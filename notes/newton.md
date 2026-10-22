@@ -1,5 +1,230 @@
 # The Newton package
 
+## MicroDuck physical stepping and closer appearance (2026-10-22)
+
+The owner asked for walking or a useful first motion milestone, and a closer
+model of the real robot. The fixture now uses a free Newton trunk and simple
+foot-plane forces. The achieved milestone is explicitly assisted physical
+stepping, not reliable forward/backward walking or a learned balance policy.
+Both signed sweep patterns in the bounded research probe drifted backward;
+changing joint angles alone is not evidence of controlled locomotion.
+
+All 15 authored masses/full inertias, 14 hinges, the pinned XML and principal
+frame conversion are unchanged. No Newton package/runtime/compiler API changed.
+`microduck.tide` implements the floor and controller as ordinary match code
+writing the existing world COM `Body.force`/`torque`. The same Newton solver
+then advances gameplay, replay and any recorded demonstrations.
+
+- Four original proxy points per foot form a 64 x 30 mm rectangle around the
+  source foot site, in its original ankle frame. They are illustrative contact
+  geometry, not extracted mesh boundaries. Point velocity is COM velocity plus
+  angular velocity crossed with the COM-to-point arm. Normal force is
+  `clamp(-1000*y - 4*vy, 0, 12)` N below the plane, zero above; tangential
+  damping has gain at most 20 N s/m and is bounded by `0.8 * normal`.
+  Each point contributes its world force and `arm x force` torque. Iteration
+  order is fixed. This is a compliant, sampled contact approximation, with
+  no self/body/inter-robot contacts or general collision/query backend.
+- The initial/reset pose includes coherent FK for every body before contacts
+  run. Reset clears root/body speeds and wrenches, q/qd, trims, phase, command,
+  contact readback and the recording ring. A fixed world joint no longer holds
+  the trunk. The two ducks use separate visual lanes.
+- Joint PD is 4/0.03, clamped to the authored 0.96 Nm limit; passive damping
+  and armature remain authored values. The gait uses a 0.625 Hz phase, signed
+  0.6 rad sweep and nonnegative 0.5 rad lift, with a smoothed command after a
+  one-second settling interval. W/S or stick Y select opposite step patterns;
+  they are not a velocity-tracking forward/backward command. Q/E selects a
+  joint, A/D adjusts its trim, R resets and B toggles assistance.
+- Assistance is explicit and starts enabled: upright torque, weak world +X
+  heading torque and a lateral lane spring/damper, capped at 4 N. It supplies
+  exactly zero forward or vertical force. The HUD labels it and the complete
+  applied assistance wrench is recorded. Disabling it can cause falls; no
+  realistic unassisted balance or BAM motor behavior is claimed.
+- The ring remains bounded at 64 transitions. Its 44-value observation is
+  q[14], qd[14], root height, world linear velocity[3], world angular
+  velocity[3], projected unit gravity[3], applied foot-normal loads[2], gait
+  command, sin/cos phase and assistance flag. Pre-state is captured before
+  control changes (after any reset); post-state follows successful physics.
+  Actions remain the 14 joint targets; efforts are actual clamped motor
+  controls. Assistance force/torque are separate fields. The tracking reward
+  is illustrative, not a walking objective. Verified-tick export and exact
+  human-view timing remain unimplemented.
+
+`visuals.tide` draws original shaded meshes per source body: a rounded camera
+hood and lens, thin jaw, exposed servo cases/hubs, brackets, leg covers and
+broad soles. Joint/site anchors come from the Apache-2.0 XML; enclosure extents
+are estimates from official photos, not CAD. No upstream STL or image texture
+is included or used to derive the geometry. The original/principal frame
+relationship is unchanged. References and licensing are in the example's
+`UPSTREAM.md`; game builds require no Python or authoring download.
+The 30 visual meshes are built once in the local `MicroduckMeshes` singleton;
+warm draws borrow stable geometry and apply each body's current transform.
+Vertex lighting is baked from the first pose. This cache is outside match
+state, snapshots and hashes. Rebuilding it every frame took 99.88 seconds for
+a 480-frame installed debug capture; caching reduced that to 75.67 seconds,
+exposing the unoptimized CLI solver cost. The same final cached fixture in
+the installed `--release` build completes 480 frames in 2.53 seconds, timed
+with `Start-Process -Wait` (the Windows release executable uses the GUI
+subsystem). The normal play/build instructions use `--release`. CMake's
+Newton backend already uses O2 in debug, unlike the installed CLI's default
+O0 game/package source profile. No optimization flags or CLI rules changed.
+
+Research artifacts are under `build/research-microduck-walk/` and
+`build/research-microduck-look/`. The bounded C probe using this Newton runtime
+supported the 7.232 N weight, produced 11–20 mm whole-foot clearance and
+completed ten seconds with identical native/WASI history hashes. Those are
+probe measurements, not a calibration claim for the finished fixture.
+
+Final validation:
+
+- All 14 generated-game tests plus fresh-process joins pass in native/WASI
+  debug and release. The intentionally changed 280-tick match hash
+  `d39953ac3eb20462` was observed on native/WASI before pinning and agrees in
+  all four builds. Both signed patterns complete five sustained lift/touchdown
+  cycles per foot in ten seconds. Final whole-foot clearances are 42.20/41.78
+  mm for +1 and 5.97/6.22 mm for -1; mean floor loads are 7.23245/7.23203 N.
+  Minimum trunk heights are 82.56/89.09 mm; peak motor controls 0.755/0.645 Nm.
+  The original >5 mm clearance acceptance was retained while lift was tuned.
+- Numeric and rotated-frame checks cover contact point velocity, COM torque,
+  friction bounds, caps/no attraction and force replacement after failure.
+  Assistance toggle and actual physics coupling, full observations/continuity,
+  coherent reset, ring/failure behavior, snapshots/alternating worlds, raw/delta
+  transfer, threads and two-client latency/jitter/loss rollback all pass.
+  The host tests' older raw player-ID mistake was corrected to
+  `tide_player_from_index`; both actual owners now receive their test actions.
+- Native-to-WASI and WASI-to-native joins pass in debug and release after 360
+  gait ticks plus 240 continuation ticks. All four snapshot files match bytes.
+  The original full-tensor stock Newton oracle still agrees within 4.543e-6;
+  converter and stock oracle regeneration checks pass with unchanged outputs.
+- Installed CLI native/web builds pass. The optimized desktop capture and
+  muted WebGL/WebGPU play checks confirm stepping, trim, assistance off/on,
+  reset and resumed recording, with no page/graphics errors. Original photo
+  references, source frames, mechanical silhouette and poses were inspected.
+  The closer meshes are cached outside match state; no simulation result
+  depends on rendering or cache lifetime.
+- Independent read-only integration review found no remaining implementation
+  issues. The final production docs build passes on Node 24.16.0, with existing
+  allowed unstaged-example 404s. Scoped whitespace/diff checks pass.
+
+Reproduction/results: `build/microduck-stepping-test-RESULTS.txt`,
+`build/microduck-stepping-validation-r2/`, `build/microduck-step-cli/` and
+`build/microduck-visuals-check/`. No compiler, engine/platform or package
+runtime source changed, so validation is scoped to the repository game on
+native/web plus the docs build. Other operating systems and physical hardware
+remain CI/independent validation work.
+
+Final integration: feature commit `44f230ec` merged `origin/dev` cleanly at
+`bfe135d7`. Incoming compiler fixes concern FBX asset handling and audio header
+inclusion; the fixture and Newton sources did not overlap. Rebuilt the affected
+native/web debug game, test and join targets; both focused CTests pass on each
+target. Comparing regenerated C/header files with their saved pre-merge hashes
+confirms that only the expected compiler/runtime compatibility fingerprint
+changed; generated behavior and layouts are unchanged. Logs are
+`build/microduck-step-debug-postmerge-{build,tests}.log` and the corresponding
+`web-debug` files.
+
+## Anchored MicroDuck fixture (2026-10-22)
+
+The owner selected Pollen Robotics' MicroDuck for the next fixture and approved
+the anchored joint-control milestone. `examples/robotics/microduck/` contains
+two owner-controlled ducks using the existing Newton package. All 15 bodies
+remain dynamic with authored mass and inertia; a world-parent Fixed joint
+anchors each trunk. The 14 leg/neck/head hinges retain the original DFS order,
+local axes and ranges. No package, compiler or engine runtime API changed.
+
+The source is `microduck_rl` revision
+`b02fdea4902c2b93b7d34a83a6f05da4ececb7d3`. `upstream/` preserves the exact
+`robot_walk.xml`, `scene_walk.xml` and Apache-2.0 license bytes. The XML/data are
+Apache-2.0; no upstream noncommercial STL meshes or mesh-derived visuals are
+included. The game draws its own primitive ducks, joints and stands.
+
+`tools/convert.py` is a pinned, standard-library-only authoring tool, not a
+general MJCF importer. It rejects changed source hashes or unsupported XML,
+diagonalizes complete symmetric inertia tensors with fixed-order Jacobi sweeps,
+and rotates body COMs and both joint attachment frames consistently. Body
+origins are unchanged. `principalRotation` maps the new principal frame into
+the original link frame; original visuals use its inverse. The fixture maps
+source Z-up to Tide Y-up with a -90-degree X rotation at the trunk anchor.
+Generated float32 values reconstruct full inertia within `1.46e-7` relative
+error and source zero/STAND COM positions within `8.37e-9` m in the converter's
+double-precision checks. Source/model contracts and exact hashes are in the
+example's `UPSTREAM.md`. Game builds run no converter, Python or MuJoCo.
+
+The match ticks at 200 Hz with one 5 ms Newton step, matching the selected
+reference integration interval. Q/E, arrows or gamepad D-pad select a joint;
+A/D or the left stick moves its target at 0.8 rad/s within its range. R/South
+resets joint coordinates/velocities, targets and recording to the authored
+STAND pose. The illustrative PD controller uses gains 0.55/0.03 plus authored
+passive damping 0.053 and armature 0.0018; package controls clamp to 0.96 Nm.
+Soft position limits use gains 0.55/0.03. These choices do not implement BAM
+motor voltage/friction/delay behavior or reproduce upstream walking policies.
+
+`Duck` keeps body/joint identities, targets, selection and a 64-transition
+ring in ordinary match state. Each transition holds tick, pre-step q[14]/qd[14],
+desired angles[14], actual clamped efforts[14], post-step q/qd and negative
+summed squared joint-target error. Reset starts a new ring; failed steps append
+nothing. These are executed-state records, with the same verified-tick export
+and human-view timing limitations as the arm fixture. No dataset exporter,
+policy runner, contacts, balance or walking is added.
+
+Validation:
+
+- Converter regeneration/check passes on Python 3.11/3.13/3.14. Native and web
+  generated model records agree byte-for-byte. Source hashes reject mutation.
+- Independent stock Newton CPU reference uses the original full tensors and
+  frames, with anchored trunk, STAND q, zero qd, no contacts/limits/friction/PD,
+  and alternating +0.02/-0.015 Nm effort. Runtime q/qd and all COMs at 1/8/32
+  steps agree within `4.67524e-6`, below the `5e-5` absolute tolerance, on
+  native/WASI. Dropping tensor products changes qd by `7.55e-4`, so this check
+  detects that approximation. A separate original-XML double FK agrees with
+  stock Newton initial COMs within `1.97e-8` m.
+- Eight game tests plus the fresh-process join CTest pass on native and web
+  debug and release. They cover each body's mass/COM/full tensor, all-joint observations,
+  bounded records, reset, snapshots/alternating worlds, raw/delta transfer,
+  thread equality and two-client rollback with latency/jitter/loss. Trusted C
+  host reads use explicit heaps when alternating worlds. The 280-tick world
+  hash `5e74bf9e0f8ba7ca` agrees in all four builds and is pinned. The join
+  host uses the same 200 Hz timestep; separate cross-target file checks pass
+  native-to-WASI and WASI-to-native at 40 ticks plus 20 continuation ticks.
+- A hidden, muted desktop capture confirms both procedural ducks, joint
+  selection, target movement and status/readout. Captures are under
+  `build/microduck-capture/`.
+- Installed CLI native/web builds pass using only the checked-in game/model
+  and Newton sources, with no Python or downloads. Desktop, WebGL and WebGPU
+  smoke checks at 1280x720 confirm selection, target movement and reset; the
+  recording count restarts at 3/64 and resumes to 36/64. No Newton error HUD,
+  page exceptions or graphics validation errors occur. All browser launches
+  were muted. Commands, logs and captures are in `build/microduck-cli/`.
+
+Independent integration review found only a copied 120 Hz timestep in the join
+host. It was corrected to 200 Hz and checked on native/web debug/release and
+both cross-target transfers. No other actionable findings remain.
+
+The full native debug suite passes 2,553/2,553 tests. The full web debug run
+passes 2,414/2,415 initially: the existing `tide_platform_draw_webgpu` test
+reports two background pixels in its maximum-uniform shader checks. Two exact
+reruns pass without source or assertion changes. Read-only review finds that
+the test waits for `picked_shader` but then also checks the independently
+compiled `many_shader`; a still-pending second pipeline fits the blank pixels,
+although individual pipeline timing was not traced. No drawing source,
+browser command or draw-target object changes are part of this fixture. All
+Newton and MicroDuck tests pass in the full runs. Production docs build passes
+on Node 24.16.0.
+Full-run and recheck logs are under `build/microduck-*-full-*` and
+`build/microduck-web-draw-*.log`. Other operating systems and physical robot
+validation remain unavailable locally.
+
+The final clean merge from `origin/dev` brought Unity HLSL/embedding and
+alternate-camera drawing changes, with no Newton or MicroDuck source changes.
+Because the platform library is a dependency, both debug targets were rebuilt.
+Focused native checks (Vulkan/OpenGL drawing, MicroDuck and its join) and web
+checks (WebGL/WebGPU drawing, MicroDuck and its join) pass 4/4 on each target.
+Commands/results are in `build/microduck-*-postmerge-*.log`. The installed CLI
+and MinGW/web platform libraries were rebuilt and restaged too. Installed
+native/web builds, a bounded 110-frame desktop capture and muted WebGPU
+controls/reset smoke all pass; source hashes are unchanged and 200 Hz/one
+substep remains confirmed. The report is
+`build/microduck-cli/postmerge-RESULTS.md`.
+
 ## Featherstone CPU integration and documentation (2026-10-22)
 
 The owner requested NVIDIA Newton as a separate optional package like Box3D,

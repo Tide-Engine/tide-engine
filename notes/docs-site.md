@@ -1,5 +1,23 @@
 # The docs site
 
+## Simpler navigation and sample source links (2026-10-22)
+
+Package sidebar entries now use just Box2D, Box3D, Newton, Rooms, Lobby,
+Steam and Voice chat. Removed the Live examples index and the separate Duel,
+Towers and Sumo walkthrough pages; the examples remain on their subject pages.
+Every Samples card has a separate Source link to its game folder on GitHub's
+`dev` branch, including Sand's `bench/sand` and the two distinct Sumo games.
+References to removed walkthroughs now link directly to source. Markdown exports
+retain all fourteen source links, with export coverage checking that none vanish.
+
+Validation: production docs build and both development/production HTTP export
+tests pass, including page/sidebar/link/anchor checks (Node 24.22.0). Unstaged
+playable pages still produce the build's existing allowed 404s. Muted headless
+Chrome checks at 1440 and 390 pixels confirm fourteen visible source links,
+no horizontal overflow, and no page exceptions; screenshots were inspected.
+The collaborative preview snapshot timed out twice, so these layout checks
+used the repository's Chrome DevTools workflow. Game code is unchanged.
+
 ## Optional Opus voice package (2026-10-22)
 
 Packages now lists `voice` as the sixth optional package, with its own sidebar

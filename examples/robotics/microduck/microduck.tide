@@ -1,0 +1,467 @@
+// MicroDuck: authored joint dynamics, a simple floor and explicit balance help.
+// Human input and replay use the same match actions and Newton physics step.
+using Newton;
+using Rooms;
+
+settings { title = "MicroDuck stepping lab"; tickRate = 200; maxPlayers = 2; }
+
+scene Main { }
+
+input DuckControls
+{
+    int select;
+    float drive;
+    float walk;
+    bool reset;
+    bool assistance;
+
+    Sample(Devices devices, Lobby lobby)
+    {
+        if (!lobby.playing) return;
+        var keys = devices.keyboard;
+        if (keys.q.down || keys.leftArrow.down || devices.gamepad.dpad.left.down) select -= 1;
+        if (keys.e.down || keys.rightArrow.down || devices.gamepad.dpad.right.down) select += 1;
+        if (keys.a.pressed) drive -= 1;
+        if (keys.d.pressed) drive += 1;
+        drive += devices.gamepad.leftStick.x;
+        if (keys.w.pressed || keys.upArrow.pressed) walk += 1;
+        if (keys.s.pressed || keys.downArrow.pressed) walk -= 1;
+        walk += devices.gamepad.leftStick.y;
+        reset = keys.r.pressed || devices.gamepad.buttonSouth.pressed;
+        assistance = keys.b.pressed || devices.gamepad.buttonNorth.pressed;
+    }
+
+    Sanitize()
+    {
+        select = Math.Clamp(select, -1, 1);
+        drive = Math.Clamp(drive, -1, 1);
+        walk = Math.Clamp(walk, -1, 1);
+    }
+}
+
+struct DuckTransition
+{
+    int tick;
+    List<float> observation;     // q/qd plus base, contact and controller state
+    List<float> action;          // All 14 desired joint angles, radians
+    List<float> effort;          // Last successful clamped actuator controls, Nm
+    List<float> nextObservation; // Same 44 values after the physics step
+    float3 assistanceForce;
+    float3 assistanceTorque;
+    float reward;
+}
+
+component Duck
+{
+    int seat;
+    List<Entity> bodies;
+    float3 spawnPosition;
+    List<Entity> joints;
+    List<float> targets;
+    List<float> trim;
+    int selected = 2; // Start on left_hip_pitch; Q/E cycle every leg/head joint
+    float reward;
+    List<DuckTransition> transitions;
+    int next;
+    List<float> before;
+    bool pending;
+    float phase;
+    float walk;
+    int settleTicks;
+    bool assisted = true;
+    bool floorEnabled = true;
+    float2 footLoad;
+    float3 assistanceForce;
+    float3 assistanceTorque;
+}
+
+singleton DuckFixture { Entity first; Entity second; }
+component DuckPart { int seat; int index; quaternion principalRotation; }
+struct DuckPlacement { float3 position; quaternion rotation; }
+
+const int DUCK_OBSERVATION_COUNT = 44;
+
+quaternion DuckWorldRotation()
+{
+    // Source: +z up, +x forward. Tide: +y up, +x still forward.
+    return quaternion.AxisAngle(float3(1, 0, 0), -Math.PI / 2);
+}
+
+List<DuckPlacement> DuckHomePlacements(float3 origin)
+{
+    var model = DuckModel();
+    mut List<DuckPlacement> poses = [DuckPlacement {
+        position = origin,
+        rotation = Math.Mul(DuckWorldRotation(), model[0].principalRotation)
+    }];
+    for (int i = 1; i < 15; i += 1)
+    {
+        var definition = model[i];
+        var parent = poses[definition.parent];
+        var turn = quaternion.AxisAngle(definition.axis, definition.home);
+        var rotation = Math.Mul(Math.Mul(Math.Mul(parent.rotation, definition.parentRotation), turn),
+                                Math.Inverse(definition.childRotation));
+        poses.Add(DuckPlacement {
+            position = parent.position + Math.Rotate(parent.rotation, definition.parentPosition)
+                       - Math.Rotate(rotation, definition.childPosition),
+            rotation = rotation
+        });
+    }
+    return poses;
+}
+
+Entity MakeDuck(float3 origin, int seat)
+{
+    var model = DuckModel();
+    var poses = DuckHomePlacements(origin);
+    mut List<Entity> bodies = [];
+    mut List<Entity> joints = [];
+    mut List<float> targets = [];
+    mut List<float> trim = [];
+    for (int i = 0; i < 15; i += 1)
+    {
+        var definition = model[i];
+        bodies.Add(Spawn(Body {
+            mass = definition.mass, inertia = definition.inertia,
+            centerOfMass = definition.centerOfMass,
+            position = poses[i].position, rotation = poses[i].rotation
+        }, DuckPart {
+            seat = seat, index = i, principalRotation = definition.principalRotation
+        }));
+    }
+
+    // The trunk is a free Newton root. Ground reactions and any labelled
+    // assistance enter through the same body force/torque fields as game code.
+    for (int i = 1; i < 15; i += 1)
+    {
+        var definition = model[i];
+        var home = Math.Clamp(definition.home, definition.lower, definition.upper);
+        joints.Add(Spawn(Joint {
+            type = JointType.Revolute, parent = bodies[definition.parent], child = bodies[i],
+            parentPosition = definition.parentPosition, parentRotation = definition.parentRotation,
+            childPosition = definition.childPosition, childRotation = definition.childRotation,
+            axis = definition.axis, position = home,
+            damping = definition.damping, armature = definition.armature,
+            limited = true, lower = definition.lower, upper = definition.upper,
+            limitStiffness = 0.55, limitDamping = 0.03
+        }, Actuator { effortLimit = definition.effortLimit }));
+        targets.Add(home);
+        trim.Add(0);
+    }
+    return Spawn(Duck { seat = seat, bodies = bodies, spawnPosition = origin,
+                       joints = joints, targets = targets, trim = trim },
+                 Owner { player = PlayerID(seat) });
+}
+
+event(Spawned) Build(mut DuckFixture fixture, mut Physics physics, with Main)
+{
+    physics.substeps = 1;
+    fixture.first = MakeDuck(float3(-0.18, 0.12, -0.14), 0);
+    fixture.second = MakeDuck(float3(0.18, 0.12, 0.14), 1);
+}
+
+// Reset is an ordinary match action: Newton reconstructs every articulated
+// body from the reset q/qd on the next step, just as during snapshot replay.
+void ResetDuck(mut Duck duck, mut World world)
+{
+    var model = DuckModel();
+    var poses = DuckHomePlacements(duck.spawnPosition);
+    for (int i = 0; i < 15; i += 1)
+    {
+        if (!world.TryGet<Body>(duck.bodies[i], out mut var body)) return;
+        body.position = poses[i].position;
+        body.rotation = poses[i].rotation;
+        body.velocity = float3(0);
+        body.angularVelocity = float3(0);
+        body.force = float3(0);
+        body.torque = float3(0);
+        world.Set<Body>(duck.bodies[i], body);
+    }
+    for (int i = 0; i < 14; i += 1)
+    {
+        if (!world.TryGet<Joint>(duck.joints[i], out mut var joint)) return;
+        var home = Math.Clamp(model[i + 1].home, joint.lower, joint.upper);
+        joint.position = home;
+        joint.velocity = 0;
+        world.Set<Joint>(duck.joints[i], joint);
+        duck.targets[i] = home;
+        duck.trim[i] = 0;
+    }
+    duck.transitions.Clear();
+    duck.before.Clear();
+    duck.next = 0;
+    duck.reward = 0;
+    duck.phase = 0;
+    duck.walk = 0;
+    duck.settleTicks = 0;
+    duck.assisted = true;
+    duck.footLoad = float2(0);
+    duck.assistanceForce = float3(0);
+    duck.assistanceTorque = float3(0);
+}
+
+// An original 64 x 30 mm flat sole proxy, centred on each source foot site.
+// In both ankle source frames the sole lies at y=-0.0238146. These dimensions
+// are illustrative; no STL geometry or general collision solver is used.
+float3 DuckSolePoint(int corner)
+{
+    return float3((corner & 2) == 0 ? -0.032 : 0.032, -0.0238146,
+                  -0.0140852 + ((corner & 1) == 0 ? -0.015 : 0.015));
+}
+
+void DuckFloor(mut Duck duck, mut World world)
+{
+    duck.footLoad = float2(0);
+    duck.assistanceForce = float3(0);
+    duck.assistanceTorque = float3(0);
+    for (int foot = 0; foot < 2 && duck.floorEnabled; foot += 1)
+    {
+        var index = foot == 0 ? 5 : 14;
+        if (!world.TryGet<Body>(duck.bodies[index], out mut var body)) return;
+        if (!world.TryGet<DuckPart>(duck.bodies[index], out var part)) return;
+        var rotation = Math.Mul(body.rotation, Math.Inverse(part.principalRotation));
+        var center = body.position + Math.Rotate(body.rotation, body.centerOfMass);
+        mut float load = 0;
+        for (int corner = 0; corner < 4; corner += 1)
+        {
+            var point = body.position + Math.Rotate(rotation, DuckSolePoint(corner));
+            var arm = point - center;
+            var velocity = body.velocity + Math.Cross(body.angularVelocity, arm);
+            if (point.y >= 0) continue;
+            var normal = Math.Clamp(-1000 * point.y - 4 * velocity.y, 0, 12);
+            var speed = Math.Length(float2(velocity.x, velocity.z));
+            var friction = Math.Min(20, 0.8 * normal / Math.Max(speed, 0.000001));
+            var force = float3(-friction * velocity.x, normal, -friction * velocity.z);
+            body.force += force;
+            body.torque += Math.Cross(arm, force);
+            load += normal;
+        }
+        if (foot == 0) duck.footLoad.x = load;
+        else duck.footLoad.y = load;
+        world.Set<Body>(duck.bodies[index], body);
+    }
+    if (!duck.assisted) return;
+    if (!world.TryGet<Body>(duck.bodies[0], out mut var root)) return;
+    if (!world.TryGet<DuckPart>(duck.bodies[0], out var rootPart)) return;
+    var rotation = Math.Mul(root.rotation, Math.Inverse(rootPart.principalRotation));
+    var up = Math.Rotate(rotation, float3(0, 0, 1));
+    var forward = Math.Rotate(rotation, float3(1, 0, 0));
+    // Explicit upright/heading/lane help: no forward or vertical force.
+    duck.assistanceTorque = 2 * Math.Cross(up, float3(0, 1, 0)) - 0.15 * root.angularVelocity;
+    duck.assistanceTorque.y = 0.25 * Math.Cross(forward, float3(1, 0, 0)).y
+                             - 0.03 * root.angularVelocity.y;
+    duck.assistanceForce.z = Math.Clamp(-40 * (root.position.z - duck.spawnPosition.z)
+                                       - 4 * root.velocity.z, -4, 4);
+    root.torque += duck.assistanceTorque;
+    root.force += duck.assistanceForce;
+    world.Set<Body>(duck.bodies[0], root);
+}
+
+List<float> DuckObservation(Duck duck, World world)
+{
+    mut List<float> observation = [];
+    for (int i = 0; i < 14; i += 1)
+    {
+        if (!world.TryGet<Joint>(duck.joints[i], out var joint)) return [];
+        observation.Add(joint.position);
+    }
+    for (int i = 0; i < 14; i += 1)
+    {
+        if (!world.TryGet<Joint>(duck.joints[i], out var joint)) return [];
+        observation.Add(joint.velocity);
+    }
+    if (!world.TryGet<Body>(duck.bodies[0], out var root)) return [];
+    if (!world.TryGet<DuckPart>(duck.bodies[0], out var part)) return [];
+    var rotation = Math.Mul(root.rotation, Math.Inverse(part.principalRotation));
+    var gravity = Math.Rotate(Math.Inverse(rotation), float3(0, -1, 0));
+    observation.Add(root.position.y);
+    observation.Add(root.velocity.x); observation.Add(root.velocity.y); observation.Add(root.velocity.z);
+    observation.Add(root.angularVelocity.x); observation.Add(root.angularVelocity.y); observation.Add(root.angularVelocity.z);
+    observation.Add(gravity.x); observation.Add(gravity.y); observation.Add(gravity.z);
+    observation.Add(duck.footLoad.x); observation.Add(duck.footLoad.y);
+    observation.Add(duck.walk);
+    observation.Add(Math.Sin(duck.phase)); observation.Add(Math.Cos(duck.phase));
+    observation.Add(duck.assisted ? 1.0 : 0.0);
+    return observation;
+}
+
+[Before(PhysicsStages.Step)]
+system Drive(DuckControls controls, mut Duck duck, mut World world, Time time)
+{
+    duck.pending = false;
+    if (controls.reset.down) ResetDuck(duck, world);
+    duck.before = DuckObservation(duck, world);
+    if (controls.assistance.down) duck.assisted = !duck.assisted;
+    duck.selected = (duck.selected + controls.select + 14) % 14;
+    duck.settleTicks = Math.Min(duck.settleTicks + 1, 200);
+    var command = duck.settleTicks >= 200 ? controls.walk : 0.0;
+    duck.walk += Math.Clamp(command - duck.walk, -time.dt * 2, time.dt * 2);
+    duck.phase += time.dt * Math.PI * 1.25 * Math.Abs(duck.walk);
+    if (duck.phase >= Math.PI * 2) duck.phase -= Math.PI * 2;
+    var wave = Math.Sin(duck.phase);
+    var sweep = 0.6 * duck.walk;
+    var lift = 0.5 * Math.Abs(duck.walk);
+    var leftSwing = Math.Max(0, wave);
+    var rightSwing = Math.Max(0, -wave);
+    var model = DuckModel();
+    // These forces are owned by the fixture. Clear even after a rejected step,
+    // so a failure cannot accumulate another tick's floor/controller forces.
+    for (int i = 0; i < 15; i += 1)
+    {
+        if (!world.TryGet<Body>(duck.bodies[i], out mut var body)) return;
+        body.force = float3(0);
+        body.torque = float3(0);
+        world.Set<Body>(duck.bodies[i], body);
+    }
+    for (int i = 0; i < 14; i += 1)
+    {
+        if (!world.TryGet<Joint>(duck.joints[i], out var joint)) return;
+        var delta = i == duck.selected ? controls.drive * time.dt * 0.8 : 0.0;
+        duck.trim[i] = Math.Clamp(duck.trim[i] + delta, -0.5, 0.5);
+        mut float target = model[i + 1].home + duck.trim[i];
+        if (i == 2) target += sweep * wave + lift * leftSwing;
+        if (i == 3) target -= 2 * lift * leftSwing;
+        if (i == 4) target -= sweep * wave - lift * leftSwing;
+        if (i == 11) target += sweep * wave - lift * rightSwing;
+        if (i == 12) target += 2 * lift * rightSwing;
+        if (i == 13) target -= sweep * wave + lift * rightSwing;
+        duck.targets[i] = Math.Clamp(target, joint.lower, joint.upper);
+    }
+    for (int i = 0; i < 14; i += 1)
+    {
+        if (!world.TryGet<Joint>(duck.joints[i], out var joint)) return;
+        if (!world.TryGet<Actuator>(duck.joints[i], out mut var actuator)) return;
+        // Small-robot PD, in Nm. Authored passive damping remains separate.
+        actuator.effort = Math.Clamp(4 * (duck.targets[i] - joint.position) - 0.03 * joint.velocity,
+                                    -actuator.effortLimit, actuator.effortLimit);
+        world.Set<Actuator>(duck.joints[i], actuator);
+    }
+    DuckFloor(duck, world);
+    duck.pending = duck.before.count == DUCK_OBSERVATION_COUNT;
+}
+
+[After(PhysicsStages.Step)]
+system Record(mut Duck duck, World world, Physics physics, Time time)
+{
+    if (!duck.pending || physics.status != Status.Ok) return;
+    var after = DuckObservation(duck, world);
+    if (after.count != DUCK_OBSERVATION_COUNT) return;
+    mut List<float> effort = [];
+    mut float error = 0;
+    for (int i = 0; i < 14; i += 1)
+    {
+        if (!world.TryGet<Joint>(duck.joints[i], out var joint)) return;
+        if (!world.TryGet<Actuator>(duck.joints[i], out var actuator)) return;
+        effort.Add(actuator.appliedEffort);
+        var difference = duck.targets[i] - joint.position;
+        error += difference * difference;
+    }
+    duck.reward = -error; // Negative summed squared joint target error
+    var sample = DuckTransition {
+        tick = time.tick, observation = duck.before, action = duck.targets,
+        effort = effort, nextObservation = after, reward = duck.reward,
+        assistanceForce = duck.assistanceForce, assistanceTorque = duck.assistanceTorque
+    };
+    // These are actual executed pre/post-step states, not human-view timing or
+    // an exported training dataset. Export verified ticks in ascending order.
+    if (duck.transitions.count < 64) duck.transitions.Add(sample);
+    else duck.transitions[duck.next] = sample;
+    duck.next = (duck.next + 1) % 64;
+}
+
+enum DuckLayers { Camera, Robots, Hud }
+
+Color DuckColor(int seat)
+{
+    return seat == 0 ? Color(1, 0.77, 0.22) : Color(0.25, 0.83, 0.76);
+}
+
+[Stage(DuckLayers.Camera)]
+view Look(DuckFixture fixture, World world)
+{
+    Draw.Clear(Color(0.055, 0.075, 0.10));
+    mut float3 focus = float3(0, 0.15, 0);
+    if (world.TryGet<Duck>(fixture.first, out var first) && world.TryGet<Duck>(fixture.second, out var second))
+    {
+        if (world.TryGet<Body>(first.bodies[0], out var a) && world.TryGet<Body>(second.bodies[0], out var b))
+            focus = float3((a.position.x + b.position.x) * 0.5, 0.15,
+                           (a.position.z + b.position.z) * 0.5);
+    }
+    var eye = focus + float3(0.28, 0.22, -0.76);
+    var rotation = quaternion.LookRotation(Math.Normalize(focus - eye), float3(0, 1, 0));
+    Draw.SetCamera(eye, rotation, 40);
+    Draw.Plane(float3(focus.x, 0, 0), float2(4, 1.6), Color(0.12, 0.16, 0.20));
+    for (int line = -10; line <= 10; line += 1)
+    {
+        Draw.Cube(float3(line * 0.2, -0.0005, 0), float3(0.001, 0.001, 1.6), Color(0.22, 0.27, 0.30));
+    }
+    Draw.Cube(float3(focus.x, -0.0005, -0.14), float3(4, 0.001, 0.002), Color(0.34, 0.30, 0.18));
+    Draw.Cube(float3(focus.x, -0.0005, 0.14), float3(4, 0.001, 0.002), Color(0.18, 0.32, 0.34));
+}
+
+void DuckRod(float3 start, float3 end, float radius, Color color)
+{
+    var offset = end - start;
+    var length = Math.Length(offset);
+    if (length < 0.0001) return;
+    var direction = offset / length;
+    var up = Math.Abs(direction.y) > 0.95 ? float3(1, 0, 0) : float3(0, 1, 0);
+    var rotation = Math.Mul(quaternion.LookRotation(direction, up),
+                            quaternion.AxisAngle(float3(1, 0, 0), Math.PI / 2));
+    Draw.Cylinder((start + end) * 0.5, radius, length, rotation, color);
+}
+
+[Stage(DuckLayers.Robots)]
+view Connections(Duck duck, World world)
+{
+    var color = DuckColor(duck.seat);
+    for (int i = 0; i < 14; i += 1)
+    {
+        if (!world.TryGet<Joint>(duck.joints[i], out var joint)) continue;
+        if (!world.TryGet<Body>(joint.parent, out var parent)) continue;
+        if (!world.TryGet<Body>(joint.child, out var child)) continue;
+        DuckRod(parent.position, child.position, 0.0025, Color(0.18, 0.21, 0.23));
+        if (i == duck.selected) Draw.Sphere(child.position, 0.004, color);
+    }
+}
+
+[Stage(DuckLayers.Robots)]
+view Parts(Body body, DuckPart part, mut MicroduckMeshes meshes)
+{
+    // Principal rotation maps physics principal coordinates into the original
+    // link frame. Visuals use the original frame and keep the body origin.
+    var rotation = Math.Mul(body.rotation, Math.Inverse(part.principalRotation));
+    MicroduckRobotPart(body.position, rotation, part.index, part.seat, meshes);
+}
+
+[Stage(DuckLayers.Hud)]
+view Instructions(Physics physics, Lobby lobby)
+{
+    if (!lobby.playing) return;
+    Draw.SetScreen();
+    Draw.Text("MICRODUCK / STEPPING LAB", float2(20, 18), 22, Color.white);
+    Draw.Text("Hold W/S or stick Y: steps   Q/E: joint   A/D: trim   R: home   B: assistance", float2(20, 48), 16, Color(0.76, 0.83, 0.88));
+    Draw.Text("Free trunk / simple foot-floor contact / experimental gait", float2(20, 72), 14, Color(0.60, 0.70, 0.77));
+    Draw.Text("Executed states / 64-step ring / match replay", float2(112, Screen.height - 26), 13, Color(0.60, 0.70, 0.77));
+    if (physics.status != Status.Ok)
+        Draw.Text($"Newton step failed: {physics.status}", float2(20, 98), 17, Color.red);
+}
+
+[Stage(DuckLayers.Hud)]
+view Readout(Duck duck, Owner owner, World world, Session session, Lobby lobby)
+{
+    if (!lobby.playing || owner.player != session.player) return;
+    if (!world.TryGet<Joint>(duck.joints[duck.selected], out var joint)) return;
+    if (!world.TryGet<Actuator>(duck.joints[duck.selected], out var actuator)) return;
+    Draw.SetScreen();
+    var y = Screen.height - 134;
+    Draw.Text($"Duck {duck.seat + 1} / {duck.selected + 1}/14 / {DuckJointName(duck.selected)}",
+              float2(20, y), 18, DuckColor(duck.seat));
+    Draw.Text($"Angle {joint.position:F3} rad   target {duck.targets[duck.selected]:F3} rad",
+              float2(20, y + 27), 15, Color.white);
+    Draw.Text($"Control {actuator.appliedEffort:F3} Nm   feet {duck.footLoad.x:F1} / {duck.footLoad.y:F1} N   records {duck.transitions.count}/64",
+              float2(20, y + 51), 14, Color(0.76, 0.83, 0.88));
+    Draw.Text(duck.assisted ? "Balance + lane help ON (B) / stepping, not a trained walking policy"
+                           : "Balance help OFF (B) / falls need R to reset",
+              float2(20, y - 24), 14, duck.assisted ? Color(0.95, 0.76, 0.35) : Color(0.60, 0.85, 0.77));
+}

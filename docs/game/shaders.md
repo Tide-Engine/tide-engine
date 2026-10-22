@@ -299,7 +299,7 @@ view PaintLight(Lens lens)
 }
 ```
 
-That's [Duel](../guide/duel.md)'s blur. Without it, the direction would be a field of a singleton that the view writes between the two Blits.
+That's [Duel](https://github.com/Tide-Engine/tide-engine/tree/dev/examples/duel)'s blur. Without it, the direction would be a field of a singleton that the view writes between the two Blits.
 
 - It goes last, after the vert and the frag, in `Draw.Mesh`, `Draw.Instanced`, [`Draw.Blit`](./render-targets.md#post-processing) and a target's `Mesh` and `Instanced`: `Draw.Mesh(vertices, indices, transform, Wave, Shade, Swell { height = 2 })`. Any expression of the struct's type will do: a literal, a local, a field, a function's result.
 - It's found by its type, as a component is, whatever the parameter is called. A draw gives one struct. Group what the vert and the frag each need in it: each reads the fields it wants.

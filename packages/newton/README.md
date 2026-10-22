@@ -2,7 +2,7 @@
 
 Experimental **NVIDIA Newton** articulated physics for Tide, in the `Newton` namespace. It is a separate optional package alongside Box3D, with no silent Box3D fallback. It is unrelated to Newton Game Dynamics.
 
-The package runs upstream Featherstone CPU kernels on native and WebAssembly. Focused tests cover exact cross-target/configuration results, snapshots, packing and two-client rollback. API names remain provisional and physical fidelity is unvalidated. There are **no colliders or contacts**: bodies do not collide with one another or with a drawn floor.
+The package runs upstream Featherstone CPU kernels on native and WebAssembly. Focused tests cover exact cross-target/configuration results, snapshots, packing and two-client rollback. API names remain provisional and physical fidelity is unvalidated. There is **no general collision/contact backend**: bodies pass through one another and drawn floors unless game code supplies forces, as the MicroDuck example does for its feet.
 
 The full [Newton package guide](../../docs/packages/newton.md) covers fields, status handling, observations, demonstration recording and current gaps. The website route is https://tide-engine.dev/packages/newton once these docs are published.
 
@@ -66,6 +66,28 @@ The runnable [two-player arm example](../../examples/robotics/arm/) uses Rooms a
 
 All persistent state is ordinary Tide components/lists/maps, with no `Resident` arena. Solver model arrays and scratch are reconstructed per call, so separate worlds retain no shared solver state.
 
+The [MicroDuck stepping lab](../../examples/robotics/microduck/) uses the
+published 15-body, 14-hinge model with a free trunk, authored four-point
+foot-plane forces and a 200 Hz tick/physics rate. Upright, heading and lateral
+lane assistance is labelled and toggleable; it applies no forward or vertical
+force. W/S or stick Y chooses opposite joint step patterns, Q/E selects a joint,
+A/D or stick X trims its target, and R resets dynamics, controller and recording.
+This is **assisted physical stepping**: opposite patterns have both drifted
+backward in probes. Controlled forward/backward walking, self-balancing and BAM
+servo dynamics are not demonstrated. These are ordinary match forces and
+controls; the package API is unchanged and has no full-body contacts.
+Use `tide run examples/robotics/microduck --release` for play; the unoptimized
+CLI solver build is too slow for this full articulation.
+
+Each duck's 64-transition ring records 44-value pre/post observations (joint
+q/qd, trunk height/velocities, projected gravity, applied foot normals, step
+command/phase and assistance flag), desired angles, clamped efforts, actual
+assistance force/torque and an illustrative joint-error score. It has the same
+verified-tick export and human-view timing limits as the arm. The example
+preserves full authored inertia tensors through the unchanged offline conversion;
+original procedural casings use official photo references and XML metadata,
+with approximate dimensions and no upstream STL geometry or photo textures.
+
 ## Upstream CPU kernels
 
 - Newton: `ea4899864046dcd5981f8ba0bc3d8c25e65dcb96`.
@@ -76,8 +98,15 @@ All persistent state is ordinary Tide components/lists/maps, with no `Resident` 
 
 ## Scope and validation
 
-The first integration covers body mass/diagonal inertia/centre of mass/world force and torque, free/static roots, fixed/revolute/prismatic joints, effort actuation and actual joint/body state. It has no colliders, contacts or queries; no URDF/MJCF importer, CUDA runtime, joint friction or velocity constraints; and no automatic realistic robot, sensors or trainer. Position limits use spring/damper responses. Physical fidelity and sim-to-real transfer are not established.
+The first integration covers body mass/diagonal inertia/centre of mass/world force and torque, free/static roots, fixed/revolute/prismatic joints, effort actuation and actual joint/body state. It has no general colliders, contacts or queries; no general URDF/MJCF importer, CUDA runtime, joint friction or velocity constraints; and no automatic realistic robot, sensors or trainer. MicroDuck's authored foot-plane forces are example code. Position limits use spring/damper responses. Physical fidelity and sim-to-real transfer are not established.
 
 The 22 runtime tests pass natively and under WASI, including a two-link stock Newton Python reference comparison within tolerance and analytic dynamics. Six Tide arm fixture tests pass in native/web debug and release, covering replay, snapshots, raw/delta packing, stale entities, thread-count equality and two-client rollback under latency, jitter and loss. Exact hashes agree across those four builds; fresh-process canonical joins also pass from native to WASI and back.
 
-The full native and web debug suites also pass. Installed-source native/web builds and a bounded desktop arm run pass; games omitting Newton compile none of it. Other-platform CI, performance measurements and independent physical-fidelity validation remain outstanding. Detailed evidence and documentation build results are in [`notes/newton.md`](../../notes/newton.md).
+The earlier package/arm validation also passed full native/web debug suites,
+installed-source native/web builds and a bounded desktop arm run; games omitting
+Newton compile none of it. All 14 revised MicroDuck tests and fresh-process
+joins pass on native/WASI debug and release, including physical stepping,
+contacts, reset, recording, replay and cross-target continuation. Desktop,
+WebGL and WebGPU play checks pass. Other-platform CI, broader measurements and
+independent physical-fidelity validation remain outstanding. Detailed evidence
+and documentation build results are in [`notes/newton.md`](../../notes/newton.md).
