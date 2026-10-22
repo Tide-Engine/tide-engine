@@ -1,5 +1,406 @@
 # The Newton package
 
+## Dev integration (2026-10-22)
+
+The 45-file local Newton/MicroDuck delta is integrated with current `dev`.
+The existing per-case MicroDuck CTest discovery, platform guard, configure
+dependency, 180-second budgets and nonempty-run assertions are preserved.
+Fresh Release builds and the focused Newton/MicroDuck CTest selections pass
+on native and WASI; the known right-turn acceptance remains explicitly
+disabled. Collision export and all 40 upstream manifest checks also pass.
+These are focused checks, not a new full-repository-suite claim. The missing
+`bench/` limitation recorded below applied to the earlier detached source
+snapshot; the complete integration checkout configures successfully.
+
+The recorded `4f7a9110` SHA below identifies the frozen Windows working
+bytes used for the earlier experiments. Git normalizes this C++ file from
+CRLF to LF without changing any other byte. The normalized repository source
+SHA-256 is `b7a046761629b2f30c4f5c7b1d810b6fca97d0df3eba68cd53affee8e980a3e9`.
+
+## Final all-direction boost, stability and performance (2026-10-22)
+
+Final runtime SHA-256 is
+`4f7a91102e1e4cd87bc3906885c02d1bb5e3cbb4578b8cee9495dff14abeb4fa`.
+It retains the free-root centering and block M×J changes from the validated
+fd6f stability basis and adds ordered four-column JᵀP. The far-pair trial was
+discarded and is not integrated. The existing fixed
+174-collider/353-scene model, released weights, hardware/BAM motors, four
+substeps, friction materials and separate CC BY-NC-SA collision-data license
+remain unchanged.
+
+**D/right is now the weak direction.** Input sets `turn = -drive`, swapping
+learned A/D turning while preserving manual drive/trim behavior. Either held
+Shift sets ordinary match `bool run`, selecting signed `runSpeed = .5` for
+forward/reverse requests and 1.25 rad/s for yaw, including diagonals. Normal
+translation/yaw requests are .4 m/s and 1 rad/s. This follows the user's
+all-direction boost preference. The .5 reverse trial fell, and boosted turns
+may stumble; boost is a requested velocity/yaw, not guaranteed stability or
+real speed. It uses the same physics with no fast-forward or artificial forces.
+Seeded recovery success is not general randomized-fall reliability, sim-to-real
+fidelity or complete directional turning.
+
+### Current controls and physical measurements
+
+The fd6f stability-basis `build/microduck-run-check/final-test-summary.json` and
+`locomotion-final-{native,wasi}.log` record **7/8** on both targets. All nine
+emitted final whole-world hashes match; the run comparison emits the W baseline
+again. The only failure is strict D/right turning.
+Final-source walk/Shift+W checks pass 1/1 per target with the same whole-world
+hashes `af41801b0af94572` / `dc74c754ef1b6356`.
+`all-boost-jtp4-test-summary.json` records the current source and controls.
+
+| Probe | Result |
+| --- | --- |
+| W / S, 7 s command | 0.786932 / 0.863201 m; left/right loaded cycles 15/14 and 11/11 |
+| Shift+W | 1.155245 m, +0.368313 m (46.8%) over W; 14/14 loaded cycles |
+| Shift+W stability / release | Minimum up .994069, height .112773 m; final horizontal speed .004675 m/s |
+| Prone / side / supine | One-second upright dwell confirms 1.340 / 2.115 / 1.905 s; each final 2 s upright 100% |
+| A/left / D/right | -3.316523 / +.196558 rad; D/right fails the unchanged .25 rad minimum |
+
+Seven supported cases register normally in CTest. The strict **right-turn**
+case is explicitly disabled with label `known-limitation`; direct execution
+still fails its original assertion. The missing unrelated `bench/` directory
+blocks CMake configuration, so there is no clean repository-suite CTest claim.
+
+### Stability correction and performance scope
+
+The adapter anchors a free root's virtual parent at its current body origin,
+initializing translation coordinates to zero for each model construction.
+Large world-origin coordinates had caused float cancellation of small
+rotational inertia during Cholesky factorization. Existing COM velocities,
+body-origin poses and world force conventions remain; no public API or
+persistent state widens. Three new regressions fail on the old source and
+pass on this basis; final backend logs in
+`build/microduck-run-check/jtp4-backend-{native,wasi}.log` report
+**63/63** on each target. State `be6cce7a3d5e1828` and contact
+`445004fca1d80fa4` were observed on both targets before intentional repinning.
+
+The actual close-duck/ball/grab full-scene reproduction failed at tick 1734,
+substep index 3 on old source. Corrected fd6f-basis native/WASI hosts complete 4,000 ticks,
+both hash `4cb7f65b76088097`. Ordinary W with both ducks and balls active also
+completes 4,000 ticks, both hash `658515fe75a71d1d`; headless timings under load
+are 1.594 ms/tick native and 3.185 ms/tick WASI. This is bounded regression
+coverage, not a claimed 4,000-tick rerun of the final JᵀP source, indefinite
+stability or hardware validation. Reverse boost falling or boosted turns
+stumbling is a learned-controller capability limit, distinct from the corrected
+Newton numerical `Unstable` error.
+
+The six-column mass-times-Jacobian block optimization skips structural zeros
+while preserving ordered nonzero arithmetic, with a dense nonfinite fallback.
+`build/microduck-perf-audit/RESULTS.md` records the paired native-only frozen
+previous-control idle-scene comparison: 3.381 to 1.720 ms/tick, and 1,020 ticks
+with all three output arrays byte-identical. It is not universal equivalence,
+final-control/browser performance or a WASI speedup measurement.
+
+The final ordered JᵀP implementation uses four independent scalar accumulators,
+retains every term in increasing order and the existing tail/finite checks,
+and introduces no FMA or reassociation. The separate paired native comparison
+in `build/microduck-perf-audit/jtp4/RESULTS.md` times only `nt_step` calls on a
+frozen previous-control idle scene: 1.459854 to 1.088080 ms/call (25.47%).
+Status and every body/joint/collider output record byte match for 1,020 calls.
+One captured 35-body/28-joint/353-collider snapshot also matches native and
+WASI SIMD output bytes, hash `d267a59f35210b5f`. That one snapshot is not full
+WASI-history proof. Do not multiply the separate 25.5% and older 49.1% runs
+to claim a precise cumulative gain or use them as browser measurements.
+
+Browser W/Shift+W/A/R and F8/F7 checks pass without errors and screenshots were
+inspected. The final 12-second steady WebGL image
+`web-profiler-steady-final.png` shows frame 32.08 ms (31 FPS), tick 2.35 ms,
+Newton 1.77 ms, 401 ticks/sec and 12.9 ticks/frame under combined client/server
+load. Earlier fd6f steady frame/tick/Newton values were 45.58/2.74/2.35 ms;
+the preoptimization snapshot was 86.09/5.23/4.83 ms. These are observations,
+not paired benchmarks. Do not claim 60 FPS, fully resolved browser lag or
+confound them with controlled native call/tick measurements.
+
+### Final deterministic checks and coverage limits
+
+- Final all-direction boost policy tests pass 13/13 native, 13/13 WASI and
+  14/14 actual threaded native, with 1,215 callbacks. All four hashes match:
+  `0d537d58ad19871e`, `3666b22b823de44c`, `f4e94516f0c7b212`,
+  `d677ec1511e1be3d`. Full/delta sampled inputs cover run false/true/held/release,
+  Shift+S -.5, boosted A/D ±1.25 and diagonals. Actor inference/history checks
+  include reverse and custom .55 requests; manual drive is unchanged.
+- `build/microduck-run-check/all-boost-jtp4-join.log` reports both fresh-process
+  native/WASI directions passing, with byte-identical 128,254-byte files,
+  SHA-256 `570cc830abd1ca6f0170f31a2d149060cc0027d321791c635e553688a31347fe`.
+- On the fd6f basis, native passes 23 manual behavior cases; its old pin alone failed. Actual
+  native/WASI 280-tick hash `90ed0aaf9bb442c8` was observed then pinned, and
+  focused pin reruns pass 1/1 on both targets. The full WASI 24-case behavior
+  suite has not been repeated on the final source. Previous 24-case/browser-grab
+  validation below is historical. Full rendered-surface coverage remains
+  unvalidated.
+
+## Historical: initial 174-collider model and seeded get-ups (2026-10-22)
+
+The integrated fixed 174-collider-per-duck model preserves the prior W/S gait
+and passes the three seeded prone/side/supine get-ups on native and WASI.
+**Left turning remains weak, and collider coverage does not match every rendered
+surface.** The full seven-case host passes 6/7 on both targets. This is not evidence
+of arbitrary-fall recovery, reliable directional turning or sim-to-real fidelity.
+
+### Data, model and license boundary
+
+The frozen production data is
+`examples/robotics/microduck/collision_spheres.json`, exported to `collisions.tide`.
+Its private predecessor is `build/microduck-walk-fix/fitted-visible-casing/candidate.json`. It has 131
+mesh-derived support spheres over 13 nonfoot bodies, 26 internal core spheres
+covering every one of those bodies, the original 16 foot-body proxies including
+12 marked sole spheres, then one appended procedural trunk-casing core.
+The complete scene has 353 colliders. One constant model serves walking, recovery
+and interaction. It does not select different geometry for each situation.
+Each nonfoot body has two internal cores at least 2 mm inward of the baseline
+support envelope and retains the source-inscribed certificate. Sampled support
+error of the mesh-derived nonfoot subset is approximately 5.5 mm (maximum 5.542759 mm);
+it is not an exact source hull, all-direction surface bound or a calibrated
+real-robot casing. The procedural visual core is outside that source-hull
+certificate and expands selected support by 6.67484 mm. Feet retain their original approximation. The separately
+tested fully fitted 150-sphere model failed walking and is not selected.
+
+The frozen JSON, exporter, `collisions.tide`, provenance and license
+files are separate from the XML/inertial converter. **Derived collision data
+is CC BY-NC-SA 4.0**, with source attribution and hashes in the example's
+`README-COLLISIONS.md` and `LICENSE-COLLISIONS.md`. Raw upstream STL meshes were
+read, sampled and converted privately; raw STL files are not redistributed.
+Original rendered visuals remain procedural/photo-based and do not use STL
+geometry or photo textures. Apache-2.0 XML/inertial data and released neural
+weights/code retain their separate license provenance. The old blanket claim
+that no upstream STL was read or converted no longer describes collision data.
+
+Source/hash provenance does not establish an exact training collision model.
+The actual 17 named training contact-dimension overrides cannot be extended
+to all 70 source robot collision geoms. Game self-contact filtering, compliant
+contacts/limits, missing backlash/delays and the absent daemon recovery wrapper
+remain differences from training and hardware.
+
+The runtime remains `2464103a`; weights, hardware/BAM controller, four-substep
+200 Hz physics, 50 Hz inference, Coulomb materials, 55/0.6 stops and 0.4 forward
+command scale are unchanged. Gearbox friction still uses successful applied
+effort/load, and battery sag still uses separate raw motor history. This
+follow-up changes fixed geometry rather than policy weights or episode control.
+
+### Visible lower-trunk coverage correction
+
+Independent review found a visible black-case hole in the 173-sphere candidate:
+a ray misses by 7 mm and a 22 mm ball ghosts through it. The new
+`microduck_visible_lower_trunk_has_pick_and_prop_collision_coverage` regression
+fails all three coverage assertions on that candidate. Source support bounds
+and body-level core counts do not establish visual pick/prop coverage.
+
+The 174-sphere model adds one original procedural body-0 core at
+`(.004, 0, -.006)` with radius `.0115` m inside the visible black case. This
+core is not source-hull-inscribed and changes the envelope; the 26 other cores
+retain their source-inscribed bounds. The one constant model passes the private
+targeted coverage case 1/1, including the point 2.5 mm inside the case and
+the ray hit, and retains the seven-episode 6/7 locomotion result on native/WASI.
+This is a narrow static coverage claim. Some visible trunk/head pixel clicks
+still miss collider volumes. Successful physical-center/lens grabs and the
+targeted regression do not establish complete visual-surface picking coverage.
+
+### Integrated 174-collider measurements
+
+`build/microduck-walk-fix/integrated174-locomotion-{native,wasi}.log` both record
+**6/7**, with all seven final whole-world hashes matching, including weak left turning:
+
+| Probe | Measured result |
+| --- | --- |
+| W / S, 7 s command | 0.774143 / 0.843499 m signed travel, unchanged from the old foot model |
+| W / S left/right loaded cycles | 15/14 and 11/10, each requiring >5 mm clearance and touchdown dwell |
+| Prone | Upright starts 0.340 s, 1 s dwell confirmed 1.340 s; final 2 s upright 100% |
+| Side | Upright starts 1.120 s, confirmed 2.120 s; final 2 s upright 100% |
+| Supine | Upright starts 0.905 s, confirmed 1.905 s; final 2 s upright 100% |
+| Full A / D | +0.196556 / -3.292314 rad unwrapped yaw; left fails the 0.25 rad minimum |
+
+All three recovery seeds preserve policy history and apply no assistance.
+These are measured seeded trials, not a randomized-fall reliability study.
+These are the actual installed-source game hosts. Earlier private candidate
+results agree, while the older completed matrix below applies to 61 spheres.
+
+### CTest registration and known left-turn limitation
+
+The seven locomotion cases are individually registered in CMake. Six supported
+cases register normally; left-turn acceptance is explicitly `DISABLED` with
+label `known-limitation`. Its strict signed 0.25 rad assertion remains in the
+directly runnable target/full host. There is no `WILL_FAIL` conversion or
+assertion weakening: the full seven-case host continues to measure 6/7.
+The unrelated missing `bench/` directory currently blocks CMake configuration,
+so registration is checked by source inspection and behavior by installed
+hosts. This is not a clean full-suite CTest validation.
+
+### Current focused production validation
+
+- Installed CLI native and web builds pass for the integrated 174-collider game.
+  The Newton runtime remains SHA-256 prefix `2464103a`, with its existing 60/60
+  native/WASI runtime cases; XML/model, neural weights and hardware/BAM control
+  are unchanged.
+- `integrated174-policy-matrix.log` passes 13/13 native, 13/13 WASI and 14/14
+  threaded native, with 1,586 actual worker callbacks. Four cadence-residue
+  hashes match: `cc280af1b0570a9e`, `1bd70bbe49487073`, `617201957caf9e6c`,
+  `30dd115e59b04f7f`.
+- `integrated174-join.log` passes fresh-process native-to-WASI and
+  WASI-to-native policy/active-grab joins, with unchanged join-host logic.
+  Both 128,411-byte files are identical, SHA-256
+  `a4ffd504d3fa71dad82ed162f1fd3c59841b345c93611bc0bef94fb991676647`.
+- All 24 retained manual cases are validated. The full WASI host passes 24/24
+  in `integrated174-manual-wasi.log`, including the new casing point/ray/prop
+  check, grabbing, topple, 200 Hz gait and two-player rollback with ball/child
+  grabs, explicit release and zero resyncs. Native passes the 23 behavior
+  cases in its full pre-pin run and the focused pin rerun 1/1 after the actual
+  native/WASI 280-tick hash `d753ef2f51722611` was observed and then pinned.
+  This is split native validation, not a claimed clean 24/24 native full run.
+- WebGL and WebGPU W/M/R, F7/F8 smoke checks pass with screenshots inspected
+  and no page exceptions or GPU errors. Inspected physical grabs show trunk
+  2.4 N / .115 Nm with body movement, head 1.5 N / .051 Nm with tilt, and ball
+  .2 N / .003 Nm with lift; releases are captured. Images include
+  `web-grab-trunk-physical.png` and `web-grab-head-physical.png`. Some initial
+  white-hood/base-edge pixels miss; physical-center/lens regions are pickable,
+  while full rendered-surface coverage remains unvalidated.
+
+Logs above are under `build/microduck-walk-fix/`. These focused results do not
+claim a full repository-suite pass, arbitrary-fall recovery or sim-to-real fidelity.
+
+## Historical: Coulomb contacts, stops and 61-sphere VelStand travel (2026-10-22)
+
+The preceding hardware/BAM controller and 61-sphere geometry produced bounded
+unassisted W/S travel and prone recovery. Side/supine recovery failed throughout
+18 seconds, and full-input left turning was weak. That physical host passed 4/7;
+runtime and policy-contract passes below must not be presented as all physical
+acceptance passing. Physical fidelity and sim-to-real transfer remain unvalidated.
+
+### Runtime and game contract
+
+`ContactFriction { Regularized, Coulomb }` and `Collider.frictionModel` expose
+the optional tangential impulse model. The default remains Regularized, with
+the existing public material defaults (2000/5/100/0.8) and regularized path
+unchanged. Both shapes must opt into Coulomb; a mixed pair uses regularized
+friction. Coulomb pair mu is `sqrt(muA) * sqrt(muB)`, zero if either side is
+zero. The upstream compliant normal force and normal coefficient averaging
+are unchanged; the adapter disables its tangential damping for Coulomb pairs.
+
+The Coulomb circular two-tangent impulse budget is
+`substepDt * muPair * normalForce`. Joint friction and contact blocks interleave
+through the same upstream H/Cholesky L mass solve, including floating roots
+and armature, for 16 fixed sweeps. The saturated full-rank quadratic block uses
+a fixed 32-iteration multiplier bracket, without a convergence stopping rule.
+The legacy joint-only path retains eight sweeps. Impulses cold-start each
+substep; model/contact scratch is local to the step, with no hidden persistent
+state or warm start. Finite sweeps do not promise exact global sticking or hard
+nonpenetration. Load and collider-force readbacks include contact impulses.
+
+MicroDuck opts all colliders into Coulomb. Sole/floor/ball friction is 0.8;
+nonsole duck spheres use 0, with normal stiffness/damping 5600/3 and authored
+friction damping 1. Physical joint stops use compliant gains 55/0.6; they do
+not clamp coordinates or claim an exact MuJoCo limit mapping. The default
+forward-command scale is 0.4 m/s. The 15-body/14-joint model, full inertias,
+source XML pins, converter and released policy weights remain unchanged.
+
+Gearbox friction now reads previous successful `Actuator.appliedEffort` and
+`Joint.load`, while voltage sag retains separate raw motor torque history
+before the effort ceiling. Reset clears requested effort, applied effort,
+joint load and motor/filter/cadence histories before controls run on the reset
+tick. The root game still uses the hardware/BAM profile, without a specialist
+policy or a controller switch to the scratch no-BAM profile.
+
+### Historical 61-sphere measured physical results
+
+`build/microduck-walk-fix/locomotion-final-native.log` records the actual
+generated-game acceptance host with the final `2464103a` runtime, unchanged
+weights and zero assistance/grabs. Each W/S episode settles for 2 s, commands
+for 7 s, then releases for 1 s. A separate idle world supplies drift. Foot
+cycles require >5 mm whole-sole clearance plus loaded touchdown dwell.
+
+| Probe | Result |
+| --- | --- |
+| W | 0.774143 m signed travel, 15/14 left/right cycles, 16.821/16.728 mm peak sole lift |
+| S | 0.843499 m signed travel in the backward direction, 11/10 cycles, 19.773/22.116 mm peak sole lift |
+| Prone | Upright interval starts 0.470 s after fall; 1 s dwell confirmed at 1.470 s; final 2 s upright 100% |
+| Side / supine | Both fail during 18 s after fall; final 2 s upright 0% |
+| Full A / D turn | +0.196556 / -3.292314 rad unwrapped yaw; left fails the 0.25 rad minimum |
+
+W/S remain upright and slow after release: mean final absolute body-forward
+speeds are 0.001674/0.001420 m/s, versus late commanded speeds
+0.139368/0.152486 m/s. This is bounded unassisted travel, not exact velocity
+tracking or reliable directional turning. Recovery seeds preserve policy
+history and cadence; they do not reset into STAND. Overall **4/7 pass** on
+native and WASI. All seven final whole-world hashes match between targets,
+including the three failed physical criteria; the prone final-world hash is
+`db79dc087a269762`. The final matrix, known failures and reproduction paths
+are recorded in `build/microduck-walk-fix/validation.json`.
+
+`build/microduck-walk-fix/xml-rehearsal/RESULTS.md` records a scratch fixed
+official CPU no-BAM actuator profile on Newton's current proxies/contact/stops:
+HOME + raw action, scale 1, no lowpass, XML +/-10 target clamp, `.55` position
+gain, `.96` motor clamp, `.053` damping, `.0018` armature and `.0048` joint
+friction. That profile also walks and recovers prone, but fails side/supine
+through 18 s. It is not the default game or an exact training replay. Official
+MuJoCo CPU reference behavior and Newton's proxy rehearsal differ in geometry,
+self-contact, friction and solver/reset contracts. These scratch comparisons
+do not isolate a cause. Missing backlash, delays, full collision geometry and
+the daemon's limp/pose wrapper remain compatibility gaps, not proven diagnoses.
+
+### Historical 61-sphere focused validation
+
+- Final `packages/newton/runtime.cpp` SHA-256 is
+  `2464103ab2fe94816913682643c2a6a2a0e4ccacccf0a07509feb64330d7e24d`,
+  including normalized contact eigenvectors and the small-impulse underflow fix.
+  All 60 runtime cases pass on native and WASI: original 33, joint-friction 14,
+  Coulomb 13. Legacy stock-Newton oracle agreement does not establish extension
+  equivalence. Finite-sweep, replay, readback, validation and failure tests are
+  distinct from the physical failures above.
+- `build/microduck-policy-game-validation/policy-{native,wasi,threaded}-run.log`
+  records 13/13 native, 13/13 WASI and 14/14 threaded native. The worker path
+  executes 1,531 actual callbacks. All four cadence-residue hashes match:
+  `abb4d9aed75dd736`, `98c70347e5692511`, `1b7b53b5c81c36e8`,
+  `7ad386f022317524`. Applied-effort friction history and reset clearing are
+  covered alongside raw high-back-EMF history, filters, failure, WASD and replay.
+- Latest fresh-process native-to-WASI and WASI-to-native policy/active-grab joins
+  produce byte-identical 103,117-byte files, SHA-256
+  `f971259580c045db6855a4e3e930d8ae2c5db2b528934fb92c30220ca7a567dd`.
+- Latest restarted-host WebGL/WebGPU smoke checks pass, including F8 stats and
+  F7 profiling. These UI and deterministic-contract checks do not convert the
+  4/7 physical acceptance result into an all-pass result.
+- The retained native manual host passes 23/23, including two-player grab
+  rollback with 3,962/3,920 replay ticks and zero resyncs, gait clearance, reset
+  and topple. The updated manual 280-tick hash `4dc3b90fb13136ce` was pinned
+  after observed native/WASI agreement.
+
+The full-suite counts, older game hashes, installed-source comparisons and
+manual stepping measurements below are **historical milestones**, not a
+full-repository-suite pass for the Coulomb/stops/applied-history extension.
+
+## Historical: released VelStand weights before Coulomb (2026-10-22)
+
+MicroDuck now defaults to the original pretrained VelStand v8 model, HF revision
+`665ae4eb20bfe13bca1ef4ea6d4bb6b4a096e448`, SHA-256
+`2fc7f8ee6acd7d0d3f66a99927b5d5a56589aeed02ec714de329b252d5ccf492`.
+The fixed C actor preserves its 61-input normalizer and 61→512→256→128→14
+ELU network. It uses ordered float operations and Tide exponential; Python/ORT
+are offline export/reference tools, not game dependencies. The original ONNX,
+license, strict exporter and independent reference fixtures are checked in.
+
+`policy.tide` owns raw actions, pre-safety filtered targets, previous raw motor
+torques, voltage sag and four-tick cadence as match values. It follows the
+hardware target profile (.9 scale, .5 head/.7 leg filtering, first inference
+unfiltered, ±pi final target clamp), the rounded policy HOME and original
+trunk-frame gravity/gyro. WASD supplies desired speed/yaw. M switches to the old
+manual controller. Learned mode applies no external balance/lane wrench.
+
+`Joint.friction` is a stopping-effort budget resolved through the existing H/L
+matrix with eight fixed PGS sweeps per substep; zero bypasses it. `Joint.load`
+publishes final-substep nonmotor load excluding electrical control, passive
+damping and friction. Both are ordinary rollback values, with no hidden cache.
+The BAM motor code applies current bounds before PWM bounds, saves raw torque
+before the separate effort ceiling, and uses that history for battery sag.
+
+Inference and deployment-contract tests pass, but physical transfer remains
+unsuccessful: default commands mostly lean, larger commands eventually fall,
+and seeded side/prone/supine recovery has not reached standing. No artificial
+balance forces or altered weights are used to conceal this. Missing backlash,
+delays, full collision geometry/self-contact and different ground friction are
+compatibility gaps, not proven root causes. The complete daemon's limp/pose
+wrapper is also absent. Earlier manual-sandbox validation below is historical;
+do not present its full-suite counts as validation of the learned controller.
+
+## Historical: collision floor and mouse sandbox (2026-10-22)
 ## MicroDuck CTest case budgets (2026-10-22)
 
 Build run 39800191824 clears the JetBrains/docs failures, but Android and Linux
@@ -191,7 +592,7 @@ the incoming navigation changes. Logs are
 `build/newton-collision-postmerge-cross-join.log` and
 `build/newton-collision-docs-postmerge.log`.
 
-## MicroDuck physical stepping and closer appearance (2026-10-22)
+## Historical: MicroDuck physical stepping and closer appearance (2026-10-22)
 
 The owner asked for walking or a useful first motion milestone, and a closer
 model of the real robot. The fixture now uses a free Newton trunk and simple
@@ -313,7 +714,7 @@ changed; generated behavior and layouts are unchanged. Logs are
 `build/microduck-step-debug-postmerge-{build,tests}.log` and the corresponding
 `web-debug` files.
 
-## Anchored MicroDuck fixture (2026-10-22)
+## Historical: anchored MicroDuck fixture (2026-10-22)
 
 The owner selected Pollen Robotics' MicroDuck for the next fixture and approved
 the anchored joint-control milestone. `examples/robotics/microduck/` contains
@@ -416,7 +817,7 @@ controls/reset smoke all pass; source hashes are unchanged and 200 Hz/one
 substep remains confirmed. The report is
 `build/microduck-cli/postmerge-RESULTS.md`.
 
-## Featherstone CPU integration and documentation (2026-10-22)
+## Historical: Featherstone CPU integration and documentation (2026-10-22)
 
 The owner requested NVIDIA Newton as a separate optional package like Box3D,
 for robotics and multiplayer/training using the same physics. A separate

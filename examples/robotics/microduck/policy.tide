@@ -1,0 +1,169 @@
+using Newton;
+
+// Released Pollen Robotics VelStand v8. The weights and baked normalizer are
+// unchanged; this state is the complete policy history for reset and replay.
+component DuckPolicyState
+{
+    bool enabled = true;
+    int status;
+    int cadence;
+    int inferences;
+    List<float> observation;
+    List<float> action;
+    List<float> filtered;
+    List<float> motor;
+    float3 command;
+    float voltage = 7.4;
+    float currentLimit = 1.75;
+    float previousMotorLoad;
+    float actionScale = 0.9;
+    float legAlpha = 0.7;
+    float headAlpha = 0.5;
+    float frictionScale = 1;
+    float forwardSpeed = 0.4;
+    float runSpeed = 0.5;
+}
+
+extern int DuckVelStandInfer(List<float> observation, int count, out List<float> action);
+
+// The policy's HOME is rounded to these values in the official controller.
+// Keep it separate from the more precise physical XML STAND keyframe.
+List<float> DuckPolicyHome()
+{
+    return [0.0, -0.0873, -0.4579, -0.0049, 0.4530,
+            0.3491, 0.3491, 0.0, 0.0, 0.0,
+            0.0873, 0.4579, 0.0049, -0.4530];
+}
+
+void ResetDuckPolicy(mut DuckPolicyState policy)
+{
+    policy.status = 0;
+    policy.cadence = 0;
+    policy.inferences = 0;
+    policy.observation.Clear();
+    policy.action.Clear();
+    policy.filtered.Clear();
+    policy.motor.Clear();
+    policy.command = float3(0);
+    policy.previousMotorLoad = 0;
+}
+
+List<float> DuckPolicyObservation(Duck duck, DuckPolicyState policy, World world)
+{
+    if (!world.TryGet<Body>(duck.bodies[0], out var root)) return [];
+    if (!world.TryGet<DuckPart>(duck.bodies[0], out var part)) return [];
+    var original = Math.Mul(root.rotation, Math.Inverse(part.principalRotation));
+    var inverse = Math.Inverse(original);
+    var gyro = Math.Rotate(inverse, root.angularVelocity);
+    var gravity = Math.Rotate(inverse, float3(0, -1, 0));
+    mut List<float> observation = [gyro.x, gyro.y, gyro.z, gravity.x, gravity.y, gravity.z];
+    var home = DuckPolicyHome();
+    for (int i = 0; i < 14; i += 1)
+    {
+        if (!world.TryGet<Joint>(duck.joints[i], out var joint)) return [];
+        observation.Add(joint.position - home[i]);
+    }
+    for (int i = 0; i < 14; i += 1)
+    {
+        if (!world.TryGet<Joint>(duck.joints[i], out var joint)) return [];
+        observation.Add(joint.velocity);
+    }
+    for (int i = 0; i < 14; i += 1)
+        observation.Add(policy.action.count == 14 ? policy.action[i] : 0.0);
+    observation.Add(policy.command.x);
+    observation.Add(policy.command.y);
+    observation.Add(policy.command.z);
+    // Head[4], body[x,y,z,roll,pitch,yaw]. Zero means neutral posture.
+    for (int i = 0; i < 10; i += 1) observation.Add(0);
+    return observation;
+}
+
+bool DuckPolicyTargets(mut Duck duck, mut DuckPolicyState policy, World world)
+{
+    if (policy.cadence == 0)
+    {
+        var observation = DuckPolicyObservation(duck, policy, world);
+        if (observation.count != 61)
+        {
+            policy.status = -1;
+            return false;
+        }
+        policy.observation = observation;
+        if (DuckVelStandInfer(observation, observation.count, out var action) != 1 || action.count != 14)
+        {
+            policy.status = -2;
+            return false;
+        }
+        var first = policy.filtered.count != 14;
+        var home = DuckPolicyHome();
+        if (first) policy.filtered = home;
+        for (int i = 0; i < 14; i += 1)
+        {
+            var proposed = home[i] + policy.actionScale * action[i];
+            var alpha = i >= 5 && i <= 8 ? policy.headAlpha : policy.legAlpha;
+            var filtered = first ? proposed : alpha * proposed + (1 - alpha) * policy.filtered[i];
+            // The controller remembers pre-safety targets. The physical soft
+            // joint limits are independent of the hardware's travel clamp.
+            policy.filtered[i] = filtered;
+            duck.targets[i] = Math.Clamp(filtered, -Math.PI, Math.PI);
+        }
+        policy.action = action;
+        policy.status = 1;
+        policy.inferences += 1;
+    }
+    policy.cadence = (policy.cadence + 1) % 4;
+    return policy.status == 1;
+}
+
+// Voltage/back-EMF part of the pinned BAM XL330 M6 fit, updated at 200 Hz.
+// Dry friction is a separate coupled Newton joint constraint, not balance help.
+void DuckPolicyMotors(mut Duck duck, mut DuckPolicyState policy, mut World world)
+{
+    var effectiveVoltage = Math.Max(6, policy.voltage - 0.1 * policy.previousMotorLoad);
+    if (policy.motor.count != 14)
+    {
+        policy.motor.Clear();
+        for (int i = 0; i < 14; i += 1) policy.motor.Add(0);
+    }
+    mut float load = 0;
+    for (int i = 0; i < 14; i += 1)
+    {
+        if (!world.TryGet<Joint>(duck.joints[i], out mut var joint)) return;
+        if (!world.TryGet<Actuator>(duck.joints[i], out mut var actuator)) return;
+        mut var duty = 0.5754755004452713 * (duck.targets[i] - joint.position);
+        if (policy.currentLimit > 0)
+        {
+            var center = 0.36601349688984386 * joint.velocity / effectiveVoltage;
+            var span = 2.8113923539223227 * policy.currentLimit / effectiveVoltage;
+            duty = Math.Clamp(duty, center - span, center + span);
+        }
+        // BAM applies the physical PWM bound after the current bound. At high
+        // back-EMF these operations cannot be replaced by a torque clamp.
+        duty = Math.Clamp(duty, -1, 1);
+        var motor = 0.13018940468383897 * (effectiveVoltage * duty - 0.36601349688984386 * joint.velocity);
+        actuator.effortLimit = 0.9634015946604082;
+        actuator.effort = Math.Clamp(motor, -actuator.effortLimit, actuator.effortLimit);
+        joint.damping = 0.005359668274599504;
+        joint.armature = 0.0018077432831600838;
+        // BAM's training-side M6 budget. Newton applies this as coupled dry
+        // friction, including static holding, rather than sign(velocity) torque.
+        // Gearbox friction uses the preceding solve's applied electrical
+        // torque. Battery sag separately uses the unclipped raw motor history.
+        var previous = actuator.appliedEffort;
+        var external = joint.load;
+        var stribeck = Math.Exp(-Math.Pow(Math.Abs(joint.velocity) / 2.890372094130307,
+                                         8.683259907618984));
+        var gearbox = Math.Abs(external * 0.000008515871897059342 - previous * 0.2667860954283698);
+        var slowGearbox = Math.Abs(external * 0.08077928978935671 - previous * 0.000010722918395099123);
+        var quadratic = Math.Abs(previous) > Math.Abs(external)
+            ? 0.004902565732332559 * external * external
+            : 0.009972471242139415 * previous * previous;
+        joint.friction = policy.frictionScale * (0.004771183165566 + gearbox
+                         + stribeck * (0.004676345799486616 + slowGearbox + quadratic));
+        policy.motor[i] = motor;
+        world.Set<Joint>(duck.joints[i], joint);
+        world.Set<Actuator>(duck.joints[i], actuator);
+        load += Math.Abs(motor);
+    }
+    policy.previousMotorLoad = load;
+}

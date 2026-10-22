@@ -631,8 +631,8 @@ TIDE_TEST(newton_crossplatform_state_bits)
             hash = hash_float(hash, world.joints[i].applied_effort);
         }
     }
-    // Confirmed with this workload in native debug and WASI debug, 2026-10-22.
-    const uint64_t expected = UINT64_C(0x92249536c6268981);
+    // Confirmed on native/WASI after centering the free-root solve coordinates.
+    const uint64_t expected = UINT64_C(0xbe6cce7a3d5e1828);
     if (hash != expected) printf("    Newton state hash: %016" PRIx64 "\n", hash);
     TIDE_CHECK(hash == expected);
 }
@@ -1326,5 +1326,5 @@ TIDE_TEST(newton_contact_snapshots_replay_and_alternating_worlds)
     TIDE_CHECK(memcmp(&saved, &replay, sizeof(saved)) == 0);
     printf("    Newton contact history: %016" PRIx64 "\n", hashes[0]);
     // Observed on both native and WASI debug before pinning, 2026-10-22.
-    TIDE_CHECK(hashes[0] == UINT64_C(0xddf1584fd2502ff1));
+    TIDE_CHECK(hashes[0] == UINT64_C(0x445004fca1d80fa4));
 }

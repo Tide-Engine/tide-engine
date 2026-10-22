@@ -7,7 +7,9 @@ description: "Experiment with NVIDIA Newton articulated bodies, sphere and plane
 `newton` is an optional, experimental package for **NVIDIA Newton** articulated physics, separate from [Box3D](./box3d.md). It exposes a small part of Newton's Featherstone solver for bodies, joints and effort control. This is not Newton Game Dynamics, and the package never substitutes Box3D for Newton.
 
 ::: warning Experimental scope
-The package runs upstream Featherstone CPU kernels and a small collision profile for spheres and static planes. The Tide API names below remain provisional and physical fidelity is unvalidated. Compound spheres approximate robot casings; these are not mesh collisions or a validated model of the real robot's ground contact.
+The package runs upstream Featherstone CPU kernels and a small collision profile for spheres and static planes. Regularized friction remains the default; coupled Coulomb impulses require explicit opt-in on both shapes. The Tide API names below remain provisional and physical fidelity is unvalidated. Compound spheres approximate robot casings; these are not mesh collisions or a validated model of the real robot's ground contact.
+
+MicroDuck's integrated 174-collider model supports W/S travel, an all-direction Shift boost, and seeded prone, side and supine get-ups on native and WASI. Forward boost has a measured travel gain; reverse boost fell in its trial, and boosted turns may stumble. D/right turning remains weak. These results do not establish arbitrary-fall recovery, reliable directional turning or hardware fidelity. Collision volumes do not cover every rendered surface.
 :::
 
 Game controls and robotics policies write actions into the same match components and use the same physics step. There is no separate training engine or training-only physics path. The package supplies dynamics and observable state; it supplies no policy trainer or automatic robot model.
@@ -135,6 +137,7 @@ sphere. `Collider.type` defaults to `Sphere`.
 | `exclusionGroup` | Nonnegative group; equal nonzero groups do not collide |
 | `stiffness`, `damping` | Contact spring and damping coefficients; defaults 2000 and 5 |
 | `frictionDamping`, `friction` | Tangential damping and friction settings; defaults 100 and 0.8 |
+| `frictionModel` | `ContactFriction.Regularized` (default) or `ContactFriction.Coulomb`; both shapes must select Coulomb for the impulse solve |
 | `contactForce` | Mean world-space contact force on this collider over the last successful tick, including friction |
 
 A plane's local +Y normal points out of its solid half-space. Planes require a
@@ -144,13 +147,25 @@ pairs are ignored. Give a robot's colliders one nonzero exclusion group to
 disable internal collisions while preserving collisions with other robots,
 props and the floor.
 
-Material coefficients must be finite and nonnegative. Contact response uses
-Newton's compliant rigid-contact forces, including its regularized friction;
-this is not a hard nonpenetration constraint or exact static sticking. The
-shape materials are averaged for a pair. Contact geometry and forces refresh
-at each physics substep. Stiffer contacts and lighter bodies may require more
-substeps. There is no continuous collision detection: sufficiently fast objects
-can pass through each other between steps.
+Material coefficients must be finite and nonnegative. The public enum is
+`ContactFriction { Regularized, Coulomb }`. A mixed pair retains upstream
+regularized friction and coefficient averaging. A Coulomb pair retains the
+unchanged upstream compliant normal force and normal stiffness/damping
+averaging, with tangential coefficient `sqrt(muA) * sqrt(muB)`. Either zero
+coefficient makes the tangential budget zero. Existing friction/default values
+and the regularized path remain unchanged.
+
+Coulomb uses a circular two-tangent impulse budget
+`substepDt * muPair * normalForce`. Joint-friction and contact impulses
+interleave for 16 fixed sweeps through Newton's same H/Cholesky L mass solve,
+including floating roots and armature. The saturated full-rank quadratic
+contact block uses a fixed 32-iteration multiplier bracket. Impulses start at
+zero each substep; there is no hidden persistent contact or warm-start state.
+This permits bounded stopping/sticking, without exact global sticking or hard
+nonpenetration guarantees. Contact geometry and forces refresh at each physics
+substep. Stiffer contacts and lighter bodies may require more substeps. There
+is no continuous collision detection: sufficiently fast objects can pass
+through each other between steps.
 
 Contact force is a simulation readback, not a real sensor. Read it after
 `PhysicsStages.Step` and only when status is `Ok`. Disabled colliders report
@@ -170,10 +185,12 @@ A `Joint` is a component on a **separate entity** connecting `child` to `parent`
 | `position`, `velocity` | Actual joint coordinate and speed, also writable resets; radians and radians/second for revolute, metres and metres/second for prismatic |
 | `damping` | Nonnegative joint damping; default zero |
 | `armature` | Nonnegative additional joint inertia; default 0.01 |
+| `friction` | Nonnegative dry-friction stopping budget; default zero, in Nm for revolute or N for prismatic |
+| `load` | Read-only last successful final-substep nonmotor generalized load, excluding control, passive damping and dry friction |
 | `limited`, `lower`, `upper` | Enable a position limit and its bounds, in the coordinate's units; disabled by default |
 | `limitStiffness`, `limitDamping` | Nonnegative position-limit response settings; defaults 10000 and 100 |
 
-Frame rotations default to identity. Position limits use a spring/damper response, not a hard positional stop. Damping, armature and limit settings must be finite, and enabled bounds must satisfy `lower <= upper`. There is no joint-friction model or velocity-limit constraint.
+Frame rotations default to identity. Position limits use a spring/damper response, not a hard positional stop. Damping, armature, friction and limit settings must be finite, and enabled bounds must satisfy `lower <= upper`. Dry friction applies bounded impulses through the coupled articulated mass matrix, including static holding. The legacy joint-only path uses eight fixed sweeps per substep; active Coulomb contacts select the 16 interleaved sweeps described above. Zero joint friction bypasses joint-friction work while contact friction can still solve. There is no velocity-limit constraint. `load` is model-derived telemetry from before the final integration, including contact impulses, not a sensor or tick average.
 
 Put an optional `Actuator` on the joint entity to supply generalized effort: torque in Nm for a revolute joint, force in N for a prismatic joint. Fixed joints have no driven coordinate.
 
@@ -217,44 +234,82 @@ Use Tide's standard world snapshot/restore path for an episode reset. Bodies, jo
 
 ## MicroDuck physics sandbox
 
-`examples/robotics/microduck/` is a two-player **assisted physical stepping**
-prototype using the published 15-body, 14-hinge MicroDuck model. Its trunk is
+`examples/robotics/microduck/` is a two-player physics sandbox with the released
+**VelStand v8 pretrained policy** and an optional manual/assisted controller,
+using the published 15-body, 14-hinge MicroDuck model. Its trunk is
 a free dynamic root. Package colliders provide contacts at a 200 Hz tick rate
-with four physics substeps. Each duck has 61 original compound sphere proxies
-across all 15 bodies, including six sole colliders per foot. A static infinite
+with four physics substeps. The model has 174 compound
+sphere colliders per duck: 131 mesh-derived support spheres and 26 interior
+source-inscribed cores on all 13 nonfoot bodies, 16 original foot-body proxies
+including six soles per foot, and one appended procedural trunk-casing core.
+The full scene has 353 colliders. One constant model serves walking, recovery and
+grabbing. A static infinite
 plane supports both ducks and four shared balls; the drawn floor is 4 × 3 m.
 Each duck's exclusion group suppresses internal collisions while retaining
 contacts with the floor, the other duck and balls.
 Run it with `tide run examples/robotics/microduck --release`; the unoptimized
 CLI solver build is too slow for this full articulation.
 
-**Controlled forward/backward walking and self-balancing are not demonstrated.**
-W/S selects opposite joint patterns rather than reliable walking directions.
-Upright, world +X heading and lateral Z lane assistance starts enabled and is
-labelled in the HUD. It applies torques and a lane force, with exactly zero
-forward X or vertical Y assistance force.
+The default learned controller runs at 50 Hz without external balance or lane
+forces. Its 61-value observation and previous raw-action/filter/motor history
+are ordinary rollback state. Native and WASI execute the same fixed C actor and
+unchanged weights. Normal forward/reverse requests use 0.4 m/s and yaw requests
+use 1 rad/s. Holding either Shift sets the match `run` flag, selecting signed
+0.5 m/s translation and 1.25 rad/s yaw, including reverse and diagonal input. Bounded probes
+of the 174-collider geometry show unassisted travel in both W/S directions and all three
+seeded recoveries. **D/right turning remains weak; arbitrary-fall recovery and
+reliable directional turning are not
+established.** The
+repository's `examples/robotics/microduck/README.md` describes the hardware
+target-filter profile, measured limits and missing training-plant features.
 
 | Control | Action |
 | --- | --- |
 | Hold left mouse button and drag | Grab a marked part of either duck or a shared ball |
-| Hold W/S, Up/Down or left stick Y | Opposite joint step patterns after one second of settling; not velocity tracking |
+| Hold W/S, Up/Down or left stick Y | Request learned forward/backward velocity; manual mode selects opposite step patterns |
+| Hold either Shift | Boost learned forward/reverse requests to ±0.5 m/s and turning to ±1.25 rad/s; stable motion is not guaranteed |
 | Q/E, Left/Right or D-pad Left/Right | Select a joint |
-| A/D or left stick X | Trim its target |
-| B or gamepad North | Toggle balance, heading and lane assistance |
-| R or gamepad South | Reset your duck, its controller/ring and all balls; assistance returns ON |
+| A/D or left stick X | Request left/right turning; D/right remains weak; manual joint trimming is unchanged |
+| M | Switch learned/manual mode and clear policy feedback |
+| B or gamepad North | Toggle balance, heading and lane assistance in manual mode |
+| R or gamepad South | Reset your duck, its controller/ring and all balls |
 
 Reset places all bodies coherently at STAND with a 0.12 m trunk height. Joint
 selection persists; controls still run on the reset tick. The other duck is
-not reset. Body revisions change on reset, invalidating either player's old
+not reset. Reset clears raw/applied motor histories, joint requested/applied
+effort and load before controls run on that tick. Body revisions change on reset, invalidating either player's old
 grab anchors on those bodies. The illustrative PD gains are 4/0.03 with a
-0.96 Nm motor-control clamp, retaining authored damping and armature. No BAM
-servo model or learned policy is included.
+0.96 Nm motor-control clamp, retaining authored damping and armature in manual
+mode. Learned mode uses the pinned BAM electrical and load-dependent friction
+parameters, with no external balancing forces. Gearbox friction uses preceding
+successful `Actuator.appliedEffort` and `Joint.load`; battery sag uses separate
+raw motor torque history before the effort ceiling. Physical joint stops use
+compliant gains 55/0.6; these are not hard clamps or an exact MuJoCo limit mapping.
 
 All fixture colliders use `stiffness = 5600`, `damping = 3`,
-`frictionDamping = 1`, `friction = 0.8`. The package runs upstream Newton's
-compliant contact response with regularized friction, without a static-friction
-constraint. The original sphere estimates follow source visual frames and
-approximate casings and soles; they are not STL-derived or calibrated geometry.
+`frictionDamping = 1`, `frictionModel = ContactFriction.Coulomb`. Soles, floor
+and balls use friction 0.8; nonsole duck spheres use 0. The package retains
+upstream Newton's compliant normal response and couples tangential impulses
+with joint friction. The nonfoot support data was derived privately from
+upstream STL geometry, with approximately 5.5 mm sampled support error for that nonfoot subset
+(maximum 5.542759 mm). This does not
+provide exact source hulls or an all-direction surface guarantee. The 26
+interior cores add volume, with two in each nonfoot body at least 2 mm inward
+of the baseline support envelope. Those 26 cores retain their source-inscribed
+certificates. The appended body-0 visual-casing core is at `(.004, 0, -.006)` m
+with radius `.0115` m. It is not mesh-inscribed and expands selected support
+by 6.67484 mm, outside that certificate. It closes the visible black-case
+pick/prop hole in the targeted regression, which failed on 173 spheres. That
+check covers its specific region, rather than every rendered surface: some
+visible trunk/head pointer positions still miss. Feet retain their original approximation.
+
+**The mesh-derived collision data is CC BY-NC-SA 4.0**, separate from the
+Apache-2.0 XML/inertial model and policy/code. Raw STL files are not
+redistributed. The example's `LICENSE-COLLISIONS.md` and
+`README-COLLISIONS.md` record attribution, fixed source hashes, frozen data
+and export provenance. These identify the data's origin, rather than exact
+training collision identity; the 17 named training material overrides cannot
+be applied indiscriminately to all 70 upstream robot collision geoms.
 
 Mouse picking uses displayed body poses and a local drag plane. Bounded absolute
 input carries the chosen collider, body-local sphere anchor and world target.
@@ -288,54 +343,153 @@ and full inertia tensors through principal-axis frames; game builds need no
 Python or MuJoCo. Original procedural casings, camera/servos and feet use
 [official photo references](https://pollen-robotics.com/microduck/press-kit/)
 and Apache-2.0 XML frames/metadata. Photo-estimated dimensions are approximate,
-not exact CAD. No upstream STL geometry or photo textures are used. The
+not exact CAD. No upstream STL geometry or photo textures are used for the
+rendered visuals; the collision support data has separate mesh-derived provenance. The
 example's README and `UPSTREAM.md` detail controls, provenance and the source pin.
 
-Both signed patterns pass the unchanged >5 mm clearance threshold and dwell
-checks using each foot's sole sphere envelope, with five lift/touchdown cycles
-per foot and peak clearances of 11.207–19.505 mm. An unassisted topple from 0.35 m reaches
-15.692 mm transient penetration (within the 20 mm budget), settles to 0.581 mm
-penetration and ends with a 0.000097 m/s root speed. Controlled travel and
-physical calibration remain unvalidated.
+The full eight-case native/WASI acceptance basis uses runtime `fd6f4839`,
+released weights and the hardware/BAM profile, with
+zero assistance and preserved policy history during recovery seeds:
 
-A bounded native capture and muted WebGL/WebGPU checks pass with the final
-contact profile. Both browser backends confirm ball grab/lift/release, head
-grab/lift/drop with assistance off, full-body floor rest, and reset of the
-owner's duck and balls with resumed recording. Final images were inspected.
-There are no page exceptions or GL/GPU validation errors; only the known
-autoplay warning remains.
+This matrix covers ordinary W/S/turns, forward boost and three seeded recoveries;
+it does not establish stable boosted reverse or turning.
+The final `4f7a9110` walk/Shift+W checks pass 1/1 on each target and preserve
+the basis whole-world hashes `af41801b0af94572` / `dc74c754ef1b6356`.
+
+| Probe | Measured result |
+| --- | --- |
+| W / S, 7 s command | 0.786932 / 0.863201 m signed travel in the requested direction |
+| W / S loaded sole cycles, left/right | 15/14 and 11/11, requiring >5 mm clearance and touchdown dwell |
+| Shift+W, 7 s command | 1.155245 m, 0.368313 m (46.8%) above W; 14/14 loaded cycles; minimum up 0.994069 and height 0.112773 m |
+| Prone recovery | 1 s upright dwell confirmed at 1.340 s; final 2 s upright 100% |
+| Side recovery | 1 s upright dwell confirmed at 2.115 s; final 2 s upright 100% |
+| Supine recovery | 1 s upright dwell confirmed at 1.905 s; final 2 s upright 100% |
+| Full A / D turning | -3.316523 / +0.196558 rad unwrapped yaw; D/right fails the 0.25 rad minimum |
+
+W/S remain upright and slow after the one-second release, with mean final
+absolute body-forward speeds 0.002281/0.002169 m/s. Shift+W's final horizontal
+speed after release is 0.004675 m/s. Both hosts pass **7/8**, with all nine
+emitted final whole-world hashes matching, including the repeated walk baseline
+and D/right failure. Learned turning now uses `turn = -drive`; manual drive
+is unchanged. The 0.5 reverse trial fell and boosted turns may stumble. Shift
+exposes all-direction velocity/yaw requests through the same physics, without
+fast-forward or artificial assistance. These trials do not establish exact speed
+tracking, reliable directional turning or arbitrary-fall recovery. A separate
+fully fitted 150-sphere alternative failed walking and is not the selected
+model. The earlier no-BAM/61-sphere recovery failures describe the old geometry;
+they do not isolate a general cause. Backlash, delays, self-contact filtering,
+contact geometry and solver differences still prevent claims of exact training
+identity or sim-to-real transfer.
+
+CTest registers seven supported locomotion cases normally and explicitly disables
+right-turn acceptance with label `known-limitation`. The strict 0.25 rad assertion
+remains directly runnable in the target/full host, which measures 7/8. The
+unrelated missing `bench/` directory blocks CMake configuration, so registration
+inspection and installed-host checks do not constitute a clean full-suite pass.
+
+The final source builds with the installed CLI on native/web. Browser
+W/Shift+W/A/R and F8/F7 checks pass without errors, with screenshots inspected.
+A final 12-second steady WebGL observation shows 32.08 ms/frame, about 31 FPS,
+2.35 ms/tick and 1.77 ms Newton work, with 401 ticks/sec and 12.9 ticks/frame
+under combined client/server load. Earlier fd6f and preoptimization snapshots
+show 45.58/2.74/2.35 and 86.09/5.23/4.83 ms for frame/tick/Newton respectively.
+These browser snapshots are not a paired benchmark; they do not establish
+60 FPS or fully resolved browser lag.
+Complete rendered-surface picking coverage remains unvalidated.
+The earlier assisted-step, unassisted-topple and browser-interaction measurements
+in the example's README are historical evidence for the preceding regularized
+manual sandbox, rather than current learned-controller acceptance.
 
 ## Current scope and validation
+
+Final runtime SHA-256 prefix `4f7a9110` passes **63 runtime tests on native
+and WASI**, including three new stability regressions that failed with the old
+adapter. Legacy stock-Newton reference
+agreement does not establish upstream equivalence for the new extension. The
+VelStand actor preserves 73 independent ONNX Runtime fixtures and a 512-step
+native/WASI feedback stream. The final all-direction boost game host passes
+**13 common tests on both targets and 14 on threaded native**, including
+1,215 actual worker callbacks,
+covering the interface, raw/applied motor history, filter state, reset, failure,
+WASD and replay, including sampled full/delta Shift held/release, reverse,
+boosted yaw and diagonal inputs with actor history. All four cadence-residue
+replay hashes match. Fresh-process
+learned-policy and active-grab joins in both native/WASI directions produce
+identical 128,254-byte files (SHA-256
+`570cc830abd1ca6f0170f31a2d149060cc0027d321791c635e553688a31347fe`).
+These focused results do not imply a full repository-suite pass, complete
+training plant or validated hardware simulation. Physical failures remain above.
+
+The stability-basis native's 23 manual behavior cases pass; both target pin reruns pass 1/1 after
+observed agreement on the 280-tick hash `90ed0aaf9bb442c8`. The full WASI 24-case
+suite has not been repeated on the final source. Current controls/run/policy
+results are in `build/microduck-run-check/all-boost-jtp4-test-summary.json`;
+the full eight-case basis is `final-test-summary.json` in that directory.
+
+The runtime centers each transient virtual free-joint parent frame at the
+current body origin, with zero initial translation coordinates. This avoids
+float cancellation in Cholesky factorization for small rotational inertia
+far from the world origin. Public COM/world conventions and API are preserved,
+with no new persistent state. A full-scene close-duck/ball/grab replay that
+failed at tick 1734, substep 3 completes 4,000 ticks on both targets on the
+fd6f stability basis, hash `4cb7f65b76088097`. Ordinary W with both ducks and
+balls active also reaches 4,000 basis ticks, hash `658515fe75a71d1d`. Reverse
+boost falling or boosted turns stumbling is a learned-controller capability
+limit, distinct from this corrected Newton numerical `Unstable` failure.
+
+A six-column block mass-times-Jacobian optimization skips structural zeros in
+the same ordered nonzero arithmetic. A paired native benchmark on a frozen
+previous-control idle scene improves from 3.38 to 1.72 ms/tick, with three
+output arrays byte-identical over 1,020 ticks. Separate basis loaded headless
+W runs measure 1.594 ms/tick native and 3.185 ms/tick WASI. Those host timings
+are not browser FPS or a paired cross-target speedup. Centering intentionally
+changes two old pins to the observed native/WASI state `be6cce7a3d5e1828` and
+contact `445004fca1d80fa4`. Backend final logs are under
+`build/microduck-interaction-fix/`.
+
+The final runtime also computes JᵀP with four ordered scalar accumulators and
+the unchanged tail, retaining every term and finite check without FMA or
+reassociation. A separate paired native comparison against the frozen fd6f
+reference measures `nt_step` calls at 1.459854 to 1.088080 ms (25.47%), with
+status and all three output record arrays byte-identical over 1,020 calls.
+One captured 35-body/28-joint/353-collider snapshot matches native/WASI SIMD
+bytes, hash `d267a59f35210b5f`. This bounded result is not browser performance
+or a precise cumulative gain with the older block benchmark. Details are in
+`build/microduck-perf-audit/jtp4/RESULTS.md`.
 
 This first integration covers free/static roots, fixed/revolute/prismatic joints,
 body forces and torques, effort controls, solver body/joint state and compliant
 sphere/plane contacts. It does not yet provide:
 
-- Other collider shapes, mesh collisions, collision queries, continuous collision detection or a static-friction constraint.
+- Other collider shapes, mesh collisions, collision queries or continuous collision detection. Optional Coulomb impulses support bounded sticking; finite sweeps do not guarantee exact global sticking.
 - General URDF/MJCF import, automatic robot construction or shape-derived mass properties.
 - CUDA execution, a Python runtime, differentiable-training APIs or a policy-training framework.
-- Joint friction or velocity constraints, simulated sensors, validated realistic robot dynamics or sim-to-real guarantees.
+- Velocity-limit constraints, simulated sensors, validated realistic robot dynamics or sim-to-real guarantees.
 
 The upstream CPU kernels are pinned to Newton `ea4899864046dcd5981f8ba0bc3d8c25e65dcb96` and Warp `b346b941a4c0cd19c510db67d6506d781464ed5b` (`1.19.0.dev20261020`). Source regeneration uses `packages/newton/tools/export.py` to produce `kernels/featherstone.inl` and `kernels/contacts.inl`; Python is required for that maintainer operation only. The selected solver path uses Tide's deterministic math with explicit FMA removed and contraction/fast math disabled. The package's `UPSTREAM.md` also records its WebAssembly native-half guard, private launch wrappers, LP64-compatible integer types and value-initialized generated temporaries.
 
-All 33 runtime tests pass on native/WASI in debug and release, including nine
+The original regularized-contact profile passed 33 runtime tests on native/WASI
+in debug and release, including nine
 independent stock Newton CPU contact state/force comparisons, the original
 two-link reference, analytic dynamics, validation atomicity, topology and replay.
-The contact-history hash `ddf1584fd2502ff1` agrees across all four configurations;
-the noncontact pin `92249536c6268981` is unchanged.
+Its historical contact-history hash `ddf1584fd2502ff1` agreed across all four
+configurations; the noncontact pin then was `92249536c6268981`.
 
-Game replay checks pass, and the MicroDuck hash `f87f0902ec4db694` and arm hash
-`db6cb5835d7c9b26` agree across native/WASI debug and release. Installed CLI
-native/web release builds pass; all 40 upstream hashes and 46 staged
-source/header files match the checkout. The example's README and `UPSTREAM.md`
+The following full-suite evidence is historical: it predates the learned controller,
+joint friction and Coulomb addition and describes the preceding manual sandbox
+revision. Game replay checks passed, and the prior MicroDuck hash
+`f87f0902ec4db694` and arm hash `db6cb5835d7c9b26` agreed across native/WASI
+debug and release. Installed CLI native/web release builds passed; all 40
+upstream hashes and 46 staged source/header files matched the checkout.
+The example's README and `UPSTREAM.md`
 record detailed validation results.
 
-The full native debug workflow passes 2,554/2,554 tests, and web debug passes
+That revision's full native debug workflow passed 2,554/2,554 tests, and web debug passed
 2,416/2,416, including WebGPU drawing. These runs include the 24 MicroDuck
 fixture cases, 33 runtime checks, six arm cases, system-order checks and both
-fresh-process joins. All 24 MicroDuck cases also pass on native/WASI release.
-Active-grab joins produce four byte-identical files across the configurations;
-both rollback clients complete thousands of replay ticks with zero resyncs.
+fresh-process joins. All 24 MicroDuck cases also passed on native/WASI release.
+Active-grab joins produced four byte-identical files across the configurations;
+both rollback clients completed thousands of replay ticks with zero resyncs.
 Other-platform coverage, broader performance measurements and independent
 physical-fidelity validation remain outstanding. These checks support
 articulated-control experiments with the same numerical build in games and

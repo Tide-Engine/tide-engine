@@ -49,6 +49,24 @@ template <class T> struct Buffer {
         return budget <= scratch_limit;
     }
 
+    bool reserve(uint64_t n, uint64_t &budget)
+    {
+        if (n <= static_cast<uint64_t>(count)) return true;
+        if (n > INT_MAX || n > SIZE_MAX / sizeof(T) ||
+            n > (scratch_limit - budget) / sizeof(T)) return false;
+        const uint64_t bytes = n * sizeof(T);
+        T *replacement = static_cast<T *>(calloc(static_cast<size_t>(n), sizeof(T)));
+        if (!replacement) return false;
+        const uint64_t old_bytes = data ? (count ? static_cast<uint64_t>(count) * sizeof(T) : sizeof(T)) : 0;
+        free(data);
+        data = replacement;
+        count = static_cast<int>(n);
+        // The check above includes both allocations at their transient peak.
+        budget += bytes;
+        budget -= old_bytes;
+        return true;
+    }
+
     T &operator[](int i) { return data[i]; }
     const T &operator[](int i) const { return data[i]; }
     operator wp::array_t<T>() const { return wp::array_t<T>(data, count); }
@@ -200,6 +218,7 @@ bool valid_joint(const nt_joint &j)
         !finite(j.effort_limit) || j.effort_limit < 0.0f ||
         !finite(j.damping) || j.damping < 0.0f ||
         !finite(j.armature) || j.armature < 0.0f ||
+        !finite(j.friction) || j.friction < 0.0f ||
         !finite(j.lower) || !finite(j.upper) || (j.limited && j.lower > j.upper) ||
         !finite(j.limit_stiffness) || j.limit_stiffness < 0.0f ||
         !finite(j.limit_damping) || j.limit_damping < 0.0f ||
@@ -216,6 +235,13 @@ wp::launch_bounds_t<1> launch_bounds(int n)
 
 struct ColliderSlot { uint64_t entity; int input; };
 
+struct ContactConstraint {
+    int shape0, shape1;
+    int articulation0, articulation1, offset;
+    Vec3 point, tangent0, tangent1;
+    float friction_force, impulse0, impulse1;
+};
+
 struct Collisions {
     Buffer<ColliderSlot> order;
     Buffer<int> body;
@@ -223,6 +249,8 @@ struct Collisions {
     Buffer<float> ke, kd, kf, ka, mu;
     Buffer<Twist> pair_wrench;
     Buffer<Vec3> force_sum;
+    Buffer<ContactConstraint> constraints;
+    int constraint_count = 0;
 
     static int compare(const void *a, const void *b)
     {
@@ -253,7 +281,8 @@ struct Collisions {
                 !finite(c.stiffness) || c.stiffness < 0.0f ||
                 !finite(c.damping) || c.damping < 0.0f ||
                 !finite(c.friction_damping) || c.friction_damping < 0.0f ||
-                !finite(c.friction) || c.friction < 0.0f) return NT_INVALID_COLLIDER;
+                !finite(c.friction) || c.friction < 0.0f ||
+                (c.friction_model != NT_REGULARIZED && c.friction_model != NT_COULOMB)) return NT_INVALID_COLLIDER;
             const int b = ids.find(c.body);
             if (b < 0 || (c.type == NT_PLANE && bodies[b].type != NT_STATIC))
                 return NT_INVALID_COLLIDER;
@@ -270,6 +299,20 @@ struct Collisions {
             kf[i] = c.friction_damping;
             mu[i] = c.friction;
         }
+        uint64_t capacity = 0;
+        for (int a = 0; a < count; ++a) {
+            const nt_collider &ca = colliders[order[a].input];
+            if (ca.friction_model != NT_COULOMB || ca.friction == 0.0f) continue;
+            for (int b = a + 1; b < count; ++b) {
+                const nt_collider &cb = colliders[order[b].input];
+                if (cb.friction_model != NT_COULOMB || cb.friction == 0.0f ||
+                    body[a] == body[b] ||
+                    (ca.exclusion_group != 0 && ca.exclusion_group == cb.exclusion_group) ||
+                    (bodies[body[a]].type == NT_STATIC && bodies[body[b]].type == NT_STATIC)) continue;
+                ++capacity;
+            }
+        }
+        if (capacity && !constraints.allocate(capacity, budget)) return NT_TOO_LARGE;
         return NT_OK;
     }
 
@@ -280,6 +323,7 @@ struct Collisions {
                const Buffer<Pose> &body_q, const Buffer<Twist> &body_qd,
                const Buffer<Vec3> &com, Buffer<Twist> &body_force)
     {
+        constraint_count = 0;
         if (!order.count) return true;
         for (int i = 0; i < order.count; ++i)
             world[i] = wp::transform_multiply(body_q[body[i]], local[i]);
@@ -335,7 +379,11 @@ struct Collisions {
                 // The original Newton force kernel runs once per canonical pair.
                 // A zeroed pair buffer also preserves each static reaction and
                 // collider's exact force contribution before body accumulation.
+                const bool coulomb = ca.friction_model == NT_COULOMB && cb.friction_model == NT_COULOMB;
+                const float old_kf0 = kf[a], old_kf1 = kf[b];
+                if (coulomb) { kf[a] = 0.0f; kf[b] = 0.0f; }
                 eval_body_contact_cpu_forward(&bounds, &args);
+                if (coulomb) { kf[a] = old_kf0; kf[b] = old_kf1; }
                 for (int k = 0; k < 6; ++k) {
                     if (!finite(pair_wrench[ba][k]) || !finite(pair_wrench[bb][k])) return false;
                     if (bodies[ba].type == NT_DYNAMIC) body_force[ba][k] += pair_wrench[ba][k];
@@ -345,6 +393,26 @@ struct Collisions {
                     force_sum[a][k] += pair_wrench[ba][k];
                     force_sum[b][k] += pair_wrench[bb][k];
                     if (!finite(force_sum[a][k]) || !finite(force_sum[b][k])) return false;
+                }
+                if (coulomb && mu[a] > 0.0f && mu[b] > 0.0f) {
+                    const Vec3 reaction(pair_wrench[bb][0], pair_wrench[bb][1], pair_wrench[bb][2]);
+                    const float normal_force = wp::max(wp::dot(reaction, normal), 0.0f);
+                    // sqrt separately avoids overflow of the material product.
+                    const float coefficient = wp::sqrt(mu[a]) * wp::sqrt(mu[b]);
+                    const float friction_force = coefficient * normal_force;
+                    if (!finite(friction_force)) return false;
+                    if (friction_force == 0.0f) continue;
+                    if (constraint_count == constraints.count) return false;
+                    int least = 0;
+                    for (int k = 1; k < 3; ++k)
+                        if (wp::abs(normal[k]) < wp::abs(normal[least])) least = k;
+                    Vec3 reference(0.0f);
+                    reference[least] = 1.0f;
+                    const Vec3 tangent0 = wp::normalize(wp::cross(normal, reference));
+                    const Vec3 tangent1 = wp::cross(normal, tangent0);
+                    constraints[constraint_count++] = ContactConstraint{
+                        a, b, -1, -1, 0, midpoint, tangent0, tangent1, friction_force, 0.0f, 0.0f
+                    };
                 }
             }
         }
@@ -360,7 +428,7 @@ struct Collisions {
 };
 
 struct Model {
-    Buffer<int> incoming, parent, first_child, next_child, order, body_joint;
+    Buffer<int> incoming, parent, first_child, next_child, order, body_joint, body_articulation;
     Buffer<int> art_start, art_end, art_J, art_M, art_H, art_rows, art_dofs, art_dof_start;
     Buffer<int> type, joint_parent, child, ancestor, q_start, qd_start, dof_dim, world;
     Buffer<Vec3> com, axis, solve_origin;
@@ -371,8 +439,13 @@ struct Model {
     Buffer<float> mass, q, q_new, qd, qd_internal, qd_new, effort, effort_internal;
     Buffer<float> damping, armature, lower, upper, limit_ke, limit_kd, zero;
     Buffer<float> tau, qdd, solve_tmp, J, M, P, H, L;
+    Buffer<float> friction, load, friction_inverse, friction_rhs, friction_response;
+    Buffer<float> friction_impulse, friction_speed;
+    Buffer<float> contact_rows, contact_response, contact_rhs, contact_solution, contact_speed;
 
     int articulations = 0;
+    bool has_friction = false;
+    int step_error = NT_UNSTABLE;
 
     int build(const nt_body *bodies, int n, const nt_joint *joints, int joint_count,
               uint64_t &budget)
@@ -387,6 +460,7 @@ struct Model {
         NT_ALLOC(next_child, n);
         NT_ALLOC(order, n);
         NT_ALLOC(body_joint, n);
+        NT_ALLOC(body_articulation, n);
         NT_ALLOC(art_start, n);
         NT_ALLOC(art_end, n);
         for (int i = 0; i < n; ++i) {
@@ -396,6 +470,7 @@ struct Model {
         for (int i = 0; i < joint_count; ++i) {
             const nt_joint &j = joints[i];
             if (!valid_joint(j) || !joint_ids.insert(j.entity, i)) return NT_INVALID_JOINT;
+            if (j.type != NT_FIXED && j.friction > 0.0f) has_friction = true;
             const int c = body_ids.find(j.child);
             const int p = j.parent ? body_ids.find(j.parent) : -1;
             if (c < 0 || (j.parent && p < 0)) return NT_INVALID_JOINT;
@@ -478,6 +553,7 @@ struct Model {
             art_rows[a] = static_cast<int>(6 * links);
             art_dofs[a] = static_cast<int>(dofs);
             art_dof_start[a] = qd_start[art_start[a]];
+            for (int j = art_start[a]; j < art_end[a]; ++j) body_articulation[child[j]] = a;
         }
         NT_ALLOC(com, n); NT_ALLOC(axis, nd); NT_ALLOC(solve_origin, n);
         NT_ALLOC(body_q, n); NT_ALLOC(body_q_com, n); NT_ALLOC(X_com, n);
@@ -491,6 +567,12 @@ struct Model {
         NT_ALLOC(lower, nd); NT_ALLOC(upper, nd); NT_ALLOC(limit_ke, nd); NT_ALLOC(limit_kd, nd);
         NT_ALLOC(zero, nd); NT_ALLOC(tau, nd); NT_ALLOC(qdd, nd); NT_ALLOC(solve_tmp, nd);
         NT_ALLOC(J, nj); NT_ALLOC(M, nm); NT_ALLOC(P, nj); NT_ALLOC(H, nh); NT_ALLOC(L, nh);
+        NT_ALLOC(friction, nd); NT_ALLOC(load, nd);
+        if (has_friction) {
+            NT_ALLOC(friction_inverse, nh); NT_ALLOC(friction_rhs, nd);
+            NT_ALLOC(friction_response, nd); NT_ALLOC(friction_impulse, nd);
+            NT_ALLOC(friction_speed, nd);
+        }
 #undef NT_ALLOC
         for (int b = 0; b < n; ++b) {
             const nt_body &input = bodies[b];
@@ -511,8 +593,14 @@ struct Model {
             if (j < 0) {
                 if (type[i] == newton_fixed) X_p[i] = body_q[b];
                 else {
+                    // The free joint's parent frame is arbitrary. Center it
+                    // on the current body origin so its spatial-twist columns
+                    // do not contain the body's absolute world translation.
+                    // Keeping a world-origin frame loses small rotational
+                    // inertias in J^T I J once light bodies travel far away.
+                    X_p[i].p = body_q[b].p;
                     for (int k = 0; k < 3; ++k) {
-                        q[qc + k] = body_q[b].p[k];
+                        q[qc + k] = 0.0f;
                         qd[dc + k] = bodies[b].velocity[k];
                         qd[dc + k + 3] = bodies[b].angular_velocity[k];
                     }
@@ -533,6 +621,7 @@ struct Model {
             effort[dc] = applied;
             damping[dc] = input.damping;
             armature[dc] = input.armature;
+            friction[dc] = input.friction;
             if (input.limited) {
                 lower[dc] = input.lower;
                 upper[dc] = input.upper;
@@ -552,8 +641,354 @@ struct Model {
         eval_rigid_fk_cpu_forward(&bounds, &args);
     }
 
+    bool apply_joint_friction(float dt)
+    {
+        // No extra arithmetic touches accelerations on the legacy path.
+        if (!has_friction) return true;
+        friction_impulse.clear();
+        for (int i = 0; i < qd_internal.count; ++i) {
+            friction_speed[i] = qd_internal[i] + dt * qdd[i];
+            if (!finite(friction_speed[i]) || !finite(dt * friction[i])) return false;
+        }
+        for (int a = 0; a < articulations; ++a) {
+            const int dim = art_dofs[a], start = art_dof_start[a], matrix = art_H[a];
+            bool active = false;
+            // Columns of (H + armature)^-1 come from Newton's existing Cholesky
+            // factor, including the floating root and every coupled joint DOF.
+            for (int column = 0; column < dim; ++column) {
+                if (friction[start + column] == 0.0f) continue;
+                active = true;
+                friction_rhs.clear();
+                friction_rhs[start + column] = 1.0f;
+                dense_solve_0(dim, matrix, start, H, L, friction_rhs, friction_response, solve_tmp);
+                for (int row = 0; row < dim; ++row) {
+                    const float value = friction_response[start + row];
+                    if (!finite(value)) return false;
+                    friction_inverse[matrix + row * dim + column] = value;
+                }
+                if (friction_inverse[matrix + column * dim + column] <= 0.0f) return false;
+            }
+            if (!active) continue;
+            // Cold start every substep. Fixed order/count is independent of
+            // convergence or hidden warm state, and the impulse cap is h*F.
+            for (int sweep = 0; sweep < 8; ++sweep) {
+                for (int column = 0; column < dim; ++column) {
+                    const int dof = start + column;
+                    if (friction[dof] == 0.0f) continue;
+                    const float diagonal = friction_inverse[matrix + column * dim + column];
+                    const float cap = dt * friction[dof];
+                    float impulse = friction_impulse[dof] - friction_speed[dof] / diagonal;
+                    if (!finite(impulse)) return false;
+                    if (impulse > cap) impulse = cap;
+                    if (impulse < -cap) impulse = -cap;
+                    const float change = impulse - friction_impulse[dof];
+                    if (!finite(change)) return false;
+                    friction_impulse[dof] = impulse;
+                    for (int row = 0; row < dim; ++row) {
+                        const int response_dof = start + row;
+                        friction_speed[response_dof] += friction_inverse[matrix + row * dim + column] * change;
+                        if (!finite(friction_speed[response_dof])) return false;
+                    }
+                }
+            }
+            for (int row = 0; row < dim; ++row) {
+                const int dof = start + row;
+                qdd[dof] = (friction_speed[dof] - qd_internal[dof]) / dt;
+                if (!finite(qdd[dof])) return false;
+            }
+        }
+        return true;
+    }
+
+    float point_jacobian(int body, int articulation, int column, const Vec3 &point, const Vec3 &tangent) const
+    {
+        const int dim = art_dofs[articulation];
+        const int at = art_J[articulation] + (body_joint[body] - art_start[articulation]) * 6 * dim + column;
+        const Vec3 linear(J[at], J[at + dim], J[at + 2 * dim]);
+        const Vec3 angular(J[at + 3 * dim], J[at + 4 * dim], J[at + 5 * dim]);
+        return wp::dot(linear + wp::cross(angular, point - solve_origin[body]), tangent);
+    }
+
+    static bool in_friction_disk(float x, float y, float cap)
+    {
+        if (!finite(x) || !finite(y)) return false;
+        const float scale = wp::max(wp::abs(x), wp::abs(y));
+        if (scale == 0.0f) return true;
+        x /= scale;
+        y /= scale;
+        return scale <= cap / wp::sqrt(x * x + y * y);
+    }
+
+    static bool contact_impulse(float w00, float w01, float w11, float v0, float v1,
+                                float old0, float old1, float cap, float &p0, float &p1)
+    {
+        p0 = p1 = 0.0f;
+        if (!finite(w00) || !finite(w01) || !finite(w11) ||
+            !finite(v0) || !finite(v1) || !finite(cap)) return false;
+        if (cap == 0.0f) return true;
+        const float scale = wp::max(wp::max(wp::abs(w00), wp::abs(w11)), wp::abs(w01));
+        if (scale == 0.0f) return true; // No responding tangent DOF.
+        const float a = w00 / scale, b = w01 / scale, c = w11 / scale;
+        const float trace = a + c;
+        const float discriminant = wp::sqrt((a - c) * (a - c) + 4.0f * b * b);
+        const float high = 0.5f * (trace + discriminant);
+        const float determinant = a * c - b * b;
+        if (a < -1.0e-6f || c < -1.0e-6f || high < 0.0f ||
+            determinant < -1.0e-6f * trace * trace) return false;
+        if (high == 0.0f) return true;
+        float x, y;
+        if (b == 0.0f) { x = a >= c ? 1.0f : 0.0f; y = a >= c ? 0.0f : 1.0f; }
+        else {
+            if (a >= c) { x = high - c; y = b; }
+            else { x = b; y = high - a; }
+            // A nearly diagonal isotropic response can leave only a tiny
+            // off-diagonal component. Normalize after scaling so its square
+            // neither underflows nor overflows.
+            const float vector_scale = wp::max(wp::abs(x), wp::abs(y));
+            x /= vector_scale; y /= vector_scale;
+            const float length = wp::sqrt(x * x + y * y);
+            x /= length; y /= length;
+        }
+        const float mass0 = high * scale;
+        // Compute det(W)/lambda_max without squaring a large off-diagonal
+        // or normalizing a small positive diagonal out of float's range.
+        // A weak but positive tangent direction still has a friction budget.
+        const float small = wp::min(w00, w11), large = wp::max(w00, w11);
+        const float mass1 = wp::max(small * (large / mass0) - w01 * (w01 / mass0), 0.0f);
+        if (!finite(mass0) || !finite(mass1)) return false;
+        const float velocity0 = x * v0 + y * v1, velocity1 = -y * v0 + x * v1;
+        const float previous0 = x * old0 + y * old1, previous1 = -y * old0 + x * old1;
+        const float gradient0 = velocity0 - mass0 * previous0;
+        const float gradient1 = velocity1 - mass1 * previous1;
+        if (!finite(gradient0) || !finite(gradient1)) return false;
+        float impulse0 = -gradient0 / mass0, impulse1 = 0.0f;
+        if (mass1 == 0.0f) {
+            // Pseudoinverse on the responding eigenvector; zero null impulse.
+            if (impulse0 > cap) impulse0 = cap;
+            if (impulse0 < -cap) impulse0 = -cap;
+        } else {
+            impulse1 = -gradient1 / mass1;
+            if (!in_friction_disk(impulse0, impulse1, cap)) {
+                // Minimize .5*p'Wp + (v-W*p_old)'p over the circular cone.
+                // Radially clamping W^-1*v is incorrect for anisotropic W and
+                // can inject energy. The constrained minimizer satisfies
+                // (W + lambda*I)*p = -(v-W*p_old), lambda >= 0.
+                const float magnitude = wp::max(wp::abs(gradient0), wp::abs(gradient1));
+                const float g0 = gradient0 / magnitude, g1 = gradient1 / magnitude;
+                float upper = (magnitude / cap) * wp::sqrt(g0 * g0 + g1 * g1);
+                float lower = 0.0f;
+                if (!finite(upper) || upper <= 0.0f) return false;
+                // Fixed count and feasible upper endpoint preserve cold,
+                // deterministic execution without a convergence criterion.
+                for (int iteration = 0; iteration < 32; ++iteration) {
+                    const float lambda = lower + 0.5f * (upper - lower);
+                    const float denominator0 = mass0 + lambda, denominator1 = mass1 + lambda;
+                    if (!finite(denominator0) || !finite(denominator1)) return false;
+                    const float trial0 = -gradient0 / denominator0;
+                    const float trial1 = -gradient1 / denominator1;
+                    if (in_friction_disk(trial0, trial1, cap)) upper = lambda;
+                    else lower = lambda;
+                }
+                const float denominator0 = mass0 + upper, denominator1 = mass1 + upper;
+                if (!finite(denominator0) || !finite(denominator1)) return false;
+                impulse0 = -gradient0 / denominator0;
+                impulse1 = -gradient1 / denominator1;
+            }
+        }
+        p0 = x * impulse0 - y * impulse1;
+        p1 = y * impulse0 + x * impulse1;
+        if (!finite(p0) || !finite(p1)) return false;
+        // Correct only basis-change roundoff after the constrained solve.
+        if (!in_friction_disk(p0, p1, cap)) {
+            const float magnitude = wp::max(wp::abs(p0), wp::abs(p1));
+            const float u = p0 / magnitude, v = p1 / magnitude;
+            const float factor = (cap / magnitude) / wp::sqrt(u * u + v * v);
+            p0 *= factor; p1 *= factor;
+        }
+        return true;
+    }
+
+    bool apply_contact_friction(const nt_body *bodies, Collisions &contacts, float dt, uint64_t &budget)
+    {
+        if (!contacts.constraint_count) return true;
+        uint64_t elements = 0;
+        for (int i = 0; i < contacts.constraint_count; ++i) {
+            auto &contact = contacts.constraints[i];
+            const int b0 = contacts.body[contact.shape0], b1 = contacts.body[contact.shape1];
+            int a0 = bodies[b0].type == NT_DYNAMIC ? body_articulation[b0] : -1;
+            int a1 = bodies[b1].type == NT_DYNAMIC ? body_articulation[b1] : -1;
+            if (a0 < 0) { a0 = a1; a1 = -1; }
+            if (a1 == a0) a1 = -1;
+            contact.articulation0 = a0;
+            contact.articulation1 = a1;
+            if (elements > INT_MAX) { step_error = NT_TOO_LARGE; return false; }
+            contact.offset = static_cast<int>(elements);
+            const int dim = (a0 >= 0 ? art_dofs[a0] : 0) + (a1 >= 0 ? art_dofs[a1] : 0);
+            elements += static_cast<uint64_t>(dim) * 2;
+        }
+        // Cache only actual contacts' participating articulation columns.
+        // There is no collider_count^2 * global_DOF dense row allocation.
+        if (!contact_rows.reserve(elements, budget) || !contact_response.reserve(elements, budget) ||
+            !contact_rhs.reserve(qd_internal.count, budget) || !contact_solution.reserve(qd_internal.count, budget) ||
+            !contact_speed.reserve(qd_internal.count, budget)) { step_error = NT_TOO_LARGE; return false; }
+        for (int k = 0; k < qd_internal.count; ++k) {
+            contact_speed[k] = qd_internal[k] + dt * qdd[k];
+            if (!finite(contact_speed[k])) return false;
+        }
+        for (int i = 0; i < contacts.constraint_count; ++i) {
+            const auto &contact = contacts.constraints[i];
+            const int b0 = contacts.body[contact.shape0], b1 = contacts.body[contact.shape1];
+            const int arts[2] = {contact.articulation0, contact.articulation1};
+            const int width = (arts[0] >= 0 ? art_dofs[arts[0]] : 0) + (arts[1] >= 0 ? art_dofs[arts[1]] : 0);
+            int cursor = 0;
+            for (int segment = 0; segment < 2; ++segment) {
+                const int a = arts[segment];
+                if (a < 0) continue;
+                const int dim = art_dofs[a], start = art_dof_start[a];
+                for (int tangent = 0; tangent < 2; ++tangent) {
+                    const Vec3 direction = tangent == 0 ? contact.tangent0 : contact.tangent1;
+                    const int row = contact.offset + tangent * width + cursor;
+                    for (int k = 0; k < dim; ++k) {
+                        float value = 0.0f;
+                        if (bodies[b1].type == NT_DYNAMIC && body_articulation[b1] == a)
+                            value += point_jacobian(b1, a, k, contact.point, direction);
+                        if (bodies[b0].type == NT_DYNAMIC && body_articulation[b0] == a)
+                            value -= point_jacobian(b0, a, k, contact.point, direction);
+                        contact_rows[row + k] = contact_rhs[start + k] = value;
+                    }
+                    dense_solve_0(dim, art_H[a], start, H, L, contact_rhs, contact_solution, solve_tmp);
+                    for (int k = 0; k < dim; ++k) {
+                        const float response = contact_solution[start + k];
+                        if (!finite(response) || !finite(contact_rows[row + k])) return false;
+                        contact_response[row + k] = response;
+                    }
+                }
+                cursor += dim;
+            }
+        }
+        if (has_friction) {
+            friction_impulse.clear();
+            // Joint and contact constraints share contact_speed below. Cache
+            // the same inverse columns as the legacy joint-only solver, but
+            // retain accumulated joint impulses throughout all contact sweeps.
+            for (int a = 0; a < articulations; ++a) {
+                const int dim = art_dofs[a], start = art_dof_start[a], matrix = art_H[a];
+                for (int column = 0; column < dim; ++column) {
+                    if (friction[start + column] == 0.0f) continue;
+                    friction_rhs.clear();
+                    friction_rhs[start + column] = 1.0f;
+                    dense_solve_0(dim, matrix, start, H, L, friction_rhs, friction_response, solve_tmp);
+                    for (int row = 0; row < dim; ++row) {
+                        const float value = friction_response[start + row];
+                        if (!finite(value)) return false;
+                        friction_inverse[matrix + row * dim + column] = value;
+                    }
+                    if (friction_inverse[matrix + column * dim + column] <= 0.0f) return false;
+                }
+            }
+        }
+        bool changed = false;
+        for (int sweep = 0; sweep < 16; ++sweep) {
+            if (has_friction) {
+                for (int a = 0; a < articulations; ++a) {
+                    const int dim = art_dofs[a], start = art_dof_start[a], matrix = art_H[a];
+                    for (int column = 0; column < dim; ++column) {
+                        const int dof = start + column;
+                        if (friction[dof] == 0.0f) continue;
+                        const float diagonal = friction_inverse[matrix + column * dim + column];
+                        const float cap = dt * friction[dof];
+                        float impulse = friction_impulse[dof] - contact_speed[dof] / diagonal;
+                        if (!finite(impulse) || !finite(cap)) return false;
+                        if (impulse > cap) impulse = cap;
+                        if (impulse < -cap) impulse = -cap;
+                        const float delta = impulse - friction_impulse[dof];
+                        if (!finite(delta)) return false;
+                        friction_impulse[dof] = impulse;
+                        if (delta == 0.0f) continue;
+                        changed = true;
+                        for (int row = 0; row < dim; ++row) {
+                            const int response_dof = start + row;
+                            contact_speed[response_dof] += friction_inverse[matrix + row * dim + column] * delta;
+                            if (!finite(contact_speed[response_dof])) return false;
+                        }
+                    }
+                }
+            }
+            for (int i = 0; i < contacts.constraint_count; ++i) {
+                auto &contact = contacts.constraints[i];
+                const int arts[2] = {contact.articulation0, contact.articulation1};
+                const int width = (arts[0] >= 0 ? art_dofs[arts[0]] : 0) + (arts[1] >= 0 ? art_dofs[arts[1]] : 0);
+                const int row0 = contact.offset, row1 = row0 + width;
+                float v0 = 0.0f, v1 = 0.0f, w00 = 0.0f, w01 = 0.0f, w10 = 0.0f, w11 = 0.0f;
+                int cursor = 0;
+                for (int segment = 0; segment < 2; ++segment) {
+                    const int a = arts[segment];
+                    if (a < 0) continue;
+                    const int dim = art_dofs[a], start = art_dof_start[a];
+                    for (int k = 0; k < dim; ++k) {
+                        const float r0 = contact_rows[row0 + cursor + k], r1 = contact_rows[row1 + cursor + k];
+                        const float b0 = contact_response[row0 + cursor + k], b1 = contact_response[row1 + cursor + k];
+                        v0 += r0 * contact_speed[start + k]; v1 += r1 * contact_speed[start + k];
+                        w00 += r0 * b0; w01 += r0 * b1; w10 += r1 * b0; w11 += r1 * b1;
+                    }
+                    cursor += dim;
+                }
+                float next0, next1;
+                if (!contact_impulse(w00, 0.5f * w01 + 0.5f * w10, w11, v0, v1,
+                                     contact.impulse0, contact.impulse1, dt * contact.friction_force, next0, next1)) return false;
+                const float delta0 = next0 - contact.impulse0, delta1 = next1 - contact.impulse1;
+                contact.impulse0 = next0; contact.impulse1 = next1;
+                if (delta0 == 0.0f && delta1 == 0.0f) continue;
+                changed = true;
+                cursor = 0;
+                for (int segment = 0; segment < 2; ++segment) {
+                    const int a = arts[segment];
+                    if (a < 0) continue;
+                    const int dim = art_dofs[a], start = art_dof_start[a];
+                    for (int k = 0; k < dim; ++k) {
+                        contact_speed[start + k] += contact_response[row0 + cursor + k] * delta0 +
+                                                    contact_response[row1 + cursor + k] * delta1;
+                        if (!finite(contact_speed[start + k])) return false;
+                    }
+                    cursor += dim;
+                }
+            }
+        }
+        if (!changed) return true;
+        for (int k = 0; k < qdd.count; ++k) {
+            if (contact_speed[k] == qd_internal[k] + dt * qdd[k]) continue;
+            qdd[k] = (contact_speed[k] - qd_internal[k]) / dt;
+            if (!finite(qdd[k])) return false;
+        }
+        for (int i = 0; i < contacts.constraint_count; ++i) {
+            const auto &contact = contacts.constraints[i];
+            const int arts[2] = {contact.articulation0, contact.articulation1};
+            const int width = (arts[0] >= 0 ? art_dofs[arts[0]] : 0) + (arts[1] >= 0 ? art_dofs[arts[1]] : 0);
+            const int row0 = contact.offset, row1 = row0 + width;
+            int cursor = 0;
+            for (int segment = 0; segment < 2; ++segment) {
+                const int a = arts[segment];
+                if (a < 0) continue;
+                const int dim = art_dofs[a], start = art_dof_start[a];
+                for (int k = 0; k < dim; ++k) {
+                    load[start + k] += (contact_rows[row0 + cursor + k] * contact.impulse0 +
+                                        contact_rows[row1 + cursor + k] * contact.impulse1) / dt;
+                    if (!finite(load[start + k])) return false;
+                }
+                cursor += dim;
+            }
+            const Vec3 force = (contact.tangent0 * contact.impulse0 + contact.tangent1 * contact.impulse1) / dt;
+            for (int k = 0; k < 3; ++k) {
+                contacts.force_sum[contact.shape0][k] -= force[k];
+                contacts.force_sum[contact.shape1][k] += force[k];
+                if (!finite(contacts.force_sum[contact.shape0][k]) || !finite(contacts.force_sum[contact.shape1][k])) return false;
+            }
+        }
+        return true;
+    }
+
     bool step(const nt_body *bodies, const nt_collider *colliders, Collisions &contacts,
-              const float *gravity, float dt)
+              const float *gravity, float dt, uint64_t &budget)
     {
         auto body_bounds = launch_bounds(body_q.count);
         auto joint_bounds = launch_bounds(type.count);
@@ -602,6 +1037,10 @@ struct Model {
         };
         eval_rigid_tau_cpu_forward(&art_bounds, &tau_args);
         if (!finite_buffer(body_force) || !finite_buffer(ft_s) || !finite_buffer(tau)) return false;
+        for (int i = 0; i < tau.count; ++i) {
+            load[i] = (tau[i] - effort_internal[i]) + damping[i] * qd_internal[i];
+            if (!finite(load[i])) return false;
+        }
         wp_args_eval_rigid_jacobian jacobian_args = {
             art_start, art_end, art_J, ancestor, qd_start, S, J
         };
@@ -614,11 +1053,58 @@ struct Model {
         wp_args_eval_dense_gemm_batched mj_args = {
             art_rows, art_dofs, art_rows, false, false, art_M, art_J, art_J, M, J, P
         };
-        eval_dense_gemm_batched_cpu_forward(&art_bounds, &mj_args);
-        wp_args_eval_dense_gemm_batched jp_args = {
-            art_dofs, art_dofs, art_rows, true, false, art_J, art_J, art_H, J, P, H
-        };
-        eval_dense_gemm_batched_cpu_forward(&art_bounds, &jp_args);
+        if (!finite_buffer(J) || !finite_buffer(M)) {
+            // Retain the reference's nonfinite propagation and final rejection.
+            eval_dense_gemm_batched_cpu_forward(&art_bounds, &mj_args);
+        } else {
+            // M is populated only in its per-body 6x6 diagonal blocks by
+            // eval_rigid_mass. Preserve increasing k within each block.
+            for (int a = 0; a < articulations; ++a) {
+                const int rows = art_rows[a], cols = art_dofs[a];
+                const int ms = art_M[a], js = art_J[a];
+                for (int row = 0; row < rows; ++row) {
+                    const int first = (row / 6) * 6;
+                    for (int col = 0; col < cols; ++col) {
+                        float sum = 0.0f;
+                        for (int k = first; k < first + 6; ++k)
+                            sum = wp::add(sum, wp::mul(M[ms + row * rows + k], J[js + k * cols + col]));
+                        P[js + row * cols + col] = sum;
+                    }
+                }
+            }
+        }
+        // Each H output retains the reference's increasing k accumulation.
+        // Buffers J, P, and H have distinct allocations; lanes are independent.
+        for (int a = 0; a < articulations; ++a) {
+            const int rows = art_rows[a], cols = art_dofs[a];
+            const float *__restrict jp = J.data + art_J[a];
+            const float *__restrict pp = P.data + art_J[a];
+            float *__restrict hp = H.data + art_H[a];
+            for (int row = 0; row < cols; ++row) {
+                int col = 0;
+                for (; col + 3 < cols; col += 4) {
+                    float s0 = 0.0f, s1 = 0.0f, s2 = 0.0f, s3 = 0.0f;
+                    for (int k = 0; k < rows; ++k) {
+                        const float j = jp[k * cols + row];
+                        const float *p = pp + k * cols + col;
+                        s0 = s0 + j * p[0];
+                        s1 = s1 + j * p[1];
+                        s2 = s2 + j * p[2];
+                        s3 = s3 + j * p[3];
+                    }
+                    hp[row * cols + col] = s0;
+                    hp[row * cols + col + 1] = s1;
+                    hp[row * cols + col + 2] = s2;
+                    hp[row * cols + col + 3] = s3;
+                }
+                for (; col < cols; ++col) {
+                    float sum = 0.0f;
+                    for (int k = 0; k < rows; ++k)
+                        sum = sum + jp[k * cols + row] * pp[k * cols + col];
+                    hp[row * cols + col] = sum;
+                }
+            }
+        }
         if (!finite_buffer(J) || !finite_buffer(M) || !finite_buffer(P) || !finite_buffer(H)) return false;
         wp_args_eval_dense_cholesky_batched factor_args = {art_H, art_dofs, art_dof_start, H, armature, L};
         eval_dense_cholesky_batched_cpu_forward(&art_bounds, &factor_args);
@@ -631,6 +1117,9 @@ struct Model {
         wp_args_eval_dense_solve_batched solve_args = {art_H, art_dofs, art_dof_start, H, L, tau, qdd, solve_tmp};
         eval_dense_solve_batched_cpu_forward(&art_bounds, &solve_args);
         if (!finite_buffer(qdd)) return false;
+        if (contacts.constraint_count) {
+            if (!apply_contact_friction(bodies, contacts, dt, budget)) return false;
+        } else if (!apply_joint_friction(dt)) return false;
         wp_args_integrate_generalized_joints integrate_args = {
             type, joint_parent, child, q_start, qd_start, dof_dim.matrix(type.count, 2),
             X_c, com, q, qd_internal, qdd, dt, q_new, qd_new
@@ -668,6 +1157,7 @@ struct Model {
             joints[j].position = type[i] == newton_fixed ? 0.0f : q[q_start[i]];
             joints[j].velocity = type[i] == newton_fixed ? 0.0f : qd[qd_start[i]];
             joints[j].applied_effort = type[i] == newton_fixed ? 0.0f : effort[qd_start[i]];
+            joints[j].load = type[i] == newton_fixed ? 0.0f : load[qd_start[i]];
         }
     }
 };
@@ -702,7 +1192,7 @@ extern "C" int nt_step(nt_body *bodies, uint32_t body_count, nt_joint *joints,
                                                 static_cast<int>(collider_count), budget);
     if (collision_status != NT_OK) return collision_status;
     for (int i = 0; i < substeps; ++i) {
-        if (!model.step(bodies, colliders, contacts, gravity, substep_dt)) return NT_UNSTABLE;
+        if (!model.step(bodies, colliders, contacts, gravity, substep_dt, budget)) return model.step_error;
     }
     model.publish(bodies, joints);
     contacts.publish(colliders, substeps);

@@ -1,0 +1,196 @@
+{
+  "schema_version": 1,
+  "source": {
+    "author": "Pollen Robotics",
+    "copyright": "Copyright Pollen Robotics",
+    "repository": "https://github.com/pollen-robotics/microduck_rl",
+    "revision": "b02fdea4902c2b93b7d34a83a6f05da4ececb7d3",
+    "robot_directory": "src/mjlab_microduck/robot/microduck",
+    "model_license_url": "https://github.com/pollen-robotics/microduck_rl/blob/b02fdea4902c2b93b7d34a83a6f05da4ececb7d3/LICENSE-MODELS.md",
+    "sha256_relative_to_robot_directory": {
+      "assets/ankle_left.stl": "2ec1bd89205b407efebaa9a8898ad9fea741389d87b80ecc5c96b21d1668119e",
+      "assets/ankle_right.stl": "f83f388ae00787415e76b8ecaab769f08f25b8c4e90c1937ff0fc4d68d81722e",
+      "assets/banana_pcb_locker.stl": "42ddde9d01bf5d91f88b99847017f14d97d2537ee27383c6d41dd8bf30a51134",
+      "assets/bearing_roll.stl": "b5603a64b2d965ad75ea847767b5798130852e12a658fde7b5068fc457e2adcc",
+      "assets/bottom_head_shell.stl": "1820f7cf96646b0fc0c431f07da87b91b13111bfa9857ab1bf2b1fc3388f8da2",
+      "assets/elec_rpi_robot_hat_pcb.stl": "1a61582759d82b5b4df9b7d11099bf1bb3944fc77e6b74d3237adf24dd5d03d7",
+      "assets/face_part.stl": "d0e89a173e7bdc8038c4d413f458140d8f42f1a2f098f67a887c2388eff31718",
+      "assets/foot_left.stl": "a1f5d43456d0f522bd60870153795f1e8112c1adf9b8b4373b59608d9545c044",
+      "assets/foot_right.stl": "54f97fa1f0e0e611d31329df9f3c3b17ffcca2d695c579d1d32cbe99e8a6c7ef",
+      "assets/hip_l.stl": "e175896932d76dc7648cf939aa39cb7b1d188b783d91745adb9a4cec65e9052c",
+      "assets/jaw.stl": "45cdbd319a4583095d8daa0db07dee726522a743d59acb82d27d82ded500a1cf",
+      "assets/jaw_soft.stl": "2d2ade4e86df4b37ce313bb9b96023109dd04bab39dba08b154e76d332fbce2e",
+      "assets/left_shell.stl": "2abde8e2b79c9b011cdb11957c67ab4287b45d7301affd4235ab81141118e331",
+      "assets/leg.stl": "9a91cc1ae31ecd9e0c1ba93f3bb2ad8a12e29bff24ec27d1ac66c0c3037d9fcf",
+      "assets/lens.stl": "b1c717432ff7666398de58adec6a1b7e03a7e45aa155dbfe27a6152ef19663e5",
+      "assets/m12_lens_holder.stl": "031d5ffaf6247328cf6d020f6b6695ffb3f8d3f22cf923b85811351d89ecfd7c",
+      "assets/motor_support.stl": "ce0aa5bef82c7474512d302568c341b9769b3005e0bdb91a19c2eaaba6dad480",
+      "assets/neck.stl": "b6e86b886153be8a8a776c1cb219c074ee9e89c8bd431117662a2d9e504d7cb5",
+      "assets/neck_pitch.stl": "a685ce65348ae4d0d49417c69a7a8871f8bbd54a6e3419362be9c334abd5d2ae",
+      "assets/noenoeil.stl": "e1167b3d5ad7fbbe6e63296bcd0c6b61556611e6bc1367b15ecfd27e3abb72f5",
+      "assets/np_f970.stl": "0e55a48281331b3b7b1a363d2e93b6012f37c52045b6dc922a149ca7c1b38388",
+      "assets/pcb__raspberry_pi_zero_2_w.stl": "802cc66fc5447c67fc642d1339e55160df10f2ad04a65efd130e35fb7b2d3c90",
+      "assets/power_support.stl": "ee45e397d3f3422f34940a4b61156c3c11c7e8c2b240451ce5f9ddd1622a130e",
+      "assets/right_shell.stl": "3efba3e193cc6aa49d49a9c92cdded0504917397c9e2c5b8fe002a958e2f2d2b",
+      "assets/seeed_bearing__configuration__22x16x4.stl": "295ee68ed9766c91fe06d3a2a49d39f7c2f56cc943395d293afdeb013123435e",
+      "assets/seeed_bearing__configuration_default.stl": "e815f3483a2e7b80844f3c0938a47e53db38b12faed9b2d364414c19e4322da4",
+      "assets/soft_mouth_top.stl": "3c2b52b0b6e2ce944a1e1b5a0838e1216be1ad3a34c8cdf91be186e634aec57b",
+      "assets/sole_left.stl": "e028c8b09fecd4cb354d042bf7fd95a1a1bc2d524d760d62137fa8d74093fc23",
+      "assets/sole_right.stl": "3f5068872f3add10eb967327651445bdfca635f5a8a01befa0ef05e462b72b4c",
+      "assets/speaker.stl": "75a35f9bcf94cd8e52f99b3fd6ae667b48f52503f9075ee2f699eebe8e7b3ddf",
+      "assets/top_head_shell.stl": "6d01f396f514c9d2185cf6b8250b1d8382ac3fa0702eb525bcb284f706196291",
+      "assets/trunk_base.stl": "aa4f853ae555a8b765e585ce4519c0bbff325ce298ec15a1437792c52a0beac1",
+      "assets/upper_leg_left.stl": "8cb1c12dfa6d366a318bb1ec16f585427b9a185afeb7738d0a6f41f5db46a07d",
+      "assets/upper_leg_right.stl": "5caf996cc3e151b01f393cdc6a6a6a940c1d86179d8b7c7f5f85cf1f1ac2fb63",
+      "assets/upper_leg_rigidity_plate.stl": "231b3e5f1e24d146d735dc158cbcfec0c95a0d0ca8c500f61f04d15d0b665652",
+      "assets/xl330.stl": "96238ed0d020ce0009cf1a5aa4b6926176c800840318ee65e4375be2298d2744",
+      "assets/yaw2roll.stl": "6c8f193ec7cb40be0f48eeb5fba81bce2c87f12e1aab3f77f1bc4981386e1495",
+      "assets/yaw_roll_motion.stl": "b0c9902dee19f06cdb7fa930292e0e1c91e2dc59baa971211495b58ff76c3c60",
+      "robot_allcollisions.xml": "ec9d2f731596cfc847a7fc3898ef8b5e67a548928abc23216537f1da8af2729c",
+      "scene_allcollisions.xml": "0d2f58227a3e1c4caae4e847a368ae83516d0f398f428c4e96737b67dd894ef1"
+    }
+  },
+  "derived_data": {
+    "files": [
+      "collision_spheres.json",
+      "collisions.tide",
+      "collision_certificates.json"
+    ],
+    "license": "CC-BY-NC-SA-4.0",
+    "license_url": "https://creativecommons.org/licenses/by-nc-sa/4.0/",
+    "changes": "Source mesh convex support converted into131 nonfoot support spheres and26 source-hull-inscribed interior cores;16 original procedural feet retained;one ORIGINAL procedural visible-casing sphere appended last. Final casing core is not source-inscribed and deliberately increases body0 support."
+  },
+  "license_scope": "Identified derived collision data only. Separate XML/model, neural-network, engine and exporter code retain their applicable licenses.",
+  "frozen_inputs": {
+    "reference150_sha256": "5272be2452d0acf731c40ea96f95f701841f8e8761df17139aac9f594b6cba19",
+    "filler26_sha256": "0e66a7a02a3402e05145276496ee5fe4e42aec59a929c5550b3d54ca33ce75c6",
+    "research173_sha256": "b6441a1bd25069ea787af81d88abd7f99044d8fcb4487eac4a01ae3369940162",
+    "tested173_candidate_sha256": "e73301c3c7ab223d24901cc9f74b786c7db2f2cd67b3f6cb9eac34dfd4463320",
+    "original_procedural_geometry_source": "examples/robotics/microduck/sandbox.tide",
+    "original_procedural_geometry_source_sha256": "6bdb56579dedd7f0200e6abd9d125d0fb915dfecf03c11bfc979f92ba7c8dfed",
+    "tested174_input_sha256": "b61ca061adc04e508e505a7a590aa3e8fb83fbff0f83c78ab4ed9c849584ea41",
+    "tested174_prepared_candidate_sha256": "162ee0fc9b0949957b6f2358bc24f0854e36ee62493a2db809c09c8e96a79a4b",
+    "private174_research_candidate_sha256": "71849bca72474898c131c4aee33fa6ce569ae941d0d503186211f60de01afc91",
+    "stage173_geometry_sha256": "7f994c3930252b40ddac0a3649ee0d3771d80166d7b1c2141dc939c6525d204b",
+    "procedural_core_input_sha256": "c2f95f6d9ba73d500db7674d01c7606be4260a26da5f54319841552557ff1edb",
+    "procedural_core_audit_sha256": "0dd5c745d4888eb42e7f10517e4c4d57560d7b6167da313b027bd867fb4407e4",
+    "procedural_core_independent_review_sha256": "7b9cde4cf2b411ff5c59c0ece79adf0ab54c4fc30705f5884f05db1a90d9a8cf",
+    "original_procedural_geometry_source_scope": "Historical pre-integration 61-sphere procedural sandbox snapshot captured by the matched-proxy model audit; this digest is intentionally not the current sandbox.tide after collision-data integration.",
+    "historical_snapshot_attestation": {
+      "snapshot_sha256": "6bdb56579dedd7f0200e6abd9d125d0fb915dfecf03c11bfc979f92ba7c8dfed",
+      "audit_artifact_id": "matched-proxy-model-audit",
+      "audit_sha256": "3cf2e2b7aabcb77c9842a0431237b01f6814605b97e4c943f61215be9bbac496",
+      "audit_field": "source_sandbox_sha256",
+      "authoritative_original_frame_records_artifact_id": "original-procedural-61-spheres",
+      "authoritative_original_frame_records_sha256": "437518bfbf778336f4fb646d84738fe29771e6947afae3dea81d9e4a84e70244",
+      "retained_selection": "body_index5 and14;all16 originalfootproxies;noinverse-principal-roundtrip coordinates",
+      "retained_foot_runtime_float32_values_matched": 64
+    }
+  },
+  "frozen_output": {
+    "file": "collision_spheres.json",
+    "sha256": "72312ed6c599e568469135104d3fed438a9c1fe4f02f924dd954e748dc92b09d",
+    "sphere_count": 174,
+    "record_order": "Exact tested173-record prefix:131source support,26source-inscribedcores,16originalfeet;then oneoriginalproceduralcasingcore last. Never sortbybody.",
+    "tested_runtime_values_preserved": true
+  },
+  "representation": {
+    "authoring_format": ".9g decimal literals",
+    "portable_export_format": ".17g binary64 round-trip",
+    "higher_precision_research_values_with_different_float32_rounding": 5,
+    "maximum_absolute_decimal_component_or_radius_change_m": 4.9329568208023034e-11,
+    "lossless_export": "The exporter losslessly emits the staged numeric asset. Mesh fitting and the deliberate freeze to tested authored decimal literals are preceding derivation steps.",
+    "tested_float32_numeric_field_count": 696
+  },
+  "research_derivation": {
+    "portability": "Research fit regeneration is not claimed portable; portable export requires only Python3.10+ standard library and frozen data.",
+    "mujoco": "3.10.0",
+    "numpy": "2.5.1",
+    "seed": 0,
+    "randomness": "none",
+    "sampling": "4096 Fibonacci directions plus6 signed body axes",
+    "greedy": "Four initial spheres perbody;allocate150 to largest remaining perbody directional deficit;radius0.0006m;sourcehullvertices ascenters",
+    "selected_model": "Remove fittedfootbodies5/14;retain all16 original proceduralfootrecords;append26 nonfootcores beforepreparer appends feet;append onefixed originalproceduralcasingcoreafterthe173prefix. No additional meshfit orradius sweep.",
+    "filler_method": "Selected-center hull facet constraints intersect individual sourcegeom hulls;fixed26-direction coordinate ascent;radius fromminimum constraintslack;2.02mm supportmargin",
+    "frame_conversion": "compiled_geom_pos+R(compiled_geom_quat)*compiled_mesh_vert;compiled pose already includes meshcentering;apply inverseTide principalrotation only atspawn;noCOM subtraction",
+    "certificate_method": "Exact-rational feasible convex-combination vertex-distance bounds,uniformradius support identity;numeric originalSTL hull containment androunding allowances forfillers",
+    "script_sha256": {
+      "fit_vertices.py": "cdef872866f221ceb2d89384741e50fe6d1441bb6f8166531c5a9e13797add09",
+      "fit_support.py": "ec60babac42e75f317eff061e6a1c8bbbf37b5ed39f8a1e6e6f1721261bdf994",
+      "fit_fillers.py": "ced289f730299f1f94f5e656dd7c4db91ae867cc738ad7a3c4a58da7ef1eb6ab",
+      "certificate_review.py": "ad6264e839bb88660ac60ec32e7fdb4ffaac92e5cd01481f332d8accdd4c1ed2",
+      "filler_review.py": "3802be0c236419878dab65ec63cf1c09ed0202f308e242f7e83bc609aea20cb6",
+      "freeze173.py": "8d170696a26ab4aa94e476f0d4982e5b50d4449ab35e33802630bcf61c85c1cc"
+    }
+  },
+  "contact_scope": "Sole/nonsole labels encode the matched diagnostic/runtime contact contract. No claim is made that all nonsole training geoms used zero friction; upstream selector coverage was a separate17-of70 finding.",
+  "legal_code": {
+    "file": "LICENSE-CC-BY-NC-SA-4.0.txt",
+    "canonical_source": "https://creativecommons.org/licenses/by-nc-sa/4.0/legalcode.txt",
+    "sha256": "547bb5c3020780f85f38fb0e058ac77b20c48e859160354f0da863defb22c27a"
+  },
+  "component_record_ranges_inclusive": {
+    "source_vertex_support": [
+      0,
+      130
+    ],
+    "source_inscribed_cores": [
+      131,
+      156
+    ],
+    "original_procedural_feet": [
+      157,
+      172
+    ],
+    "original_procedural_casing_core": [
+      173,
+      173
+    ]
+  },
+  "original_procedural_casing_core": {
+    "record_index": 173,
+    "body": 0,
+    "center_m": [
+      0.004,
+      0.0,
+      -0.006
+    ],
+    "radius_m": 0.0115,
+    "foot": -1,
+    "source": "Original procedural casing in examples/robotics/microduck/visuals.tide; explicit user-authored core,not fitted fromSTLs",
+    "visual_case_center_m": [
+      0.004,
+      0.0,
+      -0.004
+    ],
+    "visual_case_size_m": [
+      0.034,
+      0.052,
+      0.027
+    ],
+    "visual_case_bevel_m": 0.003,
+    "source_mesh_containment_claim": false,
+    "floor_envelope_invariance_claim": false,
+    "body0_continuous_support_growth_m": 0.006674836674208465,
+    "source_body0_mesh_sampled_overshoot_m": 0.0028973092680630516,
+    "source_body0_mesh_continuous_upper_m": 0.007274836674208465
+  },
+  "behavioral_validation": {
+    "native_locomotion_passed": 6,
+    "native_locomotion_total": 7,
+    "passed": [
+      "forward",
+      "backward",
+      "prone recovery",
+      "side recovery",
+      "supine recovery",
+      "right turn"
+    ],
+    "known_remaining_failure": "Existing weak left turn:+0.196556rad below unchanged0.25rad criterion",
+    "coverage_passed": 1,
+    "coverage_total": 1,
+    "locomotion_evidence_sha256": "ffe6cf79d2c8f5d30d960b5c38dfc5d0b48971dcdc1820abcb0a8e0d8201e52a",
+    "coverage_evidence_sha256": "90fc0b4794ca2b282aad086cb39942aa9c3821818b1c0fb5b8704fba3e6e4a0c",
+    "scope": "Existing parent-run actual native tests; no new episodes run by staging task. Not an all-tests-pass claim."
+  }
+}

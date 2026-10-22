@@ -20,6 +20,7 @@ enum Status
 enum BodyType { Static, Dynamic }
 enum JointType { Fixed, Revolute, Prismatic }
 enum ColliderType { Sphere, Plane }
+enum ContactFriction { Regularized, Coulomb }
 
 // Position is the body origin, velocity the world-space center-of-mass speed,
 // and angularVelocity is world-space radians/second, as in Box3D. Inertia is
@@ -67,6 +68,11 @@ component Joint
     float upper;
     float limitStiffness = 10000;
     float limitDamping = 100;
+    // Nonnegative dry-friction stopping torque (Nm) or force (N) budget.
+    float friction;
+    // Final substep's signed nonmotor load from the last successful tick.
+    // Excludes Actuator effort, passive damping and this joint's friction.
+    float load;
 }
 
 // Optional on a Joint entity. A game's controller can write effort before the
@@ -99,6 +105,7 @@ component Collider
     float frictionDamping = 100;
     float friction = 0.8;
     float3 contactForce; // Mean world force over the last successful tick
+    ContactFriction frictionModel; // Both shapes opt in; Regularized is the default
 }
 
 // Package implementation records, matching runtime.h in exact field order.
@@ -141,6 +148,8 @@ struct JointState
     quaternion childRotation;
     float3 axis;
     float appliedEffort;
+    float friction;
+    float load;
 }
 
 struct ColliderState
@@ -157,6 +166,7 @@ struct ColliderState
     float frictionDamping;
     float friction;
     float3 contactForce;
+    ContactFriction frictionModel;
 }
 
 singleton Physics
@@ -212,7 +222,7 @@ system CollectJoints(Joint joint, mut Physics physics)
         limitStiffness = joint.limitStiffness, limitDamping = joint.limitDamping,
         parentPosition = joint.parentPosition, parentRotation = joint.parentRotation,
         childPosition = joint.childPosition, childRotation = joint.childRotation,
-        axis = joint.axis
+        axis = joint.axis, friction = joint.friction, load = joint.load
     });
 }
 
@@ -227,7 +237,8 @@ system CollectColliders(Collider collider, mut Physics physics)
         type = collider.type, exclusionGroup = collider.exclusionGroup,
         radius = collider.radius, position = collider.position, rotation = collider.rotation,
         stiffness = collider.stiffness, damping = collider.damping,
-        frictionDamping = collider.frictionDamping, friction = collider.friction
+        frictionDamping = collider.frictionDamping, friction = collider.friction,
+        frictionModel = collider.frictionModel
     });
 }
 
@@ -272,6 +283,7 @@ system PublishJoints(mut Joint joint, Physics physics)
     if (state.entity != entity) return;
     joint.position = state.position;
     joint.velocity = state.velocity;
+    joint.load = state.load;
 }
 
 [Stage(PhysicsStages.Step, 5)]

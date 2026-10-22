@@ -958,10 +958,6 @@ static WP_FORCEINLINE void eval_body_contact_cpu_forward_dispatch(
     wp::launch_bounds_t<1> *dim,
     wp_args_eval_body_contact *_wp_args)
 {
-    wp::tile_shared_storage_t tile_mem;
-#if defined(WP_ENABLE_TILES_IN_STACK_MEMORY)
-    wp::shared_tile_storage = &tile_mem;
-#endif
 
     const bool wp_linear_contiguous = dim->coord_mult == 1 && ((_wp_args->body_q.strides[0] == (int)sizeof(wp::transform_t<wp::float32>)) & (_wp_args->body_qd.strides[0] == (int)sizeof(wp::vec_t<6, wp::float32>)) & (_wp_args->body_com.strides[0] == (int)sizeof(wp::vec_t<3, wp::float32>)) & (_wp_args->shape_material_ke.strides[0] == (int)sizeof(wp::float32)) & (_wp_args->shape_material_kd.strides[0] == (int)sizeof(wp::float32)) & (_wp_args->shape_material_kf.strides[0] == (int)sizeof(wp::float32)) & (_wp_args->shape_material_ka.strides[0] == (int)sizeof(wp::float32)) & (_wp_args->shape_material_mu.strides[0] == (int)sizeof(wp::float32)) & (_wp_args->shape_body.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->contact_count.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->contact_point0.strides[0] == (int)sizeof(wp::vec_t<3, wp::float32>)) & (_wp_args->contact_point1.strides[0] == (int)sizeof(wp::vec_t<3, wp::float32>)) & (_wp_args->contact_surface_velocity.strides[0] == (int)sizeof(wp::vec_t<3, wp::float32>)) & (_wp_args->contact_normal.strides[0] == (int)sizeof(wp::vec_t<3, wp::float32>)) & (_wp_args->contact_shape0.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->contact_shape1.strides[0] == (int)sizeof(wp::int32)) & (_wp_args->contact_margin0.strides[0] == (int)sizeof(wp::float32)) & (_wp_args->contact_margin1.strides[0] == (int)sizeof(wp::float32)) & (_wp_args->rigid_contact_stiffness.strides[0] == (int)sizeof(wp::float32)) & (_wp_args->rigid_contact_damping.strides[0] == (int)sizeof(wp::float32)) & (_wp_args->rigid_contact_friction_scale.strides[0] == (int)sizeof(wp::float32)) & (_wp_args->body_f.strides[0] == (int)sizeof(wp::vec_t<6, wp::float32>)));
     if (wp_linear_contiguous)
