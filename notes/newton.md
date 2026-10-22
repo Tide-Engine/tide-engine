@@ -1,5 +1,29 @@
 # The Newton package
 
+## Arm fixture hash after joint-state additions (2026-10-22)
+
+Nightly run `39837828628` at `d93f8e3e` failed only the arm fixture's
+200-tick world-hash assertion in all nine simulation suites: Windows,
+Linux and macOS native/web, MinGW, Android and Linux sanitizers. Every
+target reported `122d2b87150ba000`. The next run, `39840272210` at
+`ae6a0899`, reproduces that same failure in its completed Linux native job.
+
+`4f62aec7` intentionally added `Joint.friction`/`load`, the matching
+`JointState` fields and collider friction-model state, and publishes joint
+load after each successful step. The arm's whole-world pin still described
+the previous package state. Update only that expected hash and its comment;
+the physics, game, inputs and behavioral assertions are unchanged.
+
+Before repinning, fresh local native/WASI debug/release builds all reproduce
+the same new hash, with only that assertion failing. After repinning, all
+four selected Newton CTests pass in each configuration: runtime (63 cases),
+package ordering, robot (six cases, including threaded equality and lossy
+two-client rollback), and fresh-process join. Validation uses Clang 23.1.2
+and Node 24.19.0; logs are under `build/ci-inspection/`. No full-repository
+suite or browser/GPU coverage is claimed for this test-only correction.
+Other operating systems, Android and sanitizers were observed in the failed
+run, not rerun locally. No workflow was manually dispatched or retried.
+
 ## Dev integration (2026-10-22)
 
 The 45-file local Newton/MicroDuck delta is integrated with current `dev`.

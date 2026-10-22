@@ -12,8 +12,8 @@
 #endif
 
 #define DT (1.0f / 120.0f)
-/* Both owners receive their actions; observed on native/WASI before pinning. */
-#define ROBOT_HASH UINT64_C(0xdb6cb5835d7c9b26)
+/* Includes joint friction/load state; observed on native/WASI debug/release. */
+#define ROBOT_HASH UINT64_C(0x122d2b87150ba000)
 
 static Controls action(uint32_t tick, int seat)
 {
