@@ -59,6 +59,7 @@ if(TIDE_SANITIZE)
 endif()
 include(cmake/WebTest.cmake)
 include(cmake/VulkanTests.cmake)
+include(cmake/HlslTests.cmake)
 find_program(TIDE_NODE NAMES node) # Tests that run Node: web builds need it anyway
 
 option(TIDE_PLATFORM "Build the platform layer and the demo. Desktop builds download GLFW." ON)

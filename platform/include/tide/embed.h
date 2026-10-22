@@ -22,7 +22,7 @@ typedef struct tide_embed tide_embed;
 
 // What another language binds against: a change to anything here that it lays
 // out or calls changes the number, and tide_embed_abi says it.
-#define TIDE_EMBED_ABI 3u
+#define TIDE_EMBED_ABI 4u
 uint32_t tide_embed_abi(void);
 
 typedef struct tide_embed_desc {
@@ -150,6 +150,67 @@ _Static_assert(sizeof(tide_embed_draw_header) == 64, "tide_embed_draw_header has
 
 const uint8_t *tide_embed_draw(const tide_embed *e, uint32_t *size);
 
+// What the frame's views drew, drawn by Tide's renderer as it draws for a
+// window of its own, but into the other program's: the GPU calls it made, as
+// commands for that program to replay with its GPU API (Unity's
+// TideRender.cs does, where it has compute-class GPUs; tide_embed_draw is for
+// the others). Shapes, text, meshes, 3D, render targets, stencil, blits and
+// the game's frags and verts all come out of it, the same pixels as Tide
+// draws itself.
+//
+// The calls are platform/src/gpu.h's, which says what each does. Each
+// command is a uint32_t op (tide_embed_render_op), a uint32_t count of the
+// bytes after it (a multiple of 4), then those bytes: uint32_ts, but where
+// it says otherwise, and bytes padded with zeros to a multiple of 4. An object
+// (a buffer, a texture, a cube, a pipeline or a target) is a number from 1
+// that the commands give out as they make it, and it lives until a command
+// frees it, across frames, until tide_embed_render_reset. Target 0 is the
+// other program's own: what the frame draws over, never cleared. The pointer
+// is valid until the next call.
+typedef enum tide_embed_render_op {
+    // id, kind (tide_gpu_buffer_kind: 0 vertices, 1 indices), size, given (0 or 1), then `size` bytes if given
+    TIDE_EMBED_RENDER_BUFFER = 1,
+    TIDE_EMBED_RENDER_BUFFER_WRITE, // id, offset, size, then `size` bytes
+    TIDE_EMBED_RENDER_BUFFER_FREE,  // id
+    // id, format (tide_gpu_format: 0 RGBA8, 1 R8, 2 R16F, 3 RGBA32I), width, height, given, then its pixels if
+    // given, rows from the top
+    TIDE_EMBED_RENDER_TEXTURE,
+    TIDE_EMBED_RENDER_TEXTURE_WRITE, // id, x, y, width, height, then that part's pixels, its rows one after another
+    TIDE_EMBED_RENDER_MIPMAPS,       // id: a texture's, a target's color texture's or a cube's
+    TIDE_EMBED_RENDER_TEXTURE_FREE,  // id: a texture's or a cube's
+    // id, color (tide_gpu_color), size, given, then if given its six faces' pixels, 4 bytes each, +x, -x, +y, -y, +z, -z
+    TIDE_EMBED_RENDER_CUBE,
+    TIDE_EMBED_RENDER_CUBE_FACE, // target id, cube id, face, its depth texture's id
+    // id, its shaders' key as two uint32_ts (low first: FNV-1a's 64 bits of its SPIR-V words, or of its WGSL where
+    // it has none, which tide unity names the shader it writes by), slot_count, 3 slots of stride and per_instance,
+    // attribute_count, 16 attributes of slot, format and offset, uniform_size, texture_count, 8 reads, blend,
+    // depth, cull, stencil_test, stencil_op, into, outputs, then its name's length and bytes
+    TIDE_EMBED_RENDER_PIPELINE,
+    TIDE_EMBED_RENDER_PIPELINE_FREE, // id
+    // id, format (tide_gpu_target_format), width, height, then the ids of its 4 color textures (0 past its colors)
+    // and of its depth texture (0 for a multisampled one, till RESOLVE_DEPTH)
+    TIDE_EMBED_RENDER_TARGET,
+    TIDE_EMBED_RENDER_TARGET_FREE,    // id: a target's or a cube face's
+    TIDE_EMBED_RENDER_RESOLVE_DEPTH,  // target id, its depth texture's id
+    TIDE_EMBED_RENDER_BEGIN,          // target (0 for the other program's), clear
+    TIDE_EMBED_RENDER_END,
+    TIDE_EMBED_RENDER_SCISSOR,        // x, y, width, height: pixels from the target's top left
+    TIDE_EMBED_RENDER_USE,            // pipeline
+    TIDE_EMBED_RENDER_STENCIL,        // value
+    TIDE_EMBED_RENDER_UNIFORMS,       // size, then `size` bytes
+    TIDE_EMBED_RENDER_SAMPLE,         // slot, texture, filter (tide_gpu_filter), wrap (tide_gpu_wrap)
+    TIDE_EMBED_RENDER_VERTICES,       // slot, buffer, offset
+    TIDE_EMBED_RENDER_INDICES,        // buffer, wide (32 bits, or 16)
+    TIDE_EMBED_RENDER_DRAW,           // first, count, instances
+    TIDE_EMBED_RENDER_DRAW_INDEXED,   // count, instances
+} tide_embed_render_op;
+
+const uint8_t *tide_embed_render(tide_embed *e, uint32_t *size);
+
+// The other program's GPU objects are gone (it started over): the next
+// tide_embed_render makes everything it draws with again, numbering from 1.
+void tide_embed_render_reset(tide_embed *e);
+
 // A command from the other program, as local code's Send: `type` its type's
 // place in the schema, sent to the entity `target_index`/`target_generation`
 // (zeros for none: entity.Send against Send), `value` its bytes as the schema
@@ -168,14 +229,16 @@ bool tide_embed_command(tide_embed *e, uint32_t type, uint32_t target_index, uin
 bool tide_embed_request(tide_embed *e, tide_session_request_kind kind, const char *text, uint32_t port);
 
 // The camera the frame's views start with, as the program Tide is in draws its
-// scene: where it is (x, y, z), which way it faces (a quaternion x, y, z, w,
-// in Tide's axes: +y up, +z forward) and its vertical field of view in
-// degrees. Draw.WorldToScreen and the 3D draws then agree with that program's
-// picture; a view's own Draw.Camera is still its own. A field of view that
-// isn't between 0 and 180, or a value that isn't finite, goes back to Tide's
-// own first camera, which views start with until this is called.
-void tide_embed_camera(tide_embed *e, float x, float y, float z, float qx, float qy, float qz, float qw,
-                       float field_of_view);
+// scene, as tide_draw_set_camera_matrices takes one: `transform` places it in
+// the world (it looks along its +z, +y up: Unity's camera transform, unscaled),
+// and `projection` takes what it sees, looking down -z, to OpenGL's clip
+// space (Unity's Camera.projectionMatrix), each 16 floats, column by column.
+// Draw.WorldToScreen, the 3D draws and their depth then agree with that
+// program's picture, perspective or orthographic, near and far planes too; a
+// view's own Draw.Camera is still its own. NULL for either, or a value that
+// isn't finite, goes back to Tide's own first camera, which views start with
+// until this is called.
+void tide_embed_camera(tide_embed *e, const float *transform, const float *projection);
 
 // The app went to the background (true) or came back. A phone leaves its match
 // there, which hands a match it hosted over where host migration is on, rather

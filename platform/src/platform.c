@@ -4310,6 +4310,20 @@ void tide_platform_draw(const tide_draw_list *list)
     }
 }
 
+// Inside another program, whose GPU draws: the list through the backend that writes the calls down for it
+const uint8_t *tide_platform_embed_render(const tide_draw_list *list, uint32_t *size)
+{
+    gpu = &tide_gpu_record;
+    tide_gpu_record_begin();
+    draw_list(list, frame_destination(), false, false);
+    return tide_gpu_record_end(size);
+}
+
+void tide_platform_embed_render_reset(void)
+{
+    tide_gpu_record_reset();
+}
+
 void tide_platform_gpu_timing(const bool enabled)
 {
     if (gpu_timing == enabled) return;

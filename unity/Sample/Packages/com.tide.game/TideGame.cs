@@ -5,7 +5,7 @@ namespace Tide.Game
     // What this game's C# was made from: a view packet of another build isn't read by it.
     public static class TideGameSchema
     {
-        public const string Hash = "BACA3413D649CA34";
+        public const string Hash = "F94EB3DABF6D73DE";
         public const string Game = "Bounce";
         public const int TickRate = 30;
         public static readonly string[] Scenes = {  };
@@ -85,6 +85,32 @@ namespace Tide.Game
         Add = 1,
         Multiply = 2,
         Replace = 3,
+    }
+}
+namespace Tide.Game
+{
+    public enum StencilTest : int
+    {
+        Always = 0,
+        Never = 1,
+        Less = 2,
+        Equal = 3,
+        LessEqual = 4,
+        Greater = 5,
+        NotEqual = 6,
+        GreaterEqual = 7,
+    }
+}
+namespace Tide.Game
+{
+    public enum StencilOp : int
+    {
+        Keep = 0,
+        Replace = 1,
+        Increment = 2,
+        Decrement = 3,
+        Zero = 4,
+        Invert = 5,
     }
 }
 namespace Tide.Game
@@ -405,6 +431,41 @@ namespace Tide.Game
 }
 namespace Tide.Game
 {
+    // Tide's struct PlateCorner, as Unity code has it
+    [global::System.Serializable]
+    public unsafe partial struct PlateCorner
+    {
+        public global::UnityEngine.Vector3 position;
+        public global::UnityEngine.Vector2 uv;
+
+        public static PlateCorner From(Value v, global::Tide.TidePacket packet, global::Tide.TideRunner runner)
+        {
+            var s = new PlateCorner();
+            s.position = v.position;
+            s.uv = v.uv;
+            return s;
+        }
+
+        public Value Pack(global::Tide.TideCommandWriter writer)
+        {
+            var v = new Value();
+            v.position = position;
+            v.uv = uv;
+            return v;
+        }
+
+        // Tide's struct PlateCorner, as the game's C lays it out
+        [global::Tide.TideType("PlateCorner")]
+        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 20)]
+        public unsafe partial struct Value
+        {
+            [global::System.Runtime.InteropServices.FieldOffset(0)] public global::UnityEngine.Vector3 position;
+            [global::System.Runtime.InteropServices.FieldOffset(12)] public global::UnityEngine.Vector2 uv;
+        }
+    }
+}
+namespace Tide.Game
+{
     // Tide's struct tide_hierarchy_node
     [global::Tide.TideType("tide_hierarchy_node")]
     [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 32)]
@@ -606,6 +667,72 @@ namespace Tide.Game
         {
             [global::System.Runtime.InteropServices.FieldOffset(0)] public int arrivals;
             [global::System.Runtime.InteropServices.FieldOffset(8)] public global::Tide.TideMap balls;
+        }
+    }
+}
+namespace Tide.Game
+{
+    // Tide's struct Plates, as Unity code has it
+    [global::System.Serializable]
+    public unsafe partial struct Plates
+    {
+        public global::System.Collections.Generic.List<global::Tide.Game.PlateCorner> corners;
+        public global::System.Collections.Generic.List<int> faces;
+
+        public static Plates From(Value v, global::Tide.TidePacket packet, global::Tide.TideRunner runner)
+        {
+            var s = new Plates();
+            s.corners = global::Tide.TideRead.List<global::Tide.Game.PlateCorner.Value, global::Tide.Game.PlateCorner>(packet, runner, v.corners.handle, (e0, p0, r0) => global::Tide.Game.PlateCorner.From(e0, p0, r0));
+            s.faces = global::Tide.TideRead.List<int, int>(packet, runner, v.faces.handle, (e0, p0, r0) => e0);
+            return s;
+        }
+
+        public Value Pack(global::Tide.TideCommandWriter writer)
+        {
+            var v = new Value();
+            v.faces = writer.List(faces);
+            return v;
+        }
+
+        // Tide's struct Plates, as the game's C lays it out
+        [global::Tide.TideType("Plates")]
+        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 8)]
+        public unsafe partial struct Value
+        {
+            [global::System.Runtime.InteropServices.FieldOffset(0)] public global::Tide.TideList corners;
+            [global::System.Runtime.InteropServices.FieldOffset(4)] public global::Tide.TideList faces;
+        }
+    }
+}
+namespace Tide.Game
+{
+    // Tide's struct Badge, as Unity code has it
+    [global::System.Serializable]
+    public unsafe partial struct Badge
+    {
+        public bool made;
+
+        public static Badge From(Value v, global::Tide.TidePacket packet, global::Tide.TideRunner runner)
+        {
+            var s = new Badge();
+            s.made = v.made;
+            return s;
+        }
+
+        public Value Pack(global::Tide.TideCommandWriter writer)
+        {
+            var v = new Value();
+            v.made = made;
+            return v;
+        }
+
+        // Tide's struct Badge, as the game's C lays it out
+        [global::Tide.TideType("Badge")]
+        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 32)]
+        public unsafe partial struct Value
+        {
+            [global::System.Runtime.InteropServices.FieldOffset(0)] public fixed byte image[24]; // RenderTarget: its bytes
+            [global::System.Runtime.InteropServices.FieldOffset(24)] public bool made;
         }
     }
 }

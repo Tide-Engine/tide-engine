@@ -6,6 +6,154 @@ than a codec-only package. The host-relayed architecture, API names, packet
 limits and buffering choices below are implementation picks, provisional in
 `docs/spec.md`; the optional feature and simulation exclusion are decided.
 
+## Game-defined receive processing (2026-10-22)
+
+The owner requested arbitrary audio processing, specifically a dynamic radio
+effect. This uses the existing mixer bus/effect machinery: `VoiceClient.bus`
+is an integer receive bus (default 0, master), applied to each decoded playback
+voice. Games use `Audio.SetEffect(Bus.Radio, Radio(knobs))` every frame, with
+ordinary `audio` code, state and dynamic knobs. Game enum values convert with
+`int(Bus.Radio)`. This introduces no compiler, generated runtime, mixer,
+capture, codec, protocol, server or engine host changes.
+
+`Voice.SetBus(PlayerID, int)` overrides one speaker; negative clears the
+override and resumes following the default. There are 32 routing overrides,
+independent of the 32 gain overrides. Existing entries update, cleared slots
+are reusable, and a new entry at capacity is ignored. The default and all
+nonnegative overrides outside 0..15 repair to master; a negative default also
+repairs to master. Invalid player IDs are ignored. Clearing an override
+with no standard-host client allocates nothing. The custom C APIs are
+`tide_voice_client_bus` and `tide_voice_client_player_bus`; the existing C
+configure signature is unchanged. The package's ordinary configure extern
+additionally carries the integer bus to the standard provider.
+
+Overrides survive initial connection setup (including calls before enabling),
+and are cleared with gains on a later local reconnect/migration/match change.
+The default bus remains a local setting. Changing routes affects existing
+playback without restarting encoders, decoders or receive queues. A bus effect
+processes its mixed speakers, with one shared state/knob set per bus. Different
+buses give independent processing, within the mixer's existing 16-bus limit.
+Normal voice/player gains happen before the bus effect; its output then passes
+through bus/master volume as usual. This processes only this receiver's audio,
+not transmitted samples, delivery permissions or the game's other buses.
+
+The package test now compiles the existing mixer source into its native/WASI
+test executable (no audio device). An eighth three-session case checks a route
+set before connection, live gain knobs at 0/1/0.25 while preserving effect
+state, clearing a per-player route, changing the default on an active speaker,
+arbitrary integer repair and reset on reconnect. It runs actual Opus/session
+playback through the mixer. A separate dry sound must remain unchanged when
+the voice bus is muted; subtracting that exact dry signal detects accidental
+master processing. Teardown forgets the mixer before freeing voice queues.
+The native three-process host fixture also routes through a real game-defined
+Tide audio effect with knobs changing every 30 frames. All eight package cases
+pass on native/WASI, and the standard host capture test passes.
+
+The public docs include a compilable radio example (band filtering, clipping,
+amplitude-scaled hiss, live signal strength and clean per-player routes).
+The example transpiles without warnings. Both complete debug builds pass.
+The full native run covered 2,469 checks: 2,467 passed in the concurrent
+24-job run (118.27 s); CLI help and the benchmark harness had child-process
+timeouts. Both unchanged checks pass serially with the original deadlines
+(19.22 s). The full web debug suite passes 2,409/2,409 (374.19 s), including
+WebGL/D3D11/WebGPU, browser rooms and threads. The final host fixture also
+calls the Tide per-player SetBus extern and passes again (3.45 s).
+
+The docs production build passes. Native/web component installation succeeds,
+and the installed checkout-built CLI builds the documented radio example for
+web without special flags. The first scratch CLI attempt accidentally included
+transpiled C stored inside the scratch game's source folder and correctly
+failed duplicate symbols; a clean game folder containing only the documented
+Tide source and package list builds successfully. Diff whitespace checks pass.
+No physical microphone/device quality, Android, other desktop OS or sanitizer
+run was added; those remain manual/normal CI coverage. No CI was dispatched.
+
+Integration: origin/dev's Unity rendering/HLSL work merged cleanly in
+`dc4e8a52`, changing compiler and standard-host dependencies without voice/audio
+overlap. Rebuilt merged native voice, voice host and CLI; both voice targets
+pass (1.54 s). Rebuilt merged WASI voice and web platform; voice passes (0.82 s).
+The merged docs build and a rebuilt/reinstalled CLI's radio web example pass.
+No broad full-suite repeat was required for the disjoint dependency changes.
+
+## Configurable RNNoise suppression (2026-10-22)
+
+The owner requested RNNoise support controlled by a setting. Local
+`VoiceClient.noiseSuppression` defaults true and filters only outgoing capture.
+The owner selected true after the initial off-by-default implementation.
+The explicit C configure call now takes `noise_suppression` before `volume`;
+the ordinary Tide extern carries the same boolean. No compiler, engine host,
+microphone backend, session protocol or generated-runtime API changes.
+
+RNNoise 0.2 and upstream model archive `0b50c45` are pinned by SHA-256 in
+`packages/voice/import_rnnoise.py` and the package README, with upstream
+COPYING/AUTHORS retained. The importer selects the smaller `little` model,
+rewrites quoted includes and stores C as `.c.h` behind ten portable wrappers.
+It preserves algorithms/weights. Upstream's compile-time SSE2/NEON/scalar
+selection remains; runtime CPU dispatch is off. The scalar `vec.h` includes
+an absent `os_support.h`: a small hand-maintained compatibility header maps
+its only required macro, `OPUS_CLEAR`, to RNNoise's own `RNN_CLEAR`. Vendor
+warnings are disabled and debug vendor code optimized, as for Opus. Strict
+Tide float flags remain. Only the upstream public header's old-style empty
+parameter declarations get a narrow strict-prototypes diagnostic suppression.
+
+On the frame thread, captured normalized mono samples are scaled to PCM16's
+float range, processed in two 480-sample/10 ms blocks, repaired/clamped back
+to normalized finite samples and encoded by the existing 960-sample Opus path.
+No callback gains allocation, filtering or locking. RNNoise's analysis overlap
+and delayed spectrum add about 20 ms of filter delay; no extra queue, wire
+format, receive processing or network messages are introduced.
+
+Filter state is allocated only for an enabled, connected, transmitting client
+requesting suppression. We allocate explicitly and check failure before init;
+upstream `rnnoise_create` does not check malloc before dereferencing. Failure
+leaves transmission stopped and retries later, as encoder failure does.
+The 32,688-byte state remains until client teardown but does no work while
+bypassed. Transmission start, reconnect/migration and a setting change reset
+RNNoise/Opus history and stream numbering, discard partial capture and
+invalidate queued capture generations. Receivers and other game audio are
+unaffected. The model is included in games using Voice even with the flag off;
+games omitting Voice compile/link neither codec nor filter/model. The model
+object has 2,809,098 bytes of native readonly data (before compression).
+
+Two new three-session tests exercise actual RNNoise -> Opus -> session ->
+playback: deterministic steady noise falls below 20% of bypass energy,
+switching off restores above 80%, a stopped/restarted silent utterance has no
+stale history, and synthetic speech retains above 25% of bypass energy.
+These broad signal bounds avoid pinning vendor samples across architectures.
+The speech fixture's provenance is in `packages/voice/test/README.md`.
+All seven package cases pass on native and WASI. The three-process standard
+host fixture now relies on the true Tide default and passes its real
+microphone-file/mixer/transport/playback assertions.
+
+Release measurements on Ryzen 9 7900X (clang 23.1.2, three runs, synthesized
+48 kHz mono speech, 200 warmup + 2,000 measured packets per case): median of
+run means is 98.510 us/20 ms frame for Opus encoding alone and 235.472 us with
+RNNoise (about 0.69% of one core extra while transmitting). Encoding p95 is
+121.3 us versus 314.3 us. Mean Opus payload is 42.986 versus 43.172 bytes:
+suppression adds no protocol overhead. This measures frame-thread filtering
+plus encoding, excluding device/network time. Mobile/web CPU, physical
+microphone quality and actual mouth-to-ear latency have not been measured.
+
+Full Windows native debug: 2,469/2,469 pass (517.93 s, serial), including all
+37 GPU tests. Full web debug: 2,409/2,409 pass (331.24 s, 24 CTest jobs),
+including WebGL/D3D11/WebGPU and browser rooms/threading. Both complete builds
+and the docs production build pass. Reinstalling native/web components into
+the scratch prefix succeeds; that installation's checkout-built CLI builds
+the documented push-to-talk game with `noiseSuppression = true` for web,
+and a plain game without Voice. No runtime downloads or special flags are
+needed. `git diff --check` is clean outside the unchanged upstream whitespace
+retained in three vendor lines. Other operating systems, Android, physical
+microphones and sanitizers remain CI/manual coverage; none were run here.
+
+Default-on follow-up: only the package's Tide initializer, C header comment,
+host fixture and docs changed. The host fixture omits an explicit suppression
+assignment to exercise the ordinary default through generated local state,
+ConfigureVoice and the real microphone-file/mixer/session path. Custom C
+hosts still pass their explicit suppression boolean when configuring a client.
+Both voice targets pass natively (2/2), all seven package cases pass on WASI,
+and the docs production build passes. Generated native/web local initializers
+both explicitly set `noiseSuppression = true`; the diff passes whitespace checks.
+
 ## Package and cost
 
 `packages/voice/tide.packages` declares `Voice`. `voice.tide` provides local

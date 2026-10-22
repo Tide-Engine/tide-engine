@@ -6,6 +6,8 @@
 //     tide_spirv_shaders <file.c>
 //     tide_spirv_shaders --spv <dir>    each as <dir>/<name>.spv, for spirv-val
 //                                       (tide_spirv_shaders_valid)
+//     tide_spirv_shaders --hlsl <dir>   each as HLSL, Unity's (compiler/src/hlsl.c),
+//                                       as <dir>/<name>.hlsl, for fxc (tide_hlsl_shaders_valid)
 
 #define TIDE_SHADERS_WGSL 1 // shaders.h's WGSL, which it has for the web otherwise
 
@@ -13,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "hlsl.h"
 #include "spirv.h"
 
 #pragma clang diagnostic push
@@ -20,7 +23,8 @@
 #include "shaders.h"
 #pragma clang diagnostic pop
 
-static const char *spv_dir; // Where --spv writes them, or NULL for the C file
+static const char *spv_dir;  // Where --spv writes them, or NULL for the C file
+static const char *hlsl_dir; // ...or where --hlsl writes their HLSL
 
 static bool write(FILE *out, const char *name, const char *first, const char *second)
 {
@@ -31,6 +35,22 @@ static bool write(FILE *out, const char *name, const char *first, const char *se
     strcpy(wgsl, first);
     if (second) strcat(wgsl, second);
     char error[256];
+    if (hlsl_dir) {
+        char *hlsl = tide_wgsl_to_hlsl(wgsl, error, sizeof error);
+        free(wgsl);
+        if (!hlsl) {
+            fprintf(stderr, "tide_spirv_shaders: the %s shader's WGSL didn't become HLSL: %s\n", name, error);
+            return false;
+        }
+        char path[1024];
+        snprintf(path, sizeof path, "%s/%s.hlsl", hlsl_dir, name);
+        FILE *file = fopen(path, "wb");
+        bool written = file && fputs(hlsl, file) >= 0;
+        if (file && fclose(file) != 0) written = false;
+        if (!written) fprintf(stderr, "tide_spirv_shaders: can't write %s\n", path);
+        free(hlsl);
+        return written;
+    }
     size_t count = 0;
     uint32_t *words = tide_wgsl_to_spirv(wgsl, &count, error, sizeof error);
     free(wgsl);
@@ -57,12 +77,9 @@ static bool write(FILE *out, const char *name, const char *first, const char *se
 
 static bool write_all(FILE *out)
 {
-    return write(out, "shape", shape_wgsl, NULL) && write(out, "smooth_shape", smooth_shape_wgsl_vertex, smooth_shape_wgsl_fragment)
-        && write(out, "solid_shape", solid_shape_wgsl_vertex, smooth_shape_wgsl_fragment)
-        && write(out, "mesh", mesh_wgsl, NULL) && write(out, "text", text_wgsl, NULL)
-        && write(out, "quad", quad_wgsl, NULL) && write(out, "text_quad", text_quad_wgsl, NULL)
-        && write(out, "mesh_3d", mesh_3d_wgsl, NULL) && write(out, "clear", clear_wgsl, NULL)
-        && write(out, "clear_all", clear_all_wgsl, NULL);
+#define WRITE(name, first, second) &&write(out, #name, first, second)
+    return true TIDE_RENDERER_WGSL(WRITE);
+#undef WRITE
 }
 
 int main(int argc, char **argv)
@@ -71,8 +88,13 @@ int main(int argc, char **argv)
         spv_dir = argv[2];
         return write_all(NULL) ? 0 : 1;
     }
+    if (argc == 3 && strcmp(argv[1], "--hlsl") == 0) {
+        hlsl_dir = argv[2];
+        return write_all(NULL) ? 0 : 1;
+    }
     if (argc != 2) {
-        fprintf(stderr, "usage: tide_spirv_shaders <file.c>\n       tide_spirv_shaders --spv <dir>\n");
+        fprintf(stderr, "usage: tide_spirv_shaders <file.c>\n       tide_spirv_shaders --spv <dir>\n"
+                        "       tide_spirv_shaders --hlsl <dir>\n");
         return 2;
     }
     FILE *out = fopen(argv[1], "wb");

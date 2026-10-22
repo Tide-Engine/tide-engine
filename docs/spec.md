@@ -4386,9 +4386,17 @@ Picks made as the microphone was built (2026-10-07, the eighth card), awaiting t
 
 **Decided:** working voice chat through sessions is an optional package using Opus and the existing microphone. Games without the package do not compile/link its codec or allocate its buffers. Voice is local presentation, outside ticks, commands, rollback, snapshots and deterministic hashes.
 
+**Decided (2026-10-22):** the optional voice package also supports RNNoise microphone noise suppression, controlled by the local `VoiceClient.noiseSuppression` setting, defaulting to true.
+
 **Implemented provisional choices:** `voice` / namespace `Voice`, local `VoiceClient.enabled`, `transmitting` and `volume`, `ConfigureVoice` ordering, and `SetVolume(PlayerID, float)`. Both flags default false; microphone capture requires transmission in a connected session. The host relays unreliable packets to other subscribed players. Global chat, 48 kHz mono, 20 ms frames, 24 kbit/s, 40 ms initial receive buffering, Opus DTX/FEC/concealment, 32 receive slots and 32 player gains are first-build choices. C hosts use the optional `tide_voice_provider` and local-data session API; no language builtin or generated runtime call is added. [Voice chat](./packages/voice.md) documents use and limits. Teams, proximity routing, positional voice and embedded Unity audio remain unbuilt.
 
 The older microphone implementation notes above describe the pre-package state; voice chat is no longer deferred.
+
+**Implemented provisional suppression choices:** suppression filters only outgoing capture. RNNoise 0.2's smaller built-in model runs on the frame thread in 480-sample blocks before Opus; its history resets on transmission start and setting changes. State is lazy and retained until client teardown; off means no filter work. The model ships with the optional voice package; games without it compile/link neither RNNoise nor Opus. No engine, simulation or wire-format change is needed.
+
+**Decided (2026-10-22):** game code can process received voice with custom audio effects and dynamic parameters, including radio effects.
+
+**Implemented provisional processing choices:** `VoiceClient.bus` is a local integer receive bus, default 0 (master). `Voice.SetBus(PlayerID, int)` overrides one speaker; negative removes the override, and other out-of-range buses fall back to master. Routes apply to existing playback without restarting codecs. At most 32 player routing overrides persist independently of volume overrides until changed or the local connection/match changes, with initial setup preserving them. The default bus persists across reconnects. Voice uses the existing 16 mixer buses: speakers on one bus are mixed before its ordinary `Audio.SetEffect`, sharing its effect state and live knobs. Processing affects only this receiver's playback, with no compiler, mixer, simulation or packet change.
 
 ### Open
 

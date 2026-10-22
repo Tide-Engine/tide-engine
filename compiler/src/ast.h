@@ -1690,3 +1690,5 @@ void print_shaders(const program *prog, sb *out);
 // for each in `out`, for `tidec --spirv`: false, having said why, if one's
 // WGSL didn't become SPIR-V or a file couldn't be written.
 bool write_spirv(const program *prog, const char *dir, sb *out);
+// ...or its HLSL, as <n>.hlsl, for `tidec --hlsl` (hlsl.h).
+bool write_hlsl(const program *prog, const char *dir, sb *out);

@@ -720,3 +720,19 @@ static const char *const clear_all_wgsl = WGSL(
     "    let c = vec4f(u.color.rgb * u.color.a, u.color.a);\n"
     "    return Colors(c, c, c, c);\n"
     "}\n");
+
+// Each pipeline's WGSL as the renderer gives it, by the name its SPIR-V has
+// (shaders_spirv.h): one piece, or two it joins (joined in platform.c), whose
+// whole is longer than C promises a string literal can be. What its SPIR-V
+// and its HLSL, Unity's (tide unity), are made of.
+#define TIDE_RENDERER_WGSL(X)                                                                                          \
+    X(shape, shape_wgsl, NULL)                                                                                         \
+    X(smooth_shape, smooth_shape_wgsl_vertex, smooth_shape_wgsl_fragment)                                              \
+    X(solid_shape, solid_shape_wgsl_vertex, smooth_shape_wgsl_fragment)                                                \
+    X(mesh, mesh_wgsl, NULL)                                                                                           \
+    X(text, text_wgsl, NULL)                                                                                           \
+    X(quad, quad_wgsl, NULL)                                                                                           \
+    X(text_quad, text_quad_wgsl, NULL)                                                                                 \
+    X(mesh_3d, mesh_3d_wgsl, NULL)                                                                                     \
+    X(clear, clear_wgsl, NULL)                                                                                         \
+    X(clear_all, clear_all_wgsl, NULL)

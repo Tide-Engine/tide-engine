@@ -9,6 +9,10 @@
 #pragma clang diagnostic ignored "-Wlanguage-extension-token"
 #include "opus/include/opus.h"
 #pragma clang diagnostic pop
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wstrict-prototypes"
+#include "rnnoise/include/rnnoise.h"
+#pragma clang diagnostic pop
 
 #define FRAME 960u
 #define PACKET 400u
@@ -51,9 +55,16 @@ typedef struct gain {
     float volume;
 } gain;
 
+typedef struct route {
+    tide_player_id player;
+    uint32_t bus;
+} route;
+
 struct tide_voice_client {
     bool enabled, transmitting, was_transmitting;
+    bool noise_suppression, was_suppressing;
     float volume;
+    uint32_t bus;
     tide_session *session;
     tide_player_id player;
     uint64_t cookie;
@@ -64,8 +75,10 @@ struct tide_voice_client {
     capture_block capture[CAPTURE];
     float input[FRAME];
     OpusEncoder *encoder;
+    DenoiseState *denoiser;
     speaker speakers[SPEAKERS];
     gain gains[SPEAKERS];
+    route routes[SPEAKERS];
     double now;
 };
 
@@ -159,11 +172,13 @@ tide_voice_client *tide_voice_client_create(void)
     return v;
 }
 
-void tide_voice_client_configure(tide_voice_client *v, const bool enabled, const bool transmitting, const float volume)
+void tide_voice_client_configure(tide_voice_client *v, const bool enabled, const bool transmitting,
+                                 const bool noise_suppression, const float volume)
 {
     if (!v) return;
     v->enabled = enabled;
     v->transmitting = enabled && transmitting;
+    v->noise_suppression = noise_suppression;
     v->volume = safe_gain(volume);
 }
 
@@ -185,6 +200,40 @@ static float player_gain(const tide_voice_client *v, const tide_player_id player
         if (tide_player_equal(v->gains[i].player, player)) return v->gains[i].volume;
     }
     return 1.0f;
+}
+
+static uint32_t safe_bus(const int32_t bus)
+{
+    return bus >= 0 && (uint32_t)bus < TIDE_AUDIO_BUSES ? (uint32_t)bus : 0u;
+}
+
+void tide_voice_client_bus(tide_voice_client *v, const int32_t bus)
+{
+    if (v) v->bus = safe_bus(bus);
+}
+
+void tide_voice_client_player_bus(tide_voice_client *v, const tide_player_id player, const int32_t bus)
+{
+    if (!v || tide_player_index(player) < 0) return;
+    route *empty = NULL;
+    for (uint32_t i = 0; i < SPEAKERS; i++) {
+        route *r = &v->routes[i];
+        if (tide_player_equal(r->player, player)) {
+            if (bus < 0) *r = (route){0};
+            else r->bus = safe_bus(bus);
+            return;
+        }
+        if (!r->player.id && !empty) empty = r;
+    }
+    if (bus >= 0 && empty) *empty = (route){player, safe_bus(bus)};
+}
+
+static uint32_t player_bus(const tide_voice_client *v, const tide_player_id player)
+{
+    for (uint32_t i = 0; i < SPEAKERS; i++) {
+        if (tide_player_equal(v->routes[i].player, player)) return v->routes[i].bus;
+    }
+    return v->bus;
 }
 
 static void receive_voice(void *user, const tide_player_id player, const uint64_t connection,
@@ -265,19 +314,49 @@ static bool make_encoder(tide_voice_client *v)
     return true;
 }
 
+static bool make_denoiser(tide_voice_client *v)
+{
+    if (v->denoiser) return true;
+    if (rnnoise_get_frame_size() != (int)(FRAME / 2u)) return false;
+    // Allocate explicitly: upstream rnnoise_create doesn't check malloc before init.
+    v->denoiser = malloc((size_t)rnnoise_get_size());
+    if (!v->denoiser) return false;
+    if (rnnoise_init(v->denoiser, NULL) == 0) return true;
+    rnnoise_destroy(v->denoiser);
+    v->denoiser = NULL;
+    return false;
+}
+
+static void suppress_capture(tide_voice_client *v)
+{
+    // RNNoise expects 48 kHz mono float samples in PCM16's amplitude range.
+    // Its two 10 ms blocks fit the existing 20 ms Opus frame, with no new queue.
+    for (uint32_t i = 0; i < FRAME; i++) v->input[i] *= 32768.0f;
+    for (uint32_t at = 0; at < FRAME; at += FRAME / 2u) {
+        rnnoise_process_frame(v->denoiser, v->input + at, v->input + at);
+    }
+    for (uint32_t i = 0; i < FRAME; i++) {
+        const float sample = v->input[i] / 32768.0f;
+        v->input[i] = !isfinite(sample) ? 0.0f : sample < -1.0f ? -1.0f : sample > 1.0f ? 1.0f : sample;
+    }
+}
+
 static void send_capture(tide_voice_client *v, tide_session *session, tide_audio_frame *audio)
 {
-    const bool sending = v->enabled && v->transmitting && make_encoder(v);
-    if (sending != v->was_transmitting) {
+    const bool sending = v->enabled && v->transmitting && make_encoder(v)
+        && (!v->noise_suppression || make_denoiser(v));
+    if (sending != v->was_transmitting || (sending && v->noise_suppression != v->was_suppressing)) {
         atomic_fetch_add_explicit(&v->generation, 1u, memory_order_release);
         v->filled = 0;
         if (sending) {
             opus_encoder_ctl(v->encoder, OPUS_RESET_STATE);
+            if (v->noise_suppression) rnnoise_init(v->denoiser, NULL);
             v->stream++;
             if (!v->stream) v->stream++;
             v->sequence = 0;
         }
         v->was_transmitting = sending;
+        v->was_suppressing = sending && v->noise_suppression;
     }
     const uint32_t generation = atomic_load_explicit(&v->generation, memory_order_acquire);
     const uint32_t head = atomic_load_explicit(&v->capture_head, memory_order_acquire);
@@ -290,6 +369,7 @@ static void send_capture(tide_voice_client *v, tide_session *session, tide_audio
             for (uint32_t i = 0; i < TIDE_AUDIO_BLOCK; i++) {
                 v->input[v->filled++] = block->samples[i];
                 if (v->filled == FRAME) {
+                    if (v->noise_suppression) suppress_capture(v);
                     uint8_t data[PACKET + 9u];
                     tide_writer w = {data, sizeof data, 0, false, false};
                     tide_write_u8(&w, 1u);
@@ -343,6 +423,7 @@ static void play_speaker(tide_voice_client *v, speaker *s, tide_audio_frame *aud
     const uint32_t index = (uint32_t)(s - v->speakers);
     const tide_voice voice = {.id = VOICE_ID + 1u + index, .playing = true, .pitch = 1.0f,
         .volume = v->volume * player_gain(v, s->player),
+        .bus = player_bus(v, s->player),
         .effect = {.fn = playback_audio, .id = VOICE_ID + 1u + index, .knobs_size = sizeof knobs, .knobs = &knobs}};
     tide_audio_voice(audio, &voice);
 }
@@ -360,6 +441,7 @@ void tide_voice_client_frame(tide_voice_client *v, tide_session *session, tide_a
         for (uint32_t i = 0; i < SPEAKERS; i++) reset_speaker(&v->speakers[i]);
         if (v->session && (session != v->session || match_generation != v->match_generation)) {
             memset(v->gains, 0, sizeof v->gains);
+            memset(v->routes, 0, sizeof v->routes);
         }
         v->session = session;
         v->cookie = status.client.cookie;
@@ -389,6 +471,7 @@ void tide_voice_client_free(tide_voice_client *v, tide_session *session)
     if (!v) return;
     tide_session_listen_data(session, NULL, NULL);
     if (v->encoder) opus_encoder_destroy(v->encoder);
+    if (v->denoiser) rnnoise_destroy(v->denoiser);
     for (uint32_t i = 0; i < SPEAKERS; i++) {
         if (v->speakers[i].decoder) opus_decoder_destroy(v->speakers[i].decoder);
     }
@@ -398,15 +481,17 @@ void tide_voice_client_free(tide_voice_client *v, tide_session *session)
 // The standard host runs one player per process/library. Custom hosts can
 // use the explicit client API above instead of this registration.
 static tide_voice_client *client;
-static bool enabled, transmitting;
+static bool enabled, transmitting, noise_suppression;
 static float volume = 1.0f;
+static int32_t bus;
 
 static void frame(void *self, tide_session *session, tide_audio_frame *audio, const double now)
 {
     (void)self;
     if (!client && enabled) client = tide_voice_client_create();
     if (!client) return;
-    tide_voice_client_configure(client, enabled, transmitting, volume);
+    tide_voice_client_configure(client, enabled, transmitting, noise_suppression, volume);
+    tide_voice_client_bus(client, bus);
     tide_voice_client_frame(client, session, audio, now);
 }
 
@@ -417,12 +502,15 @@ static void stop(void *self, tide_session *session)
     client = NULL;
 }
 
-void TideVoiceConfigure(const bool listen, const bool send, const float gain, const tide_clip_ref microphone)
+void TideVoiceConfigure(const bool listen, const bool send, const bool suppress, const float gain, const int32_t receive_bus,
+                        const tide_clip_ref microphone)
 {
     (void)microphone; // The Tide reference requests microphone permission metadata.
     enabled = listen;
     transmitting = send;
+    noise_suppression = suppress;
     volume = gain;
+    bus = receive_bus;
     const tide_voice_provider provider = {.frame = frame, .stop = stop};
     tide_voice_set(&provider);
 }
@@ -431,4 +519,10 @@ void TideVoiceSetVolume(const tide_player_id player, const float gain)
 {
     if (!client && tide_player_index(player) >= 0) client = tide_voice_client_create();
     if (client) tide_voice_client_volume(client, player, gain);
+}
+
+void TideVoiceSetBus(const tide_player_id player, const int32_t receive_bus)
+{
+    if (!client && receive_bus >= 0 && tide_player_index(player) >= 0) client = tide_voice_client_create();
+    if (client) tide_voice_client_player_bus(client, player, receive_bus);
 }

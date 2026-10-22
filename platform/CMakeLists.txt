@@ -20,6 +20,12 @@ else()
             COMMAND "${CMAKE_COMMAND}" "-DTOOL=${TIDE_SPIRV_SHADERS_PATH}" "-DSPIRV_VAL=${TIDE_SPIRV_VAL}"
                 "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/spirv_shaders" -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/spirv_shaders.cmake")
     endif()
+    # ...and their HLSL, Unity's, compiles with fxc, where there's one (cmake/HlslTests.cmake)
+    if(TIDE_FXC)
+        add_test(NAME tide_hlsl_shaders_valid
+            COMMAND "${CMAKE_COMMAND}" "-DTOOL=${TIDE_SPIRV_SHADERS_PATH}" "-DFXC=${TIDE_FXC}"
+                "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/hlsl_shaders" -P "${PROJECT_SOURCE_DIR}/compiler/tests/expect_hlsl.cmake")
+    endif()
     # The prebuilt library is compiled with Khronos's headers (third_party/vulkan), under Apache 2.0
     install(FILES third_party/vulkan/LICENSE.md third_party/vulkan/Apache-2.0.txt DESTINATION licenses/vulkan-headers
         COMPONENT tide)
@@ -270,7 +276,7 @@ set_tests_properties(tide_platform_jobs PROPERTIES TIMEOUT 120)
 # Tide inside another program's frame (tide/embed.h): no window, GPU or audio device.
 tide_add_game(tide_platform_embed SOURCES tests/embed.tide NAME game EMBED
     HOST tests/embed.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
-target_include_directories(tide_platform_embed PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_include_directories(tide_platform_embed PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
 target_link_libraries(tide_platform_embed PRIVATE tide_platform)
 # Built on the web too, where it needs a page's imports (tide.js), which Node's WASI runner hasn't
 if(NOT TIDE_WEB)
