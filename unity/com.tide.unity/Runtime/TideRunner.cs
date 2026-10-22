@@ -75,6 +75,11 @@ namespace Tide
         [HideInInspector] public string map = "";
 
         public static TideRunner Current { get; private set; }
+
+        // Each frame, once Unity's keyboard, mouse, gamepad and touches are read into what Tide's devices say: the
+        // game's own input on top (an on-screen stick, a bot, a replay, a test), as a window's devices would say it.
+        public delegate void InputEdit(ref TideEmbedInput input);
+        public event InputEdit EditInput;
         TideRender render;
         TideAudio audio; // The game's sound, through Unity's (none on the web, where Tide's program plays it itself)
         public TidePacket Packet { get; } = new TidePacket();
@@ -400,6 +405,7 @@ namespace Tide
         {
             if (embed == IntPtr.Zero) return;
             TideInputReader.Read(ref input, 1f);
+            EditInput?.Invoke(ref input);
             var seen = ViewCamera();
             // The screen the views draw for: the camera's pixels where Tide's renderer draws into it
             float width = Screen.width, height = Screen.height;

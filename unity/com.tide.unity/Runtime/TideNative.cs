@@ -20,7 +20,7 @@ namespace Tide
         public const int TextMax = 32;
         public const int TouchMax = 32;
 
-        public fixed byte keys[16]; // Held keys, a bit each, in Tide's keyboard order (TideKeys.Names)
+        public fixed byte keys[16]; // Held keys, a bit each, in Tide's keyboard order (TideInputReader.Keys)
         public float mouseX, mouseY; // Logical pixels from the top left, y down
         public float wheelX, wheelY; // This frame's scroll, y positive away from the user
         public float movedX, movedY; // This frame's movement while the cursor is locked, y down
@@ -31,13 +31,24 @@ namespace Tide
         public byte pad;
         public float leftX, leftY, rightX, rightY; // Sticks, y down as gamepads report it
         public float leftTrigger, rightTrigger;
-        public uint gamepadButtons; // TideKeys.GamepadButtons' order, the d-pad's after
+        public uint gamepadButtons; // tide/devices.h's order: tide_gamepad's buttons, the d-pad's after
         public uint textCount;
         public fixed uint text[TextMax];
         public uint touchCount;
         public fixed byte touches[TouchMax * 16]; // TideEmbedTouch each
 
         public const int Size = 724;
+
+        // Holds the key named as the Input System names it ("a", "space", "leftArrow": TideInputReader.Keys), or lets
+        // it go: false for a name Tide's keyboard hasn't.
+        public bool Hold(string key, bool held = true)
+        {
+            var i = System.Array.IndexOf(TideInputReader.Keys, key);
+            if (i < 0) return false;
+            if (held) keys[i / 8] |= (byte)(1 << (i % 8));
+            else keys[i / 8] &= (byte)~(1 << (i % 8));
+            return true;
+        }
     }
 
     [StructLayout(LayoutKind.Sequential)]

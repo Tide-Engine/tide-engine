@@ -368,6 +368,30 @@ public sealed unsafe class BounceTests
         Assert.Less(loudest, 1f);
     }
 
+    // The game's own input on top of Unity's devices (an on-screen stick, a bot, a replay): D held through
+    // TideRunner.EditInput rolls this machine's ball to the right, as the key would.
+    [UnityTest]
+    public IEnumerator TheGamesOwnInputRollsTheBall()
+    {
+        SceneManager.LoadScene(Bounce);
+        yield return null;
+        var runner = Object.FindAnyObjectByType<TideRunner>();
+        TideEntityView ball = null;
+        yield return Until(() => (ball = MyBall()) != null, 10f);
+        Assert.IsNotNull(ball, "the player's ball shows");
+        yield return Until(() => false, 1.5f); // On the floor
+        var from = ball.transform.position.x;
+        var held = true;
+        TideRunner.InputEdit right = (ref TideEmbedInput input) => { if (held) Assert.IsTrue(input.Hold("d")); };
+        runner.EditInput += right;
+        yield return Until(() => ball.transform.position.x > from + 1f, 5f);
+        held = false;
+        runner.EditInput -= right;
+        Assert.Greater(ball.transform.position.x, from + 1f, "the ball rolled right");
+        var input = new TideEmbedInput();
+        Assert.IsFalse(input.Hold("no such key"), "a key Tide's keyboard hasn't");
+    }
+
     // A command's text reaches the match, a command goes to the entity a GameObject shows, and a singleton is live.
     [UnityTest]
     public IEnumerator CommandsCarryTextAndGoToGameObjects()

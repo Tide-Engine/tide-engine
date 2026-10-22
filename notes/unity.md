@@ -1239,6 +1239,109 @@ mine (Provisional).
   `-nographics`. Not run: Play's cancel and resume with an untitled scene (batch
   runs skip it), and the refresh before Play resumes.
 
+### A first game: Coin Rush (2026-10-22)
+
+The owner, away: "try making a small game and seeing what issues you hit. I
+imagine we might need to allow built-in components? for things like colliders
+and physics and what not?"
+
+Coin Rush is in a scratch project, `%LOCALAPPDATA%\TideDev\scratch\coin-rush`
+(not in the repository). It's a fresh Unity 6000.6 project with
+`com.tide.unity` from this checkout and `box3d` in `Assets/tide.packages`. Each
+player's ball (a `Box3D.Body` and `Box3D.Sphere` on a Unity sphere) rolls by
+impulses from a `Move` input, in an arena of static boxes. Five coins are sensor
+spheres on static bodies; `Touched` scores and moves the coin. A kinematic bar
+sweeps the middle. A `Scores` singleton feeds a Tide HUD, and the pickup has a
+`Clip` chime. `Assets/Editor/CoinSetup.cs` builds the prefabs and scene. It
+plays: PlayMode tests roll a ball into a coin (scored in 0.9 s, the chime heard)
+and into a wall (held at x = 5.505, the wall's face less the radius). The
+dedicated server (`tide build --server --assets .`) builds and runs, and the
+WebGL player passes `web-smoke.mjs` with its own smoke script (the ball scores
+in headless Chrome, Box3D in the page's wasm).
+
+What I hit, in order:
+
+1. **Every physics game needs two systems of boilerplate.** The converter gives
+   each entity Unity's placement as Tide's `Transform`, but `Box3D.Body` has its
+   own `position` and `rotation`, which start at zero. So every body sat at the
+   origin until a `Spawned` handler copied `Transform` into `Body`, and Unity
+   showed nothing move until an `[After(PhysicsStages.Step)]` system copied
+   `Body` back into `Transform`.
+2. **Sizes say the same thing twice.** A Unity cube scaled (12, 1, 12) needs
+   `Box3D.Box { size = (12, 1, 12) }` by hand, and the box goes wrong when the
+   scale changes. A sphere's radius likewise.
+3. **Unity's own colliders are silently nothing.** `CreatePrimitive` puts a
+   BoxCollider or SphereCollider on each, which a Unity user expects to be the
+   collider. Tide ignores them, and Unity's physics keeps them as static
+   colliders that move every frame (the ball's). They also draw Unity's collider
+   gizmos, which then don't match Box3D's shapes.
+4. **The package's own fields are authored.** `Box3D.Body`'s inspector shows `id`
+   and every `step*` field, the package's bookkeeping, and they're baked:
+   `stepType = Dynamic` on every static body. `BoxMade`, `SphereMade` and the
+   other markers are in Add Component > Tide.
+5. **A new project can't bootstrap without a detour.** The game's C# is written
+   only once it builds, and code that spawns a Unity prefab doesn't build until
+   the prefab exists, which needs the C# components. I commented the spawn out,
+   built, made the prefab, then restored it.
+6. **`using Tide.Game;` beside `using UnityEngine;` is ambiguous.** Tide's own
+   `Transform`, `Time` singleton and `Font` enum get C# types in `Tide.Game`, so
+   `Transform` and `Time.deltaTime` don't compile in such a script. I used an
+   alias.
+7. **C# had no way to give Tide input** but Unity's real devices, which a test
+   can't press (and which on-screen sticks, bots and replays need).
+   Fixed: `TideRunner.EditInput` (below).
+8. **Smaller ones:** `PlayerID` is opaque, so naming players needs a seat
+   counter, as the Sample keeps (by design). Box3D's water density makes a
+   0.5 m ball weigh 523 kg, so impulses tuned by feel are 40 times too small
+   (documented, but a surprise). The C# comments named a `TideKeys` class that
+   doesn't exist (fixed). The spec still said voice had no Unity audio (fixed).
+
+**Built (small, Provisional):** `TideRunner.EditInput`, an event of `ref
+TideEmbedInput`, raised each frame after Unity's devices are read, and
+`TideEmbedInput.Hold(key, held = true)` by the Input System's key names
+(`TideInputReader.Keys`; false for a name Tide's keyboard hasn't). Works on the
+web too, before the jslib copies the input over. Test: Sample PlayMode
+`TheGamesOwnInputRollsTheBall` (D held through it rolls the ball right; an
+unknown key refused).
+
+**Proposal, the owner's to decide: Unity's physics components as Box3D's.**
+Items 1 to 4 go away if the converter reads Unity's own physics components on
+TideEntity GameObjects as Box3D's, where the game has the box3d package:
+
+| Unity | Box3D |
+|---|---|
+| `Rigidbody` | `Body`: `isKinematic` → Kinematic, else Dynamic; `useGravity` → `gravityScale` 1 or 0; drags → dampings; `interpolation` ignored; `mass` → each shape's density, as mass over the shapes' volume |
+| a collider with no `Rigidbody` up its parents | a static `Body` |
+| `BoxCollider` | `Box`: `size` × the lossy scale, `center` × scale → `offset`, `isTrigger` → `sensor` |
+| `SphereCollider` | `Sphere`: radius × the largest scale axis |
+| `CapsuleCollider` (Y) | `Capsule`; X or Z an error that says so (Box3D's capsules stand along y) |
+| `MeshCollider` | `MeshCollider` on a static body, once Unity writes the mesh's triangles where tide reads them (C can't read an FBX) |
+| `PhysicsMaterial` | `friction` (dynamic friction) and `bounce` (bounciness); combine modes are Box3D's |
+| colliders on children | `Part`s of the body |
+
+`Body.position` and `rotation` are baked from the GameObject's world placement.
+The runner (or the package) places a body's GameObject from `Body` rather than
+`Transform`, so neither system is needed. Unity then draws and edits the
+colliders with its own gizmos. Open questions:
+
+- Is the converter knowing box3d acceptable, or should a package say how it maps
+  Unity's components (a mapping file in the package)?
+- Does a body spawned from a prefab at a `Transform` take that position, so
+  `Spawn(Roller, Transform { ... })` keeps working?
+- What about Unity's joints, and 2D (Rigidbody2D and the 2D colliders as Box2D's)?
+
+Without that, smaller fixes for items 1, 2 and 4:
+
+- Box3D's `Body` takes the entity's `Transform` when it starts at zero.
+- A way for a package to keep fields out of authoring, an attribute (a language
+  change).
+- Editor gizmos for Box3D's shapes.
+
+For 6: the engine's own types in another namespace (`Tide.Game.Engine`), or no
+C# for the ones Unity has (`Transform`, `Time`, `Font`). For 5: tide could write
+the C# of the game's components from a build that fails only at Unity names it
+doesn't have yet.
+
 ### The game is Assets (2026-10-21)
 
 **Owner:** "anything inside `Assets` is valid", rather than a game folder;

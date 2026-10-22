@@ -125,6 +125,12 @@ that GameObject reads the entity's components as Tide's views see them this
 frame: `view.Get<Tide.Game.Health>()`. `TideRunner.Current.Send(command)`
 sends a command, as local code's `Send`.
 
+Tide's devices are what Unity's keyboard, mouse, gamepad and touches say. For
+input of the game's own on top (an on-screen stick, a bot, a replay, a test),
+`TideRunner.EditInput` is called each frame after Unity's devices are read,
+with what Tide's devices are about to say:
+`runner.EditInput += (ref TideEmbedInput input) => input.Hold("space");`.
+
 The game's views draw with Unity's camera: the runner's View Camera, or the
 main camera, is the 3D camera Tide's views start with, so
 `Draw.WorldToScreen(position)` is where Unity shows that point, in screen
