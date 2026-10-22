@@ -66,6 +66,14 @@ The runnable [two-player arm example](../../examples/robotics/arm/) uses Rooms a
 
 All persistent state is ordinary Tide components/lists/maps, with no `Resident` arena. Solver model arrays and scratch are reconstructed per call, so separate worlds retain no shared solver state.
 
+The [anchored MicroDuck example](../../examples/robotics/microduck/) adds the
+published 15-body, 14-hinge robot model with selectable leg/head joints, bounded
+targets, reset and a 64-transition recording ring. It preserves authored full
+inertia tensors through an offline principal-axis conversion. Original primitive
+visuals replace upstream's separately licensed meshes. This is joint control
+with an anchored trunk; walking, ground contacts and the BAM servo model remain
+future work. It uses the same Newton package at a 200 Hz tick/physics rate.
+
 ## Upstream CPU kernels
 
 - Newton: `ea4899864046dcd5981f8ba0bc3d8c25e65dcb96`.
@@ -76,7 +84,7 @@ All persistent state is ordinary Tide components/lists/maps, with no `Resident` 
 
 ## Scope and validation
 
-The first integration covers body mass/diagonal inertia/centre of mass/world force and torque, free/static roots, fixed/revolute/prismatic joints, effort actuation and actual joint/body state. It has no colliders, contacts or queries; no URDF/MJCF importer, CUDA runtime, joint friction or velocity constraints; and no automatic realistic robot, sensors or trainer. Position limits use spring/damper responses. Physical fidelity and sim-to-real transfer are not established.
+The first integration covers body mass/diagonal inertia/centre of mass/world force and torque, free/static roots, fixed/revolute/prismatic joints, effort actuation and actual joint/body state. It has no colliders, contacts or queries; no general URDF/MJCF importer, CUDA runtime, joint friction or velocity constraints; and no automatic realistic robot, sensors or trainer. Position limits use spring/damper responses. Physical fidelity and sim-to-real transfer are not established.
 
 The 22 runtime tests pass natively and under WASI, including a two-link stock Newton Python reference comparison within tolerance and analytic dynamics. Six Tide arm fixture tests pass in native/web debug and release, covering replay, snapshots, raw/delta packing, stale entities, thread-count equality and two-client rollback under latency, jitter and loss. Exact hashes agree across those four builds; fresh-process canonical joins also pass from native to WASI and back.
 

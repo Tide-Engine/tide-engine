@@ -1,0 +1,325 @@
+// Anchored MicroDuck: authored joint dynamics with original procedural visuals.
+// Human input and replay use the same match actions and Newton physics step.
+using Newton;
+using Rooms;
+
+settings { title = "MicroDuck joint lab"; tickRate = 200; maxPlayers = 2; }
+
+scene Main { }
+
+input DuckControls
+{
+    int select;
+    float drive;
+    bool reset;
+
+    Sample(Devices devices, Lobby lobby)
+    {
+        if (!lobby.playing) return;
+        var keys = devices.keyboard;
+        if (keys.q.down || keys.leftArrow.down || devices.gamepad.dpad.left.down) select -= 1;
+        if (keys.e.down || keys.rightArrow.down || devices.gamepad.dpad.right.down) select += 1;
+        if (keys.a.pressed) drive -= 1;
+        if (keys.d.pressed) drive += 1;
+        drive += devices.gamepad.leftStick.x;
+        reset = keys.r.pressed || devices.gamepad.buttonSouth.pressed;
+    }
+
+    Sanitize()
+    {
+        select = Math.Clamp(select, -1, 1);
+        drive = Math.Clamp(drive, -1, 1);
+    }
+}
+
+struct DuckTransition
+{
+    int tick;
+    List<float> observation;     // q[14], then qd[14]: radians and radians/second
+    List<float> action;          // All 14 desired joint angles, radians
+    List<float> effort;          // Last successful clamped actuator controls, Nm
+    List<float> nextObservation; // q[14], then qd[14], after the physics step
+    float reward;
+}
+
+component Duck
+{
+    int seat;
+    List<Entity> bodies;
+    Entity anchor; // World-fixed trunk joint; not one of the 14 driven hinges
+    List<Entity> joints;
+    List<float> targets;
+    int selected = 2; // Start on left_hip_pitch; Q/E cycle every leg/head joint
+    float reward;
+    List<DuckTransition> transitions;
+    int next;
+    List<float> before;
+    bool pending;
+}
+
+singleton DuckFixture { Entity first; Entity second; }
+component DuckPart { int seat; int index; quaternion principalRotation; }
+
+quaternion DuckWorldRotation()
+{
+    // Source: +z up, +x forward. Tide: +y up, +x still forward.
+    return quaternion.AxisAngle(float3(1, 0, 0), -Math.PI / 2);
+}
+
+Entity MakeDuck(float x, int seat)
+{
+    var model = DuckModel();
+    mut List<Entity> bodies = [];
+    mut List<Entity> joints = [];
+    mut List<float> targets = [];
+    for (int i = 0; i < 15; i += 1)
+    {
+        var definition = model[i];
+        bodies.Add(Spawn(Body {
+            mass = definition.mass, inertia = definition.inertia,
+            centerOfMass = definition.centerOfMass
+        }, DuckPart {
+            seat = seat, index = i, principalRotation = definition.principalRotation
+        }));
+    }
+
+    // Keep the dynamic trunk's authored mass and principal inertia. The fixed
+    // world frame places its principal body frame; its child frame is identity.
+    var anchor = Spawn(Joint {
+        type = JointType.Fixed, child = bodies[0],
+        parentPosition = float3(x, 0.26, 0),
+        parentRotation = Math.Mul(DuckWorldRotation(), model[0].principalRotation),
+        armature = 0
+    });
+    for (int i = 1; i < 15; i += 1)
+    {
+        var definition = model[i];
+        var home = Math.Clamp(definition.home, definition.lower, definition.upper);
+        joints.Add(Spawn(Joint {
+            type = JointType.Revolute, parent = bodies[definition.parent], child = bodies[i],
+            parentPosition = definition.parentPosition, parentRotation = definition.parentRotation,
+            childPosition = definition.childPosition, childRotation = definition.childRotation,
+            axis = definition.axis, position = home,
+            damping = definition.damping, armature = definition.armature,
+            limited = true, lower = definition.lower, upper = definition.upper,
+            limitStiffness = 0.55, limitDamping = 0.03
+        }, Actuator { effortLimit = definition.effortLimit }));
+        targets.Add(home);
+    }
+    return Spawn(Duck { seat = seat, bodies = bodies, anchor = anchor, joints = joints, targets = targets },
+                 Owner { player = PlayerID(seat) });
+}
+
+event(Spawned) Build(mut DuckFixture fixture, mut Physics physics, with Main)
+{
+    physics.substeps = 1;
+    fixture.first = MakeDuck(-0.15, 0);
+    fixture.second = MakeDuck(0.15, 1);
+}
+
+// Reset is an ordinary match action: Newton reconstructs every articulated
+// body from the reset q/qd on the next step, just as during snapshot replay.
+void ResetDuck(mut Duck duck, mut World world)
+{
+    var model = DuckModel();
+    for (int i = 0; i < 14; i += 1)
+    {
+        if (!world.TryGet<Joint>(duck.joints[i], out mut var joint)) return;
+        var home = Math.Clamp(model[i + 1].home, joint.lower, joint.upper);
+        joint.position = home;
+        joint.velocity = 0;
+        world.Set<Joint>(duck.joints[i], joint);
+        duck.targets[i] = home;
+    }
+    duck.transitions.Clear();
+    duck.before.Clear();
+    duck.next = 0;
+    duck.reward = 0;
+}
+
+[Before(PhysicsStages.Step)]
+system Drive(DuckControls controls, mut Duck duck, mut World world, Time time)
+{
+    duck.pending = false;
+    if (controls.reset.down) ResetDuck(duck, world);
+    duck.selected = (duck.selected + controls.select + 14) % 14;
+    duck.before.Clear();
+    for (int i = 0; i < 14; i += 1)
+    {
+        if (!world.TryGet<Joint>(duck.joints[i], out var joint)) return;
+        var delta = i == duck.selected ? controls.drive * time.dt * 0.8 : 0.0;
+        duck.targets[i] = Math.Clamp(duck.targets[i] + delta, joint.lower, joint.upper);
+        duck.before.Add(joint.position);
+    }
+    for (int i = 0; i < 14; i += 1)
+    {
+        if (!world.TryGet<Joint>(duck.joints[i], out var joint)) return;
+        if (!world.TryGet<Actuator>(duck.joints[i], out mut var actuator)) return;
+        duck.before.Add(joint.velocity);
+        // Small-robot PD, in Nm. Authored passive damping remains separate.
+        actuator.effort = Math.Clamp(0.55 * (duck.targets[i] - joint.position) - 0.03 * joint.velocity,
+                                    -actuator.effortLimit, actuator.effortLimit);
+        world.Set<Actuator>(duck.joints[i], actuator);
+    }
+    duck.pending = true;
+}
+
+[After(PhysicsStages.Step)]
+system Record(mut Duck duck, World world, Physics physics, Time time)
+{
+    if (!duck.pending || physics.status != Status.Ok) return;
+    mut List<float> after = [];
+    mut List<float> effort = [];
+    mut float error = 0;
+    for (int i = 0; i < 14; i += 1)
+    {
+        if (!world.TryGet<Joint>(duck.joints[i], out var joint)) return;
+        if (!world.TryGet<Actuator>(duck.joints[i], out var actuator)) return;
+        after.Add(joint.position);
+        effort.Add(actuator.appliedEffort);
+        var difference = duck.targets[i] - joint.position;
+        error += difference * difference;
+    }
+    for (int i = 0; i < 14; i += 1)
+    {
+        if (!world.TryGet<Joint>(duck.joints[i], out var joint)) return;
+        after.Add(joint.velocity);
+    }
+    duck.reward = -error; // Negative summed squared joint target error
+    var sample = DuckTransition {
+        tick = time.tick, observation = duck.before, action = duck.targets,
+        effort = effort, nextObservation = after, reward = duck.reward
+    };
+    // These are actual executed pre/post-step states, not human-view timing or
+    // an exported training dataset. Export verified ticks in ascending order.
+    if (duck.transitions.count < 64) duck.transitions.Add(sample);
+    else duck.transitions[duck.next] = sample;
+    duck.next = (duck.next + 1) % 64;
+}
+
+enum DuckLayers { Camera, Robots, Hud }
+
+Color DuckColor(int seat)
+{
+    return seat == 0 ? Color(1, 0.77, 0.22) : Color(0.25, 0.83, 0.76);
+}
+
+[Stage(DuckLayers.Camera)]
+view Look()
+{
+    Draw.Clear(Color(0.055, 0.075, 0.10));
+    var eye = float3(0.22, 0.32, -0.8);
+    var rotation = quaternion.LookRotation(Math.Normalize(float3(0, 0.29, 0) - eye), float3(0, 1, 0));
+    Draw.SetCamera(eye, rotation, 40);
+    Draw.Plane(float3(0, 0, 0), float2(1.1, 0.65), Color(0.12, 0.16, 0.20));
+    for (int seat = 0; seat < 2; seat += 1)
+    {
+        var x = seat == 0 ? -0.15 : 0.15;
+        Draw.Cube(float3(x - 0.055, 0.007, 0.05), float3(0.17, 0.014, 0.17), Color(0.22, 0.27, 0.32));
+        Draw.Cylinder(float3(x - 0.055, 0.13, 0.05), 0.008, 0.26, Color(0.36, 0.42, 0.48));
+        Draw.Cube(float3(x - 0.035, 0.26, 0.025), float3(0.045, 0.012, 0.06), Color(0.36, 0.42, 0.48));
+    }
+}
+
+void DuckRod(float3 start, float3 end, float radius, Color color)
+{
+    var offset = end - start;
+    var length = Math.Length(offset);
+    if (length < 0.0001) return;
+    var direction = offset / length;
+    var up = Math.Abs(direction.y) > 0.95 ? float3(1, 0, 0) : float3(0, 1, 0);
+    var rotation = Math.Mul(quaternion.LookRotation(direction, up),
+                            quaternion.AxisAngle(float3(1, 0, 0), Math.PI / 2));
+    Draw.Cylinder((start + end) * 0.5, radius, length, rotation, color);
+}
+
+[Stage(DuckLayers.Robots)]
+view Connections(Duck duck, World world)
+{
+    var color = DuckColor(duck.seat);
+    for (int i = 0; i < 14; i += 1)
+    {
+        if (!world.TryGet<Joint>(duck.joints[i], out var joint)) continue;
+        if (!world.TryGet<Body>(joint.parent, out var parent)) continue;
+        if (!world.TryGet<Body>(joint.child, out var child)) continue;
+        DuckRod(parent.position, child.position, 0.0045, Color(0.52, 0.58, 0.63));
+        Draw.Sphere(child.position, i == duck.selected ? 0.010 : 0.006,
+                    i == duck.selected ? Color.white : color);
+    }
+}
+
+void DuckEllipsoid(float3 center, float3 radii, Color color)
+{
+    Draw.Transform(float4x4.TRS(center, quaternion.identity, radii))
+    {
+        Draw.Sphere(float3(0), 1, color);
+    }
+}
+
+[Stage(DuckLayers.Robots)]
+view Parts(Body body, DuckPart part)
+{
+    // Principal rotation maps physics principal coordinates into the original
+    // link frame. Visuals use the original frame and keep the body origin.
+    var rotation = Math.Mul(body.rotation, Math.Inverse(part.principalRotation));
+    var color = DuckColor(part.seat);
+    var orange = Color(1, 0.38, 0.12);
+    Draw.Transform(float4x4.TRS(body.position, rotation, float3(1)))
+    {
+        if (part.index == 0)
+        {
+            DuckEllipsoid(float3(-0.015, 0, 0.003), float3(0.052, 0.042, 0.036), color);
+            DuckEllipsoid(float3(-0.025, 0.036, 0.006), float3(0.034, 0.014, 0.025), Color(0.91, 0.96, 0.94));
+            DuckEllipsoid(float3(-0.025, -0.036, 0.006), float3(0.034, 0.014, 0.025), Color(0.91, 0.96, 0.94));
+            Draw.Cube(float3(-0.065, 0, 0.012), float3(0.027, 0.042, 0.018), color);
+        }
+        else if (part.index == 9)
+        {
+            // This head link's +x is up and -z is forward at the home pose.
+            DuckEllipsoid(float3(0, 0, -0.025), float3(0.030, 0.037, 0.037), color);
+            Draw.Cube(float3(-0.014, 0, -0.067), float3(0.015, 0.054, 0.034), orange);
+            for (int side = -1; side <= 1; side += 2)
+            {
+                Draw.Sphere(float3(0.010, side * 0.031, -0.047), 0.011, Color.white);
+                Draw.Sphere(float3(0.011, side * 0.037, -0.052), 0.006, Color(0.035, 0.045, 0.055));
+            }
+        }
+        else if (part.index == 5 || part.index == 14)
+        {
+            var left = part.index == 5;
+            var center = left ? float3(-0.020, -0.018, -0.012) : float3(0.020, -0.018, -0.012);
+            Draw.Cube(center, float3(0.070, 0.014, 0.038), orange);
+            Draw.Cube(center + float3(left ? -0.024 : 0.024, 0, 0), float3(0.025, 0.010, 0.048), orange);
+        }
+        else Draw.Cube(float3(0), float3(0.014), color);
+    }
+}
+
+[Stage(DuckLayers.Hud)]
+view Instructions(Physics physics, Lobby lobby)
+{
+    if (!lobby.playing) return;
+    Draw.SetScreen();
+    Draw.Text("MICRODUCK / JOINT LAB", float2(20, 18), 22, Color.white);
+    Draw.Text("Q/E or arrows: joint   A/D or stick: target   R: home", float2(20, 48), 16, Color(0.76, 0.83, 0.88));
+    Draw.Text("Anchored trunks / no foot contacts / original visual geometry", float2(20, 72), 14, Color(0.60, 0.70, 0.77));
+    Draw.Text("Executed states / 64-step ring / match replay", float2(112, Screen.height - 26), 13, Color(0.60, 0.70, 0.77));
+    if (physics.status != Status.Ok)
+        Draw.Text($"Newton step failed: {physics.status}", float2(20, 98), 17, Color.red);
+}
+
+[Stage(DuckLayers.Hud)]
+view Readout(Duck duck, Owner owner, World world, Session session, Lobby lobby)
+{
+    if (!lobby.playing || owner.player != session.player) return;
+    if (!world.TryGet<Joint>(duck.joints[duck.selected], out var joint)) return;
+    if (!world.TryGet<Actuator>(duck.joints[duck.selected], out var actuator)) return;
+    Draw.SetScreen();
+    var y = Screen.height - 134;
+    Draw.Text($"Duck {duck.seat + 1} / {duck.selected + 1}/14 / {DuckJointName(duck.selected)}",
+              float2(20, y), 18, DuckColor(duck.seat));
+    Draw.Text($"Angle {joint.position:F3} rad   target {duck.targets[duck.selected]:F3} rad",
+              float2(20, y + 27), 15, Color.white);
+    Draw.Text($"Control {actuator.appliedEffort:F3} Nm   reward {duck.reward:F4}   records {duck.transitions.count}/64",
+              float2(20, y + 51), 14, Color(0.76, 0.83, 0.88));
+}

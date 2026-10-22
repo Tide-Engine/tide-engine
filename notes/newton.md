@@ -1,5 +1,96 @@
 # The Newton package
 
+## Anchored MicroDuck fixture (2026-10-22)
+
+The owner selected Pollen Robotics' MicroDuck for the next fixture and approved
+the anchored joint-control milestone. `examples/robotics/microduck/` contains
+two owner-controlled ducks using the existing Newton package. All 15 bodies
+remain dynamic with authored mass and inertia; a world-parent Fixed joint
+anchors each trunk. The 14 leg/neck/head hinges retain the original DFS order,
+local axes and ranges. No package, compiler or engine runtime API changed.
+
+The source is `microduck_rl` revision
+`b02fdea4902c2b93b7d34a83a6f05da4ececb7d3`. `upstream/` preserves the exact
+`robot_walk.xml`, `scene_walk.xml` and Apache-2.0 license bytes. The XML/data are
+Apache-2.0; no upstream noncommercial STL meshes or mesh-derived visuals are
+included. The game draws its own primitive ducks, joints and stands.
+
+`tools/convert.py` is a pinned, standard-library-only authoring tool, not a
+general MJCF importer. It rejects changed source hashes or unsupported XML,
+diagonalizes complete symmetric inertia tensors with fixed-order Jacobi sweeps,
+and rotates body COMs and both joint attachment frames consistently. Body
+origins are unchanged. `principalRotation` maps the new principal frame into
+the original link frame; original visuals use its inverse. The fixture maps
+source Z-up to Tide Y-up with a -90-degree X rotation at the trunk anchor.
+Generated float32 values reconstruct full inertia within `1.46e-7` relative
+error and source zero/STAND COM positions within `8.37e-9` m in the converter's
+double-precision checks. Source/model contracts and exact hashes are in the
+example's `UPSTREAM.md`. Game builds run no converter, Python or MuJoCo.
+
+The match ticks at 200 Hz with one 5 ms Newton step, matching the selected
+reference integration interval. Q/E, arrows or gamepad D-pad select a joint;
+A/D or the left stick moves its target at 0.8 rad/s within its range. R/South
+resets joint coordinates/velocities, targets and recording to the authored
+STAND pose. The illustrative PD controller uses gains 0.55/0.03 plus authored
+passive damping 0.053 and armature 0.0018; package controls clamp to 0.96 Nm.
+Soft position limits use gains 0.55/0.03. These choices do not implement BAM
+motor voltage/friction/delay behavior or reproduce upstream walking policies.
+
+`Duck` keeps body/joint identities, targets, selection and a 64-transition
+ring in ordinary match state. Each transition holds tick, pre-step q[14]/qd[14],
+desired angles[14], actual clamped efforts[14], post-step q/qd and negative
+summed squared joint-target error. Reset starts a new ring; failed steps append
+nothing. These are executed-state records, with the same verified-tick export
+and human-view timing limitations as the arm fixture. No dataset exporter,
+policy runner, contacts, balance or walking is added.
+
+Validation:
+
+- Converter regeneration/check passes on Python 3.11/3.13/3.14. Native and web
+  generated model records agree byte-for-byte. Source hashes reject mutation.
+- Independent stock Newton CPU reference uses the original full tensors and
+  frames, with anchored trunk, STAND q, zero qd, no contacts/limits/friction/PD,
+  and alternating +0.02/-0.015 Nm effort. Runtime q/qd and all COMs at 1/8/32
+  steps agree within `4.67524e-6`, below the `5e-5` absolute tolerance, on
+  native/WASI. Dropping tensor products changes qd by `7.55e-4`, so this check
+  detects that approximation. A separate original-XML double FK agrees with
+  stock Newton initial COMs within `1.97e-8` m.
+- Eight game tests plus the fresh-process join CTest pass on native and web
+  debug and release. They cover each body's mass/COM/full tensor, all-joint observations,
+  bounded records, reset, snapshots/alternating worlds, raw/delta transfer,
+  thread equality and two-client rollback with latency/jitter/loss. Trusted C
+  host reads use explicit heaps when alternating worlds. The 280-tick world
+  hash `5e74bf9e0f8ba7ca` agrees in all four builds and is pinned. The join
+  host uses the same 200 Hz timestep; separate cross-target file checks pass
+  native-to-WASI and WASI-to-native at 40 ticks plus 20 continuation ticks.
+- A hidden, muted desktop capture confirms both procedural ducks, joint
+  selection, target movement and status/readout. Captures are under
+  `build/microduck-capture/`.
+- Installed CLI native/web builds pass using only the checked-in game/model
+  and Newton sources, with no Python or downloads. Desktop, WebGL and WebGPU
+  smoke checks at 1280x720 confirm selection, target movement and reset; the
+  recording count restarts at 3/64 and resumes to 36/64. No Newton error HUD,
+  page exceptions or graphics validation errors occur. All browser launches
+  were muted. Commands, logs and captures are in `build/microduck-cli/`.
+
+Independent integration review found only a copied 120 Hz timestep in the join
+host. It was corrected to 200 Hz and checked on native/web debug/release and
+both cross-target transfers. No other actionable findings remain.
+
+The full native debug suite passes 2,553/2,553 tests. The full web debug run
+passes 2,414/2,415 initially: the existing `tide_platform_draw_webgpu` test
+reports two background pixels in its maximum-uniform shader checks. Two exact
+reruns pass without source or assertion changes. Read-only review finds that
+the test waits for `picked_shader` but then also checks the independently
+compiled `many_shader`; a still-pending second pipeline fits the blank pixels,
+although individual pipeline timing was not traced. No drawing source,
+browser command or draw-target object changes are part of this fixture. All
+Newton and MicroDuck tests pass in the full runs. Production docs build passes
+on Node 24.16.0.
+Full-run and recheck logs are under `build/microduck-*-full-*` and
+`build/microduck-web-draw-*.log`. Other operating systems and physical robot
+validation remain unavailable locally.
+
 ## Featherstone CPU integration and documentation (2026-10-22)
 
 The owner requested NVIDIA Newton as a separate optional package like Box3D,
