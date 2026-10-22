@@ -5,7 +5,7 @@ namespace Tide.Game
     // What this game's C# was made from: a view packet of another build isn't read by it.
     public static class TideGameSchema
     {
-        public const string Hash = "AA549672BD8AA57D";
+        public const string Hash = "D3C97F1BC8DF4B04";
         public const string Game = "Bounce";
         public const int TickRate = 30;
         public static readonly string[] Scenes = {  };
@@ -1005,31 +1005,6 @@ namespace Tide.Game.UnityEngine
         {
             [global::System.Runtime.InteropServices.FieldOffset(0)] public int asset;
             [global::System.Runtime.InteropServices.FieldOffset(4)] public bool only;
-        }
-    }
-}
-namespace Tide.Game.UnityEngine
-{
-    // Tide's command UnityEngine.CloseScene: TideRunner.Send sends it, as local code's Send does (TideCommand)
-    public sealed partial class CloseScene : global::Tide.TideCommand
-    {
-        public int asset = 0;
-
-        public override string TideName => "UnityEngine.CloseScene";
-
-        protected override void Pack(global::Tide.TideCommandWriter writer)
-        {
-            var v = new Value();
-            v.asset = asset;
-            writer.Value(v);
-        }
-
-        // Tide's command UnityEngine.CloseScene, as the game's C lays it out
-        [global::Tide.TideType("UnityEngine.CloseScene")]
-        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 4)]
-        public unsafe partial struct Value
-        {
-            [global::System.Runtime.InteropServices.FieldOffset(0)] public int asset;
         }
     }
 }

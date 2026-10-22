@@ -345,8 +345,8 @@ prefab or scene has a file's name, that name alone is it too:
 names both.
 Build Settings' first scene loads as Main starts, as a player build starts with
 it, and Unity loads and unloads each scene as the match does, a scene the match
-loads twice as two. In the editor, a scene loaded or unloaded during Play is
-loaded or unloaded in the match too. Each such entity gets a
+loads twice as two. A scene loaded by hand, in the editor or by a script, is
+local: nothing of it reaches the match. Each such entity gets a
 `UnityEngine.Source` component, by which Unity shows it through its own GameObject.
 A message about a prefab gives lines of the Tide text tide made of it, which it
 writes to `<path>/prefabs`. With `--assets`, tide also keeps the project's
