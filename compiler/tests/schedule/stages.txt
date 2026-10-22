@@ -7,17 +7,20 @@ stage 1  Early  (once)
 stage 1  Alongside  (once)
          writes E
          alongside Early
+
 stage 2  Higher  (once)
          writes B
          after Early: the stage order requires this to run after Early
          after Alongside: the stage order requires this to run after Alongside
          alongside nothing
+
 stage 3  Gap  (once)
          writes C
          after Early: this has [After(Early)] (and through Higher)
          after Alongside: the stage order requires this to run after Alongside (and through Higher)
          after Higher: the stage order requires this to run after Higher
          alongside nothing
+
 stage 4  Last  (once)
          writes D
          after Early: the stage order requires this to run after Early (and through Higher)

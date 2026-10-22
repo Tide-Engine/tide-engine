@@ -459,8 +459,25 @@ void print_schedule(const program *prog, const char *game, sb *out)
     }
     sb_put(out, ".\nA system starts once everything it runs after is done.\n\n");
 
+    // Group the display by dependency depth, preserving tick order within a
+    // stage. The program's system order still governs execution and effects.
+    int *next = arena_alloc(sizeof(int) * ((size_t)stages + 1u));
+    memset(next, 0, sizeof(int) * ((size_t)stages + 1u));
+    for (int i = 0; i < prog->systems.count; i++) next[prog->systems.items[i]->stage]++;
+    int start = 0;
+    for (int stage = 1; stage <= stages; stage++) {
+        const int count = next[stage];
+        next[stage] = start;
+        start += count;
+    }
+    const decl **systems = arena_alloc(sizeof(*systems) * (size_t)prog->systems.count);
     for (int i = 0; i < prog->systems.count; i++) {
         const decl *sys = prog->systems.items[i];
+        systems[next[sys->stage]++] = sys;
+    }
+    for (int i = 0; i < prog->systems.count; i++) {
+        const decl *sys = systems[i];
+        if (i > 0 && sys->stage != systems[i - 1]->stage) sb_put(out, "\n");
         sb_printf(out, "stage %-2d ", sys->stage);
         put_decl_name(out, sys, "", NULL);
         sb_put(out, sys->per_entity ? "  (per entity" : "  (once");

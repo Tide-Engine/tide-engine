@@ -4,6 +4,7 @@ A system starts once everything it runs after is done.
 stage 1  Hurt  (per entity)
          writes Unit
          alongside nothing
+
 stage 2  Tally  (per entity)
          reads Unit
          writes Log

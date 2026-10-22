@@ -10,7 +10,7 @@ The tick follows it on every core: a system starts as soon as what it waits for 
 
 ## Reading it
 
-`tide schedule` prints it. This example is from a demo where balls bounce around an arena:
+`tide schedule` prints systems grouped by stage, keeping their tick order within each stage. This example is from a demo where balls bounce around an arena:
 
 ```
 demo: 5 systems each tick, 4 stages deep; 5 can run alongside others.
@@ -19,16 +19,22 @@ A system starts once everything it runs after is done.
 stage 1  Steer  (per entity)
          writes Body, Aim
          alongside Expire
+stage 1  Expire  (per entity)
+         writes Lifetime
+         alongside Steer, Fire, Move, Bounce
+
 stage 2  Fire  (per entity)
          reads Body, Aim
          after Steer: it writes Body and Aim, which this reads
          alongside Expire
+
 stage 3  Move  (per entity)
          reads Time
          writes Body
          after Steer: both write Body (and through Fire)
          after Fire: it reads Body, which this writes
          alongside Expire
+
 stage 4  Bounce  (per entity)
          reads Arena
          writes Body
@@ -36,9 +42,6 @@ stage 4  Bounce  (per entity)
          after Fire: it reads Body, which this writes (and through Move)
          after Move: both write Body
          alongside Expire
-stage 1  Expire  (per entity)
-         writes Lifetime
-         alongside Steer, Fire, Move, Bounce
 
 Views, every frame in this order (they only read, so nothing waits):
          DrawArena
@@ -50,7 +53,7 @@ Event handlers, at the end of the tick, as their events are sent:
          Spawned: Setup
 ```
 
-`Expire` only touches `Lifetime`, so it can run alongside everything else. The others all work on `Body`, so they wait for each other, in the order they're written.
+`Steer` and `Expire` are both stage 1: neither waits for another system. `Expire` only touches `Lifetime`, so it can run alongside everything else. The others all work on `Body`, so they wait for each other, in the order they're written. Stages show dependency depth; `Fire` can start when `Steer` finishes, even if `Expire` is still running.
 
 In the editors, each system shows its stage and why it waits right above it, like `stage 2 · after Move: both write Body`, and on hover.
 
@@ -77,6 +80,7 @@ stage 1  Heal  (per entity)
          reads any entity's Armor, through World
          writes any entity's Health, through World
          alongside Aim, Chase
+
 stage 2  Drain  (per entity)
          writes Health
          after Heal: both write Health

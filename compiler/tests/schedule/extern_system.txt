@@ -5,28 +5,30 @@ stage 1  Move  (per entity, in C)
          reads Velocity, Time
          writes Position
          alongside Heal, Gust
+stage 1  Heal  (per entity, in C)
+         writes Health
+         alongside Move, Tally, TallyRocks, Gust, Blow
+stage 1  Gust  (once, in C)
+         reads Time
+         writes Wind
+         alongside Move, Tally, Heal, TallyRocks
+
 stage 2  Tally  (per entity, in C)
          reads Position
          writes Count
          after Move: it writes Position, which this reads
          alongside Heal, Gust, Blow
-stage 1  Heal  (per entity, in C)
-         writes Health
-         alongside Move, Tally, TallyRocks, Gust, Blow
-stage 3  TallyRocks  (per entity, in C)
-         writes Count
-         after Tally: both write Count
-         alongside Heal, Gust, Blow
-stage 1  Gust  (once, in C)
-         reads Time
-         writes Wind
-         alongside Move, Tally, Heal, TallyRocks
 stage 2  Blow  (per entity)
          reads Wind
          writes Velocity
          after Move: it reads Velocity, which this writes
          after Gust: it writes Wind, which this reads
          alongside Tally, Heal, TallyRocks
+
+stage 3  TallyRocks  (per entity, in C)
+         writes Count
+         after Tally: both write Count
+         alongside Heal, Gust, Blow
 
 Event handlers, at the end of the tick, as their events are sent:
          Spawned: Setup
