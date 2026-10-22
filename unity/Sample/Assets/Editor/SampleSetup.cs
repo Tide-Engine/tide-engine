@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using System.IO;
 using Tide;
 using UnityEditor;
@@ -7,8 +6,9 @@ using UnityEngine;
 
 // Makes the sample's scene and ball prefab: Tools > Tide Sample > Make Scene, or
 // Unity.exe -batchmode -projectPath . -executeMethod SampleSetup.Make -quit
-// The ball (Roller.prefab) and the pillars in the scene have TideEntity: tide
-// reads them as Tide's prefabs Roller and Bounce, which Bounce.tide spawns.
+// The ball (Roller.prefab) and the pillars in the scene are Tide entities, with
+// the game's components (Ball, Spinner): tide reads them as Tide's prefabs
+// Roller and Bounce, which Bounce.tide spawns.
 public static class SampleSetup
 {
     const string Folder = "Assets/Sample";
@@ -32,7 +32,7 @@ public static class SampleSetup
         sphere.name = "Roller";
         Object.DestroyImmediate(sphere.GetComponent<Collider>());
         sphere.GetComponent<MeshRenderer>().sharedMaterial = material;
-        Entity(sphere, ("Ball", ""));
+        sphere.AddComponent<Tide.Game.Ball>();
         sphere.AddComponent<BallTint>();
         PrefabUtility.SaveAsPrefabAsset(sphere, Folder + "/Roller.prefab");
         Object.DestroyImmediate(sphere);
@@ -98,13 +98,6 @@ public static class SampleSetup
         pillar.transform.localPosition = at;
         pillar.transform.localScale = new Vector3(0.4f, 1.5f, 1.6f);
         pillar.GetComponent<MeshRenderer>().sharedMaterial = material;
-        Entity(pillar, ("Spinner", "speed = " + speed.ToString(System.Globalization.CultureInfo.InvariantCulture)));
-    }
-
-    static void Entity(GameObject on, params (string type, string values)[] components)
-    {
-        var entity = on.AddComponent<TideEntity>();
-        entity.components = new List<TideAuthoredComponent>();
-        foreach (var (type, values) in components) entity.components.Add(new TideAuthoredComponent { type = type, values = values });
+        pillar.AddComponent<Tide.Game.Spinner>().speed = speed; // With its TideEntity, which a Tide component requires
     }
 }

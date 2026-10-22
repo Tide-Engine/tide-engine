@@ -4,9 +4,9 @@ using UnityEditor;
 
 namespace Tide.Editor
 {
-    // Keeps the generated C# types (Tide.Game) the newest build's. tide unity writes each new schema into the
-    // project's Packages/com.tide.game with a stub naming its hash, which Unity's build cache sees: a refresh is all
-    // it takes, which this asks for as soon as the schema changes rather than when the editor next has focus.
+    // Keeps the game's C# (Tide.Game) the newest build's. tide unity writes each new schema into the project's
+    // Packages/com.tide.game with the C# made of it (its components and types): a refresh is all it takes, which this
+    // asks for as soon as the schema changes rather than when the editor next has focus.
     [InitializeOnLoad]
     public static class TideSchemaWatcher
     {

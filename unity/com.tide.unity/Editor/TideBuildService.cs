@@ -345,6 +345,8 @@ namespace Tide.Editor
             const string message = "Fix the game's Tide errors before Play: see the Console";
             foreach (SceneView view in SceneView.sceneViews) view.ShowNotification(new GUIContent(message));
             Debug.LogError("tide: the game has errors: fix them before Play (they're above)");
+            // Nobody can fix them in a batch run (tests), which would wait for Play forever: it fails
+            if (Application.isBatchMode) EditorApplication.Exit(1);
         }
 
         static readonly System.Text.RegularExpressions.Regex located =

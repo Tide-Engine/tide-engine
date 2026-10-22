@@ -13,6 +13,7 @@ GameObject:
   - component: {fileID: 3839991615482247061}
   - component: {fileID: 1584045890459994263}
   - component: {fileID: 2757670638287146263}
+  - component: {fileID: 5685736814116622739}
   m_Layer: 0
   m_Name: Roller
   m_TagString: Untagged
@@ -104,9 +105,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 4f7d2c1e9a8b4b6c8d3e2f1a0b9c8d7e, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Tide.Runtime::Tide.TideEntity
-  components:
-  - type: Ball
-    values: 
+  components: []
   references: []
 --- !u!114 &2757670638287146263
 MonoBehaviour:
@@ -120,3 +119,19 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: ab195b76ece4752428e4e1d1c9086c99, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::BallTint
+--- !u!114 &5685736814116622739
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 8029058467311819219}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: ce03b43f744b7347571b2cbb98249f29, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Tide.Game::Tide.Game.Ball
+  velocity: {x: 0, y: 0, z: 0}
+  color: {r: 0, g: 0, b: 0, a: 0}
+  seat: 0
+  bounces: 0

@@ -127,6 +127,7 @@ namespace Tide.Editor
         public string name;
         public string type;
         public bool local;
+        public string text; // A text field's default, as written between its quotes
     }
 
     [Serializable]

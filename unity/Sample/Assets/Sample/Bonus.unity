@@ -131,6 +131,7 @@ GameObject:
   - component: {fileID: 553936297}
   - component: {fileID: 553936296}
   - component: {fileID: 553936295}
+  - component: {fileID: 553936298}
   m_Layer: 0
   m_Name: Totem
   m_TagString: Untagged
@@ -165,9 +166,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 4f7d2c1e9a8b4b6c8d3e2f1a0b9c8d7e, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Tide.Runtime::Tide.TideEntity
-  components:
-  - type: Spinner
-    values: speed = 3
+  components: []
   references: []
 --- !u!23 &553936296
 MeshRenderer:
@@ -226,6 +225,19 @@ MeshFilter:
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 553936293}
   m_Mesh: {fileID: 10202, guid: 0000000000000000e000000000000000, type: 0}
+--- !u!114 &553936298
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 553936293}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: c1a5056ab9f7b0462fd22449bd7fbbd1, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Tide.Game::Tide.Game.Spinner
+  speed: 3
 --- !u!1 &1838927980
 GameObject:
   m_ObjectHideFlags: 0

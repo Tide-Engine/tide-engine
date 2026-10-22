@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "json.h"
 #include "sys.h"
 #include "unity_yaml.h"
 
@@ -140,13 +141,138 @@ typedef struct asset {
     int relevant; // 0 unknown, 1 holds TideEntity objects here or in a prefab it instances, -1 not, 2 being worked out
 } asset;
 
+// The game's components as Unity has them (Packages/com.tide.game/components.json, which tide unity writes with their
+// C#: unity_code.h): each one's script GUID, and how each field of it is serialized, which its YAML is read by.
+typedef struct map_field {
+    char *name;    // Tide's
+    char *key;     // Unity's YAML's: the C# field
+    char *form;    // number, bool, float2, float3, float4, int2, int3, quaternion, color, string, enum, entity, list, literal
+    char *enumeration;  // An enum's Tide name
+    char *element;      // A list's elements' form
+    char *element_type; // ...and Tide type
+} map_field;
+
+typedef struct map_component {
+    char guid[33];
+    char *name;
+    map_field *fields;
+    int field_count;
+} map_component;
+
+typedef struct map_enum {
+    char *name;
+    char **members;
+    long *values;
+    int count;
+} map_enum;
+
 typedef struct project {
     char *assets;          // Absolute, ending in '/'
     size_t project_length; // Of the project's folder, before "Assets/"
     asset *items;
     int count, capacity;
     bool failed;
+    map_component *components;
+    int component_count;
+    map_enum *enums;
+    int enum_count;
 } project;
+
+static char *json_dup(const json *object, const char *key)
+{
+    const char *v = json_str(json_get(object, key));
+    return v ? dup(v) : NULL;
+}
+
+// The project's Packages/com.tide.game/components.json, if tide unity has written it.
+static void read_components(project *p)
+{
+    char *path = grab(p->project_length + 64);
+    memcpy(path, p->assets, p->project_length);
+    strcpy(path + p->project_length, "Packages/com.tide.game/components.json");
+    size_t size = 0;
+    char *body = sys_read_file(path, &size);
+    free(path);
+    const json *map = body ? json_parse(body, size) : NULL;
+    const json *components = json_get(map, "components"), *enums = json_get(map, "enums");
+    for (int i = 0; components && components->kind == JSON_ARRAY && i < components->count; i++) {
+        const json *c = components->items[i];
+        const char *name = json_str(json_get(c, "name")), *guid = json_str(json_get(c, "guid"));
+        if (!name || !guid) continue;
+        int capacity = p->component_count;
+        grow((void **)&p->components, &capacity, p->component_count, sizeof *p->components);
+        map_component *m = &p->components[p->component_count++];
+        memset(m, 0, sizeof *m);
+        snprintf(m->guid, sizeof m->guid, "%s", guid);
+        m->name = dup(name);
+        const json *fields = json_get(c, "fields");
+        const int count = fields && fields->kind == JSON_ARRAY ? fields->count : 0;
+        m->fields = grab(sizeof *m->fields * (size_t)(count + 1));
+        for (int k = 0; k < count; k++) {
+            const json *f = fields->items[k];
+            map_field *to = &m->fields[m->field_count];
+            *to = (map_field){json_dup(f, "name"), json_dup(f, "key"), json_dup(f, "form"), json_dup(f, "enum"),
+                              json_dup(f, "element"), json_dup(f, "elementType")};
+            if (to->name && to->key && to->form) {
+                m->field_count++;
+                continue;
+            }
+            free(to->name);
+            free(to->key);
+            free(to->form);
+            free(to->enumeration);
+            free(to->element);
+            free(to->element_type);
+        }
+    }
+    for (int i = 0; enums && enums->kind == JSON_ARRAY && i < enums->count; i++) {
+        const json *e = enums->items[i];
+        const json *members = json_get(e, "members"), *values = json_get(e, "values");
+        const char *name = json_str(json_get(e, "name"));
+        if (!name || !members || !values || members->kind != JSON_ARRAY || values->kind != JSON_ARRAY) continue;
+        int capacity = p->enum_count;
+        grow((void **)&p->enums, &capacity, p->enum_count, sizeof *p->enums);
+        map_enum *m = &p->enums[p->enum_count++];
+        m->name = dup(name);
+        const int count = members->count < values->count ? members->count : values->count;
+        m->members = grab(sizeof *m->members * (size_t)(count + 1));
+        m->values = grab(sizeof *m->values * (size_t)(count + 1));
+        m->count = 0;
+        for (int k = 0; k < count; k++) {
+            const char *member = json_str(members->items[k]);
+            if (!member || values->items[k]->kind != JSON_NUMBER) continue;
+            m->members[m->count] = dup(member);
+            m->values[m->count++] = (long)values->items[k]->number;
+        }
+    }
+    if (map) json_release();
+    free(body);
+}
+
+static void free_components(project *p)
+{
+    for (int i = 0; i < p->component_count; i++) {
+        map_component *m = &p->components[i];
+        for (int k = 0; k < m->field_count; k++) {
+            free(m->fields[k].name);
+            free(m->fields[k].key);
+            free(m->fields[k].form);
+            free(m->fields[k].enumeration);
+            free(m->fields[k].element);
+            free(m->fields[k].element_type);
+        }
+        free(m->fields);
+        free(m->name);
+    }
+    free(p->components);
+    for (int i = 0; i < p->enum_count; i++) {
+        for (int k = 0; k < p->enums[i].count; k++) free(p->enums[i].members[k]);
+        free(p->enums[i].members);
+        free(p->enums[i].values);
+        free(p->enums[i].name);
+    }
+    free(p->enums);
+}
 
 static void index_meta(void *user, const char *path)
 {
@@ -234,13 +360,9 @@ static bool relevant(project *p, asset *a)
 typedef struct ident {
     char guid[33];
     int64_t file_id;
-    int what; // 0 its GameObject, 1 its Transform, 2 its TideEntity
+    int what; // 0 its GameObject, 1 its Transform, 2 its TideEntity, 3 one of its Tide components (`component`)
+    const map_component *component;
 } ident;
-
-typedef struct authored {
-    char *type;
-    char *values;
-} authored;
 
 typedef struct node node;
 
@@ -250,6 +372,30 @@ typedef struct reference {
     bool object;    // Something was referenced at all
 } reference;
 
+// A serialized field's value at a property path ("speed", "position.x", "marks.Array.data[2]"), as Unity's YAML and
+// a prefab instance's changes name them; an entity's is "@k", the component's kth reference.
+typedef struct flat {
+    char *path;
+    char *value;
+} flat;
+
+// A component a GameObject's TideEntity lists: its type and its values, a Tide literal.
+typedef struct authored {
+    char *type;
+    char *values;
+} authored;
+
+// A Tide component of a GameObject's own (com.tide.game's): what Unity serialized of it, by property path, and the
+// objects it references.
+typedef struct owned {
+    const map_component *component;
+    flat *flats;
+    int flat_count, flat_capacity;
+    reference *refs;
+    int ref_count, ref_capacity;
+    bool removed; // An instance's m_RemovedComponents took it away
+} owned;
+
 struct node {
     char *name;
     double pos[3], rot[4], scale[3];
@@ -257,6 +403,8 @@ struct node {
     bool tide; // Has TideEntity
     authored *components;
     int component_count, component_capacity;
+    owned *owned; // In the order they were first read, which never changes as a pending reference has its index
+    int owned_count, owned_capacity;
     reference *refs;
     int ref_count, ref_capacity;
     node **children;
@@ -278,13 +426,14 @@ static node *new_node(void)
     return n;
 }
 
-static void add_id(node *n, const char *guid, const int64_t file_id, const int what)
+static void add_id(node *n, const char *guid, const int64_t file_id, const int what, const map_component *component)
 {
     grow((void **)&n->ids, &n->id_capacity, n->id_count, sizeof *n->ids);
     ident *i = &n->ids[n->id_count++];
     snprintf(i->guid, sizeof i->guid, "%s", guid);
     i->file_id = file_id;
     i->what = what;
+    i->component = component;
 }
 
 static void add_child(node *parent, node *child)
@@ -304,6 +453,16 @@ static void free_node(node *n)
         free(n->components[i].values);
     }
     free(n->components);
+    for (int i = 0; i < n->owned_count; i++) {
+        owned *o = &n->owned[i];
+        for (int k = 0; k < o->flat_count; k++) {
+            free(o->flats[k].path);
+            free(o->flats[k].value);
+        }
+        free(o->flats);
+        free(o->refs);
+    }
+    free(n->owned);
     free(n->refs);
     free(n->children);
     free(n->ids);
@@ -328,10 +487,27 @@ static node *find(node **roots, const int count, const char *guid, const int64_t
     return NULL;
 }
 
+// The identity (guid, file_id) as `what` of a node in `roots` (and under them), and the node.
+static const ident *find_id(node **roots, const int count, const char *guid, const int64_t file_id, const int what, node **owner)
+{
+    for (int r = 0; r < count; r++) {
+        node *n = roots[r];
+        for (int i = 0; i < n->id_count; i++) {
+            if (n->ids[i].file_id == file_id && n->ids[i].what == what && strcmp(n->ids[i].guid, guid) == 0) {
+                *owner = n;
+                return &n->ids[i];
+            }
+        }
+        const ident *inside = find_id(n->children, n->child_count, guid, file_id, what, owner);
+        if (inside) return inside;
+    }
+    return NULL;
+}
+
 // The node of (guid, file_id) as any of its objects, and which one it is.
 static node *find_any(node **roots, const int count, const char *guid, const int64_t file_id, const int64_t instance, int *what)
 {
-    for (int w = 0; w < 3; w++) {
+    for (int w = 0; w < 4; w++) {
         node *n = find(roots, count, guid, file_id, w, instance);
         if (n) {
             if (what) *what = w;
@@ -353,7 +529,7 @@ static void add_instance_ids(node *n, const char *source, const char *file, cons
     for (int i = 0; i < count; i++) {
         if (strcmp(n->ids[i].guid, source) != 0) continue;
         const int64_t id = (int64_t)(((uint64_t)instance ^ (uint64_t)n->ids[i].file_id) & 0x7FFFFFFFFFFFFFFFull);
-        add_id(n, file, id, n->ids[i].what);
+        add_id(n, file, id, n->ids[i].what, n->ids[i].component);
     }
     for (int i = 0; i < n->child_count; i++) add_instance_ids(n->children[i], source, file, instance);
 }
@@ -467,6 +643,54 @@ static void resize_components(node *n, const int count)
     if (count > n->component_count) set_component(n, count - 1, NULL, NULL, false);
 }
 
+// The slot of the GameObject's own Tide component `c`, made where it has none.
+static int owned_slot(node *n, const map_component *c)
+{
+    for (int i = 0; i < n->owned_count; i++) {
+        if (n->owned[i].component == c) return i;
+    }
+    grow((void **)&n->owned, &n->owned_capacity, n->owned_count, sizeof *n->owned);
+    n->owned[n->owned_count] = (owned){c, NULL, 0, 0, NULL, 0, 0, false};
+    return n->owned_count++;
+}
+
+static void set_flat(owned *a, const char *path, const char *value)
+{
+    for (int i = 0; i < a->flat_count; i++) {
+        if (strcmp(a->flats[i].path, path) == 0) {
+            free(a->flats[i].value);
+            a->flats[i].value = dup(value);
+            return;
+        }
+    }
+    grow((void **)&a->flats, &a->flat_capacity, a->flat_count, sizeof *a->flats);
+    a->flats[a->flat_count++] = (flat){dup(path), dup(value)};
+}
+
+static const char *get_flat(const owned *a, const char *path)
+{
+    for (int i = 0; i < a->flat_count; i++) {
+        if (strcmp(a->flats[i].path, path) == 0) return a->flats[i].value;
+    }
+    return NULL;
+}
+
+static const map_field *field_of(const map_component *c, const char *key)
+{
+    for (int i = 0; i < c->field_count; i++) {
+        if (strcmp(c->fields[i].key, key) == 0) return &c->fields[i];
+    }
+    return NULL;
+}
+
+static const map_component *component_of(const project *p, const char *guid)
+{
+    for (int i = 0; guid[0] && i < p->component_count; i++) {
+        if (strcmp(p->components[i].guid, guid) == 0) return &p->components[i];
+    }
+    return NULL;
+}
+
 static void resize_refs(node *n, const int count)
 {
     if (count < 0 || count > 10000) return;
@@ -548,6 +772,7 @@ static bool array_path(const char *path, const char *prefix, int *index, const c
 // A reference waiting for every node of the file to be there: `n`'s `at`th, to (guid, file_id) of the file `in`.
 typedef struct pending {
     node *n;
+    int component; // Its own Tide component's slot (node's owned), whose references it's of; -1 for TideEntity's
     int at;
     char guid[33];
     int64_t file_id;
@@ -581,9 +806,127 @@ static void add_pending(expansion *x, node *n, const int at, const yaml_node *re
     grow((void **)&x->refs, &x->ref_capacity, x->ref_count, sizeof *x->refs);
     pending *r = &x->refs[x->ref_count++];
     r->n = n;
+    r->component = -1;
     r->at = at;
     snprintf(r->guid, sizeof r->guid, "%s", guid);
     r->file_id = id;
+}
+
+// A Tide component's entity field: its value "@k", k a reference of the component's own, resolved once every node of
+// the file is there; nothing referenced is none.
+static void component_reference(expansion *x, node *n, const int slot, const char *path, const yaml_node *ref)
+{
+    owned *a = &n->owned[slot];
+    char guid[33];
+    const int64_t id = yaml_reference(ref, guid);
+    if (!id && !guid[0]) {
+        set_flat(a, path, "");
+        return;
+    }
+    grow((void **)&a->refs, &a->ref_capacity, a->ref_count, sizeof *a->refs);
+    memset(&a->refs[a->ref_count], 0, sizeof *a->refs);
+    char k[24];
+    snprintf(k, sizeof k, "@%d", a->ref_count);
+    set_flat(a, path, k);
+    grow((void **)&x->refs, &x->ref_capacity, x->ref_count, sizeof *x->refs);
+    pending *r = &x->refs[x->ref_count++];
+    r->n = n;
+    r->component = slot;
+    r->at = a->ref_count++;
+    snprintf(r->guid, sizeof r->guid, "%s", guid);
+    r->file_id = id;
+}
+
+// Unity's hex of a list of numbers (List<int>, List<float>: each element's bytes, low first) as the list's paths.
+static bool hex_list(owned *a, const char *key, const map_field *f, const char *hex)
+{
+    const char *t = f->element_type ? f->element_type : "";
+    const size_t size = strcmp(t, "double") == 0 || strcmp(t, "long") == 0 ? 8 : strcmp(t, "byte") == 0 || strcmp(t, "bool") == 0 ? 1 : 4;
+    const size_t n = strlen(hex);
+    if (n % (size * 2) != 0) return false;
+    for (size_t i = 0; i < n; i++) {
+        const char c = hex[i];
+        if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'))) return false;
+    }
+    const size_t count = n / (size * 2);
+    char path[256], value[64];
+    snprintf(path, sizeof path, "%s.Array.size", key);
+    snprintf(value, sizeof value, "%zu", count);
+    set_flat(a, path, value);
+    for (size_t e = 0; e < count; e++) {
+        uint8_t bytes[8] = {0};
+        for (size_t b = 0; b < size; b++) {
+            char pair[3] = {hex[(e * size + b) * 2], hex[(e * size + b) * 2 + 1], 0};
+            bytes[b] = (uint8_t)strtoul(pair, NULL, 16);
+        }
+        if (strcmp(t, "float") == 0) {
+            float v;
+            memcpy(&v, bytes, 4);
+            snprintf(value, sizeof value, "%.9g", (double)v);
+        } else if (strcmp(t, "double") == 0) {
+            double v;
+            memcpy(&v, bytes, 8);
+            snprintf(value, sizeof value, "%.17g", v);
+        } else if (strcmp(t, "long") == 0) {
+            int64_t v;
+            memcpy(&v, bytes, 8);
+            snprintf(value, sizeof value, "%lld", (long long)v);
+        } else if (size == 1) {
+            snprintf(value, sizeof value, "%u", (unsigned)bytes[0]);
+        } else if (strcmp(t, "PlayerID") == 0) {
+            uint32_t v;
+            memcpy(&v, bytes, 4);
+            snprintf(value, sizeof value, "%u", (unsigned)v);
+        } else {
+            int32_t v;
+            memcpy(&v, bytes, 4);
+            snprintf(value, sizeof value, "%d", (int)v);
+        }
+        snprintf(path, sizeof path, "%s.Array.data[%zu]", key, e);
+        set_flat(a, path, value);
+    }
+    return true;
+}
+
+// What Unity serialized of a value at `path`, as paths: a map's keys after a '.', a sequence's items as
+// path.Array.data[i] with path.Array.size, a scalar as itself.
+static void flatten(owned *a, const char *path, const yaml_node *v)
+{
+    if (!v) return;
+    char inner[512];
+    if (v->kind == YAML_SCALAR) {
+        set_flat(a, path, v->text ? v->text : "");
+    } else if (v->kind == YAML_MAP) {
+        for (int i = 0; i < v->count; i++) {
+            snprintf(inner, sizeof inner, "%s.%s", path, v->keys[i]);
+            flatten(a, inner, v->items[i]);
+        }
+    } else {
+        char size[24];
+        snprintf(inner, sizeof inner, "%s.Array.size", path);
+        snprintf(size, sizeof size, "%d", v->count);
+        set_flat(a, inner, size);
+        for (int i = 0; i < v->count; i++) {
+            snprintf(inner, sizeof inner, "%s.Array.data[%d]", path, i);
+            flatten(a, inner, v->items[i]);
+        }
+    }
+}
+
+// A Tide component's document: its serialized fields into its GameObject's slot for it.
+static void read_component(expansion *x, node *n, const map_component *c, const yaml_node *body)
+{
+    const int slot = owned_slot(n, c);
+    owned *a = &n->owned[slot];
+    a->removed = false;
+    for (int i = 0; i < c->field_count; i++) {
+        const map_field *f = &c->fields[i];
+        const yaml_node *v = yaml_get(body, f->key);
+        if (!v) continue; // A field Unity hasn't serialized yet: its default
+        if (strcmp(f->form, "entity") == 0) component_reference(x, n, slot, f->key, v);
+        else if (strcmp(f->form, "list") == 0 && v->kind == YAML_SCALAR && hex_list(a, f->key, f, v->text ? v->text : "")) continue;
+        else flatten(a, f->key, v);
+    }
 }
 
 static void apply_modification(expansion *x, node **roots, const int count, const yaml_node *m)
@@ -628,6 +971,20 @@ static void apply_modification(expansion *x, node **roots, const int count, cons
         } else if (array_path(path, "references.Array.data[", &index, &rest) && !*rest) {
             add_pending(x, n, index, yaml_get(m, "objectReference"));
         }
+    } else if (what == 3) {
+        // A change of a Tide component's field, by its property path: an entity's is the object it references
+        node *owner = NULL;
+        const ident *id = find_id(roots, count, guid, target, 3, &owner);
+        if (!id || !id->component || owner != n) return;
+        const int slot = owned_slot(n, id->component);
+        char key[256];
+        snprintf(key, sizeof key, "%s", path);
+        char *dot = strchr(key, '.');
+        if (dot) *dot = '\0';
+        const map_field *f = field_of(id->component, key);
+        if (!f) return; // A field the component no longer has: left out
+        if (strcmp(f->form, "entity") == 0 && strcmp(path, f->key) == 0) component_reference(x, n, slot, path, yaml_get(m, "objectReference"));
+        else set_flat(&n->owned[slot], path, value);
     }
 }
 
@@ -653,7 +1010,7 @@ static bool expand(project *p, asset *file, const int depth, node ***roots, int 
         free(n->name);
         n->name = dup(yaml_text(d->body, "m_Name", "GameObject"));
         n->active = yaml_number(d->body, "m_IsActive", 1) != 0;
-        add_id(n, file->guid, d->file_id, 0);
+        add_id(n, file->guid, d->file_id, 0, NULL);
         add_top(&x, n);
     }
     for (int i = 0; i < f->count; i++) {
@@ -663,7 +1020,7 @@ static bool expand(project *p, asset *file, const int depth, node ***roots, int 
         node *n = find(x.all, x.count, file->guid, yaml_reference(yaml_get(d->body, "m_GameObject"), unused), 0, 0);
         if (!n) continue;
         read_trs(n, d->body);
-        add_id(n, file->guid, d->file_id, 1);
+        add_id(n, file->guid, d->file_id, 1, NULL);
     }
     // Its prefab instances, each expanded from its prefab with the instance's changes
     for (int i = 0; i < f->count; i++) {
@@ -693,6 +1050,12 @@ static bool expand(project *p, asset *file, const int depth, node ***roots, int 
         for (int k = 0; removed && removed->kind == YAML_SEQ && k < removed->count; k++) {
             char g[33];
             const int64_t id = yaml_reference(removed->items[k], g);
+            node *owner = NULL;
+            const ident *component = find_id(inner, inner_count, g, id, 3, &owner);
+            if (component && component->component) {
+                owner->owned[owned_slot(owner, component->component)].removed = true;
+                continue;
+            }
             node *n = find(inner, inner_count, g, id, 2, 0);
             if (!n) continue;
             n->tide = false;
@@ -724,7 +1087,21 @@ static bool expand(project *p, asset *file, const int depth, node ***roots, int 
         resize_refs(n, 0);
         const yaml_node *refs = yaml_get(d->body, "references");
         for (int k = 0; refs && refs->kind == YAML_SEQ && k < refs->count; k++) add_pending(&x, n, k, refs->items[k]);
-        add_id(n, file->guid, d->file_id, 2);
+        add_id(n, file->guid, d->file_id, 2, NULL);
+    }
+    // Tide components of their own (com.tide.game's): of the file's GameObjects, and those added to its instances'
+    for (int i = 0; i < f->count; i++) {
+        const yaml_document *d = &f->documents[i];
+        if (d->class_id != UNITY_MONO_BEHAVIOUR || d->stripped) continue;
+        char script[33];
+        yaml_reference(yaml_get(d->body, "m_Script"), script);
+        const map_component *c = component_of(p, script);
+        if (!c) continue; // Unity's own, a game's, or a component the game no longer has
+        char unused[33];
+        node *n = node_of(f, file->guid, x.all, x.count, yaml_reference(yaml_get(d->body, "m_GameObject"), unused));
+        if (!n) continue;
+        read_component(&x, n, c, d->body);
+        add_id(n, file->guid, d->file_id, 3, c);
     }
     // Parents: each own Transform's children in its order, then what went under an instance's objects
     for (int i = 0; i < f->count; i++) {
@@ -762,7 +1139,7 @@ static bool expand(project *p, asset *file, const int depth, node ***roots, int 
     // References, now every node of the file is there
     for (int i = 0; i < x.ref_count; i++) {
         pending *r = &x.refs[i];
-        reference *to = &r->n->refs[r->at];
+        reference *to = r->component >= 0 ? &r->n->owned[r->component].refs[r->at] : &r->n->refs[r->at];
         memset(to, 0, sizeof *to);
         to->object = true;
         if (r->guid[0] && strcmp(r->guid, file->guid) != 0) {
@@ -947,6 +1324,40 @@ static char *path_to(const emitter *e, const node *n)
     return t.s;
 }
 
+static void indent(text *t, const int depth);
+
+// What a reference names, as an entity field's value: `this`, an entity's path, or `default`; `k` is its number as
+// the error says it.
+static void put_reference(emitter *e, const node *n, const reference *r, const long k, text *t)
+{
+    if (!r || !r->object) {
+        puts_(t, "default");
+    } else if (r->target == n) {
+        puts_(t, "this");
+    } else if (r->target && r->target->emitted) {
+        char *path = path_to(e, r->target);
+        if (path) {
+            puts_(t, path);
+            free(path);
+        } else {
+            fprintf(stderr, "%s: error: %s names its prefab's root, which only the root's own values can, as 'this'\n",
+                    e->file->local, n->name);
+            e->p->failed = true;
+            puts_(t, "default");
+        }
+    } else if (r->target) {
+        fprintf(stderr, "%s: error: %s's reference @%ld is to %s, which has no TideEntity (or is inactive): only entities "
+                        "can be named\n", e->file->local, n->name, k, r->target->name);
+        e->p->failed = true;
+        puts_(t, "default");
+    } else {
+        fprintf(stderr, "%s: error: %s's reference @%ld is to an asset (GUID %s): Tide fields take entities from Unity's "
+                        "references, not assets yet\n", e->file->local, n->name, k, r->guid);
+        e->p->failed = true;
+        puts_(t, "default");
+    }
+}
+
 // A component's values with each `@k` (its TideEntity's kth reference) as what it names.
 static char *resolve_values(emitter *e, const node *n, const char *values)
 {
@@ -968,35 +1379,144 @@ static char *resolve_values(emitter *e, const node *n, const char *values)
         char *end = NULL;
         const long k = strtol(c + 1, &end, 10);
         c = end - 1;
-        const reference *r = k >= 0 && k < n->ref_count ? &n->refs[k] : NULL;
-        if (!r || !r->object) {
-            puts_(&t, "default");
-        } else if (r->target == n) {
-            puts_(&t, "this");
-        } else if (r->target && r->target->emitted) {
-            char *path = path_to(e, r->target);
-            if (path) {
-                puts_(&t, path);
-                free(path);
-            } else {
-                fprintf(stderr, "%s: error: %s names its prefab's root, which only the root's own values can, as 'this'\n",
-                        e->file->local, n->name);
-                e->p->failed = true;
-                puts_(&t, "default");
-            }
-        } else if (r->target) {
-            fprintf(stderr, "%s: error: %s's reference @%ld is to %s, which has no TideEntity (or is inactive): only entities "
-                            "can be named\n", e->file->local, n->name, k, r->target->name);
-            e->p->failed = true;
-            puts_(&t, "default");
-        } else {
-            fprintf(stderr, "%s: error: %s's reference @%ld is to an asset (GUID %s): Tide fields take entities from Unity's "
-                            "references, not assets yet\n", e->file->local, n->name, k, r->guid);
-            e->p->failed = true;
-            puts_(&t, "default");
-        }
+        put_reference(e, n, k >= 0 && k < n->ref_count ? &n->refs[k] : NULL, k, &t);
     }
     return t.s;
+}
+
+// A number Unity wrote, as Tide writes it: an integer as itself, else as `number` does; false for none.
+static bool put_number(text *t, const char *v)
+{
+    if (!v || !*v) return false;
+    const char *c = v + (*v == '-');
+    bool integer = *c != '\0';
+    for (; *c; c++) integer = integer && *c >= '0' && *c <= '9';
+    if (integer) {
+        puts_(t, v);
+        return true;
+    }
+    char *end = NULL;
+    const double d = strtod(v, &end);
+    if (end == v) return false;
+    number(t, d);
+    return true;
+}
+
+static void put_string(text *t, const char *v)
+{
+    puts_(t, "\"");
+    for (const char *c = v; *c; c++) {
+        if (*c == '"' || *c == '\\') {
+            put(t, "\\", 1);
+            put(t, c, 1);
+        } else if (*c == '\n') {
+            puts_(t, "\\n");
+        } else if (*c == '\t') {
+            puts_(t, "\\t");
+        } else if (*c != '\r') {
+            put(t, c, 1);
+        }
+    }
+    puts_(t, "\"");
+}
+
+// A value of `form` Unity serialized at `path` of an own component, as a Tide value into `t`: false where Unity has
+// nothing of it, which leaves the field its default.
+static bool put_form(emitter *e, const node *n, const owned *o, const map_field *f, const char *form, const char *path, text *t)
+{
+    char inner[512];
+    static const struct { const char *form, *tide, *axes; } vectors[] = {
+        {"float2", "float2", "xy"}, {"float3", "float3", "xyz"}, {"float4", "float4", "xyzw"}, {"int2", "int2", "xy"},
+        {"int3", "int3", "xyz"}, {"quaternion", "quaternion", "xyzw"}, {"color", "Color", "rgba"},
+    };
+    for (size_t i = 0; i < sizeof vectors / sizeof vectors[0]; i++) {
+        if (strcmp(form, vectors[i].form) != 0) continue;
+        bool any = false;
+        for (const char *a = vectors[i].axes; *a; a++) {
+            snprintf(inner, sizeof inner, "%s.%c", path, *a);
+            any = any || get_flat(o, inner);
+        }
+        if (!any) return false;
+        putf(t, "%s(", vectors[i].tide);
+        for (const char *a = vectors[i].axes; *a; a++) {
+            snprintf(inner, sizeof inner, "%s.%c", path, *a);
+            if (a != vectors[i].axes) puts_(t, ", ");
+            if (!put_number(t, get_flat(o, inner))) puts_(t, *a == 'w' && form[0] == 'q' ? "1" : "0");
+        }
+        puts_(t, ")");
+        return true;
+    }
+    if (strcmp(form, "list") == 0) {
+        snprintf(inner, sizeof inner, "%s.Array.size", path);
+        const char *size = get_flat(o, inner);
+        if (!size) return false;
+        const long count = strtol(size, NULL, 10);
+        puts_(t, "[");
+        for (long i = 0; i < count && i < 1000000; i++) {
+            if (i) puts_(t, ", ");
+            snprintf(inner, sizeof inner, "%s.Array.data[%ld]", path, i);
+            text element = {0};
+            puts_(&element, "");
+            const bool given = put_form(e, n, o, f, f->element ? f->element : "", inner, &element);
+            puts_(t, given ? element.s : "default");
+            free(element.s);
+        }
+        puts_(t, "]");
+        return true;
+    }
+    const char *v = get_flat(o, path);
+    if (!v) return false;
+    if (strcmp(form, "number") == 0) return put_number(t, v);
+    if (strcmp(form, "bool") == 0) {
+        puts_(t, strtol(v, NULL, 10) ? "true" : "false");
+        return true;
+    }
+    if (strcmp(form, "string") == 0) {
+        put_string(t, v);
+        return true;
+    }
+    if (strcmp(form, "literal") == 0) {
+        if (!v[0]) return false; // Its default
+        puts_(t, v);
+        return true;
+    }
+    if (strcmp(form, "entity") == 0) {
+        const long k = v[0] == '@' ? strtol(v + 1, NULL, 10) : -1;
+        put_reference(e, n, k >= 0 && k < o->ref_count ? &o->refs[k] : NULL, k, t);
+        return true;
+    }
+    if (strcmp(form, "enum") == 0) {
+        const long value = strtol(v, NULL, 10);
+        for (int i = 0; f->enumeration && i < e->p->enum_count; i++) {
+            const map_enum *m = &e->p->enums[i];
+            if (strcmp(m->name, f->enumeration) != 0) continue;
+            for (int k = 0; k < m->count; k++) {
+                if (m->values[k] != value) continue;
+                putf(t, "%s.%s", m->name, m->members[k]);
+                return true;
+            }
+        }
+        return false; // A value the enum has no member of: its default
+    }
+    return false;
+}
+
+// An own component's declaration of an entity: its type, with the fields Unity serialized.
+static void write_owned(emitter *e, const node *n, const owned *o, const int depth)
+{
+    text values = {0};
+    puts_(&values, "");
+    for (int i = 0; i < o->component->field_count; i++) {
+        const map_field *f = &o->component->fields[i];
+        text value = {0};
+        puts_(&value, "");
+        if (put_form(e, n, o, f, f->form, f->key, &value)) putf(&values, "%s%s = %s", values.n ? ", " : "", f->name, value.s);
+        free(value.s);
+    }
+    indent(&e->out, depth);
+    if (values.n) putf(&e->out, "%s { %s };\n", o->component->name, values.s);
+    else putf(&e->out, "%s;\n", o->component->name);
+    free(values.s);
 }
 
 static void indent(text *t, const int depth)
@@ -1115,6 +1635,9 @@ static void write_entity(emitter *e, node *n, const trs placement, const int dep
         } else {
             putf(&e->out, "%s;\n", c->type);
         }
+    }
+    for (int i = 0; i < n->owned_count; i++) {
+        if (!n->owned[i].removed) write_owned(e, n, &n->owned[i], depth);
     }
     node **kids = NULL;
     int count = 0, capacity = 0;
@@ -1342,6 +1865,10 @@ unsigned long long unity_assets_stamp(const char *assets)
     char *settings = path_join(project, "ProjectSettings/EditorBuildSettings.asset");
     stamp_file(&h, settings);
     free(settings);
+    // ...and the game's components as Unity has them, which their YAML is read by
+    char *components = path_join(project, "Packages/com.tide.game/components.json");
+    stamp_file(&h, components);
+    free(components);
     free(project);
     free(absolute);
     free(dir);
@@ -1359,6 +1886,7 @@ bool unity_assets_read(const char *assets, unity_sources *out)
     const size_t length = strlen(p.assets);
     p.project_length = length >= 7 && strcmp(p.assets + length - 7, "Assets/") == 0 ? length - 7 : length;
     folder_find(p.assets, ".meta", index_meta, &p);
+    read_components(&p);
     int capacity = 0;
     text map = {0};
     puts_(&map, "{\"assets\": [");
@@ -1440,6 +1968,7 @@ bool unity_assets_read(const char *assets, unity_sources *out)
         if (p.items[i].readable) yaml_free(&p.items[i].yaml);
     }
     free(p.items);
+    free_components(&p);
     free(p.assets);
     return !p.failed;
 }

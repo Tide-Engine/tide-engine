@@ -21,6 +21,7 @@
 #include "telemetry.h"
 #include "toolchain.h"
 #include "unity_assets.h"
+#include "unity_code.h"
 #include "tide/sha256.h"
 
 #ifdef TIDE_EMBEDDED_CLANG
@@ -2624,11 +2625,11 @@ static bool write_if_changed(const char *path, const char *text, const size_t si
     return same || sys_write_file(path, text, size);
 }
 
-// The project's Packages/com.tide.game, an embedded package of the assembly Tide.Game: the schema, which the
-// package's source generator makes the game's C# types of, and a stub naming the schema's hash. Unity's build
-// cache knows an assembly by its sources, so the stub is what makes a new schema compile again. Made from the
-// project of opts->unity_assets, as each build's schema changes; meant for source control, so a clone compiles
-// before tide has built anything. False after saying what's wrong.
+// The project's Packages/com.tide.game, an embedded package of the assembly Tide.Game: the schema, and the game's
+// C# made of it (unity_code.h: its components as TideComponents, its other types, and components.json), each file
+// written only where it changed, so Unity compiles only then. Made from the project of opts->unity_assets, as each
+// build's schema changes; meant for source control, so a clone compiles before tide has built anything. False after
+// saying what's wrong.
 static bool write_unity_package(const run *r, const char *schema, const uint32_t size)
 {
     if (!r->b.opts->unity_assets) return true;
@@ -2636,28 +2637,28 @@ static bool write_unity_package(const run *r, const char *schema, const uint32_t
     char *project = path_dir(assets);
     char *dir = path_join(project, "Packages/com.tide.game");
     bool ok = sys_mkdirs(dir);
-    // The hash, from the schema's "hash":"..."
-    char hash[17] = "";
-    const char *at = strstr(schema, "\"hash\":\"");
-    for (int i = 0; at && i < 16 && at[8 + i] && at[8 + i] != '"'; i++) hash[i] = at[8 + i];
     static const char package[] = "{\n  \"name\": \"com.tide.game\",\n  \"displayName\": \"Tide game types\",\n  \"version\": \"0.0.0\",\n"
-                                  "  \"description\": \"Written by tide unity: the game's schema, which Tide's package makes "
-                                  "the game's C# types of. Keep it in source control.\"\n}\n";
+                                  "  \"description\": \"Written by tide unity: the game's schema and the C# made of it, its "
+                                  "components and types. Keep it in source control.\"\n}\n";
     static const char asmdef[] = "{\n    \"name\": \"Tide.Game\",\n    \"rootNamespace\": \"Tide.Game\",\n"
                                  "    \"references\": [\n        \"Tide.Runtime\"\n    ],\n    \"allowUnsafeCode\": true,\n"
                                  "    \"autoReferenced\": true\n}\n";
-    char stub[512];
-    snprintf(stub, sizeof stub, "// Written by tide unity. The game's C# types are generated from schema.json beside this,\n"
-                                "// by Tide's package (Tide.Generator), whenever this hash changes: %s\n", hash);
-    const char *const names[] = {"package.json", "Tide.Game.asmdef", "TideGameSchema.cs", "schema.json"};
-    const char *const texts[] = {package, asmdef, stub, schema};
-    const size_t sizes[] = {sizeof package - 1, sizeof asmdef - 1, strlen(stub), size};
-    for (int i = 0; ok && i < 4; i++) {
+    const char *const names[] = {"package.json", "Tide.Game.asmdef", "schema.json"};
+    const char *const texts[] = {package, asmdef, schema};
+    const size_t sizes[] = {sizeof package - 1, sizeof asmdef - 1, size};
+    for (int i = 0; ok && i < 3; i++) {
         char *path = path_join(dir, names[i]);
         ok = write_if_changed(path, texts[i], sizes[i]);
         if (!ok) fprintf(stderr, "tide: can't write %s\n", path);
         free(path);
     }
+    // The stub that named the schema's hash for the source generator before: TideGame.cs is the game's C# now
+    for (int i = 0; i < 2; i++) {
+        char *path = path_join(dir, i ? "TideGameSchema.cs.meta" : "TideGameSchema.cs");
+        sys_remove(path);
+        free(path);
+    }
+    ok = ok && unity_code_write(dir, schema, r->b.outline);
     free(dir);
     free(project);
     free(assets);
@@ -2748,7 +2749,8 @@ static bool write_unity_schema(const run *r)
         char *path = path_join(r->dir, "schema.json");
         ok = sys_write_file(written, text, size) && sys_rename(written, path);
         if (!ok) fprintf(stderr, "tide: can't write the schema of %s\n", library_path);
-        ok = ok && write_unity_package(r, text, size);
+        // The outline first: the package regenerates its C# when com.tide.game's schema changes, and reads it
+        ok = ok && write_unity_outline(r) && write_unity_package(r, text, size);
         free(written);
         free(path);
         free(text);
@@ -2767,7 +2769,6 @@ static bool write_unity_schema(const run *r)
         free(written);
         free(path);
     }
-    if (ok) ok = write_unity_outline(r);
     return ok;
 }
 

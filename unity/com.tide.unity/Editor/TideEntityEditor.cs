@@ -80,6 +80,12 @@ namespace Tide.Editor
             var playing = EditorApplication.isPlayingOrWillChangePlaymode;
             using (new EditorGUI.DisabledScope(playing))
             {
+                if (Enumerable.Range(0, components.arraySize)
+                    .Any(i => TideMigration.ComponentType(components.GetArrayElementAtIndex(i).FindPropertyRelative("type").stringValue) != null))
+                {
+                    EditorGUILayout.HelpBox("The game's components are Unity components of their own now (Add Component > Tide): " +
+                                            "Tools > Tide > Convert TideEntity Lists to Components makes these listed ones that.", MessageType.Info);
+                }
                 for (var i = 0; i < components.arraySize; i++)
                 {
                     if (i > 0) EditorGUILayout.Space(2);
@@ -101,10 +107,14 @@ namespace Tide.Editor
             var menu = new GenericMenu();
             var have = new HashSet<string>();
             for (var i = 0; i < components.arraySize; i++) have.Add(components.GetArrayElementAtIndex(i).FindPropertyRelative("type").stringValue);
+            var go = ((TideEntity)target).gameObject;
             foreach (var t in TideEditorSchema.Components(schema).OrderBy(t => t.name))
             {
                 var name = t.name;
-                if (have.Contains(name)) menu.AddDisabledItem(new GUIContent(name.Replace('.', '/')));
+                // The game's own component where tide has made it (com.tide.game), else a listed one
+                var own = TideMigration.ComponentType(name);
+                if (have.Contains(name) || (own != null && go.GetComponent(own) != null)) menu.AddDisabledItem(new GUIContent(name.Replace('.', '/')));
+                else if (own != null) menu.AddItem(new GUIContent(name.Replace('.', '/')), false, () => Undo.AddComponent(go, own));
                 else menu.AddItem(new GUIContent(name.Replace('.', '/')), false, () => Add(name));
             }
             if (menu.GetItemCount() == 0) menu.AddDisabledItem(new GUIContent("The game has no components yet"));

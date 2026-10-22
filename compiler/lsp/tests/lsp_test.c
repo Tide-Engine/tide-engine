@@ -6336,6 +6336,7 @@ TIDE_TEST(lsp_scene_filter_names_its_scene)
 }
 
 // A game in a Unity project's Assets (tide unity --assets): renames reach TideEntity lists and prefab instance type changes; a field's only in that component's values.
+// The game's own components (com.tide.game's): a rename gives their objects the new name's script GUID, and a field's their key and a prefab instance's change of it, not another component's.
 TIDE_TEST(lsp_rename_reaches_unity_assets)
 {
     if (!find_game_dir()) return;
@@ -6366,6 +6367,31 @@ TIDE_TEST(lsp_rename_reaches_unity_assets)
                "      propertyPath: components.Array.data[0].type\n"
                "      value: Health\n"); // line 15
     write_file("lsp_unity/Assets/Other.prefab", "--- !u!1 &1\nGameObject:\n  m_Name: Health\n  type: Health\n");
+    write_file("lsp_unity/Assets/Own.prefab",
+               "--- !u!114 &50\n"
+               "MonoBehaviour:\n"
+               "  m_Script: {fileID: 11500000, guid: 3c0696cc9d36fc389947e23ca18dad65, type: 3}\n" // line 2: Health's
+               "  m_EditorClassIdentifier: Tide.Game::Tide.Game.Health\n"
+               "  hp: 10\n" // line 4
+               "  armor: 1\n"
+               "--- !u!114 &51\n"
+               "MonoBehaviour:\n"
+               "  m_Script: {fileID: 11500000, guid: e20821468e5bb86e036f171ea41778ed, type: 3}\n" // Part's
+               "  hp: 3\n");
+    write_file("lsp_unity/Assets/Own.prefab.meta", "fileFormatVersion: 2\nguid: 11112222333344445555666677778888\n");
+    write_file("lsp_unity/Assets/Holder.prefab",
+               "--- !u!1001 &7\n"
+               "PrefabInstance:\n"
+               "  m_Modification:\n"
+               "    m_Modifications:\n"
+               "    - target: {fileID: 50, guid: 11112222333344445555666677778888, type: 3}\n"
+               "      propertyPath: hp\n" // line 5: its Health's
+               "      value: 4\n"
+               "    - target: {fileID: 51, guid: 11112222333344445555666677778888, type: 3}\n"
+               "      propertyPath: hp\n" // its Part's
+               "      value: 5\n"
+               "  m_SourcePrefab: {fileID: 100100000, guid: 11112222333344445555666677778888, type: 3}\n");
+    write_file("lsp_unity/Assets/Holder.prefab.meta", "fileFormatVersion: 2\nguid: 99992222333344445555666677778888\n");
     char root[700], uri[700];
     const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
     snprintf(root, sizeof root, "file:///%s/lsp_unity/Assets/Tide", dir);
@@ -6377,12 +6403,22 @@ TIDE_TEST(lsp_rename_reaches_unity_assets)
     TIDE_CHECK(has(renamed, "{\"range\":{\"start\":{\"line\":5,\"character\":10},\"end\":{\"line\":5,\"character\":16}},\"newText\":\"Vitality\"}"));
     TIDE_CHECK(has(renamed, "{\"range\":{\"start\":{\"line\":15,\"character\":13},\"end\":{\"line\":15,\"character\":19}},\"newText\":\"Vitality\"}"));
     TIDE_CHECK(!has(renamed, "Other.prefab"));
+    TIDE_CHECK(has(renamed, "{\"range\":{\"start\":{\"line\":2,\"character\":37},\"end\":{\"line\":2,\"character\":69}},\"newText\":\"d51eee06e4b36a1bd29798379cb8e68f\"}"));
+    TIDE_CHECK(has(renamed, "{\"range\":{\"start\":{\"line\":3,\"character\":48},\"end\":{\"line\":3,\"character\":54}},\"newText\":\"Vitality\"}"));
+    TIDE_CHECK(!has(renamed, "\"line\":8,"));
     const char *field = request_at(uri, "textDocument/rename", 0, 23, "\"newName\":\"health\"");
     TIDE_CHECK(has(field, "{\"range\":{\"start\":{\"line\":6,\"character\":12},\"end\":{\"line\":6,\"character\":14}},\"newText\":\"health\"}"));
-    TIDE_CHECK(!has(field, "\"line\":8,"));
+    TIDE_CHECK(has(field, "{\"range\":{\"start\":{\"line\":4,\"character\":2},\"end\":{\"line\":4,\"character\":4}},\"newText\":\"health\"}"));
+    TIDE_CHECK(has(field, "{\"range\":{\"start\":{\"line\":5,\"character\":20},\"end\":{\"line\":5,\"character\":22}},\"newText\":\"health\"}"));
+    TIDE_CHECK(has(field, "Holder.prefab"));
+    TIDE_CHECK(!has(field, "\"line\":8,") && !has(field, "\"line\":9,"));
     remove_game_file("lsp_unity/Assets/Tide/game.tide");
     remove_game_file("lsp_unity/Assets/Thing.prefab");
     remove_game_file("lsp_unity/Assets/Other.prefab");
+    remove_game_file("lsp_unity/Assets/Own.prefab");
+    remove_game_file("lsp_unity/Assets/Own.prefab.meta");
+    remove_game_file("lsp_unity/Assets/Holder.prefab");
+    remove_game_file("lsp_unity/Assets/Holder.prefab.meta");
     remove_game_file("lsp_unity/ProjectSettings/ProjectVersion.txt");
     remove_folder("lsp_unity/Assets/Tide");
     remove_folder("lsp_unity/Assets");

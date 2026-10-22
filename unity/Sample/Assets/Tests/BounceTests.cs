@@ -55,7 +55,7 @@ public sealed unsafe class BounceTests
         yield return Until(() => Totem() != null, 10f);
         var totem = Totem();
         Assert.IsNotNull(totem, "Unity loaded Bonus as the match did, and the Totem shows its entity");
-        Assert.IsTrue(totem.TryGet(out Tide.Game.Spinner spinner) && spinner.speed == 3f, "with the scene's Spinner");
+        Assert.AreEqual(3f, totem.GetComponent<Tide.Game.Spinner>()?.speed, "with the scene's Spinner, live");
         Assert.IsTrue(SceneManager.GetSceneByPath(Bounce).isLoaded, "beside Bounce");
         // Spinning is "without scene Bonus": the totem stays as Bonus has it
         var turn = totem.transform.rotation;
@@ -143,7 +143,7 @@ public sealed unsafe class BounceTests
     {
         foreach (var view in Object.FindObjectsByType<TideEntityView>())
         {
-            if (view.Showing && view.TryGet(out Tide.Game.Ball ball) && ball.seat == -1) return view;
+            if (view.Showing && view.TryGetComponent(out Tide.Game.Ball ball) && ball.seat == -1) return view;
         }
         return null;
     }
@@ -236,15 +236,18 @@ public sealed unsafe class BounceTests
             yield return null;
             foreach (var view in Object.FindObjectsByType<TideEntityView>())
             {
-                if (view.Has<Tide.Game.Ball>()) ball = view;
+                if (view.GetComponent<Tide.Game.Ball>() != null) ball = view;
             }
         }
         Assert.IsTrue(runner.Running, "the game started");
         Assert.AreEqual(TideSessionState.Connected, runner.State);
         Assert.IsNotNull(ball, "the player's ball is shown");
         Assert.IsTrue(ball.Mine, "and it's this machine's");
-        Assert.IsTrue(ball.TryGet(out Tide.Game.Ball value), "it has Tide's Ball, read through the generated type");
-        Assert.Greater(value.color.r + value.color.g + value.color.b, 0.1f, "with the color the match gave it");
+        // Its Ball component is the entity's in Play: the color the match gave it, as the packet has it
+        var live = ball.GetComponent<Tide.Game.Ball>();
+        Assert.Greater(live.color.r + live.color.g + live.color.b, 0.1f, "with the color the match gave it");
+        Assert.IsTrue(ball.TryGet(out Tide.Game.Ball.Value value), "and its value, read through the generated layout");
+        Assert.AreEqual(value.color, live.color);
         // Dropped from 2 units up, the ball falls onto the floor and stays on it: Tide's clock is the frames' real
         // lengths, which a run in batch mode makes short, so this waits by time
         var pillars = GameObject.Find("Pillars").transform;
@@ -266,7 +269,8 @@ public sealed unsafe class BounceTests
             var pillar = pillars.GetChild(i);
             var view = pillar.GetComponent<TideEntityView>();
             Assert.IsNotNull(view, $"pillar {i} shows an entity");
-            Assert.IsTrue(view.TryGet(out Tide.Game.Spinner spinner), $"pillar {i} has its Spinner");
+            var spinner = view.GetComponent<Tide.Game.Spinner>();
+            Assert.IsNotNull(spinner, $"pillar {i} has its Spinner");
             Assert.AreEqual(i == 0 ? 1.5f : -0.75f, spinner.speed, 1e-6f, "with the speed the scene gave it");
             Assert.AreEqual(i == 0 ? -3.5f : 3.5f, pillar.position.x, 1e-3f, "placed as Unity has it, under Pillars");
             Assert.AreEqual(3.5f, pillar.position.z, 1e-3f);

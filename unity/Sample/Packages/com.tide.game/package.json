@@ -2,5 +2,5 @@
   "name": "com.tide.game",
   "displayName": "Tide game types",
   "version": "0.0.0",
-  "description": "Written by tide unity: the game's schema, which Tide's package makes the game's C# types of. Keep it in source control."
+  "description": "Written by tide unity: the game's schema and the C# made of it, its components and types. Keep it in source control."
 }

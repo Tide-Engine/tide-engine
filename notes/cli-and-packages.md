@@ -277,11 +277,14 @@ ending `.prefab`/`.unity` as `.tprefab` files (prefab declarations only).
 `game_stamp` folds in `unity_assets_stamp` (paths and stamps of every
 `.prefab`, `.unity` and `.meta`), so a saved prefab rebuilds the game. After
 each schema, `unity.json` (the UnityEngine.Source map, kept on `build.unity_map` from
-the last good generate) and `Packages/com.tide.game` beside `Assets`
-(`package.json`, `Tide.Game.asmdef`, `schema.json` and a stub naming the hash,
-each written only when it changes: Unity's shared build cache keys a compile by
-its sources, so the stub is what recompiles the generated types). Then
-`outline.json` (2026-10-21, `write_unity_outline`): `packages`, the resolved
+the last good generate), `outline.json` (below) and then `Packages/com.tide.game`
+beside `Assets` (`package.json`, `Tide.Game.asmdef`, `schema.json`, and since
+2026-10-22 the game's C# from `unity_code_write` (`compiler/cli/unity_code.c`:
+`Components/`, `TideGame.cs`, `components.json`; `notes/unity.md`, Components
+of their own), each written only when it changes, as Unity's shared build cache
+keys a compile by its sources; the hash stub `TideGameSchema.cs` that recompiled
+the generator's types is deleted). `outline.json` (2026-10-21, `write_unity_outline`,
+written first, as the C# takes text fields' defaults from it): `packages`, the resolved
 `build.packages` (name, absolute folder, and the game's line for each: `kind`
 `builtin`, `git`, `local`, or `found` for a folder of Assets with its `package`
 line, whose line is 0; `line`, `source`, `ref`, `commit`), `builtin`

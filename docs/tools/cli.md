@@ -279,8 +279,8 @@ Unity editor: Tide simulates, predicts and rolls back, and Unity draws. The
 package starts this command itself while the editor is open, so you rarely type
 it. It builds into the path it's given: the host Unity loads, then a library of
 the game each time its files change, which the running game takes over as
-`tide run` does, the game's schema, which the package generates its C#
-types from, and an outline of what each file declares and which packages the
+`tide run` does, the game's schema, which the package reads the match by,
+and an outline of what each file declares and which packages the
 game has, which the package's inspectors show. It ends when its input closes, as the editor's package closes it.
 `--once` builds once and ends. Unity and other Tide builds of the same game
 play in the same matches. This is early, and its details may change.
@@ -306,8 +306,17 @@ each one holding GameObjects with the package's TideEntity component is a Tide
 prefab named after its file, read from its saved file (Unity's Force Text
 serialization) with its prefab instances and variants expanded. A TideEntity is
 an entity of that prefab, Unity's Transform and parent are its own, and its
-Tide components are those the TideEntity lists. A prefab instance's component
-values go over its prefab's field by field. Everything from Unity is under the
+Tide components are the game's components the GameObject has: each match
+component is a Unity component (Add Component > Tide), its fields set in the
+inspector as any component's, and a prefab instance's changes go over its
+prefab's as Unity's do. In Play each one holds its entity's values in the match,
+so a script reads them as fields (`GetComponent<Tide.Game.Health>().hp`), and
+the match's writes come through each frame; a script's changes to it don't reach
+the match, which a command's do. A component or field the game no longer has is
+left out with nothing said, as Unity leaves out a removed C# field's value.
+Older projects list components on the TideEntity itself, which tide still reads:
+Tools > Tide > Convert TideEntity Lists to Components makes them components of
+their own. Everything from Unity is under the
 `UnityEngine` namespace, named by its folders under `Assets`: a prefab is
 `UnityEngine.Prefabs.Enemies.Goblin` for `Assets/Enemies/Goblin.prefab`, which
 code spawns as any prefab, and a scene `UnityEngine.Scenes.Levels.Cave`, so
@@ -321,9 +330,12 @@ it, and Unity loads and unloads each scene as the match does. Each such entity g
 `UnityEngine.Source` component, by which Unity shows it through its own GameObject.
 A message about a prefab gives lines of the Tide text tide made of it, which it
 writes to `<path>/prefabs`. With `--assets`, tide also keeps the project's
-`Packages/com.tide.game` up to date: the game's schema, which the package makes
-its C# types of. Keep that folder in source control, so a fresh clone compiles
-before tide has built anything.
+`Packages/com.tide.game` up to date: the game's schema and the C# tide writes of
+it, a Unity component for each match component and a struct for each other type,
+each written only when it changes. Keep that folder in source control, so a
+fresh clone compiles before tide has built anything. Renaming a component or a
+field in your editor (tidels) renames it in the project's prefabs and scenes
+too, so they keep their values.
 
 `tide build` and `tide run` take `--assets` too, for a dedicated server, or any
 build, of a game made in Unity: `tide build --server --assets Assets` has the

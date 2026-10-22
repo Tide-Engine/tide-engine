@@ -1,0 +1,6 @@
+{"hash": "0000000000000000", "components": [
+  {"name": "Ship", "guid": "11111111111111111111111111111111", "fields": [{"name": "speed", "key": "speed", "form": "number"}, {"name": "heading", "key": "heading", "form": "float3"}, {"name": "tint", "key": "tint", "form": "color"}, {"name": "title", "key": "title", "form": "string"}, {"name": "crew", "key": "crew", "form": "entity"}, {"name": "marks", "key": "marks", "form": "list", "element": "number", "elementType": "int"}, {"name": "stops", "key": "stops", "form": "list", "element": "float2", "elementType": "float2"}, {"name": "mode", "key": "mode", "form": "enum", "enum": "Mode"}, {"name": "extra", "key": "extra", "form": "literal"}, {"name": "fixed", "key": "fixed", "form": "bool"}, {"name": "spare", "key": "spare", "form": "number"}]},
+  {"name": "Cargo", "guid": "22222222222222222222222222222222", "fields": [{"name": "mass", "key": "mass", "form": "number"}]}
+], "enums": [
+  {"name": "Mode", "members": ["Slow","Fast"], "values": [0,1]}
+]}

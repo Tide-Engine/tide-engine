@@ -41,7 +41,7 @@ public sealed class PlayerSmoke : MonoBehaviour
     {
         foreach (var view in FindObjectsByType<TideEntityView>())
         {
-            if (view.Has<Tide.Game.Ball>()) return view;
+            if (view.GetComponent<Tide.Game.Ball>() != null) return view;
         }
         return null;
     }

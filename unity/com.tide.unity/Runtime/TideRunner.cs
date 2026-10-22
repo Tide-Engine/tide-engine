@@ -416,6 +416,49 @@ namespace Tide
             {
                 if (byRow[i] != null) Place(byRow[i], i);
             }
+            Live(count);
+        }
+
+        int liveFrame;
+        readonly List<TideComponent> liveScratch = new List<TideComponent>();
+
+        // Each shown entity's components into its GameObject's TideComponents (Packages/com.tide.game's), one made
+        // where it has none, before scripts' Update reads them; one whose component the entity no longer has goes. Only
+        // with components generated from the schema of the build running, whose values they lay out.
+        void Live(int count)
+        {
+            if (count == 0 || Schema == null || TideComponents.Hash != Schema.Hash) return;
+            liveFrame++;
+            foreach (var index in Schema.components)
+            {
+                var kind = TideComponents.Of(Schema.Type(index)?.name);
+                if (kind == null) continue;
+                var n = Packet.Count((uint)index, out _);
+                for (var r = 0; r < n; r++)
+                {
+                    var values = Packet.Row((uint)index, r, out var e);
+                    if (values == null || (uint)e >= (uint)count || byRow[e] == null) continue;
+                    var made = byRow[e].gameObject;
+                    var component = (TideComponent)(made.GetComponent(kind) ?? made.AddComponent(kind));
+                    component.LiveFrame = liveFrame;
+                    component.ReadLive(values, Packet, this);
+                }
+            }
+            for (var i = 0; i < count; i++)
+            {
+                if (byRow[i] == null) continue;
+                byRow[i].GetComponents(liveScratch);
+                foreach (var component in liveScratch)
+                {
+                    if (component.LiveFrame != liveFrame) Destroy(component);
+                }
+            }
+        }
+
+        // The GameObject an entity shows through this frame, for an entity field of a TideComponent: null for none.
+        public GameObject GameObjectOf(TideEntityId entity)
+        {
+            return !entity.IsNull && shown.TryGetValue(entity.Id, out var view) && view != null && view.Row >= 0 ? view.gameObject : null;
         }
 
         // The view of the packet's entity `row`, made or found the first time it's seen: by its UnityEngine.Source if it

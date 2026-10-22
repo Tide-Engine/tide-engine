@@ -13,6 +13,7 @@
 #include "folders.h"
 #include "lexer.h"
 #include "model_metadata.h"
+#include "sha256.h"
 #include "types.h"
 
 // Everything here points into the compiler's arena, so it all belongs to the
@@ -10055,14 +10056,29 @@ done:
 
 // ---------------------------------------------------------------------------
 // Renames reaching a Unity project (tide unity --assets): the game's folder in
-// its Assets, its prefabs and scenes holding TideEntity components
-// (com.tide.unity). A component's name is in them where a TideEntity lists it
-// (`- type: Combat.Health`) and where a prefab instance changes one's type; a
-// field's, where the TideEntity's values for that component set it
-// (`values: hp = 10, armor = 1`). Not yet: a prefab instance's change of a
-// component's values, whose YAML doesn't say which component's they are.
+// its Assets, its prefabs and scenes. A component is in them two ways:
+// - As the game's own Unity component (com.tide.game's, which tide writes):
+//   its script's GUID is its name's (unity_code_guid in compiler/cli), so a
+//   rename gives each of its objects the new name's GUID (`m_Script`), and a
+//   field's rename changes its key there and in each prefab instance's change
+//   of it (`propertyPath: speed.x`), found through the prefabs instanced.
+// - Listed on a TideEntity (com.tide.unity): where it lists it
+//   (`- type: Combat.Health`) and where a prefab instance changes one's type;
+//   a field's, where the TideEntity's values for that component set it
+//   (`values: hp = 10, armor = 1`). Not a prefab instance's change of a listed
+//   component's values, whose YAML doesn't say which component's they are.
 
 #define UNITY_ENTITY_GUID "4f7d2c1e9a8b4b6c8d3e2f1a0b9c8d7e" // TideEntity.cs.meta's
+
+// A prefab or scene of the project, by the GUID its .meta gives it, and the IDs its objects of the renamed
+// component have in it, its instances' included, once they're known.
+typedef struct unity_asset {
+    char guid[33];
+    char *path;
+    int64_t *ids;
+    int id_count, id_capacity;
+    int known; // 0 not yet, 1 being worked out, 2 known
+} unity_asset;
 
 typedef struct unity_rename {
     jbuf *out;
@@ -10070,9 +10086,138 @@ typedef struct unity_rename {
     const char *type;     // The component's name in the files, as qualified
     const char *new_type; // ...and what it's renamed to, or NULL for a field's rename
     const char *field, *new_field;
+    char guid[33], new_guid[33]; // Its script's GUID, and the new name's
+    const char *cls, *new_cls;   // Its C# class's name, as Unity's m_EditorClassIdentifier ends with it
+    unity_asset *assets;
+    int asset_count, asset_capacity;
     jbuf edits; // One file's
     int edit_count;
 } unity_rename;
+
+// A component's script GUID, from its qualified Tide name: SHA-256's first 16 bytes, as tide unity makes it.
+static void unity_component_guid(const char *name, char out[33])
+{
+    char text[300], hex[65];
+    snprintf(text, sizeof text, "tide component %s", name);
+    sha256_hex(text, strlen(text), hex);
+    memcpy(out, hex, 32);
+    out[32] = '\0';
+}
+
+static char *unity_read(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    jbuf text = {0};
+    char chunk[16384];
+    size_t n;
+    while ((n = fread(chunk, 1, sizeof chunk, f)) > 0) jb_putn(&text, chunk, n);
+    fclose(f);
+    if (!text.data) jb_put(&text, "");
+    return text.data;
+}
+
+static void unity_index_meta(void *user, const char *path)
+{
+    unity_rename *u = user;
+    const size_t n = strlen(path);
+    if (n < 5) return;
+    const char *base_end = path + n - 5; // Without ".meta"
+    const bool prefab = base_end - path > 7 && strncmp(base_end - 7, ".prefab", 7) == 0;
+    const bool scene = base_end - path > 6 && strncmp(base_end - 6, ".unity", 6) == 0;
+    if (!prefab && !scene) return;
+    char *meta = unity_read(path);
+    const char *g = meta ? strstr(meta, "\nguid: ") : NULL;
+    if (g) {
+        if (u->asset_count == u->asset_capacity) {
+            u->asset_capacity = u->asset_capacity ? u->asset_capacity * 2 : 32;
+            u->assets = realloc(u->assets, sizeof *u->assets * (size_t)u->asset_capacity);
+            if (!u->assets) abort();
+        }
+        unity_asset *a = &u->assets[u->asset_count++];
+        memset(a, 0, sizeof *a);
+        for (int i = 0; i < 32 && isxdigit((unsigned char)g[7 + i]); i++) a->guid[i] = g[7 + i];
+        a->path = malloc((size_t)(base_end - path) + 1);
+        if (!a->path) abort();
+        memcpy(a->path, path, (size_t)(base_end - path));
+        a->path[base_end - path] = '\0';
+    }
+    free(meta);
+}
+
+static unity_asset *unity_asset_of(unity_rename *u, const char *guid)
+{
+    for (int i = 0; i < u->asset_count; i++) {
+        if (strcmp(u->assets[i].guid, guid) == 0) return &u->assets[i];
+    }
+    return NULL;
+}
+
+static void unity_add_id(unity_asset *a, const int64_t id)
+{
+    if (a->id_count == a->id_capacity) {
+        a->id_capacity = a->id_capacity ? a->id_capacity * 2 : 8;
+        a->ids = realloc(a->ids, sizeof *a->ids * (size_t)a->id_capacity);
+        if (!a->ids) abort();
+    }
+    a->ids[a->id_count++] = id;
+}
+
+// The GUID after "guid: " in a line, into `out` ("" for none).
+static void unity_line_guid(const char *line, char out[33])
+{
+    out[0] = '\0';
+    const char *g = strstr(line, "guid: ");
+    if (!g) return;
+    int i = 0;
+    for (; i < 32 && isxdigit((unsigned char)g[6 + i]); i++) out[i] = g[6 + i];
+    out[i] = '\0';
+}
+
+// The IDs the renamed component's objects have in an asset: its own, and its prefab instances' (Unity numbers an
+// instance's objects (instance ^ their ID in the prefab)).
+static const unity_asset *unity_ids(unity_rename *u, unity_asset *a)
+{
+    if (!a || a->known) return a;
+    a->known = 1; // A prefab that includes itself adds nothing while it's worked out
+    char *text = unity_read(a->path);
+    int cls = 0;
+    int64_t doc = 0;
+    bool stripped = false;
+    for (char *line = text; line && *line;) {
+        char *next = strchr(line, '\n');
+        if (next) *next = '\0';
+        if (strncmp(line, "--- !u!", 7) == 0) {
+            cls = atoi(line + 7);
+            const char *amp = strchr(line, '&');
+            doc = amp ? strtoll(amp + 1, NULL, 10) : 0;
+            stripped = strstr(line, " stripped") != NULL;
+        } else if (cls == 114 && !stripped && strncmp(line, "  m_Script: ", 12) == 0 && strstr(line, u->guid)) {
+            unity_add_id(a, doc);
+        } else if (cls == 1001 && strncmp(line, "  m_SourcePrefab: ", 18) == 0) {
+            char g[33];
+            unity_line_guid(line, g);
+            const unity_asset *source = unity_ids(u, unity_asset_of(u, g));
+            for (int i = 0; source && source->known == 2 && i < source->id_count; i++) {
+                unity_add_id(a, (int64_t)(((uint64_t)doc ^ (uint64_t)source->ids[i]) & 0x7FFFFFFFFFFFFFFFull));
+            }
+        }
+        line = next ? next + 1 : NULL;
+    }
+    free(text);
+    a->known = 2;
+    return a;
+}
+
+// Whether (guid, id) is one of the renamed component's objects.
+static bool unity_is_component(unity_rename *u, const char *guid, const int64_t id)
+{
+    const unity_asset *a = unity_ids(u, unity_asset_of(u, guid));
+    for (int i = 0; a && i < a->id_count; i++) {
+        if (a->ids[i] == id) return true;
+    }
+    return false;
+}
 
 // A byte offset in a line as LSP counts columns: UTF-16 code units.
 static int utf16_column(const char *line, const int bytes)
@@ -10150,21 +10295,20 @@ static void unity_rename_keys(unity_rename *u, const int number, const char *lin
 static void unity_rename_file(void *user, const char *path)
 {
     unity_rename *u = user;
-    FILE *f = fopen(path, "rb");
-    if (!f) return;
-    jbuf text = {0};
-    char chunk[16384];
-    size_t n;
-    while ((n = fread(chunk, 1, sizeof chunk, f)) > 0) jb_putn(&text, chunk, n);
-    fclose(f);
-    if (!text.data || !strstr(text.data, UNITY_ENTITY_GUID)) {
-        jb_free(&text);
+    char *data = unity_read(path);
+    if (!data || (!strstr(data, UNITY_ENTITY_GUID) && !strstr(data, u->guid) && !strstr(data, "propertyPath: "))) {
+        free(data);
         return;
     }
+    jbuf text = {data, strlen(data), strlen(data) + 1};
     u->edits = (jbuf){0};
     u->edit_count = 0;
     char current[256] = ""; // The type of the TideEntity component whose entry the lines are in
     bool type_change = false; // The line before changed a component's type in a prefab instance
+    bool ours = false;        // The document is one of the renamed component's own objects
+    int cls = 0;
+    char target_guid[33] = ""; // What the prefab instance's change the lines are in changes
+    int64_t target = -1;
     int number = 0;
     for (char *line = text.data; line && *line; number++) {
         char *next = strchr(line, '\n');
@@ -10172,6 +10316,36 @@ static void unity_rename_file(void *user, const char *path)
         int at;
         const char *p = line;
         while (*p == ' ') p++;
+        if (strncmp(line, "--- !u!", 7) == 0) {
+            cls = atoi(line + 7);
+            ours = false;
+        } else if (cls == 114 && strncmp(line, "  m_Script: ", 12) == 0) {
+            const char *g = strstr(line, u->guid);
+            ours = g != NULL;
+            if (g && u->new_type) unity_edit(u, number, line, (int)(g - line), (int)(g - line) + 32, u->new_guid);
+        } else if (ours && u->new_type && strncmp(line, "  m_EditorClassIdentifier: ", 27) == 0) {
+            const size_t len = strlen(line) - (line[strlen(line) - 1] == '\r' ? 1 : 0), m = strlen(u->cls);
+            if (len > m && line[len - m - 1] == '.' && strncmp(line + len - m, u->cls, m) == 0) {
+                unity_edit(u, number, line, (int)(len - m), (int)len, u->new_cls);
+            }
+        } else if (ours && !u->new_type && line[0] == ' ' && line[1] == ' ' && line[2] != ' ') {
+            // One of its serialized fields, a key of its object's own
+            const size_t m = strlen(u->field);
+            if (strncmp(line + 2, u->field, m) == 0 && line[2 + m] == ':') unity_edit(u, number, line, 2, 2 + (int)m, u->new_field);
+        }
+        if (strncmp(p, "- target: ", 10) == 0) {
+            unity_line_guid(p, target_guid);
+            const char *id = strstr(p, "fileID: ");
+            target = id ? strtoll(id + 8, NULL, 10) : -1;
+        } else if (!u->new_type && strncmp(p, "propertyPath: ", 14) == 0 && target >= 0) {
+            // A prefab instance's change of its field (speed, speed.x, marks.Array.data[2])
+            const char *key = p + 14;
+            const size_t m = strlen(u->field);
+            if (strncmp(key, u->field, m) == 0 && (key[m] == '.' || key[m] == '\0' || key[m] == '\r')
+                && unity_is_component(u, target_guid[0] ? target_guid : "", target)) {
+                unity_edit(u, number, line, (int)(key - line), (int)(key - line) + (int)m, u->new_field);
+            }
+        }
         if (strncmp(p, "- type: ", 8) == 0) {
             snprintf(current, sizeof current, "%s", p + 8);
             const size_t len = strlen(current);
@@ -10235,11 +10409,27 @@ static void unity_renames(const occurrence *target, const char *new_name, jbuf *
     snprintf(new_type, sizeof new_type, "%.*s%s", dot ? (int)(dot - type + 1) : 0, type, new_name);
     char field_name[256] = "";
     if (renamed) snprintf(field_name, sizeof field_name, STR_FMT, STR_ARG(renamed->name));
-    unity_rename u = {out, files_written, type, renamed ? NULL : new_type, field_name, new_name, {0}, 0};
+    unity_rename u = {0};
+    u.out = out;
+    u.files_written = files_written;
+    u.type = type;
+    u.new_type = renamed ? NULL : new_type;
+    u.field = field_name;
+    u.new_field = new_name;
+    unity_component_guid(type, u.guid);
+    unity_component_guid(new_type, u.new_guid);
+    u.cls = dot ? dot + 1 : type;
+    u.new_cls = new_name;
     char assets[1100];
     snprintf(assets, sizeof assets, "%s/Assets/", project);
+    folder_find(assets, ".meta", unity_index_meta, &u);
     folder_find(assets, ".prefab", unity_rename_file, &u);
     folder_find(assets, ".unity", unity_rename_file, &u);
+    for (int i = 0; i < u.asset_count; i++) {
+        free(u.assets[i].path);
+        free(u.assets[i].ids);
+    }
+    free(u.assets);
 }
 
 // ---------------------------------------------------------------------------
