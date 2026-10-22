@@ -1,0 +1,125 @@
+{
+  "schema_version": 1,
+  "component_record_ranges_inclusive": {
+    "source_vertex_support": [
+      0,
+      130
+    ],
+    "source_inscribed_cores": [
+      131,
+      156
+    ],
+    "original_procedural_feet": [
+      157,
+      172
+    ],
+    "original_procedural_casing_core": [
+      173,
+      173
+    ]
+  },
+  "source_derived_prefix_certificate": {
+    "schema_version": 1,
+    "scope": "Previous173 component bounds only; excludes restored procedural foot hull accuracy and excludes final procedural casing core.",
+    "reference150_sha256": "5272be2452d0acf731c40ea96f95f701841f8e8761df17139aac9f594b6cba19",
+    "reference150_continuous_undershoot_upper_m": 0.005593734556620253,
+    "nonfoot_bodies": {
+      "0": {
+        "continuous_undershoot_lower_m": 0.005526508209194819,
+        "continuous_undershoot_upper_m": 0.005526508209194894
+      },
+      "1": {
+        "continuous_undershoot_lower_m": 0.0034574819438787405,
+        "continuous_undershoot_upper_m": 0.0034574819438787487
+      },
+      "2": {
+        "continuous_undershoot_lower_m": 0.005559615802818593,
+        "continuous_undershoot_upper_m": 0.005559615802818601
+      },
+      "3": {
+        "continuous_undershoot_lower_m": 0.0047853209540025645,
+        "continuous_undershoot_upper_m": 0.004785320954002569
+      },
+      "4": {
+        "continuous_undershoot_lower_m": 0.005219085198694229,
+        "continuous_undershoot_upper_m": 0.005219085198694234
+      },
+      "6": {
+        "continuous_undershoot_lower_m": 0.0023170147957607815,
+        "continuous_undershoot_upper_m": 0.0023170147957607867
+      },
+      "7": {
+        "continuous_undershoot_lower_m": 0.003963667281927531,
+        "continuous_undershoot_upper_m": 0.003963667281927534
+      },
+      "8": {
+        "continuous_undershoot_lower_m": 0.005216319504748008,
+        "continuous_undershoot_upper_m": 0.005216319504748024
+      },
+      "9": {
+        "continuous_undershoot_lower_m": 0.005467089496762938,
+        "continuous_undershoot_upper_m": 0.005467089496762949
+      },
+      "10": {
+        "continuous_undershoot_lower_m": 0.0034574819438787405,
+        "continuous_undershoot_upper_m": 0.0034574819438787487
+      },
+      "11": {
+        "continuous_undershoot_lower_m": 0.005559615700162388,
+        "continuous_undershoot_upper_m": 0.00555961570016239
+      },
+      "12": {
+        "continuous_undershoot_lower_m": 0.004379587225862861,
+        "continuous_undershoot_upper_m": 0.004379587225862875
+      },
+      "13": {
+        "continuous_undershoot_lower_m": 0.005219085198694235,
+        "continuous_undershoot_upper_m": 0.005219085198694244
+      }
+    },
+    "reference150_outward_support_bound_m": 0.0006,
+    "staged_outward_bound_conservative_m": 0.000600001,
+    "filler_count": 26,
+    "filler_maximum_support_change_m": 0.0,
+    "filler_minimum_separation_after_9g_float32_allowance_m": 0.0020199955,
+    "filler_minimum_source_hull_clearance_after_rounding_m": 1.999375e-05,
+    "notes": [
+      "Exact-rational support certificate applies to compiled binary64 source coordinates before staged literal normalization.",
+      "Restored feet retain original procedural geometry and material assignments.",
+      "Filler source-per-geom containment is numerically verified; equal support does not imply equal forces or body-pair contacts."
+    ]
+  },
+  "procedural_casing_core": {
+    "record_index": 173,
+    "classification": "ORIGINAL procedural visible-casing approximation; NOT a source-inscribed core",
+    "body": 0,
+    "center": [
+      0.004,
+      0.0,
+      -0.006
+    ],
+    "radius": 0.0115,
+    "foot": -1,
+    "source_per_geom_containment_claim": false,
+    "zero_support_growth_claim": false,
+    "body0_continuous_support_increase_vs173_m": 0.006674836674208465,
+    "whole_articulated_robot_note": "Body0 directional growth is an upper bound on whole-robot growth at a fixed pose; other bodies can mask it.",
+    "source_body0_mesh_sampled_overshoot_m": 0.0028973092680630516,
+    "source_body0_mesh_continuous_overshoot_upper_m": 0.007274836674208465,
+    "conservative_float32_support_growth_upper_m": 0.006674839270311474,
+    "conservative_float32_source_body0_overshoot_upper_m": 0.007274836894578406,
+    "proof": "Center inside selected15-center body0 hull. Uniformradius gives maximum supportgrowth R-.0006-min supporting-plane distance. Sourcebound uses previouslychecked selectedcenter membership.",
+    "point_inside_core_margin_m": 0.0025,
+    "nominal_visual_case_containment": true,
+    "float32_nominal_case_boundary_excursion_m": 7.45e-11,
+    "initial_camera_ray_hit": true,
+    "ball_radius_m": 0.022,
+    "ball_centered_at_target_overlap_depth_m": 0.0245,
+    "limitations": [
+      "Deliberate whole-body cavity fill and procedural visual/prop approximation.",
+      "Existing26cores retain separate stronger pergeomcontainment and inward supportmargin certificates.",
+      "No whole174model zero-envelope-growth or0.6mm-outward-bound claim.",
+      "Support bounds do not certify forces, penetration response, dynamics or body-pair cavity geometry."
+    ]
+  }
+}

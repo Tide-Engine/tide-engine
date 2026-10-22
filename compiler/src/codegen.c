@@ -20515,6 +20515,7 @@ static void gen_shaders(gen *g)
         }
         // The colors its frag writes, where that's more than the pixel's: one for each color image of a target
         if (sh->frag && sh->frag->outputs > 1) sb_printf(o, "    .outputs = %d,\n", sh->frag->outputs);
+        if (sh->blit) sb_put(o, "    .blit = true,\n");
         sb_put(o, "};\n\n");
 
         // A list its code reads goes as a texture of numbers: what writes an element's, floats then ints,
@@ -20778,6 +20779,21 @@ static void gen_shaders(gen *g)
                       s, instance ? "&tide_instance" : "NULL", uniforms ? "&tide_uniforms" : "NULL", sampling.data,
                       sh->skinned ? "    tide_scratch_reset(tide_skin_mark);\n" : "");
     }
+}
+
+// Every shader the game's draws can go through, for its host to have the
+// renderer make before anything draws with one (tide/run.h,
+// tide_platform_prewarm). In every game, none too, and in the .c: the header is
+// the game's hash, which what's drawn isn't part of.
+static void gen_shader_table(gen *g)
+{
+    const program *prog = g->prog;
+    sb *o = &g->c;
+    sb_put(o, "// Its shaders, every one, and NULL after them, which tide/run.h hands the host: their pipelines are made\n"
+              "// as the game starts\n");
+    sb_printf(o, "const tide_shader *const tide_game_shaders[%d] = {", prog->shaders.count + 1);
+    for (int s = 0; s < prog->shaders.count; s++) sb_printf(o, "&tide_shader_%d, ", s);
+    sb_put(o, "NULL};\n\n");
 }
 
 // What a view's frags and verts read that it doesn't take itself, it's
@@ -21045,6 +21061,7 @@ bool codegen(program *prog, const codegen_options *opts)
     }
     gen_hear(&g);
     gen_shaders(&g);
+    gen_shader_table(&g);
     if (diag_error_count()) { // A shader that didn't become SPIR-V
         free(g.pack_bytes);
         return false;

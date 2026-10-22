@@ -18,8 +18,23 @@
 #define DUCK_JOINTS 14
 #define DUCK_BODIES 15
 #define DUCK_OBSERVATIONS 44
-/* Package contacts: observed on native/WASI debug before pinning. */
-#define DUCK_HASH UINT64_C(0xf87f0902ec4db694)
+/* Manual-controller world, including the released actor schema and fixed
+ * 174-sphere model and centered free-root coordinates. Native/WASI agree. */
+#define DUCK_HASH UINT64_C(0x90ed0aaf9bb442c8)
+
+/* These are the original manual-controller/contact regressions. The released
+ * actor has its own policy_game_test host; keep its default out of these
+ * analytic and assisted-gait cases. */
+static void manual_world_init(tide_world *world, float dt)
+{
+    tide_world_init(world, dt);
+    const tide_entity ducks[2] = {world->DuckFixture.first, world->DuckFixture.second};
+    for (int i = 0; i < 2; ++i) {
+        DuckPolicyState policy = tide_get_DuckPolicyState(world, ducks[i]);
+        policy.enabled = false;
+        TIDE_REQUIRE(tide_set_DuckPolicyState(world, ducks[i], policy));
+    }
+}
 
 static tide_entity entity_at(const tide_world *world, tide_list list, int index)
 {
@@ -211,7 +226,7 @@ static void check_observation(const tide_world *world, Duck duck, tide_list obse
 TIDE_TEST(microduck_spawns_coherent_original_fk_without_a_fixed_root)
 {
     static tide_world world;
-    tide_world_init(&world, DUCK_DT);
+    manual_world_init(&world, DUCK_DT);
     const tide_quaternion up = tide_axisangle_q(tide_f3(1, 0, 0), -TIDE_PI_F / 2);
     for (int seat = 0; seat < 2; ++seat) {
         const Duck duck = tide_get_Duck(&world, seat == 0 ? world.DuckFixture.first : world.DuckFixture.second);
@@ -242,7 +257,7 @@ TIDE_TEST(microduck_spawns_coherent_original_fk_without_a_fixed_root)
 TIDE_TEST(microduck_preserves_each_authored_mass_com_and_full_inertia_tensor)
 {
     static tide_world world;
-    tide_world_init(&world, DUCK_DT);
+    manual_world_init(&world, DUCK_DT);
     const Duck duck = tide_get_Duck(&world, world.DuckFixture.first);
     TIDE_REQUIRE(tide_list_read_count(&world.heap, duck.bodies) == DUCK_BODIES);
     for (int i = 0; i < DUCK_BODIES; ++i) {
@@ -275,10 +290,50 @@ TIDE_TEST(microduck_preserves_each_authored_mass_com_and_full_inertia_tensor)
     tide_world_free(&world);
 }
 
+TIDE_TEST(microduck_visible_lower_trunk_has_pick_and_prop_collision_coverage)
+{
+    static tide_world world;
+    manual_world_init(&world, DUCK_DT);
+    const Duck duck = tide_get_Duck(&world, world.DuckFixture.first);
+    const tide_entity root = entity_at(&world, duck.bodies, 0);
+    const Newton_Body body = tide_get_Newton_Body(&world, root);
+    const DuckPart part = tide_get_DuckPart(&world, root);
+    /* An independently chosen point inside the drawn black base casing.
+     * This region previously lay 24.33 mm outside every trunk sphere, letting
+     * the 22 mm ball and the camera ray pass through the visible casing. */
+    const tide_float3 local = tide_rotate_q(tide_inverse_q(part.principalRotation),
+        tide_f3(.004f, 0, -.015f));
+    const tide_float3 point = tide_add_f3(body.position, tide_rotate_q(body.rotation, local));
+    const tide_float3 eye = tide_f3(.42f, .43f, -.95f);
+    const tide_float3 direction = tide_normalize_f3(tide_sub_f3(point, eye));
+    float clearance = INFINITY;
+    bool picked = false;
+    for (int i = 0; i < tide_list_read_count(&world.heap, duck.colliders); ++i) {
+        const tide_entity entity = entity_at(&world, duck.colliders, i);
+        const Newton_Collider collider = tide_get_Newton_Collider(&world, entity);
+        if (!tide_entity_equal(collider.body, root)) continue;
+        const tide_float3 delta = tide_sub_f3(local, collider.position);
+        const float gap = sqrtf(tide_dot_f3(delta, delta)) - collider.radius;
+        if (gap < clearance) clearance = gap;
+        const tide_float3 center = tide_add_f3(body.position, tide_rotate_q(body.rotation, collider.position));
+        const tide_float3 offset = tide_sub_f3(center, eye);
+        const float along = tide_dot_f3(offset, direction);
+        const float perpendicular_squared = tide_dot_f3(offset, offset) - along * along;
+        if (along > 0 && perpendicular_squared <= collider.radius * collider.radius)
+            picked = true;
+    }
+    printf("    visible lower trunk clearance %.6f m, camera ray hit %s\n",
+        (double)clearance, picked ? "yes" : "no");
+    TIDE_CHECK(clearance <= 0);
+    TIDE_CHECK(clearance < .022f);
+    TIDE_CHECK(picked);
+    tide_world_free(&world);
+}
+
 TIDE_TEST(microduck_package_colliders_cover_every_body_and_report_floor_loads)
 {
     static tide_world world;
-    tide_world_init(&world, DUCK_DT);
+    manual_world_init(&world, DUCK_DT);
     for (int seat = 0; seat < 2; ++seat) {
         const Duck duck = tide_get_Duck(&world, seat ? world.DuckFixture.second : world.DuckFixture.first);
         int coverage[DUCK_BODIES] = {0};
@@ -321,7 +376,7 @@ TIDE_TEST(microduck_package_colliders_cover_every_body_and_report_floor_loads)
 TIDE_TEST(microduck_all_four_loose_balls_fall_and_rest_on_the_floor)
 {
     static tide_world world;
-    tide_world_init(&world, DUCK_DT);
+    manual_world_init(&world, DUCK_DT);
     TIDE_REQUIRE(tide_list_read_count(&world.heap, world.DuckSandbox.balls) == 4);
     tide_entity balls[4];
     float minimum[4] = {1, 1, 1, 1};
@@ -361,7 +416,7 @@ TIDE_TEST(microduck_all_four_loose_balls_fall_and_rest_on_the_floor)
 TIDE_TEST(microduck_failed_physics_replaces_game_wrenches_without_accumulating_grabs)
 {
     static tide_world world;
-    tide_world_init(&world, DUCK_DT);
+    manual_world_init(&world, DUCK_DT);
     Duck duck = tide_get_Duck(&world, world.DuckFixture.first);
     duck.assisted = false;
     TIDE_REQUIRE(tide_set_Duck(&world, world.DuckFixture.first, duck));
@@ -411,7 +466,7 @@ TIDE_TEST(microduck_failed_physics_replaces_game_wrenches_without_accumulating_g
 TIDE_TEST(microduck_full_body_topples_onto_package_floor_without_assistance)
 {
     static tide_world world;
-    tide_world_init(&world, DUCK_DT);
+    manual_world_init(&world, DUCK_DT);
     disable_ball_colliders(&world);
     place_duck(&world, world.DuckFixture.first, tide_f3(-0.6f, 0.35f, -0.4f),
         tide_axisangle_q(tide_f3(0, 0, 1), TIDE_PI_F * 0.5f));
@@ -444,7 +499,7 @@ TIDE_TEST(microduck_full_body_topples_onto_package_floor_without_assistance)
 TIDE_TEST(microduck_loose_ball_transfers_contact_momentum_to_articulation)
 {
     static tide_world world, without;
-    tide_world_init(&world, DUCK_DT);
+    manual_world_init(&world, DUCK_DT);
     place_duck(&world, world.DuckFixture.first, tide_f3(-0.4f, 0.6f, -0.4f), tide_identity_q());
     disable_ball_colliders(&world);
     Newton_Collider floor = tide_get_Newton_Collider(&world, world.DuckSandbox.floor);
@@ -490,7 +545,7 @@ TIDE_TEST(microduck_loose_ball_transfers_contact_momentum_to_articulation)
 TIDE_TEST(microduck_input_grab_applies_com_wrench_without_teleporting)
 {
     static tide_world world, twice;
-    tide_world_init(&world, DUCK_DT);
+    manual_world_init(&world, DUCK_DT);
     const tide_entity ball = entity_at(&world, world.DuckSandbox.balls, 0);
     Newton_Body before = tide_get_Newton_Body(&world, ball);
     before.position = tide_f3(0, 1, 0);
@@ -540,7 +595,7 @@ TIDE_TEST(microduck_input_grab_applies_com_wrench_without_teleporting)
 TIDE_TEST(microduck_input_grab_child_couples_to_whole_articulation)
 {
     static tide_world world, without;
-    tide_world_init(&world, DUCK_DT);
+    manual_world_init(&world, DUCK_DT);
     place_duck(&world, world.DuckFixture.first, tide_f3(-0.4f, 0.7f, -0.4f), tide_identity_q());
     const Duck duck = tide_get_Duck(&world, world.DuckFixture.first);
     const tide_entity collider = child_collider(&world, duck, 6);
@@ -569,7 +624,7 @@ TIDE_TEST(microduck_grab_rejects_invalid_requests_and_records_requested_metadata
 {
     static tide_world world;
     for (int scenario = 0; scenario < 6; ++scenario) {
-        tide_world_init(&world, DUCK_DT);
+        manual_world_init(&world, DUCK_DT);
         const tide_entity ball = entity_at(&world, world.DuckSandbox.balls, 0);
         DuckControls request = grab_action(&world, ball, tide_f3(0, 0.01f, 0), 1);
         if (scenario == 0) request.grabAnchor = tide_f3(0, 0, 0); // not on the sphere
@@ -603,7 +658,7 @@ TIDE_TEST(microduck_grab_rejects_invalid_requests_and_records_requested_metadata
 TIDE_TEST(microduck_grab_caps_force_expires_and_releases_without_extra_impulse)
 {
     static tide_world world;
-    tide_world_init(&world, DUCK_DT);
+    manual_world_init(&world, DUCK_DT);
     world.Newton_Physics.gravity = tide_f3(0, 0, 0);
     const tide_entity ball = entity_at(&world, world.DuckSandbox.balls, 0);
     Newton_Body body = tide_get_Newton_Body(&world, ball);
@@ -649,7 +704,7 @@ TIDE_TEST(microduck_grab_caps_force_expires_and_releases_without_extra_impulse)
 TIDE_TEST(microduck_active_grab_survives_snapshot_raw_delta_threads_and_lease_replay)
 {
     static tide_world source, base, saved, replay, packed, delta, other;
-    tide_world_init(&source, DUCK_DT);
+    manual_world_init(&source, DUCK_DT);
     source.Newton_Physics.gravity = tide_f3(0, 0, 0);
     const tide_entity ball = entity_at(&source, source.DuckSandbox.balls, 0);
     Newton_Body body = tide_get_Newton_Body(&source, ball);
@@ -673,7 +728,7 @@ TIDE_TEST(microduck_active_grab_survives_snapshot_raw_delta_threads_and_lease_re
     bytes = tide_world_pack_delta(&source, &base, NULL, 0, &delta_size);
     TIDE_REQUIRE(bytes && tide_world_unpack_delta(&delta, &base, bytes, delta_size));
     free(bytes);
-    tide_world_init(&other, DUCK_DT);
+    manual_world_init(&other, DUCK_DT);
 #ifdef NEWTON_TEST_JOBS
     const tide_jobs *jobs = tide_platform_jobs();
 #endif
@@ -702,7 +757,7 @@ TIDE_TEST(microduck_active_grab_survives_snapshot_raw_delta_threads_and_lease_re
 TIDE_TEST(microduck_reset_only_own_duck_and_shared_balls_rejects_old_grab_revisions)
 {
     static tide_world world;
-    tide_world_init(&world, DUCK_DT);
+    manual_world_init(&world, DUCK_DT);
     Duck first = tide_get_Duck(&world, world.DuckFixture.first);
     Duck second = tide_get_Duck(&world, world.DuckFixture.second);
     second.selected = 9;
@@ -742,7 +797,7 @@ TIDE_TEST(microduck_reset_only_own_duck_and_shared_balls_rejects_old_grab_revisi
 TIDE_TEST(microduck_converted_model_matches_original_full_tensor_newton_dynamics)
 {
     static tide_world world;
-    tide_world_init(&world, DUCK_DT);
+    manual_world_init(&world, DUCK_DT);
     const Duck duck = tide_get_Duck(&world, world.DuckFixture.first);
     TIDE_REQUIRE(tide_list_read_count(&world.heap, duck.bodies) == MD_ORACLE_BODY_COUNT);
     TIDE_REQUIRE(tide_list_read_count(&world.heap, duck.joints) == MD_ORACLE_DOF_COUNT);
@@ -822,7 +877,7 @@ TIDE_TEST(microduck_converted_model_matches_original_full_tensor_newton_dynamics
 TIDE_TEST(microduck_all_joints_move_and_record_complete_transitions)
 {
     static tide_world world;
-    tide_world_init(&world, DUCK_DT);
+    manual_world_init(&world, DUCK_DT);
     duck_ticks(&world, 280);
     TIDE_REQUIRE(world.Newton_Physics.status == Newton_Status_Ok);
     const Duck duck = tide_get_Duck(&world, world.DuckFixture.first);
@@ -885,8 +940,8 @@ TIDE_TEST(microduck_all_joints_move_and_record_complete_transitions)
 TIDE_TEST(microduck_unanchored_standing_is_supported_by_floor_reactions)
 {
     static tide_world supported, falling;
-    tide_world_init(&supported, DUCK_DT);
-    tide_world_init(&falling, DUCK_DT);
+    manual_world_init(&supported, DUCK_DT);
+    manual_world_init(&falling, DUCK_DT);
     Duck no_floor = tide_get_Duck(&falling, falling.DuckFixture.first);
     Newton_Collider floor = tide_get_Newton_Collider(&falling, falling.DuckSandbox.floor);
     floor.enabled = false;
@@ -935,7 +990,7 @@ TIDE_TEST(microduck_unanchored_standing_is_supported_by_floor_reactions)
 TIDE_TEST(microduck_assistance_toggle_records_actual_wrenches_and_changes_physics)
 {
     static tide_world assisted, unassisted;
-    tide_world_init(&assisted, DUCK_DT);
+    manual_world_init(&assisted, DUCK_DT);
     Duck duck = tide_get_Duck(&assisted, assisted.DuckFixture.first);
     const tide_entity root_entity = body_at(&assisted, duck, 0);
     Newton_Body root = tide_get_Newton_Body(&assisted, root_entity);
@@ -990,7 +1045,7 @@ TIDE_TEST(microduck_assistance_toggle_records_actual_wrenches_and_changes_physic
 TIDE_TEST(microduck_sustained_assisted_gait_has_physical_clearance_and_contact_dwell)
 {
     static tide_world world;
-    tide_world_init(&world, DUCK_DT);
+    manual_world_init(&world, DUCK_DT);
     int airborne[2][2] = {{0}}, touchdown[2][2] = {{0}}, steps[2][2] = {{0}};
     bool lifted[2][2] = {{false}};
     float clearance[2][2] = {{0}}, peak_effort[2] = {0}, minimum_height[2] = {1, 1};
@@ -1054,12 +1109,12 @@ TIDE_TEST(microduck_sustained_assisted_gait_has_physical_clearance_and_contact_d
 TIDE_TEST(microduck_snapshot_replay_and_alternating_worlds)
 {
     static tide_world original, saved, replay, other;
-    tide_world_init(&original, DUCK_DT);
+    manual_world_init(&original, DUCK_DT);
     duck_ticks(&original, 260);
     tide_world_copy(&saved, &original);
     duck_ticks(&original, 180);
     const uint64_t expected = tide_world_hash(&original);
-    tide_world_init(&other, DUCK_DT);
+    manual_world_init(&other, DUCK_DT);
     tide_world_copy(&replay, &saved);
     for (int i = 0; i < 180; ++i) {
         duck_advance(&other, NULL);
@@ -1076,9 +1131,9 @@ TIDE_TEST(microduck_snapshot_replay_and_alternating_worlds)
 TIDE_TEST(microduck_reset_reproduces_the_first_episode_step)
 {
     static tide_world world, fresh;
-    tide_world_init(&world, DUCK_DT);
+    manual_world_init(&world, DUCK_DT);
     duck_ticks(&world, 710);
-    tide_world_init(&fresh, DUCK_DT);
+    manual_world_init(&fresh, DUCK_DT);
     for (uint32_t seat = 0; seat < 2; ++seat) {
         const tide_entity entity = seat == 0 ? world.DuckFixture.first : world.DuckFixture.second;
         Duck changed = tide_get_Duck(&world, entity);
@@ -1121,7 +1176,7 @@ TIDE_TEST(microduck_reset_reproduces_the_first_episode_step)
 TIDE_TEST(microduck_failed_steps_leave_recorded_transitions_immutable_and_resume)
 {
     static tide_world world;
-    tide_world_init(&world, DUCK_DT);
+    manual_world_init(&world, DUCK_DT);
     duck_ticks(&world, 300);
     const Duck before = tide_get_Duck(&world, world.DuckFixture.first);
     float records[64][DUCK_OBSERVATIONS * 2 + DUCK_JOINTS * 2 + 7];
@@ -1192,7 +1247,7 @@ TIDE_TEST(microduck_failed_steps_leave_recorded_transitions_immutable_and_resume
 TIDE_TEST(microduck_canonical_and_delta_transfer_preserve_owned_transition_lists)
 {
     static tide_world source, base, packed, delta;
-    tide_world_init(&source, DUCK_DT);
+    manual_world_init(&source, DUCK_DT);
     duck_ticks(&source, 300);
     tide_world_copy(&base, &source);
     duck_ticks(&source, 70);
@@ -1223,8 +1278,8 @@ TIDE_TEST(microduck_threaded_ticks_match_serial_worlds)
 {
     const tide_jobs *jobs = tide_platform_jobs();
     static tide_world serial, threaded;
-    tide_world_init(&serial, DUCK_DT);
-    tide_world_init(&threaded, DUCK_DT);
+    manual_world_init(&serial, DUCK_DT);
+    manual_world_init(&threaded, DUCK_DT);
     for (int i = 0; i < 400; ++i) {
         duck_advance(&serial, NULL);
         duck_advance(&threaded, jobs);

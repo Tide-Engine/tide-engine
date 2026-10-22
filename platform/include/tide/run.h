@@ -213,6 +213,10 @@ static inline void tide_run_rebind_resources(void *local, const bool same_memory
     tide_local_rebind_resources(local, same_memory);
 }
 
+// The game's shaders, every one its draws can go through, and NULL after
+// them, which tidec writes in the game's C.
+extern const tide_shader *const tide_game_shaders[];
+
 // The game as hosts run it.
 static const tide_host_game tide_host_game_api = {
     .game = &tide_game_api,
@@ -257,6 +261,7 @@ static const tide_host_game tide_host_game_api = {
 #endif
     .network = tide_network_get,
     .voice = tide_voice_get,
+    .shaders = tide_game_shaders,
 #ifdef TIDE_HAS_EMBED
     .layout = &tide_game_layout,
     .embed = &tide_game_embed,

@@ -1,5 +1,15 @@
 # Code the GPU runs: frags and verts
 
+## The game's shaders as a table (2026-10-22)
+
+`gen_shader_table` (codegen.c) writes `tide_game_shaders`, `&tide_shader_<n>`
+for each of `program.shaders` in order and `NULL` after them (just `NULL` in
+a game with none), after the shaders, and `gen_shaders` sets `.blit = true`
+for a blit's. The standard host prewarms their pipelines (rendering.md,
+Pipelines made before they're drawn). Shader text, ids and the header are
+unchanged, so no golden moved. `tide_platform_shaders` and
+`tide_platform_prewarm` read the table.
+
 ## LookRotation normalizes, as math.h (2026-10-22)
 
 `H_LOOKROTATION_Q` is math.h's new `tide_lookrotation_q` line for line

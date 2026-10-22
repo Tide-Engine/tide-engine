@@ -47,7 +47,9 @@ set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/newton/runtime.cpp"
 add_library(tide_newton STATIC newton/runtime.cpp newton/math.c)
 target_link_libraries(tide_newton PUBLIC tide)
 target_compile_options(tide_newton PRIVATE $<$<CONFIG:Debug>:-O2>)
-add_executable(tide_newton_runtime "${PROJECT_SOURCE_DIR}/tests/test_main.c" newton/test/runtime_test.c)
+add_executable(tide_newton_runtime "${PROJECT_SOURCE_DIR}/tests/test_main.c"
+    newton/test/runtime_test.c newton/test/friction_test.c newton/test/coulomb_test.c
+    newton/test/stability_test.c)
 target_include_directories(tide_newton_runtime PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 target_link_libraries(tide_newton_runtime PRIVATE tide_newton)
 add_test(NAME tide_newton_runtime COMMAND tide_newton_runtime)

@@ -28,8 +28,8 @@
 #include "tide/text.h"
 #include "tide/time.h"
 #include "../src/texture_residency.h"
+#include "../src/gpu.h" // tide_gpu_spirv_of, tide_platform_shader_pipelines
 #ifdef TIDE_SPIRV
-#include "../src/gpu.h" // tide_gpu_spirv_of
 #include "spirv.h"      // compiler/src's translator, which the test's build adds
 #endif
 
@@ -4292,6 +4292,115 @@ static int background_frame(void)
     return TIDE_KEEP_RUNNING;
 }
 
+// Pipelines made before anything draws with them (tide_platform_prewarm), as a game's are as it starts. A frame
+// draws one shader of each kind, a 2D mesh's, a 3D mesh's and a blit's, after the list forgot the rest, whose
+// pipelines go. Then a table of shaders none of which has a pipeline is prewarmed, with background pipelines on, as
+// a game's host has them: the scenes' 2D ones the ways they drew before, a shader of the 3D one's name with another
+// id (its code changed) the way that one drew, and another blit, which never drew, the way its kind (a blit) drew.
+// Frames go on, through none of them, till they're made (PREWARM_FRAMES at most); then their first frames make no
+// pipeline, and draw every one: on WebGPU too, whose first frame through a shader that wasn't made leaves it out
+// (background_frame). A pipeline made for a table stays when another build's first frame lets go of the last one's
+// (forget_pipelines), till another table is given.
+enum { PREWARM_FRAMES = 600 };
+
+// A lit square through `shader`, green, where shaded_3d_scene has its middle instance.
+static void lit_square(const tide_shader *shader)
+{
+    static const lit_vertex corners[4] = {{{-0.5f, 0.5f, 0.0f}, {0, 0, -1}}, {{0.5f, 0.5f, 0.0f}, {0, 0, -1}},
+                                          {{0.5f, -0.5f, 0.0f}, {0, 0, -1}}, {{-0.5f, -0.5f, 0.0f}, {0, 0, -1}}};
+    tide_draw_set_camera_3d(&list, tide_f3(0, 0, -10), tide_identity_q(), field_of_view_3d());
+    const lit_instance instance = {tide_trs_f4x4(tide_f3(0, 2, 0), tide_identity_q(), tide_f3_splat(2.0f)), green};
+    tide_draw_shaded(&list, shader, quad_mesh(14, corners, sizeof corners[0]), &instance, NULL, NULL, 0);
+}
+
+static int prewarm_frame(void)
+{
+    static int frames;
+    static uint32_t warmed; // The pipelines the table's prewarming made
+    static tide_shader drawn_blit, warm_blit; // Blits through the flat shader: the instance's color over the window
+    static tide_shader lit_again; // The lit shader's name, with other code
+    static const tide_shader *table[8];
+    const tide_float2 orange_at = tide_f2(32, 32), lit_at = seen(0, 2, 0);
+    uint32_t got = 0;
+    if (frames == 0) {
+        drawn_blit = flat_shader;
+        drawn_blit.name = "drawn blit";
+        drawn_blit.id = 0x7E57B1A4;
+        drawn_blit.vertex_size = sizeof(tide_vertex);
+        drawn_blit.blit = true;
+        warm_blit = drawn_blit;
+        warm_blit.name = "warm blit";
+        warm_blit.id = 0x7E57B1A5;
+        lit_again = lit_shader;
+        lit_again.id = 0x7E57A6A1;
+        const tide_shader *const shaders[8] = {&picked_shader, &many_shader, &counted_shader, &halves_shader,
+                                               &sampled_shader, &placed_shader, &lit_again, &warm_blit};
+        memcpy(table, shaders, sizeof table);
+        tide_draw_forget(&list);
+        tide_draw_reset(&list);
+        tide_draw_blit(&list, &drawn_blit, TIDE_BLEND_REPLACE, &background, NULL, NULL, 0);
+        flat_quad(9, at(16, 192), at(48, 224), blue);
+        lit_square(&lit_shader);
+        tide_platform_draw(&list); // Through one shader of each kind: the others' pipelines go
+        const uint32_t before = tide_platform_shader_pipelines();
+        tide_platform_background_pipelines(true);
+        tide_platform_prewarm(table, 8);
+        warmed = tide_platform_shader_pipelines() - before;
+        expect(warmed >= 8u, "prewarming makes a pipeline for each shader it's given");
+#ifdef __wasm__
+        if (strcmp(tide_platform_renderer(), "WebGPU") == 0)
+            expect(tide_platform_prewarm_waiting() > 0, "WebGPU makes prewarmed pipelines in the background");
+#endif
+        tide_platform_prewarm(table, 8);
+        expect(tide_platform_shader_pipelines() == before + warmed, "prewarming the same table again makes nothing");
+        frames++;
+        return TIDE_KEEP_RUNNING;
+    }
+    if (tide_platform_prewarm_waiting() > 0) {
+        if (frames++ < PREWARM_FRAMES) { // Frames go on meanwhile, through none of them
+            tide_draw_reset(&list);
+            tide_draw_clear(&list, background);
+            tide_platform_draw(&list);
+            return TIDE_KEEP_RUNNING;
+        }
+        expect(false, "prewarmed pipelines are made within the frames given them");
+        tide_platform_background_pipelines(false);
+        return 0;
+    }
+    printf("prewarmed pipelines: made by frame %d\n", frames);
+    // Their first frames make no pipeline, and draw everything
+    const uint32_t made = tide_platform_shader_pipelines();
+    shaded_scene();
+    tide_platform_read_pixels(&list, &orange_at, 1, &got);
+    expect(near(got, rgba(orange), 8), "a prewarmed shader draws in the first frame through it");
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    lit_square(&lit_again);
+    tide_platform_read_pixels(&list, &lit_at, 1, &got);
+    expect(near(got, rgba(green), 8), "and a 3D shader whose code changed since its name was drawn");
+    tide_draw_reset(&list);
+    tide_draw_blit(&list, &warm_blit, TIDE_BLEND_REPLACE, &white, NULL, NULL, 0);
+    tide_platform_read_pixels(&list, &orange_at, 1, &got);
+    expect(near(got, rgba(white), 8), "and a blit");
+    expect(tide_platform_shader_pipelines() == made, "and none of them made a pipeline");
+    shaded_checks(); // Drawn right, every one
+    // Another build's first frame keeps them, the table's, and what it drew with: the flat shader's
+    tide_draw_forget(&list);
+    tide_draw_reset(&list);
+    flat_quad(9, at(16, 192), at(48, 224), blue);
+    tide_platform_draw(&list);
+    expect(tide_platform_shader_pipelines() == warmed + 1u, "a build's first frame keeps the pipelines prewarmed for it");
+    // ...till another table is given
+    tide_platform_prewarm(NULL, 0);
+    tide_draw_forget(&list);
+    tide_draw_reset(&list);
+    flat_quad(9, at(16, 192), at(48, 224), blue);
+    tide_platform_draw(&list);
+    expect(tide_platform_shader_pipelines() == 1u, "and lets them go once another table is prewarmed");
+    tide_platform_background_pipelines(false);
+    return 0;
+}
+
 static int frame(void *user, const float seconds)
 {
     (void)user, (void)seconds;
@@ -4307,6 +4416,13 @@ static int frame(void *user, const float seconds)
     if (background_state == 1) {
         if (background_frame() == TIDE_KEEP_RUNNING) return TIDE_KEEP_RUNNING;
         background_state = 2;
+        if (failures) return 1;
+    }
+    // ...then the pipelines prewarmed before they're drawn (prewarm_frame)
+    static int prewarm_state; // 1: done
+    if (background_state == 2 && !prewarm_state) {
+        if (prewarm_frame() == TIDE_KEEP_RUNNING) return TIDE_KEEP_RUNNING;
+        prewarm_state = 1;
         if (failures) return 1;
     }
 #if defined(__wasm__) || defined(DRAW_VULKAN)

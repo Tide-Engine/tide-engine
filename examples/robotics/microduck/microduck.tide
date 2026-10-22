@@ -3,7 +3,14 @@
 using Newton;
 using Rooms;
 
-settings { title = "MicroDuck physics sandbox"; tickRate = 200; maxPlayers = 2; }
+settings
+{
+    title = "MicroDuck physics sandbox";
+    tickRate = 200;
+    maxPlayers = 2;
+    stats = true;
+    debugViews = true;
+}
 
 scene Main { }
 
@@ -12,8 +19,11 @@ input DuckControls
     int select;
     float drive;
     float walk;
+    float turn;
+    bool run;
     bool reset;
     bool assistance;
+    bool manual;
     bool grab;
     [Absolute] Entity grabCollider;
     [Absolute, Clamp(-0.25, 0.25)] float3 grabAnchor;
@@ -30,11 +40,14 @@ input DuckControls
         if (keys.a.pressed) drive -= 1;
         if (keys.d.pressed) drive += 1;
         drive += devices.gamepad.leftStick.x;
+        turn = -drive;
         if (keys.w.pressed || keys.upArrow.pressed) walk += 1;
         if (keys.s.pressed || keys.downArrow.pressed) walk -= 1;
         walk += devices.gamepad.leftStick.y;
+        run = keys.leftShift.pressed || keys.rightShift.pressed;
         reset = keys.r.pressed || devices.gamepad.buttonSouth.pressed;
         assistance = keys.b.pressed || devices.gamepad.buttonNorth.pressed;
+        manual = keys.m.pressed;
         grab = hand.active && devices.mouse.left.pressed && !reset;
         grabCollider = hand.collider;
         grabAnchor = hand.anchor;
@@ -48,6 +61,7 @@ input DuckControls
         select = Math.Clamp(select, -1, 1);
         drive = Math.Clamp(drive, -1, 1);
         walk = Math.Clamp(walk, -1, 1);
+        turn = Math.Clamp(turn, -1, 1);
     }
 }
 
@@ -166,14 +180,14 @@ Entity MakeDuck(float3 origin, int seat)
             axis = definition.axis, position = home,
             damping = definition.damping, armature = definition.armature,
             limited = true, lower = definition.lower, upper = definition.upper,
-            limitStiffness = 0.55, limitDamping = 0.03
+            limitStiffness = 55, limitDamping = 0.6
         }, Actuator { effortLimit = definition.effortLimit }));
         targets.Add(home);
         trim.Add(0);
     }
     return Spawn(Duck { seat = seat, bodies = bodies, colliders = colliders, soles = soles, spawnPosition = origin,
                        joints = joints, targets = targets, trim = trim },
-                 DuckGrab, Owner { player = PlayerID(seat) });
+                 DuckGrab, DuckPolicyState, Owner { player = PlayerID(seat) });
 }
 
 event(Spawned) Build(mut DuckFixture fixture, mut Physics physics, mut DuckSandbox sandbox, with Main)
@@ -218,7 +232,14 @@ void ResetDuck(mut Duck duck, mut World world)
         var home = Math.Clamp(model[i + 1].home, joint.lower, joint.upper);
         joint.position = home;
         joint.velocity = 0;
+        joint.load = 0;
         world.Set<Joint>(duck.joints[i], joint);
+        if (world.TryGet<Actuator>(duck.joints[i], out mut var actuator))
+        {
+            actuator.effort = 0;
+            actuator.appliedEffort = 0;
+            world.Set<Actuator>(duck.joints[i], actuator);
+        }
         duck.targets[i] = home;
         duck.trim[i] = 0;
     }
@@ -285,13 +306,56 @@ List<float> DuckObservation(Duck duck, World world)
 }
 
 [Before(PhysicsStages.Step)]
-system Drive(DuckControls controls, mut Duck duck, DuckSandbox sandbox, mut World world, Time time)
+system Drive(DuckControls controls, mut Duck duck, mut DuckPolicyState policy,
+             DuckSandbox sandbox, mut World world, Time time)
 {
     duck.pending = false;
     if (controls.reset.down)
     {
         ResetDuck(duck, world);
         ResetDuckBalls(sandbox, world);
+        ResetDuckPolicy(policy);
+    }
+    if (controls.manual.down)
+    {
+        policy.enabled = !policy.enabled;
+        ResetDuckPolicy(policy);
+        duck.assisted = !policy.enabled;
+    }
+    if (policy.enabled)
+    {
+        duck.assisted = false;
+        duck.assistanceForce = float3(0);
+        duck.assistanceTorque = float3(0);
+        duck.walk = controls.walk;
+        duck.before = DuckObservation(duck, world);
+        var speed = controls.run ? policy.runSpeed : policy.forwardSpeed;
+        var turnSpeed = controls.run ? 1.25 : 1.0;
+        policy.command = float3(speed * controls.walk, 0, -turnSpeed * controls.turn);
+        if (DuckPolicyTargets(duck, policy, world)) DuckPolicyMotors(duck, policy, world);
+        else
+        {
+            foreach (var entity in duck.joints)
+            {
+                if (!world.TryGet<Actuator>(entity, out mut var actuator)) continue;
+                actuator.effort = 0;
+                world.Set<Actuator>(entity, actuator);
+            }
+        }
+        duck.pending = policy.status == 1 && duck.before.count == DUCK_OBSERVATION_COUNT;
+        return;
+    }
+    var model = DuckModel();
+    for (int i = 0; i < 14; i += 1)
+    {
+        if (!world.TryGet<Joint>(duck.joints[i], out mut var joint)) return;
+        if (!world.TryGet<Actuator>(duck.joints[i], out mut var actuator)) return;
+        joint.damping = model[i + 1].damping;
+        joint.armature = model[i + 1].armature;
+        joint.friction = 0;
+        actuator.effortLimit = model[i + 1].effortLimit;
+        world.Set<Joint>(duck.joints[i], joint);
+        world.Set<Actuator>(duck.joints[i], actuator);
     }
     duck.before = DuckObservation(duck, world);
     if (controls.assistance.down) duck.assisted = !duck.assisted;
@@ -306,7 +370,6 @@ system Drive(DuckControls controls, mut Duck duck, DuckSandbox sandbox, mut Worl
     var lift = 0.5 * Math.Abs(duck.walk);
     var leftSwing = Math.Max(0, wave);
     var rightSwing = Math.Max(0, -wave);
-    var model = DuckModel();
     for (int i = 0; i < 14; i += 1)
     {
         if (!world.TryGet<Joint>(duck.joints[i], out var joint)) return;
@@ -434,15 +497,15 @@ view Instructions(Physics physics, Lobby lobby)
     if (!lobby.playing) return;
     Draw.SetScreen();
     Draw.Text("MICRODUCK / PHYSICS SANDBOX", float2(20, 18), 22, Color.white);
-    Draw.Text("Mouse: hold and drag any part or ball   W/S: steps   Q/E: joint   A/D: trim", float2(20, 48), 16, Color(0.76, 0.83, 0.88));
-    Draw.Text("R: reset your duck + all balls   B: balance help   Package sphere collisions / approximate shapes", float2(20, 72), 14, Color(0.60, 0.70, 0.77));
+    Draw.Text("W/S: walk   Shift: boost   A/D: turn   M: manual joints   Mouse: grab", float2(20, 48), 16, Color(0.76, 0.83, 0.88));
+    Draw.Text("R: reset   B: manual balance help   F8: stats   F7: profiler   Learned walking/recovery: experimental", float2(20, 72), 14, Color(0.60, 0.70, 0.77));
     Draw.Text("Executed states / 64-step ring / match replay", float2(112, Screen.height - 26), 13, Color(0.60, 0.70, 0.77));
     if (physics.status != Status.Ok)
         Draw.Text($"Newton step failed: {physics.status}", float2(20, 98), 17, Color.red);
 }
 
 [Stage(DuckLayers.Hud)]
-view Readout(Duck duck, DuckGrab grab, Owner owner, World world, Session session, Lobby lobby)
+view Readout(Duck duck, DuckGrab grab, DuckPolicyState policy, Owner owner, World world, Session session, Lobby lobby)
 {
     if (!lobby.playing || owner.player != session.player) return;
     if (!world.TryGet<Joint>(duck.joints[duck.selected], out var joint)) return;
@@ -455,7 +518,8 @@ view Readout(Duck duck, DuckGrab grab, Owner owner, World world, Session session
               float2(20, y + 27), 15, Color.white);
     Draw.Text($"Control {actuator.appliedEffort:F3} Nm   feet {duck.footLoad.x:F1} / {duck.footLoad.y:F1} N   records {duck.transitions.count}/64",
               float2(20, y + 51), 14, Color(0.76, 0.83, 0.88));
-    Draw.Text(duck.assisted ? "Balance + lane help ON (B) / stepping, not a trained walking policy"
+    Draw.Text(policy.enabled ? $"VelStand v8 / 50 Hz / {policy.inferences} actions / status {policy.status}"
+                            : duck.assisted ? "Manual: balance + lane help ON (B) / Q/E joint, A/D trim"
                            : "Balance help OFF (B) / falls need R to reset",
               float2(20, y - 24), 14, duck.assisted ? Color(0.95, 0.76, 0.35) : Color(0.60, 0.85, 0.77));
     if (grab.body != default)

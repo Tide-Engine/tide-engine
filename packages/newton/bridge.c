@@ -51,6 +51,8 @@ typedef struct joint_state {
     tide_quaternion child_rotation;
     tide_float3 axis;
     float applied_effort;
+    float friction;
+    float load;
 } joint_state;
 
 typedef struct collider_state {
@@ -66,6 +68,7 @@ typedef struct collider_state {
     float friction_damping;
     float friction;
     tide_float3 contact_force;
+    int32_t friction_model;
 } collider_state;
 
 typedef struct physics {
@@ -96,8 +99,8 @@ _Static_assert(sizeof(tide_entity) == 8 && offsetof(tide_entity, index) == 0 &&
 _Static_assert(sizeof(tide_float3) == 12 && sizeof(tide_quaternion) == 16,
                "Newton's vector/quaternion layout changed");
 _Static_assert(sizeof(body_state) == 116 && sizeof(nt_body) == 120 &&
-                   sizeof(joint_state) == 144 && sizeof(nt_joint) == 144 &&
-                   sizeof(collider_state) == 84 && sizeof(nt_collider) == 88,
+                   sizeof(joint_state) == 152 && sizeof(nt_joint) == 152 &&
+                   sizeof(collider_state) == 88 && sizeof(nt_collider) == 88,
                "Newton's Tide/native record sizes changed");
 _Static_assert(sizeof(physics) == 104 && offsetof(physics, gravity) == 0 &&
                    offsetof(physics, substeps) == 12 && offsetof(physics, status) == 16 &&
@@ -112,6 +115,7 @@ _Static_assert(sizeof(simulation_time) == 16 && offsetof(simulation_time, dt) ==
 _Static_assert(NT_OK == 0 && NT_INVALID_BODY == 1 && NT_INVALID_JOINT == 2 &&
                    NT_INVALID_TOPOLOGY == 3 && NT_TOO_LARGE == 4 && NT_UNSTABLE == 5 &&
                    NT_INVALID_COLLIDER == 6 && NT_SPHERE == 0 && NT_PLANE == 1 &&
+                   NT_REGULARIZED == 0 && NT_COULOMB == 1 &&
                    NT_STATIC == 0 && NT_DYNAMIC == 1 && NT_FIXED == 0 && NT_REVOLUTE == 1 && NT_PRISMATIC == 2,
                "newton.tide's enums must mirror runtime.h");
 
@@ -155,6 +159,8 @@ JOINT_FIELD(child_position, 100);
 JOINT_FIELD(child_rotation, 112);
 JOINT_FIELD(axis, 128);
 JOINT_FIELD(applied_effort, 140);
+JOINT_FIELD(friction, 144);
+JOINT_FIELD(load, 148);
 #undef JOINT_FIELD
 
 #define COLLIDER_FIELD(field, offset) \
@@ -172,6 +178,7 @@ COLLIDER_FIELD(damping, 60);
 COLLIDER_FIELD(friction_damping, 64);
 COLLIDER_FIELD(friction, 68);
 COLLIDER_FIELD(contact_force, 72);
+COLLIDER_FIELD(friction_model, 84);
 #undef COLLIDER_FIELD
 
 static uint64_t identity(const tide_entity entity)

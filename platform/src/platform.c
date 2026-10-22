@@ -373,10 +373,13 @@ static int headless_drawn(void)
     return last ? 0 : TIDE_KEEP_RUNNING;
 }
 
+static void write_used_keys(void);
+
 _Noreturn static void finish(int code)
 {
     code = tide_platform_players_finish(code); // A run of several players ends as one
     tide_platform_gpu_timing(false);
+    write_used_keys(); // How the game's shaders were drawn, for its next run to make them as it starts
     if (mic.open) tide_audio_in_close();
     tide_audio_out_close();
 #ifdef __wasm__
@@ -2461,6 +2464,8 @@ typedef struct shader_pipeline {
     // What the targets it draws into hold, which a pipeline is made for. Into depth alone, its blend is the
     // first, as none is read
     tide_gpu_target_format into;
+    uint32_t warmed; // The table of shaders it was made for before they drew (warm_generation), or 0
+    bool used;       // A draw drew with it, which the keys drawn with have (use_key)
 } shader_pipeline;
 
 static shader_pipeline *shader_pipelines;
@@ -2468,6 +2473,175 @@ static uint32_t shader_pipeline_count, shader_pipeline_capacity;
 static uint32_t *shader_index;         // The pipelines by id: 1 + a place, or 0 for none
 static uint32_t shader_index_capacity; // A power of two, or 0: at most half of it is taken
 static uint32_t shader_epoch;          // The epoch of the last list that drew through them (see tide_draw_forget)
+
+// The shaders tide_platform_prewarm was last given, which it alone reads, and the
+// device their pipelines were made on. Each other table is another generation:
+// the pipelines made for the current one stay when a build's first frame lets
+// go of the last build's (forget_pipelines), though nothing drew with them yet.
+static const tide_shader *const *warm_shaders;
+static uint32_t warm_count;
+static uint32_t warm_epoch;
+static uint32_t warm_generation; // 0 before the first table
+static bool warming;             // pipeline_for is asked by tide_platform_prewarm, not by a draw
+static tide_gpu_id *warm_asked;  // What the last one asked for, the engine's own too, which may be made in the background
+static uint32_t warm_asked_count, warm_asked_capacity;
+static bool *warm_done;          // By the table's shader: how it draws is known, as it drew, this run or one before
+static uint64_t *warm_names;     // ...and its name (name_key)
+static uint32_t warm_guessed;    // used_changes as the others were last made the ways their kind drew (kind_keys)
+
+// How the game's shaders were drawn (a used_key: a shader's name and kind,
+// and the rest of its pipeline's key), this run and the runs before: what's
+// prewarmed for each of them as the game starts, so the frame that first
+// draws one draws with what was made. By the shader's name, not its id, so a
+// shader whose code changed since, which has another id, has its pipelines
+// made too. They're kept in the game's temporary cache folder, as
+// `pipelines.keys`, read as the folder is known and written as the window
+// closes, natively; a page keeps those of its own run. A shader that never
+// drew is made the ways its kind of shader drew (kind_keys).
+typedef struct used_key {
+    uint64_t name; // FNV-1a of the shader's name
+    tide_gpu_target_format into;
+    uint8_t dims, blit, outputs; // Its kind
+    uint8_t blend, depth, cull, state; // As shader_pipeline has them
+    uint8_t zero;
+    uint32_t zero2;
+} used_key;
+_Static_assert(sizeof(used_key) == 24, "a used key is its file's 24 bytes, with no padding the compiler adds");
+
+enum { USED_KEYS_MOST = 4096, USED_KEYS_HEADER = 24 }; // Keys a file holds at most; and its header: TIDEKEY1, count, 0, hash
+
+static used_key *used_keys;
+static uint32_t used_key_count, used_key_capacity;
+static uint32_t used_changes; // Bumped as a draw draws with a key that wasn't there
+#ifndef __wasm__
+static bool used_dirty; // ...and not written yet
+#endif
+
+static uint64_t name_key(const tide_shader *shader)
+{
+    uint64_t hash = UINT64_C(0xCBF29CE484222325);
+    const char *name = shader->name ? shader->name : "";
+    for (const char *c = name; *c; c++) hash = (hash ^ (uint8_t)*c) * UINT64_C(0x100000001B3);
+    return shader->name ? hash : hash ^ shader->id;
+}
+
+static used_key key_of(const tide_shader *shader, const bool blit, const uint32_t blend, const uint32_t depth,
+                       const uint32_t cull, const uint32_t state, const tide_gpu_target_format into)
+{
+    return (used_key){.name = name_key(shader), .into = into, .dims = (uint8_t)shader->dims, .blit = blit,
+                      .outputs = (uint8_t)tide_shader_outputs(shader), .blend = (uint8_t)blend, .depth = (uint8_t)depth,
+                      .cull = (uint8_t)cull, .state = (uint8_t)state};
+}
+
+// Whether two keys draw alike: the same shader's, or not (`name`), and the same kind of shader's.
+static bool keys_alike(const used_key *a, const used_key *b, const bool name)
+{
+    return (!name || a->name == b->name) && a->into == b->into && a->dims == b->dims && a->blit == b->blit
+           && a->outputs == b->outputs && a->blend == b->blend && a->depth == b->depth && a->cull == b->cull
+           && a->state == b->state;
+}
+
+static void use_key(const used_key key)
+{
+    for (uint32_t i = 0; i < used_key_count; i++) {
+        if (keys_alike(&used_keys[i], &key, true)) return;
+    }
+    if (used_key_count == USED_KEYS_MOST) return;
+    if (used_key_count == used_key_capacity) {
+        const uint32_t capacity = used_key_capacity ? used_key_capacity * 2u : 64u;
+        used_keys = tide_realloc(used_keys, used_key_capacity * sizeof(used_key), capacity * sizeof(used_key));
+        used_key_capacity = capacity;
+    }
+    used_keys[used_key_count++] = key;
+    used_changes++;
+#ifndef __wasm__
+    used_dirty = true;
+#endif
+}
+
+#ifndef __wasm__
+static uint64_t keys_hash(const uint8_t *bytes, const size_t size)
+{
+    uint64_t hash = UINT64_C(0xCBF29CE484222325);
+    for (size_t i = 0; i < size; i++) hash = (hash ^ bytes[i]) * UINT64_C(0x100000001B3);
+    return hash;
+}
+
+static char *keys_file(const char *folder)
+{
+    const size_t length = strlen(folder) + 32u;
+    char *file = tide_alloc(length);
+    snprintf(file, length, "%s/pipelines.keys", folder);
+    return file;
+}
+
+// The keys the folder's file has, among those there are: none of a file that's cut short, changed, or of keys no
+// pipeline has.
+static void read_keys(const char *folder)
+{
+    char *file = keys_file(folder);
+    size_t size = 0;
+    uint8_t *bytes = tide_file_read_whole(file, USED_KEYS_HEADER + (size_t)USED_KEYS_MOST * sizeof(used_key), &size);
+    free(file);
+    uint32_t count = 0;
+    uint64_t hash = 0;
+    if (bytes && size >= USED_KEYS_HEADER) {
+        memcpy(&count, bytes + 8, 4);
+        memcpy(&hash, bytes + 16, 8);
+    }
+    const bool whole = bytes && size >= USED_KEYS_HEADER && memcmp(bytes, "TIDEKEY1", 8) == 0 && count <= USED_KEYS_MOST
+                    && size == USED_KEYS_HEADER + (size_t)count * sizeof(used_key)
+                    && hash == keys_hash(bytes + USED_KEYS_HEADER, size - USED_KEYS_HEADER);
+    for (uint32_t i = 0; whole && i < count; i++) {
+        used_key key;
+        memcpy(&key, bytes + USED_KEYS_HEADER + (size_t)i * sizeof(used_key), sizeof key);
+        if ((key.dims != 2 && key.dims != 3) || key.blit > 1 || key.outputs < 1 || key.outputs > TIDE_TARGET_COLORS
+            || key.blend >= BLENDS || key.depth >= DEPTHS || key.cull >= CULLS || (key.state & 15u) > TIDE_GPU_STENCIL_GREATER_EQUAL
+            || (key.state >> 4) > TIDE_GPU_STENCIL_INVERT || key.zero || key.zero2) {
+            continue;
+        }
+        const bool dirty = used_dirty;
+        use_key(key);
+        used_dirty = dirty; // Read, not drawn: nothing to write
+    }
+    free(bytes);
+}
+
+// The keys into the folder's file, where a draw drew with one that wasn't there: of the shaders of the last table
+// prewarmed (a shader that's gone takes its keys with it), or all of them where none was.
+static void write_keys(const char *folder)
+{
+    if (!folder || !used_dirty) return;
+    if (warm_generation) {
+        uint32_t kept = 0;
+        for (uint32_t i = 0; i < used_key_count; i++) {
+            bool named = false;
+            for (uint32_t k = 0; k < warm_count && !named; k++) named = warm_names[k] == used_keys[i].name;
+            if (named) used_keys[kept++] = used_keys[i];
+        }
+        used_key_count = kept;
+    }
+    const size_t size = USED_KEYS_HEADER + (size_t)used_key_count * sizeof(used_key);
+    uint8_t *bytes = tide_alloc(size);
+    memcpy(bytes, "TIDEKEY1", 8);
+    memcpy(bytes + 8, &used_key_count, 4);
+    memset(bytes + 12, 0, 4);
+    if (used_key_count) memcpy(bytes + USED_KEYS_HEADER, used_keys, (size_t)used_key_count * sizeof(used_key));
+    const uint64_t hash = keys_hash(bytes + USED_KEYS_HEADER, size - USED_KEYS_HEADER);
+    memcpy(bytes + 16, &hash, 8);
+    char *file = keys_file(folder);
+    if (tide_file_write_whole(file, bytes, size)) used_dirty = false;
+    free(file);
+    free(bytes);
+}
+#endif
+
+static void write_used_keys(void)
+{
+#ifndef __wasm__
+    write_keys(gpu_cache_folder);
+#endif
+}
 
 static uint32_t gpu_epoch; // The device all of the above was made on (tide_gpu.epoch)
 
@@ -2478,17 +2652,27 @@ static uint32_t gpu_epoch; // The device all of the above was made on (tide_gpu.
 // The backend is told of the game's cache folder as it changes.
 static void follow_cache_folder(void)
 {
-    if (!gpu->pipeline_cache) return;
     const char *folder = tide_platform_cache_folder();
     if (folder == gpu_cache_folder || (folder && gpu_cache_folder && strcmp(folder, gpu_cache_folder) == 0)) return;
+#ifndef __wasm__
+    write_keys(gpu_cache_folder); // How the last game's shaders were drawn, into its folder
+    used_key_count = 0;
+    used_dirty = false;
+    used_changes++;
+    if (folder) read_keys(folder); // ...and how this one's were
+#endif
     free(gpu_cache_folder);
     gpu_cache_folder = NULL;
+    if (folder) {
+        const size_t length = strlen(folder) + 1u;
+        gpu_cache_folder = memcpy(tide_alloc(length), folder, length);
+    }
+    if (!gpu->pipeline_cache) return;
     if (!folder) {
         gpu->pipeline_cache(NULL);
         return;
     }
     const size_t length = strlen(folder) + 1u;
-    gpu_cache_folder = memcpy(tide_alloc(length), folder, length);
     char *file = tide_alloc(length + 32u);
     snprintf(file, length + 32u, "%s/pipelines.vulkan", folder);
     gpu->pipeline_cache(file);
@@ -3053,7 +3237,13 @@ static tide_gpu_id pipeline_for(const tide_shader *shader, const bool blit, uint
     const uint32_t slot = shader_slot(shader->id, blit, (uint8_t)blend, (uint8_t)depth, (uint8_t)cull, (uint8_t)state, into);
     if (shader_index[slot]) {
         shader_pipeline *p = &shader_pipelines[shader_index[slot] - 1u];
-        p->frame = gpu_frame;
+        if (warming) {
+            p->warmed = warm_generation;
+        } else {
+            p->frame = gpu_frame;
+            if (!p->used) use_key(key_of(shader, blit, blend, depth, cull, state, into));
+            p->used = true;
+        }
         return p->pipeline;
     }
     static const tide_gpu_attribute_format formats[] = {
@@ -3103,8 +3293,10 @@ static tide_gpu_id pipeline_for(const tide_shader *shader, const bool blit, uint
     }
     const tide_gpu_id pipeline = gpu->pipeline(&desc);
     shader_pipelines[shader_pipeline_count] = (shader_pipeline){shader->id, pipeline, gpu_frame, (uint8_t)blend,
-                                                                (uint8_t)depth, (uint8_t)cull, (uint8_t)state, blit, into};
+                                                                (uint8_t)depth, (uint8_t)cull, (uint8_t)state, blit, into,
+                                                                warming ? warm_generation : 0u, !warming};
     shader_index[slot] = ++shader_pipeline_count;
+    if (!warming) use_key(key_of(shader, blit, blend, depth, cull, state, into));
     return pipeline;
 }
 
@@ -3115,7 +3307,8 @@ static void forget_pipelines(void)
 {
     uint32_t kept = 0;
     for (uint32_t i = 0; i < shader_pipeline_count; i++) {
-        if (shader_pipelines[i].frame != gpu_frame) {
+        const bool warm = warm_generation && shader_pipelines[i].warmed == warm_generation;
+        if (shader_pipelines[i].frame != gpu_frame && !warm) {
             gpu->pipeline_free(shader_pipelines[i].pipeline);
             continue;
         }
@@ -3124,6 +3317,21 @@ static void forget_pipelines(void)
     if (kept == shader_pipeline_count) return;
     shader_pipeline_count = kept;
     index_shaders();
+}
+
+// Whether a shader takes no more than a pipeline does.
+static bool shader_fits(const tide_shader *shader)
+{
+    const uint64_t instance_fields = (uint64_t)shader->instance_floats + shader->instance_ints;
+    const uint64_t uniform_fields = (uint64_t)shader->uniform_floats + shader->uniform_ints;
+    if (shader->attribute_count + instance_fields > TIDE_SHADER_ATTRIBUTES
+        || shader->texture_count > TIDE_SHADER_TEXTURES || uniform_fields * 16u > TIDE_SHADER_UNIFORM_BYTES) {
+        return false;
+    }
+    for (uint32_t i = 0; i < shader->attribute_count; i++) {
+        if (shader->attributes[i].format > TIDE_SHADER_INT4) return false;
+    }
+    return true;
 }
 
 // Whether the list's run `place` can draw: it wasn't forgotten (see
@@ -3137,17 +3345,150 @@ static bool run_draws(const tide_draw_list *list, const uint32_t place)
     if (!shader || run->mesh == 0 || run->mesh > list->mesh_count || run->count == 0) return false;
     const tide_draw_mesh_data *m = &list->meshes[run->mesh - 1u];
     if (m->space != TIDE_MESH_BYTES || m->index_count == 0 || m->vertex_size != shader->vertex_size) return false;
+    if (!shader_fits(shader)) return false;
     const uint64_t instance_fields = (uint64_t)shader->instance_floats + shader->instance_ints;
     const uint64_t uniform_fields = (uint64_t)shader->uniform_floats + shader->uniform_ints;
-    if (shader->attribute_count + instance_fields > TIDE_SHADER_ATTRIBUTES
-        || shader->texture_count > TIDE_SHADER_TEXTURES || uniform_fields * 16u > TIDE_SHADER_UNIFORM_BYTES) {
-        return false;
-    }
-    for (uint32_t i = 0; i < shader->attribute_count; i++) {
-        if (shader->attributes[i].format > TIDE_SHADER_INT4) return false;
-    }
     return run->first + instance_fields * 16u * run->count <= list->instance_used
            && run->uniforms + uniform_fields * 16u <= list->uniform_used;
+}
+
+// A pipeline tide_platform_prewarm asked for, which tide_platform_prewarm_waiting watches.
+static void warm_ask(const tide_gpu_id pipeline)
+{
+    if (!pipeline) return;
+    for (uint32_t i = 0; i < warm_asked_count; i++) {
+        if (warm_asked[i] == pipeline) return;
+    }
+    if (warm_asked_count == warm_asked_capacity) {
+        const uint32_t capacity = warm_asked_capacity ? warm_asked_capacity * 2u : 64u;
+        warm_asked = tide_realloc(warm_asked, warm_asked_capacity * sizeof(tide_gpu_id), capacity * sizeof(tide_gpu_id));
+        warm_asked_capacity = capacity;
+    }
+    warm_asked[warm_asked_count++] = pipeline;
+}
+
+// Whether a key is for the shader: by its name, and its kind.
+static bool key_for(const used_key *key, const tide_shader *shader, const uint64_t name)
+{
+    return key->name == name && key->dims == shader->dims && key->blit == shader->blit
+           && key->outputs == tide_shader_outputs(shader);
+}
+
+enum { KIND_KEYS_MOST = 8 }; // Kinds of target a kind of shader is guessed into, at most
+
+// For each kind of target the shaders of a kind (2D or 3D, a blit, their outputs) were drawn into, the way most of
+// them were drawn into it, in `keys`: how many, KIND_KEYS_MOST at most. A shader is compiled for what it draws into
+// (the measured drivers compile it again for another format, or for a target of depth alone), so a shader of the
+// kind that hasn't drawn yet is made for each: a shadow's frag drawn into a depth map, and a model's into the scene.
+static uint32_t kind_keys(const tide_shader *shader, used_key *keys)
+{
+    const used_key kind = key_of(shader, shader->blit, 0, 0, 0, 0, 0);
+    uint32_t count = 0, most[KIND_KEYS_MOST] = {0};
+    for (uint32_t i = 0; i < used_key_count; i++) {
+        const used_key *a = &used_keys[i];
+        if (a->dims != kind.dims || a->blit != kind.blit || a->outputs != kind.outputs) continue;
+        uint32_t shaders = 0; // The shaders drawn so: one key each, as a shader's are another's
+        for (uint32_t k = 0; k < used_key_count; k++) shaders += keys_alike(a, &used_keys[k], false);
+        uint32_t into = 0;
+        while (into < count && keys[into].into != a->into) into++;
+        if (into == count) {
+            if (count == KIND_KEYS_MOST) continue;
+            count++;
+        }
+        if (shaders > most[into]) {
+            most[into] = shaders;
+            keys[into] = *a;
+        }
+    }
+    return count;
+}
+
+// Whether a draw drew with the shader.
+static bool drawn(const tide_shader *shader)
+{
+    for (uint32_t i = 0; i < shader_pipeline_count; i++) {
+        const shader_pipeline *p = &shader_pipelines[i];
+        if (p->id == shader->id && p->blit == shader->blit && p->used) return true;
+    }
+    return false;
+}
+
+static tide_gpu_id warm_key(const tide_shader *shader, const used_key *key)
+{
+    return pipeline_for(shader, key->blit, key->blend, key->depth, key->cull, key->into, key->state);
+}
+
+void tide_platform_prewarm(const tide_shader *const *shaders, uint32_t count)
+{
+    if (!shaders) count = 0;
+    if (!gpu || gpu == &tide_gpu_record || (!headless && tide_window_unseen()) || !gpu_ready()) return;
+    const bool same = warm_generation && shaders == warm_shaders && count == warm_count;
+    if (same && warm_epoch == gpu_epoch && warm_guessed == used_changes) return;
+    if (!same) {
+        warm_generation++;
+        if (!warm_generation) warm_generation = 1; // 0 is no table's
+        warm_done = tide_realloc(warm_done, warm_count * sizeof(bool), (count + 1u) * sizeof(bool));
+        warm_names = tide_realloc(warm_names, warm_count * sizeof(uint64_t), (count + 1u) * sizeof(uint64_t));
+        for (uint32_t i = 0; i < count; i++) warm_names[i] = shaders[i] ? name_key(shaders[i]) : 0u;
+        warm_shaders = shaders;
+        warm_count = count;
+    }
+    warming = true;
+    if (!same || warm_epoch != gpu_epoch) { // All of it, for another table or on another device
+        warm_epoch = gpu_epoch;
+        warm_asked_count = 0;
+        if (count) memset(warm_done, 0, count * sizeof(bool));
+        // The renderer's own, as they're drawn by default into the window's kind of target: what a first frame of
+        // shapes, text and meshes would make, and what one that draws the first of a kind later would wait for
+        const tide_gpu_target_format into = TIDE_GPU_TARGET_COLOR;
+        for (int kind = 0; kind < PIPELINE_KINDS; kind++) {
+            warm_ask(engine_pipeline(kind, TIDE_BLEND_ALPHA, TIDE_DEPTH_READ_WRITE, TIDE_GPU_CULL_BACK, into, 0));
+        }
+        warm_ask(clear_pipeline(into));
+        warm_ask(depth_clear_pipeline(into));
+        // Each of the game's, every way it was drawn before
+        for (uint32_t i = 0; i < count; i++) {
+            const tide_shader *shader = shaders[i];
+            if (!shader || !shader_fits(shader)) continue;
+            for (uint32_t k = 0; k < used_key_count; k++) {
+                if (!key_for(&used_keys[k], shader, warm_names[i])) continue;
+                warm_ask(warm_key(shader, &used_keys[k]));
+                warm_done[i] = true;
+            }
+        }
+    }
+    // ...and those never drawn, the ways their kind were, once one of their kind was, and again as their kind is
+    // drawn into another kind of target
+    warm_guessed = used_changes;
+    used_key kinds[2][2][TIDE_TARGET_COLORS][KIND_KEYS_MOST]; // By 3D, blit and outputs less one, as kind_keys finds them
+    int8_t known[2][2][TIDE_TARGET_COLORS]; // 1 + how many, once looked for
+    memset(known, 0, sizeof known);
+    for (uint32_t i = 0; i < count; i++) {
+        const tide_shader *shader = shaders[i];
+        if (warm_done[i] || !shader || !shader_fits(shader)) continue;
+        if (drawn(shader)) {
+            warm_done[i] = true; // Its draws make what it draws with, and keep it (use_key)
+            continue;
+        }
+        const uint32_t deep = shader->dims == 3, blit = shader->blit, outputs = tide_shader_outputs(shader) - 1u;
+        used_key *keys = kinds[deep][blit][outputs];
+        if (!known[deep][blit][outputs]) known[deep][blit][outputs] = (int8_t)(1u + kind_keys(shader, keys));
+        for (int k = 0; k < known[deep][blit][outputs] - 1; k++) warm_ask(warm_key(shader, &keys[k]));
+    }
+    warming = false;
+}
+
+uint32_t tide_platform_shader_pipelines(void)
+{
+    return shader_pipeline_count;
+}
+
+uint32_t tide_platform_prewarm_waiting(void)
+{
+    if (!gpu || !gpu->pipeline_ready || warm_epoch != gpu_epoch) return 0;
+    uint32_t waiting = 0;
+    for (uint32_t i = 0; i < warm_asked_count; i++) waiting += !gpu->pipeline_ready(warm_asked[i]);
+    return waiting;
 }
 
 // What the list's shaded runs draw from goes to the GPU, before anything

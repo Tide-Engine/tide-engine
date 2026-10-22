@@ -18,6 +18,7 @@ enum nt_status {
 enum nt_body_type { NT_STATIC, NT_DYNAMIC };
 enum nt_joint_type { NT_FIXED, NT_REVOLUTE, NT_PRISMATIC };
 enum nt_collider_type { NT_SPHERE, NT_PLANE };
+enum nt_contact_friction { NT_REGULARIZED, NT_COULOMB };
 
 typedef struct nt_body {
     uint64_t entity;
@@ -55,6 +56,11 @@ typedef struct nt_joint {
     float child_rotation[4];
     float axis[3];
     float applied_effort;
+    // Dry-friction stopping effort budget (Nm or N), finite and nonnegative.
+    float friction;
+    // Last successful final-substep nonmotor generalized load. Output only;
+    // excludes applied effort, passive joint damping and joint friction.
+    float load;
 } nt_joint;
 
 // Compound colliders are separate records referencing a body. Position and
@@ -74,6 +80,9 @@ typedef struct nt_collider {
     float friction;
     // Successful tick's mean world contact force, including friction.
     float contact_force[3];
+    // Coulomb opts into a bounded sticking/sliding impulse when both shapes
+    // request it. Regularized preserves the original Newton force kernel.
+    int32_t friction_model;
 } nt_collider;
 
 #ifdef __cplusplus

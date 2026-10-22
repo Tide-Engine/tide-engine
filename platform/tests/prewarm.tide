@@ -1,0 +1,61 @@
+// A game for the standard host to make the pipelines of before anything draws
+// with them (platform/tests/prewarm.c): a frag it draws from its first frame,
+// and a mesh's and a blit's it draws only once the host says (Later), so the
+// host's test sees whether the frame that first drew them waited for one.
+
+extern bool Later();
+
+scene Main { }
+
+local singleton Picture
+{
+    RenderTarget scene;
+    bool made;
+}
+
+frag Early(Vertex vertex, out Color color)
+{
+    color = Color(1, 0, 0);
+}
+
+frag Late(Vertex vertex, out Color color)
+{
+    color = Color(0, 1, 0);
+}
+
+frag Present(Vertex vertex, out Color color, Texture source)
+{
+    color = source.Sample(vertex.uv);
+}
+
+List<Vertex> Square(float2 at, float size)
+{
+    return [
+        Vertex { position = at, color = Color.white },
+        Vertex { position = at + float2(size, 0), uv = float2(1, 0), color = Color.white },
+        Vertex { position = at + float2(size, size), uv = float2(1, 1), color = Color.white },
+        Vertex { position = at + float2(0, size), uv = float2(0, 1), color = Color.white },
+    ];
+}
+
+view Show(mut Picture picture)
+{
+    Draw.SetScreen();
+    if (Later())
+    {
+        if (!picture.made)
+        {
+            picture.scene = RenderTarget.Window();
+            picture.made = true;
+        }
+        picture.scene.Clear(Color.black);
+        picture.scene.SetScreen();
+        picture.scene.Mesh(Square(float2(40, 0), 20), [0, 1, 2, 0, 2, 3], Late);
+        Draw.Blit(picture.scene.color, Draw.window, Present);
+    }
+    else
+    {
+        Draw.Clear(Color.black);
+    }
+    Draw.Mesh(Square(float2(0, 0), 20), [0, 1, 2, 0, 2, 3], Early);
+}

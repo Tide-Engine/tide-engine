@@ -465,6 +465,9 @@ void tide_gpu_record_close(void);
 // A test's: has OpenGL make its targets as a device that can't draw into
 // floats does, while it's set. The targets there already stay as they are.
 extern bool tide_gpu_gl_no_floats;
+// A test's: how many pipelines of games' shaders the renderer has (platform.c),
+// so a test sees whether a draw made one.
+uint32_t tide_platform_shader_pipelines(void);
 #ifdef __wasm__
 extern const tide_gpu tide_gpu_webgpu; // web/gpu_web.c
 #endif

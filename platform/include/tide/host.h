@@ -120,6 +120,9 @@ typedef struct tide_host_game {
     const struct tide_embed_game *embed;
     // Optional voice package, registered in the game's own engine copy.
     const tide_voice_provider *(*voice)(void);
+    // Every shader the game's draws can go through, and NULL after them (tidec's tide_game_shaders), whose pipelines
+    // the host has the renderer make before anything draws with them (tide_platform_prewarm). Optional for C hosts.
+    const tide_shader *const *shaders;
 } tide_host_game;
 
 // A game's library exports this function, which returns its table.
@@ -803,6 +806,22 @@ static inline void tide_run_bind_io(const tide_host_game *game, void *local)
     free(player_directory);
 }
 
+// The pipelines of the game's shaders made before anything draws with them
+// (tide_platform_prewarm), so a shader's first draw doesn't wait for one: as
+// the game starts, once its folders are named (how its shaders drew in the
+// last runs is read from there, and Vulkan's cache of what it compiled), and
+// again every frame, which costs nothing till the table or the device is
+// another (a reloaded build, a lost device) or a shader drew another way.
+// Not in a run with no window, whose frames nobody waits for, nor inside
+// another program, which draws.
+static inline void tide_run_prewarm(void)
+{
+    if (tide_run_headless || tide_run_embedded || !tide_run_game->shaders) return;
+    uint32_t count = 0;
+    while (tide_run_game->shaders[count]) count++;
+    tide_platform_prewarm(tide_run_game->shaders, count);
+}
+
 // Starts tide_run_game: its local state and a session, then the match the
 // command line asks for, or Main's if it's the match's.
 static inline void tide_run_begin(void)
@@ -812,6 +831,7 @@ static inline void tide_run_begin(void)
     tide_run_start = calloc(1, game->game->start_size);
     if (!tide_run_local || !tide_run_start) abort();
     tide_run_bind_io(game, tide_run_local);
+    tide_run_prewarm();
     game->local_init(tide_run_local);
     tide_run_session = tide_run_new_session();
     tide_session_request request = {0};
@@ -1065,6 +1085,7 @@ static inline int tide_run_frame(void *user, const float seconds)
         tide_platform_gpu_timing(true);
     }
     const uint64_t render_began = timing ? tide_time_now_ns() : 0;
+    tide_run_prewarm();
     if (!tide_run_embedded) tide_platform_draw(&tide_run_draw);
     tide_platform_audio(&tide_run_audio); // Embedded, for the other program to play (tide_embed_audio)
     const uint64_t rendered = timing ? tide_time_now_ns() : 0;

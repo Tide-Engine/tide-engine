@@ -1348,6 +1348,7 @@ typedef struct tide_shader {
     uint32_t texture_count;
     uint8_t texture_reads[TIDE_SHADER_TEXTURES]; // tide_shader_read
     uint8_t outputs; // The colors its fragment stage writes: 1 for 0, TIDE_TARGET_COLORS at the most
+    bool blit;       // Drawn by blits (tide_draw_blit) over a whole destination, rather than as a mesh
     uint32_t bounds_position; // 1 + float3 position's byte offset, only for undeformed 3D geometry; 0: unknown
 } tide_shader;
 
