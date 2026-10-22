@@ -1,5 +1,31 @@
 # The Newton package
 
+## MicroDuck CTest case budgets (2026-10-22)
+
+Build run 39800191824 clears the JetBrains/docs failures, but Android and Linux
+sanitizers time out the combined tide_newton_microduck invocation at 180 seconds.
+All other 2,383 Android and 2,436 sanitizer CTests pass. Ordinary native/web and
+MinGW suites pass the fixture; the original optimized WASI invocation passes
+24/24 locally in 31.40 seconds. This is an aggregate test-budget failure, not
+evidence of a failed physics assertion or a changed deterministic result.
+
+The fixture's CMake now registers every TIDE_TEST as its own CTest, using the
+existing executable's name filter. Each retains the 180-second deadline and
+must print 1/1 passed, so an empty filter cannot silently pass. Source edits
+trigger reconfiguration to discover added cases. The threads case is omitted
+only when tide_platform is absent, matching NEWTON_TEST_JOBS; the separate
+fresh-process join test is unchanged. No solver, simulation length, network
+conditions, assertions, pinned hashes, compiler flags or workflow gate changed.
+
+Native debug passes all 24 cases, runtime and join (26 CTests, 104.87 seconds),
+and WASI debug passes the same set (121.65 seconds). The unchanged rollback case
+takes 54.61/60.15 seconds respectively. Package order passes on both targets.
+CTest metadata matches all 24 compiled cases on native/web and all 23 without
+the platform, with unchanged deadlines and nonempty-run checks. Optimized WASI
+passes all 29 Newton CTests in 36.14 seconds, including both arm hosts and the
+unchanged MicroDuck history pin. Hosted Android/sanitizer confirmation remains
+the next automatic Build run's coverage; no workflow was manually dispatched.
+
 ## Collision floor and mouse sandbox (2026-10-22)
 
 The owner wanted a physics floor and objects to play with, then requested mouse
