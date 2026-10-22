@@ -1,5 +1,144 @@
 # The platform layer and the renderer
 
+## Pipelines made before they're drawn (2026-10-22)
+
+The owner asked for shaders to be made while the game loads rather than at
+their first draw ("maybe the engine should compile before the game starts or
+something?"): BANKED's first felled pine hitched on Vulkan as four new frags
+drew for the first time, and the game drew each once unseen to hide it. The
+design below is Claude's, Provisional.
+
+- **Where the cost is** (measured on this machine, RTX 4080 SUPER, driver
+  617.42, BANKED's 25 shaders, NVIDIA's own disk cache pointed at an empty
+  folder with `__GL_SHADER_DISK_CACHE_PATH`, temporary instrumentation):
+  - Vulkan: `vkCreateShaderModule` is nothing; `vkCreateGraphicsPipelines`
+    compiles, 20 to 230 ms a pipeline cold (BANKED's first frames: 17
+    pipelines, 835 to 900 ms; its later first uses: HewnModel 75 ms,
+    NotchFace 52, Snowlump 28, HewnShadow 24, Arm 87, AxeLit 50, Ice 119),
+    0.2 ms with the driver's and `pipelines.vulkan`'s caches warm. The driver
+    compiles again for much of the key, not only the shader: a pipeline
+    made for the window's kind of target first left another for a float
+    target at about 80% of its cold cost, one for a depth-only target at
+    two thirds, `TIDE_DEPTH_READ` for `READ_WRITE` at all of it, `ADD` for
+    `ALPHA` at 6%, and other samples or cull at nothing. (A first experiment
+    with Tag, its driver cache warm, saw 6 ms become 0.03 ms for a different
+    target: the driver's disk cache answering, not reuse.)
+  - Desktop GL (NVIDIA): the link compiles, 250 to 430 ms for BANKED's big
+    frags cold, 4 ms from the driver's disk cache. Blend, depth, cull and
+    the target are set at the draw, so one program serves every key.
+  - WebGPU: `createRenderPipelineAsync` per key, in the background; Dawn
+    compiles per pipeline. WebGL: compile and link per program, in parallel
+    where `KHR_parallel_shader_compile` is. Not measured beyond the tests.
+- **What the compiler knows:** every shader combination a draw can use
+  (`program.shaders`): its sources, vertex layout, `dims`, outputs and
+  whether it's a blit. Not the target it draws into (a `RenderTarget` is a
+  value) nor the settings it draws with (settings are a stack at run time),
+  which is most of what the drivers compile for.
+- **The table:** tidec writes `const tide_shader *const tide_game_shaders[]`
+  in the game's C (not the header, which is the game's hash), every shader
+  and `NULL` after them, in every game (`gen_shader_table`), and
+  `tide_shader.blit` for blits' shaders. `tide/run.h` declares it and fills
+  the new last member of `tide_host_game`, `shaders`. Generated code calls no
+  new runtime function. Hosts and libraries rebuild together for the
+  `tide_host_game` and `tide_shader` layout changes.
+- **`tide_platform_prewarm(shaders, count)`** (`tide/platform.h`): makes
+  the renderer's own pipelines for the window's kind of target (default
+  blend, depth and cull), and for each of the game's shaders:
+  - every key it drew with before, by the shader's name (`used_key`: an
+    FNV-1a of `tide_shader.name`, its kind, and `into`, blend, depth, cull
+    and stencil state), so a shader whose code changed (another id, the same
+    name) is made too;
+  - for a shader that never drew, once a shader of its kind (2D or 3D, a
+    blit, its outputs) drew: for each kind of target its kind drew into, the
+    key most of them drew with there (`kind_keys`, at most 8). So BANKED's
+    HewnShadow gets the depth map's key as well as the scene's, and a model
+    the scene's (and the depth map's, unused).
+  It's asked again cheaply: nothing happens till the table, the device
+  (`tide_gpu.epoch`) or the keys drawn change (`used_changes`). Prewarmed
+  pipelines of the current table (`shader_pipeline.warmed`) survive the
+  first frame of another build (`forget_pipelines`); another table lets
+  them go there. `tide_platform_prewarm_waiting()` counts those asked for
+  that the backend is still making in the background.
+- **The keys file:** `pipelines.keys` in the game's temporary cache folder,
+  beside `pipelines.vulkan`: `TIDEKEY1`, a count, 4 zero bytes, an FNV-1a of
+  the keys, then 24 bytes a key, 4,096 keys at most. Read as the folder is
+  known (`follow_cache_folder`), written as the window closes (`finish`) and
+  as the folder changes, and only when a draw drew with a key that wasn't
+  there. A file cut short, changed, or with a key out of range is left out
+  whole; keys of shaders not in the last table go when it's written. Native
+  only: a page has no such folder, so it keeps its own run's keys.
+- **The standard host** (`tide_run_prewarm` in `tide/host.h`) gives it
+  `tide_game_shaders` in `tide_run_begin` (after `tide_run_bind_io` named the
+  game, so both files are read first) and every frame before
+  `tide_platform_draw`, which covers a reloaded build and a new device. Not
+  in a headless run (nobody waits for its frames, and they stay as they
+  were) or embedded. Background pipelines stay as they were: on for games,
+  so a page's prewarming doesn't hold its first frame.
+- **OpenGL shares programs** (`gl_program` in `gpu_gl.c`): pipelines with the
+  same sources and texture count, by FNV-1a, are one program, counted, so a
+  shader's other keys cost a vertex array. A program begun in the background
+  is finished at once for a pipeline asked for with background off.
+- **Measured after** (BANKED, a debug build, whose cost here is the
+  driver's, 120 headless frames with prewarming forced on by temporary
+  instrumentation, NVIDIA's cache emptied for the cold runs):
+  - First run, no keys file: the first frames make what they draw as before
+    (17 pipelines, 849 ms on Vulkan); frame 5, the first after its 3D draws,
+    makes the 7 shaders that hadn't drawn, for the scene's target and the
+    depth maps (14 pipelines, 690 ms Vulkan, 585 ms GL, where GL's second
+    key cost 0.03 ms each).
+  - Second run, its keys file, the driver cold: 31 pipelines as the game
+    starts, 1.5 to 1.6 s on Vulkan, 1.9 to 2.0 s on GL; none in any frame.
+  - Second run, the driver warm: 31 pipelines as it starts, 12 ms on Vulkan
+    (25 ms GL); none in any frame. The felling's shaders' first draws make
+    nothing, where before each made its pipeline then.
+- **Tests:**
+  - `tide_platform_draw`'s prewarm phase (after the background one), native
+    Vulkan, OpenGL and descriptor sets, WebGL and WebGPU: a frame draws one
+    shader of each kind after the list forgot; prewarming a table of others
+    makes a pipeline for each (on WebGPU in the background), the same table
+    again makes nothing; once made, the scene, a 3D shader of the drawn one's
+    name with another id, and a blit that never drew each draw in their first
+    frame (WebGPU's first frame through a pipeline not made leaves it out)
+    and make no pipeline; another build's first frame keeps them, and lets
+    them go once another table is given. Prewarming each key with its cull
+    changed, on purpose, fails it.
+  - `tide_platform_shaders`, every backend and ANGLE's D3D11: after all its
+    checks, the list forgets, a build's first frame lets the pipelines it
+    didn't draw with go, and prewarming the 172 shaders remakes the 131 gone
+    the ways they drew; every check then draws again, the same pixels, making
+    no pipeline.
+  - `tide_platform_prewarm` (`platform/tests/prewarm.tide`, `prewarm.c`,
+    run by `prewarm.cmake` in a folder of its own, Vulkan and OpenGL; once
+    in a page, WebGL and WebGPU): the standard host over a game whose late
+    mesh and blit draw once the test says. With no file nothing of the
+    game's is made as it starts, the late mesh is once the early one drew,
+    and the blit is made at its draw; with the file left, all three are made
+    as it starts and the late frame makes none and draws them all; a file
+    with a byte changed or cut short is left out and written over whole.
+- **Validation:** the native debug suite passed 2,540 of 2,540 and the web
+  debug suite 2,441 of 2,441, warning-free.
+- **Not done, and open for the owner:**
+  - A brand-new shader whose kind hasn't drawn yet is made at its first
+    draw, and so is one drawn into a kind of target its kind never drew into,
+    or with a setting other than its kind's commonest there (a decal's
+    `Depth.Read`): the next run has its key.
+  - Guessing costs: in a first run every not-yet-drawn shader is compiled
+    for each kind of target its kind drew into, some of which it never draws
+    into (BANKED: 7 of 14 unused); with the driver's cache warm that's a
+    fraction of a millisecond each.
+  - Vulkan makes them one at a time on the render thread: a cold start of
+    BANKED's 31 takes 1.5 s. Making them on the job pool's threads
+    (`vkCreateGraphicsPipelines` may be called from several), or
+    `VK_EXT_graphics_pipeline_library` to compile shaders apart from state,
+    would cut that; not built.
+  - A page keeps no keys between visits (`localStorage` through `tide.js`
+    would; a new import, not built). Its prewarming is the guess alone.
+  - Nothing lets a game wait for prewarming (a loading screen reading
+    `tide_platform_prewarm_waiting`), nor turn it off: language surface, the
+    owner's to decide. Headless runs never prewarm.
+  - Not run: the Vulkan validation layer (no SDK on this machine), drivers
+    other than NVIDIA's, Android, macOS.
+
 ## Recording, for Unity (2026-10-22)
 
 `platform/src/gpu_record.c` is a `tide_gpu` that draws nothing. It writes each call as
@@ -238,6 +377,8 @@ time it returned (see `notes/textures.md`).
   `Tide.backgroundPipelines = false` (see `notes/web.md`).
 - Gap: on the web, a shader's first appearance is one or a few frames late
   rather than hitching; nothing prewarms pipelines before they are drawn.
+  Closed in part by Pipelines made before they're drawn (2026-10-22, above):
+  what's left is listed there.
 
 ## Window scale getter (2026-10-20)
 

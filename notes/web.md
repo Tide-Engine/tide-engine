@@ -1,5 +1,13 @@
 # Web builds
 
+Prewarmed pipelines (2026-10-22): a page prewarms the game's shaders as
+desktop does (`notes/rendering.md`, Pipelines made before they're drawn),
+in the background where background pipelines are on, so its first frame
+isn't held. It has no temporary cache folder, so it keeps no `pipelines.keys`
+between visits: a shader is made the ways its kind drew once one has. WebGL
+shares a program between pipelines of the same sources (`gpu_gl.c`). No
+`tide.js` change.
+
 Invite links (2026-10-21): `tide.js` gained the `room_invite` import, the link
 that joins a room: `location.href` cut at its query or fragment, `?join=` and
 the URI-encoded room, 0 on a page that isn't `http:`, `https:` or `file:` and

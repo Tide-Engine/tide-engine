@@ -1,5 +1,21 @@
 # Runtime written by Claude for now
 
+## The game's shaders, for prewarming (2026-10-22)
+
+The owner asked for shaders to be compiled as a game starts rather than at
+their first draw. Generated code calls no runtime function for it: tidec
+writes a data symbol in the game's C, `const tide_shader *const
+tide_game_shaders[]` (every shader and `NULL` after them, in every game; not
+in the header, which is the game's hash), and `tide_shader.blit` for a blit's
+shader (`tide/draw.h`). `tide/run.h` declares the table and fills
+`tide_host_game.shaders`, a new last member (`tide/host.h`); the standard
+host hands it to the new platform surface, the agent's:
+`tide_platform_prewarm` and `tide_platform_prewarm_waiting`
+(`tide/platform.h`), and the test hook `tide_platform_shader_pipelines`
+(`platform/src/gpu.h`). Hosts, libraries and generated games rebuild together
+for the two layout changes. Contracts and tests: rendering.md, Pipelines made
+before they're drawn.
+
 ## LookRotation normalizes its arguments (2026-10-22)
 
 `tide_lookrotation_q` in `tide/math.h` (existing math maintenance) keeps its

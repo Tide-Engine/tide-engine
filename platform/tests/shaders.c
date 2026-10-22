@@ -24,6 +24,8 @@
 
 #define SIZE 256
 
+extern const tide_shader *const tide_game_shaders[]; // tidec's, in the game's C, as tide/run.h has it
+
 // The game's pack, as C (tide_add_game's for HOST programs)
 extern const unsigned char tide_game_pack[];
 extern const size_t tide_game_pack_size;
@@ -1582,6 +1584,49 @@ static void run_size_checks(const char *when)
     tide_render_target_dispose(window);
 }
 
+// Every shader of the game's made before anything draws with it (tide_platform_prewarm), as a host has them made
+// as a game starts: the ways the checks above drew it, after a build's first frame let go of the pipelines it didn't
+// draw with (the list forgot). Every check after that draws with what was made, and makes no pipeline.
+static void run_prewarmed_checks(void)
+{
+    uint32_t shaders = 0;
+    while (tide_game_shaders[shaders]) shaders++;
+    tide_platform_prewarm(NULL, 0); // No table's, so none is kept
+    tide_draw_forget(&list);
+    run_checks(", in a build's first frame");
+    const uint32_t kept = tide_platform_shader_pipelines();
+    tide_platform_prewarm(tide_game_shaders, shaders);
+    const uint32_t made = tide_platform_shader_pipelines();
+    printf("%s: the game's %u shaders prewarmed the ways they drew (%u pipelines, %u of them kept)\n",
+           made > kept ? "ok" : "FAIL", (unsigned)shaders, (unsigned)made, (unsigned)kept);
+    if (made <= kept) failures++;
+    const char *const when = ", prewarmed";
+    run_checks(when);
+    run_target_checks(when);
+    run_screen_target_checks(when);
+    run_wrap_checks(when);
+    run_image_checks(when);
+    run_shadow_checks(when);
+    run_stencil_checks(when);
+    run_output_checks(when);
+    run_values_checks(when);
+    run_height_checks(when);
+    run_mipmap_checks(2, when);
+    run_alpha_checks(when);
+    run_raw_checks(when);
+    run_cube_checks(2, when);
+    run_list_checks(0, when);
+    run_roll_checks(1234, when);
+    run_normal_checks(when);
+    run_model_checks(when);
+    run_place_checks(when);
+    run_size_checks(when);
+    const uint32_t after = tide_platform_shader_pipelines();
+    printf("%s: and every check drew with what was made, making no pipeline (%u)\n", after == made ? "ok" : "FAIL",
+           (unsigned)after);
+    if (after != made) failures++;
+}
+
 static int frame(void *user, const float seconds)
 {
     (void)user, (void)seconds;
@@ -1659,6 +1704,7 @@ static int frame(void *user, const float seconds)
     run_place_checks("");
     run_place_checks(", again");
     run_size_checks("");
+    run_prewarmed_checks();
 #ifdef __wasm__
     if (failures == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
         tide_web_eval("Tide.loseDevice()");

@@ -509,6 +509,26 @@ if(NOT TIDE_ANDROID)
         tide_gpu_test(tide_platform_shaders)
         tide_gpu_test(tide_platform_shaders_opengl OPENGL)
     endif()
+    # The standard host has the pipelines of a game's shaders made before they
+    # draw (tide_platform_prewarm): as the game starts, the ways the last run
+    # drew them, kept in its temporary cache folder, and once a shader of a
+    # kind drew, the others of that kind that way. Run twice, in a hidden
+    # window with each backend, in a folder of the test's; in a page, once.
+    tide_add_game(tide_platform_prewarm SOURCES tests/prewarm.tide NAME game HOST tests/prewarm.c)
+    target_include_directories(tide_platform_prewarm PRIVATE src)
+    target_link_libraries(tide_platform_prewarm PRIVATE tide_platform)
+    if(TIDE_WEB)
+        tide_web_page(tide_platform_prewarm SHELL web/test_shell.html)
+        tide_add_web_test(tide_platform_prewarm TARGET tide_platform_prewarm WEBGPU EXPECT "renderer: WebGPU")
+    else()
+        foreach(backend "" _opengl)
+            add_test(NAME tide_platform_prewarm${backend}
+                COMMAND "${CMAKE_COMMAND}" -DPROGRAM=$<TARGET_FILE:tide_platform_prewarm>
+                    "-DDIR=${CMAKE_CURRENT_BINARY_DIR}/tide_platform_prewarm${backend}" -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/prewarm.cmake")
+        endforeach()
+        tide_gpu_test(tide_platform_prewarm)
+        tide_gpu_test(tide_platform_prewarm_opengl OPENGL)
+    endif()
 else()
     # An app there too, to install and start by hand: OpenGL ES 3 has to
     # compile what tidec writes as the others do (`adb logcat -s tide`).
