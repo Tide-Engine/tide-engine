@@ -24,6 +24,17 @@ smoke, all five playground compiler integration tests, focused draw3d WebGPU
 smoke and all seven exports/SEO/access/admin HTTP tests pass (Node 24.19.0).
 The production build passes and Svelte check reports no errors or warnings.
 
+Integration with origin/dev 3a880ea7 is clean. Its shader/math dependency change
+was rebuilt into all staged docs examples, samples and standalone games before
+rebuilding the production site. All seven HTTP checks pass again. The first
+merged browser run passed every rendering/playground assertion but failed at
+Windows profile removal (EPERM). Teardown now waits for the child's close event,
+including inherited pipes, and awaits asynchronous profile removal with the
+same five retries and 200 ms retry delay. Its five-second shutdown fallback is
+unchanged. The final full WebGL smoke and five compiler integration tests pass
+with that teardown. This task changes only the docs runner and plugin packaging;
+full native/web engine suites were not rerun and no workflow was dispatched.
+
 ## Schedule display grouped by stage (2026-10-22)
 
 The schedule guide groups Steer and Expire together in stage 1 and separates

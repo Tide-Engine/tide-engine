@@ -13,7 +13,11 @@ On Windows with JDK 21 and Gradle 9.8.0, the original script reproduces the exac
 TaskContainerScope serialization failure. The fixed buildPlugin/buildCliInstaller
 passes all nine ordinary Java/platform tests and stores its configuration cache;
 deleting just the installer ZIP and repeating rebuilds it successfully from the
-reused cache. Full verifier results are recorded below after validation.
+reused cache. The exact CI buildPlugin/buildCliInstaller/verifyPlugin command
+also passes with caching enabled: Plugin Verifier reports Compatible on
+IC-242.26775.15 and CL-263.7031.19. The installer ZIP has the matching VERSION,
+Tide plugin, 24 LSP4IJ library files and seven upstream notices, with no duplicate
+entries or corrupt members.
 Optional real-process/server/native-canvas/JCEF tests are outside this Gradle-only
 change. No compiler, runtime or IDE adapter implementation changed.
 

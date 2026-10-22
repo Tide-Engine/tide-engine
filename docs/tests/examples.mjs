@@ -8,7 +8,8 @@
 // only have to come up.
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
@@ -71,6 +72,7 @@ const child = spawn(browser, ['--headless', '--no-sandbox', '--no-first-run', '-
     ...(process.env.TIDE_RELAY ? [] : ['--disable-features=WebRtcHideLocalIpsWithMdns', '--allow-loopback-in-peer-connection']),
     'about:blank'],
     { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
+const closed = new Promise((done) => child.once('close', done));
 let socket;
 let closeBrowser;
 try {
@@ -318,16 +320,16 @@ try {
 } finally {
     await closeBrowser?.().catch(() => {});
     socket?.close();
-    if (child.exitCode === null) {
-        await new Promise((done) => {
-            const timeout = setTimeout(() => { child.kill(); done(); }, 5000);
-            child.once('exit', () => { clearTimeout(timeout); done(); });
-        });
-    }
+    // close follows exit once the browser's inherited pipes have closed too.
+    let timeout;
+    await Promise.race([closed, new Promise((done) => {
+        timeout = setTimeout(() => { child.kill(); done(); }, 5000);
+    })]);
+    clearTimeout(timeout);
     await new Promise((done) => server.close(done));
     relay.close();
     // The only directory removed is the unique profile this test created.
     assert.equal(dirname(profile), resolve(tmpdir()));
     assert.ok(profile.startsWith(join(resolve(tmpdir()), 'tide-docs-examples-')));
-    rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }
