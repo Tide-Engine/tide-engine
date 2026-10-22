@@ -112,6 +112,16 @@ runtime source changed, so validation is scoped to the repository game on
 native/web plus the docs build. Other operating systems and physical hardware
 remain CI/independent validation work.
 
+Final integration: feature commit `44f230ec` merged `origin/dev` cleanly at
+`bfe135d7`. Incoming compiler fixes concern FBX asset handling and audio header
+inclusion; the fixture and Newton sources did not overlap. Rebuilt the affected
+native/web debug game, test and join targets; both focused CTests pass on each
+target. Comparing regenerated C/header files with their saved pre-merge hashes
+confirms that only the expected compiler/runtime compatibility fingerprint
+changed; generated behavior and layouts are unchanged. Logs are
+`build/microduck-step-debug-postmerge-{build,tests}.log` and the corresponding
+`web-debug` files.
+
 ## Anchored MicroDuck fixture (2026-10-22)
 
 The owner selected Pollen Robotics' MicroDuck for the next fixture and approved
