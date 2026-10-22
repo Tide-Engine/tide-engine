@@ -32,8 +32,8 @@ void b2t_images(int32_t *whole, int32_t *in_parts);
 
 // The match after 300 ticks, on every platform and in every configuration:
 // Box2D's own math, SIMD or not, and its image, byte for byte.
-#define SETTLED_HASH UINT64_C(0x3bb72471854bf78f)
-#define IMAGES_HASH UINT64_C(0xa0c6bdc908d4d3a6)
+#define SETTLED_HASH UINT64_C(0x8689759d0c0b985f)
+#define IMAGES_HASH UINT64_C(0x261d55eadc2aa019)
 // Where the crates are and how fast, at each of the 300 ticks: the simulation
 // alone. A change to what the image holds of a world moves the two above and
 // leaves this one; a change to how the world steps moves all three.

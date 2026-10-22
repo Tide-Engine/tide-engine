@@ -116,12 +116,13 @@ component Part
     long circle;
 }
 
-// The package's own: the entity's box, or its circle, is on its body in Box2D
+// Preserve the established ECS traversal order as bodies acquire shapes.
+// Reconciliation reads the actual shape components even after a marker exists.
 [Sparse]
 component BoxMade { }
-
 [Sparse]
 component CircleMade { }
+
 
 // Two bodies started touching, or stopped: sent to each body's entity, with
 // the other's, once for each pair of their shapes. A shape that's a sensor
@@ -204,6 +205,10 @@ singleton Physics
     Map<long, bool> selected;
     List<Collider> pending;
     List<HistoryFrame> history;
+    Map<long, Entity> joints;
+    Map<Entity, Fixtures> fixtures;
+    List<byte> topology;
+    bool topologyChanged;
 
     // A prepared, read-only scene: opted-in bodies at the presented time,
     // all other geometry at the current physics step. Invalid times fail.
@@ -298,41 +303,44 @@ singleton Physics
         return hits.count > 0;
     }
 
-    bool RaycastAll(float2 from, float2 to, out List<RayHit> hits, bool includeSensors = false)
+    bool RaycastAll(float2 from, float2 to, out List<RayHit> hits, bool includeSensors = false, QueryFilter filter = default)
     {
-        return RaycastAll(from, to, out hits, default, includeSensors);
+        return RaycastAll(from, to, out hits, default, includeSensors, filter);
     }
 
-    bool RaycastAll(float2 from, float2 to, out List<RayHit> hits, Body ignore, bool includeSensors = false)
+    bool RaycastAll(float2 from, float2 to, out List<RayHit> hits, Body ignore, bool includeSensors = false, QueryFilter filter = default)
     {
         hits = [];
         if (!Ask()) return false;
+        SetQueryFilter(filter.category, filter.mask);
         CastRayAll(out var found, from, to, ignore.id, includeSensors);
         return AllHits(found, out hits);
     }
 
-    bool CastAll(Box shape, float2 from, float angle, float2 to, out List<RayHit> hits, bool includeSensors = false)
+    bool CastAll(Box shape, float2 from, float angle, float2 to, out List<RayHit> hits, bool includeSensors = false, QueryFilter filter = default)
     {
-        return CastAll(shape, from, angle, to, out hits, default, includeSensors);
+        return CastAll(shape, from, angle, to, out hits, default, includeSensors, filter);
     }
 
-    bool CastAll(Box shape, float2 from, float angle, float2 to, out List<RayHit> hits, Body ignore, bool includeSensors = false)
+    bool CastAll(Box shape, float2 from, float angle, float2 to, out List<RayHit> hits, Body ignore, bool includeSensors = false, QueryFilter filter = default)
     {
         hits = [];
         if (!Ask()) return false;
+        SetQueryFilter(filter.category, filter.mask);
         CastBoxAll(out var found, shape, from, angle, to, ignore.id, includeSensors);
         return AllHits(found, out hits);
     }
 
-    bool CastAll(Circle shape, float2 from, float angle, float2 to, out List<RayHit> hits, bool includeSensors = false)
+    bool CastAll(Circle shape, float2 from, float angle, float2 to, out List<RayHit> hits, bool includeSensors = false, QueryFilter filter = default)
     {
-        return CastAll(shape, from, angle, to, out hits, default, includeSensors);
+        return CastAll(shape, from, angle, to, out hits, default, includeSensors, filter);
     }
 
-    bool CastAll(Circle shape, float2 from, float angle, float2 to, out List<RayHit> hits, Body ignore, bool includeSensors = false)
+    bool CastAll(Circle shape, float2 from, float angle, float2 to, out List<RayHit> hits, Body ignore, bool includeSensors = false, QueryFilter filter = default)
     {
         hits = [];
         if (!Ask()) return false;
+        SetQueryFilter(filter.category, filter.mask);
         CastCircleAll(out var found, shape, from, angle, to, ignore.id, includeSensors);
         return AllHits(found, out hits);
     }
@@ -340,24 +348,26 @@ singleton Physics
     // The first thing a ray from one place to another meets, if anything. Sensors
     // aren't met. A ray that starts inside a shape meets it there, at fraction 0,
     // with no normal.
-    bool Raycast(float2 from, float2 to, out RayHit hit)
+    bool Raycast(float2 from, float2 to, out RayHit hit, QueryFilter filter = default)
     {
         if (!Ask())
         {
             hit = default;
             return false;
         }
+        SetQueryFilter(filter.category, filter.mask);
         return Told(CastRay(from, to, 0), out hit);
     }
 
     // ...leaving out one body: its own, for a ray from inside it.
-    bool Raycast(float2 from, float2 to, out RayHit hit, Body ignore)
+    bool Raycast(float2 from, float2 to, out RayHit hit, Body ignore, QueryFilter filter = default)
     {
         if (!Ask())
         {
             hit = default;
             return false;
         }
+        SetQueryFilter(filter.category, filter.mask);
         return Told(CastRay(from, to, ignore.id), out hit);
     }
 
@@ -367,43 +377,47 @@ singleton Physics
     // where the body is, is the box where it is. `fraction` is how much of the way
     // it went before it touched. A shape that touches something where it starts
     // meets it at fraction 0, with no normal.
-    bool Cast(Box shape, float2 from, float angle, float2 to, out RayHit hit)
+    bool Cast(Box shape, float2 from, float angle, float2 to, out RayHit hit, QueryFilter filter = default)
     {
         if (!Ask())
         {
             hit = default;
             return false;
         }
+        SetQueryFilter(filter.category, filter.mask);
         return Told(CastBox(shape, from, angle, to, 0), out hit);
     }
 
-    bool Cast(Box shape, float2 from, float angle, float2 to, out RayHit hit, Body ignore)
+    bool Cast(Box shape, float2 from, float angle, float2 to, out RayHit hit, Body ignore, QueryFilter filter = default)
     {
         if (!Ask())
         {
             hit = default;
             return false;
         }
+        SetQueryFilter(filter.category, filter.mask);
         return Told(CastBox(shape, from, angle, to, ignore.id), out hit);
     }
 
-    bool Cast(Circle shape, float2 from, float angle, float2 to, out RayHit hit)
+    bool Cast(Circle shape, float2 from, float angle, float2 to, out RayHit hit, QueryFilter filter = default)
     {
         if (!Ask())
         {
             hit = default;
             return false;
         }
+        SetQueryFilter(filter.category, filter.mask);
         return Told(CastCircle(shape, from, angle, to, 0), out hit);
     }
 
-    bool Cast(Circle shape, float2 from, float angle, float2 to, out RayHit hit, Body ignore)
+    bool Cast(Circle shape, float2 from, float angle, float2 to, out RayHit hit, Body ignore, QueryFilter filter = default)
     {
         if (!Ask())
         {
             hit = default;
             return false;
         }
+        SetQueryFilter(filter.category, filter.mask);
         return Told(CastCircle(shape, from, angle, to, ignore.id), out hit);
     }
 
@@ -424,24 +438,26 @@ singleton Physics
     // The entities whose bodies have a shape in a shape at a place, or touching
     // it, each once, in an order that's the same on every machine. Sensors aren't
     // found.
-    bool Overlap(Box shape, float2 at, float angle, out List<Entity> found)
+    bool Overlap(Box shape, float2 at, float angle, out List<Entity> found, QueryFilter filter = default)
     {
         if (!Ask())
         {
             found = [];
             return false;
         }
+        SetQueryFilter(filter.category, filter.mask);
         OverlapBox(shape, at, angle, out List<long> bodies);
         return Owners(bodies, out found);
     }
 
-    bool Overlap(Circle shape, float2 at, float angle, out List<Entity> found)
+    bool Overlap(Circle shape, float2 at, float angle, out List<Entity> found, QueryFilter filter = default)
     {
         if (!Ask())
         {
             found = [];
             return false;
         }
+        SetQueryFilter(filter.category, filter.mask);
         OverlapCircle(shape, at, angle, out List<long> bodies);
         return Owners(bodies, out found);
     }
@@ -457,17 +473,161 @@ singleton Physics
             found = [];
             return false;
         }
-        VisitorsOf(heldSensors.box, heldSensors.circle, out List<long> bodies);
+        VisitorsOf(heldSensors.shapes, heldSensors.shapes.count, out List<long> bodies);
         return Owners(bodies, out found);
     }
+
+    bool CastAll(Capsule shape, float2 from, float angle, float2 to, out List<RayHit> hits, bool includeSensors = false, QueryFilter filter = default)
+    {
+        return CastAll(shape, from, angle, to, out hits, default, includeSensors, filter);
+    }
+
+    bool CastAll(Capsule shape, float2 from, float angle, float2 to, out List<RayHit> hits, Body ignore, bool includeSensors = false, QueryFilter filter = default)
+    {
+        hits = [];
+        if (!Ask()) return false;
+        SetQueryFilter(filter.category, filter.mask);
+        CastCapsuleAll(out var found, shape, from, angle, to, ignore.id, includeSensors);
+        return AllHits(found, out hits);
+    }
+
+    bool Cast(Capsule shape, float2 from, float angle, float2 to, out RayHit hit, QueryFilter filter = default)
+    {
+        if (!Ask())
+        {
+            hit = default;
+            return false;
+        }
+        SetQueryFilter(filter.category, filter.mask);
+        return Told(CastCapsule(shape, from, angle, to, 0), out hit);
+    }
+
+    bool Cast(Capsule shape, float2 from, float angle, float2 to, out RayHit hit, Body ignore, QueryFilter filter = default)
+    {
+        if (!Ask())
+        {
+            hit = default;
+            return false;
+        }
+        SetQueryFilter(filter.category, filter.mask);
+        return Told(CastCapsule(shape, from, angle, to, ignore.id), out hit);
+    }
+
+    bool Overlap(Capsule shape, float2 at, float angle, out List<Entity> found, QueryFilter filter = default)
+    {
+        if (!Ask())
+        {
+            found = [];
+            return false;
+        }
+        SetQueryFilter(filter.category, filter.mask);
+        OverlapCapsule(shape, at, angle, out List<long> bodies);
+        return Owners(bodies, out found);
+    }
+
+    bool CastAll(Polygon shape, float2 from, float angle, float2 to, out List<RayHit> hits, bool includeSensors = false, QueryFilter filter = default)
+    {
+        return CastAll(shape, from, angle, to, out hits, default, includeSensors, filter);
+    }
+
+    bool CastAll(Polygon shape, float2 from, float angle, float2 to, out List<RayHit> hits, Body ignore, bool includeSensors = false, QueryFilter filter = default)
+    {
+        hits = [];
+        if (!Ask()) return false;
+        SetQueryFilter(filter.category, filter.mask);
+        CastPolygonAll(out var found, PolygonShape(shape), from, angle, to, ignore.id, includeSensors);
+        return AllHits(found, out hits);
+    }
+
+    bool Cast(Polygon shape, float2 from, float angle, float2 to, out RayHit hit, QueryFilter filter = default)
+    {
+        if (!Ask())
+        {
+            hit = default;
+            return false;
+        }
+        SetQueryFilter(filter.category, filter.mask);
+        return Told(CastPolygon(PolygonShape(shape), from, angle, to, 0), out hit);
+    }
+
+    bool Cast(Polygon shape, float2 from, float angle, float2 to, out RayHit hit, Body ignore, QueryFilter filter = default)
+    {
+        if (!Ask())
+        {
+            hit = default;
+            return false;
+        }
+        SetQueryFilter(filter.category, filter.mask);
+        return Told(CastPolygon(PolygonShape(shape), from, angle, to, ignore.id), out hit);
+    }
+
+    bool Overlap(Polygon shape, float2 at, float angle, out List<Entity> found, QueryFilter filter = default)
+    {
+        if (!Ask())
+        {
+            found = [];
+            return false;
+        }
+        SetQueryFilter(filter.category, filter.mask);
+        OverlapPolygon(PolygonShape(shape), at, angle, out List<long> bodies);
+        return Owners(bodies, out found);
+    }
+
+    bool CastAll(Segment shape, float2 from, float angle, float2 to, out List<RayHit> hits, bool includeSensors = false, QueryFilter filter = default)
+    {
+        return CastAll(shape, from, angle, to, out hits, default, includeSensors, filter);
+    }
+
+    bool CastAll(Segment shape, float2 from, float angle, float2 to, out List<RayHit> hits, Body ignore, bool includeSensors = false, QueryFilter filter = default)
+    {
+        hits = [];
+        if (!Ask()) return false;
+        SetQueryFilter(filter.category, filter.mask);
+        CastSegmentAll(out var found, shape, from, angle, to, ignore.id, includeSensors);
+        return AllHits(found, out hits);
+    }
+
+    bool Cast(Segment shape, float2 from, float angle, float2 to, out RayHit hit, QueryFilter filter = default)
+    {
+        if (!Ask())
+        {
+            hit = default;
+            return false;
+        }
+        SetQueryFilter(filter.category, filter.mask);
+        return Told(CastSegment(shape, from, angle, to, 0), out hit);
+    }
+
+    bool Cast(Segment shape, float2 from, float angle, float2 to, out RayHit hit, Body ignore, QueryFilter filter = default)
+    {
+        if (!Ask())
+        {
+            hit = default;
+            return false;
+        }
+        SetQueryFilter(filter.category, filter.mask);
+        return Told(CastSegment(shape, from, angle, to, ignore.id), out hit);
+    }
+
+    bool Overlap(Segment shape, float2 at, float angle, out List<Entity> found, QueryFilter filter = default)
+    {
+        if (!Ask())
+        {
+            found = [];
+            return false;
+        }
+        SetQueryFilter(filter.category, filter.mask);
+        OverlapSegment(shape, at, angle, out List<long> bodies);
+        return Owners(bodies, out found);
+    }
+
 
 }
 
 // An entity's sensors: Box2D's handle to each of its shapes that is one
 struct Sensors
 {
-    long box;
-    long circle;
+    List<long> shapes;
 }
 
 struct Contact
@@ -516,11 +676,7 @@ extern void RemoveShapes(List<long> shapes, int count);
 [NativeName("b2t_made")]
 extern long TakeMade(Entity entity);
 
-[NativeName("b2t_box")]
-extern long AttachBox(long body, in Box box);
 
-[NativeName("b2t_circle")]
-extern long AttachCircle(long body, in Circle circle);
 
 [NativeName("b2t_step")]
 extern long StepWorld(float dt, int substeps, float2 gravity, float contactStiffness, float contactDamping, float contactSpeed, float bounceSpeed,
@@ -575,7 +731,7 @@ extern int OverlapBox(in Box shape, float2 at, float angle, out List<long> bodie
 extern int OverlapCircle(in Circle shape, float2 at, float angle, out List<long> bodies);
 
 [NativeName("b2t_inside")]
-extern int VisitorsOf(long box, long circle, out List<long> bodies);
+extern int VisitorsOf(List<long> shapes, int count, out List<long> bodies);
 
 // C's world for this match, at the state the match is in: the one it has, or
 // one made from the image. The bodies whose entities were destroyed since the
@@ -584,8 +740,8 @@ extern int VisitorsOf(long box, long circle, out List<long> bodies);
 // Each of these systems says where it is in the stage, so that nothing a game
 // orders its own systems by, naming the stage or one of these, can put them in
 // another order: each rests on what the ones before it did to C's world.
-[Stage(PhysicsStages.Step, 0)]
-system Begin(mut Physics physics)
+[Stage(PhysicsStages.Step, 2)]
+system Begin(mut Physics physics, World world)
 {
     if (!OpenWorld(physics.stamp))
     {
@@ -594,8 +750,41 @@ system Begin(mut Physics physics)
     physics.dropped = physics.gone.count;
     RemoveBodies(physics.gone, physics.gone.count);
     physics.gone.Clear();
+    // Component removal and replacement follow the same path as despawning.
+    if (physics.topologyChanged) foreach (var owner in physics.owners)
+    {
+        if (!world.TryGet<Body>(owner.value, out var body) || body.id != owner.key)
+        {
+            RemoveBodies([owner.key], 1);
+            physics.owners.Remove(owner.key);
+            physics.dropped += 1;
+        }
+    }
+    if (physics.topologyChanged) foreach (var entry in physics.fixtures)
+    {
+        mut var held = entry.value;
+        mut bool changed = false;
+        mut bool any = false;
+        for (int kind = 0; kind < 6; kind++)
+        {
+            var fixture = held.shapes[kind];
+            if (fixture.state.id == 0) continue;
+            if (!HasFixture(world, FixtureKey { entity = entry.key, kind = kind }) ||
+                !world.TryGet<Body>(FixtureOwner(world, entry.key), out var body) || body.id != fixture.state.body)
+            {
+                ForgetFixture(fixture, entry.key, physics);
+                DropFixture(fixture.state);
+                held.shapes[kind] = default;
+                changed = true;
+            }
+            else any = true;
+        }
+        if (!any) physics.fixtures.Remove(entry.key);
+        else if (changed) physics.fixtures[entry.key] = held;
+    }
     RemoveShapes(physics.shed, physics.shed.count);
     physics.shed.Clear();
+    BeginFixtureChanges(physics.topologyChanged);
 }
 
 // New bodies are made, and what code wrote into a body since the last step
@@ -607,7 +796,7 @@ system Begin(mut Physics physics)
 // of the ones there's something to write for. A system written in Tide would
 // copy each body out to look at it. It takes Physics to write, which keeps it
 // on one thread: what it does to the world is noted in the order of its rows.
-[Stage(PhysicsStages.Step, 1)]
+[Stage(PhysicsStages.Step, 4)]
 [NativeName("b2t_enter")]
 extern system Enter(mut Body body, mut Physics physics);
 
@@ -615,7 +804,7 @@ extern system Enter(mut Body body, mut Physics physics);
 // the match keeps in a map, which is Tide's to write. It runs for the bodies
 // Enter ran for, in its order, and asks C of each whether it was made. It
 // takes no component, so nothing is copied to ask.
-[Stage(PhysicsStages.Step, 2)]
+[Stage(PhysicsStages.Step, 5)]
 system Own(mut Physics physics, with Body)
 {
     long made = TakeMade(this);
@@ -626,103 +815,261 @@ system Own(mut Physics physics, with Body)
     }
 }
 
-[Stage(PhysicsStages.Step, 3)]
-system AttachBoxes(Body body, Box box, mut Physics physics, without BoxMade)
-{
-    long shape = AttachBox(body.id, box);
-    if (shape != 0)
-    {
-        physics.shapes += 1;
-        if (box.sensor)
-        {
-            mut var sensors = physics.sensors[this];
-            sensors.box = shape;
-            physics.sensors[this] = sensors;
-        }
-    }
-    this.Add(BoxMade);
-}
-
-[Stage(PhysicsStages.Step, 4)]
-system AttachCircles(Body body, Circle circle, mut Physics physics, without CircleMade)
-{
-    long shape = AttachCircle(body.id, circle);
-    if (shape != 0)
-    {
-        physics.shapes += 1;
-        if (circle.sensor)
-        {
-            mut var sensors = physics.sensors[this];
-            sensors.circle = shape;
-            physics.sensors[this] = sensors;
-        }
-    }
-    this.Add(CircleMade);
-}
-
-// A part's shape goes on the body of the entity it names, and the match keeps
-// which shape that is: for the events, which say the part, and for the day the
-// part goes. A part that names an entity with no Body, or one whose body went
-// before the part's first step, is destroyed.
-[Stage(PhysicsStages.Step, 5)]
-system AttachPartBoxes(mut Part part, Box box, mut Physics physics, World world, without Body, without BoxMade)
-{
-    if (!world.TryGet<Body>(part.of, out var body) || body.id == 0)
-    {
-        this.Destroy();
-        return;
-    }
-    part.box = AttachBox(body.id, box);
-    if (part.box != 0)
-    {
-        physics.shapes += 1;
-        physics.parts[part.box] = this;
-        if (box.sensor)
-        {
-            mut var sensors = physics.sensors[this];
-            sensors.box = part.box;
-            physics.sensors[this] = sensors;
-        }
-    }
-    this.Add(BoxMade);
-}
-
 [Stage(PhysicsStages.Step, 6)]
-system AttachPartCircles(mut Part part, Circle circle, mut Physics physics, World world, without Body, without CircleMade)
+[NativeName("b2t_attach_box_rows")]
+extern system AttachBoxes(Body body, Box shape, mut Physics physics, without CollisionFilter);
+
+[Stage(PhysicsStages.Step, 7)]
+[NativeName("b2t_attach_filtered_box_rows")]
+extern system AttachFilteredBoxes(Body body, Box shape, CollisionFilter filter, mut Physics physics);
+
+[Stage(PhysicsStages.Step, 8)]
+[NativeName("b2t_attach_circle_rows")]
+extern system AttachCircles(Body body, Circle shape, mut Physics physics, without CollisionFilter);
+
+[Stage(PhysicsStages.Step, 9)]
+[NativeName("b2t_attach_filtered_circle_rows")]
+extern system AttachFilteredCircles(Body body, Circle shape, CollisionFilter filter, mut Physics physics);
+
+[Stage(PhysicsStages.Step, 10)]
+system AttachCapsules(Capsule shape, World world, mut Physics physics)
 {
-    if (!world.TryGet<Body>(part.of, out var body) || body.id == 0)
+    Entity owner = FixtureOwner(world, this);
+    if (!world.TryGet<Body>(owner, out var body)) return;
+    var key = FixtureKey { entity = this, kind = 2 };
+    mut var held = physics.fixtures[this];
+    while (held.shapes.count < 6) held.shapes.Add(default);
+    var previous = held.shapes[key.kind];
+    var filter = world.Get<CollisionFilter>(this);
+    mut var fixture = SyncCapsule(previous.state, body.id, shape, filter, world.Has<CollisionFilter>(this));
+    if (fixture.id == previous.state.id && fixture.signature == previous.state.signature) return;
+    ForgetFixture(previous, this, physics);
+    if (fixture.id != 0)
     {
-        this.Destroy();
-        return;
-    }
-    part.circle = AttachCircle(body.id, circle);
-    if (part.circle != 0)
-    {
-        physics.shapes += 1;
-        physics.parts[part.circle] = this;
-        if (circle.sensor)
+        FixtureShapes(fixture, out var shapes);
+        foreach (long id in shapes)
+        {
+            if (owner != this) physics.parts[id] = this;
+            physics.shapes += 1;
+        }
+        if (shape.sensor)
         {
             mut var sensors = physics.sensors[this];
-            sensors.circle = part.circle;
+            foreach (long id in shapes) sensors.shapes.Add(id);
             physics.sensors[this] = sensors;
         }
+        held.shapes[key.kind] = Fixture { state = fixture, shapes = shapes };
     }
+    else held.shapes[key.kind] = default;
+    physics.fixtures[this] = held;
+}
+
+[Stage(PhysicsStages.Step, 11)]
+system AttachPolygons(Polygon shape, World world, mut Physics physics)
+{
+    Entity owner = FixtureOwner(world, this);
+    if (!world.TryGet<Body>(owner, out var body)) return;
+    var key = FixtureKey { entity = this, kind = 3 };
+    mut var held = physics.fixtures[this];
+    while (held.shapes.count < 6) held.shapes.Add(default);
+    var previous = held.shapes[key.kind];
+    var filter = world.Get<CollisionFilter>(this);
+    mut var fixture = SyncPolygon(previous.state, body.id, PolygonShape(shape), filter, world.Has<CollisionFilter>(this));
+    if (fixture.id == previous.state.id && fixture.signature == previous.state.signature) return;
+    ForgetFixture(previous, this, physics);
+    if (fixture.id != 0)
+    {
+        FixtureShapes(fixture, out var shapes);
+        foreach (long id in shapes)
+        {
+            if (owner != this) physics.parts[id] = this;
+            physics.shapes += 1;
+        }
+        if (shape.sensor)
+        {
+            mut var sensors = physics.sensors[this];
+            foreach (long id in shapes) sensors.shapes.Add(id);
+            physics.sensors[this] = sensors;
+        }
+        held.shapes[key.kind] = Fixture { state = fixture, shapes = shapes };
+    }
+    else held.shapes[key.kind] = default;
+    physics.fixtures[this] = held;
+}
+
+[Stage(PhysicsStages.Step, 12)]
+system AttachSegments(Segment shape, World world, mut Physics physics)
+{
+    Entity owner = FixtureOwner(world, this);
+    if (!world.TryGet<Body>(owner, out var body)) return;
+    var key = FixtureKey { entity = this, kind = 4 };
+    mut var held = physics.fixtures[this];
+    while (held.shapes.count < 6) held.shapes.Add(default);
+    var previous = held.shapes[key.kind];
+    var filter = world.Get<CollisionFilter>(this);
+    mut var fixture = SyncSegment(previous.state, body.id, shape, filter, world.Has<CollisionFilter>(this));
+    if (fixture.id == previous.state.id && fixture.signature == previous.state.signature) return;
+    ForgetFixture(previous, this, physics);
+    if (fixture.id != 0)
+    {
+        FixtureShapes(fixture, out var shapes);
+        foreach (long id in shapes)
+        {
+            if (owner != this) physics.parts[id] = this;
+            physics.shapes += 1;
+        }
+        if (shape.sensor)
+        {
+            mut var sensors = physics.sensors[this];
+            foreach (long id in shapes) sensors.shapes.Add(id);
+            physics.sensors[this] = sensors;
+        }
+        held.shapes[key.kind] = Fixture { state = fixture, shapes = shapes };
+    }
+    else held.shapes[key.kind] = default;
+    physics.fixtures[this] = held;
+}
+
+[Stage(PhysicsStages.Step, 13)]
+system AttachChain(Chain shape, World world, mut Physics physics)
+{
+    Entity owner = FixtureOwner(world, this);
+    if (!world.TryGet<Body>(owner, out var body)) return;
+    var key = FixtureKey { entity = this, kind = 5 };
+    mut var held = physics.fixtures[this];
+    while (held.shapes.count < 6) held.shapes.Add(default);
+    var previous = held.shapes[key.kind];
+    var filter = world.Get<CollisionFilter>(this);
+    mut var fixture = SyncChain(previous.state, body.id, shape.points, shape.points.count, shape.friction, shape.bounce, shape.loop, filter, world.Has<CollisionFilter>(this));
+    if (fixture.id == previous.state.id && fixture.signature == previous.state.signature) return;
+    ForgetFixture(previous, this, physics);
+    if (fixture.id != 0)
+    {
+        FixtureShapes(fixture, out var shapes);
+        foreach (long id in shapes)
+        {
+            if (owner != this) physics.parts[id] = this;
+            physics.shapes += 1;
+        }
+        held.shapes[key.kind] = Fixture { state = fixture, shapes = shapes };
+    }
+    else held.shapes[key.kind] = default;
+    physics.fixtures[this] = held;
+}
+
+[Stage(PhysicsStages.Step, 14)]
+system AttachPartBoxes(mut Part part, Box shape, World world, mut Physics physics, without Body)
+{
+    Entity owner = part.of;
+    if (!world.TryGet<Body>(owner, out var body)) return;
+    var key = FixtureKey { entity = this, kind = 0 };
+    mut var held = physics.fixtures[this];
+    while (held.shapes.count < 6) held.shapes.Add(default);
+    var previous = held.shapes[key.kind];
+    var filter = world.Get<CollisionFilter>(this);
+    mut var fixture = SyncBox(previous.state, body.id, shape, filter, world.Has<CollisionFilter>(this));
+    if (fixture.id == previous.state.id && fixture.signature == previous.state.signature) return;
+    ForgetFixture(previous, this, physics);
+    if (fixture.id != 0)
+    {
+        FixtureShapes(fixture, out var shapes);
+        foreach (long id in shapes)
+        {
+            if (owner != this) physics.parts[id] = this;
+            physics.shapes += 1;
+        }
+        if (shape.sensor)
+        {
+            mut var sensors = physics.sensors[this];
+            foreach (long id in shapes) sensors.shapes.Add(id);
+            physics.sensors[this] = sensors;
+        }
+        held.shapes[key.kind] = Fixture { state = fixture, shapes = shapes };
+    }
+    else held.shapes[key.kind] = default;
+    physics.fixtures[this] = held;
+    part.box = fixture.id;
+    this.Add(BoxMade);
+}
+
+[Stage(PhysicsStages.Step, 15)]
+system AttachPartCircles(mut Part part, Circle shape, World world, mut Physics physics, without Body)
+{
+    Entity owner = part.of;
+    if (!world.TryGet<Body>(owner, out var body)) return;
+    var key = FixtureKey { entity = this, kind = 1 };
+    mut var held = physics.fixtures[this];
+    while (held.shapes.count < 6) held.shapes.Add(default);
+    var previous = held.shapes[key.kind];
+    var filter = world.Get<CollisionFilter>(this);
+    mut var fixture = SyncCircle(previous.state, body.id, shape, filter, world.Has<CollisionFilter>(this));
+    if (fixture.id == previous.state.id && fixture.signature == previous.state.signature) return;
+    ForgetFixture(previous, this, physics);
+    if (fixture.id != 0)
+    {
+        FixtureShapes(fixture, out var shapes);
+        foreach (long id in shapes)
+        {
+            if (owner != this) physics.parts[id] = this;
+            physics.shapes += 1;
+        }
+        if (shape.sensor)
+        {
+            mut var sensors = physics.sensors[this];
+            foreach (long id in shapes) sensors.shapes.Add(id);
+            physics.sensors[this] = sensors;
+        }
+        held.shapes[key.kind] = Fixture { state = fixture, shapes = shapes };
+    }
+    else held.shapes[key.kind] = default;
+    physics.fixtures[this] = held;
+    part.circle = fixture.id;
     this.Add(CircleMade);
+}
+
+[Stage(PhysicsStages.Step, 16)]
+system RecordFixtures(mut Physics physics)
+{
+    int count = CountFixtureChanges();
+    for (int i = 0; i < count; i++)
+    {
+        var change = ReadFixtureChange(i);
+        mut var held = physics.fixtures[change.entity];
+        while (held.shapes.count < 6) held.shapes.Add(default);
+        ForgetFixture(held.shapes[change.kind], change.entity, physics);
+        mut Fixture fixture = Fixture { state = change.state };
+        if (fixture.state.id != 0)
+        {
+            FixtureShapes(fixture.state, out fixture.shapes);
+            ReadFixtureSource(i, out fixture.source);
+            physics.shapes += fixture.shapes.count;
+            if (change.sensor)
+            {
+                mut var sensors = physics.sensors[change.entity];
+                foreach (long id in fixture.shapes) sensors.shapes.Add(id);
+                physics.sensors[change.entity] = sensors;
+            }
+        }
+        held.shapes[change.kind] = fixture;
+        physics.fixtures[change.entity] = held;
+        if (change.kind == 0) change.entity.Add(BoxMade);
+        if (change.kind == 1) change.entity.Add(CircleMade);
+    }
 }
 
 // A body's parts go with it: the tick after an entity with a body was
 // destroyed, each part looks whether the one it names is still there. In any
 // other tick it's passed by.
-[Stage(PhysicsStages.Step, 7)]
-system DropParts(Part part, Physics physics, World world)
+[Stage(PhysicsStages.Step, 17)]
+system DropParts(Part part, World world)
 {
-    if (physics.dropped > 0 && !world.Has<Body>(part.of)) this.Destroy();
+    if (!world.TryGet<Body>(part.of, out var body) || body.id == 0) this.Destroy();
 }
 
 // The step, and Box2D's state after it into the match. It isn't named Step,
 // so that a game's [Before(Step)] is an error and not a place in the middle of
 // these, after what code wrote has gone to Box2D: the stage is what to name.
-[Stage(PhysicsStages.Step, 8)]
+[Stage(PhysicsStages.Step, 20)]
 system Simulate(Time time, mut Physics physics)
 {
     long stamp = StepWorld(time.dt, physics.substeps, physics.gravity, physics.contactStiffness, physics.contactDamping,
@@ -734,7 +1081,7 @@ system Simulate(Time time, mut Physics physics)
 }
 
 // Where the step left each body that it moved, into the fields that say so.
-[Stage(PhysicsStages.Step, 9)]
+[Stage(PhysicsStages.Step, 21)]
 [NativeName("b2t_leave")]
 extern system Leave(mut Body body, Physics physics);
 
@@ -747,7 +1094,7 @@ Entity PartOf(Map<long, Entity> parts, long shape, Entity body)
     return body;
 }
 
-[Stage(PhysicsStages.Step, 9)]
+[Stage(PhysicsStages.Step, 21)]
 system Report(Physics physics)
 {
     if (!physics.moved) return;
@@ -794,20 +1141,19 @@ event(Destroyed) Remove(Body body, mut Physics physics)
     if (physics.sensors.count > 0) physics.sensors.Remove(this);
 }
 
-// ...and a part that goes takes its shape off its body.
-event(Destroyed) Shed(Part part, mut Physics physics)
+// Stored shape handles also hide despawned parts from queries before the step.
+event(Destroyed) Shed(with Part, mut Physics physics)
 {
-    if (part.box != 0)
+    if (!physics.fixtures.TryGet(this, out var held)) return;
+    for (int kind = 0; kind < 6; kind++)
     {
-        physics.shed.Add(part.box);
-        physics.parts.Remove(part.box);
+        foreach (long shape in held.shapes[kind].shapes)
+        {
+            physics.shed.Add(shape);
+            physics.parts.Remove(shape);
+        }
     }
-    if (part.circle != 0)
-    {
-        physics.shed.Add(part.circle);
-        physics.parts.Remove(part.circle);
-    }
-    if (physics.sensors.count > 0) physics.sensors.Remove(this);
+    physics.sensors.Remove(this);
 }
 
 // ---------------------------------------------------------------------------
@@ -838,6 +1184,10 @@ struct Collider
     int count;
     float radius;
     bool sensor;
+    int kind;
+    long category;
+    long mask;
+    int group;
 }
 
 struct HistoryFrame
@@ -856,52 +1206,52 @@ struct Query
     List<Collider> colliders;
     List<SceneNode> nodes;
 
-    bool RaycastAll(float2 from, float2 to, out List<RayHit> hits, bool includeSensors = false)
+    bool RaycastAll(float2 from, float2 to, out List<RayHit> hits, bool includeSensors = false, QueryFilter filter = default)
     {
-        return RaycastAll(from, to, out hits, default, includeSensors);
+        return RaycastAll(from, to, out hits, default, includeSensors, filter);
     }
 
-    bool RaycastAll(float2 from, float2 to, out List<RayHit> hits, Body ignore, bool includeSensors = false)
+    bool RaycastAll(float2 from, float2 to, out List<RayHit> hits, Body ignore, bool includeSensors = false, QueryFilter filter = default)
     {
         mut List<SceneHit> found = [];
         foreach (var index in Candidates(SceneBounds { min = Math.Min(from, to), max = Math.Max(from, to), valid = true }))
         {
             var collider = colliders[index];
-            if ((!includeSensors && collider.sensor) || collider.body == ignore.id) continue;
+            if (!filter.Matches(collider) || (!includeSensors && collider.sensor) || collider.body == ignore.id) continue;
             AddSceneHit(found, collider, SceneRay(collider, from, to));
         }
         return FinishSceneHits(found, out hits);
     }
 
-    bool CastAll(Box shape, float2 from, float angle, float2 to, out List<RayHit> hits, bool includeSensors = false)
+    bool CastAll(Box shape, float2 from, float angle, float2 to, out List<RayHit> hits, bool includeSensors = false, QueryFilter filter = default)
     {
-        return CastAll(shape, from, angle, to, out hits, default, includeSensors);
+        return CastAll(shape, from, angle, to, out hits, default, includeSensors, filter);
     }
 
-    bool CastAll(Box shape, float2 from, float angle, float2 to, out List<RayHit> hits, Body ignore, bool includeSensors = false)
+    bool CastAll(Box shape, float2 from, float angle, float2 to, out List<RayHit> hits, Body ignore, bool includeSensors = false, QueryFilter filter = default)
     {
         mut List<SceneHit> found = [];
         foreach (var index in Candidates(BoxBounds(shape, angle, from, to)))
         {
             var collider = colliders[index];
-            if ((!includeSensors && collider.sensor) || collider.body == ignore.id) continue;
+            if (!filter.Matches(collider) || (!includeSensors && collider.sensor) || collider.body == ignore.id) continue;
             AddSceneHit(found, collider, SceneCastBox(collider, shape, from, angle, to));
         }
         return FinishSceneHits(found, out hits);
     }
 
-    bool CastAll(Circle shape, float2 from, float angle, float2 to, out List<RayHit> hits, bool includeSensors = false)
+    bool CastAll(Circle shape, float2 from, float angle, float2 to, out List<RayHit> hits, bool includeSensors = false, QueryFilter filter = default)
     {
-        return CastAll(shape, from, angle, to, out hits, default, includeSensors);
+        return CastAll(shape, from, angle, to, out hits, default, includeSensors, filter);
     }
 
-    bool CastAll(Circle shape, float2 from, float angle, float2 to, out List<RayHit> hits, Body ignore, bool includeSensors = false)
+    bool CastAll(Circle shape, float2 from, float angle, float2 to, out List<RayHit> hits, Body ignore, bool includeSensors = false, QueryFilter filter = default)
     {
         mut List<SceneHit> found = [];
         foreach (var index in Candidates(CircleBounds(shape, angle, from, to)))
         {
             var collider = colliders[index];
-            if ((!includeSensors && collider.sensor) || collider.body == ignore.id) continue;
+            if (!filter.Matches(collider) || (!includeSensors && collider.sensor) || collider.body == ignore.id) continue;
             AddSceneHit(found, collider, SceneCastCircle(collider, shape, from, angle, to));
         }
         return FinishSceneHits(found, out hits);
@@ -928,12 +1278,12 @@ struct Query
     }
 
 
-    bool Raycast(float2 from, float2 to, out RayHit hit)
+    bool Raycast(float2 from, float2 to, out RayHit hit, QueryFilter filter = default)
     {
-        return Raycast(from, to, out hit, default);
+        return Raycast(from, to, out hit, default, filter);
     }
 
-    bool Raycast(float2 from, float2 to, out RayHit hit, Body ignore)
+    bool Raycast(float2 from, float2 to, out RayHit hit, Body ignore, QueryFilter filter = default)
     {
         hit = default;
         mut bool any = false;
@@ -941,7 +1291,7 @@ struct Query
         foreach (var index in Candidates(SceneBounds { min = Math.Min(from, to), max = Math.Max(from, to), valid = true }))
         {
             var collider = colliders[index];
-            if (collider.sensor || collider.body == ignore.id) continue;
+            if (!filter.Matches(collider) || collider.sensor || collider.body == ignore.id) continue;
             var met = SceneRay(collider, from, to);
             if (met.body == 0 || (any && (met.fraction > hit.fraction ||
                 (met.fraction == hit.fraction && (met.shape & 0xFFFF_FFFFL) >= (nearestShape & 0xFFFF_FFFFL))))) continue;
@@ -953,12 +1303,12 @@ struct Query
         return any;
     }
 
-    bool Cast(Box shape, float2 from, float angle, float2 to, out RayHit hit)
+    bool Cast(Box shape, float2 from, float angle, float2 to, out RayHit hit, QueryFilter filter = default)
     {
-        return Cast(shape, from, angle, to, out hit, default);
+        return Cast(shape, from, angle, to, out hit, default, filter);
     }
 
-    bool Cast(Box shape, float2 from, float angle, float2 to, out RayHit hit, Body ignore)
+    bool Cast(Box shape, float2 from, float angle, float2 to, out RayHit hit, Body ignore, QueryFilter filter = default)
     {
         hit = default;
         mut bool any = false;
@@ -966,7 +1316,7 @@ struct Query
         foreach (var index in Candidates(BoxBounds(shape, angle, from, to)))
         {
             var collider = colliders[index];
-            if (collider.sensor || collider.body == ignore.id) continue;
+            if (!filter.Matches(collider) || collider.sensor || collider.body == ignore.id) continue;
             var met = SceneCastBox(collider, shape, from, angle, to);
             if (met.body == 0 || (any && (met.fraction > hit.fraction ||
                 (met.fraction == hit.fraction && (met.shape & 0xFFFF_FFFFL) >= (nearestShape & 0xFFFF_FFFFL))))) continue;
@@ -978,24 +1328,24 @@ struct Query
         return any;
     }
 
-    bool Overlap(Box shape, float2 at, float angle, out List<Entity> found)
+    bool Overlap(Box shape, float2 at, float angle, out List<Entity> found, QueryFilter filter = default)
     {
         found = [];
         foreach (var index in Candidates(BoxBounds(shape, angle, at, at)))
         {
             var collider = colliders[index];
-            if (collider.sensor || found.Contains(collider.entity)) continue;
+            if (!filter.Matches(collider) || collider.sensor || found.Contains(collider.entity)) continue;
             if (SceneOverlapBox(collider, shape, at, angle)) found.Add(collider.entity);
         }
         return found.count > 0;
     }
 
-    bool Cast(Circle shape, float2 from, float angle, float2 to, out RayHit hit)
+    bool Cast(Circle shape, float2 from, float angle, float2 to, out RayHit hit, QueryFilter filter = default)
     {
-        return Cast(shape, from, angle, to, out hit, default);
+        return Cast(shape, from, angle, to, out hit, default, filter);
     }
 
-    bool Cast(Circle shape, float2 from, float angle, float2 to, out RayHit hit, Body ignore)
+    bool Cast(Circle shape, float2 from, float angle, float2 to, out RayHit hit, Body ignore, QueryFilter filter = default)
     {
         hit = default;
         mut bool any = false;
@@ -1003,7 +1353,7 @@ struct Query
         foreach (var index in Candidates(CircleBounds(shape, angle, from, to)))
         {
             var collider = colliders[index];
-            if (collider.sensor || collider.body == ignore.id) continue;
+            if (!filter.Matches(collider) || collider.sensor || collider.body == ignore.id) continue;
             var met = SceneCastCircle(collider, shape, from, angle, to);
             if (met.body == 0 || (any && (met.fraction > hit.fraction ||
                 (met.fraction == hit.fraction && (met.shape & 0xFFFF_FFFFL) >= (nearestShape & 0xFFFF_FFFFL))))) continue;
@@ -1015,13 +1365,13 @@ struct Query
         return any;
     }
 
-    bool Overlap(Circle shape, float2 at, float angle, out List<Entity> found)
+    bool Overlap(Circle shape, float2 at, float angle, out List<Entity> found, QueryFilter filter = default)
     {
         found = [];
         foreach (var index in Candidates(CircleBounds(shape, angle, at, at)))
         {
             var collider = colliders[index];
-            if (collider.sensor || found.Contains(collider.entity)) continue;
+            if (!filter.Matches(collider) || collider.sensor || found.Contains(collider.entity)) continue;
             if (SceneOverlapCircle(collider, shape, at, angle)) found.Add(collider.entity);
         }
         return found.count > 0;
@@ -1038,6 +1388,9 @@ struct Query
             {
                 var collider = colliders[index];
                 if (collider.sensor || collider.body == volume.body || visitors.Contains(index)) continue;
+                bool collide = volume.group != 0 && volume.group == collider.group ? volume.group > 0 :
+                    (volume.category & collider.mask) != 0 && (collider.category & volume.mask) != 0;
+                if (!collide) continue;
                 if (SceneTouch(volume, collider)) visitors.Add(index);
             }
         }
@@ -1049,6 +1402,169 @@ struct Query
         }
         return found.count > 0;
     }
+    bool CastAll(Capsule shape, float2 from, float angle, float2 to, out List<RayHit> hits, bool includeSensors = false, QueryFilter filter = default)
+    {
+        return CastAll(shape, from, angle, to, out hits, default, includeSensors, filter);
+    }
+
+    bool CastAll(Capsule shape, float2 from, float angle, float2 to, out List<RayHit> hits, Body ignore, bool includeSensors = false, QueryFilter filter = default)
+    {
+        mut List<SceneHit> found = [];
+        foreach (var index in Candidates(CapsuleBounds(shape, angle, from, to)))
+        {
+            var collider = colliders[index];
+            if (!filter.Matches(collider) || (!includeSensors && collider.sensor) || collider.body == ignore.id) continue;
+            AddSceneHit(found, collider, SceneCastCapsule(collider, shape, from, angle, to));
+        }
+        return FinishSceneHits(found, out hits);
+    }
+
+    bool Cast(Capsule shape, float2 from, float angle, float2 to, out RayHit hit, QueryFilter filter = default)
+    {
+        return Cast(shape, from, angle, to, out hit, default, filter);
+    }
+
+    bool Cast(Capsule shape, float2 from, float angle, float2 to, out RayHit hit, Body ignore, QueryFilter filter = default)
+    {
+        hit = default;
+        mut bool any = false;
+        mut long nearestShape = 0;
+        foreach (var index in Candidates(CapsuleBounds(shape, angle, from, to)))
+        {
+            var collider = colliders[index];
+            if (!filter.Matches(collider) || collider.sensor || collider.body == ignore.id) continue;
+            var met = SceneCastCapsule(collider, shape, from, angle, to);
+            if (met.body == 0 || (any && (met.fraction > hit.fraction ||
+                (met.fraction == hit.fraction && (met.shape & 0xFFFF_FFFFL) >= (nearestShape & 0xFFFF_FFFFL))))) continue;
+            hit = RayHit { entity = collider.entity, part = collider.part, point = met.point,
+                           normal = met.normal, fraction = met.fraction };
+            nearestShape = met.shape;
+            any = true;
+        }
+        return any;
+    }
+
+    bool Overlap(Capsule shape, float2 at, float angle, out List<Entity> found, QueryFilter filter = default)
+    {
+        found = [];
+        foreach (var index in Candidates(CapsuleBounds(shape, angle, at, at)))
+        {
+            var collider = colliders[index];
+            if (!filter.Matches(collider) || collider.sensor || found.Contains(collider.entity)) continue;
+            if (SceneOverlapCapsule(collider, shape, at, angle)) found.Add(collider.entity);
+        }
+        return found.count > 0;
+    }
+
+    bool CastAll(Polygon shape, float2 from, float angle, float2 to, out List<RayHit> hits, bool includeSensors = false, QueryFilter filter = default)
+    {
+        return CastAll(shape, from, angle, to, out hits, default, includeSensors, filter);
+    }
+
+    bool CastAll(Polygon shape, float2 from, float angle, float2 to, out List<RayHit> hits, Body ignore, bool includeSensors = false, QueryFilter filter = default)
+    {
+        mut List<SceneHit> found = [];
+        foreach (var index in Candidates(PolygonBounds(PolygonShape(shape), angle, from, to)))
+        {
+            var collider = colliders[index];
+            if (!filter.Matches(collider) || (!includeSensors && collider.sensor) || collider.body == ignore.id) continue;
+            AddSceneHit(found, collider, SceneCastPolygon(collider, PolygonShape(shape), from, angle, to));
+        }
+        return FinishSceneHits(found, out hits);
+    }
+
+    bool Cast(Polygon shape, float2 from, float angle, float2 to, out RayHit hit, QueryFilter filter = default)
+    {
+        return Cast(shape, from, angle, to, out hit, default, filter);
+    }
+
+    bool Cast(Polygon shape, float2 from, float angle, float2 to, out RayHit hit, Body ignore, QueryFilter filter = default)
+    {
+        hit = default;
+        mut bool any = false;
+        mut long nearestShape = 0;
+        foreach (var index in Candidates(PolygonBounds(PolygonShape(shape), angle, from, to)))
+        {
+            var collider = colliders[index];
+            if (!filter.Matches(collider) || collider.sensor || collider.body == ignore.id) continue;
+            var met = SceneCastPolygon(collider, PolygonShape(shape), from, angle, to);
+            if (met.body == 0 || (any && (met.fraction > hit.fraction ||
+                (met.fraction == hit.fraction && (met.shape & 0xFFFF_FFFFL) >= (nearestShape & 0xFFFF_FFFFL))))) continue;
+            hit = RayHit { entity = collider.entity, part = collider.part, point = met.point,
+                           normal = met.normal, fraction = met.fraction };
+            nearestShape = met.shape;
+            any = true;
+        }
+        return any;
+    }
+
+    bool Overlap(Polygon shape, float2 at, float angle, out List<Entity> found, QueryFilter filter = default)
+    {
+        found = [];
+        foreach (var index in Candidates(PolygonBounds(PolygonShape(shape), angle, at, at)))
+        {
+            var collider = colliders[index];
+            if (!filter.Matches(collider) || collider.sensor || found.Contains(collider.entity)) continue;
+            if (SceneOverlapPolygon(collider, PolygonShape(shape), at, angle)) found.Add(collider.entity);
+        }
+        return found.count > 0;
+    }
+
+    bool CastAll(Segment shape, float2 from, float angle, float2 to, out List<RayHit> hits, bool includeSensors = false, QueryFilter filter = default)
+    {
+        return CastAll(shape, from, angle, to, out hits, default, includeSensors, filter);
+    }
+
+    bool CastAll(Segment shape, float2 from, float angle, float2 to, out List<RayHit> hits, Body ignore, bool includeSensors = false, QueryFilter filter = default)
+    {
+        mut List<SceneHit> found = [];
+        foreach (var index in Candidates(SegmentBounds(shape, angle, from, to)))
+        {
+            var collider = colliders[index];
+            if (!filter.Matches(collider) || (!includeSensors && collider.sensor) || collider.body == ignore.id) continue;
+            AddSceneHit(found, collider, SceneCastSegment(collider, shape, from, angle, to));
+        }
+        return FinishSceneHits(found, out hits);
+    }
+
+    bool Cast(Segment shape, float2 from, float angle, float2 to, out RayHit hit, QueryFilter filter = default)
+    {
+        return Cast(shape, from, angle, to, out hit, default, filter);
+    }
+
+    bool Cast(Segment shape, float2 from, float angle, float2 to, out RayHit hit, Body ignore, QueryFilter filter = default)
+    {
+        hit = default;
+        mut bool any = false;
+        mut long nearestShape = 0;
+        foreach (var index in Candidates(SegmentBounds(shape, angle, from, to)))
+        {
+            var collider = colliders[index];
+            if (!filter.Matches(collider) || collider.sensor || collider.body == ignore.id) continue;
+            var met = SceneCastSegment(collider, shape, from, angle, to);
+            if (met.body == 0 || (any && (met.fraction > hit.fraction ||
+                (met.fraction == hit.fraction && (met.shape & 0xFFFF_FFFFL) >= (nearestShape & 0xFFFF_FFFFL))))) continue;
+            hit = RayHit { entity = collider.entity, part = collider.part, point = met.point,
+                           normal = met.normal, fraction = met.fraction };
+            nearestShape = met.shape;
+            any = true;
+        }
+        return any;
+    }
+
+    bool Overlap(Segment shape, float2 at, float angle, out List<Entity> found, QueryFilter filter = default)
+    {
+        found = [];
+        foreach (var index in Candidates(SegmentBounds(shape, angle, at, at)))
+        {
+            var collider = colliders[index];
+            if (!filter.Matches(collider) || collider.sensor || found.Contains(collider.entity)) continue;
+            if (SceneOverlapSegment(collider, shape, at, angle)) found.Add(collider.entity);
+        }
+        return found.count > 0;
+    }
+
+
 }
 
 
@@ -1160,7 +1676,7 @@ extern Met SceneCastCircle(in Collider collider, in Circle shape, float2 from, f
 [NativeName("b2t_scene_overlap_circle")]
 extern bool SceneOverlapCircle(in Collider collider, in Circle shape, float2 at, float angle);
 
-[Stage(PhysicsStages.Step, 10)]
+[Stage(PhysicsStages.Step, 22)]
 system BeginHistory(Time time, mut Physics physics)
 {
     if (!(time.maxRewind > 0))
@@ -1187,11 +1703,11 @@ system BeginHistory(Time time, mut Physics physics)
         physics.history.RemoveAt(0);
 }
 
-[Stage(PhysicsStages.Step, 11)]
+[Stage(PhysicsStages.Step, 23)]
 [NativeName("b2t_capture_history")]
 extern system CaptureHistory(Body body, mut Physics physics);
 
-[Stage(PhysicsStages.Step, 12)]
+[Stage(PhysicsStages.Step, 24)]
 system EndHistory(mut Physics physics)
 {
     if (!(physics.historyLimit > 0)) return;
@@ -1205,7 +1721,7 @@ system EndHistory(mut Physics physics)
     physics.history.Add(HistoryFrame { tick = physics.historyTick, colliders = physics.pending });
 }
 
-[Stage(PhysicsStages.Step, 13)]
+[Stage(PhysicsStages.Step, 25)]
 [NativeName("b2t_seal_history")]
 extern system SealHistory(mut Physics physics);
 
@@ -1213,3 +1729,434 @@ void SortScene(mut List<Collider> scene)
 {
     scene.Sort(a, b) { return (a.body & 0xFFFF_FFFFL) < (b.body & 0xFFFF_FFFFL) || (a.body == b.body && (a.shape & 0xFFFF_FFFFL) < (b.shape & 0xFFFF_FFFFL)); }
 }
+
+// Joints are entities with Joint and exactly one type's settings component.
+// Anchors and rotations are local to the corresponding body's origin.
+component Joint
+{
+    Entity a;
+    Entity b;
+    float2 anchorA;
+    float2 anchorB;
+    float angleA;
+    float angleB;
+    float constraintHertz = 60;
+    float constraintDampingRatio = 2;
+    bool enabled = true;
+    bool collideConnected;
+    long id; // The package's own native handle, zero before attachment
+    float2 force; // Read back after the step, in newtons
+    float torque; // Read back after the step, in newton meters
+    long configuration; // The package's own creation-only settings key
+}
+
+component DistanceJoint
+{
+    float length = 1;
+    float lowerSpringForce = -1e12;
+    float upperSpringForce = 1e12;
+    float hertz = 0;
+    float dampingRatio = 0;
+    float minLength = 0;
+    float maxLength = 1e6;
+    float maxMotorForce = 0;
+    float motorSpeed = 0;
+    bool enableSpring = false;
+    bool enableLimit = false;
+    bool enableMotor = false;
+}
+
+component MotorJoint
+{
+    float2 linearVelocity;
+    float angularVelocity;
+    float maxVelocityForce = 0;
+    float maxVelocityTorque = 0;
+    float linearHertz = 0;
+    float linearDampingRatio = 0;
+    float maxSpringForce = 0;
+    float angularHertz = 0;
+    float angularDampingRatio = 0;
+    float maxSpringTorque = 0;
+}
+
+component FilterJoint
+{
+    bool enabled = true;
+}
+
+
+component PrismaticJoint
+{
+    float hertz = 0;
+    float dampingRatio = 0;
+    float targetTranslation = 0;
+    float lowerTranslation = 0;
+    float upperTranslation = 0;
+    float maxMotorForce = 0;
+    float motorSpeed = 0;
+    bool enableSpring = false;
+    bool enableLimit = false;
+    bool enableMotor = false;
+}
+
+component RevoluteJoint
+{
+    float targetAngle = 0;
+    float hertz = 0;
+    float dampingRatio = 0;
+    float lowerAngle = 0;
+    float upperAngle = 0;
+    float maxMotorTorque = 0;
+    float motorSpeed = 0;
+    bool enableSpring = false;
+    bool enableLimit = false;
+    bool enableMotor = false;
+}
+
+
+component WeldJoint
+{
+    float linearHertz = 0;
+    float angularHertz = 0;
+    float linearDampingRatio = 0;
+    float angularDampingRatio = 0;
+}
+
+
+[NativeName("b2t_sync_distance_joint")]
+extern bool SyncDistanceJoint(mut Joint joint, long a, long b, in DistanceJoint settings);
+
+[NativeName("b2t_sync_motor_joint")]
+extern bool SyncMotorJoint(mut Joint joint, long a, long b, in MotorJoint settings);
+
+[NativeName("b2t_sync_filter_joint")]
+extern bool SyncFilterJoint(mut Joint joint, long a, long b, in FilterJoint settings);
+
+
+[NativeName("b2t_sync_prismatic_joint")]
+extern bool SyncPrismaticJoint(mut Joint joint, long a, long b, in PrismaticJoint settings);
+
+[NativeName("b2t_sync_revolute_joint")]
+extern bool SyncRevoluteJoint(mut Joint joint, long a, long b, in RevoluteJoint settings);
+
+
+[NativeName("b2t_sync_weld_joint")]
+extern bool SyncWeldJoint(mut Joint joint, long a, long b, in WeldJoint settings);
+
+
+[NativeName("b2t_drop_joint")]
+extern void DropJoint(long id);
+[NativeName("b2t_read_joint")]
+extern void ReadJoint(mut Joint joint);
+
+// Removes orphaned handles too, including removal of the Joint component.
+[Stage(PhysicsStages.Step, 3)]
+system RemoveJoints(World world, mut Physics physics)
+{
+    foreach (var entry in physics.joints)
+    {
+        if (!world.TryGet<Joint>(entry.value, out var joint) || joint.id != entry.key)
+        {
+            DropJoint(entry.key);
+            physics.joints.Remove(entry.key);
+        }
+    }
+}
+
+[Stage(PhysicsStages.Step, 18)]
+system SynchronizeJoints(mut Joint joint, World world, mut Physics physics)
+{
+    long old = joint.id;
+    mut int count = 0;
+    if (world.Has<DistanceJoint>(this)) count += 1;
+    if (world.Has<MotorJoint>(this)) count += 1;
+    if (world.Has<FilterJoint>(this)) count += 1;
+    if (world.Has<PrismaticJoint>(this)) count += 1;
+    if (world.Has<RevoluteJoint>(this)) count += 1;
+    if (world.Has<WeldJoint>(this)) count += 1;
+    if (world.Has<WheelJoint>(this)) count += 1;
+    if (world.Has<MoverJoint>(this)) count += 1;
+    if (world.Has<PogoJoint>(this)) count += 1;
+    if (count != 1 || !world.TryGet<Body>(joint.a, out var a) || !world.TryGet<Body>(joint.b, out var b))
+    {
+        DropJoint(joint.id);
+        physics.joints.Remove(old);
+        this.Destroy();
+        return;
+    }
+    mut bool valid = false;
+    if (world.TryGet<DistanceJoint>(this, out var distance)) valid = SyncDistanceJoint(joint, a.id, b.id, distance);
+    else if (world.TryGet<MotorJoint>(this, out var motor)) valid = SyncMotorJoint(joint, a.id, b.id, motor);
+    else if (world.TryGet<FilterJoint>(this, out var filter)) valid = SyncFilterJoint(joint, a.id, b.id, filter);
+    else if (world.TryGet<PrismaticJoint>(this, out var prismatic)) valid = SyncPrismaticJoint(joint, a.id, b.id, prismatic);
+    else if (world.TryGet<RevoluteJoint>(this, out var revolute)) valid = SyncRevoluteJoint(joint, a.id, b.id, revolute);
+    else if (world.TryGet<WeldJoint>(this, out var weld)) valid = SyncWeldJoint(joint, a.id, b.id, weld);
+    else if (world.TryGet<WheelJoint>(this, out var wheel)) valid = SyncWheelJoint(joint, a.id, b.id, wheel);
+    else if (world.TryGet<MoverJoint>(this, out var mover)) valid = SyncMoverJoint(joint, a.id, b.id, mover);
+    else if (world.TryGet<PogoJoint>(this, out var pogo)) valid = SyncPogoJoint(joint, a.id, b.id, pogo);
+    if (old != joint.id) physics.joints.Remove(old);
+    if (joint.id != 0) physics.joints[joint.id] = this;
+    if (!valid) this.Destroy();
+}
+
+[Stage(PhysicsStages.Step, 21)]
+system ReadJoints(mut Joint joint, Physics physics)
+{
+    if (physics.moved) ReadJoint(joint);
+}
+
+
+
+component WheelJoint
+{
+    float hertz = 1;
+    float dampingRatio = 0.7;
+    float lowerTranslation;
+    float upperTranslation;
+    float maxMotorTorque;
+    float motorSpeed;
+    bool enableSpring = true;
+    bool enableLimit;
+    bool enableMotor;
+}
+component MoverJoint { float2 linearVelocity; float2 maxVelocityForce; }
+component PogoJoint
+{
+    float2 normal = float2(0, 1);
+    float hertz = 1;
+    float dampingRatio = 0.7;
+    float restLength = 1;
+    float maxTensionForce;
+    float maxCompressionForce = 1e12;
+    float impulse;
+    float velocity;
+}
+
+[NativeName("b2t_sync_wheel_joint")]
+extern bool SyncWheelJoint(mut Joint joint, long a, long b, in WheelJoint settings);
+
+[NativeName("b2t_sync_mover_joint")]
+extern bool SyncMoverJoint(mut Joint joint, long a, long b, in MoverJoint settings);
+
+[NativeName("b2t_sync_pogo_joint")]
+extern bool SyncPogoJoint(mut Joint joint, long a, long b, in PogoJoint settings);
+
+// Additional native shapes. Polygon computes the convex hull of up to eight
+// local vertices. A chain is one-sided, with its front to each edge's right.
+component Capsule
+{
+    float2 a = float2(0, -0.5);
+    float2 b = float2(0, 0.5);
+    float radius = 0.5;
+    float density = 1;
+    float friction = 0.6;
+    float bounce;
+    bool sensor;
+}
+component Polygon
+{
+    List<float2> points;
+    float radius;
+    float density = 1;
+    float friction = 0.6;
+    float bounce;
+    bool sensor;
+}
+component Segment
+{
+    float2 a = float2(-0.5, 0);
+    float2 b = float2(0.5, 0);
+    float friction = 0.6;
+    float bounce;
+    bool sensor;
+}
+component Chain
+{
+    List<float2> points;
+    float friction = 0.6;
+    float bounce;
+    bool loop;
+}
+component CollisionFilter
+{
+    long category = 1;
+    long mask = -1;
+    int group;
+}
+struct FixtureKey { Entity entity; int kind; }
+struct FixtureState { long id; long body; long signature; int kind; }
+struct Fixture { FixtureState state; List<long> shapes; List<byte> source; }
+
+Entity FixtureOwner(World world, Entity entity)
+{
+    if (world.Has<Body>(entity)) return entity;
+    if (world.TryGet<Part>(entity, out var part)) return part.of;
+    return default;
+}
+bool HasFixture(World world, FixtureKey key)
+{
+    if (key.kind == 0) return world.Has<Box>(key.entity);
+    if (key.kind == 1) return world.Has<Circle>(key.entity);
+    if (key.kind == 2) return world.Has<Capsule>(key.entity);
+    if (key.kind == 3) return world.Has<Polygon>(key.entity);
+    if (key.kind == 4) return world.Has<Segment>(key.entity);
+    if (key.kind == 5) return world.Has<Chain>(key.entity);
+    return false;
+}
+void ForgetFixture(Fixture fixture, Entity entity, mut Physics physics)
+{
+    foreach (long shape in fixture.shapes)
+    {
+        physics.parts.Remove(shape);
+        mut var sensors = physics.sensors[entity];
+        sensors.shapes.Remove(shape);
+        if (sensors.shapes.count > 0) physics.sensors[entity] = sensors;
+        else physics.sensors.Remove(entity);
+    }
+}
+
+[NativeName("b2t_sync_box")]
+extern FixtureState SyncBox(in FixtureState previous, long body, in Box shape, in CollisionFilter filter, bool filtered);
+
+[NativeName("b2t_sync_circle")]
+extern FixtureState SyncCircle(in FixtureState previous, long body, in Circle shape, in CollisionFilter filter, bool filtered);
+
+
+
+
+
+
+
+[NativeName("b2t_sync_chain")]
+extern FixtureState SyncChain(in FixtureState previous, long body, List<float2> points, int count, float friction, float bounce, bool loop, in CollisionFilter filter, bool filtered);
+
+[NativeName("b2t_drop_fixture")]
+extern void DropFixture(in FixtureState fixture);
+[NativeName("b2t_fixture_shapes")]
+extern void FixtureShapes(in FixtureState fixture, out List<long> shapes);
+
+// A checked inline convex polygon at the C boundary; container handles never
+// cross it inside records. Invalid counts remain invalid, rather than truncating.
+struct Hull
+{
+    float2[8] points;
+    int count;
+    float radius;
+    float density;
+    float friction;
+    float bounce;
+    bool sensor;
+}
+Hull PolygonShape(Polygon shape)
+{
+    mut Hull result = Hull { count = shape.points.count, radius = shape.radius, density = shape.density,
+                            friction = shape.friction, bounce = shape.bounce, sensor = shape.sensor };
+    if (result.count >= 3 && result.count <= 8)
+        for (int i = 0; i < result.count; i++) result.points[i] = shape.points[i];
+    return result;
+}
+
+struct Fixtures { List<Fixture> shapes; }
+
+
+
+[NativeName("b2t_cast_capsule_all")]
+extern void CastCapsuleAll(out List<Met> hits, in Capsule shape, float2 from, float angle, float2 to, long ignore, bool includeSensors);
+
+[NativeName("b2t_cast_capsule")]
+extern Met CastCapsule(in Capsule shape, float2 from, float angle, float2 to, long ignore);
+
+[NativeName("b2t_overlap_capsule")]
+extern int OverlapCapsule(in Capsule shape, float2 at, float angle, out List<long> bodies);
+
+[NativeName("b2t_capsule_bounds")]
+extern SceneBounds CapsuleBounds(in Capsule shape, float rotation, float2 from, float2 to);
+
+[NativeName("b2t_scene_cast_capsule")]
+extern Met SceneCastCapsule(in Collider collider, in Capsule shape, float2 from, float angle, float2 to);
+
+[NativeName("b2t_scene_overlap_capsule")]
+extern bool SceneOverlapCapsule(in Collider collider, in Capsule shape, float2 at, float angle);
+
+[NativeName("b2t_sync_capsule")]
+extern FixtureState SyncCapsule(in FixtureState previous, long body, in Capsule shape, in CollisionFilter filter, bool filtered);
+
+
+
+[NativeName("b2t_cast_polygon_all")]
+extern void CastPolygonAll(out List<Met> hits, in Hull shape, float2 from, float angle, float2 to, long ignore, bool includeSensors);
+
+[NativeName("b2t_cast_polygon")]
+extern Met CastPolygon(in Hull shape, float2 from, float angle, float2 to, long ignore);
+
+[NativeName("b2t_overlap_polygon")]
+extern int OverlapPolygon(in Hull shape, float2 at, float angle, out List<long> bodies);
+
+[NativeName("b2t_polygon_bounds")]
+extern SceneBounds PolygonBounds(in Hull shape, float rotation, float2 from, float2 to);
+
+[NativeName("b2t_scene_cast_polygon")]
+extern Met SceneCastPolygon(in Collider collider, in Hull shape, float2 from, float angle, float2 to);
+
+[NativeName("b2t_scene_overlap_polygon")]
+extern bool SceneOverlapPolygon(in Collider collider, in Hull shape, float2 at, float angle);
+
+[NativeName("b2t_sync_polygon")]
+extern FixtureState SyncPolygon(in FixtureState previous, long body, in Hull shape, in CollisionFilter filter, bool filtered);
+
+
+
+[NativeName("b2t_cast_segment_all")]
+extern void CastSegmentAll(out List<Met> hits, in Segment shape, float2 from, float angle, float2 to, long ignore, bool includeSensors);
+
+[NativeName("b2t_cast_segment")]
+extern Met CastSegment(in Segment shape, float2 from, float angle, float2 to, long ignore);
+
+[NativeName("b2t_overlap_segment")]
+extern int OverlapSegment(in Segment shape, float2 at, float angle, out List<long> bodies);
+
+[NativeName("b2t_segment_bounds")]
+extern SceneBounds SegmentBounds(in Segment shape, float rotation, float2 from, float2 to);
+
+[NativeName("b2t_scene_cast_segment")]
+extern Met SceneCastSegment(in Collider collider, in Segment shape, float2 from, float angle, float2 to);
+
+[NativeName("b2t_scene_overlap_segment")]
+extern bool SceneOverlapSegment(in Collider collider, in Segment shape, float2 at, float angle);
+
+[NativeName("b2t_sync_segment")]
+extern FixtureState SyncSegment(in FixtureState previous, long body, in Segment shape, in CollisionFilter filter, bool filtered);
+
+struct QueryFilter
+{
+    long category = 1;
+    long mask = -1;
+    bool Matches(Collider collider)
+    {
+        return (category & collider.mask) != 0 && (mask & collider.category) != 0;
+    }
+}
+[NativeName("b2t_query_filter")]
+extern void SetQueryFilter(long category, long mask);
+
+// Existing Body settings follow later writes, as position and velocity do.
+[Stage(PhysicsStages.Step, 19)]
+[NativeName("b2t_configure_bodies")]
+extern system ConfigureBodies(Body body, mut Physics physics);
+
+[Stage(PhysicsStages.Step, 0)]
+[NativeName("b2t_topology")]
+extern system CheckTopology(mut Physics physics);
+[Stage(PhysicsStages.Step, 1)]
+[NativeName("b2t_check_bodies")]
+extern system CheckBodies(Body body, mut Physics physics);
+[NativeName("b2t_begin_fixture_changes")]
+extern void BeginFixtureChanges(bool topologyChanged);
+[NativeName("b2t_count_fixture_changes")]
+extern int CountFixtureChanges();
+struct FixtureChange { Entity entity; FixtureState state; int kind; bool sensor; }
+[NativeName("b2t_read_fixture_change")]
+extern FixtureChange ReadFixtureChange(int index);
+[NativeName("b2t_read_fixture_source")]
+extern void ReadFixtureSource(int index, out List<byte> source);
