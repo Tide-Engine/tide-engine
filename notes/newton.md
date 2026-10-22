@@ -91,6 +91,18 @@ Full-run and recheck logs are under `build/microduck-*-full-*` and
 `build/microduck-web-draw-*.log`. Other operating systems and physical robot
 validation remain unavailable locally.
 
+The final clean merge from `origin/dev` brought Unity HLSL/embedding and
+alternate-camera drawing changes, with no Newton or MicroDuck source changes.
+Because the platform library is a dependency, both debug targets were rebuilt.
+Focused native checks (Vulkan/OpenGL drawing, MicroDuck and its join) and web
+checks (WebGL/WebGPU drawing, MicroDuck and its join) pass 4/4 on each target.
+Commands/results are in `build/microduck-*-postmerge-*.log`. The installed CLI
+and MinGW/web platform libraries were rebuilt and restaged too. Installed
+native/web builds, a bounded 110-frame desktop capture and muted WebGPU
+controls/reset smoke all pass; source hashes are unchanged and 200 Hz/one
+substep remains confirmed. The report is
+`build/microduck-cli/postmerge-RESULTS.md`.
+
 ## Featherstone CPU integration and documentation (2026-10-22)
 
 The owner requested NVIDIA Newton as a separate optional package like Box3D,
