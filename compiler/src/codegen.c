@@ -14678,6 +14678,14 @@ static void gen_task_pass(gen *g, const bool local)
         sb_printf(o, "            const tide_task_%s *tide_t = tide_table_get(&%s->tide_tasks_%s, &tide_columns_tasks_%s, tide_due_v.row, 0);\n",
                   id, w, id, id);
         sb_put(o, "            const tide_task tide_task_v = tide_t->task;\n");
+        if (!local && sharded(g)) { // A resume that touched another shard's waits, and goes on at a later tick
+            sb_printf(o, "            if (tide_w->tide_shard_state.shard) {\n"
+                         "                tide_shard_code = %du;\n                tide_shard_this = tide_task_v.owner;\n"
+                         "                tide_shard_occurrence = tide_task_v.order;\n"
+                         "                if (tide_shard_skips(tide_w->tide_shard_now, tide_shard_code, tide_shard_this, tide_shard_occurrence)) break;\n"
+                         "            }\n",
+                      shard_code_task(g->prog, i));
+        }
         sb_printf(o, "            %s tide_f = tide_t->frame;\n", type_cname(ti->frame));
         sb_printf(o, "            const int32_t tide_r = %s(%s, &tide_f, tide_task_v.owner, tide_task_v.owner_local != 0, tide_task_v.scene);\n",
                   task_resume_name(ti->fn, local), local ? "tide_w, tide_l" : "tide_w");
@@ -14687,6 +14695,7 @@ static void gen_task_pass(gen *g, const bool local)
                   id, w, id, id);
         sb_put(o, "            tide_back->frame = tide_f;\n");
         sb_put(o, "            tide_back->task.wake = tide_r < 0 ? TIDE_TASK_DONE : tide_r;\n");
+        if (!local && sharded(g)) sb_put(o, "            tide_shard_code = 0u;\n");
         sb_put(o, "            break;\n        }\n");
     }
     sb_put(o, "        default: break;\n        }\n");
@@ -21149,6 +21158,7 @@ bool codegen(program *prog, const codegen_options *opts)
     if (prog->input && prog->input->predict) gen_predict(&g);
     if (prog->input && input_needs_repair(prog->input)) gen_repair(&g);
     gen_tasks(&g);
+    gen_shard_tasks(&g); // A frame's fields are known now
     for (int i = 0; i < prog->systems.count; i++) {
         if (!prog->systems.items[i]->extern_system) gen_system_body(&g, prog->systems.items[i]); // Those are C's
     }

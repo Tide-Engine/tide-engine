@@ -131,6 +131,7 @@ static void gen_shard_moves(gen *g)
               "    tide_writer m = tide_shard_begin(w, TIDE_SHARD_ARRIVE, true);\n"
               "    tide_write_u8(&m, flags);\n    tide_write_u32(&m, (uint32_t)tide_shard_self(w));\n"
               "    tide_shard_put_tree(&m, w, root);\n"
+              "    tide_shard_send_tasks(&m, w, root); // Its tasks go on where it goes\n"
               "    tide_shard_post(w, TIDE_SHARD_TO_SHARD, (uint32_t)to, root, &m);\n"
               "    if (w->tide_shard_state.role == TIDE_SHARD_ROOT_ROLE) tide_shard_remove_tree(w, root, true);\n"
               "    else tide_shard_mark_tree(w, root, true, to);\n}\n\n"

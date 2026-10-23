@@ -30,13 +30,24 @@ static int shard_code_event(const program *prog, const decl *event)
     return 1 + prog->systems.count + event->index;
 }
 
-static int shard_codes(const program *prog)
+static int shard_code_tasks(const program *prog)
 {
     int most = 0;
     for (int i = 0; i < prog->events.count; i++) {
         if (prog->events.items[i]->index + 1 > most) most = prog->events.items[i]->index + 1;
     }
     return 1 + prog->systems.count + most;
+}
+
+// ...then each kind of task's resumes (g->tasks), by the task's owner and order
+static int shard_code_task(const program *prog, const int task)
+{
+    return shard_code_tasks(prog) + task;
+}
+
+static int shard_codes(const gen *g)
+{
+    return shard_code_tasks(g->prog) + g->tasks.count;
 }
 
 // The game's own match singletons: those that live with the root shard, read
@@ -110,9 +121,11 @@ static void gen_shard_prelude(gen *g)
                  "TIDE_SHARD_FN bool tide_shard_starting_empty; // A region's world starts with nothing in it\n"
                  "TIDE_SHARD_FN int32_t tide_shard_since; // While a waiting delivery runs: the tick it first tried\n"
                  "TIDE_SHARD_FN bool tide_shard_destroy_waits(tide_world *w, tide_entity e);\n"
+                 "TIDE_SHARD_FN void tide_shard_send_tasks(tide_writer *out, tide_world *w, tide_entity root);\n"
+                 "TIDE_SHARD_FN bool tide_shard_take_tasks(tide_world *w, tide_reader *in);\n"
                  "// The entity a destroy is of, as its tree's Destroyed handlers run: what they wait by\n"
                  "TIDE_SHARD_FN TIDE_THREAD_LOCAL tide_entity tide_shard_dying;\n\n",
-              shard_codes(g->prog));
+              shard_codes(g));
 }
 
 // What the change recorders and World.Set call: whether this shard owns an

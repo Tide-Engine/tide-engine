@@ -59,6 +59,7 @@ typedef struct totals {
     int64_t coins, wallets, left, received; // Of what shards own
     int64_t purses; // Couriers' not paid yet
     int dying;      // Couriers whose destroy waits for their bank
+    int tickers, counted; // Movers with a task counting ticks, and what they counted
 } totals;
 
 static void gather(const tide_world *w, totals *t)
@@ -82,6 +83,10 @@ static void gather(const tide_world *w, totals *t)
             if (tide_has_Transfer(w, e)) t->left += tide_get_Transfer(w, e).left;
             if (tide_has_Courier(w, e)) t->purses += tide_get_Courier(w, e).purse;
             if (tide_has_tide_dying(w, e)) t->dying++;
+            if (tide_has_Ticker(w, e)) {
+                t->tickers++;
+                t->counted += tide_get_Ticker(w, e).counted;
+            }
         }
     }
 }
@@ -118,7 +123,7 @@ static void run(const double seconds, const bool check)
         if (!check) continue;
         const totals t = count();
         for (int id = 0; id < 128; id++) TIDE_CHECK(t.owned[id] <= 1); // Never two shards' at once
-        TIDE_CHECK(t.coins + t.wallets + t.purses <= 2320);         // Nothing made from nowhere
+        TIDE_CHECK(t.coins + t.wallets + t.purses <= 2340);         // Nothing made from nowhere
         if (t.dying > most_dying) most_dying = t.dying;
     }
 }
@@ -161,8 +166,9 @@ static void check_done(void)
     TIDE_CHECK(t.owned[100] == 1 && t.owned[101] == 1);
     TIDE_CHECK(t.wallets == 0);    // Every coin paid...
     TIDE_CHECK(t.received == 200); // ...arrived once
-    TIDE_CHECK(t.coins == 2320);   // ...and the banks' transfers made and lost nothing
+    TIDE_CHECK(t.coins == 2340);   // ...and the banks' transfers made and lost nothing, the tasks' 20 coins among them
     TIDE_CHECK(t.left == 0);       // Both banks' transfers, done
+    TIDE_CHECK(t.tickers == 4 && t.counted == 4 * 600); // Every tick of every task, wherever its mover was
 }
 
 static void check_clients(const uint32_t count_of)

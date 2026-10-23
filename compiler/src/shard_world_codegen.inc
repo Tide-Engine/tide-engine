@@ -85,6 +85,7 @@ static void gen_shard_receive(gen *g)
               "        tide_entity root = {0};\n"
               "        if (r.failed || !tide_shard_take_tree(w, &r, false, 0, &root)) return false;\n"
               "        tide_shard_mark_tree(w, root, false, 0);\n"
+              "        if (!tide_shard_take_tasks(w, &r)) return false;\n"
               "        tide_shard_unask(w, root);\n"
               "        if (flags & TIDE_SHARD_BORROWED) tide_shard_pin(w, tide_shard_key(root));\n"
               "        return true;\n    }\n");
@@ -518,6 +519,124 @@ static void gen_shard_tick(gen *g)
               "    tide_shard_after(w, &t);\n"
               "    tide_heap_flush(&w->heap);\n    tide_heap_settle(&w->heap);\n"
               "    tide_shard_tick_free(&t);\n}\n\n");
+}
+
+// Tasks go with the entities they belong to (after gen_tasks: what a frame
+// holds is only known once their code is): an entity that moves or is lent
+// takes its waiting tasks with it, in the order they started, and they go on
+// there. The frames go through value codecs of their own, appended to the rest.
+static void gen_shard_tasks(gen *g)
+{
+    if (!sharded(g)) return;
+    const program *prog = g->prog;
+    sb *o = &g->c;
+    client_codec *codec = &g->value_codec;
+    const int first = codec->count;
+    bool any = false;
+    for (int i = 0; i < g->tasks.count; i++) {
+        const task_info *ti = &g->tasks.items[i];
+        if (!task_table_in(ti->fn, false)) continue;
+        any = true;
+        client_codec_type(codec, (type){TY_STRUCT, ti->frame});
+    }
+    sb_put(o, "// ---------------------------------------------------------------------------\n"
+              "// Shards: tasks go with their entities\n\n");
+    for (int i = first; i < codec->count; i++) {
+        const char *ct = elem_ctype(codec->items[i]);
+        sb_printf(o, "TIDE_HELPER void tide_client_put%d(tide_writer *, const %s *, uint32_t);\n", i, ct);
+        sb_printf(o, "TIDE_HELPER bool tide_client_get%d(tide_reader *, %s *, uint32_t, uint32_t, uint64_t *);\n", i, ct);
+    }
+    for (int i = first; i < codec->count; i++) gen_client_codec_value(g, codec, i);
+    if (!any) {
+        sb_put(o, "TIDE_SHARD_FN void tide_shard_send_tasks(tide_writer *out, tide_world *w, const tide_entity root)\n{\n"
+                  "    (void)w;\n    (void)root;\n    tide_write_u32(out, 0u);\n}\n\n"
+                  "TIDE_SHARD_FN bool tide_shard_take_tasks(tide_world *w, tide_reader *in)\n{\n"
+                  "    (void)w;\n    return tide_read_u32(in) == 0u && !in->failed;\n}\n\n");
+        return;
+    }
+    // Whether `e` is `root` or one of its descendants
+    sb_put(o, "TIDE_HELPER bool tide_shard_in_tree(const tide_world *w, const tide_entity root, tide_entity e)\n{\n");
+    if (prog->hierarchy[0]) {
+        sb_put(o, "    for (uint64_t left = (uint64_t)w->entities.next_unused + 1u; !tide_entity_is_null(e) && left--; e = tide_parent_of(w, e)) {\n"
+                  "        if (tide_entity_equal(e, root)) return true;\n    }\n    return false;\n}\n\n");
+    } else {
+        sb_put(o, "    (void)w;\n    return tide_entity_equal(e, root);\n}\n\n");
+    }
+    // The tree's tasks, written and taken out of this world: how many, then
+    // each one's kind, wake, owner, scene and frame
+    sb_put(o, "TIDE_SHARD_FN void tide_shard_send_tasks(tide_writer *out, tide_world *w, const tide_entity root)\n{\n"
+              "    uint32_t count = 0, room = 0;\n    tide_due *going = NULL;\n");
+    for (int i = 0; i < g->tasks.count; i++) {
+        const task_info *ti = &g->tasks.items[i];
+        if (!task_table_in(ti->fn, false)) continue;
+        const char *id = task_id(ti->fn);
+        sb_printf(o, "    for (uint32_t row = 0; row < w->tide_tasks_%s.count; row++) {\n"
+                     "        const tide_task_%s *t = tide_table_get(&w->tide_tasks_%s, &tide_columns_tasks_%s, row, 0);\n"
+                     "        if (t->task.wake < 0 || !tide_shard_in_tree(w, root, t->task.owner)) continue;\n"
+                     "        if (count == room) {\n            room = room ? room * 2u : 8u;\n"
+                     "            going = realloc(going, room * sizeof *going);\n            if (!going) tide_out_of_memory();\n        }\n"
+                     "        going[count++] = (tide_due){t->task.order, %du, row};\n    }\n",
+                  id, id, id, id, i);
+    }
+    sb_put(o, "    if (count) qsort(going, count, sizeof *going, tide_due_compare);\n"
+              "    tide_write_u32(out, count);\n"
+              "    for (uint32_t k = 0; k < count; k++) {\n"
+              "        tide_write_u32(out, going[k].kind);\n"
+              "        switch (going[k].kind) {\n");
+    for (int i = 0; i < g->tasks.count; i++) {
+        const task_info *ti = &g->tasks.items[i];
+        if (!task_table_in(ti->fn, false)) continue;
+        const char *id = task_id(ti->fn);
+        sb_printf(o, "        case %du: {\n"
+                     "            const tide_task_%s *t = tide_table_get(&w->tide_tasks_%s, &tide_columns_tasks_%s, going[k].row, 0);\n"
+                     "            tide_write_u32(out, (uint32_t)t->task.wake);\n"
+                     "            tide_write_u32(out, t->task.owner.index);\n            tide_write_u32(out, t->task.owner.generation);\n"
+                     "            tide_write_u32(out, t->task.scene.index);\n            tide_write_u32(out, t->task.scene.generation);\n"
+                     "            tide_client_put%d(out, &t->frame, 0);\n            break;\n        }\n",
+                  i, id, id, id, client_codec_id(codec, (type){TY_STRUCT, ti->frame}));
+    }
+    sb_put(o, "        default: break;\n        }\n    }\n    free(going);\n");
+    // ...then out of this world, from the last row, as a row removed takes the last one's place
+    for (int i = 0; i < g->tasks.count; i++) {
+        const task_info *ti = &g->tasks.items[i];
+        if (!task_table_in(ti->fn, false)) continue;
+        const char *id = task_id(ti->fn);
+        sb_printf(o, "    for (uint32_t row = w->tide_tasks_%s.count; row-- > 0;) {\n"
+                     "        tide_task_%s *t = tide_table_cell(&w->tide_tasks_%s, &tide_columns_tasks_%s, row, 0);\n"
+                     "        if (t->task.wake < 0 || !tide_shard_in_tree(w, root, t->task.owner)) continue;\n"
+                     "        tide_release_%s(&t->frame, TIDE_IN_MATCH);\n"
+                     "        tide_table_remove_row(&w->tide_tasks_%s, &tide_columns_tasks_%s, row);\n    }\n",
+                  id, id, id, id, type_cname(ti->frame), id, id);
+    }
+    sb_put(o, "}\n\n");
+    // Taken into this world, each started here now (a frame that isn't one changes nothing more)
+    sb_put(o, "TIDE_SHARD_FN bool tide_shard_take_tasks(tide_world *w, tide_reader *in)\n{\n"
+              "    const uint32_t count = tide_read_u32(in);\n"
+              "    if (in->failed || count > (in->size - in->at) / 24u) return false;\n"
+              "    uint64_t budget = SIZE_MAX;\n"
+              "    for (uint32_t k = 0; k < count; k++) {\n"
+              "        const uint32_t kind = tide_read_u32(in);\n        const int32_t wake = (int32_t)tide_read_u32(in);\n"
+              "        tide_entity owner, scene;\n"
+              "        owner.index = tide_read_u32(in);\n        owner.generation = tide_read_u32(in);\n"
+              "        scene.index = tide_read_u32(in);\n        scene.generation = tide_read_u32(in);\n"
+              "        if (in->failed || wake < 0) return false;\n"
+              "        switch (kind) {\n");
+    for (int i = 0; i < g->tasks.count; i++) {
+        const task_info *ti = &g->tasks.items[i];
+        if (!task_table_in(ti->fn, false)) continue;
+        const char *id = task_id(ti->fn);
+        const char *frame = type_cname(ti->frame);
+        sb_printf(o, "        case %du: {\n"
+                     "            %s f;\n            memset(&f, 0, sizeof f);\n"
+                     "            if (!tide_client_get%d(in, &f, TIDE_IN_MATCH, 0, &budget)) {\n"
+                     "                tide_release_%s(&f, TIDE_IN_MATCH);\n                return false;\n            }\n"
+                     "            const uint32_t row = tide_table_add(&w->tide_tasks_%s, &tide_columns_tasks_%s);\n"
+                     "            tide_task_%s *t = tide_table_cell(&w->tide_tasks_%s, &tide_columns_tasks_%s, row, 0);\n"
+                     "            t->task = (tide_task){w->tide_task_order++, wake, owner, scene, 0u};\n"
+                     "            t->frame = f;\n            break;\n        }\n",
+                  i, frame, client_codec_id(codec, (type){TY_STRUCT, ti->frame}), frame, id, id, id, id, id);
+    }
+    sb_put(o, "        default: return false;\n        }\n    }\n    return true;\n}\n\n");
 }
 
 // Everything after the codecs and the dispatchers, in the order it's called

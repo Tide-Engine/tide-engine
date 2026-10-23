@@ -34,12 +34,39 @@ event(Spawned) Setup(with Main)
     for (int i = 0; i < 20; i++)
     {
         float speed = i % 2 == 0 ? 6.0 : -6.0;
-        Spawn(Mover { position = float2(-28 + i * 3, -5), velocity = float2(speed, 0), id = i, wallet = 10, bank = a });
+        var mover = Spawn(Mover { position = float2(-28 + i * 3, -5), velocity = float2(speed, 0), id = i, wallet = 10, bank = a });
+        if (i % 5 == 0) mover.Add(Ticker { bank = b });
     }
     for (int i = 0; i < 6; i++)
     {
         Spawn(Mover { position = float2(-30 + i * 2, 8), id = 50 + i }, Courier { purse = 20, until = 240 + i * 45, bank = b });
     }
+}
+
+// A task of some movers', counting ticks for ten seconds as they cross the
+// border back and forth: it goes on on whichever shard has the mover, and
+// pays a bank across the border once it's done
+component Ticker { int counted; bool started; Entity bank; }
+
+event Begin { }
+
+system StartTicking(mut Ticker t)
+{
+    if (t.started) return;
+    t.started = true;
+    this.Send(Begin { });
+}
+
+async event(Begin begin) Count(mut Ticker t, mut World world)
+{
+    for (int i = 0; i < 600; i++)
+    {
+        await Wait.Ticks(1);
+        t.counted += 1;
+    }
+    // Then it pays the right's bank, which waits while the mover's on the left
+    Bank bank = world.Get<Bank>(t.bank);
+    world.Set<Bank>(t.bank, Bank { coins = bank.coins + 5, received = bank.received });
 }
 
 // Couriers on the left carry a purse to the right's bank, paid as they're

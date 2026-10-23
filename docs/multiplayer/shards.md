@@ -75,7 +75,6 @@ Tide's hosting service will run shards across machines, splitting and merging re
 
 ## Limits for now
 
-- What a task changes across a border when it resumes is dropped.
-- Tasks and physics state don't move with their entities.
+- Physics state doesn't move with its entities.
 - Regions split but never merge again.
 - Visibility and hot reload don't apply to sharded games yet.
