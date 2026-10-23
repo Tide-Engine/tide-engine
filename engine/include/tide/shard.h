@@ -81,6 +81,10 @@ typedef enum tide_shard_kind {
     // Count 0: the player's gone. Every shard keeps every player's, so a
     // player's machine reads its own from whichever shard's world it has.
     TIDE_SHARD_ROUTE = 14,
+    // Orchestrator: this shard's region merged into another shard's (u32 its
+    // id): everything it owns goes, by position, and what has no position to
+    // that shard, after which it ends.
+    TIDE_SHARD_RETIRE = 15,
 } tide_shard_kind;
 
 // A shard a player's machine follows, and the match its host knows it by.

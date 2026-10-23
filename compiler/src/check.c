@@ -2831,8 +2831,9 @@ static void ensure_shards(program *prog)
     state->name = state->qualified = str_from("tide_shard_state");
     state->c_name = "tide_shard_state";
     state->index = prog->singletons.count;
-    static const char *const ints[] = {"shard", "role", "sent", "acked"};
-    for (int i = 0; i < 4; i++) {
+    // into: the id + 1 of the shard a retiring one gives what has no position to, 0 for none
+    static const char *const ints[] = {"shard", "role", "sent", "acked", "into"};
+    for (int i = 0; i < 5; i++) {
         f.name = str_from(ints[i]); // shard is the id + 1: 0 is a world that's no shard
         f.type = T_INT_;
         vec_push(state->fields, f);

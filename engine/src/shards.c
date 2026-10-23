@@ -13,7 +13,7 @@
 // carried, and what it last sent each shard of its neighbours' ghosts.
 
 #define RANGE_SIZE (1u << 20) // Entity indices a shard is given at a time
-#define SPLIT_EVERY 30u       // Updates between looks at whether a region should split
+#define SPLIT_EVERY 30u       // Updates between looks at whether a region should split or merge
 
 // ---------------------------------------------------------------------------
 // A map of 64-bit keys (never 0) to 64-bit values: linear probing, deletion by
@@ -127,6 +127,10 @@ typedef struct shard {
     uint32_t sent_room;
     uint64_t singletons; // The root's: its singletons' hash, as last sent
     uint64_t match;      // What its host knows it by (tide_shards_desc.started), 0 in one process
+    // A region merged into another's (`into`): it gives up what it owns, then
+    // ends, and its id is never another's (receivers know its messages' numbers)
+    bool retiring, gone;
+    uint32_t into;
 } shard;
 
 // A player of the world: their cookie, whether they're in it, and the route
@@ -233,7 +237,7 @@ static void inject(tide_shards *s, const uint32_t to, const uint8_t *data, const
 static uint32_t new_shard(tide_shards *s)
 {
     for (uint32_t i = 1; i < s->count; i++) {
-        if (!s->shards[i].used && !s->shards[i].server) return i;
+        if (!s->shards[i].used && !s->shards[i].server && !s->shards[i].gone) return i;
     }
     if (s->count == s->room) {
         const uint32_t room = s->room ? s->room * 2u : 8u;
@@ -450,6 +454,14 @@ static void note_tree(tide_shards *s, const uint8_t *data, const uint32_t size, 
     }
 }
 
+// Where a message for a shard goes: to it, or for one that merged into
+// another and ended, to that one (an entity lent to it on the way is that one's)
+static uint32_t live_shard(const tide_shards *s, uint32_t id)
+{
+    for (uint32_t left = s->count; left-- && id < s->count && s->shards[id].gone;) id = s->shards[id].into;
+    return id;
+}
+
 static void carry(tide_shards *s, const uint32_t from)
 {
     shard *sh = &s->shards[from];
@@ -464,10 +476,12 @@ static void carry(tide_shards *s, const uint32_t from)
         through = m.number > through ? m.number : through;
         const uint8_t kind = m.data[0];
         switch (m.route) {
-        case TIDE_SHARD_TO_SHARD:
-            if (kind == TIDE_SHARD_ARRIVE) note_tree(s, m.data, m.size, m.target, from);
-            inject(s, m.target, m.data, m.size);
+        case TIDE_SHARD_TO_SHARD: {
+            const uint32_t to = live_shard(s, m.target);
+            if (kind == TIDE_SHARD_ARRIVE) note_tree(s, m.data, m.size, to, from);
+            inject(s, to, m.data, m.size);
             break;
+        }
         case TIDE_SHARD_TO_OWNER: {
             const int32_t owner = tide_shards_owner(s, m.entity);
             if (owner >= 0) inject(s, (uint32_t)owner, m.data, m.size);
@@ -676,6 +690,89 @@ static void maybe_split(tide_shards *s, const uint32_t id, const double now)
 }
 
 // ---------------------------------------------------------------------------
+// Merging two neighbouring regions whose shards hold little: the lower one's
+// region becomes both, and the other retires (TIDE_SHARD_RETIRE). It ends once
+// it owns nothing and nothing of it waits or is on its way.
+
+// Whether two regions make one box, and which
+static bool joins(const tide_shards *s, const tide_shard_box *a, const tide_shard_box *b, tide_shard_box *both)
+{
+    uint32_t touching = 3u;
+    for (uint32_t k = 0; k < s->api->dims; k++) {
+        if (a->lo[k] == b->lo[k] && a->hi[k] == b->hi[k]) continue;
+        if (touching != 3u || !(a->hi[k] == b->lo[k] || b->hi[k] == a->lo[k])) return false;
+        touching = k;
+    }
+    if (touching == 3u) return false;
+    *both = *a;
+    both->lo[touching] = a->lo[touching] < b->lo[touching] ? a->lo[touching] : b->lo[touching];
+    both->hi[touching] = a->hi[touching] > b->hi[touching] ? a->hi[touching] : b->hi[touching];
+    return true;
+}
+
+static uint32_t owned_by(const tide_shards *s, const uint32_t id)
+{
+    tide_shard_status status;
+    s->api->status(tide_server_world(s->shards[id].server), &status);
+    return status.owned;
+}
+
+// One merge at a time, of two regions together owning a quarter of what
+// splits one at most, so the merged one doesn't split again soon
+static void maybe_merge(tide_shards *s)
+{
+    for (uint32_t i = 0; i < s->count; i++) {
+        if (s->shards[i].retiring) return;
+    }
+    for (uint32_t a = 0; a < s->count; a++) {
+        if (!s->shards[a].used || !s->shards[a].region) continue;
+        for (uint32_t b = a + 1u; b < s->count; b++) {
+            if (!s->shards[b].used || !s->shards[b].region) continue;
+            tide_shard_box both;
+            if (!joins(s, &s->shards[a].box, &s->shards[b].box, &both)) continue;
+            if (((uint64_t)owned_by(s, a) + owned_by(s, b)) * 4u > s->desc.most_entities) continue;
+            s->shards[a].box = both;
+            s->shards[b].region = false;
+            s->shards[b].retiring = true;
+            s->shards[b].into = a;
+            uint8_t data[16];
+            tide_writer w = {data, sizeof data, 0, false, false};
+            tide_shard_header(&w, TIDE_SHARD_RETIRE, TIDE_SHARD_ORCHESTRATOR, 0u);
+            tide_write_u32(&w, a);
+            inject(s, b, data, w.size);
+            tell_map(s);
+            return;
+        }
+    }
+}
+
+// A retiring shard ends once it owns nothing, nothing it said is undelivered,
+// no code of it waits and nothing for it is still to be applied
+static void finish_retiring(tide_shards *s)
+{
+    for (uint32_t i = 0; i < s->count; i++) {
+        shard *sh = &s->shards[i];
+        if (!sh->used || !sh->retiring) continue;
+        tide_shard_status status;
+        s->api->status(tide_server_world(sh->server), &status);
+        if (status.owned || status.waiting || status.lent || status.outbox || tide_server_injected(sh->server)) continue;
+        if (s->desc.host_start) {
+            if (s->desc.host_stop) s->desc.host_stop(s->desc.user, i, sh->match);
+        } else {
+            tide_server_destroy(sh->server);
+        }
+        sh->server = NULL;
+        sh->used = false;
+        sh->retiring = false;
+        sh->gone = true;
+        for (uint32_t k = 0; k < sh->sent_room; k++) map_free(&sh->sent[k]);
+        for (uint32_t j = 0; j < s->count; j++) {
+            if (i < s->shards[j].sent_room) map_free(&s->shards[j].sent[i]);
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Players: a player joins the world at the root, which gives them a cookie;
 // every other shard takes them as the same player with it. The root sends
 // PlayerJoined and PlayerLeft as they come and go from the world as a whole.
@@ -834,14 +931,16 @@ void tide_shards_update(tide_shards *s, const double now)
         for (uint32_t i = 0; i < count; i++) {
             if (s->shards[i].used && s->shards[i].region) maybe_split(s, i, now);
         }
+        maybe_merge(s);
     }
+    finish_retiring(s);
 }
 
 // ---------------------------------------------------------------------------
 // Checkpoints: a header, the ranges and the directory, then each shard and its world
 
 #define SAVE_MAGIC 0x53444854u // "THDS"
-#define SAVE_VERSION 1u
+#define SAVE_VERSION 2u
 
 uint8_t *tide_shards_save(const tide_shards *s, uint32_t *size)
 {
@@ -865,6 +964,8 @@ uint8_t *tide_shards_save(const tide_shards *s, uint32_t *size)
     for (uint32_t i = 0; i < s->count; i++) {
         const shard *sh = &s->shards[i];
         tide_write_u8(&w, sh->used ? 1u : 0u);
+        tide_write_u8(&w, sh->gone ? 1u : sh->retiring ? 2u : 0u);
+        tide_write_u32(&w, sh->into);
         if (!sh->used) continue;
         tide_write_u8(&w, sh->region ? 1u : 0u);
         tide_write_bytes(&w, sh->box.lo, sizeof sh->box.lo);
@@ -925,7 +1026,13 @@ tide_shards *tide_shards_load(const tide_shards_desc *desc, const uint8_t *data,
     for (uint32_t i = 0; i < count; i++) {
         const uint32_t id = new_shard(s);
         shard *sh = &s->shards[id];
-        if (!tide_read_u8(&r)) {
+        const bool used = tide_read_u8(&r) != 0;
+        const uint8_t state = tide_read_u8(&r);
+        sh->gone = state == 1u;
+        sh->retiring = state == 2u;
+        sh->into = tide_read_u32(&r);
+        if (r.failed || state > 2u || (sh->gone && used) || (sh->retiring && !used) || ((sh->gone || sh->retiring) && sh->into >= count)) goto fail;
+        if (!used) {
             sh->used = false;
             continue;
         }

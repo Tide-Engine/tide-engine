@@ -69,12 +69,11 @@ A [dedicated server](./matches.md#dedicated-servers) runs each shard as one of i
 tide run --server --anonymous --shards 4 --shard-width 200 --shard-most 5000
 ```
 
-`--shard-most` splits a region in two when its shard owns more entities than that. Players connect to match 0, `Session.Connect("host:7777/0")` or through the server's room with `Session.Join("K7QF2M/0")`, and the server takes them into the world. Each player follows the shards near their avatar over that one connection, on the web too.
+`--shard-most` splits a region in two when its shard owns more entities than that, and merges two neighbouring regions back into one when together they own a quarter of it or less. Players connect to match 0, `Session.Connect("host:7777/0")` or through the server's room with `Session.Join("K7QF2M/0")`, and the server takes them into the world. Each player follows the shards near their avatar over that one connection, on the web too.
 
 Tide's hosting service will run shards across machines, splitting and merging regions by load.
 
 ## Limits for now
 
 - Physics state doesn't move with its entities.
-- Regions split but never merge again.
 - Visibility and hot reload don't apply to sharded games yet.

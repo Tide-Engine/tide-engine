@@ -235,7 +235,8 @@ static const argument_help arguments[] = {
      "Default: 16 times the game's shardRange. Use with --shards.", RUN},
     {"--shard-most", "--shard-most <n>", "Split a region whose shard owns more entities",
      "Requires run --server. A region splits in two by where its entities\n"
-     "are, down to twice the game's shardRange across.", RUN},
+     "are, down to twice the game's shardRange across; two neighbouring\n"
+     "regions owning a quarter of n together merge back into one.", RUN},
     {"--capture", "--capture <file.png>", "Save the last frame as a PNG",
      "Runs natively without a window; add --frames or a script's quit.\n"
      "The output path is relative to the directory where tide was invoked.", RUN | OPEN},

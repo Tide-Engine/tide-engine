@@ -406,7 +406,7 @@ reload. Server executables support:
 | `--max-connections <n>` | Admitted/pending connection limit, default 256, maximum 65536 |
 | `--udp-only` | Omit the shared WebRTC room |
 | `--shards <n>`, `--shard-width <units>` | A [sharded game](../multiplayer/shards.md)'s world as `n` regions along x, each this wide, each a match; players join the world at match 0 |
-| `--shard-most <n>` | Splits a sharded game's region in two when its shard owns more entities than this |
+| `--shard-most <n>` | Splits a sharded game's region in two when its shard owns more entities than this, and merges two neighbouring regions owning a quarter of it together |
 | `--frames <n>` | Bound a test run to this many service iterations |
 
 The service uses wall-clock time and sleeps between iterations, normally about

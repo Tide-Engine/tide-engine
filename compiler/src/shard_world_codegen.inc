@@ -161,6 +161,10 @@ static void gen_shard_receive(gen *g)
               "            tide_shard_push(&s->routes, (int64_t)tide_read_u32(&r));\n"
               "            tide_shard_push(&s->routes, (int64_t)tide_read_u64(&r));\n        }\n"
               "        return !r.failed;\n    }\n");
+    sb_put(o, "    case TIDE_SHARD_RETIRE: {\n"
+              "        const uint32_t into = tide_read_u32(&r);\n"
+              "        if (r.failed || into == (uint32_t)tide_shard_self(w) || into > INT32_MAX - 1u) return false;\n"
+              "        s->into = (int32_t)into + 1;\n        return true;\n    }\n");
     sb_put(o, "    case TIDE_SHARD_SINGLETON: {\n"
               "        const uint32_t i = tide_read_u32(&r);\n        tide_read_u32(&r);\n"
               "        if (r.failed || i >= TIDE_SHARD_SINGLETONS || !tide_shard_take_singleton(w, &r, i, true)) return false;\n"

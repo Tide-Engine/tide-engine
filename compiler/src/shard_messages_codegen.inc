@@ -158,10 +158,15 @@ static void gen_shard_moves(gen *g)
         sb_printf(o, "        if (%s) continue; // A ghost: another shard's\n", presence_cell(g, "w", a, prog->shard_ghost->index, "row", false));
         sb_printf(o, "        const tide_entity e = *%s;\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_put(o, "        double p[3];\n"
-                  "        if (!tide_shard_where(w, e, p) || tide_shard_pinned(w, tide_shard_key(e))) continue;\n"
-                  "        if (tide_shard_find(s->held, tide_shard_key(e), 1) >= 0) continue; // Code that waits here needs it\n"
-                  "        if (!root && tide_shard_mine(w, p, TIDE_SHARD_REACH * 0.25)) continue;\n"
-                  "        const int32_t there = tide_shard_region_of(w, p);\n"
+                  "        const bool placed = tide_shard_where(w, e, p);\n"
+                  "        if (tide_shard_pinned(w, tide_shard_key(e))) continue;\n"
+                  "        if (tide_shard_find(s->held, tide_shard_key(e), 1) >= 0) continue; // Code that waits here needs it\n");
+        // A retiring shard's (tide_shard_state.into) go too, what has no position to the shard it merged into
+        if (prog->hierarchy[0]) sb_put(o, "        if (!placed && (!s->into || !tide_entity_is_null(tide_parent_of(w, e)))) continue;\n");
+        else sb_put(o, "        if (!placed && !s->into) continue;\n");
+        sb_put(o, "        if (placed && !root && tide_shard_mine(w, p, TIDE_SHARD_REACH * 0.25)) continue;\n"
+                  "        int32_t there = placed ? tide_shard_region_of(w, p) : -1;\n"
+                  "        if (there < 0 && s->into) there = s->into - 1;\n"
                   "        if (there < 0 || there == tide_shard_self(w)) continue;\n"
                   "        if (count == room) {\n"
                   "            room = room ? room * 2u : 16u;\n"

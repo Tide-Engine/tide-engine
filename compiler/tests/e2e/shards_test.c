@@ -2,6 +2,7 @@
 #include "tide/shards.h"
 #include "tide_test.h"
 
+#include <math.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -238,5 +239,25 @@ TIDE_TEST(shards_split_a_crowded_region)
     TIDE_CHECK(tide_shards_count(shards) > 3); // A region with more than 8 split
     check_done();
     check_clients(tide_shards_count(shards));
+    finish();
+}
+
+TIDE_TEST(shards_merge_quiet_regions)
+{
+    const uint64_t dropped = tide_shard_dropped();
+    begin(1000); // Splits past 1,000; two regions owning a quarter of that together merge
+    TIDE_REQUIRE(shards != NULL);
+    run(1.0, false);
+    run(20.0, true);
+    // The two regions are one, the other's shard ended, and nothing was lost on the way
+    uint32_t regions = 0;
+    tide_shard_box box;
+    for (uint32_t i = 0; i < tide_shards_count(shards); i++) regions += tide_shards_region(shards, i, &box) ? 1u : 0u;
+    TIDE_CHECK(regions == 1);
+    TIDE_CHECK(tide_shards_server(shards, 2) == NULL);
+    TIDE_CHECK(tide_shards_region(shards, 1, &box) && box.lo[0] == -INFINITY && box.hi[0] == INFINITY);
+    check_done();
+    TIDE_CHECK(tide_shard_dropped() == dropped);
+    check_clients(2);
     finish();
 }
