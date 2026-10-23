@@ -458,6 +458,28 @@ TIDE_MANAGED_EXPORT(tide_managed_coordinator_restarted) void tide_managed_coordi
     tide_shard_coordinator_restarted(tide_managed_coordinator, shard);
 }
 
+// Each shard's tick in a checkpoint, from which its journal's records are
+// still needed: u32 count, then each u32 shard and u32 tick
+TIDE_MANAGED_EXPORT(tide_managed_checkpoint_ticks)
+uint32_t tide_managed_checkpoint_ticks(const uint8_t *data, const uint32_t size, const uint32_t shards)
+{
+    tide_writer w = {.grows = true};
+    const uint32_t at = w.size;
+    tide_write_u32(&w, 0u);
+    uint32_t count = 0;
+    for (uint32_t shard = 0; shard < shards; shard++) {
+        const uint8_t *world = NULL;
+        uint32_t world_size = 0, tick = 0;
+        if (!tide_shard_checkpoint_world(data, size, shard, &world, &world_size, &tick)) continue;
+        tide_write_u32(&w, shard);
+        tide_write_u32(&w, tick);
+        count++;
+    }
+    if (w.overflow) tide_out_of_memory();
+    tide_shard_patch_u32(w.data + at, count);
+    return tide_managed_give(w.data, w.size);
+}
+
 // One shard's world in a checkpoint, to start it again elsewhere: u32 the tick
 // its journal goes on from, then its world; 0 for none
 TIDE_MANAGED_EXPORT(tide_managed_checkpoint_world)

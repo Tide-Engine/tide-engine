@@ -59,10 +59,21 @@ int main(const int argc, char **argv)
     const double deadline = now + (room ? 20.0 : 12.0);
     bool joined = false, ok = false;
     Avatar a = {0};
+    double frame = 0.0;
     while (now < deadline) {
         now = (double)tide_time_now_ns() * 1e-9;
+        // A frame at a time, as a host updates: every update sends, and a
+        // hosted world's router allows each admission so many a second
+        if (now - frame < 1.0 / 60.0) {
+            tide_yield();
+            continue;
+        }
+        frame = now;
         tide_hosting_client_update(admission, now);
-        if (tide_hosting_client_result(admission) > TIDE_HOSTING_ACCEPTED) break;
+        if (tide_hosting_client_result(admission) > TIDE_HOSTING_ACCEPTED) {
+            fprintf(stderr, "sharded server client: not let in (%d)\n", (int)tide_hosting_client_result(admission));
+            break;
+        }
         if (!joined && tide_hosting_client_result(admission) == TIDE_HOSTING_ACCEPTED) {
             tide_session_join(s, tide_hosting_client_transport(admission), tide_hosting_client_address(admission), now);
             joined = true;
