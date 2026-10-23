@@ -553,13 +553,18 @@ static void gen_shard_records(gen *g)
             if (!arch_stores(g, a, c) || c == ghost) continue;
             const decl *d = prog->components.items[c];
             const int id = client_codec_id(codec, (type){TY_COMPONENT, (decl *)d});
+            sb natives = {0};
+            for (int k = 0; k < d->fields.count; k++) {
+                if (d->fields.items[k].native) sb_printf(&natives, "            v.%s = 0;\n", field_cname(&d->fields.items[k]));
+            }
+            const char *zero = natives.data ? natives.data : "";
             if (comp_sparse(g, c)) {
-                sb_printf(o, "        if (%s) {\n            tide_write_u8(out, 1u);\n            %s v;\n            %s;\n"
+                sb_printf(o, "        if (%s) {\n            tide_write_u8(out, 1u);\n            %s v;\n            %s;\n%s"
                              "            tide_client_put%d(out, &v, 0);\n        } else tide_write_u8(out, 0u);\n",
-                          presence_cell(g, "w", a, c, "loc.row", false), type_cname(d), comp_take(g, "w", a, c, "loc.row", "v"), id);
+                          presence_cell(g, "w", a, c, "loc.row", false), type_cname(d), comp_take(g, "w", a, c, "loc.row", "v"), zero, id);
             } else {
-                sb_printf(o, "        {\n            %s v;\n            %s;\n            tide_client_put%d(out, &v, 0);\n        }\n",
-                          type_cname(d), comp_take(g, "w", a, c, "loc.row", "v"), id);
+                sb_printf(o, "        {\n            %s v;\n            %s;\n%s            tide_client_put%d(out, &v, 0);\n        }\n",
+                          type_cname(d), comp_take(g, "w", a, c, "loc.row", "v"), zero, id);
             }
         }
         sb_put(o, "        break;\n    }\n");

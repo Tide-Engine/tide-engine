@@ -115,6 +115,9 @@ TIDE_TEST(box3d_bodies_cross_shards_and_keep_their_speed)
     // than it stopping dead against a copy that can't move while the other leaves as fast as it came
     TIDE_CHECK(c.owned[22] == 1 && c.owned[23] == 1 && c.shard[22] == c.shard[23]);
     TIDE_CHECK(fabsf(c.body[22].velocity.x - 2.0f) < 0.3f && fabsf(c.body[23].velocity.x - 2.0f) < 0.3f);
+    // What the shards sent each other of the bodies near their border: what changed of each, about a quarter of
+    // whole trees' 419,326 bytes
+    TIDE_CHECK(tide_shards_ghost_bytes(shards) < 150000u);
     tide_shards_destroy(shards);
     shards = NULL;
 }

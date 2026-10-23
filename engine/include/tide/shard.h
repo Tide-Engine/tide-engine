@@ -48,9 +48,15 @@ typedef enum tide_shard_kind {
     // Orchestrator: one more range of entity indices (u32 first, u32 end).
     TIDE_SHARD_RANGE = 3,
     // A shard's ghosts for this one, since the last it sent: u32 count of
-    // entities, each as tide_shard_game.border packs it, then u32 count of
-    // handles it no longer holds near here (u32 index, u32 generation each),
-    // then u8 whether the singletons follow, and if so, them.
+    // trees, each u8 0 and the tree as tide_shard_game.border packs it, or u8 1
+    // and what changed of one this shard holds as a ghost of the sender's: u32
+    // index, u32 generation (its root), u64 tide_hash of the tree's bytes as
+    // this shard packs its ghost of it (the base), u32 size, then that many
+    // bytes of runs, each varint bytes the same, varint bytes changed and those
+    // bytes XOR the base's; then u32 count of handles it no longer holds near
+    // here (u32 index, u32 generation each), then u8 whether the singletons
+    // follow, and if so, them. A base that isn't what the sender sent is asked
+    // for whole (STALE).
     TIDE_SHARD_GHOSTS = 4,
     // Numbered: an entity moving here, u8 flags (TIDE_SHARD_BORROWED), u32 the
     // shard it's borrowed from, then the entity as border packs it.
@@ -93,6 +99,10 @@ typedef enum tide_shard_kind {
     // singletons holding a C library's state ([Native]): their bytes, as GHOSTS
     // carries the root's. The root takes them, and every shard has them then.
     TIDE_SHARD_SHARED = 17,
+    // Numbered, to a shard whose GHOSTS changed a tree this shard holds no
+    // base for (u32 index, u32 generation, its root): its next has it whole.
+    // The sender's agent reads it as it's handed; the world does nothing.
+    TIDE_SHARD_STALE = 18,
 } tide_shard_kind;
 
 // A shard a player's machine follows, and the match its host knows it by.

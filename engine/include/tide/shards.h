@@ -98,6 +98,8 @@ uint32_t tide_shards_count(const tide_shards *s);
 tide_server *tide_shards_server(const tide_shards *s, uint32_t shard);
 const void *tide_shards_world(const tide_shards *s, uint32_t shard);
 bool tide_shards_region(const tide_shards *s, uint32_t shard, tide_shard_box *out); // False for the root
+// The bytes of the ghost messages its shards have sent one another, for tests and tools
+uint64_t tide_shards_ghost_bytes(const tide_shards *s);
 void tide_shards_status(const tide_shards *s, uint32_t shard, tide_shard_status *out);
 // Which shard owns an entity now, as the orchestrator knows it: the shard it
 // last went to, or the one that gave its handle. -1 for none.

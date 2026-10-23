@@ -76,6 +76,82 @@ static void run(const double seconds)
     }
 }
 
+// A shard sends what changed of a tree another holds a ghost of, against the
+// bytes it last sent it, which the other's ghost packs to. One whose base isn't
+// those asks for the tree whole (STALE); one whose base is takes the changes.
+static void each_tree(void *context, const tide_entity e, const uint8_t *data, const uint32_t size)
+{
+    tide_writer *found = context;
+    uint32_t index, generation;
+    memcpy(&index, data + 8, sizeof index); // The tree's count, the root's record's size, then its handle
+    memcpy(&generation, data + 12, sizeof generation);
+    if (found->size || e.index != index || e.generation != generation) return;
+    tide_write_bytes(found, data, size);
+}
+
+static uint32_t stale_asks(const tide_world *w)
+{
+    uint32_t size = 0, asks = 0;
+    uint8_t *outbox = tide_game_api.shards->outbox(w, &size);
+    tide_reader r = {outbox, size, 0, false};
+    tide_shard_outgoing m;
+    while (tide_shard_next_outgoing(&r, &m)) asks += m.data[0] == TIDE_SHARD_STALE;
+    free(outbox);
+    return asks;
+}
+
+TIDE_TEST(shards_send_what_changed_of_a_ghost_against_what_it_was)
+{
+    now = 0;
+    walk_until = 0;
+    net = tide_loopback_create(3);
+    const tide_shards_desc d = {.game = &tide_game_api, .tick_rate = 60, .world = {{-40, -10, 0}, {40, 10, 0}},
+                                .split = {2, 1, 1}, .transports = transports};
+    shards = tide_shards_create(&d, now);
+    TIDE_REQUIRE(shards != NULL);
+    for (int i = 0; i < 240; i++) {
+        now += 1.0 / 120.0;
+        tide_shards_update(shards, now);
+    }
+    // The marker near the border: the right's, and a ghost of it on the left
+    tide_world *left = (tide_world *)(uintptr_t)tide_shards_world(shards, 1);
+    const tide_world *right = tide_shards_world(shards, 2);
+    TIDE_REQUIRE(left != NULL && right != NULL);
+    tide_entity near = {0};
+    for (uint32_t index = 0; index < left->entities.next_unused; index++) {
+        const tide_entity e = tide_entity_in_slot(&left->entities, index);
+        if (!tide_entity_is_null(e) && tide_has_Marker(left, e) && tide_has_tide_ghost(left, e)) near = e;
+    }
+    TIDE_REQUIRE(!tide_entity_is_null(near));
+    // Its bytes as the right sends them: what the left's ghost is
+    tide_writer tree = {.grows = true};
+    tide_game_api.shards->border(right, &(tide_shard_box){{-1e9, -1e9, -1e9}, {1e9, 1e9, 1e9}}, each_tree, &tree);
+    TIDE_REQUIRE(tree.size > 0);
+    const uint32_t asked = stale_asks(left);
+    for (int wrong = 0; wrong < 2; wrong++) {
+        uint8_t bytes[96];
+        tide_writer m = {bytes, sizeof bytes, 0, false, false};
+        tide_shard_header(&m, TIDE_SHARD_GHOSTS, 2u, 0u);
+        tide_write_u32(&m, 1u);
+        tide_write_u8(&m, 1u); // What changed of it: nothing
+        tide_write_u32(&m, near.index);
+        tide_write_u32(&m, near.generation);
+        tide_write_u64(&m, tide_hash(tree.data, tree.size) + (uint64_t)wrong);
+        tide_write_u32(&m, 2u + (tree.size >= 128u) + (tree.size >= 16384u));
+        tide_write_varint(&m, tree.size); // Bytes the same
+        tide_write_varint(&m, 0u);        // ...and none changed
+        tide_write_u32(&m, 0u);           // No drops
+        tide_write_u8(&m, 0u);            // No singletons
+        TIDE_REQUIRE(!m.overflow);
+        TIDE_CHECK(tide_game_api.shards->receive(left, bytes, m.size));
+        TIDE_CHECK(tide_has_tide_ghost(left, near));
+        TIDE_CHECK(stale_asks(left) == asked + (uint32_t)wrong); // Asked whole only for the wrong base
+    }
+    free(tree.data);
+    tide_shards_destroy(shards);
+    tide_loopback_destroy(net);
+}
+
 TIDE_TEST(shards_a_player_follows_their_avatar_across_borders)
 {
     now = 0;

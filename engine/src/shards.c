@@ -42,6 +42,7 @@ struct tide_shards {
     tide_shards_records records;
     void *records_user;
     bool failed;
+    uint64_t ghost_bytes_gone; // What stopped shards' agents sent of ghosts
     double updated; // When it last updated
 };
 
@@ -146,6 +147,7 @@ static void stop(tide_shards *s, const uint32_t id)
     } else if (h->server) {
         tide_server_destroy(h->server);
     }
+    s->ghost_bytes_gone += tide_shard_agent_ghost_bytes(h->agent);
     tide_shard_agent_destroy(h->agent);
     free(h->journal);
     *h = (here){0};
@@ -302,6 +304,13 @@ void tide_shards_rebuilt(tide_shards *s, const tide_game *game, const bool laid_
 uint32_t tide_shards_count(const tide_shards *s)
 {
     return tide_shard_coordinator_count(s->coordinator);
+}
+
+uint64_t tide_shards_ghost_bytes(const tide_shards *s)
+{
+    uint64_t total = 0;
+    for (uint32_t i = 0; i < s->room; i++) total += tide_shard_agent_ghost_bytes(s->shards[i].agent);
+    return total + s->ghost_bytes_gone;
 }
 
 tide_server *tide_shards_server(const tide_shards *s, const uint32_t shard)

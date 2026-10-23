@@ -46,6 +46,8 @@ uint8_t *tide_shard_agent_report(tide_shard_agent *a, uint32_t *size);
 bool tide_shard_agent_apply(tide_shard_agent *a, const uint8_t *data, uint32_t size);
 // Whether it has a checkpoint of its world to report.
 bool tide_shard_agent_checkpointing(const tide_shard_agent *a);
+// The bytes of the GHOSTS messages it has reported, for tests and tools.
+uint64_t tide_shard_agent_ghost_bytes(const tide_shard_agent *a);
 // The shard's ticks so far, as its journal numbers them.
 uint32_t tide_shard_agent_tick(const tide_shard_agent *a);
 

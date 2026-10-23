@@ -7,6 +7,36 @@ static void gen_shard_receive(gen *g)
     const program *prog = g->prog;
     sb *o = &g->c;
     const client_codec *codec = &g->value_codec;
+    // What changed of a tree this shard holds a ghost of (GHOSTS' form 1): its
+    // bytes as this shard packs its ghost, which are what the sender sent it,
+    // with the changes on them, taken as a whole tree would be. A base that
+    // isn't the one it was sent changes nothing, and asks for the tree whole
+    sb_put(o, "TIDE_SHARD_FN bool tide_shard_take_changes(tide_world *w, tide_reader *r, const uint32_t from)\n{\n"
+              "    tide_entity root;\n    root.index = tide_read_u32(r);\n    root.generation = tide_read_u32(r);\n"
+              "    const uint64_t hash = tide_read_u64(r);\n    const uint32_t n = tide_read_u32(r);\n"
+              "    const uint8_t *changes = tide_read_bytes(r, n);\n"
+              "    if (r->failed || !changes) return false;\n"
+              "    bool took = false;\n"
+              "    if (tide_entity_alive(&w->entities, root) && tide_has_tide_ghost(w, root)\n"
+              "        && tide_get_tide_ghost(w, root).source == (int32_t)from) {\n"
+              "        tide_writer was = {.grows = true};\n        tide_shard_put_tree(&was, w, root);\n"
+              "        if (was.overflow) tide_out_of_memory();\n"
+              "        if (tide_hash(was.data, was.size) == hash) {\n"
+              "            tide_reader c = {changes, n, 0, false};\n            uint32_t at = 0;\n"
+              "            while (c.at < c.size && !c.failed) {\n"
+              "                const uint32_t same = tide_read_varint(&c), changed = tide_read_varint(&c);\n"
+              "                if (c.failed || same > was.size - at || changed > was.size - at - same) { c.failed = true; break; }\n"
+              "                at += same;\n"
+              "                for (uint32_t i = 0; i < changed; i++) was.data[at++] ^= tide_read_u8(&c);\n            }\n"
+              "            if (!c.failed && at == was.size) {\n"
+              "                tide_reader tree = {was.data, was.size, 0, false};\n"
+              "                took = tide_shard_take_tree(w, &tree, true, (int32_t)from, NULL) && tree.at == tree.size;\n            }\n        }\n"
+              "        free(was.data);\n    }\n"
+              "    if (!took) { // Asked for whole\n"
+              "        tide_writer m = tide_shard_begin(w, TIDE_SHARD_STALE, true);\n"
+              "        tide_write_u32(&m, root.index);\n        tide_write_u32(&m, root.generation);\n"
+              "        tide_shard_post(w, TIDE_SHARD_TO_SHARD, from, (tide_entity){0}, &m);\n    }\n"
+              "    return true;\n}\n\n");
     const char *use = prog->assets.count ? "    tide_pack_use();\n" : "";
     sb_printf(o, "// A message for the coming tick (tide/shard.h), applied before it on the server and on each of its\n"
                  "// players, in the order the server took them\n"
@@ -68,7 +98,9 @@ static void gen_shard_receive(gen *g)
     sb_put(o, "    case TIDE_SHARD_GHOSTS: {\n"
               "        const uint32_t trees = tide_read_u32(&r);\n"
               "        for (uint32_t i = 0; i < trees && !r.failed; i++) {\n"
-              "            if (!tide_shard_take_tree(w, &r, true, (int32_t)from, NULL)) return false;\n        }\n"
+              "            const uint8_t form = tide_read_u8(&r); // 0: a tree whole; 1: what changed of one\n"
+              "            if (form == 0u ? !tide_shard_take_tree(w, &r, true, (int32_t)from, NULL)\n"
+              "                           : form != 1u || !tide_shard_take_changes(w, &r, from)) return false;\n        }\n"
               "        const uint32_t drops = tide_read_u32(&r);\n"
               "        if (r.failed || drops > (r.size - r.at) / 8u) return false;\n"
               "        for (uint32_t i = 0; i < drops; i++) {\n"
@@ -110,6 +142,7 @@ static void gen_shard_receive(gen *g)
               "        if (r.failed || (int32_t)asker == tide_shard_self(w)) return !r.failed;\n"
               "        tide_shard_ask_of(w, e, (int32_t)asker);\n        return true;\n    }\n");
     sb_put(o, "    case TIDE_SHARD_SHARED: return tide_shard_take_shared(w, &r);\n");
+    sb_put(o, "    case TIDE_SHARD_STALE: return true; // The sender's agent's (tide_shard_agent_apply)\n");
     sb_put(o, "    case TIDE_SHARD_FREED: {\n"
               "        const uint32_t index = tide_read_u32(&r);\n        const uint32_t generation = tide_read_u32(&r);\n"
               "        if (r.failed) return false;\n"

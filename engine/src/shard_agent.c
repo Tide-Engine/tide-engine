@@ -29,7 +29,9 @@ struct tide_shard_agent {
     target *targets;
     uint32_t target_count;
     map64 *sent; // By shard
+    map64 *bases; // ...and the bytes it last sent of each tree (a `base *`), what it sends what changed against
     uint32_t sent_room;
+    uint64_t ghost_bytes; // Of the GHOSTS it reported
     // Trees whose ARRIVE it handed its server and the server may not have
     // applied yet: not in its world, and not to be dropped from the ghosts
     // their senders keep of them
@@ -47,12 +49,37 @@ static map64 *sent_to(tide_shard_agent *a, const uint32_t to)
     if (to >= a->sent_room) {
         const uint32_t room = to + 8u;
         map64 *grown = realloc(a->sent, room * sizeof *grown);
-        if (!grown) tide_out_of_memory();
+        map64 *bases = realloc(a->bases, room * sizeof *bases);
+        if (!grown || !bases) tide_out_of_memory();
         memset(grown + a->sent_room, 0, (room - a->sent_room) * sizeof *grown);
+        memset(bases + a->sent_room, 0, (room - a->sent_room) * sizeof *bases);
         a->sent = grown;
+        a->bases = bases;
         a->sent_room = room;
     }
     return &a->sent[to];
+}
+
+// A tree's bytes as it last sent them a shard
+typedef struct base {
+    uint32_t size;
+    uint8_t data[];
+} base;
+
+static void forget_base(map64 *bases, const uint64_t key)
+{
+    const uint64_t *kept = map_find(bases, key);
+    if (!kept) return;
+    free((void *)(uintptr_t)*kept);
+    map_remove(bases, key);
+}
+
+static void free_bases(map64 *bases)
+{
+    for (uint32_t k = 0; k < bases->room; k++) {
+        if (bases->keys[k] && bases->keys[k] != UINT64_MAX) free((void *)(uintptr_t)bases->values[k]);
+    }
+    map_free(bases);
 }
 
 tide_shard_agent *tide_shard_agent_create(const tide_game *game, tide_server *server, const uint32_t shard,
@@ -74,8 +101,12 @@ tide_shard_agent *tide_shard_agent_create(const tide_game *game, tide_server *se
 void tide_shard_agent_destroy(tide_shard_agent *a)
 {
     if (!a) return;
-    for (uint32_t i = 0; i < a->sent_room; i++) map_free(&a->sent[i]);
+    for (uint32_t i = 0; i < a->sent_room; i++) {
+        map_free(&a->sent[i]);
+        free_bases(&a->bases[i]);
+    }
     free(a->sent);
+    free(a->bases);
     map_free(&a->arriving);
     free(a->targets);
     free(a->checkpoint);
@@ -113,6 +144,21 @@ static void note_arrival(tide_shard_agent *a, const uint8_t *data, const uint32_
     if (r.failed || from == a->shard || from == TIDE_SHARD_ORCHESTRATOR) return;
     map_put(sent_to(a, from), key_of(root), 1u); // Sent, with bytes it doesn't know
     map_put(&a->arriving, key_of(root), 1u);
+}
+
+// A shard holds no base for a tree this one sent it what changed of: it's sent whole next
+static void note_stale(tide_shard_agent *a, const uint8_t *data, const uint32_t size)
+{
+    tide_reader r = {data, size, 0, false};
+    if (tide_read_u8(&r) != TIDE_SHARD_STALE) return;
+    const uint32_t from = tide_read_u32(&r);
+    tide_read_u32(&r);
+    tide_entity root;
+    root.index = tide_read_u32(&r);
+    root.generation = tide_read_u32(&r);
+    if (r.failed || from == a->shard || from == TIDE_SHARD_ORCHESTRATOR) return;
+    uint64_t *had = map_find(sent_to(a, from), key_of(root));
+    if (had) *had = 1u; // Sent, with bytes it doesn't know
 }
 
 bool tide_shard_agent_apply(tide_shard_agent *a, const uint8_t *data, const uint32_t size)
@@ -172,6 +218,7 @@ bool tide_shard_agent_apply(tide_shard_agent *a, const uint8_t *data, const uint
         const uint32_t n = tide_read_u32(&r);
         const uint8_t *message = tide_read_bytes(&r, n);
         note_arrival(a, message, n);
+        note_stale(a, message, n);
         if (!tide_server_inject(a->server, message, n)) tide_out_of_memory();
     }
     r.at = admits_at;
@@ -199,6 +246,7 @@ bool tide_shard_agent_apply(tide_shard_agent *a, const uint8_t *data, const uint
             for (uint32_t i = 0; i < targets; i++) still |= kept[i].shard == s;
             if (!still) {
                 map_free(&a->sent[s]);
+                free_bases(&a->bases[s]);
                 continue;
             }
             for (uint32_t k = 0; k < a->sent[s].room; k++) {
@@ -260,8 +308,25 @@ static void free_border(border *b)
     free(b->bytes.data);
 }
 
+// What changed of a tree from `was` to `now`, as many bytes of each: runs of
+// bytes the same and bytes that changed, these XOR what they were, so a value
+// that moved a little is a few bytes
+static void write_changes(tide_writer *m, const uint8_t *was, const uint8_t *now, const uint32_t size)
+{
+    for (uint32_t k = 0; k < size;) {
+        uint32_t same = 0, changed = 0;
+        while (k + same < size && was[k + same] == now[k + same]) same++;
+        while (k + same + changed < size && was[k + same + changed] != now[k + same + changed]) changed++;
+        tide_write_varint(m, same);
+        tide_write_varint(m, changed);
+        for (uint32_t i = 0; i < changed; i++) tide_write_u8(m, (uint8_t)(was[k + same + i] ^ now[k + same + i]));
+        k += same + changed;
+    }
+}
+
 // The GHOSTS message for `t`, written into `out` (u32 its shard, u32 size,
-// the message), when anything changed: whether it was
+// the message), when anything changed: whether it was. A tree it sent the
+// target before, whose bytes it knows, goes as what changed of them
 static bool ghosts_for(tide_shard_agent *a, const target *t, tide_writer *out)
 {
     const void *world = tide_server_world(a->server);
@@ -273,6 +338,7 @@ static bool ghosts_for(tide_shard_agent *a, const target *t, tide_writer *out)
     border b = {.bytes = {.grows = true}};
     a->api->border(world, &near, take_border, &b);
     map64 *sent = sent_to(a, t->shard);
+    map64 *bases = &a->bases[t->shard];
     tide_writer m = {.grows = true};
     tide_shard_header(&m, TIDE_SHARD_GHOSTS, a->shard, 0u);
     const uint32_t count_at = m.size;
@@ -283,7 +349,32 @@ static bool ghosts_for(tide_shard_agent *a, const target *t, tide_writer *out)
         map_put(&now, b.keys[i], 1u);
         const uint64_t *had = map_find(sent, b.keys[i]);
         if (had && *had == b.hashes[i]) continue;
-        tide_write_bytes(&m, b.bytes.data + b.at[i], b.sizes[i]);
+        const uint8_t *now_bytes = b.bytes.data + b.at[i];
+        const uint32_t size = b.sizes[i];
+        const uint64_t *kept = map_find(bases, b.keys[i]);
+        base *was = kept ? (base *)(uintptr_t)*kept : NULL;
+        if (had && *had > 1u && was && was->size == size) {
+            const tide_entity root = entity_of(b.keys[i]);
+            tide_write_u8(&m, 1u);
+            tide_write_u32(&m, root.index);
+            tide_write_u32(&m, root.generation);
+            tide_write_u64(&m, tide_hash(was->data, size));
+            const uint32_t at = m.size;
+            tide_write_u32(&m, 0u);
+            write_changes(&m, was->data, now_bytes, size);
+            if (!m.overflow) tide_shard_patch_u32(m.data + at, m.size - at - 4u);
+        } else {
+            tide_write_u8(&m, 0u);
+            tide_write_bytes(&m, now_bytes, size);
+            if (!was || was->size != size) {
+                free(was);
+                was = malloc(sizeof *was + size);
+                if (!was) tide_out_of_memory();
+                was->size = size;
+                map_put(bases, b.keys[i], (uint64_t)(uintptr_t)was);
+            }
+        }
+        memcpy(was->data, now_bytes, size);
         map_put(sent, b.keys[i], b.hashes[i]);
         puts++;
     }
@@ -306,6 +397,7 @@ static bool ghosts_for(tide_shard_agent *a, const target *t, tide_writer *out)
         dropped.index = tide_read_u32(&e);
         dropped.generation = tide_read_u32(&e);
         map_remove(sent, key_of(dropped));
+        forget_base(bases, key_of(dropped));
     }
     // The root's singletons, to every region, when they changed
     bool singletons = false;
@@ -332,6 +424,7 @@ static bool ghosts_for(tide_shard_agent *a, const target *t, tide_writer *out)
         tide_write_u32(out, t->shard);
         tide_write_u32(out, m.size);
         tide_write_bytes(out, m.data, m.size);
+        a->ghost_bytes += m.size;
     }
     free(m.data);
     map_free(&now);
@@ -374,6 +467,11 @@ void tide_shard_agent_rebuilt(tide_shard_agent *a, const tide_game *game)
             if (a->sent[s].keys[k]) a->sent[s].values[k] = 1u; // Sent, with bytes it doesn't know
         }
     }
+}
+
+uint64_t tide_shard_agent_ghost_bytes(const tide_shard_agent *a)
+{
+    return a ? a->ghost_bytes : 0u;
 }
 
 void tide_shard_agent_busy(tide_shard_agent *a, const float busy)
