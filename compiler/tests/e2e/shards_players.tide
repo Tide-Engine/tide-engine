@@ -111,3 +111,17 @@ view QueryMarkers(query (Marker marker) markers, World world, mut Sight sight)
         if (world.Has<Marker>(row.entity) && world.Get<Marker>(row.entity).name == "far") sight.found += 1;
     }
 }
+
+// A singleton holding a C library's state, and a setting beside it: the
+// avatar's own code writes the setting on whichever region has it, and the
+// root takes it as the world's (shards_a_player_follows_their_avatar_across_borders)
+singleton Tuning
+{
+    [Native] long handle;
+    float speed = 1;
+}
+
+system Tune(Avatar avatar, mut Tuning tuning)
+{
+    if (avatar.position.x > 5 && tuning.speed == 1) tuning.speed = 2;
+}

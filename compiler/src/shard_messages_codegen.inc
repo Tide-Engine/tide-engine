@@ -160,6 +160,38 @@ static void gen_shard_singletons(gen *g)
         }
     }
     sb_put(o, "    tide_shard_bytes_done(s->shared, flat, copied);\n}\n\n");
+    // A region's code wrote them: they go to the root, which takes them as its own
+    // (TIDE_SHARD_SHARED), and the region keeps them meanwhile
+    sb_printf(o, "TIDE_HELPER void tide_shard_send_shared(tide_world *w)\n{\n"
+                 "    tide_shard_state *s = &w->tide_shard_state;\n"
+                 "    if (!s->shard || s->role == TIDE_SHARD_ROOT_ROLE || !(%s)) return;\n"
+                 "    tide_writer now = {.grows = true};\n    tide_shard_put_shared(&now, w);\n"
+                 "    if (now.overflow) tide_out_of_memory();\n"
+                 "    uint32_t size;\n    bool copied;\n"
+                 "    const uint8_t *flat = tide_shard_bytes_flat(s->shared, &size, &copied);\n"
+                 "    const bool same = size == now.size && (!size || memcmp(flat, now.data, size) == 0);\n"
+                 "    tide_shard_bytes_done(s->shared, flat, copied);\n"
+                 "    if (!same && size == now.size) { // What the root last said, written over: tell it\n"
+                 "        tide_writer m = tide_shard_begin(w, TIDE_SHARD_SHARED, true);\n"
+                 "        tide_write_bytes(&m, now.data, now.size);\n"
+                 "        tide_shard_post(w, TIDE_SHARD_TO_SHARD, (uint32_t)TIDE_SHARD_ROOT, (tide_entity){0}, &m);\n"
+                 "        tide_shard_bytes_set(&s->shared, now.data, now.size, TIDE_IN_MATCH);\n    }\n"
+                 "    free(now.data);\n}\n\n", shared_size.data);
+    // ...and the root's, taking what a region wrote
+    sb_printf(o, "TIDE_HELPER bool tide_shard_take_shared(tide_world *w, tide_reader *r)\n{\n"
+                 "    if (r->size - r->at != (uint32_t)(%s)) return false;\n"
+                 "    if (w->tide_shard_state.role != TIDE_SHARD_ROOT_ROLE) return true; // Not its to keep\n", shared_size.data);
+    for (int i = 0; i < prog->singletons.count; i++) {
+        const decl *d = prog->singletons.items[i];
+        if (!d->native_state) continue;
+        for (int k = 0; k < d->fields.count; k++) {
+            const field *f = &d->fields.items[k];
+            if (f->native || f->hidden || f->is_local) continue;
+            sb_printf(o, "    memcpy(&w->%s.%s, tide_read_bytes(r, sizeof w->%s.%s), sizeof w->%s.%s);\n", type_cname(d),
+                      field_cname(f), type_cname(d), field_cname(f), type_cname(d), field_cname(f));
+        }
+    }
+    sb_put(o, "    (void)w;\n    return !r->failed;\n}\n\n");
     sb_printf(o, "TIDE_SHARD_FN uint8_t *tide_shard_singletons_of(const void *world, uint32_t *size)\n{\n"
                  "    const tide_world *w = world;\n    tide_text_use((tide_heap *)(uintptr_t)&w->heap, NULL);\n"
                  "    const uint64_t owned = (uint64_t)w->tide_shard_state.singletons;\n"

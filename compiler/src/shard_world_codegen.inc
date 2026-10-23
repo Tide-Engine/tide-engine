@@ -109,6 +109,7 @@ static void gen_shard_receive(gen *g)
               "        e.generation = kind == TIDE_SHARD_BORROW ? tide_read_u32(&r) : TIDE_ENTITY_TEMPORARY;\n"
               "        if (r.failed || (int32_t)asker == tide_shard_self(w)) return !r.failed;\n"
               "        tide_shard_ask_of(w, e, (int32_t)asker);\n        return true;\n    }\n");
+    sb_put(o, "    case TIDE_SHARD_SHARED: return tide_shard_take_shared(w, &r);\n");
     sb_put(o, "    case TIDE_SHARD_FREED: {\n"
               "        const uint32_t index = tide_read_u32(&r);\n        const uint32_t generation = tide_read_u32(&r);\n"
               "        if (r.failed) return false;\n"
@@ -276,6 +277,7 @@ static void gen_shard_after(gen *g)
               "    tide_shard_state *s = &w->tide_shard_state;\n"
               "    if (!s->shard) return;\n"
               "    tide_shard_touching(w, t);\n"
+              "    tide_shard_send_shared(w); // What its code wrote of the root's settings goes to the root\n"
               // What its code that waits needs: the entities it ran for, and what they touched
               "    tide_list_clear(&s->held, 8u);\n"
               "    for (uint32_t i = 0; i < t->skip_count; i++) {\n"
@@ -572,6 +574,7 @@ static void gen_shard_tick(gen *g)
               "void tide_world_tick_on(tide_world *w, const tide_jobs *jobs)\n{\n"
               "    tide_shard_use(w, tide_shard_owns_world, tide_shard_moves_world);\n"
               "    if (!w->tide_shard_state.shard) {\n        tide_world_tick_once(w, jobs);\n        return;\n    }\n"
+              "    tide_text_use(&w->heap, NULL); // Its lists are read in its own heap, whatever world this thread ran last\n"
               "    tide_shard_apply_shared(w); // The root's fields of singletons holding [Native] state, whatever was written here\n"
               "    tide_shard_tick t = {0};\n    tide_world before = {0};\n    tide_world_copy(&before, w);\n");
     if (hears) {

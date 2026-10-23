@@ -122,6 +122,11 @@ TIDE_TEST(shards_a_player_follows_their_avatar_across_borders)
     }
     const tide_client_status home = tide_client_status_of(tide_shard_client_home(player));
     TIDE_CHECK(home.state == TIDE_SESSION_CONNECTED);
+    // The setting its avatar's code wrote on the right is the world's: the root took it, and every shard has it
+    for (uint32_t i = 0; i < tide_shards_count(shards); i++) {
+        const tide_world *w = tide_shards_world(shards, i);
+        if (w) TIDE_CHECK(w->Tuning.speed == 2.0f);
+    }
 
     tide_shard_client_destroy(player);
     tide_shards_destroy(shards);

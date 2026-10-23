@@ -89,6 +89,10 @@ typedef enum tide_shard_kind {
     // Numbered: an entity of an index this shard gave was destroyed on the
     // shard it went to (u32 index, u32 generation): the index is free again.
     TIDE_SHARD_FREED = 16,
+    // Numbered, to the root: a region's code wrote the root's fields of the
+    // singletons holding a C library's state ([Native]): their bytes, as GHOSTS
+    // carries the root's. The root takes them, and every shard has them then.
+    TIDE_SHARD_SHARED = 17,
 } tide_shard_kind;
 
 // A shard a player's machine follows, and the match its host knows it by.
