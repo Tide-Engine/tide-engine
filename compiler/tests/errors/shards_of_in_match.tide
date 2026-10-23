@@ -1,0 +1,8 @@
+// expect: Shards.Of is for what this machine shows, so it's a view's or a local handler's: the match is one world wherever its entities are
+settings { shards = true; reach = 8; }
+scene Main { }
+component Rock { [Position] float2 position; int shard; }
+system Count(mut Rock rock)
+{
+    rock.shard = Shards.Of(this);
+}

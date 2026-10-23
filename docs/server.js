@@ -56,7 +56,7 @@ const server = http.createServer(async (req, res) => {
     // game has a name and explanation. Runtime HTML is a canvas-only player
     // with a generic title. Let crawlers read noindex; keep its assets alone.
     const pathname = (req.url ?? '/').split('?')[0];
-    if (/^\/(?:examples\/[a-z][a-z0-9-]*|samples\/[a-z][a-z0-9-]*|sand|duel|towers|sumo)(?:\/(?:index\.html)?)?$/.test(pathname)) {
+    if (/^\/(?:examples\/[a-z][a-z0-9-]*|samples\/[a-z][a-z0-9-]*|sand|duel|towers|sumo|earth)(?:\/(?:index\.html)?)?$/.test(pathname)) {
         res.setHeader('x-robots-tag', 'noindex');
     }
     // The installers are read as text, by `irm ... | iex` too, and never kept.

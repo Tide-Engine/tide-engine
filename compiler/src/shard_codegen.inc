@@ -235,6 +235,12 @@ static void gen_shard_views(gen *g)
               "        if (!tide_has_tide_ghost(other, e)) return other;\n"
               "        if (!copy) copy = other;\n    }\n"
               "    return copy ? copy : w;\n}\n\n");
+    // Shards.Of: the shard that owns an entity, of the worlds drawn (or the
+    // one ticked); a copy's is the shard it came from
+    sb_put(o, "TIDE_SHARD_FN int32_t tide_shard_of(const tide_entity e)\n{\n"
+              "    const tide_world *at = tide_view_world_of((const tide_world *)tide_shard_world_now(), e);\n"
+              "    if (!at || !tide_entity_alive(&at->entities, e)) return -1;\n"
+              "    return tide_has_tide_ghost(at, e) ? tide_get_tide_ghost(at, e).source : tide_shard_self(at);\n}\n\n");
     for (int i = 0; i < prog->components.count; i++) {
         const decl *d = prog->components.items[i];
         if (d->is_local) continue;

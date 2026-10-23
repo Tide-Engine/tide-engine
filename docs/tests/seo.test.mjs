@@ -158,7 +158,7 @@ test('production HTTP canonicalizes hosts, serves crawlable docs, and excludes r
         ...['package.json', 'headers.js', 'releases.js', 'analytics.js', 'admin.js', 'telemetry.js', 'prototypes.js', 'server.js'].map((file) => copyFile(path.join(docs, file), path.join(deployment, file))),
     ]);
     // Tiny static fixtures keep this check independent of compiled web games.
-    const rawPages = ['/examples/seo-probe', '/samples/seo-probe', '/sand', '/duel', '/towers', '/sumo'];
+    const rawPages = ['/examples/seo-probe', '/samples/seo-probe', '/sand', '/duel', '/towers', '/sumo', '/earth'];
     const fixtureEntries = [];
     const fixtureAliases = [];
     async function fixture(url, contents) {

@@ -796,10 +796,10 @@ void tide_platform_room_invite(const char *room, char *out, const size_t size)
     if (!size) return;
     out[0] = '\0';
     if (!room || !room[0]) return;
-    // Only letters and digits reach the program from `?join=` as they are
+    // Only letters, digits and a match's slash reach the program from `?join=` as they are
     bool linkable = true;
     for (const char *c = room; *c; c++) {
-        linkable &= (*c >= '0' && *c <= '9') || (*c >= 'A' && *c <= 'Z') || (*c >= 'a' && *c <= 'z');
+        linkable &= (*c >= '0' && *c <= '9') || (*c >= 'A' && *c <= 'Z') || (*c >= 'a' && *c <= 'z') || *c == '/';
     }
     const size_t most = size < TIDE_INVITE_BYTES ? size : TIDE_INVITE_BYTES;
     if (linkable && backend_invite(room, out, most) && memchr(out, '\0', most)) {

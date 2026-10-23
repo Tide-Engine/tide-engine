@@ -317,6 +317,8 @@ typedef bool (*tide_shard_owner)(const void *world, tide_entity e);
 typedef int64_t (*tide_shard_mover)(const void *world);
 void tide_shard_use(const void *world, tide_shard_owner owns, tide_shard_mover moves);
 bool tide_shard_owns_now(tide_entity e);
+// Shards.Of: that world, NULL with none
+const void *tide_shard_world_now(void);
 // Shards.moves: how many times an entity came to the world being ticked or
 // drawn, or left it, as its shard has it; 0 with none.
 int64_t tide_shard_moves_now(void);

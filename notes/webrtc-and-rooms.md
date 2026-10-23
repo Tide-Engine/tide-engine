@@ -80,8 +80,9 @@ accepted; Provisional in the spec's Sessions section). What code relies on:
   The web backend asks the page (`tide_web_room_invite`, `room_invite` in
   `tide.js`), which returns 0 for a page that isn't `http:`, `https:` or
   `file:` (no place to link to: `about:srcdoc`, `blob:`) and for a link that
-  doesn't fit. The C side only asks for a room of letters and digits (all
-  `?join=` passes on, as `tide.js` strips the rest), checks the answer is
+  doesn't fit. The C side only asks for a room of letters, digits and `/`
+  (all `?join=` passes on, as `tide.js` strips the rest: the slash since
+  2026-10-24, for a hosted world's `ROOMID/0`, which the docs' home page joins), checks the answer is
   printable ASCII ending within `TIDE_INVITE_BYTES` (256: `Clipboard.Copy`'s
   255 bytes and a NUL), and otherwise writes the room.
 - **How local code gets it.** Generated `tide_local` has `char

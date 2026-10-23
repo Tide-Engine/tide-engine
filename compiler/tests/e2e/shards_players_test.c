@@ -287,6 +287,8 @@ TIDE_TEST(shards_a_machine_watches_an_area_far_from_its_player)
     TIDE_CHECK(tide_shard_client_session(player, 2) == NULL);
     TIDE_CHECK(sight.blinks == 0); // The markers are the right's, and it hears none of the right's code
     TIDE_CHECK(sight.shown == 1 && sight.hidden == 0); // The copy of the near one
+    TIDE_CHECK(sight.of == 2 && sight.rowsOf == 2); // ...which the right owns (Shards.Of), though the left's copy is drawn
+    TIDE_CHECK(sight.avatarOf == 1);
 
     // Watching the right: every marker once, the near one from the right's own world
     local.Sight.watching = true;
@@ -304,6 +306,7 @@ TIDE_TEST(shards_a_machine_watches_an_area_far_from_its_player)
     TIDE_CHECK(right.state == TIDE_SESSION_CONNECTED && right.resyncs == 0);
     TIDE_CHECK(sight.blinks >= 8); // The right's markers' blinks, from the right's own ticks
     TIDE_CHECK(sight.shown == 4 && sight.hidden == 0); // The far ones came to be seen; the near one already was
+    TIDE_CHECK(sight.of == 8 && sight.rowsOf == 8); // Every marker the right's
 
     // Watching no more: the right's shard goes, and the copy is what it sees again
     local.Sight.watching = false;
@@ -324,6 +327,7 @@ TIDE_TEST(shards_a_machine_watches_an_area_far_from_its_player)
     TIDE_CHECK(tide_shard_client_joins(player) == joins + 1u);
     sight = frame();
     TIDE_CHECK(sight.shown == 7 && sight.hidden == 3); // The far ones again, each once, as the right came near
+    TIDE_CHECK(sight.avatarOf == 2);
 
     tide_local_free(&local);
     tide_event_log_free(&heard);

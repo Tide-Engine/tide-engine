@@ -4268,6 +4268,13 @@ static void gen_builtin_call(gen *g, sb *o, const expr *e)
         sb_put(o, "), true)");
         return;
     }
+    // Shards.Of in a game that isn't sharded: the one world is shard 0
+    if (!g->prog->shards && strcmp(e->c_callee, "tide_shard_of") == 0 && e->args.count == 1) {
+        sb_put(o, "((void)(");
+        gen_expr(g, o, e->args.items[0]);
+        sb_put(o, "), (int32_t)0)");
+        return;
+    }
     // Shards.Spans: noted on the tick's runs (tide_shard_span_note), each argument once; nothing in a game that isn't sharded
     if (strcmp(e->c_callee, "tide_shard_spans") == 0 && e->args.count == 3) {
         const type t = e->args.items[1]->type;

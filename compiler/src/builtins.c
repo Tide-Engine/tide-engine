@@ -1064,6 +1064,10 @@ static void build_signatures(void)
              "a, b",
              "For a library's code: one `Shards.Together(a, b)` no longer holds, like two bodies that stopped touching. "
              "With none left, the two go where each is. Nothing in a game that isn't sharded.");
+    describe(add("Shards", "Of", t_int, "tide_shard_of", 1, (type){TY_ENTITY, NULL}, T_NONE, T_NONE), "entity",
+             "For a view or a local handler: the number of the shard that owns the entity, as this machine sees it, "
+             "from 0, like a map coloring each shard's own. -1 for an entity no shard this machine follows has. "
+             "Always 0 in a game that isn't sharded.");
     // Debug: output for whoever runs the game, which changes nothing in the match
     describe(add("Debug", "Log", T_NONE, "tide_debug_log", 1, T_STR, T_NONE, T_NONE), "text",
              "Prints a line: to the terminal under `tide run`, the browser's console on the web and the system's log on "

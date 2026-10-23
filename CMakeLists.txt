@@ -200,6 +200,7 @@ if(TIDE_PLATFORM)
     endif()
     add_subdirectory(demo)
     add_subdirectory(examples/duel)
+    add_subdirectory(examples/earth) # A sharded planet, on the docs site's home page
     add_subdirectory(bench)   # Ticks on the platform layer's threads
 endif()
 

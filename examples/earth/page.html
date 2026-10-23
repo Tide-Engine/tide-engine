@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Earth</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #161618; overflow: hidden; }
+  body { display: flex; align-items: center; justify-content: center; }
+  canvas { display: block; outline: none; }
+</style>
+</head>
+<body>
+<canvas id="canvas" tabindex="-1" oncontextmenu="return false"></canvas>
+<script>
+  // A match this page starts is the planet in four regions along x, each a
+  // shard, 3,300 km wide: a world of one shard would be the same to look at,
+  // and these show what each one owns
+  var Tide = {
+    canvas: document.getElementById('canvas'),
+    print: text => console.log(text),
+    printErr: text => console.error(text),
+    arguments: ['--shards', '4', '--shard-width', '3300000'],
+  };
+</script>
+{{{ SCRIPT }}}
+</body>
+</html>

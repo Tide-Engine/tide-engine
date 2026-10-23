@@ -1,7 +1,7 @@
 # tide_add_game(<target> [SOURCES <file.tide|file.c|file.cpp>...] [HOST <file.c>...] [WINDOW] [NAME <name>]
 #               [TITLE <title>] [STATS] [LAYOUT] [EMBED] [WARNINGS <text>...]
 #               [PACKAGES <Name> <file.tide>... [<Name> <file.tide>...]]
-#               [DEFINES <SYMBOL>...])
+#               [DEFINES <SYMBOL>...] [SHELL <page.html>])
 #
 # Builds a Tide game as the program <target>. The game is every .tide file
 # in the current source folder and its subfolders (new ones are picked up by
@@ -27,7 +27,8 @@
 # game's stats setting does: the frame rate, and at a click on it or F8, what
 # a frame's work takes, ping, bandwidth, tick, entity count, the threads ticks
 # run on, memory, draw calls and the slowest systems. On the web it's
-# <target>.html, and on Android an app (see tide_android_app).
+# <target>.html, around the canvas SHELL makes (see tide_web_page), and on
+# Android an app (see tide_android_app).
 #
 # With HOST, those C files are the program instead, for tests and custom hosts.
 # WINDOW says they open a window, so that on Android they're an app too, rather
@@ -120,7 +121,7 @@ function(tide_web_page target)
 endfunction()
 
 function(tide_add_game target)
-    cmake_parse_arguments(ARG "STATS;LAYOUT;EMBED;WINDOW;SERVER;STRIP_SERVER_ASSETS" "NAME;TITLE" "SOURCES;HOST;WARNINGS;PACKAGES;DEFINES" ${ARGN})
+    cmake_parse_arguments(ARG "STATS;LAYOUT;EMBED;WINDOW;SERVER;STRIP_SERVER_ASSETS" "NAME;TITLE;SHELL" "SOURCES;HOST;WARNINGS;PACKAGES;DEFINES" ${ARGN})
     if(ARG_SERVER AND (TIDE_WEB OR TIDE_ANDROID OR ARG_HOST OR ARG_WINDOW OR ARG_LAYOUT))
         message(FATAL_ERROR "tide_add_game(${target} SERVER) is a standalone native server")
     endif()
@@ -365,7 +366,12 @@ int main(int argc, char **argv)
                 COMMAND "${CMAKE_COMMAND}" "-DFROM=${out_pack}" "-DTO=$<TARGET_FILE_DIR:${target}>/${target}.pack"
                     -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/copy_pack.cmake"
                 VERBATIM)
-            tide_web_page(${target} PACK "${out_pack}")
+            if(ARG_SHELL)
+                get_filename_component(shell "${ARG_SHELL}" ABSOLUTE)
+                tide_web_page(${target} SHELL "${shell}" PACK "${out_pack}")
+            else()
+                tide_web_page(${target} PACK "${out_pack}")
+            endif()
         endif()
     endif()
     if(NOT ARG_HOST)

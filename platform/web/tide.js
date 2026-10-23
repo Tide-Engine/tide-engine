@@ -104,7 +104,8 @@
 
     // The program's arguments are the page's. `debug-views` in the page's
     // address is --debug-views, as for a desktop game started with it, and
-    // `host` and `join=K7QF2M` are --host and --join K7QF2M: a page that shows
+    // `host` and `join=K7QF2M` are --host and --join K7QF2M (`join=K7QF2M/0`
+    // a match of the room's server, as a sharded world's is): a page that shows
     // a game, or a link to one, says which match it's in. The page's own
     // arguments go first, and win.
     const words = [...(config.arguments || [])];
@@ -117,8 +118,8 @@
         words.push('--debug-views');
     }
     if (!words.some(word => word === '--host' || word === '--join' || word === '--connect')) {
-        // A code is letters and digits: the program says what's wrong with one that isn't a room's
-        const code = (address.get('join') || '').replace(/[^0-9a-z]/gi, '');
+        // A code is letters and digits, and a match after a slash: the program says what's wrong with one that isn't a room's
+        const code = (address.get('join') || '').replace(/[^0-9a-z/]/gi, '');
         if (code) words.push('--join', code);
         else if (address.has('host')) words.push('--host');
     }

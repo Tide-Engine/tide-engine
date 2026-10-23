@@ -72,6 +72,20 @@ view Watch(Overview overview)
 
 Each shard watched is one more world this machine downloads and keeps up with, so watch what the camera shows, not the whole world.
 
+### Seeing the split
+
+To show players how the world is divided, as a debug view or a demo does, `Shards.Of(entity)` in a view is the number of the shard that owns an entity, from 0, and -1 for one this machine has no world of. Color what each shard owns:
+
+```csharp
+view Rock(Rock rock)
+{
+    var shard = Shards.Of(this);
+    Draw.Circle(rock.position, 1, shard == 0 ? Color.red : shard == 1 ? Color.green : Color.blue);
+}
+```
+
+It's for what this machine shows, so match code can't ask it: the match is one world wherever its entities are. In a game that isn't sharded it's always 0. The [home page](https://tide-engine.dev/)'s planet paints its lanterns this way under **Shards**.
+
 ## Running one
 
 `tide run` runs every shard of a sharded game's match on this machine. To try borders out, split it into regions along x:

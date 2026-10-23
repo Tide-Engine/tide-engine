@@ -1,0 +1,234 @@
+// Earth: everyone who opens the page flies a paper plane around one planet,
+// at its real size, and lights the lanterns drifting over it. The world is
+// sharded: each region of the planet can be a server of its own, and the
+// planes and lanterns cross from one to the next as they go.
+//
+// The match is this file. globe.tide draws the planet, show.tide the rest.
+
+settings
+{
+    title = "Earth";
+    maxPlayers = 64;
+    shards = true;
+    reach = 120_000;   // Metres: as far as a plane lights a lantern, with room to spare
+}
+
+const double RADIUS = 6_371_000d;   // The Earth's, in metres
+const float LOW = 2_000;           // How low a plane flies, above the ground
+const float HIGH = 2_500_000;      // ...and how high
+const float START = 40_000;        // Where a plane starts, above where its player clicked
+const float CLIMB = 1.1;           // How fast it climbs: its height times e, every 1/CLIMB seconds
+const float TURN = 1.4;            // Radians a second, turning as hard as it can
+const float LIGHT = 30_000;        // How near a plane comes to a lantern to light it
+const float LIT = 240;             // Seconds a lantern keeps its color
+const float WIND = 40;             // Metres a second the lanterns drift
+const int FESTIVALS = 40;          // Places lanterns go up
+const int LANTERNS = 30;           // ...how many at each
+const int STRAYS = 800;            // ...and lanterns on their own, anywhere
+const int BOTS = 12;
+const int COLORS = 8;
+
+// Faster the higher: low, a plane crosses a city; high, an ocean in seconds
+float SpeedAt(float altitude) { return 250 + altitude * 0.6; }
+
+scene Main { }
+
+component Plane
+{
+    [Position] double3 position;      // From the Earth's center
+    float3 heading = float3(0, 0, 1); // The way it flies, along the ground
+    float altitude = START;           // Above the ground
+    float bank;                       // How hard it's turning, -1 to 1
+    int color;
+    int lit;                          // Lanterns it lit
+    int drops;                        // The last drop its player asked for
+    bool flying;                      // A player's plane waits until they pick where to start
+    local List<double3> trail;        // This machine's: where it's been lately, for its trail
+    local float since;
+}
+
+// A plane nobody flies
+component Bot
+{
+    float turn;
+    float climb;
+    float think;  // Seconds until it changes its mind
+}
+
+component Lantern
+{
+    [Position] double3 position;
+    float height;     // Above the ground
+    int color = -1;   // The color of the plane that lit it, or -1
+    float since;      // Seconds since
+}
+
+singleton Roster
+{
+    Map<PlayerID, Entity> planes;
+    int next;   // The color the next plane gets
+    bool seeded;
+}
+
+event Lit { }   // Sent to a plane that lit a lantern
+
+input Controls
+{
+    [Clamp(-1, 1)] float turn;
+    [Clamp(-1, 1)] float climb;
+    float3 drop;   // Where to start, a direction from the Earth's center
+    int drops;     // Counts the drops asked for: one the plane hasn't had moves it
+
+    Sample(Devices devices, Pilot pilot)
+    {
+        drop = pilot.drop;
+        drops = pilot.drops;
+        if (!pilot.flying) return;
+        var keys = devices.keyboard;
+        if (keys.d.pressed || keys.rightArrow.pressed) turn += 1;
+        if (keys.a.pressed || keys.leftArrow.pressed) turn -= 1;
+        if (keys.w.pressed || keys.upArrow.pressed) climb += 1;
+        if (keys.s.pressed || keys.downArrow.pressed) climb -= 1;
+        turn += devices.gamepad.leftStick.x + pilot.turn;
+        climb += devices.gamepad.leftStick.y + pilot.climb;
+    }
+}
+
+// East along the ground from a place, or any way along it at a pole
+float3 East(double3 up)
+{
+    var u = float3(Math.Normalize(up));
+    var east = Math.Cross(float3(0, 1, 0), u);
+    if (Math.Length(east) < 0.001) return float3(1, 0, 0);
+    return Math.Normalize(east);
+}
+
+event(PlayerJoined joined) Arrive(mut Roster roster)
+{
+    // Parked over the north pole, unseen, until its player picks a place
+    roster.planes[joined.player] = Spawn(
+        Plane { position = double3(0, RADIUS + START, 0), color = roster.next % COLORS },
+        Owner { player = joined.player });
+    roster.next += 1;
+}
+
+event(PlayerLeft left) Depart(mut Roster roster)
+{
+    if (roster.planes.TryGet(left.player, out var plane))
+    {
+        plane.Destroy();
+        roster.planes.Remove(left.player);
+    }
+}
+
+// The world as it starts: lanterns going up at festivals all over, and bots flying among them
+system Seed(mut Roster roster)
+{
+    if (roster.seeded) return;
+    roster.seeded = true;
+    for (var f = 0; f < FESTIVALS; f++)
+    {
+        var center = Random.NextFloat3Direction();
+        var east = East(double3(center));
+        var north = Math.Cross(center, east);
+        for (var i = 0; i < LANTERNS; i++)
+        {
+            var spread = Random.NextFloat2() * 2 - float2(1, 1);
+            var at = Math.Normalize(double3(center) + double3(east * spread.x + north * spread.y) * 0.02d);
+            var height = Random.NextFloat(1_000, 6_000);
+            Spawn(Lantern { position = at * (RADIUS + height), height = height });
+        }
+    }
+    for (var i = 0; i < STRAYS; i++)
+    {
+        var height = Random.NextFloat(1_000, 6_000);
+        Spawn(Lantern { position = double3(Random.NextFloat3Direction()) * (RADIUS + height), height = height });
+    }
+    for (var b = 0; b < BOTS; b++)
+    {
+        var up = Random.NextFloat3Direction();
+        var altitude = Random.NextFloat(4_000, 60_000);
+        Spawn(Plane { position = double3(up) * (RADIUS + altitude), heading = East(double3(up)), altitude = altitude,
+                      color = b % COLORS, flying = true },
+              Bot { think = Random.NextFloat(0, 3) });
+        roster.next = b + 1;
+    }
+}
+
+// Flies a plane one tick: turns it about the way up, takes it up or down, and
+// along the great circle it's heading on, at the speed its height gives
+void Move(mut Plane plane, float turn, float climb, float dt)
+{
+    plane.altitude = Math.Clamp(plane.altitude * Math.Exp(climb * CLIMB * dt), LOW, HIGH);
+    plane.bank += (turn - plane.bank) * Math.Min(1, dt * 4);
+    var up = Math.Normalize(plane.position);
+    var u = float3(up);
+    var angle = plane.bank * TURN * dt;
+    var heading = plane.heading * Math.Cos(angle) + Math.Cross(u, plane.heading) * Math.Sin(angle);
+    double across = SpeedAt(plane.altitude) * dt / (RADIUS + plane.altitude);
+    var ahead = double3(heading);
+    var next = up * Math.Cos(across) + ahead * Math.Sin(across);
+    var onward = float3(ahead * Math.Cos(across) - up * Math.Sin(across));
+    plane.position = Math.Normalize(next) * (RADIUS + plane.altitude);
+    var n = float3(Math.Normalize(next));
+    plane.heading = Math.Normalize(onward - n * Math.Dot(onward, n));
+}
+
+system Fly(mut Plane plane, Controls input, Time time, without Bot)
+{
+    if (input.drops != plane.drops && Math.Length(input.drop) > 0.5)
+    {
+        plane.drops = input.drops;
+        var up = Math.Normalize(double3(input.drop));
+        plane.position = up * (RADIUS + START);
+        plane.altitude = START;
+        plane.heading = East(up);
+        plane.bank = 0;
+        plane.flying = true;
+    }
+    if (plane.flying) Move(plane, input.turn, input.climb, time.dt);
+}
+
+system Wander(mut Plane plane, mut Bot bot, Time time)
+{
+    bot.think -= time.dt;
+    if (bot.think <= 0)
+    {
+        bot.think = Random.NextFloat(2, 7);
+        bot.turn = Random.NextFloat(-0.7, 0.7);
+        bot.climb = Random.NextFloat(-0.5, 0.5);
+    }
+    // Mostly low, where the lanterns are
+    mut var climb = bot.climb;
+    if (plane.altitude < 4_000) climb = 0.5;
+    if (plane.altitude > 150_000) climb = -0.5;
+    Move(plane, bot.turn, climb, time.dt);
+}
+
+// Lanterns drift east, and take the color of a plane that passes them
+system Drift(mut Lantern lantern, Time time, query (Plane plane) planes)
+{
+    var east = double3(East(lantern.position));
+    var up = Math.Normalize(lantern.position) + east * (WIND * time.dt / RADIUS);
+    lantern.position = Math.Normalize(up) * (RADIUS + lantern.height);
+    if (lantern.color >= 0)
+    {
+        lantern.since += time.dt;
+        if (lantern.since > LIT) lantern.color = -1;
+    }
+    foreach (var row in planes)
+    {
+        if (!row.plane.flying || row.plane.color == lantern.color) continue;
+        if (Math.Length(row.plane.position - lantern.position) < LIGHT)
+        {
+            lantern.color = row.plane.color;
+            lantern.since = 0;
+            row.entity.Send(Lit { });
+        }
+    }
+}
+
+event(Lit) Count(mut Plane plane)
+{
+    plane.lit += 1;
+}

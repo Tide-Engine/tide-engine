@@ -173,7 +173,7 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | MinGW/Android toolchains, APKs, signing, Android runner | `notes/android-and-mingw.md` |
 | `bench/`, harness and saved measurements | `notes/benchmarks.md` |
 | `cmake/Tide.cmake`, `run_tidec.cmake`, generated host API/header | `notes/tide-programs.md` |
-| Docs site, pages/examples, SEO, hosting and docs workflow | `notes/docs-site.md` |
+| Docs site, pages/examples, SEO, hosting and docs workflow, `examples/earth/` (the home page's planet) | `notes/docs-site.md` |
 | `examples/towers/`, `examples/sumo/` | `notes/physics-games.md` |
 | `compiler/cli/`, package resolution, built-in clang, package contents | `notes/cli-and-packages.md` |
 | `.github/`, installers, release/upgrade code and nightlies | `notes/releases-and-ci.md` |

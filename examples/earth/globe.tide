@@ -1,0 +1,166 @@
+// The planet, worked out for every pixel: what a pixel's ray from the eye
+// meets, the Earth or the air beside it or space. Everything is drawn around
+// an eye at the origin, with the world moved the other way, so floats keep
+// their precision a planet away from where it started.
+
+// The coasts, as how far each place is from one (art/make_land.mjs)
+[Raw] [Wrap(Wrap.Repeat)] asset Texture land = "art/land.png";
+
+// A ball around the eye: each pixel of it is a ray
+struct Around
+{
+    float3 position;
+}
+
+// What the planet's frag needs of this frame
+struct Sky
+{
+    float3 center;  // From the eye to the Earth's center
+    float height;   // The eye's height above the ground, worked out in doubles
+    float3 sun;     // Towards the sun
+    float pixel;    // Radians across a pixel
+    float clouds;   // How far the clouds have turned
+}
+
+// A corner of a plane or a lantern, with which way it faces
+struct Corner
+{
+    float3 position;
+    float3 normal;
+}
+
+// One plane, or one lantern
+struct Placed
+{
+    float4x4 transform;
+    Color paint;
+}
+
+// A trail's corner: where it is, and how bright
+struct Streak
+{
+    float3 position;
+    Color paint;
+}
+
+const float R = 6_371_000;
+const float AIR = 60_000;   // How thick the glow of the air looks
+
+Color Mix(Color a, Color b, float t)
+{
+    return Color(Math.Lerp(a.r, b.r, t), Math.Lerp(a.g, b.g, t), Math.Lerp(a.b, b.b, t), 1);
+}
+
+// Kilometres from the coast at a place: inland is more than 0
+float Coast(float3 n)
+{
+    float lat = Math.Atan2(n.y, Math.Length(n.xz));
+    float lon = Math.Atan2(n.z, n.x);
+    var uv = float2(lon / Math.TAU + 0.5, Math.Clamp(0.5 - lat / Math.PI, 0.0005, 0.9995));
+    return (land.Sample(uv, Filter.Bilinear, Wrap.Repeat).r * 255 - 128) / 127 * 400;
+}
+
+Color Ground(float3 n, float km, float wide)
+{
+    float lat = Math.Degrees(Math.Atan2(n.y, Math.Length(n.xz)));
+    // Finer the nearer, as long as a pixel is smaller than what it shows
+    float fine = Math.Simplex(n * 1500) * 0.3 * Math.Saturate(1 - wide / 6) + Math.Simplex(n * 9000) * 0.25 * Math.Saturate(1 - wide)
+               + Math.Simplex(n * 50000) * 0.2 * Math.Saturate(1 - wide * 6);
+    float grain = Math.Simplex(n * 40) * 0.5 + Math.Simplex(n * 160) * 0.25 * Math.Saturate(1 - wide / 40) + fine;
+    var green = Color(0.26, 0.47, 0.30);
+    var forest = Color(0.16, 0.34, 0.24);
+    var sand = Color(0.80, 0.67, 0.44);
+    var snow = Color(0.93, 0.95, 0.98);
+    // Deserts in the dry bands either side of the tropics, forests north of them, ice at the ends
+    float dry = Math.SmoothStep(12, 22, Math.Abs(lat)) * (1 - Math.SmoothStep(32, 40, Math.Abs(lat)));
+    mut var color = Mix(green, sand, Math.Saturate(dry * 1.3 + grain * 0.6 - 0.15));
+    color = Mix(color, forest, Math.SmoothStep(45, 58, Math.Abs(lat)) * Math.Saturate(0.7 + grain));
+    float ice = lat < -60 ? 1 : Math.SmoothStep(64, 74, lat + grain * 6);
+    color = Mix(color, snow, ice);
+    // Higher inland, a little darker and rougher
+    return Mix(color, Color(0.36, 0.33, 0.30), Math.Saturate((km - 250) / 400) * 0.4 * (1 - ice));
+}
+
+Color Sea(float km)
+{
+    var shallow = Color(0.12, 0.42, 0.50);
+    var deep = Color(0.04, 0.10, 0.22);
+    return Mix(shallow, deep, Math.Saturate(-km / 140));
+}
+
+// Stars where no planet is: a few cells of the sky, each with one
+Color Space(float3 d)
+{
+    var grid = d * 400;
+    var cell = Math.Floor(grid);
+    int h = Math.Hash(int3(cell));
+    // Each star a point somewhere in its cell, and most cells none
+    var spot = float3((h % 89) / 89.0, (h % 97) / 97.0, (h % 83) / 83.0) * 0.6 + float3(0.2, 0.2, 0.2);
+    float near = Math.Length(grid - cell - spot);
+    float shine = h % 1000 < 12 ? (0.25 + (h % 7) * 0.1) * Math.Saturate(1 - near / 0.12) : 0;
+    var bg = Color(0.086, 0.086, 0.094);
+    return Color(bg.r + shine, bg.g + shine, bg.b + shine * 1.1, 1);
+}
+
+frag Earth(Around around, out Color color, Sky sky)
+{
+    float3 d = Math.Normalize(this.world);
+    float b = Math.Dot(d, sky.center);
+    // |center|² - R², kept from the eye's height rather than lost subtracting two big numbers
+    float near = sky.height * (2 * R + sky.height);
+    float disc = b * b - near;
+    var air = Color(0.36, 0.62, 1.0);
+    color = Space(d);
+    // How far over the ground a ray passes at its closest, for the glow of the air: the eye's height, looking up
+    float over = b > 0 ? Math.Sqrt(Math.Max(R * R - disc, 0)) - R : sky.height;
+    var closest = b > 0 ? d * b - sky.center : -sky.center;
+    float glow = Math.Exp(-Math.Max(over, 0) / AIR) * Math.Saturate(Math.Dot(Math.Normalize(closest), sky.sun) + 0.35);
+    color = Mix(color, air, Math.Saturate(glow) * 0.9);
+    if (b <= 0 || disc <= 0) return;
+    float t = near / (b + Math.Sqrt(disc));
+    float3 n = Math.Normalize(d * t - sky.center);
+    // Ground or sea, the coast drawn as sharp as a pixel at any height
+    float wide = Math.Max(t * sky.pixel / Math.Max(Math.Dot(n, -d), 0.12) / 1000, 0.05);
+    float km = Coast(n);
+    float detail = Math.Simplex(n * 900) * 6 + Math.Simplex(n * 7000) * 1.2 + Math.Simplex(n * 40000) * 0.25;
+    float shore = km + detail * Math.Saturate(1 - wide / 8);
+    float onLand = Math.SmoothStep(-wide, wide, shore);
+    mut var surface = Mix(Sea(shore), Ground(n, km, wide), onLand);
+    // Clouds, turning slowly
+    float3 turned = float3(n.x * Math.Cos(sky.clouds) - n.z * Math.Sin(sky.clouds), n.y, n.x * Math.Sin(sky.clouds) + n.z * Math.Cos(sky.clouds));
+    float cloud = Math.SmoothStep(0.15, 0.6, Math.Simplex(turned * 5) * 0.6 + Math.Simplex(turned * 13) * 0.3 + Math.Simplex(turned * 41) * 0.15);
+    surface = Mix(surface, Color(0.97, 0.98, 1.0), cloud * 0.75 * Math.Saturate(1 - wide / 40 + 0.4));
+    // Day and night, with the sun glinting off the sea
+    float lit = Math.Dot(n, sky.sun);
+    float day = Math.SmoothStep(-0.08, 0.25, lit);
+    float glint = Math.Pow(Math.Max(Math.Dot(Math.Reflect(d, n), sky.sun), 0), 60) * (1 - onLand) * (1 - cloud) * day;
+    var night = Color(surface.r * 0.06 + 0.01, surface.g * 0.07 + 0.015, surface.b * 0.10 + 0.04, 1);
+    var shade = 0.35 + 0.65 * Math.Saturate(lit);
+    var lighted = Color(surface.r * shade + glint, surface.g * shade + glint, surface.b * shade + glint, 1);
+    var ground = Mix(night, lighted, day);
+    // The air between the eye and the ground, more of it towards the edge
+    float haze = Math.Pow(1 - Math.Max(Math.Dot(n, -d), 0), 3) * 0.6 * Math.Saturate(lit + 0.3);
+    color = Mix(ground, air, Math.Saturate(haze));
+}
+
+// A plane: paper, lit from the sun, in its player's color
+frag Paper(Corner corner, out Color color, Placed placed, Instance instance, Sky sky)
+{
+    var normal = instance.Normal(corner.normal);
+    float lit = Math.Abs(Math.Dot(normal, sky.sun)) * 0.55 + 0.45;
+    color = Color(placed.paint.r * lit, placed.paint.g * lit, placed.paint.b * lit, 1);
+}
+
+// A lantern: a glow, brightest in its middle, added to what's behind it
+frag Glow(Corner corner, out Color color, Placed placed)
+{
+    float r = Math.Length(corner.position.xy);
+    mut float glow = Math.Saturate(1 - r);
+    glow = glow * glow * (0.4 + 0.6 * glow);
+    color = Color(placed.paint.r * glow, placed.paint.g * glow, placed.paint.b * glow, 1);
+}
+
+frag Trail(Streak streak, out Color color)
+{
+    color = streak.paint;
+}

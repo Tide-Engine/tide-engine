@@ -217,6 +217,11 @@ bool tide_shard_owns_now(const tide_entity e)
     return !owner_of || owner_of(owner_world, e);
 }
 
+const void *tide_shard_world_now(void)
+{
+    return owner_world;
+}
+
 bool tide_shard_next_outgoing(tide_reader *r, tide_shard_outgoing *out)
 {
     if (r->at >= r->size) return false;

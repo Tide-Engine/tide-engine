@@ -111,16 +111,17 @@ jobs:
         run: |
           if [ -d external/tide-prototypes ]; then
             cmake --preset web-release -DTIDE_DOC_EXAMPLES=ON "-DTIDE_EXTERNAL_DIRS=$GITHUB_WORKSPACE/external/tide-prototypes"
-            cmake --build --preset web-release --target sand duel towers sumo docs_examples sample_games private_games
+            cmake --build --preset web-release --target sand duel towers sumo earth docs_examples sample_games private_games
           else
             cmake --preset web-release -DTIDE_DOC_EXAMPLES=ON
-            cmake --build --preset web-release --target sand duel towers sumo docs_examples sample_games
+            cmake --build --preset web-release --target sand duel towers sumo earth docs_examples sample_games
           fi
-          mkdir -p docs/static/sand docs/static/duel docs/static/towers docs/static/sumo
+          mkdir -p docs/static/sand docs/static/duel docs/static/towers docs/static/sumo docs/static/earth
           cp build/web-release/bin/sand.html docs/static/sand/index.html
           cp build/web-release/bin/duel.html docs/static/duel/index.html
           cp build/web-release/bin/towers.html docs/static/towers/index.html
           cp build/web-release/bin/sumo.html docs/static/sumo/index.html
+          cp build/web-release/bin/earth.html docs/static/earth/index.html
       - name: Build the site
         working-directory: docs
         run: |

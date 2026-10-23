@@ -10,7 +10,7 @@ interface GamePage {
     start?: () => Promise<void>;
 }
 
-function game(frame: HTMLIFrameElement): GamePage | undefined {
+export function game(frame: HTMLIFrameElement): GamePage | undefined {
     try {
         return (frame.contentWindow as (Window & { Tide?: GamePage }) | null)?.Tide;
     } catch {
@@ -21,7 +21,7 @@ function game(frame: HTMLIFrameElement): GamePage | undefined {
 // An example starts by itself once it's in view, and stops once it's well out
 // of it, so a page runs what its reader is looking at and nothing else. A
 // reader who asked for less motion or less data starts each one themselves.
-function eager() {
+export function eager() {
     const saving = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection?.saveData;
     return !saving && !matchMedia('(prefers-reduced-motion: reduce)').matches;
 }

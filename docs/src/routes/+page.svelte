@@ -1,9 +1,61 @@
 <script lang="ts">
+    import { onMount } from 'svelte';
     import Seo from '#lib/components/Seo.svelte';
+    import { eager, game } from '#lib/examples.ts';
 
     let { data } = $props();
 
     const external = (link: string) => /^https?:/.test(link);
+
+    // The planet beside the hero (examples/earth): a game of its own in a
+    // frame, which takes the logo's place once it has drawn. It starts by
+    // itself, but for a reader who asked for less motion or less data, and
+    // stops once the hero is well out of view. A build without the game keeps
+    // the logo.
+    let place: HTMLElement;
+    let shown = $state(false);
+    onMount(() => {
+        if (!eager()) return;
+        let frame: HTMLIFrameElement | undefined;
+        function open() {
+            const url = new URL('/earth/', location.href);
+            url.searchParams.set('embedded', '');
+            url.searchParams.set('wait', '');
+            const backend = new URLSearchParams(location.search).get('backend');
+            if (backend) url.searchParams.set('backend', backend);
+            const opened = document.createElement('iframe');
+            opened.title = 'Earth: a paper plane for everyone on this page, around one planet';
+            opened.src = url.href;
+            opened.addEventListener('load', async () => {
+                const page = game(opened);
+                if (typeof page?.start !== 'function') return opened.remove();
+                await page.start();
+                if (frame === opened) shown = true;
+            }, { once: true });
+            place.append(opened);
+            frame = opened;
+        }
+        function close() {
+            frame?.remove();
+            frame = undefined;
+            shown = false;
+        }
+        const watching = new IntersectionObserver(([entry]) => {
+            if (entry.isIntersecting && !frame) open();
+            else if (!entry.isIntersecting) close();
+        }, { rootMargin: '100% 0px' });
+        watching.observe(place);
+        // A press on the page takes the keyboard back from the game
+        const elsewhere = () => {
+            if (frame && document.activeElement === frame) frame.blur();
+        };
+        document.addEventListener('pointerdown', elsewhere, true);
+        return () => {
+            watching.disconnect();
+            document.removeEventListener('pointerdown', elsewhere, true);
+            close();
+        };
+    });
 </script>
 
 <Seo title={data.title} description={data.description} path="/" />
@@ -22,8 +74,13 @@
                 {/each}
             </div>
         </div>
-        <div class="image" aria-hidden="true">
-            <img src="/favicon.svg" alt="" width="320" height="320" />
+        <div class="image">
+            <div class="earth" class:shown bind:this={place}>
+                <img src="/favicon.svg" alt="" width="320" height="320" />
+            </div>
+            {#if shown}
+                <p class="caption">Live: click the planet to fly. <a href="/earth/" target="_blank">Full screen</a></p>
+            {/if}
         </div>
     </section>
 
@@ -133,15 +190,58 @@
 
     .image {
         flex: none;
-        display: grid;
-        place-items: center;
         width: 360px;
-        height: 360px;
     }
 
-    .image img {
-        width: 280px;
-        height: 280px;
+    .earth {
+        position: relative;
+        display: grid;
+        place-items: center;
+        width: 100%;
+        aspect-ratio: 1;
+        border-radius: 16px;
+        overflow: hidden;
+        transition: background-color 0.4s;
+    }
+
+    .earth img {
+        width: 78%;
+        height: 78%;
+        transition: opacity 0.4s;
+    }
+
+    /* The game's frame, unseen until it has drawn, then over the logo */
+    .earth :global(iframe) {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        border: 0;
+        opacity: 0;
+        transition: opacity 0.4s;
+    }
+
+    .earth.shown {
+        background: #161618;
+    }
+
+    .earth.shown img {
+        opacity: 0;
+    }
+
+    .earth.shown :global(iframe) {
+        opacity: 1;
+    }
+
+    .caption {
+        margin: 8px 0 0;
+        color: var(--text-2);
+        font-size: 13px;
+        text-align: center;
+    }
+
+    .caption a {
+        color: var(--brand-1);
     }
 
     .features {
@@ -224,13 +324,8 @@
         }
 
         .image {
-            width: 200px;
-            height: 200px;
-        }
-
-        .image img {
-            width: 160px;
-            height: 160px;
+            width: 100%;
+            max-width: 420px;
         }
 
         .feature {

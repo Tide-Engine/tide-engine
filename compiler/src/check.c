@@ -7311,6 +7311,11 @@ static type check_method(checker *c, expr *e)
                        STR_ARG(e->name));
             return T_ERR;
         }
+        if (str_eq_c(owner, "Shards") && str_eq_c(e->name, "Of") && c->system && !local_code(c)) {
+            diag_error(e->at, "Shards.Of is for what this machine shows, so it's a view's or a local handler's: the match is "
+                              "one world wherever its entities are");
+            return T_ERR;
+        }
         if (draws && !check_setting(c, e)) return T_ERR;
         if (cursor && !check_cursor_use(c, e->at, true)) return T_ERR;
         check_default_args(c, e);
