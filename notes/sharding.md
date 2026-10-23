@@ -139,7 +139,7 @@ Error fixtures: `native_field_default`, `native_field_type`, `native_singleton_l
 
 - A copy is where its owner last had it, a tick or two ago: two bodies racing toward each other meet a little late on one side and early on the other until they're on one shard. Each side reports only its own entities' touches.
 - Bodies jointed together go together, so a long chain of jointed bodies is one shard's whatever its length.
-- Visibility on regions lags the root's directory by a tick or two, so a group's narrowing shows a region's clients the old audience that long.
+- Visibility on regions lags the root's directory by a tick or two, so a group's narrowing shows a region's clients the old audience that long. Kept so (the owner, 2026-10-24): switching every shard at one tick only delays the root too. The spec says so.
 - A game's code for no entity runs on the root, so its queries of a library's `[Native]` state (a raycast over the physics world from code for no entity) see the root's world only. Code for an entity sees its shard's.
 - Host migration doesn't apply (shards are servers).
 - The hosting service runs sharded worlds across machines (`Tide-Engine/tide-services`, its `notes/sharded-worlds.md`): its gaps (deploying hosts) are recorded there.
