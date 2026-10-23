@@ -51,8 +51,8 @@ component Body
 // Missing/stale body references fail the step; no joint is silently removed.
 component Joint
 {
-    Entity parent;
-    Entity child;
+    [Together] Entity parent; // In a sharded world, an articulation is one shard's
+    [Together] Entity child;
     JointType type;
     float3 parentPosition;
     quaternion parentRotation = quaternion.identity;
@@ -169,19 +169,21 @@ struct ColliderState
     ContactFriction frictionModel;
 }
 
+// In a sharded world the settings are the world's, and the step's state each
+// shard's own: [Native], as each steps the bodies it has.
 singleton Physics
 {
     float3 gravity = float3(0, -9.81, 0);
     int substeps = 4;
-    Status status;
+    [Native] Status status;
     // Package-owned collection buffers/maps. Keys include entity generations;
     // no native handles, pointers, resident arenas or hidden state are retained.
-    List<BodyState> bodies;
-    List<JointState> joints;
-    List<ColliderState> colliders;
-    Map<Entity, int> bodyIndices;
-    Map<Entity, int> jointIndices;
-    Map<Entity, int> colliderIndices;
+    [Native] List<BodyState> bodies;
+    [Native] List<JointState> joints;
+    [Native] List<ColliderState> colliders;
+    [Native] Map<Entity, int> bodyIndices;
+    [Native] Map<Entity, int> jointIndices;
+    [Native] Map<Entity, int> colliderIndices;
 }
 
 [Stage(PhysicsStages.Step, 0)]
@@ -249,6 +251,44 @@ system CollectActuators(Actuator actuator, mut Physics physics, with Joint)
     if (!physics.jointIndices.TryGet(entity, out var index)) return;
     physics.joints[index].effort = actuator.effort;
     physics.joints[index].effortLimit = actuator.effortLimit;
+}
+
+// In a sharded world, the bodies other shards own near this one's border, and
+// their colliders, are in the step as they are: a dynamic one as heavy as it
+// is, so what this shard's bodies run into moves as the body would. What the
+// step does to them is no one's: only this shard's own are published, and the
+// body's own shard works out what's done to it. In a world that isn't sharded
+// every body is this shard's own, and this does nothing.
+[Stage(PhysicsStages.Step, 3)]
+system CollectNeighbours(mut Physics physics, query (Body body) bodies, query (Collider collider) colliders)
+{
+    foreach (var row in bodies)
+    {
+        if (Shards.Owns(row.entity)) continue;
+        physics.bodyIndices[row.entity] = physics.bodies.count;
+        physics.bodies.Add(BodyState {
+            entity = row.entity, type = row.body.type, mass = row.body.mass,
+            inertia = row.body.inertia, centerOfMass = row.body.centerOfMass,
+            position = row.body.position, rotation = row.body.rotation,
+            velocity = row.body.velocity, angularVelocity = row.body.angularVelocity,
+            force = row.body.force, torque = row.body.torque
+        });
+    }
+    foreach (var row in colliders)
+    {
+        if (Shards.Owns(row.entity) || !row.collider.enabled) continue;
+        Entity body = row.collider.body == default ? row.entity : row.collider.body;
+        if (!physics.bodyIndices.Has(body)) continue; // Its body isn't near enough to be here
+        physics.colliderIndices[row.entity] = physics.colliders.count;
+        physics.colliders.Add(ColliderState {
+            entity = row.entity, body = body,
+            type = row.collider.type, exclusionGroup = row.collider.exclusionGroup,
+            radius = row.collider.radius, position = row.collider.position, rotation = row.collider.rotation,
+            stiffness = row.collider.stiffness, damping = row.collider.damping,
+            frictionDamping = row.collider.frictionDamping, friction = row.collider.friction,
+            frictionModel = row.collider.frictionModel
+        });
+    }
 }
 
 // One call per tick. C derives counts from the actual lists, and publishes

@@ -56,6 +56,13 @@ add_test(NAME tide_newton_runtime COMMAND tide_newton_runtime)
 set_tests_properties(tide_newton_runtime PROPERTIES TIMEOUT 120)
 tide_package_order_test(tide_newton_order Newton "${CMAKE_CURRENT_SOURCE_DIR}/newton/newton.tide"
     "${CMAKE_CURRENT_SOURCE_DIR}/newton/test")
+# A sharded world: each shard steps its own bodies, with its neighbours' near the border
+tide_add_game(tide_newton_shards SOURCES newton/bridge.c newton/test/shards.tide NAME game PACKAGES Newton newton/newton.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" newton/test/shards_test.c)
+target_include_directories(tide_newton_shards PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_newton_shards PRIVATE tide_newton)
+add_test(NAME tide_newton_shards COMMAND tide_newton_shards)
+set_tests_properties(tide_newton_shards PROPERTIES TIMEOUT 120)
 
 # Box2D's own sources, as they came: a library the tests share, with its
 # warnings off. The package's bridge is ours, and compiles with each test.

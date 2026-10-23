@@ -1,5 +1,9 @@
 # The Newton package
 
+## Sharded worlds (2026-10-23)
+
+`Physics`' collection lists and maps and `status` are `[Native]`, each shard's own (each steps the bodies it has); `gravity` and `substeps` are the root's on every shard. `Joint.parent` and `Joint.child` are `[Together]`, so an articulation is one shard's; a `Collider` with no position goes with the first entity it names, its body. `CollectNeighbours` (stage 3, a system for no entity with queries of every `Body` and `Collider`) adds the bodies other shards own near the border, and their enabled colliders whose body is here, to the step as they are: a dynamic one dynamic with its mass, so contacts across the border share momentum. Publishing is per entity and skips them (ghosts run no code), so what the step does to them is dropped. In a world that isn't sharded `Shards.Owns` is `true` and the system's loops skip every row; no hash pin moved, and `order.txt` has it after `CollectActuators`. Test: `tide_newton_shards` (a ball crossing keeps its speed; a 1 kg ball at 4 m/s into a 3 kg one at rest across the border: momentum about 4 and the heavy one between 1 and 3 m/s, which it isn't without the neighbours; a fixed pair crosses whole, 1.5 m apart).
+
 ## Instrumented MicroDuck rollback budget (2026-10-22)
 
 Run `39842031157` at `f8468b30` passes all eight ordinary native/web,

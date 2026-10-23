@@ -4,6 +4,7 @@ Newton.CollectBodies
 Newton.CollectJoints
 Newton.CollectColliders
 Newton.CollectActuators
+Newton.CollectNeighbours
 Newton.Simulate
 Newton.PublishBodies
 Newton.PublishJoints
