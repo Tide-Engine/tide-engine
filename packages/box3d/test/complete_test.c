@@ -222,7 +222,7 @@ TIDE_TEST(box3d_complete_snapshot_replay)
     tide_world w={0}, saved={0}; start(&w); tide_world_copy(&saved,&w);
     uint64_t sequence=0;
     for (int i=0;i<100;i++) { tide_world_tick(&w); const uint64_t h=tide_world_hash(&w); sequence=tide_hash_more(sequence,&h,sizeof h); }
-    TIDE_CHECK(sequence==UINT64_C(0xb835d8fc8fdd337b));
+    TIDE_CHECK(sequence==UINT64_C(0x21553e0b1cff694e));
     printf("  complete sequence: %016llx\n",(unsigned long long)sequence);
     for (int i=0;i<100;i++) tide_world_tick(&saved);
     TIDE_CHECK(tide_world_hash(&saved)==tide_world_hash(&w));

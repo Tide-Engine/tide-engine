@@ -121,7 +121,7 @@ TIDE_TEST(box2d_complete_snapshot_pack_restore_replay)
         b2t_forget(); tide_world_tick(&restored); TIDE_CHECK(tide_world_hash(&restored) == hash);
     }
     printf("  complete sequence: %016llx\n", (unsigned long long)sequence);
-    TIDE_CHECK(sequence == UINT64_C(0xe8e8894f5e3c59dc));
+    TIDE_CHECK(sequence == UINT64_C(0x7e85ef6df20a92db));
     tick(&saved, 90); TIDE_CHECK(tide_world_hash(&saved) == tide_world_hash(&w));
     tide_world_free(&restored); tide_world_free(&saved); tide_world_free(&w);
 }

@@ -14,10 +14,10 @@ static tide_shards *shards;
 static double now;
 
 typedef struct crates {
-    int owned[16];      // By id: how many shards own it
-    Box3D_Body body[16]; // ...and its Body on the one that does
-    int shard[16];
-    int hits[16];
+    int owned[24];      // By id: how many shards own it
+    Box3D_Body body[24]; // ...and its Body on the one that does
+    int shard[24];
+    int hits[24];
     int bodies;          // Bodies the shards' Box3D worlds have, by their maps of whose each is
 } crates;
 
@@ -37,7 +37,7 @@ static crates count(void)
             const tide_entity e = tide_entity_in_slot(&w->entities, index);
             if (tide_entity_is_null(e) || !tide_has_Crate(w, e) || tide_has_tide_ghost(w, e)) continue;
             const int id = tide_get_Crate(w, e).id;
-            if (id < 0 || id >= 16) continue;
+            if (id < 0 || id >= 24) continue;
             c.owned[id]++;
             if (tide_has_Box3D_Body(w, e)) c.body[id] = tide_get_Box3D_Body(w, e);
             c.shard[id] = (int)i;
@@ -54,8 +54,8 @@ static void step(const double seconds)
         now += 1.0 / 120.0;
         tide_shards_update(shards, now);
         const crates c = count();
-        for (int id = 0; id < 16; id++) TIDE_CHECK(c.owned[id] <= 1); // Never two shards' at once
-        TIDE_CHECK(c.bodies <= 13); // ...and never a body for a crate on two shards' worlds
+        for (int id = 0; id < 24; id++) TIDE_CHECK(c.owned[id] <= 1); // Never two shards' at once
+        TIDE_CHECK(c.bodies <= 16); // ...and never a body for a crate on two shards' worlds
     }
 }
 
@@ -76,7 +76,7 @@ TIDE_TEST(box3d_bodies_cross_shards_and_keep_their_speed)
     // Four seconds on: from x = -12 at 6 m/s, across the border at x = 0 to about 12
     step(3.5);
     c = count();
-    TIDE_CHECK(c.bodies == 13); // One body for each crate, on the shard that owns it
+    TIDE_CHECK(c.bodies == 16); // One body for each crate, on the shard that owns it
     for (int id = 0; id < 4; id++) {
         TIDE_CHECK(c.owned[id] == 1 && c.shard[id] == 2);
         TIDE_CHECK(c.body[id].id != 0);
@@ -104,6 +104,13 @@ TIDE_TEST(box3d_bodies_cross_shards_and_keep_their_speed)
     TIDE_CHECK(c.shard[8] == 2 && c.shard[9] == 2 && c.shard[5] == 2);
     const float apart = c.body[8].position.x - c.body[9].position.x;
     TIDE_CHECK(fabsf(apart - 2.0f) < 0.05f);
+    // The ring of three: its crates and joints are one shard's, each crate two meters from the next
+    for (int id = 16; id < 22; id++) TIDE_CHECK(c.owned[id] == 1 && c.shard[id] == 2);
+    for (int k = 0; k < 3; k++) {
+        const Box3D_Body *p = &c.body[16 + k], *q = &c.body[16 + (k + 1) % 3];
+        const float dx = p->position.x - q->position.x, dz = p->position.z - q->position.z;
+        TIDE_CHECK(fabsf(sqrtf(dx * dx + dz * dz) - 2.0f) < 0.05f);
+    }
     tide_shards_destroy(shards);
     shards = NULL;
 }

@@ -279,8 +279,9 @@ typedef struct field {
     // A list, a grid, a map or a set that code the GPU runs reads: for each part of an element (shader_leaves),
     // whether any frag or vert of the game reads it. Only those are sent. NULL: nothing reads its elements there
     bool *gpu_leaves;
-    bool per_shard; // [PerShard]: in a sharded game, 0 wherever its entity is copied or arrives (shard_codegen.inc)
-    bool shared;    // [Shared] in a [PerShard] singleton: the root's value, on every shard
+    // [Native]: a C library's state, which means nothing on another shard. A component's is 0 wherever its
+    // entity is copied or arrives; a singleton's is each shard's own (shard_codegen.inc)
+    bool native;
 } field;
 
 typedef enum param_mode {
@@ -527,7 +528,7 @@ typedef struct decl {
     bool query_row;   // Compiler-only foreach row: entity and named read-only component values
     struct param *query_source; // Its query parameter, for editor binding lookup
     bool is_local;    // `local`: belongs to this machine, not the match. Views are always local code.
-    bool per_shard;   // `[PerShard] singleton`: in a sharded game, each shard has its own (shard_codegen.inc)
+    bool native_state; // A singleton with [Native] fields: each shard keeps those, and has the root's other fields
     struct decl *placement_of; // A private local storage specialization; values have the source component's type
     struct decl *local_placement; // The source component's local specialization, created only when used
     loc local_at;     // The `local` keyword
@@ -694,7 +695,6 @@ typedef struct decl {
     loc predict_at;
     bool is_view;        // A view: a DECL_SYSTEM that runs once per frame, reads the world and draws.
     bool run_in_editor, editor_only; // Explicit authoring-preview inclusion, on views only.
-    bool ghosts; // [Ghosts]: a system that runs for the copies a shard holds of other shards' entities, not its own
     bool is_handler;     // An event handler: a DECL_SYSTEM that runs when its event is sent, `event(Hit hit) Name(...)`.
     struct decl *event;  // A handler's event
     struct decl *forgets; // A local handler of Forgotten: the match component or singleton whose local fields it hears go
@@ -1528,18 +1528,16 @@ typedef struct program {
     bool stats;                // stats: the host shows its stats overlay
     bool debug_views;          // debugViews: hosts show their debug views when asked
     decl *prediction;          // The built-in enum Prediction
-    // Shards (`settings { shards = true; shardRange = 64; }`, docs/spec.md, Shards)
+    // Shards (`settings { shards = true; reach = 64; }`, docs/spec.md, Shards)
     bool shards;
-    double shard_range;        // shardRange, or 0 where it isn't set
+    double shard_range;        // reach, or 0 where it isn't set
     loc shards_at, shard_range_at;
-    decl *partition;           // The component whose field [Partition] marks, or NULL: Transform's position decides
-    int partition_field;       // ...that field's index
-    loc partition_at;
-    // Packages' own [Partition]s (Box3D's Body.position), one a package: an
-    // entity with none of the game's goes by the first of these it has, in order
-    VEC(struct partition_mark { decl *component; int field; loc at; }) package_partitions;
-    // [GoesWith] Entity fields: an entity with one naming a live entity goes where that one goes
-    VEC(struct partition_mark) goes_with;
+    // The [Position] vectors of match components, which say where an entity is:
+    // it goes by the first of the game's it has, then of the packages', then
+    // by its Transform
+    VEC(struct field_mark { decl *component; int field; loc at; }) positions;
+    // [Together] Entity fields: what one names is kept on the same shard as the entity that has it
+    VEC(struct field_mark) together;
     decl *shard_ghost;         // The hidden sparse component a ghost (another shard's entity, read-only) has
     decl *shard_dying;         // ...and the one an entity has while its destroy waits for its Destroyed handlers to run
     decl *shard_anchor;        // ...and the one naming what an entity spawned with no position goes with: the entity whose code spawned it

@@ -63,7 +63,6 @@ typedef struct body {
     bool step_asleep; // What the last step left `asleep` as
     bool rewind;
     uint8_t unused[3];
-    tide_entity held_by; // The joint it goes with, in a sharded world
 } body;
 
 typedef struct box {
@@ -160,7 +159,7 @@ typedef struct physics {
     tide_map copied_parts; // ...and the parts whose shapes are on one
 } physics;
 
-_Static_assert(sizeof(body) == 104 && offsetof(body, sleep_speed) == 60 && offsetof(body, fixed_rotation) == 88 && sizeof(box) == 32
+_Static_assert(sizeof(body) == 96 && offsetof(body, sleep_speed) == 60 && offsetof(body, fixed_rotation) == 88 && sizeof(box) == 32
                    && sizeof(circle) == 28 && sizeof(touch) == 40 && sizeof(blow) == 56 && sizeof(met) == 40
                    && sizeof(physics) == 336 && offsetof(physics, moved) == 60 && offsetof(physics, shard_moves) == 256,
                "box2d.tide's types changed: these are theirs");

@@ -1,4 +1,0 @@
-// expect: [GoesWith] marks a match component's Entity field: in a sharded world its entity goes where that one goes
-settings { shards = true; shardRange = 8; }
-scene Main { }
-singleton Herd { [GoesWith] Entity leader; }

@@ -70,7 +70,6 @@ typedef struct body {
     bool rewind;
     bool settings_applied;
     uint8_t unused_too[2];
-    tide_entity held_by; // The joint it goes with, in a sharded world
 } body;
 
 typedef struct box {
@@ -178,7 +177,7 @@ typedef struct physics {
     tide_map copied_parts; // ...and the parts whose shapes are on one
 } physics;
 
-_Static_assert(sizeof(body) == 184 && sizeof(box) == 44 && sizeof(sphere) == 36 && sizeof(capsule) == 40 && sizeof(touch) == 40
+_Static_assert(sizeof(body) == 176 && sizeof(box) == 44 && sizeof(sphere) == 36 && sizeof(capsule) == 40 && sizeof(touch) == 40
                    && sizeof(strike) == 48 && sizeof(found) == 48 && sizeof(physics) == 376 && offsetof(physics, moved) == 88
                    && offsetof(physics, shard_moves) == 296 && offsetof(physics, copies) == 304,
                "box3d.tide's types changed: these are theirs");
@@ -218,7 +217,7 @@ enum { SETTINGS = 3 };
 #define SET_STEP offsetof(body, step_gravity_scale)
 #define FLAGS offsetof(body, bullet)
 
-_Static_assert(offsetof(body, step_position) - SET == SETTINGS * sizeof(float) && offsetof(body, held_by) - SET_STEP == (SETTINGS + 1) * sizeof(float)
+_Static_assert(offsetof(body, step_position) - SET == SETTINGS * sizeof(float) && sizeof(body) - SET_STEP == (SETTINGS + 1) * sizeof(float)
                    && offsetof(body, step_bullet) == FLAGS + 1 && offsetof(body, asleep) == FLAGS + 2
                    && offsetof(body, step_asleep) == FLAGS + 3 && FLAGS % 4 == 0 && offsetof(body, step_type) == FLAGS + 4,
                "a Body's settings, and what Box3D has of them, aren't where the systems written in C look for them any more");

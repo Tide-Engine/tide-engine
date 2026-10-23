@@ -4,7 +4,7 @@
 settings
 {
     shards = true;
-    shardRange = 8;
+    reach = 8;
     maxPlayers = 4;
 }
 
@@ -12,7 +12,7 @@ input Controls { float2 move; }
 
 component Avatar
 {
-    [Partition] float2 position;
+    [Position] float2 position;
     int steps;
     int moved;
 }

@@ -1,4 +1,0 @@
-// expect: a [PerShard] field is 0 wherever its entity arrives or is copied, so it takes no default
-settings { shards = true; shardRange = 8; }
-scene Main { }
-component Handle { [PerShard] long id = 3; }

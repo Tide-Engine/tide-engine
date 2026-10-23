@@ -1,0 +1,4 @@
+// expect: a component's [Native] field is 0 wherever its entity is copied, so it takes no default
+settings { shards = true; reach = 8; }
+scene Main { }
+component Handle { [Native] long id = 3; }

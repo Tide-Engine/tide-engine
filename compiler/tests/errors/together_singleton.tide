@@ -1,0 +1,4 @@
+// expect: [Together] marks a match component's Entity field: the entity it names is kept with the one that has it, as a joint keeps its bodies
+settings { shards = true; reach = 8; }
+scene Main { }
+singleton Herd { [Together] Entity leader; }

@@ -1,0 +1,4 @@
+// expect: a component's [Native] field is a number or a bool, which is 0 wherever its entity is copied, not float2
+settings { shards = true; reach = 8; }
+scene Main { }
+component Handle { [Native] float2 at; }

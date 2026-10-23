@@ -4,10 +4,11 @@ Box2D.CheckBodies
 Unordered
 BeforeBegin
 Box2D.Begin
+Box2D.CopyBodies
 Box2D.DropCopies
-Box2D.HoldJointed
-Box2D.RemoveJoints
 BeforeEnter
+Box2D.RemoveJoints
+Box2D.CopyParts
 Box2D.Enter
 BeforeOwn
 Box2D.Own

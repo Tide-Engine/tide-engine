@@ -7,12 +7,12 @@
 settings
 {
     shards = true;
-    shardRange = 8;
+    reach = 8;
 }
 
 component Mover
 {
-    [Partition] float2 position;
+    [Position] float2 position;
     float2 velocity;
     int id;
     int wallet;

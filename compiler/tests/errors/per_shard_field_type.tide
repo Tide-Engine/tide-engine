@@ -1,4 +1,0 @@
-// expect: [PerShard] works on a number or a bool, which is 0 on another shard, not float2
-settings { shards = true; shardRange = 8; }
-scene Main { }
-component Handle { [PerShard] float2 at; }

@@ -127,16 +127,16 @@ static void gen_shard_singletons(gen *g)
         sb_printf(o, "        w->%s = v;\n        return true;\n    }\n", name);
     }
     sb_put(o, "    default: return false;\n    }\n}\n\n");
-    // The [Shared] fields of [PerShard] singletons, one after another, as their bytes
+    // The fields of singletons holding a C library's state ([Native]) but those, the root's, as their bytes
     sb_put(o, "TIDE_HELPER void tide_shard_put_shared(tide_writer *out, const tide_world *w)\n{\n    (void)out;\n    (void)w;\n");
     sb shared_size = {0};
     sb_put(&shared_size, "0u");
     for (int i = 0; i < prog->singletons.count; i++) {
         const decl *d = prog->singletons.items[i];
-        if (!d->per_shard) continue;
+        if (!d->native_state) continue;
         for (int k = 0; k < d->fields.count; k++) {
             const field *f = &d->fields.items[k];
-            if (!f->shared) continue;
+            if (f->native || f->hidden || f->is_local) continue;
             sb_printf(o, "    tide_write_bytes(out, &w->%s.%s, sizeof w->%s.%s);\n", type_cname(d), field_cname(f), type_cname(d), field_cname(f));
             sb_printf(&shared_size, " + sizeof(((tide_world *)0)->%s.%s)", type_cname(d), field_cname(f));
         }
@@ -151,10 +151,10 @@ static void gen_shard_singletons(gen *g)
                  "    tide_reader r = {flat, size, 0, false};\n    (void)r;\n", shared_size.data);
     for (int i = 0; i < prog->singletons.count; i++) {
         const decl *d = prog->singletons.items[i];
-        if (!d->per_shard) continue;
+        if (!d->native_state) continue;
         for (int k = 0; k < d->fields.count; k++) {
             const field *f = &d->fields.items[k];
-            if (!f->shared) continue;
+            if (f->native || f->hidden || f->is_local) continue;
             sb_printf(o, "    memcpy(&w->%s.%s, tide_read_bytes(&r, sizeof w->%s.%s), sizeof w->%s.%s);\n", type_cname(d),
                       field_cname(f), type_cname(d), field_cname(f), type_cname(d), field_cname(f));
         }
@@ -170,11 +170,44 @@ static void gen_shard_singletons(gen *g)
                  "    for (uint32_t i = 0; i < %du; i++) {\n"
                  "        if (!((owned >> i) & 1u)) continue;\n"
                  "        tide_write_u32(&out, i);\n        tide_shard_put_singleton(&out, w, i);\n    }\n"
-                 "    // Then the [Shared] fields of its [PerShard] singletons: u32 their size, and their bytes\n"
+                 "    // Then the root's fields of its singletons holding [Native] state: u32 their size, and their bytes\n"
                  "    const uint32_t at = out.size;\n    tide_write_u32(&out, 0u);\n    tide_shard_put_shared(&out, w);\n"
                  "    if (!out.overflow) tide_shard_patch_u32(out.data + at, out.size - at - 4u);\n"
                  "    if (out.overflow) tide_out_of_memory();\n    *size = out.size;\n    return out.data;\n}\n\n",
               shard_singleton_count(prog), shard_singleton_count(prog));
+}
+
+// Whether an archetype's entities have a position: a [Position] or a Transform
+static bool shard_placed(gen *g, const int a)
+{
+    const program *prog = g->prog;
+    if (shard_uses(prog, prog->transform) && arch_stores(g, a, prog->transform->index)) return true;
+    for (int k = 0; k < prog->positions.count; k++) {
+        const decl *d = prog->positions.items[k].component;
+        if (shard_uses(prog, d) && arch_stores(g, a, d->index)) return true;
+    }
+    return false;
+}
+
+// The Entity fields of an archetype's components, the engine's aside, in
+// order: one with no position goes with the first of them that names one. In
+// `out`, the C that reads each, by entity `e`; empty for none
+static void shard_named(gen *g, const int a, sb *out)
+{
+    const program *prog = g->prog;
+    for (int c = 0; c < prog->components.count; c++) {
+        const decl *comp = prog->components.items[c];
+        if (!arch_stores(g, a, c) || comp->builtin || comp->is_local || comp->is_scene) continue;
+        for (int k = 0; k < comp->fields.count; k++) {
+            const field *f = &comp->fields.items[k];
+            if (f->type.kind != TY_ENTITY || f->is_local || f->hidden) continue;
+            sb_put(out, "    ");
+            if (comp_sparse(g, c)) sb_printf(out, "if (%s) ", presence_cell(g, "w", a, c, "row", false));
+            sb_printf(out, "{\n        const tide_entity n = tide_get_%s(w, e).%s;\n"
+                           "        if (!tide_entity_is_null(n) && !tide_entity_equal(n, e) && (!here || tide_entity_alive(&w->entities, n))) return n;\n    }\n",
+                      type_cname(comp), field_cname(f));
+        }
+    }
 }
 
 // Lending what this shard owns to the shard that asked, and moving what's
@@ -212,17 +245,118 @@ static void gen_shard_moves(gen *g)
               "    tide_shard_post(w, TIDE_SHARD_TO_OWNER, 0u, anchor, &m);\n"
               "    w->tide_shard_state.moves++;\n"
               "    tide_shard_remove_tree(w, root, true);\n}\n\n"
-              // Each entity this shard owns whose position is in another shard's
-              // region (a quarter of its range past its own, so one on the border
-              // doesn't go back and forth), unless it's borrowed for now or held;
-              // one with no position where the entity whose code spawned it is
-              // (tide_follows); and on a retiring shard, everything
-              "TIDE_SHARD_FN void tide_shard_handoff(tide_world *w)\n{\n"
+              "\n");
+    // Entities kept together: each [Together] field joins the entity that has
+    // it and the one it names, and an entity with no position joins the first
+    // entity it names. Each group goes where its lead is: the member with a
+    // position, then the lowest handle, so every shard that sees the group
+    // picks the same one
+    sb_put(o, "typedef struct tide_shard_tie {\n    int64_t key;\n    tide_entity e;\n    uint32_t up, lead;\n    bool placed;\n} tide_shard_tie;\n\n"
+              "typedef struct tide_shard_ties {\n    tide_shard_tie *at;\n    uint32_t count, room, *slots, slot_count;\n} tide_shard_ties;\n\n"
+              "TIDE_HELPER uint32_t tide_shard_tie_slot(const int64_t key, const uint32_t slot_count)\n{\n"
+              "    return (uint32_t)(((uint64_t)key * 0x9E3779B97F4A7C15ull) >> 32) & (slot_count - 1u);\n}\n\n"
+              "TIDE_HELPER uint32_t tide_shard_tie_find(const tide_shard_ties *l, const tide_entity e)\n{\n"
+              "    if (!l->slot_count) return UINT32_MAX;\n"
+              "    const int64_t key = tide_shard_key(e);\n"
+              "    for (uint32_t h = tide_shard_tie_slot(key, l->slot_count);; h = (h + 1u) & (l->slot_count - 1u)) {\n"
+              "        const uint32_t at = l->slots[h];\n"
+              "        if (!at) return UINT32_MAX;\n"
+              "        if (l->at[at - 1u].key == key) return at - 1u;\n    }\n}\n\n"
+              "TIDE_HELPER uint32_t tide_shard_tie_add(tide_shard_ties *l, const tide_world *w, const tide_entity e)\n{\n"
+              "    const uint32_t found = tide_shard_tie_find(l, e);\n"
+              "    if (found != UINT32_MAX) return found;\n"
+              "    if (l->count == l->room) {\n"
+              "        l->room = l->room ? l->room * 2u : 16u;\n"
+              "        l->at = realloc(l->at, l->room * sizeof *l->at);\n        if (!l->at) tide_out_of_memory();\n    }\n"
+              "    if ((l->count + 1u) * 2u > l->slot_count) { // The slots again, twice as many\n"
+              "        free(l->slots);\n"
+              "        l->slot_count = l->slot_count ? l->slot_count * 2u : 32u;\n"
+              "        l->slots = calloc(l->slot_count, sizeof *l->slots);\n        if (!l->slots) tide_out_of_memory();\n"
+              "        for (uint32_t i = 0; i < l->count; i++) {\n"
+              "            uint32_t h = tide_shard_tie_slot(l->at[i].key, l->slot_count);\n"
+              "            while (l->slots[h]) h = (h + 1u) & (l->slot_count - 1u);\n"
+              "            l->slots[h] = i + 1u;\n        }\n    }\n"
+              "    const uint32_t n = l->count++;\n"
+              "    double p[3];\n"
+              "    l->at[n] = (tide_shard_tie){tide_shard_key(e), e, n, n, tide_shard_where(w, e, p)};\n"
+              "    uint32_t h = tide_shard_tie_slot(l->at[n].key, l->slot_count);\n"
+              "    while (l->slots[h]) h = (h + 1u) & (l->slot_count - 1u);\n"
+              "    l->slots[h] = n + 1u;\n    return n;\n}\n\n"
+              "TIDE_HELPER uint32_t tide_shard_tie_top(tide_shard_ties *l, uint32_t i)\n{\n"
+              "    while (l->at[i].up != i) {\n        l->at[i].up = l->at[l->at[i].up].up;\n        i = l->at[i].up;\n    }\n"
+              "    return i;\n}\n\n"
+              // The lower handle tops a group, so its lead starts as the lowest
+              "TIDE_HELPER void tide_shard_tie_join(tide_shard_ties *l, const tide_world *w, const tide_entity a, const tide_entity b)\n{\n"
+              "    if (tide_entity_is_null(b) || tide_entity_equal(a, b) || !tide_entity_alive(&w->entities, b)) return;\n"
+              "    uint32_t x = tide_shard_tie_top(l, tide_shard_tie_add(l, w, a));\n"
+              "    uint32_t y = tide_shard_tie_top(l, tide_shard_tie_add(l, w, b));\n"
+              "    if (x == y) return;\n"
+              "    if (l->at[y].key < l->at[x].key) {\n        const uint32_t t = x;\n        x = y;\n        y = t;\n    }\n"
+              "    l->at[y].up = x;\n}\n\n"
+              // The entity the group of `e` goes with, or null for one in none
+              "TIDE_HELPER tide_entity tide_shard_tie_lead(tide_shard_ties *l, const tide_entity e)\n{\n"
+              "    const uint32_t at = tide_shard_tie_find(l, e);\n"
+              "    if (at == UINT32_MAX) return (tide_entity){0};\n"
+              "    return l->at[l->at[tide_shard_tie_top(l, at)].lead].e;\n}\n\n");
+    // The first entity an entity with no position names (only one alive here, with `here`)
+    for (int a = 0; a < prog->archetypes.count; a++) {
+        if (arch_local(g, a) || shard_placed(g, a)) continue;
+        sb named = {0};
+        shard_named(g, a, &named);
+        if (named.len) {
+            sb_printf(o, "TIDE_HELPER tide_entity tide_shard_first_named_%d(const tide_world *w, const tide_entity e, const bool here)\n{\n"
+                         "    const tide_location loc = tide_entity_location(&w->entities, e);\n"
+                         "    const uint32_t row = loc.row;\n    (void)row;\n%s    return (tide_entity){0};\n}\n\n", a, named.data);
+        }
+    }
+    sb_put(o, "TIDE_HELPER void tide_shard_ties_of(tide_shard_ties *l, const tide_world *w)\n{\n    (void)l;\n    (void)w;\n");
+    for (int a = 0; a < prog->archetypes.count; a++) {
+        if (arch_local(g, a)) continue;
+        sb body = {0};
+        for (int m = 0; m < prog->together.count; m++) {
+            const struct field_mark *mark = &prog->together.items[m];
+            const int c = mark->component->index;
+            if (!shard_uses(prog, mark->component) || !arch_stores(g, a, c)) continue;
+            sb_put(&body, "        ");
+            if (comp_sparse(g, c)) sb_printf(&body, "if (%s) ", presence_cell(g, "w", a, c, "row", false));
+            sb_printf(&body, "tide_shard_tie_join(l, w, e, tide_get_%s(w, e).%s);\n", type_cname(mark->component),
+                      field_cname(&mark->component->fields.items[mark->field]));
+        }
+        if (!shard_placed(g, a)) { // With no position: with the first entity it names that's here
+            sb named = {0};
+            shard_named(g, a, &named);
+            if (named.len) {
+                if (prog->hierarchy[0]) sb_put(&body, "        if (tide_entity_is_null(tide_parent_of(w, e))) {\n");
+                else sb_put(&body, "        {\n");
+                sb_printf(&body, "            const tide_entity first = tide_shard_first_named_%d(w, e, true);\n"
+                                 "            if (!tide_entity_is_null(first)) tide_shard_tie_join(l, w, e, first);\n        }\n", a);
+            }
+        }
+        if (body.len) {
+            sb_printf(o, "    for (uint32_t row = 0; row < w->%s.count; row++) {\n", arch_name(g, a));
+            sb_printf(o, "        const tide_entity e = *%s;\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
+            sb_put(o, body.data);
+            sb_put(o, "    }\n");
+        }
+    }
+    // Each group's lead: a member with a position before one without, then the lowest handle
+    sb_put(o, "    for (uint32_t i = 0; i < l->count; i++) {\n"
+              "        const uint32_t top = tide_shard_tie_top(l, i);\n"
+              "        const tide_shard_tie *lead = &l->at[l->at[top].lead];\n"
+              "        if (l->at[i].placed && (!lead->placed || l->at[i].key < lead->key)) l->at[top].lead = i;\n    }\n}\n\n");
+    // Each entity this shard owns whose position is in another shard's region
+    // (a quarter of its range past its own, so one on the border doesn't go
+    // back and forth), unless it's borrowed for now or held; one in a group
+    // where its group's lead is; one with no position where what it names is,
+    // or the entity whose code spawned it (tide_follows); and on a retiring
+    // shard, everything. What a group this shard leads has elsewhere is asked for
+    sb_put(o, "TIDE_SHARD_FN void tide_shard_handoff(tide_world *w)\n{\n"
               "    tide_shard_state *s = &w->tide_shard_state;\n"
               "    if (!s->shard || !tide_list_count(s->regions)) return;\n"
+              "    tide_shard_ties links = {0};\n    tide_shard_ties_of(&links, w);\n"
               "    uint32_t count = 0, room = 0;\n    tide_entity *going = NULL, *with = NULL;\n    int32_t *to = NULL;\n"
               // What stays with a lead that's here: it goes along if the lead goes now
-              "    uint32_t staying = 0, staying_room = 0;\n    tide_entity *stays = NULL, *led_by = NULL;\n    (void)staying_room;\n");
+              "    uint32_t staying = 0, staying_room = 0;\n    tide_entity *stays = NULL, *led_by = NULL;\n");
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
         sb_printf(o, "    for (uint32_t row = 0; row < w->%s.count; row++) {\n", arch_name(g, a));
@@ -233,37 +367,32 @@ static void gen_shard_moves(gen *g)
                   "        if (tide_shard_pinned(w, tide_shard_key(e))) continue;\n"
                   "        if (tide_shard_find(s->held, tide_shard_key(e), 1) >= 0) continue; // Code that waits here needs it\n");
         if (prog->hierarchy[0]) sb_put(o, "        if (!placed && !tide_entity_is_null(tide_parent_of(w, e))) continue; // It goes with its root\n");
-        // [GoesWith]: the first live entity one names leads it. Owned here, it stays,
-        // wherever it is; a ghost here, it goes to that one's shard; else, with no
-        // position, to whichever shard has that one now
-        sb_put(o, "        int32_t there = -1;\n        tide_entity anchor = {0};\n        bool led = false;\n");
-        for (int m = 0; m < prog->goes_with.count; m++) {
-            const struct partition_mark *mark = &prog->goes_with.items[m];
-            const int c = mark->component->index;
-            if (c < 0 || c >= prog->components.count || prog->components.items[c] != mark->component || !arch_stores(g, a, c)) continue;
-            sb_put(o, "        if (!led");
-            if (comp_sparse(g, c)) sb_printf(o, " && %s", presence_cell(g, "w", a, c, "row", false));
-            sb_printf(o, ") {\n            const tide_entity lead = tide_get_%s(w, e).%s;\n", type_cname(mark->component),
-                      field_cname(&mark->component->fields.items[mark->field]));
-            sb_put(o, "            if (tide_entity_is_null(lead) || tide_entity_equal(lead, e)) {\n"
-                      "            } else if (tide_entity_alive(&w->entities, lead) && tide_has_tide_ghost(w, lead)) {\n"
-                      "                led = true;\n                there = tide_get_tide_ghost(w, lead).source;\n"
-                      "            } else if (tide_entity_alive(&w->entities, lead)) { // Here, with what it goes with\n"
-                      "                if (staying == staying_room) {\n"
-                      "                    staying_room = staying_room ? staying_room * 2u : 16u;\n"
-                      "                    stays = realloc(stays, staying_room * sizeof *stays);\n"
-                      "                    led_by = realloc(led_by, staying_room * sizeof *led_by);\n"
-                      "                    if (!stays || !led_by) tide_out_of_memory();\n                }\n"
-                      "                stays[staying] = e;\n                led_by[staying++] = lead;\n"
-                      "                continue;\n"
-                      "            } else if (!placed && !tide_shard_owned(w, lead)) { // Not here, and not known to be gone\n"
-                      "                led = true;\n                anchor = lead;\n            }\n        }\n");
+        sb_put(o, "        int32_t there = -1;\n        tide_entity anchor = {0};\n        bool led = false;\n"
+                  "        const tide_entity lead = tide_shard_tie_lead(&links, e);\n"
+                  "        if (!tide_entity_is_null(lead) && !tide_entity_equal(lead, e)) {\n"
+                  "            if (tide_has_tide_ghost(w, lead)) { // Its group's lead is another shard's: it goes there\n"
+                  "                led = true;\n                there = tide_get_tide_ghost(w, lead).source;\n"
+                  "            } else { // Here: it stays with it, and goes along if it goes\n"
+                  "                if (staying == staying_room) {\n"
+                  "                    staying_room = staying_room ? staying_room * 2u : 16u;\n"
+                  "                    stays = realloc(stays, staying_room * sizeof *stays);\n"
+                  "                    led_by = realloc(led_by, staying_room * sizeof *led_by);\n"
+                  "                    if (!stays || !led_by) tide_out_of_memory();\n                }\n"
+                  "                stays[staying] = e;\n                led_by[staying++] = lead;\n"
+                  "                continue;\n            }\n        }\n");
+        sb named = {0};
+        if (!shard_placed(g, a)) shard_named(g, a, &named);
+        sb_put(o, "        if (led) {\n"
+                  "        } else if (placed) {\n"
+                  "            if (tide_shard_mine(w, p, TIDE_SHARD_REACH * 0.25)) continue; // Its own region's: the root's too, when it has one\n"
+                  "            there = tide_shard_region_of(w, p);\n        }");
+        if (named.len) { // What it names isn't here, and isn't known to be gone: it goes to whichever shard has that
+            sb_printf(o, " else if (!tide_entity_is_null(tide_shard_first_named_%d(w, e, false))\n"
+                         "                   && !tide_entity_alive(&w->entities, tide_shard_first_named_%d(w, e, false))\n"
+                         "                   && !tide_shard_owned(w, tide_shard_first_named_%d(w, e, false))) {\n"
+                         "            anchor = tide_shard_first_named_%d(w, e, false);\n        }", a, a, a, a);
         }
-        sb_printf(o, "        if (led) {\n"
-                     "        } else if (placed) {\n"
-                     "            if (tide_shard_mine(w, p, TIDE_SHARD_REACH * 0.25)) continue; // Its own region's: the root's too, when it has one\n"
-                     "            there = tide_shard_region_of(w, p);\n"
-                     "        } else if (%s) {\n"
+        sb_printf(o, " else if (%s) {\n"
                      "            anchor = tide_get_tide_follows(w, e).of;\n"
                      "            if (tide_shard_owned(w, anchor)) anchor = (tide_entity){0}; // It's here\n"
                      "            else if (tide_entity_alive(&w->entities, anchor) && tide_has_tide_ghost(w, anchor)) {\n"
@@ -279,23 +408,32 @@ static void gen_shard_moves(gen *g)
                   "            if (!going || !to || !with) tide_out_of_memory();\n        }\n"
                   "        going[count] = e;\n        with[count] = anchor;\n        to[count++] = there;\n    }\n");
     }
-    // What stays with a lead that goes now goes with it, in the same tick, and
-    // so what stays with that, as far as it goes: a body, its parts, its joint
-    // and the joint's other body move together
-    sb_put(o, "    for (bool more = staying > 0; more;) {\n"
-              "        more = false;\n"
-              "        for (uint32_t k = 0; k < staying; k++) {\n"
-              "            if (tide_entity_is_null(stays[k])) continue;\n"
-              "            for (uint32_t i = 0; i < count; i++) {\n"
-              "                if (!tide_entity_equal(going[i], led_by[k])) continue;\n"
-              "                if (count == room) {\n"
-              "                    room = room ? room * 2u : 16u;\n"
-              "                    going = realloc(going, room * sizeof *going);\n                    to = realloc(to, room * sizeof *to);\n"
-              "                    with = realloc(with, room * sizeof *with);\n"
-              "                    if (!going || !to || !with) tide_out_of_memory();\n                }\n"
-              "                going[count] = stays[k];\n                with[count] = with[i];\n                to[count++] = to[i];\n"
-              "                stays[k] = (tide_entity){0};\n                more = true;\n                break;\n            }\n        }\n    }\n"
+    // What stays with a lead that goes now goes with it, in the same tick: a
+    // body, its parts, its joint and the joint's other body move together
+    sb_put(o, "    for (uint32_t k = 0; k < staying; k++) {\n"
+              "        for (uint32_t i = 0; i < count; i++) {\n"
+              "            if (!tide_entity_equal(going[i], led_by[k])) continue;\n"
+              "            if (count == room) {\n"
+              "                room = room ? room * 2u : 16u;\n"
+              "                going = realloc(going, room * sizeof *going);\n                to = realloc(to, room * sizeof *to);\n"
+              "                with = realloc(with, room * sizeof *with);\n"
+              "                if (!going || !to || !with) tide_out_of_memory();\n            }\n"
+              "            going[count] = stays[k];\n            with[count] = with[i];\n            to[count++] = to[i];\n"
+              "            break;\n        }\n    }\n"
               "    free(stays);\n    free(led_by);\n");
+    // A group this shard leads and stays with: what it has on other shards comes here
+    sb_put(o, "    for (uint32_t i = 0; i < links.count; i++) {\n"
+              "        const tide_entity e = links.at[i].e, lead = tide_shard_tie_lead(&links, e);\n"
+              "        if (!tide_has_tide_ghost(w, e) || tide_has_tide_ghost(w, lead)) continue;\n"
+              "        bool leaving = false;\n"
+              "        for (uint32_t k = 0; k < count && !leaving; k++) leaving = tide_entity_equal(going[k], lead);\n"
+              "        if (leaving || tide_shard_find(s->asked, tide_shard_key(e), 1) >= 0) continue;\n"
+              "        tide_shard_push(&s->asked, tide_shard_key(e));\n"
+              "        tide_writer m = tide_shard_begin(w, TIDE_SHARD_BORROW, true);\n"
+              "        tide_write_u32(&m, (uint32_t)tide_shard_self(w));\n"
+              "        tide_write_u32(&m, e.index);\n        tide_write_u32(&m, e.generation);\n"
+              "        tide_shard_post(w, TIDE_SHARD_TO_OWNER, 0u, e, &m);\n    }\n"
+              "    free(links.at);\n    free(links.slots);\n");
     sb_put(o, "    for (uint32_t i = 0; i < count; i++) {\n"
               "        if (!tide_entity_alive(&w->entities, going[i]) || tide_has_tide_ghost(w, going[i])) continue;\n"
               "        if (tide_entity_is_null(with[i])) tide_shard_send_tree(w, going[i], to[i], 0u);\n"

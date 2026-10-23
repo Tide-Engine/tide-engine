@@ -1,5 +1,5 @@
 // Box2D in a sharded world (shards_test.c): each shard steps its own Box2D
-// world (Physics is [PerShard]), and a body that crosses into another
+// world (Physics holds [Native] state), and a body that crosses into another
 // region's is made anew there from its Body, as it was when it left. Four
 // crates slide right across the border at x = 0 and keep their speed; two
 // others meet head on once they're both on the right, and push each other.
@@ -11,7 +11,7 @@ using Box2D;
 settings
 {
     shards = true;
-    shardRange = 4;
+    reach = 4;
 }
 
 scene Main { }
@@ -27,7 +27,7 @@ event(Hit hit) Count(mut Crate crate)
     crate.hits += 1;
 }
 
-// Set once, on the root: Physics' settings are [Shared], so every shard has them
+// Set once, on the root: Physics' settings are the world's, so every shard has them
 event(Spawned) Make(with Main, mut Physics physics)
 {
     physics.gravity = float2(0, 0);

@@ -166,7 +166,7 @@ typedef struct tide_shard_status {
 // What a sharded game gives the runtime: tide_game.shards, generated for
 // games with `settings { shards = true; }`, NULL for others.
 typedef struct tide_shard_game {
-    double range;  // shardRange
+    double range;  // The game's reach
     uint32_t dims; // 2 or 3: the [Partition] field's
     // Starts `world` as a shard: the root as tide_game.start would (`start`,
     // the scene, or NULL for Main), a region with nothing in it. `config` is a

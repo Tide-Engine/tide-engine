@@ -1,4 +1,0 @@
-// expect: [Shared] marks a field of a [PerShard] singleton that's the root's on every shard, like a setting
-settings { shards = true; shardRange = 8; }
-scene Main { }
-singleton Tuning { [Shared] float pull; }

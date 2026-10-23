@@ -52,9 +52,9 @@ enum BodyType
 // see it get there over a few frames. Neither changes anything of the match.
 component Body
 {
-    [PerShard] long id; // Box2D's own handle: 0 until the body's first step, and on a shard it came to
+    [Native] long id; // Box2D's own handle: 0 until the body's first step, and on a shard it came to
     BodyType type = BodyType.Dynamic;
-    [Position] [Partition] float2 position; // Where it is: in a sharded world, which shard has it
+    [Position] float2 position; // Where it is: in a sharded world, which shard has it
     [Rotation] float angle; // In radians, from -pi to pi
     float2 velocity;
     float spin; // In radians a second
@@ -77,9 +77,6 @@ component Body
     // an `asleep` that code wrote since is told
     bool stepAsleep;
     bool rewind; // Opt this body and all its shapes into bounded collider history
-    // The package's own: the joint that holds this body to another, which it
-    // goes with in a sharded world (HoldJointed)
-    [GoesWith] Entity heldBy;
 }
 
 // A box on the entity's body, `size` wide and high around `offset`.
@@ -113,10 +110,10 @@ component Circle
 // parts with it. A part whose entity names none with a Body is destroyed.
 component Part
 {
-    [GoesWith] Entity of; // In a sharded world, a part goes where its body goes
+    Entity of; // The body it's part of
     // The package's own: its shapes in Box2D, 0 until they're on the body
-    [PerShard] long box;
-    [PerShard] long circle;
+    [Native] long box;
+    [Native] long circle;
 }
 
 // Preserve the established ECS traversal order as bodies acquire shapes.
@@ -178,52 +175,49 @@ struct RayHit
     float fraction; // How far along the way that was, from 0 at its start to 1 at its end
 }
 
-// Each shard of a sharded world has its own: Box2D's world of the bodies it
-// owns. A body that goes to another shard is made there anew from its Body,
-// as it was when it left.
-// Its settings ([Shared]) are the root's on every shard: set them anywhere the
-// root has them, such as Main's Spawned, and every shard steps by them.
-[PerShard]
+// Box2D's world. In a sharded world each shard keeps its own ([Native]) of
+// the bodies it owns, and a body that goes to another shard is made there anew
+// from its Body; the settings are the world's, as a game sets them.
 singleton Physics
 {
-    [Shared] float2 gravity = float2(0, -10);
-    [Shared] int substeps = 4;
+    float2 gravity = float2(0, -10);
+    int substeps = 4;
     // How the world is tuned. Each is Box2D's own default, and a change is the next step's.
-    [Shared] float contactStiffness = 30; // How stiff contacts are, in cycles a second: no more than an eighth of the substeps a second count
-    [Shared] float contactDamping = 10; // ...and how little they spring back: under 1 they bounce
-    [Shared] float contactSpeed = 3; // The fastest bodies that overlap are pushed apart, in meters a second
-    [Shared] float bounceSpeed = 1; // Shapes with `bounce` only bounce when they meet faster than this
-    [Shared] float hitSpeed = 1; // Bodies that meet faster than this send Hit
-    [Shared] bool sleeping = true; // Bodies at rest fall asleep, and cost nothing until something wakes them
-    int bodies; // Made so far
-    int shapes;
-    long stamp; // Which state `image` is, by all that was ever done to the world: what C's world is told apart by
-    int size; // The image's bytes
-    bool moved; // The last tick stepped the world: nothing awake and nothing done to it, and it doesn't
-    int dropped; // Bodies whose entities were destroyed before this tick's step: their parts go too
-    List<byte> image; // Box2D's whole state after the last step
-    List<long> gone; // Bodies whose entities were destroyed, until the next step
-    List<long> shed; // ...and the shapes of parts whose entities were
-    Map<long, Entity> owners; // Each body's entity
-    Map<long, Entity> parts; // ...and each part's shape's
-    Map<Entity, Sensors> sensors; // The sensors of each entity that has any
+    float contactStiffness = 30; // How stiff contacts are, in cycles a second: no more than an eighth of the substeps a second count
+    float contactDamping = 10; // ...and how little they spring back: under 1 they bounce
+    float contactSpeed = 3; // The fastest bodies that overlap are pushed apart, in meters a second
+    float bounceSpeed = 1; // Shapes with `bounce` only bounce when they meet faster than this
+    float hitSpeed = 1; // Bodies that meet faster than this send Hit
+    bool sleeping = true; // Bodies at rest fall asleep, and cost nothing until something wakes them
+    [Native] int bodies; // Made so far
+    [Native] int shapes;
+    [Native] long stamp; // Which state `image` is, by all that was ever done to the world: what C's world is told apart by
+    [Native] int size; // The image's bytes
+    [Native] bool moved; // The last tick stepped the world: nothing awake and nothing done to it, and it doesn't
+    [Native] int dropped; // Bodies whose entities were destroyed before this tick's step: their parts go too
+    [Native] List<byte> image; // Box2D's whole state after the last step
+    [Native] List<long> gone; // Bodies whose entities were destroyed, until the next step
+    [Native] List<long> shed; // ...and the shapes of parts whose entities were
+    [Native] Map<long, Entity> owners; // Each body's entity
+    [Native] Map<long, Entity> parts; // ...and each part's shape's
+    [Native] Map<Entity, Sensors> sensors; // The sensors of each entity that has any
 
-    float historyDt;
-    float historyLimit;
-    int historyTick;
-    Map<long, bool> selected;
-    List<Collider> pending;
-    List<HistoryFrame> history;
-    Map<long, Entity> joints;
-    Map<Entity, Fixtures> fixtures;
-    List<byte> topology;
-    bool topologyChanged; // Entities changed, or came or went (Shards.moves): what's Box2D's is looked over
-    long shardMoves; // The package's own: Shards.moves as the last tick had it
+    [Native] float historyDt;
+    [Native] float historyLimit;
+    [Native] int historyTick;
+    [Native] Map<long, bool> selected;
+    [Native] List<Collider> pending;
+    [Native] List<HistoryFrame> history;
+    [Native] Map<long, Entity> joints;
+    [Native] Map<Entity, Fixtures> fixtures;
+    [Native] List<byte> topology;
+    [Native] bool topologyChanged; // Entities changed, or came or went: what's Box2D's is looked over
+    [Native] long shardMoves; // How many entities came to this shard or left it, as the last tick had it (tide_shard_moves_now)
     // In a sharded world: Box2D's copies of other shards' bodies near this
     // one's border, by entity, and whose each copy is (CopyBodies)
-    Map<Entity, Copy> copies;
-    Map<long, Entity> copyOf;
-    Map<Entity, CopyPart> copiedParts;
+    [Native] Map<Entity, Copy> copies;
+    [Native] Map<long, Entity> copyOf;
+    [Native] Map<Entity, CopyPart> copiedParts;
 
     // A prepared, read-only scene: opted-in bodies at the presented time,
     // all other geometry at the current physics step. Invalid times fail.
@@ -858,33 +852,39 @@ void CopyShapes(World world, Entity entity, long body)
 }
 
 // In a sharded world, the bodies other shards own near this one's border are
-// here as ghosts, and Box2D has each as a copy this shard's bodies run into:
+// here as copies, and Box2D has each as a copy this shard's bodies run into:
 // kinematic (static for a static one), where its owner last had it and as
-// fast, with its own box or circle. In a world that isn't sharded, there are
-// none, and these systems aren't there.
-[Ghosts]
+// fast, with its shapes. In a world that isn't sharded, every body is this
+// shard's own, and these do nothing.
 [Stage(PhysicsStages.Step, 3)]
-system CopyBodies(Body body, World world, Time time, mut Physics physics)
+system CopyBodies(World world, Time time, mut Physics physics, query (Body body) bodies)
 {
-    long had = physics.copies.TryGet(this, out var copy) ? copy.body : 0;
-    long made = CopyBody(had, body);
-    if (had != 0 && made != had) physics.copyOf.Remove(had);
-    if (made != 0 && made != had)
+    foreach (var row in bodies)
     {
-        CopyShapes(world, this, made);
-        physics.copyOf[made] = this;
+        if (Shards.Owns(row.entity)) continue;
+        long had = physics.copies.TryGet(row.entity, out var copy) ? copy.body : 0;
+        long made = CopyBody(had, row.body);
+        if (had != 0 && made != had) physics.copyOf.Remove(had);
+        if (made != 0 && made != had)
+        {
+            CopyShapes(world, row.entity, made);
+            physics.copyOf[made] = row.entity;
+        }
+        physics.copies[row.entity] = Copy { body = made, tick = time.tick };
     }
-    physics.copies[this] = Copy { body = made, tick = time.tick };
 }
 
 // A part another shard owns, on a body copied here: its shapes are on the copy
-[Ghosts]
 [Stage(PhysicsStages.Step, 4)]
-system CopyParts(Part part, World world, Time time, mut Physics physics)
+system CopyParts(World world, Time time, mut Physics physics, query (Part part) parts)
 {
-    if (!physics.copies.TryGet(part.of, out var copy) || copy.body == 0) return;
-    if (!physics.copiedParts.TryGet(this, out var on) || on.body != copy.body) CopyShapes(world, this, copy.body);
-    physics.copiedParts[this] = CopyPart { of = part.of, body = copy.body, tick = time.tick };
+    if (physics.copies.count == 0) return;
+    foreach (var row in parts)
+    {
+        if (Shards.Owns(row.entity) || !physics.copies.TryGet(row.part.of, out var copy) || copy.body == 0) continue;
+        if (!physics.copiedParts.TryGet(row.entity, out var on) || on.body != copy.body) CopyShapes(world, row.entity, copy.body);
+        physics.copiedParts[row.entity] = CopyPart { of = row.part.of, body = copy.body, tick = time.tick };
+    }
 }
 
 // A copy whose ghost went last tick, or that this shard owns now, goes, once
@@ -1872,8 +1872,8 @@ void SortScene(mut List<Collider> scene)
 // Anchors and rotations are local to the corresponding body's origin.
 component Joint
 {
-    [GoesWith] Entity a; // In a sharded world, a joint goes where its first body goes
-    Entity b;
+    [Together] Entity a; // The bodies it joins, which in a sharded world are kept on one shard with it
+    [Together] Entity b;
     float2 anchorA;
     float2 anchorB;
     float angleA;
@@ -1882,10 +1882,10 @@ component Joint
     float constraintDampingRatio = 2;
     bool enabled = true;
     bool collideConnected;
-    [PerShard] long id; // The package's own native handle, zero before attachment
+    [Native] long id; // The package's own native handle, zero before attachment
     float2 force; // Read back after the step, in newtons
     float torque; // Read back after the step, in newton meters
-    [PerShard] long configuration; // The package's own creation-only settings key
+    [Native] long configuration; // The package's own creation-only settings key
 }
 
 component DistanceJoint
@@ -1989,19 +1989,6 @@ extern void DropJoint(long id);
 extern void ReadJoint(mut Joint joint);
 
 // Removes orphaned handles too, including removal of the Joint component.
-// In a sharded world, a joint's bodies go together: the joint goes with its
-// first body (Joint.a), and its second with the joint (Body.heldBy), so one
-// shard has all three, and the joint holds
-[Stage(PhysicsStages.Step, 3)]
-system HoldJointed(Joint joint, mut World world)
-{
-    if (!world.Has<Body>(joint.b)) return;
-    mut var b = world.Get<Body>(joint.b);
-    if (b.heldBy == this) return;
-    b.heldBy = this;
-    world.Set<Body>(joint.b, b);
-}
-
 [Stage(PhysicsStages.Step, 3)]
 system RemoveJoints(World world, mut Physics physics)
 {

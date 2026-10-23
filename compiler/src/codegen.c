@@ -4246,6 +4246,14 @@ static bool noise_call(const char *c_callee)
 
 static void gen_builtin_call(gen *g, sb *o, const expr *e)
 {
+    // Shards.Owns in a game that isn't sharded: everything is its own, so code
+    // for other shards' entities (a library's copies of them) compiles away
+    if (!g->prog->shards && strcmp(e->c_callee, "tide_shard_owns_now") == 0 && e->args.count == 1) {
+        sb_put(o, "((void)(");
+        gen_expr(g, o, e->args.items[0]);
+        sb_put(o, "), true)");
+        return;
+    }
     // Draw.Shape goes through the helper that turns a Shape into a tide_shape
     const bool shape = e->call == CALL_DRAW && strcmp(e->c_callee, "tide_draw_shape") == 0;
     sb_printf(o, "%s(", shape ? "tide_draw_shape_value" : e->c_callee);
@@ -8274,7 +8282,7 @@ static decl map_entry_decl(const decl *map)
     sb_printf(&name, "tide_map%d_entry", map->index);
     d.gen_name = name.data;
     d.name = str_from(name.data);
-    const field order = {str_from("tide_order"), str_from(""), {0, 0, 0}, {TY_LONG, NULL}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
+    const field order = {str_from("tide_order"), str_from(""), {0, 0, 0}, {TY_LONG, NULL}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
     vec_push(d.fields, order);
     for (int i = 0; i < map->fields.count; i++) vec_push(d.fields, map->fields.items[i]);
     return d;
@@ -10675,9 +10683,8 @@ static void gen_apply(gen *g, const bool local)
         sb_printf(o, "        tide_entity_set_location(&w->entities, c->entity, (tide_location){%d, row});\n", a);
         // A shard's spawn with no position goes with the entity whose code spawned it (tide_shard_handoff)
         bool placed = false;
-        for (int k = -2; k < prog->package_partitions.count; k++) { // The game's [Partition], or Transform; a package's
-            const decl *placing = k == -2 ? prog->partition : k == -1 ? (prog->partition ? NULL : prog->transform)
-                                                                      : prog->package_partitions.items[k].component;
+        for (int k = -1; k < prog->positions.count; k++) { // A [Position], or Transform
+            const decl *placing = k == -1 ? prog->transform : prog->positions.items[k].component;
             placed |= placing && placing->index >= 0 && placing->index < prog->components.count
                    && prog->components.items[placing->index] == placing && arch_stores(g, a, placing->index);
         }

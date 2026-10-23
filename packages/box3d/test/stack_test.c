@@ -41,8 +41,8 @@ void b3t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took);
 
 // The match after 300 ticks, on every platform and in every configuration:
 // Box3D's own math, SIMD or not, and its resident stamp and digest.
-#define SETTLED_HASH UINT64_C(0x1cfef57d9f96086d)
-#define IMAGES_HASH UINT64_C(0x6152fb0fa8a71bdd)
+#define SETTLED_HASH UINT64_C(0xfa23a8f4eba064ff)
+#define IMAGES_HASH UINT64_C(0x80a9e27b24968326)
 // Box3D's own digest at each of the 300 ticks, apart from everything else the
 // match holds. A change to what the match keeps
 // beside it (a field of Physics, a component of the package's) moves the two

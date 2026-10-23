@@ -1,5 +1,5 @@
 // Box3D in a sharded world (shards_test.c): each shard steps its own Box3D
-// world (Physics is [PerShard]), and a body that crosses into another
+// world (Physics holds [Native] state), and a body that crosses into another
 // region's is made anew there from its Body, as it was when it left. Four
 // crates slide right across the border at x = 0 and keep their speed; two
 // others meet head on once they're both on the right, and push each other.
@@ -11,7 +11,7 @@ using Box3D;
 settings
 {
     shards = true;
-    shardRange = 4;
+    reach = 4;
 }
 
 scene Main { }
@@ -27,7 +27,7 @@ event(Hit hit) Count(mut Crate crate)
     crate.hits += 1;
 }
 
-// Set once, on the root: Physics' settings are [Shared], so every shard has them
+// Set once, on the root: Physics' settings are the world's, so every shard has them
 event(Spawned) Make(with Main, mut Physics physics)
 {
     physics.gravity = float3(0, 0, 0);
@@ -51,4 +51,11 @@ event(Spawned) Make(with Main, mut Physics physics)
     var lead = Spawn(Crate { id = 8 }, Body { position = float3(-10, 0, 60), velocity = float3(6, 0, 0) }, Box);
     var held = Spawn(Crate { id = 9 }, Body { position = float3(-12, 0, 60), velocity = float3(6, 0, 0) }, Box);
     Spawn(Crate { id = 5 }, Joint { a = lead, b = held }, DistanceJoint { length = 2 });
+    // Three crates joined in a ring, each to the next: all of it crosses together
+    var first = Spawn(Crate { id = 16 }, Body { position = float3(-12, 0, 70), velocity = float3(6, 0, 0) }, Box);
+    var second = Spawn(Crate { id = 17 }, Body { position = float3(-10, 0, 70), velocity = float3(6, 0, 0) }, Box);
+    var third = Spawn(Crate { id = 18 }, Body { position = float3(-11, 0, 71.7320508), velocity = float3(6, 0, 0) }, Box);
+    Spawn(Crate { id = 19 }, Joint { a = first, b = second }, DistanceJoint { length = 2 });
+    Spawn(Crate { id = 20 }, Joint { a = second, b = third }, DistanceJoint { length = 2 });
+    Spawn(Crate { id = 21 }, Joint { a = third, b = first }, DistanceJoint { length = 2 });
 }

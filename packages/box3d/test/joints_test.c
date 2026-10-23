@@ -109,7 +109,7 @@ TIDE_TEST(box3d_joints_snapshot_canonical_restore_and_replay)
         tide_world_tick(&restored);
         TIDE_CHECK(tide_world_hash(&restored) == hash);
     }
-    TIDE_CHECK(sequence == UINT64_C(0x92352dab246ee8cb));
+    TIDE_CHECK(sequence == UINT64_C(0x78bf7bb3c89f806a));
     printf("  joint sequence: %016llx\n", (unsigned long long)sequence);
     for (int i = 0; i < 90; i++) tide_world_tick(&saved);
     TIDE_CHECK(tide_world_hash(&saved) == tide_world_hash(&w));

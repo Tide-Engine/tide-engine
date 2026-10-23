@@ -212,7 +212,7 @@ static bool tide_run_seeded;
 static uint32_t tide_run_seed;
 // --shards <n> and --shard-width <units>: a sharded game's matches on this
 // machine split into n regions along x from the start, each that wide (0: 16
-// times the game's shardRange), for trying borders out (tide/shards.h)
+// times the game's reach), for trying borders out (tide/shards.h)
 static uint32_t tide_run_shards;
 static double tide_run_shard_width;
 static tide_session *tide_run_session;

@@ -14,20 +14,13 @@ This is new, and its names and details may change ([spec](../spec.md#shards)).
 settings
 {
     shards = true;
-    shardRange = 64;
-}
-
-component Avatar
-{
-    [Partition] float2 position;
+    reach = 64;
 }
 ```
 
-`shardRange` is how far, in world units, the game's code looks around an entity: sight, reach, a query for what's nearby. A shard keeps read-only copies of its neighbours' entities that far past its border, so that code sees them. Regions are never narrower than twice the range.
+That's all a game declares. `reach` is how far, in world units, anything in the game looks or acts: sight, an attack's range, a query for what's nearby. Code near a border sees that far across it, and regions are never narrower than twice it.
 
-`[Partition]` marks the field that decides where an entity lives: one `float2`, `float3`, `double2` or `double3` field, on one component. Without it, the world position of an entity's `Transform` decides. An entity in a `Transform` hierarchy lives with its root. An entity without a position goes with the entity whose code spawned it: a bag spawned by a player's avatar follows the avatar from shard to shard.
-
-A package can mark a `[Partition]` of its own, as the physics packages do on `Body.position`, so a body goes where it is. An entity with the game's `[Partition]` component goes by that, and one with a package's by the package's. Every `[Partition]` in a game has the same number of axes.
+Where an entity is comes from the position it already has: a `[Position]` field, the one that's [smoothed](./networking.md#provisional-correction-smoothing) when prediction is corrected, or its `Transform`. An entity in a `Transform` hierarchy lives with its root. An entity without a position goes with the first entity its fields name, so a bag with an `owner` follows its owner from shard to shard, or else with the entity whose code spawned it.
 
 ## What changes in the game
 
@@ -63,7 +56,7 @@ Players join the world at its first shard, which sends `PlayerJoined`. A player'
 tide run --shards 2 --shard-width 100
 ```
 
-`--shard-width` is each region's width in world units, 16 times `shardRange` without it.
+`--shard-width` is each region's width in world units, 16 times `reach` without it.
 
 A [dedicated server](./matches.md#dedicated-servers) runs each shard as one of its matches:
 
@@ -89,20 +82,17 @@ Tide's hosting service runs a sharded game's world across machines. The world st
 
 [Box3D](../packages/box3d.md) and [Box2D](../packages/box2d.md) work in a sharded world. Each shard steps its own physics world of the bodies it owns. A body that crosses a border is made anew on the next shard from its `Body`, where it was and as fast. Bodies another shard owns near the border are there too, as kinematic copies where their owner last had them, with all their shapes and parts, so a crate runs into a wall across the border instead of passing through it. Each side tells its own entities of a touch or a hit.
 
-Jointed bodies go together: the shard that has one has the other and the joint, so a joint holds across borders. A body's parts go with it.
+Jointed bodies go together: the shard that has one has the other and the joint, so a joint holds across borders, and so does a chain or a ring of them. A body's parts go with it.
 
-The physics settings, such as `gravity`, are the world's: set them on the first shard, from `Main` or code for no entity, and every shard has them.
+The physics settings, such as `gravity`, are the world's: set them as in any game, and every shard has them.
 
-## A game's own C state
+## A C library's state
 
-A C library that keeps state for the entities a shard has, as the physics packages do, declares where that state lives:
+This is for whoever writes a package around a C library, as the physics packages do; a game that uses the package writes none of it. The library says what its fields are, and the engine works out what that means across shards:
 
-- `[PerShard] singleton` is a singleton each shard has its own of. Nothing copies it to other shards or borrows it. Code for no entity that takes one runs on every shard, for that shard; other code for no entity runs once, on the first shard.
-- `[PerShard]` on a component's number or bool field marks something that means something on one shard alone, like a handle into a C library. It's 0 wherever its entity arrives or is copied, so the library makes its own there.
-- `[Shared]` on a field of a `[PerShard]` singleton makes it the world's one value, the first shard's, which every other shard has too: settings for the library, such as a physics world's gravity.
-- `[GoesWith]` on a component's `Entity` field makes its entity go where that entity goes instead of by its own position, as a physics part goes with its body.
-- `[Ghosts]` on a system runs it for the read-only copies a shard holds of other shards' entities near its border, instead of its own entities. It can't change their components. In a game that isn't sharded it isn't there.
-- `Shards.moves` counts the times an entity came to this shard or left it, so a library can notice what left.
+- `[Native]` marks a field holding the library's state, like a handle. On a component it's a number or a bool, 0 wherever its entity arrives or is copied, so the library makes its own there. On a singleton it can be anything, and each shard keeps its own; the singleton's other fields are the world's, the first shard's on every shard, like a physics world's gravity. The package's own code for no entity that takes such a singleton runs on every shard, for that shard; a game's runs once, as any code for no entity does, so a setting the game writes reaches every shard.
+- `[Together]` on a component's `Entity` field keeps what it names on one shard with the entity that has it, as a joint keeps its two bodies. Everything tied together this way, a chain or a ring included, goes as one.
+- The copies a shard holds of other shards' entities near its border are what a query finds and `Shards.Owns` says this shard doesn't own: a library makes its own copies of them from that.
 
 ## Visibility
 

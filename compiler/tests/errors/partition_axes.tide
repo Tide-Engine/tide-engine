@@ -1,5 +1,0 @@
-// expect: every [Partition] position has as many axes, and 'at' has 3 where another has 2
-settings { shards = true; shardRange = 8; }
-scene Main { }
-component Flat { [Partition] float2 at; }
-component Deep { [Partition] float3 at; }

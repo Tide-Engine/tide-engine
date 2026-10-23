@@ -25,7 +25,7 @@ typedef struct tide_shard_coordinator tide_shard_coordinator;
 
 typedef struct tide_shard_coordinator_desc {
     uint32_t players;  // How many the game takes (tide_game_players)
-    double range;      // The game's shardRange (tide_shard_game.range)
+    double range;      // The game's reach (tide_shard_game.range)
     uint32_t dims;     // ...and how many axes its positions have
     // The box the regions divide, which grow past it to take what goes
     // outside, and regions along each axis to start with (0 counts as 1)

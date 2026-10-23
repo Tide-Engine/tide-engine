@@ -2,7 +2,7 @@
 
 ## Shard attributes (2026-10-23)
 
-`[PerShard]` on a singleton and on a component's number or bool field, `[Ghosts]` on a per-entity system, `Shards.moves`, and one `[Partition]` a package: rules, checks and generated code are in `notes/sharding.md`, The language side; the spec's Shards section has them as Provisional. `field` gained `per_shard` as its last member, so positional `field` initializers end in `false`.
+`reach`, `[Position]` deciding where an entity is, `[Native]` and `[Together]` (which replaced `shardRange`, `[Partition]`, `[PerShard]`, `[Shared]`, `[Ghosts]`, `[GoesWith]` and `Shards.moves` the same day): rules, checks and generated code are in `notes/sharding.md`, The language side; the spec's Shards section has them as Provisional. `field` has `native` as its last member, so positional `field` initializers end in `false`.
 
 ## LookRotation of any length (2026-10-22)
 

@@ -1252,7 +1252,6 @@ static const struct {
 } members[] = {
     {"Application", "title", TY_STRING, "tide_str_from_cstr(tide_game_title)"},
     {"Shards", "delay", TY_INT, "tide_shard_delay_now"},
-    {"Shards", "moves", TY_LONG, "tide_shard_moves_now()"},
     {"Application", "persistentDataPath", TY_STRING, "tide_application_persistent_data_path(tide_l->tide_io)"},
     {"Application", "temporaryCachePath", TY_STRING, "tide_application_temporary_cache_path(tide_l->tide_io)"},
     {"Math", "PI", TY_FLOAT, "TIDE_PI_F"},
@@ -2086,11 +2085,11 @@ static const setting settings[] = {
     {"shards", TY_BOOL, "false",
      "Splits the match's world across servers by where things are, for worlds bigger than one server holds: each "
      "region a shard of its own, with entities moving between them as they move. Game code doesn't change; code that "
-     "changes something across a border waits until its shard owns it. Needs `shardRange`, and a `[Partition]` field "
-     "or `Transform`'s position to say where each entity is."},
-    {"shardRange", TY_FLOAT, "none",
-     "With `shards`: how far the game's code looks around, in world units, like sight or reach. Each shard holds "
-     "read-only copies of its neighbours' entities within this of its border, and no region is narrower than twice it."},
+     "changes something across a border waits until its shard owns it. Needs `reach`. Where an entity is comes "
+     "from its `[Position]` fields, or its `Transform`."},
+    {"reach", TY_FLOAT, "none",
+     "With `shards`: how far anything in the game looks or acts, in world units: sight, an attack's range, a query "
+     "for what's nearby. Code near a border sees that far across it, and no region is narrower than twice it."},
     {"debugViews", TY_BOOL, "false",
      "The engine's debug views are on in the game: F7 shows the profiler, which says where a frame's time goes (the "
      "match's ticks, each view, drawing) and a tick's (each system, then its changes and events). Nothing is measured "

@@ -3,10 +3,10 @@
 settings
 {
     shards = true;
-    shardRange = 16;
+    reach = 16;
 }
 
-component Coin { [Partition] float2 position; int value; }
+component Coin { [Position] float2 position; int value; }
 singleton Score { int total; int ticks; }
 
 scene Main { }

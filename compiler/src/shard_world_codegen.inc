@@ -78,7 +78,7 @@ static void gen_shard_receive(gen *g)
               "                const bool mine = (((uint64_t)s->singletons >> (i & 63u)) & 1u) != 0;\n"
               "                if (r.failed || i >= TIDE_SHARD_SINGLETONS || !tide_shard_take_singleton(w, &r, i, !mine)) return false;\n"
               "            }\n"
-              "            // The root's [Shared] fields: kept, and in the world from now on, on any shard but the root\n"
+              "            // The root's fields of singletons holding [Native] state: kept, and in the world from now on, on any shard but the root\n"
               "            if (r.at < r.size) {\n"
               "                const uint32_t n = tide_read_u32(&r);\n"
               "                const uint8_t *shared = tide_read_bytes(&r, n);\n"
@@ -519,7 +519,7 @@ static void gen_shard_tick(gen *g)
               "void tide_world_tick_on(tide_world *w, const tide_jobs *jobs)\n{\n"
               "    tide_shard_use(w, tide_shard_owns_world, tide_shard_moves_world);\n"
               "    if (!w->tide_shard_state.shard) {\n        tide_world_tick_once(w, jobs);\n        return;\n    }\n"
-              "    tide_shard_apply_shared(w); // What the root has of [Shared] fields, whatever was written here\n"
+              "    tide_shard_apply_shared(w); // The root's fields of singletons holding [Native] state, whatever was written here\n"
               "    tide_shard_tick t = {0};\n    tide_world before = {0};\n    tide_world_copy(&before, w);\n");
     if (hears) {
         sb_put(o, "    const uint32_t heard_size = tide_listening ? tide_listening->size : 0u;\n"

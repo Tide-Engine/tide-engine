@@ -5,10 +5,11 @@ Unordered
 BeforeBegin
 Box3D.Begin
 Box3D.BeginShapes
-Box3D.HoldJointed
 Box3D.DropCopies
 Box3D.RemoveJoints
+Box3D.CopyBodies
 Box3D.PruneShapes
+Box3D.CopyParts
 BeforeEnter
 Box3D.Enter
 Box3D.PrepareParts

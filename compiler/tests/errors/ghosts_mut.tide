@@ -1,6 +1,0 @@
-// expect: a ghost is another shard's entity, read here: [Ghosts] code changes none of its components, so 'mover' can't be 'mut'
-settings { shards = true; shardRange = 8; }
-scene Main { }
-component Mover { [Partition] float2 at; }
-[Ghosts]
-system Copy(mut Mover mover) { mover.at.x += 1; }

@@ -1,5 +1,0 @@
-// expect: [Shared] works on a plain value, which every shard is sent as it is, not List<int>
-settings { shards = true; shardRange = 8; }
-scene Main { }
-[PerShard]
-singleton Tuning { [Shared] List<int> pulls; }

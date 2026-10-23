@@ -1,5 +1,0 @@
-// expect: PerShard marks a match singleton each shard of a sharded game has its own of, and 'Score' isn't one
-settings { shards = true; shardRange = 8; }
-scene Main { }
-[PerShard]
-component Score { int points; }

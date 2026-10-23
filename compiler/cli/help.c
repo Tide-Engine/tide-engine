@@ -232,10 +232,10 @@ static const argument_help arguments[] = {
      "regions along x, each a shard. On a server, each shard is one of its\n"
      "matches and players join the world at match 0.", RUN},
     {"--shard-width", "--shard-width <units>", "Each region's width, in world units",
-     "Default: 16 times the game's shardRange. Use with --shards.", RUN},
+     "Default: 16 times the game's reach. Use with --shards.", RUN},
     {"--shard-most", "--shard-most <n>", "Split a region whose shard owns more entities",
      "Requires run --server. A region splits in two by where its entities\n"
-     "are, down to twice the game's shardRange across; two neighbouring\n"
+     "are, down to twice the game's reach across; two neighbouring\n"
      "regions owning a quarter of n together merge back into one.", RUN},
     {"--shard-journal", "--shard-journal <folder>", "Keep a sharded server's world in a folder",
      "Requires run --server. A checkpoint now and then, and every shard's ticks\n"

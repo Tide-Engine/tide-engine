@@ -266,7 +266,7 @@ int tide_serve(const tide_serve_desc *desc)
     const char *journal = NULL;
     uint32_t port = 7777, frames = 0;
     // A sharded game's world (tide/shards.h): regions along x to start with,
-    // each this wide (0: 16 times its shardRange), and the entities a region's
+    // each this wide (0: 16 times its reach), and the entities a region's
     // shard owns before it splits (0: never)
     uint32_t regions = 1, shard_width = 0, shard_most = 0;
     bool udp_only = false;
