@@ -158,7 +158,7 @@ enum { START_UNKNOWN = 0, START_MAIN = 1, START_GIVEN = 2 };
 // Chunks of a big command an update sends, up and down: 16 KB, under the
 // inputs and frames, so about a megabyte a second at 60 updates a second
 #define COMMAND_CHUNKS_PER_UPDATE 16u
-#define PUBLISHED_MOST 64u // Big commands a server keeps, dispatched or on their way to the players
+#define PUBLISHED_MOST 64u // Players' big commands a server keeps, dispatched or on their way to the players
 #define DOWNLOADS_MOST 64u // ...and a client keeps, whole or coming, for the ticks that name them: as many
 #define PACKETS_PER_UPDATE 8u
 #define EVENTS_PER_PLAYER 4u    // Joins and leaves kept before a tick, for each player the game takes
@@ -871,8 +871,9 @@ struct tide_server {
     uint32_t (*events)[2];    // Joins and leaves before the next tick: EVENTS_PER_PLAYER for each player
     uint32_t event_count;
     uint32_t command_player; // Next sender considered, so a busy player cannot starve the others
-    published *published;    // Big commands, by number (see `published`): PUBLISHED_MOST at most
-    uint32_t published_count;
+    published *published;    // Big commands, by number (see `published`): PUBLISHED_MOST of players' at most,
+    uint32_t published_count; // and as many shard messages as come (the orchestrator's)
+    uint32_t published_room;
     uint32_t next_published;
     windows w;
     stored_frame *frames;
@@ -1846,12 +1847,31 @@ static void keep_needed(tide_server *s, const uint32_t tick)
     }
 }
 
+// The next published's place, the list grown if it's full; NULL out of memory
+static published *publish_place(tide_server *s)
+{
+    if (s->published_count == s->published_room) {
+        const uint32_t room = s->published_room * 2u;
+        published *grown = realloc(s->published, (size_t)room * sizeof *grown);
+        if (!grown) return NULL;
+        s->published = grown;
+        s->published_room = room;
+    }
+    return &s->published[s->published_count];
+}
+
 // A big command's turn has come: it's sent to every player in the match
 // before it goes in a tick, so it's published, under a number, and the
-// pending command remembers which. Full, nothing is published: it waits.
+// pending command remembers which. With PUBLISHED_MOST of players' already,
+// nothing is published: it waits. Shard messages aren't counted: they're the
+// orchestrator's, and a busy border has one or more every tick, which a
+// fixed number would hold up for as long as published ones are kept.
 static void publish_command(tide_server *s, const uint32_t player, pending_command *cmd)
 {
-    if (cmd->published || s->published_count >= PUBLISHED_MOST) return;
+    if (cmd->published) return;
+    uint32_t players = 0;
+    for (uint32_t i = 0; i < s->published_count; i++) players += s->published[i].player != PUBLISHED_SHARD;
+    if (players >= PUBLISHED_MOST || !publish_place(s)) return;
     uint8_t *copy = malloc(cmd->size);
     if (!copy) return;
     memcpy(copy, cmd->data, cmd->size);
@@ -1972,7 +1992,7 @@ static uint32_t dispatch_injected(tide_server *s, tide_writer *w)
         injected *m = &s->injected[count];
         const published *p = NULL;
         if (big_command(m->size) && !g->client_state) {
-            if (!m->published && s->published_count < PUBLISHED_MOST) {
+            if (!m->published && publish_place(s)) {
                 uint8_t *copy = malloc(m->size);
                 if (!copy) break;
                 memcpy(copy, m->data, m->size);
@@ -2776,6 +2796,7 @@ tide_server *tide_server_create(const tide_server_desc *desc, const double now)
     s->handover = malloc(handover_capacity(s->players));
     s->frames = calloc(s->w.history, sizeof *s->frames);
     s->published = calloc(PUBLISHED_MOST, sizeof *s->published);
+    s->published_room = PUBLISHED_MOST;
     s->world = calloc(1, g->world_size);
     s->frame = malloc(2u * (size_t)frame_capacity(g));
     s->packet = malloc(TIDE_NET_MTU);

@@ -1,0 +1,7 @@
+// expect: Shards.Together says what acts on what in the match, so it's match code's: a system or a handler
+scene Main { }
+component Thing { Entity other; }
+view Look(Thing thing)
+{
+    Shards.Together(thing.other, thing.other);
+}

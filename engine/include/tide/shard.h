@@ -237,6 +237,14 @@ typedef struct tide_shard_attempt {
     tide_entity touched;
 } tide_shard_attempt;
 
+// Two entities a run's code says act on each other now (Shards.Together, +1)
+// or no longer (Shards.Apart, -1): its shard keeps them on one shard while
+// they do (tide_shard_state.touching).
+typedef struct tide_shard_pair {
+    tide_entity a, b;
+    int32_t delta;
+} tide_shard_pair;
+
 // A tick's runs: what the last run noted, and what the next skips. Outside the
 // world: a tick that ran again starts from the world as it was before it.
 typedef struct tide_shard_tick {
@@ -248,6 +256,8 @@ typedef struct tide_shard_tick {
     uint32_t codes;
     uint32_t runs;            // Runs so far
     bool unknown;             // Code that can't be skipped noted something: no run can avoid it
+    tide_shard_pair *pairs;   // What the last run said acts on what, in no order: its shard sorts them
+    uint32_t pair_count, pair_room;
     int lock;
 } tide_shard_tick;
 
@@ -261,6 +271,9 @@ extern TIDE_THREAD_LOCAL int32_t tide_shard_delay_now;
 // The code running now touched `touched`, which its shard doesn't own: it's
 // noted, under a lock, as systems run on several threads.
 void tide_shard_note(tide_shard_tick *t, tide_entity touched);
+// Shards.Together(a, b) (delta 1) and Shards.Apart(a, b) (-1), noted the same
+// way. NULL: a world that's no shard, where nothing's noted.
+void tide_shard_pair_note(tide_shard_tick *t, tide_entity a, tide_entity b, int32_t delta);
 // Whether the next run skips the code running now (tide_shard_code and the rest).
 bool tide_shard_skips(const tide_shard_tick *t, uint32_t code, tide_entity entity, uint32_t occurrence);
 // What the last run noted, as what the next skips; false when it noted nothing.

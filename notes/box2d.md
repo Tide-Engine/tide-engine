@@ -6,6 +6,8 @@ As Box3D's (`notes/box3d.md`, Sharded worlds): `Physics` with `[Native]` state, 
 
 Since (same day), as Box3D's: settings the root's, every shape copied (`b2t_copy_capsule`, `_polygon`, `_segment`, `_chain`, each synced with a zero fixture) and parts by `CopyParts`, and `[Together]` on `Joint.a` and `Joint.b`. `Body` is 96 bytes and `Physics` 336.
 
+Copies of dynamic bodies are dynamic since (same day), as heavy as their shapes make them, with the body's gravity scale and dampings, put back where the owner last had them each tick (`b2t_copy`): a crate running into one across the border shares its speed, where a kinematic copy stopped it dead. `Report` takes a `World` and says `Shards.Together` as two dynamic bodies begin to touch and `Shards.Apart` for every touch that ends (`Pushing`), so the two are on one shard while they touch. No world-hash or order pin moved. Test: the crates 22/23 (Box2D 16/17) in the package's shards test.
+
 ## Joints, collider completion and live settings (2026-10-22)
 
 The owner requested completion of the missing Box2D package features, including

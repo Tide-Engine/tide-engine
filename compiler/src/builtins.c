@@ -1045,6 +1045,15 @@ static void build_signatures(void)
              "Whether this shard owns the entity now, so code running here can change it at once. Code that changes an "
              "entity another shard owns waits until this one does, and runs again then: see `Shards.delay`. Always true "
              "in a game that isn't sharded, or a match that isn't split.");
+    describe(add("Shards", "Together", T_NONE, "tide_shard_together", 2, (type){TY_ENTITY, NULL}, (type){TY_ENTITY, NULL}, T_NONE),
+             "a, b",
+             "For a library's code: the two entities act on each other from now on, like two bodies that touch, so a "
+             "sharded world keeps them on one shard until as many `Shards.Apart(a, b)` say they don't. Nothing in a game "
+             "that isn't sharded.");
+    describe(add("Shards", "Apart", T_NONE, "tide_shard_apart", 2, (type){TY_ENTITY, NULL}, (type){TY_ENTITY, NULL}, T_NONE),
+             "a, b",
+             "For a library's code: one `Shards.Together(a, b)` no longer holds, like two bodies that stopped touching. "
+             "With none left, the two go where each is. Nothing in a game that isn't sharded.");
     // Debug: output for whoever runs the game, which changes nothing in the match
     describe(add("Debug", "Log", T_NONE, "tide_debug_log", 1, T_STR, T_NONE, T_NONE), "text",
              "Prints a line: to the terminal under `tide run`, the browser's console on the web and the system's log on "

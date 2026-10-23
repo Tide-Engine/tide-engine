@@ -339,6 +339,12 @@ static void gen_shard_moves(gen *g)
             sb_put(o, "    }\n");
         }
     }
+    // What acts on what (Shards.Together): each pair one group while it does
+    sb_put(o, "    const tide_list touching = w->tide_shard_state.touching;\n"
+              "    for (int32_t k = 0; k + 3 <= tide_list_count(touching); k += 3) {\n"
+              "        const tide_entity a = tide_shard_unkey(tide_shard_long(touching, k));\n"
+              "        if (tide_entity_alive(&w->entities, a)) tide_shard_tie_join(l, w, a, tide_shard_unkey(tide_shard_long(touching, k + 1)));\n"
+              "    }\n");
     // Each group's lead: a member with a position before one without, then the lowest handle
     sb_put(o, "    for (uint32_t i = 0; i < l->count; i++) {\n"
               "        const uint32_t top = tide_shard_tie_top(l, i);\n"

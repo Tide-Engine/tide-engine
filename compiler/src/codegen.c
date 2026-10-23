@@ -4266,6 +4266,18 @@ static void gen_builtin_call(gen *g, sb *o, const expr *e)
         sb_put(o, "), true)");
         return;
     }
+    // Shards.Together and Apart: noted on the tick's runs (tide_shard_pair_note), and nothing in a game that isn't sharded
+    const bool together = strcmp(e->c_callee, "tide_shard_together") == 0;
+    if ((together || strcmp(e->c_callee, "tide_shard_apart") == 0) && e->args.count == 2) {
+        if (g->prog->shards) sb_put(o, "tide_shard_pair_note(tide_w->tide_shard_now, ");
+        else sb_put(o, "((void)(");
+        gen_expr(g, o, e->args.items[0]);
+        sb_put(o, g->prog->shards ? ", " : "), (void)(");
+        gen_expr(g, o, e->args.items[1]);
+        if (g->prog->shards) sb_printf(o, ", %s)", together ? "1" : "-1");
+        else sb_put(o, "))");
+        return;
+    }
     // Draw.Shape goes through the helper that turns a Shape into a tide_shape
     const bool shape = e->call == CALL_DRAW && strcmp(e->c_callee, "tide_draw_shape") == 0;
     sb_printf(o, "%s(", shape ? "tide_draw_shape_value" : e->c_callee);

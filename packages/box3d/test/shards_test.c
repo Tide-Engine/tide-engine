@@ -55,7 +55,7 @@ static void step(const double seconds)
         tide_shards_update(shards, now);
         const crates c = count();
         for (int id = 0; id < 24; id++) TIDE_CHECK(c.owned[id] <= 1); // Never two shards' at once
-        TIDE_CHECK(c.bodies <= 16); // ...and never a body for a crate on two shards' worlds
+        TIDE_CHECK(c.bodies <= 18); // ...and never a body for a crate on two shards' worlds
     }
 }
 
@@ -76,7 +76,7 @@ TIDE_TEST(box3d_bodies_cross_shards_and_keep_their_speed)
     // Four seconds on: from x = -12 at 6 m/s, across the border at x = 0 to about 12
     step(3.5);
     c = count();
-    TIDE_CHECK(c.bodies == 16); // One body for each crate, on the shard that owns it
+    TIDE_CHECK(c.bodies == 18); // One body for each crate, on the shard that owns it
     for (int id = 0; id < 4; id++) {
         TIDE_CHECK(c.owned[id] == 1 && c.shard[id] == 2);
         TIDE_CHECK(c.body[id].id != 0);
@@ -111,6 +111,10 @@ TIDE_TEST(box3d_bodies_cross_shards_and_keep_their_speed)
         const float dx = p->position.x - q->position.x, dz = p->position.z - q->position.z;
         TIDE_CHECK(fabsf(sqrtf(dx * dx + dz * dz) - 2.0f) < 0.05f);
     }
+    // The crate that ran into the one across the border: one shard has both, and they share its speed, rather
+    // than it stopping dead against a copy that can't move while the other leaves as fast as it came
+    TIDE_CHECK(c.owned[22] == 1 && c.owned[23] == 1 && c.shard[22] == c.shard[23]);
+    TIDE_CHECK(fabsf(c.body[22].velocity.x - 2.0f) < 0.3f && fabsf(c.body[23].velocity.x - 2.0f) < 0.3f);
     tide_shards_destroy(shards);
     shards = NULL;
 }

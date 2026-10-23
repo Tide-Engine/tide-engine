@@ -104,7 +104,7 @@ Tide's hosting service runs a sharded game's world across machines. The world st
 
 ## Physics
 
-[Box3D](../packages/box3d.md) and [Box2D](../packages/box2d.md) work in a sharded world. Each shard steps its own physics world of the bodies it owns. A body that crosses a border is made anew on the next shard from its `Body`, where it was and as fast. Bodies another shard owns near the border are there too, as kinematic copies where their owner last had them, with all their shapes and parts, so a crate runs into a wall across the border instead of passing through it. Each side tells its own entities of a touch or a hit.
+[Box3D](../packages/box3d.md) and [Box2D](../packages/box2d.md) work in a sharded world. Each shard steps its own physics world of the bodies it owns. A body that crosses a border is made anew on the next shard from its `Body`, where it was and as fast. Bodies another shard owns near the border are there too, as copies where their owner last had them, as heavy as they are, with all their shapes and parts, so a crate runs into a wall across the border instead of passing through it, and one crate running into another shares its speed as it would on one shard. Two bodies that touch go to one shard together while they do. Each side tells its own entities of a touch or a hit.
 
 Jointed bodies go together: the shard that has one has the other and the joint, so a joint holds across borders, and so does a chain or a ring of them. A body's parts go with it.
 
@@ -116,6 +116,7 @@ This is for whoever writes a package around a C library, as the physics packages
 
 - `[Native]` marks a field holding the library's state, like a handle. On a component it's a number or a bool, 0 wherever its entity arrives or is copied, so the library makes its own there. On a singleton it can be anything, and each shard keeps its own; the singleton's other fields are the world's, the first shard's on every shard, like a physics world's gravity. The package's own code for no entity that takes such a singleton runs on every shard, for that shard; a game's runs once, as any code for no entity does, so a setting the game writes reaches every shard.
 - `[Together]` on a component's `Entity` field keeps what it names on one shard with the entity that has it, as a joint keeps its two bodies. Everything tied together this way, a chain or a ring included, goes as one.
+- `Shards.Together(a, b)` from the library's match code says two entities act on each other for now, as two bodies do while they touch, and keeps them on one shard the same way, until as many `Shards.Apart(a, b)` say they don't. In a world that isn't sharded they do nothing.
 - The copies a shard holds of other shards' entities near its border are what a query finds and `Shards.Owns` says this shard doesn't own: a library makes its own copies of them from that.
 
 ## Visibility

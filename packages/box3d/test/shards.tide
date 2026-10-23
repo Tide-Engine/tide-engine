@@ -58,4 +58,8 @@ event(Spawned) Make(with Main, mut Physics physics)
     Spawn(Crate { id = 19 }, Joint { a = first, b = second }, DistanceJoint { length = 2 });
     Spawn(Crate { id = 20 }, Joint { a = second, b = third }, DistanceJoint { length = 2 });
     Spawn(Crate { id = 21 }, Joint { a = third, b = first }, DistanceJoint { length = 2 });
+    // A crate from the left runs into one at rest just across the border: they share its speed, each its weight
+    // against the other, as they would on one shard
+    Spawn(Crate { id = 22 }, Body { position = float3(-6, 0, 80), velocity = float3(4, 0, 0) }, Box);
+    Spawn(Crate { id = 23 }, Body { position = float3(1.5, 0, 80) }, Box);
 }

@@ -6,6 +6,8 @@
 
 Since (same day): the settings (`gravity`, `substeps`, `contactStiffness`, `contactDamping`, `contactSpeed`, `bounceSpeed`, `hitSpeed`, `sleeping`) are the root's on every shard, as `Physics`' fields that aren't `[Native]`. Copies have every shape: `CopyShapes` adds meshes, hulls and height fields (`b3t_copy_mesh`/`_hull`/`_height`, the lists passed with their counts, as an extern can't take a component holding lists), and `CopyParts` (stage 4) copies each ghost part onto its body's copy (`Physics.copiedParts`, `struct CopyPart`). `CopyBodies` and `CopyParts` are systems for no entity with queries, skipping what `Shards.Owns`. `Joint.a` and `Joint.b` are `[Together]`, so a joint and both bodies cross together and the joint holds; a part goes with its body as the first entity it names. `PrepareParts` and `Begin` destroy a part only when this shard owns it. `Body` is 176 bytes and `Physics` 376.
 
+Copies of dynamic bodies are dynamic since (same day), as heavy as their shapes make them, with the body's gravity scale and dampings, put back where the owner last had them each tick (`b3t_copy`): a crate running into one across the border shares its speed, where a kinematic copy stopped it dead. `Report` takes a `World` and says `Shards.Together` as two dynamic bodies begin to touch and `Shards.Apart` for every touch that ends (`Pushing`), so the two are on one shard while they touch. No world-hash or order pin moved. Test: the crates 22/23 (Box2D 16/17) in the package's shards test.
+
 ## Vendored feature scope and live components (2026-10-22)
 
 The owner approved all nine vendored joint types, remaining collider,

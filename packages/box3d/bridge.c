@@ -694,22 +694,30 @@ void b3t_gone(const int64_t *bodies, const int32_t count)
 }
 
 // A copy of a body another shard owns near this one's border (a ghost's, in
-// a sharded world): kinematic, or static for a static one, where the body's
-// owner last had it and as fast. Made when `id` is 0, and moved when it
-// isn't; its id, or 0 when it's gone. A copy at rest is left as it is, so
-// what rests against it can sleep.
+// a sharded world), of the body's type, where the body's owner last had it and
+// as fast: a dynamic one as heavy as the body, so what runs into it here moves
+// as it would into the body. What it does in a step is no one's: it's put
+// back each tick, and the body's own shard works out what's done to it, with
+// a copy of what did it. Made when `id` is 0, and moved when it isn't; its
+// id, or 0 when it's gone. A copy at rest is left as it is, so what rests
+// against it can sleep.
 int64_t b3t_copy(const int64_t id, const body *b)
 {
     world *w = active;
-    const b3BodyType type = b->type == b3_staticBody ? b3_staticBody : b3_kinematicBody;
+    const b3BodyType type = b->type == b3_staticBody ? b3_staticBody : b->type == b3_kinematicBody ? b3_kinematicBody : b3_dynamicBody;
     if (id == 0) {
         b3BodyDef def = b3DefaultBodyDef();
         def.type = type;
         def.position = b3ToPos(vec(b->position));
         def.rotation = quat(b->rotation);
-        if (type == b3_kinematicBody) {
+        if (type != b3_staticBody) {
             def.linearVelocity = vec(b->velocity);
             def.angularVelocity = vec(b->angular_velocity);
+        }
+        if (type == b3_dynamicBody) {
+            def.gravityScale = b->gravity_scale;
+            def.linearDamping = b->linear_damping;
+            def.angularDamping = b->angular_damping;
         }
         const b3BodyId made = b3CreateBody(w->id, &def);
         const int64_t copy = handle(made.index1, made.generation);
@@ -723,10 +731,11 @@ int64_t b3t_copy(const int64_t id, const body *b)
     const b3Pos now = b3ToPos(vec(b->position));
     const b3Quat turned = b3Body_GetRotation(at), turn = quat(b->rotation);
     if (memcmp(&was, &now, sizeof now) != 0 || memcmp(&turned, &turn, sizeof turn) != 0) b3Body_SetTransform(at, now, turn);
-    if (type == b3_kinematicBody) {
+    if (type != b3_staticBody) {
         const b3Vec3 v = b3Body_GetLinearVelocity(at), want = vec(b->velocity);
         if (memcmp(&v, &want, sizeof v) != 0) b3Body_SetLinearVelocity(at, want);
-        b3Body_SetAngularVelocity(at, vec(b->angular_velocity));
+        const b3Vec3 spin = b3Body_GetAngularVelocity(at), spun = vec(b->angular_velocity);
+        if (memcmp(&spin, &spun, sizeof spin) != 0) b3Body_SetAngularVelocity(at, spun);
     }
     note('m', &id, sizeof id);
     note('m', b, sizeof *b);

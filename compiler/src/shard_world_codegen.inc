@@ -237,9 +237,45 @@ static void gen_shard_lending(gen *g)
 static void gen_shard_after(gen *g)
 {
     sb *o = &g->c;
+    // What acts on what (Shards.Together and Apart): the last run's, sorted so the
+    // shard's list comes out the same whatever order its threads said them in,
+    // summed into it; a pair is gone at 0, and when neither is here
+    sb_put(o, "static int tide_shard_pair_order(const void *x, const void *y)\n{\n"
+              "    const tide_shard_pair *p = x, *q = y;\n"
+              "    const int64_t a[3] = {tide_shard_key(p->a), tide_shard_key(p->b), p->delta};\n"
+              "    const int64_t b[3] = {tide_shard_key(q->a), tide_shard_key(q->b), q->delta};\n"
+              "    for (int i = 0; i < 3; i++) if (a[i] != b[i]) return a[i] < b[i] ? -1 : 1;\n"
+              "    return 0;\n}\n\n"
+              "TIDE_SHARD_FN void tide_shard_touching(tide_world *w, const tide_shard_tick *t)\n{\n"
+              "    tide_shard_state *s = &w->tide_shard_state;\n"
+              "    if (t->pair_count) {\n"
+              "        tide_shard_pair *pairs = malloc((size_t)t->pair_count * sizeof *pairs);\n"
+              "        if (!pairs) tide_out_of_memory();\n"
+              "        for (uint32_t i = 0; i < t->pair_count; i++) {\n"
+              "            pairs[i] = t->pairs[i];\n"
+              "            if (tide_shard_key(pairs[i].b) < tide_shard_key(pairs[i].a)) {\n"
+              "                pairs[i].a = t->pairs[i].b;\n                pairs[i].b = t->pairs[i].a;\n            }\n        }\n"
+              "        qsort(pairs, t->pair_count, sizeof *pairs, tide_shard_pair_order);\n"
+              "        for (uint32_t i = 0; i < t->pair_count; i++) {\n"
+              "            const int64_t a = tide_shard_key(pairs[i].a), b = tide_shard_key(pairs[i].b);\n"
+              "            int32_t at = -1;\n"
+              "            for (int32_t k = 0; k + 3 <= tide_list_count(s->touching) && at < 0; k += 3) {\n"
+              "                if (tide_shard_long(s->touching, k) == a && tide_shard_long(s->touching, k + 1) == b) at = k;\n            }\n"
+              "            if (at >= 0) *(int64_t *)tide_list_at_mut(s->touching, at + 2, 8u) += pairs[i].delta;\n"
+              "            else if (pairs[i].delta > 0) {\n"
+              "                tide_shard_push(&s->touching, a);\n                tide_shard_push(&s->touching, b);\n"
+              "                tide_shard_push(&s->touching, pairs[i].delta);\n            }\n        }\n"
+              "        free(pairs);\n    }\n"
+              "    for (int32_t k = tide_list_count(s->touching) - 3; k >= 0; k -= 3) {\n"
+              "        const tide_entity a = tide_shard_unkey(tide_shard_long(s->touching, k));\n"
+              "        const tide_entity b = tide_shard_unkey(tide_shard_long(s->touching, k + 1));\n"
+              "        if (tide_shard_long(s->touching, k + 2) > 0\n"
+              "            && (tide_entity_alive(&w->entities, a) || tide_entity_alive(&w->entities, b))) continue;\n"
+              "        tide_shard_drop(&s->touching, k, 3);\n    }\n}\n\n");
     sb_put(o, "TIDE_SHARD_FN void tide_shard_after(tide_world *w, const tide_shard_tick *t)\n{\n"
               "    tide_shard_state *s = &w->tide_shard_state;\n"
               "    if (!s->shard) return;\n"
+              "    tide_shard_touching(w, t);\n"
               // What its code that waits needs: the entities it ran for, and what they touched
               "    tide_list_clear(&s->held, 8u);\n"
               "    for (uint32_t i = 0; i < t->skip_count; i++) {\n"

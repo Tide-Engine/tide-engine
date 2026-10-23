@@ -1231,8 +1231,16 @@ Entity PartOf(Map<long, Entity> parts, long shape, Entity body)
     return body;
 }
 
+// Whether two bodies push each other: both dynamic. A sharded world keeps the two
+// on one shard while they touch, so each has its weight against the other; a
+// copy of a static or kinematic body pushes as the body itself does
+bool Pushing(World world, Entity a, Entity b)
+{
+    return world.Get<Body>(a).type == BodyType.Dynamic && world.Get<Body>(b).type == BodyType.Dynamic;
+}
+
 [Stage(PhysicsStages.Step, 21)]
-system Report(Physics physics)
+system Report(Physics physics, World world)
 {
     if (!physics.moved) return;
     int count = CountTouches(physics.stamp);
@@ -1246,11 +1254,13 @@ system Report(Physics physics)
         // In a sharded world each side of a border tells its own entities, of a copy too: the copy's own shard tells it
         if (contact.began)
         {
+            if (Pushing(world, a, b)) Shards.Together(a, b);
             if (Shards.Owns(a)) a.Send(Touched { other = b, part = partA, otherPart = partB });
             if (Shards.Owns(b)) b.Send(Touched { other = a, part = partB, otherPart = partA });
         }
         else
         {
+            Shards.Apart(a, b); // As many as touched, whatever they are now: one that wasn't is nothing
             if (Shards.Owns(a)) a.Send(Parted { other = b, part = partA, otherPart = partB });
             if (Shards.Owns(b)) b.Send(Parted { other = a, part = partB, otherPart = partA });
         }

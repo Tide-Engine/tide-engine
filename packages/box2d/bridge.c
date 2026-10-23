@@ -2277,15 +2277,21 @@ scene_bounds b2t_circle_bounds(const circle *shape, const float rotation, const 
 int64_t b2t_copy(const int64_t id, const body *b)
 {
     world *w = active;
-    const b2BodyType type = type_of(b->type) == b2_staticBody ? b2_staticBody : b2_kinematicBody;
+    const b2BodyType type = type_of(b->type); // A dynamic one as heavy as the body (b3t_copy says why)
     if (id == 0) {
         b2BodyDef def = b2DefaultBodyDef();
         def.type = type;
         def.position = b2ToPos((b2Vec2){b->position.x, b->position.y});
         def.rotation = b2MakeRot(b->angle);
-        if (type == b2_kinematicBody) {
+        if (type != b2_staticBody) {
             def.linearVelocity = (b2Vec2){b->velocity.x, b->velocity.y};
             def.angularVelocity = b->spin;
+        }
+        if (type == b2_dynamicBody) {
+            def.gravityScale = b->gravity_scale;
+            def.linearDamping = b->linear_damping;
+            def.angularDamping = b->angular_damping;
+            def.motionLocks.angularZ = b->fixed_rotation;
         }
         const b2BodyId made = b2CreateBody(w->id, &def);
         const int64_t copy = handle(made.index1, made.generation);
@@ -2299,7 +2305,7 @@ int64_t b2t_copy(const int64_t id, const body *b)
     const b2Pos was = b2Body_GetPosition(at);
     if ((float)was.x != b->position.x || (float)was.y != b->position.y || b2Rot_GetAngle(b2Body_GetRotation(at)) != b->angle)
         b2Body_SetTransform(at, b2ToPos((b2Vec2){b->position.x, b->position.y}), b2MakeRot(b->angle));
-    if (type == b2_kinematicBody) {
+    if (type != b2_staticBody) {
         const b2Vec2 v = b2Body_GetLinearVelocity(at);
         if (v.x != b->velocity.x || v.y != b->velocity.y) b2Body_SetLinearVelocity(at, (b2Vec2){b->velocity.x, b->velocity.y});
         if (b2Body_GetAngularVelocity(at) != b->spin) b2Body_SetAngularVelocity(at, b->spin);

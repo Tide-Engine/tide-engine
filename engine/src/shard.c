@@ -136,9 +136,25 @@ bool tide_shard_tick_again(tide_shard_tick *t)
     return true;
 }
 
+void tide_shard_pair_note(tide_shard_tick *t, const tide_entity a, const tide_entity b, const int32_t delta)
+{
+    if (!t || tide_entity_is_null(a) || tide_entity_is_null(b) || tide_entity_equal(a, b)) return;
+    lock(t);
+    if (t->pair_count == t->pair_room) {
+        const uint32_t room = t->pair_room ? t->pair_room * 2u : 16u;
+        tide_shard_pair *grown = realloc(t->pairs, (size_t)room * sizeof *grown);
+        if (!grown) tide_out_of_memory();
+        t->pairs = grown;
+        t->pair_room = room;
+    }
+    t->pairs[t->pair_count++] = (tide_shard_pair){a, b, delta};
+    unlock(t);
+}
+
 void tide_shard_tick_begin(tide_shard_tick *t, const uint32_t codes)
 {
     t->noted_count = 0;
+    t->pair_count = 0; // Each run says it all again
     t->runs++;
     if (codes > t->codes) {
         uint32_t *grown = realloc(t->occurrences, (size_t)codes * sizeof *grown);
@@ -154,6 +170,7 @@ void tide_shard_tick_free(tide_shard_tick *t)
     free(t->noted);
     free(t->skip);
     free(t->occurrences);
+    free(t->pairs);
     memset(t, 0, sizeof *t);
 }
 
