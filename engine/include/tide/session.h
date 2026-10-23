@@ -318,6 +318,9 @@ typedef struct tide_view_correction {
     uint32_t tick;
     float alpha;
     bool reset;
+    // From a shard beside the one this machine plays in (tide_client_set_beside):
+    // only that world's own entities' errors count, and it never resets the rest.
+    bool beside;
 } tide_view_correction;
 
 typedef void (*tide_view_correct_fn)(void *user, const tide_view_correction *correction);
@@ -569,6 +572,9 @@ tide_view_worlds tide_client_view(const tide_client *c);
 // After drawing tide_client_view, record its timestamp. This alone copies no
 // worlds: old endpoints are kept only if a later replay replaces them.
 void tide_client_mark_presented(tide_client *c);
+// A sharded match's client of a shard beside the one its machine plays in
+// (tide/shard_client.h): what it corrects says so (tide_view_correction.beside).
+void tide_client_set_beside(tide_client *c, bool beside);
 
 // ---------------------------------------------------------------------------
 // Session: what a host program uses. Start runs a server with this machine's

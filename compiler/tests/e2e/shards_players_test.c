@@ -136,6 +136,7 @@ static tide_local local;
 static tide_draw_list draw;
 static tide_gui gui;
 static tide_devices devices;
+static tide_event_log heard; // What the shards it follows sent, for its local handlers
 
 static Sight frame(void)
 {
@@ -143,6 +144,7 @@ static Sight frame(void)
     uint32_t ids[TIDE_SESSION_VIEWS];
     const uint32_t n = tide_shard_client_views(player, more, ids, TIDE_SESSION_VIEWS);
     tide_frame_shards(more, n);
+    tide_local_events(&local, &heard);
     const tide_view_worlds home = tide_client_view(tide_shard_client_home(player));
     tide_draw_reset(&draw);
     tide_gui_begin(&gui, &devices, tide_f2(640.0f, 480.0f), NULL);
@@ -185,9 +187,10 @@ TIDE_TEST(shards_a_machine_watches_an_area_far_from_its_player)
                                 .split = {2, 1, 1}, .transports = transports};
     shards = tide_shards_create(&d, now);
     TIDE_REQUIRE(shards != NULL);
+    heard = (tide_event_log){.taken = true};
     const tide_shard_client_desc pd = {
         .client = {.game = &tide_game_api, .transport = tide_loopback_endpoint(net, 100u), .server = tide_loopback_address(10u),
-                   .sample = sample, .lead = 2},
+                   .sample = sample, .lead = 2, .events = &heard},
         .reach = reach,
     };
     player = tide_shard_client_create(&pd, now);
@@ -201,6 +204,8 @@ TIDE_TEST(shards_a_machine_watches_an_area_far_from_its_player)
     TIDE_CHECK(sight.drawn == 1 && sight.queried == 1 && sight.named == 0);
     TIDE_CHECK(sight.x > 2.5f && sight.x < 3.5f);
     TIDE_CHECK(tide_shard_client_session(player, 2) == NULL);
+    TIDE_CHECK(sight.blinks == 0); // The markers are the right's, and it hears none of the right's code
+    TIDE_CHECK(sight.shown == 1 && sight.hidden == 0); // The copy of the near one
 
     // Watching the right: every marker once, the near one from the right's own world
     local.Sight.watching = true;
@@ -210,9 +215,12 @@ TIDE_TEST(shards_a_machine_watches_an_area_far_from_its_player)
     sight = frame();
     TIDE_CHECK(sight.drawn == 4 && sight.queried == 4);
     TIDE_CHECK(sight.named == 3); // The far ones' names, read from the right's world
+    TIDE_CHECK(sight.found == 3); // ...and through World, which finds them there
     TIDE_CHECK(sight.x > 92.5f && sight.x < 93.5f);
     const tide_client_status right = tide_client_status_of(tide_shard_client_session(player, 2));
     TIDE_CHECK(right.state == TIDE_SESSION_CONNECTED && right.resyncs == 0);
+    TIDE_CHECK(sight.blinks >= 8); // The right's markers' blinks, from the right's own ticks
+    TIDE_CHECK(sight.shown == 4 && sight.hidden == 0); // The far ones came to be seen; the near one already was
 
     // Watching no more: the right's shard goes, and the copy is what it sees again
     local.Sight.watching = false;
@@ -220,6 +228,7 @@ TIDE_TEST(shards_a_machine_watches_an_area_far_from_its_player)
     TIDE_CHECK(tide_shard_client_session(player, 2) == NULL);
     sight = frame();
     TIDE_CHECK(sight.drawn == 1 && sight.queried == 1);
+    TIDE_CHECK(sight.shown == 4 && sight.hidden == 3); // The far ones went; the near one's copy stayed
 
     // Walking across the border, its avatar is drawn once every frame: by the
     // shard that owns it, or while it's on its way, by the first with a copy.
@@ -230,8 +239,11 @@ TIDE_TEST(shards_a_machine_watches_an_area_far_from_its_player)
     watch_run(5.0);
     TIDE_CHECK(tide_shard_client_home_shard(player) == 2);
     TIDE_CHECK(tide_shard_client_joins(player) == joins + 1u);
+    sight = frame();
+    TIDE_CHECK(sight.shown == 7 && sight.hidden == 3); // The far ones again, each once, as the right came near
 
     tide_local_free(&local);
+    tide_event_log_free(&heard);
     tide_shard_client_destroy(player);
     tide_shards_destroy(shards);
     tide_loopback_destroy(net);

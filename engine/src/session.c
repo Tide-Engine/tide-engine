@@ -3299,6 +3299,7 @@ struct tide_client {
     // The last pair actually drawn. Recording it is free; replay keeps old
     // endpoints only when it is about to replace one of them.
     bool presented;
+    bool beside; // A shard's beside its machine's home (tide_client_set_beside)
     bool presented_previous;
     uint32_t presented_tick;
     float presented_alpha;
@@ -3491,6 +3492,7 @@ static void finish_view_correction(tide_client *c)
         .tick = c->presented_tick,
         .alpha = c->presented_alpha,
         .reset = reset,
+        .beside = c->beside,
     };
     if (c->desc.correct_views) c->desc.correct_views(c->desc.user, &correction);
     discard_view_correction(c);
@@ -5661,6 +5663,11 @@ tide_view_worlds tide_client_view(const tide_client *c)
         .alpha = (float)alpha, .verified = world_at(c, shown),
         .verified_previous = shown > c->first_tick ? world_at(c, shown - 1u) : NULL,
         .verified_alpha = fraction > 0.0 ? (float)fraction : 1.0f, .verified_tick = shown};
+}
+
+void tide_client_set_beside(tide_client *c, const bool beside)
+{
+    if (c) c->beside = beside;
 }
 
 void tide_client_mark_presented(tide_client *c)

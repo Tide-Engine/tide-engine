@@ -48,7 +48,7 @@ A split world doesn't give bit-identical results to the same game on one server,
 
 Players join the world at its first shard, which sends `PlayerJoined`. A player's machine plays in the shard that owns their entities, and also follows the shards near them. When their avatar walks across a border, the machine switches to the next shard at once, with nothing to download.
 
-Views draw everything the machine follows, each entity once, from the shard that owns it. A view for each entity runs as it always does; a view's query has every entity the machine sees. Local code and local handlers see the shard the player plays in.
+Views draw everything the machine follows, each entity once, from the shard that owns it. A view for each entity runs as it always does; a view's query has every entity the machine sees, and its `World` finds them too. Local handlers hear what happens on every shard the machine follows, and `Shown` and `Hidden` come as an entity comes into view and leaves it, whichever shard has it.
 
 ### Watching an area
 

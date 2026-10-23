@@ -208,6 +208,48 @@ static void gen_shard_views(gen *g)
               "        const tide_world *before = tide_view_of(k)->current;\n"
               "        if (before && tide_entity_alive(&before->entities, e)) return true;\n    }\n"
               "    return false;\n}\n\n");
+    // What a view reads of an entity by its handle: the world drawn that owns
+    // it, or the one the view runs on when that has a copy, or the first that has one
+    sb_put(o, "TIDE_SHARD_FN const tide_world *tide_view_world_of(const tide_world *w, const tide_entity e)\n{\n"
+              "    if (!tide_view_more_count || !w) return w;\n"
+              "    const tide_world *copy = NULL;\n"
+              "    if (tide_entity_alive(&w->entities, e)) {\n"
+              "        if (!tide_has_tide_ghost(w, e)) return w;\n        copy = w;\n    }\n"
+              "    for (int32_t k = -1; k < (int32_t)tide_view_more_count; k++) {\n"
+              "        const tide_world *other = tide_view_of(k)->current;\n"
+              "        if (!other || other == w || !tide_entity_alive(&other->entities, e)) continue;\n"
+              "        if (!tide_has_tide_ghost(other, e)) return other;\n"
+              "        if (!copy) copy = other;\n    }\n"
+              "    return copy ? copy : w;\n}\n\n");
+    for (int i = 0; i < prog->components.count; i++) {
+        const decl *d = prog->components.items[i];
+        if (d->is_local) continue;
+        const char *name = type_cname(d);
+        sb_printf(o, "TIDE_SHARD_FN bool tide_view_has_%s(const tide_world *w, const tide_entity e)\n{\n"
+                     "    return tide_has_%s(tide_view_world_of(w, e), e);\n}\n\n", name, name);
+        sb_printf(o, "TIDE_SHARD_FN %s tide_view_get_%s(const tide_world *w, const tide_entity e)\n{\n"
+                     "    const tide_world *at = tide_view_world_of(w, e);\n", name, name);
+        if (!decl_has_text(d)) {
+            sb_printf(o, "    return tide_get_%s(at, e);\n}\n\n", name);
+            continue;
+        }
+        // Another world's: what it holds of that world's heap, copied, read with that heap
+        sb_printf(o, "    if (at == w) return tide_get_%s(w, e);\n"
+                     "    tide_heap *const tide_match = tide_world_heaps[TIDE_IN_MATCH];\n"
+                     "    tide_text_use((tide_heap *)(uintptr_t)&at->heap, tide_world_heaps[TIDE_IN_LOCAL]);\n"
+                     "    %s value = tide_get_%s(at, e);\n", name, name, name);
+        gen_scratch_decl(o, d, "value", "    ", 0);
+        sb_put(o, "    tide_text_use(tide_match, tide_world_heaps[TIDE_IN_LOCAL]);\n    return value;\n}\n\n");
+    }
+    // ...and of its place in the hierarchy
+    if (prog->hierarchy[0]) {
+        static const char *const reads[] = {"parent_of", "local_to_world", "parent_to_world"};
+        static const char *const types[] = {"tide_entity", "tide_float4x4", "tide_float4x4"};
+        for (int i = 0; i < 3; i++) {
+            sb_printf(o, "TIDE_SHARD_FN %s tide_view_%s(const tide_world *w, const tide_entity e)\n{\n"
+                         "    return tide_%s(tide_view_world_of(w, e), e);\n}\n\n", types[i], reads[i], reads[i]);
+        }
+    }
 }
 
 // What the change recorders and World.Set call: whether this shard owns an

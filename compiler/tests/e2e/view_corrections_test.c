@@ -58,7 +58,7 @@ static void scalar64(tide_world *w, double value)
 
 static void correct_on(tide_local *l, float alpha)
 {
-    const tide_view_correction c = {&before, &previous, &after, &after_previous, 0, alpha, false};
+    const tide_view_correction c = {&before, &previous, &after, &after_previous, 0, alpha, false, false};
     tide_local_correct(l, &c);
 }
 

@@ -59,9 +59,25 @@ local singleton Sight
     int drawn;   // Markers the view for each ran for, this frame
     int queried; // ...and a query's rows
     int named;   // ...of them named "far", as the query has them
+    int found;   // ...and as World has them
     float x;     // The x of those the view for each ran for, added up
     int avatars; // Avatars the view for each ran for
+    int blinks;  // Blinks local handlers heard, from wherever they were sent
+    int shown;   // Markers that came to be seen, and went
+    int hidden;
 }
+
+// Each marker blinks twice a second, on whichever shard has it
+event Blink { }
+
+system Shine(Time time, with Marker)
+{
+    if (time.tick % 30 == 0) this.Send(Blink { });
+}
+
+local event(Blink) Blinked(mut Sight sight) { sight.blinks += 1; }
+local event(Shown) SeeMarker(mut Sight sight, with Marker) { sight.shown += 1; }
+local event(Hidden) LoseMarker(mut Sight sight, with Marker) { sight.hidden += 1; }
 
 view Look(mut Sight sight)
 {
@@ -70,6 +86,7 @@ view Look(mut Sight sight)
     sight.drawn = 0;
     sight.queried = 0;
     sight.named = 0;
+    sight.found = 0;
     sight.x = 0;
     sight.avatars = 0;
 }
@@ -85,11 +102,12 @@ view DrawMarker(Marker marker, mut Sight sight)
     sight.x += marker.position.x;
 }
 
-view QueryMarkers(query (Marker marker) markers, mut Sight sight)
+view QueryMarkers(query (Marker marker) markers, World world, mut Sight sight)
 {
     foreach (var row in markers)
     {
         sight.queried += 1;
         if (row.marker.name == "far") sight.named += 1;
+        if (world.Has<Marker>(row.entity) && world.Get<Marker>(row.entity).name == "far") sight.found += 1;
     }
 }

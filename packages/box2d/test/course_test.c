@@ -146,7 +146,7 @@ TIDE_TEST(box2d_views_glide_through_a_correction)
     said.angle += 0.5f;
     put(&b, tide_has_Spinner, said);
     const uint64_t hash = tide_world_hash(&b);
-    const tide_view_correction correction = {&a, &previous, &b, &previous, 0, 1.0f, false};
+    const tide_view_correction correction = {&a, &previous, &b, &previous, 0, 1.0f, false, false};
     tide_local_correct(&local, &correction);
     tide_draw_reset(&draw);
     tide_frame(&b, &previous, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);

@@ -3220,6 +3220,14 @@ static bool has_local(const gen *g)
     return g->code && (g->code->is_view || g->code->is_local);
 }
 
+// Whether the code being generated is a sharded game's view's own: what it
+// reads of an entity by its handle comes from the world drawn that owns it
+// (tide_view_world_of), whichever world the view runs on.
+static bool view_reads(const gen *g)
+{
+    return g->prog->shard_state && !g->task && !own_routine(g) && g->code && g->code->is_view;
+}
+
 static bool has_world(const gen *g)
 {
     if (g->task) return true;
@@ -4036,7 +4044,8 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             gen_expr(g, o, e->object);
             sb_printf(o, "), &%s, %s)", grid_shape_name(e->object->type.decl), place_where(g, e->object));
         } else if (e->call == CALL_TRANSFORM) {
-            sb_printf(o, "%s%s(%s, ", world_prefix(e->local_world), str_eq_c(e->name, "Parent") ? "parent_of"
+            sb_printf(o, "%s%s(%s, ", e->local_world ? world_prefix(true) : view_reads(g) ? "tide_view_" : world_prefix(false),
+                      str_eq_c(e->name, "Parent") ? "parent_of"
                       : str_eq_c(e->name, "ParentToWorld") ? "parent_to_world" : "local_to_world",
                       e->local_world ? "tide_l" : "tide_w");
             gen_expr(g, o, e->args.items[0]);
@@ -4049,7 +4058,8 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         } else if (e->call == CALL_WORLD && str_eq_c(e->name, "TryGet")) {
             // world.TryGet<Health>(e, out health): whether it has one, and into the variable, it or the default
             const expr *value = e->args.items[1];
-            sb_printf(o, "tide_tryget_%s(%s, ", type_cname(e->type_decl), e->type_decl->is_local ? "tide_l" : "tide_w");
+            sb_printf(o, "tide_%stryget_%s(%s, ", !e->type_decl->is_local && view_reads(g) ? "view_" : "", type_cname(e->type_decl),
+                      e->type_decl->is_local ? "tide_l" : "tide_w");
             gen_expr(g, o, e->args.items[0]);
             sb_put(o, ", &(");
             gen_expr(g, o, value);
@@ -4058,8 +4068,9 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             // world.Get<Health>(e): that entity's, or its zero when it has none; Has: whether it has one;
             // Set: puts one back, and nothing when it has none
             const bool set = str_eq_c(e->name, "Set");
-            sb_printf(o, "%stide_%s_%s(%s, ", set ? "(void)" : "", set ? "world_set" : str_eq_c(e->name, "Has") ? "has" : "get",
-                      type_cname(e->type_decl), e->type_decl->is_local ? "tide_l" : "tide_w");
+            sb_printf(o, "%stide_%s%s_%s(%s, ", set ? "(void)" : "", !set && !e->type_decl->is_local && view_reads(g) ? "view_" : "",
+                      set ? "world_set" : str_eq_c(e->name, "Has") ? "has" : "get", type_cname(e->type_decl),
+                      e->type_decl->is_local ? "tide_l" : "tide_w");
             if (set) sb_put(o, "tide_bindings, ");
             gen_expr(g, o, e->args.items[0]);
             if (set) {
@@ -7816,6 +7827,11 @@ static void gen_header(gen *g)
                      "typedef struct tide_outgoing_item {\n    uint8_t *data;\n    uint32_t size;\n    uint32_t channel;\n} tide_outgoing_item;\n\n",
                   (unsigned)prog->channels.count + 1u);
     }
+    if (prog->shards && hears_visibility(prog)) {
+        sb_put(o, "// What a frame drew of a sharded match, by shard: each world's copy, for what's available\n"
+                  "typedef struct tide_kept_worlds {\n    tide_world *world[TIDE_SESSION_VIEWS + 1u];\n"
+                  "    int32_t shard[TIDE_SESSION_VIEWS + 1u];\n    uint32_t count;\n} tide_kept_worlds;\n\n");
+    }
     sb_put(o, "typedef struct tide_local {\n");
     sb_put(o, "    const tide_io *tide_io; // Host-owned storage provider; excluded from saved state\n");
     for (int i = 0; i < prog->components.count; i++) {
@@ -7859,6 +7875,8 @@ static void gen_header(gen *g)
         sb_put(o, "    tide_world *tide_available_predicted; // Last delivered permitted presentation endpoints, never packed\n"
                   "    tide_world *tide_available_verified;\n"
                   "    tide_event_log tide_available_causes; // Private genuine-death metadata awaiting its presentation endpoint\n");
+        // A sharded game's: each world a frame drew, by its shard, predicted and verified
+        if (prog->shards) sb_put(o, "    tide_kept_worlds tide_available_shards[2];\n");
     }
     gen_task_tables(g, true);
     if (world_has_tasks(g, true)) sb_put(o, "    int32_t tide_frames;       // Frames so far, which local tasks count\n");
@@ -9682,9 +9700,18 @@ static void gen_correction_state(gen *g)
                      "            if (w && tide_has_%s(w, e) && tide_born_same(born, tide_entity_born(&w->entities, e))) {\n"
                      "                if (s->snaps == tide_entity_snaps(&w->entities, e)) continue;\n"
                      "            } else if (verified && tide_has_%s(verified, e)\n"
-                     "                       && tide_born_same(born, tide_entity_born(&verified->entities, e))) continue;\n"
-                     "            tide_attached_remove(a, &tide_columns_correction_%s, row);\n"
-                     "        }\n    }\n", n, n, n, n, n, n, n, n);
+                     "                       && tide_born_same(born, tide_entity_born(&verified->entities, e))) continue;\n",
+                  n, n, n, n, n, n, n);
+        if (sharded(g)) { // ...or another shard's world drawn
+            sb_printf(o, "            bool tide_drawn = false;\n"
+                         "            for (uint32_t k = 0; k < tide_view_more_count && !tide_drawn; k++) {\n"
+                         "                const tide_world *o = tide_view_more[k].current;\n"
+                         "                tide_drawn = o && tide_has_%s(o, e) && tide_born_same(born, tide_entity_born(&o->entities, e))\n"
+                         "                          && s->snaps == tide_entity_snaps(&o->entities, e);\n"
+                         "            }\n            if (tide_drawn) continue;\n", n);
+        }
+        sb_printf(o, "            tide_attached_remove(a, &tide_columns_correction_%s, row);\n"
+                     "        }\n    }\n", n);
     }
     for (int i = 0; i < prog->singletons.count; i++) {
         const decl *d = prog->singletons.items[i];
@@ -9693,8 +9720,10 @@ static void gen_correction_state(gen *g)
         sb_printf(o, "    if (w && l->tide_correction_%s.valid && l->tide_correction_%s.snaps != (uint32_t)w->%s.tide_snaps)\n"
                      "        memset(&l->tide_correction_%s, 0, sizeof l->tide_correction_%s);\n", n, n, n, n, n);
     }
-    sb_put(o, "}\n\nvoid tide_local_correct(tide_local *l, const tide_view_correction *c)\n{\n"
-              "    if (!c || c->reset || !c->before || !c->after) { tide_corrections_reset(l); return; }\n"
+    sb_put(o, "}\n\nvoid tide_local_correct(tide_local *l, const tide_view_correction *c)\n{\n");
+    // Another shard's client corrects what its world owns, and never starts the rest over
+    if (sharded(g)) sb_put(o, "    if (c && c->beside && (c->reset || !c->before || !c->after)) return;\n");
+    sb_put(o, "    if (!c || c->reset || !c->before || !c->after) { tide_corrections_reset(l); return; }\n"
               "    const tide_world *before = c->before, *after = c->after;\n"
               "    const tide_world *before_previous = c->before_previous, *after_previous = c->after_previous;\n"
               "    (void)before_previous; (void)after_previous;\n");
@@ -9705,7 +9734,7 @@ static void gen_correction_state(gen *g)
             if (!decl_corrects(d)) continue;
             const char *n = type_cname(d);
             if (side) {
-                sb_printf(o, "    {\n        tide_correction_%s *s = &l->tide_correction_%s;\n", n, n);
+                sb_printf(o, "    %s{\n        tide_correction_%s *s = &l->tide_correction_%s;\n", sharded(g) ? "if (!c->beside) " : "", n, n);
                 if (d->snapped) sb_printf(o, "        if (before->%s.tide_snaps != after->%s.tide_snaps) { memset(s, 0, sizeof *s); } else {\n", n, n);
                 else sb_put(o, "        {\n");
                 sb_printf(o, "            %s old_value = before->%s, new_value = after->%s;\n", n, n, n);
@@ -9722,7 +9751,7 @@ static void gen_correction_state(gen *g)
                              "        for (uint32_t index = 0; index < after->entities.next_unused; index++) {\n"
                              "            const tide_entity e = tide_entity_in_slot(&after->entities, index);\n"
                              "            %s old_value, new_value;\n"
-                             "            if (!tide_load_%s(after, e, &new_value)) continue;\n"
+                             "            if (%s!tide_load_%s(after, e, &new_value)) continue;\n"
                              "            uint32_t row = tide_attached_find(a, &tide_columns_correction_%s, e);\n"
                              "            const uint32_t snaps = tide_entity_snaps(&after->entities, e), born = tide_entity_born(&after->entities, e);\n"
                              "            if (!tide_load_%s(before, e, &old_value)\n"
@@ -9748,7 +9777,9 @@ static void gen_correction_state(gen *g)
                              "                if (row == TIDE_ATTACHED_NONE) row = tide_attached_add(a, &tide_columns_correction_%s, e, born);\n"
                              "                value.snaps = snaps; value.valid = true;\n"
                              "                *(tide_correction_%s *)tide_attached_cell(a, &tide_columns_correction_%s, row) = value;\n"
-                             "            }\n        }\n    }\n", n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n);
+                             "            }\n        }\n    }\n", n, n,
+                          sharded(g) ? "tide_has_tide_ghost(after, e) || " : "", // A copy is its own shard's to correct
+                          n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n, n);
             }
         }
     }
@@ -11200,6 +11231,7 @@ static const char *heard_rows_wants(const gen *g, const int n)
 }
 
 #include "value_codec_codegen.inc"
+static void gen_scratch_decl(sb *o, const decl *d, const char *value, const char *pad, int depth);
 #include "shard_codegen.inc"
 #include "shard_messages_codegen.inc"
 #include "shard_world_codegen.inc"
@@ -15074,6 +15106,19 @@ static void gen_routines(gen *g)
         if (decl_has_text(d)) sb_printf(o, "    tide_assign_%s(value, found, where);\n", name);
         else sb_put(o, "    *value = found;\n");
         sb_put(o, "    return has;\n}\n\n");
+        if (!g->prog->shard_state || d->is_local) continue;
+        // A view's, from the world drawn that owns the entity (tide_view_world_of)
+        sb_printf(o, "TIDE_SHARD_FN bool tide_view_tryget_%s(const tide_world *w, const tide_entity e, %s *value, const uint32_t where)\n{\n"
+                     "    (void)where;\n    const bool has = tide_view_has_%s(w, e);\n", name, name, name);
+        sb_printf(o, "    const %s found = has ? ", name);
+        if (type_has_list(t)) sb_printf(o, "tide_copy_%s(tide_view_get_%s(w, e))", name, name);
+        else sb_printf(o, "tide_view_get_%s(w, e)", name);
+        sb_put(o, " : ");
+        gen_default(g, o, t);
+        sb_put(o, ";\n");
+        if (decl_has_text(d)) sb_printf(o, "    tide_assign_%s(value, found, where);\n", name);
+        else sb_put(o, "    *value = found;\n");
+        sb_put(o, "    return has;\n}\n\n");
     }
     bool externs = false;
     for (int i = 0; i < g->prog->decls.count; i++) {
@@ -18900,6 +18945,7 @@ static void gen_world_bytes(gen *g, const bool local)
     if (local && program_hears(prog)) sb_put(o, "    memset(&header->tide_heard, 0, sizeof header->tide_heard);\n");
     if (local && hears_visibility(prog)) sb_put(o, "    header->tide_available_predicted = header->tide_available_verified = NULL;\n"
                                                 "    memset(&header->tide_available_causes, 0, sizeof header->tide_available_causes);\n");
+    if (local && hears_visibility(prog) && prog->shards) sb_put(o, "    memset(header->tide_available_shards, 0, sizeof header->tide_available_shards);\n");
     sb_put(o, "    memset(&header->entities, 0, sizeof header->entities);\n");
     for (int i = 0; i < resident_count; i++) { // Its pages are this machine's; its kind, stamp and digest go with the struct
         sb_printf(o, "    header->%s.%s.pages = NULL;\n", type_cname(residents[i].singleton), field_cname(residents[i].f));
@@ -18982,6 +19028,7 @@ static void gen_world_bytes(gen *g, const bool local)
     if (local && program_hears(prog)) sb_put(o, "    memset(&w->tide_heard, 0, sizeof w->tide_heard);\n");
     if (local && hears_visibility(prog)) sb_put(o, "    w->tide_available_predicted = w->tide_available_verified = NULL;\n"
                                                 "    memset(&w->tide_available_causes, 0, sizeof w->tide_available_causes);\n");
+    if (local && hears_visibility(prog) && prog->shards) sb_put(o, "    memset(w->tide_available_shards, 0, sizeof w->tide_available_shards);\n");
     if (local) {
         for (int i = 0; i < prog->components.count; i++) {
             const decl *d = prog->components.items[i];

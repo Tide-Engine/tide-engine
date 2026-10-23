@@ -52,6 +52,7 @@ static bool open_client(tide_shard_client *c, const uint32_t shard, tide_client_
     if (c->heard && !c->logs[shard]) {
         c->logs[shard] = calloc(1, sizeof *c->logs[shard]);
         if (!c->logs[shard]) tide_out_of_memory();
+        c->logs[shard]->taken = c->heard->taken;
     }
     d.events = c->heard ? c->logs[shard] : NULL;
     c->clients[shard] = tide_client_create(&d, now);
@@ -105,14 +106,26 @@ static void follow(tide_shard_client *c, const tide_shard_link link, const doubl
     (void)open_client(c, link.shard, d, now);
 }
 
-// What the home heard goes on to the host; what the others heard isn't heard
+// What each shard it follows heard goes on to the host, the home's first: the
+// events its code sent, each where it ran. What's available in each world
+// (Shown and Hidden) is the home's alone: the frame works it out across every
+// world it draws (tide_frame_shards), as an entity is in several at once.
 static void pass_heard(tide_shard_client *c)
 {
     if (!c->heard) return;
+    // Each records once the host takes what's heard (tide_session_events), as the host's own log would
     for (uint32_t i = 0; i < c->room; i++) {
-        if (!c->logs[i]) continue;
-        if (i == c->home) tide_event_log_take(c->heard, c->logs[i]);
-        else tide_event_log_clear(c->logs[i]);
+        if (c->logs[i]) c->logs[i]->taken = c->heard->taken;
+    }
+    if (c->logs[c->home]) tide_event_log_take(c->heard, c->logs[c->home]);
+    for (uint32_t i = 0; i < c->room; i++) {
+        tide_event_log *log = c->logs[i];
+        if (!log || i == c->home) continue;
+        uint32_t at = 0;
+        for (const tide_heard *r; c->clients[i] && (r = tide_event_log_next(log, &at));) {
+            if (!(r->wants & TIDE_HEARD_AVAILABILITY)) tide_event_log_copy(c->heard, log, r, r->as);
+        }
+        tide_event_log_clear(log);
     }
 }
 
@@ -169,6 +182,8 @@ void tide_shard_client_update(tide_shard_client *c, const double now)
         c->home = next_home;
         c->moves++;
     }
+    // What each corrects of its views is its own entities' alone, but the home's
+    for (uint32_t i = 0; i < c->room; i++) tide_client_set_beside(c->clients[i], i != c->home);
     // What neither its route nor the area it watches names goes, but its home
     for (uint32_t i = 0; i < c->room; i++) {
         if (!c->clients[i] || i == c->home) continue;
