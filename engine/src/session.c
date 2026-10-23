@@ -3236,10 +3236,10 @@ struct tide_client {
     uint16_t *input_size;
     uint8_t *inputs;
     uint32_t sampled;       // The next tick to sample an input for: at least `ahead`
-    // Its last CLIENT packet: when, with inputs sampled up to what, and whether
-    // the server said anything since, which it answers at once
+    // Its last CLIENT packet: when, how long (its bytes are after `packet`'s),
+    // and whether the server said anything since, which it answers at once
     double client_sent;
-    uint32_t sent_sampled;
+    uint32_t client_sent_size;
     bool heard_since_sent;
     // The first of the inputs it sampled in a row up to `sampled`: it sampled
     // none for the ticks before, which the server runs without one (skip_inputs)
@@ -3333,7 +3333,7 @@ struct tide_client {
     uint32_t late; // Ticks the server ran without an input this machine sampled for them, which came too late
     double hold_until; // No clock changes until then: it's still losing what the last one found
 
-    uint8_t *packet;
+    uint8_t *packet;  // TIDE_NET_MTU, then the last CLIENT packet sent
     uint8_t *input;   // input_size
     uint8_t *scratch; // scratch_size: inputs and their deltas
 
@@ -5197,13 +5197,20 @@ static void send_hello(tide_client *c)
     c->last_hello = c->now;
 }
 
+// A packet when there's something new to say (any of it but its times
+// differs from the last: a tick verified, a frame or chunk had, a repair asked
+// for, an input sampled) or an answer to what arrived, and otherwise one a
+// tick: a host that updates many times a tick (a fast display, no vsync)
+// sends no more
 static void send_client(tide_client *c)
 {
     const tide_game *g = c->game;
     tide_writer w = {c->packet, TIDE_NET_MTU, 0, false, false};
     header(&w, MSG_CLIENT);
-    tide_write_u16(&w, said_time(c));
+    const uint32_t said_at = w.size;
+    tide_write_u16(&w, 0); // When it's said, once it's sent
     tide_write_u16(&w, c->their_time);
+    const uint32_t times_end = w.size;
     // Whether it needs the world, or is taking the one coming, and has one to build it from
     const bool wants = c->need_snapshot || !c->loaded || c->receiving || c->repair_tick;
     const bool has = !c->base_failed && (c->loaded || c->base);
@@ -5310,6 +5317,19 @@ static void send_client(tide_client *c)
         count++;
     }
     c->packet[count_at] = (uint8_t)count;
+    // A tick's time, less a little for the clock's rounding: a host updating
+    // once a tick sends every update
+    const double every = c->tick_rate ? 0.99 / (double)c->tick_rate : 0.0;
+    uint8_t *last = c->packet + TIDE_NET_MTU;
+    const bool same = w.size == c->client_sent_size && !w.overflow
+                   && memcmp(c->packet + times_end, last + times_end, w.size - times_end) == 0;
+    if (same && !c->heard_since_sent && c->now - c->client_sent < every) return;
+    tide_writer said = {c->packet + said_at, 2u, 0, false, false};
+    tide_write_u16(&said, said_time(c));
+    memcpy(last, c->packet, w.size);
+    c->client_sent_size = w.size;
+    c->client_sent = c->now;
+    c->heard_since_sent = false;
     send_packet(&c->desc.transport, c->desc.server, &w, &c->traffic);
 }
 
@@ -5480,7 +5500,7 @@ tide_client *tide_client_create(const tide_client_desc *desc, const double now)
     for (uint32_t i = 0; c->worlds && i < c->ring; i++) c->worlds[i] = calloc(1, g->world_size);
     c->input = calloc(1, (size_t)g->input_size + 1u);
     c->scratch = calloc(1, scratch_size(g));
-    c->packet = malloc(TIDE_NET_MTU);
+    c->packet = malloc(2u * TIDE_NET_MTU);
     bool worlds = c->worlds != NULL;
     for (uint32_t i = 0; worlds && i < c->ring; i++) worlds = c->worlds[i] != NULL;
     if (!worlds || !c->input || !c->scratch || !c->packet) {
@@ -5563,16 +5583,7 @@ static void update_client(tide_client *c, const double now)
         return;
     }
     if (c->loaded) play(c);
-    // A packet when there's something new to say, an input sampled for
-    // another tick or an answer to what arrived, and otherwise one a tick: a
-    // host that updates many times a tick (a fast display, no vsync) sends no more
-    const double every = c->tick_rate ? 1.0 / (double)c->tick_rate : 0.0;
-    if (c->heard_since_sent || c->sampled != c->sent_sampled || c->now - c->client_sent >= every) {
-        send_client(c);
-        c->client_sent = c->now;
-        c->sent_sampled = c->sampled;
-        c->heard_since_sent = false;
-    }
+    send_client(c);
     send_commands(c);
     const bool listening = c->local_receive != NULL && c->state == TIDE_SESSION_CONNECTED;
     if (c->loaded && (listening != c->local_subscribed || (listening && now - c->local_sent >= 0.5))) {

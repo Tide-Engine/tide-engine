@@ -71,7 +71,7 @@ A [dedicated server](./matches.md#dedicated-servers) runs each shard as one of i
 tide run --server --anonymous --shards 4 --shard-width 200 --shard-most 5000
 ```
 
-`--shard-most` splits a region in two when its shard owns more entities than that, and merges two neighbouring regions back into one when together they own a quarter of it or less. Players connect to match 0, `Session.Connect("host:7777/0")` or through the server's room with `Session.Join("K7QF2M/0")`, and the server takes them into the world. Each player follows the shards near their avatar over that one connection, on the web too.
+`--shard-most` splits a region in two when its shard owns more entities than that, and merges two neighbouring regions back into one when together they own a quarter of it or less. Without `--shards`, the world starts as one shard owning all of it, splits as it fills, and comes back together into one shard as it empties. Players connect to match 0, `Session.Connect("host:7777/0")` or through the server's room with `Session.Join("K7QF2M/0")`, and the server takes them into the world. Each player follows the shards near their avatar over that one connection, on the web too.
 
 ### Keeping the world
 
@@ -83,23 +83,15 @@ tide run --server --anonymous --shards 4 --shard-journal world
 
 It writes a checkpoint now and then, and every tick of every shard since, to the disk before anything one shard sends reaches another. Started again with the same folder, it goes on where the world was, to the tick, and nothing that crossed a border is lost or happens twice. Players have 20 seconds to reconnect as themselves before the world sends `PlayerLeft`.
 
-Tide's hosting service runs a sharded game's world across machines. It splits a region whose shard is steadily too busy, merges quiet neighbours back, and starts a shard whose machine fails again elsewhere, where it was.
+Tide's hosting service runs a sharded game's world across machines. The world starts as one shard; the service splits a region whose shard is steadily too busy, merges quiet neighbours back until the world is one shard again, and starts a shard whose machine fails again elsewhere, where it was. A world nobody is in stops after the project's empty timeout, as a match does, and goes on where it was when a player comes back.
 
 ## Physics
 
-[Box3D](../packages/box3d.md) and [Box2D](../packages/box2d.md) work in a sharded world. Each shard steps its own physics world of the bodies it owns. A body that crosses a border is made anew on the next shard from its `Body`, where it was and as fast. Bodies another shard owns near the border are there too, as kinematic copies where their owner last had them, so a crate runs into a wall across the border instead of passing through it. Each side tells its own entities of a touch or a hit.
+[Box3D](../packages/box3d.md) and [Box2D](../packages/box2d.md) work in a sharded world. Each shard steps its own physics world of the bodies it owns. A body that crosses a border is made anew on the next shard from its `Body`, where it was and as fast. Bodies another shard owns near the border are there too, as kinematic copies where their owner last had them, with all their shapes and parts, so a crate runs into a wall across the border instead of passing through it. Each side tells its own entities of a touch or a hit.
 
-The physics settings, such as `gravity`, are each shard's, as its world is. Set them from a system that runs on every shard: one for no entity that takes `Physics`.
+Jointed bodies go together: the shard that has one has the other and the joint, so a joint holds across borders. A body's parts go with it.
 
-```csharp
-[Before(PhysicsStages.Step)]
-system Moon(mut Physics physics)
-{
-    physics.gravity = float3(0, -1.6, 0);
-}
-```
-
-A joint holds two bodies only while one shard owns both, so keep jointed bodies together, in one `Transform` tree for instance.
+The physics settings, such as `gravity`, are the world's: set them on the first shard, from `Main` or code for no entity, and every shard has them.
 
 ## A game's own C state
 
@@ -107,6 +99,8 @@ A C library that keeps state for the entities a shard has, as the physics packag
 
 - `[PerShard] singleton` is a singleton each shard has its own of. Nothing copies it to other shards or borrows it. Code for no entity that takes one runs on every shard, for that shard; other code for no entity runs once, on the first shard.
 - `[PerShard]` on a component's number or bool field marks something that means something on one shard alone, like a handle into a C library. It's 0 wherever its entity arrives or is copied, so the library makes its own there.
+- `[Shared]` on a field of a `[PerShard]` singleton makes it the world's one value, the first shard's, which every other shard has too: settings for the library, such as a physics world's gravity.
+- `[GoesWith]` on a component's `Entity` field makes its entity go where that entity goes instead of by its own position, as a physics part goes with its body.
 - `[Ghosts]` on a system runs it for the read-only copies a shard holds of other shards' entities near its border, instead of its own entities. It can't change their components. In a game that isn't sharded it isn't there.
 - `Shards.moves` counts the times an entity came to this shard or left it, so a library can notice what left.
 
