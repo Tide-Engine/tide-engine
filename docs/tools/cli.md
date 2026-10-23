@@ -407,6 +407,7 @@ reload. Server executables support:
 | `--udp-only` | Omit the shared WebRTC room |
 | `--shards <n>`, `--shard-width <units>` | A [sharded game](../multiplayer/shards.md)'s world as `n` regions along x, each this wide, each a match; players join the world at match 0 |
 | `--shard-most <n>` | Splits a sharded game's region in two when its shard owns more entities than this, and merges two neighbouring regions owning a quarter of it together |
+| `--shard-journal <folder>` | Keeps a sharded game's world in a folder: a checkpoint now and then and every shard's ticks since, on the disk before anything a shard sends goes on. Started again with the same folder, the server goes on where the world was |
 | `--frames <n>` | Bound a test run to this many service iterations |
 
 The service uses wall-clock time and sleeps between iterations, normally about

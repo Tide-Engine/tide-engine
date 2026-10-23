@@ -395,6 +395,15 @@ static void gen_shard_queries(gen *g)
         sb_put(o, "        each(context, e, tide_get_tide_ghost(w, e).source);\n    }\n");
     }
     sb_put(o, "}\n\n");
+    sb_put(o, "TIDE_SHARD_FN void tide_shard_owned_of(const void *world, void (*each)(void *context, tide_entity e), void *context)\n{\n"
+              "    const tide_world *w = world;\n");
+    for (int a = 0; a < prog->archetypes.count; a++) {
+        if (arch_local(g, a)) continue;
+        sb_printf(o, "    for (uint32_t row = 0; row < w->%s.count; row++) {\n", arch_name(g, a));
+        sb_printf(o, "        if (!%s) each(context, *%s);\n    }\n", presence_cell(g, "w", a, ghost, "row", false),
+                  arch_cell(g, "w", a, 0, "tide_entity", "row", false));
+    }
+    sb_put(o, "}\n\n");
     sb_put(o, "TIDE_SHARD_FN uint32_t tide_shard_route_of(const void *world, const tide_player_id player, uint32_t *home,\n"
               "                                          tide_shard_link *out, const uint32_t capacity)\n{\n"
               "    const tide_world *w = world;\n    tide_text_use((tide_heap *)(uintptr_t)&w->heap, NULL);\n"
@@ -434,6 +443,7 @@ static void gen_shard_queries(gen *g)
               "    const int32_t n = tide_list_count(s->ranges);\n"
               "    for (int32_t i = 0; i + 2 <= n; i += 2) {\n"
               "        if (tide_shard_long(s->ranges, i) >= s->end) out->indices += (uint64_t)(tide_shard_long(s->ranges, i + 1) - tide_shard_long(s->ranges, i));\n"
+              "        if ((uint64_t)tide_shard_long(s->ranges, i + 1) > out->ranges_end) out->ranges_end = (uint64_t)tide_shard_long(s->ranges, i + 1);\n"
               "    }\n}\n\n");
 }
 
@@ -457,7 +467,7 @@ static void gen_shard_start(gen *g)
                  "    .receive = tide_shard_receive,\n    .outbox = tide_shard_outbox,\n    .border = tide_shard_border,\n"
                  "    .singletons = tide_shard_singletons_of,\n    .load = tide_shard_load,\n    .sample = tide_shard_sample,\n"
                  "    .presence = tide_shard_presence_of,\n    .status = tide_shard_status_of,\n    .ghosts = tide_shard_ghosts_of,\n"
-                 "    .route = tide_shard_route_of,\n};\n\n");
+                 "    .route = tide_shard_route_of,\n    .owned = tide_shard_owned_of,\n};\n\n");
 }
 
 // A scene unloaded on the shard that owns it: its entities here go too

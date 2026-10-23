@@ -363,7 +363,22 @@ typedef struct tide_server_desc {
     // that account; zero is anonymous. Never sent, snapshotted or hashed.
     void *identity_user;
     bool (*identity)(void *user, uint32_t transport, tide_address peer, uint8_t identity[32]);
+    // The match's journal: after each tick, a record of everything that went
+    // into it (its players' inputs, joins and leaves, commands and shard
+    // messages, their bytes whole), from which tide_replay makes the tick
+    // again from the world before it. The bytes are the server's until the
+    // call returns. NULL: none.
+    void *journal_user;
+    void (*journal)(void *user, uint32_t tick, const uint8_t *record, uint32_t size);
 } tide_server_desc;
+
+// Runs again, on `world` (the game's, at the record's tick), the tick a
+// journal record says (tide_server_desc.journal): false, with the world in
+// whatever state it reached, for bytes that aren't one, or when the world it
+// makes isn't the one the server made (its hash).
+bool tide_replay(const tide_game *game, void *world, const uint8_t *record, uint32_t size, const tide_jobs *jobs);
+// The tick a journal record is of, or false for bytes that aren't one.
+bool tide_replay_tick(const uint8_t *record, uint32_t size, uint32_t *tick);
 
 tide_server *tide_server_create(const tide_server_desc *desc, double now);
 // Tells every player the match is over, and closes the transports.

@@ -271,3 +271,126 @@ TIDE_TEST(shards_merge_quiet_regions)
     check_clients(2);
     finish();
 }
+
+// A journal in memory: each shard's records since the last checkpoint, which
+// a checkpoint clears
+typedef struct kept {
+    uint8_t *checkpoint;
+    uint32_t checkpoint_size;
+    uint32_t checkpoints;
+    uint8_t **records[16];
+    uint32_t *sizes[16];
+    uint32_t counts[16], rooms[16];
+} kept;
+
+static kept journal;
+
+static void forget_records(void)
+{
+    for (uint32_t i = 0; i < 16u; i++) {
+        for (uint32_t k = 0; k < journal.counts[i]; k++) free(journal.records[i][k]);
+        journal.counts[i] = 0;
+    }
+}
+
+static void keep_record(void *user, const uint32_t shard, const uint32_t tick, const uint8_t *record, const uint32_t size)
+{
+    (void)user;
+    (void)tick;
+    if (shard >= 16u) return;
+    if (journal.counts[shard] == journal.rooms[shard]) {
+        journal.rooms[shard] = journal.rooms[shard] ? journal.rooms[shard] * 2u : 256u;
+        journal.records[shard] = realloc(journal.records[shard], journal.rooms[shard] * sizeof *journal.records[shard]);
+        journal.sizes[shard] = realloc(journal.sizes[shard], journal.rooms[shard] * sizeof *journal.sizes[shard]);
+    }
+    uint8_t *copy = malloc(size);
+    memcpy(copy, record, size);
+    journal.records[shard][journal.counts[shard]] = copy;
+    journal.sizes[shard][journal.counts[shard]++] = size;
+}
+
+static void keep_checkpoint(void *user, const uint8_t *data, const uint32_t size)
+{
+    (void)user;
+    free(journal.checkpoint);
+    journal.checkpoint = malloc(size);
+    memcpy(journal.checkpoint, data, size);
+    journal.checkpoint_size = size;
+    journal.checkpoints++;
+    forget_records(); // The ones before it aren't needed
+}
+
+static bool give_record(void *user, const uint32_t shard, const uint32_t index, const uint8_t **record, uint32_t *size)
+{
+    (void)user;
+    if (shard >= 16u || index >= journal.counts[shard]) return false;
+    *record = journal.records[shard][index];
+    *size = journal.sizes[shard][index];
+    return true;
+}
+
+static void crash_and_recover(const uint32_t most)
+{
+    memset(&journal, 0, sizeof journal);
+    now = 0;
+    most_dying = 0;
+    memset(clients, 0, sizeof clients);
+    net = tide_loopback_create(7);
+    tide_shards_desc d = desc_of(most);
+    d.journal = keep_record;
+    d.checkpoint = keep_checkpoint;
+    d.checkpoint_seconds = 3.0;
+    shards = tide_shards_create(&d, now);
+    TIDE_REQUIRE(shards != NULL);
+    run(1.0, false);
+    run(7.5, true); // Checkpoints at about 3 and 6 seconds, then records since
+    TIDE_REQUIRE(journal.checkpoints >= 2);
+    // As each shard is when it stops for good, no checkpoint since
+    const uint32_t count = tide_shards_count(shards);
+    if (most) TIDE_CHECK(count > 3u); // It split before it stopped
+    uint32_t ticks[8];
+    uint64_t hashes[8];
+    for (uint32_t i = 0; i < count && i < 8u; i++) {
+        if (!tide_shards_world(shards, i)) continue;
+        ticks[i] = (uint32_t)((const tide_world *)tide_shards_world(shards, i))->Time.tick;
+        hashes[i] = tide_game_api.hash_world(tide_shards_world(shards, i));
+    }
+    for (uint32_t i = 0; i < CLIENTS; i++) {
+        tide_client_destroy(clients[i]);
+        clients[i] = NULL;
+    }
+    tide_shards_destroy(shards);
+    // Started again from the last checkpoint and the records since: every shard as it was
+    shards = tide_shards_recover(&d, journal.checkpoint, journal.checkpoint_size, give_record, NULL, now);
+    TIDE_REQUIRE(shards != NULL);
+    TIDE_CHECK(tide_shards_count(shards) == count);
+    for (uint32_t i = 0; i < count && i < 8u; i++) {
+        if (!tide_shards_world(shards, i)) continue;
+        TIDE_CHECK((uint32_t)((const tide_world *)tide_shards_world(shards, i))->Time.tick == ticks[i]);
+        TIDE_CHECK(tide_game_api.hash_world(tide_shards_world(shards, i)) == hashes[i]);
+    }
+    // ...and the world goes on, nothing lost or made twice
+    run(20.0, true);
+    check_done();
+    check_clients(most ? 1u : 3u);
+    finish();
+    forget_records();
+    for (uint32_t i = 0; i < 16u; i++) {
+        free(journal.records[i]);
+        free(journal.sizes[i]);
+    }
+    free(journal.checkpoint);
+}
+
+TIDE_TEST(shards_recover_from_a_crash_where_they_were)
+{
+    crash_and_recover(0);
+}
+
+// The same with regions splitting along the way: the world's shape is in the
+// checkpoint that follows each change
+TIDE_TEST(shards_recover_from_a_crash_after_splits)
+{
+    crash_and_recover(8);
+    TIDE_CHECK(journal.checkpoints >= 3);
+}

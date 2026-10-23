@@ -47,6 +47,18 @@ typedef struct tide_shards_desc {
     // orchestrator makes, updates and ends them itself.
     tide_server *(*host_start)(void *user, uint32_t shard, const tide_server_desc *desc, uint64_t *match);
     void (*host_stop)(void *user, uint32_t shard, uint64_t match);
+    // The world's journal, so it comes back after a crash where it was
+    // (tide_shards_recover). Each shard's tick, as its record
+    // (tide_server_desc.journal); then, once an update, `flush`: every record
+    // so far is to be kept for good by the time it returns, as nothing a shard
+    // sent goes on to another before its ticks are kept. Now and then
+    // (`checkpoint_seconds`, 0: 60), and whenever the regions or the entity
+    // ranges change, a checkpoint (tide_shards_save's bytes), after which the
+    // records before it aren't needed. NULL: none of it.
+    void (*journal)(void *user, uint32_t shard, uint32_t tick, const uint8_t *record, uint32_t size);
+    void (*flush)(void *user);
+    void (*checkpoint)(void *user, const uint8_t *data, uint32_t size);
+    double checkpoint_seconds;
 } tide_shards_desc;
 
 // A dedicated server's matches as the shards (tide_shards_desc.host_start
@@ -80,3 +92,11 @@ uint32_t tide_shards_at(const tide_shards *s, const double p[3]);
 // it was, its shards' servers new (players connect again).
 uint8_t *tide_shards_save(const tide_shards *s, uint32_t *size);
 tide_shards *tide_shards_load(const tide_shards_desc *desc, const uint8_t *data, uint32_t size, double now);
+// A checkpoint, then each shard's journal records kept since it, run again:
+// the world as it was at the last records kept. `records` gives shard
+// `shard`'s records in turn (the `index`th from 0), false past the last;
+// records from before the checkpoint are passed over. NULL for a world whose
+// records don't make the ticks they say.
+typedef bool (*tide_shards_records)(void *user, uint32_t shard, uint32_t index, const uint8_t **record, uint32_t *size);
+tide_shards *tide_shards_recover(const tide_shards_desc *desc, const uint8_t *data, uint32_t size,
+                                 tide_shards_records records, void *records_user, double now);

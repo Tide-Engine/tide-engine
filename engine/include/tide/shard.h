@@ -156,6 +156,7 @@ typedef struct tide_shard_status {
     uint32_t outbox;     // Messages not yet acknowledged
     uint32_t lent;       // Requests for what it owns, waiting until it can lend it
     uint64_t indices;    // Entity indices it has left to give its spawns
+    uint64_t ranges_end; // The end of the highest range of indices it was given
 } tide_shard_status;
 
 // What a sharded game gives the runtime: tide_game.shards, generated for
@@ -200,6 +201,9 @@ typedef struct tide_shard_game {
     // and up to `capacity` of the shards their machine follows. How many it
     // follows, 0 for no route.
     uint32_t (*route)(const void *world, tide_player_id player, uint32_t *home, tide_shard_link *out, uint32_t capacity);
+    // Each entity the shard owns (no ghost), for the orchestrator to know
+    // where everything is when it starts from a checkpoint.
+    void (*owned)(const void *world, void (*each)(void *context, tide_entity e), void *context);
 } tide_shard_game;
 
 

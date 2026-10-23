@@ -237,6 +237,10 @@ static const argument_help arguments[] = {
      "Requires run --server. A region splits in two by where its entities\n"
      "are, down to twice the game's shardRange across; two neighbouring\n"
      "regions owning a quarter of n together merge back into one.", RUN},
+    {"--shard-journal", "--shard-journal <folder>", "Keep a sharded server's world in a folder",
+     "Requires run --server. A checkpoint now and then, and every shard's ticks\n"
+     "since, on the disk before anything a shard sends goes on: a server\n"
+     "started again with the same folder goes on where the world was.", RUN},
     {"--capture", "--capture <file.png>", "Save the last frame as a PNG",
      "Runs natively without a window; add --frames or a script's quit.\n"
      "The output path is relative to the directory where tide was invoked.", RUN | OPEN},

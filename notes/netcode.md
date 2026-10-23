@@ -1,5 +1,15 @@
 # Netcode: sessions, prediction, commands
 
+## A server's journal (2026-10-23)
+
+`tide_server_desc.journal` gets, after each tick, a record of what went into
+it: the tick's frame as players get it, then the bytes of every big command or
+shard message the frame names by download. `tide_replay` runs that tick again
+on the world from before it, as a client applies a frame, and checks the hash.
+Nothing on the wire changes; a server without a journal does nothing new. The
+orchestrator journals every shard and recovers from a checkpoint and records
+(notes/sharding.md, The journal).
+
 ## Session protocol 18: shard messages (2026-10-23)
 
 A sharded game's servers take messages from other shards

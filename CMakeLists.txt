@@ -180,7 +180,10 @@ if(TIDE_PLATFORM)
                 "$<TARGET_FILE:tide_server_shards>" "$<TARGET_FILE:tide_server_shards_client>" shards)
             add_test(NAME tide_server_shards_room COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/platform/tests/server_pack.mjs"
                 "$<TARGET_FILE:tide_server_shards>" "$<TARGET_FILE:tide_server_shards_client>" shards-room)
-            set_tests_properties(tide_server_shards tide_server_shards_room PROPERTIES TIMEOUT 30)
+            # ...and the same server killed outright, going on from its journal
+            add_test(NAME tide_server_shards_journal COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/platform/tests/server_journal.mjs"
+                "$<TARGET_FILE:tide_server_shards>")
+            set_tests_properties(tide_server_shards tide_server_shards_room tide_server_shards_journal PROPERTIES TIMEOUT 30)
         endif()
         tide_add_game(tide_server_entry SERVER NAME game SOURCES
             "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/server_menu.tide"

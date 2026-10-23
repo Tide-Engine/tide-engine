@@ -71,6 +71,16 @@ tide run --server --anonymous --shards 4 --shard-width 200 --shard-most 5000
 
 `--shard-most` splits a region in two when its shard owns more entities than that, and merges two neighbouring regions back into one when together they own a quarter of it or less. Players connect to match 0, `Session.Connect("host:7777/0")` or through the server's room with `Session.Join("K7QF2M/0")`, and the server takes them into the world. Each player follows the shards near their avatar over that one connection, on the web too.
 
+### Keeping the world
+
+A dedicated server can keep its world in a folder, so a crash or a restart doesn't lose it:
+
+```sh
+tide run --server --anonymous --shards 4 --shard-journal world
+```
+
+It writes a checkpoint now and then, and every tick of every shard since, to the disk before anything one shard sends reaches another. Started again with the same folder, it goes on where the world was, to the tick, and nothing that crossed a border is lost or happens twice. Players have 20 seconds to reconnect as themselves before the world sends `PlayerLeft`.
+
 Tide's hosting service will run shards across machines, splitting and merging regions by load.
 
 ## Limits for now

@@ -2186,6 +2186,8 @@ static void store_client_frame(tide_server *s, connection *c, const void *before
 
 // Runs one tick: joins and leaves, then the inputs that arrived for it, in
 // slot order, the queued commands, then the systems. Clients do the same.
+static void journal_tick(tide_server *s, uint32_t tick, const uint8_t *frame, uint32_t size);
+
 static void server_tick(tide_server *s)
 {
     const tide_game *g = s->game;
@@ -2309,12 +2311,205 @@ static void server_tick(tide_server *s)
     free_world(g, f->world);
     free(f->world);
     *f = (stored_frame){.tick = tick, .size = w.size, .data = data, .world = before};
+    if (s->desc.journal) journal_tick(s, tick, data, w.size); // What went into the tick, for tide_replay
     for (uint32_t p = 0; before && p < s->players; p++) {
         connection *c = &s->connections[p];
         if (c->used && c->greeted) store_client_frame(s, c, before, tick, journals ? &journals[p] : NULL);
     }
     for (uint32_t p = 0; journals && p < s->players; p++) tide_event_log_free(&journals[p]);
     free(journals);
+}
+
+// ---------------------------------------------------------------------------
+// The journal (tide_server_desc.journal): a tick's frame, as players get it,
+// then the bytes of each big command or shard message it names by download:
+// u32 tick, u32 the frame's size, the frame, u32 how many named, then each
+// u32 number, u32 size and its bytes.
+
+// Goes through a frame, giving each download it names; false for bytes that
+// aren't one. `players` is how many the game takes.
+static bool frame_names_each(const uint8_t *data, const uint32_t size, const uint32_t players,
+                             void (*each)(void *context, uint32_t number, uint32_t size), void *context)
+{
+    tide_reader r = {data, size, 0, false};
+    tide_read_u64(&r);
+    const uint8_t parts = tide_read_u8(&r);
+    const uint32_t events = parts & FRAME_EVENTS ? tide_read_varint(&r) : 0u;
+    if (events > EVENTS_PER_PLAYER * players) return false;
+    for (uint32_t i = 0; i < events; i++) {
+        tide_read_u8(&r);
+        tide_read_varint(&r);
+    }
+    const tide_player_set none = {0};
+    const tide_player_set mask = parts & FRAME_INPUTS ? read_players(&r) : none;
+    if (parts & FRAME_LATE) read_players(&r);
+    for (uint32_t slot = 0; slot <= players; slot++) {
+        if (tide_players_has(&mask, slot) && !tide_read_bytes(&r, tide_read_varint(&r))) return false;
+    }
+    const uint32_t commands = parts & FRAME_COMMANDS ? tide_read_varint(&r) : 0u;
+    if (commands > TIDE_COMMANDS_PER_TICK) return false;
+    for (uint32_t i = 0; i < commands && !r.failed; i++) {
+        tide_read_varint(&r);
+        tide_read_varint(&r);
+        const uint32_t n = tide_read_varint(&r);
+        if (big_command(n)) each(context, tide_read_varint(&r), n);
+        else tide_read_bytes(&r, n);
+    }
+    const uint32_t messages = parts & FRAME_SHARD ? tide_read_varint(&r) : 0u;
+    if (messages > TIDE_SHARD_MESSAGES_PER_TICK) return false;
+    for (uint32_t i = 0; i < messages && !r.failed; i++) {
+        const uint32_t n = tide_read_varint(&r);
+        if (big_command(n)) each(context, tide_read_varint(&r), n);
+        else tide_read_bytes(&r, n);
+    }
+    return !r.failed;
+}
+
+typedef struct journal_names {
+    tide_server *server;
+    tide_writer *out;
+    uint32_t count;
+    bool missing;
+} journal_names;
+
+static void journal_name(void *context, const uint32_t number, const uint32_t size)
+{
+    journal_names *j = context;
+    const published *p = published_by_number(j->server, number);
+    if (!p || p->size != size) {
+        j->missing = true;
+        return;
+    }
+    tide_write_u32(j->out, number);
+    tide_write_u32(j->out, p->size);
+    tide_write_bytes(j->out, p->data, p->size);
+    j->count++;
+}
+
+static void journal_tick(tide_server *s, const uint32_t tick, const uint8_t *frame, const uint32_t size)
+{
+    tide_writer w = {.grows = true};
+    tide_write_u32(&w, tick);
+    tide_write_u32(&w, size);
+    tide_write_bytes(&w, frame, size);
+    const uint32_t count_at = w.size;
+    tide_write_u32(&w, 0u);
+    journal_names names = {s, &w, 0u, false};
+    if (!frame_names_each(frame, size, s->players, journal_name, &names) || names.missing) {
+        // Every download a frame names is kept until its tick's frame goes: a
+        // frame whose bytes aren't there is a bug in this file
+        fputs("tide: a tick's journal record names a download the server doesn't have\n", stderr);
+        abort();
+    }
+    if (w.overflow) tide_out_of_memory();
+    for (uint32_t k = 0; k < 4u; k++) w.data[count_at + k] = (uint8_t)(names.count >> (8u * k));
+    s->desc.journal(s->desc.journal_user, tick, w.data, w.size);
+    free(w.data);
+}
+
+bool tide_replay_tick(const uint8_t *record, const uint32_t size, uint32_t *tick)
+{
+    tide_reader r = {record, size, 0, false};
+    *tick = tide_read_u32(&r);
+    return !r.failed;
+}
+
+// A download a record carries
+static const uint8_t *record_download(const uint8_t *record, const uint32_t size, const uint32_t names_at,
+                                      const uint32_t number, const uint32_t length)
+{
+    tide_reader r = {record, size, names_at, false};
+    const uint32_t count = tide_read_u32(&r);
+    for (uint32_t i = 0; i < count && !r.failed; i++) {
+        const uint32_t n = tide_read_u32(&r), bytes = tide_read_u32(&r);
+        const uint8_t *data = tide_read_bytes(&r, bytes);
+        if (data && n == number && bytes == length) return data;
+    }
+    return NULL;
+}
+
+bool tide_replay(const tide_game *g, void *world, const uint8_t *record, const uint32_t size, const tide_jobs *jobs)
+{
+    if (!g || !world || !record) return false;
+    tide_reader head = {record, size, 0, false};
+    tide_read_u32(&head);
+    const uint32_t frame_size = tide_read_u32(&head);
+    const uint8_t *frame = tide_read_bytes(&head, frame_size);
+    if (!frame) return false;
+    const uint32_t names_at = head.at;
+    const uint32_t players = tide_game_players(g);
+    tide_reader r = {frame, frame_size, 0, false};
+    const uint64_t hash = tide_read_u64(&r);
+    const uint8_t parts = tide_read_u8(&r);
+    const uint32_t events = parts & FRAME_EVENTS ? tide_read_varint(&r) : 0u;
+    if (events > EVENTS_PER_PLAYER * players) return false;
+    for (uint32_t i = 0; i < events; i++) {
+        const uint8_t kind = tide_read_u8(&r);
+        const uint32_t player = tide_read_varint(&r);
+        if (r.failed || player >= players) return false;
+        if (kind == EVENT_JOIN) g->player_joined(world, tide_player_from_index((int32_t)player));
+        else g->player_left(world, tide_player_from_index((int32_t)player));
+    }
+    const tide_player_set none = {0};
+    const tide_player_set mask = parts & FRAME_INPUTS ? read_players(&r) : none;
+    if (parts & FRAME_LATE) read_players(&r);
+    uint8_t *input = calloc(1, scratch_size(g)), *scratch = calloc(1, scratch_size(g));
+    if (!input || !scratch) tide_out_of_memory();
+    bool ok = true;
+    for (uint32_t slot = 0; ok && slot <= players; slot++) {
+        if (!tide_players_has(&mask, slot)) continue;
+        const uint32_t n = tide_read_varint(&r);
+        const uint8_t *bytes = tide_read_bytes(&r, n);
+        ok = bytes && g->read_input;
+        if (!ok) break;
+        if (g->read_input_delta && g->world_input) {
+            g->world_input(world, slot, scratch);
+            ok = g->read_input_delta(bytes, n, scratch, input);
+        } else {
+            ok = g->read_input(bytes, n, input);
+        }
+        if (!ok) break;
+        if (slot == players) g->set_server_input(world, input);
+        else g->set_input(world, tide_player_from_index((int32_t)slot), input);
+    }
+    free(input);
+    free(scratch);
+    if (!ok) return false;
+    const uint32_t commands = parts & FRAME_COMMANDS ? tide_read_varint(&r) : 0u;
+    if (commands > TIDE_COMMANDS_PER_TICK || (commands && (!g->command || !g->command_sequence))) return false;
+    for (uint32_t i = 0; i < commands; i++) {
+        const uint32_t player = tide_read_varint(&r);
+        const uint32_t sequence = tide_read_varint(&r);
+        const uint32_t n = tide_read_varint(&r);
+        if (r.failed || player >= players || !n || n > TIDE_COMMAND_LIMIT) return false;
+        const uint8_t *data = big_command(n) ? record_download(record, size, names_at, tide_read_varint(&r), n)
+                                             : tide_read_bytes(&r, n);
+        uint32_t channel = 0;
+        if (!data || !g->check_command(data, n, &channel)) return false;
+        if (!g->command(world, tide_player_from_index((int32_t)player), channel, sequence, data, n)) return false;
+    }
+    const uint32_t messages = parts & FRAME_SHARD ? tide_read_varint(&r) : 0u;
+    if (messages > TIDE_SHARD_MESSAGES_PER_TICK || (messages && !g->shards)) return false;
+    for (uint32_t i = 0; i < messages; i++) {
+        const uint32_t n = tide_read_varint(&r);
+        if (r.failed || !n || n > TIDE_SHARD_MESSAGE_LIMIT) return false;
+        const uint8_t *data = big_command(n) ? record_download(record, size, names_at, tide_read_varint(&r), n)
+                                             : tide_read_bytes(&r, n);
+        if (!data) return false;
+        g->shards->receive(world, data, n);
+    }
+    if (parts & FRAME_DESTROYED) {
+        const uint32_t destroyed = tide_read_varint(&r);
+        if (r.failed || destroyed > (r.size - r.at) / 2u) return false;
+        for (uint32_t i = 0; i < destroyed; i++) {
+            tide_read_varint(&r);
+            tide_read_varint(&r);
+        }
+    }
+    if (parts & FRAME_LOCAL_EVENTS) tide_read_bytes(&r, tide_read_varint(&r));
+    if (r.failed || r.at != r.size) return false;
+    g->tick(world, jobs);
+    return hash_of(g, world, jobs) == hash;
 }
 
 // How long the server has held the time it echoes to a player: from when the

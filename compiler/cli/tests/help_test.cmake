@@ -83,7 +83,8 @@ excludes("${out}" "--nightly")
 
 foreach(argument folder source package editor file.tprefab --release --web --android --define --title --stats --debug-views -o
         --no-open --host --join --connect --server --strip-server-assets --anonymous --port --max-matches --max-connections
-        --udp-only --shards --shard-width --shard-most --capture --capture-audio --microphone --frames --script --scale --size
+        --udp-only --shards --shard-width --shard-most --shard-journal --capture --capture-audio --microphone --frames --script
+        --scale --size
         --seed --players --data-dir --project
         --server-only --bundle-only --check --preview --local-preview --nightly --stable --version setting --help -h)
     help(0 help "${argument}")

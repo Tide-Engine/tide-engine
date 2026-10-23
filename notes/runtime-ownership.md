@@ -1,5 +1,15 @@
 # Runtime written by Claude for now
 
+## Journals and recovery (2026-10-23)
+
+The owner asked for recovery from an input log. Engine-side and the agent's:
+`tide_server_desc.journal`/`journal_user`, `tide_replay` and
+`tide_replay_tick` (`tide/session.h`); `tide_shards_desc.journal`, `flush`,
+`checkpoint`, `checkpoint_seconds` and `tide_shards_recover`
+(`tide/shards.h`); `tide_shard_status.ranges_end` and
+`tide_shard_game.owned`, which generated code fills (a new last member).
+Generated code calls nothing new. Contracts and tests: notes/sharding.md.
+
 ## Shards (2026-10-23)
 
 The owner agreed the design (docs/spec.md, Shards) and that the engine has the
