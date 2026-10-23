@@ -5457,8 +5457,10 @@ struct tide_session {
     // this machine's player in it, `client` being its home shard's client
     tide_shards *shards;
     tide_shard_client *shard_client;
-    // ...and on a dedicated server, its admission to each shard it follows but
-    // the first (tide_session_desc.open_shard), by shard
+    // ...and on a dedicated server, the admission it joined by (the host's,
+    // which outlives the match), and its admission to each shard it follows
+    // but the first, beside it (tide_hosting_client_beside), by shard
+    struct tide_hosting_client *shard_front;
     struct tide_hosting_client **shard_admissions;
     bool *shard_handed; // ...and whether its client was made with it
     uint32_t shard_admission_room;
@@ -5514,6 +5516,7 @@ static void tear_down(tide_session *s)
     s->shard_admissions = NULL;
     s->shard_handed = NULL;
     s->shard_admission_room = 0;
+    s->shard_front = NULL;
     tide_shards_destroy(s->shards);
     s->shards = NULL;
     tide_server_destroy(s->server);
@@ -5732,12 +5735,12 @@ void tide_session_kick_all(tide_session *s, const char *message)
 }
 
 // A shard of the dedicated server's sharded world this session joined at its
-// front: let into its match on a transport of its own, then followed there
+// front: let into its match over the front's connection, then followed there
 static bool shard_join_reach(void *user, const uint32_t shard, const uint64_t match, tide_transport *transport,
                              tide_address *server)
 {
     tide_session *s = user;
-    if (!s->desc.open_shard || !match) return false;
+    if (!s->shard_front || !match) return false;
     if (shard >= s->shard_admission_room) {
         uint32_t room = s->shard_admission_room ? s->shard_admission_room : 8u;
         while (room <= shard) room *= 2u;
@@ -5753,15 +5756,9 @@ static bool shard_join_reach(void *user, const uint32_t shard, const uint64_t ma
     }
     tide_hosting_client **admission = &s->shard_admissions[shard];
     if (!*admission) {
-        tide_transport network;
-        tide_address at;
-        if (!s->desc.open_shard(s->desc.user, &network, &at)) return false;
-        tide_hosting_client_desc d = {.transport = network, .server = at, .match = match,
-                                      .nonce = s->desc.entropy ? s->desc.entropy() : 0u};
-        if (!d.nonce) d.nonce = next_random(&s->shard_nonce) | 1u;
-        memcpy(d.simulation, s->desc.game->simulation, 32);
-        *admission = tide_hosting_client_create(&d, s->last_now);
-        if (!*admission && network.close) network.close(network.self);
+        uint64_t nonce = s->desc.entropy ? s->desc.entropy() : 0u;
+        if (!nonce) nonce = next_random(&s->shard_nonce) | 1u;
+        *admission = tide_hosting_client_beside(s->shard_front, match, nonce, s->last_now);
         return false; // Once it's let in
     }
     const tide_hosting_result result = tide_hosting_client_result(*admission);
@@ -5825,6 +5822,7 @@ void tide_session_join(tide_session *s, const tide_transport network, const tide
     };
     if (s->desc.game->shards && !migrating) { // A sharded world, joined at its front: its root shard
         s->shard_nonce = tide_hash(&server, sizeof server) ^ (uint64_t)(now * 1e6);
+        s->shard_front = tide_hosting_client_of(network); // On a dedicated server: the admission it joined by
         const tide_shard_client_desc sharded = {.client = client, .reach = shard_join_reach, .user = s};
         s->shard_client = tide_shard_client_create(&sharded, now);
         s->client = s->shard_client ? tide_shard_client_home(s->shard_client) : NULL;

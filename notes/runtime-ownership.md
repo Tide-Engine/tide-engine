@@ -18,8 +18,8 @@ member every generated initializer fills (`NULL` outside sharded games). In
 `tide/session.h`: `tide_game.shards` (the generated `tide_shard_api`) and the
 server calls `tide_server_inject`, `_injected`, `_admit`, `_connected` and
 `_cookie`. The orchestrator (`tide/shards.h`), the shard client
-(`tide/shard_client.h`) and the hosting calls `tide_hosting_server`, `_keep`
-and `_front` are engine-side and generated code doesn't call them. Contracts
+(`tide/shard_client.h`) and the hosting calls `tide_hosting_server`, `_keep`,
+`_front`, `_open`, `tide_hosting_client_beside` and `_of` are engine-side and generated code doesn't call them. Contracts
 and tests: notes/sharding.md.
 
 ## The game's shaders, for prewarming (2026-10-22)

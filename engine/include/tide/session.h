@@ -581,12 +581,6 @@ typedef struct tide_session_desc {
     tide_shard_box shard_world;
     uint32_t shard_split[3];
     uint32_t shard_most;
-    // A sharded game's match on a dedicated server (tide/hosting.h), joined
-    // at its front: another transport to the server it joined, for following
-    // another of its shards, a match there this machine is let into as it
-    // was the first (`user` is the session's). NULL: none, and this machine
-    // only ever plays in the shard it joined.
-    bool (*open_shard)(void *user, tide_transport *transport, tide_address *server);
 } tide_session_desc;
 
 typedef enum tide_session_event_kind {

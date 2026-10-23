@@ -129,17 +129,8 @@ TIDE_TEST(shards_a_player_follows_their_avatar_across_borders)
 // A sharded world on a dedicated server (tide/hosting.h): each shard one of
 // its matches, the root its front, which a request for match 0 joins. A
 // session let in at the front follows its avatar to the shards it walks into,
-// each a match it's let into over a transport of its own.
-static uint32_t next_endpoint;
+// each a match it's let into over the front's own connection.
 static uint64_t entropy_state;
-
-static bool open_shard(void *user, tide_transport *transport, tide_address *server)
-{
-    (void)user;
-    *transport = tide_loopback_endpoint(net, next_endpoint++);
-    *server = tide_loopback_address(1u);
-    return true;
-}
 
 static uint64_t entropy(void)
 {
@@ -168,7 +159,6 @@ TIDE_TEST(shards_a_player_joins_a_dedicated_sharded_world)
 {
     now = 0;
     walk_until = 0;
-    next_endpoint = 10u;
     net = tide_loopback_create(5);
     tide_hosting *host = tide_hosting_create(&(tide_hosting_desc){.game = &tide_game_api, .transport = tide_loopback_endpoint(net, 1u),
                                                                   .entropy = entropy, .allow_anonymous_join = true}, now);
@@ -182,8 +172,7 @@ TIDE_TEST(shards_a_player_joins_a_dedicated_sharded_world)
                                       .match = 0, .nonce = 77};
     memcpy(front.simulation, tide_game_api.simulation, 32);
     tide_hosting_client *admission = tide_hosting_client_create(&front, now);
-    tide_session *s = tide_session_create(&(tide_session_desc){.game = &tide_game_api, .tick_rate = 60, .sample = sample,
-                                                               .open_shard = open_shard});
+    tide_session *s = tide_session_create(&(tide_session_desc){.game = &tide_game_api, .tick_rate = 60, .sample = sample});
     TIDE_REQUIRE(admission != NULL && s != NULL);
     bool joined = false;
     for (int step = 0; step < 1200; step++) {

@@ -7,20 +7,13 @@
 #include <string.h>
 
 // A player of a sharded world on a dedicated server (tide_serve --shards 2,
-// platform/tests/server_pack.mjs): let in at its front, match 0, it follows
-// its avatar into the left region's match, then walks it right across the
-// border into the right region's, each a match it's let into over a UDP
-// socket of its own.
+// platform/tests/server_pack.mjs): let in at its front, match 0, by UDP or
+// through the server's room, it follows its avatar into the left region's
+// match, then walks it right across the border into the right region's, each
+// a match it's let into over the one connection it joined by.
 
-static const char *address;
 static double now;
 static double walk_until;
-
-static bool open_shard(void *user, tide_transport *transport, tide_address *server)
-{
-    (void)user;
-    return tide_platform_resolve(address, 7777, server) && tide_platform_udp_open(0, transport);
-}
 
 static void sample(void *user, const uint32_t tick, void *input)
 {
@@ -50,18 +43,20 @@ static bool avatar(const tide_session *s, Avatar *found)
 int main(const int argc, char **argv)
 {
     if (argc != 2) return 2;
-    address = argv[1];
+    const char *address = argv[1];
+    const bool room = strlen(address) == TIDE_ROOM_CODE_LENGTH;
     tide_transport transport;
     tide_address server;
-    if (!open_shard(NULL, &transport, &server)) return 2;
+    if (!(room ? tide_platform_room_join(address, &transport, &server)
+               : tide_platform_resolve(address, 7777, &server) && tide_platform_udp_open(0, &transport))) return 2;
     now = (double)tide_time_now_ns() * 1e-9;
-    tide_hosting_client_desc d = {.transport = transport, .server = server, .nonce = tide_platform_entropy()};
+    tide_hosting_client_desc d = {.transport = transport, .server = server, .nonce = tide_platform_entropy(), .secure = room};
     memcpy(d.simulation, tide_game_api.simulation, 32);
     tide_hosting_client *admission = tide_hosting_client_create(&d, now);
     tide_session *s = tide_session_create(&(tide_session_desc){.game = &tide_game_api, .sample = sample,
-                                                               .entropy = tide_platform_entropy, .open_shard = open_shard});
+                                                               .entropy = tide_platform_entropy});
     if (!admission || !s) return 2;
-    const double deadline = now + 12.0;
+    const double deadline = now + (room ? 20.0 : 12.0);
     bool joined = false, ok = false;
     Avatar a = {0};
     while (now < deadline) {
@@ -84,7 +79,8 @@ int main(const int argc, char **argv)
         }
         tide_yield();
     }
-    fprintf(stderr, "sharded server client: %s (avatar at x = %.2f)\n", ok ? "ok" : "FAILED", (double)a.position.x);
+    fprintf(stderr, "sharded server client%s: %s (avatar at x = %.2f)\n", room ? " by room" : "", ok ? "ok" : "FAILED",
+            (double)a.position.x);
     tide_session_destroy(s);
     tide_hosting_client_destroy(admission);
     return ok ? 0 : 1;

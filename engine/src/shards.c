@@ -977,6 +977,7 @@ tide_server *tide_shards_hosting_start(void *hosting, const uint32_t shard, cons
     if (!*match) return NULL;
     (void)tide_hosting_keep(host, *match);
     if (shard == TIDE_SHARD_ROOT) tide_hosting_front(host, *match);
+    else (void)tide_hosting_open(host, *match); // Its server takes only players the root admitted
     return tide_hosting_server(host, *match);
 }
 

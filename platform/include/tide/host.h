@@ -395,19 +395,6 @@ static inline void tide_run_discard_commands(void)
 static tide_hosting_client *tide_run_hosting;
 static bool tide_run_hosting_joined;
 static char tide_run_hosting_endpoint[TIDE_NETWORK_ADDRESS_BYTES];
-static bool tide_run_hosting_room;      // ...reached through its room, or else
-static uint16_t tide_run_hosting_port;  // ...at this port
-
-// Another shard of a sharded world on the dedicated server it joined, at the
-// address its first was (tide_session_desc.open_shard). Not through a room:
-// a program is in one room at a time (notes/sharding.md, Gaps).
-static inline bool tide_run_open_shard(void *user, tide_transport *transport, tide_address *server)
-{
-    (void)user;
-    return tide_run_hosting && !tide_run_hosting_room
-        && tide_platform_resolve(tide_run_hosting_endpoint, tide_run_hosting_port, server)
-        && tide_platform_udp_open(0, transport);
-}
 
 static inline void tide_run_hosting_leave(void)
 {
@@ -435,8 +422,6 @@ static inline bool tide_run_hosted_request(const tide_session_request *request)
     tide_transport transport = {0};
     tide_address server;
     const bool room = request->kind == TIDE_REQUEST_JOIN;
-    tide_run_hosting_room = room;
-    tide_run_hosting_port = (uint16_t)request->port;
     const bool opened = room ? tide_platform_room_join(tide_run_hosting_endpoint, &transport, &server)
                             : tide_platform_resolve(tide_run_hosting_endpoint, (uint16_t)request->port, &server)
                               && tide_platform_udp_open(0, &transport);
@@ -799,7 +784,6 @@ static inline tide_session *tide_run_new_session(void)
     return tide_session_create(&(tide_session_desc){
         .shard_world = {{-half, -half, -half}, {half, half, half}},
         .shard_split = {regions, 1u, 1u},
-        .open_shard = sharded ? tide_run_open_shard : NULL,
         .game = tide_run_game->game,
         .tick_rate = (uint32_t)tide_run_settings.tick_rate,
         .sample = tide_run_sample,

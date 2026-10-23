@@ -4,9 +4,9 @@ import { once } from 'node:events';
 import { createRelay } from '../../relay/relay.mjs';
 
 const [serverPath, clientPath, mode] = process.argv.slice(2);
-const room = mode === 'room';
+const room = mode === 'room' || mode === 'shards-room';
 // A sharded game's server: two regions, 40 units wide, either side of x = 0
-const shards = mode === 'shards' ? ['--shards', '2', '--shard-width', '40'] : [];
+const shards = mode === 'shards' || mode === 'shards-room' ? ['--shards', '2', '--shard-width', '40'] : [];
 const relay = room ? createRelay({ iceServers: [] }) : null;
 if (relay) await new Promise(resolve => relay.listen(0, '127.0.0.1', resolve));
 const env = { ...process.env, TIDE_HIDDEN: '1', ...(relay ? {

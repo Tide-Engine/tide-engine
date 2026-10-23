@@ -42,6 +42,7 @@ typedef struct host_match {
     host_queue queue;
     double empty_since, arrived;
     bool kept; // A shard: it runs with no one in it (tide_hosting_keep)
+    bool open; // ...and one whose server takes only players it admitted, which anyone may ask to join (tide_hosting_open)
 } host_match;
 
 typedef struct host_peer {
@@ -67,7 +68,18 @@ struct tide_hosting {
     uint64_t front; // What a request for match 0 joins (tide_hosting_front), or 0
 };
 
+// The transport admissions to one server share (tide_hosting_client_beside):
+// whichever updates first reads it, and each datagram goes to the admission
+// it's for. The last admission to go closes it.
+typedef struct host_link {
+    tide_transport transport;
+    tide_address server;
+    tide_hosting_client **members;
+    uint32_t count, room;
+} host_link;
+
 struct tide_hosting_client {
+    host_link *link;
     tide_hosting_client_desc desc;
     tide_hosting_result result;
     uint64_t match, route;
@@ -379,10 +391,14 @@ static void on_request(tide_hosting *h, const tide_address from, const uint64_t 
     if (pn) memcpy(p->parameters, parameters, pn);
     tide_hosting_grant grant = {0};
     tide_hosting_result result = TIDE_HOSTING_DENIED;
+    const host_match *wanted = find_match(h, match);
+    const bool open = wanted && wanted->open;
     if (memcmp(simulation, h->desc.game->simulation, 32) != 0) {
         result = TIDE_HOSTING_WRONG_VERSION;
     } else if (cn && (!h->desc.secure_peer || !h->desc.secure_peer(h->desc.user, from))) {
         result = TIDE_HOSTING_DENIED;
+    } else if (!cn && open) {
+        result = TIDE_HOSTING_ACCEPTED; // Its server decides who plays
     } else if (h->desc.authorize) {
         const tide_hosting_request request = request_of(p);
         result = h->desc.authorize(h->desc.user, &request, &grant);
@@ -486,6 +502,13 @@ bool tide_hosting_keep(tide_hosting *h, const uint64_t match)
     return m != NULL;
 }
 
+bool tide_hosting_open(tide_hosting *h, const uint64_t match)
+{
+    host_match *m = h ? find_match(h, match) : NULL;
+    if (m) m->open = true;
+    return m != NULL;
+}
+
 void tide_hosting_front(tide_hosting *h, const uint64_t match)
 {
     if (h) h->front = match;
@@ -504,13 +527,24 @@ bool tide_hosting_player_identity(const tide_hosting *h, const uint64_t match, c
     return tide_server_player_identity(m ? m->server : NULL, player, identity);
 }
 
-tide_hosting_client *tide_hosting_client_create(const tide_hosting_client_desc *desc, const double now)
+static void client_send(void *self, tide_address to, const void *data, uint32_t size);
+
+static bool link_add(host_link *l, tide_hosting_client *c)
 {
-    if (!desc || !desc->nonce || !desc->transport.send || !desc->transport.receive || !desc->transport.close
-        || !isfinite(now) || desc->credential_size > TIDE_HOSTING_CREDENTIAL_BYTES
-        || desc->parameter_size > TIDE_HOSTING_PARAMETER_BYTES || (desc->match && desc->parameter_size)
-        || (desc->credential_size && (!desc->credential || !desc->secure))
-        || (desc->parameter_size && !desc->parameters)) return NULL;
+    if (l->count == l->room) {
+        const uint32_t room = l->room ? l->room * 2u : 4u;
+        tide_hosting_client **grown = realloc(l->members, room * sizeof *grown);
+        if (!grown) return false;
+        l->members = grown;
+        l->room = room;
+    }
+    l->members[l->count++] = c;
+    c->link = l;
+    return true;
+}
+
+static tide_hosting_client *client_new(const tide_hosting_client_desc *desc, const double now)
+{
     tide_hosting_client *c = calloc(1, sizeof *c);
     if (!c) return NULL;
     c->desc = *desc;
@@ -529,49 +563,112 @@ tide_hosting_client *tide_hosting_client_create(const tide_hosting_client_desc *
     return c;
 }
 
+tide_hosting_client *tide_hosting_client_create(const tide_hosting_client_desc *desc, const double now)
+{
+    if (!desc || !desc->nonce || !desc->transport.send || !desc->transport.receive || !desc->transport.close
+        || !isfinite(now) || desc->credential_size > TIDE_HOSTING_CREDENTIAL_BYTES
+        || desc->parameter_size > TIDE_HOSTING_PARAMETER_BYTES || (desc->match && desc->parameter_size)
+        || (desc->credential_size && (!desc->credential || !desc->secure))
+        || (desc->parameter_size && !desc->parameters)) return NULL;
+    tide_hosting_client *c = client_new(desc, now);
+    host_link *l = c ? calloc(1, sizeof *l) : NULL;
+    if (l) *l = (host_link){.transport = desc->transport, .server = desc->server};
+    if (!l || !link_add(l, c)) {
+        free(l);
+        free(c);
+        return NULL;
+    }
+    return c;
+}
+
+tide_hosting_client *tide_hosting_client_beside(tide_hosting_client *first, const uint64_t match, const uint64_t nonce,
+                                               const double now)
+{
+    if (!first || !first->link || !match || !nonce || !isfinite(now)) return NULL;
+    tide_hosting_client_desc d = first->desc;
+    d.match = match;
+    d.nonce = nonce;
+    d.credential_size = d.parameter_size = 0;
+    tide_hosting_client *c = client_new(&d, now);
+    if (c && !link_add(first->link, c)) {
+        free(c);
+        return NULL;
+    }
+    return c;
+}
+
+tide_hosting_client *tide_hosting_client_of(const tide_transport transport)
+{
+    return transport.send == client_send ? transport.self : NULL;
+}
+
 void tide_hosting_client_destroy(tide_hosting_client *c)
 {
     if (!c) return;
-    c->desc.transport.close(c->desc.transport.self);
+    host_link *l = c->link;
+    for (uint32_t i = 0; i < l->count; i++) {
+        if (l->members[i] != c) continue;
+        l->members[i] = l->members[--l->count];
+        break;
+    }
+    if (!l->count) { // The last admission over it: the transport goes
+        l->transport.close(l->transport.self);
+        free(l->members);
+        free(l);
+    }
     clear_queue(&c->queue);
     memset(c, 0, sizeof *c);
     free(c);
+}
+
+// A datagram for this admission: its reply, or its match's data
+static void client_take(tide_hosting_client *c, const uint8_t kind, tide_reader *r, const double arrived)
+{
+    if (kind == HOST_REPLY) {
+        const uint8_t result = tide_read_u8(r);
+        const uint64_t match = tide_read_u64(r), id = tide_read_u64(r);
+        if (r->failed || r->at != r->size || result > TIDE_HOSTING_WRONG_VERSION || !id
+            || (result == TIDE_HOSTING_ACCEPTED && (!match || (c->desc.match && c->desc.match != match)))) return;
+        // A delayed PENDING must not undo an accepted/refused decision.
+        if (c->result > TIDE_HOSTING_ACCEPTED || (c->result == TIDE_HOSTING_ACCEPTED
+            && (result == TIDE_HOSTING_PENDING || id != c->route))) return;
+        c->result = (tide_hosting_result)result;
+        c->match = match;
+        c->route = id;
+        if (result != TIDE_HOSTING_PENDING) memset(c->request, 0, sizeof c->request);
+    } else if (kind == HOST_DATA) {
+        take_data(c->parts, &c->queue, tide_hosting_client_address(c), arrived, r);
+    }
 }
 
 void tide_hosting_client_update(tide_hosting_client *c, const double now)
 {
     if (!c || !isfinite(now) || now < c->now) return;
     c->now = now;
-    const tide_transport *t = &c->desc.transport;
+    host_link *l = c->link;
+    const tide_transport *t = &l->transport;
     for (uint32_t budget = 0; budget < HOST_BUDGET; budget++) {
         uint8_t bytes[TIDE_NET_MTU], kind;
         tide_address from;
         const uint32_t n = t->receive(t->self, &from, bytes, sizeof bytes);
         if (!n) break;
-        if (!same_address(from, c->desc.server)) continue;
+        if (!same_address(from, l->server)) continue;
         tide_reader r = {.data = bytes, .size = n};
         uint64_t route;
         if (!read_header(&r, &kind, &route)) continue;
-        if (kind == HOST_REPLY && route == c->desc.nonce) {
-            const uint8_t result = tide_read_u8(&r);
-            const uint64_t match = tide_read_u64(&r), id = tide_read_u64(&r);
-            if (r.failed || r.at != r.size || result > TIDE_HOSTING_WRONG_VERSION || !id
-                || (result == TIDE_HOSTING_ACCEPTED && (!match || (c->desc.match && c->desc.match != match)))) continue;
-            // A delayed PENDING must not undo an accepted/refused decision.
-            if (c->result > TIDE_HOSTING_ACCEPTED || (c->result == TIDE_HOSTING_ACCEPTED
-                && (result == TIDE_HOSTING_PENDING || id != c->route))) continue;
-            c->result = (tide_hosting_result)result;
-            c->match = match;
-            c->route = id;
-            if (result != TIDE_HOSTING_PENDING) memset(c->request, 0, sizeof c->request);
-        } else if (kind == HOST_DATA && c->result == TIDE_HOSTING_ACCEPTED && route == c->route) {
-            take_data(c->parts, &c->queue, tide_hosting_client_address(c), t->arrived ? t->arrived(t->self) : now, &r);
+        const double arrived = t->arrived ? t->arrived(t->self) : now;
+        for (uint32_t i = 0; i < l->count; i++) {
+            tide_hosting_client *m = l->members[i];
+            if (kind == HOST_REPLY ? route == m->desc.nonce : kind == HOST_DATA && m->result == TIDE_HOSTING_ACCEPTED && route == m->route) {
+                client_take(m, kind, &r, arrived);
+                break;
+            }
         }
     }
     if (c->result != TIDE_HOSTING_PENDING) return;
     if (now - c->began >= 10.0) { c->result = TIDE_HOSTING_TIMED_OUT; memset(c->request, 0, sizeof c->request); }
     else if (now - c->sent >= 0.25) {
-        t->send(t->self, c->desc.server, c->request, c->request_size);
+        t->send(t->self, l->server, c->request, c->request_size);
         c->sent = now;
     }
 }
@@ -593,7 +690,7 @@ static void client_send(void *self, const tide_address to, const void *data, con
 {
     tide_hosting_client *c = self;
     if (!c->detached && c->result == TIDE_HOSTING_ACCEPTED && same_address(to, tide_hosting_client_address(c)))
-        send_data(&c->desc.transport, c->desc.server, c->route, &c->sequence, data, size);
+        send_data(&c->link->transport, c->link->server, c->route, &c->sequence, data, size);
 }
 
 static uint32_t client_receive(void *self, tide_address *from, void *data, const uint32_t capacity)
@@ -612,7 +709,7 @@ static void client_close(void *self)
 static double client_clock(void *self)
 {
     const tide_hosting_client *c = self;
-    const tide_transport *t = &c->desc.transport;
+    const tide_transport *t = &c->link->transport;
     return t->clock ? t->clock(t->self) : c->now;
 }
 

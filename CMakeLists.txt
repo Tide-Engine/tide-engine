@@ -178,7 +178,9 @@ if(TIDE_PLATFORM)
             target_link_libraries(tide_server_shards_client PRIVATE tide_platform)
             add_test(NAME tide_server_shards COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/platform/tests/server_pack.mjs"
                 "$<TARGET_FILE:tide_server_shards>" "$<TARGET_FILE:tide_server_shards_client>" shards)
-            set_tests_properties(tide_server_shards PROPERTIES TIMEOUT 30)
+            add_test(NAME tide_server_shards_room COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/platform/tests/server_pack.mjs"
+                "$<TARGET_FILE:tide_server_shards>" "$<TARGET_FILE:tide_server_shards_client>" shards-room)
+            set_tests_properties(tide_server_shards tide_server_shards_room PROPERTIES TIMEOUT 30)
         endif()
         tide_add_game(tide_server_entry SERVER NAME game SOURCES
             "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/server_menu.tide"
