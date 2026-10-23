@@ -30,17 +30,21 @@ static void gen_shard_receive(gen *g)
                  "        uint32_t id = 0;\n        uint8_t role = 0;\n"
                  "        if (kind == TIDE_SHARD_CONFIG) {\n            id = tide_read_u32(&r);\n            role = tide_read_u8(&r);\n        }\n"
                  "        const uint32_t regions = tide_read_u32(&r);\n"
-                 "        if (r.failed || regions > (r.size - r.at) / 52u) return false;\n"
+                 "        if (r.failed || regions > (r.size - r.at) / 60u) return false;\n"
                  "        double *values = malloc((size_t)regions * 7u * sizeof *values + 1u);\n"
-                 "        if (!values) tide_out_of_memory();\n"
+                 "        uint64_t *matches = malloc((size_t)regions * sizeof *matches + 1u);\n"
+                 "        if (!values || !matches) tide_out_of_memory();\n"
                  "        for (uint32_t i = 0; i < regions; i++) {\n"
                  "            values[i * 7u] = (double)tide_read_u32(&r);\n"
                  "            const uint8_t *box = tide_read_bytes(&r, 48u);\n"
-                 "            if (box) memcpy(values + i * 7u + 1u, box, 48u);\n        }\n"
-                 "        if (r.failed) { free(values); return false; }\n"
+                 "            if (box) memcpy(values + i * 7u + 1u, box, 48u);\n"
+                 "            matches[i] = tide_read_u64(&r);\n        }\n"
+                 "        if (r.failed) { free(values); free(matches); return false; }\n"
                  "        tide_list_clear(&s->regions, 8u);\n"
+                 "        tide_list_clear(&s->matches, 8u);\n"
                  "        for (uint32_t i = 0; i < regions * 7u; i++) *(double *)tide_list_add(&s->regions, 8u, TIDE_IN_MATCH) = values[i];\n"
-                 "        free(values);\n"
+                 "        for (uint32_t i = 0; i < regions; i++) tide_shard_push(&s->matches, (int64_t)matches[i]);\n"
+                 "        free(values);\n        free(matches);\n"
                  "        if (kind == TIDE_SHARD_MAP) return true;\n"
                  "        s->shard = (int32_t)id + 1;\n        s->role = role;\n"
                  "        if (role == TIDE_SHARD_ROOT_ROLE) s->singletons = (int64_t)%s;\n"
@@ -430,6 +434,19 @@ static void gen_shard_queries(gen *g)
               "        out[i].shard = (uint32_t)tide_shard_long(routes, at + 3 + 2 * (int32_t)i);\n"
               "        out[i].match = (uint64_t)tide_shard_long(routes, at + 4 + 2 * (int32_t)i);\n    }\n"
               "    return count;\n}\n\n");
+    // The regions, as a machine watching an area finds the shards owning it
+    sb_put(o, "TIDE_SHARD_FN uint32_t tide_shard_regions_of(const void *world, tide_shard_region *out, const uint32_t capacity)\n{\n"
+              "    const tide_world *w = world;\n    tide_text_use((tide_heap *)(uintptr_t)&w->heap, NULL);\n"
+              "    const tide_shard_state *s = &w->tide_shard_state;\n"
+              "    const uint32_t count = (uint32_t)(tide_list_count(s->regions) / 7);\n"
+              "    for (uint32_t i = 0; i < count && i < capacity; i++) {\n"
+              "        const int32_t at = (int32_t)(i * 7u);\n"
+              "        out[i].shard = (uint32_t)*(const double *)tide_list_at(s->regions, at, 8u);\n"
+              "        for (int32_t k = 0; k < 3; k++) {\n"
+              "            out[i].box.lo[k] = *(const double *)tide_list_at(s->regions, at + 1 + k, 8u);\n"
+              "            out[i].box.hi[k] = *(const double *)tide_list_at(s->regions, at + 4 + k, 8u);\n        }\n"
+              "        out[i].match = (uint64_t)tide_shard_long(s->matches, (int32_t)i);\n    }\n"
+              "    return count;\n}\n\n");
     sb_put(o, "TIDE_SHARD_FN void tide_shard_status_of(const void *world, tide_shard_status *out)\n{\n"
               "    const tide_world *w = world;\n    tide_text_use((tide_heap *)(uintptr_t)&w->heap, NULL);\n"
               "    const tide_shard_state *s = &w->tide_shard_state;\n"
@@ -481,7 +498,7 @@ static void gen_shard_start(gen *g)
                  "    .receive = tide_shard_receive,\n    .outbox = tide_shard_outbox,\n    .border = tide_shard_border,\n"
                  "    .singletons = tide_shard_singletons_of,\n    .load = tide_shard_load,\n    .sample = tide_shard_sample,\n"
                  "    .presence = tide_shard_presence_of,\n    .status = tide_shard_status_of,\n    .ghosts = tide_shard_ghosts_of,\n"
-                 "    .route = tide_shard_route_of,\n    .owned = tide_shard_owned_of,\n};\n\n");
+                 "    .route = tide_shard_route_of,\n    .regions = tide_shard_regions_of,\n    .owned = tide_shard_owned_of,\n};\n\n");
 }
 
 // A scene unloaded on the shard that owns it: its entities here go too

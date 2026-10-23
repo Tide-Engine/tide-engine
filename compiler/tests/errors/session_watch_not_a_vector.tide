@@ -1,0 +1,6 @@
+// expect: Session.Watch takes the area's size as a float2 or a float3 (a double2 or a double3 for double positions), not float
+local scene Main { }
+view Look()
+{
+    Session.Watch(float2(0, 0), 100.0);
+}

@@ -60,6 +60,7 @@ typedef struct cshard {
 
     uint32_t delivered; // Its messages carried, through this number...
     uint32_t acked;     // ...and acknowledged
+    uint32_t arrival;   // The batch of instructions with the last ARRIVE it was given, until it applied it
 
     // Its next instructions
     uint32_t batch; // The last it was given
@@ -80,7 +81,9 @@ typedef struct roster {
     bool away; // ...though on no shard since `away_since`: they've a while to come back
     double away_since;
     uint32_t home;
-    uint64_t route; // The route the shards were last told (its hash)
+    uint64_t route; // The route the shards were last told (its hash)...
+    uint32_t *follows; // ...and the shards it names
+    uint32_t follow_count, follow_room;
 } roster;
 
 typedef struct range {
@@ -104,6 +107,7 @@ struct tide_shard_coordinator {
     // The regions as they are (each change, a version), and each region's
     // neighbours as of `neighbours_of`
     uint64_t map_version, neighbours_of;
+    bool map_due; // A region's match changed since the map was last sent
     uint32_t *neighbour_first, *neighbours;
     // Checkpoints: when the last was made; whether the shape changed since;
     // a change waiting for one to be kept before it's told (the map, and
@@ -230,6 +234,7 @@ static void write_regions(const tide_shard_coordinator *c, tide_writer *w)
         tide_write_u32(w, i);
         tide_write_bytes(w, sh->box.lo, sizeof sh->box.lo);
         tide_write_bytes(w, sh->box.hi, sizeof sh->box.hi);
+        tide_write_u64(w, sh->match);
     }
 }
 
@@ -358,18 +363,25 @@ static void start_anew(tide_shard_coordinator *c, const uint32_t id, const uint3
     c->shards[id].flags |= TIDE_SHARD_DO_TARGETS;
 }
 
-// The regions, told every shard: at once, or once a checkpoint of them is
-// kept, when checkpoints are made, so no record depends on a shape none has
-static void tell_map(tide_shard_coordinator *c)
+// The regions as they are, to every shard
+static void send_map(tide_shard_coordinator *c)
 {
-    c->map_version++;
-    c->changed = true;
+    c->map_due = false;
     tide_writer w = {.grows = true};
     tide_shard_header(&w, TIDE_SHARD_MAP, TIDE_SHARD_ORCHESTRATOR, 0u);
     write_regions(c, &w);
     if (w.overflow) tide_out_of_memory();
     for (uint32_t i = 0; i < c->count; i++) inject(c, i, w.data, w.size);
     free(w.data);
+}
+
+// The regions, told every shard: at once, or once a checkpoint of them is
+// kept, when checkpoints are made, so no record depends on a shape none has
+static void tell_map(tide_shard_coordinator *c)
+{
+    c->map_version++;
+    c->changed = true;
+    send_map(c);
     retarget(c);
 }
 
@@ -466,6 +478,7 @@ void tide_shard_coordinator_destroy(tide_shard_coordinator *c)
     for (uint32_t i = 0; i < c->count; i++) free_shard(&c->shards[i]);
     free(c->shards);
     free(c->ranges);
+    for (uint32_t p = 0; p < c->player_count; p++) free(c->players[p].follows);
     free(c->players);
     free(c->neighbour_first);
     free(c->neighbours);
@@ -666,6 +679,7 @@ static int32_t range_owner(const tide_shard_coordinator *c, const uint32_t index
 // came from, which needs no entry
 static void note_tree(tide_shard_coordinator *c, const uint8_t *data, const uint32_t size, const uint32_t to)
 {
+    if (to < c->count) c->shards[to].arrival = c->shards[to].batch + 1u; // Its next instructions have it
     tide_reader r = {data, size, 9u, false};
     tide_read_u8(&r);
     tide_read_u32(&r);
@@ -1058,14 +1072,33 @@ static void find_neighbours(tide_shard_coordinator *c)
     c->neighbour_first[c->count] = count;
 }
 
+// Whether an entity is on its way from one shard to another: an ARRIVE was
+// carried that its shard hasn't applied yet. Then no shard owns it, and no
+// shard says whose it is.
+static bool moving(tide_shard_coordinator *c)
+{
+    bool any = false;
+    for (uint32_t i = 0; i < c->count; i++) {
+        cshard *sh = &c->shards[i];
+        if (!sh->used || !sh->arrival) continue;
+        if (sh->applied - sh->arrival < UINT32_MAX / 2u && !sh->injected) sh->arrival = 0; // Applied, and in its world
+        else any = true;
+    }
+    return any;
+}
+
 // Where each player's entities are: their home is the shard that owns the
 // most of them, and their machine follows each shard owning any, and each
 // region within the range of any. The shards are told when that changes,
-// every shard every player's.
+// every shard every player's. While an entity is on its way between two, a
+// route keeps the shards it had: its player's machine keeps the one the
+// entity left and the one it's going to, rather than letting one go and
+// joining it again a moment later.
 static void route_players(tide_shard_coordinator *c)
 {
     if (!c->player_count) return;
     find_neighbours(c);
+    const bool keep = moving(c);
     uint32_t seen_count = 0;
     for (uint32_t i = 0; i < c->count; i++) seen_count += c->shards[i].used ? c->shards[i].presence_count : 0u;
     sighting *seen = malloc((seen_count ? seen_count : 1u) * sizeof *seen);
@@ -1115,6 +1148,16 @@ static void route_players(tide_shard_coordinator *c)
                     if (tide_shard_box_near(&seen[k].box, &c->shards[b].box, c->desc.range, c->desc.dims)) follows[count++] = b;
                 }
             }
+            if (keep && r->follow_count) { // ...and those it had
+                if (count + r->follow_count > follows_room) {
+                    follows_room = (count + r->follow_count) * 2u;
+                    follows = realloc(follows, follows_room * sizeof *follows);
+                    if (!follows) tide_out_of_memory();
+                }
+                for (uint32_t k = 0; k < r->follow_count; k++) {
+                    if (r->follows[k] < c->count) follows[count++] = r->follows[k];
+                }
+            }
             qsort(follows, count, sizeof *follows, by_number);
             uint32_t kept = 0;
             for (uint32_t k = 0; k < count; k++) {
@@ -1129,6 +1172,13 @@ static void route_players(tide_shard_coordinator *c)
         if (!r->here) hash = 0;
         if (hash == r->route) continue;
         r->route = hash;
+        if (count > r->follow_room) {
+            r->follow_room = count * 2u;
+            r->follows = realloc(r->follows, r->follow_room * sizeof *r->follows);
+            if (!r->follows) tide_out_of_memory();
+        }
+        if (count) memcpy(r->follows, follows, count * sizeof *follows);
+        r->follow_count = count;
         tide_writer w = {.grows = true};
         tide_shard_header(&w, TIDE_SHARD_ROUTE, TIDE_SHARD_ORCHESTRATOR, 0u);
         tide_write_u32(&w, tide_player_from_index((int32_t)p).id);
@@ -1506,6 +1556,8 @@ void tide_shard_coordinator_step(tide_shard_coordinator *c, const double now)
         else acknowledge(c);
         if (!c->desc.checkpoints) c->changed = false;
     }
+    // Unless a new shape waits for its checkpoint, which tells the map with this
+    if (c->map_due && !c->tell_after) send_map(c);
     track_players(c);
     for (uint32_t i = 0; i < c->count; i++) {
         if (c->shards[i].used) carry(c, i);
@@ -1550,5 +1602,9 @@ uint32_t tide_shard_coordinator_at(const tide_shard_coordinator *c, const double
 
 void tide_shard_coordinator_set_match(tide_shard_coordinator *c, const uint32_t shard, const uint64_t match)
 {
-    if (c && shard < c->count) c->shards[shard].match = match;
+    if (!c || shard >= c->count || c->shards[shard].match == match) return;
+    c->shards[shard].match = match;
+    // The map says where each region's shard is, for machines watching an
+    // area: sent again at the next step, once for all that changed
+    if (c->shards[shard].used && c->shards[shard].region) c->map_due = true;
 }

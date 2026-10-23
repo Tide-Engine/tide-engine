@@ -30,6 +30,10 @@ struct tide_shard_agent {
     uint32_t target_count;
     map64 *sent; // By shard
     uint32_t sent_room;
+    // Trees whose ARRIVE it handed its server and the server may not have
+    // applied yet: not in its world, and not to be dropped from the ghosts
+    // their senders keep of them
+    map64 arriving;
     uint32_t sample_stride; // Asked to report where its entities are, every this many: 0 not
     bool fresh;             // Its first report says what it owns and holds
     uint8_t *checkpoint;    // Its world, packed, for the next report
@@ -72,6 +76,7 @@ void tide_shard_agent_destroy(tide_shard_agent *a)
     if (!a) return;
     for (uint32_t i = 0; i < a->sent_room; i++) map_free(&a->sent[i]);
     free(a->sent);
+    map_free(&a->arriving);
     free(a->targets);
     free(a->checkpoint);
     free(a);
@@ -107,6 +112,7 @@ static void note_arrival(tide_shard_agent *a, const uint8_t *data, const uint32_
     root.generation = tide_read_u32(&r);
     if (r.failed || from == a->shard || from == TIDE_SHARD_ORCHESTRATOR) return;
     map_put(sent_to(a, from), key_of(root), 1u); // Sent, with bytes it doesn't know
+    map_put(&a->arriving, key_of(root), 1u);
 }
 
 bool tide_shard_agent_apply(tide_shard_agent *a, const uint8_t *data, const uint32_t size)
@@ -288,6 +294,7 @@ static bool ghosts_for(tide_shard_agent *a, const target *t, tide_writer *out)
     for (uint32_t i = 0; i < sent->room; i++) {
         const uint64_t key = sent->keys[i];
         if (!key || key == UINT64_MAX || map_find(&now, key)) continue; // UINT64_MAX: the singletons
+        if (map_find(&a->arriving, key)) continue; // Here once the server's next tick takes it
         const tide_entity e = entity_of(key);
         tide_write_u32(&m, e.index);
         tide_write_u32(&m, e.generation);
@@ -454,6 +461,7 @@ uint8_t *tide_shard_agent_report(tide_shard_agent *a, uint32_t *size)
     at = w.size;
     count = 0;
     tide_write_u32(&w, 0u);
+    if (!tide_server_injected(a->server)) map_free(&a->arriving); // Everything handed is in its world
     for (uint32_t i = 0; i < a->target_count; i++) count += ghosts_for(a, &a->targets[i], &w) ? 1u : 0u;
     if (!w.overflow) tide_shard_patch_u32(w.data + at, count);
     // Where its entities are, when asked

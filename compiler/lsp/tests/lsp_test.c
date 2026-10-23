@@ -5284,7 +5284,7 @@ TIDE_TEST(lsp_enum_members_and_hovers)
 
     open_document("local scene Main { }\nview Menu()\n{\n    Sess$ion.Leave();\n}\n");
     const char *session = request("textDocument/hover");
-    TIDE_CHECK(has(session, "Start, Open, Close, Kick, KickAll, Join, Connect, Leave and End") && !has(session, "Play"));
+    TIDE_CHECK(has(session, "Start, Open, Close, Kick, KickAll, Join, Connect, Leave, End, Watch and Unwatch") && !has(session, "Play"));
     open_document("[Native$Name(\"c_noise\")]\nextern float Noise(float x);\nscene Main { }\n");
     TIDE_CHECK(has(request("textDocument/hover"), "The C function the extern function after it calls"));
     open_document("enum Voxel : by$te { Air, Stone }\nscene Main { }\n");

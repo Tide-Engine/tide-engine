@@ -30,3 +30,66 @@ system Walk(mut Avatar a, Controls input, Time time)
     a.steps += 1;
     if (input.move.x != 0) a.moved += 1;
 }
+
+// Markers in the right region, one near the border, which the left region
+// holds a copy of, and three far from it: what a machine whose player is on
+// the left sees when it watches an area on the right
+// (shards_a_machine_watches_an_area_far_from_its_player)
+component Marker
+{
+    [Position] float2 position;
+    string name;
+}
+
+singleton Seeded { bool done; }
+
+system Seed(mut Seeded seeded)
+{
+    if (seeded.done) return;
+    seeded.done = true;
+    Spawn(Marker { position = float2(3, 0), name = "near" });
+    Spawn(Marker { position = float2(25, 0), name = "far" });
+    Spawn(Marker { position = float2(30, 0), name = "far" });
+    Spawn(Marker { position = float2(35, 0), name = "far" });
+}
+
+local singleton Sight
+{
+    bool watching;
+    int drawn;   // Markers the view for each ran for, this frame
+    int queried; // ...and a query's rows
+    int named;   // ...of them named "far", as the query has them
+    float x;     // The x of those the view for each ran for, added up
+    int avatars; // Avatars the view for each ran for
+}
+
+view Look(mut Sight sight)
+{
+    if (sight.watching) Session.Watch(float2(30, 0), float2(20, 20));
+    else Session.Unwatch();
+    sight.drawn = 0;
+    sight.queried = 0;
+    sight.named = 0;
+    sight.x = 0;
+    sight.avatars = 0;
+}
+
+view DrawAvatar(mut Sight sight, with Avatar)
+{
+    sight.avatars += 1;
+}
+
+view DrawMarker(Marker marker, mut Sight sight)
+{
+    sight.drawn += 1;
+    sight.x += marker.position.x;
+}
+
+view QueryMarkers(query (Marker marker) markers, mut Sight sight)
+{
+    foreach (var row in markers)
+    {
+        sight.queried += 1;
+        if (row.marker.name == "far") sight.named += 1;
+    }
+}

@@ -709,6 +709,17 @@ double tide_session_until_tick(const tide_session *s);
 const void *tide_session_world(const tide_session *s);
 // What views draw, blended between ticks (see tide_view_worlds).
 tide_view_worlds tide_session_view(const tide_session *s);
+// In a sharded match, what views draw beside it: each other shard this
+// machine follows, its own entities, as tide_session_view has the home's (see
+// tide_view_use). Up to `capacity` of them, with which shard each is, and how
+// many there are; 0 for a match that isn't sharded.
+uint32_t tide_session_views(const tide_session *s, tide_view_worlds *out, uint32_t *shards, uint32_t capacity);
+#define TIDE_SESSION_VIEWS 64u // The most a sharded game's frame draws beside its own (tide_frame_shards)
+// An area of a sharded match this machine watches wherever its player is
+// (Session.Watch): it follows the shards owning it, which views then draw.
+// NULL stops. It holds across matches; a match that isn't sharded has all of
+// itself anyway.
+void tide_session_watch(tide_session *s, const tide_shard_box *area);
 // What the match sent since the host last took it, for the game's local
 // handlers (tide/events.h): the host hands it to the game's local state before
 // each frame (tide_local_events, tide_host_game.events), which empties it.
@@ -762,8 +773,8 @@ typedef bool (*tide_migrate_fn)(void *user, const void *from, void *to);
 bool tide_session_migrate(tide_session *s, const tide_game *game, tide_migrate_fn migrate, void *user);
 
 // What local code asked for, with Session.Start, Join, Connect, Leave, Open,
-// Close, Kick, KickAll and End, and Clipboard.Copy, which isn't the session's
-// but goes to the host the same way.
+// Close, Kick, KickAll, End, Watch and Unwatch, and Clipboard.Copy, which isn't
+// the session's but goes to the host the same way.
 typedef enum tide_session_request_kind {
     TIDE_REQUEST_NONE,
     TIDE_REQUEST_START,
@@ -776,6 +787,8 @@ typedef enum tide_session_request_kind {
     TIDE_REQUEST_KICK_ALL,
     TIDE_REQUEST_END,     // The match this machine runs ends, for everyone
     TIDE_REQUEST_COPY,    // Text onto this machine's clipboard
+    TIDE_REQUEST_WATCH,   // An area of a sharded world this machine sees wherever its player is (tide_session_watch)
+    TIDE_REQUEST_UNWATCH, // ...and no longer
 } tide_session_request_kind;
 
 #define TIDE_DEFAULT_PORT 7777u
@@ -786,4 +799,5 @@ typedef struct tide_session_request {
     tide_player_id player;  // Kick: whom
     char text[TIDE_MESSAGE_BYTES]; // Join: the room's code. Connect: the server's address, "host" or "host:port".
                                    // Kick and KickAll: the message. Copy: the text
+    tide_shard_box area;           // Watch: the area
 } tide_session_request;

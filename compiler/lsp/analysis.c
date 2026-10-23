@@ -1966,6 +1966,11 @@ static const method_form session_calls[] = {
     {"End", "Session.End()",
      "Ends the match this machine runs, for everyone: every player goes offline with `Ended`, and no other machine "
      "takes it over. On a client, it does nothing."},
+    {"Watch", "Session.Watch(float3 center, float3 size)",
+     "Sees an area of a sharded world wherever this machine's player is, like a camera zoomed out over it: this machine "
+     "follows the shards owning it, and views draw what they own. Call it as the area moves; it holds until "
+     "`Session.Unwatch`. A float2 center and size in a 2D game. A world that isn't sharded has all of itself anyway."},
+    {"Unwatch", "Session.Unwatch()", "Stops watching the area `Session.Watch` asked for: this machine sees what's near its player."},
 };
 
 #define GRID_SIZE_DOC                                                                                                  \

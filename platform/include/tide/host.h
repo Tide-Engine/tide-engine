@@ -67,6 +67,10 @@ typedef struct tide_host_game {
     // local fields of the match's entities are kept by, with `world`
     void (*frame)(const void *world, const void *previous, float alpha, const void *verified, const void *verified_previous, float verified_alpha, void *local,
                   tide_draw_list *draw, tide_gui *gui);
+    // tide_frame_shards, before `frame`: in a sharded match, the other shards'
+    // worlds this machine follows, which the frame draws beside its own
+    // (tide_session_views). NULL for a game that isn't sharded.
+    void (*frame_shards)(const tide_view_worlds *more, uint32_t count);
     // tide_local_events, before `frame`: what the match sent since the last one
     // (tide_session_events), which the game's local handlers hear as the frame
     // starts. It leaves `events` empty. Optional for C hosts.
@@ -529,6 +533,12 @@ static inline void tide_run_request(const tide_session_request *request, const v
         break;
     case TIDE_REQUEST_COPY:
         tide_platform_copy(request->text);
+        break;
+    case TIDE_REQUEST_WATCH:
+        tide_session_watch(s, &request->area);
+        break;
+    case TIDE_REQUEST_UNWATCH:
+        tide_session_watch(s, NULL);
         break;
     default:
         break;
@@ -1092,6 +1102,12 @@ static inline int tide_run_frame(void *user, const float seconds)
     // What the match sent since the last frame: its local handlers run first
     if (heard) game->events(tide_run_local, heard);
     if (game->audio) game->audio(tide_run_local, &tide_run_audio);
+    if (game->frame_shards) { // A sharded match's other shards this machine follows, drawn beside its home's
+        tide_view_worlds more[TIDE_SESSION_VIEWS];
+        uint32_t shards[TIDE_SESSION_VIEWS];
+        const uint32_t n = tide_session_views(s, more, shards, TIDE_SESSION_VIEWS);
+        game->frame_shards(more, n < TIDE_SESSION_VIEWS ? n : TIDE_SESSION_VIEWS);
+    }
     game->frame(match, view.previous, view.alpha, view.verified, view.verified_previous, view.verified_alpha, tide_run_local, &tide_run_draw, &tide_run_gui);
     if (game->voice) {
         const tide_voice_provider *voice = game->voice();

@@ -162,6 +162,54 @@ static void gen_shard_prelude(gen *g)
               shard_codes(g));
 }
 
+// What views draw (tide_frame_shards): the frame's own world and each other
+// shard's this machine follows, each entity once. A world that owns it draws
+// it. One that none of them owns (yet: what moves between two is a copy in
+// both for a moment) is drawn from the first that has a copy, the frame's own
+// first.
+static void gen_shard_views(gen *g)
+{
+    const program *prog = g->prog;
+    sb *o = &g->c;
+    bool confirmed = false;
+    for (int i = 0; i < prog->views.count && !confirmed; i++) confirmed = prog->views.items[i]->takes_verified;
+    sb_put(o, "// What views draw beside the frame's own world, for the next frame (tide_frame_shards), and which they draw now:\n"
+              "// -1 for the frame's own, else one of the others\n"
+              "static tide_view_worlds tide_view_more[TIDE_SESSION_VIEWS];\n"
+              "static uint32_t tide_view_more_count;\n"
+              "static tide_view_worlds tide_view_home;\n"
+              "static int32_t tide_view_drawing = -1;\n\n"
+              "void tide_frame_shards(const tide_view_worlds *more, uint32_t count)\n{\n"
+              "    if (!more) count = 0u;\n"
+              "    if (count > TIDE_SESSION_VIEWS) count = TIDE_SESSION_VIEWS;\n"
+              "    for (uint32_t i = 0; i < count; i++) tide_view_more[i] = more[i];\n"
+              "    tide_view_more_count = count;\n}\n\n"
+              "TIDE_SHARD_FN const tide_view_worlds *tide_view_of(const int32_t k)\n{\n"
+              "    return k < 0 ? &tide_view_home : &tide_view_more[k];\n}\n\n"
+              // What views read of a world: its heap, and what it owns
+              "TIDE_SHARD_FN void tide_view_switch(const int32_t k, tide_local *local)\n{\n"
+              "    const tide_view_worlds *v = tide_view_of(k);\n"
+              "    const tide_world *w = v->current;\n"
+              "    tide_view_drawing = k;\n"
+              "    tide_shard_use(w, w ? tide_shard_owns_world : NULL, w ? tide_shard_moves_world : NULL);\n"
+              "    tide_text_use(w ? (tide_heap *)(uintptr_t)&w->heap : NULL, &local->heap);\n");
+    if (confirmed) {
+        sb_put(o, "    const tide_world *verified = v->verified;\n"
+                  "    tide_text_use_verified(verified ? &verified->heap : w ? &w->heap : NULL);\n");
+    }
+    sb_put(o, "}\n\n"
+              "TIDE_HELPER bool tide_view_hides(const tide_world *w, const tide_entity e)\n{\n"
+              "    if (!tide_view_more_count || !tide_has_tide_ghost(w, e)) return false;\n"
+              "    for (int32_t k = -1; k < (int32_t)tide_view_more_count; k++) { // A world drawn that owns it\n"
+              "        const tide_world *other = tide_view_of(k)->current;\n"
+              "        if (other && other != w && tide_entity_alive(&other->entities, e) && !tide_has_tide_ghost(other, e)) return true;\n"
+              "    }\n"
+              "    for (int32_t k = -1; k < tide_view_drawing; k++) { // ...or the first with a copy\n"
+              "        const tide_world *before = tide_view_of(k)->current;\n"
+              "        if (before && tide_entity_alive(&before->entities, e)) return true;\n    }\n"
+              "    return false;\n}\n\n");
+}
+
 // What the change recorders and World.Set call: whether this shard owns an
 // entity, noting it when not; and the handles a shard gives its spawns.
 static void gen_shard_early(gen *g)

@@ -2862,8 +2862,9 @@ static void ensure_shards(program *prog)
     f.name = str_from("regions");
     f.type = list_of(prog, (type){TY_DOUBLE, NULL});
     vec_push(state->fields, f);
-    static const char *const long_lists[] = {"ranges", "heard", "pins", "asked", "gone", "held", "routes"};
-    for (int i = 0; i < 7; i++) {
+    // matches: the match each region's host knows its shard by, beside `regions`
+    static const char *const long_lists[] = {"ranges", "heard", "pins", "asked", "gone", "held", "routes", "matches"};
+    for (int i = 0; i < 8; i++) {
         f.name = str_from(long_lists[i]);
         f.type = list_of(prog, (type){TY_LONG, NULL});
         vec_push(state->fields, f);
@@ -5184,8 +5185,9 @@ static bool address_like(const str text)
 // and Session.Leave(): which match this machine is in; Session.Open(port)
 // and Session.Close(): whether others can join the one it runs;
 // Session.Kick(player, message) and Session.KickAll(message): sending players
-// out of it; and Session.End(): ending it for everyone. Only local code
-// decides.
+// out of it; Session.End(): ending it for everyone; and Session.Watch(center,
+// size) and Session.Unwatch(): an area of a sharded world this machine sees
+// wherever its player is. Only local code decides.
 static type check_session_call(checker *c, expr *e)
 {
     const bool start = str_eq_c(e->name, "Start");
@@ -5197,7 +5199,9 @@ static type check_session_call(checker *c, expr *e)
     const bool kick = str_eq_c(e->name, "Kick");
     const bool kick_all = str_eq_c(e->name, "KickAll");
     const bool end = str_eq_c(e->name, "End");
-    if (!start && !join && !connect && !leave && !open && !close && !kick && !kick_all && !end) {
+    const bool watch = str_eq_c(e->name, "Watch");
+    const bool unwatch = str_eq_c(e->name, "Unwatch");
+    if (!start && !join && !connect && !leave && !open && !close && !kick && !kick_all && !end && !watch && !unwatch) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         if (str_eq_c(e->name, "Play") || str_eq_c(e->name, "Host")) {
             diag_error(e->at, "Session." STR_FMT " is Session.Start now", STR_ARG(e->name));
@@ -5205,7 +5209,8 @@ static type check_session_call(checker *c, expr *e)
                                                 : "'Session.Start(Arena); Session.Open();' starts a match others can join");
             return T_ERR;
         }
-        diag_error(e->at, "Session has no '" STR_FMT "'; it has Start, Open, Close, Kick, KickAll, End, Join, Connect and Leave",
+        diag_error(e->at, "Session has no '" STR_FMT "'; it has Start, Open, Close, Kick, KickAll, End, Join, Connect, Leave, "
+                          "Watch and Unwatch",
                    STR_ARG(e->name));
         suggestion s = suggest_start(e->name);
         suggest_consider_c(&s, "Start");
@@ -5217,6 +5222,8 @@ static type check_session_call(checker *c, expr *e)
         suggest_consider_c(&s, "Connect");
         suggest_consider_c(&s, "Leave");
         suggest_consider_c(&s, "End");
+        suggest_consider_c(&s, "Watch");
+        suggest_consider_c(&s, "Unwatch");
         suggest_note(&s);
         return T_ERR;
     }
@@ -5240,7 +5247,7 @@ static type check_session_call(checker *c, expr *e)
         }
         return T_ERR;
     }
-    if (c->loop_header > 0 || c->branch_depth > 0 || c->short_circuit_depth > 0) {
+    if (!watch && !unwatch && (c->loop_header > 0 || c->branch_depth > 0 || c->short_circuit_depth > 0)) {
         diag_error(e->at, "Session." STR_FMT " is a statement of its own", STR_ARG(e->name));
     }
     if (inherits(c)) {
@@ -5249,10 +5256,10 @@ static type check_session_call(checker *c, expr *e)
         note_act(c, true, e->at, what.data, false, false);
     }
     e->call = CALL_SESSION;
-    const int least = join || connect || kick ? 1 : 0;
-    const int most = connect || kick ? 2 : open || kick_all || start ? 1 : least;
+    const int least = watch ? 2 : join || connect || kick ? 1 : 0;
+    const int most = connect || kick || watch ? 2 : open || kick_all || start ? 1 : least;
     const char *named = start ? "scene" : join ? "code" : connect ? "address, port" : open ? "port" : kick ? "player, message"
-                        : kick_all ? "message" : "";
+                        : kick_all ? "message" : watch ? "center, size" : "";
     if (!order_named_args(e, named, most - least)) {
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         return T_ERR;
@@ -5273,6 +5280,9 @@ static type check_session_call(checker *c, expr *e)
                                : kick_all ? "Session.KickAll takes nothing, or a message: "
                                             "'Session.KickAll()' or 'Session.KickAll(\"The party's over\")'"
                                : end     ? "Session.End takes nothing: 'Session.End()'"
+                               : watch   ? "Session.Watch takes the area's center and size: "
+                                           "'Session.Watch(camera.position, float3(200, 200, 200))'"
+                               : unwatch ? "Session.Unwatch takes nothing: 'Session.Unwatch()'"
                                          : "Session.Leave takes nothing: 'Session.Leave()'");
         if (start && e->args.count == 2) diag_note("a match takes players once it's opened: 'Session.Open(7777)'");
         return T_ERR;
@@ -5305,6 +5315,24 @@ static type check_session_call(checker *c, expr *e)
     if (open && e->args.count == 1) {
         const type t = check_expr(c, e->args.items[0]);
         if (!type_assignable(T_INT_, t)) diag_error(e->args.items[0]->at, "a port is an int, like 7777");
+    }
+    if (watch) {
+        int axes = 0;
+        for (int i = 0; i < 2; i++) {
+            const expr *arg = e->args.items[i];
+            const type t = check_expr(c, e->args.items[i]);
+            if (t.kind == TY_ERROR) continue;
+            const bool vector = t.kind == TY_FLOAT2 || t.kind == TY_FLOAT3 || t.kind == TY_DOUBLE2 || t.kind == TY_DOUBLE3;
+            if (!vector) {
+                diag_error(arg->at, "Session.Watch takes the area's %s as a float2 or a float3 (a double2 or a double3 for double "
+                                    "positions), not %s", i ? "size" : "center", type_name(t));
+            } else if (axes && type_dim(t) != axes) {
+                diag_error(arg->at, "the area's size has %d axes and its center %d: give both as many", type_dim(t), axes);
+            } else {
+                axes = type_dim(t);
+            }
+        }
+        return T_VOID_;
     }
     if (kick) {
         const type t = check_expr(c, e->args.items[0]);

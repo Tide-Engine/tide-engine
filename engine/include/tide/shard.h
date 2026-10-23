@@ -38,9 +38,10 @@
 // Message kinds: a message is its kind (one byte), its sender (u32), its number
 // (u32, 0 for messages that aren't numbered), then what the kind says.
 typedef enum tide_shard_kind {
-    // Orchestrator: u32 shard id, u8 role (tide_shard_role), the regions (below),
-    // then the entity index ranges this shard allocates from (u32 count, each u32
-    // first and u32 end).
+    // Orchestrator: u32 shard id, u8 role (tide_shard_role), the regions (u32
+    // count, each u32 shard, its box's lo and hi as six doubles, and u64 the
+    // match its host knows it by), then the entity index ranges this shard
+    // allocates from (u32 count, each u32 first and u32 end).
     TIDE_SHARD_CONFIG = 1,
     // Orchestrator: the regions, as in CONFIG.
     TIDE_SHARD_MAP = 2,
@@ -120,9 +121,12 @@ typedef struct tide_shard_box {
     double hi[3];
 } tide_shard_box;
 
+// A region, the shard that owns it, and the match its host knows that shard by
+// (0 in one process, and until the host says).
 typedef struct tide_shard_region {
     uint32_t shard;
     tide_shard_box box;
+    uint64_t match;
 } tide_shard_region;
 
 // A message in a shard's outbox, as the orchestrator reads it.
@@ -205,6 +209,10 @@ typedef struct tide_shard_game {
     // and up to `capacity` of the shards their machine follows. How many it
     // follows, 0 for no route.
     uint32_t (*route)(const void *world, tide_player_id player, uint32_t *home, tide_shard_link *out, uint32_t capacity);
+    // The regions as the last CONFIG or MAP said: up to `capacity` of them,
+    // and how many there are. Every shard has them, so a player's machine
+    // finds the shards owning an area it watches in whichever world it has.
+    uint32_t (*regions)(const void *world, tide_shard_region *out, uint32_t capacity);
     // Each entity the shard owns (no ghost), for the orchestrator to know
     // where everything is when it starts from a checkpoint.
     void (*owned)(const void *world, void (*each)(void *context, tide_entity e), void *context);
@@ -281,7 +289,7 @@ const uint8_t *tide_shard_bytes_flat(tide_list l, uint32_t *size, bool *copied);
 void tide_shard_bytes_done(tide_list l, const uint8_t *flat, bool copied);
 void tide_shard_bytes_set(tide_list *l, const void *data, uint32_t size, uint32_t where);
 
-// Writing and reading message headers and regions.
+// Writing message headers.
 static inline void tide_shard_header(tide_writer *w, const tide_shard_kind kind, const uint32_t from, const uint32_t number)
 {
     tide_write_u8(w, (uint8_t)kind);
@@ -293,16 +301,6 @@ static inline void tide_shard_header(tide_writer *w, const tide_shard_kind kind,
 static inline void tide_shard_patch_u32(uint8_t *at, const uint32_t value)
 {
     for (uint32_t k = 0; k < 4u; k++) at[k] = (uint8_t)(value >> (8u * k));
-}
-
-static inline void tide_shard_write_regions(tide_writer *w, const tide_shard_region *regions, const uint32_t count)
-{
-    tide_write_u32(w, count);
-    for (uint32_t i = 0; i < count; i++) {
-        tide_write_u32(w, regions[i].shard);
-        tide_write_bytes(w, regions[i].box.lo, sizeof regions[i].box.lo);
-        tide_write_bytes(w, regions[i].box.hi, sizeof regions[i].box.hi);
-    }
 }
 
 // Whether `p` is in the box: lo <= p < hi on each of `dims` axes.

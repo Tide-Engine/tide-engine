@@ -38,6 +38,8 @@ A game that starts in a menu has a local `Main`, and its local code decides whic
 | `Session.Connect(address, port)` | The same, on another port than 7777 |
 | `Session.Leave()` | Leaves the match. With [host migration](#host-migration), a match this machine runs goes on without it |
 | `Session.End()` | Ends the match this machine runs, for everyone |
+| `Session.Watch(center, size)` | In a [sharded world](./shards.md#watching-an-area), sees that area wherever this machine's player is |
+| `Session.Unwatch()` | Stops watching it |
 
 `Start` names the scene the match starts in, with its values as for `Scene.Load`: `Session.Start(Arena { size = 30 })`, or nothing for `Main` with its defaults, which has to be the match's. `Join` and `Connect` get whatever the server runs. Starting or joining a match leaves the one this machine is in first.
 

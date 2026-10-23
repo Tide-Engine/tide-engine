@@ -5715,6 +5715,8 @@ struct tide_session {
     // this machine's player in it, `client` being its home shard's client
     tide_shards *shards;
     tide_shard_client *shard_client;
+    bool watching; // An area local code watches (tide_session_watch), for whatever match it's in
+    tide_shard_box watch;
     // ...and on a dedicated server, the admission it joined by (the host's,
     // which outlives the match), and its admission to each shard it follows
     // but the first, beside it (tide_hosting_client_beside), by shard
@@ -6146,6 +6148,7 @@ void tide_session_update(tide_session *s, const double now)
     if (s->loopback) tide_loopback_set_time(s->loopback, t);
     if (s->shard_client) { // Every shard, then this machine's player, now at home wherever its entities are
         update_admissions(s);
+        tide_shard_client_watch(s->shard_client, s->watching ? &s->watch : NULL);
         tide_shard_client_update(s->shard_client, t);
         if (s->shards) {
             tide_shards_update(s->shards, t);
@@ -6269,8 +6272,20 @@ tide_event_log *tide_session_events(tide_session *s)
     return &s->heard;
 }
 
+uint32_t tide_session_views(const tide_session *s, tide_view_worlds *out, uint32_t *shards, const uint32_t capacity)
+{
+    return s->shard_client ? tide_shard_client_views(s->shard_client, out, shards, capacity) : 0u;
+}
+
+void tide_session_watch(tide_session *s, const tide_shard_box *area)
+{
+    s->watching = area != NULL;
+    if (area) s->watch = *area;
+}
+
 void tide_session_mark_presented(tide_session *s)
 {
+    if (s->shard_client) tide_shard_client_mark_presented(s->shard_client);
     if (s->client && s->client->loaded) tide_client_mark_presented(s->client);
     else if (s->stale && s->desc.correct_views) {
         s->stale->presented = true;

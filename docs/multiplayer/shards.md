@@ -48,6 +48,30 @@ A split world doesn't give bit-identical results to the same game on one server,
 
 Players join the world at its first shard, which sends `PlayerJoined`. A player's machine plays in the shard that owns their entities, and also follows the shards near them. When their avatar walks across a border, the machine switches to the next shard at once, with nothing to download.
 
+Views draw everything the machine follows, each entity once, from the shard that owns it. A view for each entity runs as it always does; a view's query has every entity the machine sees. Local code and local handlers see the shard the player plays in.
+
+### Watching an area
+
+A camera zoomed out over the world, a spectator or a map sees more than what's near the player. Say what it looks at, from a view or a local handler, as it moves:
+
+```csharp
+local singleton Overview
+{
+    bool zoomedOut;
+    float3 center;
+}
+
+view Watch(Overview overview)
+{
+    if (overview.zoomedOut) Session.Watch(overview.center, float3(400, 100, 400));
+    else Session.Unwatch();
+}
+```
+
+`Session.Watch(center, size)` makes this machine follow every shard whose region is near that box too, and views draw what they own. It holds until `Session.Unwatch()`, wherever the player goes; calling it again with another box moves it. Take a `float2` center and size in a 2D game. In a world that isn't sharded, there's nothing to do: the machine has the whole world already.
+
+Each shard watched is one more world this machine downloads and keeps up with, so watch what the camera shows, not the whole world.
+
 ## Running one
 
 `tide run` runs every shard of a sharded game's match on this machine. To try borders out, split it into regions along x:

@@ -235,6 +235,9 @@ static const tide_host_game tide_host_game_api = {
     .sample_input = tide_run_sample_input,
 #endif
     .frame = tide_run_views,
+#ifdef TIDE_GAME_SHARDED
+    .frame_shards = tide_frame_shards,
+#endif
     .events = tide_run_events,
 #ifdef TIDE_HAS_AUDIO
     .audio = tide_run_audio_set,

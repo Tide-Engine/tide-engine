@@ -128,6 +128,115 @@ TIDE_TEST(shards_a_player_follows_their_avatar_across_borders)
     tide_loopback_destroy(net);
 }
 
+// A machine whose player stays on the left watches an area on the right
+// (Session.Watch): it follows the right region's shard too, and its views draw
+// every marker once, the one near the border from the shard that owns it, not
+// from the copy the left one holds. Watching no more, it lets that shard go.
+static tide_local local;
+static tide_draw_list draw;
+static tide_gui gui;
+static tide_devices devices;
+
+static Sight frame(void)
+{
+    tide_view_worlds more[TIDE_SESSION_VIEWS];
+    uint32_t ids[TIDE_SESSION_VIEWS];
+    const uint32_t n = tide_shard_client_views(player, more, ids, TIDE_SESSION_VIEWS);
+    tide_frame_shards(more, n);
+    const tide_view_worlds home = tide_client_view(tide_shard_client_home(player));
+    tide_draw_reset(&draw);
+    tide_gui_begin(&gui, &devices, tide_f2(640.0f, 480.0f), NULL);
+    tide_frame(home.current, home.previous, home.alpha, home.verified, home.verified_previous, home.verified_alpha, &local,
+               &draw, &gui);
+    tide_gui_end(&gui, &draw);
+    tide_shard_client_mark_presented(player);
+    // What its views asked of the session: the area to watch, as a host hands it over
+    tide_session_request request;
+    tide_start start;
+    while (tide_local_take_request(&local, &request, &start)) {
+        if (request.kind == TIDE_REQUEST_WATCH) tide_shard_client_watch(player, &request.area);
+        if (request.kind == TIDE_REQUEST_UNWATCH) tide_shard_client_watch(player, NULL);
+    }
+    return local.Sight;
+}
+
+// Steps, each with a frame, and the most markers any frame drew; a frame
+// that didn't draw the avatar once fails
+static int watch_run(const double seconds)
+{
+    int most = 0;
+    const double until = now + seconds;
+    while (now < until) {
+        run(1.0 / 120.0);
+        const Sight sight = frame();
+        if (sight.drawn > most) most = sight.drawn;
+        if (sight.queried > most) most = sight.queried;
+        TIDE_CHECK(sight.avatars == 1 || now < 1.0); // Once it's spawned
+    }
+    return most;
+}
+
+TIDE_TEST(shards_a_machine_watches_an_area_far_from_its_player)
+{
+    now = 0;
+    walk_until = 0;
+    net = tide_loopback_create(3);
+    const tide_shards_desc d = {.game = &tide_game_api, .tick_rate = 60, .world = {{-40, -10, 0}, {40, 10, 0}},
+                                .split = {2, 1, 1}, .transports = transports};
+    shards = tide_shards_create(&d, now);
+    TIDE_REQUIRE(shards != NULL);
+    const tide_shard_client_desc pd = {
+        .client = {.game = &tide_game_api, .transport = tide_loopback_endpoint(net, 100u), .server = tide_loopback_address(10u),
+                   .sample = sample, .lead = 2},
+        .reach = reach,
+    };
+    player = tide_shard_client_create(&pd, now);
+    TIDE_REQUIRE(player != NULL);
+    tide_local_init(&local);
+
+    // Its avatar on the left, it sees the copy the left region holds of the marker near the border
+    TIDE_CHECK(watch_run(2.0) <= 4);
+    TIDE_CHECK(tide_shard_client_home_shard(player) == 1);
+    Sight sight = frame();
+    TIDE_CHECK(sight.drawn == 1 && sight.queried == 1 && sight.named == 0);
+    TIDE_CHECK(sight.x > 2.5f && sight.x < 3.5f);
+    TIDE_CHECK(tide_shard_client_session(player, 2) == NULL);
+
+    // Watching the right: every marker once, the near one from the right's own world
+    local.Sight.watching = true;
+    TIDE_CHECK(watch_run(2.0) <= 4);
+    TIDE_CHECK(tide_shard_client_session(player, 2) != NULL);
+    TIDE_CHECK(tide_shard_client_home_shard(player) == 1); // It plays where its avatar is, as before
+    sight = frame();
+    TIDE_CHECK(sight.drawn == 4 && sight.queried == 4);
+    TIDE_CHECK(sight.named == 3); // The far ones' names, read from the right's world
+    TIDE_CHECK(sight.x > 92.5f && sight.x < 93.5f);
+    const tide_client_status right = tide_client_status_of(tide_shard_client_session(player, 2));
+    TIDE_CHECK(right.state == TIDE_SESSION_CONNECTED && right.resyncs == 0);
+
+    // Watching no more: the right's shard goes, and the copy is what it sees again
+    local.Sight.watching = false;
+    TIDE_CHECK(watch_run(1.0) <= 4);
+    TIDE_CHECK(tide_shard_client_session(player, 2) == NULL);
+    sight = frame();
+    TIDE_CHECK(sight.drawn == 1 && sight.queried == 1);
+
+    // Walking across the border, its avatar is drawn once every frame: by the
+    // shard that owns it, or while it's on its way, by the first with a copy.
+    // It joins the right's shard once: while the avatar's on its way from one
+    // to the other, which neither owns, its route keeps both.
+    const uint32_t joins = tide_shard_client_joins(player);
+    walk_until = now + 4.0;
+    watch_run(5.0);
+    TIDE_CHECK(tide_shard_client_home_shard(player) == 2);
+    TIDE_CHECK(tide_shard_client_joins(player) == joins + 1u);
+
+    tide_local_free(&local);
+    tide_shard_client_destroy(player);
+    tide_shards_destroy(shards);
+    tide_loopback_destroy(net);
+}
+
 // A sharded world on a dedicated server (tide/hosting.h): each shard one of
 // its matches, the root its front, which a request for match 0 joins. A
 // session let in at the front follows its avatar to the shards it walks into,
@@ -198,6 +307,24 @@ TIDE_TEST(shards_a_player_joins_a_dedicated_sharded_world)
     const tide_session_status status = tide_session_status_of(s);
     TIDE_CHECK(status.client.state == TIDE_SESSION_CONNECTED);
     TIDE_CHECK(status.client.resyncs == 0);
+
+    // Watching the left from the right: the left's match, as the map has it, let in beside the others
+    TIDE_CHECK(tide_server_player_count(tide_shards_server(shards, 1)) == 0);
+    tide_session_watch(s, &(tide_shard_box){{-35, -5, 0}, {-25, 5, 0}});
+    for (int step = 0; step < 240; step++) {
+        now += 1.0 / 120.0;
+        tide_loopback_set_time(net, now);
+        tide_hosting_update(host, now);
+        tide_shards_update(shards, now);
+        tide_hosting_client_update(admission, now);
+        tide_session_update(s, now);
+    }
+    TIDE_CHECK(tide_server_player_count(tide_shards_server(shards, 1)) == 1);
+    tide_view_worlds views[4];
+    uint32_t ids[4];
+    TIDE_CHECK(tide_session_views(s, views, ids, 4) == 1);
+    TIDE_CHECK(ids[0] == 1 && views[0].current != NULL);
+    TIDE_CHECK(home_avatar(s, &a) != NULL); // Still at home where its avatar is
     tide_session_destroy(s);
     tide_hosting_client_destroy(admission);
     tide_shards_destroy(shards);
