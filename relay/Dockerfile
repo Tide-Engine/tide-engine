@@ -1,5 +1,5 @@
 # The relay's image, for Fly (fly.toml): Node and the relay, nothing else.
-FROM node:24-alpine
+FROM node:24.22.1-alpine
 WORKDIR /relay
 COPY relay.mjs lobbies.mjs main.mjs ./
 USER node

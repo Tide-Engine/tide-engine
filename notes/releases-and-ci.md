@@ -1,5 +1,23 @@
 # Releases, installing and CI
 
+## Node security updates (2026-10-23)
+
+Every Build and Docs `actions/setup-node` step requests `^24.22.1` with
+`check-latest: true`. This requires the October 21 security fixes while
+selecting subsequent 24.x patches even when the runner caches an older release.
+Workflow parsing and structural comparison verify that only these Node inputs
+changed; triggers, jobs, tests and publication/deployment gates are unchanged.
+The docs and relay images explicitly pin `node:24.22.1-alpine`; later image
+security updates require advancing that pin. Service-repository pins are
+maintained separately in `Tide-Engine/tide-services`.
+
+Docs dependencies also advance markdown-it to 15.0.3 and Vite to 8.3.3 for
+their published security fixes, preserving the existing compatible ranges.
+Both docs and release-note dependency audits report zero vulnerabilities.
+Release-note tests pass 3/3. Full local validation is recorded in
+`notes/testing.md`; docs and relay validation are in their subsystem notes.
+No workflow was manually dispatched.
+
 ## MicroDuck sanitizer timeout (2026-10-22)
 
 Run `39842031157` at `f8468b30` confirms the arm-hash correction:

@@ -2,7 +2,7 @@
 # pages need the rest of the repo (the grammar, the code they show, the demos),
 # so the image only takes what the build made. The server needs nothing from
 # node_modules: the build bundles it all.
-FROM node:24-alpine
+FROM node:24.22.1-alpine
 
 RUN apk add --no-cache su-exec
 

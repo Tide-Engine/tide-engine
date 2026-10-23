@@ -1,5 +1,26 @@
 # The docs site
 
+## Node and build dependency security updates (2026-10-23)
+
+The site image pins `node:24.22.1-alpine`, including the October 21 Node
+security fixes. Docs CI requests `^24.22.1` with `check-latest: true` so
+future 24.x patches are selected instead of an older runner-cached version.
+The live website already reported 24.22.1 before this change.
+
+markdown-it advances from 15.0.2 to 15.0.3 (pathological parsing/rendering
+denial of service) and Vite from 8.3.2 to 8.3.3 (development-server/editor
+security fixes). Existing caret ranges are retained; the lockfile changes
+only those packages and markdown-it's required argparse patch. No site content,
+server API, language semantics or release-runtime generator dependency changed.
+
+Validation with Node 24.22.1: Svelte check reports zero errors/warnings;
+production build passes, retaining the allowed unstaged-example 404s; all 49
+access/release/analytics/admin/telemetry/export/SEO/production HTTP tests pass.
+The dependency audit reports zero vulnerabilities. The production Docker image
+builds and reports v24.22.1. Workflow structural comparison and whitespace
+checks pass. Browser/grammar coverage runs in the full native/web suites
+recorded in `notes/testing.md`; no separate docs workflow was dispatched.
+
 ## Example startup smoke and late scrolling (2026-10-22)
 
 Build run 39790751086 built the site and passed exports/SEO/HTTP checks, then

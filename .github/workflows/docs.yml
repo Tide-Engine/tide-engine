@@ -63,7 +63,8 @@ jobs:
           path: external/tide-prototypes
       - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: '^24.22.1'
+          check-latest: true
           cache: npm
           cache-dependency-path: docs/package-lock.json
       # tools/tide-syntax/test: the grammar's scopes, on its cases and the

@@ -1,5 +1,24 @@
 # Test infrastructure
 
+## Node 24.22.1 security validation (2026-10-23)
+
+The checkout's portable Node 24.22.1 executable matches the official release's
+SHA-256. Both debug configurations explicitly select it as TIDE_NODE; their
+builds pass with Clang 23.1.2. Full native debug passes all 2,599 enabled tests
+(114.01 s), including 39 GPU checks with Vulkan validation/OpenGL. Full web
+debug passes all 2,459 enabled tests (285.28 s), including WebGL, Windows ANGLE
+D3D11 and 12 WebGPU checks. Both retain the existing disabled MicroDuck
+right-turn limitation; no test, assertion, timeout or hash pin was changed.
+
+Docs Svelte check/build and all 49 HTTP/unit/export/SEO checks pass; relay/lobby
+37/37 and release-note 3/3 pass. Docs and release-note dependency audits report
+zero vulnerabilities. Parsed workflow comparisons confirm that only Node
+version/check-latest inputs changed. Production docs/relay Docker images build
+and report v24.22.1; hosting image/service validation is recorded in the
+services repository. All runs retain TIDE_HIDDEN and muted browser flags.
+Engine coverage on other operating systems, Android, MinGW and sanitizers
+remains CI's; no workflow was manually dispatched.
+
 ## Windows ANGLE D3D11 shader regression (2026-10-19)
 
 tide_add_web_test(... D3D11) adds a Windows-host WebGL run using
@@ -85,11 +104,11 @@ CI runs no `gpu` test (its runners have no GPU), so Vulkan's coverage is this ma
 
 - Skinned-model implementation validation (2026-10-08): the merged full native suite passed 1,957 tests and the full web suite passed 1,932. After the subsequent function-capability merge and the empty-alias diagnostic, both full builds passed again, with all 1,880 affected native compiler/editor tests and 1,869 web compiler tests passing. The language-server harness passed 188/188; docs production build and grammar 202/202 passed. CPU pose bits and the persistent match hash agree between native and WASI; OpenGL, WebGL and WebGPU each pass 24 skinning pixel assertions. An isolated Windows clang AddressSanitizer build passed the skinned, pack, map and static-importer groups, and the web CLI watch regression passed. No CI workflow was dispatched; real modelling-tool exports and Android GPU rendering were not exercised here.
 
-Node runs many of the tests (`cmake/run_wasi.mjs`, the relay's, the build service's, the scripts under `platform/tests/`), and on Windows it has to be 24.16 or newer. Before that, and in every 22 so far, a process that starts a TCP connection ends, about one launch in 500, with exit code 3221226505 (0xC0000409) and nothing on stderr, however idle the machine is:
+Node runs many of the tests (`cmake/run_wasi.mjs`, the relay's, the build service's, the scripts under `platform/tests/`). Use 24.22.1 or a newer 24.x patch on every platform: the [October 21, 2026 security release](https://nodejs.org/en/blog/vulnerability/october-2026-security-releases) fixes the Brotli decoder, TLS/DNS validation and other vulnerabilities. Windows also needs the crash fix introduced in 24.16. Before that fix, a process that starts a TCP connection ends, about one launch in 500, with exit code 3221226505 (0xC0000409) and nothing on stderr, however idle the machine is:
 
 - It's libuv's (`uv__is_fast_loopback_fail_supported` in its `src/win/tcp.c`, which `uv_tcp_connect` goes through; fixed by libuv's #5107, in its 1.53, which Node carries from 24.16): it hands `RtlGetVersion` a struct whose size it never set, right under the function's stack cookie. Where the bytes left there say 284, the size of the longer struct, Windows writes 8 bytes more, over the cookie, and the function stops the process as it returns. In a test file's process those bytes are half of a heap's address, which is 284 once in about 500 launches.
 - `node --test` then reports the file as failed with no test named, its process gone before its first test ran; `--test-reporter=tap` shows the exit code. It's never the test's: nothing is loosened or run again for it. The Node is replaced.
-- CI's Build workflow installs Node 24 on every platform (`actions/setup-node`), as the docs' does: the runners' own is 22.
+- CI's Build and Docs workflows request `^24.22.1` with `check-latest: true` (`actions/setup-node`), so older cached Node versions cannot satisfy the security floor and newer 24.x patches are selected. The runners' own Node is not used for these tests.
 - A crash of Node's own is found by running the process under lldb, which leaves its streams pipes (`lldb -b -o run -k "thread backtrace all" -k quit -- node <file>`, with `NODE_TEST_CONTEXT=child-v8` in the environment for a test file as `node --test` runs it), and `llvm-objdump -d` reads a frame of `node.exe` without its symbols.
 
 Every browser a test starts is muted (the owner, 2026-10-08, who heard an agent's runs: a page in headless Chrome, sent keys through the debugger). Headless, Chrome and Edge still play through the machine's own output device once a page's AudioContext runs, and a page's resumes at its first pointer, key or touch (`platform/web/tide.js`), so the tests were silent only for as long as none of them sent one.

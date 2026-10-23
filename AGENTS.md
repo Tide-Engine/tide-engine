@@ -39,7 +39,7 @@ Requires CMake 3.25+, Ninja and clang. The toolchain finds clang through `$LLVM_
 | Configure, build and test web debug | `cmake --workflow --preset web-debug` |
 | Run web tests | `ctest --preset web-debug` |
 
-`debug` has no optimization; `release` is optimized with debug information. `sanitize` enables ASan and UBSan on Linux/macOS. Web, MinGW, Android and packaging presets are in `CMakePresets.json`; read their notes before using them. Windows Node-based tests require Node 24.16 or newer (`notes/testing.md`).
+`debug` has no optimization; `release` is optimized with debug information. `sanitize` enables ASan and UBSan on Linux/macOS. Web, MinGW, Android and packaging presets are in `CMakePresets.json`; read their notes before using them. Use Node 24.22.1 or a newer 24.x patch for Node-based tooling and services (`notes/testing.md`); this includes the October 2026 security fixes and the Windows crash fix from 24.16.
 
 Desktop configuration downloads pinned GLFW. Linux desktop builds need X11 development headers. `-DTIDE_PLATFORM=OFF` omits the platform layer and targets requiring it, useful offline. Native builds copy `tidels` to `build/tools/tidels` for the editors. Build integration and layout details are in `notes/repository.md` and `notes/tide-programs.md`.
 
