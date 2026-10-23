@@ -3035,6 +3035,14 @@
     async function replace(bytes, fresh, nextPack) {
         const program = await instantiate(bytes);
         resumeWith = null;
+        // A sharded match changes build at a moment nothing the old build wrote
+        // is on its way between its shards: the running one goes on until one
+        // comes, three seconds at most
+        if (!fresh && exports && exports.tide_reload_ready && !stopped) {
+            const until = performance.now() + 3000;
+            while (!stopped && !exports.tide_reload_ready() && performance.now() < until)
+                await new Promise(resolve => setTimeout(resolve, 4));
+        }
         if (!fresh && exports && exports.tide_reload_save && !stopped) {
             try {
                 const at = exports.tide_reload_save();

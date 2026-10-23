@@ -354,6 +354,13 @@ uint32_t tide_managed_shard_begin(const double now, const uint32_t seed, const u
     return made;
 }
 
+// How busy the shard is, as its host measures it (tide_shard_agent_busy):
+// the share of the time its updates take of late
+TIDE_MANAGED_EXPORT(tide_managed_shard_busy) void tide_managed_shard_busy(const float busy)
+{
+    tide_shard_agent_busy(tide_managed_agent, busy);
+}
+
 // Its report, after an update: its size, the bytes in tide_managed_bytes()
 TIDE_MANAGED_EXPORT(tide_managed_shard_report) uint32_t tide_managed_shard_report(void)
 {
@@ -369,7 +376,7 @@ uint32_t tide_managed_shard_apply(const uint8_t *data, const uint32_t size)
 
 // The coordinator, from its description: 48 bytes the world's box, 3 u32 its
 // split, u32 most entities, u8 whether it makes checkpoints, f64 every how
-// many seconds
+// many seconds, f32 the busiest a shard should be
 static bool tide_managed_coordinator_desc(const uint8_t *data, const uint32_t size, tide_shard_coordinator_desc *out)
 {
     tide_reader r = {data, size, 0, false};
@@ -384,6 +391,8 @@ static bool tide_managed_coordinator_desc(const uint8_t *data, const uint32_t si
     out->checkpoints = tide_read_u8(&r) != 0;
     const uint64_t seconds = tide_read_u64(&r);
     memcpy(&out->checkpoint_seconds, &seconds, sizeof seconds);
+    const uint32_t busiest = tide_read_u32(&r);
+    memcpy(&out->busiest, &busiest, sizeof busiest);
     return !r.failed && r.at == r.size;
 }
 

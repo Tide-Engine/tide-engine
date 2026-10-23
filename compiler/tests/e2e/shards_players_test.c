@@ -1,9 +1,11 @@
 #include "game.h"
 #include "tide/hosting.h"
 #include "tide/shard_client.h"
+#include "tide/shard_coordinator.h"
 #include "tide/shards.h"
 #include "tide_test.h"
 
+#include <stdlib.h>
 #include <string.h>
 
 // e2e/shards_players.tide: a player's machine (tide/shard_client.h) joins the
@@ -241,5 +243,177 @@ TIDE_TEST(shards_a_session_plays_a_sharded_match_on_this_machine)
     }
     TIDE_CHECK(owned == 1);
     TIDE_CHECK(tide_session_status_of(s).client.resyncs == 0);
+    tide_session_destroy(s);
+}
+
+// Hot reloading a sharded match on this machine: every shard and every shard
+// its player follows changes build at once, at a moment nothing the old build
+// wrote is on its way between them (tide_session_can_reload). Each build here
+// is a copy of the game's table; the one swapped out is zeroed, so anything
+// still using it would fail. The second has another layout, carried over by
+// copying each world, and the walk goes on across the border as it would have.
+static int migrations;
+
+static bool copy_over(void *user, const void *from, void *to)
+{
+    (void)user;
+    migrations++;
+    tide_world_copy(to, from);
+    return true;
+}
+
+static void update_until_reloadable(tide_session *s)
+{
+    for (int i = 0; i < 600 && !tide_session_can_reload(s); i++) {
+        now += 1.0 / 120.0;
+        tide_session_update(s, now);
+    }
+    TIDE_REQUIRE(tide_session_can_reload(s));
+}
+
+static tide_game builds[3];
+
+TIDE_TEST(shards_a_sharded_match_reloads_every_shard_at_once)
+{
+    now = 0;
+    walk_until = 0;
+    for (int i = 0; i < 3; i++) builds[i] = tide_game_api;
+    builds[2].hash ^= 1u; // Another layout
+    tide_session *s = tide_session_create(&(tide_session_desc){
+        .game = &builds[0], .tick_rate = 60, .sample = sample,
+        .shard_world = {{-40, -10, 0}, {40, 10, 0}}, .shard_split = {2, 1, 1}});
+    TIDE_REQUIRE(s != NULL);
+    tide_session_start(s, NULL, now);
+    for (int i = 0; i < 240; i++) {
+        now += 1.0 / 120.0;
+        tide_session_update(s, now);
+    }
+    TIDE_REQUIRE(tide_session_status_of(s).client.state == TIDE_SESSION_CONNECTED);
+    walk_until = now + 4.0;
+    for (int i = 0; i < 120; i++) {
+        now += 1.0 / 120.0;
+        tide_session_update(s, now);
+    }
+    // New code, the same layout
+    update_until_reloadable(s);
+    tide_session_set_game(s, &builds[1]);
+    memset(&builds[0], 0, sizeof builds[0]);
+    for (int i = 0; i < 120; i++) {
+        now += 1.0 / 120.0;
+        tide_session_update(s, now);
+    }
+    // Another layout, as the walk crosses the border
+    update_until_reloadable(s);
+    migrations = 0;
+    TIDE_REQUIRE(tide_session_migrate(s, &builds[2], copy_over, NULL));
+    TIDE_CHECK(migrations == 3); // The root's world and both regions'
+    memset(&builds[1], 0, sizeof builds[1]);
+    for (int i = 0; i < 720; i++) {
+        now += 1.0 / 120.0;
+        tide_session_update(s, now);
+    }
+    const tide_world *w = tide_session_world(s);
+    TIDE_REQUIRE(w != NULL);
+    int owned = 0;
+    for (uint32_t index = 0; index < w->entities.next_unused; index++) {
+        if (!w->entities.page[index >> TIDE_ENTITY_PAGE_SHIFT]) {
+            index |= (1u << TIDE_ENTITY_PAGE_SHIFT) - 1u;
+            continue;
+        }
+        const tide_entity e = tide_entity_in_slot(&w->entities, index);
+        if (tide_entity_is_null(e) || !tide_has_Avatar(w, e) || tide_has_tide_ghost(w, e)) continue;
+        owned++;
+        TIDE_CHECK(tide_get_Avatar(w, e).position.x > 18.0f); // It walked all the way, through both reloads
+    }
+    TIDE_CHECK(owned == 1);
+    const tide_session_status status = tide_session_status_of(s);
+    TIDE_CHECK(status.client.state == TIDE_SESSION_CONNECTED);
+    TIDE_CHECK(status.client.resyncs == 0); // Each world it follows took its server's, carried over
+    tide_session_destroy(s);
+}
+
+// A web build's hot reload: the old program hands the next its sharded match
+// whole (tide_session_save_shards), every shard's world carried over in the
+// checkpoint (tide_shard_checkpoint_rewrite, here by copying), and the new
+// one goes on from it with this machine's player back as themselves: one
+// avatar, walking on across the border.
+static uint8_t *copy_world(void *user, const uint32_t shard, const uint8_t *world, const uint32_t size, uint32_t *out_size)
+{
+    (void)shard;
+    (*(int *)user)++;
+    uint8_t *copy = malloc(size ? size : 1u);
+    if (copy) memcpy(copy, world, size);
+    *out_size = size;
+    return copy;
+}
+
+static int avatars(const tide_world *w, Avatar *found)
+{
+    int count = 0;
+    for (uint32_t index = 0; w && index < w->entities.next_unused; index++) {
+        if (!w->entities.page[index >> TIDE_ENTITY_PAGE_SHIFT]) {
+            index |= (1u << TIDE_ENTITY_PAGE_SHIFT) - 1u;
+            continue;
+        }
+        const tide_entity e = tide_entity_in_slot(&w->entities, index);
+        if (tide_entity_is_null(e) || !tide_has_Avatar(w, e) || tide_has_tide_ghost(w, e)) continue;
+        *found = tide_get_Avatar(w, e);
+        count++;
+    }
+    return count;
+}
+
+TIDE_TEST(shards_a_sharded_match_goes_on_in_another_program)
+{
+    now = 0;
+    walk_until = 0;
+    const tide_session_desc desc = {.game = &tide_game_api, .tick_rate = 60, .sample = sample,
+                                    .shard_world = {{-40, -10, 0}, {40, 10, 0}}, .shard_split = {2, 1, 1}};
+    tide_session *s = tide_session_create(&desc);
+    TIDE_REQUIRE(s != NULL);
+    tide_session_start(s, NULL, now);
+    for (int i = 0; i < 240; i++) {
+        now += 1.0 / 120.0;
+        tide_session_update(s, now);
+    }
+    walk_until = now + 4.0;
+    for (int i = 0; i < 120; i++) {
+        now += 1.0 / 120.0;
+        tide_session_update(s, now);
+    }
+    update_until_reloadable(s);
+    uint32_t size = 0;
+    uint64_t cookie = 0;
+    uint8_t *saved = tide_session_save_shards(s, &size, &cookie);
+    TIDE_REQUIRE(saved != NULL && cookie != 0);
+    const tide_player_id player = tide_session_status_of(s).client.player;
+    tide_session_destroy(s);
+
+    int worlds = 0;
+    uint32_t carried_size = 0;
+    uint8_t *carried = tide_shard_checkpoint_rewrite(saved, size, copy_world, &worlds, &carried_size);
+    free(saved);
+    TIDE_REQUIRE(carried != NULL);
+    TIDE_CHECK(worlds == 3);
+    s = tide_session_create(&desc);
+    TIDE_REQUIRE(s != NULL);
+    tide_session_start_shards_from(s, carried, carried_size, cookie, now);
+    free(carried);
+    for (int i = 0; i < 600; i++) {
+        now += 1.0 / 120.0;
+        tide_session_update(s, now);
+    }
+    const tide_session_status status = tide_session_status_of(s);
+    TIDE_CHECK(status.client.state == TIDE_SESSION_CONNECTED);
+    TIDE_CHECK(status.client.player.id == player.id); // The same player, joined no second time
+    Avatar a = {0};
+    int every = 0; // Across every shard: PlayerJoined spawned no second avatar
+    for (uint32_t i = 0; i < tide_shards_count(tide_session_shards(s)); i++) {
+        Avatar b;
+        every += avatars(tide_shards_world(tide_session_shards(s), i), &b);
+    }
+    TIDE_CHECK(every == 1);
+    TIDE_CHECK(avatars(tide_session_world(s), &a) == 1);
+    TIDE_CHECK(a.position.x > 18.0f);
     tide_session_destroy(s);
 }

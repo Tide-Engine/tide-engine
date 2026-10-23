@@ -35,6 +35,10 @@ typedef struct tide_shard_coordinator_desc {
     // where they are, down to twice the range across, and two neighbouring
     // regions owning a quarter of it together merge (0: neither)
     uint32_t most_entities;
+    // ...and so is one whose shard is steadily busier than this, the share of
+    // its time its updates take (tide_shard_agent_busy), and two neighbouring
+    // regions merge only if they're a quarter of it together too (0: neither)
+    float busiest;
     // Checkpoints: now and then (`checkpoint_seconds`, 0: 60) and after each
     // change of shape. False: none, and a change of shape is told at once.
     bool checkpoints;
@@ -96,11 +100,20 @@ void tide_shard_coordinator_kept(tide_shard_coordinator *c);
 void tide_shard_coordinator_restarted(tide_shard_coordinator *c, uint32_t shard);
 // Whether it waits for shards' checkpoints (their next reports have them).
 bool tide_shard_coordinator_checkpointing(const tide_shard_coordinator *c);
+// The game's build changed and its worlds were laid out anew: checkpoints of
+// the old layout are no use to it, so one is made as soon as it can be.
+void tide_shard_coordinator_rebuilt(tide_shard_coordinator *c);
 
 // One shard's world in a checkpoint (TIDE_SHARD_ACTION_CHECKPOINT's bytes),
 // and the tick its journal goes on from: false for none, or bytes that aren't one.
 bool tide_shard_checkpoint_world(const uint8_t *data, uint32_t size, uint32_t shard, const uint8_t **world,
                                  uint32_t *world_size, uint32_t *tick);
+// A checkpoint with each shard's world made anew by `world` (from its packed
+// bytes, as bytes to free(), or NULL to fail): a hot reload's, carried over
+// to another layout. NULL for bytes that aren't a checkpoint, or a world that fails.
+typedef uint8_t *(*tide_shard_rewrite_fn)(void *user, uint32_t shard, const uint8_t *world, uint32_t size, uint32_t *out_size);
+uint8_t *tide_shard_checkpoint_rewrite(const uint8_t *data, uint32_t size, tide_shard_rewrite_fn world, void *user,
+                                       uint32_t *out_size);
 
 // A checkpoint now, its own part and each running shard's world as `world`
 // gives it (packed, with the tick its journal goes on from): for a host with

@@ -35,6 +35,7 @@ struct tide_shard_agent {
     uint8_t *checkpoint;    // Its world, packed, for the next report
     uint32_t checkpoint_size;
     uint32_t checkpoint_tick; // ...and the tick its journal goes on from
+    float busy;               // How busy its server is, as its host last said
 };
 
 static map64 *sent_to(tide_shard_agent *a, const uint32_t to)
@@ -354,6 +355,25 @@ static void list_ghost(void *context, const tide_entity e, const int32_t source)
     l->count++;
 }
 
+void tide_shard_agent_rebuilt(tide_shard_agent *a, const tide_game *game)
+{
+    if (!a || !game || !game->shards) return;
+    a->game = game;
+    a->api = game->shards;
+    // What it sent each target, it sends again whole: its bytes may be laid out
+    // anew, and the ghosts on their way were dropped
+    for (uint32_t s = 0; s < a->sent_room; s++) {
+        for (uint32_t k = 0; k < a->sent[s].room; k++) {
+            if (a->sent[s].keys[k]) a->sent[s].values[k] = 1u; // Sent, with bytes it doesn't know
+        }
+    }
+}
+
+void tide_shard_agent_busy(tide_shard_agent *a, const float busy)
+{
+    if (a) a->busy = isfinite(busy) && busy > 0.0f ? busy : 0.0f;
+}
+
 uint8_t *tide_shard_agent_report(tide_shard_agent *a, uint32_t *size)
 {
     const void *world = tide_server_world(a->server);
@@ -363,6 +383,9 @@ uint8_t *tide_shard_agent_report(tide_shard_agent *a, uint32_t *size)
     tide_write_u32(&w, a->applied);
     tide_write_u32(&w, tide_shard_agent_tick(a));
     tide_write_u32(&w, tide_server_injected(a->server));
+    uint32_t busy;
+    memcpy(&busy, &a->busy, sizeof busy);
+    tide_write_u32(&w, busy);
     tide_shard_status status;
     a->api->status(world, &status);
     tide_write_u32(&w, (uint32_t)status.id);

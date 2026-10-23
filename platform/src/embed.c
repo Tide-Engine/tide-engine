@@ -251,6 +251,7 @@ double tide_embed_frame(tide_embed *e, const float seconds, const tide_embed_inp
             reload.since_check = 0.0f;
             check();
         }
+        take_waiting(); // Every frame: a sharded match can change build only now and then
         if (reload.restart_requested && tide_run_game) {
             check();
             restart();

@@ -419,6 +419,13 @@ bool tide_server_kick(tide_server *s, tide_player_id player, const char *message
 bool tide_server_inject(tide_server *s, const uint8_t *data, uint32_t size);
 // How many handed messages are still waiting for a tick.
 uint32_t tide_server_injected(const tide_server *s);
+// The `i`th of them, from the first to be applied: its bytes and size, NULL
+// past the last.
+const uint8_t *tide_server_injected_message(const tide_server *s, uint32_t i, uint32_t *size);
+// Drops those of a kind (their first byte, tide_shard_kind) still
+// waiting, and says how many: a reloaded sharded world drops its ghosts on
+// their way, which are sent again whole.
+uint32_t tide_server_drop_injected(tide_server *s, uint8_t kind);
 // Shards: a player of the world, who joins this shard's match as `player` by
 // presenting `cookie` (the one their first shard gave them), closed or not.
 // False when another player has the slot.
@@ -715,8 +722,26 @@ const void *tide_session_server_world(const tide_session *s);
 tide_session_status tide_session_status_of(const tide_session *s);
 // The next thing that happened since the last call, oldest first.
 bool tide_session_next_event(tide_session *s, tide_session_event *event);
+// The shards of a sharded match on this machine (tide/shards.h), for tests
+// and tools; NULL for any other session.
+struct tide_shards *tide_session_shards(const tide_session *s);
+// A sharded match on this machine whole, to go on in another program (a web
+// build's hot reload): a checkpoint of every shard (tide_shards_save) and
+// this machine's player's cookie. NULL elsewhere, or when it isn't quiet
+// (tide_session_can_reload); bytes to free().
+uint8_t *tide_session_save_shards(const tide_session *s, uint32_t *size, uint64_t *cookie);
+// ...and the match going on from them, its worlds carried over to this
+// build's layout first if need be (tide_shard_checkpoint_rewrite): every
+// shard, and this machine's player back in it as themselves.
+void tide_session_start_shards_from(tide_session *s, const uint8_t *data, uint32_t size, uint64_t cookie, double now);
+// Whether another build can take over now (tide_session_set_game,
+// tide_session_migrate). Always, but in a sharded match on this machine: all
+// its shards change build at once, at a moment nothing the old build wrote is
+// on its way between them (tide_shards_quiet). A host waits for one.
+bool tide_session_can_reload(const tide_session *s);
 // Runs another build of the same game from now on: new code with the same
-// data layout (the same hash), for hot reloading. The match goes on.
+// data layout (the same hash), for hot reloading. The match goes on, every
+// shard of a sharded one.
 void tide_session_set_game(tide_session *s, const tide_game *game);
 // Hot reloading can add or remove correction attributes without changing the
 // simulation layout. Refresh the optional presentation callback with its table.
@@ -730,8 +755,10 @@ typedef bool (*tide_migrate_fn)(void *user, const void *from, void *to);
 // world the server confirmed on a client of another machine. This machine's
 // own player takes its server's world. Players stay where they are. A client's
 // ticks ahead of the server run again, and a world that came out different
-// from the server's is sent again, as when a client goes wrong. False,
-// changing nothing, if `migrate` fails or there isn't the memory.
+// from the server's is sent again, as when a client goes wrong. A sharded
+// match carries every shard over, and every shard this machine follows. False,
+// changing nothing, if `migrate` fails, there isn't the memory, or a sharded
+// match on this machine isn't quiet (tide_session_can_reload).
 bool tide_session_migrate(tide_session *s, const tide_game *game, tide_migrate_fn migrate, void *user);
 
 // What local code asked for, with Session.Start, Join, Connect, Leave, Open,

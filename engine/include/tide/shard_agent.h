@@ -31,6 +31,13 @@ typedef struct tide_shard_agent tide_shard_agent;
 tide_shard_agent *tide_shard_agent_create(const tide_game *game, tide_server *server, uint32_t shard,
                                           uint32_t ticks_before, bool fresh);
 void tide_shard_agent_destroy(tide_shard_agent *a);
+// The game's build changed (a hot reload), its server's with it: the agent
+// goes on with `game`, and sends every ghost again whole, as those on their
+// way were dropped (tide_server_drop_injected).
+void tide_shard_agent_rebuilt(tide_shard_agent *a, const tide_game *game);
+// How busy the shard's server is: the share of the time its updates take, of
+// late (1: all of it), as its host measures it. Its reports say the last.
+void tide_shard_agent_busy(tide_shard_agent *a, float busy);
 // Its report, once the server has updated (and the shard's journal has kept
 // what its ticks were): bytes to free(), for tide_shard_coordinator_report.
 uint8_t *tide_shard_agent_report(tide_shard_agent *a, uint32_t *size);
@@ -55,8 +62,9 @@ uint32_t tide_shard_agent_tick(const tide_shard_agent *a);
 //
 // Report: u32 TIDE_SHARD_REPORT, u32 shard, u32 the last batch applied, u32
 // the shard's tick (as its journal numbers them), u32 messages handed the
-// server and not yet applied, its status (i32 id, u32 role, owned, ghosts,
-// waiting, outbox, lent, u64 indices, ranges_end), u32 count and each player
+// server and not yet applied, f32 how busy it is (tide_shard_agent_busy),
+// its status (i32 id, u32 role, owned, ghosts, waiting, outbox, lent, u64
+// indices, ranges_end), u32 count and each player
 // connected (u32 PlayerID, u64 cookie), u32 count and each player's presence
 // (u32 PlayerID, u32 count, 48 bytes box), u32 count and each message its
 // world sent since the last report (as an outbox record: u32 route, target,

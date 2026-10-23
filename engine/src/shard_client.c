@@ -150,6 +150,16 @@ void tide_shard_client_update(tide_shard_client *c, const double now)
     }
 }
 
+void tide_shard_client_rebuilt(tide_shard_client *c, const tide_game *game)
+{
+    c->desc.client.game = game;
+}
+
+uint32_t tide_shard_client_room(const tide_shard_client *c)
+{
+    return c->room;
+}
+
 tide_client *tide_shard_client_home(const tide_shard_client *c)
 {
     return c->clients[c->home];

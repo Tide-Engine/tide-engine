@@ -1471,13 +1471,14 @@ static void on_client(tide_server *s, connection *c, tide_reader *r)
         lacks_size = tide_read_varint(r);
         lacks = tide_read_bytes(r, lacks_size);
     }
-    // What it has of the big command on its way down (see send_client), in a
-    // game with commands: its number (0: none), then 0 for all of it, or the
-    // chunks it has from the first, plus one, and which it has after those
+    // What it has of the big command or shard message on its way down (see
+    // send_client), in a game with commands or shards: its number (0: none),
+    // then 0 for all of it, or the chunks it has from the first, plus one, and
+    // which it has after those
     uint32_t download_number = 0;
     uint32_t download_ack = 0;
     uint64_t download_mask = 0;
-    if (s->game->command) {
+    if (s->game->command || s->game->shards) {
         download_number = tide_read_varint(r);
         const uint32_t has = download_number ? tide_read_varint(r) : 0u;
         download_ack = !download_number ? 0u : has == 0 ? UINT32_MAX : has - 1u;
@@ -2025,6 +2026,40 @@ bool tide_server_inject(tide_server *s, const uint8_t *data, const uint32_t size
 uint32_t tide_server_injected(const tide_server *s)
 {
     return s->injected_count;
+}
+
+const uint8_t *tide_server_injected_message(const tide_server *s, const uint32_t i, uint32_t *size)
+{
+    if (i >= s->injected_count) return NULL;
+    *size = s->injected[i].size;
+    return s->injected[i].data;
+}
+
+uint32_t tide_server_drop_injected(tide_server *s, const uint8_t kind)
+{
+    uint32_t kept = 0, dropped = 0;
+    for (uint32_t i = 0; i < s->injected_count; i++) {
+        injected *m = &s->injected[i];
+        if (m->data[0] != kind) {
+            s->injected[kept++] = *m;
+            continue;
+        }
+        // Published for its players already: nobody needs its bytes now
+        for (uint32_t k = 0; m->published && k < s->published_count; k++) {
+            published *p = &s->published[k];
+            if (p->number != m->published) continue;
+            for (uint32_t c = 0; c < s->players; c++) {
+                if (s->connections[c].download_number == p->number) stop_download(&s->connections[c]);
+            }
+            free(p->data);
+            s->published[k] = s->published[--s->published_count];
+            break;
+        }
+        free(m->data);
+        dropped++;
+    }
+    s->injected_count = kept;
+    return dropped;
 }
 
 bool tide_server_admit(tide_server *s, const tide_player_id player, const uint64_t cookie)
@@ -5205,10 +5240,10 @@ static void send_client(tide_client *c)
         tide_write_varint(&w, c->lacks_size);
         tide_write_bytes(&w, c->lacks, c->lacks_size);
     }
-    // The big command on its way down, in a game with commands: the chunks it
-    // has of the lowest one coming, or that it has all of the last, as for a
-    // world's chunks above
-    if (g->command) {
+    // The big command or shard message on its way down, in a game with
+    // commands or shards: the chunks it has of the lowest one coming, or that
+    // it has all of the last, as for a world's chunks above
+    if (g->command || g->shards) {
         const download *coming = NULL;
         uint32_t whole = c->download_done;
         for (uint32_t i = 0; i < DOWNLOADS_MOST; i++) {
@@ -5784,7 +5819,10 @@ static bool shard_reach(void *user, const uint32_t shard, const uint64_t match, 
     return true;
 }
 
-static void start_shards(tide_session *s, const void *start, const double now)
+// Every shard of a sharded match on this machine, made anew from `start`, or
+// from a checkpoint (`checkpoint`, `size`) its player comes back to with `cookie`
+static void start_shards(tide_session *s, const void *start, const uint8_t *checkpoint, const uint32_t size,
+                         const uint64_t cookie, const double now)
 {
     s->loopback = tide_loopback_create(1);
     if (!s->loopback) {
@@ -5804,7 +5842,10 @@ static void start_shards(tide_session *s, const void *start, const double now)
         .user = s,
         .jobs = s->desc.jobs,
     };
-    s->shards = tide_shards_create(&shards, now);
+    s->shards = checkpoint ? tide_shards_load(&shards, checkpoint, size, now) : tide_shards_create(&shards, now);
+    // From a checkpoint, the shards take its players back (a round applies
+    // their admissions) before this machine's says hello as one of them
+    if (checkpoint && s->shards) tide_shards_update(s->shards, now);
     const tide_shard_client_desc client = {
         .client = {
             .game = s->desc.game,
@@ -5819,6 +5860,7 @@ static void start_shards(tide_session *s, const void *start, const double now)
             .guess_seconds = s->desc.guess_seconds,
             .correct_views = s->desc.correct_views,
             .events = &s->heard,
+            .cookie = cookie,
         },
         .reach = shard_reach,
         .user = s,
@@ -5841,7 +5883,7 @@ static void start_server(tide_session *s, const void *start, const void *world, 
     tide_session_leave(s);
     if (s->desc.game->shards && !world) {
         start_clock(s, now);
-        start_shards(s, start, now);
+        start_shards(s, start, NULL, 0, 0, now);
         return;
     }
     start_clock(s, now);
@@ -6338,9 +6380,57 @@ void tide_session_take_over(tide_session *s, const tide_transport network, const
     s->last_state = TIDE_SESSION_CONNECTING;
 }
 
+// A client's build changed with the same layout: it goes on as it is
+static void client_set_game(tide_client *c, const tide_game *game)
+{
+    c->desc.game = game;
+    c->game = game;
+    // What the last build recorded is laid out its own way: the ticks it ran
+    // and this one confirms as they were tell the handlers nothing
+    tide_hearing_rebuilt(&c->hearing);
+}
+
+uint8_t *tide_session_save_shards(const tide_session *s, uint32_t *size, uint64_t *cookie)
+{
+    if (!s->shards || !s->client || !tide_shards_quiet(s->shards)) return NULL;
+    *cookie = tide_client_status_of(s->client).cookie;
+    return tide_shards_save(s->shards, size);
+}
+
+void tide_session_start_shards_from(tide_session *s, const uint8_t *data, const uint32_t size, const uint64_t cookie,
+                                    const double now)
+{
+    tide_session_leave(s);
+    start_clock(s, now);
+    start_shards(s, NULL, data, size, cookie, now);
+}
+
+struct tide_shards *tide_session_shards(const tide_session *s)
+{
+    return s->shards;
+}
+
+bool tide_session_can_reload(const tide_session *s)
+{
+    return !s->shards || tide_shards_quiet(s->shards);
+}
+
 void tide_session_set_game(tide_session *s, const tide_game *game)
 {
     s->desc.game = game;
+    // A sharded match's every shard and every shard this machine follows, at once
+    for (uint32_t i = 0; s->shards && i < tide_shards_count(s->shards); i++) {
+        tide_server *server = tide_shards_server(s->shards, i);
+        if (!server) continue;
+        server->desc.game = game;
+        server->game = game;
+    }
+    if (s->shards) tide_shards_rebuilt(s->shards, game, false);
+    for (uint32_t i = 0; s->shard_client && i < tide_shard_client_room(s->shard_client); i++) {
+        tide_client *c = tide_shard_client_session(s->shard_client, i);
+        if (c && c != s->client) client_set_game(c, game);
+    }
+    if (s->shard_client) tide_shard_client_rebuilt(s->shard_client, game);
     if (s->stale) {
         s->stale->desc.game = game;
         s->stale->game = game;
@@ -6349,13 +6439,7 @@ void tide_session_set_game(tide_session *s, const tide_game *game)
         s->server->desc.game = game;
         s->server->game = game;
     }
-    if (s->client) {
-        s->client->desc.game = game;
-        s->client->game = game;
-    }
-    // What the last build recorded is laid out its own way: the ticks it ran
-    // and this one confirms as they were tell the handlers nothing
-    if (s->client) tide_hearing_rebuilt(&s->client->hearing);
+    if (s->client) client_set_game(s->client, game);
     tide_event_log_clear(&s->heard);
 }
 
@@ -6607,9 +6691,59 @@ static void take_server_world(tide_client *c, const tide_server *s)
     c->repair_stream = false;
 }
 
+// A sharded match: every shard's server here and every shard this machine
+// follows, carried over together, or none of them
+static bool migrate_shards(tide_session *s, const tide_game *game, const tide_migrate_fn migrate, void *user)
+{
+    if (s->shards && !tide_shards_quiet(s->shards)) return false; // What's on its way is the old build's (tide_session_can_reload)
+    const uint32_t servers = s->shards ? tide_shards_count(s->shards) : 0u;
+    const uint32_t clients = s->shard_client ? tide_shard_client_room(s->shard_client) : 0u;
+    server_migration *sm = calloc(servers ? servers : 1u, sizeof *sm);
+    client_migration *cm = calloc(clients ? clients : 1u, sizeof *cm);
+    bool ok = sm && cm;
+    for (uint32_t i = 0; ok && i < servers; i++) {
+        tide_server *server = tide_shards_server(s->shards, i);
+        if (server) ok = prepare_server(server, game, migrate, user, &sm[i]);
+    }
+    for (uint32_t i = 0; ok && i < clients; i++) {
+        tide_client *c = tide_shard_client_session(s->shard_client, i);
+        // One of this machine's shards takes what its server has; another machine's carries its own over
+        if (c) ok = prepare_client(c, game, s->shards ? NULL : migrate, user, &cm[i]);
+    }
+    if (!ok) {
+        for (uint32_t i = 0; sm && i < servers; i++) discard_server_migration(game, &sm[i]);
+        for (uint32_t i = 0; cm && i < clients; i++) {
+            tide_client *c = tide_shard_client_session(s->shard_client, i);
+            if (c) discard_client_migration(c, game, &cm[i]);
+        }
+        free(sm);
+        free(cm);
+        return false;
+    }
+    for (uint32_t i = 0; i < servers; i++) {
+        tide_server *server = tide_shards_server(s->shards, i);
+        if (server) commit_server(server, game, &sm[i]);
+    }
+    for (uint32_t i = 0; i < clients; i++) {
+        tide_client *c = tide_shard_client_session(s->shard_client, i);
+        if (!c) continue;
+        commit_client(c, game, &cm[i]);
+        tide_server *server = s->shards ? tide_shards_server(s->shards, i) : NULL;
+        if (server && c->loaded) take_server_world(c, server);
+    }
+    free(sm);
+    free(cm);
+    if (s->shards) tide_shards_rebuilt(s->shards, game, true);
+    if (s->shard_client) tide_shard_client_rebuilt(s->shard_client, game);
+    if (s->stale && s->desc.game->hash != game->hash) clear_commands(&s->stale->commands);
+    s->desc.game = game;
+    tide_event_log_clear(&s->heard);
+    return true;
+}
+
 bool tide_session_migrate(tide_session *s, const tide_game *game, const tide_migrate_fn migrate, void *user)
 {
-    if (s->shards || s->shard_client) return false; // A sharded match starts over (notes/sharding.md, Gaps)
+    if (s->shards || s->shard_client) return migrate_shards(s, game, migrate, user);
     const bool own = s->server && s->client; // This machine's player, on its own server
     server_migration sm = {0};
     client_migration cm = {0};

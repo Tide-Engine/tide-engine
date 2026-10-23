@@ -15,6 +15,8 @@
 
 #define RANGE_SIZE (1u << 20)    // Entity indices a shard is given at a time
 #define SPLIT_EVERY 30u          // Updates between looks at whether a region should split or merge
+#define BUSY_SMOOTHING 0.05      // How much of a shard's busy share its last report makes
+#define BUSY_SETTLING 120u       // Reports before a shard's busy share is anything to go by
 #define PLAYER_AWAY_SECONDS 20.0 // How long a player of the world on no shard has to come back before PlayerLeft
 #define SAVE_MAGIC 0x53444854u   // "THDS"
 #define SAVE_VERSION 4u
@@ -40,6 +42,8 @@ typedef struct cshard {
     uint32_t tick;
     uint32_t injected; // Messages handed it and not yet applied
     tide_shard_status status;
+    double busy;          // Its busy share, smoothed over its reports...
+    uint32_t busy_heard;  // ...of this many since its region last changed
     uint32_t *connected; // PlayerIDs...
     uint64_t *cookies;   // ...and their cookies
     uint32_t connected_count, connected_room;
@@ -498,6 +502,9 @@ bool tide_shard_coordinator_report(tide_shard_coordinator *c, const uint8_t *rep
     const uint32_t applied = tide_read_u32(&r);
     const uint32_t tick = tide_read_u32(&r);
     const uint32_t injected = tide_read_u32(&r);
+    const uint32_t busy_bits = tide_read_u32(&r);
+    float busy;
+    memcpy(&busy, &busy_bits, sizeof busy);
     tide_shard_status status;
     status.id = (int32_t)tide_read_u32(&r);
     status.role = tide_read_u32(&r);
@@ -607,6 +614,10 @@ bool tide_shard_coordinator_report(tide_shard_coordinator *c, const uint8_t *rep
     sh->tick = tick;
     sh->injected = injected;
     sh->status = status;
+    if (isfinite(busy) && busy >= 0.0f) {
+        sh->busy = sh->busy_heard ? sh->busy + (busy - sh->busy) * BUSY_SMOOTHING : busy;
+        sh->busy_heard++;
+    }
     return true;
 }
 
@@ -738,10 +749,30 @@ static int compare_double(const void *a, const void *b)
     return x < y ? -1 : x > y ? 1 : 0;
 }
 
+// Whether a region's shard holds too much: more entities than a region takes,
+// or busier than a shard should be, steadily
+static bool too_much(const tide_shard_coordinator *c, const cshard *sh)
+{
+    if (c->desc.most_entities && sh->status.owned > c->desc.most_entities) return true;
+    return c->desc.busiest > 0.0f && sh->busy_heard >= BUSY_SETTLING && sh->busy > (double)c->desc.busiest;
+}
+
+// Whether two regions' shards are quiet enough together to be one: a
+// quarter of what splits one at most, by entities and by how busy, so the
+// merged one doesn't split again soon
+static bool quiet_together(const tide_shard_coordinator *c, const cshard *a, const cshard *b)
+{
+    if (c->desc.most_entities && ((uint64_t)a->status.owned + b->status.owned) * 4u > c->desc.most_entities) return false;
+    if (c->desc.busiest > 0.0f
+        && (a->busy_heard < BUSY_SETTLING || b->busy_heard < BUSY_SETTLING || (a->busy + b->busy) * 4.0 > (double)c->desc.busiest))
+        return false;
+    return true;
+}
+
 static bool maybe_split(tide_shard_coordinator *c, const uint32_t id)
 {
     cshard *sh = &c->shards[id];
-    if (sh->status.owned <= c->desc.most_entities) return false;
+    if (!too_much(c, sh) || sh->status.owned < 2u) return false;
     if (!sh->sampled) { // Where its entities are, first
         if (!sh->sample_asked) {
             sh->sample_stride = sh->status.owned / 4096u + 1u;
@@ -779,6 +810,7 @@ static bool maybe_split(tide_shard_coordinator *c, const uint32_t id)
     half->box.lo[axis] = cut;
     sh->box.hi[axis] = cut;
     half->used = true;
+    sh->busy_heard = 0; // Each half's own, from now
     give_range(c, added);
     // It starts at the world's tick, the root's, holding nothing
     start_anew(c, added, c->shards[TIDE_SHARD_ROOT].tick);
@@ -807,8 +839,7 @@ static bool joins(const tide_shard_coordinator *c, const tide_shard_box *a, cons
     return true;
 }
 
-// One merge at a time, of two regions together owning a quarter of what
-// splits one at most, so the merged one doesn't split again soon
+// One merge at a time, of two regions quiet enough together
 static bool maybe_merge(tide_shard_coordinator *c)
 {
     for (uint32_t i = 0; i < c->count; i++) {
@@ -820,8 +851,9 @@ static bool maybe_merge(tide_shard_coordinator *c)
             if (!c->shards[b].used || !c->shards[b].region) continue;
             tide_shard_box both;
             if (!joins(c, &c->shards[a].box, &c->shards[b].box, &both)) continue;
-            if (((uint64_t)c->shards[a].status.owned + c->shards[b].status.owned) * 4u > c->desc.most_entities) continue;
+            if (!quiet_together(c, &c->shards[a], &c->shards[b])) continue;
             c->shards[a].box = both;
+            c->shards[a].busy_heard = 0;
             c->shards[b].region = false;
             c->shards[b].retiring = true;
             c->shards[b].into = a;
@@ -865,7 +897,7 @@ static void reshape(tide_shard_coordinator *c)
         sh->status.indices += RANGE_SIZE; // Until it reports having it
         c->changed = true;
     }
-    if (c->desc.most_entities && !c->tell_after) {
+    if ((c->desc.most_entities || c->desc.busiest > 0.0f) && !c->tell_after) {
         const uint32_t count = c->count;
         bool split = false;
         for (uint32_t i = 0; i < count; i++) {
@@ -1158,6 +1190,56 @@ bool tide_shard_checkpoint_world(const uint8_t *data, const uint32_t size, const
     return false;
 }
 
+uint8_t *tide_shard_checkpoint_rewrite(const uint8_t *data, const uint32_t size, const tide_shard_rewrite_fn world,
+                                       void *user, uint32_t *out_size)
+{
+    tide_reader r = {data, size, 0, false};
+    if (tide_read_u32(&r) != SAVE_MAGIC || tide_read_u32(&r) != SAVE_VERSION) return NULL;
+    tide_read_u64(&r);
+    const uint32_t ranges = tide_read_u32(&r);
+    tide_read_bytes(&r, ranges * 12u);
+    const uint32_t moved = tide_read_u32(&r);
+    tide_read_bytes(&r, moved * 12u);
+    const uint32_t players = tide_read_u32(&r);
+    tide_read_bytes(&r, players * 9u);
+    const uint32_t count = tide_read_u32(&r);
+    if (r.failed) return NULL;
+    // The head as it was, then each shard with its world as `world` makes it
+    tide_writer w = {.grows = true};
+    tide_write_bytes(&w, data, r.at);
+    for (uint32_t i = 0; i < count; i++) {
+        const uint32_t from = r.at;
+        const bool used = tide_read_u8(&r) != 0;
+        tide_read_u8(&r);
+        tide_read_u32(&r);
+        if (!used) {
+            if (!r.failed) tide_write_bytes(&w, data + from, r.at - from);
+            continue;
+        }
+        tide_read_bytes(&r, 1u + 48u);
+        tide_read_u32(&r);
+        const uint32_t before = r.at;
+        const uint32_t n = tide_read_u32(&r);
+        const uint8_t *bytes = tide_read_bytes(&r, n);
+        uint32_t made = 0;
+        uint8_t *remade = bytes ? world(user, i, bytes, n, &made) : NULL;
+        if (!remade) {
+            free(w.data);
+            return NULL;
+        }
+        tide_write_bytes(&w, data + from, before - from);
+        tide_write_u32(&w, made);
+        tide_write_bytes(&w, remade, made);
+        free(remade);
+    }
+    if (r.failed || r.at != r.size || w.overflow) {
+        free(w.data);
+        return NULL;
+    }
+    *out_size = w.size;
+    return w.data;
+}
+
 // Every running shard makes a checkpoint of its world for its next report
 static void begin_checkpoint(tide_shard_coordinator *c)
 {
@@ -1255,6 +1337,11 @@ void tide_shard_coordinator_restarted(tide_shard_coordinator *c, const uint32_t 
         if (c->players[p].here) admit(c, shard, p, c->players[p].cookie);
         c->players[p].route = 0; // Every route told again
     }
+}
+
+void tide_shard_coordinator_rebuilt(tide_shard_coordinator *c)
+{
+    if (c) c->changed = true;
 }
 
 bool tide_shard_coordinator_checkpointing(const tide_shard_coordinator *c)

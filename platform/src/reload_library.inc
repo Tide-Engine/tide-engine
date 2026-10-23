@@ -136,6 +136,13 @@ static struct {
     bool r_held;
     bool r_down; // A tap already seen but still pending the game's next input sample
     bool restart_requested;
+    // A new build waiting to take over until the match can change build: a
+    // sharded one's shards change together, when nothing is on its way
+    // between them (tide_session_can_reload)
+    const tide_host_game *waiting;
+    void *waiting_library;
+    uint32_t waiting_build;
+    uint64_t waiting_since; // tide_time_now_ns
 } reload;
 
 static void library_path(const uint32_t build, char *out, const size_t size)
@@ -321,7 +328,7 @@ static bool carry_over(const tide_host_game *next)
 // Runs `next` from now on. With the same data layout, it takes over the match
 // and the local state where they are; with another, they're carried over to
 // it, and when they can't be, the game starts over.
-static void swap(const tide_host_game *next, void *library)
+static void swap(const tide_host_game *next, void *library, const bool unsettled)
 {
     const tide_host_game *old = tide_run_game;
     // Release private caches with the code that made their layout, before
@@ -337,6 +344,12 @@ static void swap(const tide_host_game *next, void *library)
     const bool own_network = tide_run_network.on;
     if (own_network) {
         printf("tide: the match is on the game's own network, which the new build replaces: starting over\n");
+        retained = false;
+        tide_run_end();
+        tide_run_game = next;
+        tide_run_begin();
+    } else if (unsettled) {
+        printf("tide: reloaded, and started over: the shards never stopped sending each other what the old build wrote\n");
         retained = false;
         tide_run_end();
         tide_run_game = next;
@@ -386,6 +399,11 @@ static void restart(void)
     old->unload();
     library_close(reload.library);
     reload.library = NULL;
+    if (reload.waiting) { // A build waiting to take over is the one to start fresh
+        library_close(reload.waiting_library);
+        reload.waiting = NULL;
+        reload.loaded = reload.waiting_build;
+    }
     tide_run_game = load(reload.loaded, &reload.library, false);
     if (!tide_run_game && !tide_run_embedded) exit(1);
     if (!tide_run_game) return; // Another program's game stops, saying why: the program goes on
@@ -397,6 +415,33 @@ static void restart(void)
     tide_run_begin();
     printf("tide: started over\n");
     fflush(stdout);
+}
+
+// The build waiting to take over does, once the match can change build, or
+// after three seconds, starting over
+#define RELOAD_WAIT_NS 3000000000ull
+
+static void take_waiting(void)
+{
+    if (!reload.waiting) return;
+    const bool ready = !tide_run_session || tide_session_can_reload(tide_run_session);
+    const bool late = tide_time_now_ns() - reload.waiting_since >= RELOAD_WAIT_NS;
+    if (!ready && !late) return;
+    const tide_host_game *next = reload.waiting;
+    reload.waiting = NULL;
+    swap(next, reload.waiting_library, !ready);
+    reload.loaded = reload.waiting_build;
+}
+
+// A build that waited, and a newer one came: it never ran
+static void drop_waiting(void)
+{
+    if (!reload.waiting) return;
+    reload.waiting = NULL;
+    library_close(reload.waiting_library);
+    char path[4096];
+    loaded_path(reload.waiting_build, path, sizeof path);
+    remove(path);
 }
 
 // Swaps in the newest build, if there's a newer one, and starts over if tide
@@ -416,10 +461,15 @@ static void check(void)
         void *library = NULL;
         const tide_host_game *next = load(newest, &library, true);
         if (next) {
-            swap(next, library);
-            reload.loaded = newest;
+            const uint64_t since = reload.waiting ? reload.waiting_since : tide_time_now_ns();
+            drop_waiting();
+            reload.waiting = next;
+            reload.waiting_library = library;
+            reload.waiting_build = newest;
+            reload.waiting_since = since;
         }
     }
+    take_waiting();
 
     snprintf(path, sizeof path, "%s/restart", reload.dir);
     if (file_exists(path)) {

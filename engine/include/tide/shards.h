@@ -35,6 +35,15 @@ typedef struct tide_shards_desc {
     // neighbouring regions whose shards own a quarter of it together merge
     // back into one (0: neither).
     uint32_t most_entities;
+    // A region whose shard is steadily busier than this, the share of the
+    // time its updates take, is split too, and regions merge only when a
+    // quarter of it together (0: neither). How busy each shard is comes from
+    // `busy` (its host's measure, as `user`), or without it, is each server's
+    // update's time over the time since the last, as measured here. Shards in
+    // one process share its machine, so splitting them by load is for a host
+    // that runs them apart (Tide's hosting service), and for tests.
+    float busiest;
+    float (*busy)(void *user, uint32_t shard);
     // Each shard's server's transports (tide_server_desc.transports), made as
     // the shard starts: `shard` is its id. NULL: none, as in tests that only
     // tick the shards.
@@ -72,6 +81,17 @@ void tide_shards_destroy(tide_shards *s);
 // Runs every shard's due ticks, then carries what they sent and their ghosts
 // to the shards they're for, which apply them at their next ticks.
 void tide_shards_update(tide_shards *s, double now);
+
+// A hot reload swaps every shard's build at once, between updates, once the
+// world is quiet: no shard has a delivery or destroy waiting on a border, no
+// message holding values (an entity arriving, an event, a singleton) is on
+// its way to a server, and no checkpoint is being gathered, as the new build
+// can't read what the old one wrote of those.
+bool tide_shards_quiet(const tide_shards *s);
+// The game's build changed (its servers' too, which the caller sets): ghosts
+// on their way are dropped and sent again whole, and with a new layout
+// (`laid_out_anew`), a checkpoint follows soon.
+void tide_shards_rebuilt(tide_shards *s, const tide_game *game, bool laid_out_anew);
 
 // Shards are numbered from 0, the root; one that was merged away is NULL.
 uint32_t tide_shards_count(const tide_shards *s);

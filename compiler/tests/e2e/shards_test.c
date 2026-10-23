@@ -138,14 +138,19 @@ static void run(const double seconds, const bool check)
     }
 }
 
-static void begin(const uint32_t most)
+static void begin_with(const tide_shards_desc *d)
 {
     now = 0;
     most_dying = 0;
     memset(clients, 0, sizeof clients);
     net = tide_loopback_create(7);
+    shards = tide_shards_create(d, now);
+}
+
+static void begin(const uint32_t most)
+{
     const tide_shards_desc d = desc_of(most);
-    shards = tide_shards_create(&d, now);
+    begin_with(&d);
 }
 
 static void finish(void)
@@ -267,6 +272,52 @@ TIDE_TEST(shards_merge_quiet_regions)
     TIDE_CHECK(tide_shards_server(shards, 2) == NULL);
     TIDE_CHECK(tide_shards_region(shards, 1, &box) && box.lo[0] == -INFINITY && box.hi[0] == INFINITY);
     check_done();
+    TIDE_CHECK(tide_shard_dropped() == dropped);
+    check_clients(2);
+    finish();
+}
+
+// How busy each shard is, as a host would measure it
+static float busy_of[64];
+
+static float busy(void *user, const uint32_t shard)
+{
+    (void)user;
+    return shard < 64u ? busy_of[shard] : 0.0f;
+}
+
+TIDE_TEST(shards_split_a_busy_region_and_merge_quiet_ones)
+{
+    const uint64_t dropped = tide_shard_dropped();
+    memset(busy_of, 0, sizeof busy_of);
+    tide_shards_desc d = desc_of(0); // No limit by entities: by load alone
+    d.busiest = 0.5f;
+    d.busy = busy;
+    busy_of[1] = busy_of[2] = 0.3f; // Under the most, too busy to merge
+    begin_with(&d);
+    TIDE_REQUIRE(shards != NULL);
+    run(1.0, false);
+    // The left region's shard is busy for a while: it splits, and only it
+    busy_of[1] = 0.9f;
+    run(4.0, true);
+    const uint32_t split = tide_shards_count(shards);
+    TIDE_CHECK(split > 3);
+    tide_shard_box left, right;
+    TIDE_CHECK(tide_shards_region(shards, 1, &left) && left.hi[0] < 0.0);
+    TIDE_CHECK(tide_shards_region(shards, 2, &right) && right.lo[0] == 0.0 && right.hi[0] == INFINITY);
+    for (uint32_t i = 3; i < split; i++) {
+        tide_shard_box box;
+        TIDE_CHECK(tide_shards_region(shards, i, &box) && box.hi[0] <= 0.0); // Cut from the left
+    }
+    // Then everything's quiet: the regions merge back, one at a time, into one
+    memset(busy_of, 0, sizeof busy_of);
+    run(20.0, true);
+    uint32_t regions = 0;
+    tide_shard_box box;
+    for (uint32_t i = 0; i < tide_shards_count(shards); i++) regions += tide_shards_region(shards, i, &box) ? 1u : 0u;
+    TIDE_CHECK(regions == 1);
+    TIDE_CHECK(tide_shards_server(shards, 2) == NULL);
+    check_done(); // A merge's trees too big for a frame went by download: a game with no commands takes those too
     TIDE_CHECK(tide_shard_dropped() == dropped);
     check_clients(2);
     finish();

@@ -34,6 +34,11 @@ void tide_shard_client_update(tide_shard_client *c, double now);
 // The client of its home shard, and which shard that is.
 tide_client *tide_shard_client_home(const tide_shard_client *c);
 uint32_t tide_shard_client_home_shard(const tide_shard_client *c);
+// The game's build changed (a hot reload): the clients it makes from now on
+// are `game`'s. Those it has, the caller carries over (tide_session_migrate).
+void tide_shard_client_rebuilt(tide_shard_client *c, const tide_game *game);
+// Shards numbered below this can have a client (tide_shard_client_session).
+uint32_t tide_shard_client_room(const tide_shard_client *c);
 // The client of a shard it follows, or NULL.
 tide_client *tide_shard_client_session(const tide_shard_client *c, uint32_t shard);
 // How many times its home moved to another shard.

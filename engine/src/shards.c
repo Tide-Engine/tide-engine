@@ -7,6 +7,7 @@
 #include "tide/hosting.h"
 #include "tide/shard_agent.h"
 #include "tide/shard_coordinator.h"
+#include "tide/time.h"
 
 // See tide/shards.h. Every shard of the world in this process: each its server
 // and its agent (tide/shard_agent.h), and the world's coordinator
@@ -25,6 +26,7 @@ typedef struct here {
     uint64_t match;        // What its host knows it by
     uint32_t ticks_before; // Its ticks before its server's first: the journal numbers them on from there
     journal_ref *journal;
+    float busy; // Its last update's time over the time since the one before, measured here
 } here;
 
 struct tide_shards {
@@ -40,6 +42,7 @@ struct tide_shards {
     tide_shards_records records;
     void *records_user;
     bool failed;
+    double updated; // When it last updated
 };
 
 static void shard_journal(void *user, const uint32_t tick, const uint8_t *record, const uint32_t size)
@@ -172,6 +175,7 @@ static void round_of(tide_shards *s, const double now)
     for (uint32_t i = 0; i < s->room; i++) {
         if (!s->shards[i].agent) continue;
         uint32_t size = 0;
+        tide_shard_agent_busy(s->shards[i].agent, s->desc.busy ? s->desc.busy(s->desc.user, i) : s->shards[i].busy);
         uint8_t *report = tide_shard_agent_report(s->shards[i].agent, &size);
         if (!tide_shard_coordinator_report(s->coordinator, report, size)) {
             fprintf(stderr, "tide: shard %u's report wasn't one its coordinator takes\n", (unsigned)i);
@@ -213,6 +217,7 @@ static tide_shard_coordinator_desc coordinator_desc(const tide_shards *s)
         .world = s->desc.world,
         .split = {s->desc.split[0], s->desc.split[1], s->desc.split[2]},
         .most_entities = s->desc.most_entities,
+        .busiest = s->desc.busiest,
         .checkpoints = s->desc.checkpoint != NULL,
         .checkpoint_seconds = s->desc.checkpoint_seconds,
     };
@@ -246,14 +251,52 @@ void tide_shards_destroy(tide_shards *s)
 
 void tide_shards_update(tide_shards *s, const double now)
 {
+    const double since = now - s->updated;
+    s->updated = now;
     for (uint32_t i = 0; i < s->room; i++) {
-        if (s->shards[i].server && !s->desc.host_start) tide_server_update(s->shards[i].server, now); // A host updates its own
+        if (!s->shards[i].server || s->desc.host_start) continue; // A host updates its own
+        const uint64_t began = tide_time_now_ns();
+        tide_server_update(s->shards[i].server, now);
+        const double took = (double)(tide_time_now_ns() - began) * 1e-9;
+        s->shards[i].busy = since > 0.0 && since < 1.0 ? (float)(took / since) : 0.0f;
     }
     // The ticks are kept before anything they sent goes on
     if (s->desc.flush) s->desc.flush(s->desc.user);
     round_of(s, now);
     // A checkpoint begun is gathered at once: every shard is here
     for (uint32_t rounds = 0; rounds < 4u && tide_shard_coordinator_checkpointing(s->coordinator); rounds++) round_of(s, now);
+}
+
+bool tide_shards_quiet(const tide_shards *s)
+{
+    if (tide_shard_coordinator_checkpointing(s->coordinator)) return false;
+    for (uint32_t i = 0; i < s->room; i++) {
+        tide_server *server = s->shards[i].server;
+        if (!server) continue;
+        tide_shard_status status;
+        s->api->status(tide_server_world(server), &status);
+        if (status.waiting) return false; // A delivery or destroy waiting on a border, its value as this build lays it out
+        uint32_t size = 0;
+        for (uint32_t k = 0;; k++) {
+            const uint8_t *m = tide_server_injected_message(server, k, &size);
+            if (!m) break;
+            if (m[0] == TIDE_SHARD_ARRIVE || m[0] == TIDE_SHARD_EVENT || m[0] == TIDE_SHARD_SINGLETON) return false;
+        }
+    }
+    return true;
+}
+
+void tide_shards_rebuilt(tide_shards *s, const tide_game *game, const bool laid_out_anew)
+{
+    s->desc.game = game;
+    s->game = game;
+    s->api = game->shards;
+    for (uint32_t i = 0; i < s->room; i++) {
+        if (s->shards[i].server) (void)tide_server_drop_injected(s->shards[i].server, TIDE_SHARD_GHOSTS);
+        tide_shard_agent_rebuilt(s->shards[i].agent, game);
+    }
+    // A checkpoint of the old layout is no use to the new build
+    if (laid_out_anew) tide_shard_coordinator_rebuilt(s->coordinator);
 }
 
 uint32_t tide_shards_count(const tide_shards *s)
