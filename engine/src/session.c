@@ -3236,6 +3236,11 @@ struct tide_client {
     uint16_t *input_size;
     uint8_t *inputs;
     uint32_t sampled;       // The next tick to sample an input for: at least `ahead`
+    // Its last CLIENT packet: when, with inputs sampled up to what, and whether
+    // the server said anything since, which it answers at once
+    double client_sent;
+    uint32_t sent_sampled;
+    bool heard_since_sent;
     // The first of the inputs it sampled in a row up to `sampled`: it sampled
     // none for the ticks before, which the server runs without one (skip_inputs)
     uint32_t sampled_from;
@@ -3914,7 +3919,10 @@ static void client_receive(tide_client *c)
         c->arrived = arrived_of(t, c->now);
         tide_reader r = {data, size, 0, false};
         const uint8_t type = read_header(&r);
-        if (type != 0 && type != MSG_HELLO) c->last_heard = c->now;
+        if (type != 0 && type != MSG_HELLO) {
+            c->last_heard = c->now;
+            c->heard_since_sent = true;
+        }
         switch (type) {
         case MSG_WELCOME: on_welcome(c, &r); break;
         case MSG_CHUNK: on_chunk(c, &r); break;
@@ -5555,7 +5563,16 @@ static void update_client(tide_client *c, const double now)
         return;
     }
     if (c->loaded) play(c);
-    send_client(c);
+    // A packet when there's something new to say, an input sampled for
+    // another tick or an answer to what arrived, and otherwise one a tick: a
+    // host that updates many times a tick (a fast display, no vsync) sends no more
+    const double every = c->tick_rate ? 1.0 / (double)c->tick_rate : 0.0;
+    if (c->heard_since_sent || c->sampled != c->sent_sampled || c->now - c->client_sent >= every) {
+        send_client(c);
+        c->client_sent = c->now;
+        c->sent_sampled = c->sampled;
+        c->heard_since_sent = false;
+    }
     send_commands(c);
     const bool listening = c->local_receive != NULL && c->state == TIDE_SESSION_CONNECTED;
     if (c->loaded && (listening != c->local_subscribed || (listening && now - c->local_sent >= 0.5))) {

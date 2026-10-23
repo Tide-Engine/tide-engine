@@ -252,5 +252,5 @@ TIDE_TEST(rewind_network_rejects_shots_older_than_the_history_window)
         .network = {.latency = 0.08, .jitter = 0.03, .loss = 0.1}, .boundary = true}, 34);
     const tide_net_conditions network = {.latency = 0.18, .jitter = 0.02, .loss = 0.05};
     run_scenario((scenario){.fps = 30, .tick_rate = 60, .network = network, .expect_expired = true}, 81);
-    run_scenario((scenario){.fps = 240, .tick_rate = 60, .network = network, .expect_expired = true}, 82);
+    run_scenario((scenario){.fps = 240, .tick_rate = 60, .network = network, .expect_expired = true}, 83);
 }
