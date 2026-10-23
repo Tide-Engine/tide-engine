@@ -1,5 +1,19 @@
 # Desktop WebRTC, rooms and their tests
 
+## Relay Node security update (2026-10-23)
+
+The relay image explicitly pins `node:24.22.1-alpine`, including the October
+21 Brotli, TLS/DNS and other Node security fixes. The live relay reported
+24.21.0 before this update. Relay source, protocol and Fly configuration are
+unchanged. Both relay/lobby files pass all 37 tests under Node 24.22.1, and
+the production image builds and reports v24.22.1. Full engine validation is
+recorded in `notes/testing.md`.
+
+Deployed to the existing relay as Fly release 10, image
+`deployment-01M5M03PFP7ZKV2M1YBKP2XR1N`. Machine smoke/health checks pass;
+SSH reports v24.22.1 and the public relay health endpoint returns HTTP 200.
+The first PowerShell HTTP probe timed out; curl verifies the public endpoint.
+
 ## Web invites wait for registration (2026-10-22)
 
 A correct invite could be copied before the relay knew its host's room.

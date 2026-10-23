@@ -65,7 +65,8 @@ jobs:
       # semantic-release's action installs its plugins with npm.
       - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: '^24.22.1'
+          check-latest: true
       - name: Test release notes
         shell: bash
         run: |
@@ -161,10 +162,12 @@ jobs:
       # one in 500, as it starts its first TCP connection (exit code
       # 3221226505, before a test file's first test ran): libuv's #5107, which
       # Node has from 24.16. So the Node tests here run on 24, on every
-      # platform, as the docs' do.
+      # platform, as the docs' do. Require the October 2026 security fixes
+      # and check for newer 24.x patches instead of trusting the runner cache.
       - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: '^24.22.1'
+          check-latest: true
 
       # A run that releases nothing builds as this repo's version, as builds
       # here do: the package's tests check `#if TIDE_0_1_OR_NEWER` against it.
@@ -603,7 +606,8 @@ jobs:
         run: cat dist/*.sha256 > dist/SHA256SUMS && cat dist/SHA256SUMS
       - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: '^24.22.1'
+          check-latest: true
       # A nightly: the commit's tag, the note semantic-release keeps for each
       # of its tags (which channel it's on, so a stable release still reads
       # the history rightly), and the release with what was built.
