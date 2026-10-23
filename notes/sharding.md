@@ -43,7 +43,7 @@ Built (2026-10-23): the language surface, the generated shard code, the session'
 ## Players (`tide/shard_client.h`, `engine/src/shard_client.c`; the orchestrator's `track_players`, `route_players`)
 
 - A player joins the world at the root. Once any shard has them connected, the orchestrator admits them everywhere with the root's cookie and has the root send `PlayerJoined` (`PLAYER`); `PlayerLeft` once no shard has them.
-- Each shard reports, for every player, how many entities they own there and the box around them (`tide_shard_game.presence`). A player's home is the shard owning the most; they follow every shard owning any, and every region within the range of their entities' box. A `ROUTE` (the home and, for each followed shard, its id and its host's match) goes to every shard when that changes, so every client of every shard has every player's route as match state (`tide_shard_game.route`).
+- Each shard reports, for every player, how many entities they own there and the box around them (`tide_shard_game.presence`). A player's home is the shard owning the most; they follow every shard owning any, and every region within the range of their entities' box. Only what each shard has is gathered (`sighting`s, sorted by player), and the regions near a player's entities are looked for among the neighbours of the regions owning them (`find_neighbours`: regions within 1.25 ranges of each other, found again when `tell_map` changes the map), so no table of players by shards is made. A `ROUTE` (the home and, for each followed shard, its id and its host's match) goes to every shard when that changes, so every client of every shard has every player's route as match state (`tide_shard_game.route`).
 - `tide_shard_client` keeps a `tide_client` per followed shard, all with the same player and cookie and the same `sample`, so input reaches every shard owning any of the player's entities. It moves its home to the route's once that shard's client is connected: views draw that world, and only the home's local events go on to the host (each client records into its own log). A client the route no longer names is closed, never the home.
 - A player's avatar spawned by `PlayerJoined` on the root moves to its region by position like anything else, and the player's home follows it.
 
@@ -71,7 +71,6 @@ Built (2026-10-23): the language surface, the generated shard code, the session'
 
 ## Gaps
 
-- The orchestrator scans every player on every shard each update (`route_players`): players × shards.
 - Exactly once by replay (spec, Provisional): no shard's input log is recorded durably, so a failed shard is restored only from the last whole checkpoint, not replayed to where it was.
 - Resident (physics) state doesn't move with its entity (spec, Open).
 - Index space isn't reclaimed from entities that moved.

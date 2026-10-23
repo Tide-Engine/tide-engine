@@ -162,6 +162,11 @@ struct tide_shards {
     double now;
     roster *players; // tide_game_players(game) of them
     uint32_t player_count;
+    // The regions as they are (each change, a version), and each region's
+    // neighbours as of `neighbours_of`: `neighbours` from `neighbour_first[i]`
+    // up to `neighbour_first[i + 1]`
+    uint64_t map_version, neighbours_of;
+    uint32_t *neighbour_first, *neighbours;
 };
 
 static map64 *sent_to(tide_shards *s, const uint32_t from, const uint32_t to)
@@ -286,6 +291,7 @@ static void start_server(tide_shards *s, const uint32_t id, const void *world, c
 
 static void tell_map(tide_shards *s)
 {
+    s->map_version++;
     tide_writer w = {.grows = true};
     tide_shard_header(&w, TIDE_SHARD_MAP, TIDE_SHARD_ORCHESTRATOR, 0u);
     write_regions(s, &w);
@@ -366,6 +372,8 @@ void tide_shards_destroy(tide_shards *s)
     free(s->ranges);
     free(s->players);
     map_free(&s->directory);
+    free(s->neighbour_first);
+    free(s->neighbours);
     free(s);
 }
 
@@ -816,57 +824,124 @@ static void track_players(tide_shards *s)
 // the shard that owns the most of them, and their machine follows each shard
 // owning any, and each region within the range of any. The shards are told
 // when that changes, every shard every player's.
-typedef struct whereabouts {
-    uint32_t count;
+//
+// Only what the shards have is gathered (a sighting each of a player on a
+// shard), and a region near a player's entities is looked for among the
+// neighbours of the regions that own them, which are found again only when
+// the regions change.
+typedef struct sighting {
+    uint32_t player, shard, count;
     tide_shard_box box;
-    bool any;
-} whereabouts;
+} sighting;
+
+static int by_player(const void *a, const void *b)
+{
+    const sighting *x = a, *y = b;
+    if (x->player != y->player) return x->player < y->player ? -1 : 1;
+    return x->shard < y->shard ? -1 : x->shard > y->shard ? 1 : 0;
+}
+
+static int by_number(const void *a, const void *b)
+{
+    const uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
+    return x < y ? -1 : x > y ? 1 : 0;
+}
+
+// Each region's neighbours: the regions near enough that what it owns (up to
+// a quarter of the range past it) can be within the range of them
+static void find_neighbours(tide_shards *s)
+{
+    if (s->neighbour_first && s->neighbours_of == s->map_version) return;
+    s->neighbours_of = s->map_version;
+    free(s->neighbour_first);
+    free(s->neighbours);
+    s->neighbour_first = calloc((size_t)s->count + 1u, sizeof *s->neighbour_first);
+    uint32_t room = 16u, count = 0;
+    s->neighbours = malloc(room * sizeof *s->neighbours);
+    if (!s->neighbour_first || !s->neighbours) tide_out_of_memory();
+    for (uint32_t a = 0; a < s->count; a++) {
+        s->neighbour_first[a] = count;
+        if (!s->shards[a].used || !s->shards[a].region) continue;
+        for (uint32_t b = 0; b < s->count; b++) {
+            if (a == b || !s->shards[b].used || !s->shards[b].region) continue;
+            if (!tide_shard_box_near(&s->shards[a].box, &s->shards[b].box, 1.25 * s->api->range, s->api->dims)) continue;
+            if (count == room) {
+                room *= 2u;
+                s->neighbours = realloc(s->neighbours, room * sizeof *s->neighbours);
+                if (!s->neighbours) tide_out_of_memory();
+            }
+            s->neighbours[count++] = b;
+        }
+    }
+    s->neighbour_first[s->count] = count;
+}
 
 static void route_players(tide_shards *s)
 {
     if (!s->player_count || !s->api->presence) return;
-    const uint32_t shards = s->count;
-    whereabouts *at = calloc((size_t)s->player_count * shards, sizeof *at);
+    find_neighbours(s);
     tide_shard_presence *found = malloc(s->player_count * sizeof *found);
-    if (!at || !found) tide_out_of_memory();
-    for (uint32_t i = 0; i < shards; i++) {
+    if (!found) tide_out_of_memory();
+    sighting *seen = NULL;
+    uint32_t seen_count = 0, seen_room = 0;
+    for (uint32_t i = 0; i < s->count; i++) {
         if (!s->shards[i].used) continue;
         const uint32_t n = s->api->presence(tide_server_world(s->shards[i].server), found, s->player_count);
         for (uint32_t k = 0; k < n && k < s->player_count; k++) {
             const int32_t p = tide_player_index(found[k].player);
             if (p < 0 || (uint32_t)p >= s->player_count) continue;
-            whereabouts *w = &at[(size_t)p * shards + i];
-            w->count = found[k].count;
-            w->box = found[k].box;
-            w->any = true;
+            if (seen_count == seen_room) {
+                seen_room = seen_room ? seen_room * 2u : 64u;
+                seen = realloc(seen, seen_room * sizeof *seen);
+                if (!seen) tide_out_of_memory();
+            }
+            seen[seen_count++] = (sighting){(uint32_t)p, i, found[k].count, found[k].box};
         }
     }
-    uint32_t *follows = malloc(shards * sizeof *follows);
-    if (!follows) tide_out_of_memory();
-    for (uint32_t p = 0; p < s->player_count; p++) {
+    free(found);
+    if (seen_count) qsort(seen, seen_count, sizeof *seen, by_player);
+    uint32_t *follows = NULL;
+    uint32_t follows_room = 0;
+    for (uint32_t p = 0, at = 0; p < s->player_count; p++) {
+        const uint32_t first = at;
+        while (at < seen_count && seen[at].player == p) at++;
         roster *r = &s->players[p];
-        const whereabouts *mine = &at[(size_t)p * shards];
         uint32_t count = 0;
         if (r->here) {
             uint32_t home = r->home, most = 0;
-            for (uint32_t i = 0; i < shards; i++) {
-                if (mine[i].any && mine[i].count > most) {
-                    most = mine[i].count;
-                    home = i;
+            for (uint32_t k = first; k < at; k++) {
+                if (seen[k].count > most) {
+                    most = seen[k].count;
+                    home = seen[k].shard;
                 }
             }
-            if (home >= shards || !s->shards[home].used) home = TIDE_SHARD_ROOT;
+            if (home >= s->count || !s->shards[home].used) home = TIDE_SHARD_ROOT;
             r->home = home;
-            for (uint32_t i = 0; i < shards; i++) {
-                if (!s->shards[i].used) continue;
-                bool follow = i == home || mine[i].any;
-                for (uint32_t k = 0; k < shards && !follow; k++) {
-                    if (mine[k].any && mine[k].count && s->shards[i].region) {
-                        follow = tide_shard_box_near(&mine[k].box, &s->shards[i].box, s->api->range, s->api->dims);
-                    }
-                }
-                if (follow) follows[count++] = i;
+            // Its home, the shards owning any of its entities, and the regions near those
+            uint32_t most_follows = 1u + (at - first);
+            for (uint32_t k = first; k < at; k++) {
+                if (seen[k].count) most_follows += s->neighbour_first[seen[k].shard + 1u] - s->neighbour_first[seen[k].shard];
             }
+            if (most_follows > follows_room) {
+                follows_room = most_follows * 2u;
+                follows = realloc(follows, follows_room * sizeof *follows);
+                if (!follows) tide_out_of_memory();
+            }
+            follows[count++] = home;
+            for (uint32_t k = first; k < at; k++) {
+                follows[count++] = seen[k].shard;
+                if (!seen[k].count) continue;
+                for (uint32_t n = s->neighbour_first[seen[k].shard]; n < s->neighbour_first[seen[k].shard + 1u]; n++) {
+                    const uint32_t b = s->neighbours[n];
+                    if (tide_shard_box_near(&seen[k].box, &s->shards[b].box, s->api->range, s->api->dims)) follows[count++] = b;
+                }
+            }
+            qsort(follows, count, sizeof *follows, by_number);
+            uint32_t kept = 0;
+            for (uint32_t k = 0; k < count; k++) {
+                if (s->shards[follows[k]].used && (!kept || follows[kept - 1u] != follows[k])) follows[kept++] = follows[k];
+            }
+            count = kept;
         }
         // Told again only when it changed
         uint64_t hash = tide_hash_more(TIDE_HASH_START, &r->home, sizeof r->home);
@@ -889,8 +964,7 @@ static void route_players(tide_shards *s)
         free(w.data);
     }
     free(follows);
-    free(found);
-    free(at);
+    free(seen);
 }
 
 // ---------------------------------------------------------------------------
