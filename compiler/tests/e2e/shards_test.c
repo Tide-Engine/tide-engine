@@ -257,6 +257,8 @@ TIDE_TEST(shards_split_a_crowded_region)
     finish();
 }
 
+static void check_one_shard(void);
+
 TIDE_TEST(shards_merge_quiet_regions)
 {
     const uint64_t dropped = tide_shard_dropped();
@@ -264,17 +266,26 @@ TIDE_TEST(shards_merge_quiet_regions)
     TIDE_REQUIRE(shards != NULL);
     run(1.0, false);
     run(20.0, true);
-    // The two regions are one, the other's shard ended, and nothing was lost on the way
-    uint32_t regions = 0;
-    tide_shard_box box;
-    for (uint32_t i = 0; i < tide_shards_count(shards); i++) regions += tide_shards_region(shards, i, &box) ? 1u : 0u;
-    TIDE_CHECK(regions == 1);
-    TIDE_CHECK(tide_shards_server(shards, 2) == NULL);
-    TIDE_CHECK(tide_shards_region(shards, 1, &box) && box.lo[0] == -INFINITY && box.hi[0] == INFINITY);
+    // The two regions are one, and that one the root's: the world is one shard
+    // again, the others ended, and nothing was lost on the way
+    check_one_shard();
     check_done();
     TIDE_CHECK(tide_shard_dropped() == dropped);
-    check_clients(2);
+    check_clients(1);
     finish();
+}
+
+// The world is one shard again: the root's region is all of it, and every
+// other shard has ended
+static void check_one_shard(void)
+{
+    tide_shard_box box;
+    TIDE_CHECK(tide_shards_region(shards, TIDE_SHARD_ROOT, &box));
+    for (uint32_t k = 0; k < 3u; k++) TIDE_CHECK(box.lo[k] == -INFINITY && box.hi[k] == INFINITY);
+    for (uint32_t i = 1; i < tide_shards_count(shards); i++) {
+        TIDE_CHECK(tide_shards_server(shards, i) == NULL);
+        TIDE_CHECK(!tide_shards_region(shards, i, &box));
+    }
 }
 
 // How busy each shard is, as a host would measure it
@@ -312,14 +323,45 @@ TIDE_TEST(shards_split_a_busy_region_and_merge_quiet_ones)
     // Then everything's quiet: the regions merge back, one at a time, into one
     memset(busy_of, 0, sizeof busy_of);
     run(20.0, true);
-    uint32_t regions = 0;
-    tide_shard_box box;
-    for (uint32_t i = 0; i < tide_shards_count(shards); i++) regions += tide_shards_region(shards, i, &box) ? 1u : 0u;
-    TIDE_CHECK(regions == 1);
-    TIDE_CHECK(tide_shards_server(shards, 2) == NULL);
+    check_one_shard();
     check_done(); // A merge's trees too big for a frame went by download: a game with no commands takes those too
     TIDE_CHECK(tide_shard_dropped() == dropped);
-    check_clients(2);
+    check_clients(1);
+    finish();
+}
+
+// A world that starts as one shard, the root, owning all of it: it splits as
+// its shard gets busy, and comes back together into the root as it quiets
+TIDE_TEST(shards_a_world_of_one_shard_splits_on_demand_and_comes_back_together)
+{
+    const uint64_t dropped = tide_shard_dropped();
+    memset(busy_of, 0, sizeof busy_of);
+    tide_shards_desc d = desc_of(0);
+    d.split[0] = 1;
+    d.busiest = 0.5f;
+    d.busy = busy;
+    busy_of[0] = 0.3f;
+    begin_with(&d);
+    TIDE_REQUIRE(shards != NULL);
+    TIDE_CHECK(tide_shards_count(shards) == 1);
+    check_one_shard();
+    run(1.0, true);
+    for (int i = 0; i < 64; i++) busy_of[i] = 0.9f; // Every shard there is, and any that's made, is struggling
+    run(6.0, true);
+    TIDE_CHECK(tide_shards_count(shards) > 2); // Split, and split again
+    uint32_t owning = 0;
+    for (uint32_t i = 0; i < tide_shards_count(shards); i++) {
+        tide_shard_status st;
+        tide_shards_status(shards, i, &st);
+        owning += st.owned > 0 ? 1u : 0u;
+    }
+    TIDE_CHECK(owning > 1); // What's in the world is spread over them
+    memset(busy_of, 0, sizeof busy_of);
+    run(30.0, true);
+    check_one_shard();
+    check_done();
+    TIDE_CHECK(tide_shard_dropped() == dropped);
+    check_clients(1);
     finish();
 }
 

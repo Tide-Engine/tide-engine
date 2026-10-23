@@ -105,7 +105,7 @@ static void note_arrival(tide_shard_agent *a, const uint8_t *data, const uint32_
     tide_entity root;
     root.index = tide_read_u32(&r);
     root.generation = tide_read_u32(&r);
-    if (r.failed || from == TIDE_SHARD_ROOT || from == a->shard || from == TIDE_SHARD_ORCHESTRATOR) return;
+    if (r.failed || from == a->shard || from == TIDE_SHARD_ORCHESTRATOR) return;
     map_put(sent_to(a, from), key_of(root), 1u); // Sent, with bytes it doesn't know
 }
 

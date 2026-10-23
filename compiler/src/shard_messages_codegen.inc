@@ -155,7 +155,7 @@ static void gen_shard_moves(gen *g)
               "    tide_shard_send_tasks(&m, w, root); // Its tasks go on where it goes\n"
               "    tide_shard_post(w, TIDE_SHARD_TO_SHARD, (uint32_t)to, root, &m);\n"
               "    w->tide_shard_state.moves++; // It left\n"
-              "    if (w->tide_shard_state.role == TIDE_SHARD_ROOT_ROLE) tide_shard_remove_tree(w, root, true);\n"
+              "    if (w->tide_shard_state.role == TIDE_SHARD_ROOT_ROLE && !tide_shard_regional(w)) tide_shard_remove_tree(w, root, true);\n"
               "    else tide_shard_mark_tree(w, root, true, to);\n}\n\n"
               "TIDE_HELPER void tide_shard_lend(tide_world *w, const tide_entity e, const int32_t to)\n{\n"
               "    if (tide_shard_is_singleton(e)) {\n"
@@ -184,7 +184,6 @@ static void gen_shard_moves(gen *g)
               "TIDE_SHARD_FN void tide_shard_handoff(tide_world *w)\n{\n"
               "    tide_shard_state *s = &w->tide_shard_state;\n"
               "    if (!s->shard || !tide_list_count(s->regions)) return;\n"
-              "    const bool root = s->role == TIDE_SHARD_ROOT_ROLE;\n"
               "    uint32_t count = 0, room = 0;\n    tide_entity *going = NULL, *with = NULL;\n    int32_t *to = NULL;\n");
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
@@ -198,7 +197,7 @@ static void gen_shard_moves(gen *g)
         if (prog->hierarchy[0]) sb_put(o, "        if (!placed && !tide_entity_is_null(tide_parent_of(w, e))) continue; // It goes with its root\n");
         sb_printf(o, "        int32_t there = -1;\n        tide_entity anchor = {0};\n"
                      "        if (placed) {\n"
-                     "            if (!root && tide_shard_mine(w, p, TIDE_SHARD_REACH * 0.25)) continue;\n"
+                     "            if (tide_shard_mine(w, p, TIDE_SHARD_REACH * 0.25)) continue; // Its own region's: the root's too, when it has one\n"
                      "            there = tide_shard_region_of(w, p);\n"
                      "        } else if (%s) {\n"
                      "            anchor = tide_get_tide_follows(w, e).of;\n"

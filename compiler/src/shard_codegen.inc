@@ -189,6 +189,12 @@ static void gen_shard_early(gen *g)
     sb_put(o, "TIDE_HELPER bool tide_shard_root(const tide_world *w)\n{\n"
               "    return !w->tide_shard_state.shard || w->tide_shard_state.role == TIDE_SHARD_ROOT_ROLE;\n}\n\n"
               "TIDE_HELPER int32_t tide_shard_self(const tide_world *w)\n{\n    return w->tide_shard_state.shard - 1;\n}\n\n"
+              // Whether this shard has a region: the root has one when the world is one shard, or merged back into it
+              "TIDE_HELPER bool tide_shard_regional(const tide_world *w)\n{\n"
+              "    const tide_list r = w->tide_shard_state.regions;\n"
+              "    for (int32_t at = 0; at + 7 <= tide_list_count(r); at += 7) {\n"
+              "        if ((int32_t)*(const double *)tide_list_at(r, at, 8u) == tide_shard_self(w)) return true;\n    }\n"
+              "    return false;\n}\n\n"
               // A singleton's mark among the entities skipped code touched
               "TIDE_HELPER bool tide_shard_is_singleton(const tide_entity e)\n{\n"
               "    return e.generation == TIDE_ENTITY_TEMPORARY;\n}\n\n"

@@ -167,7 +167,7 @@ static void write_targets(const tide_shard_coordinator *c, const uint32_t from, 
     uint32_t count = 0;
     for (uint32_t b = 0; b < c->count; b++) {
         const cshard *t = &c->shards[b];
-        if (b == from || !t->used || !t->region || (a->region && !near(c, a, t))) continue;
+        if (b == from || !t->used || !t->region || (from != TIDE_SHARD_ROOT && a->region && !near(c, a, t))) continue;
         tide_write_u32(w, b);
         tide_write_u8(w, 1u);
         tide_write_bytes(w, t->box.lo, sizeof t->box.lo);
@@ -189,7 +189,7 @@ uint8_t *tide_shard_coordinator_instructions(tide_shard_coordinator *c, const ui
     *size = 0;
     if (!c || shard >= c->count || !c->shards[shard].used) return NULL;
     cshard *sh = &c->shards[shard];
-    if (!sh->inject_count && !sh->admit_count && !sh->flags && !sh->held_count) return NULL;
+    if (!sh->inject_count && !sh->admit_count && !sh->flags && !sh->held_count && !sh->sample_stride) return NULL;
     uint8_t flags = sh->flags;
     if (sh->held_count) flags |= TIDE_SHARD_DO_HELD;
     if (sh->sample_stride) flags |= TIDE_SHARD_DO_SAMPLE;
@@ -415,12 +415,22 @@ tide_shard_coordinator *tide_shard_coordinator_create(const tide_shard_coordinat
         free(c);
         return NULL;
     }
-    // The root, then a region for each cell of the split world
+    // The root, then a region for each cell of the split world; a world of one
+    // cell is the root's alone, which splits as it fills
     const uint32_t root = new_shard(c);
     give_range(c, root);
     uint32_t n[3];
     for (uint32_t k = 0; k < 3u; k++) n[k] = desc->split[k] ? desc->split[k] : 1u;
     if (desc->dims == 2u) n[2] = 1u;
+    if (n[0] * n[1] * n[2] == 1u) {
+        cshard *sh = &c->shards[root];
+        sh->region = true;
+        for (uint32_t k = 0; k < 3u; k++) {
+            sh->box.lo[k] = -INFINITY;
+            sh->box.hi[k] = INFINITY;
+        }
+        n[0] = n[1] = n[2] = 0u;
+    }
     for (uint32_t z = 0; z < n[2]; z++) {
         for (uint32_t y = 0; y < n[1]; y++) {
             for (uint32_t x = 0; x < n[0]; x++) {
@@ -839,11 +849,43 @@ static bool joins(const tide_shard_coordinator *c, const tide_shard_box *a, cons
     return true;
 }
 
-// One merge at a time, of two regions quiet enough together
+// A region merging into another, `a`, which takes its box (`both`): it's told
+// RETIRE once the new shape's checkpoint is kept
+static void merge_into(tide_shard_coordinator *c, const uint32_t a, const uint32_t b, const tide_shard_box *both)
+{
+    c->shards[a].box = *both;
+    c->shards[a].region = true;
+    c->shards[a].busy_heard = 0;
+    c->shards[b].region = false;
+    c->shards[b].retiring = true;
+    c->shards[b].into = a;
+    uint8_t data[16];
+    tide_writer w = {data, sizeof data, 0, false, false};
+    tide_shard_header(&w, TIDE_SHARD_RETIRE, TIDE_SHARD_ORCHESTRATOR, 0u);
+    tide_write_u32(&w, a);
+    tell_after(c, b, data, w.size);
+    reshaped(c);
+}
+
+// One merge at a time, of two regions quiet enough together; and the last
+// region into the root, when that has none: a quiet world is one shard
 static bool maybe_merge(tide_shard_coordinator *c)
 {
     for (uint32_t i = 0; i < c->count; i++) {
         if (c->shards[i].retiring) return false;
+    }
+    cshard *root = &c->shards[TIDE_SHARD_ROOT];
+    uint32_t regions = 0, last = 0;
+    for (uint32_t i = 0; i < c->count; i++) {
+        if (c->shards[i].used && c->shards[i].region) {
+            regions++;
+            last = i;
+        }
+    }
+    if (root->used && !root->region && regions == 1u && quiet_together(c, root, &c->shards[last])) {
+        const tide_shard_box all = c->shards[last].box;
+        merge_into(c, TIDE_SHARD_ROOT, last, &all);
+        return true;
     }
     for (uint32_t a = 0; a < c->count; a++) {
         if (!c->shards[a].used || !c->shards[a].region) continue;
@@ -852,17 +894,7 @@ static bool maybe_merge(tide_shard_coordinator *c)
             tide_shard_box both;
             if (!joins(c, &c->shards[a].box, &c->shards[b].box, &both)) continue;
             if (!quiet_together(c, &c->shards[a], &c->shards[b])) continue;
-            c->shards[a].box = both;
-            c->shards[a].busy_heard = 0;
-            c->shards[b].region = false;
-            c->shards[b].retiring = true;
-            c->shards[b].into = a;
-            uint8_t data[16];
-            tide_writer w = {data, sizeof data, 0, false, false};
-            tide_shard_header(&w, TIDE_SHARD_RETIRE, TIDE_SHARD_ORCHESTRATOR, 0u);
-            tide_write_u32(&w, a);
-            tell_after(c, b, data, w.size);
-            reshaped(c);
+            merge_into(c, a, b, &both);
             return true;
         }
     }
