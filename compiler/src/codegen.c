@@ -10168,6 +10168,7 @@ static void scene_pass(const gen *g, const decl *sys, const int a, const char *s
 }
 
 #include "hierarchy_codegen.inc"
+static int shard_singleton(const program *prog, const decl *d); // shard_codegen.inc
 #include "visibility_codegen.inc"
 
 static void gen_moves(gen *g)

@@ -73,6 +73,24 @@ static void gen_shard_pins(gen *g)
 }
 
 // Singletons: each the root's, read everywhere as copies, lent to be changed
+
+// Releases what a singleton's value holds on the heap (`value`: the C that
+// names it, ending in '.'), as one statement or none: the engine's own
+// singletons (the visibility directory) have no release function of their own
+static void put_singleton_release(sb *o, const decl *d, const char *value)
+{
+    if (!decl_has_text(d)) return;
+    path_list paths = {0};
+    text_paths(d, "", &paths);
+    for (int k = 0; k < paths.count; k++) {
+        const heap_path *hp = &paths.items[k];
+        if (hp->list) sb_printf(o, " tide_list%d_release(&%s%s, TIDE_IN_MATCH);", hp->list->index, value, hp->path);
+        else if (hp->map) sb_printf(o, " tide_map%d_release(&%s%s, TIDE_IN_MATCH);", hp->map->index, value, hp->path);
+        else if (hp->grid) sb_printf(o, " tide_grid_release(&%s%s, &%s, TIDE_IN_MATCH);", value, hp->path, grid_shape_name(hp->grid));
+        else sb_printf(o, " tide_text_release(&%s%s, TIDE_IN_MATCH);", value, hp->path);
+    }
+}
+
 static void gen_shard_singletons(gen *g)
 {
     const program *prog = g->prog;
@@ -82,7 +100,7 @@ static void gen_shard_singletons(gen *g)
               "    (void)out;\n    (void)w;\n    switch (i) {\n");
     for (int i = 0; i < prog->singletons.count; i++) {
         const decl *d = prog->singletons.items[i];
-        if (!shard_shares(d)) continue;
+        if (!shard_shares(prog, d)) continue;
         sb_printf(o, "    case %du: tide_client_put%d(out, &w->%s, 0); break;\n", shard_singleton(prog, d),
                   client_codec_id(codec, (type){TY_SINGLETON, (decl *)d}), type_cname(d));
     }
@@ -93,16 +111,19 @@ static void gen_shard_singletons(gen *g)
               "    uint64_t budget = SIZE_MAX;\n    (void)budget;\n    (void)w;\n    (void)in;\n    (void)keep;\n    switch (i) {\n");
     for (int i = 0; i < prog->singletons.count; i++) {
         const decl *d = prog->singletons.items[i];
-        if (!shard_shares(d)) continue;
+        if (!shard_shares(prog, d)) continue;
         const char *name = type_cname(d);
         sb_printf(o, "    case %du: {\n        %s v;\n        memset(&v, 0, sizeof v);\n"
                      "        if (!tide_client_get%d(in, &v, TIDE_IN_MATCH, 0, &budget)) {", shard_singleton(prog, d), name,
                   client_codec_id(codec, (type){TY_SINGLETON, (decl *)d}));
-        if (decl_has_text(d)) sb_printf(o, " tide_release_%s(&v, TIDE_IN_MATCH);", name);
+        put_singleton_release(o, d, "v.");
         sb_put(o, " return false; }\n        if (!keep) {");
-        if (decl_has_text(d)) sb_printf(o, " tide_release_%s(&v, TIDE_IN_MATCH);", name);
-        sb_put(o, " return true; }\n");
-        if (decl_has_text(d)) sb_printf(o, "        tide_release_%s(&w->%s, TIDE_IN_MATCH);\n", name, name);
+        put_singleton_release(o, d, "v.");
+        sb_put(o, " return true; }\n        ");
+        char current[160];
+        snprintf(current, sizeof current, "w->%s.", name);
+        put_singleton_release(o, d, current);
+        sb_put(o, "\n");
         sb_printf(o, "        w->%s = v;\n        return true;\n    }\n", name);
     }
     sb_put(o, "    default: return false;\n    }\n}\n\n");

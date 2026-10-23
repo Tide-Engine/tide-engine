@@ -42,26 +42,37 @@ static void gen_visibility(gen *g)
         sb_printf(o, "    a.%s &= b.%s;\n", name, name);
     }
     sb_put(o, "    return a;\n}\n\n");
+    // In a sharded game the directory is the root's: another shard's code
+    // changing it waits on the border, borrowing it (shard_codegen.inc)
+    char create_border[96] = "", border_void[96] = "";
+    if (sharded(g)) {
+        const int n = shard_singleton(prog, prog->visibility_state);
+        snprintf(create_border, sizeof create_border, "    if (!tide_shard_singleton_may(w, %du)) return group;\n", n);
+        snprintf(border_void, sizeof border_void, "    if (!tide_shard_singleton_may(w, %du)) return;\n", n);
+    }
     sb_printf(o,
         "TIDE_HELPER VisibilityGroup tide_visibility_create_group(tide_world *w, Audience audience)\n{\n"
         "    VisibilityGroup group = {.id = -1};\n"
         "    if (w->tide_visibility_state.client || w->tide_visibility_state.next == INT64_MAX) return group;\n"
+        "%s"
         "    group.id = ++w->tide_visibility_state.next;\n"
         "    tide_map%d_set(&w->tide_visibility_state.groups, group.id, tide_audience_intersect(audience, TIDE_AUDIENCE_ALL), TIDE_IN_MATCH);\n"
         "    return group;\n}\n\n"
         "TIDE_HELPER void tide_visibility_set_group(tide_world *w, VisibilityGroup group, Audience audience)\n{\n"
         "    if (w->tide_visibility_state.client || group.id <= 0 || !tide_map%d_has(w->tide_visibility_state.groups, group.id)) return;\n"
+        "%s"
         "    audience = tide_audience_intersect(audience, TIDE_AUDIENCE_ALL);\n"
         "    const Audience old = tide_map%d_get(w->tide_visibility_state.groups, group.id);\n"
         "    if (memcmp(&old, &audience, sizeof audience) == 0) return;\n"
         "    tide_map%d_set(&w->tide_visibility_state.groups, group.id, audience, TIDE_IN_MATCH);\n}\n\n"
         "TIDE_HELPER void tide_visibility_destroy_group(tide_world *w, VisibilityGroup group)\n{\n"
+        "%s"
         "    if (!w->tide_visibility_state.client && group.id > 0)\n"
         "        (void)tide_map%d_remove(&w->tide_visibility_state.groups, group.id, TIDE_IN_MATCH);\n}\n\n"
         "TIDE_HELPER Audience tide_visibility_group_audience(const tide_world *w, VisibilityGroup group)\n{\n"
         "    if (!group.id) return TIDE_AUDIENCE_ALL;\n"
         "    return group.id > 0 ? tide_map%d_get(w->tide_visibility_state.groups, group.id) : (Audience){0};\n}\n\n",
-        groups, groups, groups, groups, groups, groups);
+        create_border, groups, groups, border_void, groups, groups, border_void, groups, groups);
     sb_printf(o,
         "TIDE_HELPER void tide_visibility_set_policy(Visibility *v, int64_t component, tide_visibility_policy policy, uint32_t where)\n{\n"
         "    if (!v) return;\n"

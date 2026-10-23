@@ -51,11 +51,13 @@ static int shard_codes(const gen *g)
 }
 
 // The game's own match singletons: those that live with the root shard, read
-// everywhere as copies and borrowed to be changed elsewhere. The engine's own
-// (Time, the shard state, hierarchy links) are each shard's.
-static bool shard_shares(const decl *d)
+// everywhere as copies and borrowed to be changed elsewhere. So does the
+// visibility directory (its groups' audiences), as a group means the same on
+// every shard. The engine's other ones (Time, the shard state, hierarchy
+// links) are each shard's.
+static bool shard_shares(const program *prog, const decl *d)
 {
-    return !d->is_local && !d->builtin;
+    return d == prog->visibility_state || (!d->is_local && !d->builtin);
 }
 
 static int shard_singleton(const program *prog, const decl *d)
@@ -63,8 +65,8 @@ static int shard_singleton(const program *prog, const decl *d)
     int n = 0;
     for (int i = 0; i < prog->singletons.count; i++) {
         const decl *s = prog->singletons.items[i];
-        if (s == d) return shard_shares(s) ? n : -1;
-        if (shard_shares(s)) n++;
+        if (s == d) return shard_shares(prog, s) ? n : -1;
+        if (shard_shares(prog, s)) n++;
     }
     return -1;
 }
@@ -72,7 +74,7 @@ static int shard_singleton(const program *prog, const decl *d)
 static int shard_singleton_count(const program *prog)
 {
     int n = 0;
-    for (int i = 0; i < prog->singletons.count; i++) n += shard_shares(prog->singletons.items[i]);
+    for (int i = 0; i < prog->singletons.count; i++) n += shard_shares(prog, prog->singletons.items[i]);
     return n;
 }
 
@@ -95,7 +97,7 @@ static void collect_shard_codecs(gen *g)
     }
     for (int i = 0; i < prog->singletons.count; i++) {
         const decl *d = prog->singletons.items[i];
-        if (shard_shares(d)) client_codec_type(&g->value_codec, (type){TY_SINGLETON, (decl *)d});
+        if (shard_shares(prog, d)) client_codec_type(&g->value_codec, (type){TY_SINGLETON, (decl *)d});
     }
     for (int i = 0; i < prog->events.count; i++) {
         const decl *d = prog->events.items[i];
@@ -232,7 +234,7 @@ static void gen_shard_system_entry(gen *g, const decl *sys)
     bool singletons = false;
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
-        singletons |= p->type.kind == TY_SINGLETON && p->mode == PARAM_MUT && shard_shares(p->type.decl);
+        singletons |= p->type.kind == TY_SINGLETON && p->mode == PARAM_MUT && shard_shares(prog, p->type.decl);
     }
     if (sys->is_handler && !singletons) return; // A handler's delivery is what waits (gen_shard_dispatch_entry)
     line(g, o, "if (tide_w->tide_shard_state.shard) {");
@@ -248,7 +250,7 @@ static void gen_shard_system_entry(gen *g, const decl *sys)
     }
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
-        if (p->type.kind != TY_SINGLETON || p->mode != PARAM_MUT || !shard_shares(p->type.decl)) continue;
+        if (p->type.kind != TY_SINGLETON || p->mode != PARAM_MUT || !shard_shares(prog, p->type.decl)) continue;
         line(g, o, "if (!tide_shard_singleton_may(tide_w, %du)) return; // " STR_FMT " is the root's", shard_singleton(prog, p->type.decl),
              STR_ARG(p->type.decl->name));
     }

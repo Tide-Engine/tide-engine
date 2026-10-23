@@ -47,6 +47,7 @@ tide_e2e_test(visibility_groups) # Shared audiences, whole-component restriction
 tide_e2e_test(visibility_projection SOURCES e2e/visibility_projection.tide e2e/visibility_projection_c.c)
 tide_e2e_test(shards) # One world split across shards: moving, ghosts, waiting on borders, checkpoints and splits
 tide_e2e_test(shards_players) # A player's machine following their avatar from shard to shard
+tide_e2e_test(shards_visibility) # A visibility group the root keeps, read on every shard and changed from a region
 tide_e2e_test(prefabs SOURCES e2e/prefabs.tide e2e/prefabs.tprefab)
 tide_e2e_test(asset_references SOURCES e2e/asset_references.tide e2e/asset_references.tprefab)
 tide_e2e_test(asset_reference_empty)
