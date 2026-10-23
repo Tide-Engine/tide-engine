@@ -1,0 +1,27 @@
+// A sharded game inside another program (embed_shards.c): six rocks across two
+// regions, and no player of its own, so this machine plays at the root, which
+// has none of them; a view watches the whole world, and the view packet has
+// each rock once, from the shard that has it.
+settings
+{
+    shards = true;
+    reach = 4;
+}
+
+scene Main { }
+
+component Rock
+{
+    [Position] float2 position;
+    int id;
+}
+
+event(Spawned) Make(with Main)
+{
+    for (int i = 0; i < 6; i++) Spawn(Rock { position = float2(-15 + i * 6, 0), id = i });
+}
+
+view Watch()
+{
+    Session.Watch(float2(0, 0), float2(40, 10));
+}

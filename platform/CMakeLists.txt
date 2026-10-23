@@ -284,6 +284,16 @@ if(NOT TIDE_WEB)
     set_tests_properties(tide_platform_embed PROPERTIES TIMEOUT 60)
 endif()
 
+# A sharded game inside another program: its view packet has every shard it watches
+tide_add_game(tide_platform_embed_shards SOURCES tests/embed_shards.tide NAME game EMBED
+    HOST tests/embed_shards.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+target_include_directories(tide_platform_embed_shards PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
+target_link_libraries(tide_platform_embed_shards PRIVATE tide_platform)
+if(NOT TIDE_WEB)
+    add_test(NAME tide_platform_embed_shards COMMAND tide_platform_embed_shards)
+    set_tests_properties(tide_platform_embed_shards PROPERTIES TIMEOUT 60)
+endif()
+
 # The font's glyphs, fitted to the pixels they're drawn on: no window or GPU.
 add_executable(tide_platform_font tests/font.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
 target_include_directories(tide_platform_font PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)

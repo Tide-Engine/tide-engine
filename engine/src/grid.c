@@ -193,6 +193,20 @@ void tide_grid_clear(tide_grid *g, const tide_grid_shape *s, const uint32_t wher
     d->records = 0;
 }
 
+tide_grid tide_grid_copy_from(const tide_heap *heap, const tide_grid g, const tide_grid_shape *s, const uint32_t where)
+{
+    tide_heap *to = tide_heap_of(where);
+    if (!to || !heap || to == heap || !g.at || g.at >> 30 == TIDE_IN_SCRATCH) return (tide_grid){0};
+    // The source's directory stays put: what's made goes in the other heap
+    const tide_grid_dir *d = (const tide_grid_dir *)(const void *)(tide_heap_block(heap, OFFSET(g.at)) + 1);
+    tide_grid out = {where << 30 | new_dir(to, d->size, s)};
+    for (uint32_t i = 0; i < d->records; i++) {
+        const tide_grid_record r = tide_grid_records(d)[i];
+        (void)add_chunk(&out, to, r.chunk[0], r.chunk[1], r.chunk[2], tide_grid_chunk_at(heap, r.block), s);
+    }
+    return out;
+}
+
 const void *tide_grid_read(const tide_heap *heap, const tide_grid g, const int32_t x, const int32_t y, const int32_t z,
                            const tide_grid_shape *s)
 {

@@ -39,6 +39,12 @@ component Marker
 {
     [Position] float2 position;
     string name;
+    Grid2<int> cells; // A cell set where it is, which a query reads from its own shard's world
+}
+
+system Mark(mut Marker marker)
+{
+    if (marker.cells[int2(1, 1)] == 0) marker.cells[int2(1, 1)] = 7;
 }
 
 singleton Seeded { bool done; }
@@ -60,6 +66,8 @@ local singleton Sight
     int queried; // ...and a query's rows
     int named;   // ...of them named "far", as the query has them
     int found;   // ...and as World has them
+    int called;  // ...and as a function's World has them
+    int marked;  // ...and with their cell set, as the query has them
     float x;     // The x of those the view for each ran for, added up
     int avatars; // Avatars the view for each ran for
     int blinks;  // Blinks local handlers heard, from wherever they were sent
@@ -87,6 +95,8 @@ view Look(mut Sight sight)
     sight.queried = 0;
     sight.named = 0;
     sight.found = 0;
+    sight.called = 0;
+    sight.marked = 0;
     sight.x = 0;
     sight.avatars = 0;
 }
@@ -102,13 +112,20 @@ view DrawMarker(Marker marker, mut Sight sight)
     sight.x += marker.position.x;
 }
 
+bool Far(World world, Entity marker)
+{
+    return world.Get<Marker>(marker).name == "far";
+}
+
 view QueryMarkers(query (Marker marker) markers, World world, mut Sight sight)
 {
     foreach (var row in markers)
     {
         sight.queried += 1;
         if (row.marker.name == "far") sight.named += 1;
+        if (row.marker.cells[int2(1, 1)] == 7) sight.marked += 1;
         if (world.Has<Marker>(row.entity) && world.Get<Marker>(row.entity).name == "far") sight.found += 1;
+        if (Far(world, row.entity)) sight.called += 1;
     }
 }
 

@@ -168,7 +168,7 @@ typedef struct tide_embed_desc {
     const tide_host_game *game; // A game linked in (players, IL2CPP static builds), or NULL with:
     const char *library_dir;    // ...the folder tide writes game-<n> libraries to: the editor, hot reloading
     int tick_rate;              // 0 for the game's tickRate
-    int argc;                   // tide/run.h's --host, --join, --connect, --seed
+    int argc;                   // tide/run.h's --host, --join, --connect, --seed, and a sharded game's --shards and --shard-width
     char **argv;
     const char *files_dir;      // Where the game's files live (Application.persistentDataPath)
     const char *relay;          // NULL for the default relay

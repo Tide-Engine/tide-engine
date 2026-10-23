@@ -32,7 +32,8 @@ typedef struct tide_embed_desc {
     size_t pack_size;
     int tick_rate;              // Ticks per second, over the game's tickRate setting; 0 for that
     int argc;                   // As main's (argv[0] the program): tide/run.h's --host, --join, --connect, --seed
-                                // and --data-dir, and --stats; one that's wrong is left out, saying so
+                                // and --data-dir, --stats, and a sharded game's --shards and --shard-width; one
+                                // that's wrong is left out, saying so
     char **argv;
     const char *game_name;      // Its folders' name when the game sets no appId; NULL for "game"
     const char *relay;          // Another relay's address; NULL for TIDE_RELAY or the default

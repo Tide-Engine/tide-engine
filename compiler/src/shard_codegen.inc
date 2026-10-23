@@ -173,6 +173,20 @@ static void gen_shard_views(gen *g)
     sb *o = &g->c;
     bool confirmed = false;
     for (int i = 0; i < prog->views.count && !confirmed; i++) confirmed = prog->views.items[i]->takes_verified;
+    // Grids copied out of other worlds for views to read (gen_scratch_value), in the local state's heap until the frame ends
+    sb_put(o, "typedef struct tide_view_grid {\n    tide_grid grid;\n    const tide_grid_shape *shape;\n} tide_view_grid;\n"
+              "static tide_view_grid *tide_view_grids;\nstatic uint32_t tide_view_grid_count, tide_view_grid_room;\n\n"
+              "TIDE_SHARD_FN tide_grid tide_view_keep_grid(const tide_grid g, const tide_grid_shape *s)\n{\n"
+              "    if (!g.at) return g;\n"
+              "    if (tide_view_grid_count == tide_view_grid_room) {\n"
+              "        tide_view_grid_room = tide_view_grid_room ? tide_view_grid_room * 2u : 8u;\n"
+              "        tide_view_grids = realloc(tide_view_grids, tide_view_grid_room * sizeof *tide_view_grids);\n"
+              "        if (!tide_view_grids) tide_out_of_memory();\n    }\n"
+              "    tide_view_grids[tide_view_grid_count++] = (tide_view_grid){g, s};\n"
+              "    return g;\n}\n\n"
+              "TIDE_SHARD_FN void tide_view_drop_grids(void)\n{\n"
+              "    for (uint32_t i = 0; i < tide_view_grid_count; i++) tide_grid_release(&tide_view_grids[i].grid, tide_view_grids[i].shape, TIDE_IN_LOCAL);\n"
+              "    tide_view_grid_count = 0;\n}\n\n");
     sb_put(o, "// What views draw beside the frame's own world, for the next frame (tide_frame_shards), and which they draw now:\n"
               "// -1 for the frame's own, else one of the others\n"
               "static tide_view_worlds tide_view_more[TIDE_SESSION_VIEWS];\n"

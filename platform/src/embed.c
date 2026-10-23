@@ -54,9 +54,10 @@ uint32_t tide_embed_abi(void)
     return TIDE_EMBED_ABI;
 }
 
-// --seed <n>, --data-dir <folder> and --stats from `desc`'s command line, as
-// tide/run.h and tide run read them, but a bad one is left out with a line
-// saying so: the program Tide is inside of goes on.
+// --seed <n>, --data-dir <folder>, --stats, and a sharded game's --shards <n>
+// and --shard-width <w> from `desc`'s command line, as tide/run.h and tide run
+// read them, but a bad one is left out with a line saying so: the program Tide
+// is inside of goes on.
 static void embed_options(const tide_embed_desc *desc)
 {
     for (int i = 1; i < desc->argc; i++) {
@@ -81,6 +82,22 @@ static void embed_options(const tide_embed_desc *desc)
         } else if (strcmp(arg, "--data-dir") == 0) {
             if (value[0] && value[0] != '-') tide_run_data_directory = value;
             else fprintf(stderr, "tide: --data-dir takes a nonempty save directory, not '%s': left out\n", value);
+            i++;
+        } else if (strcmp(arg, "--shards") == 0 || strcmp(arg, "--shard-width") == 0) {
+            const bool count = strcmp(arg, "--shards") == 0;
+            char *end = NULL;
+            const double number = strtod(value, &end);
+            if (!tide_run_game->game->shards) {
+                fprintf(stderr, "tide: %s is for a sharded game: one with 'settings { shards = true; }': left out\n", arg);
+            } else if (end == value || *end || !(count ? number >= 1.0 && number <= 256.0 && number == (double)(uint32_t)number
+                                                      : number >= 1e-3 && number <= 1e12)) {
+                fprintf(stderr, count ? "tide: --shards takes a whole number from 1 to 256, not '%s': left out\n"
+                                      : "tide: --shard-width takes a width in world units, not '%s': left out\n", value);
+            } else if (count) {
+                tide_run_shards = (uint32_t)number;
+            } else {
+                tide_run_shard_width = number;
+            }
             i++;
         }
     }
@@ -235,6 +252,12 @@ static void write_view(void)
     }
     const tide_view_worlds view = tide_session_view(tide_run_session);
     const tide_session_status status = tide_session_status_of(tide_run_session);
+    if (tide_run_game->frame_shards) { // A sharded match's other shards this machine follows: in the packet too
+        tide_view_worlds more[TIDE_SESSION_VIEWS];
+        uint32_t shards[TIDE_SESSION_VIEWS];
+        const uint32_t n = tide_session_views(tide_run_session, more, shards, TIDE_SESSION_VIEWS);
+        tide_run_game->frame_shards(more, n < TIDE_SESSION_VIEWS ? n : TIDE_SESSION_VIEWS);
+    }
     embed->view(view.current, view.previous, view.alpha, tide_run_local, status.client.verified_tick, &packet);
 }
 

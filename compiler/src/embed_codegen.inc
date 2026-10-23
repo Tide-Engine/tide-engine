@@ -231,19 +231,41 @@ static bool embed_component_listed(const gen *g, const int c)
 
 // For each of the match's rows that have component `c`: `body`, with `e` the
 // entity and `i` the row of archetype `a`.
+// In a sharded game, for each world the frame draws (tide_frame_shards), with
+// `w`, `previous` and `alpha` that world's, what it draws of its rows
+static void gen_embed_worlds_begin(gen *g)
+{
+    if (!sharded(g)) return;
+    sb_put(&g->c, "        for (int32_t tide_k = -1; tide_k < (int32_t)tide_view_more_count; tide_k++) {\n"
+                  "        const tide_view_worlds *tide_v = tide_view_of(tide_k);\n"
+                  "        if (!tide_v->current) continue;\n"
+                  "        tide_view_switch(tide_k, (tide_local *)(uintptr_t)l);\n"
+                  "        const tide_world *w = tide_v->current;\n        const tide_world *previous = tide_v->previous;\n"
+                  "        const float alpha = tide_k < 0 ? home_alpha : tide_v->alpha;\n"
+                  "        (void)previous;\n        (void)alpha;\n");
+}
+
+static void gen_embed_worlds_end(gen *g)
+{
+    if (sharded(g)) sb_put(&g->c, "        }\n        tide_view_switch(-1, (tide_local *)(uintptr_t)l);\n");
+}
+
 static void gen_embed_rows(gen *g, const int c, const char *body)
 {
     sb *o = &g->c;
+    gen_embed_worlds_begin(g);
     for (int a = 0; a < g->prog->archetypes.count; a++) {
         if (arch_local(g, a) || !arch_stores(g, a, c)) continue;
         sb_printf(o, "        for (uint32_t i = 0; i < w->%s.count; i++) {\n", arch_name(g, a));
         if (comp_sparse(g, c)) sb_printf(o, "            if (!%s) continue;\n", presence_cell(g, "w", a, c, "i", false));
         sb_printf(o, "            const tide_entity e = *%s;\n            (void)e;\n", arch_cell(g, "w", a, 0, "tide_entity", "i", false));
+        if (sharded(g)) sb_put(o, "            if (tide_view_hides(w, e)) continue; // Another world drawn has it\n");
         sb_printf(o, "#define TIDE_EMBED_ROW tide_row_%s(&w->%s, %s, %d, i)\n", type_cname(g->prog->components.items[c]),
                   arch_name(g, a), arch_columns(g, a), arch_column(g, a, c));
         sb_put(o, body);
         sb_put(o, "#undef TIDE_EMBED_ROW\n        }\n");
     }
+    gen_embed_worlds_end(g);
 }
 
 // The match's events tidec --embed taps (add_embed_taps in compile.c): those with a tap among their local handlers.
@@ -355,8 +377,15 @@ static void gen_embed(gen *g)
         sb_printf(o, "    tide_text_use(%s, %s);\n", world_heap(prog, false) ? "(tide_heap *)(uintptr_t)&w->heap" : "NULL",
                   world_heap(prog, true) ? "(tide_heap *)(uintptr_t)&l->heap" : "NULL");
     }
-    sb_put(o, "    const uint32_t mark = tide_scratch_mark();\n"
-              "    uint32_t *place = tide_packet_places(out, w->entities.next_unused);\n"
+    sb_put(o, "    const uint32_t mark = tide_scratch_mark();\n    uint32_t places = w->entities.next_unused;\n");
+    if (sharded(g)) { // Every world the frame drew: the host gave the others again (tide_frame_shards)
+        sb_put(o, "    const float home_alpha = alpha;\n"
+                  "    tide_view_home = (tide_view_worlds){.current = w, .previous = previous, .alpha = alpha};\n"
+                  "    for (uint32_t k = 0; k < tide_view_more_count; k++) {\n"
+                  "        const tide_world *o = tide_view_more[k].current;\n"
+                  "        if (o && o->entities.next_unused > places) places = o->entities.next_unused;\n    }\n");
+    }
+    sb_put(o, "    uint32_t *place = tide_packet_places(out, places);\n"
               "    (void)place;\n    uint32_t n = 0;\n");
     const int owner = prog->owner ? prog->owner->index : -1;
     if (owner >= 0) {
@@ -364,10 +393,12 @@ static void gen_embed(gen *g)
                   field_cname(&prog->session->fields.items[1]));
     }
     // Every entity of the match, with its owner's flags
+    gen_embed_worlds_begin(g);
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
         sb_printf(o, "    for (uint32_t i = 0; i < w->%s.count; i++) {\n", arch_name(g, a));
         sb_printf(o, "        const tide_entity e = *%s;\n        uint32_t flags = 0;\n", arch_cell(g, "w", a, 0, "tide_entity", "i", false));
+        if (sharded(g)) sb_put(o, "        if (tide_view_hides(w, e)) continue; // Another world drawn has it\n");
         if (owner >= 0 && arch_stores(g, a, owner)) {
             if (comp_sparse(g, owner)) sb_printf(o, "        if (%s) {\n", presence_cell(g, "w", a, owner, "i", false));
             else sb_put(o, "        {\n");
@@ -383,16 +414,19 @@ static void gen_embed(gen *g)
         sb_put(o, "        const uint32_t row[6] = {e.index, e.generation, flags, TIDE_PACKET_NONE, TIDE_PACKET_NONE,\n"
                   "                                 tide_entity_born(&w->entities, e)};\n"
                   "        memcpy(tide_packet_grow(out, TIDE_PACKET_ENTITY, false), row, sizeof row);\n"
-                  "        if (e.index < w->entities.next_unused) place[e.index] = n;\n        n++;\n    }\n");
+                  "        if (e.index < places) place[e.index] = n;\n        n++;\n    }\n");
     }
+    gen_embed_worlds_end(g);
     // Parents, now every entity has its place
     if (prog->hierarchy[0]) {
-        sb_put(o, "    for (uint32_t k = 0; k < n; k++) {\n"
-                  "        uint32_t row[6];\n        uint8_t *at = out->bytes + TIDE_PACKET_HEADER + (size_t)k * TIDE_PACKET_ENTITY;\n"
-                  "        memcpy(row, at, sizeof row);\n"
-                  "        const tide_entity parent = tide_parent_of(w, (tide_entity){row[0], row[1]});\n"
-                  "        if (tide_entity_is_null(parent) || parent.index >= w->entities.next_unused) continue;\n"
-                  "        row[4] = place[parent.index];\n        memcpy(at, row, sizeof row);\n    }\n");
+        // In a sharded game, as the world that owns each has it (tide_view_parent_of)
+        sb_printf(o, "    for (uint32_t k = 0; k < n; k++) {\n"
+                     "        uint32_t row[6];\n        uint8_t *at = out->bytes + TIDE_PACKET_HEADER + (size_t)k * TIDE_PACKET_ENTITY;\n"
+                     "        memcpy(row, at, sizeof row);\n"
+                     "        const tide_entity parent = tide_%sparent_of(w, (tide_entity){row[0], row[1]});\n"
+                     "        if (tide_entity_is_null(parent) || parent.index >= places) continue;\n"
+                     "        row[4] = place[parent.index];\n        memcpy(at, row, sizeof row);\n    }\n",
+                  sharded(g) ? "view_" : "");
     }
     // Each component's rows and values, blended as views see them; then its local fields
     for (int c = 0; c < prog->components.count; c++) {
@@ -414,7 +448,7 @@ static void gen_embed(gen *g)
             else sb_printf(&body, "            tide_blend_%s(&value, before, alpha);\n", name);
         }
         if (embed_has_fix(d)) sb_printf(&body, "            tide_embed_fix_%s(&value, out);\n", name);
-        sb_printf(&body, "            rows[k] = e.index < w->entities.next_unused ? place[e.index] : 0u;\n"
+        sb_printf(&body, "            rows[k] = e.index < places ? place[e.index] : 0u;\n"
                          "            memcpy(values + (size_t)k * sizeof value, &value, sizeof value);\n            k++;\n");
         gen_embed_rows(g, c, body.data);
         sb_put(o, "    }\n");
@@ -429,7 +463,7 @@ static void gen_embed(gen *g)
             sb local_body = {0};
             sb_printf(&local_body, "            %s value = tide_get_%s_local(l, e);\n", part_name, name);
             if (embed_has_fix(part)) sb_printf(&local_body, "            tide_embed_fix_%s(&value, out);\n", part_name);
-            sb_put(&local_body, "            rows[k] = e.index < w->entities.next_unused ? place[e.index] : 0u;\n"
+            sb_put(&local_body, "            rows[k] = e.index < places ? place[e.index] : 0u;\n"
                                 "            memcpy(values + (size_t)k * sizeof value, &value, sizeof value);\n            k++;\n");
             gen_embed_rows(g, c, local_body.data);
             sb_put(o, "    }\n");
@@ -457,7 +491,9 @@ static void gen_embed(gen *g)
         }
     }
     // What this machine heard since the last packet
-    if (heard) sb_put(o, "    tide_embed_heard_write(out, place, w->entities.next_unused);\n");
+    if (heard) sb_put(o, "    tide_embed_heard_write(out, place, places);\n");
+    // The other worlds were for this packet alone, as for a frame
+    if (sharded(g)) sb_put(o, "    tide_view_more_count = 0u;\n    tide_view_home = (tide_view_worlds){0};\n    tide_view_drop_grids();\n");
     sb_printf(o, "    tide_scratch_reset(mark);\n"
                  "    tide_packet_end(out, 0x%016llXull, true, (uint32_t)w->Time.tick, verified_tick, alpha, n);\n}\n\n",
               (unsigned long long)g->game_hash);

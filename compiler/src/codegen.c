@@ -3220,12 +3220,14 @@ static bool has_local(const gen *g)
     return g->code && (g->code->is_view || g->code->is_local);
 }
 
-// Whether the code being generated is a sharded game's view's own: what it
-// reads of an entity by its handle comes from the world drawn that owns it
-// (tide_view_world_of), whichever world the view runs on.
+// Whether what the code being generated reads of an entity by its handle comes
+// from the world drawn that owns it (tide_view_world_of), whichever world a
+// view runs on: any code of a sharded game, as a frame's views, local handlers
+// and the functions they call read what's drawn, and a tick's code, with no
+// other world drawn then, reads its own world as it always does.
 static bool view_reads(const gen *g)
 {
-    return g->prog->shard_state && !g->task && !own_routine(g) && g->code && g->code->is_view;
+    return g->prog->shard_state != NULL;
 }
 
 static bool has_world(const gen *g)
@@ -13273,7 +13275,8 @@ static void gen_confirmed_copy(sb *o, const decl *d, const char *value, const ch
 // a view draws, read while that world's heap is the match's: its text, lists,
 // maps and sets copied into the scratch area, and what their elements hold in
 // turn, so the view reads them whatever world it runs on. A grid can't hold
-// cells there: it's an empty grid of its size.
+// cells there: it's copied into the local state's heap, kept until the frame
+// ends (tide_view_keep_grid).
 static void gen_scratch_decl(sb *o, const decl *d, const char *value, const char *pad, int depth);
 
 static void gen_scratch_value(sb *o, const type t, const char *place, const char *pad, const int depth)
@@ -13283,9 +13286,8 @@ static void gen_scratch_value(sb *o, const type t, const char *place, const char
         return;
     }
     if (t.kind == TY_GRID) {
-        sb_printf(o, "%s{\n%s    int32_t tide_size[3];\n%s    tide_grid_size(%s, tide_size);\n", pad, pad, pad, place);
-        sb_printf(o, "%s    %s = %s.at ? tide_grid_new(%s.dims, tide_size[0], tide_size[1], tide_size[2]) : (tide_grid){0};\n%s}\n", pad,
-                  place, place, grid_shape_name(t.decl), pad);
+        sb_printf(o, "%s%s = tide_view_keep_grid(tide_grid_copy_from(tide_world_heaps[TIDE_IN_MATCH], %s, &%s, TIDE_IN_LOCAL), &%s);\n",
+                  pad, place, place, grid_shape_name(t.decl), grid_shape_name(t.decl));
         return;
     }
     if (t.kind == TY_STRUCT || t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_EVENT) {
@@ -18504,7 +18506,10 @@ static void gen_api(gen *g)
     }
     if (prog->sound->named) sb_put(o, "    tide_local_sounds(local);\n");
     if (prog->uses_texture_size) sb_put(o, "    tide_texture_target_pixels(tide_previous_pixels);\n");
-    if (sharded(g)) sb_put(o, "    tide_view_more_count = 0u; // ...which were this frame's alone\n    tide_view_home = (tide_view_worlds){0};\n");
+    if (sharded(g)) {
+        sb_put(o, "    tide_view_more_count = 0u; // ...which were this frame's alone\n    tide_view_home = (tide_view_worlds){0};\n"
+                  "    tide_view_drop_grids();\n");
+    }
     sb_put(o, "}\n\n");
     sb_put(o, "void tide_local_events(tide_local *local, tide_event_log *events)\n{\n    (void)local;\n    if (!events) return;\n");
     if (program_hears(prog)) {

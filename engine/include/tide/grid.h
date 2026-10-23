@@ -399,3 +399,8 @@ static inline void tide_grid_size(const tide_grid g, int32_t size[3])
 
 // A world's grid, read from outside, like a host reading a component.
 const void *tide_grid_read(const tide_heap *heap, tide_grid g, int32_t x, int32_t y, int32_t z, const tide_grid_shape *s);
+
+// A copy of `g`, a grid in `heap` (another world's, which a `where` can't
+// name), in `where`'s heap: its size and every chunk it has. An empty grid
+// for one that isn't a world's. Release it as any of that heap's.
+tide_grid tide_grid_copy_from(const tide_heap *heap, tide_grid g, const tide_grid_shape *s, uint32_t where);

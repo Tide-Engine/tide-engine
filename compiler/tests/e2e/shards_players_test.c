@@ -221,6 +221,8 @@ TIDE_TEST(shards_a_machine_watches_an_area_far_from_its_player)
     TIDE_CHECK(sight.drawn == 4 && sight.queried == 4);
     TIDE_CHECK(sight.named == 3); // The far ones' names, read from the right's world
     TIDE_CHECK(sight.found == 3); // ...and through World, which finds them there
+    TIDE_CHECK(sight.called == 3); // ...and through a function's World, the same
+    TIDE_CHECK(sight.marked == 4); // ...and every marker's cell, a grid copied out of the world that has it
     TIDE_CHECK(sight.x > 92.5f && sight.x < 93.5f);
     const tide_client_status right = tide_client_status_of(tide_shard_client_session(player, 2));
     TIDE_CHECK(right.state == TIDE_SESSION_CONNECTED && right.resyncs == 0);
