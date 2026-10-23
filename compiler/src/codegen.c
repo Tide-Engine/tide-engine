@@ -7506,6 +7506,7 @@ static void gen_header(gen *g)
         sb_put(o, "\n\n");
     }
     if (program_uses_io(prog)) sb_put(o, "#define TIDE_HAS_IO 1\n\n");
+    if (prog->shards) sb_put(o, "#define TIDE_GAME_SHARDED 1 // A world split across shards (tide/shards.h)\n\n");
     if (prog->assets.count) sb_put(o, "#define TIDE_HAS_ASSETS 1\n\n");
     if (prog->skinned_types.count) sb_put(o, "#include \"tide/skinned.h\"\n\n");
     for (int i = 0; i < prog->assets.count; i++) {

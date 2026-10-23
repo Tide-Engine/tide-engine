@@ -87,8 +87,20 @@ uint32_t tide_shard_coordinator_actions(const tide_shard_coordinator *c, const t
 uint8_t *tide_shard_coordinator_instructions(tide_shard_coordinator *c, uint32_t shard, uint32_t *size);
 // The last checkpoint is kept for good.
 void tide_shard_coordinator_kept(tide_shard_coordinator *c);
+// A shard started again, elsewhere, from the last checkpoint and its journal
+// (its host failed): what it was handed and hadn't applied went with it, so
+// every shard sends again what wasn't acknowledged (receivers drop what they
+// had by number), it's told the regions, its ranges and the players again, its
+// neighbours send it their ghosts whole, and its first report says what it
+// owns and holds.
+void tide_shard_coordinator_restarted(tide_shard_coordinator *c, uint32_t shard);
 // Whether it waits for shards' checkpoints (their next reports have them).
 bool tide_shard_coordinator_checkpointing(const tide_shard_coordinator *c);
+
+// One shard's world in a checkpoint (TIDE_SHARD_ACTION_CHECKPOINT's bytes),
+// and the tick its journal goes on from: false for none, or bytes that aren't one.
+bool tide_shard_checkpoint_world(const uint8_t *data, uint32_t size, uint32_t shard, const uint8_t **world,
+                                 uint32_t *world_size, uint32_t *tick);
 
 // A checkpoint now, its own part and each running shard's world as `world`
 // gives it (packed, with the tick its journal goes on from): for a host with

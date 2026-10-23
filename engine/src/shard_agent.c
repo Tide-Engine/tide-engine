@@ -183,11 +183,20 @@ bool tide_shard_agent_apply(tide_shard_agent *a, const uint8_t *data, const uint
             memcpy(kept[i].box.lo, tide_read_bytes(&r, 24u), 24u);
             memcpy(kept[i].box.hi, tide_read_bytes(&r, 24u), 24u);
         }
-        // What it sent a shard that's no target any more is forgotten: that one dropped them
+        // What it sent a shard that's no target any more is forgotten: that one
+        // dropped them. What it sent the others goes again whole, as their
+        // copies may be older than it knows (after a shard started again), and
+        // what they hold that's gone from near them is still dropped.
         for (uint32_t s = 0; s < a->sent_room; s++) {
             bool still = false;
             for (uint32_t i = 0; i < targets; i++) still |= kept[i].shard == s;
-            if (!still) map_free(&a->sent[s]);
+            if (!still) {
+                map_free(&a->sent[s]);
+                continue;
+            }
+            for (uint32_t k = 0; k < a->sent[s].room; k++) {
+                if (a->sent[s].keys[k]) a->sent[s].values[k] = 1u; // Sent, with bytes it doesn't know
+            }
         }
         free(a->targets);
         a->targets = kept;

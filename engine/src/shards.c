@@ -362,6 +362,27 @@ tide_shards *tide_shards_recover(const tide_shards_desc *desc, const uint8_t *da
     return load(desc, data, size, records, records_user, now);
 }
 
+bool tide_shards_restart(tide_shards *s, const uint32_t shard, const uint8_t *data, const uint32_t size,
+                         const tide_shards_records records, void *records_user, const double now)
+{
+    const uint8_t *world = NULL;
+    uint32_t world_size = 0, tick = 0;
+    if (!s || shard >= s->room || !s->shards[shard].server
+        || !tide_shard_checkpoint_world(data, size, shard, &world, &world_size, &tick)) return false;
+    stop(s, shard);
+    s->records = records;
+    s->records_user = records_user;
+    s->failed = false;
+    const tide_shard_action a = {.kind = TIDE_SHARD_ACTION_START, .shard = shard, .tick = tick, .world = world,
+                                 .world_size = world_size};
+    start(s, &a, now);
+    s->records = NULL;
+    s->records_user = NULL;
+    if (s->failed) return false;
+    tide_shard_coordinator_restarted(s->coordinator, shard);
+    return true;
+}
+
 // ---------------------------------------------------------------------------
 // A dedicated server's matches as shards
 

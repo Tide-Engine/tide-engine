@@ -394,3 +394,39 @@ TIDE_TEST(shards_recover_from_a_crash_after_splits)
     crash_and_recover(8);
     TIDE_CHECK(journal.checkpoints >= 3);
 }
+
+// One shard's machine failing: that shard starts again from the last
+// checkpoint and its records, the others going on, and nothing is lost
+TIDE_TEST(shards_restart_one_shard_where_it_was)
+{
+    memset(&journal, 0, sizeof journal);
+    now = 0;
+    most_dying = 0;
+    memset(clients, 0, sizeof clients);
+    net = tide_loopback_create(7);
+    tide_shards_desc d = desc_of(0);
+    d.journal = keep_record;
+    d.checkpoint = keep_checkpoint;
+    d.checkpoint_seconds = 3.0;
+    shards = tide_shards_create(&d, now);
+    TIDE_REQUIRE(shards != NULL);
+    run(1.0, false);
+    run(7.5, true);
+    TIDE_REQUIRE(journal.checkpoints >= 2);
+    const tide_world *before = tide_shards_world(shards, 1);
+    const uint32_t tick = (uint32_t)before->Time.tick;
+    const uint64_t hash = tide_game_api.hash_world(before);
+    TIDE_REQUIRE(tide_shards_restart(shards, 1, journal.checkpoint, journal.checkpoint_size, give_record, NULL, now));
+    const tide_world *after = tide_shards_world(shards, 1);
+    TIDE_CHECK((uint32_t)after->Time.tick == tick);              // Where it was...
+    TIDE_CHECK(tide_game_api.hash_world(after) == hash);           // ...exactly
+    run(20.0, true);
+    check_done();
+    finish();
+    forget_records();
+    for (uint32_t i = 0; i < 16u; i++) {
+        free(journal.records[i]);
+        free(journal.sizes[i]);
+    }
+    free(journal.checkpoint);
+}

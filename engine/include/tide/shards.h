@@ -100,3 +100,9 @@ tide_shards *tide_shards_load(const tide_shards_desc *desc, const uint8_t *data,
 typedef bool (*tide_shards_records)(void *user, uint32_t shard, uint32_t index, const uint8_t **record, uint32_t *size);
 tide_shards *tide_shards_recover(const tide_shards_desc *desc, const uint8_t *data, uint32_t size,
                                  tide_shards_records records, void *records_user, double now);
+// One shard started again from the last checkpoint (`data`) and its journal
+// records since, the rest going on: as when its machine failed
+// (tide_shard_coordinator_restarted). False for records that don't make the
+// ticks they say, or a shard the checkpoint hasn't.
+bool tide_shards_restart(tide_shards *s, uint32_t shard, const uint8_t *data, uint32_t size,
+                         tide_shards_records records, void *records_user, double now);

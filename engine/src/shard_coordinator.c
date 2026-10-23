@@ -1126,6 +1126,38 @@ uint8_t *tide_shard_coordinator_save(const tide_shard_coordinator *c, const tide
     return w.data;
 }
 
+bool tide_shard_checkpoint_world(const uint8_t *data, const uint32_t size, const uint32_t shard, const uint8_t **world,
+                                 uint32_t *world_size, uint32_t *tick)
+{
+    tide_reader r = {data, size, 0, false};
+    if (tide_read_u32(&r) != SAVE_MAGIC || tide_read_u32(&r) != SAVE_VERSION) return false;
+    tide_read_u64(&r);
+    const uint32_t ranges = tide_read_u32(&r);
+    tide_read_bytes(&r, ranges * 12u);
+    const uint32_t moved = tide_read_u32(&r);
+    tide_read_bytes(&r, moved * 12u);
+    const uint32_t players = tide_read_u32(&r);
+    tide_read_bytes(&r, players * 9u);
+    const uint32_t count = tide_read_u32(&r);
+    for (uint32_t i = 0; i < count && !r.failed; i++) {
+        const bool used = tide_read_u8(&r) != 0;
+        tide_read_u8(&r);
+        tide_read_u32(&r);
+        if (!used) continue;
+        tide_read_bytes(&r, 1u + 48u);
+        const uint32_t at = tide_read_u32(&r);
+        const uint32_t n = tide_read_u32(&r);
+        const uint8_t *bytes = tide_read_bytes(&r, n);
+        if (i == shard && bytes) {
+            *world = bytes;
+            *world_size = n;
+            *tick = at;
+            return true;
+        }
+    }
+    return false;
+}
+
 // Every running shard makes a checkpoint of its world for its next report
 static void begin_checkpoint(tide_shard_coordinator *c)
 {
@@ -1183,6 +1215,46 @@ void tide_shard_coordinator_kept(tide_shard_coordinator *c)
         c->told_after.size = 0;
     }
     c->changed = false;
+}
+
+void tide_shard_coordinator_restarted(tide_shard_coordinator *c, const uint32_t shard)
+{
+    if (!c || shard >= c->count || !c->shards[shard].used) return;
+    cshard *sh = &c->shards[shard];
+    sh->heard = false; // Until it reports, as a new agent
+    sh->injected = 0;
+    sh->outbox.size = sh->ghosts.size = 0;
+    sh->injects.size = sh->admits.size = sh->held.size = 0;
+    sh->inject_count = sh->admit_count = sh->held_count = 0;
+    // Everything unacknowledged, again from every shard: what it was handed went with it
+    for (uint32_t i = 0; i < c->count; i++) {
+        cshard *other = &c->shards[i];
+        if (!other->used) continue;
+        other->delivered = other->acked;
+        other->outbox.size = 0;
+        other->flags |= TIDE_SHARD_DO_FROM_START | TIDE_SHARD_DO_TARGETS; // ...and their ghosts whole
+    }
+    // What the orchestrator told it since, again
+    for (uint32_t k = 0; k < c->range_count; k++) {
+        if (c->ranges[k].shard == shard) tell_range(c, c->ranges[k]);
+    }
+    if (sh->retiring) {
+        uint8_t retire[16];
+        tide_writer w = {retire, sizeof retire, 0, false, false};
+        tide_shard_header(&w, TIDE_SHARD_RETIRE, TIDE_SHARD_ORCHESTRATOR, 0u);
+        tide_write_u32(&w, sh->into);
+        inject(c, shard, retire, w.size);
+    }
+    tide_writer w = {.grows = true};
+    tide_shard_header(&w, TIDE_SHARD_MAP, TIDE_SHARD_ORCHESTRATOR, 0u);
+    write_regions(c, &w);
+    if (w.overflow) tide_out_of_memory();
+    inject(c, shard, w.data, w.size);
+    free(w.data);
+    for (uint32_t p = 0; p < c->player_count; p++) {
+        if (c->players[p].here) admit(c, shard, p, c->players[p].cookie);
+        c->players[p].route = 0; // Every route told again
+    }
 }
 
 bool tide_shard_coordinator_checkpointing(const tide_shard_coordinator *c)
