@@ -492,8 +492,12 @@ void b3t_apply_filters(tide_rows *rows, physics *p)
 // stored in simulation state. A changed table is copied only on structural edits.
 void b3t_topology(tide_rows *rows, physics *p)
 {
+    // In a sharded world, an entity that came or went is looked over as one that changed
+    const int64_t moves=tide_shard_moves_now();
+    const bool moved=moves!=p->shard_moves;
+    p->shard_moves=moves;
     const tide_entities *entities=rows->entities;
-    if(!entities) { p->topology_changed=true; return; }
+    if(!entities || moved) { p->topology_changed=true; if(!entities) return; }
     const uint64_t total=(uint64_t)entities->next_unused*sizeof(tide_entity_slot);
     if(total>(1u<<30)) tide_out_of_memory();
     bool same=total==(uint64_t)tide_list_count(p->topology);
@@ -506,7 +510,7 @@ void b3t_topology(tide_rows *rows, physics *p)
         same=source_span(p->topology,i*sizeof(tide_entity_slot),slots,n*sizeof(tide_entity_slot));
         i+=n;
     }
-    p->topology_changed=!same;
+    p->topology_changed=!same || moved;
     if(same) return;
     uint8_t *bytes=tide_alloc((size_t)total);
     for(uint32_t i=0;i<entities->next_unused;) {

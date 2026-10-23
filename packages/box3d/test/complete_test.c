@@ -8,7 +8,7 @@
 void b3t_check(bool on, bool whenever);
 void b3t_forget(void);
 
-_Static_assert(sizeof(Box3D_Physics) == 296 && sizeof(Box3D_Collider) == 192 &&
+_Static_assert(sizeof(Box3D_Physics) == 352 && sizeof(Box3D_Collider) == 192 &&
     sizeof(Box3D_HullGeometry) == 3592 && sizeof(Box3D_ShapeRecord) == 32 && sizeof(Box3D_Part) == 64,
     "live collider, history and native bookkeeping ABIs must agree");
 
@@ -222,7 +222,7 @@ TIDE_TEST(box3d_complete_snapshot_replay)
     tide_world w={0}, saved={0}; start(&w); tide_world_copy(&saved,&w);
     uint64_t sequence=0;
     for (int i=0;i<100;i++) { tide_world_tick(&w); const uint64_t h=tide_world_hash(&w); sequence=tide_hash_more(sequence,&h,sizeof h); }
-    TIDE_CHECK(sequence==UINT64_C(0xe104c5cc0015dba1));
+    TIDE_CHECK(sequence==UINT64_C(0x9117e072adf2f4bd));
     printf("  complete sequence: %016llx\n",(unsigned long long)sequence);
     for (int i=0;i<100;i++) tide_world_tick(&saved);
     TIDE_CHECK(tide_world_hash(&saved)==tide_world_hash(&w));

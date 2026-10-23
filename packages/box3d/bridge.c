@@ -31,6 +31,7 @@
 #include "tide/page.h"
 #include "tide/resident.h"
 #include "tide/rows.h"
+#include "tide/shard.h"
 #include "tide/time.h"
 
 // Box3D's headers are its own, as its sources are: what they'd be warned for
@@ -170,10 +171,14 @@ typedef struct physics {
     tide_list topology;
     bool topology_changed;
     uint8_t topology_padding[3];
+    int64_t shard_moves; // Shards.moves as the last tick had it
+    tide_map copies;     // Other shards' bodies near this one's border, by entity...
+    tide_map copy_of;    // ...and whose each copy is
 } physics;
 
 _Static_assert(sizeof(body) == 176 && sizeof(box) == 44 && sizeof(sphere) == 36 && sizeof(capsule) == 40 && sizeof(touch) == 40
-                   && sizeof(strike) == 48 && sizeof(found) == 48 && sizeof(physics) == 296 && offsetof(physics, moved) == 88,
+                   && sizeof(strike) == 48 && sizeof(found) == 48 && sizeof(physics) == 352 && offsetof(physics, moved) == 88
+                   && offsetof(physics, shard_moves) == 296 && offsetof(physics, copies) == 304,
                "box3d.tide's types changed: these are theirs");
 
 _Static_assert(offsetof(physics, gravity) == 0 && offsetof(physics, substeps) == 12
@@ -685,6 +690,54 @@ void b3t_gone(const int64_t *bodies, const int32_t count)
         b3DestroyBody(id);
         note('g', &bodies[i], sizeof bodies[i]);
     }
+}
+
+// A copy of a body another shard owns near this one's border (a ghost's, in
+// a sharded world): kinematic, or static for a static one, where the body's
+// owner last had it and as fast. Made when `id` is 0, and moved when it
+// isn't; its id, or 0 when it's gone. A copy at rest is left as it is, so
+// what rests against it can sleep.
+int64_t b3t_copy(const int64_t id, const body *b)
+{
+    world *w = active;
+    const b3BodyType type = b->type == b3_staticBody ? b3_staticBody : b3_kinematicBody;
+    if (id == 0) {
+        b3BodyDef def = b3DefaultBodyDef();
+        def.type = type;
+        def.position = b3ToPos(vec(b->position));
+        def.rotation = quat(b->rotation);
+        if (type == b3_kinematicBody) {
+            def.linearVelocity = vec(b->velocity);
+            def.angularVelocity = vec(b->angular_velocity);
+        }
+        const b3BodyId made = b3CreateBody(w->id, &def);
+        const int64_t copy = handle(made.index1, made.generation);
+        note('c', &copy, sizeof copy);
+        note('c', b, sizeof *b);
+        return copy;
+    }
+    const b3BodyId at = body_of(w, id);
+    if (!b3Body_IsValid(at)) return 0;
+    const b3Pos was = b3Body_GetPosition(at);
+    const b3Pos now = b3ToPos(vec(b->position));
+    const b3Quat turned = b3Body_GetRotation(at), turn = quat(b->rotation);
+    if (memcmp(&was, &now, sizeof now) != 0 || memcmp(&turned, &turn, sizeof turn) != 0) b3Body_SetTransform(at, now, turn);
+    if (type == b3_kinematicBody) {
+        const b3Vec3 v = b3Body_GetLinearVelocity(at), want = vec(b->velocity);
+        if (memcmp(&v, &want, sizeof v) != 0) b3Body_SetLinearVelocity(at, want);
+        b3Body_SetAngularVelocity(at, vec(b->angular_velocity));
+    }
+    note('m', &id, sizeof id);
+    note('m', b, sizeof *b);
+    return id;
+}
+
+void b3t_drop_copy(const int64_t id)
+{
+    const b3BodyId at = body_of(active, id);
+    if (!b3Body_IsValid(at)) return;
+    b3DestroyBody(at);
+    note('d', &id, sizeof id);
 }
 
 // For a host, and for tests: C's worlds go, as when a program starts. Matches

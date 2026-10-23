@@ -1,5 +1,9 @@
 # The Box3D package
 
+## Sharded worlds (2026-10-23)
+
+`Physics` is `[PerShard]`, `Body.position` is the package's `[Partition]`, and the handles in components are `[PerShard]` fields, so a body that crosses a border is made anew on the next shard from its `Body` and the old shard drops it (`Shards.moves` into `b3t_topology`, then `Begin`'s ownership check). `[Ghosts] CopyBodies` keeps a kinematic or static copy of each neighbour's body near the border, with its box, sphere or capsule (`b3t_copy`, `b3t_drop_copy`, `Physics.copies`/`copyOf`), and `Report` tells only owned entities. Joints wait while their bodies are on two shards. `Physics` is 352 bytes; world-hash pins changed, body, image and answer pins didn't. Contracts, tests (`tide_box3d_shards`) and gaps: `notes/sharding.md`, Physics.
+
 ## Vendored feature scope and live components (2026-10-22)
 
 The owner approved all nine vendored joint types, remaining collider,

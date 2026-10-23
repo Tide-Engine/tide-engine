@@ -1252,6 +1252,7 @@ static const struct {
 } members[] = {
     {"Application", "title", TY_STRING, "tide_str_from_cstr(tide_game_title)"},
     {"Shards", "delay", TY_INT, "tide_shard_delay_now"},
+    {"Shards", "moves", TY_LONG, "tide_shard_moves_now()"},
     {"Application", "persistentDataPath", TY_STRING, "tide_application_persistent_data_path(tide_l->tide_io)"},
     {"Application", "temporaryCachePath", TY_STRING, "tide_application_temporary_cache_path(tide_l->tide_io)"},
     {"Math", "PI", TY_FLOAT, "TIDE_PI_F"},

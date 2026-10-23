@@ -34,6 +34,7 @@
 #include "tide/net.h"
 #include "tide/page.h"
 #include "tide/rows.h"
+#include "tide/shard.h"
 #include "tide/time.h"
 
 #include "box2d/src/box2d/box2d.h"
@@ -152,11 +153,14 @@ typedef struct physics {
     tide_list topology;
     bool topology_changed;
     uint8_t topology_padding[3];
+    int64_t shard_moves; // Shards.moves as the last tick had it
+    tide_map copies;     // Other shards' bodies near this one's border, by entity...
+    tide_map copy_of;    // ...and whose each copy is
 } physics;
 
 _Static_assert(sizeof(body) == 96 && offsetof(body, sleep_speed) == 60 && offsetof(body, fixed_rotation) == 88 && sizeof(box) == 32
                    && sizeof(circle) == 28 && sizeof(touch) == 40 && sizeof(blow) == 56 && sizeof(met) == 40
-                   && sizeof(physics) == 256 && offsetof(physics, moved) == 60,
+                   && sizeof(physics) == 312 && offsetof(physics, moved) == 60 && offsetof(physics, shard_moves) == 256,
                "box2d.tide's types changed: these are theirs");
 
 _Static_assert(offsetof(physics, gravity) == 0 && offsetof(physics, substeps) == 8
@@ -2264,6 +2268,76 @@ scene_bounds b2t_circle_bounds(const circle *shape, const float rotation, const 
 }
 
 #include "joints.inc"
+
+// A copy of a body another shard owns near this one's border (a ghost's, in
+// a sharded world): kinematic, or static for a static one, where the body's
+// owner last had it and as fast. Made when `id` is 0, and moved when it
+// isn't; its id, or 0 when it's gone. A copy at rest is left as it is.
+int64_t b2t_copy(const int64_t id, const body *b)
+{
+    world *w = active;
+    const b2BodyType type = type_of(b->type) == b2_staticBody ? b2_staticBody : b2_kinematicBody;
+    if (id == 0) {
+        b2BodyDef def = b2DefaultBodyDef();
+        def.type = type;
+        def.position = b2ToPos((b2Vec2){b->position.x, b->position.y});
+        def.rotation = b2MakeRot(b->angle);
+        if (type == b2_kinematicBody) {
+            def.linearVelocity = (b2Vec2){b->velocity.x, b->velocity.y};
+            def.angularVelocity = b->spin;
+        }
+        const b2BodyId made = b2CreateBody(w->id, &def);
+        const int64_t copy = handle(made.index1, made.generation);
+        if (copy != 0) know(w, made.index1, (uint8_t)(type + 1));
+        note('c', &copy, sizeof copy);
+        note('c', b, sizeof *b);
+        return copy;
+    }
+    const b2BodyId at = body_of(w, id);
+    if (!b2Body_IsValid(at)) return 0;
+    const b2Pos was = b2Body_GetPosition(at);
+    if ((float)was.x != b->position.x || (float)was.y != b->position.y || b2Rot_GetAngle(b2Body_GetRotation(at)) != b->angle)
+        b2Body_SetTransform(at, b2ToPos((b2Vec2){b->position.x, b->position.y}), b2MakeRot(b->angle));
+    if (type == b2_kinematicBody) {
+        const b2Vec2 v = b2Body_GetLinearVelocity(at);
+        if (v.x != b->velocity.x || v.y != b->velocity.y) b2Body_SetLinearVelocity(at, (b2Vec2){b->velocity.x, b->velocity.y});
+        if (b2Body_GetAngularVelocity(at) != b->spin) b2Body_SetAngularVelocity(at, b->spin);
+    }
+    note('m', &id, sizeof id);
+    note('m', b, sizeof *b);
+    return id;
+}
+
+void b2t_copy_box(const int64_t on, const box *s)
+{
+    const b2BodyId body_id = body_of(active, on);
+    if (!b2Body_IsValid(body_id) || !(s->size.x > 0) || !(s->size.y > 0)) return;
+    const b2ShapeDef def = shape_def(s->density, s->friction, s->bounce, s->sensor);
+    const b2Polygon shape = box_shape(s);
+    b2CreatePolygonShape(body_id, &def, &shape);
+    note('x', &on, sizeof on);
+    note('x', s, sizeof *s);
+}
+
+void b2t_copy_circle(const int64_t on, const circle *s)
+{
+    const b2BodyId body_id = body_of(active, on);
+    if (!b2Body_IsValid(body_id) || !(s->radius > 0)) return;
+    const b2ShapeDef def = shape_def(s->density, s->friction, s->bounce, s->sensor);
+    const b2Circle shape = {{s->offset.x, s->offset.y}, s->radius};
+    b2CreateCircleShape(body_id, &def, &shape);
+    note('o', &on, sizeof on);
+    note('o', s, sizeof *s);
+}
+
+void b2t_drop_copy(const int64_t id)
+{
+    const b2BodyId at = body_of(active, id);
+    if (!b2Body_IsValid(at)) return;
+    b2DestroyBody(at);
+    know(active, at.index1, 0);
+    note('d', &id, sizeof id);
+}
 
 #include "colliders.inc"
 

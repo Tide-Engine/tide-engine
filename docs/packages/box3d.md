@@ -756,6 +756,10 @@ A query, including one from a view of a confirmed world while this machine predi
 
 It's also why code never calls Box3D: everything that changes the physics world goes through the match, as components. The package itself talks to Box3D through [C functions](../c/functions.md), and reads the bodies back with [systems written in C](../c/functions.md#systems-written-in-c).
 
+### A sharded world
+
+In a [sharded world](../multiplayer/shards.md#physics), each shard has its own `Physics` and steps its own Box3D world of the bodies it owns. `Body.position` decides which shard has a body. A body that crosses a border is made anew on the next shard from its `Body`, where it was and as fast, and its shapes are put back on it there. Bodies another shard owns near the border are kinematic copies here, static for a static one, with their own box, sphere or capsule, where their owner last had them. This shard's bodies run into them, and each side tells its own entities of a touch or a hit. Set `Physics`' settings from a system for no entity that takes `Physics`, which runs on every shard. A joint holds its bodies only while one shard owns both. A body's parts, meshes, hulls and height fields aren't copied across a border yet.
+
 ## What it costs
 
 A resident tick copies the pages Box3D may have written and computes its digest. Keeping a snapshot shares the pages, and hashing reads the stamp and digest. A rollback copies the pages that differ from its target state; packing a world for another machine still writes the full canonical snapshot and geometry.

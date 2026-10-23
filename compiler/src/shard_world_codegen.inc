@@ -503,7 +503,7 @@ static void gen_shard_tick(gen *g)
     const bool hears = program_hears(prog);
     sb_put(o, "static void tide_world_tick_once(tide_world *w, const tide_jobs *jobs);\n\n"
               "void tide_world_tick_on(tide_world *w, const tide_jobs *jobs)\n{\n"
-              "    tide_shard_use(w, tide_shard_owns_world);\n"
+              "    tide_shard_use(w, tide_shard_owns_world, tide_shard_moves_world);\n"
               "    if (!w->tide_shard_state.shard) {\n        tide_world_tick_once(w, jobs);\n        return;\n    }\n"
               "    tide_shard_tick t = {0};\n    tide_world before = {0};\n    tide_world_copy(&before, w);\n");
     if (hears) {

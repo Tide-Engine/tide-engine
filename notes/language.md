@@ -1,5 +1,9 @@
 # Language features, as tidec builds them
 
+## Shard attributes (2026-10-23)
+
+`[PerShard]` on a singleton and on a component's number or bool field, `[Ghosts]` on a per-entity system, `Shards.moves`, and one `[Partition]` a package: rules, checks and generated code are in `notes/sharding.md`, The language side; the spec's Shards section has them as Provisional. `field` gained `per_shard` as its last member, so positional `field` initializers end in `false`.
+
 ## LookRotation of any length (2026-10-22)
 
 Found by the BANKED prototype's first-person arm IK:

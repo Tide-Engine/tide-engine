@@ -1,5 +1,9 @@
 # Netcode: sessions, prediction, commands
 
+## Shard messages by download in games without commands (2026-10-23)
+
+A sharded game's clients now report the progress of a download (a published command or shard message) in `MSG_CLIENT` whether or not the game has commands, and servers read it, as they did only for games with commands. A big shard message in a game without commands was never acknowledged, which held it and every later one at the server for good. `PROTOCOL` stays 18: only sharded games without commands send anything new, and their builds must match anyway. Server additions: `tide_server_injected_message`, `tide_server_drop_injected`. Session additions for sharded matches: `tide_session_can_reload`, `tide_session_save_shards`, `tide_session_start_shards_from`, `tide_session_shards`. Details: `notes/sharding.md`.
+
 ## A server's journal (2026-10-23)
 
 `tide_server_desc.journal` gets, after each tick, a record of what went into

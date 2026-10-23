@@ -52,9 +52,9 @@ enum BodyType
 // see it get there over a few frames. Neither changes anything of the match.
 component Body
 {
-    long id; // Box2D's own handle: 0 until the body's first step
+    [PerShard] long id; // Box2D's own handle: 0 until the body's first step, and on a shard it came to
     BodyType type = BodyType.Dynamic;
-    [Position] float2 position;
+    [Position] [Partition] float2 position; // Where it is: in a sharded world, which shard has it
     [Rotation] float angle; // In radians, from -pi to pi
     float2 velocity;
     float spin; // In radians a second
@@ -112,8 +112,8 @@ component Part
 {
     Entity of;
     // The package's own: its shapes in Box2D, 0 until they're on the body
-    long box;
-    long circle;
+    [PerShard] long box;
+    [PerShard] long circle;
 }
 
 // Preserve the established ECS traversal order as bodies acquire shapes.
@@ -175,6 +175,10 @@ struct RayHit
     float fraction; // How far along the way that was, from 0 at its start to 1 at its end
 }
 
+// Each shard of a sharded world has its own: Box2D's world of the bodies it
+// owns. A body that goes to another shard is made there anew from its Body,
+// as it was when it left.
+[PerShard]
 singleton Physics
 {
     float2 gravity = float2(0, -10);
@@ -208,7 +212,12 @@ singleton Physics
     Map<long, Entity> joints;
     Map<Entity, Fixtures> fixtures;
     List<byte> topology;
-    bool topologyChanged;
+    bool topologyChanged; // Entities changed, or came or went (Shards.moves): what's Box2D's is looked over
+    long shardMoves; // The package's own: Shards.moves as the last tick had it
+    // In a sharded world: Box2D's copies of other shards' bodies near this
+    // one's border, by entity, and whose each copy is (CopyBodies)
+    Map<Entity, Copy> copies;
+    Map<long, Entity> copyOf;
 
     // A prepared, read-only scene: opted-in bodies at the presented time,
     // all other geometry at the current physics step. Invalid times fail.
@@ -753,7 +762,7 @@ system Begin(mut Physics physics, World world)
     // Component removal and replacement follow the same path as despawning.
     if (physics.topologyChanged) foreach (var owner in physics.owners)
     {
-        if (!world.TryGet<Body>(owner.value, out var body) || body.id != owner.key)
+        if (!world.TryGet<Body>(owner.value, out var body) || body.id != owner.key || !Shards.Owns(owner.value))
         {
             RemoveBodies([owner.key], 1);
             physics.owners.Remove(owner.key);
@@ -769,7 +778,7 @@ system Begin(mut Physics physics, World world)
         {
             var fixture = held.shapes[kind];
             if (fixture.state.id == 0) continue;
-            if (!HasFixture(world, FixtureKey { entity = entry.key, kind = kind }) ||
+            if (!Shards.Owns(entry.key) || !HasFixture(world, FixtureKey { entity = entry.key, kind = kind }) ||
                 !world.TryGet<Body>(FixtureOwner(world, entry.key), out var body) || body.id != fixture.state.body)
             {
                 ForgetFixture(fixture, entry.key, physics);
@@ -782,9 +791,77 @@ system Begin(mut Physics physics, World world)
         if (!any) physics.fixtures.Remove(entry.key);
         else if (changed) physics.fixtures[entry.key] = held;
     }
+    // An entity that went to another shard takes its sensors with it
+    if (physics.topologyChanged && physics.sensors.count > 0) foreach (var entry in physics.sensors)
+    {
+        if (!Shards.Owns(entry.key)) physics.sensors.Remove(entry.key);
+    }
     RemoveShapes(physics.shed, physics.shed.count);
     physics.shed.Clear();
     BeginFixtureChanges(physics.topologyChanged);
+}
+
+// A copy of another shard's body near this one's border, and when it was last seen
+struct Copy
+{
+    long body;
+    int tick;
+}
+
+[NativeName("b2t_copy")]
+extern long CopyBody(long id, in Body body);
+
+[NativeName("b2t_copy_box")]
+extern void CopyBox(long body, in Box shape);
+
+[NativeName("b2t_copy_circle")]
+extern void CopyCircle(long body, in Circle shape);
+
+[NativeName("b2t_drop_copy")]
+extern void DropCopy(long id);
+
+// In a sharded world, the bodies other shards own near this one's border are
+// here as ghosts, and Box2D has each as a copy this shard's bodies run into:
+// kinematic (static for a static one), where its owner last had it and as
+// fast, with its own box or circle. In a world that isn't sharded, there are
+// none, and these systems aren't there.
+[Ghosts]
+[Stage(PhysicsStages.Step, 3)]
+system CopyBodies(Body body, World world, Time time, mut Physics physics)
+{
+    long had = physics.copies.TryGet(this, out var copy) ? copy.body : 0;
+    long made = CopyBody(had, body);
+    if (had != 0 && made != had) physics.copyOf.Remove(had);
+    if (made != 0 && made != had)
+    {
+        if (world.TryGet<Box>(this, out var box)) CopyBox(made, box);
+        if (world.TryGet<Circle>(this, out var circle)) CopyCircle(made, circle);
+        physics.copyOf[made] = this;
+    }
+    physics.copies[this] = Copy { body = made, tick = time.tick };
+}
+
+// A copy whose ghost went last tick, or that this shard owns now, goes, once
+// Begin has Box2D's world
+[Stage(PhysicsStages.Step, 3)]
+system DropCopies(Time time, mut Physics physics)
+{
+    if (physics.copies.count == 0) return;
+    foreach (var entry in physics.copies)
+    {
+        if (entry.value.tick >= time.tick - 1 && !Shards.Owns(entry.key)) continue;
+        DropCopy(entry.value.body);
+        physics.copyOf.Remove(entry.value.body);
+        physics.copies.Remove(entry.key);
+    }
+}
+
+// Whose a body is: its entity's, or for a copy of another shard's body (in a
+// sharded world), the entity it copies
+Entity BodyOwner(Physics physics, long body)
+{
+    if (physics.owners.TryGet(body, out var owner)) return owner;
+    return physics.copyOf[body];
 }
 
 // New bodies are made, and what code wrote into a body since the last step
@@ -1102,31 +1179,32 @@ system Report(Physics physics)
     for (int i = 0; i < count; i++)
     {
         Contact contact = ReadTouch(i);
-        Entity a = physics.owners[contact.a];
-        Entity b = physics.owners[contact.b];
+        Entity a = BodyOwner(physics, contact.a);
+        Entity b = BodyOwner(physics, contact.b);
         Entity partA = PartOf(physics.parts, contact.shapeA, a);
         Entity partB = PartOf(physics.parts, contact.shapeB, b);
+        // In a sharded world each side of a border tells its own entities, of a copy too: the copy's own shard tells it
         if (contact.began)
         {
-            a.Send(Touched { other = b, part = partA, otherPart = partB });
-            b.Send(Touched { other = a, part = partB, otherPart = partA });
+            if (Shards.Owns(a)) a.Send(Touched { other = b, part = partA, otherPart = partB });
+            if (Shards.Owns(b)) b.Send(Touched { other = a, part = partB, otherPart = partA });
         }
         else
         {
-            a.Send(Parted { other = b, part = partA, otherPart = partB });
-            b.Send(Parted { other = a, part = partB, otherPart = partA });
+            if (Shards.Owns(a)) a.Send(Parted { other = b, part = partA, otherPart = partB });
+            if (Shards.Owns(b)) b.Send(Parted { other = a, part = partB, otherPart = partA });
         }
     }
     int hits = CountHits();
     for (int i = 0; i < hits; i++)
     {
         Blow blow = ReadHit(i);
-        Entity a = physics.owners[blow.a];
-        Entity b = physics.owners[blow.b];
+        Entity a = BodyOwner(physics, blow.a);
+        Entity b = BodyOwner(physics, blow.b);
         Entity partA = PartOf(physics.parts, blow.shapeA, a);
         Entity partB = PartOf(physics.parts, blow.shapeB, b);
-        a.Send(Hit { other = b, part = partA, otherPart = partB, point = blow.point, normal = blow.normal, speed = blow.speed });
-        b.Send(Hit { other = a, part = partB, otherPart = partA, point = blow.point, normal = -blow.normal, speed = blow.speed });
+        if (Shards.Owns(a)) a.Send(Hit { other = b, part = partA, otherPart = partB, point = blow.point, normal = blow.normal, speed = blow.speed });
+        if (Shards.Owns(b)) b.Send(Hit { other = a, part = partB, otherPart = partA, point = blow.point, normal = -blow.normal, speed = blow.speed });
     }
 }
 
@@ -1744,10 +1822,10 @@ component Joint
     float constraintDampingRatio = 2;
     bool enabled = true;
     bool collideConnected;
-    long id; // The package's own native handle, zero before attachment
+    [PerShard] long id; // The package's own native handle, zero before attachment
     float2 force; // Read back after the step, in newtons
     float torque; // Read back after the step, in newton meters
-    long configuration; // The package's own creation-only settings key
+    [PerShard] long configuration; // The package's own creation-only settings key
 }
 
 component DistanceJoint
@@ -1878,6 +1956,17 @@ system SynchronizeJoints(mut Joint joint, World world, mut Physics physics)
     if (world.Has<WheelJoint>(this)) count += 1;
     if (world.Has<MoverJoint>(this)) count += 1;
     if (world.Has<PogoJoint>(this)) count += 1;
+    // In a sharded world, a joint whose bodies aren't both this shard's holds nothing until they are
+    if (!Shards.Owns(joint.a) || !Shards.Owns(joint.b))
+    {
+        if (joint.id != 0)
+        {
+            DropJoint(joint.id);
+            physics.joints.Remove(joint.id);
+            joint.id = 0;
+        }
+        return;
+    }
     if (count != 1 || !world.TryGet<Body>(joint.a, out var a) || !world.TryGet<Body>(joint.b, out var b))
     {
         DropJoint(joint.id);

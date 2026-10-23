@@ -263,8 +263,12 @@ uint32_t tide_shard_touched(const tide_shard_tick *t, uint32_t code, tide_entity
 // Shards.Owns: what the world being ticked or drawn says, which its tick or
 // frame tells this thread (tide_shard_use); true with none.
 typedef bool (*tide_shard_owner)(const void *world, tide_entity e);
-void tide_shard_use(const void *world, tide_shard_owner owns);
+typedef int64_t (*tide_shard_mover)(const void *world);
+void tide_shard_use(const void *world, tide_shard_owner owns, tide_shard_mover moves);
 bool tide_shard_owns_now(tide_entity e);
+// Shards.moves: how many times an entity came to the world being ticked or
+// drawn, or left it, as its shard has it; 0 with none.
+int64_t tide_shard_moves_now(void);
 
 // A byte list (List<byte>) as one run of bytes: appended to, read whole (to
 // tide_shard_bytes_done after), and replaced.

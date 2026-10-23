@@ -590,6 +590,10 @@ That state is in the match's hash, and it's the same bytes on every machine: the
 
 It's also why code never calls Box2D: everything that changes the physics world goes through the match, as components. [Asking](#asking-the-world) changes nothing, so it's a function. The package itself talks to Box2D through [C functions](../c/functions.md), and reads the bodies back with [systems written in C](../c/functions.md#systems-written-in-c).
 
+### A sharded world
+
+In a [sharded world](../multiplayer/shards.md#physics), each shard has its own `Physics` and steps its own Box2D world of the bodies it owns. `Body.position` decides which shard has a body. A body that crosses a border is made anew on the next shard from its `Body`, where it was and as fast, and its shapes are put back on it there. Bodies another shard owns near the border are kinematic copies here, static for a static one, with their own box or circle, where their owner last had them. This shard's bodies run into them, and each side tells its own entities of a touch or a hit. Set `Physics`' settings from a system for no entity that takes `Physics`, which runs on every shard. A joint holds its bodies only while one shard owns both. A body's parts and other shapes aren't copied across a border yet.
+
 ## What it costs
 
 Measured on a release build, with 2,400 crates in stacks, on one thread, with the world kept and hashed every tick as a client's is:

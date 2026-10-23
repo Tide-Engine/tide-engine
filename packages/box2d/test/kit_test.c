@@ -130,8 +130,8 @@ static bool stays(tide_world *w)
 // The match of parts after its ticks, on every platform and in every
 // configuration: its parts' shapes are in Box2D's image, and whose each is in
 // the match.
-#define PARTS_HASH UINT64_C(0xbbcd480571d76404)
-#define PARTS_IMAGES_HASH UINT64_C(0xd00c6728d0466669)
+#define PARTS_HASH UINT64_C(0xb8b0433469e4e597)
+#define PARTS_IMAGES_HASH UINT64_C(0xbeac22292af2b7b0)
 
 enum { PART_TICKS = 420, SNIP = 200, FELL = 260, LOOK = 180 };
 
@@ -399,7 +399,7 @@ static bool same_bytes(const void *x, const void *y, const size_t size, const ch
 
 // The match of questions after its ticks, and every answer the match was
 // given along the way, on every platform and in every configuration.
-#define ASKS_HASH UINT64_C(0x04abae2015f81182)
+#define ASKS_HASH UINT64_C(0x3d1d6e474ea4f639)
 #define ANSWERS_HASH UINT64_C(0x53abf452b7c6e40b)
 
 enum { ASK_TICKS = 150, FADE = 100 };

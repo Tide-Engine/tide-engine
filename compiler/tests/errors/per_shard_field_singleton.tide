@@ -1,0 +1,4 @@
+// expect: [PerShard] marks a match component's field that means something on one shard alone, like a C library's handle
+settings { shards = true; shardRange = 8; }
+scene Main { }
+singleton World3 { [PerShard] long id; }

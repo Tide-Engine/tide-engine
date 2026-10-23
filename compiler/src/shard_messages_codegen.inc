@@ -154,6 +154,7 @@ static void gen_shard_moves(gen *g)
               "    tide_shard_put_tree(&m, w, root);\n"
               "    tide_shard_send_tasks(&m, w, root); // Its tasks go on where it goes\n"
               "    tide_shard_post(w, TIDE_SHARD_TO_SHARD, (uint32_t)to, root, &m);\n"
+              "    w->tide_shard_state.moves++; // It left\n"
               "    if (w->tide_shard_state.role == TIDE_SHARD_ROOT_ROLE) tide_shard_remove_tree(w, root, true);\n"
               "    else tide_shard_mark_tree(w, root, true, to);\n}\n\n"
               "TIDE_HELPER void tide_shard_lend(tide_world *w, const tide_entity e, const int32_t to)\n{\n"
@@ -173,6 +174,7 @@ static void gen_shard_moves(gen *g)
               "    tide_shard_put_tree(&m, w, root);\n"
               "    tide_shard_send_tasks(&m, w, root);\n"
               "    tide_shard_post(w, TIDE_SHARD_TO_OWNER, 0u, anchor, &m);\n"
+              "    w->tide_shard_state.moves++;\n"
               "    tide_shard_remove_tree(w, root, true);\n}\n\n"
               // Each entity this shard owns whose position is in another shard's
               // region (a quarter of its range past its own, so one on the border

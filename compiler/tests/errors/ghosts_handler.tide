@@ -1,0 +1,6 @@
+// expect: Ghosts marks a match system that runs for each copy a shard holds of another shard's entity, and 'Count' isn't one
+settings { shards = true; shardRange = 8; }
+scene Main { }
+component Mover { [Partition] float2 at; }
+[Ghosts]
+event(Spawned) Count(Mover mover) { }

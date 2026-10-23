@@ -91,6 +91,10 @@ Each handler's component requirements determine its availability. A handler read
 
 **Provisional delivery rule:** availability follows the endpoints delivered to local presentation. Changes inside one tick or between frames coalesce to their final availability, so adding, removing and adding a component before a frame cannot leave its presentation released. A correction that restores an entity or component runs `Shown` again; an unchanged replay does nothing. Predicted and verified handlers follow separate presentation endpoints, and their queries read the corresponding old or new endpoint. A local rebuild clears this history and prepares available objects again, so `Shown` initialization should reuse or replace existing resources safely.
 
+## In a sharded world
+
+In a [sharded world](../multiplayer/shards.md#visibility), a group means the same on every shard: an entity in it is shown to the same players on whichever shard has it, and each shard sends its own players only what they may see. The groups are kept with the first shard. Code on another shard that creates, changes or destroys a group waits on the border for them, and other shards see the change a tick or two later.
+
 ## Consequences across a visibility boundary
 
 The server may simulate a hidden object affecting a public one. The client receives the corrected public result; it does not need the hidden cause. Design public state to contain the consequences players need, such as damage, a revealed projectile or a public combat log.

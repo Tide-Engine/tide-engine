@@ -8274,7 +8274,7 @@ static decl map_entry_decl(const decl *map)
     sb_printf(&name, "tide_map%d_entry", map->index);
     d.gen_name = name.data;
     d.name = str_from(name.data);
-    const field order = {str_from("tide_order"), str_from(""), {0, 0, 0}, {TY_LONG, NULL}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL};
+    const field order = {str_from("tide_order"), str_from(""), {0, 0, 0}, {TY_LONG, NULL}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
     vec_push(d.fields, order);
     for (int i = 0; i < map->fields.count; i++) vec_push(d.fields, map->fields.items[i]);
     return d;
@@ -10674,9 +10674,13 @@ static void gen_apply(gen *g, const bool local)
         (void)mask;
         sb_printf(o, "        tide_entity_set_location(&w->entities, c->entity, (tide_location){%d, row});\n", a);
         // A shard's spawn with no position goes with the entity whose code spawned it (tide_shard_handoff)
-        const decl *placing = prog->partition ? prog->partition : prog->transform;
-        const bool placed = placing && placing->index >= 0 && placing->index < prog->components.count
-                         && prog->components.items[placing->index] == placing && arch_stores(g, a, placing->index);
+        bool placed = false;
+        for (int k = -2; k < prog->package_partitions.count; k++) { // The game's [Partition], or Transform; a package's
+            const decl *placing = k == -2 ? prog->partition : k == -1 ? (prog->partition ? NULL : prog->transform)
+                                                                      : prog->package_partitions.items[k].component;
+            placed |= placing && placing->index >= 0 && placing->index < prog->components.count
+                   && prog->components.items[placing->index] == placing && arch_stores(g, a, placing->index);
+        }
         if (!local && sharded(g) && !placed && !arch_scene(g, a)) { // A scene goes nowhere: its entities are on every shard
             const int anchor = prog->shard_anchor->index;
             sb_printf(o, "        if (!tide_entity_is_null(c->spawner) && !tide_entity_equal(c->spawner, c->entity)) {\n"
@@ -18170,7 +18174,7 @@ static void gen_api(gen *g)
               "                tide_local *local, tide_draw_list *draw, tide_gui *gui)\n{\n");
     sb_put(o, "    (void)previous;\n    (void)alpha;\n    (void)verified;\n    (void)verified_previous;\n    (void)verified_alpha;\n");
     // Shards.Owns in views: what the world they draw owns
-    if (sharded(g)) sb_put(o, "    tide_shard_use(w, w ? tide_shard_owns_world : NULL);\n");
+    if (sharded(g)) sb_put(o, "    tide_shard_use(w, w ? tide_shard_owns_world : NULL, w ? tide_shard_moves_world : NULL);\n");
     if (prog->seed_local) sb_put(o, "    local->tide_match_seed = w ? w->Time.seed : 0;\n");
     if (prog->uses_texture_size) sb_put(o, "    tide_target_pixels_fn tide_previous_pixels = tide_texture_target_pixels(draw->target_pixels);\n");
     // What the frame's draws send for code the GPU runs that rolls or reads the seed: one roll of this

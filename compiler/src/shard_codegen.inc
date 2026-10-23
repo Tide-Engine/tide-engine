@@ -54,10 +54,31 @@ static int shard_codes(const gen *g)
 // everywhere as copies and borrowed to be changed elsewhere. So does the
 // visibility directory (its groups' audiences), as a group means the same on
 // every shard. The engine's other ones (Time, the shard state, hierarchy
-// links) are each shard's.
+// links) are each shard's, and so are those marked [PerShard].
 static bool shard_shares(const program *prog, const decl *d)
 {
-    return d == prog->visibility_state || (!d->is_local && !d->builtin);
+    return d == prog->visibility_state || (!d->is_local && !d->builtin && !d->per_shard);
+}
+
+// Whether a component has fields that mean something on one shard alone ([PerShard])
+static bool per_shard_fields(const decl *comp)
+{
+    for (int k = 0; k < comp->fields.count; k++) {
+        if (comp->fields.items[k].per_shard) return true;
+    }
+    return false;
+}
+
+// Whether code for no entity runs on every shard: it takes a singleton each
+// shard has its own of ([PerShard]), so it's about this shard. Other code for
+// no entity runs once, on the root.
+static bool shard_everywhere(const decl *sys)
+{
+    for (int i = 0; i < sys->params.count; i++) {
+        const param *p = &sys->params.items[i];
+        if (p->type.kind == TY_SINGLETON && p->type.decl->per_shard) return true;
+    }
+    return false;
 }
 
 static int shard_singleton(const program *prog, const decl *d)
@@ -183,6 +204,8 @@ static void gen_shard_early(gen *g)
               "    return !tide_has_tide_ghost(w, e);\n}\n\n"
               "TIDE_SHARD_FN bool tide_shard_owns_world(const void *world, const tide_entity e)\n{\n"
               "    return tide_shard_owned(world, e);\n}\n\n"
+              "TIDE_SHARD_FN int64_t tide_shard_moves_world(const void *world)\n{\n"
+              "    return ((const tide_world *)world)->tide_shard_state.moves;\n}\n\n"
               "TIDE_HELPER bool tide_shard_may(tide_world *w, const tide_entity e)\n{\n"
               "    if (tide_shard_owned(w, e)) return true;\n"
               "    tide_shard_note(w->tide_shard_now, e); // The code waits on the border: its tick runs again without it\n"
@@ -240,7 +263,7 @@ static void gen_shard_system_entry(gen *g, const decl *sys)
     line(g, o, "if (tide_w->tide_shard_state.shard) {");
     g->indent++;
     if (!sys->is_handler) {
-        if (!sys->per_entity) {
+        if (!sys->per_entity && !shard_everywhere(sys)) {
             line(g, o, "if (tide_w->tide_shard_state.role != TIDE_SHARD_ROOT_ROLE) return; // Code for no entity runs once, on the root");
         }
         line(g, o, "tide_shard_code = %du;", shard_code_system(sys));
@@ -298,9 +321,11 @@ static void gen_shard_dispatch_entry(gen *g, const decl *event)
 // Transform's, for an entity in no hierarchy (one in one goes with its root).
 static uint32_t shard_dims(const program *prog)
 {
-    if (!prog->partition) return 3;
-    const type t = prog->partition->fields.items[prog->partition_field].type;
-    return t.kind == TY_FLOAT2 || t.kind == TY_DOUBLE2 ? 2u : 3u;
+    const field *f = prog->partition ? &prog->partition->fields.items[prog->partition_field]
+                   : prog->package_partitions.count ? &prog->package_partitions.items[0].component->fields.items[prog->package_partitions.items[0].field]
+                                                    : NULL;
+    if (!f) return 3;
+    return f->type.kind == TY_FLOAT2 || f->type.kind == TY_DOUBLE2 ? 2u : 3u;
 }
 
 static bool shard_uses(const program *prog, const decl *component)
@@ -317,18 +342,24 @@ static void gen_shard_where(gen *g)
               "TIDE_HELPER bool tide_shard_where(const tide_world *w, const tide_entity e, double p[3])\n{\n"
               "    p[0] = p[1] = p[2] = 0.0;\n");
     if (prog->hierarchy[0]) sb_put(o, "    if (!tide_entity_is_null(tide_parent_of(w, e))) return false; // It goes with its root\n");
+    // The game's [Partition], then each package's, then (with none of the game's) Transform's
+    for (int i = -1; i < prog->package_partitions.count; i++) {
+        const decl *d = i < 0 ? prog->partition : prog->package_partitions.items[i].component;
+        if (!d || !shard_uses(prog, d)) continue;
+        const char *comp = type_cname(d);
+        const field *f = &d->fields.items[i < 0 ? prog->partition_field : prog->package_partitions.items[i].field];
+        sb_printf(o, "    if (tide_has_%s(w, e)) {\n        const %s v = tide_get_%s(w, e);\n", comp, comp, comp);
+        for (uint32_t k = 0; k < shard_dims(prog); k++) sb_printf(o, "        p[%u] = (double)v.%s.%s;\n", k, field_cname(f), xyzw[k]);
+        sb_put(o, "        return true;\n    }\n");
+    }
     if (prog->partition) {
-        const char *comp = type_cname(prog->partition);
-        const field *f = &prog->partition->fields.items[prog->partition_field];
-        sb_printf(o, "    if (!tide_has_%s(w, e)) return false;\n    const %s v = tide_get_%s(w, e);\n", comp, comp, comp);
-        for (uint32_t k = 0; k < shard_dims(prog); k++) sb_printf(o, "    p[%u] = (double)v.%s.%s;\n", k, field_cname(f), xyzw[k]);
-        sb_put(o, "    return true;\n}\n\n");
+        sb_put(o, "    return false;\n}\n\n");
     } else if (shard_uses(prog, prog->transform)) {
         sb_put(o, "    if (!tide_has_Transform(w, e)) return false;\n    const Transform t = tide_get_Transform(w, e);\n"
                   "    p[0] = (double)t.localPosition.x;\n    p[1] = (double)t.localPosition.y;\n    p[2] = (double)t.localPosition.z;\n"
                   "    return true;\n}\n\n");
     } else {
-        sb_put(o, "    (void)w;\n    (void)e;\n    return false; // Nothing has a position: everything stays where it's spawned\n}\n\n");
+        sb_put(o, "    (void)w;\n    (void)e;\n    return false; // Nothing else has a position: it stays where it's spawned\n}\n\n");
     }
     // The regions, 7 doubles each: the shard, then its box's lo and hi
     sb_printf(o, "TIDE_HELPER bool tide_shard_holds(const tide_world *w, const int32_t at, const double p[3], const double margin)\n{\n"
@@ -463,6 +494,7 @@ static void gen_shard_records(gen *g)
               "    tide_entity e;\n    e.index = tide_read_u32(&r);\n    e.generation = tide_read_u32(&r);\n"
               "    const uint32_t archetype = tide_read_u32(&r);\n    const uint32_t snaps = tide_read_u32(&r);\n"
               "    if (r.failed || !(e.generation & 1u) || (e.generation & TIDE_ENTITY_TEMPORARY) || e.index == UINT32_MAX) return false;\n"
+              "    if (!ghost) w->tide_shard_state.moves++; // It came here\n"
               "    if (ghost && tide_entity_alive(&w->entities, e) && !tide_has_tide_ghost(w, e)\n"
               "        && tide_entity_location(&w->entities, e).archetype != TIDE_ARCHETYPE_NONE) return true; // This shard's own\n"
               "    uint64_t budget = SIZE_MAX;\n    (void)budget;\n"
@@ -482,6 +514,9 @@ static void gen_shard_records(gen *g)
             sb_printf(o, "        %s v%d;\n        memset(&v%d, 0, sizeof v%d);\n        uint8_t p%d = 1u;\n", type_cname(d), c, c, c, c);
             if (comp_sparse(g, c)) sb_printf(o, "        p%d = tide_read_u8(&r);\n        if (p%d > 1u) r.failed = true;\n", c, c);
             sb_printf(o, "        if (p%d && !r.failed && !tide_client_get%d(&r, &v%d, TIDE_IN_MATCH, 0, &budget)) r.failed = true;\n", c, id, c);
+            for (int k = 0; k < d->fields.count; k++) { // What meant something on the shard it came from alone
+                if (d->fields.items[k].per_shard) sb_printf(o, "        v%d.%s = 0;\n", c, field_cname(&d->fields.items[k]));
+            }
             if (decl_has_text(d)) sb_printf(&release, " tide_release_%s(&v%d, TIDE_IN_MATCH);", type_cname(d), c);
         }
         if (prog->hierarchy[0]) {
@@ -542,8 +577,21 @@ static void gen_shard_records(gen *g)
               "    const tide_ghost gv = {ghost ? source : 0};\n    (void)gv;\n    switch (loc.archetype) {\n");
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
-        sb_printf(o, "    case %d: %s = ghost ? 1u : 0u; %s; break;\n", a, presence_cell(g, "w", a, ghost, "loc.row", true),
+        sb_printf(o, "    case %d: %s = ghost ? 1u : 0u; %s;", a, presence_cell(g, "w", a, ghost, "loc.row", true),
                   comp_put(g, "w", a, ghost, "loc.row", "gv"));
+        // What means something on this shard alone ([PerShard]) is 0 on a ghost
+        for (int c = 0; c < prog->components.count; c++) {
+            const decl *comp = prog->components.items[c];
+            if (!arch_stores(g, a, c) || c == ghost || !per_shard_fields(comp)) continue;
+            sb_printf(o, " if (ghost%s%s%s) { %s v; %s;", comp_sparse(g, c) ? " && " : "",
+                      comp_sparse(g, c) ? presence_cell(g, "w", a, c, "loc.row", false) : "", "", type_cname(comp),
+                      comp_take(g, "w", a, c, "loc.row", "v"));
+            for (int k = 0; k < comp->fields.count; k++) {
+                if (comp->fields.items[k].per_shard) sb_printf(o, " v.%s = 0;", field_cname(&comp->fields.items[k]));
+            }
+            sb_printf(o, " %s; }", comp_put(g, "w", a, c, "loc.row", "v"));
+        }
+        sb_put(o, " break;\n");
     }
     sb_put(o, "    default: break;\n    }\n}\n\n");
     sb_put(o, "TIDE_HELPER void tide_shard_mark_tree(tide_world *w, const tide_entity root, const bool ghost, const int32_t source)\n{\n");

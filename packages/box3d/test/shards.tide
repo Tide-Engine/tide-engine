@@ -1,0 +1,48 @@
+// Box3D in a sharded world (shards_test.c): each shard steps its own Box3D
+// world (Physics is [PerShard]), and a body that crosses into another
+// region's is made anew there from its Body, as it was when it left. Four
+// crates slide right across the border at x = 0 and keep their speed; two
+// others meet head on once they're both on the right, and push each other.
+// A wall on the left beside the border is a copy on the right, and a crate
+// sliding left on the right runs into it there, and is told it hit it.
+
+using Box3D;
+
+settings
+{
+    shards = true;
+    shardRange = 4;
+}
+
+scene Main { }
+
+component Crate
+{
+    int id;
+    int hits;
+}
+
+event(Hit hit) Count(mut Crate crate)
+{
+    crate.hits += 1;
+}
+
+// Box3D's settings are each shard's, as its world is: code that changes
+// Physics for no entity runs on every shard
+[Before(PhysicsStages.Step)]
+system Weightless(mut Physics physics)
+{
+    physics.gravity = float3(0, 0, 0);
+}
+
+event(Spawned) Make(with Main)
+{
+    for (int i = 0; i < 4; i++)
+    {
+        Spawn(Crate { id = i }, Body { position = float3(-12, 0, i * 3), velocity = float3(6, 0, 0) }, Box);
+    }
+    Spawn(Crate { id = 10 }, Body { position = float3(-10, 0, 20), velocity = float3(6, 0, 0) }, Box);
+    Spawn(Crate { id = 11 }, Body { position = float3(14, 0, 20), velocity = float3(-2, 0, 0) }, Box);
+    Spawn(Crate { id = 12 }, Body { position = float3(4, 0, 30), velocity = float3(-3, 0, 0) }, Box);
+    Spawn(Crate { id = 13 }, Body { type = BodyType.Static, position = float3(-1.5, 0, 30) }, Box);
+}

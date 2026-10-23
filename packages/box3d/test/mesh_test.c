@@ -128,7 +128,7 @@ TIDE_TEST(box3d_mesh_contacts_preserve_concavity_and_replay)
         TIDE_CHECK(tide_get_Falling(&w, e).gap ? b.position.y < -10 : b.position.y >= 0.24f && b.position.y <= 0.27f);
     }
     printf("  mesh simulation sequence: %016llx\n", (unsigned long long)sequence);
-    TIDE_CHECK(sequence == UINT64_C(0x326d43871a6f6e41));
+    TIDE_CHECK(sequence == UINT64_C(0xb08bf8a2f6b2caaf));
     tide_world_copy(&decoded, &saved);
     for (int i = 0; i < 110; i++) tide_world_tick(&decoded);
     TIDE_CHECK(tide_world_hash(&decoded) == tide_world_hash(&w));

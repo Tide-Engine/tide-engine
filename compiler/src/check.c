@@ -1298,7 +1298,7 @@ static type list_of(program *prog, const type element)
     sb name = {0};
     sb_printf(&name, "List<%s>", type_name(element));
     d->name = (str){name.data, (int)name.len};
-    const field item = {str_from("item"), str_from(""), {0, 0, 0}, element, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL};
+    const field item = {str_from("item"), str_from(""), {0, 0, 0}, element, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
     vec_push(d->fields, item);
     d->index = prog->lists.count;
     vec_push(prog->lists, d);
@@ -1327,7 +1327,7 @@ static type mesh_of(program *prog, const type vertex)
     sb name = {0};
     sb_printf(&name, "Mesh<%s>", type_name(vertex));
     d->name = (str){name.data, (int)name.len};
-    const field item = {str_from("vertex"), str_from(""), {0, 0, 0}, vertex, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL};
+    const field item = {str_from("vertex"), str_from(""), {0, 0, 0}, vertex, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
     vec_push(d->fields, item);
     d->index = prog->meshes.count;
     vec_push(prog->meshes, d);
@@ -1406,10 +1406,10 @@ static type map_of(program *prog, const type key, const type value, const bool s
     if (set) sb_printf(&name, "Set<%s>", type_name(key));
     else sb_printf(&name, "Map<%s, %s>", type_name(key), type_name(value));
     d->name = (str){name.data, (int)name.len};
-    const field k = {str_from("key"), str_from(""), {0, 0, 0}, key, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL};
+    const field k = {str_from("key"), str_from(""), {0, 0, 0}, key, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
     vec_push(d->fields, k);
     if (!set) {
-        const field v = {str_from("value"), str_from(""), {0, 0, 0}, value, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL};
+        const field v = {str_from("value"), str_from(""), {0, 0, 0}, value, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
         vec_push(d->fields, v);
         decl *entry = NEW(decl);
         entry->kind = DECL_STRUCT;
@@ -1687,7 +1687,7 @@ static type grid_of(program *prog, const type cell, const int dims)
     sb name = {0};
     sb_printf(&name, "Grid%d<%s>", dims, type_name(cell));
     d->name = (str){name.data, (int)name.len};
-    const field item = {str_from("cell"), str_from(""), {0, 0, 0}, cell, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL};
+    const field item = {str_from("cell"), str_from(""), {0, 0, 0}, cell, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
     vec_push(d->fields, item);
     d->index = prog->grids.count;
     vec_push(prog->grids, d);
@@ -2064,7 +2064,7 @@ static type array_of(program *prog, const type element, const int n, const loc a
     sb name = {0};
     sb_printf(&name, "%s[%d]", type_name(element), n);
     d->name = (str){name.data, (int)name.len};
-    const field item = {str_from("item"), str_from(""), {0, 0, 0}, element, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL};
+    const field item = {str_from("item"), str_from(""), {0, 0, 0}, element, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
     vec_push(d->fields, item);
     d->index = prog->arrays.count;
     vec_push(prog->arrays, d);
@@ -2852,8 +2852,9 @@ static void ensure_shards(program *prog)
         f.type = T_INT_;
         vec_push(state->fields, f);
     }
-    static const char *const longs[] = {"next", "end", "singletons"};
-    for (int i = 0; i < 3; i++) {
+    // moves: how many times an entity came to this shard or left it (Shards.moves)
+    static const char *const longs[] = {"next", "end", "singletons", "moves"};
+    for (int i = 0; i < 4; i++) {
         f.name = str_from(longs[i]);
         f.type = (type){TY_LONG, NULL};
         vec_push(state->fields, f);
@@ -13414,17 +13415,44 @@ static void check_field_sampling(checker *c, const field *f, attribute *a)
 }
 
 // [Partition]: the position that decides which shard owns an entity (docs/spec.md, Shards).
+static const char *package_of(const decl *d);
+
+// The number of axes a [Partition] field has
+static int partition_axes(const type t)
+{
+    return t.kind == TY_FLOAT2 || t.kind == TY_DOUBLE2 ? 2 : 3;
+}
+
 static void check_partition_attribute(checker *c, const decl *d, const field *f, const attribute *a)
 {
     program *prog = c->prog;
     const bool vector = f->type.kind == TY_FLOAT2 || f->type.kind == TY_FLOAT3 || f->type.kind == TY_DOUBLE2
                      || f->type.kind == TY_DOUBLE3;
+    // Every one has as many axes: the regions are boxes of that many
+    const field *other = prog->partition ? &prog->partition->fields.items[prog->partition_field]
+                       : prog->package_partitions.count ? &prog->package_partitions.items[0].component->fields.items[prog->package_partitions.items[0].field]
+                                                        : NULL;
     if (a->values.count || a->args.count) {
         diag_error(a->at, "[Partition] takes no arguments");
     } else if (d->kind != DECL_COMPONENT || d->is_local || d->part_of || f->is_local) {
         diag_error(a->at, "[Partition] marks a match component's position: where its entity is decides which shard owns it");
     } else if (f->type.kind != TY_ERROR && !vector) {
         diag_error(a->at, "[Partition] works on a float2, float3, double2 or double3 position, not %s", type_name(f->type));
+    } else if (other && other != f && partition_axes(other->type) != partition_axes(f->type)) {
+        diag_error(a->at, "every [Partition] position has as many axes, and '" STR_FMT "' has %d where another has %d",
+                   STR_ARG(f->name), partition_axes(f->type), partition_axes(other->type));
+    } else if (package_of(d)) { // A package's own, for the entities it makes
+        for (int i = 0; i < prog->package_partitions.count; i++) {
+            const struct partition_mark *m = &prog->package_partitions.items[i];
+            if (m->component == d && m->field == (int)(f - d->fields.items)) return;
+            if (package_of(m->component) && str_eq_c(str_from(package_of(m->component)), package_of(d))) {
+                diag_error(a->at, "a package has one [Partition] position, and '" STR_FMT "." STR_FMT "' is already its",
+                           STR_ARG(m->component->name), STR_ARG(m->component->fields.items[m->field].name));
+                return;
+            }
+        }
+        const struct partition_mark mark = {(decl *)d, (int)(f - d->fields.items), a->at};
+        vec_push(prog->package_partitions, mark);
     } else if (prog->partition && !(prog->partition == d && &prog->partition->fields.items[prog->partition_field] == f)) {
         diag_error(a->at, "a game has one [Partition] position, and '" STR_FMT "." STR_FMT "' is already it",
                    STR_ARG(prog->partition->name), STR_ARG(prog->partition->fields.items[prog->partition_field].name));
@@ -13493,6 +13521,25 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
         }
         if (str_eq_c(a->name, "Partition")) {
             check_partition_attribute(c, d, f, a);
+            continue;
+        }
+        if (str_eq_c(a->name, "PerShard")) {
+            const bool number = f->type.kind == TY_INT || f->type.kind == TY_LONG || f->type.kind == TY_BOOL
+                             || f->type.kind == TY_FLOAT || f->type.kind == TY_DOUBLE || f->type.kind == TY_BYTE;
+            if (a->values.count || a->args.count) {
+                diag_error(a->at, "[PerShard] takes no arguments");
+            } else if (d->kind != DECL_COMPONENT || d->is_scene || d->is_local || f->is_local) {
+                diag_error(a->at, "[PerShard] marks a match component's field that means something on one shard alone, "
+                                  "like a C library's handle");
+                diag_note("a singleton each shard has its own of is '[PerShard] singleton'");
+            } else if (f->type.kind != TY_ERROR && !number) {
+                diag_error(a->at, "[PerShard] works on a number or a bool, which is 0 on another shard, not %s", type_name(f->type));
+            } else if (f->default_value) {
+                diag_error(f->default_value->at, "a [PerShard] field is 0 wherever its entity arrives or is copied, "
+                                                 "so it takes no default");
+            } else {
+                f->per_shard = true;
+            }
             continue;
         }
         if (str_eq_c(a->name, "Snap")) {
@@ -16157,12 +16204,12 @@ static void add_builtins(program *prog)
     time->kind = DECL_SINGLETON;
     time->name = str_from("Time");
     time->builtin = true;
-    const field dt = {str_from("dt"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL};
-    const field tick = {str_from("tick"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL};
-    const field t = {str_from("t"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL};
+    const field dt = {str_from("dt"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field tick = {str_from("tick"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field t = {str_from("t"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
     vec_push(time->fields, dt);
     vec_push(time->fields, tick);
-    const field rate = {str_from("tickRate"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL};
+    const field rate = {str_from("tickRate"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
     vec_push(time->fields, t);
     vec_push(time->fields, rate);
     field rewind_field = {0};
@@ -16250,7 +16297,7 @@ static void add_builtins(program *prog)
     owner->kind = DECL_COMPONENT;
     owner->name = str_from("Owner");
     owner->builtin = true;
-    const field player = {str_from("player"), str_from("PlayerID"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL};
+    const field player = {str_from("player"), str_from("PlayerID"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
     vec_push(owner->fields, player);
     prog->owner = owner;
 
@@ -16451,7 +16498,7 @@ static void add_builtins(program *prog)
     static const char *const vertex_fields[][2] = {{"position", "float2"}, {"uv", "float2"}, {"color", "Color"}};
     for (int i = 0; i < (int)(sizeof vertex_fields / sizeof vertex_fields[0]); i++) {
         const field f = {str_from(vertex_fields[i][0]), str_from(vertex_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
         vec_push(vertex->fields, f);
     }
     expr *white = NEW(expr);
@@ -16471,7 +16518,7 @@ static void add_builtins(program *prog)
     static const char *const vertex3_fields[][2] = {{"position", "float3"}, {"uv", "float2"}, {"color", "Color"}};
     for (int i = 0; i < (int)(sizeof vertex3_fields / sizeof vertex3_fields[0]); i++) {
         const field f = {str_from(vertex3_fields[i][0]), str_from(vertex3_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
         vec_push(vertex3->fields, f);
     }
     vertex3->fields.items[2].default_value = white;
@@ -16489,7 +16536,7 @@ static void add_builtins(program *prog)
         {"color", "Color"}, {"color2", "Color"}, {"outline", "float"}, {"outlineColor", "Color"}, {"soft", "float"}};
     for (int i = 0; i < (int)(sizeof shape_fields / sizeof shape_fields[0]); i++) {
         const field f = {str_from(shape_fields[i][0]), str_from(shape_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
         vec_push(shape->fields, f);
     }
     expr *none = NEW(expr);
@@ -16760,7 +16807,7 @@ static void add_builtins(program *prog)
         {"state", "SessionState"}, {"player", "PlayerID"}, {"ping", "int"}, {"server", "bool"}, {"open", "bool"}};
     for (int i = 0; i < (int)(sizeof session_fields / sizeof session_fields[0]); i++) {
         const field f = {str_from(session_fields[i][0]), str_from(session_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
         vec_push(session->fields, f);
     }
     prog->session = session;
@@ -16769,7 +16816,7 @@ static void add_builtins(program *prog)
     prog->connected->is_local = true;
     prog->disconnected->is_local = true;
     const field reason_field = {str_from("reason"), str_from("DisconnectReason"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0,
-                                {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL};
+                                {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
     vec_push(prog->disconnected->fields, reason_field);
     // Forgotten: sent to a match entity (or the match) whose local fields are
     // going, for local handlers to let go of what they hold (see check_forgotten).
@@ -16836,7 +16883,7 @@ static decl *new_record(program *prog, const char *name, const char *c_name)
 
 static void record_field(decl *d, const char *name, const type t)
 {
-    const field f = {str_from(name), str_from(""), {0, 0, 0}, t, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL};
+    const field f = {str_from(name), str_from(""), {0, 0, 0}, t, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
     vec_push(d->fields, f);
 }
 
@@ -17463,7 +17510,8 @@ static void warn_shard_singletons(const program *prog)
         if (!sys->per_entity || sys->is_local || package_of(sys)) continue;
         for (int k = 0; k < sys->params.count; k++) {
             const param *p = &sys->params.items[k];
-            if (p->type.kind != TY_SINGLETON || p->mode != PARAM_MUT || p->type.decl->is_local || p->type.decl->builtin) continue;
+            if (p->type.kind != TY_SINGLETON || p->mode != PARAM_MUT || p->type.decl->is_local || p->type.decl->builtin
+                || p->type.decl->per_shard) continue;
             diag_warning(p->at, "'" STR_FMT "' changes the singleton '" STR_FMT "' for each entity: in a sharded game every region's "
                          "shard borrows it from the root in turn, a tick at a time; keep the state on an entity or a scene, "
                          "or send an event to the one that has it",
@@ -18001,6 +18049,36 @@ static void check_attributes(checker *c)
                 }
                 continue;
             }
+            if (str_eq_c(attr->name, "PerShard")) {
+                if (d->kind != DECL_SINGLETON || d->is_local) {
+                    diag_error(attr->at, "PerShard marks a match singleton each shard of a sharded game has its own of, "
+                               "and '" STR_FMT "' isn't one", STR_ARG(d->name));
+                    diag_note("what a C library keeps of the entities a shard has, like a physics world: "
+                              "'[PerShard] singleton Physics { Resident state; }'");
+                } else if (attr->values.count > 0 || attr->args.count > 0) {
+                    diag_error(attr->at, "PerShard takes nothing: '[PerShard]'");
+                } else {
+                    d->per_shard = true;
+                }
+                continue;
+            }
+            if (str_eq_c(attr->name, "Ghosts")) {
+                if (d->kind != DECL_SYSTEM || d->is_view || d->is_handler || !d->per_entity || d->is_local) {
+                    diag_error(attr->at, "Ghosts marks a match system that runs for each copy a shard holds of another "
+                               "shard's entity, and '" STR_FMT "' isn't one", STR_ARG(d->name));
+                } else if (attr->values.count > 0 || attr->args.count > 0) {
+                    diag_error(attr->at, "Ghosts takes nothing: '[Ghosts]'");
+                } else {
+                    d->ghosts = true;
+                    for (int k = 0; k < d->params.count; k++) {
+                        const param *p = &d->params.items[k];
+                        if (p->type.kind == TY_COMPONENT && p->mode == PARAM_MUT)
+                            diag_error(p->at, "a ghost is another shard's entity, read here: [Ghosts] code changes none of its "
+                                       "components, so '" STR_FMT "' can't be 'mut'", STR_ARG(p->name));
+                    }
+                }
+                continue;
+            }
             if (str_eq_c(attr->name, "Sparse")) { // Read as the archetypes derive (sparse_component)
                 if (d->kind != DECL_COMPONENT || d->is_scene) {
                     diag_error(attr->at, "Sparse marks a component that entities gain and lose, and '" STR_FMT "' isn't one",
@@ -18024,6 +18102,8 @@ static void check_attributes(checker *c)
                 suggest_consider_c(&s, "NativeName");
                 suggest_consider_c(&s, "Name");
                 suggest_consider_c(&s, "Sparse");
+                suggest_consider_c(&s, "PerShard");
+                suggest_consider_c(&s, "Ghosts");
                 suggest_consider_c(&s, "Bus");
                 suggest_consider_c(&s, "Channel");
                 suggest_consider_c(&s, "Unordered");
@@ -18035,7 +18115,8 @@ static void check_attributes(checker *c)
                 diag_note("the attributes are Before and After, which order systems: [After(Physics.Integrate)], "
                           "Stage, which assigns an enum phase: [Stage(RenderStages.Objects)], "
                           "NativeName, which names an extern function's or system's C function, Sparse, for a component that "
-                          "entities gain and lose, Channel and Unordered, which order a command's delivery, Filter and "
+                          "entities gain and lose, PerShard, for a singleton each shard has its own of, Ghosts, for a system that runs "
+                          "for the copies a shard holds of other shards' entities, Channel and Unordered, which order a command's delivery, Filter and "
                           "Wrap, which say how an asset that's drawn with is sampled, LOD, which has a mesh asset's levels of "
                           "detail made, and Bus, which marks the enum of the audio buses");
                 continue;
@@ -20309,6 +20390,16 @@ bool check(program *prog)
 
     check_attributes(&c);
     number_channels(prog);
+    if (!prog->shards) { // No shards, no ghosts: [Ghosts] systems run for nothing, so they aren't there
+        int kept = 0;
+        for (int i = 0; i < prog->systems.count; i++) {
+            decl *sys = prog->systems.items[i];
+            if (sys->ghosts) continue;
+            sys->index = kept;
+            prog->systems.items[kept++] = sys;
+        }
+        prog->systems.count = kept;
+    }
     if (diag_error_count() == 0) {
         order_phases(prog->systems.items, prog->systems.count);
         order_phases(prog->views.items, prog->views.count);
@@ -20367,6 +20458,11 @@ bool check(program *prog)
     for (int i = 0; prog->shard_ghost && i < prog->decls.count; i++) {
         decl *d = prog->decls.items[i];
         if (d->kind != DECL_SYSTEM || d->is_view || d->listens || !d->per_entity || d->entity_local) continue;
+        if (d->ghosts) { // ...but these, which run for the ghosts
+            d->need_mask = mask_or(d->need_mask, bit(prog->shard_ghost));
+            d->without_mask = mask_or(d->without_mask, bit(prog->shard_dying));
+            continue;
+        }
         d->without_mask = mask_or(d->without_mask, mask_or(bit(prog->shard_ghost), bit(prog->shard_dying)));
     }
     derive_archetypes(&c);

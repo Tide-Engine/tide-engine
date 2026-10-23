@@ -149,6 +149,15 @@ target_link_libraries(tide_box2d_sleep PRIVATE tide_box2d)
 add_test(NAME tide_box2d_sleep COMMAND tide_box2d_sleep)
 set_tests_properties(tide_box2d_sleep PROPERTIES TIMEOUT 120)
 
+# Box2D in a sharded world: each shard steps its own, a body that crosses a
+# border is made anew on the shard it goes to, and neighbours' bodies near the
+# border are copies.
+tide_add_game(tide_box2d_shards SOURCES box2d/bridge.c box2d/test/shards.tide NAME game PACKAGES Box2D box2d/box2d.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box2d/test/shards_test.c)
+target_include_directories(tide_box2d_shards PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_box2d_shards PRIVATE tide_box2d)
+add_test(NAME tide_box2d_shards COMMAND tide_box2d_shards)
+
 # Rooms: the menu a game opens on and the way back to it, in Tide alone. Its
 # test's game is built with the package as tide builds one that lists it.
 tide_add_game(tide_rooms_lobby SOURCES rooms/test/game.tide NAME game PACKAGES Rooms rooms/rooms.tide
@@ -285,6 +294,15 @@ target_include_directories(tide_box3d_course PRIVATE "${PROJECT_SOURCE_DIR}/test
 target_link_libraries(tide_box3d_course PRIVATE tide_box3d)
 add_test(NAME tide_box3d_course COMMAND tide_box3d_course)
 set_tests_properties(tide_box3d_course PROPERTIES TIMEOUT 300)
+
+# Box3D in a sharded world: each shard steps its own, a body that crosses a
+# border is made anew on the shard it goes to, and neighbours' bodies near the
+# border are copies.
+tide_add_game(tide_box3d_shards SOURCES box3d/bridge.c box3d/test/shards.tide NAME game PACKAGES Box3D box3d/box3d.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box3d/test/shards_test.c)
+target_include_directories(tide_box3d_shards PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_box3d_shards PRIVATE tide_box3d)
+add_test(NAME tide_box3d_shards COMMAND tide_box3d_shards)
 
 # Bodies that code puts to sleep and wakes, as tide_box2d_sleep is for Box2D,
 # with every image in parts compared with the image written whole.

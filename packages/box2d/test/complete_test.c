@@ -7,7 +7,7 @@
 void b2t_check(bool enabled, bool whenever);
 void b2t_forget(void);
 
-_Static_assert(sizeof(Box2D_Joint) == 88 && offsetof(Box2D_Joint, id) == 56 && sizeof(Box2D_Physics) == 256 &&
+_Static_assert(sizeof(Box2D_Joint) == 88 && offsetof(Box2D_Joint, id) == 56 && sizeof(Box2D_Physics) == 312 &&
     sizeof(Box2D_Collider) == 152 && sizeof(Box2D_Hull) == 88 && sizeof(Box2D_FixtureState) == 32,
     "native package records match generated layouts");
 
@@ -121,7 +121,7 @@ TIDE_TEST(box2d_complete_snapshot_pack_restore_replay)
         b2t_forget(); tide_world_tick(&restored); TIDE_CHECK(tide_world_hash(&restored) == hash);
     }
     printf("  complete sequence: %016llx\n", (unsigned long long)sequence);
-    TIDE_CHECK(sequence == UINT64_C(0x39d1697495a58b42));
+    TIDE_CHECK(sequence == UINT64_C(0x2b60d065ca3de191));
     tick(&saved, 90); TIDE_CHECK(tide_world_hash(&saved) == tide_world_hash(&w));
     tide_world_free(&restored); tide_world_free(&saved); tide_world_free(&w);
 }

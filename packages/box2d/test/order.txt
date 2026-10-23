@@ -4,8 +4,9 @@ Box2D.CheckBodies
 Unordered
 BeforeBegin
 Box2D.Begin
-Box2D.RemoveJoints
+Box2D.DropCopies
 BeforeEnter
+Box2D.RemoveJoints
 Box2D.Enter
 BeforeOwn
 Box2D.Own

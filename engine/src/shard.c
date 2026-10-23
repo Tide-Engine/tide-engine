@@ -28,6 +28,7 @@ void tide_shard_note_dropped(const uint32_t count)
 
 static TIDE_THREAD_LOCAL const void *owner_world;
 static TIDE_THREAD_LOCAL tide_shard_owner owner_of;
+static TIDE_THREAD_LOCAL tide_shard_mover moves_of;
 
 static void lock(tide_shard_tick *t)
 {
@@ -156,10 +157,16 @@ void tide_shard_tick_free(tide_shard_tick *t)
     memset(t, 0, sizeof *t);
 }
 
-void tide_shard_use(const void *world, const tide_shard_owner owns)
+void tide_shard_use(const void *world, const tide_shard_owner owns, const tide_shard_mover moves)
 {
     owner_world = world;
     owner_of = owns;
+    moves_of = moves;
+}
+
+int64_t tide_shard_moves_now(void)
+{
+    return moves_of ? moves_of(owner_world) : 0;
 }
 
 bool tide_shard_owns_now(const tide_entity e)
