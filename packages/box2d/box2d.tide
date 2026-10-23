@@ -178,18 +178,20 @@ struct RayHit
 // Each shard of a sharded world has its own: Box2D's world of the bodies it
 // owns. A body that goes to another shard is made there anew from its Body,
 // as it was when it left.
+// Its settings ([Shared]) are the root's on every shard: set them anywhere the
+// root has them, such as Main's Spawned, and every shard steps by them.
 [PerShard]
 singleton Physics
 {
-    float2 gravity = float2(0, -10);
-    int substeps = 4;
+    [Shared] float2 gravity = float2(0, -10);
+    [Shared] int substeps = 4;
     // How the world is tuned. Each is Box2D's own default, and a change is the next step's.
-    float contactStiffness = 30; // How stiff contacts are, in cycles a second: no more than an eighth of the substeps a second count
-    float contactDamping = 10; // ...and how little they spring back: under 1 they bounce
-    float contactSpeed = 3; // The fastest bodies that overlap are pushed apart, in meters a second
-    float bounceSpeed = 1; // Shapes with `bounce` only bounce when they meet faster than this
-    float hitSpeed = 1; // Bodies that meet faster than this send Hit
-    bool sleeping = true; // Bodies at rest fall asleep, and cost nothing until something wakes them
+    [Shared] float contactStiffness = 30; // How stiff contacts are, in cycles a second: no more than an eighth of the substeps a second count
+    [Shared] float contactDamping = 10; // ...and how little they spring back: under 1 they bounce
+    [Shared] float contactSpeed = 3; // The fastest bodies that overlap are pushed apart, in meters a second
+    [Shared] float bounceSpeed = 1; // Shapes with `bounce` only bounce when they meet faster than this
+    [Shared] float hitSpeed = 1; // Bodies that meet faster than this send Hit
+    [Shared] bool sleeping = true; // Bodies at rest fall asleep, and cost nothing until something wakes them
     int bodies; // Made so far
     int shapes;
     long stamp; // Which state `image` is, by all that was ever done to the world: what C's world is told apart by

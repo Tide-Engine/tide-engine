@@ -27,16 +27,10 @@ event(Hit hit) Count(mut Crate crate)
     crate.hits += 1;
 }
 
-// Box2D's settings are each shard's, as its world is: code that changes
-// Physics for no entity runs on every shard
-[Before(PhysicsStages.Step)]
-system Weightless(mut Physics physics)
+// Set once, on the root: Physics' settings are [Shared], so every shard has them
+event(Spawned) Make(with Main, mut Physics physics)
 {
     physics.gravity = float2(0, 0);
-}
-
-event(Spawned) Make(with Main)
-{
     for (int i = 0; i < 4; i++)
     {
         Spawn(Crate { id = i }, Body { position = float2(-12, i * 3), velocity = float2(6, 0) }, Box);

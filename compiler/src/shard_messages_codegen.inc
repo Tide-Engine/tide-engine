@@ -127,16 +127,52 @@ static void gen_shard_singletons(gen *g)
         sb_printf(o, "        w->%s = v;\n        return true;\n    }\n", name);
     }
     sb_put(o, "    default: return false;\n    }\n}\n\n");
+    // The [Shared] fields of [PerShard] singletons, one after another, as their bytes
+    sb_put(o, "TIDE_HELPER void tide_shard_put_shared(tide_writer *out, const tide_world *w)\n{\n    (void)out;\n    (void)w;\n");
+    sb shared_size = {0};
+    sb_put(&shared_size, "0u");
+    for (int i = 0; i < prog->singletons.count; i++) {
+        const decl *d = prog->singletons.items[i];
+        if (!d->per_shard) continue;
+        for (int k = 0; k < d->fields.count; k++) {
+            const field *f = &d->fields.items[k];
+            if (!f->shared) continue;
+            sb_printf(o, "    tide_write_bytes(out, &w->%s.%s, sizeof w->%s.%s);\n", type_cname(d), field_cname(f), type_cname(d), field_cname(f));
+            sb_printf(&shared_size, " + sizeof(((tide_world *)0)->%s.%s)", type_cname(d), field_cname(f));
+        }
+    }
+    sb_put(o, "}\n\n");
+    // ...and taken back into the world, on any shard but the root
+    sb_printf(o, "TIDE_HELPER void tide_shard_apply_shared(tide_world *w)\n{\n"
+                 "    const tide_shard_state *s = &w->tide_shard_state;\n"
+                 "    if (!s->shard || s->role == TIDE_SHARD_ROOT_ROLE || tide_list_count(s->shared) != (int32_t)(%s)) return;\n"
+                 "    uint32_t size;\n    bool copied;\n"
+                 "    const uint8_t *flat = tide_shard_bytes_flat(s->shared, &size, &copied);\n"
+                 "    tide_reader r = {flat, size, 0, false};\n    (void)r;\n", shared_size.data);
+    for (int i = 0; i < prog->singletons.count; i++) {
+        const decl *d = prog->singletons.items[i];
+        if (!d->per_shard) continue;
+        for (int k = 0; k < d->fields.count; k++) {
+            const field *f = &d->fields.items[k];
+            if (!f->shared) continue;
+            sb_printf(o, "    memcpy(&w->%s.%s, tide_read_bytes(&r, sizeof w->%s.%s), sizeof w->%s.%s);\n", type_cname(d),
+                      field_cname(f), type_cname(d), field_cname(f), type_cname(d), field_cname(f));
+        }
+    }
+    sb_put(o, "    tide_shard_bytes_done(s->shared, flat, copied);\n}\n\n");
     sb_printf(o, "TIDE_SHARD_FN uint8_t *tide_shard_singletons_of(const void *world, uint32_t *size)\n{\n"
                  "    const tide_world *w = world;\n    tide_text_use((tide_heap *)(uintptr_t)&w->heap, NULL);\n"
                  "    const uint64_t owned = (uint64_t)w->tide_shard_state.singletons;\n"
-                 "    *size = 0;\n    if (!w->tide_shard_state.shard || !owned) return NULL;\n"
+                 "    *size = 0;\n    if (!w->tide_shard_state.shard) return NULL;\n"
                  "    tide_writer out = {.grows = true};\n    uint32_t count = 0;\n"
                  "    for (uint32_t i = 0; i < %du; i++) count += (owned >> i) & 1u;\n"
                  "    tide_write_u32(&out, count);\n"
                  "    for (uint32_t i = 0; i < %du; i++) {\n"
                  "        if (!((owned >> i) & 1u)) continue;\n"
                  "        tide_write_u32(&out, i);\n        tide_shard_put_singleton(&out, w, i);\n    }\n"
+                 "    // Then the [Shared] fields of its [PerShard] singletons: u32 their size, and their bytes\n"
+                 "    const uint32_t at = out.size;\n    tide_write_u32(&out, 0u);\n    tide_shard_put_shared(&out, w);\n"
+                 "    if (!out.overflow) tide_shard_patch_u32(out.data + at, out.size - at - 4u);\n"
                  "    if (out.overflow) tide_out_of_memory();\n    *size = out.size;\n    return out.data;\n}\n\n",
               shard_singleton_count(prog), shard_singleton_count(prog));
 }

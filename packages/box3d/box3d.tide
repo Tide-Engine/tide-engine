@@ -282,21 +282,23 @@ struct ShapeChange { Entity owner; long body; long before; long after; int kind;
 // Each shard of a sharded world has its own: Box3D's world of the bodies it
 // owns. A body that goes to another shard is made there anew from its Body,
 // as it was when it left.
+// Its settings ([Shared]) are the root's on every shard: set them anywhere the
+// root has them, such as Main's Spawned, and every shard steps by them.
 [PerShard]
 singleton Physics
 {
-    float3 gravity = float3(0, -10, 0);
-    int substeps = 4;
+    [Shared] float3 gravity = float3(0, -10, 0);
+    [Shared] int substeps = 4;
     // How the world steps, as Box3D has it unless a game says: how stiff two
     // bodies that touch are held apart, in cycles a second, how fast that
     // springing dies down (1 just stops it), and how fast two that overlap are
     // pushed apart at most, in meters a second
-    float contactStiffness = 30;
-    float contactDamping = 10;
-    float contactSpeed = 3;
-    float bounceSpeed = 1; // Slower than this, in meters a second, nothing bounces
-    float hitSpeed = 1; // Faster than this, two bodies that meet are sent Hit
-    bool sleeping = true; // Bodies at rest fall asleep
+    [Shared] float contactStiffness = 30;
+    [Shared] float contactDamping = 10;
+    [Shared] float contactSpeed = 3;
+    [Shared] float bounceSpeed = 1; // Slower than this, in meters a second, nothing bounces
+    [Shared] float hitSpeed = 1; // Faster than this, two bodies that meet are sent Hit
+    [Shared] bool sleeping = true; // Bodies at rest fall asleep
     int bodies; // Made so far
     int shapes;
     long stamp; // Which state `state` is, by all that was ever done to the world: what C's world is told apart by

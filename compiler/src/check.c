@@ -1298,7 +1298,7 @@ static type list_of(program *prog, const type element)
     sb name = {0};
     sb_printf(&name, "List<%s>", type_name(element));
     d->name = (str){name.data, (int)name.len};
-    const field item = {str_from("item"), str_from(""), {0, 0, 0}, element, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field item = {str_from("item"), str_from(""), {0, 0, 0}, element, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(d->fields, item);
     d->index = prog->lists.count;
     vec_push(prog->lists, d);
@@ -1327,7 +1327,7 @@ static type mesh_of(program *prog, const type vertex)
     sb name = {0};
     sb_printf(&name, "Mesh<%s>", type_name(vertex));
     d->name = (str){name.data, (int)name.len};
-    const field item = {str_from("vertex"), str_from(""), {0, 0, 0}, vertex, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field item = {str_from("vertex"), str_from(""), {0, 0, 0}, vertex, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(d->fields, item);
     d->index = prog->meshes.count;
     vec_push(prog->meshes, d);
@@ -1406,10 +1406,10 @@ static type map_of(program *prog, const type key, const type value, const bool s
     if (set) sb_printf(&name, "Set<%s>", type_name(key));
     else sb_printf(&name, "Map<%s, %s>", type_name(key), type_name(value));
     d->name = (str){name.data, (int)name.len};
-    const field k = {str_from("key"), str_from(""), {0, 0, 0}, key, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field k = {str_from("key"), str_from(""), {0, 0, 0}, key, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(d->fields, k);
     if (!set) {
-        const field v = {str_from("value"), str_from(""), {0, 0, 0}, value, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+        const field v = {str_from("value"), str_from(""), {0, 0, 0}, value, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
         vec_push(d->fields, v);
         decl *entry = NEW(decl);
         entry->kind = DECL_STRUCT;
@@ -1687,7 +1687,7 @@ static type grid_of(program *prog, const type cell, const int dims)
     sb name = {0};
     sb_printf(&name, "Grid%d<%s>", dims, type_name(cell));
     d->name = (str){name.data, (int)name.len};
-    const field item = {str_from("cell"), str_from(""), {0, 0, 0}, cell, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field item = {str_from("cell"), str_from(""), {0, 0, 0}, cell, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(d->fields, item);
     d->index = prog->grids.count;
     vec_push(prog->grids, d);
@@ -2064,7 +2064,7 @@ static type array_of(program *prog, const type element, const int n, const loc a
     sb name = {0};
     sb_printf(&name, "%s[%d]", type_name(element), n);
     d->name = (str){name.data, (int)name.len};
-    const field item = {str_from("item"), str_from(""), {0, 0, 0}, element, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field item = {str_from("item"), str_from(""), {0, 0, 0}, element, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(d->fields, item);
     d->index = prog->arrays.count;
     vec_push(prog->arrays, d);
@@ -2868,8 +2868,9 @@ static void ensure_shards(program *prog)
         f.type = list_of(prog, (type){TY_LONG, NULL});
         vec_push(state->fields, f);
     }
-    static const char *const byte_lists[] = {"outbox", "waits"};
-    for (int i = 0; i < 2; i++) {
+    // shared: the root's [Shared] fields of [PerShard] singletons, as they last came (tide_shard_apply_shared)
+    static const char *const byte_lists[] = {"outbox", "waits", "shared"};
+    for (int i = 0; i < 3; i++) {
         f.name = str_from(byte_lists[i]);
         f.type = list_of(prog, (type){TY_BYTE, NULL});
         vec_push(state->fields, f);
@@ -13423,6 +13424,15 @@ static int partition_axes(const type t)
     return t.kind == TY_FLOAT2 || t.kind == TY_DOUBLE2 ? 2 : 3;
 }
 
+// Whether a declaration has an attribute, before its attributes are checked
+static bool attributed(const decl *d, const char *name)
+{
+    for (int i = 0; i < d->attributes.count; i++) {
+        if (str_eq_c(d->attributes.items[i].name, name)) return true;
+    }
+    return false;
+}
+
 static void check_partition_attribute(checker *c, const decl *d, const field *f, const attribute *a)
 {
     program *prog = c->prog;
@@ -13521,6 +13531,20 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
         }
         if (str_eq_c(a->name, "Partition")) {
             check_partition_attribute(c, d, f, a);
+            continue;
+        }
+        if (str_eq_c(a->name, "Shared")) {
+            if (a->values.count || a->args.count) {
+                diag_error(a->at, "[Shared] takes no arguments");
+            } else if (d->kind != DECL_SINGLETON || !attributed(d, "PerShard") || f->is_local) {
+                diag_error(a->at, "[Shared] marks a field of a [PerShard] singleton that's the root's on every shard, "
+                                  "like a setting");
+                diag_note("'[PerShard] singleton Physics { [Shared] float3 gravity; Resident state; }'");
+            } else if (f->type.kind != TY_ERROR && (holds_heap(f->type) || f->type.kind == TY_RESIDENT)) {
+                diag_error(a->at, "[Shared] works on a plain value, which every shard is sent as it is, not %s", type_name(f->type));
+            } else {
+                f->shared = true;
+            }
             continue;
         }
         if (str_eq_c(a->name, "PerShard")) {
@@ -16204,12 +16228,12 @@ static void add_builtins(program *prog)
     time->kind = DECL_SINGLETON;
     time->name = str_from("Time");
     time->builtin = true;
-    const field dt = {str_from("dt"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
-    const field tick = {str_from("tick"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
-    const field t = {str_from("t"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field dt = {str_from("dt"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
+    const field tick = {str_from("tick"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
+    const field t = {str_from("t"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(time->fields, dt);
     vec_push(time->fields, tick);
-    const field rate = {str_from("tickRate"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field rate = {str_from("tickRate"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(time->fields, t);
     vec_push(time->fields, rate);
     field rewind_field = {0};
@@ -16297,7 +16321,7 @@ static void add_builtins(program *prog)
     owner->kind = DECL_COMPONENT;
     owner->name = str_from("Owner");
     owner->builtin = true;
-    const field player = {str_from("player"), str_from("PlayerID"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field player = {str_from("player"), str_from("PlayerID"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(owner->fields, player);
     prog->owner = owner;
 
@@ -16498,7 +16522,7 @@ static void add_builtins(program *prog)
     static const char *const vertex_fields[][2] = {{"position", "float2"}, {"uv", "float2"}, {"color", "Color"}};
     for (int i = 0; i < (int)(sizeof vertex_fields / sizeof vertex_fields[0]); i++) {
         const field f = {str_from(vertex_fields[i][0]), str_from(vertex_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
         vec_push(vertex->fields, f);
     }
     expr *white = NEW(expr);
@@ -16518,7 +16542,7 @@ static void add_builtins(program *prog)
     static const char *const vertex3_fields[][2] = {{"position", "float3"}, {"uv", "float2"}, {"color", "Color"}};
     for (int i = 0; i < (int)(sizeof vertex3_fields / sizeof vertex3_fields[0]); i++) {
         const field f = {str_from(vertex3_fields[i][0]), str_from(vertex3_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
         vec_push(vertex3->fields, f);
     }
     vertex3->fields.items[2].default_value = white;
@@ -16536,7 +16560,7 @@ static void add_builtins(program *prog)
         {"color", "Color"}, {"color2", "Color"}, {"outline", "float"}, {"outlineColor", "Color"}, {"soft", "float"}};
     for (int i = 0; i < (int)(sizeof shape_fields / sizeof shape_fields[0]); i++) {
         const field f = {str_from(shape_fields[i][0]), str_from(shape_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
         vec_push(shape->fields, f);
     }
     expr *none = NEW(expr);
@@ -16807,7 +16831,7 @@ static void add_builtins(program *prog)
         {"state", "SessionState"}, {"player", "PlayerID"}, {"ping", "int"}, {"server", "bool"}, {"open", "bool"}};
     for (int i = 0; i < (int)(sizeof session_fields / sizeof session_fields[0]); i++) {
         const field f = {str_from(session_fields[i][0]), str_from(session_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
         vec_push(session->fields, f);
     }
     prog->session = session;
@@ -16816,7 +16840,7 @@ static void add_builtins(program *prog)
     prog->connected->is_local = true;
     prog->disconnected->is_local = true;
     const field reason_field = {str_from("reason"), str_from("DisconnectReason"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0,
-                                {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+                                {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(prog->disconnected->fields, reason_field);
     // Forgotten: sent to a match entity (or the match) whose local fields are
     // going, for local handlers to let go of what they hold (see check_forgotten).
@@ -16883,7 +16907,7 @@ static decl *new_record(program *prog, const char *name, const char *c_name)
 
 static void record_field(decl *d, const char *name, const type t)
 {
-    const field f = {str_from(name), str_from(""), {0, 0, 0}, t, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field f = {str_from(name), str_from(""), {0, 0, 0}, t, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(d->fields, f);
 }
 

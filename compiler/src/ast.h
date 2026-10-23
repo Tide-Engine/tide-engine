@@ -280,6 +280,7 @@ typedef struct field {
     // whether any frag or vert of the game reads it. Only those are sent. NULL: nothing reads its elements there
     bool *gpu_leaves;
     bool per_shard; // [PerShard]: in a sharded game, 0 wherever its entity is copied or arrives (shard_codegen.inc)
+    bool shared;    // [Shared] in a [PerShard] singleton: the root's value, on every shard
 } field;
 
 typedef enum param_mode {
