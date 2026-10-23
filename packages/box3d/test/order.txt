@@ -5,6 +5,7 @@ Unordered
 BeforeBegin
 Box3D.Begin
 Box3D.BeginShapes
+Box3D.HoldJointed
 Box3D.DropCopies
 Box3D.RemoveJoints
 Box3D.PruneShapes

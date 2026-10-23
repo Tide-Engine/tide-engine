@@ -1,0 +1,4 @@
+// expect: [GoesWith] names the entity this one goes with: an Entity, not int
+settings { shards = true; shardRange = 8; }
+scene Main { }
+component Rider { [GoesWith] int horse; }

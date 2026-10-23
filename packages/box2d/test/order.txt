@@ -5,8 +5,9 @@ Unordered
 BeforeBegin
 Box2D.Begin
 Box2D.DropCopies
-BeforeEnter
+Box2D.HoldJointed
 Box2D.RemoveJoints
+BeforeEnter
 Box2D.Enter
 BeforeOwn
 Box2D.Own

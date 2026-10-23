@@ -70,6 +70,7 @@ typedef struct body {
     bool rewind;
     bool settings_applied;
     uint8_t unused_too[2];
+    tide_entity held_by; // The joint it goes with, in a sharded world
 } body;
 
 typedef struct box {
@@ -174,10 +175,11 @@ typedef struct physics {
     int64_t shard_moves; // Shards.moves as the last tick had it
     tide_map copies;     // Other shards' bodies near this one's border, by entity...
     tide_map copy_of;    // ...and whose each copy is
+    tide_map copied_parts; // ...and the parts whose shapes are on one
 } physics;
 
-_Static_assert(sizeof(body) == 176 && sizeof(box) == 44 && sizeof(sphere) == 36 && sizeof(capsule) == 40 && sizeof(touch) == 40
-                   && sizeof(strike) == 48 && sizeof(found) == 48 && sizeof(physics) == 352 && offsetof(physics, moved) == 88
+_Static_assert(sizeof(body) == 184 && sizeof(box) == 44 && sizeof(sphere) == 36 && sizeof(capsule) == 40 && sizeof(touch) == 40
+                   && sizeof(strike) == 48 && sizeof(found) == 48 && sizeof(physics) == 376 && offsetof(physics, moved) == 88
                    && offsetof(physics, shard_moves) == 296 && offsetof(physics, copies) == 304,
                "box3d.tide's types changed: these are theirs");
 
@@ -216,7 +218,7 @@ enum { SETTINGS = 3 };
 #define SET_STEP offsetof(body, step_gravity_scale)
 #define FLAGS offsetof(body, bullet)
 
-_Static_assert(offsetof(body, step_position) - SET == SETTINGS * sizeof(float) && sizeof(body) - SET_STEP == (SETTINGS + 1) * sizeof(float)
+_Static_assert(offsetof(body, step_position) - SET == SETTINGS * sizeof(float) && offsetof(body, held_by) - SET_STEP == (SETTINGS + 1) * sizeof(float)
                    && offsetof(body, step_bullet) == FLAGS + 1 && offsetof(body, asleep) == FLAGS + 2
                    && offsetof(body, step_asleep) == FLAGS + 3 && FLAGS % 4 == 0 && offsetof(body, step_type) == FLAGS + 4,
                "a Body's settings, and what Box3D has of them, aren't where the systems written in C look for them any more");
@@ -2847,3 +2849,41 @@ scene_bounds b3t_capsule_bounds(const capsule *shape, const tide_quaternion rota
 #include "shapes.inc"
 
 #include "hull_queries.inc"
+
+// Shapes on a copy of another shard's body (CopyBodies, CopyParts in a
+// sharded world): what the entity it copies has, made as the systems that
+// keep a body's shapes make them
+int64_t b3t_copy_mesh(const int64_t on, const tide_float3 *vertices, const int32_t vertex_count, const int32_t *indices,
+                      const int32_t index_count, const tide_float3 scale, const tide_float3 offset, const float friction,
+                      const float bounce)
+{
+    note('M', &on, sizeof on);
+    if (vertex_count < 3 || vertex_count > 65536 || index_count < 3 || index_count > 3 * 65536) return 0;
+    return attach_mesh(on, vertices, vertex_count, indices, index_count, scale, offset, friction, bounce);
+}
+
+int64_t b3t_copy_hull(const int64_t on, const tide_float3 *vertices, const int32_t count, const tide_float3 scale,
+                      const tide_float3 offset, const float density, const float friction, const float bounce, const bool sensor)
+{
+    note('U', &on, sizeof on);
+    const uint32_t mark = tide_scratch_mark();
+    const hull_collider s = {.vertices = tide_list_from(vertices, count, sizeof *vertices), .scale = scale, .offset = offset,
+                             .density = density, .friction = friction, .bounce = bounce, .sensor = sensor};
+    const int64_t made = live_hull(on, 0, &s);
+    tide_scratch_reset(mark);
+    return made;
+}
+
+int64_t b3t_copy_height(const int64_t on, const float *heights, const int32_t height_count, const uint8_t *holes,
+                        const int32_t hole_count, const int32_t columns, const int32_t rows, const tide_float3 scale,
+                        const float minimum, const float maximum, const float friction, const float bounce)
+{
+    note('E', &on, sizeof on);
+    const uint32_t mark = tide_scratch_mark();
+    const height_collider s = {.heights = tide_list_from(heights, height_count, sizeof *heights),
+                               .holes = tide_list_from(holes, hole_count, sizeof *holes), .columns = columns, .rows = rows,
+                               .scale = scale, .minimum = minimum, .maximum = maximum, .friction = friction, .bounce = bounce};
+    const int64_t made = live_height(on, 0, &s);
+    tide_scratch_reset(mark);
+    return made;
+}

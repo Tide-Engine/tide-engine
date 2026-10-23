@@ -39,7 +39,7 @@ static crates count(void)
             const int id = tide_get_Crate(w, e).id;
             if (id < 0 || id >= 16) continue;
             c.owned[id]++;
-            c.body[id] = tide_get_Box3D_Body(w, e);
+            if (tide_has_Box3D_Body(w, e)) c.body[id] = tide_get_Box3D_Body(w, e);
             c.shard[id] = (int)i;
             c.hits[id] = tide_get_Crate(w, e).hits;
         }
@@ -55,7 +55,7 @@ static void step(const double seconds)
         tide_shards_update(shards, now);
         const crates c = count();
         for (int id = 0; id < 16; id++) TIDE_CHECK(c.owned[id] <= 1); // Never two shards' at once
-        TIDE_CHECK(c.bodies <= 8); // ...and never a body for a crate on two shards' worlds
+        TIDE_CHECK(c.bodies <= 13); // ...and never a body for a crate on two shards' worlds
     }
 }
 
@@ -76,7 +76,7 @@ TIDE_TEST(box3d_bodies_cross_shards_and_keep_their_speed)
     // Four seconds on: from x = -12 at 6 m/s, across the border at x = 0 to about 12
     step(3.5);
     c = count();
-    TIDE_CHECK(c.bodies == 8); // One body for each crate, on the shard that owns it
+    TIDE_CHECK(c.bodies == 13); // One body for each crate, on the shard that owns it
     for (int id = 0; id < 4; id++) {
         TIDE_CHECK(c.owned[id] == 1 && c.shard[id] == 2);
         TIDE_CHECK(c.body[id].id != 0);
@@ -94,6 +94,16 @@ TIDE_TEST(box3d_bodies_cross_shards_and_keep_their_speed)
     TIDE_CHECK(c.body[12].position.x > -0.6f);
     TIDE_CHECK(c.body[12].velocity.x > -0.01f);
     TIDE_CHECK(c.hits[12] > 0);
+    // ...and the one that slid into the hull wall's copy
+    TIDE_CHECK(c.owned[15] == 1 && c.shard[15] == 1);
+    TIDE_CHECK(c.owned[14] == 1 && c.shard[14] == 2 && c.body[14].position.x > -0.6f && c.hits[14] > 0);
+    // The part went with its crate, though it has no position of its own
+    TIDE_CHECK(c.owned[6] == 1 && c.shard[6] == 2 && c.owned[7] == 1 && c.shard[7] == 2);
+    // The jointed crates and their joint are one shard's, and the joint held them two meters apart
+    TIDE_CHECK(c.owned[8] == 1 && c.owned[9] == 1 && c.owned[5] == 1);
+    TIDE_CHECK(c.shard[8] == 2 && c.shard[9] == 2 && c.shard[5] == 2);
+    const float apart = c.body[8].position.x - c.body[9].position.x;
+    TIDE_CHECK(fabsf(apart - 2.0f) < 0.05f);
     tide_shards_destroy(shards);
     shards = NULL;
 }

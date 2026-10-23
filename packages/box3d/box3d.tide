@@ -82,6 +82,9 @@ component Body
     float stepAngularDamping;
     bool rewind; // Opt this body and all its shapes into bounded collider history
     [PerShard] bool settingsApplied; // The package's own: restore defaults if BodySettings is removed
+    // The package's own: the joint that holds this body to another, which it
+    // goes with in a sharded world (HoldJointed)
+    [GoesWith] Entity heldBy;
 }
 
 // A box on the entity's body, `size` wide, high and deep around `offset`.
@@ -199,7 +202,7 @@ component HeightFieldCollider
 // `of` has no body when its shapes would be made is destroyed too.
 component Part
 {
-    Entity of;
+    [GoesWith] Entity of; // In a sharded world, a part goes where its body goes
     // The package's own: Box3D's handles to the shapes made for this entity
     [PerShard] long box;
     [PerShard] long sphere;
@@ -329,6 +332,7 @@ singleton Physics
     // one's border, by entity, and whose each copy is (CopyBodies)
     Map<Entity, Copy> copies;
     Map<long, Entity> copyOf;
+    Map<Entity, CopyPart> copiedParts;
 
     // A prepared, read-only scene: opted-in bodies at the presented time,
     // all other geometry at the current physics step. Invalid times fail.
@@ -772,7 +776,7 @@ system Begin(World world, mut Physics physics)
                 if (physics.parts.TryGet(shape, out var part))
                 {
                     physics.parts.Remove(shape);
-                    part.Destroy();
+                    if (Shards.Owns(part)) part.Destroy(); // One that went to another shard went with its body
                 }
             }
         }
@@ -815,7 +819,8 @@ system PrepareParts(mut Part part, World world)
 {
     part.body = 0;
     if (world.TryGet<Body>(part.of, out var body)) part.body = body.id;
-    if (part.body == 0) this.Destroy();
+    // In a sharded world, one whose body is another shard's waits: it goes where its body is
+    if (part.body == 0 && Shards.Owns(part.of)) this.Destroy();
 }
 
 [Stage(PhysicsStages.Step, 2)]
@@ -840,8 +845,44 @@ struct Copy
     int tick;
 }
 
+// ...and a part whose shapes are on a copy, and when it was last seen
+struct CopyPart
+{
+    Entity of;
+    long body;
+    int tick;
+}
+
 [NativeName("b3t_copy")]
 extern long CopyBody(long id, in Body body);
+
+[NativeName("b3t_copy_mesh")]
+extern long CopyMesh(long body, List<float3> vertices, int vertexCount, List<int> indices, int indexCount, float3 scale,
+                     float3 offset, float friction, float bounce);
+
+[NativeName("b3t_copy_hull")]
+extern long CopyHull(long body, List<float3> vertices, int count, float3 scale, float3 offset, float density, float friction,
+                     float bounce, bool sensor);
+
+[NativeName("b3t_copy_height")]
+extern long CopyHeightField(long body, List<float> heights, int heightCount, List<byte> holes, int holeCount, int columns,
+                            int rows, float3 scale, float minimumHeight, float maximumHeight, float friction, float bounce);
+
+// The shapes an entity has, on a copy
+void CopyShapes(World world, Entity entity, long body)
+{
+    if (world.TryGet<Box>(entity, out var box)) AttachBox(body, box);
+    if (world.TryGet<Sphere>(entity, out var sphere)) AttachSphere(body, sphere);
+    if (world.TryGet<Capsule>(entity, out var capsule)) AttachCapsule(body, capsule);
+    if (world.TryGet<MeshCollider>(entity, out var mesh))
+        CopyMesh(body, mesh.vertices, mesh.vertices.count, mesh.indices, mesh.indices.count, mesh.scale, mesh.offset, mesh.friction,
+                 mesh.bounce);
+    if (world.TryGet<HullCollider>(entity, out var hull))
+        CopyHull(body, hull.vertices, hull.vertices.count, hull.scale, hull.offset, hull.density, hull.friction, hull.bounce, hull.sensor);
+    if (world.TryGet<HeightFieldCollider>(entity, out var height))
+        CopyHeightField(body, height.heights, height.heights.count, height.holes, height.holes.count, height.columns, height.rows,
+                        height.scale, height.minimumHeight, height.maximumHeight, height.friction, height.bounce);
+}
 
 [NativeName("b3t_drop_copy")]
 extern void DropCopy(long id);
@@ -860,12 +901,20 @@ system CopyBodies(Body body, World world, Time time, mut Physics physics)
     if (had != 0 && made != had) physics.copyOf.Remove(had);
     if (made != 0 && made != had)
     {
-        if (world.TryGet<Box>(this, out var box)) AttachBox(made, box);
-        if (world.TryGet<Sphere>(this, out var sphere)) AttachSphere(made, sphere);
-        if (world.TryGet<Capsule>(this, out var capsule)) AttachCapsule(made, capsule);
+        CopyShapes(world, this, made);
         physics.copyOf[made] = this;
     }
     physics.copies[this] = Copy { body = made, tick = time.tick };
+}
+
+// A part another shard owns, on a body copied here: its shapes are on the copy
+[Ghosts]
+[Stage(PhysicsStages.Step, 4)]
+system CopyParts(Part part, World world, Time time, mut Physics physics)
+{
+    if (!physics.copies.TryGet(part.of, out var copy) || copy.body == 0) return;
+    if (!physics.copiedParts.TryGet(this, out var on) || on.body != copy.body) CopyShapes(world, this, copy.body);
+    physics.copiedParts[this] = CopyPart { of = part.of, body = copy.body, tick = time.tick };
 }
 
 // A copy whose ghost went last tick, or that this shard owns now, goes
@@ -873,6 +922,19 @@ system CopyBodies(Body body, World world, Time time, mut Physics physics)
 system DropCopies(Time time, mut Physics physics)
 {
     if (physics.copies.count == 0) return;
+    // A copied part that went, or that this shard owns now: its body's copy is
+    // made again, without it
+    if (physics.copiedParts.count > 0) foreach (var entry in physics.copiedParts)
+    {
+        if (entry.value.tick >= time.tick - 1 && !Shards.Owns(entry.key)) continue;
+        if (physics.copies.TryGet(entry.value.of, out var copy) && copy.body == entry.value.body)
+        {
+            DropCopy(copy.body);
+            physics.copyOf.Remove(copy.body);
+            physics.copies.Remove(entry.value.of);
+        }
+        physics.copiedParts.Remove(entry.key);
+    }
     foreach (var entry in physics.copies)
     {
         if (entry.value.tick >= time.tick - 1 && !Shards.Owns(entry.key)) continue;
@@ -1556,7 +1618,7 @@ void SortScene(mut List<Collider> scene)
 // Anchors and rotations are local to the corresponding body's origin.
 component Joint
 {
-    Entity a;
+    [GoesWith] Entity a; // In a sharded world, a joint goes where its first body goes
     Entity b;
     float3 anchorA;
     float3 anchorB;
@@ -1717,6 +1779,19 @@ extern bool SyncWheelJoint(mut Joint joint, long a, long b, in WheelJoint settin
 extern void DropJoint(long id);
 [NativeName("b3t_read_joint")]
 extern void ReadJoint(mut Joint joint);
+
+// In a sharded world, a joint's bodies go together: the joint goes with its
+// first body (Joint.a), and its second with the joint (Body.heldBy), so one
+// shard has all three, and the joint holds
+[Stage(PhysicsStages.Step, 2)]
+system HoldJointed(Joint joint, mut World world)
+{
+    if (!world.Has<Body>(joint.b)) return;
+    mut var b = world.Get<Body>(joint.b);
+    if (b.heldBy == this) return;
+    b.heldBy = this;
+    world.Set<Body>(joint.b, b);
+}
 
 // Removes orphaned handles too, including removal of the Joint component.
 [Stage(PhysicsStages.Step, 2)]

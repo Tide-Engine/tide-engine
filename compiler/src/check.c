@@ -13533,6 +13533,27 @@ static void check_field_attributes(checker *c, const decl *d, field *f)
             check_partition_attribute(c, d, f, a);
             continue;
         }
+        if (str_eq_c(a->name, "GoesWith")) {
+            if (a->values.count || a->args.count) {
+                diag_error(a->at, "[GoesWith] takes no arguments");
+            } else if (d->kind != DECL_COMPONENT || d->is_scene || d->is_local || f->is_local || d->part_of) {
+                diag_error(a->at, "[GoesWith] marks a match component's Entity field: in a sharded world its entity goes "
+                                  "where that one goes");
+            } else if (f->type.kind != TY_ERROR && f->type.kind != TY_ENTITY) {
+                diag_error(a->at, "[GoesWith] names the entity this one goes with: an Entity, not %s", type_name(f->type));
+            } else {
+                bool known = false;
+                for (int i = 0; i < c->prog->goes_with.count; i++) {
+                    const struct partition_mark *m = &c->prog->goes_with.items[i];
+                    known |= m->component == d && m->field == (int)(f - d->fields.items);
+                }
+                if (!known) {
+                    const struct partition_mark mark = {(decl *)d, (int)(f - d->fields.items), a->at};
+                    vec_push(c->prog->goes_with, mark);
+                }
+            }
+            continue;
+        }
         if (str_eq_c(a->name, "Shared")) {
             if (a->values.count || a->args.count) {
                 diag_error(a->at, "[Shared] takes no arguments");

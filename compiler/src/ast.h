@@ -1538,6 +1538,8 @@ typedef struct program {
     // Packages' own [Partition]s (Box3D's Body.position), one a package: an
     // entity with none of the game's goes by the first of these it has, in order
     VEC(struct partition_mark { decl *component; int field; loc at; }) package_partitions;
+    // [GoesWith] Entity fields: an entity with one naming a live entity goes where that one goes
+    VEC(struct partition_mark) goes_with;
     decl *shard_ghost;         // The hidden sparse component a ghost (another shard's entity, read-only) has
     decl *shard_dying;         // ...and the one an entity has while its destroy waits for its Destroyed handlers to run
     decl *shard_anchor;        // ...and the one naming what an entity spawned with no position goes with: the entity whose code spawned it

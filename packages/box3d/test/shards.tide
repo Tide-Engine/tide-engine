@@ -39,4 +39,16 @@ event(Spawned) Make(with Main, mut Physics physics)
     Spawn(Crate { id = 11 }, Body { position = float3(14, 0, 20), velocity = float3(-2, 0, 0) }, Box);
     Spawn(Crate { id = 12 }, Body { position = float3(4, 0, 30), velocity = float3(-3, 0, 0) }, Box);
     Spawn(Crate { id = 13 }, Body { type = BodyType.Static, position = float3(-1.5, 0, 30) }, Box);
+    // A wall that's a hull, and a crate that runs into its copy
+    Spawn(Crate { id = 14 }, Body { position = float3(4, 0, 40), velocity = float3(-3, 0, 0) }, Box);
+    Spawn(Crate { id = 15 }, Body { type = BodyType.Static, position = float3(-1.5, -1, 40) }, HullCollider {
+        vertices = [float3(-0.5, 0, -2), float3(0.5, 0, -2), float3(-0.5, 0, 2), float3(0.5, 0, 2),
+                    float3(-0.5, 2, -2), float3(0.5, 2, -2), float3(-0.5, 2, 2), float3(0.5, 2, 2)] });
+    // A crate with a part, which goes where it goes
+    var carrier = Spawn(Crate { id = 6 }, Body { position = float3(-12, 0, 50), velocity = float3(6, 0, 0) }, Box);
+    Spawn(Crate { id = 7 }, Part { of = carrier }, Sphere { radius = 0.3, offset = float3(0, 1, 0) });
+    // Two crates a joint holds two meters apart, crossing together
+    var lead = Spawn(Crate { id = 8 }, Body { position = float3(-10, 0, 60), velocity = float3(6, 0, 0) }, Box);
+    var held = Spawn(Crate { id = 9 }, Body { position = float3(-12, 0, 60), velocity = float3(6, 0, 0) }, Box);
+    Spawn(Crate { id = 5 }, Joint { a = lead, b = held }, DistanceJoint { length = 2 });
 }

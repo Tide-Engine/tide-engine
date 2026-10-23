@@ -63,6 +63,7 @@ typedef struct body {
     bool step_asleep; // What the last step left `asleep` as
     bool rewind;
     uint8_t unused[3];
+    tide_entity held_by; // The joint it goes with, in a sharded world
 } body;
 
 typedef struct box {
@@ -156,11 +157,12 @@ typedef struct physics {
     int64_t shard_moves; // Shards.moves as the last tick had it
     tide_map copies;     // Other shards' bodies near this one's border, by entity...
     tide_map copy_of;    // ...and whose each copy is
+    tide_map copied_parts; // ...and the parts whose shapes are on one
 } physics;
 
-_Static_assert(sizeof(body) == 96 && offsetof(body, sleep_speed) == 60 && offsetof(body, fixed_rotation) == 88 && sizeof(box) == 32
+_Static_assert(sizeof(body) == 104 && offsetof(body, sleep_speed) == 60 && offsetof(body, fixed_rotation) == 88 && sizeof(box) == 32
                    && sizeof(circle) == 28 && sizeof(touch) == 40 && sizeof(blow) == 56 && sizeof(met) == 40
-                   && sizeof(physics) == 312 && offsetof(physics, moved) == 60 && offsetof(physics, shard_moves) == 256,
+                   && sizeof(physics) == 336 && offsetof(physics, moved) == 60 && offsetof(physics, shard_moves) == 256,
                "box2d.tide's types changed: these are theirs");
 
 _Static_assert(offsetof(physics, gravity) == 0 && offsetof(physics, substeps) == 8
@@ -2393,4 +2395,31 @@ void b2t_configure_bodies(tide_rows *rows, physics *p)
         }
         active->controls[at] = desired;
     }
+}
+
+// More shapes on a copy of another shard's body (CopyBodies, CopyParts in a
+// sharded world), made as the systems that keep a body's shapes make them
+void b2t_copy_capsule(const int64_t on, const capsule *s)
+{
+    const fixture none = {0};
+    (void)b2t_sync_capsule(&none, on, s, NULL, false);
+}
+
+void b2t_copy_polygon(const int64_t on, const polygon_shape *s)
+{
+    const fixture none = {0};
+    (void)b2t_sync_polygon(&none, on, s, NULL, false);
+}
+
+void b2t_copy_segment(const int64_t on, const segment_shape *s)
+{
+    const fixture none = {0};
+    (void)b2t_sync_segment(&none, on, s, NULL, false);
+}
+
+void b2t_copy_chain(const int64_t on, const tide_float2 *points, const int32_t count, const float friction, const float bounce,
+                    const bool loop)
+{
+    const fixture none = {0};
+    (void)b2t_sync_chain(&none, on, points, count, friction, bounce, loop, NULL, false);
 }

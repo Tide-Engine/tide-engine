@@ -39,4 +39,15 @@ event(Spawned) Make(with Main, mut Physics physics)
     Spawn(Crate { id = 11 }, Body { position = float2(14, 20), velocity = float2(-2, 0) }, Box);
     Spawn(Crate { id = 12 }, Body { position = float2(4, 30), velocity = float2(-3, 0) }, Box);
     Spawn(Crate { id = 13 }, Body { type = BodyType.Static, position = float2(-1.5, 30) }, Box);
+    // A wall that's a polygon, and a crate that runs into its copy
+    Spawn(Crate { id = 14 }, Body { position = float2(4, 40), velocity = float2(-3, 0) }, Box);
+    Spawn(Crate { id = 15 }, Body { type = BodyType.Static, position = float2(-1.5, 40) },
+          Polygon { points = [float2(-0.5, -2), float2(0.5, -2), float2(0.5, 2), float2(-0.5, 2)] });
+    // A crate with a part, which goes where it goes
+    var carrier = Spawn(Crate { id = 6 }, Body { position = float2(-12, 50), velocity = float2(6, 0) }, Box);
+    Spawn(Crate { id = 7 }, Part { of = carrier }, Circle { radius = 0.3, offset = float2(0, 1) });
+    // Two crates a joint holds two meters apart, crossing together
+    var lead = Spawn(Crate { id = 8 }, Body { position = float2(-10, 60), velocity = float2(6, 0) }, Box);
+    var held = Spawn(Crate { id = 9 }, Body { position = float2(-12, 60), velocity = float2(6, 0) }, Box);
+    Spawn(Crate { id = 5 }, Joint { a = lead, b = held }, DistanceJoint { length = 2 });
 }

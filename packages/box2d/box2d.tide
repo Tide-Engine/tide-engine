@@ -77,6 +77,9 @@ component Body
     // an `asleep` that code wrote since is told
     bool stepAsleep;
     bool rewind; // Opt this body and all its shapes into bounded collider history
+    // The package's own: the joint that holds this body to another, which it
+    // goes with in a sharded world (HoldJointed)
+    [GoesWith] Entity heldBy;
 }
 
 // A box on the entity's body, `size` wide and high around `offset`.
@@ -110,7 +113,7 @@ component Circle
 // parts with it. A part whose entity names none with a Body is destroyed.
 component Part
 {
-    Entity of;
+    [GoesWith] Entity of; // In a sharded world, a part goes where its body goes
     // The package's own: its shapes in Box2D, 0 until they're on the body
     [PerShard] long box;
     [PerShard] long circle;
@@ -220,6 +223,7 @@ singleton Physics
     // one's border, by entity, and whose each copy is (CopyBodies)
     Map<Entity, Copy> copies;
     Map<long, Entity> copyOf;
+    Map<Entity, CopyPart> copiedParts;
 
     // A prepared, read-only scene: opted-in bodies at the presented time,
     // all other geometry at the current physics step. Invalid times fail.
@@ -822,6 +826,37 @@ extern void CopyCircle(long body, in Circle shape);
 [NativeName("b2t_drop_copy")]
 extern void DropCopy(long id);
 
+[NativeName("b2t_copy_capsule")]
+extern void CopyCapsule(long body, in Capsule shape);
+
+[NativeName("b2t_copy_polygon")]
+extern void CopyPolygon(long body, in Hull shape);
+
+[NativeName("b2t_copy_segment")]
+extern void CopySegment(long body, in Segment shape);
+
+[NativeName("b2t_copy_chain")]
+extern void CopyChain(long body, List<float2> points, int count, float friction, float bounce, bool loop);
+
+// ...and a part whose shapes are on a copy, and when it was last seen
+struct CopyPart
+{
+    Entity of;
+    long body;
+    int tick;
+}
+
+// The shapes an entity has, on a copy
+void CopyShapes(World world, Entity entity, long body)
+{
+    if (world.TryGet<Box>(entity, out var box)) CopyBox(body, box);
+    if (world.TryGet<Circle>(entity, out var circle)) CopyCircle(body, circle);
+    if (world.TryGet<Capsule>(entity, out var capsule)) CopyCapsule(body, capsule);
+    if (world.TryGet<Polygon>(entity, out var polygon)) CopyPolygon(body, PolygonShape(polygon));
+    if (world.TryGet<Segment>(entity, out var segment)) CopySegment(body, segment);
+    if (world.TryGet<Chain>(entity, out var chain)) CopyChain(body, chain.points, chain.points.count, chain.friction, chain.bounce, chain.loop);
+}
+
 // In a sharded world, the bodies other shards own near this one's border are
 // here as ghosts, and Box2D has each as a copy this shard's bodies run into:
 // kinematic (static for a static one), where its owner last had it and as
@@ -836,11 +871,20 @@ system CopyBodies(Body body, World world, Time time, mut Physics physics)
     if (had != 0 && made != had) physics.copyOf.Remove(had);
     if (made != 0 && made != had)
     {
-        if (world.TryGet<Box>(this, out var box)) CopyBox(made, box);
-        if (world.TryGet<Circle>(this, out var circle)) CopyCircle(made, circle);
+        CopyShapes(world, this, made);
         physics.copyOf[made] = this;
     }
     physics.copies[this] = Copy { body = made, tick = time.tick };
+}
+
+// A part another shard owns, on a body copied here: its shapes are on the copy
+[Ghosts]
+[Stage(PhysicsStages.Step, 4)]
+system CopyParts(Part part, World world, Time time, mut Physics physics)
+{
+    if (!physics.copies.TryGet(part.of, out var copy) || copy.body == 0) return;
+    if (!physics.copiedParts.TryGet(this, out var on) || on.body != copy.body) CopyShapes(world, this, copy.body);
+    physics.copiedParts[this] = CopyPart { of = part.of, body = copy.body, tick = time.tick };
 }
 
 // A copy whose ghost went last tick, or that this shard owns now, goes, once
@@ -849,6 +893,19 @@ system CopyBodies(Body body, World world, Time time, mut Physics physics)
 system DropCopies(Time time, mut Physics physics)
 {
     if (physics.copies.count == 0) return;
+    // A copied part that went, or that this shard owns now: its body's copy is
+    // made again, without it
+    if (physics.copiedParts.count > 0) foreach (var entry in physics.copiedParts)
+    {
+        if (entry.value.tick >= time.tick - 1 && !Shards.Owns(entry.key)) continue;
+        if (physics.copies.TryGet(entry.value.of, out var copy) && copy.body == entry.value.body)
+        {
+            DropCopy(copy.body);
+            physics.copyOf.Remove(copy.body);
+            physics.copies.Remove(entry.value.of);
+        }
+        physics.copiedParts.Remove(entry.key);
+    }
     foreach (var entry in physics.copies)
     {
         if (entry.value.tick >= time.tick - 1 && !Shards.Owns(entry.key)) continue;
@@ -1142,7 +1199,8 @@ system RecordFixtures(mut Physics physics)
 [Stage(PhysicsStages.Step, 17)]
 system DropParts(Part part, World world)
 {
-    if (!world.TryGet<Body>(part.of, out var body) || body.id == 0) this.Destroy();
+    // In a sharded world, one whose body is another shard's waits: it goes where its body is
+    if ((!world.TryGet<Body>(part.of, out var body) || body.id == 0) && Shards.Owns(part.of)) this.Destroy();
 }
 
 // The step, and Box2D's state after it into the match. It isn't named Step,
@@ -1814,7 +1872,7 @@ void SortScene(mut List<Collider> scene)
 // Anchors and rotations are local to the corresponding body's origin.
 component Joint
 {
-    Entity a;
+    [GoesWith] Entity a; // In a sharded world, a joint goes where its first body goes
     Entity b;
     float2 anchorA;
     float2 anchorB;
@@ -1931,6 +1989,19 @@ extern void DropJoint(long id);
 extern void ReadJoint(mut Joint joint);
 
 // Removes orphaned handles too, including removal of the Joint component.
+// In a sharded world, a joint's bodies go together: the joint goes with its
+// first body (Joint.a), and its second with the joint (Body.heldBy), so one
+// shard has all three, and the joint holds
+[Stage(PhysicsStages.Step, 3)]
+system HoldJointed(Joint joint, mut World world)
+{
+    if (!world.Has<Body>(joint.b)) return;
+    mut var b = world.Get<Body>(joint.b);
+    if (b.heldBy == this) return;
+    b.heldBy = this;
+    world.Set<Body>(joint.b, b);
+}
+
 [Stage(PhysicsStages.Step, 3)]
 system RemoveJoints(World world, mut Physics physics)
 {
