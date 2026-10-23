@@ -4268,6 +4268,26 @@ static void gen_builtin_call(gen *g, sb *o, const expr *e)
         sb_put(o, "), true)");
         return;
     }
+    // Shards.Spans: noted on the tick's runs (tide_shard_span_note), each argument once; nothing in a game that isn't sharded
+    if (strcmp(e->c_callee, "tide_shard_spans") == 0 && e->args.count == 3) {
+        const type t = e->args.items[1]->type;
+        const bool z = type_dim(t) == 3;
+        sb_put(o, "do {\n");
+        for (int i = 0; i < 3; i++) {
+            sb_printf(o, "    const %s tide_span%d = ", c_type(e->args.items[i]->type), i);
+            gen_expr(g, o, e->args.items[i]);
+            sb_put(o, ";\n");
+        }
+        if (g->prog->shards) {
+            sb_printf(o, "    tide_shard_span_note(tide_w->tide_shard_now, tide_span0, (double)tide_span1.x, (double)tide_span1.y, %s, "
+                         "(double)tide_span2.x, (double)tide_span2.y, %s);\n",
+                      z ? "(double)tide_span1.z" : "0.0", z ? "(double)tide_span2.z" : "0.0");
+        } else {
+            sb_put(o, "    (void)tide_span0;\n    (void)tide_span1;\n    (void)tide_span2;\n");
+        }
+        sb_put(o, "} while (0)");
+        return;
+    }
     // Shards.Together and Apart: noted on the tick's runs (tide_shard_pair_note), and nothing in a game that isn't sharded
     const bool together = strcmp(e->c_callee, "tide_shard_together") == 0;
     if ((together || strcmp(e->c_callee, "tide_shard_apart") == 0) && e->args.count == 2) {
@@ -9870,6 +9890,7 @@ static void gen_prelude(gen *g)
     if (g->prog->skinned_types.count) sb_put(o, "#include \"tide/skinned_data.h\"\n");
     sb_put(o, "#include <stddef.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n");
     sb_put(o, "#include \"tide/shard.h\" // Shards.Owns and Shards.delay, which any game can read\n\n");
+    sb_printf(o, "#define TIDE_SHARDS_ON %s // Shards.on\n\n", g->prog->shards ? "true" : "false");
     sb_put(o, "// Determinism: never fuse a*b + c, whatever flags this file is built with.\n");
     sb_put(o, "#pragma STDC FP_CONTRACT OFF\n\n");
     sb_put(o, "// Helpers are emitted whether or not this program uses them.\n");

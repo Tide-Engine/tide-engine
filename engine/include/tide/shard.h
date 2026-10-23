@@ -259,6 +259,13 @@ typedef struct tide_shard_pair {
     int32_t delta;
 } tide_shard_pair;
 
+// An entity reaching past its position, as a run's code says (Shards.Spans):
+// the box it covers, so every shard near any of it has it.
+typedef struct tide_shard_span {
+    tide_entity e;
+    double lo[3], hi[3];
+} tide_shard_span;
+
 // A tick's runs: what the last run noted, and what the next skips. Outside the
 // world: a tick that ran again starts from the world as it was before it.
 typedef struct tide_shard_tick {
@@ -272,6 +279,8 @@ typedef struct tide_shard_tick {
     bool unknown;             // Code that can't be skipped noted something: no run can avoid it
     tide_shard_pair *pairs;   // What the last run said acts on what, in no order: its shard sorts them
     uint32_t pair_count, pair_room;
+    tide_shard_span *spans;   // ...and what it said reaches where
+    uint32_t span_count, span_room;
     int lock;
 } tide_shard_tick;
 
@@ -288,6 +297,9 @@ void tide_shard_note(tide_shard_tick *t, tide_entity touched);
 // Shards.Together(a, b) (delta 1) and Shards.Apart(a, b) (-1), noted the same
 // way. NULL: a world that's no shard, where nothing's noted.
 void tide_shard_pair_note(tide_shard_tick *t, tide_entity a, tide_entity b, int32_t delta);
+// Shards.Spans(e, center, size), noted the same way: e covers that box this tick.
+void tide_shard_span_note(tide_shard_tick *t, tide_entity e, double cx, double cy, double cz, double sx, double sy,
+                          double sz);
 // Whether the next run skips the code running now (tide_shard_code and the rest).
 bool tide_shard_skips(const tide_shard_tick *t, uint32_t code, tide_entity entity, uint32_t occurrence);
 // What the last run noted, as what the next skips; false when it noted nothing.

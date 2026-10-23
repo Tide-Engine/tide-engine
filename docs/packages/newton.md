@@ -402,7 +402,7 @@ manual sandbox, rather than current learned-controller acceptance.
 
 ## A sharded world
 
-In a [sharded world](../multiplayer/shards.md#physics), each shard steps the bodies it owns, with the ones its neighbours own near the border in the step as they are, a dynamic one as heavy as it is, so a ball runs into one across the border as it would on one shard. What the step does to a neighbour's body is that body's own shard's to work out. `Body.position` decides which shard has a body, a joint keeps its two bodies on one shard, so an articulation crosses whole, and a collider goes with its body. `Physics`' settings are the world's: set them as in any game, and every shard has them; its `status` is each shard's own step's.
+In a [sharded world](../multiplayer/shards.md#physics), each shard steps the bodies it owns, with the ones its neighbours own near the border in the step as they are, a dynamic one as heavy as it is, so a ball runs into one across the border as it would on one shard. What the step does to a neighbour's body is that body's own shard's to work out. `Body.position` decides which shard has a body, a joint keeps its two bodies on one shard, so an articulation crosses whole, and a collider goes with its body. A plane goes on for ever, so its body is copied to every shard. `Physics`' settings are the world's: set them as in any game, and every shard has them; its `status` is each shard's own step's.
 
 ## Current scope and validation
 

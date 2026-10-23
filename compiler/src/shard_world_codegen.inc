@@ -306,10 +306,40 @@ static void gen_shard_after(gen *g)
               "        if (tide_shard_long(s->touching, k + 2) > 0\n"
               "            && (tide_entity_alive(&w->entities, a) || tide_entity_alive(&w->entities, b))) continue;\n"
               "        tide_shard_drop(&s->touching, k, 3);\n    }\n}\n\n");
+    sb_put(o, "static int tide_shard_span_order(const void *x, const void *y)\n{\n"
+              "    const int64_t a = tide_shard_key(((const tide_shard_span *)x)->e), b = tide_shard_key(((const tide_shard_span *)y)->e);\n"
+              "    return a < b ? -1 : a > b ? 1 : 0;\n}\n\n"
+              "TIDE_SHARD_FN void tide_shard_spanning(tide_world *w, const tide_shard_tick *t)\n{\n"
+              "    tide_shard_state *s = &w->tide_shard_state;\n"
+              "    tide_list_clear(&s->spanned, 8u);\n    tide_list_clear(&s->spans, 8u);\n"
+              "    if (!t->span_count) return;\n"
+              "    tide_shard_span *spans = malloc((size_t)t->span_count * sizeof *spans);\n"
+              "    if (!spans) tide_out_of_memory();\n"
+              "    memcpy(spans, t->spans, (size_t)t->span_count * sizeof *spans);\n"
+              "    qsort(spans, t->span_count, sizeof *spans, tide_shard_span_order);\n"
+              "    for (uint32_t i = 0; i < t->span_count;) {\n"
+              "        tide_shard_span span = spans[i];\n"
+              "        uint32_t next = i + 1u;\n"
+              "        for (; next < t->span_count && tide_entity_equal(spans[next].e, span.e); next++) {\n"
+              "            for (uint32_t k = 0; k < 3u; k++) {\n"
+              "                if (spans[next].lo[k] < span.lo[k]) span.lo[k] = spans[next].lo[k];\n"
+              "                if (spans[next].hi[k] > span.hi[k]) span.hi[k] = spans[next].hi[k];\n            }\n        }\n"
+              "        i = next;\n"
+              "        double p[3];\n"
+              "        if (!tide_entity_alive(&w->entities, span.e) || !tide_shard_where(w, span.e, p)) continue;\n"
+              "        bool past = false; // What its position shares already, within reach of it, needs no span\n"
+              "        for (uint32_t k = 0; k < TIDE_SHARD_DIMS; k++) {\n"
+              "            past |= span.lo[k] < p[k] - TIDE_SHARD_REACH || span.hi[k] > p[k] + TIDE_SHARD_REACH;\n        }\n"
+              "        if (!past) continue;\n"
+              "        tide_shard_push(&s->spanned, tide_shard_key(span.e));\n"
+              "        for (uint32_t k = 0; k < 3u; k++) *(double *)tide_list_add(&s->spans, 8u, TIDE_IN_MATCH) = span.lo[k];\n"
+              "        for (uint32_t k = 0; k < 3u; k++) *(double *)tide_list_add(&s->spans, 8u, TIDE_IN_MATCH) = span.hi[k];\n    }\n"
+              "    free(spans);\n}\n\n");
     sb_put(o, "TIDE_SHARD_FN void tide_shard_after(tide_world *w, const tide_shard_tick *t)\n{\n"
               "    tide_shard_state *s = &w->tide_shard_state;\n"
               "    if (!s->shard) return;\n"
               "    tide_shard_touching(w, t);\n"
+              "    tide_shard_spanning(w, t); // What reaches past its position, for the border\n"
               "    tide_shard_send_shared(w); // What its code wrote of the root's settings goes to the root\n"
               // What its code that waits needs: the entities it ran for, and what they touched
               "    tide_list_clear(&s->held, 8u);\n"
@@ -395,7 +425,22 @@ static void gen_shard_queries(gen *g)
     const program *prog = g->prog;
     sb *o = &g->c;
     const int ghost = prog->shard_ghost->index;
-    // The trees this shard owns whose position is in `box`: on the root, the ones with no position too
+    // Whether an entity reaches into `box` past its position (Shards.Spans, as its shard kept it this tick)
+    sb_put(o, "TIDE_SHARD_FN bool tide_shard_spans_into(const tide_world *w, const tide_entity e, const tide_shard_box *box)\n{\n"
+              "    const tide_shard_state *s = &w->tide_shard_state;\n"
+              "    const int32_t at = tide_shard_find(s->spanned, tide_shard_key(e), 1);\n"
+              "    if (at < 0) return false;\n"
+              "    for (int32_t k = 0; k < (int32_t)TIDE_SHARD_DIMS; k++) {\n"
+              "        const double lo = *(const double *)tide_list_at(s->spans, at * 6 + k, 8u);\n"
+              "        const double hi = *(const double *)tide_list_at(s->spans, at * 6 + 3 + k, 8u);\n"
+              "        if (!(lo < box->hi[k] && hi >= box->lo[k])) return false;\n    }\n"
+              "    return true;\n}\n\n");
+    // ...and whether an entity is near `box`: its position in it, or its span reaching it
+    sb_put(o, "TIDE_SHARD_FN bool tide_shard_near(const tide_world *w, const tide_entity e, const tide_shard_box *box, bool *placed)\n{\n"
+              "    double p[3];\n    *placed = tide_shard_where(w, e, p);\n"
+              "    return (*placed && tide_shard_box_holds(box, p, TIDE_SHARD_DIMS)) || tide_shard_spans_into(w, e, box);\n}\n\n");
+    // The trees this shard owns near `box`: on the root, the ones with no position too, and elsewhere one with
+    // no position that goes with an entity near it (a part with its body)
     sb_put(o, "TIDE_SHARD_FN void tide_shard_border(const void *world, const tide_shard_box *box, tide_shard_each each, void *context)\n{\n"
               "    const tide_world *w = world;\n    tide_text_use((tide_heap *)(uintptr_t)&w->heap, NULL);\n"
               "    const bool root = tide_shard_root(w);\n    (void)root;\n");
@@ -404,9 +449,17 @@ static void gen_shard_queries(gen *g)
         sb_printf(o, "    for (uint32_t row = 0; row < w->%s.count; row++) {\n", arch_name(g, a));
         sb_printf(o, "        if (%s) continue;\n", presence_cell(g, "w", a, ghost, "row", false));
         sb_printf(o, "        const tide_entity e = *%s;\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
-        sb_put(o, "        double p[3];\n");
         if (prog->hierarchy[0]) sb_put(o, "        if (!tide_entity_is_null(tide_parent_of(w, e))) continue;\n");
-        sb_put(o, "        if (tide_shard_where(w, e, p) ? !tide_shard_box_holds(box, p, TIDE_SHARD_DIMS) : !root) continue;\n"
+        sb_put(o, "        bool placed;\n        bool near = tide_shard_near(w, e, box, &placed);\n");
+        sb named = {0};
+        if (!shard_placed(g, a)) shard_named(g, a, &named);
+        if (named.len) { // With no position: near where what it goes with is
+            sb_printf(o, "        if (!near && !placed && !root) {\n"
+                         "            const tide_entity first = tide_shard_first_named_%d(w, e, true);\n"
+                         "            bool first_placed;\n"
+                         "            near = !tide_entity_is_null(first) && tide_shard_near(w, first, box, &first_placed);\n        }\n", a);
+        }
+        sb_put(o, "        if (!near && (placed || !root)) continue;\n"
                   "        tide_writer out = {.grows = true};\n        tide_shard_put_tree(&out, w, e);\n"
                   "        if (out.overflow) tide_out_of_memory();\n"
                   "        each(context, e, out.data, out.size);\n        free(out.data);\n    }\n");

@@ -1050,6 +1050,16 @@ static void build_signatures(void)
              "For a library's code: the two entities act on each other from now on, like two bodies that touch, so a "
              "sharded world keeps them on one shard until as many `Shards.Apart(a, b)` say they don't. Nothing in a game "
              "that isn't sharded.");
+    {
+        const type kinds[4] = {{TY_FLOAT3, NULL}, {TY_DOUBLE3, NULL}, {TY_FLOAT2, NULL}, {TY_DOUBLE2, NULL}};
+        for (int i = 0; i < 4; i++) {
+            describe(add("Shards", "Spans", T_NONE, "tide_shard_spans", 3, (type){TY_ENTITY, NULL}, kinds[i], kinds[i]),
+                     "entity, center, size",
+                     "For a library's code: the entity covers that box this tick, past its position, like a floor or a "
+                     "terrain, so every shard near any of it has a copy of it. Say it each tick it does. Nothing in a game "
+                     "that isn't sharded: `Shards.on` says which, so the work of finding the box can be left out.");
+        }
+    }
     describe(add("Shards", "Apart", T_NONE, "tide_shard_apart", 2, (type){TY_ENTITY, NULL}, (type){TY_ENTITY, NULL}, T_NONE),
              "a, b",
              "For a library's code: one `Shards.Together(a, b)` no longer holds, like two bodies that stopped touching. "
@@ -1261,6 +1271,7 @@ static const struct {
 } members[] = {
     {"Application", "title", TY_STRING, "tide_str_from_cstr(tide_game_title)"},
     {"Shards", "delay", TY_INT, "tide_shard_delay_now"},
+    {"Shards", "on", TY_BOOL, "TIDE_SHARDS_ON"}, // Whether the game is sharded: false compiles a library's shard work away
     {"Application", "persistentDataPath", TY_STRING, "tide_application_persistent_data_path(tide_l->tide_io)"},
     {"Application", "temporaryCachePath", TY_STRING, "tide_application_temporary_cache_path(tide_l->tide_io)"},
     {"Math", "PI", TY_FLOAT, "TIDE_PI_F"},

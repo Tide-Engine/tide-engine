@@ -151,10 +151,35 @@ void tide_shard_pair_note(tide_shard_tick *t, const tide_entity a, const tide_en
     unlock(t);
 }
 
+void tide_shard_span_note(tide_shard_tick *t, const tide_entity e, const double cx, const double cy, const double cz,
+                          const double sx, const double sy, const double sz)
+{
+    if (!t || tide_entity_is_null(e)) return;
+    const double c[3] = {cx, cy, cz}, s[3] = {sx, sy, sz};
+    tide_shard_span span = {e, {0}, {0}};
+    for (uint32_t k = 0; k < 3u; k++) {
+        const double half = (s[k] < 0.0 ? -s[k] : s[k]) * 0.5;
+        span.lo[k] = c[k] - half;
+        span.hi[k] = c[k] + half;
+        if (span.lo[k] != span.lo[k] || span.hi[k] != span.hi[k]) return; // NaN: nowhere
+    }
+    lock(t);
+    if (t->span_count == t->span_room) {
+        const uint32_t room = t->span_room ? t->span_room * 2u : 16u;
+        tide_shard_span *grown = realloc(t->spans, (size_t)room * sizeof *grown);
+        if (!grown) tide_out_of_memory();
+        t->spans = grown;
+        t->span_room = room;
+    }
+    t->spans[t->span_count++] = span;
+    unlock(t);
+}
+
 void tide_shard_tick_begin(tide_shard_tick *t, const uint32_t codes)
 {
     t->noted_count = 0;
     t->pair_count = 0; // Each run says it all again
+    t->span_count = 0;
     t->runs++;
     if (codes > t->codes) {
         uint32_t *grown = realloc(t->occurrences, (size_t)codes * sizeof *grown);
@@ -171,6 +196,7 @@ void tide_shard_tick_free(tide_shard_tick *t)
     free(t->skip);
     free(t->occurrences);
     free(t->pairs);
+    free(t->spans);
     memset(t, 0, sizeof *t);
 }
 

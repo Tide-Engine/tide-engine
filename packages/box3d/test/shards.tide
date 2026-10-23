@@ -62,4 +62,11 @@ event(Spawned) Make(with Main, mut Physics physics)
     // against the other, as they would on one shard
     Spawn(Crate { id = 22 }, Body { position = float3(-6, 0, 80), velocity = float3(4, 0, 0) }, Box);
     Spawn(Crate { id = 23 }, Body { position = float3(1.5, 0, 80) }, Box);
+    // A long floor whose place is far into the left region, reaching under the right one: a crate falling onto it on
+    // the right lands on it there
+    Spawn(Crate { id = 24 }, Body { type = BodyType.Static, position = float3(-25, -0.5, 90) }, Box { size = float3(70, 1, 4) });
+    Spawn(Crate { id = 25 }, Body { position = float3(6, 3, 90), velocity = float3(0, -3, 0) }, Box);
+    // A static body by the border with a part: the right has a copy of the part as well as of its body
+    var post = Spawn(Crate { id = 26 }, Body { type = BodyType.Static, position = float3(-2, 0, 100) }, Box);
+    Spawn(Crate { id = 27 }, Part { of = post }, Box { offset = float3(0, 1, 0) });
 }

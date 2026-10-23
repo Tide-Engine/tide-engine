@@ -233,6 +233,11 @@ system CollectColliders(Collider collider, mut Physics physics)
 {
     if (!collider.enabled) return;
     Entity entity = this;
+    // A plane goes on for ever: every shard has a copy of its body
+    if (Shards.on && collider.type == ColliderType.Plane)
+    {
+        Shards.Spans(collider.body == default ? entity : collider.body, float3(0), float3(1e30));
+    }
     physics.colliderIndices[entity] = physics.colliders.count;
     physics.colliders.Add(ColliderState {
         entity = entity, body = collider.body == default ? entity : collider.body,

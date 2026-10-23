@@ -742,6 +742,23 @@ int64_t b3t_copy(const int64_t id, const body *b)
     return id;
 }
 
+// The box a body's shapes cover, in the world (Span): zeros for one that's gone
+typedef struct span {
+    tide_float3 lo;
+    tide_float3 hi;
+} span;
+
+span b3t_span(const int64_t id)
+{
+    span out = {{0}, {0}};
+    const b3BodyId at = body_of(active, id);
+    if (!b3Body_IsValid(at)) return out;
+    const b3AABB box = b3Body_ComputeAABB(at);
+    out.lo = (tide_float3){box.lowerBound.x, box.lowerBound.y, box.lowerBound.z};
+    out.hi = (tide_float3){box.upperBound.x, box.upperBound.y, box.upperBound.z};
+    return out;
+}
+
 void b3t_drop_copy(const int64_t id)
 {
     const b3BodyId at = body_of(active, id);

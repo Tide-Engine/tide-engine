@@ -14,10 +14,10 @@ static tide_shards *shards;
 static double now;
 
 typedef struct crates {
-    int owned[24];      // By id: how many shards own it
-    Box3D_Body body[24]; // ...and its Body on the one that does
-    int shard[24];
-    int hits[24];
+    int owned[28];      // By id: how many shards own it
+    Box3D_Body body[28]; // ...and its Body on the one that does
+    int shard[28];
+    int hits[28];
     int bodies;          // Bodies the shards' Box3D worlds have, by their maps of whose each is
 } crates;
 
@@ -37,7 +37,7 @@ static crates count(void)
             const tide_entity e = tide_entity_in_slot(&w->entities, index);
             if (tide_entity_is_null(e) || !tide_has_Crate(w, e) || tide_has_tide_ghost(w, e)) continue;
             const int id = tide_get_Crate(w, e).id;
-            if (id < 0 || id >= 24) continue;
+            if (id < 0 || id >= 28) continue;
             c.owned[id]++;
             if (tide_has_Box3D_Body(w, e)) c.body[id] = tide_get_Box3D_Body(w, e);
             c.shard[id] = (int)i;
@@ -47,6 +47,17 @@ static crates count(void)
     return c;
 }
 
+// Whether a shard holds a copy of the crate with that id
+static bool ghost_of(const uint32_t shard, const int id)
+{
+    const tide_world *w = tide_shards_world(shards, shard);
+    for (uint32_t index = 0; w && index < w->entities.next_unused; index++) {
+        const tide_entity e = tide_entity_in_slot(&w->entities, index);
+        if (!tide_entity_is_null(e) && tide_has_Crate(w, e) && tide_has_tide_ghost(w, e) && tide_get_Crate(w, e).id == id) return true;
+    }
+    return false;
+}
+
 static void step(const double seconds)
 {
     const double until = now + seconds;
@@ -54,8 +65,8 @@ static void step(const double seconds)
         now += 1.0 / 120.0;
         tide_shards_update(shards, now);
         const crates c = count();
-        for (int id = 0; id < 24; id++) TIDE_CHECK(c.owned[id] <= 1); // Never two shards' at once
-        TIDE_CHECK(c.bodies <= 18); // ...and never a body for a crate on two shards' worlds
+        for (int id = 0; id < 28; id++) TIDE_CHECK(c.owned[id] <= 1); // Never two shards' at once
+        TIDE_CHECK(c.bodies <= 21); // ...and never a body for a crate on two shards' worlds
     }
 }
 
@@ -76,7 +87,7 @@ TIDE_TEST(box3d_bodies_cross_shards_and_keep_their_speed)
     // Four seconds on: from x = -12 at 6 m/s, across the border at x = 0 to about 12
     step(3.5);
     c = count();
-    TIDE_CHECK(c.bodies == 18); // One body for each crate, on the shard that owns it
+    TIDE_CHECK(c.bodies == 21); // One body for each crate, on the shard that owns it
     for (int id = 0; id < 4; id++) {
         TIDE_CHECK(c.owned[id] == 1 && c.shard[id] == 2);
         TIDE_CHECK(c.body[id].id != 0);
@@ -115,6 +126,13 @@ TIDE_TEST(box3d_bodies_cross_shards_and_keep_their_speed)
     // than it stopping dead against a copy that can't move while the other leaves as fast as it came
     TIDE_CHECK(c.owned[22] == 1 && c.owned[23] == 1 && c.shard[22] == c.shard[23]);
     TIDE_CHECK(fabsf(c.body[22].velocity.x - 2.0f) < 0.3f && fabsf(c.body[23].velocity.x - 2.0f) < 0.3f);
+    // The crate that fell onto the long floor on the right: the left's floor reaches there, so the right has a copy
+    // of it, and the crate rests on it
+    TIDE_CHECK(c.owned[24] == 1 && c.shard[24] == 1 && c.owned[25] == 1 && c.shard[25] == 2);
+    TIDE_CHECK(c.body[25].position.y > 0.4f && c.body[25].position.y < 1.0f); // Weightless, it stops as it meets the floor
+    TIDE_CHECK(c.body[25].velocity.y > -0.1f);
+    // ...and the part on the post by the border: the right holds a copy of it, which goes with its body
+    TIDE_CHECK(ghost_of(2, 27));
     // What the shards sent each other of the bodies near their border: what changed of each, about a quarter of
     // whole trees' 419,326 bytes
     TIDE_CHECK(tide_shards_ghost_bytes(shards) < 150000u);

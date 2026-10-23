@@ -2862,10 +2862,14 @@ static void ensure_shards(program *prog)
     f.name = str_from("regions");
     f.type = list_of(prog, (type){TY_DOUBLE, NULL});
     vec_push(state->fields, f);
+    f.name = str_from("spans");
+    vec_push(state->fields, f);
     // matches: the match each region's host knows its shard by, beside `regions`
     // touching: entities that act on each other (Shards.Together), each pair its two keys, lower first, and a count
-    static const char *const long_lists[] = {"ranges", "heard", "pins", "asked", "gone", "held", "routes", "matches", "touching"};
-    for (int i = 0; i < 9; i++) {
+    // spanned: entities reaching past their position (Shards.Spans) this tick, by key, and spans their boxes, 6 doubles each
+    static const char *const long_lists[] = {"ranges", "heard", "pins", "asked", "gone", "held", "routes", "matches", "touching",
+                                             "spanned"};
+    for (int i = 0; i < 10; i++) {
         f.name = str_from(long_lists[i]);
         f.type = list_of(prog, (type){TY_LONG, NULL});
         vec_push(state->fields, f);
@@ -7301,7 +7305,8 @@ static type check_method(checker *c, expr *e)
         if (draws && (old_setting(e) || !check_sprite_args(c, e))) return T_ERR;
         const type result = resolve_builtin_call(owner, e);
         if (result.kind == TY_ERROR) return result;
-        if (str_eq_c(owner, "Shards") && (str_eq_c(e->name, "Together") || str_eq_c(e->name, "Apart")) && local_code(c)) {
+        if (str_eq_c(owner, "Shards") && (str_eq_c(e->name, "Together") || str_eq_c(e->name, "Apart") || str_eq_c(e->name, "Spans"))
+            && local_code(c)) {
             diag_error(e->at, "Shards." STR_FMT " says what acts on what in the match, so it's match code's: a system or a handler",
                        STR_ARG(e->name));
             return T_ERR;

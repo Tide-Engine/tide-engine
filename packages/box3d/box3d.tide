@@ -881,6 +881,16 @@ void CopyShapes(World world, Entity entity, long body)
 [NativeName("b3t_drop_copy")]
 extern void DropCopy(long id);
 
+// The box a body's shapes cover, by Box's handle
+struct Span
+{
+    float3 lo;
+    float3 hi;
+}
+
+[NativeName("b3t_span")]
+extern Span BodySpan(long id);
+
 // In a sharded world, the bodies other shards own near this one's border are
 // here as copies, and Box3D has each as a copy this shard's bodies run into:
 // kinematic (static for a static one), where its owner last had it and as
@@ -891,7 +901,16 @@ system CopyBodies(World world, Time time, mut Physics physics, query (Body body)
 {
     foreach (var row in bodies)
     {
-        if (Shards.Owns(row.entity)) continue;
+        if (Shards.Owns(row.entity))
+        {
+            // A static body reaching past where it is, like a floor: every shard near any of it has a copy
+            if (Shards.on && row.body.type == BodyType.Static && row.body.id != 0)
+            {
+                Span span = BodySpan(row.body.id);
+                Shards.Spans(row.entity, (span.lo + span.hi) * 0.5, span.hi - span.lo);
+            }
+            continue;
+        }
         long had = physics.copies.TryGet(row.entity, out var copy) ? copy.body : 0;
         long made = CopyBody(had, row.body);
         if (had != 0 && made != had) physics.copyOf.Remove(had);

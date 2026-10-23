@@ -2337,6 +2337,23 @@ void b2t_copy_circle(const int64_t on, const circle *s)
     note('o', s, sizeof *s);
 }
 
+// The box a body's shapes cover, in the world (Span): zeros for one that's gone
+typedef struct span {
+    tide_float2 lo;
+    tide_float2 hi;
+} span;
+
+span b2t_span(const int64_t id)
+{
+    span out = {{0}, {0}};
+    const b2BodyId at = body_of(active, id);
+    if (!b2Body_IsValid(at)) return out;
+    const b2AABB box = b2Body_ComputeAABB(at);
+    out.lo = (tide_float2){box.lowerBound.x, box.lowerBound.y};
+    out.hi = (tide_float2){box.upperBound.x, box.upperBound.y};
+    return out;
+}
+
 void b2t_drop_copy(const int64_t id)
 {
     const b2BodyId at = body_of(active, id);
