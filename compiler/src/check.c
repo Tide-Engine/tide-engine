@@ -17437,6 +17437,27 @@ static const char *system_what(const decl *sys)
     return sys->is_view ? "view" : sys->is_handler ? "event handler" : "system";
 }
 
+// In a sharded game a singleton is the root shard's, and code elsewhere that
+// changes it borrows it first (docs/spec.md, Shards). A system that changes
+// one for each entity does that on every region's shard, every tick: they
+// take it in turn, waiting for each other.
+static void warn_shard_singletons(const program *prog)
+{
+    if (!prog->shards) return;
+    for (int i = 0; i < prog->systems.count; i++) {
+        const decl *sys = prog->systems.items[i];
+        if (!sys->per_entity || sys->is_local || package_of(sys)) continue;
+        for (int k = 0; k < sys->params.count; k++) {
+            const param *p = &sys->params.items[k];
+            if (p->type.kind != TY_SINGLETON || p->mode != PARAM_MUT || p->type.decl->is_local || p->type.decl->builtin) continue;
+            diag_warning(p->at, "'" STR_FMT "' changes the singleton '" STR_FMT "' for each entity: in a sharded game every region's "
+                         "shard borrows it from the root in turn, a tick at a time; keep the state on an entity or a scene, "
+                         "or send an event to the one that has it",
+                         STR_ARG(sys->name), STR_ARG(p->type.decl->name));
+        }
+    }
+}
+
 static void warn_unmatched(const program *prog, const decl *const *list, const int count)
 {
     for (int i = 0; i < count; i++) {
@@ -20341,6 +20362,7 @@ bool check(program *prog)
 
     warn_unmatched(prog, (const decl *const *)prog->systems.items, prog->systems.count);
     warn_unmatched(prog, (const decl *const *)prog->views.items, prog->views.count);
+    warn_shard_singletons(prog);
     warn_unmatched(prog, (const decl *const *)prog->handlers.items, prog->handlers.count);
     warn_unsent(&c);
     int match_singleton_index = 0;

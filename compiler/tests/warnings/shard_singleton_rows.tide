@@ -1,0 +1,29 @@
+// warnings: 1
+// expect: 'Collect' changes the singleton 'Score' for each entity: in a sharded game every region's shard borrows it from the root in turn
+settings
+{
+    shards = true;
+    shardRange = 16;
+}
+
+component Coin { [Partition] float2 position; int value; }
+singleton Score { int total; int ticks; }
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Coin { position = float2(0, 0), value = 1 });
+}
+
+// Changes the score for each coin: borrowed by every region, in turn
+system Collect(Coin coin, mut Score score)
+{
+    score.total += coin.value;
+}
+
+// Runs once for the world, on the root, which has the score: no warning
+system Count(mut Score score)
+{
+    score.ticks += 1;
+}

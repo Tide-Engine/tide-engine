@@ -14,6 +14,7 @@ Built (2026-10-23): the language surface, the generated shard code, the session'
 - `Shards.Owns(entity)` and `Shards.delay` (`compiler/src/builtins.c`): `tide_shard_owns_now` (the world the thread's tick or frame registered with `tide_shard_use`, true with none) and the thread-local `tide_shard_delay_now`. Any game can read them; in a game that isn't sharded they're true and 0.
 - `ensure_shards` adds two hidden declarations: the sparse component `tide_ghost { int source; }`, which every match archetype can have (`derive_archetypes`), and the singleton `tide_shard_state`: `shard` (the id + 1, 0 for a world that's no shard), `role`, `sent` (the last number its messages had), `acked`, `next`/`end` (the entity index range it gives from), `singletons` (a bit for each of the game's singletons it owns), and lists of plain numbers and bytes: `regions` (7 doubles each: shard, box lo, box hi), `ranges`, `heard` (per sender, the last number applied), `pins` (borrowed entities kept until a tick), `asked`, `gone`, `held`, `outbox` and `waits`. They're match state like any, so snapshots, hashes, packing and the clients' worlds keep them.
 - Every per-entity match system and handler is filtered `without tide_ghost` before archetypes are derived: a shard runs code for what it owns, and reads ghosts through queries and `World`.
+- A per-entity match system taking a game singleton `mut` warns in a sharded game (`warn_shard_singletons`): each region's shard would borrow it from the root in turn, every tick. Code for no entity runs on the root, which has the singletons, and doesn't warn. Fixture: `compiler/tests/warnings/shard_singleton_rows.tide`.
 
 ## Generated code (`compiler/src/shard_codegen.inc`, `shard_messages_codegen.inc`, `shard_world_codegen.inc`)
 
@@ -71,7 +72,6 @@ Built (2026-10-23): the language surface, the generated shard code, the session'
 
 - The orchestrator scans every player on every shard each update (`route_players`): players × shards.
 - Exactly once by replay (spec, Provisional): no shard's input log is recorded durably, so a failed shard is restored only from the last whole checkpoint, not replayed to where it was.
-- The compiler's warning for a system writing a singleton on every tick in a sharded game (spec, Provisional) isn't built.
 - Resident (physics) state doesn't move with its entity (spec, Open).
 - Index space isn't reclaimed from entities that moved.
 - Unpositioned entities stay on the shard that spawned them rather than following their spawner.

@@ -31,7 +31,9 @@ typedef struct tide_shards_desc {
     tide_shard_box world;
     uint32_t split[3];
     // A region whose shard owns more entities than this is split in two, by
-    // where they are, down to twice the game's range across (0: never).
+    // where they are, down to twice the game's range across, and two
+    // neighbouring regions whose shards own a quarter of it together merge
+    // back into one (0: neither).
     uint32_t most_entities;
     // Each shard's server's transports (tide_server_desc.transports), made as
     // the shard starts: `shard` is its id. NULL: none, as in tests that only
