@@ -1,156 +1,31 @@
 #include "tide/shards.h"
 
-#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
 #include "tide/hosting.h"
+#include "tide/shard_agent.h"
+#include "tide/shard_coordinator.h"
 
-// See tide/shards.h. The orchestrator keeps, outside every world: which shard
-// owns each entity that moved (the directory; one that never moved is the
-// shard's whose range its index is in), which messages of each shard it
-// carried, and what it last sent each shard of its neighbours' ghosts.
+// See tide/shards.h. Every shard of the world in this process: each its server
+// and its agent (tide/shard_agent.h), and the world's coordinator
+// (tide/shard_coordinator.h), which they report to and take instructions
+// from each update, as they would across machines.
 
-#define RANGE_SIZE (1u << 20) // Entity indices a shard is given at a time
-#define SPLIT_EVERY 30u       // Updates between looks at whether a region should split or merge
-#define PLAYER_AWAY_SECONDS 20.0 // How long a player of the world on no shard has to come back before PlayerLeft
+// A shard's server's journal goes to the world's (tide_shards_desc.journal), as that shard's
+typedef struct journal_ref {
+    tide_shards *s;
+    uint32_t shard;
+} journal_ref;
 
-// ---------------------------------------------------------------------------
-// A map of 64-bit keys (never 0) to 64-bit values: linear probing, deletion by
-// shifting back what follows.
-
-typedef struct map64 {
-    uint64_t *keys;
-    uint64_t *values;
-    uint32_t count, room; // room: a power of two, or 0
-} map64;
-
-static uint32_t slot_of(const map64 *m, const uint64_t key)
-{
-    uint64_t h = key * 0x9E3779B97F4A7C15ull;
-    h ^= h >> 32;
-    return (uint32_t)h & (m->room - 1u);
-}
-
-static uint64_t *map_find(const map64 *m, const uint64_t key)
-{
-    if (!m->room) return NULL;
-    for (uint32_t i = slot_of(m, key);; i = (i + 1u) & (m->room - 1u)) {
-        if (m->keys[i] == key) return &m->values[i];
-        if (!m->keys[i]) return NULL;
-    }
-}
-
-static void map_put(map64 *m, uint64_t key, uint64_t value);
-
-static void map_grow(map64 *m)
-{
-    const map64 old = *m;
-    m->room = old.room ? old.room * 2u : 64u;
-    m->keys = calloc(m->room, sizeof *m->keys);
-    m->values = calloc(m->room, sizeof *m->values);
-    if (!m->keys || !m->values) tide_out_of_memory();
-    m->count = 0;
-    for (uint32_t i = 0; i < old.room; i++) {
-        if (old.keys[i]) map_put(m, old.keys[i], old.values[i]);
-    }
-    free(old.keys);
-    free(old.values);
-}
-
-static void map_put(map64 *m, const uint64_t key, const uint64_t value)
-{
-    if ((m->count + 1u) * 2u > m->room) map_grow(m);
-    for (uint32_t i = slot_of(m, key);; i = (i + 1u) & (m->room - 1u)) {
-        if (m->keys[i] == key) {
-            m->values[i] = value;
-            return;
-        }
-        if (!m->keys[i]) {
-            m->keys[i] = key;
-            m->values[i] = value;
-            m->count++;
-            return;
-        }
-    }
-}
-
-static void map_remove(map64 *m, const uint64_t key)
-{
-    if (!m->room) return;
-    uint32_t i = slot_of(m, key);
-    while (m->keys[i] != key) {
-        if (!m->keys[i]) return;
-        i = (i + 1u) & (m->room - 1u);
-    }
-    m->keys[i] = 0;
-    m->count--;
-    // What follows in its run moves back into the gap when it can
-    for (uint32_t j = (i + 1u) & (m->room - 1u); m->keys[j]; j = (j + 1u) & (m->room - 1u)) {
-        const uint32_t home = slot_of(m, m->keys[j]);
-        const bool between = i <= j ? (home > i && home <= j) : (home > i || home <= j);
-        if (between) continue;
-        m->keys[i] = m->keys[j];
-        m->values[i] = m->values[j];
-        m->keys[j] = 0;
-        i = j;
-    }
-}
-
-static void map_free(map64 *m)
-{
-    free(m->keys);
-    free(m->values);
-    memset(m, 0, sizeof *m);
-}
-
-static uint64_t key_of(const tide_entity e)
-{
-    return ((uint64_t)e.generation << 32) | e.index;
-}
-
-static tide_entity entity_of(const uint64_t key)
-{
-    return (tide_entity){(uint32_t)key, (uint32_t)(key >> 32)};
-}
-
-// ---------------------------------------------------------------------------
-
-typedef struct shard {
-    bool used;
-    bool region; // The root has none
-    tide_shard_box box;
+typedef struct here {
     tide_server *server;
-    uint32_t delivered; // Its messages carried, through this number
-    // What it last sent each shard of its ghosts: by tree root, its bytes' hash
-    map64 *sent;
-    uint32_t sent_room;
-    uint64_t singletons; // The root's: its singletons' hash, as last sent
-    uint64_t match;      // What its host knows it by (tide_shards_desc.started), 0 in one process
-    // A region merged into another's (`into`): it gives up what it owns, then
-    // ends, and its id is never another's (receivers know its messages' numbers)
-    bool retiring, gone;
-    uint32_t into;
-    uint32_t acked;               // Its messages it was told were kept, through this number
-    struct journal_ref *journal;  // Its server's journal's user (tide_shards_desc.journal)
-    uint32_t ticks_before;         // Its ticks before its server's first: the journal numbers them on from there
-} shard;
-
-// A player of the world: their cookie, whether they're in it, and the route
-// the shards were last told (its hash)
-typedef struct roster {
-    uint64_t cookie;
-    bool here;
-    bool away;          // ...though on no shard since `away_since`: they've a while to come back
-    double away_since;
-    uint32_t home;
-    uint64_t route;
-} roster;
-
-typedef struct range {
-    uint32_t first, end, shard;
-} range;
+    tide_shard_agent *agent;
+    uint64_t match;        // What its host knows it by
+    uint32_t ticks_before; // Its ticks before its server's first: the journal numbers them on from there
+    journal_ref *journal;
+} here;
 
 struct tide_shards {
     tide_shards_desc desc;
@@ -158,33 +33,14 @@ struct tide_shards {
     const tide_shard_game *api;
     uint32_t tick_rate;
     float dt;
-    shard *shards;
-    uint32_t count, room;
-    map64 directory; // Entity key to the shard it last went to
-    range *ranges;
-    uint32_t range_count;
-    uint64_t next_index; // The next range's first
-    uint64_t updates;
-    double now;
-    roster *players; // tide_game_players(game) of them
-    uint32_t player_count;
-    // The regions as they are (each change, a version), and each region's
-    // neighbours as of `neighbours_of`: `neighbours` from `neighbour_first[i]`
-    // up to `neighbour_first[i + 1]`
-    uint64_t map_version, neighbours_of;
-    uint32_t *neighbour_first, *neighbours;
-    // Checkpoints (tide_shards_desc.checkpoint): when the last was made, and
-    // whether the regions or ranges changed since
-    double checkpointed;
-    bool changed;
-    uint64_t reshaped; // The update it last looked at splitting and merging
+    tide_shard_coordinator *coordinator;
+    here *shards;
+    uint32_t room;
+    // Recovering: each shard's journal records since the checkpoint
+    tide_shards_records records;
+    void *records_user;
+    bool failed;
 };
-
-// A shard's server's journal goes to the world's (tide_shards_desc.journal), as that shard's
-typedef struct journal_ref {
-    tide_shards *s;
-    uint32_t shard;
-} journal_ref;
 
 static void shard_journal(void *user, const uint32_t tick, const uint8_t *record, const uint32_t size)
 {
@@ -204,106 +60,50 @@ static void shard_journal(void *user, const uint32_t tick, const uint8_t *record
     free(numbered);
 }
 
-static map64 *sent_to(tide_shards *s, const uint32_t from, const uint32_t to)
+static here *grow(tide_shards *s, const uint32_t id)
 {
-    shard *f = &s->shards[from];
-    if (to >= f->sent_room) {
-        const uint32_t room = to + 8u;
-        map64 *grown = realloc(f->sent, room * sizeof *grown);
-        if (!grown) tide_out_of_memory();
-        memset(grown + f->sent_room, 0, (room - f->sent_room) * sizeof *grown);
-        f->sent = grown;
-        f->sent_room = room;
-    }
-    return &f->sent[to];
-}
-
-static void write_regions(const tide_shards *s, tide_writer *w)
-{
-    uint32_t count = 0;
-    for (uint32_t i = 0; i < s->count; i++) count += s->shards[i].used && s->shards[i].region;
-    tide_write_u32(w, count);
-    for (uint32_t i = 0; i < s->count; i++) {
-        const shard *sh = &s->shards[i];
-        if (!sh->used || !sh->region) continue;
-        tide_write_u32(w, i);
-        tide_write_bytes(w, sh->box.lo, sizeof sh->box.lo);
-        tide_write_bytes(w, sh->box.hi, sizeof sh->box.hi);
-    }
-}
-
-static range give_range(tide_shards *s, const uint32_t shard_id)
-{
-    if (s->next_index + RANGE_SIZE > UINT32_MAX) {
-        fprintf(stderr, "tide: the sharded world has given every entity index it has\n");
-        abort();
-    }
-    const range r = {(uint32_t)s->next_index, (uint32_t)(s->next_index + RANGE_SIZE), shard_id};
-    s->next_index += RANGE_SIZE;
-    range *grown = realloc(s->ranges, (s->range_count + 1u) * sizeof *grown);
-    if (!grown) tide_out_of_memory();
-    s->ranges = grown;
-    s->ranges[s->range_count++] = r;
-    return r;
-}
-
-// A CONFIG message: who the shard is, the regions, and its ranges
-static uint8_t *config_for(tide_shards *s, const uint32_t id, uint32_t *size)
-{
-    tide_writer w = {.grows = true};
-    tide_shard_header(&w, TIDE_SHARD_CONFIG, TIDE_SHARD_ORCHESTRATOR, 0u);
-    tide_write_u32(&w, id);
-    tide_write_u8(&w, id == TIDE_SHARD_ROOT ? TIDE_SHARD_ROOT_ROLE : TIDE_SHARD_REGION);
-    write_regions(s, &w);
-    uint32_t count = 0;
-    for (uint32_t i = 0; i < s->range_count; i++) count += s->ranges[i].shard == id;
-    tide_write_u32(&w, count);
-    for (uint32_t i = 0; i < s->range_count; i++) {
-        if (s->ranges[i].shard != id) continue;
-        tide_write_u32(&w, s->ranges[i].first);
-        tide_write_u32(&w, s->ranges[i].end);
-    }
-    if (w.overflow) tide_out_of_memory();
-    *size = w.size;
-    return w.data;
-}
-
-static void inject(tide_shards *s, const uint32_t to, const uint8_t *data, const uint32_t size)
-{
-    if (to >= s->count || !s->shards[to].used) return;
-    if (!tide_server_inject(s->shards[to].server, data, size)) tide_out_of_memory();
-}
-
-static uint32_t new_shard(tide_shards *s)
-{
-    for (uint32_t i = 1; i < s->count; i++) {
-        if (!s->shards[i].used && !s->shards[i].server && !s->shards[i].gone) return i;
-    }
-    if (s->count == s->room) {
-        const uint32_t room = s->room ? s->room * 2u : 8u;
-        shard *grown = realloc(s->shards, room * sizeof *grown);
+    if (id >= s->room) {
+        const uint32_t room = id + 8u;
+        here *grown = realloc(s->shards, room * sizeof *grown);
         if (!grown) tide_out_of_memory();
         memset(grown + s->room, 0, (room - s->room) * sizeof *grown);
         s->shards = grown;
         s->room = room;
     }
-    return s->count++;
+    return &s->shards[id];
 }
 
-// A shard's server, from `world` (which it copies), or a world started for it
-static void start_server(tide_shards *s, const uint32_t id, const void *world, const double now)
+// A shard's world, from a checkpoint's and its journal's records since, run again
+static bool replay(tide_shards *s, const uint32_t shard, void *world, uint32_t *next)
 {
-    void *started = NULL;
-    if (!world) {
-        uint32_t size;
-        uint8_t *config = config_for(s, id, &size);
-        started = calloc(1, s->game->world_size);
-        if (!started) tide_out_of_memory();
+    const uint8_t *record = NULL;
+    uint32_t size = 0;
+    for (uint32_t index = 0; s->records && s->records(s->records_user, shard, index, &record, &size); index++) {
+        uint32_t tick;
+        if (!tide_replay_tick(record, size, &tick)) return false;
+        if (tick < *next) continue; // From before the checkpoint
+        if (tick != *next || !tide_replay(s->game, world, record, size, s->desc.jobs)) return false;
+        (*next)++;
+    }
+    return true;
+}
+
+static void start(tide_shards *s, const tide_shard_action *a, const double now)
+{
+    void *world = calloc(1, s->game->world_size);
+    if (!world) tide_out_of_memory();
+    uint32_t next = a->tick;
+    if (a->world) {
+        if (!s->game->unpack_world(world, a->world, a->world_size) || !replay(s, a->shard, world, &next)) {
+            s->failed = true;
+            if (s->game->free_world) s->game->free_world(world);
+            free(world);
+            return;
+        }
+    } else {
         // A shard that starts later starts at the world's tick, the root's
-        const uint32_t tick = id != TIDE_SHARD_ROOT && s->shards[0].server ? tide_server_tick(s->shards[0].server) : 0u;
-        s->api->start(started, s->dt, id == TIDE_SHARD_ROOT ? s->desc.start : NULL, s->desc.seed, tick, config, size);
-        free(config);
-        world = started;
+        s->api->start(world, s->dt, a->shard == TIDE_SHARD_ROOT ? s->desc.start : NULL, s->desc.seed, a->tick, a->config,
+                      a->config_size);
     }
     tide_server_desc d = {0};
     d.game = s->game;
@@ -312,37 +112,85 @@ static void start_server(tide_shards *s, const uint32_t id, const void *world, c
     d.world = world;
     d.seed = s->desc.seed;
     d.jobs = s->desc.jobs;
-    d.closed = id != TIDE_SHARD_ROOT; // Players join the world at the root, and a region takes those it's told of
-    if (s->desc.transports) s->desc.transports(s->desc.user, id, d.transports);
-    shard *sh = &s->shards[id];
+    d.closed = a->shard != TIDE_SHARD_ROOT; // Players join the world at the root, and a region takes those it's told of
+    if (s->desc.transports) s->desc.transports(s->desc.user, a->shard, d.transports);
+    here *h = grow(s, a->shard);
+    h->ticks_before = a->world ? next : 0u;
     if (s->desc.journal) { // Its ticks go to the world's journal, as this shard's
-        if (!sh->journal) {
-            sh->journal = malloc(sizeof *sh->journal);
-            if (!sh->journal) tide_out_of_memory();
-            *sh->journal = (journal_ref){s, id};
+        if (!h->journal) {
+            h->journal = malloc(sizeof *h->journal);
+            if (!h->journal) tide_out_of_memory();
+            *h->journal = (journal_ref){s, a->shard};
         }
-        d.journal_user = sh->journal;
+        d.journal_user = h->journal;
         d.journal = shard_journal;
     }
-    sh->server =s->desc.host_start ? s->desc.host_start(s->desc.user, id, &d, &sh->match) : tide_server_create(&d, now);
-    if (!sh->server) tide_out_of_memory();
-    sh->used = true;
-    if (started) {
-        if (s->game->free_world) s->game->free_world(started);
-        free(started);
+    h->server = s->desc.host_start ? s->desc.host_start(s->desc.user, a->shard, &d, &h->match) : tide_server_create(&d, now);
+    if (!h->server) tide_out_of_memory();
+    h->agent = tide_shard_agent_create(s->game, h->server, a->shard, h->ticks_before, a->world != NULL);
+    if (!h->agent) tide_out_of_memory();
+    tide_shard_coordinator_set_match(s->coordinator, a->shard, h->match);
+    if (s->game->free_world) s->game->free_world(world);
+    free(world);
+}
+
+static void stop(tide_shards *s, const uint32_t id)
+{
+    if (id >= s->room) return;
+    here *h = &s->shards[id];
+    if (h->server && s->desc.host_start) {
+        if (s->desc.host_stop) s->desc.host_stop(s->desc.user, id, h->match);
+    } else if (h->server) {
+        tide_server_destroy(h->server);
+    }
+    tide_shard_agent_destroy(h->agent);
+    free(h->journal);
+    *h = (here){0};
+}
+
+// What the coordinator decided, done
+static void act(tide_shards *s, const double now)
+{
+    const tide_shard_action *actions;
+    const uint32_t count = tide_shard_coordinator_actions(s->coordinator, &actions);
+    for (uint32_t i = 0; i < count; i++) {
+        const tide_shard_action *a = &actions[i];
+        switch (a->kind) {
+        case TIDE_SHARD_ACTION_START: start(s, a, now); break;
+        case TIDE_SHARD_ACTION_STOP: stop(s, a->shard); break;
+        case TIDE_SHARD_ACTION_CHECKPOINT:
+            if (s->desc.checkpoint) s->desc.checkpoint(s->desc.user, a->data, a->size);
+            tide_shard_coordinator_kept(s->coordinator);
+            break;
+        }
     }
 }
 
-static void tell_map(tide_shards *s)
+// Each shard reports, the coordinator decides, and each shard does as it's told
+static void round_of(tide_shards *s, const double now)
 {
-    s->map_version++;
-    s->changed = true; // A checkpoint has the new shape
-    tide_writer w = {.grows = true};
-    tide_shard_header(&w, TIDE_SHARD_MAP, TIDE_SHARD_ORCHESTRATOR, 0u);
-    write_regions(s, &w);
-    if (w.overflow) tide_out_of_memory();
-    for (uint32_t i = 0; i < s->count; i++) inject(s, i, w.data, w.size);
-    free(w.data);
+    for (uint32_t i = 0; i < s->room; i++) {
+        if (!s->shards[i].agent) continue;
+        uint32_t size = 0;
+        uint8_t *report = tide_shard_agent_report(s->shards[i].agent, &size);
+        if (!tide_shard_coordinator_report(s->coordinator, report, size)) {
+            fprintf(stderr, "tide: shard %u's report wasn't one its coordinator takes\n", (unsigned)i);
+            abort();
+        }
+        free(report);
+    }
+    tide_shard_coordinator_step(s->coordinator, now);
+    act(s, now);
+    for (uint32_t i = 0; i < s->room; i++) {
+        if (!s->shards[i].agent) continue;
+        uint32_t size = 0;
+        uint8_t *instructions = tide_shard_coordinator_instructions(s->coordinator, i, &size);
+        if (instructions && !tide_shard_agent_apply(s->shards[i].agent, instructions, size)) {
+            fprintf(stderr, "tide: shard %u's instructions weren't any its agent takes\n", (unsigned)i);
+            abort();
+        }
+        free(instructions);
+    }
 }
 
 static bool setup(tide_shards *s, const tide_shards_desc *desc)
@@ -353,10 +201,21 @@ static bool setup(tide_shards *s, const tide_shards_desc *desc)
     s->api = desc->game->shards;
     s->tick_rate = desc->tick_rate ? desc->tick_rate : desc->game->tick_rate ? desc->game->tick_rate : 60u;
     s->dt = desc->dt > 0.0f ? desc->dt : 1.0f / (float)s->tick_rate;
-    s->player_count = tide_game_players(desc->game);
-    s->players = calloc(s->player_count, sizeof *s->players);
-    if (!s->players) tide_out_of_memory();
     return true;
+}
+
+static tide_shard_coordinator_desc coordinator_desc(const tide_shards *s)
+{
+    return (tide_shard_coordinator_desc){
+        .players = tide_game_players(s->game),
+        .range = s->api->range,
+        .dims = s->api->dims,
+        .world = s->desc.world,
+        .split = {s->desc.split[0], s->desc.split[1], s->desc.split[2]},
+        .most_entities = s->desc.most_entities,
+        .checkpoints = s->desc.checkpoint != NULL,
+        .checkpoint_seconds = s->desc.checkpoint_seconds,
+    };
 }
 
 tide_shards *tide_shards_create(const tide_shards_desc *desc, const double now)
@@ -366,71 +225,45 @@ tide_shards *tide_shards_create(const tide_shards_desc *desc, const double now)
         free(s);
         return NULL;
     }
-    s->now = now;
-    // The root, then a region for each cell of the split world
-    const uint32_t root = new_shard(s);
-    give_range(s, root);
-    uint32_t n[3];
-    for (uint32_t k = 0; k < 3u; k++) n[k] = desc->split[k] ? desc->split[k] : 1u;
-    if (s->api->dims == 2u) n[2] = 1u;
-    for (uint32_t z = 0; z < n[2]; z++) {
-        for (uint32_t y = 0; y < n[1]; y++) {
-            for (uint32_t x = 0; x < n[0]; x++) {
-                const uint32_t id = new_shard(s);
-                shard *sh = &s->shards[id];
-                sh->region = true;
-                const uint32_t cell[3] = {x, y, z};
-                for (uint32_t k = 0; k < 3u; k++) {
-                    const double lo = desc->world.lo[k], hi = desc->world.hi[k];
-                    const double step = (hi - lo) / (double)n[k];
-                    // The outer edges reach past the world, so what goes outside it stays in a region
-                    sh->box.lo[k] = cell[k] == 0 ? -INFINITY : lo + step * (double)cell[k];
-                    sh->box.hi[k] = cell[k] == n[k] - 1u ? INFINITY : lo + step * (double)(cell[k] + 1u);
-                    if (k == 2 && s->api->dims == 2u) {
-                        sh->box.lo[k] = -INFINITY;
-                        sh->box.hi[k] = INFINITY;
-                    }
-                }
-                sh->used = true; // So the regions written into configs have it
-                give_range(s, id);
-            }
-        }
+    const tide_shard_coordinator_desc d = coordinator_desc(s);
+    s->coordinator = tide_shard_coordinator_create(&d, now);
+    if (!s->coordinator) {
+        free(s);
+        return NULL;
     }
-    for (uint32_t i = 0; i < s->count; i++) start_server(s, i, NULL, now);
+    act(s, now); // The root and the regions start
     return s;
 }
 
 void tide_shards_destroy(tide_shards *s)
 {
     if (!s) return;
-    for (uint32_t i = 0; i < s->count; i++) {
-        shard *sh = &s->shards[i];
-        if (sh->server && s->desc.host_start) {
-            if (s->desc.host_stop) s->desc.host_stop(s->desc.user, i, sh->match);
-        } else if (sh->server) {
-            tide_server_destroy(sh->server);
-        }
-        for (uint32_t k = 0; k < sh->sent_room; k++) map_free(&sh->sent[k]);
-        free(sh->sent);
-        free(sh->journal);
-    }
+    for (uint32_t i = 0; i < s->room; i++) stop(s, i);
     free(s->shards);
-    free(s->ranges);
-    free(s->players);
-    map_free(&s->directory);
-    free(s->neighbour_first);
-    free(s->neighbours);
+    tide_shard_coordinator_destroy(s->coordinator);
     free(s);
+}
+
+void tide_shards_update(tide_shards *s, const double now)
+{
+    for (uint32_t i = 0; i < s->room; i++) {
+        if (s->shards[i].server && !s->desc.host_start) tide_server_update(s->shards[i].server, now); // A host updates its own
+    }
+    // The ticks are kept before anything they sent goes on
+    if (s->desc.flush) s->desc.flush(s->desc.user);
+    round_of(s, now);
+    // A checkpoint begun is gathered at once: every shard is here
+    for (uint32_t rounds = 0; rounds < 4u && tide_shard_coordinator_checkpointing(s->coordinator); rounds++) round_of(s, now);
 }
 
 uint32_t tide_shards_count(const tide_shards *s)
 {
-    return s->count;
+    return tide_shard_coordinator_count(s->coordinator);
 }
 
 tide_server *tide_shards_server(const tide_shards *s, const uint32_t shard)
 {
-    return shard < s->count && s->shards[shard].used ? s->shards[shard].server : NULL;
+    return shard < s->room ? s->shards[shard].server : NULL;
 }
 
 const void *tide_shards_world(const tide_shards *s, const uint32_t shard)
@@ -441,9 +274,7 @@ const void *tide_shards_world(const tide_shards *s, const uint32_t shard)
 
 bool tide_shards_region(const tide_shards *s, const uint32_t shard, tide_shard_box *out)
 {
-    if (shard >= s->count || !s->shards[shard].used || !s->shards[shard].region) return false;
-    *out = s->shards[shard].box;
-    return true;
+    return tide_shard_coordinator_region(s->coordinator, shard, out);
 }
 
 void tide_shards_status(const tide_shards *s, const uint32_t shard, tide_shard_status *out)
@@ -456,770 +287,42 @@ void tide_shards_status(const tide_shards *s, const uint32_t shard, tide_shard_s
 
 int32_t tide_shards_owner(const tide_shards *s, const tide_entity e)
 {
-    const uint64_t *moved = map_find(&s->directory, key_of(e));
-    if (moved) return (int32_t)*moved;
-    for (uint32_t i = 0; i < s->range_count; i++) {
-        if (e.index >= s->ranges[i].first && e.index < s->ranges[i].end) return (int32_t)s->ranges[i].shard;
-    }
-    return -1;
-}
-
-uint32_t tide_shards_at(const tide_shards *s, const double p[3])
-{
-    for (uint32_t i = 0; i < s->count; i++) {
-        const shard *sh = &s->shards[i];
-        if (sh->used && sh->region && tide_shard_box_holds(&sh->box, p, s->api->dims)) return i;
-    }
-    return TIDE_SHARD_ROOT;
+    return tide_shard_coordinator_owner(s->coordinator, e);
 }
 
 void tide_shards_player(tide_shards *s, const tide_player_id player, const bool joined)
 {
-    uint8_t data[16];
-    tide_writer w = {data, sizeof data, 0, false, false};
-    tide_shard_header(&w, TIDE_SHARD_PLAYER, TIDE_SHARD_ORCHESTRATOR, 0u);
-    tide_write_u8(&w, joined ? 1u : 0u);
-    tide_write_u32(&w, player.id);
-    inject(s, TIDE_SHARD_ROOT, data, w.size);
+    tide_shard_coordinator_player(s->coordinator, player, joined);
+}
+
+uint32_t tide_shards_at(const tide_shards *s, const double p[3])
+{
+    return tide_shard_coordinator_at(s->coordinator, p);
 }
 
 // ---------------------------------------------------------------------------
-// Carrying messages
+// Checkpoints (tide_shard_coordinator_save's)
 
-// The handles of an ARRIVE's tree (after its header, flags and lender)
-static void note_tree(tide_shards *s, const uint8_t *data, const uint32_t size, const uint32_t to, const uint32_t from)
+static uint8_t *world_of(void *user, const uint32_t shard, uint32_t *size, uint32_t *tick)
 {
-    tide_reader r = {data, size, 9u, false};
-    tide_read_u8(&r);
-    tide_read_u32(&r);
-    const uint32_t count = tide_read_u32(&r);
-    for (uint32_t i = 0; i < count && !r.failed; i++) {
-        const uint32_t record = tide_read_u32(&r);
-        if (r.failed || record < 8u || record > r.size - r.at) return;
-        tide_reader e = {r.data + r.at, record, 0, false};
-        tide_entity handle;
-        handle.index = tide_read_u32(&e);
-        handle.generation = tide_read_u32(&e);
-        r.at += record;
-        map_put(&s->directory, key_of(handle), to);
-        // The shard it left keeps it as a ghost of the one it went to (the root
-        // keeps none): what that one sends it of its ghosts starts from there
-        if (i == 0 && s->shards[from].region) map_put(sent_to(s, to, from), key_of(handle), 1u);
-    }
+    const tide_shards *s = user;
+    const here *h = shard < s->room ? &s->shards[shard] : NULL;
+    *size = 0;
+    *tick = 0;
+    if (!h || !h->server) return NULL;
+    const void *world = tide_server_world(h->server);
+    const uint32_t n = s->game->pack_world(world, NULL, 0);
+    uint8_t *packed = malloc(n ? n : 1u);
+    if (!packed) tide_out_of_memory();
+    s->game->pack_world(world, packed, n);
+    *size = n;
+    *tick = h->ticks_before + tide_server_tick(h->server); // The tick its journal's next record is of
+    return packed;
 }
-
-// Where a message for a shard goes: to it, or for one that merged into
-// another and ended, to that one (an entity lent to it on the way is that one's)
-static uint32_t live_shard(const tide_shards *s, uint32_t id)
-{
-    for (uint32_t left = s->count; left-- && id < s->count && s->shards[id].gone;) id = s->shards[id].into;
-    return id;
-}
-
-static void carry(tide_shards *s, const uint32_t from)
-{
-    shard *sh = &s->shards[from];
-    uint32_t size = 0;
-    uint8_t *bytes = s->api->outbox(tide_server_world(sh->server), &size);
-    if (!bytes) return;
-    uint32_t through = sh->delivered;
-    tide_reader r = {bytes, size, 0, false};
-    tide_shard_outgoing m;
-    while (tide_shard_next_outgoing(&r, &m)) {
-        if (!m.number || m.number <= sh->delivered) continue;
-        through = m.number > through ? m.number : through;
-        const uint8_t kind = m.data[0];
-        switch (m.route) {
-        case TIDE_SHARD_TO_SHARD: {
-            const uint32_t to = live_shard(s, m.target);
-            if (kind == TIDE_SHARD_ARRIVE) note_tree(s, m.data, m.size, to, from);
-            inject(s, to, m.data, m.size);
-            break;
-        }
-        case TIDE_SHARD_TO_OWNER: {
-            const int32_t owner = tide_shards_owner(s, m.entity);
-            if (owner < 0 && kind != TIDE_SHARD_ARRIVE) break;
-            // An entity with no position, to where the one it goes with is
-            // (or back, where that's no shard's)
-            const uint32_t to = owner >= 0 ? live_shard(s, (uint32_t)owner) : from;
-            if (kind == TIDE_SHARD_ARRIVE) note_tree(s, m.data, m.size, to, from);
-            inject(s, to, m.data, m.size);
-            break;
-        }
-        case TIDE_SHARD_TO_ALL:
-            for (uint32_t i = 0; i < s->count; i++) {
-                if (i != from) inject(s, i, m.data, m.size);
-            }
-            break;
-        default: break;
-        }
-    }
-    free(bytes);
-    sh->delivered = through;
-}
-
-// What every shard was handed it has applied, and its ticks are kept (the
-// journal's flush): each sender lets go of what it sent until then. Until
-// then they keep it, so a world started again from a checkpoint and its
-// records sends again what wasn't applied, and receivers drop what was.
-static void acknowledge(tide_shards *s)
-{
-    for (uint32_t i = 0; i < s->count; i++) {
-        shard *sh = &s->shards[i];
-        if (!sh->used || sh->acked == sh->delivered) continue;
-        sh->acked = sh->delivered;
-        uint8_t ack[16];
-        tide_writer w = {ack, sizeof ack, 0, false, false};
-        tide_shard_header(&w, TIDE_SHARD_ACK, TIDE_SHARD_ORCHESTRATOR, 0u);
-        tide_write_u32(&w, sh->acked);
-        inject(s, i, ack, w.size);
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Ghosts
-
-typedef struct border {
-    uint64_t *keys;
-    uint64_t *hashes;
-    uint32_t *at; // Where each tree's bytes are in `bytes`
-    uint32_t *sizes;
-    uint32_t count, room;
-    tide_writer bytes;
-} border;
-
-static void take_border(void *context, const tide_entity e, const uint8_t *data, const uint32_t size)
-{
-    border *b = context;
-    if (b->count == b->room) {
-        b->room = b->room ? b->room * 2u : 64u;
-        b->keys = realloc(b->keys, b->room * sizeof *b->keys);
-        b->hashes = realloc(b->hashes, b->room * sizeof *b->hashes);
-        b->at = realloc(b->at, b->room * sizeof *b->at);
-        b->sizes = realloc(b->sizes, b->room * sizeof *b->sizes);
-        if (!b->keys || !b->hashes || !b->at || !b->sizes) tide_out_of_memory();
-    }
-    b->keys[b->count] = key_of(e);
-    const uint64_t hash = tide_hash(data, size);
-    b->hashes[b->count] = hash ? hash : 2u; // 0 is no tree, and 1 one whose bytes aren't known
-    b->at[b->count] = b->bytes.size;
-    b->sizes[b->count] = size;
-    tide_write_bytes(&b->bytes, data, size);
-    b->count++;
-}
-
-static void free_border(border *b)
-{
-    free(b->keys);
-    free(b->hashes);
-    free(b->at);
-    free(b->sizes);
-    free(b->bytes.data);
-}
-
-// What `from` holds near `to`'s region, against what it last sent: what
-// changed goes, and what went is dropped
-static void send_ghosts(tide_shards *s, const uint32_t from, const uint32_t to)
-{
-    const shard *f = &s->shards[from];
-    const shard *t = &s->shards[to];
-    const void *world = tide_server_world(f->server);
-    tide_shard_box near = t->box;
-    for (uint32_t k = 0; k < 3u; k++) {
-        near.lo[k] -= s->api->range;
-        near.hi[k] += s->api->range;
-    }
-    border b = {.bytes = {.grows = true}};
-    s->api->border(world, &near, take_border, &b);
-    map64 *sent = sent_to(s, from, to);
-    tide_writer m = {.grows = true};
-    tide_shard_header(&m, TIDE_SHARD_GHOSTS, from, 0u);
-    const uint32_t count_at = m.size;
-    tide_write_u32(&m, 0u);
-    uint32_t puts = 0;
-    map64 now = {0};
-    for (uint32_t i = 0; i < b.count; i++) {
-        map_put(&now, b.keys[i], 1u);
-        const uint64_t *had = map_find(sent, b.keys[i]);
-        if (had && *had == b.hashes[i]) continue;
-        tide_write_bytes(&m, b.bytes.data + b.at[i], b.sizes[i]);
-        map_put(sent, b.keys[i], b.hashes[i]);
-        puts++;
-    }
-    // What it sent before and holds there no more
-    uint32_t drops = 0;
-    const uint32_t drops_at = m.size;
-    tide_write_u32(&m, 0u);
-    for (uint32_t i = 0; i < sent->room; i++) {
-        const uint64_t key = sent->keys[i];
-        if (!key || key == UINT64_MAX || map_find(&now, key)) continue; // UINT64_MAX: the singletons
-        const tide_entity e = entity_of(key);
-        tide_write_u32(&m, e.index);
-        tide_write_u32(&m, e.generation);
-        drops++;
-    }
-    for (uint32_t i = drops_at + 4u; i < m.size; i += 8u) { // Forgotten as sent, now that they're dropped
-        tide_reader e = {m.data + i, 8u, 0, false};
-        tide_entity dropped;
-        dropped.index = tide_read_u32(&e);
-        dropped.generation = tide_read_u32(&e);
-        map_remove(sent, key_of(dropped));
-    }
-    // The root's singletons, to every region, when they changed
-    bool singletons = false;
-    if (from == TIDE_SHARD_ROOT && s->api->singletons) {
-        uint32_t size = 0;
-        uint8_t *values = s->api->singletons(world, &size);
-        const uint64_t hash = values ? tide_hash(values, size) : 0u;
-        const uint64_t *had = map_find(sent, UINT64_MAX);
-        if (values && (!had || *had != hash)) {
-            tide_write_u8(&m, 1u);
-            tide_write_bytes(&m, values, size);
-            map_put(sent, UINT64_MAX, hash);
-            singletons = true;
-        }
-        free(values);
-    }
-    if (puts || drops || singletons) {
-        if (m.overflow) tide_out_of_memory();
-        tide_shard_patch_u32(m.data + count_at, puts);
-        tide_shard_patch_u32(m.data + drops_at, drops);
-        if (!singletons) tide_write_u8(&m, 0u);
-        if (m.overflow) tide_out_of_memory();
-        inject(s, to, m.data, m.size);
-    }
-    free(m.data);
-    map_free(&now);
-    free_border(&b);
-}
-
-static bool near(const tide_shards *s, const shard *a, const shard *b)
-{
-    return tide_shard_box_near(&a->box, &b->box, s->api->range, s->api->dims);
-}
-
-// ---------------------------------------------------------------------------
-// Splitting a region whose shard holds too much
-
-static int compare_double(const void *a, const void *b)
-{
-    const double x = *(const double *)a, y = *(const double *)b;
-    return x < y ? -1 : x > y ? 1 : 0;
-}
-
-static void maybe_split(tide_shards *s, const uint32_t id, const double now)
-{
-    shard *sh = &s->shards[id];
-    tide_shard_status status;
-    s->api->status(tide_server_world(sh->server), &status);
-    if (!s->desc.most_entities || status.owned <= s->desc.most_entities) return;
-    // Across its longest side where its entities are, at their middle, keeping
-    // each half twice the range across
-    tide_shard_box spread;
-    if (!s->api->load(tide_server_world(sh->server), &spread)) return;
-    uint32_t axis = 0;
-    double widest = -1.0;
-    for (uint32_t k = 0; k < s->api->dims; k++) {
-        const double lo = sh->box.lo[k] > spread.lo[k] ? sh->box.lo[k] : spread.lo[k];
-        const double hi = sh->box.hi[k] < spread.hi[k] ? sh->box.hi[k] : spread.hi[k];
-        if (hi - lo > widest) {
-            widest = hi - lo;
-            axis = k;
-        }
-    }
-    const uint32_t capacity = 4096u;
-    double (*points)[3] = malloc(capacity * sizeof *points);
-    double *values = malloc(capacity * sizeof *values);
-    if (!points || !values) tide_out_of_memory();
-    const uint32_t stride = status.owned / capacity + 1u;
-    const uint32_t n = s->api->sample(tide_server_world(sh->server), stride, points, capacity);
-    for (uint32_t i = 0; i < n; i++) values[i] = points[i][axis];
-    qsort(values, n, sizeof *values, compare_double);
-    const double cut = n ? values[n / 2u] : 0.0;
-    free(points);
-    free(values);
-    const double floor = 2.0 * s->api->range;
-    if (!(cut - sh->box.lo[axis] >= floor && sh->box.hi[axis] - cut >= floor)) return;
-    const uint32_t added = new_shard(s);
-    sh = &s->shards[id]; // The array may have moved
-    shard *half = &s->shards[added];
-    half->region = true;
-    half->box = sh->box;
-    half->box.lo[axis] = cut;
-    sh->box.hi[axis] = cut;
-    half->used = true;
-    give_range(s, added);
-    start_server(s, added, NULL, now);
-    for (uint32_t p = 0; p < s->player_count; p++) {
-        if (s->players[p].here) (void)tide_server_admit(s->shards[added].server, tide_player_from_index((int32_t)p), s->players[p].cookie);
-    }
-    // Every shard learns the new regions, and what's in the new half moves
-    // there as its shard's next tick ends
-    tell_map(s);
-}
-
-// ---------------------------------------------------------------------------
-// Merging two neighbouring regions whose shards hold little: the lower one's
-// region becomes both, and the other retires (TIDE_SHARD_RETIRE). It ends once
-// it owns nothing and nothing of it waits or is on its way.
-
-// Whether two regions make one box, and which
-static bool joins(const tide_shards *s, const tide_shard_box *a, const tide_shard_box *b, tide_shard_box *both)
-{
-    uint32_t touching = 3u;
-    for (uint32_t k = 0; k < s->api->dims; k++) {
-        if (a->lo[k] == b->lo[k] && a->hi[k] == b->hi[k]) continue;
-        if (touching != 3u || !(a->hi[k] == b->lo[k] || b->hi[k] == a->lo[k])) return false;
-        touching = k;
-    }
-    if (touching == 3u) return false;
-    *both = *a;
-    both->lo[touching] = a->lo[touching] < b->lo[touching] ? a->lo[touching] : b->lo[touching];
-    both->hi[touching] = a->hi[touching] > b->hi[touching] ? a->hi[touching] : b->hi[touching];
-    return true;
-}
-
-static uint32_t owned_by(const tide_shards *s, const uint32_t id)
-{
-    tide_shard_status status;
-    s->api->status(tide_server_world(s->shards[id].server), &status);
-    return status.owned;
-}
-
-// One merge at a time, of two regions together owning a quarter of what
-// splits one at most, so the merged one doesn't split again soon
-static void maybe_merge(tide_shards *s)
-{
-    for (uint32_t i = 0; i < s->count; i++) {
-        if (s->shards[i].retiring) return;
-    }
-    for (uint32_t a = 0; a < s->count; a++) {
-        if (!s->shards[a].used || !s->shards[a].region) continue;
-        for (uint32_t b = a + 1u; b < s->count; b++) {
-            if (!s->shards[b].used || !s->shards[b].region) continue;
-            tide_shard_box both;
-            if (!joins(s, &s->shards[a].box, &s->shards[b].box, &both)) continue;
-            if (((uint64_t)owned_by(s, a) + owned_by(s, b)) * 4u > s->desc.most_entities) continue;
-            s->shards[a].box = both;
-            s->shards[b].region = false;
-            s->shards[b].retiring = true;
-            s->shards[b].into = a;
-            uint8_t data[16];
-            tide_writer w = {data, sizeof data, 0, false, false};
-            tide_shard_header(&w, TIDE_SHARD_RETIRE, TIDE_SHARD_ORCHESTRATOR, 0u);
-            tide_write_u32(&w, a);
-            inject(s, b, data, w.size);
-            tell_map(s);
-            return;
-        }
-    }
-}
-
-// A retiring shard ends once it owns nothing, nothing it said is undelivered,
-// no code of it waits and nothing for it is still to be applied
-static void finish_retiring(tide_shards *s)
-{
-    for (uint32_t i = 0; i < s->count; i++) {
-        shard *sh = &s->shards[i];
-        if (!sh->used || !sh->retiring) continue;
-        tide_shard_status status;
-        s->api->status(tide_server_world(sh->server), &status);
-        if (status.owned || status.waiting || status.lent || status.outbox || tide_server_injected(sh->server)) continue;
-        if (s->desc.host_start) {
-            if (s->desc.host_stop) s->desc.host_stop(s->desc.user, i, sh->match);
-        } else {
-            tide_server_destroy(sh->server);
-        }
-        sh->server = NULL;
-        sh->used = false;
-        sh->retiring = false;
-        sh->gone = true;
-        free(sh->journal);
-        sh->journal = NULL;
-        s->changed = true;
-        for (uint32_t k = 0; k < sh->sent_room; k++) map_free(&sh->sent[k]);
-        for (uint32_t j = 0; j < s->count; j++) {
-            if (i < s->shards[j].sent_room) map_free(&s->shards[j].sent[i]);
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Players: a player joins the world at the root, which gives them a cookie;
-// every other shard takes them as the same player with it. The root sends
-// PlayerJoined and PlayerLeft as they come and go from the world as a whole.
-
-static void admit_everywhere(tide_shards *s, const uint32_t player)
-{
-    const roster *r = &s->players[player];
-    for (uint32_t i = 0; i < s->count; i++) {
-        if (s->shards[i].used) (void)tide_server_admit(s->shards[i].server, tide_player_from_index((int32_t)player), r->cookie);
-    }
-}
-
-static void track_players(tide_shards *s)
-{
-    for (uint32_t p = 0; p < s->player_count; p++) {
-        roster *r = &s->players[p];
-        const tide_player_id id = tide_player_from_index((int32_t)p);
-        bool here = false;
-        uint64_t cookie = 0;
-        for (uint32_t i = 0; i < s->count; i++) {
-            if (!s->shards[i].used || !tide_server_connected(s->shards[i].server, id)) continue;
-            here = true;
-            if (!cookie) cookie = tide_server_cookie(s->shards[i].server, id);
-        }
-        if (here) {
-            r->away = false;
-            if (r->here) continue;
-            r->here = true;
-            r->cookie = cookie;
-            admit_everywhere(s, p);
-            tide_shards_player(s, id, true);
-            continue;
-        }
-        // On no shard: they've a while to come back, as a server gives them
-        if (!r->here) continue;
-        if (!r->away) {
-            r->away = true;
-            r->away_since = s->now;
-            continue;
-        }
-        if (s->now - r->away_since < PLAYER_AWAY_SECONDS) continue;
-        r->here = r->away = false;
-        tide_shards_player(s, id, false);
-    }
-}
-
-// Where each player's entities are (tide_shard_game.presence): their home is
-// the shard that owns the most of them, and their machine follows each shard
-// owning any, and each region within the range of any. The shards are told
-// when that changes, every shard every player's.
-//
-// Only what the shards have is gathered (a sighting each of a player on a
-// shard), and a region near a player's entities is looked for among the
-// neighbours of the regions that own them, which are found again only when
-// the regions change.
-typedef struct sighting {
-    uint32_t player, shard, count;
-    tide_shard_box box;
-} sighting;
-
-static int by_player(const void *a, const void *b)
-{
-    const sighting *x = a, *y = b;
-    if (x->player != y->player) return x->player < y->player ? -1 : 1;
-    return x->shard < y->shard ? -1 : x->shard > y->shard ? 1 : 0;
-}
-
-static int by_number(const void *a, const void *b)
-{
-    const uint32_t x = *(const uint32_t *)a, y = *(const uint32_t *)b;
-    return x < y ? -1 : x > y ? 1 : 0;
-}
-
-// Each region's neighbours: the regions near enough that what it owns (up to
-// a quarter of the range past it) can be within the range of them
-static void find_neighbours(tide_shards *s)
-{
-    if (s->neighbour_first && s->neighbours_of == s->map_version) return;
-    s->neighbours_of = s->map_version;
-    free(s->neighbour_first);
-    free(s->neighbours);
-    s->neighbour_first = calloc((size_t)s->count + 1u, sizeof *s->neighbour_first);
-    uint32_t room = 16u, count = 0;
-    s->neighbours = malloc(room * sizeof *s->neighbours);
-    if (!s->neighbour_first || !s->neighbours) tide_out_of_memory();
-    for (uint32_t a = 0; a < s->count; a++) {
-        s->neighbour_first[a] = count;
-        if (!s->shards[a].used || !s->shards[a].region) continue;
-        for (uint32_t b = 0; b < s->count; b++) {
-            if (a == b || !s->shards[b].used || !s->shards[b].region) continue;
-            if (!tide_shard_box_near(&s->shards[a].box, &s->shards[b].box, 1.25 * s->api->range, s->api->dims)) continue;
-            if (count == room) {
-                room *= 2u;
-                s->neighbours = realloc(s->neighbours, room * sizeof *s->neighbours);
-                if (!s->neighbours) tide_out_of_memory();
-            }
-            s->neighbours[count++] = b;
-        }
-    }
-    s->neighbour_first[s->count] = count;
-}
-
-static void route_players(tide_shards *s)
-{
-    if (!s->player_count || !s->api->presence) return;
-    find_neighbours(s);
-    tide_shard_presence *found = malloc(s->player_count * sizeof *found);
-    if (!found) tide_out_of_memory();
-    sighting *seen = NULL;
-    uint32_t seen_count = 0, seen_room = 0;
-    for (uint32_t i = 0; i < s->count; i++) {
-        if (!s->shards[i].used) continue;
-        const uint32_t n = s->api->presence(tide_server_world(s->shards[i].server), found, s->player_count);
-        for (uint32_t k = 0; k < n && k < s->player_count; k++) {
-            const int32_t p = tide_player_index(found[k].player);
-            if (p < 0 || (uint32_t)p >= s->player_count) continue;
-            if (seen_count == seen_room) {
-                seen_room = seen_room ? seen_room * 2u : 64u;
-                seen = realloc(seen, seen_room * sizeof *seen);
-                if (!seen) tide_out_of_memory();
-            }
-            seen[seen_count++] = (sighting){(uint32_t)p, i, found[k].count, found[k].box};
-        }
-    }
-    free(found);
-    if (seen_count) qsort(seen, seen_count, sizeof *seen, by_player);
-    uint32_t *follows = NULL;
-    uint32_t follows_room = 0;
-    for (uint32_t p = 0, at = 0; p < s->player_count; p++) {
-        const uint32_t first = at;
-        while (at < seen_count && seen[at].player == p) at++;
-        roster *r = &s->players[p];
-        uint32_t count = 0;
-        if (r->here) {
-            uint32_t home = r->home, most = 0;
-            for (uint32_t k = first; k < at; k++) {
-                if (seen[k].count > most) {
-                    most = seen[k].count;
-                    home = seen[k].shard;
-                }
-            }
-            if (home >= s->count || !s->shards[home].used) home = TIDE_SHARD_ROOT;
-            r->home = home;
-            // Its home, the shards owning any of its entities, and the regions near those
-            uint32_t most_follows = 1u + (at - first);
-            for (uint32_t k = first; k < at; k++) {
-                if (seen[k].count) most_follows += s->neighbour_first[seen[k].shard + 1u] - s->neighbour_first[seen[k].shard];
-            }
-            if (most_follows > follows_room) {
-                follows_room = most_follows * 2u;
-                follows = realloc(follows, follows_room * sizeof *follows);
-                if (!follows) tide_out_of_memory();
-            }
-            follows[count++] = home;
-            for (uint32_t k = first; k < at; k++) {
-                follows[count++] = seen[k].shard;
-                if (!seen[k].count) continue;
-                for (uint32_t n = s->neighbour_first[seen[k].shard]; n < s->neighbour_first[seen[k].shard + 1u]; n++) {
-                    const uint32_t b = s->neighbours[n];
-                    if (tide_shard_box_near(&seen[k].box, &s->shards[b].box, s->api->range, s->api->dims)) follows[count++] = b;
-                }
-            }
-            qsort(follows, count, sizeof *follows, by_number);
-            uint32_t kept = 0;
-            for (uint32_t k = 0; k < count; k++) {
-                if (s->shards[follows[k]].used && (!kept || follows[kept - 1u] != follows[k])) follows[kept++] = follows[k];
-            }
-            count = kept;
-        }
-        // Told again only when it changed
-        uint64_t hash = tide_hash_more(TIDE_HASH_START, &r->home, sizeof r->home);
-        hash = tide_hash_more(hash, follows, count * sizeof *follows);
-        hash = tide_hash_end(hash) | 1u;
-        if (!r->here) hash = 0;
-        if (hash == r->route) continue;
-        r->route = hash;
-        tide_writer w = {.grows = true};
-        tide_shard_header(&w, TIDE_SHARD_ROUTE, TIDE_SHARD_ORCHESTRATOR, 0u);
-        tide_write_u32(&w, tide_player_from_index((int32_t)p).id);
-        tide_write_u32(&w, r->home);
-        tide_write_u32(&w, count);
-        for (uint32_t k = 0; k < count; k++) {
-            tide_write_u32(&w, follows[k]);
-            tide_write_u64(&w, s->shards[follows[k]].match);
-        }
-        if (w.overflow) tide_out_of_memory();
-        for (uint32_t i = 0; i < s->count; i++) inject(s, i, w.data, w.size);
-        free(w.data);
-    }
-    free(follows);
-    free(seen);
-}
-
-// ---------------------------------------------------------------------------
-
-// Whether every shard has applied all it was handed: nothing is on its way
-// but in the outboxes, which are in the worlds
-static bool drained(const tide_shards *s)
-{
-    for (uint32_t i = 0; i < s->count; i++) {
-        if (s->shards[i].used && tide_server_injected(s->shards[i].server)) return false;
-    }
-    return true;
-}
-
-static void give_more(tide_shards *s, const uint32_t i)
-{
-    const range r = give_range(s, i);
-    uint8_t data[24];
-    tide_writer w = {data, sizeof data, 0, false, false};
-    tide_shard_header(&w, TIDE_SHARD_RANGE, TIDE_SHARD_ORCHESTRATOR, 0u);
-    tide_write_u32(&w, r.first);
-    tide_write_u32(&w, r.end);
-    inject(s, i, data, w.size);
-}
-
-// What changes the world's shape, at a moment nothing is on its way: more
-// indices before a shard runs out, splits and merges, and retired shards
-// ending. A checkpoint follows at once, so no record kept after it depends on
-// a shape it doesn't have.
-static void reshape(tide_shards *s, const double now)
-{
-    for (uint32_t i = 0; i < s->count; i++) {
-        if (!s->shards[i].used) continue;
-        tide_shard_status status;
-        s->api->status(tide_server_world(s->shards[i].server), &status);
-        if (status.indices < RANGE_SIZE / 2u) {
-            give_more(s, i);
-            s->changed = true;
-        }
-    }
-    if (s->desc.most_entities && s->updates - s->reshaped >= SPLIT_EVERY) {
-        s->reshaped = s->updates;
-        const uint32_t count = s->count;
-        for (uint32_t i = 0; i < count; i++) {
-            if (s->shards[i].used && s->shards[i].region) maybe_split(s, i, now);
-        }
-        maybe_merge(s);
-    }
-    finish_retiring(s);
-}
-
-void tide_shards_update(tide_shards *s, const double now)
-{
-    s->now = now;
-    s->updates++;
-    for (uint32_t i = 0; i < s->count; i++) {
-        if (s->shards[i].used && !s->desc.host_start) tide_server_update(s->shards[i].server, now); // A host updates its own
-    }
-    // The ticks are kept before anything they sent goes on
-    if (s->desc.flush) s->desc.flush(s->desc.user);
-    if (drained(s)) {
-        reshape(s, now);
-        const double every = s->desc.checkpoint_seconds > 0.0 ? s->desc.checkpoint_seconds : 60.0;
-        if (s->desc.checkpoint && (s->changed || now - s->checkpointed >= every)) {
-            uint32_t size = 0;
-            uint8_t *saved = tide_shards_save(s, &size);
-            s->desc.checkpoint(s->desc.user, saved, size);
-            free(saved);
-            s->checkpointed = now;
-        }
-        s->changed = false;
-        acknowledge(s);
-    }
-    track_players(s);
-    for (uint32_t i = 0; i < s->count; i++) {
-        if (s->shards[i].used) carry(s, i);
-    }
-    // Ghosts: each region's to its neighbours, and the root's to every region
-    for (uint32_t a = 0; a < s->count; a++) {
-        if (!s->shards[a].used) continue;
-        for (uint32_t b = 0; b < s->count; b++) {
-            if (a == b || !s->shards[b].used || !s->shards[b].region) continue;
-            if (s->shards[a].region && !near(s, &s->shards[a], &s->shards[b])) continue;
-            send_ghosts(s, a, b);
-        }
-    }
-    route_players(s);
-}
-
-// ---------------------------------------------------------------------------
-// Checkpoints: a header, the ranges, the directory and the players, then each
-// shard, its server's tick and its world
-
-#define SAVE_MAGIC 0x53444854u // "THDS"
-#define SAVE_VERSION 3u
 
 uint8_t *tide_shards_save(const tide_shards *s, uint32_t *size)
 {
-    tide_writer w = {.grows = true};
-    tide_write_u32(&w, SAVE_MAGIC);
-    tide_write_u32(&w, SAVE_VERSION);
-    tide_write_u64(&w, s->next_index);
-    tide_write_u32(&w, s->range_count);
-    for (uint32_t i = 0; i < s->range_count; i++) {
-        tide_write_u32(&w, s->ranges[i].first);
-        tide_write_u32(&w, s->ranges[i].end);
-        tide_write_u32(&w, s->ranges[i].shard);
-    }
-    tide_write_u32(&w, s->directory.count);
-    for (uint32_t i = 0; i < s->directory.room; i++) {
-        if (!s->directory.keys[i]) continue;
-        tide_write_u64(&w, s->directory.keys[i]);
-        tide_write_u32(&w, (uint32_t)s->directory.values[i]);
-    }
-    // Who's in the world, and their cookies: they come back as themselves
-    tide_write_u32(&w, s->player_count);
-    for (uint32_t p = 0; p < s->player_count; p++) {
-        tide_write_u8(&w, s->players[p].here ? 1u : 0u);
-        tide_write_u64(&w, s->players[p].here ? s->players[p].cookie : 0u);
-    }
-    tide_write_u32(&w, s->count);
-    for (uint32_t i = 0; i < s->count; i++) {
-        const shard *sh = &s->shards[i];
-        tide_write_u8(&w, sh->used ? 1u : 0u);
-        tide_write_u8(&w, sh->gone ? 1u : sh->retiring ? 2u : 0u);
-        tide_write_u32(&w, sh->into);
-        if (!sh->used) continue;
-        tide_write_u8(&w, sh->region ? 1u : 0u);
-        tide_write_bytes(&w, sh->box.lo, sizeof sh->box.lo);
-        tide_write_bytes(&w, sh->box.hi, sizeof sh->box.hi);
-        tide_write_u32(&w, sh->ticks_before + tide_server_tick(sh->server)); // The tick its journal's next record is of
-        const void *world = tide_server_world(sh->server);
-        const uint32_t bytes = s->game->pack_world(world, NULL, 0);
-        tide_write_u32(&w, bytes);
-        uint8_t *packed = malloc(bytes ? bytes : 1u);
-        if (!packed) tide_out_of_memory();
-        s->game->pack_world(world, packed, bytes);
-        tide_write_bytes(&w, packed, bytes);
-        free(packed);
-    }
-    if (w.overflow) tide_out_of_memory();
-    *size = w.size;
-    return w.data;
-}
-
-static void know_ghost(void *context, const tide_entity e, const int32_t source)
-{
-    void **args = context;
-    tide_shards *s = args[0];
-    const uint32_t to = *(const uint32_t *)args[1];
-    if (source < 0 || (uint32_t)source >= s->count) return;
-    map_put(sent_to(s, (uint32_t)source, to), key_of(e), 1u); // Sent, with bytes it doesn't know
-}
-
-// Where each entity a shard owns is, as its world has it: one in another
-// shard's range (or none) is in the directory, one in its own isn't
-static void know_owned(void *context, const tide_entity e)
-{
-    void **args = context;
-    tide_shards *s = args[0];
-    const uint32_t shard = *(const uint32_t *)args[1];
-    int32_t home = -1;
-    for (uint32_t i = 0; i < s->range_count; i++) {
-        if (e.index >= s->ranges[i].first && e.index < s->ranges[i].end) home = (int32_t)s->ranges[i].shard;
-    }
-    if (home == (int32_t)shard) map_remove(&s->directory, key_of(e));
-    else map_put(&s->directory, key_of(e), shard);
-}
-
-// A shard's world from its checkpoint, run on through the journal records
-// kept since: false for records that don't make the ticks they say
-static bool replay_shard(tide_shards *s, const uint32_t shard, void *world, uint32_t *next,
-                         const tide_shards_records records, void *user)
-{
-    const uint8_t *record = NULL;
-    uint32_t size = 0;
-    for (uint32_t index = 0; records && records(user, shard, index, &record, &size); index++) {
-        uint32_t tick;
-        if (!tide_replay_tick(record, size, &tick)) return false;
-        if (tick < *next) continue; // From before the checkpoint
-        if (tick != *next || !tide_replay(s->game, world, record, size, s->desc.jobs)) return false;
-        (*next)++;
-    }
-    return true;
+    return tide_shard_coordinator_save(s->coordinator, world_of, (void *)(uintptr_t)s, size);
 }
 
 static tide_shards *load(const tide_shards_desc *desc, const uint8_t *data, const uint32_t size,
@@ -1230,115 +333,22 @@ static tide_shards *load(const tide_shards_desc *desc, const uint8_t *data, cons
         free(s);
         return NULL;
     }
-    s->now = now;
-    s->checkpointed = now;
-    tide_reader r = {data, size, 0, false};
-    if (tide_read_u32(&r) != SAVE_MAGIC || tide_read_u32(&r) != SAVE_VERSION) goto fail;
-    s->next_index = tide_read_u64(&r);
-    const uint32_t ranges = tide_read_u32(&r);
-    if (r.failed || ranges > (r.size - r.at) / 12u) goto fail;
-    s->ranges = calloc(ranges ? ranges : 1u, sizeof *s->ranges);
-    if (!s->ranges) tide_out_of_memory();
-    for (uint32_t i = 0; i < ranges; i++) {
-        s->ranges[i].first = tide_read_u32(&r);
-        s->ranges[i].end = tide_read_u32(&r);
-        s->ranges[i].shard = tide_read_u32(&r);
+    const tide_shard_coordinator_desc d = coordinator_desc(s);
+    s->coordinator = tide_shard_coordinator_load(&d, data, size, now);
+    if (!s->coordinator) {
+        free(s);
+        return NULL;
     }
-    s->range_count = ranges;
-    const uint32_t moved = tide_read_u32(&r);
-    if (r.failed || moved > (r.size - r.at) / 12u) goto fail;
-    for (uint32_t i = 0; i < moved; i++) {
-        const uint64_t key = tide_read_u64(&r);
-        const uint32_t owner = tide_read_u32(&r);
-        if (key) map_put(&s->directory, key, owner);
+    s->records = records;
+    s->records_user = records_user;
+    act(s, now); // Each shard from its world, and with records, run on through them
+    s->records = NULL;
+    s->records_user = NULL;
+    if (s->failed) {
+        tide_shards_destroy(s);
+        return NULL;
     }
-    const uint32_t players = tide_read_u32(&r);
-    if (r.failed || players != s->player_count) goto fail;
-    for (uint32_t p = 0; p < players; p++) {
-        s->players[p].here = tide_read_u8(&r) != 0;
-        s->players[p].cookie = tide_read_u64(&r);
-        // Every player who was in the world has a while to come back
-        s->players[p].away = s->players[p].here;
-        s->players[p].away_since = now;
-    }
-    const uint32_t count = tide_read_u32(&r);
-    if (r.failed || count > (r.size - r.at)) goto fail;
-    for (uint32_t i = 0; i < count; i++) {
-        const uint32_t id = new_shard(s);
-        shard *sh = &s->shards[id];
-        const bool used = tide_read_u8(&r) != 0;
-        const uint8_t state = tide_read_u8(&r);
-        sh->gone = state == 1u;
-        sh->retiring = state == 2u;
-        sh->into = tide_read_u32(&r);
-        if (r.failed || state > 2u || (sh->gone && used) || (sh->retiring && !used) || ((sh->gone || sh->retiring) && sh->into >= count)) goto fail;
-        if (!used) {
-            sh->used = false;
-            continue;
-        }
-        sh->region = tide_read_u8(&r) != 0;
-        const uint8_t *lo = tide_read_bytes(&r, sizeof sh->box.lo);
-        const uint8_t *hi = tide_read_bytes(&r, sizeof sh->box.hi);
-        if (!lo || !hi) goto fail;
-        memcpy(sh->box.lo, lo, sizeof sh->box.lo);
-        memcpy(sh->box.hi, hi, sizeof sh->box.hi);
-        // What was carried but not yet applied went with the servers: everything
-        // still in an outbox goes again, and receivers drop what they had (by number)
-        sh->delivered = sh->acked = 0;
-        const uint32_t tick = tide_read_u32(&r);
-        const uint32_t bytes = tide_read_u32(&r);
-        const uint8_t *packed = tide_read_bytes(&r, bytes);
-        if (!packed) goto fail;
-        void *world = calloc(1, s->game->world_size);
-        if (!world) tide_out_of_memory();
-        uint32_t next = tick;
-        const bool made = s->game->unpack_world(world, packed, bytes) && replay_shard(s, id, world, &next, records, records_user);
-        sh = &s->shards[id];
-        sh->ticks_before = next;
-        if (made) start_server(s, id, world, now);
-        if (s->game->free_world) s->game->free_world(world);
-        free(world);
-        if (!made) goto fail;
-    }
-    if (r.failed || r.at != r.size) goto fail;
-    for (uint32_t i = 0; i < s->count; i++) {
-        if (!s->shards[i].used) continue;
-        const void *world = tide_server_world(s->shards[i].server);
-        void *args[2] = {s, &i};
-        // What each shard was sent of its neighbours' ghosts is what it holds now
-        if (s->api->ghosts) s->api->ghosts(world, know_ghost, args);
-        // ...where each entity is, what it owns...
-        if (s->api->owned) s->api->owned(world, know_owned, args);
-        // ...and its ranges again, any it was given since being on their way then
-        tide_shard_status status;
-        s->api->status(world, &status);
-        if (status.ranges_end > s->next_index) s->next_index = status.ranges_end;
-        for (uint32_t k = 0; k < s->range_count; k++) {
-            if (s->ranges[k].shard != i) continue;
-            uint8_t again[24];
-            tide_writer w = {again, sizeof again, 0, false, false};
-            tide_shard_header(&w, TIDE_SHARD_RANGE, TIDE_SHARD_ORCHESTRATOR, 0u);
-            tide_write_u32(&w, s->ranges[k].first);
-            tide_write_u32(&w, s->ranges[k].end);
-            inject(s, i, again, w.size);
-        }
-        if (s->shards[i].retiring) { // ...and where it retires to
-            uint8_t retire[16];
-            tide_writer w = {retire, sizeof retire, 0, false, false};
-            tide_shard_header(&w, TIDE_SHARD_RETIRE, TIDE_SHARD_ORCHESTRATOR, 0u);
-            tide_write_u32(&w, s->shards[i].into);
-            inject(s, i, retire, w.size);
-        }
-    }
-    for (uint32_t p = 0; p < s->player_count; p++) {
-        if (s->players[p].here) admit_everywhere(s, p);
-    }
-    // The regions again, in case a split's map was on its way when it was saved
-    tell_map(s);
     return s;
-fail:
-    tide_shards_destroy(s);
-    return NULL;
 }
 
 tide_shards *tide_shards_load(const tide_shards_desc *desc, const uint8_t *data, const uint32_t size, const double now)

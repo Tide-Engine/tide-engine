@@ -7,7 +7,7 @@ The owner asked for recovery from an input log. Engine-side and the agent's:
 `tide_replay_tick` (`tide/session.h`); `tide_shards_desc.journal`, `flush`,
 `checkpoint`, `checkpoint_seconds` and `tide_shards_recover`
 (`tide/shards.h`); `tide_shard_status.ranges_end` and
-`tide_shard_game.owned`, which generated code fills (a new last member).
+`tide_shard_game.owned`, which generated code fills (a new last member). The orchestrator is now a shard agent (`tide/shard_agent.h`) and a coordinator (`tide/shard_coordinator.h`) exchanging bytes, both engine-side; `tide/shards.h` runs them in one process.
 Generated code calls nothing new. Contracts and tests: notes/sharding.md.
 
 ## Shards (2026-10-23)
