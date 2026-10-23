@@ -85,6 +85,9 @@ typedef enum tide_shard_kind {
     // id): everything it owns goes, by position, and what has no position to
     // that shard, after which it ends.
     TIDE_SHARD_RETIRE = 15,
+    // Numbered: an entity of an index this shard gave was destroyed on the
+    // shard it went to (u32 index, u32 generation): the index is free again.
+    TIDE_SHARD_FREED = 16,
 } tide_shard_kind;
 
 // A shard a player's machine follows, and the match its host knows it by.
@@ -107,6 +110,7 @@ typedef enum tide_shard_route {
     TIDE_SHARD_TO_OWNER = 1,  // to whichever shard owns `entity` now
     TIDE_SHARD_TO_ALL = 2,    // to every shard but the sender
     TIDE_SHARD_TO_ORCHESTRATOR = 3,
+    TIDE_SHARD_TO_RANGE = 4,  // to the shard whose range of indices has `entity`'s
 } tide_shard_route;
 
 // A region: the box of positions a shard owns, from lo up to (not including)

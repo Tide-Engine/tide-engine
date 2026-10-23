@@ -105,6 +105,11 @@ static void gen_shard_receive(gen *g)
               "        e.generation = kind == TIDE_SHARD_BORROW ? tide_read_u32(&r) : TIDE_ENTITY_TEMPORARY;\n"
               "        if (r.failed || (int32_t)asker == tide_shard_self(w)) return !r.failed;\n"
               "        tide_shard_ask_of(w, e, (int32_t)asker);\n        return true;\n    }\n");
+    sb_put(o, "    case TIDE_SHARD_FREED: {\n"
+              "        const uint32_t index = tide_read_u32(&r);\n        const uint32_t generation = tide_read_u32(&r);\n"
+              "        if (r.failed) return false;\n"
+              "        (void)tide_entity_release(&w->entities, index, generation);\n"
+              "        return true;\n    }\n");
     sb_put(o, "    case TIDE_SHARD_GONE: {\n"
               "        tide_entity e;\n        e.index = tide_read_u32(&r);\n        e.generation = tide_read_u32(&r);\n"
               "        if (r.failed) return false;\n"

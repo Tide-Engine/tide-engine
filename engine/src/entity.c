@@ -154,6 +154,21 @@ void tide_entity_forget(tide_entities *t, const tide_entity e, const bool away)
     slot->snaps = 0;
 }
 
+bool tide_entity_release(tide_entities *t, const uint32_t index, const uint32_t generation)
+{
+    if (index >= t->next_unused || !(generation & 1u)) return false;
+    const tide_entity_slot *was = slot_of(t, index);
+    uint32_t left = generation + 1u; // What forgetting it here made its slot's
+    if (left & TIDE_ENTITY_TEMPORARY) left = 2;
+    if (was->archetype != TIDE_ARCHETYPE_AWAY || was->generation != left) return false;
+    tide_entity_slot *slot = slot_to_change(t, index);
+    slot->archetype = TIDE_ARCHETYPE_NONE;
+    slot->row = t->free_head;
+    slot->snaps = 0;
+    t->free_head = index + 1u;
+    return true;
+}
+
 bool tide_entity_died_here(const tide_entities *t, const tide_entity e)
 {
     if (e.index >= t->next_unused || tide_entity_alive(t, e)) return false;

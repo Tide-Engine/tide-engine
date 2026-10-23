@@ -138,6 +138,8 @@ static void gen_shard_prelude(gen *g)
                  "#define TIDE_SHARD_LEND 0xFFFFFFFFu // A wait for what another shard asked for, to lend it\n"
                  "TIDE_HELPER bool tide_shard_may(tide_world *w, tide_entity e);\n"
                  "TIDE_HELPER bool tide_shard_singleton_may(tide_world *w, uint32_t i);\n"
+                 "TIDE_HELPER tide_writer tide_shard_begin(tide_world *w, uint8_t kind, bool numbered);\n"
+                 "TIDE_HELPER void tide_shard_post(tide_world *w, uint32_t route, uint32_t target, tide_entity entity, tide_writer *message);\n"
                  "TIDE_SHARD_FN tide_entity tide_shard_create(void *world);\n"
                  "TIDE_SHARD_FN void tide_shard_resume(tide_world *w);\n"
                  "TIDE_SHARD_FN void tide_shard_unloaded(tide_world *w, tide_entity scene);\n"
@@ -247,9 +249,15 @@ static void gen_shard_early(gen *g)
               );
     // A slot destroyed here: listed free when its index is this shard's to give again
     sb_put(o,
+              // A destroyed entity's index: listed free when this shard gave it, else
+              // the shard that gave it is told, which lists it free (FREED)
               "TIDE_HELPER void tide_shard_free_slot(tide_world *w, const tide_entity e)\n{\n"
-              "    if (!w->tide_shard_state.shard || tide_shard_in_range(w, e.index)) tide_entity_destroy(&w->entities, e);\n"
-              "    else tide_entity_forget(&w->entities, e, false);\n}\n\n");
+              "    if (!w->tide_shard_state.shard || tide_shard_in_range(w, e.index)) {\n"
+              "        tide_entity_destroy(&w->entities, e);\n        return;\n    }\n"
+              "    tide_entity_forget(&w->entities, e, false);\n"
+              "    tide_writer m = tide_shard_begin(w, TIDE_SHARD_FREED, true);\n"
+              "    tide_write_u32(&m, e.index);\n    tide_write_u32(&m, e.generation);\n"
+              "    tide_shard_post(w, TIDE_SHARD_TO_RANGE, 0u, e, &m);\n}\n\n");
 }
 
 // Where a system starts: it runs for what this shard owns, and code for no

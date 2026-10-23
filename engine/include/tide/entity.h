@@ -104,6 +104,11 @@ bool tide_entity_install(tide_entities *t, tide_entity e);
 // give. `away`: it went to another shard, or was a copy of another shard's,
 // and lives on there (TIDE_ARCHETYPE_AWAY); else it was destroyed here.
 void tide_entity_forget(tide_entities *t, tide_entity e, bool away);
+// Index `index`, whose entity (of `generation`) lived on elsewhere and was
+// destroyed there, is free here again: listed free, its next entity of a
+// later generation. False, changing nothing, unless the slot is that entity's
+// away (as tide_entity_forget left it).
+bool tide_entity_release(tide_entities *t, uint32_t index, uint32_t generation);
 // Sets what views go by to tell that it jumped (tide_entity_snap): an entity
 // coming from another shard brings its own.
 void tide_entity_set_snaps(tide_entities *t, tide_entity e, uint32_t snaps);

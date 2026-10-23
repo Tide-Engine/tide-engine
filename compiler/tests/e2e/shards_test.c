@@ -164,6 +164,52 @@ static void finish(void)
     tide_loopback_destroy(net);
 }
 
+// Whether shard `of` gave an index: it's in one of its ranges
+static bool gave(const uint32_t of, const uint32_t index)
+{
+    const tide_world *w = tide_shards_world(shards, of);
+    if (!w) return false;
+    tide_text_use((tide_heap *)&w->heap, NULL);
+    const tide_list r = w->tide_shard_state.ranges;
+    for (int32_t i = 0; i + 2 <= tide_list_count(r); i += 2) {
+        const int64_t first = *(const int64_t *)tide_list_at(r, i, 8u), end = *(const int64_t *)tide_list_at(r, i + 1, 8u);
+        if ((int64_t)index >= first && (int64_t)index < end) return true;
+    }
+    return false;
+}
+
+// The indices shard `of` gave that are away, living on elsewhere, are its
+// entities alive on the other shards: one destroyed elsewhere was given back
+// (FREED), so a long world spends no index for good
+static void check_away(const uint32_t of)
+{
+    const tide_world *home = tide_shards_world(shards, of);
+    if (!home) return;
+    uint32_t away = 0, elsewhere = 0;
+    for (uint32_t index = 0; index < home->entities.next_unused; index++) {
+        if (!home->entities.page[index >> TIDE_ENTITY_PAGE_SHIFT]) {
+            index |= (1u << TIDE_ENTITY_PAGE_SHIFT) - 1u;
+            continue;
+        }
+        const tide_entity_slot *slot =
+            &((const tide_entity_slot *)tide_page_data(home->entities.page[index >> TIDE_ENTITY_PAGE_SHIFT]))[index & ((1u << TIDE_ENTITY_PAGE_SHIFT) - 1u)];
+        if (slot->archetype == TIDE_ARCHETYPE_AWAY && gave(of, index)) away++;
+    }
+    for (uint32_t i = 0; i < tide_shards_count(shards); i++) {
+        const tide_world *w = tide_shards_world(shards, i);
+        if (!w || i == of) continue;
+        for (uint32_t index = 0; index < w->entities.next_unused; index++) {
+            if (!w->entities.page[index >> TIDE_ENTITY_PAGE_SHIFT]) {
+                index |= (1u << TIDE_ENTITY_PAGE_SHIFT) - 1u;
+                continue;
+            }
+            const tide_entity e = tide_entity_in_slot(&w->entities, index);
+            if (!tide_entity_is_null(e) && !tide_has_tide_ghost(w, e) && gave(of, index)) elsewhere++;
+        }
+    }
+    TIDE_CHECK(away == elsewhere);
+}
+
 // Once everything that waited got done: at a moment nothing is on its way
 // between shards, every mover and both banks are owned once, and every coin is
 // where it was paid to
@@ -185,6 +231,7 @@ static void check_done(void)
     TIDE_CHECK(t.coins == 2340);   // ...and the banks' transfers made and lost nothing, the tasks' 20 coins among them
     TIDE_CHECK(t.left == 0);       // Both banks' transfers, done
     TIDE_CHECK(t.tickers == 4 && t.counted == 4 * 600); // Every tick of every task, wherever its mover was
+    for (uint32_t i = 0; i < tide_shards_count(shards); i++) check_away(i);
 }
 
 static void check_clients(const uint32_t count_of)

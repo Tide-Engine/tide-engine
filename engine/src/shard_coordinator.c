@@ -652,8 +652,18 @@ int32_t tide_shard_coordinator_owner(const tide_shard_coordinator *c, const tide
     return -1;
 }
 
+// The shard whose range of indices has an index, or -1
+static int32_t range_owner(const tide_shard_coordinator *c, const uint32_t index)
+{
+    for (uint32_t i = 0; i < c->range_count; i++) {
+        if (index >= c->ranges[i].first && index < c->ranges[i].end) return (int32_t)c->ranges[i].shard;
+    }
+    return -1;
+}
+
 // The handles of an ARRIVE's tree (after its header, flags and lender) go to
-// the directory as the shard it went to's
+// the directory as the shard it went to's: but for one back where its index
+// came from, which needs no entry
 static void note_tree(tide_shard_coordinator *c, const uint8_t *data, const uint32_t size, const uint32_t to)
 {
     tide_reader r = {data, size, 9u, false};
@@ -668,7 +678,9 @@ static void note_tree(tide_shard_coordinator *c, const uint8_t *data, const uint
         handle.index = tide_read_u32(&e);
         handle.generation = tide_read_u32(&e);
         r.at += record;
-        map_put(&c->directory, key_of(handle), to);
+        const int32_t home = range_owner(c, handle.index);
+        if (home >= 0 && live_shard(c, (uint32_t)home) == to) map_remove(&c->directory, key_of(handle));
+        else map_put(&c->directory, key_of(handle), to);
     }
 }
 
@@ -696,6 +708,12 @@ static void carry(tide_shard_coordinator *c, const uint32_t from)
             const uint32_t to = owner >= 0 ? live_shard(c, (uint32_t)owner) : from;
             if (kind == TIDE_SHARD_ARRIVE) note_tree(c, m.data, m.size, to);
             inject(c, to, m.data, m.size);
+            break;
+        }
+        case TIDE_SHARD_TO_RANGE: { // An index free again: where it came from; and the entity's no one's now
+            map_remove(&c->directory, key_of(m.entity));
+            const int32_t home = range_owner(c, m.entity.index);
+            if (home >= 0) inject(c, live_shard(c, (uint32_t)home), m.data, m.size);
             break;
         }
         case TIDE_SHARD_TO_ALL:
