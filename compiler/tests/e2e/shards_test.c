@@ -16,6 +16,7 @@ static tide_loopback *net;
 static tide_shards *shards;
 static tide_client *clients[CLIENTS];
 static double now;
+static int most_dying; // The most couriers seen waiting to go at once
 
 static void transports(void *user, const uint32_t shard, tide_transport out[2])
 {
@@ -56,6 +57,8 @@ typedef struct totals {
     int owned[128]; // By mover id (the banks are 100 and 101): how many shards own it
     int distinct;   // Ids some shard owns
     int64_t coins, wallets, left, received; // Of what shards own
+    int64_t purses; // Couriers' not paid yet
+    int dying;      // Couriers whose destroy waits for their bank
 } totals;
 
 static void gather(const tide_world *w, totals *t)
@@ -77,6 +80,8 @@ static void gather(const tide_world *w, totals *t)
                 t->received += b.received;
             }
             if (tide_has_Transfer(w, e)) t->left += tide_get_Transfer(w, e).left;
+            if (tide_has_Courier(w, e)) t->purses += tide_get_Courier(w, e).purse;
+            if (tide_has_tide_dying(w, e)) t->dying++;
         }
     }
 }
@@ -113,13 +118,15 @@ static void run(const double seconds, const bool check)
         if (!check) continue;
         const totals t = count();
         for (int id = 0; id < 128; id++) TIDE_CHECK(t.owned[id] <= 1); // Never two shards' at once
-        TIDE_CHECK(t.coins + t.wallets <= 2200);                    // Nothing made from nowhere
+        TIDE_CHECK(t.coins + t.wallets + t.purses <= 2320);         // Nothing made from nowhere
+        if (t.dying > most_dying) most_dying = t.dying;
     }
 }
 
 static void begin(const uint32_t most)
 {
     now = 0;
+    most_dying = 0;
     memset(clients, 0, sizeof clients);
     net = tide_loopback_create(7);
     const tide_shards_desc d = desc_of(most);
@@ -149,10 +156,12 @@ static void check_done(void)
     }
     TIDE_CHECK(t.distinct == 22);
     for (int id = 0; id < 20; id++) TIDE_CHECK(t.owned[id] == 1);
+    for (int id = 50; id < 56; id++) TIDE_CHECK(t.owned[id] == 0); // Every courier went...
+    TIDE_CHECK(t.purses == 0 && t.dying == 0);                     // ...having paid
     TIDE_CHECK(t.owned[100] == 1 && t.owned[101] == 1);
     TIDE_CHECK(t.wallets == 0);    // Every coin paid...
     TIDE_CHECK(t.received == 200); // ...arrived once
-    TIDE_CHECK(t.coins == 2200);   // ...and the banks' transfers made and lost nothing
+    TIDE_CHECK(t.coins == 2320);   // ...and the banks' transfers made and lost nothing
     TIDE_CHECK(t.left == 0);       // Both banks' transfers, done
 }
 
@@ -181,6 +190,7 @@ TIDE_TEST(shards_move_entities_and_wait_on_borders_without_losing_anything)
     TIDE_CHECK(a.owned > 0 && b.owned > 0);
     TIDE_CHECK(a.ghosts > 0 && b.ghosts > 0);
     TIDE_CHECK(a.waiting == 0 && b.waiting == 0);
+    TIDE_CHECK(most_dying > 0); // A courier's destroy waited for the bank across the border
     TIDE_CHECK(tide_shard_dropped() == dropped); // Nothing across a border was dropped
     check_clients(3);
     finish();

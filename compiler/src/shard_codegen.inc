@@ -19,7 +19,7 @@
 
 // The numbers code is noted by: a system's, then each event's deliveries. 0 is
 // code that can't wait, whose changes across a border are dropped (counted:
-// tide_shard_dropped).
+// tide_shard_dropped), such as a task's resume.
 static int shard_code_system(const decl *sys)
 {
     return 1 + sys->index;
@@ -65,9 +65,9 @@ static int shard_singleton_count(const program *prog)
     return n;
 }
 
-// Whether an event's deliveries can wait: one that's queued (sent by code) and
-// Spawned, which runs again for its entity. Destroyed can't yet: its entity
-// is gone by the time it could run.
+// Whether an event's deliveries wait on their own: one that's queued (sent by
+// code) and Spawned, which runs again for its entity. Destroyed's wait with
+// the destroy they're part of (tide_shard_destroy_waits).
 static bool shard_parks(const program *prog, const decl *event)
 {
     return is_queued(prog, event) || event == prog->spawned;
@@ -108,7 +108,10 @@ static void gen_shard_prelude(gen *g)
                  "TIDE_SHARD_FN void tide_shard_resume(tide_world *w);\n"
                  "TIDE_SHARD_FN void tide_shard_unloaded(tide_world *w, tide_entity scene);\n"
                  "TIDE_SHARD_FN bool tide_shard_starting_empty; // A region's world starts with nothing in it\n"
-                 "TIDE_SHARD_FN int32_t tide_shard_since; // While a waiting delivery runs: the tick it first tried\n\n",
+                 "TIDE_SHARD_FN int32_t tide_shard_since; // While a waiting delivery runs: the tick it first tried\n"
+                 "TIDE_SHARD_FN bool tide_shard_destroy_waits(tide_world *w, tide_entity e);\n"
+                 "// The entity a destroy is of, as its tree's Destroyed handlers run: what they wait by\n"
+                 "TIDE_SHARD_FN TIDE_THREAD_LOCAL tide_entity tide_shard_dying;\n\n",
               shard_codes(g->prog));
 }
 
@@ -254,6 +257,12 @@ static void gen_shard_dispatch_entry(gen *g, const decl *event)
         sb_printf(o, "        if (!tide_entity_is_null(tide_target) && !tide_shard_owned(tide_w, tide_target)) {\n"
                      "            tide_shard_forward_%s(tide_w, tide_target, tide_event, %s); // Another shard's: it runs there\n"
                      "            return;\n        }\n", name, sender);
+    }
+    if (event == prog->destroyed) { // Its whole destroy waits (tide_shard_destroy_waits), by the entity it's of
+        sb_printf(o, "        tide_shard_code = tide_entity_is_null(tide_shard_dying) ? 0u : %du;\n"
+                     "        tide_shard_this = tide_shard_dying;\n        tide_shard_occurrence = 0u;\n    }\n",
+                  shard_code_event(prog, event));
+        return;
     }
     if (!shard_parks(prog, event)) {
         sb_put(o, "        tide_shard_code = 0u; // It can't wait: what it changes across a border is dropped\n    }\n");

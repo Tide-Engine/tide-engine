@@ -145,7 +145,7 @@ static void gen_shard_moves(gen *g)
               "    tide_shard_send_tree(w, e, to, TIDE_SHARD_BORROWED);\n}\n\n"
               // Each entity this shard owns whose position is in another shard's
               // region (a quarter of its range past its own, so one on the border
-              // doesn't go back and forth), unless it's borrowed for now
+              // doesn't go back and forth), unless it's borrowed for now or held
               "TIDE_SHARD_FN void tide_shard_handoff(tide_world *w)\n{\n"
               "    tide_shard_state *s = &w->tide_shard_state;\n"
               "    if (!s->shard || !tide_list_count(s->regions)) return;\n"
@@ -158,6 +158,7 @@ static void gen_shard_moves(gen *g)
         sb_printf(o, "        const tide_entity e = *%s;\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_put(o, "        double p[3];\n"
                   "        if (!tide_shard_where(w, e, p) || tide_shard_pinned(w, tide_shard_key(e))) continue;\n"
+                  "        if (tide_shard_find(s->held, tide_shard_key(e), 1) >= 0) continue; // Code that waits here needs it\n"
                   "        if (!root && tide_shard_mine(w, p, TIDE_SHARD_REACH * 0.25)) continue;\n"
                   "        const int32_t there = tide_shard_region_of(w, p);\n"
                   "        if (there < 0 || there == tide_shard_self(w)) continue;\n"
@@ -212,6 +213,55 @@ static void gen_shard_events(gen *g)
         sb_put(o, "    if (r.overflow) tide_out_of_memory();\n    tide_shard_patch(&r, 0u, r.size);\n"
                   "    tide_shard_bytes_append(&w->tide_shard_state.waits, r.data, r.size, TIDE_IN_MATCH);\n    free(r.data);\n}\n\n");
     }
+
+    // A destroy whose Destroyed handlers touched what this shard doesn't own
+    // waits with them: the entity and its tree stay, marked tide_dying, which
+    // nothing runs for, until this shard owns what they touched
+    const int dying = prog->shard_dying->index;
+    sb_put(o, "TIDE_HELPER void tide_shard_dying_one(tide_world *w, const tide_entity e, const bool dying)\n{\n"
+              "    const tide_location loc = tide_entity_location(&w->entities, e);\n"
+              "    const tide_dying v = {dying ? (tide_shard_since ? tide_shard_since : w->Time.tick) : 0};\n    (void)v;\n"
+              "    switch (loc.archetype) {\n");
+    for (int a = 0; a < prog->archetypes.count; a++) {
+        if (arch_local(g, a)) continue;
+        sb_printf(o, "    case %d: %s = dying ? 1u : 0u; %s; break;\n", a, presence_cell(g, "w", a, dying, "loc.row", true),
+                  comp_put(g, "w", a, dying, "loc.row", "v"));
+    }
+    sb_put(o, "    default: break;\n    }\n}\n\n"
+              "TIDE_HELPER void tide_shard_dying_tree(tide_world *w, const tide_entity root, const bool dying)\n{\n");
+    if (prog->hierarchy[0]) {
+        sb_put(o, "    tide_entity e = root;\n    uint64_t left = (uint64_t)w->entities.next_unused + 1u;\n"
+                  "    while (!tide_entity_is_null(e) && left--) {\n"
+                  "        tide_shard_dying_one(w, e, dying);\n"
+                  "        tide_hierarchy_node n = tide_hierarchy_get(w, e);\n"
+                  "        if (!tide_entity_is_null(n.first)) { e = n.first; continue; }\n"
+                  "        while (!tide_entity_equal(e, root) && tide_entity_is_null(n.next)) {\n"
+                  "            e = n.parent;\n            n = tide_hierarchy_get(w, e);\n        }\n"
+                  "        e = tide_entity_equal(e, root) ? (tide_entity){0} : n.next;\n    }\n}\n\n");
+    } else {
+        sb_put(o, "    tide_shard_dying_one(w, root, dying);\n}\n\n");
+    }
+    sb_printf(o, "TIDE_SHARD_FN bool tide_shard_destroy_waits(tide_world *w, const tide_entity e)\n{\n"
+                 "    if (!w->tide_shard_state.shard || !tide_entity_alive(&w->entities, e)\n"
+                 "        || !tide_shard_skips(w->tide_shard_now, %du, e, 0u)) return false;\n"
+                 "    const uint32_t needs = tide_shard_touched(w->tide_shard_now, %du, e, 0u, NULL, 0u);\n"
+                 "    tide_entity *touched = malloc((needs + 1u) * sizeof *touched);\n"
+                 "    if (!touched) tide_out_of_memory();\n"
+                 "    tide_shard_touched(w->tide_shard_now, %du, e, 0u, touched, needs);\n"
+                 "    touched[needs] = e; // ...and the entity itself, which may be lent meanwhile\n"
+                 "    tide_writer r = {.grows = true};\n    tide_write_u32(&r, 0u);\n"
+                 "    tide_write_u32(&r, %du);\n    tide_write_u32(&r, e.index);\n    tide_write_u32(&r, e.generation);\n"
+                 "    tide_write_u32(&r, (uint32_t)(tide_shard_since ? tide_shard_since : w->Time.tick));\n    tide_write_u32(&r, 0u);\n"
+                 "    tide_write_u32(&r, needs + 1u);\n"
+                 "    for (uint32_t k = 0; k <= needs; k++) {\n"
+                 "        tide_write_u32(&r, touched[k].index);\n        tide_write_u32(&r, touched[k].generation);\n    }\n"
+                 "    free(touched);\n"
+                 "    if (r.overflow) tide_out_of_memory();\n    tide_shard_patch(&r, 0u, r.size);\n"
+                 "    tide_shard_bytes_append(&w->tide_shard_state.waits, r.data, r.size, TIDE_IN_MATCH);\n    free(r.data);\n"
+                 "    tide_shard_dying_tree(w, e, true);\n"
+                 "    return true;\n}\n\n",
+              shard_code_event(prog, prog->destroyed), shard_code_event(prog, prog->destroyed),
+              shard_code_event(prog, prog->destroyed), shard_code_event(prog, prog->destroyed));
 
     // The deliveries that waited and can run now, as the tick's changes start:
     // each in full, as when it was sent, knowing how long it waited (Shards.delay)
@@ -271,6 +321,12 @@ static void gen_shard_events(gen *g)
         }
         sb_put(o, "            break;\n        }\n");
     }
+    // A destroy that waited: its entity isn't dying any more, and goes as any destroyed does
+    sb_printf(o, "        case %du:\n"
+                 "            if (tide_entity_alive(&w->entities, target)) {\n"
+                 "                tide_shard_dying_tree(w, target, false);\n                tide_destroy_now(w, target);\n            }\n"
+                 "            break;\n",
+              shard_code_event(prog, prog->destroyed));
     sb_put(o, "        default: break;\n        }\n"
               "        tide_shard_since = 0;\n        tide_shard_delay_now = 0;\n    }\n"
               "    free(ready);\n    free(all);\n}\n\n");

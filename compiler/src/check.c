@@ -2812,6 +2812,18 @@ static void ensure_shards(program *prog)
     ghost->index = prog->components.count;
     vec_push(prog->components, ghost);
     prog->shard_ghost = ghost;
+    // An entity whose destroy waits on a border, until its Destroyed handlers can
+    // run: nothing else runs for it meanwhile
+    decl *dying = NEW(decl);
+    dying->kind = DECL_COMPONENT;
+    dying->builtin = true;
+    dying->name = dying->qualified = str_from("tide_dying");
+    dying->c_name = "tide_dying";
+    f.name = str_from("since"); // The tick its destroy first waited
+    vec_push(dying->fields, f);
+    dying->index = prog->components.count;
+    vec_push(prog->components, dying);
+    prog->shard_dying = dying;
 
     decl *state = NEW(decl);
     state->kind = DECL_SINGLETON;
@@ -17289,7 +17301,7 @@ static bool sparse_component_source(const program *prog, const decl *d)
 
 static bool sparse_component(const program *prog, const decl *d)
 {
-    return (!d->is_local && d->visibility_optional) || d == prog->shard_ghost || sparse_component_source(prog, d);
+    return (!d->is_local && d->visibility_optional) || d == prog->shard_ghost || d == prog->shard_dying || sparse_component_source(prog, d);
 }
 
 // Whether a system's (or handler's, or view's) filters admit archetype `mask`:
@@ -17402,7 +17414,7 @@ static void derive_archetypes(const checker *c)
     if (!expand_archetypes(prog, &p, prog->main_archetype)) goto too_many;
     // Any of a sharded match's entities can be a ghost: another shard's, held here read-only
     for (int i = 0; prog->shard_ghost && i < prog->archetypes.count; i++) {
-        if (!prog->archetype_local.items[i]) allow_sparse(prog, i, bit(prog->shard_ghost));
+        if (!prog->archetype_local.items[i]) allow_sparse(prog, i, mask_or(bit(prog->shard_ghost), bit(prog->shard_dying)));
     }
     for (int i = 0; i < prog->archetypes.count; i++) vec_push(prog->spawn_target, false);
     if (prog->main) prog->spawn_target.items[prog->main_archetype] = true;
@@ -20315,11 +20327,11 @@ bool check(program *prog)
 
     diag_phase("checking the rest");
     // A shard runs its systems and handlers for the entities it owns: ghosts,
-    // other shards' entities near its border, are only read (queries, World)
+    // other shards' entities near its border, are only read (queries, World), and nothing runs for an entity whose destroy waits
     for (int i = 0; prog->shard_ghost && i < prog->decls.count; i++) {
         decl *d = prog->decls.items[i];
         if (d->kind != DECL_SYSTEM || d->is_view || d->listens || !d->per_entity || d->entity_local) continue;
-        d->without_mask = mask_or(d->without_mask, bit(prog->shard_ghost));
+        d->without_mask = mask_or(d->without_mask, mask_or(bit(prog->shard_ghost), bit(prog->shard_dying)));
     }
     derive_archetypes(&c);
     check_extern_sparse(prog);

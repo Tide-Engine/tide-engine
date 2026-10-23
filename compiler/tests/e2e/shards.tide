@@ -1,8 +1,9 @@
 // A world split across shards (tests/e2e/shards_test.c runs it with the
 // engine's orchestrator): movers going back and forth across the border,
 // two banks paying each other through the World (a change across the border,
-// which waits until one shard owns both), and movers paying a bank with
-// events, which go to the shard that owns it.
+// which waits until one shard owns both), movers paying a bank with events,
+// which go to the shard that owns it, and couriers paying one as they're
+// destroyed.
 settings
 {
     shards = true;
@@ -35,6 +36,26 @@ event(Spawned) Setup(with Main)
         float speed = i % 2 == 0 ? 6.0 : -6.0;
         Spawn(Mover { position = float2(-28 + i * 3, -5), velocity = float2(speed, 0), id = i, wallet = 10, bank = a });
     }
+    for (int i = 0; i < 6; i++)
+    {
+        Spawn(Mover { position = float2(-30 + i * 2, 8), id = 50 + i }, Courier { purse = 20, until = 240 + i * 45, bank = b });
+    }
+}
+
+// Couriers on the left carry a purse to the right's bank, paid as they're
+// destroyed: their Destroyed handler changes a bank another shard owns, so
+// the destroy waits, the courier with it, until this shard owns the bank
+component Courier { int purse; int until; Entity bank; }
+
+system Expire(Courier c, Time time)
+{
+    if (time.tick >= c.until) this.Destroy();
+}
+
+event(Destroyed) Bequeath(Courier c, mut World world)
+{
+    Bank bank = world.Get<Bank>(c.bank);
+    world.Set<Bank>(c.bank, Bank { coins = bank.coins + c.purse, received = bank.received });
 }
 
 system Move(mut Mover m, Time time)

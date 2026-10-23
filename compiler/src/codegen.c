@@ -10809,7 +10809,11 @@ static void gen_apply(gen *g, const bool local)
     sb_put(o, "}\n\n");
 
     // Destroy one entity now
-    sb_printf(o, "TIDE_HELPER void %s%s(%s *w, tide_entity e)\n{\n", p, prog->hierarchy[local] ? "destroy_leaf" : "destroy_now", world);
+    // A shard's destroy may wait for its Destroyed handlers (tide_shard_destroy_waits), so it goes through
+    // destroy_now as a hierarchy's does
+    const bool shard_destroys = !local && sharded(g);
+    sb_printf(o, "TIDE_HELPER void %s%s(%s *w, tide_entity e)\n{\n", p,
+              prog->hierarchy[local] || shard_destroys ? "destroy_leaf" : "destroy_now", world);
     sb_put(o, "    tide_location loc = tide_entity_location(&w->entities, e);\n");
     sb_put(o, "    switch (loc.archetype) {\n");
     for (int a = 0; a < prog->archetypes.count; a++) {
@@ -10835,7 +10839,16 @@ static void gen_apply(gen *g, const bool local)
     sb_put(o, "    default: return; // Already destroyed.\n    }\n");
     // A shard lists free only indices it gives (tide_shard_free_slot)
     sb_put(o, !local && sharded(g) ? "    tide_shard_free_slot(w, e);\n}\n\n" : "    tide_entity_destroy(&w->entities, e);\n}\n\n");
-    if (prog->hierarchy[local]) sb_printf(o, "TIDE_HELPER void %sdestroy_now(%s *w, tide_entity e)\n{\n    %shierarchy_destroy(w, e);\n}\n\n", p, world, p);
+    if (shard_destroys) {
+        // Destroyed's handlers run as the entity this destroy is of, by whose identity they wait
+        sb_printf(o, "TIDE_HELPER void %sdestroy_now(%s *w, tide_entity e)\n{\n"
+                     "    if (tide_shard_destroy_waits(w, e)) return;\n"
+                     "    const tide_entity was = tide_shard_dying;\n    tide_shard_dying = e;\n"
+                     "    %s%s(w, e);\n    tide_shard_dying = was;\n}\n\n",
+                  p, world, p, prog->hierarchy[local] ? "hierarchy_destroy" : "destroy_leaf");
+    } else if (prog->hierarchy[local]) {
+        sb_printf(o, "TIDE_HELPER void %sdestroy_now(%s *w, tide_entity e)\n{\n    %shierarchy_destroy(w, e);\n}\n\n", p, world, p);
+    }
 
     // Unloading a scene: every entity in it, then the scene itself. Rows are
     // walked from the end, so the row swapped into a gap was already seen.

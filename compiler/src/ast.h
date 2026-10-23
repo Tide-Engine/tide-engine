@@ -1532,6 +1532,7 @@ typedef struct program {
     int partition_field;       // ...that field's index
     loc partition_at;
     decl *shard_ghost;         // The hidden sparse component a ghost (another shard's entity, read-only) has
+    decl *shard_dying;         // ...and the one an entity has while its destroy waits for its Destroyed handlers to run
     decl *shard_state;         // The hidden singleton of what makes a world a shard
 } program;
 

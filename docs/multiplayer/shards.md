@@ -76,7 +76,7 @@ Tide's hosting service will run shards across machines, splitting and merging re
 ## Limits for now
 
 - A player who joins a sharded server through its room code, including every web player, plays only in the shard they joined. Players need `Session.Connect` to follow their avatar between shards.
-- What a `Destroyed` handler changes across a border is dropped.
+- What a task changes across a border when it resumes is dropped.
 - Tasks and physics state don't move with their entities.
 - Regions split but never merge again.
 - Visibility and hot reload don't apply to sharded games yet.
