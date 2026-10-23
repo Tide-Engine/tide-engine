@@ -36,6 +36,7 @@ event(Spawned) Setup(with Main)
         float speed = i % 2 == 0 ? 6.0 : -6.0;
         var mover = Spawn(Mover { position = float2(-28 + i * 3, -5), velocity = float2(speed, 0), id = i, wallet = 10, bank = a });
         if (i % 5 == 0) mover.Add(Ticker { bank = b });
+        if (i % 4 == 0) mover.Add(Pack { });
     }
     for (int i = 0; i < 6; i++)
     {
@@ -67,6 +68,17 @@ async event(Begin begin) Count(mut Ticker t, mut World world)
     // Then it pays the right's bank, which waits while the mover's on the left
     Bank bank = world.Get<Bank>(t.bank);
     world.Set<Bank>(t.bank, Bank { coins = bank.coins + 5, received = bank.received });
+}
+
+// Some movers spawn a bag, which has no position: it goes where its mover is
+component Pack { bool packed; }
+component Bag { int id; Entity holder; }
+
+system PackUp(mut Pack pack, Mover m)
+{
+    if (pack.packed) return;
+    pack.packed = true;
+    Spawn(Bag { id = m.id, holder = this });
 }
 
 // Couriers on the left carry a purse to the right's bank, paid as they're

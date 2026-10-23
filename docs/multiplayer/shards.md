@@ -25,7 +25,7 @@ component Avatar
 
 `shardRange` is how far, in world units, the game's code looks around an entity: sight, reach, a query for what's nearby. A shard keeps read-only copies of its neighbours' entities that far past its border, so that code sees them. Regions are never narrower than twice the range.
 
-`[Partition]` marks the field that decides where an entity lives: one `float2`, `float3`, `double2` or `double3` field, on one component. Without it, the world position of an entity's `Transform` decides. An entity in a `Transform` hierarchy lives with its root. Entities without a position stay on the shard that spawned them.
+`[Partition]` marks the field that decides where an entity lives: one `float2`, `float3`, `double2` or `double3` field, on one component. Without it, the world position of an entity's `Transform` decides. An entity in a `Transform` hierarchy lives with its root. An entity without a position goes with the entity whose code spawned it: a bag spawned by a player's avatar follows the avatar from shard to shard.
 
 ## What changes in the game
 

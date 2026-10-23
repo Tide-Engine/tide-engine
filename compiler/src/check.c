@@ -2824,6 +2824,20 @@ static void ensure_shards(program *prog)
     dying->index = prog->components.count;
     vec_push(prog->components, dying);
     prog->shard_dying = dying;
+    // An entity spawned with no position goes where the entity whose code
+    // spawned it is
+    decl *anchor = NEW(decl);
+    anchor->kind = DECL_COMPONENT;
+    anchor->builtin = true;
+    anchor->name = anchor->qualified = str_from("tide_follows");
+    anchor->c_name = "tide_follows";
+    f.name = str_from("of");
+    f.type = (type){TY_ENTITY, NULL};
+    vec_push(anchor->fields, f);
+    anchor->index = prog->components.count;
+    vec_push(prog->components, anchor);
+    prog->shard_anchor = anchor;
+    f.type = T_INT_;
 
     decl *state = NEW(decl);
     state->kind = DECL_SINGLETON;
@@ -17302,7 +17316,7 @@ static bool sparse_component_source(const program *prog, const decl *d)
 
 static bool sparse_component(const program *prog, const decl *d)
 {
-    return (!d->is_local && d->visibility_optional) || d == prog->shard_ghost || d == prog->shard_dying || sparse_component_source(prog, d);
+    return (!d->is_local && d->visibility_optional) || d == prog->shard_ghost || d == prog->shard_dying || d == prog->shard_anchor || sparse_component_source(prog, d);
 }
 
 // Whether a system's (or handler's, or view's) filters admit archetype `mask`:
@@ -17415,7 +17429,7 @@ static void derive_archetypes(const checker *c)
     if (!expand_archetypes(prog, &p, prog->main_archetype)) goto too_many;
     // Any of a sharded match's entities can be a ghost: another shard's, held here read-only
     for (int i = 0; prog->shard_ghost && i < prog->archetypes.count; i++) {
-        if (!prog->archetype_local.items[i]) allow_sparse(prog, i, mask_or(bit(prog->shard_ghost), bit(prog->shard_dying)));
+        if (!prog->archetype_local.items[i]) allow_sparse(prog, i, mask_or(mask_or(bit(prog->shard_ghost), bit(prog->shard_dying)), bit(prog->shard_anchor)));
     }
     for (int i = 0; i < prog->archetypes.count; i++) vec_push(prog->spawn_target, false);
     if (prog->main) prog->spawn_target.items[prog->main_archetype] = true;

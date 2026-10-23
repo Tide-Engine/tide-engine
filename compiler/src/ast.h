@@ -1533,6 +1533,7 @@ typedef struct program {
     loc partition_at;
     decl *shard_ghost;         // The hidden sparse component a ghost (another shard's entity, read-only) has
     decl *shard_dying;         // ...and the one an entity has while its destroy waits for its Destroyed handlers to run
+    decl *shard_anchor;        // ...and the one naming what an entity spawned with no position goes with: the entity whose code spawned it
     decl *shard_state;         // The hidden singleton of what makes a world a shard
 } program;
 

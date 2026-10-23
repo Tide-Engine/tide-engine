@@ -7698,6 +7698,7 @@ static void gen_header(gen *g)
     sb_put(o, "    uint32_t depth;     // How far down a chain of events: one more than the change whose handlers recorded it\n");
     if (prog->prefab_sites.count) sb_put(o, "    uint32_t prefab_pending; // Its initialization runs after the whole authored tree is ready\n");
     sb_put(o, "    tide_entity entity; // For sends, the entity it's sent to, or null for the world\n");
+    if (sharded(g)) sb_put(o, "    tide_entity spawner; // A shard's: the entity whose code recorded it (tide_shard_this), which a spawn with no position goes with\n");
     if (prog->command_types.count) sb_put(o, "    tide_player_id sender; // Commands: authenticated by the session, never supplied by the payload\n");
     sb_put(o, "    union {\n        uint8_t tide_none;\n");
     if (prog->hierarchy[0] || prog->hierarchy[1]) sb_put(o, "        struct { tide_entity parent; bool keep; uint8_t padding[3]; } parent;\n");
@@ -10374,7 +10375,7 @@ static void gen_command_recorders(gen *g)
             "    c->id = (uint16_t)id;\n"
             "    c->depth = w->tide_chain;\n"
             "    c->entity = e;\n"
-            "%s"
+            "%s%s"
             "    return c;\n"
             "}\n\n"
             "TIDE_HELPER void %scmd_remove(%s *w, tide_entity e, uint32_t component)\n"
@@ -10395,7 +10396,8 @@ static void gen_command_recorders(gen *g)
             p, world_type(local),
             // A task on another thread records into its own queue (tide/jobs.h)
             local ? "&w->commands" : "tide_recording(&w->commands)", local ? "frame" : "tick",
-            prog->prefab_sites.count ? "    c->prefab_pending = 0;\n" : "", p, world_type(local),
+            prog->prefab_sites.count ? "    c->prefab_pending = 0;\n" : "", shard ? "    c->spawner = w->tide_shard_state.shard ? tide_shard_this : (tide_entity){0}; // A shard's code, in its tick\n" : "",
+            p, world_type(local),
             shard ? "    if (!tide_shard_may(w, e)) return;\n" : "", p, p, world_type(local),
             shard ? "    if (!tide_shard_may(w, e)) return;\n" : "", p, p, world_type(local),
             shard ? "    if (!tide_shard_may(w, scene)) return;\n" : "", p);
@@ -10669,6 +10671,16 @@ static void gen_apply(gen *g, const bool local)
         }
         (void)mask;
         sb_printf(o, "        tide_entity_set_location(&w->entities, c->entity, (tide_location){%d, row});\n", a);
+        // A shard's spawn with no position goes with the entity whose code spawned it (tide_shard_handoff)
+        const decl *placing = prog->partition ? prog->partition : prog->transform;
+        const bool placed = placing && placing->index >= 0 && placing->index < prog->components.count
+                         && prog->components.items[placing->index] == placing && arch_stores(g, a, placing->index);
+        if (!local && sharded(g) && !placed && !arch_scene(g, a)) { // A scene goes nowhere: its entities are on every shard
+            const int anchor = prog->shard_anchor->index;
+            sb_printf(o, "        if (!tide_entity_is_null(c->spawner) && !tide_entity_equal(c->spawner, c->entity)) {\n"
+                         "            const tide_follows tide_of = {c->spawner};\n            %s = 1;\n            %s;\n        }\n",
+                      presence_cell(g, "w", a, anchor, "row", true), comp_put(g, "w", a, anchor, "row", "tide_of"));
+        }
         if (born) {
             sb_put(o, "        uint64_t tide_h = tide_hash_more(TIDE_HASH_START, &w->Time.tick, sizeof w->Time.tick);\n");
             if (prog->visibility_state) {

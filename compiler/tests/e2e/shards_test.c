@@ -61,6 +61,8 @@ typedef struct totals {
     int64_t purses; // Couriers' not paid yet
     int dying;      // Couriers whose destroy waits for their bank
     int tickers, counted; // Movers with a task counting ticks, and what they counted
+    int bag_owned[20]; // By the id of the mover that spawned it: how many shards own its bag
+    int bags, carried; // Bags owned, and those owned where their mover is
 } totals;
 
 static void gather(const tide_world *w, totals *t)
@@ -71,6 +73,12 @@ static void gather(const tide_world *w, totals *t)
             const uint32_t index = (p << TIDE_ENTITY_PAGE_SHIFT) + k;
             if (index >= w->entities.next_unused) break;
             const tide_entity e = tide_entity_in_slot(&w->entities, index);
+            if (!tide_entity_is_null(e) && tide_has_Bag(w, e) && !tide_has_tide_ghost(w, e)) {
+                const Bag bag = tide_get_Bag(w, e);
+                if (bag.id >= 0 && bag.id < 20) t->bag_owned[bag.id]++;
+                t->bags++;
+                if (tide_entity_alive(&w->entities, bag.holder) && !tide_has_tide_ghost(w, bag.holder)) t->carried++;
+            }
             if (tide_entity_is_null(e) || !tide_has_Mover(w, e) || tide_has_tide_ghost(w, e)) continue;
             const Mover m = tide_get_Mover(w, e);
             if (m.id < 0 || m.id >= 128) continue;
@@ -124,6 +132,7 @@ static void run(const double seconds, const bool check)
         if (!check) continue;
         const totals t = count();
         for (int id = 0; id < 128; id++) TIDE_CHECK(t.owned[id] <= 1); // Never two shards' at once
+        for (int id = 0; id < 20; id++) TIDE_CHECK(t.bag_owned[id] <= 1);
         TIDE_CHECK(t.coins + t.wallets + t.purses <= 2340);         // Nothing made from nowhere
         if (t.dying > most_dying) most_dying = t.dying;
     }
@@ -156,11 +165,12 @@ static void finish(void)
 static void check_done(void)
 {
     totals t = count();
-    for (int tries = 0; t.distinct != 22 && tries < 600; tries++) {
+    for (int tries = 0; (t.distinct != 22 || t.carried != 5) && tries < 600; tries++) {
         step();
         t = count();
     }
     TIDE_CHECK(t.distinct == 22);
+    TIDE_CHECK(t.bags == 5 && t.carried == 5); // Every bag, with no position, where its mover is
     for (int id = 0; id < 20; id++) TIDE_CHECK(t.owned[id] == 1);
     for (int id = 50; id < 56; id++) TIDE_CHECK(t.owned[id] == 0); // Every courier went...
     TIDE_CHECK(t.purses == 0 && t.dying == 0);                     // ...having paid

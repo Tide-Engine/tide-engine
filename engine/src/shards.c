@@ -484,7 +484,12 @@ static void carry(tide_shards *s, const uint32_t from)
         }
         case TIDE_SHARD_TO_OWNER: {
             const int32_t owner = tide_shards_owner(s, m.entity);
-            if (owner >= 0) inject(s, (uint32_t)owner, m.data, m.size);
+            if (owner < 0 && kind != TIDE_SHARD_ARRIVE) break;
+            // An entity with no position, to where the one it goes with is
+            // (or back, where that's no shard's)
+            const uint32_t to = owner >= 0 ? live_shard(s, (uint32_t)owner) : from;
+            if (kind == TIDE_SHARD_ARRIVE) note_tree(s, m.data, m.size, to, from);
+            inject(s, to, m.data, m.size);
             break;
         }
         case TIDE_SHARD_TO_ALL:
