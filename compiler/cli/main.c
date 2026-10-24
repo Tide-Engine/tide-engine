@@ -328,6 +328,28 @@ static int command_main(const int argc, char **argv)
                 return 2;
             }
             defines[opts.define_count++] = name;
+        } else if ((build || run) && strcmp(a, "--scene") == 0) {
+            if (!left || !argv[i + 1][0] || argv[i + 1][0] == '-' || opts.scene) {
+                fputs("tide: --scene takes one qualified prefab or scene name, like --scene Levels.Start\n", stderr);
+                free(defines);
+                return 2;
+            }
+            opts.scene = argv[++i];
+        } else if ((build || run) && strcmp(a, "--source-overlay") == 0) {
+            if (left < 2 || !argv[i + 1][0] || !argv[i + 2][0] || argv[i + 1][0] == '-' || argv[i + 2][0] == '-' || opts.editor_source) {
+                fputs("tide: --source-overlay takes an original source path and a replacement file\n", stderr);
+                free(defines);
+                return 2;
+            }
+            opts.editor_source = path_absolute(argv[++i]);
+            opts.editor_draft = path_absolute(argv[++i]);
+        } else if ((build || run) && strcmp(a, "--editor-cache") == 0) {
+            if (!left || !argv[i + 1][0] || argv[i + 1][0] == '-' || opts.work) {
+                fputs("tide: --editor-cache takes one private build-cache folder\n", stderr);
+                free(defines);
+                return 2;
+            }
+            opts.work = argv[++i];
         } else if (strcmp(a, "--title") == 0 && i + 1 < argc) opts.title = argv[++i];
         else if (strcmp(a, "-o") == 0 && i + 1 < argc && (build || unity)) opts.output = argv[++i];
         else if (unity && strcmp(a, "--once") == 0) once = true;

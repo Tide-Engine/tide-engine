@@ -1,0 +1,18 @@
+// expect: [SceneRequired] field 'Target.child' needs a named entity reference in prefab 'Broken'
+scene Main { }
+component Target { [SceneRequired] Entity child; }
+prefab Base
+{
+    entity Child
+    {
+        Target { child = Child.Grandchild };
+        entity Grandchild { }
+    }
+}
+prefab Broken
+{
+    entity Item : Base
+    {
+        entity Child { Target { child = default }; }
+    }
+}

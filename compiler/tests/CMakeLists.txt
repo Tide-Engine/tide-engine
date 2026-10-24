@@ -49,6 +49,7 @@ tide_e2e_test(shards) # One world split across shards: moving, ghosts, waiting o
 tide_e2e_test(shards_players) # A player's machine following their avatar from shard to shard
 tide_e2e_test(shards_visibility) # A visibility group the root keeps, read on every shard and changed from a region
 tide_e2e_test(prefabs SOURCES e2e/prefabs.tide e2e/prefabs.tprefab)
+tide_e2e_test(scene_startup SOURCES e2e/scene_startup.tide e2e/scene_startup.tprefab)
 tide_e2e_test(asset_references SOURCES e2e/asset_references.tide e2e/asset_references.tprefab)
 tide_e2e_test(asset_reference_empty)
 tide_e2e_test(function_acts) # Functions and methods that send, spawn and change entities, as their callers would
@@ -503,6 +504,9 @@ add_test(NAME tidec_unity_folder_names
 add_test(NAME tidec_prefab_error_once
     COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/prefab_error_once"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/prefab_error_once.cmake")
+add_test(NAME tidec_scene_startup
+    COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/scene_startup"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/scene_startup.cmake")
 
 # Outline tests: `tidec --outline` on outline/<name>.tide, run in its folder so the paths it prints are the
 # file's name, must print outline/<name>.json exactly.

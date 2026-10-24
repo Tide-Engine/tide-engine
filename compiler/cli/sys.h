@@ -43,6 +43,11 @@ sys_process *sys_start(const char *const *argv, const char *cwd);
 // The same, with what it prints and its errors in the file `log`, made anew,
 // rather than on the terminal.
 sys_process *sys_start_logged(const char *const *argv, const char *cwd, const char *log);
+// A logged program and all the children it starts, owned together. sys_kill
+// stops the complete tree; sys_wait also cleans up any children left when the
+// program ends. The tree is established before the program can start children.
+// Used for cancellable editor builds and play sessions.
+sys_process *sys_start_tree_logged(const char *const *argv, const char *cwd, const char *log);
 // Starts a program that outlives tide, with nothing of tide's: no terminal,
 // no window, its input and output nowhere, in a session or process group of
 // its own, so neither the terminal closing nor Ctrl+C ends it. False if it

@@ -178,6 +178,10 @@ static const argument_help arguments[] = {
      "each package. TIDE_ and PACKAGE_ prefixes are reserved.", COMPILE},
     {"--title", "--title <title>", "Override the game's window title",
      "Defaults to the game's title setting, or its folder name.", RUN | BUILD},
+    {"--scene", "--scene <qualified-name>", "Start directly in an authored prefab or scene",
+     "Overrides the project default: settings { startScene = Levels.Start; }.\n"
+     "Without either selection, the game starts in Main. Runs normal\n"
+     "Spawned handlers, systems and views, with the usual session and devices.", RUN | BUILD},
     {"--stats", "--stats", "Enable the stats drawer (F8)",
      "Shows frame rate, CPU/GPU time, ping, bandwidth, memory, draw calls and\n"
      "slow systems. run starts the drawer open; build starts it closed.\n"
@@ -199,8 +203,9 @@ static const argument_help arguments[] = {
      "server, or any build, of a game made in Unity.", UNITY | BUILD | RUN},
     {"--no-open", "--no-open", "Serve a web run without opening a browser",
      "Use with tide run --web. TIDE_HIDDEN also prevents opening a browser.", RUN},
-    {"--host", "--host [port]", "Open Main's match for others to join",
-     "Main must be the match's scene. Opens a WebRTC room and, on desktop,\n"
+    {"--host", "--host [port]", "Open the startup match for others to join",
+     "Requires a match startup, selected by --scene, settings.startScene or Main.\n"
+     "Opens a WebRTC room and, on desktop,\n"
      "a UDP port (7777 by default). Web hosts use the room only.", RUN},
     {"--join", "--join <code>", "Join a match by WebRTC room code",
      "Example: --join K7QF2M. For dedicated servers, room/0 requests a new\n"
@@ -280,8 +285,9 @@ static const argument_help arguments[] = {
      "inputs repeat the same simulation.", RUN},
     {"--players", "--players <n>", "Run several players on a simulated network",
      "Native headless only: add --frames, --capture or --script. At most 32\n"
-     "players, limited by the game's maxPlayers. Player 1 hosts Main's match;\n"
-     "the others join. Script input can name a player: 120 player 2 key d down.\n"
+     "players, limited by the game's maxPlayers. With a match startup, player 1\n"
+     "hosts and the others join. A local startup leaves joining to game code.\n"
+     "Script input can name a player: 120 player 2 key d down.\n"
      "Captures gain player numbers, like fight-2.png. With --players 1, filenames\n"
      "have no number. Cannot combine with --host, --join or --connect.", RUN},
     {"--project", "--project <name-or-id>", "Select or relink the deployment project",

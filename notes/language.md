@@ -1,5 +1,56 @@
 # Language features, as tidec builds them
 
+## Inherited prefab values and selected startup (2026-10-24)
+
+Owner-approved: matching nested `entity ExistingChild { Component { field =
+value }; }` blocks override inherited descendant values per instance. Only
+existing component fields may change; no inherited component/child additions,
+removals, replacement or alternate base. Nested-instance roots retain ordinary
+authored additions. prefab_check.inc merges matching blocks into the existing
+composition without adding entities or changing reference scopes, defaults,
+placement checks, complete-tree construction or root-first Spawned order.
+Duplicate blocks/fields and unknown/type-invalid/empty/bare/new component
+overrides are diagnosed. The native editor writes/reset these same value blocks.
+
+The project may choose `settings { startScene = Qualified.Name; }`; CLI
+`tide run/build <project> --scene Name` overrides that choice for compilation.
+Absent selection keeps existing Main generation. Names select prefab or scene
+declarations, never text/calls/initializers. CLI lookup has no source-file
+namespace/using context. A selected prefab lowers through a checked private
+Scene.Load factory, loading its authored root in match placement without a
+wrapper or handwritten Main. Ordinary selected scenes retain defaults and
+match/local placement. Normal lifecycle, views, input/camera, Session.Start()
+default and empty-world fallback use the selection. Main source is untouched;
+duplicate Main and invalid/duplicate persistent settings remain errors even
+with an override. Startup enters simulation identity and asset-use analysis.
+No generated-C/runtime API was introduced.
+
+The native editor's Play uses private original-path source replacement and an
+isolated cache to compile applied drafts, then the ordinary host; these private
+flags are intentionally absent from public docs/help. Persistent startup is
+written separately by Set startup. Authoring preview still skips gameplay
+initialization. Current user docs/spec replace earlier Main-only and inherited
+read-only statements; historical sections below describe their original builds.
+
+Validation: full native/web debug builds pass; the engine/compiler/platform
+checks, 249 LSP cases and all seven final editor CTests pass. Prefab coverage
+includes deep overrides/defaults/references/lifecycle/entity counts on match and
+local placement, plus twelve structural/value diagnostics. scene_startup pins
+normal lifecycle, default Session.Start/fallback, snapshots/packing, source
+identity/asset closure and CLI/persisted/overlay selection. Startup authoring
+passes 18 source-preservation/namespace/conflict cases; the complete native UI
+creation/extraction/instance loop and twelve inspector focus/undo regressions
+pass. The production docs build passes. The unrelated external Cracked hash-pin
+failure reproduces with the HEAD compiler, and optional external browser
+playthroughs were not completed; details and remaining platform coverage are in
+notes/editors.md. No expected deterministic result was changed.
+
+Remaining: inherited structure edits, top-level variants, language-server entity
+path refactors/completion, child-to-prefab-root path syntax, authored attached
+local fields and automatic live-instance reconciliation. Authoring transactions
+and extraction/reference limits are in notes/editors.md. CLI integration and
+validation belong to notes/cli-and-packages.md.
+
 ## Shard attributes (2026-10-23)
 
 `reach`, `[Position]` deciding where an entity is, `[Native]` and `[Together]` (which replaced `shardRange`, `[Partition]`, `[PerShard]`, `[Shared]`, `[Ghosts]`, `[GoesWith]` and `Shards.moves` the same day): rules, checks and generated code are in `notes/sharding.md`, The language side; the spec's Shards section has them as Provisional. `field` has `native` as its last member, so positional `field` initializers end in `false`.
@@ -1563,9 +1614,9 @@ are recorded with the networking/editor changes after validation completes.
 Performance measurement (Windows clang 23.1.2, 2026-10-15): the projection
 fixture plus 10,000 visible PublicState rows with empty owned fields produced
 1,087,683 logical bytes. In release/O2, three runs of 200 calls measured
-2.12â€“2.92 ms per recipient canonical hash after changing every added row's integer
-column; unchanged worlds measured 2.22â€“3.54 ms. Full-world hashes measured
-4.19â€“9.76 us with that column dirty and 2.57â€“11.11 us unchanged. These operations
+2.12Ã¢â‚¬â€œ2.92 ms per recipient canonical hash after changing every added row's integer
+column; unchanged worlds measured 2.22Ã¢â‚¬â€œ3.54 ms. Full-world hashes measured
+4.19Ã¢â‚¬â€œ9.76 us with that column dirty and 2.57Ã¢â‚¬â€œ11.11 us unchanged. These operations
 do different work: full-world hashing reuses cached page hashes and only rehashes
 the changed integer-column pages, whereas recipient hashing currently traverses
 and serializes every permitted logical value and allocates the temporary byte

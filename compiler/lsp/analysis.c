@@ -374,7 +374,7 @@ static const decl *replaced_or_self(const decl *d)
 
 static void list_written(void)
 {
-    for (int i = 0; i < A.prog->decls.count; i++) if (!A.prog->decls.items[i]->placement_of) vec_push(A.written, A.prog->decls.items[i]);
+    for (int i = 0; i < A.prog->decls.count; i++) if (!A.prog->decls.items[i]->placement_of && A.prog->decls.items[i] != A.prog->startup_create) vec_push(A.written, A.prog->decls.items[i]);
     for (int i = 0; i < A.prog->replaced.count; i++) {
         const decl *v = A.prog->replaced.items[i];
         vec_push(A.written, v->owner ? v->replaced_by : v); // A method that was replaced is in its type's body
@@ -1184,6 +1184,15 @@ static void walk_prefab_bases(const prefab_node *node)
         qualifier_ref(node->base_qual_at, node->base_at, node->base);
         const str name = last_part(node->base);
         add_occ((occurrence){.at = node->base_at, .len = name.len, .kind = OCC_TYPE, .decl = node->base_decl, .name = name});
+    }
+    // Merged values keep the inherited component's location. Its written
+    // override still names the component; checked copies supply fields/values.
+    for (int i = 0; i < node->components.count; i++) {
+        const expr *written = node->components.items[i];
+        if (!written->type_decl) continue;
+        qualifier_ref(written->qual_at, written->at, written->name);
+        const str name = last_part(written->name);
+        add_occ((occurrence){.at = written->at, .len = name.len, .kind = OCC_TYPE, .decl = written->type_decl, .name = name});
     }
     for (int i = 0; i < node->children.count; i++) walk_prefab_bases(node->children.items[i]);
 }

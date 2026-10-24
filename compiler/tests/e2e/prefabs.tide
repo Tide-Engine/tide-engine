@@ -9,6 +9,15 @@ component WorkerChild { }
 component LevelSettings { int difficulty = 1; }
 component Self { Entity value; }
 component ScopedLinks { Entity child; Entity tip; }
+component DescendantRefs { [SceneRequired] Entity kept; [SceneRequired] Entity changed; Entity self; }
+component DescendantRoots
+{
+    Entity first; Entity second; Entity source;
+    Entity firstTip; Entity secondTip; Entity sourceTip;
+    Entity anchor; Entity added;
+}
+component LocalDescendantRefs { [SceneRequired] LocalEntity kept; [SceneRequired] LocalEntity changed; LocalEntity self; }
+component LocalDescendantRoots { LocalEntity item; LocalEntity source; LocalEntity tip; LocalEntity anchor; LocalEntity added; }
 namespace Defaults { const int VALUE = 41; }
 namespace Overrides { const int VALUE = 42; }
 singleton Probe
@@ -25,8 +34,17 @@ singleton Probe
     int overrideCalls;
     bool spawnScoped;
     Entity scoped;
+    bool spawnDescendants;
+    Entity descendants;
+    Entity descendantsAgain;
+    int descendantReady;
+    bool invalidDescendants;
 }
-local singleton LocalProbe { LocalEntity root; LocalEntity loaded; bool started; bool ready; bool unload; }
+local singleton LocalProbe
+{
+    LocalEntity root; LocalEntity loaded; bool started; bool ready; bool unload;
+    bool spawnDescendants; LocalEntity descendants; LocalEntity descendantsAgain; int descendantReady; bool invalidDescendants;
+}
 scene Main { }
 
 int OverrideValue(mut Probe probe, int value)
@@ -61,8 +79,27 @@ event(Spawned) Order(Data data, mut Probe probe) { probe.order = probe.order * 1
 system Actions(mut Probe probe)
 {
     if (probe.spawnScoped) { probe.scoped = Spawn(Overrides.Scoped); probe.spawnScoped = false; }
+    if (probe.spawnDescendants)
+    {
+        probe.descendants = Spawn(Overrides.Descendants);
+        probe.descendantsAgain = Scene.Load(Overrides.Descendants);
+        probe.spawnDescendants = false;
+    }
     if (probe.destroy) { probe.root.Destroy(); probe.destroy = false; }
     if (probe.unload) { Scene.Unload(probe.loaded); probe.unload = false; }
+}
+
+event(Spawned) DescendantsReady(DescendantRoots roots, mut Probe probe, World world)
+{
+    var first = world.Get<DescendantRefs>(roots.first);
+    var second = world.Get<DescendantRefs>(roots.second);
+    var source = world.Get<DescendantRefs>(roots.source);
+    probe.descendantReady += 1;
+    probe.invalidDescendants = probe.invalidDescendants
+        || world.Parent(roots.first) != this || world.Parent(roots.second) != this || world.Parent(roots.source) != this
+        || world.Parent(first.kept) != roots.first || world.Parent(second.kept) != roots.second || world.Parent(source.kept) != roots.source
+        || world.Parent(roots.firstTip) != first.kept || world.Parent(roots.secondTip) != second.kept || world.Parent(roots.sourceTip) != source.kept
+        || world.Parent(roots.added) != roots.first || world.Parent(roots.anchor) != this;
 }
 
 Entity MakeWorker() { return Spawn(Worker); }
@@ -95,6 +132,24 @@ view LocalSetup(mut LocalProbe probe)
         probe.started = true;
     }
     if (probe.unload) { Scene.Unload(probe.loaded); probe.unload = false; }
+    if (probe.spawnDescendants)
+    {
+        probe.descendants = local Spawn(LocalDescendants);
+        probe.descendantsAgain = Scene.Load(LocalDescendants);
+        probe.spawnDescendants = false;
+    }
+}
+
+local event(Spawned) LocalDescendantsReady(local LocalDescendantRoots roots, mut LocalProbe probe, World world)
+{
+    var item = world.Get<LocalDescendantRefs>(roots.item);
+    var source = world.Get<LocalDescendantRefs>(roots.source);
+    probe.descendantReady += 1;
+    probe.invalidDescendants = probe.invalidDescendants
+        || world.Parent(roots.item) != this || world.Parent(roots.source) != this
+        || world.Parent(item.kept) != roots.item || world.Parent(source.kept) != roots.source
+        || world.Parent(roots.tip) != item.kept || world.Parent(roots.added) != roots.item
+        || world.Parent(roots.anchor) != this;
 }
 
 local event(Spawned) LocalReady(local LocalLinks links, local LocalNested nested, mut LocalProbe probe, World world)

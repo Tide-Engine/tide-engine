@@ -140,6 +140,7 @@ settings
 | Setting | What it is | Without it |
 |---|---|---|
 | `title` | The window's title | The game's folder's name |
+| `startScene` | The prefab or scene declaration the program starts in, such as `Levels.Start` | `Main` |
 | `tickRate` | How many times a second the match ticks, from 1 to 1000: `Time.dt` is 1 / `tickRate`, and code reads the rate as `Time.tickRate` | 60 |
 | `maxPlayers` | How many players a match takes, from 1 to 65536. Builds with different values can't play together (see [Matches](../multiplayer/matches.md#how-many-players)) | 16 |
 | `hostMigration` | When the machine running a room's match goes, another player's takes it over (see [Host migration](../multiplayer/matches.md#host-migration)) | `false` |
@@ -149,11 +150,12 @@ settings
 | `stats` | Shows the stats in the window's bottom right corner: the frame rate, and at a click on it or F8, the rest (see [The tide command](../tools/cli.md#stats)). It's in what `tide build` makes too, so take it out before players get the game, unless the frame rate is theirs to see | `false` |
 | `debugViews` | The engine's [debug views](../tools/debug-views.md) are on: F7 shows the profiler, which says where a frame's time and a tick's go. `--debug-views` turns them on too, whatever this says | `false` |
 
-- Settings are set without a type, to constant expressions, which can name constants. A game's own values go in constants, not settings.
+- Settings are set without a type. `startScene` names a prefab or scene declaration, without quotation marks; other settings take constant expressions, which can name constants. A game's own values go in constants, not settings.
 - A game can have several `settings` blocks, in any of its files, so a setting can be written beside the code it's about: each block sets what the others don't. A setting that's set twice, in one block or in two, is an error that says where the other one is.
 - The editors complete the names of the settings the game doesn't set yet, and show what each one does.
 - Settings are part of the build. The machine that runs a match decides its tick rate, and every player ticks at that rate. Under `tide run`, a new `tickRate` takes effect when a match starts.
 - `--title` goes over the `title` setting (see [The tide command](../tools/cli.md)).
+- Startup uses `--scene` first, then `startScene`, then `Main` (see [Matches](../multiplayer/matches.md#starting-a-match-from-tide-run)).
 
 ## Logging and asserting
 
