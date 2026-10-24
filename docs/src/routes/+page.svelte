@@ -18,6 +18,16 @@
     let place: HTMLElement;
     let shown = $state(false);
     let full = $state('/earth/');
+    // Bigger: the frame over the whole page, as it is (no new page, so the game goes on where it was)
+    let big = $state(false);
+    $effect(() => {
+        document.body.style.overflow = big ? 'hidden' : '';
+        const out = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') big = false;
+        };
+        if (big) document.addEventListener('keydown', out);
+        return () => document.removeEventListener('keydown', out);
+    });
     onMount(() => {
         if (!eager()) return;
         let frame: HTMLIFrameElement | undefined;
@@ -104,11 +114,17 @@
             </div>
         </div>
         <div class="image">
-            <div class="earth" class:shown bind:this={place}>
-                <img src="/favicon.svg" alt="" width="320" height="320" />
+            <div class="slot">
+                <div class="earth" class:shown class:big bind:this={place}>
+                    <img src="/favicon.svg" alt="" width="320" height="320" />
+                </div>
             </div>
+            {#if big}
+                <button type="button" class="backdrop" aria-label="Back to the page" onclick={() => (big = false)}></button>
+                <button type="button" class="shrink" onclick={() => (big = false)}>Close ✕</button>
+            {/if}
             {#if shown}
-                <p class="caption">Live: click a town to walk among whoever's there. <a href={full} target="_blank">Full screen</a></p>
+                <p class="caption">Live: visit a town, meet whoever's there. <button type="button" class="expand" onclick={() => (big = true)}>Expand</button> · <a href={full} target="_blank">New tab</a></p>
             {/if}
         </div>
     </section>
@@ -222,6 +238,12 @@
         width: 360px;
     }
 
+    /* Keeps the frame's place in the hero while it's over the whole page */
+    .slot {
+        width: 100%;
+        aspect-ratio: 1;
+    }
+
     .earth {
         position: relative;
         display: grid;
@@ -260,6 +282,49 @@
 
     .earth.shown :global(iframe) {
         opacity: 1;
+    }
+
+    .earth.big {
+        position: fixed;
+        inset: 4vh 4vw;
+        z-index: 101;
+        width: auto;
+        aspect-ratio: auto;
+        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+    }
+
+    .backdrop {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        border: 0;
+        background: rgba(0, 0, 0, 0.6);
+        cursor: zoom-out;
+    }
+
+    .shrink {
+        position: fixed;
+        top: calc(4vh + 10px);
+        left: 50%;
+        z-index: 102;
+        transform: translateX(-50%);
+        padding: 4px 14px;
+        border: 0;
+        border-radius: 14px;
+        background: rgba(13, 13, 16, 0.7);
+        color: #eeeef0;
+        font: inherit;
+        font-size: 13px;
+        cursor: pointer;
+    }
+
+    .expand {
+        padding: 0;
+        border: 0;
+        background: none;
+        color: var(--brand-1);
+        font: inherit;
+        cursor: pointer;
     }
 
     .caption {
@@ -355,6 +420,15 @@
         .image {
             width: 100%;
             max-width: 420px;
+        }
+
+        .earth.big {
+            inset: 0;
+            border-radius: 0;
+        }
+
+        .shrink {
+            top: 10px;
         }
 
         .feature {

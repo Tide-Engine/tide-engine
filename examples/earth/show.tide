@@ -35,6 +35,7 @@ local singleton Pilot
     int arrived = -1;   // ...the move the camera last turned for
     int landed;         // ...the last move it took
     float settle;       // Seconds since: a view sees it blended between ticks until it has stood a moment
+    float waiting;      // Seconds the walk has waited for the walker to get to its town
     float facing;
     float2 spot;
     float height;
@@ -172,8 +173,12 @@ view Buttons(mut Pilot pilot)
     if (pilot.walking)
     {
         if (GUI.Button(Rect(Screen.width - 104, 44, 94, 28), "Globe")) pilot.walking = false;
-        if (GUI.Button(Rect(Screen.width - 104, Screen.height - 38, 94, 28), "Wave")) pilot.waving = 0.15;
-        if (GUI.Button(Rect(Screen.width - 204, Screen.height - 38, 94, 28), "Jump")) pilot.jumping = 0.15;
+        // Only in a town: on the way there they'd do nothing
+        if (pilot.blend > 0.5)
+        {
+            if (GUI.Button(Rect(Screen.width - 104, Screen.height - 38, 94, 28), "Wave")) pilot.waving = 0.15;
+            if (GUI.Button(Rect(Screen.width - 204, Screen.height - 38, 94, 28), "Jump")) pilot.jumping = 0.15;
+        }
     }
     else if (pilot.had && pilot.at >= 0)
     {
@@ -186,6 +191,13 @@ view Mine(Walker walker, mut Pilot pilot, with ownership)
 {
     pilot.mine = true;
     pilot.me = this;
+    // A walker that took more requests than this page made (this machine's player came back to it, as a page that
+    // was reloaded or put back in its frame does): go on from its count, or a new request would read as an old one
+    if (walker.moves > pilot.moves)
+    {
+        pilot.moves = walker.moves;
+        if (walker.city >= 0) pilot.city = walker.city;
+    }
     pilot.at = walker.city;
     pilot.facing = walker.facing;
     pilot.landed = walker.moves;
@@ -254,6 +266,13 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
     // The walk starts once the walker is in the city its player picked, looking the way it does
     bool there = pilot.at == pilot.city && pilot.city >= 0;
     pilot.settle = there && pilot.landed == pilot.moves ? pilot.settle + dt : 0;
+    // Still not there after a while (a request the world never had): ask again
+    pilot.waiting = pilot.walking && !there && pilot.city >= 0 ? pilot.waiting + dt : 0;
+    if (pilot.waiting > 6)
+    {
+        pilot.moves = Math.Max(pilot.moves, pilot.landed) + 1;
+        pilot.waiting = 0;
+    }
     if (pilot.settle > 0.2 && pilot.arrived != pilot.moves)
     {
         pilot.arrived = pilot.moves;
@@ -635,7 +654,8 @@ view Picture(mut Scenery scenery, mut Pilot pilot, Shapes shapes, Roster roster)
                 string label = here > 0 ? $"{Name(city)} · {here}" : Name(city);
                 Draw.Text(label, float2(spot.x + 9, spot.y - 7), 12, here > 0 ? bright : quiet);
             }
-            string hint = pilot.had && pilot.at >= 0 ? "Click a town to go there, or Back" : "Click a town to visit it";
+            string hint = pilot.walking && pilot.city >= 0 ? $"Going to {Name(pilot.city)}..."
+                        : pilot.had && pilot.at >= 0 ? "Click a town to go there, or Back" : "Click a town to visit it";
             Backed(hint, float2(Screen.width * 0.5 - Draw.MeasureText(hint, 13).x * 0.5, Screen.height - 38), 13, bright);
         }
         else if (pilot.at >= 0)
