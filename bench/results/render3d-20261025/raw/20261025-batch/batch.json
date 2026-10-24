@@ -1,0 +1,60 @@
+{
+  "revision": "a1d962c99d93657d23f79ba54b0c836f635905e8",
+  "startedUtc": "2026-10-24T23:27:32.1999124Z",
+  "maximumSeconds": 180,
+  "stopAtSeconds": 145,
+  "state": "completed",
+  "runs": [
+    {
+      "label": "20261025-mesh",
+      "state": "completed",
+      "startedSeconds": 0.0145823,
+      "exitCode": 0,
+      "pid": 73764,
+      "finishedSeconds": 28.682274
+    },
+    {
+      "label": "20261025-light1",
+      "state": "completed",
+      "startedSeconds": 28.6875853,
+      "exitCode": 0,
+      "pid": 80248,
+      "finishedSeconds": 41.4235988
+    },
+    {
+      "label": "20261025-light8",
+      "state": "completed",
+      "startedSeconds": 41.4298058,
+      "exitCode": 0,
+      "pid": 12776,
+      "finishedSeconds": 54.6169596
+    },
+    {
+      "label": "20261025-light32",
+      "state": "completed",
+      "startedSeconds": 54.6192895,
+      "exitCode": 0,
+      "pid": 55940,
+      "finishedSeconds": 67.4228579
+    },
+    {
+      "label": "20261025-point",
+      "state": "completed",
+      "startedSeconds": 67.4255547,
+      "exitCode": 0,
+      "pid": 52260,
+      "finishedSeconds": 82.9638071
+    },
+    {
+      "label": "20261025-mixed",
+      "state": "completed",
+      "startedSeconds": 82.9674524,
+      "exitCode": 0,
+      "pid": 32160,
+      "finishedSeconds": 99.6831413
+    }
+  ],
+  "absoluteDeadlineUtc": "2026-10-24T23:30:00.0000000Z",
+  "wallSeconds": 99.6877061,
+  "finishedUtc": "2026-10-24T23:29:11.8955676Z"
+}

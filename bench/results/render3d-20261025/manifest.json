@@ -1,0 +1,981 @@
+{
+  "format": 1,
+  "sourceCommit": "a1d962c99d93657d23f79ba54b0c836f635905e8",
+  "groups": [
+    "20261025-mesh",
+    "20261025-light1",
+    "20261025-light8",
+    "20261025-light32",
+    "20261025-point",
+    "20261025-mixed"
+  ],
+  "binaryIdentity": {
+    "bytes": 1499648,
+    "sha256": "9d3ab3ba54b734334b87e9276c331fc1bf97177583ae71802e19ae4d424d1ce9",
+    "included": false
+  },
+  "sourceTreeVerification": {
+    "method": "git show COMMIT:path raw blob bytes; matched measurement metadata exactly",
+    "commit": "a1d962c99d93657d23f79ba54b0c836f635905e8",
+    "files": [
+      {
+        "path": "bench/render3d/game.tide",
+        "sha256": "ff3219d63073b1e3b4b9bbc756445dc822ca4b71c690949a13732d14c132996d",
+        "bytes": 3807,
+        "gitTreeVerified": true
+      },
+      {
+        "path": "bench/render3d/main.c",
+        "sha256": "f89a0eeb6b8d76305437864e140c34a0c34bff8042bbed82bd2daab2c1771b5d",
+        "bytes": 23363,
+        "gitTreeVerified": true
+      },
+      {
+        "path": "bench/render3d/direct.c",
+        "sha256": "81c9c163643ffcad020482821d88286562098ed25ca668eea40f30474a7bfc33",
+        "bytes": 33269,
+        "gitTreeVerified": true
+      },
+      {
+        "path": "bench/render3d/direct.h",
+        "sha256": "d875e4ff0eae157228d5c16cd1ac3418115fb86095683bf28f5b3f4bd575a507",
+        "bytes": 1188,
+        "gitTreeVerified": true
+      },
+      {
+        "path": "bench/render3d/mesh.obj",
+        "sha256": "071fafffd9372ec2b8ee04769aa8148fef8fdcd15584fbc6dde3b200216aa182",
+        "bytes": 698,
+        "gitTreeVerified": true
+      },
+      {
+        "path": "bench/render3d/run.ps1",
+        "sha256": "634d80a4c3a2aabd139080eb0dacda4ffb9fd5da93449c15c6d96d25927532cc",
+        "bytes": 21501,
+        "gitTreeVerified": true
+      }
+    ]
+  },
+  "files": [
+    {
+      "path": "raw/20261025-batch/20261025-light1.err",
+      "source": "build/render3d-measurements/20261025-batch/20261025-light1.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-batch/20261025-light1.log",
+      "source": "build/render3d-measurements/20261025-batch/20261025-light1.log",
+      "bytes": 438,
+      "sha256": "1e9f8bfcaef4cdeb1d4693f4a57619c10b4a77cdb2146baa24b1691d65bae983"
+    },
+    {
+      "path": "raw/20261025-batch/20261025-light32.err",
+      "source": "build/render3d-measurements/20261025-batch/20261025-light32.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-batch/20261025-light32.log",
+      "source": "build/render3d-measurements/20261025-batch/20261025-light32.log",
+      "bytes": 445,
+      "sha256": "54a3d85635b54f7b5d7e5a98aa92a4490fa8803e1c35fd6f6dcc15974edeb190"
+    },
+    {
+      "path": "raw/20261025-batch/20261025-light8.err",
+      "source": "build/render3d-measurements/20261025-batch/20261025-light8.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-batch/20261025-light8.log",
+      "source": "build/render3d-measurements/20261025-batch/20261025-light8.log",
+      "bytes": 438,
+      "sha256": "e4160740488079a6a2e084681f73e4a85e7dcc8fd37e6ae75e56bae2c9526950"
+    },
+    {
+      "path": "raw/20261025-batch/20261025-mesh.err",
+      "source": "build/render3d-measurements/20261025-batch/20261025-mesh.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-batch/20261025-mesh.log",
+      "source": "build/render3d-measurements/20261025-batch/20261025-mesh.log",
+      "bytes": 424,
+      "sha256": "679873d50cfd8523f57bcca51386d9d86c41a7877a61c902b55127ca6f332939"
+    },
+    {
+      "path": "raw/20261025-batch/20261025-mixed.err",
+      "source": "build/render3d-measurements/20261025-batch/20261025-mixed.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-batch/20261025-mixed.log",
+      "source": "build/render3d-measurements/20261025-batch/20261025-mixed.log",
+      "bytes": 431,
+      "sha256": "432624966fbafc851fa0f40486cb9840da53b3a4994e09d4895b459fd5036537"
+    },
+    {
+      "path": "raw/20261025-batch/20261025-point.err",
+      "source": "build/render3d-measurements/20261025-batch/20261025-point.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-batch/20261025-point.log",
+      "source": "build/render3d-measurements/20261025-batch/20261025-point.log",
+      "bytes": 431,
+      "sha256": "570026b2131238615a92b58ed14bd38622faafc3ae3fe9c91e5a105335562a6d"
+    },
+    {
+      "path": "raw/20261025-batch/batch.json",
+      "source": "build/render3d-measurements/20261025-batch/batch.json",
+      "bytes": 1516,
+      "sha256": "13bcc6c52f8d8e9ed3bf086df04aa4ccd93f5092292f269f8eea9fefcad214fc"
+    },
+    {
+      "path": "raw/20261025-light1/20261025-light1-vulkan-cached_direct-r1.err",
+      "source": "build/render3d-measurements/20261025-light1/20261025-light1-vulkan-cached_direct-r1.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-light1/20261025-light1-vulkan-cached_direct-r1.jsonl",
+      "source": "build/render3d-measurements/20261025-light1/20261025-light1-vulkan-cached_direct-r1.jsonl",
+      "bytes": 1797,
+      "sha256": "38713025011566fea2f983cb063ab041265985b71f830e0e83fee5e8cbb13aad"
+    },
+    {
+      "path": "raw/20261025-light1/20261025-light1-vulkan-cached_direct-r1.log",
+      "source": "build/render3d-measurements/20261025-light1/20261025-light1-vulkan-cached_direct-r1.log",
+      "bytes": 311,
+      "sha256": "bf528ba19ca5bce52ea171fb2d9a827ce366d31e29118f579aee0ff54d31e51a"
+    },
+    {
+      "path": "raw/20261025-light1/20261025-light1-vulkan-cached_direct-r2.err",
+      "source": "build/render3d-measurements/20261025-light1/20261025-light1-vulkan-cached_direct-r2.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-light1/20261025-light1-vulkan-cached_direct-r2.jsonl",
+      "source": "build/render3d-measurements/20261025-light1/20261025-light1-vulkan-cached_direct-r2.jsonl",
+      "bytes": 1796,
+      "sha256": "6a5981e1bfa74f098a656066879a14c96aaa4f6f75fe48bf4fded719b3bed156"
+    },
+    {
+      "path": "raw/20261025-light1/20261025-light1-vulkan-cached_direct-r2.log",
+      "source": "build/render3d-measurements/20261025-light1/20261025-light1-vulkan-cached_direct-r2.log",
+      "bytes": 311,
+      "sha256": "764d1413e0a0a02977baee74b0de617603ac6408f8587eded02f35171bb3ea2c"
+    },
+    {
+      "path": "raw/20261025-light1/20261025-light1-vulkan-cached_direct-r3.err",
+      "source": "build/render3d-measurements/20261025-light1/20261025-light1-vulkan-cached_direct-r3.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-light1/20261025-light1-vulkan-cached_direct-r3.jsonl",
+      "source": "build/render3d-measurements/20261025-light1/20261025-light1-vulkan-cached_direct-r3.jsonl",
+      "bytes": 1800,
+      "sha256": "153c9e53bc122508452c0acf7bc9e292b5e6b04a7abb21a5e7991d585238e2a4"
+    },
+    {
+      "path": "raw/20261025-light1/20261025-light1-vulkan-cached_direct-r3.log",
+      "source": "build/render3d-measurements/20261025-light1/20261025-light1-vulkan-cached_direct-r3.log",
+      "bytes": 311,
+      "sha256": "76759237f52994b61a56728322c9c1364f81ae94e9d1d118602ffcf759b411f5"
+    },
+    {
+      "path": "raw/20261025-light1/20261025-light1-vulkan-package-r1.err",
+      "source": "build/render3d-measurements/20261025-light1/20261025-light1-vulkan-package-r1.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-light1/20261025-light1-vulkan-package-r1.jsonl",
+      "source": "build/render3d-measurements/20261025-light1/20261025-light1-vulkan-package-r1.jsonl",
+      "bytes": 1786,
+      "sha256": "b4311bad830d448b3e7d02fe5ebb7c9e271025565b977d6ca5f616c3ad491516"
+    },
+    {
+      "path": "raw/20261025-light1/20261025-light1-vulkan-package-r1.log",
+      "source": "build/render3d-measurements/20261025-light1/20261025-light1-vulkan-package-r1.log",
+      "bytes": 305,
+      "sha256": "dd55523d6eb86d364caf7006ee5cdd810d444b6bd3e9fef0c10ee99c52eca242"
+    },
+    {
+      "path": "raw/20261025-light1/20261025-light1-vulkan-package-r2.err",
+      "source": "build/render3d-measurements/20261025-light1/20261025-light1-vulkan-package-r2.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-light1/20261025-light1-vulkan-package-r2.jsonl",
+      "source": "build/render3d-measurements/20261025-light1/20261025-light1-vulkan-package-r2.jsonl",
+      "bytes": 1789,
+      "sha256": "aa458f44b9d24d6dc7efcc0eeff95d0f7a3ca086aec3aca92ba52440f787b35f"
+    },
+    {
+      "path": "raw/20261025-light1/20261025-light1-vulkan-package-r2.log",
+      "source": "build/render3d-measurements/20261025-light1/20261025-light1-vulkan-package-r2.log",
+      "bytes": 305,
+      "sha256": "fc1c3b6e435555fcef7faceb7de187a7925a27a31f68638d95397f303b1f0821"
+    },
+    {
+      "path": "raw/20261025-light1/20261025-light1-vulkan-package-r3.err",
+      "source": "build/render3d-measurements/20261025-light1/20261025-light1-vulkan-package-r3.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-light1/20261025-light1-vulkan-package-r3.jsonl",
+      "source": "build/render3d-measurements/20261025-light1/20261025-light1-vulkan-package-r3.jsonl",
+      "bytes": 1782,
+      "sha256": "891eef0b901d3c6cea3f4fdad6908d91b20a9aaa0567ed05965f0206b37b0fd9"
+    },
+    {
+      "path": "raw/20261025-light1/20261025-light1-vulkan-package-r3.log",
+      "source": "build/render3d-measurements/20261025-light1/20261025-light1-vulkan-package-r3.log",
+      "bytes": 305,
+      "sha256": "0eadec4f8f750ea9e4d41db1170a9d5bfc36cfafcd8977a10030f247baf601f9"
+    },
+    {
+      "path": "raw/20261025-light1/gpu-info.csv",
+      "source": "build/render3d-measurements/20261025-light1/gpu-info.csv",
+      "bytes": 61,
+      "sha256": "bea9878327360b67025b195e19af10364680bff2d236284bcdcda234ecab5769"
+    },
+    {
+      "path": "raw/20261025-light1/gpu-info.err",
+      "source": "build/render3d-measurements/20261025-light1/gpu-info.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-light1/metadata.json",
+      "source": "build/render3d-measurements/20261025-light1/metadata.json",
+      "bytes": 21297,
+      "sha256": "a57c7b578c967f4755107ad2adc59105e161fd3e5ba163e76ff18402ca390df7"
+    },
+    {
+      "path": "raw/20261025-light32/20261025-light32-vulkan-cached_direct-r1.err",
+      "source": "build/render3d-measurements/20261025-light32/20261025-light32-vulkan-cached_direct-r1.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-light32/20261025-light32-vulkan-cached_direct-r1.jsonl",
+      "source": "build/render3d-measurements/20261025-light32/20261025-light32-vulkan-cached_direct-r1.jsonl",
+      "bytes": 1802,
+      "sha256": "81e339b5ae16f47206a187be33469624c10bdc16d9cc2d319fa5f1ad933e74fa"
+    },
+    {
+      "path": "raw/20261025-light32/20261025-light32-vulkan-cached_direct-r1.log",
+      "source": "build/render3d-measurements/20261025-light32/20261025-light32-vulkan-cached_direct-r1.log",
+      "bytes": 312,
+      "sha256": "4c8dfdf94805a996e8b84390e4a86b3e36a16c05d223c4a07858260cfe0d2a21"
+    },
+    {
+      "path": "raw/20261025-light32/20261025-light32-vulkan-cached_direct-r2.err",
+      "source": "build/render3d-measurements/20261025-light32/20261025-light32-vulkan-cached_direct-r2.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-light32/20261025-light32-vulkan-cached_direct-r2.jsonl",
+      "source": "build/render3d-measurements/20261025-light32/20261025-light32-vulkan-cached_direct-r2.jsonl",
+      "bytes": 1796,
+      "sha256": "46d752c6cede4c47bc042b7d47640f613cfda5d9587f707c08d5d6d4af6f369f"
+    },
+    {
+      "path": "raw/20261025-light32/20261025-light32-vulkan-cached_direct-r2.log",
+      "source": "build/render3d-measurements/20261025-light32/20261025-light32-vulkan-cached_direct-r2.log",
+      "bytes": 312,
+      "sha256": "0b8f8ca052b2d7c2b739759052d3ae946303c5fade2473b7fa6db0d55ecd8538"
+    },
+    {
+      "path": "raw/20261025-light32/20261025-light32-vulkan-cached_direct-r3.err",
+      "source": "build/render3d-measurements/20261025-light32/20261025-light32-vulkan-cached_direct-r3.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-light32/20261025-light32-vulkan-cached_direct-r3.jsonl",
+      "source": "build/render3d-measurements/20261025-light32/20261025-light32-vulkan-cached_direct-r3.jsonl",
+      "bytes": 1802,
+      "sha256": "86731b4d5c27c55da3dbe7f7fac2461e5c625f30695897bd6b58855ab5844893"
+    },
+    {
+      "path": "raw/20261025-light32/20261025-light32-vulkan-cached_direct-r3.log",
+      "source": "build/render3d-measurements/20261025-light32/20261025-light32-vulkan-cached_direct-r3.log",
+      "bytes": 312,
+      "sha256": "fedb754ee0d9df81a6783d1364e82387600c39f50e15cdc0897c556b16122fe4"
+    },
+    {
+      "path": "raw/20261025-light32/20261025-light32-vulkan-package-r1.err",
+      "source": "build/render3d-measurements/20261025-light32/20261025-light32-vulkan-package-r1.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-light32/20261025-light32-vulkan-package-r1.jsonl",
+      "source": "build/render3d-measurements/20261025-light32/20261025-light32-vulkan-package-r1.jsonl",
+      "bytes": 1789,
+      "sha256": "861febcef865b9ca27f368fda84c14cb9d80bc26afadf20e0b0933a00923dc95"
+    },
+    {
+      "path": "raw/20261025-light32/20261025-light32-vulkan-package-r1.log",
+      "source": "build/render3d-measurements/20261025-light32/20261025-light32-vulkan-package-r1.log",
+      "bytes": 306,
+      "sha256": "f8c084b3d10b01e97922b4ed2d0781ef71fb2ecbb6a52317eb32945169d40631"
+    },
+    {
+      "path": "raw/20261025-light32/20261025-light32-vulkan-package-r2.err",
+      "source": "build/render3d-measurements/20261025-light32/20261025-light32-vulkan-package-r2.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-light32/20261025-light32-vulkan-package-r2.jsonl",
+      "source": "build/render3d-measurements/20261025-light32/20261025-light32-vulkan-package-r2.jsonl",
+      "bytes": 1789,
+      "sha256": "c5080765540ed76fa6593c800cac28ea98902980f68d1d333ee89cf4dbe5d5c8"
+    },
+    {
+      "path": "raw/20261025-light32/20261025-light32-vulkan-package-r2.log",
+      "source": "build/render3d-measurements/20261025-light32/20261025-light32-vulkan-package-r2.log",
+      "bytes": 306,
+      "sha256": "1863c3f8ec4be6fc0474c559f0128cf7bae1609281f62e52973ab55128fbcb03"
+    },
+    {
+      "path": "raw/20261025-light32/20261025-light32-vulkan-package-r3.err",
+      "source": "build/render3d-measurements/20261025-light32/20261025-light32-vulkan-package-r3.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-light32/20261025-light32-vulkan-package-r3.jsonl",
+      "source": "build/render3d-measurements/20261025-light32/20261025-light32-vulkan-package-r3.jsonl",
+      "bytes": 1786,
+      "sha256": "9afcce9a300f979e6234c67ae51e308a83d23b9989e27be742dbe5c6e498f791"
+    },
+    {
+      "path": "raw/20261025-light32/20261025-light32-vulkan-package-r3.log",
+      "source": "build/render3d-measurements/20261025-light32/20261025-light32-vulkan-package-r3.log",
+      "bytes": 306,
+      "sha256": "9bba9e06d5d1f8144c3bc70a41ecb3cb5b0099e9de63ac4dcd7a6753808abe40"
+    },
+    {
+      "path": "raw/20261025-light32/gpu-info.csv",
+      "source": "build/render3d-measurements/20261025-light32/gpu-info.csv",
+      "bytes": 61,
+      "sha256": "bea9878327360b67025b195e19af10364680bff2d236284bcdcda234ecab5769"
+    },
+    {
+      "path": "raw/20261025-light32/gpu-info.err",
+      "source": "build/render3d-measurements/20261025-light32/gpu-info.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-light32/metadata.json",
+      "source": "build/render3d-measurements/20261025-light32/metadata.json",
+      "bytes": 21403,
+      "sha256": "49395d99175f8bd64efea524ee0ddb96bc95dda023a3c6e1b0bb033174300984"
+    },
+    {
+      "path": "raw/20261025-light8/20261025-light8-vulkan-cached_direct-r1.err",
+      "source": "build/render3d-measurements/20261025-light8/20261025-light8-vulkan-cached_direct-r1.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-light8/20261025-light8-vulkan-cached_direct-r1.jsonl",
+      "source": "build/render3d-measurements/20261025-light8/20261025-light8-vulkan-cached_direct-r1.jsonl",
+      "bytes": 1799,
+      "sha256": "0921450c1816b6191959ff3a06681d9f3caccc8a1165800592f4b0b87d42c9f7"
+    },
+    {
+      "path": "raw/20261025-light8/20261025-light8-vulkan-cached_direct-r1.log",
+      "source": "build/render3d-measurements/20261025-light8/20261025-light8-vulkan-cached_direct-r1.log",
+      "bytes": 311,
+      "sha256": "10fb474b2d5df615ea49806134fd1787a0f5f31b463cd066e46b1337b7277d1f"
+    },
+    {
+      "path": "raw/20261025-light8/20261025-light8-vulkan-cached_direct-r2.err",
+      "source": "build/render3d-measurements/20261025-light8/20261025-light8-vulkan-cached_direct-r2.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-light8/20261025-light8-vulkan-cached_direct-r2.jsonl",
+      "source": "build/render3d-measurements/20261025-light8/20261025-light8-vulkan-cached_direct-r2.jsonl",
+      "bytes": 1797,
+      "sha256": "954050dc18ca8497fb31b42f9bfa7633bc96f62785bb95df0de6b06785005c49"
+    },
+    {
+      "path": "raw/20261025-light8/20261025-light8-vulkan-cached_direct-r2.log",
+      "source": "build/render3d-measurements/20261025-light8/20261025-light8-vulkan-cached_direct-r2.log",
+      "bytes": 311,
+      "sha256": "997afdbb0702e31527fb608f857f49fd2bd228f73df0aa43173490ac8588388f"
+    },
+    {
+      "path": "raw/20261025-light8/20261025-light8-vulkan-cached_direct-r3.err",
+      "source": "build/render3d-measurements/20261025-light8/20261025-light8-vulkan-cached_direct-r3.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-light8/20261025-light8-vulkan-cached_direct-r3.jsonl",
+      "source": "build/render3d-measurements/20261025-light8/20261025-light8-vulkan-cached_direct-r3.jsonl",
+      "bytes": 1796,
+      "sha256": "5a52f758d33ccc6d96ff5f298339096de970255180e70b57a958207c7ea0a43a"
+    },
+    {
+      "path": "raw/20261025-light8/20261025-light8-vulkan-cached_direct-r3.log",
+      "source": "build/render3d-measurements/20261025-light8/20261025-light8-vulkan-cached_direct-r3.log",
+      "bytes": 311,
+      "sha256": "4a102c8acbec95eac8f5c1d5428a73830ed9a09d0ef299f4680fcf59ce3091e5"
+    },
+    {
+      "path": "raw/20261025-light8/20261025-light8-vulkan-package-r1.err",
+      "source": "build/render3d-measurements/20261025-light8/20261025-light8-vulkan-package-r1.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-light8/20261025-light8-vulkan-package-r1.jsonl",
+      "source": "build/render3d-measurements/20261025-light8/20261025-light8-vulkan-package-r1.jsonl",
+      "bytes": 1786,
+      "sha256": "43acb957f4122c5e98f92bc9ae71ca66edc137f14c40b3df32c841f8f24cee2b"
+    },
+    {
+      "path": "raw/20261025-light8/20261025-light8-vulkan-package-r1.log",
+      "source": "build/render3d-measurements/20261025-light8/20261025-light8-vulkan-package-r1.log",
+      "bytes": 305,
+      "sha256": "55bd80936add55b6f92a0445976e734f9be9b0d9234537b47ea93371ff24b2bb"
+    },
+    {
+      "path": "raw/20261025-light8/20261025-light8-vulkan-package-r2.err",
+      "source": "build/render3d-measurements/20261025-light8/20261025-light8-vulkan-package-r2.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-light8/20261025-light8-vulkan-package-r2.jsonl",
+      "source": "build/render3d-measurements/20261025-light8/20261025-light8-vulkan-package-r2.jsonl",
+      "bytes": 1788,
+      "sha256": "73249bdef8778baed38286488290be4c0d1c0c1cc672572dc899664c0b6b470f"
+    },
+    {
+      "path": "raw/20261025-light8/20261025-light8-vulkan-package-r2.log",
+      "source": "build/render3d-measurements/20261025-light8/20261025-light8-vulkan-package-r2.log",
+      "bytes": 305,
+      "sha256": "8d468bbe7a3096a1bdd5a355b464c02e44b19dd9fa1a449fc4db63436abff375"
+    },
+    {
+      "path": "raw/20261025-light8/20261025-light8-vulkan-package-r3.err",
+      "source": "build/render3d-measurements/20261025-light8/20261025-light8-vulkan-package-r3.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-light8/20261025-light8-vulkan-package-r3.jsonl",
+      "source": "build/render3d-measurements/20261025-light8/20261025-light8-vulkan-package-r3.jsonl",
+      "bytes": 1786,
+      "sha256": "7aa53f3d6b88a496a95fa55416d69fcce4109f58bb4f4bed90742ac63e103ea0"
+    },
+    {
+      "path": "raw/20261025-light8/20261025-light8-vulkan-package-r3.log",
+      "source": "build/render3d-measurements/20261025-light8/20261025-light8-vulkan-package-r3.log",
+      "bytes": 305,
+      "sha256": "cc475bf71967a627d75e4f3d0c66ff980c4af556bcc8349920194117257c2451"
+    },
+    {
+      "path": "raw/20261025-light8/gpu-info.csv",
+      "source": "build/render3d-measurements/20261025-light8/gpu-info.csv",
+      "bytes": 61,
+      "sha256": "bea9878327360b67025b195e19af10364680bff2d236284bcdcda234ecab5769"
+    },
+    {
+      "path": "raw/20261025-light8/gpu-info.err",
+      "source": "build/render3d-measurements/20261025-light8/gpu-info.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-light8/metadata.json",
+      "source": "build/render3d-measurements/20261025-light8/metadata.json",
+      "bytes": 21295,
+      "sha256": "f33664acbee9fe26d097ce166639a1326bf3e8c181a82d2d72939896b29c7124"
+    },
+    {
+      "path": "raw/20261025-mesh/20261025-mesh-vulkan-cached_direct-r1.err",
+      "source": "build/render3d-measurements/20261025-mesh/20261025-mesh-vulkan-cached_direct-r1.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-mesh/20261025-mesh-vulkan-cached_direct-r1.jsonl",
+      "source": "build/render3d-measurements/20261025-mesh/20261025-mesh-vulkan-cached_direct-r1.jsonl",
+      "bytes": 10759,
+      "sha256": "6f030cf480a5058c0c982d7011da57d01b99c4bf83deb30dbb1e07bb7022d06b"
+    },
+    {
+      "path": "raw/20261025-mesh/20261025-mesh-vulkan-cached_direct-r1.log",
+      "source": "build/render3d-measurements/20261025-mesh/20261025-mesh-vulkan-cached_direct-r1.log",
+      "bytes": 1339,
+      "sha256": "272ba36bcd11810b5cfe757fa8cfd01afd183e5fc071381d478d87cbf9ab2f14"
+    },
+    {
+      "path": "raw/20261025-mesh/20261025-mesh-vulkan-cached_direct-r2.err",
+      "source": "build/render3d-measurements/20261025-mesh/20261025-mesh-vulkan-cached_direct-r2.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-mesh/20261025-mesh-vulkan-cached_direct-r2.jsonl",
+      "source": "build/render3d-measurements/20261025-mesh/20261025-mesh-vulkan-cached_direct-r2.jsonl",
+      "bytes": 10764,
+      "sha256": "d127b81bfc037c9ab0477dedede386be84a3e271c747a229851efdd13d3a953c"
+    },
+    {
+      "path": "raw/20261025-mesh/20261025-mesh-vulkan-cached_direct-r2.log",
+      "source": "build/render3d-measurements/20261025-mesh/20261025-mesh-vulkan-cached_direct-r2.log",
+      "bytes": 1339,
+      "sha256": "b78a68e975331eac5f0635f482798fd515d5c1f0479c6b2c4db8506d78b8b179"
+    },
+    {
+      "path": "raw/20261025-mesh/20261025-mesh-vulkan-cached_direct-r3.err",
+      "source": "build/render3d-measurements/20261025-mesh/20261025-mesh-vulkan-cached_direct-r3.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-mesh/20261025-mesh-vulkan-cached_direct-r3.jsonl",
+      "source": "build/render3d-measurements/20261025-mesh/20261025-mesh-vulkan-cached_direct-r3.jsonl",
+      "bytes": 10763,
+      "sha256": "55bf562c085af0060b2874bb49d17f037d63c29a39e4a184ad1a73ec1d0bbb38"
+    },
+    {
+      "path": "raw/20261025-mesh/20261025-mesh-vulkan-cached_direct-r3.log",
+      "source": "build/render3d-measurements/20261025-mesh/20261025-mesh-vulkan-cached_direct-r3.log",
+      "bytes": 1339,
+      "sha256": "4e05f0e7d32edd219d9c7a589c45e154b76850bbc4fc10b7a5f9eccfe3ae73b6"
+    },
+    {
+      "path": "raw/20261025-mesh/20261025-mesh-vulkan-package-r1.err",
+      "source": "build/render3d-measurements/20261025-mesh/20261025-mesh-vulkan-package-r1.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-mesh/20261025-mesh-vulkan-package-r1.jsonl",
+      "source": "build/render3d-measurements/20261025-mesh/20261025-mesh-vulkan-package-r1.jsonl",
+      "bytes": 10699,
+      "sha256": "49eff208bb7dda79dde4f31e9e466d6913c70d8d8827c5dd9605c970a5922d91"
+    },
+    {
+      "path": "raw/20261025-mesh/20261025-mesh-vulkan-package-r1.log",
+      "source": "build/render3d-measurements/20261025-mesh/20261025-mesh-vulkan-package-r1.log",
+      "bytes": 1303,
+      "sha256": "4fe12ca3e711d307f566b711c665cb81c966fb6695efc3e318ebc1d78c016b12"
+    },
+    {
+      "path": "raw/20261025-mesh/20261025-mesh-vulkan-package-r2.err",
+      "source": "build/render3d-measurements/20261025-mesh/20261025-mesh-vulkan-package-r2.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-mesh/20261025-mesh-vulkan-package-r2.jsonl",
+      "source": "build/render3d-measurements/20261025-mesh/20261025-mesh-vulkan-package-r2.jsonl",
+      "bytes": 10696,
+      "sha256": "0ba0c5ce26c8cf86e781cb6a548e0e9958087d9fa5422899ccd37ff127636f6a"
+    },
+    {
+      "path": "raw/20261025-mesh/20261025-mesh-vulkan-package-r2.log",
+      "source": "build/render3d-measurements/20261025-mesh/20261025-mesh-vulkan-package-r2.log",
+      "bytes": 1303,
+      "sha256": "703b11b3c1630ae687f4a46e5977e2187aa501e561d1b3417600e8ecafb972b3"
+    },
+    {
+      "path": "raw/20261025-mesh/20261025-mesh-vulkan-package-r3.err",
+      "source": "build/render3d-measurements/20261025-mesh/20261025-mesh-vulkan-package-r3.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-mesh/20261025-mesh-vulkan-package-r3.jsonl",
+      "source": "build/render3d-measurements/20261025-mesh/20261025-mesh-vulkan-package-r3.jsonl",
+      "bytes": 10695,
+      "sha256": "2454562f6aed415f7f317664aa8470891beb42a4827986bcfdc9b2ca04987fcd"
+    },
+    {
+      "path": "raw/20261025-mesh/20261025-mesh-vulkan-package-r3.log",
+      "source": "build/render3d-measurements/20261025-mesh/20261025-mesh-vulkan-package-r3.log",
+      "bytes": 1303,
+      "sha256": "33e87ffa458569a8539e24f57d24053e240b70fee8fa99db8d113ebb3b57370a"
+    },
+    {
+      "path": "raw/20261025-mesh/gpu-info.csv",
+      "source": "build/render3d-measurements/20261025-mesh/gpu-info.csv",
+      "bytes": 61,
+      "sha256": "bea9878327360b67025b195e19af10364680bff2d236284bcdcda234ecab5769"
+    },
+    {
+      "path": "raw/20261025-mesh/gpu-info.err",
+      "source": "build/render3d-measurements/20261025-mesh/gpu-info.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-mesh/metadata.json",
+      "source": "build/render3d-measurements/20261025-mesh/metadata.json",
+      "bytes": 21211,
+      "sha256": "a24083a2e9deea629b920252bb143a7d5b3712fbb1f904aaa167bada9b3cf07e"
+    },
+    {
+      "path": "raw/20261025-mixed/20261025-mixed-vulkan-cached_direct-r1.err",
+      "source": "build/render3d-measurements/20261025-mixed/20261025-mixed-vulkan-cached_direct-r1.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-mixed/20261025-mixed-vulkan-cached_direct-r1.jsonl",
+      "source": "build/render3d-measurements/20261025-mixed/20261025-mixed-vulkan-cached_direct-r1.jsonl",
+      "bytes": 3592,
+      "sha256": "4269272905baf222cb11a178902d1db7012d421aeb1731bb0087e357a5541d1e"
+    },
+    {
+      "path": "raw/20261025-mixed/20261025-mixed-vulkan-cached_direct-r1.log",
+      "source": "build/render3d-measurements/20261025-mixed/20261025-mixed-vulkan-cached_direct-r1.log",
+      "bytes": 516,
+      "sha256": "75d50bc19d5b65a85ceac2ecc9dbb7783e3a6c20ff5bd4d1b79f6588946bf337"
+    },
+    {
+      "path": "raw/20261025-mixed/20261025-mixed-vulkan-cached_direct-r2.err",
+      "source": "build/render3d-measurements/20261025-mixed/20261025-mixed-vulkan-cached_direct-r2.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-mixed/20261025-mixed-vulkan-cached_direct-r2.jsonl",
+      "source": "build/render3d-measurements/20261025-mixed/20261025-mixed-vulkan-cached_direct-r2.jsonl",
+      "bytes": 3595,
+      "sha256": "7646454f22e2a1bb1a6d7a58c1dad9c615a736982c83efa8c5398c5c0db3ce83"
+    },
+    {
+      "path": "raw/20261025-mixed/20261025-mixed-vulkan-cached_direct-r2.log",
+      "source": "build/render3d-measurements/20261025-mixed/20261025-mixed-vulkan-cached_direct-r2.log",
+      "bytes": 516,
+      "sha256": "f3632e5ca6a44609946aaf85e5f32f6e3ea4fa714166a1ad06de953b81908023"
+    },
+    {
+      "path": "raw/20261025-mixed/20261025-mixed-vulkan-cached_direct-r3.err",
+      "source": "build/render3d-measurements/20261025-mixed/20261025-mixed-vulkan-cached_direct-r3.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-mixed/20261025-mixed-vulkan-cached_direct-r3.jsonl",
+      "source": "build/render3d-measurements/20261025-mixed/20261025-mixed-vulkan-cached_direct-r3.jsonl",
+      "bytes": 3599,
+      "sha256": "4b55038f3b9cb5bade2931650501ce715ade36eb05652a53fc57ab7fd027c99e"
+    },
+    {
+      "path": "raw/20261025-mixed/20261025-mixed-vulkan-cached_direct-r3.log",
+      "source": "build/render3d-measurements/20261025-mixed/20261025-mixed-vulkan-cached_direct-r3.log",
+      "bytes": 516,
+      "sha256": "b4c04341d4a34e4b20bffd419e7d34144e1dbe5a11b835c3f52512bbd0dc5101"
+    },
+    {
+      "path": "raw/20261025-mixed/20261025-mixed-vulkan-package-r1.err",
+      "source": "build/render3d-measurements/20261025-mixed/20261025-mixed-vulkan-package-r1.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-mixed/20261025-mixed-vulkan-package-r1.jsonl",
+      "source": "build/render3d-measurements/20261025-mixed/20261025-mixed-vulkan-package-r1.jsonl",
+      "bytes": 3576,
+      "sha256": "fd4ba253de320c3cfad52ccc6d9560989d587b84c1b533942992f4b6357c38c8"
+    },
+    {
+      "path": "raw/20261025-mixed/20261025-mixed-vulkan-package-r1.log",
+      "source": "build/render3d-measurements/20261025-mixed/20261025-mixed-vulkan-package-r1.log",
+      "bytes": 504,
+      "sha256": "96da26701469c0031d5f8158dbf92170f91eb501b185b64ebaa531ff026bd14b"
+    },
+    {
+      "path": "raw/20261025-mixed/20261025-mixed-vulkan-package-r2.err",
+      "source": "build/render3d-measurements/20261025-mixed/20261025-mixed-vulkan-package-r2.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-mixed/20261025-mixed-vulkan-package-r2.jsonl",
+      "source": "build/render3d-measurements/20261025-mixed/20261025-mixed-vulkan-package-r2.jsonl",
+      "bytes": 3572,
+      "sha256": "2aa67505a6f34561a1ccde5241684625a135a12460065d987e24d1bbab7aee6c"
+    },
+    {
+      "path": "raw/20261025-mixed/20261025-mixed-vulkan-package-r2.log",
+      "source": "build/render3d-measurements/20261025-mixed/20261025-mixed-vulkan-package-r2.log",
+      "bytes": 504,
+      "sha256": "1428107f90ab4b7f7ecabdca0ac1c2553c08633ec1dc830acc3f3dc04366e042"
+    },
+    {
+      "path": "raw/20261025-mixed/20261025-mixed-vulkan-package-r3.err",
+      "source": "build/render3d-measurements/20261025-mixed/20261025-mixed-vulkan-package-r3.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-mixed/20261025-mixed-vulkan-package-r3.jsonl",
+      "source": "build/render3d-measurements/20261025-mixed/20261025-mixed-vulkan-package-r3.jsonl",
+      "bytes": 3578,
+      "sha256": "c9daa2ad933695c5550ecfa3903dfbbf8b075fcd452386c0c0a520437e88c89a"
+    },
+    {
+      "path": "raw/20261025-mixed/20261025-mixed-vulkan-package-r3.log",
+      "source": "build/render3d-measurements/20261025-mixed/20261025-mixed-vulkan-package-r3.log",
+      "bytes": 504,
+      "sha256": "509666bc49b0d8317271b61072f4392f430943c336df61430c357e261e899d64"
+    },
+    {
+      "path": "raw/20261025-mixed/gpu-info.csv",
+      "source": "build/render3d-measurements/20261025-mixed/gpu-info.csv",
+      "bytes": 61,
+      "sha256": "bea9878327360b67025b195e19af10364680bff2d236284bcdcda234ecab5769"
+    },
+    {
+      "path": "raw/20261025-mixed/gpu-info.err",
+      "source": "build/render3d-measurements/20261025-mixed/gpu-info.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-mixed/metadata.json",
+      "source": "build/render3d-measurements/20261025-mixed/metadata.json",
+      "bytes": 21241,
+      "sha256": "c1c3c2fc0c695ed8ae55b60cc1b3013539b666eec3e22b2e9e0bf7edc315d184"
+    },
+    {
+      "path": "raw/20261025-point/20261025-point-vulkan-cached_direct-r1.err",
+      "source": "build/render3d-measurements/20261025-point/20261025-point-vulkan-cached_direct-r1.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-point/20261025-point-vulkan-cached_direct-r1.jsonl",
+      "source": "build/render3d-measurements/20261025-point/20261025-point-vulkan-cached_direct-r1.jsonl",
+      "bytes": 3596,
+      "sha256": "9a0ae6e381944c298fd4ea9ba86537c37a31c610cf0e932e0f42a971b2b494ea"
+    },
+    {
+      "path": "raw/20261025-point/20261025-point-vulkan-cached_direct-r1.log",
+      "source": "build/render3d-measurements/20261025-point/20261025-point-vulkan-cached_direct-r1.log",
+      "bytes": 516,
+      "sha256": "9c34d0db0371f87d848c561769fa72bb42ee7d8ac71e10ab8c0304ffda164f5b"
+    },
+    {
+      "path": "raw/20261025-point/20261025-point-vulkan-cached_direct-r2.err",
+      "source": "build/render3d-measurements/20261025-point/20261025-point-vulkan-cached_direct-r2.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-point/20261025-point-vulkan-cached_direct-r2.jsonl",
+      "source": "build/render3d-measurements/20261025-point/20261025-point-vulkan-cached_direct-r2.jsonl",
+      "bytes": 3594,
+      "sha256": "baf25de5bded56ef930306e12d9b3c4d331b6393fea68ebb02f6897cca5527df"
+    },
+    {
+      "path": "raw/20261025-point/20261025-point-vulkan-cached_direct-r2.log",
+      "source": "build/render3d-measurements/20261025-point/20261025-point-vulkan-cached_direct-r2.log",
+      "bytes": 516,
+      "sha256": "f6db8bcfe91977ede76cd011b5d9674d1b85ee5edc622f174bdcb5d76daa38eb"
+    },
+    {
+      "path": "raw/20261025-point/20261025-point-vulkan-cached_direct-r3.err",
+      "source": "build/render3d-measurements/20261025-point/20261025-point-vulkan-cached_direct-r3.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-point/20261025-point-vulkan-cached_direct-r3.jsonl",
+      "source": "build/render3d-measurements/20261025-point/20261025-point-vulkan-cached_direct-r3.jsonl",
+      "bytes": 3594,
+      "sha256": "2c9b35a3ac5b1bcbba11bbea0d11a3fbd61dc6cab5b115667af1f436ae7cc346"
+    },
+    {
+      "path": "raw/20261025-point/20261025-point-vulkan-cached_direct-r3.log",
+      "source": "build/render3d-measurements/20261025-point/20261025-point-vulkan-cached_direct-r3.log",
+      "bytes": 516,
+      "sha256": "32743b3b4c13fe15443b20ffd7436c3700b3702eb9a6e193ecd2e8468bb41b70"
+    },
+    {
+      "path": "raw/20261025-point/20261025-point-vulkan-package-r1.err",
+      "source": "build/render3d-measurements/20261025-point/20261025-point-vulkan-package-r1.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-point/20261025-point-vulkan-package-r1.jsonl",
+      "source": "build/render3d-measurements/20261025-point/20261025-point-vulkan-package-r1.jsonl",
+      "bytes": 3568,
+      "sha256": "d72ed8641b38a5b5b59d47cad73da4aad2f65d38f1f7a2a11133e0b74ceff9d5"
+    },
+    {
+      "path": "raw/20261025-point/20261025-point-vulkan-package-r1.log",
+      "source": "build/render3d-measurements/20261025-point/20261025-point-vulkan-package-r1.log",
+      "bytes": 504,
+      "sha256": "f6159e25d3537836e6dc3ed2f897859cbf46cb9364628d2ead1819f88bd2f30c"
+    },
+    {
+      "path": "raw/20261025-point/20261025-point-vulkan-package-r2.err",
+      "source": "build/render3d-measurements/20261025-point/20261025-point-vulkan-package-r2.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-point/20261025-point-vulkan-package-r2.jsonl",
+      "source": "build/render3d-measurements/20261025-point/20261025-point-vulkan-package-r2.jsonl",
+      "bytes": 3576,
+      "sha256": "eb6c13388db9018d6728ca4aedf0f8f0fad9c3cea8458f229d08bc24bd32c00c"
+    },
+    {
+      "path": "raw/20261025-point/20261025-point-vulkan-package-r2.log",
+      "source": "build/render3d-measurements/20261025-point/20261025-point-vulkan-package-r2.log",
+      "bytes": 504,
+      "sha256": "bf1fbcc29311815fc98c5f1dce0a3dbb589049f99b087922c3e0c5c9926fcfff"
+    },
+    {
+      "path": "raw/20261025-point/20261025-point-vulkan-package-r3.err",
+      "source": "build/render3d-measurements/20261025-point/20261025-point-vulkan-package-r3.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-point/20261025-point-vulkan-package-r3.jsonl",
+      "source": "build/render3d-measurements/20261025-point/20261025-point-vulkan-package-r3.jsonl",
+      "bytes": 3573,
+      "sha256": "53d27ad7179c5f0db5bf4756b72f4a2d8c546410a5cd76d28c8849e1377d8753"
+    },
+    {
+      "path": "raw/20261025-point/20261025-point-vulkan-package-r3.log",
+      "source": "build/render3d-measurements/20261025-point/20261025-point-vulkan-package-r3.log",
+      "bytes": 504,
+      "sha256": "3e80e7c86110ba2944b01f8f0054788840fcf736ce509aaa3c56fefe66bffce9"
+    },
+    {
+      "path": "raw/20261025-point/gpu-info.csv",
+      "source": "build/render3d-measurements/20261025-point/gpu-info.csv",
+      "bytes": 61,
+      "sha256": "bea9878327360b67025b195e19af10364680bff2d236284bcdcda234ecab5769"
+    },
+    {
+      "path": "raw/20261025-point/gpu-info.err",
+      "source": "build/render3d-measurements/20261025-point/gpu-info.err",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": "raw/20261025-point/metadata.json",
+      "source": "build/render3d-measurements/20261025-point/metadata.json",
+      "bytes": 21241,
+      "sha256": "e9cccf136f18087433edbc8c44c0d9b71ef612f06fe276a26e1ed493b5655da4"
+    },
+    {
+      "path": "raw/batch-wrapper/render3d-bench-batch.log",
+      "source": "build/render3d-bench-batch.log",
+      "bytes": 276,
+      "sha256": "790f64d955b81c10de844e2ac7c2836972d6f7093172cf794fe90ae25c16484d"
+    },
+    {
+      "path": "raw/batch-wrapper/render3d-bench-batch.ps1",
+      "source": "build/render3d-bench-batch.ps1",
+      "bytes": 4301,
+      "sha256": "6c2893972e44c0080a651d444f751dc279ea818944862ad084d8cb9ae0d64592"
+    },
+    {
+      "path": "sources/bench/render3d/direct.c",
+      "source": "bench/render3d/direct.c",
+      "bytes": 33269,
+      "sha256": "81c9c163643ffcad020482821d88286562098ed25ca668eea40f30474a7bfc33"
+    },
+    {
+      "path": "sources/bench/render3d/direct.h",
+      "source": "bench/render3d/direct.h",
+      "bytes": 1188,
+      "sha256": "d875e4ff0eae157228d5c16cd1ac3418115fb86095683bf28f5b3f4bd575a507"
+    },
+    {
+      "path": "sources/bench/render3d/game.tide",
+      "source": "bench/render3d/game.tide",
+      "bytes": 3807,
+      "sha256": "ff3219d63073b1e3b4b9bbc756445dc822ca4b71c690949a13732d14c132996d"
+    },
+    {
+      "path": "sources/bench/render3d/main.c",
+      "source": "bench/render3d/main.c",
+      "bytes": 23363,
+      "sha256": "f89a0eeb6b8d76305437864e140c34a0c34bff8042bbed82bd2daab2c1771b5d"
+    },
+    {
+      "path": "sources/bench/render3d/mesh.obj",
+      "source": "bench/render3d/mesh.obj",
+      "bytes": 698,
+      "sha256": "071fafffd9372ec2b8ee04769aa8148fef8fdcd15584fbc6dde3b200216aa182"
+    },
+    {
+      "path": "sources/bench/render3d/run.ps1",
+      "source": "bench/render3d/run.ps1",
+      "bytes": 21501,
+      "sha256": "634d80a4c3a2aabd139080eb0dacda4ffb9fd5da93449c15c6d96d25927532cc"
+    }
+  ],
+  "binaryVerificationAtExport": [
+    {
+      "group": "20261025-mesh",
+      "source": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-eeefbfdc\\build\\render3d-measurements\\20261025-mesh\\bin\\bench_render3d.exe",
+      "bytes": 1499648,
+      "sha256": "9d3ab3ba54b734334b87e9276c331fc1bf97177583ae71802e19ae4d424d1ce9"
+    },
+    {
+      "group": "20261025-light1",
+      "source": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-eeefbfdc\\build\\render3d-measurements\\20261025-light1\\bin\\bench_render3d.exe",
+      "bytes": 1499648,
+      "sha256": "9d3ab3ba54b734334b87e9276c331fc1bf97177583ae71802e19ae4d424d1ce9"
+    },
+    {
+      "group": "20261025-light8",
+      "source": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-eeefbfdc\\build\\render3d-measurements\\20261025-light8\\bin\\bench_render3d.exe",
+      "bytes": 1499648,
+      "sha256": "9d3ab3ba54b734334b87e9276c331fc1bf97177583ae71802e19ae4d424d1ce9"
+    },
+    {
+      "group": "20261025-light32",
+      "source": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-eeefbfdc\\build\\render3d-measurements\\20261025-light32\\bin\\bench_render3d.exe",
+      "bytes": 1499648,
+      "sha256": "9d3ab3ba54b734334b87e9276c331fc1bf97177583ae71802e19ae4d424d1ce9"
+    },
+    {
+      "group": "20261025-point",
+      "source": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-eeefbfdc\\build\\render3d-measurements\\20261025-point\\bin\\bench_render3d.exe",
+      "bytes": 1499648,
+      "sha256": "9d3ab3ba54b734334b87e9276c331fc1bf97177583ae71802e19ae4d424d1ce9"
+    },
+    {
+      "group": "20261025-mixed",
+      "source": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-eeefbfdc\\build\\render3d-measurements\\20261025-mixed\\bin\\bench_render3d.exe",
+      "bytes": 1499648,
+      "sha256": "9d3ab3ba54b734334b87e9276c331fc1bf97177583ae71802e19ae4d424d1ce9"
+    }
+  ]
+}

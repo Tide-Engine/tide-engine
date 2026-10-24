@@ -1,0 +1,80 @@
+// Static, bounded forward-PBR workload. Setup/ticking is outside measurement.
+// The C baseline uses this exact frame's shaders and packed draw inputs.
+scene Main;
+asset Render3D.Mesh3D tile = "mesh.obj";
+
+singleton Workload
+{
+    int count = 100;
+    int directional = 1;
+    int point = 4;
+    int spot = 4;
+    int shadowMaps;
+    int shadowResolution = 512;
+    bool shadows;
+    bool built;
+}
+
+system Setup(mut Workload work)
+{
+    if (work.built) return;
+    work.built = true;
+    // One fixed receiver behind the count variable caster grid. Its numeric
+    // material differs; measured frames batch it with all cubes in one opaque draw.
+    Spawn(Render3D.MeshRenderer { mesh = tile, castShadows = false },
+          Render3D.Material { baseColor = Color(0.4, 0.4, 0.4), roughness = 1 },
+          Transform { localPosition = float3(0, 0, 4), localScale = float3(34, 19, 0.1) });
+    mut int columns = 1;
+    while (columns * columns < work.count) columns++;
+    int rows = (work.count + columns - 1) / columns;
+    // Fixed orthographic camera and rotation: each projected silhouette scales
+    // with side squared. Summed squared scale is 160 for every count.
+    float side = Math.Sqrt(160.0 / float(work.count));
+    for (var i = 0; i < work.count; i++)
+    {
+        float x = (float(i % columns) + 0.5) * 30 / float(columns) - 15;
+        float y = (float(i / columns) + 0.5) * 16 / float(rows) - 8;
+        Spawn(Render3D.MeshRenderer { mesh = tile },
+              Render3D.Material { baseColor = Color(0.65, 0.6, 0.55), roughness = 0.7 },
+              Transform { localPosition = float3(x, y, 0), localRotation = quaternion.Euler(float3(10deg, 20deg, 0)),
+                          localScale = float3(side) });
+    }
+    int total = Math.Max(work.directional + work.point + work.spot, 1);
+    for (var i = 0; i < work.directional; i++)
+        Spawn(Render3D.DirectionalLight {
+            direction = Math.Normalize(float3(0.2 + float(i % 3) * 0.1, -0.3, 1)),
+            radiance = float3(3.0 / float(total)), castShadows = work.shadows });
+    // Every punctual light reaches the complete grid. Wide spot cones point
+    // toward it; this is overlapping forward lighting, not discarded lights.
+    for (var i = 0; i < work.point; i++)
+        Spawn(Render3D.PointLight { intensity = float3(900.0 / float(total)), range = 100, castShadows = work.shadows },
+              Transform { localPosition = float3(float(i % 3) - 1, float(i % 2) - 0.5, -10) });
+    for (var i = 0; i < work.spot; i++)
+        Spawn(Render3D.SpotLight { direction = float3(0, 0, 1), intensity = float3(900.0 / float(total)), range = 100,
+                                  innerAngle = 130deg, outerAngle = 150deg, castShadows = work.shadows },
+              Transform { localPosition = float3(float(i % 3) - 1, float(i % 2) - 0.5, -10) });
+}
+
+// The package accepts a perspective camera. This benchmark's fixed projection
+// is applied after its color clear, before any opaque draw, on both paths.
+[Stage(Render3D.Stages.Color, 1)]
+view FixedCoverageCamera(Render3D.Renderer renderer)
+{
+    renderer.hdr.SetCamera(float4x4.Translate(float3(0, 0, -20)), float4x4.Ortho(40, 22.5, 0.1, 100));
+}
+
+[Before(Render3D.Stages.Prepare)]
+view Configure(Workload work, mut Render3D.Renderer renderer)
+{
+    renderer.camera = Render3D.Camera { position = float3(0, 0, -20), rotation = quaternion.identity, verticalFov = 60deg };
+    renderer.background = Color(0.02, 0.025, 0.03);
+    renderer.maxLights = 64;
+    renderer.shadows = work.shadows;
+    renderer.maxShadowMaps = work.shadowMaps;
+    renderer.shadowResolution = work.shadowResolution;
+    renderer.shadowCenter = float3(0, 0, 1);
+    renderer.shadowExtent = 22;
+    renderer.shadowDistance = 80;
+    renderer.shadowBias = 0.0005;
+    renderer.shadowSlopeBias = 0.002;
+}

@@ -1,0 +1,13 @@
+renderer: Vulkan; fixed 1920x1080; isolated static frames; CPU/GPU overlap; readback is not FPS
+equivalent: 100 meshes + receiver, unshadowed, 1 lights, 0 shadow views, 4 calls, digest b29b6b27c76f83b5
+cached_direct, unshadowed, 100 meshes: record 0.0080, submit 0.0601 ms, GPU 0.0873 ms (100/100 samples)
+equivalent: 100 meshes + receiver, dir, 1 lights, 1 shadow views, 5 calls, digest b92ba3a9ff5bdb58
+cached_direct, dir, 100 meshes: record 0.0071, submit 0.0471 ms, GPU 0.1174 ms (100/100 samples)
+equivalent: 1000 meshes + receiver, unshadowed, 1 lights, 0 shadow views, 4 calls, digest 03321ce21245cae8
+cached_direct, unshadowed, 1000 meshes: record 0.0170, submit 0.0551 ms, GPU 0.0973 ms (100/100 samples)
+equivalent: 1000 meshes + receiver, dir, 1 lights, 1 shadow views, 5 calls, digest 7b556a57d1e81d5f
+cached_direct, dir, 1000 meshes: record 0.0153, submit 0.0450 ms, GPU 0.1324 ms (100/100 samples)
+equivalent: 10000 meshes + receiver, unshadowed, 1 lights, 0 shadow views, 4 calls, digest f387fe2e4444516f
+cached_direct, unshadowed, 10000 meshes: record 0.1138, submit 0.1232 ms, GPU 0.1479 ms (100/100 samples)
+equivalent: 10000 meshes + receiver, dir, 1 lights, 1 shadow views, 5 calls, digest 7f90ec5a7a9afee4
+cached_direct, dir, 10000 meshes: record 0.1578, submit 0.1520 ms, GPU 0.2064 ms (100/100 samples)

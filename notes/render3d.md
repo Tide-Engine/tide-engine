@@ -1,5 +1,58 @@
 # Render3D package
 
+## Measured static-cube workload (2026-10-25)
+
+`bench_render3d` measures source a1d962c99d93657d23f79ba54b0c836f635905e8,
+optimized native Vulkan at 1920x1080 on the operator-supplied Ryzen 9 7900X /
+RTX 4080 SUPER machine (NVIDIA inventory driver 617.42; Clang 23.1.2 -O2,
+no fast-math/FMA contraction). It uses production PBR, atlas shadows and HDR
+presentation. Fixed-rotation 24-vertex/12-triangle cubes keep summed projected
+coverage constant, with one fixed receiver. This is a controlled static
+geometry workload, not a representative complex-model or real-game limit.
+
+Medians of three process medians, package CPU recording / GPU ms:
+
+| Cubes / lights | Shadows | Recording / GPU | Total calls |
+| --- | --- | ---: | ---: |
+| 100 / one directional | One map | 0.04395 / 0.117440 | 5 |
+| 1,000 / one directional | One map | 0.31935 / 0.132432 | 5 |
+| 10,000 / one directional | One map | 2.92990 / 0.260016 | 5 |
+| 10,000 / same directional | Off | 1.82285 / 0.148672 | 4 |
+| 1,000 / 1, 8, 32 points | Off | 0.18885, 0.18555, 0.19270 / 0.103472, 0.352864, 1.099296 | 4 |
+| 1,000 / one point | Six faces | 0.75105 / 0.155936 | 10 |
+| 1,000 / one directional, two points, one spot | Eight views | 0.95850 / 0.333952 | 12 |
+
+The same-light point and mixed unshadowed controls give 0.18555/0.104192 and
+0.21355/0.212192 ms respectively. One opaque batch contains all cubes and the
+receiver despite numeric material differences; each shadow view adds one
+caster batch, with two clears and presentation accounting for the other three
+calls. Warmed texture uploads are zero. Requested/active shadow cells stay 512;
+six/eight views use a 1536-square atlas and mixed's second point is unshadowed.
+
+The equivalent cached-direct C path is a static submission floor, excluding
+recurring ECS/hierarchy/collection work while using the identical shaders,
+transforms, numeric data and passes. At 10,000/one map its recording/GPU is
+0.15775/0.207312 ms. Package/floor GPU ranges are 0.212080–0.299984 and
+0.206432–0.211264; identical shader work with uncontrolled, unrecorded clocks
+establishes no GPU speedup. CPU/GPU intervals overlap and are never added;
+native completion/readback is separate synchronization overhead, not FPS.
+
+All 78 rows across 36 optimized processes pass untimed full native pixels and
+expanded-command equivalence, with fixed per-frame counts and 100 GPU samples
+per 100 measured frames (7,800 total each). The coordinated quiet window used
+the shared gate separately per group, with 5/1-second guards and no detected
+contention/resets/exclusions; other desktop activity was uncontrolled and the
+physical adapter was not queried by the API. Focused native/web debug builds
+and Vulkan/OpenGL/WebGL/served WebGPU quick checks pass; optimized native
+Vulkan/OpenGL quick checks pass (two CTests, 2.22 s). Software web smoke is
+correctness coverage only. Broader package validation below is separate.
+
+[Saved evidence, exact ranges/p95s, verification and reproduction](../bench/results/render3d-20261025/README.md)
+retain original bytes and measured source/binary/input identities; no binaries
+are committed. A later source-comment correction clarifies batching without
+changing the measured a1d962c9 identity. No new package/compiler/runtime change
+or full-suite/other-platform timing claim accompanies these measurements.
+
 ## Mesh aliases and light components (2026-10-24)
 
 The owner approved general transparent type aliases and multiple directional,
