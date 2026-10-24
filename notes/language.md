@@ -1574,7 +1574,8 @@ hardware-independent tick budget. Debug/O0 (40 calls) measured 6.08 ms for the
 recipient hash versus 13.88 us for the changed-column full-world hash, and
 8.66 ms versus 36.31 us unchanged, including full-world cache warmup. The
 visibility path's linear work and allocation remain a performance limitation;
-no projection hash cache is implemented. The no-visibility path keeps its
+since 2026-10-24 each entity's part is hashed once a tick for every recipient
+(`gen_client_hashes`, `notes/netcode.md`). The no-visibility path keeps its
 ordinary cached full-world hash. The focused release projection fixture passes
 all 12 cases and the same canonical pin.
 

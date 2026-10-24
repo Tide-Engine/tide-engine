@@ -424,7 +424,15 @@ static bool unpack_client_state(const tide_game *g, void *world, const void *bas
         at += n;
     }
     ok = ok && tide_delta_closed(&d) && d.bytes.at == size && tide_hash(bytes, count) == hash;
-    if (ok) ok = g->load_client_state(world, bytes, count) && g->client_hash(world, player) == hash;
+    // Loaded, the world says what it was sent: its projection is those bytes again (client_hash is another
+    // hash, of its values, which frames check)
+    if (ok) ok = g->load_client_state(world, bytes, count);
+    if (ok) {
+        uint32_t again_count = 0;
+        uint8_t *again = g->client_state(world, player, &again_count);
+        ok = again && tide_hash(again, again_count) == hash;
+        free(again);
+    }
     if (ok) {
         *destroyed = died;
         *destroyed_count = died_count;
@@ -2133,8 +2141,96 @@ static void note_wait(tide_server *s, connection *c, const uint32_t tick, const 
     c->waited_update = s->updates;
 }
 
+// Every player's inputs for a tick's frames, worked out once: each slot's
+// before and after the tick, what a slot withheld reads, which slots each
+// recipient may have before and after, and each changed slot's delta
+typedef struct frame_inputs {
+    uint32_t slots;
+    uint8_t *before, *after; // slots * input_size
+    uint8_t *none;           // input_size
+    uint8_t *allowed_before, *allowed_after; // per recipient, slots each
+    uint8_t *changed;        // per slot
+    uint32_t *packed_at, *packed_size; // per slot, into packed
+    tide_writer packed;
+} frame_inputs;
+
+static bool make_frame_inputs(tide_server *s, const void *before, const tide_player_id *recipients, const uint32_t count,
+                              frame_inputs *f)
+{
+    const tide_game *g = s->game;
+    *f = (frame_inputs){.packed = {.grows = true}};
+    if (!g->client_input_masks || !g->world_input || !g->write_input || !g->input_size || !count) return false;
+    f->slots = s->players + 1u;
+    const size_t all = (size_t)f->slots * g->input_size;
+    f->before = malloc(2u * all + g->input_size);
+    f->allowed_before = malloc(2u * (size_t)count * f->slots);
+    f->changed = malloc(f->slots);
+    f->packed_at = malloc(2u * (size_t)f->slots * sizeof *f->packed_at);
+    if (!f->before || !f->allowed_before || !f->changed || !f->packed_at) tide_out_of_memory();
+    f->after = f->before + all;
+    f->none = f->after + all;
+    f->allowed_after = f->allowed_before + (size_t)count * f->slots;
+    f->packed_size = f->packed_at + f->slots;
+    for (uint32_t slot = 0; slot < f->slots; slot++) {
+        uint8_t *was = f->before + (size_t)slot * g->input_size, *is = f->after + (size_t)slot * g->input_size;
+        g->world_input(before, slot, was);
+        g->world_input(s->world, slot, is);
+        f->changed[slot] = memcmp(was, is, g->input_size) != 0;
+        f->packed_at[slot] = f->packed.size;
+        f->packed_size[slot] = 0;
+        if (!f->changed[slot]) continue;
+        uint8_t *packed = s->scratch + (size_t)2u * g->input_size;
+        const uint32_t n = g->write_input_delta ? g->write_input_delta(is, was, packed, g->max_input_bytes)
+                                                : g->write_input(is, packed, g->max_input_bytes);
+        tide_write_bytes(&f->packed, packed, n);
+        f->packed_size[slot] = n;
+    }
+    if (f->packed.overflow) tide_out_of_memory();
+    g->client_input_masks(before, recipients, count, f->allowed_before, f->none);
+    g->client_input_masks(s->world, recipients, count, f->allowed_after, f->none);
+    return true;
+}
+
+static void free_frame_inputs(frame_inputs *f)
+{
+    free(f->before);
+    free(f->allowed_before);
+    free(f->changed);
+    free(f->packed_at);
+    free(f->packed.data);
+}
+
+// A recipient's inputs of a frame (the `index`th of frame_inputs' recipients): each slot as it may have it, where it changed
+static void write_frame_inputs(tide_server *s, const frame_inputs *f, const uint32_t index, tide_player_set *mask,
+                               tide_writer *inputs)
+{
+    const tide_game *g = s->game;
+    const uint8_t *was_allowed = f->allowed_before + (size_t)index * f->slots;
+    const uint8_t *is_allowed = f->allowed_after + (size_t)index * f->slots;
+    for (uint32_t slot = 0; slot < f->slots; slot++) {
+        if (was_allowed[slot] && is_allowed[slot]) {
+            if (!f->changed[slot] || !f->packed_size[slot]) continue;
+            tide_players_add(mask, slot);
+            tide_write_varint(inputs, f->packed_size[slot]);
+            tide_write_bytes(inputs, f->packed.data + f->packed_at[slot], f->packed_size[slot]);
+            continue;
+        }
+        const uint8_t *previous = was_allowed[slot] ? f->before + (size_t)slot * g->input_size : f->none;
+        const uint8_t *current = is_allowed[slot] ? f->after + (size_t)slot * g->input_size : f->none;
+        if (memcmp(previous, current, g->input_size) == 0) continue;
+        uint8_t *packed = s->scratch + (size_t)2u * g->input_size;
+        const uint32_t n = g->write_input_delta ? g->write_input_delta(current, previous, packed, g->max_input_bytes)
+                                                : g->write_input(current, packed, g->max_input_bytes);
+        if (!n) continue;
+        tide_players_add(mask, slot);
+        tide_write_varint(inputs, n);
+        tide_write_bytes(inputs, packed, n);
+    }
+}
+
 static void store_client_frame(tide_server *s, connection *c, const void *before, const uint32_t tick,
-                                tide_event_log *events_log)
+                                tide_event_log *events_log, const uint64_t hash, const frame_inputs *batch,
+                                const uint32_t batch_index)
 {
     const tide_game *g = s->game;
     const tide_player_id player = tide_player_from_index((int32_t)(c - s->connections));
@@ -2161,7 +2257,8 @@ static void store_client_frame(tide_server *s, connection *c, const void *before
     tide_player_set mask = {0};
     uint8_t *all_inputs = NULL;
     size_t all_size = 0;
-    if (g->filter_client_inputs && g->world_input && g->write_input && g->input_size) {
+    if (batch) write_frame_inputs(s, batch, batch_index, &mask, &inputs);
+    else if (g->filter_client_inputs && g->world_input && g->write_input && g->input_size) {
         const size_t slots = (size_t)s->players + 1u;
         if ((size_t)g->input_size > SIZE_MAX / 2u / slots) tide_out_of_memory();
         all_size = slots * g->input_size;
@@ -2175,7 +2272,7 @@ static void store_client_frame(tide_server *s, connection *c, const void *before
         g->filter_client_inputs(s->world, player, all_inputs + all_size);
     }
     uint8_t *packed = s->scratch + (size_t)2u * g->input_size;
-    for (uint32_t slot = 0; g->world_input && g->write_input && slot <= s->players; slot++) {
+    for (uint32_t slot = 0; !batch && g->world_input && g->write_input && slot <= s->players; slot++) {
         uint8_t *previous = all_inputs ? all_inputs + (size_t)slot * g->input_size : s->scratch;
         uint8_t *current = all_inputs ? previous + all_size : s->scratch + g->input_size;
         if (!all_inputs) {
@@ -2203,7 +2300,7 @@ static void store_client_frame(tide_server *s, connection *c, const void *before
     if (destroyed_count) destroyed_count = g->tick_client_events ? client_event_causes(events_log, destroyed, destroyed_count)
         : g->client_destroyed(s->world, before, player, destroyed, destroyed_count);
     tide_writer out = {.grows = true};
-    tide_write_u64(&out, g->client_hash(s->world, player));
+    tide_write_u64(&out, hash);
     const uint8_t parts = (uint8_t)((events ? FRAME_EVENTS : 0u) | (tide_players_any(&mask) ? FRAME_INPUTS : 0u)
         | (tide_players_any(&late) ? FRAME_LATE : 0u) | (destroyed_count ? FRAME_DESTROYED : 0u)
         | (events_log && events_log->size ? FRAME_LOCAL_EVENTS : 0u));
@@ -2367,9 +2464,27 @@ static void server_tick(tide_server *s)
     free(f->world);
     *f = (stored_frame){.tick = tick, .size = w.size, .data = data, .world = before};
     if (s->desc.journal) journal_tick(s, tick, data, w.size); // What went into the tick, for tide_replay
-    for (uint32_t p = 0; before && p < s->players; p++) {
-        connection *c = &s->connections[p];
-        if (c->used && c->greeted) store_client_frame(s, c, before, tick, journals ? &journals[p] : NULL);
+    if (before) {
+        // Every player's projection hash: at once where the game can, as most of it is alike for them all
+        tide_player_id *recipients = malloc(((size_t)s->players + 1u) * sizeof *recipients);
+        uint64_t *hashes = malloc(((size_t)s->players + 1u) * sizeof *hashes);
+        if (!recipients || !hashes) tide_out_of_memory();
+        uint32_t count = 0;
+        for (uint32_t p = 0; p < s->players; p++) {
+            if (s->connections[p].used && s->connections[p].greeted) recipients[count++] = tide_player_from_index((int32_t)p);
+        }
+        if (g->client_hashes && count) g->client_hashes(s->world, recipients, count, hashes);
+        else for (uint32_t i = 0; i < count; i++) hashes[i] = g->client_hash(s->world, recipients[i]);
+        frame_inputs batch;
+        const bool batched = make_frame_inputs(s, before, recipients, count, &batch);
+        for (uint32_t i = 0; i < count; i++) {
+            const uint32_t p = (uint32_t)tide_player_index(recipients[i]);
+            store_client_frame(s, &s->connections[p], before, tick, journals ? &journals[p] : NULL, hashes[i],
+                               batched ? &batch : NULL, i);
+        }
+        free_frame_inputs(&batch);
+        free(recipients);
+        free(hashes);
     }
     for (uint32_t p = 0; journals && p < s->players; p++) tide_event_log_free(&journals[p]);
     free(journals);

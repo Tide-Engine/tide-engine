@@ -1,4 +1,6 @@
 #include <math.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include "game.h"
 #include "tide/shard_client.h"
@@ -168,6 +170,56 @@ TIDE_TEST(earth_walkers_walk_drive_and_high_five_and_traffic_stops_for_them)
     ticks(2);
     TIDE_CHECK(world.Roster.online == 1);
     TIDE_CHECK(tide_entity_is_null(walker_of(&world, player(1))));
+    tide_world_free(&world);
+}
+
+// What a player's machine is sent of the world, loaded, hashes as the server
+// says it does, all players' at once or one at a time: for a player near
+// another (who has their Walker) and one far off (who has their Beacon alone)
+TIDE_TEST(earth_a_machine_hashes_its_world_as_the_server_does)
+{
+    tide_world_init(&world, 1.0f / 60.0f);
+    for (int p = 0; p < 3; p++) tide_world_player_joined(&world, player(p));
+    ticks(1);
+    const tide_float3 town = times(up_at(52, 8), PLANET), far = times(up_at(6, 138), PLANET);
+    tide_world_set_input(&world, player(0), (Controls){.drop = town, .moves = 1});
+    tide_world_set_input(&world, player(1), (Controls){.drop = town, .moves = 1});
+    tide_world_set_input(&world, player(2), (Controls){.drop = far, .moves = 1});
+    ticks(61); // Landed, and looked at who's near
+    const tide_player_id all[3] = {player(0), player(1), player(2)};
+    uint64_t together[3];
+    tide_game_api.client_hashes(&world, all, 3, together);
+    for (int p = 0; p < 3; p++) {
+        TIDE_CHECK(together[p] == tide_game_api.client_hash(&world, all[p]));
+        uint32_t size = 0;
+        uint8_t *bytes = tide_game_api.client_state(&world, all[p], &size);
+        tide_world *machine = calloc(1, sizeof *machine);
+        TIDE_REQUIRE(bytes && machine && tide_game_api.load_client_state(machine, bytes, size));
+        TIDE_CHECK(tide_game_api.client_hash(machine, all[p]) == together[p]);
+        // Players 0 and 1 have each other's Walker; player 2 has neither's
+        TIDE_CHECK(tide_has_Walker(machine, walker_of(&world, player(p == 0 ? 1 : 0))) == (p != 2));
+        tide_world_free(machine);
+        free(machine);
+        free(bytes);
+    }
+    TIDE_CHECK(together[0] != together[1] && together[1] != together[2]);
+    // Whose inputs each may have, all at once, is what each one's filter says
+    enum { SLOTS = TIDE_GAME_PLAYERS + 1 };
+    static uint8_t allowed[3 * SLOTS];
+    static Controls filtered[SLOTS];
+    Controls none;
+    tide_game_api.client_input_masks(&world, all, 3, allowed, &none);
+    for (int p = 0; p < 3; p++) {
+        for (uint32_t slot = 0; slot < SLOTS; slot++) tide_game_api.world_input(&world, slot, &filtered[slot]);
+        tide_game_api.filter_client_inputs(&world, all[p], filtered);
+        for (uint32_t slot = 0; slot < SLOTS; slot++) {
+            Controls raw;
+            tide_game_api.world_input(&world, slot, &raw);
+            const Controls *expect = allowed[p * SLOTS + slot] ? &raw : &none;
+            TIDE_CHECK(memcmp(&filtered[slot], expect, sizeof raw) == 0);
+        }
+    }
+    TIDE_CHECK(allowed[0 * SLOTS + 1] && !allowed[2 * SLOTS + 0]); // Players 0 and 1 have each other's; 2 has neither's
     tide_world_free(&world);
 }
 

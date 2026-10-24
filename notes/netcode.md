@@ -264,12 +264,37 @@ world is projected before adoption.
 
 Hash/repair partitioning is currently internal and provisional: one canonical
 projection hash goes each tick, no hierarchical page-hash negotiation or inferred
-dependency graph is implemented. Hashing presently encodes the entire permitted
-projection per recipient, so CPU cost scales with that value size and recipients;
-unchanged asset/container values do not yet reuse cached canonical hashes.
-Measured (`notes/benchmarks.md`, Earth under load): hashing views is 80 to 90%
-of a server's work from 64 players, and steady corrections put a client's
-verified world up to 1.5 s behind at 133 ms round trips.
+dependency graph is implemented. Steady corrections put a client's verified
+world up to 1.5 s behind at 133 ms round trips (`notes/benchmarks.md`, Earth
+under load).
+
+Every player's frame after a tick is built from what's alike for them worked
+out once (2026-10-24; they were 80 to 90% of a server's work from 64 players,
+and grew with the square of the players):
+- **Projection hashes** (`tide_game.client_hashes`, every greeted player's at
+  once; `client_hash` is the same for one). The projection hash is no longer
+  the hash of `client_state`'s bytes: it's the singletons' hash (the command
+  state each recipient's own), plus a sum of each permitted entity's hash (its
+  archetype, handle, snaps, scene and permitted components, by the value codec)
+  and of each input slot's, as permitted. An entity's audiences and its hash
+  with all it has are worked out once a tick; a recipient denied some of its
+  components gets another, computed once and kept for the next recipient with
+  the same mask. The sum doesn't depend on row order, which a client's tables,
+  missing hidden rows, needn't share with the server's. Games with transform
+  hierarchies keep hashing `client_state`'s bytes, as each recipient's cut links
+  and anchors differ. A transfer's check is now the hash of the bytes the
+  loaded world encodes to again (it compared `client_hash`, which was the same
+  hash). `recipient logical state schema 2` is in the simulation identity.
+- **Inputs** (`tide_game.client_input_masks`): which slots each recipient may
+  have, before and after the tick, from each slot's owner's entities' audiences
+  intersected once; the session reads every slot once and packs each changed
+  slot's delta once (`frame_inputs`), packing again only for a recipient whose
+  mask differs before and after. `filter_client_inputs` stays for the other
+  paths (endpoints, repairs).
+`earth_a_machine_hashes_its_world_as_the_server_does` checks a loaded
+projection hashes as the server's, together and one by one, for players who
+have each other's Walker and one who has neither's, and that the masks are
+the filter's. The Session ABI marker says `client hashes (2)`.
 Canonical insertion/removal can shift later byte regions and reduce delta reuse.
 Physical-page sharing still makes authoritative history snapshots cheap, but
 retained history and recipient journals add memory. These are optimization gaps,

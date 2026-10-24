@@ -166,7 +166,7 @@ static void recipient_state_schema(asset_usage *w)
 {
     const program *prog = w->prog;
     recipient_schema schema = {0};
-    ctext(w, "Tide recipient logical state schema 1");
+    ctext(w, "Tide recipient logical state schema 2");
     for (int i = 0; i < prog->singletons.count; i++) {
         decl *d = prog->singletons.items[i];
         if (d->is_local || d == prog->visibility_state || d == prog->hierarchy[0]) continue;

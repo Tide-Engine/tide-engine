@@ -63,6 +63,27 @@ What it means:
 - **Artifacts**: no resyncs anywhere, inputs almost never late (0.02%), but corrections put a bot's verified world up to 1.5 s behind under visibility, in bursts: what was predicted is put right that late.
 - Not measured: phones, real networks, more than one process per shard (here every shard and bot shares one machine and thread, timed apart), hosting's own shard machines.
 
+### Every player's frame at once, the same day
+
+The owner: "seems like we should optimize stuff". A profile of 128 bots (`tide_sample`, the whole process) put the projections at about 45% of it, `tide_visibility_audience` the most: each entity's audiences worked out again for every recipient it was checked for. Now each tick's frames are built from what's alike for every player worked out once (`notes/netcode.md`, Per-recipient simulation): the projection hashes (`client_hashes`) and which inputs each may have (`client_input_masks`, each changed slot's delta packed once). What's sent and the match are the same, bit for bit: every run's bytes and end hash are as before. Rows `batched-*` in `bench/results/earth.jsonl`, the same options as `stress-*`.
+
+| One server, spread over 10 towns: update median / p99 (ms) | 16 | 32 | 64 | 128 | 256 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Before | 0.58 / 1.01 | 1.43 / 2.35 | 3.82 / 6.39 | 11.3 / 18.7 | 38.6 / 57.8 |
+| After | 0.23 / 0.49 | 0.46 / 1.11 | 0.98 / 2.56 | 2.08 / 7.95 | 5.20 / 22.7 |
+| Hashing views, before / after (ms a second) | 21 / 4.0 | 47 / 5.2 | 109 / 7.0 | 269 / 10.3 | 739 / 17.5 |
+
+| Everyone in one town: update median (ms) | 16 | 32 | 64 | 128 |
+| --- | ---: | ---: | ---: | ---: |
+| Before | 0.61 | 1.50 | 4.26 | 14.2 |
+| After | 0.23 | 0.45 | 0.91 | 1.83 |
+
+Split in 4, a shard's update median at 64, 128 and 256 players: 0.36, 0.89 and 2.10 ms (were 1.01, 2.85 and 9.71). Splitting by load (`--busiest 25`) at 256 now ends with 5 shards, not 19, each bot following 1.7 and getting 77 KB a second (was 126).
+
+As WebAssembly under Node, one thread, the one server's update median at 64, 128 and 256 players: 1.57, 3.39 and 8.24 ms (were 6.55 and 20.1 at 64 and 128), the same end hashes as native.
+
+What's left: the p99s (22.7 ms at 256 natively, 42 ms as WebAssembly) are packing projections for corrections and joins (`client_state` of the world and of the client's verified one for a delta, 66 ms a second at 256 natively); and the bots' own machines, whose simulating (Earth's `Walk`, `Bump`, which looks at every walker, and `Clear`, the buildings) is now most of a run's time.
+
 ## Drawing: plain records and sprites, 2026-10-21
 
 After the third round (below), the owner's "yes do it" to its two biggest

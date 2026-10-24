@@ -356,6 +356,18 @@ static uint64_t timed_client_hash(const void *world, const tide_player_id recipi
     return hash;
 }
 
+// ...or every player's at once, as a server asks
+static void timed_client_hashes(const void *world, const tide_player_id *recipients, const uint32_t count, uint64_t *out)
+{
+    const uint64_t start = tide_time_now_ns();
+    real->client_hashes(world, recipients, count, out);
+    current->hash_ms += since(start);
+    current->hashes++;
+    for (uint32_t i = 0; diverging && traced && i < count; i++) {
+        if (tide_player_equal(recipients[i], traced_player)) compare(world, out[i]);
+    }
+}
+
 static void timed_copy(void *to, const void *from)
 {
     const uint64_t start = tide_time_now_ns();
@@ -1263,6 +1275,7 @@ int bench_main(const bench_desc *d, const int argc, char **argv)
     if (real->client_state) timed.client_state = timed_client_state;
     if (real->load_client_state) timed.load_client_state = timed_load_client_state;
     if (real->client_hash) timed.client_hash = timed_client_hash;
+    if (real->client_hashes) timed.client_hashes = timed_client_hashes;
 
     const tide_jobs *jobs = jobs_for(o.threads);
     diverging = o.diverge ? d : NULL;

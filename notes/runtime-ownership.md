@@ -1,5 +1,15 @@
 # Runtime written by Claude for now
 
+## Every player's frame at once (2026-10-24)
+
+The owner, after the Earth stress test: "seems like we should optimize stuff".
+Two optional `tide_game` callbacks extend the existing visibility session
+boundary, generated and called by the session: `client_hashes` (every
+recipient's projection hash at once) and `client_input_masks` (which input
+slots each recipient may have). Generated code calls nothing new. The session's
+`store_client_frame` takes the batch's hash and inputs (`frame_inputs`).
+Contracts and tests: notes/netcode.md, Per-recipient simulation.
+
 ## Journals and recovery (2026-10-23)
 
 The owner asked for recovery from an input log. Engine-side and the agent's:

@@ -119,12 +119,21 @@ typedef struct tide_game {
     uint8_t *(*client_state)(const void *world, tide_player_id recipient, uint32_t *size);
     bool (*load_client_state)(void *world, const uint8_t *data, uint32_t size);
     uint64_t (*client_hash)(const void *world, tide_player_id recipient);
+    // Optional: client_hash for `count` recipients at once, into `out`, the
+    // same values; what's alike for them all is worked out once. The server
+    // asks for every player's after each tick.
+    void (*client_hashes)(const void *world, const tide_player_id *recipients, uint32_t count, uint64_t *out);
     // Restrict a copied slot input before sending it to this recipient.
     void (*filter_client_input)(const void *world, tide_player_id recipient, uint32_t slot, void *input);
     // The same for all max_players + 1 contiguous input_size slots at once;
     // the server slot is last. Preferred over the single-slot callback when
     // supplied, so visibility policy can inspect entities once per recipient.
     void (*filter_client_inputs)(const void *world, tide_player_id recipient, void *all_slots);
+    // Optional, with it: which input slots each of `count` recipients may
+    // have, at once, max_players + 1 bytes each (1: the slot's input, 0: it
+    // reads as `none`, input_size bytes, as filter_client_inputs writes).
+    void (*client_input_masks)(const void *world, const tide_player_id *recipients, uint32_t count, uint8_t *allowed,
+                               void *none);
     // Entities permitted in had that actually died, rather than becoming
     // hidden. NULL out/zero capacity asks for the count.
     uint32_t (*client_destroyed)(const void *world, const void *had, tide_player_id recipient,
