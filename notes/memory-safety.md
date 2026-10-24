@@ -1,5 +1,17 @@
 # No Tide code can corrupt memory
 
+## Session cookie proof (2026-10-24)
+
+Protocol 19 checks a cookie and connection attempt before decoding connected
+packets or refreshing liveness in either direction. HELLO cannot replace a
+live/pending connection by its address alone; malformed disconnect payloads
+are ignored. Cookie-generation keys/counters remain private host metadata,
+outside simulation memory and serialization. Failed advertised entropy cannot
+produce an all-zero known key. Eleven session packet cases pass under targeted
+Windows ASan, including forgery, stale attempts, timeout and valid recovery.
+Wire/entropy contracts and the raw UDP security boundary: `notes/netcode.md`,
+Session cookie proof. No generated-C API or simulation layout changes.
+
 ## Shard membership and recovery reservations (2026-10-24)
 
 Lifecycle messages validate their 0/1 flag and PlayerID against the game's

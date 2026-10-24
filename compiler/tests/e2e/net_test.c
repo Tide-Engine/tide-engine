@@ -134,11 +134,11 @@ static uint32_t damaged_receive(void *self, tide_address *from, void *data, cons
     uint32_t size = damaged_inner.receive(damaged_inner.self, from, data, capacity);
     uint8_t *bytes = data;
     // Current wire header: magic, protocol and type. CHUNK is type 4, with
-    // uint32 number/index followed by uint16 byte count. WELCOME is type 2;
+    // cookie8/attempt4, uint32 number/index followed by uint16 byte count. WELCOME is type 2;
     // its uint32 snapshot byte/chunk counts start at offsets 27 and 31.
-    if (damaged_mode == 1 && size >= 14u && bytes[3] == 4u) {
-        bytes[12] = bytes[13] = 0;
-        size = 14u;
+    if (damaged_mode == 1 && size >= 26u && bytes[3] == 4u) {
+        bytes[24] = bytes[25] = 0;
+        size = 26u;
         damaged_count++;
     } else if (damaged_mode == 2 && size >= 35u && bytes[3] == 2u) {
         tide_reader r = {bytes + 27u, 8u, 0, false};
@@ -497,11 +497,14 @@ TIDE_TEST(net_a_stall_leaves_no_lasting_delay)
 // players, 50 ms away, for ten seconds after joining.
 static tide_transport counted_inner[3];
 static uint64_t counted_bytes[3];
+static uint64_t counted_proof_bytes[3];
 
 static void counted_send(void *self, const tide_address to, const void *data, const uint32_t size)
 {
     const intptr_t i = (intptr_t)self;
     counted_bytes[i] += size;
+    const uint8_t kind = size >= 4u ? ((const uint8_t *)data)[3] : 0u;
+    if (kind == 4u || kind == 5u || kind == 6u) counted_proof_bytes[i] += 12u; // Protocol 19 CHUNK/CLIENT/SERVER proof
     counted_inner[i].send(counted_inner[i].self, to, data, size);
 }
 
@@ -538,12 +541,19 @@ TIDE_TEST(net_a_match_costs_little_to_keep_going)
     }
     run(1.0);
     memset(counted_bytes, 0, sizeof counted_bytes);
+    memset(counted_proof_bytes, 0, sizeof counted_proof_bytes);
     run(11.0);
     for (int i = 0; i < 2; i++) TIDE_CHECK(tide_client_status_of(clients[i]).resyncs == 0);
     // About 6.5 KB a second to each player and 2.5 KB a second from each, at 60 ticks a second, most of it the
     // hashes of ticks sent again until a round trip says they came.
-    TIDE_CHECK(counted_bytes[0] < 140000u);
-    TIDE_CHECK(counted_bytes[1] < 28000u && counted_bytes[2] < 28000u);
+    // Retain the original payload ceilings while accounting for the exact
+    // mandatory cookie/attempt bytes. WELCOME/HELLO sizes are unchanged.
+    printf("    wire bytes %llu/%llu/%llu, proof bytes %llu/%llu/%llu\n",
+        (unsigned long long)counted_bytes[0], (unsigned long long)counted_bytes[1], (unsigned long long)counted_bytes[2],
+        (unsigned long long)counted_proof_bytes[0], (unsigned long long)counted_proof_bytes[1],
+        (unsigned long long)counted_proof_bytes[2]);
+    TIDE_CHECK(counted_bytes[0] - counted_proof_bytes[0] < 140000u);
+    TIDE_CHECK(counted_bytes[1] - counted_proof_bytes[1] < 28000u && counted_bytes[2] - counted_proof_bytes[2] < 28000u);
     finish();
 }
 
