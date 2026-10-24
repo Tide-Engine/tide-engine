@@ -1,5 +1,62 @@
 # The docs site
 
+## Earth on the Ryzen integrated GPU (2026-10-25)
+
+The owner suggested using the CPU's integrated graphics as a local proxy for
+the sluggish Pixel. This machine has an enabled Radeon RDNA 2 iGPU in its
+Ryzen 9 7900X, alongside the RTX 4080 SUPER. A disposable muted Chrome process
+uses the iGPU's enumerated DXGI LUID through `--use-adapter-luid`; WebGL's
+unmasked renderer identifies AMD Radeon Graphics/device 164e and WebGPU's
+adapter identifies AMD/RDNA 2 with no software fallback. No Windows graphics
+preferences, devices or drivers were changed. The forced AMD-only Vulkan ICD
+could not initialize (ERROR_OUT_OF_HOST_MEMORY); browser D3D11/D3D12 paths work.
+
+The downloaded production release `7ae5960b` joins the actual hosted room.
+At 412 x 915 CSS pixels and DPR 3 (1236 x 2745 actual pixels), it reproduces
+the reported kind of ground-view slowdown. WebGL GPU medians are 48.93 ms
+walking and 45.33 ms driving, while host CPU medians are 2.11/2.46 ms and
+session updates 0.22/0.25 ms. WebGPU has similar callback intervals,
+48.37/43.26 ms, with CPU work 1.63/1.67 ms. WebGL disjoint timer queries
+measure game drawing asynchronously, excluding the stats overlay; WebGPU
+GPU milliseconds were not collected in the page callback. The same CSS
+viewport at DPR 1 is a diagnostic control: WebGL GPU medians fall to
+5.96/5.81 ms, while CPU work stays around 1.6–1.8 ms. The iGPU is useful for
+finding a graphics bottleneck; its desktop CPU, driver, architecture, clocks
+and browser are not a Pixel emulation. One live trajectory per case is not
+a controlled before/after performance claim.
+
+Material isolation retains the full 3.39-million-pixel viewport and all
+geometry/CPU work. With the warning correction below, the full ground is
+48.33/45.72 ms on the GPU. A scratch shader replacing Ground's material with
+a constant, while retaining the analytic sphere and atmosphere, takes
+3.21/3.49 ms. Replacing only Grass (retaining Grain, roads and towns) takes
+27.33/25.67 ms. These material substitutions and DPR 1 are local attribution
+probes, never deployed visual changes. They identify the procedural
+per-pixel material as the main graphics cost here; the earlier 0.8–0.9 ms
+desktop CPU scenery profile does not make scenery generation the dominant
+bottleneck on this iGPU. Caching static material work is the next relevant
+quality-preserving investigation, rather than assuming geometry or the
+sphere intersection is expensive.
+
+The production shader also exposes ANGLE D3D11 X4000 on Ground's early
+return, naming its potentially uninitialized return temporary. The game now
+keeps one initialized color and one return, with the opaque plaza fast path
+in an if/else. The same Radeon shader then compiles without warnings. This
+changes no material formula, resolution, geometry or match behavior; all six
+native release comparison captures are byte-identical. All 20 Earth checks
+and three unchanged benchmark pins pass on native/web debug. Radeon WebGL
+and WebGPU fixtures with fatal shader validation pass. Native/web release builds pass;
+the corrected game source has not been redeployed as part of this hardware
+investigation.
+
+`notes/earth-igpu-measurements.json` retains all seven backend/DPR/material
+summaries, the adverse production WebGL warning, sample counts, GPU and CPU
+quantiles, adapter identity, caveats and pixel comparisons. Raw frame/query
+samples, the bounded scripts and captures remain in `build/earth-perf/`.
+Browser callbacks and GPU queries measure work/arrival intervals, not display
+scanout or touch-to-display latency. Other desktop applications stayed running;
+no clocks were controlled, and some CPU-only tests overlapped low-density runs.
+
 ## Earth ground shading without a quality reduction (2026-10-24)
 
 The owner reported lag while walking/driving on a Pixel 9 Pro and requested
