@@ -1,5 +1,20 @@
 # No Tide code can corrupt memory
 
+## Untrusted session packets (2026-10-24)
+
+Upload chunks must match their retained transfer's size and sequence before
+indexing its chunk map or copying bytes. Validating the index against a new
+packet's size alone allowed a connected peer to access outside
+the original upload allocation. Windows AddressSanitizer reproduces the old
+heap-buffer-overflow; the fixed packet tests pass with session.c instrumented.
+
+Client input packets stage all canonical inputs in a reused private buffer;
+only a fully decoded, exactly consumed packet can change connection state.
+Acknowledgements and tick arithmetic are bounded before commit. Regression
+coverage and the remaining source-address authentication boundary are recorded
+in `notes/netcode.md`, Hostile client packet validation. No generated/runtime
+API, simulation layout or valid wire representation changes.
+
 ## Optional voice and local packets (2026-10-22)
 
 Session local data checks packet bounds, greeted source/cookie, recipient
