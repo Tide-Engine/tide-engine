@@ -1,5 +1,60 @@
 # Netcode: sessions, prediction, commands
 
+## Hostile client packet validation (2026-10-24)
+
+`on_upload` now binds every chunk of an existing transfer number to its
+original command size and sequence before indexing the retained chunk map or
+copying payload bytes. Previously a peer could start a small upload, reuse its
+number with a larger size/index and access beyond both original allocations.
+A shorter size or changed sequence could also mix incompatible chunks. Rejected
+chunks leave the original transfer usable; a new number still replaces it.
+
+`on_client` now validates every input's span and codec, the exact packet end,
+known flags, acknowledgement against the authoritative tick and non-wrapping
+input tick arithmetic before greeting, acknowledging transfers or storing any
+input. Canonical whole inputs are staged in one reused server buffer, avoiding
+per-packet allocation after its capacity is established. Inputs beyond the
+server's bounded future window cannot change arrival-lead bookkeeping. HELLO
+also requires an exact packet end and known flags. Valid packet bytes, protocol
+18, generated-C APIs, snapshots and deterministic results are unchanged.
+
+`tests/test_session_packets.c` drives the public server with raw loopback
+packets: changed upload size/sequence, out-of-allocation chunk indices,
+truncated/empty/invalid final inputs, trailing bytes, future acknowledgements
+and wrapping input ticks, followed by valid traffic and transfer replacement.
+A far-future input followed by an ordinary input must still report subsequent
+missing inputs as late, rather than retaining the first input's positive wait.
+The original parser fails the atomic-input regression; a separately linked
+Windows AddressSanitizer build reproduces its heap-buffer-overflow in
+`on_upload`. The fixed session passes all five packet tests under ASan and
+on native/WASI, including malformed HELLO retention and valid input delivery.
+
+Validation: warning-free native/web debug builds; all 2,621 enabled native
+and 2,479 enabled web engine CTests pass, including Vulkan/OpenGL,
+WebGL/D3D11/WebGPU, rooms, migration and deterministic pins. Both retain the
+existing disabled MicroDuck right-turn test. The final engine test executable,
+with all five added packet cases, also passes as a whole on native/WASI.
+Node is 24.22.1; runs retain TIDE_HIDDEN and muted browser flags.
+
+The environment also configured tide-prototypes. Its Cracked direct-world
+3,000-tick hash pin fails on both native/WASI with the same actual
+`bf53c0610c47764e` versus expected `0a216d532fa6445c`; that test never calls
+the changed session code. No prototype source or pin was changed. After all
+engine checks finished, the remaining optional prototype browser playtests
+were stopped (Inside Out's active WebGL playtest and the queued prototype
+browser checks); they are not coverage for this task. Other operating systems,
+Android, MinGW and the full sanitizer suite remain CI coverage; only the
+targeted Windows session/packet ASan probe ran here. No CI was dispatched.
+
+Audit boundary: command payload validation and connection-derived sender,
+chunk/download bounds, recipient acknowledgement ownership and view-time
+validation were checked. This does not establish authentication of the source
+address: protocol 18 CLIENT and BYE still trust it, and a new HELLO can replace
+an existing connection at that address. A session-cookie wire-protocol change
+was raised with the owner separately and is not implemented by this parsing
+fix. Native/WebRTC transport security and game-specific command authorization
+remain separate boundaries; this is not a complete transport/cryptography audit.
+
 ## A client sends at most once a tick unless it has news (2026-10-23)
 
 `update_client` used to send a packet every update, so a client updating faster than the tick rate (a 144 Hz browser, a native client without vsync) sent more than it needed, and more than the hosting router allows an admission (100 a second). `send_client` now builds the packet every update and sends it when it heard from the server since it last sent (`heard_since_sent`, set by any packet taken in: so acknowledgements and pings go out as promptly as before), when anything in it after its two times differs from the last one sent (kept after `packet`, `client_sent_size`: a tick verified, a frame or chunk had, a repair asked for, a new input), or when 0.99 of a tick has passed since it last sent (`client_sent`; the slack keeps a host updating once a tick sending every update, which float rounding of the clock otherwise skipped now and then). Nothing on the wire changed, so `PROTOCOL` stays 18.

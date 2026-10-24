@@ -897,6 +897,7 @@ struct tide_server {
     uint8_t *server_last; // The server's input last set, packed
     uint32_t server_last_size;
     uint8_t *scratch; // scratch_size: inputs and their deltas
+    tide_writer received_inputs; // Reused staging: no packet changes a connection until every input is valid.
     // Each player's cookie, kept after they leave so they can come back, and
     // since when they're away (0: here, or never was)
     uint64_t *cookies;
@@ -1300,7 +1301,7 @@ static void on_hello(tide_server *s, const uint32_t transport, const tide_addres
     const uint64_t cookie = tide_read_u64(r);
     const uint8_t flags = tide_read_u8(r);
     const uint8_t *asset_pack = tide_read_bytes(r, 32);
-    if (r->failed) return;
+    if (r->failed || r->at != r->size || (flags & ~(HELLO_KNEW_KICK | HELLO_HAS_WORLD | HELLO_CAN_START))) return;
     uint8_t identity[32] = {0};
     const uint8_t anonymous[32] = {0};
     const uint64_t digest = cookie_digest(cookie);
@@ -1495,7 +1496,36 @@ static void on_client(tide_server *s, connection *c, tide_reader *r)
     }
     const uint32_t first_input = frame_ack + tide_read_varint(r);
     const uint8_t input_count = tide_read_u8(r);
-    if (r->failed) return;
+    if (r->failed || frame_ack > s->tick || first_input < frame_ack
+        || input_count > UINT32_MAX - first_input
+        || (flags & ~(CLIENT_WANTS_WORLD | CLIENT_HAS_WORLD | CLIENT_LACKS | CLIENT_CAN_START | CLIENT_ASSETS
+                      | CLIENT_REPAIR | CLIENT_REPAIR_STREAM))) return;
+    const tide_game *g = s->game;
+    const uint32_t max = g->max_input_bytes;
+    const bool deltas = g->read_input && g->read_input_delta;
+    uint8_t *previous = s->scratch;
+    uint8_t *current = s->scratch + g->input_size;
+    uint8_t *whole = current + g->input_size;
+    uint32_t input_sizes[UINT8_MAX];
+    tide_writer *staged = &s->received_inputs;
+    staged->size = 0;
+    staged->overflow = false;
+    staged->grows = true;
+    for (uint32_t i = 0; i < input_count; i++) {
+        const uint32_t size = tide_read_varint(r);
+        const uint8_t *bytes = tide_read_bytes(r, size);
+        if (!bytes || !size || size > max || !g->read_input || !g->write_input) return;
+        if (!(deltas && i ? g->read_input_delta(bytes, size, previous, current) : g->read_input(bytes, size, current))) return;
+        const uint32_t n = g->write_input(current, whole, max);
+        if (!n || n > max || n > UINT16_MAX) return;
+        input_sizes[i] = n;
+        tide_write_bytes(staged, whole, n);
+        if (staged->overflow) return;
+        uint8_t *swap = previous;
+        previous = current;
+        current = swap;
+    }
+    if (r->failed || r->at != r->size) return;
     if (download_number) {
         published *p = published_by_number(s, download_number);
         if (p && download_ack == UINT32_MAX) { // It has all of it
@@ -1567,29 +1597,14 @@ static void on_client(tide_server *s, connection *c, tide_reader *r)
         if (frame_ack == c->frame_ack) c->frame_mask = frame_mask;
     }
 
-    // Its inputs: after the first, each as what differs from the one before,
-    // when the game packs them that way
-    const tide_game *g = s->game;
-    const uint32_t max = g->max_input_bytes;
-    const bool deltas = g->read_input && g->read_input_delta;
-    uint8_t *previous = s->scratch;
-    uint8_t *current = s->scratch + g->input_size;
-    uint8_t *whole = current + g->input_size;
+    // Commit only the completely validated packet's canonical inputs.
+    uint32_t input_at = 0;
     for (uint32_t i = 0; i < input_count; i++) {
-        const uint32_t size = tide_read_varint(r);
-        const uint8_t *bytes = tide_read_bytes(r, size);
-        if (!bytes) return;
-        uint32_t n = size;
-        if (deltas) { // Each builds on the one before, late or not
-            if (!(i == 0 ? g->read_input(bytes, size, current) : g->read_input_delta(bytes, size, previous, current))) return;
-            n = g->write_input(current, whole, max);
-            bytes = whole;
-            uint8_t *swap = previous;
-            previous = current;
-            current = swap;
-        }
+        const uint32_t n = input_sizes[i];
+        const uint8_t *bytes = staged->data + input_at;
+        input_at += n;
         const uint32_t t = first_input + i;
-        if (n > max || n == 0) continue;
+        if (t >= s->tick && t - s->tick >= s->w.inputs) continue; // A future claim cannot set arrival lead.
         if (!c->sent_input || t + 1u > c->newest_sent) c->newest_sent = t + 1u; // Whenever it came: it's what the player has got to
         c->sent_input = true;
         if (t < s->tick || t - s->tick >= s->w.inputs) continue; // Late, or much too early
@@ -1679,6 +1694,7 @@ static void on_upload(tide_server *s, connection *c, tide_reader *r)
         c->upload_size = size;
         c->upload_chunks = chunks;
     }
+    if (size != c->upload_size || sequence != c->upload_sequence) return;
     if (c->upload_have[index]) return;
     memcpy(c->upload + (size_t)index * CHUNK, data, bytes);
     c->upload_have[index] = 1;
@@ -3054,6 +3070,7 @@ void tide_server_destroy(tide_server *s)
     free(s->input);
     free(s->start);
     free(s->scratch);
+    free(s->received_inputs.data);
     free(s->packed);
     free(s->server_last);
     free(s->connections);
