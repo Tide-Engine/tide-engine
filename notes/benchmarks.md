@@ -1,5 +1,55 @@
 # Benchmarks
 
+## Render3D static-scene submission harness (2026-10-25)
+
+The owner's request for benchmarks after the mesh-alias/multiple-light merge
+adds `bench_render3d` (`bench/render3d/`, methodology and reproduction in its
+README). It uses the production Render3D PBR, shadow-atlas and HDR presentation
+shaders, without compiler/runtime/package changes. A fixed 1920x1080, scale-one
+orthographic view draws 100/1,000/10,000 fixed-rotation cubes, plus one fixed
+flattened-cube receiver. Each mesh has 24 vertices/12 source triangles. Squared
+scale sums to 160 for constant summed continuous projected coverage; rasterized
+pixels and shadows can differ by count. Lights overlap the whole grid.
+
+The bounded default cases are 1 directional/4 point/4 spot with shadows off;
+1 directional/1 map; 1 point/6 faces; and 1 directional/2 point/1 spot with an
+8-view budget (one point's atomic six-face request is excluded). Requested
+512-pixel cells remain 512 for every default case; active cell size, atlas size,
+selected/dropped lights and unshadowed requests are recorded. CLI overrides
+allow separate light-count sweeps without a Cartesian workload expansion.
+
+`package` includes generated views, ECS/hierarchy access, collection and pass
+setup. `cached_direct` is an explicitly cached static-scene submission floor:
+untimed capture keeps the package frame's shaders, geometry, matrices, numeric
+light/shadow texture bytes and pass state; C re-records public drawing calls,
+using one bulk call per compatible batch. It does not reproduce recurring
+collection/hierarchy work, change shaders or bypass the shared renderer, and is
+not a dynamic-renderer or Tide-versus-C performance claim. Exact expanded draws,
+native full-frame pixels (web: nine pixels), match-state preservation, submitted
+vertices, calls and uploads are compared outside timing; measured-frame work
+counts must remain fixed. The packet digest includes live resource identities
+and is only an in-process check, not a cross-process portable hash.
+
+CPU recording, CPU submission, actual asynchronous GPU queries and native
+completion/readback are separate. GPU sample counts are explicit; unavailable
+queries/web readback are null. Native queries include shaded on-demand uploads;
+WebGPU sums render-pass timestamps, so backend scopes differ. Native full-frame
+readback synchronizes each frame and is not shipping FPS; CPU/GPU overlap is
+never added. Resources/memory include retained caches. Defaults are 20 warmup,
+100 measured frames and three alternating internal repeats; the runner uses
+three alternating process pairs under the shared named mutex and 90 continuous
+quiet seconds, preserving logs/JSONL/hashes/contention and optional GPU clocks.
+Hardware labels come from the operator (unknown when absent), not a backend
+adapter query. Software web smoke is correctness coverage only.
+
+Focused native/web debug target builds, native Vulkan/OpenGL quick checks and
+the WebGL/served WebGPU smoke pass. Quick mode disables timing and uses four
+cubes with 32-pixel shadow cells. The runner parses, detects the known WASI and
+browser Node command-line fixtures while excluding an ordinary Node service,
+and rejects the quiet-time deadline boundary. Final root validation/optimized
+measurements are recorded separately when complete. This harness entry itself
+makes no timing claim.
+
 ## Earth physics and shard membership pins (2026-10-24)
 
 The town-coordinate inverse correction changes actual movement/collisions;
