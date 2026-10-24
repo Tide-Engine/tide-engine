@@ -1,61 +1,91 @@
-// The towns people visit, and what each is made of: the same on every
-// machine, as the match walks into its buildings and the views draw them.
-// A town is laid out on the ground at its place on the planet, in metres east
-// (x) and north (y) of its middle.
+// The little planet's towns and the roads between them, and what each town
+// is made of: the same on every machine, as the match walks into its
+// buildings and the views draw them. A town is laid out on the ground round
+// its middle, in metres east (x) and north (y) of it; a road runs from one
+// town's square to another's, along the great circle between them. Where the
+// towns are and their buildings are tables in layout.tide (tools/towns.mjs).
 
-const int CITIES = 12;
-const float EDGE = 400;          // How far a city goes from its middle
-const float PLAZA = 34;          // The square in its middle
-const float FOUNTAIN = 5;
-const float RING = 180;          // The ring road's middle
-const float ROAD = 9;            // Half a road's width, kerbs and all
-const int BUILDINGS = 40;
+const float R = 3_000;            // The planet's radius, in metres
+const int TOWNS = 10;
+const int ROADS = 11;
+const float TOWN = 110;           // How far a town goes from its middle
+const float PLAZA = 18;           // The square in its middle
+const float FOUNTAIN = 4;
+const float RING = 70;            // The ring road's middle
+const float ROAD = 6;             // Half a road's width, kerbs and all
+const int BUILDINGS = 22;
 
-// Its latitude and longitude, in degrees: on a made-up world, spread round it
-float2 Where(int city)
+// The towns a road joins: each town's two nearest, once each
+int2 Road(int road)
 {
-    if (city == 0) return float2(40, -70);
-    if (city == 1) return float2(15, -100);
-    if (city == 2) return float2(-25, -45);
-    if (city == 3) return float2(50, 0);
-    if (city == 4) return float2(5, 15);
-    if (city == 5) return float2(28, 40);
-    if (city == 6) return float2(58, 60);
-    if (city == 7) return float2(18, 80);
-    if (city == 8) return float2(38, 115);
-    if (city == 9) return float2(32, 145);
-    if (city == 10) return float2(-30, 150);
-    return float2(35, -125);
+    if (road == 0) return int2(0, 1);
+    if (road == 1) return int2(0, 2);
+    if (road == 2) return int2(0, 3);
+    if (road == 3) return int2(0, 9);
+    if (road == 4) return int2(1, 2);
+    if (road == 5) return int2(3, 4);
+    if (road == 6) return int2(4, 5);
+    if (road == 7) return int2(5, 8);
+    if (road == 8) return int2(6, 7);
+    if (road == 9) return int2(6, 9);
+    return int2(7, 8);
 }
 
-// Straight up at a city's middle, from the Earth's center
-double3 Up(int city)
+// East and north along the ground at a place, given which way is up there
+float3 EastOf(float3 up)
 {
-    var at = Where(city);
-    double lat = Math.Radians(double(at.x));
-    double lon = Math.Radians(double(at.y));
-    return double3(Math.Cos(lat) * Math.Cos(lon), Math.Sin(lat), Math.Cos(lat) * Math.Sin(lon));
+    var east = Math.Cross(up, float3(0, 1, 0));
+    if (Math.Length(east) < 0.001) return float3(1, 0, 0);
+    return Math.Normalize(east);
 }
 
-// East and north along the ground there
-float3 East(double3 up)
+float3 NorthOf(float3 up)
 {
-    var u = float3(up);
-    return Math.Normalize(Math.Cross(u, float3(0, 1, 0)));
+    return Math.Cross(EastOf(up), up);
 }
 
-float3 North(double3 up)
+// A place in a town, from the planet's center: on the ground, or `height` above it
+float3 Place(int town, float2 at, float height)
 {
-    var u = float3(up);
-    return Math.Cross(East(up), u);
+    var up = Up(town);
+    return Math.Normalize(up * R + EastOf(up) * at.x + NorthOf(up) * at.y) * (R + height);
 }
 
-// A place in a city, from the Earth's center: on the ground, or `height` above it
-double3 Place(int city, float2 at, float height)
+// Where a place is in a town: metres east and north of its middle
+float2 Local(int town, float3 place)
 {
-    var up = Up(city);
-    var round = Math.Normalize(up * RADIUS + double3(East(up) * at.x + North(up) * at.y));
-    return round * (RADIUS + height);
+    var up = Up(town);
+    var on = Math.Normalize(place) * R;
+    return float2(Math.Dot(on, EastOf(up)), Math.Dot(on, NorthOf(up)));
+}
+
+// The town a place is in, or -1 out in the country
+int TownAt(float3 place, float margin)
+{
+    var n = Math.Normalize(place);
+    for (var town = 0; town < TOWNS; town++)
+    {
+        if (Math.Dot(n, Up(town)) > Math.Cos((TOWN + margin) / R)) return town;
+    }
+    return -1;
+}
+
+// The town nearest a place
+int Nearest(float3 place)
+{
+    var n = Math.Normalize(place);
+    mut int best = 0;
+    mut float closest = -2;
+    for (var town = 0; town < TOWNS; town++)
+    {
+        float d = Math.Dot(n, Up(town));
+        if (d > closest)
+        {
+            closest = d;
+            best = town;
+        }
+    }
+    return best;
 }
 
 // A building: a box standing on the ground
@@ -67,38 +97,15 @@ struct Block
     int paint;
 }
 
-float Roll(int city, int i, int k)
-{
-    return (Math.Hash(int3(city * 131 + k, i, 9001)) % 10000) / 10000.0;
-}
-
-Block Building(int city, int i)
-{
-    var half = float2(5 + Roll(city, i, 0) * 7, 5 + Roll(city, i, 1) * 7);
-    float reach = Math.Length(half);
-    // Inside the ring road, round the square, or outside it, out to the edge
-    bool inside = i < BUILDINGS * 2 / 5;
-    float low = inside ? PLAZA + reach + 6 : RING + ROAD + reach + 4;
-    float high = inside ? RING - ROAD - reach - 4 : EDGE - reach - 30;
-    float r = low + Roll(city, i, 2) * (high - low);
-    // A quarter each, between the four roads out of the square
-    float turn = (i % 4) * Math.PI * 0.5 + 0.2 + Roll(city, i, 3) * (Math.PI * 0.5 - 0.4);
-    mut var center = float2(Math.Sin(turn), Math.Cos(turn)) * r;
-    // Clear of the roads that go out from the square
-    if (Math.Abs(center.x) < half.x + ROAD + 2) center.x = (center.x < 0 ? -1 : 1) * (half.x + ROAD + 2);
-    if (Math.Abs(center.y) < half.y + ROAD + 2) center.y = (center.y < 0 ? -1 : 1) * (half.y + ROAD + 2);
-    float tall = 10 + Roll(city, i, 4) * (inside ? 40 : 22);
-    return Block { center = center, half = half, height = tall, paint = Math.Hash(int2(city, i)) % 6 };
-}
-
-// Where something round of `radius` at `at` goes, out of the buildings and the
-// fountain, and inside the city
-float2 Clear(int city, float2 at, float radius)
+// Where something round of `radius` at `at` in a town goes: out of the
+// buildings and the fountain
+float2 Clear(int town, float2 at, float radius)
 {
     mut var p = at;
     for (var i = 0; i < BUILDINGS; i++)
     {
-        var b = Building(city, i);
+        var b = Building(town, i);
+        if (b.height <= 0) continue;
         var nearest = float2(Math.Clamp(p.x, b.center.x - b.half.x, b.center.x + b.half.x),
                              Math.Clamp(p.y, b.center.y - b.half.y, b.center.y + b.half.y));
         var away = p - nearest;
@@ -111,6 +118,13 @@ float2 Clear(int city, float2 at, float radius)
     }
     float middle = Math.Length(p);
     if (middle < FOUNTAIN + radius) p = middle > 0.0001 ? p / middle * (FOUNTAIN + radius) : float2(0, FOUNTAIN + radius);
-    if (middle > EDGE - radius) p = p / middle * (EDGE - radius);
     return p;
+}
+
+// A place anywhere on the planet, kept out of whatever town it's in
+float3 Settle(float3 place, float radius, float height)
+{
+    int town = TownAt(place, 10);
+    if (town < 0) return Math.Normalize(place) * (R + height);
+    return Place(town, Clear(town, Local(town, place), radius), height);
 }

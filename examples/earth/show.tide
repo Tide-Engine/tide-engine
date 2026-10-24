@@ -1,89 +1,115 @@
-// What this machine shows: the planet from far away, with its cities, until
-// its player picks one, then their walker there from behind. Everything is
-// placed around the eye, a double3, and drawn as floats from there.
+// What this machine shows: the planet from out in space, until its player
+// picks a place on it, then their walker (or their car) from behind.
+// Everything is placed around the eye and drawn from there.
 
 local singleton Pilot
 {
-    bool walking;       // In a city behind this machine's walker; else looking at the globe
-    int city = -1;      // The city its player asked for
+    bool walking;       // Down on the ground behind this machine's walker; else looking at the globe
+    float3 drop;        // Where its player asked to go
     int moves;
     // The globe's camera: over which longitude and latitude, how many radii out
-    float yaw = 0.26;
-    float pitch = 0.44;
-    float away = 3.0;
+    float yaw = 0.4;
+    float pitch = 0.5;
+    float away = 3.2;
     float spin;         // Radians a second the globe still turns after a drag
-    // The walk's camera: which way it looks (clockwise from north), down how far, from how far
-    float look;
-    float tilt = 0.35;
+    // The walk's camera: which way it looks along the ground, down how far, from how far
+    float3 look = float3(0, 0, 1);
+    float tilt = 0.32;
     float back = 8;
     float blend;        // From the globe to the walk, 0 to 1
     bool shards;        // Paints what each shard owns
     bool pressing;
     bool dragging;
     float2 pressed;     // Where the press started, on the screen
-    float2 goal;        // Where a tap on the ground said to walk to
+    float3 goal;        // Where a tap on the ground said to walk to
     bool going;
-    float2 toward;      // ...the way there, for the input
-    float jumping;      // Seconds a button's jump and wave are held for, so a tick sees them
+    // What the input reads: the way there, and which ways the camera's ahead and right are along the ground
+    float3 toward;
+    float3 ahead = float3(0, 0, 1);
+    float3 right = float3(1, 0, 0);
+    float jumping;      // Seconds a button's jump, wave or change is held for, so a tick sees it
     float waving;
-    float clouds;
+    float morphing;
     // This machine's walker, as its view last saw it
     bool mine;
     bool had;
+    bool placed;
+    bool driving;
     Entity me;
-    int at = -1;        // Its city
-    int arrived = -1;   // ...the move the camera last turned for
-    int landed;         // ...the last move it took
+    float3 spot;
+    float3 facing;
+    int landed;         // The last place it took
+    int arrived = -1;   // ...the one the camera last turned for
     float settle;       // Seconds since: a view sees it blended between ticks until it has stood a moment
-    float waiting;      // Seconds the walk has waited for the walker to get to its town
-    float facing;
-    float2 spot;
-    float height;
-    // The frame's camera, and the city it's in
-    double3 eye;
+    float waiting;      // Seconds the walk has waited for the walker to get there
+    // The frame's camera
+    float3 eye;
     quaternion turned;
-    int near = -1;
     Sky sky;
 }
 
 local singleton Scenery
 {
-    List<Placed> rounds;    // Balls: bodies, heads, trees, wheels
+    List<Placed> rounds;    // Balls: bodies, heads, wheels, trees
     List<Placed> boxes;     // Cars, trunks
     List<Tower> towers;
     List<Placed> glows;
     List<Placed> shades;
-    List<int> people;       // Players in each city, this frame
+    List<Tag> tags;         // Players' names over their heads
+    List<int> people;       // Players in each town, this frame
+    List<float3> players;   // ...and where every player is
     int shown;              // A bit for each shard that owns something drawn
     int lastShown;
+    float3 crowd;           // Where most players are together, but this machine's
+    int crowded;            // ...how many, 0 for none
     List<Bit> confetti;
 }
 
-// A piece of confetti from a high five
+struct Tag
+{
+    float3 at;
+    string text;
+    Color paint;
+}
+
+// A spark: confetti from a high five, or a car coming together
 struct Bit
 {
-    double3 at;
+    float3 at;
     float3 velocity;
     Color paint;
     float life;
 }
 
-const float FOV = 55;
+const float FOV = 60;
+const float NEAR = 380;   // How far off what's on the ground is drawn
 
-string Name(int city)
+string Name(int town)
 {
-    if (city == 0) return "Tidewater";
-    if (city == 1) return "Saltmere";
-    if (city == 2) return "Coralbay";
-    if (city == 3) return "Amberhold";
-    if (city == 4) return "Emberfall";
-    if (city == 5) return "Duskport";
-    if (city == 6) return "Frostgate";
-    if (city == 7) return "Mistvale";
-    if (city == 8) return "Stonereach";
-    if (city == 9) return "Glimmerdeep";
-    if (city == 10) return "Brightwater";
+    if (town == 0) return "Tidewater";
+    if (town == 1) return "Saltmere";
+    if (town == 2) return "Coralbay";
+    if (town == 3) return "Amberhold";
+    if (town == 4) return "Emberfall";
+    if (town == 5) return "Duskport";
+    if (town == 6) return "Frostgate";
+    if (town == 7) return "Mistvale";
+    if (town == 8) return "Stonereach";
     return "Pinecrest";
+}
+
+// A player's name, from when they arrived: two words, sixteen of each
+string Called(int tag)
+{
+    int a = tag % 16;
+    int b = (tag * 7 + tag / 16 + 3) % 16;
+    string first = a == 0 ? "Swift" : a == 1 ? "Happy" : a == 2 ? "Brave" : a == 3 ? "Sleepy" : a == 4 ? "Sunny" : a == 5 ? "Fuzzy"
+                 : a == 6 ? "Lucky" : a == 7 ? "Jolly" : a == 8 ? "Clever" : a == 9 ? "Mighty" : a == 10 ? "Gentle" : a == 11 ? "Cosmic"
+                 : a == 12 ? "Wobbly" : a == 13 ? "Shiny" : a == 14 ? "Zippy" : "Cozy";
+    string second = b == 0 ? "Otter" : b == 1 ? "Fox" : b == 2 ? "Panda" : b == 3 ? "Koala" : b == 4 ? "Badger" : b == 5 ? "Llama"
+                  : b == 6 ? "Owl" : b == 7 ? "Penguin" : b == 8 ? "Hedgehog" : b == 9 ? "Moose" : b == 10 ? "Gecko" : b == 11 ? "Walrus"
+                  : b == 12 ? "Turtle" : b == 13 ? "Crab" : b == 14 ? "Yak" : "Puffin";
+    return first + " " + second;
 }
 
 Color Paint(int color)
@@ -123,39 +149,34 @@ Color Facade(int paint)
 }
 
 // Whether the planet is between the eye and a place
-bool Behind(double3 eye, double3 place)
+bool Behind(float3 eye, float3 place)
 {
     var v = place - eye;
-    double t = -Math.Dot(eye, v) / Math.Dot(v, v);
+    float t = -Math.Dot(eye, v) / Math.Dot(v, v);
     if (t <= 0 || t >= 1) return false;
     var closest = eye + v * t;
-    return Math.Dot(closest, closest) < RADIUS * RADIUS * 0.99999;
+    return Math.Dot(closest, closest) < (R - 2) * (R - 2);
 }
 
-// A city's way round: x east, y up, z north
-quaternion Turn(int city)
+// Upright at a place, facing a way along the ground
+quaternion Standing(float3 place, float3 facing)
 {
-    var up = Up(city);
-    return quaternion.LookRotation(North(up), float3(up));
-}
-
-// From the eye to a place in a city
-float3 Seen(Pilot pilot, int city, float2 at, float height)
-{
-    return float3(Place(city, at, height) - pilot.eye);
+    var up = Math.Normalize(place);
+    var ahead = Flat(facing, up);
+    return quaternion.LookRotation(Math.Length(ahead) > 0.0001 ? Math.Normalize(ahead) : EastOf(up), up);
 }
 
 // A high five: confetti over the walker
 local event(HighFive five) Cheer(Walker walker, mut Scenery scenery)
 {
-    var up = float3(Math.Normalize(walker.position));
+    var up = Math.Normalize(walker.position);
+    var east = EastOf(up);
+    var north = NorthOf(up);
     for (var i = 0; i < 24; i++)
     {
         float turn = i * 2.4;
-        var east = East(Up(walker.city));
-        var north = North(Up(walker.city));
         var out = (east * Math.Sin(turn) + north * Math.Cos(turn)) * (1.5 + (i % 5) * 0.4) + up * (4 + (i % 3) * 1.5);
-        scenery.confetti.Add(Bit { at = walker.position + double3(up * 2.2), velocity = out, paint = Paint(i % 8), life = 2.5 });
+        scenery.confetti.Add(Bit { at = walker.position + up * 2.2, velocity = out, paint = Paint(i % 8), life = 2.5 });
     }
 }
 
@@ -166,23 +187,40 @@ local event(Disconnected gone) Alone()
 }
 
 // The buttons, first, so a press on one is theirs and not the world's
-view Buttons(mut Pilot pilot)
+view Buttons(mut Pilot pilot, Scenery scenery)
 {
     GUI.SetTheme(GUITheme { radius = 6 });
     if (GUI.Button(Rect(Screen.width - 104, 10, 94, 28), pilot.shards ? "Hide shards" : "Shards")) pilot.shards = !pilot.shards;
     if (pilot.walking)
     {
         if (GUI.Button(Rect(Screen.width - 104, 44, 94, 28), "Globe")) pilot.walking = false;
-        // Only in a town: on the way there they'd do nothing
+        // Only on the ground: on the way there they'd do nothing
         if (pilot.blend > 0.5)
         {
-            if (GUI.Button(Rect(Screen.width - 104, Screen.height - 38, 94, 28), "Wave")) pilot.waving = 0.15;
+            if (GUI.Button(Rect(Screen.width - 104, Screen.height - 38, 94, 28), pilot.driving ? "Walk" : "Car")) pilot.morphing = 0.15;
             if (GUI.Button(Rect(Screen.width - 204, Screen.height - 38, 94, 28), "Jump")) pilot.jumping = 0.15;
+            if (!pilot.driving)
+            {
+                if (GUI.Button(Rect(Screen.width - 304, Screen.height - 38, 94, 28), "Wave")) pilot.waving = 0.15;
+            }
         }
     }
-    else if (pilot.had && pilot.at >= 0)
+    else if (pilot.had && pilot.placed)
     {
         if (GUI.Button(Rect(Screen.width - 104, 44, 94, 28), "Back")) pilot.walking = true;
+    }
+    // Others somewhere: straight there
+    if (scenery.crowded > 0)
+    {
+        string join = $"Join {scenery.crowded} {(scenery.crowded == 1 ? "player" : "players")}";
+        if (GUI.Button(Rect(10, 38, 150, 28), join))
+        {
+            var up = Math.Normalize(scenery.crowd);
+            pilot.drop = Math.Normalize(scenery.crowd + EastOf(up) * 3);
+            pilot.moves = Math.Max(pilot.moves, pilot.landed) + 1;
+            pilot.walking = true;
+            pilot.going = false;
+        }
     }
 }
 
@@ -191,18 +229,14 @@ view Mine(Walker walker, mut Pilot pilot, with ownership)
 {
     pilot.mine = true;
     pilot.me = this;
+    pilot.placed = walker.placed;
+    pilot.driving = walker.driving;
+    pilot.spot = walker.position;
+    pilot.facing = walker.forward;
+    pilot.landed = walker.moves;
     // A walker that took more requests than this page made (this machine's player came back to it, as a page that
     // was reloaded or put back in its frame does): go on from its count, or a new request would read as an old one
-    if (walker.moves > pilot.moves)
-    {
-        pilot.moves = walker.moves;
-        if (walker.city >= 0) pilot.city = walker.city;
-    }
-    pilot.at = walker.city;
-    pilot.facing = walker.facing;
-    pilot.landed = walker.moves;
-    pilot.spot = walker.at;
-    pilot.height = walker.height;
+    if (walker.moves > pilot.moves) pilot.moves = walker.moves;
 }
 
 view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atlas, Devices devices)
@@ -210,7 +244,17 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
     if (shapes.ball.count == 0) Build(shapes);
     if (!atlas.made)
     {
-        for (var i = 0; i < CITIES; i++) atlas.towns[i] = float3(Up(i));
+        for (var i = 0; i < TOWNS; i++)
+        {
+            atlas.towns[i] = Up(i);
+            atlas.easts[i] = EastOf(Up(i));
+            atlas.norths[i] = NorthOf(Up(i));
+        }
+        for (var i = 0; i < ROADS; i++)
+        {
+            atlas.froms[i] = Up(Road(i).x);
+            atlas.tos[i] = Up(Road(i).y);
+        }
         atlas.made = true;
     }
     float dt = Math.Min(Frame.dt, 0.05);
@@ -221,14 +265,16 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
     scenery.towers.Clear();
     scenery.glows.Clear();
     scenery.shades.Clear();
+    scenery.tags.Clear();
     scenery.people.Clear();
-    for (var i = 0; i < CITIES; i++) scenery.people.Add(0);
+    for (var i = 0; i < TOWNS; i++) scenery.people.Add(0);
     pilot.jumping = Math.Max(pilot.jumping - dt, 0);
     pilot.waving = Math.Max(pilot.waving - dt, 0);
+    pilot.morphing = Math.Max(pilot.morphing - dt, 0);
 
     var keys = devices.keyboard;
     if (keys.escape.down || keys.g.down) pilot.walking = false;
-    if (keys.enter.down && pilot.at >= 0) pilot.walking = true;
+    if (keys.enter.down && pilot.placed) pilot.walking = true;
     mut var scroll = devices.mouse.scroll.y;
     // Two fingers apart or together zoom, as the wheel does, and are neither a tap nor a drag
     mut int fingers = 0;
@@ -255,34 +301,34 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
     if (fingers >= 2) pilot.dragging = true;
     if (pilot.walking)
     {
-        pilot.back = Math.Clamp(pilot.back * Math.Exp(-scroll * 0.15), 3, 40);
-        if (pilot.back >= 40) pilot.walking = false;
+        pilot.back = Math.Clamp(pilot.back * Math.Exp(-scroll * 0.15), 3, 60);
+        if (pilot.back >= 60) pilot.walking = false;
     }
     else
     {
-        pilot.away = Math.Clamp(pilot.away * Math.Exp(-scroll * 0.1), 1.25, 8);
-        if (pilot.back >= 40) pilot.back = 14;
+        pilot.away = Math.Clamp(pilot.away * Math.Exp(-scroll * 0.1), 1.2, 8);
+        if (pilot.back >= 60) pilot.back = 16;
     }
-    // The walk starts once the walker is in the city its player picked, looking the way it does
-    bool there = pilot.at == pilot.city && pilot.city >= 0;
-    pilot.settle = there && pilot.landed == pilot.moves ? pilot.settle + dt : 0;
+    // The walk starts once the walker is where its player asked, looking the way it does
+    bool there = pilot.placed && pilot.landed >= pilot.moves && pilot.moves > 0;
+    pilot.settle = there ? pilot.settle + dt : 0;
+    if (pilot.settle > 0.2 && pilot.arrived != pilot.moves)
+    {
+        pilot.arrived = pilot.moves;
+        pilot.look = pilot.facing;
+        pilot.tilt = 0.32;
+    }
     // Still not there after a while (a request the world never had): ask again
-    pilot.waiting = pilot.walking && !there && pilot.city >= 0 ? pilot.waiting + dt : 0;
+    pilot.waiting = pilot.walking && !there && pilot.moves > 0 ? pilot.waiting + dt : 0;
     if (pilot.waiting > 6)
     {
         pilot.moves = Math.Max(pilot.moves, pilot.landed) + 1;
         pilot.waiting = 0;
     }
-    if (pilot.settle > 0.2 && pilot.arrived != pilot.moves)
-    {
-        pilot.arrived = pilot.moves;
-        pilot.look = pilot.facing;
-        pilot.tilt = 0.3;
-    }
     float toward = pilot.walking && there ? 1 : 0;
     pilot.blend = Math.Clamp(pilot.blend + (toward > pilot.blend ? dt / 1.8 : -dt / 1.0), 0, 1);
 
-    // The pointer: on the globe, a drag turns it and a click picks a city; in a city, a drag looks round and a tap walks there
+    // The pointer: on the globe, a drag turns it and a click goes there; on the ground, a drag looks round and a tap walks there
     var pointer = devices.pointer;
     var screen = Screen.Flip(pointer.position);
     if (pointer.press.down)
@@ -301,14 +347,16 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
             click = !pilot.dragging;
         }
     }
+    var up = Math.Normalize(pilot.spot);
     if (fingers >= 2)
     {
         // Pinching: no turning
     }
     else if (pilot.walking && pilot.pressing && pilot.dragging)
     {
-        pilot.look += pointer.delta.x * 0.006;
-        pilot.tilt = Math.Clamp(pilot.tilt - pointer.delta.y * 0.004, 0.05, 1.3);
+        float turn = pointer.delta.x * 0.006;
+        pilot.look = pilot.look * Math.Cos(turn) + Math.Cross(up, pilot.look) * Math.Sin(turn);
+        pilot.tilt = Math.Clamp(pilot.tilt - pointer.delta.y * 0.004, 0.05, 1.4);
     }
     else if (!pilot.walking && pilot.pressing && pilot.dragging)
     {
@@ -321,253 +369,298 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
     else if (!pilot.walking)
     {
         pilot.yaw += pilot.spin * dt;
-        pilot.spin = Math.Lerp(pilot.spin, 0.04, Math.Min(dt * 1.5, 1));
+        pilot.spin = Math.Lerp(pilot.spin, 0.05, Math.Min(dt * 1.5, 1));
     }
     if (pilot.yaw > Math.TAU) pilot.yaw -= Math.TAU;
     if (pilot.yaw < 0) pilot.yaw += Math.TAU;
-    if (pilot.look > Math.TAU) pilot.look -= Math.TAU;
-    if (pilot.look < 0) pilot.look += Math.TAU;
+    // The look stays along the ground as the walker goes round the planet; a car's camera swings in behind it
+    var flat = Flat(pilot.look, up);
+    pilot.look = Math.Length(flat) > 0.001 ? Math.Normalize(flat) : Flat(pilot.facing, up);
+    if (pilot.driving && !pilot.pressing) pilot.look = Math.Normalize(Math.Lerp(pilot.look, pilot.facing, Math.Min(dt * 2.5, 1)));
+    pilot.ahead = pilot.look;
+    pilot.right = Math.Cross(up, pilot.look);
 
     // The globe's camera, and the walk's, and between them by height
-    var around = double3(Math.Cos(pilot.pitch) * Math.Cos(pilot.yaw), Math.Sin(pilot.pitch), Math.Cos(pilot.pitch) * Math.Sin(pilot.yaw));
-    double globeHeight = (pilot.away - 1) * RADIUS;
-    var globeTurned = quaternion.LookRotation(float3(-around), float3(0, 1, 0));
-    mut var eye = around * (RADIUS + globeHeight);
+    var around = float3(Math.Cos(pilot.pitch) * Math.Cos(pilot.yaw), Math.Sin(pilot.pitch), Math.Cos(pilot.pitch) * Math.Sin(pilot.yaw));
+    float globeHeight = (pilot.away - 1) * R;
+    var globeTurned = quaternion.LookRotation(-around, float3(0, 1, 0));
+    mut var eye = around * (R + globeHeight);
     mut var turned = globeTurned;
-    pilot.near = -1;
-    if (pilot.blend > 0 && pilot.at >= 0)
+    if (pilot.blend > 0 && pilot.placed)
     {
-        var up = Up(pilot.at);
-        var u = float3(up);
-        var ahead = East(up) * Math.Sin(pilot.look) + North(up) * Math.Cos(pilot.look);
-        var target = Place(pilot.at, pilot.spot, pilot.height + 1.2);
-        var from = ahead * Math.Cos(pilot.tilt) - u * Math.Sin(pilot.tilt);
-        mut var walkEye = target - double3(from * pilot.back);
-        // Never under the ground
-        double over = Math.Length(walkEye) - RADIUS;
-        if (over < 0.6) walkEye = Math.Normalize(walkEye) * (RADIUS + 0.6);
-        var walkTurned = quaternion.LookRotation(Math.Normalize(float3(target - walkEye)), u);
+        float lift = pilot.driving ? 1.6 : 1.2;
+        var target = pilot.spot + up * lift;
+        float distance = pilot.back * (pilot.driving ? 1.6 : 1);
+        var from = pilot.look * Math.Cos(pilot.tilt) - up * Math.Sin(pilot.tilt);
+        mut var walkEye = target - from * distance;
+        if (Math.Length(walkEye) < R + 0.6) walkEye = Math.Normalize(walkEye) * (R + 0.6);
+        var walkTurned = quaternion.LookRotation(Math.Normalize(target - walkEye), up);
         float s = Math.SmoothStep(0, 1, pilot.blend);
-        double walkHeight = Math.Length(walkEye) - RADIUS;
-        double low = Math.Max(walkHeight, 0.5d);
-        double height = Math.Exp(Math.Lerp(Math.Log(globeHeight), Math.Log(low), double(s)));
-        // Across as far as it's come down, so that near the ground it's over the city whatever's left of the blend
-        double across = Math.Clamp(1 - (height - low) / Math.Max(globeHeight - low, 1d), 0d, 1d);
+        float low = Math.Max(Math.Length(walkEye) - R, 0.5);
+        float height = Math.Exp(Math.Lerp(Math.Log(globeHeight), Math.Log(low), s));
+        // Across as far as it's come down, so that near the ground it's over the walker whatever's left of the blend
+        float across = Math.Clamp(1 - (height - low) / Math.Max(globeHeight - low, 1), 0, 1);
         var way = Math.Normalize(Math.Lerp(Math.Normalize(eye), Math.Normalize(walkEye), across));
-        eye = way * (RADIUS + height);
+        eye = way * (R + height);
         if (s >= 1) eye = walkEye;
         turned = Math.Slerp(globeTurned, walkTurned, s);
-        if (pilot.blend > 0.5) pilot.near = pilot.at;
     }
     pilot.eye = eye;
     pilot.turned = turned;
-    double above = Math.Length(eye) - RADIUS;
-    float near = float(Math.Clamp(above * 0.02, 0.1d, 100000d));
-    var projection = float4x4.PerspectiveFov(Math.Radians(FOV), Screen.width / Screen.height, near, float(above + RADIUS * 3));
+    float above = Math.Length(eye) - R;
+    float near = Math.Clamp(above * 0.02, 0.05, 200);
+    var projection = float4x4.PerspectiveFov(Math.Radians(FOV), Screen.width / Screen.height, near, above + R * 3);
     Draw.SetCamera(float4x4.TRS(float3(0), turned, float3(1)), projection);
 
-    // A click on the globe: the nearest city to it
-    if (click && !pilot.walking)
+    // Where a ray from the eye through a pixel meets the ground
+    var ray = Draw.ScreenRayDirection(screen);
+    float b = -Math.Dot(ray, eye);
+    float c = above * (2 * R + above);
+    float disc = b * b - c;
+    bool hits = disc > 0 && b > 0;
+    var hit = hits ? Math.Normalize(eye + ray * (c / (b + Math.Sqrt(disc)))) * R : float3(0, 0, 0);
+    // A click on the globe: there, or the square of a town near it
+    if (click && !pilot.walking && hits)
     {
-        var ray = double3(Draw.ScreenRayDirection(screen));
-        double b = -Math.Dot(ray, eye);
-        double c = Math.Dot(eye, eye) - RADIUS * RADIUS;
-        double disc = b * b - c;
-        if (disc > 0 && b > 0)
+        int town = Nearest(hit);
+        mut var at = hit;
+        if (FromMiddle(Math.Normalize(hit), Up(town)) < 400)
         {
-            var hit = Math.Normalize(eye + ray * (b - Math.Sqrt(disc)));
-            mut int best = 0;
-            mut double closest = -2;
-            for (var city = 0; city < CITIES; city++)
-            {
-                double d = Math.Dot(hit, Up(city));
-                if (d > closest) { closest = d; best = city; }
-            }
-            if (best != pilot.at || !pilot.had)
-            {
-                pilot.city = best;
-                pilot.moves += 1;
-            }
-            pilot.walking = true;
-            pilot.going = false;
-            pilot.back = 8;
+            var spot = Local(town, hit);
+            var side = Math.Length(spot) > 0.01 ? Math.Normalize(spot) : float2(0, 1);
+            at = Place(town, side * (FOUNTAIN + 6), 0);
         }
+        pilot.drop = at;
+        pilot.moves = Math.Max(pilot.moves, pilot.landed) + 1;
+        pilot.walking = true;
+        pilot.going = false;
+        pilot.back = 8;
     }
-    // A tap on the ground in a city: walk there
-    if (click && pilot.walking && pilot.near >= 0)
+    // A tap on the ground: walk there
+    if (click && pilot.walking && pilot.blend > 0.5 && hits)
     {
-        var up = Up(pilot.near);
-        var ray = Draw.ScreenRayDirection(screen);
-        var u = float3(up);
-        var ground = float3(Place(pilot.near, float2(0, 0), 0) - eye);
-        float facing = Math.Dot(ray, u);
-        if (facing < -0.01)
-        {
-            float t = Math.Dot(ground, u) / facing;
-            var hit = ray * t - ground;
-            pilot.goal = float2(Math.Dot(hit, East(up)), Math.Dot(hit, North(up)));
-            pilot.going = true;
-        }
+        pilot.goal = hit;
+        pilot.going = true;
     }
     if (pilot.going)
     {
-        var way = pilot.goal - pilot.spot;
+        var way = Flat(pilot.goal - pilot.spot, up);
         if (Math.Length(way) < 0.8 || !pilot.walking) pilot.going = false;
         else pilot.toward = Math.Normalize(way);
     }
-    if (!pilot.going) pilot.toward = float2(0, 0);
+    if (!pilot.going) pilot.toward = float3(0, 0, 0);
     if (keys.w.pressed || keys.a.pressed || keys.s.pressed || keys.d.pressed || keys.upArrow.pressed || keys.downArrow.pressed
         || keys.leftArrow.pressed || keys.rightArrow.pressed) pilot.going = false;
 
     // A world too big for one server is shards: far out, this machine follows them all
-    if (pilot.blend < 1) Session.Watch(double3(0), double3(RADIUS * 2.2));
+    if (pilot.blend < 1) Session.Watch(float3(0), float3(R * 2.2));
     else Session.Unwatch();
 
-    // The sun: over the viewer's shoulder far out, high in the sky in a city
-    var eyeUp = float3(Math.Normalize(eye));
-    var right = Math.Rotate(turned, float3(1, 0, 0));
+    // The sun: over the viewer's shoulder far out, high in the sky on the ground
+    var eyeUp = Math.Normalize(eye);
+    var side = Math.Rotate(turned, float3(1, 0, 0));
     var top = Math.Rotate(turned, float3(0, 1, 0));
-    var globeSun = Math.Normalize(eyeUp - right * 0.6 + top * 0.5);
+    var globeSun = Math.Normalize(eyeUp - side * 0.6 + top * 0.5);
     mut var sun = globeSun;
-    if (pilot.at >= 0 && pilot.blend > 0)
+    if (pilot.placed && pilot.blend > 0)
     {
-        var up = Up(pilot.at);
-        var citySun = Math.Normalize(float3(up) * 0.85 + East(up) * 0.35 + North(up) * 0.4);
-        sun = Math.Normalize(Math.Lerp(globeSun, citySun, Math.SmoothStep(0.3, 0.9, pilot.blend)));
+        var groundSun = Math.Normalize(up * 0.85 + EastOf(up) * 0.35 + NorthOf(up) * 0.4);
+        sun = Math.Normalize(Math.Lerp(globeSun, groundSun, Math.SmoothStep(0.3, 0.9, pilot.blend)));
     }
-    pilot.clouds += dt * 0.004;
-    pilot.sky = Sky { center = float3(-eye), height = float(above), sun = sun, pixel = Math.Radians(FOV) / Screen.height, clouds = pilot.clouds };
+    pilot.sky = Sky { center = -eye, height = above, sun = sun, pixel = Math.Radians(FOV) / Screen.height };
     Draw.Clear(Color(0.086, 0.086, 0.094));
     Draw.Cull(Cull.Front), Draw.Depth(Depth.None)
     {
-        Draw.Mesh(shapes.sky, shapes.skyFaces, float4x4.TRS(float3(0), quaternion.identity, float3(near * 4)), Earth, pilot.sky);
+        Draw.Mesh(shapes.sky, shapes.skyFaces, float4x4.TRS(float3(0), quaternion.identity, float3(near * 4)), Planet, pilot.sky);
     }
-    // A city, near: its ground, its buildings, its trees
-    if (pilot.near >= 0)
+    // The horizon: a ball a little under the ground, in depth alone
+    Draw.Blend(Blend.Add), Draw.Cull(Cull.Back)
     {
-        int city = pilot.near;
-        var frame = Turn(city);
-        Draw.Blend(Blend.Alpha), Draw.Cull(Cull.None)
-        {
-            Draw.Mesh(shapes.ground, shapes.groundFaces, float4x4.TRS(Seen(pilot, city, float2(0, 0), 0), frame, float3(1)), Streets, pilot.sky);
-        }
+        Draw.Mesh(shapes.hull, shapes.hullFaces, float4x4.TRS(-eye, quaternion.identity, float3(R - 1.2)), Unseen);
+    }
+    // The towns near: their buildings, their trees, their fountains
+    for (var town = 0; town < TOWNS; town++)
+    {
+        var middle = Up(town) * R;
+        if (Math.Length(middle - eye) > NEAR + TOWN) continue;
         for (var i = 0; i < BUILDINGS; i++)
         {
-            var b = Building(city, i);
-            var size = float3(b.half.x * 2, b.height, b.half.y * 2);
-            scenery.towers.Add(Tower { transform = float4x4.TRS(Seen(pilot, city, b.center, b.height * 0.5), frame, size),
-                                       size = size, paint = Facade(b.paint) });
+            var block = Building(town, i);
+            if (block.height <= 0) continue;
+            var base = Place(town, block.center, 0);
+            var standing = Standing(base, NorthOf(Up(town)));
+            var size = float3(block.half.x * 2, block.height, block.half.y * 2);
+            scenery.towers.Add(Tower { transform = float4x4.TRS(base + Math.Rotate(standing, float3(0, block.height * 0.5, 0)) - eye, standing, size),
+                                       size = size, paint = Facade(block.paint) });
         }
-        // Trees along the ring road, either side
-        for (var i = 0; i < 72; i++)
-        {
-            float turn = i * Math.TAU / 36;
-            float r = i < 36 ? RING - ROAD - 3 : RING + ROAD + 3;
-            var at = float2(Math.Sin(turn + 0.04), Math.Cos(turn + 0.04)) * r;
-            if (Math.Min(Math.Abs(at.x), Math.Abs(at.y)) < ROAD + 2) continue;
-            float tall = 4 + (Math.Hash(int2(city, i)) % 100) / 40.0;
-            scenery.boxes.Add(Placed { transform = float4x4.TRS(Seen(pilot, city, at, tall * 0.35), frame, float3(0.35, tall * 0.7, 0.35)),
-                                       paint = Color(0.40, 0.30, 0.22) });
-            scenery.rounds.Add(Placed { transform = float4x4.TRS(Seen(pilot, city, at, tall * 0.85), frame, float3(1.9, 1.7, 1.9)),
-                                        paint = Color(0.24, 0.48 + (i % 3) * 0.04, 0.26) });
-        }
-        // The fountain in the square
-        scenery.rounds.Add(Placed { transform = float4x4.TRS(Seen(pilot, city, float2(0, 0), 0.3), frame, float3(FOUNTAIN, 0.7, FOUNTAIN)),
+        var square = Standing(middle, NorthOf(Up(town)));
+        scenery.rounds.Add(Placed { transform = float4x4.TRS(Place(town, float2(0, 0), 0.3) - eye, square, float3(FOUNTAIN, 0.7, FOUNTAIN)),
                                     paint = Color(0.70, 0.68, 0.64) });
-        scenery.rounds.Add(Placed { transform = float4x4.TRS(Seen(pilot, city, float2(0, 0), 0.75), frame, float3(FOUNTAIN - 0.6, 0.25, FOUNTAIN - 0.6)),
+        scenery.rounds.Add(Placed { transform = float4x4.TRS(Place(town, float2(0, 0), 0.75) - eye, square, float3(FOUNTAIN - 0.5, 0.25, FOUNTAIN - 0.5)),
                                     paint = Color(0.35, 0.62, 0.80) });
-        scenery.rounds.Add(Placed { transform = float4x4.TRS(Seen(pilot, city, float2(0, 0), 1.6), frame, float3(0.5, 1.4, 0.5)),
+        scenery.rounds.Add(Placed { transform = float4x4.TRS(Place(town, float2(0, 0), 1.5) - eye, square, float3(0.45, 1.3, 0.45)),
                                     paint = Color(0.75, 0.73, 0.70) });
+    }
+    // Trees out in the country, near the eye: one in some cells of a grid of latitude and longitude, never on a road or in a town
+    if (above < 300)
+    {
+        var at = Math.Normalize(eye);
+        float lat = Math.Asin(Math.Clamp(at.y, -1, 1));
+        float lon = Math.Atan2(at.z, at.x);
+        float step = 16 / R;
+        int row0 = int(Math.Floor(lat / step));
+        float across = step / Math.Max(Math.Cos(lat), 0.2);
+        int column0 = int(Math.Floor(lon / across));
+        for (var row = row0 - 10; row <= row0 + 10; row++)
+        {
+            for (var column = column0 - 10; column <= column0 + 10; column++)
+            {
+                int h = Math.Hash(int2(row, column));
+                float jitterA = (h % 1000) / 1000.0;
+                float jitterB = ((h / 1000) % 1000) / 1000.0;
+                float tLat = (row + jitterA) * step;
+                float tLon = (column + jitterB) * across;
+                var n = float3(Math.Cos(tLat) * Math.Cos(tLon), Math.Sin(tLat), Math.Cos(tLat) * Math.Sin(tLon));
+                float forest = Math.Simplex(n * 7) * 0.6 + Math.Simplex(n * 19) * 0.3 + Math.Simplex(n * 61) * 0.1;
+                if ((h / 1000000) % 100 > (forest > 0.1 ? 70 : 12)) continue;
+                var place = n * R;
+                if (Math.Length(place - eye) > 170 || Paved(place) || TownAt(place, 8) >= 0) continue;
+                mut bool roadside = false;
+                for (var road = 0; road < ROADS && !roadside; road++)
+                {
+                    if (RoadDistance(n, Up(Road(road).x), Up(Road(road).y)) < ROAD + 3) roadside = true;
+                }
+                if (roadside) continue;
+                float tall = 4 + (h % 7) * 0.6;
+                var standing = Standing(place, NorthOf(n));
+                scenery.boxes.Add(Placed { transform = float4x4.TRS(place + n * (tall * 0.35) - eye, standing, float3(0.35, tall * 0.7, 0.35)),
+                                           paint = Color(0.40, 0.30, 0.22) });
+                scenery.rounds.Add(Placed { transform = float4x4.TRS(place + n * (tall * 0.85) - eye, standing, float3(1.9, 1.7, 1.9)),
+                                            paint = Color(0.20 + (h % 3) * 0.03, 0.44 + (h % 5) * 0.03, 0.24) });
+            }
+        }
     }
 }
 
-// A walker: a body, a head with eyes, hands and feet, which step as it walks
+// A walker: a body, a head with eyes, hands and feet that step as it walks.
+// Or a car: a body, a cabin, four wheels and two lamps. Between, as it turns
+// into one or back, each part flies to where it goes in the other.
 view People(mut Walker walker, mut Scenery scenery, Pilot pilot, Time time)
 {
-    if (walker.city < 0) return;
+    if (!walker.placed) return;
     bool player = walker.color < 100;
-    if (player) scenery.people[walker.city] += 1;
     int shard = Shards.Of(this);
     if (shard >= 0 && shard < 31) scenery.shown |= 1 << shard;
-    var base = Place(walker.city, walker.at, walker.height);
-    if (walker.city != pilot.near)
+    if (player)
     {
-        // Far away, a player is a dot over their city on the globe
-        if (player && pilot.blend < 0.5 && !Behind(pilot.eye, base))
+        scenery.players.Add(walker.position);
+        int town = TownAt(walker.position, 30);
+        if (town >= 0) scenery.people[town] += 1;
+    }
+    walker.morph = Math.Clamp(walker.morph + (walker.driving ? 1 : -1) * Math.Min(Frame.dt, 0.05) / 0.8, 0, 1);
+    var at = walker.position - pilot.eye;
+    if (Math.Length(at) > NEAR)
+    {
+        // Far away, a player is a dot on the globe
+        if (player && pilot.blend < 0.5 && !Behind(pilot.eye, walker.position))
         {
-            var at = float3(base - pilot.eye);
             var paint = pilot.shards ? ShardPaint(shard) : Paint(walker.color);
-            scenery.glows.Add(Placed { transform = float4x4.TRS(at, pilot.turned, float3(Math.Length(at) * 0.006)), paint = paint });
+            scenery.glows.Add(Placed { transform = float4x4.TRS(at, pilot.turned, float3(Math.Length(at) * 0.008)), paint = paint });
         }
         return;
     }
-    var up = Up(walker.city);
-    var u = float3(up);
-    var ahead = East(up) * Math.Sin(walker.facing) + North(up) * Math.Cos(walker.facing);
-    var turned = quaternion.LookRotation(ahead, u);
-    var at = float3(base - pilot.eye);
+    var up = Math.Normalize(walker.position);
+    var turned = Standing(walker.position, walker.forward);
     float speed = Math.Length(walker.velocity);
     walker.stride += Frame.dt * speed * 2.2;
     if (walker.stride > Math.TAU) walker.stride -= Math.TAU;
-    float step = Math.Sin(walker.stride) * Math.Min(speed / 3, 1);
-    float bob = Math.Abs(Math.Cos(walker.stride)) * 0.05 * Math.Min(speed / 3, 1);
+    float step = Math.Sin(walker.stride) * Math.Min(speed / 3, 1) * (1 - walker.morph);
+    float bob = Math.Abs(Math.Cos(walker.stride)) * 0.05 * Math.Min(speed / 3, 1) * (1 - walker.morph);
     var paint = pilot.shards ? ShardPaint(shard) : Paint(walker.color);
-    var skin = player ? Color(0.96, 0.82, 0.68) : Color(0.86, 0.72, 0.60);
-    Part(scenery, at, turned, float3(0, 0.62 + bob, 0), float3(0.30, 0.40, 0.25), paint);
-    Part(scenery, at, turned, float3(0, 1.22 + bob, 0), float3(0.27, 0.27, 0.27), skin);
-    Part(scenery, at, turned, float3(-0.095, 1.27 + bob, 0.235), float3(0.045, 0.06, 0.03), Color(0.08, 0.08, 0.1));
-    Part(scenery, at, turned, float3(0.095, 1.27 + bob, 0.235), float3(0.045, 0.06, 0.03), Color(0.08, 0.08, 0.1));
-    Part(scenery, at, turned, float3(-0.12, 0.09, step * 0.18), float3(0.09, 0.08, 0.14), Color(0.2, 0.2, 0.24));
-    Part(scenery, at, turned, float3(0.12, 0.09, -step * 0.18), float3(0.09, 0.08, 0.14), Color(0.2, 0.2, 0.24));
-    Part(scenery, at, turned, float3(-0.34, 0.6 + bob, -step * 0.12), float3(0.08, 0.08, 0.08), skin);
-    if (walker.waving > 0)
+    var skin = player ? Color(0.96, 0.82, 0.68) : Color(0.82, 0.70, 0.60);
+    var dark = Color(0.12, 0.12, 0.14);
+    float small = player ? 1 : 0.88; // The townsfolk are a little smaller
+    float t = walker.morph;
+    var cabin = Color(paint.r * 0.75 + 0.15, paint.g * 0.75 + 0.15, paint.b * 0.75 + 0.18);
+    var lamp = Color(1.0, 0.95, 0.7);
+    float swing = Math.Sin(time.t * 16) * 0.08;
+    bool waving = walker.waving > 0 && t <= 0;
+    // Each part: as a walker, then as a car (its place, its size, ball or box), and the order they fly in
+    Part(scenery, at, turned, float3(0, 0.62 + bob, 0) * small, float3(0.30, 0.40, 0.25) * small, paint,
+         float3(0, 0.62, 0), float3(1.8, 0.7, 4.0), paint, true, t, 0);
+    Part(scenery, at, turned, float3(0, 1.22 + bob, 0) * small, float3(0.27, 0.27, 0.27) * small, skin,
+         float3(0, 1.25, -0.35), float3(1.55, 0.6, 2.0), cabin, true, t, 1);
+    Part(scenery, at, turned, float3(-0.095, 1.27 + bob, 0.235) * small, float3(0.045, 0.06, 0.03) * small, dark,
+         float3(-0.6, 0.65, 2.0), float3(0.22, 0.16, 0.08), lamp, false, t, 2);
+    Part(scenery, at, turned, float3(0.095, 1.27 + bob, 0.235) * small, float3(0.045, 0.06, 0.03) * small, dark,
+         float3(0.6, 0.65, 2.0), float3(0.22, 0.16, 0.08), lamp, false, t, 3);
+    Part(scenery, at, turned, float3(-0.12, 0.09, step * 0.18) * small, float3(0.09, 0.08, 0.14) * small, dark,
+         float3(-0.95, 0.38, -1.35), float3(0.16, 0.38, 0.38), dark, false, t, 4);
+    Part(scenery, at, turned, float3(0.12, 0.09, -step * 0.18) * small, float3(0.09, 0.08, 0.14) * small, dark,
+         float3(0.95, 0.38, -1.35), float3(0.16, 0.38, 0.38), dark, false, t, 5);
+    Part(scenery, at, turned, float3(-0.34, 0.6 + bob, -step * 0.12) * small, float3(0.08, 0.08, 0.08) * small, skin,
+         float3(-0.95, 0.38, 1.35), float3(0.16, 0.38, 0.38), dark, false, t, 6);
+    var hand = waving ? float3(0.40 + swing, 1.45, 0.05) : float3(0.34, 0.6 + bob, step * 0.12);
+    Part(scenery, at, turned, hand * small, float3(0.08, 0.08, 0.08) * small, skin,
+         float3(0.95, 0.38, 1.35), float3(0.16, 0.38, 0.38), dark, false, t, 7);
+    // Sparks as it comes apart and back together
+    if (t > 0.02 && t < 0.98 && Math.Hash(int2(int(time.t * 30), walker.tag + walker.color * 31)) % 3 == 0)
     {
-        float swing = Math.Sin(time.t * 16) * 0.08;
-        Part(scenery, at, turned, float3(0.40 + swing, 1.45, 0.05), float3(0.09, 0.09, 0.09), skin);
+        var spark = at + up * (0.5 + (Math.Hash(int3(walker.tag, int(time.t * 60), 1)) % 100) / 60.0)
+                  + Math.Rotate(turned, float3(((Math.Hash(int3(walker.tag, int(time.t * 60), 2)) % 100) - 50) / 30.0, 0, 0));
+        scenery.glows.Add(Placed { transform = float4x4.TRS(spark, pilot.turned, float3(0.18)), paint = Color(1, 0.85, 0.4) });
     }
-    else
+    // A shadow under it, and a player's name over them
+    var lying = quaternion.LookRotation(up, Flat(walker.forward, up));
+    var ground = Math.Normalize(walker.position) * (R + 0.03) - pilot.eye;
+    var shadow = Math.Lerp(float3(0.55, 0.55, 1), float3(1.2, 2.3, 1), t);
+    scenery.shades.Add(Placed { transform = float4x4.TRS(ground, lying, shadow), paint = Color(0, 0, 0, 0.45) });
+    if (player && Math.Length(at) < 120)
     {
-        Part(scenery, at, turned, float3(0.34, 0.6 + bob, step * 0.12), float3(0.08, 0.08, 0.08), skin);
-    }
-    // A shadow under it, and over a player, a dot in their color, bigger over this machine's own
-    var flat = quaternion.LookRotation(u, ahead);
-    scenery.shades.Add(Placed { transform = float4x4.TRS(float3(Place(walker.city, walker.at, 0.03) - pilot.eye), flat, float3(0.55)),
-                                paint = Color(0, 0, 0, 0.45) });
-    if (player)
-    {
-        float size = this == pilot.me ? 0.16 : 0.11;
-        scenery.glows.Add(Placed { transform = float4x4.TRS(at + u * (1.85 + bob), pilot.turned, float3(size)), paint = Paint(walker.color) });
+        bool me = this == pilot.me;
+        scenery.tags.Add(Tag { at = at + up * (2.1 + t * 0.5 + bob), text = me ? "You" : Called(walker.tag), paint = Paint(walker.color) });
     }
 }
 
-void Part(mut Scenery scenery, float3 at, quaternion turned, float3 offset, float3 size, Color paint)
+// A part of a walker or a car, `t` of the way from the one to the other: it
+// leaps and spins on the way, later the later it is in the order
+void Part(mut Scenery scenery, float3 at, quaternion turned, float3 walking, float3 walkingSize, Color walkingPaint,
+          float3 driving, float3 drivingSize, Color drivingPaint, bool box, float t, int order)
 {
-    scenery.rounds.Add(Placed { transform = float4x4.TRS(at + Math.Rotate(turned, offset), turned, size), paint = paint });
+    float mine = Math.SmoothStep(0, 1, Math.Saturate(t * 1.6 - order * 0.075));
+    float leap = Math.Sin(mine * Math.PI);
+    var place = Math.Lerp(walking, driving, mine) + float3(0, leap * 1.1, 0);
+    var size = Math.Lerp(walkingSize, drivingSize, mine) * (1 - leap * 0.45);
+    var spin = quaternion.AxisAngle(Math.Normalize(float3(order % 2 == 0 ? 1 : -1, 1, (order % 3) - 1)), mine * Math.TAU);
+    var facing = Math.Mul(turned, spin);
+    var paint = mine < 0.5 ? walkingPaint : drivingPaint;
+    var transform = float4x4.TRS(at + Math.Rotate(turned, place), facing, size);
+    // A box only once it's mostly a car's: it starts out round
+    if (box && mine > 0.5) scenery.boxes.Add(Placed { transform = transform, paint = paint });
+    else scenery.rounds.Add(Placed { transform = transform, paint = paint });
 }
 
-// A car: a body, a cabin and four wheels, going round the ring
+// A townsperson's car: a body, a cabin and four wheels
 view Cars(Car car, mut Scenery scenery, Pilot pilot)
 {
     int shard = Shards.Of(this);
     if (shard >= 0 && shard < 31) scenery.shown |= 1 << shard;
-    if (car.city != pilot.near) return;
-    var up = Up(car.city);
-    var u = float3(up);
-    var way = East(up) * Math.Cos(car.turn) * car.way - North(up) * Math.Sin(car.turn) * car.way;
-    var turned = quaternion.LookRotation(way, u);
-    var at = float3(car.position - pilot.eye);
+    var at = car.position - pilot.eye;
+    if (Math.Length(at) > NEAR) return;
+    var up = Math.Normalize(car.position);
+    var turned = Standing(car.position, car.forward);
     var paint = pilot.shards ? ShardPaint(shard) : Paint(car.color);
-    scenery.boxes.Add(Placed { transform = float4x4.TRS(at + u * 0.65, turned, float3(1.8, 0.75, 4.2)), paint = paint });
-    scenery.boxes.Add(Placed { transform = float4x4.TRS(at + u * 1.3 + Math.Rotate(turned, float3(0, 0, -0.3)), turned, float3(1.6, 0.6, 2.2)),
+    scenery.boxes.Add(Placed { transform = float4x4.TRS(at + Math.Rotate(turned, float3(0, 0.62, 0)), turned, float3(1.8, 0.7, 4.0)), paint = paint });
+    scenery.boxes.Add(Placed { transform = float4x4.TRS(at + Math.Rotate(turned, float3(0, 1.25, -0.35)), turned, float3(1.55, 0.6, 2.0)),
                                paint = Color(paint.r * 0.75 + 0.15, paint.g * 0.75 + 0.15, paint.b * 0.75 + 0.18) });
     for (var i = 0; i < 4; i++)
     {
-        var wheel = float3(i % 2 == 0 ? -0.9 : 0.9, 0.35, i < 2 ? 1.35 : -1.35);
-        scenery.rounds.Add(Placed { transform = float4x4.TRS(at + Math.Rotate(turned, wheel), turned, float3(0.15, 0.35, 0.35)), paint = Color(0.1, 0.1, 0.12) });
+        var wheel = float3(i % 2 == 0 ? -0.95 : 0.95, 0.38, i < 2 ? 1.35 : -1.35);
+        scenery.rounds.Add(Placed { transform = float4x4.TRS(at + Math.Rotate(turned, wheel), turned, float3(0.16, 0.38, 0.38)), paint = Color(0.12, 0.12, 0.14) });
     }
-    var flat = quaternion.LookRotation(u, way);
-    scenery.shades.Add(Placed { transform = float4x4.TRS(float3(Place(car.city, float2(Math.Sin(car.turn), Math.Cos(car.turn)) * car.lane, 0.03) - pilot.eye),
-                                flat, float3(1.6, 2.8, 1)), paint = Color(0, 0, 0, 0.4) });
+    var lying = quaternion.LookRotation(up, Flat(car.forward, up));
+    scenery.shades.Add(Placed { transform = float4x4.TRS(Math.Normalize(car.position) * (R + 0.03) - pilot.eye, lying, float3(1.2, 2.3, 1)),
+                                paint = Color(0, 0, 0, 0.4) });
 }
 
 // Text on a dark pill, to read over a bright sky or ground: `at` its top left
@@ -582,19 +675,37 @@ void Backed(string text, float2 at, float size, Color color)
 view Picture(mut Scenery scenery, mut Pilot pilot, Shapes shapes, Roster roster)
 {
     float dt = Math.Min(Frame.dt, 0.05);
+    // Where most players are together, but this machine's: for Join
+    scenery.crowded = 0;
+    for (var i = 0; i < scenery.players.count; i++)
+    {
+        var place = scenery.players[i];
+        if (pilot.mine && Math.Length(place - pilot.spot) < 0.5) continue;
+        mut int near = 0;
+        foreach (var other in scenery.players)
+        {
+            if (Math.Length(other - place) < 60 && !(pilot.mine && Math.Length(other - pilot.spot) < 0.5)) near += 1;
+        }
+        if (near > scenery.crowded && !(pilot.mine && pilot.walking && Math.Length(place - pilot.spot) < 60))
+        {
+            scenery.crowded = near;
+            scenery.crowd = place;
+        }
+    }
+    scenery.players.Clear();
     // The confetti of high fives, falling
     for (var i = scenery.confetti.count - 1; i >= 0; i--)
     {
         mut var bit = scenery.confetti[i];
         bit.life -= dt;
-        var up = float3(Math.Normalize(bit.at));
+        var up = Math.Normalize(bit.at);
         bit.velocity -= up * (6 * dt);
-        bit.at += double3(bit.velocity * dt);
+        bit.at += bit.velocity * dt;
         if (bit.life <= 0) scenery.confetti.RemoveAt(i);
         else
         {
             scenery.confetti[i] = bit;
-            scenery.glows.Add(Placed { transform = float4x4.TRS(float3(bit.at - pilot.eye), pilot.turned, float3(0.12)), paint = bit.paint });
+            scenery.glows.Add(Placed { transform = float4x4.TRS(bit.at - pilot.eye, pilot.turned, float3(0.12)), paint = bit.paint });
         }
     }
     Draw.Blend(Blend.Alpha), Draw.Depth(Depth.Read), Draw.Cull(Cull.None)
@@ -607,14 +718,14 @@ view Picture(mut Scenery scenery, mut Pilot pilot, Shapes shapes, Roster roster)
         Draw.Instanced(shapes.box, shapes.boxFaces, scenery.boxes, Lit, pilot.sky);
         Draw.Instanced(shapes.ball, shapes.ballFaces, scenery.rounds, Lit, pilot.sky);
     }
-    // The cities on the globe
+    // The towns on the globe
     if (pilot.blend < 0.5)
     {
-        for (var city = 0; city < CITIES; city++)
+        for (var town = 0; town < TOWNS; town++)
         {
-            var place = Place(city, float2(0, 0), 0);
+            var place = Up(town) * R;
             if (Behind(pilot.eye, place)) continue;
-            var at = float3(place - pilot.eye);
+            var at = place - pilot.eye;
             scenery.glows.Add(Placed { transform = float4x4.TRS(at, pilot.turned, float3(Math.Length(at) * 0.012)), paint = Color(0.98, 0.75, 0.14) });
         }
     }
@@ -625,53 +736,66 @@ view Picture(mut Scenery scenery, mut Pilot pilot, Shapes shapes, Roster roster)
 
     var quiet = Color(0.70, 0.70, 0.74);
     var bright = Color(0.95, 0.95, 0.96);
+    var ahead = Math.Rotate(pilot.turned, float3(0, 0, 1));
     Draw.Screen()
     {
+        // Players' names, over their heads
+        foreach (var tag in scenery.tags)
+        {
+            if (Math.Dot(tag.at, ahead) < 0.5) continue;
+            var spot = Draw.WorldToScreen(tag.at);
+            var box = Draw.MeasureText(tag.text, 12);
+            Draw.RoundRect(float2(spot.x, spot.y), box + float2(14, 6), (box.y + 6) * 0.5, Color(0.05, 0.05, 0.06, 0.6));
+            Draw.Circle(float2(spot.x - box.x * 0.5 - 1, spot.y), 3, tag.paint);
+            Draw.Text(tag.text, float2(spot.x + 3, spot.y), 12, bright, Anchor.MiddleCenter);
+        }
         mut int shards = 0;
         for (var i = 0; i < 31; i++) if ((scenery.lastShown & (1 << i)) != 0) shards += 1;
         Backed($"     {roster.online} online · {shards} {(shards == 1 ? "shard" : "shards")}", float2(14, 14), 13, bright);
         Draw.Circle(float2(26, 21), 4, Color(0.18, 0.83, 0.45));
         if (pilot.shards)
         {
-            mut float x = 12;
+            mut float x = 170;
             for (var i = 0; i < 31; i++)
             {
                 if ((scenery.lastShown & (1 << i)) == 0) continue;
-                Draw.Circle(float2(x + 5, 42), 5, ShardPaint(i));
-                Draw.Text($"{i}", float2(x + 14, 35), 12, quiet);
+                Draw.Circle(float2(x + 5, 21), 5, ShardPaint(i));
+                Draw.Text($"{i}", float2(x + 14, 14), 12, bright);
                 x += 34;
             }
         }
         if (pilot.blend < 0.5)
         {
-            // Each city's name, and who's there
-            for (var city = 0; city < CITIES; city++)
+            // Each town's name, and who's there
+            for (var town = 0; town < TOWNS; town++)
             {
-                var place = Place(city, float2(0, 0), 0);
+                var place = Up(town) * R;
                 if (Behind(pilot.eye, place)) continue;
-                var spot = Draw.WorldToScreen(float3(place - pilot.eye));
-                int here = scenery.people[city];
-                string label = here > 0 ? $"{Name(city)} · {here}" : Name(city);
+                var spot = Draw.WorldToScreen(place - pilot.eye);
+                int here = scenery.people[town];
+                string label = here > 0 ? $"{Name(town)} · {here}" : Name(town);
                 Draw.Text(label, float2(spot.x + 9, spot.y - 7), 12, here > 0 ? bright : quiet);
             }
-            string hint = pilot.walking && pilot.city >= 0 ? $"Going to {Name(pilot.city)}..."
-                        : pilot.had && pilot.at >= 0 ? "Click a town to go there, or Back" : "Click a town to visit it";
+            string hint = pilot.walking && pilot.moves > 0 ? "Going there..."
+                        : pilot.had && pilot.placed ? "Click anywhere to go there, or Back" : "Click anywhere on the planet to go there";
             Backed(hint, float2(Screen.width * 0.5 - Draw.MeasureText(hint, 13).x * 0.5, Screen.height - 38), 13, bright);
         }
-        else if (pilot.at >= 0)
+        else if (pilot.placed)
         {
-            int here = scenery.people[pilot.at];
-            string town = $"{Name(pilot.at)} · {here} {(here == 1 ? "player" : "players")} here";
-            // A small screen has its buttons along the bottom, and the town at the top
-            if (Screen.width < 560)
+            int town = TownAt(pilot.spot, 0);
+            string where = town >= 0 ? $"In {Name(town)}" : $"Out in the country, near {Name(Nearest(pilot.spot))}";
+            string keys = pilot.driving ? "WASD drive · C walk · Space hop · drag to look · Esc globe"
+                        : "WASD walk · tap to go · C car · Space jump · E wave · Esc globe";
+            // A small screen has its buttons along the bottom, and these at the top
+            if (Screen.width < 600)
             {
-                Backed(town, float2(14, 44), 13, bright);
-                Backed("Tap to walk · drag to look", float2(14, 70), 12, bright);
+                Backed(where, float2(14, 72), 13, bright);
+                Backed(pilot.driving ? "Drag to look · tap to drive there" : "Tap to walk · drag to look", float2(14, 98), 12, bright);
             }
             else
             {
-                Backed(town, float2(14, Screen.height - 50), 13, bright);
-                Backed("WASD walk · tap to go · drag to look · Space jump · E wave · Esc globe", float2(14, Screen.height - 26), 12, bright);
+                Backed(where, float2(14, Screen.height - 50), 13, bright);
+                Backed(keys, float2(14, Screen.height - 26), 12, bright);
             }
         }
     }

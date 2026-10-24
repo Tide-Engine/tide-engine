@@ -32,7 +32,7 @@
         if (!eager()) return;
         let frame: HTMLIFrameElement | undefined;
         let opening = 0;
-        const title = 'A planet for everyone on this page: towns to walk round together';
+        const title = 'A little planet for everyone on this page, to walk and drive round together';
         async function open() {
             const asked = ++opening;
             const backend = new URLSearchParams(location.search).get('backend');
@@ -124,7 +124,7 @@
                 <button type="button" class="shrink" onclick={() => (big = false)}>Close ✕</button>
             {/if}
             {#if shown}
-                <p class="caption">Live: visit a town, meet whoever's there. <button type="button" class="expand" onclick={() => (big = true)}>Expand</button> · <a href={full} target="_blank">New tab</a></p>
+                <p class="caption">Live: walk or drive round a little planet with whoever's there. <button type="button" class="expand" onclick={() => (big = true)}>Expand</button> · <a href={full} target="_blank">New tab</a></p>
             {/if}
         </div>
     </section>
