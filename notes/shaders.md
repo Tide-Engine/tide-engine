@@ -1,5 +1,56 @@
 # Code the GPU runs: frags and verts
 
+## GPU simplex work reuse (2026-10-25)
+
+The owner requested engine improvements before changes to Earth's game code.
+Only the compiler's 3D simplex GPU helper changes: seven rotated xxHash lanes
+(two lattice coordinates per axis, one seed) replace sixteen lane calculations.
+Four unsigned sums and avalanche operations still produce exactly Math.Hash's
+old corner hashes. Six independent rank tests replace the nested simplex-order
+branches, preserving x/y/z priority on ties. Floating-point expressions, their
+order, gradients, noise scale and 32-bit precision are unchanged. CPU noise and
+simulation code are unchanged; this is an intentional GPU scheduling exception
+to the older line-for-line wording below, with the same mathematical formulas.
+No runtime interface, uniform layout, draw behavior or game source changes.
+
+Fixed-camera terrain probes use the checkout's Earth generated code and renderer
+at 412 x 915 CSS pixels, DPR 3 (1236 x 2745 physical pixels), on the Ryzen 7900X
+Radeon RDNA 2 iGPU through muted headless Chrome/ANGLE D3D11 and WebGPU. They
+render the planet and GUI with a null match, excluding other world scenery and
+networking. Each case runs 180 frames, with WebGL queries excluding the first
+30; WebGPU uses the renderer's asynchronous timestamps after 60 warm-up frames.
+These are terrain-work comparisons, not whole-game FPS or a Pixel emulation.
+Screenshots match byte-for-byte before/after within each backend. Adapter
+selection is process-local; no Windows preference or driver was changed.
+
+The hash-only implementation repeatedly reduces country-view WebGL GPU time
+from about 47.5 to 42.0 ms; independent ranking brings it to about 41.4 ms.
+WebGPU's initial country comparison is 46.79 to 37.36 ms. A road-midpoint view
+with hash reuse is 23.75 to 22.65 ms. See earth-engine-measurements.json for final
+runs, sample counts, renderer identity, captures and caveats. Other applications
+remain running and clocks are uncontrolled; some exploratory runs overlap CPU
+builds. Final confirmations are recorded separately. No run substitutes a
+reduced resolution, flat material or alternate noise pattern for this change.
+
+Other local probes are rejected: conditional corner hashing alone saved about
+3%, but delaying the avalanche after lane reuse made no additional difference;
+branchless gradient selection and direct uniform-array access changed timing by
+less than 1%. The latter retained existing uniform bytes and bypassed Atlas
+copies; it did not establish spills or a uniform-copy bottleneck. Its first
+version used dynamic vector indexing and correctly failed ANGLE's fatal warning
+check; static-lane selection removed that warning. No such uniform rewrite is
+committed. Browser antialiasing is already disabled, canvas sizes are assigned
+only when changed, and ordinary draws already receive frustum culling. Those
+paths do not explain the measured material cost.
+
+The math shader golden pins both languages. Platform RestOf comparisons add
+negative coordinates/seeds, coordinate permutations, equal-coordinate and
+pairwise ties, origin and both int seed extremes, in CPU/frag/vert paths and
+after device recreation. Validation initially caught a GLSL/WGSL shift-operand
+type mismatch in the new rotate helper; both the shift count and its literal
+arguments now use uint explicitly. Validation and publication results follow
+once the complete native/web suites and integration finish.
+
 ## Mutable callable arguments (2026-10-24)
 
 `Func<mut Vertex, void>` and mixed read/mut signatures lower to ordinary checked

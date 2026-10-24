@@ -1,0 +1,268 @@
+{
+  "date": "2026-10-25",
+  "baseline_commit": "9d1907e4",
+  "unchanged_game_source_sha256": "2c75e64a6b2f6770c405c31c465d6597d7a16d0eeb859a3f571d534d654139c8",
+  "cpu": "AMD Ryzen 9 7900X",
+  "gpu": "AMD Radeon Graphics RDNA 2, device 164e",
+  "driver": "32.0.11034.2",
+  "browser": "Chrome 155.0.8059.85",
+  "viewport_css": [
+    412,
+    915
+  ],
+  "dpr": 3,
+  "viewport_pixels": [
+    1236,
+    2745
+  ],
+  "fixture": "180 fixed-camera frames, null match; planet and GUI only; no world scenery/networking",
+  "webgl_timing": "asynchronous EXT_disjoint_timer_query_webgl2, first 30 frames excluded",
+  "webgpu_timing": "renderer timestamps, first 60 frames excluded; C summary in logs",
+  "exploratory_webgl": [
+    {
+      "mode": "base",
+      "scene": "2",
+      "pixels": [
+        1236,
+        2745
+      ],
+      "renderer": "ANGLE (AMD, AMD Radeon(TM) Graphics (0x0000164E) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "samples": 146,
+      "median": 47.50024,
+      "p95": 47.607879999999994,
+      "disjoint": 0,
+      "errors": []
+    },
+    {
+      "mode": "lazy",
+      "scene": "2",
+      "pixels": [
+        1236,
+        2745
+      ],
+      "renderer": "ANGLE (AMD, AMD Radeon(TM) Graphics (0x0000164E) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "samples": 146,
+      "median": 46.002559999999995,
+      "p95": 46.1318,
+      "disjoint": 0,
+      "errors": []
+    },
+    {
+      "mode": "grad",
+      "scene": "2",
+      "pixels": [
+        1236,
+        2745
+      ],
+      "renderer": "ANGLE (AMD, AMD Radeon(TM) Graphics (0x0000164E) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "samples": 146,
+      "median": 47.404399999999995,
+      "p95": 47.523559999999996,
+      "disjoint": 0,
+      "errors": []
+    },
+    {
+      "mode": "lanes",
+      "scene": "2",
+      "pixels": [
+        1236,
+        2745
+      ],
+      "renderer": "ANGLE (AMD, AMD Radeon(TM) Graphics (0x0000164E) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "samples": 146,
+      "median": 42.02824,
+      "p95": 42.168839999999996,
+      "disjoint": 0,
+      "errors": []
+    },
+    {
+      "mode": "uniform",
+      "scene": "2",
+      "pixels": [
+        1236,
+        2745
+      ],
+      "renderer": "ANGLE (AMD, AMD Radeon(TM) Graphics (0x0000164E) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "samples": 146,
+      "median": 47.322199999999995,
+      "p95": 47.43564,
+      "disjoint": 0,
+      "errors": []
+    },
+    {
+      "mode": "engine",
+      "scene": "2",
+      "pixels": [
+        1236,
+        2745
+      ],
+      "renderer": "ANGLE (AMD, AMD Radeon(TM) Graphics (0x0000164E) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "samples": 146,
+      "median": 42.043639999999996,
+      "p95": 42.16636,
+      "disjoint": 0,
+      "errors": []
+    },
+    {
+      "mode": "end",
+      "scene": "2",
+      "pixels": [
+        1236,
+        2745
+      ],
+      "renderer": "ANGLE (AMD, AMD Radeon(TM) Graphics (0x0000164E) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "samples": 146,
+      "median": 42.01544,
+      "p95": 42.15992,
+      "disjoint": 0,
+      "errors": []
+    },
+    {
+      "mode": "order",
+      "scene": "2",
+      "pixels": [
+        1236,
+        2745
+      ],
+      "renderer": "ANGLE (AMD, AMD Radeon(TM) Graphics (0x0000164E) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "samples": 148,
+      "median": 41.422799999999995,
+      "p95": 41.855239999999995,
+      "disjoint": 0,
+      "errors": []
+    },
+    {
+      "mode": "before-repeat",
+      "scene": "2",
+      "pixels": [
+        1236,
+        2745
+      ],
+      "renderer": "ANGLE (AMD, AMD Radeon(TM) Graphics (0x0000164E) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "samples": 149,
+      "median": 47.82445,
+      "p95": 48.14291,
+      "disjoint": 0,
+      "errors": []
+    },
+    {
+      "mode": "engine-repeat",
+      "scene": "2",
+      "pixels": [
+        1236,
+        2745
+      ],
+      "renderer": "ANGLE (AMD, AMD Radeon(TM) Graphics (0x0000164E) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "samples": 149,
+      "median": 42.059439999999995,
+      "p95": 42.483779999999996,
+      "disjoint": 0,
+      "errors": []
+    },
+    {
+      "mode": "before-road",
+      "scene": "14",
+      "pixels": [
+        1236,
+        2745
+      ],
+      "renderer": "ANGLE (AMD, AMD Radeon(TM) Graphics (0x0000164E) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "samples": 149,
+      "median": 23.74655,
+      "p95": 24.007949999999997,
+      "disjoint": 0,
+      "errors": []
+    },
+    {
+      "mode": "engine-road",
+      "scene": "14",
+      "pixels": [
+        1236,
+        2745
+      ],
+      "renderer": "ANGLE (AMD, AMD Radeon(TM) Graphics (0x0000164E) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "samples": 149,
+      "median": 22.65231,
+      "p95": 22.94448,
+      "disjoint": 0,
+      "errors": []
+    }
+  ],
+  "initial_webgpu": [
+    {
+      "variant": "before",
+      "gpu_median_ms": 46.792704,
+      "gpu_p95_ms": 47.120384,
+      "samples": 58
+    },
+    {
+      "variant": "hash_reuse",
+      "gpu_median_ms": 38.273024,
+      "gpu_p95_ms": 38.535168,
+      "samples": 52
+    },
+    {
+      "variant": "hash_reuse_and_rank",
+      "gpu_median_ms": 37.35552,
+      "gpu_p95_ms": 37.617664,
+      "samples": 55
+    }
+  ],
+  "pixel_comparisons": [
+    {
+      "before": "base-2",
+      "after": "lazy-2",
+      "pixel_identical": true
+    },
+    {
+      "before": "base-2",
+      "after": "grad-2",
+      "pixel_identical": true
+    },
+    {
+      "before": "base-2",
+      "after": "lanes-2",
+      "pixel_identical": true
+    },
+    {
+      "before": "base-2",
+      "after": "uniform-2",
+      "pixel_identical": true
+    },
+    {
+      "before": "before-repeat-2",
+      "after": "engine-repeat-2",
+      "pixel_identical": true
+    },
+    {
+      "before": "before-repeat-2",
+      "after": "order-2",
+      "pixel_identical": true
+    },
+    {
+      "before": "before-road-14",
+      "after": "engine-road-14",
+      "pixel_identical": true
+    },
+    {
+      "before": "before-gpu-2",
+      "after": "engine-gpu-2",
+      "pixel_identical": true
+    },
+    {
+      "before": "before-gpu-2",
+      "after": "final-gpu-2",
+      "pixel_identical": true
+    }
+  ],
+  "rank_combinations_checked": 216,
+  "caveats": [
+    "Desktop iGPU, CPU and driver are not Pixel emulation.",
+    "Terrain timings are not full-game FPS or touch/display latency.",
+    "Other applications remain running; clocks uncontrolled.",
+    "Some exploratory runs overlap CPU builds; final confirmations recorded separately.",
+    "Direct uniform array probe required static-lane reads to pass ANGLE warnings and showed no useful gain."
+  ],
+  "validation": "Focused native GLSL/WGSL golden, SPIR-V, HLSL and Vulkan/OpenGL pixels pass; focused WebGL, D3D11/WARP and WebGPU pixels pass. Full suites pending integration.",
+  "deployed": false
+}
