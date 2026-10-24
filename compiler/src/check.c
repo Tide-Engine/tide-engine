@@ -103,6 +103,7 @@ static const type T_FLOAT_ = {TY_FLOAT, NULL};
 static const type T_ENTITY_ = {TY_ENTITY, NULL};
 static void check_signature(checker *c, decl *m);
 static void check_method_body(checker *c, decl *m);
+static void check_function_decl(checker *c, decl *fn);
 
 static decl *local_method(checker *c, decl *owner, decl *source)
 {
@@ -1791,6 +1792,8 @@ static type unknown_type(const checker *c, const type_ref *r, const loc at, cons
 
 static type resolve_type(const checker *c, const type_ref *r, type_place place, loc at);
 
+#include "callable_types.inc"
+
 // What's written in a generic type's <>, resolved and checked against what
 // the form takes there (generic_arg, types.h): a list's element or a map's
 // value, a key, or a grid's cell. `key` is the key type where it's a map's
@@ -1943,6 +1946,7 @@ static type resolve_named(const checker *c, const type_ref *r, const type_place 
 {
     const str name = r->name;
     type t;
+    if (str_eq_c(name, "Func")) return resolve_callable(c, r, at);
     if (r->args.count > 0 && str_eq_c(name, "Asset")) {
         if (r->args.count != 1) {
             diag_error(at, "Asset takes one mesh type, like 'Asset<Mesh<Vertex3>>'");
@@ -1989,6 +1993,10 @@ static type resolve_named(const checker *c, const type_ref *r, const type_place 
     // Existing user types keep their names; the model value types are supplied
     // only when ordinary type lookup has no declaration for that name.
     decl *const d = find_type(c, name, at);
+    if (!d) {
+        decl *stage = find_named(c, name, at, NAME_SHADER);
+        if (stage) return (type){TY_STRUCT, shader_binding_type(c, stage)};
+    }
     if (!d && skinned_type_named(c->prog, name, &t)) return t;
     if (routine_place(place) || place == PLACE_FIELD || place == PLACE_LOCAL) {
         if (str_eq_c(name, "Action")) return (type){TY_ACTION, NULL};
@@ -2327,6 +2335,10 @@ static type check_switch_value(checker *c, expr *e, type want);
 
 static type check_expr_want_any(checker *c, expr *e, const type stored, const bool checked)
 {
+    if (is_callable(stored) && !checked && (e->lambda || e->kind == E_NAME || e->kind == E_MEMBER)) {
+        const type bound = check_callable_value(c, e, stored);
+        if (bound.kind != TY_VOID) return bound;
+    }
     const type want = read_type(stored); // A field declared T? takes what a T? does
     if (e->kind == E_SWITCH && !checked) return check_switch_value(c, e, read_type(want));
     // As in C#, `default` of a T? is nothing.
@@ -2451,7 +2463,23 @@ static bool unity_authored(const loc at)
 // Checks `Transform { position = ... }`, `Stats { armor = 2 }` and `Hit { damage = 5 }`.
 static type check_literal(checker *c, expr *e)
 {
+    if (e->lambda) {
+        diag_error(e->at, "a lambda needs a Func signature from its field, parameter or declared local type");
+        return T_ERR;
+    }
     decl *d = find_type(c, e->name, e->at);
+    if (!d) {
+        decl *stage = find_named(c, e->name, e->at, NAME_SHADER);
+        if (stage) {
+            d = shader_binding_type(c, stage);
+            for (int k = 0; k < d->fields.count; k++) {
+                bool supplied = false;
+                for (int j = 0; j < e->inits.count; j++) supplied |= str_eq(e->inits.items[j].name, d->fields.items[k].name);
+                if (!supplied) diag_error(e->at, "shader binding '" STR_FMT "' requires function '" STR_FMT "'",
+                                         STR_ARG(stage->name), STR_ARG(d->fields.items[k].name));
+            }
+        }
+    }
     type builtin;
     if (!d && skinned_type_named(c->prog, e->name, &builtin)) d = builtin.decl;
     if (!d || (d->kind != DECL_COMPONENT && d->kind != DECL_STRUCT && d->kind != DECL_EVENT)) {
@@ -2494,6 +2522,14 @@ static type check_literal(checker *c, expr *e)
             continue;
         }
         if (!init->field) {
+            if (d->binding_of) {
+                diag_error(init->at, "shader '" STR_FMT "' has no function binding '" STR_FMT "'",
+                           STR_ARG(d->binding_of->name), STR_ARG(init->name));
+                suggestion s = suggest_start(init->name);
+                suggest_fields(&s, d);
+                suggest_note(&s);
+                continue;
+            }
             diag_error(init->at, "%s '" STR_FMT "' has no field '" STR_FMT "'",
                        d->kind == DECL_STRUCT ? "struct" : d->kind == DECL_EVENT ? "event" : "component", STR_ARG(d->name),
                        STR_ARG(init->name));
@@ -2630,7 +2666,7 @@ static decl *component_placement(program *prog, decl *d, const bool local, const
     if (!local) {
         for (int i = 0; i < d->fields.count; i++) {
             const field *f = &d->fields.items[i];
-            if (holds_render_resource(f->type) || holds_local_handle(f->type, 0)) {
+            if (holds_render_resource(f->type) || holds_callable(f->type) || holds_local_handle(f->type, 0)) {
                 diag_error(at, "'" STR_FMT "' contains machine-local field '" STR_FMT "' and can't be placed in the match",
                            STR_ARG(d->name), STR_ARG(f->name));
                 diag_note("use local placement and access for this component");
@@ -4576,6 +4612,7 @@ static void check_arg_types(checker *c, expr *e, decl *m)
 // picked without it.
 static bool untyped_arg(const expr *arg)
 {
+    if (arg->lambda || arg->callable_reference) return true;
     if (arg->is_out) return out_untyped(arg); // `out var health`, `out _`
     return arg->enum_shorthand || arg->kind == E_DEFAULT || arg->kind == E_NULL || arg->kind == E_LIST || is_new_grid(arg);
 }
@@ -4706,6 +4743,11 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
     // Each argument once. What takes its type from its parameter waits for the one picked.
     for (int i = 0; i < written; i++) {
         expr *arg = e->args.items[i];
+        str function_name;
+        const expr *function_root = chain_root(arg);
+        if ((arg->kind == E_NAME || arg->kind == E_MEMBER) && qualified_text(arg, &function_name)
+            && function_root->kind == E_NAME && !find_local(c, function_root->name) && !find_param(c, function_root->name)
+            && find_named(c, function_name, arg->at, NAME_FUNCTION)) arg->callable_reference = true;
         if (arg->is_out) { // In scope from here, whichever is picked
             begin_out_arg(c, arg);
             continue;
@@ -4980,8 +5022,23 @@ static type check_self_call(checker *c, expr *e, decl *m)
 
 #include "prefab_check.inc"
 
+#include "callable_check.inc"
+
 static type check_call(checker *c, expr *e)
 {
+    const stmt *call_local = find_local(c, e->name);
+    const param *call_param = find_param(c, e->name);
+    const field *call_field = field_in_scope(c, e->name);
+    if ((call_local && is_callable(call_local->type))
+        || (call_param && (is_callable(call_param->type) || call_param->call_binding))
+        || (call_field && is_callable(call_field->type))) {
+        expr *receiver = NEW(expr);
+        receiver->kind = E_NAME;
+        receiver->at = e->at;
+        receiver->name = e->name;
+        const type t = check_expr(c, receiver);
+        if (is_callable(t)) return check_callable_call(c, e, receiver, t);
+    }
     param *const block = find_local(c, e->name) ? NULL : find_param(c, e->name);
     if (block && block->type.kind == TY_ACTION) return check_block_call(c, e, block);
 
@@ -5690,8 +5747,26 @@ static void use_mesh_types(checker *c)
 
 // The frag or vert an argument of Draw.Mesh names, or NULL: `Shade`, or
 // `Effects.Shade`.
-static decl *named_shader(const checker *c, expr *arg)
+static decl *named_shader(checker *c, expr *arg)
 {
+    if (arg->binding_value) return arg->type_decl;
+    const expr *value_root = chain_root(arg);
+    const bool stored = value_root->kind == E_NAME
+        && (find_local(c, value_root->name) || find_param(c, value_root->name) || field_in_scope(c, value_root->name));
+    decl *factory = arg->kind == E_CALL ? find_named(c, arg->name, arg->at, NAME_FUNCTION) : NULL;
+    const bool returned = factory && factory->return_type.kind == TY_STRUCT && factory->return_type.decl->binding_of;
+    if (arg->kind == E_LITERAL || arg->kind == E_INDEX || stored || returned) {
+        const type t = check_expr(c, arg);
+        if (t.kind == TY_STRUCT && t.decl->binding_of) {
+            expr *value = NEW(expr);
+            *value = *arg;
+            arg->binding_value = value;
+            arg->bind = BIND_SHADER;
+            arg->type_decl = t.decl->binding_of;
+            return arg->type_decl;
+        }
+        return NULL;
+    }
     // Shade, Effects.Shade, or with its parameters' types where frags or verts
     // share the name: Shade(BoxVertex, Color), Effects.Shade(BoxVertex, Color)
     const bool with_params = arg->kind == E_CALL || arg->kind == E_METHOD;
@@ -5855,6 +5930,10 @@ static void check_shader_binding(const checker *c, const expr *e, const expr *na
                      : e->instanced ? "Draw.Instanced" : "Draw.Mesh";
     for (int i = 1; i < shader->params.count; i++) {
         const param *p = &shader->params.items[i];
+        if (p->type.kind == TY_STRUCT && p->type.decl->binding_of) {
+            if (!name->binding_value) diag_error(name->at, "configure shader functions with '" STR_FMT " { ... }'", STR_ARG(shader->name));
+            continue;
+        }
         if (p->type.kind == TY_STRUCT && p->is_out) { // What a vert writes for its frag
             if (e->values_type == p->type.decl) {
                 diag_error(name->at, "vert '" STR_FMT "' writes a '" STR_FMT "' for its frag, and this draw gives a '"
@@ -7388,6 +7467,18 @@ static type check_method(checker *c, expr *e)
     c->asset_value = e->object;
     const type obj = check_expr(c, e->object);
     c->asset_value = previous_asset;
+    if (obj.decl && (obj.kind == TY_STRUCT || obj.kind == TY_COMPONENT || obj.kind == TY_SINGLETON)) {
+        const field *f = callable_field_named(obj.decl, e->name);
+        if (f && is_callable(f->type)) {
+            expr *receiver = NEW(expr);
+            receiver->kind = E_MEMBER;
+            receiver->at = e->at;
+            receiver->object = e->object;
+            receiver->member = e->name;
+            check_expr(c, receiver);
+            return check_callable_call(c, e, receiver, f->type);
+        }
+    }
     if ((obj.kind == TY_STRUCT && obj.decl == c->prog->audience)
         || (obj.kind == TY_COMPONENT && obj.decl == c->prog->visibility))
         return check_visibility_method(c, e, obj);
@@ -8860,6 +8951,15 @@ static type check_name(checker *c, expr *e)
     if (!p && str_eq_c(e->name, "world") && !field_in_scope(c, e->name)
         && !(c->method && find_property(c->method->owner, e->name))) p = component_world(c, e->at);
     if (p) {
+        if (p->call_binding && !e->binding_object) {
+            expr *object = NEW(expr);
+            *object = *e;
+            object->binding_object = true;
+            e->kind = E_MEMBER;
+            e->object = object;
+            e->member = p->call_binding->name;
+            return check_expr(c, e);
+        }
         e->bind = BIND_PARAM;
         e->param = p;
         p->read = true;
@@ -8931,6 +9031,17 @@ static type check_name(checker *c, expr *e)
     if (k) return use_constant(c, e, k);
     k = find_named(c, e->name, e->at, NAME_ASSET);
     if (k) return use_asset(c, e, k);
+    decl *function = find_named(c, e->name, e->at, NAME_FUNCTION);
+    if (function) {
+        if (function->shares_name || function->params.count > 16) {
+            diag_error(e->at, "a function reference needs an explicit Func signature to select its overload");
+            return T_ERR;
+        }
+        type signature[17];
+        for (int i = 0; i < function->params.count; i++) signature[i] = function->params.items[i].type;
+        signature[function->params.count] = function->return_type;
+        return check_callable_value(c, e, callable_of(c, signature, function->params.count + 1, e->at));
+    }
     decl *shader = find_named(c, e->name, e->at, NAME_SHADER);
     if (shader) {
         e->bind = BIND_SHADER;
@@ -10403,7 +10514,7 @@ static type check_expr_any_raw(checker *c, expr *e)
         c->method->makes_text = true; // Scratch memory, which the audio thread has none of (check_audio_bodies)
         c->method->makes_text_at = e->at;
     }
-    if (holds_render_resource(t) && !gpu_code(c)) {
+    if ((holds_render_resource(t) || holds_callable(t)) && !gpu_code(c)) {
         decl *code = reading_code(c);
         if (code) {
             if (!code->render_resources) code->render_resources_at = e->at;
@@ -12146,7 +12257,7 @@ static void check_var(checker *c, stmt *s)
         s->type = T_ERR;
     }
 
-    if (holds_render_resource(s->type) && !gpu_code(c)) {
+    if ((holds_render_resource(s->type) || holds_callable(s->type)) && !gpu_code(c)) {
         decl *code = reading_code(c);
         if (code) {
             if (!code->render_resources) code->render_resources_at = s->at;
@@ -13872,6 +13983,9 @@ static void check_fields(checker *c, const decl *d)
     for (int i = 0; i < d->fields.count; i++) {
         field *f = &d->fields.items[i];
         if (f->hidden) continue;
+        if (holds_callable(f->type) && d->kind != DECL_STRUCT && !d->is_local && d->kind != DECL_COMPONENT) {
+            diag_error(f->at, "callable and shader bindings belong in local state: make this field local");
+        }
         if (d->is_command && (holds_list_but_bytes(f->type) || f->type.kind == TY_GRID)) {
             diag_error(f->type_at.line ? f->type_at : f->at, "a command can't hold a list, map, set or grid");
             diag_note("send numbers, bools, enums, strings, a file's bytes as List<byte>, or structs containing those");
@@ -14150,7 +14264,7 @@ static void check_signature(checker *c, decl *m)
                                                         : "a task can't return a Mesh: it's the pack's own memory, which is read within a frame");
         m->return_type = T_ERR;
     }
-    if (holds_render_resource(m->return_type)) {
+    if (holds_render_resource(m->return_type) || holds_callable(m->return_type)) {
         m->render_resources = true;
         m->render_resources_at = m->return_type_at;
     }
@@ -14219,7 +14333,7 @@ static void check_signature(checker *c, decl *m)
                 m->gpu_only_reads = TY_GRID;
             }
         }
-        if (holds_render_resource(p->type)) {
+        if (holds_render_resource(p->type) || holds_callable(p->type)) {
             if (!m->render_resources) m->render_resources_at = p->type_at;
             m->render_resources = true;
         }
@@ -14919,6 +15033,15 @@ static void check_shader_decl(const checker *c, decl *d)
                     diag_error(p->name_at, "parameter '" STR_FMT "' is declared twice", STR_ARG(p->name));
                 }
             }
+        }
+        if (i > 0 && p->type_ref && str_eq_c(p->type_ref->name, "Func")) {
+            decl *binding = shader_binding_type(c, d);
+            p->type = (type){TY_STRUCT, binding};
+            p->call_binding = callable_field_named(binding, p->name);
+            p->function_param = false;
+            if (p->mode != PARAM_READ || p->is_out) diag_error(p->at, "a shader's function binding is read-only");
+            if (p->placement_local) diag_error(p->placement_at, "local access qualifies a component");
+            continue;
         }
         decl *t = find_type(c, p->type_name, p->type_at);
         if (t && t->kind == DECL_COMPONENT) t = component_placement(c->prog, t, p->placement_local, p->type_at);
@@ -20356,6 +20479,7 @@ bool check(program *prog)
         if (diag_error_count() == errors) vec_push(c.access_warnings, d); // Transitive Set can write a mutable binding
     }
     for (int i = replaced_before; i < prog->replaced.count; i++) check_replaced(&c, prog->replaced.items[i]);
+    finish_callables(&c);
     // Called placements have been checked independently. An unused method is
     // still checked once, in match placement, so unused bodies don't hide errors.
     for (int i = 0; i < prog->components.count; i++) {

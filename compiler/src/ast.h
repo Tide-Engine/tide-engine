@@ -304,6 +304,8 @@ typedef struct device_leaf {
 #define DEVICE_WORDS 4 // Bits for up to 256 device leaves
 
 typedef struct param {
+    const struct field *call_binding; // A shader function slot, stored in its named binding value.
+    const struct expr *capture_source; // Compiler-only source identity of a lambda capture.
     bool owner_context; // Entity identity borrowed from an attached component argument.
     bool owner_world;   // Its owning world is needed too; no stored component metadata.
     param_mode mode;
@@ -604,6 +606,18 @@ typedef struct decl {
 
     // Components, singletons, inputs, records, structs and events
     VEC(field) fields;
+    // Local, owned callable values and configured shader stages. Their stored
+    // representation is ordinary typed data; no native code pointer is stored.
+    bool callable;
+    bool generated_callable;
+    const char *callable_display;
+    struct decl *call_dispatch;
+    VEC(type) call_types; // Arguments, then the result.
+    VEC(struct decl *) call_targets;
+    VEC(int) call_tags;
+    VEC(int) call_capture_first;
+    struct decl *binding_of;
+    struct decl *binding_type;
     VEC(property *) properties; // Computed members; never part of stored state.
     int index; // Component bit / singleton index / event index / system order / list, map or grid number. Constants: 1 while checking, 2 once checked.
     int match_singleton_index; // Match-only ordinal: local singletons/attached fields do not affect seeding or simulation identity.
@@ -1012,6 +1026,14 @@ struct expr {
     prefab_instance *prefab;
     loc end; // E_SWITCH: just past its closing brace, for editor spans
     type type;
+    bool lambda;
+    VEC(param) lambda_params;
+    struct expr *lambda_body;
+    struct expr *binding_value; // A draw's named shader binding, before BIND_SHADER.
+    bool binding_object;
+    bool callable_reference;
+    struct expr *callable_source; // Authored function reference, retained for editor navigation.
+    struct expr *callable_receiver; // The authored receiver of a lowered callable invocation.
 
     // E_INT, E_FLOAT. int_value is a case label's value too, worked out by the checker.
     str text;

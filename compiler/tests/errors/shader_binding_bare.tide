@@ -1,0 +1,8 @@
+// expect: configure shader functions with 'Shade { ... }'
+scene Main;
+local singleton Geometry { List<Vertex> vertices; List<int> indices; }
+frag Shade(Vertex vertex, out Color color, Func<float2, float> distance)
+{
+    float d = distance(vertex.uv); color = Color(d, d, d);
+}
+view Test(Geometry geometry) { Draw.Mesh(geometry.vertices, geometry.indices, Shade); }

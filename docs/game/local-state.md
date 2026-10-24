@@ -122,6 +122,11 @@ async void Reveal(mut Banner banner)
 
 ## Local fields
 
+Configured [frags and verts](./shaders.md#configured-shaders), and `Func` values
+with owned captures, can be kept in local state too. An attached field can use
+the frag's name as its type, such as `local ShapeLook fragment;`. These values
+remain outside match snapshots, networking and deterministic hashes.
+
 Some of what a machine keeps is about the match's own entities: a mesh baked for each, an animation timer, a smoothed position, a C library's handle. It isn't part of the match, since the simulation never reads it, and every machine can work it out for itself. `local` before a field of a match component or singleton makes that field this machine's:
 
 Fixed arrays work here too: `local float3[4] pieces;` keeps four positions in

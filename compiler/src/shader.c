@@ -4282,7 +4282,8 @@ static void ex(emit *em, const expr *e)
             first = false;
             const expr *value = NULL;
             for (int k = 0; k < e->inits.count; k++) {
-                if (e->inits.items[k].field == f) value = e->inits.items[k].value;
+                if (e->inits.items[k].field == f || (t.decl->callable && str_eq(e->inits.items[k].name, f->name)))
+                    value = e->inits.items[k].value;
             }
             if (value) ex_as(em, value, f->type);
             else if (f->default_value && f->default_value->type.kind != TY_ERROR) ex_as(em, f->default_value, f->type);
@@ -6249,7 +6250,8 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
         const bool explicit_instance = p->type.kind == TY_STRUCT && p->type.decl == sh->instance_type;
         // The struct the draw gives after its vert and frag: once for the draw, as a singleton's fields
         const bool given = p->type.kind == TY_STRUCT && !p->is_out && sh->values_type && p->type.decl == sh->values_type;
-        if (p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON && !explicit_instance && !given) continue;
+        const bool binding = p->type.kind == TY_STRUCT && p->type.decl->binding_of;
+        if (p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON && !explicit_instance && !given && !binding) continue;
         for (int k = 0; k < p->type.decl->fields.count; k++) {
             const field *f = &p->type.decl->fields.items[k];
             if (f->hidden || !(p->whole || (p->reads && p->reads[k]))) continue;
@@ -6546,6 +6548,7 @@ void plan_shaders(program *prog)
         decl *view = draw->in;
         for (int b = 0; b < sh->bound.count; b++) {
             decl *d = sh->bound.items[b];
+            if (d->binding_of) continue;
             bool has = false;
             for (int k = 0; k < view->params.count; k++) {
                 param *p = &view->params.items[k];

@@ -449,6 +449,60 @@ system Count(mut Counter counter, mut Log log)
 - The right of `&&` and `||` and the sides of `?:` still only run when they would.
 - A list's, map's or set's change that gives a value (`items.Remove(x)`, `seen.Add(key)`) counts as a call that changes it.
 
+## Function values
+
+`Func<Arguments..., Result>` holds a function with those argument and result
+types. A function name takes its signature from where it is assigned; an
+overloaded name selects the matching overload:
+
+```csharp
+float Circle(float2 position) { return Math.Length(position) - 0.5; }
+
+float Evaluate(float2 position, Func<float2, float> distance)
+{
+    return distance(position);
+}
+
+view Example()
+{
+    Func<float2, float> distance = Circle;
+    float value = Evaluate(float2(1, 0), distance);
+    Debug.Log(value);
+}
+```
+
+The last type is the result; `Func<float>` takes no arguments, and
+`Func<float, void>` takes a float and returns nothing. Functions have read-only
+value parameters and matching result types; extern, async and failable functions
+aren't callable values. An unambiguous function name can also initialize `var`.
+
+A typed expression lambda binds additional data:
+
+```csharp
+Func<float2, float> SizedCircle(float radius)
+{
+    return (float2 position) => Math.Length(position) - radius;
+}
+```
+
+It captures a copy of `radius` when constructed. Returning it, assigning it to
+a local field, or keeping it in a list doesn't retain a reference to the
+original variable. Changing that variable later doesn't change the capture.
+The initial implementation captures plain values, including numeric structs
+and fixed arrays. Heap containers, textures, entity/component context and
+recursive captures of the same Func type aren't supported; pass data or
+callables explicitly to helpers. Nested lambdas aren't supported yet.
+
+Function values belong to local state. They can be fields of local components,
+local singletons, attached `local` fields, or structs and collections kept there.
+They cannot enter match state. A default callable returns its result type's
+default, or does nothing for `void`.
+
+Frags, verts and their helpers accept function parameters too. The compiler
+collects the possible targets and generates typed dispatch; there are no GPU
+function pointers. Ordinary GPU restrictions apply to every reachable target.
+See [configured shaders and batching](../game/shaders.md#configured-shaders).
+
 ## Actions
 
 A function's last parameter can be an `Action`: code the caller writes in braces after the call. The function runs it by calling it, as many times as it likes, including none.

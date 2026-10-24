@@ -1,5 +1,76 @@
 # Language features, as tidec builds them
 
+## Callable values and configured GPU stages (2026-10-24)
+
+Owner-approved foundation for separate `render3d` and future `render2d`
+packages: typed function parameters in GPU code, helper forwarding, explicit
+`Shade { distance = Circle }` bindings, local component storage, and heterogeneous
+instance callbacks dispatched in one shader. No rendering package is implemented
+here. Render3D's PBR, baked indirect lighting, probes, shadows and post-processing
+remain the agreed direction, not implemented features.
+
+`callable_types.inc` and `callable_check.inc` implement `Func<A..., R>` as private
+ordinary structs containing a target tag and owned typed capture fields. Named
+functions and typed expression lambdas populate a closed target set per resolved
+signature. Generated ordinary dispatcher functions initialize a result, switch
+over targets, and return once; this avoids ANGLE D3D11's X4000 on returns inside
+switch cases. CPU and GPU use the same checked AST and normal call/effect/resource
+analysis. There are no stored native function pointers, new runtime functions or
+generated-C/runtime ABI changes.
+
+The initial language spellings and restrictions are provisional in spec.md,
+Callable shader values. Captures copy plain values at construction, including
+numeric structs and fixed arrays; no stack borrow escapes. Resource/heap captures,
+borrowed component/world/query/input context, nested lambdas and recursive capture
+layouts are diagnosed. Explicit parameters and named assets retain their normal
+GPU rules. Missing/unknown callable tags return the result's default. Configured
+stages with invalid required tags skip submission. These values and their
+collections are local-only, including through nested structs and attached fields.
+
+A stage binding is a private struct associated with its declaration. Its public
+type is the stage's name. Each function parameter reads its named binding field;
+other stage parameters retain their existing source binding. Draw wrappers receive
+binding values explicitly, separately from ordinary draw values and components.
+The Mesh, Instanced, target, skinned and Blit paths share this machinery. Binding
+factories evaluate once, in written draw-operand order. Callable and stage types
+go through normal array wrapping; stored indexed stage values can be drawn.
+
+Capture fields and named function tags have stable qualified identities for
+ordinary local serialization/migration. Lambda identity also uses its containing
+declaration and source location: moving one may invalidate old bindings, which
+must then be reconstructed. Unknown identities never retarget arbitrary code.
+Target identity collisions are diagnosed. Captures currently reserve fields per
+target of a signature; compact overlapping payloads and static-target specialization
+remain performance work. Existing GPU uniform/attribute limits apply.
+
+Coverage: `e2e/gpu_functions` exercises exact overload selection, qualified function
+references, inferred named functions, helper forwarding, returned closures,
+capture-at-construction semantics, local/attached storage, local pack/unpack,
+stored/returned/inline/indexed stage bindings, fixed arrays, custom vert plus frag,
+Blit, zero-argument/void/default callables, skipped unconfigured stages, factory
+evaluation order and unchanged match hashes. Four distinct SDF instances remain
+one run. Nine GPU/CPU lambda capture variants force field-vector growth: earlier
+callable literals resolve their stable field names during emission, rather than
+losing initializers through stale arena-copy field pointers.
+`shaders/callables` pins GLSL/WGSL and joins SPIR-V/HLSL validation. Eight diagnostic
+fixtures cover invalid signatures, captures, placement and bindings. GPU pixels
+and actual draw counts are checked by `platform/tests/gpu_functions.c` on native
+and web; editor contracts are in editors.md.
+
+Validation: full native debug passed 2,595 enabled tests (final run 169.29 s,
+four jobs), and full web debug passed 2,492 (667.80 s). Each retains the existing
+disabled Microduck right-turn limitation. The final array/indexed-binding changes
+also passed all 13 scoped web checks after rebuilding the affected targets.
+The docs build and all 280 shared grammar tests passed. Native pixels ran on
+Vulkan and OpenGL; web pixels ran on WebGL, ANGLE D3D11 and WebGPU. FXC validated
+the HLSL fixture. Standalone spirv-val and a Vulkan validation layer were absent.
+
+GitHub DNS prevented downloading pinned WASI SDK 24. Web validation used an
+ignored local toolchain file with the already-installed SDK 34 sysroot/builtins,
+clang 23 and Node 24.22.1; all Tide tools/programs were built in this checkout.
+The checked-in toolchain is unchanged; pinned-SDK-24 coverage remains unavailable
+on this machine. External prototype directories were disabled for both presets.
+
 ## Shard attributes (2026-10-23)
 
 `reach`, `[Position]` deciding where an entity is, `[Native]` and `[Together]` (which replaced `shardRange`, `[Partition]`, `[PerShard]`, `[Shared]`, `[Ghosts]`, `[GoesWith]` and `Shards.moves` the same day): rules, checks and generated code are in `notes/sharding.md`, The language side; the spec's Shards section has them as Provisional. `field` has `native` as its last member, so positional `field` initializers end in `false`.

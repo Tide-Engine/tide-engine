@@ -1,0 +1,3 @@
+// expect: callable and shader bindings belong in local state: make this field local
+scene Main;
+singleton State { Func<float2, float> distance; }

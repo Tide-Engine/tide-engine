@@ -1,0 +1,6 @@
+// expect: a callable cannot capture its own Func type; pass the callable explicitly to a helper
+scene Main;
+Func<float2, float> Wrap(Func<float2, float> source)
+{
+    return (float2 p) => source(p);
+}

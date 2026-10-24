@@ -1,5 +1,23 @@
 # The language server and the editors
 
+## Callable functions and configured shaders (2026-10-24)
+
+The compiler retains authored function-reference and invocation metadata while
+lowering Func values. Analysis uses those source symbols instead of generated
+dispatcher names. Lambda bodies retain their typed parameters, source ranges and
+capture-source identities, so captured reads navigate to their original local or
+parameter. Named shader binding types and initializers navigate to the shader;
+binding slot names use the shader's parameter identity. Func type trees expose
+their argument/result types, completion offers Func, and the formatter keeps its
+generic brackets tight. The shared TextMate grammar recognizes Func signatures,
+serving the editors and docs without adapter changes.
+
+`lsp_callable_bindings_preserve_function_navigation_and_signature_types` covers
+diagnostics, function and shader definitions, capture definitions and completion.
+The grammar suite includes a Func signature case. Full validation is recorded
+with the compiler work in language.md. Material-specific authoring and visual
+shader tooling remain outside this foundation.
+
 ## Offline installer configuration cache (2026-10-22)
 
 Build run 39790751086 passed plugin compatibility verification but failed while

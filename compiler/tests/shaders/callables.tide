@@ -1,0 +1,36 @@
+scene Main;
+
+float Circle(float2 p) { return Math.Length(p) - 0.5; }
+float Box(float2 p) { return Math.Max(Math.Abs(p.x), Math.Abs(p.y)) - 0.5; }
+float Evaluate(float2 p, Func<float2, float> distance) { return distance(p); }
+Func<float2, float> Sized(float radius) { return (float2 p) => Math.Length(p) - radius; }
+
+struct Item { float2 center; Func<float2, float> distance; }
+local singleton Geometry
+{
+    List<Vertex> vertices;
+    List<int> indices;
+    List<Item> items;
+    Shade configured;
+}
+
+vert Place(mut Vertex vertex, Item item) { vertex.position += item.center; }
+frag Instances(Vertex vertex, out Color color, Item item)
+{
+    float d = Evaluate(vertex.uv, item.distance);
+    color = Color(d, d, d);
+}
+frag Shade(Vertex vertex, out Color color, Func<float2, float> distance)
+{
+    float d = Evaluate(vertex.uv, distance);
+    color = Color(d, d, d);
+}
+view Show(mut Geometry geometry)
+{
+    geometry.items.Add(Item { distance = Circle });
+    geometry.items.Add(Item { distance = Box });
+    geometry.items.Add(Item { distance = Sized(0.75) });
+    geometry.configured = Shade { distance = Circle };
+    Draw.Instanced(geometry.vertices, geometry.indices, geometry.items, Place, Instances);
+    Draw.Mesh(geometry.vertices, geometry.indices, geometry.configured);
+}

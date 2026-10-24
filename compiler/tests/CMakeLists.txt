@@ -133,6 +133,7 @@ foreach(placement match local)
     add_test(NAME tidec_editor_preview_${placement} COMMAND tidec_editor_preview_${placement})
 endforeach()
 tide_e2e_test(shapes) # The shapes with smooth edges: each Draw call, the general Shape, and target receivers
+tide_e2e_test(gpu_functions) # Owned callable captures, named stage bindings and heterogeneous SDF instances.
 tide_e2e_test(draw_settings) # Blend, tint, transform, clip and cameras: around blocks, listed with commas, and set
 tide_e2e_test(draw_depth) # ...and what 3D meshes do with depth: the setting that's in a game's C only when it names it
 tide_e2e_test(draw_cull) # ...and which side of their triangles draws, with the instances a transform mirrors told apart

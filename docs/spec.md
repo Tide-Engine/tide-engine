@@ -156,6 +156,14 @@ system Burn(mut Unit unit)
 
 ### Functions
 
+- **Callable shaders (agreed 2026-10-24).** Functions can be supplied to GPU
+  code and forwarded through helpers. Frags and verts have explicit named
+  binding initializers, `Shade { distance = Circle }`, with no positional
+  binding shorthand. Configured stages can be kept in local component state.
+  Instance records may select different functions in a shared draw through
+  generated dispatch. The initial spellings, representation and restrictions
+  are provisional under Callable shader values below.
+
 - A function is code that other code calls: systems, views, the input's `Sample`, `Sanitize` and `Predict`, methods and other functions. The engine never runs one by itself.
 - A plain value parameter is a copy, read-only. A `mut` parameter is the caller's variable itself, which the function changes: the caller passes something it can write, and its signature still shows the write, so `Heal(unit.stats, 5)` needs `mut Unit unit`. The argument's type matches exactly.
 - Parameters are built-in types, structs, components and singletons. Return values are built-in types, structs and components; singleton return values aren't supported.
@@ -649,6 +657,43 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
 - A variable an `out` argument makes is read in its turn like any other: in `Count(tally, out var made) * 10 + made`, `made` is what the call gave, and in `seen * 100 + Count(tally, out seen)`, `seen` is read before the call makes it anew.
 - A call whose value is read several times runs once: `float4(Corner(counter), 0, 1)` and `Corner(counter).yx` each call `Corner` once.
 - Arguments passed by name are worked out in the order the call writes them, not the parameters': in `Pack(ones: Next(counter), tens: Next(counter))`, `ones` gets the first `Next`. A default the call leaves out is a constant, so it has no turn.
+
+### Callable shader values
+
+Initial implementation choices, 2026-10-24, provisional:
+
+- `Func<A, B, R>` is a local value taking A and B and returning R. Zero to 16
+  read-only arguments are supported; the final type is the result, including
+  `void`. Named synchronous non-extern, non-failable functions match exact
+  signatures. Typed expression lambdas take their signature from context.
+- Lambdas copy captured plain values at construction and own those copies.
+  Their lifetime is independent of the source stack. Numeric structs and
+  fixed arrays work; heap containers, rendering-resource captures, borrowed
+  entity/component/world/input context, nested lambdas and recursive capture
+  layouts are diagnosed. Explicit helper parameters and asset references
+  retain their existing capabilities and GPU rules.
+- Each Func signature has a closed set of targets. Stored values contain a
+  target tag and typed capture fields, never native code pointers. CPU and
+  GPU invocations use generated switches and ordinary calls. Default or
+  unknown tags return the result's default, or do nothing for void. GPU
+  reachability and resource/effect checks include the dispatcher and targets.
+- A frag or vert's name also denotes its local configured-stage type.
+  Initializers bind all function slots by name; other shader inputs retain
+  existing draw binding rules. Locals, attached local fields, local-world
+  components, singletons, helper arguments/results and local collections can
+  retain these values. Function bindings cannot enter match state. A configured
+  stage with a missing/unknown required target is skipped at draw submission.
+- Instanced draws upload function tags and captures as ordinary instance data.
+  Different targets share a shader and draw when its normal state and resource
+  bindings allow it. Ordinary per-draw values stay shared uniforms. Captures
+  reserve fields per target of a signature; GPU attribute/uniform limits remain.
+- Named function identities derive from qualified names and signatures, and
+  captures have named fields for normal local serialization/migration.
+  Lambda identities also include their enclosing declaration and source
+  location. Moving a lambda can invalidate old bindings; reconstruct those
+  bindings after such a hot reload. Identity collisions are diagnosed for
+  callable targets. Automatic specialization of constant targets and compact
+  overlapping capture payloads remain optimizations to explore.
 
 ### Functions and blocks
 

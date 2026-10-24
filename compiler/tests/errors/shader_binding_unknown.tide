@@ -1,0 +1,8 @@
+// expect: shader 'Shade' has no function binding 'distant'
+scene Main;
+float Distance(float2 p) { return p.x; }
+frag Shade(Vertex vertex, out Color color, Func<float2, float> distance)
+{
+    float d = distance(vertex.uv); color = Color(d, d, d);
+}
+view Test() { var fragment = Shade { distance = Distance, distant = Distance }; _ = fragment; }

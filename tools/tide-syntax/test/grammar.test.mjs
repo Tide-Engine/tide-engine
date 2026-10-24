@@ -83,6 +83,11 @@ function checkLinesEndText(file, lines) {
 
 const probe = tokenize(fs.readFileSync(path.join(here, 'probe.tide'), 'utf8'));
 
+test('typed callable signatures keep generic type highlighting', () => {
+    const lines = tokenize('Func<float2, float> distance;');
+    check(lines[0], ['Func', 'support.class']);
+});
+
 test('computed property accessors are contextual', () => {
     const lines = tokenize('float diameter { get { return radius * 2; } set { radius = value / 2; } }\nint get = 1;\n');
     check(lines[0], ['get', 'keyword.other.accessor']);

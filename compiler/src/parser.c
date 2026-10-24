@@ -145,7 +145,7 @@ static qname parse_qname(parser *p, const char *what)
 // Generic types, which take a type in <>.
 static bool generic_name(const str name)
 {
-    return generic_form_named(name) != NULL;
+    return str_eq_c(name, "Func") || generic_form_named(name) != NULL;
 }
 
 // Where a type that starts at the token `i` ahead ends: the token after it,
@@ -251,7 +251,14 @@ static type_ref *parse_type(parser *p, const char *what)
     r->name_at = q.name_at;
     r->end = (loc){q.name_at.line, q.name_at.col + last_name_len(q.text), q.name_at.file};
     const generic_form *form = at(p, T_LT) ? generic_form_named(q.text) : NULL;
-    if (form) {
+    if (at(p, T_LT) && str_eq_c(q.text, "Func")) {
+        advance(p);
+        do {
+            vec_push(r->args, parse_type(p, "a function argument or result type"));
+        } while (accept(p, T_COMMA));
+        const loc close = close_angle(p, "'>' after the function signature");
+        r->end = (loc){close.line, close.col + 1, close.file};
+    } else if (form) {
         advance(p);
         for (int i = 0; i < form->arity; i++) {
             if (i == 1 && str_eq_c(q.text, "SkinnedMesh") && !at(p, T_COMMA)) break;
@@ -533,6 +540,39 @@ static expr *parse_primary(parser *p)
         return e;
     }
     case T_LPAREN: {
+        // A typed expression lambda: (float3 position, float scale) => ...
+        int look = 1;
+        bool lambda = peek_at(p, look)->kind == T_RPAREN;
+        while (!lambda) {
+            const int end = skip_type(p, look);
+            if (end < 0 || peek_at(p, end)->kind != T_IDENT) break;
+            look = end + 1;
+            if (peek_at(p, look)->kind == T_RPAREN) { lambda = true; break; }
+            if (peek_at(p, look)->kind != T_COMMA) break;
+            look++;
+        }
+        if (lambda && peek_at(p, look + 1)->kind == T_ARROW) {
+            advance(p);
+            expr *e = new_expr(E_LITERAL, t->at);
+            e->lambda = true;
+            if (!at(p, T_RPAREN)) do {
+                param a = {0};
+                a.type_ref = parse_type(p, "a lambda parameter type");
+                a.type_name = a.type_ref->text;
+                a.type_at = a.type_ref->name_at;
+                a.type_qual_at = a.type_ref->at;
+                const token *name = expect_ident(p, "a lambda parameter name");
+                a.name = name->text;
+                a.at = a.name_at = name->at;
+                a.mode = PARAM_READ;
+                vec_push(e->lambda_params, a);
+            } while (accept(p, T_COMMA));
+            expect(p, T_RPAREN, "')' after the lambda parameters");
+            expect(p, T_ARROW, "'=>' before the lambda expression");
+            e->lambda_body = parse_expr(p);
+            e->end = peek(p)->at;
+            return e;
+        }
         advance(p);
         expr *e = parse_expr(p);
         expect(p, T_RPAREN, "')'");

@@ -230,6 +230,85 @@ If `Shade` takes `Box` and `Sun`, the function must take exactly one input param
 
 This also works for a target's draws, `Draw.Instanced`, `Draw.SkinnedMesh` and `Draw.Blit`. Textures, per-draw values and instance lists keep their usual syntax. The function draws in its caller's frame and follows the existing drawing restrictions.
 
+## Configured shaders
+
+A frag or vert can take typed [function parameters](../language/functions.md#function-values).
+Bind them by name using an initializer:
+
+```csharp
+float Circle(float2 position) { return Math.Length(position) - 0.5; }
+
+frag ShapeLook(Vertex vertex, out Color color, Func<float2, float> distance)
+{
+    float d = distance(vertex.uv * 2 - float2(1));
+    color = Color(1, 1, 1, Math.Saturate(0.5 - d));
+}
+
+view DrawShape(Geometry geometry)
+{
+    var fragment = ShapeLook { distance = Circle };
+    Draw.Mesh(geometry.vertices, geometry.indices, fragment);
+}
+```
+
+`Geometry` above is the game's local geometry storage. The initializer configures
+the shader; it doesn't execute it. Every required function slot must be named
+once with a matching function signature. Vertex data, outputs and ordinary
+draw inputs continue to come from the draw. Positional function binding such as
+`ShapeLook(Circle)` isn't supported.
+
+The declaration's name is also the type of its configured values:
+
+```csharp
+component Appearance
+{
+    local ShapeLook fragment;
+}
+```
+
+Views can assign and draw `appearance.fragment`, and helpers can take or return
+`ShapeLook`. Different bindings of the same declaration share this type.
+A default binding with missing function targets draws nothing. These values
+belong to local state, like textures. Captured values are owned copies; GPU
+programs and pipelines remain the renderer's resources.
+
+### Functions in instance data
+
+A function can also be a field of an instance struct:
+
+```csharp
+struct ShapeItem
+{
+    float2 center;
+    Func<float2, float> distance;
+}
+
+vert PlaceShape(mut Vertex vertex, ShapeItem shape)
+{
+    vertex.position = shape.center + vertex.position * 8;
+}
+
+frag FillShape(Vertex vertex, out Color color, ShapeItem shape)
+{
+    float d = shape.distance(vertex.uv * 2 - float2(1));
+    if (d > 0) this.Discard();
+    color = Color.white;
+}
+```
+
+`Draw.Instanced(vertices, indices, shapes, PlaceShape, FillShape)` draws one
+quad per `ShapeItem`. Its shaders take the current item, not the whole list.
+Items can select different distance functions and carry different captures
+inside one instance run. The compiler stores a target tag with the captures
+and generates a switch in the shader. A new target is compiled with the game;
+changing a captured numeric value doesn't compile another shader.
+
+Normal batching boundaries still apply: targets, settings, shared uniforms and
+texture bindings must be compatible, and drawing order is preserved. The usual
+GPU attribute and uniform limits also apply to callable capture data. The
+initial capture layout reserves fields for the targets of each Func signature;
+many large capture variants can exceed those limits.
+
 ## What they read
 
 After the vertex, and what each writes (a frag's color, the structs a vert hands its frag, where a vert puts its vertex), a frag or vert takes the game's state, as a view does:
