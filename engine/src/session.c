@@ -91,7 +91,7 @@
 // the world's pages, says which of them its world lacks, and gets those.
 
 #define MAGIC 0x5449u // "TI"
-#define PROTOCOL 18u
+#define PROTOCOL 19u
 
 enum { MSG_HELLO = 1, MSG_WELCOME, MSG_REFUSE, MSG_CHUNK, MSG_CLIENT, MSG_SERVER, MSG_BYE, MSG_HANDOVER, MSG_COMMAND,
        MSG_UPLOAD, MSG_DOWNLOAD, MSG_LOCAL_INTEREST, MSG_LOCAL_DATA };
@@ -266,6 +266,15 @@ static void header(tide_writer *w, const uint8_t type)
     tide_write_u16(w, MAGIC);
     tide_write_u8(w, PROTOCOL);
     tide_write_u8(w, type);
+}
+
+// Connected traffic proves both the player's cookie and this connection attempt.
+// Cookies are bearer credentials, not encryption or a MAC for an exposed UDP path.
+static void authenticated_header(tide_writer *w, const uint8_t type, const uint64_t cookie, const uint32_t nonce)
+{
+    header(w, type);
+    tide_write_u64(w, cookie);
+    tide_write_u32(w, nonce);
 }
 
 // The datagram's type, or 0 if it isn't ours.
@@ -905,6 +914,8 @@ struct tide_server {
     uint64_t *digests; // ...and each one's digest: all a server it went on from passed on
     double *away_since;
     uint64_t random;
+    uint8_t cookie_key[32]; // Private, never sent or snapshotted; cookie outputs cannot disclose the generator state.
+    uint64_t cookie_count;
     // How its match started, for players to start it too (START_*), with
     // Time.dt, the seed it picked (in a game that has one) and, for
     // START_GIVEN, the game's tide_start
@@ -1253,20 +1264,21 @@ static bool hands_over(const tide_server *s)
     return !s->game->client_state && s->game->host_migration && s->room_key[0] && s->room_code[0];
 }
 
-static void send_bye(tide_server *s, const uint32_t transport, const tide_address to)
+static void send_bye(tide_server *s, const uint32_t transport, const tide_address to, const uint64_t cookie,
+                     const uint32_t nonce)
 {
-    uint8_t data[8];
+    uint8_t data[20];
     tide_writer w = {data, sizeof data, 0, false, false};
-    header(&w, MSG_BYE);
+    authenticated_header(&w, MSG_BYE, cookie, nonce);
     tide_write_u8(&w, s->ended ? BYE_ENDED : hands_over(s) ? BYE_HANDOVER : BYE_LEFT);
     send_packet(&s->desc.transports[transport], to, &w, &s->traffic);
 }
 
 static void send_kicked(tide_server *s, const kicked *k)
 {
-    uint8_t data[8u + TIDE_MESSAGE_BYTES];
+    uint8_t data[20u + TIDE_MESSAGE_BYTES];
     tide_writer w = {data, sizeof data, 0, false, false};
-    header(&w, MSG_BYE);
+    authenticated_header(&w, MSG_BYE, k->cookie, k->nonce);
     tide_write_u8(&w, BYE_KICKED);
     const uint32_t n = (uint32_t)strlen(k->message);
     tide_write_u8(&w, (uint8_t)n);
@@ -1274,11 +1286,13 @@ static void send_kicked(tide_server *s, const kicked *k)
     send_packet(&s->desc.transports[k->transport], k->address, &w, &s->traffic);
 }
 
-static void refuse(tide_server *s, const uint32_t transport, const tide_address to, const uint8_t reason)
+static void refuse(tide_server *s, const uint32_t transport, const tide_address to, const uint32_t nonce,
+                    const uint8_t reason)
 {
-    uint8_t data[8];
+    uint8_t data[12];
     tide_writer w = {data, sizeof data, 0, false, false};
     header(&w, MSG_REFUSE);
+    tide_write_u32(&w, nonce);
     tide_write_u8(&w, reason);
     send_packet(&s->desc.transports[transport], to, &w, &s->traffic);
 }
@@ -1302,21 +1316,31 @@ static void on_hello(tide_server *s, const uint32_t transport, const tide_addres
     const uint8_t flags = tide_read_u8(r);
     const uint8_t *asset_pack = tide_read_bytes(r, 32);
     if (r->failed || r->at != r->size || (flags & ~(HELLO_KNEW_KICK | HELLO_HAS_WORLD | HELLO_CAN_START))) return;
+    if (s->ended) {
+        send_bye(s, transport, from, cookie, nonce);
+        return;
+    }
     uint8_t identity[32] = {0};
     const uint8_t anonymous[32] = {0};
     const uint64_t digest = cookie_digest(cookie);
     if (s->desc.identity) {
         if (!s->desc.identity(s->desc.identity_user, transport, from, identity)) {
-            refuse(s, transport, from, REFUSE_CLOSED);
+            refuse(s, transport, from, nonce, REFUSE_CLOSED);
             return;
         }
         for (uint32_t i = 0; cookie && i < s->players; i++) {
             if (s->digests[i] == digest && memcmp(identity, s->identities[i], 32) != 0) {
-                refuse(s, transport, from, REFUSE_CLOSED);
+                refuse(s, transport, from, nonce, REFUSE_CLOSED);
                 return;
             }
         }
     }
+    connection *c = find_connection(s, transport, from);
+    // A source address alone cannot replace a live or pending connection.
+    // A trusted admission identity can still resume its own account without a cookie.
+    if (c && cookie != s->cookies[c - s->connections]
+        && !(s->desc.identity && memcmp(identity, anonymous, 32) != 0
+             && memcmp(identity, s->identities[c - s->connections], 32) == 0)) return;
     for (uint32_t i = 0; i < s->players; i++) {
         kicked *k = &s->kicks[i];
         if (!k->used) continue;
@@ -1335,12 +1359,11 @@ static void on_hello(tide_server *s, const uint32_t transport, const tide_addres
             k->used = false; // That machine trying again, without a cookie: someone new
         }
     }
-    connection *c = find_connection(s, transport, from);
     if (c && c->nonce == nonce) return; // It's being welcomed already
     if (memcmp(s->game->simulation, anonymous, 32) == 0
         ? game != s->game->hash : memcmp(simulation, s->game->simulation, 32) != 0) {
         if (c) drop_connection(s, c);
-        refuse(s, transport, from, REFUSE_OTHER_GAME);
+        refuse(s, transport, from, nonce, REFUSE_OTHER_GAME);
         return;
     }
     // Its cookie's digest: the player's, from this server or the one it went on from
@@ -1385,7 +1408,7 @@ static void on_hello(tide_server *s, const uint32_t transport, const tide_addres
     const bool in_world = player >= 0
                        && (tide_players_has(&s->present, (uint32_t)player) || tide_players_has(&s->admitted, (uint32_t)player));
     if (s->closed && !(s->desc.local_first && transport == 0) && !in_world) {
-        refuse(s, transport, from, REFUSE_CLOSED);
+        refuse(s, transport, from, nonce, REFUSE_CLOSED);
         return;
     }
     // A player coming back gets their slot; a new one a slot never used, or
@@ -1404,15 +1427,24 @@ static void on_hello(tide_server *s, const uint32_t transport, const tide_addres
         }
     }
     if (player < 0) {
-        refuse(s, transport, from, REFUSE_FULL);
+        refuse(s, transport, from, nonce, REFUSE_FULL);
         return;
     }
     const bool new_player = s->cookies[player] == 0;
     if (new_player) {
         memcpy(s->identities[player], identity, 32);
-        s->random ^= (uint64_t)from.host << 16 ^ from.port ^ (uint64_t)nonce << 32;
-        do s->cookies[player] = next_random(&s->random);
-        while (s->cookies[player] == 0);
+        // Fixed-length secret-prefix SHA-256: knowing one cookie does not reveal
+        // the secret or let its owner calculate another player's next cookie.
+        do {
+            const uint64_t count = ++s->cookie_count;
+            uint8_t digest_bytes[32];
+            tide_sha256 hash;
+            tide_sha256_init(&hash);
+            tide_sha256_add(&hash, s->cookie_key, sizeof s->cookie_key);
+            tide_sha256_add(&hash, &count, sizeof count);
+            tide_sha256_end(&hash, digest_bytes);
+            memcpy(&s->cookies[player], digest_bytes, sizeof s->cookies[player]);
+        } while (s->cookies[player] == 0);
         s->digests[player] = cookie_digest(s->cookies[player]);
     }
     c = &s->connections[player];
@@ -1432,7 +1464,7 @@ static void on_hello(tide_server *s, const uint32_t transport, const tide_addres
         || (s->game->client_state && !c->client_frames)) {
         free_connection(s, c);
         if (new_player) s->cookies[player] = s->digests[player] = 0;
-        refuse(s, transport, from, REFUSE_FULL);
+        refuse(s, transport, from, nonce, REFUSE_FULL);
         return;
     }
     for (uint32_t i = 0; i < s->w.inputs; i++) c->input_tick[i] = UINT32_MAX;
@@ -1649,10 +1681,9 @@ static void take_command(tide_server *s, connection *c, const uint32_t sequence,
 static void on_command(tide_server *s, connection *c, tide_reader *r)
 {
     const tide_game *g = s->game;
-    const uint32_t nonce = tide_read_u32(r);
     const uint32_t sequence = tide_read_varint(r);
     const uint32_t size = tide_read_varint(r);
-    if (r->failed || !c->greeted || nonce != c->nonce || !g->command || !g->command_sequence || !g->check_command
+    if (r->failed || !c->greeted || !g->command || !g->command_sequence || !g->check_command
         || !size || size > TIDE_COMMAND_BYTES) return;
     const uint8_t *data = tide_read_bytes(r, size);
     if (!data || r->at != r->size) return;
@@ -1668,14 +1699,13 @@ static void on_command(tide_server *s, connection *c, tide_reader *r)
 static void on_upload(tide_server *s, connection *c, tide_reader *r)
 {
     const tide_game *g = s->game;
-    const uint32_t nonce = tide_read_u32(r);
     const uint32_t number = tide_read_varint(r);
     const uint32_t sequence = tide_read_varint(r);
     const uint32_t size = tide_read_varint(r);
     const uint32_t index = tide_read_varint(r);
     const uint16_t bytes = tide_read_u16(r);
     const uint8_t *data = tide_read_bytes(r, bytes);
-    if (r->failed || !data || r->at != r->size || !c->greeted || nonce != c->nonce || !g->command
+    if (r->failed || !data || r->at != r->size || !c->greeted || !g->command
         || !g->command_sequence || !g->check_command || !number || !big_command(size) || size > TIDE_COMMAND_LIMIT
         || number == c->upload_done) return;
     const uint32_t chunks = chunks_of(size);
@@ -1714,8 +1744,7 @@ static void on_upload(tide_server *s, connection *c, tide_reader *r)
 static void on_local_data(tide_server *s, connection *c, tide_reader *r, const bool interest)
 {
     const uint32_t player = (uint32_t)(c - s->connections);
-    const uint64_t cookie = tide_read_u64(r);
-    if (r->failed || !c->greeted || s->ended || cookie != s->cookies[player]) return;
+    if (!c->greeted || s->ended) return;
     if (interest) {
         const uint8_t enabled = tide_read_u8(r);
         if (r->failed || r->at != r->size || enabled > 1u) return;
@@ -1736,8 +1765,7 @@ static void on_local_data(tide_server *s, connection *c, tide_reader *r, const b
         if (i == player || !to->used || !to->greeted || to->local_until <= s->now) continue;
         uint8_t data[TIDE_NET_MTU];
         tide_writer w = {data, sizeof data, 0, false, false};
-        header(&w, MSG_LOCAL_DATA);
-        tide_write_u64(&w, s->cookies[i]);
+        authenticated_header(&w, MSG_LOCAL_DATA, s->cookies[i], to->nonce);
         tide_write_varint(&w, player + 1u);
         tide_write_u64(&w, s->digests[player]);
         tide_write_bytes(&w, r->data + r->at, size);
@@ -1758,23 +1786,28 @@ static void server_receive(tide_server *s, const uint32_t transport)
         tide_reader r = {data, size, 0, false};
         const uint8_t type = read_header(&r);
         if (type == MSG_HELLO) {
-            if (s->ended) send_bye(s, transport, from); // Too late to join
-            else on_hello(s, transport, from, &r);
+            on_hello(s, transport, from, &r);
             continue;
         }
+        if (type != MSG_CLIENT && type != MSG_COMMAND && type != MSG_UPLOAD && type != MSG_LOCAL_INTEREST
+            && type != MSG_LOCAL_DATA && type != MSG_BYE) continue;
+        const uint64_t cookie = tide_read_u64(&r);
+        const uint32_t nonce = tide_read_u32(&r);
+        if (r.failed || !cookie) continue;
         connection *c = find_connection(s, transport, from);
         if (!c && type == MSG_CLIENT) { // A player it kicked, who didn't hear: told again
             for (uint32_t i = 0; i < s->players; i++) {
                 const kicked *k = &s->kicks[i];
-                if (k->used && k->transport == transport && tide_address_equal(k->address, from)) send_kicked(s, k);
+                if (k->used && k->transport == transport && tide_address_equal(k->address, from)
+                    && cookie == k->cookie && nonce == k->nonce) send_kicked(s, k);
             }
         }
-        if (!c) continue;
+        if (!c || cookie != s->cookies[c - s->connections] || nonce != c->nonce) continue;
         if (type == MSG_CLIENT) on_client(s, c, &r);
         else if (type == MSG_COMMAND) on_command(s, c, &r);
         else if (type == MSG_UPLOAD) on_upload(s, c, &r);
         else if (type == MSG_LOCAL_INTEREST || type == MSG_LOCAL_DATA) on_local_data(s, c, &r, type == MSG_LOCAL_INTEREST);
-        else if (type == MSG_BYE) drop_connection(s, c);
+        else if (type == MSG_BYE && r.at == r.size) drop_connection(s, c);
     }
 }
 
@@ -2811,7 +2844,7 @@ static void send_chunks(tide_server *s, connection *c)
         const uint32_t from = i * CHUNK;
         const uint32_t size = c->snapshot_size - from < CHUNK ? c->snapshot_size - from : CHUNK;
         tide_writer w = {s->packet, TIDE_NET_MTU, 0, false, false};
-        header(&w, MSG_CHUNK);
+        authenticated_header(&w, MSG_CHUNK, s->cookies[c - s->connections], c->nonce);
         tide_write_u32(&w, c->snapshot_number);
         tide_write_u32(&w, i);
         tide_write_u16(&w, (uint16_t)size);
@@ -2825,7 +2858,7 @@ static void send_chunks(tide_server *s, connection *c)
 static void start_server_packet(const tide_server *s, const connection *c, tide_writer *w, uint32_t *count_at)
 {
     *w = (tide_writer){s->packet, TIDE_NET_MTU, 0, false, false};
-    header(w, MSG_SERVER);
+    authenticated_header(w, MSG_SERVER, s->cookies[c - s->connections], c->nonce);
     tide_write_u16(w, millis16(s->now));
     tide_write_u16(w, c->their_time);
     tide_write_varint(w, held_ms(s, c));
@@ -2893,7 +2926,7 @@ static void send_downloads(tide_server *s, connection *c)
         const uint32_t from = i * CHUNK;
         const uint32_t size = p->size - from < CHUNK ? p->size - from : CHUNK;
         tide_writer w = {s->packet, TIDE_NET_MTU, 0, false, false};
-        header(&w, MSG_DOWNLOAD);
+        authenticated_header(&w, MSG_DOWNLOAD, s->cookies[c - s->connections], c->nonce);
         tide_write_varint(&w, p->number);
         tide_write_varint(&w, p->size);
         tide_write_varint(&w, i);
@@ -3047,6 +3080,16 @@ tide_server *tide_server_create(const tide_server_desc *desc, const double now)
     s->started = !desc->wait_for_first;
     s->clock_start = now;
     s->random = tide_hash(&s, sizeof s) ^ tide_hash(&now, sizeof now);
+    uint64_t cookie_entropy = 0;
+    for (uint32_t i = 0; i < sizeof s->cookie_key; i += 8u) {
+        const uint64_t secret = desc->entropy ? desc->entropy() : next_random(&s->random);
+        cookie_entropy |= secret;
+        memcpy(s->cookie_key + i, &secret, sizeof secret);
+    }
+    if (desc->entropy && !cookie_entropy) { // An advertised system RNG failed; do not issue predictable credentials.
+        tide_server_destroy(s);
+        return NULL;
+    }
     return s;
 }
 
@@ -3056,7 +3099,7 @@ void tide_server_destroy(tide_server *s)
     for (uint32_t i = 0; s->connections && i < s->players; i++) {
         connection *c = &s->connections[i];
         if (!c->used) continue;
-        send_bye(s, c->transport, c->address);
+        send_bye(s, c->transport, c->address, s->cookies[i], c->nonce);
         free_connection(s, c);
     }
     // A goodbye can be lost: a match that ended says so where its players
@@ -3139,7 +3182,7 @@ static void send_handover(tide_server *s)
         uint8_t data[32u + HANDOVER_PART];
         _Static_assert(sizeof data <= TIDE_NET_MTU, "a handover's part fits one datagram");
         tide_writer p = {data, sizeof data, 0, false, false};
-        header(&p, MSG_HANDOVER);
+        authenticated_header(&p, MSG_HANDOVER, 0, 0); // Filled separately for each recipient below.
         tide_write_u32(&p, s->handover_version);
         tide_write_varint(&p, w.size);
         tide_write_varint(&p, part);
@@ -3147,7 +3190,12 @@ static void send_handover(tide_server *s)
         tide_write_bytes(&p, s->handover + from, w.size - from < HANDOVER_PART ? w.size - from : HANDOVER_PART);
         for (uint32_t i = 0; i < s->players; i++) {
             const connection *c = &s->connections[i];
-            if (c->used && !c->local) send_packet(&s->desc.transports[c->transport], c->address, &p, &s->traffic);
+            if (c->used && !c->local) {
+                tide_writer auth = {data, sizeof data, 4u, false, false};
+                tide_write_u64(&auth, s->cookies[i]);
+                tide_write_u32(&auth, c->nonce);
+                send_packet(&s->desc.transports[c->transport], c->address, &p, &s->traffic);
+            }
         }
     }
 }
@@ -3182,7 +3230,7 @@ void tide_server_update(tide_server *s, const double now)
         connection *c = &s->connections[i];
         if (!c->used) continue;
         if (s->ended) { // Every update, until they've all gone
-            send_bye(s, c->transport, c->address);
+            send_bye(s, c->transport, c->address, s->cookies[i], c->nonce);
         } else if (c->welcoming) { // Until it writes back
             send_welcome(s, c);
         } else if (c->sending) {
@@ -3848,7 +3896,7 @@ static void measure(tide_client *c, const uint16_t echo, const uint32_t held_ms)
     c->ping_ms = ping > 0.0 ? (uint32_t)(ping * 1000.0 + 0.5) : 0u;
 }
 
-static void on_welcome(tide_client *c, tide_reader *r)
+static bool on_welcome(tide_client *c, tide_reader *r)
 {
     const uint32_t nonce = tide_read_u32(r);
     const uint32_t player = tide_read_varint(r);
@@ -3864,9 +3912,10 @@ static void on_welcome(tide_client *c, tide_reader *r)
     const uint16_t echo = tide_read_u16(r);
     const uint16_t held = tide_read_u16(r);
     const uint64_t cookie = tide_read_u64(r);
-    if (r->failed || nonce != c->nonce || player >= c->players || tick_rate == 0 || kind > SEND_CLIENT_REPAIR
+    if (r->failed || r->at != r->size || nonce != c->nonce || !cookie || (c->welcomed && cookie != c->cookie)
+        || player >= c->players || tick_rate == 0 || kind > SEND_CLIENT_REPAIR
         || (number && ((kind >= SEND_CLIENT_WORLD) != (c->game->client_state != NULL)))
-        || chunks != chunks_of(size)) return;
+        || chunks != chunks_of(size)) return false;
     if (!c->frames) { // Its windows, now that it knows the tick rate
         c->w = windows_for(tick_rate);
         c->frames = calloc(c->w.history, sizeof *c->frames);
@@ -3875,7 +3924,7 @@ static void on_welcome(tide_client *c, tide_reader *r)
         c->inputs = malloc((size_t)c->w.inputs * (c->game->max_input_bytes ? c->game->max_input_bytes : 1u));
         if (!c->frames || !c->input_tick || !c->input_size || !c->inputs) {
             go_offline(c, TIDE_DISCONNECT_FAILED);
-            return;
+            return false;
         }
         for (uint32_t i = 0; i < c->w.inputs; i++) c->input_tick[i] = UINT32_MAX;
         // A tick it remembers is one it ran and hasn't had confirmed: as many as it has snapshots at most
@@ -3895,13 +3944,13 @@ static void on_welcome(tide_client *c, tide_reader *r)
     // keeps ticks. Something it had whole, it had: what's after it is newer.
     const bool wanted = !c->loaded || (c->need_snapshot && tick >= c->verified) || tick > c->ahead
         || (kind == SEND_CLIENT_REPAIR && c->loaded && tick > c->verified);
-    if (!wanted || number <= c->got_number || (c->receiving && c->snapshot_number == number)) return;
+    if (!wanted || number <= c->got_number || (c->receiving && c->snapshot_number == number)) return true;
     stop_receiving(c);
     c->snapshot = malloc(size ? size : 1u);
     c->chunk_have = calloc(chunks ? chunks : 1u, 1);
     if (!c->snapshot || !c->chunk_have) {
         stop_receiving(c);
-        return;
+        return true;
     }
     c->receiving = true;
     c->snapshot_tick = tick;
@@ -3911,6 +3960,7 @@ static void on_welcome(tide_client *c, tide_reader *r)
     c->snapshot_size = size;
     c->chunk_count = chunks;
     c->chunks_had = 0;
+    return true;
 }
 
 static void load_snapshot(tide_client *c);
@@ -4143,21 +4193,23 @@ static void client_receive(tide_client *c)
         c->arrived = arrived_of(t, c->now);
         tide_reader r = {data, size, 0, false};
         const uint8_t type = read_header(&r);
-        if (type != 0 && type != MSG_HELLO) {
-            c->last_heard = c->now;
-            c->heard_since_sent = true;
+        if (type == MSG_CHUNK || type == MSG_DOWNLOAD || type == MSG_SERVER || type == MSG_HANDOVER
+            || type == MSG_LOCAL_DATA || type == MSG_BYE) {
+            const uint64_t cookie = tide_read_u64(&r);
+            const uint32_t nonce = tide_read_u32(&r);
+            const uint64_t expected = c->welcomed ? c->cookie : c->desc.cookie;
+            if (r.failed || cookie != expected || nonce != c->nonce || (!c->welcomed && type != MSG_BYE)) continue;
         }
         switch (type) {
-        case MSG_WELCOME: on_welcome(c, &r); break;
+        case MSG_WELCOME: if (!on_welcome(c, &r)) continue; break;
         case MSG_CHUNK: on_chunk(c, &r); break;
         case MSG_DOWNLOAD: on_download(c, &r); break;
         case MSG_SERVER: on_server(c, &r); break;
         case MSG_HANDOVER: on_handover(c, &r); break;
         case MSG_LOCAL_DATA: {
-            const uint64_t cookie = tide_read_u64(&r);
             const tide_player_id sender = {tide_read_varint(&r)};
             const uint64_t connection = tide_read_u64(&r);
-            if (r.failed || cookie != c->cookie || !sender.id || sender.id > c->players
+            if (r.failed || !sender.id || sender.id > c->players
                 || sender.id == c->player + 1u || !connection || r.size == r.at
                 || r.size - r.at > TIDE_LOCAL_DATA_BYTES || !c->loaded
                 || c->state != TIDE_SESSION_CONNECTED || !c->local_receive) break;
@@ -4165,8 +4217,10 @@ static void client_receive(tide_client *c)
             break;
         }
         case MSG_REFUSE: {
+            const uint32_t nonce = tide_read_u32(&r);
             const uint8_t why = tide_read_u8(&r);
-            if (r.failed) break;
+            if (r.failed || r.at != r.size || nonce != c->nonce || c->welcomed
+                || why < REFUSE_OTHER_GAME || why > REFUSE_CLOSED) continue;
             if (why == REFUSE_OTHER_GAME) copy_message(c->message,
                 "Different simulation; update the client to this game's release.", TIDE_MESSAGE_BYTES - 1u);
             go_offline(c, TIDE_DISCONNECT_REFUSED);
@@ -4174,19 +4228,24 @@ static void client_receive(tide_client *c)
         }
         case MSG_BYE: {
             const uint8_t why = tide_read_u8(&r);
-            if (why == BYE_KICKED && !r.failed) {
+            if (r.failed || why > BYE_HANDOVER) continue;
+            if (why == BYE_KICKED) {
                 const uint8_t n = tide_read_u8(&r);
                 const uint8_t *bytes = tide_read_bytes(&r, n);
-                if (c->state != TIDE_SESSION_OFFLINE) copy_message(c->message, r.failed ? NULL : (const char *)bytes, n);
+                if (r.failed || r.at != r.size) continue;
+                if (c->state != TIDE_SESSION_OFFLINE) copy_message(c->message, (const char *)bytes, n);
                 go_offline(c, TIDE_DISCONNECT_KICKED);
                 break;
             }
-            if (why == BYE_HANDOVER && !r.failed) c->handed_over = c->state != TIDE_SESSION_OFFLINE;
-            go_offline(c, why == BYE_ENDED && !r.failed ? TIDE_DISCONNECT_ENDED : TIDE_DISCONNECT_SERVER_LEFT);
+            if (r.at != r.size) continue;
+            if (why == BYE_HANDOVER) c->handed_over = c->state != TIDE_SESSION_OFFLINE;
+            go_offline(c, why == BYE_ENDED ? TIDE_DISCONNECT_ENDED : TIDE_DISCONNECT_SERVER_LEFT);
             break;
         }
-        default: break;
+        default: continue;
         }
+        c->last_heard = c->now;
+        c->heard_since_sent = true;
         if (c->state == TIDE_SESSION_OFFLINE) return;
     }
 }
@@ -5430,7 +5489,7 @@ static void send_client(tide_client *c)
 {
     const tide_game *g = c->game;
     tide_writer w = {c->packet, TIDE_NET_MTU, 0, false, false};
-    header(&w, MSG_CLIENT);
+    authenticated_header(&w, MSG_CLIENT, c->cookie, c->nonce);
     const uint32_t said_at = w.size;
     tide_write_u16(&w, 0); // When it's said, once it's sent
     tide_write_u16(&w, c->their_time);
@@ -5664,8 +5723,7 @@ static void send_upload(tide_client *c)
         const uint32_t from = i * CHUNK;
         const uint32_t size = cmd->size - from < CHUNK ? cmd->size - from : CHUNK;
         tide_writer w = {c->packet, TIDE_NET_MTU, 0, false, false};
-        header(&w, MSG_UPLOAD);
-        tide_write_u32(&w, c->nonce);
+        authenticated_header(&w, MSG_UPLOAD, c->cookie, c->nonce);
         tide_write_varint(&w, c->upload_number);
         tide_write_varint(&w, cmd->sequence);
         tide_write_varint(&w, cmd->size);
@@ -5688,8 +5746,7 @@ static void send_commands(tide_client *c)
         pending_command *cmd = &c->commands.items[i];
         if (big_command(cmd->size) || (cmd->sent > 0 && c->now - cmd->sent < again)) continue;
         tide_writer w = {c->packet, TIDE_NET_MTU, 0, false, false};
-        header(&w, MSG_COMMAND);
-        tide_write_u32(&w, c->nonce);
+        authenticated_header(&w, MSG_COMMAND, c->cookie, c->nonce);
         tide_write_varint(&w, cmd->sequence);
         tide_write_varint(&w, cmd->size);
         tide_write_bytes(&w, cmd->data, cmd->size);
@@ -5745,10 +5802,10 @@ tide_client *tide_client_create(const tide_client_desc *desc, const double now)
 void tide_client_destroy(tide_client *c)
 {
     if (!c) return;
-    if (c->state != TIDE_SESSION_OFFLINE && c->desc.transport.send) {
-        uint8_t data[8];
+    if (c->state != TIDE_SESSION_OFFLINE && c->welcomed && c->desc.transport.send) {
+        uint8_t data[16];
         tide_writer w = {data, sizeof data, 0, false, false};
-        header(&w, MSG_BYE);
+        authenticated_header(&w, MSG_BYE, c->cookie, c->nonce);
         send_packet(&c->desc.transport, c->desc.server, &w, &c->traffic);
     }
     if (c->desc.transport.close) c->desc.transport.close(c->desc.transport.self);
@@ -5811,10 +5868,9 @@ static void update_client(tide_client *c, const double now)
     send_commands(c);
     const bool listening = c->local_receive != NULL && c->state == TIDE_SESSION_CONNECTED;
     if (c->loaded && (listening != c->local_subscribed || (listening && now - c->local_sent >= 0.5))) {
-        uint8_t data[16];
+        uint8_t data[20];
         tide_writer w = {data, sizeof data, 0, false, false};
-        header(&w, MSG_LOCAL_INTEREST);
-        tide_write_u64(&w, c->cookie);
+        authenticated_header(&w, MSG_LOCAL_INTEREST, c->cookie, c->nonce);
         tide_write_u8(&w, listening ? 1u : 0u);
         send_packet(&c->desc.transport, c->desc.server, &w, &c->traffic);
         c->local_subscribed = listening;
@@ -6461,8 +6517,7 @@ bool tide_session_send_data(tide_session *s, const uint8_t *data, const uint32_t
         || !data || !size || size > TIDE_LOCAL_DATA_BYTES) return false;
     uint8_t packet[TIDE_NET_MTU];
     tide_writer w = {packet, sizeof packet, 0, false, false};
-    header(&w, MSG_LOCAL_DATA);
-    tide_write_u64(&w, c->cookie);
+    authenticated_header(&w, MSG_LOCAL_DATA, c->cookie, c->nonce);
     tide_write_bytes(&w, data, size);
     send_packet(&c->desc.transport, c->desc.server, &w, &c->traffic);
     return !w.overflow;
@@ -6621,6 +6676,7 @@ void tide_session_take_over(tide_session *s, const tide_transport network, const
         .leaving = leaving,
         .digests = h->digests,
         .closed = !h->open,
+        .entropy = s->desc.entropy,
         .jobs = s->desc.jobs,
     };
     s->server = tide_server_create(&server, now); // Closes `network` if it can't be made

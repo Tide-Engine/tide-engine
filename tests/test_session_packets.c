@@ -15,7 +15,11 @@ typedef struct packet_peer {
     tide_loopback *net;
     tide_server *server;
     tide_transport transport;
+    tide_transport server_transport;
+    tide_client *client;
     uint8_t data[TIDE_NET_MTU];
+    uint64_t cookie;
+    uint32_t nonce;
     double now;
 } packet_peer;
 
@@ -33,6 +37,35 @@ static void packet_tick(void *world, const tide_jobs *jobs)
 
 static void packet_copy(void *to, const void *from) { memcpy(to, from, sizeof(packet_world)); }
 static uint64_t packet_hash(const void *world) { return tide_hash(world, sizeof(packet_world)); }
+
+static uint32_t packet_pack(const void *world, uint8_t *out, uint32_t capacity)
+{
+    if (out && capacity >= sizeof(packet_world)) memcpy(out, world, sizeof(packet_world));
+    return sizeof(packet_world);
+}
+
+static bool packet_unpack(void *world, const uint8_t *data, uint32_t size)
+{
+    if (size != sizeof(packet_world)) return false;
+    memcpy(world, data, size);
+    return true;
+}
+
+static uint8_t *packet_pack_delta(const void *world, const void *base, const uint8_t *need, uint32_t need_size,
+                                   bool assets, uint32_t *size)
+{
+    (void)base; (void)need; (void)need_size; (void)assets;
+    *size = sizeof(packet_world);
+    uint8_t *data = malloc(*size);
+    if (data) memcpy(data, world, *size);
+    return data;
+}
+
+static bool packet_unpack_delta(void *world, const void *base, const uint8_t *data, uint32_t size)
+{
+    (void)base;
+    return packet_unpack(world, data, size);
+}
 
 static void packet_join(void *world, tide_player_id player)
 {
@@ -97,6 +130,8 @@ static const tide_game packet_game = {
     .hash = 1234, .world_size = sizeof(packet_world), .max_players = 1,
     .input_size = 1, .max_input_bytes = 1,
     .start = packet_start, .tick = packet_tick, .copy_world = packet_copy, .hash_world = packet_hash,
+    .pack_world = packet_pack, .unpack_world = packet_unpack,
+    .pack_delta = packet_pack_delta, .unpack_delta = packet_unpack_delta,
     .player_joined = packet_join, .player_left = packet_leave,
     .read_input = packet_read, .read_input_delta = packet_read_delta, .write_input = packet_write,
     .world_input = packet_get, .set_input = packet_set,
@@ -107,8 +142,12 @@ static tide_writer packet_begin(packet_peer *p, uint8_t type)
 {
     tide_writer w = {p->data, sizeof p->data, 0, false, false};
     tide_write_u16(&w, 0x5449u);
-    tide_write_u8(&w, 18u);
+    tide_write_u8(&w, 19u);
     tide_write_u8(&w, type);
+    if (type != 1u) {
+        tide_write_u64(&w, p->cookie);
+        tide_write_u32(&w, p->nonce);
+    }
     return w;
 }
 
@@ -127,7 +166,7 @@ static tide_writer packet_hello(packet_peer *p, uint32_t nonce, uint8_t flags)
     tide_write_bytes(&w, zero, sizeof zero);
     tide_write_u32(&w, nonce);
     tide_write_u16(&w, 0);
-    tide_write_u64(&w, 0);
+    tide_write_u64(&w, p->cookie);
     tide_write_u8(&w, flags);
     tide_write_bytes(&w, zero, sizeof zero);
     return w;
@@ -135,20 +174,55 @@ static tide_writer packet_hello(packet_peer *p, uint32_t nonce, uint8_t flags)
 
 static packet_peer packet_setup(void)
 {
-    packet_peer p = {0};
+    packet_peer p = {.nonce = 123u};
     p.net = tide_loopback_create(1234);
     p.server = tide_server_create(&(tide_server_desc){.game = &packet_game, .wait_for_first = true,
         .transports = {tide_loopback_endpoint(p.net, 1)}}, 0);
     p.transport = tide_loopback_endpoint(p.net, 2);
     tide_writer w = packet_hello(&p, 123u, 0);
     packet_send(&p, &w);
+    p.cookie = tide_server_cookie(p.server, (tide_player_id){1});
     return p;
 }
 
 static void packet_finish(packet_peer *p)
 {
+    if (p->client) tide_client_destroy(p->client);
     tide_server_destroy(p->server);
     tide_loopback_destroy(p->net);
+}
+
+static void packet_steps(packet_peer *p, uint32_t count)
+{
+    for (uint32_t i = 0; i < count; i++) {
+        p->now += 0.01;
+        tide_loopback_set_time(p->net, p->now);
+        tide_client_update(p->client, p->now);
+        tide_server_update(p->server, p->now);
+    }
+}
+
+static packet_peer packet_connected_client(void)
+{
+    packet_peer p = {0};
+    p.net = tide_loopback_create(1234);
+    p.server_transport = tide_loopback_endpoint(p.net, 1);
+    p.server = tide_server_create(&(tide_server_desc){.game = &packet_game, .wait_for_first = true,
+        .transports = {p.server_transport}}, 0);
+    p.transport = tide_loopback_endpoint(p.net, 2);
+    p.client = tide_client_create(&(tide_client_desc){.game = &packet_game,
+        .transport = p.transport, .server = tide_loopback_address(1)}, 0);
+    tide_client_update(p.client, 0);
+    tide_address from;
+    const uint32_t size = p.server_transport.receive(p.server_transport.self, &from, p.data, sizeof p.data);
+    TIDE_CHECK(size > 48u && p.data[3] == 1u);
+    tide_reader r = {p.data, size, 44u, false};
+    p.nonce = tide_read_u32(&r);
+    p.transport.send(p.transport.self, tide_loopback_address(1), p.data, size);
+    packet_steps(&p, 50);
+    p.cookie = tide_client_status_of(p.client).cookie;
+    TIDE_CHECK(p.cookie && tide_client_status_of(p.client).state == TIDE_SESSION_CONNECTED);
+    return p;
 }
 
 static tide_writer packet_client(packet_peer *p, uint32_t ack, uint32_t offset, uint8_t count)
@@ -245,6 +319,7 @@ TIDE_TEST(session_packets_far_future_inputs_cannot_suppress_late_input_feedback)
         tide_reader r = {p.data, size, 0, false};
         (void)tide_read_u16(&r); (void)tide_read_u8(&r);
         if (tide_read_u8(&r) != 6) continue;
+        (void)tide_read_u64(&r); (void)tide_read_u32(&r); // Cookie and connection attempt
         (void)tide_read_u16(&r); (void)tide_read_u16(&r);
         for (uint32_t i = 0; i < 3; i++) (void)tide_read_varint(&r); // Held, tick, lead
         waited = tide_unzigzag(tide_read_varint(&r));
@@ -258,7 +333,6 @@ TIDE_TEST(session_packets_far_future_inputs_cannot_suppress_late_input_feedback)
 static void packet_upload(packet_peer *p, uint32_t number, uint32_t sequence, uint32_t size, uint32_t index)
 {
     tide_writer w = packet_begin(p, 10); // UPLOAD; CHUNK is 1000
-    tide_write_u32(&w, 123u);
     tide_write_varint(&w, number);
     tide_write_varint(&w, sequence);
     tide_write_varint(&w, size);
@@ -281,6 +355,7 @@ static uint8_t packet_upload_state(packet_peer *p)
         (void)tide_read_u16(&r);
         (void)tide_read_u8(&r);
         if (tide_read_u8(&r) != 6) continue; // SERVER
+        (void)tide_read_u64(&r); (void)tide_read_u32(&r);
         (void)tide_read_u16(&r); (void)tide_read_u16(&r);
         for (uint32_t i = 0; i < 4; i++) (void)tide_read_varint(&r); // Held, tick, lead, wait
         result = tide_read_u8(&r);
@@ -309,4 +384,162 @@ TIDE_TEST(session_packets_upload_metadata_cannot_resize_or_resequence_existing_b
     packet_upload(&p, 2, 2, 2000, 1);
     TIDE_CHECK(packet_upload_state(&p) == 2);
     packet_finish(&p);
+}
+
+TIDE_TEST(session_packets_cookie_proof_precedes_greeting_inputs_and_disconnect)
+{
+    packet_peer p = packet_setup();
+    const uint64_t cookie = p.cookie;
+    p.cookie ^= 1u;
+    tide_writer w = packet_client(&p, 0, 0, 1);
+    packet_input(&w, 7);
+    packet_send(&p, &w);
+    TIDE_CHECK(!tide_server_connected(p.server, (tide_player_id){1}));
+    p.cookie = cookie;
+    p.nonce++;
+    w = packet_client(&p, 0, 0, 0);
+    packet_send(&p, &w);
+    TIDE_CHECK(!tide_server_connected(p.server, (tide_player_id){1}));
+    p.nonce--;
+    for (uint32_t cut = 4; cut < 16; cut++) {
+        w = packet_client(&p, 0, 0, 0);
+        w.size = cut;
+        packet_send(&p, &w);
+        TIDE_CHECK(!tide_server_connected(p.server, (tide_player_id){1}));
+    }
+    w = packet_client(&p, 0, 0, 1);
+    packet_input(&w, 3);
+    packet_send(&p, &w);
+    TIDE_CHECK(tide_server_connected(p.server, (tide_player_id){1}));
+    p.cookie ^= 1u;
+    w = packet_client(&p, 0, 0, 1);
+    packet_input(&w, 9);
+    packet_send(&p, &w);
+    w = packet_begin(&p, 7); // Forged BYE from the correct address
+    packet_send(&p, &w);
+    TIDE_CHECK(tide_server_connected(p.server, (tide_player_id){1}));
+    tide_server_update(p.server, 0.1);
+    TIDE_CHECK(((const packet_world *)tide_server_world(p.server))->input == 3);
+    p.cookie = cookie;
+    w = packet_begin(&p, 7);
+    packet_send(&p, &w);
+    TIDE_CHECK(!tide_server_connected(p.server, (tide_player_id){1}));
+    packet_finish(&p);
+}
+
+TIDE_TEST(session_packets_hello_needs_existing_cookie_and_old_attempts_cannot_disconnect_reconnects)
+{
+    packet_peer p = packet_setup();
+    tide_writer w = packet_client(&p, 0, 0, 0);
+    packet_send(&p, &w);
+    const uint64_t cookie = p.cookie;
+    for (uint32_t mode = 0; mode < 2; mode++) {
+        p.cookie = mode ? cookie ^ 1u : 0;
+        w = packet_hello(&p, 124u, 0);
+        packet_send(&p, &w);
+        TIDE_CHECK(tide_server_connected(p.server, (tide_player_id){1}));
+        TIDE_CHECK(tide_server_cookie(p.server, (tide_player_id){1}) == cookie);
+    }
+    p.cookie = cookie;
+    w = packet_hello(&p, 124u, 0);
+    packet_send(&p, &w); // Genuine reconnect with the same cookie
+    w = packet_begin(&p, 7); // Cookie is right, attempt 123 is stale
+    packet_send(&p, &w);
+    TIDE_CHECK(tide_server_connected(p.server, (tide_player_id){1}));
+    p.nonce = 124u;
+    w = packet_client(&p, 0, 0, 0);
+    packet_send(&p, &w);
+    TIDE_CHECK(tide_server_connected(p.server, (tide_player_id){1}));
+    w = packet_begin(&p, 7);
+    packet_send(&p, &w);
+    TIDE_CHECK(!tide_server_connected(p.server, (tide_player_id){1}));
+    packet_finish(&p);
+}
+
+TIDE_TEST(session_packets_client_ignores_forged_server_frames_refusals_and_disconnects)
+{
+    packet_peer p = packet_connected_client();
+    const uint64_t cookie = p.cookie;
+    const uint32_t nonce = p.nonce;
+    const uint32_t verified = tide_client_status_of(p.client).verified_tick;
+    for (uint32_t mode = 0; mode < 2; mode++) {
+        p.cookie = mode ? cookie : cookie ^ 1u;
+        p.nonce = mode ? nonce ^ 1u : nonce;
+        tide_writer w = packet_begin(&p, 6); // Valid SERVER syntax, forged credentials
+        tide_write_u16(&w, 1); tide_write_u16(&w, 0);
+        tide_write_varint(&w, 0); // Held milliseconds
+        tide_write_varint(&w, 100000); // Forged server clock
+        tide_write_varint(&w, 0); tide_write_varint(&w, tide_zigzag(-30001));
+        tide_write_u8(&w, 0); tide_write_u8(&w, 0); // No upload or frame pieces
+        p.server_transport.send(p.server_transport.self, tide_loopback_address(2), w.data, w.size);
+        w = packet_begin(&p, 7);
+        tide_write_u8(&w, 1); // ENDED
+        p.server_transport.send(p.server_transport.self, tide_loopback_address(2), w.data, w.size);
+        tide_client_update(p.client, p.now);
+        TIDE_CHECK(tide_client_status_of(p.client).state == TIDE_SESSION_CONNECTED);
+        TIDE_CHECK(tide_client_status_of(p.client).server_tick < 100000);
+    }
+    p.cookie = cookie;
+    p.nonce = nonce;
+    tide_writer w = packet_begin(&p, 3); // REFUSE has only an echoed nonce, not the connected prefix.
+    w.size = 4;
+    tide_write_u32(&w, nonce);
+    tide_write_u8(&w, 1);
+    p.server_transport.send(p.server_transport.self, tide_loopback_address(2), w.data, w.size);
+    w = packet_begin(&p, 7); // Even authenticated malformed BYE is ignored.
+    p.server_transport.send(p.server_transport.self, tide_loopback_address(2), w.data, w.size);
+    tide_client_update(p.client, p.now);
+    TIDE_CHECK(tide_client_status_of(p.client).state == TIDE_SESSION_CONNECTED);
+    packet_steps(&p, 10);
+    TIDE_CHECK(tide_client_status_of(p.client).verified_tick > verified);
+    TIDE_CHECK(tide_client_status_of(p.client).resyncs == 0);
+    w = packet_begin(&p, 7);
+    tide_write_u8(&w, 1);
+    p.server_transport.send(p.server_transport.self, tide_loopback_address(2), w.data, w.size);
+    tide_client_update(p.client, p.now);
+    TIDE_CHECK(tide_client_status_of(p.client).state == TIDE_SESSION_OFFLINE);
+    TIDE_CHECK(tide_client_status_of(p.client).reason == TIDE_DISCONNECT_ENDED);
+    packet_finish(&p);
+}
+
+TIDE_TEST(session_packets_forged_server_packets_cannot_keep_a_connection_alive)
+{
+    packet_peer p = packet_connected_client();
+    p.cookie ^= 1u;
+    for (uint32_t i = 0; i < 70; i++) {
+        p.now += 0.1;
+        tide_loopback_set_time(p.net, p.now);
+        tide_writer w = packet_begin(&p, 7);
+        tide_write_u8(&w, 0);
+        p.server_transport.send(p.server_transport.self, tide_loopback_address(2), w.data, w.size);
+        tide_client_update(p.client, p.now); // The genuine server has stopped updating.
+    }
+    TIDE_CHECK(tide_client_status_of(p.client).state == TIDE_SESSION_OFFLINE);
+    TIDE_CHECK(tide_client_status_of(p.client).reason == TIDE_DISCONNECT_TIMED_OUT);
+    packet_finish(&p);
+}
+
+static uint64_t packet_failed_entropy(void) { return 0; }
+
+TIDE_TEST(session_packets_reconnect_can_verify_a_kick_before_receiving_a_welcome)
+{
+    packet_peer p = packet_connected_client();
+    TIDE_REQUIRE(tide_server_kick(p.server, (tide_player_id){1}, "Bye"));
+    tide_client_destroy(p.client); // Its transport closes before it hears the kick.
+    p.transport = tide_loopback_endpoint(p.net, 2);
+    p.client = tide_client_create(&(tide_client_desc){.game = &packet_game, .transport = p.transport,
+        .server = tide_loopback_address(1), .cookie = p.cookie}, p.now);
+    packet_steps(&p, 10);
+    const tide_client_status status = tide_client_status_of(p.client);
+    TIDE_CHECK(status.state == TIDE_SESSION_OFFLINE && status.reason == TIDE_DISCONNECT_KICKED);
+    TIDE_CHECK(strcmp(status.message, "Bye") == 0);
+    packet_finish(&p);
+}
+
+TIDE_TEST(session_packets_failed_entropy_does_not_issue_known_cookie_credentials)
+{
+    tide_server *server = tide_server_create(&(tide_server_desc){.game = &packet_game,
+        .entropy = packet_failed_entropy}, 0);
+    TIDE_CHECK(server == NULL);
+    if (server) tide_server_destroy(server);
 }

@@ -1,5 +1,15 @@
 # Optional session voice (2026-10-22)
 
+Protocol-19 follow-up (2026-10-24): local subscription/data packets now carry
+the current connection attempt after their existing cookie, in both directions,
+as part of the common session proof. Payload bytes, rate limits, subscriptions,
+codec and package APIs are unchanged. The raw packet fixture captures each
+real HELLO attempt through a wrapper preserving clock/arrival/close callbacks,
+and checks a right-cookie/wrong-attempt packet alongside the existing cookie,
+truncation, size and rate cases. Session contracts: notes/netcode.md.
+The complete native/web suites pass, including voice, its three-process host,
+and browser rooms; final counts and coverage are recorded there.
+
 The owner requested voice chat in an optional package, using Opus over the
 existing microphone, and explicitly selected working session voice rather
 than a codec-only package. The host-relayed architecture, API names, packet
