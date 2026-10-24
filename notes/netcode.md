@@ -75,6 +75,15 @@ The eleven packet cases also pass with the final session.c under Windows ASan.
 Other operating systems, Android, MinGW and the full sanitizer suite remain
 CI coverage. No workflow was manually dispatched or deployment performed.
 
+Integration: origin/dev's scene startup, prefab overrides and editor/CLI work
+merged cleanly in `50bed96c`, with no session/runtime overlap. Since codegen is
+a dependency, rebuilt the affected native/WASI networking, commands, recovery,
+handover, players/ceiling, visibility, voice and prefab/startup targets. All 20
+selected CTests pass on each platform, including the incoming scene-startup
+script and the complete engine test executable. No full-suite repeat was
+needed for this dependency-only integration; the complete pre-merge results
+above remain the broad validation.
+
 ## Hostile client packet validation (2026-10-24)
 
 `on_upload` now binds every chunk of an existing transfer number to its
