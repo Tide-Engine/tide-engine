@@ -62,8 +62,16 @@ ms: the slower first run is retained, and no independent cause is established.
 `notes/earth-ground-measurements.json` retains all 24 process rows, 54 image
 comparisons, source/harness digests and full-game pixel comparison counts.
 The bounded harness and captures remain in this checkout's `build/earth-perf/`.
-The hosted homepage release is separate from the docs build and has not been
-redeployed by this change.
+Published source `5bd07774` with a CLI and web platform staged from this
+checkout to the existing Earth project as release
+`7ae5960b52672cce1392b547457ac608a28e55c2ab249a557878b946ae273ce1`.
+The public hosted page's embedded WASM payload matches the deployed bundle
+(the hosting service adds the join address to its HTML). Muted Chrome WebGL
+and WebGPU clients join room 966ANR, land, walk and become cars without game
+or renderer errors. Their final captures show one/two online players on the
+hosted shard, rather than the local fallback. The browser checks use the
+downloaded production page and its live relay/server; the test enables fatal
+renderer validation. Existing homepage tabs need to reload to get the release.
 
 ## Render3D example and pure Tide packages (2026-10-24)
 
