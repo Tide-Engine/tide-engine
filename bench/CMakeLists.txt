@@ -20,6 +20,29 @@ tide_add_game(bench_gallery SOURCES gallery/gallery.tide NAME gallery HOST galle
 target_link_libraries(bench_gallery PRIVATE tide_bench)
 add_test(NAME bench_gallery COMMAND bench_gallery --quick --expect 0xe8641c8f2826ff50)
 
+# The home page's planet (examples/earth), its match as it is but for taking
+# up to 256 players rather than the page's 64, to see how far it goes. Its
+# views come too, as the input's Sample reads one of their singletons; bots
+# draw nothing.
+set(earth_dir "${PROJECT_SOURCE_DIR}/examples/earth")
+file(READ "${earth_dir}/game.tide" earth_game)
+string(REPLACE "maxPlayers = 64;" "maxPlayers = 256;" bench_earth_game "${earth_game}")
+if(bench_earth_game STREQUAL earth_game)
+    message(FATAL_ERROR "bench/CMakeLists.txt: examples/earth/game.tide no longer says `maxPlayers = 64;`; say what to change here")
+endif()
+file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/earth/game.tide" CONTENT "${bench_earth_game}" @ONLY)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${earth_dir}/game.tide")
+tide_add_game(bench_earth NAME game HOST earth/main.c
+    SOURCES "${CMAKE_CURRENT_BINARY_DIR}/earth/game.tide" "${earth_dir}/city.tide" "${earth_dir}/layout.tide"
+            "${earth_dir}/globe.tide" "${earth_dir}/shapes.tide" "${earth_dir}/show.tide")
+target_link_libraries(bench_earth PRIVATE tide_bench)
+add_test(NAME bench_earth COMMAND bench_earth --quick --expect 0x7112d06182252825)
+# A town hop changes shard and what the machine sees at once: corrections put it up to two seconds behind, as
+# the engine's visibility tests allow
+add_test(NAME bench_earth_split COMMAND bench_earth --quick --split 2 --lag 120 --expect 0x4a82e8d505148384)
+# Comparing one bot's world with what the server says it is, tick by tick
+add_test(NAME bench_earth_diverge COMMAND bench_earth --quick --diverge 1 --expect 0x7112d06182252825)
+
 # Page hashes: the engine's beside candidates for its place, timed on the
 # shapes a world's hash reads (`bench_hash`, natively and under Node); the test
 # checks each SIMD way gives its plain definition's bits.

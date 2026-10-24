@@ -267,6 +267,9 @@ projection hash goes each tick, no hierarchical page-hash negotiation or inferre
 dependency graph is implemented. Hashing presently encodes the entire permitted
 projection per recipient, so CPU cost scales with that value size and recipients;
 unchanged asset/container values do not yet reuse cached canonical hashes.
+Measured (`notes/benchmarks.md`, Earth under load): hashing views is 80 to 90%
+of a server's work from 64 players, and steady corrections put a client's
+verified world up to 1.5 s behind at 133 ms round trips.
 Canonical insertion/removal can shift later byte regions and reduce delta reuse.
 Physical-page sharing still makes authoritative history snapshots cheap, but
 retained history and recipient journals add memory. These are optimization gaps,

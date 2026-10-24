@@ -6,6 +6,63 @@ ccd64c3fd8bcbb8b for Gallery, equal on native and WASI. Only the expected hashes
 change; workloads, inputs, convergence assertions and saved measurements are
 untouched. No performance comparison is claimed. Validation: notes/language.md.
 
+## Earth under load, 2026-10-24
+
+The owner: "can we somehow stress test this? see how many players we can have and their load? server load? sharding? artifacts? bandwidth?" `bench_earth` (`bench/earth/main.c`) plays the home page's planet (`examples/earth`) with bots, built with `maxPlayers = 256` rather than the page's 64 (`bench/CMakeLists.txt` rewrites that line of a copy of `game.tide`; configuring fails if the line changes). Each bot lands in a town (`--towns` spreads them; 1 puts everyone in one), walks a new way every three seconds, waves and hops; `--drivers` of each hundred turn into cars; every `--hop` seconds each goes to another town, as a click on the globe does. Its inputs come from no platform sines: the towns are numbers in the file, as two platforms' `cosf` differ.
+
+The harness (`bench/bench.c`) grew for it, every addition picked by Claude, Provisional:
+- **Its own network**: `tide_loopback`'s datagram for datagram (the same seed loses and delays the same ones; each endpoint reads in the same order, so sand's and gallery's pinned hashes didn't move), with a queue per endpoint and no limit on endpoints: the loopback's one queue, scanned on every read, was most of a client's update with hundreds of bots, and its 1,024 endpoints too few for shards.
+- **`--split <n>`** runs a sharded game's world split into `n` regions along x through `tide_shards`, each shard's server made by the harness (`host_start`) so each is timed alone (`busy` is its update over a frame, for `--busiest`); bots are `tide_shard_client`s. `--most` and `--busiest` let regions split and merge. The report has a row per shard (region, owned, ghosts, what it holds, its updates, its work, what it sends), the orchestrator's time and the ghosts' bytes.
+- **Visibility games' functions are timed too** (`tick_client_events`, `hash_world_on`, `client_state`, `load_client_state`, `client_hash`): before, a game with visibility showed no server simulation at all.
+- **What bots' machines hold** (`bench_desc.held`), their late inputs, round trips, worlds received (the first and repairs), the most their verified world fell behind its home's server (each shard counts its own ticks), and `--lag <ticks>` to let a run go on past 60 (the engine's own visibility tests allow 120). A bot whose home ends and that comes back in at the root catches up as on joining (`rejoins`).
+- **`--diverge <bot>`**: with visibility, that bot's world is compared, tick by tick, with what the server says it is (the server's `client_state` for it at the tick it hashed, against the bot's `client_hash` at the same `Time.tick`); where they differ, `bench_desc.differ` (Earth's, entity by entity, component by component) says how. It's what found the causes below.
+
+Tests: `bench_earth` (`--quick`, one server), `bench_earth_split` (`--quick --split 2`) and `bench_earth_diverge`, pinned at `0x7112d06182252825` and `0x4a82e8d505148384` (the split one with `--lag 120`: a town hop changes shard and what the machine sees at once, and its corrections put a bot 61 ticks behind), the same in native debug and release, on one thread and twelve, and as WebAssembly under Node.
+
+What it found, and what changed because of it:
+- **Earth's player visibility, as first built, made every machine fall behind.** Clients worked out who's near (the townsfolk's `Seen` audiences, the players' `Sight`) from walkers they didn't have, and a far player's `Beacon` moved with nothing on the machine to move it: every machine's world went otherwise than the server's, the correction stream (`notes/netcode.md`) ran all the time, and a bot's verified world fell over a second behind with 32 players. Earth now keeps `Seen` the server's alone (`visibility.Set<Seen>(Audience.None)`; the townsfolk have no owner, so no input is withheld for it), keeps no audience for players (`visibility.Set<Walker>` each look; its overrides aren't part of what's hashed), looks at everything at one tick every 30 (`LOOK`), and moves beacons at one tick every 3 s (`BEACON`), only those 20 m stale.
+- **Interactions across the edge of sight**: even the version on the page (players public) diverged at a walker that a machine had bumping into a townsperson it didn't (positions a centimetre apart). Townsfolk and cars are now on a machine 40 m further than players (`FURTHER`), so what a player it has touches, it has too.
+- **What's left is what can't be predicted**: a player joining (its `Walker` is predicted, then hidden), beacons moving, and things coming into and going out of sight. About one corrected tick a second for a bot among 32; its verified world 50 to 90 ticks behind at worst, in bursts.
+- **`Audience` has `==`** (the spec's Visibility section): Earth's comparison went through the first 64 players.
+- **A shard's entity record lost its Visibility's overrides** (`notes/sharding.md`): found by `earth_tests` first, the same day.
+- **A merge sent players offline** (`notes/sharding.md`, the shard client): with `--most` or `--busiest`, regions merging back while few were in stopped a shard that bots still played in.
+
+Measured on the Ryzen 9 7900X, Windows 11, release, 12 threads, 50 ms each way (+10), 1% lost, a join every 0.25 s and 20 s once all are in (`bench/results/earth.jsonl`, `stress-*`). Server times are one update's, a frame being 16.7 ms; bytes are a second's.
+
+| Players, one server, spread over 10 towns | 16 | 32 | 64 | 128 | 256 |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Server update, median / p99 (ms) | 0.58 / 1.01 | 1.43 / 2.35 | 3.82 / 6.39 | 11.3 / 18.7 | 38.6 / 57.8 |
+| ...of which hashing each player's view (ms a second) | 21 | 47 | 109 | 269 | 739 |
+| Server sends, each bot's share (KB) | 6.3 | 6.7 | 8.4 | 13.0 | 22.5 |
+| A bot sends (KB) | 4.8 | 5.5 | 6.5 | 7.7 | 8.8 |
+| A bot's update, median (ms) / ticks run per tick played | 0.04 / 2.5 | 0.05 / 2.9 | 0.07 / 3.0 | 0.06 / 3.0 | 0.05 / 3.0 |
+| Entities a bot's machine holds | 23 | 39 | 71 | 135 | 263 |
+| Corrections a bot gets (KB) / its verified world behind at most (ticks) | 0.5 / 50 | 1.2 / 63 | 3.3 / 70 | 8.5 / 76 | 20.0 / 90 |
+
+| Everyone in one town | 16 | 32 | 64 | 128 |
+| --- | ---: | ---: | ---: | ---: |
+| Server update, median / p99 (ms) | 0.61 / 0.91 | 1.50 / 2.29 | 4.26 / 6.40 | 14.2 / 20.3 |
+| Server sends, each bot's share (KB) | 7.0 | 8.7 | 13.4 | 24.8 |
+| A bot's simulating (ms a second) / ticks run per tick played | 1.9 / 3.6 | 4.0 / 4.2 | 9.8 / 5.0 | 27.6 / 6.1 |
+
+| Split in 4 along x (the page's shape) | 64 | 128 | 256 |
+| --- | ---: | ---: | ---: |
+| A shard's update, median / p99 (ms) | 1.01 / 2.80 | 2.85 / 6.72 | 9.71 / 20.4 (busiest 15.5 median) |
+| Hashing views, all shards (ms a second) | 123 | 288 | 818 |
+| Shards send, each bot's share (KB) / a bot sends | 14.3 / 12.4 | 24.5 / 13.6 | 42.2 / 14.5 |
+| Shards a bot follows / ghosts between shards (KB) | 1.45 | 1.51 | 1.50 / 454 |
+
+With `--busiest 25` (a shard splits when its updates take a quarter of a frame), 256 players start in 4 regions, which merge while few are in, then split by load to 19: the busiest shard at 11.3 ms median, each bot following 2.9 shards and getting 126 KB a second, the shards hashing 2.5 s a second together. 38 to 45 times a bot's home ended in a merge before it had moved, and it came back in at the root. With `--most 400` the world merged into one shard and stayed there, 339 entities being under 400, at 41.6 ms an update.
+
+As WebAssembly under Node, one thread (`node cmake/run_wasi.mjs build/web-release/bin/bench_earth.wasm`), as managed hosting runs a match, the one server's update is 2.38 ms median at 32 players, 6.55 at 64 and 20.1 at 128, hashing views 79, 191 and 480 ms a second: about 1.7 times native, sending the same bytes.
+
+What it means:
+- **The server's limit is hashing each player's view**, 80 to 90% of its work from 64 players: every player's whole permitted projection is encoded and hashed every tick (`notes/netcode.md` lists it as a gap), and on Earth every machine has every player's entity (its Beacon), so it grows with the square of the players. One server keeps up to about 128 natively and 64 to 90 as WebAssembly on a whole core; managed hosting's machines share theirs.
+- **Splitting divides a shard's work but adds to the whole**: four shards at 256 players are each a quarter of one server, but hash more together, and a bot sends and gets more, as it follows more than one. Splitting by load to 19 shards costs each bot 126 KB a second.
+- **Clients are cheap**: 0.05 ms an update spread out, 1 ms in a crowd of 128, running about three ticks for each played, as prediction does.
+- **Artifacts**: no resyncs anywhere, inputs almost never late (0.02%), but corrections put a bot's verified world up to 1.5 s behind under visibility, in bursts: what was predicted is put right that late.
+- Not measured: phones, real networks, more than one process per shard (here every shard and bot shares one machine and thread, timed apart), hosting's own shard machines.
+
 ## Drawing: plain records and sprites, 2026-10-21
 
 After the third round (below), the owner's "yes do it" to its two biggest
