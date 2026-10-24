@@ -6,7 +6,7 @@ After another report of cities pulling the player back, a fresh production
 client walked from Amberhold's fountain into the countryside. The previous
 edge test only started 115 m from one town, so coverage now includes the
 whole street: all 22 road ends, on foot and in a car, from the square to
-160 m beyond it. Twenty actual server/client trips cover every city in both
+at least 160 m from the town centre. Twenty actual server/client trips cover every city in both
 modes, including townsfolk/traffic, 144 Hz clients, 50 ms one-way latency,
 10 ms jitter and 1% packet loss; authoritative and predicted positions must
 both leave, with continued verification. No remaining walking wall reproduced
@@ -25,7 +25,15 @@ sideways/backward driving-input regressions fail before their fixes.
 Validation: all 19 Earth checks and its three unchanged benchmark pins pass
 on native/web debug; the release web build passes. Native bounded four-region
 captures and browser city exits cover the actual views and sampled controls.
-Publishing/live evidence is recorded after checking the new production client.
+Source `c5b26cf2` is published to the existing Earth project as release
+`9529611c9a5d54169a59a1ccb23a8596b9564bb9054fc304b70bee187b17ba6c`;
+the production client's embedded payload matches its bundle. Two live muted
+Chrome clients start in Amberhold (WebGL) and Frostgate (WebGPU), walk backward,
+become cars and press W immediately, without waiting for the camera to turn.
+After 45 seconds both are in the countryside, moving forward (81/56 km/h),
+still in the hosted room and showing two online players on one shard, without
+renderer errors. The native four-region capture also exits Amberhold at
+115 km/h. No hosting/service code or limits changed.
 
 ## Town-edge collision correction (2026-10-24)
 
