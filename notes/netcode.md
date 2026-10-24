@@ -84,6 +84,34 @@ script and the complete engine test executable. No full-suite repeat was
 needed for this dependency-only integration; the complete pre-merge results
 above remain the broad validation.
 
+Push retry integration: fetched the shard recovery/admission changes through
+`12f3cdac` after GitHub DNS became available through a command-scoped resolver
+override. The C merge retains both the cookie/attempt gate and the admitted-slot
+reuse exclusion/release; both prepend records are retained in the notes.
+Rebuilt the affected native/WASI engine, networking, command, visibility,
+voice, shard and Earth targets. All 25 selected CTests pass on each platform
+(19.56/21.65 s), including the 12 shard-player cases, 15 Earth cases, all three
+Earth benchmark pins and the packet regressions. The overlap is limited to
+admission/reconnect and shard recovery, so no full-suite repeat was required.
+
+## Shard recovery reserves player slots (2026-10-24)
+
+The server's anonymous-slot reuse scan now excludes `admitted` players as
+well as connected players and migration reservations. A restored full shard
+previously let an anonymous peer replace a reserved cookie before its owner
+returned. Global departures release admissions on every shard through
+`tide_server_unadmit`; an unused slot clears its old identity so a new cookie
+can be admitted there, while live connections and migration reservations keep
+theirs. Invalid/out-of-game IDs do nothing. The shard instruction uses cookie
+zero for release; this reservation fix left game packets unchanged (then
+protocol 18). The combined build uses protocol 19's cookie proof above.
+
+Neighbour retries preserve the player's cookie; terminal home kicks/refusals
+are no longer hidden by `outlive_home`. The checkpoint/journal lifecycle fix,
+its new internal checkpoint version and tests are in `notes/sharding.md`,
+Border and recovery audit. Cookies remain private host/checkpoint metadata;
+the generated membership bitset contains only public player-slot presence.
+
 ## Hostile client packet validation (2026-10-24)
 
 `on_upload` now binds every chunk of an existing transfer number to its

@@ -55,8 +55,12 @@ float3 Place(int town, float2 at, float height)
 float2 Local(int town, float3 place)
 {
     var up = Up(town);
-    var on = Math.Normalize(place) * R;
-    return float2(Math.Dot(on, EastOf(up)), Math.Dot(on, NorthOf(up)));
+    var on = Math.Normalize(place);
+    // Inverse of Place's tangent-plane projection. Multiplying by R alone
+    // used sin(angle) where Place expects tan(angle), pulling a walker back
+    // toward town every collision pass even when nothing was in their way.
+    float scale = R / Math.Max(Math.Dot(on, up), 0.001);
+    return float2(Math.Dot(on, EastOf(up)), Math.Dot(on, NorthOf(up))) * scale;
 }
 
 // The town a place is in, or -1 out in the country

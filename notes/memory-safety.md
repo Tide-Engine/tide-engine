@@ -12,6 +12,20 @@ Windows ASan, including forgery, stale attempts, timeout and valid recovery.
 Wire/entropy contracts and the raw UDP security boundary: `notes/netcode.md`,
 Session cookie proof. No generated-C API or simulation layout changes.
 
+## Shard membership and recovery reservations (2026-10-24)
+
+Lifecycle messages validate their 0/1 flag and PlayerID against the game's
+configured count before indexing a membership word. The bitset grows through
+existing bounded list operations and writes through `tide_list_at_mut`, so
+snapshots retain COW ownership; at the player ceiling it contains 1,024 words.
+The invalid-slot regression covers zero, one past this game's count and
+UINT32_MAX, with unchanged world hashes. Admission release validates the
+player before touching arrays and cannot clear an active/migration identity.
+Checkpoint version 5 bounds pending notification counts against remaining
+bytes and the game's player count, and validates each flag/ID/desired state.
+No raw pointer or authentication cookie enters match state. Recovery and
+native/web validation are recorded in `notes/sharding.md`.
+
 ## Untrusted session packets (2026-10-24)
 
 Upload chunks must match their retained transfer's size and sequence before
