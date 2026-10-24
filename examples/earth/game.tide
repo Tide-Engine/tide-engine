@@ -140,7 +140,11 @@ input Controls
         // Back on foot; a brake in a car, independent of the camera's facing.
         brake = pilot.driving && push.y < 0;
         if (brake) push.y = 0;
-        move = pilot.ahead * push.y + pilot.right * push.x;
+        // Driving follows the car while its orbit camera catches up or looks
+        // elsewhere. W must not reverse it toward what the camera faces.
+        var ahead = pilot.driving ? pilot.facing : pilot.ahead;
+        var right = pilot.driving ? Math.Cross(Math.Normalize(pilot.spot), pilot.facing) : pilot.right;
+        move = ahead * push.y + right * push.x;
         if (pilot.going) move += pilot.toward;
         jump = keys.space.pressed || devices.gamepad.buttonSouth.pressed || pilot.jumping > 0;
         wave = keys.e.pressed || devices.gamepad.buttonWest.pressed || pilot.waving > 0;
