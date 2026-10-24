@@ -1,0 +1,10 @@
+// expect: 'captured' is read-only
+scene Main;
+float Change(mut float value) { value += 1; return value; }
+view Test()
+{
+    mut float captured = 0;
+    Func<mut float, float> fn = (mut float value) => Change(value) + Change(captured);
+    mut float value = 0;
+    _ = fn(value);
+}

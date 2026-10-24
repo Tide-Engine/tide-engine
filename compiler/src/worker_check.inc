@@ -2,6 +2,7 @@
 static bool worker_value_type(const type t, const int depth)
 {
     if (depth > 128) return false;
+    if (t.decl && (t.decl->callable || t.decl->binding_of)) return false;
     switch (t.kind) {
     case TY_WORLD: case TY_QUERY: case TY_COMPONENT: case TY_SINGLETON:
     case TY_INPUT: case TY_RECORD: case TY_ACTION: case TY_DRAW_LIST:

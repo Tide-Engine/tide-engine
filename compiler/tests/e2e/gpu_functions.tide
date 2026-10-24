@@ -1,0 +1,197 @@
+scene Main;
+
+float Circle(float2 position) { return Math.Length(position) - 0.5; }
+float Box(float2 position) { return Math.Max(Math.Abs(position.x), Math.Abs(position.y)) - 0.6; }
+float Circle(float position) { return position - 0.5; }
+float SizedCircle(float2 position, float radius) { return Math.Length(position) - radius; }
+namespace Distances { float Diamond(float2 p) { return Math.Abs(p.x) + Math.Abs(p.y) - 0.25; } }
+float2 Identity(float2 position) { return position; }
+void Ignore(float value) { _ = value; }
+void TranslateVertex(mut Vertex vertex, float2 offset) { vertex.position += offset; }
+void Right(mut Vertex vertex) { TranslateVertex(vertex, float2(0.25, 0)); }
+void Left(mut Vertex vertex) { TranslateVertex(vertex, float2(-0.25, 0)); }
+Func<mut Vertex, void> OffsetVertex(float2 offset)
+{
+    return (mut Vertex vertex) => TranslateVertex(vertex, offset);
+}
+void ApplyVertex(mut Vertex vertex, Func<mut Vertex, void> deform) { deform(vertex); }
+float Adjust(mut float value, float amount) { value += amount; return value; }
+
+// More captures than the compiler's initial field-vector capacity. Constructed
+// on both CPU and GPU, so an earlier literal must survive later target growth.
+float ManyCaptures(float position)
+{
+    float offset = 0.125;
+    Func<float, float> a = (float p) => p + offset;
+    Func<float, float> b = (float p) => p + offset;
+    Func<float, float> c = (float p) => p + offset;
+    Func<float, float> d = (float p) => p + offset;
+    Func<float, float> e = (float p) => p + offset;
+    Func<float, float> f = (float p) => p + offset;
+    Func<float, float> g = (float p) => p + offset;
+    Func<float, float> h = (float p) => p + offset;
+    Func<float, float> i = (float p) => p + offset;
+    return (a(position) + b(position) + c(position) + d(position) + e(position)
+        + f(position) + g(position) + h(position) + i(position)) / 9;
+}
+
+float Evaluate(float2 position, Func<float2, float> distance) { return distance(position); }
+float Forward(float2 position, Func<float2, float> distance) { return Evaluate(position, distance); }
+
+Func<float2, float> MakeDistance(float radius)
+{
+    return (float2 position) => SizedCircle(position, radius);
+}
+
+struct ShapeItem
+{
+    float2 center;
+    Color tint;
+    Func<float2, float> distance;
+    Func<mut Vertex, void> deform;
+}
+
+struct Camera { float scale = 1; }
+
+component Visual
+{
+    local ShapeShade fragment;
+    local Func<float2, float> distance;
+}
+
+local singleton Shapes
+{
+    List<Vertex> vertices = [
+        Vertex { position = float2(-1, -1), uv = float2(0, 0) },
+        Vertex { position = float2(1, -1), uv = float2(1, 0) },
+        Vertex { position = float2(1, 1), uv = float2(1, 1) },
+        Vertex { position = float2(-1, 1), uv = float2(0, 1) }];
+    List<int> indices = [0, 1, 2, 0, 2, 3];
+    List<ShapeItem> items;
+    ShapeShade configured;
+    ShapeShade[2] bindings;
+    Func<float2, float>[2] distances;
+    Func<float2, float> kept;
+    float[13] results;
+    int frames;
+    bool onlyBatch;
+    RenderTarget source;
+    RenderTarget destination;
+    int operandOrder;
+}
+
+event(Spawned) Setup(with Main) { Spawn(Visual); }
+
+vert PlaceShape(mut Vertex vertex, ShapeItem item)
+{
+    ApplyVertex(vertex, item.deform);
+    vertex.position = item.center + vertex.position * 8;
+}
+
+frag FillShape(Vertex vertex, out Color color, ShapeItem item)
+{
+    float distance = Forward(vertex.uv * 2 - float2(1), item.distance);
+    if (distance > 0) this.Discard();
+    mut float brightness = 0.5;
+    Func<mut float, float, float> adjust = Adjust;
+    float adjusted = adjust(brightness, 0.5);
+    color = item.tint * (ManyCaptures(0) * 8 * brightness * adjusted);
+}
+
+frag ShapeShade(Vertex vertex, out Color color, Camera camera, Func<float2, float> distance)
+{
+    float value = Forward(vertex.uv * camera.scale, distance);
+    color = Color(value, value, value);
+}
+
+vert Deform(mut Vertex vertex, Func<mut Vertex, void> deform) { deform(vertex); }
+frag ColorFilter(Vertex vertex, out Color color, Texture source, Func<Color, Color> filter)
+{
+    color = filter(source.Sample(vertex.uv));
+}
+
+ShapeShade MakeShader(float radius)
+{
+    return ShapeShade { distance = (float2 position) => SizedCircle(position, radius) };
+}
+
+ShapeShade OrderedShader(mut Shapes shapes)
+{
+    shapes.operandOrder = shapes.operandOrder * 10 + 1;
+    return ShapeShade { distance = Circle };
+}
+
+Camera OrderedCamera(mut Shapes shapes)
+{
+    shapes.operandOrder = shapes.operandOrder * 10 + 2;
+    return Camera {};
+}
+
+void Paint(Shapes shapes, ShapeShade fragment, Camera camera)
+{
+    Draw.Mesh(shapes.vertices, shapes.indices, fragment, camera);
+}
+
+view DrawShapes(mut Shapes shapes, mut Visual visual)
+{
+    if (shapes.frames == 0)
+    {
+        mut float radius = 0.25;
+        Func<float2, float> captured = (float2 position) => SizedCircle(position, radius);
+        radius = 0.75;
+        shapes.kept = captured;
+        visual.distance = MakeDistance(radius);
+        shapes.configured = ShapeShade { distance = Circle };
+        shapes.bindings[0] = shapes.configured;
+        shapes.distances[0] = Circle;
+        visual.fragment = MakeShader(0.125);
+        shapes.source = RenderTarget(8, 8, 1);
+        shapes.destination = RenderTarget(8, 8, 1);
+        shapes.items.Add(ShapeItem { center = float2(6, 8), tint = Color.red, distance = Circle, deform = Right });
+        shapes.items.Add(ShapeItem { center = float2(26, 8), tint = Color.green, distance = Box, deform = Left });
+        shapes.items.Add(ShapeItem { center = float2(36, 8), tint = Color.blue, distance = captured, deform = OffsetVertex(float2(0.5, 0)) });
+        shapes.items.Add(ShapeItem { center = float2(60, 8), tint = Color.white, distance = visual.distance, deform = OffsetVertex(float2(-0.5, 0)) });
+        Func<float2, float> empty = default;
+        shapes.results[0] = Forward(float2(1, 0), Circle);
+        shapes.results[1] = Forward(float2(1, 0), Box);
+        shapes.results[2] = Forward(float2(1, 0), captured);
+        shapes.results[3] = Forward(float2(1, 0), visual.distance);
+        shapes.results[4] = Forward(float2(1, 0), empty);
+        shapes.results[5] = Forward(float2(1, 0), visual.fragment.distance);
+        shapes.results[8] = Forward(float2(1, 0), Distances.Diamond);
+        var sized = SizedCircle;
+        shapes.results[9] = sized(float2(1, 0), 0.8);
+        shapes.results[10] = ManyCaptures(0);
+        Func<float> getRadius = () => radius;
+        shapes.results[11] = getRadius();
+        mut Func<float, void> ignore = Ignore;
+        ignore(1);
+        shapes.results[12] = Forward(float2(1, 0), shapes.distances[0]);
+        ignore = default;
+        ignore(1);
+    }
+    shapes.results[6] = Forward(float2(1, 0), shapes.kept);
+    shapes.results[7] = Forward(float2(1, 0), visual.distance);
+    shapes.frames++;
+    Draw.Clear(Color.black);
+    Draw.Screen()
+    {
+        Draw.Instanced(shapes.vertices, shapes.indices, shapes.items, PlaceShape, FillShape);
+        if (shapes.onlyBatch) return;
+        // Offscreen draws still exercise stored/helper/inline stage bindings.
+        Draw.Clip(Rect(0, 24, 64, 8))
+        {
+            Draw.Mesh(shapes.vertices, shapes.indices, shapes.bindings[0], Camera {});
+            Paint(shapes, visual.fragment, Camera {});
+            Paint(shapes, default, Camera {}); // Unconfigured bindings submit no run.
+            Draw.Mesh(shapes.vertices, shapes.indices, ShapeShade { distance = Box }, Camera {});
+            Draw.Mesh(shapes.vertices, shapes.indices, MakeShader(0.375), Camera {});
+            Draw.Mesh(shapes.vertices, shapes.indices, Deform { deform = Right }, shapes.configured, Camera {});
+            shapes.operandOrder = 0;
+            Draw.Mesh(shapes.vertices, shapes.indices, OrderedShader(shapes), OrderedCamera(shapes));
+        }
+        shapes.source.Clear(Color.white);
+        Color tone = Color(0.5, 1, 1);
+        Draw.Blit(shapes.source.color, shapes.destination, ColorFilter { filter = (Color c) => c * tone });
+    }
+}

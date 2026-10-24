@@ -1,0 +1,4 @@
+// expect: 'value' is read-only
+scene Main;
+void Change(mut float value) { value += 1; }
+view Test() { Func<mut float, void> fn = Change; float value = 0; fn(value); }

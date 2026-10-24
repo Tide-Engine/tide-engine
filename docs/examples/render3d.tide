@@ -1,0 +1,78 @@
+settings { title = "Render3D: PBR, shadows and custom surfaces"; }
+scene Main;
+
+asset Mesh<Render3D.MeshVertex> sphere = "assets/render3d/sphere.obj";
+asset Mesh<Render3D.MeshVertex> cube = "assets/render3d/cube.obj";
+
+component Bands { local bool configured; }
+local singleton Controls
+{
+    float exposure = 1;
+    float sunlight = 5;
+    bool shadows = true;
+}
+
+event(Spawned) BuildScene(with Main)
+{
+    Spawn(Render3D.MeshRenderer { mesh = cube },
+          Render3D.Material { baseColor = Color(0.46, 0.49, 0.54), roughness = 0.9 },
+          Transform { localPosition = float3(0, -0.15, 0), localScale = float3(10, 0.3, 7) });
+    Spawn(Render3D.MeshRenderer { mesh = sphere },
+          Render3D.Material { baseColor = Color(0.86, 0.2, 0.12), roughness = 0.25 },
+          Transform { localPosition = float3(-2.1, 0.9, 0), localScale = float3(0.9) });
+    Spawn(Render3D.MeshRenderer { mesh = sphere },
+          Render3D.Material { baseColor = Color(1, 0.78, 0.33), metallic = 1, roughness = 0.22 },
+          Transform { localPosition = float3(0, 0.9, 0), localScale = float3(0.9) });
+    Spawn(Render3D.MeshRenderer { mesh = sphere }, Bands {},
+          Render3D.Material { baseColor = Color(0.12, 0.72, 0.62), roughness = 0.5 },
+          Transform { localPosition = float3(2.1, 0.9, 0), localScale = float3(0.9, 1.2, 0.9) });
+    Spawn(Render3D.MeshRenderer { mesh = cube },
+          Render3D.Material { baseColor = Color(0.23, 0.36, 0.65), roughness = 0.7 },
+          Transform { localPosition = float3(0, 0.55, 2), localScale = float3(1.1),
+                      localRotation = quaternion.Euler(float3(0, 30deg, 0)) });
+}
+
+// A material changes a numeric surface, while the package owns lighting/passes.
+void Striped(Render3D.SurfaceInput input, mut Render3D.Surface surface)
+{
+    float band = Math.Sin(input.world.y * 10 + input.world.x * 2);
+    surface.roughness = band > 0 ? 0.14 : 0.8;
+    if (band < 0) surface.albedo *= 0.25;
+}
+
+[Before(Render3D.Stages.Prepare)]
+view SetCustomSurface(mut Bands bands, mut Render3D.Material material)
+{
+    if (bands.configured) return;
+    material.shader = Render3D.Lit { surface = Striped };
+    bands.configured = true;
+}
+
+[Before(Render3D.Stages.Prepare)]
+view CameraAndLight(mut Render3D.Renderer renderer, Controls controls)
+{
+    float3 eye = float3(6, 4.5, -8);
+    renderer.camera = Render3D.Camera {
+        position = eye,
+        rotation = quaternion.LookRotation(float3(0, 0.5, 0) - eye, float3(0, 1, 0)),
+        verticalFov = 45deg
+    };
+    renderer.sun = Render3D.DirectionalLight { direction = float3(-1, -2, 1), radiance = float3(controls.sunlight) };
+    renderer.exposure = controls.exposure;
+    renderer.shadows = controls.shadows;
+    renderer.shadowCenter = float3(0, 0.5, 0);
+    renderer.shadowExtent = 7;
+    renderer.shadowDistance = 30;
+}
+
+[After(Render3D.Stages.Present)]
+view Overlay(mut Controls controls)
+{
+    GUILayout.Area(Rect(12, 12, 280, 160))
+    {
+        GUILayout.Label("Default PBR + a custom surface");
+        GUILayout.Slider("Exposure", controls.exposure, 0.25, 3);
+        GUILayout.Slider("Sunlight", controls.sunlight, 0, 12);
+        GUILayout.Toggle("Shadows", controls.shadows);
+    }
+}

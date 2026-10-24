@@ -1,5 +1,41 @@
 # Code the GPU runs: frags and verts
 
+## Mutable callable arguments (2026-10-24)
+
+`Func<mut Vertex, void>` and mixed read/mut signatures lower to ordinary checked
+functions. Dispatch forwards the mutable argument, including through a captured
+lambda, as GLSL inout/WGSL function pointers. No special shader dispatch ABI is
+needed. Mutable lambda parameters must have function_param, like parsed ordinary
+function parameters, so WGSL forwards their pointer rather than making a value
+copy from it. `shaders/mut_callables` pins the emitted forms; `gpu_functions`
+verifies per-instance named/captured vertex mutations and a nonvoid mutable frag
+callback against pixels and the existing one-batch draw count. Language contracts
+and final validation are in language.md, Mutable callable arguments.
+
+## Named stage bindings and callable instances (2026-10-24)
+
+Owner-approved function-valued GPU inputs use ordinary generated dispatcher
+functions and typed value structs; contracts and limitations are recorded in
+language.md, Callable values and configured GPU stages. A configured frag/vert
+is supplied explicitly to its draw wrapper and uploaded as shared uniforms.
+Callable fields of explicit instance structs instead upload their tags and
+captures per instance, with normal flat transport to the frag. Different targets
+therefore share one shader and draw; ordinary state, uniform, texture and ordering
+boundaries remain. `plan_reads` recognizes configured-stage structs as explicit
+shared inputs; views infer no ambient binding state. No backend or runtime API
+changed. Constant-target specialization and compact capture packing are not built.
+
+`platform/tests/gpu_functions.c` draws four colored SDF quads with two named
+distance functions and two captured radii. It checks centers, silhouettes, three
+frames, unchanged match hashes, one instance run and two total GPU draws (Tide's
+background clear triangle plus the single shape batch). The ordinary runtime
+fixture also covers stored/inline/helper/returned stage bindings, a configured
+vert beside a configured frag, and a Blit with a captured color transform.
+`compiler/tests/shaders/callables` pins both shader languages. Generated dispatch
+initializes its result and returns once because ANGLE D3D11 warned X4000 on
+early returns in its switch; the revised form passes that backend. Final complete
+suite results are recorded in language.md.
+
 ## The game's shaders as a table (2026-10-22)
 
 `gen_shader_table` (codegen.c) writes `tide_game_shaders`, `&tide_shader_<n>`

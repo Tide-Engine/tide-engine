@@ -1,0 +1,223 @@
+// An opaque forward renderer: one sun, one shadow map and a linear HDR scene.
+// Games configure Renderer before Stages.Prepare and draw HUDs after Present.
+namespace Render3D;
+
+enum Stages { Prepare, Shadows, Color, Opaque, Present }
+
+struct MeshVertex
+{
+    float3 position;
+    float3 normal;
+    float2 uv;
+    Color color = Color.white;
+}
+
+struct Camera
+{
+    float3 position = float3(0, 2, -5);
+    quaternion rotation = quaternion.identity;
+    float verticalFov = 60deg;
+    float near = 0.1;
+    float far = 1000;
+}
+
+struct DirectionalLight
+{
+    float3 direction = float3(1, -2, 1); // Direction the light travels.
+    float3 radiance = float3(4);        // Linear RGB, independent of exposure.
+}
+
+asset Texture White = "white.png";
+
+component MeshRenderer
+{
+    Asset<Mesh<MeshVertex>> mesh;
+    bool visible = true;
+    bool castShadows = true;
+}
+
+component Material
+{
+    Color baseColor = Color.white; // Artist/display RGB; decoded before lighting.
+    float metallic;
+    float roughness = 0.5;
+    float3 emission;               // Linear HDR radiance.
+    bool receiveShadows = true;
+    local Texture baseMap = White;
+    local Lit shader = Lit { surface = Render3D.StandardSurface };
+}
+
+local singleton Renderer
+{
+    bool enabled = true;
+    Camera camera;
+    DirectionalLight sun;
+    Color background = Color(0.06, 0.08, 0.12);
+    float exposure = 1; // Linear exposure multiplier.
+    bool shadows = true;
+    int shadowResolution = 1024;
+    float3 shadowCenter;
+    float shadowExtent = 10; // Half-width and half-height in world units.
+    float shadowDistance = 40;
+    float shadowBias = 0.0005;
+    float shadowSlopeBias = 0.002;
+
+    RenderTarget hdr;
+    RenderTarget shadowMap;
+    DepthTexture shadow;
+    float4x4 worldToShadow;
+    float3 eye;
+    float3 towardLight;
+    float3 lightRadiance;
+    int allocatedShadowResolution;
+    float shadowTexel;
+    bool ready;
+}
+
+// Explicit lifetime hook, also used when the renderer is disabled.
+void Dispose(mut Renderer renderer)
+{
+    renderer.hdr.Dispose();
+    renderer.shadowMap.Dispose();
+    renderer.hdr = default;
+    renderer.shadowMap = default;
+    renderer.shadow = default;
+    renderer.allocatedShadowResolution = 0;
+    renderer.ready = false;
+}
+
+void ResetTarget(RenderTarget target)
+{
+    target.SetClip();
+    target.SetTint();
+    target.SetTransform();
+    target.SetStencil();
+    target.SetBlend(Blend.Replace);
+    target.SetDepth();
+    target.SetCull();
+    target.SetFrustumCulling();
+    target.SetBounds();
+}
+
+[Stage(Stages.Prepare)]
+view Prepare(mut Renderer renderer)
+{
+    if (!renderer.enabled)
+    {
+        if (renderer.ready) Dispose(renderer);
+        return;
+    }
+    int resolution = Math.Clamp(renderer.shadowResolution, 16, 4096);
+    if (!renderer.ready)
+    {
+        renderer.hdr = RenderTarget.Window(Format.Rgba16f);
+        renderer.shadowMap = RenderTarget(resolution, resolution, 1, Format.Depth);
+        renderer.shadow = renderer.shadowMap.depth;
+        renderer.allocatedShadowResolution = resolution;
+        renderer.ready = true;
+    }
+    if (renderer.allocatedShadowResolution != resolution)
+    {
+        renderer.shadowMap.Resize(resolution, resolution);
+        renderer.allocatedShadowResolution = resolution;
+    }
+    renderer.shadowTexel = 1.0 / resolution;
+    renderer.eye = renderer.camera.position;
+    mut float3 direction = Math.Normalize(renderer.sun.direction);
+    if (Math.LengthSq(direction) < 0.5) direction = float3(0, -1, 0);
+    renderer.towardLight = -direction;
+    renderer.lightRadiance = Math.Max(renderer.sun.radiance, float3(0));
+
+    float distance = Math.Max(renderer.shadowDistance, 0.2);
+    float extent = Math.Max(renderer.shadowExtent, 0.01);
+    var rotation = quaternion.LookRotation(direction, float3(0, 1, 0));
+    var lightCamera = float4x4.TRS(renderer.shadowCenter - direction * (distance * 0.5), rotation, float3(1));
+    ResetTarget(renderer.shadowMap);
+    renderer.shadowMap.SetCamera(lightCamera, float4x4.Ortho(extent * 2, extent * 2, 0.01, distance));
+    renderer.worldToShadow = renderer.shadowMap.WorldToClip();
+    renderer.shadowMap.Clear(Color.white);
+}
+
+[Stage(Stages.Shadows)]
+view Cast(MeshRenderer mesh, with Material, Renderer renderer, World world)
+{
+    if (!renderer.enabled || !renderer.ready || !renderer.shadows || !mesh.visible || !mesh.castShadows) return;
+    renderer.shadowMap.Mesh(mesh.mesh.Value, world.LocalToWorld(this));
+}
+
+[Stage(Stages.Color)]
+view BeginColor(Renderer renderer)
+{
+    if (!renderer.enabled || !renderer.ready) return;
+    ResetTarget(renderer.hdr);
+    float near = Math.Max(renderer.camera.near, 0.001);
+    float far = Math.Max(renderer.camera.far, near + 0.001);
+    float fov = Math.Clamp(renderer.camera.verticalFov, 1deg, 179deg);
+    float aspect = Math.Max(Screen.width, 1) / Math.Max(Screen.height, 1);
+    var camera = float4x4.TRS(renderer.camera.position, renderer.camera.rotation, float3(1));
+    renderer.hdr.SetCamera(camera, float4x4.PerspectiveFov(fov, aspect, near, far));
+    float3 background = SrgbToLinear(float3(renderer.background.r, renderer.background.g, renderer.background.b));
+    renderer.hdr.Clear(Color(background.x, background.y, background.z));
+}
+
+float ShadowVisibility(DepthTexture shadow, float4 projected, float bias, float texel)
+{
+    if (projected.w <= 0) return 1;
+    float3 position = projected.xyz / projected.w;
+    if (position.x < -1 || position.x > 1 || position.y < -1 || position.y > 1 || position.z < -1 || position.z > 1) return 1;
+    float2 uv = float2(position.x * 0.5 + 0.5, 0.5 - position.y * 0.5);
+    float depth = position.z * 0.5 + 0.5 - bias;
+    float step = texel * 0.75;
+    return (shadow.Compare(uv + float2(-step, -step), depth)
+          + shadow.Compare(uv + float2(step, -step), depth)
+          + shadow.Compare(uv + float2(-step, step), depth)
+          + shadow.Compare(uv + float2(step, step), depth)) * 0.25;
+}
+
+frag Lit(MeshVertex vertex, out Color color, Instance instance, Material material, Renderer renderer,
+         Func<SurfaceInput, mut Surface, void> surface)
+{
+    float3 normal = instance.Normal(vertex.normal);
+    float3 viewDirection = Math.Normalize(renderer.eye - this.world);
+    Color sampled = material.baseMap.Sample(vertex.uv);
+    float3 texel = SrgbToLinear(float3(sampled.r, sampled.g, sampled.b));
+    float3 tint = SrgbToLinear(float3(material.baseColor.r, material.baseColor.g, material.baseColor.b));
+    float3 vertexColor = SrgbToLinear(float3(vertex.color.r, vertex.color.g, vertex.color.b));
+    mut Surface result = Surface {
+        albedo = texel * tint * vertexColor, normal = normal,
+        metallic = material.metallic, roughness = material.roughness, emission = material.emission
+    };
+    surface(SurfaceInput { world = this.world, normal = normal, uv = vertex.uv, viewDirection = viewDirection }, result);
+    mut float visibility = 1;
+    if (renderer.shadows && material.receiveShadows)
+    {
+        float facing = Math.Saturate(Math.Dot(normal, renderer.towardLight));
+        float bias = Math.Max(renderer.shadowBias, 0) + Math.Max(renderer.shadowSlopeBias, 0) * (1 - facing);
+        visibility = ShadowVisibility(renderer.shadow, Math.Mul(renderer.worldToShadow, float4(this.world, 1)), bias, renderer.shadowTexel);
+    }
+    float3 radiance = EvaluatePbr(result, viewDirection, renderer.towardLight, renderer.lightRadiance, visibility);
+    color = Color(radiance.x, radiance.y, radiance.z);
+}
+
+[Stage(Stages.Opaque)]
+view DrawMesh(MeshRenderer mesh, Material material, Renderer renderer, World world)
+{
+    if (!renderer.enabled || !renderer.ready || !mesh.visible) return;
+    renderer.hdr.Mesh(mesh.mesh.Value, world.LocalToWorld(this), material.shader);
+}
+
+struct Presentation { float exposure = 1; }
+
+frag TonemapScene(Vertex vertex, out Color color, Texture source, Presentation settings)
+{
+    Color hdr = source.Sample(vertex.uv);
+    float3 display = LinearToSrgb(Tonemap(float3(hdr.r, hdr.g, hdr.b), settings.exposure));
+    color = Color(display.x, display.y, display.z);
+}
+
+[Stage(Stages.Present)]
+view Present(Renderer renderer)
+{
+    if (!renderer.enabled || !renderer.ready) return;
+    Draw.Blit(renderer.hdr.color, Draw.window, TonemapScene, Presentation { exposure = renderer.exposure });
+}

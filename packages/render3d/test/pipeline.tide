@@ -1,0 +1,99 @@
+scene Main;
+asset Mesh<Render3D.MeshVertex> quad = "quad.obj";
+asset Mesh<Render3D.MeshVertex> slanted = "slanted.obj";
+asset Texture tint = "tint.png";
+
+component Patch { int index; local bool configured; }
+local singleton Probe
+{
+    bool disableShadows;
+    bool disableRenderer;
+    Color[7] expected;
+    int frames;
+}
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Patch { index = 0 }, Render3D.MeshRenderer { mesh = quad },
+          Render3D.Material { roughness = 1 },
+          Transform { localPosition = float3(-4.2, 0, 0), localScale = float3(1.5, 1.5, 1) });
+    Spawn(Patch { index = 1 }, Render3D.MeshRenderer { mesh = quad },
+          Render3D.Material { baseColor = Color(0.73535698, 0.73535698, 0.73535698), roughness = 1, metallic = 1 },
+          Transform { localPosition = float3(-1.5, 0, 0), localScale = float3(1.5, 1.5, 1) });
+    Spawn(Patch { index = 2 }, Render3D.MeshRenderer { mesh = slanted },
+          Render3D.Material { baseColor = Color(0.73535698, 0.73535698, 0.73535698), roughness = 0.5 },
+          Transform { localPosition = float3(1.5, 0, 0), localScale = float3(-1.5, 1.5, 0.5) });
+    Spawn(Patch { index = 3 }, Render3D.MeshRenderer { mesh = quad }, Render3D.Material {},
+          Transform { localPosition = float3(4.2, 0, 0), localScale = float3(1.5, 1.5, 1) });
+    Spawn(Patch { index = 4 }, Render3D.MeshRenderer { mesh = quad },
+          Render3D.Material { baseColor = Color(0.73535698, 0.73535698, 0.73535698), roughness = 1 },
+          Transform { localPosition = float3(0, -1.7, 0), localScale = float3(11, 1.2, 1) });
+    Spawn(Patch { index = 5 }, Render3D.MeshRenderer { mesh = quad }, Render3D.Material {},
+          Transform { localPosition = float3(-1.5, -1.7, -1), localScale = float3(0.8, 0.8, 1) });
+}
+
+void Emissive(Render3D.SurfaceInput input, mut Render3D.Surface surface, float strength)
+{
+    surface.albedo = float3(0);
+    surface.metallic = 1;
+    surface.emission = float3(strength);
+}
+
+[Before(Render3D.Stages.Prepare)]
+view Configure(mut Render3D.Renderer renderer, mut Probe probe)
+{
+    renderer.enabled = !probe.disableRenderer;
+    renderer.camera = Render3D.Camera { position = float3(0, 0, -6), rotation = quaternion.identity, verticalFov = 60deg };
+    renderer.sun = Render3D.DirectionalLight { direction = float3(1, 0, 2), radiance = float3(4) };
+    renderer.background = Color.black;
+    renderer.shadowResolution = 256;
+    renderer.shadowExtent = 4;
+    renderer.shadowDistance = 20;
+    renderer.shadows = !probe.disableShadows;
+    renderer.shadowBias = 0.003;
+    renderer.shadowSlopeBias = 0;
+    probe.frames++;
+}
+
+[Before(Render3D.Stages.Prepare)]
+view Customize(mut Patch patch, mut Render3D.Material material)
+{
+    if (patch.index == 0) material.baseMap = tint;
+    if (patch.index != 3 || patch.configured) return;
+    mut float strength = 4;
+    material.shader = Render3D.Lit {
+        surface = (Render3D.SurfaceInput input, mut Render3D.Surface surface) => Emissive(input, surface, strength)
+    };
+    strength = 99;
+    patch.configured = true;
+}
+
+Color ReferenceSurface(Render3D.Renderer renderer, float2 pixel, float metallic, float roughness, float3 normal, float3 albedo)
+{
+    float depth = renderer.hdr.WorldToScreen(float3(0)).z;
+    float3 world = renderer.hdr.ScreenToWorld(float3(pixel + float2(0.5), depth));
+    var surface = Render3D.Surface { albedo = albedo, normal = normal, metallic = metallic, roughness = roughness };
+    float3 lit = Render3D.EvaluatePbr(surface, renderer.eye - world, renderer.towardLight, renderer.lightRadiance, 1);
+    float3 display = Render3D.LinearToSrgb(Render3D.Tonemap(lit, 1));
+    return Color(display.x, display.y, display.z);
+}
+
+Color Reference(Render3D.Renderer renderer, float2 pixel, float metallic, float roughness)
+{
+    return ReferenceSurface(renderer, pixel, metallic, roughness, float3(0, 0, -1), float3(0.5));
+}
+
+[Stage(Render3D.Stages.Opaque, -1)]
+view ReferencePixels(Render3D.Renderer renderer, mut Probe probe)
+{
+    if (!renderer.enabled || !renderer.ready) return;
+    probe.expected[0] = ReferenceSurface(renderer, float2(26, 32), 0, 1, float3(0, 0, -1),
+                                        Render3D.SrgbToLinear(float3(128.0 / 255, 192.0 / 255, 64.0 / 255)));
+    probe.expected[1] = Reference(renderer, float2(50, 32), 1, 1);
+    // OBJ reflects X; inverse-transpose of scale(-1.5,1.5,.5) gives (1,0,-3).
+    probe.expected[2] = ReferenceSurface(renderer, float2(78, 32), 0, 0.5, Math.Normalize(float3(1, 0, -3)), float3(0.5));
+    probe.expected[3] = Color(0.90633175, 0.90633175, 0.90633175);
+    probe.expected[4] = Reference(renderer, float2(88, 48), 0, 1);
+    probe.expected[5] = Reference(renderer, float2(112, 48), 0, 1);
+    probe.expected[6] = Reference(renderer, float2(56, 48), 0, 1);
+}

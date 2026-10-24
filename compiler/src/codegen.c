@@ -1898,7 +1898,9 @@ static void gen_value(gen *g, sb *o, const decl *d, const field_init *inits, con
         const field *f = &d->fields.items[i];
         expr *value = declared_default(f);
         for (int j = 0; j < init_count; j++) {
-            if (inits[j].field == f) value = inits[j].value;
+            // Callback captures grow while later bodies are checked. Earlier
+            // literals retain an arena copy of a field from before that growth.
+            if (inits[j].field == f || (d->callable && str_eq(inits[j].name, f->name))) value = inits[j].value;
         }
         if (!value && f->type.kind == TY_STRUCT && has_defaults(f->type.decl)) {
             sb_printf(o, "%s.%s = ", written++ ? ", " : "", field_cname(f));
@@ -3551,6 +3553,17 @@ static void gen_visibility_call(gen *g, sb *o, const expr *e)
 
 static void gen_expr(gen *g, sb *o, const expr *e)
 {
+    if (e->binding_value) {
+        // Draw checking marks the argument as a stage, but it remains an
+        // ordinary evaluated value. Keep hoisting/snapshot metadata on that
+        // original argument so factories run once in written operand order.
+        expr value = *e;
+        value.bind = e->binding_value->bind;
+        value.type_decl = e->binding_value->type_decl;
+        value.binding_value = NULL;
+        gen_expr(g, o, &value);
+        return;
+    }
     if (e->hoisted) {
         sb_put(o, e->hoisted); // Already ran, or was read, before the statement (see hoist_ordered)
         return;
@@ -4177,6 +4190,19 @@ static void gen_expr(gen *g, sb *o, const expr *e)
                 gen_as(g, o, e->values, e->values->type);
             }
             for (int b = 0; b < sh->bound.count; b++) {
+                if (sh->bound.items[b]->binding_of) {
+                    const decl *binding = sh->bound.items[b];
+                    const expr *value = NULL;
+                    for (int a = 0; a < e->args.count; a++) {
+                        const expr *arg = e->args.items[a];
+                        if (arg->binding_value && arg->type_decl == binding->binding_of) value = arg;
+                    }
+                    sb_printf(o, ", &((const %s[]){", type_cname(binding));
+                    if (value) gen_expr(g, o, value);
+                    else sb_printf(o, "(%s){0}", type_cname(binding));
+                    sb_put(o, "})[0]");
+                    continue;
+                }
                 // Functions have a unique input; views prefer their non-verified parameter where they take both.
                 const decl *code = g->routine ? g->routine : g->code;
                 const param *from = NULL;
@@ -5586,7 +5612,7 @@ static void collect_ordered(expr *e, ordering *out, const bool later)
                 expr *arg = ops.items[i].e;
                 const int had = out->items.count;
                 collect_ordered(arg, out, false);
-                if (arg->bind == BIND_SHADER || !can_keep(arg->type)) continue;
+                if ((arg->bind == BIND_SHADER && !arg->binding_value) || !can_keep(arg->type)) continue;
                 if (out->items.count > had && out->items.items[out->items.count - 1].e == arg) continue;
                 // Drawing only reads the model, pose and instance list, then captures their data in the draw list.
                 // Keep the handles without another owned copy when no later operand can change
@@ -21065,6 +21091,18 @@ static void gen_shaders(gen *g)
         }
         sb_put(o, ")\n{\n");
         if (sh->blit) sb_put(o, "    tide_draw = tide_draw_render_target(tide_draw, tide_destination);\n");
+        for (int b = 0; b < sh->bound.count; b++) {
+            const decl *binding = sh->bound.items[b];
+            if (!binding->binding_of) continue;
+            for (int f = 0; f < binding->fields.count; f++) {
+                const field *slot = &binding->fields.items[f];
+                const decl *callable = slot->type.decl;
+                sb_put(o, "    if (!(false");
+                for (int t = 0; t < callable->call_tags.count; t++)
+                    sb_printf(o, " || tide_b%d->%s.kind == %d", b, field_cname(slot), callable->call_tags.items[t]);
+                sb_put(o, ")) return;\n");
+            }
+        }
         if (sh->direct_texture || sh->textured) sb_put(o, "    (void)tide_texture;\n");
         if (sh->instanced) {
             sb_put(o, "    const int32_t tide_count = tide_list_count(tide_items);\n"

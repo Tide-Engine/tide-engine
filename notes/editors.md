@@ -10,6 +10,34 @@ the probe checks both local/worker orders and worker as a variable. Existing
 navigation/diagnostics remain function-based. Public docs link the worker/task
 workflow. Semantics and validation: language.md.
 
+## Mutable callable signatures (2026-10-24)
+
+Callable type text and hover preserve `mut` argument modes and spell a void
+result as void. The formatter's generic-closing scan includes mut, keeping
+`Func<mut float, void>` tight and idempotent. The shared grammar gives Func its
+own recursive generic region, scopes mut as a modifier, and handles mixed and
+nested signatures. `lsp_mut_callable_types_preserve_qualifiers_and_formatting`
+and the mutable-signature grammar probe cover these contracts. Validation is
+recorded in language.md, Mutable callable arguments.
+
+## Callable functions and configured shaders (2026-10-24)
+
+The compiler retains authored function-reference and invocation metadata while
+lowering Func values. Analysis uses those source symbols instead of generated
+dispatcher names. Lambda bodies retain their typed parameters, source ranges and
+capture-source identities, so captured reads navigate to their original local or
+parameter. Named shader binding types and initializers navigate to the shader;
+binding slot names use the shader's parameter identity. Func type trees expose
+their argument/result types, completion offers Func, and the formatter keeps its
+generic brackets tight. The shared TextMate grammar recognizes Func signatures,
+serving the editors and docs without adapter changes.
+
+`lsp_callable_bindings_preserve_function_navigation_and_signature_types` covers
+diagnostics, function and shader definitions, capture definitions and completion.
+The grammar suite includes a Func signature case. Full validation is recorded
+with the compiler work in language.md. Material-specific authoring and visual
+shader tooling remain outside this foundation.
+
 ## Native editor workspace layout (2026-10-24)
 
 main.c, hierarchy_ui.inc, workspace_ui.inc and inspector_ui.inc arrange the

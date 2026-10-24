@@ -11909,6 +11909,44 @@ TIDE_TEST(lsp_animation_assets_use_cached_catalogs_and_refresh_names)
     model_metadata_forget();
 }
 
+TIDE_TEST(lsp_callable_bindings_preserve_function_navigation_and_signature_types)
+{
+    start();
+    open_document("scene Main;\nfloat Distance(float2 p) { return p.x; }\n"
+                  "view Test() { Func<float2, float> fn = Dista$nce; _ = fn(float2(0)); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "Distance"));
+    TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":1,\"character\":6}"));
+    TIDE_CHECK(offers(complete("scene Main;\nlocal singleton State { $ }\n"), "Func"));
+    open_document("scene Main;\nfloat Distance(float2 p) { return p.x; }\n"
+                  "frag Shade(Vertex v, out Color color, Func<float2, float> distance) { float d = distance(v.uv); color = Color(d, d, d); }\n"
+                  "local singleton State { Shade fragment; }\n"
+                  "view Test(mut State state) { state.fragment = Sh$ade { distance = Distance }; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":2,\"character\":5}"));
+    open_document("scene Main;\n"
+                  "view Test() { float radius = 0.25; Func<float2, float> fn = (float2 p) => Math.Length(p) - radi$us; _ = fn(float2(0)); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":1,\"character\":20}"));
+}
+
+TIDE_TEST(lsp_mut_callable_types_preserve_qualifiers_and_formatting)
+{
+    start();
+    open_document("scene Main;\nvoid Change(mut float value) { value += 1; }\n"
+                  "view Test() { Func<mut float, void> fn = Change; mut float value = 0; f$n(value); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "Func<mut float, void>"));
+    const char *source = "scene Main;\nvoid Change(mut float value) { value += 1; }\n"
+                         "view Test() { Func< mut float,void > fn=Change; mut float value=0; fn(value); }\n";
+    open_document(source);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    format_reply(source);
+    const char *formatted = apply_reply(source, NULL);
+    TIDE_CHECK(has(formatted, "Func<mut float, void>"));
+    TIDE_CHECK(has(format_reply(formatted), "\"result\":[]"));
+}
+
 TIDE_TEST(lsp_double_types_swizzles_parsing_and_signatures)
 {
     start();

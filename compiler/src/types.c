@@ -389,6 +389,7 @@ const char *type_suffix(const type t)
 
 const char *type_name(const type t)
 {
+    if (t.kind == TY_STRUCT && t.decl->callable_display) return t.decl->callable_display;
     static char buf[4][128];
     static int next;
     switch (t.kind) {

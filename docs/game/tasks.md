@@ -174,8 +174,9 @@ Workers receive independent copies of their inputs and return independent
 values. Numbers, text, lists, maps, sets, ordinary structs, fixed arrays and
 optional/error results follow their normal value rules. A worker takes no
 `mut`, `out`, component/singleton binding, World, query, devices, resource handle,
-asset borrow or grid. Pass the CPU data it needs. Its helpers have the same
-restrictions: no live world, drawing, frame services, file/network operations,
+asset borrow, callable/shader binding or grid. Pass the CPU data it needs.
+Its helpers have the same restrictions: no live world, drawing, frame services,
+file/network operations,
 task starts or implicit match randomness. C remains trusted; C called by workers
 must be safe to run on their threads.
 

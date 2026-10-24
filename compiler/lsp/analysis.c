@@ -454,7 +454,7 @@ static void type_written(const loc qual_at, const loc at, const str text, const 
     occurrence o = {.at = at, .len = name.len, .kind = OCC_TYPE, .name = name, .type = t};
     if (t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_RECORD
         || t.kind == TY_STRUCT || t.kind == TY_EVENT || t.kind == TY_ENUM) {
-        o.decl = t.decl;
+        o.decl = t.decl->binding_of ? t.decl->binding_of : t.decl;
     } else if (!builtin_type_named(name, &o.type)) {
         // Unresolved, for example a component used as a field type: still a type.
         for (int i = 0; i < A.prog->decls.count; i++) {
@@ -491,7 +491,9 @@ static void type_tree(const type_ref *r, const type t)
         add_occ((occurrence){.at = r->at, .len = r->name.len, .kind = OCC_TYPE, .name = r->name, .type = t});
         const bool holds = (t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID || t.kind == TY_MESH) && t.decl;
         for (int i = 0; i < r->args.count; i++) {
-            const type part = t.kind == TY_STRUCT && t.decl && t.decl->skin_kind == SKIN_MESH
+            const type part = t.kind == TY_STRUCT && t.decl && t.decl->callable && i < t.decl->call_types.count
+                ? t.decl->call_types.items[i]
+                : t.kind == TY_STRUCT && t.decl && t.decl->skin_kind == SKIN_MESH
                 ? i == 0 ? t.decl->skin_vertex : t.decl->skin_contract ? (type){TY_STRUCT, t.decl->skin_contract} : (type){TY_ERROR, NULL}
                 : holds && i < t.decl->fields.count ? t.decl->fields.items[i].type : (type){TY_ERROR, NULL};
             type_tree(r->args.items[i], part);
@@ -694,6 +696,19 @@ static void walk_expr(const expr *e)
 
 static void walk_value(const expr *e)
 {
+    if (e->callable_receiver) {
+        walk_expr(e->callable_receiver);
+        for (int i = 1; i < e->args.count; i++) walk_expr(e->args.items[i]);
+        return;
+    }
+    if (e->callable_source) {
+        const expr *source = e->callable_source;
+        if (source->kind == E_MEMBER) walk_expr(source->object);
+        const str name = source->kind == E_MEMBER ? source->member : source->name;
+        add_occ((occurrence){.at = source->at, .len = name.len, .kind = OCC_FUNCTION,
+                             .decl = source->method, .name = name, .type = e->type});
+        return;
+    }
     switch (e->kind) {
     case E_INT:
     case E_FLOAT:
@@ -754,6 +769,15 @@ static void walk_value(const expr *e)
             break;
         }
         occurrence o = {.at = e->at, .len = e->name.len, .name = e->name, .type = e->type, .write = e == walk_written};
+        if (e->bind == BIND_PARAM && e->param->capture_source) {
+            const expr *source = e->param->capture_source;
+            o.kind = source->bind == BIND_LOCAL ? OCC_LOCAL : source->bind == BIND_FIELD ? OCC_FIELD : OCC_PARAM;
+            o.local = source->local;
+            o.param = source->param;
+            o.field = source->field;
+            add_occ(o);
+            break;
+        }
         switch (e->bind) {
         case BIND_PARAM:
             o.kind = OCC_PARAM;
@@ -805,9 +829,22 @@ static void walk_value(const expr *e)
     }
 
     case E_MEMBER: {
-        if (!e->enum_shorthand) walk_expr(e->object);
+        if (!e->enum_shorthand && !e->object->binding_object) walk_expr(e->object);
         occurrence o = {.at = e->at, .len = e->member.len, .name = e->member, .type = e->type,
                         .object_type = e->object->type, .write = e == walk_written};
+        const decl *stage = e->object->type.kind == TY_STRUCT ? e->object->type.decl->binding_of : NULL;
+        if (stage && e->field) {
+            for (int i = 0; i < stage->params.count; i++) {
+                const param *p = &stage->params.items[i];
+                if (!p->call_binding || !str_eq(p->name, e->member)) continue;
+                o.kind = OCC_PARAM;
+                o.param = p;
+                o.param_of = stage;
+                add_occ(o);
+                break;
+            }
+            break;
+        }
         if (e->bind == BIND_TYPE && e->type_decl) { // Combat.Health, in Spawn(Combat.Health)
             o.kind = OCC_TYPE;
             o.decl = e->type_decl;
@@ -970,11 +1007,20 @@ static void walk_value(const expr *e)
         if (e->type_decl) {
             qualifier_ref(e->qual_at, e->at, e->name);
             const str name = last_part(e->name);
-            add_occ((occurrence){.at = e->at, .len = name.len, .kind = OCC_TYPE, .decl = e->type_decl, .name = name});
+            const decl *d = e->type_decl->binding_of ? e->type_decl->binding_of : e->type_decl;
+            add_occ((occurrence){.at = e->at, .len = name.len, .kind = OCC_TYPE, .decl = d, .name = name});
         }
         for (int i = 0; i < e->inits.count; i++) {
             const field_init *init = &e->inits.items[i];
-            if (init->field) {
+            const decl *stage = e->type_decl ? e->type_decl->binding_of : NULL;
+            if (stage && init->field) {
+                for (int j = 0; j < stage->params.count; j++) {
+                    const param *p = &stage->params.items[j];
+                    if (str_eq(p->name, init->name))
+                        add_occ((occurrence){.at = init->at, .len = init->name.len, .kind = OCC_PARAM, .param = p,
+                                             .param_of = stage, .name = init->name, .type = init->field->type});
+                }
+            } else if (init->field) {
                 add_occ((occurrence){.at = init->at, .len = init->name.len, .kind = OCC_FIELD, .field = init->field,
                                      .decl = e->type_decl, .name = init->name, .type = init->field->type});
             }
@@ -1090,6 +1136,7 @@ static void walk_stmt(const stmt *s)
 
 static void walk_param(const param *p, const decl *d)
 {
+    if (p->capture_source) return;
     if (p->mode == PARAM_QUERY) {
         const int keyword = token_at(p->at);
         if (keyword >= 0) A.files[p->at.file].query_keywords[keyword] = true;
@@ -1112,7 +1159,8 @@ static void walk_param(const param *p, const decl *d)
             return;
         }
         // `with scene Arena`: the scene's name, as a type's is, for its hover and its renames
-        const type placed = p->scene && p->scene_of ? (type){TY_COMPONENT, p->scene_of} : p->type;
+        const type placed = p->scene && p->scene_of ? (type){TY_COMPONENT, p->scene_of}
+                         : p->call_binding ? p->call_binding->type : p->type;
         type_place(p->type_ref, p->type_qual_at, p->type_at, p->type_name, placed);
     }
     if (p->name.len > 0) {
@@ -1225,6 +1273,13 @@ static void index_program(void)
 
     for (int i = 0; i < A.written.count; i++) {
         const decl *d = A.written.items[i];
+        if (d->generated_callable && d->named_in) {
+            walk_params(d);
+            walk_code = d;
+            walk_stmt(d->body);
+            walk_code = NULL;
+            continue;
+        }
         if (d->builtin) continue;
         replace_refs(d);
         // Scheduling attributes: declarations or an enum and its phase member. An override in place has
@@ -7411,6 +7466,8 @@ static void complete_value_types(completion *c, const unsigned which)
     }
     if (which & VT_TEXT) item(c, "string", CK_STRUCT, "built-in type", builtin_type_doc(TY_STRING), NULL);
     if (which & VT_LIST) {
+        item(c, "Func", CK_STRUCT, "Func<Arguments..., Result>",
+             "A typed local callable with owned captures. GPU calls use generated dispatch over build-known targets.", "Func<${1:float3}, ${2:float}>");
         item(c, "List", CK_STRUCT, "List<T>", builtin_type_doc(TY_LIST), "List<$1>");
         item(c, "Map", CK_STRUCT, "Map<K, V>", builtin_type_doc(TY_MAP), "Map<$1, $2>");
         item(c, "Set", CK_STRUCT, "Set<K>", builtin_type_doc(TY_SET), "Set<$1>");
@@ -11607,7 +11664,7 @@ static bool is_argument_colon(const int i)
 // A type written with others in <>, which the formatter keeps tight: List<int>, Map<int, float>.
 static bool generic_type(const str name)
 {
-    return str_eq_c(name, "List") || str_eq_c(name, "Map") || str_eq_c(name, "Set") || str_eq_c(name, "Grid2")
+    return str_eq_c(name, "Func") || str_eq_c(name, "List") || str_eq_c(name, "Map") || str_eq_c(name, "Set") || str_eq_c(name, "Grid2")
         || str_eq_c(name, "Grid3") || str_eq_c(name, "Mesh") || str_eq_c(name, "SkinnedMesh") || str_eq_c(name, "Asset");
 }
 
@@ -11638,7 +11695,8 @@ static bool space_between(const fmt_item *a, const fmt_item *b)
     if (x == T_LT && a->tok > 0 && generic_type(DOC->toks[a->tok - 1].text)) return false;
     if (y == T_GT) { // ...past a map's key and the comma after it
         int k = b->tok - 1;
-        while (k > 0 && (DOC->toks[k].kind == T_IDENT || DOC->toks[k].kind == T_DOT || DOC->toks[k].kind == T_COMMA)) k--;
+        while (k > 0 && (DOC->toks[k].kind == T_IDENT || DOC->toks[k].kind == T_MUT
+                         || DOC->toks[k].kind == T_DOT || DOC->toks[k].kind == T_COMMA)) k--;
         if (k > 0 && DOC->toks[k].kind == T_LT && generic_type(DOC->toks[k - 1].text)) return false;
     }
     // i++ and ++i: against what they change

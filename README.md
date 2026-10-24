@@ -113,9 +113,14 @@ The [docs](https://tide-engine.dev) go through the language a topic at a time, a
 
 ## Packages
 
-Optional [packages](docs/packages/index.md) include `box2d`, `box3d`, `newton`,
-`rooms`, `lobby`, `steam` and `voice`. Add only the ones a game uses with
-`tide add <name>`. [Newton](docs/packages/newton.md) is an experimental NVIDIA
+Optional [packages](docs/packages/index.md) include `render3d`, `box2d`, `box3d`,
+`newton`, `rooms`, `lobby`, `steam` and `voice`. Add only the ones a game uses with
+`tide add <name>`. [Render3D](docs/packages/render3d.md) supplies opaque
+mesh/material components, directional shadows, linear PBR lighting and HDR tone
+mapping, with package-owned passes. Its first slice has one camera and sun;
+broader rendering features remain future work.
+
+[Newton](docs/packages/newton.md) is an experimental NVIDIA
 Newton articulation/control integration for the same game and robotics-policy
 simulation. Native and web replay tests agree; collisions, robot importers and
 physical fidelity validation remain future work. Use a checkout or installation containing it.

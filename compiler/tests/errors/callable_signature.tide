@@ -1,0 +1,4 @@
+// expect: function 'Wrong' does not match this Func's argument and result types
+scene Main;
+float Wrong(float value) { return value; }
+view Test() { Func<float2, float> distance = Wrong; _ = distance(float2(0)); }

@@ -1,0 +1,3 @@
+// expect: a worker takes owned CPU values, not Func<int, int>
+local worker int Build(Func<int, int> operation) { return operation(1); }
+scene Main;

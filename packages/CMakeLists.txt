@@ -8,6 +8,35 @@
 # <package>/test/order.txt lists, a name a line. The order alone is compared,
 # and not what tidec says of each wait.
 set(TIDE_PACKAGE_ORDER "${CMAKE_CURRENT_BINARY_DIR}/expect_order.cmake")
+
+# Render3D is pure Tide; consuming it introduces no runtime library.
+set(render3d_sources render3d/pbr.tide render3d/render3d.tide)
+tide_add_game(tide_render3d_pbr SOURCES render3d/test/pbr.tide NAME game
+    PACKAGES Render3D render3d/pbr.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" render3d/test/pbr_test.c)
+target_include_directories(tide_render3d_pbr PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tide_render3d_pbr COMMAND tide_render3d_pbr)
+
+tide_add_game(tide_render3d_pipeline SOURCES render3d/test/pipeline.tide NAME game
+    PACKAGES Render3D ${render3d_sources}
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" render3d/test/pipeline_test.c)
+target_include_directories(tide_render3d_pipeline PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tide_render3d_pipeline COMMAND tide_render3d_pipeline)
+
+if(TARGET tide_platform AND NOT TIDE_ANDROID)
+    tide_add_game(tide_render3d_pixels SOURCES render3d/test/pipeline.tide NAME game
+        PACKAGES Render3D ${render3d_sources} HOST render3d/test/pixels.c)
+    target_link_libraries(tide_render3d_pixels PRIVATE tide_platform)
+    if(TIDE_WEB)
+        tide_web_page(tide_render3d_pixels SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
+        tide_add_web_test(tide_render3d_pixels TARGET tide_render3d_pixels WEBGPU EXPECT "renderer: WebGPU" D3D11)
+    else()
+        add_test(NAME tide_render3d_pixels COMMAND tide_render3d_pixels)
+        add_test(NAME tide_render3d_pixels_opengl COMMAND tide_render3d_pixels)
+        tide_gpu_test(tide_render3d_pixels)
+        tide_gpu_test(tide_render3d_pixels_opengl OPENGL)
+    endif()
+endif()
 file(WRITE "${TIDE_PACKAGE_ORDER}" [=[
 execute_process(
     COMMAND "${TIDEC}" "${GAME}" --package "${PACKAGE}" "${SOURCE}" --schedule

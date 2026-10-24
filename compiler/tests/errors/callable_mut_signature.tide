@@ -1,0 +1,4 @@
+// expect: function 'Change' does not match this Func's argument and result types
+scene Main;
+void Change(mut float value) { value += 1; }
+view Test() { Func<float, void> fn = Change; fn(0); }

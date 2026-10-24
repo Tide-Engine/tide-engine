@@ -1,5 +1,15 @@
 # Drawing: `Draw`, its settings, shapes and meshes
 
+## Callable instance data (2026-10-24)
+
+Configured stage values and callable fields extend compiler binding and shader
+packing, with no Draw runtime or backend change. Explicit instance lists can
+carry different SDF functions and numeric captures in one run; generated dispatch
+is inside the shared shader. `tide_platform_gpu_functions` checks four shapes in
+one actual GPU draw, plus the existing clear triangle. Ordinary per-draw values
+remain shared uniforms and existing batching/order boundaries still apply.
+Contracts, limits and full-suite validation are in language.md and shaders.md.
+
 ## A sprite in one call (2026-10-21)
 
 The owner's "yes do it" (2026-10-20), to a call for sprites, which the third

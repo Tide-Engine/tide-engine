@@ -1,0 +1,6 @@
+// expect: a stored callable captures owned plain values; pass explicit data instead of Texture
+scene Main;
+Func<float2, Color> Make(Texture image)
+{
+    return (float2 uv) => image.Sample(uv);
+}

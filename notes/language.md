@@ -56,6 +56,137 @@ Remaining: owned grids, priorities, public handles/explicit cancellation,
 preemption and match workers. Existing async component/local-field restrictions
 are unchanged: publication currently uses local singletons or local entities.
 
+Integration with incoming callable/shader support retains both notes entries.
+Callable and shader-binding structs are explicitly excluded at worker value
+boundaries, including nested fields: they are local execution/rendering values,
+outside the initial owned CPU-data contract. worker_callable pins the rejection.
+Merged validation through origin/dev d90a787c: warning-free full native/web
+debug builds and all 2,636 native and 2,531 web enabled tests pass (245.43 s /
+425.05 s, four jobs), retaining the existing disabled MicroDuck case. This
+includes incoming callable/Render3D checks and native/browser worker coverage.
+All 286 shared grammar checks and the merged docs production build pass.
+
+## Mutable callable arguments (2026-10-24)
+
+Owner-approved: `Func<mut Vertex, void>` accepts a matching named function or
+typed expression lambda, forwards the caller's writable storage through helpers
+and generated dispatch, and leaves captures read-only. This applies to ordinary
+CPU values and GPU-local values under existing access rules; no runtime or
+backend interface changes. `out` callable parameters remain outside this change.
+
+The parser records each Func argument's mut location in `type_ref.arg_mut` and
+retains it in type text. `decl.call_mut` participates in signature interning,
+generated type/dispatcher identities, target identity and overload selection.
+Mode prefixes distinguish mutable slots in those identities. Inferred function values
+retain their modes. The generated dispatcher's ordinary parameters carry
+PARAM_MUT, so checking, ownership, evaluation order and C/GLSL/WGSL forwarding
+reuse normal calls. The result cannot be mut. A default/unknown target performs
+no writes. Lambda parameters now carry function_param, including mutable ones:
+without it WGSL treated a forwarded mutable lambda argument as a value and
+generated an invalid pointer-to-value copy. Captures are always PARAM_READ.
+
+`e2e/mut_callables` checks scalar and field writes, forwarding, returned captured
+lambdas, named/inferred targets, exact mode separation, multiple mutable aliases,
+left-to-right reads beside writes, defaults and unchanged match hashes. Array
+elements retain the ordinary take-out/change/put-back rule. Seven diagnostic
+fixtures cover wrong modes, lambda modes, read-only arguments/captures and a mut
+result. `e2e/gpu_functions` now deforms each SDF quad through distinct named or
+captured mutable callbacks, with compensated centers keeping the same pixel
+expectations; its frag also reads a nonvoid callback's result and changed argument.
+Configured mutable vert bindings are exercised too. The smaller `shaders/mut_callables`
+fixture pins GLSL/WGSL and joins available SPIR-V/HLSL validation.
+
+Validation: full native debug passed all 2,605 enabled tests (165.28 s, four
+jobs); full web debug passed all 2,501 (334.33 s, four jobs). Each retains the
+existing disabled Microduck right-turn limitation. Native pixels passed on
+Vulkan/OpenGL; web pixels passed on WebGL, ANGLE D3D11 and WebGPU. FXC validated
+the mutable-callable golden; the complete 250-test language-server executable,
+all 282 grammar tests and the docs production build passed. No determinism
+expectations changed. Web uses the same ignored SDK 34 fallback described below;
+pinned SDK 24 downloads and GitHub fetch still fail DNS resolution. There is no
+standalone spirv-val or Vulkan validation layer on this machine.
+
+Integration (2026-10-24): fetched and merged origin/dev through 85f14e4f after
+GitHub DNS recovered. Compiler/editor code merged cleanly; the two top-of-file
+notes conflicts retain both the callable entries and incoming editor/startup
+entries. The merged full native debug suite passed 2,621 enabled tests (211.08 s)
+and full web debug passed 2,515 (361.12 s), each at four jobs with the existing
+disabled Microduck right-turn limitation. New editor/startup coverage and the
+callable CPU/GPU probes pass together. The merged docs production build passed.
+Web retained the local SDK 34 fallback above. No code corrections or additional
+determinism expectation changes were required for integration.
+
+## Callable values and configured GPU stages (2026-10-24)
+
+Owner-approved foundation for separate `render3d` and future `render2d`
+packages: typed function parameters in GPU code, helper forwarding, explicit
+`Shade { distance = Circle }` bindings, local component storage, and heterogeneous
+instance callbacks dispatched in one shader. No rendering package is implemented
+here. Render3D's PBR, baked indirect lighting, probes, shadows and post-processing
+remain the agreed direction, not implemented features.
+
+`callable_types.inc` and `callable_check.inc` implement `Func<A..., R>` as private
+ordinary structs containing a target tag and owned typed capture fields. Named
+functions and typed expression lambdas populate a closed target set per resolved
+signature. Generated ordinary dispatcher functions initialize a result, switch
+over targets, and return once; this avoids ANGLE D3D11's X4000 on returns inside
+switch cases. CPU and GPU use the same checked AST and normal call/effect/resource
+analysis. There are no stored native function pointers, new runtime functions or
+generated-C/runtime ABI changes.
+
+The initial language spellings and restrictions are provisional in spec.md,
+Callable shader values. Captures copy plain values at construction, including
+numeric structs and fixed arrays; no stack borrow escapes. Resource/heap captures,
+borrowed component/world/query/input context, nested lambdas and recursive capture
+layouts are diagnosed. Explicit parameters and named assets retain their normal
+GPU rules. Missing/unknown callable tags return the result's default. Configured
+stages with invalid required tags skip submission. These values and their
+collections are local-only, including through nested structs and attached fields.
+
+A stage binding is a private struct associated with its declaration. Its public
+type is the stage's name. Each function parameter reads its named binding field;
+other stage parameters retain their existing source binding. Draw wrappers receive
+binding values explicitly, separately from ordinary draw values and components.
+The Mesh, Instanced, target, skinned and Blit paths share this machinery. Binding
+factories evaluate once, in written draw-operand order. Callable and stage types
+go through normal array wrapping; stored indexed stage values can be drawn.
+
+Capture fields and named function tags have stable qualified identities for
+ordinary local serialization/migration. Lambda identity also uses its containing
+declaration and source location: moving one may invalidate old bindings, which
+must then be reconstructed. Unknown identities never retarget arbitrary code.
+Target identity collisions are diagnosed. Captures currently reserve fields per
+target of a signature; compact overlapping payloads and static-target specialization
+remain performance work. Existing GPU uniform/attribute limits apply.
+
+Coverage: `e2e/gpu_functions` exercises exact overload selection, qualified function
+references, inferred named functions, helper forwarding, returned closures,
+capture-at-construction semantics, local/attached storage, local pack/unpack,
+stored/returned/inline/indexed stage bindings, fixed arrays, custom vert plus frag,
+Blit, zero-argument/void/default callables, skipped unconfigured stages, factory
+evaluation order and unchanged match hashes. Four distinct SDF instances remain
+one run. Nine GPU/CPU lambda capture variants force field-vector growth: earlier
+callable literals resolve their stable field names during emission, rather than
+losing initializers through stale arena-copy field pointers.
+`shaders/callables` pins GLSL/WGSL and joins SPIR-V/HLSL validation. Eight diagnostic
+fixtures cover invalid signatures, captures, placement and bindings. GPU pixels
+and actual draw counts are checked by `platform/tests/gpu_functions.c` on native
+and web; editor contracts are in editors.md.
+
+Validation: full native debug passed 2,595 enabled tests (final run 169.29 s,
+four jobs), and full web debug passed 2,492 (667.80 s). Each retains the existing
+disabled Microduck right-turn limitation. The final array/indexed-binding changes
+also passed all 13 scoped web checks after rebuilding the affected targets.
+The docs build and all 280 shared grammar tests passed. Native pixels ran on
+Vulkan and OpenGL; web pixels ran on WebGL, ANGLE D3D11 and WebGPU. FXC validated
+the HLSL fixture. Standalone spirv-val and a Vulkan validation layer were absent.
+
+GitHub DNS prevented downloading pinned WASI SDK 24. Web validation used an
+ignored local toolchain file with the already-installed SDK 34 sysroot/builtins,
+clang 23 and Node 24.22.1; all Tide tools/programs were built in this checkout.
+The checked-in toolchain is unchanged; pinned-SDK-24 coverage remains unavailable
+on this machine. External prototype directories were disabled for both presets.
+
 ## Inherited prefab values and selected startup (2026-10-24)
 
 Owner-approved: matching nested `entity ExistingChild { Component { field =
