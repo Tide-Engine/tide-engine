@@ -1,0 +1,8 @@
+// expect: can't read live assets; capture their data before starting the worker
+asset List<byte> bytes = "worker_asset.txt";
+local worker int Build(List<int> input)
+{
+    mut List<int> result = input;
+    return result[int(bytes[0])]++;
+}
+scene Main;

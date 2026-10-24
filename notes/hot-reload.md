@@ -11,6 +11,11 @@ after the callback returns, permitting safe unload. Owner loss only abandons
 publication; its group keeps captures until completion. local_workers pins
 saved-state and retained-rebind behavior.
 
+The gap pass also covers workers nested inside an awaited async helper, with
+changed source data before pack/rebind: the saved child arguments are retained.
+Draining abandons the entire group before helping, skipping queued calculations
+while still waiting for a provider's completion before old code can unload.
+
 ## Sharded matches (2026-10-23)
 
 A sharded match on this machine (`tide run --shards`) reloads every shard at once: the host keeps a new build waiting until `tide_session_can_reload` (every frame, at most 3 seconds, then it starts over saying why), and `tide_session_set_game`/`tide_session_migrate` change every shard's server and every followed client together. On the web the page waits for `tide_reload_ready`, and the saved state carries the match as a checkpoint, each shard's world carried over with `tide_migrate_world` in the new program. Before this, a same-layout native reload left shards and followed clients on the unloaded build's table, and a web reload dropped a sharded match. Details: `notes/sharding.md`, Hot reload.

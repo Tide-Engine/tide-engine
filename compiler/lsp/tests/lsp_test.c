@@ -3333,6 +3333,9 @@ TIDE_TEST(lsp_local_workers)
     const char *source = "local  worker int Build( int value ) { return value+1; }\nscene Main;\n";
     format_reply(source);
     TIDE_CHECK(has(apply_reply(source, NULL), "local worker int Build(int value)"));
+    open_document("int Cell(Grid2<int> cells) { return cells[0, 0]; }\n"
+                  "local worker List<int> Build(Grid2<int> cells) { mut List<int> values = []; values.Add(Cell(cells)); values.$ return values; }\nscene Main;\n");
+    TIDE_CHECK(has(request("textDocument/completion"), "\"label\":\"Add\""));
 }
 
 TIDE_TEST(lsp_empty_scene_declarations)

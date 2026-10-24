@@ -30,6 +30,16 @@ rebuild together; positional jobs initializers were completed. No match storage,
 tick order or math contract changed. Contracts/tests: language.md and
 schedule-and-threads.md.
 
+Worker audit changes are internal to the same maintenance exception: a private
+dispatch wrapper skips abandoned queued items, and disposal abandons every item
+before helping/draining. Existing public signatures and provider completion
+ownership are unchanged. Tests and compiler boundary corrections: language.md.
+
+The owner-approved read-only grid inputs add no runtime function: a private
+generated capture copies directory/chunk bytes through tide_heap_alloc/_write
+and existing grid accessors. Ordinary runtime grid copy/assignment semantics
+remain unchanged. CPU helper reachability and foreach emission are compiler-side.
+
 ## Shard recovery admission release (2026-10-24)
 
 `tide_server_unadmit` (`tide/session.h`, session.c) is part of the existing

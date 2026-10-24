@@ -6668,8 +6668,9 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         return;
     }
     // In a frag or vert: the GPU has no text, reads lists, maps and sets and changes none, and a grid there is a texture
-    // ...and in a function that takes a grid or samples a texture, which only those call
-    const bool gpu = is_shader(sc->decl) || (sc->decl && sc->decl->gpu_only);
+    // Grid helpers used by local workers also have ordinary CPU operations.
+    const bool gpu = is_shader(sc->decl) || (sc->decl && sc->decl->gpu_only
+        && !(sc->decl->worker_cpu && !sc->decl->gpu_sampling));
     if (t.decl && (t.decl == A.prog->audience || t.decl == A.prog->visibility)) {
         if (gpu) return;
         size_t count;

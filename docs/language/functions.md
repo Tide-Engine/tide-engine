@@ -151,6 +151,12 @@ Pass the asset directly, or forward a borrowed parameter through further helpers
 
 Large read-only values can use borrowed storage in generated CPU helpers when the compiler proves it safe, avoiding repeated stack copies. They retain value semantics: overlapping mutable arguments, later argument effects and C calls still preserve the captured value. This needs no annotation or reference syntax.
 
+Read-only grid parameters can be read and forwarded through helpers called by
+[local workers](../game/tasks.md#local-workers) or shader code. Workers capture
+independent grid inputs before dispatch. Grid helpers do not grant ordinary
+views or match systems a way to pass grids as CPU values, and functions still
+cannot return grids. Sampling a grid as a texture remains GPU-only.
+
 Singleton arguments are explicit values, like component arguments. The function gets no singleton lookup or access to a world. A match system or handler can pass state it can write to a `mut` parameter; a view can pass local state it can write, while its match state stays read-only. The input's `Sample` can only read local state, including through helpers. These restrictions follow calls through other helpers, and their reads and writes count toward the caller's access and scheduling.
 
 ```csharp

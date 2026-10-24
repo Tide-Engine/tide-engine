@@ -1,0 +1,4 @@
+// expect: a worker takes owned CPU values, not Capture
+struct Capture { Asset<Mesh<Vertex3>> mesh; }
+local worker int Build(Capture input) { return input.mesh.Value.vertices.count; }
+scene Main;

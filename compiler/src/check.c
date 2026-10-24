@@ -3450,6 +3450,7 @@ static bool function_samples(decl *fn, const expr *call, const expr *of, const t
                   reads == TY_DEPTH_TEXTURE ? "lamp.shadow" : reads == TY_CUBEMAP ? "room.sky" : "look.image");
         return false;
     }
+    fn->gpu_sampling = true;
     if (!fn->gpu_only) {
         fn->gpu_only = true;
         fn->gpu_only_at = call->at;
@@ -12468,7 +12469,8 @@ static void check_stmt(checker *c, stmt *s)
         // do depends on their order
         if (list.kind == TY_GRID) {
             for (int i = 0; i < 3; i++) s->block[i] = 1;
-            s->parallel = c->system && !c->method && !async_code(c) && !c->in_input && !c->parallel
+            s->parallel = ((c->system && !c->method) || (c->method && c->method->is_worker))
+                       && !async_code(c) && !c->in_input && !c->parallel
                        && own_cell_only(s->then_stmt, s, 0);
             if (s->parallel) plan_window(s);
             if (!s->parallel) c->prog->uses_text = true; // In order, it keeps where it is in the scratch area
@@ -14412,7 +14414,7 @@ static void check_signature(checker *c, decl *m)
             p->type.decl = component_placement(c->prog, p->type.decl, p->placement_local, p->type_at);
         } else if (p->placement_local) diag_error(p->placement_at, "local component access belongs on a system, view, handler, query or async parameter; ordinary functions take values");
         if (world) check_world_param(m, p, k);
-        if (p->type.kind == TY_GRID) { // Which grid it is, the GPU's code is written for: the CPU has no call that passes one
+        if (p->type.kind == TY_GRID) { // Read-only shader arguments or isolated worker snapshots.
             if (p->mode == PARAM_MUT) {
                 diag_error(p->type_at, "a function reads the cells of a grid it takes, and never changes them: '" STR_FMT "' can't be '%s'",
                            STR_ARG(p->name), p->is_out ? "out" : "mut");
@@ -14421,7 +14423,7 @@ static void check_signature(checker *c, decl *m)
             } else if (p->default_value) {
                 diag_error(p->name_at, "a grid a function takes has no default: the call names the one it reads");
                 p->type = T_ERR;
-            } else if (!m->gpu_only) {
+            } else if (!m->is_worker && !m->gpu_only) {
                 m->gpu_only = true;
                 m->gpu_only_at = p->type_at;
                 m->gpu_only_reads = TY_GRID;
@@ -18884,13 +18886,27 @@ static void check_io_calls(const checker *c)
 
 // A function that calls one that reads Frame.dt reads it too: each is handed the local state, so only local code calls them, and an async one is a local task.
 // A function that plays sounds is local code's to call likewise.
-// A function that takes a grid, or samples a texture, is written for the grid or texture each call names, which only the GPU's code has: a frag, a vert and the functions they call.
+// Grid-reading helpers also run inside local workers; GPU sampling remains
+// shader-only. Propagate each execution requirement through helper chains.
 static void check_gpu_only_calls(const checker *c)
 {
+    for (int i = 0; i < c->prog->decls.count; i++) {
+        decl *d = c->prog->decls.items[i];
+        if (d->is_worker) d->worker_cpu = true;
+    }
     for (bool changed = true; changed;) {
         changed = false;
         for (int i = 0; i < c->calls.count; i++) {
             const call_site *site = &c->calls.items[i];
+            if (site->from->worker_cpu && !site->to->is_extern && !site->to->worker_cpu) {
+                site->to->worker_cpu = true;
+                changed = true;
+            }
+            if (site->to->is_worker) continue; // Await captures data; the caller does not execute its body.
+            if (site->to->gpu_sampling && !site->from->gpu_sampling) {
+                site->from->gpu_sampling = true;
+                changed = true;
+            }
             if (!site->to->gpu_only || site->from->gpu_only) continue;
             if (site->from->kind != DECL_FUNCTION && site->from->kind != DECL_METHOD) continue;
             site->from->gpu_only = true;
@@ -18901,11 +18917,13 @@ static void check_gpu_only_calls(const checker *c)
     }
     for (int i = 0; i < c->calls.count; i++) {
         const call_site *site = &c->calls.items[i];
+        if (site->to->is_worker) continue;
+        if (site->from->worker_cpu && !site->to->gpu_sampling && site->to->gpu_only_reads == TY_GRID) continue;
         if (!site->to->gpu_only || site->from->gpu_only || site->from->kind == DECL_SHADER) continue;
         const type_kind reads = site->to->gpu_only_reads;
         if (reads != TY_TEXTURE && reads != TY_DEPTH_TEXTURE && reads != TY_CUBEMAP) {
-            diag_error(site->call->at, "'" STR_FMT "' reads a grid it's passed, which only code the GPU runs does: a frag, a vert "
-                       "and the functions they call", STR_ARG(site->to->name));
+            diag_error(site->call->at, "'" STR_FMT "' reads a grid it's passed, which shader code and local workers can call",
+                       STR_ARG(site->to->name));
             diag_note_at(site->to->gpu_only_at, "it takes or passes the grid on line %d; here, read the cells through the grid's "
                          "component or singleton, like 'board.cells[x, y]'", site->to->gpu_only_at.line);
             continue;
@@ -20636,7 +20654,8 @@ bool check(program *prog)
     }
     mark_c_callers(&c);
     for (int i = 0; i < prog->decls.count; i++) {
-        if (prog->decls.items[i]->kind == DECL_SYSTEM) settle_grid_loops(prog, prog->decls.items[i]->body);
+        if (prog->decls.items[i]->kind == DECL_SYSTEM || prog->decls.items[i]->is_worker)
+            settle_grid_loops(prog, prog->decls.items[i]->body);
     }
     warn_unused_locals(&c); // Once it's known which calls draw and call C
     warn_dropped_values(&c);
