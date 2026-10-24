@@ -133,61 +133,67 @@ Color Ground(float3 n, float wide, Atlas atlas)
         at = float2(Math.Dot(n, atlas.easts[candidate]), Math.Dot(n, atlas.norths[candidate])) * R;
         break;
     }
-    // A plaza interior covers everything beneath it.
-    if (town >= 0 && soft < PLAZA && distance <= PLAZA - soft) return Paving(at, wide);
-    // Accumulate the road layers and how much natural ground remains visible.
-    // Fully opaque asphalt needs none of the procedural meadow underneath.
+    // A plaza interior covers everything beneath it. Keep one initialized
+    // result and one return: ANGLE's D3D11 compiler warns on the early return.
     mut var ground = Color(0, 0, 0, 1);
-    mut float unpainted = 1;
-    // The roads between the towns, a dashed line down the middle
-    for (var road = 0; road < 11; road++)
+    if (town >= 0 && soft < PLAZA && distance <= PLAZA - soft)
     {
-        var a = atlas.froms[road];
-        var b = atlas.tos[road];
-        var c = Math.Normalize(Math.Cross(a, b));
-        // |sin(angle)| <= |angle|: reject distant road planes before any
-        // curved distance or arc-end calculation. The exact test stays below.
-        float side = Math.Dot(n, c);
-        if (Math.Abs(side) * R > ROAD + soft) continue;
-        if (Math.Dot(Math.Cross(a, n), c) < 0 || Math.Dot(Math.Cross(n, b), c) < 0) continue;
-        float across = Math.Abs(Math.Asin(Math.Clamp(side, -1, 1))) * R;
-        if (across > ROAD + soft) continue;
-        mut var paint = across < ROAD - 1.2 ? tarmac : kerb;
-        if (wide < 1.6 && across < 0.12 + soft * 0.5)
-        {
-            float along = Math.Atan2(Math.Dot(Math.Cross(a, n), c), Math.Dot(a, n)) * R;
-            paint = Mix(paint, line, Marking(across, along, wide));
-        }
-        float coverage = Math.SmoothStep(ROAD + soft, ROAD - soft, across);
-        ground = Mix(ground, paint, coverage);
-        unpainted *= 1 - coverage;
+        ground = Paving(at, wide);
     }
-    mut float grain = 0;
-    if (unpainted > 0)
+    else
     {
-        grain = Grain(n, wide);
-        var grass = Grass(n, wide, grain);
-        ground = Color(ground.r + grass.r * unpainted, ground.g + grass.g * unpainted, ground.b + grass.b * unpainted, 1);
-    }
-    // The local town's ground, ring road and square.
-    if (town >= 0)
-    {
-        if (unpainted <= 0) grain = Grain(n, wide);
-        // Mown lawns in town, lighter than the country
-        ground = Mix(ground, Color(0.56 + grain * 0.04, 0.68 + grain * 0.04, 0.44, 1), Math.SmoothStep(TOWN + 8, TOWN - 4, distance) * 0.85);
-        float ring = Math.Abs(distance - RING);
-        if (ring < ROAD + soft)
+        // Accumulate road paint before evaluating the visible meadow.
+        mut float unpainted = 1;
+        // The roads between the towns, a dashed line down the middle
+        for (var road = 0; road < 11; road++)
         {
-            mut var paint = ring < ROAD - 1.2 ? tarmac : kerb;
-            if (wide < 1.6 && ring < 0.12 + soft * 0.5)
-                paint = Mix(paint, line, Marking(ring, Math.Atan2(at.x, at.y) * RING, wide));
-            ground = Mix(ground, paint, Math.SmoothStep(ROAD + soft, ROAD - soft, ring));
+            var a = atlas.froms[road];
+            var b = atlas.tos[road];
+            var c = Math.Normalize(Math.Cross(a, b));
+            // |sin(angle)| <= |angle|: reject distant road planes before any
+            // curved distance or arc-end calculation. The exact test stays below.
+            float side = Math.Dot(n, c);
+            if (Math.Abs(side) * R > ROAD + soft) continue;
+            if (Math.Dot(Math.Cross(a, n), c) < 0 || Math.Dot(Math.Cross(n, b), c) < 0) continue;
+            float across = Math.Abs(Math.Asin(Math.Clamp(side, -1, 1))) * R;
+            if (across > ROAD + soft) continue;
+            mut var paint = across < ROAD - 1.2 ? tarmac : kerb;
+            if (wide < 1.6 && across < 0.12 + soft * 0.5)
+            {
+                float along = Math.Atan2(Math.Dot(Math.Cross(a, n), c), Math.Dot(a, n)) * R;
+                paint = Mix(paint, line, Marking(across, along, wide));
+            }
+            float coverage = Math.SmoothStep(ROAD + soft, ROAD - soft, across);
+            ground = Mix(ground, paint, coverage);
+            unpainted *= 1 - coverage;
         }
-        if (distance < PLAZA + soft)
+        mut float grain = 0;
+        if (unpainted > 0)
         {
-            // Paved in stones a little apart, each its own shade
-            var paving = Paving(at, wide);
-            ground = Mix(ground, paving, Math.SmoothStep(PLAZA + soft, PLAZA - soft, distance));
+            grain = Grain(n, wide);
+            var grass = Grass(n, wide, grain);
+            ground = Color(ground.r + grass.r * unpainted, ground.g + grass.g * unpainted, ground.b + grass.b * unpainted, 1);
+        }
+        // The local town's ground, ring road and square.
+        if (town >= 0)
+        {
+            if (unpainted <= 0) grain = Grain(n, wide);
+            // Mown lawns in town, lighter than the country
+            ground = Mix(ground, Color(0.56 + grain * 0.04, 0.68 + grain * 0.04, 0.44, 1), Math.SmoothStep(TOWN + 8, TOWN - 4, distance) * 0.85);
+            float ring = Math.Abs(distance - RING);
+            if (ring < ROAD + soft)
+            {
+                mut var paint = ring < ROAD - 1.2 ? tarmac : kerb;
+                if (wide < 1.6 && ring < 0.12 + soft * 0.5)
+                    paint = Mix(paint, line, Marking(ring, Math.Atan2(at.x, at.y) * RING, wide));
+                ground = Mix(ground, paint, Math.SmoothStep(ROAD + soft, ROAD - soft, ring));
+            }
+            if (distance < PLAZA + soft)
+            {
+                // Paved in stones a little apart, each its own shade
+                var paving = Paving(at, wide);
+                ground = Mix(ground, paving, Math.SmoothStep(PLAZA + soft, PLAZA - soft, distance));
+            }
         }
     }
     return ground;
