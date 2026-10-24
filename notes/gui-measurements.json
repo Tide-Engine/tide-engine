@@ -1,0 +1,33 @@
+{
+  "status": "timings_pending",
+  "reason": "Concurrent project builds/tests; architecture parent requested finishing without waiting for a quiet measurement window.",
+  "measurements": [],
+  "baseline_gui_commit": "1807aa3b",
+  "candidate_gui_commit": "e204f6ed",
+  "validated_integration_commit": "f775a41c",
+  "compiler": "clang 23.1.2",
+  "cpu": "AMD Ryzen 9 7900X",
+  "scope": "CPU GUI recording only; no GPU or frame-rate claim",
+  "probe_source": "notes/gui-measurement.c",
+  "probe_source_sha256": "335C23B83B7A851E75EDBEDB930FF62012F3820F9FFC4C12A28515D504AC7352",
+  "flags": "-O2 -DNDEBUG -std=c17 -fno-fast-math -ffp-contract=off; MSVC DLL runtime",
+  "baseline_method": "Original GUI source/header with shared candidate release drawing/runtime library",
+  "binaries": [
+    {
+      "name": "baseline.exe",
+      "sha256": "1CD938479B244AAB579DA02013C377172FA2FC756A59B029208AC7128B8DE49C"
+    },
+    {
+      "name": "current.exe",
+      "sha256": "1CCD2A8B992406A6C873EB492D3A00A8D56F16544A5632E763A93CF2DF2636F5"
+    }
+  ],
+  "structural_preflight": {
+    "timings_discarded": true,
+    "concurrent_work": true,
+    "baseline_stock_digest": "83ce5d69b9060b3f",
+    "candidate_stock_digest": "83ce5d69b9060b3f",
+    "direct_custom_digest": "5436392dbf1abd0b",
+    "scoped_custom_digest": "5436392dbf1abd0b"
+  }
+}

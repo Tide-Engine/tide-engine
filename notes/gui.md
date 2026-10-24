@@ -43,6 +43,31 @@ helpers, draw order, focus through row reorder/removal, nested numeric/text keys
 once-per-frame execution and cross-list early exits. `lsp_gui` covers catalog
 completion, snippets and fields. Final validation/measurements follow below.
 
+### Validation (2026-10-25)
+
+Windows, clang 23.1.2 and Node 24.22.1: all 2,640 enabled engine native tests
+and all 2,535 enabled engine web tests passed, including native GPU and browser
+WebGL/D3D11/WebGPU coverage. The pre-existing disabled Microduck right-turn
+case was not enabled. Focused GUI checks passed 88 runtime/profile cases,
+five new end-to-end cases and the editor checks. The production docs build
+passed. After merging origin/dev's worker fixes and Earth optimization, the
+notes-only prepend conflict retained both sections; all 32 native and 31 web
+overlap checks passed, including full runtime/LSP and worker/GUI/shader/order
+fixtures. The merged docs build also passed. No GUI source conflict occurred.
+
+The machine's TIDE_EXTERNAL_DIRS also configured private prototype checks.
+Eleven of twelve native extras passed; seventeen web extras passed. Cracked's
+fixed match-hash assertion fails on both native and WASI: expected
+`0a216d532fa6445c`, actual `bf53c0610c47764e` (816 bullets, one round). An original
+pre-GUI compiler rebuilt from `1807aa3b` generated a baseline Cracked executable
+that reproduced the identical hash/failure; no simulation runtime path changed
+here. The prototype pin was not modified. Once every engine web check had
+finished, the remaining fourteen optional prototype browser/render checks were
+stopped rather than running their up-to-25-minute playtests. Engine/prototype
+classification used CTest backtrace ownership, including the unlabeled Foldline
+render checks. Other OSes, Android, MinGW and sanitizers were not run locally;
+the Vulkan validation layer is unavailable. No workflow was manually dispatched.
+
 ### CPU measurement method
 
 `notes/gui-measurement.c` is a standalone recording probe, not a GPU/frame-rate
@@ -65,6 +90,23 @@ MSVC DLL runtime flags as the release build, and `TIDE_HIDDEN=1`. Run stock on
 both executables and `custom`/`direct` only on CURRENT. Sorted sample times are
 printed after the median/best time and output digest. No GUI timing claim is
 made from runs concurrent with builds/tests.
+
+### Timing status and frozen artifacts (2026-10-25)
+
+Timings are pending. The architecture parent confirmed that ongoing native and
+child correctness builds prevent a clean window and requested finishing this
+validated merge without waiting. No speedup, no-regression or GPU timing claim
+is made. `notes/gui-measurements.json` records the frozen executable/source
+identities and contains no measurement samples. The native executables remain
+under `build/gui-bench/` for a later measurement-only follow-up. GUI code is
+unchanged by the incoming worker merge.
+
+A nonisolated structural preflight verified exact expanded-command/text digests:
+baseline/candidate stock both `83ce5d69b9060b3f`; direct/scoped custom controls
+both `5436392dbf1abd0b`. Its timings were discarded. These digests establish
+equivalent recorded work, not a rendering-time result. The implementation adds
+no UI replay or separate renderer pass, reuses warmed draw-list buffers and
+keeps drawing snapshots out of ordinary layout records.
 
 ## Host pool on a frame (2026-10-24)
 
