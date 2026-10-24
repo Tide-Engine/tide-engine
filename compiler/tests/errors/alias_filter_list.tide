@@ -1,0 +1,4 @@
+// expect: systems take components and singletons
+using Values = List<int>;
+system Step(with Values) { }
+scene Main;

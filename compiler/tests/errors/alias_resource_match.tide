@@ -1,0 +1,6 @@
+// expect: rendering resources belong to this machine
+using Image = Texture;
+asset Image picture = "../e2e/assets/hero.png";
+singleton Probe { int width; }
+system Read(mut Probe probe) { probe.width = picture.size.x; }
+scene Main;

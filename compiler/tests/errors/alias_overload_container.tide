@@ -1,0 +1,6 @@
+// expect: 'Count' is already declared with these parameters
+using Scalar = int;
+using Values = List<Scalar>;
+int Count(Values values) { return values.count; }
+int Count(List<int> values) { return values.count; }
+scene Main;

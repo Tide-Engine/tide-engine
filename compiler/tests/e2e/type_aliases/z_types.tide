@@ -1,0 +1,9 @@
+namespace AliasImported
+{
+    struct Remote { int chosen; }
+}
+
+namespace AliasTypes
+{
+    struct Later { int number; }
+}

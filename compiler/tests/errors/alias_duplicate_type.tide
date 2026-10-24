@@ -1,0 +1,4 @@
+// expect: 'Value' is already declared
+using Value = int;
+struct Value { int number; }
+scene Main;

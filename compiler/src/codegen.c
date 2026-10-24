@@ -5070,6 +5070,8 @@ static void gen_entity_copies(gen *g, const bool put)
         const param *p = &code->params.items[i];
         if (p->type.kind != TY_COMPONENT || (p->mode != PARAM_READ && p->mode != PARAM_MUT)) continue;
         const decl *d = p->type.decl;
+        // Local code retains its readonly match snapshot, including blended values.
+        if (!d->is_local && has_local(g)) continue;
         const char *world = d->is_local ? "tide_l" : "tide_w";
         const char *name = local_cname(g, p->name);
         if (put && p->mode == PARAM_MUT) line(g, &g->c, "tide_store_%s(%s, tide_this, %s);", type_cname(d), world, name);

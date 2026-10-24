@@ -1,5 +1,126 @@
 # Language features, as tidec builds them
 
+## Transparent type aliases (2026-10-24)
+
+Owner-approved general language feature: `using Name = Type;` declares a
+namespace-scoped name for a closed type. An alias is shared across that
+namespace's files and imported/qualified like ordinary types. It can appear
+among declarations, including inside namespace blocks; file-scoped namespace
+headers and namespace imports precede aliases, as other declarations. The target
+reads names in the alias's own declaration scope, supports ordinary forward types and other aliases,
+and is checked even when unused. Generic alias declarations are not supported.
+
+DECL_ALIAS retains the authored alias_ref, canonical alias_type and resolving
+state for cycle diagnostics. Uses resolve the same underlying type in their
+ordinary placement, preserving numeric conversions, overload identity,
+component IDs/capabilities, local/resource restrictions and container ownership.
+There is no generated alias type, new runtime function, layout or ABI. Primitive
+constructors and static APIs, struct/component literals, enum members/conversion
+and byte/int backing aliases, arrays/optionals, Func signatures, configured
+shader stages and Asset<Mesh<V>> use the same existing checked paths. Authored
+type_ref.alias and expr.type_alias remain separate for navigation and rename.
+The outline reports an alias with its canonical target. Editor contracts are
+in notes/editors.md; decided syntax/semantics are in docs/spec.md and the
+namespaces/types user pages.
+
+Asset classification now inspects resolved types instead of the written
+Mesh/List/Map syntax, including aliased element/key types and qualified package
+alias chains. Singular bytes remain distinct from byte-file collections;
+existing invalid-asset diagnostics, pack kinds/importers and borrowing rules
+are retained. Shader alias literals require the same function bindings as
+their stages; a qualified stage resolves Func aliases in its own namespace.
+
+Coverage: type_aliases exercises primitives and numeric/static operations,
+canonical ECS/query/World access, arrays/optional/list/map/set values,
+forward/declaration-scope name binding, Func captures/mut arguments and configured
+stages. alias_assets checks packaged Mesh aliases, singular/list/map imports,
+borrowed helpers, Asset references, snapshot/pack roundtrips and reload.
+Diagnostic fixtures cover cycles through several type forms, duplicate names
+and canonical overloads, invalid/open targets, missing shader bindings and the
+underlying mesh/resource/callable restrictions.
+
+Scoped validation: both native E2E targets and 67 selected alias/asset checks
+pass. The complete 1,999-test pre-existing compiler diagnostic run found only
+three asset wording regressions; their original messages were restored and
+their checks pass. Grammar passes 290 cases. All 256 native LSP cases pass,
+including five alias protocol cases. The foreign-stage/missing-binding and
+aliased Random/grid-constructor regressions
+pass in the selected checks. Final full integration results are below.
+No determinism expectation was changed.
+
+Independent review found and corrected canonical cache initialization for
+forward aliases reached from Func signatures, optional aliases bypassing
+field/function restrictions, composite aliases reaching ECS component fallback,
+aliased enum backing during forward constant folding, container aliases escaping
+constant-type checks, and enum aliases in Stage/Channel/Filter/Wrap attributes.
+Enum storage also resolves lazily before a conversion: an array bound evaluated
+while initially resolving aliases must use the canonical backing width before
+the ordinary enum prepass. alias_canonical_array checks matching int[2] alias
+and field identities with the backing alias declared before or after the array.
+Dedicated regressions cover each; source occurrence identity also covers
+qualified constructors, World type arguments, bare component names and aliased
+enum attributes. The existing header-order rule is pinned for aliases too.
+Two nested-optional alias diagnostics preserve the existing prohibition on a
+T? holding another T? and pass in the final selected checks.
+
+Final integration after the GUI/local-worker merge: full warning-free native/web
+debug builds and CTest suites pass (2716 native, 2611 web enabled tests, with the
+unchanged disabled Microduck right-turn fixture). The production docs build and
+live Render3D browser example
+pass; its Mesh3D asset alias is exercised on Vulkan/OpenGL/WebGL/D3D11/WebGPU.
+The aliased-stage consumer also passes six FXC /WX compilations across three
+Unity APIs and both stages. Web uses the existing SDK 34 cache rather than
+the pinned SDK 24 toolchain; remaining platform coverage is in render3d.md.
+
+Separate existing gap: a used Func with fixed-array arguments has a generated-C
+type-emission failure even without aliases. This task preserves that boundary;
+alias_canonical_array checks canonical array identity through outline output.
+
+## Alias and local-worker merge boundary (2026-10-25)
+
+The merge retains canonical alias types at worker boundaries and both editor
+and grammar paths. Owned-value restrictions still inspect the underlying type,
+including nested callable/shader bindings, resources and worlds. Readonly grid
+input snapshots follow the later Local worker audit contract below.
+
+The integration audit found that reading an Asset<Mesh<V>> reference's Value
+was not recognized as a live-asset borrow. The merged worker_invalid_expr retains
+the asset_ref_value check alongside BIND_ASSET in the incoming complete AST walk.
+Asset handles remain refused recursively at worker boundaries.
+worker_asset_reference pins the direct read and
+worker_alias_asset_reference pins aliases plus helper forwarding. This is a
+compiler-only correction with no runtime or ABI change. Both negative fixtures
+pass in the combined native/web suites.
+
+The mixed Render3D/worker consumer exposed task-start component synchronization
+writing through a view's readonly match world and reloading its presented match
+values. gen_entity_copies now leaves match component copies intact in local
+execution, while retaining match-side and local-world component flush/refresh.
+Attached local fields continue through their existing separate publication path.
+The local_workers regression starts an awaiting task after an attached-field
+write, preserves the blended numeric match value across that start, and checks
+the attached result plus unchanged current/previous match hashes. This changes
+only compiler emission; there is no const cast, runtime API or ABI change.
+Focused native builds pass, with all 7 local_workers and 5 function_acts checks.
+The reported Render3D mixed consumer regenerates and passes strict C17 syntax
+checking with warnings as errors. Independent review cleared both merge fixes.
+Initial combined warning-free full native/web builds and all 2700/2595 enabled
+CTests pass (520.36 s / 783.59 s), retaining the existing disabled Microduck case.
+The production docs build, live Render3D WebGL example, 257 native LSP tests
+and 293 shared grammar tests pass. Toolchain limitations remain as recorded
+above and in render3d.md; no runtime interface or determinism pin changed.
+
+The subsequent origin/dev merge through a6ed9bfd retains custom GUI composition,
+the broader worker asset walk, owned readonly grid snapshots and both sets of
+notes. The readonly match-copy guard in gen_entity_copies and the attached-field,
+blended-value/hash regression survive the automatic merge. This conflict
+resolution changes no runtime code or design. Independent merge review is clean.
+Refreshed warning-free full native/web builds and all 2716/2611 enabled CTests
+pass (298.33 s / 539.43 s), with the existing disabled Microduck case unchanged.
+The refreshed production docs build and live Render3D example, all 257 native
+LSP tests and all 295 shared grammar tests pass. The web build retains the
+existing SDK 34 cache and the platform-coverage limits recorded in render3d.md.
+
 ## Custom GUI composition (2026-10-24)
 
 The owner delegated GUI implementation/API choices with performance first.

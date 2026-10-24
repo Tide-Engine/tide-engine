@@ -5135,6 +5135,159 @@ TIDE_TEST(lsp_namespace_blocks)
     TIDE_CHECK(has(last_sent(), "'using' goes at the top of the file"));
 }
 
+#define TYPE_ALIASES                                             \
+    "using Types;\n"                                            \
+    "namespace Types\n{\n"                                     \
+    "    struct Score { int value; }\n"                         \
+    "    using Points = Score;\n"                               \
+    "    using Count = int;\n"                                  \
+    "    using Scores = List<Points>;\n"                        \
+    "    enum Mode { Ready, Done }\n"                           \
+    "    using Phase = Mode;\n"                                 \
+    "    component Health { int value; }\n"                     \
+    "    using Life = Health;\n"                                \
+    "}\nscene Main;\n"
+
+TIDE_TEST(lsp_type_aliases)
+{
+    start();
+    static const char code[] = TYPE_ALIASES
+        "Count Twice(Count count) { return count * 2; }\n"
+        "Points Make() { return Points { value = 1 }; }\n"
+        "Scores Collect(Points point) { return [point]; }\n"
+        "system Heal(mut Life health) { health.value += 1; }\n"
+        "event(Spawned) Setup(with Main) { Spawn(Life); }\n"
+        "Types.Points Qualified() { return Make(); }\n";
+    open_document(code);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(hover_at(4, 13), "using Points = Score;"));
+    TIDE_CHECK(has(hover_at(13, 2), "using Count = int;") && has(hover_at(13, 2), "Transparent type alias"));
+    const char *definition = request_at("file:///test.tide", "textDocument/definition", 14, 2, "");
+    TIDE_CHECK(has(definition, "\"line\":4,\"character\":10"));
+    const char *refs = request_at("file:///test.tide", "textDocument/references", 4, 13,
+                                 "\"context\":{\"includeDeclaration\":true}");
+    TIDE_CHECK(count(refs, "\"uri\"") == 6);
+    request_at("file:///test.tide", "textDocument/rename", 4, 13, "\"newName\":\"Tally\"");
+    const char *renamed = apply_reply(code, "file:///test.tide");
+    TIDE_CHECK(count(renamed, "Tally") == 6 && !has(renamed, "Points"));
+    TIDE_CHECK(has(renamed, "struct Score") && has(renamed, "using Tally = Score;") && has(renamed, "using Scores = List<Tally>;"));
+    request_at("file:///test.tide", "textDocument/rename", 3, 13, "\"newName\":\"Result\"");
+    renamed = apply_reply(code, "file:///test.tide");
+    TIDE_CHECK(has(renamed, "struct Result") && has(renamed, "using Points = Result;") && has(renamed, "Points Make()"));
+    const char *symbols = request("textDocument/documentSymbol");
+    TIDE_CHECK(has(symbols, "\"name\":\"Points\",\"detail\":\"type alias\""));
+    TIDE_CHECK(has(request_with("workspace/symbol", "\"query\":\"Points\""), "\"name\":\"Points\""));
+
+    const char *reply = complete(TYPE_ALIASES "Count Echo($) { return 1; }\n");
+    TIDE_CHECK(offers(reply, "Count") && offers(reply, "Points") && offers(reply, "Scores") && offers(reply, "Life"));
+    reply = complete(TYPE_ALIASES "using More = $\n");
+    TIDE_CHECK(offers(reply, "int") && offers(reply, "List") && offers(reply, "Points") && offers(reply, "Life"));
+    reply = complete(TYPE_ALIASES "using More = List<$\n");
+    TIDE_CHECK(offers(reply, "Count") && offers(reply, "Score"));
+    reply = complete(TYPE_ALIASES "void Inspect(Scores scores) { var value = scores.$ }\n");
+    TIDE_CHECK(offers(reply, "count") && offers(reply, "Add"));
+    reply = complete(TYPE_ALIASES "Phase Read() { return Phase.$ }\n");
+    TIDE_CHECK(offers(reply, "Ready") && offers(reply, "Done") && offers(reply, "Count()"));
+    reply = complete(TYPE_ALIASES "void Inspect() { Types.$ }\n");
+    TIDE_CHECK(offers(reply, "Points") && offers(reply, "Count") && offers(reply, "Scores"));
+    reply = complete("scene Main;\n$\n");
+    TIDE_CHECK(offers(reply, "using alias") && has(reply, "using ${1:Name} = ${2:Type};"));
+
+    static const char messy[] = "namespace Types {\nusing Scores=Map<int,List<float>>;\n}\nscene Main;\n";
+    static const char tidy[] = "namespace Types\n{\n    using Scores = Map<int, List<float>>;\n}\nscene Main;\n";
+    format_reply(messy);
+    TIDE_CHECK(strcmp(apply_reply(messy, NULL), tidy) == 0);
+    TIDE_CHECK(has(format_reply(tidy), "\"result\":[]"));
+    open_document("using Broken = ;\nusing Count = int;\nscene Main;\nCount Echo(Count value) { return value; }\n");
+    TIDE_CHECK(has(hover_at(1, 8), "using Count = int;"));
+}
+
+TIDE_TEST(lsp_type_alias_source_spelling)
+{
+    start();
+    static const char code[] = "using Real = double;\nusing Count = int;\nusing Other = Real;\nscene Main;\n"
+        "Real Make(Count input) { return Real(input) + Real.PI; }\n";
+    open_document(code);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 0, 8,
+                               "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 5);
+    request_at("file:///test.tide", "textDocument/rename", 0, 8, "\"newName\":\"Scalar\"");
+    const char *renamed = apply_reply(code, "file:///test.tide");
+    TIDE_CHECK(count(renamed, "Scalar") == 5 && !has(renamed, "Real"));
+    TIDE_CHECK(has(renamed, "using Scalar = double;") && has(renamed, "Scalar(input) + Scalar.PI"));
+    TIDE_CHECK(has(hover_at(4, 47), "using Real = double;"));
+}
+
+TIDE_TEST(lsp_type_alias_enum_backing)
+{
+    start();
+    static const char code[] = "namespace Types { using ByteKind = byte; }\n"
+        "enum Flags : Types.ByteKind { None, Ready }\nscene Main;\n";
+    open_document("namespace Types { using ByteKind = byte; }\n"
+                  "enum Flags : Types.Byte$Kind { None, Ready }\nscene Main;\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "using ByteKind = byte;"));
+    TIDE_CHECK(has(request("textDocument/definition"), "\"line\":0,\"character\":24"));
+    TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 2);
+    request_with("textDocument/rename", "\"newName\":\"Bits\"");
+    const char *renamed = apply_reply(code, "file:///test.tide");
+    TIDE_CHECK(has(renamed, "using Bits = byte;") && has(renamed, "enum Flags : Types.Bits"));
+    open_document("enum Plain : by$te { None, Ready }\nscene Main;\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "one byte"));
+}
+
+TIDE_TEST(lsp_type_alias_qualified_constructors_and_world)
+{
+    start();
+    static const char code[] = "using Names;\nnamespace Names\n{\n"
+        "    using Number = float;\n    using Cells = Grid2<int>;\n    using Dice = Random;\n"
+        "    component Body { int value; }\n    using Part = Body;\n}\nscene Main;\n"
+        "Names.Number MakeNumber() { return Names.Number(1); }\n"
+        "Dice MakeDice() { return Dice(7); }\n"
+        "Names.Dice MakeQualifiedDice() { return Names.Dice(7); }\n"
+        "local singleton Data { Names.Cells cells = Names.Cells(2, 2); }\n"
+        "event(Spawned) Setup(mut World world, with Main) { var entity = Spawn(Names.Part); "
+        "var part = world.Get<Names.Part>(entity); world.Set<Names.Part>(entity, part); }\n";
+    open_document(code);
+    TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 3, 12,
+                               "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 3);
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 4, 12,
+                               "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 3);
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 5, 12,
+                               "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 5);
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 7, 12,
+                               "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 4);
+    request_at("file:///test.tide", "textDocument/rename", 7, 12, "\"newName\":\"Bit\"");
+    const char *renamed = apply_reply(code, "file:///test.tide");
+    TIDE_CHECK(count(renamed, "Bit") == 4 && !has(renamed, "Part"));
+    TIDE_CHECK(has(renamed, "Spawn(Names.Bit)") && has(renamed, "world.Get<Names.Bit>") && has(renamed, "world.Set<Names.Bit>"));
+    TIDE_CHECK(has(renamed, "component Body") && has(renamed, "using Bit = Body;"));
+}
+
+TIDE_TEST(lsp_type_alias_enum_attributes)
+{
+    start();
+    static const char code[] = "using Scheduling;\nnamespace Scheduling\n{\n"
+        "    enum Stages { Early, Late }\n    using Phase = Stages;\n}\nscene Main;\n"
+        "[Stage(Phase.Early)]\nview First() { }\n"
+        "[Before(Scheduling.Phase.Late), After(Phase.Early)]\nview Middle() { }\n"
+        "[Stage(Phase.Late)]\nview Last() { }\n"
+        "[Channel(Phase.Early)]\ncommand Change { int value; }\n";
+    open_document(code);
+    TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
+    TIDE_CHECK(has(hover_at(7, 9), "using Phase = Stages;"));
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 4, 12,
+                               "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 6);
+    request_at("file:///test.tide", "textDocument/rename", 4, 12, "\"newName\":\"Step\"");
+    const char *renamed = apply_reply(code, "file:///test.tide");
+    TIDE_CHECK(count(renamed, "Step") == 6 && !has(renamed, "Phase"));
+    TIDE_CHECK(has(renamed, "Before(Scheduling.Step.Late)") && has(renamed, "Channel(Step.Early)"));
+    request_at("file:///test.tide", "textDocument/rename", 3, 21, "\"newName\":\"Initial\"");
+    renamed = apply_reply(code, "file:///test.tide");
+    TIDE_CHECK(count(renamed, "Initial") == 4 && has(renamed, "using Phase = Stages;"));
+}
+
 TIDE_TEST(lsp_rename_refusals)
 {
     start();
@@ -10968,6 +11121,20 @@ TIDE_TEST(lsp_asset_textures_and_declared_sampling)
     open_uri(uri_main, "scene Main { }\nlocal singleton Art\n{\n    List<Texture> frames;\n}\n");
     TIDE_CHECK(has(last_sent(), "a list or a map can't hold rendering resources"));
     TIDE_CHECK(has(last_sent(), "asset List<Texture> frames"));
+
+    static const char sampling_aliases[] = "using Sampling;\n"
+        "namespace Sampling { using Sampler = Filter; using Address = Wrap; }\n"
+        "[Filter(Sampler.Trilinear), Wrap(Sampling.Address.Repeat)]\n"
+        "asset Texture tiles = \"art/tile.png\";\nscene Main;\n";
+    open_uri(uri_main, sampling_aliases);
+    TIDE_CHECK(!has(sent_with(uri_main), "\"severity\":1"));
+    TIDE_CHECK(has(request_at(uri_main, "textDocument/hover", 2, 10, ""), "using Sampler = Filter;"));
+    TIDE_CHECK(has(request_at(uri_main, "textDocument/hover", 2, 44, ""), "using Address = Wrap;"));
+    TIDE_CHECK(count(request_at(uri_main, "textDocument/references", 2, 10,
+                               "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 2);
+    request_at(uri_main, "textDocument/rename", 2, 10, "\"newName\":\"Pick\"");
+    const char *sampling_renamed = apply_reply(sampling_aliases, uri_main);
+    TIDE_CHECK(has(sampling_renamed, "using Pick = Filter;") && has(sampling_renamed, "Filter(Pick.Trilinear)"));
 
     static const char raw_file[] = "[Raw] asset Texture masks = \"art/tile.png\";\n"
                                    "scene Main { }\n"

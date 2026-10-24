@@ -1,0 +1,5 @@
+// expect: fields can't hold components
+using OptionalHealth = Health?;
+component Health { int value; }
+component Holder { OptionalHealth value; }
+scene Main;

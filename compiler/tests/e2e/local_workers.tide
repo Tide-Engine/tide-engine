@@ -16,6 +16,8 @@ local singleton Meshing
     MeshData result;
     bool started;
     bool finished;
+    float matchBefore;
+    float matchAfter;
 }
 
 int Face(int voxel) { return voxel * 3 + 1; }
@@ -42,16 +44,28 @@ async void Rebuild(mut Meshing meshing)
     meshing.finished = true;
 }
 
-view Prepare(mut Meshing meshing)
+view Prepare(mut Meshing meshing, mut WorkerPreview preview)
 {
     if (!meshing.started)
     {
         meshing.started = true;
+        preview.result = 41;
+        meshing.matchBefore = preview.value;
         Rebuild(meshing);
+        meshing.matchAfter = preview.value;
+        preview.result += 1;
     }
 }
 
 scene Main;
+
+component WorkerPreview
+{
+    [Position] float value;
+    local int result;
+}
+
+event(Spawned) Setup(with Main) { Spawn(WorkerPreview { value = 7 }); }
 
 component RenderTask
 {

@@ -1,0 +1,5 @@
+// expect: a list can't hold a Mesh
+using Model = Mesh<Vertex3>;
+using Models = List<Model>;
+local singleton Props { Models models; }
+scene Main;

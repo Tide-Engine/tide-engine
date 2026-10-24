@@ -6,6 +6,10 @@ singleton Simulation { int marker = 37; }
 local singleton PbrResults
 {
     float3[27] lighting;
+    float3[12] direct;
+    float3[5] multipleLights;
+    float[20] point;
+    float[19] cone;
     float[8] transfer;
     float3 roundtrip;
     float3[5] presentation;
@@ -101,6 +105,82 @@ view Evaluate(mut PbrResults results)
     results.lighting[25] = EvaluatePbr(surface, up, up, white, 1);
     results.lighting[26] = EvaluatePbr(surface, float3(Math.Sqrt(15) / 4, 0.25, 0),
         float3(-Math.Sqrt(15) / 4, 0.25, 0), white, 1);
+
+    surface = Surface { albedo = float3(0.5), roughness = 1, emission = float3(0.1, 0.2, 0.3) };
+    results.direct[0] = EvaluateDirectPbr(surface, up, up, white, 1);
+    surface.normal = float3(0);
+    results.direct[1] = EvaluateDirectPbr(surface, up, up, white, 1);
+    surface.normal = up;
+    results.direct[2] = EvaluateDirectPbr(surface, float3(0), up, white, 1);
+    results.direct[3] = EvaluateDirectPbr(surface, up, float3(0), white, 1);
+    results.direct[4] = EvaluateDirectPbr(surface, -up, up, white, 1);
+    results.direct[5] = EvaluateDirectPbr(surface, up, -up, white, 1);
+    results.direct[6] = EvaluateDirectPbr(surface, up, up, white, 0);
+    results.direct[7] = EvaluateDirectPbr(surface, up, up, white, -1);
+    results.direct[8] = EvaluateDirectPbr(surface, up, up, white, 2);
+    results.direct[9] = EvaluateDirectPbr(surface, up, up, float3(-1, 0, 2), 1);
+    results.direct[10] = EvaluateDirectPbr(surface, float3(1, 1e-5, 0), float3(-1, 1e-5, 0), white, 1);
+    surface.emission = float3(-1, -2, -3);
+    results.direct[11] = EvaluateDirectPbr(surface, up, up, white, 1);
+    results.multipleLights[3] = EvaluatePbr(surface, up, up, white, 1);
+    surface.emission = float3(0.1, 0.2, 0.3);
+    float point = PointAttenuation(2, 4);
+    float cone = SpotAttenuation(0.5, 0.75, 0.25);
+    results.multipleLights[0] = Math.Max(surface.emission, float3(0))
+        + EvaluateDirectPbr(surface, up, up, float3(1, 0, 0), 1)
+        + EvaluateDirectPbr(surface, up, up, float3(0, 2, 0) * point, 1)
+        + EvaluateDirectPbr(surface, up, up, float3(0, 0, 4) * point * cone, 0.25);
+    results.multipleLights[1] = Math.Max(surface.emission, float3(0))
+        + EvaluateDirectPbr(surface, up, -up, white, 1)
+        + EvaluateDirectPbr(surface, up, up, white * PointAttenuation(4, 4), 1)
+        + EvaluateDirectPbr(surface, up, up, white * SpotAttenuation(-1, 0.75, 0.25), 1);
+    surface.emission = float3(-1, 0.2, -3);
+    results.multipleLights[2] = Math.Max(surface.emission, float3(0))
+        + EvaluateDirectPbr(surface, up, up, white, 1)
+        + EvaluateDirectPbr(surface, up, up, white, 0.5)
+        + EvaluateDirectPbr(surface, up, up, white, 0.25);
+    results.multipleLights[4] = EvaluatePbr(surface, up, -up, white, 1);
+
+    results.point[0] = PointAttenuation(1, 2);
+    results.point[1] = PointAttenuation(2, 4);
+    results.point[2] = PointAttenuation(3, 4);
+    results.point[3] = PointAttenuation(0, 2);
+    results.point[4] = PointAttenuation(-1, 2);
+    results.point[5] = PointAttenuation(0.005, 0.01);
+    results.point[6] = PointAttenuation(0.01, 0.02);
+    results.point[7] = PointAttenuation(2, 2);
+    results.point[8] = PointAttenuation(3, 2);
+    results.point[9] = PointAttenuation(0, 0);
+    results.point[10] = PointAttenuation(1, -1);
+    results.point[11] = PointAttenuation(0, -1);
+    results.point[12] = PointAttenuation(0, 0.001);
+    results.point[13] = PointAttenuation(0.001, 0.001);
+    results.point[14] = PointAttenuation(1.999, 2);
+    results.point[15] = PointAttenuation(0.02, 0.04);
+    results.point[16] = PointAttenuation(18446744073709551616.0, 36893488147419103232.0);
+    results.point[17] = PointAttenuation(0.5, 1);
+    results.point[18] = PointAttenuation(0.9999999403953552, 1);
+    results.point[19] = PointAttenuation(1.0000001192092896, 1);
+
+    results.cone[0] = SpotAttenuation(0.75, 0.75, 0.25);
+    results.cone[1] = SpotAttenuation(0.25, 0.75, 0.25);
+    results.cone[2] = SpotAttenuation(0.5, 0.75, 0.25);
+    results.cone[3] = SpotAttenuation(0.375, 0.75, 0.25);
+    results.cone[4] = SpotAttenuation(0.625, 0.75, 0.25);
+    results.cone[5] = SpotAttenuation(1, 0.75, 0.25);
+    results.cone[6] = SpotAttenuation(-1, 0.75, 0.25);
+    results.cone[7] = SpotAttenuation(2, 0.75, 0.25);
+    results.cone[8] = SpotAttenuation(-2, 0.75, 0.25);
+    results.cone[9] = SpotAttenuation(0.5, 0.5, 0.5);
+    results.cone[10] = SpotAttenuation(0.49, 0.5, 0.5);
+    results.cone[11] = SpotAttenuation(0.51, 0.5, 0.5);
+    results.cone[12] = SpotAttenuation(0.75, 0.25, 0.75);
+    results.cone[13] = SpotAttenuation(0.74, 0.25, 0.75);
+    results.cone[14] = SpotAttenuation(0.5, 2, -1);
+    results.cone[15] = SpotAttenuation(1, -1, 2);
+    results.cone[16] = SpotAttenuation(0.999, -1, 2);
+    results.cone[17] = SpotAttenuation(0, 0, 0);
+    results.cone[18] = SpotAttenuation(-0.001, 0, 0);
 
     results.transfer[0] = SrgbToLinear(0);
     results.transfer[1] = SrgbToLinear(1);

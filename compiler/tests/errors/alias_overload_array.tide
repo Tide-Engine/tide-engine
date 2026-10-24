@@ -1,0 +1,5 @@
+// expect: 'Pick' is already declared with these parameters
+using Values = int[3];
+int Pick(Values values) { return values[0]; }
+int Pick(int[3] values) { return values[0]; }
+scene Main;

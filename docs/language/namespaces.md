@@ -36,7 +36,7 @@ event(Spawned) Setup(with Main)
 ```
 
 - A file has at most one `namespace Name;` line, and files without one are in the global namespace. Namespaces can be dotted: `namespace Game.Combat;`.
-- `namespace Name;` and `using` come before any declaration.
+- `namespace Name;` and namespace imports (`using Combat;`) come before any declaration.
 - A plain name is looked up in the namespace of the code that writes it, then the namespaces around it out to the global namespace, then the `using` ones. So a name your game declares itself always means yours, even when a namespace you import has one too: write the namespace, `Physics.Body`, for the imported one. If two `using` namespaces both have a name that nothing of yours has, it's ambiguous: write the namespace.
 - Qualified names work wherever a type is named: parameters (`mut Combat.Health health`), `with` and `without`, component values, `Spawn`, `Add` and `Remove`, and `[Before]` and `[After]` (`[After(Physics.Gravity)]`). They work for constants too: `Combat.CRIT_MULTIPLIER`.
 - The same name can be declared in different namespaces.
@@ -79,10 +79,39 @@ event(Spawned) Setup(with Main)
 - A block goes wherever a declaration does, and one can be inside another: `Rules` above is `Combat.Rules`. A block's name can be dotted, `namespace Game.Items { }`.
 - A block is inside the namespace it's written in. In a file that starts with `namespace Game;`, the block `namespace Combat { }` is `Game.Combat`.
 - The same namespace can be a block more than once, in one file or in several, and a file's own namespace somewhere else: it's one namespace, and each sees what the others declare by its plain name.
-- Code in a block finds plain names in its block's namespace first, then the ones around it, then the file's `using` ones. `using` lines stay at the top of the file, and are for every block in it.
+- Code in a block finds plain names in its block's namespace first, then the ones around it, then the file's imported namespaces. Namespace imports (`using Combat;`) stay at the top of the file, and are for every block in it.
 - A name with a namespace is written whole, from the outermost one: `Combat.Rules.Cap`, inside `Combat` too.
 - A block changes no order: its systems run where they're written in the file, like any others.
 - Attributes, `local`, `virtual` and `override` go before the declarations inside a block, not before the block.
+
+### Type aliases
+
+`using Name = Type;` gives a closed type another name. Declare it alongside other namespace declarations, at the top level of a file or inside a namespace block.
+
+A file's `namespace Game;` header and namespace imports go before its aliases, as they go before other declarations. Namespace blocks can follow aliases and other declarations.
+
+```csharp
+namespace Game
+{
+    using Point = float3;
+    using Points = List<Point>;
+    using Matrix = float4x4;
+    using Health = Combat.Health;
+
+    struct Path
+    {
+        Points points;
+    }
+}
+```
+
+`Point` is exactly `float3`, and `Points` is exactly `List<float3>`. The alias keeps the underlying type's conversions, members, defaults and restrictions. An alias for a component still names that same component; it doesn't give an entity a second component type. Functions whose parameter types differ only by an alias have the same signature.
+
+Aliases belong to their namespace, like structs: another file can write `Game.Point`, or `using Game;` and then `Point`. A top-level alias in a file with `namespace Game;` also belongs to `Game`; without a namespace it is global. The target's names are resolved where the alias is declared.
+
+The target can be a primitive, a built-in vector or matrix, a struct, an enum, a component or a closed container type, including qualified names and other aliases. Alias chains are allowed; a cycle is an error. Supply every type argument: `using Points = List<float3>;` is valid, while generic alias declarations such as `using Points<T> = List<T>;` aren't supported.
+
+The `=` distinguishes a type alias from a namespace import: `using Combat;` imports names for that file, while `using Health = Combat.Health;` declares one alias in its namespace.
 
 ## Code for other versions of tide
 

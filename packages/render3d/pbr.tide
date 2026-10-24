@@ -27,17 +27,17 @@ void StandardSurface(SurfaceInput input, mut Surface surface)
 // Direct metallic-roughness BRDF: GGX, height-correlated Smith and Schlick,
 // with the non-reflected, non-metallic energy going to Lambert diffuse.
 // Directions point away from the surface (lightDirection is TOWARD the light).
-// Radiance and the returned color are linear HDR; emission is included once.
-float3 EvaluatePbr(Surface surface, float3 viewDirection, float3 lightDirection,
-                   float3 radiance, float visibility)
+// Radiance and the returned color are linear HDR. Sum direct contributions,
+// then add Math.Max(surface.emission, float3(0)) once for the whole surface.
+float3 EvaluateDirectPbr(Surface surface, float3 viewDirection, float3 lightDirection,
+                         float3 radiance, float visibility)
 {
     float3 n = Math.Normalize(surface.normal);
     float3 v = Math.Normalize(viewDirection);
     float3 l = Math.Normalize(lightDirection);
     float noL = Math.Clamp(Math.Dot(n, l), 0, 1);
     float noV = Math.Clamp(Math.Dot(n, v), 0, 1);
-    float3 emission = Math.Max(surface.emission, float3(0));
-    if (noL <= 0 || noV <= 0) return emission;
+    if (noL <= 0 || noV <= 0) return float3(0);
 
     float3 h = Math.Normalize(v + l);
     float noH = Math.Clamp(Math.Dot(n, h), 0, 1);
@@ -64,8 +64,47 @@ float3 EvaluatePbr(Surface surface, float3 viewDirection, float3 lightDirection,
     float3 fresnel = f0 + (float3(1) - f0) * fifth;
     float3 specular = distribution * smith * fresnel;
     float3 diffuse = (float3(1) - fresnel) * (1 - metallic) * albedo / Math.PI;
-    return emission + (diffuse + specular) * Math.Max(radiance, float3(0))
+    return (diffuse + specular) * Math.Max(radiance, float3(0))
         * (noL * Math.Clamp(visibility, 0, 1));
+}
+
+// Single-light convenience wrapper, including emission exactly once.
+float3 EvaluatePbr(Surface surface, float3 viewDirection, float3 lightDirection,
+                   float3 radiance, float visibility)
+{
+    return Math.Max(surface.emission, float3(0))
+        + EvaluateDirectPbr(surface, viewDirection, lightDirection, radiance, visibility);
+}
+
+// Finite-range inverse-square falloff. Distance and range are world units;
+// negative distance is treated as zero, and nonpositive range disables a light.
+// A .01-world-unit source radius bounds attenuation at 10000 at the source.
+float PointAttenuation(float distance, float range)
+{
+    if (range <= 0) return 0;
+    float d = Math.Max(distance, 0);
+    if (d >= range) return 0;
+    float ratio = d / range;
+    float square = ratio * ratio;
+    float window = Math.Clamp(1 - square * square, 0, 1);
+    // Preserve representable subnormal falloff when squaring an extreme
+    // distance would overflow. The ordinary path needs only one division.
+    if (d > 1e19) return (window * window / d) / d;
+    return window * window / Math.Max(d * d, 0.0001);
+}
+
+// cosine is the dot of the light's forward direction and the normalized
+// light-to-surface direction. Supply cosines of cone half-angles in [0, pi/2];
+// they may be prepared once per light. Inner is clamped to be inside outer.
+// Equal angles form a hard edge, including the cone boundary.
+float SpotAttenuation(float cosine, float innerCosine, float outerCosine)
+{
+    float outer = Math.Clamp(outerCosine, 0, 1);
+    float inner = Math.Clamp(innerCosine, outer, 1);
+    float angle = Math.Clamp(cosine, -1, 1);
+    if (inner <= outer) return angle >= outer ? 1 : 0;
+    float t = Math.Clamp((angle - outer) / (inner - outer), 0, 1);
+    return t * t * (3 - 2 * t);
 }
 
 float SrgbToLinear(float value)

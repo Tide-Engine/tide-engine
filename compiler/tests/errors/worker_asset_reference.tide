@@ -1,0 +1,3 @@
+// expect: can't read live assets; capture their data before starting the worker
+local worker int Build(Asset<Mesh<Vertex3>> reference) { return reference.Value.vertices.count; }
+scene Main;

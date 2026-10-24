@@ -1,0 +1,4 @@
+// expect: 'Value' is already declared
+int Value() { return 1; }
+using Value = int;
+scene Main;

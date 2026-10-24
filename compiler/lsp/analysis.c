@@ -500,7 +500,12 @@ static void type_tree(const type_ref *r, const type t)
         }
         return;
     }
-    type_written(r->at, r->name_at, r->name, t);
+    if (r->alias) {
+        qualifier_ref(r->at, r->name_at, r->name);
+        const str name = last_part(r->name);
+        add_occ((occurrence){.at = r->name_at, .len = name.len, .kind = OCC_TYPE,
+                             .decl = r->alias, .name = name, .type = t});
+    } else type_written(r->at, r->name_at, r->name, t);
 }
 
 // A type where the parser kept a tree, or only its text (one the checker made).
@@ -514,6 +519,7 @@ static void type_place(const type_ref *r, const loc qual_at, const loc at, const
 static type type_of_decl(const decl *d)
 {
     if (!d) return (type){TY_ERROR, NULL};
+    if (d->kind == DECL_ALIAS) return d->alias_type;
     const type_kind kind = d->kind == DECL_COMPONENT ? TY_COMPONENT
                          : d->kind == DECL_SINGLETON ? TY_SINGLETON
                          : d->kind == DECL_INPUT     ? TY_INPUT
@@ -789,7 +795,7 @@ static void walk_value(const expr *e)
             break;
         case BIND_TYPE:
             o.kind = OCC_TYPE;
-            o.decl = e->type_decl;
+            o.decl = e->type_alias ? e->type_alias : e->type_decl;
             break;
         case BIND_FIELD:
             o.kind = OCC_FIELD;
@@ -824,6 +830,11 @@ static void walk_value(const expr *e)
             }
             break;
         }
+        if (o.kind == OCC_TYPE && e->type_alias) {
+            o.decl = e->type_alias;
+            o.name = e->type_alias->name;
+            o.len = o.name.len;
+        }
         add_occ(o);
         break;
     }
@@ -845,9 +856,9 @@ static void walk_value(const expr *e)
             }
             break;
         }
-        if (e->bind == BIND_TYPE && e->type_decl) { // Combat.Health, in Spawn(Combat.Health)
+        if (e->bind == BIND_TYPE && (e->type_decl || e->type_alias)) { // Combat.Health, in Spawn(Combat.Health)
             o.kind = OCC_TYPE;
-            o.decl = e->type_decl;
+            o.decl = e->type_alias ? e->type_alias : e->type_decl;
         } else if (e->bind == BIND_SHADER && e->type_decl) { // Effects.Shade, in Draw.Mesh(..., Effects.Shade)
             o.kind = OCC_SYSTEM;
             o.decl = e->type_decl;
@@ -883,23 +894,28 @@ static void walk_value(const expr *e)
 
     case E_CALL: {
         occurrence o = {.at = e->at, .len = e->name.len, .name = e->name, .type = e->type, .call = e->call, .write = e == walk_written};
+        if (e->type_alias) {
+            o.name = e->type_alias->name;
+            o.len = o.name.len;
+        }
         // cells[x, y] is cells[int2(x, y)] to the checker: that int2 isn't in the source.
         const int name = token_at(e->at);
-        const bool in_source = name >= 0 && str_eq(A.files[e->at.file].toks[name].text, e->name);
+        const bool in_source = name >= 0 && str_eq(A.files[e->at.file].toks[name].text, o.name);
         if (e->call != CALL_NONE && in_source) vec_push(A.calls, e);
         if (converts_enum(e) && in_source) { // Card(2): the enum, even where its argument is refused
             o.kind = OCC_TYPE;
-            o.decl = e->type_decl;
+            o.decl = e->type_alias ? e->type_alias : e->type_decl;
             add_occ(o);
         } else if ((e->call == CALL_CONSTRUCT || e->call == CALL_NEW_GRID || (e->resource_operation && e->type.kind == TY_RENDER_TARGET)) && in_source) {
             o.kind = OCC_TYPE;
+            o.decl = e->type_alias;
             add_occ(o);
         } else if (e->call == CALL_SPAWN || e->call == CALL_SEND) {
             o.kind = OCC_FUNCTION;
             add_occ(o);
         } else if (e->call == CALL_BUILTIN && in_source && e->type.kind == TY_STRUCT && e->type.decl == A.prog->random) {
             o.kind = OCC_TYPE; // Random(seed): the type it makes
-            o.decl = A.prog->random;
+            o.decl = e->type_alias ? e->type_alias : A.prog->random;
             add_occ(o);
         } else if (e->call == CALL_METHOD || e->call == CALL_FUNCTION || e->call == CALL_EFFECT) { // IsDead() in a method, or Heal(...)
             o.kind = e->call == CALL_METHOD ? OCC_METHOD : OCC_FUNCTION;
@@ -925,6 +941,10 @@ static void walk_value(const expr *e)
         }
         occurrence o = {.at = e->at, .len = e->name.len, .name = e->name, .type = e->type, .object_type = e->object->type,
                         .call = e->call, .write = e == walk_written};
+        if (e->type_alias) {
+            o.name = e->type_alias->name;
+            o.len = o.name.len;
+        }
         if (e->call != CALL_NONE) vec_push(A.calls, e);
         // world.Get<Health>(e): the component in <>; Json.Read<LobbyInfo>(text): the type its T? holds
         if (e->type_arg.len > 0) {
@@ -941,9 +961,11 @@ static void walk_value(const expr *e)
                 }
             }
             add_occ(o);
-        } else if (converts_enum(e)) { // Combat.Stance(2): the enum, after its namespace
+        } else if (converts_enum(e) || (e->type_alias && (e->call == CALL_CONSTRUCT || e->call == CALL_NEW_GRID
+                   || (e->call == CALL_BUILTIN && e->type.kind == TY_STRUCT && e->type.decl == A.prog->random)))) {
+            // A qualified constructor: its namespace is walked above, its authored alias here.
             o.kind = OCC_TYPE;
-            o.decl = e->type_decl;
+            o.decl = e->type_alias ? e->type_alias : e->type_decl;
             o.object_type = (type){TY_ERROR, NULL};
             add_occ(o);
         } else if (e->call == CALL_ENUM_COUNT || e->call == CALL_SKINNED || (e->resource_operation && (e->object->type.kind == TY_RENDER_TARGET || e->object->type.kind == TY_CUBEMAP))) {
@@ -1007,8 +1029,8 @@ static void walk_value(const expr *e)
         if (e->type_decl) {
             qualifier_ref(e->qual_at, e->at, e->name);
             const str name = last_part(e->name);
-            const decl *d = e->type_decl->binding_of ? e->type_decl->binding_of : e->type_decl;
-            add_occ((occurrence){.at = e->at, .len = name.len, .kind = OCC_TYPE, .decl = d, .name = name});
+            const decl *d = e->type_alias ? e->type_alias : e->type_decl->binding_of ? e->type_decl->binding_of : e->type_decl;
+            add_occ((occurrence){.at = e->at, .len = name.len, .kind = OCC_TYPE, .decl = d, .name = name, .type = e->type});
         }
         for (int i = 0; i < e->inits.count; i++) {
             const field_init *init = &e->inits.items[i];
@@ -1255,6 +1277,35 @@ static int occ_order(const void *a, const void *b)
     return c != 0 ? c : x->order - y->order;
 }
 
+// Attribute qnames keep the canonical enum for scheduling and asset sampling.
+// Recover its authored alias with the declaration's namespace lookup order.
+static const decl *attribute_enum_alias(const unit *u, const str text, const decl *enumeration)
+{
+    const bool qualified = memchr(text.ptr, '.', (size_t)text.len) != NULL;
+    str ns = u ? u->ns : (str){"", 0};
+    for (;;) {
+        for (int i = 0; i < A.prog->decls.count; i++) {
+            const decl *d = A.prog->decls.items[i];
+            if (!has_name(d) || d->kind == DECL_SYSTEM || d->kind == DECL_FUNCTION || d->kind == DECL_METHOD
+                || d->kind == DECL_CONST || d->kind == DECL_ASSET || d->kind == DECL_SHADER || d->kind == DECL_PREFAB) continue;
+            const str home = decl_home(d) ? decl_home(d)->ns : (str){"", 0};
+            if (qualified ? !str_eq(d->qualified, text) : !str_eq(d->name, text) || !str_eq(home, ns)) continue;
+            return d->kind == DECL_ALIAS && d->alias_type.kind == TY_ENUM && d->alias_type.decl == enumeration ? d : NULL;
+        }
+        if (qualified || ns.len == 0) break;
+        while (ns.len > 0 && ns.ptr[ns.len - 1] != '.') ns.len--;
+        if (ns.len > 0) ns.len--;
+    }
+    for (int k = 0; !qualified && u && k < u->usings.count; k++) {
+        for (int i = 0; i < A.prog->decls.count; i++) {
+            const decl *d = A.prog->decls.items[i];
+            if (d->kind == DECL_ALIAS && str_eq(d->name, text) && decl_home(d) && str_eq(decl_home(d)->ns, u->usings.items[k])
+                && d->alias_type.kind == TY_ENUM && d->alias_type.decl == enumeration) return d;
+        }
+    }
+    return NULL;
+}
+
 static void index_program(void)
 {
     // `namespace X;` and `using Y;` at the top of each file, and each
@@ -1296,7 +1347,13 @@ static void index_program(void)
                     const int member_token = token_at(q->name_at);
                     if (member_token >= 2) {
                         const loc enum_at = A.files[q->at.file].toks[member_token - 2].at;
-                        type_written(q->at, enum_at, enum_name, (type){TY_ENUM, q->decl});
+                        const decl *alias = attribute_enum_alias(decl_home(d), enum_name, q->decl);
+                        if (alias) {
+                            qualifier_ref(q->at, enum_at, enum_name);
+                            const str alias_name = last_part(enum_name);
+                            add_occ((occurrence){.at = enum_at, .len = alias_name.len, .kind = OCC_TYPE,
+                                                 .decl = alias, .name = alias_name, .type = alias->alias_type});
+                        } else type_written(q->at, enum_at, enum_name, (type){TY_ENUM, q->decl});
                     }
                     add_occ((occurrence){.at = q->name_at, .len = name.len, .kind = OCC_ENUM_MEMBER,
                                          .decl = q->decl, .name = name});
@@ -1332,7 +1389,11 @@ static void index_program(void)
             continue;
         }
         add_occ((occurrence){.at = d->at, .len = d->name.len, .kind = OCC_TYPE, .declaration = true, .decl = d,
-                             .name = d->name});
+                             .name = d->name, .type = type_of_decl(d)});
+        if (d->kind == DECL_ALIAS) {
+            if (d->alias_ref) type_tree(d->alias_ref, d->alias_type);
+            continue;
+        }
         if (d->kind == DECL_PREFAB && d->prefab_checked) {
             walk_prefab_bases(d->prefab_root);
             for (int n = 0; n < d->prefab_checked->entities.count; n++) {
@@ -1342,8 +1403,9 @@ static void index_program(void)
             continue;
         }
         if (d->kind == DECL_ENUM && d->backing.len > 0) { // enum Voxel : byte
-            add_occ((occurrence){.at = d->backing_at, .len = d->backing.len, .kind = OCC_TYPE, .name = d->backing,
-                                 .type = {TY_INT, NULL}, .backing = true});
+            if (d->backing_ref && d->backing_ref->alias) type_tree(d->backing_ref, d->backing_ref->alias->alias_type);
+            else add_occ((occurrence){.at = d->backing_at, .len = d->backing.len, .kind = OCC_TYPE, .name = d->backing,
+                                      .type = {TY_INT, NULL}, .backing = true});
         }
         for (int m = 0; m < d->members.count; m++) {
             const enum_member *member = &d->members.items[m];
@@ -1680,6 +1742,7 @@ static const char *decl_keyword(const decl *d)
     case DECL_RESULT: return "result";
     case DECL_CONST: return "const";
     case DECL_ASSET: return "asset";
+    case DECL_ALIAS: return "using";
     case DECL_SETTINGS: return "settings";
     case DECL_SHADER: return d->is_frag ? "frag" : "vert";
     case DECL_SYSTEM: return d->is_view ? "view" : d->is_handler ? d->is_command ? "command" : "event" : "system";
@@ -1691,6 +1754,7 @@ static const char *decl_keyword(const decl *d)
 // and "local component" for what's local.
 static const char *decl_what(const decl *d)
 {
+    if (d->kind == DECL_ALIAS) return "type alias";
     if (d->is_worker) return "local worker";
     const char *what = d->kind == DECL_SYSTEM && d->is_handler ? d->is_command ? "command handler" : "event handler"
                      : d->extern_system                        ? "extern system" // Written in C
@@ -1898,6 +1962,11 @@ static const char *unity_prefab_asset(const decl *d)
 
 static void format_data_decl(const decl *d, sb *out)
 {
+    if (d->kind == DECL_ALIAS) {
+        sb_printf(out, "using " STR_FMT " = %s;", STR_ARG(d->name),
+                  d->alias_ref ? str_to_cstr(d->alias_ref->text) : type_name(d->alias_type));
+        return;
+    }
     if (d->kind == DECL_PREFAB) {
         format_prefab(d, out);
         return;
@@ -2963,7 +3032,9 @@ static void describe(const occurrence *o, sb *out)
         } else if (o->decl) {
             format_data_decl(o->decl, &code);
             code_block(out, code.data);
-            if (o->decl->kind == DECL_PREFAB && unity_prefab_asset(o->decl)) {
+            if (o->decl->kind == DECL_ALIAS) {
+                sb_printf(out, "\n\nTransparent type alias for `%s`; it has the same type and restrictions.", type_name(o->decl->alias_type));
+            } else if (o->decl->kind == DECL_PREFAB && unity_prefab_asset(o->decl)) {
                 sb_printf(out, "\n\nFrom `%s` in the Unity project, as tide read it.", unity_prefab_asset(o->decl));
             } else if (o->decl->kind == DECL_EVENT && o->decl->builtin) sb_printf(out, "\n\n%s", builtin_event_doc(A.prog, o->decl));
             else if (shader_record_doc(o->decl)) sb_printf(out, "\n\n%s", shader_record_doc(o->decl));
@@ -4956,7 +5027,7 @@ enum { SYMBOL_CLASS = 5, SYMBOL_METHOD = 6, SYMBOL_PROPERTY = 7, SYMBOL_FIELD = 
 static int symbol_kind(const decl *d)
 {
     return d->kind == DECL_COMPONENT || d->kind == DECL_STRUCT ? SYMBOL_STRUCT
-         : d->kind == DECL_SINGLETON                            ? SYMBOL_CLASS
+         : d->kind == DECL_SINGLETON || d->kind == DECL_ALIAS    ? SYMBOL_CLASS
          : d->kind == DECL_INPUT                                ? SYMBOL_INTERFACE
          : d->kind == DECL_EVENT                                ? SYMBOL_EVENT
          : d->kind == DECL_ENUM                                 ? SYMBOL_ENUM
@@ -6033,7 +6104,7 @@ static void classify(const occurrence *o, int *type, int *mods)
         *type = o->decl->kind == DECL_COMPONENT || o->decl->kind == DECL_STRUCT || o->decl->kind == DECL_EVENT ? ST_STRUCT
               : o->decl->kind == DECL_ENUM      ? ST_ENUM
               : o->decl->kind == DECL_INPUT     ? ST_INTERFACE
-              : o->decl->kind == DECL_RECORD    ? ST_TYPE
+              : o->decl->kind == DECL_RECORD || o->decl->kind == DECL_ALIAS ? ST_TYPE
                                                 : ST_CLASS;
         if (o->decl->builtin) *mods |= SM_DEFAULT_LIBRARY;
         break;
@@ -7118,8 +7189,9 @@ static void complete_members(completion *c, const int dot, const loc at, const o
         sb written = {0};
         for (int k = n - 1; k >= 0; k--) sb_printf(&written, "%s" STR_FMT, k == n - 1 ? "" : ".", STR_ARG(DOC->toks[ids[k]].text));
         for (int i = 0; i < A.prog->decls.count; i++) {
-            const decl *d = A.prog->decls.items[i];
-            if (d->kind != DECL_ENUM || strcmp(name_for(d), written.data) != 0) continue;
+            const decl *named = A.prog->decls.items[i];
+            const decl *d = named->kind == DECL_ALIAS && named->alias_type.kind == TY_ENUM ? named->alias_type.decl : named;
+            if (d->kind != DECL_ENUM || strcmp(name_for(named), written.data) != 0) continue;
             for (int m = 0; m < d->members.count; m++) {
                 char value[32];
                 snprintf(value, sizeof value, "%lld", (long long)d->members.items[m].number);
@@ -7231,10 +7303,22 @@ static const char *name_for(const decl *d)
     return str_to_cstr(visible_by_name(d) ? d->name : d->qualified);
 }
 
+static void complete_alias(completion *c, const decl *d)
+{
+    sb detail = {0};
+    format_data_decl(d, &detail);
+    item(c, name_for(d), CK_CLASS, detail.data, "A transparent name for the same underlying type.", NULL);
+}
+
 static void complete_types(completion *c, const bool components, const bool singletons, const bool input)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
+        if (d->kind == DECL_ALIAS) {
+            const type t = d->alias_type;
+            if ((components && t.kind == TY_COMPONENT) || (singletons && t.kind == TY_SINGLETON)
+                || (input && t.kind == TY_INPUT)) complete_alias(c, d);
+        }
         if (components && d->kind == DECL_COMPONENT) item(c, name_for(d), CK_STRUCT, decl_what(d), NULL, NULL);
         if (singletons && d->kind == DECL_SINGLETON) item(c, name_for(d), CK_CLASS, decl_what(d), NULL, NULL);
         if (input && d->kind == DECL_INPUT) item(c, name_for(d), CK_INTERFACE, "input", NULL, NULL);
@@ -7247,6 +7331,8 @@ static void complete_components_of(completion *c, const bool local)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
+        if (d->kind == DECL_ALIAS && d->alias_type.kind == TY_COMPONENT
+            && (!d->alias_type.decl->is_scene || d->alias_type.decl->is_local == local)) complete_alias(c, d);
         if (d->kind == DECL_COMPONENT && (!d->is_scene || d->is_local == local)) item(c, name_for(d), CK_STRUCT, decl_what(d), NULL, NULL);
     }
 }
@@ -7298,6 +7384,7 @@ static void complete_structs(completion *c)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
+        if (d->kind == DECL_ALIAS && (d->alias_type.kind == TY_STRUCT || d->alias_type.kind == TY_ENUM)) complete_alias(c, d);
         if (d->kind == DECL_STRUCT) item(c, name_for(d), CK_STRUCT, "struct", d == A.prog->random ? RANDOM_DOC
                                        : d == A.prog->audience ? AUDIENCE_DOC
                                        : d == A.prog->visibility_group ? VISIBILITY_GROUP_DOC : NULL, NULL);
@@ -7427,7 +7514,8 @@ static bool complete_in_namespace(completion *c, const str ns, const order_compl
                        : d->kind == DECL_SYSTEM || is_shader(d) ? CK_FUNCTION : d->kind == DECL_CONST ? CK_CONSTANT
                        : d->kind == DECL_ASSET ? CK_VARIABLE : CK_CLASS;
         sb detail = {0};
-        sb_put(&detail, decl_keyword(d));
+        if (d->kind == DECL_ALIAS) format_data_decl(d, &detail);
+        else sb_put(&detail, decl_keyword(d));
         if (d->kind == DECL_ASSET) sb_printf(&detail, " " STR_FMT, STR_ARG(d->return_type_name));
         item(c, str_to_cstr(d->name), kind, detail.data, NULL, NULL);
     }
@@ -7455,6 +7543,27 @@ enum {
 
 static void complete_value_types(completion *c, const unsigned which)
 {
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        if (d->kind != DECL_ALIAS) continue;
+        const type t = d->alias_type;
+        unsigned kind = t.kind == TY_STRING ? VT_TEXT : t.kind == TY_GRID ? VT_GRID
+                      : t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_ARRAY
+                        || t.kind == TY_OPTIONAL || t.kind == TY_MESH ? VT_LIST : 0;
+        for (size_t k = 0; k < sizeof value_types / sizeof value_types[0]; k++) {
+            type builtin;
+            if (!builtin_type_named(str_from(value_types[k]), &builtin) || builtin.kind != t.kind) continue;
+            kind = t.kind == TY_BOOL ? VT_BOOL : t.kind == TY_ENTITY ? VT_ENTITY
+                 : t.kind == TY_LOCAL_ENTITY ? VT_LOCAL_ENTITY : VT_VALUES;
+        }
+        if (!(which & kind)) continue;
+        if ((which & VT_GPU) && (type_is_double_based(t) || t.kind == TY_LONG || t.kind == TY_PLAYER || t.kind == TY_RECT
+            || t.kind == TY_RENDER_TARGET || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_OPTIONAL
+            || t.kind == TY_ARRAY || t.kind == TY_MESH)) continue;
+        if ((t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET)
+            && !(which & (VT_LOCAL_ENTITY | VT_GPU))) continue;
+        complete_alias(c, d);
+    }
     for (size_t i = 0; i < sizeof value_types / sizeof value_types[0]; i++) {
         type t;
         builtin_type_named(str_from(value_types[i]), &t);
@@ -7904,6 +8013,8 @@ static void complete_declarations(completion *c)
          "namespace ${1:Name}\n{\n    $0\n}");
     item(c, "using", CK_KEYWORD, "using Name;", "Names from another namespace, without writing it. Goes at the top.",
          "using ${1:Name};");
+    item(c, "using alias", CK_SNIPPET, "using Name = Type;", "A namespace-scoped, transparent name for a closed type.",
+         "using ${1:Name} = ${2:Type};");
 }
 
 static void complete_code_declarations(completion *c)
@@ -9206,6 +9317,19 @@ void analysis_completion(const int line, const int character, jbuf *out)
     switch (f.kind) {
     case CTX_TOP:
         if (complete_asset_type(&c, last)) break;
+        // An unfinished alias has no declaration AST yet. Its right side is a type,
+        // including the arguments of a closed built-in generic.
+        for (int first = last; first >= 0; first--) {
+            const tok_kind k = DOC->toks[first].kind;
+            if (k == T_SEMI || k == T_LBRACE || k == T_RBRACE) break;
+            if (first + 2 > last || k != T_IDENT || !str_eq_c(DOC->toks[first].text, "using")
+                || DOC->toks[first + 1].kind != T_IDENT || DOC->toks[first + 2].kind != T_ASSIGN) continue;
+            complete_value_types(&c, VT_LOCALS | VT_LOCAL_ENTITY | VT_GRID);
+            complete_structs(&c);
+            complete_types(&c, true, true, true);
+            complete_namespaces(&c, false);
+            goto done;
+        }
         if (pk == T_EOF || pk == T_RBRACE || pk == T_SEMI || pk == T_RBRACKET || (pk == T_LBRACE && namespace_brace(prev->at))) {
             complete_declarations(&c);
         } else if (pk == T_IDENT && str_eq_c(prev->text, "override")) { // What there is to replace, each written out
@@ -11673,6 +11797,20 @@ static bool generic_type(const str name)
         || str_eq_c(name, "Grid3") || str_eq_c(name, "Mesh") || str_eq_c(name, "SkinnedMesh") || str_eq_c(name, "Asset");
 }
 
+// A nested type can end in one lexer token, `>>`, as in an alias of Map<int, List<float>>.
+static bool closes_generic_type(const int i)
+{
+    int depth = DOC->toks[i].kind == T_SHR ? 2 : 1;
+    for (int k = i - 1; k > 0; k--) {
+        const tok_kind kind = DOC->toks[k].kind;
+        if (kind == T_GT) depth++;
+        else if (kind == T_SHR) depth += 2;
+        else if (kind == T_LT && --depth == 0) return generic_type(DOC->toks[k - 1].text);
+        else if (kind != T_LT && kind != T_IDENT && kind != T_MUT && kind != T_DOT && kind != T_COMMA && kind != T_QUESTION) return false;
+    }
+    return false;
+}
+
 static bool space_between(const fmt_item *a, const fmt_item *b)
 {
     if (a->tok < 0 || b->tok < 0) return true; // Comments
@@ -11698,12 +11836,7 @@ static bool space_between(const fmt_item *a, const fmt_item *b)
     // List<Item>: a type, not a comparison
     if (x == T_IDENT && y == T_LT && generic_type(DOC->toks[a->tok].text)) return false;
     if (x == T_LT && a->tok > 0 && generic_type(DOC->toks[a->tok - 1].text)) return false;
-    if (y == T_GT) { // ...past a map's key and the comma after it
-        int k = b->tok - 1;
-        while (k > 0 && (DOC->toks[k].kind == T_IDENT || DOC->toks[k].kind == T_MUT
-                         || DOC->toks[k].kind == T_DOT || DOC->toks[k].kind == T_COMMA)) k--;
-        if (k > 0 && DOC->toks[k].kind == T_LT && generic_type(DOC->toks[k - 1].text)) return false;
-    }
+    if ((y == T_GT || y == T_SHR) && closes_generic_type(b->tok)) return false;
     // i++ and ++i: against what they change
     if ((y == T_PLUS_PLUS || y == T_MINUS_MINUS) && ends_operand(x)) return false;
     if ((x == T_PLUS_PLUS || x == T_MINUS_MINUS) && !(a->tok > 0 && ends_operand(DOC->toks[a->tok - 1].kind))) return false;

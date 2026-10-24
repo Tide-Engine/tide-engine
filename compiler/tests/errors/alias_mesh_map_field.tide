@@ -1,0 +1,5 @@
+// expect: can't hold a Mesh
+using Model = Mesh<Vertex3>;
+using Models = Map<string, Model>;
+local singleton Props { Models models; }
+scene Main;

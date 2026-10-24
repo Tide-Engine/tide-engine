@@ -1,0 +1,4 @@
+// expect: callable and shader bindings belong in local state
+using Callback = Func<float, float>;
+singleton State { Callback function; }
+scene Main;

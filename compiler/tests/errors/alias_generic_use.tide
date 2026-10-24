@@ -1,0 +1,4 @@
+// expect: ';' after the type alias
+using Values = List<int>;
+using Invalid = Values<float>;
+scene Main;

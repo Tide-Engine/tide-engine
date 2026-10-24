@@ -80,6 +80,35 @@ TIDE_TEST(local_workers_owned_result)
     tide_draw_free(&draw);
 }
 
+TIDE_TEST(local_workers_start_preserves_readonly_match_and_attached_fields)
+{
+    init();
+    gui.jobs = &deferred;
+    tide_world previous = {0};
+    tide_world_copy(&previous, &world);
+    const tide_entity entity = {1, 1};
+    WorkerPreview preview = tide_get_WorkerPreview(&world, entity);
+    preview.value = 17;
+    tide_set_WorkerPreview(&world, entity, preview);
+    const uint64_t hash = tide_world_hash(&world);
+    const uint64_t previous_hash = tide_world_hash(&previous);
+    tide_frame(&world, &previous, 0.5f, NULL, NULL, 1, &local, &draw, &gui);
+    TIDE_CHECK(pending != NULL && !local.Meshing.finished);
+    TIDE_CHECK(local.Meshing.matchBefore == 12 && local.Meshing.matchAfter == 12);
+    TIDE_CHECK(tide_get_WorkerPreview_local(&local, entity).result == 42);
+    TIDE_CHECK(tide_get_WorkerPreview(&world, entity).value == 17);
+    TIDE_CHECK(tide_world_hash(&world) == hash && tide_world_hash(&previous) == previous_hash);
+    complete();
+    tide_frame(&world, &previous, 0.5f, NULL, NULL, 1, &local, &draw, &gui);
+    check_result();
+    TIDE_CHECK(tide_get_WorkerPreview_local(&local, entity).result == 42);
+    TIDE_CHECK(tide_world_hash(&world) == hash && tide_world_hash(&previous) == previous_hash);
+    tide_local_free(&local);
+    tide_world_free(&previous);
+    tide_world_free(&world);
+    tide_draw_free(&draw);
+}
+
 TIDE_TEST(local_workers_capture_survives_source_changes)
 {
     init();

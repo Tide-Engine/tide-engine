@@ -1,0 +1,4 @@
+// expect: a T?'s value can't be World
+using W = World?;
+component Holder { W value; }
+scene Main;

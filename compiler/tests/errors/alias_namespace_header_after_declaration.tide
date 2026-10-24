@@ -1,0 +1,4 @@
+// expect: 'namespace' goes at the top of the file, before any declaration
+using Count = int;
+namespace Late;
+scene Main;

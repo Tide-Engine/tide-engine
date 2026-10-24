@@ -1,8 +1,7 @@
-// An opaque forward renderer: one sun, one shadow map and a linear HDR scene.
-// Games configure Renderer before Stages.Prepare and draw HUDs after Present.
+// Opaque forward PBR. Configure before Prepare and draw HUDs after Present.
 namespace Render3D;
 
-enum Stages { Prepare, Shadows, Color, Opaque, Present }
+enum Stages { Prepare, Lights, Shadows, Color, Opaque, Present }
 
 struct MeshVertex
 {
@@ -11,6 +10,8 @@ struct MeshVertex
     float2 uv;
     Color color = Color.white;
 }
+
+using Mesh3D = Mesh<MeshVertex>;
 
 struct Camera
 {
@@ -21,60 +22,113 @@ struct Camera
     float far = 1000;
 }
 
-struct DirectionalLight
+component DirectionalLight
 {
-    float3 direction = float3(1, -2, 1); // Direction the light travels.
-    float3 radiance = float3(4);        // Linear RGB, independent of exposure.
+    bool enabled = true;
+    float3 direction = float3(1, -2, 1); // Local photon travel direction.
+    float3 radiance = float3(4);        // Linear RGB.
+    bool castShadows = true;
+    int priority;
+}
+
+component PointLight
+{
+    bool enabled = true;
+    float3 intensity = float3(10); // Linear incident light at one world unit.
+    float range = 10;
+    bool castShadows;
+    int priority;
+}
+
+component SpotLight
+{
+    bool enabled = true;
+    float3 direction = float3(0, 0, 1); // Local cone axis.
+    float3 intensity = float3(10);
+    float range = 10;
+    float innerAngle = 25deg; // Full cone opening, radians.
+    float outerAngle = 40deg;
+    bool castShadows;
+    int priority;
 }
 
 asset Texture White = "white.png";
 
 component MeshRenderer
 {
-    Asset<Mesh<MeshVertex>> mesh;
+    Asset<Mesh3D> mesh;
     bool visible = true;
     bool castShadows = true;
 }
 
 component Material
 {
-    Color baseColor = Color.white; // Artist/display RGB; decoded before lighting.
+    Color baseColor = Color.white;
     float metallic;
     float roughness = 0.5;
-    float3 emission;               // Linear HDR radiance.
+    float3 emission;
     bool receiveShadows = true;
     local Texture baseMap = White;
     local Lit shader = Lit { surface = Render3D.StandardSurface };
+}
+
+enum LightKind { Directional, Point, Spot }
+
+// Numeric data only: lists travel through the existing GPU data textures.
+struct LightData
+{
+    LightKind kind;
+    float3 position;
+    float3 direction;
+    float3 intensity;
+    float range;
+    float innerCosine;
+    float outerCosine;
+    float outerAngle;
+    bool castShadows;
+    int priority;
+    int shadowIndex = -1;
+}
+
+struct ShadowView
+{
+    float4x4 camera;
+    float4x4 projection;
+    float4x4 worldToClip;
+    float4 uvRect; // Top-left interior; two-pixel gutter outside it.
 }
 
 local singleton Renderer
 {
     bool enabled = true;
     Camera camera;
-    DirectionalLight sun;
     Color background = Color(0.06, 0.08, 0.12);
-    float exposure = 1; // Linear exposure multiplier.
+    float exposure = 1;
+    int maxLights = 32;
     bool shadows = true;
-    int shadowResolution = 1024;
+    int maxShadowMaps = 8; // Directional/spot: one; point: six together.
+    int shadowResolution = 1024; // Requested cell size, including gutters.
     float3 shadowCenter;
-    float shadowExtent = 10; // Half-width and half-height in world units.
+    float shadowExtent = 10;
     float shadowDistance = 40;
+    float shadowNear = 0.05;
     float shadowBias = 0.0005;
     float shadowSlopeBias = 0.002;
 
     RenderTarget hdr;
     RenderTarget shadowMap;
     DepthTexture shadow;
-    float4x4 worldToShadow;
+    List<LightData> lights;
+    List<ShadowView> shadowViews;
     float3 eye;
-    float3 towardLight;
-    float3 lightRadiance;
-    int allocatedShadowResolution;
     float shadowTexel;
+    int activeShadowResolution;
+    int atlasSize;
+    int droppedLights;
+    int unshadowedLights;
     bool ready;
 }
 
-// Explicit lifetime hook, also used when the renderer is disabled.
 void Dispose(mut Renderer renderer)
 {
     renderer.hdr.Dispose();
@@ -82,7 +136,9 @@ void Dispose(mut Renderer renderer)
     renderer.hdr = default;
     renderer.shadowMap = default;
     renderer.shadow = default;
-    renderer.allocatedShadowResolution = 0;
+    renderer.lights.Clear();
+    renderer.shadowViews.Clear();
+    renderer.atlasSize = 0;
     renderer.ready = false;
 }
 
@@ -107,42 +163,227 @@ view Prepare(mut Renderer renderer)
         if (renderer.ready) Dispose(renderer);
         return;
     }
-    int resolution = Math.Clamp(renderer.shadowResolution, 16, 4096);
     if (!renderer.ready)
     {
         renderer.hdr = RenderTarget.Window(Format.Rgba16f);
-        renderer.shadowMap = RenderTarget(resolution, resolution, 1, Format.Depth);
+        renderer.shadowMap = RenderTarget(16, 16, 1, Format.Depth);
         renderer.shadow = renderer.shadowMap.depth;
-        renderer.allocatedShadowResolution = resolution;
+        renderer.atlasSize = 16;
         renderer.ready = true;
     }
-    if (renderer.allocatedShadowResolution != resolution)
-    {
-        renderer.shadowMap.Resize(resolution, resolution);
-        renderer.allocatedShadowResolution = resolution;
-    }
-    renderer.shadowTexel = 1.0 / resolution;
     renderer.eye = renderer.camera.position;
-    mut float3 direction = Math.Normalize(renderer.sun.direction);
-    if (Math.LengthSq(direction) < 0.5) direction = float3(0, -1, 0);
-    renderer.towardLight = -direction;
-    renderer.lightRadiance = Math.Max(renderer.sun.radiance, float3(0));
-
-    float distance = Math.Max(renderer.shadowDistance, 0.2);
-    float extent = Math.Max(renderer.shadowExtent, 0.01);
-    var rotation = quaternion.LookRotation(direction, float3(0, 1, 0));
-    var lightCamera = float4x4.TRS(renderer.shadowCenter - direction * (distance * 0.5), rotation, float3(1));
+    renderer.lights.Clear();
+    renderer.shadowViews.Clear();
+    renderer.droppedLights = 0;
+    renderer.unshadowedLights = 0;
     ResetTarget(renderer.shadowMap);
-    renderer.shadowMap.SetCamera(lightCamera, float4x4.Ortho(extent * 2, extent * 2, 0.01, distance));
-    renderer.worldToShadow = renderer.shadowMap.WorldToClip();
+}
+
+float3 LightDirection(float4x4 transform, float3 direction)
+{
+    float3 result = Math.Normalize(Math.Mul(transform, float4(direction, 0)).xyz);
+    return Math.LengthSq(result) < 0.5 ? float3(0, -1, 0) : result;
+}
+
+// Equal priorities retain collection order: directional, spot, point; match then local.
+void AddLight(mut Renderer renderer, LightData light)
+{
+    int limit = Math.Max(renderer.maxLights, 0);
+    mut int slot = renderer.lights.count;
+    while (slot > 0 && light.priority > renderer.lights[slot - 1].priority) slot--;
+    if (slot >= limit)
+    {
+        renderer.droppedLights++;
+        return;
+    }
+    if (renderer.lights.count >= limit)
+    {
+        renderer.lights.RemoveAt(renderer.lights.count - 1);
+        renderer.droppedLights++;
+    }
+    renderer.lights.Insert(slot, light);
+}
+
+void AddDirectional(mut Renderer renderer, DirectionalLight light, float4x4 transform)
+{
+    if (!renderer.enabled || !renderer.ready || !light.enabled) return;
+    AddLight(renderer, LightData {
+        kind = LightKind.Directional, direction = LightDirection(transform, light.direction),
+        intensity = Math.Max(light.radiance, float3(0)), castShadows = light.castShadows, priority = light.priority
+    });
+}
+
+void AddPoint(mut Renderer renderer, PointLight light, float4x4 transform)
+{
+    if (!renderer.enabled || !renderer.ready || !light.enabled || light.range <= 0) return;
+    AddLight(renderer, LightData {
+        kind = LightKind.Point, position = transform.c3.xyz,
+        intensity = Math.Max(light.intensity, float3(0)), range = light.range,
+        castShadows = light.castShadows, priority = light.priority
+    });
+}
+
+void AddSpot(mut Renderer renderer, SpotLight light, float4x4 transform)
+{
+    if (!renderer.enabled || !renderer.ready || !light.enabled || light.range <= 0) return;
+    float outer = Math.Clamp(light.outerAngle, 1deg, 179deg);
+    float inner = Math.Clamp(light.innerAngle, 0, outer);
+    AddLight(renderer, LightData {
+        kind = LightKind.Spot, position = transform.c3.xyz,
+        direction = LightDirection(transform, light.direction),
+        intensity = Math.Max(light.intensity, float3(0)), range = light.range,
+        innerCosine = Math.Cos(inner * 0.5), outerCosine = Math.Cos(outer * 0.5), outerAngle = outer,
+        castShadows = light.castShadows, priority = light.priority
+    });
+}
+
+[Stage(Stages.Lights)]
+view CollectDirectional(DirectionalLight light, mut Renderer renderer, World world)
+{
+    AddDirectional(renderer, light, world.LocalToWorld(this));
+}
+
+[Stage(Stages.Lights)]
+view CollectLocalDirectional(local DirectionalLight light, mut Renderer renderer, World world)
+{
+    AddDirectional(renderer, light, world.LocalToWorld(this));
+}
+
+[Stage(Stages.Lights, 1)]
+view CollectSpot(SpotLight light, mut Renderer renderer, World world)
+{
+    AddSpot(renderer, light, world.LocalToWorld(this));
+}
+
+[Stage(Stages.Lights, 1)]
+view CollectLocalSpot(local SpotLight light, mut Renderer renderer, World world)
+{
+    AddSpot(renderer, light, world.LocalToWorld(this));
+}
+
+[Stage(Stages.Lights, 2)]
+view CollectPoint(PointLight light, mut Renderer renderer, World world)
+{
+    AddPoint(renderer, light, world.LocalToWorld(this));
+}
+
+[Stage(Stages.Lights, 2)]
+view CollectLocalPoint(local PointLight light, mut Renderer renderer, World world)
+{
+    AddPoint(renderer, light, world.LocalToWorld(this));
+}
+
+quaternion PointFaceRotation(int face)
+{
+    if (face == 0) return quaternion.LookRotation(float3(1, 0, 0), float3(0, 1, 0));
+    if (face == 1) return quaternion.LookRotation(float3(-1, 0, 0), float3(0, 1, 0));
+    if (face == 2) return quaternion.LookRotation(float3(0, 1, 0), float3(0, 0, -1));
+    if (face == 3) return quaternion.LookRotation(float3(0, -1, 0), float3(0, 0, 1));
+    if (face == 4) return quaternion.LookRotation(float3(0, 0, 1), float3(0, 1, 0));
+    return quaternion.LookRotation(float3(0, 0, -1), float3(0, 1, 0));
+}
+
+void AddShadowView(mut Renderer renderer, float4x4 camera, float4x4 projection)
+{
+    renderer.shadowMap.SetCamera(camera, projection);
+    renderer.shadowViews.Add(ShadowView {
+        camera = camera, projection = projection, worldToClip = renderer.shadowMap.WorldToClip()
+    });
+}
+
+[Stage(Stages.Lights, 3)]
+view FinishLights(mut Renderer renderer)
+{
+    if (!renderer.enabled || !renderer.ready) return;
+    int limit = renderer.shadows ? Math.Clamp(renderer.maxShadowMaps, 0, 16) : 0;
+    for (var i = 0; i < renderer.lights.count; i++)
+    {
+        mut var light = renderer.lights[i];
+        if (!light.castShadows) continue;
+        int required = light.kind == LightKind.Point ? 6 : 1;
+        float near = Math.Max(renderer.shadowNear, 0.001);
+        if (renderer.shadowViews.count + required > limit ||
+            (light.kind != LightKind.Directional && light.range <= near))
+        {
+            renderer.unshadowedLights++;
+            continue;
+        }
+        light.shadowIndex = renderer.shadowViews.count;
+        renderer.lights[i] = light;
+        if (light.kind == LightKind.Directional)
+        {
+            float distance = Math.Max(renderer.shadowDistance, 0.2);
+            float extent = Math.Max(renderer.shadowExtent, 0.01);
+            var camera = float4x4.TRS(renderer.shadowCenter - light.direction * (distance * 0.5),
+                                     quaternion.LookRotation(light.direction, float3(0, 1, 0)), float3(1));
+            AddShadowView(renderer, camera, float4x4.Ortho(extent * 2, extent * 2, 0.01, distance));
+        }
+        else if (light.kind == LightKind.Spot)
+        {
+            var camera = float4x4.TRS(light.position, quaternion.LookRotation(light.direction, float3(0, 1, 0)), float3(1));
+            AddShadowView(renderer, camera, float4x4.PerspectiveFov(light.outerAngle, 1, near, light.range));
+        }
+        else
+        {
+            for (var face = 0; face < 6; face++)
+            {
+                var camera = float4x4.TRS(light.position, PointFaceRotation(face), float3(1));
+                AddShadowView(renderer, camera, float4x4.PerspectiveFov(90deg, 1, near, light.range));
+            }
+        }
+    }
+    mut int grid = 1;
+    while (grid * grid < renderer.shadowViews.count) grid++;
+    // Portable texture-size baseline: gutters remain real pixels on every backend.
+    int cell = Math.Clamp(renderer.shadowResolution, 16, 2048 / grid);
+    int size = renderer.shadowViews.count > 0 ? cell * grid : renderer.atlasSize;
+    if (renderer.atlasSize != size)
+    {
+        renderer.shadowMap.Resize(size, size);
+        renderer.atlasSize = size;
+    }
+    renderer.activeShadowResolution = renderer.shadowViews.count > 0 ? cell : 0;
+    renderer.shadowTexel = 1.0 / size;
+    for (var i = 0; i < renderer.shadowViews.count; i++)
+    {
+        renderer.shadowViews[i].uvRect = float4(
+            (float(i % grid * cell) + 2) / size, (float(i / grid * cell) + 2) / size,
+            float(cell - 4) / size, float(cell - 4) / size);
+    }
+    ResetTarget(renderer.shadowMap);
     renderer.shadowMap.Clear(Color.white);
 }
 
-[Stage(Stages.Shadows)]
-view Cast(MeshRenderer mesh, with Material, Renderer renderer, World world)
+struct ShadowTile { float4 uvRect; }
+
+vert AtlasVertex(mut MeshVertex vertex, out float4 clip, ShadowTile tile)
 {
-    if (!renderer.enabled || !renderer.ready || !renderer.shadows || !mesh.visible || !mesh.castShadows) return;
-    renderer.shadowMap.Mesh(mesh.mesh.Value, world.LocalToWorld(this));
+    float4 raw = this.clip;
+    clip = float4(raw.xy * tile.uvRect.zw +
+                  float2(2 * tile.uvRect.x + tile.uvRect.z - 1,
+                         1 - 2 * tile.uvRect.y - tile.uvRect.w) * raw.w, raw.z, raw.w);
+}
+
+[Stage(Stages.Shadows)]
+view Cast(Renderer renderer, World world, query (MeshRenderer mesh, with Material) casters)
+{
+    if (!renderer.enabled || !renderer.ready) return;
+    foreach (var shadow in renderer.shadowViews)
+    {
+        renderer.shadowMap.SetCamera(shadow.camera, shadow.projection);
+        renderer.shadowMap.Screen()
+        {
+            renderer.shadowMap.SetClip(Rect(shadow.uvRect.x * renderer.atlasSize, shadow.uvRect.y * renderer.atlasSize,
+                                           shadow.uvRect.z * renderer.atlasSize, shadow.uvRect.w * renderer.atlasSize));
+        }
+        foreach (var caster in casters)
+        {
+            if (!caster.mesh.visible || !caster.mesh.castShadows) continue;
+            renderer.shadowMap.Mesh(caster.mesh.mesh.Value, world.LocalToWorld(caster.entity),
+                                    AtlasVertex, ShadowTile { uvRect = shadow.uvRect });
+        }
+    }
+    renderer.shadowMap.SetClip();
 }
 
 [Stage(Stages.Color)]
@@ -160,18 +401,32 @@ view BeginColor(Renderer renderer)
     renderer.hdr.Clear(Color(background.x, background.y, background.z));
 }
 
-float ShadowVisibility(DepthTexture shadow, float4 projected, float bias, float texel)
+int PointFace(float3 direction)
 {
+    float3 absolute = Math.Abs(direction);
+    if (absolute.x >= absolute.y && absolute.x >= absolute.z) return direction.x >= 0 ? 0 : 1;
+    if (absolute.y >= absolute.z) return direction.y >= 0 ? 2 : 3;
+    return direction.z >= 0 ? 4 : 5;
+}
+
+float ShadowVisibility(DepthTexture atlas, ShadowView shadow, float3 world, float bias, float texel, bool pointFace)
+{
+    float4 projected = Math.Mul(shadow.worldToClip, float4(world, 1));
     if (projected.w <= 0) return 1;
     float3 position = projected.xyz / projected.w;
-    if (position.x < -1 || position.x > 1 || position.y < -1 || position.y > 1 || position.z < -1 || position.z > 1) return 1;
-    float2 uv = float2(position.x * 0.5 + 0.5, 0.5 - position.y * 0.5);
+    if (position.z < -1 || position.z > 1) return 1;
+    // The dominant-axis point face covers x/y by construction. Camera rounding
+    // can put an exact seam just outside [-1,1]; clamp its taps instead of leaking light.
+    if (!pointFace && (position.x < -1 || position.x > 1 || position.y < -1 || position.y > 1)) return 1;
+    float2 uv = shadow.uvRect.xy + float2(position.x * 0.5 + 0.5, 0.5 - position.y * 0.5) * shadow.uvRect.zw;
     float depth = position.z * 0.5 + 0.5 - bias;
+    float2 minimum = shadow.uvRect.xy + float2(texel * 0.5);
+    float2 maximum = shadow.uvRect.xy + shadow.uvRect.zw - float2(texel * 0.5);
     float step = texel * 0.75;
-    return (shadow.Compare(uv + float2(-step, -step), depth)
-          + shadow.Compare(uv + float2(step, -step), depth)
-          + shadow.Compare(uv + float2(-step, step), depth)
-          + shadow.Compare(uv + float2(step, step), depth)) * 0.25;
+    return (atlas.Compare(Math.Clamp(uv + float2(-step, -step), minimum, maximum), depth)
+          + atlas.Compare(Math.Clamp(uv + float2(step, -step), minimum, maximum), depth)
+          + atlas.Compare(Math.Clamp(uv + float2(-step, step), minimum, maximum), depth)
+          + atlas.Compare(Math.Clamp(uv + float2(step, step), minimum, maximum), depth)) * 0.25;
 }
 
 frag Lit(MeshVertex vertex, out Color color, Instance instance, Material material, Renderer renderer,
@@ -188,14 +443,29 @@ frag Lit(MeshVertex vertex, out Color color, Instance instance, Material materia
         metallic = material.metallic, roughness = material.roughness, emission = material.emission
     };
     surface(SurfaceInput { world = this.world, normal = normal, uv = vertex.uv, viewDirection = viewDirection }, result);
-    mut float visibility = 1;
-    if (renderer.shadows && material.receiveShadows)
+    mut float3 radiance = Math.Max(result.emission, float3(0));
+    foreach (var light in renderer.lights)
     {
-        float facing = Math.Saturate(Math.Dot(normal, renderer.towardLight));
-        float bias = Math.Max(renderer.shadowBias, 0) + Math.Max(renderer.shadowSlopeBias, 0) * (1 - facing);
-        visibility = ShadowVisibility(renderer.shadow, Math.Mul(renderer.worldToShadow, float4(this.world, 1)), bias, renderer.shadowTexel);
+        float3 toward = light.kind == LightKind.Directional ? -light.direction : Math.Normalize(light.position - this.world);
+        mut float attenuation = 1;
+        if (light.kind != LightKind.Directional)
+        {
+            attenuation = PointAttenuation(Math.Length(light.position - this.world), light.range);
+            if (light.kind == LightKind.Spot)
+                attenuation *= SpotAttenuation(Math.Dot(light.direction, -toward), light.innerCosine, light.outerCosine);
+        }
+        if (attenuation <= 0) continue;
+        mut float visibility = 1;
+        if (renderer.shadows && material.receiveShadows && light.shadowIndex >= 0)
+        {
+            int face = light.kind == LightKind.Point ? PointFace(this.world - light.position) : 0;
+            float facing = Math.Saturate(Math.Dot(normal, toward));
+            float bias = Math.Max(renderer.shadowBias, 0) + Math.Max(renderer.shadowSlopeBias, 0) * (1 - facing);
+            visibility = ShadowVisibility(renderer.shadow, renderer.shadowViews[light.shadowIndex + face], this.world, bias, renderer.shadowTexel,
+                                          light.kind == LightKind.Point);
+        }
+        radiance += EvaluateDirectPbr(result, viewDirection, toward, light.intensity * attenuation, visibility);
     }
-    float3 radiance = EvaluatePbr(result, viewDirection, renderer.towardLight, renderer.lightRadiance, visibility);
     color = Color(radiance.x, radiance.y, radiance.z);
 }
 

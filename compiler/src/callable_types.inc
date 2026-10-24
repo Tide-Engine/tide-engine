@@ -190,8 +190,12 @@ static decl *shader_binding_type(const checker *c, decl *shader)
     shader->binding_type = binding;
     for (int i = 1; i < shader->params.count; i++) {
         const param *p = &shader->params.items[i];
-        if (!p->type_ref || !str_eq_c(p->type_ref->name, "Func")) continue;
-        const type t = resolve_callable(c, p->type_ref, p->type_at);
+        if (!p->type_ref) continue;
+        checker scoped = *c;
+        scoped.unit = shader->unit;
+        decl *alias = authored_alias(&scoped, p->type_ref->name, p->type_at);
+        if (!str_eq_c(p->type_ref->name, "Func") && !(alias && is_callable(resolve_alias_type(&scoped, alias)))) continue;
+        const type t = resolve_type(&scoped, p->type_ref, PLACE_FUNCTION, p->type_at);
         vec_push(binding->fields, callable_field(p->name, t, p->at));
     }
     return binding;

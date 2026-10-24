@@ -11,6 +11,11 @@ static void near3(const tide_float3 value, const float x, const float y, const f
     TIDE_CHECK(isfinite(value.z) && fabsf(value.z - z) < tolerance);
 }
 
+static void near1(const float value, const float expected)
+{
+    TIDE_CHECK(isfinite(value) && fabsf(value - expected) < 0.000002f * fmaxf(1, fabsf(expected)));
+}
+
 TIDE_TEST(render3d_pbr_linear_light_and_surface_callbacks)
 {
     static tide_world world;
@@ -65,6 +70,48 @@ TIDE_TEST(render3d_pbr_linear_light_and_surface_callbacks)
         // N.H = 1, N.V = N.L = V.H = 1/4, roughness 1/2:
         // (2343/25600 + 857/(50*sqrt(31))) / pi, including N.L.
         near3(lit[26], 1.0090290702f, 1.0090290702f, 1.0090290702f);
+        near3(r->direct.at[0], dielectric, dielectric, dielectric);
+        for (int i = 1; i <= 7; i++) near3(r->direct.at[i], 0, 0, 0);
+        near3(r->direct.at[8], dielectric, dielectric, dielectric);
+        near3(r->direct.at[9], 0, 0, 2 * dielectric);
+        near3(r->direct.at[10], lit[9].x, lit[9].y, lit[9].z);
+        TIDE_CHECK(r->direct.at[10].x > 0);
+        near3(r->direct.at[11], dielectric, dielectric, dielectric);
+        // Directional, point and spot contributions are independently known at
+        // normal incidence: point = 225/1024, cone = 1/2, visibility = 1/4.
+        near3(r->multipleLights.at[0], 0.1f + dielectric,
+            0.2f + dielectric * (225.0f / 512.0f),
+            0.3f + dielectric * (225.0f / 2048.0f));
+        near3(r->multipleLights.at[1], 0.1f, 0.2f, 0.3f);
+        near3(r->multipleLights.at[2], 1.75f * dielectric, 0.2f + 1.75f * dielectric, 1.75f * dielectric);
+        near3(r->multipleLights.at[3], dielectric, dielectric, dielectric);
+        near3(r->multipleLights.at[4], 0, 0.2f, 0);
+        // At half range the window is (1 - 1/16)^2 = 225/256.
+        // At 3/4 range it is (1 - 81/256)^2 = 30625/65536.
+        near1(r->point.at[0], 225.0f / 256.0f);
+        near1(r->point.at[1], 225.0f / 1024.0f);
+        near1(r->point.at[2], 30625.0f / 589824.0f);
+        near1(r->point.at[3], 10000);
+        near1(r->point.at[4], 10000);
+        near1(r->point.at[5], 8789.0625f);
+        near1(r->point.at[6], 8789.0625f);
+        for (int i = 7; i <= 11; i++) TIDE_CHECK(r->point.at[i] == 0);
+        near1(r->point.at[12], 10000);
+        TIDE_CHECK(r->point.at[13] == 0);
+        TIDE_CHECK(r->point.at[14] > 0 && r->point.at[14] < 0.000002f);
+        near1(r->point.at[15], 2197.265625f);
+        // d=2^64, range=2^65: attenuation=225*2^-136 is representable
+        // although d*d overflows. Preserve it rather than silently returning 0.
+        TIDE_CHECK(r->point.at[16] == 225.0f * 0x1p-136f);
+        near1(r->point.at[17], 225.0f / 64.0f);
+        TIDE_CHECK(r->point.at[18] > 0 && r->point.at[18] < 1e-12f);
+        TIDE_CHECK(r->point.at[19] == 0);
+        const float cone_expected[] = {
+            1, 0, 0.5f, 0.15625f, 0.84375f, 1, 0, 1, 0,
+            1, 0, 1, 1, 0, 0.5f, 1, 0, 1, 0
+        };
+        for (unsigned i = 0; i < sizeof cone_expected / sizeof cone_expected[0]; i++)
+            near1(r->cone.at[i], cone_expected[i]);
         for (unsigned i = 0; i < sizeof expected / sizeof expected[0]; i++)
             TIDE_CHECK(fabsf(r->transfer.at[i] - expected[i]) < 0.000002f);
         near3(r->roundtrip, 0.02f, 0.5f, 1);
