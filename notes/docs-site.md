@@ -6,7 +6,8 @@ After another report of cities pulling the player back, a fresh production
 client walked from Amberhold's fountain into the countryside. The previous
 edge test only started 115 m from one town, so coverage now includes the
 whole street: all 22 road ends, on foot and in a car, from the square to
-at least 160 m from the town centre. Twenty actual server/client trips cover every city in both
+at least 160 m from the town centre. Twenty actual server/client trips cover
+every city in both
 modes, including townsfolk/traffic, 144 Hz clients, 50 ms one-way latency,
 10 ms jitter and 1% packet loss; authoritative and predicted positions must
 both leave, with continued verification. No remaining walking wall reproduced
@@ -34,6 +35,13 @@ After 45 seconds both are in the countryside, moving forward (81/56 km/h),
 still in the hosted room and showing two online players on one shard, without
 renderer errors. The native four-region capture also exits Amberhold at
 115 km/h. No hosting/service code or limits changed.
+
+Final integration merges dev's independent protocol-19 session changes after
+publishing this game release. Rebuilt Earth, its tests/benchmark, the complete
+engine test executable and the shard-player fixture against that dependency;
+all six selected CTests pass on native and web, including all 19 Earth checks
+and unchanged simulation pins. The immutable production release above retains
+its matching client/server runtime; this task did not redeploy protocol 19.
 
 ## Town-edge collision correction (2026-10-24)
 
