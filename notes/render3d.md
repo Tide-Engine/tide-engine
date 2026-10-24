@@ -66,9 +66,10 @@ Directional and spot views retain strict x/y outside-volume rejection.
 
 ### Validation
 
-The final warning-free full native/web debug builds passed. Native CTest passed
-all 2687 enabled tests (339.25 s); web CTest passed all 2582 (603.33 s). The
-existing disabled Microduck right-turn test remains unchanged in both suites.
+After merging the local-worker work (2026-10-25), the final warning-free full
+native/web debug builds passed. Native CTest passed all 2700 enabled tests
+(520.36 s); web CTest passed all 2595 (783.59 s). The existing disabled Microduck
+right-turn test remains unchanged in both suites.
 Render3D pixels pass on Vulkan/OpenGL and WebGL/ANGLE D3D11/WebGPU, including
 colored match/local lights, transformed directions/positions, point range and
 full spot cones, independent per-light shadows, all six point faces/seams,
@@ -83,8 +84,14 @@ depth, and separately checks strict far-z/negative-w and nonpoint guards.
 All four generated renderer shaders passed FXC /WX across D3D11/GLCORE/GLES3
 vertex and fragment stages (24 compilations). The aliased-stage compiler
 consumer passed six more HLSL compilations. The production docs build, live
-WebGL example/source check, 290 grammar tests and 256 LSP tests pass.
+WebGL example/source check, 293 grammar tests and 257 LSP tests pass.
 Native and browser example captures were visually inspected.
+
+The merge audit corrected live-asset reads through worker reference values and
+task-start synchronization of readonly match copies in views. The mixed
+Render3D/worker consumer passes strict generated-C checking; the local_workers
+fixture preserves attached local fields, blended values and match hashes.
+Independent review cleared both corrections. Details are in language.md.
 
 The web cache still uses installed WASI SDK 34 via ignored wasi-local.cmake,
 not the checked-in SDK 24 preset. spirv-val/Vulkan validation layers remain

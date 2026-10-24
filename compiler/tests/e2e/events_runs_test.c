@@ -146,7 +146,7 @@ TIDE_TEST(events_runs_take_each_event_as_its_turn_finds_its_target)
     tide_world_copy(&many, &one);
     tide_world_copy(&heard, &one);
     // A pool that says it has four threads: each system's chunks record into queues of their own
-    const tide_jobs jobs = {NULL, 4u, work, NULL, NULL, NULL};
+    const tide_jobs jobs = {NULL, 4u, work, NULL, NULL, NULL, NULL, NULL};
     tide_event_log log = {0};
     uint32_t back_from = 0;
     for (uint32_t tick = 0; tick < TICKS; tick++) {

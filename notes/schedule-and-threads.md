@@ -1,5 +1,27 @@
 # The schedule and the tick on threads
 
+## Background local calculations (2026-10-24)
+
+Local workers share the platform's bounded pool with tick rounds. Their separate
+queue does not count an executing calculation as part of a synchronous round.
+Desktop workers check foreground invitations between jobs; browser workers
+distinguish foreground invitations from queue wakeups. Queue publication is
+synchronized, including Wasm memory growth. Match scheduling is unchanged.
+
+Worker parallel_for queues bounded helper callbacks, and its caller consumes
+iterations too. Helpers take priority; waiting workers only help loop work,
+never recursively entering another whole calculation. A full pool therefore
+needs no spare thread to finish its loops. Steps inherit private heap resolvers
+and use independent scratch; generated capture/output materialization prevents
+cross-thread scratch handles. Small loops or missing background/help callbacks
+run serially. Without a background provider, a worker runs on its first poll.
+
+Owner loss abandons publication without blocking that frame; disposal/rebind
+drains callbacks before capture release or code unload. platform/tests/jobs.c
+stresses twice the pool's thread count in background jobs with parallel loops,
+checking off-frame execution, exact once-only results and frame-thread release.
+Existing tick/pool regressions stay enabled. Language/lifetime tests: language.md.
+
 ## Schedule display grouped by stage (2026-10-22)
 
 `print_schedule` groups systems by increasing dependency depth, preserving

@@ -83,6 +83,9 @@ component Toast { float alpha; }
 async local event(Displayed) Fade(mut Toast toast) { }
 local async event(Displayed) Glow(mut local Toast toast) { }
 async void Countdown() { await Wait.Seconds(1); }
+local worker List<int> Build(List<int> values) { return values; }
+worker local int Count(int value) { return value; }
+var worker = 1;
 
 // fails after the parameters, or on a line of its own.
 int Parse(string text) fails ParseError

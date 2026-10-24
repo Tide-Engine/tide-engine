@@ -14,9 +14,71 @@
 #include <stdlib.h>
 
 #include "tide/time.h" // How long a round took (run)
+#include "tide/worker.h"
 
 #ifndef MOST_THREADS
 #define MOST_THREADS 32u
+#endif
+
+#if !defined(__wasm__) || defined(__wasm_atomics__)
+static uint32_t background_lock;
+static tide_background *background_first, *background_last;
+static void background_notify(void);
+
+static void background_acquire(void)
+{
+    while (__atomic_exchange_n(&background_lock, 1u, __ATOMIC_ACQUIRE)) {
+    }
+}
+
+static bool background_pending(void)
+{
+    background_acquire();
+    const bool any = background_first != NULL;
+    __atomic_store_n(&background_lock, 0u, __ATOMIC_RELEASE);
+    return any;
+}
+
+static tide_background *background_take(const bool helpers_only)
+{
+    background_acquire();
+    tide_memory_sync();
+    tide_background *job = background_first;
+    if (job && (!helpers_only || job->helper)) {
+        background_first = job->next;
+        if (!background_first) background_last = NULL;
+    } else job = NULL;
+    __atomic_store_n(&background_lock, 0u, __ATOMIC_RELEASE);
+    return job;
+}
+
+static bool background_help(void *self, const bool helpers_only)
+{
+    (void)self;
+    tide_background *job = background_take(helpers_only);
+    if (!job) return false;
+    job->work(job->context);
+    __atomic_store_n(&job->done, 1u, __ATOMIC_RELEASE);
+    return true;
+}
+
+static void background_submit(void *self, tide_background *job)
+{
+    (void)self;
+    background_acquire();
+    if (job->helper) {
+        job->next = background_first;
+        background_first = job;
+        if (!background_last) background_last = job;
+    } else {
+        job->next = NULL;
+        if (background_last) background_last->next = job;
+        else background_first = job;
+        background_last = job;
+    }
+    __atomic_store_n(&background_lock, 0u, __ATOMIC_RELEASE);
+    background_notify();
+}
 #endif
 
 #if defined(__wasm__) && !defined(__wasm_atomics__)
@@ -57,6 +119,7 @@ void tide_platform_jobs_profile(tide_profile *profile)
 typedef struct pool {
     tide_jobs jobs;
     uint32_t calls;  // For workers, which they wait on: rounds started, and more asked into one
+    uint32_t rounds; // Foreground invitations, distinct from background queue wakeups
     uint32_t asleep; // Workers waiting for one, or about to
     uint32_t gate;
     void (*work)(void *context, uint32_t thread);
@@ -87,27 +150,41 @@ static void start_workers(pool *p)
     pthread_attr_destroy(&attr);
 }
 
+static void background_notify(void)
+{
+    pool *p = &the_pool;
+    if (!p->started) start_workers(p);
+    __atomic_fetch_add(&p->calls, 1u, __ATOMIC_SEQ_CST);
+    __builtin_wasm_memory_atomic_notify((int32_t *)&p->calls, UINT32_MAX);
+}
+
 static void *worker(void *thread)
 {
     pool *p = &the_pool;
     uint32_t seen = 0;
+    uint32_t seen_round = 0;
     for (;;) {
         // Counted asleep before it looks at the calls: whoever calls counts
         // its call first and then looks for sleepers, so one of the two sees
         // the other (more)
         __atomic_fetch_add(&p->asleep, 1u, __ATOMIC_SEQ_CST);
         uint32_t calls;
-        while ((calls = __atomic_load_n(&p->calls, __ATOMIC_SEQ_CST)) == seen) {
+        while ((calls = __atomic_load_n(&p->calls, __ATOMIC_SEQ_CST)) == seen && !background_pending()) {
             __builtin_wasm_memory_atomic_wait32((int32_t *)&p->calls, (int32_t)seen, -1);
         }
         __atomic_fetch_sub(&p->asleep, 1u, __ATOMIC_SEQ_CST);
         seen = calls;
+        const uint32_t round = __atomic_load_n(&p->rounds, __ATOMIC_ACQUIRE);
         uint32_t gate = __atomic_load_n(&p->gate, __ATOMIC_ACQUIRE);
         bool joined = false;
-        while ((gate & OPEN) && !joined) {
+        while (round != seen_round && (gate & OPEN) && !joined) {
             joined = __atomic_compare_exchange_n(&p->gate, &gate, gate + 1u, true, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE);
         }
-        if (!joined) continue; // Over before it woke
+        seen_round = round;
+        if (!joined) {
+            background_help(p, false);
+            continue;
+        }
         p->work(p->context, (uint32_t)(uintptr_t)thread);
         __atomic_fetch_sub(&p->gate, 1u, __ATOMIC_RELEASE);
     }
@@ -132,6 +209,7 @@ static void run_some(void *self, const uint32_t others, void (*work)(void *conte
     p->work = work;
     p->context = context;
     __atomic_store_n(&p->gate, OPEN, __ATOMIC_RELEASE);
+    __atomic_fetch_add(&p->rounds, 1u, __ATOMIC_RELEASE);
     __atomic_fetch_add(&p->calls, 1u, __ATOMIC_SEQ_CST);
     __builtin_wasm_memory_atomic_notify((int32_t *)&p->calls, others);
     work(context, 0);
@@ -151,6 +229,7 @@ static void run(void *self, void (*work)(void *context, uint32_t thread), void *
 static void more(void *self, const uint32_t count)
 {
     pool *p = self;
+    __atomic_fetch_add(&p->rounds, 1u, __ATOMIC_RELEASE);
     __atomic_fetch_add(&p->calls, 1u, __ATOMIC_SEQ_CST);
     if (__atomic_load_n(&p->asleep, __ATOMIC_SEQ_CST)) __builtin_wasm_memory_atomic_notify((int32_t *)&p->calls, count);
 }
@@ -161,7 +240,7 @@ const tide_jobs *tide_platform_jobs(void)
     made = true;
     pool *p = &the_pool;
     const uint32_t n = tide_web_threads();
-    p->jobs = (tide_jobs){p, n < MOST_THREADS ? n : MOST_THREADS, run, p->jobs.profile, more, run_some}; // A profile given before stays
+    p->jobs = (tide_jobs){p, n < MOST_THREADS ? n : MOST_THREADS, run, p->jobs.profile, more, run_some, background_submit, background_help}; // A profile given before stays
     return p->jobs.threads > 1 ? &p->jobs : NULL;
 }
 
@@ -281,6 +360,14 @@ typedef struct pool {
 static pool the_pool;
 static bool made;
 
+static void background_notify(void)
+{
+    pool *p = &the_pool;
+    LOCK(&p->lock);
+    for (uint32_t g = 0; g < p->groups; g++) WAKE_ALL(&p->start[g]);
+    UNLOCK(&p->lock);
+}
+
 static void worker_loop(const uint32_t thread)
 {
     pool *p = &the_pool;
@@ -294,10 +381,16 @@ static void worker_loop(const uint32_t thread)
         // the lock once it waits, or this one sees the call (wake)
         __atomic_fetch_add(&p->asleep[g], 1u, __ATOMIC_SEQ_CST);
         uint32_t calls;
-        while ((calls = __atomic_load_n(&p->calls, __ATOMIC_SEQ_CST)) == seen) WAIT(&p->start[g], &p->lock);
+        while ((calls = __atomic_load_n(&p->calls, __ATOMIC_SEQ_CST)) == seen && !background_pending()) WAIT(&p->start[g], &p->lock);
         __atomic_fetch_sub(&p->asleep[g], 1u, __ATOMIC_SEQ_CST);
+        const bool round = calls != seen;
         seen = calls;
-        if (!p->open || p->inside_group[g] >= p->room[g]) continue; // Over before it woke, or no room for its group
+        if (!round || !p->open || p->inside_group[g] >= p->room[g]) {
+            UNLOCK(&p->lock);
+            background_help(p, false);
+            LOCK(&p->lock);
+            continue;
+        }
         p->inside++;
         p->inside_group[g]++;
         void (*const work)(void *, uint32_t) = p->work;
@@ -586,7 +679,7 @@ const tide_jobs *tide_platform_jobs(void)
     made = true;
     pool *p = &the_pool;
     const uint32_t n = cores(p);
-    p->jobs = (tide_jobs){p, n < MOST_THREADS ? n : MOST_THREADS, run, p->jobs.profile, more, run_some}; // A profile given before stays
+    p->jobs = (tide_jobs){p, n < MOST_THREADS ? n : MOST_THREADS, run, p->jobs.profile, more, run_some, background_submit, background_help}; // A profile given before stays
 #ifdef _WIN32
     InitializeSRWLock(&p->lock);
     for (uint32_t g = 0; g < MOST_GROUPS; g++) InitializeConditionVariable(&p->start[g]);

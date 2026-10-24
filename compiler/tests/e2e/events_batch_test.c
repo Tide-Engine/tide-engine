@@ -61,7 +61,7 @@ TIDE_TEST(events_batches_keep_order_filters_calls_and_snapshots)
     TIDE_REQUIRE(tide_world_pack(&one, bytes, size) == size);
     TIDE_REQUIRE(tide_world_unpack(&back, bytes, size));
     free(bytes);
-    const tide_jobs jobs = {NULL, 4u, work, NULL, NULL, NULL};
+    const tide_jobs jobs = {NULL, 4u, work, NULL, NULL, NULL, NULL, NULL};
     tide_world *worlds[] = {&one, &many, &back};
     for (uint32_t i = 0; i < 3u; i++) {
         observed = worlds[i];

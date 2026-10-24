@@ -63,9 +63,9 @@ enum attributes. The existing header-order rule is pinned for aliases too.
 Two nested-optional alias diagnostics preserve the existing prohibition on a
 T? holding another T? and pass in the final selected checks.
 
-Final integration: full warning-free native/web debug builds and CTest suites
-pass (2687 native, 2582 web enabled tests, with the unchanged disabled Microduck
-right-turn fixture). The production docs build and live Render3D browser example
+Final integration after the local-worker merge: full warning-free native/web
+debug builds and CTest suites pass (2700 native, 2595 web enabled tests, with the
+unchanged disabled Microduck right-turn fixture). The production docs build and live Render3D browser example
 pass; its Mesh3D asset alias is exercised on Vulkan/OpenGL/WebGL/D3D11/WebGPU.
 The aliased-stage consumer also passes six FXC /WX compilations across three
 Unity APIs and both stages. Web uses the existing SDK 34 cache rather than
@@ -74,6 +74,104 @@ the pinned SDK 24 toolchain; remaining platform coverage is in render3d.md.
 Separate existing gap: a used Func with fixed-array arguments has a generated-C
 type-emission failure even without aliases. This task preserves that boundary;
 alias_canonical_array checks canonical array identity through outline output.
+
+## Alias and local-worker merge boundary (2026-10-25)
+
+The merge retains canonical alias types at worker boundaries and both editor
+and grammar paths. Owned-value restrictions still inspect the underlying type,
+including nested callable/shader bindings, resources, worlds and grids.
+
+The integration audit found that reading an Asset<Mesh<V>> reference's Value
+was not recognized as a live-asset borrow. worker_borrows_expr now rejects
+asset_ref_value alongside BIND_ASSET; passing a plain asset identity remains
+unchanged. worker_asset_reference pins the direct read and
+worker_alias_asset_reference pins aliases plus helper forwarding. This is a
+compiler-only correction with no runtime or ABI change. Both negative fixtures
+pass in the combined native/web suites.
+
+The mixed Render3D/worker consumer exposed task-start component synchronization
+writing through a view's readonly match world and reloading its presented match
+values. gen_entity_copies now leaves match component copies intact in local
+execution, while retaining match-side and local-world component flush/refresh.
+Attached local fields continue through their existing separate publication path.
+The local_workers regression starts an awaiting task after an attached-field
+write, preserves the blended numeric match value across that start, and checks
+the attached result plus unchanged current/previous match hashes. This changes
+only compiler emission; there is no const cast, runtime API or ABI change.
+Focused native builds pass, with all 7 local_workers and 5 function_acts checks.
+The reported Render3D mixed consumer regenerates and passes strict C17 syntax
+checking with warnings as errors. Independent review cleared both merge fixes.
+Combined warning-free full native/web builds and all 2700/2595 enabled CTests
+pass (520.36 s / 783.59 s), retaining the existing disabled Microduck case.
+The production docs build, live Render3D WebGL example, 257 native LSP tests
+and 293 shared grammar tests pass. Toolchain limitations remain as recorded
+above and in render3d.md; no runtime interface or determinism pin changed.
+
+## Local workers (2026-10-24)
+
+Owner-approved direction and spelling: `local worker` functions, awaited from
+local async code, with owned CPU inputs/results and existing loop rules.
+Bare `worker` stays rejected for a future deterministic-match contract.
+Implementation choices are distinguished from decisions in the spec's Tasks.
+worker_check.inc/worker_codegen.inc extend the existing checker/codegen.
+
+Calls decide an async caller's side as local and propagate through its normal
+starters/awaited parents. Bodies run to completion without awaiting. Reachable
+world/frame, rendering/audio, filesystem/network, live-asset, task-start and
+implicit match-randomness access is rejected. C stays trusted. Boundaries accept
+owned CPU values, including nested containers, plain fixed arrays and optional/
+failable results; bindings, resources, queries, devices, grids, Actions and
+mut/out parameters are refused. Overrides preserve worker execution kind.
+
+Generated walkers fully materialize inputs, including packed lists, into a
+private heap before dispatch. Each job also owns an output heap. The frame
+acquires detached scratch results before releasing a completed job. Ephemeral
+optional/failable strings own private bytes instead of caller scratch pointers.
+Only integer tickets enter local task frames; restore/rebind clears them and
+restarts pending calls. An owner disappearing abandons publication while the
+group retains captures until callback completion. Reload/disposal drains jobs
+before code unload.
+
+Explicit parallel loops accept owned local plain-value lists. Output lists and
+readonly captures are heap-backed before sharing, with the existing independent
+step rules. List foreach/for order is unchanged. Automatic foreach analysis is
+currently grid-only; workers do not take grids, so this does not extend that
+analysis. Worker callback emission also closes list-cache patches before
+gen_tasks switches output buffers; the otherwise-open patch caused a compiler
+crash with worker loops plus multiple async functions.
+
+Coverage: local_workers checks geometry/text ownership, discarded scratch and
+changed sources, real pool execution, owner loss, saved local state and retained
+rebind. worker_values checks nested text lists/maps, fixed arrays, optional
+strings, failable strings and void. Negative fixtures cover bare/misused worker
+declarations, match starts, mut inputs, bound values, frame helpers and assets.
+Pool stress runs more jobs than threads, each with parallel work. LSP and shared
+grammar pin hover/symbol/formatting/highlighting.
+
+Validation: warning-free native/web debug builds, full suites passing 2,604
+native and 2,499 web tests, with the existing disabled MicroDuck right-turn case
+unchanged. Final test additions pass all 12 selected checks on each target,
+including readonly worker captures, threaded optional/error values, all eight
+worker diagnostics, the complete 250-case LSP executable natively and a served
+browser frame running background/parallel work beside simulation. The shared
+grammar passes 282 cases and the production docs build passes. Clang 23.1.2,
+Node 24.22.1, Windows; native GPU/WebGL/D3D11/WebGPU checks pass. This checkout
+has no Vulkan validation layer. Android, other OSes, MinGW and sanitizers remain
+CI coverage; no CI workflow was dispatched. Existing determinism pins are intact.
+
+Remaining: owned grids, priorities, public handles/explicit cancellation,
+preemption and match workers. Existing async component/local-field restrictions
+are unchanged: publication currently uses local singletons or local entities.
+
+Integration with incoming callable/shader support retains both notes entries.
+Callable and shader-binding structs are explicitly excluded at worker value
+boundaries, including nested fields: they are local execution/rendering values,
+outside the initial owned CPU-data contract. worker_callable pins the rejection.
+Merged validation through origin/dev d90a787c: warning-free full native/web
+debug builds and all 2,636 native and 2,531 web enabled tests pass (245.43 s /
+425.05 s, four jobs), retaining the existing disabled MicroDuck case. This
+includes incoming callable/Render3D checks and native/browser worker coverage.
+All 286 shared grammar checks and the merged docs production build pass.
 
 ## Mutable callable arguments (2026-10-24)
 

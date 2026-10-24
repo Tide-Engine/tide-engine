@@ -211,6 +211,7 @@ typedef struct tide_gui_kept {
 #define TIDE_GUI_KEPT(name) tide_gui_kept name;
 
 typedef struct tide_gui {
+    const struct tide_jobs *jobs; // Optional host pool for local calculations
     // The screen this frame (Screen in Tide).
     float width;
     float height;

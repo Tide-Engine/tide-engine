@@ -25,10 +25,10 @@ type arguments. The complete suite passes after the final compiler rebuilding.
 Final full native/web and docs integration results follow below.
 No editor adapter or protocol change is needed.
 
-Final integration passes the full native/web debug suites (2687/2582 enabled
-tests), production docs build and live Render3D example. The 256 native LSP
-and 290 shared grammar checks above remain green. Toolchain/platform coverage
-is recorded in language.md and render3d.md.
+Final integration after the local-worker merge passes the full native/web debug
+suites (2700/2595 enabled tests), production docs build and live Render3D example.
+The combined 257 native LSP and 293 shared grammar checks pass. Toolchain/platform
+coverage is recorded in language.md and render3d.md.
 
 Review follow-up: qualified primitive/Grid/Random constructors and bare Random
 constructors retain their authored alias occurrences. Stage/Before/After/Channel
@@ -40,6 +40,16 @@ and World/Spawn component aliases; `lsp_type_alias_enum_attributes` covers
 ordering/channel navigation and rename. The existing asset sampling regression
 also covers imported and qualified enum aliases. These follow-up cases pass
 in the complete rebuilt native language-server suite above.
+
+## Local worker declarations (2026-10-24)
+
+The shared compiler parses/checks local workers. Routine hovers, override
+completion headers and document symbols preserve local worker, while outline
+JSON records worker:true. lsp_local_workers checks hover, outline and formatting.
+Shared/JetBrains TextMate grammars and Vim highlight the contextual modifier;
+the probe checks both local/worker orders and worker as a variable. Existing
+navigation/diagnostics remain function-based. Public docs link the worker/task
+workflow. Semantics and validation: language.md.
 
 ## Mutable callable signatures (2026-10-24)
 

@@ -126,6 +126,95 @@ Tasks whose time has come go on at the end of the tick (or frame), after its cha
 
 A task waiting for an async call waits in the same place: the call is part of the task, and ends with it. An async function can't await itself, as its task would hold itself; it can start itself again instead, as a task of its own.
 
+## Local workers
+
+Use a `local worker` for expensive CPU calculations such as chunk meshing.
+Capture its input from local code, await it from an async function, and publish
+the completed result there. The view can keep drawing the previous mesh.
+
+```csharp
+struct MeshData
+{
+    List<Vertex3> vertices;
+    List<int> indices;
+}
+
+local singleton ChunkVisual
+{
+    List<byte> voxels;
+    MeshData mesh;
+    int generation;
+    bool building;
+}
+
+local worker MeshData BuildMesh(List<byte> voxels)
+{
+    return GreedyMesh(voxels); // The game's ordinary calculation helper
+}
+
+async void Rebuild(mut ChunkVisual visual)
+{
+    visual.building = true;
+    var generation = visual.generation;
+    var mesh = await BuildMesh(visual.voxels);
+    if (visual.generation == generation)
+        visual.mesh = mesh;
+    visual.building = false;
+}
+```
+
+Start `Rebuild(visual)` from a view or local handler when the input changes and
+`building` is false. Advance the local generation whenever that meshing input
+changes, including neighboring boundaries and rollback corrections; discard an
+outdated result and request the latest input. For many chunks, keep a local queue
+and schedule the visible chunks first. This example uses a local singleton;
+local tasks retain their existing component and local-field access rules.
+
+Workers receive independent copies of their inputs and return independent
+values. Numbers, text, lists, maps, sets, ordinary structs, fixed arrays and
+optional/error results follow their normal value rules. A worker takes no
+`mut`, `out`, component/singleton binding, World, query, devices, resource handle,
+asset borrow, callable/shader binding or grid. Pass the CPU data it needs.
+Its helpers have the same restrictions: no live world, drawing, frame services,
+file/network operations,
+task starts or implicit match randomness. C remains trusted; C called by workers
+must be safe to run on their threads.
+
+Loop semantics stay the same. Workers additionally permit `parallel` over
+their own lists of plain values, including local variables:
+
+```csharp
+local worker List<float3> NormalizePoints(List<float3> points)
+{
+    mut List<float3> result = points;
+    parallel (var i in result)
+    {
+        result[i] = Math.Normalize(result[i]);
+    }
+    return result;
+}
+```
+
+Each step changes only its own output element or block. Code after the loop
+waits for all steps. Ordinary `for` and list `foreach` loops remain ordered;
+automatic grid-`foreach` analysis is unchanged, and workers do not take grids.
+Jobs and their parallel steps share the host's bounded pool. With no background
+provider, a worker runs synchronously when polled, so expensive work can still
+stall a frame on a host without threads. Small parallel loops run serially.
+
+Only local async code awaits workers; bare `worker` is reserved for a future
+match contract and is currently an error. An owner disappearing drops its
+continuation; a running calculation can finish privately and its output is
+discarded. Reload drains old calculations before their code is unloaded.
+Saved or retained waiting tasks restart their pending worker after restoration
+or reload. No worker state enters match snapshots, hashes or networking.
+
 ## In C
 
 Hosts tell local code how long each frame is, before `tide_frame`: `tide_local_frame_time(local, seconds)`, which local tasks' waits count down and `Frame.dt` reads. `tide/run.h` does. Under `tide run`, a waiting task carries over to a new build when its code is the same; when it changed, the task is dropped, and tide says so.
+
+Custom hosts set `gui.jobs` to their `tide_jobs` provider before `tide_frame`
+to enable local background workers. The standard host supplies
+`tide_platform_jobs()`. Providers implement the optional `background` and
+`help` callbacks from `tide/jobs.h`; `tide/worker.h` describes item ownership
+and completion. A zeroed GUI retains the synchronous fallback.

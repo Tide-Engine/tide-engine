@@ -27,7 +27,7 @@ TIDE_TEST(parallel_unknown_inner_work_uses_the_pool)
     tide_world_copy(&many, &one);
 
     uint32_t rounds = 0;
-    const tide_jobs jobs = {&rounds, 2u, count_round, NULL, NULL, NULL};
+    const tide_jobs jobs = {&rounds, 2u, count_round, NULL, NULL, NULL, NULL, NULL};
     tide_world_tick(&one);
     tide_world_tick_on(&many, &jobs);
     TIDE_CHECK(rounds == EXPECTED_ROUNDS);

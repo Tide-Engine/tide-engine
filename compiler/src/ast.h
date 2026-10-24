@@ -761,6 +761,9 @@ typedef struct decl {
 
     // Async functions and handlers: they run as tasks, which can wait
     bool is_async;       // `async`
+    bool is_worker;      // `local worker`: owned calculation, awaited by local tasks
+    bool uses_workers;   // Awaits a worker, directly or in an awaited task
+    loc worker_at;
     bool is_audio;       // `audio Name(mut Samples samples, ...)`: a DECL_FUNCTION the audio thread runs once a block
     int audio_state;     // ...the parameter that's its state (`mut`, kept between blocks), or -1
     int audio_knobs;     // ...and the one that's its knobs (read-only, a copy the frame gave), or -1

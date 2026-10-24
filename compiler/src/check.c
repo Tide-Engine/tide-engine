@@ -5075,6 +5075,15 @@ static type check_function_call(checker *c, expr *e, decl *fn)
     fn = check_routine_args(c, e, fn);
     if (!fn) return T_ERR;
     if (fn->is_async) check_task_call(c, e, fn);
+    if (fn->is_worker) {
+        decl *from = reading_code(c);
+        if (c->awaiting != e) {
+            diag_error(e->at, "a local worker is awaited from local async code: 'var result = await " STR_FMT "(...)'", STR_ARG(fn->name));
+        } else if (from && from->is_async) {
+            from->uses_workers = true;
+            note_side(from, TASK_LOCAL, e->at);
+        }
+    }
     if (c->method && c->method->kind == DECL_FUNCTION) {
         bool known = false;
         for (int i = 0; i < c->method->callees.count; i++) known |= c->method->callees.items[i] == fn;
@@ -10466,7 +10475,7 @@ static type check_await(checker *c, expr *e)
     if (t.kind == TY_ERROR) return T_ERR;
     if (call->call == CALL_WAIT) return T_VOID_;
     if (call->storage_flush || call->web_fetch) return t;
-    if ((call->kind == E_CALL || call->kind == E_METHOD) && call->call == CALL_FUNCTION && call->method->is_async) return t;
+    if ((call->kind == E_CALL || call->kind == E_METHOD) && call->call == CALL_FUNCTION && (call->method->is_async || call->method->is_worker)) return t;
     diag_error(e->at, "'await' waits for an async function's call, or for Wait, like 'await Wait.Ticks(30)'");
     if ((call->kind == E_CALL || call->kind == E_METHOD) && call->call == CALL_FUNCTION) {
         diag_note("'" STR_FMT "' isn't async: it runs to its end as it's called, so there's nothing to wait for",
@@ -11601,7 +11610,7 @@ static void check_parallel(checker *c, stmt *s)
     }
     const expr *root = s->value;
     while (root->kind == E_MEMBER) root = root->object;
-    if (list && root->kind == E_NAME && root->bind == BIND_LOCAL) {
+    if (list && root->kind == E_NAME && root->bind == BIND_LOCAL && !(c->method && c->method->is_worker)) {
         diag_error(s->value->at, "a parallel loop goes through a list the world keeps: a component's or a singleton's, "
                                  "and '" STR_FMT "' is a variable", STR_ARG(root->name));
         diag_note("a variable's list lives on the thread that made it; keep the list in a component or singleton, or "
@@ -11655,7 +11664,7 @@ static void check_parallel(checker *c, stmt *s)
         diag_error(s->at, "a parallel loop's step can't hold another parallel loop");
         return;
     }
-    if (in_routine(c) || async_code(c) || c->in_input) {
+    if ((in_routine(c) && !c->method->is_worker) || async_code(c) || c->in_input) {
         diag_error(s->at, "a parallel loop goes in a system, view or handler%s", async_code(c) ? " that isn't async" : "");
         diag_note("its steps run on threads, as a system's do");
     }
@@ -15258,6 +15267,15 @@ static void check_function_decl(checker *c, decl *fn)
     check_signature(c, fn);
     if (fn->is_extern) check_extern_decl(c, fn);
     if (fn->is_async) check_async_decl(fn);
+    if (fn->is_worker) {
+        if (fn->takes_action) diag_error(fn->worker_at, "a worker takes owned values, not an Action");
+        for (int i = 0; i < fn->params.count; i++) {
+            const param *p = &fn->params.items[i];
+            if (p->mode != PARAM_READ || p->is_out) {
+                diag_error(p->at, "a worker owns its inputs; return the result instead of taking 'mut' or 'out'");
+            }
+        }
+    }
 }
 
 static void refuse_shader_value(const decl *d, const param *p)
@@ -17688,7 +17706,7 @@ static void collect_decls(program *prog)
         }
 
         if (d->is_local && !(d->kind == DECL_COMPONENT || d->kind == DECL_SINGLETON || d->kind == DECL_EVENT
-                             || (d->kind == DECL_SYSTEM && d->is_handler))) {
+                             || (d->kind == DECL_SYSTEM && d->is_handler) || d->is_worker)) {
             switch (d->kind) {
             case DECL_STRUCT:
                 diag_error(d->local_at, "structs belong to neither side: the match and local state both hold them");
@@ -20396,6 +20414,10 @@ static bool override_agrees(const decl *o, const decl *v)
         }
         return false;
     }
+    if (o->is_worker != v->is_worker) {
+        diag_error(o->at, "an override must preserve 'local worker'");
+        return false;
+    }
     return true;
 }
 
@@ -20596,6 +20618,8 @@ static void check_replaced(checker *c, decl *v)
     }
     for (int i = fixes; i < copy.fixes.count; i++) vec_push(c->prog->fixes, copy.fixes.items[i]);
 }
+
+#include "worker_check.inc"
 
 bool check(program *prog)
 {
@@ -20874,6 +20898,7 @@ bool check(program *prog)
     warn_unused_locals(&c); // Once it's known which calls draw and call C
     warn_dropped_values(&c);
     collect_device_uses(&c);
+    check_workers(&c);
     // A singleton something snaps counts its snaps: views blend it between ticks with the same count.
     for (int i = 0; i < prog->decls.count; i++) {
         decl *d = prog->decls.items[i];

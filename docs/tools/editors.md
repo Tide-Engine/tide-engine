@@ -4,6 +4,10 @@ description: "Set up Tide in VS Code, JetBrains, Emacs, Vim or Neovim with highl
 
 # Editors
 
+Local worker declarations share normal function navigation and diagnostics.
+Hovers and symbol outlines identify them as `local worker`; syntax highlighting
+recognizes the modifier without reserving `worker` as an ordinary variable name.
+
 ## Choose your editor
 
 [Install Tide](../guide/install.md) first, then choose your setup:

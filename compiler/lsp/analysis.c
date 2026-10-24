@@ -1755,6 +1755,7 @@ static const char *decl_keyword(const decl *d)
 static const char *decl_what(const decl *d)
 {
     if (d->kind == DECL_ALIAS) return "type alias";
+    if (d->is_worker) return "local worker";
     const char *what = d->kind == DECL_SYSTEM && d->is_handler ? d->is_command ? "command handler" : "event handler"
                      : d->extern_system                        ? "extern system" // Written in C
                                                                : decl_keyword(d);
@@ -1865,7 +1866,7 @@ static void format_routine(const decl *m, sb *out)
         return;
     }
     sb_printf(out, "%s%s%s%s" STR_FMT " " STR_FMT "(", m->is_virtual ? "virtual " : m->is_override ? "override " : "",
-              m->is_extern ? "extern " : "", m->is_async ? "async " : "", m->is_mut_method ? "mut " : "",
+              m->is_extern ? "extern " : "", m->is_worker ? "local worker " : m->is_async ? "async " : "", m->is_mut_method ? "mut " : "",
               STR_ARG(m->return_type_name), STR_ARG(m->name));
     for (int i = 0; i < m->params.count; i++) {
         if (i) sb_put(out, ", ");
@@ -8120,7 +8121,7 @@ static void complete_overrides(completion *c)
             } else if (v->kind == DECL_SHADER) {
                 sb_put(&header, v->is_frag ? "frag " : "vert ");
             } else {
-                sb_printf(&header, "%s%s", v->is_async ? "async " : "", v->is_mut_method ? "mut " : "");
+                sb_printf(&header, "%s%s", v->is_worker ? "local worker " : v->is_async ? "async " : "", v->is_mut_method ? "mut " : "");
                 if (v->return_type.kind == TY_VOID) sb_put(&header, "void");
                 else put_type_here(&header, v->return_type, v->return_type_name);
                 sb_put(&header, " ");

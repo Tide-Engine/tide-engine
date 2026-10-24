@@ -1,5 +1,13 @@
 # The GUI
 
+## Host pool on a frame (2026-10-24)
+
+tide_gui.jobs is an optional borrowed tide_jobs provider for generated local
+worker calls during a frame. It is not available to Tide GUI code. The standard
+host sets it before frame; zeroed/custom hosts keep the synchronous fallback.
+GUI interaction/layout behavior is unchanged. Hosts/games rebuild for the C
+layout addition. Worker ownership/lifecycle contracts: notes/language.md.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Rendering and platform

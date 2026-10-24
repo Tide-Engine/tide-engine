@@ -196,6 +196,7 @@ void print_outline(const program *prog, sb *out)
         put_json_c(out, d->unit->src->path);
         sb_printf(out, ", \"line\": %d, \"column\": %d", d->at.line, d->at.col);
         if (d->is_local) sb_put(out, ", \"local\": true");
+        if (d->is_worker) sb_put(out, ", \"worker\": true");
         if (d->is_async) sb_put(out, ", \"async\": true");
         if (d->is_extern || d->extern_system) sb_put(out, ", \"extern\": true");
         switch (d->kind) {

@@ -1015,7 +1015,7 @@ static bool is_decl_word(const str text)
     return str_eq_c(text, "input") || str_eq_c(text, "view") || str_eq_c(text, "struct") || str_eq_c(text, "event") || str_eq_c(text, "command")
         || str_eq_c(text, "enum") || str_eq_c(text, "scene") || str_eq_c(text, "local") || str_eq_c(text, "namespace")
         || str_eq_c(text, "using") || str_eq_c(text, "extern") || str_eq_c(text, "const") || str_eq_c(text, "frag")
-        || str_eq_c(text, "vert") || str_eq_c(text, "asset") || str_eq_c(text, "audio");
+        || str_eq_c(text, "vert") || str_eq_c(text, "asset") || str_eq_c(text, "audio") || str_eq_c(text, "worker");
 }
 
 // Keywords that only start declarations, and the contextual ones at the start
@@ -2821,6 +2821,7 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         // `override` before one: it replaces the virtual declaration it names.
         const token *local = NULL;
         const token *async = NULL;
+        const token *worker = NULL;
         const token *virtual = NULL;
         const token *override = NULL;
         p.overriding = false;
@@ -2831,6 +2832,8 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
                 local = advance(&p);
             } else if (!async && t->kind == T_IDENT && str_eq_c(t->text, "async") && (after == T_IDENT || after == T_MUT)) {
                 async = advance(&p);
+            } else if (!worker && t->kind == T_IDENT && str_eq_c(t->text, "worker") && after == T_IDENT) {
+                worker = advance(&p);
             } else if (!virtual && t->kind == T_IDENT && str_eq_c(t->text, "virtual") && at_replace_word(&p, false)) {
                 virtual = advance(&p);
             } else if (!override && t->kind == T_IDENT && str_eq_c(t->text, "override") && at_replace_word(&p, false)) {
@@ -2931,6 +2934,16 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
             }
         }
         if (virtual || override) mark_replace_words(d, virtual, override);
+        if (worker) {
+            if (d->kind != DECL_FUNCTION || d->is_extern) {
+                diag_error(worker->at, "'local worker' declares a calculation function: 'local worker Result Build(Input input) { ... }'");
+            } else {
+                d->is_worker = true;
+                d->worker_at = worker->at;
+                if (!local) diag_error(worker->at, "workers currently require 'local': write 'local worker'");
+                if (async) diag_error(async->at, "a worker runs to completion; drop 'async' and await it from a local async function");
+            }
+        }
         if (async && (d->kind == DECL_FUNCTION || (d->kind == DECL_SYSTEM && d->is_handler))) {
             d->is_async = true;
             d->async_at = async->at;

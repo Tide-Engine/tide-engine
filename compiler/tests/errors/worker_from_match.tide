@@ -1,0 +1,5 @@
+// expect: uses local state
+local worker int Build() { return 1; }
+async int Work() { return await Build(); }
+system Start() { Work(); }
+scene Main;

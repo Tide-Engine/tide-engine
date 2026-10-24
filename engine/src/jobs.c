@@ -6,6 +6,7 @@
 
 #include "tide/page.h"
 #include "tide/time.h"
+#include "tide/worker.h"
 
 
 // Below this much work in all (see tide_system_tasks.count), a tick runs on
@@ -433,6 +434,7 @@ void tide_parallel_for(const uint32_t count, void (*work_fn)(void *context, uint
                        const uint64_t cost)
 {
     tick_run *r = current;
+    if (!r && tide_worker_parallel(count, work_fn, context, cost)) return;
     loop_job job = {work_fn, context, count, 0u, 0u};
     atomic_init(&job.next, 0u);
     atomic_init(&job.done, 0u);

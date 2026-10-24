@@ -1,5 +1,17 @@
 # No Tide code can corrupt memory
 
+## Owned local worker boundaries (2026-10-24)
+
+Capture/result walkers materialize text and nested containers before changing
+heap resolvers or releasing their source. Packed provenance never escapes a
+capture. Private input/output heaps live until provider-published completion;
+cancellation abandons publication and frame-thread collection releases memory.
+Parallel callbacks inherit private heap resolvers and detached captures, with
+independent scratch. Wasm acquisitions synchronize grown memory before reading
+queued jobs, outputs or pages. Only integer tickets enter task frames; unpack/
+rebind resets them and never restores group/provider pointers from saved bytes.
+Teardown drains callbacks before unloading code. Regressions/support: language.md.
+
 ## Session cookie proof (2026-10-24)
 
 Protocol 19 checks a cookie and connection attempt before decoding connected

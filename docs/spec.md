@@ -1497,7 +1497,7 @@ Built 2026-10-06 on that; each point beyond it is a pick, awaiting the owner.
 - Taking a whole list out of a field or variable copies it; its elements, count, methods and `foreach` don't. A read-only list argument is passed without a copy unless a `mut` argument of the same call could change it.
 - Lists in code (not in a world) live in the scratch area, like text.
 - `parallel (var i in items) { ... }` goes through a list's elements at once, on threads, as it does a grid's cells (see Grids): its places are the elements' indices, so `i` is an `int`, and the step reads the element as `items[i]`. Each step reads the list as the loop found it and changes only its own element, `items[i]`, so the result is the same on any number of threads. `parallel (var i in items by 2 offset o)` gives each step a block of elements from `i` up to the block's size, which it changes as `items[i + 1]` and the like; blocks start at the offset plus any multiple of their size, and one that would go past the list's end is left out. The step's rules are a grid's: it changes nothing else (not the list's count either: no `Add`, `RemoveAt`, `Resize` or `Clear`), can't end the loop, wait, spawn or send, and so on.
-- A parallel loop goes through a list the world keeps, a component's or a singleton's, not a variable's, and one whose elements hold no text: steps run on threads, where text can't be made.
+- A parallel loop goes through a list the world keeps, a component's or a singleton's, or an owned local list in a `local worker`. Its elements are plain values with no text or containers. Ordinary function-local lists retain their existing restriction.
 - `items.Sort(a, b) { return a.x < b.x; }` sorts a list, stable, by a comparison written after the call: its two names are the elements it compares, read-only copies of the element type, and the block says whether the first goes before the second, as `return a.x < b.x;`, on every path. Elements the comparison doesn't order keep their order. It runs again and again as the list sorts, in an order nothing promises, so it changes nothing outside it (not the list, not a field, not an outer variable), and can't spawn, send, wait, draw, use the GUI, change scenes or the session, or call C; it reads what it likes: fields, the code's parameters and variables. `break`, `continue` and the comparison's `return` are its own, not the code's around it. It sorts in systems, views, handlers and plain functions, and not yet in methods, async code, functions that take an Action, blocks written after a call, or the input's code. Merge sort, so the same comparisons in the same order on every machine.
 
 ### Open
@@ -1578,7 +1578,7 @@ Implemented on the owner's go-ahead, to be revisited once games use them:
 - A parallel loop's step changes only its own cell or block, `at` plus constants (`at + int2(1, 0)`, `int2(at.x + 1, at.y)`), and the variables it declares. Anything else it changes is an error that says why: a variable outside the loop (to add up, use a `for` loop or a foreach that goes in order), another cell, the whole grid (`Clear`), through a `mut` argument too. It can't `break` out of the loop (`continue` ends the step), return, wait, start tasks, spawn, send, add, remove or destroy, load scenes, draw, use the GUI, or hold another parallel loop. It can call functions, and C.
 - A block is 1 to 64 cells along each axis, a size known while compiling: a constant int, or `int2`/`int3`. The offset can be any int: blocks start at it plus any multiple of their size, so with blocks of 2, an offset of 2 gives the same blocks as 0.
 - An open axis ends where the ints do. A block that would go past the last int is left out, as one past a grid's size is, so no block's cells wrap around; a step that reads past that edge, `cells[at + int2(1, 0)]` at the last int, reads the cell its own arithmetic wraps to, as an int wraps anywhere else. A foreach reaches the cells at both ends. (Picked while testing that no loop can go wrong there: see Open, at the end.)
-- A parallel loop goes in a system, a view or an event handler that isn't async: not in functions, methods, async code or an input's `Sample`. A foreach there whose steps only touch their own cell runs at once; anywhere else, it goes in order.
+- A parallel loop goes in a system, a view, a synchronous event handler or a `local worker`: not in ordinary functions, methods, async code or an input's `Sample`. A grid foreach there whose steps only touch their own cell runs at once; anywhere else, it goes in order. Workers currently take no grids.
 - A foreach over a grid can't wait inside it: it goes through the cells as they are.
 - Each step writes into a copy of its chunk, made from the chunk as it was, and the loop's end puts the copies into the grid in order, chunk by chunk, so where the steps ran never shows. The schedule says how many parallel loops each system has: `(once, 2 parallel loops)`. A tick with one runs on threads, and the loop's steps spread across them when there are enough to be worth it.
 - Hosts read a world's cells with `tide_grid_read(&w->heap, w->Field.cells, x, y, 0, &tide_shape_Grid2_int)`: the generated header names each grid type's shape.
@@ -2133,6 +2133,48 @@ Implemented, awaiting approval:
 - Methods and functions that take an Action being async, and `await` inside a block written after a call.
 - Local handlers of match events (see Events), which a local task awaiting a match event would need too.
 - Whether what's written before an `await` in its statement is read before the wait, as in C#: `score.value + await Bonus()` reads `score.value` once the task goes on today, unless a call that writes comes after it in the statement (see Evaluation order).
+
+### Local workers
+
+**Decided (2026-10-24).** `local worker Result Build(Input input) { ... }`
+declares a CPU calculation whose scheduling belongs to this machine. A local
+async function or handler awaits it with `await Build(input)`. Inputs and results
+are owned values, independent of live worlds and frame storage. The calling
+task publishes results in local state. Worker completion never enters match
+state, tick order, snapshots, hashes or networking. Bare `worker` is reserved
+for a future match contract and is currently rejected.
+
+Workers share the bounded host pool, and can distribute independent loop work
+through the same pool. Existing loop ordering and independence rules remain.
+Explicit `parallel` loops also accept a worker's owned local list. A step cannot
+append to a shared list or write another step's output.
+
+**Implemented choices, provisional.** Workers are synchronous function bodies,
+without `async`, `mut`/`out` parameters, bindings, World, queries, devices,
+resource/asset borrows, callable/shader bindings or grids. Owned CPU values
+include text, nested lists/maps/sets, ordinary structs, fixed arrays, optionals
+and failable results.
+Reachable helpers have no world, frame, drawing/audio, file/network, task-start
+or implicit match-randomness capabilities. Explicit Random values retain their
+ordinary calculation rules. Extern C remains trusted. Worker calls currently
+require `await`; start a local async wrapper from a view or local handler.
+
+Captures are fully materialized, including packed geometry lists, before
+dispatch. Results are acquired on the frame thread. Owner loss drops the
+continuation and discards pending output; a running calculation may finish
+privately. Local state disposal and retained reload drain jobs before their
+callbacks can be unloaded. Restored/retained tasks restart a pending worker
+from their current saved arguments and component bindings.
+
+A custom host supplies optional background/help callbacks through `gui.jobs`;
+the standard host uses its platform pool. Parallel waiters execute queued loop
+helpers to avoid requiring a free thread. No provider means synchronous
+execution when the task polls its worker, which can stall that frame. List
+foreach and ordinary for loops retain their ordered semantics. Automatic grid
+foreach analysis is unchanged, and workers currently have no grid values.
+
+**Open:** deterministic match workers, owned grid values, priorities, explicit
+cancellation and public worker handles.
 
 ## Input
 

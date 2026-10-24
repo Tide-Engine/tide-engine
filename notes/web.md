@@ -1,5 +1,21 @@
 # Web builds
 
+## Local background workers (2026-10-24)
+
+The existing wasi-threads pool also consumes the local-worker queue. Foreground
+round invitations have a separate counter from background wakeups, preventing
+a queue notification from joining a tick round twice. Helpers have queue
+priority, and waiting workers help them without needing another available
+thread. Queue/result acquisitions call memory_sync for pages another thread
+grew. Captures are detached before dispatch; workers use private heaps/scratch.
+Where the page has no threads/provider, polling runs a worker synchronously.
+No JavaScript import, browser flags or deployment requirements changed.
+Ownership, language limits and validation: language.md, schedule-and-threads.md.
+The served web_threads regression also runs a background job and its parallel
+loop between frames beside the existing deterministic tick comparison; the
+final browser run passes. Typed nested/optional/error results run through both
+the serial fallback and the actual platform pool under WASI.
+
 Invite readiness (2026-10-22): a built-in web host's `Session.invite` stays
 empty until the relay confirms registration, preventing a fast copied-link
 join from exhausting missing-room retries before its host is registered.

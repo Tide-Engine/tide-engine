@@ -1,0 +1,4 @@
+// expect: a local worker is awaited from local async code
+local worker int Build(int value) { return value; }
+view Start() { Build(1); }
+scene Main;

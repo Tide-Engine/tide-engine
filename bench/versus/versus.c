@@ -81,7 +81,7 @@ static const tide_jobs *jobs_for(const uint32_t threads, limited *l)
     const tide_jobs *pool = tide_platform_jobs();
     if (!pool || threads == 1) return NULL;
     if (threads == 0 || threads >= pool->threads) return pool;
-    l->jobs = (tide_jobs){l, threads, limited_run, NULL, pool->more ? limited_more : NULL, limited_run_some};
+    l->jobs = (tide_jobs){l, threads, limited_run, NULL, pool->more ? limited_more : NULL, limited_run_some, NULL, NULL};
     l->pool = pool;
     atomic_init(&l->inside, 0u);
     return &l->jobs;

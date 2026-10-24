@@ -1,5 +1,14 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Local workers (2026-10-24)
+
+The standard host supplies its existing platform pool in tide_gui.jobs before
+each generated frame. Local worker captures/results are private to generated
+local state. Missing platform background support keeps the synchronous poll
+fallback. Free/rebind drains callbacks before game code unload. Custom hosts
+opt in through the same optional GUI field; views keep their serial draw order.
+Contracts and coverage: notes/language.md and notes/schedule-and-threads.md.
+
 ## Optional voice provider (2026-10-22)
 
 The host table's optional `voice` getter obtains registration from the game's

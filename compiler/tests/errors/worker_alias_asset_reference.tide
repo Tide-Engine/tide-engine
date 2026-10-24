@@ -1,0 +1,6 @@
+// expect: can't read live assets; capture their data before starting the worker
+using Model = Mesh<Vertex3>;
+using ModelReference = Asset<Model>;
+local worker int Build(ModelReference reference) { return Read(reference); }
+int Read(ModelReference reference) { return reference.Value.vertices.count; }
+scene Main;

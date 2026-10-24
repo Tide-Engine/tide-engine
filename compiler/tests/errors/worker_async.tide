@@ -1,0 +1,3 @@
+// expect: a worker runs to completion; drop 'async'
+local async worker int Build(int value) { return value; }
+scene Main;
