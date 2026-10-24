@@ -1,0 +1,104 @@
+namespace Render3D;
+
+struct SurfaceInput
+{
+    float3 world;
+    float3 normal;
+    float2 uv;
+    float3 viewDirection;
+}
+
+// Albedo and emission are linear light. Decode display-space material colors
+// with SrgbToLinear before constructing the surface; normals are world-space.
+struct Surface
+{
+    float3 albedo = float3(1);
+    float3 normal = float3(0, 1, 0);
+    float roughness = 0.5;
+    float metallic;
+    float3 emission;
+}
+
+// The default callback leaves the caller's material and geometric normal alone.
+void StandardSurface(SurfaceInput input, mut Surface surface)
+{
+}
+
+// Direct metallic-roughness BRDF: GGX, height-correlated Smith and Schlick,
+// with the non-reflected, non-metallic energy going to Lambert diffuse.
+// Directions point away from the surface (lightDirection is TOWARD the light).
+// Radiance and the returned color are linear HDR; emission is included once.
+float3 EvaluatePbr(Surface surface, float3 viewDirection, float3 lightDirection,
+                   float3 radiance, float visibility)
+{
+    float3 n = Math.Normalize(surface.normal);
+    float3 v = Math.Normalize(viewDirection);
+    float3 l = Math.Normalize(lightDirection);
+    float noL = Math.Clamp(Math.Dot(n, l), 0, 1);
+    float noV = Math.Clamp(Math.Dot(n, v), 0, 1);
+    float3 emission = Math.Max(surface.emission, float3(0));
+    if (noL <= 0 || noV <= 0) return emission;
+
+    float3 h = Math.Normalize(v + l);
+    float noH = Math.Clamp(Math.Dot(n, h), 0, 1);
+    float voH = Math.Clamp(Math.Dot(v, h), 0, 1);
+    float roughness = Math.Clamp(surface.roughness, 0.05, 1);
+    float metallic = Math.Clamp(surface.metallic, 0, 1);
+    float3 albedo = Math.Clamp(surface.albedo, float3(0), float3(1));
+    float alpha = roughness * roughness;
+    float a2 = alpha * alpha;
+
+    // This form avoids subtracting nearly equal terms at the specular peak.
+    float noH2 = noH * noH;
+    float denominator = (1 - noH2) + a2 * noH2;
+    float distribution = a2 / (Math.PI * denominator * denominator);
+    float ggxV = noL * Math.Sqrt(noV * noV * (1 - a2) + a2);
+    float ggxL = noV * Math.Sqrt(noL * noL * (1 - a2) + a2);
+    // Smith visibility already includes 1 / (4 * noL * noV). The floor only
+    // protects vanishing grazing denominators from underflow/division by zero.
+    float smith = 0.5 / Math.Max(ggxV + ggxL, 1e-12);
+    float3 f0 = Math.Lerp(float3(0.04), albedo, metallic);
+    float oneMinusVoH = 1 - voH;
+    float square = oneMinusVoH * oneMinusVoH;
+    float fifth = square * square * oneMinusVoH;
+    float3 fresnel = f0 + (float3(1) - f0) * fifth;
+    float3 specular = distribution * smith * fresnel;
+    float3 diffuse = (float3(1) - fresnel) * (1 - metallic) * albedo / Math.PI;
+    return emission + (diffuse + specular) * Math.Max(radiance, float3(0))
+        * (noL * Math.Clamp(visibility, 0, 1));
+}
+
+float SrgbToLinear(float value)
+{
+    float channel = Math.Max(value, 0);
+    if (channel <= 0.04045) return channel / 12.92;
+    return Math.Pow((channel + 0.055) / 1.055, 2.4);
+}
+
+float3 SrgbToLinear(float3 value)
+{
+    return float3(SrgbToLinear(value.x), SrgbToLinear(value.y), SrgbToLinear(value.z));
+}
+
+float LinearToSrgb(float value)
+{
+    float channel = Math.Max(value, 0);
+    if (channel <= 0.0031308) return 12.92 * channel;
+    return 1.055 * Math.Pow(channel, 1 / 2.4) - 0.055;
+}
+
+float3 LinearToSrgb(float3 value)
+{
+    return float3(LinearToSrgb(value.x), LinearToSrgb(value.y), LinearToSrgb(value.z));
+}
+
+// Exposure is a linear multiplier. Reinhard maps linear HDR to linear display
+// range; encode with LinearToSrgb once afterwards. Half-float targets can read
+// back infinity after overflow, so bound both operands BEFORE multiplying.
+float3 Tonemap(float3 radiance, float exposure)
+{
+    float3 light = Math.Clamp(radiance, float3(0), float3(65504));
+    float scale = Math.Clamp(exposure, 0, 1e6);
+    float3 exposed = light * scale;
+    return exposed / (float3(1) + exposed);
+}

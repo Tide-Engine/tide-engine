@@ -1,0 +1,135 @@
+using Render3D;
+
+scene Main;
+singleton Simulation { int marker = 37; }
+
+local singleton PbrResults
+{
+    float3[27] lighting;
+    float[8] transfer;
+    float3 roundtrip;
+    float3[5] presentation;
+    Surface[5] callbacks;
+    float3 specialRadiance;
+    float specialExposure;
+    int frames;
+}
+
+Surface ApplySurface(SurfaceInput input, Surface initial, Func<SurfaceInput, mut Surface, void> callback)
+{
+    mut Surface surface = initial;
+    callback(input, surface);
+    return surface;
+}
+
+void CustomSurface(SurfaceInput input, mut Surface surface)
+{
+    surface.albedo = SrgbToLinear(float3(input.uv, 0.75));
+    surface.normal = Math.Normalize(input.normal);
+    surface.roughness = 0.75;
+    surface.metallic = 0.25;
+    surface.emission = input.world * 0.1 + input.viewDirection * 0.2;
+}
+
+void GainSurface(SurfaceInput input, mut Surface surface, float gain)
+{
+    surface.albedo *= gain;
+    surface.emission = input.world * gain;
+}
+
+Func<SurfaceInput, mut Surface, void> WithGain(float gain)
+{
+    return (SurfaceInput input, mut Surface surface) => GainSurface(input, surface, gain);
+}
+
+view Evaluate(mut PbrResults results)
+{
+    float3 up = float3(0, 1, 0);
+    float3 white = float3(1);
+    mut Surface surface = Surface { albedo = float3(0.5), roughness = 1 };
+    results.lighting[0] = EvaluatePbr(surface, up, up, white, 1);
+    surface.metallic = 1;
+    results.lighting[1] = EvaluatePbr(surface, up, up, white, 1);
+    float3 angledV = float3(Math.Sqrt(0.75), 0.5, 0);
+    float3 angledL = float3(-Math.Sqrt(0.75), 0.5, 0);
+    results.lighting[3] = EvaluatePbr(surface, angledV, angledL, white, 1);
+    surface.metallic = 0;
+    results.lighting[2] = EvaluatePbr(surface, angledV, angledL, white, 1);
+    results.lighting[4] = EvaluatePbr(surface, up, -up, white, 1);
+    results.lighting[5] = EvaluatePbr(surface, -up, up, white, 1);
+    surface.emission = float3(0.1, 0.2, 0.3);
+    surface.normal = float3(0);
+    results.lighting[6] = EvaluatePbr(surface, up, up, white, 1);
+    surface.normal = up;
+    results.lighting[7] = EvaluatePbr(surface, float3(0), up, white, 1);
+    results.lighting[8] = EvaluatePbr(surface, up, float3(0), white, 1);
+    results.lighting[16] = EvaluatePbr(surface, up, up, white, 0);
+    results.lighting[17] = EvaluatePbr(surface, up, up, white, 0.25);
+    surface.emission = float3(0);
+    results.lighting[9] = EvaluatePbr(surface, float3(1, 1e-5, 0), float3(-1, 1e-5, 0), white, 1);
+    surface.roughness = 0;
+    results.lighting[10] = EvaluatePbr(surface, up, up, white, 1);
+    surface.roughness = 0.05;
+    results.lighting[11] = EvaluatePbr(surface, up, up, white, 1);
+    surface.roughness = -2;
+    results.lighting[12] = EvaluatePbr(surface, up, up, white, 1);
+    surface.roughness = 2;
+    results.lighting[13] = EvaluatePbr(surface, up, up, white, 1);
+    surface.metallic = -1;
+    results.lighting[14] = EvaluatePbr(surface, up, up, white, 1);
+    surface.metallic = 2;
+    results.lighting[15] = EvaluatePbr(surface, up, up, white, 1);
+    surface.metallic = 0;
+    results.lighting[18] = EvaluatePbr(surface, up, up, float3(100), 1);
+    surface.albedo = float3(0);
+    results.lighting[19] = EvaluatePbr(surface, up, up, white, 1);
+    surface.albedo = white;
+    results.lighting[20] = EvaluatePbr(surface, up, up, white, 1);
+    surface.albedo = float3(1, 0.25, 0);
+    surface.metallic = 1;
+    results.lighting[21] = EvaluatePbr(surface, up, up, white, 1);
+    surface.albedo = float3(0.5);
+    surface.metallic = 0;
+    surface.normal = up * 3;
+    results.lighting[22] = EvaluatePbr(surface, up * 4, up * 5, white, 1);
+    surface.metallic = 0.5;
+    results.lighting[23] = EvaluatePbr(surface, up, up, white, 1);
+    surface.metallic = 1;
+    surface.roughness = 0.5;
+    results.lighting[24] = EvaluatePbr(surface, up, up, white, 1);
+    surface.metallic = 0;
+    results.lighting[25] = EvaluatePbr(surface, up, up, white, 1);
+    results.lighting[26] = EvaluatePbr(surface, float3(Math.Sqrt(15) / 4, 0.25, 0),
+        float3(-Math.Sqrt(15) / 4, 0.25, 0), white, 1);
+
+    results.transfer[0] = SrgbToLinear(0);
+    results.transfer[1] = SrgbToLinear(1);
+    results.transfer[2] = SrgbToLinear(0.5);
+    results.transfer[3] = SrgbToLinear(0.04045);
+    results.transfer[4] = LinearToSrgb(0);
+    results.transfer[5] = LinearToSrgb(1);
+    results.transfer[6] = LinearToSrgb(0.21404114048223255);
+    results.transfer[7] = LinearToSrgb(0.0031308);
+    results.roundtrip = LinearToSrgb(SrgbToLinear(float3(0.02, 0.5, 1)));
+    results.presentation[0] = Tonemap(float3(0, 1, 4), 2);
+    results.presentation[1] = LinearToSrgb(results.presentation[0]);
+    results.presentation[2] = Tonemap(results.lighting[18], 1);
+    results.presentation[3] = Tonemap(results.specialRadiance, results.specialExposure);
+    results.presentation[4] = Tonemap(float3(-1, 1, 65504), -1);
+
+    SurfaceInput input = SurfaceInput {
+        world = float3(2, 4, 6), normal = up * 3, uv = float2(0.5, 0.25), viewDirection = float3(0, 0, 2)
+    };
+    Surface seed = Surface {
+        albedo = float3(0.2, 0.3, 0.4), normal = up * 2,
+        roughness = 0.6, metallic = 0.4, emission = float3(0.1)
+    };
+    Func<SurfaceInput, mut Surface, void> standard = StandardSurface;
+    Func<SurfaceInput, mut Surface, void> custom = CustomSurface;
+    results.callbacks[0] = ApplySurface(input, seed, standard);
+    results.callbacks[1] = ApplySurface(input, seed, custom);
+    results.callbacks[2] = ApplySurface(input, seed, WithGain(0.5));
+    results.callbacks[3] = ApplySurface(input, seed, default);
+    results.callbacks[4] = Surface {};
+    results.frames++;
+}

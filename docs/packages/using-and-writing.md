@@ -94,7 +94,7 @@ A folder's files build as they are, with no commit, and `tide run` reloads the g
 
 ## Packages that come with tide
 
-The [bundled packages](./index.md#bundled-packages) are `box2d`, `box3d`, `newton`, `rooms`, `lobby`, `steam` and `voice`. Their API docs are collected in this section. [Newton](./newton.md) is experimental; use a checkout or installation containing it, and check its current scope and validation. A line for a bundled package is its name alone:
+The [bundled packages](./index.md#bundled-packages) are `render3d`, `box2d`, `box3d`, `newton`, `rooms`, `lobby`, `steam` and `voice`. Their API docs are collected in this section. [Render3D](./render3d.md) supplies opaque mesh/material rendering with package-owned lighting, shadows and HDR presentation. [Newton](./newton.md) is experimental. Use a checkout or installation containing the packages you need, and check their current scope. A line for a bundled package is its name alone:
 
 ```
 box2d
