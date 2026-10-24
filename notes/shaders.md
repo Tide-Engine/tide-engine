@@ -26,10 +26,11 @@ selection is process-local; no Windows preference or driver was changed.
 The hash-only implementation repeatedly reduces country-view WebGL GPU time
 from about 47.5 to 42.0 ms; independent ranking brings it to about 41.4 ms.
 WebGPU's initial country comparison is 46.79 to 37.36 ms. A road-midpoint view
-with hash reuse is 23.75 to 22.65 ms. See earth-engine-measurements.json for final
-runs, sample counts, renderer identity, captures and caveats. Other applications
+with hash reuse is 23.75 to 22.65 ms. See earth-engine-measurements.json for retained
+exploratory runs, sample counts, renderer identity, captures and caveats. Other applications
 remain running and clocks are uncontrolled; some exploratory runs overlap CPU
-builds. Final confirmations are recorded separately. No run substitutes a
+builds. An additional strict-gated confirmation was prepared and requested, then deferred without starting it
+after publication; no clean or isolated timing claim is made. No run substitutes a
 reduced resolution, flat material or alternate noise pattern for this change.
 
 Other local probes are rejected: conditional corner hashing alone saved about
@@ -48,7 +49,9 @@ negative coordinates/seeds, coordinate permutations, equal-coordinate and
 pairwise ties, origin and both int seed extremes, in CPU/frag/vert paths and
 after device recreation. Validation initially caught a GLSL/WGSL shift-operand
 type mismatch in the new rotate helper; both the shift count and its literal
-arguments now use uint explicitly. Merged dev's independent type-alias/Render3D changes without conflicts and
+arguments now use uint explicitly.
+
+Merged dev's independent type-alias/Render3D changes without conflicts and
 rebuilt both complete configurations. All required engine checks pass: 2,757
 native and 2,611 web, including 46 native GPU checks, unchanged Earth checks and
 benchmark pins, WebGL, D3D11/WARP, WebGPU, SPIR-V and HLSL. The native configured
@@ -63,8 +66,21 @@ The web run's optional private campaign tail was stopped after all required
 engine checks passed, per the engine-only scope; complete private browser
 coverage is not claimed. Other OSes, Android and sanitizers remain CI coverage.
 No workflow was dispatched or awaited. The staged release CLI builds Earth's
-client/server deployment bundle successfully; publication and the coordinated
-Radeon confirmation are recorded below when complete.
+client/server deployment bundle successfully. The unrelated Render3D benchmark
+commits merge cleanly afterward, with no shader/runtime dependency changes and
+no repeat validation required. Pushed 005d6944 to dev and published the unchanged
+Earth sources using this checkout's staged CLI/platform as release
+c58a995f7d9b7d68aea35a476eb469b570a9ab6e3403efbc28b7f730f76ad4c6.
+The public play page's embedded TIDE_PROGRAM exactly matches the client from
+the uploaded deployment bundle; the managed room remains 966ANR/0. Muted
+Radeon WebGL/WebGPU production clients join that live room, land, walk and drive
+without renderer/game errors. Inspected 412 x 915 DPR 1 captures show cars,
+scenery and online shard status; this is a correctness check, not a new timing
+measurement. The driver first moves the synthetic mouse before pressing it,
+so an initial whole-viewport delta is not mistaken for a camera drag. The additional
+Radeon quiet confirmation was deferred without starting a timing run; all measurements
+above remain exploratory.
+
 
 ## Mutable callable arguments (2026-10-24)
 

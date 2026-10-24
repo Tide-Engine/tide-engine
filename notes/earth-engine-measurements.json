@@ -260,7 +260,7 @@
     "Desktop iGPU, CPU and driver are not Pixel emulation.",
     "Terrain timings are not full-game FPS or touch/display latency.",
     "Other applications remain running; clocks uncontrolled.",
-    "Some exploratory runs overlap CPU builds; final confirmations recorded separately.",
+    "Some exploratory runs overlap CPU builds. All timing remains exploratory; the additional coordinated quiet confirmation was prepared but deferred without starting.",
     "Direct uniform array probe required static-lane reads to pass ANGLE warnings and showed no useful gain."
   ],
   "validation": {
@@ -307,5 +307,53 @@
     "web_optional_tail": "Stopped after required engine tests all passed when the configured suite entered private prototype campaign playtests; no complete private browser coverage claimed.",
     "earth_source_and_pins": "Unchanged, all checks and benchmark pins passed on native/WASI."
   },
-  "deployed": false
+  "deployed": true,
+  "publication": {
+    "release": "c58a995f7d9b7d68aea35a476eb469b570a9ab6e3403efbc28b7f730f76ad4c6",
+    "project": "29c727eab929afcbef23455a6bf73125",
+    "play": "https://play.tide-engine.dev/g/29c727eab929afcbef23455a6bf73125/",
+    "room": "966ANR/0",
+    "manifest": {
+      "format": 1,
+      "tide": "0.5.0-dev",
+      "simulation": "e0be682507e9b6118218d2ccb58f86f7f3021dbac8ba07ba245f52cfd18e86a4",
+      "files": [
+        {
+          "name": "server.wasm",
+          "size": 436677,
+          "sha256": "fc7360bccec495a2332c2d6120bc44260c57482b4a8d013b6add79c429791503"
+        },
+        {
+          "name": "client.html",
+          "size": 1710645,
+          "sha256": "70c0c3ead32a104e6c5b0abac31e352b925226880acc0d4aa98706817e11c62d"
+        }
+      ]
+    },
+    "production_program_matches_bundle": true,
+    "game_source_unchanged_since": "9d1907e4",
+    "live_checks": {
+      "webgl": {
+        "room": "966ANR",
+        "size": [
+          412,
+          915
+        ],
+        "errors": []
+      },
+      "webgpu": {
+        "room": "966ANR",
+        "size": [
+          412,
+          915
+        ],
+        "errors": []
+      }
+    },
+    "live_checks_note": "Downloaded production page, same embedded program as bundle; live server/relay. Muted Radeon browser at 412x915 DPR1 for correctness only, no timing claim; screenshots inspected with cars, scenery and online shard status."
+  },
+  "quiet_confirmation": {
+    "run": false,
+    "reason": "Additional coordinated window requested, then withdrawn after publication so other correctness work was not held; no clean timing claim."
+  }
 }
