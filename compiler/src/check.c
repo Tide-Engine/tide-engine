@@ -2868,8 +2868,8 @@ static void ensure_shards(program *prog)
     // touching: entities that act on each other (Shards.Together), each pair its two keys, lower first, and a count
     // spanned: entities reaching past their position (Shards.Spans) this tick, by key, and spans their boxes, 6 doubles each
     static const char *const long_lists[] = {"ranges", "heard", "pins", "asked", "gone", "held", "routes", "matches", "touching",
-                                             "spanned"};
-    for (int i = 0; i < 10; i++) {
+                                             "spanned", "members"};
+    for (int i = 0; i < 11; i++) {
         f.name = str_from(long_lists[i]);
         f.type = list_of(prog, (type){TY_LONG, NULL});
         vec_push(state->fields, f);

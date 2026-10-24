@@ -1,5 +1,22 @@
 # Netcode: sessions, prediction, commands
 
+## Shard recovery reserves player slots (2026-10-24)
+
+The server's anonymous-slot reuse scan now excludes `admitted` players as
+well as connected players and migration reservations. A restored full shard
+previously let an anonymous peer replace a reserved cookie before its owner
+returned. Global departures release admissions on every shard through
+`tide_server_unadmit`; an unused slot clears its old identity so a new cookie
+can be admitted there, while live connections and migration reservations keep
+theirs. Invalid/out-of-game IDs do nothing. The shard instruction uses cookie
+zero for release; game packets and protocol 18 are unchanged.
+
+Neighbour retries preserve the player's cookie; terminal home kicks/refusals
+are no longer hidden by `outlive_home`. The checkpoint/journal lifecycle fix,
+its new internal checkpoint version and tests are in `notes/sharding.md`,
+Border and recovery audit. Cookies remain private host/checkpoint metadata;
+the generated membership bitset contains only public player-slot presence.
+
 ## Hostile client packet validation (2026-10-24)
 
 `on_upload` now binds every chunk of an existing transfer number to its

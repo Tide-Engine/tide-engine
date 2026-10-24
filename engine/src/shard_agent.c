@@ -225,7 +225,8 @@ bool tide_shard_agent_apply(tide_shard_agent *a, const uint8_t *data, const uint
     for (uint32_t i = 0; i < admits; i++) {
         const tide_player_id player = {tide_read_u32(&r)};
         const uint64_t cookie = tide_read_u64(&r);
-        (void)tide_server_admit(a->server, player, cookie);
+        if (cookie) (void)tide_server_admit(a->server, player, cookie);
+        else tide_server_unadmit(a->server, player);
     }
     if (flags & TIDE_SHARD_DO_TARGETS) {
         target *kept = calloc(targets ? targets : 1u, sizeof *kept);
