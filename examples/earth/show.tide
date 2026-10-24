@@ -19,7 +19,10 @@ local singleton Pilot
     float blend;        // From the globe to the walk, 0 to 1
     bool shards;        // Paints what each shard owns
     bool pressing;
+    bool touching;      // ...with a finger, which taps to go somewhere: a mouse's click is only a click
     bool dragging;
+    bool wasDriving;
+    float fov = 60;     // Wider the faster a car goes
     float2 pressed;     // Where the press started, on the screen
     float3 goal;        // Where a tap on the ground said to walk to
     bool going;
@@ -35,6 +38,7 @@ local singleton Pilot
     bool had;
     bool placed;
     bool driving;
+    float speed;
     Entity me;
     float3 spot;
     float3 facing;
@@ -231,6 +235,7 @@ view Mine(Walker walker, mut Pilot pilot, with ownership)
     pilot.me = this;
     pilot.placed = walker.placed;
     pilot.driving = walker.driving;
+    pilot.speed = walker.speed;
     pilot.spot = walker.position;
     pilot.facing = walker.forward;
     pilot.landed = walker.moves;
@@ -333,6 +338,7 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
     var screen = Screen.Flip(pointer.position);
     if (pointer.press.down)
     {
+        pilot.touching = fingers > 0;
         pilot.pressing = true;
         pilot.dragging = false;
         pilot.pressed = screen;
@@ -409,7 +415,9 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
     pilot.turned = turned;
     float above = Math.Length(eye) - R;
     float near = Math.Clamp(above * 0.02, 0.05, 200);
-    var projection = float4x4.PerspectiveFov(Math.Radians(FOV), Screen.width / Screen.height, near, above + R * 3);
+    float wide = FOV + (pilot.driving && pilot.blend > 0.5 ? Math.Min(Math.Abs(pilot.speed) * 0.35, 18) : 0);
+    pilot.fov = Math.Lerp(pilot.fov, wide, Math.Min(dt * 3, 1));
+    var projection = float4x4.PerspectiveFov(Math.Radians(pilot.fov), Screen.width / Screen.height, near, above + R * 3);
     Draw.SetCamera(float4x4.TRS(float3(0), turned, float3(1)), projection);
 
     // Where a ray from the eye through a pixel meets the ground
@@ -436,8 +444,9 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
         pilot.going = false;
         pilot.back = 8;
     }
-    // A tap on the ground: walk there
-    if (click && pilot.walking && pilot.blend > 0.5 && hits)
+    // A finger's tap on the ground: walk or drive there. A mouse's click isn't one: it's what gives a page's game the
+    // keyboard, and it walked the walker off to wherever it was
+    if (click && pilot.touching && pilot.walking && pilot.blend > 0.5 && hits)
     {
         pilot.goal = hit;
         pilot.going = true;
@@ -445,10 +454,11 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
     if (pilot.going)
     {
         var way = Flat(pilot.goal - pilot.spot, up);
-        if (Math.Length(way) < 0.8 || !pilot.walking) pilot.going = false;
+        if (Math.Length(way) < (pilot.driving ? 5 : 0.8) || !pilot.walking || pilot.driving != pilot.wasDriving) pilot.going = false;
         else pilot.toward = Math.Normalize(way);
     }
     if (!pilot.going) pilot.toward = float3(0, 0, 0);
+    pilot.wasDriving = pilot.driving;
     if (keys.w.pressed || keys.a.pressed || keys.s.pressed || keys.d.pressed || keys.upArrow.pressed || keys.downArrow.pressed
         || keys.leftArrow.pressed || keys.rightArrow.pressed) pilot.going = false;
 
@@ -467,7 +477,7 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
         var groundSun = Math.Normalize(up * 0.85 + EastOf(up) * 0.35 + NorthOf(up) * 0.4);
         sun = Math.Normalize(Math.Lerp(globeSun, groundSun, Math.SmoothStep(0.3, 0.9, pilot.blend)));
     }
-    pilot.sky = Sky { center = -eye, height = above, sun = sun, pixel = Math.Radians(FOV) / Screen.height };
+    pilot.sky = Sky { center = -eye, height = above, sun = sun, pixel = Math.Radians(pilot.fov) / Screen.height };
     Draw.Clear(Color(0.086, 0.086, 0.094));
     Draw.Cull(Cull.Front), Draw.Depth(Depth.None)
     {
@@ -784,6 +794,11 @@ view Picture(mut Scenery scenery, mut Pilot pilot, Shapes shapes, Roster roster)
         {
             int town = TownAt(pilot.spot, 0);
             string where = town >= 0 ? $"In {Name(town)}" : $"Out in the country, near {Name(Nearest(pilot.spot))}";
+            if (pilot.driving)
+            {
+                string fast = $"{int(Math.Abs(pilot.speed) * 3.6)} km/h";
+                Backed(fast, float2(Screen.width * 0.5 - Draw.MeasureText(fast, 16).x * 0.5, Screen.height - 82), 16, bright);
+            }
             string keys = pilot.driving ? "WASD drive · C walk · Space hop · drag to look · Esc globe"
                         : "WASD walk · tap to go · C car · Space jump · E wave · Esc globe";
             // A small screen has its buttons along the bottom, and these at the top

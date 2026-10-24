@@ -22,9 +22,9 @@ const float BUMPER = 1.8;           // ...a car's
 const float JUMP = 5;               // How fast a jump leaves the ground
 const float GRAVITY = 15;
 const int WAVE = 90;                // Ticks a wave lasts
-const float ON_ROAD = 38;           // A car's top speed on a road, metres a second
-const float OFF_ROAD = 20;          // ...and across country
-const float ACCELERATE = 12;
+const float ON_ROAD = 55;           // A car's top speed on a road, metres a second: round the planet in six minutes
+const float OFF_ROAD = 32;          // ...and across country
+const float ACCELERATE = 16;
 const float BRAKE = 26;
 const float STEER = 2.6;            // Radians a second, turning as hard as it can
 const float LANE = 2.5;             // A car keeps to the right of the road's middle
@@ -262,7 +262,7 @@ void Drive(mut Walker walker, float3 toward, bool jump, float dt)
         else
         {
             mut float angle = Math.Atan2(Math.Dot(Math.Cross(walker.forward, way), up), ahead);
-            float most = STEER * dt * Math.Clamp(Math.Abs(walker.speed) / 6, 0.25, 1);
+            float most = STEER * dt * Math.Clamp(Math.Abs(walker.speed) / 6, 0.6, 1); // Turns even crawling, as off a wall
             angle = Math.Clamp(angle, -most, most);
             walker.forward = Math.Normalize(walker.forward * Math.Cos(angle) + Math.Cross(up, walker.forward) * Math.Sin(angle));
             target = (Paved(walker.position) ? ON_ROAD : OFF_ROAD) * push;
