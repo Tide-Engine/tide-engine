@@ -84,6 +84,39 @@ TIDE_TEST(jobs_background_workers_share_parallel_work_without_waiting_on_the_fra
     background_caller = false;
 }
 
+typedef struct running_probe {
+    uint32_t started, finish;
+    uint32_t value, releases;
+} running_probe;
+
+static void running_work(void *context)
+{
+    running_probe *probe = context;
+    __atomic_store_n(&probe->started, 1u, __ATOMIC_RELEASE);
+    while (!__atomic_load_n(&probe->finish, __ATOMIC_ACQUIRE)) tide_yield();
+    probe->value = 17;
+}
+
+static void running_release(void *context) { ((running_probe *)context)->releases++; }
+
+TIDE_TEST(jobs_abandoned_running_worker_keeps_captures_until_completion)
+{
+    const tide_jobs *jobs = tide_platform_jobs();
+    if (!jobs || !jobs->background) return;
+    tide_workers *workers = NULL;
+    running_probe probe = {0};
+    const uint32_t ticket = tide_worker_start(&workers, jobs, running_work, running_release, &probe);
+    const uint64_t until = tide_time_now_ns() + 10000000000ull;
+    while (!__atomic_load_n(&probe.started, __ATOMIC_ACQUIRE) && tide_time_now_ns() < until) tide_yield();
+    TIDE_CHECK(__atomic_load_n(&probe.started, __ATOMIC_ACQUIRE) == 1u);
+    tide_worker_forget(workers, ticket);
+    TIDE_CHECK(probe.releases == 0);
+    TIDE_CHECK(tide_worker_poll(workers, ticket) == NULL);
+    __atomic_store_n(&probe.finish, 1u, __ATOMIC_RELEASE);
+    tide_workers_free(workers);
+    TIDE_CHECK(probe.value == 17 && probe.releases == 1);
+}
+
 static void note_thread(void *context, const uint32_t thread)
 {
     (void)context;

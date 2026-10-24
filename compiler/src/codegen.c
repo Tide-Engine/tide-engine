@@ -20,6 +20,11 @@
 
 #include "tide/player.h"  // How many players a game takes without a maxPlayers setting
 
+static bool cpu_routine(const decl *d)
+{
+    return !d->gpu_only || (d->worker_cpu && !d->gpu_sampling);
+}
+
 // Each C system gets a distinct slot; only once-per-tick calls expose it.
 static int extern_system_count(const program *prog)
 {
@@ -53,12 +58,12 @@ typedef struct gen_frame {
 } gen_frame;
 
 // A block that something closes when it ends, however it's left: a GUI
-// container's (tide_gui_close) or a draw setting's (tide_draw_pop). Each kind
-// closes with the ones opened inside it, so leaving several at once closes the
-// outermost of each.
+// container's (tide_gui_close) or a draw setting's (tide_draw_pop). Draw scopes
+// capture their list because GUI.Draw changes the list inside its block.
 typedef struct gen_open {
     const char *mark; // The variable its close takes
     bool draw;        // A draw setting's, rather than the GUI's
+    const char *list;  // Captured destination: GUI.Draw can shadow tide_draw inside this block
 } gen_open;
 
 // A switch or loop being generated: what `break` and `continue` go to. In a
@@ -3401,7 +3406,8 @@ static void gen_gui_call(gen *g, sb *o, const expr *e)
         return;
     }
     sb_printf(o, "%s(tide_ui", e->c_callee);
-    if (e->gui & GUI_ID) sb_printf(o, ", tide_gui_id(tide_ui, tide_seed, %du)", ++g->sites);
+    if (e->gui & GUI_KEY) sb_printf(o, ", tide_gui_seed(tide_seed, %du)", ++g->sites);
+    else if (e->gui & GUI_ID) sb_printf(o, ", tide_gui_id(tide_ui, tide_seed, %du)", ++g->sites);
     for (int i = 0; i < e->args.count; i++) {
         sb_put(o, ", ");
         if ((e->arg_mut & (1u << i)) && e->arg_want.items[i].kind == TY_STRING) {
@@ -5687,7 +5693,10 @@ static void collect_ordered(expr *e, ordering *out, const bool later)
     case E_TRY:
     case E_DEFAULTED:
     case E_AWAIT: {
-        if (e->kind == E_AWAIT) { // The call's arguments first, then the wait
+        if (e->kind == E_AWAIT && e->lhs->method && e->lhs->method->is_worker) {
+            // Worker lowering captures arguments in written order, including
+            // grid snapshots that must survive a later argument's await.
+        } else if (e->kind == E_AWAIT) { // The call's arguments first, then the wait
             for (int n = 0; n < e->lhs->args.count; n++) {
                 take(&ops, e->lhs->args.items[arg_in_turn(e->lhs, n)]);
             }
@@ -6017,21 +6026,17 @@ static const char *unwrapped_place(gen *g, expr *e)
 }
 
 // The statements that close every container opened since there were `from`
-// of them, each ended with "; ": the outermost of the GUI's and of the draw
-// settings', which close the ones inside them. NULL when there's none.
+// of them, each ended with "; ", in reverse nesting order. NULL when there's
+// none. Each draw scope closes on the list it opened, across GUI.Draw blocks.
 static const char *closing(const gen *g, const int from)
 {
-    const char *gui = NULL, *draw = NULL;
-    for (int i = from; i < g->containers.count; i++) {
-        const gen_open *c = &g->containers.items[i];
-        if (c->draw && !draw) draw = c->mark;
-        if (!c->draw && !gui) gui = c->mark;
-    }
-    if (!gui && !draw) return NULL;
     sb out = {0};
-    if (gui) sb_printf(&out, "tide_gui_close(tide_ui, %s); ", gui);
-    if (draw) sb_printf(&out, "tide_draw_pop(tide_draw, %s); ", draw);
-    return out.data;
+    for (int i = g->containers.count - 1; i >= from; i--) {
+        const gen_open *c = &g->containers.items[i];
+        if (c->draw) sb_printf(&out, "tide_draw_pop(%s, %s); ", c->list, c->mark);
+        else sb_printf(&out, "tide_gui_close(tide_ui, %s); ", c->mark);
+    }
+    return out.len ? out.data : NULL;
 }
 
 // Leaves the function being generated with `value`, C text of its result type,
@@ -6405,7 +6410,14 @@ static void gen_container(gen *g, const expr *e)
         line(g, o, "if (%s >= 0) {", depth);
         g->indent++;
     }
-    const gen_open open = {depth, false};
+    if (e->gui & GUI_DRAW) {
+        line(g, o, "tide_ui->list.screen_scale = tide_draw->screen_scale;");
+        line(g, o, "tide_ui->list.target_pixels = tide_draw->target_pixels;");
+        line(g, o, "tide_ui->list.lod_pixels = tide_draw->lod_pixels;");
+        line(g, o, "tide_draw_list *const tide_draw = &tide_ui->list;");
+        line(g, o, "(void)tide_draw;");
+    }
+    const gen_open open = {depth, false, NULL};
     vec_push(g->containers, open);
     gen_body_stmt(g, e->block);
     g->containers.count--;
@@ -6426,15 +6438,17 @@ static void gen_setting(gen *g, const expr *e)
     const char *mark = made_up(g, "set");
     line(g, o, "{");
     g->indent++;
+    const char *list = made_up(g, "draw");
+    line(g, o, "tide_draw_list *const %s = tide_draw;", list);
     indent(g, o);
     sb_printf(o, "const uint32_t %s = ", mark);
     gen_builtin_call(g, o, e);
     sb_put(o, ";\n");
-    const gen_open open = {mark, true};
+    const gen_open open = {mark, true, list};
     vec_push(g->containers, open);
     gen_body_stmt(g, e->block);
     g->containers.count--;
-    line(g, o, "tide_draw_pop(tide_draw, %s);", mark);
+    line(g, o, "tide_draw_pop(%s, %s);", list, mark);
     g->indent--;
     line(g, o, "}");
 }
@@ -10009,7 +10023,8 @@ static void gen_prelude(gen *g)
     sb_printf(o, "// GUI.Control: what tide/gui.h says of a control, as a GUIControl.\n"
                  "TIDE_HELPER %s tide_gui_control_value(tide_gui *g, const uint32_t id, const tide_rect rect)\n{\n"
                  "    const tide_control c = tide_gui_control(g, id, rect);\n"
-                 "    return (%s){.hovered = c.hovered, .pressed = c.pressed, .focused = c.focused, .clicked = c.clicked};\n"
+                 "    return (%s){.hovered = c.hovered, .pressed = c.pressed, .focused = c.focused, .clicked = c.clicked,\n"
+                 "                .down = c.down, .up = c.up, .cancelled = c.cancelled, .position = c.position};\n"
                  "}\n\n",
               control, control);
 
@@ -12499,10 +12514,20 @@ static void gen_parallel_call(gen *g, const stmt *s)
     } else {
         line(g, o, "const int32_t tide_offset[3] = {0, 0, 0};");
     }
-    indent(g, o);
-    sb_put(o, "tide_par_begin(&tide_pl, &(");
-    gen_expr(g, o, s->value);
-    sb_printf(o, "), &%s, %s, tide_block, tide_offset);\n", grid_shape_name(grid), place_where(g, s->value));
+    if (g->routine && g->routine->is_worker && s->kind == S_FOREACH) {
+        // Read-only worker grids are already private input snapshots. The
+        // loop planner needs a handle slot, but no step can change its cells.
+        indent(g, o);
+        sb_put(o, "tide_grid tide_input = ");
+        gen_expr(g, o, s->value);
+        sb_put(o, ";\n");
+        line(g, o, "tide_par_begin(&tide_pl, &tide_input, &%s, TIDE_IN_MATCH, tide_block, tide_offset);", grid_shape_name(grid));
+    } else {
+        indent(g, o);
+        sb_put(o, "tide_par_begin(&tide_pl, &(");
+        gen_expr(g, o, s->value);
+        sb_printf(o, "), &%s, %s, tide_block, tide_offset);\n", grid_shape_name(grid), place_where(g, s->value));
+    }
     // Steps that roll run at once, so each has a generator of its own, made from this one and its place
     if (stmt_rolls(s->then_stmt)) line(g, o, "const tide_random tide_par_dice = tide_random_fork(tide_dice);");
     indent(g, o);
@@ -15054,10 +15079,10 @@ static void gen_task_routines(gen *g)
     for (int i = 0; i < g->prog->decls.count; i++) {
         const decl *d = g->prog->decls.items[i];
         const bool own = (d->kind == DECL_FUNCTION || (d->kind == DECL_METHOD && d->placement_of))
-                      && !d->takes_action && !d->is_extern && !d->is_async && !d->gpu_only && takes_task(d);
+                      && !d->takes_action && !d->is_extern && !d->is_async && cpu_routine(d) && takes_task(d);
         for (int k = -1; k < d->methods.count; k++) {
             const decl *m = k < 0 ? d : d->methods.items[k];
-            if (m->borrows_queries || (k < 0 ? !own : m->gpu_only || !takes_task(m))) continue;
+            if (m->borrows_queries || (k < 0 ? !own : !cpu_routine(m) || !takes_task(m))) continue;
             if (!any) sb_put(o, "// Methods and functions that start tasks\n\n");
             any = true;
             gen_routine(g, m);
@@ -15197,7 +15222,7 @@ static void gen_routine_prototypes(gen *g)
     bool any = false;
     for (int i = 0; i < g->prog->decls.count; i++) {
         const decl *d = g->prog->decls.items[i];
-        if ((d->kind == DECL_FUNCTION || (d->kind == DECL_METHOD && d->placement_of)) && !d->borrows_queries && !d->takes_action && !d->is_extern && !d->is_async && !d->gpu_only) {
+        if ((d->kind == DECL_FUNCTION || (d->kind == DECL_METHOD && d->placement_of)) && !d->borrows_queries && !d->takes_action && !d->is_extern && !d->is_async && cpu_routine(d)) {
             if (!any) sb_put(o, "// Methods and functions: declarations for defaults and calls\n\n");
             any = true;
             gen_routine_signature(g, o, d);
@@ -15205,7 +15230,7 @@ static void gen_routine_prototypes(gen *g)
         }
         for (int k = 0; k < d->methods.count; k++) {
             const decl *m = d->methods.items[k];
-            if (m->borrows_queries || m->gpu_only || !m->body_checked) continue;
+            if (m->borrows_queries || !cpu_routine(m) || !m->body_checked) continue;
             if (!any) sb_put(o, "// Methods and functions: declarations for defaults and calls\n\n");
             any = true;
             gen_routine_signature(g, o, m);
@@ -15302,9 +15327,9 @@ static void gen_routines(gen *g)
     for (int i = 0; i < g->prog->decls.count; i++) {
         const decl *d = g->prog->decls.items[i];
         // Those are copied into each call. One that takes a grid is the GPU's alone (shader.c writes it)
-        if ((d->kind == DECL_FUNCTION || (d->kind == DECL_METHOD && d->placement_of)) && !d->borrows_queries && !d->takes_action && !d->is_extern && !d->is_async && !d->gpu_only) vec_push(all, d);
+        if ((d->kind == DECL_FUNCTION || (d->kind == DECL_METHOD && d->placement_of)) && !d->borrows_queries && !d->takes_action && !d->is_extern && !d->is_async && cpu_routine(d)) vec_push(all, d);
         for (int k = 0; k < d->methods.count; k++) {
-            if (!d->methods.items[k]->borrows_queries && !d->methods.items[k]->gpu_only && d->methods.items[k]->body_checked) vec_push(all, d->methods.items[k]);
+            if (!d->methods.items[k]->borrows_queries && cpu_routine(d->methods.items[k]) && d->methods.items[k]->body_checked) vec_push(all, d->methods.items[k]);
         }
     }
     if (all.count == 0 && g->borrows.count == 0) return;

@@ -174,11 +174,32 @@ Workers receive independent copies of their inputs and return independent
 values. Numbers, text, lists, maps, sets, ordinary structs, fixed arrays and
 optional/error results follow their normal value rules. A worker takes no
 `mut`, `out`, component/singleton binding, World, query, devices, resource handle,
-asset borrow, callable/shader binding or grid. Pass the CPU data it needs.
+asset reference/borrow or callable/shader binding. Pass the CPU data it needs.
 Its helpers have the same restrictions: no live world, drawing, frame services,
-file/network operations,
-task starts or implicit match randomness. C remains trusted; C called by workers
+file/network operations, task starts or implicit match randomness. C remains trusted; C called by workers
 must be safe to run on their threads.
+
+A worker can also take read-only `Grid2<T>` and `Grid3<T>` snapshots:
+
+```csharp
+local worker List<int3> FindSolidCells(Grid3<byte> voxels)
+{
+    mut List<int3> cells = [];
+    foreach (var at in voxels)
+        if (voxels[at] != 0) cells.Add(at);
+    return cells;
+}
+```
+
+Await it with a grid field or grid asset. Capture copies its directory and
+existing chunks before dispatch; later source edits or pack replacement cannot
+change the worker's input. Capture costs time on the calling thread, so pass a
+chunk's grid rather than a whole voxel world's when possible. Ordinary helpers
+can read and forward the snapshot. Grid parameters stay read-only, including
+through those helpers; grid locals and return values remain unsupported.
+GPU `Sample` operations remain unavailable in workers.
+Arguments are captured in their written order. If a later argument changes the
+source or awaits another task, an earlier grid capture keeps its original cells.
 
 Loop semantics stay the same. Workers additionally permit `parallel` over
 their own lists of plain values, including local variables:
@@ -196,16 +217,19 @@ local worker List<float3> NormalizePoints(List<float3> points)
 ```
 
 Each step changes only its own output element or block. Code after the loop
-waits for all steps. Ordinary `for` and list `foreach` loops remain ordered;
-automatic grid-`foreach` analysis is unchanged, and workers do not take grids.
+waits for all steps. Ordinary `for` and list `foreach` loops remain ordered.
+Grid `foreach` uses the existing independence analysis inside workers too;
+appending to an output list or reducing a total keeps the loop ordered. Explicit
+list-parallel steps can read the captured grids while writing their own output.
 Jobs and their parallel steps share the host's bounded pool. With no background
 provider, a worker runs synchronously when polled, so expensive work can still
 stall a frame on a host without threads. Small parallel loops run serially.
 
 Only local async code awaits workers; bare `worker` is reserved for a future
 match contract and is currently an error. An owner disappearing drops its
-continuation; a running calculation can finish privately and its output is
-discarded. Reload drains old calculations before their code is unloaded.
+continuation. Queued calculations that have been abandoned are skipped; a
+running calculation can finish privately and its output is discarded. Reload
+drains old calculations before their code is unloaded.
 Saved or retained waiting tasks restart their pending worker after restoration
 or reload. No worker state enters match snapshots, hashes or networking.
 

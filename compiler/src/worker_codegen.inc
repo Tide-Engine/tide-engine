@@ -126,6 +126,29 @@ static void gen_worker_own(gen *g, const type t, const char *place, const char *
 static void gen_workers(gen *g)
 {
     sb *o = &g->c;
+    if (program_workers(g->prog) && g->prog->grids.count) {
+        sb_put(o, "TIDE_HELPER tide_grid tide_worker_grid_capture(tide_grid value, const tide_grid_shape *shape, tide_heap *target, uint32_t where)\n{\n"
+                  "    const tide_grid_dir *source = tide_grid_dir_of(value);\n"
+                  "    if (!source) return (tide_grid){0};\n"
+                  "    const tide_heap *heap = tide_heap_read(value.at >> 30);\n"
+                  "    const uint64_t bytes = sizeof(*source) + (uint64_t)source->room * sizeof(tide_grid_record) + (uint64_t)source->slots * sizeof(uint32_t);\n"
+                  "    if (bytes > UINT32_MAX - sizeof(tide_block)) tide_out_of_memory();\n"
+                  "    const uint32_t at = tide_heap_alloc(target, (uint32_t)bytes);\n"
+                  "    void *directory = tide_heap_write(target, at) + 1;\n"
+                  "    source = tide_grid_dir_of(value);\n"
+                  "    memcpy(directory, source, (size_t)bytes);\n"
+                  "    const uint32_t chunk_bytes = tide_grid_chunk_bytes(shape);\n"
+                  "    const uint32_t records = source->records;\n"
+                  "    for (uint32_t i = 0; i < records; i++) {\n"
+                  "        const uint32_t original = tide_grid_records(tide_grid_dir_of(value))[i].block;\n"
+                  "        const uint32_t cells = tide_heap_alloc(target, chunk_bytes - (uint32_t)sizeof(tide_block));\n"
+                  "        void *data = tide_heap_write(target, cells);\n"
+                  "        memcpy(data, tide_grid_chunk_at(heap, original), chunk_bytes);\n"
+                  "        tide_grid_dir *copy = (tide_grid_dir *)(void *)(tide_heap_write(target, at) + 1);\n"
+                  "        tide_grid_records(copy)[i].block = cells;\n"
+                  "    }\n"
+                  "    return (tide_grid){where << 30 | at};\n}\n\n");
+    }
     for (int i = 0; i < g->prog->decls.count; i++) {
         const decl *fn = g->prog->decls.items[i];
         if (!fn->is_worker) continue;
@@ -162,6 +185,10 @@ static void gen_workers(gen *g)
                   "    v->jobs = local->tide_worker_jobs;\n");
         for (int k = 0; k < fn->params.count; k++) {
             const type t = fn->params.items[k].type;
+            if (t.kind == TY_GRID) {
+                sb_printf(o, "    v->input%d = tide_worker_grid_capture(input%d, &%s, &v->input_heap, TIDE_IN_MATCH);\n", k, k, grid_shape_name(t.decl));
+                continue;
+            }
             sb_printf(o, t.kind == TY_STRING ? "    v->input%d = tide_text_temp(input%d);\n" : "    v->input%d = input%d;\n", k, k);
             sb place = {0}; sb_printf(&place, "v->input%d", k);
             gen_worker_snapshot(g, t, place.data, 0);
@@ -188,6 +215,17 @@ static void gen_workers(gen *g)
     }
 }
 
+static bool worker_argument_waits(const expr *e)
+{
+    if (!e) return false;
+    if (e->kind == E_AWAIT) return true;
+    if (worker_argument_waits(e->object) || worker_argument_waits(e->lhs)
+        || worker_argument_waits(e->rhs) || worker_argument_waits(e->cond)) return true;
+    for (int i = 0; i < e->args.count; i++) if (worker_argument_waits(e->args.items[i])) return true;
+    for (int i = 0; i < e->inits.count; i++) if (worker_argument_waits(e->inits.items[i].value)) return true;
+    return false;
+}
+
 static void gen_worker_await(gen *g, expr *e, const char *name)
 {
     sb *o = &g->c;
@@ -200,13 +238,53 @@ static void gen_worker_await(gen *g, expr *e, const char *name)
     line(g, o, "if (!tide_f->tide_worker_ticket) {");
     g->indent++;
     const int mark = task_mark(g);
-    hoist_arguments(g, call);
+    bool grids = false, ordered = false;
+    for (int i = 0; i < call->args.count; i++) {
+        grids |= fn->params.items[i].type.kind == TY_GRID;
+        ordered |= holds_writer(call->args.items[i]) || worker_argument_waits(call->args.items[i]);
+    }
+    const char **inputs = NULL;
+    if (grids && ordered) {
+        // Freeze each argument in written order. A grid captured before a later
+        // await belongs to a hidden frame slot until the invocation is ready.
+        inputs = arena_alloc(sizeof *inputs * (size_t)call->args.count);
+        for (int turn = 0; turn < call->args.count; turn++) {
+            const int i = arg_in_turn(call, turn);
+            expr *arg = call->args.items[i];
+            const type input = fn->params.items[i].type;
+            const char *temp = made_up(g, "worker_input");
+            inputs[i] = temp;
+            hoist_spawns(g, arg);
+            indent(g, o);
+            sb_printf(o, "%s %s = ", c_type(input), temp);
+            if (input.kind == TY_GRID) {
+                sb_put(o, "tide_worker_grid_capture(");
+                gen_as(g, o, arg, input);
+                sb_printf(o, ", &%s, &tide_l->heap, TIDE_IN_LOCAL);\n", grid_shape_name(input.decl));
+                line(g, o, "tide_f->%s = %s;", task_slot_for(g, temp, input), temp);
+            } else {
+                gen_value_of(g, o, arg, input);
+                sb_put(o, ";\n");
+            }
+            task_declare(g, temp, input);
+        }
+    } else hoist_arguments(g, call);
     indent(g, o);
     sb_printf(o, "tide_f->tide_worker_ticket = (int32_t)tide_worker_begin_%s(tide_l", routine_cname(fn));
     for (int i = 0; i < call->args.count; i++) {
-        sb_put(o, ", "); gen_as(g, o, call->args.items[i], call->arg_want.items[i]);
+        sb_put(o, ", ");
+        if (inputs) sb_put(o, inputs[i]);
+        else gen_as(g, o, call->args.items[i], call->arg_want.items[i]);
     }
     sb_put(o, ");\n");
+    if (inputs) {
+        for (int i = 0; i < call->args.count; i++) {
+            const type input = fn->params.items[i].type;
+            if (input.kind != TY_GRID) continue;
+            line(g, o, "tide_grid_release(&tide_f->%s, &%s, TIDE_IN_LOCAL);",
+                 task_slot_for(g, inputs[i], input), grid_shape_name(input.decl));
+        }
+    }
     task_pop(g, mark);
     g->indent--;
     line(g, o, "}");

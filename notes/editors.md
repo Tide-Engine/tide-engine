@@ -1,5 +1,13 @@
 # The language server and the editors
 
+## Custom GUI composition (2026-10-24)
+
+The common builtin catalog supplies GUI.Draw/Key block snippets, Reserve
+overloads and signature help. GUIControl completion/hover includes pointer down,
+up, cancellation and GUI-space position. `lsp_gui` checks these additions.
+No editor-specific protocol or grammar change. API/contracts/validation:
+`notes/gui.md`, Custom control composition.
+
 ## Local worker declarations (2026-10-24)
 
 The shared compiler parses/checks local workers. Routine hovers, override
@@ -9,6 +17,11 @@ Shared/JetBrains TextMate grammars and Vim highlight the contextual modifier;
 the probe checks both local/worker orders and worker as a variable. Existing
 navigation/diagnostics remain function-based. Public docs link the worker/task
 workflow. Semantics and validation: language.md.
+
+The grid input extension preserves CPU completion in worker/grid-helper bodies,
+even when those helpers are also GPU-callable. lsp_local_workers includes list
+Add completion after a grid-helper call. Existing grid syntax needs no grammar
+change. Contract and validation: language.md, Local worker audit.
 
 ## Mutable callable signatures (2026-10-24)
 

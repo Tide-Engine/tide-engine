@@ -1,0 +1,9 @@
+// expect: can't read live assets; capture their data before starting the worker
+asset List<byte> offsets = "worker_asset.txt";
+local worker List<int> Build(List<int> input)
+{
+    mut List<int> result = input;
+    parallel (var i in result offset int(offsets[0])) { result[i] += 1; }
+    return result;
+}
+scene Main;

@@ -840,9 +840,11 @@ typedef struct decl {
     struct param *place;          // A vert: its `out float4`, where it puts its vertex itself, in the engine's place; NULL when the engine does
     VEC(shader_sample) samples;   // The grids it samples, once each
     int gpu_state;                // Code checked for the GPU: 1 while it is, 2 once it fits, 3 if it doesn't
-    // A function or method that takes a grid or samples a texture, or calls one that does: only code the GPU runs
-    // calls it, and no C is written for it
+    // Grid-reading or GPU-sampling helpers. Grid readers reachable from local
+    // workers also have CPU bodies; actual GPU sampling remains GPU-only.
     bool gpu_only;
+    bool worker_cpu; // Reachable from a local worker: grid-reading helpers also have CPU bodies.
+    bool gpu_sampling; // Samples GPU resources, directly or transitively; never worker CPU code.
     loc gpu_only_at;
     type_kind gpu_only_reads;     // ...what it reads there: TY_GRID for a grid it takes, or the type it samples
     VEC(const struct decl *) gpu_data; // A function the GPU runs: the assets whose list or grid it reads the numbers of by name, in what it calls too
@@ -949,6 +951,8 @@ enum {
     GUI_SKIPS = 4,     // A container whose block doesn't always run: it returns -1 then
     DRAW_BLOCK = 8,    // A draw setting around a block, which puts back what it found: Draw.Blend(...) { ... }
     DRAW_SET = 16,     // ...and its other form, for the draws that follow, which takes no block: Draw.SetBlend(...)
+    GUI_KEY = 32,      // A keyed scope uses its source site without occurrence counting
+    GUI_DRAW = 64,     // Draw calls in this block record into the GUI's list
 };
 
 // How a constructor call builds its value.

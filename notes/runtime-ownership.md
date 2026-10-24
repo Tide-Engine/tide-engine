@@ -1,5 +1,16 @@
 # Runtime written by Claude for now
 
+## Custom GUI composition (2026-10-24)
+
+Owner-delegated GUI work continues the existing GUI/drawing maintenance exception.
+Generated calls add `tide_gui_layout_reserve`, `_reserve_flexible`,
+`tide_gui_begin_draw`, and `tide_gui_begin_key`, `_key_long`, `_key_text`.
+GUIControl's adapter copies four new interaction fields. The GUI uses the new
+drawing helpers `tide_draw_restore_window` and `tide_draw_move_gui`; these are
+not language builtins. No renderer backend, simulation or networking interface
+changes. Hosts/games rebuild for GUI/group/control layout additions. Contracts
+and validation: `notes/gui.md`, Custom control composition.
+
 ## Local worker runtime (2026-10-24)
 
 The owner approved local workers with owned inputs/results, local async callers
@@ -18,6 +29,16 @@ from saved headers, and resettable worker tickets. Hosts, libraries and games
 rebuild together; positional jobs initializers were completed. No match storage,
 tick order or math contract changed. Contracts/tests: language.md and
 schedule-and-threads.md.
+
+Worker audit changes are internal to the same maintenance exception: a private
+dispatch wrapper skips abandoned queued items, and disposal abandons every item
+before helping/draining. Existing public signatures and provider completion
+ownership are unchanged. Tests and compiler boundary corrections: language.md.
+
+The owner-approved read-only grid inputs add no runtime function: a private
+generated capture copies directory/chunk bytes through tide_heap_alloc/_write
+and existing grid accessors. Ordinary runtime grid copy/assignment semantics
+remain unchanged. CPU helper reachability and foreach emission are compiler-side.
 
 ## Shard recovery admission release (2026-10-24)
 

@@ -1,5 +1,95 @@
 # Language features, as tidec builds them
 
+## Custom GUI composition (2026-10-24)
+
+The owner delegated GUI implementation/API choices with performance first.
+`GUI.Draw`, `GUI.Key` and `GUILayout.Reserve` use the shared builtin catalog.
+GUI_KEY supplies an unsalted source seed; runtime scopes compose the data key.
+GUI_DRAW lexically redirects the implicit Draw list, including helper calls.
+Draw settings capture their original list; reverse-order early-exit cleanup
+restores both lists across GUI.Draw. UI code is never replayed for layout.
+GUIControl adds pointer edges/cancellation and a float2 position; its generated
+adapter leaves explicit padding zeroed. Contracts, tests, validation and remaining
+GUI work: `notes/gui.md`, Custom control composition.
+
+## Local worker audit (2026-10-24)
+
+The gap pass closes live-asset access through loop offset expressions, increment
+targets and Asset<Mesh<V>> handles. The worker's AST walk includes loop by/offset
+operands, step statements and drawing/skinning operands; asset-handle Value reads
+are borrows even when no asset declaration is named. Asset handles are refused
+recursively at input/result boundaries. The offset and two handle fixtures were
+accepted by the previous checker and now receive the required errors; the step
+fixture also pins the traversal. All 13 worker diagnostic fixtures pass locally.
+
+Runtime abandonment skips queued calculations. Disposal first abandons every
+item, then helps/drains the provider, so helping cannot start another calculation
+whose group is also being disposed. A callback that already observed a live item
+can finish privately; only provider-published completion permits release. No new
+runtime API, language spelling or match behavior is introduced.
+
+test_worker checks queued versus running/completed abandonment, provider-owned
+item lifetime, once-only release and cancellation of all deferred/fallback work
+on disposal. local_workers now awaits through an intermediate async function:
+owner loss, restoration and retained reload traverse its nested worker frame.
+Changing the source before pack/rebind still returns the child's saved arguments.
+The three runtime and six typed lifecycle cases pass on native initially.
+The platform job test also cancels a running background callback after its
+started signal, checking that its private capture survives until provider
+completion and is released once on the frame thread.
+
+The owner then approved read-only Grid2<T>/Grid3<T> worker input snapshots,
+preserving the restrictions on grid locals/results. A private generated capture
+helper copies the source directory and chunks into the job's input heap through
+existing heap APIs, including packed images, bounded empty grids and open grids.
+Inputs are copied before enqueueing and are never stored as live grid borrows in
+task frames. Restored tasks recapture their current saved arguments/bindings.
+
+Grid-reading helpers reachable from workers receive ordinary CPU bodies, using
+worker_cpu call reachability and a separate transitive gpu_sampling flag. This
+does not grant a normal view or match system permission to pass grids, and a
+worker calling a sampling helper is still rejected. Await does not propagate a
+worker's execution capabilities back to its local caller. Independent grid
+foreach bodies use the existing planner over the private input snapshot; a
+temporary handle slot keeps its parameter read-only. Reductions stay ordered.
+LSP completion retains CPU list operations when a worker calls a grid helper.
+
+worker_grids checks local and match bounded/sparse/open/empty grids, both int edges, ordered
+reductions, automatic foreach callbacks, list-parallel reads through a helper
+chain, source mutation, packed asset replacement, restore and fallback/real-pool
+execution, with unchanged match hashes during frames. Seven grid diagnostics preserve read-only, local/return, ordinary CPU
+caller and GPU sampling restrictions. The owner requested proposals too: spec.md
+records invocation priorities, structured task cancellation, cooperative
+interruption and deterministic resumable match workers as unapproved proposals.
+Worker-called helpers cannot use shader grid alias locals to evade the current
+grid-local restriction. Automatic worker foreach loops are settled again after
+transitive C effects are known, just like system loops; the two-helper C visit
+probe checks serial row order across chunk boundaries.
+
+Argument-order follow-up (2026-10-25): the new positional and nested-await grid
+cases reproduced late capture. Worker awaits now own argument lowering instead
+of having the outer ordering pass execute those arguments first. Calls with grid
+inputs and effectful/waiting arguments capture every argument in written order.
+Earlier grids enter private owned frame slots immediately, so later waits,
+failure, owner loss and pack/restore use ordinary frame ownership. Slots are
+released after dispatch captures its independent input. Pure calls retain the
+single-copy path. Capture refreshes source/destination addresses after heap
+allocation, including capture into the caller's local heap. worker_grids checks
+positional/named order and restore during a later argument's await; worker_values
+pins once-only positional/named scalar effects. No public grid local or runtime
+API was added.
+
+Final validation (2026-10-25): warning-free complete native/web debug builds;
+all 2,648 native and 2,543 web enabled CTests pass, including the final argument
+order/restoration cases, runtime cancellation stress, complete LSP executable,
+native GPU and browser WebGL/D3D11/WebGPU checks. The existing disabled MicroDuck
+right-turn test is unchanged. Production docs build and diff checks pass.
+Windows, Clang 23.1.2, Node 24.22.1; external prototype directories remain disabled.
+The checkout has no Vulkan validation layer. Other OSes, Android, MinGW and
+sanitizers remain CI coverage; no workflow was manually dispatched. Match
+determinism expectations are unchanged. No performance claim is derived from
+these validation runs, which overlapped other agents' integration work.
+
 ## Local workers (2026-10-24)
 
 Owner-approved direction and spelling: `local worker` functions, awaited from
