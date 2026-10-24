@@ -1,5 +1,70 @@
 # The docs site
 
+## Earth ground shading without a quality reduction (2026-10-24)
+
+The owner reported lag while walking/driving on a Pixel 9 Pro and requested
+cheaper ground rendering with the visuals preserved. `globe.tide` retains the
+analytic sphere, full display resolution, procedural frequencies and weights,
+flowers, paving, kerbs, road markings, distance coverage, lighting and atmosphere.
+The match, geometry and tree placement are unchanged.
+
+The shader rejects distant towns using a conservative squared chord bound
+before calculating their curved distance. The ten towns' 130 m ground caps
+are disjoint, so it retains the single relevant town instead of carrying all
+ten through the material work. `earth_town_ground_regions_do_not_overlap`
+checks all 45 pairs in the actual atlas built by the view. A fully covered
+plaza pixel finishes with its paving immediately. Roads accumulate their
+paint and the remaining meadow coverage before noise is evaluated: fully
+opaque asphalt skips the meadow, retaining grain when a town lawn needs it.
+Partial coverage and overlapping roads keep their original layer order.
+
+Road planes also have a conservative linear rejection before arc-end and
+asin calculations. Along-road atan2/sin run only where a centre stripe can
+contribute. Noise octaves whose existing footprint weight is zero, flowers
+outside their existing footprint/forest conditions, and sky/stars behind an
+opaque ground hit are not evaluated. These are removed calculations, not
+coarser textures, reduced density or new distance cutoffs.
+
+Validation: all 20 Earth checks and all three unchanged Earth benchmark pins
+pass on native/web debug with Clang 23.1.2 and Node 24.22.1; the native and
+web release game builds pass. Native release renders the actual four-region
+game on OpenGL/Vulkan, with sampled walking and driving on OpenGL. Comparing those
+two full-game captures against the original changes only one/two pixels,
+respectively, by one byte step. A bounded custom host
+compares the original and revised terrain at 1440 x 900 on OpenGL/Vulkan:
+27 viewpoints each (ten town centres, eleven road midpoints, country/town
+edge and three globe heights). No detail or region is missing. GPU arithmetic
+is not bit-identical: OpenGL changes at most 554 of 1,296,000 pixels in one
+capture, with at most six differing by more than one byte step; Vulkan
+changes at most 14 pixels, with at most one above one step. Larger isolated
+differences are paving grout threshold pixels. Muted Chrome WebGL/WebGPU
+checks render plaza, country, road and near/far globe views with fatal shader
+validation enabled; their captures were inspected. Actual phone hardware and
+Android GPU coverage remain unavailable here.
+
+GPU measurements use that terrain-only host, OpenGL 3.3 on an RTX 4080 SUPER
+(Windows 11, driver 617.42), release at 1440 x 900. Three alternating process
+pairs per view each discard 60 warmup frames and collect 300 asynchronous
+elapsed queries, with no readback in measured frames. Median of the three
+process medians, in milliseconds:
+
+| View | Original | Revised | Ratio |
+| --- | ---: | ---: | ---: |
+| Globe | 0.201728 | 0.081920 | 2.46x |
+| Amberhold plaza | 0.569344 | 0.070656 | 8.06x |
+| Country | 0.498688 | 0.214016 | 2.33x |
+| Road midpoint | 0.491520 | 0.140288 | 3.50x |
+
+These are terrain draw timings, not whole-game frame rates or Pixel results.
+Other desktop applications remained running; clocks were not controlled or
+normalized. The road's revised process medians are 0.479232/0.140288/0.140288
+ms: the slower first run is retained, and no independent cause is established.
+`notes/earth-ground-measurements.json` retains all 24 process rows, 54 image
+comparisons, source/harness digests and full-game pixel comparison counts.
+The bounded harness and captures remain in this checkout's `build/earth-perf/`.
+The hosted homepage release is separate from the docs build and has not been
+redeployed by this change.
+
 ## Render3D example and pure Tide packages (2026-10-24)
 
 docs/examples/render3d.tide uses the optional Render3D package, with exposure,
