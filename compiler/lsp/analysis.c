@@ -11685,7 +11685,8 @@ static bool space_between(const fmt_item *a, const fmt_item *b)
     if (x == T_LT && a->tok > 0 && generic_type(DOC->toks[a->tok - 1].text)) return false;
     if (y == T_GT) { // ...past a map's key and the comma after it
         int k = b->tok - 1;
-        while (k > 0 && (DOC->toks[k].kind == T_IDENT || DOC->toks[k].kind == T_DOT || DOC->toks[k].kind == T_COMMA)) k--;
+        while (k > 0 && (DOC->toks[k].kind == T_IDENT || DOC->toks[k].kind == T_MUT
+                         || DOC->toks[k].kind == T_DOT || DOC->toks[k].kind == T_COMMA)) k--;
         if (k > 0 && DOC->toks[k].kind == T_LT && generic_type(DOC->toks[k - 1].text)) return false;
     }
     // i++ and ++i: against what they change

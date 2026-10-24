@@ -688,6 +688,22 @@
     "generics": {
       "patterns": [
         {
+          "comment": "Func<mut Vertex, void>: callable parameter modes and nested signatures",
+          "begin": "(?<!\\.)\\b(Func)\\s*(<)",
+          "end": ">|$",
+          "beginCaptures": {
+            "1": { "name": "support.class.tide" },
+            "2": { "name": "punctuation.definition.typeparameters.begin.tide" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.typeparameters.end.tide" }
+          },
+          "patterns": [
+            { "name": "storage.modifier.tide", "match": "\\bmut\\b" },
+            { "include": "#type-name" }
+          ]
+        },
+        {
           "comment": "world.Get<Health>(e): a method's type, which the call's '(' follows, so no comparison reads as one",
           "match": "(\\.)\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(<)\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\s*\\.\\s*[A-Za-z_][A-Za-z0-9_]*)*)\\s*(>)(?=\\s*\\()",
           "captures": {
@@ -700,7 +716,7 @@
         },
         {
           "comment": "List<int>, Map<int, Cell>, Set<int>, Grid2<Cell>, Mesh<Corner>, SkinnedMesh<Corner, Rig>: the built-in types that hold another",
-          "match": "(?<!\\.)\\b(Func|List|Map|Set|Grid2|Grid3|Mesh|SkinnedMesh|Asset)\\s*(<)\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*>)?\\??(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)?)\\s*(>)",
+          "match": "(?<!\\.)\\b(List|Map|Set|Grid2|Grid3|Mesh|SkinnedMesh|Asset)\\s*(<)\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*>)?\\??(?:\\s*,\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)?)\\s*(>)",
           "captures": {
             "1": { "name": "support.class.tide" },
             "2": { "name": "punctuation.definition.typeparameters.begin.tide" },

@@ -9038,9 +9038,13 @@ static type check_name(checker *c, expr *e)
             return T_ERR;
         }
         type signature[17];
-        for (int i = 0; i < function->params.count; i++) signature[i] = function->params.items[i].type;
+        unsigned mut = 0;
+        for (int i = 0; i < function->params.count; i++) {
+            signature[i] = function->params.items[i].type;
+            if (function->params.items[i].mode == PARAM_MUT) mut |= 1u << i;
+        }
         signature[function->params.count] = function->return_type;
-        return check_callable_value(c, e, callable_of(c, signature, function->params.count + 1, e->at));
+        return check_callable_value(c, e, callable_of(c, signature, function->params.count + 1, mut, e->at));
     }
     decl *shader = find_named(c, e->name, e->at, NAME_SHADER);
     if (shader) {

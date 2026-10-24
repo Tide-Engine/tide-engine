@@ -105,26 +105,28 @@ static field callable_field(const str name, const type t, const loc at)
     return f;
 }
 
-static type callable_of(const checker *c, const type *types, const int count, const loc at)
+static type callable_of(const checker *c, const type *types, const int count, const unsigned mut, const loc at)
 {
     for (int i = 0; i < c->prog->decls.count; i++) {
         decl *d = c->prog->decls.items[i];
-        if (!d->callable || d->call_types.count != count) continue;
+        if (!d->callable || d->call_types.count != count || d->call_mut != mut) continue;
         bool same = true;
         for (int k = 0; k < count; k++) same &= same_type(d->call_types.items[k], types[k]);
         if (same) return (type){TY_STRUCT, d};
     }
     decl *d = callable_decl(c, DECL_STRUCT, "Callable", at);
     sb signature = {0};
-    for (int i = 0; i < count; i++) sb_printf(&signature, "%s;", type_name(types[i]));
+    for (int i = 0; i < count; i++) sb_printf(&signature, "%s%s;", mut & (1u << i) ? "mut " : "", type_name(types[i]));
     const unsigned identity = callable_hash(signature.data);
     callable_identity(d, "Callable", identity);
     sb display = {0};
     sb_put(&display, "Func<");
-    for (int i = 0; i < count; i++) sb_printf(&display, "%s%s", i ? ", " : "", type_name(types[i]));
+    for (int i = 0; i < count; i++) sb_printf(&display, "%s%s%s", i ? ", " : "", mut & (1u << i) ? "mut " : "",
+                                            types[i].kind == TY_VOID ? "void" : type_name(types[i]));
     sb_put(&display, ">");
     d->callable_display = display.data;
     d->callable = true;
+    d->call_mut = mut;
     for (int i = 0; i < count; i++) vec_push(d->call_types, types[i]);
     vec_push(d->fields, callable_field(str_from("kind"), T_INT_, at));
     decl *fn = callable_decl(c, DECL_FUNCTION, "Invoke", at);
@@ -136,7 +138,11 @@ static type callable_of(const checker *c, const type *types, const int count, co
     fn->return_type_name = fn->return_type_ref->text;
     fn->return_type_at = fn->return_type_qual_at = at;
     vec_push(fn->params, callable_param(str_from("binding"), (type){TY_STRUCT, d}, at));
-    for (int i = 0; i < count - 1; i++) vec_push(fn->params, callable_param(callable_text("arg", i), types[i], at));
+    for (int i = 0; i < count - 1; i++) {
+        param p = callable_param(callable_text("arg", i), types[i], at);
+        if (mut & (1u << i)) p.mode = PARAM_MUT;
+        vec_push(fn->params, p);
+    }
     d->call_dispatch = fn;
     return (type){TY_STRUCT, d};
 }
@@ -148,8 +154,16 @@ static type resolve_callable(const checker *c, const type_ref *r, const loc at)
         return T_ERR;
     }
     type types[17];
+    unsigned mut = 0;
     for (int i = 0; i < r->args.count; i++) {
         const bool result = i == r->args.count - 1;
+        if (i < r->arg_mut.count && r->arg_mut.items[i].line) {
+            if (result) {
+                diag_error(r->arg_mut.items[i], "a Func's result is a value, not mut; put mut on an argument type instead");
+                return T_ERR;
+            }
+            mut |= 1u << i;
+        }
         types[i] = resolve_type(c, r->args.items[i], result ? PLACE_RETURN : PLACE_FUNCTION, at);
         if (types[i].kind == TY_ERROR) return T_ERR;
         if (types[i].kind == TY_WORLD || types[i].kind == TY_QUERY || types[i].kind == TY_INPUT
@@ -158,7 +172,7 @@ static type resolve_callable(const checker *c, const type_ref *r, const loc at)
             return T_ERR;
         }
     }
-    return callable_of(c, types, r->args.count, at);
+    return callable_of(c, types, r->args.count, mut, at);
 }
 
 static decl *shader_binding_type(const checker *c, decl *shader)

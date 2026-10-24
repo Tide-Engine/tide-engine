@@ -1,5 +1,15 @@
 # The language server and the editors
 
+## Mutable callable signatures (2026-10-24)
+
+Callable type text and hover preserve `mut` argument modes and spell a void
+result as void. The formatter's generic-closing scan includes mut, keeping
+`Func<mut float, void>` tight and idempotent. The shared grammar gives Func its
+own recursive generic region, scopes mut as a modifier, and handles mixed and
+nested signatures. `lsp_mut_callable_types_preserve_qualifiers_and_formatting`
+and the mutable-signature grammar probe cover these contracts. Validation is
+recorded in language.md, Mutable callable arguments.
+
 ## Callable functions and configured shaders (2026-10-24)
 
 The compiler retains authored function-reference and invocation metadata while

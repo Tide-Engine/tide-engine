@@ -472,9 +472,28 @@ view Example()
 ```
 
 The last type is the result; `Func<float>` takes no arguments, and
-`Func<float, void>` takes a float and returns nothing. Functions have read-only
-value parameters and matching result types; extern, async and failable functions
-aren't callable values. An unambiguous function name can also initialize `var`.
+`Func<float, void>` takes a float and returns nothing. Parameters are read-only
+unless their type is preceded by `mut`, as in `Func<mut float, void>`. Parameter
+types, `mut` modes and the result type must match the target function exactly;
+extern, async and failable functions aren't callable values. An unambiguous
+function name can also initialize `var`, retaining its parameter modes.
+
+```csharp
+void Increase(mut float value) { value += 1; }
+
+view ChangeValue()
+{
+    Func<mut float, void> increase = Increase;
+    mut float value = 2;
+    increase(value); // value is now 3
+}
+```
+
+Mutable arguments follow ordinary function rules: pass a writable variable of
+the exact type, and helpers forward that same storage. Typed lambdas declare
+the matching mode too, for example `(mut float value) => Increase(value)`.
+Captures stay read-only owned copies even when an explicit argument is mutable.
+The result type cannot be `mut`; `out` callable parameters aren't supported yet.
 
 A typed expression lambda binds additional data:
 
@@ -496,7 +515,7 @@ callables explicitly to helpers. Nested lambdas aren't supported yet.
 Function values belong to local state. They can be fields of local components,
 local singletons, attached `local` fields, or structs and collections kept there.
 They cannot enter match state. A default callable returns its result type's
-default, or does nothing for `void`.
+default, or does nothing for `void`. Its mutable arguments remain unchanged.
 
 Frags, verts and their helpers accept function parameters too. The compiler
 collects the possible targets and generates typed dispatch; there are no GPU

@@ -1,5 +1,45 @@
 # Language features, as tidec builds them
 
+## Mutable callable arguments (2026-10-24)
+
+Owner-approved: `Func<mut Vertex, void>` accepts a matching named function or
+typed expression lambda, forwards the caller's writable storage through helpers
+and generated dispatch, and leaves captures read-only. This applies to ordinary
+CPU values and GPU-local values under existing access rules; no runtime or
+backend interface changes. `out` callable parameters remain outside this change.
+
+The parser records each Func argument's mut location in `type_ref.arg_mut` and
+retains it in type text. `decl.call_mut` participates in signature interning,
+generated type/dispatcher identities, target identity and overload selection.
+Mode prefixes distinguish mutable slots in those identities. Inferred function values
+retain their modes. The generated dispatcher's ordinary parameters carry
+PARAM_MUT, so checking, ownership, evaluation order and C/GLSL/WGSL forwarding
+reuse normal calls. The result cannot be mut. A default/unknown target performs
+no writes. Lambda parameters now carry function_param, including mutable ones:
+without it WGSL treated a forwarded mutable lambda argument as a value and
+generated an invalid pointer-to-value copy. Captures are always PARAM_READ.
+
+`e2e/mut_callables` checks scalar and field writes, forwarding, returned captured
+lambdas, named/inferred targets, exact mode separation, multiple mutable aliases,
+left-to-right reads beside writes, defaults and unchanged match hashes. Array
+elements retain the ordinary take-out/change/put-back rule. Seven diagnostic
+fixtures cover wrong modes, lambda modes, read-only arguments/captures and a mut
+result. `e2e/gpu_functions` now deforms each SDF quad through distinct named or
+captured mutable callbacks, with compensated centers keeping the same pixel
+expectations; its frag also reads a nonvoid callback's result and changed argument.
+Configured mutable vert bindings are exercised too. The smaller `shaders/mut_callables`
+fixture pins GLSL/WGSL and joins available SPIR-V/HLSL validation.
+
+Validation: full native debug passed all 2,605 enabled tests (165.28 s, four
+jobs); full web debug passed all 2,501 (334.33 s, four jobs). Each retains the
+existing disabled Microduck right-turn limitation. Native pixels passed on
+Vulkan/OpenGL; web pixels passed on WebGL, ANGLE D3D11 and WebGPU. FXC validated
+the mutable-callable golden; the complete 250-test language-server executable,
+all 282 grammar tests and the docs production build passed. No determinism
+expectations changed. Web uses the same ignored SDK 34 fallback described below;
+pinned SDK 24 downloads and GitHub fetch still fail DNS resolution. There is no
+standalone spirv-val or Vulkan validation layer on this machine.
+
 ## Callable values and configured GPU stages (2026-10-24)
 
 Owner-approved foundation for separate `render3d` and future `render2d`

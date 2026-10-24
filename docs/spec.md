@@ -161,7 +161,10 @@ system Burn(mut Unit unit)
   binding initializers, `Shade { distance = Circle }`, with no positional
   binding shorthand. Configured stages can be kept in local component state.
   Instance records may select different functions in a shared draw through
-  generated dispatch. The initial spellings, representation and restrictions
+  generated dispatch. Callable signatures can mark explicit arguments `mut`,
+  as in `Func<mut Vertex, void>`; calls forward the caller's writable value
+  through helpers, with ordinary access rules. Captures remain read-only.
+  The initial representation and other restrictions
   are provisional under Callable shader values below.
 
 - A function is code that other code calls: systems, views, the input's `Sample`, `Sanitize` and `Predict`, methods and other functions. The engine never runs one by itself.
@@ -663,9 +666,13 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
 Initial implementation choices, 2026-10-24, provisional:
 
 - `Func<A, B, R>` is a local value taking A and B and returning R. Zero to 16
-  read-only arguments are supported; the final type is the result, including
+  arguments are supported, read-only unless marked `mut`; the final type is the result, including
   `void`. Named synchronous non-extern, non-failable functions match exact
-  signatures. Typed expression lambdas take their signature from context.
+  parameter types/modes and result types. Typed expression lambdas take their
+  signature from context and declare matching parameter modes. Generated
+  dispatchers forward mutable parameters using ordinary mutable-call semantics;
+  default/unknown targets leave those arguments unchanged. Results cannot be
+  qualified `mut`; `out` callable parameters remain unsupported.
 - Lambdas copy captured plain values at construction and own those copies.
   Their lifetime is independent of the source stack. Numeric structs and
   fixed arrays work; heap containers, rendering-resource captures, borrowed

@@ -272,6 +272,28 @@ A default binding with missing function targets draws nothing. These values
 belong to local state, like textures. Captured values are owned copies; GPU
 programs and pipelines remain the renderer's resources.
 
+A callback can change an explicit GPU-local argument using `mut`:
+
+```csharp
+void Bend(mut Vertex vertex)
+{
+    vertex.position.y += Math.Sin(vertex.position.x);
+}
+
+vert Deform(mut Vertex vertex, Func<mut Vertex, void> deform)
+{
+    deform(vertex);
+}
+
+// In a view:
+var vertexShader = Deform { deform = Bend };
+Draw.Mesh(geometry.vertices, geometry.indices, vertexShader, fragment);
+```
+
+The callback changes this vertex, and helper calls forward the same mutable
+value. The ordinary GPU rules apply: changing local shader data grants no access
+to CPU state or writable instance inputs. Captured values remain read-only.
+
 ### Functions in instance data
 
 A function can also be a field of an instance struct:

@@ -24,7 +24,8 @@ static bool callable_matches(const decl *signature, const decl *fn)
     if (!same_type(fn->return_type, signature->call_types.items[signature->call_types.count - 1])) return false;
     for (int i = 0; i < fn->params.count; i++) {
         const param *p = &fn->params.items[i];
-        if (p->mode != PARAM_READ || p->is_out || !same_type(p->type, signature->call_types.items[i])) return false;
+        const param_mode mode = signature->call_mut & (1u << i) ? PARAM_MUT : PARAM_READ;
+        if (p->mode != mode || p->is_out || !same_type(p->type, signature->call_types.items[i])) return false;
     }
     return true;
 }
@@ -107,6 +108,10 @@ static type check_callable_value(checker *c, expr *e, const type want)
             if (!same_type(p.type, signature->call_types.items[i]))
                 diag_error(p.type_at, "lambda argument %d is %s; this Func requires %s", i + 1,
                            type_name(p.type), type_name(signature->call_types.items[i]));
+            const param_mode mode = signature->call_mut & (1u << i) ? PARAM_MUT : PARAM_READ;
+            if (p.mode != mode)
+                diag_error(p.at, "lambda argument %d must be %s to match this Func", i + 1,
+                           mode == PARAM_MUT ? "mut" : "read-only (remove mut)");
             vec_push(fn->params, p);
         }
         const int capture_errors = diag_error_count();
@@ -151,7 +156,7 @@ static type check_callable_value(checker *c, expr *e, const type want)
             fn = candidate;
         }
         if (!fn) {
-            diag_error(e->at, "function '" STR_FMT "' does not match this Func's argument and result types", STR_ARG(name));
+            diag_error(e->at, "function '" STR_FMT "' does not match this Func's argument and result types (including mut parameter modes)", STR_ARG(name));
             return e->type = T_ERR;
         }
     }
@@ -161,7 +166,8 @@ static type check_callable_value(checker *c, expr *e, const type want)
         variant = signature->call_targets.count;
         sb identity = {0};
         sb_printf(&identity, STR_FMT, STR_ARG(fn->qualified));
-        for (int i = 0; i < fn->params.count; i++) sb_printf(&identity, ";%s", type_name(fn->params.items[i].type));
+        for (int i = 0; i < fn->params.count; i++) sb_printf(&identity, ";%s%s",
+            fn->params.items[i].mode == PARAM_MUT ? "mut " : "", type_name(fn->params.items[i].type));
         const int tag = (int)callable_hash(identity.data) + (callable_hash(identity.data) == 0);
         for (int i = 0; i < signature->call_tags.count; i++) {
             if (signature->call_tags.items[i] == tag) diag_error(e->at, "callable identity collision; rename one of these functions");

@@ -166,7 +166,7 @@ static int skip_type(const parser *p, int i)
             if (k == T_LT) depth++;
             else if (k == T_GT) depth--;
             else if (k == T_SHR) depth -= 2;
-            else if (k != T_IDENT && k != T_DOT && k != T_COMMA && k != T_QUESTION) return -1;
+            else if (k != T_IDENT && k != T_MUT && k != T_DOT && k != T_COMMA && k != T_QUESTION) return -1;
             i++;
         }
         if (depth < 0) return -1;
@@ -218,7 +218,8 @@ static void set_type_text(type_ref *r)
     sb text = {0};
     sb_printf(&text, STR_FMT, STR_ARG(r->name));
     for (int i = 0; i < r->args.count; i++) {
-        sb_printf(&text, "%s" STR_FMT, i == 0 ? "<" : ", ", STR_ARG(r->args.items[i]->text));
+        sb_printf(&text, "%s%s" STR_FMT, i == 0 ? "<" : ", ",
+                  i < r->arg_mut.count && r->arg_mut.items[i].line ? "mut " : "", STR_ARG(r->args.items[i]->text));
     }
     if (r->args.count > 0) sb_put(&text, ">");
     for (int i = 0; i < r->sizes.count; i++) {
@@ -254,6 +255,8 @@ static type_ref *parse_type(parser *p, const char *what)
     if (at(p, T_LT) && str_eq_c(q.text, "Func")) {
         advance(p);
         do {
+            const loc mut_at = at(p, T_MUT) ? advance(p)->at : (loc){0};
+            vec_push(r->arg_mut, mut_at);
             vec_push(r->args, parse_type(p, "a function argument or result type"));
         } while (accept(p, T_COMMA));
         const loc close = close_angle(p, "'>' after the function signature");
@@ -544,6 +547,7 @@ static expr *parse_primary(parser *p)
         int look = 1;
         bool lambda = peek_at(p, look)->kind == T_RPAREN;
         while (!lambda) {
+            if (peek_at(p, look)->kind == T_MUT) look++;
             const int end = skip_type(p, look);
             if (end < 0 || peek_at(p, end)->kind != T_IDENT) break;
             look = end + 1;
@@ -557,14 +561,18 @@ static expr *parse_primary(parser *p)
             e->lambda = true;
             if (!at(p, T_RPAREN)) do {
                 param a = {0};
+                const token *mut = at(p, T_MUT) ? advance(p) : NULL;
                 a.type_ref = parse_type(p, "a lambda parameter type");
                 a.type_name = a.type_ref->text;
                 a.type_at = a.type_ref->name_at;
                 a.type_qual_at = a.type_ref->at;
                 const token *name = expect_ident(p, "a lambda parameter name");
                 a.name = name->text;
-                a.at = a.name_at = name->at;
-                a.mode = PARAM_READ;
+                a.name_at = name->at;
+                a.at = mut ? mut->at : a.type_qual_at;
+                a.mode = mut ? PARAM_MUT : PARAM_READ;
+                a.function_param = true;
+                if (mut) a.mode_word = mut->text;
                 vec_push(e->lambda_params, a);
             } while (accept(p, T_COMMA));
             expect(p, T_RPAREN, "')' after the lambda parameters");

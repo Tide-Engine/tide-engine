@@ -1,0 +1,57 @@
+scene Main;
+
+float Add(mut float value, float amount) { value += amount; return value; }
+float ReadAdd(float value, float amount) { return value + amount; }
+void ChangeBoth(mut float first, mut float second) { first += 1; second += 2; }
+void Set(mut float value) { value = 20; }
+
+float Forward(mut float value, float amount, Func<mut float, float, float> change)
+{
+    return change(value, amount);
+}
+
+Func<mut float, float, float> Scaled(float factor)
+{
+    return (mut float value, float amount) => Add(value, amount * factor);
+}
+
+struct Values { float field; float[2] array; }
+local singleton State { float[15] results; Values values; int frames; }
+
+view Test(mut State state)
+{
+    mut float value = 1;
+    Func<mut float, float, float> add = Add;
+    state.results[0] = add(value, 2);
+    state.results[1] = value;
+    state.results[2] = Forward(value, 4, add);
+    state.results[3] = value;
+    var scaled = Scaled(2);
+    state.results[4] = scaled(value, 2);
+    state.results[5] = value;
+    Func<mut float, void> empty = default;
+    empty(value);
+    state.results[6] = value;
+    Func<float, float, float> read = ReadAdd;
+    state.results[7] = read(value, 1);
+    var inferred = Add;
+    state.results[8] = inferred(value, 1);
+    Func<mut float, mut float, void> both = ChangeBoth;
+    both(value, value);
+    state.results[9] = value;
+    state.values.field = 3;
+    state.values.array[1] = 4;
+    _ = add(state.values.field, 2);
+    mut float element = state.values.array[1];
+    _ = add(element, 3);
+    state.values.array[1] = element;
+    state.results[10] = state.values.field;
+    state.results[11] = state.values.array[1];
+    Func<mut float, void> set = (mut float target) => Set(target);
+    set(value);
+    state.results[12] = value;
+    value = 1;
+    state.results[13] = value + add(value, 1) + value;
+    state.results[14] = value;
+    state.frames++;
+}

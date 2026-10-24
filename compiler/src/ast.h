@@ -212,6 +212,7 @@ typedef struct type_ref {
     loc at;      // Where it starts: its namespace if it's qualified
     loc name_at; // Its last part: the name itself
     VEC(struct type_ref *) args; // What's in its <>, in order; none for a plain name
+    VEC(loc) arg_mut;           // Func's argument qualifiers: the `mut` location, or zero for read-only.
     VEC(expr *) sizes;           // T[N][M]: what's in each [] after it, the first the outer; constant expressions
     bool optional;   // `T?`
     loc question_at; // ...the '?'
@@ -613,6 +614,7 @@ typedef struct decl {
     const char *callable_display;
     struct decl *call_dispatch;
     VEC(type) call_types; // Arguments, then the result.
+    unsigned call_mut; // One bit per mutable argument; the result has none.
     VEC(struct decl *) call_targets;
     VEC(int) call_tags;
     VEC(int) call_capture_first;

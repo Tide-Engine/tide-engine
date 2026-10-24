@@ -1,5 +1,17 @@
 # Code the GPU runs: frags and verts
 
+## Mutable callable arguments (2026-10-24)
+
+`Func<mut Vertex, void>` and mixed read/mut signatures lower to ordinary checked
+functions. Dispatch forwards the mutable argument, including through a captured
+lambda, as GLSL inout/WGSL function pointers. No special shader dispatch ABI is
+needed. Mutable lambda parameters must have function_param, like parsed ordinary
+function parameters, so WGSL forwards their pointer rather than making a value
+copy from it. `shaders/mut_callables` pins the emitted forms; `gpu_functions`
+verifies per-instance named/captured vertex mutations and a nonvoid mutable frag
+callback against pixels and the existing one-batch draw count. Language contracts
+and final validation are in language.md, Mutable callable arguments.
+
 ## Named stage bindings and callable instances (2026-10-24)
 
 Owner-approved function-valued GPU inputs use ordinary generated dispatcher

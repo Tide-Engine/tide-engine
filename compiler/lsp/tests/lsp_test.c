@@ -11829,6 +11829,23 @@ TIDE_TEST(lsp_callable_bindings_preserve_function_navigation_and_signature_types
     TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":1,\"character\":20}"));
 }
 
+TIDE_TEST(lsp_mut_callable_types_preserve_qualifiers_and_formatting)
+{
+    start();
+    open_document("scene Main;\nvoid Change(mut float value) { value += 1; }\n"
+                  "view Test() { Func<mut float, void> fn = Change; mut float value = 0; f$n(value); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "Func<mut float, void>"));
+    const char *source = "scene Main;\nvoid Change(mut float value) { value += 1; }\n"
+                         "view Test() { Func< mut float,void > fn=Change; mut float value=0; fn(value); }\n";
+    open_document(source);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    format_reply(source);
+    const char *formatted = apply_reply(source, NULL);
+    TIDE_CHECK(has(formatted, "Func<mut float, void>"));
+    TIDE_CHECK(has(format_reply(formatted), "\"result\":[]"));
+}
+
 TIDE_TEST(lsp_double_types_swizzles_parsing_and_signatures)
 {
     start();
