@@ -1,5 +1,25 @@
 # Benchmarks
 
+## Earth physics and shard membership pins (2026-10-24)
+
+The town-coordinate inverse correction changes actual movement/collisions;
+sharded worlds also gain a match-state membership bitset for replay-safe
+player lifecycle delivery. The quick Earth pins intentionally move to
+`0x642d3bbe3c5fb58c` (ordinary/divergence, tick 273) and
+`0xdb65d449fe39c077` (two regions, tick 287). Native debug/release and web debug
+produce these same bits. Historical measurements below remain measurements
+of their original game; changed trajectories make them unsuitable as a
+before/after speed comparison for this physics correction. The shard audit
+and full validation are in `notes/sharding.md`.
+
+The optimized native audit run (64 bots, 15 seconds after staggered joins,
+four initial regions, `--busiest 25 --lag 120`, default 50 ms one-way latency,
+10 ms jitter and 1% loss) passed while regions merged: 137 home changes,
+232 shard joins, no late inputs, at most 75 ticks of verified lag. Mean
+per-bot traffic was 13.9 KB/s received and 9.4 KB/s sent, including joins
+and repairs; shard update p99 was 1.91 ms. These are workload measurements,
+not a fixed bandwidth promise or a before/after physics comparison.
+
 Scene visibility unification (2026-10-15): removing generated scene audience
 fields changes the quick-session world pins to 742cb392be44252d for Sand and
 ccd64c3fd8bcbb8b for Gallery, equal on native and WASI. Only the expected hashes
@@ -17,7 +37,7 @@ The harness (`bench/bench.c`) grew for it, every addition picked by Claude, Prov
 - **What bots' machines hold** (`bench_desc.held`), their late inputs, round trips, worlds received (the first and repairs), the most their verified world fell behind its home's server (each shard counts its own ticks), and `--lag <ticks>` to let a run go on past 60 (the engine's own visibility tests allow 120). A bot whose home ends and that comes back in at the root catches up as on joining (`rejoins`).
 - **`--diverge <bot>`**: with visibility, that bot's world is compared, tick by tick, with what the server says it is (the server's `client_state` for it at the tick it hashed, against the bot's `client_hash` at the same `Time.tick`); where they differ, `bench_desc.differ` (Earth's, entity by entity, component by component) says how. It's what found the causes below.
 
-Tests: `bench_earth` (`--quick`, one server), `bench_earth_split` (`--quick --split 2`) and `bench_earth_diverge`, pinned at `0x7112d06182252825` and `0x4a82e8d505148384` (the split one with `--lag 120`: a town hop changes shard and what the machine sees at once, and its corrections put a bot 61 ticks behind), the same in native debug and release, on one thread and twelve, and as WebAssembly under Node.
+Tests: `bench_earth` (`--quick`, one server), `bench_earth_split` (`--quick --split 2`) and `bench_earth_diverge`, pinned at `0x642d3bbe3c5fb58c` and `0xdb65d449fe39c077` (the split one with `--lag 120`: a town hop changes shard and what the machine sees at once, and its corrections put a bot 61 ticks behind), the same in native debug and release, on one thread and twelve, and as WebAssembly under Node.
 
 What it found, and what changed because of it:
 - **Earth's player visibility, as first built, made every machine fall behind.** Clients worked out who's near (the townsfolk's `Seen` audiences, the players' `Sight`) from walkers they didn't have, and a far player's `Beacon` moved with nothing on the machine to move it: every machine's world went otherwise than the server's, the correction stream (`notes/netcode.md`) ran all the time, and a bot's verified world fell over a second behind with 32 players. Earth now keeps `Seen` the server's alone (`visibility.Set<Seen>(Audience.None)`; the townsfolk have no owner, so no input is withheld for it), keeps no audience for players (`visibility.Set<Walker>` each look; its overrides aren't part of what's hashed), looks at everything at one tick every 30 (`LOOK`), and moves beacons at one tick every 3 s (`BEACON`), only those 20 m stale.

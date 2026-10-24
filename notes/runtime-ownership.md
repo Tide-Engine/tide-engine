@@ -1,5 +1,18 @@
 # Runtime written by Claude for now
 
+## Shard recovery admission release (2026-10-24)
+
+`tide_server_unadmit` (`tide/session.h`, session.c) is part of the existing
+agent-maintained shard/session implementation. The shard agent calls it for
+a zero-cookie admission instruction after a global departure. It removes the
+reservation and clears an unused slot's old cookie/digest/identity, preserving
+an active connection or ordinary migration reservation. Anonymous allocation
+cannot take an admitted slot meanwhile. Generated code calls no new runtime
+function: lifecycle deduplication uses a hidden, bounded match-state bitset
+through the existing list/COW functions. Checkpoint envelope 5 commits player
+metadata and pending notifications before game delivery. Contracts, failure
+reproductions and validation: `notes/sharding.md`, Border and recovery audit.
+
 ## Every player's frame at once (2026-10-24)
 
 The owner, after the Earth stress test: "seems like we should optimize stuff".

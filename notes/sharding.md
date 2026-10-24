@@ -1,5 +1,76 @@
 # Shards: one world across servers
 
+## Border and recovery audit (2026-10-24)
+
+The owner reported further disconnects, a zero online count and a car being
+pushed back at an apparent border. The production checkpoint contained a live
+car with `Roster.online == 0`; replaying its retained records also reproduced
+a negative count after the final departure. Raw captures stay in ignored build
+storage. The invisible town edge was a separate Earth projection bug
+(`notes/docs-site.md`, Town-edge collision correction).
+
+The audit reproduced and fixed these engine failures:
+
+- A needed neighbour that timed out stayed in `clients` forever, so `follow`
+  never reached it again. Lost neighbours now release their failed endpoint
+  for one update, then go through admission again with the original cookie.
+  That absent update lets `update_admissions` discard the detached endpoint.
+  Refusals and kicks are terminal. `outlive_home` no longer hides a home kick
+  by selecting another connected shard; its reason and message reach the caller.
+- A world's journal could contain a departure newer than the coordinator's
+  checkpoint. Loading replayed the departure, then the coordinator sent it
+  again after its absence grace. Joins newer than the checkpoint also lacked
+  their saved cookie. With checkpoints enabled, connection changes are now
+  batched and checkpointed before the root gets their PlayerJoined/PlayerLeft
+  notifications. Membership/cookie tracking waits while that checkpoint is
+  gathered or kept, so its header and captured worlds agree.
+- Checkpoint envelope 5 stores the pending notifications with that roster.
+  Loading reissues them. Generated `tide_shard_state.members` is a bounded
+  bitset in match state, updated before dispatching those notifications, so
+  replay or reissue cannot deliver the same logical arrival/departure twice.
+  It uses existing checked list/COW operations and adds no runtime function
+  called by generated code. The wire protocol remains 18; the internal world
+  layout and simulation identity change. Older releases retain their own code
+  and checkpoint reader; their raw saves are not this new layout.
+- A restarted root reconciles committed membership, leaving uncommitted
+  notifications behind their checkpoint barrier. A shard restarted while a
+  checkpoint is gathering is asked for its replacement snapshot.
+- Anonymous joins could take slots reserved for recovery when the game was
+  full. The server's reuse search now excludes admitted slots. Global
+  departures revoke admissions on every shard (a zero-cookie admission
+  instruction); `tide_server_unadmit` frees an unused slot's old identity so
+  the next player's cookie can be admitted there, while live connections and
+  migration reservations remain intact.
+
+`shards_players_test.c` now covers repeated crossings, reversals and a
+four-region corner at 60/144/240 updates per second, with up to 100 ms one-way
+latency, 50 ms jitter and 15% loss: one visible avatar, never two authoritative
+owners, stable identity and continued verification. A seven-second outage of
+an already-followed neighbour must recover before crossing into it. Further
+regressions cover a kick with a healthy neighbour, reserved-slot rejection and
+reuse, and invalid lifecycle player IDs without changing the world.
+
+Earth's tests cover a departure replayed just before a crash, joins cut both
+before and after their first game tick, a root-only restart, original cookies
+and avatars, repeated lifecycle notifications, and ordinary leave/rejoin churn.
+The pre-fix departure, neighbour, kick and reservation regressions all failed.
+Checkpoint-enabled worlds now pay for one checkpoint per batch of membership
+changes, in addition to periodic/shape checkpoints. This is durability work
+on joins/leaves, not an optimization of steady tick traffic.
+
+Validation: warning-free native/web debug builds; all 2,621 enabled native
+and 2,479 enabled web CTests pass, including the 12 shard-player and 15 Earth
+checks, native Vulkan/OpenGL and web WebGL/D3D11/WebGPU. Both retain the
+existing disabled MicroDuck right-turn limitation. Optimized native and web
+Earth builds, native town/car captures, muted WebGL/WebGPU landing/walking
+checks and the 64-bot dynamic-merge run pass (`notes/benchmarks.md`). Release
+ordinary/split pins agree with debug/WASI. The companion hosting service's
+Svelte check/build and all 58 tests pass against the staged compiler/runtime,
+including real room border crossing, host loss and checkpoint/journal recovery.
+Node is 24.22.1. Android, other operating systems, MinGW and sanitizers remain
+CI coverage; no workflow was manually dispatched. Deployment evidence follows
+once the merged build is published.
+
 The language-level design, agreed with the owner on 2026-10-22, is `docs/spec.md`, Shards: what's Decided there is the owner's, what's Provisional the agent's picks. This file is how it's built, what code relies on, the tests and what's left.
 
 ## Status
@@ -101,7 +172,7 @@ The orchestrator is two halves that talk in bytes, so the same code runs in one 
 - **Load** (`tide_shard_agent_busy`, `tide_shard_coordinator_desc.busiest`): a host says how busy each shard is, the share of the time its updates take; the agent reports it (after `injected`) and the coordinator smooths it (`BUSY_SMOOTHING` 0.05 a report) and trusts it after `BUSY_SETTLING` (120) reports since the region last changed. `too_much` splits a region by entities or by `busy > busiest`; `quiet_together` merges two only if both are a quarter of each limit set. `tide_shards` times each server's update over the time since the last (`busy`), unless `tide_shards_desc.busy` says (tests, hosts); `tide_session` and `tide_serve` don't set `busiest`, as their shards share one machine. Managed: `tide_managed_shard_busy`, and `busiest` is the coordinator description's last f32.
 - Merging: two regions whose boxes make one box (`joins`: equal on every axis but one, where they touch) and whose shards together own a quarter of `most_entities` at most merge, one at a time: the lower id's region becomes both, and the other leaves the map and is told `RETIRE` (into the lower), which its world keeps (`tide_shard_state.into`, the id + 1): its handoff sends what it owns by position, and what has no position (roots of trees) to that shard. Once it owns nothing, has nothing waiting, lent or unacknowledged, and nothing handed to apply, it's stopped (`finish_retiring`). Its id is never given again (`gone`: receivers keep its messages' last number), and a message routed to it goes to the shard it merged into (`live_shard`), so an entity lent to it on the way isn't lost. When the last region left is quiet with the root (which then has no region: it split away), it merges into the root (`maybe_merge`, `merge_into(c, ROOT, last, box)`), whose region becomes the whole world: the world is one shard again, as it started.
 - **A change of shape waits for its checkpoint.** With checkpoints on, a split or merge is decided and its new shard started, but the map (and a `RETIRE`) is told only once a checkpoint with the new shape is kept (`tell_after`, released by `kept`). So no shard's journal depends on a shape no checkpoint has. Without checkpoints it's told at once.
-- **Checkpoints** (`SAVE_VERSION` 4): when drained, idle and due (`checkpoint_seconds`, or the shape or ranges changed), the coordinator captures its own part (ranges, directory, players: whether each is in the world and their cookie) and asks every shard for its world; once all are in, the checkpoint is an action. Acknowledgements wait while one is gathered or kept. Loading starts every shard from its world (and journal records, recovering), and its first report rebuilds the directory from what it owns (one outside its own range, or in none, is listed) and tells each shard which of its entities others hold as ghosts; it sends each shard its ranges, a retiring one its `RETIRE` and every shard the regions again, as orchestrator messages on their way were lost with the servers, and admits the players everywhere with their cookies. `next_index` is the checkpoint's: a range is given only when drained and the change checkpointed.
+- **Checkpoints** (`SAVE_VERSION` 5): when drained, idle and due (`checkpoint_seconds`, or the shape or ranges changed), the coordinator captures its own part (ranges, directory, players: whether each is in the world and their cookie) and asks every shard for its world; once all are in, the checkpoint is an action. Acknowledgements wait while one is gathered or kept. Loading starts every shard from its world (and journal records, recovering), and its first report rebuilds the directory from what it owns (one outside its own range, or in none, is listed) and tells each shard which of its entities others hold as ghosts; it sends each shard its ranges, a retiring one its `RETIRE` and every shard the regions again, as orchestrator messages on their way were lost with the servers, and admits the players everywhere with their cookies. `next_index` is the checkpoint's: a range is given only when drained and the change checkpointed.
 - **One shard started again** (`tide_shard_coordinator_restarted`, `tide_shards_restart` in one process, `tide_shard_checkpoint_world` to find its world in a checkpoint): its host failed, so it starts elsewhere from the last checkpoint and its journal records. What it was handed and hadn't applied went with it, so every shard reports its unacknowledged messages again (`DO_FROM_START`, `delivered` back to `acked`; receivers drop what they had) and its ghosts whole (`DO_TARGETS` marks every entry of what it sent as of unknown bytes, so all goes again and what's gone is still dropped); the shard is told the regions, its ranges, its retirement and the players again, every route is told again, and its first report rebuilds where everything is. Tested by `shards_restart_one_shard_where_it_was`: shard 1 is started again mid-run, at the tick and hash it had, and the world goes on to the same end.
 - **Managed instances** (`platform/include/tide/managed_run.h`, for a game whose header defines `TIDE_GAME_SHARDED`): `tide_managed_shard_new` (from a CONFIG), `_stage`/`_replay`/`_begin` (from a checkpoint's world and its records), `_report`, `_apply`, and the coordinator's `tide_managed_coordinator_create`/`_load`/`_report`/`_step`/`_actions` (as bytes)/`_instructions`/`_kept`/`_restarted`/`_checkpointing`/`_count`/`_set_match`, with `tide_managed_checkpoint_world` and `tide_managed_checkpoint_ticks` (each shard's tick in a checkpoint: its journal's records from before it can go); bytes given the host are in `tide_managed_bytes()`. The shard's journal goes to the host through the import `tide_host.journal`, which only a sharded game's module imports, so other games' modules are as they were.
 - **In one process** (`engine/src/shards.c`), `tide_shards_update` updates every server, flushes the journal, then does a round: every agent reports, the coordinator steps, its actions are done (servers started from a CONFIG or a world, replaying records when recovering; stopped; checkpoints handed to `tide_shards_desc.checkpoint` and confirmed at once) and every agent applies its instructions. A checkpoint begun is gathered in another round within the same update. `tide_shards_save` packs every world at once (`tide_shard_coordinator_save`).
@@ -146,9 +217,9 @@ The physics shards tests (`tide_box3d_shards`, `tide_box2d_shards`) have a crate
 
 Error fixtures: `native_field_default`, `native_field_type`, `native_singleton_list`, `position_axes`, `together_not_entity`, `together_singleton`, `shards_of_in_match`. `platform/tests/reload_web.mjs` checks the page waits for `tide_reload_ready`.
 
-`tide_server_shards` (root `CMakeLists.txt`, `platform/tests/server_pack.mjs shards`, `platform/tests/server_shards_client.c`): the same game's dedicated server with `--shards 2 --shard-width 40` and a separate client process over UDP, and `tide_server_shards_room` the same through the server's WebRTC room (`shards-room`, a local relay), which waits until it plays where its avatar is, walks it right for three seconds and checks it's owned in its home world at x ≈ 12, connected with no resync. The client updates 60 times a second, as a host would (a client sends at most once a tick unless it has news, `notes/netcode.md`), and the hosting service's router (which the same program goes through in `Tide-Engine/tide-services`' `worlds.test.mjs`) allows each admission 100 a second.
+`tide_server_shards` (root `CMakeLists.txt`, `platform/tests/server_pack.mjs shards`, `platform/tests/server_shards_client.c`): the same game's dedicated server with `--shards 2 --shard-width 40` and a separate client process over UDP, and `tide_server_shards_room` the same through the server's WebRTC room (`shards-room`, a local relay), which waits until it plays where its avatar is, walks it right for three seconds and checks it's owned in its home world at x ≈ 12, connected with no resync. The client updates 60 times a second, as a host would (a client sends at most once a tick unless it has news, `notes/netcode.md`), and the hosting service's router (which the same program goes through in `Tide-Engine/tide-services`' `worlds.test.mjs`) now allows each admission 256 a second with a burst of 128 (`tide-services/notes/managed-hosting.md`).
 
-`earth_tests` (`examples/earth/test/earth_test.c`, the docs' home page game): in four regions along x, 3,300 km wide, a player's walker goes to a town on one shard, then to one on another, one shard owning it at every step and their machine's home moving with it, every townsperson and car owned once, and 25 seconds after they've gone, the root's `PlayerLeft` destroys the walker on the region that has it (a destroy waiting on a border). It found a game's mistake worth knowing for any sharded game: a shard that has an entity before its player's input guesses an input of zeros, so an input field that asks for something must mean nothing at zero (the walker took a different `moves` count as a request, and went back and forth between two shards with neither owning it; it takes only a newer one now).
+`earth_tests` (`examples/earth/test/earth_test.c`, the docs' home page game): in four regions along x, 1,600 m wide, a player's walker goes to a town on one shard, then to one on another, one shard owning it at every step and their machine's home moving with it, every townsperson and car owned once, and 25 seconds after they've gone, the root's `PlayerLeft` destroys the walker on the region that has it (a destroy waiting on a border). It found a game's mistake worth knowing for any sharded game: a shard that has an entity before its player's input guesses an input of zeros, so an input field that asks for something must mean nothing at zero (the walker took a different `moves` count as a request, and went back and forth between two shards with neither owning it; it takes only a newer one now).
 
 ## Gaps
 

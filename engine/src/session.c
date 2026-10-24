@@ -1394,7 +1394,7 @@ static void on_hello(tide_server *s, const uint32_t transport, const tide_addres
     }
     if (player < 0) {
         for (uint32_t i = 0; i < s->players; i++) {
-            if (s->connections[i].used || tide_players_has(&s->present, i)) continue; // In the match
+            if (s->connections[i].used || tide_players_has(&s->present, i) || tide_players_has(&s->admitted, i)) continue; // In the world
             if (player < 0 || s->away_since[i] < s->away_since[player]) player = (int32_t)i;
         }
         if (player >= 0) { // Given away
@@ -2134,6 +2134,17 @@ bool tide_server_connected(const tide_server *s, const tide_player_id player)
 {
     const int32_t i = tide_player_index(player);
     return i >= 0 && (uint32_t)i < s->players && s->connections[i].used && s->connections[i].greeted;
+}
+
+void tide_server_unadmit(tide_server *s, const tide_player_id player)
+{
+    const int32_t i = tide_player_index(player);
+    if (i < 0 || (uint32_t)i >= s->players || !tide_players_has(&s->admitted, (uint32_t)i)) return;
+    tide_players_remove(&s->admitted, (uint32_t)i);
+    if (!s->connections[i].used && !tide_players_has(&s->present, (uint32_t)i)) {
+        s->cookies[i] = s->digests[i] = 0;
+        memset(s->identities[i], 0, sizeof s->identities[i]);
+    }
 }
 
 uint64_t tide_server_cookie(const tide_server *s, const tide_player_id player)

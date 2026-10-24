@@ -1,5 +1,22 @@
 # Netcode: sessions, prediction, commands
 
+## Shard recovery reserves player slots (2026-10-24)
+
+The server's anonymous-slot reuse scan now excludes `admitted` players as
+well as connected players and migration reservations. A restored full shard
+previously let an anonymous peer replace a reserved cookie before its owner
+returned. Global departures release admissions on every shard through
+`tide_server_unadmit`; an unused slot clears its old identity so a new cookie
+can be admitted there, while live connections and migration reservations keep
+theirs. Invalid/out-of-game IDs do nothing. The shard instruction uses cookie
+zero for release; game packets and protocol 18 are unchanged.
+
+Neighbour retries preserve the player's cookie; terminal home kicks/refusals
+are no longer hidden by `outlive_home`. The checkpoint/journal lifecycle fix,
+its new internal checkpoint version and tests are in `notes/sharding.md`,
+Border and recovery audit. Cookies remain private host/checkpoint metadata;
+the generated membership bitset contains only public player-slot presence.
+
 ## A client sends at most once a tick unless it has news (2026-10-23)
 
 `update_client` used to send a packet every update, so a client updating faster than the tick rate (a 144 Hz browser, a native client without vsync) sent more than it needed, and more than the hosting router allows an admission (100 a second). `send_client` now builds the packet every update and sends it when it heard from the server since it last sent (`heard_since_sent`, set by any packet taken in: so acknowledgements and pings go out as promptly as before), when anything in it after its two times differs from the last one sent (kept after `packet`, `client_sent_size`: a tick verified, a frame or chunk had, a repair asked for, a new input), or when 0.99 of a tick has passed since it last sent (`client_sent`; the slack keeps a host updating once a tick sending every update, which float rounding of the clock otherwise skipped now and then). Nothing on the wire changed, so `PROTOCOL` stays 18.

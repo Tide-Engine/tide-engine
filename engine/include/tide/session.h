@@ -442,6 +442,10 @@ uint32_t tide_server_drop_injected(tide_server *s, uint8_t kind);
 // presenting `cookie` (the one their first shard gave them), closed or not.
 // False when another player has the slot.
 bool tide_server_admit(tide_server *s, tide_player_id player, uint64_t cookie);
+// Releases that reservation once the player left the world. An unused
+// slot forgets its cookie/identity so another player's admission can use it;
+// an existing connection or migration reservation is unchanged.
+void tide_server_unadmit(tide_server *s, tide_player_id player);
 // Whether a player is in the match on a connection now, and their cookie (0
 // for none).
 bool tide_server_connected(const tide_server *s, tide_player_id player);

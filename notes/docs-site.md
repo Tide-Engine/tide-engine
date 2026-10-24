@@ -1,5 +1,22 @@
 # The docs site
 
+## Town-edge collision correction (2026-10-24)
+
+The reported invisible boundary also reproduces without a shard border.
+`city.tide`'s Local used an orthographic projection while Place used a tangent
+plane. Repeated Settle calls pulled positions toward a town; cars treated
+that correction as a wall and lost speed. Local now inverts Place, dividing
+by the direction's component along the town's up axis (bounded away from
+zero). The collision-free town-edge regression starts on foot and in a car
+115 m from Pinecrest's centre and requires outward progress, and continued
+car acceleration, across the town's collision boundary.
+
+The zero/negative online count was separately reproduced after recovery of a
+checkpoint plus newer departure records. The engine fix preserves cookies
+and exactly-once logical membership across recovery (`notes/sharding.md`,
+Border and recovery audit). The demo's counter is not clamped or replaced
+to conceal that lifecycle error.
+
 ## Earth distance transitions, foundations and braking (2026-10-24)
 
 Country trees now extend to 400 m, beyond the ordinary ground camera's
