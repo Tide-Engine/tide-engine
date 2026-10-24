@@ -49,6 +49,12 @@ and WebGPU fixtures with fatal shader validation pass. Native/web release builds
 the corrected game source has not been redeployed as part of this hardware
 investigation.
 
+Integration merges dev's independent GUI/local-worker dependency changes,
+rebuilds Earth and its benchmark, and passes the same 20 checks and three
+pins on native/web debug again. The merged compiler emits byte-identical
+GLSL/WGSL to the validated shader, and the merged Radeon WebGL fatal-warning
+fixture passes. This integration makes no additional performance claim.
+
 `notes/earth-igpu-measurements.json` retains all seven backend/DPR/material
 summaries, the adverse production WebGL warning, sample counts, GPU and CPU
 quantiles, adapter identity, caveats and pixel comparisons. Raw frame/query
