@@ -1,5 +1,87 @@
 # The language server and the editors
 
+## Scene authoring, extraction and direct Play (2026-10-24)
+
+The approved workflow keeps the rooted .tprefab format: New Scene/New Prefab,
+named objects and models, arrange, Save as Prefab, place instances and Play
+without handwritten Main. main.c and hierarchy_ui.inc/inspector_ui.inc/
+workspace_ui.inc provide file controls, folded hierarchy, rename/duplicate/drag
+parenting, source-prefab navigation, direct bool/int/float/vector/Euler fields,
+entity/enum choices, asset browsing and optional inline expressions.
+
+document.c creates files exclusively inside existing discoverable project source
+folders and preserves source spans/comments, recovery and 64 current-document
+undo entries. Rename/duplicate/reparent use checked same-file reference edits;
+required cross-file rewrites are refused. Reparent retains local TRS, not world
+placement. Inherited descendants support field overrides/reset only; nested
+instance roots retain authored additions. Structural path refactors require a
+clean project check. Semantic/project errors may save; own syntax errors and
+disk conflicts block Save. This supersedes older save/read-only/future-work
+claims below, which record earlier builds.
+
+Save as Prefab extracts an ordinary authored child subtree, preserving incoming
+paths and rebasing internal references, then replaces it with an instance. It
+rejects outgoing references, child-to-selected-root references the language cannot
+express, already-instance roots and consumer-sensitive cross-file changes. The
+source replacement is one undo; undo keeps the newly created asset.
+
+play.c builds an owned snapshot of applied unsaved text with the selected startup
+and launches the normal game host, including initialization, systems, game views,
+camera/input and services. Compiler errors/conflicts/unresolved recovery block
+Play. Stop terminates build/game descendants, discards runtime state and removes
+only owned play artifacts. Private source-overlay/cache switches are unlisted
+implementation transport, not a public authoring workflow. Views-only preview
+remains separate. startup.c writes settings.startScene with source conflict
+checks, preserving other settings/Main; New Scene chooses itself only when no
+Main or startup is present. Switching documents saves the previous draft first.
+
+Validation on Windows, Clang 23.1.2 and Node 24.22.1: the final seven
+editor CTests pass, including native embedding, all 12 inspector focus/undo
+regressions and the complete UI create/arrange/rename/extract/place/save loop.
+The document executable passes 47 cases (25 document, 18 startup and four
+geometry/interaction cases). A draft records its source, prefab, entity path,
+field and revision; valid blur edits commit to that original field before
+selection changes, while Escape and outside source changes cancel them. Source
+navigation retains the selected prefab declaration even within a shared file.
+Nested instances omit a Transform reset so authored TRS defaults survive.
+
+Startup checks cover BOM/CRLF/trailing comments, invalid string RHS replacement,
+settings namespaces and name shadowing, exact disk bytes including appended
+NULs, exclusive file creation, source ownership, pending recovery and active
+.tide source baselines. A bare global prefab shadowed by a prefab in the
+settings namespace is refused before writing; the user can move that setting
+to global scope. Repeated startup selection preserves the active declaration.
+The installed Play test builds/runs a no-Main unsaved scene twice with real
+Spawned/systems/unmarked views, input, camera pixels and fresh state after Stop.
+
+Full native/web debug builds pass. All engine/compiler/platform checks pass,
+including native Vulkan validation/OpenGL and WebGL/D3D11/WebGPU; the existing
+MicroDuck right-turn case stays disabled. The configured external prototype
+suite also runs automatically: Cracked's unchanged match-hash pin fails on
+native and web, identically with a separately built HEAD compiler
+(2a37a61034c7a00750a5948637c8489febcbab6f). Its generated simulation and asset
+pack match; actual 0xbf53c0610c47764e versus pin 0x0a216d532fa6445c. No expected
+hash changed. Optional long private-prototype browser playthroughs were stopped;
+they are outside this engine/editor task. Logs and the baseline comparison are
+under build/scene-startup-baseline. The production docs build passes.
+
+Integration: origin/dev merged cleanly, adding only session packet validation
+and its tests/notes. Rebuilt the affected runtime and startup/session targets;
+all six native and five web checks pass, including the complete runtime suite.
+The staged CLI with the merged engine passes the real unsaved Play/pixel test
+again; its native editor --check reports zero errors/warnings. The two remaining
+Foldline web rendering checks also pass. No engine test remains unvalidated;
+optional external browser playthroughs remain outside scope as recorded above.
+
+Limits: no cross-document refactor/undo transaction, inherited structural edits,
+world-preserving authored reparent, child-to-prefab-root path syntax, automatic
+runtime-to-authoring apply, or live defaults/override reconciliation. Conditional
+path edits/extraction and cross-file consumer rewrites are refused. Extraction
+requires a self-contained ordinary authored subtree; its new asset survives
+undo. Existing preview picking/geometry, CMake consumer selection and IDE frame
+transport limits remain. Other operating systems, Android and sanitizers were
+not run here; no CI was manually dispatched.
+
 ## Offline installer configuration cache (2026-10-22)
 
 Build run 39790751086 passed plugin compatibility verification but failed while

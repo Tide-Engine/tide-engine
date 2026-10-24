@@ -8,7 +8,7 @@ Every match runs on a server, and this machine's player connects to it. When the
 
 ## Starting a match from `tide run`
 
-A game whose `Main` scene is the match's starts playing at once. `tide run` can open it to others, or join one instead:
+A game whose selected entry is a prefab or match scene starts playing at once. Startup uses `--scene` first, then `settings.startScene`, then `Main`. `tide run` can open it to others, or join one instead:
 
 ```sh
 tide run --host                 # others can join: in a room, and on UDP port 7777
@@ -22,12 +22,12 @@ To check a match with several players without opening a window for each, `tide r
 
 ## Starting a match from code
 
-A game that starts in a menu has a local `Main`, and its local code decides which match this machine is in:
+A game that starts in a menu selects a local scene as its entry, such as a local `Main`, and its local code decides which match this machine is in:
 
 | Call | What it does |
 |---|---|
 | `Session.Start(scene)` | Starts a match on this machine, which runs its server |
-| `Session.Start()` | The same, in `Main`: for code that can't name the game's scenes, like a package's |
+| `Session.Start()` | The same, in the selected startup prefab or match scene: for code that can't name the game's scenes, like a package's |
 | `Session.Open()` | Lets others join the match this machine runs: in a [room](#rooms), and on port 7777 too (not on the web) |
 | `Session.Open(port)` | The same, on another port |
 | `Session.Close()` | Lets no one else join; the players in the match stay |
@@ -41,7 +41,7 @@ A game that starts in a menu has a local `Main`, and its local code decides whic
 | `Session.Watch(center, size)` | In a [sharded world](./shards.md#watching-an-area), sees that area wherever this machine's player is |
 | `Session.Unwatch()` | Stops watching it |
 
-`Start` names the scene the match starts in, with its values as for `Scene.Load`: `Session.Start(Arena { size = 30 })`, or nothing for `Main` with its defaults, which has to be the match's. `Join` and `Connect` get whatever the server runs. Starting or joining a match leaves the one this machine is in first.
+`Start` names the scene the match starts in, with its values as for `Scene.Load`: `Session.Start(Arena { size = 30 })`. Without an argument, it uses the selected entry's authored prefab tree or scene defaults. If the entry is local, name a match scene explicitly. `Join` and `Connect` get whatever the server runs. Starting or joining a match leaves the one this machine is in first.
 
 There's one kind of match. It starts closed, so single-player is just a match nobody else was let into. `Open` and `Close` change that at any time: a game can start alone and open its match to friends later, then close it once the party's full. Closing turns away anyone who isn't in the match, and opening it again uses the same room and port.
 
@@ -207,9 +207,11 @@ require WebRTC/DTLS or a custom transport that provides equivalent protection;
 the hosting layer refuses credentials over its plain UDP path. Tide supplies
 the admission interface, not an account database or a particular identity provider.
 
-The server starts matches in match `Main` by default. For a local menu `Main`,
-provide a process entry point that selects the match scene and its typed startup
-parameters. See [server options](../tools/cli.md#dedicated-servers).
+The server starts matches in the selected entry when it is a prefab or match
+scene, using `--scene`, then `settings.startScene`, then `Main`. If the selected
+entry is a local menu, use `--scene` to select a match prefab or scene for the
+server, or provide a process entry point that selects the match scene and its
+typed startup parameters. See [server options](../tools/cli.md#dedicated-servers).
 
 Server builds can omit assets reached only from client code. Assets used by
 simulation, including helper calls, defaults and dynamic match asset references,

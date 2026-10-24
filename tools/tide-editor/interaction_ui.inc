@@ -15,13 +15,13 @@ static float segment_distance(tide_float2 p, tide_float2 a, tide_float2 b)
 static bool gizmo(editor *e, tide_rect r, const tide_float4x4 *matrices, const bool *valid)
 {
     if (e->drag.active && (e->drag.node != e->selected || e->drag.revision != e->doc.revision || e->pending != NONE ||
-        e->devices.keyboard.escape.down || e->picker || e->discard || e->recovery)) {
+        e->devices.keyboard.escape.down || e->picker || e->discard || e->recovery || e->dialog_open || e->value_picker)) {
         e->drag.active = false; return true;
     }
     if (!e->tool || e->selected < 0 || e->selected >= e->doc.nodes.count || !valid[e->selected]) return false;
     const editor_node *node = &e->doc.nodes.items[e->selected];
     tide_float3 pos, scale; tide_quaternion rot;
-    if (!node->authored || !editor_component(node,str_from("Transform")) || !local_trs(node,&pos,&rot,&scale)) return false;
+    if (!editor_can_edit_fields(&e->doc,e->selected) || !editor_component(node,str_from("Transform")) || !local_trs(node,&pos,&rot,&scale)) return false;
     const tide_float4x4 parent = node->parent < 0 ? tide_identity_f4x4() : matrices[node->parent];
     const tide_float3 world = tide_transform_f4x4(matrices[e->selected],tide_f3(0,0,0));
     const tide_float2 center = project(e,r,world);
@@ -71,7 +71,7 @@ static bool gizmo(editor *e, tide_rect r, const tide_float4x4 *matrices, const b
         tide_draw_rect(&e->draw,center,tide_f2(10,10),rgb(.95f,.95f,.75f));
         if (tide_length_f2(tide_sub_f2(e->gui.mouse,center)) < 10) hot = 3;
     }
-    if (!contains(content,e->gui.mouse) || e->picker || e->discard || e->recovery) hot = -1;
+    if (!contains(content,e->gui.mouse) || e->picker || e->discard || e->recovery || e->dialog_open || e->value_picker) hot = -1;
     if (hot >= 0 && e->gui.mouse_pressed && !e->drag.active && e->pending == NONE) {
         e->drag.active = true; e->drag.node = e->selected; e->drag.axis = hot; e->drag.tool = e->tool;
         e->drag.revision = e->doc.revision; e->drag.start = e->gui.mouse; e->drag.center = center;

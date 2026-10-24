@@ -42,6 +42,7 @@ typedef struct codegen_options {
     const char *const *defines; // The symbols the build defines for every file's #if (`--define FAST`, DEBUG), or NULL
     int define_count;
     const uint8_t *external_identity; // Optional SHA-256 of game C/headers/libraries, independent of target.
+    const char *scene; // Explicit startup prefab or scene, overriding settings.startScene and Main.
     const char *editor_prefab; // Internal native-editor build: qualified prefab to instantiate without gameplay startup.
     bool editor_local;
     const char *editor_source, *editor_text; // Unsaved source overlay, retaining the original path and asset scope.

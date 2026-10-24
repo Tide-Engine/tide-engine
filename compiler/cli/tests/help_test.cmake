@@ -69,19 +69,21 @@ endforeach()
 
 help(0 help build)
 contains("${out}" "-o <path>")
+contains("${out}" "--scene <qualified-name>")
 excludes("${out}" "--capture-audio")
 excludes("${out}" "--project")
 help(0 help deploy)
 contains("${out}" "--project <name-or-id>")
 excludes("${out}" "--preview")
 help(0 help run)
+contains("${out}" "--scene <qualified-name>")
 contains("${out}" "--capture-audio <file.wav>")
 contains("${out}" "--data-dir <folder>")
 contains("${out}" "--max-connections <n>")
 contains("${out}" "--shard-width <units>")
 excludes("${out}" "--nightly")
 
-foreach(argument folder source package editor file.tprefab --release --web --android --define --title --stats --debug-views -o
+foreach(argument folder source package editor file.tprefab --release --web --android --define --title --scene --stats --debug-views -o
         --no-open --host --join --connect --server --strip-server-assets --anonymous --port --max-matches --max-connections
         --udp-only --shards --shard-width --shard-most --shard-journal --capture --capture-audio --microphone --frames --script
         --scale --size
@@ -90,6 +92,24 @@ foreach(argument folder source package editor file.tprefab --release --web --and
     help(0 help "${argument}")
     contains("${out}" "Commands:")
 endforeach()
+
+foreach(command run build)
+    help(0 help "${command}" --scene)
+    contains("${out}" "--scene <qualified-name>")
+    contains("${out}" "settings { startScene = Levels.Start; }")
+    contains("${out}" "the game starts in Main")
+    contains("${out}" "Spawned handlers, systems and views")
+    excludes("${out}" "--source-overlay")
+    excludes("${out}" "--editor-cache")
+endforeach()
+help(0 help --host)
+contains("${out}" "Requires a match startup")
+contains("${out}" "--scene, settings.startScene or Main")
+excludes("${out}" "Main must be")
+help(0 help --players)
+contains("${out}" "With a match startup")
+contains("${out}" "A local startup leaves joining to game code")
+excludes("${out}" "hosts Main's match")
 
 help(0 help --project)
 contains("${out}" "--project <name-or-id>")

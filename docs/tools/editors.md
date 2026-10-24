@@ -51,30 +51,85 @@ Tide's language server, `tidels`, comes with `tide`. Open your game's folder, th
 Open an authored tree in a desktop window alongside your code editor:
 
 ```sh
+tide open .
 tide open scenes/Level.tprefab --project .
 ```
+
+With a project folder, or no argument for the current folder, the app opens a
+workspace with **New Scene**, **New Prefab** and **Open file**. With a document
+open, **New** / **Ctrl+N** creates another scene. Use these controls to create a
+named rooted `.tprefab`, and **Open** / **Ctrl+O** to switch to another authored
+file. Scenes and prefabs use the same format; a scene
+is a prefab loaded as a scene. New files need an unused name and a new filename
+in an existing project source folder. Opening another file saves the current
+draft first; a conflict or current-file syntax error must be resolved before
+switching. **Next** switches between declarations in one file.
+
+Start with **New Scene**, add objects with **+ Entity**, arrange them in the
+viewport and save. **Save as Prefab...** turns an ordinary authored child subtree
+into a reusable asset and leaves an instance in its place. **+ Prefab** places
+more instances beneath the selection. **Play** builds the selected tree directly,
+so this workflow needs no handwritten `Main`.
 
 The hierarchy shows the complete composition, including descendants inherited
 from nested prefabs. Select an entity in the hierarchy, click its viewport
 marker, or click a static mesh surface. Overlapping meshes select the nearest
-authored triangle. The inspector shows its components and effective field values, including
-defaults. Select a field, edit its Tide expression, then press Enter or **Apply**.
-**Ctrl+A** selects the whole value while typing. Values can name entities,
-assets, constants and ordinary struct/list literals, with the normal compiler
-checks. **Reset override** restores the component default or inherited value.
+authored triangle. Fold arrows collapse branches. The inspector shows components
+and effective field values, including defaults. Edit booleans, integers, floats
+strings and vector axes directly; quaternion controls show Euler angles in degrees.
+Entity and enum fields open searchable choices, and model fields open the asset
+browser. **=** opens an inline Tide expression; press Enter or **Apply** to apply
+it. **Ctrl+A** selects the whole expression while typing. Values can name
+entities, assets, constants and ordinary struct/list literals, with the normal
+compiler checks. **Reset** restores the component default or inherited value.
 Untouched fields are not serialized.
 Direct entity references show their composed paths, so a nested prefab's `Lid`
 can be overridden as `Crates.Left.Lid`. When editing a more complex inherited
 expression, write its names in the current prefab's namespace and entity-path
 scope; compiler diagnostics check the resulting value.
 
-**Add component** lists this project's shared component definitions.
-**Child** adds an entity beneath the selection, and **Prefab** nests an existing
-prefab there. **Delete selected subtree** removes an authored child and its
+**+ Add component** lists this project's shared component definitions.
+**+ Entity** asks for a child's name, and **+ Prefab** nests an existing
+prefab there. **Delete** removes an authored child and its
 descendants. **Remove** deletes an authored component entry or override; it
 cannot remove a component inherited from the base prefab. Inherited descendants
-are read-only here: edit their source prefab. **Next** switches between prefab
-declarations in a file. **Source** shows the current text draft.
+allow field-value overrides, marked with `*`; their components and children
+cannot be added, removed or replaced. A nested instance's root still accepts
+authored component and child additions. **Open source prefab** opens the base
+definition when you need to change its structure. **Source** shows the text draft.
+
+**Rename** / **F2** and **Duplicate** act on authored children. Drag an authored child
+onto another hierarchy row to change its parent. These operations check and
+rewrite affected entity references in the current file; duplication redirects
+references inside the copied subtree to the copy. Reparenting preserves local
+position, rotation and scale, so its world position can change. Invalid names,
+cycles and changes requiring a rewrite in another source file are refused.
+Resolve project errors before operations that change hierarchy paths.
+Path edits and extraction of conditional authored trees are also refused, so
+inactive build branches cannot keep stale references.
+
+**Save as Prefab...** creates a new asset from an ordinary authored child and
+replaces it with an instance, retaining incoming reference paths. The subtree
+must be self-contained: references to outside entities, and descendant references
+to the selected root, prevent extraction. A selected root that is already a
+prefab instance cannot be extracted again. Changes requiring updates to other
+files' consumers or overrides are refused. Extraction is one undo in the current
+document; undo restores the child but keeps the newly created asset.
+
+**Play** / **F5** checks and builds the project with the selected scene's applied draft,
+including unsaved edits, then opens the normal game window. It runs `Spawned`
+handlers, systems, all normal game views, the game's camera, input and services.
+Fix compiler errors and resolve outside conflicts or recovery before playing.
+The build can still report C, link or full-asset errors. **Stop** ends the play
+session and discards runtime state. Runtime changes are not written into the
+authored tree; the next Play starts fresh.
+
+**Set startup** saves the current scene and writes its qualified name to project
+`settings { startScene = ...; }`. It preserves other settings and any existing
+`Main`; normal `tide run` and `tide build` then start there. A new scene becomes
+startup automatically only if the project has neither `Main` nor a startup
+selection. Play itself does not change startup. See
+[Startup scene](../game/scenes.md#startup-scene) for settings and CLI overrides.
 
 The viewport draws referenced static models, unit wire cubes and axes, with parenting,
 local position, rotation and scale. Use the wheel to zoom, middle drag to pan,
@@ -91,7 +146,7 @@ handles use the entity's local axes; the scale center changes all axes together.
 Hold Shift to snap movement to 0.5 units, rotation to 15 degrees, or scale factors
 to 0.1 steps. Edge-on axes/rings are hidden; use Isometric to reach another axis.
 The selected entity needs an editable `Transform` with constant previewable TRS.
-Inherited children remain read-only, while authored nested roots can be edited.
+Inherited children receive per-instance Transform field overrides too.
 A drag writes only its changed field on release and makes one undo entry.
 Escape cancels it. Descendant markers and fixed-preview meshes follow the drag;
 compiled views refresh with the new authored transform after release.
@@ -109,7 +164,7 @@ view Models(Model model, World world)
 }
 ```
 
-The editor constructs the selected prefab's whole tree from its authored values
+This authoring preview constructs the selected prefab's whole tree from its authored values
 and defaults. It does not start `Main`, run `Spawned` or other event handlers,
 tick systems, or start a session. A view can prepare its own local visual state
 using the usual view permissions; that state belongs to the preview. Systems
@@ -137,7 +192,7 @@ off releases it. Closing waits for an active compile to finish. Private build
 outputs and logs remain under `<project>/.tide/editor-preview/`.
 
 Declare a field such as `Asset<Mesh<Vertex3>> model` in your own component and
-add that component to an entity. Select its field and choose **Browse**, select
+add that component to an entity. Click its field to browse, select
 a matching singular mesh asset, then **Use for selected field**. The prefab
 stores the asset name as an ordinary checked override. Nested instances use
 their composed position, rotation and scale in the preview.
@@ -147,36 +202,44 @@ expressions are counted as omitted in the viewport footer; inspect their text.
 **Models** opens the project's static mesh asset browser, including collection
 items. Right drag orbits, the wheel zooms, **Frame model** resets the zoom and
 **Lit**/**Unlit** switches preview shading. Model files and glTF side buffers
-refresh when their filesystem metadata changes. Skinned-model previews and
+refresh when their filesystem metadata changes. With a singular mesh selected,
+**Place as Component.field** adds a named child with `Transform` and a compatible
+asset-reference component beneath the selection. Use Rename to change its
+generated name. Skinned-model previews and
 assigning collection items as persistent references are later work.
 
 **Save** / **Ctrl+S** updates the text file. **Undo** / **Ctrl+Z** and **Redo** /
 **Ctrl+Y** keep up to 64 edits. Source edits preserve surrounding comments,
 line endings and untouched values. Syntax-invalid edits are rejected so the
-inspector remains editable; type/reference errors remain visible and block Save.
+inspector remains editable. Semantic errors, including type/reference errors
+and errors in other project files, remain visible and may be saved. Syntax errors
+in the current document and outside conflicts block Save. Play requires a clean
+compiler check.
 The compiler checks the whole project's scripts and prefabs as code changes,
 including `[SceneRequired]` references. This is front-end and asset-metadata
 validation; normal game builds still validate generated C and complete assets.
 
 Outside changes reload automatically while the document is clean. With unsaved
 edits, the draft stays in memory and Save refuses to overwrite changed source.
-**Reload** asks before discarding edits. Unsaved applied edits are also kept in
+**Reload** asks before discarding unsaved edits and reading the file again.
+Unsaved applied edits are also kept in
 `<project>/.tide/editor/`; opening the file again offers recovery. Recovery retains
 the original source baseline, so a newer outside edit still causes a conflict.
 These recovery files are local cache files, not authored project content.
 
-The first app opens existing `.tprefab` files and uses the folder/package project
+The app uses the folder/package project
 context described under [`tide open`](cli.md#open). It supports Tide expression
 fields rather than a full text editor: long expressions and source syntax errors
-are edited in your usual code editor. Entity rename/reparent authoring and
-new-file creation remain future work.
+are edited in your usual code editor. It does not merge conflicting outside edits
+or perform refactors that require changing another document.
 
 ## VS Code, Cursor, VSCodium and Windsurf
 
 VS Code and JetBrains recognize `.tprefab` files as Tide. They use the same
 game/package context as scripts, report invalid authored components and references,
 and include prefab files when renaming components, fields and named prefabs.
-Authored entity names and paths currently need manual text edits. See
+Language-server rename/completion for authored entity names and paths remains
+limited; use the native hierarchy's checked operations within one document. See
 [Authored prefabs](../game/scenes.md#authored-prefabs) for the text format.
 
 **Tide: Open Prefab Editor** in the Explorer context menu or above an open

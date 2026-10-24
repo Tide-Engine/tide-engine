@@ -1,0 +1,14 @@
+// expect: inherited entity 'Item.Child.Grandchild' has no child 'Missing'; add children in the source prefab
+scene Main { }
+component Data { int value; }
+prefab Base { entity Child { entity Grandchild { Data; } } }
+prefab Broken
+{
+    entity Item : Base
+    {
+        entity Child
+        {
+            entity Grandchild { entity Missing { Data { value = 9 }; } }
+        }
+    }
+}

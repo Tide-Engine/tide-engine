@@ -55,6 +55,20 @@ namespace Defaults
         Data { value = VALUE };
         entity Child { Data { value = VALUE }; }
     }
+
+    prefab DescendantTemplate
+    {
+        Data { value = VALUE, label = "source-root" };
+        DescendantRefs { kept = Child, changed = Sibling, self = this };
+        entity Child
+        {
+            Data { value = VALUE, label = "inherited-child" };
+            LevelSettings;
+            DescendantRefs { kept = Child.Grandchild, changed = Sibling, self = this };
+            entity Grandchild { Data { value = VALUE + 1 }; }
+        }
+        entity Sibling { Data { label = "sibling" }; }
+    }
 }
 
 namespace Overrides
@@ -64,4 +78,70 @@ namespace Overrides
         ScopedLinks { child = Item, tip = Item.Child };
         entity Item : Defaults.Template { Data { value = VALUE }; }
     }
+
+    prefab Descendants
+    {
+        DescendantRoots
+        {
+            first = First, second = Second, source = Source,
+            firstTip = First.Child.Grandchild, secondTip = Second.Child.Grandchild, sourceTip = Source.Child.Grandchild,
+            anchor = Anchor, added = First.Added
+        };
+        entity First : Defaults.DescendantTemplate
+        {
+            Data { label = "first-root" };
+            LevelSettings { difficulty = 9 }; // Root instances still accept new components.
+            entity Child
+            {
+                Data { value = VALUE };
+                LevelSettings { difficulty = 9 };
+                DescendantRefs { changed = Anchor }; // Written references use this prefab's scope.
+                entity Grandchild { Data { value = 90 }; }
+            }
+            entity Added { Data { value = 31 }; } // Root instances still accept new children.
+        }
+        entity Second : Defaults.DescendantTemplate
+        {
+            entity Child
+            {
+                Data { value = VALUE * 2 };
+                DescendantRefs { kept = Anchor };
+                entity Grandchild { Data { label = "second-tip" }; }
+            }
+        }
+        entity Source : Defaults.DescendantTemplate { }
+        entity Anchor { Data { value = 66 }; }
+    }
+}
+
+prefab LocalDescendantTemplate
+{
+    Data { value = 1, label = "local-root" };
+    LocalDescendantRefs { kept = Child, changed = Sibling, self = this };
+    entity Child
+    {
+        Data { value = 4, label = "local-child" };
+        LocalDescendantRefs { kept = Child.Grandchild, changed = Sibling, self = this };
+        entity Grandchild { Data { value = 6 }; }
+    }
+    entity Sibling { Data { label = "local-sibling" }; }
+}
+
+prefab LocalDescendants
+{
+    LocalDescendantRoots { item = Item, source = Source, tip = Item.Child.Grandchild, anchor = Anchor, added = Item.Added };
+    entity Item : LocalDescendantTemplate
+    {
+        Data { value = 2 };
+        LevelSettings { difficulty = 5 };
+        entity Child
+        {
+            Data { value = 9 };
+            LocalDescendantRefs { changed = Anchor };
+            entity Grandchild { Data { value = 10 }; }
+        }
+        entity Added { Data { value = 3 }; }
+    }
+    entity Source : LocalDescendantTemplate { }
+    entity Anchor { Data { value = 8 }; }
 }

@@ -1402,6 +1402,11 @@ static bool takes_world(const decl *m)
     return m->world_match || m->acts[0] || (takes_task(m) && (m->runs_in[0] || m->runs_in[1])); // A local task reads the match too
 }
 
+static bool startup_is_local(const gen *g)
+{
+    return !g->prog->startup_create && g->prog->main && g->prog->main->is_local;
+}
+
 // Whether the match's world a function is handed is one it changes: it sets a
 // component through its World, or records in the world's queue.
 static bool changes_world(const decl *m)
@@ -6299,6 +6304,10 @@ static void gen_session_call(gen *g, const expr *e)
               str_eq_c(e->name, "Start") ? "TIDE_REQUEST_START"
               : str_eq_c(e->name, "End") ? "TIDE_REQUEST_END"
                                          : "TIDE_REQUEST_LEAVE");
+    if (str_eq_c(e->name, "Start") && !e->args.count && g->prog->startup_create) {
+        indent(g, o);
+        sb_put(o, "tide_l->tide_request_start = (tide_start){.scene = -1};\n");
+    }
     if (!e->type_decl) return;
     int index = 0;
     while (g->prog->start_scenes.items[index] != e->type_decl) index++;
@@ -7955,7 +7964,7 @@ static void gen_header(gen *g)
     }
     sb_put(o, "} tide_local;\n\n");
 
-    if (prog->main->is_local) {
+    if (startup_is_local(g)) {
         sb_put(o, "// The program starts in a local scene, Main, rather than in a match.\n#define TIDE_MAIN_IS_LOCAL 1\n\n");
     }
     if (prog->grids.count) {
@@ -10757,6 +10766,22 @@ static void gen_component_availability(gen *g, const bool before, const bool pre
     }
 }
 
+static void gen_default_start(gen *g, sb *o, const char *world, const char *padding)
+{
+    const program *prog = g->prog;
+    if (prog->startup_create) {
+        const decl *fn = prog->startup_create;
+        sb_printf(o, "%s%s(%s", padding, routine_cname(fn), takes_world(fn) ? world : "");
+        if (takes_scene(prog, fn)) sb_printf(o, "%s(tide_entity){0}", takes_world(fn) ? ", " : "");
+        sb_put(o, ");\n");
+    } else {
+        sb_printf(o, "%stide_cmd_load%d(%s, (tide_spawn%d){.%s = ", padding, prog->main_archetype,
+                  world, prog->main_archetype, type_cname(prog->main));
+        gen_value(g, o, prog->main, NULL, 0);
+        sb_put(o, "});\n");
+    }
+}
+
 static void gen_apply(gen *g, const bool local)
 {
     const program *prog = g->prog;
@@ -11142,17 +11167,15 @@ static void gen_apply(gen *g, const bool local)
     // Once nothing is left, a world that's Main's and has no scene loads Main
     // again, with what its Spawned handlers make. Only once, so a Main that
     // unloads itself as it loads doesn't load forever.
-    if (prog->main->is_local == local && !g->opts->editor_prefab) {
+    if (startup_is_local(g) == local && !g->opts->editor_prefab) {
         sb_put(o, "    // Every scene unloaded: Main loads again.\n    if (");
         if (!local && prog->visibility_state) sb_put(o, "!w->tide_visibility_state.client && ");
         // A shard's scenes are the root's: a region holds none of its own
         if (!local && sharded(g)) sb_put(o, "!tide_shard_starting_empty && tide_shard_root(w) && ");
         gen_no_scene(g, local);
-        const int a = prog->main_archetype;
-        sb_printf(o, ") {\n        const tide_queue_place from = tide_queue_end(&w->commands);\n        tide_cmd_load%d(w, (tide_spawn%d){.%s = ", a, a,
-                  type_cname(prog->main));
-        gen_value(g, o, prog->main, NULL, 0);
-        sb_printf(o, "});\n        %sapply_from(w, from);\n    }\n", p);
+        sb_put(o, ") {\n        const tide_queue_place from = tide_queue_end(&w->commands);\n");
+        gen_default_start(g, o, "w", "        ");
+        sb_printf(o, "        %sapply_from(w, from);\n    }\n", p);
     }
     sb_printf(o,
         "    tide_queue_clear(&w->commands);\n"
@@ -18305,11 +18328,7 @@ static void gen_api(gen *g)
                       type_cname(scene), type_cname(scene));
         }
         sb_put(o, "    default:\n");
-        if (!prog->main->is_local) {
-            sb_printf(o, "        tide_cmd_load%d(w, (tide_spawn%d){.%s = ", prog->main_archetype, prog->main_archetype, type_cname(prog->main));
-            gen_value(g, o, prog->main, NULL, 0);
-            sb_put(o, "});\n");
-        }
+        if (!startup_is_local(g)) gen_default_start(g, o, "w", "        ");
         sb_put(o, "        break;\n    }\n");
     } else sb_put(o, "    (void)start; // Authoring starts from the selected prefab, without Main.\n");
     sb_put(o, "    tide_apply_commands(w);\n}\n\n");
@@ -18433,7 +18452,7 @@ static void gen_api(gen *g)
     // back instead (see tide_apply_commands), and a match that can't hold a
     // scene can't start.
     sb_put(o, "bool tide_world_ended(const tide_world *w)\n{\n");
-    if (prog->main->is_local && has_scene_archetypes(g, false)) {
+    if (startup_is_local(g) && has_scene_archetypes(g, false)) {
         if (sharded(g)) sb_put(o, "    if (!tide_shard_root(w)) return false; // A region holds no scene: the root's say when it's over\n");
         sb_put(o, "    return ");
         if (prog->visibility_state) sb_put(o, "!w->tide_visibility_state.client && ");
@@ -18465,7 +18484,7 @@ static void gen_api(gen *g)
         sb_printf(&value, "local->%s", type_cname(d));
         gen_seeding(g, o, "    ", d, value.data, true, "local", "(tide_entity){0}");
     }
-    if (prog->main->is_local && !g->opts->editor_prefab) {
+    if (startup_is_local(g) && !g->opts->editor_prefab) {
         sb_printf(o, "    tide_cmd_load%d(local, (tide_spawn%d){.%s = ", prog->main_archetype, prog->main_archetype,
                   type_cname(prog->main));
         gen_value(g, o, prog->main, NULL, 0);

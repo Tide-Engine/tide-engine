@@ -68,10 +68,15 @@ static int prefab_append_entity(prefab_instance *p, const str path, const int pa
 }
 
 static void prefab_compose(checker *c, prefab_instance *p, const int index,
-                           const prefab_node *node, const str scope, decl **stack, const int depth)
+                           const prefab_node *node, const str scope, decl **stack, const int depth,
+                           const bool inherited)
 {
     if (depth >= PREFAB_DEPTH) {
         diag_error(node->at, "prefab composition nests at most %d levels", PREFAB_DEPTH);
+        return;
+    }
+    if (inherited && node->base.len) {
+        diag_error(node->base_at, "an inherited entity override cannot replace its prefab; edit the source prefab");
         return;
     }
     const unit *saved = c->unit;
@@ -89,7 +94,7 @@ static void prefab_compose(checker *c, prefab_instance *p, const int index,
             if (cycle) diag_error(node->at, "recursive prefab inclusion of '" STR_FMT "'; a prefab cannot contain itself", STR_ARG(base->qualified));
             else {
                 stack[depth] = base;
-                prefab_compose(c, p, index, base->prefab_root, p->entities.items[index].path, stack, depth + 1);
+                prefab_compose(c, p, index, base->prefab_root, p->entities.items[index].path, stack, depth + 1, false);
                 stack[depth] = NULL;
             }
         }
@@ -113,11 +118,21 @@ static void prefab_compose(checker *c, prefab_instance *p, const int index,
         for (int f = 0; f < written->inits.count; f++) {
             for (int j = 0; j < f; j++) if (str_eq(written->inits.items[f].name, written->inits.items[j].name)) diag_error(written->inits.items[f].at, "field '" STR_FMT "' is set twice", STR_ARG(written->inits.items[f].name));
         }
-        expr *value = prefab_copy_expr(written, node->unit, scope, index);
-        value->type_decl = component;
         expr *spawn = p->entities.items[index].spawn;
         expr *existing = NULL;
         for (int j = 0; j < spawn->args.count; j++) if (spawn->args.items[j]->type_decl == component) existing = spawn->args.items[j];
+        if (inherited && !existing) {
+            diag_error(written->at, "inherited entity '" STR_FMT "' has no component '" STR_FMT "'; add components in the source prefab",
+                       STR_ARG(p->entities.items[index].path), STR_ARG(component->name));
+            continue;
+        }
+        if (inherited && !written->inits.count) {
+            diag_error(written->at, "an inherited component override must set explicit fields; write '" STR_FMT " { field = value };'",
+                       STR_ARG(component->name));
+            continue;
+        }
+        expr *value = prefab_copy_expr(written, node->unit, scope, index);
+        value->type_decl = component;
         if (!existing) { vec_push(spawn->args, value); continue; }
         for (int f = 0; f < value->inits.count; f++) {
             field_init init = value->inits.items[f];
@@ -134,12 +149,27 @@ static void prefab_compose(checker *c, prefab_instance *p, const int index,
     for (int i = 0; i < node->children.count; i++) {
         const prefab_node *child = node->children.items[i];
         const str path = prefab_path(p->entities.items[index].path, child->name);
-        if (prefab_entity_named(p, path) >= 0) {
+        bool duplicate = false;
+        for (int j = 0; j < i; j++) duplicate |= str_eq(node->children.items[j]->name, child->name);
+        if (duplicate) {
             diag_error(child->at, "entity '" STR_FMT "' already exists in this composition; give the child a unique name", STR_ARG(path));
             continue;
         }
+        const int existing = prefab_entity_named(p, path);
+        if (existing >= 0) {
+            // This block targets a child contributed by the base prefab. Keep
+            // its entity/order and inherited value scopes; merge written fields
+            // in the current source prefab's scope, without changing structure.
+            prefab_compose(c, p, existing, child, scope, stack, depth + 1, true);
+            continue;
+        }
+        if (inherited) {
+            diag_error(child->at, "inherited entity '" STR_FMT "' has no child '" STR_FMT "'; add children in the source prefab",
+                       STR_ARG(p->entities.items[index].path), STR_ARG(child->name));
+            continue;
+        }
         const int added = prefab_append_entity(p, path, index, child->at);
-        if (added >= 0) prefab_compose(c, p, added, child, scope, stack, depth + 1);
+        if (added >= 0) prefab_compose(c, p, added, child, scope, stack, depth + 1, false);
     }
     c->unit = saved;
 }
@@ -238,7 +268,7 @@ static prefab_instance *prefab_expand(checker *c, decl *d)
     p->declaration = d;
     prefab_append_entity(p, (str){0}, -1, d->at);
     decl *stack[PREFAB_DEPTH] = {d};
-    prefab_compose(c, p, 0, d->prefab_root, (str){0}, stack, 1);
+    prefab_compose(c, p, 0, d->prefab_root, (str){0}, stack, 1, false);
     return p;
 }
 

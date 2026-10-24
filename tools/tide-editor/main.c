@@ -8,6 +8,8 @@
 #include "asset_files.h"
 #include "model.h"
 #include "preview.h"
+#include "play.h"
+#include "startup.h"
 #include "interaction.h"
 #include "embed.h"
 #include "packages.h"
@@ -16,7 +18,21 @@
 #include "tide/text.h"
 #include "tide/time.h"
 
-typedef enum action { NONE, SAVE, RELOAD, DISCARD, UNDO, REDO, SET, RESET, ADD, REMOVE, CHILD, DELETE_NODE, PREFAB, RECOVER, DROP_RECOVERY } action;
+typedef enum action { NONE, SAVE, RELOAD, DISCARD, UNDO, REDO, SET, RESET, ADD, REMOVE, CHILD, DELETE_NODE, PREFAB, RECOVER, DROP_RECOVERY,
+    CREATE_FILE, OPEN_FILE, RENAME_NODE, DUPLICATE_NODE, REPARENT_NODE, EXTRACT_NODE, NAMED_CHILD, PLAY, STOP, SET_STARTUP, PLACE_MODEL } action;
+typedef enum dialog_kind { DIALOG_NONE, DIALOG_NEW_SCENE, DIALOG_NEW_PREFAB, DIALOG_OPEN, DIALOG_RENAME, DIALOG_DUPLICATE, DIALOG_EXTRACT, DIALOG_CHILD } dialog_kind;
+typedef enum inspector_kind { INSPECTOR_STRING, INSPECTOR_INT, INSPECTOR_FLOAT, INSPECTOR_VECTOR, INSPECTOR_EULER, INSPECTOR_EXPRESSION } inspector_kind;
+typedef struct inspector_edit {
+    char *file, *prefab, *path, *component, *field, *initial, *draft;
+    uint64_t revision;
+    uint32_t id;
+    tide_rect rect;
+    inspector_kind kind;
+    int count, part;
+    int32_t integer;
+    float numbers[4];
+    struct inspector_edit *next;
+} inspector_edit;
 typedef struct editor {
     editor_document doc;
     tide_draw_list draw;
@@ -28,6 +44,7 @@ typedef struct editor {
     tide_float2 pan;
     char *component, *field, *value;
     action pending;
+    action following;
     int argument;
     char *pending_name;
     bool models;
@@ -47,6 +64,16 @@ typedef struct editor {
     bool embedded;
     uint64_t embedded_time;
     int tool; // 0 select, 1 move, 2 rotate, 3 scale.
+    editor_play play;
+    char *workspace, *pending_path, *dialog_name, *dialog_path, *search;
+    dialog_kind dialog;
+    bool dialog_open, value_picker;
+    bool folded[1024];
+    int drag_node;
+    tide_float2 drag_origin;
+    bool tree_dragging;
+    uint32_t text_selection;
+    inspector_edit *edit, *edit_first, *edit_last;
     struct {
         bool active;
         int node, axis, tool;
@@ -59,7 +86,7 @@ typedef struct editor {
 } editor;
 
 static editor *closing_editor;
-static void close_preview(void) { if (closing_editor) editor_preview_close(&closing_editor->preview, &closing_editor->draw); }
+static void close_preview(void) { if (closing_editor) { editor_play_close(&closing_editor->play); editor_preview_close(&closing_editor->preview, &closing_editor->draw); } }
 
 static char *own(const char *s)
 {
@@ -91,10 +118,50 @@ static void queue_name(editor *e, action a, str name)
     if (e->pending != NONE) return;
     e->pending_name = own(str_to_cstr(name)); e->pending = a;
 }
+static void inspector_cancel(editor *e);
 static void clear_field(editor *e)
 {
+    inspector_cancel(e);
     free(e->component); free(e->field); free(e->value); e->component = e->field = e->value = NULL;
     e->value_selected = false;
+}
+
+static bool text_field(editor *e, uint32_t id, tide_rect r, const char *label_text, char **value, bool *entered)
+{
+    if (!*value) *value = own("");
+    const bool ctrl = e->devices.keyboard.leftCtrl.pressed || e->devices.keyboard.rightCtrl.pressed;
+    if (e->gui.editing == id && ctrl && e->devices.keyboard.a.down) e->text_selection = id;
+    if (e->gui.editing == id && e->text_selection == id && (e->gui.text.count || e->devices.keyboard.backspace.down)) {
+        replace(value, ""); e->gui.edit_len = 0; e->gui.edit[0] = '\0'; e->text_selection = 0;
+    }
+    tide_str text = tide_str_from_cstr(*value);
+    bool done;
+    const bool changed = tide_gui_text_field_entered(&e->gui,id,r,label_text,(tide_textref){.local=&text},&done);
+    if (changed) replace(value,tide_str_c(text));
+    if (entered) *entered = done;
+    return changed;
+}
+
+static void open_dialog(editor *e, dialog_kind kind, const char *name, const char *path)
+{
+    e->dialog = kind; e->dialog_open = true;
+    replace(&e->dialog_name,name ? name : ""); replace(&e->dialog_path,path ? path : "");
+    e->drag.active = e->tree_dragging = false;
+}
+
+static bool layout_text_field(editor *e, uint32_t id, const char *label_text, char **value, bool *entered)
+{
+    if (!*value) *value=own("");
+    const bool ctrl=e->devices.keyboard.leftCtrl.pressed || e->devices.keyboard.rightCtrl.pressed;
+    if(e->gui.editing==id && ctrl && e->devices.keyboard.a.down) e->text_selection=id;
+    if(e->gui.editing==id && e->text_selection==id && (e->gui.text.count || e->devices.keyboard.backspace.down)) {
+        replace(value,""); e->gui.edit_len=0; e->gui.edit[0]='\0'; e->text_selection=0;
+    }
+    tide_str text=tide_str_from_cstr(*value); bool done;
+    const bool changed=tide_gui_layout_text_field_entered(&e->gui,id,label_text,(tide_textref){.local=&text},&done);
+    if(changed) replace(value,tide_str_c(text));
+    if(entered) *entered=done;
+    return changed;
 }
 
 static int scroll_rows(float value, int factor)
@@ -141,8 +208,8 @@ static bool vector(const expr *v, float *out, int count, int depth)
     if (v->kind == E_DEFAULT) { for (int i = 0; i < count; i++) out[i] = 0; return true; }
     if (depth > 64) return false;
     if (v->bind == BIND_CONST) return vector(v->constant->value, out, count, depth + 1);
-    if (v->kind == E_CALL && (str_eq_c(v->name, "float3") || str_eq_c(v->name, "quaternion"))) {
-        if (v->args.count == 1 && count == 3) {
+    if (v->kind == E_CALL && (str_eq_c(v->name, "float2") || str_eq_c(v->name, "float3") || str_eq_c(v->name, "float4") || str_eq_c(v->name, "quaternion"))) {
+        if (v->args.count == 1 && count != 4) {
             float f; if (!scalar(v->args.items[0], &f, 0)) return false;
             for (int i = 0; i < count; i++) out[i] = f;
             return true;
@@ -190,6 +257,7 @@ static void asset_stamp_path(void *user, const char *path)
 
 static uint64_t asset_stamp(const editor_document *doc)
 {
+    if (!doc->prog) return 0;
     const arena_mark mark = arena_checkpoint();
     uint64_t stamp = UINT64_C(14695981039346656037);
     for (int a = 0; a < doc->prog->assets.count; a++) {
@@ -258,6 +326,24 @@ static void models(editor *e, tide_rect r, tide_float2 size)
             queue(e, SET); e->models = false;
         }
     } else if (wanted) label(e, r.x+12, r.y+r.height-92, "Choose a matching singular mesh asset for the field.", dim);
+    else if(selected_decl && !selected_decl->asset_many && selected_decl->return_type.kind==TY_MESH) {
+        int offered=0;
+        for(int c=0;c<e->doc.prog->components.count && offered<2;c++) {
+            decl *component=e->doc.prog->components.items[c];
+            if(component->is_scene || component->placement_of) continue;
+            for(int f=0;f<component->fields.count && offered<2;f++) {
+                field *item=&component->fields.items[f];
+                if(item->hidden || item->is_local || item->type.kind!=TY_STRUCT || !item->type.decl || item->type.decl->asset_ref_of!=selected_decl->return_type.decl) continue;
+                sb title={0}; sb_printf(&title,"Place as " STR_FMT "." STR_FMT,STR_ARG(component->qualified),STR_ARG(item->name));
+                const int disabled=tide_gui_begin_disabled(&e->gui,!editor_can_structure(&e->doc,e->selected));
+                if(button(e,410000u+(uint32_t)c*1024u+(uint32_t)f,(tide_rect){r.x+12,r.y+r.height-76-(float)offered*32,r.width-24,28},title.data)) {
+                    replace(&e->component,str_to_cstr(component->qualified)); replace(&e->field,str_to_cstr(item->name));
+                    replace(&e->value,str_to_cstr(selected_decl->qualified)); queue(e,PLACE_MODEL);
+                }
+                tide_gui_close(&e->gui,disabled); offered++;
+            }
+        }
+    }
     if (e->model_revision != e->doc.revision) {
         if (selected) editor_model_set(&e->model, &selected->mesh, e->model_lighting);
         else editor_model_free(&e->model);
@@ -297,8 +383,7 @@ static void models(editor *e, tide_rect r, tide_float2 size)
     } else label(e, view.x+10,view.y+14, selected ? "Geometry could not be previewed." : "Select a model asset.", dim);
     tide_draw_unset_clip(&e->draw); tide_draw_unset_clip(&e->gui.list);
     tide_draw_set_clip(&e->draw, r);
-    label(e, r.x+12,r.y+r.height-66, "Right drag: orbit  |  Wheel: zoom", dim);
-    label(e, r.x+12,r.y+r.height-40, "Preview lighting / imported colors; game materials are not rendered.", dim);
+    label(e, r.x+12,r.y+r.height-40, "Right drag: orbit  |  Wheel: zoom", dim);
     label(e, r.x+12,r.y+r.height-18, "Static Mesh assets only; SkinnedMesh previews are not available yet.", dim);
     tide_draw_unset_clip(&e->draw);
 }
@@ -448,7 +533,7 @@ static void viewport(editor *e, tide_rect r, tide_float2 size)
         }
     }
     const bool gizmo_used = gizmo(e,r,matrices,valid);
-    if (!gizmo_used && picked >= 0 && e->gui.mouse_pressed && !e->picker && !e->discard && !e->recovery && e->pending == NONE) {
+    if (!gizmo_used && picked >= 0 && e->gui.mouse_pressed && !e->picker && !e->discard && !e->recovery && !e->dialog_open && !e->value_picker && e->pending == NONE) {
         e->selected = picked; e->inspector_scroll = 0; clear_field(e);
     }
     panel(e, (tide_rect){r.x,r.y,r.width,34}, rgb(.075f,.095f,.115f));
@@ -465,37 +550,7 @@ static void viewport(editor *e, tide_rect r, tide_float2 size)
     tide_draw_unset_clip(&e->draw); tide_draw_unset_clip(&e->gui.list);
 }
 
-static void tree(editor *e, tide_rect r)
-{
-    label(e, r.x + 14, r.y + 12, "HIERARCHY", dim);
-    if (e->doc.prefabs.count) {
-        decl *p = e->doc.prefabs.items[e->doc.active];
-        label(e, r.x + 14, r.y + 43, str_to_cstr(p->name), ink);
-        if (e->doc.prefabs.count > 1 && button(e, 80, (tide_rect){r.x + r.width - 74, r.y + 38, 60, 26}, "Next")) {
-            queue(e, PREFAB); e->argument = (e->doc.active + 1) % e->doc.prefabs.count;
-        }
-    }
-    const tide_rect content = {r.x + 8, r.y + 76, r.width - 16, r.height - 154};
-    if (contains(content, e->gui.mouse)) e->tree_scroll -= scroll_rows(e->devices.mouse.poll_scroll.y, 3);
-    const int visible = (int)(content.height / 30);
-    const int max = e->doc.nodes.count > visible ? e->doc.nodes.count - visible : 0;
-    e->tree_scroll = e->tree_scroll < 0 ? 0 : e->tree_scroll > max ? max : e->tree_scroll;
-    for (int i = e->tree_scroll; i < e->doc.nodes.count && i < e->tree_scroll + visible; i++) {
-        editor_node *n = &e->doc.nodes.items[i]; int depth = 0;
-        for (int p = n->parent; p >= 0 && depth < 128; p = e->doc.nodes.items[p].parent) depth++;
-        sb b = {0}; const char *name = n->path.len ? str_to_cstr(n->path) : "Root";
-        const char *last = strrchr(name, '.'); if (last) name = last + 1;
-        sb_printf(&b, "%s%s", name, n->authored ? "" : "  (inherited)");
-        const float indent = (float)(depth < 6 ? depth : 6) * 12;
-        tide_rect row = {content.x + indent, content.y + (float)(i - e->tree_scroll) * 30, content.width - indent, 26};
-        const int theme = tide_gui_begin_theme(&e->gui, (tide_gui_theme){.text = ink, .control = i == e->selected ? rgb(.14f,.32f,.38f) : rgb(.11f,.14f,.17f), .hot = rgb(.19f,.26f,.3f), .pressed = rgb(.14f,.32f,.38f), .accent = rgb(.3f,.83f,.93f), .radius = 3});
-        if (button(e, 2000u + (uint32_t)i, row, b.data)) { e->selected = i; e->inspector_scroll = 0; clear_field(e); }
-        tide_gui_close(&e->gui, theme);
-    }
-    if (button(e, 81, (tide_rect){r.x + 14, r.y + r.height - 66, 100, 26}, "+ Child")) queue(e, CHILD);
-    if (button(e, 82, (tide_rect){r.x + 124, r.y + r.height - 66, 106, 26}, "+ Prefab")) { e->picker = true; e->nested_picker = true; e->argument = 0; }
-    if (button(e, 83, (tide_rect){r.x + 14, r.y + r.height - 34, 216, 26}, "Delete selected subtree")) queue(e, DELETE_NODE);
-}
+#include "hierarchy_ui.inc"
 
 static char *field_text(editor *e, expr *c, field *f)
 {
@@ -512,75 +567,14 @@ static char *field_text(editor *e, expr *c, field *f)
     return str_to_cstr(str_from("default"));
 }
 
-static void inspector(editor *e, tide_rect r)
-{
-    label(e, r.x + 14, r.y + 12, "INSPECTOR", dim);
-    if (e->selected < 0 || e->selected >= e->doc.nodes.count) return;
-    editor_node *n = &e->doc.nodes.items[e->selected];
-    label(e, r.x + 14, r.y + 44, n->path.len ? str_to_cstr(n->path) : "Root entity", ink);
-    label(e, r.x + 14, r.y + 70, n->authored ? "Values are Tide expressions. Enter to apply." : "Inherited child: edit its source prefab.", dim);
-    const tide_rect content = {r.x + 14, r.y + 106, r.width - 28, r.height - 292};
-    if (contains(content, e->gui.mouse)) e->inspector_scroll -= scroll_rows(e->devices.mouse.poll_scroll.y, 3);
-    if (e->inspector_scroll < 0) e->inspector_scroll = 0;
-    int row = 0;
-    if (n->effective) for (int c = 0; c < n->effective->args.count; c++) {
-        expr *comp = n->effective->args.items[c]; decl *type = comp->type_decl;
-        if (!type) continue;
-        float y = content.y + (float)(row++ - e->inspector_scroll) * 30;
-        if (y >= content.y && y + 28 <= content.y + content.height) {
-            label(e, content.x, y + 3, str_to_cstr(type->qualified), rgb(.3f,.83f,.93f));
-            if (button(e, 3000u + (uint32_t)c, (tide_rect){content.x + content.width - 64, y, 64, 24}, "Remove")) queue_name(e, REMOVE, type->qualified);
-        }
-        for (int f = 0; f < type->fields.count; f++) {
-            field *item = &type->fields.items[f]; if (item->hidden || item->is_local) continue;
-            y = content.y + (float)(row++ - e->inspector_scroll) * 30;
-            if (y < content.y || y + 28 > content.y + content.height) continue;
-            sb b = {0}; sb_printf(&b, STR_FMT " = %s", STR_ARG(item->name), field_text(e, comp, item));
-            if (button(e, 100000u + (uint32_t)row, (tide_rect){content.x, y, content.width, 26}, b.data)) {
-                replace(&e->component, str_to_cstr(type->qualified)); replace(&e->field, str_to_cstr(item->name)); replace(&e->value, field_text(e, comp, item));
-                e->value_selected = false;
-            }
-        }
-        row++;
-    }
-    if (n->authored) for (int c = 0; c < n->authored->components.count; c++) {
-        expr *raw = n->authored->components.items[c]; if (raw->type_decl) continue;
-        const float y = content.y + (float)(row++ - e->inspector_scroll) * 30;
-        if (y < content.y || y + 28 > content.y + content.height) continue;
-        sb b = {0}; sb_printf(&b, STR_FMT " (unresolved)", STR_ARG(raw->name));
-        label(e, content.x, y + 3, b.data, rgb(.98f,.53f,.4f));
-        if (button(e, 200000u + (uint32_t)c, (tide_rect){content.x+content.width-64,y,64,24}, "Remove")) queue_name(e, REMOVE, raw->name);
-    }
-    const int visible = (int)(content.height / 30), maximum = row > visible ? row - visible : 0;
-    if (e->inspector_scroll > maximum) e->inspector_scroll = maximum;
-    if (e->component) {
-        sb b = {0}; sb_printf(&b, "%s.%s", e->component, e->field);
-        label(e, r.x + 14, r.y + r.height - 177, b.data, ink);
-        const bool ctrl = e->devices.keyboard.leftCtrl.pressed || e->devices.keyboard.rightCtrl.pressed;
-        if (e->gui.editing == 90 && ctrl && e->devices.keyboard.a.down) e->value_selected = true;
-        if (e->gui.editing == 90 && e->value_selected && (e->gui.text.count || e->devices.keyboard.backspace.down)) {
-            replace(&e->value, ""); e->gui.edit_len = 0; e->gui.edit[0] = '\0'; e->value_selected = false;
-        }
-        tide_str value = tide_str_from_cstr(e->value); bool entered = false;
-        const bool too_long = strlen(e->value) >= sizeof e->gui.edit;
-        const int disabled = tide_gui_begin_disabled(&e->gui, too_long);
-        if (tide_gui_text_field_entered(&e->gui, 90, (tide_rect){r.x + 14, r.y + r.height - 146, r.width - 28, 30}, "Value", (tide_textref){.local = &value}, &entered)) replace(&e->value, tide_str_c(value));
-        tide_gui_close(&e->gui, disabled);
-        label(e, r.x + 14, r.y + r.height - 68, too_long ? "Long expression: edit it in your code editor." : e->value_selected ? "Entire value selected; type to replace." : "Ctrl+A selects the whole value.", dim);
-        if (button(e, 91, (tide_rect){r.x + 14, r.y + r.height - 106, 110, 28}, "Apply") || entered) queue(e, SET);
-        if (button(e, 92, (tide_rect){r.x + 134, r.y + r.height - 106, 110, 28}, "Reset override")) queue(e, RESET);
-        if (selected_asset_type(e) && button(e, 94, (tide_rect){r.x+254,r.y+r.height-106,90,28}, "Browse")) {
-            e->models = true; e->source = false;
-        }
-    }
-    if (button(e, 93, (tide_rect){r.x + 14, r.y + r.height - 48, r.width - 28, 30}, "+ Add component")) { e->picker = true; e->nested_picker = false; e->argument = 0; }
-}
+#include "inspector_ui.inc"
 
 static void picker(editor *e, tide_float2 screen)
 {
     const int modal = tide_gui_begin_modal(&e->gui, 100, TIDE_ANCHOR_MIDDLE_CENTER, &e->picker);
     if (modal < 0) return;
     tide_gui_layout_label(&e->gui, e->nested_picker ? "Nest a prefab under the selected entity" : "Add a component from this project");
+    if(layout_text_field(e,109,"Search",&e->search,NULL)) e->argument=0;
     int offered = 0;
     // Bound the modal to fit; paging follows the same scroll wheel as panels.
     if (e->devices.mouse.poll_scroll.y) e->argument -= scroll_rows(e->devices.mouse.poll_scroll.y, 3);
@@ -590,6 +584,7 @@ static void picker(editor *e, tide_float2 screen)
         decl *d = e->doc.prog->decls.items[i];
         if (e->nested_picker ? d->kind != DECL_PREFAB : (d->kind != DECL_COMPONENT || d->is_scene || d->placement_of)) continue;
         if (e->nested_picker && e->doc.prefabs.count && d == e->doc.prefabs.items[e->doc.active]) continue;
+        if(e->search && e->search[0] && !strstr(str_to_cstr(d->qualified),e->search)) continue;
         if (offered++ < e->argument || offered > e->argument + visible) continue;
         if (tide_gui_layout_button(&e->gui, 12000u + (uint32_t)i, str_to_cstr(d->qualified))) {
             queue_name(e, e->nested_picker ? CHILD : ADD, d->qualified); e->picker = false;
@@ -602,9 +597,12 @@ static void picker(editor *e, tide_float2 screen)
     tide_gui_close(&e->gui, modal);
 }
 
+#include "workspace_ui.inc"
+
 static int frame(void *user, float seconds)
 {
     editor *e = user;
+    editor_play_poll(&e->play,0);
     if (e->embedded) {
         const int result = editor_embed_input();
         if (result != -1) return result;
@@ -616,7 +614,7 @@ static int frame(void *user, float seconds)
     char *selected_path = e->selected >= 0 && e->selected < e->doc.nodes.count ? own_slice(e->doc.nodes.items[e->selected].path) : NULL;
     const uint64_t revision = e->doc.revision;
     e->poll += seconds;
-    if (e->poll >= .5f) {
+    if (e->doc.path && e->poll >= .5f) {
         e->poll = 0; editor_poll(&e->doc);
         const uint64_t current = asset_stamp(&e->doc);
         if (current != e->asset_stamp && e->doc.revision == revision) editor_refresh(&e->doc);
@@ -624,6 +622,7 @@ static int frame(void *user, float seconds)
     }
     if (e->doc.revision != revision) {
         e->drag.active = false;
+        e->gui.editing=e->gui.focus=0; e->text_selection=0;
         e->selected = 0;
         for (int i = 0; selected_path && i < e->doc.nodes.count; i++) if (str_eq_c(e->doc.nodes.items[i].path, selected_path)) e->selected = i;
         clear_field(e);
@@ -632,7 +631,7 @@ static int frame(void *user, float seconds)
     if (e->selected >= e->doc.nodes.count) e->selected = 0;
     // Polling can replace the analysis/revision too: bounded output must build
     // that current document, rather than the state from before the poll.
-    editor_preview_update(&e->preview, &e->doc, &e->draw, 0);
+    if(e->doc.path) editor_preview_update(&e->preview, &e->doc, &e->draw, 0);
     if (e->bounded_preview && e->preview.enabled) {
         while (e->preview.builder) editor_preview_update(&e->preview, &e->doc, &e->draw, 50);
         if (!e->preview.api || e->preview.revision != e->doc.revision) {
@@ -653,6 +652,7 @@ static int frame(void *user, float seconds)
         arena_rewind(mark); tide_scratch_reset(scratch); return TIDE_KEEP_RUNNING;
     }
     tide_gui_begin(&e->gui, &e->devices, size, tide_platform_measure_text);
+    inspector_prepare(e);
     tide_gui_theme theme = tide_gui_theme_default();
     theme.text = ink; theme.panel = rgb(.11f,.14f,.17f); theme.control = rgb(.16f,.20f,.24f);
     theme.hot = rgb(.22f,.29f,.34f); theme.pressed = rgb(.13f,.32f,.39f); theme.accent = rgb(.3f,.83f,.93f);
@@ -660,27 +660,39 @@ static int frame(void *user, float seconds)
     const int themed = tide_gui_begin_theme(&e->gui, theme);
     panel(e, (tide_rect){0,0,size.x,52}, rgb(.11f,.14f,.17f));
     label(e, 18, 16, "TIDE", rgb(.3f,.83f,.93f));
-    if (button(e, 1, (tide_rect){90,12,72,28}, "Save")) queue(e, SAVE);
-    if (button(e, 2, (tide_rect){172,12,72,28}, "Undo")) queue(e, UNDO);
-    if (button(e, 3, (tide_rect){254,12,72,28}, "Redo")) queue(e, REDO);
-    if (button(e, 4, (tide_rect){336,12,86,28}, "Reload")) { if (editor_dirty(&e->doc)) e->discard = true; else queue(e, RELOAD); }
-    if (button(e, 5, (tide_rect){432,12,86,28}, e->source ? "Viewport" : "Source")) e->source = !e->source;
-    if (button(e, 6, (tide_rect){528,12,86,28}, e->models ? "Scene" : "Models")) { e->models = !e->models; e->source = false; }
-    if (button(e, 7, (tide_rect){624,12,86,28}, e->preview.enabled ? "Views: on" : "Views: off")) {
-        e->preview.enabled = !e->preview.enabled;
-        e->models = e->source = false;
-    }
+    if(button(e,8,(tide_rect){90,12,64,28},"New")) open_dialog(e,DIALOG_NEW_SCENE,"Level",NULL);
+    if(button(e,9,(tide_rect){162,12,64,28},"Open")) open_dialog(e,DIALOG_OPEN,NULL,NULL);
+    const bool has_document=e->doc.path!=NULL;
+    const int toolbar_disabled=tide_gui_begin_disabled(&e->gui,!has_document);
+    if(button(e,1,(tide_rect){234,12,64,28},"Save")) queue(e,SAVE);
+    if(button(e,2,(tide_rect){306,12,64,28},"Undo")) queue(e,UNDO);
+    if(button(e,3,(tide_rect){378,12,64,28},"Redo")) queue(e,REDO);
+    if(button(e,10,(tide_rect){450,12,86,28},playing(e) ? "Stop" : "Play")) queue(e,playing(e) ? STOP : PLAY);
+    if(button(e,11,(tide_rect){544,12,112,28},"Set startup")) queue(e,SET_STARTUP);
+    if(button(e,4,(tide_rect){size.x-86,12,76,28},"Reload")) { if(editor_dirty(&e->doc)) e->discard=true; else queue(e,RELOAD); }
+    tide_gui_close(&e->gui,toolbar_disabled);
     if (e->models || e->source) e->drag.active = false;
-    sb title = {0}; sb_printf(&title, "%s%s", path_base(e->doc.path), editor_dirty(&e->doc) ? " *" : "");
-    label(e, 730, 18, title.data, ink);
+    sb title = {0}; sb_printf(&title, "%s%s", has_document ? path_base(e->doc.path) : "Choose or create a scene", has_document && editor_dirty(&e->doc) ? " *" : "");
+    tide_draw_set_clip(&e->draw,(tide_rect){674,12,fmaxf(0,size.x-768),30});
+    label(e,674,18,title.data,ink); tide_draw_unset_clip(&e->draw);
     // Shortcuts read presses before GUI consumption, except while typing/modal.
     const bool ctrl = e->devices.keyboard.leftCtrl.pressed || e->devices.keyboard.rightCtrl.pressed;
-    if (ctrl && !tide_gui_typing(&e->gui) && !e->picker && !e->discard && !e->recovery) {
+    const bool modal_open=e->picker || e->discard || e->recovery || e->dialog_open || e->value_picker;
+    if (ctrl && !tide_gui_typing(&e->gui) && !modal_open) {
+        if(e->devices.keyboard.n.down) open_dialog(e,DIALOG_NEW_SCENE,"Level",NULL);
+        if(e->devices.keyboard.o.down) open_dialog(e,DIALOG_OPEN,NULL,NULL);
+    }
+    if (has_document && ctrl && !tide_gui_typing(&e->gui) && !modal_open) {
         if (e->devices.keyboard.s.down) queue(e, SAVE);
         if (e->devices.keyboard.z.down) queue(e, e->devices.keyboard.leftShift.pressed ? REDO : UNDO);
         if (e->devices.keyboard.y.down) queue(e, REDO);
     }
-    if (!ctrl && !tide_gui_typing(&e->gui) && !e->picker && !e->discard && !e->recovery) {
+    if (has_document && !ctrl && !tide_gui_typing(&e->gui) && !modal_open) {
+        if(e->devices.keyboard.f5.down) queue(e,playing(e) ? STOP : PLAY);
+        if(e->selected>0 && editor_can_structure(&e->doc,e->selected)) {
+            if(e->devices.keyboard.f2.down) open_dialog(e,DIALOG_RENAME,node_name(&e->doc.nodes.items[e->selected]),NULL);
+            if(e->devices.keyboard.delete.down) queue(e,DELETE_NODE);
+        }
         int tool = -1;
         if (e->devices.keyboard.q.down) tool = 0;
         if (e->devices.keyboard.w.down) tool = 1;
@@ -689,13 +701,14 @@ static int frame(void *user, float seconds)
         if (tool >= 0) { e->tool = tool; e->drag.active = false; }
     }
     const float height = size.y - 230, right = size.x - 390;
+    if(has_document) {
     panel(e, (tide_rect){0,56,250,height}, rgb(.10f,.125f,.15f));
     panel(e, (tide_rect){right,56,390,height}, rgb(.10f,.125f,.15f));
     tree(e, (tide_rect){0,56,250,height});
     if (e->models && !e->source) models(e, (tide_rect){254,56,right-258,height}, size);
     else if (!e->source) viewport(e, (tide_rect){254,56,right-258,height}, size);
     else {
-        tide_rect r = {266,70,right-278,height-28};
+        tide_rect r = {266,112,right-278,height-70};
         if (contains(r, e->gui.mouse)) e->source_scroll -= scroll_rows(e->devices.mouse.poll_scroll.y, 3);
         if (e->source_scroll < 0) e->source_scroll = 0;
         const char *p = e->doc.text; int line = 0;
@@ -710,22 +723,35 @@ static int frame(void *user, float seconds)
         }
         tide_draw_unset_clip(&e->draw);
     }
+    if(button(e,5,(tide_rect){right-86,66,78,26},e->source ? "Scene" : "Source")) { e->source=!e->source; e->models=false; }
+    if(button(e,6,(tide_rect){right-172,66,78,26},e->models ? "Scene" : "Models")) { e->models=!e->models; e->source=false; }
+    if(button(e,7,(tide_rect){right-276,66,96,26},e->preview.enabled ? "Views: on" : "Views: off")) { e->preview.enabled=!e->preview.enabled; e->models=e->source=false; }
     inspector(e, (tide_rect){right,56,390,height});
+    } else {
+        label(e,70,130,"Create a scene, add objects, then press Play.",ink);
+        label(e,70,164,e->workspace,dim);
+        if(button(e,12,(tide_rect){70,218,200,38},"New Scene")) open_dialog(e,DIALOG_NEW_SCENE,"Level",NULL);
+        if(button(e,13,(tide_rect){286,218,200,38},"New Prefab")) open_dialog(e,DIALOG_NEW_PREFAB,"Object",NULL);
+        if(button(e,14,(tide_rect){502,218,200,38},"Open file")) open_dialog(e,DIALOG_OPEN,NULL,NULL);
+    }
     panel(e, (tide_rect){0,size.y-170,size.x,170}, rgb(.095f,.115f,.14f));
     char status[150]; snprintf(status, sizeof status, "PROJECT   %d error(s)   %d warning(s)%s", e->doc.errors, e->doc.warnings, e->doc.conflict ? "   FILE CONFLICT" : "");
     label(e, 16, size.y-158, status, e->doc.errors || e->doc.conflict ? rgb(.98f,.53f,.4f) : rgb(.3f,.83f,.93f));
-    label(e, 420, size.y-158, e->doc.project, dim);
+    label(e, 420, size.y-158, e->workspace, dim);
     tide_rect diagnostics = {12,size.y-130,size.x-24,82};
     if (contains(diagnostics, e->gui.mouse)) e->diagnostic_scroll -= scroll_rows(e->devices.mouse.poll_scroll.y, 2);
     const int maximum = e->doc.diagnostics.count > 3 ? e->doc.diagnostics.count - 3 : 0;
     e->diagnostic_scroll = e->diagnostic_scroll < 0 ? 0 : e->diagnostic_scroll > maximum ? maximum : e->diagnostic_scroll;
     tide_draw_set_clip(&e->draw, diagnostics);
     const bool preview_failure = e->preview.enabled && !e->preview.builder && !e->doc.errors && e->preview.revision != e->doc.revision;
-    if (preview_failure || !e->doc.diagnostics.count) label(e, 16, size.y-126, e->preview.enabled ? e->preview.message : "Project checked. Save writes only authored overrides; game code remains in .tide files.", preview_failure ? rgb(.98f,.53f,.4f) : dim);
-    if (!preview_failure) for (int i = e->diagnostic_scroll; i < e->doc.diagnostics.count && i < e->diagnostic_scroll + 3; i++) label(e, 16, size.y-126 + (float)(i-e->diagnostic_scroll)*25, e->doc.diagnostics.items[i], ink);
+    const bool play_failure=e->play.state==EDITOR_PLAY_FAILED;
+    if (play_failure || preview_failure || !e->doc.diagnostics.count) label(e, 16, size.y-126, play_failure ? e->play.message : e->preview.enabled ? e->preview.message : "Project checked. Save writes authored values; Play runs the game.", play_failure || preview_failure ? rgb(.98f,.53f,.4f) : dim);
+    if (!play_failure && !preview_failure) for (int i = e->diagnostic_scroll; i < e->doc.diagnostics.count && i < e->diagnostic_scroll + 3; i++) label(e, 16, size.y-126 + (float)(i-e->diagnostic_scroll)*25, e->doc.diagnostics.items[i], ink);
     tide_draw_unset_clip(&e->draw);
-    label(e, 16, size.y-34, e->doc.message[0] ? e->doc.message : "Ctrl+S save   |   Ctrl+Z undo   |   Ctrl+Y redo   |   Edits stay in memory until saved", dim);
+    label(e,16,size.y-34,e->play.message[0] ? e->play.message : e->doc.message[0] ? e->doc.message : "Ctrl+N new scene   |   Ctrl+O open   |   Ctrl+S save   |   F5 play / stop",dim);
     if (e->picker) picker(e, size);
+    if(e->value_picker) value_picker(e,size);
+    if(e->dialog_open) file_dialog(e,size);
     const int modal = tide_gui_begin_modal(&e->gui, 103, TIDE_ANCHOR_MIDDLE_CENTER, &e->discard);
     if (modal >= 0) {
         tide_gui_layout_label(&e->gui, "Discard unsaved changes and reload the file?");
@@ -744,15 +770,25 @@ static int frame(void *user, float seconds)
     tide_platform_draw(&e->draw); tide_devices_consume(&e->devices);
     arena_rewind(mark); tide_scratch_reset(scratch);
     // Apply after drawing: compiler refresh invalidates every AST pointer.
+    const bool inspector_committed = inspector_apply(e);
     const int selected = e->selected;
     selected_path = selected >= 0 && selected < e->doc.nodes.count ? own_slice(e->doc.nodes.items[selected].path) : NULL;
+    char *next_path=NULL;
+    if(e->pending==RENAME_NODE || e->pending==DUPLICATE_NODE || e->pending==NAMED_CHILD || e->pending==REPARENT_NODE) {
+        int parent=e->pending==NAMED_CHILD ? selected : e->pending==REPARENT_NODE ? e->argument : selected>0 && selected<e->doc.nodes.count ? e->doc.nodes.items[selected].parent : -1;
+        if(parent>=0 && parent<e->doc.nodes.count) {
+            const str prefix=e->doc.nodes.items[parent].path;
+            const char *leaf=e->pending==REPARENT_NODE ? node_name(&e->doc.nodes.items[selected]) : e->pending_name;
+            sb path={0}; sb_printf(&path,STR_FMT "%s%s",STR_ARG(prefix),prefix.len ? "." : "",leaf ? leaf : ""); next_path=own(path.data);
+        }
+    }
     switch (e->pending) {
     case SAVE: editor_save(&e->doc); break;
     case RELOAD: editor_reload(&e->doc, false); clear_field(e); break;
     case DISCARD: editor_reload(&e->doc, true); clear_field(e); break;
     case UNDO: editor_undo(&e->doc, false); clear_field(e); break;
     case REDO: editor_undo(&e->doc, true); clear_field(e); break;
-    case SET: if (e->component) editor_set_field(&e->doc, selected, str_from(e->component), str_from(e->field), e->value); break;
+    case SET: if (!inspector_committed && e->component) editor_set_field(&e->doc, selected, str_from(e->component), str_from(e->field), e->value); break;
     case RESET: if (e->component) editor_reset_field(&e->doc, selected, str_from(e->component), str_from(e->field)); clear_field(e); break;
     case ADD: editor_add_component(&e->doc, selected, str_from(e->pending_name)); break;
     case REMOVE: editor_remove_component(&e->doc, selected, str_from(e->pending_name)); clear_field(e); break;
@@ -761,22 +797,30 @@ static int frame(void *user, float seconds)
     case PREFAB: e->doc.active = e->argument; editor_refresh(&e->doc); e->selected = 0; clear_field(e); break;
     case RECOVER: editor_recover(&e->doc, true); clear_field(e); break;
     case DROP_RECOVERY: editor_recover(&e->doc, false); break;
-    case NONE: break;
+    default: apply_workspace_action(e,selected); break;
     }
-    if (e->pending != NONE && e->pending != PREFAB && e->pending != DELETE_NODE) {
+    if(e->following!=NONE) {
+        const action next=e->following; e->following=NONE;
+        if(next==SAVE) editor_save(&e->doc);
+        else { e->pending=next; apply_workspace_action(e,e->selected); }
+    }
+    if (e->pending != NONE && e->pending != PREFAB && e->pending != DELETE_NODE && e->pending != CREATE_FILE && e->pending != OPEN_FILE) {
         bool found = false;
-        for (int i = 0; selected_path && i < e->doc.nodes.count; i++) if (str_eq_c(e->doc.nodes.items[i].path, selected_path)) { e->selected = i; found = true; }
+        for (int i=0;next_path && i<e->doc.nodes.count;i++) if(str_eq_c(e->doc.nodes.items[i].path,next_path)) { e->selected=i; found=true; break; }
+        for (int i = 0; !found && selected_path && i < e->doc.nodes.count; i++) if (str_eq_c(e->doc.nodes.items[i].path, selected_path)) { e->selected = i; found = true; }
         if (!found) { e->selected = 0; clear_field(e); }
     }
     free(selected_path);
+    free(next_path);
     free(e->pending_name); e->pending_name = NULL; e->pending = NONE;
-    if (e->embedded && !editor_embed_frame(editor_dirty(&e->doc),e->doc.revision,e->doc.errors,e->doc.warnings)) return 1;
+    free(e->pending_path); e->pending_path=NULL;
+    if (e->embedded && !editor_embed_frame(e->doc.path && editor_dirty(&e->doc),e->doc.revision,e->doc.errors,e->doc.warnings)) return 1;
     return TIDE_KEEP_RUNNING;
 }
 
 static void usage(void)
 {
-    puts("usage: tide open <file.tprefab> [--project <folder>] [--check]\n"
+    puts("usage: tide open [file.tprefab|project-folder] [--project <folder>] [--check]\n"
          "A native scene/prefab editor. Root: nearest tide.packages, otherwise the file's folder.\n"
          "--preview runs opted-in views on authored match entities; --local-preview uses local placement.\n"
          "--check validates without a window. --frames N, --capture file.png and --script file\n"
@@ -816,6 +860,7 @@ int main(int argc, char **argv)
         } else if (!path && argv[i][0] != '-') path = argv[i];
         else { usage(); return 2; }
     }
+    if(path && sys_is_dir(path)) { if(!project_root) project_root=path; path=NULL; }
     bool prefab_file = path && strlen(path) >= 8;
     if (prefab_file) {
 #ifdef _WIN32
@@ -824,7 +869,8 @@ int main(int argc, char **argv)
         prefab_file = strcmp(path + strlen(path) - 8, ".tprefab") == 0;
 #endif
     }
-    if (!prefab_file) { fputs("tide open: first editor supports .tprefab files\n", stderr); return 2; }
+    if (path && !prefab_file) { fputs("tide open: choose a .tprefab file or a project folder\n", stderr); return 2; }
+    if(!path && (check_only || embedded || preview)) { fputs("tide open: --check, --embed and --preview need an authored file\n",stderr); return 2; }
     if (embedded && (check_only || hidden.frames || hidden.capture || hidden.script)) { fputs("tide open: --embed cannot be combined with --check/--frames/--capture/--script\n",stderr); return 2; }
     if (sys_hidden() && !embedded && !check_only && !hidden.frames && !hidden.capture && !hidden.script) { fputs("tide open: TIDE_HIDDEN requires --check, --frames, --capture or --script\n", stderr); return 2; }
     if (embedded && !editor_embed_open((uint16_t)embed_port,embed_token)) { fputs("tide open: could not connect to the IDE frame transport\n",stderr); return 2; }
@@ -832,7 +878,10 @@ int main(int argc, char **argv)
     if (!sys_is_dir(builtin)) { free(builtin); builtin = own(TIDE_SOURCE_DIR "/packages"); }
     packages_set_builtin_folder(builtin); free(builtin); free(root); free(bin);
     editor *e = calloc(1, sizeof(*e)); if (!e) abort(); e->zoom = 48; e->model_lighting = true;
-    if (!editor_open(&e->doc, path, project_root)) { fprintf(stderr, "tide open: %s\n", e->doc.message); editor_close(&e->doc); free(e); return 2; }
+    e->drag_node=-1;
+    if (path && !editor_open(&e->doc, path, project_root)) { fprintf(stderr, "tide open: %s\n", e->doc.message); editor_close(&e->doc); free(e); return 2; }
+    e->workspace=e->doc.project ? own(e->doc.project) : path_absolute(project_root ? project_root : ".");
+    if(!sys_is_dir(e->workspace)) { fputs("tide open: project folder does not exist\n",stderr); free(e->workspace); free(e); return 2; }
     e->preview.enabled = preview; e->preview.local = preview_local;
     e->bounded_preview = hidden.capture || hidden.frames || hidden.script;
     e->embedded = embedded;
@@ -851,9 +900,13 @@ int main(int argc, char **argv)
         tide_platform_open_headless(&hidden);
     } else tide_platform_open(&(tide_window_desc){.title="Tide Scene Editor", .width=hidden.width, .height=hidden.height});
     tide_platform_run(frame, e);
+    editor_play_close(&e->play);
     editor_preview_close(&e->preview, &e->draw);
     editor_model_free(&e->model);
     free(e->model_asset); free(e->model_key);
     for (int i = 0; i < e->scene_model_count; i++) editor_model_free(&e->scene_models[i]);
     free(e->scene_models);
+    editor_close(&e->doc);
+    free(e->workspace); free(e->dialog_name); free(e->dialog_path); free(e->search);
+    clear_field(e); closing_editor=NULL; free(e);
 }

@@ -1,0 +1,36 @@
+settings { startScene = Levels.Start; tickRate = 30; maxPlayers = 2; }
+
+component Number { int value; }
+component Root { Entity child; }
+singleton Probe { Entity root; int order; int ready; int steps; int input; bool unload; }
+local singleton FrameProbe { int frames; int entities; int request; }
+
+scene Alternate { int value = 55; }
+
+event(Spawned) Ready(Root root, World world, mut Probe probe)
+{
+    probe.root = this;
+    if (world.Has<Number>(root.child) && world.Get<Number>(root.child).value == 2
+        && world.Parent(root.child) == this) probe.ready += 1;
+}
+
+event(Spawned) Order(Number number, mut Probe probe) { probe.order = probe.order * 10 + number.value; }
+system Advance(mut Number number) { number.value += 1; }
+system Input(Devices devices, mut Probe probe)
+{
+    probe.steps += 1;
+    if (devices.keyboard.space.pressed) probe.input += 1;
+    if (probe.unload) { Scene.Unload(probe.root); probe.unload = false; }
+}
+
+view Ordinary(World world, Probe match, mut FrameProbe probe)
+{
+    probe.frames += 1;
+    probe.entities = 0;
+    if (world.Has<Number>(match.root)) probe.entities += 1;
+    if (world.Has<Number>(world.Get<Root>(match.root).child)) probe.entities += 1;
+    Draw.SetCamera(float2(4, 5), 20);
+    Draw.Circle(float2(0, 0), 2, Color.white);
+    if (probe.request == 1) Session.Start(Alternate);
+    if (probe.request == 2) Session.Start();
+}

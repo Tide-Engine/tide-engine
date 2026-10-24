@@ -245,7 +245,7 @@ static bool find_packages(const char *folder, game_packages *out)
 // Every .tide file of the game, in the order they compile: each package's,
 // in the packages' order, then the game's own, each by path. `paths` holds
 // the paths. NULL after saying the game has no files of its own.
-static compile_input *game_inputs(const char *folder, const game_packages *packages, file_list *paths, int *count)
+static compile_input *game_inputs(const char *folder, const game_packages *packages, file_list *paths, int *count, const char *overlay)
 {
     *paths = (file_list){0};
     const char **names = malloc(sizeof(char *) * 1); // Each path's package
@@ -255,6 +255,41 @@ static compile_input *game_inputs(const char *folder, const game_packages *packa
         const char *name = p < packages->count ? packages->items[p].name : NULL;
         if (!name) game_start = paths->count;
         file_list files = tide_files(name ? packages->items[p].folder : folder);
+        if (!name && overlay) {
+            bool found = false;
+            for (int k = 0; k < paths->count; k++) found |=
+#ifdef _WIN32
+                _stricmp(paths->items[k], overlay) == 0;
+#else
+                path_compare(paths->items[k], overlay) == 0;
+#endif
+            for (int k = 0; k < files.count; k++) found |=
+#ifdef _WIN32
+                _stricmp(files.items[k], overlay) == 0;
+#else
+                path_compare(files.items[k], overlay) == 0;
+#endif
+            if (!found) {
+                char *prefix = path_join(folder, "");
+                const size_t len = strlen(prefix);
+                const bool inside = strlen(overlay) > len &&
+#ifdef _WIN32
+                    _strnicmp(prefix, overlay, len) == 0;
+#else
+                    strncmp(prefix, overlay, len) == 0;
+#endif
+                free(prefix);
+                if (!inside || (!has_extension(overlay, ".tide") && !has_extension(overlay, ".tprefab"))) {
+                    fprintf(stderr, "tide: a new source overlay must name a .tide or .tprefab file in the selected project: %s\n", overlay);
+                    free_files(&files);
+                    free_files(paths);
+                    free(names);
+                    return NULL;
+                }
+                add_file(&files, overlay);
+                qsort(files.items, (size_t)files.count, sizeof(char *), path_order);
+            }
+        }
         names = realloc(names, sizeof(char *) * (size_t)(paths->count + files.count + 1));
         if (!names) abort();
         for (int i = 0; i < files.count; i++) {
@@ -571,6 +606,7 @@ typedef struct build {
 } build;
 
 static uint64_t header_stamp(const char *folder);
+static uint64_t hash_text(uint64_t h, const char *text);
 
 // Game code stays unoptimized for debugging; the engine keeps its speed in
 // every configuration, with debug information and assertions in development.
@@ -1041,12 +1077,22 @@ static bool setup(build *b, const char *root, const build_options *opts, const b
     if (b->jobs > SYS_AT_ONCE) b->jobs = SYS_AT_ONCE;
 
     // Everything tide makes goes in <folder>/.tide/<configuration>.
-    char *tide_dir = tide_work_folder(b->folder);
+    char *tide_dir = opts->work ? path_absolute(opts->work) : tide_work_folder(b->folder);
     char config[32];
     snprintf(config, sizeof config, "%s-%s", opts->managed ? "managed" : opts->server ? "server" : opts->web ? "web" : opts->android ? "android" : "native",
              opts->release ? "release" : "debug");
     b->cache = path_join(tide_dir, config);
     free(tide_dir);
+    if (!opts->work && (opts->scene || opts->editor_source)) {
+        uint64_t identity = hash_text(0xCBF29CE484222325ull, opts->scene ? opts->scene : "");
+        identity = hash_text(identity, opts->editor_source ? opts->editor_source : "");
+        identity = hash_text(identity, opts->editor_draft ? opts->editor_draft : "");
+        char selected[40];
+        snprintf(selected, sizeof selected, "startup-%016llx", (unsigned long long)identity);
+        char *cache = path_join(b->cache, selected);
+        free(b->cache);
+        b->cache = cache;
+    }
     sys_mkdirs(b->cache);
     return true;
 }
@@ -1894,7 +1940,7 @@ static bool generate(build *b, const char *gen, const bool layout)
     if (!find_packages(b->folder, &b->packages)) return false;
     file_list paths;
     int count = 0;
-    compile_input *inputs = game_inputs(b->folder, &b->packages, &paths, &count);
+    compile_input *inputs = game_inputs(b->folder, &b->packages, &paths, &count, b->opts->editor_source);
     if (!inputs) return false;
     // A Unity project's prefabs and scenes, as the prefabs tide makes of them, after the game's own files
     unity_sources unity = {0};
@@ -1987,7 +2033,7 @@ static bool generate(build *b, const char *gen, const bool layout)
     char *pack = pack_of(gen);
     // The game's folder is where its .tide/ is: the hashes of the files its assets name, and fetched URLs, are kept there
     char *editor_text = b->opts->editor_draft ? sys_read_file(b->opts->editor_draft, NULL) : NULL;
-    if (b->opts->editor_draft && !editor_text) { fprintf(stderr, "tide: cannot read the editor draft\n"); free(pack); free_files(&paths); free(inputs); unity_sources_free(&unity); return false; }
+    if (b->opts->editor_draft && !editor_text) { fprintf(stderr, "tide: cannot read the source overlay replacement: %s\n", b->opts->editor_draft); free(pack); free_files(&paths); free(inputs); unity_sources_free(&unity); return false; }
     sb outline = {0}, shaders = {0};
     const codegen_options codegen = {.name = "game", .out_dir = gen, .line_directives = true, .layout = layout,
                                      .embed = b->opts->unity, .externs = &b->externs,
@@ -1999,6 +2045,7 @@ static bool generate(build *b, const char *gen, const bool layout)
                                      .strip_unused_assets = strip_game_assets(b, layout),
                                      .defines = b->opts->defines, .define_count = b->opts->define_count,
                                      .external_identity = has_external ? external_identity : NULL,
+                                     .scene = b->opts->scene,
                                      .editor_prefab = b->opts->editor_prefab, .editor_local = b->opts->editor_local,
                                      .editor_source = b->opts->editor_source, .editor_text = editor_text};
     const bool ok = compile_inputs(inputs, count, &codegen, NULL);
@@ -2349,6 +2396,7 @@ static void stamp_folder(uint64_t *h, const char *folder)
 static uint64_t game_stamp(const build *b)
 {
     uint64_t h = 0xCBF29CE484222325ull;
+    if (b->opts->editor_draft) stamp_file(&h, b->opts->editor_draft);
     if (b->opts->notified && packages_unity_assets(b->folder)) {
         // The editor says what else changes in Assets (a file made, moved or gone, a prefab, a scene, a package):
         // here, only the files it compiled and its tide.packages, which an editor outside Unity may save while
@@ -3638,7 +3686,7 @@ bool tide_schedule(const build_options *opts, const bool shaders)
     game_packages packages = {0};
     file_list paths;
     int count = 0;
-    compile_input *inputs = find_packages(folder, &packages) ? game_inputs(folder, &packages, &paths, &count) : NULL;
+    compile_input *inputs = find_packages(folder, &packages) ? game_inputs(folder, &packages, &paths, &count, NULL) : NULL;
     if (!inputs) return false;
     const codegen_options codegen = {.name = game_name(folder), .line_directives = true, .shaders = shaders, .game_folder = folder,
                                      .defines = opts->defines, .define_count = opts->define_count};

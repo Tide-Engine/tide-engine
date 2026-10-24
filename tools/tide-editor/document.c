@@ -9,8 +9,26 @@
 #include "packages.h"
 #include "sys.h"
 
-typedef struct lexed_file { const source *src; token *tokens; int count; } lexed_file;
+typedef struct lexed_file { const source *src; token *tokens; int count; bool syntax_errors; } lexed_file;
 static VEC(lexed_file) lexed;
+
+bool editor_source_syntax_errors(const editor_document *d, const source *src)
+{
+    if (!d->prog || !src) return true;
+    for (int i = 0; i < lexed.count; i++) if (lexed.items[i].src == src) return lexed.items[i].syntax_errors;
+    return true;
+}
+
+token *editor_source_tokens(const editor_document *d, const source *src, int *count)
+{
+    if (count) *count = 0;
+    if (!d->prog || !src) return NULL;
+    for (int i = 0; i < lexed.count; i++) if (lexed.items[i].src == src) {
+        if (count) *count = lexed.items[i].count;
+        return lexed.items[i].tokens;
+    }
+    return NULL;
+}
 
 static bool same_path(const char *a, const char *b)
 {
@@ -82,6 +100,7 @@ static void collect(void *user, const diag_severity severity, const loc at, cons
     if (severity == DIAG_ERROR) d->errors++;
     if (severity == DIAG_WARNING) d->warnings++;
     const source *s = at.line ? diag_source(at.file) : NULL;
+    if (severity == DIAG_ERROR && d->parsing && s && same_path(s->path, d->path)) d->syntax_errors = true;
     sb b = {0};
     if (s) {
         const size_t root = strlen(d->project);
@@ -147,9 +166,11 @@ static void read_folder(inputs *in, const char *folder)
         *s = (source){str_to_cstr(str_from(path)), str_to_cstr(str_from(text)), len, 0, in->package};
         free(text);
         diag_add_source(s);
+        const int before_errors = in->d->errors;
         token *t = lex_all(s);
         int count = 0; while (t[count].kind != T_EOF) count++;
-        vec_push(lexed, ((lexed_file){s, t, count}));
+        const int cache = lexed.count;
+        vec_push(lexed, ((lexed_file){.src = s, .tokens = t, .count = count}));
         if (own_file) {
             // Retain the filesystem's filename spelling when replacing it.
             free(in->d->path); in->d->path = copy(path);
@@ -158,6 +179,7 @@ static void read_folder(inputs *in, const char *folder)
             while (t[in->d->token_count].kind != T_EOF) in->d->token_count++;
         }
         parse_file(in->d->prog, s, t, true);
+        lexed.items[cache].syntax_errors = in->d->errors > before_errors;
         in->web |= web_prelude_wanted(s->text, s->len);
     }
 }
@@ -197,6 +219,21 @@ void editor_select_prefab(editor_document *d, int index)
         }
     }
     authored_nodes(d, p->prefab_root, (str){0}, -1);
+    // An authored block may be a value override of an inherited child. Keep
+    // provenance independent of whether such a block has been materialized.
+    for (int i = 1; i < d->nodes.count; i++) {
+        editor_node *n = &d->nodes.items[i];
+        n->inherited = !n->authored;
+        for (int a = n->parent; a >= 0; a = d->nodes.items[a].parent) {
+            const editor_node *ancestor = &d->nodes.items[a];
+            const decl *base = ancestor->authored ? ancestor->authored->base_decl : NULL;
+            if (!base || !base->prefab_checked) continue;
+            const int skip = ancestor->path.len ? ancestor->path.len + 1 : 0;
+            const str relative = {n->path.ptr + skip, n->path.len - skip};
+            for (int k = 1; k < base->prefab_checked->entities.count; k++)
+                if (str_eq(relative, base->prefab_checked->entities.items[k].path)) n->inherited = true;
+        }
+    }
 }
 
 void editor_refresh(editor_document *d)
@@ -207,6 +244,7 @@ void editor_refresh(editor_document *d)
     lexed.items = NULL; lexed.count = lexed.cap = 0;
     diag_reset();
     d->errors = d->warnings = d->token_count = 0;
+    d->syntax_errors = false; d->parsing = true;
     d->diagnostics.count = d->diagnostics.cap = 0; d->diagnostics.items = NULL;
     d->prefabs.count = d->prefabs.cap = 0; d->prefabs.items = NULL;
     d->nodes.count = d->nodes.cap = 0; d->nodes.items = NULL;
@@ -233,11 +271,14 @@ void editor_refresh(editor_document *d)
     if (in.web) {
         source *s = NEW(source);
         s->path = WEB_PRELUDE_PATH; s->text = web_prelude(&s->len);
+        const int before_errors = d->errors;
         diag_add_source(s); token *t = lex_all(s); int count = 0;
         while (t[count].kind != T_EOF) count++;
-        vec_push(lexed, ((lexed_file){s, t, count})); parse_file(d->prog, s, t, true);
+        const int cache = lexed.count;
+        vec_push(lexed, ((lexed_file){.src = s, .tokens = t, .count = count})); parse_file(d->prog, s, t, true);
+        lexed.items[cache].syntax_errors = d->errors > before_errors;
     }
-    d->syntax_errors = d->errors > 0;
+    d->parsing = false;
     check(d->prog);
     diag_set_sink(NULL, NULL);
     for (int i = 0; i < d->prog->decls.count; i++) {
@@ -333,10 +374,31 @@ static void keep_draft(editor_document *d)
     free(temp);
 }
 
-static bool patch(editor_document *d, const size_t from, const size_t to, const char *replacement)
+static uint64_t reference_count(const expr *e)
+{
+    if (!e) return 0;
+    if (e->prefab_reference) return 1;
+    uint64_t count = reference_count(e->object) + reference_count(e->lhs) + reference_count(e->rhs) + reference_count(e->cond);
+    for (int i = 0; i < e->args.count; i++) count += reference_count(e->args.items[i]);
+    for (int i = 0; i < e->inits.count; i++) count += reference_count(e->inits.items[i].value);
+    return count;
+}
+
+static uint64_t project_reference_count(const editor_document *d)
+{
+    uint64_t count = 0;
+    for (int i = 0; i < d->prog->decls.count; i++) {
+        const decl *p = d->prog->decls.items[i];
+        if (p->kind != DECL_PREFAB || !p->prefab_checked) continue;
+        for (int n = 0; n < p->prefab_checked->entities.count; n++) count += reference_count(p->prefab_checked->entities.items[n].spawn);
+    }
+    return count;
+}
+
+static bool patch_checked(editor_document *d, const size_t from, const size_t to, const char *replacement, const bool checked, const uint64_t expected_refs)
 {
     if (d->syntax_errors || !d->src || from > to || to > strlen(d->text)) {
-        snprintf(d->message, sizeof d->message, "Fix source syntax/package errors in your code editor, then Reload.");
+        snprintf(d->message, sizeof d->message, "Fix this document's syntax in your code editor, then Reload.");
         return false;
     }
     const size_t n = strlen(d->text), add = strlen(replacement);
@@ -350,14 +412,20 @@ static bool patch(editor_document *d, const size_t from, const size_t to, const 
     d->text = next;
     d->message[0] = '\0';
     editor_refresh(d);
-    if (d->syntax_errors) {
-        char reason[700]; snprintf(reason, sizeof reason, "Edit rejected: %.650s", d->diagnostics.count ? d->diagnostics.items[0] : "invalid Tide syntax");
+    const bool bindings_changed = expected_refs != UINT64_MAX && project_reference_count(d) != expected_refs;
+    if (d->syntax_errors || (checked && d->errors) || bindings_changed) {
+        char reason[700]; snprintf(reason, sizeof reason, "Edit rejected: %.650s", bindings_changed ? "entity paths would capture or lose another expression's binding" : d->diagnostics.count ? d->diagnostics.items[0] : "invalid Tide syntax");
         free(d->text); d->text = before; editor_refresh(d);
         snprintf(d->message, sizeof d->message, "%s", reason); return false;
     }
     history_push(d->undo, &d->undo_count, before);
     history_clear(d->redo, &d->redo_count); keep_draft(d);
     return true;
+}
+
+static bool patch(editor_document *d, const size_t from, const size_t to, const char *replacement)
+{
+    return patch_checked(d, from, to, replacement, false, UINT64_MAX);
 }
 
 bool editor_undo(editor_document *d, const bool redo)
@@ -372,9 +440,11 @@ bool editor_undo(editor_document *d, const bool redo)
 bool editor_save(editor_document *d)
 {
     editor_refresh(d);
-    if (d->errors || !d->src || !d->prefabs.count) { snprintf(d->message, sizeof d->message, "Save blocked: fix the %d project error(s) below and keep this file in the project.", d->errors); return false; }
-    char *disk = sys_read_file(d->path, NULL);
-    const bool same = disk && strcmp(disk, d->saved) == 0;
+    if (d->syntax_errors || !d->src || !d->prefabs.count) { snprintf(d->message, sizeof d->message, "Save blocked: fix this document's syntax and keep an authored prefab in the project."); return false; }
+    size_t disk_len = 0;
+    const size_t saved_len = strlen(d->saved);
+    char *disk = sys_read_file(d->path, &disk_len);
+    const bool same = disk && disk_len == saved_len && memcmp(disk, d->saved, saved_len) == 0;
     free(disk);
     if (!same) {
         d->conflict = true;
@@ -387,8 +457,8 @@ bool editor_save(editor_document *d)
     strcpy(temp, d->path); strcat(temp, suffix);
     bool ok = sys_write_text(temp, d->text);
     // Check again after writing, before replacing the source.
-    disk = sys_read_file(d->path, NULL);
-    ok = ok && disk && strcmp(disk, d->saved) == 0;
+    disk = sys_read_file(d->path, &disk_len);
+    ok = ok && disk && disk_len == saved_len && memcmp(disk, d->saved, saved_len) == 0;
     free(disk);
     if (ok) ok = sys_rename(temp, d->path);
     if (!ok) sys_remove(temp);
@@ -544,11 +614,45 @@ static expr *raw_component(const editor_node *node, const str name)
     return NULL;
 }
 
+bool editor_node_inherited(const editor_document *d, const int node)
+{
+    return node >= 0 && node < d->nodes.count && d->nodes.items[node].inherited;
+}
+
+bool editor_can_edit_fields(const editor_document *d, const int node)
+{
+    return node >= 0 && node < d->nodes.count && !d->syntax_errors && d->src &&
+        (d->nodes.items[node].authored || d->nodes.items[node].effective);
+}
+
+bool editor_can_structure(const editor_document *d, const int node)
+{
+    return editor_can_edit_fields(d, node) && !editor_node_inherited(d, node) &&
+        d->nodes.items[node].authored && d->nodes.items[node].close >= 0;
+}
+
+const char *editor_node_source(const editor_document *d, const int node)
+{
+    if (node < 0 || node >= d->nodes.count) return NULL;
+    const editor_node *n = &d->nodes.items[node];
+    const source *s = n->effective ? diag_source(n->effective->at.file) : NULL;
+    // A composed spawn's location is its introducing block in the source prefab.
+    return s ? s->path : n->authored ? n->authored->unit->src->path : NULL;
+}
+
+bool editor_field_overridden(const editor_document *d, const int node, const str component, const str name)
+{
+    if (node < 0 || node >= d->nodes.count) return false;
+    const expr *raw = raw_component(&d->nodes.items[node], component);
+    for (int i = 0; raw && i < raw->inits.count; i++) if (str_eq(raw->inits.items[i].name, name)) return true;
+    return false;
+}
+
 static bool editable(editor_document *d, const int node)
 {
     if (node < 0 || node >= d->nodes.count) return false;
-    if (!d->nodes.items[node].authored || d->nodes.items[node].close < 0 || d->syntax_errors) {
-        snprintf(d->message, sizeof d->message, "Inherited descendants are read-only. Edit their source prefab; fix source syntax before editing.");
+    if (!editor_can_structure(d, node)) {
+        snprintf(d->message, sizeof d->message, "Inherited descendants allow existing field overrides only. Fix this document's syntax before editing.");
         return false;
     }
     return true;
@@ -591,8 +695,35 @@ static bool component_bounds(editor_document *d, expr *c, int *start, int *end)
 
 bool editor_set_field(editor_document *d, const int node, const str component, const str name, const char *value)
 {
-    if (!editable(d, node)) return false;
+    if (!editor_can_edit_fields(d, node)) return false;
     if (!value[0]) { snprintf(d->message, sizeof d->message, "Enter a Tide value, or Reset to remove the override."); return false; }
+    if (editor_node_inherited(d, node)) {
+        const expr *effective = editor_component(&d->nodes.items[node], component);
+        bool exists = false;
+        for (int i = 0; effective && effective->type_decl && i < effective->type_decl->fields.count; i++)
+            exists |= str_eq(effective->type_decl->fields.items[i].name, name);
+        if (!exists) { snprintf(d->message, sizeof d->message, "Inherited descendants allow changes to existing component fields only."); return false; }
+    }
+    if (!d->nodes.items[node].authored) {
+        int ancestor = node;
+        while (ancestor >= 0 && !d->nodes.items[ancestor].authored) ancestor = d->nodes.items[ancestor].parent;
+        if (ancestor < 0) return false;
+        sb b = {0};
+        int depth = 0;
+        // The ancestry has at most one block per path segment. Walk in path
+        // order, without retaining compiler pointers through a refresh.
+        const str path = d->nodes.items[node].path;
+        int start = d->nodes.items[ancestor].path.len;
+        if (start) start++;
+        for (int end = start; end <= path.len; end++) {
+            if (end < path.len && path.ptr[end] != '.') continue;
+            sb_printf(&b, "entity %.*s { ", end - start, path.ptr + start);
+            depth++; start = end + 1;
+        }
+        sb_printf(&b, STR_FMT " { " STR_FMT " = %s }; ", STR_ARG(component), STR_ARG(name), value);
+        while (depth--) sb_put(&b, "} ");
+        return insert_entry(d, ancestor, b.data);
+    }
     expr *raw = raw_component(&d->nodes.items[node], component);
     if (!raw) {
         sb b = {0}; sb_printf(&b, STR_FMT " { " STR_FMT " = %s };", STR_ARG(component), STR_ARG(name), value);
@@ -624,12 +755,34 @@ bool editor_set_field(editor_document *d, const int node, const str component, c
 
 bool editor_reset_field(editor_document *d, const int node, const str component, const str name)
 {
-    if (!editable(d, node)) return false;
+    if (!editor_can_edit_fields(d, node)) return false;
     expr *raw = raw_component(&d->nodes.items[node], component);
     if (!raw) return false;
     for (int i = 0; i < raw->inits.count; i++) {
         field_init *f = &raw->inits.items[i];
         if (!str_eq(f->name, name)) continue;
+        if (editor_node_inherited(d, node) && raw->inits.count == 1) {
+            // Bare component entries reset component defaults; they are not a
+            // value override. Remove empty inherited blocks all the way up.
+            int remove = node;
+            const prefab_node *authored = d->nodes.items[node].authored;
+            if (authored->components.count == 1 && !authored->children.count) {
+                for (;;) {
+                    const int parent = d->nodes.items[remove].parent;
+                    if (parent < 0 || !editor_node_inherited(d, parent)) break;
+                    const prefab_node *p = d->nodes.items[parent].authored;
+                    if (!p || p->components.count || p->children.count != 1) break;
+                    remove = parent;
+                }
+                const editor_node *n = &d->nodes.items[remove];
+                const int t = token_at(d, n->authored->at);
+                if (t < 1) return false;
+                return patch(d, offset(d->src, d->tokens[t - 1].at), offset(d->src, d->tokens[n->close].at) + 1, "");
+            }
+            int start, end;
+            if (!component_bounds(d, raw, &start, &end)) return false;
+            return patch(d, offset(d->src, d->tokens[start].at), offset(d->src, d->tokens[end].at) + 1, "");
+        }
         const int t = token_at(d, f->at);
         if (t < 0 || t + 2 >= d->token_count) return false;
         size_t from, to; expression_bounds(d->src, d->tokens, d->token_count, t + 2, &from, &to);
@@ -673,7 +826,72 @@ bool editor_add_child(editor_document *d, const int node, const char *base)
         used = false;
         for (int i = 0; i < d->nodes.count; i++) used |= str_eq_c(d->nodes.items[i].path, path.data);
     } while (used && suffix < 1025);
-    sb b = {0}; sb_printf(&b, "entity %s%s%s { Transform; }", child, base && base[0] ? " : " : "", base ? base : "");
+    return editor_add_named_child(d, node, child, base);
+}
+
+static bool valid_name(editor_document *d, const char *name)
+{
+    if (name && lex_identifier_ok(str_from(name))) return true;
+    snprintf(d->message, sizeof d->message, "Enter a valid Tide identifier, such as Level or Player1.");
+    return false;
+}
+
+static str child_path(const str parent, const char *name)
+{
+    sb b = {0};
+    if (parent.len) sb_printf(&b, STR_FMT ".", STR_ARG(parent));
+    sb_put(&b, name); return str_from(b.data);
+}
+
+static bool available_child(editor_document *d, const int parent, const char *name, const int except)
+{
+    if (!valid_name(d, name)) return false;
+    const str path = child_path(d->nodes.items[parent].path, name);
+    for (int i = 0; i < d->nodes.count; i++) if (i != except && str_eq(d->nodes.items[i].path, path)) {
+        snprintf(d->message, sizeof d->message, "An object named %s already exists under this parent.", name); return false;
+    }
+    return true;
+}
+
+bool editor_add_named_child(editor_document *d, const int node, const char *name, const char *base)
+{
+    if (!editable(d, node) || !available_child(d, node, name, -1)) return false;
+    // Resolve a prefab declaration instead of accepting arbitrary source text.
+    decl *prefab = NULL;
+    if (base && base[0]) {
+        for (int i = 0; i < d->prog->decls.count; i++) {
+            decl *p = d->prog->decls.items[i];
+            if (p->kind == DECL_PREFAB && str_eq_c(p->qualified, base)) prefab = p;
+        }
+        if (!prefab || prefab == d->prefabs.items[d->active]) {
+            snprintf(d->message, sizeof d->message, "Choose another existing prefab by its qualified name."); return false;
+        }
+    }
+    sb b = {0}; sb_printf(&b, "entity %s", name);
+    if (prefab) sb_printf(&b, " : " STR_FMT, STR_ARG(prefab->qualified));
+    sb_put(&b, prefab ? " { }" : " { Transform; }"); return insert_entry(d, node, b.data);
+}
+
+bool editor_add_model(editor_document *d, const int node, const char *name, const str component, const str field_name, const char *asset)
+{
+    if (!editable(d, node) || !available_child(d, node, name, -1)) return false;
+    decl *c = NULL, *a = NULL;
+    for (int i = 0; i < d->prog->decls.count; i++) {
+        decl *p = d->prog->decls.items[i];
+        if (p->kind == DECL_COMPONENT && str_eq(p->qualified, component)) c = p;
+        if (p->kind == DECL_ASSET && str_eq_c(p->qualified, asset)) a = p;
+    }
+    if (!c || !a) return false;
+    bool field_exists = false;
+    for (int i = 0; i < c->fields.count; i++) {
+        const field *f = &c->fields.items[i];
+        if (str_eq(f->name, field_name) && f->type.kind == TY_STRUCT && f->type.decl &&
+            f->type.decl->asset_ref_of && a->return_type.kind == TY_MESH && !a->asset_many &&
+            f->type.decl->asset_ref_of == a->return_type.decl) field_exists = true;
+    }
+    if (!field_exists) { snprintf(d->message, sizeof d->message, "Choose a matching singular Mesh asset and Asset<Mesh> component field."); return false; }
+    sb b = {0}; sb_printf(&b, "entity %s { Transform; " STR_FMT " { " STR_FMT " = " STR_FMT " }; }",
+        name, STR_ARG(c->qualified), STR_ARG(field_name), STR_ARG(a->qualified));
     return insert_entry(d, node, b.data);
 }
 
@@ -684,4 +902,482 @@ bool editor_remove_node(editor_document *d, const int node)
     const int name = token_at(d, n->authored->at);
     if (name < 1 || !str_eq_c(d->tokens[name - 1].text, "entity")) return false;
     return patch(d, offset(d->src, d->tokens[name - 1].at), offset(d->src, d->tokens[n->close].at) + 1, "");
+}
+
+typedef struct text_edit { size_t from, to; const char *text; } text_edit;
+typedef struct text_edits { text_edit *items; int count, cap; bool invalid; } text_edits;
+
+static bool under(const str path, const str root)
+{
+    return !root.len || (path.len >= root.len && memcmp(path.ptr, root.ptr, (size_t)root.len) == 0 &&
+        (path.len == root.len || path.ptr[root.len] == '.'));
+}
+
+static str replace_path(const str path, const str old, const str replacement)
+{
+    if (!under(path, old)) return path;
+    sb b = {0}; sb_putn(&b, replacement.ptr, (size_t)replacement.len);
+    sb_putn(&b, path.ptr + old.len, (size_t)(path.len - old.len)); return str_from(b.data ? b.data : "");
+}
+
+static void add_edit(text_edits *edits, const size_t from, const size_t to, const char *text)
+{
+    for (int i = 0; i < edits->count; i++) if (edits->items[i].from == from && edits->items[i].to == to) {
+        if (strcmp(edits->items[i].text, text) != 0) edits->invalid = true;
+        return;
+    }
+    vec_push(*edits, ((text_edit){from, to, text}));
+}
+
+static int compare_edits(const void *a, const void *b)
+{
+    const text_edit *x = a, *y = b;
+    return x->from < y->from ? -1 : x->from > y->from ? 1 : x->to < y->to ? -1 : x->to > y->to;
+}
+
+static char *edited_slice(const editor_document *d, text_edits *edits, const size_t from, const size_t to)
+{
+    qsort(edits->items, (size_t)edits->count, sizeof(*edits->items), compare_edits);
+    sb b = {0}; size_t at = from;
+    for (int i = 0; i < edits->count; i++) {
+        const text_edit e = edits->items[i];
+        if (e.from < from || e.to > to) continue;
+        if (e.from < at || e.from > e.to) { edits->invalid = true; return NULL; }
+        sb_putn(&b, d->text + at, e.from - at); sb_put(&b, e.text); at = e.to;
+    }
+    sb_putn(&b, d->text + at, to - at); return b.data ? b.data : str_to_cstr((str){0});
+}
+
+static bool apply_edits(editor_document *d, text_edits *edits, const uint64_t expected_refs)
+{
+    char *text = edited_slice(d, edits, 0, strlen(d->text));
+    if (edits->invalid || !text) {
+        snprintf(d->message, sizeof d->message, "Edit refused: overlapping or context-dependent source references."); return false;
+    }
+    return patch_checked(d, 0, strlen(d->text), text, true, expected_refs);
+}
+
+static bool node_bounds(const editor_document *d, const int node, size_t *from, size_t *to)
+{
+    const editor_node *n = &d->nodes.items[node];
+    const int name = n->authored ? token_at(d, n->authored->at) : -1;
+    if (name < 1 || n->close < 0 || !str_eq_c(d->tokens[name - 1].text, "entity")) return false;
+    *from = offset(d->src, d->tokens[name - 1].at); *to = offset(d->src, d->tokens[n->close].at) + 1;
+    return true;
+}
+
+static bool reference_bounds(const editor_document *d, const expr *e, size_t *from, size_t *to)
+{
+    const source *s = diag_source(e->at.file);
+    if (!s || !same_path(s->path, d->path)) return false;
+    const expr *first = e;
+    while (first->kind == E_MEMBER && first->object) first = first->object;
+    const int end = token_at(d, e->at);
+    if (end < 0) return false;
+    *from = offset(d->src, first->at); *to = offset(d->src, d->tokens[end].at) + (size_t)d->tokens[end].text.len;
+    return true;
+}
+
+typedef struct path_change { prefab_instance *instance; str old, next; } path_change;
+typedef struct reference_edits {
+    editor_document *d;
+    text_edits edits;
+    VEC(path_change) changes;
+    bool external;
+    size_t only_from, only_to; // Duplicate: rewrite only copied source bytes.
+} reference_edits;
+
+static str changed_path(const reference_edits *r, const prefab_instance *instance, const str path)
+{
+    for (int i = 0; i < r->changes.count; i++) {
+        const path_change *c = &r->changes.items[i];
+        if (c->instance == instance && under(path, c->old)) return replace_path(path, c->old, c->next);
+    }
+    return path;
+}
+
+static void rewrite_references(reference_edits *r, const prefab_instance *p, const expr *e)
+{
+    if (!e) return;
+    if (e->prefab_reference) {
+        if (e->kind == E_THIS || e->prefab_entity < 0 || e->prefab_entity >= p->entities.count) return;
+        size_t from = 0, to = 0;
+        if (r->only_to && (!reference_bounds(r->d, e, &from, &to) || from < r->only_from || to > r->only_to)) return;
+        const str old_target = p->entities.items[e->prefab_entity].path;
+        const str target = changed_path(r, p, old_target);
+        const str scope = r->only_to ? e->prefab_scope : changed_path(r, p, e->prefab_scope);
+        const int old_skip = e->prefab_scope.len ? e->prefab_scope.len + 1 : 0;
+        const int skip = scope.len ? scope.len + 1 : 0;
+        if (!under(target, scope) || target.len < skip || old_target.len < old_skip) { r->edits.invalid = true; return; }
+        const str old_text = {old_target.ptr + old_skip, old_target.len - old_skip};
+        const str text = {target.ptr + skip, target.len - skip};
+        if (str_eq(text, old_text)) return;
+        if (!reference_bounds(r->d, e, &from, &to)) { if (!r->only_to) r->external = true; return; }
+        if (r->only_to && (from < r->only_from || to > r->only_to)) return;
+        if (!text.len) { r->edits.invalid = true; return; }
+        add_edit(&r->edits, from, to, str_to_cstr(text)); return;
+    }
+    rewrite_references(r, p, e->object); rewrite_references(r, p, e->lhs);
+    rewrite_references(r, p, e->rhs); rewrite_references(r, p, e->cond);
+    for (int i = 0; i < e->args.count; i++) rewrite_references(r, p, e->args.items[i]);
+    for (int i = 0; i < e->inits.count; i++) rewrite_references(r, p, e->inits.items[i].value);
+}
+
+static void rewrite_instance(reference_edits *r, const prefab_instance *p)
+{
+    for (int i = 0; i < p->entities.count; i++) rewrite_references(r, p, p->entities.items[i].spawn);
+}
+
+static bool checked_structure(editor_document *d, const int node)
+{
+    if (!editable(d, node) || d->nodes.items[node].parent < 0) return false;
+    if (d->errors) { snprintf(d->message, sizeof d->message, "Fix project errors before changing hierarchy paths so every entity reference can be checked."); return false; }
+    return true;
+}
+
+static bool same_loc(const loc a, const loc b) { return a.file == b.file && a.line == b.line && a.col == b.col; }
+
+static bool has_directives(const char *text, const size_t len)
+{
+    bool start = true;
+    for (size_t i = 0; i < len; i++) {
+        const char c = text[i];
+        if (start && c == '#') return true;
+        if (c == '\n') start = true;
+        else if (c != ' ' && c != '\t' && c != '\r') start = false;
+    }
+    return false;
+}
+
+static bool checked_configurations(editor_document *d)
+{
+    for (int i = 0; i < lexed.count; i++) {
+        const source *s = lexed.items[i].src;
+        const size_t len = strlen(s->path);
+        if (len >= 8 && same_path(s->path + len - 8, ".tprefab") && has_directives(s->text, s->len)) {
+            snprintf(d->message, sizeof d->message, "Hierarchy path edits need every authored branch checked. Edit conditional prefab sources in your code editor."); return false;
+        }
+    }
+    return true;
+}
+
+static void rewrite_override_names(reference_edits *r, const prefab_instance *p, const prefab_node *raw, const str path, const bool reparent)
+{
+    const str next = changed_path(r, p, path);
+    if (!str_eq(next, path)) {
+        // Descendant names do not change when their ancestor moves/renames.
+        const char *old_name = str_to_cstr(path), *new_name = str_to_cstr(next);
+        const char *dot = strrchr(old_name, '.'); old_name = dot ? dot + 1 : old_name;
+        dot = strrchr(new_name, '.'); new_name = dot ? dot + 1 : new_name;
+        if (reparent) r->external = true; // Moving a consumer's override needs a separate document transaction.
+        else if (strcmp(old_name, new_name) != 0) {
+            if (!same_path(raw->unit->src->path, r->d->path)) r->external = true;
+            else add_edit(&r->edits, offset(r->d->src, raw->at), offset(r->d->src, raw->at) + (size_t)raw->name.len, new_name);
+        }
+    }
+    for (int i = 0; i < raw->children.count; i++) {
+        prefab_node *child = raw->children.items[i];
+        rewrite_override_names(r, p, child, child_path(path, str_to_cstr(child->name)), reparent);
+    }
+}
+
+static bool gather_changes(editor_document *d, const int node, const str next, reference_edits *r)
+{
+    r->d = d;
+    const str old = d->nodes.items[node].path;
+    const loc origin = d->nodes.items[node].authored->at;
+    for (int i = 0; i < d->prog->decls.count; i++) {
+        decl *decl = d->prog->decls.items[i];
+        prefab_instance *p = decl->kind == DECL_PREFAB ? decl->prefab_checked : NULL;
+        if (!p) continue;
+        for (int k = 1; k < p->entities.count; k++) {
+            const prefab_entity *e = &p->entities.items[k];
+            if (!same_loc(e->spawn->at, origin) || e->path.len < old.len) continue;
+            const int prefix = e->path.len - old.len;
+            if (memcmp(e->path.ptr + prefix, old.ptr, (size_t)old.len) != 0) continue;
+            sb b = {0}; sb_putn(&b, e->path.ptr, (size_t)prefix); sb_putn(&b, next.ptr, (size_t)next.len);
+            vec_push(r->changes, ((path_change){p, e->path, str_from(b.data)}));
+        }
+    }
+    // A consumer can add a sibling the base does not contain. Adding the base
+    // child at that path would silently turn it into an inherited override.
+    for (int c = 0; c < r->changes.count; c++) {
+        const path_change *change = &r->changes.items[c];
+        const prefab_instance *p = change->instance;
+        for (int k = 0; k < p->entities.count; k++)
+            if (str_eq(p->entities.items[k].path, change->next) && !under(p->entities.items[k].path, change->old)) {
+                snprintf(d->message, sizeof d->message, "An instance already has an object at the destination path. Choose another name or parent."); return false;
+            }
+    }
+    return true;
+}
+
+static bool hierarchy_changes(editor_document *d, const int node, const str next, const bool reparent, reference_edits *r)
+{
+    if (!checked_configurations(d) || !gather_changes(d, node, next, r)) return false;
+    for (int i = 0; i < d->prog->decls.count; i++) {
+        decl *decl = d->prog->decls.items[i];
+        prefab_instance *p = decl->kind == DECL_PREFAB ? decl->prefab_checked : NULL;
+        if (!p) continue;
+        rewrite_instance(r, p);
+        // The active declaration's node header is handled by the action itself.
+        if (decl != d->prefabs.items[d->active]) rewrite_override_names(r, p, decl->prefab_root, (str){0}, reparent);
+    }
+    if (r->external || r->edits.invalid) {
+        snprintf(d->message, sizeof d->message, "Hierarchy change needs edits in another prefab source or an instance override. Update those in your code editor first."); return false;
+    }
+    return true;
+}
+
+bool editor_rename_node(editor_document *d, const int node, const char *name)
+{
+    if (!checked_structure(d, node)) return false;
+    const int parent = d->nodes.items[node].parent;
+    if (!available_child(d, parent, name, node)) return false;
+    const str next = child_path(d->nodes.items[parent].path, name);
+    if (str_eq(next, d->nodes.items[node].path)) return false;
+    reference_edits r = {0};
+    if (!hierarchy_changes(d, node, next, false, &r)) return false;
+    const prefab_node *raw = d->nodes.items[node].authored;
+    add_edit(&r.edits, offset(d->src, raw->at), offset(d->src, raw->at) + (size_t)raw->name.len, name);
+    return apply_edits(d, &r.edits, project_reference_count(d));
+}
+
+bool editor_duplicate_node(editor_document *d, const int node, const char *name)
+{
+    if (!checked_structure(d, node) || !available_child(d, d->nodes.items[node].parent, name, -1)) return false;
+    size_t from, to; if (!node_bounds(d, node, &from, &to)) return false;
+    if (has_directives(d->text + from, to - from)) {
+        snprintf(d->message, sizeof d->message, "Duplicate conditional object blocks in your code editor so every branch's references can be updated."); return false;
+    }
+    const str next = child_path(d->nodes.items[d->nodes.items[node].parent].path, name);
+    reference_edits consumers = {0};
+    if (!checked_configurations(d) || !gather_changes(d, node, next, &consumers)) return false;
+    uint64_t expected_refs = project_reference_count(d);
+    for (int c = 0; c < consumers.changes.count; c++) {
+        const path_change *change = &consumers.changes.items[c];
+        const prefab_instance *instance = change->instance;
+        for (int i = 0; i < instance->entities.count; i++) if (under(instance->entities.items[i].path, change->old))
+            expected_refs += reference_count(instance->entities.items[i].spawn);
+    }
+    reference_edits r = {.d = d, .only_from = from, .only_to = to};
+    prefab_instance *p = d->prefabs.items[d->active]->prefab_checked;
+    vec_push(r.changes, ((path_change){p, d->nodes.items[node].path, next}));
+    rewrite_instance(&r, p);
+    const prefab_node *raw = d->nodes.items[node].authored;
+    add_edit(&r.edits, offset(d->src, raw->at), offset(d->src, raw->at) + (size_t)raw->name.len, name);
+    char *block = edited_slice(d, &r.edits, from, to);
+    if (r.edits.invalid) return false;
+    sb b = {0}; sb_put(&b, newline(d)); sb_put(&b, block);
+    return patch_checked(d, to, to, b.data, true, expected_refs);
+}
+
+bool editor_reparent_node(editor_document *d, const int node, const int parent)
+{
+    if (!checked_structure(d, node) || !editable(d, parent)) return false;
+    if (parent == d->nodes.items[node].parent) return false;
+    if (under(d->nodes.items[parent].path, d->nodes.items[node].path)) {
+        snprintf(d->message, sizeof d->message, "An object cannot be parented to itself or its descendants."); return false;
+    }
+    const char *name = str_to_cstr(d->nodes.items[node].authored->name);
+    if (!available_child(d, parent, name, -1)) return false;
+    const str next = child_path(d->nodes.items[parent].path, name);
+    reference_edits r = {0}; if (!hierarchy_changes(d, node, next, true, &r)) return false;
+    size_t from, to; if (!node_bounds(d, node, &from, &to)) return false;
+    char *block = edited_slice(d, &r.edits, from, to);
+    if (r.edits.invalid) return false;
+    int count = 0;
+    for (int i = 0; i < r.edits.count; i++) if (r.edits.items[i].from < from || r.edits.items[i].to > to) r.edits.items[count++] = r.edits.items[i];
+    r.edits.count = count; add_edit(&r.edits, from, to, "");
+    const size_t insert = offset(d->src, d->tokens[d->nodes.items[parent].close].at);
+    sb b = {0}; sb_put(&b, newline(d)); sb_put(&b, block); sb_put(&b, newline(d));
+    add_edit(&r.edits, insert, insert, b.data);
+    return apply_edits(d, &r.edits, project_reference_count(d));
+}
+
+typedef struct source_folder { const char *target; bool found; } source_folder;
+
+static bool enter_source_folder(void *user, const char *path)
+{
+    source_folder *folder = user;
+    const size_t len = strlen(path), target_len = strlen(folder->target);
+    const bool exact = target_len + 1 == len &&
+#ifdef _WIN32
+        _strnicmp(path, folder->target, target_len) == 0;
+#else
+        strncmp(path, folder->target, target_len) == 0;
+#endif
+    if (exact) folder->found = true;
+    return !exact && target_len >= len &&
+#ifdef _WIN32
+        _strnicmp(path, folder->target, len) == 0;
+#else
+        strncmp(path, folder->target, len) == 0;
+#endif
+}
+
+static void ignore_source_file(void *user, const char *path, const unsigned long long size)
+{
+    (void)user; (void)path; (void)size;
+}
+
+static bool new_file_path(editor_document *d, const char *path, const char *project, char **absolute)
+{
+    *absolute = path_absolute(path);
+    char *root = path_absolute(project), *folder = path_dir(*absolute);
+    const size_t n = strlen(root), len = strlen(*absolute);
+    const bool in_root = len > n && (*absolute)[n] == '/' &&
+#ifdef _WIN32
+        _strnicmp(*absolute, root, n) == 0;
+#else
+        strncmp(*absolute, root, n) == 0;
+#endif
+    bool ok = in_root && len > 8 && same_path(*absolute + len - 8, ".tprefab") && sys_is_dir(folder);
+    // Match the folder scanner's hidden-folder and nested-project boundaries.
+    for (const char *p = in_root ? *absolute + n + 1 : ""; ok && *p; p++)
+        if (((p == *absolute + n + 1 || p[-1] == '/') && p[0] == '.') || p[0] == ':') ok = false;
+    char *candidate = copy(folder);
+    while (ok && !same_path(candidate, root)) {
+        char *marker = path_join(candidate, PACKAGES_FILE);
+        if (sys_exists(marker)) ok = false;
+        free(marker);
+        char *parent = path_dir(candidate);
+        if (same_path(parent, candidate) || !parent[0]) ok = false;
+        free(candidate); candidate = parent;
+    }
+    if (ok && !same_path(folder, root)) {
+        source_folder source = {.target = folder};
+        char *slash = path_join(root, "");
+        // This scanner skips directory links/reparse points just as source
+        // discovery does; refuse those before opening any destination file.
+        folder_find_files_in(slash, enter_source_folder, ignore_source_file, &source);
+        free(slash); ok = source.found;
+    }
+    free(candidate); free(folder); free(root);
+    if (!ok) snprintf(d->message, sizeof d->message, "Choose a .tprefab path in an existing source folder of this project, outside nested projects and hidden folders.");
+    else if (sys_exists(*absolute)) {
+        snprintf(d->message, sizeof d->message, "File already exists; choose a new .tprefab filename."); ok = false;
+    }
+    return ok;
+}
+
+static bool write_new_file(editor_document *d, const char *path, const char *text)
+{
+    // C17 exclusive creation prevents overwrites even when another program
+    // creates the chosen name after validation. Existing files are never opened.
+    FILE *f = fopen(path, "wbx");
+    if (!f) { snprintf(d->message, sizeof d->message, "Cannot create new file; the filename may exist or its folder is not writable."); return false; }
+    const size_t len = strlen(text);
+    const bool written = fwrite(text, 1, len, f) == len;
+    const bool closed = fclose(f) == 0;
+    if (!written || !closed) { sys_remove(path); snprintf(d->message, sizeof d->message, "Could not finish writing the new file; original document kept."); return false; }
+    return true;
+}
+
+static bool declaration_available(editor_document *d, const str name, const decl *except)
+{
+    for (int i = 0; d->prog && i < d->prog->decls.count; i++) {
+        const decl *p = d->prog->decls.items[i];
+        if (p != except && str_eq(p->qualified, name)) {
+            snprintf(d->message, sizeof d->message, "A declaration named " STR_FMT " already exists in this project.", STR_ARG(name)); return false;
+        }
+    }
+    return true;
+}
+
+bool editor_create(editor_document *d, const char *path, const char *project, const char *name)
+{
+    memset(d, 0, sizeof *d);
+    if (!project || !valid_name(d, name)) return false;
+    char *absolute = NULL;
+    if (!new_file_path(d, path, project, &absolute)) { free(absolute); return false; }
+    sb b = {0}; sb_printf(&b, "prefab %s {\n    Transform;\n}\n", name);
+    char *text = copy(b.data);
+    if (!write_new_file(d, absolute, text)) { free(absolute); free(text); return false; }
+    const bool opened = editor_open(d, absolute, project);
+    const bool ok = opened && !d->syntax_errors && d->prefabs.count == 1 &&
+        declaration_available(d, d->prefabs.items[0]->qualified, d->prefabs.items[0]);
+    if (!ok) {
+        char reason[1024]; snprintf(reason, sizeof reason, "%s", d->message[0] ? d->message : "New file is outside this project's discoverable source boundary.");
+        char *disk = sys_read_file(absolute, NULL);
+        if (disk && strcmp(disk, text) == 0) sys_remove(absolute);
+        free(disk); editor_close(d); snprintf(d->message, sizeof d->message, "%s", reason);
+    }
+    free(absolute); free(text); return ok;
+}
+
+typedef struct extraction_refs { editor_document *d; prefab_instance *p; str root; int self; text_edits edits; bool outside; } extraction_refs;
+
+static void extract_references(extraction_refs *r, const expr *e)
+{
+    if (!e) return;
+    if (e->prefab_reference) {
+        if (e->prefab_entity < 0 || e->prefab_entity >= r->p->entities.count) { r->outside = true; return; }
+        const str path = r->p->entities.items[e->prefab_entity].path;
+        if (!under(path, r->root)) { r->outside = true; return; }
+        if (e->kind == E_THIS) return;
+        // Base-prefab expressions keep their own relative scope and source.
+        // Only values written in this extracted block need rebasing.
+        size_t from, to;
+        if (!reference_bounds(r->d, e, &from, &to)) return;
+        if (under(e->prefab_scope, r->root)) return;
+        if (str_eq(path, r->root)) {
+            if (e->prefab_entity != r->self) { r->outside = true; return; }
+            add_edit(&r->edits, from, to, "this");
+        } else {
+            const str relative = {path.ptr + r->root.len + 1, path.len - r->root.len - 1};
+            add_edit(&r->edits, from, to, str_to_cstr(relative));
+        }
+        return;
+    }
+    extract_references(r, e->object); extract_references(r, e->lhs); extract_references(r, e->rhs); extract_references(r, e->cond);
+    for (int i = 0; i < e->args.count; i++) extract_references(r, e->args.items[i]);
+    for (int i = 0; i < e->inits.count; i++) extract_references(r, e->inits.items[i].value);
+}
+
+bool editor_extract_prefab(editor_document *d, const int node, const char *path, const char *name)
+{
+    if (!checked_structure(d, node) || !valid_name(d, name)) return false;
+    const editor_node *n = &d->nodes.items[node];
+    if (n->authored->base.len) { snprintf(d->message, sizeof d->message, "Extract an authored object with its own root; this object is already a prefab instance."); return false; }
+    decl *active = d->prefabs.items[d->active];
+    const str qualified = child_path(active->unit->ns, name);
+    if (!declaration_available(d, qualified, NULL)) return false;
+    char *absolute = NULL;
+    if (!new_file_path(d, path, d->project, &absolute)) { free(absolute); return false; }
+    extraction_refs refs = {.d = d, .p = active->prefab_checked, .root = n->path};
+    uint64_t expected_refs = project_reference_count(d);
+    for (int i = 0; i < d->nodes.count; i++) if (under(d->nodes.items[i].path, n->path)) {
+        refs.self = i; extract_references(&refs, d->nodes.items[i].effective);
+        expected_refs += reference_count(d->nodes.items[i].effective);
+    }
+    if (refs.outside) {
+        snprintf(d->message, sizeof d->message, "Extraction needs a self-contained subtree: remove references to outside objects or from descendants to this root first."); free(absolute); return false;
+    }
+    const size_t body_from = offset(d->src, d->tokens[n->open].at), body_to = offset(d->src, d->tokens[n->close].at) + 1;
+    if (has_directives(d->text + body_from, body_to - body_from)) {
+        snprintf(d->message, sizeof d->message, "Extract conditional object blocks in your code editor so every branch's references can be rebased."); free(absolute); return false;
+    }
+    char *body = edited_slice(d, &refs.edits, body_from, body_to);
+    if (!body || refs.edits.invalid) { free(absolute); return false; }
+    sb asset = {0};
+    if (active->unit->ns.len) sb_printf(&asset, "namespace " STR_FMT ";%s", STR_ARG(active->unit->ns), newline(d));
+    for (int i = 0; i < active->unit->usings.count; i++) sb_printf(&asset, "using " STR_FMT ";%s", STR_ARG(active->unit->usings.items[i]), newline(d));
+    sb_printf(&asset, "prefab %s %s%s", name, body, newline(d));
+    char *new_text = copy(asset.data);
+    size_t from, to; if (!node_bounds(d, node, &from, &to)) { free(absolute); free(new_text); return false; }
+    sb instance = {0}; sb_printf(&instance, "entity " STR_FMT " : " STR_FMT " {}", STR_ARG(n->authored->name), STR_ARG(qualified));
+    char *replacement = copy(instance.data);
+    if (!write_new_file(d, absolute, new_text)) { free(absolute); free(new_text); free(replacement); return false; }
+    const bool ok = patch_checked(d, from, to, replacement, true, expected_refs);
+    if (!ok) {
+        char reason[sizeof d->message]; snprintf(reason, sizeof reason, "%s", d->message);
+        char *disk = sys_read_file(absolute, NULL);
+        if (disk && strcmp(disk, new_text) == 0) sys_remove(absolute);
+        free(disk);
+        // The rejected transaction's rollback analysis still saw the asset.
+        // Refresh after cleanup so no deleted declaration remains selectable.
+        editor_refresh(d); snprintf(d->message, sizeof d->message, "%s", reason);
+    }
+    free(absolute); free(new_text); free(replacement); return ok;
 }
