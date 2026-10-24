@@ -226,10 +226,28 @@ system Stroll(mut Walker walker, mut Person person, Time time, query (Walker oth
     Step(walker, toward, STROLL, false, time.dt);
 }
 
-// Walkers bump each other aside, and two waving at each other high-five
-system Bump(mut Walker walker, query (Walker other) walkers)
+// Walkers bump each other aside, and out of the cars' way, and two waving at each other high-five
+system Bump(mut Walker walker, query (Walker other) walkers, query (Car car) cars)
 {
     if (walker.city < 0) return;
+    foreach (var row in cars)
+    {
+        if (row.car.city != walker.city) continue;
+        // Out of the car's box, the shorter way: its length along the ring, its width across it
+        var middle = float2(Math.Sin(row.car.turn), Math.Cos(row.car.turn)) * row.car.lane;
+        var along = float2(Math.Cos(row.car.turn), -Math.Sin(row.car.turn));
+        var across = float2(along.y, -along.x);
+        var off = walker.at - middle;
+        float u = Math.Dot(off, along);
+        float v = Math.Dot(off, across);
+        float longways = CAR + BODY - Math.Abs(u);
+        float sideways = 1.0 + BODY - Math.Abs(v);
+        if (longways > 0 && sideways > 0)
+        {
+            if (sideways < longways) walker.at += across * ((v < 0 ? -1 : 1) * sideways);
+            else walker.at += along * ((u < 0 ? -1 : 1) * longways);
+        }
+    }
     foreach (var row in walkers)
     {
         if (row.entity == this || row.other.city != walker.city) continue;

@@ -106,6 +106,14 @@ TIDE_TEST(earth_walkers_walk_bump_and_high_five_and_cars_stop_for_them)
     const Car stopped = tide_get_Car(&world, car);
     TIDE_CHECK(stopped.speed < 0.5f);
     TIDE_CHECK(fabsf(stopped.turn - c.turn) * c.lane < 7.0f);
+    // Put where the car is, the walker is pushed out of it
+    a = tide_get_Walker(&world, me);
+    a.at = (tide_float2){sinf(stopped.turn) * stopped.lane, cosf(stopped.turn) * stopped.lane};
+    tide_set_Walker(&world, me, a);
+    ticks(1);
+    a = tide_get_Walker(&world, me);
+    const tide_float2 middle = {sinf(stopped.turn) * stopped.lane, cosf(stopped.turn) * stopped.lane};
+    TIDE_CHECK(length2((tide_float2){a.at.x - middle.x, a.at.y - middle.y}) > 1.0f);
     // Out of the way, it goes on
     a = tide_get_Walker(&world, me);
     a.at = (tide_float2){0, 20};

@@ -217,7 +217,30 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
     var keys = devices.keyboard;
     if (keys.escape.down || keys.g.down) pilot.walking = false;
     if (keys.enter.down && pilot.at >= 0) pilot.walking = true;
-    var scroll = devices.mouse.scroll.y;
+    mut var scroll = devices.mouse.scroll.y;
+    // Two fingers apart or together zoom, as the wheel does, and are neither a tap nor a drag
+    mut int fingers = 0;
+    mut var first = float2(0, 0);
+    mut var was = float2(0, 0);
+    mut float pinch = 0;
+    foreach (var touch in devices.touchscreen.touches)
+    {
+        if (!touch.press.pressed) continue;
+        if (fingers == 0)
+        {
+            first = touch.position;
+            was = touch.position - touch.delta;
+        }
+        else if (fingers == 1)
+        {
+            float now = Math.Length(touch.position - first);
+            float before = Math.Length(touch.position - touch.delta - was);
+            if (now > 1 && before > 1) pinch = Math.Log(now / before) * 7;
+        }
+        fingers += 1;
+    }
+    scroll += pinch;
+    if (fingers >= 2) pilot.dragging = true;
     if (pilot.walking)
     {
         pilot.back = Math.Clamp(pilot.back * Math.Exp(-scroll * 0.15), 3, 40);
@@ -259,7 +282,11 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
             click = !pilot.dragging;
         }
     }
-    if (pilot.walking && pilot.pressing && pilot.dragging)
+    if (fingers >= 2)
+    {
+        // Pinching: no turning
+    }
+    else if (pilot.walking && pilot.pressing && pilot.dragging)
     {
         pilot.look += pointer.delta.x * 0.006;
         pilot.tilt = Math.Clamp(pilot.tilt - pointer.delta.y * 0.004, 0.05, 1.3);
@@ -614,8 +641,18 @@ view Picture(mut Scenery scenery, mut Pilot pilot, Shapes shapes, Roster roster)
         else if (pilot.at >= 0)
         {
             int here = scenery.people[pilot.at];
-            Backed($"{Name(pilot.at)} · {here} {(here == 1 ? "player" : "players")} here", float2(14, Screen.height - 50), 13, bright);
-            Backed("WASD walk · tap to go · drag to look · Space jump · E wave · Esc globe", float2(14, Screen.height - 26), 12, bright);
+            string town = $"{Name(pilot.at)} · {here} {(here == 1 ? "player" : "players")} here";
+            // A small screen has its buttons along the bottom, and the town at the top
+            if (Screen.width < 560)
+            {
+                Backed(town, float2(14, 44), 13, bright);
+                Backed("Tap to walk · drag to look", float2(14, 70), 12, bright);
+            }
+            else
+            {
+                Backed(town, float2(14, Screen.height - 50), 13, bright);
+                Backed("WASD walk · tap to go · drag to look · Space jump · E wave · Esc globe", float2(14, Screen.height - 26), 12, bright);
+            }
         }
     }
     pilot.had = pilot.mine;
