@@ -34,6 +34,16 @@ with redundant sends suppressed. The companion service change replaces the
 minute blackout with a bounded, continuously replenished per-route allowance
 (`tide-services/notes/managed-hosting.md`). No engine protocol change is needed.
 
+Published source `4d6910dc` as Earth release
+`277e6fbb4bac77e03c37fb37d9ddc17d52cb0a77747f6f5cdcdea169a671b08c`;
+the production page's embedded client payload matches that bundle. The new
+world `20d210d637b4d02d8d143dca09bc0388` runs and checkpoints on this release.
+The hosting packet fix is deployed too; clients open before the restart need
+to reload. The updated production client passes 75 seconds of continuous
+walking on each of WebGL and WebGPU without leaving the hosted room or
+reporting renderer errors; their final captures show online players on the
+shared shard.
+
 ## Node and build dependency security updates (2026-10-23)
 
 The site image pins `node:24.22.1-alpine`, including the October 21 Node
