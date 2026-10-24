@@ -5,11 +5,34 @@ static bool playing(const editor *e)
 
 static void document_changed(editor *e)
 {
+    free(e->root_name); e->root_name=NULL;
     e->selected=0; e->tree_scroll=e->inspector_scroll=e->source_scroll=0;
     memset(e->folded,0,sizeof e->folded); clear_field(e);
     e->gui.editing=e->gui.focus=0; e->drag.active=false;
     e->asset_stamp=asset_stamp(&e->doc); e->scene_model_revision=UINT64_MAX;
     e->model_revision=UINT64_MAX; e->recovery=e->doc.recovery!=NULL;
+}
+
+static void empty_document(editor *e, tide_rect r)
+{
+    const float x=r.x+70, y=r.y+74;
+    if(!e->root_name) {
+        const char *file=path_base(e->doc.path), *dot=strrchr(file,'.');
+        const str name={file,(int)(dot ? dot-file : (ptrdiff_t)strlen(file))};
+        e->root_name=own(lex_identifier_ok(name) ? str_to_cstr(name) : "Level");
+    }
+    label(e,x,y,"This file has no scene or prefab root yet.",ink);
+    if(e->doc.syntax_errors) {
+        label(e,x,y+36,"Fix this file's syntax in your code editor, then Reload.",dim);
+        return;
+    }
+    label(e,x,y+36,"Create its root here to start adding objects and components.",dim);
+    const int disabled=tide_gui_begin_disabled(&e->gui,e->doc.recovery || e->doc.conflict);
+    bool entered=false;
+    text_field(e,45010,(tide_rect){x,y+82,360,32},"Name",&e->root_name,&entered);
+    if(button(e,45011,(tide_rect){x,y+130,180,34},"Create root") || entered) queue_name(e,INITIALIZE_ROOT,str_from(e->root_name));
+    tide_gui_close(&e->gui,disabled);
+    label(e,x,y+184,"The file stays unchanged until Save. Undo removes the new root.",dim);
 }
 
 static bool switch_document(editor *e, const char *path, const char *name)
@@ -107,6 +130,9 @@ static void value_picker(editor *e, tide_float2 size)
 static void apply_workspace_action(editor *e, const int selected)
 {
     switch(e->pending) {
+    case INITIALIZE_ROOT:
+        if(editor_initialize_prefab(&e->doc,e->pending_name)) { document_changed(e); e->source=e->models=false; }
+        break;
     case CREATE_FILE:
         if(switch_document(e,e->pending_path,e->pending_name) && e->dialog==DIALOG_NEW_SCENE && !e->doc.prog->main && !e->doc.prog->startup) editor_set_startup(&e->doc);
         break;

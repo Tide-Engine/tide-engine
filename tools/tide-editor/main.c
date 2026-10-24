@@ -19,7 +19,7 @@
 #include "tide/time.h"
 
 typedef enum action { NONE, SAVE, RELOAD, DISCARD, UNDO, REDO, SET, RESET, ADD, REMOVE, CHILD, DELETE_NODE, PREFAB, RECOVER, DROP_RECOVERY,
-    CREATE_FILE, OPEN_FILE, RENAME_NODE, DUPLICATE_NODE, REPARENT_NODE, EXTRACT_NODE, NAMED_CHILD, PLAY, STOP, SET_STARTUP, PLACE_MODEL } action;
+    CREATE_FILE, OPEN_FILE, RENAME_NODE, DUPLICATE_NODE, REPARENT_NODE, EXTRACT_NODE, NAMED_CHILD, PLAY, STOP, SET_STARTUP, PLACE_MODEL, INITIALIZE_ROOT } action;
 typedef enum dialog_kind { DIALOG_NONE, DIALOG_NEW_SCENE, DIALOG_NEW_PREFAB, DIALOG_OPEN, DIALOG_RENAME, DIALOG_DUPLICATE, DIALOG_EXTRACT, DIALOG_CHILD } dialog_kind;
 typedef enum inspector_kind { INSPECTOR_STRING, INSPECTOR_INT, INSPECTOR_FLOAT, INSPECTOR_VECTOR, INSPECTOR_EULER, INSPECTOR_EXPRESSION } inspector_kind;
 typedef struct inspector_edit {
@@ -65,7 +65,7 @@ typedef struct editor {
     uint64_t embedded_time;
     int tool; // 0 select, 1 move, 2 rotate, 3 scale.
     editor_play play;
-    char *workspace, *pending_path, *dialog_name, *dialog_path, *search;
+    char *workspace, *pending_path, *dialog_name, *dialog_path, *search, *root_name;
     dialog_kind dialog;
     bool dialog_open, value_picker;
     bool folded[1024];
@@ -663,12 +663,17 @@ static int frame(void *user, float seconds)
     if(button(e,8,(tide_rect){90,12,64,28},"New")) open_dialog(e,DIALOG_NEW_SCENE,"Level",NULL);
     if(button(e,9,(tide_rect){162,12,64,28},"Open")) open_dialog(e,DIALOG_OPEN,NULL,NULL);
     const bool has_document=e->doc.path!=NULL;
+    const bool has_root=e->doc.prefabs.count>0;
     const int toolbar_disabled=tide_gui_begin_disabled(&e->gui,!has_document);
+    int root_disabled=tide_gui_begin_disabled(&e->gui,!has_root);
     if(button(e,1,(tide_rect){234,12,64,28},"Save")) queue(e,SAVE);
+    tide_gui_close(&e->gui,root_disabled);
     if(button(e,2,(tide_rect){306,12,64,28},"Undo")) queue(e,UNDO);
     if(button(e,3,(tide_rect){378,12,64,28},"Redo")) queue(e,REDO);
+    root_disabled=tide_gui_begin_disabled(&e->gui,!has_root);
     if(button(e,10,(tide_rect){450,12,86,28},playing(e) ? "Stop" : "Play")) queue(e,playing(e) ? STOP : PLAY);
     if(button(e,11,(tide_rect){544,12,112,28},"Set startup")) queue(e,SET_STARTUP);
+    tide_gui_close(&e->gui,root_disabled);
     if(button(e,4,(tide_rect){size.x-86,12,76,28},"Reload")) { if(editor_dirty(&e->doc)) e->discard=true; else queue(e,RELOAD); }
     tide_gui_close(&e->gui,toolbar_disabled);
     if (e->models || e->source) e->drag.active = false;
@@ -683,12 +688,12 @@ static int frame(void *user, float seconds)
         if(e->devices.keyboard.o.down) open_dialog(e,DIALOG_OPEN,NULL,NULL);
     }
     if (has_document && ctrl && !tide_gui_typing(&e->gui) && !modal_open) {
-        if (e->devices.keyboard.s.down) queue(e, SAVE);
+        if (has_root && e->devices.keyboard.s.down) queue(e, SAVE);
         if (e->devices.keyboard.z.down) queue(e, e->devices.keyboard.leftShift.pressed ? REDO : UNDO);
         if (e->devices.keyboard.y.down) queue(e, REDO);
     }
     if (has_document && !ctrl && !tide_gui_typing(&e->gui) && !modal_open) {
-        if(e->devices.keyboard.f5.down) queue(e,playing(e) ? STOP : PLAY);
+        if(has_root && e->devices.keyboard.f5.down) queue(e,playing(e) ? STOP : PLAY);
         if(e->selected>0 && editor_can_structure(&e->doc,e->selected)) {
             if(e->devices.keyboard.f2.down) open_dialog(e,DIALOG_RENAME,node_name(&e->doc.nodes.items[e->selected]),NULL);
             if(e->devices.keyboard.delete.down) queue(e,DELETE_NODE);
@@ -701,7 +706,9 @@ static int frame(void *user, float seconds)
         if (tool >= 0) { e->tool = tool; e->drag.active = false; }
     }
     const float height = size.y - 230, right = size.x - 390;
-    if(has_document) {
+    if(has_document && !has_root) {
+        empty_document(e,(tide_rect){0,56,size.x,height});
+    } else if(has_document) {
     panel(e, (tide_rect){0,56,250,height}, rgb(.10f,.125f,.15f));
     panel(e, (tide_rect){right,56,390,height}, rgb(.10f,.125f,.15f));
     tree(e, (tide_rect){0,56,250,height});
@@ -735,8 +742,12 @@ static int frame(void *user, float seconds)
         if(button(e,14,(tide_rect){502,218,200,38},"Open file")) open_dialog(e,DIALOG_OPEN,NULL,NULL);
     }
     panel(e, (tide_rect){0,size.y-170,size.x,170}, rgb(.095f,.115f,.14f));
+    bool empty_entry=false;
+    if(has_document && !has_root && !e->doc.syntax_errors && e->doc.errors==1)
+        for(int i=0;i<e->doc.diagnostics.count;i++) if(strstr(e->doc.diagnostics.items[i],"error: the program has no entry point")) empty_entry=true;
     char status[150]; snprintf(status, sizeof status, "PROJECT   %d error(s)   %d warning(s)%s", e->doc.errors, e->doc.warnings, e->doc.conflict ? "   FILE CONFLICT" : "");
-    label(e, 16, size.y-158, status, e->doc.errors || e->doc.conflict ? rgb(.98f,.53f,.4f) : rgb(.3f,.83f,.93f));
+    if(empty_entry) snprintf(status,sizeof status,"FILE HAS NO AUTHORED ROOT");
+    label(e, 16, size.y-158, status, !empty_entry && (e->doc.errors || e->doc.conflict) ? rgb(.98f,.53f,.4f) : rgb(.3f,.83f,.93f));
     label(e, 420, size.y-158, e->workspace, dim);
     tide_rect diagnostics = {12,size.y-130,size.x-24,82};
     if (contains(diagnostics, e->gui.mouse)) e->diagnostic_scroll -= scroll_rows(e->devices.mouse.poll_scroll.y, 2);
@@ -745,8 +756,9 @@ static int frame(void *user, float seconds)
     tide_draw_set_clip(&e->draw, diagnostics);
     const bool preview_failure = e->preview.enabled && !e->preview.builder && !e->doc.errors && e->preview.revision != e->doc.revision;
     const bool play_failure=e->play.state==EDITOR_PLAY_FAILED;
-    if (play_failure || preview_failure || !e->doc.diagnostics.count) label(e, 16, size.y-126, play_failure ? e->play.message : e->preview.enabled ? e->preview.message : "Project checked. Save writes authored values; Play runs the game.", play_failure || preview_failure ? rgb(.98f,.53f,.4f) : dim);
-    if (!play_failure && !preview_failure) for (int i = e->diagnostic_scroll; i < e->doc.diagnostics.count && i < e->diagnostic_scroll + 3; i++) label(e, 16, size.y-126 + (float)(i-e->diagnostic_scroll)*25, e->doc.diagnostics.items[i], ink);
+    if(empty_entry) label(e,16,size.y-126,"Create a root above to edit and play this file. Project startup can be chosen later.",dim);
+    else if (play_failure || preview_failure || !e->doc.diagnostics.count) label(e, 16, size.y-126, play_failure ? e->play.message : e->preview.enabled ? e->preview.message : "Project checked. Save writes authored values; Play runs the game.", play_failure || preview_failure ? rgb(.98f,.53f,.4f) : dim);
+    if (!empty_entry && !play_failure && !preview_failure) for (int i = e->diagnostic_scroll; i < e->doc.diagnostics.count && i < e->diagnostic_scroll + 3; i++) label(e, 16, size.y-126 + (float)(i-e->diagnostic_scroll)*25, e->doc.diagnostics.items[i], ink);
     tide_draw_unset_clip(&e->draw);
     label(e,16,size.y-34,e->play.message[0] ? e->play.message : e->doc.message[0] ? e->doc.message : "Ctrl+N new scene   |   Ctrl+O open   |   Ctrl+S save   |   F5 play / stop",dim);
     if (e->picker) picker(e, size);
@@ -907,6 +919,6 @@ int main(int argc, char **argv)
     for (int i = 0; i < e->scene_model_count; i++) editor_model_free(&e->scene_models[i]);
     free(e->scene_models);
     editor_close(&e->doc);
-    free(e->workspace); free(e->dialog_name); free(e->dialog_path); free(e->search);
+    free(e->workspace); free(e->dialog_name); free(e->dialog_path); free(e->search); free(e->root_name);
     clear_field(e); closing_editor=NULL; free(e);
 }

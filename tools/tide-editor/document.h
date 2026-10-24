@@ -37,6 +37,9 @@ bool editor_open(editor_document *d, const char *path, const char *project);
 // Close the previous document first: compiler analysis uses one global arena.
 // Creates an exclusive new file in an existing project's source boundary.
 bool editor_create(editor_document *d, const char *path, const char *project, const char *name);
+// Appends the first prefab to an open, syntax-valid own source document.
+// One undo/recovery transaction; leaves the source file unchanged until Save.
+bool editor_initialize_prefab(editor_document *d, const char *name);
 void editor_close(editor_document *d);
 void editor_refresh(editor_document *d);
 void editor_poll(editor_document *d); // Rescan source/package changes; protect unsaved edits.

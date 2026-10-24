@@ -531,3 +531,186 @@ TIDE_TEST(editor_save_refuses_external_appended_nul_bytes)
     TIDE_CHECK(strstr(d.text, "value = 77") != NULL && sys_exists(d.draft_path));
     free(disk); free(outside); editor_close(&d); free(file);
 }
+
+static void document_disk_is(const char *path, const char *expected)
+{
+    size_t len = 0; char *disk = sys_read_file(path, &len);
+    TIDE_CHECK(disk && len == strlen(expected) && memcmp(disk, expected, len) == 0);
+    free(disk);
+}
+
+TIDE_TEST(editor_initialize_empty_sources_preserves_bytes_and_uses_one_draft_transaction)
+{
+    const struct { const char *folder, *prefix, *addition; } cases[] = {
+        {"initialize-zero", "", "prefab Root {\n    Transform;\n}\n"},
+        {"initialize-whitespace", " \t\n  \t", "\nprefab Root {\n    Transform;\n}\n"},
+        {"initialize-comment", "// keep h\xC3\xA9llo", "\nprefab Root {\n    Transform;\n}\n"},
+        {"initialize-comments", "/* keep */\n// tail\n", "prefab Root {\n    Transform;\n}\n"},
+        {"initialize-bom-only", "\xEF\xBB\xBF", "prefab Root {\n    Transform;\n}\n"},
+        {"initialize-bom-crlf", "\xEF\xBB\xBF// keep\r\n \t", "\r\nprefab Root {\r\n    Transform;\r\n}\r\n"}
+    };
+    for (size_t i = 0; i < sizeof cases / sizeof *cases; i++) {
+        char *file = fixture(cases[i].folder, "component Health { int value = 1; }\n", cases[i].prefix); editor_document d;
+        TIDE_REQUIRE(editor_open(&d, file, NULL));
+        TIDE_CHECK(!d.prefabs.count && !d.nodes.count && !d.syntax_errors && !editor_dirty(&d));
+        document_disk_is(file, cases[i].prefix);
+        const size_t prefix = strlen(cases[i].prefix), add = strlen(cases[i].addition);
+        char *expected = malloc(prefix + add + 1); TIDE_REQUIRE(expected);
+        memcpy(expected, cases[i].prefix, prefix); memcpy(expected + prefix, cases[i].addition, add + 1);
+        TIDE_REQUIRE(editor_initialize_prefab(&d, "Root"));
+        TIDE_CHECK(strcmp(d.text, expected) == 0 && strcmp(d.saved, cases[i].prefix) == 0);
+        TIDE_CHECK(d.prefabs.count == 1 && d.nodes.count == 1 && d.errors == 0 && d.undo_count == 1 && d.redo_count == 0);
+        TIDE_CHECK(str_eq_c(d.prefabs.items[0]->qualified, "Root") && editor_dirty(&d) && sys_exists(d.draft_path));
+        document_disk_is(file, cases[i].prefix);
+        TIDE_REQUIRE(editor_undo(&d, false));
+        TIDE_CHECK(strcmp(d.text, cases[i].prefix) == 0 && !d.prefabs.count && !d.nodes.count);
+        TIDE_CHECK(!editor_dirty(&d) && !d.undo_count && d.redo_count == 1 && !sys_exists(d.draft_path));
+        char *redo = d.redo[0]; const uint64_t revision = d.revision;
+        TIDE_CHECK(!editor_initialize_prefab(&d, "bad name"));
+        TIDE_CHECK(d.redo_count == 1 && d.redo[0] == redo && d.revision == revision && strcmp(d.text, cases[i].prefix) == 0);
+        TIDE_REQUIRE(editor_undo(&d, true)); TIDE_CHECK(strcmp(d.text, expected) == 0 && d.nodes.count == 1);
+        document_disk_is(file, cases[i].prefix);
+        TIDE_REQUIRE(editor_save(&d)); document_disk_is(file, expected);
+        TIDE_CHECK(!editor_dirty(&d) && !sys_exists(d.draft_path));
+        editor_close(&d); free(expected); free(file);
+    }
+}
+
+TIDE_TEST(editor_initialize_uses_file_namespace_after_closed_blocks_and_exact_collisions)
+{
+    const char *script = "namespace Props { component Data { int value; } }\n"
+        "prefab Root {}\nnamespace Other { prefab Root {} }\nnamespace Game { prefab Taken {} }\n";
+    const char *prefix = "\xEF\xBB\xBFnamespace Game;\r\nusing Props;\r\nnamespace Closed {}\r\n// keep";
+    const char *expected = "\xEF\xBB\xBFnamespace Game;\r\nusing Props;\r\nnamespace Closed {}\r\n// keep\r\nprefab Root {\r\n    Transform;\r\n}\r\n";
+    char *file = fixture("initialize-namespace", script, prefix); editor_document d;
+    TIDE_REQUIRE(editor_open(&d, file, NULL)); TIDE_REQUIRE(!d.syntax_errors && !d.prefabs.count);
+    const uint64_t revision = d.revision;
+    TIDE_CHECK(!editor_initialize_prefab(&d, "Taken"));
+    TIDE_CHECK(strcmp(d.text, prefix) == 0 && !d.undo_count && d.revision == revision);
+    const char *bad[] = {"", "9Root", "this", "float", "Math", "Transform", "tide_private"};
+    for (size_t i = 0; i < sizeof bad / sizeof *bad; i++) {
+        TIDE_CHECK(!editor_initialize_prefab(&d, bad[i]));
+        TIDE_CHECK(strcmp(d.text, prefix) == 0 && !d.undo_count && d.revision == revision);
+    }
+    document_disk_is(file, prefix);
+    TIDE_REQUIRE(editor_initialize_prefab(&d, "Root"));
+    TIDE_CHECK(d.errors == 0 && d.prefabs.count == 1 && str_eq_c(d.prefabs.items[0]->qualified, "Game.Root"));
+    TIDE_CHECK(strcmp(d.text, expected) == 0); document_disk_is(file, prefix);
+    TIDE_REQUIRE(editor_save(&d)); document_disk_is(file, expected);
+    editor_close(&d); free(file);
+
+    prefix = "using Closed;\nnamespace Closed {}\n// end";
+    file = fixture("initialize-global-after-block", "namespace Closed { prefab Root {} }\n", prefix);
+    TIDE_REQUIRE(editor_open(&d, file, NULL)); TIDE_REQUIRE(editor_initialize_prefab(&d, "Root"));
+    TIDE_CHECK(d.errors == 0 && str_eq_c(d.prefabs.items[0]->qualified, "Root"));
+    document_disk_is(file, prefix);
+    editor_close(&d); free(file);
+}
+
+TIDE_TEST(editor_initialize_preserves_pending_recovery_until_explicit_resolution)
+{
+    const char *prefix = "// authored later\n";
+    char *file = fixture("initialize-recovery", code, prefix); editor_document d;
+    TIDE_REQUIRE(editor_open(&d, file, NULL)); TIDE_REQUIRE(editor_initialize_prefab(&d, "Recovered"));
+    document_disk_is(file, prefix); editor_close(&d);
+    TIDE_REQUIRE(editor_open(&d, file, NULL)); TIDE_REQUIRE(d.recovery && !d.prefabs.count);
+    char *draft = sys_read_file(d.draft_path, NULL); TIDE_REQUIRE(draft);
+    program *prog = d.prog; const uint64_t revision = d.revision;
+    TIDE_CHECK(!editor_initialize_prefab(&d, "Replacement"));
+    TIDE_CHECK(d.recovery && d.prog == prog && d.revision == revision && !d.undo_count && !d.redo_count);
+    TIDE_CHECK(strcmp(d.text, prefix) == 0); document_disk_is(file, prefix); document_disk_is(d.draft_path, draft);
+    TIDE_REQUIRE(editor_recover(&d, true));
+    TIDE_CHECK(d.prefabs.count == 1 && str_eq_c(d.prefabs.items[0]->qualified, "Recovered") && editor_dirty(&d));
+    document_disk_is(file, prefix);
+    TIDE_REQUIRE(editor_save(&d)); document_disk_is(file, d.text);
+    TIDE_CHECK(!sys_exists(d.draft_path));
+    free(draft); editor_close(&d); free(file);
+}
+
+TIDE_TEST(editor_initialize_rejects_existing_empty_body_and_keeps_it_editable)
+{
+    const char *prefab = "// existing root\nprefab Empty {}\n";
+    char *file = fixture("initialize-existing-empty", code, prefab); editor_document d;
+    TIDE_REQUIRE(editor_open(&d, file, NULL)); TIDE_REQUIRE(d.prefabs.count == 1 && d.nodes.count == 1 && d.errors == 0);
+    const uint64_t revision = d.revision;
+    TIDE_CHECK(!editor_initialize_prefab(&d, "Other"));
+    TIDE_CHECK(strcmp(d.text, prefab) == 0 && !d.undo_count && d.revision == revision);
+    TIDE_REQUIRE(editor_add_named_child(&d, 0, "Child", NULL));
+    TIDE_REQUIRE(editor_add_component(&d, 0, str_from("Health")));
+    TIDE_REQUIRE(editor_set_field(&d, 0, str_from("Health"), str_from("value"), "7"));
+    TIDE_CHECK(d.errors == 0 && d.nodes.count == 2 && value(&d, "", "Health", "value")->int_value == 7);
+    document_disk_is(file, prefab);
+    TIDE_REQUIRE(editor_save(&d)); document_disk_is(file, d.text);
+    editor_close(&d); free(file);
+}
+
+TIDE_TEST(editor_initialize_rejects_syntax_and_unpolled_conflicts_without_losing_history)
+{
+    const char *broken = "using ;\n";
+    char *file = fixture("initialize-own-syntax", code, broken); editor_document d;
+    TIDE_REQUIRE(editor_open(&d, file, NULL)); TIDE_REQUIRE(d.syntax_errors && !d.prefabs.count);
+    const uint64_t syntax_revision = d.revision;
+    TIDE_CHECK(!editor_initialize_prefab(&d, "Root"));
+    TIDE_CHECK(strcmp(d.text, broken) == 0 && !d.undo_count && d.revision == syntax_revision);
+    document_disk_is(file, broken); editor_close(&d); free(file);
+
+    file = fixture("initialize-outside-conflict", code, ""); TIDE_REQUIRE(editor_open(&d, file, NULL));
+    TIDE_REQUIRE(editor_initialize_prefab(&d, "Original")); TIDE_REQUIRE(editor_undo(&d, false));
+    TIDE_REQUIRE(!d.prefabs.count && d.redo_count == 1);
+    const uint64_t revision = d.revision; char *redo = d.redo[0];
+    d.conflict = true;
+    TIDE_CHECK(!editor_initialize_prefab(&d, "Replacement"));
+    TIDE_CHECK(!d.text[0] && d.redo_count == 1 && d.redo[0] == redo && d.revision == revision);
+    d.conflict = false;
+    const char outside[] = "\0outside edit";
+    TIDE_REQUIRE(sys_write_file(file, outside, sizeof outside - 1));
+    TIDE_CHECK(!editor_initialize_prefab(&d, "Replacement") && d.conflict);
+    TIDE_CHECK(!d.text[0] && !d.undo_count && d.redo_count == 1 && d.redo[0] == redo && d.revision == revision);
+    size_t len = 0; char *disk = sys_read_file(file, &len);
+    TIDE_CHECK(disk && len == sizeof outside - 1 && memcmp(disk, outside, len) == 0);
+    TIDE_CHECK(!sys_exists(d.draft_path));
+    free(disk); editor_close(&d); free(file);
+}
+
+TIDE_TEST(editor_initialize_works_with_unrelated_project_errors)
+{
+    char *file = fixture("initialize-project-errors", "component Broken { int value = ; }\n", "// draft\n"); editor_document d;
+    TIDE_REQUIRE(editor_open(&d, file, NULL)); TIDE_REQUIRE(d.errors > 0 && !d.syntax_errors);
+    TIDE_REQUIRE(editor_initialize_prefab(&d, "Draft")); TIDE_CHECK(d.errors > 0 && d.prefabs.count == 1);
+    document_disk_is(file, "// draft\n");
+    TIDE_REQUIRE(editor_save(&d)); document_disk_is(file, d.text);
+    editor_close(&d); free(file);
+}
+
+TIDE_TEST(editor_initialize_respects_own_package_namespace_and_source_boundaries)
+{
+    const char *prefix = "namespace Kit.Tools;\n// kit root";
+    char *file = fixture("initialize-own-package", "namespace Kit;\ncomponent Health { int value; }\n", prefix);
+    char *root = path_dir(file), *manifest = path_join(root, "tide.packages");
+    TIDE_REQUIRE(sys_write_text(manifest, "package Kit\n"));
+    editor_document d; TIDE_REQUIRE(editor_open(&d, file, NULL));
+    TIDE_REQUIRE(editor_initialize_prefab(&d, "Root"));
+    TIDE_CHECK(d.errors == 0 && str_eq_c(d.prefabs.items[0]->qualified, "Kit.Tools.Root"));
+    document_disk_is(file, prefix); TIDE_REQUIRE(editor_undo(&d, false)); editor_close(&d);
+    TIDE_REQUIRE(sys_write_text(file, "namespace Kit {}\n"));
+    TIDE_REQUIRE(editor_open(&d, file, NULL)); TIDE_REQUIRE(!d.prefabs.count && !d.syntax_errors);
+    TIDE_CHECK(!editor_initialize_prefab(&d, "Root"));
+    TIDE_CHECK(strstr(d.message, "namespace Kit;") != NULL && !d.undo_count);
+    document_disk_is(file, "namespace Kit {}\n"); editor_close(&d);
+
+    char *dependency = path_join(root, "dependency"); TIDE_REQUIRE(sys_mkdirs(dependency));
+    char *dep_manifest = path_join(dependency, "tide.packages"), *dep_file = path_join(dependency, "Empty.tprefab");
+    TIDE_REQUIRE(sys_write_text(manifest, "./dependency\n"));
+    TIDE_REQUIRE(sys_write_text(dep_manifest, "package Props\n")); TIDE_REQUIRE(sys_write_text(dep_file, "namespace Props;\n"));
+    TIDE_REQUIRE(editor_open(&d, dep_file, root)); TIDE_REQUIRE(d.src && !d.prefabs.count && !d.syntax_errors);
+    const uint64_t revision = d.revision;
+    TIDE_CHECK(!editor_initialize_prefab(&d, "Root"));
+    TIDE_CHECK(!d.undo_count && d.revision == revision); document_disk_is(dep_file, "namespace Props;\n");
+    editor_close(&d);
+    // Removing the dependency declaration makes that same nested-project file
+    // completely outside the explicit project's analyzed source boundary.
+    TIDE_REQUIRE(sys_write_text(manifest, "")); TIDE_CHECK(!editor_open(&d, dep_file, root));
+    TIDE_CHECK(!editor_initialize_prefab(&d, "Root") && !d.undo_count);
+    document_disk_is(dep_file, "namespace Props;\n"); editor_close(&d);
+    free(dep_file); free(dep_manifest); free(dependency); free(manifest); free(root); free(file);
+}

@@ -65,6 +65,13 @@ in an existing project source folder. Opening another file saves the current
 draft first; a conflict or current-file syntax error must be resolved before
 switching. **Next** switches between declarations in one file.
 
+An existing blank file, including one containing only comments or namespace
+directives, opens a name field and **Create root**. This adds the first prefab
+to the current draft; the file stays unchanged until Save, and Undo removes the
+new root. An empty declaration such as `prefab Empty {}` already has a root and
+opens the normal hierarchy and inspector. Syntax errors must be fixed before
+creating a root; existing authored declarations are never replaced.
+
 Start with **New Scene**, add objects with **+ Entity**, arrange them in the
 viewport and save. **Save as Prefab...** turns an ordinary authored child subtree
 into a reusable asset and leaves an instance in its place. **+ Prefab** places

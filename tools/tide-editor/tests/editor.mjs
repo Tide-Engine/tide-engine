@@ -107,6 +107,37 @@ if (mode === 'ui') {
     assert.match(readFileSync(join(fresh, 'Level.tprefab'), 'utf8'), /entity Entity1 : Box\s*\{\s*\}/);
     assert.match(readFileSync(join(fresh, 'Box.tprefab'), 'utf8'), /localPosition = float3\(3, 0, 0\)/);
     assert.match(readFileSync(join(fresh, 'Startup.tide'), 'utf8'), /startScene = Level/);
+    // A zero-byte existing file offers root initialization, including Undo/Redo.
+    const emptyProject = join(work, 'empty-project'); mkdirSync(emptyProject, { recursive: true });
+    writeFileSync(join(emptyProject, 'tide.packages'), '');
+    const empty = join(emptyProject, 'Empty.tprefab'); writeFileSync(empty, '');
+    writeFileSync(script, [
+        '2 capture blank-open.png',
+        '4 mouse 150 277', '5 button left', // Explicit Create root in this file.
+        '8 capture blank-initialized.png',
+        '10 mouse 338 26', '11 button left', // Undo returns to the empty-file form.
+        '14 capture blank-undone.png',
+        '16 mouse 410 26', '17 button left', // Redo restores the root.
+        '20 mouse 266 26', '21 button left', '24 quit',
+    ].join('\n'));
+    let emptyResult = spawnSync(cli, ['open', empty, '--script', script], { encoding: 'utf8', timeout: 30000, env: { ...process.env, TIDE_HIDDEN: '1' } });
+    assert.ifError(emptyResult.error); assert.equal(emptyResult.status, 0, emptyResult.stderr + emptyResult.stdout);
+    assert.match(readFileSync(empty, 'utf8'), /prefab Empty\s*\{\s*Transform;/);
+    const blankOpen = readPng(readFileSync(join(work, 'blank-open.png')));
+    const initialized = readPng(readFileSync(join(work, 'blank-initialized.png')));
+    const blankUndone = readPng(readFileSync(join(work, 'blank-undone.png')));
+    assert.deepEqual(blankOpen.at(650, 390), blankUndone.at(650, 390), 'Undo restores empty-file view');
+    assert.notDeepEqual(blankOpen.at(20, 140), initialized.at(20, 140), 'root initialization opens the hierarchy');
+    // A valid empty body already has a root; ordinary child creation works.
+    const bare = join(emptyProject, 'Bare.tprefab'); writeFileSync(bare, 'prefab Bare {}\n');
+    writeFileSync(script, [
+        '2 mouse 60 575', '3 button left',
+        '6 mouse 720 466', '7 button left',
+        '10 mouse 266 26', '11 button left', '14 quit',
+    ].join('\n'));
+    emptyResult = spawnSync(cli, ['open', bare, '--script', script], { encoding: 'utf8', timeout: 30000, env: { ...process.env, TIDE_HIDDEN: '1' } });
+    assert.ifError(emptyResult.error); assert.equal(emptyResult.status, 0, emptyResult.stderr + emptyResult.stdout);
+    assert.match(readFileSync(bare, 'utf8'), /prefab Bare\s*\{\s*entity Object \{ Transform; \}/);
     console.log('ok: native inspector editing, save, undo/redo and two viewport sizes');
 } else {
     // Real CLI dispatch and compiler diagnostics after a source refactor.

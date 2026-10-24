@@ -1285,6 +1285,86 @@ static bool declaration_available(editor_document *d, const str name, const decl
     return true;
 }
 
+typedef struct own_document_search { const char *path; bool found; } own_document_search;
+
+static void find_own_document(void *user, const char *path)
+{
+    own_document_search *search = user;
+    if (same_path(path, search->path)) search->found = true;
+}
+
+static bool reserved_prefab_name(const str name)
+{
+    // Match declaration reservations, which include the public built-in
+    // owners except Audio, plus engine names without static members.
+    if (builtin_owner(name) && !str_eq_c(name, "Audio")) return true;
+    static const char *const names[] = {
+        "Devices", "Spawn", "Send", "Scene", "Action", "DrawList", "string",
+        "Transform", "Visibility", "VisibilityGroup"
+    };
+    for (size_t i = 0; i < sizeof names / sizeof *names; i++) if (str_eq_c(name, names[i])) return true;
+    return false;
+}
+
+bool editor_initialize_prefab(editor_document *d, const char *name)
+{
+    if (!d->prog || !d->src || !d->text || !d->saved || !d->project) {
+        snprintf(d->message, sizeof d->message, "Open a document inside this project's source boundary before creating its root."); return false;
+    }
+    if (d->prefabs.count) {
+        snprintf(d->message, sizeof d->message, "This document already has a prefab root. Select it to add objects or components."); return false;
+    }
+    if (d->syntax_errors || editor_source_syntax_errors(d, d->src)) {
+        snprintf(d->message, sizeof d->message, "Fix this document's syntax in your code editor, then Reload before creating its root."); return false;
+    }
+    if (d->recovery || d->recovery_base) {
+        snprintf(d->message, sizeof d->message, "Recover or discard the pending draft before creating a root."); return false;
+    }
+    if (d->conflict) {
+        snprintf(d->message, sizeof d->message, "Resolve the outside source conflict before creating a root. Your draft is kept."); return false;
+    }
+    own_document_search search = {.path = d->path};
+    char *folder = path_join(d->project, "");
+    folder_find_own(folder, ".tide", find_own_document, &search);
+    folder_find_own(folder, ".tprefab", find_own_document, &search);
+    free(folder);
+    if (!search.found) {
+        snprintf(d->message, sizeof d->message, "Create the root in this project's own discoverable source files, outside dependencies and nested projects."); return false;
+    }
+    size_t disk_len = 0;
+    const size_t saved_len = strlen(d->saved);
+    char *disk = sys_read_file(d->path, &disk_len);
+    const bool same = disk && disk_len == saved_len && memcmp(disk, d->saved, saved_len) == 0;
+    free(disk);
+    if (!same) {
+        d->conflict = true;
+        snprintf(d->message, sizeof d->message, "File changed outside Tide. Reload it before creating a root; your draft is kept."); return false;
+    }
+    if (!valid_name(d, name)) return false;
+    if (reserved_prefab_name(str_from(name))) {
+        snprintf(d->message, sizeof d->message, "%s is built into the language. Choose another root name.", name); return false;
+    }
+    const unit *file = NULL;
+    for (int i = 0; i < d->prog->units.count; i++) {
+        const unit *u = d->prog->units.items[i];
+        if (u->src == d->src && !u->outer) { file = u; break; }
+    }
+    if (!file) {
+        snprintf(d->message, sizeof d->message, "Reload this document before creating its root so its namespace can be checked."); return false;
+    }
+    if (d->src->package && !under(file->ns, str_from(d->src->package))) {
+        snprintf(d->message, sizeof d->message, "Start this package source with 'namespace %s;' before creating its root.", d->src->package); return false;
+    }
+    if (!declaration_available(d, child_path(file->ns, name), NULL)) return false;
+    const size_t end = strlen(d->text);
+    const size_t bom = end >= 3 && memcmp(d->text, "\xEF\xBB\xBF", 3) == 0 ? 3 : 0;
+    const char *nl = newline(d);
+    sb addition = {0};
+    if (end > bom && d->text[end - 1] != '\n') sb_put(&addition, nl);
+    sb_printf(&addition, "prefab %s {%s    Transform;%s}%s", name, nl, nl, nl);
+    return patch(d, end, end, addition.data);
+}
+
 bool editor_create(editor_document *d, const char *path, const char *project, const char *name)
 {
     memset(d, 0, sizeof *d);

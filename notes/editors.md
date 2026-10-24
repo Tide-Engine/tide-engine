@@ -1,5 +1,32 @@
 # The language server and the editors
 
+## Opening blank authored files (2026-10-24)
+
+A zero-byte or comment/directive-only .tprefab previously opened with no root,
+disabled hierarchy controls and a blocked Save. The native editor now presents
+a named Create root action instead. editor_initialize_prefab appends a normal
+root with Transform through the existing source-preserving draft transaction;
+it changes no disk bytes until Save and supports one-step undo, redo and recovery.
+Existing comments, BOM, line endings and namespace/using directives are retained.
+Existing empty-body prefab declarations remain ordinary editable roots, with no
+automatic component additions. Save/Play/startup controls stay disabled until a
+root exists. The blank-document UI explains root creation instead of suggesting
+a handwritten Main when the metadata check has only a missing-entry diagnostic.
+
+Initialization rejects existing authored declarations, own syntax errors,
+invalid/conflicting names, pending recovery and changed/out-of-project sources.
+Other project errors remain visible and can be corrected alongside authoring.
+No compiler, runtime or file format changed.
+
+Validation: the warning-free native editor/tool build and all seven editor
+CTests pass, including 54 document/startup/geometry cases. Seven new document
+test groups cover exact blank/comment/BOM/CRLF prefixes, namespace collision
+scope, recovery, existing empty-body roots, syntax/conflicts, project errors
+and own-package boundaries. The actual native UI test opens a zero-byte file,
+creates its root, undoes/redoes it, saves and reopens; a separate empty-body
+prefab remains editable and gains a child normally. The production docs build
+passes. Engine/web suites are unchanged and outside this tools/docs-only fix.
+
 ## Scene authoring, extraction and direct Play (2026-10-24)
 
 The approved workflow keeps the rooted .tprefab format: New Scene/New Prefab,
