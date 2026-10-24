@@ -73,7 +73,20 @@ and scene/compiler changes was clean in code; both new notes sections were
 retained when resolving their prepend conflicts. Both full builds pass again,
 as do the overlapping 283 native and 275 web checks (all compiler end-to-end,
 prefab/startup, engine, dedicated server/room, Earth and its benchmark pins).
-Deployment evidence follows once the merged build is published.
+The merged staged toolchain also passes all 58 companion hosting tests again.
+
+Published merged source `2848e7ce` to the existing Earth project as release
+`0909a3821941f523d8a6780e213bb0acf310a1333cc003ba0d183a4c7cb0424a`.
+The downloaded production client's embedded payload matches the bundle.
+Two muted Chrome clients, WebGL and WebGPU, each walk for 75 seconds through
+the live relay, retain room 966ANR and show two online players on one shard,
+with no renderer errors. After both close and more than the empty-world
+minute elapses, a fresh client joins, walks and shows one online player on
+one shard. Production remains one shard; the real multi-host/border/outage
+coverage above is isolated service/test coverage, not a provisioned live fleet.
+No service code, fleet size or hosting limits change in this audit. A local
+DNS outage required command-scoped resolver overrides for publishing and
+browser checks; no persistent computer/network settings were changed.
 
 The language-level design, agreed with the owner on 2026-10-22, is `docs/spec.md`, Shards: what's Decided there is the owner's, what's Provisional the agent's picks. This file is how it's built, what code relies on, the tests and what's left.
 

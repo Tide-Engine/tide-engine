@@ -17,6 +17,15 @@ and exactly-once logical membership across recovery (`notes/sharding.md`,
 Border and recovery audit). The demo's counter is not clamped or replaced
 to conceal that lifecycle error.
 
+Published merged engine/game source `2848e7ce` to the existing hosting project
+as release `0909a3821941f523d8a6780e213bb0acf310a1333cc003ba0d183a4c7cb0424a`.
+The production client payload matches its bundle. Two live clients pass 75
+seconds of walking on WebGL/WebGPU without leaving the shared room or renderer
+errors, showing two online players on one shard. After both leave and the
+idle minute passes, a fresh client walks with one online player on one shard.
+Full validation and the distinction between this one-shard production world
+and isolated multi-host border tests are in `notes/sharding.md`.
+
 ## Earth distance transitions, foundations and braking (2026-10-24)
 
 Country trees now extend to 400 m, beyond the ordinary ground camera's
