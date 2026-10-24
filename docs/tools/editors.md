@@ -57,13 +57,27 @@ tide open scenes/Level.tprefab --project .
 
 With a project folder, or no argument for the current folder, the app opens a
 workspace with **New Scene**, **New Prefab** and **Open file**. With a document
-open, **New** / **Ctrl+N** creates another scene. Use these controls to create a
-named rooted `.tprefab`, and **Open** / **Ctrl+O** to switch to another authored
-file. Scenes and prefabs use the same format; a scene
-is a prefab loaded as a scene. New files need an unused name and a new filename
-in an existing project source folder. Opening another file saves the current
+open, use **File > New Scene...** or **File > New Prefab...** to create a named
+rooted `.tprefab`, and **File > Open...** / **Ctrl+O** to switch to another authored
+file. The toolbar's **New** / **Ctrl+N** creates another scene. Scenes and prefabs
+use the same format; a scene is a prefab loaded as a scene. New files need an
+unused name and a new filename in an existing project source folder. Opening another file saves the current
 draft first; a conflict or current-file syntax error must be resolved before
 switching. **Next** switches between declarations in one file.
+
+The dark workspace has a compact toolbar with **Q**, **W**, **E**, **R** tools and
+a centered **Play** / **Stop** control. The searchable **Hierarchy** is on the
+left, **Scene**, **Source** and **Models** tabs are in the center, and the
+**Inspector** fills the right side. **Project** and **Console** tabs sit below
+the hierarchy and scene area.
+
+With an authored file open, **Project** lists the current project's checked
+prefab declarations and static mesh assets, including collection items. Filter
+with **All Assets**, **Prefabs**, **Models** and the search field. Click a prefab
+to open that exact declaration, including when several share a source file;
+click a mesh to preview it in **Models**. **Console** shows compiler diagnostics.
+A failed view-preview build opens Console and keeps a visible status message;
+scroll the Console to read longer build logs.
 
 An existing blank file, including one containing only comments or namespace
 directives, opens a name field and **Create root**. This adds the first prefab
@@ -73,18 +87,22 @@ contents. An empty declaration such as `prefab Empty {}` already has a root and
 opens the normal hierarchy and inspector. Syntax errors must be fixed before
 creating a root; existing authored declarations are never replaced.
 
-Start with **New Scene**, add objects with **+ Entity**, arrange them in the
-viewport and save. **Save as Prefab...** turns an ordinary authored child subtree
-into a reusable asset and leaves an instance in its place. **+ Prefab** places
-more instances beneath the selection. **Play** builds the selected tree directly,
+Start with **New Scene**, add objects with **+ Create > Empty Object** in the
+hierarchy, arrange them in the viewport and save. **Actions ... > Save as Prefab...**
+turns an ordinary authored child subtree into a reusable asset and leaves an
+instance in its place. **+ Create > Prefab Instance...** places more instances
+beneath the selection. **Play** builds the selected tree directly,
 so this workflow needs no handwritten `Main`.
 
 The hierarchy shows the complete composition, including descendants inherited
 from nested prefabs. Select an entity in the hierarchy, click its viewport
 marker, or click a static mesh surface. Overlapping meshes select the nearest
-authored triangle. Fold arrows collapse branches. The inspector shows components
-and effective field values, including defaults. Edit booleans, integers, floats
-strings and vector axes directly; quaternion controls show Euler angles in degrees.
+authored triangle. Compact hierarchy rows have fold arrows to collapse branches;
+search finds entities by their composed paths. The inspector groups components
+under gray foldout headers and shows effective field values, including defaults.
+Edit booleans, integers, floats, strings and vector axes directly. Transform's
+**Position**, **Rotation** and **Scale** edit its local values with **X**, **Y**,
+**Z** fields; quaternion controls show Euler angles in degrees.
 Entity and enum fields open searchable choices, and model fields open the asset
 browser. **=** opens an inline Tide expression; press Enter or **Apply** to apply
 it. **Ctrl+A** selects the whole expression while typing. Values can name
@@ -96,15 +114,19 @@ can be overridden as `Crates.Left.Lid`. When editing a more complex inherited
 expression, write its names in the current prefab's namespace and entity-path
 scope; compiler diagnostics check the resulting value.
 
-**+ Add component** lists this project's shared component definitions.
-**+ Entity** asks for a child's name, and **+ Prefab** nests an existing
-prefab there. **Delete** removes an authored child and its
-descendants. **Remove** deletes an authored component entry or override; it
+**Add Component** lists this project's shared component definitions.
+**+ Create > Empty Object** asks for a child's name, and
+**+ Create > Prefab Instance...** nests an existing prefab there. The hierarchy's
+**Actions ...** menu offers **Rename**, **Duplicate...**, **Save as Prefab...**,
+**Delete** and **Open Source Prefab**; these actions are also in **GameObject**.
+**Delete** removes an authored child and its descendants. **Remove** deletes an
+authored component entry or override; it
 cannot remove a component inherited from the base prefab. Inherited descendants
-allow field-value overrides, marked with `*`; their components and children
-cannot be added, removed or replaced. A nested instance's root still accepts
-authored component and child additions. **Open source prefab** opens the base
-definition when you need to change its structure. **Source** shows the text draft.
+allow field-value overrides, marked in blue and with `*`; their components and
+children cannot be added, removed or replaced. A nested instance's root still
+accepts authored component and child additions. **Open Source Prefab** opens the
+base definition when you need to change its structure. **Source** shows a
+read-only view of the text draft.
 
 **Rename** / **F2** and **Duplicate** act on authored children. Drag an authored child
 onto another hierarchy row to change its parent. These operations check and
@@ -141,18 +163,19 @@ selection. Play itself does not change startup. See
 
 The viewport draws referenced static models, unit wire cubes and axes, with parenting,
 local position, rotation and scale. Use the wheel to zoom, middle drag to pan,
-and **XY**/**Isometric** to change projection. Literal TRS, constants and basic
+and **2D / XY**/**Iso** to change projection. Literal TRS, constants and basic
 float arithmetic are previewed, including `quaternion.Euler(float3(...))`.
 Unsupported expressions and their subtrees are explicitly omitted from the
 preview. With **Views: off**, static models draw both sides with imported colors and editor lighting
 without executing game code.
 
-**Select / Move / Rotate / Scale** (Q / W / E / R, outside text fields) change
-the viewport tool. Move axes edit `localPosition` in the parent's coordinates;
-the center handle moves in the editor's world XY plane. Rotation rings and scale
+The toolbar's **Q / W / E / R** buttons choose **Select / Move / Rotate / Scale**;
+the same keys work outside text fields. Move axes edit `localPosition` in the
+parent's coordinates; the center handle moves in the editor's world XY plane.
+Rotation rings and scale
 handles use the entity's local axes; the scale center changes all axes together.
 Hold Shift to snap movement to 0.5 units, rotation to 15 degrees, or scale factors
-to 0.1 steps. Edge-on axes/rings are hidden; use Isometric to reach another axis.
+to 0.1 steps. Edge-on axes/rings are hidden; use **Iso** to reach another axis.
 The selected entity needs an editable `Transform` with constant previewable TRS.
 Inherited children receive per-instance Transform field overrides too.
 A drag writes only its changed field on release and makes one undo entry.
@@ -216,9 +239,10 @@ asset-reference component beneath the selection. Use Rename to change its
 generated name. Skinned-model previews and
 assigning collection items as persistent references are later work.
 
-**Save** / **Ctrl+S** updates the text file. **Undo** / **Ctrl+Z** and **Redo** /
-**Ctrl+Y** keep up to 64 edits. Source edits preserve surrounding comments,
-line endings and untouched values. Syntax-invalid edits are rejected so the
+**File > Save** / **Ctrl+S** updates the text file. **Edit > Undo** / **Ctrl+Z**
+and **Edit > Redo** / **Ctrl+Y** keep up to 64 edits; Save, Undo and Redo are also
+on the toolbar. Source edits preserve surrounding comments, line endings and
+untouched values. Syntax-invalid edits are rejected so the
 inspector remains editable. Semantic errors, including type/reference errors
 and errors in other project files, remain visible and may be saved. Syntax errors
 in the current document and outside conflicts block Save. Play requires a clean
@@ -229,7 +253,7 @@ validation; normal game builds still validate generated C and complete assets.
 
 Outside changes reload automatically while the document is clean. With unsaved
 edits, the draft stays in memory and Save refuses to overwrite changed source.
-**Reload** asks before discarding unsaved edits and reading the file again.
+**File > Reload** asks before discarding unsaved edits and reading the file again.
 Unsaved applied edits are also kept in
 `<project>/.tide/editor/`; opening the file again offers recovery. Recovery retains
 the original source baseline, so a newer outside edit still causes a conflict.

@@ -47,12 +47,12 @@ prefab Level {
 // Fixed 1440x900 layout, InspectorData before Transform. Deliberately switch
 // backward in draw order: earlier controls must not steal a later field's draft.
 const point = {
-    a: [120, 175],
+    a: [120, 169],
     viewportB: [794, 391], // Origin (650,391), 48 pixels/unit; B is at x=3.
-    count: [1260, 214], first: [1260, 248], second: [1260, 282], amount: [1260, 316],
-    countExpression: [1368, 214], expression: [1220, 248], applyExpression: [1102, 278],
-    directionX: [1105, 376], directionZ: [1300, 376],
-    save: [266, 26], undo: [338, 26], redo: [410, 26],
+    count: [1264, 195], first: [1264, 221], second: [1264, 247], amount: [1264, 273],
+    countExpression: [1382, 195], expression: [1220, 222], applyExpression: [1100, 251],
+    directionX: [1200, 299], directionZ: [1342, 299],
+    save: [266, 38], undo: [338, 38], redo: [410, 38],
 };
 
 function script() {
@@ -105,7 +105,7 @@ function regression(name, edit, expected, selected = 'a') {
 
             const png = readPng(readFileSync(join(project, 'final.png')));
             assert.equal(png.width, 1440); assert.equal(png.height, 900);
-            const selectedY = selected === 'a' ? 175 : 205, otherY = selected === 'a' ? 205 : 175;
+            const selectedY = selected === 'a' ? 169 : 191, otherY = selected === 'a' ? 191 : 169;
             assert.ok(png.at(235, selectedY)[1] > png.at(235, otherY)[1] + 20,
                 `${name}: ${selected.toUpperCase()} must actually be selected (including viewport picking)`);
             assert.equal(readFileSync(prefab, 'utf8'), expected,

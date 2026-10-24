@@ -217,6 +217,21 @@ static bool inspector_float(editor *e, decl *component, field *f, uint32_t id, t
     return changed;
 }
 
+static bool inspector_axis(editor *e, decl *component, field *f, uint32_t id, tide_rect r,
+                           float *values, int count, int part, inspector_kind kind)
+{
+    static const tide_color colors[4] = {{.95f,.4f,.4f,1},{.48f,.78f,.4f,1},{.42f,.65f,.95f,1},{.75f,.75f,.75f,1}};
+    static const char *axes[4] = {"X","Y","Z","W"};
+    const float width = (r.width - (float)(count - 1) * 4) / (float)count;
+    const float x = r.x + (float)part * (width + 4);
+    tide_draw_text(&e->gui.list,axes[part],tide_f2(x+1,r.y+4),12,colors[part]);
+    const tide_rect box = {x+14,r.y,width-14,r.height};
+    const uint32_t clip = tide_draw_push_clip(&e->gui.list,(tide_rect){box.x-2,box.y-2,box.width+4,box.height+4});
+    const bool changed = inspector_float(e,component,f,tide_gui_seed(id,(uint32_t)part+1),box,values,count,part,kind);
+    tide_draw_pop(&e->gui.list,clip);
+    return changed;
+}
+
 static bool value_controls(editor *e, decl *component, field *f, expr *v, uint32_t id, tide_rect r)
 {
     char text[256];
@@ -265,10 +280,8 @@ static bool value_controls(editor *e, decl *component, field *f, expr *v, uint32
         float values[4] = {0};
         if (v && !vector(v, values, count, 0)) return false;
         bool changed = false;
-        const float width = (r.width - (float)(count - 1) * 6) / (float)count;
         for (int i = 0; i < count; i++) {
-            const tide_rect box = {r.x + (float)i * (width + 6), r.y, width, r.height};
-            if (inspector_float(e,component,f,tide_gui_seed(id,(uint32_t)i+1),box,values,count,i,INSPECTOR_VECTOR)) changed = true;
+            if (inspector_axis(e,component,f,id,r,values,count,i,INSPECTOR_VECTOR)) changed = true;
         }
         if (changed) {
             sb b = {0}; sb_printf(&b, "float%d(", count);
@@ -287,9 +300,9 @@ static bool value_controls(editor *e, decl *component, field *f, expr *v, uint32
         float angles[3] = {asinf(tide_clamp_f(-z.y,-1,1)), atan2f(z.x,z.z), atan2f(x.y,y.y)};
         if (fabsf(z.y) > .99999f) { angles[1] = atan2f(-x.z,x.x); angles[2] = 0; }
         for (int i = 0; i < 3; i++) angles[i] *= 57.2957795131f;
-        bool changed = false; const float width = (r.width - 12) / 3;
+        bool changed = false;
         for (int i = 0; i < 3; i++) {
-            if (inspector_float(e,component,f,tide_gui_seed(id,(uint32_t)i+1),(tide_rect){r.x+(float)i*(width+6),r.y,width,r.height},angles,3,i,INSPECTOR_EULER)) changed = true;
+            if (inspector_axis(e,component,f,id,r,angles,3,i,INSPECTOR_EULER)) changed = true;
         }
         if (changed) {
             snprintf(text, sizeof text, "quaternion.Euler(float3(%.9gdeg, %.9gdeg, %.9gdeg))", (double)angles[0],(double)angles[1],(double)angles[2]);
@@ -300,42 +313,138 @@ static bool value_controls(editor *e, decl *component, field *f, expr *v, uint32
     return false;
 }
 
+// These names are presentation only; source names still identify every edit.
+static const char *inspector_name(str name)
+{
+    sb text = {0};
+    for (int i = 0; i < name.len; i++) {
+        char c = name.ptr[i];
+        if (c == '_') { if (text.len && text.data[text.len-1] != ' ') sb_put(&text," "); continue; }
+        const bool upper = c >= 'A' && c <= 'Z';
+        const bool previous_lower = i && ((name.ptr[i-1] >= 'a' && name.ptr[i-1] <= 'z') || (name.ptr[i-1] >= '0' && name.ptr[i-1] <= '9'));
+        const bool next_lower = i+1 < name.len && name.ptr[i+1] >= 'a' && name.ptr[i+1] <= 'z';
+        if (upper && text.len && text.data[text.len-1] != ' ' && (previous_lower || next_lower)) sb_put(&text," ");
+        if (!text.len && c >= 'a' && c <= 'z') c = (char)(c - 'a' + 'A');
+        sb_putn(&text,&c,1);
+    }
+    return text.data ? text.data : "";
+}
+
+static uint64_t inspector_component_key(str name)
+{
+    uint64_t key = UINT64_C(14695981039346656037);
+    for (int i = 0; i < name.len; i++) key = (key ^ (unsigned char)name.ptr[i]) * UINT64_C(1099511628211);
+    return key;
+}
+
+static bool inspector_component_header(editor *e, decl *type, int component, tide_rect r)
+{
+    const uint64_t key = inspector_component_key(type->qualified);
+    int folded = -1;
+    for (int i = 0; i < e->inspector_folded_count; i++) if (e->inspector_folded[i] == key) { folded = i; break; }
+    const bool removable = editor_can_structure(&e->doc,e->selected);
+    const tide_rect hit = {r.x,r.y,r.width-(removable ? 70 : 0),r.height};
+    const tide_control control = tide_gui_control(&e->gui,tide_gui_seed(0x494e5350u,(uint32_t)component+1),hit);
+    if (control.clicked) {
+        inspector_finish(e);
+        if (folded >= 0) {
+            e->inspector_folded[folded] = e->inspector_folded[--e->inspector_folded_count];
+            folded = -1;
+        } else {
+            const int capacity = (int)(sizeof e->inspector_folded / sizeof e->inspector_folded[0]);
+            if (e->inspector_folded_count == capacity) e->inspector_folded_count--;
+            folded = e->inspector_folded_count;
+            e->inspector_folded[e->inspector_folded_count++] = key;
+        }
+    }
+    panel(e,r,control.hovered ? rgb(.3f,.3f,.3f) : rgb(.26f,.26f,.26f));
+    panel(e,(tide_rect){r.x,r.y,r.width,1},rgb(.32f,.32f,.32f));
+    if (control.focused) panel(e,(tide_rect){r.x,r.y,2,r.height},rgb(.24f,.48f,.72f));
+    const float x = r.x+11, y = r.y+13;
+    if (folded >= 0) {
+        tide_draw_line(&e->draw,tide_f2(x-2,y-4),tide_f2(x+2,y),ink);
+        tide_draw_line(&e->draw,tide_f2(x+2,y),tide_f2(x-2,y+4),ink);
+    } else {
+        tide_draw_line(&e->draw,tide_f2(x-4,y-2),tide_f2(x,y+2),ink);
+        tide_draw_line(&e->draw,tide_f2(x,y+2),tide_f2(x+4,y-2),ink);
+    }
+    const uint32_t clip = tide_draw_push_clip(&e->draw,(tide_rect){r.x+26,r.y,hit.width-30,r.height});
+    label(e,r.x+26,r.y+6,inspector_name(type->name),ink);
+    tide_draw_pop(&e->draw,clip);
+    if (removable && button(e,3000u+(uint32_t)component,(tide_rect){r.x+r.width-66,r.y+2,62,22},"Remove")) queue_name(e,REMOVE,type->qualified);
+    return folded >= 0;
+}
+
 static void inspector(editor *e, tide_rect r)
 {
-    label(e, r.x+14, r.y+12, "INSPECTOR", dim);
-    if (e->selected < 0 || e->selected >= e->doc.nodes.count) return;
+    panel(e,(tide_rect){r.x,r.y,r.width,26},rgb(.18f,.18f,.18f));
+    panel(e,(tide_rect){r.x+1,r.y+1,103,25},rgb(.22f,.22f,.22f));
+    panel(e,(tide_rect){r.x+1,r.y,103,2},rgb(.24f,.48f,.72f));
+    label(e,r.x+12,r.y+6,"Inspector",ink);
+    if (e->selected < 0 || e->selected >= e->doc.nodes.count) {
+        label(e,r.x+14,r.y+48,"Select an object to inspect its properties.",dim);
+        return;
+    }
     const editor_node *n = &e->doc.nodes.items[e->selected];
-    label(e, r.x+14, r.y+44, n->path.len ? str_to_cstr(n->path) : "Root entity", ink);
     const bool inherited = editor_node_inherited(&e->doc,e->selected);
-    label(e, r.x+14, r.y+70, inherited ? "Prefab child: values override this instance." : "Edit values directly. * marks an override.", dim);
-    const tide_rect content = {r.x+14,r.y+106,r.width-28,r.height-170};
-    if (contains(content,e->gui.mouse)) e->inspector_scroll -= scroll_rows(e->devices.mouse.poll_scroll.y, 3);
+    const bool instance = n->authored && n->authored->base_decl;
+    const float icon_x = r.x+27, icon_y = r.y+52;
+    const tide_color icon = inherited || instance ? rgb(.42f,.65f,.88f) : rgb(.7f,.7f,.7f);
+    tide_draw_line(&e->draw,tide_f2(icon_x,icon_y-10),tide_f2(icon_x+11,icon_y-4),icon);
+    tide_draw_line(&e->draw,tide_f2(icon_x+11,icon_y-4),tide_f2(icon_x,icon_y+2),icon);
+    tide_draw_line(&e->draw,tide_f2(icon_x,icon_y+2),tide_f2(icon_x-11,icon_y-4),icon);
+    tide_draw_line(&e->draw,tide_f2(icon_x-11,icon_y-4),tide_f2(icon_x,icon_y-10),icon);
+    tide_draw_line(&e->draw,tide_f2(icon_x-11,icon_y-4),tide_f2(icon_x-11,icon_y+8),icon);
+    tide_draw_line(&e->draw,tide_f2(icon_x-11,icon_y+8),tide_f2(icon_x,icon_y+14),icon);
+    tide_draw_line(&e->draw,tide_f2(icon_x,icon_y+14),tide_f2(icon_x+11,icon_y+8),icon);
+    tide_draw_line(&e->draw,tide_f2(icon_x+11,icon_y+8),tide_f2(icon_x+11,icon_y-4),icon);
+    tide_draw_line(&e->draw,tide_f2(icon_x,icon_y+2),tide_f2(icon_x,icon_y+14),icon);
+    const uint32_t object_clip = tide_draw_push_clip(&e->draw,(tide_rect){r.x+50,r.y+32,r.width-62,48});
+    const char *name = n->path.len ? node_name(n) : str_to_cstr(e->doc.prefabs.items[e->doc.active]->name);
+    tide_draw_text(&e->draw,name,tide_f2(r.x+52,r.y+36),16,ink);
+    label(e,r.x+52,r.y+60,inherited ? "Prefab child  -  * marks an override" : instance ? "Prefab instance  -  * marks an override" : "Entity  -  * marks an override",dim);
+    tide_draw_pop(&e->draw,object_clip);
+    panel(e,(tide_rect){r.x,r.y+88,r.width,1},rgb(.14f,.14f,.14f));
+    const tide_rect content = {r.x+6,r.y+94,r.width-12,r.height-140};
+    if (!e->menu && contains(content,e->gui.mouse)) e->inspector_scroll -= scroll_rows(e->devices.mouse.poll_scroll.y, 3);
     if (e->inspector_scroll < 0) e->inspector_scroll = 0;
     float cursor = 0;
     tide_draw_set_clip(&e->draw,content); tide_draw_set_clip(&e->gui.list,content);
     if (n->effective) for (int c = 0; c < n->effective->args.count; c++) {
         expr *comp = n->effective->args.items[c]; decl *type = comp->type_decl;
         if (!type || type->is_scene) continue;
-        float y = content.y + cursor - (float)e->inspector_scroll*30; cursor += 38;
-        if (y+28 >= content.y && y < content.y+content.height) {
-            label(e,content.x,y+3,str_to_cstr(type->qualified),rgb(.3f,.83f,.93f));
-            if (editor_can_structure(&e->doc,e->selected) && button(e,3000u+(uint32_t)c,(tide_rect){content.x+content.width-64,y,64,24},"Remove")) queue_name(e,REMOVE,type->qualified);
+        float y = content.y + cursor - (float)e->inspector_scroll*26; cursor += 32;
+        bool folded = false;
+        if (y >= content.y && y+26 <= content.y+content.height) folded = inspector_component_header(e,type,c,(tide_rect){content.x,y,content.width,26});
+        else {
+            const uint64_t key = inspector_component_key(type->qualified);
+            for (int i = 0; i < e->inspector_folded_count; i++) if (e->inspector_folded[i] == key) { folded = true; break; }
         }
+        if (folded) continue;
         for (int f = 0; f < type->fields.count; f++) {
             field *item = &type->fields.items[f]; if (item->hidden || item->is_local) continue;
-            const bool parts = item->type.kind == TY_FLOAT2 || item->type.kind == TY_FLOAT3 || item->type.kind == TY_FLOAT4 || item->type.kind == TY_QUATERNION;
-            y = content.y+cursor-(float)e->inspector_scroll*30;
-            const float height = parts ? 60 : 34;
+            y = content.y+cursor-(float)e->inspector_scroll*26;
+            const float height = 26;
             cursor += height;
             const bool expanded = e->component && str_eq_c(type->qualified,e->component) && str_eq_c(item->name,e->field) && e->value_selected;
-            if (expanded) cursor += 64;
+            if (expanded) cursor += 60;
             if (y < content.y || y+height > content.y+content.height) continue;
             const uint32_t id = tide_gui_seed(100000u+(uint32_t)c*4096u+(uint32_t)f*8u,(uint32_t)e->selected+1);
             const bool overridden = editor_field_overridden(&e->doc,e->selected,type->qualified,item->name);
-            sb title = {0}; sb_printf(&title, STR_FMT "%s%s",STR_ARG(item->name), item->type.kind == TY_QUATERNION ? " (degrees)" : "",overridden ? " *" : "");
-            label(e,content.x,y+5,title.data,overridden ? ink : dim);
-            const tide_rect value = parts ? (tide_rect){content.x,y+26,content.width-76,28} : (tide_rect){content.x+118,y,content.width-194,28};
+            const char *field_name = inspector_name(item->name);
+            if (type == e->doc.prog->transform) {
+                if (str_eq_c(item->name,"localPosition")) field_name = "Position";
+                else if (str_eq_c(item->name,"localRotation")) field_name = "Rotation";
+                else if (str_eq_c(item->name,"localScale")) field_name = "Scale";
+            }
+            sb title = {0}; sb_printf(&title,"%s%s",field_name,overridden ? " *" : "");
+            if (overridden) panel(e,(tide_rect){content.x,y+3,2,20},rgb(.24f,.48f,.72f));
+            const uint32_t title_clip = tide_draw_push_clip(&e->draw,(tide_rect){content.x+10,y,90,height});
+            label(e,content.x+10,y+6,title.data,overridden ? rgb(.54f,.73f,.94f) : ink);
+            tide_draw_pop(&e->draw,title_clip);
+            const tide_rect value = {content.x+104,y+2,content.width-170,22};
             const int disabled = tide_gui_begin_disabled(&e->gui,!editor_can_edit_fields(&e->doc,e->selected));
+            const uint32_t value_clip = tide_draw_push_clip(&e->gui.list,(tide_rect){value.x-2,value.y-2,value.width+4,value.height+4});
             if (!value_controls(e,type,item,editor_value(comp,item),id,value)) {
                 if (button(e,id,value,field_text(e,comp,item))) {
                     select_field(e,type,item,field_text(e,comp,item));
@@ -347,43 +456,59 @@ static void inspector(editor *e, tide_rect r)
                     else e->value_selected = true;
                 }
             }
-            if (button(e,id+1,(tide_rect){content.x+content.width-70,y,24,26},"=")) {
+            tide_draw_pop(&e->gui.list,value_clip);
+            if (button(e,id+1,(tide_rect){content.x+content.width-62,y+2,20,22},"=")) {
                 select_field(e,type,item,field_text(e,comp,item)); e->value_selected = true;
             }
-            if (overridden && button(e,id+2,(tide_rect){content.x+content.width-42,y,42,26},"Reset")) { select_field(e,type,item,field_text(e,comp,item)); queue(e,RESET); }
+            if (overridden && button(e,id+2,(tide_rect){content.x+content.width-38,y+2,38,22},"Reset")) { select_field(e,type,item,field_text(e,comp,item)); queue(e,RESET); }
             if (expanded) {
                 bool entered = false;
                 if(strlen(e->value)<sizeof e->gui.edit) {
                     const bool was_typing=e->edit && e->edit->id==id+3;
                     char *initial=own(e->value);
-                    const tide_rect expression_box={content.x,y+height,content.width,28};
-                    text_field(e,id+3,expression_box,"",&e->value,&entered);
-                    inspector_track(e,type,item,id+3,expression_box,INSPECTOR_EXPRESSION,initial,NULL,0,0,0);
+                    const tide_rect expression_box={content.x+10,y+height+2,content.width-20,24};
+                    if (expression_box.y+expression_box.height <= content.y+content.height) {
+                        const uint32_t expression_clip=tide_draw_push_clip(&e->gui.list,(tide_rect){expression_box.x-2,expression_box.y-2,expression_box.width+4,expression_box.height+4});
+                        text_field(e,id+3,expression_box,"",&e->value,&entered);
+                        tide_draw_pop(&e->gui.list,expression_clip);
+                        inspector_track(e,type,item,id+3,expression_box,INSPECTOR_EXPRESSION,initial,NULL,0,0,0);
+                    }
                     free(initial);
                     if (was_typing) {
                         replace(&e->edit->draft,e->value);
                         if (entered || e->gui.editing!=id+3) inspector_finish(e);
                     }
-                    if (button(e,id+4,(tide_rect){content.x,y+height+32,76,24},"Apply")) field_changed(e,type,item,e->value);
-                } else label(e,content.x,y+height+5,"Long expression: open it in your code editor.",dim);
-                if (button(e,id+5,(tide_rect){content.x+84,y+height+32,76,24},"Close")) e->value_selected = false;
+                    if (y+height+54 <= content.y+content.height && button(e,id+4,(tide_rect){content.x+10,y+height+32,68,22},"Apply")) field_changed(e,type,item,e->value);
+                } else label(e,content.x+10,y+height+5,"Long expression: open it in your code editor.",dim);
+                if (y+height+54 <= content.y+content.height && button(e,id+5,(tide_rect){content.x+84,y+height+32,68,22},"Close")) e->value_selected = false;
             }
             tide_gui_close(&e->gui,disabled);
         }
-        cursor += 12;
+        cursor += 8;
     }
     if (n->authored) for (int c = 0; c < n->authored->components.count; c++) {
         expr *raw = n->authored->components.items[c]; if (raw->type_decl) continue;
-        const float y = content.y + cursor - (float)e->inspector_scroll * 30; cursor += 34;
-        if (y < content.y || y + 28 > content.y + content.height) continue;
+        const float y = content.y + cursor - (float)e->inspector_scroll * 26; cursor += 32;
+        if (y < content.y || y + 26 > content.y + content.height) continue;
+        panel(e,(tide_rect){content.x,y,content.width,26},rgb(.26f,.26f,.26f));
         sb title = {0}; sb_printf(&title, STR_FMT " (unresolved)", STR_ARG(raw->name));
-        label(e, content.x, y + 3, title.data, rgb(.98f,.53f,.4f));
-        if (editor_can_structure(&e->doc,e->selected) && button(e,200000u+(uint32_t)c,(tide_rect){content.x+content.width-64,y,64,24},"Remove")) queue_name(e,REMOVE,raw->name);
+        const uint32_t clip=tide_draw_push_clip(&e->draw,(tide_rect){content.x+10,y,content.width-84,26});
+        label(e,content.x+10,y+6,title.data,rgb(.98f,.63f,.42f));
+        tide_draw_pop(&e->draw,clip);
+        if (editor_can_structure(&e->doc,e->selected) && button(e,200000u+(uint32_t)c,(tide_rect){content.x+content.width-66,y+2,62,22},"Remove")) queue_name(e,REMOVE,raw->name);
     }
     tide_draw_unset_clip(&e->draw); tide_draw_unset_clip(&e->gui.list);
-    const int maximum = cursor > content.height ? (int)ceilf((cursor-content.height)/30) : 0;
+    const int maximum = cursor > content.height ? (int)ceilf((cursor-content.height)/26) : 0;
     if (e->inspector_scroll > maximum) e->inspector_scroll = maximum;
+    if (maximum) {
+        const float track = content.height;
+        const float thumb = track * content.height / cursor;
+        panel(e,(tide_rect){r.x+r.width-4,content.y,2,track},rgb(.18f,.18f,.18f));
+        panel(e,(tide_rect){r.x+r.width-4,content.y+(track-thumb)*(float)e->inspector_scroll/(float)maximum,2,thumb},rgb(.43f,.43f,.43f));
+    }
+    panel(e,(tide_rect){r.x,r.y+r.height-44,r.width,44},rgb(.2f,.2f,.2f));
+    panel(e,(tide_rect){r.x,r.y+r.height-44,r.width,1},rgb(.14f,.14f,.14f));
     const int disabled = tide_gui_begin_disabled(&e->gui,!editor_can_structure(&e->doc,e->selected));
-    if (button(e,93,(tide_rect){r.x+14,r.y+r.height-48,r.width-28,30},"+ Add component")) { e->picker = true; e->nested_picker = false; e->argument = 0; replace(&e->search,""); }
+    if (button(e,93,(tide_rect){r.x+85,r.y+r.height-36,r.width-170,26},"Add Component")) { e->picker = true; e->nested_picker = false; e->argument = 0; replace(&e->search,""); }
     tide_gui_close(&e->gui,disabled);
 }

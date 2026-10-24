@@ -15,7 +15,7 @@ static float segment_distance(tide_float2 p, tide_float2 a, tide_float2 b)
 static bool gizmo(editor *e, tide_rect r, const tide_float4x4 *matrices, const bool *valid)
 {
     if (e->drag.active && (e->drag.node != e->selected || e->drag.revision != e->doc.revision || e->pending != NONE ||
-        e->devices.keyboard.escape.down || e->picker || e->discard || e->recovery || e->dialog_open || e->value_picker)) {
+        e->devices.keyboard.escape.down || e->menu || e->picker || e->discard || e->recovery || e->dialog_open || e->value_picker)) {
         e->drag.active = false; return true;
     }
     if (!e->tool || e->selected < 0 || e->selected >= e->doc.nodes.count || !valid[e->selected]) return false;
@@ -26,7 +26,7 @@ static bool gizmo(editor *e, tide_rect r, const tide_float4x4 *matrices, const b
     const tide_float3 world = tide_transform_f4x4(matrices[e->selected],tide_f3(0,0,0));
     const tide_float2 center = project(e,r,world);
     const editor_camera camera = {tide_f2(0,0),e->zoom,e->xy};
-    const tide_rect content = {r.x,r.y+112,r.width,r.height-154};
+    const tide_rect content = {r.x,r.y+56,r.width,r.height-80};
     static const tide_float3 axes[] = {{1,0,0},{0,1,0},{0,0,1}};
     static const tide_color colors[] = {{.95f,.35f,.35f,1},{.4f,.87f,.4f,1},{.4f,.6f,.95f,1}};
     int hot = -1; float nearest = 9;
@@ -71,7 +71,7 @@ static bool gizmo(editor *e, tide_rect r, const tide_float4x4 *matrices, const b
         tide_draw_rect(&e->draw,center,tide_f2(10,10),rgb(.95f,.95f,.75f));
         if (tide_length_f2(tide_sub_f2(e->gui.mouse,center)) < 10) hot = 3;
     }
-    if (!contains(content,e->gui.mouse) || e->picker || e->discard || e->recovery || e->dialog_open || e->value_picker) hot = -1;
+    if (!contains(content,e->gui.mouse) || e->menu || e->picker || e->discard || e->recovery || e->dialog_open || e->value_picker) hot = -1;
     if (hot >= 0 && e->gui.mouse_pressed && !e->drag.active && e->pending == NONE) {
         e->drag.active = true; e->drag.node = e->selected; e->drag.axis = hot; e->drag.tool = e->tool;
         e->drag.revision = e->doc.revision; e->drag.start = e->gui.mouse; e->drag.center = center;

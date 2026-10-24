@@ -1,5 +1,60 @@
 # The language server and the editors
 
+## Native editor workspace layout (2026-10-24)
+
+main.c, hierarchy_ui.inc, workspace_ui.inc and inspector_ui.inc arrange the
+native app as a neutral dark workspace: compact Q/W/E/R toolbar with centered
+Play/Stop, searchable compact Hierarchy rows on the left, Scene/Source/Models
+tabs in the center, full-height Inspector on the right, and Project/Console
+below the hierarchy and scene area. File offers New Scene, New Prefab, Open,
+Save and Reload; Edit offers Undo and Redo. Toolbar New/Open/Save/Undo/Redo and
+Set startup remain available. Scene projection is labelled 2D / XY or Iso.
+
+Hierarchy + Create offers Empty Object and Prefab Instance. Actions offers
+Rename, Duplicate, Save as Prefab, Delete and Open Source Prefab, also exposed
+in GameObject. These menus replace the direct + Entity/+ Prefab buttons.
+The Inspector uses gray component foldouts, human-readable labels, colored
+vector axes and blue override indicators alongside the existing * and Reset.
+Add Component is the plain button label. Transform displays Position, Rotation
+and Scale with X/Y/Z fields; edits still identify localPosition/localRotation/
+localScale in source, and quaternion values use the existing degree Euler UI.
+
+Project browses the current checked program's prefab declarations and static
+Mesh assets, including resolved collection items. All Assets/Prefabs/Models
+and qualified-name search filter this existing metadata. A prefab click selects
+that exact declaration, including another root in the same source file; a mesh
+click selects its Models preview. Console displays compiler diagnostics and the
+existing empty-root guidance. This introduces no new asset discovery contract.
+Failed view-preview attempts open Console once and retain a red status message,
+including at minimum window size; long preview/Play messages scroll by line.
+Views belongs to the Scene tab so it cannot overlap Models lighting controls.
+Repeated top-menu clicks close the active menu without reopening on release.
+After appended view commands, the viewport restores the authoring content clip
+so its marker labels and wires cannot spill into the Inspector.
+
+Source-preserving authoring, inheritance and extraction rules, local-TRS
+reparenting, applied-unsaved Play snapshots and Stop cleanup, separate startup
+settings, empty-file root creation, undo and recovery retain the contracts below.
+Implementation gaps: panel layout is fixed, with no panel resizing or full
+docking; generalized filesystem browsing is not implemented.
+
+Validation: the warning-free Windows native tool build and all seven editor
+CTests pass, including 54 document/startup/geometry cases, all 12 Inspector
+focus regressions, native embedding/picking/gizmos and the creation/extraction/
+placement loop. Updated UI scripts exercise Create/Actions and Project mesh
+selection, assert rendered orbit/zoom changes and exact saved prefab bytes.
+The staged installed-CLI preview integration passes with real shaders, unsaved
+overrides, undo/redo, exact prefab switching and Views toggles. Native captures
+were inspected at 1440x900 and 1100x650; the production docs build passes.
+Review regressions also cover repeated File-menu toggling and minimum-size
+model lighting, asserting real shading changes without starting a Views build.
+A missing-extern preview regression checks automatic Console/error status and
+retained geometry while Project remains browsable. The compiled and retained
+preview Inspector matches the complete Views-off pixel region exactly, guarding
+the restored scene-content clip.
+Engine/web behavior is unchanged by this tools/docs-only presentation change;
+other operating-system UI coverage remains with CI.
+
 ## Opening blank authored files (2026-10-24)
 
 A zero-byte or comment/directive-only .tprefab previously opened with no root,
