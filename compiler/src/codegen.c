@@ -20,6 +20,11 @@
 
 #include "tide/player.h"  // How many players a game takes without a maxPlayers setting
 
+static bool cpu_routine(const decl *d)
+{
+    return !d->gpu_only || (d->worker_cpu && !d->gpu_sampling);
+}
+
 // Each C system gets a distinct slot; only once-per-tick calls expose it.
 static int extern_system_count(const program *prog)
 {
@@ -5687,7 +5692,10 @@ static void collect_ordered(expr *e, ordering *out, const bool later)
     case E_TRY:
     case E_DEFAULTED:
     case E_AWAIT: {
-        if (e->kind == E_AWAIT) { // The call's arguments first, then the wait
+        if (e->kind == E_AWAIT && e->lhs->method && e->lhs->method->is_worker) {
+            // Worker lowering captures arguments in written order, including
+            // grid snapshots that must survive a later argument's await.
+        } else if (e->kind == E_AWAIT) { // The call's arguments first, then the wait
             for (int n = 0; n < e->lhs->args.count; n++) {
                 take(&ops, e->lhs->args.items[arg_in_turn(e->lhs, n)]);
             }
@@ -12499,10 +12507,20 @@ static void gen_parallel_call(gen *g, const stmt *s)
     } else {
         line(g, o, "const int32_t tide_offset[3] = {0, 0, 0};");
     }
-    indent(g, o);
-    sb_put(o, "tide_par_begin(&tide_pl, &(");
-    gen_expr(g, o, s->value);
-    sb_printf(o, "), &%s, %s, tide_block, tide_offset);\n", grid_shape_name(grid), place_where(g, s->value));
+    if (g->routine && g->routine->is_worker && s->kind == S_FOREACH) {
+        // Read-only worker grids are already private input snapshots. The
+        // loop planner needs a handle slot, but no step can change its cells.
+        indent(g, o);
+        sb_put(o, "tide_grid tide_input = ");
+        gen_expr(g, o, s->value);
+        sb_put(o, ";\n");
+        line(g, o, "tide_par_begin(&tide_pl, &tide_input, &%s, TIDE_IN_MATCH, tide_block, tide_offset);", grid_shape_name(grid));
+    } else {
+        indent(g, o);
+        sb_put(o, "tide_par_begin(&tide_pl, &(");
+        gen_expr(g, o, s->value);
+        sb_printf(o, "), &%s, %s, tide_block, tide_offset);\n", grid_shape_name(grid), place_where(g, s->value));
+    }
     // Steps that roll run at once, so each has a generator of its own, made from this one and its place
     if (stmt_rolls(s->then_stmt)) line(g, o, "const tide_random tide_par_dice = tide_random_fork(tide_dice);");
     indent(g, o);
@@ -15054,10 +15072,10 @@ static void gen_task_routines(gen *g)
     for (int i = 0; i < g->prog->decls.count; i++) {
         const decl *d = g->prog->decls.items[i];
         const bool own = (d->kind == DECL_FUNCTION || (d->kind == DECL_METHOD && d->placement_of))
-                      && !d->takes_action && !d->is_extern && !d->is_async && !d->gpu_only && takes_task(d);
+                      && !d->takes_action && !d->is_extern && !d->is_async && cpu_routine(d) && takes_task(d);
         for (int k = -1; k < d->methods.count; k++) {
             const decl *m = k < 0 ? d : d->methods.items[k];
-            if (m->borrows_queries || (k < 0 ? !own : m->gpu_only || !takes_task(m))) continue;
+            if (m->borrows_queries || (k < 0 ? !own : !cpu_routine(m) || !takes_task(m))) continue;
             if (!any) sb_put(o, "// Methods and functions that start tasks\n\n");
             any = true;
             gen_routine(g, m);
@@ -15197,7 +15215,7 @@ static void gen_routine_prototypes(gen *g)
     bool any = false;
     for (int i = 0; i < g->prog->decls.count; i++) {
         const decl *d = g->prog->decls.items[i];
-        if ((d->kind == DECL_FUNCTION || (d->kind == DECL_METHOD && d->placement_of)) && !d->borrows_queries && !d->takes_action && !d->is_extern && !d->is_async && !d->gpu_only) {
+        if ((d->kind == DECL_FUNCTION || (d->kind == DECL_METHOD && d->placement_of)) && !d->borrows_queries && !d->takes_action && !d->is_extern && !d->is_async && cpu_routine(d)) {
             if (!any) sb_put(o, "// Methods and functions: declarations for defaults and calls\n\n");
             any = true;
             gen_routine_signature(g, o, d);
@@ -15205,7 +15223,7 @@ static void gen_routine_prototypes(gen *g)
         }
         for (int k = 0; k < d->methods.count; k++) {
             const decl *m = d->methods.items[k];
-            if (m->borrows_queries || m->gpu_only || !m->body_checked) continue;
+            if (m->borrows_queries || !cpu_routine(m) || !m->body_checked) continue;
             if (!any) sb_put(o, "// Methods and functions: declarations for defaults and calls\n\n");
             any = true;
             gen_routine_signature(g, o, m);
@@ -15302,9 +15320,9 @@ static void gen_routines(gen *g)
     for (int i = 0; i < g->prog->decls.count; i++) {
         const decl *d = g->prog->decls.items[i];
         // Those are copied into each call. One that takes a grid is the GPU's alone (shader.c writes it)
-        if ((d->kind == DECL_FUNCTION || (d->kind == DECL_METHOD && d->placement_of)) && !d->borrows_queries && !d->takes_action && !d->is_extern && !d->is_async && !d->gpu_only) vec_push(all, d);
+        if ((d->kind == DECL_FUNCTION || (d->kind == DECL_METHOD && d->placement_of)) && !d->borrows_queries && !d->takes_action && !d->is_extern && !d->is_async && cpu_routine(d)) vec_push(all, d);
         for (int k = 0; k < d->methods.count; k++) {
-            if (!d->methods.items[k]->borrows_queries && !d->methods.items[k]->gpu_only && d->methods.items[k]->body_checked) vec_push(all, d->methods.items[k]);
+            if (!d->methods.items[k]->borrows_queries && cpu_routine(d->methods.items[k]) && d->methods.items[k]->body_checked) vec_push(all, d->methods.items[k]);
         }
     }
     if (all.count == 0 && g->borrows.count == 0) return;

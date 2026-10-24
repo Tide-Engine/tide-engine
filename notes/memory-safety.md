@@ -12,6 +12,27 @@ queued jobs, outputs or pages. Only integer tickets enter task frames; unpack/
 rebind resets them and never restores group/provider pointers from saved bytes.
 Teardown drains callbacks before unloading code. Regressions/support: language.md.
 
+Worker audit: Asset<Mesh<V>> handles cannot enter owned boundaries; Value reads,
+loop offset/by operands and increment targets participate in the live-asset
+walk. Queued cancellation uses an atomic abandoned flag without releasing the
+provider's item early. Disposal abandons the whole group before helping it.
+test_worker checks release after provider completion, including abandoned items.
+
+Approved grid inputs are copied into the private input heap before dispatch.
+The generated capture widens directory-size arithmetic, copies existing chunks
+including their cell/header bytes, and reacquires the destination directory
+after allocations. No source grid handle or packed chunk reference survives.
+worker_grids covers int-edge positions, sparse/empty grids, source/pack changes,
+restore and shared-pool readers. Locals/results and writable grid inputs remain
+refused; helper chains borrow only the private snapshot.
+
+Effectful/waiting worker arguments preserve earlier grid captures in private
+owned frame slots. Their grid directory/chunks use the local heap and its normal
+release/serialization machinery; no source borrow or scratch handle crosses the
+wait. Frame disposal also releases a capture if a later argument ends the task.
+After dispatch clones the input, the slot is released/zeroed. Source addresses
+are refreshed when capture allocates in the same heap as the source.
+
 ## Session cookie proof (2026-10-24)
 
 Protocol 19 checks a cookie and connection attempt before decoding connected

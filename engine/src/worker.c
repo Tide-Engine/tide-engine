@@ -9,9 +9,11 @@
 typedef struct worker_item {
     tide_background job;
     struct worker_item *next;
+    void (*work)(void *);
     void (*release)(void *);
+    void *context;
     uint32_t ticket;
-    bool forgotten;
+    uint32_t forgotten;
     bool submitted;
     const tide_jobs *jobs;
 } worker_item;
@@ -31,6 +33,14 @@ const tide_jobs *tide_worker_enter(const tide_jobs *jobs)
 }
 void tide_worker_leave(const tide_jobs *previous) { worker_jobs = previous; }
 
+static void worker_run(void *context)
+{
+    const worker_item *item = context;
+    // Abandoning queued work should not delay current work or reload. Once a
+    // calculation has started it retains its private captures until completion.
+    if (!__atomic_load_n(&item->forgotten, __ATOMIC_ACQUIRE)) item->work(item->context);
+}
+
 uint32_t tide_worker_start(tide_workers **workers, const tide_jobs *jobs,
                            void (*work)(void *), void (*release)(void *), void *context)
 {
@@ -45,10 +55,12 @@ uint32_t tide_worker_start(tide_workers **workers, const tide_jobs *jobs,
         for (worker_item *p = w->items; p && !used; p = p->next) used = p->ticket == w->next;
     } while (used);
     item->ticket = w->next;
+    item->work = work;
     item->release = release;
+    item->context = context;
     item->jobs = jobs;
-    item->job.work = work;
-    item->job.context = context;
+    item->job.work = worker_run;
+    item->job.context = item;
     item->next = w->items;
     w->items = item;
     if (jobs && jobs->background) {
@@ -75,7 +87,7 @@ void *tide_worker_poll(tide_workers *w, const uint32_t ticket)
     }
     if (!__atomic_load_n(&item->job.done, __ATOMIC_ACQUIRE)) return NULL;
     tide_memory_sync();
-    return item->job.context;
+    return item->context;
 }
 
 void tide_workers_collect(tide_workers *w)
@@ -87,7 +99,7 @@ void tide_workers_collect(tide_workers *w)
         if (p->forgotten && (!p->submitted || __atomic_load_n(&p->job.done, __ATOMIC_ACQUIRE))) {
             tide_memory_sync();
             *at = p->next;
-            p->release(p->job.context);
+            p->release(p->context);
             free(p);
         } else at = &p->next;
     }
@@ -97,15 +109,16 @@ void tide_worker_forget(tide_workers *w, const uint32_t ticket)
 {
     if (!ticket) return;
     worker_item *p = find(w, ticket);
-    if (p) p->forgotten = true;
+    if (p) __atomic_store_n(&p->forgotten, 1u, __ATOMIC_RELEASE);
     tide_workers_collect(w);
 }
 
 void tide_workers_free(tide_workers *w)
 {
     if (!w) return;
+    for (worker_item *p = w->items; p; p = p->next)
+        __atomic_store_n(&p->forgotten, 1u, __ATOMIC_RELEASE);
     for (worker_item *p = w->items; p; p = p->next) {
-        p->forgotten = true;
         while (p->submitted && !__atomic_load_n(&p->job.done, __ATOMIC_ACQUIRE)) {
             if (p->jobs && p->jobs->help) p->jobs->help(p->jobs->self, false);
             tide_yield();

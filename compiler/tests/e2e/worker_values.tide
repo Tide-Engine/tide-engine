@@ -18,8 +18,11 @@ local singleton Results
     bool good;
     bool started;
     bool done;
+    int calls;
 }
 
+int Next(mut Results results) { results.calls++; return results.calls; }
+local worker int Pair(int first, int second) { return first * 10 + second; }
 local worker Payload Echo(Payload input) { return input; }
 local worker string EchoText(string value) { return value + "!"; }
 local worker int[2] EchoArray(int[2] value) { return value; }
@@ -43,6 +46,11 @@ async void Work(mut Results results)
     var failure = await MayFail("") ?? "failed";
     var success = await MayFail("value") ?? "bad";
     await NoResult(2);
+    results.calls = 0;
+    var ordered = await Pair(Next(results), Next(results));
+    var orderedOnce = results.calls == 2;
+    results.calls = 0;
+    var named = await Pair(second: Next(results), first: Next(results));
     results.source.nested[0][0] = "changed";
     results.good = results.result.nested[0][0] == "a"
         && results.result.nested[1][0] == "c"
@@ -53,7 +61,8 @@ async void Work(mut Results results)
         && results.names[0] == 8
         && (results.optional ?? "") == "a!"
         && failure == "failed"
-        && success == "value okay";
+        && success == "value okay"
+        && ordered == 12 && orderedOnce && named == 21 && results.calls == 2;
     results.done = true;
 }
 

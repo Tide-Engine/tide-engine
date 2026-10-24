@@ -10,6 +10,11 @@ the probe checks both local/worker orders and worker as a variable. Existing
 navigation/diagnostics remain function-based. Public docs link the worker/task
 workflow. Semantics and validation: language.md.
 
+The grid input extension preserves CPU completion in worker/grid-helper bodies,
+even when those helpers are also GPU-callable. lsp_local_workers includes list
+Add completion after a grid-helper call. Existing grid syntax needs no grammar
+change. Contract and validation: language.md, Local worker audit.
+
 ## Mutable callable signatures (2026-10-24)
 
 Callable type text and hover preserve `mut` argument modes and spell a void
