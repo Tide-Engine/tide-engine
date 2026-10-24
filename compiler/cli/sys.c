@@ -450,7 +450,7 @@ static bool ends_with(const char *s, const char *suffix)
 // `quiet`, into a pipe whose other end `kept` is given when that's asked for,
 // and otherwise where tide's own do.
 static bool start_process(const char *const *argv, const char *cwd, const bool quiet, const char *log, HANDLE *kept,
-                          PROCESS_INFORMATION *process)
+                          PROCESS_INFORMATION *process, HANDLE *tree)
 {
     char *line = NULL;
     size_t len = 0;
@@ -485,6 +485,11 @@ static bool start_process(const char *const *argv, const char *cwd, const bool q
         } else {
             output = log ? CreateFileA(log, GENERIC_WRITE, FILE_SHARE_READ, &inherit, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL)
                          : CreateFileA("NUL", GENERIC_WRITE, FILE_SHARE_WRITE, &inherit, OPEN_EXISTING, 0, NULL);
+            if (output == INVALID_HANDLE_VALUE) {
+                if (command != line) free(command);
+                free(line);
+                return false;
+            }
         }
         startup.dwFlags = STARTF_USESTDHANDLES;
         startup.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
@@ -499,7 +504,37 @@ static bool start_process(const char *const *argv, const char *cwd, const bool q
         startup.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
         startup.hStdError = GetStdHandle(STD_ERROR_HANDLE);
     }
-    const BOOL started = CreateProcessA(NULL, command, NULL, NULL, TRUE, redirected ? CREATE_NO_WINDOW : 0, NULL, cwd, &startup, process);
+    HANDLE job = NULL;
+    if (tree) {
+        job = CreateJobObjectA(NULL, NULL);
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION limits = {0};
+        limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+        if (!job || !SetInformationJobObject(job, JobObjectExtendedLimitInformation, &limits, sizeof limits)) {
+            if (job) CloseHandle(job);
+            if (output != INVALID_HANDLE_VALUE) CloseHandle(output);
+            if (kept) CloseHandle(*kept);
+            if (command != line) free(command);
+            free(line);
+            return false;
+        }
+    }
+    const DWORD flags = (redirected || sys_hidden() ? CREATE_NO_WINDOW : 0) | (tree ? CREATE_SUSPENDED : 0);
+    BOOL started = CreateProcessA(NULL, command, NULL, NULL, TRUE, flags, NULL, cwd, &startup, process);
+    if (started && tree) {
+        // Assign while suspended: even a compiler which starts immediately
+        // cannot escape the job between CreateProcess and assignment.
+        if (!AssignProcessToJobObject(job, process->hProcess) || ResumeThread(process->hThread) == (DWORD)-1) {
+            TerminateProcess(process->hProcess, 1);
+            WaitForSingleObject(process->hProcess, INFINITE);
+            CloseHandle(process->hProcess);
+            CloseHandle(process->hThread);
+            started = FALSE;
+        }
+    }
+    if (tree) {
+        if (started) *tree = job;
+        else CloseHandle(job);
+    }
     if (command != line) free(command);
     free(line);
     if (output != INVALID_HANDLE_VALUE) CloseHandle(output);
@@ -510,7 +545,7 @@ static bool start_process(const char *const *argv, const char *cwd, const bool q
 int sys_run(const char *const *argv, const char *cwd, const bool quiet)
 {
     PROCESS_INFORMATION process;
-    if (!start_process(argv, cwd, quiet, NULL, NULL, &process)) return -1;
+    if (!start_process(argv, cwd, quiet, NULL, NULL, &process, NULL)) return -1;
     WaitForSingleObject(process.hProcess, INFINITE);
     DWORD code = 1;
     GetExitCodeProcess(process.hProcess, &code);
@@ -521,6 +556,7 @@ int sys_run(const char *const *argv, const char *cwd, const bool quiet)
 
 struct sys_process {
     PROCESS_INFORMATION info;
+    HANDLE tree;
     // For a program whose words are kept (sys_start_kept): the pipe's end to
     // read, the thread that reads it, and what it has read, which is that
     // thread's until it ends
@@ -534,7 +570,18 @@ sys_process *sys_start_logged(const char *const *argv, const char *cwd, const ch
 {
     sys_process *p = calloc(1, sizeof *p);
     if (!p) abort();
-    if (!start_process(argv, cwd, false, log, NULL, &p->info)) {
+    if (!start_process(argv, cwd, false, log, NULL, &p->info, NULL)) {
+        free(p);
+        return NULL;
+    }
+    return p;
+}
+
+sys_process *sys_start_tree_logged(const char *const *argv, const char *cwd, const char *log)
+{
+    sys_process *p = calloc(1, sizeof *p);
+    if (!p) abort();
+    if (!start_process(argv, cwd, false, log, NULL, &p->info, &p->tree)) {
         free(p);
         return NULL;
     }
@@ -575,7 +622,7 @@ sys_process *sys_start_kept(const char *const *argv)
 {
     sys_process *p = calloc(1, sizeof *p);
     if (!p) abort();
-    if (!start_process(argv, NULL, false, NULL, &p->said, &p->info)) {
+    if (!start_process(argv, NULL, false, NULL, &p->said, &p->info, NULL)) {
         free(p);
         return NULL;
     }
@@ -638,6 +685,19 @@ bool sys_start_detached(const char *const *argv)
     return true;
 }
 
+static void close_tree(HANDLE tree)
+{
+    if (!tree) return;
+    // Killing a job requests termination; its descendants may still be closing
+    // files after its root has exited. Keep ownership until they have all gone,
+    // before a caller removes a build's executables, logs and private cache.
+    TerminateJobObject(tree, 1);
+    JOBOBJECT_BASIC_ACCOUNTING_INFORMATION accounting;
+    while (QueryInformationJobObject(tree, JobObjectBasicAccountingInformation, &accounting, sizeof accounting, NULL)
+           && accounting.ActiveProcesses != 0) Sleep(1);
+    CloseHandle(tree);
+}
+
 bool sys_wait(sys_process *p, const int ms, int *code)
 {
     if (WaitForSingleObject(p->info.hProcess, (DWORD)ms) != WAIT_OBJECT_0) return false;
@@ -645,6 +705,7 @@ bool sys_wait(sys_process *p, const int ms, int *code)
     GetExitCodeProcess(p->info.hProcess, &exit_code);
     CloseHandle(p->info.hProcess);
     CloseHandle(p->info.hThread);
+    close_tree(p->tree);
     free(p);
     *code = (int)exit_code;
     return true;
@@ -652,10 +713,12 @@ bool sys_wait(sys_process *p, const int ms, int *code)
 
 void sys_kill(sys_process *p)
 {
-    TerminateProcess(p->info.hProcess, 1);
+    if (p->tree) TerminateJobObject(p->tree, 1);
+    else TerminateProcess(p->info.hProcess, 1);
     WaitForSingleObject(p->info.hProcess, INFINITE);
     CloseHandle(p->info.hProcess);
     CloseHandle(p->info.hThread);
+    close_tree(p->tree);
     if (p->reader) free(take_said(p));
     free(p);
 }
@@ -761,6 +824,7 @@ int sys_run(const char *const *argv, const char *cwd, const bool quiet)
 
 struct sys_process {
     pid_t pid;
+    bool tree;
     // For a program whose words are kept (sys_start_kept): the pipe's end to
     // read, and what was read of it so far
     int said;
@@ -769,27 +833,48 @@ struct sys_process {
     size_t cap;
 };
 
-sys_process *sys_start_logged(const char *const *argv, const char *cwd, const char *log)
+static sys_process *start_logged(const char *const *argv, const char *cwd, const char *log, const bool tree)
 {
     const pid_t pid = fork();
     if (pid < 0) return NULL;
     if (pid == 0) {
+        if (tree && setpgid(0, 0) != 0) _exit(127);
         if (cwd && chdir(cwd) != 0) _exit(127);
         if (log) {
             const int file = open(log, O_WRONLY | O_CREAT | O_TRUNC, 0666);
             if (file >= 0) {
                 dup2(file, 1);
                 dup2(file, 2);
+                if (file != 1 && file != 2) close(file);
             }
+            else _exit(127);
         }
         execvp(argv[0], (char *const *)argv);
         _exit(127);
     }
+    // The child also sets this before exec; the parent establishes it before
+    // returning, so an immediate Stop cannot miss a not-yet-created group.
+    if (tree && setpgid(pid, pid) != 0 && errno != EACCES && errno != ESRCH) {
+        kill(pid, SIGKILL);
+        while (waitpid(pid, NULL, 0) < 0 && errno == EINTR) {}
+        return NULL;
+    }
     sys_process *p = calloc(1, sizeof *p);
     if (!p) abort();
     p->pid = pid;
+    p->tree = tree;
     p->said = -1;
     return p;
+}
+
+sys_process *sys_start_logged(const char *const *argv, const char *cwd, const char *log)
+{
+    return start_logged(argv, cwd, log, false);
+}
+
+sys_process *sys_start_tree_logged(const char *const *argv, const char *cwd, const char *log)
+{
+    return start_logged(argv, cwd, log, true);
 }
 
 sys_process *sys_start_kept(const char *const *argv)
@@ -905,8 +990,10 @@ bool sys_wait(sys_process *p, const int ms, int *code)
     for (int waited = 0;; waited += 10) {
         int status = 0;
         const pid_t done = waitpid(p->pid, &status, WNOHANG);
+        if (done < 0 && errno == EINTR) continue;
         if (done == p->pid || done < 0) {
             *code = done == p->pid && WIFEXITED(status) ? WEXITSTATUS(status) : 1;
+            if (p->tree) kill(-p->pid, SIGKILL);
             free(p);
             return true;
         }
@@ -918,9 +1005,9 @@ bool sys_wait(sys_process *p, const int ms, int *code)
 
 void sys_kill(sys_process *p)
 {
-    kill(p->pid, SIGTERM);
+    kill(p->tree ? -p->pid : p->pid, p->tree ? SIGKILL : SIGTERM);
     int status = 0;
-    waitpid(p->pid, &status, 0);
+    while (waitpid(p->pid, &status, 0) < 0 && errno == EINTR) {}
     if (p->said >= 0) close(p->said);
     free(p->text);
     free(p);

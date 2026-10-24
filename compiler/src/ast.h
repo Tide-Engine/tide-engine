@@ -1425,6 +1425,9 @@ typedef struct program {
     decl *player_joined;
     decl *player_left;
     decl *main;          // The scene named Main, where the program starts
+    const char *startup_name; // Explicit compiler/CLI startup override, or NULL.
+    decl *startup;       // settings.startScene or the explicit override; prefab or scene.
+    decl *startup_create; // Checked Scene.Load factory for an authored prefab startup.
     decl *editor_create; // Private preview factory, present only in an editor build.
     int main_archetype;  // Main's archetype
     decl *input;         // The input declaration, if any.

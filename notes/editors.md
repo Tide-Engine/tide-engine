@@ -28,6 +28,172 @@ The grammar suite includes a Func signature case. Full validation is recorded
 with the compiler work in language.md. Material-specific authoring and visual
 shader tooling remain outside this foundation.
 
+## Native editor workspace layout (2026-10-24)
+
+main.c, hierarchy_ui.inc, workspace_ui.inc and inspector_ui.inc arrange the
+native app as a neutral dark workspace: compact Q/W/E/R toolbar with centered
+Play/Stop, searchable compact Hierarchy rows on the left, Scene/Source/Models
+tabs in the center, full-height Inspector on the right, and Project/Console
+below the hierarchy and scene area. File offers New Scene, New Prefab, Open,
+Save and Reload; Edit offers Undo and Redo. Toolbar New/Open/Save/Undo/Redo and
+Set startup remain available. Scene projection is labelled 2D / XY or Iso.
+
+Hierarchy + Create offers Empty Object and Prefab Instance. Actions offers
+Rename, Duplicate, Save as Prefab, Delete and Open Source Prefab, also exposed
+in GameObject. These menus replace the direct + Entity/+ Prefab buttons.
+The Inspector uses gray component foldouts, human-readable labels, colored
+vector axes and blue override indicators alongside the existing * and Reset.
+Add Component is the plain button label. Transform displays Position, Rotation
+and Scale with X/Y/Z fields; edits still identify localPosition/localRotation/
+localScale in source, and quaternion values use the existing degree Euler UI.
+
+Project browses the current checked program's prefab declarations and static
+Mesh assets, including resolved collection items. All Assets/Prefabs/Models
+and qualified-name search filter this existing metadata. A prefab click selects
+that exact declaration, including another root in the same source file; a mesh
+click selects its Models preview. Console displays compiler diagnostics and the
+existing empty-root guidance. This introduces no new asset discovery contract.
+Failed view-preview attempts open Console once and retain a red status message,
+including at minimum window size; long preview/Play messages scroll by line.
+Views belongs to the Scene tab so it cannot overlap Models lighting controls.
+Repeated top-menu clicks close the active menu without reopening on release.
+After appended view commands, the viewport restores the authoring content clip
+so its marker labels and wires cannot spill into the Inspector.
+
+Source-preserving authoring, inheritance and extraction rules, local-TRS
+reparenting, applied-unsaved Play snapshots and Stop cleanup, separate startup
+settings, empty-file root creation, undo and recovery retain the contracts below.
+Implementation gaps: panel layout is fixed, with no panel resizing or full
+docking; generalized filesystem browsing is not implemented.
+
+Validation: the warning-free Windows native tool build and all seven editor
+CTests pass, including 54 document/startup/geometry cases, all 12 Inspector
+focus regressions, native embedding/picking/gizmos and the creation/extraction/
+placement loop. Updated UI scripts exercise Create/Actions and Project mesh
+selection, assert rendered orbit/zoom changes and exact saved prefab bytes.
+The staged installed-CLI preview integration passes with real shaders, unsaved
+overrides, undo/redo, exact prefab switching and Views toggles. Native captures
+were inspected at 1440x900 and 1100x650; the production docs build passes.
+Review regressions also cover repeated File-menu toggling and minimum-size
+model lighting, asserting real shading changes without starting a Views build.
+A missing-extern preview regression checks automatic Console/error status and
+retained geometry while Project remains browsable. The compiled and retained
+preview Inspector matches the complete Views-off pixel region exactly, guarding
+the restored scene-content clip.
+Engine/web behavior is unchanged by this tools/docs-only presentation change;
+other operating-system UI coverage remains with CI.
+
+## Opening blank authored files (2026-10-24)
+
+A zero-byte or comment/directive-only .tprefab previously opened with no root,
+disabled hierarchy controls and a blocked Save. The native editor now presents
+a named Create root action instead. editor_initialize_prefab appends a normal
+root with Transform through the existing source-preserving draft transaction;
+it changes no disk bytes until Save and supports one-step undo, redo and recovery.
+Existing comments, BOM, line endings and namespace/using directives are retained.
+Existing empty-body prefab declarations remain ordinary editable roots, with no
+automatic component additions. Play/startup controls stay disabled until a
+root exists. Save is disabled for an unchanged blank file; undoing a saved root
+can still be saved back to the original blank contents. The blank-document UI
+explains root creation instead of suggesting
+a handwritten Main when the metadata check has only a missing-entry diagnostic.
+
+Initialization rejects existing authored declarations, own syntax errors,
+invalid/conflicting names, pending recovery and changed/out-of-project sources.
+Other project errors remain visible and can be corrected alongside authoring.
+No compiler, runtime or file format changed.
+
+Validation: the warning-free native editor/tool build and all seven editor
+CTests pass, including 54 document/startup/geometry cases. Seven new document
+test groups cover exact blank/comment/BOM/CRLF prefixes, namespace collision
+scope, recovery, existing empty-body roots, syntax/conflicts, project errors
+and own-package boundaries. The actual native UI test opens a zero-byte file,
+creates its root, undoes/redoes it, saves and reopens; a separate empty-body
+prefab remains editable and gains a child normally. The production docs build
+passes. Engine/web suites are unchanged and outside this tools/docs-only fix.
+
+## Scene authoring, extraction and direct Play (2026-10-24)
+
+The approved workflow keeps the rooted .tprefab format: New Scene/New Prefab,
+named objects and models, arrange, Save as Prefab, place instances and Play
+without handwritten Main. main.c and hierarchy_ui.inc/inspector_ui.inc/
+workspace_ui.inc provide file controls, folded hierarchy, rename/duplicate/drag
+parenting, source-prefab navigation, direct bool/int/float/vector/Euler fields,
+entity/enum choices, asset browsing and optional inline expressions.
+
+document.c creates files exclusively inside existing discoverable project source
+folders and preserves source spans/comments, recovery and 64 current-document
+undo entries. Rename/duplicate/reparent use checked same-file reference edits;
+required cross-file rewrites are refused. Reparent retains local TRS, not world
+placement. Inherited descendants support field overrides/reset only; nested
+instance roots retain authored additions. Structural path refactors require a
+clean project check. Semantic/project errors may save; own syntax errors and
+disk conflicts block Save. This supersedes older save/read-only/future-work
+claims below, which record earlier builds.
+
+Save as Prefab extracts an ordinary authored child subtree, preserving incoming
+paths and rebasing internal references, then replaces it with an instance. It
+rejects outgoing references, child-to-selected-root references the language cannot
+express, already-instance roots and consumer-sensitive cross-file changes. The
+source replacement is one undo; undo keeps the newly created asset.
+
+play.c builds an owned snapshot of applied unsaved text with the selected startup
+and launches the normal game host, including initialization, systems, game views,
+camera/input and services. Compiler errors/conflicts/unresolved recovery block
+Play. Stop terminates build/game descendants, discards runtime state and removes
+only owned play artifacts. Private source-overlay/cache switches are unlisted
+implementation transport, not a public authoring workflow. Views-only preview
+remains separate. startup.c writes settings.startScene with source conflict
+checks, preserving other settings/Main; New Scene chooses itself only when no
+Main or startup is present. Switching documents saves the previous draft first.
+
+Validation on Windows, Clang 23.1.2 and Node 24.22.1: the final seven
+editor CTests pass, including native embedding, all 12 inspector focus/undo
+regressions and the complete UI create/arrange/rename/extract/place/save loop.
+The document executable passes 47 cases (25 document, 18 startup and four
+geometry/interaction cases). A draft records its source, prefab, entity path,
+field and revision; valid blur edits commit to that original field before
+selection changes, while Escape and outside source changes cancel them. Source
+navigation retains the selected prefab declaration even within a shared file.
+Nested instances omit a Transform reset so authored TRS defaults survive.
+
+Startup checks cover BOM/CRLF/trailing comments, invalid string RHS replacement,
+settings namespaces and name shadowing, exact disk bytes including appended
+NULs, exclusive file creation, source ownership, pending recovery and active
+.tide source baselines. A bare global prefab shadowed by a prefab in the
+settings namespace is refused before writing; the user can move that setting
+to global scope. Repeated startup selection preserves the active declaration.
+The installed Play test builds/runs a no-Main unsaved scene twice with real
+Spawned/systems/unmarked views, input, camera pixels and fresh state after Stop.
+
+Full native/web debug builds pass. All engine/compiler/platform checks pass,
+including native Vulkan validation/OpenGL and WebGL/D3D11/WebGPU; the existing
+MicroDuck right-turn case stays disabled. The configured external prototype
+suite also runs automatically: Cracked's unchanged match-hash pin fails on
+native and web, identically with a separately built HEAD compiler
+(2a37a61034c7a00750a5948637c8489febcbab6f). Its generated simulation and asset
+pack match; actual 0xbf53c0610c47764e versus pin 0x0a216d532fa6445c. No expected
+hash changed. Optional long private-prototype browser playthroughs were stopped;
+they are outside this engine/editor task. Logs and the baseline comparison are
+under build/scene-startup-baseline. The production docs build passes.
+
+Integration: origin/dev merged cleanly, adding only session packet validation
+and its tests/notes. Rebuilt the affected runtime and startup/session targets;
+all six native and five web checks pass, including the complete runtime suite.
+The staged CLI with the merged engine passes the real unsaved Play/pixel test
+again; its native editor --check reports zero errors/warnings. The two remaining
+Foldline web rendering checks also pass. No engine test remains unvalidated;
+optional external browser playthroughs remain outside scope as recorded above.
+
+Limits: no cross-document refactor/undo transaction, inherited structural edits,
+world-preserving authored reparent, child-to-prefab-root path syntax, automatic
+runtime-to-authoring apply, or live defaults/override reconciliation. Conditional
+path edits/extraction and cross-file consumer rewrites are refused. Extraction
+requires a self-contained ordinary authored subtree; its new asset survives
+undo. Existing preview picking/geometry, CMake consumer selection and IDE frame
+transport limits remain. Other operating systems, Android and sanitizers were
+not run here; no CI was manually dispatched.
+
 ## Offline installer configuration cache (2026-10-22)
 
 Build run 39790751086 passed plugin compatibility verification but failed while

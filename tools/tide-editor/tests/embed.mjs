@@ -57,7 +57,7 @@ try {
     assert.ok(readPng(initial.png).at(450,365).slice(0,3).every(v=>v>60),'isometric source meshes align with markers/picking');
     writeFileSync(file,source);await new Promise(resolve=>setTimeout(resolve,550));await app.frame();
     // XY view, then pick a surface away from both origins. Near wins over Far.
-    await app.frame('mouse 294 110','button left');await app.frame();
+    await app.frame('mouse 294 96','button left');await app.frame();
     await app.frame('mouse 600 300','button left');await app.frame();
     await app.frame('key w');await app.frame();
     await app.frame('mouse 715 391','button left down');

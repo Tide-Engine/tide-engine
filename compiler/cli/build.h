@@ -20,6 +20,8 @@ typedef struct build_options {
     const char *const *defines; // Kept by the caller for the build and every watched rebuild
     int define_count;
     const char *editor_prefab, *editor_source, *editor_draft;
+    const char *scene; // Explicit startup override.
+    const char *work; // Private isolated build-cache root, or NULL for .tide/.
     bool editor_local;
     bool unity; // For Unity's Tide package (tide unity): the game built for another program to run (tidec --embed)
     const char *unity_assets; // ...and the Unity project's Assets folder, whose prefabs and scenes it has (unity_assets.h)

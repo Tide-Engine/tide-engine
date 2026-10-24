@@ -100,7 +100,23 @@ static bool connected(const tide_client *client)
 static void follow(tide_shard_client *c, const tide_shard_link link, const double now)
 {
     make_room(c, link.shard);
-    if (c->clients[link.shard] || !c->desc.reach) return;
+    tide_client *client = c->clients[link.shard];
+    if (client) {
+        const tide_client_status status = tide_client_status_of(client);
+        const bool lost = status.reason == TIDE_DISCONNECT_TIMED_OUT || status.reason == TIDE_DISCONNECT_SERVER_LEFT
+                       || status.reason == TIDE_DISCONNECT_ENDED;
+        if (link.shard != c->home && status.state == TIDE_SESSION_OFFLINE && lost) {
+            // A needed neighbour can time out while home still works. Drop its
+            // failed endpoint so reach can admit it again with the same cookie.
+            // Leave it absent for this update: a session releases the previous
+            // hosting admission before handing a replacement endpoint to us.
+            tide_client_destroy(client);
+            c->clients[link.shard] = NULL;
+            if (c->logs[link.shard]) tide_event_log_clear(c->logs[link.shard]);
+        }
+        return;
+    }
+    if (!c->desc.reach) return;
     tide_client_desc d = c->desc.client;
     if (!c->desc.reach(c->desc.user, link.shard, link.match, &d.transport, &d.server)) return;
     d.cookie = c->cookie;
@@ -164,6 +180,8 @@ static void outlive_home(tide_shard_client *c, const double now)
 {
     tide_client *home = c->clients[c->home];
     if (!home || tide_client_status_of(home).state != TIDE_SESSION_OFFLINE) return;
+    const tide_disconnect_reason reason = tide_client_status_of(home).reason;
+    if (reason != TIDE_DISCONNECT_TIMED_OUT && reason != TIDE_DISCONNECT_SERVER_LEFT && reason != TIDE_DISCONNECT_ENDED) return;
     uint32_t next = c->wanted < c->room && c->wanted != c->home && connected(c->clients[c->wanted]) ? c->wanted : c->room;
     for (uint32_t i = 0; i < c->room && next == c->room; i++) {
         if (i != c->home && connected(c->clients[i])) next = i;

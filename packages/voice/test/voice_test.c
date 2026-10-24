@@ -24,6 +24,44 @@ static tide_loopback *network;
 static double now;
 static uint32_t sample_number;
 static tide_transport endpoints[3];
+static tide_transport captured_endpoints[3]; // Stable while a retired client's wrapper may still close.
+static uint32_t attempts[3];
+
+static void capture_send(void *user, tide_address to, const void *data, uint32_t size)
+{
+    tide_transport *inner = user;
+    tide_reader r = {data, size, 0, false};
+    (void)tide_read_u16(&r); (void)tide_read_u8(&r);
+    if (tide_read_u8(&r) == 1u) {
+        (void)tide_read_u64(&r); (void)tide_read_bytes(&r, 32);
+        attempts[inner - captured_endpoints] = tide_read_u32(&r);
+    }
+    inner->send(inner->self, to, data, size);
+}
+
+static uint32_t capture_receive(void *user, tide_address *from, void *data, uint32_t size)
+{
+    const tide_transport *inner = user;
+    return inner->receive(inner->self, from, data, size);
+}
+
+static void capture_close(void *user)
+{
+    const tide_transport *inner = user;
+    if (inner->close) inner->close(inner->self);
+}
+
+static double capture_clock(void *user)
+{
+    const tide_transport *inner = user;
+    return inner->clock(inner->self);
+}
+
+static double capture_arrived(void *user)
+{
+    const tide_transport *inner = user;
+    return inner->arrived(inner->self);
+}
 static bool noise_source, silent_source;
 static uint32_t noise_random;
 static tide_sound speech_source;
@@ -61,7 +99,11 @@ static void begin(const tide_net_conditions conditions)
     TIDE_CHECK(tide_session_open(players[0].session, tide_loopback_endpoint(network, 1)));
     for (uint32_t i = 1; i < 3; i++) {
         endpoints[i] = tide_loopback_endpoint(network, i + 1u);
-        tide_session_join(players[i].session, endpoints[i], tide_loopback_address(1), now);
+        captured_endpoints[i] = endpoints[i];
+        attempts[i] = 0;
+        const tide_transport observed = {.self = &captured_endpoints[i], .send = capture_send, .receive = capture_receive,
+            .close = capture_close, .clock = capture_clock, .arrived = capture_arrived};
+        tide_session_join(players[i].session, observed, tide_loopback_address(1), now);
     }
 }
 
@@ -233,9 +275,10 @@ static uint32_t raw_packet(uint8_t *data, const uint8_t kind, const uint64_t coo
 {
     tide_writer w = {data, TIDE_NET_MTU, 0, false, false};
     tide_write_u16(&w, 0x5449u);
-    tide_write_u8(&w, 18u); // PROTOCOL
+    tide_write_u8(&w, 19u); // PROTOCOL
     tide_write_u8(&w, kind);
     tide_write_u64(&w, cookie);
+    tide_write_u32(&w, attempts[1]);
     for (uint32_t i = 0; i < size; i++) tide_write_u8(&w, (uint8_t)i);
     return w.size;
 }
@@ -259,6 +302,11 @@ TIDE_TEST(voice_session_data_validates_identity_subscription_sizes_and_rate)
     uint8_t data[TIDE_NET_MTU];
     const uint64_t cookie = tide_session_status_of(players[1].session).client.cookie;
     uint32_t size = raw_packet(data, 13u, cookie ^ 1u, 1u);
+    endpoints[1].send(endpoints[1].self, tide_loopback_address(1), data, size);
+    data_steps(1);
+    TIDE_CHECK(received[0].count == 1u);
+    size = raw_packet(data, 13u, cookie, 1u);
+    data[12] ^= 1u; // Correct cookie, wrong connection attempt.
     endpoints[1].send(endpoints[1].self, tide_loopback_address(1), data, size);
     data_steps(1);
     TIDE_CHECK(received[0].count == 1u);

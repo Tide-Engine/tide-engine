@@ -192,7 +192,17 @@ static void gen_shard_receive(gen *g)
               "        if (r.failed) return false;\n        tide_shard_acknowledged(w, through);\n        return true;\n    }\n");
     sb_printf(o, "    case TIDE_SHARD_PLAYER: {\n"
                  "        const uint8_t joined = tide_read_u8(&r);\n        const tide_player_id player = {tide_read_u32(&r)};\n"
-                 "        if (r.failed) return false;\n"
+                 "        const int32_t slot = tide_player_index(player);\n"
+                 "        if (r.failed || joined > 1u || slot < 0 || slot >= (int32_t)TIDE_GAME_PLAYERS) return false;\n"
+                 "        const int32_t word = slot / 64;\n"
+                 "        if (word >= tide_list_count(s->members)) {\n"
+                 "            if (!joined) return true;\n"
+                 "            tide_list_resize(&s->members, word + 1, 8u, TIDE_IN_MATCH);\n"
+                 "        }\n"
+                 "        uint64_t *members = tide_list_at_mut(s->members, word, 8u);\n"
+                 "        const uint64_t mask = UINT64_C(1) << ((uint32_t)slot & 63u);\n"
+                 "        if (((*members & mask) != 0) == (joined != 0)) return true;\n"
+                 "        *members ^= mask;\n"
                  "        if (joined) tide_cmd_send_%s(w, (tide_entity){0}, (%s){.player = player});\n"
                  "        else tide_cmd_send_%s(w, (tide_entity){0}, (%s){.player = player});\n"
                  "        return true;\n    }\n",

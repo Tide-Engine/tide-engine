@@ -1,0 +1,13 @@
+// expect: an inherited entity override cannot replace its prefab; edit the source prefab
+scene Main { }
+component Data { int value; }
+prefab Original { Data { value = 1 }; }
+prefab Replacement { Data { value = 2 }; }
+prefab Base { entity Child : Original { } }
+prefab Broken
+{
+    entity Item : Base
+    {
+        entity Child : Replacement { Data { value = 9 }; }
+    }
+}

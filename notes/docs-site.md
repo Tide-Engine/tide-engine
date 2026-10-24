@@ -1,5 +1,74 @@
 # The docs site
 
+## City-exit driving and the orbit camera (2026-10-24)
+
+After another report of cities pulling the player back, a fresh production
+client walked from Amberhold's fountain into the countryside. The previous
+edge test only started 115 m from one town, so coverage now includes the
+whole street: all 22 road ends, on foot and in a car, from the square to
+at least 160 m from the town centre. Twenty actual server/client trips cover
+every city in both
+modes, including townsfolk/traffic, 144 Hz clients, 50 ms one-way latency,
+10 ms jitter and 1% packet loss; authoritative and predicted positions must
+both leave, with continued verification. No remaining walking wall reproduced
+in these tests or the refreshed production walking check.
+
+The driving sequence found a further bug: walk backwards, become a car, then
+press W. The camera could remain opposite the car because normalizing a
+linear blend of opposite directions never rotates it. Driving input also
+followed that camera, so W could command reverse or turn back toward town.
+The camera now turns by a signed angle around the surface normal, including
+a half-turn. W/A/D and the stick follow the car's heading while its camera
+turns or looks elsewhere; S remains a brake and walking remains camera-relative.
+Tap-to-go keeps its world-space destination. Both the antipodal camera and
+sideways/backward driving-input regressions fail before their fixes.
+
+Validation: all 19 Earth checks and its three unchanged benchmark pins pass
+on native/web debug; the release web build passes. Native bounded four-region
+captures and browser city exits cover the actual views and sampled controls.
+Source `c5b26cf2` is published to the existing Earth project as release
+`9529611c9a5d54169a59a1ccb23a8596b9564bb9054fc304b70bee187b17ba6c`;
+the production client's embedded payload matches its bundle. Two live muted
+Chrome clients start in Amberhold (WebGL) and Frostgate (WebGPU), walk backward,
+become cars and press W immediately, without waiting for the camera to turn.
+After 45 seconds both are in the countryside, moving forward (81/56 km/h),
+still in the hosted room and showing two online players on one shard, without
+renderer errors. The native four-region capture also exits Amberhold at
+115 km/h. No hosting/service code or limits changed.
+
+Final integration merges dev's independent protocol-19 session changes after
+publishing this game release. Rebuilt Earth, its tests/benchmark, the complete
+engine test executable and the shard-player fixture against that dependency;
+all six selected CTests pass on native and web, including all 19 Earth checks
+and unchanged simulation pins. The immutable production release above retains
+its matching client/server runtime; this task did not redeploy protocol 19.
+
+## Town-edge collision correction (2026-10-24)
+
+The reported invisible boundary also reproduces without a shard border.
+`city.tide`'s Local used an orthographic projection while Place used a tangent
+plane. Repeated Settle calls pulled positions toward a town; cars treated
+that correction as a wall and lost speed. Local now inverts Place, dividing
+by the direction's component along the town's up axis (bounded away from
+zero). The collision-free town-edge regression starts on foot and in a car
+115 m from Pinecrest's centre and requires outward progress, and continued
+car acceleration, across the town's collision boundary.
+
+The zero/negative online count was separately reproduced after recovery of a
+checkpoint plus newer departure records. The engine fix preserves cookies
+and exactly-once logical membership across recovery (`notes/sharding.md`,
+Border and recovery audit). The demo's counter is not clamped or replaced
+to conceal that lifecycle error.
+
+Published merged engine/game source `2848e7ce` to the existing hosting project
+as release `0909a3821941f523d8a6780e213bb0acf310a1333cc003ba0d183a4c7cb0424a`.
+The production client payload matches its bundle. Two live clients pass 75
+seconds of walking on WebGL/WebGPU without leaving the shared room or renderer
+errors, showing two online players on one shard. After both leave and the
+idle minute passes, a fresh client walks with one online player on one shard.
+Full validation and the distinction between this one-shard production world
+and isolated multi-host border tests are in `notes/sharding.md`.
+
 ## Earth distance transitions, foundations and braking (2026-10-24)
 
 Country trees now extend to 400 m, beyond the ordinary ground camera's

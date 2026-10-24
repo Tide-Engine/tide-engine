@@ -243,6 +243,231 @@ static Sight frame(void)
     return local.Sight;
 }
 
+static void steer_sample(void *user, const uint32_t tick, void *input)
+{
+    (void)tick;
+    *(Controls *)input = (Controls){.move = *(const tide_float2 *)user};
+}
+
+TIDE_TEST(shards_a_home_kick_is_not_hidden_by_a_healthy_neighbour)
+{
+    now = walk_until = 0;
+    net = tide_loopback_create(27);
+    shards = tide_shards_create(&(tide_shards_desc){.game = &tide_game_api, .tick_rate = 60,
+        .world = {{-40, -10, 0}, {40, 10, 0}}, .split = {2, 1, 1}, .transports = transports}, now);
+    TIDE_REQUIRE(shards);
+    player = tide_shard_client_create(&(tide_shard_client_desc){
+        .client = {.game = &tide_game_api, .transport = tide_loopback_endpoint(net, 100),
+            .server = tide_loopback_address(10), .sample = sample, .lead = 2}, .reach = reach}, now);
+    TIDE_REQUIRE(player); run(3);
+    tide_shard_client_watch(player, &(tide_shard_box){{20, -5, 0}, {35, 5, 0}}); run(2);
+    const uint32_t home = tide_shard_client_home_shard(player);
+    TIDE_REQUIRE(home == 1 && tide_shard_client_session(player, 2));
+    TIDE_REQUIRE(tide_client_status_of(tide_shard_client_session(player, 2)).state == TIDE_SESSION_CONNECTED);
+    const tide_player_id id = tide_client_status_of(tide_shard_client_home(player)).player;
+    tide_server_kick(tide_shards_server(shards, home), id, "removed"); run(2);
+    const tide_client_status status = tide_client_status_of(tide_shard_client_home(player));
+    TIDE_CHECK(status.state == TIDE_SESSION_OFFLINE && status.reason == TIDE_DISCONNECT_KICKED);
+    TIDE_CHECK(strcmp(status.message, "removed") == 0);
+    TIDE_CHECK(tide_shard_client_home_shard(player) == home);
+    tide_shard_client_destroy(player); tide_shards_destroy(shards); tide_loopback_destroy(net);
+}
+
+TIDE_TEST(shards_recovery_reserves_admitted_player_slots_for_their_cookies)
+{
+    tide_loopback *wire = tide_loopback_create(91);
+    tide_server *server = tide_server_create(&(tide_server_desc){.game = &tide_game_api,
+        .transports = {tide_loopback_endpoint(wire, 10)}, .tick_rate = 60}, 0);
+    TIDE_REQUIRE(server);
+    for (int p = 0; p < 4; p++) TIDE_REQUIRE(tide_server_admit(server, tide_player_from_index(p), 100u + (uint64_t)p));
+    tide_client *stranger = tide_client_create(&(tide_client_desc){.game = &tide_game_api,
+        .transport = tide_loopback_endpoint(wire, 100), .server = tide_loopback_address(10)}, 0);
+    TIDE_REQUIRE(stranger);
+    for (unsigned frame = 1; frame <= 120; frame++) {
+        const double seconds = frame / 120.0;
+        tide_loopback_set_time(wire, seconds); tide_server_update(server, seconds); tide_client_update(stranger, seconds);
+    }
+    const tide_client_status refused = tide_client_status_of(stranger);
+    TIDE_CHECK(refused.state == TIDE_SESSION_OFFLINE && refused.reason == TIDE_DISCONNECT_REFUSED);
+    tide_client_destroy(stranger);
+    tide_client *returning = tide_client_create(&(tide_client_desc){.game = &tide_game_api,
+        .transport = tide_loopback_endpoint(wire, 101), .server = tide_loopback_address(10), .cookie = 100}, 1);
+    TIDE_REQUIRE(returning);
+    for (unsigned frame = 121; frame <= 240; frame++) {
+        const double seconds = frame / 120.0;
+        tide_loopback_set_time(wire, seconds); tide_server_update(server, seconds); tide_client_update(returning, seconds);
+    }
+    const tide_client_status restored = tide_client_status_of(returning);
+    TIDE_CHECK(restored.state == TIDE_SESSION_CONNECTED && restored.player.id == 1 && restored.cookie == 100);
+    tide_server_unadmit(server, tide_player_from_index(3));
+    TIDE_CHECK(tide_server_admit(server, tide_player_from_index(3), 200));
+    TIDE_CHECK(tide_server_cookie(server, tide_player_from_index(3)) == 200);
+    tide_server_unadmit(server, tide_player_from_index(3));
+    stranger = tide_client_create(&(tide_client_desc){.game = &tide_game_api,
+        .transport = tide_loopback_endpoint(wire, 102), .server = tide_loopback_address(10)}, 2);
+    TIDE_REQUIRE(stranger);
+    for (unsigned frame = 241; frame <= 360; frame++) {
+        const double seconds = frame / 120.0;
+        tide_loopback_set_time(wire, seconds); tide_server_update(server, seconds);
+        tide_client_update(returning, seconds); tide_client_update(stranger, seconds);
+    }
+    const tide_client_status reused = tide_client_status_of(stranger);
+    TIDE_CHECK(reused.state == TIDE_SESSION_CONNECTED && reused.player.id == 4 && reused.cookie != 103);
+    TIDE_CHECK(tide_client_status_of(returning).cookie == 100);
+    tide_client_destroy(stranger); tide_client_destroy(returning); tide_server_destroy(server); tide_loopback_destroy(wire);
+}
+
+TIDE_TEST(shards_lifecycle_messages_reject_invalid_player_slots_without_changing_the_world)
+{
+    now = 0;
+    net = tide_loopback_create(17);
+    shards = tide_shards_create(&(tide_shards_desc){.game = &tide_game_api, .tick_rate = 60,
+        .world = {{-40, -10, 0}, {40, 10, 0}}, .split = {1, 1, 1}, .transports = transports}, now);
+    TIDE_REQUIRE(shards);
+    tide_world *root = (tide_world *)(uintptr_t)tide_shards_world(shards, 0);
+    const uint64_t before = tide_game_api.hash_world(root);
+    const uint32_t invalid[] = {0, 5, UINT32_MAX}; // The fixture takes four players.
+    for (unsigned i = 0; i < sizeof invalid / sizeof *invalid; i++) {
+        uint8_t bytes[16]; tide_writer message = {bytes, sizeof bytes, 0, false, false};
+        tide_shard_header(&message, TIDE_SHARD_PLAYER, TIDE_SHARD_ORCHESTRATOR, 0);
+        tide_write_u8(&message, 1); tide_write_u32(&message, invalid[i]);
+        TIDE_CHECK(!tide_game_api.shards->receive(root, bytes, message.size));
+        TIDE_CHECK(tide_game_api.hash_world(root) == before);
+    }
+    tide_shards_destroy(shards); tide_loopback_destroy(net);
+}
+
+typedef struct interrupted_link { tide_transport wire; bool blocked; } interrupted_link;
+static interrupted_link interrupted[8];
+static void interrupted_send(void *self, tide_address to, const void *data, uint32_t size)
+{
+    interrupted_link *link = self;
+    if (!link->blocked) link->wire.send(link->wire.self, to, data, size);
+}
+static uint32_t interrupted_receive(void *self, tide_address *from, void *data, uint32_t size)
+{
+    interrupted_link *link = self;
+    uint32_t n;
+    while ((n = link->wire.receive(link->wire.self, from, data, size))) if (!link->blocked) return n;
+    return 0;
+}
+static void interrupted_close(void *self)
+{
+    interrupted_link *link = self;
+    if (link->wire.close) link->wire.close(link->wire.self);
+}
+static bool interrupted_reach(void *user, uint32_t shard, uint64_t match, tide_transport *transport, tide_address *server)
+{
+    (void)user; (void)match;
+    if (shard >= 8) return false;
+    interrupted[shard].wire = tide_loopback_endpoint(net, 100 + shard);
+    *transport = (tide_transport){.self = &interrupted[shard], .send = interrupted_send,
+        .receive = interrupted_receive, .close = interrupted_close};
+    *server = tide_loopback_address(10 + shard);
+    return true;
+}
+
+TIDE_TEST(shards_a_timed_out_neighbour_recovers_before_the_player_crosses)
+{
+    now = walk_until = 0;
+    memset(interrupted, 0, sizeof interrupted);
+    net = tide_loopback_create(7);
+    tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 0.03, .jitter = 0.01, .loss = 0.05});
+    shards = tide_shards_create(&(tide_shards_desc){.game = &tide_game_api, .tick_rate = 60,
+        .world = {{-40, -10, 0}, {40, 10, 0}}, .split = {2, 1, 1}, .transports = transports}, now);
+    TIDE_REQUIRE(shards);
+    player = tide_shard_client_create(&(tide_shard_client_desc){
+        .client = {.game = &tide_game_api, .transport = tide_loopback_endpoint(net, 100),
+            .server = tide_loopback_address(10), .sample = sample, .lead = 2}, .reach = interrupted_reach}, now);
+    TIDE_REQUIRE(player);
+    run(3);
+    const tide_player_id id = tide_client_status_of(tide_shard_client_home(player)).player;
+    tide_shard_client_watch(player, &(tide_shard_box){{20, -5, 0}, {35, 5, 0}});
+    run(3);
+    TIDE_REQUIRE(tide_shard_client_session(player, 2));
+    TIDE_REQUIRE(tide_client_status_of(tide_shard_client_session(player, 2)).state == TIDE_SESSION_CONNECTED);
+    interrupted[2].blocked = true;
+    run(7);
+    interrupted[2].blocked = false;
+    run(4);
+    TIDE_CHECK(tide_client_status_of(tide_shard_client_session(player, 2)).state == TIDE_SESSION_CONNECTED);
+    TIDE_CHECK(tide_client_status_of(tide_shard_client_home(player)).state == TIDE_SESSION_CONNECTED);
+    walk_until = now + 4;
+    run(6);
+    TIDE_CHECK(tide_shard_client_home_shard(player) == 2);
+    const tide_client_status status = tide_client_status_of(tide_shard_client_home(player));
+    TIDE_CHECK(status.state == TIDE_SESSION_CONNECTED && status.player.id == id.id);
+    tide_entity e; Avatar a;
+    TIDE_CHECK(owners(&e, &a) == 1 && a.position.x > 16);
+    tide_shard_client_destroy(player);
+    tide_shards_destroy(shards);
+    tide_loopback_destroy(net);
+}
+
+TIDE_TEST(shards_repeated_crossings_and_a_four_region_corner_keep_one_visible_avatar)
+{
+    const unsigned rates[] = {60, 144, 240};
+    const tide_net_conditions conditions[] = {
+        {.latency = 0.02, .jitter = 0.005},
+        {.latency = 0.05, .jitter = 0.02, .loss = 0.05},
+        {.latency = 0.1, .jitter = 0.05, .loss = 0.15}};
+    const struct { tide_float2 move; double seconds; } path[] = {
+        {{0, 0}, 3}, {{0, -1}, 1.5}, {{1, 0}, 3}, {{0, 1}, 3},
+        {{-1, 0}, 3}, {{0, -1}, 3}, {{1, 1}, 3}, {{-1, -1}, 3}, {{0, 0}, 3}};
+    for (unsigned trial = 0; trial < 3; trial++) {
+        now = 0;
+        net = tide_loopback_create(51 + trial);
+        tide_loopback_set_conditions(net, conditions[trial]);
+        shards = tide_shards_create(&(tide_shards_desc){.game = &tide_game_api, .tick_rate = 60,
+            .world = {{-40, -40, 0}, {40, 40, 0}}, .split = {2, 2, 1}, .transports = transports}, now);
+        TIDE_REQUIRE(shards);
+        tide_float2 move = {0};
+        heard = (tide_event_log){.taken = true};
+        player = tide_shard_client_create(&(tide_shard_client_desc){
+            .client = {.game = &tide_game_api, .transport = tide_loopback_endpoint(net, 100),
+                .server = tide_loopback_address(10), .sample = steer_sample, .user = &move, .lead = 2, .events = &heard},
+            .reach = reach}, now);
+        TIDE_REQUIRE(player);
+        tide_local_init(&local);
+        memset(&devices, 0, sizeof devices);
+        memset(&gui, 0, sizeof gui);
+        unsigned last_server = 0, missing = 0, duplicate = 0, double_owner = 0;
+        tide_entity identity = {0};
+        for (unsigned leg = 0; leg < sizeof path / sizeof *path; leg++) {
+            move = path[leg].move;
+            const unsigned frames = (unsigned)(path[leg].seconds * rates[trial]);
+            for (unsigned step = 0; step < frames; step++) {
+                now += 1.0 / rates[trial];
+                tide_loopback_set_time(net, now);
+                const unsigned server_tick = (unsigned)(now * 60);
+                if (server_tick != last_server) { tide_shards_update(shards, now); last_server = server_tick; }
+                tide_shard_client_update(player, now);
+                tide_entity e = {0}; Avatar a = {0};
+                const int owned = owners(&e, &a);
+                double_owner += owned > 1;
+                if (owned == 1) {
+                    if (tide_entity_is_null(identity)) identity = e;
+                    TIDE_CHECK(e.index == identity.index && e.generation == identity.generation);
+                }
+                const Sight sight = frame();
+                if (now > 3) { missing += sight.avatars == 0; duplicate += sight.avatars > 1; }
+            }
+        }
+        TIDE_CHECK(missing == 0);
+        TIDE_CHECK(duplicate == 0);
+        TIDE_CHECK(double_owner == 0);
+        TIDE_CHECK(tide_shard_client_moves(player) >= 5);
+        const tide_client_status status = tide_client_status_of(tide_shard_client_home(player));
+        TIDE_CHECK(status.state == TIDE_SESSION_CONNECTED && status.verified_tick > 1400);
+        tide_shard_client_destroy(player);
+        tide_shards_destroy(shards);
+        tide_loopback_destroy(net);
+        tide_draw_free(&draw);
+        tide_local_free(&local);
+        tide_event_log_free(&heard);
+    }
+}
+
 // Steps, each with a frame, and the most markers any frame drew; a frame
 // that didn't draw the avatar once fails
 static int watch_run(const double seconds)

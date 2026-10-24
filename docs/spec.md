@@ -545,9 +545,9 @@ e.Remove(Stunned);
 
 ### Entry point
 
-- The scene named `Main` is where the program starts (see Scenes). There is exactly one.
-- A local `Main` starts the program in it, usually a menu. A match `Main` starts a single-player match with it right away, the same as a menu starting one.
-- `Main` sets up the first scene, not the game loop: the engine runs the tick.
+- Project startup can select an authored prefab or an ordinary scene (see Scenes). An authored prefab starts directly as a match scene, without a handwritten `Main`.
+- Without a startup selection, the scene named `Main` is where the program starts. There must then be exactly one. A local startup scene starts outside a match, usually in a menu; a match startup starts a single-player match right away.
+- The startup scene sets up the first scene, not the game loop: the engine runs the tick.
 
 ```csharp
 scene Main { }
@@ -755,7 +755,7 @@ Initial implementation choices, 2026-10-24, provisional:
 - Qualified names work wherever a type is named: parameters (`mut Combat.Health health`), `with` and `without`, component values (`Combat.Health { value = 10 }`), `Spawn`, `Add` and `Remove`.
 - The same name can be declared in different namespaces. Built-in names can't start a namespace (`namespace Math;` is an error).
 - In generated C, namespaced declarations are prefixed with their namespace: `Combat.Health` is `Combat_Health`, read with `tide_get_Combat_Health`.
-- There's exactly one `Main` in a game, in any file or namespace. `namespace` and `using` are only keywords where a declaration can start: anywhere else they're names like any other.
+- There can be at most one `scene Main` in a game, in any file or namespace; it is required only without an explicit startup selection. `namespace` and `using` are only keywords where a declaration can start: anywhere else they're names like any other.
 
 ```csharp
 // combat.tide
@@ -3264,12 +3264,24 @@ Implemented, awaiting approval:
 - A prefab instance's complete tree, components, references and parenting exist
   before any of its `Spawned` handlers run. Handlers then run root-first (owner
   decision, 2026-10-12).
+- Inherited descendants support per-instance field-value overrides using matching
+  nested `entity` blocks. Only values of existing component fields may change;
+  inherited components and children cannot be added, removed or replaced. Nested
+  instance roots retain their existing component and child additions (approved
+  2026-10-24). Reference scopes, defaults, construction order and entity counts
+  are unchanged.
+- The native editor supports creating a scene, adding and arranging objects,
+  extracting an authored subtree as a prefab, placing instances and playing the
+  selected tree directly. Play runs the normal game lifecycle, camera and input;
+  Stop discards runtime state. Project startup is a separate persistent choice.
+  Existing `Main` code remains unchanged and is the default without a selection
+  (approved 2026-10-24).
 
 ### Provisional
 
-**First text/compiler implementation (2026-10-12).** The spelling and initial
-limits below remain provisional. Transform and parenting are implemented
-separately in the following section. The first native editor is described below.
+**Current text/compiler implementation (2026-10-24).** The spellings and initial
+limits below remain provisional except for the decisions above. Transform and
+parenting are described separately in the following section.
 
 Use `.tprefab`, normally one named declaration per file, such as
 `Enemy.tprefab`. Its body is its root entity. Ordinary component values use the
@@ -3314,10 +3326,13 @@ component Aim
 
 - `entity Weapon : Pistol` instantiates Pistol as that child and applies the
   component values in Weapon's block as overrides on its root. Its named
-  descendants participate in paths such as `Weapon.Muzzle`. Additional named
-  children can be added. Removing/replacing inherited children and top-level
-  prefab variants are later work; overlapping inherited names must not be
-  resolved by silently taking whichever file was read last.
+  descendants participate in paths such as `Weapon.Muzzle`. Its root can add
+  named children and components. A matching `entity Muzzle { Transform {
+  localPosition = float3(0, 0, 0.8) }; }` inside Weapon overrides an existing
+  descendant's fields; nested matching blocks reach deeper descendants. These
+  descendant blocks require nonempty component field assignments: no bare or new
+  component, new child, base prefab, removal or replacement. Duplicate matching
+  blocks or fields are errors. Top-level prefab variants are not implemented.
 - Authoring expressions are literals, the existing constant/default expressions,
   assets and named entity references. They do not call game functions, run
   statements, read live worlds or start tasks. Entity names/paths are resolved
@@ -3377,22 +3392,45 @@ component Aim
   declarations are also accepted in `.tide` files. Every declaration is validated,
   including unused prefabs and required fields. Composition is initially bounded
   to 1024 entities per instance and 128 levels of nesting.
-- First native editor (2026-10-12): `tide open <file.tprefab>` opens an existing
-  authored file in a desktop app. `--project <folder>` explicitly selects its
+- Native editor: `tide open <file.tprefab>` opens an authored file in a desktop
+  app; New Scene/New Prefab create another rooted `.tprefab` in the project.
+  `--project <folder>` explicitly selects its
   game; otherwise the nearest enclosing tide.packages selects the root, with
   the file's folder as the no-manifest fallback. The root is displayed. Only
   that folder's sources and resolved packages provide components; arbitrary
   ancestor scripts are not gathered. CMake manifest/shared-package consumer
   selection are future work. Checking uses DEBUG and package symbols, matching
   ordinary IDE analysis; custom build defines are not selected yet.
-- The first app provides a composed hierarchy, component/default/override
-  inspection, Tide expression editing, child/prefab insertion and subtree
-  deletion. Inherited descendants are read-only; nested roots can override their
-  component values. Source-span edits retain untouched text and comments.
-  Syntax-invalid edits are rejected; project compiler errors block Save.
+- The app provides a composed hierarchy, component/default/override inspection,
+  direct bool/int/float/vector/Euler controls, checked entity/enum/asset choices
+  and optional inline Tide expressions. Authored objects support named child and
+  prefab insertion, deletion, rename, duplicate and drag reparenting. Checked
+  same-file references are rewritten; operations requiring edits in another
+  source file are refused. Reparenting preserves local TRS, so world placement
+  can change. Inherited descendants allow field overrides, while their structure
+  remains read-only; Open source prefab navigates to their definition.
+  Source-span edits retain untouched text and comments.
+  Syntax-invalid edits are rejected. Semantic/project errors remain visible and
+  may be saved; syntax errors in the current document and disk conflicts block Save.
   Saving compares the original disk text before replacement. Undo/redo retain
   64 edits; recovery drafts retain the original source baseline under .tide/editor.
   This is front-end/asset-metadata authoring validation, not game compilation.
+- Save as Prefab extracts an ordinary authored child subtree into an exclusively
+  created new asset and replaces that child with an instance of it. Incoming
+  references keep their paths. Outgoing references beyond the subtree, descendant
+  references to the selected root (which the language cannot express in the new
+  prefab), an already-instanced selected root and consumer-sensitive cross-file
+  changes are refused. The source replacement is one current-document undo;
+  undo retains the new asset. New files never overwrite an existing destination.
+- Play checks the whole project, builds the selected prefab as the normal startup
+  scene with applied unsaved text, and launches the normal game host. It requires
+  no compiler errors or unresolved conflict/recovery. Gameplay runs in a separate
+  window with normal handlers, systems, views, game camera, input and services.
+  Stop ends the build/game process tree and discards runtime state; authored text
+  and project startup are retained. Authoring preview below remains separate.
+  Set startup writes `settings { startScene = Qualified.Name; }` in project code,
+  preserving other settings and existing `Main`. New Scene selects itself for
+  startup only when the project has neither a `Main` nor an explicit startup.
 - The viewport uses transform markers with local TRS/parent composition, XY or
   isometric projection, zoom and pan. It interprets a limited set of constant
   TRS expressions; unsupported transforms and their subtrees are visibly omitted.
@@ -3416,7 +3454,8 @@ component Aim
   authored transforms, choosing nearest depth in the editor camera. It does not
   derive proxies from arbitrary view draws, custom shader deformation or cameras.
   Move/rotate/scale gizmos patch one local TRS field on release, with one undo
-  entry, cancellation and optional snapping. Inherited children are read-only.
+  entry, cancellation and optional snapping. Inherited children receive ordinary
+  per-instance field overrides.
   Compiled views refresh after release; overlays/fixed meshes follow the drag.
 - IDE launch actions open this native app for .tprefab files in a trusted
   game context. VS Code also embeds its frames in an editor tab; JetBrains uses
@@ -3430,22 +3469,19 @@ component Aim
 
 Further authoring/editor work:
 
-- Root identity filters and prefab Main. The first implementation gives a prefab
-  no implicit component/type; use explicit root components for filters and keep
-  today's `.tide` `scene Main` startup convention. A future prefab startup
-  convention needs a separate decision.
-- Rename/completion for authored entity paths. Component/field/prefab symbol
-  renames are implemented; authored child names currently require text edits.
+- Root identity filters. A prefab has no implicit component/type; use explicit
+  root components for filters.
+- Language-server rename/completion for authored entity paths. Native hierarchy
+  refactors handle checked same-file paths; cross-file operations remain limited.
 - Authoring machine-local fields on match entities, including model/material
   selection, without putting rendering resources in match snapshots or trusting
   serialized executable code. A basic data tree alone does not solve this.
 - Defaults-versus-overrides during live editing/hot reload of existing instances.
   The first slice can instantiate new trees; automatic modification of existing
   gameplay instances needs a separate policy.
-- GPU/frame transport improvements, dynamic picking proxies, authored
-  reparent/rename refactoring, new-file creation and conflict merge UI. The first
-  native app edits existing files and keeps conflicting drafts without merging
-  them automatically. CMake/consumer project selection and remembered context
+- GPU/frame transport improvements, dynamic picking proxies and conflict merge
+  UI. The native app keeps conflicting drafts without merging them automatically.
+  CMake/consumer project selection and remembered context
   remain open tooling work.
 
 ## Transform and entity parenting
@@ -3668,13 +3704,15 @@ local event(Forgotten) FreeModel(Model model, mut Loaded loaded)
 - Loading and unloading happen at the end of the tick, like `Spawn` and `Destroy`. `Spawned` handlers set a scene up, and its entities get `Destroyed` when it unloads, both within that tick (see Events).
 - **Ownership:** a spawn joins the scene of the entity the code runs for. In a handler, that's the entity the event was sent to. Code that isn't running for an entity, like a system that runs once per tick, spawns into no scene, and those entities live until they're destroyed.
 - A scene is never owned: it lives until it's unloaded, whoever loaded it.
-- `Main` is the fallback: when the last scene of `Main`'s world unloads, `Main` loads again, set up by its `Spawned` handlers as at the start. A match `Main` comes back in the match, a local one in the local state.
-- When `Main` is local, a match can't load it, so a match whose last scene unloads ends. Every machine in it goes offline, back to its local `Main`, with `Disconnected` and the reason `Ended` (see Sessions).
+- Project startup selects a prefab or scene independently of its name. A prefab starts as an ordinary loaded match scene with its authored root and complete construction before root-first `Spawned`, followed by normal game systems, views, camera and input. No wrapper entity or handwritten `Main` is required. A selected ordinary scene retains its match/local placement. Without a selection, existing `scene Main` startup is unchanged.
+- `settings { startScene = Qualified.Name; }` persists that selection. `tide run/build <project> --scene Name` overrides it for that build without changing source or existing `Main` declarations (approved 2026-10-24).
+- The selected startup is also the fallback, or `Main` without a selection: when the last scene of its world unloads, it loads again, initialized as at the start. A match startup comes back in the match, a local one in local state.
+- When startup is local, a match can't load it, so a match whose last scene unloads ends. Every machine in it goes offline with `Disconnected` and the reason `Ended` (see Sessions); local state carries on.
 - Loaded scenes share their world: the same systems, singletons and `Time`. Scenes that share nothing are separate worlds, which never communicate. Only the server creates worlds, so match code can't (see Open).
 - **Visibility:** scenes, entities and whole components use one audience mechanism at different scopes. A loaded scene root's `Visibility` group limits all entities owned by that scene, including later spawns. Scenes are public by default. `Visibility.Set(group, audience)` changes the shared live audience; a player newly included receives the scene's permitted state. Entity and component restrictions intersect the enclosing scene audience and cannot broaden it. Scene ownership and lifetime remain independent of audience groups.
 - A scene whose group audience is empty exists only on the server, which is where secrets like RNG seeds go. Code that reads a private scene only predicts correctly on machines that see it, and the server corrects the others.
 - A client never loads match scenes on its own: it has the ones the server has it in.
-- A system named `Main` is an ordinary system. Without a `scene Main`, the missing entry point's error says so.
+- A system named `Main` is an ordinary system. Without a selected startup or a `scene Main`, compilation reports a missing entry point.
 
 ```csharp
 scene Arena
@@ -3717,9 +3755,9 @@ system Collapse(Arena arena)
 - `Scene.Load(Scene { ... }, Component { ... }, ...)` accepts ordinary root components, including `Visibility { group = group }`, before initialization handlers run. Root components are positional, unique and use the same placement/value rules as Spawn; `Scene.Load(scene: Arena)` remains valid when no root components follow. Authored prefab loads use their ordinary root overrides. Local scenes can take ordinary local root components, but no Visibility.
 - Scene components contain only their declared state; audience policy lives in the root Visibility and shared group directory. There is no separate scene visibility enum or player-membership API.
 - **Scene filters** (the spelling is the owner's; the rest is provisional): `with scene Arena` and `without scene Arena` in a system's, a view's or an event handler's parameters take only the entities of a loaded `Arena`, or only those of none. An entity's scene is the one it was spawned into (see Ownership above); a scene's own entity is one of its entities, its scene being itself. `with Arena` still filters by the component, so it takes a scene's own entity alone: `event(Spawned) Setup(with Main)` runs once. Several scene filters can be given, each a scene of the entities' own side. A scene filter alone runs for every entity of the scenes, as an `Entity` parameter alone does. `scene` is a word of its own there only right before a name; a filter naming a prefab, or a component that isn't a scene, is an error that says so.
-- The engine loads `Main` itself: `tide_world_init` loads a match `Main`, and `tide_local_init` a local one, with `TIDE_MAIN_IS_LOCAL` defined. `tide/run.h` starts without a match when `Main` is local.
-- The `Main` scene is the world's first entity.
-- The fallback waits for the end of the tick (the frame, in local state), once every change and handler has applied, so unloading one scene and loading another in the same tick never brings `Main` back. Entities in no scene don't count. `Main` comes back at most once a tick: one that unloads itself as it loads leaves the world without a scene until the next.
+- Startup name resolution: the selection names a declaration, not a string, constructed value or runtime expression. Settings resolve through their source file's namespace/using context; a CLI name has no such context and an unqualified name resolves only in global scope. Invalid or duplicate persistent settings remain errors even with a CLI override. A prefab loads in match placement with normal placement/reference checks; a prefab merely named Main is not the default entry point.
+- The engine loads the effective startup itself: `tide_world_init` loads a match startup, and `tide_local_init` a local one, with `TIDE_MAIN_IS_LOCAL` defined. `tide/run.h` starts without a match when startup is local. The startup root is the world's first entity.
+- The fallback waits for the end of the tick (the frame, in local state), once every change and handler has applied, so unloading one scene and loading another in the same tick never brings it back. Entities in no scene don't count. It returns at most once a tick: one that unloads itself as it loads leaves the world without a scene until the next.
 - A match that ends runs no more ticks after the one that left it without a scene. The server tells every player then, and anyone who tries to join. Only the match ends: local state carries on as it was, so whatever local scenes were loaded stay loaded.
 
 ### Open
@@ -3821,7 +3859,7 @@ Picks for the first build; names and details to confirm.
 ### Decided
 
 - Single-player and multiplayer are the same: every match runs on a server, and this machine's player connects to it, over a loopback transport when the server is on this machine. The engine assumes nothing about what a game does with it, like pausing; games build that from inputs and state.
-- Local code decides which match this machine is in: `Session.Start(scene)` starts one on this machine, `Session.Join(code)` joins the match in a room by its code, `Session.Connect(address, port)` joins another machine's by its address, and `Session.Leave()` leaves. `Start` names the scene the match starts in, with its values like `Scene.Load`'s: `Session.Start(Arena { size = 30 })`; `Session.Start()` names none, and starts in `Main` with its defaults, which is for code that can't name the game's scenes (a package's menu), and an error where `Main` is local. `Join` and `Connect` get whatever the server runs.
+- Local code decides which match this machine is in: `Session.Start(scene)` starts one on this machine, `Session.Join(code)` joins the match in a room by its code, `Session.Connect(address, port)` joins another machine's by its address, and `Session.Leave()` leaves. `Start` names the scene the match starts in, with its values like `Scene.Load`'s: `Session.Start(Arena { size = 30 })`. `Session.Start()` uses the selected startup, or `Main` without a selection, with its initial values. This lets code such as a package's menu start a match without naming the game's scenes; it is an error when startup is local. `Join` and `Connect` get whatever the server runs.
 - There's one kind of match. Whether others can join it is a switch on it, not another way to start one: a match starts closed, `Session.Open()` lets others join the match this machine runs, and `Session.Close()` stops letting them, at any time. Single-player is a match nobody else was let into.
 - The machine that runs a match sends players out of it with `Session.Kick(player, message)`, or every other machine's with `Session.KickAll(message)`. The message is text, so a game can say anything, and kicked players get it with their `Disconnected`. A kick isn't a ban.
 - The machine that runs a match says what it means by leaving it: `Session.Leave()` leaves, and with host migration the match goes on without this machine; `Session.End()` ends the match for everyone, who go offline with `Ended`. A crash, or closing the window, is a `Leave`.
@@ -3877,7 +3915,7 @@ Implemented, awaiting approval:
   - On the web, a link: the page's address without its query or fragment (`origin` and `pathname`), then `?join=` and the room's code, like `https://example.com/my-game/?join=K7QF2M`, so it works wherever the page is served (a site, `localhost`, a LAN address). Opening it joins the room, as `?join=` always did. A web host's invite stays `""` until the relay confirms its room is registered, even if `room` already has a code. A page that's no place to link to (not `http:`, `https:` or `file:`), a link longer than 255 bytes, and a `room` that `?join=` wouldn't pass on whole (a game's own network's text with anything but letters, digits and `/`, which `ROOMID/0` has) have the room's text itself.
   - Natively (desktop, Android), where there's no page to link to, the room's code itself: what a friend types to join.
   - Up to 255 bytes of printable ASCII, so `Clipboard.Copy` takes it whole.
-- `Connected` is sent once the match's world has arrived and this machine plays in it; `Disconnected { DisconnectReason reason; string message; }` when it leaves: `Left` (it called `Leave`, or started another match), `TimedOut` (the server stopped answering, or never did), `Refused` (another build of the game, no room left, or a closed match), `ServerLeft` (the server's machine left, which ended the match), `Failed` (it couldn't start: no network, a port in use, an address that isn't one, a room nobody has) `Ended` (the match's last scene unloaded, and `Main` is local; see Scenes) or `Kicked` (the server's machine sent it away). `message` is the kick's, and `""` for the other reasons.
+- `Connected` is sent once the match's world has arrived and this machine plays in it; `Disconnected { DisconnectReason reason; string message; }` when it leaves: `Left` (it called `Leave`, or started another match), `TimedOut` (the server stopped answering, or never did), `Refused` (another build of the game, no room left, or a closed match), `ServerLeft` (the server's machine left, which ended the match), `Failed` (it couldn't start: no network, a port in use, an address that isn't one, a room nobody has) `Ended` (the match's last scene unloaded, and startup is local; see Scenes) or `Kicked` (the server's machine sent it away). `message` is the kick's, and `""` for the other reasons.
 - `Session.Kick(player)` and `Session.KickAll()` send no message. A kicked player leaves the match at once, as if they had left: `PlayerLeft` follows, and they can join again, as the same player, while the match is open. A goodbye can be lost: a kicked player who didn't hear it is told again whenever they're in touch, while they still send to the server and when they join it again, before they're let in (taking a match over with host migration included). Once they've heard, they can join again. Kicks only change a match this machine runs: on a client, or offline, they do nothing, and this machine's own player can't be kicked (it calls `Leave`). A message is up to 255 bytes of UTF-8, cut where a character starts. A frame takes up to 16 kicks; a `Start`, `Join`, `Connect` or `Leave` after them drops them, as it does Opens. A machine kicked from a match it joined with `--join` or `--connect` doesn't join it again by itself.
 - `Session.Open(port)` takes players in a room, and on `port` too, 7777 without one, except on the web, which has no ports. A closed match turns away anyone who isn't in it, coming back or not; the players in it stay. Opened again, it takes players in the same room and on the same port. `Open` and `Close` only change a match this machine runs: on a client, or offline, they do nothing. When it can take players neither in a room nor on the port, the match stays closed. Opens and Closes before a `Start`, `Join`, `Connect` or `Leave` in the same frame were for the match it ends, so they're dropped. `Session.Play` and `Session.Host` are errors that point to `Start` and `Open`.
 - `Session.Connect(address, port)` takes `"192.168.1.5"`, `"192.168.1.5:7777"` or a name like `"localhost"`, and the port is 7777 without one.
@@ -3898,7 +3936,7 @@ Implemented, awaiting approval:
 - A match can't start in a scene that holds text or lists yet.
 - Starting a match leaves the one this machine is in first, which sends `Disconnected` with `Left` before the new one's `Connected`.
 - The server's player joins before the match's first tick, as `PlayerJoined` handled at the end of it; the server only starts ticking then.
-- When `Main` is the match's, `tide/run.h` starts it at once, and opens it with `--host [port]`, or joins another with `--join code` and `--connect address` on the command line (and `tide run --host`, `--join` and `--connect`).
+- When startup is the match's, `tide/run.h` starts it at once, and opens it with `--host [port]`, or joins another with `--join code` and `--connect address` on the command line (and `tide run --host`, `--join` and `--connect`).
 - A match takes up to the game's `maxPlayers` players, 16 without the setting and 65536 at most (see Settings). One more is refused, as from a full match.
 - A client predicts at most a second ahead of the last tick the server confirmed, however many ticks that is at the match's tick rate; beyond it, it waits for the server. The server keeps four seconds of ticks to send again; a player further behind gets its complete permitted world again. A player that was sent the world has every tick since kept for it until it catches up, however long the world took to arrive, up to 32 seconds: one that can't catch up in that long gets the world again.
 - Joining takes a round trip and a half: a hello gets a welcome, and the world comes once the player writes back, so that a hello from an address that isn't the player's costs the server a datagram and never puts a player in the match. One that never writes back is forgotten in two seconds. Players who join in the same tick are sent one packing of the world.
@@ -3980,7 +4018,7 @@ Mismatches use the existing Refused reason with update guidance in the message.
 - `settings` is a keyword only at the top level of a file, so it still works as a name everywhere else.
 - Every setting has a default, so a block only lists what it changes.
 - A game can have several blocks, in any of its files, and together they're one list of what it sets: each sets what the others don't. A setting that two of them set is an error, as one set twice in a block is. A second block is no error by itself: what clashes is two that set the same thing.
-- Values are constant expressions, and can name constants.
+- Values are constant expressions, and can name constants. The startup selection names a prefab or scene declaration instead (see Scenes).
 - Settings are part of the build, so every machine in a match has the same ones.
 - The editor completes the settings' names and shows each one's default and what it does. A name that isn't a setting is an error that says which one was meant.
 - The first settings are `title` (the window's), `tickRate` (ticks per second, 60 by default), `maxPlayers` (how many players a match takes, 16 by default), `hostMigration` (see Sessions), `prediction` (how clients keep up with the match, see below), `appId` (the app's ID on phones), `version` (the version people see), `stats` (the stats overlay, see below) and `debugViews` (the engine's debug views, like the profiler, see below). The window's size and the default port can come later.
@@ -4556,7 +4594,7 @@ Symbols beyond tide's versions (the owner, 2026-10-07: `#if` with no `#define` i
 
 ## Open
 
-- How entities authored as data (levels, prefabs) feed into archetype derivation.
+- Archetype derivation for additional authored forms beyond the current checked prefab composition.
 - Archetype growth past what reachability trims: an `Add` or `Remove` on an entity read from a field or a parameter still reaches every archetype of its world, so a game that toggles many components on arbitrary entities multiplies combinations. Sparse components (a presence bit in the row instead of an archetype of their own) are the way out; see Entities.
 - How modules, such as the engine's built-in systems, initialize when there's a single `Main`.
 - Access control: whether a namespace can keep declarations to itself.

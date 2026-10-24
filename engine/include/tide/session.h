@@ -41,6 +41,12 @@
 // events; if they'd left, PlayerJoined comes again, with the same PlayerID.
 // Single-player and hosting are the same: a server and its own player on one
 // machine, over a loopback transport (tide_session).
+// Connected packets in both directions prove that cookie and the current
+// connection attempt. A HELLO from the same address cannot replace a connection
+// without its cookie or a matching trusted admission identity. A client that
+// lost its cookie must wait for that address's old connection to time out.
+// Cookies prevent blind source-address spoofing; they are bearer credentials,
+// not UDP encryption or protection against a peer observing/modifying the path.
 //
 // Host migration (tide_game.host_migration): the server tells its players
 // where to meet when it goes, its room and the room's key, and the digests of
@@ -366,6 +372,9 @@ typedef struct tide_server_desc {
     // it starts (tide_game.seeded): no two matches go the same. NULL: the seed
     // is `seed`, and a run repeats exactly (tests and benchmarks). A match
     // that goes on from `world` keeps the seed it has.
+    // Also seeds a private cookie-generation key, even for an unseeded game.
+    // Network hosts should supply system entropy; NULL retains a process/time
+    // fallback for test/benchmark hosts, without a secure-entropy guarantee.
     uint64_t (*entropy)(void);
     // With no entropy, the seed of the match it starts (Time.seed): its low 31
     // bits. 0 unless the host picked one.
@@ -442,6 +451,10 @@ uint32_t tide_server_drop_injected(tide_server *s, uint8_t kind);
 // presenting `cookie` (the one their first shard gave them), closed or not.
 // False when another player has the slot.
 bool tide_server_admit(tide_server *s, tide_player_id player, uint64_t cookie);
+// Releases that reservation once the player left the world. An unused
+// slot forgets its cookie/identity so another player's admission can use it;
+// an existing connection or migration reservation is unchanged.
+void tide_server_unadmit(tide_server *s, tide_player_id player);
 // Whether a player is in the match on a connection now, and their cookie (0
 // for none).
 bool tide_server_connected(const tide_server *s, tide_player_id player);
@@ -609,7 +622,7 @@ typedef struct tide_session_desc {
     uint64_t (*now_ns)(void); // The real time, for its clients to keep within their budget (tide_client_desc), or NULL
     double resim_budget;      // Seconds a frame a client may spend running predicted ticks again; 0 for 0.004
     double guess_seconds;     // How long its clients guess that others' inputs stay as they were; 0 for 0.15 (tide_client_desc)
-    uint64_t (*entropy)(void); // For the seeds of the matches it starts (tide_server_desc), or NULL: they're `seed`
+    uint64_t (*entropy)(void); // For match seeds and private cookie keys (tide_server_desc); NULL: test/benchmark fallback
     uint32_t seed;             // With no entropy, the seed of every match it starts: 0 unless the host picked one
     tide_view_correct_fn correct_views; // Optional: presentation corrections, using `user`
     // A sharded game's matches on this machine (tide/shards.h): the box the

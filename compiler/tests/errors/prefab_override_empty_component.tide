@@ -1,0 +1,11 @@
+// expect: an inherited component override must set explicit fields; write 'Data { field = value };'
+scene Main { }
+component Data { int value = 7; }
+prefab Base { entity Child { Data { value = 3 }; } }
+prefab Broken
+{
+    entity Item : Base
+    {
+        entity Child { Data { }; }
+    }
+}

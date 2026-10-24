@@ -393,7 +393,14 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
     // The look stays along the ground as the walker goes round the planet; a car's camera swings in behind it
     var flat = Flat(pilot.look, up);
     pilot.look = Math.Length(flat) > 0.001 ? Math.Normalize(flat) : Flat(pilot.facing, up);
-    if (pilot.driving && !pilot.pressing) pilot.look = Math.Normalize(Math.Lerp(pilot.look, pilot.facing, Math.Min(dt * 2.5, 1)));
+    if (pilot.driving && !pilot.pressing)
+    {
+        // A normalized linear blend never turns two opposite directions:
+        // walking backwards before becoming a car left W pointing behind it.
+        float turn = Math.Atan2(Math.Dot(Math.Cross(pilot.look, pilot.facing), up), Math.Dot(pilot.look, pilot.facing))
+                   * Math.Min(dt * 2.5, 1);
+        pilot.look = Math.Normalize(pilot.look * Math.Cos(turn) + Math.Cross(up, pilot.look) * Math.Sin(turn));
+    }
     pilot.ahead = pilot.look;
     pilot.right = Math.Cross(up, pilot.look);
 

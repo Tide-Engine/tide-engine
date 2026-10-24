@@ -1,5 +1,46 @@
 # No Tide code can corrupt memory
 
+## Session cookie proof (2026-10-24)
+
+Protocol 19 checks a cookie and connection attempt before decoding connected
+packets or refreshing liveness in either direction. HELLO cannot replace a
+live/pending connection by its address alone; malformed disconnect payloads
+are ignored. Cookie-generation keys/counters remain private host metadata,
+outside simulation memory and serialization. Failed advertised entropy cannot
+produce an all-zero known key. Eleven session packet cases pass under targeted
+Windows ASan, including forgery, stale attempts, timeout and valid recovery.
+Wire/entropy contracts and the raw UDP security boundary: `notes/netcode.md`,
+Session cookie proof. No generated-C API or simulation layout changes.
+
+## Shard membership and recovery reservations (2026-10-24)
+
+Lifecycle messages validate their 0/1 flag and PlayerID against the game's
+configured count before indexing a membership word. The bitset grows through
+existing bounded list operations and writes through `tide_list_at_mut`, so
+snapshots retain COW ownership; at the player ceiling it contains 1,024 words.
+The invalid-slot regression covers zero, one past this game's count and
+UINT32_MAX, with unchanged world hashes. Admission release validates the
+player before touching arrays and cannot clear an active/migration identity.
+Checkpoint version 5 bounds pending notification counts against remaining
+bytes and the game's player count, and validates each flag/ID/desired state.
+No raw pointer or authentication cookie enters match state. Recovery and
+native/web validation are recorded in `notes/sharding.md`.
+
+## Untrusted session packets (2026-10-24)
+
+Upload chunks must match their retained transfer's size and sequence before
+indexing its chunk map or copying bytes. Validating the index against a new
+packet's size alone allowed a connected peer to access outside
+the original upload allocation. Windows AddressSanitizer reproduces the old
+heap-buffer-overflow; the fixed packet tests pass with session.c instrumented.
+
+Client input packets stage all canonical inputs in a reused private buffer;
+only a fully decoded, exactly consumed packet can change connection state.
+Acknowledgements and tick arithmetic are bounded before commit. Regression
+coverage and the remaining source-address authentication boundary are recorded
+in `notes/netcode.md`, Hostile client packet validation. No generated/runtime
+API, simulation layout or valid wire representation changes.
+
 ## Optional voice and local packets (2026-10-22)
 
 Session local data checks packet bounds, greeted source/cookie, recipient

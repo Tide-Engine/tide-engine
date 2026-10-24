@@ -19,7 +19,7 @@
 #define BUSY_SETTLING 120u       // Reports before a shard's busy share is anything to go by
 #define PLAYER_AWAY_SECONDS 20.0 // How long a player of the world on no shard has to come back before PlayerLeft
 #define SAVE_MAGIC 0x53444854u   // "THDS"
-#define SAVE_VERSION 4u
+#define SAVE_VERSION 5u
 
 typedef struct sighting {
     uint32_t player, shard, count;
@@ -118,6 +118,7 @@ struct tide_shard_coordinator {
     bool changed;
     bool tell_after;
     tide_writer told_after;
+    tide_writer players_after; // Lifecycle notifications committed in the checkpoint before the root applies them
     uint64_t reshaped; // The update it last looked at splitting and merging
     // Its actions since the last step, and the bytes they point into
     tide_shard_action *actions;
@@ -483,6 +484,7 @@ void tide_shard_coordinator_destroy(tide_shard_coordinator *c)
     free(c->neighbour_first);
     free(c->neighbours);
     free(c->told_after.data);
+    free(c->players_after.data);
     free(c->head.data);
     clear_actions(c);
     free(c->actions);
@@ -991,8 +993,35 @@ void tide_shard_coordinator_player(tide_shard_coordinator *c, const tide_player_
     inject(c, TIDE_SHARD_ROOT, data, w.size);
 }
 
+static void player_changed(tide_shard_coordinator *c, const tide_player_id player, const bool joined)
+{
+    if (!c->desc.checkpoints) { tide_shard_coordinator_player(c, player, joined); return; }
+    // Keep the identity/cookie and the notification together. Otherwise the
+    // world's journal can replay a leave while the coordinator still remembers
+    // that player as present, or replay a join whose cookie was never saved.
+    c->players_after.grows = true;
+    tide_write_u8(&c->players_after, joined ? 1u : 0u);
+    tide_write_u32(&c->players_after, player.id);
+    if (c->players_after.overflow) tide_out_of_memory();
+    c->changed = true;
+}
+
+static void tell_players(tide_shard_coordinator *c)
+{
+    tide_reader r = {c->players_after.data, c->players_after.size, 0, false};
+    while (r.at < r.size) {
+        const bool joined = tide_read_u8(&r) != 0;
+        const tide_player_id player = {tide_read_u32(&r)};
+        tide_shard_coordinator_player(c, player, joined);
+    }
+    c->players_after.size = 0;
+}
+
 static void track_players(tide_shard_coordinator *c)
 {
+    // The checkpoint header must not change while its worlds are gathered or
+    // the host keeps it. Further connection changes join the next batch.
+    if (c->checkpoint != CHECKPOINT_IDLE || c->players_after.size) return;
     for (uint32_t p = 0; p < c->player_count; p++) {
         roster *r = &c->players[p];
         const tide_player_id id = tide_player_from_index((int32_t)p);
@@ -1014,7 +1043,7 @@ static void track_players(tide_shard_coordinator *c)
             r->here = true;
             r->cookie = cookie;
             admit_everywhere(c, p);
-            tide_shard_coordinator_player(c, id, true);
+            player_changed(c, id, true);
             continue;
         }
         // On no shard: they've a while to come back, as a server gives them
@@ -1026,7 +1055,8 @@ static void track_players(tide_shard_coordinator *c)
         }
         if (c->now - r->away_since < PLAYER_AWAY_SECONDS) continue;
         r->here = r->away = false;
-        tide_shard_coordinator_player(c, id, false);
+        for (uint32_t i = 0; i < c->count; i++) if (c->shards[i].used) admit(c, i, p, 0);
+        player_changed(c, id, false);
     }
 }
 
@@ -1223,6 +1253,8 @@ static void save_head(const tide_shard_coordinator *c, tide_writer *w)
         tide_write_u8(w, c->players[p].here ? 1u : 0u);
         tide_write_u64(w, c->players[p].here ? c->players[p].cookie : 0u);
     }
+    tide_write_u32(w, c->players_after.size / 5u);
+    tide_write_bytes(w, c->players_after.data, c->players_after.size);
     tide_write_u32(w, c->count);
 }
 
@@ -1270,6 +1302,9 @@ bool tide_shard_checkpoint_world(const uint8_t *data, const uint32_t size, const
     tide_read_bytes(&r, moved * 12u);
     const uint32_t players = tide_read_u32(&r);
     tide_read_bytes(&r, players * 9u);
+    const uint32_t notifications = tide_read_u32(&r);
+    if (r.failed || notifications > (r.size - r.at) / 5u) return false;
+    tide_read_bytes(&r, notifications * 5u);
     const uint32_t count = tide_read_u32(&r);
     for (uint32_t i = 0; i < count && !r.failed; i++) {
         const bool used = tide_read_u8(&r) != 0;
@@ -1302,6 +1337,9 @@ uint8_t *tide_shard_checkpoint_rewrite(const uint8_t *data, const uint32_t size,
     tide_read_bytes(&r, moved * 12u);
     const uint32_t players = tide_read_u32(&r);
     tide_read_bytes(&r, players * 9u);
+    const uint32_t notifications = tide_read_u32(&r);
+    if (r.failed || notifications > (r.size - r.at) / 5u) return NULL;
+    tide_read_bytes(&r, notifications * 5u);
     const uint32_t count = tide_read_u32(&r);
     if (r.failed) return NULL;
     // The head as it was, then each shard with its world as `world` makes it
@@ -1396,6 +1434,7 @@ void tide_shard_coordinator_kept(tide_shard_coordinator *c)
         }
         c->told_after.size = 0;
     }
+    tell_players(c);
     c->changed = false;
 }
 
@@ -1408,6 +1447,11 @@ void tide_shard_coordinator_restarted(tide_shard_coordinator *c, const uint32_t 
     sh->outbox.size = sh->ghosts.size = 0;
     sh->injects.size = sh->admits.size = sh->held.size = 0;
     sh->inject_count = sh->admit_count = sh->held_count = 0;
+    if (c->checkpoint == CHECKPOINT_GATHERING) {
+        free(sh->world);
+        sh->world = NULL;
+        sh->flags |= TIDE_SHARD_DO_CHECKPOINT;
+    }
     // Everything unacknowledged, again from every shard: what it was handed went with it
     for (uint32_t i = 0; i < c->count; i++) {
         cshard *other = &c->shards[i];
@@ -1433,8 +1477,19 @@ void tide_shard_coordinator_restarted(tide_shard_coordinator *c, const uint32_t 
     if (w.overflow) tide_out_of_memory();
     inject(c, shard, w.data, w.size);
     free(w.data);
+    tide_player_set pending = {0};
+    tide_reader changes = {c->players_after.data, c->players_after.size, 0, false};
+    while (changes.at < changes.size) {
+        tide_read_u8(&changes);
+        const uint32_t id = tide_read_u32(&changes);
+        if (id) tide_players_add(&pending, id - 1u);
+    }
     for (uint32_t p = 0; p < c->player_count; p++) {
         if (c->players[p].here) admit(c, shard, p, c->players[p].cookie);
+        // A root restored before a committed lifecycle notification applied
+        // must still receive it. Its match membership makes this idempotent.
+        if (shard == TIDE_SHARD_ROOT && !tide_players_has(&pending, p))
+            tide_shard_coordinator_player(c, tide_player_from_index((int32_t)p), c->players[p].here);
         c->players[p].route = 0; // Every route told again
     }
 }
@@ -1486,6 +1541,16 @@ tide_shard_coordinator *tide_shard_coordinator_load(const tide_shard_coordinator
         c->players[p].away = c->players[p].here;
         c->players[p].away_since = now;
     }
+    const uint32_t notifications = tide_read_u32(&r);
+    if (r.failed || notifications > players || notifications > (r.size - r.at) / 5u) goto fail;
+    c->players_after.grows = true;
+    for (uint32_t i = 0; i < notifications; i++) {
+        const uint8_t joined = tide_read_u8(&r);
+        const uint32_t id = tide_read_u32(&r);
+        if (joined > 1u || !id || id > players || (joined != 0) != c->players[id - 1u].here) goto fail;
+        tide_write_u8(&c->players_after, joined);
+        tide_write_u32(&c->players_after, id);
+    }
     const uint32_t count = tide_read_u32(&r);
     if (r.failed || count > (r.size - r.at)) goto fail;
     for (uint32_t i = 0; i < count; i++) {
@@ -1532,6 +1597,7 @@ tide_shard_coordinator *tide_shard_coordinator_load(const tide_shard_coordinator
     for (uint32_t p = 0; p < c->player_count; p++) {
         if (c->players[p].here) admit_everywhere(c, p);
     }
+    tell_players(c);
     tell_map(c);
     c->checkpointed = now;
     return c;

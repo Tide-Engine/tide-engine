@@ -6614,6 +6614,95 @@ TIDE_TEST(lsp_prefab_project_and_refactors)
     lsp_free(&server);
 }
 
+TIDE_TEST(lsp_prefab_inherited_descendant_overrides)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_prefab_overrides");
+    static const char main_file[] = "namespace Game;\n"
+                                    "component Data\n"
+                                    "{\n"
+                                    "    int value = 1;\n"
+                                    "    int kept = 2;\n"
+                                    "}\n"
+                                    "component Extra { int value; }\n"
+                                    "const int GRANDCHILD_VALUE = 10;\n"
+                                    "scene Main { }\n"
+                                    "event(Spawned) Setup(with Main) { Spawn(Level); }\n";
+    static const char prefab_file[] = "namespace Game;\n"
+                                      "prefab Base\n"
+                                      "{\n"
+                                      "    entity Child\n"
+                                      "    {\n"
+                                      "        Data { value = 3 };\n"
+                                      "        entity Grandchild\n"
+                                      "        {\n"
+                                      "            Data { value = 4 };\n"
+                                      "        }\n"
+                                      "    }\n"
+                                      "}\n"
+                                      "prefab Level\n"
+                                      "{\n"
+                                      "    entity Item : Base\n"
+                                      "    {\n"
+                                      "        Extra { value = 5 };\n"
+                                      "        entity Added { Data; }\n"
+                                      "        entity Child\n"
+                                      "        {\n"
+                                      "            Game.Data { value = 9 };\n"
+                                      "            entity Grandchild\n"
+                                      "            {\n"
+                                      "                Game.Data { value = GRANDCHILD_VALUE };\n"
+                                      "            }\n"
+                                      "        }\n"
+                                      "    }\n"
+                                      "}\n";
+    write_file("lsp_prefab_overrides/main.tide", main_file);
+    write_file("lsp_prefab_overrides/Level.tprefab", prefab_file);
+    char root[700], uri_main[700], uri_prefab[700];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_prefab_overrides", dir);
+    snprintf(uri_main, sizeof uri_main, "file:///%s/lsp_prefab_overrides/main.tide", dir);
+    snprintf(uri_prefab, sizeof uri_prefab, "file:///%s/lsp_prefab_overrides/Level.tprefab", dir);
+    start_in(root);
+    open_uri(uri_main, main_file);
+    TIDE_CHECK(sent_count == 2);
+    for (int i = 0; i < sent_count; i++) TIDE_CHECK(has(sent[i], "\"diagnostics\":[]"));
+    open_uri(uri_prefab, prefab_file);
+    TIDE_CHECK(sent_count == 2);
+    for (int i = 0; i < sent_count; i++) TIDE_CHECK(has(sent[i], "\"diagnostics\":[]"));
+
+    // Matching child and grandchild blocks retain ordinary component/field
+    // tooling, including qualified component names and omitted default fields.
+    static const int override_lines[] = {20, 23};
+    for (int i = 0; i < 2; i++) {
+        const int line = override_lines[i];
+        const int indent = 12 + 4 * i;
+        TIDE_CHECK(offers(request_at(uri_prefab, "textDocument/completion", line, indent, ""), "Data"));
+        const char *fields = request_at(uri_prefab, "textDocument/completion", line, indent + 12, "");
+        TIDE_CHECK(offers(fields, "value") && offers(fields, "kept"));
+        TIDE_CHECK(has(request_at(uri_prefab, "textDocument/hover", line, indent + 6, ""), "component Data"));
+        const char *component = request_at(uri_prefab, "textDocument/definition", line, indent + 6, "");
+        TIDE_CHECK(has(component, uri_main) && has(component, "\"range\":{\"start\":{\"line\":1,\"character\":10},\"end\":{\"line\":1,\"character\":14}}"));
+        const char *hover = request_at(uri_prefab, "textDocument/hover", line, indent + 13, "");
+        TIDE_CHECK(has(hover, "int value") && has(hover, "Field of component `Data`"));
+        const char *field = request_at(uri_prefab, "textDocument/definition", line, indent + 13, "");
+        TIDE_CHECK(has(field, uri_main) && has(field, "\"range\":{\"start\":{\"line\":3,\"character\":8},\"end\":{\"line\":3,\"character\":13}}"));
+    }
+    TIDE_CHECK(has(request_at(uri_prefab, "textDocument/hover", 23, 37, ""), "const int GRANDCHILD_VALUE"));
+    const char *value = request_at(uri_prefab, "textDocument/definition", 23, 37, "");
+    TIDE_CHECK(has(value, uri_main) && has(value, "\"range\":{\"start\":{\"line\":7,\"character\":10},\"end\":{\"line\":7,\"character\":26}}"));
+    // Authored names and checked copies contribute one occurrence per source
+    // position, even when Base is expanded again as Item.
+    TIDE_CHECK(count(request_at(uri_main, "textDocument/references", 1, 11,
+                                "\"context\":{\"includeDeclaration\":true}"), "\"uri\":") == 6);
+
+    remove_game_file("lsp_prefab_overrides/main.tide");
+    remove_game_file("lsp_prefab_overrides/Level.tprefab");
+    remove_folder("lsp_prefab_overrides");
+    clear_sent();
+    lsp_free(&server);
+}
+
 // A package in a folder: analyzed with the game's files in its namespace, or alone with no Main; a folder with its own tide.packages isn't the game's.
 TIDE_TEST(lsp_open_folder_with_packages)
 {

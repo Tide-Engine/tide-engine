@@ -40,6 +40,16 @@ expectations changed. Web uses the same ignored SDK 34 fallback described below;
 pinned SDK 24 downloads and GitHub fetch still fail DNS resolution. There is no
 standalone spirv-val or Vulkan validation layer on this machine.
 
+Integration (2026-10-24): fetched and merged origin/dev through 85f14e4f after
+GitHub DNS recovered. Compiler/editor code merged cleanly; the two top-of-file
+notes conflicts retain both the callable entries and incoming editor/startup
+entries. The merged full native debug suite passed 2,621 enabled tests (211.08 s)
+and full web debug passed 2,515 (361.12 s), each at four jobs with the existing
+disabled Microduck right-turn limitation. New editor/startup coverage and the
+callable CPU/GPU probes pass together. The merged docs production build passed.
+Web retained the local SDK 34 fallback above. No code corrections or additional
+determinism expectation changes were required for integration.
+
 ## Callable values and configured GPU stages (2026-10-24)
 
 Owner-approved foundation for separate `render3d` and future `render2d`
@@ -110,6 +120,57 @@ ignored local toolchain file with the already-installed SDK 34 sysroot/builtins,
 clang 23 and Node 24.22.1; all Tide tools/programs were built in this checkout.
 The checked-in toolchain is unchanged; pinned-SDK-24 coverage remains unavailable
 on this machine. External prototype directories were disabled for both presets.
+
+## Inherited prefab values and selected startup (2026-10-24)
+
+Owner-approved: matching nested `entity ExistingChild { Component { field =
+value }; }` blocks override inherited descendant values per instance. Only
+existing component fields may change; no inherited component/child additions,
+removals, replacement or alternate base. Nested-instance roots retain ordinary
+authored additions. prefab_check.inc merges matching blocks into the existing
+composition without adding entities or changing reference scopes, defaults,
+placement checks, complete-tree construction or root-first Spawned order.
+Duplicate blocks/fields and unknown/type-invalid/empty/bare/new component
+overrides are diagnosed. The native editor writes/reset these same value blocks.
+
+The project may choose `settings { startScene = Qualified.Name; }`; CLI
+`tide run/build <project> --scene Name` overrides that choice for compilation.
+Absent selection keeps existing Main generation. Names select prefab or scene
+declarations, never text/calls/initializers. CLI lookup has no source-file
+namespace/using context. A selected prefab lowers through a checked private
+Scene.Load factory, loading its authored root in match placement without a
+wrapper or handwritten Main. Ordinary selected scenes retain defaults and
+match/local placement. Normal lifecycle, views, input/camera, Session.Start()
+default and empty-world fallback use the selection. Main source is untouched;
+duplicate Main and invalid/duplicate persistent settings remain errors even
+with an override. Startup enters simulation identity and asset-use analysis.
+No generated-C/runtime API was introduced.
+
+The native editor's Play uses private original-path source replacement and an
+isolated cache to compile applied drafts, then the ordinary host; these private
+flags are intentionally absent from public docs/help. Persistent startup is
+written separately by Set startup. Authoring preview still skips gameplay
+initialization. Current user docs/spec replace earlier Main-only and inherited
+read-only statements; historical sections below describe their original builds.
+
+Validation: full native/web debug builds pass; the engine/compiler/platform
+checks, 249 LSP cases and all seven final editor CTests pass. Prefab coverage
+includes deep overrides/defaults/references/lifecycle/entity counts on match and
+local placement, plus twelve structural/value diagnostics. scene_startup pins
+normal lifecycle, default Session.Start/fallback, snapshots/packing, source
+identity/asset closure and CLI/persisted/overlay selection. Startup authoring
+passes 18 source-preservation/namespace/conflict cases; the complete native UI
+creation/extraction/instance loop and twelve inspector focus/undo regressions
+pass. The production docs build passes. The unrelated external Cracked hash-pin
+failure reproduces with the HEAD compiler, and optional external browser
+playthroughs were not completed; details and remaining platform coverage are in
+notes/editors.md. No expected deterministic result was changed.
+
+Remaining: inherited structure edits, top-level variants, language-server entity
+path refactors/completion, child-to-prefab-root path syntax, authored attached
+local fields and automatic live-instance reconciliation. Authoring transactions
+and extraction/reference limits are in notes/editors.md. CLI integration and
+validation belong to notes/cli-and-packages.md.
 
 ## Shard attributes (2026-10-23)
 
@@ -1674,9 +1735,9 @@ are recorded with the networking/editor changes after validation completes.
 Performance measurement (Windows clang 23.1.2, 2026-10-15): the projection
 fixture plus 10,000 visible PublicState rows with empty owned fields produced
 1,087,683 logical bytes. In release/O2, three runs of 200 calls measured
-2.12â€“2.92 ms per recipient canonical hash after changing every added row's integer
-column; unchanged worlds measured 2.22â€“3.54 ms. Full-world hashes measured
-4.19â€“9.76 us with that column dirty and 2.57â€“11.11 us unchanged. These operations
+2.12Ã¢â‚¬â€œ2.92 ms per recipient canonical hash after changing every added row's integer
+column; unchanged worlds measured 2.22Ã¢â‚¬â€œ3.54 ms. Full-world hashes measured
+4.19Ã¢â‚¬â€œ9.76 us with that column dirty and 2.57Ã¢â‚¬â€œ11.11 us unchanged. These operations
 do different work: full-world hashing reuses cached page hashes and only rehashes
 the changed integer-column pages, whereas recipient hashing currently traverses
 and serializes every permitted logical value and allocates the temporary byte

@@ -1,4 +1,5 @@
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -318,6 +319,61 @@ TIDE_TEST(earth_a_fast_moving_client_stays_connected_with_bounded_traffic)
 
 // S is a brake regardless of where the orbit camera looks. Exercise the
 // sampled key through the match, including the final stop without reversing.
+TIDE_TEST(earth_driving_controls_follow_the_car_while_the_camera_turns)
+{
+    tide_local_init(&local);
+    memset(&devices, 0, sizeof devices);
+    local.Pilot.walking = local.Pilot.driving = true;
+    local.Pilot.spot = (tide_float3){0, 0, PLANET};
+    local.Pilot.facing = (tide_float3){1, 0, 0};
+    const tide_float3 looks[3] = {{1,0,0},{0,1,0},{-1,0,0}};
+    for (int angle = 0; angle < 3; angle++) {
+        local.Pilot.ahead = looks[angle];
+        local.Pilot.right = (tide_float3){-looks[angle].y,looks[angle].x,0};
+        devices.keyboard.w.pressed = true;
+        devices.keyboard.d.pressed = false;
+        Controls input = tide_input_sample(&devices, &local);
+        TIDE_CHECK(input.move.x == 1 && input.move.y == 0 && input.move.z == 0);
+        devices.keyboard.d.pressed = true;
+        input = tide_input_sample(&devices, &local);
+        TIDE_CHECK(input.move.x == 1 && input.move.y == 1 && input.move.z == 0);
+    }
+    tide_local_free(&local);
+    memset(&devices, 0, sizeof devices);
+}
+
+TIDE_TEST(earth_a_car_camera_can_turn_around_before_driving_forward)
+{
+    tide_world_init(&world, 1.0f / 60.0f);
+    world.Roster.seeded = true;
+    tide_world_player_joined(&world, player(0)); ticks(1);
+    const tide_entity me = walker_of(&world, player(0));
+    Walker w = tide_get_Walker(&world, me);
+    w.position = (tide_float3){0, 0, PLANET};
+    w.forward = (tide_float3){1, 0, 0};
+    w.placed = w.driving = true;
+    w.moves = 1;
+    tide_set_Walker(&world, me, w);
+    tide_local_init(&local);
+    memset(&gui, 0, sizeof gui); memset(&devices, 0, sizeof devices);
+    local.Pilot.walking = true;
+    local.Pilot.moves = local.Pilot.arrived = 1;
+    local.Pilot.blend = 1;
+    local.Pilot.look = (tide_float3){-1, 0, 0}; // Walked backwards, then became a car.
+    for (int frame = 0; frame < 180; frame++) draw_world(&world, player(0));
+    TIDE_CHECK(local.Pilot.look.x > 0.99f);
+    devices.keyboard.w.pressed = true;
+    for (int frame = 0; frame < 120; frame++) {
+        draw_world(&world, player(0));
+        tide_world_set_input(&world, player(0), tide_input_sample(&devices, &local));
+        ticks(1);
+    }
+    w = tide_get_Walker(&world, me);
+    TIDE_CHECK(w.position.x > 20 && w.speed > 20);
+    tide_draw_free(&draw); tide_local_free(&local); tide_world_free(&world);
+    memset(&devices, 0, sizeof devices);
+}
+
 TIDE_TEST(earth_s_brakes_a_car_without_turning_it)
 {
     tide_world_init(&world, 1.0f / 60.0f);
@@ -352,6 +408,138 @@ TIDE_TEST(earth_s_brakes_a_car_without_turning_it)
     tide_local_free(&local);
     tide_world_free(&world);
     memset(&devices, 0, sizeof devices);
+}
+
+typedef struct city_trip { tide_float3 drop, forward; bool car; } city_trip;
+static void leaving_city(void *user, uint32_t tick, void *input)
+{
+    const city_trip *trip = user;
+    *(Controls *)input = (Controls){.drop = trip->drop, .moves = 1, .move = trip->forward, .car = trip->car && tick >= 240};
+}
+
+static float city_progress(const tide_world *w, tide_player_id who, const city_trip *trip)
+{
+    if (!w) return -1;
+    const tide_entity avatar = walker_of(w, who);
+    if (tide_entity_is_null(avatar)) return -1;
+    const tide_float3 delta = minus(tide_get_Walker(w, avatar).position, trip->drop);
+    return delta.x * trip->forward.x + delta.y * trip->forward.y + delta.z * trip->forward.z;
+}
+
+TIDE_TEST(earth_networked_players_can_leave_a_city)
+{
+    const tide_float3 centers[10] = {up_at(48,-75), up_at(12,-118), up_at(-28,-62), up_at(52,8), up_at(2,32),
+        up_at(-38,48), up_at(38,92), up_at(6,138), up_at(-42,128), up_at(66,165)};
+    const tide_float3 destinations[10] = {centers[1],centers[0],centers[0],centers[4],centers[3],
+        centers[4],centers[7],centers[6],centers[7],centers[6]};
+    for (int city = 0; city < 10; city++) for (int car = 0; car < 2; car++) {
+        const tide_float3 up = centers[city], to = destinations[city];
+        const float dot = up.x * to.x + up.y * to.y + up.z * to.z;
+        tide_float3 forward = minus(to, times(up, dot));
+        forward = times(forward, 1 / length3(forward));
+        const tide_float3 projected = {up.x * PLANET + forward.x * 24,
+            up.y * PLANET + forward.y * 24, up.z * PLANET + forward.z * 24};
+        city_trip trip = {.drop = times(projected, PLANET / length3(projected)), .forward = forward, .car = car != 0};
+        tide_loopback *wire = tide_loopback_create(123);
+        tide_loopback_set_conditions(wire, (tide_net_conditions){.latency = 0.05, .jitter = 0.01, .loss = 0.01});
+        tide_server *server = tide_server_create(&(tide_server_desc){.game = &tide_game_api,
+            .transports = {tide_loopback_endpoint(wire, 1)}, .tick_rate = 60}, 0);
+        tide_client *client = tide_client_create(&(tide_client_desc){.game = &tide_game_api,
+            .transport = tide_loopback_endpoint(wire, 2), .server = tide_loopback_address(1),
+            .sample = leaving_city, .user = &trip, .lead = 2}, 0);
+        TIDE_REQUIRE(server && client);
+        unsigned last_server = 0;
+        for (unsigned frame = 1; frame <= 144 * 45; frame++) {
+            const double seconds = frame / 144.0;
+            tide_loopback_set_time(wire, seconds);
+            const unsigned server_tick = (unsigned)(seconds * 60);
+            if (server_tick != last_server) { tide_server_update(server, seconds); last_server = server_tick; }
+            tide_client_update(client, seconds);
+            if (frame % 144 == 0) {
+                const tide_player_id who = tide_client_status_of(client).player;
+                if (city_progress(tide_server_world(server), who, &trip) > 160
+                    && city_progress(tide_client_view(client).current, who, &trip) > 160) break;
+            }
+        }
+        const tide_client_status status = tide_client_status_of(client);
+        TIDE_CHECK(status.state == TIDE_SESSION_CONNECTED && status.verified_tick > 300);
+        const tide_world *worlds[2] = {tide_server_world(server), tide_client_view(client).current};
+        for (int side = 0; side < 2; side++) {
+            const float progress = city_progress(worlds[side], status.player, &trip);
+            if (progress < 130) printf("network city %d car %d side %d progress %.3f\n", city, car, side, progress);
+            TIDE_CHECK(progress > 130);
+        }
+        tide_client_destroy(client); tide_server_destroy(server); tide_loopback_destroy(wire);
+    }
+}
+
+TIDE_TEST(earth_every_road_leads_out_of_its_city)
+{
+    static const float towns[10][2] = {{48,-75},{12,-118},{-28,-62},{52,8},{2,32},
+        {-38,48},{38,92},{6,138},{-42,128},{66,165}};
+    static const int roads[11][2] = {{0,1},{0,2},{0,3},{0,9},{1,2},{3,4},{4,5},{5,8},{6,7},{6,9},{7,8}};
+    for (int road = 0; road < 11; road++) for (int end = 0; end < 2; end++) for (int car = 0; car < 2; car++) {
+        const int town = roads[road][end], other = roads[road][1-end];
+        const tide_float3 up = up_at(towns[town][0], towns[town][1]);
+        const tide_float3 to = up_at(towns[other][0], towns[other][1]);
+        const float dot = up.x * to.x + up.y * to.y + up.z * to.z;
+        tide_float3 forward = minus(to, times(up, dot));
+        forward = times(forward, 1 / length3(forward));
+        const tide_float3 right = {up.y * forward.z - up.z * forward.y,
+            up.z * forward.x - up.x * forward.z, up.x * forward.y - up.y * forward.x};
+        const tide_float3 projected = {up.x * PLANET + forward.x * 24 + right.x * 2.5f,
+            up.y * PLANET + forward.y * 24 + right.y * 2.5f,
+            up.z * PLANET + forward.z * 24 + right.z * 2.5f};
+        tide_world_init(&world, 1.0f / 60.0f);
+        world.Roster.seeded = true; // Isolate the street/building layout from moving traffic.
+        tide_world_player_joined(&world, player(0)); ticks(1);
+        const tide_entity me = walker_of(&world, player(0));
+        Walker w = tide_get_Walker(&world, me);
+        w.position = times(projected, PLANET / length3(projected));
+        w.forward = forward; w.placed = true; w.driving = car != 0;
+        tide_set_Walker(&world, me, w);
+        tide_world_set_input(&world, player(0), (Controls){.move = forward});
+        float distance = 0;
+        for (int tick = 0; tick < 2400 && distance < 160; tick++) {
+            ticks(1);
+            w = tide_get_Walker(&world, me);
+            distance = length3(minus(w.position, times(up, PLANET)));
+        }
+        if (distance < 160) printf("road %d town %d car %d stopped at %.3f m, speed %.3f\n", road, town, car, distance, w.speed);
+        TIDE_CHECK(distance >= 160);
+        tide_world_free(&world);
+    }
+}
+
+TIDE_TEST(earth_walkers_and_cars_can_leave_the_edge_of_a_town)
+{
+    const tide_float3 up = up_at(66, 165);
+    const tide_float3 east = {up.z / sqrtf(up.x * up.x + up.z * up.z), 0,
+                              -up.x / sqrtf(up.x * up.x + up.z * up.z)};
+    const tide_float3 north = {-east.z * up.y, east.z * up.x - east.x * up.z, east.x * up.y};
+    for (int car = 0; car < 2; car++) {
+        tide_world_init(&world, 1.0f / 60.0f);
+        tide_world_player_joined(&world, player(0)); ticks(1);
+        const tide_entity me = walker_of(&world, player(0));
+        const tide_float3 projected = {up.x * PLANET + north.x * 115,
+            up.y * PLANET + north.y * 115, up.z * PLANET + north.z * 115};
+        const tide_float3 position = times(projected, PLANET / length3(projected));
+        const tide_float3 n = times(position, 1 / PLANET);
+        const float dot = north.x * n.x + north.y * n.y + north.z * n.z;
+        const tide_float3 tangent = {north.x - n.x * dot, north.y - n.y * dot, north.z - n.z * dot};
+        const tide_float3 forward = times(tangent, 1 / length3(tangent));
+        Walker w = tide_get_Walker(&world, me);
+        w.position = position; w.forward = forward; w.placed = true; w.driving = car != 0;
+        w.speed = car ? 10 : 0; w.velocity = times(forward, w.speed);
+        tide_set_Walker(&world, me, w);
+        tide_world_set_input(&world, player(0), (Controls){.move = forward});
+        ticks(180);
+        w = tide_get_Walker(&world, me);
+        const tide_float3 moved = minus(w.position, position);
+        TIDE_CHECK(moved.x * forward.x + moved.y * forward.y + moved.z * forward.z > (car ? 20 : 10));
+        if (car) TIDE_CHECK(w.speed > 20);
+        tide_world_free(&world);
+    }
 }
 
 // One world, as a match that isn't split: the townsfolk and the traffic; a
@@ -642,6 +830,176 @@ static void run(const double seconds)
         TIDE_CHECK(owners(0, &w) <= 1);
         TIDE_CHECK(owners(1, &w) <= 1);
     }
+}
+
+static tide_writer lifecycle_records;
+static uint8_t *lifecycle_checkpoint;
+static uint32_t lifecycle_checkpoint_size;
+static unsigned lifecycle_saves;
+static void lifecycle_record(void *user, uint32_t shard, uint32_t tick, const uint8_t *data, uint32_t size)
+{
+    (void)user; (void)tick;
+    TIDE_REQUIRE(shard == 0);
+    tide_write_u32(&lifecycle_records, size);
+    tide_write_bytes(&lifecycle_records, data, size);
+}
+static void lifecycle_saved(void *user, const uint8_t *data, uint32_t size)
+{
+    (void)user;
+    free(lifecycle_checkpoint);
+    lifecycle_checkpoint = malloc(size);
+    TIDE_REQUIRE(lifecycle_checkpoint);
+    memcpy(lifecycle_checkpoint, data, size);
+    lifecycle_checkpoint_size = size;
+    lifecycle_saves++;
+    lifecycle_records.size = 0;
+}
+static bool lifecycle_read(void *user, uint32_t shard, uint32_t index, const uint8_t **record, uint32_t *size)
+{
+    (void)user;
+    if (shard != 0) return false;
+    tide_reader r = {lifecycle_records.data, lifecycle_records.size, 0, false};
+    for (uint32_t i = 0; i <= index && !r.failed && r.at < r.size; i++) {
+        *size = tide_read_u32(&r);
+        *record = tide_read_bytes(&r, *size);
+        if (i == index) return *record != NULL;
+    }
+    return false;
+}
+
+TIDE_TEST(earth_recovery_does_not_repeat_a_departure_from_the_journal)
+{
+    now = 0;
+    first = (visitor){.endpoints = 100}; second = (visitor){.endpoints = 200};
+    lifecycle_records = (tide_writer){.grows = true};
+    lifecycle_checkpoint = NULL; lifecycle_checkpoint_size = 0;
+    net = tide_loopback_create(3);
+    const tide_shards_desc desc = {.game = &tide_game_api, .tick_rate = 60,
+        .world = {{-3000, -3000, -3000}, {3000, 3000, 3000}}, .split = {1, 1, 1},
+        .transports = transports, .journal = lifecycle_record, .checkpoint = lifecycle_saved, .checkpoint_seconds = 3};
+    shards = tide_shards_create(&desc, now); TIDE_REQUIRE(shards);
+    join(&first); run(2); join(&second); run(2);
+    const uint64_t cookie = tide_client_status_of(tide_shard_client_home(second.client)).cookie;
+    const tide_player_id id = tide_client_status_of(tide_shard_client_home(second.client)).player;
+    tide_shard_client_destroy(first.client); first.client = NULL;
+    const double deadline = now + 22;
+    while (((const tide_world *)tide_shards_world(shards, 0))->Roster.online == 2 && now < deadline) run(1.0 / 60.0);
+    TIDE_REQUIRE(((const tide_world *)tide_shards_world(shards, 0))->Roster.online == 1);
+    tide_shard_client_destroy(second.client); second.client = NULL;
+    tide_shards_destroy(shards);
+    TIDE_REQUIRE(lifecycle_checkpoint);
+    shards = tide_shards_recover(&desc, lifecycle_checkpoint, lifecycle_checkpoint_size, lifecycle_read, NULL, now);
+    TIDE_REQUIRE(shards);
+    second.client = tide_shard_client_create(&(tide_shard_client_desc){
+        .client = {.game = &tide_game_api, .transport = tide_loopback_endpoint(net, second.endpoints),
+            .server = tide_loopback_address(10), .sample = sample, .user = &second, .lead = 2, .cookie = cookie}, .reach = reach, .user = &second}, now);
+    TIDE_REQUIRE(second.client);
+    run(25);
+    const tide_world *w = tide_shards_world(shards, 0);
+    TIDE_CHECK(w->Roster.online == 1);
+    tide_text_use((tide_heap *)&w->heap, NULL);
+    TIDE_CHECK(tide_map_count(w->Roster.walkers) == 1);
+    TIDE_CHECK(tide_client_status_of(tide_shard_client_home(second.client)).player.id == id.id);
+    tide_shard_client_destroy(second.client); second.client = NULL;
+    tide_shards_destroy(shards); tide_loopback_destroy(net);
+    free(lifecycle_checkpoint); lifecycle_checkpoint = NULL;
+    free(lifecycle_records.data); lifecycle_records = (tide_writer){0};
+}
+
+static void check_join_recovery(const bool applied)
+{
+    now = 0; first = (visitor){.endpoints = 100}; second = (visitor){.endpoints = 200};
+    lifecycle_records = (tide_writer){.grows = true};
+    lifecycle_checkpoint = NULL; lifecycle_checkpoint_size = 0; lifecycle_saves = 0;
+    net = tide_loopback_create(19);
+    const tide_shards_desc desc = {.game = &tide_game_api, .tick_rate = 60,
+        .world = {{-3000, -3000, -3000}, {3000, 3000, 3000}}, .split = {1, 1, 1},
+        .transports = transports, .journal = lifecycle_record, .checkpoint = lifecycle_saved, .checkpoint_seconds = 3};
+    shards = tide_shards_create(&desc, now); TIDE_REQUIRE(shards);
+    run(2);
+    const unsigned saved = lifecycle_saves;
+    join(&first);
+    const double deadline = now + 1;
+    while (now < deadline && (applied
+        ? ((const tide_world *)tide_shards_world(shards, 0))->Roster.online == 0
+            || tide_client_status_of(tide_shard_client_home(first.client)).state != TIDE_SESSION_CONNECTED
+        : lifecycle_saves == saved)) run(1.0 / 60.0);
+    const tide_client_status before = tide_client_status_of(tide_shard_client_home(first.client));
+    TIDE_REQUIRE(before.cookie != 0);
+    TIDE_REQUIRE(lifecycle_saves > saved);
+    TIDE_CHECK(((const tide_world *)tide_shards_world(shards, 0))->Roster.online == (applied ? 1 : 0));
+    const tide_entity avatar = walker_of(tide_shards_world(shards, 0), before.player);
+    TIDE_CHECK(tide_entity_is_null(avatar) != applied);
+    tide_shard_client_destroy(first.client); first.client = NULL;
+    tide_shards_destroy(shards);
+    shards = tide_shards_recover(&desc, lifecycle_checkpoint, lifecycle_checkpoint_size, lifecycle_read, NULL, now);
+    TIDE_REQUIRE(shards);
+    first.client = tide_shard_client_create(&(tide_shard_client_desc){
+        .client = {.game = &tide_game_api, .transport = tide_loopback_endpoint(net, first.endpoints),
+            .server = tide_loopback_address(10), .sample = sample, .user = &first, .lead = 2, .cookie = before.cookie},
+        .reach = reach, .user = &first}, now);
+    TIDE_REQUIRE(first.client); run(3);
+    const tide_world *w = tide_shards_world(shards, 0);
+    const tide_client_status after = tide_client_status_of(tide_shard_client_home(first.client));
+    const tide_entity restored = walker_of(w, before.player);
+    TIDE_CHECK(w->Roster.online == 1 && w->Roster.next == 1);
+    TIDE_CHECK(!tide_entity_is_null(restored));
+    if (applied) TIDE_CHECK(restored.index == avatar.index && restored.generation == avatar.generation);
+    TIDE_CHECK(after.state == TIDE_SESSION_CONNECTED && after.player.id == before.player.id && after.cookie == before.cookie);
+    tide_shard_client_destroy(first.client); first.client = NULL;
+    if (applied) {
+        TIDE_REQUIRE(tide_shards_restart(shards, 0, lifecycle_checkpoint, lifecycle_checkpoint_size, lifecycle_read, NULL, now));
+        first.client = tide_shard_client_create(&(tide_shard_client_desc){
+            .client = {.game = &tide_game_api, .transport = tide_loopback_endpoint(net, first.endpoints),
+                .server = tide_loopback_address(10), .sample = sample, .user = &first, .lead = 2, .cookie = before.cookie},
+            .reach = reach, .user = &first}, now);
+        TIDE_REQUIRE(first.client); run(3);
+        const tide_world *root = tide_shards_world(shards, 0);
+        TIDE_CHECK(root->Roster.online == 1 && root->Roster.next == 1);
+        TIDE_CHECK(tide_client_status_of(tide_shard_client_home(first.client)).cookie == before.cookie);
+        tide_shard_client_destroy(first.client); first.client = NULL;
+    }
+    tide_shards_destroy(shards); tide_loopback_destroy(net);
+    free(lifecycle_checkpoint); lifecycle_checkpoint = NULL;
+    free(lifecycle_records.data); lifecycle_records = (tide_writer){0};
+}
+
+TIDE_TEST(earth_a_join_is_recoverable_with_its_original_cookie_and_avatar) { check_join_recovery(true); }
+TIDE_TEST(earth_a_saved_join_survives_a_crash_before_its_first_game_tick) { check_join_recovery(false); }
+
+TIDE_TEST(earth_a_shared_world_counts_players_through_leaves_and_rejoins)
+{
+    now = 0;
+    first = (visitor){.endpoints = 100};
+    second = (visitor){.endpoints = 200};
+    net = tide_loopback_create(3);
+    shards = tide_shards_create(&(tide_shards_desc){.game = &tide_game_api, .tick_rate = 60,
+        .world = {{-3000, -3000, -3000}, {3000, 3000, 3000}}, .split = {1, 1, 1}, .transports = transports}, now);
+    TIDE_REQUIRE(shards);
+    join(&first);
+    run(2);
+    TIDE_CHECK(((const tide_world *)tide_shards_world(shards, 0))->Roster.online == 1);
+    join(&second);
+    run(2);
+    TIDE_CHECK(((const tide_world *)tide_shards_world(shards, 0))->Roster.online == 2);
+    tide_shards_player(shards, player(0), true); // A repeated lifecycle notification is not another arrival.
+    run(1);
+    TIDE_CHECK(((const tide_world *)tide_shards_world(shards, 0))->Roster.online == 2);
+    tide_shard_client_destroy(first.client); first.client = NULL;
+    run(25);
+    TIDE_CHECK(((const tide_world *)tide_shards_world(shards, 0))->Roster.online == 1);
+    tide_shards_player(shards, player(0), false);
+    run(1);
+    TIDE_CHECK(((const tide_world *)tide_shards_world(shards, 0))->Roster.online == 1);
+    tide_shard_client_destroy(second.client); second.client = NULL;
+    run(25);
+    TIDE_CHECK(((const tide_world *)tide_shards_world(shards, 0))->Roster.online == 0);
+    join(&first);
+    run(2);
+    TIDE_CHECK(((const tide_world *)tide_shards_world(shards, 0))->Roster.online == 1);
+    tide_shard_client_destroy(first.client); first.client = NULL;
+    tide_shards_destroy(shards);
+    tide_loopback_destroy(net);
 }
 
 TIDE_TEST(earth_a_player_visits_towns_on_two_shards_and_leaves)
