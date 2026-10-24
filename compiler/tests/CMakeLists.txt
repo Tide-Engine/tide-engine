@@ -328,6 +328,13 @@ tide_e2e_test(namespace_blocks SOURCES e2e/namespace_blocks/a_game.tide e2e/name
 # What a game declares itself comes before what a namespace it imports has by that name
 tide_e2e_test(using_own SOURCES e2e/using_own/a_lib.tide e2e/using_own/a_other.tide e2e/using_own/b_game.tide
     e2e/using_own/c_inner.tide)
+tide_e2e_test(type_aliases SOURCES e2e/type_aliases/a_aliases.tide e2e/type_aliases/b_game.tide
+    e2e/type_aliases/c_consumer.tide e2e/type_aliases/z_types.tide) # Closed aliases retain canonical values and declaration-site name binding
+tide_e2e_test(alias_assets SOURCES e2e/alias_assets.tide
+    PACKAGES AliasKit e2e/alias_assets/AliasKit/kit.tide) # Mesh assets and checked references through closed aliases
+add_test(NAME tidec_alias_canonical_array
+    COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/alias_canonical_array"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/alias_canonical_array.cmake")
 tide_e2e_test(extern SOURCES e2e/extern.tide e2e/extern_noise.tide e2e/extern_c.c) # C functions, from the game's C file
 tide_e2e_test(extern_system SOURCES e2e/extern_system.tide e2e/extern_system_c.c) # Systems written in C, and their rows
 if(TIDE_PLATFORM) # ...on the platform layer's threads, where there are some

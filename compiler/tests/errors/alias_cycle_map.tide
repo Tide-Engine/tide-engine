@@ -1,0 +1,4 @@
+// expect: refers to itself
+using First = Map<int, Second>;
+using Second = List<First>;
+scene Main;

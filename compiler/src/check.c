@@ -104,6 +104,8 @@ static const type T_ENTITY_ = {TY_ENTITY, NULL};
 static void check_signature(checker *c, decl *m);
 static void check_method_body(checker *c, decl *m);
 static void check_function_decl(checker *c, decl *fn);
+static type resolve_alias_type(const checker *c, decl *d);
+static void check_enum_storage(const checker *c, decl *d);
 
 static decl *local_method(checker *c, decl *owner, decl *source)
 {
@@ -148,6 +150,13 @@ static type decl_type(decl *d)
     case DECL_STRUCT: return (type){TY_STRUCT, d};
     case DECL_EVENT: return (type){TY_EVENT, d};
     case DECL_ENUM: return (type){TY_ENUM, d};
+    case DECL_ALIAS: return d->alias_type;
+    case DECL_LIST: return (type){TY_LIST, d};
+    case DECL_MAP: return (type){d->is_set ? TY_SET : TY_MAP, d};
+    case DECL_GRID: return (type){TY_GRID, d};
+    case DECL_ARRAY: return (type){TY_ARRAY, d};
+    case DECL_MESH: return (type){TY_MESH, d};
+    case DECL_RESULT: return (type){d->fields.count == 1 ? TY_OPTIONAL : TY_FAILABLE, d};
     default: return T_ERR;
     }
 }
@@ -454,7 +463,41 @@ static decl *find_named(const checker *c, const str name, const loc at, const na
 
 static decl *find_type(const checker *c, const str name, const loc at)
 {
-    return find_named(c, name, at, NAME_TYPE);
+    decl *d = find_named(c, name, at, NAME_TYPE);
+    return d && d->kind == DECL_ALIAS ? resolve_alias_type(c, d).decl : d;
+}
+
+static decl *authored_alias(const checker *c, const str name, const loc at)
+{
+    decl *d = find_named(c, name, at, NAME_TYPE);
+    return d && d->kind == DECL_ALIAS ? d : NULL;
+}
+
+static bool resolve_builtin_alias(const checker *c, const str name, type *out)
+{
+    if (resolve_builtin_type(c, name, out)) return true;
+    decl *d = authored_alias(c, name, (loc){0});
+    if (!d) return false;
+    const type t = resolve_alias_type(c, d);
+    if (t.decl || t.kind == TY_ERROR) return false;
+    type builtin;
+    if (!builtin_type_named(str_from(type_name(t)), &builtin)) return false;
+    *out = t;
+    return true;
+}
+
+static bool names_type_as(const checker *c, const str name, const char *underlying)
+{
+    if (str_eq_c(name, underlying)) return true;
+    decl *alias = authored_alias(c, name, (loc){0});
+    return alias && strcmp(type_name(resolve_alias_type(c, alias)), underlying) == 0;
+}
+
+static void bind_alias_ref(const checker *c, const type_ref *r)
+{
+    if (!r) return;
+    ((type_ref *)r)->alias = authored_alias(c, r->name, r->at);
+    for (int i = 0; i < r->args.count; i++) bind_alias_ref(c, r->args.items[i]);
 }
 
 // `a.b.c` as the text "a.b.c", if the expression is only names and members.
@@ -859,6 +902,9 @@ static bool names_param_type(const program *prog, const unit *from, const str te
 {
     if (p->ownership) return str_eq_c(text, "ownership");
     const type t = p->type;
+    decl *alias_other;
+    decl *alias = lookup(prog, from, text, NAME_TYPE, &alias_other);
+    if (alias && alias->kind == DECL_ALIAS) return same_type(t, alias->alias_type);
     type builtin;
     if (t.kind == TY_WORLD) return str_eq_c(text, "World");
     if (builtin_type_named(text, &builtin)) return builtin.kind == t.kind;
@@ -880,6 +926,8 @@ static bool signature_names(const program *prog, const unit *from, sig_item *ite
         if (j == param_count) return false;
         const param *p = &params[j++];
         sig_item *item = &items[i];
+        const checker scoped = {.prog = (program *)prog, .unit = from};
+        bind_alias_ref(&scoped, item->type_ref);
         if (signature_form(item->mode) != signature_form(p->mode) || item->verified != p->verified) return false;
         if (p->mode == PARAM_QUERY) {
             if (!signature_names(prog, from, item->query.items, item->query.count, p->query.items, p->query.count)) return false;
@@ -964,7 +1012,7 @@ static void check_shared_names(const checker *c, const decl_kind kind)
         const decl *met = NULL;
         for (int j = first_c_named(by_c_name, mine.data, mine.len); j >= 0 && !met; j = by_c_name->next[j]) {
             const decl *other = prog->decls.items[j];
-            if (other->shares_name || other->builtin) continue; // Those are named with their parameters too (below)
+            if (other->shares_name || other->builtin || other->kind == DECL_ALIAS) continue; // Those are named with their parameters too (below)
             if (kind == DECL_SYSTEM && other->kind != DECL_SYSTEM && other->kind != DECL_FUNCTION && other->kind != DECL_SHADER
                 && other->kind != DECL_CONST) continue;
             sb theirs = {0};
@@ -1476,7 +1524,8 @@ static bool is_wrapped(const type t)
 // function can return, but the devices or code.
 static bool result_value_ok(const type t, const loc at, const char *what)
 {
-    if (t.kind == TY_RECORD || t.kind == TY_ACTION || t.kind == TY_SINGLETON || t.kind == TY_INPUT) {
+    if (t.kind == TY_RECORD || t.kind == TY_ACTION || t.kind == TY_SINGLETON || t.kind == TY_INPUT
+        || t.kind == TY_WORLD || t.kind == TY_DRAW_LIST || t.kind == TY_RESIDENT) {
         diag_error(at, "%s can't be %s", what, type_name(t));
         return false;
     }
@@ -1485,6 +1534,10 @@ static bool result_value_ok(const type t, const loc at, const char *what)
 
 static type optional_type(const checker *c, const type t, const loc at)
 {
+    if (t.kind == TY_OPTIONAL) {
+        diag_error(at, "a T? can't hold another T?: a value is present or nothing, and there's one nothing");
+        return T_ERR;
+    }
     if (t.kind == TY_VOID) {
         diag_error(at, "'void?' isn't a type: a function that returns nothing has nothing to leave out");
         return T_ERR;
@@ -1657,6 +1710,15 @@ static bool element_ok(const type t, const loc at, const type *key, const bool a
         diag_error(at, "a %s can't hold grids", key ? "map" : "list");
         diag_note("grids stay where they're made: in components, singletons and scenes");
         return false;
+    case TY_CUBEMAP:
+        if (asset) {
+            diag_error(at, "a Cubemap is six files already, which its glob matches: a list or a map of cubes isn't there yet");
+            diag_note("declare each cube as an asset of its own: 'asset Cubemap sky = \"art/sky_??.png\";'");
+            return false;
+        }
+        // Other contexts retain the ordinary unsupported-element diagnostic.
+        diag_error(at, "a list or a map holds values, like numbers, text, enums and structs, not %s", type_name(t));
+        return false;
     default:
         diag_error(at, "a list or a map holds values, like numbers, text, enums and structs, not %s", type_name(t));
         if (t.kind == TY_COMPONENT) diag_note("to keep entities in a list, keep their Entity");
@@ -1753,6 +1815,7 @@ typedef enum type_place {
     PLACE_CONST,    // A constant's
     PLACE_IS,       // What's after `is`
     PLACE_ASSET,    // An asset's: a List<T> or Map<string, T> there holds grids too, as nothing writes one
+    PLACE_ALIAS,    // A type name of its own: its uses still undergo their ordinary placement checks.
     ARG_ELEMENT,    // In <>: a list's element, List<here>, or a map's value, Map<K, here>
     ARG_KEY,        // A map's or set's key: Map<here, V>, Set<here>
     ARG_CELL,       // A grid's cell: Grid2<here>, Grid3<here>
@@ -1791,6 +1854,7 @@ static type unknown_type(const checker *c, const type_ref *r, const loc at, cons
 }
 
 static type resolve_type(const checker *c, const type_ref *r, type_place place, loc at);
+static type resolve_alias_at(const checker *c, decl *d, type_place place, loc at);
 
 #include "callable_types.inc"
 
@@ -1925,7 +1989,11 @@ static void long_array_misplaced(const loc at, const type t, const char *what)
 static type resolve_type(const checker *c, const type_ref *r, const type_place place, const loc at)
 {
     // int?: the places that take a T? resolve what it holds first (without_question), and wrap that
-    if (r->optional) return unknown_type(c, r, at, place);
+    if (r->optional) {
+        type_ref inner = *r;
+        inner.optional = false;
+        return optional_type(c, resolve_type(c, &inner, place, at), at);
+    }
     type t = resolve_named(c, r, place, at);
     // int[4][8]: 4 arrays of 8, so the last length wraps first
     for (int i = r->sizes.count - 1; i >= 0; i--) t = array_type((checker *)c, t, r->sizes.items[i], at);
@@ -1938,6 +2006,34 @@ static type resolve_type(const checker *c, const type_ref *r, const type_place p
         return T_ERR;
     }
     return t;
+}
+
+static type resolve_alias_at(const checker *c, decl *d, const type_place place, const loc at)
+{
+    if (d->alias_state == 1) {
+        diag_error(at, "type alias '" STR_FMT "' refers to itself", STR_ARG(d->qualified));
+        diag_note_at(d->at, "an alias can name another alias, but its chain must end at a type without returning here");
+        return T_ERR;
+    }
+    // A signature can use a later alias while resolving an earlier one.
+    // Contextual validation must never publish an uninitialized canonical type.
+    if (place != PLACE_ALIAS && d->alias_state == 0) {
+        const type canonical = resolve_alias_type(c, d);
+        if (canonical.kind == TY_ERROR) return T_ERR;
+    }
+    if (d->alias_state == 2 && (place == PLACE_ALIAS || d->alias_type.kind == TY_ERROR)) return d->alias_type;
+    d->alias_state = 1;
+    checker scoped = *c;
+    scoped.unit = d->unit;
+    const type t = resolve_type(&scoped, d->alias_ref, place, at);
+    d->alias_state = 2;
+    if (place == PLACE_ALIAS) d->alias_type = t;
+    return t;
+}
+
+static type resolve_alias_type(const checker *c, decl *d)
+{
+    return resolve_alias_at(c, d, PLACE_ALIAS, d->alias_ref->at);
 }
 
 // The type `r`'s name means, with what's in its <>: everything of it but the
@@ -1980,10 +2076,10 @@ static type resolve_named(const checker *c, const type_ref *r, const type_place 
     }
     if (r->args.count > 0 && str_eq_c(name, "SkinnedMesh")) return resolve_skinned_mesh(c, r, at);
     if (r->args.count > 0 && str_eq_c(name, "Mesh")) return resolve_mesh(c, r, place, at);
-    if (r->args.count > 0) return resolve_generic(c, r, at, place == PLACE_ASSET,
+    if (r->args.count > 0) return resolve_generic(c, r, at, place == PLACE_ASSET || place == PLACE_ALIAS,
                                                 place == PLACE_FUNCTION || place == PLACE_RETURN);
     if (resolve_builtin_type(c, name, &t)) {
-        if (t.kind == TY_RESIDENT && place != PLACE_FIELD && place != PLACE_FUNCTION) {
+        if (t.kind == TY_RESIDENT && place != PLACE_FIELD && place != PLACE_FUNCTION && place != PLACE_ALIAS) {
             diag_error(at, "Resident state is a match singleton's field, for the C of a package that comes with tide: nothing else holds one");
             return T_ERR;
         }
@@ -1992,25 +2088,29 @@ static type resolve_named(const checker *c, const type_ref *r, const type_place 
     if (str_eq_c(name, "string")) return (type){TY_STRING, NULL};
     // Existing user types keep their names; the model value types are supplied
     // only when ordinary type lookup has no declaration for that name.
-    decl *const d = find_type(c, name, at);
+    decl *const d = find_named(c, name, at, NAME_TYPE);
+    if (d && d->kind == DECL_ALIAS) {
+        ((type_ref *)r)->alias = d;
+        return resolve_alias_at(c, d, place, at);
+    }
     if (!d) {
         decl *stage = find_named(c, name, at, NAME_SHADER);
         if (stage) return (type){TY_STRUCT, shader_binding_type(c, stage)};
     }
     if (!d && skinned_type_named(c->prog, name, &t)) return t;
-    if (routine_place(place) || place == PLACE_FIELD || place == PLACE_LOCAL) {
+    if (routine_place(place) || place == PLACE_FIELD || place == PLACE_LOCAL || place == PLACE_ALIAS) {
         if (str_eq_c(name, "Action")) return (type){TY_ACTION, NULL};
         if (str_eq_c(name, "DrawList")) return (type){TY_DRAW_LIST, NULL};
     }
-    if (routine_place(place)) {
-        if (place == PLACE_RETURN && str_eq_c(name, "void")) return T_VOID_;
+    if (routine_place(place) || place == PLACE_ALIAS) {
+        if ((place == PLACE_RETURN || place == PLACE_ALIAS) && str_eq_c(name, "void")) return T_VOID_;
         for (int i = 0; i < c->prog->records.count; i++) { // Devices, Keyboard, ..., Button
             if (str_eq(c->prog->records.items[i]->name, name)) return (type){TY_RECORD, c->prog->records.items[i]};
         }
     }
     if (d) return decl_type(d);
     // The engine's World where a value's type goes: the place says where it belongs (world_misplaced)
-    if ((routine_place(place) || place == PLACE_FIELD || place == PLACE_LOCAL) && str_eq_c(name, "World")) return (type){TY_WORLD, NULL};
+    if ((routine_place(place) || place == PLACE_FIELD || place == PLACE_LOCAL || place == PLACE_ALIAS) && str_eq_c(name, "World")) return (type){TY_WORLD, NULL};
     if (place == PLACE_FUNCTION && str_eq_c(name, "void")) {
         diag_error(at, "'void' only goes before a method that returns nothing");
         return T_ERR;
@@ -2467,17 +2567,12 @@ static type check_literal(checker *c, expr *e)
         diag_error(e->at, "a lambda needs a Func signature from its field, parameter or declared local type");
         return T_ERR;
     }
+    e->type_alias = authored_alias(c, e->name, e->at);
     decl *d = find_type(c, e->name, e->at);
     if (!d) {
         decl *stage = find_named(c, e->name, e->at, NAME_SHADER);
         if (stage) {
             d = shader_binding_type(c, stage);
-            for (int k = 0; k < d->fields.count; k++) {
-                bool supplied = false;
-                for (int j = 0; j < e->inits.count; j++) supplied |= str_eq(e->inits.items[j].name, d->fields.items[k].name);
-                if (!supplied) diag_error(e->at, "shader binding '" STR_FMT "' requires function '" STR_FMT "'",
-                                         STR_ARG(stage->name), STR_ARG(d->fields.items[k].name));
-            }
         }
     }
     type builtin;
@@ -2498,6 +2593,14 @@ static type check_literal(checker *c, expr *e)
         return T_ERR;
     }
     e->type_decl = d;
+    if (d->binding_of) {
+        for (int k = 0; k < d->fields.count; k++) {
+            bool supplied = false;
+            for (int j = 0; j < e->inits.count; j++) supplied |= str_eq(e->inits.items[j].name, d->fields.items[k].name);
+            if (!supplied) diag_error(e->at, "shader binding '" STR_FMT "' requires function '" STR_FMT "'",
+                                     STR_ARG(d->binding_of->name), STR_ARG(d->fields.items[k].name));
+        }
+    }
 
     for (int i = 0; i < e->inits.count; i++) {
         field_init *init = &e->inits.items[i];
@@ -2586,6 +2689,7 @@ static decl *check_component_arg(checker *c, expr *arg, const char *fn)
     if (root && root->kind == E_NAME && !find_local(c, root->name) && !find_param(c, root->name)
         && qualified_text(arg, &name)) {
         decl *d = find_type(c, name, arg->at);
+        arg->type_alias = authored_alias(c, name, arg->at);
         if (d && d->kind == DECL_COMPONENT) {
             if (arg->kind == E_MEMBER) mark_namespaces(arg->object);
             arg->bind = BIND_TYPE;
@@ -3277,6 +3381,11 @@ static bool names_only(const expr *e);
 // an int to a byte.
 static type check_enum_conversion(checker *c, expr *e, decl *d)
 {
+    if (!d->width) {
+        checker scoped = *c;
+        scoped.unit = d->unit;
+        check_enum_storage(&scoped, d);
+    }
     // Its name is the enum's, for editors, whatever its arguments are: it's a call only once they're right
     e->type_decl = d;
     e->ctor = CTOR_ENUM;
@@ -3313,7 +3422,6 @@ static type check_enum_conversion(checker *c, expr *e, decl *d)
 // Card in Card(2), Combat.Stance in Combat.Stance(2). NULL for any other call.
 static decl *converted_enum(const checker *c, const expr *e)
 {
-    decl *other;
     str name = e->name;
     if (e->kind == E_METHOD) {
         str ns;
@@ -3324,7 +3432,7 @@ static decl *converted_enum(const checker *c, const expr *e)
         memcpy(text + ns.len + 1, e->name.ptr, (size_t)e->name.len);
         name = (str){text, ns.len + 1 + e->name.len};
     }
-    decl *d = lookup(c->prog, c->unit, name, NAME_TYPE, &other);
+    decl *d = find_type(c, name, e->at);
     return d && d->kind == DECL_ENUM ? d : NULL;
 }
 
@@ -3924,6 +4032,7 @@ static decl *check_event_arg(checker *c, expr *arg)
         && qualified_text(arg, &name)) {
         decl *d = find_type(c, name, arg->at);
         if (d) {
+            arg->type_alias = authored_alias(c, name, arg->at);
             if (arg->kind == E_MEMBER) mark_namespaces(arg->object);
             arg->bind = BIND_TYPE;
             arg->type_decl = d;
@@ -5046,7 +5155,9 @@ static type check_call(checker *c, expr *e)
     if (own) return check_self_call(c, e, own);
 
     type builtin;
-    if (builtin_type_named(e->name, &builtin)) return check_construct(c, e, builtin);
+    e->type_alias = authored_alias(c, e->name, e->at);
+    if (resolve_builtin_alias(c, e->name, &builtin)) return check_construct(c, e, builtin);
+    if (e->type_alias && e->type_alias->alias_type.kind == TY_GRID) return check_new_grid(c, e, e->type_alias->alias_type);
     if (is_new_grid(e)) return check_new_grid(c, e, T_VOID_); // Where nothing says its type: an error
 
     if (str_eq_c(e->name, "Send")) return check_send(c, e);
@@ -5172,6 +5283,29 @@ static bool names_builtin_owner(const checker *c, const expr *e)
     return e->kind == E_NAME && builtin_owner(e->name) && !find_local(c, e->name) && !find_param(c, e->name);
 }
 
+// Static built-in APIs inspect their owner's spelling. Retain the authored
+// alias on a private canonical receiver, so source navigation still names it.
+static void alias_receiver(const checker *c, expr *e)
+{
+    expr *receiver = e->object;
+    if (!receiver) return;
+    const expr *root = chain_root(receiver);
+    str name;
+    if (root->kind != E_NAME || find_local(c, root->name) || find_param(c, root->name)
+        || field_in_scope(c, root->name) || !qualified_text(receiver, &name)) return;
+    decl *alias = authored_alias(c, name, receiver->at);
+    if (!alias) return;
+    receiver->type_alias = alias;
+    const type t = resolve_alias_type(c, alias);
+    if (t.kind == TY_ERROR || (t.decl && !t.decl->builtin)) return;
+    expr *canonical = NEW(expr);
+    *canonical = *receiver;
+    canonical->kind = E_NAME;
+    canonical->name = t.decl ? t.decl->qualified : str_from(type_name(t));
+    canonical->object = NULL;
+    e->object = canonical;
+}
+
 // The scene Session.Start starts a match in: one of the
 // match's, named with its defaults or written with values.
 static decl *check_start_scene(checker *c, expr *arg, const char *call)
@@ -5185,6 +5319,7 @@ static decl *check_start_scene(checker *c, expr *arg, const char *call)
         str name;
         decl *d = (arg->kind == E_NAME || arg->kind == E_MEMBER) && qualified_text(arg, &name) ? find_type(c, name, arg->at) : NULL;
         if (d) {
+            arg->type_alias = authored_alias(c, name, arg->at);
             if (arg->kind == E_MEMBER) mark_namespaces(arg->object);
             arg->bind = BIND_TYPE;
             arg->type_decl = d;
@@ -5504,6 +5639,7 @@ static type check_scene_call(checker *c, expr *e)
             str name;
             decl *d = (arg->kind == E_NAME || arg->kind == E_MEMBER) && qualified_text(arg, &name) ? find_type(c, name, arg->at) : NULL;
             if (d) {
+                arg->type_alias = authored_alias(c, name, arg->at);
                 if (arg->kind == E_MEMBER) mark_namespaces(arg->object);
                 arg->bind = BIND_TYPE;
                 arg->type_decl = d;
@@ -6658,6 +6794,7 @@ static type check_world_call(checker *c, expr *e, param *world)
                    STR_ARG(world->name), STR_ARG(e->name), usage);
         return T_ERR;
     }
+    bind_alias_ref(c, e->type_arg_ref);
     decl *d = find_type(c, e->type_arg, e->type_arg_at);
     e->type_decl = d;
     if (!d || d->kind != DECL_COMPONENT) {
@@ -7258,6 +7395,21 @@ static type check_parse_call(checker *c, expr *e, const type result)
 
 static type check_method(checker *c, expr *e)
 {
+    // A qualified primitive alias's constructor has the parser's method form.
+    str alias_name;
+    const expr *alias_root = chain_root(e->object);
+    if (alias_root->kind == E_NAME && !find_local(c, alias_root->name) && !find_param(c, alias_root->name)
+        && !field_in_scope(c, alias_root->name) && qualified_text(e->object, &alias_name) && is_namespace(c->prog, alias_name)) {
+        sb full = {0};
+        sb_printf(&full, STR_FMT "." STR_FMT, STR_ARG(alias_name), STR_ARG(e->name));
+        e->type_alias = authored_alias(c, (str){full.data, (int)full.len}, e->at);
+        type primitive;
+        if (e->type_alias && resolve_builtin_alias(c, (str){full.data, (int)full.len}, &primitive))
+            return check_construct(c, e, primitive);
+        if (e->type_alias && e->type_alias->alias_type.decl == c->prog->random) return check_random_seeded(c, e);
+        if (e->type_alias && e->type_alias->alias_type.kind == TY_GRID) return check_new_grid(c, e, e->type_alias->alias_type);
+    }
+    alias_receiver(c, e);
     if (visibility_owner(c, e->object, "Visibility") || visibility_owner(c, e->object, "Audience"))
         return check_visibility_static(c, e);
     if (str_eq_c(e->name, "Count")) {
@@ -8477,6 +8629,7 @@ static type check_property(checker *c, expr *e, property *prop, const decl *plac
 
 static type check_member(checker *c, expr *e)
 {
+    alias_receiver(c, e);
     if (visibility_owner(c, e->object, "Audience")) {
         ensure_visibility(c->prog);
         e->object->bind = BIND_TYPE;
@@ -9747,14 +9900,16 @@ static type check_list_method(checker *c, expr *e, const type list)
 
 static bool is_new_grid(const expr *e)
 {
-    return e->kind == E_CALL && (str_eq_c(e->name, "Grid2") || str_eq_c(e->name, "Grid3"));
+    return (e->kind == E_CALL && (str_eq_c(e->name, "Grid2") || str_eq_c(e->name, "Grid3")))
+        || ((e->kind == E_CALL || e->kind == E_METHOD) && e->type_alias && e->type_alias->alias_type.kind == TY_GRID);
 }
 
 // Grid2(1024, 1024), Grid3(0, 384, 0) or Grid2(): a grid of that size, open
 // on the axes given 0 or left out. Its cell type comes from where it goes.
 static type check_new_grid(checker *c, expr *e, const type want)
 {
-    const int dims = e->name.ptr[4] - '0';
+    const int dims = e->type_alias && e->type_alias->alias_type.kind == TY_GRID ? e->type_alias->alias_type.decl->dims
+                                                                            : e->name.ptr[4] - '0';
     for (int i = 0; i < e->args.count; i++) {
         const type t = check_expr_want(c, e->args.items[i], T_INT_);
         if (!type_assignable(T_INT_, t)) {
@@ -11735,8 +11890,9 @@ static bool fold_enum(const expr *e, int64_t *out)
 {
     int64_t number;
     if (e->args.count != 1 || !fold_int(e->args.items[0], &number)) return false;
-    const str backing = e->type_decl->backing;
-    *out = str_eq_c(backing, "byte") ? (uint8_t)number : str_eq_c(backing, "ushort") ? (uint16_t)number : (int32_t)number;
+    const decl *d = e->type_decl;
+    const int width = d->width ? d->width : str_eq_c(d->backing, "byte") ? 1 : str_eq_c(d->backing, "ushort") ? 2 : 4;
+    *out = width == 1 ? (uint8_t)number : width == 2 ? (uint16_t)number : (int32_t)number;
     return true;
 }
 
@@ -12199,6 +12355,7 @@ static void check_var(checker *c, stmt *s)
         s->type = value;
     } else {
         const type_ref *const written = type_ref_or_text(s->type_ref, s->type_name);
+        bind_alias_ref(c, written);
         const bool optional = written->optional;
         const type_ref inner = optional ? without_question(written) : *written;
         const loc at = s->type_qual_at.line ? s->type_qual_at : s->at;
@@ -12574,6 +12731,22 @@ static bool names_only(const expr *e)
     return e->kind == E_NAME;
 }
 
+static bool constant_alias_call(const checker *c, const expr *e)
+{
+    str owner;
+    if (!qualified_text(e->object, &owner)) return false;
+    sb full = {0};
+    sb_printf(&full, STR_FMT "." STR_FMT, STR_ARG(owner), STR_ARG(e->name));
+    decl *alias = authored_alias(c, (str){full.data, (int)full.len}, e->at);
+    type builtin;
+    if (alias && resolve_builtin_alias(c, (str){full.data, (int)full.len}, &builtin)) return true;
+    if (alias && (alias->alias_type.decl == c->prog->random || alias->alias_type.kind == TY_GRID)) return true;
+    alias = authored_alias(c, owner, e->object->at);
+    if (!alias) return false;
+    const type t = resolve_alias_type(c, alias);
+    return !t.decl && builtin_owner(str_from(type_name(t)));
+}
+
 // Constant expressions: literals, constants, constructors of built-in types,
 // Math functions, built-in constants like quaternion.identity, members of any
 // of these, and operators on them. Nothing that reads fields, singletons or
@@ -12612,12 +12785,14 @@ static bool is_constant(const checker *c, const expr *e)
         }
         return true;
     case E_CALL: // A built-in type's constructor, an enum's conversion, a grid's size, and a Random's seed
-        return (builtin_type_named(e->name, &ignored) || is_new_grid(e) || converted_enum(c, e)
-                || lookup(c->prog, c->unit, e->name, NAME_TYPE, &other) == c->prog->random)
+        return (resolve_builtin_alias(c, e->name, &ignored) || is_new_grid(e) || converted_enum(c, e)
+                || find_type(c, e->name, e->at) == c->prog->random
+                || (authored_alias(c, e->name, e->at) && resolve_alias_type(c, authored_alias(c, e->name, e->at)).kind == TY_GRID))
             && all_constant(c, e);
     case E_METHOD: // Math.Max(...), and Combat.Stance(2)
         if (str_eq_c(e->name, "Count") && named_enum(c, e->object)) return all_constant(c, e);
-        return ((e->object->kind == E_NAME && builtin_owner(e->object->name)) || converted_enum(c, e)) && all_constant(c, e);
+        return ((e->object->kind == E_NAME && builtin_owner(e->object->name)) || converted_enum(c, e)
+                || constant_alias_call(c, e)) && all_constant(c, e);
     case E_MEMBER: // Checking tells a member of an enum or a constant from anything else
         return e->enum_shorthand || (e->object->kind == E_NAME && builtin_owner(e->object->name)) || is_constant(c, e->object) || names_only(e);
     case E_LITERAL:
@@ -12711,10 +12886,23 @@ static type constant_type(const checker *c, const decl *k)
     }
     const type t = resolve_type(c, r, PLACE_CONST, at);
     switch (t.kind) {
+    case TY_ARRAY:
+        diag_error(at, "a constant can't be an array yet");
+        return T_ERR;
+    case TY_LIST: case TY_MAP: case TY_SET: case TY_GRID:
+        diag_error(at, "a constant can't be a %s yet", t.kind == TY_LIST ? "list" : t.kind == TY_MAP ? "map" : t.kind == TY_SET ? "set" : "grid");
+        return T_ERR;
+    case TY_OPTIONAL:
+        diag_error(at, "a constant can't be a T? yet");
+        return T_ERR;
     case TY_ERROR:
     case TY_STRING: return t;
     case TY_STRUCT:
     case TY_ENUM:
+        if (holds_callable(t)) {
+            diag_error(at, "a constant can't hold callable or shader bindings: they belong in local state");
+            return T_ERR;
+        }
         if (holds_render_resource(t)) {
             diag_error(at, "a constant can't hold rendering resources, including inside a struct");
             return T_ERR;
@@ -13161,34 +13349,32 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
     const loc at = k->return_type_qual_at.line ? k->return_type_qual_at : k->return_type_at;
     const type_ref *const written = type_ref_or_text(k->return_type_ref, k->return_type_name);
     *many = *is_map = false;
-    const type_ref *inner = written;
-    const bool generic = written->args.count > 0 && !written->optional;
-    if (generic && str_eq_c(written->name, "List") && !str_eq_c(written->text, "List<byte>")) { // A glob's files, not one file's bytes
+    k->return_type = resolve_type(c, written, PLACE_ASSET, at);
+    type inner = k->return_type;
+    if (inner.kind == TY_ERROR) return false;
+    // Classify canonical types, including aliases nested in collections.
+    // List<byte> alone is one file's bytes, rather than a glob.
+    if (inner.kind == TY_LIST && list_element(inner).kind != TY_BYTE) {
         *many = true;
-        inner = written->args.items[0];
-    } else if (generic && str_eq_c(written->name, "Map")) {
-        if (!str_eq_c(written->args.items[0]->text, "string")) {
+        inner = list_element(inner);
+    } else if (inner.kind == TY_MAP) {
+        if (map_key(inner).kind != TY_STRING) {
             diag_error(at, "a map of assets is keyed by their paths: 'Map<string, ...>'");
             return false;
         }
         *many = *is_map = true;
-        inner = written->args.items[1];
+        inner = map_value(inner);
     }
-    if (str_eq_c(inner->text, "string")) *kind = ASSET_TEXT;
-    else if (str_eq_c(inner->text, "List<byte>")) *kind = ASSET_BYTES;
-    else if (str_eq_c(inner->text, "Grid2<Color>")) *kind = ASSET_GRID;
-    else if (str_eq_c(inner->text, "Texture")) *kind = ASSET_TEXTURE;
-    else if (str_eq_c(inner->text, "Clip")) *kind = ASSET_CLIP;
-    else if (str_eq_c(inner->text, "AnimationCatalog")) *kind = ASSET_ANIMATIONS;
-    else if (str_eq_c(inner->text, "Animation")) *kind = ASSET_ANIMATION;
-    else if (str_eq_c(inner->name, "Mesh") && inner->args.count == 1 && !inner->optional) *kind = ASSET_MESH;
-    else if (str_eq_c(inner->name, "SkinnedMesh") && inner->args.count >= 1 && !inner->optional) *kind = ASSET_SKINNED;
-    else if (str_eq_c(inner->text, "Mesh")) {
-        diag_error(at, "a Mesh says what its vertices are: 'Mesh<Vertex3>', or 'Mesh<...>' of a struct of the game's with a "
-                       "'float3 position'");
-        diag_note("a file's positions, normals, uvs and colors fill the struct's 'position', 'normal', 'uv' and 'color' fields");
-        return false;
-    } else if (str_eq_c(inner->text, "Cubemap")) {
+    if (inner.kind == TY_STRING) *kind = ASSET_TEXT;
+    else if (inner.kind == TY_LIST && list_element(inner).kind == TY_BYTE) *kind = ASSET_BYTES;
+    else if (inner.kind == TY_GRID && inner.decl->dims == 2 && grid_cell(inner).kind == TY_COLOR) *kind = ASSET_GRID;
+    else if (inner.kind == TY_TEXTURE) *kind = ASSET_TEXTURE;
+    else if (inner.kind == TY_CLIP) *kind = ASSET_CLIP;
+    else if (inner.kind == TY_STRUCT && inner.decl->skin_kind == SKIN_ANIMATIONS) *kind = ASSET_ANIMATIONS;
+    else if (inner.kind == TY_STRUCT && inner.decl->skin_kind == SKIN_ANIMATION) *kind = ASSET_ANIMATION;
+    else if (inner.kind == TY_MESH) *kind = ASSET_MESH;
+    else if (inner.kind == TY_STRUCT && inner.decl->skin_kind == SKIN_MESH) *kind = ASSET_SKINNED;
+    else if (inner.kind == TY_CUBEMAP) {
         if (*many) {
             diag_error(at, "a Cubemap is six files already, which its glob matches: a list or a map of cubes isn't there yet");
             diag_note("declare each cube as an asset of its own: 'asset Cubemap sky = \"art/sky_??.png\";'");
@@ -13196,14 +13382,18 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
         }
         *kind = ASSET_CUBEMAP;
     } else {
+        if (inner.kind == TY_STRUCT && (str_eq_c(inner.decl->name, "AnimationCatalog") || str_eq_c(inner.decl->name, "Animation"))) {
+            const bool catalog = str_eq_c(inner.decl->name, "AnimationCatalog");
+            diag_error(at, "an %s asset uses the built-in %s; '%s' names a different type",
+                       catalog ? "AnimationCatalog" : "Animation", catalog ? "animation catalog" : "animation type", type_name(inner));
+            return false;
+        }
         diag_error(at, "an asset is a string (UTF-8 text), a List<byte> (any file), a Grid2<Color> or a Texture (an image), a "
                        "Cubemap (six images), a Clip (WAV, Ogg Vorbis, MP3 or FLAC), a Mesh<V> (glTF, OBJ or FBX), or a "
-                       "SkinnedMesh<V>, Animation or AnimationCatalog (glTF 2.0 or FBX), not '" STR_FMT "'",
-                   STR_ARG(inner->text));
+                       "SkinnedMesh<V>, Animation or AnimationCatalog (glTF 2.0 or FBX), not '%s'", type_name(inner));
         diag_note("for the files a glob matches, a 'List<...>' of one of those, or a 'Map<string, ...>' of their paths");
         return false;
     }
-    k->return_type = resolve_type(c, written, PLACE_ASSET, at);
     if ((*kind == ASSET_ANIMATIONS || *kind == ASSET_ANIMATION) && k->return_type.kind != TY_ERROR) {
         const type t = k->return_type.kind == TY_LIST ? list_element(k->return_type)
                      : k->return_type.kind == TY_MAP ? map_value(k->return_type) : k->return_type;
@@ -13299,7 +13489,13 @@ static void check_sampling_attribute(checker *c, decl *d, attribute *attr)
     str member_name;
     if (attr->args.count == 1 && attr->values.count == 0 && split_qualified(attr->args.items[0].text, &enum_name, &member_name)) {
         decl *other;
-        if (lookup(c->prog, c->unit, enum_name, NAME_TYPE, &other) == wanted) {
+        decl *enumeration = lookup(c->prog, c->unit, enum_name, NAME_TYPE, &other);
+        if (enumeration && enumeration->kind == DECL_ALIAS && !other) {
+            const type target = resolve_alias_type(c, enumeration);
+            if (target.kind == TY_ERROR) return;
+            enumeration = target.kind == TY_ENUM ? target.decl : NULL;
+        }
+        if (!other && enumeration == wanted) {
             for (int i = 0; i < wanted->members.count; i++) {
                 if (!str_eq(wanted->members.items[i].name, member_name)) continue;
                 *said = 1 + (int)wanted->members.items[i].number;
@@ -13870,8 +14066,10 @@ static void resolve_field_types(const checker *c, const decl *d)
     for (int i = 0; i < d->fields.count; i++) {
         field *f = &d->fields.items[i];
         if (f->hidden && !f->type_name.len && f->type.kind != TY_ERROR) continue;
+        bind_alias_ref(c, f->type_ref);
         const loc at = f->type_qual_at.line ? f->type_qual_at : f->at;
-        if (resolve_builtin_type(c, f->type_name, &f->type) && !(f->type_ref && f->type_ref->optional)) {
+        if (resolve_builtin_alias(c, f->type_name, &f->type) && !(f->type_ref && f->type_ref->optional)) {
+            if (f->type_ref) ((type_ref *)f->type_ref)->alias = authored_alias(c, f->type_name, at);
             if (f->type.kind != TY_RESIDENT) continue;
             // Resident state (tide/resident.h): a match singleton's, one of them, for the C of a package that comes with tide
             f->type = T_ERR;
@@ -13895,7 +14093,16 @@ static void resolve_field_types(const checker *c, const decl *d)
         const type_ref *const r = type_ref_or_text(f->type_ref, f->type_name);
         // int? target: the type it holds, which is a field's as any is, then what a T? of it is kept as
         const type_ref inner = r->optional ? without_question(r) : *r;
-        const type t = resolve_type(c, &inner, PLACE_FIELD, at);
+        type t = resolve_type(c, &inner, PLACE_FIELD, at);
+        bool optional = r->optional;
+        if (t.kind == TY_OPTIONAL) {
+            if (optional) {
+                optional_type(c, t, at);
+                continue;
+            }
+            optional = true;
+            t = t.decl->fields.items[0].type;
+        }
         switch (t.kind) {
         case TY_ERROR: break;
         case TY_ACTION: diag_error(at, "fields can't hold an Action; it's only ever a function's last parameter"); break;
@@ -13916,7 +14123,7 @@ static void resolve_field_types(const checker *c, const decl *d)
             break;
         }
         default:
-            if (!r->optional) f->type = t;
+            if (!optional) f->type = t;
             else if (optional_field_ok(d, f, t, at)) f->type = optional_field_type(c, t, at);
         }
     }
@@ -13925,24 +14132,28 @@ static void resolve_field_types(const checker *c, const decl *d)
 // An enum's members: their names and values. A member without a value is one
 // more than the one before it, and the first is 0, as in C#. In generated C,
 // Page.Title is Page_Title.
-static void check_enum(checker *c, decl *d)
+static void check_enum_storage(const checker *c, decl *d)
 {
-    if (d->members.count == 0) diag_error(d->at, "enum '" STR_FMT "' needs at least one member", STR_ARG(d->name));
     // What it's stored as: an int, or as C# writes it, `enum Voxel : byte`
     d->width = 4;
-    int64_t most = INT32_MAX;
     if (d->backing.len) {
-        if (str_eq_c(d->backing, "byte")) {
+        bind_alias_ref(c, d->backing_ref);
+        if (names_type_as(c, d->backing, "byte")) {
             d->width = 1;
-            most = 255;
         } else if (str_eq_c(d->backing, "ushort")) {
             d->width = 2;
-            most = 65535;
-        } else if (!str_eq_c(d->backing, "int")) {
+        } else if (!names_type_as(c, d->backing, "int")) {
             diag_error(d->backing_at, "an enum is stored as a byte, a ushort or an int, not '" STR_FMT "'", STR_ARG(d->backing));
             diag_note("like 'enum Voxel : byte', for members from 0 to 255; 'ushort' goes to 65535");
         }
     }
+}
+
+static void check_enum(checker *c, decl *d)
+{
+    if (d->members.count == 0) diag_error(d->at, "enum '" STR_FMT "' needs at least one member", STR_ARG(d->name));
+    check_enum_storage(c, d);
+    const int64_t most = d->width == 1 ? 255 : d->width == 2 ? 65535 : INT32_MAX;
     int64_t next = 0;
     for (int i = 0; i < d->members.count; i++) {
         enum_member *m = &d->members.items[i];
@@ -13977,6 +14188,7 @@ static void check_enum(checker *c, decl *d)
         const decl_index *by_c_name = decls_by(c->prog, true);
         for (int k = first_c_named(by_c_name, mine.data, mine.len); k >= 0; k = by_c_name->next[k]) {
             const decl *other = c->prog->decls.items[k];
+            if (other->kind == DECL_ALIAS) continue;
             sb theirs = {0};
             c_name_of(other, &theirs);
             if (strcmp(mine.data, theirs.data) == 0) {
@@ -14152,6 +14364,7 @@ static void check_local_part(const checker *c, const decl *part)
     const decl_index *by_c_name = decls_by(c->prog, true);
     for (int k = first_c_named(by_c_name, mine.data, mine.len); k >= 0; k = by_c_name->next[k]) {
         const decl *other = c->prog->decls.items[k];
+        if (other->kind == DECL_ALIAS) continue;
         sb theirs = {0};
         c_name_of(other, &theirs);
         if (strcmp(mine.data, theirs.data) != 0 || other->kind == DECL_SYSTEM) continue;
@@ -14165,6 +14378,13 @@ static void check_local_part(const checker *c, const decl *part)
 // enum or component; singletons only as parameters, and void only as a return.
 static type method_type(const checker *c, const type_ref *r, const loc at, const bool is_return)
 {
+    bind_alias_ref(c, r);
+    if (r->alias && r->args.count == 0 && r->sizes.count == 0 && !r->optional) {
+        if (resolve_alias_type(c, r->alias).kind == TY_ERROR) return T_ERR;
+        checker scoped = *c;
+        scoped.unit = r->alias->unit;
+        return method_type(&scoped, r->alias->alias_ref, at, is_return);
+    }
     if (r->optional) { // int?
         const type_ref inner = without_question(r);
         const type value = method_type(c, &inner, at, is_return);
@@ -14355,6 +14575,7 @@ static void check_signature(checker *c, decl *m)
     }
     for (int k = 0; k < m->params.count; k++) {
         param *p = &m->params.items[k];
+        bind_alias_ref(c, p->type_ref);
         check_reserved(p->name, p->at);
         for (int j = 0; j < k; j++) {
             if (str_eq(m->params.items[j].name, p->name)) {
@@ -14373,7 +14594,7 @@ static void check_signature(checker *c, decl *m)
                 diag_error(p->at, "a borrowed query has no default: move it before parameters with defaults");
             continue;
         }
-        const bool world = str_eq_c(p->type_name, "World") && !find_type(c, p->type_name, p->type_at);
+        const bool world = names_type_as(c, p->type_name, "World") && !find_type(c, p->type_name, p->type_at);
         c->grid_param = !m->is_extern && !m->is_async && !m->is_operator && !m->is_interpolate && !m->is_audio && !m->takes_action;
         p->type = world ? (type){TY_WORLD, NULL} : method_type(c, type_ref_or_text(p->type_ref, p->type_name), p->type_qual_at, false);
         c->grid_param = false;
@@ -14444,7 +14665,7 @@ static void check_signature(checker *c, decl *m)
         // Action isn't an argument: it's the code after the call.
         if (p->default_value) {
             check_param_default(c, m, p);
-        } else if (k > 0 && m->params.items[k - 1].default_value && !str_eq_c(p->type_name, "Action")) {
+        } else if (k > 0 && m->params.items[k - 1].default_value && !names_type_as(c, p->type_name, "Action")) {
             if (p->is_out) {
                 diag_error(p->name_at, "'" STR_FMT "' comes after a parameter with a default, and an 'out' parameter takes none",
                            STR_ARG(p->name));
@@ -14874,7 +15095,7 @@ static void check_extern_c_name(const checker *c, decl *fn)
     const decl_index *by_c_name = decls_by(c->prog, true);
     for (int i = first_c_named(by_c_name, fn->c_name, strlen(fn->c_name)); i >= 0; i = by_c_name->next[i]) {
         const decl *other = c->prog->decls.items[i];
-        if (other->kind == DECL_FUNCTION || other->kind == DECL_SYSTEM || other->builtin) continue;
+        if (other->kind == DECL_FUNCTION || other->kind == DECL_SYSTEM || other->kind == DECL_ALIAS || other->builtin) continue;
         sb theirs = {0};
         c_name_of(other, &theirs);
         if (strcmp(theirs.data, fn->c_name) != 0) continue;
@@ -14917,6 +15138,7 @@ static void check_extern_system(const checker *c, decl *sys)
 {
     for (int i = 0; i < sys->params.count; i++) {
         param *p = &sys->params.items[i];
+        bind_alias_ref(c, p->type_ref);
         const loc at = p->type_at.line ? p->type_at : p->at;
         switch (p->type.kind) {
         case TY_QUERY:
@@ -15093,6 +15315,7 @@ static void check_shader_decl(const checker *c, decl *d)
     const param *source_texture = NULL;
     for (int i = 0; i < d->params.count; i++) {
         param *p = &d->params.items[i];
+        bind_alias_ref(c, p->type_ref);
         const loc at = p->type_at.line ? p->type_at : p->at;
         p->type = T_ERR;
         p->place = false;
@@ -15106,7 +15329,7 @@ static void check_shader_decl(const checker *c, decl *d)
                               "which entities", word);
             continue;
         }
-        if (str_eq_c(p->type_name, "World") && !find_type(c, p->type_name, p->type_at)) {
+        if (names_type_as(c, p->type_name, "World") && !find_type(c, p->type_name, p->type_at)) {
             diag_error(at, "a %s can't reach other entities: the GPU is sent the components of the one being drawn", word);
             diag_note("the view copies what it needs of the others into a component of this entity, or into a singleton");
             continue;
@@ -15119,7 +15342,10 @@ static void check_shader_decl(const checker *c, decl *d)
                 }
             }
         }
-        if (i > 0 && p->type_ref && str_eq_c(p->type_ref->name, "Func")) {
+        decl *call_alias = p->type_ref ? authored_alias(c, p->type_ref->name, p->type_at) : NULL;
+        if (i > 0 && p->type_ref && (str_eq_c(p->type_ref->name, "Func")
+                                   || (call_alias && is_callable(resolve_alias_type(c, call_alias))))) {
+            ((type_ref *)p->type_ref)->alias = call_alias;
             decl *binding = shader_binding_type(c, d);
             p->type = (type){TY_STRUCT, binding};
             p->call_binding = callable_field_named(binding, p->name);
@@ -15132,7 +15358,7 @@ static void check_shader_decl(const checker *c, decl *d)
         if (t && t->kind == DECL_COMPONENT) t = component_placement(c->prog, t, p->placement_local, p->type_at);
         else if (p->placement_local) diag_error(p->placement_at, "local access qualifies a component");
         type value = T_ERR;
-        const bool plain = !t && builtin_type_named(p->type_name, &value);
+        const bool plain = !t && resolve_builtin_alias(c, p->type_name, &value);
 
         if (i == 0) { // The vertex
             if (!t || t->kind != DECL_STRUCT) {
@@ -15271,7 +15497,7 @@ static void check_shader_decl(const checker *c, decl *d)
             }
             continue;
         }
-        if (!t && str_eq_c(p->type_name, "Pixel")) {
+        if (!t && names_type_as(c, p->type_name, "Pixel")) {
             if (!d->is_frag) {
                 diag_error(at, "a vert runs for a vertex, before there are pixels: the pixel is a frag's 'this'");
                 continue;
@@ -15280,7 +15506,7 @@ static void check_shader_decl(const checker *c, decl *d)
             diag_error(at, "a frag's pixel is 'this' now: remove the 'Pixel' parameter and use 'this'");
             const fix f = {.kind = FIX_USE_THIS, .at = at, .param = p};
             vec_push(c->prog->fixes, f);
-        } else if (!t && str_eq_c(p->type_name, "Instance")) {
+        } else if (!t && names_type_as(c, p->type_name, "Instance")) {
             t = prog->instance;
         }
         if (!t) {
@@ -15751,6 +15977,7 @@ static void check_entity_query(const checker *c, decl *sys, param *query)
     const decl *side_of = NULL;
     for (int i = 0; i < query->query.count; i++) {
         param *p = &query->query.items[i];
+        bind_alias_ref(c, p->type_ref);
         p->query_source = query;
         if (p->mode == PARAM_QUERY) {
             diag_error(p->at, "a query can't contain another query");
@@ -15920,6 +16147,7 @@ static void check_params(const checker *c, decl *sys)
 
     for (int i = 0; i < sys->params.count; i++) {
         param *p = &sys->params.items[i];
+        bind_alias_ref(c, p->type_ref);
         if (p->ownership) {
             check_ownership(c, sys, p);
             continue;
@@ -15931,8 +16159,8 @@ static void check_params(const checker *c, decl *sys)
         decl *d = p->mode == PARAM_QUERY ? NULL : find_type(c, p->type_name, p->type_at);
         if (d && d->kind == DECL_COMPONENT) d = component_placement(c->prog, d, p->placement_local || d->is_local, p->type_at);
         else if (p->placement_local) diag_error(p->placement_at, "local access qualifies a component");
-        const bool is_entity = str_eq_c(p->type_name, "Entity");
-        const bool is_local_entity = str_eq_c(p->type_name, "LocalEntity");
+        const bool is_entity = names_type_as(c, p->type_name, "Entity");
+        const bool is_local_entity = names_type_as(c, p->type_name, "LocalEntity");
 
         if (p->name.len > 0) {
             check_reserved(p->name, p->at);
@@ -15947,7 +16175,7 @@ static void check_params(const checker *c, decl *sys)
         // What the confirmed world keeps in its heap is read there, and elements with text come as copies in the scratch area
         if (p->verified && p->mode != PARAM_EVENT && d && decl_holds_text(d)) c->prog->uses_text = true;
         if (p->mode == PARAM_SENDER) {
-            if (!str_eq_c(p->type_name, "PlayerID")) {
+            if (!names_type_as(c, p->type_name, "PlayerID")) {
                 diag_error(p->type_at, "a command sender is PlayerID, supplied by the connection");
                 p->type = T_ERR;
             } else p->type = (type){TY_PLAYER, NULL};
@@ -15987,7 +16215,7 @@ static void check_params(const checker *c, decl *sys)
 
         // Views receive this frame's masked devices. Match code receives the
         // owner's devices, or the server's: the input sends what it reads.
-        if (str_eq_c(p->type_name, "Devices")) {
+        if (names_type_as(c, p->type_name, "Devices")) {
             if (!sys->is_view && is_local_code(sys)) {
                 diag_error(p->at, "local handlers can't read the devices yet");
             }
@@ -16004,7 +16232,7 @@ static void check_params(const checker *c, decl *sys)
         // world.Get<Health>(e), Has and, with mut, Set. What the body reaches
         // that way is access to every entity's, and it filters nothing. A
         // game's own World, in its namespace, comes first.
-        if (!d && str_eq_c(p->type_name, "World")) {
+        if (!d && names_type_as(c, p->type_name, "World")) {
             if (p->mode == PARAM_WITH || p->mode == PARAM_WITHOUT) {
                 diag_error(p->at, "'with' and 'without' filter entities by component, and the World is every entity's");
                 diag_note("take it as a parameter, 'World world', and ask it: 'world.Has<Health>(entity)'");
@@ -16017,7 +16245,7 @@ static void check_params(const checker *c, decl *sys)
             continue;
         }
 
-        if (!d && p->type_ref && p->type_ref->optional) {
+        if ((d && d->kind == DECL_RESULT && d->fields.count == 1) || (!d && p->type_ref && p->type_ref->optional)) {
             diag_error(p->type_at.line ? p->type_at : p->at, "a %s's parameters are there or it doesn't run, so they can't be T?",
                        system_what(sys));
             diag_note("to run for entities with or without a component, write two %ss, one 'with' it and one 'without'",
@@ -16097,6 +16325,12 @@ static void check_params(const checker *c, decl *sys)
             if (has_input) diag_error(p->at, "a system can only have one input parameter");
             has_input = true;
             p->type = (type){TY_INPUT, d};
+            continue;
+        }
+
+        if (d->kind != DECL_COMPONENT && d->kind != DECL_SINGLETON) {
+            diag_error(p->type_at.line ? p->type_at : p->at, "systems take components and singletons, not %s", type_name(decl_type(d)));
+            p->type = T_ERR;
             continue;
         }
 
@@ -16205,6 +16439,7 @@ static void check_params(const checker *c, decl *sys)
     // code sees the match (codegen: gen_query_fill, gen_hear_rows).
     for (int i = 0; i < sys->params.count; i++) {
         param *p = &sys->params.items[i];
+        bind_alias_ref(c, p->type_ref);
         if (p->type.kind != TY_QUERY) continue;
         if (!p->query_of && sys->is_handler && sys->is_local && !sys->listens) {
             p->query_local = true;
@@ -17401,7 +17636,8 @@ static void collect_decls(program *prog)
         // An override's name is that of what it replaces: it declares none, so it clashes with none
         if (!d->builtin && !d->is_override) {
             check_reserved(d->name, d->at);
-            if (is_builtin_name(d->name)) {
+            if (is_builtin_name(d->name) || (d->kind == DECL_ALIAS && (generic_form_named(d->name) || str_eq_c(d->name, "Func")
+                                                                    || str_eq_c(d->name, "void")))) {
                 diag_error(d->at, "'" STR_FMT "' is built into the language", STR_ARG(d->name));
             }
             // The World a system takes, 'World world': a game's own goes in a namespace
@@ -17421,7 +17657,8 @@ static void collect_decls(program *prog)
                 const bool function = d->kind == DECL_FUNCTION || other->kind == DECL_FUNCTION || d->kind == DECL_SHADER
                                    || other->kind == DECL_SHADER;
                 const bool constant = d->kind == DECL_CONST || other->kind == DECL_CONST;
-                if (!both_types && !both_systems && !function && !constant) continue;
+                const bool alias = d->kind == DECL_ALIAS || other->kind == DECL_ALIAS;
+                if (!both_types && !both_systems && !function && !constant && !alias) continue;
                 if (str_eq(d->name, other->name) && str_eq(ns, decl_ns(other))) {
                     if (other->builtin) {
                         diag_error(d->at, "'" STR_FMT "' is built into the engine", STR_ARG(d->name));
@@ -17438,6 +17675,7 @@ static void collect_decls(program *prog)
                     }
                     continue;
                 }
+                if (alias) continue; // Aliases emit no C names of their own.
                 // Different names that generated C would spell the same: Combat.Health and Combat_Health.
                 sb theirs = {0};
                 c_name_of(other, &theirs);
@@ -17535,6 +17773,7 @@ static void collect_decls(program *prog)
         case DECL_SHADER:
         case DECL_SETTINGS: // Not in prog->decls
         case DECL_PREFAB:
+        case DECL_ALIAS:
             break;
         case DECL_SYSTEM:
             if (d->is_view) {
@@ -17891,7 +18130,7 @@ static void check_sample(checker *c, decl *input)
                 diag_error(p->at, "parameter '" STR_FMT "' is declared twice", STR_ARG(p->name));
             }
         }
-        if (str_eq_c(p->type_name, "Devices")) {
+        if (names_type_as(c, p->type_name, "Devices")) {
             if (p->mode != PARAM_READ) diag_error(p->at, "devices can't be 'mut', 'with' or 'without'; code can only read them");
             if (has_devices) diag_error(p->at, "Sample can only have one Devices parameter");
             has_devices = true;
@@ -18105,6 +18344,11 @@ static bool resolve_enum_member(checker *c, const decl *d, qname *q, const bool 
         diag_note("write which one you mean, like '" STR_FMT "." STR_FMT "'", STR_ARG(enumeration->qualified),
                   STR_ARG(member_name));
         return true;
+    }
+    if (enumeration->kind == DECL_ALIAS) {
+        const type target = resolve_alias_type(c, enumeration);
+        if (target.kind == TY_ERROR) return true;
+        if (target.kind == TY_ENUM) enumeration = target.decl;
     }
     if (enumeration->kind != DECL_ENUM) {
         if (!required) return false;
@@ -20367,6 +20611,18 @@ bool check(program *prog)
     collect_decls(prog);
     check_units(prog);
     check_packages(prog);
+    // Resolve unused aliases too. Each use still checks its ordinary placement.
+    for (int i = 0; i < prog->decls.count; i++) {
+        decl *d = prog->decls.items[i];
+        if (d->kind == DECL_ALIAS) resolve_alias_type(&c, d);
+    }
+    // Folding a conversion can refer to an enum declared later in the file.
+    for (int i = 0; i < prog->decls.count; i++) {
+        decl *d = prog->decls.items[i];
+        if (d->kind != DECL_ENUM) continue;
+        c.unit = d->unit;
+        check_enum_storage(&c, d);
+    }
     // A game's [Bus] enum types Sound.bus (checked with the attributes, once fields resolved)
     for (int i = 0; i < prog->decls.count && !prog->bus_enum; i++) {
         decl *d = prog->decls.items[i];

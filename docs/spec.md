@@ -20,6 +20,25 @@ The language Tide games and the engine's built-in systems are written in. It tra
 - A file can put its declarations in a namespace, and namespaces are how large games keep names apart.
 - Code outside the namespace names its declarations with it (`Combat.Health`), or imports it with `using Combat;`.
 
+### Type aliases
+
+- `using Name = Type;` declares another name for a closed type. It goes at namespace scope: at the top level of a file, in that file's namespace (or the global namespace), or inside a namespace block. It is distinct from the namespace import `using Namespace;`.
+- File-scoped namespace headers and namespace imports precede aliases, as they precede other declarations. Namespace blocks and aliases can appear among declarations.
+- An alias follows ordinary namespace lookup: code can use its plain name in scope, qualify it (`Game.Point`), or import its namespace. Its target is resolved in the namespace context of the alias declaration.
+- Targets include primitives, built-in vectors and matrices, structs, enums, components and closed containers, with qualified names and aliases allowed inside the type. An alias can name another alias; chains resolve to their underlying type. Cycles are errors.
+- Aliases are transparent: an alias and its underlying type are the same type, including for assignments, overload signatures, container elements and component identity. They add no conversion, storage or distinct type identity, and retain the underlying type's members, defaults, capabilities and placement restrictions.
+- An alias declares no type parameters: `using Points = List<float3>;` is valid; `using Points<T> = List<T>;` is not. Every type argument in its target must be supplied.
+
+```csharp
+namespace Game
+{
+    using Point = float3;
+    using Points = List<Point>;
+    using Matrix = float4x4;
+    using Health = Combat.Health;
+}
+```
+
 ### Order of systems
 
 - Systems run in one deterministic order, the same on every platform. By default it follows the files, sorted by path, then the order of declarations in each file.
@@ -39,6 +58,7 @@ The language Tide games and the engine's built-in systems are written in. It tra
 - `component` declares a component.
 - `singleton` declares world-wide state (what other ECSs call a resource). There is exactly one instance **per world**, not per process.
 - `struct` declares a value type for fields and locals (see Structs).
+- `using Name = Type;` declares a transparent type alias (see Type aliases).
 - `system` declares a system.
 - `event` declares an event, and `event(...)` code that runs when one is sent (see Events).
 - `enum` declares an enum (see Enums and switch).
@@ -744,17 +764,17 @@ Initial implementation choices, 2026-10-24, provisional:
   - A block's name is inside the namespace it's written in: in a file of `namespace Game;`, `namespace Combat { }` is `Game.Combat`, and a block inside it named `Rules` is `Game.Combat.Rules`. A block's name can be dotted too.
   - A namespace is a set of names, not a place: the same one can be a block twice in a file, a block in several files, and a file's own namespace in another. What any of them declares is one namespace's.
   - What's inside a block is declared as anywhere: its order among the file's declarations is where it's written, so a block changes no system's order.
-  - Provisional: `using` stays at the top of the file, and is every block's of the file. A `using` inside a block is an error.
+  - Provisional: namespace imports (`using Physics;`) stay at the top of the file, and are every block's of the file. A namespace import inside a block is an error. Type aliases (`using Name = Type;`) are namespace declarations and can go inside a block (see Type aliases).
   - Provisional: the line form comes before any declaration, a block being one: a file says its own namespace first, and blocks after it are inside that.
   - Provisional: a block takes no attributes, `local`, `virtual` or `override`: they go before the declarations inside it.
   - Provisional: a qualified name is still exact, from the global namespace: inside `Combat`, the block `Rules`' function is `Combat.Rules.Cap`, not `Rules.Cap`. (C# also reads a qualified name's first part from the namespaces around the code. Not built.)
   - Provisional: a package's blocks are in its namespace or one inside it, as its files are: a package file with no namespace line can have everything in `namespace Package { ... }`.
   - Where a file is half typed, editors and the errors after a first one tell where a block's declarations start by their column: the first line's after the `{`, which the formatter makes one step in from the block's `namespace`.
-- `using Physics;` at the top of a file lets it name Physics' declarations without the prefix. `namespace Name;` and `using` come before any declaration.
+- `using Physics;` at the top of a file lets it name Physics' declarations without the prefix. `namespace Name;` and namespace imports come before any declaration.
 - A plain name is looked up in the namespace of the code that writes it (its block's, or its file's), then the namespaces around it out to the global namespace, then the `using` namespaces, as in C# (agreed 2026-10-05). So what a game declares itself is what its code means, whatever a namespace it imports also has by that name: a game with a `Body` of its own that says `using Physics;` means its own by `Body`, and writes `Physics.Body` for the other. If two `using` namespaces both have a name and nothing nearer does, it's ambiguous: write the namespace.
 - Qualified names work wherever a type is named: parameters (`mut Combat.Health health`), `with` and `without`, component values (`Combat.Health { value = 10 }`), `Spawn`, `Add` and `Remove`.
 - The same name can be declared in different namespaces. Built-in names can't start a namespace (`namespace Math;` is an error).
-- In generated C, namespaced declarations are prefixed with their namespace: `Combat.Health` is `Combat_Health`, read with `tide_get_Combat_Health`.
+- In generated C, namespaced declarations are prefixed with their namespace: `Combat.Health` is `Combat_Health`, read with `tide_get_Combat_Health`. Type aliases use their canonical underlying type.
 - There can be at most one `scene Main` in a game, in any file or namespace; it is required only without an explicit startup selection. `namespace` and `using` are only keywords where a declaration can start: anywhere else they're names like any other.
 
 ```csharp

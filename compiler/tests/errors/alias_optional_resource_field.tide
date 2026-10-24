@@ -1,0 +1,4 @@
+// expect: a field can't be a rendering resource or nothing
+using OptionalImage = Texture?;
+local singleton Holder { OptionalImage value; }
+scene Main;

@@ -1,0 +1,3 @@
+// expect: a type alias names a closed type
+using Values<T> = List<T>;
+scene Main;

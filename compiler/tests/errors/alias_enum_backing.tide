@@ -1,0 +1,4 @@
+// expect: an enum is stored as a byte, a ushort or an int
+using Real = float;
+enum State : Real { First, Last }
+scene Main;

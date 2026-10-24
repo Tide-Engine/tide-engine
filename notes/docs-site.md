@@ -6,7 +6,9 @@ docs/examples/render3d.tide uses the optional Render3D package, with exposure,
 sunlight/shadow controls and a custom surface callback. Its OBJ assets live beside the
 example. docs/examples/CMakeLists.txt accepts pure Tide packages without a dummy
 C library, while packages with C sources still require their tide_<name> target.
-The example has native/web targets and normal example-page staging. Package
+The example now uses the Mesh3D alias and local directional, point and spot
+lights, with a second directional fill. The example has native/web targets and
+normal example-page staging. Package
 contracts and final validation are in notes/render3d.md.
 
 ## City-exit driving and the orbit camera (2026-10-24)

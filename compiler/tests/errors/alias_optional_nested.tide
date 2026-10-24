@@ -1,0 +1,4 @@
+// expect: a T? can't hold another T?
+using Maybe = int?;
+using Nested = Maybe?;
+scene Main;

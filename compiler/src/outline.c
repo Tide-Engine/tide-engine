@@ -62,6 +62,7 @@ static const char *kind_of(const decl *d)
     case DECL_SETTINGS: return "settings";
     case DECL_SHADER: return "shader";
     case DECL_ASSET: return "asset";
+    case DECL_ALIAS: return "alias";
     default: return NULL;
     }
 }
@@ -198,6 +199,10 @@ void print_outline(const program *prog, sb *out)
         if (d->is_async) sb_put(out, ", \"async\": true");
         if (d->is_extern || d->extern_system) sb_put(out, ", \"extern\": true");
         switch (d->kind) {
+        case DECL_ALIAS:
+            sb_put(out, ", \"type\": ");
+            put_json_c(out, type_name(d->alias_type));
+            break;
         case DECL_COMPONENT:
         case DECL_SINGLETON:
         case DECL_STRUCT:

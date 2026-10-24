@@ -1,5 +1,80 @@
 # Language features, as tidec builds them
 
+## Transparent type aliases (2026-10-24)
+
+Owner-approved general language feature: `using Name = Type;` declares a
+namespace-scoped name for a closed type. An alias is shared across that
+namespace's files and imported/qualified like ordinary types. It can appear
+among declarations, including inside namespace blocks; file-scoped namespace
+headers and namespace imports precede aliases, as other declarations. The target
+reads names in the alias's own declaration scope, supports ordinary forward types and other aliases,
+and is checked even when unused. Generic alias declarations are not supported.
+
+DECL_ALIAS retains the authored alias_ref, canonical alias_type and resolving
+state for cycle diagnostics. Uses resolve the same underlying type in their
+ordinary placement, preserving numeric conversions, overload identity,
+component IDs/capabilities, local/resource restrictions and container ownership.
+There is no generated alias type, new runtime function, layout or ABI. Primitive
+constructors and static APIs, struct/component literals, enum members/conversion
+and byte/int backing aliases, arrays/optionals, Func signatures, configured
+shader stages and Asset<Mesh<V>> use the same existing checked paths. Authored
+type_ref.alias and expr.type_alias remain separate for navigation and rename.
+The outline reports an alias with its canonical target. Editor contracts are
+in notes/editors.md; decided syntax/semantics are in docs/spec.md and the
+namespaces/types user pages.
+
+Asset classification now inspects resolved types instead of the written
+Mesh/List/Map syntax, including aliased element/key types and qualified package
+alias chains. Singular bytes remain distinct from byte-file collections;
+existing invalid-asset diagnostics, pack kinds/importers and borrowing rules
+are retained. Shader alias literals require the same function bindings as
+their stages; a qualified stage resolves Func aliases in its own namespace.
+
+Coverage: type_aliases exercises primitives and numeric/static operations,
+canonical ECS/query/World access, arrays/optional/list/map/set values,
+forward/declaration-scope name binding, Func captures/mut arguments and configured
+stages. alias_assets checks packaged Mesh aliases, singular/list/map imports,
+borrowed helpers, Asset references, snapshot/pack roundtrips and reload.
+Diagnostic fixtures cover cycles through several type forms, duplicate names
+and canonical overloads, invalid/open targets, missing shader bindings and the
+underlying mesh/resource/callable restrictions.
+
+Scoped validation: both native E2E targets and 67 selected alias/asset checks
+pass. The complete 1,999-test pre-existing compiler diagnostic run found only
+three asset wording regressions; their original messages were restored and
+their checks pass. Grammar passes 290 cases. All 256 native LSP cases pass,
+including five alias protocol cases. The foreign-stage/missing-binding and
+aliased Random/grid-constructor regressions
+pass in the selected checks. Final full integration results are below.
+No determinism expectation was changed.
+
+Independent review found and corrected canonical cache initialization for
+forward aliases reached from Func signatures, optional aliases bypassing
+field/function restrictions, composite aliases reaching ECS component fallback,
+aliased enum backing during forward constant folding, container aliases escaping
+constant-type checks, and enum aliases in Stage/Channel/Filter/Wrap attributes.
+Enum storage also resolves lazily before a conversion: an array bound evaluated
+while initially resolving aliases must use the canonical backing width before
+the ordinary enum prepass. alias_canonical_array checks matching int[2] alias
+and field identities with the backing alias declared before or after the array.
+Dedicated regressions cover each; source occurrence identity also covers
+qualified constructors, World type arguments, bare component names and aliased
+enum attributes. The existing header-order rule is pinned for aliases too.
+Two nested-optional alias diagnostics preserve the existing prohibition on a
+T? holding another T? and pass in the final selected checks.
+
+Final integration: full warning-free native/web debug builds and CTest suites
+pass (2687 native, 2582 web enabled tests, with the unchanged disabled Microduck
+right-turn fixture). The production docs build and live Render3D browser example
+pass; its Mesh3D asset alias is exercised on Vulkan/OpenGL/WebGL/D3D11/WebGPU.
+The aliased-stage consumer also passes six FXC /WX compilations across three
+Unity APIs and both stages. Web uses the existing SDK 34 cache rather than
+the pinned SDK 24 toolchain; remaining platform coverage is in render3d.md.
+
+Separate existing gap: a used Func with fixed-array arguments has a generated-C
+type-emission failure even without aliases. This task preserves that boundary;
+alias_canonical_array checks canonical array identity through outline output.
+
 ## Mutable callable arguments (2026-10-24)
 
 Owner-approved: `Func<mut Vertex, void>` accepts a matching named function or

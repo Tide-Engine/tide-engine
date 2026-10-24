@@ -1,0 +1,137 @@
+using AliasTypes;
+
+singleton Probe
+{
+    Dice seeded = AliasTypes.Dice(17);
+    Cells cells = Cells(2, 2);
+    Entity selected;
+    int conversions;
+    int primitives;
+    int statics;
+    int values;
+    int foldForward;
+    int foldChecked;
+    int foldAlias;
+    int containers;
+    int forward;
+    int worldValue;
+    int queries;
+    int lexical;
+}
+
+local singleton LocalProbe
+{
+    Callback callback;
+    Fragment fragment;
+    VertexStage vertexStage;
+    int result;
+    int forwardResult;
+    int frames;
+}
+
+scene Main;
+
+event(Spawned) Setup(with Main, mut Probe probe)
+{
+    probe.selected = Spawn(UnitName { pair = First { left = 1 } }, Included);
+    Spawn(UnitName { pair = First { left = 100 } }, Included, ExcludedName);
+}
+
+Real Twice(Real value) { return value * 2; }
+Real Bump(mut Real value) { value += 1; return value; }
+Real Evaluate(Callback function, Real value) { return function(value); }
+Callback Capture(Real offset) { return (Real value) => value + offset; }
+Fragment Bind(Callback function) { return Fragment { convert = function }; }
+Int Which(Int value) { return value + 10; }
+Int Which(Real value) { return Int(value) + 20; }
+Maybe Present(Int value) { return value; }
+
+system Step(mut UnitName unit, with Included, without ExcludedName)
+{
+    unit.pair.Add(2);
+    unit.rows[1][2] = unit.pair.left;
+    unit.value = unit.pair.Sum();
+}
+
+system Inspect(mut Probe probe, mut World world, query (UnitName unit, with Included, without ExcludedName) units)
+{
+    Debug.Assert(probe.seeded.state == Random(17).state);
+    Octet small = Octet(258);
+    Real scalar = Real(7);
+    Vector vector = Vector(int3(1, 2, 3));
+    probe.conversions = Int(small) + Int(scalar) + Int(vector.x + vector.y + vector.z)
+        + Which(1) + Which(Real(1)) + AliasTypes.Int(2.9);
+    Flag flag = true;
+    Rune rune = Rune(65);
+    Long big = Long(5);
+    Text text = "42";
+    List<Octet> bytes = text.ToBytes();
+    Debug.Assert((Text.FromBytes(bytes) ?? "") == text);
+    probe.primitives = text.length + Int(big) + Int(rune) + (flag ? 1 : 0);
+
+    var rotated = Math.Rotate(Rotation.identity, Vector(1, 2, 3));
+    var translated = Math.Transform(Matrix.Translate(Vector(4, 0, 0)), rotated);
+    Tint red = Tint.red;
+    probe.statics = Int(translated.x) + Int(red.r);
+    if (Wide.PI == double.PI && Wide.TAU == double.TAU) probe.statics += 10;
+    if (Int.TryParse("12", out var parsed)) probe.statics += parsed;
+
+    mut First pair = Second { left = 2 };
+    pair.Add(3);
+    Mode mode = Mode.On;
+    probe.values = pair.Sum() + Int(mode) + Mode.Count() + Int(Mode(260));
+    Mode shorthand = .Last;
+    if (shorthand == State.Last) probe.values += 10;
+    probe.foldForward = Int(ForwardFold.Folded);
+    probe.foldChecked = Int(CheckedFold.Folded);
+    probe.foldAlias = MODE_FOLDED;
+
+    mut Ints list = [1, 2];
+    list.Add(3);
+    mut Table table = [];
+    table[4] = list;
+    mut Unique unique = [2, 2, 5];
+    unique.Add(7);
+    mut Triplet samples = [4, 5, 6];
+    samples[1] += 1;
+    Rows rows = [samples, [7, 8, 9]];
+    Maybe none = null;
+    Maybe some = Present(5);
+    probe.containers = table[4].count + unique.count + rows[0][1] + rows[1][2]
+        + (none ?? 2) + (some ?? 0);
+
+    Holder holder = Holder { value = Forward { number = 17 } };
+    probe.forward = holder.value.number;
+    probe.queries = 0;
+    foreach (var entry in units) probe.queries += entry.unit.rows[1][2];
+    Debug.Assert(world.Has<UnitName>(probe.selected));
+    Debug.Assert(world.TryGet<UnitName>(probe.selected, out var found));
+    mut var value = world.Get<UnitName>(probe.selected);
+    probe.worldValue = found.pair.Sum() * 100;
+    value.pair.right = 8;
+    world.Set<UnitName>(probe.selected, value);
+    probe.worldValue += world.Get<Unit>(probe.selected).pair.Sum();
+}
+
+view Configure(mut LocalProbe probe)
+{
+    ForwardCallback forward = Twice;
+    ForwardReal forwarded = forward(3);
+    probe.forwardResult = Int(forwarded);
+    probe.callback = Capture(2);
+    probe.fragment = Bind(probe.callback);
+    probe.vertexStage = VertexStage { convert = Twice };
+    ImportedStage importedStage = ImportedStage { convert = Twice };
+    _ = importedStage;
+    probe.result = Int(Evaluate(probe.callback, 3)) + Int(Evaluate(Twice, 4));
+    MutCallback change = Bump;
+    mut Real changed = 4;
+    Real result = change(changed);
+    probe.result += Int(result) + Int(changed);
+    List<Corner> vertices = [
+        Corner { position = float2(-1, -1) },
+        Corner { position = float2(1, -1) },
+        Corner { position = float2(0, 1) }];
+    Draw.Mesh(vertices, [0, 1, 2], probe.vertexStage, probe.fragment);
+    probe.frames += 1;
+}

@@ -12,7 +12,7 @@ The name in the first column is what you pass to `tide add` or write in `tide.pa
 
 | Package | Namespace | What it provides | Documentation |
 |---|---|---|---|
-| `render3d` | `Render3D` | Opaque mesh/material rendering, one directional sun, shadows and HDR tone mapping | [Render3D](./render3d.md) |
+| `render3d` | `Render3D` | Opaque mesh/material rendering, directional/point/spot lights, shadows and HDR tone mapping | [Render3D](./render3d.md) |
 | `box2d` | `Box2D` | Deterministic 2D rigid bodies, shapes, collisions and queries | [Box2D](./box2d.md) |
 | `box3d` | `Box3D` | Deterministic 3D rigid bodies, shapes, collisions and queries | [Box3D](./box3d.md) |
 | `newton` | `Newton` | Experimental NVIDIA Newton articulated bodies, joints and effort control; no contacts | [Newton](./newton.md) |
@@ -23,7 +23,7 @@ The name in the first column is what you pass to `tide add` or write in `tide.pa
 
 Choose `rooms` for a simple Play/Host/Join flow, or `lobby` when players gather before a match and browse or find games. `steam` extends `lobby` for desktop Steam builds and requires the game's own Steamworks library; that library is not bundled with Tide.
 
-Choose `render3d` for package-owned lighting and shadow passes over mesh/material components on match entities. Its first slice has one camera, sun and shadow volume, with opaque static meshes and custom surface callbacks. The engine's drawing and shader APIs remain available for other rendering paths.
+Choose `render3d` for package-owned lighting and shadow passes over mesh/material components on match entities. It has one camera, multiple directional/point/spot lights, bounded shadow maps and custom surface callbacks. Lights can be match or local entities. The engine's drawing and shader APIs remain available for other rendering paths.
 
 Choose `box2d` or `box3d` for their existing collision APIs. `newton` is a separate experimental articulation/control integration for games and robotics policies using the same match physics. Native/web replay tests agree; colliders, contacts and independent physical-fidelity validation remain future work.
 

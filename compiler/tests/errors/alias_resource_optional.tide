@@ -1,0 +1,4 @@
+// expect: a field can't be a rendering resource or nothing
+using Image = Texture;
+component Sprite { Image? image; }
+scene Main;
