@@ -530,6 +530,22 @@ static void gen_shard_where(gen *g)
                  "    return false;\n}\n\n", shard_dims(prog));
 }
 
+// A Visibility's own fields a recipient's codec leaves out (its overrides: who
+// may have each of the entity's components), which a shard taking the entity
+// over needs, or its restricted components would go to everyone
+static void shard_hidden_fields(gen *g, const decl *d, const bool put, const int c)
+{
+    if (d != g->prog->visibility) return;
+    for (int k = 0; k < d->fields.count; k++) {
+        const field *f = &d->fields.items[k];
+        if (!f->hidden || f->typed) continue;
+        const int id = client_codec_id(&g->value_codec, f->type);
+        if (put) sb_printf(&g->c, "            tide_client_put%d(out, &v.%s, 0);\n", id, field_cname(f));
+        else sb_printf(&g->c, "        if (p%d && !r.failed && !tide_client_get%d(&r, &v%d.%s, TIDE_IN_MATCH, 0, &budget)) r.failed = true;\n",
+                       c, id, c, field_cname(f));
+    }
+}
+
 // An entity as a record: its size, its handle, archetype and snaps, its scene,
 // each of its components (a sparse one after whether it's there), and its
 // place in a hierarchy. A tree is its root's records and its descendants'.
@@ -566,11 +582,15 @@ static void gen_shard_records(gen *g)
             const char *zero = natives.data ? natives.data : "";
             if (comp_sparse(g, c)) {
                 sb_printf(o, "        if (%s) {\n            tide_write_u8(out, 1u);\n            %s v;\n            %s;\n%s"
-                             "            tide_client_put%d(out, &v, 0);\n        } else tide_write_u8(out, 0u);\n",
+                             "            tide_client_put%d(out, &v, 0);\n",
                           presence_cell(g, "w", a, c, "loc.row", false), type_cname(d), comp_take(g, "w", a, c, "loc.row", "v"), zero, id);
+                shard_hidden_fields(g, d, true, c);
+                sb_put(o, "        } else tide_write_u8(out, 0u);\n");
             } else {
-                sb_printf(o, "        {\n            %s v;\n            %s;\n%s            tide_client_put%d(out, &v, 0);\n        }\n",
+                sb_printf(o, "        {\n            %s v;\n            %s;\n%s            tide_client_put%d(out, &v, 0);\n",
                           type_cname(d), comp_take(g, "w", a, c, "loc.row", "v"), zero, id);
+                shard_hidden_fields(g, d, true, c);
+                sb_put(o, "        }\n");
             }
         }
         sb_put(o, "        break;\n    }\n");
@@ -665,6 +685,7 @@ static void gen_shard_records(gen *g)
             sb_printf(o, "        %s v%d;\n        memset(&v%d, 0, sizeof v%d);\n        uint8_t p%d = 1u;\n", type_cname(d), c, c, c, c);
             if (comp_sparse(g, c)) sb_printf(o, "        p%d = tide_read_u8(&r);\n        if (p%d > 1u) r.failed = true;\n", c, c);
             sb_printf(o, "        if (p%d && !r.failed && !tide_client_get%d(&r, &v%d, TIDE_IN_MATCH, 0, &budget)) r.failed = true;\n", c, id, c);
+            shard_hidden_fields(g, d, false, c);
             for (int k = 0; k < d->fields.count; k++) { // What meant something on the shard it came from alone
                 if (d->fields.items[k].native) sb_printf(o, "        v%d.%s = 0;\n", c, field_cname(&d->fields.items[k]));
             }

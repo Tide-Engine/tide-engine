@@ -7,7 +7,8 @@
 // e2e/shards_visibility.tide on the engine's orchestrator: the movers the
 // root's group keeps from player 1 are hidden from them on every shard that
 // has them, owned or as a ghost, and shown to player 0; and once code on the
-// right region opens the group, every shard shows them to both. Each player
+// right region opens the group, every shard shows them to both, but not
+// their Secret, which is player 0's alone on whichever shard has them. Each player
 // also has a client of the right region, as a player there would, whose world
 // has what that shard lets them see.
 
@@ -69,8 +70,8 @@ static void hidden_movers(const int player, int *held, int *seen, int *owned)
     }
 }
 
-// The hidden movers a client's world has
-static int in_client(const tide_client *c)
+// The hidden movers a client's world has, and of them those with their Secret
+static int in_client_with(const tide_client *c, const bool secret)
 {
     const tide_world *w = c ? tide_client_verified_world(c) : NULL;
     int count = 0;
@@ -80,9 +81,14 @@ static int in_client(const tide_client *c)
             continue;
         }
         const tide_entity e = tide_entity_in_slot(&w->entities, index);
-        if (!tide_entity_is_null(e) && tide_has_Mover(w, e) && tide_get_Mover(w, e).id <= 3) count++;
+        if (!tide_entity_is_null(e) && tide_has_Mover(w, e) && tide_get_Mover(w, e).id <= 3 && (!secret || tide_has_Secret(w, e))) count++;
     }
     return count;
+}
+
+static int in_client(const tide_client *c)
+{
+    return in_client_with(c, false);
 }
 
 TIDE_TEST(shards_keep_a_group_hidden_on_every_shard_and_open_it_from_a_region)
@@ -124,6 +130,9 @@ TIDE_TEST(shards_keep_a_group_hidden_on_every_shard_and_open_it_from_a_region)
     TIDE_CHECK(owned == 4);
     TIDE_CHECK(seen == held && seen >= 4);
     TIDE_CHECK(in_client(rights[1]) > 0); // Player 1's client of the right region sees what it has of them now
+    // ...but not their Secret, though they came from other shards, which had its restriction
+    TIDE_CHECK(in_client_with(rights[1], true) == 0);
+    TIDE_CHECK(in_client_with(rights[0], true) == in_client(rights[0]) && in_client(rights[0]) > 0);
     TIDE_CHECK(tide_shard_dropped() == dropped); // The group's change waited, and was made, not dropped
     for (int p = 0; p < 2; p++) {
         const tide_client_status status = tide_client_status_of(rights[p]);

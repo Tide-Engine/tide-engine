@@ -20,6 +20,7 @@ struct tide_shard_client {
     tide_event_log **logs;  // ...and what each heard, when the host hears
     uint32_t room;
     uint32_t home;
+    uint32_t wanted; // The home its route last named
     uint32_t moves;
     uint32_t joins;
     uint64_t cookie;
@@ -153,11 +154,39 @@ static uint32_t add_watched(tide_shard_client *c, const void *world, tide_shard_
     return n;
 }
 
+// Its home's server ended under it while it follows another: a region merged
+// into another ends once what it owned has gone there, which this machine's
+// verified world, behind the server's by its corrections (a second, under
+// visibility), may not show it yet. It plays on in the shard its route last
+// named as its home, or else one it follows, or else it comes back in at the
+// root, which every route reaches, and goes on from there.
+static void outlive_home(tide_shard_client *c, const double now)
+{
+    tide_client *home = c->clients[c->home];
+    if (!home || tide_client_status_of(home).state != TIDE_SESSION_OFFLINE) return;
+    uint32_t next = c->wanted < c->room && c->wanted != c->home && connected(c->clients[c->wanted]) ? c->wanted : c->room;
+    for (uint32_t i = 0; i < c->room && next == c->room; i++) {
+        if (i != c->home && connected(c->clients[i])) next = i;
+    }
+    if (next == c->room && c->home != TIDE_SHARD_ROOT && c->cookie) {
+        follow(c, (tide_shard_link){TIDE_SHARD_ROOT, 0u}, now);
+        if (c->clients[TIDE_SHARD_ROOT]) next = TIDE_SHARD_ROOT;
+    }
+    if (next == c->room) return;
+    pass_heard(c);
+    tide_client_destroy(home);
+    c->clients[c->home] = NULL;
+    if (c->logs[c->home]) tide_event_log_clear(c->logs[c->home]);
+    c->home = next;
+    c->moves++;
+}
+
 void tide_shard_client_update(tide_shard_client *c, const double now)
 {
     for (uint32_t i = 0; i < c->room; i++) {
         if (c->clients[i]) tide_client_update(c->clients[i], now);
     }
+    outlive_home(c, now);
     tide_client *home = c->clients[c->home];
     if (!connected(home)) {
         pass_heard(c);
@@ -177,6 +206,7 @@ void tide_shard_client_update(tide_shard_client *c, const double now)
     for (uint32_t i = 0; i < n; i++) follow(c, links[i], now);
     pass_heard(c); // What the home heard up to now is the old home's
     if (!count) return; // No route for it yet: what it has, it keeps
+    c->wanted = next_home;
     // Its home moves once it plays in the next one: then local code sees that one
     if (next_home != c->home && next_home < c->room && connected(c->clients[next_home])) {
         c->home = next_home;

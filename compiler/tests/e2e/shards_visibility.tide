@@ -3,7 +3,8 @@
 // whichever shard has them, as the directory of groups is the root's and every
 // shard reads it. Once mover 0 is well into the right region, code there opens
 // the group to everyone: it waits on the border for the root's directory, and
-// then every shard shows the movers to every player.
+// then every shard shows the movers to every player. Their Secret stays player
+// 0's alone all along: its own restriction goes with a mover from shard to shard.
 settings
 {
     shards = true;
@@ -30,8 +31,9 @@ event(Spawned) Setup(with Main, mut Control control)
     control.few = Visibility.CreateGroup(Audience.Only(PlayerID(0)));
     for (int i = 0; i < 4; i++)
     {
-        Spawn(Mover { position = float2(-14.0 + i, 0), velocity = float2(4, 0), id = i }, Secret,
-              Visibility { group = control.few });
+        mut var visibility = Visibility { group = control.few };
+        visibility.Set<Secret>(Audience.Only(PlayerID(0)));
+        Spawn(Mover { position = float2(-14.0 + i, 0), velocity = float2(4, 0), id = i }, Secret, visibility);
     }
     Spawn(Mover { position = float2(14, 0), id = 10 }, Secret, Visibility);
 }
