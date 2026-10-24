@@ -1572,13 +1572,13 @@ Implemented on the owner's go-ahead, to be revisited once games use them:
 - Cells are plain values: numbers, bools, chars, enums, vectors, quaternions, matrices, `Color`, `Rect`, `Entity`, `PlayerID`, and structs of those. Not text, lists or grids, which say to keep them elsewhere and a number for them in the cell.
 - `cells[x, y]` is `cells[int2(x, y)]`, and `cells[x, y, z]` is `cells[int3(x, y, z)]`. `cells.size` is the grid's size, 0 on open axes. `cells.Clear()` sets every cell back to zero and keeps the size; `cells = Grid2(...)` gives the field a new, empty grid.
 - A cell is a copy, like a list's element: `cells[p].heat = 1` is an error that says to take it out, change it and put it back. `cells[p] += 1` works on numbers. Setting a cell to zero where there's no chunk makes none.
-- A grid is never copied, since every chunk would be: a local can't hold one, nor a component or singleton that has one, and a grid field is only assigned a new grid. Functions can't take or return grids yet. `Grid2(...)` takes its cell type from the field it goes in; anywhere else it's an error that says so.
+- A grid stays in its component or singleton: a local can't hold a copy, and a grid field is only assigned a new grid. Local workers can take independent read-only grid snapshots; their synchronous helpers and shader code can read and forward grid parameters. Other CPU callers cannot pass grids. Functions cannot return grids. `Grid2(...)` takes its cell type from the field it goes in; anywhere else it's an error that says so.
 - A chunk is the engine's: 4096 cells (64 by 64, or 16 by 16 by 16 in 3D), or for cells bigger than four bytes, as many as fit in a page (16 KiB), a power of two along each axis, the first axes the most.
 - A loop over a grid with a size on every axis goes through every cell within it. An open axis goes on forever, so there a loop goes through the cells of the chunks the grid has, where something was set: in blocks, every block that takes in part of one. A foreach over an open grid goes through them in the same order, rows from the first, skipping what has no chunk.
 - A parallel loop's step changes only its own cell or block, `at` plus constants (`at + int2(1, 0)`, `int2(at.x + 1, at.y)`), and the variables it declares. Anything else it changes is an error that says why: a variable outside the loop (to add up, use a `for` loop or a foreach that goes in order), another cell, the whole grid (`Clear`), through a `mut` argument too. It can't `break` out of the loop (`continue` ends the step), return, wait, start tasks, spawn, send, add, remove or destroy, load scenes, draw, use the GUI, or hold another parallel loop. It can call functions, and C.
 - A block is 1 to 64 cells along each axis, a size known while compiling: a constant int, or `int2`/`int3`. The offset can be any int: blocks start at it plus any multiple of their size, so with blocks of 2, an offset of 2 gives the same blocks as 0.
 - An open axis ends where the ints do. A block that would go past the last int is left out, as one past a grid's size is, so no block's cells wrap around; a step that reads past that edge, `cells[at + int2(1, 0)]` at the last int, reads the cell its own arithmetic wraps to, as an int wraps anywhere else. A foreach reaches the cells at both ends. (Picked while testing that no loop can go wrong there: see Open, at the end.)
-- A parallel loop goes in a system, a view, a synchronous event handler or a `local worker`: not in ordinary functions, methods, async code or an input's `Sample`. A grid foreach there whose steps only touch their own cell runs at once; anywhere else, it goes in order. Workers currently take no grids.
+- A parallel loop goes in a system, a view, a synchronous event handler or a `local worker`: not in ordinary functions, methods, async code or an input's `Sample`. A grid foreach there whose steps are independent runs at once; anywhere else, it goes in order. Worker grid inputs are read-only; explicit parallel loops in workers write owned lists and may read those snapshots.
 - A foreach over a grid can't wait inside it: it goes through the cells as they are.
 - Each step writes into a copy of its chunk, made from the chunk as it was, and the loop's end puts the copies into the grid in order, chunk by chunk, so where the steps ran never shows. The schedule says how many parallel loops each system has: `(once, 2 parallel loops)`. A tick with one runs on threads, and the loop's steps spread across them when there are enough to be worth it.
 - Hosts read a world's cells with `tide_grid_read(&w->heap, w->Field.cells, x, y, 0, &tide_shape_Grid2_int)`: the generated header names each grid type's shape.
@@ -2149,9 +2149,17 @@ through the same pool. Existing loop ordering and independence rules remain.
 Explicit `parallel` loops also accept a worker's owned local list. A step cannot
 append to a shared list or write another step's output.
 
+**Decided (2026-10-24, grid extension).** Read-only `Grid2<T>` and `Grid3<T>`
+worker inputs capture independent snapshots before dispatch. Both grid fields
+and grid assets can supply a snapshot. Synchronous helpers can read and forward
+it through explicit grid parameters without obtaining live-world access.
+Existing grid foreach independence and ordering rules apply within workers.
+Grid locals, returns and writable worker grid parameters remain unsupported;
+ordinary CPU callers cannot pass grids to helpers. GPU sampling remains GPU-only.
+
 **Implemented choices, provisional.** Workers are synchronous function bodies,
 without `async`, `mut`/`out` parameters, bindings, World, queries, devices,
-resource/asset borrows, callable/shader bindings or grids. Owned CPU values
+resource/asset references or borrows, or callable/shader bindings. Owned CPU values
 include text, nested lists/maps/sets, ordinary structs, fixed arrays, optionals
 and failable results.
 Reachable helpers have no world, frame, drawing/audio, file/network, task-start
@@ -2161,20 +2169,59 @@ require `await`; start a local async wrapper from a view or local handler.
 
 Captures are fully materialized, including packed geometry lists, before
 dispatch. Results are acquired on the frame thread. Owner loss drops the
-continuation and discards pending output; a running calculation may finish
-privately. Local state disposal and retained reload drain jobs before their
-callbacks can be unloaded. Restored/retained tasks restart a pending worker
+continuation and discards pending output; abandoned queued calculations are
+skipped, while a running calculation may finish privately. Local state disposal
+and retained reload drain jobs before their callbacks can be unloaded.
+Restored/retained tasks restart a pending worker
 from their current saved arguments and component bindings.
 
 A custom host supplies optional background/help callbacks through `gui.jobs`;
 the standard host uses its platform pool. Parallel waiters execute queued loop
 helpers to avoid requiring a free thread. No provider means synchronous
 execution when the task polls its worker, which can stall that frame. List
-foreach and ordinary for loops retain their ordered semantics. Automatic grid
-foreach analysis is unchanged, and workers currently have no grid values.
+foreach and ordinary for loops retain their ordered semantics. Grid foreach
+uses the existing independence analysis in workers, with ordered reductions.
+Snapshot capture copies the directory and existing chunks on the calling thread.
+Capture follows written argument order. An earlier grid capture survives later
+argument mutations or waits as privately owned task state until dispatch.
 
-**Open:** deterministic match workers, owned grid values, priorities, explicit
-cancellation and public worker handles.
+**Open:** deterministic match workers, priorities, explicit cancellation,
+cooperative interruption and public worker/task handles.
+
+### Proposed worker extensions (not implemented)
+
+These are recommendations for the owner's review, not approved requirements.
+No new syntax or runtime behavior below is part of the current implementation.
+
+- **Priorities:** put scheduling metadata on an invocation, so the same mesher
+  can serve visible and distant chunks. Start with three queue priorities:
+  Urgent, Normal and Background, FIFO within each and aging to avoid starvation.
+  Tick work retains precedence. Priority changes only when queued work starts;
+  it neither interrupts running calculations nor removes the cost of capture.
+  Invocation spelling and any foreground-capacity reservation need decisions
+  and measurements before implementation.
+- **Explicit cancellation:** first expose cancellation of an owning local task,
+  using a typed, owner-bound local handle. Cancel ends its continuation and
+  abandons pending worker publication, matching existing owner loss. A call is
+  nonblocking and cannot undo a result already published. Queued work is skipped;
+  running work keeps its private capture until completion. Independent worker
+  handles, multiple awaiters and an explicit Cancelled result are a separate
+  API choice. Define handle behavior across save/restore and reload before
+  exposing it; no handle belongs in match state.
+- **Cooperative interruption:** avoid terminating threads or interrupting C.
+  An eventual local cancellation context could offer safe checks in long Tide
+  loops. It would observe only cancellation, release private work safely and
+  leave C calls to finish. Priorities alone do not provide preemption. This needs
+  a cancellation/result contract first.
+- **Match workers:** keep bare `worker` reserved. The existing ECS scheduler
+  already distributes same-tick work deterministically. A worker that finishes
+  before the tick's dependency barrier is straightforward but cannot advance
+  simulation while unfinished. Work spanning ticks needs explicit resumable
+  progress and a deterministic work-unit budget; inputs, cursor, result and
+  cancellation enter snapshots/hashes, and thread speed cannot choose its
+  completion tick or entity/event order. Recommend that model only for a
+  concrete workload that needs it. Outside-service answers still enter as input;
+  local completion timing must never become match state directly.
 
 ## Input
 
@@ -3025,7 +3072,7 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
     - **A list or a grid has other names there: a local, and a function's or a method's parameter** (built 2026-10-08, from the rule above; every rule is Claude's pick, Provisional). Which list or grid a name stands for is known as the shader is written, never as it runs: neither GLSL ES 3 nor WGSL hands a texture to a function on every backend, so a function that takes one is written once for each list or grid it's called with, and takes nothing for it.
       - `var items = lights.items;` names a field of what the frag or vert takes, an asset, another such local or a parameter. It isn't `mut`, and it isn't a list that's picked or made as the code runs (`flag ? a : b`, a function's result, a literal): an error that says a list there is one the code was given, by a name.
       - `float Sum(List<float> numbers)` is the function the CPU's code calls too. On the GPU its argument is such a name, and the parameter isn't `mut` or `out`. A function passes its own on.
-      - `int Cell(Grid2<int> cells, int2 at)`: a function or a method takes a grid, to read `cells[x, y]` and `cells.size`. Such a function, and one that calls it, is the GPU's alone: called from a system, a view or a handler it's an error that says to read the cells through the grid's component or singleton, and no C is written for it. Its grid parameter takes no `mut`, `out` or default, and an operator, an extern, an async function and one that takes an Action take none. A grid's local is in a frag, a vert or a function that takes a grid; anywhere else it's the error it was.
+      - `int Cell(Grid2<int> cells, int2 at)`: a function or a method takes a grid, to read `cells[x, y]` and `cells.size`. Such helpers are callable from shader code and local workers; worker-reachable helpers also have CPU bodies over captured grid inputs. A direct call from an ordinary system, view or handler remains an error that says to read cells through their component or singleton. Its grid parameter takes no `mut`, `out` or default, and an operator, an extern, an async function and one that takes an Action take none. A grid alias local is supported only along the shader path; a worker and its helpers read or forward parameters directly, without grid locals.
       - An asset's list or grid is read by its name in a function a frag or vert calls, too.
       - A function still returns no list and no grid, and a struct that holds one isn't a value there.
     - **A function samples the textures it takes** (built 2026-10-08. The owner asked that a function only GPU code calls take a `DepthTexture` and call `Sample` and `Compare` on it, and the same for a `Texture`, with a call from the CPU an error that says so, after Tag's and Sumo's frags each carried a copy of one shadow lookup; a `Cubemap` and a grid by the same rule, and every other rule here, are Claude's picks, Provisional).
@@ -3130,7 +3177,7 @@ view DrawHud(Arena arena)
 - Containers take a block, and they're ordinary functions with an `Action` parameter (see Functions): `GUILayout.Horizontal() { ... }`, `GUILayout.Vertical() { ... }` and `GUILayout.Area(...) { ... }`. Calls always have parentheses.
 - Widgets edit values through `mut` parameters, and return whether the value changed: `GUILayout.Toggle("Fullscreen", settings.fullscreen)`. A button returns whether it was pressed.
 - **Entered fields** (agreed 2026-10-06): a view can tell that the player pressed Enter in a field they typed into. `TextField`, `IntField` and `FloatField` each have a second version, in `GUILayout` and in `GUI`, with an `out bool entered` parameter (see Out parameters): `GUILayout.TextField("Code", lobby.code, out var entered)`. It's true in the frame Enter ends the typing in that field. What the field returns stays whether the value changed, and without the argument the field is the one there always was. The details are picks, under Provisional.
-- Widgets have no IDs to write. They're told apart by where they're called from and the entity the view runs for.
+- Widgets have automatic identity from where they're called and the entity the view runs for. Reorderable data can supply a stable key for a block of controls.
 - The engine builds nothing a game couldn't build itself: containers are functions with an `Action`, and widgets are made of pieces games can use too.
 - Gamepad and keyboard navigation are built in: focus moves between widgets, the south button presses, the east button goes back.
 - Whatever the GUI is using, such as a click on a button or typing in a field, is hidden from the input's `Sample`.
@@ -3142,7 +3189,7 @@ view DrawHud(Arena arena)
   - It takes the pointer for its rect by itself, as the GUI's own widgets do: a press on it never reaches the input's `Sample` or the other views, from the frame it lands in.
   - It joins Tab and Shift+Tab, arrow, d-pad and left stick navigation alongside the built-in widgets, in the order they're called. Enter, Space and the gamepad's south button click it.
   - `GUI.Disabled(...) { }` and modals stop it like any widget.
-  - What a view draws is under the GUI's own widgets, and under a modal's dim, since the GUI draws last.
+  - Custom controls can reserve layout space and draw alongside built-in widgets, in the GUI's declaration order. Ordinary world drawing stays under the GUI.
 - **Themes:** the GUI stays bare: one look, and a simple theme for it. `GUITheme` is a built-in struct of the colors the GUI's widgets use and their corners' radius, and nothing else: no styles for single widgets, no text sizes, no fonts. Its defaults are the look the widgets have without one, so a theme names only what it changes, and a game that sets none looks as it always did.
   - `GUI.Theme(theme) { ... }` wraps a block: its widgets have the theme, and the look it found is back when the block ends. `GUI.SetTheme(theme)` stays for the widgets that follow, in this view and the ones after it, until it's set again or the frame ends. Every frame starts from the defaults. It's the rule for every setting of a frame with two forms, `Draw`'s too: the plain name around a block, and `Set` for what follows.
   - Round corners are `Draw`'s round rects.
@@ -3235,6 +3282,12 @@ view Tools(Devices devices, mut Toolbox box)
 
 ### Provisional
 
+- **Custom control composition** (2026-10-24; the owner delegated implementation and API choices, prioritizing performance and API):
+  - `GUILayout.Reserve(float2 size)` returns the next layout `Rect`, with the requested width and height, without drawing, claiming input or joining focus navigation. `Reserve(size, minWidth, expandWidth)` allows horizontal shrinking to `minWidth` and optional expansion to the column's remembered natural width. Heights stay explicit. Negative and nonfinite dimensions become zero; `minWidth` is clamped to the requested width. Layout executes game code once per frame.
+  - `GUI.Draw() { ... }` sends its ordinary `Draw` calls, and those in helpers it calls, to the GUI's list. It starts in screen pixels, at its position in GUI declaration order, above the enclosing panel and below later GUI content. The window's drawing settings are restored on every exit, including `Set` changes inside the block. Render-target settings remain their destination's. Screen-space 2D shapes, text, sprites, indexed meshes, shader runs and clips follow an anchored area's placement; explicit custom cameras and 3D draws retain their own coordinates. This is not a layout or hit-testing transform. The block is skipped if no container nesting space remains, so unscoped drawing cannot leak settings.
+  - `GUI.Key(int key) { ... }`, with `long` and `string` forms, adds a scoped data key to child widget and container identities, through helper calls as well. Keys must be unique among siblings from the same call site; zero and the empty string are valid. Reordering or omitting different keys does not transfer focus or pointer capture. Unkeyed repeated sites retain occurrence identity. Identity remains a bounded 32-bit runtime hash, not a persistent application identifier.
+  - `GUIControl.down` is the pointer press edge owned by the control, `up` its release edge even outside the rect, and `cancelled` an active gesture aborted because the control became disabled or covered by a modal. Cancellation is reported once while the control is still declared; removal has no callback. `position` is the pointer position in GUI pixels, including while held outside. Existing `pressed` still means held; keyboard/gamepad submission sets `clicked`, without inventing pointer edges. Native capture-loss cancellation is not yet represented separately.
+
 Implemented, awaiting approval:
 
 - Positions and sizes are in pixels, as on a web page, so widgets keep their size when the window changes size. On a display scaled to 150%, a pixel is the display's logical one, 1.5 real pixels wide, as CSS pixels are.
@@ -3276,15 +3329,16 @@ Implemented, awaiting approval:
 - Views that claim the same device all go on reading it: which of their widgets is on top is theirs to know. Up to 16 views claim in one frame and go on reading; past that, a claim still hides.
 - A modal is an anchored area over the screen, dimmed. The one drawn last is on top, and only its widgets work. Its first widget takes the focus the frame after it comes up, and back doesn't close it on the frame it came up, so the press that opened it doesn't. `GUI` has no modal at a rect yet.
 - The drawing: a dark panel behind each area and the engine's default font, in the theme's colors.
-- `GUI.Control(Rect rect) -> GUIControl`. `GUIControl` is a built-in struct of four bools, named as a `Devices` button's are:
+- `GUI.Control(Rect rect) -> GUIControl`. Its interaction flags follow the device naming convention:
   - `hovered`: the pointer is on it, with nothing of the GUI's over it.
   - `pressed`: the pointer holds it, from a press on it until it lets go, wherever it goes meanwhile, as `devices.mouse.left.pressed` is true while the button is held. A button looks down while it's `pressed` and `hovered`, and a handle follows the pointer while it's `pressed`. It's false in the frame the pointer lets go, and Enter held on it doesn't count.
   - `focused`: the keyboard and the gamepad are on it.
   - `clicked`: a press on it let go on it, or Enter, Space or the south button went down while it had the focus. For one frame.
-- A click with the pointer doesn't give a control the focus, as it doesn't a button. In a Disabled block or outside the modal that's up, nothing of it is true, the focus skips it, and the pointer on it is still the GUI's.
+  - `down`, `up`, `cancelled` and `position`: the pointer edges, cancellation and position described under Custom control composition above.
+- A click with the pointer doesn't give a control the focus, as it doesn't a button. In a Disabled block or outside the modal that's up, it cannot hover, hold, focus or click; an active gesture reports cancellation once. The focus skips it, and the pointer on it is still the GUI's.
 - While a control has the focus, the view that called it goes on reading the keyboard and the gamepad, but for what moves the focus and clicks: the arrows, Tab, Enter, Space and Escape, and the d-pad, the left stick and the south and east buttons. The input's `Sample` and the other views read none of it, as with any focused widget. So a menu's own shortcuts (a card's number) work while one of its cards has the focus, and a control can be a text field: its view reads `devices.keyboard.text`. A view that runs once per entity is one view. Under a modal, no view reads anything.
-- Controls made in a loop come from one call, so they're told apart by their turn, as the GUI's own widgets in a loop are: the first one made, the second, and so on. A loop that makes the same ones every frame, in the same order, is all that takes. One that leaves an earlier one out gives its turn to the next: what was hovered, held or focused there goes on with the control that's now in its place.
-- `GUILayout` has no control: `GUI.Control` takes its rect. A laid out one would hand back a rect inside an area, and what a view draws there is under the area's panel, which the GUI draws last; and an anchored area finds its place when it closes, after the control was drawn. It waits until views can draw among the GUI's widgets.
+- Unkeyed repeated calls use occurrence identity. `GUI.Key` makes repeated controls follow application keys instead.
+- `GUILayout.Reserve` supplies layout space for `GUI.Control`, and `GUI.Draw` places its custom visuals among the GUI's widgets.
 - `GUITheme`'s fields, all `Color` but the last: `text` (text, and a slider's thumb), `panel` (an area's background), `control` (a button, a toggle's box, a slider's rail, a color field's frame), `hot` (those with the pointer on them), `pressed` (a button held down), `field` (a field to type into), `fieldHot` (one with the pointer on it), `accent` (the focus's outline, a toggle's check, a slider's filled part) and `float radius` (the corners', in pixels; 0, its default, is square). A modal's dim isn't in it, nor how much a disabled widget fades.
 - A part is no rounder than half its smaller side, so a slider's rail and a toggle's box end as a pill and a circle under a big radius. A part drawn around another (the focus's outline) or inside one (a toggle's check) is rounder or less round by how far it is from it. With a radius of 0 the widgets are the plain rects they always were.
 - An area's panel has the theme it opened with, whatever its block sets. `GUI.SetTheme` inside a `GUI.Theme` block ends with the block, which puts back what it found. `GUI.Theme` lays nothing out, like `GUI.Disabled`. Blocks nest up to 32 deep with containers; past that, a `GUI.Theme` changes nothing.

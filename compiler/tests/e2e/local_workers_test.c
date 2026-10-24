@@ -134,6 +134,10 @@ TIDE_TEST(local_workers_restart_after_serialization)
     gui.jobs = &deferred;
     tide_frame(&world, NULL, 1, NULL, NULL, 1, &local, &draw, &gui);
     TIDE_CHECK(!local.Meshing.finished && pending);
+    // The nested async call keeps its own arguments across restoration.
+    tide_text_use(&world.heap, &local.heap);
+    tide_list_clear(&local.Meshing.source.voxels, sizeof(int32_t));
+    tide_text_set(&local.Meshing.source.name, tide_str_from_cstr("changed"), TIDE_IN_LOCAL);
     const uint32_t size = tide_local_pack(&local, NULL, 0);
     uint8_t *bytes = malloc(size);
     TIDE_CHECK(tide_local_pack(&local, bytes, size) == size);
@@ -158,6 +162,9 @@ TIDE_TEST(local_workers_reload_drains_old_code_and_restarts)
     gui.jobs = &deferred;
     tide_frame(&world, NULL, 1, NULL, NULL, 1, &local, &draw, &gui);
     TIDE_CHECK(pending != NULL);
+    tide_text_use(&world.heap, &local.heap);
+    tide_list_clear(&local.Meshing.source.voxels, sizeof(int32_t));
+    tide_text_set(&local.Meshing.source.name, tide_str_from_cstr("changed"), TIDE_IN_LOCAL);
     tide_local_rebind_resources(&local, true);
     TIDE_CHECK(pending == NULL);
     TIDE_CHECK(local.tide_workers == NULL);

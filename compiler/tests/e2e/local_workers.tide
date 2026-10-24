@@ -33,9 +33,14 @@ local worker MeshData BuildMesh(MeshInput input)
     return MeshData { faces = faces, name = input.name + " built" };
 }
 
+async MeshData Calculate(MeshInput input)
+{
+    return await BuildMesh(input);
+}
+
 async void Rebuild(mut Meshing meshing)
 {
-    meshing.result = await BuildMesh(meshing.source);
+    meshing.result = await Calculate(meshing.source);
     meshing.finished = true;
 }
 
@@ -92,7 +97,7 @@ view OwnerControl(mut Control control)
 
 async void FinishOwner(mut local RenderTask owner, MeshInput input)
 {
-    owner.mesh = await BuildMesh(input);
+    owner.mesh = await Calculate(input);
     owner.finished = true;
 }
 

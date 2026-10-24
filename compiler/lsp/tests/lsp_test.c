@@ -2916,6 +2916,7 @@ TIDE_TEST(lsp_gui)
     TIDE_CHECK(offers(widgets, "Button"));
     TIDE_CHECK(offers(widgets, "Horizontal"));
     TIDE_CHECK(offers(widgets, "Area"));
+    TIDE_CHECK(offers(widgets, "Reserve"));
     TIDE_CHECK(offers(complete("scene Main { }\nview V()\n{\n    $\n}\n"), "GUILayout"));
     TIDE_CHECK(!offers(complete("scene Main { }\nsystem S()\n{\n    $\n}\n"), "GUILayout"));
     TIDE_CHECK(offers(complete("scene Main { }\nvoid F()\n{\n    $\n}\n"), "Screen"));
@@ -2924,6 +2925,8 @@ TIDE_TEST(lsp_gui)
     TIDE_CHECK(offers(claims, "ClaimPointer"));
     TIDE_CHECK(offers(claims, "ClaimKeyboard"));
     TIDE_CHECK(offers(claims, "ShowKeyboard"));
+    TIDE_CHECK(offers(claims, "Draw") && offers(claims, "Key"));
+    TIDE_CHECK(has(claims, "Draw()\\n{\\n\\t$0\\n}"));
 
     TIDE_CHECK(offers(claims, "Control") && offers(claims, "Navigate") && offers(claims, "SetTheme") && offers(claims, "Theme"));
     TIDE_CHECK(has(claims, "Theme(${1:theme})\\n{\\n\\t$0\\n}"));
@@ -2938,6 +2941,7 @@ TIDE_TEST(lsp_gui)
     TIDE_CHECK(has(control, "the GUI handles its input as a button's, and draws nothing"));
     const char *said = complete(CONTROL_VIEW("    var card = GUI.Control(Rect(0, 0, 200, 200));\n    var on = card.$"));
     TIDE_CHECK(offers(said, "hovered") && offers(said, "pressed") && offers(said, "focused") && offers(said, "clicked"));
+    TIDE_CHECK(offers(said, "down") && offers(said, "up") && offers(said, "cancelled") && offers(said, "position"));
     TIDE_CHECK(has(said, "a press on it let go on it"));
     const char *looks = complete(CONTROL_VIEW("    GUI.SetTheme(GUITheme { $ });"));
     TIDE_CHECK(offers(looks, "text") && offers(looks, "panel") && offers(looks, "control") && offers(looks, "hot"));
@@ -3329,6 +3333,9 @@ TIDE_TEST(lsp_local_workers)
     const char *source = "local  worker int Build( int value ) { return value+1; }\nscene Main;\n";
     format_reply(source);
     TIDE_CHECK(has(apply_reply(source, NULL), "local worker int Build(int value)"));
+    open_document("int Cell(Grid2<int> cells) { return cells[0, 0]; }\n"
+                  "local worker List<int> Build(Grid2<int> cells) { mut List<int> values = []; values.Add(Cell(cells)); values.$ return values; }\nscene Main;\n");
+    TIDE_CHECK(has(request("textDocument/completion"), "\"label\":\"Add\""));
 }
 
 TIDE_TEST(lsp_empty_scene_declarations)

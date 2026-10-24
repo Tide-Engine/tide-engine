@@ -2,7 +2,7 @@
 static bool worker_value_type(const type t, const int depth)
 {
     if (depth > 128) return false;
-    if (t.decl && (t.decl->callable || t.decl->binding_of)) return false;
+    if (t.decl && (t.decl->callable || t.decl->binding_of || t.decl->asset_ref_of)) return false;
     switch (t.kind) {
     case TY_WORLD: case TY_QUERY: case TY_COMPONENT: case TY_SINGLETON:
     case TY_INPUT: case TY_RECORD: case TY_ACTION: case TY_DRAW_LIST:
@@ -18,33 +18,62 @@ static bool worker_value_type(const type t, const int depth)
     }
 }
 
-static bool worker_borrows_stmt(const stmt *s);
+static const char *worker_invalid_stmt(const stmt *s);
 
-static bool worker_borrows_expr(const expr *e)
+static const char *worker_invalid_expr(const expr *e)
 {
-    if (!e) return false;
-    if (e->bind == BIND_ASSET || e->asset_ref_value) return true;
-    if (worker_borrows_expr(e->object) || worker_borrows_expr(e->lhs)
-        || worker_borrows_expr(e->rhs) || worker_borrows_expr(e->cond) || worker_borrows_stmt(e->block)) return true;
-    for (int i = 0; i < e->args.count; i++) if (worker_borrows_expr(e->args.items[i])) return true;
-    for (int i = 0; i < e->inits.count; i++) if (worker_borrows_expr(e->inits.items[i].value)) return true;
-    return false;
+    if (!e) return NULL;
+    if (e->bind == BIND_ASSET || e->asset_ref_value)
+        return "read live assets; capture their data before starting the worker";
+    const expr *children[] = {e->object, e->lhs, e->rhs, e->cond, e->values, e->skin_mesh, e->skin_pose};
+    for (size_t i = 0; i < sizeof children / sizeof *children; i++) {
+        const char *error = worker_invalid_expr(children[i]);
+        if (error) return error;
+    }
+    const char *error = worker_invalid_stmt(e->step);
+    if (!error) error = worker_invalid_stmt(e->block);
+    if (error) return error;
+    for (int i = 0; i < e->args.count; i++) {
+        error = worker_invalid_expr(e->args.items[i]);
+        if (error) return error;
+    }
+    for (int i = 0; i < e->inits.count; i++) {
+        error = worker_invalid_expr(e->inits.items[i].value);
+        if (error) return error;
+    }
+    return NULL;
 }
 
-static bool worker_borrows_stmt(const stmt *s)
+static const char *worker_invalid_stmt(const stmt *s)
 {
-    if (!s) return false;
-    if (worker_borrows_expr(s->value) || worker_borrows_expr(s->target) || worker_borrows_expr(s->cond)
-        || worker_borrows_stmt(s->init) || worker_borrows_stmt(s->step)
-        || worker_borrows_stmt(s->then_stmt) || worker_borrows_stmt(s->else_stmt)) return true;
-    for (int i = 0; i < s->stmts.count; i++) if (worker_borrows_stmt(s->stmts.items[i])) return true;
-    for (int i = 0; i < s->cases.count; i++) {
-        for (int j = 0; j < s->cases.items[i].labels.count; j++)
-            if (worker_borrows_expr(s->cases.items[i].labels.items[j])) return true;
-        for (int j = 0; j < s->cases.items[i].body.count; j++)
-            if (worker_borrows_stmt(s->cases.items[i].body.items[j])) return true;
+    if (!s) return NULL;
+    if (s->kind == S_VAR && s->type.kind == TY_GRID)
+        return "keep grid locals; read or forward the grid parameter directly";
+    const expr *values[] = {s->value, s->target, s->cond, s->by, s->offset};
+    for (size_t i = 0; i < sizeof values / sizeof *values; i++) {
+        const char *error = worker_invalid_expr(values[i]);
+        if (error) return error;
     }
-    return false;
+    const stmt *children[] = {s->init, s->step, s->then_stmt, s->else_stmt};
+    for (size_t i = 0; i < sizeof children / sizeof *children; i++) {
+        const char *error = worker_invalid_stmt(children[i]);
+        if (error) return error;
+    }
+    for (int i = 0; i < s->stmts.count; i++) {
+        const char *error = worker_invalid_stmt(s->stmts.items[i]);
+        if (error) return error;
+    }
+    for (int i = 0; i < s->cases.count; i++) {
+        for (int j = 0; j < s->cases.items[i].labels.count; j++) {
+            const char *error = worker_invalid_expr(s->cases.items[i].labels.items[j]);
+            if (error) return error;
+        }
+        for (int j = 0; j < s->cases.items[i].body.count; j++) {
+            const char *error = worker_invalid_stmt(s->cases.items[i].body.items[j]);
+            if (error) return error;
+        }
+    }
+    return NULL;
 }
 
 static const char *worker_effect(const decl *d)
@@ -55,9 +84,9 @@ static const char *worker_effect(const decl *d)
     if (d->world_local || d->world_match || d->uses_this || d->world_uses.count) return "access a live world";
     if (d->acts[0] || d->acts[1] || d->starts_tasks || d->is_async) return "send events, change entities or start tasks";
     if (d->rolls || d->reads_seed) return "read the match's random generator or seed";
-    if (d->borrows_asset_collections || d->gpu_only || d->is_audio) return "access frame assets, GPU or audio code";
-    if (worker_borrows_stmt(d->body)) return "read live assets; capture their data before starting the worker";
-    return NULL;
+    if (d->borrows_asset_collections || d->gpu_sampling || (d->gpu_only && !d->worker_cpu) || d->is_audio)
+        return "access frame assets, GPU or audio code";
+    return worker_invalid_stmt(d->body);
 }
 
 static void check_workers(const checker *c)
@@ -68,7 +97,8 @@ static void check_workers(const checker *c)
         if (!worker_value_type(root->result, 0)) diag_error(root->at, "a worker returns owned CPU values, not %s", type_name(root->result));
         for (int k = 0; k < root->params.count; k++) {
             const param *p = &root->params.items[k];
-            if (!worker_value_type(p->type, 0)) diag_error(p->at, "a worker takes owned CPU values, not %s; pass the data it needs instead", type_name(p->type));
+            if (p->type.kind != TY_GRID && !worker_value_type(p->type, 0))
+                diag_error(p->at, "a worker takes owned CPU values, not %s; pass the data it needs instead", type_name(p->type));
         }
         VEC(const decl *) seen = {0};
         vec_push(seen, root);

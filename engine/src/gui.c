@@ -205,7 +205,7 @@ uint32_t tide_gui_seed(const uint32_t a, const uint32_t b)
 
 uint32_t tide_gui_id(tide_gui *g, const uint32_t seed, const uint32_t site)
 {
-    const uint32_t key = tide_gui_seed(seed, site);
+    const uint32_t key = tide_gui_seed(g->key ? tide_gui_seed(seed, g->key) : seed, site);
     uint32_t slot = key & (TIDE_GUI_MAX_IDS - 1);
     for (uint32_t probe = 0; probe < TIDE_GUI_MAX_IDS; probe++) {
         tide_gui_seen *s = &g->seen[slot];
@@ -664,11 +664,14 @@ void tide_gui_begin(tide_gui *g, const tide_devices *devices, const tide_float2 
     g->theme = tide_gui_theme_default();
     g->nav_count = 0;
     g->depth = 0;
+    g->key = 0;
+    g->drawing_count = 0;
     g->in_modal = 0;
     const tide_gui_size *root = remembered(g, ROOT_ID);
     g->groups[0] = (tide_gui_group){
         .id = ROOT_ID, .kind = VERTICAL, .room = screen.x, .stretch = root ? root->natural : 0.0f, .anchor = -1};
     tide_draw_reset(&g->list);
+    tide_draw_screen_size(&g->list, screen);
     tide_draw_set_screen(&g->list); // In the screen's pixels, whatever list it's added to
 }
 
@@ -1031,6 +1034,7 @@ int tide_gui_begin_area(tide_gui *g, const uint32_t id, const tide_rect rect)
     top(g)->commands_from = commands;
     top(g)->plains_from = plains;
     top(g)->radius = g->theme.radius;
+    top(g)->clips_from = g->list.clip_count;
     top(g)->hot_before = g->hot_next;
     top(g)->rects_before = g->rect_count_next;
     return before;
@@ -1055,6 +1059,7 @@ int tide_gui_begin_area_at(tide_gui *g, const uint32_t id, const int32_t anchor)
     top(g)->commands_from = commands;
     top(g)->plains_from = plains;
     top(g)->radius = g->theme.radius;
+    top(g)->clips_from = g->list.clip_count;
     top(g)->hot_before = g->hot_next;
     top(g)->rects_before = g->rect_count_next;
     return before;
@@ -1088,7 +1093,48 @@ static bool open_scope(tide_gui *g)
     g->depth++;
     top(g)->scope = true;
     top(g)->themed = false;
+    top(g)->keyed = false;
+    top(g)->drawing = false;
     return true;
+}
+
+int tide_gui_begin_draw(tide_gui *g)
+{
+    const int before = g->depth;
+    if (!open_scope(g)) return -1; // A skipped block cannot leak drawing settings at the nesting ceiling
+    tide_draw_render_target(&g->list, (tide_render_target){.id = TIDE_RENDER_WINDOW});
+    top(g)->drawing = true;
+    g->drawing[g->drawing_count++] = (tide_gui_draw_state){g->list.place, g->list.saved_count};
+    tide_draw_set_screen(&g->list);
+    return before;
+}
+
+static int begin_key(tide_gui *g, const uint32_t site, const uint32_t key)
+{
+    const int before = g->depth;
+    if (!open_scope(g)) return before;
+    top(g)->keyed = true;
+    top(g)->key_before = g->key;
+    g->key = tide_gui_seed(g->key, tide_gui_seed(site, key));
+    return before;
+}
+
+int tide_gui_begin_key(tide_gui *g, const uint32_t site, const int32_t key)
+{
+    return begin_key(g, site, (uint32_t)key);
+}
+
+int tide_gui_begin_key_long(tide_gui *g, const uint32_t site, const int64_t key)
+{
+    const uint64_t bits = (uint64_t)key;
+    return begin_key(g, site, tide_gui_seed((uint32_t)bits, (uint32_t)(bits >> 32)));
+}
+
+int tide_gui_begin_key_text(tide_gui *g, const uint32_t site, const char *key)
+{
+    uint32_t hash = 2166136261u;
+    if (key) for (const unsigned char *p = (const unsigned char *)key; *p; p++) hash = (hash ^ *p) * 16777619u;
+    return begin_key(g, site, hash);
 }
 
 int tide_gui_begin_disabled(tide_gui *g, const bool disabled)
@@ -1123,15 +1169,8 @@ static void close_area(tide_gui *g, const tide_gui_group *grp)
         const float dx = at.x - grp->guess.x;
         const float dy = at.y - grp->guess.y;
         if ((dx != 0.0f || dy != 0.0f) && (grp->panel != UINT32_MAX || grp->panel_plain)) {
-            for (uint32_t i = grp->panel != UINT32_MAX ? grp->panel : grp->commands_from; i < g->list.count; i++) {
-                tide_draw_command *c = &g->list.commands[i];
-                if (c->kind != TIDE_DRAW_PLAIN) c->a = tide_f2(c->a.x + dx, c->a.y + dy); // A run's are its shapes'
-            }
-            for (uint32_t i = grp->plains_from; i < g->list.plain_count; i++) {
-                tide_draw_plain *p = &g->list.plains[i];
-                p->a = tide_f2(p->a.x + dx, p->a.y + dy);
-                if (p->kind == TIDE_DRAW_LINE) p->b = tide_f2(p->b.x + dx, p->b.y + dy);
-            }
+            tide_draw_move_gui(&g->list, grp->panel != UINT32_MAX ? grp->panel : grp->commands_from,
+                               grp->plains_from, grp->clips_from, tide_f2(dx, dy));
         }
         // Its widgets are remembered where they're drawn, too.
         for (uint32_t i = grp->rects_before; i < g->rect_count_next; i++) {
@@ -1169,6 +1208,11 @@ void tide_gui_close(tide_gui *g, const int depth)
         g->depth--;
         if (grp.scope) { // A Disabled or Theme block hands the layout back to the container around it
             if (grp.themed) g->theme = grp.before; // ...and a Theme block the look it found
+            if (grp.keyed) g->key = grp.key_before;
+            if (grp.drawing) {
+                const tide_gui_draw_state *state = &g->drawing[--g->drawing_count];
+                tide_draw_restore_window(&g->list, &state->before, state->mark);
+            }
             tide_gui_group *around = top(g);
             const tide_gui_group own = *around;
             *around = grp;
@@ -1176,6 +1220,9 @@ void tide_gui_close(tide_gui *g, const int depth)
             around->scope = own.scope;
             around->themed = own.themed;
             around->before = own.before;
+            around->keyed = own.keyed;
+            around->key_before = own.key_before;
+            around->drawing = own.drawing;
             continue;
         }
         g->in_modal = grp.in_modal_before;
@@ -1206,6 +1253,25 @@ void tide_gui_layout_space(tide_gui *g, const float size)
         grp->cursor.y += size;
         grp->size.y = max_f(grp->size.y, grp->cursor.y - SPACING - grp->origin.y);
     }
+}
+
+static float dimension(const float value)
+{
+    return tide_is_finite_f(value) && value > 0.0f ? value : 0.0f;
+}
+
+tide_rect tide_gui_layout_reserve_flexible(tide_gui *g, const tide_float2 size, const float min_width,
+                                          const bool expand_width)
+{
+    const float width = dimension(size.x), height = dimension(size.y);
+    const float least = min_f(dimension(min_width), width);
+    const tide_gui_group *grp = top(g);
+    return take(g, fit(grp, wanted(grp, width, expand_width), least), height, width, least);
+}
+
+tide_rect tide_gui_layout_reserve(tide_gui *g, const tide_float2 size)
+{
+    return tide_gui_layout_reserve_flexible(g, size, size.x, false);
 }
 
 // A labelled widget's label column, as narrow as it goes: the label and a gap.
@@ -1273,6 +1339,7 @@ bool tide_gui_button(tide_gui *g, const uint32_t id, const tide_rect rect, const
 
 tide_control tide_gui_control(tide_gui *g, const uint32_t id, const tide_rect rect)
 {
+    const bool was_active = g->active == id;
     bool hover, down, focused;
     const bool click = clicked(g, id, rect, &hover, &down, &focused);
     if (focused) { // Its view goes on reading the keys the GUI doesn't use
@@ -1280,7 +1347,12 @@ tide_control tide_gui_control(tide_gui *g, const uint32_t id, const tide_rect re
         g->focus_view = g->view;
     }
     // Held until the pointer lets go: not in the frame it does, when a click says so
-    return (tide_control){.hovered = hover, .pressed = down && g->mouse_held, .focused = focused, .clicked = click};
+    const bool enabled = live(g);
+    if (was_active && !enabled) g->active = 0;
+    return (tide_control){.hovered = hover, .pressed = down && g->mouse_held && enabled,
+                          .focused = focused, .clicked = click && enabled,
+                          .down = down && g->mouse_pressed && enabled, .up = down && g->mouse_released && enabled,
+                          .cancelled = was_active && !enabled, .position = g->mouse};
 }
 
 bool tide_gui_layout_button(tide_gui *g, const uint32_t id, const char *text)

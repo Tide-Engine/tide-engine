@@ -25,9 +25,10 @@ type arguments. The complete suite passes after the final compiler rebuilding.
 Final full native/web and docs integration results follow below.
 No editor adapter or protocol change is needed.
 
-Final integration after the local-worker merge passes the full native/web debug
-suites (2700/2595 enabled tests), production docs build and live Render3D example.
-The combined 257 native LSP and 293 shared grammar checks pass. Toolchain/platform
+Final integration after the GUI/local-worker merge passes the full native/web
+debug suites (2716/2611 enabled tests), production docs build and live Render3D
+example.
+The combined 257 native LSP and 295 shared grammar checks pass. Toolchain/platform
 coverage is recorded in language.md and render3d.md.
 
 Review follow-up: qualified primitive/Grid/Random constructors and bare Random
@@ -41,6 +42,14 @@ ordering/channel navigation and rename. The existing asset sampling regression
 also covers imported and qualified enum aliases. These follow-up cases pass
 in the complete rebuilt native language-server suite above.
 
+## Custom GUI composition (2026-10-24)
+
+The common builtin catalog supplies GUI.Draw/Key block snippets, Reserve
+overloads and signature help. GUIControl completion/hover includes pointer down,
+up, cancellation and GUI-space position. `lsp_gui` checks these additions.
+No editor-specific protocol or grammar change. API/contracts/validation:
+`notes/gui.md`, Custom control composition.
+
 ## Local worker declarations (2026-10-24)
 
 The shared compiler parses/checks local workers. Routine hovers, override
@@ -50,6 +59,11 @@ Shared/JetBrains TextMate grammars and Vim highlight the contextual modifier;
 the probe checks both local/worker orders and worker as a variable. Existing
 navigation/diagnostics remain function-based. Public docs link the worker/task
 workflow. Semantics and validation: language.md.
+
+The grid input extension preserves CPU completion in worker/grid-helper bodies,
+even when those helpers are also GPU-callable. lsp_local_workers includes list
+Add completion after a grid-helper call. Existing grid syntax needs no grammar
+change. Contract and validation: language.md, Local worker audit.
 
 ## Mutable callable signatures (2026-10-24)
 

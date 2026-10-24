@@ -22,6 +22,17 @@ stresses twice the pool's thread count in background jobs with parallel loops,
 checking off-frame execution, exact once-only results and frame-thread release.
 Existing tick/pool regressions stay enabled. Language/lifetime tests: language.md.
 
+The worker audit skips abandoned queue items before entering game code. Group
+disposal atomically marks every item abandoned before helping the provider;
+already-running callbacks still finish under the original completion contract.
+test_worker pins skipping, full-group disposal and provider-owned item lifetime.
+
+Read-only grid worker snapshots also participate in the existing automatic
+foreach analysis. The planner receives a temporary slot for the already-private
+input handle; steps cannot write it. Ordered reductions retain the serial row
+walk. List-parallel helpers can read grid snapshots from the private input heap.
+worker_grids pins both paths, including actual shared-pool list work.
+
 ## Schedule display grouped by stage (2026-10-22)
 
 `print_schedule` groups systems by increasing dependency depth, preserving

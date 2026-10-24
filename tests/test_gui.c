@@ -1,4 +1,5 @@
 #include <float.h>
+#include <math.h>
 #include <string.h>
 
 #include "tide/gui.h"
@@ -47,6 +48,123 @@ static void end(void)
 static void type(const char *text)
 {
     for (const char *c = text; *c; c++) devices.keyboard.text.chars[devices.keyboard.text.count++] = (uint32_t)*c;
+}
+
+TIDE_TEST(gui_custom_control_reports_pointer_edges_and_cancels_once)
+{
+    start();
+    const tide_rect rect = {10, 10, 100, 40};
+    mouse(20, 20, false);
+    begin();
+    tide_gui_control(&gui, 10, rect);
+    end();
+    mouse(20, 20, true);
+    begin();
+    tide_control c = tide_gui_control(&gui, 10, rect);
+    TIDE_CHECK(c.down && c.pressed && !c.up && !c.clicked && !c.cancelled);
+    TIDE_CHECK(c.position.x == 20 && c.position.y == 20);
+    end();
+    mouse(500, 400, true);
+    begin();
+    c = tide_gui_control(&gui, 10, rect);
+    TIDE_CHECK(!c.down && c.pressed && !c.hovered && !c.up);
+    TIDE_CHECK(c.position.x == 500 && c.position.y == 400);
+    end();
+    mouse(500, 400, false);
+    begin();
+    c = tide_gui_control(&gui, 10, rect);
+    TIDE_CHECK(c.up && !c.pressed && !c.clicked && !c.cancelled);
+    end();
+
+    mouse(20, 20, true);
+    begin();
+    tide_gui_control(&gui, 10, rect);
+    end();
+    begin();
+    const int disabled = tide_gui_begin_disabled(&gui, true);
+    c = tide_gui_control(&gui, 10, rect);
+    TIDE_CHECK(c.cancelled && !c.pressed && !c.down && !c.up && !c.clicked);
+    tide_gui_close(&gui, disabled);
+    end();
+    begin();
+    c = tide_gui_control(&gui, 10, rect);
+    TIDE_CHECK(!c.cancelled && !c.pressed && !c.clicked);
+    end();
+}
+
+TIDE_TEST(gui_reserved_space_has_explicit_height_and_safe_dimensions)
+{
+    start();
+    begin();
+    tide_rect a = tide_gui_layout_reserve(&gui, tide_f2(120, 44));
+    tide_rect b = tide_gui_layout_reserve_flexible(&gui, tide_f2(2000, 60), 80, false);
+    tide_rect invalid = tide_gui_layout_reserve(&gui, tide_f2(NAN, -INFINITY));
+    TIDE_CHECK(a.x == 0 && a.y == 0 && a.width == 120 && a.height == 44);
+    TIDE_CHECK(b.y == 49 && b.width == 1920 && b.height == 60);
+    TIDE_CHECK(invalid.width == 0 && invalid.height == 0);
+    TIDE_CHECK(gui.rect_count_next == 0 && gui.nav_count == 0);
+    end();
+}
+
+TIDE_TEST(gui_draw_scopes_restore_settings_and_preserve_enclosing_scopes)
+{
+    start();
+    begin();
+    const int keyed = tide_gui_begin_key(&gui, 20, 0);
+    const uint32_t key_before = gui.key;
+    const int drawing = tide_gui_begin_draw(&gui);
+    tide_draw_set_tint(&gui.list, TIDE_COLOR_RED);
+    tide_draw_set_blend(&gui.list, TIDE_BLEND_ADD);
+    tide_draw_set_clip(&gui.list, (tide_rect){10, 20, 30, 40});
+    tide_draw_rect(&gui.list, tide_f2(20, 30), tide_f2(5, 5), TIDE_COLOR_WHITE);
+    const int disabled = tide_gui_begin_disabled(&gui, false);
+    tide_gui_layout_reserve(&gui, tide_f2(100, 44));
+    tide_gui_close(&gui, disabled);
+    TIDE_CHECK(gui.drawing_count == 1 && gui.key == key_before);
+    tide_gui_close(&gui, drawing);
+    TIDE_CHECK(gui.drawing_count == 0 && gui.key == key_before);
+    TIDE_CHECK(!gui.list.place.tinted && gui.list.place.blend == TIDE_BLEND_ALPHA && !gui.list.place.clip);
+    tide_gui_close(&gui, keyed);
+    TIDE_CHECK(gui.key == 0 && gui.depth == 0);
+    end();
+}
+
+TIDE_TEST(gui_draw_at_the_nesting_ceiling_skips_without_changing_settings)
+{
+    start();
+    begin();
+    for (int i = 0; i < TIDE_GUI_MAX_DEPTH; i++) tide_gui_begin_disabled(&gui, false);
+    TIDE_CHECK(tide_gui_begin_draw(&gui) == -1);
+    TIDE_CHECK(gui.depth == TIDE_GUI_MAX_DEPTH && gui.drawing_count == 0);
+    end();
+    TIDE_CHECK(gui.depth == 0 && !gui.list.place.tinted);
+}
+
+TIDE_TEST(gui_anchored_custom_meshes_quads_and_clips_move_with_the_panel)
+{
+    start();
+    begin();
+    const int area = tide_gui_begin_area_at(&gui, 10, TIDE_ANCHOR_MIDDLE_CENTER);
+    const tide_rect r = tide_gui_layout_reserve(&gui, tide_f2(100, 60));
+    const int drawing = tide_gui_begin_draw(&gui);
+    tide_draw_set_clip(&gui.list, r);
+    const tide_vertex vertices[] = {
+        {{r.x, r.y}, {0, 0}, TIDE_COLOR_WHITE},
+        {{r.x + 100, r.y}, {1, 0}, TIDE_COLOR_WHITE},
+        {{r.x, r.y + 60}, {0, 1}, TIDE_COLOR_WHITE},
+    };
+    const uint32_t indices[] = {0, 1, 2, 0, 1, 2};
+    tide_draw_mesh(&gui.list, vertices, 3, indices, 6, NULL, TIDE_FILTER_BILINEAR);
+    tide_draw_sprite(&gui.list, (tide_texture_ref){0}, tide_f2(r.x + 50, r.y + 30), tide_f2(100, 60), TIDE_COLOR_WHITE);
+    tide_gui_close(&gui, drawing);
+    tide_gui_close(&gui, area);
+    TIDE_REQUIRE(gui.list.vertex_count >= 3);
+    TIDE_CHECK(gui.list.vertices[0].position.x == 910 && gui.list.vertices[0].position.y == 510);
+    TIDE_REQUIRE(gui.list.quad_count == 1);
+    TIDE_CHECK(gui.list.quads[0].from.x == 910 && gui.list.quads[0].from.y == 510);
+    TIDE_REQUIRE(gui.list.clip_count == 1);
+    TIDE_CHECK(gui.list.clips[0].rect.x == 910 && gui.list.clips[0].rect.y == 510);
+    end();
 }
 
 // A frame with two layout buttons; returns which were pressed (bit 0 and 1).

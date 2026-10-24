@@ -16,6 +16,11 @@ loop between frames beside the existing deterministic tick comparison; the
 final browser run passes. Typed nested/optional/error results run through both
 the serial fallback and the actual platform pool under WASI.
 
+The approved grid-input extension uses the same publication/heap synchronization
+contract. Generated capture materializes source directory/chunks before queueing,
+including packed images. worker_grids exercises source/pack changes, restore,
+shared-pool readers and ordinary foreach order without changing JavaScript APIs.
+
 Invite readiness (2026-10-22): a built-in web host's `Session.invite` stays
 empty until the relay confirms registration, preventing a fast copied-link
 join from exhausting missing-room retries before its host is registered.
