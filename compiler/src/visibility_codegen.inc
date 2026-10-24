@@ -42,6 +42,12 @@ static void gen_visibility(gen *g)
         sb_printf(o, "    a.%s &= b.%s;\n", name, name);
     }
     sb_put(o, "    return a;\n}\n\n");
+    sb_put(o, "TIDE_HELPER bool tide_audience_equal(Audience a, Audience b)\n{\n    return ");
+    for (int i = 0; i < prog->audience->fields.count; i++) {
+        const char *name = str_to_cstr(prog->audience->fields.items[i].name);
+        sb_printf(o, "%sa.%s == b.%s", i ? " && " : "", name, name);
+    }
+    sb_put(o, ";\n}\n\n");
     // In a sharded game the directory is the root's: another shard's code
     // changing it waits on the border, borrowing it (shard_codegen.inc)
     char create_border[96] = "", border_void[96] = "";

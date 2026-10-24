@@ -3688,7 +3688,7 @@ system Collapse(Arena arena)
 
 ### Provisional
 
-- `Audience` is a copied value: `Audience.All`, `Audience.None`, `Audience.Only(PlayerID)` and `Audience.From(List<PlayerID>)`. Mutable values have `Add(PlayerID)` and `Remove(PlayerID)`; `Contains(PlayerID)` is read-only.
+- `Audience` is a copied value: `Audience.All`, `Audience.None`, `Audience.Only(PlayerID)` and `Audience.From(List<PlayerID>)`. Mutable values have `Add(PlayerID)` and `Remove(PlayerID)`; `Contains(PlayerID)` is read-only. Two audiences are equal (`==`, `!=`) when they have the same players.
 - `Visibility.CreateGroup(Audience)` returns an opaque `VisibilityGroup`. `Visibility.Set(group, audience)` replaces its live audience; `Visibility.DestroyGroup(group)` makes stale references empty. Handles are not reused in that match. A default handle means all players.
 - `Visibility { group = group }` supplies entity policy. An entity with no `Visibility` is public subject to its enclosing scene. An entity's mutable `Visibility` has `Set<T>(Audience)`, `Set<T>(VisibilityGroup)` and `Reset<T>()`, where `T` is one ordinary whole component. Reset removes the component override. These writes belong to match code and their helper effects participate in scheduling. Ordinary transform parenting does not inherit visibility; the scene root is the enclosing policy.
 - Group tables and policy memberships remain authoritative. Recipient projections contain permitted values rather than the private audience table. Match singletons remain public; per-entity secrets belong in components or private scenes.

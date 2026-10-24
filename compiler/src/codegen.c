@@ -2676,6 +2676,14 @@ static void gen_binary(gen *g, sb *o, const tok_kind op, expr *l, expr *r, const
         sb_put(o, op == T_EQ ? "== (" : "!= ("); gen_expr(g, o, r); sb_put(o, ").id)");
         return;
     }
+    if (lt.kind == TY_STRUCT && lt.decl == g->prog->audience && (op == T_EQ || op == T_NE)) {
+        sb_put(o, op == T_EQ ? "tide_audience_equal(" : "!tide_audience_equal(");
+        gen_expr(g, o, l);
+        sb_put(o, ", ");
+        gen_expr(g, o, r);
+        sb_put(o, ")");
+        return;
+    }
 
     // Integer arithmetic and shifts go through helpers that wrap on overflow and
     // define division by zero and shift counts, so results never depend on the

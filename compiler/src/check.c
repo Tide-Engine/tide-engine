@@ -7953,6 +7953,9 @@ static type binary_result(const program *prog, const tok_kind op, const type l, 
     if (l.kind == TY_ERROR || r.kind == TY_ERROR) return T_ERR;
     if ((op == T_EQ || op == T_NE) && l.kind == TY_STRUCT && r.kind == TY_STRUCT
         && l.decl == prog->visibility_group && r.decl == prog->visibility_group) return T_BOOL_;
+    // Two audiences are equal when they have the same players
+    if ((op == T_EQ || op == T_NE) && l.kind == TY_STRUCT && r.kind == TY_STRUCT
+        && l.decl == prog->audience && r.decl == prog->audience) return T_BOOL_;
     // Text joins with anything it can show, and compares with text.
     if (l.kind == TY_STRING || r.kind == TY_STRING) {
         const type other = l.kind == TY_STRING ? r : l;

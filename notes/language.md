@@ -1457,7 +1457,11 @@ groups in a projected client world does not change server policy.
 `Audience.All`, `.None`, `.Only(PlayerID)` and `.From(List<PlayerID>)` construct
 value bitsets sized to `maxPlayers`. `mut` audiences have `Add(player)` and
 `Remove(player)`; `Contains(player)` only reads. Invalid/out-of-game player
-indices are ignored and never index outside the mask. A group's audience is a
+indices are ignored and never index outside the mask. Two audiences compare
+with `==` and `!=` (2026-10-24, Claude's pick, Provisional: Earth's own
+comparison only went through the first 64 players), every word of the mask
+(`tide_audience_equal`), as `VisibilityGroup` compares its id; the
+`visibility_groups` fixture covers a player in the third word. A group's audience is a
 live reference, not copied into every member. Per-component restrictions use
 `visibility.Set<Inventory>(group)` or `visibility.Set<Inventory>(audience)`;
 `visibility.Reset<Inventory>()` restores inheritance. They require an ordinary

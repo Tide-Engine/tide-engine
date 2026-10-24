@@ -10,7 +10,7 @@ The API names below are provisional. Visibility applies to entities and whole co
 
 ## Share an audience
 
-An `Audience` is a set of players. `Audience.All` includes everyone and `Audience.None` includes nobody. `Audience.Only(player)` selects one player; `Audience.From(players)` takes a `List<PlayerID>`. An audience value has `Add(player)`, `Remove(player)` and `Contains(player)`.
+An `Audience` is a set of players. `Audience.All` includes everyone and `Audience.None` includes nobody. `Audience.Only(player)` selects one player; `Audience.From(players)` takes a `List<PlayerID>`. An audience value has `Add(player)`, `Remove(player)` and `Contains(player)`, and two audiences are equal (`==`) when they have the same players.
 
 A `VisibilityGroup` gives many entities one live audience:
 
