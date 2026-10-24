@@ -20,7 +20,7 @@ system Setup(mut Workload work)
     if (work.built) return;
     work.built = true;
     // One fixed receiver behind the count variable caster grid. Its numeric
-    // material differs; compatible per-instance values can still batch.
+    // material differs; measured frames batch it with all cubes in one opaque draw.
     Spawn(Render3D.MeshRenderer { mesh = tile, castShadows = false },
           Render3D.Material { baseColor = Color(0.4, 0.4, 0.4), roughness = 1 },
           Transform { localPosition = float3(0, 0, 4), localScale = float3(34, 19, 0.1) });

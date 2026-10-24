@@ -1,5 +1,72 @@
 # Benchmarks
 
+## Render3D measured static cubes (2026-10-25)
+
+Measured `a1d962c99d93657d23f79ba54b0c836f635905e8`, native optimized Vulkan,
+operator-supplied Ryzen 9 7900X / RTX 4080 SUPER, NVIDIA inventory driver 617.42,
+Clang 23.1.2. The release host command uses -O2, -DNDEBUG, strict C17, no
+fast-math and no FMA contraction. Six bounded groups run three alternating
+package/cached-direct process pairs each: 36 processes, 18 pairs, 78 rows,
+7,800 measured frames and 7,800 completed GPU queries. Every process exits 0;
+untimed full native pixels/expanded draws agree and per-frame work stays fixed.
+The 99.6877061-second batch ends at 2026-10-24T23:29:11.8955676Z.
+
+At fixed 1920x1080 and constant summed projected coverage, one directional
+light/one 512-pixel shadow cell gives package CPU recording/GPU medians of
+0.04395/0.117440 ms at 100 cubes, 0.31935/0.132432 at 1,000 and
+2.92990/0.260016 at 10,000. Each cube has 24 vertices/12 source triangles;
+one additional fixed flattened cube receives shadows. At 10,000 without the
+map, recording/GPU is 1.82285/0.148672 ms. The corresponding cached static
+floor's recording is 0.00585/0.01705/0.11380 ms without shadows and
+0.00705/0.01960/0.15775 with the map, excluding recurring ECS/hierarchy/light
+collection work. This is not a dynamic-renderer or Tide-versus-C comparison.
+
+All figures are medians of three process medians, not pooled frames. At 10,000
+with the map, package recording medians span 2.88545–2.98685 ms, GPU
+0.212080–0.299984; cached recording spans 0.11010–0.23365, GPU
+0.206432–0.211264. Identical shader work and uncontrolled clocks mean the
+package/floor GPU difference establishes no speedup. Median-of-process-p95
+recording is 3.6702/0.4179 ms; that statistic is not a pooled p95.
+
+With 1,000 cubes, overlapping 1/8/32 point lights, shadows off, package
+recording stays 0.18885/0.18555/0.19270 ms while GPU is
+0.103472/0.352864/1.099296. One point with six shadow faces gives
+0.75105/0.155936 ms, against its separate same-light unshadowed control's
+0.18555/0.104192. One directional/two points/one spot with eight views gives
+0.95850/0.333952, versus identical lights without shadows at
+0.21355/0.212192. The light1 and point groups retain separate repeated
+one-point controls; they are not pooled into six rounds.
+
+Actual batching is one opaque draw for all cubes plus the receiver, including
+its different numeric material, and one caster draw per shadow view. Including
+two clears and presentation, total calls are 4/5/10/12 for zero/one/six/eight
+views. All warmed texture uploads are zero. Active cells remain 512; six/eight
+views use a 1536-square atlas. At 1,000 cubes, submitted vertices/indices are
+36,048/72,048/252,048/324,048 respectively. CPU submission and completion/full
+RGBA readback are separate in the saved rows; readback synchronizes each frame.
+CPU and GPU overlap and are never added or presented as shipping FPS.
+
+The explicit coordinated quiet window uses the shared mutex separately per
+group with shortened 5-second/1-second quiet guards, not the default 90. No
+competition/resets/exclusions were detected; polling does not control all
+desktop activity. No clocks/power/temperature were recorded or controlled.
+Hardware identity is operator-supplied, not a backend adapter query. These are
+limited static-cube results, not real-game/complex-model or hardware-web claims.
+
+[Raw evidence, tables, ranges, verifier and reproduction](../bench/results/render3d-20261025/README.md)
+preserve 147 files byte-for-byte, including all process/batch logs, metadata,
+JSONL, GPU inventory and measured source snapshots. All six source SHA-256s
+match the measured Git tree and all frozen executables match their recorded
+identity. Binaries/PDBs are omitted. A later batching comment correction changes
+no executable behavior; the measurement identity stays a1d962c9.
+
+Local validation: focused native/web debug benchmark builds and Vulkan/OpenGL/
+WebGL/served WebGPU quick checks pass; optimized native Vulkan/OpenGL quick
+checks pass (two CTests, 2.22 seconds). Quick checks disable timing. The export
+verifier checks raw hashes, completion/identity/round ordering, all rows and
+frame/query counts, pixel/expanded flags and work invariants. No full engine
+suite rerun, other OS/mobile/sanitizer or hardware-web timing is claimed here.
+
 ## Render3D static-scene submission harness (2026-10-25)
 
 The owner's request for benchmarks after the mesh-alias/multiple-light merge
@@ -46,9 +113,9 @@ Focused native/web debug target builds, native Vulkan/OpenGL quick checks and
 the WebGL/served WebGPU smoke pass. Quick mode disables timing and uses four
 cubes with 32-pixel shadow cells. The runner parses, detects the known WASI and
 browser Node command-line fixtures while excluding an ordinary Node service,
-and rejects the quiet-time deadline boundary. Final root validation/optimized
-measurements are recorded separately when complete. This harness entry itself
-makes no timing claim.
+and rejects the quiet-time deadline boundary. Optimized measurements and their
+separate validation are recorded above; this harness description adds no
+performance claim of its own.
 
 ## Earth physics and shard membership pins (2026-10-24)
 
