@@ -34,7 +34,7 @@ component Walker
     int city = -1;                // Where it is: -1 until its player picks a city
     float2 at;                    // Metres east and north of the city's middle
     float2 velocity;
-    float facing;                 // Radians clockwise from north
+    [Rotation] float facing;      // Radians clockwise from north: blended the short way round, across ±π
     float height;                 // Off the ground, jumping
     float rise;
     int color;
@@ -57,7 +57,7 @@ component Car
 {
     [Position] double3 position;
     int city;
-    float turn;     // Round the ring road, radians clockwise from north
+    [Rotation] float turn;  // Round the ring road, radians clockwise from north: blended the short way, across 0 and 2π
     float lane;     // Metres from the city's middle
     float way;      // 1 clockwise, -1 the other way
     float speed;
