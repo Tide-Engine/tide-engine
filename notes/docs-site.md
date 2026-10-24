@@ -1,5 +1,39 @@
 # The docs site
 
+## Earth distance transitions, foundations and braking (2026-10-24)
+
+Country trees now extend to 400 m, beyond the ordinary ground camera's
+tree-top horizon, with coverage fading over 320–400 m and camera heights
+200–300 m. Enumeration includes every relevant longitude cell, once even
+near a pole. World positions and cell IDs stay fixed. The former 170 m
+cutoff was in plain sight. Road centre stripes integrate coverage across
+their width and fade unresolved dashes continuously rather than switching
+them off at a one-metre pixel footprint.
+
+All solid geometry, shadows and glows now test against the same analytic
+sphere as the ground shader. The separate low-resolution, sunken depth hull
+left objects and shadow cards visible through the actual curved surface.
+Buildings extend their foundations below the whole footprint, keeping their
+roofs in place; trunks also extend slightly below the surface. Car S/down
+and backward stick input now brake independently of camera direction;
+walking backward is unchanged. The driving hint names the brake.
+
+All ten Earth checks and its three benchmark pins pass on native/web debug.
+New checks exercise sampled S through a moving car until stopped without
+turning, actual drawn foundation corners below the sphere, and a moving
+240 Hz client with a 60 Hz server, latency and jitter for 65 seconds.
+Bounded native four-region country/town/car captures and muted Chrome
+WebGL/WebGPU landing/walking checks pass. Preview snapshots timed out twice;
+browser checks use the repository's documented Chrome DevTools workflow.
+
+The production server remains alive when the reported local fallback occurs.
+A 240 Hz moving client reproduces a timeout with hosting's former 6,000/minute
+incoming-packet cutoff. A 144 Hz client produced 6,455 session packets in a
+steady minute: input and acknowledgement news can exceed the tick rate even
+with redundant sends suppressed. The companion service change replaces the
+minute blackout with a bounded, continuously replenished per-route allowance
+(`tide-services/notes/managed-hosting.md`). No engine protocol change is needed.
+
 ## Node and build dependency security updates (2026-10-23)
 
 The site image pins `node:24.22.1-alpine`, including the October 21 Node

@@ -1,6 +1,6 @@
 // The meshes everything is drawn with, made once as the game starts: a ball
-// of rings (heads, bodies, wheels, trees, and the sky's rays), a finer one
-// under the ground (the horizon), a box (buildings, cars) and a card (glows
+// of rings (heads, bodies, wheels, trees, and the sky's rays), a box
+// (buildings, cars) and a card (glows
 // and shadows).
 
 local singleton Shapes
@@ -9,8 +9,6 @@ local singleton Shapes
     List<int> skyFaces;
     List<Corner> ball;
     List<int> ballFaces;
-    List<Corner> hull;
-    List<int> hullFaces;
     List<Corner> box;
     List<int> boxFaces;
     List<Corner> card;
@@ -48,7 +46,6 @@ void Build(mut Shapes shapes)
     Ball(shapes.ball, shapes.ballFaces, 8);
     foreach (var corner in shapes.ball) shapes.sky.Add(Around { position = corner.position });
     shapes.skyFaces = shapes.ballFaces;
-    Ball(shapes.hull, shapes.hullFaces, 96);
     // A box from -0.5 to 0.5, four corners a side so each side has its own normal
     for (var side = 0; side < 6; side++)
     {

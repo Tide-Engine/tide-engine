@@ -50,6 +50,27 @@ Color Mix(Color a, Color b, float t)
     return Color(Math.Lerp(a.r, b.r, t), Math.Lerp(a.g, b.g, t), Math.Lerp(a.b, b.b, t), 1);
 }
 
+// Integrate the thin stripe over a pixel, then lose unresolved dashes gradually.
+float Marking(float across, float along, float wide)
+{
+    float soft = Math.Max(wide, 0.05);
+    float stripe = Math.Saturate((0.12 + soft * 0.5 - across) / soft);
+    float dash = Math.SmoothStep(0.25 - soft * 0.4, 0.25 + soft * 0.4, Math.Sin(along * 0.8));
+    return stripe * dash * (1 - Math.SmoothStep(0.4, 1.6, wide));
+}
+
+// All geometry uses the same spherical surface as Planet, including at the
+// horizon. A sunken polygonal depth mesh left bases visible through the ground.
+bool Underground(float3 point, Sky sky)
+{
+    float distance = Math.Length(point);
+    var ray = point / Math.Max(distance, 0.0001);
+    float b = Math.Dot(ray, sky.center);
+    float near = sky.height * (2 * R + sky.height);
+    float disc = b * b - near;
+    return b > 0 && disc > 0 && near / (b + Math.Sqrt(Math.Max(disc, 0))) < distance - 0.02;
+}
+
 // The ground at a place: meadows and forests, the roads, the towns. `wide` is
 // how many metres a pixel covers there, so nothing finer than that shows.
 Color Ground(float3 n, float wide, Atlas atlas)
@@ -84,7 +105,7 @@ Color Ground(float3 n, float wide, Atlas atlas)
         if (across > ROAD + soft) continue;
         float along = Math.Atan2(Math.Dot(Math.Cross(a, n), c), Math.Dot(a, n)) * R;
         mut var paint = across < ROAD - 1.2 ? tarmac : kerb;
-        if (across < 0.12 + wide * 0.5 && Math.Sin(along * 0.8) > 0.25 && wide < 1) paint = line;
+        paint = Mix(paint, line, Marking(across, along, wide));
         ground = Mix(ground, paint, Math.SmoothStep(ROAD + soft, ROAD - soft, across));
     }
     // The towns: their ground, ring road and square
@@ -100,7 +121,7 @@ Color Ground(float3 n, float wide, Atlas atlas)
         if (ring < ROAD + soft)
         {
             mut var paint = ring < ROAD - 1.2 ? tarmac : kerb;
-            if (ring < 0.12 + wide * 0.5 && Math.Sin(Math.Atan2(at.x, at.y) * RING * 0.8) > 0.25 && wide < 1) paint = line;
+            paint = Mix(paint, line, Marking(ring, Math.Atan2(at.x, at.y) * RING, wide));
             ground = Mix(ground, paint, Math.SmoothStep(ROAD + soft, ROAD - soft, ring));
         }
         if (d < PLAZA + soft)
@@ -150,24 +171,23 @@ frag Planet(Around around, out Color color, Sky sky, Atlas atlas)
     color = Mix(ground, air, haze);
 }
 
-// A ball a little under the ground, which writes depth and adds no color: what's
-// past the horizon is hidden behind it, as the planet the frag draws is no mesh
-frag Unseen(Corner corner, out Color color)
-{
-    color = Color(0, 0, 0, 0);
-}
-
 // What's on the planet: walkers, cars, trees, lit from the sun
 frag Lit(Corner corner, out Color color, Placed placed, Instance instance, Sky sky)
 {
+    if (Underground(this.world, sky)) this.Discard();
+    // Opaque coverage avoids sorting transparent trunks and crowns. At full
+    // coverage every pixel stays; at the outer edge none remain to pop in.
+    float coverage = Math.Frac(52.9829189 * Math.Frac(Math.Dot(this.position, float2(0.06711056, 0.00583715))));
+    if (placed.paint.a <= coverage) this.Discard();
     var normal = instance.Normal(corner.normal);
     float lit = Math.Max(Math.Dot(normal, sky.sun), 0) * 0.6 + 0.4;
     color = Color(placed.paint.r * lit, placed.paint.g * lit, placed.paint.b * lit, 1);
 }
 
 // A glow, brightest in its middle, added to what's behind it: a town on the globe, sparks
-frag Glow(Corner corner, out Color color, Placed placed)
+frag Glow(Corner corner, out Color color, Placed placed, Sky sky)
 {
+    if (Underground(this.world, sky)) this.Discard();
     float r = Math.Length(corner.position.xy);
     mut float glow = Math.Saturate(1 - r);
     glow = glow * glow * (0.4 + 0.6 * glow);
@@ -175,8 +195,9 @@ frag Glow(Corner corner, out Color color, Placed placed)
 }
 
 // A soft shadow under something, darkening the ground
-frag Shade(Corner corner, out Color color, Placed placed)
+frag Shade(Corner corner, out Color color, Placed placed, Sky sky)
 {
+    if (Underground(this.world, sky)) this.Discard();
     float r = Math.Length(corner.position.xy);
     color = Color(0, 0, 0, Math.Saturate(1 - r) * placed.paint.a);
 }
@@ -191,6 +212,7 @@ struct Tower
 
 frag Wall(Corner corner, out Color color, Tower tower, Instance instance, Sky sky)
 {
+    if (Underground(this.world, sky)) this.Discard();
     var normal = instance.Normal(corner.normal);
     var p = (corner.position + float3(0.5, 0.5, 0.5)) * tower.size;
     mut var paint = tower.paint;

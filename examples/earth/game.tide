@@ -118,6 +118,7 @@ event HighFive { }   // Sent to each walker of the two, for what's shown
 input Controls
 {
     float3 move;    // Along the ground, as the camera has it: at most 1 long
+    bool brake;
     bool jump;
     bool wave;
     bool car;       // Turns into a car, or back, as it goes down
@@ -136,6 +137,9 @@ input Controls
         if (keys.w.pressed || keys.upArrow.pressed) push.y += 1;
         if (keys.s.pressed || keys.downArrow.pressed) push.y -= 1;
         push += devices.gamepad.leftStick;
+        // Back on foot; a brake in a car, independent of the camera's facing.
+        brake = pilot.driving && push.y < 0;
+        if (brake) push.y = 0;
         move = pilot.ahead * push.y + pilot.right * push.x;
         if (pilot.going) move += pilot.toward;
         jump = keys.space.pressed || devices.gamepad.buttonSouth.pressed || pilot.jumping > 0;
@@ -279,13 +283,13 @@ void Step(mut Walker walker, float3 toward, float speed, bool jump, float dt)
 }
 
 // A car: it turns toward where it's asked to go, as a car does, faster on the road
-void Drive(mut Walker walker, float3 toward, bool jump, float dt)
+void Drive(mut Walker walker, float3 toward, bool brake, bool jump, float dt)
 {
     var up = Math.Normalize(walker.position);
     var want = Flat(toward, up);
     float push = Math.Min(Math.Length(want), 1);
     mut float target = 0;
-    if (push > 0.1)
+    if (push > 0.1 && !brake)
     {
         var way = Math.Normalize(want);
         float ahead = Math.Dot(walker.forward, way);
@@ -342,7 +346,7 @@ system Walk(mut Walker walker, Controls input, Time time, without Person)
         walker.waving = 0;
     }
     if (input.wave && walker.waving == 0 && !walker.driving) walker.waving = WAVE;
-    if (walker.driving) Drive(walker, input.move, input.jump, time.dt);
+    if (walker.driving) Drive(walker, input.move, input.brake, input.jump, time.dt);
     else Step(walker, input.move, WALK, input.jump, time.dt);
 }
 

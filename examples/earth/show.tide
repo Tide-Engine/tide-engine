@@ -494,11 +494,6 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
     {
         Draw.Mesh(shapes.sky, shapes.skyFaces, float4x4.TRS(float3(0), quaternion.identity, float3(near * 4)), Planet, pilot.sky);
     }
-    // The horizon: a ball a little under the ground, in depth alone
-    Draw.Blend(Blend.Add), Draw.Cull(Cull.Back)
-    {
-        Draw.Mesh(shapes.hull, shapes.hullFaces, float4x4.TRS(-eye, quaternion.identity, float3(R - 1.2)), Unseen);
-    }
     // The towns near: their buildings, their trees, their fountains
     for (var town = 0; town < TOWNS; town++)
     {
@@ -510,8 +505,11 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
             if (block.height <= 0) continue;
             var base = Place(town, block.center, 0);
             var standing = Standing(base, NorthOf(Up(town)));
-            var size = float3(block.half.x * 2, block.height, block.half.y * 2);
-            scenery.towers.Add(Tower { transform = float4x4.TRS(base + Math.Rotate(standing, float3(0, block.height * 0.5, 0)) - eye, standing, size),
+            // The footprint is flat; extend its foundation below the sphere
+            // at every corner, keeping the roof at its original height.
+            float foundation = Math.Dot(block.half, block.half) / (2 * R) + 0.08;
+            var size = float3(block.half.x * 2, block.height + foundation, block.half.y * 2);
+            scenery.towers.Add(Tower { transform = float4x4.TRS(base + Math.Rotate(standing, float3(0, (block.height - foundation) * 0.5, 0)) - eye, standing, size),
                                        size = size, paint = Facade(block.paint) });
         }
         var square = Standing(middle, NorthOf(Up(town)));
@@ -530,7 +528,9 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
         float lon = Math.Atan2(at.z, at.x);
         float step = 16 / R;
         int row0 = int(Math.Floor(lat / step));
-        for (var row = row0 - 10; row <= row0 + 10; row++)
+        // Far enough that an ordinary ground camera sees trees disappear
+        // behind the actual horizon before they reach the drawing limit.
+        for (var row = row0 - 26; row <= row0 + 26; row++)
         {
             // Each row has a fixed grid. Using the eye's latitude for this
             // spacing moved every tree whenever the player walked north/south.
@@ -539,7 +539,12 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
             int columns = int(Math.Floor(Math.TAU * Math.Max(Math.Cos(rowLat), 0.2) / step));
             float across = Math.TAU / columns;
             int column0 = int(Math.Floor(lon / across));
-            for (var column = column0 - 10; column <= column0 + 10; column++)
+            float narrowest = Math.Max(Math.Cos(Math.Abs(rowLat) + step * 0.5), 0.0001);
+            int span = int(Math.Ceil(400 / (R * across * narrowest))) + 2;
+            // Near a pole the neighborhood may include the whole row, once.
+            int firstColumn = column0 - span;
+            int lastColumn = Math.Min(column0 + span, firstColumn + columns - 1);
+            for (var column = firstColumn; column <= lastColumn; column++)
             {
                 int wrapped = (column % columns + columns) % columns;
                 int h = Math.Hash(int2(row, wrapped));
@@ -548,10 +553,12 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
                 float tLat = (row + jitterA) * step;
                 float tLon = (wrapped + jitterB) * across;
                 var n = float3(Math.Cos(tLat) * Math.Cos(tLon), Math.Sin(tLat), Math.Cos(tLat) * Math.Sin(tLon));
+                var place = n * R;
+                float coverage = (1 - Math.SmoothStep(320, 400, Math.Length(place - eye))) * (1 - Math.SmoothStep(200, 300, above));
+                if (coverage <= 0) continue;
                 float forest = Math.Simplex(n * 7) * 0.6 + Math.Simplex(n * 19) * 0.3 + Math.Simplex(n * 61) * 0.1;
                 if ((h / 1000000) % 100 > (forest > 0.1 ? 70 : 12)) continue;
-                var place = n * R;
-                if (Math.Length(place - eye) > 170 || Paved(place) || TownAt(place, 8) >= 0) continue;
+                if (Paved(place) || TownAt(place, 8) >= 0) continue;
                 mut bool roadside = false;
                 for (var road = 0; road < ROADS && !roadside; road++)
                 {
@@ -560,10 +567,10 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
                 if (roadside) continue;
                 float tall = 4 + (h % 7) * 0.6;
                 var standing = Standing(place, NorthOf(n));
-                scenery.boxes.Add(Placed { transform = float4x4.TRS(place + n * (tall * 0.35) - eye, standing, float3(0.35, tall * 0.7, 0.35)),
-                                           paint = Color(0.40, 0.30, 0.22) });
+                scenery.boxes.Add(Placed { transform = float4x4.TRS(place + n * (tall * 0.35 - 0.05) - eye, standing, float3(0.35, tall * 0.7 + 0.1, 0.35)),
+                                           paint = Color(0.40, 0.30, 0.22, coverage) });
                 scenery.rounds.Add(Placed { transform = float4x4.TRS(place + n * (tall * 0.85) - eye, standing, float3(1.9, 1.7, 1.9)),
-                                            paint = Color(0.20 + (h % 3) * 0.03, 0.44 + (h % 5) * 0.03, 0.24) });
+                                            paint = Color(0.20 + (h % 3) * 0.03, 0.44 + (h % 5) * 0.03, 0.24, coverage) });
             }
         }
     }
@@ -738,7 +745,7 @@ view Picture(mut Scenery scenery, mut Pilot pilot, Shapes shapes, Roster roster,
     }
     Draw.Blend(Blend.Alpha), Draw.Depth(Depth.Read), Draw.Cull(Cull.None)
     {
-        Draw.Instanced(shapes.card, shapes.cardFaces, scenery.shades, Shade);
+        Draw.Instanced(shapes.card, shapes.cardFaces, scenery.shades, Shade, pilot.sky);
     }
     Draw.Cull(Cull.None)
     {
@@ -759,7 +766,7 @@ view Picture(mut Scenery scenery, mut Pilot pilot, Shapes shapes, Roster roster,
     }
     Draw.Blend(Blend.Add), Draw.Depth(Depth.Read), Draw.Cull(Cull.None)
     {
-        Draw.Instanced(shapes.card, shapes.cardFaces, scenery.glows, Glow);
+        Draw.Instanced(shapes.card, shapes.cardFaces, scenery.glows, Glow, pilot.sky);
     }
 
     var quiet = Color(0.70, 0.70, 0.74);
@@ -819,7 +826,7 @@ view Picture(mut Scenery scenery, mut Pilot pilot, Shapes shapes, Roster roster,
                 string fast = $"{int(Math.Abs(pilot.speed) * 3.6)} km/h";
                 Backed(fast, float2(Screen.width * 0.5 - Draw.MeasureText(fast, 16).x * 0.5, Screen.height - 82), 16, bright);
             }
-            string keys = pilot.driving ? "WASD drive · C walk · Space hop · drag to look · Esc globe"
+            string keys = pilot.driving ? "W drive · S brake · A/D steer · C walk"
                         : "WASD walk · tap to go · C car · Space jump · E wave · Esc globe";
             // A small screen has its buttons along the bottom, and these at the top
             if (Screen.width < 600)

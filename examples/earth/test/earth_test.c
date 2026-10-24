@@ -228,6 +228,132 @@ static void ticks(const int n)
     for (int i = 0; i < n; i++) tide_world_tick(&world);
 }
 
+TIDE_TEST(earth_building_foundations_reach_below_the_curved_ground)
+{
+    tide_world_init(&world, 1.0f / 60.0f);
+    tide_world_player_joined(&world, player(0));
+    ticks(1);
+    const tide_entity me = walker_of(&world, player(0));
+    Walker w = tide_get_Walker(&world, me);
+    w.position = times(up_at(52, 8), PLANET);
+    w.placed = true;
+    w.moves = 1;
+    tide_set_Walker(&world, me, w);
+    tide_local_init(&local);
+    memset(&devices, 0, sizeof devices);
+    memset(&gui, 0, sizeof gui);
+    local.Pilot.walking = true;
+    local.Pilot.moves = local.Pilot.arrived = 1;
+    local.Pilot.blend = 1;
+    draw_world(&world, player(0));
+    tide_text_use(NULL, &local.heap);
+    const int count = tide_list_count(local.Scenery.towers);
+    TIDE_CHECK(count > 10);
+    for (int i = 0; i < count; i++) {
+        const Tower *tower = tide_list_at(local.Scenery.towers, i, sizeof *tower);
+        const tide_float4x4 m = tower->transform;
+        for (int x = -1; x <= 1; x += 2) for (int z = -1; z <= 1; z += 2) {
+            const tide_float3 corner = {
+                local.Pilot.eye.x + m.c3.x + (m.c0.x * x - m.c1.x + m.c2.x * z) * 0.5f,
+                local.Pilot.eye.y + m.c3.y + (m.c0.y * x - m.c1.y + m.c2.y * z) * 0.5f,
+                local.Pilot.eye.z + m.c3.z + (m.c0.z * x - m.c1.z + m.c2.z * z) * 0.5f};
+            TIDE_CHECK(length3(corner) < PLANET - 0.04f);
+        }
+    }
+    tide_draw_free(&draw);
+    tide_local_free(&local);
+    tide_world_free(&world);
+}
+
+static tide_transport measured_wire;
+static unsigned measured_packets;
+static void measured_send(void *self, tide_address to, const void *data, uint32_t size)
+{
+    (void)self;
+    measured_packets++;
+    measured_wire.send(measured_wire.self, to, data, size);
+}
+static uint32_t measured_receive(void *self, tide_address *from, void *data, uint32_t capacity)
+{
+    (void)self;
+    return measured_wire.receive(measured_wire.self, from, data, capacity);
+}
+static void moving_sample(void *user, uint32_t tick, void *input)
+{
+    (void)user;
+    (void)tick;
+    *(Controls *)input = (Controls){.drop = {0, 0, PLANET}, .moves = 1, .move = {0, 1, 0}};
+}
+TIDE_TEST(earth_a_fast_moving_client_stays_connected_with_bounded_traffic)
+{
+    tide_loopback *wire = tide_loopback_create(123);
+    tide_loopback_set_conditions(wire, (tide_net_conditions){.latency = 0.03, .jitter = 0.005});
+    tide_server *server = tide_server_create(&(tide_server_desc){.game = &tide_game_api,
+        .transports = {tide_loopback_endpoint(wire, 1)}, .tick_rate = 60}, 0);
+    measured_wire = tide_loopback_endpoint(wire, 2);
+    measured_packets = 0;
+    tide_transport measured = {.send = measured_send, .receive = measured_receive};
+    tide_client *client = tide_client_create(&(tide_client_desc){.game = &tide_game_api,
+        .transport = measured, .server = tide_loopback_address(1), .sample = moving_sample, .lead = 2}, 0);
+    TIDE_REQUIRE(server && client);
+    unsigned last_server = 0;
+    for (unsigned frame = 1; frame <= 240 * 65; frame++) {
+        const double seconds = frame / 240.0;
+        tide_loopback_set_time(wire, seconds);
+        const unsigned server_tick = (unsigned)(seconds * 60);
+        if (server_tick != last_server) {
+            tide_server_update(server, seconds);
+            last_server = server_tick;
+        }
+        tide_client_update(client, seconds);
+        if (frame == 240 * 5) measured_packets = 0;
+    }
+    TIDE_CHECK(tide_client_status_of(client).state == TIDE_SESSION_CONNECTED);
+    TIDE_CHECK(tide_client_status_of(client).verified_tick > 3800);
+    TIDE_CHECK(measured_packets < 9000); // Input/ack news can exceed one packet a tick, but not follow the 240 Hz renderer.
+    tide_client_destroy(client);
+    tide_server_destroy(server);
+    tide_loopback_destroy(wire);
+}
+
+// S is a brake regardless of where the orbit camera looks. Exercise the
+// sampled key through the match, including the final stop without reversing.
+TIDE_TEST(earth_s_brakes_a_car_without_turning_it)
+{
+    tide_world_init(&world, 1.0f / 60.0f);
+    tide_world_player_joined(&world, player(0));
+    ticks(1);
+    const tide_entity me = walker_of(&world, player(0));
+    Walker w = tide_get_Walker(&world, me);
+    w.position = (tide_float3){0, 0, PLANET};
+    w.forward = (tide_float3){1, 0, 0};
+    w.speed = 30;
+    w.velocity = times(w.forward, w.speed);
+    w.placed = w.driving = true;
+    tide_set_Walker(&world, me, w);
+    tide_local_init(&local);
+    memset(&devices, 0, sizeof devices);
+    local.Pilot.walking = local.Pilot.driving = true;
+    local.Pilot.ahead = (tide_float3){0, 1, 0}; // Looking sideways at the car.
+    devices.keyboard.s.pressed = true;
+    const Controls input = tide_input_sample(&devices, &local);
+    TIDE_CHECK(input.brake && length3(input.move) == 0);
+    tide_world_set_input(&world, player(0), input);
+    ticks(1);
+    w = tide_get_Walker(&world, me);
+    TIDE_CHECK(w.speed < 30 && w.speed > 29);
+    TIDE_CHECK(fabsf(w.forward.y) < 0.00001f);
+    ticks(120);
+    w = tide_get_Walker(&world, me);
+    TIDE_CHECK(w.speed == 0 && length3(w.velocity) == 0);
+    local.Pilot.driving = false;
+    const Controls walking = tide_input_sample(&devices, &local);
+    TIDE_CHECK(!walking.brake && walking.move.y == -1);
+    tide_local_free(&local);
+    tide_world_free(&world);
+    memset(&devices, 0, sizeof devices);
+}
+
 // One world, as a match that isn't split: the townsfolk and the traffic; a
 // player who picks a town lands by its fountain, walks, can't go through the
 // fountain, turns into a car and drives, stops a car by standing in front of
