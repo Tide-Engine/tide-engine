@@ -20,6 +20,13 @@ per-bot traffic was 13.9 KB/s received and 9.4 KB/s sent, including joins
 and repairs; shard update p99 was 1.91 ms. These are workload measurements,
 not a fixed bandwidth promise or a before/after physics comparison.
 
+After merging the session-parser and scene/compiler work from dev, the same
+run with `--hop 4` passed 259 home changes and 360 shard joins, with no late
+inputs and at most 77 ticks of verified lag. More frequent town changes raised
+mean traffic to 20.8 KB/s received and 10.3 KB/s sent per bot, including
+8.7 KB/s of initial/repair worlds. This is an additional adverse workload,
+not a regression comparison against the slower-hopping run.
+
 Scene visibility unification (2026-10-15): removing generated scene audience
 fields changes the quick-session world pins to 742cb392be44252d for Sand and
 ccd64c3fd8bcbb8b for Gallery, equal on native and WASI. Only the expected hashes

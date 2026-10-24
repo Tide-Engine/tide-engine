@@ -68,8 +68,12 @@ ordinary/split pins agree with debug/WASI. The companion hosting service's
 Svelte check/build and all 58 tests pass against the staged compiler/runtime,
 including real room border crossing, host loss and checkpoint/journal recovery.
 Node is 24.22.1. Android, other operating systems, MinGW and sanitizers remain
-CI coverage; no workflow was manually dispatched. Deployment evidence follows
-once the merged build is published.
+CI coverage; no workflow was manually dispatched. Merging dev's session-parser
+and scene/compiler changes was clean in code; both new notes sections were
+retained when resolving their prepend conflicts. Both full builds pass again,
+as do the overlapping 283 native and 275 web checks (all compiler end-to-end,
+prefab/startup, engine, dedicated server/room, Earth and its benchmark pins).
+Deployment evidence follows once the merged build is published.
 
 The language-level design, agreed with the owner on 2026-10-22, is `docs/spec.md`, Shards: what's Decided there is the owner's, what's Provisional the agent's picks. This file is how it's built, what code relies on, the tests and what's left.
 
