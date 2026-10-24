@@ -1,0 +1,116 @@
+// The towns people visit, and what each is made of: the same on every
+// machine, as the match walks into its buildings and the views draw them.
+// A town is laid out on the ground at its place on the planet, in metres east
+// (x) and north (y) of its middle.
+
+const int CITIES = 12;
+const float EDGE = 400;          // How far a city goes from its middle
+const float PLAZA = 34;          // The square in its middle
+const float FOUNTAIN = 5;
+const float RING = 180;          // The ring road's middle
+const float ROAD = 9;            // Half a road's width, kerbs and all
+const int BUILDINGS = 40;
+
+// Its latitude and longitude, in degrees: on a made-up world, spread round it
+float2 Where(int city)
+{
+    if (city == 0) return float2(40, -70);
+    if (city == 1) return float2(15, -100);
+    if (city == 2) return float2(-25, -45);
+    if (city == 3) return float2(50, 0);
+    if (city == 4) return float2(5, 15);
+    if (city == 5) return float2(28, 40);
+    if (city == 6) return float2(58, 60);
+    if (city == 7) return float2(18, 80);
+    if (city == 8) return float2(38, 115);
+    if (city == 9) return float2(32, 145);
+    if (city == 10) return float2(-30, 150);
+    return float2(35, -125);
+}
+
+// Straight up at a city's middle, from the Earth's center
+double3 Up(int city)
+{
+    var at = Where(city);
+    double lat = Math.Radians(double(at.x));
+    double lon = Math.Radians(double(at.y));
+    return double3(Math.Cos(lat) * Math.Cos(lon), Math.Sin(lat), Math.Cos(lat) * Math.Sin(lon));
+}
+
+// East and north along the ground there
+float3 East(double3 up)
+{
+    var u = float3(up);
+    return Math.Normalize(Math.Cross(u, float3(0, 1, 0)));
+}
+
+float3 North(double3 up)
+{
+    var u = float3(up);
+    return Math.Cross(East(up), u);
+}
+
+// A place in a city, from the Earth's center: on the ground, or `height` above it
+double3 Place(int city, float2 at, float height)
+{
+    var up = Up(city);
+    var round = Math.Normalize(up * RADIUS + double3(East(up) * at.x + North(up) * at.y));
+    return round * (RADIUS + height);
+}
+
+// A building: a box standing on the ground
+struct Block
+{
+    float2 center;
+    float2 half;
+    float height;
+    int paint;
+}
+
+float Roll(int city, int i, int k)
+{
+    return (Math.Hash(int3(city * 131 + k, i, 9001)) % 10000) / 10000.0;
+}
+
+Block Building(int city, int i)
+{
+    var half = float2(5 + Roll(city, i, 0) * 7, 5 + Roll(city, i, 1) * 7);
+    float reach = Math.Length(half);
+    // Inside the ring road, round the square, or outside it, out to the edge
+    bool inside = i < BUILDINGS * 2 / 5;
+    float low = inside ? PLAZA + reach + 6 : RING + ROAD + reach + 4;
+    float high = inside ? RING - ROAD - reach - 4 : EDGE - reach - 30;
+    float r = low + Roll(city, i, 2) * (high - low);
+    // A quarter each, between the four roads out of the square
+    float turn = (i % 4) * Math.PI * 0.5 + 0.2 + Roll(city, i, 3) * (Math.PI * 0.5 - 0.4);
+    mut var center = float2(Math.Sin(turn), Math.Cos(turn)) * r;
+    // Clear of the roads that go out from the square
+    if (Math.Abs(center.x) < half.x + ROAD + 2) center.x = (center.x < 0 ? -1 : 1) * (half.x + ROAD + 2);
+    if (Math.Abs(center.y) < half.y + ROAD + 2) center.y = (center.y < 0 ? -1 : 1) * (half.y + ROAD + 2);
+    float tall = 10 + Roll(city, i, 4) * (inside ? 40 : 22);
+    return Block { center = center, half = half, height = tall, paint = Math.Hash(int2(city, i)) % 6 };
+}
+
+// Where something round of `radius` at `at` goes, out of the buildings and the
+// fountain, and inside the city
+float2 Clear(int city, float2 at, float radius)
+{
+    mut var p = at;
+    for (var i = 0; i < BUILDINGS; i++)
+    {
+        var b = Building(city, i);
+        var nearest = float2(Math.Clamp(p.x, b.center.x - b.half.x, b.center.x + b.half.x),
+                             Math.Clamp(p.y, b.center.y - b.half.y, b.center.y + b.half.y));
+        var away = p - nearest;
+        float d = Math.Length(away);
+        if (d < radius)
+        {
+            if (d > 0.0001) p = nearest + away / d * radius;
+            else p.y = b.center.y + (p.y < b.center.y ? -1 : 1) * (b.half.y + radius);
+        }
+    }
+    float middle = Math.Length(p);
+    if (middle < FOUNTAIN + radius) p = middle > 0.0001 ? p / middle * (FOUNTAIN + radius) : float2(0, FOUNTAIN + radius);
+    if (middle > EDGE - radius) p = p / middle * (EDGE - radius);
+    return p;
+}

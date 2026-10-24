@@ -84,7 +84,7 @@ view Rock(Rock rock)
 }
 ```
 
-It's for what this machine shows, so match code can't ask it: the match is one world wherever its entities are. In a game that isn't sharded it's always 0. The [home page](https://tide-engine.dev/)'s planet paints its lanterns this way under **Shards**.
+It's for what this machine shows, so match code can't ask it: the match is one world wherever its entities are. In a game that isn't sharded it's always 0. The [home page](https://tide-engine.dev/)'s planet paints its walkers and cars this way under **Shards**.
 
 ## Running one
 

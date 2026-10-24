@@ -3,8 +3,12 @@
 // an eye at the origin, with the world moved the other way, so floats keep
 // their precision a planet away from where it started.
 
-// The coasts, as how far each place is from one (art/make_land.mjs)
-[Raw] [Wrap(Wrap.Repeat)] asset Texture land = "art/land.png";
+// Where the towns are, for the land to rise under them (Look fills it once)
+local singleton Atlas
+{
+    float3[12] towns;
+    bool made;
+}
 
 // A ball around the eye: each pixel of it is a ray
 struct Around
@@ -22,24 +26,17 @@ struct Sky
     float clouds;   // How far the clouds have turned
 }
 
-// A corner of a plane or a lantern, with which way it faces
+// A corner of a shape, with which way it faces
 struct Corner
 {
     float3 position;
     float3 normal;
 }
 
-// One plane, or one lantern
+// One of a shape: where, and its color
 struct Placed
 {
     float4x4 transform;
-    Color paint;
-}
-
-// A trail's corner: where it is, and how bright
-struct Streak
-{
-    float3 position;
     Color paint;
 }
 
@@ -51,13 +48,24 @@ Color Mix(Color a, Color b, float t)
     return Color(Math.Lerp(a.r, b.r, t), Math.Lerp(a.g, b.g, t), Math.Lerp(a.b, b.b, t), 1);
 }
 
-// Kilometres from the coast at a place: inland is more than 0
-float Coast(float3 n)
+// How high a place is, in something like kilometres above the sea: noise,
+// bent by more noise so the continents aren't round, and land round every
+// town. The world is made up, so nothing has to be stored for it.
+float Relief(float3 n, Atlas atlas)
 {
-    float lat = Math.Atan2(n.y, Math.Length(n.xz));
-    float lon = Math.Atan2(n.z, n.x);
-    var uv = float2(lon / Math.TAU + 0.5, Math.Clamp(0.5 - lat / Math.PI, 0.0005, 0.9995));
-    return (land.Sample(uv, Filter.Bilinear, Wrap.Repeat).r * 255 - 128) / 127 * 400;
+    var warp = float3(Math.Simplex(n * 1.7 + float3(3.1, 0, 0)), Math.Simplex(n * 1.7 + float3(0, 7.3, 0)),
+                      Math.Simplex(n * 1.7 + float3(0, 0, 5.9)));
+    var w = n + warp * 0.35;
+    mut float h = Math.Simplex(w * 1.4) * 0.55 + Math.Simplex(w * 3.1) * 0.27 + Math.Simplex(w * 6.7) * 0.13
+                + Math.Simplex(w * 14.3) * 0.06 - 0.1;
+    // Land round each town, its shore as ragged as any
+    float rag = Math.Simplex(n * 30) * 0.0025 + Math.Simplex(n * 90) * 0.001;
+    foreach (var town in atlas.towns)
+    {
+        float near = Math.SmoothStep(0.994, 0.9995, Math.Dot(n, town) + rag);
+        h = Math.Max(h, near * 0.12 - 0.01 + h * 0.2);
+    }
+    return h * 1200;
 }
 
 Color Ground(float3 n, float km, float wide)
@@ -67,25 +75,28 @@ Color Ground(float3 n, float km, float wide)
     float fine = Math.Simplex(n * 1500) * 0.3 * Math.Saturate(1 - wide / 6) + Math.Simplex(n * 9000) * 0.25 * Math.Saturate(1 - wide)
                + Math.Simplex(n * 50000) * 0.2 * Math.Saturate(1 - wide * 6);
     float grain = Math.Simplex(n * 40) * 0.5 + Math.Simplex(n * 160) * 0.25 * Math.Saturate(1 - wide / 40) + fine;
-    var green = Color(0.26, 0.47, 0.30);
-    var forest = Color(0.16, 0.34, 0.24);
-    var sand = Color(0.80, 0.67, 0.44);
+    // How wet a place is, its own noise: forests where it's wet, grass, then dry plains
+    float wet = Math.Simplex(n * 2.3 + float3(11, 0, 0)) * 0.7 + Math.Simplex(n * 7 + float3(0, 13, 0)) * 0.3 + grain * 0.15;
+    var grass = Color(0.36, 0.55, 0.30);
+    var forest = Color(0.17, 0.38, 0.24);
+    var plain = Color(0.70, 0.64, 0.42);
+    var beach = Color(0.86, 0.79, 0.58);
+    var rock = Color(0.46, 0.42, 0.38);
     var snow = Color(0.93, 0.95, 0.98);
-    // Deserts in the dry bands either side of the tropics, forests north of them, ice at the ends
-    float dry = Math.SmoothStep(12, 22, Math.Abs(lat)) * (1 - Math.SmoothStep(32, 40, Math.Abs(lat)));
-    mut var color = Mix(green, sand, Math.Saturate(dry * 1.3 + grain * 0.6 - 0.15));
-    color = Mix(color, forest, Math.SmoothStep(45, 58, Math.Abs(lat)) * Math.Saturate(0.7 + grain));
-    float ice = lat < -60 ? 1 : Math.SmoothStep(64, 74, lat + grain * 6);
-    color = Mix(color, snow, ice);
-    // Higher inland, a little darker and rougher
-    return Mix(color, Color(0.36, 0.33, 0.30), Math.Saturate((km - 250) / 400) * 0.4 * (1 - ice));
+    mut var color = Mix(plain, grass, Math.SmoothStep(-0.45, -0.1, wet));
+    color = Mix(color, forest, Math.SmoothStep(0.15, 0.45, wet));
+    // A beach at the water, rock up high, snow higher, and at the ends of the world
+    color = Mix(beach, color, Math.SmoothStep(2, 12, km));
+    color = Mix(color, rock, Math.SmoothStep(380, 560, km + grain * 60));
+    float ice = Math.Max(Math.SmoothStep(66, 76, Math.Abs(lat) + grain * 6), Math.SmoothStep(560, 680, km + grain * 80));
+    return Mix(color, snow, ice);
 }
 
 Color Sea(float km)
 {
     var shallow = Color(0.12, 0.42, 0.50);
     var deep = Color(0.04, 0.10, 0.22);
-    return Mix(shallow, deep, Math.Saturate(-km / 140));
+    return Mix(shallow, deep, Math.Saturate(-km / 90));
 }
 
 // Stars where no planet is: a few cells of the sky, each with one
@@ -102,7 +113,7 @@ Color Space(float3 d)
     return Color(bg.r + shine, bg.g + shine, bg.b + shine * 1.1, 1);
 }
 
-frag Earth(Around around, out Color color, Sky sky)
+frag Earth(Around around, out Color color, Sky sky, Atlas atlas)
 {
     float3 d = Math.Normalize(this.world);
     float b = Math.Dot(d, sky.center);
@@ -121,8 +132,8 @@ frag Earth(Around around, out Color color, Sky sky)
     float3 n = Math.Normalize(d * t - sky.center);
     // Ground or sea, the coast drawn as sharp as a pixel at any height
     float wide = Math.Max(t * sky.pixel / Math.Max(Math.Dot(n, -d), 0.12) / 1000, 0.05);
-    float km = Coast(n);
-    float detail = Math.Simplex(n * 900) * 6 + Math.Simplex(n * 7000) * 1.2 + Math.Simplex(n * 40000) * 0.25;
+    float km = Relief(n, atlas);
+    float detail = Math.Simplex(n * 120) * 30 + Math.Simplex(n * 900) * 6 + Math.Simplex(n * 7000) * 1.2 + Math.Simplex(n * 40000) * 0.25;
     float shore = km + detail * Math.Saturate(1 - wide / 8);
     float onLand = Math.SmoothStep(-wide, wide, shore);
     mut var surface = Mix(Sea(shore), Ground(n, km, wide), onLand);
@@ -133,7 +144,7 @@ frag Earth(Around around, out Color color, Sky sky)
     // Day and night, with the sun glinting off the sea
     float lit = Math.Dot(n, sky.sun);
     float day = Math.SmoothStep(-0.08, 0.25, lit);
-    float glint = Math.Pow(Math.Max(Math.Dot(Math.Reflect(d, n), sky.sun), 0), 60) * (1 - onLand) * (1 - cloud) * day;
+    float glint = Math.Pow(Math.Max(Math.Dot(Math.Reflect(d, n), sky.sun), 0), 400) * 0.35 * (1 - onLand) * (1 - cloud) * day;
     var night = Color(surface.r * 0.06 + 0.01, surface.g * 0.07 + 0.015, surface.b * 0.10 + 0.04, 1);
     var shade = 0.35 + 0.65 * Math.Saturate(lit);
     var lighted = Color(surface.r * shade + glint, surface.g * shade + glint, surface.b * shade + glint, 1);
@@ -143,15 +154,15 @@ frag Earth(Around around, out Color color, Sky sky)
     color = Mix(ground, air, Math.Saturate(haze));
 }
 
-// A plane: paper, lit from the sun, in its player's color
-frag Paper(Corner corner, out Color color, Placed placed, Instance instance, Sky sky)
+// What's on the planet: walkers, cars, trees, lit from the sun
+frag Lit(Corner corner, out Color color, Placed placed, Instance instance, Sky sky)
 {
     var normal = instance.Normal(corner.normal);
-    float lit = Math.Abs(Math.Dot(normal, sky.sun)) * 0.55 + 0.45;
+    float lit = Math.Max(Math.Dot(normal, sky.sun), 0) * 0.6 + (normal.y * 0.5 + 0.5) * 0.15 + 0.32;
     color = Color(placed.paint.r * lit, placed.paint.g * lit, placed.paint.b * lit, 1);
 }
 
-// A lantern: a glow, brightest in its middle, added to what's behind it
+// A glow, brightest in its middle, added to what's behind it: a city on the globe, confetti
 frag Glow(Corner corner, out Color color, Placed placed)
 {
     float r = Math.Length(corner.position.xy);
@@ -160,7 +171,87 @@ frag Glow(Corner corner, out Color color, Placed placed)
     color = Color(placed.paint.r * glow, placed.paint.g * glow, placed.paint.b * glow, 1);
 }
 
-frag Trail(Streak streak, out Color color)
+// A soft shadow under something, darkening the ground
+frag Shade(Corner corner, out Color color, Placed placed)
 {
-    color = streak.paint;
+    float r = Math.Length(corner.position.xy);
+    color = Color(0, 0, 0, Math.Saturate(1 - r) * placed.paint.a);
+}
+
+// A city's ground, in metres from its middle: the square, the roads, grass,
+// fading into the land around at its edge
+struct Spot
+{
+    float3 position;
+    float2 at;
+}
+
+frag Streets(Spot spot, out Color color, Sky sky)
+{
+    var p = spot.at;
+    float r = Math.Length(p);
+    float grain = Math.Simplex(float3(p * 0.08, 1)) * 0.5 + Math.Simplex(float3(p * 0.6, 2)) * 0.25;
+    var grass = Color(0.30 + grain * 0.05, 0.50 + grain * 0.07, 0.27, 1);
+    mut var ground = grass;
+    var stone = Color(0.72, 0.66, 0.58, 1);
+    var tarmac = Color(0.20, 0.21, 0.23, 1);
+    var kerb = Color(0.58, 0.58, 0.60, 1);
+    // The square, paved in stones a little apart, each its own shade
+    if (r < PLAZA)
+    {
+        var tile = p / 1.5;
+        var cell = Math.Floor(tile);
+        var within = tile - cell;
+        float shade = (Math.Hash(int2(cell)) % 100) / 100.0 * 0.08 - 0.04;
+        bool grout = within.x < 0.06 || within.y < 0.06;
+        ground = grout ? Color(0.52, 0.48, 0.43, 1) : Color(stone.r + shade, stone.g + shade, stone.b + shade, 1);
+    }
+    // The four streets out of the square and the ring road, a kerb each side and a dashed line down the middle
+    float across = Math.Min(Math.Abs(p.x), Math.Abs(p.y));
+    float along = Math.Abs(p.x) < Math.Abs(p.y) ? p.y : p.x;
+    if (r >= PLAZA && r < EDGE - 20)
+    {
+        if (across < ROAD) ground = across < ROAD - 2 ? tarmac : kerb;
+        if (across < 0.15 && Math.Sin(along * 0.9) > 0.2) ground = Color(0.9, 0.85, 0.6, 1);
+    }
+    float fromRing = Math.Abs(r - RING);
+    if (fromRing < ROAD)
+    {
+        ground = fromRing < ROAD - 2 ? tarmac : kerb;
+        if (fromRing < 0.15 && Math.Sin(Math.Atan2(p.x, p.y) * RING * 0.9) > 0.2) ground = Color(0.95, 0.95, 0.95, 1);
+    }
+    var up = Math.Normalize(-sky.center);
+    float lit = 0.55 + 0.45 * Math.Saturate(Math.Dot(up, sky.sun) + 0.3);
+    color = Color(ground.r * lit, ground.g * lit, ground.b * lit, Math.Saturate((EDGE - r) / 40));
+}
+
+// A building: walls with rows of windows, and a roof
+struct Tower
+{
+    float4x4 transform;
+    float3 size;
+    Color paint;
+}
+
+frag Wall(Corner corner, out Color color, Tower tower, Instance instance, Sky sky)
+{
+    var normal = instance.Normal(corner.normal);
+    var p = (corner.position + float3(0.5, 0.5, 0.5)) * tower.size;
+    mut var paint = tower.paint;
+    if (Math.Abs(corner.normal.y) < 0.5)
+    {
+        // Across the wall and up it, in metres
+        float u = Math.Abs(corner.normal.x) > 0.5 ? p.z : p.x;
+        float floor = p.y - Math.Floor(p.y / 3.2) * 3.2;
+        float bay = u - Math.Floor(u / 2.8) * 2.8;
+        bool window = floor > 1.1 && floor < 2.6 && bay > 0.6 && bay < 2.2 && p.y > 1;
+        if (window) paint = Color(0.55, 0.68, 0.78, 1);
+        if (p.y < 0.4) paint = Color(paint.r * 0.6, paint.g * 0.6, paint.b * 0.6, 1);
+    }
+    else
+    {
+        paint = Color(paint.r * 0.7, paint.g * 0.7, paint.b * 0.7, 1);
+    }
+    float lit = Math.Max(Math.Dot(normal, sky.sun), 0) * 0.55 + 0.4;
+    color = Color(paint.r * lit, paint.g * lit, paint.b * lit, 1);
 }

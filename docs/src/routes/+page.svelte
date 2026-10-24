@@ -22,7 +22,7 @@
         if (!eager()) return;
         let frame: HTMLIFrameElement | undefined;
         let opening = 0;
-        const title = 'Earth: a paper plane for everyone on this page, around one planet';
+        const title = 'A planet for everyone on this page: towns to walk round together';
         async function open() {
             const asked = ++opening;
             const backend = new URLSearchParams(location.search).get('backend');
@@ -108,7 +108,7 @@
                 <img src="/favicon.svg" alt="" width="320" height="320" />
             </div>
             {#if shown}
-                <p class="caption">Live: click the planet to fly. <a href={full} target="_blank">Full screen</a></p>
+                <p class="caption">Live: click a town to walk among whoever's there. <a href={full} target="_blank">Full screen</a></p>
             {/if}
         </div>
     </section>

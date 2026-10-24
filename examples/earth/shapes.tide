@@ -1,0 +1,87 @@
+// The meshes everything is drawn with, made once as the game starts: a ball
+// of rings (heads, bodies, trees, and the sky's rays), a box (buildings, cars),
+// a card (glows and shadows), and a city's ground.
+
+local singleton Shapes
+{
+    List<Around> sky;
+    List<int> skyFaces;
+    List<Corner> ball;
+    List<int> ballFaces;
+    List<Corner> box;
+    List<int> boxFaces;
+    List<Corner> card;
+    List<int> cardFaces;
+    List<Spot> ground;
+    List<int> groundFaces;
+}
+
+void Build(mut Shapes shapes)
+{
+    // A ball of radius 1, rings from top to bottom, its normals its corners
+    for (var ring = 0; ring <= 10; ring++)
+    {
+        for (var step = 0; step <= 16; step++)
+        {
+            float across = step * Math.TAU / 16;
+            float down = ring * Math.PI / 10;
+            var at = float3(Math.Sin(down) * Math.Cos(across), Math.Cos(down), Math.Sin(down) * Math.Sin(across));
+            shapes.sky.Add(Around { position = at });
+            shapes.ball.Add(Corner { position = at, normal = at });
+            if (ring < 10 && step < 16)
+            {
+                int first = ring * 17 + step;
+                shapes.ballFaces.Add(first);
+                shapes.ballFaces.Add(first + 1);
+                shapes.ballFaces.Add(first + 17);
+                shapes.ballFaces.Add(first + 1);
+                shapes.ballFaces.Add(first + 18);
+                shapes.ballFaces.Add(first + 17);
+            }
+        }
+    }
+    shapes.skyFaces = shapes.ballFaces;
+    // A box from -0.5 to 0.5, four corners a side so each side has its own normal
+    for (var side = 0; side < 6; side++)
+    {
+        var normal = side == 0 ? float3(1, 0, 0) : side == 1 ? float3(-1, 0, 0) : side == 2 ? float3(0, 1, 0)
+                   : side == 3 ? float3(0, -1, 0) : side == 4 ? float3(0, 0, 1) : float3(0, 0, -1);
+        var u = Math.Abs(normal.y) > 0.5 ? float3(1, 0, 0) : Math.Cross(float3(0, 1, 0), normal);
+        var v = Math.Cross(normal, u);
+        int first = shapes.box.count;
+        shapes.box.Add(Corner { position = (normal - u - v) * 0.5, normal = normal });
+        shapes.box.Add(Corner { position = (normal - u + v) * 0.5, normal = normal });
+        shapes.box.Add(Corner { position = (normal + u + v) * 0.5, normal = normal });
+        shapes.box.Add(Corner { position = (normal + u - v) * 0.5, normal = normal });
+        shapes.boxFaces.Add(first);
+        shapes.boxFaces.Add(first + 1);
+        shapes.boxFaces.Add(first + 2);
+        shapes.boxFaces.Add(first);
+        shapes.boxFaces.Add(first + 2);
+        shapes.boxFaces.Add(first + 3);
+    }
+    shapes.card = [Corner { position = float3(-1, -1, 0), normal = float3(0, 0, -1) }, Corner { position = float3(-1, 1, 0), normal = float3(0, 0, -1) },
+                   Corner { position = float3(1, 1, 0), normal = float3(0, 0, -1) }, Corner { position = float3(1, -1, 0), normal = float3(0, 0, -1) }];
+    shapes.cardFaces = [0, 1, 2, 0, 2, 3];
+    // A city's ground: rings round its middle, out to its edge, x east and z north
+    for (var ring = 0; ring <= 24; ring++)
+    {
+        float r = EDGE * ring / 24.0;
+        for (var step = 0; step <= 64; step++)
+        {
+            float turn = step * Math.TAU / 64;
+            var at = float2(Math.Sin(turn), Math.Cos(turn)) * r;
+            shapes.ground.Add(Spot { position = float3(at.x, 0, at.y), at = at });
+            if (ring < 24 && step < 64)
+            {
+                int first = ring * 65 + step;
+                shapes.groundFaces.Add(first);
+                shapes.groundFaces.Add(first + 65);
+                shapes.groundFaces.Add(first + 1);
+                shapes.groundFaces.Add(first + 1);
+                shapes.groundFaces.Add(first + 65);
+                shapes.groundFaces.Add(first + 66);
+            }
+        }
+    }
+}
