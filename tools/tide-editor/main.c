@@ -665,13 +665,15 @@ static int frame(void *user, float seconds)
     const bool has_document=e->doc.path!=NULL;
     const bool has_root=e->doc.prefabs.count>0;
     const int toolbar_disabled=tide_gui_begin_disabled(&e->gui,!has_document);
-    int root_disabled=tide_gui_begin_disabled(&e->gui,!has_root);
+    int root_disabled=tide_gui_begin_disabled(&e->gui,!has_root && (!has_document || !editor_dirty(&e->doc)));
     if(button(e,1,(tide_rect){234,12,64,28},"Save")) queue(e,SAVE);
     tide_gui_close(&e->gui,root_disabled);
     if(button(e,2,(tide_rect){306,12,64,28},"Undo")) queue(e,UNDO);
     if(button(e,3,(tide_rect){378,12,64,28},"Redo")) queue(e,REDO);
-    root_disabled=tide_gui_begin_disabled(&e->gui,!has_root);
+    root_disabled=tide_gui_begin_disabled(&e->gui,!has_root && !playing(e));
     if(button(e,10,(tide_rect){450,12,86,28},playing(e) ? "Stop" : "Play")) queue(e,playing(e) ? STOP : PLAY);
+    tide_gui_close(&e->gui,root_disabled);
+    root_disabled=tide_gui_begin_disabled(&e->gui,!has_root);
     if(button(e,11,(tide_rect){544,12,112,28},"Set startup")) queue(e,SET_STARTUP);
     tide_gui_close(&e->gui,root_disabled);
     if(button(e,4,(tide_rect){size.x-86,12,76,28},"Reload")) { if(editor_dirty(&e->doc)) e->discard=true; else queue(e,RELOAD); }
@@ -688,12 +690,12 @@ static int frame(void *user, float seconds)
         if(e->devices.keyboard.o.down) open_dialog(e,DIALOG_OPEN,NULL,NULL);
     }
     if (has_document && ctrl && !tide_gui_typing(&e->gui) && !modal_open) {
-        if (has_root && e->devices.keyboard.s.down) queue(e, SAVE);
+        if ((has_root || editor_dirty(&e->doc)) && e->devices.keyboard.s.down) queue(e, SAVE);
         if (e->devices.keyboard.z.down) queue(e, e->devices.keyboard.leftShift.pressed ? REDO : UNDO);
         if (e->devices.keyboard.y.down) queue(e, REDO);
     }
     if (has_document && !ctrl && !tide_gui_typing(&e->gui) && !modal_open) {
-        if(has_root && e->devices.keyboard.f5.down) queue(e,playing(e) ? STOP : PLAY);
+        if((has_root || playing(e)) && e->devices.keyboard.f5.down) queue(e,playing(e) ? STOP : PLAY);
         if(e->selected>0 && editor_can_structure(&e->doc,e->selected)) {
             if(e->devices.keyboard.f2.down) open_dialog(e,DIALOG_RENAME,node_name(&e->doc.nodes.items[e->selected]),NULL);
             if(e->devices.keyboard.delete.down) queue(e,DELETE_NODE);

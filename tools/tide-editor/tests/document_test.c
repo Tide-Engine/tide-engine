@@ -572,6 +572,10 @@ TIDE_TEST(editor_initialize_empty_sources_preserves_bytes_and_uses_one_draft_tra
         document_disk_is(file, cases[i].prefix);
         TIDE_REQUIRE(editor_save(&d)); document_disk_is(file, expected);
         TIDE_CHECK(!editor_dirty(&d) && !sys_exists(d.draft_path));
+        TIDE_REQUIRE(editor_undo(&d, false)); TIDE_CHECK(editor_dirty(&d) && !d.prefabs.count);
+        TIDE_REQUIRE(editor_save(&d)); document_disk_is(file, cases[i].prefix);
+        TIDE_REQUIRE(editor_undo(&d, true));
+        TIDE_REQUIRE(editor_save(&d)); document_disk_is(file, expected);
         editor_close(&d); free(expected); free(file);
     }
 }

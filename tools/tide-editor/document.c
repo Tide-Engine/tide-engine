@@ -440,7 +440,7 @@ bool editor_undo(editor_document *d, const bool redo)
 bool editor_save(editor_document *d)
 {
     editor_refresh(d);
-    if (d->syntax_errors || !d->src || !d->prefabs.count) { snprintf(d->message, sizeof d->message, "Save blocked: fix this document's syntax and keep an authored prefab in the project."); return false; }
+    if (d->syntax_errors || !d->src) { snprintf(d->message, sizeof d->message, "Save blocked: fix this document's syntax and keep it inside the project."); return false; }
     size_t disk_len = 0;
     const size_t saved_len = strlen(d->saved);
     char *disk = sys_read_file(d->path, &disk_len);

@@ -68,7 +68,8 @@ switching. **Next** switches between declarations in one file.
 An existing blank file, including one containing only comments or namespace
 directives, opens a name field and **Create root**. This adds the first prefab
 to the current draft; the file stays unchanged until Save, and Undo removes the
-new root. An empty declaration such as `prefab Empty {}` already has a root and
+new root. Undoing a saved root can also be saved back to the original blank
+contents. An empty declaration such as `prefab Empty {}` already has a root and
 opens the normal hierarchy and inspector. Syntax errors must be fixed before
 creating a root; existing authored declarations are never replaced.
 

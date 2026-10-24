@@ -9,8 +9,10 @@ root with Transform through the existing source-preserving draft transaction;
 it changes no disk bytes until Save and supports one-step undo, redo and recovery.
 Existing comments, BOM, line endings and namespace/using directives are retained.
 Existing empty-body prefab declarations remain ordinary editable roots, with no
-automatic component additions. Save/Play/startup controls stay disabled until a
-root exists. The blank-document UI explains root creation instead of suggesting
+automatic component additions. Play/startup controls stay disabled until a
+root exists. Save is disabled for an unchanged blank file; undoing a saved root
+can still be saved back to the original blank contents. The blank-document UI
+explains root creation instead of suggesting
 a handwritten Main when the metadata check has only a missing-entry diagnostic.
 
 Initialization rejects existing authored declarations, own syntax errors,
