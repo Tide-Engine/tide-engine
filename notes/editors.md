@@ -65,6 +65,14 @@ hash changed. Optional long private-prototype browser playthroughs were stopped;
 they are outside this engine/editor task. Logs and the baseline comparison are
 under build/scene-startup-baseline. The production docs build passes.
 
+Integration: origin/dev merged cleanly, adding only session packet validation
+and its tests/notes. Rebuilt the affected runtime and startup/session targets;
+all six native and five web checks pass, including the complete runtime suite.
+The staged CLI with the merged engine passes the real unsaved Play/pixel test
+again; its native editor --check reports zero errors/warnings. The two remaining
+Foldline web rendering checks also pass. No engine test remains unvalidated;
+optional external browser playthroughs remain outside scope as recorded above.
+
 Limits: no cross-document refactor/undo transaction, inherited structural edits,
 world-preserving authored reparent, child-to-prefab-root path syntax, automatic
 runtime-to-authoring apply, or live defaults/override reconciliation. Conditional
