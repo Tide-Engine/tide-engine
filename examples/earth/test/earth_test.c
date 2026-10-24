@@ -152,6 +152,26 @@ static tide_float3 times(const tide_float3 a, const float k)
     return (tide_float3){a.x * k, a.y * k, a.z * k};
 }
 
+// The terrain can finish an opaque plaza without visiting any other town:
+// no other town's lawn or paving can reach it. Check the actual atlas that
+// the view hands the shader, so changing the layout cannot break that rule.
+TIDE_TEST(earth_town_ground_regions_do_not_overlap)
+{
+    tide_local_init(&local);
+    memset(&devices, 0, sizeof devices);
+    memset(&gui, 0, sizeof gui);
+    draw_world(NULL, player(0));
+    TIDE_REQUIRE(local.Atlas.made);
+    for (int a = 0; a < 10; a++) {
+        for (int b = a + 1; b < 10; b++) {
+            const float chord = length3(minus(local.Atlas.towns.at[a], local.Atlas.towns.at[b])) * PLANET;
+            TIDE_CHECK(chord > 2 * (110 + 20));
+        }
+    }
+    tide_draw_free(&draw);
+    tide_local_free(&local);
+}
+
 static int tree_positions(tide_float3 out[512])
 {
     tide_text_use(NULL, &local.heap);

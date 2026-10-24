@@ -1,0 +1,677 @@
+{
+  "baseline_commit": "1807aa3be380d8efa5f6c9609b53e88c6a19db10",
+  "source_sha256": {
+    "before": "6237b8c6f7965ea64d0fc8fc34880ee41162ca2baea35508371ed93c56700a42",
+    "after": "32a6481a662d4b39de3fbfe1173dee7f5a9c7f063ae3a534b72e456d74211c2d"
+  },
+  "harness_sha256": "dccc36955393bab6a6d13c32f56e496e86b090df44ed1e91edc10d1a1fbbcd9f",
+  "environment": {
+    "os": "Windows 11",
+    "compiler": "Clang 23.1.2 -O2, strict float flags",
+    "gpu": "NVIDIA GeForce RTX 4080 SUPER",
+    "driver": "617.42",
+    "backend": "OpenGL 3.3",
+    "viewport": [
+      1440,
+      900
+    ],
+    "warmup_frames": 60,
+    "measured_frames": 300,
+    "process_pairs": 3,
+    "order": [
+      "before-after",
+      "after-before",
+      "before-after"
+    ],
+    "metric": "asynchronous GPU elapsed queries, whole terrain-only draw list; no readback in measured frames",
+    "limitations": "Other desktop applications remained running. Clocks were not controlled or normalized. Not Pixel measurements or whole-game FPS."
+  },
+  "scene_names": {
+    "0": "globe at 3.2 radii",
+    "1": "Amberhold plaza",
+    "2": "country, latitude 40 longitude 90",
+    "14": "midpoint of road 0"
+  },
+  "gpu_processes": [
+    {
+      "trial": 1,
+      "variant": "before",
+      "scene": 0,
+      "samples": 300,
+      "gpu_median": 0.2048,
+      "gpu_p95": 0.214016
+    },
+    {
+      "trial": 1,
+      "variant": "after",
+      "scene": 0,
+      "samples": 300,
+      "gpu_median": 0.082944,
+      "gpu_p95": 0.089088
+    },
+    {
+      "trial": 1,
+      "variant": "before",
+      "scene": 1,
+      "samples": 300,
+      "gpu_median": 0.574464,
+      "gpu_p95": 0.913408
+    },
+    {
+      "trial": 1,
+      "variant": "after",
+      "scene": 1,
+      "samples": 300,
+      "gpu_median": 0.078848,
+      "gpu_p95": 0.234496
+    },
+    {
+      "trial": 1,
+      "variant": "before",
+      "scene": 2,
+      "samples": 300,
+      "gpu_median": 0.55296,
+      "gpu_p95": 0.923648
+    },
+    {
+      "trial": 1,
+      "variant": "after",
+      "scene": 2,
+      "samples": 300,
+      "gpu_median": 0.22016,
+      "gpu_p95": 0.242688
+    },
+    {
+      "trial": 1,
+      "variant": "before",
+      "scene": 14,
+      "samples": 300,
+      "gpu_median": 0.5376,
+      "gpu_p95": 0.907264
+    },
+    {
+      "trial": 1,
+      "variant": "after",
+      "scene": 14,
+      "samples": 300,
+      "gpu_median": 0.479232,
+      "gpu_p95": 2.05824
+    },
+    {
+      "trial": 2,
+      "variant": "after",
+      "scene": 0,
+      "samples": 300,
+      "gpu_median": 0.08192,
+      "gpu_p95": 0.084992
+    },
+    {
+      "trial": 2,
+      "variant": "before",
+      "scene": 0,
+      "samples": 300,
+      "gpu_median": 0.201728,
+      "gpu_p95": 0.211968
+    },
+    {
+      "trial": 2,
+      "variant": "after",
+      "scene": 1,
+      "samples": 300,
+      "gpu_median": 0.070656,
+      "gpu_p95": 0.075776
+    },
+    {
+      "trial": 2,
+      "variant": "before",
+      "scene": 1,
+      "samples": 300,
+      "gpu_median": 0.553984,
+      "gpu_p95": 0.816128
+    },
+    {
+      "trial": 2,
+      "variant": "after",
+      "scene": 2,
+      "samples": 300,
+      "gpu_median": 0.214016,
+      "gpu_p95": 0.219136
+    },
+    {
+      "trial": 2,
+      "variant": "before",
+      "scene": 2,
+      "samples": 300,
+      "gpu_median": 0.498688,
+      "gpu_p95": 0.67584
+    },
+    {
+      "trial": 2,
+      "variant": "after",
+      "scene": 14,
+      "samples": 300,
+      "gpu_median": 0.140288,
+      "gpu_p95": 0.141312
+    },
+    {
+      "trial": 2,
+      "variant": "before",
+      "scene": 14,
+      "samples": 300,
+      "gpu_median": 0.490496,
+      "gpu_p95": 0.669696
+    },
+    {
+      "trial": 3,
+      "variant": "before",
+      "scene": 0,
+      "samples": 300,
+      "gpu_median": 0.18432,
+      "gpu_p95": 0.190464
+    },
+    {
+      "trial": 3,
+      "variant": "after",
+      "scene": 0,
+      "samples": 300,
+      "gpu_median": 0.073728,
+      "gpu_p95": 0.0768
+    },
+    {
+      "trial": 3,
+      "variant": "before",
+      "scene": 1,
+      "samples": 300,
+      "gpu_median": 0.569344,
+      "gpu_p95": 0.812032
+    },
+    {
+      "trial": 3,
+      "variant": "after",
+      "scene": 1,
+      "samples": 300,
+      "gpu_median": 0.06656,
+      "gpu_p95": 0.069632
+    },
+    {
+      "trial": 3,
+      "variant": "before",
+      "scene": 2,
+      "samples": 300,
+      "gpu_median": 0.497664,
+      "gpu_p95": 0.719872
+    },
+    {
+      "trial": 3,
+      "variant": "after",
+      "scene": 2,
+      "samples": 300,
+      "gpu_median": 0.214016,
+      "gpu_p95": 0.216064
+    },
+    {
+      "trial": 3,
+      "variant": "before",
+      "scene": 14,
+      "samples": 300,
+      "gpu_median": 0.49152,
+      "gpu_p95": 0.497664
+    },
+    {
+      "trial": 3,
+      "variant": "after",
+      "scene": 14,
+      "samples": 300,
+      "gpu_median": 0.140288,
+      "gpu_p95": 0.144384
+    }
+  ],
+  "pixel_comparisons": [
+    {
+      "backend": "opengl",
+      "scene": 0,
+      "differing": 520,
+      "over_one": 0,
+      "maximum": 1,
+      "mean": 0.00013734567901234568
+    },
+    {
+      "backend": "opengl",
+      "scene": 1,
+      "differing": 0,
+      "over_one": 0,
+      "maximum": 0,
+      "mean": 0.0
+    },
+    {
+      "backend": "opengl",
+      "scene": 2,
+      "differing": 5,
+      "over_one": 0,
+      "maximum": 1,
+      "mean": 1.286008230452675e-06
+    },
+    {
+      "backend": "opengl",
+      "scene": 3,
+      "differing": 8,
+      "over_one": 0,
+      "maximum": 1,
+      "mean": 2.05761316872428e-06
+    },
+    {
+      "backend": "opengl",
+      "scene": 4,
+      "differing": 0,
+      "over_one": 0,
+      "maximum": 0,
+      "mean": 0.0
+    },
+    {
+      "backend": "opengl",
+      "scene": 5,
+      "differing": 3,
+      "over_one": 1,
+      "maximum": 45,
+      "mean": 3.0606995884773666e-05
+    },
+    {
+      "backend": "opengl",
+      "scene": 6,
+      "differing": 3,
+      "over_one": 0,
+      "maximum": 1,
+      "mean": 7.716049382716049e-07
+    },
+    {
+      "backend": "opengl",
+      "scene": 7,
+      "differing": 0,
+      "over_one": 0,
+      "maximum": 0,
+      "mean": 0.0
+    },
+    {
+      "backend": "opengl",
+      "scene": 8,
+      "differing": 2,
+      "over_one": 0,
+      "maximum": 1,
+      "mean": 5.1440329218107e-07
+    },
+    {
+      "backend": "opengl",
+      "scene": 9,
+      "differing": 8,
+      "over_one": 0,
+      "maximum": 1,
+      "mean": 2.05761316872428e-06
+    },
+    {
+      "backend": "opengl",
+      "scene": 10,
+      "differing": 2,
+      "over_one": 0,
+      "maximum": 1,
+      "mean": 5.1440329218107e-07
+    },
+    {
+      "backend": "opengl",
+      "scene": 11,
+      "differing": 4,
+      "over_one": 0,
+      "maximum": 1,
+      "mean": 1.02880658436214e-06
+    },
+    {
+      "backend": "opengl",
+      "scene": 12,
+      "differing": 1,
+      "over_one": 1,
+      "maximum": 46,
+      "mean": 3.112139917695473e-05
+    },
+    {
+      "backend": "opengl",
+      "scene": 13,
+      "differing": 5,
+      "over_one": 0,
+      "maximum": 1,
+      "mean": 1.286008230452675e-06
+    },
+    {
+      "backend": "opengl",
+      "scene": 14,
+      "differing": 4,
+      "over_one": 0,
+      "maximum": 1,
+      "mean": 1.286008230452675e-06
+    },
+    {
+      "backend": "opengl",
+      "scene": 15,
+      "differing": 2,
+      "over_one": 0,
+      "maximum": 1,
+      "mean": 5.1440329218107e-07
+    },
+    {
+      "backend": "opengl",
+      "scene": 16,
+      "differing": 2,
+      "over_one": 0,
+      "maximum": 1,
+      "mean": 5.1440329218107e-07
+    },
+    {
+      "backend": "opengl",
+      "scene": 17,
+      "differing": 28,
+      "over_one": 0,
+      "maximum": 1,
+      "mean": 7.458847736625514e-06
+    },
+    {
+      "backend": "opengl",
+      "scene": 18,
+      "differing": 2,
+      "over_one": 0,
+      "maximum": 1,
+      "mean": 5.1440329218107e-07
+    },
+    {
+      "backend": "opengl",
+      "scene": 19,
+      "differing": 4,
+      "over_one": 0,
+      "maximum": 1,
+      "mean": 1.02880658436214e-06
+    },
+    {
+      "backend": "opengl",
+      "scene": 20,
+      "differing": 3,
+      "over_one": 0,
+      "maximum": 1,
+      "mean": 7.716049382716049e-07
+    },
+    {
+      "backend": "opengl",
+      "scene": 21,
+      "differing": 3,
+      "over_one": 0,
+      "maximum": 1,
+      "mean": 7.716049382716049e-07
+    },
+    {
+      "backend": "opengl",
+      "scene": 22,
+      "differing": 5,
+      "over_one": 0,
+      "maximum": 1,
+      "mean": 1.5432098765432098e-06
+    },
+    {
+      "backend": "opengl",
+      "scene": 23,
+      "differing": 2,
+      "over_one": 0,
+      "maximum": 1,
+      "mean": 5.1440329218107e-07
+    },
+    {
+      "backend": "opengl",
+      "scene": 24,
+      "differing": 3,
+      "over_one": 0,
+      "maximum": 1,
+      "mean": 7.716049382716049e-07
+    },
+    {
+      "backend": "opengl",
+      "scene": 25,
+      "differing": 124,
+      "over_one": 0,
+      "maximum": 1,
+      "mean": 3.1893004115226336e-05
+    },
+    {
+      "backend": "opengl",
+      "scene": 26,
+      "differing": 554,
+      "over_one": 6,
+      "maximum": 3,
+      "mean": 0.00016409465020576132
+    },
+    {
+      "backend": "vulkan",
+      "scene": 0,
+      "differing": 0,
+      "over_one": 0,
+      "maximum": 0,
+      "mean": 0.0
+    },
+    {
+      "backend": "vulkan",
+      "scene": 1,
+      "differing": 0,
+      "over_one": 0,
+      "maximum": 0,
+      "mean": 0.0
+    },
+    {
+      "backend": "vulkan",
+      "scene": 2,
+      "differing": 0,
+      "over_one": 0,
+      "maximum": 0,
+      "mean": 0.0
+    },
+    {
+      "backend": "vulkan",
+      "scene": 3,
+      "differing": 0,
+      "over_one": 0,
+      "maximum": 0,
+      "mean": 0.0
+    },
+    {
+      "backend": "vulkan",
+      "scene": 4,
+      "differing": 0,
+      "over_one": 0,
+      "maximum": 0,
+      "mean": 0.0
+    },
+    {
+      "backend": "vulkan",
+      "scene": 5,
+      "differing": 0,
+      "over_one": 0,
+      "maximum": 0,
+      "mean": 0.0
+    },
+    {
+      "backend": "vulkan",
+      "scene": 6,
+      "differing": 0,
+      "over_one": 0,
+      "maximum": 0,
+      "mean": 0.0
+    },
+    {
+      "backend": "vulkan",
+      "scene": 7,
+      "differing": 0,
+      "over_one": 0,
+      "maximum": 0,
+      "mean": 0.0
+    },
+    {
+      "backend": "vulkan",
+      "scene": 8,
+      "differing": 1,
+      "over_one": 1,
+      "maximum": 30,
+      "mean": 2.0061728395061728e-05
+    },
+    {
+      "backend": "vulkan",
+      "scene": 9,
+      "differing": 1,
+      "over_one": 1,
+      "maximum": 44,
+      "mean": 3.0092592592592593e-05
+    },
+    {
+      "backend": "vulkan",
+      "scene": 10,
+      "differing": 0,
+      "over_one": 0,
+      "maximum": 0,
+      "mean": 0.0
+    },
+    {
+      "backend": "vulkan",
+      "scene": 11,
+      "differing": 1,
+      "over_one": 1,
+      "maximum": 44,
+      "mean": 2.957818930041152e-05
+    },
+    {
+      "backend": "vulkan",
+      "scene": 12,
+      "differing": 0,
+      "over_one": 0,
+      "maximum": 0,
+      "mean": 0.0
+    },
+    {
+      "backend": "vulkan",
+      "scene": 13,
+      "differing": 1,
+      "over_one": 1,
+      "maximum": 37,
+      "mean": 2.4691358024691357e-05
+    },
+    {
+      "backend": "vulkan",
+      "scene": 14,
+      "differing": 0,
+      "over_one": 0,
+      "maximum": 0,
+      "mean": 0.0
+    },
+    {
+      "backend": "vulkan",
+      "scene": 15,
+      "differing": 0,
+      "over_one": 0,
+      "maximum": 0,
+      "mean": 0.0
+    },
+    {
+      "backend": "vulkan",
+      "scene": 16,
+      "differing": 0,
+      "over_one": 0,
+      "maximum": 0,
+      "mean": 0.0
+    },
+    {
+      "backend": "vulkan",
+      "scene": 17,
+      "differing": 14,
+      "over_one": 0,
+      "maximum": 1,
+      "mean": 3.6008230452674896e-06
+    },
+    {
+      "backend": "vulkan",
+      "scene": 18,
+      "differing": 1,
+      "over_one": 0,
+      "maximum": 1,
+      "mean": 2.57201646090535e-07
+    },
+    {
+      "backend": "vulkan",
+      "scene": 19,
+      "differing": 0,
+      "over_one": 0,
+      "maximum": 0,
+      "mean": 0.0
+    },
+    {
+      "backend": "vulkan",
+      "scene": 20,
+      "differing": 0,
+      "over_one": 0,
+      "maximum": 0,
+      "mean": 0.0
+    },
+    {
+      "backend": "vulkan",
+      "scene": 21,
+      "differing": 0,
+      "over_one": 0,
+      "maximum": 0,
+      "mean": 0.0
+    },
+    {
+      "backend": "vulkan",
+      "scene": 22,
+      "differing": 0,
+      "over_one": 0,
+      "maximum": 0,
+      "mean": 0.0
+    },
+    {
+      "backend": "vulkan",
+      "scene": 23,
+      "differing": 0,
+      "over_one": 0,
+      "maximum": 0,
+      "mean": 0.0
+    },
+    {
+      "backend": "vulkan",
+      "scene": 24,
+      "differing": 0,
+      "over_one": 0,
+      "maximum": 0,
+      "mean": 0.0
+    },
+    {
+      "backend": "vulkan",
+      "scene": 25,
+      "differing": 0,
+      "over_one": 0,
+      "maximum": 0,
+      "mean": 0.0
+    },
+    {
+      "backend": "vulkan",
+      "scene": 26,
+      "differing": 0,
+      "over_one": 0,
+      "maximum": 0,
+      "mean": 0.0
+    }
+  ],
+  "game_capture_comparison": {
+    "viewport": [
+      960,
+      720
+    ],
+    "walking": {
+      "changed_pixels": 1,
+      "max_channel_difference": 1
+    },
+    "driving": {
+      "changed_pixels": 2,
+      "max_channel_difference": 1
+    }
+  }
+}
