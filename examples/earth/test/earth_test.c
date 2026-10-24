@@ -208,6 +208,17 @@ static void sample(void *user, const uint32_t tick, void *input)
     *(Controls *)input = (Controls){.drop = drop, .moves = moves};
 }
 
+// The townsfolk the player's machine has of its home shard's world: only
+// those near enough for it to see them (Seen, Visibility)
+static int people_seen(void)
+{
+    const tide_world *w = tide_client_view(tide_shard_client_home(client)).current;
+    int count = 0;
+    if (!w) return -1;
+    EACH(w, e) count += tide_has_Person(w, e);
+    return count;
+}
+
 // The player's walker as the shards that own it have it
 static int owners(Walker *found)
 {
@@ -278,6 +289,8 @@ TIDE_TEST(earth_a_player_visits_towns_on_two_shards_and_leaves)
     }
     TIDE_CHECK(people == 10 * 6);
     TIDE_CHECK(cars == 11 * 2);
+    // ...but the player's machine has only the townsfolk of the town it's in: the rest are past its horizon
+    TIDE_CHECK(people_seen() == 6);
 
     drop = times(up_at(6, 138), PLANET);
     moves = 2;
@@ -287,6 +300,7 @@ TIDE_TEST(earth_a_player_visits_towns_on_two_shards_and_leaves)
     TIDE_CHECK(tide_shard_client_home_shard(client) != first);
     const tide_client_status home = tide_client_status_of(tide_shard_client_home(client));
     TIDE_CHECK(home.state == TIDE_SESSION_CONNECTED && home.resyncs == 0);
+    TIDE_CHECK(people_seen() == 6); // The new town's, on the new shard
 
     tide_shard_client_destroy(client);
     client = NULL;

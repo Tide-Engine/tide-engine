@@ -12,7 +12,7 @@ settings
     title = "Earth";
     maxPlayers = 64;
     shards = true;
-    reach = 150;   // Metres: further than anything here looks for anything else
+    reach = 320;   // Metres: further than anything here looks for anything else, a player's sight among it
 }
 
 const float WALK = 5;               // Metres a second
@@ -32,6 +32,8 @@ const float TRAFFIC = 14;           // How fast the townsfolk's cars go
 const int PEOPLE = 6;               // Townsfolk in each town
 const int CARS = 2;                 // Cars on each road
 const int COLORS = 8;
+const float SIGHT = 300;            // How far off a player's machine has the townsfolk and the traffic: past the horizon
+const int LOOK = 15;                // Ticks between looks at who's near
 
 scene Main { }
 
@@ -82,6 +84,16 @@ singleton Roster
     int online;
     int next;
     bool seeded;
+}
+
+// Who has a townsperson or a car on their machine: the players near it. The
+// rest of the planet is past their horizon, so their machines needn't run it.
+// Players themselves are everyone's, for the globe's dots and Join.
+component Seen
+{
+    VisibilityGroup group;
+    Audience audience;
+    int next;       // The tick it looks again
 }
 
 event HighFive { }   // Sent to each walker of the two, for what's shown
@@ -146,8 +158,10 @@ system Seed(mut Roster roster)
         {
             var turn = Random.NextFloat(0, Math.TAU);
             var at = Place(town, Clear(town, float2(Math.Sin(turn), Math.Cos(turn)) * Random.NextFloat(PLAZA, TOWN - 15), BODY), 0);
+            var group = Visibility.CreateGroup(Audience.None);
             Spawn(Walker { position = at, color = 100 + Random.NextInt(6), placed = true },
-                  Person { town = town, goal = at, rest = Random.NextFloat(0, 4) });
+                  Person { town = town, goal = at, rest = Random.NextFloat(0, 4) },
+                  Visibility { group = group }, Seen { group = group, audience = Audience.None, next = i % LOOK });
         }
     }
     for (var road = 0; road < ROADS; road++)
@@ -157,7 +171,8 @@ system Seed(mut Roster roster)
             float way = i % 2 == 0 ? 1 : -1;
             mut var car = Car { road = road, along = Length(road) * (0.3 + i * 0.4), way = way, speed = TRAFFIC, color = Random.NextInt(COLORS) };
             OnRoad(car);
-            Spawn(car);
+            var group = Visibility.CreateGroup(Audience.None);
+            Spawn(car, Visibility { group = group }, Seen { group = group, audience = Audience.None, next = (road + i) % LOOK });
         }
     }
 }
@@ -437,4 +452,47 @@ system Traffic(mut Car car, Time time, query (Walker walker) walkers, query (Car
     if (car.along > end && car.way > 0) car.way = -1;
     if (car.along < PLAZA + 6 && car.way < 0) car.way = 1;
     OnRoad(car);
+}
+
+// ------------------------------------------------------------ who sees what
+
+// Whether two audiences have the same players
+bool Same(Audience a, Audience b)
+{
+    for (var i = 0; i < 64; i++)
+    {
+        if (a.Contains(PlayerID(i)) != b.Contains(PlayerID(i))) return false;
+    }
+    return true;
+}
+
+// Every so often, the players near a place become who sees what's there, when that changed
+void Spot(mut Seen seen, Audience near, int tick)
+{
+    seen.next = tick + LOOK;
+    if (Same(near, seen.audience)) return;
+    seen.audience = near;
+    Visibility.Set(seen.group, near);
+}
+
+system SeeTownsfolk(mut Seen seen, Walker walker, Time time, query (Walker other, Owner owner, without Person) players, with Person)
+{
+    if (time.tick < seen.next) return;
+    mut var near = Audience.None;
+    foreach (var row in players)
+    {
+        if (row.other.placed && Math.Length(row.other.position - walker.position) < SIGHT) near.Add(row.owner.player);
+    }
+    Spot(seen, near, time.tick);
+}
+
+system SeeTraffic(mut Seen seen, Car car, Time time, query (Walker other, Owner owner, without Person) players)
+{
+    if (time.tick < seen.next) return;
+    mut var near = Audience.None;
+    foreach (var row in players)
+    {
+        if (row.other.placed && Math.Length(row.other.position - car.position) < SIGHT) near.Add(row.owner.player);
+    }
+    Spot(seen, near, time.tick);
 }
