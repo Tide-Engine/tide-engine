@@ -1,5 +1,32 @@
 # The docs site
 
+## City-exit driving and the orbit camera (2026-10-24)
+
+After another report of cities pulling the player back, a fresh production
+client walked from Amberhold's fountain into the countryside. The previous
+edge test only started 115 m from one town, so coverage now includes the
+whole street: all 22 road ends, on foot and in a car, from the square to
+160 m beyond it. Twenty actual server/client trips cover every city in both
+modes, including townsfolk/traffic, 144 Hz clients, 50 ms one-way latency,
+10 ms jitter and 1% packet loss; authoritative and predicted positions must
+both leave, with continued verification. No remaining walking wall reproduced
+in these tests or the refreshed production walking check.
+
+The driving sequence found a further bug: walk backwards, become a car, then
+press W. The camera could remain opposite the car because normalizing a
+linear blend of opposite directions never rotates it. Driving input also
+followed that camera, so W could command reverse or turn back toward town.
+The camera now turns by a signed angle around the surface normal, including
+a half-turn. W/A/D and the stick follow the car's heading while its camera
+turns or looks elsewhere; S remains a brake and walking remains camera-relative.
+Tap-to-go keeps its world-space destination. Both the antipodal camera and
+sideways/backward driving-input regressions fail before their fixes.
+
+Validation: all 19 Earth checks and its three unchanged benchmark pins pass
+on native/web debug; the release web build passes. Native bounded four-region
+captures and browser city exits cover the actual views and sampled controls.
+Publishing/live evidence is recorded after checking the new production client.
+
 ## Town-edge collision correction (2026-10-24)
 
 The reported invisible boundary also reproduces without a shard border.
