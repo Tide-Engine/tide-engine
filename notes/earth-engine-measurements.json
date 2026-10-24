@@ -263,6 +263,49 @@
     "Some exploratory runs overlap CPU builds; final confirmations recorded separately.",
     "Direct uniform array probe required static-lane reads to pass ANGLE warnings and showed no useful gain."
   ],
-  "validation": "Focused native GLSL/WGSL golden, SPIR-V, HLSL and Vulkan/OpenGL pixels pass; focused WebGL, D3D11/WARP and WebGPU pixels pass. Full suites pending integration.",
+  "validation": {
+    "native_engine": {
+      "passed": 2757,
+      "total": 2757
+    },
+    "web_engine": {
+      "passed": 2611,
+      "total": 2611
+    },
+    "native_gpu_checks_passed": 46,
+    "full_configured_native": {
+      "passed": 2768,
+      "enabled": 2769,
+      "disabled": 1,
+      "seconds": 280.85,
+      "failure": "Optional private CRACKED match hash; old/new shader compiler produces identical C except generated #line output paths."
+    },
+    "optional_private_cracked": {
+      "expected": "0a216d532fa6445c",
+      "native_and_wasi_actual": "bf53c0610c47764e",
+      "attribution": [
+        {
+          "file": "game.c",
+          "raw_identical": false,
+          "identical_after_generated_line_paths": true,
+          "normalized_sha256": "2d5ca7b514111d949df455bf70f37e8c2f2f5215140d289fa94ba677fc3cd331"
+        },
+        {
+          "file": "game.h",
+          "raw_identical": true,
+          "identical_after_generated_line_paths": true,
+          "normalized_sha256": "54e0b19c92433983ac95c742ffbe10136b12426c80b54bd29034b5c506769cb2"
+        },
+        {
+          "file": "game_pack.c",
+          "raw_identical": true,
+          "identical_after_generated_line_paths": true,
+          "normalized_sha256": "801bbaa6d1d6cead9f3f0284cbea2af6d2687a4c7d566a6a2e9ea2db534aa591"
+        }
+      ]
+    },
+    "web_optional_tail": "Stopped after required engine tests all passed when the configured suite entered private prototype campaign playtests; no complete private browser coverage claimed.",
+    "earth_source_and_pins": "Unchanged, all checks and benchmark pins passed on native/WASI."
+  },
   "deployed": false
 }

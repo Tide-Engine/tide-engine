@@ -48,8 +48,23 @@ negative coordinates/seeds, coordinate permutations, equal-coordinate and
 pairwise ties, origin and both int seed extremes, in CPU/frag/vert paths and
 after device recreation. Validation initially caught a GLSL/WGSL shift-operand
 type mismatch in the new rotate helper; both the shift count and its literal
-arguments now use uint explicitly. Validation and publication results follow
-once the complete native/web suites and integration finish.
+arguments now use uint explicitly. Merged dev's independent type-alias/Render3D changes without conflicts and
+rebuilt both complete configurations. All required engine checks pass: 2,757
+native and 2,611 web, including 46 native GPU checks, unchanged Earth checks and
+benchmark pins, WebGL, D3D11/WARP, WebGPU, SPIR-V and HLSL. The native configured
+run is 2,768/2,769 enabled cases passing (280.85 s), with its existing disabled
+MicroDuck right-turn case retained. Its sole failure is the optional private
+CRACKED pin, also failing identically on WASI: expected 0a216d532fa6445c,
+actual bf53c0610c47764e. CRACKED uses no simplex helper. A tidec built here with
+only shader.c restored to 9d1907e4 produces byte-identical game.h/game_pack.c
+and identical game.c after normalizing only generated #line output directories.
+This failure is independent of the optimization; no prototype pin is changed.
+The web run's optional private campaign tail was stopped after all required
+engine checks passed, per the engine-only scope; complete private browser
+coverage is not claimed. Other OSes, Android and sanitizers remain CI coverage.
+No workflow was dispatched or awaited. The staged release CLI builds Earth's
+client/server deployment bundle successfully; publication and the coordinated
+Radeon confirmation are recorded below when complete.
 
 ## Mutable callable arguments (2026-10-24)
 
