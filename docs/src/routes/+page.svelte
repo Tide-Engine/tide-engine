@@ -8,40 +8,69 @@
     const external = (link: string) => /^https?:/.test(link);
 
     // The planet beside the hero (examples/earth): a game of its own in a
-    // frame, which takes the logo's place once it has drawn. It starts by
-    // itself, but for a reader who asked for less motion or less data, and
-    // stops once the hero is well out of view. A build without the game keeps
-    // the logo.
+    // frame, which takes the logo's place once it has drawn. It's the world
+    // everyone on this page shares, hosted (Tide-Engine/tide-services), when
+    // that can be played now; else this machine's own, from this site, with
+    // bots. It starts by itself, but for a reader who asked for less motion
+    // or less data, and stops once the hero is well out of view. A build
+    // without the game keeps the logo.
+    const shared = 'https://play.tide-engine.dev/g/29c727eab929afcbef23455a6bf73125/';
     let place: HTMLElement;
     let shown = $state(false);
+    let full = $state('/earth/');
     onMount(() => {
         if (!eager()) return;
         let frame: HTMLIFrameElement | undefined;
-        function open() {
-            const url = new URL('/earth/', location.href);
-            url.searchParams.set('embedded', '');
-            url.searchParams.set('wait', '');
+        let opening = 0;
+        const title = 'Earth: a paper plane for everyone on this page, around one planet';
+        async function open() {
+            const asked = ++opening;
             const backend = new URLSearchParams(location.search).get('backend');
-            if (backend) url.searchParams.set('backend', backend);
+            let hosted = false;
+            try {
+                hosted = (await fetch(`${shared}ready`, { signal: AbortSignal.timeout(4000) })).ok;
+            } catch {
+                // Not there, or not playable: this machine's own
+            }
+            if (asked !== opening) return;
             const opened = document.createElement('iframe');
-            opened.title = 'Earth: a paper plane for everyone on this page, around one planet';
-            opened.src = url.href;
-            opened.addEventListener('load', async () => {
-                const page = game(opened);
-                if (typeof page?.start !== 'function') return opened.remove();
-                await page.start();
-                if (frame === opened) shown = true;
-            }, { once: true });
+            opened.title = title;
+            if (hosted) {
+                // Another site's page: it starts as it loads, and says nothing of when it has drawn
+                const url = new URL(shared);
+                url.searchParams.set('embedded', '');
+                if (backend) url.searchParams.set('backend', backend);
+                opened.src = url.href;
+                opened.allow = 'cross-origin-isolated; fullscreen';
+                opened.addEventListener('load', () => setTimeout(() => {
+                    if (frame === opened) shown = true;
+                }, 1500), { once: true });
+                full = shared;
+            } else {
+                const url = new URL('/earth/', location.href);
+                url.searchParams.set('embedded', '');
+                url.searchParams.set('wait', '');
+                if (backend) url.searchParams.set('backend', backend);
+                opened.src = url.href;
+                opened.addEventListener('load', async () => {
+                    const page = game(opened);
+                    if (typeof page?.start !== 'function') return opened.remove();
+                    await page.start();
+                    if (frame === opened) shown = true;
+                }, { once: true });
+                full = '/earth/';
+            }
             place.append(opened);
             frame = opened;
         }
         function close() {
+            opening++;
             frame?.remove();
             frame = undefined;
             shown = false;
         }
         const watching = new IntersectionObserver(([entry]) => {
-            if (entry.isIntersecting && !frame) open();
+            if (entry.isIntersecting && !frame) void open();
             else if (!entry.isIntersecting) close();
         }, { rootMargin: '100% 0px' });
         watching.observe(place);
@@ -79,7 +108,7 @@
                 <img src="/favicon.svg" alt="" width="320" height="320" />
             </div>
             {#if shown}
-                <p class="caption">Live: click the planet to fly. <a href="/earth/" target="_blank">Full screen</a></p>
+                <p class="caption">Live: click the planet to fly. <a href={full} target="_blank">Full screen</a></p>
             {/if}
         </div>
     </section>
