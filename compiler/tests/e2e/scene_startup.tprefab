@@ -1,0 +1,9 @@
+namespace Levels
+{
+    prefab Start
+    {
+        Number { value = 1 };
+        Root { child = Child };
+        entity Child { Number { value = 2 }; }
+    }
+}

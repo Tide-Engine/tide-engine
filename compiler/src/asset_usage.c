@@ -526,6 +526,7 @@ static void strip_assets(program *prog, const bool server)
 {
     if (!prog->assets.count) return;
     asset_usage w = {.server = server, .prog = prog};
+    if (prog->startup_create) queue(&w, USAGE_DECL, prog->startup_create);
     for (int i = 0; i < prog->decls.count; i++) {
         const decl *d = prog->decls.items[i];
         if (server) {
@@ -589,6 +590,7 @@ bool program_simulation_id(const program *prog, uint8_t out[32], const bool cons
     if (prog->visibility_state) { recipient_state_schema(&w); listener_wire(&w); }
     number(&w, prog->start_scenes.count);
     for (int i = 0; i < prog->start_scenes.count; i++) queue(&w, USAGE_DECL, prog->start_scenes.items[i]);
+    if (prog->startup) queue(&w, USAGE_DECL, prog->startup_create ? prog->startup_create : prog->startup);
     for (int i = 0; i < DEVICE_WORDS; i++) number(&w, prog->device_uses[i]);
     for (int i = 0; i < prog->archetypes.count; i++) {
         if (prog->archetype_local.items[i]) continue;

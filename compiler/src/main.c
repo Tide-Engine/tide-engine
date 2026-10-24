@@ -27,6 +27,7 @@ static void usage(void)
             "                 a line of a list can say it too. PACKAGE_<NAME> is defined for\n"
             "                 each package named\n"
             "  --name <name>  base name of the generated files (default: the first file's name)\n"
+            "  --scene <name> start directly in this qualified prefab or scene, overriding settings.startScene\n"
             "  --no-line      don't map generated code back to .tide lines for debuggers\n"
             "  --layout       also describe the data layout, as tide run does for hot reloading\n"
             "  --embed        ...and what another program needs to run the game (tide/embed.h), as tide unity builds it\n"
@@ -58,6 +59,22 @@ typedef struct input_list {
 // The symbols `--define` named.
 static const char *defines[256];
 static int define_count;
+
+static char *overlay_text(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    const long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char *text = size >= 0 ? malloc((size_t)size + 1u) : NULL;
+    const size_t read = text ? fread(text, 1, (size_t)size, f) : 0u;
+    const bool ok = text && read == (size_t)size && !ferror(f);
+    fclose(f);
+    if (!ok) { free(text); return NULL; }
+    text[read] = '\0';
+    return text;
+}
 
 static bool add_define(const char *name)
 {
@@ -160,6 +177,16 @@ int main(const int argc, char **argv)
             opts.out_dir = argv[++i];
         } else if (strcmp(argv[i], "--name") == 0 && i + 1 < argc) {
             opts.name = argv[++i];
+        } else if (strcmp(argv[i], "--scene") == 0 && i + 1 < argc && !opts.scene) {
+            opts.scene = argv[++i];
+        } else if (strcmp(argv[i], "--source-overlay") == 0 && i + 2 < argc && !opts.editor_source) {
+            opts.editor_source = argv[++i];
+            const char *replacement = argv[++i];
+            opts.editor_text = overlay_text(replacement);
+            if (!opts.editor_text) {
+                fprintf(stderr, "tidec: can't read the source overlay replacement '%s'\n", replacement);
+                return 2;
+            }
         } else if (strcmp(argv[i], "--strip-unused-assets") == 0) {
             opts.strip_unused_assets = true;
         } else if (strcmp(argv[i], "--server") == 0) {

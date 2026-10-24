@@ -23,7 +23,7 @@ tide <command> [folder] [options]
 | `tide fetch [folder]` | Downloads the game's packages from git that this machine doesn't have yet, and builds nothing |
 | `tide editors` | Installs bundled plugins into detected VS Code family editors and existing JetBrains IDE profiles |
 | `tide ide <editor>` | Prints setup for Emacs, Vim or Neovim using the installed Tide files |
-| `tide open <file.tprefab>` | Opens the native [scene editor](editors.md#native-scene-editor) |
+| `tide open [file.tprefab \| folder]` | Opens the native [scene editor](editors.md#native-scene-editor), ready to open or create an authored tree |
 | `tide upgrade` | Updates tide to the newest version |
 | `tide version` | Shows tide's version and channel, where it's installed, and which compilers it found |
 | `tide telemetry on\|off\|status` | Turns anonymous [usage data](telemetry.md) on or off, or shows what's sent |
@@ -88,6 +88,7 @@ without those characters.
 ## open
 
 ```sh
+tide open .
 tide open scenes/Level.tprefab
 tide open scenes/Level.tprefab --project .
 tide open scenes/Level.tprefab --check
@@ -95,10 +96,13 @@ tide open scenes/Level.tprefab --preview
 ```
 
 The desktop app edits rooted [prefabs and scenes](../game/scenes.md#authored-prefabs).
+With a project folder, or no argument for the current folder, it opens a workspace
+where New Scene/New Prefab creates the first authored file. `--check` and preview
+flags require an existing `.tprefab` argument.
 It uses the nearest enclosing `tide.packages` as the project root, or the
 prefab's folder if there is none. Use `--project <folder>` when scripts live
 elsewhere in your game's folder. The selected root is visible in the window.
-The first version uses folder/package discovery; it does not read CMake game
+The app uses folder/package discovery; it does not read CMake game
 manifests. Packages must already be available locally (`tide fetch` downloads them).
 
 `tide open --check` runs the same authoring validation without opening a window and
@@ -109,6 +113,9 @@ the normal [hidden input/capture loop](#scripts). The default editor size is
 game's `tide run --size`. `TIDE_HIDDEN` requires one of these bounded modes or `--check`.
 
 See [the editor controls and current limits](editors.md#native-scene-editor).
+New Scene/New Prefab create rooted authored files in that project; Play builds
+the selected tree with the normal game lifecycle. Set startup saves a persistent
+project selection separately from Play.
 
 `--preview` starts with compiled views enabled on authored match entities;
 `--local-preview` uses local placement. Only `[RunInEditor]` and `[EditorOnly]`
@@ -124,6 +131,7 @@ still performs only front-end validation, even with a preview flag.
 | `--release` | Optimizes game and package code, the way players get it |
 | `--web` | A web page (WebGPU, or WebGL 2 where the browser has none), built with clang's WebAssembly target |
 | `--android` | An Android app, for phones and the emulator (see [Android](#android)) |
+| `--scene <Name>` | Starts in the named prefab or scene for this run/build, over the project's `startScene` setting; use the qualified name for a declaration in a namespace |
 | `--define <SYMBOL>` | Defines a symbol for the game's [`#if` lines](../language/namespaces.md#symbols-of-your-own), as many times as there are symbols. `DEBUG` is defined without `--release`. `schedule` and `shaders` take it too |
 | `--title <title>` | The window's title, over the game's `title` setting (default: that, or the folder's name) |
 | `--stats` | Shows the [stats](#stats) in the window's corner, as the game's `stats` setting does. `run` starts them open |
@@ -135,6 +143,32 @@ still performs only front-end validation, even with a preview flag.
 | `--shards <n>`, `--shard-width <units>` | `run` only: a [sharded game](../multiplayer/shards.md)'s match as `n` regions along x, each this wide (16 times its `reach` without it), all on this machine |
 | `-o <path>` | `build` only: where the program goes |
 | `--no-open` | `run --web` only: serves the page without opening a browser |
+
+Choose a startup without writing a `Main` scene:
+
+```sh
+tide run . --scene Levels.Start
+tide build . --scene Levels.Start
+```
+
+For a persistent project choice, put `settings { startScene = Levels.Start; }`
+in a `.tide` file. The command-line selection overrides that setting for the
+build and changes no source. It takes a declaration name, not a file path or
+string expression. CLI names have no file's namespace or `using` context, so
+write `Levels.Start` for a declaration in `namespace Levels;`. Unknown names
+and invalid project settings are compiler errors.
+
+A prefab starts as a match scene with its authored root and complete tree, then
+runs normal initialization, systems, game views, camera and input. A selected
+ordinary scene keeps its match/local placement. With neither selection, the
+existing `scene Main` starts as before; a prefab named Main alone is not an
+entry point. See [Scenes](../game/scenes.md#startup-scene).
+
+Watched builds keep the command's `--scene` selection. Hot reload follows the
+usual state-retention rules; changing startup or prefab text does not recreate
+existing live instances. Restart the run to play from fresh initial state.
+`--scene` leaves the output filename unchanged; use `-o` for a separate build
+artifact.
 
 The engine is optimized in every build. Without `--release`, generated game code and the game's and packages' C/C++ stay unoptimized for debugging; engine and game code retain debug symbols and assertions, and `DEBUG` is defined. Engine objects are cached, so ordinary game edits reuse them. This applies to native, web and Android builds, including hot reload.
 
@@ -439,7 +473,7 @@ server executable; browser players still connect through WebRTC.
 
 ## Multiplayer
 
-`tide run` can start a match others join, or join one. For `--host`, the game's `Main` scene must be the match's (see [Scenes](../game/scenes.md)); a game that starts in a menu does the same from code (see [Matches](../multiplayer/matches.md)).
+`tide run` can start a match others join, or join one. For `--host`, the selected startup must be a match scene (an authored prefab also starts in the match); without a selection, this is `Main` (see [Scenes](../game/scenes.md)). A game that starts in a local menu does the same from code (see [Matches](../multiplayer/matches.md)).
 
 | Option | What it does |
 |---|---|
@@ -539,7 +573,7 @@ tide run --players 2 --script play.txt --size 640 360
 
 Each player is a copy of the game, a program of its own, as on a machine of its own. The copies go a frame at a time, together, so frame 300 is the same moment for every player. Their network is made up, as the run's time and input are: what one sends in a frame, the others read in the next, in the same order every run. Nothing leaves the machine: no port opens, and no relay is asked. So a run of several repeats exactly, as a run of one does, and goes as fast as the machine plays it.
 
-- **Who's in the match.** If the game's `Main` scene is the match's, player 1 opens it, as with `--host`, and the others join it before the first frame: there's nothing to script. A game that starts in a menu opens and joins from its own code, as it does for its players, at the script's clicks and keys.
+- **Who's in the match.** If the selected startup is a match scene or prefab, player 1 opens it, as with `--host`, and the others join it before the first frame: there's nothing to script. Without a startup selection, this uses `Main`. A game that starts in a local menu opens and joins from its own code, as it does for its players, at the script's clicks and keys.
 - **Rooms.** A match that's open is in a room, and each player's room has a code of its own, six of one letter: `AAAAAA` is player 1's, `BBBBBB` player 2's, `CCCCCC` player 3's, and so on through the letters a code has (no `I` or `O`). [`Session.room`](../multiplayer/matches.md#where-this-machine-stands) reads it, and `Session.Join("AAAAAA")` joins player 1's match, so a script types it where a player would: `260 player 2 text AAAAAA`. A room nobody has open fails at once, with `Disconnected` and `Failed`, as a room that isn't one does.
 - **Addresses.** `Session.Connect` reaches the first player whose match is open on the address's port, 7777 unless `Session.Open(port)` picked another. The rest of the address says nothing here, and no name is looked up. A port nobody opened never answers, and the game times out, as on a network.
 - **One script for everyone.** A line says whose it is after its frame: `120 player 2 key d down`. Input that names no player is player 1's, so a script for one player plays as it did. `quit` and `--frames` end the run for everyone.

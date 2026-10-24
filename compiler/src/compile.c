@@ -73,6 +73,7 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
     diag_reset();
     diag_phase(NULL);
     program *prog = program_new();
+    prog->startup_name = opts->scene;
     // What every file's #if conditions read as defined: the build's own symbols, and its packages
     lex_symbols_reset();
     for (int i = 0; i < opts->define_count; i++) lex_define(opts->defines[i]);
@@ -111,7 +112,7 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
         if (!parse_file(prog, src, toks, false)) return false;
     }
     if (opts->editor_source && !overlay_found) {
-        fprintf(stderr, "tide: preview source is not in the selected project: %s\n", opts->editor_source);
+        fprintf(stderr, "tide: source overlay is not in the selected project: %s\n", opts->editor_source);
         return false;
     }
     if (web) {

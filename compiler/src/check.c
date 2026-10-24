@@ -5356,6 +5356,7 @@ static type check_session_call(checker *c, expr *e)
     if (!start) return T_VOID_;
     decl *scene = NULL;
     if (e->args.count == 0) {
+        if (c->prog->startup && c->prog->startup->kind == DECL_PREFAB) return T_VOID_;
         // Session.Start(): a match of this machine's own, in Main, which a
         // package's code can't name (the game's Main may be in a namespace)
         scene = c->prog->main;
@@ -5400,7 +5401,7 @@ static type check_scene_call(checker *c, expr *e)
         return T_ERR;
     }
     const char *error = NULL;
-    if (in_routine(c)) error = "%s can't load or unload scenes; systems, views and event handlers do";
+    if (in_routine(c) && c->method != c->prog->startup_create) error = "%s can't load or unload scenes; systems, views and event handlers do";
     else if (c->in_input) error = "%s runs outside the simulation, so it can't load or unload scenes";
     if (error) {
         diag_error(e->at, error, c->method ? routines(c) : input_code(c));
@@ -12776,6 +12777,81 @@ static bool setting_float(const expr *e, float *out, const int depth)
     return false;
 }
 
+static decl *startup_named(checker *c, expr *value)
+{
+    str name;
+    if (!qualified_text(value, &name)) {
+        diag_error(value->at, "startScene names a prefab or scene declaration, like 'startScene = Levels.Start;'");
+        return NULL;
+    }
+    decl *d = prefab_named(c, value);
+    if (!d) d = find_named(c, name, value->at, NAME_TYPE);
+    if (!d) {
+        diag_error(value->at, "there is no prefab or scene named '" STR_FMT "'", STR_ARG(name));
+        diag_note("name its declaration, including its namespace, like 'Levels.Start'");
+        return NULL;
+    }
+    if (d->kind != DECL_PREFAB && !(d->kind == DECL_COMPONENT && d->is_scene)) {
+        diag_error(value->at, "startup takes a prefab or scene, and '" STR_FMT "' is %s", STR_ARG(d->qualified), decl_what(d));
+        return NULL;
+    }
+    value->bind = BIND_TYPE;
+    value->type_decl = d;
+    if (value->kind == E_MEMBER) mark_namespaces(value->object);
+    return d;
+}
+
+// A prefab starts as an ordinary loaded scene, with its authored root and normal
+// Spawned handlers. This private helper goes through the usual checker/codegen;
+// it introduces neither a wrapper entity nor a runtime API.
+static void check_startup(checker *c)
+{
+    program *prog = c->prog;
+    if (prog->startup_name) {
+        expr *name = NEW(expr);
+        name->kind = E_NAME;
+        name->name = str_from(prog->startup_name);
+        name->at = (loc){1, 1, 0};
+        c->unit = NULL;
+        prog->startup = startup_named(c, name);
+    }
+    decl *startup = prog->startup;
+    if (!startup) return;
+    if (startup->kind != DECL_PREFAB) {
+        prog->main = startup; // Source declarations and their names stay intact.
+        return;
+    }
+    decl *fn = NEW(decl);
+    fn->kind = DECL_FUNCTION;
+    fn->name = fn->qualified = str_from("tide_startup"); // Reserved, stable across unrelated declarations.
+    fn->at = fn->return_type_at = startup->at;
+    fn->unit = startup->unit;
+    fn->return_type_name = str_from("void");
+    fn->body = NEW(stmt);
+    fn->body->kind = S_BLOCK;
+    fn->body->at = fn->body->end = startup->at;
+    stmt *load = NEW(stmt);
+    load->kind = S_EXPR;
+    load->at = startup->at;
+    expr *call = load->value = NEW(expr);
+    call->kind = E_METHOD;
+    call->name = str_from("Load");
+    call->at = startup->at;
+    call->object = NEW(expr);
+    call->object->kind = E_NAME;
+    call->object->name = str_from("Scene");
+    call->object->at = startup->at;
+    expr *arg = NEW(expr);
+    arg->kind = E_NAME;
+    arg->name = startup->qualified;
+    arg->at = startup->at;
+    vec_push(call->args, arg);
+    vec_push(fn->body->stmts, load);
+    prog->startup_create = fn;
+    vec_push(prog->decls, fn);
+    prog->by_name.first = prog->by_c_name.first = NULL;
+}
+
 static void check_settings(checker *c)
 {
     program *prog = c->prog;
@@ -12810,6 +12886,11 @@ static void check_settings(checker *c)
                 continue;
             }
             expr *value = f->default_value;
+            if (str_eq_c(f->name, "startScene")) {
+                decl *startup = startup_named(c, value);
+                if (startup) prog->startup = startup;
+                continue;
+            }
             if (!is_constant(c, value)) {
                 diag_error(value->at, "a setting's value must be a constant expression");
                 diag_note("use literals, constants and operators: settings are part of the build, the same on every machine");
@@ -17598,7 +17679,7 @@ static void warn_unmatched(const program *prog, const decl *const *list, const i
         // An authoring preview constructs its selected prefab directly. These
         // combinations need no Spawn in ordinary game code; either placement
         // can be selected in the editor, subject to the view's usual filters.
-        if (!matched && prog->editor_authoring && sys->is_view && (sys->run_in_editor || sys->editor_only)) {
+        if (!matched && prog->editor_authoring) {
             for (int d = 0; d < prog->decls.count && !matched; d++) {
                 const prefab_instance *p = prog->decls.items[d]->prefab_checked;
                 if (!p) continue;
@@ -20219,6 +20300,7 @@ bool check(program *prog)
         asset_files_save_hashes(prog->game_folder, named, count);
     }
     check_settings(&c);
+    check_startup(&c);
     if (prog->max_rewind > 0.0f && prog->input) {
         if (field_named(prog->input, str_from("viewTime"))) {
             diag_error(prog->input->at, "viewTime is supplied by the engine; remove the input field declaration");
@@ -20449,7 +20531,9 @@ bool check(program *prog)
         }
     }
 
-    if (!prog->main && diag_error_count() == 0 && !only_packages(prog)) {
+    bool authored = false;
+    for (int i = 0; prog->editor_authoring && i < prog->decls.count && !authored; i++) authored = prog->decls.items[i]->kind == DECL_PREFAB;
+    if (!prog->main && !prog->startup && !authored && diag_error_count() == 0 && !only_packages(prog)) {
         // Something named like it: a scene spelled main, or anything else named Main.
         const decl *near = NULL;
         for (int i = 0; i < prog->decls.count; i++) {

@@ -1,5 +1,67 @@
 # `tide`, packages and the package
 
+## Direct authored startup and native editor Play (2026-10-24)
+
+`tide build` and `tide run` accept `--scene <qualified-name>`, also exposed by
+`tidec`. It selects a prefab or a scene declaration without renaming source
+symbols or requiring a handwritten Main/loader. The project's persistent
+selection is a declaration-valued `settings { startScene = Levels.Start; }`;
+`--scene` overrides it for that build. With neither selection, the existing
+Main behavior remains. A prefab entry uses the ordinary checked Scene.Load
+path, its authored root and normal Spawned handlers, then ordinary systems,
+views and session startup. Match and local scene entries retain their normal
+placement. No new runtime function or generated-C/runtime ABI is introduced.
+CLI help exposes --scene for build/run and describes hosting and several-player
+startup using the selected match/local entry. The help fixture pins the option,
+persisted-setting example and removal of the former Main-only requirements.
+
+The private editor flags `--source-overlay <original> <draft>` and
+`--editor-cache <directory>` build an applied unsaved document using its
+original source path, namespace/package context and relative asset paths. An
+original .tprefab not present on disk is included as a game input. The private
+cache isolates generated files and objects from ordinary builds and other
+editor runs; its configuration subdirectory keeps the usual target/mode
+separation. Neither the persisted source bytes nor its project startup setting
+are changed by this build. These flags are internal editor plumbing, separate
+from the public startup selection.
+
+`tools/tide-editor/play.h` exposes a zero-initialized editor_play, Start/Poll/
+Stop/Close and explicit STOPPED, BUILDING, RUNNING, FINISHED and FAILED states.
+Start copies the applied source, qualified selected prefab, project/path,
+revision and runtime arguments into a unique .tide/editor-play/<pid>-<serial>
+workspace. It first builds a standalone normal game, then Poll launches its
+executable through the ordinary game host. All normal views run, including
+unmarked ones; the game's own camera, devices, local player and session are
+used. This is distinct from the frozen authored-view preview. The UI must Stop
+before replacing or closing its document. Later authoring edits do not change
+the captured running build. Stop destroys the runtime process and its private
+artifacts; it does not copy simulation state into the authoring document.
+
+The compiler and game are each owned by sys_start_tree_logged: a Windows job
+assigned while the new process is suspended, or a POSIX process group set
+before exec. Cancellation kills descendants, and a completed parent also
+cleans up remaining descendants. Output is logged, windows remain suppressed
+under TIDE_HIDDEN, and the helper refuses hidden Play without bounded --frames,
+--capture or --script arguments. Errors retain the workspace/log until Stop,
+Close or another Start. Tests use explicit scratch --data-dir paths.
+
+Focused Windows validation: tide_editor_play passes its actual executable/
+grandchild cancellation fixture, cleanup after a successful compiler exits,
+immutable unsaved revision, build/run/error states and hidden/conflict refusals.
+The installed-game test
+`node tools/tide-editor/tests/play.mjs <tide_editor_play_tests> <installed tide>
+<work>` passes against this checkout's debug CLI and freshly built MinGW
+platform/runtime. It builds a no-Main authored game twice, verifies unsaved
+values, Spawned, systems, unmarked views, scripted input and fresh runtime
+state after Stop, checks real camera/capture pixels, and preserves source
+bytes and the dirty authoring document. The standalone process test requires
+no GPU; the installed-game test does. POSIX process groups and other desktop
+hosts were not run here. The native scene_startup lifecycle fixture and compiler
+startup contract script pass on native and web. Full native/web builds and all
+engine checks pass; the final seven editor CTests and docs build pass. An
+external prototype hash-pin failure reproduces with the HEAD compiler; optional
+external browser playthroughs were stopped. Details: notes/editors.md.
+
 ## Bundled JetBrains installation (2026-10-21)
 
 `tide editors` now installs the release's own JetBrains plugin into existing

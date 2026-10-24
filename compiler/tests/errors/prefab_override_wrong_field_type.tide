@@ -1,0 +1,11 @@
+// expect: field 'value' is int, not string
+scene Main { }
+component Data { int value; }
+prefab Base { entity Child { Data; } }
+prefab Broken
+{
+    entity Item : Base
+    {
+        entity Child { Data { value = "wrong" }; }
+    }
+}

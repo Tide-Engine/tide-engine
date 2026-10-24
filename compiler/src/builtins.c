@@ -2069,6 +2069,7 @@ bool builtin_describe(const str owner, const str name, sb *out)
 // Settings
 
 static const setting settings[] = {
+    {"startScene", TY_VOID, "Main", "The prefab or scene the program starts in. Name its declaration, such as Levels.Start; --scene overrides it."},
     {"maxRewind", TY_FLOAT, "0", "Maximum historical physics query age in seconds. Zero disables collider history. "
      "Input viewTime is engine-stamped and server-validated; games still validate firing and aim."},
     {"title", TY_STRING, "the game's name",
