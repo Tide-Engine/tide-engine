@@ -32,8 +32,16 @@ const float TRAFFIC = 14;           // How fast the townsfolk's cars go
 const int PEOPLE = 6;               // Townsfolk in each town
 const int CARS = 2;                 // Cars on each road
 const int COLORS = 8;
-const float SIGHT = 300;            // How far off a player's machine has the townsfolk and the traffic: past the horizon
-const int LOOK = 15;                // Ticks between looks at who's near
+const float SIGHT = 300;            // How far off a player's machine has other players: past the horizon
+// ...and the townsfolk and traffic, further: whatever a player it has bumps
+// into or waves at is on its machine too, or what it worked out would differ
+const float FURTHER = 40;
+const float STALE = 20;             // How far a walker goes before its beacon follows it
+// Ticks between looks at who's near, and between beacons' moves: everything at
+// once, so a machine whose world the server has to put right (it can't work out
+// what it doesn't have) is put right once for them all
+const int LOOK = 30;
+const int BEACON = 180;
 
 scene Main { }
 
@@ -86,14 +94,23 @@ singleton Roster
     bool seeded;
 }
 
-// Who has a townsperson or a car on their machine: the players near it. The
-// rest of the planet is past their horizon, so their machines needn't run it.
-// Players themselves are everyone's, for the globe's dots and Join.
+// Who has a townsperson or a car on their machine (its group's audience): the
+// players near it, as last set. The server's alone: a machine without everyone
+// can't say who's near, and what it worked out would differ from the server's.
 component Seen
 {
     VisibilityGroup group;
     Audience audience;
-    int next;       // The tick it looks again
+}
+
+// A player's walker is everyone's, but its Walker is only the players' near it
+// (and its own player's): far off, a machine has its Beacon alone, where it
+// is every few seconds, for the globe's dots, the towns' counts and Join
+component Beacon
+{
+    float3 at;
+    int color;
+    int tag;
 }
 
 event HighFive { }   // Sent to each walker of the two, for what's shown
@@ -129,10 +146,13 @@ input Controls
 
 event(PlayerJoined joined) Arrive(mut Roster roster)
 {
-    // Over the north pole, unseen, until its player picks a place
+    // Over the north pole, unseen, until its player picks a place; its Walker its own player's alone until others come near
+    var mine = Audience.Only(joined.player);
+    mut var seen = Visibility { };
+    seen.Set<Walker>(mine);
     roster.walkers[joined.player] = Spawn(
         Walker { position = float3(0, R, 0), color = roster.next % COLORS, tag = roster.next },
-        Owner { player = joined.player });
+        Owner { player = joined.player }, seen, Beacon { color = roster.next % COLORS, tag = roster.next });
     roster.next += 1;
     roster.online += 1;
 }
@@ -160,8 +180,7 @@ system Seed(mut Roster roster)
             var at = Place(town, Clear(town, float2(Math.Sin(turn), Math.Cos(turn)) * Random.NextFloat(PLAZA, TOWN - 15), BODY), 0);
             var group = Visibility.CreateGroup(Audience.None);
             Spawn(Walker { position = at, color = 100 + Random.NextInt(6), placed = true },
-                  Person { town = town, goal = at, rest = Random.NextFloat(0, 4) },
-                  Visibility { group = group }, Seen { group = group, audience = Audience.None, next = i % LOOK });
+                  Person { town = town, goal = at, rest = Random.NextFloat(0, 4) }, Grouped(group), Seen { group = group });
         }
     }
     for (var road = 0; road < ROADS; road++)
@@ -172,7 +191,7 @@ system Seed(mut Roster roster)
             mut var car = Car { road = road, along = Length(road) * (0.3 + i * 0.4), way = way, speed = TRAFFIC, color = Random.NextInt(COLORS) };
             OnRoad(car);
             var group = Visibility.CreateGroup(Audience.None);
-            Spawn(car, Visibility { group = group }, Seen { group = group, audience = Audience.None, next = (road + i) % LOOK });
+            Spawn(car, Grouped(group), Seen { group = group });
         }
     }
 }
@@ -456,43 +475,54 @@ system Traffic(mut Car car, Time time, query (Walker walker) walkers, query (Car
 
 // ------------------------------------------------------------ who sees what
 
-// Whether two audiences have the same players
-bool Same(Audience a, Audience b)
+// The players near a place. Every machine can work it out, but only the
+// server's has every player, so what it says goes nowhere else: who sees
+// what's there (Seen, the server's alone), and a player's own Walker, whose
+// audience is behind the scenes.
+Audience Near(float3 place, float sight, Audience start, query (Walker other, Owner owner, without Person) players)
 {
-    for (var i = 0; i < 64; i++)
+    mut var near = start;
+    foreach (var row in players)
     {
-        if (a.Contains(PlayerID(i)) != b.Contains(PlayerID(i))) return false;
+        if (row.other.placed && Math.Length(row.other.position - place) < sight) near.Add(row.owner.player);
     }
-    return true;
+    return near;
 }
 
-// Every so often, the players near a place become who sees what's there, when that changed
-void Spot(mut Seen seen, Audience near, int tick)
+// A townsperson's or a car's Visibility: its group's, its Seen no one's
+Visibility Grouped(VisibilityGroup group)
 {
-    seen.next = tick + LOOK;
-    if (Same(near, seen.audience)) return;
+    mut var visibility = Visibility { group = group };
+    visibility.Set<Seen>(Audience.None);
+    return visibility;
+}
+
+// Changing a group's audience on a region waits on the border for the root's
+// directory, so only when it changes
+void See(mut Seen seen, Audience near)
+{
+    if (near == seen.audience) return;
     seen.audience = near;
     Visibility.Set(seen.group, near);
 }
 
-system SeeTownsfolk(mut Seen seen, Walker walker, Time time, query (Walker other, Owner owner, without Person) players, with Person)
+system SeeTownsfolk(mut Seen seen, Walker walker, Time time, query (Walker other, Owner owner, without Person) players)
 {
-    if (time.tick < seen.next) return;
-    mut var near = Audience.None;
-    foreach (var row in players)
-    {
-        if (row.other.placed && Math.Length(row.other.position - walker.position) < SIGHT) near.Add(row.owner.player);
-    }
-    Spot(seen, near, time.tick);
+    if (time.tick % LOOK == 0) See(seen, Near(walker.position, SIGHT + FURTHER, Audience.None, players));
 }
 
 system SeeTraffic(mut Seen seen, Car car, Time time, query (Walker other, Owner owner, without Person) players)
 {
-    if (time.tick < seen.next) return;
-    mut var near = Audience.None;
-    foreach (var row in players)
-    {
-        if (row.other.placed && Math.Length(row.other.position - car.position) < SIGHT) near.Add(row.owner.player);
-    }
-    Spot(seen, near, time.tick);
+    if (time.tick % LOOK == 0) See(seen, Near(car.position, SIGHT + FURTHER, Audience.None, players));
+}
+
+// A player's walker: its Walker to the players near it and to its own, and to everyone where it is, every three
+// seconds when it has gone somewhere: each move is a correction for every machine without its Walker
+system SeePlayers(mut Visibility visibility, mut Beacon beacon, Walker walker, Owner owner, Time time,
+                  query (Walker other, Owner theirs, without Person) players, without Person)
+{
+    var at = walker.placed ? walker.position : float3(0, 0, 0);
+    if (time.tick % BEACON == 0 && Math.Length(at - beacon.at) > STALE) beacon.at = at;
+    if (time.tick % LOOK != 0) return;
+    visibility.Set<Walker>(walker.placed ? Near(walker.position, SIGHT, Audience.Only(owner.player), players) : Audience.Only(owner.player));
 }

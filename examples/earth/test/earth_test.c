@@ -178,13 +178,20 @@ TIDE_TEST(earth_walkers_walk_drive_and_high_five_and_traffic_stops_for_them)
 // destroys it where it is. A shard that has the walker before its player's
 // input guesses an input of zeros, which mustn't read as a request to go
 // anywhere: until the walker took only newer requests, it went back and forth
-// between two shards, and neither owned it.
+// between two shards, and neither owned it. A second player, in town 4 on the
+// same shard but 700 m off, is only a Beacon on the first one's machine until
+// they come to town 3 too.
+typedef struct visitor {
+    tide_shard_client *client;
+    uint32_t endpoints; // Its clients' loopback endpoints: this and the shard's number
+    tide_float3 drop;
+    int moves;
+} visitor;
+
 static tide_loopback *net;
 static tide_shards *shards;
-static tide_shard_client *client;
+static visitor first = {.endpoints = 100}, second = {.endpoints = 200};
 static double now;
-static tide_float3 drop;
-static int moves;
 
 static void transports(void *user, const uint32_t shard, tide_transport out[2])
 {
@@ -194,33 +201,63 @@ static void transports(void *user, const uint32_t shard, tide_transport out[2])
 
 static bool reach(void *user, const uint32_t shard, const uint64_t match, tide_transport *transport, tide_address *server)
 {
-    (void)user;
+    const visitor *v = user;
     (void)match;
-    *transport = tide_loopback_endpoint(net, 100u + shard);
+    *transport = tide_loopback_endpoint(net, v->endpoints + shard);
     *server = tide_loopback_address(10u + shard);
     return true;
 }
 
 static void sample(void *user, const uint32_t tick, void *input)
 {
-    (void)user;
+    const visitor *v = user;
     (void)tick;
-    *(Controls *)input = (Controls){.drop = drop, .moves = moves};
+    *(Controls *)input = (Controls){.drop = v->drop, .moves = v->moves};
+}
+
+static void join(visitor *v)
+{
+    const tide_shard_client_desc pd = {
+        .client = {.game = &tide_game_api, .transport = tide_loopback_endpoint(net, v->endpoints), .server = tide_loopback_address(10u),
+                   .sample = sample, .user = v, .lead = 2},
+        .reach = reach,
+        .user = v,
+    };
+    v->client = tide_shard_client_create(&pd, now);
+}
+
+static const tide_world *home_world(const visitor *v)
+{
+    return tide_client_view(tide_shard_client_home(v->client)).current;
 }
 
 // The townsfolk the player's machine has of its home shard's world: only
 // those near enough for it to see them (Seen, Visibility)
 static int people_seen(void)
 {
-    const tide_world *w = tide_client_view(tide_shard_client_home(client)).current;
+    const tide_world *w = home_world(&first);
     int count = 0;
     if (!w) return -1;
     EACH(w, e) count += tide_has_Person(w, e);
     return count;
 }
 
-// The player's walker as the shards that own it have it
-static int owners(Walker *found)
+// The players the first player's machine has, as Beacons, and of them those it has the Walker of
+static void players_seen(int *beacons, int *walkers)
+{
+    const tide_world *w = home_world(&first);
+    *beacons = *walkers = 0;
+    if (!w) return;
+    EACH(w, e)
+    {
+        if (!tide_has_Beacon(w, e) || tide_has_tide_ghost(w, e)) continue;
+        *beacons += 1;
+        *walkers += tide_has_Walker(w, e);
+    }
+}
+
+// A player's walker, by its tag (the order they came in), as the shards that own it have it
+static int owners(const int tag, Walker *found)
 {
     int count = 0;
     for (uint32_t i = 0; i < tide_shards_count(shards); i++) {
@@ -229,6 +266,7 @@ static int owners(Walker *found)
         EACH(w, e)
         {
             if (!tide_has_Walker(w, e) || tide_has_Person(w, e) || tide_has_tide_ghost(w, e)) continue;
+            if (tide_get_Walker(w, e).tag != tag) continue;
             *found = tide_get_Walker(w, e);
             count++;
         }
@@ -243,9 +281,11 @@ static void run(const double seconds)
         now += 1.0 / 60.0;
         tide_loopback_set_time(net, now);
         tide_shards_update(shards, now);
-        if (client) tide_shard_client_update(client, now);
+        if (first.client) tide_shard_client_update(first.client, now);
+        if (second.client) tide_shard_client_update(second.client, now);
         Walker w;
-        TIDE_CHECK(owners(&w) <= 1);
+        TIDE_CHECK(owners(0, &w) <= 1);
+        TIDE_CHECK(owners(1, &w) <= 1);
     }
 }
 
@@ -258,23 +298,25 @@ TIDE_TEST(earth_a_player_visits_towns_on_two_shards_and_leaves)
                                 .split = {4, 1, 1}, .transports = transports};
     shards = tide_shards_create(&d, now);
     TIDE_REQUIRE(shards != NULL);
-    const tide_shard_client_desc pd = {
-        .client = {.game = &tide_game_api, .transport = tide_loopback_endpoint(net, 100u), .server = tide_loopback_address(10u),
-                   .sample = sample, .lead = 2},
-        .reach = reach,
-    };
-    client = tide_shard_client_create(&pd, now);
-    TIDE_REQUIRE(client != NULL);
-
-    moves = 0;
+    first.moves = second.moves = 0;
+    join(&first);
+    TIDE_REQUIRE(first.client != NULL);
     run(2.0);
-    drop = times(up_at(52, 8), PLANET);
-    moves = 1;
+    join(&second);
+    TIDE_REQUIRE(second.client != NULL);
+    run(2.0);
+    first.drop = times(up_at(52, 8), PLANET);
+    first.moves = 1;
+    second.drop = times(up_at(2, 32), PLANET);
+    second.moves = 1;
     run(3.0);
-    Walker w;
-    TIDE_CHECK(owners(&w) == 1);
+    Walker w, w2;
+    TIDE_CHECK(owners(0, &w) == 1);
     TIDE_CHECK(w.placed && w.position.x > 1600.0f);
-    const uint32_t first = tide_shard_client_home_shard(client);
+    TIDE_CHECK(owners(1, &w2) == 1);
+    TIDE_CHECK(w2.placed && w2.position.x > 1600.0f && length3(minus(w.position, w2.position)) > 600.0f);
+    const uint32_t home = tide_shard_client_home_shard(first.client);
+    TIDE_CHECK(tide_shard_client_home_shard(second.client) == home);
     // Every townsperson and car is some shard's, once
     int people = 0, cars = 0;
     for (uint32_t i = 0; i < tide_shards_count(shards); i++) {
@@ -291,21 +333,35 @@ TIDE_TEST(earth_a_player_visits_towns_on_two_shards_and_leaves)
     TIDE_CHECK(cars == 11 * 2);
     // ...but the player's machine has only the townsfolk of the town it's in: the rest are past its horizon
     TIDE_CHECK(people_seen() == 6);
+    // ...and of the other player, past its horizon, where they are and not their Walker
+    int beacons, walkers;
+    players_seen(&beacons, &walkers);
+    TIDE_CHECK(beacons == 2 && walkers == 1);
 
-    drop = times(up_at(6, 138), PLANET);
-    moves = 2;
+    // The other player comes to town 3: now they're near, their Walker too
+    second.drop = first.drop;
+    second.moves = 2;
     run(3.0);
-    TIDE_CHECK(owners(&w) == 1);
+    players_seen(&beacons, &walkers);
+    TIDE_CHECK(beacons == 2 && walkers == 2);
+
+    first.drop = times(up_at(6, 138), PLANET);
+    first.moves = 2;
+    run(3.0);
+    TIDE_CHECK(owners(0, &w) == 1);
     TIDE_CHECK(w.placed && w.position.x < -1600.0f);
-    TIDE_CHECK(tide_shard_client_home_shard(client) != first);
-    const tide_client_status home = tide_client_status_of(tide_shard_client_home(client));
-    TIDE_CHECK(home.state == TIDE_SESSION_CONNECTED && home.resyncs == 0);
+    TIDE_CHECK(tide_shard_client_home_shard(first.client) != home);
+    const tide_client_status status = tide_client_status_of(tide_shard_client_home(first.client));
+    TIDE_CHECK(status.state == TIDE_SESSION_CONNECTED && status.resyncs == 0);
     TIDE_CHECK(people_seen() == 6); // The new town's, on the new shard
 
-    tide_shard_client_destroy(client);
-    client = NULL;
+    tide_shard_client_destroy(first.client);
+    first.client = NULL;
+    tide_shard_client_destroy(second.client);
+    second.client = NULL;
     run(25.0);
-    TIDE_CHECK(owners(&w) == 0);
+    TIDE_CHECK(owners(0, &w) == 0);
+    TIDE_CHECK(owners(1, &w) == 0);
 
     tide_shards_destroy(shards);
     tide_loopback_destroy(net);

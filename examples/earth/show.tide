@@ -561,24 +561,9 @@ view People(mut Walker walker, mut Scenery scenery, Pilot pilot, Time time)
     bool player = walker.color < 100;
     int shard = Shards.Of(this);
     if (shard >= 0 && shard < 31) scenery.shown |= 1 << shard;
-    if (player)
-    {
-        scenery.players.Add(walker.position);
-        int town = TownAt(walker.position, 30);
-        if (town >= 0) scenery.people[town] += 1;
-    }
     walker.morph = Math.Clamp(walker.morph + (walker.driving ? 1 : -1) * Math.Min(Frame.dt, 0.05) / 0.8, 0, 1);
     var at = walker.position - pilot.eye;
-    if (Math.Length(at) > NEAR)
-    {
-        // Far away, a player is a dot on the globe
-        if (player && pilot.blend < 0.5 && !Behind(pilot.eye, walker.position))
-        {
-            var paint = pilot.shards ? ShardPaint(shard) : Paint(walker.color);
-            scenery.glows.Add(Placed { transform = float4x4.TRS(at, pilot.turned, float3(Math.Length(at) * 0.008)), paint = paint });
-        }
-        return;
-    }
+    if (Math.Length(at) > NEAR) return; // Far off, its Beacon is what's drawn
     var up = Math.Normalize(walker.position);
     var turned = Standing(walker.position, walker.forward);
     float speed = Math.Length(walker.velocity);
@@ -650,6 +635,23 @@ void Part(mut Scenery scenery, float3 at, quaternion turned, float3 walking, flo
     else scenery.rounds.Add(Placed { transform = transform, paint = paint });
 }
 
+// Every player, near or far, where their Beacon says: a dot on the globe, a
+// count in their town, somewhere for Join to go
+view Beacons(Beacon beacon, mut Scenery scenery, Pilot pilot)
+{
+    if (Math.Length(beacon.at) < 1) return; // Not on the planet yet
+    int town = TownAt(beacon.at, 30);
+    if (town >= 0) scenery.people[town] += 1;
+    if (this != pilot.me) scenery.players.Add(beacon.at);
+    var at = beacon.at - pilot.eye;
+    if (pilot.blend < 0.5 && Math.Length(at) > NEAR && !Behind(pilot.eye, beacon.at))
+    {
+        int shard = Shards.Of(this);
+        var paint = pilot.shards ? ShardPaint(shard) : Paint(beacon.color);
+        scenery.glows.Add(Placed { transform = float4x4.TRS(at, pilot.turned, float3(Math.Length(at) * 0.008)), paint = paint });
+    }
+}
+
 // A townsperson's car: a body, a cabin and four wheels
 view Cars(Car car, mut Scenery scenery, Pilot pilot)
 {
@@ -690,11 +692,10 @@ view Picture(mut Scenery scenery, mut Pilot pilot, Shapes shapes, Roster roster)
     for (var i = 0; i < scenery.players.count; i++)
     {
         var place = scenery.players[i];
-        if (pilot.mine && Math.Length(place - pilot.spot) < 0.5) continue;
         mut int near = 0;
         foreach (var other in scenery.players)
         {
-            if (Math.Length(other - place) < 60 && !(pilot.mine && Math.Length(other - pilot.spot) < 0.5)) near += 1;
+            if (Math.Length(other - place) < 60) near += 1;
         }
         if (near > scenery.crowded && !(pilot.mine && pilot.walking && Math.Length(place - pilot.spot) < 60))
         {
