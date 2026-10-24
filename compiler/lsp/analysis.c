@@ -2326,6 +2326,10 @@ static const char *builtin_field_doc(const decl *d, const str name)
             return "Whether it was clicked this frame: a press on it let go on it, or Enter, Space or the gamepad's "
                    "south button went down while it had the focus.";
         }
+        if (str_eq_c(name, "down")) return "This frame's pointer press belongs to this control. Follow pressed while it is held.";
+        if (str_eq_c(name, "up")) return "This control's pointer was released this frame, even outside its rect.";
+        if (str_eq_c(name, "cancelled")) return "Its held gesture was aborted because the control became disabled or covered by a modal.";
+        if (str_eq_c(name, "position")) return "The pointer's position in GUI pixels from the top left, including while held outside the rect.";
     }
     return NULL;
 }

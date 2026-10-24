@@ -1,5 +1,71 @@
 # The GUI
 
+## Custom control composition (2026-10-24)
+
+The owner requested capability inspired by `D:/wkspaces/unity/Now-UI`, then
+delegated implementation and design with performance and API as the priorities.
+This implementation completes the custom-control composition boundary. A larger
+SDF scene library, spatial navigation and text editing remain work ahead.
+Detailed picks are provisional in the spec's GUI section and in `docs/game/gui.md`.
+
+- `GUILayout.Reserve(size)` allocates a fixed layout rect; its
+  `(size, minWidth, expandWidth)` form uses existing width fitting/stretching.
+  Heights are explicit. Negative/nonfinite dimensions become zero; minimum
+  width cannot exceed natural width. Reserving adds no hit/focus target.
+- `GUI.Draw() { ... }` routes Draw calls and helpers into the existing GUI list
+  in declaration order, restoring GUI window settings on every exit, including
+  Set changes. Only draw scopes copy drawing settings. No separate rendering
+  pass or UI replay is added; game UI code executes once per frame.
+- Anchored placement moves screen-space shapes/text, sprites, indexed vertices,
+  2D shader-run transforms and clips. State command unions are not positions.
+  Target content, explicit world cameras and 3D retain their own coordinates.
+  Shared mesh indices/clip ancestors move once using append's existing scratch;
+  shape-only areas allocate none. Stable-sized areas need no relocation. C code
+  should capture its own vertices, not share mutable geometry across areas.
+- `GUI.Key(int/long/string)` adds a scoped data key through helper chains. Its
+  site is not occurrence-salted; child occurrence counters use the keyed path.
+  Unkeyed IDs stay unchanged. Keys must be unique among same-site siblings;
+  zero/empty text are valid. Runtime IDs remain bounded 32-bit hashes and the
+  existing ID/cache/depth ceilings apply.
+- GUIControl adds pointer `down`, `up`, `cancelled`, and GUI-space `position`.
+  `pressed` remains held; keyboard/gamepad submission remains `clicked`.
+  Disabling/modal coverage aborts an active declared control once. Removal has
+  no callback; native capture loss has no separate signal yet.
+- Codegen captures each Draw setting's list and unwinds in reverse order, so
+  early exits restore both GUI and enclosing world drawing scopes. Generated
+  type adapters keep padding zeroed. Editor completion/signatures/field hovers
+  expose the API through the common catalog.
+
+Regressions: `tests/test_gui.c` covers pointer edges/release outside/cancellation,
+reservation sanitization, nested scope restoration, and first-frame anchored
+indexed meshes, sprite quads and clips. `compiler/tests/e2e/gui_custom` covers
+helpers, draw order, focus through row reorder/removal, nested numeric/text keys,
+once-per-frame execution and cross-list early exits. `lsp_gui` covers catalog
+completion, snippets and fields. Final validation/measurements follow below.
+
+### CPU measurement method
+
+`notes/gui-measurement.c` is a standalone recording probe, not a GPU/frame-rate
+benchmark. It warms 64 frames, then takes nine samples of 2,000 frames, with
+256 controls in 32 rows, layout, GUI begin/end and append included. Its stock
+mode compares the original GUI at `1807aa3b` with this implementation, using the
+same optimized drawing/runtime library. Its custom mode uses one Key and Draw
+scope per control; direct mode draws the same output through ordinary C GUI/Draw
+calls with precomputed IDs. Expanded commands and text are hashed for equality.
+One Draw scope around the whole custom group avoids the per-control snapshot
+cost, so the custom workload is deliberately the more expensive usage pattern.
+
+Reproduce on Windows after building `tide` with the release preset (platform may
+be off): compile the probe with `CURRENT=1`, `engine/include` and the release
+`engine/tide.lib`. For baseline, put `git show 1807aa3b:engine/src/gui.c` and the
+matching `engine/include/tide/gui.h` in a scratch directory, compile those with
+that header directory before `engine/include`, omit CURRENT, and link the same
+library. Both use clang `-O2 -std=c17 -fno-fast-math -ffp-contract=off`, the same
+MSVC DLL runtime flags as the release build, and `TIDE_HIDDEN=1`. Run stock on
+both executables and `custom`/`direct` only on CURRENT. Sorted sample times are
+printed after the median/best time and output digest. No GUI timing claim is
+made from runs concurrent with builds/tests.
+
 ## Host pool on a frame (2026-10-24)
 
 tide_gui.jobs is an optional borrowed tide_jobs provider for generated local
@@ -50,7 +116,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - It gives a `tide_control` (`hovered`, `pressed`, `focused`, `clicked`), which generated C makes Tide's `GUIControl` of in a helper (`tide_gui_control_value`), as the two are different C types. `pressed` is the pointer holding it, wherever it goes meanwhile, as a `Devices` button's `pressed` is held.
   - While a control has the focus, the view that called it goes on reading the keyboard and the gamepad, less what moves the focus and clicks (`focus_view`, `hide_navigation`, `tide_gui_view`): the game and the other views read neither, as with any focus. So a menu's own shortcuts work with one of its controls focused.
   - Controls a loop makes come from one call, and are told apart as the GUI's own widgets in a loop are, by their turn (`tide_gui_id` counts the calls from a site in a frame): one left out gives its turn to the next.
-  - `GUILayout` has no control: what a view draws is under the GUI's own widgets, a panel included, and under a modal's dim, since the GUI draws last. That's documented, and stays.
+  - The original API had no layout bridge and ordinary view drawing stayed under panels. The composition work above supersedes that restriction with `GUILayout.Reserve` and `GUI.Draw`; ordinary drawing outside the block stays beneath the GUI.
 - The focus moves in the order widgets are called: down and right go on, up and left go back (`navigate`). A widget that steps its value with left and right keeps those (`focusable`'s `steps`: sliders and number fields), and the press that brought the focus to one doesn't step it too. The arrows, the d-pad and the left stick only start the focus while the game isn't reading the devices, or while a view says a menu is up, frame by frame (`GUI.Navigate()`, `tide_gui_navigate`), as a menu over a running match needs: a HUD's button never takes the d-pad.
 - Container sizes use a bounded probing cache (fixed 2026-10-08). IDs with the same low bits previously overwrote each other every frame, so vertical groups never stretched their narrow widgets to their widest one and rows lost their fitted widths. `remembered` and `remember` resolve collisions; only a full cache evicts a container, choosing the oldest frame stamp. No GUI layout or memory limit changes. `gui_colliding_containers_keep_their_layout_sizes` checks independent widths across frames, and `gui_size_cache_reuses_old_containers_when_full` checks replacement and the root's retained width.
 - Slider normalization and interpolation are double-width internally (fixed 2026-10-08): finite float endpoints can span more than a float holds, and nearby large ints can be the same float. Pointer coordinates and the drawing stay floats. An int slider applies keyboard and gamepad steps directly to its clamped integer in `int64_t`, exactly one toward the appropriate end, then clamps again; a reversed range reverses the step. Right still wins over Left, and a key's step over a held pointer. Idle widgets leave values unchanged, including values outside the range; a degenerate range clamps to its one value on interaction. A NaN pointer fraction is ignored. `gui_int_sliders_step_by_one_across_the_int_range`, `gui_int_sliders_place_large_values_on_the_track` and `gui_int_slider_steps_keep_their_input_precedence` (`tests/test_gui.c`) cover narrow ranges near both int limits, the full range, reversed and degenerate ranges, out-of-range values, keyboard/gamepad steps, pointer positions and precedence. `gui_float_sliders_keep_finite_ranges_finite` and `gui_float_sliders_step_with_extreme_finite_bounds` cover finite extremes, both range directions, endpoints, quarters, midpoint, and keyboard steps, natively and on the web.

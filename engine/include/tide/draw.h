@@ -2107,6 +2107,14 @@ uint32_t tide_draw_push_clip(tide_draw_list *d, tide_rect rect);
 // from tide_draw_defaults, and leaves the cameras and clips `from` ended with.
 void tide_draw_append(tide_draw_list *d, const tide_draw_list *from);
 
+// GUI drawing scopes restore a previously captured window place while keeping
+// the renderer's current played state. The mark also closes nested settings.
+void tide_draw_restore_window(tide_draw_list *d, const tide_draw_place *before, uint32_t mark);
+
+// Reposition the window's 2D content of an anchored GUI area. Plain records
+// before `plains` and clips before `clips` belong to the surrounding content.
+void tide_draw_move_gui(tide_draw_list *d, uint32_t commands, uint32_t plains, uint32_t clips, tide_float2 offset);
+
 // The texture `id` of `space` (TIDE_PIXELS_*) at `version`, for a mesh
 // command: 1 + its place in the list's textures, or 0 when it has no size.
 // When the list hasn't got its pixels as they are (it's new, or its version

@@ -1,5 +1,17 @@
 # Language features, as tidec builds them
 
+## Custom GUI composition (2026-10-24)
+
+The owner delegated GUI implementation/API choices with performance first.
+`GUI.Draw`, `GUI.Key` and `GUILayout.Reserve` use the shared builtin catalog.
+GUI_KEY supplies an unsalted source seed; runtime scopes compose the data key.
+GUI_DRAW lexically redirects the implicit Draw list, including helper calls.
+Draw settings capture their original list; reverse-order early-exit cleanup
+restores both lists across GUI.Draw. UI code is never replayed for layout.
+GUIControl adds pointer edges/cancellation and a float2 position; its generated
+adapter leaves explicit padding zeroed. Contracts, tests, validation and remaining
+GUI work: `notes/gui.md`, Custom control composition.
+
 ## Local workers (2026-10-24)
 
 Owner-approved direction and spelling: `local worker` functions, awaited from

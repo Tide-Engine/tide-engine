@@ -1,5 +1,16 @@
 # Drawing: `Draw`, its settings, shapes and meshes
 
+## Custom GUI drawing (2026-10-24)
+
+`GUI.Draw` records into the existing GUI list in declaration order and restores
+window settings via `tide_draw_restore_window`. `tide_draw_move_gui` relocates
+an anchored area's screen-space 2D content, including meshes/quads/shader runs
+and clips, without interpreting state-command unions as positions. Indexed
+vertices/shared clip ancestors move once using the existing remap scratch;
+target content, explicit world cameras and 3D keep their coordinates. No backend,
+shader ABI or batching rule changed. Contracts/tests/measurements: `notes/gui.md`,
+Custom control composition.
+
 ## Callable instance data (2026-10-24)
 
 Configured stage values and callable fields extend compiler binding and shader

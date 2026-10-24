@@ -44,7 +44,9 @@ typedef struct tide_textref tide_textref;
 //
 // A view's own widgets are controls (GUI.Control): the view draws one however
 // it likes, and the GUI says what the player does with it, as it would for a
-// button of its own. The GUI draws nothing for it.
+// button of its own. The GUI draws nothing for it. GUILayout.Reserve supplies
+// a custom layout rect; GUI.Draw records its visuals among the GUI's widgets.
+// GUI.Key scopes repeated controls by application identity instead of loop order.
 //
 // A view with widgets that read the devices themselves, like a library's,
 // claims what they use (GUI.ClaimPointer, GUI.ClaimKeyboard), each frame it
@@ -128,6 +130,10 @@ typedef struct tide_control {
     bool pressed; // The pointer holds it: from a press on it until it lets go, wherever it goes meanwhile
     bool focused; // The keyboard and the gamepad are on it
     bool clicked; // A press on it let go on it, or Enter, Space or the south button went down with the focus on it
+    bool down;    // This frame's pointer press belongs to this control
+    bool up;      // Its pointer was released this frame, on or off the rect
+    bool cancelled; // Its held gesture ended because it became disabled or covered by a modal
+    tide_float2 position; // Pointer position in GUI pixels, including while held outside the rect
 } tide_control;
 
 typedef struct tide_gui_group {
@@ -156,7 +162,16 @@ typedef struct tide_gui_group {
     bool scope;               // A Disabled or Theme block: the container around it, carried on, and handed back when it closes
     bool themed;              // A Theme block...
     tide_gui_theme before;    // ...and the theme it found, which is back when it closes
+    uint32_t key_before;
+    bool keyed;
+    bool drawing;
+    uint32_t clips_from;
 } tide_gui_group;
+
+typedef struct tide_gui_draw_state {
+    tide_draw_place before;
+    uint32_t mark;
+} tide_gui_draw_state;
 
 // A container's size last frame, which lays out the next.
 typedef struct tide_gui_size {
@@ -313,6 +328,9 @@ typedef struct tide_gui {
 
     tide_gui_group groups[TIDE_GUI_MAX_DEPTH + 1]; // [0] is the screen's own
     int depth;
+    uint32_t key; // Explicit identity scopes, independent of layout and loop order
+    tide_gui_draw_state drawing[TIDE_GUI_MAX_DEPTH]; // Only GUI.Draw scopes copy drawing settings
+    uint32_t drawing_count;
     tide_gui_size sizes[TIDE_GUI_MAX_SIZES];
     tide_gui_seen seen[TIDE_GUI_MAX_IDS];
     tide_draw_list list; // This frame's commands, drawn over the world at the end
@@ -419,6 +437,18 @@ void tide_gui_set_theme(tide_gui *g, tide_gui_theme theme);
 // Space and Escape, and the d-pad, the left stick and the south and east
 // buttons.
 tide_control tide_gui_control(tide_gui *g, uint32_t id, tide_rect rect);
+
+// Custom visuals use this list inside a GUI.Draw block. Its close restores
+// the window's drawing settings, including settings changed with Set calls.
+// At the container nesting ceiling returns -1; generated code skips the block.
+int tide_gui_begin_draw(tide_gui *g);
+int tide_gui_begin_key(tide_gui *g, uint32_t site, int32_t key);
+int tide_gui_begin_key_long(tide_gui *g, uint32_t site, int64_t key);
+int tide_gui_begin_key_text(tide_gui *g, uint32_t site, const char *key);
+
+// Reserve layout space without drawing or registering an interactive widget.
+tide_rect tide_gui_layout_reserve(tide_gui *g, tide_float2 size);
+tide_rect tide_gui_layout_reserve_flexible(tide_gui *g, tide_float2 size, float min_width, bool expand_width);
 
 // Widgets at a rect (GUI). The ones with a value change it, and return whether
 // they did; a button returns whether it was pressed.

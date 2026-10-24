@@ -1,5 +1,13 @@
 # The language server and the editors
 
+## Custom GUI composition (2026-10-24)
+
+The common builtin catalog supplies GUI.Draw/Key block snippets, Reserve
+overloads and signature help. GUIControl completion/hover includes pointer down,
+up, cancellation and GUI-space position. `lsp_gui` checks these additions.
+No editor-specific protocol or grammar change. API/contracts/validation:
+`notes/gui.md`, Custom control composition.
+
 ## Local worker declarations (2026-10-24)
 
 The shared compiler parses/checks local workers. Routine hovers, override

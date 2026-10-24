@@ -53,12 +53,12 @@ typedef struct gen_frame {
 } gen_frame;
 
 // A block that something closes when it ends, however it's left: a GUI
-// container's (tide_gui_close) or a draw setting's (tide_draw_pop). Each kind
-// closes with the ones opened inside it, so leaving several at once closes the
-// outermost of each.
+// container's (tide_gui_close) or a draw setting's (tide_draw_pop). Draw scopes
+// capture their list because GUI.Draw changes the list inside its block.
 typedef struct gen_open {
     const char *mark; // The variable its close takes
     bool draw;        // A draw setting's, rather than the GUI's
+    const char *list;  // Captured destination: GUI.Draw can shadow tide_draw inside this block
 } gen_open;
 
 // A switch or loop being generated: what `break` and `continue` go to. In a
@@ -3401,7 +3401,8 @@ static void gen_gui_call(gen *g, sb *o, const expr *e)
         return;
     }
     sb_printf(o, "%s(tide_ui", e->c_callee);
-    if (e->gui & GUI_ID) sb_printf(o, ", tide_gui_id(tide_ui, tide_seed, %du)", ++g->sites);
+    if (e->gui & GUI_KEY) sb_printf(o, ", tide_gui_seed(tide_seed, %du)", ++g->sites);
+    else if (e->gui & GUI_ID) sb_printf(o, ", tide_gui_id(tide_ui, tide_seed, %du)", ++g->sites);
     for (int i = 0; i < e->args.count; i++) {
         sb_put(o, ", ");
         if ((e->arg_mut & (1u << i)) && e->arg_want.items[i].kind == TY_STRING) {
@@ -6017,21 +6018,17 @@ static const char *unwrapped_place(gen *g, expr *e)
 }
 
 // The statements that close every container opened since there were `from`
-// of them, each ended with "; ": the outermost of the GUI's and of the draw
-// settings', which close the ones inside them. NULL when there's none.
+// of them, each ended with "; ", in reverse nesting order. NULL when there's
+// none. Each draw scope closes on the list it opened, across GUI.Draw blocks.
 static const char *closing(const gen *g, const int from)
 {
-    const char *gui = NULL, *draw = NULL;
-    for (int i = from; i < g->containers.count; i++) {
-        const gen_open *c = &g->containers.items[i];
-        if (c->draw && !draw) draw = c->mark;
-        if (!c->draw && !gui) gui = c->mark;
-    }
-    if (!gui && !draw) return NULL;
     sb out = {0};
-    if (gui) sb_printf(&out, "tide_gui_close(tide_ui, %s); ", gui);
-    if (draw) sb_printf(&out, "tide_draw_pop(tide_draw, %s); ", draw);
-    return out.data;
+    for (int i = g->containers.count - 1; i >= from; i--) {
+        const gen_open *c = &g->containers.items[i];
+        if (c->draw) sb_printf(&out, "tide_draw_pop(%s, %s); ", c->list, c->mark);
+        else sb_printf(&out, "tide_gui_close(tide_ui, %s); ", c->mark);
+    }
+    return out.len ? out.data : NULL;
 }
 
 // Leaves the function being generated with `value`, C text of its result type,
@@ -6405,7 +6402,14 @@ static void gen_container(gen *g, const expr *e)
         line(g, o, "if (%s >= 0) {", depth);
         g->indent++;
     }
-    const gen_open open = {depth, false};
+    if (e->gui & GUI_DRAW) {
+        line(g, o, "tide_ui->list.screen_scale = tide_draw->screen_scale;");
+        line(g, o, "tide_ui->list.target_pixels = tide_draw->target_pixels;");
+        line(g, o, "tide_ui->list.lod_pixels = tide_draw->lod_pixels;");
+        line(g, o, "tide_draw_list *const tide_draw = &tide_ui->list;");
+        line(g, o, "(void)tide_draw;");
+    }
+    const gen_open open = {depth, false, NULL};
     vec_push(g->containers, open);
     gen_body_stmt(g, e->block);
     g->containers.count--;
@@ -6426,15 +6430,17 @@ static void gen_setting(gen *g, const expr *e)
     const char *mark = made_up(g, "set");
     line(g, o, "{");
     g->indent++;
+    const char *list = made_up(g, "draw");
+    line(g, o, "tide_draw_list *const %s = tide_draw;", list);
     indent(g, o);
     sb_printf(o, "const uint32_t %s = ", mark);
     gen_builtin_call(g, o, e);
     sb_put(o, ";\n");
-    const gen_open open = {mark, true};
+    const gen_open open = {mark, true, list};
     vec_push(g->containers, open);
     gen_body_stmt(g, e->block);
     g->containers.count--;
-    line(g, o, "tide_draw_pop(tide_draw, %s);", mark);
+    line(g, o, "tide_draw_pop(%s, %s);", list, mark);
     g->indent--;
     line(g, o, "}");
 }
@@ -10009,7 +10015,8 @@ static void gen_prelude(gen *g)
     sb_printf(o, "// GUI.Control: what tide/gui.h says of a control, as a GUIControl.\n"
                  "TIDE_HELPER %s tide_gui_control_value(tide_gui *g, const uint32_t id, const tide_rect rect)\n{\n"
                  "    const tide_control c = tide_gui_control(g, id, rect);\n"
-                 "    return (%s){.hovered = c.hovered, .pressed = c.pressed, .focused = c.focused, .clicked = c.clicked};\n"
+                 "    return (%s){.hovered = c.hovered, .pressed = c.pressed, .focused = c.focused, .clicked = c.clicked,\n"
+                 "                .down = c.down, .up = c.up, .cancelled = c.cancelled, .position = c.position};\n"
                  "}\n\n",
               control, control);
 

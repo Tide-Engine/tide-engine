@@ -949,6 +949,8 @@ enum {
     GUI_SKIPS = 4,     // A container whose block doesn't always run: it returns -1 then
     DRAW_BLOCK = 8,    // A draw setting around a block, which puts back what it found: Draw.Blend(...) { ... }
     DRAW_SET = 16,     // ...and its other form, for the draws that follow, which takes no block: Draw.SetBlend(...)
+    GUI_KEY = 32,      // A keyed scope uses its source site without occurrence counting
+    GUI_DRAW = 64,     // Draw calls in this block record into the GUI's list
 };
 
 // How a constructor call builds its value.

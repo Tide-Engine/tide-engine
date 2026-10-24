@@ -16845,18 +16845,17 @@ static void add_builtins(program *prog)
     theme_radius.type_name = str_from("float");
     vec_push(theme->fields, theme_radius);
     prog->gui_theme = theme;
-    // struct GUIControl { bool hovered; bool pressed; bool focused; bool
-    // clicked; }: what GUI.Control says of a control, as tide/gui.h's
-    // tide_control.
+    // GUI.Control's interaction flags and GUI-space pointer position, as
+    // tide/gui.h's tide_control. Generated padding stays explicit and zeroed.
     decl *control = NEW(decl);
     control->kind = DECL_STRUCT;
     control->name = str_from("GUIControl");
     control->builtin = true;
-    static const char *const control_fields[] = {"hovered", "pressed", "focused", "clicked"};
+    static const char *const control_fields[] = {"hovered", "pressed", "focused", "clicked", "down", "up", "cancelled", "position"};
     for (int i = 0; i < (int)(sizeof control_fields / sizeof control_fields[0]); i++) {
         field f = {0};
         f.name = str_from(control_fields[i]);
-        f.type_name = str_from("bool");
+        f.type_name = str_from(i == 7 ? "float2" : "bool");
         vec_push(control->fields, f);
     }
     prog->gui_control = control;
