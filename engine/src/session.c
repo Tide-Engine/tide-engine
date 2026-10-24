@@ -1921,11 +1921,30 @@ static void forget_published(tide_server *s)
     }
 }
 
+// Private effects are absent from recipient frames, but a server journal
+// must retain them. These buffers belong only to this tick's journal record.
+typedef struct private_journal {
+    tide_writer commands, shards, downloads;
+    uint32_t command_count, shard_count, download_count;
+} private_journal;
+
+static void journal_payload(private_journal *j, tide_writer *out, const uint8_t *data, const uint32_t size)
+{
+    tide_write_varint(out, size);
+    if (big_command(size)) {
+        const uint32_t number = ++j->download_count;
+        tide_write_varint(out, number);
+        tide_write_u32(&j->downloads, number);
+        tide_write_u32(&j->downloads, size);
+        tide_write_bytes(&j->downloads, data, size);
+    } else tide_write_bytes(out, data, size);
+}
+
 // Commands into this tick, from each player in turn, in the server's order:
 // a player's next in a channel, or an unordered one. A big one goes once
 // every player has its bytes (publish_command): the frame names its
 // download rather than carrying it.
-static uint32_t dispatch_commands(tide_server *s, tide_writer *w)
+static uint32_t dispatch_commands(tide_server *s, tide_writer *w, private_journal *journal)
 {
     const tide_game *g = s->game;
     if (!g->command || !g->command_sequence) return 0;
@@ -1961,6 +1980,12 @@ static uint32_t dispatch_commands(tide_server *s, tide_writer *w)
             if (g->client_state) {
                 // Command payloads can contain secrets. Their permitted results
                 // arrive through reconciliation; no other player gets the bytes.
+                if (journal) {
+                    tide_write_varint(&journal->commands, player);
+                    tide_write_varint(&journal->commands, cmd->sequence);
+                    journal_payload(journal, &journal->commands, cmd->data, cmd->size);
+                    journal->command_count++;
+                }
                 remove_command(&c->commands, i);
                 count++;
                 examined = 0;
@@ -1991,7 +2016,7 @@ static uint32_t dispatch_commands(tide_server *s, tide_writer *w)
 // big one goes once every player has its bytes, as a big command does, and
 // nothing after it goes before it. Under client_state players are sent none:
 // what they change reaches them as permitted state.
-static uint32_t dispatch_injected(tide_server *s, tide_writer *w)
+static uint32_t dispatch_injected(tide_server *s, tide_writer *w, private_journal *journal)
 {
     const tide_game *g = s->game;
     if (!g->shards || !s->injected_count) return 0;
@@ -2013,6 +2038,10 @@ static uint32_t dispatch_injected(tide_server *s, tide_writer *w)
             if (!p || !everyone_has(s, p)) break;
         }
         g->shards->receive(s->world, m->data, m->size);
+        if (journal) {
+            journal_payload(journal, &journal->shards, m->data, m->size);
+            journal->shard_count++;
+        }
         if (!g->client_state) {
             tide_write_varint(w, m->size);
             if (p) {
@@ -2338,12 +2367,14 @@ static void store_client_frame(tide_server *s, connection *c, const void *before
 
 // Runs one tick: joins and leaves, then the inputs that arrived for it, in
 // slot order, the queued commands, then the systems. Clients do the same.
-static void journal_tick(tide_server *s, uint32_t tick, const uint8_t *frame, uint32_t size);
+static void journal_tick(tide_server *s, uint32_t tick, const uint8_t *frame, uint32_t size, private_journal *journal);
 
 static void server_tick(tide_server *s)
 {
     const tide_game *g = s->game;
     const uint32_t tick = s->tick;
+    private_journal journal = {.commands = {.grows = true}, .shards = {.grows = true}, .downloads = {.grows = true}};
+    private_journal *private = g->client_state && s->desc.journal ? &journal : NULL;
     void *before = g->client_state ? calloc(1, g->world_size) : NULL;
     if (g->client_state && !before) tide_out_of_memory();
     if (before) g->copy_world(before, s->world);
@@ -2425,14 +2456,14 @@ static void server_tick(tide_server *s)
     // Build the command entries apart, so their count precedes them. The
     // temporary input bytes have already been copied into this frame.
     tide_writer commands = {s->frame + frame_capacity(g), frame_capacity(g), 0, false, false};
-    const uint32_t command_count = dispatch_commands(s, &commands);
+    const uint32_t command_count = dispatch_commands(s, &commands, private);
     if (command_count) {
         tide_write_varint(&w, command_count);
         tide_write_bytes(&w, commands.data, commands.size);
     }
     // Shard messages after the commands, applied in the same order by players
     tide_writer shard_messages = {s->frame + frame_capacity(g), frame_capacity(g), 0, false, false};
-    const uint32_t shard_count = dispatch_injected(s, &shard_messages);
+    const uint32_t shard_count = dispatch_injected(s, &shard_messages, private);
     if (shard_count) {
         tide_write_varint(&w, shard_count);
         tide_write_bytes(&w, shard_messages.data, shard_messages.size);
@@ -2457,13 +2488,19 @@ static void server_tick(tide_server *s)
         free(before);
         for (uint32_t p = 0; journals && p < s->players; p++) tide_event_log_free(&journals[p]);
         free(journals);
+        free(journal.commands.data);
+        free(journal.shards.data);
+        free(journal.downloads.data);
         return;
     }
     memcpy(data, s->frame, w.size);
     free_world(g, f->world);
     free(f->world);
     *f = (stored_frame){.tick = tick, .size = w.size, .data = data, .world = before};
-    if (s->desc.journal) journal_tick(s, tick, data, w.size); // What went into the tick, for tide_replay
+    if (s->desc.journal) journal_tick(s, tick, data, w.size, private); // What went into the tick, for tide_replay
+    free(journal.commands.data);
+    free(journal.shards.data);
+    free(journal.downloads.data);
     if (before) {
         // Every player's projection hash: at once where the game can, as most of it is alike for them all
         tide_player_id *recipients = malloc(((size_t)s->players + 1u) * sizeof *recipients);
@@ -2556,25 +2593,46 @@ static void journal_name(void *context, const uint32_t number, const uint32_t si
     j->count++;
 }
 
-static void journal_tick(tide_server *s, const uint32_t tick, const uint8_t *frame, const uint32_t size)
+static void journal_tick(tide_server *s, const uint32_t tick, const uint8_t *frame, const uint32_t size,
+                         private_journal *private)
 {
+    tide_writer full = {.grows = true};
+    if (private) {
+        tide_write_bytes(&full, frame, size);
+        if (full.overflow) tide_out_of_memory();
+        if (private->command_count) {
+            full.data[8] |= FRAME_COMMANDS;
+            tide_write_varint(&full, private->command_count);
+            tide_write_bytes(&full, private->commands.data, private->commands.size);
+        }
+        if (private->shard_count) {
+            full.data[8] |= FRAME_SHARD;
+            tide_write_varint(&full, private->shard_count);
+            tide_write_bytes(&full, private->shards.data, private->shards.size);
+        }
+    }
     tide_writer w = {.grows = true};
     tide_write_u32(&w, tick);
-    tide_write_u32(&w, size);
-    tide_write_bytes(&w, frame, size);
+    tide_write_u32(&w, private ? full.size : size);
+    tide_write_bytes(&w, private ? full.data : frame, private ? full.size : size);
     const uint32_t count_at = w.size;
     tide_write_u32(&w, 0u);
     journal_names names = {s, &w, 0u, false};
-    if (!frame_names_each(frame, size, s->players, journal_name, &names) || names.missing) {
+    if (private) {
+        tide_write_bytes(&w, private->downloads.data, private->downloads.size);
+        names.count = private->download_count;
+    } else if (!frame_names_each(frame, size, s->players, journal_name, &names) || names.missing) {
         // Every download a frame names is kept until its tick's frame goes: a
         // frame whose bytes aren't there is a bug in this file
         fputs("tide: a tick's journal record names a download the server doesn't have\n", stderr);
         abort();
     }
-    if (w.overflow) tide_out_of_memory();
+    if (w.overflow || full.overflow || (private && (private->commands.overflow || private->shards.overflow
+        || private->downloads.overflow))) tide_out_of_memory();
     for (uint32_t k = 0; k < 4u; k++) w.data[count_at + k] = (uint8_t)(names.count >> (8u * k));
     s->desc.journal(s->desc.journal_user, tick, w.data, w.size);
     free(w.data);
+    free(full.data);
 }
 
 bool tide_replay_tick(const uint8_t *record, const uint32_t size, uint32_t *tick)

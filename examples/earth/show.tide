@@ -185,9 +185,19 @@ local event(HighFive five) Cheer(Walker walker, mut Scenery scenery)
 }
 
 // A joined world that isn't there, or that went: this machine's own instead, with its townsfolk
-local event(Disconnected gone) Alone()
+local event(Disconnected gone) Alone(mut Pilot pilot)
 {
-    if (gone.reason != DisconnectReason.Left) Session.Start();
+    if (gone.reason == DisconnectReason.Left) return;
+    // Continue from where this machine last saw its walker, rather than the
+    // place it first clicked, perhaps a long walk ago. The new match's count
+    // starts over, so its first input is a fresh landing request.
+    if (pilot.walking && pilot.placed) pilot.drop = pilot.spot;
+    if (pilot.moves > 0) pilot.moves = 1;
+    pilot.landed = 0;
+    pilot.arrived = -1;
+    pilot.waiting = 0;
+    pilot.going = false;
+    Session.Start();
 }
 
 // The buttons, first, so a press on one is theirs and not the world's
@@ -304,7 +314,7 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
     }
     scroll += pinch;
     if (fingers >= 2) pilot.dragging = true;
-    if (pilot.walking)
+    if (pilot.walking && pilot.blend > 0.5)
     {
         pilot.back = Math.Clamp(pilot.back * Math.Exp(-scroll * 0.15), 3, 60);
         if (pilot.back >= 60) pilot.walking = false;
@@ -331,7 +341,8 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
         pilot.waiting = 0;
     }
     float toward = pilot.walking && there ? 1 : 0;
-    pilot.blend = Math.Clamp(pilot.blend + (toward > pilot.blend ? dt / 1.8 : -dt / 1.0), 0, 1);
+    if (toward > pilot.blend) pilot.blend = Math.Min(pilot.blend + dt / 1.8, toward);
+    else if (toward < pilot.blend) pilot.blend = Math.Max(pilot.blend - dt, toward);
 
     // The pointer: on the globe, a drag turns it and a click goes there; on the ground, a drag looks round and a tap walks there
     var pointer = devices.pointer;
@@ -358,13 +369,13 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
     {
         // Pinching: no turning
     }
-    else if (pilot.walking && pilot.pressing && pilot.dragging)
+    else if (pilot.walking && there && pilot.blend > 0.5 && pilot.pressing && pilot.dragging)
     {
         float turn = pointer.delta.x * 0.006;
         pilot.look = pilot.look * Math.Cos(turn) + Math.Cross(up, pilot.look) * Math.Sin(turn);
         pilot.tilt = Math.Clamp(pilot.tilt - pointer.delta.y * 0.004, 0.05, 1.4);
     }
-    else if (!pilot.walking && pilot.pressing && pilot.dragging)
+    else if ((!pilot.walking || !there || pilot.blend <= 0.5) && pilot.pressing && pilot.dragging)
     {
         // The globe goes the way it's dragged, the slower the nearer
         float slow = (pilot.away - 1) / 2.4;
@@ -372,7 +383,7 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
         pilot.yaw -= pointer.delta.x * 0.006 * slow;
         pilot.pitch = Math.Clamp(pilot.pitch - pointer.delta.y * 0.006 * slow, -1.4, 1.4);
     }
-    else if (!pilot.walking)
+    else if (!pilot.walking || !there || pilot.blend <= 0.5)
     {
         pilot.yaw += pilot.spin * dt;
         pilot.spin = Math.Lerp(pilot.spin, 0.05, Math.Min(dt * 1.5, 1));
@@ -428,7 +439,7 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
     bool hits = disc > 0 && b > 0;
     var hit = hits ? Math.Normalize(eye + ray * (c / (b + Math.Sqrt(disc)))) * R : float3(0, 0, 0);
     // A click on the globe: there, or the square of a town near it
-    if (click && !pilot.walking && hits)
+    if (click && (!pilot.walking || !there || pilot.blend <= 0.5) && hits)
     {
         int town = Nearest(hit);
         mut var at = hit;
@@ -519,17 +530,23 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
         float lon = Math.Atan2(at.z, at.x);
         float step = 16 / R;
         int row0 = int(Math.Floor(lat / step));
-        float across = step / Math.Max(Math.Cos(lat), 0.2);
-        int column0 = int(Math.Floor(lon / across));
         for (var row = row0 - 10; row <= row0 + 10; row++)
         {
+            // Each row has a fixed grid. Using the eye's latitude for this
+            // spacing moved every tree whenever the player walked north/south.
+            float rowLat = (row + 0.5) * step;
+            if (Math.Abs(rowLat) >= Math.PI * 0.5) continue;
+            int columns = int(Math.Floor(Math.TAU * Math.Max(Math.Cos(rowLat), 0.2) / step));
+            float across = Math.TAU / columns;
+            int column0 = int(Math.Floor(lon / across));
             for (var column = column0 - 10; column <= column0 + 10; column++)
             {
-                int h = Math.Hash(int2(row, column));
+                int wrapped = (column % columns + columns) % columns;
+                int h = Math.Hash(int2(row, wrapped));
                 float jitterA = (h % 1000) / 1000.0;
                 float jitterB = ((h / 1000) % 1000) / 1000.0;
                 float tLat = (row + jitterA) * step;
-                float tLon = (column + jitterB) * across;
+                float tLon = (wrapped + jitterB) * across;
                 var n = float3(Math.Cos(tLat) * Math.Cos(tLon), Math.Sin(tLat), Math.Cos(tLat) * Math.Sin(tLon));
                 float forest = Math.Simplex(n * 7) * 0.6 + Math.Simplex(n * 19) * 0.3 + Math.Simplex(n * 61) * 0.1;
                 if ((h / 1000000) % 100 > (forest > 0.1 ? 70 : 12)) continue;
@@ -684,7 +701,7 @@ void Backed(string text, float2 at, float size, Color color)
 }
 
 // Everything added, drawn at once, then what's written over it
-view Picture(mut Scenery scenery, mut Pilot pilot, Shapes shapes, Roster roster)
+view Picture(mut Scenery scenery, mut Pilot pilot, Shapes shapes, Roster roster, Session session)
 {
     float dt = Math.Min(Frame.dt, 0.05);
     // Where most players are together, but this machine's: for Join
@@ -762,7 +779,9 @@ view Picture(mut Scenery scenery, mut Pilot pilot, Shapes shapes, Roster roster)
         }
         mut int shards = 0;
         for (var i = 0; i < 31; i++) if ((scenery.lastShown & (1 << i)) != 0) shards += 1;
-        Backed($"     {roster.online} online · {shards} {(shards == 1 ? "shard" : "shards")}", float2(14, 14), 13, bright);
+        string status = session.server ? $"     {roster.online} here · local world"
+                        : $"     {roster.online} online · {shards} {(shards == 1 ? "shard" : "shards")}";
+        Backed(status, float2(14, 14), 13, bright);
         Draw.Circle(float2(26, 21), 4, Color(0.18, 0.83, 0.45));
         if (pilot.shards)
         {

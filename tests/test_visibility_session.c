@@ -3,6 +3,7 @@
 #include <stdio.h>
 
 #include "tide/session.h"
+#include "tide/shard.h"
 #include "tide_test.h"
 
 // Plain data deliberately has no shared physical-world snapshot/packing API.
@@ -263,6 +264,48 @@ static const tide_game visibility_game = {
     .tick_client_events = visibility_tick_journal, .check_client_events = visibility_check_events,
 };
 
+typedef struct visibility_replay {
+    const tide_game *game;
+    visibility_world world;
+    uint32_t records;
+} visibility_replay;
+
+static void visibility_replay_record(void *user, uint32_t tick, const uint8_t *record, uint32_t size)
+{
+    visibility_replay *replay = user;
+    TIDE_CHECK(tick == replay->records);
+    TIDE_CHECK(tide_replay(replay->game, &replay->world, record, size, NULL));
+    replay->records++;
+}
+
+static bool visibility_receive_shard(void *world, const uint8_t *data, uint32_t size)
+{
+    visibility_world *w = world;
+    for (uint32_t i = 0; i < size; i++) w->health += data[i];
+    return true;
+}
+
+TIDE_TEST(visibility_journal_replays_private_small_and_large_shard_messages)
+{
+    const tide_shard_game shards = {.receive = visibility_receive_shard};
+    tide_game game = visibility_game;
+    game.shards = &shards;
+    visibility_replay replay = {.game = &game};
+    visibility_continuous = false;
+    tide_server *server = tide_server_create(&(tide_server_desc){.game = &game,
+        .journal = visibility_replay_record, .journal_user = &replay}, 0);
+    TIDE_REQUIRE(server);
+    replay.world = *(const visibility_world *)tide_server_world(server);
+    uint8_t message[5000];
+    memset(message, 7, sizeof message);
+    TIDE_CHECK(tide_server_inject(server, message, 3));
+    TIDE_CHECK(tide_server_inject(server, message, sizeof message));
+    for (uint32_t i = 1; i <= 120; i++) tide_server_update(server, i / 60.0);
+    TIDE_CHECK(replay.records > 100);
+    TIDE_CHECK(visibility_hash(&replay.world) == visibility_hash(tide_server_world(server)));
+    tide_server_destroy(server);
+}
+
 static void visibility_run_case(tide_net_conditions conditions, bool commands, bool recover, bool continuous)
 {
     visibility_loads = visibility_starts = visibility_private_inputs = 0;
@@ -273,8 +316,12 @@ static void visibility_run_case(tide_net_conditions conditions, bool commands, b
     tide_loopback *net = tide_loopback_create(541254);
     TIDE_REQUIRE(net);
     tide_loopback_set_conditions(net, conditions);
+    visibility_replay replay = {.game = &visibility_game};
     tide_server *server = tide_server_create(&(tide_server_desc){.game = &visibility_game,
-        .transports = {tide_loopback_endpoint(net, 1)}}, 0);
+        .transports = {tide_loopback_endpoint(net, 1)},
+        .journal = visibility_replay_record, .journal_user = &replay}, 0);
+    TIDE_REQUIRE(server);
+    replay.world = *(const visibility_world *)tide_server_world(server);
     uint32_t sampled[2] = {3, 7};
     tide_client *clients[2];
     tide_event_log events[2] = {{.taken = true}, {.taken = true}};
@@ -314,6 +361,8 @@ static void visibility_run_case(tide_net_conditions conditions, bool commands, b
             free(large);
         }
     }
+    TIDE_CHECK(replay.records > 600);
+    TIDE_CHECK(visibility_hash(&replay.world) == visibility_hash(tide_server_world(server)));
     TIDE_CHECK(visibility_starts == 1); // No client ever reconstructs private starting state.
     TIDE_CHECK(visibility_loads >= 8); // Initial joins plus hidden interaction/reveal/conceal corrections.
     TIDE_CHECK(visibility_private_inputs == 0);

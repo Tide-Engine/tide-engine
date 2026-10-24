@@ -394,8 +394,10 @@ system Bump(mut Walker walker, query (Walker other) walkers, query (Car car) car
     {
         if (row.entity == this || !row.other.placed || Math.Abs(row.other.height - walker.height) > 1.6) continue;
         var apart = walker.position - row.other.position;
-        float d = Math.Length(apart);
         float theirs = row.other.driving ? BUMPER : BODY;
+        float reach = Math.Max(mine + theirs, 2.2);
+        if (Math.Abs(apart.x) >= reach || Math.Abs(apart.y) >= reach || Math.Abs(apart.z) >= reach) continue;
+        float d = Math.Length(apart);
         if (d < mine + theirs && d > 0.0001)
         {
             // A car hardly moves for someone on foot; someone on foot gets out of a car's way

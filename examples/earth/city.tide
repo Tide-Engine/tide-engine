@@ -109,6 +109,9 @@ float2 Clear(int town, float2 at, float radius)
         var nearest = float2(Math.Clamp(p.x, b.center.x - b.half.x, b.center.x + b.half.x),
                              Math.Clamp(p.y, b.center.y - b.half.y, b.center.y + b.half.y));
         var away = p - nearest;
+        // Outside either axis, the circle cannot touch this building. Keep
+        // the same nearest point and collision arithmetic for those that can.
+        if (Math.Abs(away.x) >= radius || Math.Abs(away.y) >= radius) continue;
         float d = Math.Length(away);
         if (d < radius)
         {

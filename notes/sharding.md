@@ -59,6 +59,14 @@ The owner's rule (2026-10-23): shards aren't a game's concern, and what a game d
 
 ## The journal and recovering from a crash
 
+Visibility journals (2026-10-24): the server now records private shard
+messages and commands in a separate full replay frame, even though recipient
+frames omit them. Earth's hosted checkpoint exposed the missing messages;
+its four-region test now replays every recorded tick through player joins,
+town travel and leaves, then checks each shard's complete hash. Existing
+records that omitted effects remain unrecoverable. Details and full
+native/web validation: notes/netcode.md, A server's journal.
+
 - **A server's journal** (`tide_server_desc.journal`, `journal_tick` in `engine/src/session.c`): after each tick, a record of the tick's frame as players get it (joins and leaves, changed inputs, commands, shard messages) and the bytes of each big command or message the frame names by download (`frame_names_each` finds them; a named download the server no longer has aborts, as it's kept until its frame goes). `tide_replay` runs the tick again on the world from before it, as a client applies a frame, and checks the world's hash against the frame's. Inputs come as deltas from what the world keeps, which a checkpointed world has. A server's tick counter starts at 0 whatever world it starts from; `tide_replay_tick` reads a record's.
 - **The orchestrator's journal** (`tide_shards_desc.journal`, `flush`, `checkpoint`, `checkpoint_seconds`): every shard's records, numbered on across restarts (`ticks_before`, patched into a record's first word); `flush` once an update after the servers ticked and before anything is carried, so no message leaves a shard before the ticks that made it are kept.
 - **Acknowledging** (`acknowledge`): a sender lets go of a message only once every shard has applied everything it was handed (`drained`: no server has injected messages waiting) and those ticks were flushed. Until this change, carrying a message acknowledged it at once, so a crash between a receiver taking a message and applying it lost it.

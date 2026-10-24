@@ -9,12 +9,120 @@
 
 #define PLANET 3000.0f
 
+static tide_local local;
+static tide_draw_list draw;
+static tide_gui gui;
+static tide_devices devices;
+
+static void draw_world(const tide_world *w, const tide_player_id who)
+{
+    tide_local_set_session(&local, TIDE_SESSION_CONNECTED, who, 0, true, false, "");
+    tide_local_frame_time(&local, 1.0f / 60.0f);
+    tide_draw_reset(&draw);
+    tide_gui_begin(&gui, &devices, tide_f2(640, 480), NULL);
+    tide_frame(w, NULL, 1, w, NULL, 1, &local, &draw, &gui);
+    tide_gui_end(&gui, &draw);
+}
+
+static void sample_local(void *user, const uint32_t tick, void *input)
+{
+    (void)user;
+    (void)tick;
+    *(Controls *)input = tide_input_sample(&devices, &local);
+}
+
+// A failed hosted join starts a local, one-region match. Exercise the actual
+// views and sampled controls as well as the simulation: a direct set_input
+// test cannot catch a landing request being lost by presentation.
+TIDE_TEST(earth_a_local_fallback_lands_from_its_views)
+{
+    tide_local_init(&local);
+    tide_session *s = tide_session_create(&(tide_session_desc){.game = &tide_game_api, .sample = sample_local});
+    TIDE_REQUIRE(s != NULL);
+    tide_session_start(s, NULL, 0);
+    for (int i = 1; i <= 300; i++) {
+        tide_session_update(s, i / 60.0);
+        const tide_session_status status = tide_session_status_of(s);
+        draw_world(tide_session_world(s), status.client.player);
+        if (i == 60) {
+            local.Pilot.drop = (tide_float3){1829.01f, 2364.03f, 257.05f};
+            local.Pilot.moves++;
+            local.Pilot.walking = true;
+        }
+        if (i >= 220) TIDE_CHECK(local.Pilot.blend == 1);
+    }
+    TIDE_CHECK(local.Pilot.had);
+    TIDE_CHECK(local.Pilot.placed);
+    TIDE_CHECK(local.Pilot.landed == local.Pilot.moves);
+    TIDE_CHECK(local.Pilot.blend == 1);
+    tide_session_destroy(s);
+    tide_draw_free(&draw);
+    tide_local_free(&local);
+}
+
+TIDE_TEST(earth_the_globe_can_turn_while_a_landing_is_pending)
+{
+    tide_local_init(&local);
+    memset(&gui, 0, sizeof gui);
+    memset(&devices, 0, sizeof devices);
+    local.Pilot.walking = true;
+    local.Pilot.moves = 1;
+    local.Pilot.drop = (tide_float3){1, 0, 0};
+    local.Pilot.pressing = true;
+    local.Pilot.pressed = (tide_float2){200, 200};
+    devices.pointer.position = (tide_float2){240, 240};
+    devices.pointer.poll_delta = (tide_float2){40, 0};
+    devices.pointer.press.pressed = true;
+    devices.pointer.press.held = true;
+    gui.last = devices; // The drag began in the previous frame.
+    const float yaw = local.Pilot.yaw;
+    draw_world(NULL, tide_player_from_index(0));
+    TIDE_CHECK(local.Pilot.yaw != yaw);
+    TIDE_CHECK(local.Pilot.walking && local.Pilot.moves == 1);
+    tide_draw_free(&draw);
+    tide_local_free(&local);
+    memset(&devices, 0, sizeof devices);
+}
+
+TIDE_TEST(earth_a_disconnect_continues_locally_where_the_walker_was)
+{
+    tide_local_init(&local);
+    memset(&gui, 0, sizeof gui);
+    const tide_float3 spot = {0, 0, 3000};
+    local.Pilot.walking = local.Pilot.placed = true;
+    local.Pilot.spot = spot;
+    local.Pilot.drop = (tide_float3){3000, 0, 0};
+    local.Pilot.moves = local.Pilot.landed = 7;
+    tide_local_disconnected(&local, TIDE_DISCONNECT_TIMED_OUT, "");
+    draw_world(NULL, tide_player_from_index(0));
+    tide_session_request request;
+    tide_start start;
+    TIDE_REQUIRE(tide_local_take_request(&local, &request, &start));
+    TIDE_CHECK(request.kind == TIDE_REQUEST_START);
+    tide_session *s = tide_session_create(&(tide_session_desc){.game = &tide_game_api, .sample = sample_local});
+    TIDE_REQUIRE(s);
+    tide_session_start(s, &start, 0);
+    for (int i = 1; i <= 300; i++) {
+        tide_session_update(s, i / 60.0);
+        draw_world(tide_session_world(s), tide_session_status_of(s).client.player);
+    }
+    TIDE_CHECK(local.Pilot.placed && local.Pilot.blend == 1);
+    const tide_float3 at = local.Pilot.spot;
+    TIDE_CHECK(fabsf(at.x - spot.x) < 3 && fabsf(at.y - spot.y) < 3 && fabsf(at.z - spot.z) < 3);
+    TIDE_CHECK(local.Pilot.moves == 1 && local.Pilot.landed == 1);
+    tide_session_destroy(s);
+    tide_draw_free(&draw);
+    tide_local_free(&local);
+}
+
 // Every live entity of a world, in index order
 #define EACH(w, e)                                                                                                    \
     for (uint32_t index_ = 0; index_ < (w)->entities.next_unused; index_++)                                           \
         for (tide_entity e = tide_entity_in_slot(&(w)->entities, index_); !tide_entity_is_null(e); e = (tide_entity){0})
 
 static tide_world world;
+static tide_entity walker_of(const tide_world *w, tide_player_id who);
+static void ticks(int n);
 
 static tide_player_id player(const int n)
 {
@@ -41,6 +149,66 @@ static tide_float3 minus(const tide_float3 a, const tide_float3 b)
 static tide_float3 times(const tide_float3 a, const float k)
 {
     return (tide_float3){a.x * k, a.y * k, a.z * k};
+}
+
+static int tree_positions(tide_float3 out[512])
+{
+    tide_text_use(NULL, &local.heap);
+    int count = 0;
+    for (int i = 0; i < tide_list_count(local.Scenery.boxes) && count < 512; i++) {
+        const Placed *p = tide_list_at(local.Scenery.boxes, i, sizeof *p);
+        if (p->paint.r != 0.4f || p->paint.g != 0.3f || p->paint.b != 0.22f) continue;
+        out[count++] = (tide_float3){p->transform.c3.x + local.Pilot.eye.x,
+                                    p->transform.c3.y + local.Pilot.eye.y,
+                                    p->transform.c3.z + local.Pilot.eye.z};
+    }
+    return count;
+}
+
+// Compare the actual drawn trunks in world coordinates as the eye moves a
+// metre north, and across the longitude seam. Existing trees must stay put;
+// only the few at the edge of the drawing radius may appear/disappear.
+TIDE_TEST(earth_trees_stay_in_place_when_the_eye_moves)
+{
+    tide_world_init(&world, 1.0f / 60.0f);
+    tide_world_player_joined(&world, player(0));
+    ticks(1);
+    const tide_entity me = walker_of(&world, player(0));
+    tide_local_init(&local);
+    memset(&devices, 0, sizeof devices);
+    memset(&gui, 0, sizeof gui);
+    for (int seam = 0; seam < 2; seam++) {
+        tide_float3 before[512], after[512];
+        int a = 0, b = 0;
+        for (int step = 0; step < 2; step++) {
+            Walker w = tide_get_Walker(&world, me);
+            w.position = times(up_at(40.0f + step * 0.02f, seam ? 179.999f + step * 0.002f : 90), PLANET);
+            w.forward = (tide_float3){0, 1, 0};
+            w.placed = true;
+            w.moves = 1;
+            tide_set_Walker(&world, me, w);
+            local.Pilot.walking = true;
+            local.Pilot.moves = 1;
+            local.Pilot.blend = 1;
+            local.Pilot.arrived = 1;
+            draw_world(&world, player(0));
+            if (!step) a = tree_positions(before);
+            else b = tree_positions(after);
+        }
+        int same = 0;
+        for (int i = 0; i < a; i++) {
+            for (int j = 0; j < b; j++) {
+                if (length3(minus(before[i], after[j])) >= 0.003f) continue;
+                same++;
+                break;
+            }
+        }
+        TIDE_CHECK(a > 10 && b > 10);
+        TIDE_CHECK(same > a * 0.9f);
+    }
+    tide_draw_free(&draw);
+    tide_local_free(&local);
+    tide_world_free(&world);
 }
 
 // A player's walker: the one their PlayerJoined spawned, which no Person has
@@ -242,6 +410,15 @@ typedef struct visitor {
 
 static tide_loopback *net;
 static tide_shards *shards;
+static tide_world replayed[5];
+
+static void replay_record(void *user, uint32_t shard, uint32_t tick, const uint8_t *record, uint32_t size)
+{
+    (void)user;
+    (void)tick;
+    TIDE_REQUIRE(shard < 5);
+    TIDE_CHECK(tide_replay(&tide_game_api, &replayed[shard], record, size, NULL));
+}
 static visitor first = {.endpoints = 100}, second = {.endpoints = 200};
 static double now;
 
@@ -347,9 +524,11 @@ TIDE_TEST(earth_a_player_visits_towns_on_two_shards_and_leaves)
     net = tide_loopback_create(3);
     const double half = 2.0 * 1600.0;
     const tide_shards_desc d = {.game = &tide_game_api, .tick_rate = 60, .world = {{-half, -half, -half}, {half, half, half}},
-                                .split = {4, 1, 1}, .transports = transports};
+                                .split = {4, 1, 1}, .transports = transports, .journal = replay_record};
     shards = tide_shards_create(&d, now);
     TIDE_REQUIRE(shards != NULL);
+    for (uint32_t i = 0; i < tide_shards_count(shards); i++)
+        tide_world_copy(&replayed[i], tide_shards_world(shards, i));
     first.moves = second.moves = 0;
     join(&first);
     TIDE_REQUIRE(first.client != NULL);
@@ -414,6 +593,11 @@ TIDE_TEST(earth_a_player_visits_towns_on_two_shards_and_leaves)
     run(25.0);
     TIDE_CHECK(owners(0, &w) == 0);
     TIDE_CHECK(owners(1, &w) == 0);
+
+    for (uint32_t i = 0; i < tide_shards_count(shards); i++) {
+        TIDE_CHECK(tide_world_hash(&replayed[i]) == tide_world_hash(tide_shards_world(shards, i)));
+        tide_world_free(&replayed[i]);
+    }
 
     tide_shards_destroy(shards);
     tide_loopback_destroy(net);

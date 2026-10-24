@@ -84,6 +84,44 @@ As WebAssembly under Node, one thread, the one server's update median at 64, 128
 
 What's left: the p99s (22.7 ms at 256 natively, 42 ms as WebAssembly) are packing projections for corrections and joins (`client_state` of the world and of the client's verified one for a delta, 66 ms a second at 256 natively); and the bots' own machines, whose simulating (Earth's `Walk`, `Bump`, which looks at every walker, and `Clear`, the buildings) is now most of a run's time.
 
+### Walking follow-up and bandwidth, the same day
+
+Recovered baseline `3a51a29e`, same machine/compiler/options as above, one
+gated before/after pair each at 64 and 256 players (`followup-before-*` and
+`followup-after-*` in `bench/results/earth.jsonl`). A whole-process sample at
+256 players puts 15.6% of program samples in Walk's rows, 10.3% in Clear and
+9.1% in Bump's rows; it includes all bots, not only the server. Clear and Bump
+now reject separated axes before taking a length, retaining the original
+collision arithmetic/order for nearby pairs. End hashes, bytes, join times,
+repair rates and worst confirmation lag are identical to their before runs.
+
+At 64 players server median/p99 is 0.73/2.21 before and 0.74/2.30 ms after;
+server simulation is 5.55 -> 5.23 ms per simulated second. At 256 it is
+5.26/23.14 -> 4.97/21.99 ms, simulation 15.67 -> 14.04 ms/s and a bot's
+simulation 4.19 -> 3.95 ms/s. This single pair does not establish a general
+speedup: packing and hashing, unchanged by these bounds, also moved by a few
+percent. Packing corrections/joins remains the server's tail-cost target.
+
+The earlier **77 KB/s is an average per bot for 256 bots with dynamic
+splitting**, not a constant connection rate or the homepage's normal load.
+The page is capped at 64 players; only the stress build raises it to 256.
+The follow-up one-server runs receive 8.4 KB/s per bot at 64, 22.5 at 256,
+and send 6.5/8.8 KB/s respectively. A new one-player, 20-second walking run
+(`followup-one-player`, `--hop 0`) receives 6.1 KB/s and sends 4.4, with no
+resyncs. These are simulated datagram bytes, excluding WebRTC/hosting envelope
+overhead; they are not a measurement of the live homepage. More shards,
+players, changing visibility and repairs raise traffic. No bandwidth reduction
+is claimed from the collision bounds.
+
+The page's actual view also oscillated its settled camera away from 1 every
+third frame, repeatedly toggling whole-globe watching. It now stays settled;
+its country trees have fixed row/cell coordinates and pending landings keep
+globe controls. These presentation fixes are outside the bots' measurements.
+The hosted failed world's missing private journal effects were reproduced and
+fixed separately (notes/netcode.md). All full native/web debug suites pass;
+the final Earth views additionally pass scoped native/web tests and muted
+WebGL/WebGPU landing/walking smoke. No benchmark pin changed.
+
 ## Drawing: plain records and sprites, 2026-10-21
 
 After the third round (below), the owner's "yes do it" to its two biggest

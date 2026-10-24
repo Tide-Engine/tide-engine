@@ -12,6 +12,32 @@ A sharded game's clients now report the progress of a download (a published comm
 
 ## A server's journal (2026-10-23)
 
+Visibility recovery correction (2026-10-24): private commands and injected
+shard messages were applied but omitted from the common frame, which the
+journal had copied. The hosted Earth's saved journal reproduces a mismatch
+at tick 4291, after 717 successfully replayed records from its checkpoint.
+With projections and a journal enabled, dispatch now copies these effects
+into tick-local, server-only buffers. `journal_tick` appends their entries to
+a separate full replay frame; large payloads use record-local download IDs
+and bytes in the existing journal format. Recipient frames, downloads, wire
+protocol, tick order and hashes are unchanged. Games without a journal make
+no payload copies. No new public/generated runtime API is introduced.
+
+Every visibility-session case now replays every server record while checking
+the original privacy, loss, correction and command assertions, including two
+100 KB private uploads. A separate test covers small and 5 KB private shard
+messages. Earth's real four-region test replays each shard throughout joins,
+travel and leaves and compares final full-world hashes. Previously omitted
+effects cannot be reconstructed from the old records; the fix protects new
+journals rather than accepting an invalid historical hash.
+
+Validation: full Windows debug suites pass 2,621 enabled native and 2,479 web
+tests, including Vulkan/OpenGL, WebGL/D3D11/WebGPU and existing journal/recovery
+coverage. The existing MicroDuck right-turn test stays disabled. Final Earth
+presentation edits additionally pass its four CTests on native/web debug.
+Other operating systems, Android, MinGW and sanitizers remain CI coverage;
+no CI was manually dispatched.
+
 `tide_server_desc.journal` gets, after each tick, a record of what went into
 it: the tick's frame as players get it, then the bytes of every big command or
 shard message the frame names by download. `tide_replay` runs that tick again
