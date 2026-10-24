@@ -3319,6 +3319,18 @@ TIDE_TEST(lsp_format_lists)
 }
 
 
+TIDE_TEST(lsp_local_workers)
+{
+    start();
+    open_document("local worker int Bu$ild(int value) { return value + 1; }\nscene Main;\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "local worker int Build(int value)"));
+    TIDE_CHECK(has(request("textDocument/documentSymbol"), "local worker"));
+    const char *source = "local  worker int Build( int value ) { return value+1; }\nscene Main;\n";
+    format_reply(source);
+    TIDE_CHECK(has(apply_reply(source, NULL), "local worker int Build(int value)"));
+}
+
 TIDE_TEST(lsp_empty_scene_declarations)
 {
     start();

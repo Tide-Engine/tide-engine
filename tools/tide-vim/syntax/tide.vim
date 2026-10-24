@@ -5,7 +5,7 @@ endif
 syntax case match
 syntax keyword tideKeyword component singleton system view input event command
 syntax keyword tideKeyword scene prefab entity struct enum namespace using extern
-syntax keyword tideKeyword const asset frag vert async virtual override local verified
+syntax keyword tideKeyword const asset frag vert async worker virtual override local verified
 syntax keyword tideKeyword mut with without out in var fails is this
 syntax keyword tideConditional if else switch case default
 syntax keyword tideRepeat while for foreach parallel

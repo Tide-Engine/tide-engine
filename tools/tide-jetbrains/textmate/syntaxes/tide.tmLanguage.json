@@ -163,7 +163,7 @@
       "patterns": [
         {
           "comment": "A system's or a view's parameter list, including read-only query (Body body, with Fighter) fighters. extern system Move(mut Position position): a system written in C",
-          "begin": "(?:^|(?<=\\]))\\s*(?:(local|async|virtual|override|extern)\\s+)?(?:((?:local|async|virtual|override)(?:\\s+(?:local|async|virtual|override))?)\\s+)?(system|view)\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)\\s*(\\()",
+          "begin": "(?:^|(?<=\\]))\\s*(?:(local|async|worker|virtual|override|extern)\\s+)?(?:((?:local|async|worker|virtual|override)(?:\\s+(?:local|async|worker|virtual|override))?)\\s+)?(system|view)\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)\\s*(\\()",
           "end": "\\)",
           "beginCaptures": {
             "1": { "name": "storage.modifier.tide" },
@@ -189,7 +189,7 @@
         },
         {
           "comment": "component Transform, singleton Time, struct Stats, input PlayerInput, event Hit, command Rename, scene Arena, enum Voxel : byte",
-          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|virtual|override)\\s+)?(?:((?:local|async|virtual|override)(?:\\s+(?:local|async|virtual|override))?)\\s+)?(component|singleton|struct|input|event|command|enum|scene|prefab|entity)\\s+([A-Za-z_][A-Za-z0-9_]*)(?:\\s*(:)\\s*([A-Za-z_][A-Za-z0-9_]*))?",
+          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|worker|virtual|override)\\s+)?(?:((?:local|async|worker|virtual|override)(?:\\s+(?:local|async|worker|virtual|override))?)\\s+)?(component|singleton|struct|input|event|command|enum|scene|prefab|entity)\\s+([A-Za-z_][A-Za-z0-9_]*)(?:\\s*(:)\\s*([A-Za-z_][A-Za-z0-9_]*))?",
           "captures": {
             "1": { "name": "storage.modifier.tide" },
             "2": { "name": "storage.modifier.tide" },
@@ -201,7 +201,7 @@
         },
         {
           "comment": "command(Rename rename, PlayerID sender) RenamePlayer: a command handler",
-          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|virtual|override)\\s+)?(?:((?:local|async|virtual|override)(?:\\s+(?:local|async|virtual|override))?)\\s+)?(command)\\s*(\\()\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\\s+([A-Za-z_][A-Za-z0-9_]*))?\\s*(,)\\s*(PlayerID)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(\\))\\s*((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)",
+          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|worker|virtual|override)\\s+)?(?:((?:local|async|worker|virtual|override)(?:\\s+(?:local|async|worker|virtual|override))?)\\s+)?(command)\\s*(\\()\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\\s+([A-Za-z_][A-Za-z0-9_]*))?\\s*(,)\\s*(PlayerID)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(\\))\\s*((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
             "1": {
               "name": "storage.modifier.tide"
@@ -252,7 +252,7 @@
         },
         {
           "comment": "local event(Hit hit) ShowHit(Body body, query (Body other, with Fighter) fighters): a handler's parameter list, where a local handler takes queries as a system does",
-          "begin": "(?:^|(?<=\\]))\\s*(?:(local|async|virtual|override)\\s+)?(?:((?:local|async|virtual|override)(?:\\s+(?:local|async|virtual|override))?)\\s+)?(event)\\s*(\\()\\s*(?:(verified)\\s+(?=[A-Za-z_]))?([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\\s+([A-Za-z_][A-Za-z0-9_]*))?\\s*(\\))\\s*((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)\\s*(\\()",
+          "begin": "(?:^|(?<=\\]))\\s*(?:(local|async|worker|virtual|override)\\s+)?(?:((?:local|async|worker|virtual|override)(?:\\s+(?:local|async|worker|virtual|override))?)\\s+)?(event)\\s*(\\()\\s*(?:(verified)\\s+(?=[A-Za-z_]))?([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\\s+([A-Za-z_][A-Za-z0-9_]*))?\\s*(\\))\\s*((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)\\s*(\\()",
           "end": "\\)",
           "beginCaptures": {
             "1": { "name": "storage.modifier.tide" },
@@ -283,7 +283,7 @@
         },
         {
           "comment": "event(Hit hit) TakeHit: an event handler, with the event it handles. local event(verified Died died) ShowDeath: 'verified' is a word of its own where an event follows it, and an event's name where none does",
-          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|virtual|override)\\s+)?(?:((?:local|async|virtual|override)(?:\\s+(?:local|async|virtual|override))?)\\s+)?(event)\\s*(\\()\\s*(?:(verified)\\s+(?=[A-Za-z_]))?([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\\s+([A-Za-z_][A-Za-z0-9_]*))?\\s*(\\))\\s*((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)",
+          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|worker|virtual|override)\\s+)?(?:((?:local|async|worker|virtual|override)(?:\\s+(?:local|async|worker|virtual|override))?)\\s+)?(event)\\s*(\\()\\s*(?:(verified)\\s+(?=[A-Za-z_]))?([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\\s+([A-Za-z_][A-Za-z0-9_]*))?\\s*(\\))\\s*((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
             "1": { "name": "storage.modifier.tide" },
             "2": { "name": "storage.modifier.tide" },
@@ -304,7 +304,7 @@
         },
         {
           "comment": "system MovePlayer, view DrawBalls, frag Shade, vert Wave, audio Echo, extern system MoveInC",
-          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|virtual|override|extern)\\s+)?(?:((?:local|async|virtual|override)(?:\\s+(?:local|async|virtual|override))?)\\s+)?(system|view|frag|vert|audio)\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)",
+          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|worker|virtual|override|extern)\\s+)?(?:((?:local|async|worker|virtual|override)(?:\\s+(?:local|async|worker|virtual|override))?)\\s+)?(system|view|frag|vert|audio)\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
             "1": { "name": "storage.modifier.tide" },
             "2": { "name": "storage.modifier.tide" },
@@ -376,7 +376,7 @@
         },
         {
           "comment": "Methods and functions: [virtual] [async] [mut] Type Name(, where Type can be List<T> or T?, at the start of a line. An override's name is written with what it's in: override float Combat.Damage(, override bool Stats.IsDead(",
-          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|virtual|override)\\s+)?(?:((?:local|async|virtual|override)(?:\\s+(?:local|async|virtual|override))?)\\s+)?(?:(mut)\\s+)?(?!(?:return|if|else|var|mut|with|without|system|view|frag|vert|audio|component|singleton|struct|input|event|command|enum|scene|prefab|entity|local|async|switch|case|default|break|while|for|foreach|parallel|continue|namespace|using|extern|const|asset|settings|fail|try|is|null|true|false|this|await|operator|virtual|override)\\b)([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*>)?\\s*>)?\\??)\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)(?=\\s*\\()",
+          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|worker|virtual|override)\\s+)?(?:((?:local|async|worker|virtual|override)(?:\\s+(?:local|async|worker|virtual|override))?)\\s+)?(?:(mut)\\s+)?(?!(?:return|if|else|var|mut|with|without|system|view|frag|vert|audio|component|singleton|struct|input|event|command|enum|scene|prefab|entity|local|async|switch|case|default|break|while|for|foreach|parallel|continue|namespace|using|extern|const|asset|settings|fail|try|is|null|true|false|this|await|operator|virtual|override)\\b)([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*>)?\\s*>)?\\??)\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)(?=\\s*\\()",
           "captures": {
             "1": { "name": "storage.modifier.tide" },
             "2": { "name": "storage.modifier.tide" },

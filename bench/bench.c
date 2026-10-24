@@ -501,7 +501,7 @@ static const tide_jobs *jobs_for(const uint32_t threads)
     const tide_jobs *pool = tide_platform_jobs();
     if (!pool || threads == 1) return NULL;
     if (threads == 0 || threads >= pool->threads) return pool;
-    the_limited = (limited){{&the_limited, threads, limited_run, NULL, NULL, NULL}, pool};
+    the_limited = (limited){{&the_limited, threads, limited_run, NULL, NULL, NULL, NULL, NULL}, pool};
     return &the_limited.jobs;
 }
 

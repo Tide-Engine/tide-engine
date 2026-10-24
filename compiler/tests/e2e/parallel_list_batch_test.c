@@ -82,7 +82,7 @@ TIDE_TEST(parallel_list_batches_keep_exact_order_bounds_calls_and_snapshots)
         Item *next = malloc((size_t)(count ? count : 1) * sizeof *next);
         TIDE_REQUIRE(was && next);
         for (int32_t i = 0; i < count; i++) was[i] = item_at(&one, i);
-        const tide_jobs jobs = {NULL, 2u, work, NULL, NULL, NULL};
+        const tide_jobs jobs = {NULL, 2u, work, NULL, NULL, NULL, NULL, NULL};
         for (int tick = 0; tick < 3; tick++) {
             reference(next, was, count, one.Time.dt);
             tide_world_tick(&one);
@@ -129,7 +129,7 @@ TIDE_TEST(parallel_list_sqrt_keeps_nan_classification)
         TIDE_REQUIRE(was && next);
         for (int32_t i = 0; i < count; i++) was[i] = item_at(&one, i);
         reference(next, was, count, one.Time.dt);
-        const tide_jobs jobs = {NULL, 2u, work, NULL, NULL, NULL};
+        const tide_jobs jobs = {NULL, 2u, work, NULL, NULL, NULL, NULL, NULL};
         tide_world_tick(&one);
         tide_world_tick_on(&many, &jobs);
         for (int32_t i = 0; i < count; i++) {

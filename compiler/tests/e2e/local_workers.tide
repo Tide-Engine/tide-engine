@@ -1,0 +1,92 @@
+struct MeshInput
+{
+    List<int> voxels;
+    string name;
+}
+
+struct MeshData
+{
+    List<int> faces;
+    string name;
+}
+
+local singleton Meshing
+{
+    MeshInput source;
+    MeshData result;
+    bool started;
+    bool finished;
+}
+
+int Face(int voxel) { return voxel * 3 + 1; }
+
+local worker MeshData BuildMesh(MeshInput input)
+{
+    var saved = input;
+    mut List<int> faces = input.voxels;
+    parallel (var i in faces)
+    {
+        faces[i] = Face(saved.voxels[i]);
+    }
+    return MeshData { faces = faces, name = input.name + " built" };
+}
+
+async void Rebuild(mut Meshing meshing)
+{
+    meshing.result = await BuildMesh(meshing.source);
+    meshing.finished = true;
+}
+
+view Prepare(mut Meshing meshing)
+{
+    if (!meshing.started)
+    {
+        meshing.started = true;
+        Rebuild(meshing);
+    }
+}
+
+scene Main;
+
+component RenderTask
+{
+    bool started;
+    bool finished;
+    MeshData mesh;
+}
+
+local singleton Control
+{
+    bool spawn;
+    bool destroy;
+    LocalEntity owner;
+}
+
+view OwnerControl(mut Control control)
+{
+    if (control.spawn)
+    {
+        control.owner = local Spawn(RenderTask);
+        control.spawn = false;
+    }
+    if (control.destroy)
+    {
+        control.owner.Destroy();
+        control.destroy = false;
+    }
+}
+
+async void FinishOwner(mut local RenderTask owner, MeshInput input)
+{
+    owner.mesh = await BuildMesh(input);
+    owner.finished = true;
+}
+
+view OwnerWork(mut local RenderTask owner, Meshing meshing)
+{
+    if (!owner.started)
+    {
+        owner.started = true;
+        FinishOwner(owner, meshing.source);
+    }
+}

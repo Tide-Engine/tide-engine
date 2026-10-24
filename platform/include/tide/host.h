@@ -1099,6 +1099,7 @@ static inline int tide_run_frame(void *user, const float seconds)
         seen = &kept;
     }
     tide_gui_begin(&tide_run_gui, seen, tide_platform_screen_size(), tide_platform_measure_text);
+    tide_run_gui.jobs = tide_platform_jobs();
     // What the match sent since the last frame: its local handlers run first
     if (heard) game->events(tide_run_local, heard);
     if (game->audio) game->audio(tide_run_local, &tide_run_audio);

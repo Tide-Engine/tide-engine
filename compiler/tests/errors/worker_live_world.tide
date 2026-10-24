@@ -1,0 +1,4 @@
+// expect: a worker takes owned CPU values, not
+component Chunk { int value; }
+local worker int Build(Chunk chunk) { return chunk.value; }
+scene Main;

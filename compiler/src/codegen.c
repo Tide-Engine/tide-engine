@@ -1046,7 +1046,7 @@ static bool indirect_value(const decl *fn, const type value)
 
 static void select_indirect_routine(decl *fn)
 {
-    if ((fn->kind != DECL_FUNCTION && fn->kind != DECL_METHOD) || fn->is_extern || fn->is_async || fn->is_audio
+    if ((fn->kind != DECL_FUNCTION && fn->kind != DECL_METHOD) || fn->is_extern || fn->is_async || fn->is_audio || fn->is_worker
         || fn->is_operator || fn->is_interpolate || fn->takes_action || fn->calls_c
         || fn->is_mut_method || fn->world_sets || fn->acts[0] || fn->acts[1] || fn->starts_tasks
         || (fn->owner && fn->owner->kind == DECL_INPUT)) return;
@@ -4819,8 +4819,19 @@ static void gen_as(gen *g, sb *o, expr *e, type want);
 // match); an async call runs in the task's frame until it's done.
 static void gen_entity_copies(gen *g, bool put);
 
+static void gen_frame_workers(gen *g, const task_info *ti);
+static void gen_reset_worker_tables(gen *g, const char *local, const char *pad, bool forget);
+static void gen_worker_await(gen *g, expr *e, const char *name);
+static void gen_worker_snapshot(gen *g, type t, const char *place, int depth);
+static void gen_worker_own(gen *g, type t, const char *place, const char *where);
+static bool worker_has_storage(type t);
+
 static void gen_await(gen *g, expr *e, const char *name)
 {
+    if (e->lhs->method && e->lhs->method->is_worker) {
+        gen_worker_await(g, e, name);
+        return;
+    }
     sb *o = &g->c;
     gen_task *t = g->task;
     const expr *call = e->lhs;
@@ -7287,6 +7298,7 @@ static void add_task(gen *g, decl *fn)
     frame_field(frame, "tide_left", (type){TY_FLOAT, NULL}); // Or the seconds it has left to wait, on this machine
     if (fn->uses_io) frame_field(frame, "tide_io_ticket", int_t);
     if (fn->uses_fetch) frame_field(frame, "tide_fetch_ticket", int_t);
+    if (fn->uses_workers) frame_field(frame, "tide_worker_ticket", int_t);
     if (fn->rolls) frame_field(frame, "tide_dice", (type){TY_STRUCT, g->prog->random}); // What it rolls with, across its waits
     if (fn->kind == DECL_SYSTEM) frame_field(frame, "tide_event", (type){TY_EVENT, fn->event});
     for (int i = 0; i < fn->params.count; i++) {
@@ -7652,7 +7664,7 @@ static void gen_header(gen *g)
     if (prog->uses_audio || program_has_clips(prog) || prog->sound->named || prog->uses_microphone) sb_put(o, "#include \"tide/audio.h\"\n");
     sb_put(o, "#include \"tide/color.h\"\n#include \"tide/devices.h\"\n#include \"tide/draw.h\"\n#include \"tide/entity.h\"\n"
               "#include \"tide/grid.h\"\n#include \"tide/gui.h\"\n#include \"tide/math.h\"\n#include \"tide/list.h\"\n#include \"tide/map.h\"\n#include \"tide/mesh.h\"\n#include \"tide/player.h\"\n#include \"tide/session.h\"\n"
-              "#include \"tide/jobs.h\"\n#include \"tide/table.h\"\n#include \"tide/attached.h\"\n#include \"tide/text.h\"\n#include \"tide/debug.h\"\n#include \"tide/io.h\"\n");
+              "#include \"tide/jobs.h\"\n#include \"tide/worker.h\"\n#include \"tide/table.h\"\n#include \"tide/attached.h\"\n#include \"tide/text.h\"\n#include \"tide/debug.h\"\n#include \"tide/io.h\"\n");
     if (prog->decodes) sb_put(o, "#include \"tide/png.h\"\n"); // grid.Decode: only in a game that calls it
     if (prog->uses_resident) sb_put(o, "#include \"tide/resident.h\"\n"); // A Resident field: only in a game that has one
     sb_put(o, "\n");
@@ -7892,6 +7904,8 @@ static void gen_header(gen *g)
     }
     sb_put(o, "typedef struct tide_local {\n");
     sb_put(o, "    const tide_io *tide_io; // Host-owned storage provider; excluded from saved state\n");
+    sb_put(o, "    struct tide_workers *tide_workers; // Running local calculations; never serialized\n"
+              "    const tide_jobs *tide_worker_jobs; // Host-owned pool\n");
     for (int i = 0; i < prog->components.count; i++) {
         const decl *d = prog->components.items[i];
         if (decl_corrects(d)) sb_printf(o, "    tide_attached tide_corrections_%s; // Private presentation errors, never serialized\n", type_cname(d));
@@ -11989,7 +12003,9 @@ static const char *ptr_type(const char *qual, const char *ctype)
 static capture_list par_captures(gen *g, const decl *sys, const stmt *loop)
 {
     capture_list out = {0};
-    if (sys->is_view) {
+    if (sys->is_worker) {
+        // A worker has no live world or frame context.
+    } else if (sys->is_view) {
         capture(&out, "const tide_world *", "tide_w");
         capture(&out, "tide_local *", "tide_l");
         capture(&out, "tide_draw_list *", "tide_draw");
@@ -12011,7 +12027,7 @@ static capture_list par_captures(gen *g, const decl *sys, const stmt *loop)
             p->type.kind == TY_WORLD) {
             continue;
         }
-        capture(&out, ptr_type(p->mode == PARAM_MUT ? "" : "const ", c_type(p->type)), local_cname(g, p->name));
+        capture(&out, sys->is_worker && !is_pointer_param(p) ? c_type(p->type) : ptr_type(p->mode == PARAM_MUT ? "" : "const ", c_type(p->type)), local_cname(g, p->name));
         if (p->type.kind == TY_INPUT) capture(&out, ptr_type("const ", c_type(p->type)), prev_input_name(g, p->name));
         if (has_fields_ptr(p)) {
             capture(&out, ptr_type(p->mode == PARAM_MUT ? "" : "const ", type_cname(local_part_of(p->type))), fields_name(g, p->name));
@@ -12384,8 +12400,29 @@ static void gen_parallel_call(gen *g, const stmt *s)
     const int index = par_index(g, s);
     const char *name = g->par_names.items[index];
     const decl *grid = s->value->type.decl;
-    const capture_list caps = par_captures(g, g->code, s);
+    const capture_list caps = par_captures(g, g->routine ? g->routine : g->code, s);
     const uint64_t cost = stmt_cost(s->then_stmt);
+    if (g->routine && g->routine->is_worker) {
+        if (s->value->type.kind == TY_LIST) {
+            indent(g, o);
+            sb_printf(o, "tide_list%d_own(&(", s->value->type.decl->index);
+            gen_expr(g, o, s->value);
+            sb_put(o, "), TIDE_IN_LOCAL);\n");
+        }
+        stmt_list locals = {0};
+        outer_locals_stmt(s->then_stmt, s->then_stmt, s, &locals);
+        for (int i = 0; i < locals.count; i++) {
+            const stmt *l = locals.items[i];
+            if (!worker_has_storage(l->type) || l->type.kind == TY_STRING) continue;
+            const char *place = local_cname(g, l->name);
+            if (s->value->kind == E_NAME && s->value->bind == BIND_LOCAL && s->value->local == l) continue;
+            const char *copy = made_up(g, "worker_capture");
+            line(g, o, "%s %s = %s;", c_type(l->type), copy, place);
+            gen_worker_snapshot(g, l->type, copy, 0);
+            gen_worker_own(g, l->type, copy, "TIDE_IN_LOCAL");
+            for (int k = 0; k < caps.count; k++) if (strcmp(caps.items[k].name, place) == 0) caps.items[k].name = copy;
+        }
+    }
     if (s->value->type.kind == TY_LIST) { // A list's elements, by index (tide/list.h)
         line(g, o, "{");
         g->indent++;
@@ -12495,7 +12532,7 @@ static void gen_par_nest(gen *g, const decl *sys, const stmt *s, const int base,
         line(g, o, "(void)tide_dice;");
     }
     g->code = sys;
-    g->routine = NULL;
+    g->routine = sys->is_worker ? sys : NULL;
     g->frame = NULL;
     g->task = NULL;
     g->par_loop = s;
@@ -14605,6 +14642,7 @@ static void gen_routine(gen *g, const decl *m)
 {
     sb *o = &g->c;
     gen_sort_heads(g, NULL, m, m->body);
+    if (m->is_worker) gen_par_heads(g, m);
     if (m->owner) sb_printf(o, "// " STR_FMT "." STR_FMT "\n", STR_ARG(m->owner->qualified), STR_ARG(m->name));
     else sb_printf(o, "// " STR_FMT "\n", STR_ARG(m->qualified));
     gen_routine_signature(g, o, m);
@@ -14664,6 +14702,12 @@ static void gen_routine(gen *g, const decl *m)
     line_reset(g);
     sb_put(o, "\n");
     gen_sort_functions(g, NULL, m);
+    if (m->is_worker) {
+        gen_par_steps(g, m);
+        close_list_caches(g);
+        g->code = NULL;
+        g->routine = NULL;
+    }
 }
 
 // A task's code for one world (gen_task_resume) as a function: from where it
@@ -14916,6 +14960,7 @@ static void gen_task_pass(gen *g, const bool local)
         }
         sb_put(o, "        if (!tide_alive) { // It ends with its owner\n");
         sb_printf(o, "            tide_task_%s *tide_gone = tide_table_cell(&%s->tide_tasks_%s, &tide_columns_tasks_%s, tide_i, 0);\n", id, w, id, id);
+        if (local && ti->fn->uses_workers) sb_printf(o, "            tide_forget_workers_%s(&tide_gone->frame, tide_l->tide_workers);\n", type_cname(ti->frame));
         if (local && ti->fn->uses_io) sb_printf(o, "            tide_forget_io_%s(&tide_gone->frame, tide_l->tide_io);\n", type_cname(ti->frame));
         sb_printf(o, "            tide_release_%s(&tide_gone->frame, %s);\n", type_cname(ti->frame), where);
         sb_put(o, "            tide_gone->task.wake = TIDE_TASK_DONE;\n");
@@ -14947,6 +14992,7 @@ static void gen_task_pass(gen *g, const bool local)
         sb_printf(o, "            %s tide_f = tide_t->frame;\n", type_cname(ti->frame));
         sb_printf(o, "            const int32_t tide_r = %s(%s, &tide_f, tide_task_v.owner, tide_task_v.owner_local != 0, tide_task_v.scene);\n",
                   task_resume_name(ti->fn, local), local ? "tide_w, tide_l" : "tide_w");
+        if (local && ti->fn->uses_workers) sb_printf(o, "            if (tide_r < 0) tide_forget_workers_%s(&tide_f, tide_l->tide_workers);\n", type_cname(ti->frame));
         if (local && ti->fn->uses_io) sb_printf(o, "            if (tide_r < 0) tide_forget_io_%s(&tide_f, tide_l->tide_io);\n", type_cname(ti->frame));
         sb_printf(o, "            if (tide_r < 0) tide_release_%s(&tide_f, %s);\n", type_cname(ti->frame), where);
         sb_printf(o, "            tide_task_%s *tide_back = tide_table_cell(&%s->tide_tasks_%s, &tide_columns_tasks_%s, tide_due_v.row, 0);\n",
@@ -15047,6 +15093,7 @@ static void gen_tasks(gen *g)
         gen_type(g, o, g->tasks.items[i].frame);
         gen_frame_release(g, g->tasks.items[i].frame);
         gen_frame_forget_io(g, &g->tasks.items[i]);
+        gen_frame_workers(g, &g->tasks.items[i]);
     }
     for (int i = 0; i < g->tasks.count; i++) {
         const task_info *ti = &g->tasks.items[i];
@@ -15247,6 +15294,8 @@ static void gen_routines(gen *g)
     }
     g->borrow = NULL;
 }
+
+#include "worker_codegen.inc"
 
 // The devices as the input sends them: the values match code reads, repaired,
 // and nothing else, so the input's bytes only depend on those.
@@ -18496,6 +18545,7 @@ static void gen_api(gen *g)
               "                const tide_world *verified_previous, float verified_alpha,\n"
               "                tide_local *local, tide_draw_list *draw, tide_gui *gui)\n{\n");
     sb_put(o, "    (void)previous;\n    (void)alpha;\n    (void)verified;\n    (void)verified_previous;\n    (void)verified_alpha;\n");
+    if (program_workers(prog)) sb_put(o, "    local->tide_worker_jobs = gui->jobs;\n    tide_workers_collect(local->tide_workers);\n");
     // Shards.Owns in views: what the world they draw owns
     if (sharded(g)) {
         sb_put(o, "    tide_view_home = (tide_view_worlds){.current = w, .previous = previous, .alpha = alpha, .verified = verified,\n"
@@ -18947,6 +18997,7 @@ static void gen_world_bytes(gen *g, const bool local)
     const char *world = world_type(local);
     const char *prefix = local ? "tide_local_" : "tide_world_";
     sb_printf(o, "void %sfree(%s *w)\n{\n    tide_entities_free(&w->entities);\n", prefix, world);
+    if (local) sb_put(o, "    tide_workers_free(w->tide_workers);\n    w->tide_workers = NULL;\n");
     resident_field residents[RESIDENTS_MOST];
     const int resident_count = local ? 0 : resident_fields(prog, residents, RESIDENTS_MOST);
     for (int i = 0; i < resident_count; i++) {
@@ -18982,7 +19033,7 @@ static void gen_world_bytes(gen *g, const bool local)
     if (local) sb_put(o, "    const tide_io *io = w->tide_io;\n");
     if (local && prog->uses_resident) sb_put(o, "    tide_residents_release(&w->tide_residents);\n");
     sb_put(o, "    memset(w, 0, sizeof *w);\n");
-    if (local) sb_put(o, "    w->tide_io = io;\n");
+    if (local) sb_put(o, "    w->tide_io = io;\n    w->tide_workers = NULL;\n    w->tide_worker_jobs = NULL;\n");
     sb_put(o, "}\n\n");
 
     sb_printf(o, "uint32_t %spack(const %s *w, uint8_t *out, const uint32_t capacity)\n{\n", prefix, world);
@@ -19011,7 +19062,7 @@ static void gen_world_bytes(gen *g, const bool local)
     sb_put(o, "    if (size > UINT32_MAX) tide_out_of_memory();\n");
     sb_put(o, "    if (!out || size > capacity) return (uint32_t)size;\n");
     sb_printf(o, "    %s *header = malloc(sizeof *header); // Storage pointers are cleared before serialization\n    if (!header) tide_out_of_memory();\n    memcpy(header, w, sizeof *header);\n", world);
-    if (local) sb_put(o, "    header->tide_io = NULL;\n");
+    if (local) sb_put(o, "    header->tide_io = NULL;\n    header->tide_workers = NULL;\n    header->tide_worker_jobs = NULL;\n");
     if (local && prog->command_types.count) sb_put(o, "    memset(header->tide_outgoing, 0, sizeof header->tide_outgoing);\n    header->tide_outgoing_count = 0;\n");
     // What the match sent is a frame's: none of it is the local state's to keep
     if (local && program_hears(prog)) sb_put(o, "    memset(&header->tide_heard, 0, sizeof header->tide_heard);\n");
@@ -19096,7 +19147,7 @@ static void gen_world_bytes(gen *g, const bool local)
     sb_put(o, "    if (size < sizeof *w) return false;\n");
     if (local) sb_put(o, "    const tide_io *io = w->tide_io;\n");
     sb_put(o, "    memcpy(w, data, sizeof *w);\n");
-    if (local) sb_put(o, "    w->tide_io = io;\n");
+    if (local) sb_put(o, "    w->tide_io = io;\n    w->tide_workers = NULL;\n    w->tide_worker_jobs = NULL;\n");
     if (local && program_hears(prog)) sb_put(o, "    memset(&w->tide_heard, 0, sizeof w->tide_heard);\n");
     if (local && hears_visibility(prog)) sb_put(o, "    w->tide_available_predicted = w->tide_available_verified = NULL;\n"
                                                 "    memset(&w->tide_available_causes, 0, sizeof w->tide_available_causes);\n");
@@ -19161,6 +19212,7 @@ static void gen_world_bytes(gen *g, const bool local)
         sb_printf(o, "    ok = ok && tide_table_unpack(&w->tide_tasks_%s, &tide_columns_tasks_%s, &bytes);\n", id, id);
     }
     if (local) gen_reset_io_tables(g, "w", "    ", false);
+    if (local) gen_reset_worker_tables(g, "w", "    ", false);
     for (int i = 0; i < fields.count; i++) {
         sb_printf(o, "    ok = ok && tide_attached_unpack(&w->%s, %s, &bytes);\n", fields_table(fields.items[i]), fields_columns(fields.items[i]));
     }
@@ -19878,6 +19930,8 @@ static void gen_rebind_resources(gen *g)
     sb_put(o, "void tide_local_rebind_resources(tide_local *l, const bool same_memory)\n{\n    (void)l;\n    (void)same_memory;\n");
     if (prog->uses_resident) sb_put(o, "    tide_residents_adopt(&l->tide_residents); // The arenas the last build left, at their addresses\n");
     gen_reset_io_tables(g, "l", "    ", true);
+    gen_reset_worker_tables(g, "l", "    ", true);
+    sb_put(o, "    tide_workers_free(l->tide_workers);\n    l->tide_workers = NULL;\n    l->tide_worker_jobs = NULL;\n");
     for (int i = 0; i < prog->singletons.count; i++) {
         const decl *d = prog->singletons.items[i];
         if (!d->is_local || !resource_fields(d)) continue;
@@ -21518,6 +21572,7 @@ bool codegen(program *prog, const codegen_options *opts)
         return false;
     }
     gen_routines(&g);
+    gen_workers(&g);
     gen_correction_math(&g);
     gen_blend_helpers(&g); // After the routines: a type's Interpolate is one
     gen_correction_state(&g);

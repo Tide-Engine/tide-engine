@@ -182,6 +182,11 @@ const cases = {
         ['local async event(Displayed) Glow(', [['local', 'storage.modifier'], ['async', 'storage.modifier'], ['event', 'storage.type'], ['Glow', 'entity.name.function']]],
         ['async void Countdown()', [['async', 'storage.modifier'], ['void', 'storage.type.primitive'], ['Countdown', 'entity.name.function'], ['Wait', 'support.class'], ['await', 'keyword.control']]],
     ],
+    'local worker declarations': [
+        ['local worker List<int> Build(', [['local', 'storage.modifier'], ['worker', 'storage.modifier'], ['Build', 'entity.name.function']]],
+        ['worker local int Count(', [['local', 'storage.modifier'], ['worker', 'storage.modifier'], ['Count', 'entity.name.function']]],
+        ['var worker = 1;', [['worker', '!storage']]],
+    ],
     'virtual and override, where a declaration starts': [
         ['virtual system Drift(', [['virtual', 'storage.modifier'], ['system', 'storage.type'], ['Drift', 'entity.name.function'], ['Drift', '!entity.name.function.call']]],
         ['virtual local async event(Displayed) Blink(', [
@@ -626,7 +631,7 @@ const e2e = path.join(repo, 'compiler', 'tests', 'e2e');
 const programs = fs.readdirSync(e2e, { recursive: true })
     .filter(f => f.endsWith('.tide') && fs.statSync(path.join(e2e, f)).isFile()).sort();
 
-const modifiers = String.raw`(?:(?:local|async|virtual|override)\s+)*`;
+const modifiers = String.raw`(?:(?:local|async|worker|virtual|override)\s+)*`;
 const type = String.raw`[\w.]+(?:\s*<[\w.<>\s]*>)?\??`;
 const keywords = new Set(['return', 'if', 'else', 'var', 'await', 'fail', 'try', 'case', 'switch', 'while', 'for', 'foreach', 'parallel']);
 const declarations = [

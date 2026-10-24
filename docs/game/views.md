@@ -23,6 +23,11 @@ Drawing is immediate mode: views record their drawing calls every frame. Views r
 
 A view's `mut` parameters, `Spawn`, `Add`, `Remove`, `Destroy` and `Send` are all local: views can change this machine's own state, like particles or a menu, but not the match (see [Local state](./local-state.md)). Only views, and the functions they call, can draw.
 
+For expensive preparation such as voxel meshing, start a local async function
+that awaits a [local worker](./tasks.md#local-workers), and draw the last
+completed geometry while it works. A heavy calculation directly in a view
+blocks that frame.
+
 `[RunInEditor]` also runs a view in the native prefab editor's compiled preview.
 `[EditorOnly]` runs it only there; an unmarked view runs only in the game. Choose
 one attribute, without arguments. Both keep the ordinary view access rules.

@@ -88,7 +88,7 @@ TIDE_TEST(function_acts_are_the_same_on_threads)
     tide_world one = {0}, many = {0}, again = {0};
     tide_world_init(&one, 1.0f);
     tide_world_copy(&many, &one);
-    const tide_jobs jobs = {NULL, 4u, work, NULL, NULL, NULL};
+    const tide_jobs jobs = {NULL, 4u, work, NULL, NULL, NULL, NULL, NULL};
     for (int tick = 1; tick <= 8; tick++) {
         tide_world_copy(&again, &one);
         tide_world_tick(&one);

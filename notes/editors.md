@@ -1,5 +1,15 @@
 # The language server and the editors
 
+## Local worker declarations (2026-10-24)
+
+The shared compiler parses/checks local workers. Routine hovers, override
+completion headers and document symbols preserve local worker, while outline
+JSON records worker:true. lsp_local_workers checks hover, outline and formatting.
+Shared/JetBrains TextMate grammars and Vim highlight the contextual modifier;
+the probe checks both local/worker orders and worker as a variable. Existing
+navigation/diagnostics remain function-based. Public docs link the worker/task
+workflow. Semantics and validation: language.md.
+
 ## Native editor workspace layout (2026-10-24)
 
 main.c, hierarchy_ui.inc, workspace_ui.inc and inspector_ui.inc arrange the

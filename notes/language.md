@@ -1,5 +1,61 @@
 # Language features, as tidec builds them
 
+## Local workers (2026-10-24)
+
+Owner-approved direction and spelling: `local worker` functions, awaited from
+local async code, with owned CPU inputs/results and existing loop rules.
+Bare `worker` stays rejected for a future deterministic-match contract.
+Implementation choices are distinguished from decisions in the spec's Tasks.
+worker_check.inc/worker_codegen.inc extend the existing checker/codegen.
+
+Calls decide an async caller's side as local and propagate through its normal
+starters/awaited parents. Bodies run to completion without awaiting. Reachable
+world/frame, rendering/audio, filesystem/network, live-asset, task-start and
+implicit match-randomness access is rejected. C stays trusted. Boundaries accept
+owned CPU values, including nested containers, plain fixed arrays and optional/
+failable results; bindings, resources, queries, devices, grids, Actions and
+mut/out parameters are refused. Overrides preserve worker execution kind.
+
+Generated walkers fully materialize inputs, including packed lists, into a
+private heap before dispatch. Each job also owns an output heap. The frame
+acquires detached scratch results before releasing a completed job. Ephemeral
+optional/failable strings own private bytes instead of caller scratch pointers.
+Only integer tickets enter local task frames; restore/rebind clears them and
+restarts pending calls. An owner disappearing abandons publication while the
+group retains captures until callback completion. Reload/disposal drains jobs
+before code unload.
+
+Explicit parallel loops accept owned local plain-value lists. Output lists and
+readonly captures are heap-backed before sharing, with the existing independent
+step rules. List foreach/for order is unchanged. Automatic foreach analysis is
+currently grid-only; workers do not take grids, so this does not extend that
+analysis. Worker callback emission also closes list-cache patches before
+gen_tasks switches output buffers; the otherwise-open patch caused a compiler
+crash with worker loops plus multiple async functions.
+
+Coverage: local_workers checks geometry/text ownership, discarded scratch and
+changed sources, real pool execution, owner loss, saved local state and retained
+rebind. worker_values checks nested text lists/maps, fixed arrays, optional
+strings, failable strings and void. Negative fixtures cover bare/misused worker
+declarations, match starts, mut inputs, bound values, frame helpers and assets.
+Pool stress runs more jobs than threads, each with parallel work. LSP and shared
+grammar pin hover/symbol/formatting/highlighting.
+
+Validation: warning-free native/web debug builds, full suites passing 2,604
+native and 2,499 web tests, with the existing disabled MicroDuck right-turn case
+unchanged. Final test additions pass all 12 selected checks on each target,
+including readonly worker captures, threaded optional/error values, all eight
+worker diagnostics, the complete 250-case LSP executable natively and a served
+browser frame running background/parallel work beside simulation. The shared
+grammar passes 282 cases and the production docs build passes. Clang 23.1.2,
+Node 24.22.1, Windows; native GPU/WebGL/D3D11/WebGPU checks pass. This checkout
+has no Vulkan validation layer. Android, other OSes, MinGW and sanitizers remain
+CI coverage; no CI workflow was dispatched. Existing determinism pins are intact.
+
+Remaining: owned grids, priorities, public handles/explicit cancellation,
+preemption and match workers. Existing async component/local-field restrictions
+are unchanged: publication currently uses local singletons or local entities.
+
 ## Inherited prefab values and selected startup (2026-10-24)
 
 Owner-approved: matching nested `entity ExistingChild { Component { field =

@@ -17,6 +17,7 @@
 
 #include "game.h"
 #include "tide/platform.h"
+#include "tide/worker.h"
 
 #define TICKS 240
 
@@ -28,6 +29,28 @@ static tide_world snapshot;
 static const tide_jobs *jobs;
 static int ticks;
 static double now;
+static tide_workers *background;
+static uint32_t background_ticket;
+static uint32_t background_values[1024];
+static bool background_done;
+
+static void background_step(void *context, const uint32_t index)
+{
+    uint32_t *values = context;
+    values[index] = index * 7u + 3u;
+}
+
+static void background_run(void *context)
+{
+    const tide_jobs *previous = tide_worker_enter(jobs);
+    tide_parallel_for(1024, background_step, context, 1000000u);
+    tide_worker_leave(previous);
+}
+
+static void background_release(void *context)
+{
+    (void)context; // Static test data; real worker captures own their storage.
+}
 
 // The threads that took part in a round of work, a bit each.
 static uint32_t threads_seen;
@@ -63,10 +86,20 @@ static int frame(void *user, const float seconds)
 {
     (void)user;
     now += seconds;
+    if (!background_done && tide_worker_poll(background, background_ticket)) {
+        for (uint32_t i = 0; i < 1024; i++) {
+            if (background_values[i] != i * 7u + 3u) return fail("background parallel result differs");
+        }
+        tide_worker_forget(background, background_ticket);
+        tide_workers_free(background);
+        background = NULL;
+        background_done = true;
+    }
     const bool slept = atomic_load(&jobs_tasks_slept) > 0;
     if (now > 45.0) {
         return fail(!(threads_seen & ~1u) ? "no worker joined in 45 seconds"
                     : ticks < TICKS       ? "the ticks took over 45 seconds"
+                    : !background_done   ? "background worker did not finish in 45 seconds"
                                           : "none of C's workers slept while it waited, in 45 seconds");
     }
     // A worker only takes one of C's tasks when it has nothing else: a few
@@ -88,7 +121,8 @@ static int frame(void *user, const float seconds)
         }
     }
     if (!(threads_seen & ~1u)) jobs->run(jobs->self, note_thread, NULL);
-    if (ticks < TICKS || !(threads_seen & ~1u) || atomic_load(&jobs_tasks_slept) == 0) return TIDE_KEEP_RUNNING;
+    if (ticks < TICKS || !(threads_seen & ~1u) || atomic_load(&jobs_tasks_slept) == 0 || !background_done) return TIDE_KEEP_RUNNING;
+    printf("ok: background local worker and its parallel loop completed between frames\n");
     printf("ok: %d ticks the same on %u threads, %d of which took part in one round; %d waits of C's workers slept\n", ticks,
            (unsigned)jobs->threads, __builtin_popcount(threads_seen), atomic_load(&jobs_tasks_slept));
     if (timed) {
@@ -103,6 +137,7 @@ int main(void)
     tide_platform_open(&(tide_window_desc){.title = "web threads", .width = 64, .height = 64, .hidden = true});
     jobs = tide_platform_jobs();
     if (!jobs) return fail("no threads: the page isn't cross-origin isolated, or can't make workers");
+    background_ticket = tide_worker_start(&background, jobs, background_run, background_release, background_values);
     tide_world_init(&one, 1.0f / 60.0f);
     tide_world_init(&many, 1.0f / 60.0f);
     tide_platform_run(frame, NULL);

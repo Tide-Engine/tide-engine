@@ -30,6 +30,7 @@
 // systems that spawn, and systems waiting for it start after it, so they
 // never see a temporary handle.
 
+struct tide_background;
 typedef struct tide_jobs {
     void *self;
     uint32_t threads; // That can run work: the pool's, and the caller's
@@ -56,6 +57,13 @@ typedef struct tide_jobs {
     // changed: waking every thread of a pool for it costs the caller more than
     // the threads save, while two or three take most of it off the caller.
     void (*run_some)(void *self, uint32_t others, void (*work)(void *context, uint32_t thread), void *context);
+    // Queues independent local work without blocking the caller. NULL where
+    // background threads are unavailable. `help` executes one queued item.
+    // Helpers take priority over ordinary jobs. help(self, true) runs only
+    // loop helpers, so a full pool can finish nested loops without recursing
+    // into another whole calculation.
+    void (*background)(void *self, struct tide_background *job);
+    bool (*help)(void *self, bool helpers_only);
 } tide_jobs;
 
 // The entities a system's spawns got as it settled them: what a temporary

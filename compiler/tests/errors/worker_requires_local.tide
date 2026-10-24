@@ -1,0 +1,3 @@
+// expect: workers currently require 'local': write 'local worker'
+worker int Build(int value) { return value; }
+scene Main;

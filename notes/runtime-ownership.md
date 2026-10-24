@@ -1,5 +1,24 @@
 # Runtime written by Claude for now
 
+## Local worker runtime (2026-10-24)
+
+The owner approved local workers with owned inputs/results, local async callers
+and shared-pool parallel loops. Agent-maintained with the compiler and existing
+jobs/platform maintenance: tide/worker.h and engine/src/worker.c. New generated
+calls are tide_worker_start/_poll/_forget/_enter/_leave and
+tide_workers_collect/_free. Existing parallel_for delegates to
+tide_worker_parallel only outside simulation ticks. Groups retain captures
+until provider completion and release them on the frame thread.
+
+tide_jobs appends optional background/help callbacks using tide_background.
+Providers publish done after returning from game code and prioritize loop
+helpers. tide_gui borrows an optional jobs pointer, supplied by the standard
+host. Generated local state has transient group/provider pointers, cleared
+from saved headers, and resettable worker tickets. Hosts, libraries and games
+rebuild together; positional jobs initializers were completed. No match storage,
+tick order or math contract changed. Contracts/tests: language.md and
+schedule-and-threads.md.
+
 ## Shard recovery admission release (2026-10-24)
 
 `tide_server_unadmit` (`tide/session.h`, session.c) is part of the existing
