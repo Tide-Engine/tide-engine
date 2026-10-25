@@ -2917,6 +2917,7 @@ TIDE_TEST(lsp_gui)
     TIDE_CHECK(offers(widgets, "Horizontal"));
     TIDE_CHECK(offers(widgets, "Area"));
     TIDE_CHECK(offers(widgets, "Reserve"));
+    TIDE_CHECK(offers(widgets, "Scroll"));
     TIDE_CHECK(offers(complete("scene Main { }\nview V()\n{\n    $\n}\n"), "GUILayout"));
     TIDE_CHECK(!offers(complete("scene Main { }\nsystem S()\n{\n    $\n}\n"), "GUILayout"));
     TIDE_CHECK(offers(complete("scene Main { }\nvoid F()\n{\n    $\n}\n"), "Screen"));
@@ -2926,6 +2927,7 @@ TIDE_TEST(lsp_gui)
     TIDE_CHECK(offers(claims, "ClaimKeyboard"));
     TIDE_CHECK(offers(claims, "ShowKeyboard"));
     TIDE_CHECK(offers(claims, "Draw") && offers(claims, "Key"));
+    TIDE_CHECK(offers(claims, "Scroll") && offers(claims, "FocusNext") && offers(claims, "ClearFocus"));
     TIDE_CHECK(has(claims, "Draw()\\n{\\n\\t$0\\n}"));
 
     TIDE_CHECK(offers(claims, "Control") && offers(claims, "Navigate") && offers(claims, "SetTheme") && offers(claims, "Theme"));

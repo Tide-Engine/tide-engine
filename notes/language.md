@@ -1,5 +1,16 @@
 # Language features, as tidec builds them
 
+## Scoped GUI offset writeback (2026-10-25)
+
+The owner's next GUI priorities introduce GUI_SCROLL lowering, without changing
+general language semantics. Its two arguments are staged in written order;
+mutable-path indices are frozen once. The active runtime receives only a C
+local offset. gen_open.after adds ordinary checked assignment after close,
+including return/break/continue cleanup. Existing list/map/grid/array assignment
+lowering resolves current storage and refuses removed list indices. No game-heap
+pointer survives the body. Shared builtin signatures expose Rect overloads,
+Scroll and FocusNext/ClearFocus. Full contracts and tests: notes/gui.md.
+
 ## Transparent type aliases (2026-10-24)
 
 Owner-approved general language feature: `using Name = Type;` declares a

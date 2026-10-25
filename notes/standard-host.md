@@ -1,5 +1,13 @@
 # The standard host: runs with no window, the stats, debug views
 
+## GUI selection clipboard callback (2026-10-25)
+
+The standard host binds tide_gui.copy to tide_platform_copy after begin, allowing
+Ctrl+C/X selection editing without including platform headers in the GUI runtime.
+The callback is optional for custom hosts; hidden runs retain the platform's
+existing refusal to access the system clipboard. GUI layout changes require
+hosts/games to rebuild together. Contracts and validation: notes/gui.md.
+
 ## Local workers (2026-10-24)
 
 The standard host supplies its existing platform pool in tide_gui.jobs before

@@ -1339,7 +1339,7 @@ system Advance(mut Match match)
   - **`int.TryParse(text, out value)`, `long.TryParse` and `float.TryParse`** give whether the whole text is a number of that type, which goes to `value`, an `out` argument as a function's is (`out var n`, `out n`, `out _`); otherwise false, and `value` is 0. A call can stand as a statement of its own. An int and a long are digits, with `-` before them for a negative one, zeros before them allowed. A float is that with a point among the digits and an exponent after: `-12.5`, `.5`, `5.`, `1e-3`, `2.5E+10`. Nothing else is a number: no spaces before or after (`Trim` first), no `+` before it, no hex, no digit separators, no `f` or `deg` after it, no `NaN` or `Infinity`. A number the type doesn't hold is false too: an int past its range, a float past the biggest float (one too small to tell from zero is zero). There's no `byte.TryParse`, and no `Parse` that fails.
   - **A float read from text is the one nearest the number written**, a tie going to the even one, as IEEE 754 rounds, whatever the number of digits: worked out with exact integer arithmetic, never the platform's `strtof`, so the same text is the same bits on every machine, and the match can read numbers. What text shows of a float (its shortest digits, or with a format) reads back as that float.
   - They run in any CPU code, the match's too; code the GPU runs has no text. A `Split`'s list and a `ToBytes`'s are in the scratch area, like any list code makes.
-- `GUILayout.TextField(label, mut text)` and `GUI.TextField(rect, label, mut text)`: a field the player types into, which changes the text as they type. Enter or Escape stop typing, and Backspace takes off the last character. With `out bool entered` after the text, it also says whether Enter ended the typing (see GUI).
+- `GUILayout.TextField(label, mut text)` and `GUI.TextField(rect, label, mut text)`: a field the player types into, which changes the text as they type. Enter or Escape stop typing; caret, selection and editing keys are described under GUI. With `out bool entered` after the text, it also says whether Enter ended the typing (see GUI).
 - Systems that change the match's text or lists wait for each other, as their heap is one: `tidec --schedule` says "both change text or lists".
 
 ### Open
@@ -1348,7 +1348,7 @@ system Advance(mut Match match)
 - `Join`, `Split` by several separators or with a count, `byte.TryParse`, a `Parse` that fails with an error, and reading hex.
 - The GUI's number fields (`GUILayout.FloatField`) still read what's typed with the platform's `strtof`: local code only, so no match depends on it, but they could read with `float.TryParse`'s code.
 - `++`, `--` and `+=` on a char, and `\r`, `\t` and `\0` in text's literals, which a char's have.
-- Text with a caret that moves, and selection, in text fields.
+- Grapheme-cluster caret movement, bidirectional editing and inline IME preedit in text fields.
 - Case for letters past ASCII.
 
 ## JSON
@@ -3282,6 +3282,13 @@ view Tools(Devices devices, mut Toolbox box)
 
 ### Provisional
 
+- **Rectangle and GUI follow-up** (2026-10-25; owner requested the proposed priorities and a performance pass):
+  - `Draw.Rect(Rect rect, Color color)`, `(rect, float radius, color)` and `(rect, float4 radii, color)` draw filled SDF boxes with target-pixel AA. Four radii run clockwise from top left; invalid/negative radii become zero, and each is capped at half the smaller side. Equal radii use the existing uniform-radius path. Center/size `Draw.Rect` keeps whole-pixel coverage for adjacent tiles. Themes are not required.
+  - `GUILayout.Scroll(float2 size, mut float2 offset) { ... }` reserves a fixed viewport; `GUI.Scroll(Rect rect, mut float2 offset)` places one explicitly. Their layout content is clipped for drawing and pointer hits. Offset is in pixels from the content origin, sanitized and clamped to its measured bounds. Wheel residuals bubble from the innermost hovered viewport to parents. A touch drag beyond six pixels cancels a child's pending press, then belongs to that viewport until release. Focus navigation reveals the selected child. Content executes once, without virtualization or inertia.
+  - A scroll offset is read on entry and checked-written back on close, including early exits. Indexed paths evaluate indices once and reacquire current storage at writeback; list removal makes the write a no-op; maps and grids use ordinary assignment semantics. No raw pointer into game heap storage survives the block. At the nesting ceiling the block is skipped.
+  - `GUI.FocusNext()` selects the next enabled control, including inside a keyed item; `GUI.ClearFocus()` clears focus. Directional navigation uses screen positions while Tab retains declaration order.
+  - Single-line fields support pointer caret/drag selection, Unicode-code-point Left/Right, Shift selection, Home/End, Ctrl word movement/select-all/copy/cut, Backspace/Delete, and 15 undo steps with Ctrl+Z/Y or Shift+Ctrl+Z. Editing keys repeat after 450 ms, at 50 ms intervals with at most one repeat per frame. Text remains bounded to 255 UTF-8 bytes. Number fields initially select their value; numeric commit/Escape behavior remains unchanged. Browser composition commits once and candidate Enter does not submit; inline preedit and grapheme/bidirectional editing remain open.
+
 - **Custom control composition** (2026-10-24; the owner delegated implementation and API choices, prioritizing performance and API):
   - `GUILayout.Reserve(float2 size)` returns the next layout `Rect`, with the requested width and height, without drawing, claiming input or joining focus navigation. `Reserve(size, minWidth, expandWidth)` allows horizontal shrinking to `minWidth` and optional expansion to the column's remembered natural width. Heights stay explicit. Negative and nonfinite dimensions become zero; `minWidth` is clamped to the requested width. Layout executes game code once per frame.
   - `GUI.Draw() { ... }` sends its ordinary `Draw` calls, and those in helpers it calls, to the GUI's list. It starts in screen pixels, at its position in GUI declaration order, above the enclosing panel and below later GUI content. The window's drawing settings are restored on every exit, including `Set` changes inside the block. Render-target settings remain their destination's. Screen-space 2D shapes, text, sprites, indexed meshes, shader runs and clips follow an anchored area's placement; explicit custom cameras and 3D draws retain their own coordinates. This is not a layout or hit-testing transform. The block is skipped if no container nesting space remains, so unscoped drawing cannot leak settings.
@@ -3304,7 +3311,7 @@ Implemented, awaiting approval:
 - Widget IDs come from where each call is in the program, mixed with the entity a view runs for, and for a function that draws, with where it's called from. Calls from one place with the same entity count up, in the order they run.
 - Widgets draw as they're called, so, like `Spawn`, they can't be on the right of `&&` or `||` or in a side of `?:`. A statement with several runs them left to right.
 - Navigation: Tab and Shift+Tab move the focus between widgets, in the order they were drawn. The arrows, d-pad and left stick move it once a widget has it, and only start moving it while the game isn't reading the devices, so a HUD's button never takes the d-pad from the player. Enter, Space and the south button press; Escape and the east button let go. With the focus, left and right step a slider or number field.
-- Down and right go on to the next widget and up and left go back, in the order the widgets are called, whatever their places on the screen: three cards side by side are reached with left and right. A slider and a number field keep left and right, to step their value, and the press that brought the focus to one doesn't step it too. From a button, a toggle, a text field or a control, left and right move the focus.
+- Arrows, d-pad and stick choose a nearby control in the requested screen direction, using last frame's placed rectangles. At an edge focus stays put. Tab/Shift+Tab wrap through declaration order. Sliders and number fields keep horizontal input for stepping; an editing field uses it for caret movement. The directional edge that first focuses a stepper does not also step it.
 - `GUI.Navigate()` says a menu is up: the arrows, the d-pad and the left stick can start moving the focus though the match reads the devices, as in a menu over a match that goes on behind it. A view, or a function it calls, calls it every frame the menu is up, as with `GUI.ShowKeyboard()`. Without it, only Tab starts the focus there. Once a widget has the focus, the keyboard and the gamepad are hidden from the input's `Sample`, as ever.
 - Typing: clicking a number field, or pressing Enter on it, starts typing into it with its value selected, so the first character replaces it; typing a number into a focused field starts too. Enter or leaving the field keeps a valid number; Escape keeps the old value.
 - **Entered fields**, beyond what's agreed (see Decided). Picks, awaiting the owner:
@@ -3351,8 +3358,8 @@ Implemented, awaiting approval:
 - A field for any enum. A game couldn't write one itself until there are generics.
 - Styles and themes.
 - More than one block per function, like Swift's labelled trailing closures.
-- The pieces widgets are made of, so a game can build its own like the built-in ones: a control's ID, which the compiler derives from the call as for the built-in widgets, whether it's hovered, pressed or focused, and drawing in the GUI's layer, over its panels (`Draw.Screen()` draws in its pixels, under it).
-- Scrolling, clipping, and keys that repeat while held.
+- Public control handles for explicit navigation links; custom composition, scoped keys and GUI-layer drawing are implemented above.
+- Scrollbar visuals, list virtualization, kinetic touch scrolling and navigation overrides. Editing keys repeat; general widget navigation repeat remains open.
 
 ## Prefabs and authored scenes
 

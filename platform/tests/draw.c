@@ -2086,6 +2086,27 @@ static void smooth_shapes(void)
     expect(calls == 2, "shapes of every kind, one after another, are one draw call");
 }
 
+static void corner_rects(void)
+{
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    tide_draw_set_screen(&list);
+    tide_draw_rect_area_corners(&list, (tide_rect){20, 20, 80, 60}, tide_f4(0, 8, 20, 30), red);
+    tide_draw_rect_area(&list, (tide_rect){120.25f, 20.25f, 40, 40}, blue);
+    const check checks[] = {
+        {20.5f, 20.5f, red, "independent top-left corner is square"},
+        {99.5f, 20.5f, background, "top-right corner has radius eight"},
+        {96.5f, 23.5f, red, "inside the top-right arc"},
+        {99.5f, 79.5f, background, "bottom-right corner has radius twenty"},
+        {20.5f, 79.5f, background, "bottom-left corner has radius thirty"},
+        {29.5f, 70.5f, red, "inside the bottom-left arc"},
+        {60.5f, 50.5f, red, "independent corners keep a solid middle"},
+        {130.5f, 30.5f, blue, "a Rect-based square has a solid middle"},
+    };
+    check_pixels(checks, sizeof checks / sizeof checks[0]);
+    expect(tide_platform_draw_calls() == 2, "independent corners and square AA rects share one shape draw");
+}
+
 // The GUI's own widgets with a theme: its colors, and its round corners,
 // beside one with the look they have without. Buttons with no text, so no
 // font decides a pixel.
@@ -4451,6 +4472,7 @@ static int frame(void *user, const float seconds)
         wraps();
         mipmaps();
         smooth_shapes();
+        corner_rects();
         themed_gui();
         tiles_leave_no_gaps();
         runs_drawn_alike();
@@ -4484,6 +4506,7 @@ static int frame(void *user, const float seconds)
         wraps();
         mipmaps();
         smooth_shapes();
+        corner_rects();
         themed_gui();
         tiles_leave_no_gaps();
         runs_drawn_alike();

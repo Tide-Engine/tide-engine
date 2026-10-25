@@ -10,6 +10,13 @@ local singleton Menu
     GUIControl control;
     Rect slot;
     bool shader;
+    bool scrolling;
+    bool focusLast;
+    float2 offset;
+    bool indexed;
+    bool clearOffsets;
+    int indexCalls;
+    List<float2> offsets = [float2(0)];
     List<Vertex> vertices = [
         Vertex { position = float2(0, 0), uv = float2(0, 0) },
         Vertex { position = float2(64, 0), uv = float2(1, 0) },
@@ -25,8 +32,7 @@ frag CustomSdf(Vertex vertex, out Color color)
 
 void Paint(Rect rect)
 {
-    Draw.RoundRect(float2(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5),
-                   float2(rect.width, rect.height), 8, Color.red);
+    Draw.Rect(rect, 8, Color.red);
 }
 
 void Controls(mut Menu menu)
@@ -49,9 +55,49 @@ void Controls(mut Menu menu)
     }
 }
 
+int OffsetIndex(mut Menu menu)
+{
+    menu.indexCalls++;
+    return 0;
+}
+
 view MenuView(mut Menu menu)
 {
     menu.frames++;
+    if (menu.indexed)
+    {
+        GUILayout.Scroll(float2(160, 60), menu.offsets[OffsetIndex(menu)])
+        {
+            for (var i = 0; i < 64; i++) menu.offsets.Add(float2(i));
+            if (menu.clearOffsets) menu.offsets.Clear();
+            for (var i = 0; i < 8; i++)
+            {
+                if (i == 7) GUI.FocusNext();
+                GUILayout.Button("item");
+            }
+            if (menu.leave) return;
+        }
+        return;
+    }
+    if (menu.scrolling)
+    {
+        GUILayout.Scroll(float2(160, 60), menu.offset)
+        {
+            for (var i = 0; i < 8; i++)
+            {
+                if (menu.focusLast && i == 7) GUI.FocusNext();
+                var slot = GUILayout.Reserve(float2(140, 30));
+                GUI.Control(slot);
+                GUI.Draw()
+                {
+                    Draw.Rect(slot, Color.red);
+                    Draw.Rect(slot, float4(0, 4, 8, 12), Color.blue);
+                    if (menu.leave) return;
+                }
+            }
+        }
+        return;
+    }
     Draw.SetScreen();
     Draw.Tint(Color.blue)
     {

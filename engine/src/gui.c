@@ -4,6 +4,7 @@
 #include <stdio.h>
 
 #include "tide/text.h"
+#include "tide/time.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -53,7 +54,7 @@ tide_gui_theme tide_gui_theme_default(void)
     };
 }
 
-enum { VERTICAL, HORIZONTAL, AREA };
+enum { VERTICAL, HORIZONTAL, AREA, SCROLL };
 
 #define ROOT_ID 1u // The screen's own group, where widgets outside any container go
 
@@ -75,6 +76,15 @@ enum {
     PAD_CANCEL = 1u << 13, // East
     KEY_BACKSPACE = 1u << 14,
     KEY_SHIFT = 1u << 15,
+    KEY_DELETE = 1u << 16,
+    KEY_HOME = 1u << 17,
+    KEY_END = 1u << 18,
+    KEY_CTRL = 1u << 19,
+    KEY_A = 1u << 20,
+    KEY_Z = 1u << 21,
+    KEY_Y = 1u << 22,
+    KEY_C = 1u << 23,
+    KEY_X = 1u << 24,
 };
 
 #define STICK 0.5f // How far the left stick goes before it counts as a d-pad press
@@ -94,6 +104,15 @@ static uint32_t nav_keys(const tide_devices *d)
     if (k->escape.held) keys |= KEY_CANCEL;
     if (k->backspace.held) keys |= KEY_BACKSPACE;
     if (k->leftShift.held || k->rightShift.held) keys |= KEY_SHIFT;
+    if (k->delete.held) keys |= KEY_DELETE;
+    if (k->home.held) keys |= KEY_HOME;
+    if (k->end.held) keys |= KEY_END;
+    if (k->leftCtrl.held || k->rightCtrl.held) keys |= KEY_CTRL;
+    if (k->a.held) keys |= KEY_A;
+    if (k->z.held) keys |= KEY_Z;
+    if (k->y.held) keys |= KEY_Y;
+    if (k->c.held) keys |= KEY_C;
+    if (k->x.held) keys |= KEY_X;
     if (p->connected) {
         if (p->dpad.up.held || p->leftStick.y > STICK) keys |= PAD_UP;
         if (p->dpad.down.held || p->leftStick.y < -STICK) keys |= PAD_DOWN;
@@ -142,6 +161,16 @@ static bool contains(const tide_rect r, const tide_float2 p)
 {
     return p.x >= r.x && p.y >= r.y && p.x < r.x + r.width && p.y < r.y + r.height;
 }
+
+static tide_rect intersect(const tide_rect a, const tide_rect b)
+{
+    const float x = max_f(a.x, b.x), y = max_f(a.y, b.y);
+    return (tide_rect){x, y, max_f(min_f(a.x + a.width, b.x + b.width) - x, 0.0f),
+                            max_f(min_f(a.y + a.height, b.y + b.height) - y, 0.0f)};
+}
+
+void tide_gui_focus_next(tide_gui *g) { g->focus_next = true; }
+void tide_gui_clear_focus(tide_gui *g) { g->focus = 0; g->focus_next = false; }
 
 // Whether widgets drawn now are in a Disabled block.
 static bool grayed(const tide_gui *g)
@@ -418,7 +447,7 @@ static bool on_gui(const tide_gui *g, const tide_devices *d)
 // none of its content is, as its panel is under it. 0 for none; else `where`
 // is its place. It's what a frame works out as it draws (hovered,
 // close_area), over again for a pointer that has moved since.
-static uint32_t on_top(const tide_gui *g, const tide_float2 at, tide_rect *where)
+static uint32_t on_top(const tide_gui *g, const tide_float2 at, tide_rect *where, uint32_t *scroll)
 {
     uint32_t id = 0;
     uint32_t found = 0; // How many places there are up to the one on top so far, with it
@@ -428,6 +457,7 @@ static uint32_t on_top(const tide_gui *g, const tide_float2 at, tide_rect *where
         if (r->content != WIDGET && found > r->content) continue; // An area with some of its content there
         id = r->id;
         *where = r->rect;
+        *scroll = r->scroll;
         found = i + 1u;
     }
     return id;
@@ -555,40 +585,58 @@ static uint32_t claimed_from(const tide_gui *g, const tide_devices *d, const uin
     return taken & ~own;
 }
 
-// Moves the focus with Tab, the arrows and the d-pad, in last frame's order.
+// Tab follows declaration order. Directional input searches geometry only on
+// an input edge, so an idle frame does no spatial search.
 static void navigate(tide_gui *g)
 {
-    // A view that claimed the keyboard has its keys until a widget has the
-    // focus: Tab and the arrows don't start moving it.
+    if (!(g->keys_pressed & (KEY_TAB | KEY_UP | KEY_DOWN | KEY_LEFT | KEY_RIGHT |
+                            PAD_UP | PAD_DOWN | PAD_LEFT | PAD_RIGHT | KEY_CANCEL | PAD_CANCEL))) return;
     const bool keyboard = g->focus || !(g->taken & TIDE_GUI_KEYBOARD);
     const bool tab = keyboard && pressed(g, KEY_TAB);
-    bool next = tab && !(g->keys & KEY_SHIFT);
-    bool back = tab && (g->keys & KEY_SHIFT);
+    const bool back = tab && (g->keys & KEY_SHIFT);
     const int n = (int)g->nav_last_count;
     int at = -1;
-    for (int i = 0; i < n; i++) {
-        if (g->nav_last[i] == g->focus) at = i;
-    }
-    // The arrows and d-pad move the focus once a widget has it. They only
-    // start moving it while the game isn't reading the devices, or a view says
-    // a menu is up (GUI.Navigate), so they never take a HUD's button away from
-    // the game. Down and right go on, up and left go back, in the order the
-    // widgets are called; a widget that steps its value with left and right
-    // keeps those.
-    if (g->focus || g->nav_arrows) {
+    for (int i = 0; i < n; i++) if (g->nav_last[i] == g->focus) { at = i; break; }
+    int to = at;
+    if (tab && n) to = at < 0 ? (back ? n - 1 : 0) : (at + (back ? n - 1 : 1)) % n;
+    else if (g->focus || g->nav_arrows) {
         uint32_t usable = keyboard ? ~0u : ~(uint32_t)(KEY_DOWN | KEY_UP | KEY_LEFT | KEY_RIGHT);
-        if (at >= 0 && g->nav_steps_last[at]) usable &= ~(uint32_t)(KEY_LEFT | KEY_RIGHT | PAD_LEFT | PAD_RIGHT);
-        if (pressed(g, (KEY_DOWN | PAD_DOWN | KEY_RIGHT | PAD_RIGHT) & usable)) next = true;
-        if (pressed(g, (KEY_UP | PAD_UP | KEY_LEFT | PAD_LEFT) & usable)) back = true;
+        if (g->editing || (at >= 0 && g->nav_steps_last[at]))
+            usable &= ~(uint32_t)(KEY_LEFT | KEY_RIGHT | PAD_LEFT | PAD_RIGHT);
+        const uint32_t edges = g->keys_pressed & usable;
+        int x = 0, y = 0;
+        if (edges & (KEY_RIGHT | PAD_RIGHT)) x = 1;
+        else if (edges & (KEY_LEFT | PAD_LEFT)) x = -1;
+        else if (edges & (KEY_DOWN | PAD_DOWN)) y = 1;
+        else if (edges & (KEY_UP | PAD_UP)) y = -1;
+        if ((x || y) && n) {
+            if (at < 0) to = x < 0 || y < 0 ? n - 1 : 0;
+            else {
+                const tide_rect from = g->nav_rects[at];
+                double best = DBL_MAX;
+                for (int i = 0; i < n; i++) {
+                    if (i == at) continue;
+                    const tide_rect r = g->nav_rects[i];
+                    const double dx = (double)r.x + r.width * 0.5 - from.x - from.width * 0.5;
+                    const double dy = (double)r.y + r.height * 0.5 - from.y - from.height * 0.5;
+                    const double along = dx * x + dy * y;
+                    const double cross = x ? dy : dx;
+                    const double half = x ? ((double)r.height + from.height) * 0.5 : ((double)r.width + from.width) * 0.5;
+                    const double across = (cross < 0 ? -cross : cross) > half ? (cross < 0 ? -cross : cross) - half : 0;
+                    if (!(along > 0.0)) continue;
+                    const double score = along * along + across * across * 4.0;
+                    if (score < best) { best = score; to = i; }
+                }
+            }
+        }
     }
-    if ((next || back) && n > 0) {
-        const int to = at < 0 ? (next ? 0 : n - 1) : (at + (next ? 1 : n - 1)) % n;
+    if (to >= 0 && to != at) {
         g->focus = g->nav_last[to];
-        // A press of left or right that brought the focus to a slider isn't the slider's to step with too
+        g->reveal_focus = true;
         g->keys_pressed &= ~(uint32_t)(KEY_LEFT | KEY_RIGHT | PAD_LEFT | PAD_RIGHT);
     }
     if (pressed(g, KEY_CANCEL | PAD_CANCEL)) {
-        if (g->editing) g->editing = 0; // Stops typing, keeping the old value
+        if (g->editing) g->editing = 0;
         else g->focus = 0;
     }
 }
@@ -623,10 +671,51 @@ void tide_gui_begin(tide_gui *g, const tide_devices *devices, const tide_float2 
     // mouse in a slow frame. By where the last frame saw it, a tap on a button
     // of a menu the mouse rested on pressed the menu's panel, which was on top
     // there. With more widgets than a frame remembers, it's as that frame saw it.
-    if (!g->rects_full) g->hot = on_top(g, g->mouse, &g->hot_rect);
+    g->wheel_owner = 0;
+    if (!g->rects_full) g->hot = on_top(g, g->mouse, &g->hot_rect, &g->wheel_owner);
+    g->wheel = devices->mouse.poll_scroll;
+    g->gesture_cancel = 0;
+    g->drag_delta = tide_f2(0, 0);
+    if (g->mouse_pressed && p->touch) {
+        g->drag_scroll = g->wheel_owner;
+        const tide_gui_size *last_scroll = remembered(g, g->drag_scroll);
+        g->drag_axes = last_scroll ? (last_scroll->size.x > last_scroll->natural ? 1u : 0u)
+                                   | (last_scroll->size.y > last_scroll->least ? 2u : 0u) : 0;
+        g->drag_start = g->drag_last = g->mouse;
+        g->scroll_dragging = false;
+    }
+    if (g->drag_scroll && p->touch && g->mouse_held) {
+        const tide_float2 moved = tide_f2(g->mouse.x - g->drag_start.x, g->mouse.y - g->drag_start.y);
+        if (!g->scroll_dragging && (((g->drag_axes & 1u) && tide_abs_f(moved.x) > 6) ||
+                                    ((g->drag_axes & 2u) && tide_abs_f(moved.y) > 6))) {
+            g->scroll_dragging = true;
+            g->gesture_cancel = g->active;
+            g->active = 0;
+        }
+        if (g->scroll_dragging) {
+            g->drag_delta = tide_f2(g->drag_axes & 1u ? g->drag_last.x - g->mouse.x : 0,
+                                   g->drag_axes & 2u ? g->drag_last.y - g->mouse.y : 0);
+            g->drag_last = g->mouse;
+        }
+    } else if (!g->mouse_held) {
+        g->drag_scroll = 0;
+        g->scroll_dragging = false;
+    }
     const uint32_t keys = nav_keys(devices);
     g->keys_pressed = keys & ~g->keys;
     g->keys = keys;
+    // Repeat editing keys locally, without inventing device presses for the
+    // match or other views. A stalled frame takes at most one repeat step.
+    const uint32_t repeat = g->editing ? keys & (KEY_LEFT | KEY_RIGHT | KEY_BACKSPACE | KEY_DELETE) : 0;
+    if (repeat) {
+        const uint64_t now = tide_time_now_ns();
+        if (repeat != g->edit_repeat) g->edit_repeat_at = now + UINT64_C(450000000);
+        else if (now >= g->edit_repeat_at) {
+            g->keys_pressed |= repeat;
+            g->edit_repeat_at = now + UINT64_C(50000000);
+        }
+    }
+    g->edit_repeat = repeat;
     g->text = devices->keyboard.text;
     g->nav_arrows = !g->game_input || g->navigate;
     g->game_input = false;
@@ -650,7 +739,7 @@ void tide_gui_begin(tide_gui *g, const tide_devices *devices, const tide_float2 
     hide_claimed(&g->devices, claimed_from(g, &g->unclaimed, 0));
     g->view = 0;
 
-    g->claimed = false;
+    g->claimed = g->scroll_dragging;
     g->active_seen = false;
     g->focus_seen = false;
     g->editing_seen = false;
@@ -658,6 +747,7 @@ void tide_gui_begin(tide_gui *g, const tide_devices *devices, const tide_float2 
     // A click ends keyboard and gamepad navigation; a field it lands on takes the focus back.
     const uint32_t focus = g->focus;
     if (g->mouse_pressed) g->focus = 0;
+    g->reveal_focus = false;
     navigate(g);
     if (g->focus != focus) g->focus_reads = false; // It moved on: the keys are the next widget's
 
@@ -666,6 +756,10 @@ void tide_gui_begin(tide_gui *g, const tide_devices *devices, const tide_float2 
     g->depth = 0;
     g->key = 0;
     g->drawing_count = 0;
+    g->scrolling_count = 0;
+    g->scroll_clip = g->scroll_id = 0;
+    g->input_clip = (tide_rect){0, 0, screen.x, screen.y};
+    g->focus_next = false;
     g->in_modal = 0;
     const tide_gui_size *root = remembered(g, ROOT_ID);
     g->groups[0] = (tide_gui_group){
@@ -690,6 +784,12 @@ void tide_gui_end(tide_gui *g, tide_draw_list *draw)
     g->hot_next = 0;
     g->over = g->over_next;
     g->over_next = false;
+    // Resolve scroll clips after anchored placement and scroll relocation.
+    for (uint32_t i = 0; i < g->rect_count_next; i++) {
+        tide_gui_rect *r = &g->rects_next[i];
+        for (uint32_t clip = r->clip; clip && clip <= g->list.clip_count; clip = g->list.clips[clip - 1u].parent)
+            r->rect = intersect(r->rect, g->list.clips[clip - 1u].rect);
+    }
     memcpy(g->rects, g->rects_next, g->rect_count_next * sizeof g->rects[0]);
     g->rect_count = g->rect_count_next;
     g->rect_count_next = 0;
@@ -832,7 +932,7 @@ static bool live(const tide_gui *g)
 // content's.
 static void remember_place(tide_gui *g, const uint32_t id, const tide_rect r, const uint32_t content)
 {
-    if (g->rect_count_next < TIDE_GUI_MAX_RECTS) g->rects_next[g->rect_count_next++] = (tide_gui_rect){r, id, content};
+    if (g->rect_count_next < TIDE_GUI_MAX_RECTS) g->rects_next[g->rect_count_next++] = (tide_gui_rect){r, id, content, g->scroll_clip, g->scroll_id};
     else g->rects_full_next = true;
 }
 
@@ -844,7 +944,7 @@ static bool hovered(tide_gui *g, const uint32_t id, const tide_rect r)
 {
     if (under_modal(g)) return false;
     remember_place(g, id, r, WIDGET);
-    if (!contains(r, g->mouse)) return false;
+    if (!contains(r, g->mouse) || (g->scroll_clip && !contains(g->input_clip, g->mouse))) return false;
     g->hot_next = id;
     g->hot_rect_next = r;
     g->over_next = true;
@@ -867,9 +967,14 @@ static bool held_down(tide_gui *g, const uint32_t id, const bool hover)
 // Adds the widget to the ones the focus moves between; true if it has it.
 // One that `steps` its value with left and right keeps those: from the
 // others, they move the focus.
-static bool focusable(tide_gui *g, const uint32_t id, const bool steps)
+static bool focusable(tide_gui *g, const uint32_t id, const bool steps, const tide_rect rect)
 {
     if (!live(g)) return false;
+    if (g->focus_next) {
+        g->focus = id;
+        g->focus_next = false;
+        g->reveal_focus = true;
+    }
     // The first widget of a modal that just came on top. A field under it that
     // was typed into ends its typing itself as it runs, without the focus
     if (g->grab && g->grab == g->in_modal) {
@@ -877,10 +982,12 @@ static bool focusable(tide_gui *g, const uint32_t id, const bool steps)
         g->focus = id;
     }
     if (g->nav_count < TIDE_GUI_MAX_NAV) {
+        g->nav_rects[g->nav_count] = rect;
         g->nav_steps[g->nav_count] = steps;
         g->nav[g->nav_count++] = id;
     }
     if (g->focus != id) return false;
+    g->focus_rect = rect;
     g->focus_seen = true;
     return true;
 }
@@ -891,7 +998,7 @@ static bool clicked(tide_gui *g, const uint32_t id, const tide_rect r, bool *hov
 {
     *hover = hovered(g, id, r);
     *down = held_down(g, id, *hover);
-    *focused = focusable(g, id, false);
+    *focused = focusable(g, id, false, r);
     return (*down && g->mouse_released && *hover) || (*focused && pressed(g, KEY_ENTER | KEY_SPACE | PAD_ACCEPT));
 }
 
@@ -1037,6 +1144,7 @@ int tide_gui_begin_area(tide_gui *g, const uint32_t id, const tide_rect rect)
     top(g)->clips_from = g->list.clip_count;
     top(g)->hot_before = g->hot_next;
     top(g)->rects_before = g->rect_count_next;
+    top(g)->nav_from = g->nav_count;
     return before;
 }
 
@@ -1062,6 +1170,7 @@ int tide_gui_begin_area_at(tide_gui *g, const uint32_t id, const int32_t anchor)
     top(g)->clips_from = g->list.clip_count;
     top(g)->hot_before = g->hot_next;
     top(g)->rects_before = g->rect_count_next;
+    top(g)->nav_from = g->nav_count;
     return before;
 }
 
@@ -1177,6 +1286,11 @@ static void close_area(tide_gui *g, const tide_gui_group *grp)
             g->rects_next[i].rect.x += dx;
             g->rects_next[i].rect.y += dy;
         }
+        for (uint32_t i = grp->nav_from; i < g->nav_count; i++) {
+            g->nav_rects[i].x += dx;
+            g->nav_rects[i].y += dy;
+            if (g->nav[i] == g->focus) g->focus_rect = g->nav_rects[i];
+        }
         r = (tide_rect){at.x, at.y, size.x, size.y};
     }
     if (grp->panel != UINT32_MAX) {
@@ -1198,6 +1312,73 @@ static void close_area(tide_gui *g, const tide_gui_group *grp)
     if (g->hot_next == grp->hot_before) {
         g->hot_next = grp->id;
         g->hot_rect_next = r;
+    }
+}
+
+static void close_scroll(tide_gui *g, const tide_gui_group *grp)
+{
+    const tide_gui_scroll_state state = g->scrolling[--g->scrolling_count];
+    const tide_float2 limit = tide_f2(max_f(grp->size.x - state.viewport.width, 0.0f),
+                                     max_f(grp->size.y - state.viewport.height, 0.0f));
+    tide_float2 offset = *state.offset;
+    if (g->drag_scroll == grp->id && g->scroll_dragging && live(g)) {
+        offset.x += g->drag_delta.x;
+        offset.y += g->drag_delta.y;
+    }
+    if (g->wheel_owner == grp->id && live(g)) {
+        const tide_float2 moved = tide_f2(clamp_f(offset.x - g->wheel.x * LINE, 0.0f, limit.x),
+                                         clamp_f(offset.y - g->wheel.y * LINE, 0.0f, limit.y));
+        g->wheel.x += (moved.x - offset.x) / LINE;
+        g->wheel.y += (moved.y - offset.y) / LINE;
+        offset = moved;
+        g->wheel_owner = state.parent;
+    }
+    if (g->focus && g->focus_seen && g->reveal_focus) {
+        for (uint32_t i = grp->nav_from; i < g->nav_count; i++) {
+            if (g->nav[i] != g->focus) continue;
+            const tide_rect r = g->focus_rect;
+            if (r.x < state.viewport.x) offset.x += r.x - state.viewport.x;
+            else if (r.x + r.width > state.viewport.x + state.viewport.width)
+                offset.x += r.x + r.width - state.viewport.x - state.viewport.width;
+            if (r.y < state.viewport.y) offset.y += r.y - state.viewport.y;
+            else if (r.y + r.height > state.viewport.y + state.viewport.height)
+                offset.y += r.y + r.height - state.viewport.y - state.viewport.height;
+            break;
+        }
+    }
+    offset.x = clamp_f(offset.x, 0.0f, limit.x);
+    offset.y = clamp_f(offset.y, 0.0f, limit.y);
+    *state.offset = offset;
+    const tide_float2 shift = tide_f2(state.before.x - offset.x, state.before.y - offset.y);
+    if (shift.x != 0.0f || shift.y != 0.0f) {
+        tide_draw_move_gui(&g->list, grp->commands_from, grp->plains_from, state.clip, shift);
+        for (uint32_t i = grp->rects_before; i < g->rect_count_next; i++) {
+            g->rects_next[i].rect.x += shift.x;
+            g->rects_next[i].rect.y += shift.y;
+        }
+        for (uint32_t i = grp->nav_from; i < g->nav_count; i++) {
+            g->nav_rects[i].x += shift.x;
+            g->nav_rects[i].y += shift.y;
+            if (g->nav[i] == g->focus) g->focus_rect = g->nav_rects[i];
+        }
+    }
+    tide_draw_pop(&g->list, state.mark);
+    g->scroll_clip = state.clip_before_id;
+    g->scroll_id = state.parent;
+    g->input_clip = state.clip_before;
+    // For scrolls the two width fields remember the viewport dimensions,
+    // allowing touch arbitration before the next frame's content is called.
+    remember(g, grp->id, grp->size, state.viewport.width, state.viewport.height);
+    const uint32_t count_before = g->rect_count_next;
+    remember_place(g, grp->id, state.viewport, grp->rects_before);
+    // The viewport itself routes wheel input to this scroll container.
+    if (g->rect_count_next > count_before) g->rects_next[g->rect_count_next - 1u].scroll = grp->id;
+    if (contains(state.viewport, g->mouse) && (!g->scroll_clip || contains(g->input_clip, g->mouse))) {
+        g->over_next = true;
+        if (g->hot_next == grp->hot_before) {
+            g->hot_next = grp->id;
+            g->hot_rect_next = state.viewport;
+        }
     }
 }
 
@@ -1226,6 +1407,10 @@ void tide_gui_close(tide_gui *g, const int depth)
             continue;
         }
         g->in_modal = grp.in_modal_before;
+        if (grp.kind == SCROLL) {
+            close_scroll(g, &grp);
+            continue;
+        }
         if (grp.kind == AREA) {
             close_area(g, &grp); // Areas are on the screen, not in the container around them
             continue;
@@ -1258,6 +1443,42 @@ void tide_gui_layout_space(tide_gui *g, const float size)
 static float dimension(const float value)
 {
     return tide_is_finite_f(value) && value > 0.0f ? value : 0.0f;
+}
+
+int tide_gui_begin_scroll(tide_gui *g, const uint32_t id, tide_rect rect, tide_float2 *offset)
+{
+    if (g->depth == TIDE_GUI_MAX_DEPTH) return -1;
+    rect.width = dimension(rect.width);
+    rect.height = dimension(rect.height);
+    const tide_gui_size *last = remembered(g, id);
+    offset->x = last ? clamp_f(dimension(offset->x), 0.0f, max_f(last->size.x - rect.width, 0.0f)) : dimension(offset->x);
+    offset->y = last ? clamp_f(dimension(offset->y), 0.0f, max_f(last->size.y - rect.height, 0.0f)) : dimension(offset->y);
+    // An unseen container is measured at zero offset, preserving precision
+    // even for a huge requested offset. Close clamps and places its content.
+    const tide_float2 placed = last ? *offset : tide_f2(0, 0);
+    const int before = open_group(g, id, SCROLL, tide_f2(rect.x - placed.x, rect.y - placed.y));
+    tide_gui_group *grp = top(g);
+    grp->room = rect.width;
+    grp->stretch = rect.width;
+    grp->commands_from = g->list.count;
+    grp->plains_from = g->list.plain_count;
+    grp->rects_before = g->rect_count_next;
+    grp->nav_from = g->nav_count;
+    grp->hot_before = g->hot_next;
+    const uint32_t mark = tide_draw_push_clip(&g->list, rect);
+    g->scrolling[g->scrolling_count++] = (tide_gui_scroll_state){
+        .offset = offset, .before = placed, .viewport = rect, .clip_before = g->input_clip,
+        .clip = g->list.clip_count, .clip_before_id = g->scroll_clip, .parent = g->scroll_id, .mark = mark};
+    g->input_clip = g->scroll_clip ? intersect(g->input_clip, rect) : rect;
+    g->scroll_clip = g->list.place.clip;
+    g->scroll_id = id;
+    return before;
+}
+
+int tide_gui_begin_layout_scroll(tide_gui *g, const uint32_t id, const tide_float2 size, tide_float2 *offset)
+{
+    if (g->depth == TIDE_GUI_MAX_DEPTH) return -1;
+    return tide_gui_begin_scroll(g, id, tide_gui_layout_reserve(g, size), offset);
 }
 
 tide_rect tide_gui_layout_reserve_flexible(tide_gui *g, const tide_float2 size, const float min_width,
@@ -1340,6 +1561,8 @@ bool tide_gui_button(tide_gui *g, const uint32_t id, const tide_rect rect, const
 tide_control tide_gui_control(tide_gui *g, const uint32_t id, const tide_rect rect)
 {
     const bool was_active = g->active == id;
+    const bool gesture_cancelled = g->gesture_cancel == id;
+    if (gesture_cancelled) g->gesture_cancel = 0;
     bool hover, down, focused;
     const bool click = clicked(g, id, rect, &hover, &down, &focused);
     if (focused) { // Its view goes on reading the keys the GUI doesn't use
@@ -1352,7 +1575,7 @@ tide_control tide_gui_control(tide_gui *g, const uint32_t id, const tide_rect re
     return (tide_control){.hovered = hover, .pressed = down && g->mouse_held && enabled,
                           .focused = focused, .clicked = click && enabled,
                           .down = down && g->mouse_pressed && enabled, .up = down && g->mouse_released && enabled,
-                          .cancelled = was_active && !enabled, .position = g->mouse};
+                          .cancelled = (was_active && !enabled) || gesture_cancelled, .position = g->mouse};
 }
 
 bool tide_gui_layout_button(tide_gui *g, const uint32_t id, const char *text)
@@ -1387,7 +1610,7 @@ static double slider(tide_gui *g, const uint32_t id, const tide_rect r, const do
 {
     const bool hover = hovered(g, id, r);
     const bool down = held_down(g, id, hover);
-    const bool focused = focusable(g, id, true);
+    const bool focused = focusable(g, id, true, r);
     double moved = -1.0;
     if (step) *step = 0;
     if (down && g->mouse_held && r.width > 0.0f) moved = clamp_f((g->mouse.x - r.x) / r.width, 0.0f, 1.0f);
@@ -1517,21 +1740,183 @@ static bool typed_number(const tide_gui *g, const number_kind kind)
     return false;
 }
 
-static void type_into(tide_gui *g, const number_kind kind)
+// Edit positions are UTF-8 byte boundaries, never a pointer into game storage.
+static uint32_t edit_prev(const tide_gui *g, uint32_t at)
 {
-    if (pressed(g, KEY_BACKSPACE)) {
-        if (g->edit_fresh) g->edit_len = 0;
-        else if (g->edit_len > 0) g->edit_len--;
-        g->edit_fresh = false;
+    if (at) do at--; while (at && ((unsigned char)g->edit[at] & 0xC0u) == 0x80u);
+    return at;
+}
+
+static uint32_t edit_next(const tide_gui *g, uint32_t at)
+{
+    if (at < g->edit_len) do at++; while (at < g->edit_len && ((unsigned char)g->edit[at] & 0xC0u) == 0x80u);
+    return at;
+}
+
+static tide_gui_edit_state edit_state(const tide_gui *g)
+{
+    tide_gui_edit_state state = {.length = g->edit_len, .caret = g->edit_caret, .anchor = g->edit_anchor};
+    memcpy(state.text, g->edit, g->edit_len + 1u);
+    return state;
+}
+
+static void edit_start(tide_gui *g, const bool select_all)
+{
+    g->edit_caret = g->edit_len;
+    g->edit_anchor = select_all ? 0 : g->edit_len;
+    g->edit_scroll = 0.0f;
+    g->edit_history_count = 1;
+    g->edit_history_at = 0;
+    g->edit_history[0] = edit_state(g);
+}
+
+static void edit_restore(tide_gui *g, const uint32_t at)
+{
+    const tide_gui_edit_state *state = &g->edit_history[at];
+    memcpy(g->edit, state->text, state->length + 1u);
+    g->edit_len = state->length;
+    g->edit_caret = state->caret;
+    g->edit_anchor = state->anchor;
+    g->edit_history_at = at;
+}
+
+static void edit_record(tide_gui *g)
+{
+    if (g->edit_history_at == 15) {
+        memmove(g->edit_history, g->edit_history + 1, 15 * sizeof g->edit_history[0]);
+        g->edit_history_at--;
+    }
+    g->edit_history[++g->edit_history_at] = edit_state(g);
+    g->edit_history_count = g->edit_history_at + 1u;
+}
+
+static void edit_replace(tide_gui *g, const char *bytes, const uint32_t count)
+{
+    const uint32_t lo = g->edit_caret < g->edit_anchor ? g->edit_caret : g->edit_anchor;
+    const uint32_t hi = g->edit_caret > g->edit_anchor ? g->edit_caret : g->edit_anchor;
+    if (count > sizeof g->edit - 1u - (g->edit_len - (hi - lo))) return;
+    memmove(g->edit + lo + count, g->edit + hi, g->edit_len - hi + 1u);
+    if (count) memcpy(g->edit + lo, bytes, count);
+    g->edit_len = g->edit_len - (hi - lo) + count;
+    g->edit_caret = g->edit_anchor = lo + count;
+    g->edit_fresh = false;
+}
+
+static bool edit_space(const tide_gui *g, const uint32_t at)
+{
+    return at < g->edit_len && (g->edit[at] == ' ' || g->edit[at] == '\t');
+}
+
+static uint32_t edit_word(const tide_gui *g, uint32_t at, const bool right)
+{
+    if (right) {
+        while (at < g->edit_len && !edit_space(g, at)) at = edit_next(g, at);
+        while (at < g->edit_len && edit_space(g, at)) at = edit_next(g, at);
+    } else {
+        while (at && edit_space(g, edit_prev(g, at))) at = edit_prev(g, at);
+        while (at && !edit_space(g, edit_prev(g, at))) at = edit_prev(g, at);
+    }
+    return at;
+}
+
+static bool edit_apply(tide_gui *g, const number_kind kind)
+{
+    if (!g->text.count && !pressed(g, KEY_HOME | KEY_END | KEY_LEFT | KEY_RIGHT | KEY_DELETE | KEY_BACKSPACE |
+                                      KEY_A | KEY_C | KEY_X | KEY_Y | KEY_Z)) return false;
+    const bool ctrl = (g->keys & KEY_CTRL) != 0, shift = (g->keys & KEY_SHIFT) != 0;
+    if (ctrl && (pressed(g, KEY_Z) || pressed(g, KEY_Y))) {
+        const bool redo = pressed(g, KEY_Y) || shift;
+        const uint32_t at = g->edit_history_at;
+        if (redo && at + 1u < g->edit_history_count) edit_restore(g, at + 1u);
+        else if (!redo && at) edit_restore(g, at - 1u);
+        return at != g->edit_history_at;
+    }
+    if (ctrl && pressed(g, KEY_A)) { g->edit_anchor = 0; g->edit_caret = g->edit_len; }
+    const uint32_t lo = g->edit_caret < g->edit_anchor ? g->edit_caret : g->edit_anchor;
+    const uint32_t hi = g->edit_caret > g->edit_anchor ? g->edit_caret : g->edit_anchor;
+    if (pressed(g, KEY_HOME)) g->edit_caret = 0;
+    else if (pressed(g, KEY_END)) g->edit_caret = g->edit_len;
+    else if (pressed(g, KEY_LEFT)) g->edit_caret = !shift && lo != hi ? lo : ctrl ? edit_word(g, g->edit_caret, false) : edit_prev(g, g->edit_caret);
+    else if (pressed(g, KEY_RIGHT)) g->edit_caret = !shift && lo != hi ? hi : ctrl ? edit_word(g, g->edit_caret, true) : edit_next(g, g->edit_caret);
+    if (!shift && pressed(g, KEY_HOME | KEY_END | KEY_LEFT | KEY_RIGHT)) g->edit_anchor = g->edit_caret;
+    if (g->edit_history_count) g->edit_history[g->edit_history_at] = edit_state(g);
+    const tide_gui_edit_state before = edit_state(g);
+    if (ctrl && pressed(g, KEY_C | KEY_X) && hi > lo && g->copy) {
+        char text[256];
+        memcpy(text, g->edit + lo, hi - lo);
+        text[hi - lo] = '\0';
+        g->copy(text);
+    }
+    if (pressed(g, KEY_BACKSPACE | KEY_DELETE) || (ctrl && pressed(g, KEY_X) && g->copy)) {
+        if (lo == hi) {
+            if (pressed(g, KEY_BACKSPACE)) g->edit_anchor = ctrl ? edit_word(g, lo, false) : edit_prev(g, lo);
+            else if (pressed(g, KEY_DELETE)) g->edit_anchor = ctrl ? edit_word(g, hi, true) : edit_next(g, hi);
+        }
+        edit_replace(g, NULL, 0);
     }
     for (uint32_t i = 0; i < g->text.count && i < TIDE_TEXT_MAX; i++) {
-        const uint32_t c = g->text.chars[i];
-        if (!number_char(c, kind)) continue;
-        if (g->edit_fresh) g->edit_len = 0;
-        g->edit_fresh = false;
-        if (g->edit_len + 1 < sizeof g->edit) g->edit[g->edit_len++] = c == ',' ? '.' : (char)c;
+        uint32_t c = g->text.chars[i];
+        if (kind != NUMBER_NONE) {
+            if (!number_char(c, kind)) continue;
+            if (c == ',') c = '.';
+        } else if (c < 32 || c == 127) continue;
+        char bytes[4];
+        const int n = tide_utf8_encode(c, bytes);
+        if (n > 0) edit_replace(g, bytes, (uint32_t)n);
     }
-    g->edit[g->edit_len] = '\0';
+    const bool changed = before.length != g->edit_len || memcmp(before.text, g->edit, g->edit_len) != 0;
+    if (changed) edit_record(g);
+    return changed;
+}
+
+static void type_into(tide_gui *g, const number_kind kind) { (void)edit_apply(g, kind); }
+
+static float edit_width(tide_gui *g, const uint32_t end)
+{
+    const char saved = g->edit[end];
+    g->edit[end] = '\0';
+    const float width = text_width(g, g->edit);
+    g->edit[end] = saved;
+    return width;
+}
+
+static void edit_pointer(tide_gui *g, const uint32_t id, const tide_rect box, const bool place)
+{
+    if (place) { g->active = id; g->active_seen = true; }
+    if (g->active != id) return;
+    g->active_seen = true;
+    if (!place && !g->mouse_held) return;
+    uint32_t boundaries[257], count = 0;
+    for (uint32_t at = 0;; at = edit_next(g, at)) {
+        boundaries[count++] = at;
+        if (at == g->edit_len) break;
+    }
+    const float x = g->mouse.x - box.x - PAD + g->edit_scroll;
+    uint32_t lo = 0, hi = count - 1u;
+    while (lo < hi) {
+        const uint32_t mid = (lo + hi) / 2u;
+        const float edge = (edit_width(g, boundaries[mid]) + edit_width(g, boundaries[mid + 1u])) * 0.5f;
+        if (x < edge) hi = mid;
+        else lo = mid + 1u;
+    }
+    g->edit_caret = boundaries[lo];
+    if (place && !(g->keys & KEY_SHIFT)) g->edit_anchor = g->edit_caret;
+}
+
+static void edit_draw(tide_gui *g, const tide_rect box)
+{
+    const float caret = edit_width(g, g->edit_caret), room = max_f(box.width - 2 * PAD, 1.0f);
+    g->edit_scroll = clamp_f(g->edit_scroll, max_f(caret - room, 0.0f), caret);
+    const uint32_t mark = tide_draw_push_clip(&g->list, box);
+    const float x = box.x + PAD - g->edit_scroll, y = box.y + box.height * 0.5f;
+    if (g->edit_anchor != g->edit_caret) {
+        const float anchor = edit_width(g, g->edit_anchor);
+        const tide_color color = shade(g, (tide_color){g->theme.accent.r, g->theme.accent.g, g->theme.accent.b, 0.35f});
+        tide_draw_rect(&g->list, tide_f2(x + (anchor + caret) * 0.5f, y), tide_f2(tide_abs_f(anchor - caret), FONT), color);
+    }
+    text_at(g, g->edit, x, y, g->theme.text);
+    tide_draw_rect(&g->list, tide_f2(x + caret, y), tide_f2(1.0f, FONT), shade(g, g->theme.text));
+    tide_draw_pop(&g->list, mark);
 }
 
 // What was typed, if it's a number.
@@ -1582,6 +1967,7 @@ static void start_typing(tide_gui *g, const uint32_t id, const double value, con
     else snprintf(g->edit, sizeof g->edit, "%.*g", FLT_DECIMAL_DIG, value); // Editing keeps every bit of a float.
     g->edit_len = (uint32_t)strlen(g->edit);
     g->edit_fresh = true;
+    edit_start(g, true);
 }
 
 // One box of a number field. Returns whether the player changed `value`, and
@@ -1595,8 +1981,10 @@ static bool number_box(tide_gui *g, const uint32_t id, const tide_rect box, doub
         g->claimed = true;
         g->focus = id;
         if (g->editing != id) start_typing(g, id, *value, kind);
+        else edit_pointer(g, id, box, true);
     }
-    const bool focused = focusable(g, id, true);
+    if (g->editing == id) edit_pointer(g, id, box, false);
+    const bool focused = focusable(g, id, true, box);
     bool changed = false;
     if (entered) *entered = false;
     if (g->editing == id) {
@@ -1646,9 +2034,11 @@ static bool number_box(tide_gui *g, const uint32_t id, const tide_rect box, doub
     if (focused) fill_around(g, box, BORDER, g->theme.accent);
     fill(g, box, hover ? g->theme.field_hot : g->theme.field);
     char text[48];
-    if (g->editing == id) snprintf(text, sizeof text, "%s_", g->edit);
-    else format_number(text, sizeof text, *value, kind);
-    text_at(g, text, box.x + 10.0f, box.y + box.height * 0.5f, g->theme.text);
+    if (g->editing == id) edit_draw(g, box);
+    else {
+        format_number(text, sizeof text, *value, kind);
+        text_at(g, text, box.x + 10.0f, box.y + box.height * 0.5f, g->theme.text);
+    }
     return changed;
 }
 
@@ -1755,28 +2145,11 @@ static void start_text(tide_gui *g, const uint32_t id, const tide_str value)
     g->edit_len = (uint32_t)n;
     g->edit[n] = '\0';
     g->edit_fresh = false;
+    edit_start(g, false);
 }
 
 // Typed characters and Backspace into the edit buffer; whether it changed.
-static bool type_text(tide_gui *g)
-{
-    bool changed = false;
-    if (pressed(g, KEY_BACKSPACE) && g->edit_len > 0) {
-        do g->edit_len--; // A whole character: its continuation bytes, then its first
-        while (g->edit_len > 0 && ((unsigned char)g->edit[g->edit_len] & 0xC0u) == 0x80u);
-        changed = true;
-    }
-    for (uint32_t i = 0; i < g->text.count && i < TIDE_TEXT_MAX; i++) {
-        char bytes[4];
-        const int n = tide_utf8_encode(g->text.chars[i], bytes);
-        if (n == 0 || g->edit_len + (uint32_t)n + 1 > sizeof g->edit) continue;
-        memcpy(g->edit + g->edit_len, bytes, (size_t)n);
-        g->edit_len += (uint32_t)n;
-        changed = true;
-    }
-    g->edit[g->edit_len] = '\0';
-    return changed;
-}
+static bool type_text(tide_gui *g) { return edit_apply(g, NUMBER_NONE); }
 
 bool tide_gui_text_field_entered(tide_gui *g, const uint32_t id, const tide_rect rect, const char *label,
                                  const tide_textref value, bool *entered)
@@ -1787,8 +2160,10 @@ bool tide_gui_text_field_entered(tide_gui *g, const uint32_t id, const tide_rect
         g->claimed = true;
         g->focus = id;
         if (g->editing != id) start_text(g, id, tide_textref_get(value));
+        edit_pointer(g, id, box, true);
     }
-    const bool focused = focusable(g, id, false);
+    if (g->editing == id) edit_pointer(g, id, box, false);
+    const bool focused = focusable(g, id, false, box);
     bool changed = false;
     *entered = false;
     if (g->editing == id) {
@@ -1816,8 +2191,11 @@ bool tide_gui_text_field_entered(tide_gui *g, const uint32_t id, const tide_rect
     fill(g, box, hover ? g->theme.field_hot : g->theme.field);
     const tide_str shown = tide_textref_get(value);
     char text[300];
-    snprintf(text, sizeof text, g->editing == id ? "%.*s_" : "%.*s", (int)shown.bytes, shown.ptr);
-    text_at(g, text, box.x + 10.0f, box.y + box.height * 0.5f, g->theme.text);
+    if (g->editing == id) edit_draw(g, box);
+    else {
+        snprintf(text, sizeof text, "%.*s", (int)shown.bytes, shown.ptr);
+        text_at(g, text, box.x + 10.0f, box.y + box.height * 0.5f, g->theme.text);
+    }
     return changed;
 }
 

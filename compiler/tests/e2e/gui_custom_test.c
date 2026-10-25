@@ -30,6 +30,43 @@ static void start(void)
     frame();
 }
 
+TIDE_TEST(gui_scroll_compiles_mut_offsets_and_unwinds_early_returns)
+{
+    start();
+    local.Menu.scrolling = true;
+    local.Menu.focusLast = true;
+    frame();
+    TIDE_CHECK(local.Menu.offset.y == 215);
+    TIDE_CHECK(gui.focus != 0 && gui.nav_last_count == 8);
+    TIDE_CHECK(gui.scrolling_count == 0 && gui.list.place.clip == 0);
+    bool corners = false;
+    for (uint32_t i = 0; i < gui.list.shape_count; i++)
+        if (gui.list.shapes[i].form == TIDE_SHAPE_CORNERS) corners = true;
+    TIDE_CHECK(corners);
+    local.Menu.leave = true;
+    frame();
+    TIDE_CHECK(gui.depth == 0 && gui.scrolling_count == 0 && gui.drawing_count == 0);
+    TIDE_CHECK(gui.list.place.clip == 0);
+}
+
+TIDE_TEST(gui_scroll_offset_writeback_rechecks_grown_or_removed_list_elements)
+{
+    start();
+    local.Menu.indexed = true;
+    local.Menu.leave = true;
+    frame();
+    TIDE_CHECK(local.Menu.indexCalls == 1);
+    TIDE_CHECK(tide_list_count(local.Menu.offsets) == 65);
+    const tide_float2 *offset = tide_list_at(local.Menu.offsets, 0, sizeof(tide_float2));
+    TIDE_REQUIRE(offset);
+    TIDE_CHECK(offset->y == 199);
+    TIDE_CHECK(gui.scrolling_count == 0 && gui.depth == 0);
+    local.Menu.clearOffsets = true;
+    frame();
+    TIDE_CHECK(local.Menu.indexCalls == 2 && tide_list_count(local.Menu.offsets) == 0);
+    TIDE_CHECK(gui.scrolling_count == 0 && gui.depth == 0 && gui.list.place.clip == 0);
+}
+
 static const tide_draw_command *text(const char *value, uint32_t *index)
 {
     for (uint32_t i = 0; i < draw.count; i++) {

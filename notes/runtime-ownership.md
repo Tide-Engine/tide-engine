@@ -1,5 +1,18 @@
 # Runtime written by Claude for now
 
+## GUI priority follow-up boundary (2026-10-25)
+
+Within the owner's delegated GUI/API/performance task, generated code gains
+Rect-based drawing wrappers, tide_gui_begin_scroll/begin_layout_scroll and
+focus_next/clear_focus calls. GUI_SCROLL lowering stages offset values in locals
+and writes back through ordinary checked assignment on all exits; no pointer
+into game heap storage crosses a block. The existing GUI/drawing temporary
+maintenance exception applies. tide_gui grows local navigation/scroll/edit state
+and an optional clipboard callback, so hosts and games rebuild together. The
+standard host binds that callback to tide_platform_copy; a zeroed/custom host
+keeps it absent. No match state, wire format or simulation arithmetic changes.
+Contracts, validation and remaining gaps: gui.md and drawing.md.
+
 ## Custom GUI composition (2026-10-24)
 
 Owner-delegated GUI work continues the existing GUI/drawing maintenance exception.

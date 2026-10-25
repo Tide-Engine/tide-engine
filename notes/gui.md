@@ -1,5 +1,97 @@
 # The GUI
 
+## Rectangles, scrolling, focus and editing (2026-10-25)
+
+The owner requested the proposed priorities plus a performance pass. This
+follow-up implements Rect-based SDF drawing, independent corner radii, scrolling,
+spatial focus, and bounded single-line editing. The API details remain
+provisional in docs/spec.md; docs/game/gui.md and views.md show the calls.
+
+- Draw.Rect(rect, color), (rect, radius, color), and (rect, float4 radii, color)
+  need no theme. Zero radius still uses target-pixel AA. Four corners are TL,
+  TR, BR, BL, individually capped at half the smaller side. Ordinary center/size
+  rects retain whole-pixel coverage. Uniform-radius Rect wrappers inline into
+  the existing rounded-box recorder. Equal four-radii values use that path too.
+- GUI.Scroll(rect, mut offset) and GUILayout.Scroll(size, mut offset) coordinate
+  layout, drawing clips and pointer hits. Geometry is measured once; close
+  clamps the offset and relocates recorded content. The first measurement uses
+  zero placement, so FLT_MAX requests cannot erase layout precision. Clip chains
+  resolve after scrolling and anchored placement, before retaining hit rects.
+  Wheel residuals bubble from the innermost hovered viewport at an edge. Touch
+  drags on scrollable axes take the gesture after six logical pixels, cancel a
+  child's held control once, and retain it through release. Non-scrolling content
+  never steals the child's gesture. The standard host's existing input claims
+  remain in effect; no match input or state changes.
+- Generated scroll calls stage offset values in C locals and checked-write back
+  on every close, return, break or continue. Indexed paths freeze indices once
+  and resolve current list/map/grid/array storage at writeback; removing a
+  list element makes the write a no-op; maps/grids use ordinary assignment semantics. No game-heap pointer crosses a block.
+  C callers supply a pointer valid through their matching close. At the nesting
+  ceiling scroll blocks skip; the existing depth and cache limits remain.
+- Arrows/d-pad/stick search last-frame placed geometry on an input edge. The
+  score prefers nearby controls along the requested axis and penalizes cross-axis
+  gaps. At an edge focus stays; Tab/Shift+Tab retain cyclic declaration order.
+  GUI.FocusNext requests the next enabled control; GUI.ClearFocus clears it.
+  Scrolls reveal navigation/requested focus, without undoing pointer wheel input.
+- Fields share the active 255-byte UTF-8 edit buffer. Caret/anchor are byte
+  boundaries; pointer placement uses binary search over code-point boundaries.
+  Shift selection, Home/End, Ctrl word motion/select-all/copy/cut, Backspace/
+  Delete and 15 undo steps are supported for text and numeric fields. Numeric
+  parsing, commit, Escape and entered contracts are preserved. Selection and
+  caret draw inside the field clip; horizontal scrolling keeps the caret visible.
+  Editing arrows/deletion repeat locally after 450 ms at 50 ms intervals, at most
+  one step per frame. Undo/history work is skipped on an idle editing frame.
+  GUI.copy is an optional clipboard callback, bound by the standard host.
+- The browser ignores composition preedit in the committed character stream,
+  commits once, and does not treat candidate Enter as submission. Forward
+  deletion from a phone keyboard maps to Delete. Native committed characters
+  retain their existing platform path. Inline preedit/candidate positioning,
+  grapheme/bidirectional editing and macOS Command shortcuts remain gaps.
+
+Performance implementation: navigation returns before searching on idle frames;
+its geometry buffer is read at begin and reused for the current frame, avoiding
+an extra 8 KiB buffer/copy at the default 512-control ceiling. Drawing snapshots
+remain limited to GUI.Draw. Per-corner boxes reuse the existing shape record and
+32-byte flexible GPU extra; the ordinary 24-byte plain/4-byte solid-radius GPU
+streams are unchanged. No UI replay, extra shape instance or new rendering pass
+is introduced. Timings and validation are recorded below when complete.
+
+### Follow-up validation and performance provenance
+
+Windows/Clang 23.1.2 and Node 24.22.1: all 2,720 enabled native and 2,615 enabled
+web CTest cases passed across the full suites and focused corrections. The
+existing disabled Microduck right-turn test remains disabled. Native's first
+full run exposed the scene editor's old Ctrl+A buffer-reset shim; removing it
+made both unchanged scripted inspector/UI cases pass. Web's first run exposed
+a stale Enter edge in the new IME test; it now consumes the prior edge and
+asserts both held and down are clear. Final focused checks passed six native
+and seven web CTest targets, including full runtime/LSP, gui_custom, native
+Vulkan/OpenGL, browser WebGL/WebGPU/RGBA fallbacks and IME input. The GUI filter
+passes 96 runtime/profile cases; gui_custom passes seven end-to-end cases.
+The production docs build passed, retaining the existing examples/lists/maps/
+grids 404 reports. No test guard, hash pin or timeout was weakened.
+
+Other operating systems, Android/real phones and sanitizers were not run on this
+Windows machine. The Vulkan validation layer is unavailable; actual Vulkan and
+OpenGL functional rendering passed. No workflow was manually dispatched.
+
+notes/gui-priority-measurements.json records the new frozen source/binary
+identities, identical untimed output digests and CPU method. The earlier
+build/gui-bench executables were absent when this follow-up began; their hashes
+are not reused. The new pair lives in build/gui-pass and compares baseline GUI
+at e757c631 with this candidate, both against the same optimized drawing/runtime
+library. The --check path takes no timings. notes/gui-measurement.ps1 runs only
+three alternating pairs under a strict process gate/detector and an absolute
+whole-batch deadline; any observed contention invalidates the batch. Isolated
+CPU samples and GPU timings remain pending unless a clean run is recorded in
+that manifest; structural parity alone establishes no speedup.
+
+Remaining scope: scrollbars, list virtualization, kinetic scrolling, explicit
+navigation links and general navigation key repeat; composed SDF scenes/masks;
+native pointer-capture-loss notification. Drawing themes remain the deliberately
+small stock-widget API. This does not add a retained UI tree or copy Now-UI's
+Unity hosts/measurement replay.
+
 ## Custom control composition (2026-10-24)
 
 The owner requested capability inspired by `D:/wkspaces/unity/Now-UI`, then

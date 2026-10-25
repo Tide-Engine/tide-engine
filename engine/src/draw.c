@@ -1468,6 +1468,10 @@ static void fit_shape(const tide_float2 size, tide_draw_shape_data *shape)
     const float most = (size.x < size.y ? size.x : size.y) * 0.5f;
     shape->radius = shape->radius > most ? most : shape->radius > 0.0f ? shape->radius : 0.0f;
     shape->outline = shape->outline > most ? most : shape->outline > 0.0f ? shape->outline : 0.0f;
+    if ((shape->form & TIDE_SHAPE_FORMS) == TIDE_SHAPE_CORNERS) {
+        shape->soft = shape->soft > most ? most : shape->soft > 0.0f ? shape->soft : 0.0f;
+        shape->sweep = shape->sweep > most ? most : shape->sweep > 0.0f ? shape->sweep : 0.0f;
+    }
 }
 
 // An ellipse as wide as it's tall is a circle, which is a box whose corners
@@ -1526,10 +1530,18 @@ static __attribute__((noinline)) void alter_shape(const tide_draw_list *d, tide_
         const tide_color top = *color;
         *color = shape->color2;
         shape->color2 = top;
+        if (form == TIDE_SHAPE_CORNERS) {
+            const float left = shape->radius, right = shape->outline;
+            shape->radius = shape->sweep;
+            shape->outline = shape->soft;
+            shape->soft = right;
+            shape->sweep = left;
+        }
     }
     shape->radius *= p->scale;
     shape->outline *= p->scale;
     shape->soft *= p->scale;
+    if (form == TIDE_SHAPE_CORNERS) shape->sweep *= p->scale;
     if (form == TIDE_SHAPE_ELLIPSE) form = (uint32_t)ellipse_form(*size, &shape->radius);
     shape->form = form | hairline;
 }
@@ -1654,6 +1666,18 @@ void tide_draw_wire_round_rect(tide_draw_list *d, const tide_float2 center, cons
                                const float width, const tide_color color)
 {
     wire(d, center, size, radius, TIDE_SHAPE_BOX, width, color);
+}
+
+void tide_draw_rect_area_corners(tide_draw_list *d, const tide_rect rect, const tide_float4 radii, const tide_color color)
+{
+    if (radii.x == radii.y && radii.x == radii.z && radii.x == radii.w) {
+        tide_draw_rect_area_radius(d, rect, radii.x, color);
+        return;
+    }
+    push_shape(d, tide_f2(rect.x + rect.width * 0.5f, rect.y + rect.height * 0.5f),
+               tide_f2(rect.width, rect.height), color,
+               (tide_draw_shape_data){.turn = {1.0f, 0.0f}, .radius = radii.x, .outline = radii.y,
+                                      .soft = radii.z, .sweep = radii.w, .form = TIDE_SHAPE_CORNERS, .color2 = color});
 }
 
 void tide_draw_ellipse(tide_draw_list *d, const tide_float2 center, const tide_float2 radii, const tide_color color)

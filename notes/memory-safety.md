@@ -1,5 +1,19 @@
 # No Tide code can corrupt memory
 
+## Scroll offsets and bounded field editing (2026-10-25)
+
+A generated Scroll never keeps a list/grid/array element address across its
+body. Indices are evaluated once, the offset lives in a generated C local, and
+normal checked assignment reacquires current storage on every exit. gui_custom
+covers list growth, removal and early return. GUI's pointer is borrowed only to
+that stack local; trusted C must keep its own pointer valid through close.
+Offsets/dimensions are sanitized and bounded, and first-frame placement measures
+at zero before clamping huge requests. Caret/anchor/history use bounded indices
+into the active 256-byte buffer; insertion checks replacement capacity, UTF-8
+movement stays on code-point boundaries, and undo has 16 fixed states. Tests
+cover multibyte replacement, undo/redo, deletion, repeat and FLT_MAX offsets.
+No simulation memory or unchecked game pointer is added.
+
 ## Owned local worker boundaries (2026-10-24)
 
 Capture/result walkers materialize text and nested containers before changing

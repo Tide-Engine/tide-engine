@@ -14,7 +14,6 @@ static void inspector_cancel(editor *e)
         !strcmp(e->component,e->edit->component) && !strcmp(e->field,e->edit->field)) replace(&e->value,e->edit->initial);
     if (e->gui.editing == e->edit->id) e->gui.editing = 0;
     if (e->gui.edit_left == e->edit->id) e->gui.edit_left = 0;
-    e->text_selection = 0;
     inspector_free(e->edit); e->edit = NULL;
 }
 
@@ -88,7 +87,6 @@ static void inspector_finish(editor *e)
     e->edit = NULL;
     if (e->gui.editing == edit->id) e->gui.editing = 0;
     if (e->gui.edit_left == edit->id) e->gui.edit_left = 0;
-    e->text_selection = 0;
     inspector_enqueue(e, edit);
 }
 

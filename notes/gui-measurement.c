@@ -49,10 +49,12 @@ static int compare(const void *a, const void *b)
 int main(int argc, char **argv)
 {
     const int custom = argc > 1 ? (strcmp(argv[1], "custom") == 0 ? 1 : strcmp(argv[1], "direct") == 0 ? 2 : 0) : 0;
+    int check_only = 0;
+    for (int i = 1; i < argc; i++) if (strcmp(argv[i], "--check") == 0) check_only = 1;
     devices.pointer.position = tide_f2(-100, -100);
     for (int i = 0; i < 64; i++) frame(custom);
-    double samples[9];
-    for (int sample = 0; sample < 9; sample++) {
+    double samples[9] = {0};
+    for (int sample = 0; !check_only && sample < 9; sample++) {
         const uint64_t start = tide_time_now_ns();
         for (int i = 0; i < 2000; i++) frame(custom);
         samples[sample] = (double)(tide_time_now_ns() - start) / 2000.0 / 1000.0;
@@ -65,12 +67,18 @@ int main(int argc, char **argv)
     uint64_t hash = UINT64_C(14695981039346656037);
     for (size_t i = 0; i < (size_t)count * sizeof *flat; i++) hash = (hash ^ ((const unsigned char *)flat)[i]) * UINT64_C(1099511628211);
     for (uint32_t i = 0; i < draw.text_used; i++) hash = (hash ^ (unsigned char)draw.text[i]) * UINT64_C(1099511628211);
-    printf("%s median %.3f us/frame, best %.3f, commands %u, group %zu bytes, digest %016llx\n",
+    if (check_only) {
+        printf("structural_check %s commands %u, group %zu bytes, digest %016llx\n",
+               custom == 1 ? "custom" : custom == 2 ? "direct" : "stock", draw.count,
+               sizeof(tide_gui_group), (unsigned long long)hash);
+    } else {
+        printf("%s median %.3f us/frame, best %.3f, commands %u, group %zu bytes, digest %016llx\n",
            custom == 1 ? "custom" : custom == 2 ? "direct" : "stock", samples[4], samples[0], draw.count,
            sizeof(tide_gui_group), (unsigned long long)hash);
-    printf("sorted_samples_us:");
-    for (int i = 0; i < 9; i++) printf(" %.3f", samples[i]);
-    putchar('\n');
+        printf("sorted_samples_us:");
+        for (int i = 0; i < 9; i++) printf(" %.3f", samples[i]);
+        putchar('\n');
+    }
     free(flat);
     tide_draw_free(&gui.list);
     tide_draw_free(&draw);
