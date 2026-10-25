@@ -7,7 +7,7 @@ using UnityEngine;
 using UnityEngine.TestTools;
 
 // Tide's files in the Project window: a .tide file and a tide.packages import as their text with Tide's icons, and
-// a folder whose tide.packages says `package Name` is a package's, which gets the badge.
+// a folder whose tide.packages says `package Name` is a package's, which gets the badge. Tide's scripts have its icons.
 public class IconTests
 {
     const string Folder = "Assets/TideIconTestTemp";
@@ -58,6 +58,34 @@ public class IconTests
         Assert.IsNotNull(AssetDatabase.LoadAssetAtPath<Texture2D>(TideIcons.BadgePath));
         Assert.IsTrue(TidePackageFolders.IsPackage(Folder + "/Kit"));
         Assert.IsFalse(TidePackageFolders.IsPackage(Folder));
+    }
+
+    // Tide's scripts in the Inspector: a Tide component (the game's, which tide writes) has the component icon, a
+    // TideEntity the entity's, the runner the waves; not a C# script's
+    [Test]
+    public void TideScriptsHaveTideIcons()
+    {
+        var made = new GameObject("Icons");
+        try
+        {
+            var ball = made.AddComponent<Tide.Game.Ball>();
+            var runner = made.AddComponent<Tide.TideRunner>();
+            foreach (var (component, path) in new (Component, string)[]
+                     {
+                         (ball, Tide.TideIcon.Component), (made.GetComponent<Tide.TideEntity>(), Tide.TideIcon.Entity),
+                         (runner, Tide.TideIcon.Tide),
+                     })
+            {
+                var expected = AssetDatabase.LoadAssetAtPath<Texture2D>(path);
+                Assert.IsNotNull(expected, path);
+                var shown = EditorGUIUtility.ObjectContent(component, component.GetType()).image;
+                Assert.AreEqual(expected, shown, $"{component.GetType().Name}: {(shown ? shown.name : "none")}");
+            }
+        }
+        finally
+        {
+            Object.DestroyImmediate(made);
+        }
     }
 
     // Rider's and Visual Studio's packages open only the extensions Editor Settings lists beside their own: Tide's

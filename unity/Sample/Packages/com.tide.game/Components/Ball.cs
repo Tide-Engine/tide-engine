@@ -5,6 +5,7 @@ namespace Tide.Game
     // Tide's component Ball: its fields as authored outside Play, its entity's values in Play (TideComponent)
     [global::UnityEngine.AddComponentMenu("Tide/Ball")]
     [global::UnityEngine.DisallowMultipleComponent]
+    [global::UnityEngine.Icon(global::Tide.TideIcon.Component)]
     public sealed partial class Ball : global::Tide.TideComponent
     {
         public global::UnityEngine.Vector3 velocity = new global::UnityEngine.Vector3(0f, 0f, 0f);

@@ -7,7 +7,7 @@ namespace Tide.Editor
 {
     // A Tide component's inspector: Unity's own, its fields as authored, and in Play its entity's values, which the
     // match decides: shown, not edited, as a change there would reach neither the match nor the scene. In Play its
-    // local fields follow, this machine's own, which Unity doesn't keep.
+    // local fields follow, this machine's own, which Unity doesn't keep. One with a shape (TideShape) has Edit Shape.
     [CustomEditor(typeof(TideComponent), true)]
     [CanEditMultipleObjects]
     sealed class TideComponentEditor : UnityEditor.Editor
@@ -15,6 +15,11 @@ namespace Tide.Editor
         public override void OnInspectorGUI()
         {
             var playing = EditorApplication.isPlayingOrWillChangePlaymode;
+            if (!playing && TideShapes.Read(target as TideComponent, out _))
+            {
+                // Its shape's handles in the Scene view (TideShapeTool), as a collider's Edit Collider
+                EditorGUILayout.EditorToolbarForTarget(EditorGUIUtility.TrTempContent("Edit Shape"), this);
+            }
             using (new EditorGUI.DisabledScope(playing)) DrawDefaultInspector();
             if (!EditorApplication.isPlaying || targets.Length != 1) return;
             var locals = Array.FindAll(target.GetType().GetFields(BindingFlags.Instance | BindingFlags.Public),

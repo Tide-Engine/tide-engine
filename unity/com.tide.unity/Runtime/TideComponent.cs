@@ -11,6 +11,7 @@ namespace Tide
     // written before scripts' Update: a script reads them as fields, its local fields too. Writing one changes nothing
     // in the match, which is the server's: send a command.
     [RequireComponent(typeof(TideEntity))]
+    [Icon(TideIcon.Component)]
     public abstract class TideComponent : MonoBehaviour
     {
         // Its Tide component's name, as the schema has it: "Combat.Health"
@@ -21,6 +22,15 @@ namespace Tide
         protected internal abstract unsafe void ReadLive(byte* values, byte* locals, TidePacket packet, TideRunner runner);
 
         internal int LiveFrame = -1; // The runner's frame that last wrote it: one the entity lost isn't
+    }
+
+    // The Inspector's icons of Tide's scripts (com.tide.unity's Editor/Icons): the generated components name Component
+    public static class TideIcon
+    {
+        const string Folder = "Packages/com.tide.unity/Editor/Icons/";
+        public const string Component = Folder + "TideComponent.png";
+        public const string Entity = Folder + "TideEntity.png";
+        public const string Tide = Folder + "TideFile.png";
     }
 
     // One of the match's singletons, as the package generates it: its fields this frame, its local fields too, as Tide's

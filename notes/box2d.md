@@ -123,12 +123,14 @@ Rooms/invite group passed 16 native and 18 web tests, including the browser
 registration, handover and ended-room cases. No CI run was dispatched.
 
 
-## Unity's components as Box2D's (2026-10-22)
+## In Unity (2026-10-22)
 
-`packages/box2d/unity.json` says which of Unity's physics components are Box2D's for a game made in Unity,
-and holds the Tide a Unity project alone gets: a body starts at its entity's Transform, which follows it. The
-package's own `.tide` is unchanged, so games outside Unity are too. Contracts and tests: `notes/unity.md`, Packages'
-translations of Unity's components.
+`packages/box2d/unity.json` says how the package's components are in a Unity project: fields and components it keeps
+for itself hidden, shapes sized by the GameObject's scale and drawn in the Scene view; and the Tide a Unity project
+alone gets: a body starts at its entity's Transform, which follows it. The package's own `.tide` is unchanged, so
+games outside Unity are too. Unity's own physics components aren't the package's. Contracts and tests:
+`notes/unity.md`, Packages' components in Unity.
+
 ## All-hit queries and game filtering (2026-10-18)
 
 The owner approved `RaycastAll`/`CastAll` and ignore-body overloads after the

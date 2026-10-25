@@ -188,6 +188,7 @@ struct ctype;
 struct shape;
 
 typedef struct game {
+    const unity_mappings *mappings; // What the game's packages say of their components in Unity
     type *types;
     int type_count;
     enumeration *enums;
@@ -1194,17 +1195,30 @@ static void write_class(out *o, game *g, const type *t, out *map)
 {
     const bool component = t->component, command = strcmp(t->base, "TideCommand") == 0;
     const bool event = strcmp(t->base, "TideEvent") == 0;
+    const unity_component_rules *rules = component ? unity_rules_of(g->mappings, t->bare) : NULL;
     if (component) {
         putf(o, "    // Tide's component %s: its fields as authored outside Play, its entity's values in Play (TideComponent)\n", t->bare);
-        puts_(o, "    [global::UnityEngine.AddComponentMenu(\"Tide/");
-        for (const char *c = t->bare; *c; c++) {
-            if (*c == '.') puts_(o, "/");
-            else if (*c == '"' || *c == '\\') {
-                putn(o, "\\", 1);
-                putn(o, c, 1);
-            } else putn(o, c, 1);
+        if (rules && rules->hidden) {
+            puts_(o, "    // Its package's own (its unity.json): no GameObject is given it in Unity\n"
+                     "    [global::UnityEngine.AddComponentMenu(\"\")]\n");
+        } else {
+            puts_(o, "    [global::UnityEngine.AddComponentMenu(\"Tide/");
+            for (const char *c = t->bare; *c; c++) {
+                if (*c == '.') puts_(o, "/");
+                else if (*c == '"' || *c == '\\') {
+                    putn(o, "\\", 1);
+                    putn(o, c, 1);
+                } else putn(o, c, 1);
+            }
+            puts_(o, "\")]\n");
         }
-        puts_(o, "\")]\n    [global::UnityEngine.DisallowMultipleComponent]\n");
+        puts_(o, "    [global::UnityEngine.DisallowMultipleComponent]\n"
+                 "    [global::UnityEngine.Icon(global::Tide.TideIcon.Component)]\n");
+        if (rules && rules->shape) {
+            // What the Scene view draws of it, and edits with handles (com.tide.unity's TideShapes)
+            putf(o, "    [global::Tide.TideShape(\"%s\", \"%s\", \"%s\", \"%s\")]\n", rules->shape, rules->size,
+                 rules->center ? rules->center : "", rules->height ? rules->height : "");
+        }
     } else if (command) {
         putf(o, "    // Tide's command %s: TideRunner.Send sends it, as local code's Send does (TideCommand)\n", t->bare);
     } else if (event) {
@@ -1251,6 +1265,9 @@ static void write_class(out *o, game *g, const type *t, out *map)
             put_live_field(o, &live, g, ct, id, from.s, "", "", "        ");
         } else if (authorable(g, ct)) {
             char *cs = live_cs(g, ct, false);
+            const unity_scale by = unity_field_scale(rules, f->name);
+            if (unity_field_hidden(rules, f->name)) puts_(o, "        [global::UnityEngine.HideInInspector] // Its package's own\n");
+            if (by != UNITY_SCALE_NONE) puts_(o, "        [global::UnityEngine.Tooltip(\"By the GameObject's scale, as a collider's size is\")]\n");
             putf(o, "        public %s %s", cs, id);
             out initial = {0};
             puts_(&initial, "");
@@ -1260,6 +1277,13 @@ static void write_class(out *o, game *g, const type *t, out *map)
             putf(&live, "            %s = ", id);
             put_conv(&live, g, ct, from.s, "packet", "runner", false, 0);
             puts_(&live, ";\n");
+            // The match has it by the scale: shown as authored, divided by it
+            if (by != UNITY_SCALE_NONE) {
+                char by_name[32];
+                snprintf(by_name, sizeof by_name, "%s", unity_scale_name(by));
+                by_name[0] = (char)(by_name[0] - 'a' + 'A');
+                putf(&live, "            %s = global::Tide.TideScale.Unscale(%s, transform, global::Tide.TideScale.By.%s);\n", id, id, by_name);
+            }
             free(cs);
             if (mapped++) puts_(map, ", ");
             puts_(map, "{\"name\": ");
@@ -1454,18 +1478,28 @@ static void sweep_entry(void *user, const char *name, const bool is_dir)
     free(path);
 }
 
-bool unity_code_write(const char *dir, const char *schema_text, const char *outline_text)
+bool unity_code_write(const char *dir, const char *schema_text, const char *outline_text, const unity_package *packages,
+                      const int package_count)
 {
+    // What the packages say of their components, read before the schema: JSON's trees go together
+    unity_mappings mappings;
+    if (!unity_mappings_read(packages, package_count, &mappings)) {
+        unity_mappings_free(&mappings);
+        return false;
+    }
     json *schema = json_parse(schema_text, strlen(schema_text));
     if (!schema) {
         fprintf(stderr, "tide: the game's schema isn't JSON\n");
+        unity_mappings_free(&mappings);
         return false;
     }
     json *outline = outline_text ? json_parse(outline_text, strlen(outline_text)) : NULL;
     game g = {0};
     g.outline = outline;
+    g.mappings = &mappings;
     if (!read_game(schema, &g)) {
         json_release();
+        unity_mappings_free(&mappings);
         fprintf(stderr, "tide: the game's schema has no types\n");
         return false;
     }
@@ -1560,5 +1594,6 @@ bool unity_code_write(const char *dir, const char *schema_text, const char *outl
     free_trees(&g);
     free_game(&g);
     json_release();
+    unity_mappings_free(&mappings);
     return !failed;
 }

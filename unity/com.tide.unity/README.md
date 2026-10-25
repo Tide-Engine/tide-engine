@@ -157,14 +157,14 @@ the runner's "Draw Tide" is on: 2D, text, 3D with the camera's depth, render
 targets and the game's own shaders, in Unity's built-in render pipeline and in
 URP.
 
-Unity's own physics components are a physics package's, where the game has one
-that says so: with `box3d`, a `Rigidbody` is a Box3D body and a `BoxCollider`,
-`SphereCollider` or Y-axis `CapsuleCollider` its shape, sized by the
-GameObject's scale, and a collider with no `Rigidbody` is static; with `box2d`,
-the 2D ones are Box2D's. Unity draws and edits them as it does its own, and the
-GameObject shows where the body is. What isn't one to one (a collider under
-another GameObject's `Rigidbody`, a capsule along X) gets a warning and is left
-out. See the [Box3D](https://tide-engine.dev/packages/box3d) package's page.
+A physics package's components are on GameObjects like the game's own: with
+`box3d`, a `Body` and a `Box`, `Sphere` or `Capsule` (Add Component, Tide/Box3D).
+A shape's size is by the GameObject's scale, as a collider's is, a selected one
+is drawn in the Scene view, and Edit Shape gives it handles. The body starts
+where the GameObject is, and the GameObject follows it. Fields and components
+the package keeps for itself are hidden. Unity's own `Rigidbody` and colliders
+do nothing in the match. See the [Box3D](https://tide-engine.dev/packages/box3d)
+package's page.
 
 The game's sound (`Audio.Play`, `Sound` fields, its `audio` declarations)
 plays through Unity's audio: an AudioSource under the runner, "Tide Audio", so
