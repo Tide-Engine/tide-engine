@@ -1,5 +1,22 @@
 # No Tide code can corrupt memory
 
+## Started task identities and retained results (2026-10-25)
+
+Handles contain only a serial, slot and zero padding. Lookup checks slot bounds,
+serial, operation code, typed table bounds and row identity. Stale/default
+handles cannot cancel a reused slot. Serial/start-order exhaustion uses the
+existing allocation-failure policy instead of wrapping into an old identity.
+Due-row allocation and tracing growth check widened size arithmetic.
+
+Result ownership uses ordinary typed table/heap acquire/release. Iterative value
+and operation worklists trace recursive containers and cached-result cycles
+without recursive C stack growth; completion sweeping validates row ownership
+before updating a registry entry. Source Task types remain invariant even
+though C aliases share the same opaque 16-byte representation.
+Expired hidden handle slots and captured grid slots release their ownership.
+Provider callbacks/pointers/TLS cancellation context are never serialized.
+Tests, reload/privacy boundaries and validation: language.md and hot-reload.md.
+
 ## Owned local worker boundaries (2026-10-24)
 
 Capture/result walkers materialize text and nested containers before changing

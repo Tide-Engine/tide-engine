@@ -1,5 +1,23 @@
 # Runtime written by Claude for now
 
+## Worker admission, stopping and task handles (2026-10-25)
+
+The owner requested automatic backpressure and cooperative abandonment, then
+approved explicit Task/LocalTask handles and shared waiter semantics. The
+existing worker maintenance exception includes tide_worker_cancelled, reserve/
+can_reserve/submit, transfer_ready/begin/transferred and tide_workers_frame.
+The worker group owns a ticket hash index, live/retired lists, soft capture/
+transfer budgets and worker-side timestamps. Parallel helpers inherit the
+current cancellation predicate. Provider completion still owns safe release.
+
+tide_gui borrows optional worker_limits. Worker profile rows and counts extend
+tide_profile; only the frame thread publishes the worker's measurements.
+Hosts/libraries/generated code rebuild together. The generated Task registry,
+typed result storage, tracing, cancellation context and operation validation
+use existing list/table/heap/layout APIs and add no runtime task function.
+Contracts, measurements and validation: language.md, schedule-and-threads.md
+and benchmarks.md.
+
 ## Local worker runtime (2026-10-24)
 
 The owner approved local workers with owned inputs/results, local async callers

@@ -63,7 +63,7 @@ Use an absolute executable path to select a particular Tide installation."
                     "int4" "long" "double" "double2" "double3" "double4" "double2x2" "double3x3" "double4x4" "float" "float2" "float3" "float4" "float2x2"
                     "float3x3" "float4x4" "quaternion" "string" "Entity"
                     "LocalEntity" "PlayerID" "Color" "Rect" "World" "List"
-                    "Map" "Set" "Grid2" "Grid3" "Asset") 'symbols)
+                    "Map" "Set" "Grid2" "Grid3" "Asset" "Task" "LocalTask") 'symbols)
      . font-lock-type-face)
     (,(regexp-opt '("true" "false" "null") 'symbols) . font-lock-constant-face)
     ("^[ \t]*\\(#[ \t]*\\(?:if\\|elif\\|else\\|endif\\|define\\|undef\\)\\)\\_>"

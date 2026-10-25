@@ -130,6 +130,22 @@ static void take_stock(tide_profiler *p, const uint32_t again_ticks)
     add_time(p, FRAME, 1, "Render", part[TIDE_FRAME_RENDER], frame_ms);
     add_time(p, FRAME, 1, "Other", part[TIDE_FRAME_OTHER], frame_ms);
     add_time(p, FRAME, 1, "Swap, idle", at_least_zero(frame_ms - work), frame_ms);
+    if (f->worker_runs && f->workers.count >= 2u) {
+        // Background intervals overlap the frame and each other. Show a per-job
+        // duration with no share bar, separate from the frame's timed parts.
+        const double jobs = (double)f->worker_runs;
+        r = add_row(p, FRAME, 0, "Workers");
+        snprintf(r->note, sizeof r->note, "%llu done, wait %.2f ms/job",
+                 (unsigned long long)f->worker_runs, f->workers.items[0].total / jobs);
+        snprintf(r->value, sizeof r->value, "%.2f ms", f->workers.items[1].total / jobs);
+    }
+    if (f->workers.count >= 4u && (f->workers.items[2].total > 0.0 || f->workers.items[3].total > 0.0)) {
+        r = add_row(p, FRAME, 0, "Worker copies");
+        snprintf(r->note, sizeof r->note, "capture %.2f, result %.2f ms/frame",
+                 f->workers.items[2].total / frames, f->workers.items[3].total / frames);
+        snprintf(r->value, sizeof r->value, "%.2f ms",
+                 (f->workers.items[2].total + f->workers.items[3].total) / frames);
+    }
     if (p->memory || p->gpu_memory) { // The program's memory, and the renderer's on the GPU: no time, so no bar
         r = add_row(p, FRAME, 0, "Memory");
         const double ram = (double)p->memory / (1024.0 * 1024.0), vram = (double)p->gpu_memory / (1024.0 * 1024.0);

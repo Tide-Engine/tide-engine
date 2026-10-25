@@ -160,3 +160,12 @@ TIDE_TEST(worker_grid_argument_survives_an_await_and_local_state_restoration)
     tide_scratch_free();
     finish();
 }
+
+TIDE_TEST(worker_grid_snapshots_progress_with_one_slot_and_oversized_transfers)
+{
+    init(&deferred);
+    const tide_worker_limits limits = {.pending = 1, .transfer_bytes = 1};
+    gui.worker_limits = &limits;
+    finish();
+    gui.worker_limits = NULL;
+}

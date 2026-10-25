@@ -211,7 +211,7 @@ static void put_size_text(sb *out, const expr *e)
 // `r`'s text from its parts: "Map<K, V>", with that comma and space, and '?' after.
 static void set_type_text(type_ref *r)
 {
-    if (r->args.count == 0 && r->sizes.count == 0 && !r->optional) {
+    if (r->args.count == 0 && r->sizes.count == 0 && !r->optional && !r->failure) {
         r->text = r->name;
         return;
     }
@@ -228,6 +228,7 @@ static void set_type_text(type_ref *r)
         sb_put(&text, "]");
     }
     if (r->optional) sb_put(&text, "?");
+    if (r->failure) sb_printf(&text, " fails " STR_FMT, STR_ARG(r->failure->text));
     r->text = (str){text.data, (int)text.len};
 }
 
@@ -267,6 +268,18 @@ static type_ref *parse_type(parser *p, const char *what)
             if (i == 1 && str_eq_c(q.text, "SkinnedMesh") && !at(p, T_COMMA)) break;
             if (i) expect(p, T_COMMA, form->comma);
             vec_push(r->args, parse_type(p, form->hints[i]));
+            if (str_eq_c(q.text, "Task") || str_eq_c(q.text, "LocalTask")) {
+                type_ref *held = r->args.items[r->args.count - 1];
+                if (at(p, T_QUESTION)) {
+                    held->question_at = advance(p)->at;
+                    held->optional = true;
+                }
+                if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "fails")) {
+                    advance(p);
+                    held->failure = parse_type(p, "the task's declared failure type");
+                }
+                set_type_text(held);
+            }
             if (at(p, T_QUESTION) || at(p, T_COALESCE)) { // List<int?>: what a container holds is always there
                 const type_ref *held = r->args.items[r->args.count - 1];
                 diag_error(peek(p)->at, "what a " STR_FMT " holds is always there, so it can't be a T?", STR_ARG(q.text));

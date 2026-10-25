@@ -117,6 +117,32 @@ TIDE_TEST(jobs_abandoned_running_worker_keeps_captures_until_completion)
     TIDE_CHECK(probe.value == 17 && probe.releases == 1);
 }
 
+static void cooperative_work(void *context)
+{
+    running_probe *probe = context;
+    __atomic_store_n(&probe->started, 1u, __ATOMIC_RELEASE);
+    const uint64_t until = tide_time_now_ns() + UINT64_C(10000000000);
+    while (!tide_worker_cancelled() && tide_time_now_ns() < until) tide_yield();
+    probe->value = tide_worker_cancelled() ? 1u : 2u;
+}
+
+TIDE_TEST(jobs_running_worker_observes_abandonment_at_cooperative_safe_points)
+{
+    TIDE_CHECK(!tide_worker_cancelled());
+    const tide_jobs *jobs = tide_platform_jobs();
+    if (!jobs || !jobs->background) return;
+    tide_workers *workers = NULL;
+    running_probe probe = {0};
+    const uint32_t ticket = tide_worker_start(&workers, jobs, cooperative_work, running_release, &probe);
+    const uint64_t until = tide_time_now_ns() + UINT64_C(10000000000);
+    while (!__atomic_load_n(&probe.started, __ATOMIC_ACQUIRE) && tide_time_now_ns() < until) tide_yield();
+    TIDE_CHECK(__atomic_load_n(&probe.started, __ATOMIC_ACQUIRE) == 1u);
+    tide_worker_forget(workers, ticket);
+    tide_workers_free(workers);
+    TIDE_CHECK(probe.value == 1 && probe.releases == 1);
+    TIDE_CHECK(!tide_worker_cancelled());
+}
+
 static void note_thread(void *context, const uint32_t thread)
 {
     (void)context;

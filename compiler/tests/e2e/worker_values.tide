@@ -51,6 +51,7 @@ async void Work(mut Results results)
     var orderedOnce = results.calls == 2;
     results.calls = 0;
     var named = await Pair(second: Next(results), first: Next(results));
+    var nested = await Pair(3, await Pair(4, 5));
     results.source.nested[0][0] = "changed";
     results.good = results.result.nested[0][0] == "a"
         && results.result.nested[1][0] == "c"
@@ -62,7 +63,7 @@ async void Work(mut Results results)
         && (results.optional ?? "") == "a!"
         && failure == "failed"
         && success == "value okay"
-        && ordered == 12 && orderedOnce && named == 21 && results.calls == 2;
+        && ordered == 12 && orderedOnce && named == 21 && results.calls == 2 && nested == 75;
     results.done = true;
 }
 

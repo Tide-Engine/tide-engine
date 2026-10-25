@@ -88,6 +88,15 @@ test('typed callable signatures keep generic type highlighting', () => {
     check(lines[0], ['Func', 'support.class']);
 });
 
+test('task handles keep failure result types and nested generics', () => {
+    const lines = tokenize('Task<List<Vertex3> fails MeshError> build;\nLocalTask<void fails IOError> flush;\nLocalTask running;');
+    check(lines[0], ['Task', 'support.class']);
+    check(lines[0], ['fails', 'storage.modifier']);
+    check(lines[1], ['LocalTask', 'support.class']);
+    check(lines[1], ['fails', 'storage.modifier']);
+    check(lines[2], ['LocalTask', 'support.class']);
+});
+
 test('mutable callable signatures keep argument modes and nested types', () => {
     const lines = tokenize('Func<mut Vertex, float, mut Color, void> shade;\nFunc<mut Vertex, Func<mut Color, void>> factory;');
     for (const line of lines) {

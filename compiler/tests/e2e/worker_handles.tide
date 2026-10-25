@@ -1,0 +1,55 @@
+settings { shards = true; reach = 8; }
+local singleton State
+{
+    Grid3<byte> cells = Grid3(2, 2, 2);
+    LocalTask<int> build;
+    LocalTask first;
+    LocalTask second;
+    bool started;
+    bool cancelFirst;
+    bool cancelSecond;
+    bool cancelBuild;
+    bool dropBuild;
+    int one;
+    int two;
+}
+
+extern void EnteredWorker();
+
+local worker int Sample(Grid3<byte> cells, int add)
+{
+    EnteredWorker();
+    return cells[int3(0, 0, 0)] + add;
+}
+
+int Change(mut State state)
+{
+    state.cells[int3(0, 0, 0)] = 8;
+    return 2;
+}
+
+async void Read(LocalTask<int> build, mut State state, int which)
+{
+    var value = await build;
+    if (which == 1) state.one = value;
+    else state.two = value;
+}
+
+view Start(mut State state)
+{
+    if (!state.started)
+    {
+        state.started = true;
+        state.cells[int3(0, 0, 0)] = 3;
+        state.build = Sample(state.cells, Change(state));
+        state.first = Read(state.build, state, 1);
+        state.second = Read(state.build, state, 2);
+        state.cells[int3(0, 0, 0)] = 9;
+    }
+    if (state.cancelFirst) { state.first.Cancel(); state.cancelFirst = false; }
+    if (state.cancelSecond) { state.second.Cancel(); state.cancelSecond = false; }
+    if (state.cancelBuild) { state.build.Cancel(); state.cancelBuild = false; }
+    if (state.dropBuild) { state.build = default; state.dropBuild = false; }
+}
+
+scene Main;

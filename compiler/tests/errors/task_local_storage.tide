@@ -1,0 +1,4 @@
+// expect: LocalTask belongs to this machine: keep this field in local state
+struct Held { LocalTask<int> task; }
+singleton State { List<Held> tasks; }
+scene Main;

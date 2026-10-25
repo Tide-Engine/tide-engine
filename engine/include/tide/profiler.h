@@ -48,7 +48,7 @@ typedef struct tide_profiler_row {
     uint32_t depth; // How far it's indented
 } tide_profiler_row;
 
-#define TIDE_PROFILER_ROWS 20
+#define TIDE_PROFILER_ROWS 24
 
 // A zeroed one is ready to use.
 typedef struct tide_profiler {

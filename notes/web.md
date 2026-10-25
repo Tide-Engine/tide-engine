@@ -1,5 +1,15 @@
 # Web builds
 
+## Started tasks and worker controls (2026-10-25)
+
+Task registries, tracing and cached typed results use the same generated C
+and owned containers under WASI. Cancellation safe points and soft worker
+admission/transfer budgets need no JavaScript import or browser flag.
+The existing wasi-threads provider still publishes completion before release;
+unthreaded hosts retain synchronous polling. The sharded positive worker
+fixture keeps local handles valid while match handle ownership is deferred.
+Contracts and complete validation: language.md, schedule-and-threads.md.
+
 ## Local background workers (2026-10-24)
 
 The existing wasi-threads pool also consumes the local-worker queue. Foreground

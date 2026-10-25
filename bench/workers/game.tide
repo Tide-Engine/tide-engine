@@ -1,0 +1,89 @@
+// Culled voxel faces for a 32^3 chunk with a one-cell neighbor halo.
+struct ChunkMesh
+{
+    List<int> faces;
+    int chunk;
+}
+
+local singleton Meshing
+{
+    Grid3<byte> voxels;
+    bool ready;
+    int chunks;
+    int started;
+    int finished;
+    long faces;
+    long checksum;
+}
+
+local worker ChunkMesh BuildChunk(Grid3<byte> voxels, int chunk)
+{
+    mut List<int> faces = [];
+    for (var z = 1; z <= 32; z++)
+    {
+        for (var y = 1; y <= 32; y++)
+        {
+            for (var x = 1; x <= 32; x++)
+            {
+                if (voxels[int3(x, y, z)] == 0) continue;
+                var cell = ((z - 1) * 32 + y - 1) * 32 + x - 1;
+                if (voxels[int3(x - 1, y, z)] == 0) faces.Add(cell * 6);
+                if (voxels[int3(x + 1, y, z)] == 0) faces.Add(cell * 6 + 1);
+                if (voxels[int3(x, y - 1, z)] == 0) faces.Add(cell * 6 + 2);
+                if (voxels[int3(x, y + 1, z)] == 0) faces.Add(cell * 6 + 3);
+                if (voxels[int3(x, y, z - 1)] == 0) faces.Add(cell * 6 + 4);
+                if (voxels[int3(x, y, z + 1)] == 0) faces.Add(cell * 6 + 5);
+            }
+        }
+    }
+    return ChunkMesh { faces = faces, chunk = chunk };
+}
+
+async void Rebuild(mut Meshing meshing, int chunk)
+{
+    var mesh = await BuildChunk(meshing.voxels, chunk);
+    mut long checksum = mesh.chunk;
+    foreach (var face in mesh.faces) checksum += face;
+    meshing.checksum += checksum;
+    meshing.faces += mesh.faces.count;
+    meshing.finished++;
+}
+
+view Prepare(mut Meshing meshing)
+{
+    if (!meshing.ready)
+    {
+        meshing.voxels = Grid3(34, 34, 34);
+        for (var z = 0; z < 34; z++)
+            for (var y = 0; y < 34; y++)
+                for (var x = 0; x < 34; x++)
+                    if (((x * 17 + y * 31 + z * 13) & 7) < 3)
+                        meshing.voxels[int3(x, y, z)] = 1;
+        meshing.ready = true;
+    }
+    while (meshing.started < meshing.chunks)
+    {
+        var chunk = meshing.started;
+        meshing.started++;
+        Rebuild(meshing, chunk);
+    }
+}
+
+singleton Simulation
+{
+    List<int> values;
+    int count;
+}
+
+system Simulate(mut Simulation simulation)
+{
+    while (simulation.values.count < simulation.count) simulation.values.Add(1);
+    parallel (var i in simulation.values)
+    {
+        mut int value = simulation.values[i];
+        for (var n = 0; n < 512; n++) value = (value * 17 + n) & 65535;
+        simulation.values[i] = value;
+    }
+}
+
+scene Main;

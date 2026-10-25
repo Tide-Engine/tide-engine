@@ -756,7 +756,7 @@ static void gen_shard_tasks(gen *g)
                      "        if (t->task.wake < 0 || !tide_shard_in_tree(w, root, t->task.owner)) continue;\n"
                      "        if (count == room) {\n            room = room ? room * 2u : 8u;\n"
                      "            going = realloc(going, room * sizeof *going);\n            if (!going) tide_out_of_memory();\n        }\n"
-                     "        going[count++] = (tide_due){t->task.order, %du, row};\n    }\n",
+                     "        going[count++] = (tide_due){.order = t->task.order, .kind = %du, .row = row};\n    }\n",
                   id, id, id, id, i);
     }
     sb_put(o, "    if (count) qsort(going, count, sizeof *going, tide_due_compare);\n"

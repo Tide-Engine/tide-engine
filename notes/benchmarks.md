@@ -1,5 +1,19 @@
 # Benchmarks
 
+## Local voxel worker controls (2026-10-25)
+
+bench/workers adds a CPU-only 32³ culled-face mesher with a one-cell halo,
+exact independent face/checksum validation, optional parallel foreground
+simulation and bounded completion. Quick pool, one-slot fallback and contention
+checks run in both suites. Its separate flat-grid C timing is only a kernel
+reference, not equivalent async work. The paired runner and methodology are
+in bench/workers/README.md and bench/results/worker-controls/run.ps1.
+
+Release baseline 807e34b2 and the candidate are built with identical mesher/
+driver work (baseline-only removal of the new host API fields). Timing is
+pending: the shared guard still sees other checkout builds. No loaded run,
+speedup or responsiveness number is claimed.
+
 ## Earth physics and shard membership pins (2026-10-24)
 
 The town-coordinate inverse correction changes actual movement/collisions;

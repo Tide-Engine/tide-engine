@@ -437,6 +437,11 @@
     },
     "keywords": {
       "patterns": [
+          {
+            "comment": "Computed property accessors, contextual before their bodies",
+            "name": "keyword.other.accessor.tide",
+            "match": "\\b(get|set)\\b(?=\\s*\\{)"
+          },
         {
           "comment": "A parallel loop's header, whose blocks go 'by' a size from an 'offset': parallel (var at in cells by 2 offset o)",
           "begin": "\\b(parallel)\\s*(\\()",
@@ -683,6 +688,38 @@
     "generics": {
       "patterns": [
         {
+          "comment": "Task<Result fails Error>: preserve the whole completion type",
+          "begin": "(?<!\\.)\\b(Task|LocalTask)\\s*(<)",
+          "end": ">|$",
+          "beginCaptures": {
+            "1": { "name": "support.class.tide" },
+            "2": { "name": "punctuation.definition.typeparameters.begin.tide" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.typeparameters.end.tide" }
+          },
+          "patterns": [
+            { "name": "storage.modifier.fails.tide", "match": "\\bfails\\b" },
+            { "include": "#type-name" }
+          ]
+        },
+        {
+          "comment": "Func<mut Vertex, void>: callable parameter modes and nested signatures",
+          "begin": "(?<!\\.)\\b(Func)\\s*(<)",
+          "end": ">|$",
+          "beginCaptures": {
+            "1": { "name": "support.class.tide" },
+            "2": { "name": "punctuation.definition.typeparameters.begin.tide" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.typeparameters.end.tide" }
+          },
+          "patterns": [
+            { "name": "storage.modifier.tide", "match": "\\bmut\\b" },
+            { "include": "#type-name" }
+          ]
+        },
+        {
           "comment": "world.Get<Health>(e): a method's type, which the call's '(' follows, so no comparison reads as one",
           "match": "(\\.)\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(<)\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\s*\\.\\s*[A-Za-z_][A-Za-z0-9_]*)*)\\s*(>)(?=\\s*\\()",
           "captures": {
@@ -715,7 +752,7 @@
         {
           "comment": "Built-in singletons, components, events, enums, records, the World, generic types and function groups. Not after a '.': GUI.Button is a function",
           "name": "support.class.tide",
-          "match": "(?<!\\.)\\b(Time|Math|Draw|GUI|GUILayout|Screen|Cursor|Frame|Anchor|Vertex|Vertex3|Shape|GUITheme|GUIControl|Filter|Wrap|Font|Blend|Depth|Cull|StencilTest|StencilOp|Random|Owner|Visibility|VisibilityGroup|Audience|World|Devices|Keyboard|Mouse|Gamepad|Button|Dpad|Spawned|Destroyed|Shown|Hidden|PlayerJoined|PlayerLeft|Scene|Prediction|Debug|Session|SessionState|DisconnectReason|Connected|Disconnected|Wait|Clipboard|File|Directory|Path|Application|Storage|IOError|Json|List|Map|Set|Grid2|Grid3)\\b"
+          "match": "(?<!\\.)\\b(Time|Math|Draw|GUI|GUILayout|Screen|Cursor|Frame|Anchor|Vertex|Vertex3|Shape|GUITheme|GUIControl|Filter|Wrap|Font|Blend|Depth|Cull|StencilTest|StencilOp|Random|Owner|Visibility|VisibilityGroup|Audience|World|Devices|Keyboard|Mouse|Gamepad|Button|Dpad|Spawned|Destroyed|Shown|Hidden|PlayerJoined|PlayerLeft|Scene|Prediction|Debug|Session|SessionState|DisconnectReason|Connected|Disconnected|Wait|Clipboard|File|Directory|Path|Application|Storage|IOError|Json|List|Map|Set|Grid2|Grid3|Task|LocalTask)\\b"
         },
         {
           "comment": "Spawn(...), Send(...)",

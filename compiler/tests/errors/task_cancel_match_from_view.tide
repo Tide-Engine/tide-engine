@@ -1,0 +1,4 @@
+// expect: local code can't cancel a match Task
+singleton State { Task<int> task; }
+view Cancel(State state) { state.task.Cancel(); }
+scene Main;

@@ -1,5 +1,32 @@
 # The schedule and the tick on threads
 
+## Started operations and worker admission (2026-10-25)
+
+Task registry reads/writes participate in static scheduling and propagate
+through helpers. Writers serialize in the existing order. Task passes visit
+already-waiting operation dependencies before their continuations using an
+iterative walk over start-ordered due rows; every due row runs at most once
+per pass. Captured handles and direct await preserve serial logical results.
+Match registry/results are ordinary world state; local ones are machine-local.
+
+Worker tickets use a hash index and retired-only collection instead of scanning
+all live jobs for each lookup/release. Defaults limit private pending jobs to
+64, retained input captures to 64 MiB and frame capture/result transfers to
+4 MiB. Limits are soft: the crossing/oversized operation finishes so progress
+is possible. Direct starts suspend before arguments when admission is full;
+arguments containing waits precheck without reserving across the child wait,
+then retry with their frozen values. First-class calls capture at call time:
+their adapter-owned values are outside the private worker-capture budget.
+No hard process/job allocation cap or new allocation failure result is promised.
+
+Generated Tide safe points stop abandoned running calculations and synchronous
+helper chains; trusted C finishes its current call. Parallel helpers inherit
+the owner and stop taking iterations after cancellation. Cancelling one waiter
+preserves other consumers; dropping the last consumer abandons worker adapters,
+while ordinary async calls retain fire-and-forget. Disposal/rebind still drains
+provider completion before unloading code. Tests and timing: language.md,
+benchmarks.md.
+
 ## Background local calculations (2026-10-24)
 
 Local workers share the platform's bounded pool with tick rounds. Their separate
