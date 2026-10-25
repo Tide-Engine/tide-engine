@@ -1,6 +1,6 @@
 {
-  "status": "timings_pending",
-  "reason": "Integration and all overlap checks are complete. The merged pair was rebuilt/frozen after worker_limits integration. A clean timing window is pending; no timing batch has started.",
+  "status": "timings_deferred",
+  "reason": "The architecture coordinator explicitly deferred this optional 20-second attempt while P1 correctness and external Render3D validation remain active. No hold or late window is reserved. No timing process started. A future measurement requires a NEW explicit coordinated GO after inspected quiet inventory.",
   "baseCommit": "a21a81a86c65c92ce655b7f73b183a541af4a703",
   "hardware": {
     "cpu": "AMD Ryzen 9 7900X 12-Core Processor",

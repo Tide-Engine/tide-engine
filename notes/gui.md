@@ -96,6 +96,11 @@ three alternating pairs under the shared benchmark mutex, five-second quiet
 preflight, strict process gate/detector and an absolute whole-batch deadline; any observed contention invalidates the batch. Isolated
 CPU samples and GPU timings remain pending unless a clean run is recorded in
 that manifest; structural parity alone establishes no speedup.
+The architecture coordinator subsequently explicitly deferred the optional
+20-second attempt: no hold, GO or late window is reserved. No timing process
+started. The frozen pair and matching digests are preserved; a future run needs
+a NEW explicit coordinated GO after inspected quiet inventory. This probe does
+not block the validated GUI merge or ongoing P1 correctness work.
 
 Remaining scope: scrollbars, list virtualization, kinetic scrolling, explicit
 navigation links and general navigation key repeat; composed SDF scenes/masks;
