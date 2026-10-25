@@ -3,8 +3,11 @@
   "displayName": "Tide",
   "version": "0.1.0",
   "unity": "6000.0",
-  "description": "Runs a Tide game's simulation and networking inside Unity: Tide simulates, predicts and rolls back, and Unity draws, plays audio and authors scenes and prefabs. Needs the tide command installed (tide-engine.dev).",
+  "description": "Runs a Tide game's simulation and networking inside Unity: Tide simulates, predicts and rolls back, and Unity draws, plays audio and authors scenes and prefabs. From git, it builds with the tide of its own commit, installed beside any other from tide-engine.dev.",
   "keywords": ["tide", "netcode", "multiplayer", "deterministic", "rollback"],
+  "dependencies": {
+    "com.unity.modules.unitywebrequest": "1.0.0"
+  },
   "author": {
     "name": "Tide",
     "url": "https://tide-engine.dev"

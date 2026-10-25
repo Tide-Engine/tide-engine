@@ -56,7 +56,7 @@ float4 _ProjectionParams;
 float _TideFlip, _TideHeight, _TideLinear;
 float4 _TideAttributes[16];
 float4 _TideSlots[3];
-uint _TideOffset0, _TideOffset1, _TideOffset2, _TideFirst, _TideSampling;
+uint _TideOffset0, _TideOffset1, _TideOffset2, _TideFirst, _TideSampling, _TideSamplingHigh;
 #if TIDEHL_TEXTURE_BUFFERS
 Texture2D<float4> _TideVertices0, _TideVertices1, _TideVertices2;
 #else
@@ -404,7 +404,7 @@ float4 _ProjectionParams;
 float _TideFlip, _TideHeight, _TideLinear;
 float4 _TideAttributes[16];
 float4 _TideSlots[3];
-uint _TideOffset0, _TideOffset1, _TideOffset2, _TideFirst, _TideSampling;
+uint _TideOffset0, _TideOffset1, _TideOffset2, _TideFirst, _TideSampling, _TideSamplingHigh;
 #if TIDEHL_TEXTURE_BUFFERS
 Texture2D<float4> _TideVertices0, _TideVertices1, _TideVertices2;
 #else

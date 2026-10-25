@@ -1885,7 +1885,13 @@ tide.packages", with only Unity switching versions (the CLI's pin: `notes/cli-an
   (`TIDE_RELEASES_SITE`, default tide-engine.dev; `file://` for tests), this platform's package (`PackageName`, as the
   installers name them) and `SHA256SUMS`, checked; unpacked (zip by `ZipFile`, tar.gz by `tar`, which keeps what runs
   runnable) into `.<version>-<guid>`, whose `VERSION` must be the version, then moved into its place last; another
-  editor's install meanwhile is taken.
+  editor's install meanwhile is taken. Everything from the site comes through `UnityWebRequest` (the package depends on
+  `com.unity.modules.unitywebrequest`): .NET's `HttpClient` in the editor timed out on every address on this machine,
+  the site, api.github.com and google.com alike, where `UnityWebRequest` took 0.2-1.7 s, so the first version, built on
+  `HttpClient` and tested only with `file://`, never reached the site. `UnityWebRequest` belongs to the editor's
+  thread: a batch run or a player build waits on it there (`Install`); the editor's install (`Begin`) follows the
+  download (`DownloadHandlerFile`, into the work folder) each update, then checks and unpacks it off the thread
+  (`Settle`).
 - **When:** `TideToolchain.Find(out where, install, wait)`: your own command first (`TideUserSettings`, below), then
   the package's version: in a batch run installed at once (a build server: GameCI needs nothing beforehand); in the
   editor asked once a session (a dialog), then installed off the editor's thread with a `Progress` task, the build
@@ -1903,8 +1909,11 @@ tide.packages", with only Unity switching versions (the CLI's pin: `notes/cli-an
 - **Tests:** the Sample's EditMode `VersionTests` (a site and versions folder in a scratch folder: a tag is its
   version with nothing asked; a commit the site's answer, kept; an unknown commit's reason; a version installed beside
   others, once, leaving no work folder; a damaged checksum and a package of another version installing nothing);
-  `docs/tests/releases.test.mjs`. Sample EditMode 28/28, PlayMode 17/17. Not run: a git package resolving and installing against the
-  real site (the endpoint deploys with this), macOS's and Linux's tar path, the dialog.
+  `docs/tests/releases.test.mjs`. Sample EditMode 28/28, PlayMode 17/17. Against the live site, in batch mode (a
+  scratch copy of the Sample, `TIDE_VERSIONS` an empty folder, the installer's tide 0.5.0-nightly.24): a git package
+  at commit 6f3c781e found it's 0.5.0-nightly.25 (the site, 0.4 s) and stopped there under `HttpClient`; with
+  `UnityWebRequest`, that commit's version installed in 11 s (`tide --version` saying it) and a second `Install` took
+  it as it was. Not run: macOS's and Linux's tar path, the dialog.
 
 ## Web
 

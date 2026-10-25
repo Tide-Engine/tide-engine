@@ -1,14 +1,15 @@
 using System;
 using System.Diagnostics;
 using System.IO;
-using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
+using System.Threading;
 using System.Threading.Tasks;
 using UnityEditor;
 using UnityEditor.PackageManager;
 using UnityEngine;
+using UnityEngine.Networking;
 using Debug = UnityEngine.Debug;
 
 namespace Tide.Editor
@@ -181,85 +182,155 @@ namespace Tide.Editor
             public Asset[] assets;
         }
 
-        static readonly HttpClient Http = new HttpClient { Timeout = TimeSpan.FromMinutes(10) };
-        static readonly HttpClient Quick = new HttpClient { Timeout = TimeSpan.FromSeconds(20) }; // A question, on the editor's thread
-
-        // An address's bytes: the site's, or a file's (file://, for tests and mirrors)
-        static byte[] Fetch(string address, Action<long, long> progress = null)
+        // An address's bytes, waited for on the editor's thread: the site's, or a file's (file://, for tests and
+        // mirrors). Through UnityWebRequest, as .NET's HttpClient in the editor can time out on every address.
+        static byte[] Fetch(string address)
         {
             var uri = new Uri(address);
             if (uri.IsFile) return File.ReadAllBytes(uri.LocalPath);
-            var client = progress != null ? Http : Quick;
-            using var response = client.GetAsync(uri, HttpCompletionOption.ResponseHeadersRead).GetAwaiter().GetResult();
-            if (!response.IsSuccessStatusCode) throw new IOException($"{address} answered {(int)response.StatusCode}");
-            var total = response.Content.Headers.ContentLength ?? -1;
-            using var from = response.Content.ReadAsStreamAsync().GetAwaiter().GetResult();
-            using var to = new MemoryStream();
-            var buffer = new byte[1 << 16];
-            int n;
-            while ((n = from.Read(buffer, 0, buffer.Length)) > 0)
-            {
-                to.Write(buffer, 0, n);
-                progress?.Invoke(to.Length, total);
-            }
-            return to.ToArray();
+            using var request = UnityWebRequest.Get(uri);
+            request.timeout = 20;
+            request.SendWebRequest();
+            while (!request.isDone) Thread.Sleep(10);
+            if (request.result != UnityWebRequest.Result.Success) throw new IOException($"{address}: {request.error}");
+            return request.downloadHandler.data;
         }
 
-        // Installs `version` side by side: its release's package for this platform, checked against the release's
-        // SHA256SUMS, unpacked whole into a folder of its own, which takes the version's place last. The tide command,
-        // or null with `error` said. `progress` hears how far, from 0 to 1, and what's being done.
+        // A version's package for this platform, downloading into a folder of its own beside the versions
+        sealed class Download
+        {
+            public string version, work, archive, expected;
+            public UnityWebRequest request; // Null for a file's (file://), copied at once
+
+            public bool Done => request == null || request.isDone;
+            public float Got => request?.downloadProgress ?? 1f;
+        }
+
+        // Asks the site for `version`'s release and starts downloading its package, on the editor's thread: null,
+        // with `error` said, for a release with none
+        static Download Start(string version, out string error)
+        {
+            error = null;
+            var release = JsonUtility.FromJson<Release>(Encoding.UTF8.GetString(Fetch($"{Site}/releases/v{version}.json")));
+            Asset package = null, sums = null;
+            foreach (var a in release?.assets ?? Array.Empty<Asset>())
+            {
+                if (a.name == PackageName) package = a;
+                if (a.name == "SHA256SUMS") sums = a;
+            }
+            if (package == null || sums == null)
+            {
+                error = $"tide {version} has no {PackageName} to install";
+                return null;
+            }
+            var d = new Download
+            {
+                version = version,
+                work = Path.Combine(Root, $".{version}-{Guid.NewGuid():N}"),
+                expected = Expected(Encoding.UTF8.GetString(Fetch(sums.browser_download_url)), PackageName),
+            };
+            Directory.CreateDirectory(d.work);
+            d.archive = Path.Combine(d.work, PackageName);
+            var uri = new Uri(package.browser_download_url);
+            if (uri.IsFile)
+            {
+                File.Copy(uri.LocalPath, d.archive);
+                return d;
+            }
+            d.request = new UnityWebRequest(uri, UnityWebRequest.kHttpVerbGET, new DownloadHandlerFile(d.archive), null);
+            d.request.SendWebRequest();
+            return d;
+        }
+
+        // Whether the download came whole, read on the editor's thread
+        static bool Downloaded(Download d, out string error)
+        {
+            error = null;
+            if (d.request == null || d.request.result == UnityWebRequest.Result.Success) return true;
+            error = $"tide {d.version} couldn't be downloaded: {d.request.error}";
+            return false;
+        }
+
+        // Checks the downloaded package against the release's SHA256SUMS and unpacks it whole into its folder, which
+        // takes the version's place last, on any thread: the tide command, or null with `error` said
+        static string Settle(Download d, out string error)
+        {
+            error = null;
+            string actual;
+            using (var sha = SHA256.Create())
+            using (var file = File.OpenRead(d.archive))
+                actual = Hex(sha.ComputeHash(file));
+            if (d.expected == null || actual != d.expected)
+            {
+                error = $"the download of tide {d.version} is damaged (its checksum isn't the release's): nothing was installed";
+                return null;
+            }
+            var into = Path.Combine(d.work, "tide");
+            Directory.CreateDirectory(into);
+            Unpack(d.archive, into);
+            if (!IsWhole(into, d.version))
+            {
+                error = $"tide {d.version}'s package says it's another version: nothing was installed";
+                return null;
+            }
+            var place = Path.Combine(Root, d.version);
+            try
+            {
+                if (Directory.Exists(place)) Directory.Delete(place, true); // One that stopped partway: not whole
+                Directory.Move(into, place);
+            }
+            catch (Exception)
+            {
+                // Another editor may have installed it meanwhile
+                var other = Executable(d.version);
+                if (other != null) return other;
+                throw;
+            }
+            return Executable(d.version);
+        }
+
+        static void Clean(Download d)
+        {
+            if (d == null) return;
+            d.request?.Dispose();
+            try
+            {
+                if (Directory.Exists(d.work)) Directory.Delete(d.work, true);
+            }
+            catch (Exception)
+            {
+                // A scanner has a file a moment: the next install's folder is another
+            }
+        }
+
+        // Installs `version` side by side, waiting for it on the editor's thread: its release's package for this
+        // platform, checked against the release's SHA256SUMS, unpacked whole into a folder of its own, which takes the
+        // version's place last. The tide command, or null with `error` said. `progress` hears how far, from 0 to 1,
+        // and what's being done.
         public static string Install(string version, Action<float, string> progress, out string error)
         {
             error = null;
             var had = Executable(version);
             if (had != null) return had;
-            var place = Path.Combine(Root, version);
-            var work = Path.Combine(Root, $".{version}-{Guid.NewGuid():N}");
+            Download d = null;
             try
             {
                 progress?.Invoke(0f, $"Finding tide {version}");
-                var release = JsonUtility.FromJson<Release>(Encoding.UTF8.GetString(Fetch($"{Site}/releases/v{version}.json")));
-                Asset package = null, sums = null;
-                foreach (var a in release?.assets ?? Array.Empty<Asset>())
+                d = Start(version, out error);
+                if (d == null) return null;
+                while (!d.Done)
                 {
-                    if (a.name == PackageName) package = a;
-                    if (a.name == "SHA256SUMS") sums = a;
+                    progress?.Invoke(0.9f * d.Got, $"Downloading tide {version}");
+                    Thread.Sleep(20);
                 }
-                if (package == null || sums == null)
-                {
-                    error = $"tide {version} has no {PackageName} to install";
-                    return null;
-                }
-                var expected = Expected(Encoding.UTF8.GetString(Fetch(sums.browser_download_url)), PackageName);
-                var bytes = Fetch(package.browser_download_url, (got, total) =>
-                    progress?.Invoke(total > 0 ? 0.9f * got / total : 0.5f, $"Downloading tide {version}"));
-                string actual;
-                using (var sha = SHA256.Create()) actual = Hex(sha.ComputeHash(bytes));
-                if (expected == null || actual != expected)
-                {
-                    error = $"the download of tide {version} is damaged (its checksum isn't the release's): nothing was installed";
-                    return null;
-                }
+                if (!Downloaded(d, out error)) return null;
                 progress?.Invoke(0.9f, $"Unpacking tide {version}");
-                Directory.CreateDirectory(work);
-                var archive = Path.Combine(work, PackageName);
-                File.WriteAllBytes(archive, bytes);
-                var into = Path.Combine(work, "tide");
-                Directory.CreateDirectory(into);
-                Unpack(archive, into);
-                if (!IsWhole(into, version))
-                {
-                    error = $"tide {version}'s package says it's another version: nothing was installed";
-                    return null;
-                }
-                if (Directory.Exists(place)) Directory.Delete(place, true); // One that stopped partway: not whole
-                Directory.Move(into, place);
-                progress?.Invoke(1f, $"Installed tide {version}");
-                return Executable(version);
+                var exe = Settle(d, out error);
+                if (exe != null) progress?.Invoke(1f, $"Installed tide {version}");
+                return exe;
             }
             catch (Exception e)
             {
-                // Another editor may have installed it meanwhile
                 var other = Executable(version);
                 if (other != null) return other;
                 error = $"tide {version} couldn't be installed: {Message(e)}";
@@ -267,14 +338,7 @@ namespace Tide.Editor
             }
             finally
             {
-                try
-                {
-                    if (Directory.Exists(work)) Directory.Delete(work, true);
-                }
-                catch (Exception)
-                {
-                    // A scanner has a file a moment: the next install's folder is another
-                }
+                Clean(d);
             }
         }
 
@@ -316,7 +380,6 @@ namespace Tide.Editor
 
         // In the editor, the package's version installs once someone says so, while the editor goes on: asked once a
         // session, with the editor's progress in its status bar. A batch run (a build server) installs it at once.
-        static Task<string> installing;
         static string installingVersion;
         static bool asked;
 
@@ -345,7 +408,7 @@ namespace Tide.Editor
                 }
                 return exe;
             }
-            if (installing != null)
+            if (installingVersion != null)
             {
                 where = $"Installing tide {installingVersion}, which this project's Tide package is";
                 return null;
@@ -366,37 +429,60 @@ namespace Tide.Editor
             return null;
         }
 
-        // Starts installing `version` off the editor's thread; tide's build starts once it's in place
+        // Starts installing `version` while the editor goes on: the download followed each update, checking and
+        // unpacking it off the editor's thread; tide's build starts once it's in place
         public static void Begin(string version)
         {
-            if (installing != null) return;
+            if (installingVersion != null) return;
             installingVersion = version;
             var task = Progress.Start("Tide", $"Installing tide {version}");
-            float done = 0f;
-            string doing = "";
-            installing = Task.Run(() =>
+            Download d = null;
+            Task<string> settling = null;
+            void End(string exe, string why)
             {
-                var exe = Install(version, (f, what) => { done = f; doing = what; }, out var error);
-                if (exe == null) throw new IOException(error);
-                return exe;
-            });
+                EditorApplication.update -= Watch;
+                Progress.Finish(task, exe != null ? Progress.Status.Succeeded : Progress.Status.Failed);
+                Progress.Remove(task);
+                Clean(d);
+                installingVersion = null;
+                if (exe != null) TideBuildService.Restart();
+                else Debug.LogError($"Tide: {why}");
+            }
             void Watch()
             {
-                if (Progress.Exists(task)) Progress.Report(task, done, doing);
-                if (!installing.IsCompleted) return;
-                EditorApplication.update -= Watch;
-                if (installing.IsFaulted)
+                if (settling == null)
                 {
-                    Progress.Finish(task, Progress.Status.Failed);
-                    Debug.LogError($"Tide: {Message(installing.Exception)}");
+                    if (!d.Done)
+                    {
+                        Progress.Report(task, 0.9f * d.Got, $"Downloading tide {version}");
+                        return;
+                    }
+                    if (!Downloaded(d, out var why))
+                    {
+                        End(null, why);
+                        return;
+                    }
+                    Progress.Report(task, 0.9f, $"Unpacking tide {version}");
+                    settling = Task.Run(() => Settle(d, out var error) ?? throw new IOException(error));
+                    return;
                 }
-                else
+                if (!settling.IsCompleted) return;
+                if (settling.IsFaulted) End(Executable(version), $"tide {version} couldn't be installed: {Message(settling.Exception)}");
+                else End(settling.Result, null);
+            }
+            try
+            {
+                d = Start(version, out var error);
+                if (d == null)
                 {
-                    Progress.Finish(task);
-                    TideBuildService.Restart();
+                    End(null, error);
+                    return;
                 }
-                Progress.Remove(task);
-                installing = null;
+            }
+            catch (Exception e)
+            {
+                End(null, $"tide {version} couldn't be installed: {Message(e)}");
+                return;
             }
             EditorApplication.update += Watch;
         }
