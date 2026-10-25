@@ -1,0 +1,225 @@
+settings { title = "Render3D: skinning, deformation and bloom"; }
+scene Main;
+asset Render3D.SkinnedMesh3D ribbon = "assets/render3d/ribbon.gltf";
+asset Render3D.Mesh3D sphere = "assets/render3d/sphere.obj";
+asset Render3D.Mesh3D cube = "assets/render3d/cube.obj";
+component Ribbon { }
+component Warped { }
+local singleton Controls
+{
+    bool lightsCreated;
+    bool open = true;
+    bool play = true;
+    bool animate = true;
+    bool deform = true;
+    bool bloom = true;
+    bool tint;
+    float seconds;
+    float bend = 0.3;
+    float glow = 0.6;
+    float exposure = 1;
+    float yaw = 0.35;
+    float pitch = 0.3;
+    float distance = 1;
+    bool dragging;
+    float pinch;
+    int firstFinger;
+    int secondFinger;
+}
+
+event(Spawned) Build(with Main)
+{
+    Spawn(Ribbon, Warped, Render3D.SkinnedMeshRenderer { mesh = ribbon },
+        Render3D.Material { baseColor = Color(0.1, 0.65, 0.9), roughness = 0.4,
+                            emission = float3(0.1, 1.5, 3), doubleSided = true },
+        Transform { localPosition = float3(-0.4, 1.3, 0) });
+    Spawn(Warped, Render3D.MeshRenderer { mesh = sphere },
+        Render3D.Material { baseColor = Color(1, 0.2, 0.08), emission = float3(6, 0.4, 0.1), roughness = 0.3 },
+        Transform { localPosition = float3(1.8, 1, 0), localScale = float3(0.7) });
+    Spawn(Render3D.MeshRenderer { mesh = cube }, Render3D.Material { roughness = 1 },
+        Transform { localPosition = float3(0, -0.15, 0), localScale = float3(14, 0.3, 7) });
+}
+
+// This example owns its animation clock. Render3D only consumes the pose.
+[Before(Render3D.Stages.Prepare)]
+view Configure(mut Render3D.Renderer renderer, mut Controls controls)
+{
+    if (controls.play) controls.seconds += Frame.dt;
+    if (!controls.lightsCreated)
+    {
+        controls.lightsCreated = true;
+        local Spawn(Render3D.DirectionalLight { direction = float3(0.7, -1.5, 0.9), radiance = float3(3) });
+    }
+    renderer.bloom.enabled = controls.bloom;
+    renderer.bloom.intensity = controls.glow;
+    renderer.exposure = controls.exposure;
+    renderer.postEffects.Clear();
+    if (controls.tint)
+    {
+        float3 multiplier = float3(1.2, 0.85, 0.65);
+        renderer.postEffects.Add((Texture source, RenderTarget destination) => ApplyTint(source, destination, multiplier));
+    }
+}
+
+[Before(Render3D.Stages.Prepare), After(Configure)]
+view AnimateRibbon(mut Render3D.SkinnedMeshRenderer mesh, with Ribbon, Controls controls)
+{
+    mesh.pose = null;
+    if (controls.animate)
+        mesh.pose = ribbon.animations.slide.Sample((Math.Sin(controls.seconds) + 1) * 0.5);
+}
+
+void Bend(Render3D.VertexInput input, mut Render3D.MeshVertex vertex, float amount)
+{
+    float slope = 2 * amount * vertex.position.y;
+    vertex.position.x += amount * vertex.position.y * vertex.position.y;
+    vertex.normal = Math.Normalize(float3(vertex.normal.x, vertex.normal.y - slope * vertex.normal.x, vertex.normal.z));
+    float3 tangent = vertex.tangent.xyz;
+    vertex.tangent = float4(Math.Normalize(float3(tangent.x + slope * tangent.y, tangent.y, tangent.z)), vertex.tangent.w);
+}
+
+[Before(Render3D.Stages.Prepare), After(Configure)]
+view ConfigureDeform(mut Render3D.Material material, with Warped, Controls controls)
+{
+    material.vertex = null;
+    if (controls.deform)
+    {
+        float amount = controls.bend;
+        material.vertex = Render3D.Deform {
+            vertex = (Render3D.VertexInput input, mut Render3D.MeshVertex vertex) => Bend(input, vertex, amount)
+        };
+    }
+}
+
+struct TintSettings { float3 multiplier; }
+frag Tint(Vertex vertex, out Color color, Texture source, TintSettings settings)
+{
+    Color sample = source.Sample(vertex.uv);
+    color = Color(float3(sample.r, sample.g, sample.b) * settings.multiplier, 1);
+}
+
+bool ApplyTint(Texture source, RenderTarget destination, float3 multiplier)
+{
+    Draw.Blit(source, destination, Tint, TintSettings { multiplier = multiplier });
+    return true;
+}
+
+[Before(Render3D.Stages.Prepare)]
+view Camera(mut Render3D.Renderer renderer, mut Controls controls, Devices devices)
+{
+    float panelHeight = controls.open ? 272 : 96;
+    float panelTop = Screen.height - panelHeight;
+    var pointer = devices.pointer;
+    if (pointer.press.down) controls.dragging = Screen.Flip(pointer.position).y < panelTop;
+    if (!pointer.press.pressed) controls.dragging = false;
+    mut int fingers = 0;
+    mut float2 firstPosition = float2(0);
+    mut float2 secondPosition = float2(0);
+    mut int firstId = 0;
+    mut int secondId = 0;
+    foreach (var touch in devices.touchscreen.touches)
+    {
+        if (!touch.press.pressed || Screen.Flip(touch.startPosition).y >= panelTop) continue;
+        if (fingers == 0)
+        {
+            firstPosition = touch.position;
+            firstId = touch.id;
+        }
+        if (fingers == 1)
+        {
+            secondPosition = touch.position;
+            secondId = touch.id;
+        }
+        fingers += 1;
+    }
+    if (fingers >= 2)
+    {
+        float span = Math.Distance(firstPosition, secondPosition);
+        if (controls.pinch > 0 && firstId == controls.firstFinger && secondId == controls.secondFinger)
+            controls.distance *= controls.pinch / Math.Max(span, 1);
+        controls.pinch = span;
+        controls.firstFinger = firstId;
+        controls.secondFinger = secondId;
+        controls.dragging = false;
+    }
+    else
+    {
+        controls.pinch = 0;
+        if (controls.dragging)
+        {
+            controls.yaw -= pointer.delta.x * 0.008;
+            controls.pitch -= pointer.delta.y * 0.008;
+        }
+    }
+    if (Screen.Flip(devices.mouse.position).y < panelTop)
+        controls.distance *= Math.Pow(0.85, devices.mouse.scroll.y);
+    controls.pitch = Math.Clamp(controls.pitch, 0.05, 1.3);
+    controls.distance = Math.Clamp(controls.distance, 0.55, 2.5);
+    // Includes the ribbon at all animation/deformation settings and the sphere.
+    float3 center = float3(-0.2, 1.3, 0);
+    float3 half = float3(3.1, 1.4, 1.1);
+    float cosPitch = Math.Cos(controls.pitch);
+    float sinPitch = Math.Sin(controls.pitch);
+    float3 outward = float3(Math.Sin(controls.yaw) * cosPitch, sinPitch, -Math.Cos(controls.yaw) * cosPitch);
+    float3 right = float3(Math.Cos(controls.yaw), 0, Math.Sin(controls.yaw));
+    float3 up = Math.Cross(-outward, right);
+    float height = Math.Max(Screen.height, 1);
+    float tanHalf = Math.Tan(45deg * 0.5);
+    // Center the exhibit in the space above the panel, with a 15% inset.
+    float ndcY = Math.Clamp(panelHeight / height, 0, 0.9);
+    float halfVisible = (1 - ndcY) * 0.85;
+    float top = ndcY + halfVisible;
+    float bottom = ndcY - halfVisible;
+    float horizontal = Math.Max(Screen.width / height, 0.1) * tanHalf * 0.85;
+    mut float centerDepth = 1;
+    for (var i = 0; i < 8; i++)
+    {
+        float3 corner = half * float3((i & 1) == 0 ? -1 : 1,
+            (i & 2) == 0 ? -1 : 1, (i & 4) == 0 ? -1 : 1);
+        float y = Math.Dot(corner, up);
+        float z = Math.Dot(corner, -outward);
+        centerDepth = Math.Max(centerDepth, Math.Abs(Math.Dot(corner, right)) / horizontal - z);
+        centerDepth = Math.Max(centerDepth, (y - top * tanHalf * z) / (halfVisible * tanHalf));
+        centerDepth = Math.Max(centerDepth, (bottom * tanHalf * z - y) / (halfVisible * tanHalf));
+        centerDepth = Math.Max(centerDepth, 0.2 - z);
+    }
+    // Zoom scales the fitted distance; it is never clamped back to that fit.
+    float distance = centerDepth * (cosPitch + ndcY * tanHalf * sinPitch) / cosPitch * controls.distance;
+    float dy = ndcY * distance * tanHalf / (cosPitch + ndcY * tanHalf * sinPitch);
+    float3 target = center - float3(0, dy, 0);
+    float3 eye = target + outward * distance;
+    renderer.camera = Render3D.Camera {
+        position = eye, rotation = quaternion.LookRotation(target - eye, float3(0, 1, 0)), verticalFov = 45deg
+    };
+    renderer.background = Color(0.086, 0.086, 0.094);
+    renderer.ambientIrradiance = float3(0.3);
+    renderer.shadows = true;
+    renderer.shadowCenter = float3(0, 0.5, 0);
+    renderer.shadowExtent = 10;
+}
+
+[After(Render3D.Stages.Present)]
+view Overlay(mut Controls controls)
+{
+    GUI.SetTheme(GUITheme { radius = 6 });
+    float panelHeight = controls.open ? 272 : 96;
+    GUILayout.Area(Rect(12, Screen.height - panelHeight, Screen.width - 24, controls.open ? panelHeight - 52 : 44))
+    {
+        GUILayout.Horizontal()
+        {
+            if (GUILayout.Button(controls.open ? "Hide" : "Controls")) controls.open = !controls.open;
+            if (GUILayout.Button("Reset")) { controls.yaw = 0.35; controls.pitch = 0.3; controls.distance = 1; }
+            if (GUILayout.Button("Zoom +")) controls.distance = Math.Max(0.55, controls.distance * 0.85);
+            if (GUILayout.Button("Zoom -")) controls.distance = Math.Min(2.5, controls.distance / 0.85);
+        }
+        if (controls.open)
+        {
+            GUILayout.Horizontal() { GUILayout.Toggle("Play", controls.play); GUILayout.Toggle("Pose", controls.animate); }
+            GUILayout.Horizontal() { GUILayout.Toggle("Deform", controls.deform); GUILayout.Toggle("Bloom", controls.bloom); }
+            GUILayout.Slider("Bend", controls.bend, -0.6, 0.6);
+            GUILayout.Slider("Glow", controls.glow, 0, 2);
+            GUILayout.Horizontal() { GUILayout.Toggle("Warm tint", controls.tint); GUILayout.Slider("Exposure", controls.exposure, 0.25, 2); }
+            GUILayout.Label("Drag / swipe to orbit; pinch to zoom");
+        }
+    }
+}

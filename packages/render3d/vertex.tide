@@ -1,0 +1,52 @@
+namespace Render3D;
+
+// The vertex is already skinned, in mesh-local space. world is its position
+// before this callback; eye is the main camera in color and shadow passes.
+struct VertexInput
+{
+    float3 world;
+    float3 eye;
+    float4x4 localToWorld;
+}
+
+void StandardVertex(VertexInput input, mut MeshVertex vertex) { }
+
+VertexInput VertexContext(float3 position, float4x4 transform, float3 eye)
+{
+    return VertexInput {
+        world = Math.Mul(transform, float4(position, 1)).xyz,
+        eye = eye,
+        localToWorld = transform
+    };
+}
+
+// Configured as Deform { vertex = MyDeformation }. Captures are shared draw
+// uniforms, leaving the material's existing per-instance attribute budget.
+vert Deform(mut MeshVertex corner, Instance instance, Renderer renderer,
+            Func<VertexInput, mut MeshVertex, void> vertex)
+{
+    vertex(VertexContext(corner.position, instance.transform, renderer.eye), corner);
+}
+
+vert DeformShadow(mut MeshVertex vertex, out float4 clip, Instance instance,
+                  Renderer renderer, ShadowTile tile,
+                  Func<VertexInput, mut MeshVertex, void> deform)
+{
+    deform(VertexContext(vertex.position, instance.transform, renderer.eye), vertex);
+    float4 raw = this.clip;
+    clip = AtlasClip(raw, tile.uvRect);
+}
+
+// Prepared opaque casters retain owned numeric callbacks, not component rows.
+struct ShadowInstance
+{
+    float4x4 transform;
+    Func<VertexInput, mut MeshVertex, void> vertex;
+}
+
+float4 AtlasClip(float4 raw, float4 rect)
+{
+    return float4(raw.xy * rect.zw +
+        float2(2 * rect.x + rect.z - 1, 1 - 2 * rect.y - rect.w) * raw.w,
+        raw.z, raw.w);
+}

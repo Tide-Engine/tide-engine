@@ -209,7 +209,7 @@ typedef enum tide_gpu_filter {
     TIDE_GPU_FILTER_MIPMAPS, // ...and between the two of its images nearest the size it's drawn at
 } tide_gpu_filter;
 
-enum { TIDE_GPU_MAX_SLOTS = 3, TIDE_GPU_MAX_ATTRIBUTES = 16, TIDE_GPU_MAX_TEXTURES = 8 };
+enum { TIDE_GPU_MAX_SLOTS = 3, TIDE_GPU_MAX_ATTRIBUTES = 16, TIDE_GPU_MAX_TEXTURES = 12 };
 
 // The most a pipeline's uniform block takes, in bytes.
 #define TIDE_GPU_MAX_UNIFORMS 4096u

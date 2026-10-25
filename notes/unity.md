@@ -1,5 +1,20 @@
 # Unity as a front end
 
+## Twelve texture slots and embed ABI 6 (2026-10-25)
+
+The coordinated internal capacity completion raises TideRender's sampled arrays
+and texture property IDs to twelve. Slots 0..7 keep _TideSampling's original
+four-bit modes; slots 8..11 use _TideSamplingHigh, supplied separately per draw.
+HLSL reads that high word only for high slots. The recorded pipeline contains
+one read entry per actual texture, replacing eight fixed entries. Native and
+managed embed ABI constants are both 6; stale hosts are rejected and the whole
+host/library/generated-shader set must rebuild. The separate draw packet stays
+at its existing version. No new runtime function, device baseline or vertex
+buffer transport is introduced. Twelve game textures plus the three GLES/WebGL
+vertex-buffer textures fit the existing sixteen vertex-texture baseline.
+The native zero-through-twelve packet fixture and strict FXC compilation of the
+capacity fixture passed. Unity player execution remains unvalidated locally.
+
 Proposed and built 2026-10-20, early: the owner asked for every phase "most of
 the way there" to test and then list tweaks. What's built is in the "as built"
 sections below; the proposal's text above them is the design they follow.

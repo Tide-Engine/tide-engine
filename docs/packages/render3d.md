@@ -1,5 +1,5 @@
 ---
-description: "Explore Render3D materials, normal and height maps, cutout shadows, sorted transparency, lights and linear HDR PBR with interactive examples."
+description: "Render static and skinned meshes with PBR materials, shared vertex deformation, shadows, sorted transparency, bloom and custom HDR effects."
 ---
 
 # Render3D
@@ -76,6 +76,7 @@ Both `MeshRenderer` and `Material` must be present for an entity to draw or cast
 | `Material.uv` | `Render3D.StandardUV` | Attached local callback adjusting UVs before parallax |
 | `Material.coverage` | `Render3D.StandardCoverage` | Attached local callback adjusting alpha and cutoff |
 | `Material.shader` | `Render3D.Lit { surface = Render3D.StandardSurface }` | Attached local shader binding |
+| `Material.vertex` | `null` | Optional attached local `Render3D.Deform` binding, shared by color and shadows |
 
 The base map, base color and vertex color each supply display-space RGB. The shader decodes each to linear light before multiplying them into albedo. Their alpha channels multiply without color conversion. Assign maps, callbacks or `shader` through a mutable `Material` parameter in a view before preparation. Numeric material fields are match state: change them in match code or send a [command](../game/commands.md) from a local control. A captured surface callback can make local shading comparisons without changing match data.
 
@@ -143,6 +144,75 @@ Choose **PBR maps**, **Cutout** or **Blend** to move between the exhibits. In PB
 
 `doubleSided = true` disables back-face culling and flips the shading frame for the viewed back side. It is useful for a thin leaf or card. A closed transparent mesh can expose both front and back surfaces; object sorting does not solve ordering inside that mesh.
 
+## Skinned meshes
+
+`Render3D.SkinnedMesh3D` aliases `SkinnedMesh<Render3D.MeshVertex>`. Use a
+`SkinnedMeshRenderer` with the same `Material` component, lights and shadow
+settings as a static mesh:
+
+```csharp
+asset Render3D.SkinnedMesh3D hero = "art/hero.glb";
+
+event(Spawned) Character(with Main)
+{
+    Spawn(Transform, Render3D.SkinnedMeshRenderer { mesh = hero }, Render3D.Material);
+}
+
+[Before(Render3D.Stages.Prepare)]
+view Animate(mut Render3D.SkinnedMeshRenderer mesh, Time time)
+{
+    mesh.pose = hero.animations.walk.Sample(time.t, Playback.Loop);
+}
+```
+
+The `mesh` field is an `Asset<SkinnedMesh3D>` reference, preserving shared model
+identity and imported LOD. The attached local `pose` defaults to `null`, which
+draws authored rest. An explicitly invalid pose skips drawing. The package
+snapshots the render pose during preparation and uses it for every shadow and
+color pass. It does not choose clips, advance playback clocks or extract root
+motion. Games can sample a local pose or forward a pose from their match state;
+see [animation](../game/animation.md).
+
+Skinned normal and height maps need authored UV tangents: the static tangent
+generator does not generate skinned tangents. Skinning and custom deformation
+also need explicit conservative bounds to enable culling. Transparent sorting
+uses the mesh's existing bounds/LOD center, or its origin; it does not track the
+animated silhouette. Static and skinned transparent objects sort together.
+
+## Vertex deformation
+
+Configure `Material.vertex` with an explicit stage binding:
+
+```csharp
+void Bend(Render3D.VertexInput input, mut Render3D.MeshVertex vertex)
+{
+    float amount = 0.25;
+    float slope = 2 * amount * vertex.position.y;
+    vertex.position.x += amount * vertex.position.y * vertex.position.y;
+    vertex.normal = Math.Normalize(float3(vertex.normal.x,
+        vertex.normal.y - slope * vertex.normal.x, vertex.normal.z));
+    float3 tangent = vertex.tangent.xyz;
+    vertex.tangent = float4(Math.Normalize(float3(
+        tangent.x + slope * tangent.y, tangent.y, tangent.z)), vertex.tangent.w);
+}
+
+[Before(Render3D.Stages.Prepare)]
+view ConfigureVertex(mut Render3D.Material material)
+{
+    material.vertex = Render3D.Deform { vertex = Bend };
+}
+```
+
+The mutable vertex is mesh-local, after skinning and before the object's world
+transform. `VertexInput.world` is its world position before the callback;
+`localToWorld` is the effective draw transform, and `eye` is the main camera in
+both color and shadow passes. The callback can change position, normal, tangent,
+UV and color. Update normals/tangents when the deformation requires it; changing
+position does not derive them automatically. Plain captures become shared draw
+uniforms. Set `material.vertex = null` to restore the ordinary static path and
+its automatic bounds. A present unconfigured stage retains the engine's normal
+skip-draw behavior.
+
 ## Camera and renderer
 
 `Render3D.Renderer` is a local singleton on each machine. Configure it in a `[Before(Render3D.Stages.Prepare)]` view, as in the cube example above.
@@ -163,6 +233,9 @@ Choose **PBR maps**, **Cutout** or **Blend** to move between the exhibits. In PB
 | `camera` | Defaults above | This machine's camera |
 | `background` | `Color(0.06, 0.08, 0.12)` | Display-space background, decoded before rendering |
 | `exposure` | `1` | Linear multiplier before tone mapping; 2 doubles the light |
+| `defaultPresent` | `true` | Run the stock exposure, tone-map and sRGB presentation pass |
+| `bloom` | Disabled | Built-in scene-linear bloom settings |
+| `postEffects` | Empty list | Ordered custom HDR callbacks after bloom |
 | `ambientIrradiance` | `float3(0)` | Linear diffuse ambient irradiance, multiplied by material AO |
 | `maxLights` | `32` | Maximum retained lights; negative values act as 0 |
 | `shadows` | `true` | Enable shadow casting and sampling |
@@ -221,6 +294,9 @@ The package owns these named view stages, in order:
 | `Render3D.Stages.Color` | Set the scene camera and clear the HDR target |
 | `Render3D.Stages.Opaque` | Draw opaque meshes with their materials |
 | `Render3D.Stages.Transparent` | Draw sorted transparent meshes after opaque/cutout geometry |
+| `Render3D.Stages.PostPrepare` | Reset `Renderer.output` to the current linear HDR scene |
+| `Render3D.Stages.Bloom` | Apply enabled built-in bloom |
+| `Render3D.Stages.PostProcess` | Apply the ordered custom HDR effect chain |
 | `Render3D.Stages.Present` | Apply exposure, tone map and present to the window |
 
 Every caster finishes before color drawing starts. Configure camera, lighting, textures and shader bindings with `[Before(Render3D.Stages.Prepare)]`. Draw ordinary window UI with `[After(Render3D.Stages.Present)]`:
@@ -268,7 +344,81 @@ view ConfigureMaterials(mut Render3D.Material material)
 
 `Material.uv` is an attached local `Func<Render3D.SurfaceInput, mut float2, void>` and runs after scale/offset, before height parallax. `Material.coverage` is an attached local `Func<Render3D.SurfaceInput, mut Render3D.Coverage, void>` and runs after alpha sampling; `Coverage` contains `alpha = 1` and `cutoff = 0.5`. The package initializes those from the material and multiplied alpha before invoking the hook. The same hooks run for cutout shadows. A surface callback runs after the maps initialize `Surface`; it cannot change fragment coverage.
 
-Use `Render3D.SrgbToLinear` when supplying display-space colors inside a callback. Owned captures of plain values, including numeric structs, work with the existing [callable rules](../language/functions.md#function-values); resources and heap values cannot be captured. The original `Lit { surface = CustomSurface }` form remains valid. Callbacks change appearance and coverage; the package offers no custom vertex-deformation API.
+Use `Render3D.SrgbToLinear` when supplying display-space colors inside a callback. Owned captures of plain values, including numeric structs, work with the existing [callable rules](../language/functions.md#function-values); resources and heap values cannot be captured. The original `Lit { surface = CustomSurface }` form remains valid. Surface and coverage callbacks change appearance; use the separate [vertex binding](#vertex-deformation) to deform geometry.
+
+## Bloom and post-processing
+
+Bloom runs after transparent rendering and before custom effects, exposure and
+tone mapping. Its threshold is measured in scene-linear HDR light, so changing
+exposure does not change which light is extracted. It uses quarter-resolution
+targets, a soft knee and separable blur, then adds the glow to the HDR scene.
+
+| `BloomSettings` field | Default | Range |
+|---|---|---|
+| `enabled` | `false` | Enable bloom |
+| `threshold` | `1` | 0–65504 |
+| `softness` | `1` | Soft-knee half-width, 0–65504 |
+| `intensity` | `0.25` | 0–16; zero bypasses bloom |
+| `radius` | `1` | Blur spacing in quarter-resolution pixels, 0–8 |
+| `iterations` | `2` | Horizontal/vertical blur pairs, 1–4 |
+
+`PostEffect` aliases `Func<Texture, RenderTarget, bool>`. Each callback receives
+the current linear HDR source and a distinct package-owned destination. Fully
+overwrite the destination and return `true` to publish it. Return `false` to
+bypass the effect. Default callbacks bypass safely. The list order is the pass
+order, and captured numeric settings are copied when the callback is created.
+Keep outputs linear and do not tone-map or encode sRGB inside the chain.
+
+```csharp
+struct TintSettings { float3 multiplier; }
+
+frag Tint(Vertex vertex, out Color color, Texture source, TintSettings settings)
+{
+    Color sample = source.Sample(vertex.uv);
+    color = Color(float3(sample.r, sample.g, sample.b) * settings.multiplier, 1);
+}
+
+bool ApplyTint(Texture source, RenderTarget destination, float3 multiplier)
+{
+    Draw.Blit(source, destination, Tint, TintSettings { multiplier = multiplier });
+    return true;
+}
+
+[Before(Render3D.Stages.Prepare)]
+view ConfigureEffects(mut Render3D.Renderer renderer)
+{
+    renderer.bloom.enabled = true;
+    float3 multiplier = float3(1, 0.9, 0.8);
+    renderer.postEffects = [
+        (Texture source, RenderTarget destination) => ApplyTint(source, destination, multiplier)
+    ];
+}
+```
+
+For a pass that also samples game-owned singleton textures, use a staged view
+with explicit shader bindings. Between `PostPrepare` and `Present`, read
+`renderer.output`, obtain `Render3D.NextPostTarget(renderer)`, draw your pass,
+then call `Render3D.CommitPost(renderer)`. Repeated `NextPostTarget` calls before
+a commit return the same destination. Set `defaultPresent = false` for a custom
+final presentation; scene rendering and the HDR effect chain still run.
+
+Scratch targets are allocated only when used and retained across frames.
+The original scene target remains available as `renderer.hdr`. Dispose the
+renderer before recording, as described above; recorded effects also depend on
+their retained sources and destinations.
+
+::: tide-example render3d-effects Skinning, shared deformation, bloom and an HDR tint pass
+
+<<< @/examples/render3d-effects.tide
+
+:::
+
+Toggle **Pose** to compare animation with authored rest, then vary **Bend** and
+watch the geometry and its shadow move together. **Bloom** and **Glow** control
+the built-in effect; **Warm tint** inserts a custom HDR pass. Pause the example
+with **Play** to compare settings on the same pose. Drag/swipe to orbit and use
+the zoom buttons or pinch; standalone launches also support wheel zoom. Stats
+are enabled, with the collapsed toolbar clear of the stats corner.
 
 ## Lighting and current limits
 
@@ -276,4 +426,4 @@ Lighting uses a metallic-roughness BRDF with GGX specular, Smith visibility, Sch
 
 Base-map sampling currently filters display-space texels **before** decoding them to linear light. This can produce different edges and mip colors from linear-light filtering; automatic hardware sRGB sampling is not part of this slice. On devices unable to render into float targets, the engine's existing [RGBA8 fallback](../game/render-targets.md#what-a-target-holds) clips HDR values before tone mapping.
 
-The current path draws static mesh assets, which can move with their entity transforms. It has no `LightMode`, baked or area lights, cascades, skinning, environment specular, GI, probes or light baker. Model texture and metallic/roughness import is not automatic: declare and bind the maps explicitly. Height is UV parallax and transparency is sorted alpha blending, subject to the limits above.
+The current path draws static and skinned mesh assets. It has no `LightMode`, baked or area lights, cascades, environment specular, GI, probes or light baker. Model texture and metallic/roughness import is not automatic: declare and bind the maps explicitly. Height is UV parallax and transparency is sorted alpha blending, subject to the limits above.

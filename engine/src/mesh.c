@@ -792,14 +792,14 @@ static uint32_t mesh3_slot(tide_draw_list *d, const tide_list vertices, const ti
 }
 
 void tide_draw_mesh_shaded(tide_draw_list *d, const tide_shader *shader, const tide_list vertices, const tide_list indices,
-                           const void *instance, const void *uniforms, const uint32_t *textures, const uint32_t sampling)
+                           const void *instance, const void *uniforms, const uint32_t *textures, const uint64_t sampling)
 {
     tide_draw_mesh_shaded_instances(d, shader, vertices, indices, instance, 1, uniforms, textures, sampling);
 }
 
 void tide_draw_mesh_shaded_instances(tide_draw_list *d, const tide_shader *shader, const tide_list vertices,
                                      const tide_list indices, const void *instances, const uint32_t count,
-                                     const void *uniforms, const uint32_t *textures, const uint32_t sampling)
+                                     const void *uniforms, const uint32_t *textures, const uint64_t sampling)
 {
     if (count == 0 || !shader) return;
     const int32_t vertex_count = tide_list_count(vertices);

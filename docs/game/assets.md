@@ -202,8 +202,12 @@ Use `==` and `!=` to compare references of the same mesh type, including aliases
 declaration, so reloading its geometry preserves equality; two declarations
 naming identical files remain different. References have no ordering or public
 numeric identity.
+The same reference rules support `Asset<SkinnedMesh<V>>`, including transparent
+type aliases. Its `.Value` preserves the packed model's skinning palette and LOD
+paths; persistent model assignment still uses ordinary owned value semantics.
+See [Skinned meshes and animation](./animation.md) for an example.
 The [native editor](../tools/editors.md#native-scene-editor) can browse, assign
-and preview these fields; your views still choose materials and drawing.
+and preview static mesh fields; your views still choose materials and drawing.
 
 
 A model an artist made, or one a tool generated, is a mesh file: glTF (a `.glb`, or a `.gltf` with its buffers), FBX (`.fbx`, binary or ASCII) or a Wavefront `.obj`. `asset Mesh<V>` declares one as vertices of a struct of yours, `V`, which the file fills by its fields' names:

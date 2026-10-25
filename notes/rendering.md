@@ -1,5 +1,25 @@
 # The platform layer and the renderer
 
+## Twelve shader textures and recorded ABI 6 (2026-10-25)
+
+The approved material/skinning boundary completion raises the internal texture
+capacity to twelve. Backend descriptors and bound arrays follow that capacity;
+draw uploads, bindings and descriptor writes keep their actual-count loops.
+Vulkan's shared layout is twenty-five descriptors including uniforms, within
+the thirty-two push-descriptor baseline. OpenGL's scratch upload unit is twelve.
+WebGPU/HLSL transport changes are recorded in web.md and shaders.md.
+
+Recorded pipelines now contain texture_count read entries rather than eight
+fixed entries. The embed ABI is 6, with the Unity consumer changed together;
+the separate legacy draw packet version is unchanged. The packet regression
+checks each count from zero through twelve. Texture-capacity pixel fixtures
+compare slots 8..11 against independent low-slot draws for every filter/wrap
+combination and check data/depth/compare/cube reads, including device recreation.
+Native Vulkan and OpenGL pixel fixtures and the actual-count packet regression
+passed. WebGL2, Direct3D11 ANGLE and WebGPU comparisons passed, including WebGPU
+device loss and recreation. Vulkan validation layers were unavailable on this
+machine. No performance measurement is claimed.
+
 ## Independent rectangle corners (2026-10-25)
 
 SHAPE_CORNERS uses the existing 32-byte shape_extra: radius/outline/soft/sweep

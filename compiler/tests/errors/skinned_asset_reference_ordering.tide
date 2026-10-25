@@ -1,0 +1,4 @@
+// expect: operator '<' can't be used with Asset<SkinnedMesh<Vertex3>> and Asset<SkinnedMesh<Vertex3>>
+component Art { Asset<SkinnedMesh<Vertex3>> a; Asset<SkinnedMesh<Vertex3>> b; }
+system Compare(Art art) { Debug.Assert(art.a < art.b); }
+scene Main;

@@ -10,6 +10,7 @@
 #include "tide/run.h"
 #include "tide/voice.h"
 #include "tide_test.h"
+#include "gpu.h"
 #if !defined(__wasm__)
 #include "shaders_spirv.h"
 #endif
@@ -492,6 +493,30 @@ static rendered read_commands(const uint8_t *p, const uint32_t size)
         at += head[1];
     }
     return r;
+}
+
+TIDE_TEST(embed_render_pipeline_carries_actual_texture_reads)
+{
+    for (uint32_t textures = 0; textures <= TIDE_GPU_MAX_TEXTURES; textures++) {
+        tide_gpu_pipeline_desc desc = {.name = "capacity", .texture_count = textures,
+            .blend = TIDE_GPU_BLEND_ALPHA, .depth = TIDE_GPU_DEPTH_NONE};
+        for (uint32_t i = 0; i < textures; i++) desc.reads[i] = (uint8_t)(i % 5u);
+        tide_gpu_record_begin();
+        const tide_gpu_id pipeline = tide_gpu_record.pipeline(&desc);
+        uint32_t size;
+        const uint8_t *packet = tide_gpu_record_end(&size);
+        // Independent ABI 6 offsets: id/key (3), slots (7), attributes (49), uniform size/count (2).
+        const uint32_t reads_at = 61;
+        TIDE_REQUIRE(size >= 8u + (reads_at + textures + 8u) * 4u);
+        TIDE_CHECK(u32_at(packet, 0) == TIDE_EMBED_RENDER_PIPELINE);
+        TIDE_CHECK(u32_at(packet, 4) + 8u == size && u32_at(packet, 8) == pipeline);
+        TIDE_CHECK(u32_at(packet, 8u + (reads_at - 1u) * 4u) == textures);
+        for (uint32_t i = 0; i < textures; i++)
+            TIDE_CHECK(u32_at(packet, 8u + (reads_at + i) * 4u) == i % 5u);
+        TIDE_CHECK(u32_at(packet, 8u + (reads_at + textures) * 4u) == TIDE_GPU_BLEND_ALPHA);
+        const uint32_t name_at = 8u + (reads_at + textures + 8u) * 4u;
+        TIDE_CHECK(u32_at(packet, name_at - 4u) == 8 && memcmp(packet + name_at, "capacity", 8) == 0);
+    }
 }
 
 static rendered render(tide_embed *e)

@@ -9,6 +9,36 @@
 
 static tide_draw_list list;
 
+TIDE_TEST(draw_sampling_banks_keep_every_slot_independent)
+{
+    uint64_t sampling = 0;
+    for (uint32_t slot = 0; slot < TIDE_SHADER_TEXTURES; slot++) {
+        sampling |= tide_sampling_filtered(slot, (int32_t)(slot % 3u))
+                  | tide_sampling_wrapped(slot, (int32_t)((slot + 1u) % 3u));
+    }
+    for (uint32_t changed = 0; changed < TIDE_SHADER_TEXTURES; changed++) {
+        for (int32_t filter = 0; filter < 3; filter++) {
+            for (int32_t wrap = 0; wrap < 3; wrap++) {
+                const uint64_t mask = tide_sampling_filtered(changed, TIDE_FILTER_TRILINEAR);
+                const uint32_t shift = 32u * (changed / 8u) + TIDE_SAMPLING_WRAP + 2u * (changed % 8u);
+                const uint64_t cleared = sampling & ~(mask | UINT64_C(3) << shift);
+                const uint64_t edited = cleared | tide_sampling_filtered(changed, filter) | tide_sampling_wrapped(changed, wrap);
+                for (uint32_t slot = 0; slot < TIDE_SHADER_TEXTURES; slot++) {
+                    TIDE_CHECK(tide_sampling_filter(edited, slot) == (slot == changed ? (tide_filter)filter : (tide_filter)(slot % 3u)));
+                    TIDE_CHECK(tide_sampling_wrap(edited, slot) == (slot == changed ? (tide_wrap)wrap : (tide_wrap)((slot + 1u) % 3u)));
+                }
+            }
+        }
+    }
+    for (uint32_t slot = 0; slot < 8u; slot++) {
+        TIDE_CHECK(tide_sampling_filtered(slot, TIDE_FILTER_TRILINEAR) == ((UINT64_C(1) << slot) | (UINT64_C(1) << (24u + slot))));
+        TIDE_CHECK(tide_sampling_wrapped(slot, TIDE_WRAP_MIRROR) == UINT64_C(2) << (8u + 2u * slot));
+    }
+    TIDE_CHECK(tide_sampling_filtered(UINT32_MAX, 2) == 0 && tide_sampling_wrapped(12, 2) == 0);
+    TIDE_CHECK(tide_sampling_filter(UINT64_MAX, UINT32_MAX) == TIDE_FILTER_POINT);
+    TIDE_CHECK(tide_sampling_wrap(UINT64_MAX, 12) == TIDE_WRAP_CLAMP);
+}
+
 TIDE_TEST(draw_rect_areas_have_aa_and_bounded_independent_corners)
 {
     tide_draw_reset(&list);
@@ -1773,6 +1803,43 @@ TIDE_TEST(draw_shaded_instances_are_copied_and_batched)
 
     tide_draw_free(&appended);
     tide_draw_free(&d);
+    tide_scratch_reset(mark);
+}
+
+TIDE_TEST(draw_twelve_textures_keep_high_slots_through_batching_and_append)
+{
+    const uint32_t mark = tide_scratch_mark();
+    const tide_list vertices = tide_list_from(cube_corners, 4, sizeof(tide_vertex3));
+    const tide_list indices = tide_list_from(cube_indices, 6, sizeof(uint32_t));
+    const tide_float4x4 transform = tide_identity_f4x4();
+    static const tide_shader shader = {.dims = 3, .vertex_size = sizeof(tide_vertex3),
+        .instance_floats = 4, .texture_count = 12};
+    tide_draw_list source = {0}, appended = {0};
+    uint32_t textures[12];
+    uint64_t sampling = 0;
+    for (uint32_t i = 0; i < 12u; i++) {
+        uint8_t *pixels;
+        textures[i] = tide_draw_texture_slot(&source, TIDE_PIXELS_MEMORY, i + 1u, 1, 1, 1, &pixels);
+        pixels[0] = (uint8_t)(i + 1u); pixels[1] = 0; pixels[2] = 0; pixels[3] = 255;
+        sampling |= tide_sampling_filtered(i, (int32_t)(i % 3u)) | tide_sampling_wrapped(i, (int32_t)((i + 1u) % 3u));
+    }
+    tide_draw_mesh_shaded(&source, &shader, vertices, indices, &transform, NULL, textures, sampling);
+    tide_draw_mesh_shaded(&source, &shader, vertices, indices, &transform, NULL, textures, sampling);
+    TIDE_REQUIRE(source.run_count == 1 && source.runs[0].count == 2);
+    const uint64_t other = sampling ^ tide_sampling_wrapped(11, TIDE_WRAP_REPEAT);
+    tide_draw_mesh_shaded(&source, &shader, vertices, indices, &transform, NULL, textures, other);
+    TIDE_REQUIRE(source.run_count == 2);
+    tide_draw_append(&appended, &source);
+    TIDE_REQUIRE(appended.run_count == 2);
+    TIDE_CHECK(appended.runs[0].sampling == sampling && appended.runs[1].sampling == other);
+    for (uint32_t i = 0; i < 12u; i++) {
+        const uint32_t slot = appended.runs[0].textures[i];
+        TIDE_REQUIRE(slot && slot <= appended.texture_count);
+        TIDE_CHECK(appended.textures[slot - 1u].pixels[0] == i + 1u);
+    }
+    tide_draw_free(&source);
+    TIDE_CHECK(appended.textures[appended.runs[0].textures[11] - 1u].pixels[0] == 12u);
+    tide_draw_free(&appended);
     tide_scratch_reset(mark);
 }
 

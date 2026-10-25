@@ -1,5 +1,102 @@
 # Render3D package
 
+## Skinning, shared vertex deformation and HDR effects (2026-10-25)
+
+The owner requested extending this package rather than implementing another
+game pipeline. The owner approved checked Asset<SkinnedMesh<V>> references and
+an attached local render Pose? whose omitted value means authored rest. The
+compiler reference completion preserves the original pack model, typed geometry
+and LOD handles; language/asset notes record its boundaries and tests.
+
+SkinnedMesh3D aliases SkinnedMesh<MeshVertex>. SkinnedMeshRenderer has mesh,
+visible/castShadows flags and attached pose. Prepare offset 1 copies it into
+preparedPose, so all shadow/color draws use one frame snapshot. The package owns
+no animation clock/controller. Null uses the omitted-pose draw; a present
+invalid pose keeps the engine's skip-draw behavior. Main and shadow submissions
+use proven borrowed models, retaining palette reuse and automatic LOD. Static
+and skinned transparents are recorded inside one mark/sort scope. Missing skinned
+UV tangents remain missing: mapped skinned materials need authored tangents.
+Bounds/sort centers do not automatically follow animation or user deformation.
+
+Material.vertex is an optional configured Deform stage, explicitly constructed
+as Deform { vertex = callback }. Its Func<VertexInput, mut MeshVertex, void>
+runs after engine skinning, before outer/world placement. Input contains the
+pre-deformation world position, effective localToWorld matrix and the main eye,
+also during shadow casting. Normal/tangent/UV/color edits feed the existing
+material evaluation; the callback owns any normal/tangent correction needed by
+its position edits. Color projects after the hook; shadow remaps this.clip after
+the same hook. Captures are shared uniforms, avoiding new instance-attribute
+pressure. A missing binding keeps the original static no-vert/culling path.
+
+Default opaque shadows keep the prior contiguous asset/handedness/cull bulk
+submission. Custom opaque shadows prepare transforms and owned numeric callbacks
+once, then record per-caster configured stages; equal adjacent captures can
+still merge in the ordinary draw list. This deliberately keeps arbitrarily
+larger vertex captures out of per-instance attributes. Cutout and color helpers
+retain live component resource/attached-field context. No Material or query row
+is retained in the prepared opaque batches.
+
+The new stage order after Transparent is PostPrepare, Bloom, PostProcess,
+Present. BeginPost resets output from hdr.color each frame. Bloom thresholds
+scene-linear light before exposure, extracts at quarter resolution, applies a
+normalized paired Gaussian and publishes an additive HDR composite. Defaults:
+disabled, threshold/softness 1, intensity .25, radius 1, two blur pairs. Numeric
+inputs/intermediates clamp to finite half-float radiance. The original scene
+target remains intact. Existing RGBA8 fallback still clips HDR and cannot promise
+the same bloom result as float targets.
+
+PostEffect is Func<Texture, RenderTarget, bool>. Ordered callbacks receive the
+current source and a distinct package-owned destination: true publishes a fully
+overwritten image, false/default bypasses. Plain captures are construction-time
+copies. NextPostTarget/CommitPost expose the same ping-pong pair to staged views
+that need their own singleton resources. Such resource context is not implicitly
+captured by a Func. defaultPresent=false skips only the final stock blit. The
+normal presentation applies exposure/Reinhard/sRGB exactly once. No effects
+allocates no scratch and retains one presentation pass.
+
+Full-size post scratch and quarter-size bloom targets allocate lazily, with
+readiness independent of Renderer.ready for additive reloads. Window targets
+resize through the engine; every used image is rewritten. Disabling bloom before
+Prepare frees its pair; full-size scratch remains until disable/Dispose.
+Dispose still belongs before recording, never after Present.
+
+The existing provisional eight-texture implementation limit is raised to twelve
+across drawing/compiler/backends/Unity; a fully mapped skinned material uses ten.
+Sampling banks, read-kind transport, actual-count embed packets and ABI 6 are
+recorded in drawing/rendering/web/unity/runtime-ownership notes. All hosts,
+libraries and generated games must rebuild together. No new runtime function is
+introduced and no new performance result is claimed.
+
+Focused native CPU and Vulkan/OpenGL package checks pass, including original
+material/atlas regressions, pose snapshots and palette reuse, mixed transparent
+order, independent mapped/cutout pixels and HDR/kernel/effect/lifecycle oracles.
+One initial fixture used unsupported `is var`; it now explicitly unwraps Pose.
+A local-spawn fixture now checks next-frame visibility, and shadow rays avoid
+exact filtered silhouette edges; pixel tolerances remain unchanged. One isolated
+Vulkan skinning process crashed without diagnostics; its isolated retry passes.
+No cause or source correction is claimed. Full native/web debug builds pass
+with external prototype directories disabled for this engine-only task. The
+first full native run is 2,789/2,790 enabled checks passing (246.82 s); its sole
+diagnostic-fixture mismatch is corrected and passes targeted recheck. The first
+full web run is 2,685/2,687 (541.91 s): a color landmark landed on a raster edge
+on the software backends. Moving that landmark inside/outside the silhouettes,
+without changing its oracle or tolerance, passes all three web backends and both
+native backends. The existing disabled Microduck right-turn case remains.
+
+All new skinning/post pixels pass on Vulkan, OpenGL, WebGL, ANGLE D3D11 and
+WebGPU, including mapped skin palette/influence reads in high slots, captured
+deformation/cutout agreement, mixed transparency and device recreation. Added
+BloomChain cases independently verify bloom-before-callback routing at exposures
+.5 and 2 across every size/scale row. Actual skinned pack unload/reload and
+deferred captures pass on native/WASI. All 282 actual-consumer FXC /WX stage/API
+checks pass. Fresh Asset, capacity, post and pipeline source reviews are clean
+after correcting the written Bend example's Jacobian and stale API sentence.
+Old-layout post migration and Unity player execution remain untested.
+
+The interactive effects example and browser controls are recorded in
+docs-site.md. One incoming compiler/Unity overlap requires merge compatibility
+review and repeat native/web integration; those final results remain pending.
+
 ## Mapped materials and interactive docs (2026-10-25)
 
 The owner approved opaque/cutout/transparent materials, normal/ORM/emission and

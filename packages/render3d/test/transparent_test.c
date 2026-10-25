@@ -73,7 +73,8 @@ static void frame(tide_draw_list *d)
 // capture byte. Registry slots, byte offsets and batching are not appearance.
 typedef struct packet {
     uint64_t shader, mesh, destination;
-    uint32_t level, size, uniform_size, sampling, moved;
+    uint32_t level, size, uniform_size, moved;
+    uint64_t sampling;
     uint8_t blend, depth, cull;
     tide_color tint;
     tide_draw_transform transform;

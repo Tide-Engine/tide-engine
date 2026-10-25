@@ -1,5 +1,20 @@
 # Web builds
 
+## Twelve texture bindings (2026-10-25)
+
+The existing gpu_pipeline_begin bridge carries two eight-slot banks of three-bit
+read kinds, as two uint32 arguments. JavaScript decodes each bank with shifts
+below thirty-two; no BigInt or retained WASM pointer crosses the call. WebGPU's
+bound arrays hold twelve slots while layouts/bind groups use the actual count.
+The runtime fixture exercises every read kind independently in slots 8..11;
+the texture-capacity pixel fixture compares high-slot sampling against low-slot
+references and repeats after device loss. The release runtime was regenerated
+with Node 24.22.1, and all five runtime tests passed, including the independent
+high-slot bridge/layout fixture. WebGL2, Direct3D11 ANGLE and WebGPU pixel/read-kind
+checks passed; WebGPU repeated them after forced device loss and recreation.
+The WASI capture test and all 82 draw-filter tests passed. The embed target
+compiled for WASM; its packet test ran natively, as no web embed runner exists.
+
 ## Started tasks and worker controls (2026-10-25)
 
 Task registries, tracing and cached typed results use the same generated C

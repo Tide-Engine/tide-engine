@@ -97,7 +97,7 @@ namespace Tide
             public GraphicsBuffer v0, v1, v2, index;
             public Texture w0, w1, w2; // The vertices of OpenGL ES 3.0 and WebGL 2, in textures
             public int o0, o1, o2, count, instances, textures, textureCount, uniformAt, uniformSize;
-            public uint first, sampling;
+            public uint first, sampling, samplingHigh;
             public RenderTexture mipmapped; // Mipmaps
         }
 
@@ -150,8 +150,9 @@ namespace Tide
         readonly uint[] vertexOffset = new uint[3];
         uint indexBuffer;
         bool indexWide;
-        readonly uint[] sampled = new uint[8];
-        readonly uint[] sampling = new uint[8];
+        const int MaxTextures = 12;
+        readonly uint[] sampled = new uint[MaxTextures];
+        readonly uint[] sampling = new uint[MaxTextures];
         int uniformAt, uniformSize;
         int stencil;
         bool inPass, flipped;
@@ -165,6 +166,7 @@ namespace Tide
         static readonly int Flip = Shader.PropertyToID("_TideFlip"), Height = Shader.PropertyToID("_TideHeight");
         static readonly int Linear = Shader.PropertyToID("_TideLinear");
         static readonly int First = Shader.PropertyToID("_TideFirst"), Sampling = Shader.PropertyToID("_TideSampling");
+        static readonly int SamplingHigh = Shader.PropertyToID("_TideSamplingHigh");
         static readonly int Uniforms = Shader.PropertyToID("TideUniforms"), DepthMS = Shader.PropertyToID("_TideDepthMS");
         static readonly int[] Offsets = { Shader.PropertyToID("_TideOffset0"), Shader.PropertyToID("_TideOffset1"), Shader.PropertyToID("_TideOffset2") };
         static readonly int[] Vertices = { Shader.PropertyToID("_TideVertices0"), Shader.PropertyToID("_TideVertices1"), Shader.PropertyToID("_TideVertices2") };
@@ -173,6 +175,8 @@ namespace Tide
             Shader.PropertyToID("_TideTexture0"), Shader.PropertyToID("_TideTexture1"), Shader.PropertyToID("_TideTexture2"),
             Shader.PropertyToID("_TideTexture3"), Shader.PropertyToID("_TideTexture4"), Shader.PropertyToID("_TideTexture5"),
             Shader.PropertyToID("_TideTexture6"), Shader.PropertyToID("_TideTexture7"),
+            Shader.PropertyToID("_TideTexture8"), Shader.PropertyToID("_TideTexture9"),
+            Shader.PropertyToID("_TideTexture10"), Shader.PropertyToID("_TideTexture11"),
         };
 
         // Whether this GPU replays Tide's drawing: its shaders read vertices from buffers, or on OpenGL ES 3.0 and
@@ -532,7 +536,7 @@ namespace Tide
                     break;
                 }
                 case Op.Sample:
-                    if (W(0) < 8)
+                    if (W(0) < MaxTextures)
                     {
                         sampled[W(0)] = W(1);
                         sampling[W(0)] = W(2) | W(3) << 2;
@@ -827,7 +831,7 @@ namespace Tide
             for (var i = 0; i < 16; i++, at += 3) made.attributes[i] = new Vector4(W(at), W(at + 2), W(at + 1), 0); // slot, offset, format
             made.uniformSize = (int)W(at++);
             made.textureCount = (int)W(at++);
-            at += 8; // reads: the shader says how it reads each
+            at += made.textureCount; // ABI 6: one read kind per actual texture.
             made.blend = (int)W(at++);
             made.depth = (int)W(at++);
             made.cull = (int)W(at++);
@@ -965,8 +969,8 @@ namespace Tide
                 if (!buffers.TryGetValue(indexBuffer, out var ib) || !ib.indices) return;
                 c.index = IndexView(ib, indexWide);
             }
-            uint modes = 0;
-            for (var i = 0; i < pipeline.textureCount && i < 8; i++)
+            uint modes = 0, modesHigh = 0;
+            for (var i = 0; i < pipeline.textureCount && i < MaxTextures; i++)
             {
                 var mode = sampling[i];
                 Texture texture = white;
@@ -981,10 +985,12 @@ namespace Tide
                 }
                 into.textures.Add(texture);
                 into.elements.Add(element);
-                modes |= (mode & 15) << (4 * i);
+                if (i < 8) modes |= (mode & 15) << (4 * i);
+                else modesHigh |= (mode & 15) << (4 * (i - 8));
             }
             c.textureCount = into.textures.Count - c.textures;
             c.sampling = modes;
+            c.samplingHigh = modesHigh;
             into.commands.Add(c);
         }
 
@@ -1074,6 +1080,7 @@ namespace Tide
                             else cb.SetGlobalTexture(Textures[i], texture);
                         }
                         cb.SetGlobalInteger(Sampling, (int)c.sampling);
+                        cb.SetGlobalInteger(SamplingHigh, (int)c.samplingHigh);
                         if (c.uniformSize > 0) cb.SetGlobalConstantBuffer(r.uniformBuffer, Uniforms, c.uniformAt, c.uniformSize);
                         if (c.index != null) cb.DrawProcedural(c.index, Matrix4x4.identity, c.material, 0, MeshTopology.Triangles, c.count, c.instances);
                         else cb.DrawProcedural(Matrix4x4.identity, c.material, 0, MeshTopology.Triangles, c.count, c.instances);

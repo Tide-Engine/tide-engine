@@ -1,0 +1,120 @@
+// Asset<T> keeps declaration identity; Value borrows the current packed model.
+using Model = SkinnedMesh<Vertex3>;
+using Reference = Asset<Model>;
+asset Model first = "skinned/models/a.gltf";
+asset Model twin = "skinned/models/a.gltf";
+asset Model rest = "skinned/rest.gltf";
+[LOD] asset Model detailed = "assets/lod/arm.glb";
+const Reference EMPTY = default;
+const bool EMPTY_EQUAL = EMPTY == default;
+const int FOLDED = EMPTY_EQUAL ? 2 : 3;
+
+component Art { Reference model = first; }
+prefab Character { Art { model = first }; }
+singleton Probe
+{
+    Entity root;
+    Reference held = first;
+    Reference left;
+    Reference right;
+    int count;
+    int heldCount;
+    int emptyCount;
+    int clips;
+    int bones;
+    int order;
+    int calls;
+    int[FOLDED] folded;
+    bool equal;
+    bool differentNames;
+    bool defaults;
+    bool receivedEqual;
+    bool beforeEffect;
+    bool ordered;
+}
+local singleton LocalProbe
+{
+    LocalEntity root;
+    int count;
+    int lod = -1;
+    bool borrowLifetime;
+    int resolvedClips;
+    int namedClips;
+    int resolvedBones;
+    int namedBones;
+    bool sameIdentity;
+    bool distinctName;
+}
+scene Main;
+
+int Count(Reference reference) { return reference.Value.indices.count; }
+int Count(int value) { return value; }
+bool Same(Asset<SkinnedMesh<Vertex3>> a, Reference b) { return a == b; }
+Reference Ordered(mut Probe probe, int digit, Reference value)
+{
+    probe.order = probe.order * 10 + digit;
+    probe.calls++;
+    return value;
+}
+Reference Replace(mut Probe probe, Reference replacement, Reference result)
+{
+    probe.left = replacement;
+    return result;
+}
+
+event(Spawned) Begin(with Main, mut Probe probe) { probe.root = Spawn(Character); }
+system Read(mut Probe probe, World world)
+{
+    var art = world.Get<Art>(probe.root);
+    probe.count = Count(art.model);
+    probe.heldCount = Count(probe.held);
+    Reference none = default;
+    probe.emptyCount = Count(none);
+    probe.clips = probe.held.Value.animations.count;
+    probe.bones = probe.held.Value.skeleton.bones.count;
+    Reference choice = true ? first : rest;
+    List<Reference> references = [first, rest, default];
+    Debug.Assert(Count(first) == first.indices.count && Count(choice) == first.indices.count);
+    Debug.Assert(Count(references[1]) == rest.indices.count && Count(references[2]) == 0);
+    probe.equal = Same(choice, first) && choice == first && first == choice;
+    probe.differentNames = first != choice ? false : choice != twin;
+    probe.defaults = none == default && default == none && choice != default;
+    probe.receivedEqual = probe.left == probe.right;
+    probe.order = 0;
+    probe.calls = 0;
+    probe.ordered = Ordered(probe, 1, first) == Ordered(probe, 2, first);
+    probe.left = first;
+    probe.beforeEffect = probe.left == Replace(probe, rest, first);
+}
+
+view Show(Probe probe, mut LocalProbe localProbe, World world)
+{
+    if (localProbe.borrowLifetime)
+    {
+        // Unload does not clear named asset globals. Compare checked skinned
+        // operations with the named asset, without dereferencing stale typed
+        // list borrows or copying them into a new model variable.
+        localProbe.resolvedClips = probe.held.Value.animations.count;
+        localProbe.namedClips = first.animations.count;
+        localProbe.resolvedBones = probe.held.Value.skeleton.bones.count;
+        localProbe.namedBones = first.skeleton.bones.count;
+        localProbe.sameIdentity = probe.held == first;
+        localProbe.distinctName = probe.held != twin;
+        Draw.SetCamera(float3(0, 0, 0), quaternion.identity, 60);
+        Draw.SkinnedMesh(probe.held.Value, float4x4.identity);
+        Draw.SkinnedMesh(first, float4x4.Translate(float3(2, 0, 0)));
+        return;
+    }
+    if (localProbe.root == default) localProbe.root = local Spawn(Character);
+    var art = world.Get<Art>(localProbe.root);
+    localProbe.count = Count(art.model);
+    Draw.SetCamera(float3(0, 0, 0), quaternion.identity, 60);
+    var current = probe.held.Value;
+    Draw.SkinnedMesh(current, float4x4.identity);
+    Draw.SkinnedMesh(probe.held.Value, float4x4.Translate(float3(2, 0, 0)));
+    Draw.Instanced(probe.held.Value, [float4x4.Translate(float3(4, 0, 0))]);
+    Reference lod = detailed;
+    if (localProbe.lod >= 0) Draw.SetLOD(localProbe.lod);
+    Draw.SkinnedMesh(lod.Value, float4x4.Translate(float3(0, 0, 900)));
+    Draw.SetLOD();
+}

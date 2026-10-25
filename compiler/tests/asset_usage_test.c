@@ -380,6 +380,27 @@ TIDE_TEST(asset_usage_server_retains_dynamic_match_asset_reference_targets)
     done();
 }
 
+TIDE_TEST(asset_usage_server_retains_dynamic_skinned_asset_reference_targets)
+{
+    static const char text[] =
+        "asset string defaults = \"assets/rules.txt\";\n"
+        "struct V { float3 position; int extra = defaults.length; }\n"
+        "using Model = SkinnedMesh<V>;\nusing Reference = Asset<Model>;\n"
+        "asset Model first = \"skinned/models/a.gltf\";\n"
+        "asset Model second = \"skinned/rest.gltf\";\n"
+        "asset Mesh<V> staticModel = \"assets/meshes/quad.glb\";\n"
+        "asset Texture picture = \"assets/hero.png\";\n"
+        "input Controls { Reference choice; }\n"
+        "singleton State { int count; }\nscene Main;\n"
+        "system Use(Controls input, mut State state) { state.count = input.choice.Value.vertices.count; }\n";
+    program *p = checked(text);
+    TIDE_REQUIRE(p);
+    program_strip_server_assets(p);
+    TIDE_CHECK(has_asset(p, "first") && has_asset(p, "second") && has_asset(p, "defaults"));
+    TIDE_CHECK(!has_asset(p, "picture") && !has_asset(p, "staticModel"));
+    done();
+}
+
 TIDE_TEST(asset_usage_retains_instantiated_prefab_values)
 {
     static const char text[] =

@@ -1,5 +1,38 @@
 # The docs site
 
+## Render3D skinning, shared deformation and effects (2026-10-25)
+
+The owner requested extending Render3D with skinned models, a shared vertex
+hook and post-processing/bloom. The package guide/README now cover local render
+pose ownership and authored rest, optional configured Deform bindings, callback
+coordinates and normal/tangent responsibilities, bloom defaults/order and the
+HDR callback/staged-view interfaces. Existing surface bindings remain valid.
+
+The new render3d-effects example combines an authored nine-vertex/two-bone ribbon,
+local clip sampling, derivative-aware shear on static/skinned geometry, bloom
+and a custom warm HDR tint. Play freezes its own animation clock; Pose, Deform,
+Bloom and tint toggles allow comparisons. Orbit/pinch/zoom and responsive camera
+framing follow the mapped-material example. Both open and collapsed controls
+reserve 52 pixels above the bottom stats area. The source and self-contained
+glTF are part of the example; no external model download is required. All docs
+launch paths retain their existing stats defaults.
+
+Native --frames 180 --stats captures at 376x400 and 960x540 were visually checked.
+The complete exhibit and controls fit without the stats overlap found in the
+first draft. Native and web example targets build warning-free. Svelte check
+reports zero errors/warnings and the first production docs build passes. The
+written Bend snippet's initial varying-rotation normal error was corrected to
+the runnable example's analytic shear Jacobian; fresh review confirms that
+correction and the production build passes afterward. All three Render3D
+examples pass the repository's muted WebGL/WebGPU source, stats and interaction
+runner. The new regression freezes Play before exact camera/pixel comparisons
+and exercises real GUI actions for pose, deformation, bloom, tint and collapsed
+zoom. Captures were retained under build/render3d-ext-browser-* and native
+build/render3d-ext-captures. T3 preview opened/navigated but both snapshot attempts
+failed with 'Preview automation snapshot timed out after 15000ms.'; the named
+repository runner supplied browser validation. Engine compiler/Unity incoming
+work is being merged separately and does not change the example controls.
+
 ## Interactive Render3D materials and docs stats (2026-10-25)
 
 The owner requested transparency/cutout, AO/normal/height and other PBR maps,

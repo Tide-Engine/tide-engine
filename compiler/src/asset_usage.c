@@ -363,7 +363,7 @@ static void declaration(asset_usage *w, const decl *d)
     if (w->server && d->asset_ref_of) {
         for (int i = 0; i < w->prog->assets.count; i++) {
             const decl *asset = w->prog->assets.items[i];
-            if (asset->return_type.kind == TY_MESH && asset->return_type.decl == d->asset_ref_of) use_asset(w, asset);
+            if (type_asset_reference_accepts(d, asset->return_type)) use_asset(w, asset);
         }
     }
     value_type(w, d->return_type);

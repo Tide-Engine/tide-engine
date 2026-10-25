@@ -1,0 +1,8 @@
+// expect: takes Asset<SkinnedMesh<Vertex3>>
+void Keep(Asset<SkinnedMesh<Vertex3>> reference) { Debug.Assert(reference.Value.indices.count == 0); }
+view Show()
+{
+    SkinnedMesh<Vertex3> borrowed = default;
+    Keep(borrowed);
+}
+scene Main;

@@ -2836,6 +2836,28 @@ TIDE_TEST(lsp_asset_reference_members)
                              "system Read(Art art) { var model = art.model.Value.$; }\n"), "indices"));
 }
 
+TIDE_TEST(lsp_skinned_asset_reference_aliases_and_dynamic_value_members)
+{
+    start();
+    open_document("using Model = SkinnedMesh<Vertex3>;\nusing Reference = Asset<Model>;\n"
+                  "component Art { Reference model; }\nscene Main;\n"
+                  "system Read(Art art) { Debug.Assert(art.model.Va$lue.vertices.count == 0); }\n"
+                  "event(Spawned) Begin(with Main) { Spawn(Art); }\n");
+    TIDE_CHECK(has(sent[0], "\"diagnostics\":[]"));
+    const char *members = complete("using Model = SkinnedMesh<Vertex3>;\nusing Reference = Asset<Model>;\n"
+                                   "component Art { Reference model; }\nscene Main;\n"
+                                   "system Read(Art art) { var model = art.model.$; }\n");
+    TIDE_CHECK(offers(members, "Value") && has(members, "SkinnedMesh<Vertex3>"));
+    TIDE_CHECK(!offers(members, "id") && !offers(members, "animations"));
+    members = complete("component Art { Asset<SkinnedMesh<Vertex3>> model; }\nscene Main;\n"
+                       "system Read(Art art) { var model = art.model.Value.$; }\n");
+    TIDE_CHECK(offers(members, "vertices") && offers(members, "indices") && offers(members, "defaultPose"));
+    TIDE_CHECK(offers(members, "animations") && offers(members, "skeleton") && !offers(members, "data"));
+    members = complete("component Art { Asset<SkinnedMesh<Vertex3>> model; }\nscene Main;\n"
+                       "system Read(Art art) { var clips = art.model.Value.animations.$; }\n");
+    TIDE_CHECK(offers(members, "count") && offers(members, "TryGetByName") && offers(members, "TryGetAt"));
+}
+
 TIDE_TEST(lsp_byte_scalar_hover_and_completion)
 {
     start();

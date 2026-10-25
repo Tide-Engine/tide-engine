@@ -6,6 +6,25 @@ description: "Import skinned glTF or FBX models, sample and blend deterministic 
 
 A `SkinnedMesh<V>` holds a model's geometry, skeleton and animation clips. A `Pose` holds one character's current bone transforms. Several characters can share the same model while playing different animations.
 
+Keep a named model selection in a component with `Asset<SkinnedMesh<V>>`:
+
+```csharp
+asset SkinnedMesh<Vertex3> hero = "art/hero.glb";
+component CharacterArt { Asset<SkinnedMesh<Vertex3>> model = hero; }
+
+view DrawCharacter(CharacterArt art)
+{
+    Draw.SkinnedMesh(art.model.Value, float4x4.identity);
+}
+```
+
+`.Value` resolves the current packed model, preserving imported LODs and shared
+skin palettes. It exposes the declared type's dynamic catalogs; use the original
+asset for its inferred clip and bone names. A borrowed or decoded model value
+cannot supply declaration identity. References compare by named asset identity
+with `==` and `!=`; empty or unknown references resolve to an empty model.
+Storing the resolved model itself uses ordinary owned value semantics.
+
 ## Import and draw
 
 Import a glTF 2.0 `.glb` or `.gltf`, or a binary or ASCII `.fbx`, with your [vertex struct](./assets.md#meshes). A model needs no animation clips to draw: leaving out the pose draws its authored rest pose.

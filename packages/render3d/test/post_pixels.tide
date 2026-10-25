@@ -1,0 +1,149 @@
+using Render3D;
+
+scene Main;
+singleton PostPixelSimulation { int marker = 113; }
+
+enum PostPixelCase
+{
+    Plain, ConstantBloom, Chain, DefaultBypass, FalseBypass,
+    Kernel, KernelEdge, KernelConstant, Impulse, ImpulseEdge, BloomChain
+}
+
+local singleton PostPixelProbe
+{
+    PostPixelCase scenario;
+    bool disabled;
+    bool suppressPresentation;
+    bool releaseScratch;
+    float exposure = 1;
+    int2 sourcePixels;
+    int2 quarterPixels;
+    int2 impulse;
+    float3 sceneColor = float3(4, 2, 1);
+    float3 seedColor = float3(1, 0.5, 0.25);
+    float diagnosticGain = 16;
+    Grid2<Color> white = Grid2(1, 1);
+}
+
+bool KernelCase(PostPixelCase scenario)
+{
+    return scenario == PostPixelCase.Kernel || scenario == PostPixelCase.KernelEdge
+        || scenario == PostPixelCase.KernelConstant;
+}
+
+struct PixelPattern
+{
+    int2 size;
+    int2 impulse;
+    bool point;
+    float3 light;
+}
+
+// Shader-written HDR is deliberate: uploading a color grid or clearing a
+// target would clip the fixture's values before the package could process it.
+frag PostPixelPattern(Vertex vertex, out Color color, Texture source, PixelPattern pattern)
+{
+    int2 pixel = int2(Math.Floor(vertex.uv * float2(pattern.size)));
+    float3 white = float3(source.Sample(float2(0.5)).r);
+    float3 light = pattern.point && (pixel.x != pattern.impulse.x || pixel.y != pattern.impulse.y)
+        ? float3(0) : pattern.light;
+    color = Color(light * white, 1);
+}
+
+struct PixelArithmetic { float gain = 1; float bias; }
+
+frag PostPixelArithmetic(Vertex vertex, out Color color, Texture source, PixelArithmetic values)
+{
+    Color sample = source.Sample(vertex.uv, Filter.Bilinear, Wrap.Clamp);
+    color = Color(float3(sample.r, sample.g, sample.b) * values.gain + float3(values.bias), 1);
+}
+
+bool PixelScale(Texture source, RenderTarget destination, float gain)
+{
+    Draw.Blit(source, destination, PostPixelArithmetic, PixelArithmetic { gain = gain });
+    return true;
+}
+
+bool PixelAdd(Texture source, RenderTarget destination)
+{
+    Draw.Blit(source, destination, PostPixelArithmetic, PixelArithmetic { bias = 3 });
+    return true;
+}
+
+bool PixelBypass(Texture source, RenderTarget destination)
+{
+    _ = source;
+    _ = destination;
+    return false;
+}
+
+[Before(Render3D.Stages.Prepare)]
+view ConfigurePostPixels(mut Renderer renderer, mut PostPixelProbe probe)
+{
+    if (probe.releaseScratch) DisposePost(renderer);
+    probe.white[int2(0)] = Color.white;
+    renderer.enabled = !probe.disabled;
+    renderer.shadows = false;
+    renderer.exposure = probe.exposure;
+    renderer.defaultPresent = !KernelCase(probe.scenario) && !probe.suppressPresentation;
+    renderer.bloom = BloomSettings {
+        enabled = probe.scenario == PostPixelCase.ConstantBloom || KernelCase(probe.scenario)
+            || probe.scenario == PostPixelCase.Impulse || probe.scenario == PostPixelCase.ImpulseEdge
+            || probe.scenario == PostPixelCase.BloomChain,
+        radius = KernelCase(probe.scenario) ? 0 : 1,
+        // A stronger new-case witness keeps premature exposure errors outside
+        // the unchanged pixel tolerance; existing cases retain default .25.
+        intensity = probe.scenario == PostPixelCase.BloomChain ? 1 : 0.25,
+        iterations = probe.scenario == PostPixelCase.ConstantBloom || probe.scenario == PostPixelCase.BloomChain ? 2 : 1
+    };
+    renderer.postEffects = [];
+    if (probe.scenario == PostPixelCase.Chain || probe.scenario == PostPixelCase.BloomChain)
+    {
+        mut float gain = 2;
+        PostEffect captured = (Texture source, RenderTarget destination) => PixelScale(source, destination, gain);
+        gain = 99;
+        renderer.postEffects = [captured, default, PixelBypass, PixelAdd,
+            (Texture source, RenderTarget destination) => PixelScale(source, destination, 0.5)];
+    }
+    if (probe.scenario == PostPixelCase.DefaultBypass) renderer.postEffects = [default, PixelAdd];
+    if (probe.scenario == PostPixelCase.FalseBypass) renderer.postEffects = [PixelBypass, PixelAdd];
+}
+
+[Stage(Render3D.Stages.PostPrepare, -1)]
+view FillPostScene(Renderer renderer, PostPixelProbe probe)
+{
+    if (!renderer.enabled || !renderer.ready) return;
+    Draw.Blit(probe.white, renderer.hdr, PostPixelPattern, PixelPattern {
+        size = probe.sourcePixels, impulse = probe.impulse, light = probe.sceneColor,
+        point = probe.scenario == PostPixelCase.Impulse || probe.scenario == PostPixelCase.ImpulseEdge
+    });
+}
+
+// Isolate the real package blur shader from extraction and presentation. The
+// normal Bloom pass allocated these package-owned targets earlier this frame.
+[Stage(Render3D.Stages.PostProcess, 1)]
+view IsolatePostBlur(Renderer renderer, PostPixelProbe probe)
+{
+    if (!renderer.enabled || !renderer.ready || !KernelCase(probe.scenario)) return;
+    Draw.Blit(probe.white, renderer.bloomA, PostPixelPattern, PixelPattern {
+        size = probe.quarterPixels, impulse = probe.impulse, light = probe.seedColor,
+        point = probe.scenario != PostPixelCase.KernelConstant
+    });
+    Draw.Blit(renderer.bloomA.color, renderer.bloomB, BlurBloom, BloomStep { direction = float2(1, 0) });
+    Draw.Blit(renderer.bloomB.color, renderer.bloomA, BlurBloom, BloomStep { direction = float2(0, 1) });
+}
+
+struct PixelRead { float gain; }
+
+frag PostReadLinear(Vertex vertex, out Color color, Texture source, PixelRead values)
+{
+    Color sample = source.Sample(vertex.uv, Filter.Point, Wrap.Clamp);
+    color = Color(float3(sample.r, sample.g, sample.b) * values.gain, 1);
+}
+
+[Stage(Render3D.Stages.Present, 1)]
+view ShowPostBlur(Renderer renderer, PostPixelProbe probe)
+{
+    if (!renderer.enabled || !renderer.ready || !KernelCase(probe.scenario) || probe.suppressPresentation) return;
+    Draw.Blit(renderer.bloomA.color, Draw.window, PostReadLinear, PixelRead { gain = probe.diagnosticGain });
+}

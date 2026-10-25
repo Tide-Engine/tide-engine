@@ -1,5 +1,18 @@
 # No Tide code can corrupt memory
 
+## Twelve-slot sampling and capture (2026-10-25)
+
+Run sampling uses two uint32-layout banks in a uint64_t. Existing helpers check
+the twelve-slot bound before shifts; invalid indices return nearest/clamp/zero
+as appropriate. Texture references still carry four bits independently of the
+run encoding. Capture and append bound the active texture prefix, zero unused
+run storage and retain owned pixels as before. WebGPU transfers read kinds in
+two uint32 banks with bounded C/JS shifts. No new game pointer or simulation
+state is introduced. Independent-slot, owned append and zero-through-twelve
+packet regressions passed natively. Draw and capture regressions also passed
+under WASI. The Node bridge/layout fixture and WebGL2/Direct3D11/WebGPU pixel
+checks passed, including device recreation.
+
 ## Scroll offsets and bounded field editing (2026-10-25)
 
 A generated Scroll never keeps a list/grid/array element address across its

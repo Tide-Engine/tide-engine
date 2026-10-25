@@ -1,7 +1,7 @@
 // Forward PBR. Configure before Prepare and draw HUDs after Present.
 namespace Render3D;
 
-enum Stages { Prepare, Lights, Shadows, Color, Opaque, Transparent, Present }
+enum Stages { Prepare, Lights, Shadows, Color, Opaque, Transparent, PostPrepare, Bloom, PostProcess, Present }
 
 struct MeshVertex
 {
@@ -13,6 +13,7 @@ struct MeshVertex
 }
 
 using Mesh3D = Mesh<MeshVertex>;
+using SkinnedMesh3D = SkinnedMesh<MeshVertex>;
 
 struct Camera
 {
@@ -62,6 +63,16 @@ component MeshRenderer
     bool castShadows = true;
 }
 
+component SkinnedMeshRenderer
+{
+    Asset<SkinnedMesh3D> mesh;
+    bool visible = true;
+    bool castShadows = true;
+    local Pose? pose;
+    // Frame snapshot: configure pose before Stages.Prepare.
+    local Pose? preparedPose;
+}
+
 component Material
 {
     SurfaceMode mode;
@@ -85,6 +96,7 @@ component Material
     local Func<SurfaceInput, mut float2, void> uv = Render3D.StandardUV;
     local Func<SurfaceInput, mut Coverage, void> coverage = Render3D.StandardCoverage;
     local Lit shader = Lit { surface = Render3D.StandardSurface };
+    local Deform? vertex;
 }
 
 enum LightKind { Directional, Point, Spot }
@@ -119,6 +131,9 @@ local singleton Renderer
     Camera camera;
     Color background = Color(0.06, 0.08, 0.12);
     float exposure = 1;
+    bool defaultPresent = true;
+    BloomSettings bloom;
+    List<PostEffect> postEffects;
     float3 ambientIrradiance;
     int maxLights = 32;
     bool shadows = true;
@@ -143,10 +158,23 @@ local singleton Renderer
     int droppedLights;
     int unshadowedLights;
     bool ready;
+
+    // Retained scratch is independent of ready for additive hot reloads.
+    Texture output;
+    RenderTarget postA;
+    RenderTarget postB;
+    bool postReady;
+    int postSourceSlot;
+    int postPendingSlot;
+    RenderTarget bloomA;
+    RenderTarget bloomB;
+    Texture bloomImage;
+    bool bloomReady;
 }
 
 void Dispose(mut Renderer renderer)
 {
+    DisposePost(renderer);
     renderer.hdr.Dispose();
     renderer.shadowMap.Dispose();
     renderer.hdr = default;
@@ -174,6 +202,7 @@ void ResetTarget(RenderTarget target)
 [Stage(Stages.Prepare)]
 view Prepare(mut Renderer renderer)
 {
+    PreparePostResources(renderer);
     if (!renderer.enabled)
     {
         if (renderer.ready) Dispose(renderer);
@@ -193,6 +222,13 @@ view Prepare(mut Renderer renderer)
     renderer.droppedLights = 0;
     renderer.unshadowedLights = 0;
     ResetTarget(renderer.shadowMap);
+}
+
+[Stage(Stages.Prepare, 1)]
+view PreparePose(mut SkinnedMeshRenderer mesh, Renderer renderer)
+{
+    if (renderer.enabled && mesh.visible) mesh.preparedPose = mesh.pose;
+    else mesh.preparedPose = null;
 }
 
 float3 LightDirection(float4x4 transform, float3 direction)
@@ -382,6 +418,9 @@ struct ShadowBatch
     int count;
     float4x4 first;
     List<float4x4> transforms;
+    bool deformed;
+    Func<VertexInput, mut MeshVertex, void> firstVertex;
+    List<ShadowInstance> instances;
 }
 
 bool Mirrors(float4x4 matrix)
@@ -395,9 +434,7 @@ bool Mirrors(float4x4 matrix)
 vert AtlasVertex(mut MeshVertex vertex, out float4 clip, ShadowTile tile)
 {
     float4 raw = this.clip;
-    clip = float4(raw.xy * tile.uvRect.zw +
-                  float2(2 * tile.uvRect.x + tile.uvRect.z - 1,
-                         1 - 2 * tile.uvRect.y - tile.uvRect.w) * raw.w, raw.z, raw.w);
+    clip = AtlasClip(raw, tile.uvRect);
 }
 
 [Stage(Stages.Shadows)]
@@ -423,9 +460,10 @@ view Cast(Renderer renderer, World world, query (MeshRenderer mesh, Material mat
             continue;
         }
         bool mirrored = Mirrors(transform);
+        bool deformed = caster.material.vertex is Deform;
         if (current.count > 0 &&
             (current.mesh != caster.mesh.mesh || current.mirrored != mirrored ||
-             current.doubleSided != caster.material.doubleSided))
+             current.doubleSided != caster.material.doubleSided || current.deformed != deformed))
         {
             batches.Add(current);
             current = default;
@@ -433,11 +471,27 @@ view Cast(Renderer renderer, World world, query (MeshRenderer mesh, Material mat
         current.mesh = caster.mesh.mesh;
         current.mirrored = mirrored;
         current.doubleSided = caster.material.doubleSided;
-        if (current.count == 0) current.first = transform;
+        current.deformed = deformed;
+        mut Func<VertexInput, mut MeshVertex, void> hook = StandardVertex;
+        if (caster.material.vertex is Deform binding) hook = binding.vertex;
+        if (current.count == 0)
+        {
+            current.first = transform;
+            current.firstVertex = hook;
+        }
         else
         {
-            if (current.count == 1) current.transforms.Add(current.first);
-            current.transforms.Add(transform);
+            if (deformed)
+            {
+                if (current.count == 1)
+                    current.instances.Add(ShadowInstance { transform = current.first, vertex = current.firstVertex });
+                current.instances.Add(ShadowInstance { transform = transform, vertex = hook });
+            }
+            else
+            {
+                if (current.count == 1) current.transforms.Add(current.first);
+                current.transforms.Add(transform);
+            }
         }
         current.count++;
     }
@@ -455,7 +509,23 @@ view Cast(Renderer renderer, World world, query (MeshRenderer mesh, Material mat
         for (var i = 0; i < batches.count; i++)
         {
             renderer.shadowMap.SetCull(batches[i].doubleSided ? Cull.None : Cull.Back);
-            if (batches[i].count == 1)
+            if (batches[i].deformed)
+            {
+                if (batches[i].count == 1)
+                    renderer.shadowMap.Mesh(batches[i].mesh.Value, batches[i].first,
+                        DeformShadow { deform = batches[i].firstVertex }, ShadowTile { uvRect = shadow.uvRect });
+                else
+                {
+                    // Keep callback captures in shared uniforms, as in the
+                    // color pass. Their size does not consume vertex attributes.
+                    // Equal adjacent captures still batch in the draw list.
+                    for (var item = 0; item < batches[i].instances.count; item++)
+                        renderer.shadowMap.Mesh(batches[i].mesh.Value, batches[i].instances[item].transform,
+                            DeformShadow { deform = batches[i].instances[item].vertex },
+                            ShadowTile { uvRect = shadow.uvRect });
+                }
+            }
+            else if (batches[i].count == 1)
                 renderer.shadowMap.Mesh(batches[i].mesh.Value, batches[i].first,
                                         AtlasVertex, ShadowTile { uvRect = shadow.uvRect });
             else
@@ -492,8 +562,74 @@ MaterialMaps Maps(Material material, float4x4 transform)
 void CastMasked(Renderer renderer, MeshRenderer mesh, Material material, float4x4 transform, float4 rect)
 {
     renderer.shadowMap.SetCull(material.doubleSided ? Cull.None : Cull.Back);
-    renderer.shadowMap.Mesh(mesh.mesh.Value, transform, AtlasVertex, ShadowCutout,
-                           ShadowTile { uvRect = rect, maps = Maps(material, transform) });
+    if (material.vertex is Deform binding)
+        renderer.shadowMap.Mesh(mesh.mesh.Value, transform, DeformShadow { deform = binding.vertex }, ShadowCutout,
+                               ShadowTile { uvRect = rect, maps = Maps(material, transform) });
+    else
+        renderer.shadowMap.Mesh(mesh.mesh.Value, transform, AtlasVertex, ShadowCutout,
+                               ShadowTile { uvRect = rect, maps = Maps(material, transform) });
+}
+
+Func<VertexInput, mut MeshVertex, void> VertexHook(Material material)
+{
+    if (material.vertex is Deform binding) return binding.vertex;
+    return StandardVertex;
+}
+
+[Stage(Stages.Shadows)]
+view CastSkinned(Renderer renderer, World world,
+                 query (SkinnedMeshRenderer mesh, Material material) casters)
+{
+    if (!renderer.enabled || !renderer.ready || renderer.shadowViews.count == 0) return;
+    // Transform preparation is independent of the shadow camera. Retain only
+    // numeric values; material resources still come from the live query row.
+    mut List<float4x4> transforms = [];
+    foreach (var caster in casters)
+    {
+        if (!caster.mesh.visible || !caster.mesh.castShadows || caster.material.mode == SurfaceMode.Transparent) continue;
+        transforms.Add(world.LocalToWorld(caster.entity));
+    }
+    if (transforms.count == 0) return;
+    foreach (var shadow in renderer.shadowViews)
+    {
+        renderer.shadowMap.SetCamera(shadow.camera, shadow.projection);
+        renderer.shadowMap.Screen()
+        {
+            renderer.shadowMap.SetClip(Rect(shadow.uvRect.x * renderer.atlasSize, shadow.uvRect.y * renderer.atlasSize,
+                shadow.uvRect.z * renderer.atlasSize, shadow.uvRect.w * renderer.atlasSize));
+        }
+        mut int index = 0;
+        foreach (var caster in casters)
+        {
+            if (!caster.mesh.visible || !caster.mesh.castShadows || caster.material.mode == SurfaceMode.Transparent) continue;
+            CastSkinnedMaterial(renderer, caster.mesh, caster.material, transforms[index], shadow.uvRect);
+            index++;
+        }
+    }
+    renderer.shadowMap.SetCull();
+    renderer.shadowMap.SetClip();
+}
+
+void CastSkinnedMaterial(Renderer renderer, SkinnedMeshRenderer mesh, Material material,
+                         float4x4 transform, float4 rect)
+{
+    renderer.shadowMap.SetCull(material.doubleSided ? Cull.None : Cull.Back);
+    var vertex = DeformShadow { deform = VertexHook(material) };
+    var tile = ShadowTile { uvRect = rect, maps = Maps(material, transform) };
+    if (mesh.preparedPose is Pose pose)
+    {
+        if (material.mode == SurfaceMode.Cutout)
+            renderer.shadowMap.SkinnedMesh(mesh.mesh.Value, transform, pose, vertex, ShadowCutout, tile);
+        else
+            renderer.shadowMap.SkinnedMesh(mesh.mesh.Value, transform, pose, vertex, tile);
+    }
+    else
+    {
+        if (material.mode == SurfaceMode.Cutout)
+            renderer.shadowMap.SkinnedMesh(mesh.mesh.Value, transform, vertex, ShadowCutout, tile);
+        else
+            renderer.shadowMap.SkinnedMesh(mesh.mesh.Value, transform, vertex, tile);
+    }
 }
 
 [Stage(Stages.Color)]
@@ -550,7 +686,29 @@ void DrawMaterial(Renderer renderer, MeshRenderer mesh, Material material, float
 {
     renderer.hdr.Cull(material.doubleSided ? Cull.None : Cull.Back)
     {
-        renderer.hdr.Mesh(mesh.mesh.Value, transform, material.shader, Maps(material, transform));
+        if (material.vertex is Deform binding)
+            renderer.hdr.Mesh(mesh.mesh.Value, transform, binding, material.shader, Maps(material, transform));
+        else
+            renderer.hdr.Mesh(mesh.mesh.Value, transform, material.shader, Maps(material, transform));
+    }
+}
+
+[Stage(Stages.Opaque)]
+view DrawSkinnedMesh(SkinnedMeshRenderer mesh, Material material, Renderer renderer, World world)
+{
+    if (!renderer.enabled || !renderer.ready || !mesh.visible || material.mode == SurfaceMode.Transparent) return;
+    DrawSkinnedMaterial(renderer, mesh, material, world.LocalToWorld(this));
+}
+
+void DrawSkinnedMaterial(Renderer renderer, SkinnedMeshRenderer mesh, Material material, float4x4 transform)
+{
+    var vertex = Deform { vertex = VertexHook(material) };
+    renderer.hdr.Cull(material.doubleSided ? Cull.None : Cull.Back)
+    {
+        if (mesh.preparedPose is Pose pose)
+            renderer.hdr.SkinnedMesh(mesh.mesh.Value, transform, pose, vertex, material.shader, Maps(material, transform));
+        else
+            renderer.hdr.SkinnedMesh(mesh.mesh.Value, transform, vertex, material.shader, Maps(material, transform));
     }
 }
 
@@ -560,7 +718,8 @@ extern int TransparentMark(DrawList list);
 extern void SortTransparent(DrawList list, int first, float3 eye, float3 forward);
 
 [Stage(Stages.Transparent)]
-view DrawTransparent(Renderer renderer, World world, query (MeshRenderer mesh, Material material) meshes)
+view DrawTransparent(Renderer renderer, World world, query (MeshRenderer mesh, Material material) meshes,
+                     query (SkinnedMeshRenderer mesh, Material material) skins)
 {
     if (!renderer.enabled || !renderer.ready) return;
     mut int first = -1;
@@ -572,6 +731,12 @@ view DrawTransparent(Renderer renderer, World world, query (MeshRenderer mesh, M
         if (first < 0) first = TransparentMark(Draw.list);
         DrawMaterial(renderer, object.mesh, object.material, world.LocalToWorld(object.entity));
     }
+    foreach (var object in skins)
+    {
+        if (!object.mesh.visible || object.material.mode != SurfaceMode.Transparent) continue;
+        if (first < 0) first = TransparentMark(Draw.list);
+        DrawSkinnedMaterial(renderer, object.mesh, object.material, world.LocalToWorld(object.entity));
+    }
     renderer.hdr.SetDepth();
     renderer.hdr.SetBlend(Blend.Replace);
     if (first >= 0)
@@ -580,6 +745,24 @@ view DrawTransparent(Renderer renderer, World world, query (MeshRenderer mesh, M
 }
 
 struct Presentation { float exposure = 1; }
+
+[Stage(Stages.PostPrepare)]
+view PreparePost(mut Renderer renderer)
+{
+    BeginPost(renderer);
+}
+
+[Stage(Stages.Bloom)]
+view Bloom(mut Renderer renderer)
+{
+    ApplyBloom(renderer);
+}
+
+[Stage(Stages.PostProcess)]
+view PostProcess(mut Renderer renderer)
+{
+    ApplyPostEffects(renderer);
+}
 
 frag TonemapScene(Vertex vertex, out Color color, Texture source, Presentation settings)
 {
@@ -591,6 +774,6 @@ frag TonemapScene(Vertex vertex, out Color color, Texture source, Presentation s
 [Stage(Stages.Present)]
 view Present(Renderer renderer)
 {
-    if (!renderer.enabled || !renderer.ready) return;
-    Draw.Blit(renderer.hdr.color, Draw.window, TonemapScene, Presentation { exposure = renderer.exposure });
+    if (!renderer.enabled || !renderer.ready || !renderer.defaultPresent) return;
+    Draw.Blit(renderer.output, Draw.window, TonemapScene, Presentation { exposure = renderer.exposure });
 }

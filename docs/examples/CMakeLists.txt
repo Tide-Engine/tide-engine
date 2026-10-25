@@ -9,6 +9,7 @@ set(TIDE_DOC_PACKAGE_physics-2d box2d)
 set(TIDE_DOC_PACKAGE_physics-3d box3d)
 set(TIDE_DOC_PACKAGE_render3d render3d)
 set(TIDE_DOC_PACKAGE_render3d-materials render3d)
+set(TIDE_DOC_PACKAGE_render3d-effects render3d)
 
 file(GLOB TIDE_DOC_SOURCES CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.tide")
 add_custom_target(docs_examples)

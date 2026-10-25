@@ -3,4 +3,6 @@ singleton Probe { int count = -1; }
 system Empty(mut Probe probe) {
     Asset<Mesh<Vertex3>> model = default;
     probe.count = model.Value.indices.count;
+    Asset<SkinnedMesh<Vertex3>> skinned = default;
+    probe.count += skinned.Value.indices.count + skinned.Value.animations.count;
 }

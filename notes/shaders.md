@@ -1,5 +1,25 @@
 # Code the GPU runs: frags and verts
 
+## Twelve texture bindings (2026-10-25)
+
+The approved Render3D skinning extension needs eight material/scene bindings
+plus the existing palette and influence textures. The provisional compiler
+capacity is now twelve, without changing vertex/varying/uniform limits or
+resource specialization. Sampling emission keeps slots 0..7's original 32-bit
+bank and puts slots 8..11 in a second bank of a uint64_t. Generated texture
+arrays contain the shader's actual count. HLSL accepts twelve texture/sampler
+pairs and reads the high slots from _TideSamplingHigh; low-slot expressions
+remain unchanged. No new language form or runtime function is introduced.
+
+texture_capacity adds twelve-binding and ten-binding skinned consumers, exact
+high-slot capture checks, a GLSL/WGSL golden and HLSL/SPIR-V coverage. The limit
+diagnostic now rejects thirteen. Backend pixel and bridge fixtures cover high
+sampling/read kinds. Native validation passed: exact golden, thirteen-binding
+diagnostic, generated-C capture tests, strict FXC HLSL and Vulkan/OpenGL pixels.
+The same golden, diagnostic and capture tests passed in the web configuration,
+with WebGL2, Direct3D11 ANGLE and WebGPU pixels. SPIR-V validation was unavailable
+in this configuration.
+
 ## Raw Texture field specialization (2026-10-25)
 
 The owner's Raw Texture field completion keeps the role on the resolved field,

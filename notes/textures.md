@@ -1,5 +1,16 @@
 # Textures and how they are sampled
 
+## Twelve shader slots (2026-10-25)
+
+The internal draw capacity is twelve. Individual Texture references retain
+their existing four sampling bits, Raw role and ownership. A run's sampling
+value is uint64_t: slots 0..7 retain their original low bank and slots 8..11 use
+the same layout in the high bank. Existing filters, wraps, mip preparation and
+binding identity remain unchanged. The coordinated drawing/backend/Unity ABI
+and high-slot validation are recorded in drawing.md and rendering.md. Native
+Vulkan/OpenGL, WebGL2, Direct3D11 ANGLE and WebGPU comparisons passed for all
+filter/wrap combinations in slots 8..11, including WebGPU device recreation.
+
 ## Raw Texture fields (2026-10-25)
 
 The owner approved extending [Raw] to Texture fields using the existing raw-grid

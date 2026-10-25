@@ -600,7 +600,7 @@ typedef struct decl {
     int array_length;      // ...and how many
     int long_arrays;       // A struct: whether it holds an array of more than 4,096 elements (0 not worked out, 1 no, 2 yes: check.c, holds_long_array)
     skinned_kind skin_kind;
-    struct decl *asset_ref_of; // Asset<Mesh<V>>: persistent named identity, resolved to borrowed mesh on .Value
+    struct decl *asset_ref_of; // Asset<T>: named static/skinned model identity, resolved without ownership on .Value
     bool task_handle; // Task<T>/LocalTask<T>: shared operation identity, not an owned result
     bool task_local;
     type task_value; // The complete result, including optional/failure wrapping
@@ -1083,7 +1083,7 @@ struct expr {
     decl *type_alias;   // The authored alias, separate from its canonical type declaration.
     decl *constant;     // BIND_CONST, on an E_NAME or E_MEMBER
     bool asset_reference; // BIND_ASSET converted to its checked persistent reference
-    bool asset_ref_value; // .Value on an Asset<Mesh<V>>
+    bool asset_ref_value; // .Value on a checked static/skinned model Asset<T>
 
     // E_MEMBER, E_METHOD
     expr *object;

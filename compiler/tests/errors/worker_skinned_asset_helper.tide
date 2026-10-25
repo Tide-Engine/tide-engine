@@ -1,0 +1,8 @@
+// expect: can't read live assets; capture their data before starting the worker
+int Count()
+{
+    Asset<SkinnedMesh<Vertex3>> reference = default;
+    return reference.Value.vertices.count;
+}
+local worker int Build() { return Count(); }
+scene Main;

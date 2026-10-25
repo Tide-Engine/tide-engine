@@ -260,8 +260,9 @@ static tide_gpu_id record_pipeline(const tide_gpu_pipeline_desc *desc)
                        : desc->wgsl ? hash(desc->wgsl, strlen(desc->wgsl)) : 0u;
     const char *name = desc->name ? desc->name : "";
     const size_t name_size = strlen(name);
+    const uint32_t textures = desc->texture_count < TIDE_GPU_MAX_TEXTURES ? desc->texture_count : TIDE_GPU_MAX_TEXTURES;
     op(TIDE_EMBED_RENDER_PIPELINE, 4u * (3u + 1u + 2u * TIDE_GPU_MAX_SLOTS + 1u + 3u * TIDE_GPU_MAX_ATTRIBUTES + 2u
-                                         + TIDE_GPU_MAX_TEXTURES + 7u + 1u) + name_size);
+                                         + textures + 7u + 1u) + name_size);
     u32(id);
     u32((uint32_t)key);
     u32((uint32_t)(key >> 32));
@@ -278,8 +279,8 @@ static tide_gpu_id record_pipeline(const tide_gpu_pipeline_desc *desc)
         u32(used ? desc->attributes[i].offset : 0u);
     }
     u32(desc->uniform_size);
-    u32(desc->texture_count);
-    for (uint32_t i = 0; i < TIDE_GPU_MAX_TEXTURES; i++) u32(i < desc->texture_count ? desc->reads[i] : 0u);
+    u32(textures);
+    for (uint32_t i = 0; i < textures; i++) u32(desc->reads[i]);
     u32((uint32_t)desc->blend);
     u32((uint32_t)desc->depth);
     u32((uint32_t)desc->cull);

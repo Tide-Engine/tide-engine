@@ -136,7 +136,7 @@ visual/simulation text edits. Full contracts/tests: managed-hosting.md.
 Dedicated server packs (2026-10-15): closed server builds keep simulation asset
 dependencies and omit client-only assets after computing the client's unchanged
 compatibility identity. C projects retain all assets unless explicitly opting in.
-Dynamic match Asset<Mesh<V>> types keep every matching declaration and its vertex
+Dynamic match Asset<Mesh<V>> and Asset<SkinnedMesh<V>> types keep every matching declaration and its vertex
 defaults. Different pack digests use self-contained network transfer. Source
 validation still processes all assets. Contracts and tests: dedicated-servers.md.
 
@@ -156,7 +156,7 @@ rewrites the ASCII triangle's first UV index past the array and checks the
 corner reads the last UV. The cabin itself (a paid asset, not in this
 repository) was checked through the prototype's build.
 
-## Persistent static model references (2026-10-12)
+## Persistent model references (2026-10-12; skinned extension 2026-10-25)
 
 Approved Asset<Mesh<V>> fields store a checked singular asset declaration's
 identity, separate from borrowed Mesh handles. Value resolves its current global;
@@ -167,6 +167,23 @@ existing static importer/cache for browsing and nested scene previews; copied
 geometry survives front-end arena replacement (notes/editors.md). Imported colors
 and fixed preview lighting are visual only; custom vertex defaults/materials and
 SkinnedMesh previews are not evaluated by the editor.
+
+The owner approved the same typed identity for Asset<SkinnedMesh<V>>, including
+transparent aliases. Value exposes the declared model type and its dynamic
+catalogs; no inferred-name forwarding is added. Its generated switch returns
+the current asset global's original data/vertices/indices handles, preserving
+packed-model palette and LOD proofs. Persistent model assignment still follows
+ordinary owned-value rules. Empty/unknown references resolve empty; missing or
+changed skinned pack payloads retain the existing atomic compatibility rejection.
+No runtime API is added, and native editor previews remain static-only.
+Compiler, worker, server-retention and LSP coverage is listed in notes/language.md,
+Checked skinned asset references. Root reported the initial Asset E2E passing;
+new actual-unload and erased-catalog regression additions remain uncompiled.
+Unload preserves the existing borrowed lifetime: it clears the pack/proof registry,
+not generated asset globals. The follow-up tests compare checked catalog/direct
+skinned draws with the named asset and retain pre-unload captures through deferred
+palette preparation. They do not dereference stale typed lists or require Count
+to return zero. Reload restores the same reference identity and packed fast paths.
 
 ## Retained ordinary asset values (2026-10-11)
 

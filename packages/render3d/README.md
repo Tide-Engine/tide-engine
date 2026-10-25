@@ -172,7 +172,7 @@ frame's recorded draws and presentation.
 
 ## Ordering and custom surfaces
 
-The package views run `Prepare → Lights → Shadows → Color → Opaque → Transparent → Present`, from
+The package views run `Prepare → Lights → Shadows → Color → Opaque → Transparent → PostPrepare → Bloom → PostProcess → Present`, from
 `Render3D.Stages`. All casters finish before color rendering. Configure camera,
 lighting and attached local material fields in `[Before(Render3D.Stages.Prepare)]`
 views; draw window UI in `[After(Render3D.Stages.Present)]` views.
@@ -183,8 +183,8 @@ The callback is `Func<SurfaceInput, mut Surface, void>`: input contains `world`,
 initialized surface contains linear `albedo`, world-space `normal`, `roughness`,
 `metallic`, linear HDR `emission` and `occlusion = 1`.
 Owned plain-value captures work; resource and heap captures do not. Callbacks
-change appearance, not shadow geometry; no custom vertex-deformation API is
-offered here. Compatible shader/mesh/texture/uniform/state draws can batch;
+change appearance. `Material.vertex` separately controls shared geometry deformation.
+Compatible shader/mesh/texture/uniform/state draws can batch;
 different materials need not share a draw.
 
 `Material.uv` is an attached local
@@ -219,10 +219,45 @@ behavior and cache keys. Generated tangents do not promise MikkTSpace bake compa
 mapping shifts UVs with one height sample; it changes no geometry, depth or
 silhouette. Keep the scale modest, especially near grazing views.
 
+## Skinning, vertex deformation and post-processing
+
+Use `SkinnedMeshRenderer { mesh = model }` and a normal `Material` for an
+`asset Render3D.SkinnedMesh3D model`. Its model field is a checked
+`Asset<SkinnedMesh3D>` reference. Configure the attached local `pose` before
+`Stages.Prepare`; the package snapshots it once for every pass. `null` draws
+authored rest, while a present invalid pose skips drawing. Games own sampling,
+blending and playback clocks. Skinned maps need authored UV tangents.
+
+Set `material.vertex = Render3D.Deform { vertex = MyVertex }` for a shared
+`Func<VertexInput, mut MeshVertex, void>` callback. It runs after skinning in
+mesh-local space, before the draw transform, for both color and shadow passes.
+Input contains the pre-deformation `world` position, main-camera `eye` and
+`localToWorld`. Update normals/tangents when needed. Plain captures are shared
+uniforms; `null` preserves the original static path and automatic bounds.
+Custom-deformed/skinned meshes need explicit conservative bounds for culling.
+Static and skinned transparent submissions share one object sort; centers do
+not follow animated geometry.
+
+Enable `renderer.bloom.enabled` for scene-linear bloom before custom HDR
+effects, exposure and tone mapping. Defaults are threshold `1`, softness `1`,
+intensity `0.25`, radius `1` and two blur pairs. Bloom starts disabled and zero
+intensity bypasses its work. Scratch targets are retained and allocated only
+when needed.
+
+`renderer.postEffects` is an ordered `List<PostEffect>`, where
+`PostEffect = Func<Texture, RenderTarget, bool>`. The callback receives the
+current linear HDR image and a distinct destination. Fully overwrite it and
+return `true` to publish, or `false` to bypass. Keep output linear. Resource
+arguments are explicit; captures remain plain values. Staged views can bind
+additional game resources through ordinary shader parameters: between
+`PostPrepare` and `Present`, read `renderer.output`, obtain
+`NextPostTarget(renderer)`, draw and call `CommitPost(renderer)`.
+`defaultPresent = false` suppresses only the stock final presentation.
+
 ## Current scope
 
-One camera; static mesh assets with material maps and scalar values.
-No `LightMode`, baked or area lights, cascades, skinning, environment specular,
+One camera; static and skinned mesh assets with material maps and scalar values.
+No `LightMode`, baked or area lights, cascades, environment specular,
 GI, probes or light baker in this slice.
 Model texture and metallic/roughness import is not automatic.
 
