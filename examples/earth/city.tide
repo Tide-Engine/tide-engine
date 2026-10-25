@@ -48,7 +48,7 @@ float3 NorthOf(float3 up)
 float3 Place(int town, float2 at, float height)
 {
     var up = Up(town);
-    return Math.Normalize(up * R + EastOf(up) * at.x + NorthOf(up) * at.y) * (R + height);
+    return Surface(Math.Normalize(up * R + EastOf(up) * at.x + NorthOf(up) * at.y), height);
 }
 
 // Where a place is in a town: metres east and north of its middle
@@ -132,6 +132,6 @@ float2 Clear(int town, float2 at, float radius)
 float3 Settle(float3 place, float radius, float height)
 {
     int town = TownAt(place, 10);
-    if (town < 0) return Math.Normalize(place) * (R + height);
+    if (town < 0) return Surface(Math.Normalize(place), height);
     return Place(town, Clear(town, Local(town, place), radius), height);
 }

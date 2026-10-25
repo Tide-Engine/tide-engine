@@ -1,5 +1,82 @@
 # The docs site
 
+## Earth relief, biomes and cheaper ground shading (2026-10-25)
+
+The owner reports the Pixel still slow after the exact-gradient cache, with
+cost increasing with window size, and explicitly permits changing the tiny
+ground pattern. This pass also includes requested gentle hills and
+biome-specific plants. Animal behavior is a separate feature.
+
+`terrain.tide` replaces the analytic per-pixel ground with cached cube-sphere
+mesh tiles. Six face quadtrees select 4x4-cell leaves, capped at level 8
+(about 6 m finest spacing), with 6 m skirts and a conservative horizon bound.
+A bounded 2,048-chunk LRU uses integer tile keys; a combined visible patch is
+rebuilt after the eye travels 32 m, so camera turns normally reuse one mesh.
+Height, normals and broad climate fields are calculated at cached corners.
+The mesh writes ordinary depth, replacing the sphere-only Underground test
+in object shaders. The globe has a separate material root retaining the
+original broad procedural fields; the walking root uses interpolated fields.
+
+Road and town calculations keep their original geometry/material formulas.
+Each tile supplies a conservative town hint and an 11-bit road-plane mask,
+including 64 m of pixel-filter reach. Hints travel as exact float integers and
+are rounded in the fragment. Pixels wider than 64 m and the globe use all
+candidates. Tests probe actual triangle interiors against every town cap and
+road plane to reject false exclusions. This supplied the largest remaining
+shader win; splitting whole grass draws did not help and was discarded.
+
+Fine detail is now one filtered world-space value-noise sample: a local
+256x256 RGBA grid stores adjacent z slices in R/G, repeats at its boundaries,
+and reconstructs smooth 3D noise. Grain uses frequency 6,000, coverage fades
+with pixel footprint, and meadow flower flecks reuse that sample. Broad
+forest/dry colors and snow remain; exact fine grain changed with approval.
+There are no downloaded textures. The earlier 175,616-entry exact-gradient
+cache is removed. CPU-backed meshes/textures restore normally after device
+loss. `TERRAIN_REVISION` must be bumped when cached formulas/topology change;
+it invalidates retained terrain and plant data after a native code reload.
+
+Simulation and presentation share Surface/TerrainHeight: two deterministic
+simplex bands (14 m at frequency 12 and 5 m at 31), eased to zero within 128 m of each
+town and graded back into the country by 210 m. Walking, jumping, vehicle
+routes, local placement, camera clearance, roots and shadows use that same
+surface. Occasional pointer picking marches on the CPU inside the expanded
+sphere; there is no per-pixel height ray march. The bounds allow 24 m of
+terrain relief. No match schema/input fields were added.
+
+`plants.tide` caches stable 16 m latitude/longitude cells within 480 m and moves
+the cache after 48 m. Draw fading remains 320-400 m and 200-300 m above ground.
+Meadows have sparse broad crowns, woods layered evergreen crowns, dry
+regions cacti, and frost sparse rocky scrub. Climate thresholds are shared
+with the terrain. The four-biome regression checks actual stored plants and
+settles them with the actual movement systems; camera turns keep their roots
+and mesh data. Copying an owning LandChunk during every cache search was
+found to clone its list repeatedly; lookups now use a Map and plain fields.
+Scratch exhaustion in that rejected prototype reached a NULL copy in the
+runtime and was reported separately to the architecture coordinator; no
+runtime change or general safety fix is claimed here.
+
+The same muted Radeon iGPU diagnostic at 412 x 915, DPR 3 shows WebGL GPU medians
+38.83 -> 12.77 ms and WebGPU 32.18 -> 9.76 ms (roughly 67%/70% less). These remain
+exploratory, without a reserved quiet window or controlled clocks; they are
+terrain-only, not Pixel FPS. Native cached CPU recording is about 0.25 ms,
+while first-frame WASM generation is about 123 ms before shader/upload costs.
+Initial terrain generation and travel-triggered rebuilds still need a phone
+verdict. Frozen page hashes, source hashes, raw summaries and final shader
+correspondence are in `earth-terrain-measurements.json`; artifacts are in
+`build/earth-perf/`. The final cache-version change leaves all measured shader
+texts byte-identical. No timing here is called clean.
+
+Native/web debug Earth targets pass all 23 game checks and three benchmark
+cases. Native and web optimized builds confirm the same new pins: ordinary
+and diverge `2d4f30cae27728fa`, split `77140ad82e885ede`. These intentionally replace
+`642d3bbe3c5fb58c` / `db65d449fe39c077` because match positions now include relief;
+client/server verification, recovery and traffic assertions are unchanged.
+Native Vulkan validation walking/driving captures and Radeon WebGL/WebGPU
+shader checks pass. Android/Pixel hardware and other operating systems were
+not available. Engine/compiler/CLI source is unchanged by this pass.
+Publication and hosted checks are recorded after deployment below.
+
+
 ## Earth exact biome gradient cache (2026-10-25)
 
 The owner authorized game-side optimization while preserving the visuals,

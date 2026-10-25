@@ -1,5 +1,17 @@
 # Benchmarks
 
+## Earth relief changes the simulation pins (2026-10-25)
+
+The owner requested gentle hills alongside the game-side performance pass.
+Earth walkers, jumps and traffic now sample the shared terrain surface.
+The ordinary/diverge pin changes `642d3bbe3c5fb58c` -> `2d4f30cae27728fa`;
+split changes `db65d449fe39c077` -> `77140ad82e885ede`. Native and WASI debug and
+optimized builds agree on both values. No verification, replay, traffic,
+lag, input or benchmark flag was relaxed. Terrain/plants sources join the
+benchmark's existing Earth source list. Game contracts and exploratory GPU
+data are in `docs-site.md` and `earth-terrain-measurements.json`.
+
+
 ## Render3D before/current package runner (2026-10-25)
 
 `bench/render3d/run-paired.ps1` readies the CPU-performance comparison against

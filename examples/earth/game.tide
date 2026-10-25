@@ -257,7 +257,7 @@ void Move(mut Walker walker, float dt, float radius)
     var facing = Flat(walker.forward, up);
     if (Math.Length(facing) > 0.0001) walker.forward = Math.Normalize(facing);
     if (walker.driving && Math.Length(Math.Normalize(meant) - up) * R > 0.05) walker.speed *= 0.6;
-    walker.position = up * (R + walker.height);
+    walker.position = Surface(up, walker.height);
 }
 
 void Hop(mut Walker walker, bool jump, float dt)
@@ -266,7 +266,7 @@ void Hop(mut Walker walker, bool jump, float dt)
     walker.rise -= GRAVITY * dt;
     walker.height = Math.Max(walker.height + walker.rise * dt, 0);
     if (walker.height <= 0) walker.rise = 0;
-    walker.position = Math.Normalize(walker.position) * (R + walker.height);
+    walker.position = Surface(Math.Normalize(walker.position), walker.height);
     if (walker.waving > 0) walker.waving -= 1;
     if (walker.fived > 0) walker.fived -= 1;
 }
@@ -452,7 +452,7 @@ void OnRoad(mut Car car)
     var forward = Math.Normalize(Math.Cross(c, middle)) * car.way;
     var right = Math.Cross(middle, forward);
     car.forward = forward;
-    car.position = Math.Normalize(middle * R + right * LANE) * R;
+    car.position = Surface(Math.Normalize(middle * R + right * LANE), 0);
 }
 
 // The townsfolk's cars go up and down their roads, turning round at the

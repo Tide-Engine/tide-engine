@@ -1,7 +1,5 @@
-// The planet, worked out for every pixel: what a pixel's ray from the eye
-// meets, the ground (meadows, forests, the roads, the towns' squares and ring
-// roads) or the air beside it or space. Everything is drawn around an eye at
-// the origin, with the world moved the other way.
+// Terrain materials and the sky behind the cached ground mesh. Everything
+// is drawn around an eye at the origin, with the world moved the other way.
 
 // Where the towns and the roads are, for the frag (Look fills it once)
 local singleton Atlas
@@ -13,76 +11,6 @@ local singleton Atlas
     float3[11] tos;
     float3[11] normals;
     bool made;
-}
-
-local singleton Biomes
-{
-    Grid2<float> gradients = Grid2(512, 343);
-    Texture lookup;
-    bool made;
-}
-
-// Four broad biome octaves visit only [-27, 27] in the simplex lattice:
-// the largest frequency is 19, and a skewed unit vector reaches 19 * sqrt(2).
-// Store exact gradient choices, not filtered noise, so the pattern stays put.
-// The 56 cubed entries fit exactly into 512 by 343 point-sampled pixels.
-float BiomeGradient(int3 cell, Texture gradients)
-{
-    var at = cell + int3(28);
-    int index = at.x + at.y * 56 + at.z * (56 * 56);
-    return gradients.Sample((float2(index & 511, index >> 9) + float2(0.5)) / float2(512, 343), Filter.Point).r;
-}
-
-float BiomeCorner(float h, float3 p)
-{
-    float t = 0.6 - p.x * p.x - p.y * p.y - p.z * p.z;
-    mut float result = 0;
-    if (t >= 0)
-    {
-        mut float u = p.x;
-        mut float v = p.y;
-        if (h >= 8) u = p.y;
-        if (h >= 4) v = p.z;
-        if (h == 12 || h == 14) v = p.x;
-        if (Math.Frac(h * 0.5) != 0) u = -u;
-        if (Math.Frac(Math.Floor(h * 0.5) * 0.5) != 0) v = -v;
-        float tt = t * t;
-        result = tt * tt * (u + v);
-    }
-    return result;
-}
-
-float BiomeNoise(float3 p, Texture gradients)
-{
-    float s = (p.x + p.y + p.z) * 0.33333334;
-    var base = Math.Floor(p + float3(s));
-    // Keep an exact fallback if a future biome octave leaves the cached cube.
-    mut float result = 0;
-    if (base.x < -28 || base.y < -28 || base.z < -28 || base.x > 26 || base.y > 26 || base.z > 26)
-    {
-        result = Math.Simplex(p);
-    }
-    else
-    {
-        float t = (base.x + base.y + base.z) * 0.16666667;
-        var p0 = p - (base - float3(t));
-        var first = int3(p0.x >= p0.y && p0.x >= p0.z ? 1 : 0,
-                         p0.y > p0.x && p0.y >= p0.z ? 1 : 0,
-                         p0.z > p0.x && p0.z > p0.y ? 1 : 0);
-        var second = int3(p0.x >= p0.y || p0.x >= p0.z ? 1 : 0,
-                          p0.y > p0.x || p0.y >= p0.z ? 1 : 0,
-                          p0.z > p0.x || p0.z > p0.y ? 1 : 0);
-        var p1 = p0 - float3(first) + float3(0.16666667);
-        var p2 = p0 - float3(second) + float3(0.33333334);
-        var p3 = p0 - float3(0.5);
-        var cell = int3(base);
-        float n0 = BiomeCorner(BiomeGradient(cell, gradients), p0);
-        float n1 = BiomeCorner(BiomeGradient(cell + first, gradients), p1);
-        float n2 = BiomeCorner(BiomeGradient(cell + second, gradients), p2);
-        float n3 = BiomeCorner(BiomeGradient(cell + int3(1), gradients), p3);
-        result = (n0 + n1 + n2 + n3) * 32.5;
-    }
-    return result;
 }
 
 // A ball around the eye: each pixel of it is a ray
@@ -130,41 +58,23 @@ float Marking(float across, float along, float wide)
     return stripe * dash * (1 - Math.SmoothStep(0.4, 1.6, wide));
 }
 
-// All geometry uses the same spherical surface as Planet, including at the
-// horizon. A sunken polygonal depth mesh left bases visible through the ground.
-bool Underground(float3 point, Sky sky)
+// Biomes and relief supply the broad variation; one filtered world-space
+// detail sample keeps grass crisp without recomputing several noise octaves.
+float Grain(float3 n, float wide, Texture noise)
 {
-    float distance = Math.Length(point);
-    var ray = point / Math.Max(distance, 0.0001);
-    float b = Math.Dot(ray, sky.center);
-    float near = sky.height * (2 * R + sky.height);
-    float disc = b * b - near;
-    return b > 0 && disc > 0 && near / (b + Math.Sqrt(Math.Max(disc, 0))) < distance - 0.02;
+    return DetailNoise(n * 6000, noise) * Math.Saturate(1 - wide / 1.5);
 }
 
-float Grain(float3 n, float wide)
+Color Grass(float3 n, float wide, float grain, float3 climate)
 {
-    float fine = Math.Saturate(1 - wide / 3);
-    // An octave whose coverage is zero contributes nothing. Keep the same
-    // frequencies, weights and arithmetic when it is visible.
-    float medium = wide < 3 ? Math.Simplex(n * 4000) : 0;
-    float tiny = wide < 1 ? Math.Simplex(n * 20000) : 0;
-    return Math.Simplex(n * 900) * 0.5 + medium * 0.3 * fine + tiny * 0.2 * Math.Saturate(1 - wide);
-}
-
-Color Grass(float3 n, float wide, float grain, Texture gradients)
-{
-    float forest = BiomeNoise(n * 7, gradients) * 0.6 + BiomeNoise(n * 19, gradients) * 0.3 + Math.Simplex(n * 61) * 0.1;
+    float forest = climate.x;
     var meadow = Color(0.40 + grain * 0.05, 0.62 + grain * 0.06, 0.32, 1);
     var woods = Color(0.18 + grain * 0.03, 0.40 + grain * 0.05, 0.24, 1);
     mut var ground = Mix(meadow, woods, Math.SmoothStep(0.05, 0.3, forest));
-    // Dry grassland in places, and snow toward the poles
-    float dry = BiomeNoise(n * 3 + float3(5, 0, 0), gradients) * 0.7 + BiomeNoise(n * 11, gradients) * 0.3;
-    ground = Mix(ground, Color(0.66 + grain * 0.04, 0.62 + grain * 0.04, 0.38, 1), Math.SmoothStep(0.25, 0.5, dry) * (1 - Math.SmoothStep(0.05, 0.3, forest)));
-    float cold = Math.Abs(n.y) + grain * 0.03;
+    ground = Mix(ground, Color(0.66 + grain * 0.04, 0.62 + grain * 0.04, 0.38, 1), Math.SmoothStep(0.25, 0.5, climate.y) * (1 - Math.SmoothStep(0.05, 0.3, forest)));
+    float cold = climate.z + grain * 0.03;
     ground = Mix(ground, Color(0.92, 0.94, 0.97, 1), Math.SmoothStep(0.9, 0.94, cold));
-    // Flowers in the meadows, close up
-    if (wide < 0.3 && forest < 0.0 && Math.Simplex(n * 30000) > 0.9 && Math.Simplex(n * 260) > 0.35) ground = Color(0.95, 0.85, 0.35, 1);
+    if (wide < 0.3 && forest < 0 && climate.y < 0.25 && climate.z < 0.8 && grain > 0.9) ground = Color(0.95, 0.85, 0.35, 1);
     return ground;
 }
 
@@ -180,7 +90,7 @@ Color Paving(float2 at, float wide)
 
 // The ground at a place: meadows and forests, the roads, the towns. `wide` is
 // how many metres a pixel covers there, so nothing finer than that shows.
-Color Ground(float3 n, float wide, Atlas atlas, Texture gradients)
+Color Ground(float3 n, float wide, Atlas atlas, Texture noise, float3 climate, int townHint, int roads)
 {
     var tarmac = Color(0.22, 0.23, 0.25, 1);
     var kerb = Color(0.60, 0.60, 0.62, 1);
@@ -192,7 +102,9 @@ Color Ground(float3 n, float wide, Atlas atlas, Texture gradients)
     mut int town = -1;
     mut float distance = 0;
     mut var at = float2(0);
-    for (var candidate = 0; candidate < 10; candidate++)
+    int first = townHint >= 0 ? Math.Clamp(townHint, 0, 9) : 0;
+    int last = townHint >= 0 ? first + 1 : townHint == -1 ? 0 : 10;
+    for (var candidate = first; candidate < last; candidate++)
     {
         var delta = n - atlas.towns[candidate];
         float reach = (TOWN + 20) / R + 0.00001;
@@ -218,6 +130,7 @@ Color Ground(float3 n, float wide, Atlas atlas, Texture gradients)
         // The roads between the towns, a dashed line down the middle
         for (var road = 0; road < 11; road++)
         {
+            if ((roads & (1 << road)) == 0) continue;
             var a = atlas.froms[road];
             var b = atlas.tos[road];
             var c = atlas.normals[road];
@@ -241,14 +154,14 @@ Color Ground(float3 n, float wide, Atlas atlas, Texture gradients)
         mut float grain = 0;
         if (unpainted > 0)
         {
-            grain = Grain(n, wide);
-            var grass = Grass(n, wide, grain, gradients);
+            grain = Grain(n, wide, noise);
+            var grass = Grass(n, wide, grain, climate);
             ground = Color(ground.r + grass.r * unpainted, ground.g + grass.g * unpainted, ground.b + grass.b * unpainted, 1);
         }
         // The local town's ground, ring road and square.
         if (town >= 0)
         {
-            if (unpainted <= 0) grain = Grain(n, wide);
+            if (unpainted <= 0) grain = Grain(n, wide, noise);
             // Mown lawns in town, lighter than the country
             ground = Mix(ground, Color(0.56 + grain * 0.04, 0.68 + grain * 0.04, 0.44, 1), Math.SmoothStep(TOWN + 8, TOWN - 4, distance) * 0.85);
             float ring = Math.Abs(distance - RING);
@@ -270,46 +183,28 @@ Color Ground(float3 n, float wide, Atlas atlas, Texture gradients)
     return ground;
 }
 
-frag Planet(Around around, out Color color, Sky sky, Atlas atlas, Biomes biomes)
+// The backdrop costs no ground shading. Opaque terrain supplies its own
+// real depth, so the ordinary depth buffer also hides distant scenery.
+frag Planet(Around around, out Color color, Sky sky)
 {
-    float3 d = Math.Normalize(this.world);
+    var d = Math.Normalize(this.world);
     float b = Math.Dot(d, sky.center);
-    // |center|² - R², kept from the eye's height rather than lost subtracting two big numbers
-    float near = sky.height * (2 * R + sky.height);
-    float disc = b * b - near;
-    var air = Color(0.42, 0.66, 1.0);
-    // Sky work has no contribution to an opaque ground pixel.
-    if (b <= 0 || disc <= 0)
-    {
-        // Stars where no planet is, and the air's glow over the ground
-        var grid = d * 400;
-        var cell = Math.Floor(grid);
-        int h = Math.Hash(int3(cell));
-        var spot = float3((h % 89) / 89.0, (h % 97) / 97.0, (h % 83) / 83.0) * 0.6 + float3(0.2, 0.2, 0.2);
-        float star = h % 1000 < 12 ? (0.25 + (h % 7) * 0.1) * Math.Saturate(1 - Math.Length(grid - cell - spot) / 0.12) : 0;
-        color = Color(0.086 + star, 0.086 + star, 0.094 + star * 1.1, 1);
-        float over = b > 0 ? Math.Sqrt(Math.Max(R * R - disc, 0)) - R : sky.height;
-        var closest = b > 0 ? d * b - sky.center : -sky.center;
-        float glow = Math.Exp(-Math.Max(over, 0) / AIR) * Math.Saturate(Math.Dot(Math.Normalize(closest), sky.sun) + 0.5);
-        color = Mix(color, air, Math.Saturate(glow) * 0.95);
-        return;
-    }
-    float t = near / (b + Math.Sqrt(disc));
-    float3 n = Math.Normalize(d * t - sky.center);
-    float wide = t * sky.pixel / Math.Max(Math.Dot(n, -d), 0.12);
-    var surface = Ground(n, wide, atlas, biomes.lookup);
-    float lit = Math.Dot(n, sky.sun);
-    float shade = 0.45 + 0.55 * Math.Saturate(lit);
-    var ground = Color(surface.r * shade, surface.g * shade, surface.b * shade, 1);
-    // The air between the eye and the ground, more of it far off
-    float haze = Math.Saturate(1 - Math.Exp(-t / 2500)) * 0.55 * Math.Saturate(1 - sky.height / 1500);
-    color = Mix(ground, air, haze);
+    var air = Color(0.42, 0.66, 1);
+    var grid = d * 400;
+    var cell = Math.Floor(grid);
+    int h = Math.Hash(int3(cell));
+    var spot = float3((h % 89) / 89.0, (h % 97) / 97.0, (h % 83) / 83.0) * 0.6 + float3(0.2);
+    float star = h % 1000 < 12 ? (0.25 + (h % 7) * 0.1) * Math.Saturate(1 - Math.Length(grid - cell - spot) / 0.12) : 0;
+    color = Color(0.086 + star, 0.086 + star, 0.094 + star * 1.1, 1);
+    var closest = b > 0 ? d * b - sky.center : -sky.center;
+    float over = Math.Length(closest) - R;
+    float glow = Math.Exp(-Math.Max(over, 0) / AIR) * Math.Saturate(Math.Dot(Math.Normalize(closest), sky.sun) + 0.5);
+    color = Mix(color, air, Math.Saturate(glow) * 0.95);
 }
 
 // What's on the planet: walkers, cars, trees, lit from the sun
 frag Lit(Corner corner, out Color color, Placed placed, Instance instance, Sky sky)
 {
-    if (Underground(this.world, sky)) this.Discard();
     // Opaque coverage avoids sorting transparent trunks and crowns. At full
     // coverage every pixel stays; at the outer edge none remain to pop in.
     float coverage = Math.Frac(52.9829189 * Math.Frac(Math.Dot(this.position, float2(0.06711056, 0.00583715))));
@@ -322,7 +217,6 @@ frag Lit(Corner corner, out Color color, Placed placed, Instance instance, Sky s
 // A glow, brightest in its middle, added to what's behind it: a town on the globe, sparks
 frag Glow(Corner corner, out Color color, Placed placed, Sky sky)
 {
-    if (Underground(this.world, sky)) this.Discard();
     float r = Math.Length(corner.position.xy);
     mut float glow = Math.Saturate(1 - r);
     glow = glow * glow * (0.4 + 0.6 * glow);
@@ -332,7 +226,6 @@ frag Glow(Corner corner, out Color color, Placed placed, Sky sky)
 // A soft shadow under something, darkening the ground
 frag Shade(Corner corner, out Color color, Placed placed, Sky sky)
 {
-    if (Underground(this.world, sky)) this.Discard();
     float r = Math.Length(corner.position.xy);
     color = Color(0, 0, 0, Math.Saturate(1 - r) * placed.paint.a);
 }
@@ -347,7 +240,6 @@ struct Tower
 
 frag Wall(Corner corner, out Color color, Tower tower, Instance instance, Sky sky)
 {
-    if (Underground(this.world, sky)) this.Discard();
     var normal = instance.Normal(corner.normal);
     var p = (corner.position + float3(0.5, 0.5, 0.5)) * tower.size;
     mut var paint = tower.paint;

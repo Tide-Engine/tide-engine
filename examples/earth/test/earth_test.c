@@ -16,6 +16,8 @@ static tide_draw_list draw;
 static tide_gui gui;
 static tide_devices devices;
 
+static tide_float3 ground_at(tide_float3 direction);
+
 static void draw_world(const tide_world *w, const tide_player_id who)
 {
     tide_local_set_session(&local, TIDE_SESSION_CONNECTED, who, 0, true, false, "");
@@ -90,7 +92,7 @@ TIDE_TEST(earth_a_disconnect_continues_locally_where_the_walker_was)
 {
     tide_local_init(&local);
     memset(&gui, 0, sizeof gui);
-    const tide_float3 spot = {0, 0, 3000};
+    const tide_float3 spot = ground_at((tide_float3){0, 0, 1});
     local.Pilot.walking = local.Pilot.placed = true;
     local.Pilot.spot = spot;
     local.Pilot.drop = (tide_float3){3000, 0, 0};
@@ -173,37 +175,39 @@ TIDE_TEST(earth_town_ground_regions_do_not_overlap)
     tide_local_free(&local);
 }
 
-// Check the actual half-float texture recorded by Planet, including its
-// dimensions and every lattice address. All gradient indices are exact in
-// half precision; a second frame must reuse the same immutable pixels.
-TIDE_TEST(earth_biome_lookup_keeps_the_original_gradients)
+// The two channels are adjacent z slices of a wrapped value-noise field.
+// Check the actual uploaded bytes, including the wrap, and immutable reuse.
+TIDE_TEST(earth_ground_detail_is_seamless_and_cached)
 {
     tide_local_init(&local);
     memset(&devices, 0, sizeof devices);
     memset(&gui, 0, sizeof gui);
     draw_world(NULL, player(0));
-    TIDE_REQUIRE(local.Biomes.made);
     const tide_draw_texture *texture = NULL;
     for (uint32_t i = 0; i < draw.texture_count; i++) {
-        if (draw.textures[i].format == TIDE_TEXELS_HALF && draw.textures[i].width == 512 && draw.textures[i].height == 343)
+        if (draw.textures[i].format == TIDE_TEXELS_BYTES && draw.textures[i].width == 256 && draw.textures[i].height == 256)
             texture = &draw.textures[i];
     }
     TIDE_REQUIRE(texture != NULL);
-    const uint16_t *pixels = (const uint16_t *)texture->pixels;
-    for (int i = 0; i < 56 * 56 * 56; i++) {
-        const tide_int4 cell = {i % 56 - 28, i / 56 % 56 - 28, i / (56 * 56) - 28, 0};
-        TIDE_REQUIRE(pixels[i] == tide_half_from_float((float)(tide_hash_i4(cell) & 15)));
+    const uint8_t *pixels = texture->pixels;
+    for (int y = 0; y < 256; y++) {
+        for (int x = 0; x < 256; x++) {
+            const int at = (x + y * 256) * 4;
+            const int next = (((x + 37) & 255) + ((y + 17) & 255) * 256) * 4;
+            TIDE_REQUIRE(pixels[at + 1] == pixels[next]);
+            TIDE_REQUIRE(pixels[at + 3] == 255);
+        }
     }
     const uint64_t id = texture->id, version = texture->version;
+    const uint32_t mesh = local.Land.shown.at;
     draw_world(NULL, player(0));
     bool kept = false;
     for (uint32_t i = 0; i < draw.texture_count; i++) {
-        if (draw.textures[i].id == id && draw.textures[i].version == version && draw.textures[i].pixels == (const uint8_t *)pixels)
-            kept = true;
+        if (draw.textures[i].id == id && draw.textures[i].version == version && draw.textures[i].pixels == pixels) kept = true;
     }
     TIDE_CHECK(kept);
-    // A reload from the previous layout has no cached road normals yet.
-    // Retaining Atlas.made must still rebuild those planes.
+    TIDE_CHECK(local.Land.shown.at == mesh);
+    TIDE_CHECK(tide_list_count(local.Land.chunks) <= 2048);
     memset(&local.Atlas.normals, 0, sizeof local.Atlas.normals);
     draw_world(NULL, player(0));
     for (int i = 0; i < 11; i++) {
@@ -286,6 +290,126 @@ static tide_entity walker_of(const tide_world *w, const tide_player_id who)
             return e;
     }
     return (tide_entity){0};
+}
+
+// Ask the real movement systems to settle a neutral walker onto the terrain.
+// Tests of resume/drive height use this instead of assuming a perfect sphere.
+static tide_float3 ground_at(const tide_float3 direction)
+{
+    const tide_heap *match_heap = tide_heap_read(TIDE_IN_MATCH);
+    const tide_heap *local_heap = tide_heap_read(TIDE_IN_LOCAL);
+    tide_world probe = {0};
+    tide_world_init(&probe, 1.0f / 60.0f);
+    tide_world_player_joined(&probe, player(0));
+    tide_world_tick(&probe);
+    const tide_entity entity = walker_of(&probe, player(0));
+    Walker walker = tide_get_Walker(&probe, entity);
+    walker.position = times(tide_normalize_f3(direction), PLANET);
+    walker.placed = true;
+    walker.moves = 1;
+    tide_set_Walker(&probe, entity, walker);
+    tide_world_tick(&probe);
+    const tide_float3 at = tide_get_Walker(&probe, entity).position;
+    tide_world_free(&probe);
+    tide_text_use((tide_heap *)(uintptr_t)match_heap, (tide_heap *)(uintptr_t)local_heap);
+    return at;
+}
+
+TIDE_TEST(earth_biomes_have_distinct_grounded_plants)
+{
+    static const tide_float3 directions[4] = {
+        {-0.766044438f, -0.642787576f, 6.69697329e-08f},
+        {0.586824059f, -0.642787576f, 0.492403835f},
+        {-0.663413942f, -0.642787576f, -0.383022279f},
+        {-0.342020154f, -0.939692616f, 2.99003524e-08f},
+    };
+    tide_local_init(&local);
+    memset(&devices, 0, sizeof devices);
+    memset(&gui, 0, sizeof gui);
+    for (int biome = 0; biome < 4; biome++) {
+        local.Pilot.had = local.Pilot.mine = local.Pilot.placed = local.Pilot.walking = true;
+        local.Pilot.moves = local.Pilot.landed = local.Pilot.arrived = 1;
+        local.Pilot.blend = 1;
+        local.Pilot.settle = 2;
+        local.Pilot.spot = ground_at(directions[biome]);
+        local.Pilot.look = local.Pilot.facing = tide_normalize_f3(tide_cross_f3(directions[biome], tide_f3(0, 1, 0)));
+        local.Pilot.tilt = 0.32f;
+        draw_world(NULL, player(0));
+        tide_text_use(NULL, &local.heap);
+        bool found = false;
+        for (int i = 0; i < tide_list_count(local.Flora.plants); i++) {
+            const Plant plant = *(const Plant *)tide_list_at(local.Flora.plants, i, sizeof(Plant));
+            if ((int)plant.biome != biome) continue;
+            TIDE_CHECK(length3(minus(plant.position, ground_at(plant.position))) < 0.01f);
+            found = true;
+            break;
+        }
+        TIDE_CHECK(found);
+    }
+    tide_draw_free(&draw);
+    tide_local_free(&local);
+}
+
+TIDE_TEST(earth_hills_match_the_drawn_surface_and_stay_gentle)
+{
+    tide_local_init(&local);
+    memset(&devices, 0, sizeof devices);
+    memset(&gui, 0, sizeof gui);
+    const tide_float3 up = up_at(28, 45);
+    const tide_float3 at = ground_at(up);
+    TIDE_CHECK(fabsf(length3(at) - PLANET) > 0.1f);
+    TIDE_CHECK(fabsf(length3(at) - PLANET) < 24);
+    local.Pilot.had = local.Pilot.mine = local.Pilot.placed = local.Pilot.walking = true;
+    local.Pilot.moves = local.Pilot.landed = local.Pilot.arrived = 1;
+    local.Pilot.blend = 1;
+    local.Pilot.settle = 2;
+    local.Pilot.spot = at;
+    local.Pilot.look = local.Pilot.facing = (tide_float3){-1, 0, 0};
+    local.Pilot.tilt = 0.32f;
+    draw_world(NULL, player(0));
+    tide_text_use(NULL, &local.heap);
+    float nearest = 1e9f, plane = 1e9f;
+    for (int i = 0; i < tide_list_count(local.Land.shown); i++) {
+        const LandCorner *corner = tide_list_at(local.Land.shown, i, sizeof *corner);
+        const tide_float3 apart = minus(at, corner->position);
+        const float d = length3(apart);
+        if (d < nearest) { nearest = d; plane = fabsf(tide_dot_f3(apart, corner->normal)); }
+    }
+    TIDE_CHECK(nearest < 6);
+    TIDE_CHECK(plane < 0.1f);
+    // Tile hints must never exclude a town cap or road filter footprint.
+    // Probe triangle interiors as well as their corners, including skirts.
+    for (int i = 0; i + 2 < tide_list_count(local.Land.shownFaces); i += 3) {
+        tide_float3 sum = {0};
+        const LandCorner *first = NULL;
+        for (int k = 0; k < 3; k++) {
+            const int index = *(const int32_t *)tide_list_at(local.Land.shownFaces, i + k, sizeof(int32_t));
+            const LandCorner *corner = tide_list_at(local.Land.shown, index, sizeof *corner);
+            if (!k) first = corner;
+            sum = tide_add_f3(sum, corner->position);
+        }
+        const tide_float3 n = tide_normalize_f3(sum);
+        for (int town = 0; town < 10; town++) {
+            if (length3(minus(n, local.Atlas.towns.at[town])) * PLANET < 130)
+                TIDE_REQUIRE(first->town == -2 || first->town == town);
+        }
+        for (int road = 0; road < 11; road++) {
+            if (fabsf(tide_dot_f3(n, local.Atlas.normals.at[road])) * PLANET < 6 + 64)
+                TIDE_REQUIRE(((int)first->roads & (1 << road)) != 0);
+        }
+    }
+    TIDE_CHECK(tide_list_count(local.Land.chunks) <= 2048);
+    const uint32_t terrain = local.Land.shown.at, plants = local.Flora.plants.at;
+    local.Pilot.look = local.Pilot.facing = (tide_float3){0, -up.z, up.y};
+    draw_world(NULL, player(0));
+    TIDE_CHECK(local.Land.shown.at == terrain);
+    TIDE_CHECK(local.Flora.plants.at == plants);
+    local.Land.revision = local.Flora.revision = 0;
+    draw_world(NULL, player(0));
+    TIDE_CHECK(local.Land.revision == 1 && local.Flora.revision == 1);
+    TIDE_CHECK(tide_list_count(local.Land.shown) > 0 && tide_list_count(local.Flora.plants) > 0);
+    tide_draw_free(&draw);
+    tide_local_free(&local);
 }
 
 static void ticks(const int n)
@@ -639,7 +763,7 @@ TIDE_TEST(earth_walkers_walk_drive_and_high_five_and_traffic_stops_for_them)
     TIDE_CHECK(a.placed);
     TIDE_CHECK(length3(minus(a.position, square)) < 18.0f);
     TIDE_CHECK(length3(minus(a.position, square)) >= 4.0f + 0.45f - 0.05f); // Out of the fountain
-    TIDE_CHECK(fabsf(length3(a.position) - PLANET) < 0.01f);
+    TIDE_CHECK(length3(minus(a.position, ground_at(a.position))) < 0.01f);
 
     // Walking ahead for a second: about 5 m, less the start, and still on the ground
     const tide_float3 was = a.position;
@@ -648,7 +772,7 @@ TIDE_TEST(earth_walkers_walk_drive_and_high_five_and_traffic_stops_for_them)
     a = tide_get_Walker(&world, me);
     const float walked = length3(minus(a.position, was));
     TIDE_CHECK(walked > 3.5f && walked < 5.5f);
-    TIDE_CHECK(fabsf(length3(a.position) - PLANET) < 0.01f);
+    TIDE_CHECK(length3(minus(a.position, ground_at(a.position))) < 0.01f);
 
     // Into a car, and off: faster than walking
     tide_world_set_input(&world, player(0), (Controls){.drop = square, .moves = 1, .car = true});
@@ -665,7 +789,7 @@ TIDE_TEST(earth_walkers_walk_drive_and_high_five_and_traffic_stops_for_them)
     ticks(180);
     a = tide_get_Walker(&world, me);
     TIDE_CHECK(a.speed > 15.0f);
-    TIDE_CHECK(fabsf(length3(a.position) - PLANET) < 0.01f);
+    TIDE_CHECK(length3(minus(a.position, ground_at(a.position))) < 0.01f);
     // ...and out again
     tide_world_set_input(&world, player(0), (Controls){.drop = square, .moves = 1});
     ticks(1);

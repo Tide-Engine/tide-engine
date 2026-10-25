@@ -34,14 +34,14 @@ file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/earth/game.tide" CONTENT "${b
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${earth_dir}/game.tide")
 tide_add_game(bench_earth NAME game HOST earth/main.c
     SOURCES "${CMAKE_CURRENT_BINARY_DIR}/earth/game.tide" "${earth_dir}/city.tide" "${earth_dir}/layout.tide"
-            "${earth_dir}/globe.tide" "${earth_dir}/shapes.tide" "${earth_dir}/show.tide")
+            "${earth_dir}/globe.tide" "${earth_dir}/shapes.tide" "${earth_dir}/show.tide" "${earth_dir}/terrain.tide" "${earth_dir}/plants.tide")
 target_link_libraries(bench_earth PRIVATE tide_bench)
-add_test(NAME bench_earth COMMAND bench_earth --quick --expect 0x642d3bbe3c5fb58c)
+add_test(NAME bench_earth COMMAND bench_earth --quick --expect 0x2d4f30cae27728fa)
 # A town hop changes shard and what the machine sees at once: corrections put it up to two seconds behind, as
 # the engine's visibility tests allow
-add_test(NAME bench_earth_split COMMAND bench_earth --quick --split 2 --lag 120 --expect 0xdb65d449fe39c077)
+add_test(NAME bench_earth_split COMMAND bench_earth --quick --split 2 --lag 120 --expect 0x77140ad82e885ede)
 # Comparing one bot's world with what the server says it is, tick by tick
-add_test(NAME bench_earth_diverge COMMAND bench_earth --quick --diverge 1 --expect 0x642d3bbe3c5fb58c)
+add_test(NAME bench_earth_diverge COMMAND bench_earth --quick --diverge 1 --expect 0x2d4f30cae27728fa)
 
 # Page hashes: the engine's beside candidates for its place, timed on the
 # shapes a world's hash reads (`bench_hash`, natively and under Node); the test
