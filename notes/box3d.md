@@ -154,12 +154,14 @@ With the id-lane guard, a final release sample is 0.089 ms at rest for 2400
 boxes; no native step/commit. Other existing body/query/digest pins still hold.
 
 
-## Unity's components as Box3D's (2026-10-22)
+## In Unity (2026-10-22)
 
-`packages/box3d/unity.json` says which of Unity's physics components are Box3D's for a game made in Unity,
-and holds the Tide a Unity project alone gets: a body starts at its entity's Transform, which follows it. The
-package's own `.tide` is unchanged, so games outside Unity are too. Contracts and tests: `notes/unity.md`, Packages'
-translations of Unity's components.
+`packages/box3d/unity.json` says how the package's components are in a Unity project: fields and components it keeps
+for itself hidden, shapes sized by the GameObject's scale and drawn in the Scene view; and the Tide a Unity project
+alone gets: a body starts at its entity's Transform, which follows it. The package's own `.tide` is unchanged, so
+games outside Unity are too. Unity's own physics components aren't the package's. Contracts and tests:
+`notes/unity.md`, Packages' components in Unity.
+
 ## All-hit queries and live ignore-body parity (2026-10-18)
 
 The owner approved `RaycastAll`/`CastAll` and ignore-body overloads after the

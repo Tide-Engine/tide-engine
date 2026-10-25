@@ -1,5 +1,82 @@
 {
-  "about": "Unity's physics components that are Box3D's one to one, which tide unity translates (notes/unity.md, Packages' translations of Unity's components)",
+  "about": "How Box3D's components are in a Unity project, which tide unity reads (compiler/cli/unity_mapping.h)",
+  "components": {
+    "Box3D.Body": {
+      "hidden": [
+        "id",
+        "position",
+        "rotation",
+        "stepPosition",
+        "stepRotation",
+        "stepVelocity",
+        "stepAngularVelocity",
+        "stepBullet",
+        "stepAsleep",
+        "stepType",
+        "stepGravityScale",
+        "stepLinearDamping",
+        "stepAngularDamping"
+      ]
+    },
+    "Box3D.Box": {
+      "scaled": {
+        "size": "absScale",
+        "offset": "scale"
+      },
+      "shape": {
+        "box": "size",
+        "center": "offset"
+      }
+    },
+    "Box3D.Sphere": {
+      "scaled": {
+        "radius": "largestScale",
+        "offset": "scale"
+      },
+      "shape": {
+        "sphere": "radius",
+        "center": "offset"
+      }
+    },
+    "Box3D.Capsule": {
+      "scaled": {
+        "radius": "largestScaleXZ",
+        "height": "scaleY",
+        "offset": "scale"
+      },
+      "shape": {
+        "capsule": "radius",
+        "height": "height",
+        "center": "offset"
+      }
+    },
+    "Box3D.MeshCollider": {
+      "scaled": {
+        "scale": "scale",
+        "offset": "scale"
+      }
+    },
+    "Box3D.Part": {
+      "hidden": [
+        "box",
+        "sphere",
+        "capsule",
+        "mesh"
+      ]
+    },
+    "Box3D.BoxMade": {
+      "hidden": true
+    },
+    "Box3D.SphereMade": {
+      "hidden": true
+    },
+    "Box3D.CapsuleMade": {
+      "hidden": true
+    },
+    "Box3D.MeshMade": {
+      "hidden": true
+    }
+  },
   "sourceAbout": "Added to a Unity project's game: a body starts where its entity's Transform (Unity's placement) is, and the Transform follows the body",
   "source": [
     "namespace Box3D",
@@ -22,48 +99,5 @@
     "        transform.localRotation = body.rotation;",
     "    }",
     "}"
-  ],
-  "unity": {
-    "Rigidbody": {
-      "as": "Box3D.Body",
-      "fields": {
-        "type": {"from": "m_IsKinematic", "values": {"0": "Box3D.BodyType.Dynamic", "1": "Box3D.BodyType.Kinematic"}},
-        "gravityScale": "m_UseGravity",
-        "linearDamping": "m_LinearDamping",
-        "angularDamping": "m_AngularDamping"
-      }
-    },
-    "BoxCollider": {
-      "as": "Box3D.Box",
-      "fields": {
-        "size": "m_Size * absScale",
-        "offset": "m_Center * scale",
-        "sensor": "m_IsTrigger"
-      },
-      "needs": "Box3D.Body { type = Box3D.BodyType.Static }",
-      "notUnder": ["Rigidbody", "a collider under a Rigidbody is a shape of that body, which is Box3D.Part, not one to one"]
-    },
-    "SphereCollider": {
-      "as": "Box3D.Sphere",
-      "fields": {
-        "radius": "m_Radius * largestScale",
-        "offset": "m_Center * scale",
-        "sensor": "m_IsTrigger"
-      },
-      "needs": "Box3D.Body { type = Box3D.BodyType.Static }",
-      "notUnder": ["Rigidbody", "a collider under a Rigidbody is a shape of that body, which is Box3D.Part, not one to one"]
-    },
-    "CapsuleCollider": {
-      "as": "Box3D.Capsule",
-      "when": ["m_Direction", "1", "Box3D's capsules stand along y: set the capsule's Direction to Y-Axis and turn its GameObject"],
-      "fields": {
-        "radius": "m_Radius * largestScaleXZ",
-        "height": "m_Height * scaleY",
-        "offset": "m_Center * scale",
-        "sensor": "m_IsTrigger"
-      },
-      "needs": "Box3D.Body { type = Box3D.BodyType.Static }",
-      "notUnder": ["Rigidbody", "a collider under a Rigidbody is a shape of that body, which is Box3D.Part, not one to one"]
-    }
-  }
+  ]
 }

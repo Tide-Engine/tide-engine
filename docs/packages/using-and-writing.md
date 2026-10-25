@@ -218,33 +218,26 @@ Tide still changes from version to version, so a package can have code for the v
 
 ### Unity components
 
-A package can say which of Unity's own components are which of its own, for games made in Unity: a `unity.json` in its folder, which `tide unity` reads for each game that lists the package. Box3D's makes a `Rigidbody` its `Body` and a `BoxCollider` its `Box`. Only components that are one to one belong there, field for field:
+In a Unity project, a package's components are on GameObjects like the game's own. A `unity.json` in the package's folder says how they're shown and baked there, for each game that lists the package. Box3D's:
 
 ```json
 {
-  "unity": {
-    "BoxCollider": {
-      "as": "Box3D.Box",
-      "fields": {
-        "size": "m_Size * absScale",
-        "offset": "m_Center * scale",
-        "sensor": "m_IsTrigger"
-      },
-      "needs": "Box3D.Body { type = Box3D.BodyType.Static }",
-      "notUnder": ["Rigidbody", "a collider under a Rigidbody is a shape of that body, which is Box3D.Part, not one to one"]
-    }
-  }
+  "components": {
+    "Box3D.Body": { "hidden": ["id", "stepPosition", "stepVelocity"] },
+    "Box3D.Box": {
+      "scaled": { "size": "absScale", "offset": "scale" },
+      "shape": { "box": "size", "center": "offset" }
+    },
+    "Box3D.BoxMade": { "hidden": true }
+  },
+  "source": ["namespace Box3D", "{", "    ...", "}"]
 }
 ```
 
-- Each key of `unity` is a Unity component, as Unity's scene files name it. `as` is the package's component it is.
-- `fields` gives each field of that component from Unity's: its serialized name (`m_IsTrigger`), or `{"from": "m_IsKinematic", "values": {"0": "...", "1": "..."}}` for one whose values become others. A size can be by the GameObject's scale, as Unity's are: `* scale` and `* absScale` (each axis, with its sign or without), `* largestScale`, `* largestScaleXY`, `* largestScaleXZ`, and `* scaleX`, `* scaleY` and `* scaleZ`.
-- `when`, `["m_Direction", "1", "why"]`, says the only value of a field with which it's one to one. With another the component is left out, and a warning says why.
-- `needs` is a component the entity has with it when nothing else gives it one of that type: a collider with no `Rigidbody` is on a static body.
-- `notUnder` names a Unity component that, on a GameObject above it, makes it no one to one.
-- `source` is lines of Tide the game has in a Unity project alone: Box3D's starts a body where its entity's Transform is, and has the Transform follow the body.
-
-A component of the package's own on the GameObject always wins over a Unity one's translation.
+- `hidden` is a list of the component's fields that aren't in the Inspector or baked from the scene, as the package sets them itself; or `true` for a component that isn't in Add Component, one the package adds itself.
+- `scaled` gives fields that are by the GameObject's scale, as a collider's size is. They're authored without the scale and baked times it, and in Play the component shows the match's value divided by it. Each one's scale is one of `scale` and `absScale` (each axis, with its sign or without), `largestScale`, `largestScaleXY`, `largestScaleXZ` (the largest axis without its sign), `scaleX`, `scaleY` or `scaleZ`.
+- `shape` is what the Scene view draws of a selected component, and gives handles with Edit Shape: one of `box`, `sphere` or `capsule`, or in the XY plane `rect` or `circle`, naming its size field (a radius for the round ones). `center` names its centre's field, and a capsule's `height` its height's.
+- `source` is lines of Tide that the game has in a Unity project alone, in the package's namespace. Box3D's starts a body where its entity's Transform is, and has the Transform follow the body.
 
 ## Editors
 

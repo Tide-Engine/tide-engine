@@ -742,9 +742,12 @@ Removing `Body` removes its native body, parts and joints at the next physics st
 
 ## In Unity
 
-In a Unity project ([Unity](../tools/cli.md#unity)), Unity's own physics components on a TideEntity GameObject are Box3D's: tide translates them as it reads the scene or prefab. A `Rigidbody` is a `Body` (Kinematic when it's kinematic, else Dynamic; `useGravity` as `gravityScale` 1 or 0; its drags as the dampings). A `BoxCollider` is a `Box`, a `SphereCollider` a `Sphere` and a Y-axis `CapsuleCollider` a `Capsule`, sized by the GameObject's scale as Unity sizes them, `isTrigger` as `sensor`. A collider with no `Rigidbody` is on a static body, as in Unity. A body starts where the GameObject is, and Unity shows it where Box3D has it.
+In a Unity project ([Unity](../tools/cli.md#unity)), Box3D's components go on a TideEntity GameObject like any of the game's, from Add Component's Tide/Box3D menu: a `Body`, and a `Box`, `Sphere` or `Capsule` for its shape. Unity's own `Rigidbody` and colliders aren't Box3D's, and do nothing in the match.
 
-Only what's one to one is translated, and what isn't is left out with a warning that says why: a collider under another GameObject's `Rigidbody` (a [part](#parts) in Box3D), a capsule along X or Z, a second collider of one kind on a GameObject. A `Rigidbody`'s mass isn't one to one either, as a body weighs what its shapes' densities make it: give the GameObject the shape's Box3D component to say its density, which then stands in for the collider. A Box3D component of the GameObject's own always wins over the translation of a Unity one.
+- A shape's size is by the GameObject's scale, as a collider's is: a `Box` of size 1 on a cube scaled (12, 1, 12) is 12 by 1 by 12 in the match. A `Sphere`'s radius is by the largest axis of the scale, and a `Capsule`'s radius by the larger of x and z, its height by y. In Play the component shows what you authored, the match's value divided by the scale.
+- A selected shape is drawn in the Scene view, and its Edit Shape button (also in the Scene view's tools) gives it handles, as Edit Collider does.
+- A body starts where its GameObject is, and the GameObject follows the body.
+- The fields Box3D keeps for itself, such as a body's `id` and its `step` values, aren't in the Inspector, and the components it adds itself, such as `BoxMade`, aren't in Add Component.
 
 ## Multiplayer
 

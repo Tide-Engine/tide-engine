@@ -21,6 +21,7 @@ namespace Tide
     // On each GameObject that shows a Tide entity: which one, and its
     // components as this frame's view packet has them, blended between ticks.
     [DisallowMultipleComponent]
+    [Icon(TideIcon.Entity)]
     public sealed class TideEntityView : MonoBehaviour
     {
         public TideRunner Runner { get; internal set; }

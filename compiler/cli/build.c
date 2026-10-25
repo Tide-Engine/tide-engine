@@ -1945,7 +1945,8 @@ static bool generate(build *b, const char *gen, const bool layout)
     // A Unity project's prefabs and scenes, as the prefabs tide makes of them, after the game's own files
     unity_sources unity = {0};
     if (b->opts->unity_assets) {
-        // ...with Unity's own components the game's packages translate into theirs (each package's unity.json)
+        // ...as the game's packages say their components are baked there, with their Tide for a Unity project (each
+        // package's unity.json)
         unity_package *packages = calloc((size_t)b->packages.count + 1, sizeof *packages);
         if (!packages) abort();
         for (int i = 0; i < b->packages.count; i++) packages[i] = (unity_package){b->packages.items[i].folder, b->packages.items[i].name};
@@ -2734,7 +2735,12 @@ static bool write_unity_package(const run *r, const char *schema, const uint32_t
         sys_remove(path);
         free(path);
     }
-    ok = ok && unity_code_write(dir, schema, r->b.outline);
+    // ...with what the game's packages say of their components in Unity (each one's unity.json)
+    unity_package *packages = calloc((size_t)r->b.packages.count + 1, sizeof *packages);
+    if (!packages) abort();
+    for (int i = 0; i < r->b.packages.count; i++) packages[i] = (unity_package){r->b.packages.items[i].folder, r->b.packages.items[i].name};
+    ok = ok && unity_code_write(dir, schema, r->b.outline, packages, r->b.packages.count);
+    free(packages);
     ok = ok && unity_shaders_write(dir, r->b.shaders, r->b.shaders_size);
     free(dir);
     free(project);
