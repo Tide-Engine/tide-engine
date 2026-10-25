@@ -90,10 +90,10 @@ notes/gui-priority-measurements.json records the new frozen source/binary
 identities, identical untimed output digests and CPU method. The earlier
 build/gui-bench executables were absent when this follow-up began; their hashes
 are not reused. The new pair lives in build/gui-pass and compares baseline GUI
-at e757c631 with this candidate, both against the same optimized drawing/runtime
+at a21a81a8 with merged candidate 27d75edb, both against the same optimized drawing/runtime
 library. The --check path takes no timings. notes/gui-measurement.ps1 runs only
-three alternating pairs under a strict process gate/detector and an absolute
-whole-batch deadline; any observed contention invalidates the batch. Isolated
+three alternating pairs under the shared benchmark mutex, five-second quiet
+preflight, strict process gate/detector and an absolute whole-batch deadline; any observed contention invalidates the batch. Isolated
 CPU samples and GPU timings remain pending unless a clean run is recorded in
 that manifest; structural parity alone establishes no speedup.
 

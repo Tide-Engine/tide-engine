@@ -1,7 +1,7 @@
 {
   "status": "timings_pending",
-  "reason": "Correctness tests and external work have contended the machine. No timing batch has started for this follow-up.",
-  "baseCommit": "e757c631bce4b0d6d7265a98cdd34860d94777fb",
+  "reason": "Integration and all overlap checks are complete. The merged pair was rebuilt/frozen after worker_limits integration. A clean timing window is pending; no timing batch has started.",
+  "baseCommit": "a21a81a86c65c92ce655b7f73b183a541af4a703",
   "hardware": {
     "cpu": "AMD Ryzen 9 7900X 12-Core Processor",
     "physicalCores": 12,
@@ -26,19 +26,19 @@
   ],
   "baseline": {
     "exe": "build/gui-pass/baseline.exe",
-    "exeSha256": "a6df71f96e8eb4b40241ea5f4292dc07c10ac8cd2a318f508ea820bf427a16b7",
+    "exeSha256": "b31686c554da48b4589a2a7fc1ea59daaf4c0cbcfca4641a36162271e6b4a6f5",
     "guiCsha256": "2b4928fafb8bd2233d5eef7d4caff3879290087210ea657f91bb0bd3181e67ed",
-    "guiHsha256": "1343e78c6fcdae523c57b3c87fe871e82188247c93c32eff5863c5c7aed3d46a"
+    "guiHsha256": "fd3a352a1288eb9fa01cec1a82c975b150307d5a0ad7aeabe6f540f72d3d73a6"
   },
   "candidate": {
     "exe": "build/gui-pass/current.exe",
-    "exeSha256": "7f60fac11397d8936db0e437cbb7843b6732c9ede97bc2a10ccbf1ef4078b700",
+    "exeSha256": "67e0e5fa7d2e6ace7534c81132e5aff080972d509366c1197c31e3ec706a4892",
     "guiCsha256": "8c067b11a97c56da4cc967ed53d522e8bc488013ed045666cbb4b98f4f010ea9",
-    "guiHsha256": "6d8da8a269dc7e0a7d56172f62b23fa489c3c61b5a1e807622c4e4ca77273950"
+    "guiHsha256": "b1a5e0c38f223dc60c7481a3d798a373932abe506377983e396881f4f6b9af1a"
   },
   "sharedRuntime": {
     "path": "build/release/engine/tide.lib",
-    "sha256": "0b3b727c9e3758dacc1dba9256bd134c25cf8f17fd7b723e5b38859ff714aed5"
+    "sha256": "8c96b32912469d140d0d704b09dfd5195b9b2feef7983436ea061ee1d12b3d96"
   },
   "probe": {
     "path": "notes/gui-measurement.c",
@@ -49,7 +49,7 @@
     "controls": 256,
     "rows": 32
   },
-  "gate": "notes/gui-measurement.ps1: three alternating process pairs, no ignored heavy processes, bounded by an absolute UTC deadline; contention marks the entire batch.",
+  "gate": "notes/gui-measurement.ps1: shared Local\\TideClaudeContinuationBenchmark mutex, five-second quiet preflight, three alternating process pairs, no ignored heavy processes, bounded by an absolute UTC deadline; contention invalidates the entire batch.",
   "untimedStructuralChecks": {
     "stockBaselineAndCandidate": "83ce5d69b9060b3f",
     "customAndDirectCandidate": "5436392dbf1abd0b",
@@ -62,5 +62,6 @@
     "CPU layout/record/append only; no GPU or frame-rate claim.",
     "Custom/direct comparison has precomputed IDs in the direct C reference.",
     "Earlier build/gui-bench frozen files were absent when this follow-up began; their previous identities are not reused."
-  ]
+  ],
+  "candidateCommit": "27d75edb57eb259c129fcc5f9748f5be072938ef"
 }
