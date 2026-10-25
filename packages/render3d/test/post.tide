@@ -1,0 +1,165 @@
+using Render3D;
+
+scene Main;
+singleton PostSimulation { int marker = 79; }
+
+local singleton PostProbe
+{
+    int mode;
+    bool disabled;
+    bool present = true;
+    bool disposeScratch;
+    bool bloomEnabled;
+    float bloomIntensity = 0.25;
+    float bloomRadius = 1;
+    int bloomIterations = 2;
+    BloomSettings raw;
+    BloomSettings bounded;
+    float3 special;
+    float3[12] bright;
+    float3[9] impulse;
+    float3 constantBlur;
+    float3 invalidBlur;
+    float3[4] combined;
+    int beforeSlot;
+    int afterSlot;
+    int finalSlot;
+    int finalPending;
+    RenderTarget firstPending;
+    RenderTarget secondPending;
+    Texture extra;
+}
+
+struct PostNumbers { float gain = 1; float bias; }
+
+frag PostArithmetic(Vertex vertex, out Color color, Texture source, PostNumbers numbers)
+{
+    Color sample = source.Sample(vertex.uv);
+    color = Color(float3(sample.r, sample.g, sample.b) * numbers.gain + float3(numbers.bias), 1);
+}
+
+bool PostScale(Texture source, RenderTarget destination, float gain)
+{
+    Draw.Blit(source, destination, PostArithmetic, PostNumbers { gain = gain });
+    return true;
+}
+
+bool PostAdd(Texture source, RenderTarget destination)
+{
+    Draw.Blit(source, destination, PostArithmetic, PostNumbers { bias = 3 });
+    return true;
+}
+
+bool PostBypass(Texture source, RenderTarget destination)
+{
+    _ = source;
+    _ = destination;
+    return false;
+}
+
+float3 ImpulseAt(int index)
+{
+    return index == 4 ? float3(1, 2, 4) : float3(0);
+}
+
+float3 ImpulseLinear(float position)
+{
+    int index = int(Math.Floor(position));
+    return Math.Lerp(ImpulseAt(index), ImpulseAt(index + 1), position - float(index));
+}
+
+[Before(Render3D.Stages.Prepare)]
+view ConfigurePost(mut Renderer renderer, mut PostProbe probe)
+{
+    if (probe.disposeScratch) DisposePost(renderer);
+    renderer.enabled = !probe.disabled;
+    renderer.defaultPresent = probe.present;
+    renderer.bloom = BloomSettings {
+        enabled = probe.bloomEnabled, intensity = probe.bloomIntensity,
+        radius = probe.bloomRadius, iterations = probe.bloomIterations
+    };
+    renderer.postEffects = [];
+    if (probe.mode == 1)
+    {
+        mut float gain = 2;
+        PostEffect captured = (Texture source, RenderTarget destination) => PostScale(source, destination, gain);
+        gain = 99;
+        renderer.postEffects = [captured, default, PostBypass, PostAdd,
+            (Texture source, RenderTarget destination) => PostScale(source, destination, 0.5)];
+    }
+    if (probe.mode == 5) renderer.postEffects = [default, PostAdd];
+    if (probe.mode == 6) renderer.postEffects = [PostBypass, PostAdd];
+    probe.bounded = ClampBloom(probe.raw);
+    BloomSettings soft = default;
+    BloomSettings hard = BloomSettings { softness = 0 };
+    probe.bright[0] = BloomBright(float3(0), soft);
+    probe.bright[1] = BloomBright(float3(0.25, 0.125, 0.0625), soft);
+    probe.bright[2] = BloomBright(float3(1, 0.5, 0.25), soft);
+    probe.bright[3] = BloomBright(float3(2, 1, 0.5), soft);
+    probe.bright[4] = BloomBright(float3(4, 2, 1), soft);
+    probe.bright[5] = BloomBright(float3(0.5, 0.25, 0.125), hard);
+    probe.bright[6] = BloomBright(float3(1, 0.5, 0.25), hard);
+    probe.bright[7] = BloomBright(float3(2, 1, 0.5), hard);
+    probe.bright[8] = BloomBright(float3(2, 0.5, 0.25), BloomSettings { threshold = 0, softness = 0 });
+    probe.bright[9] = BloomBright(probe.special, soft);
+    probe.bright[10] = BloomBright(float3(0.125, 0.0625, 0.03125), BloomSettings { threshold = 0, softness = 65504 });
+    probe.bright[11] = BloomBright(float3(4, 2, 1), BloomSettings { threshold = 8, softness = 0 });
+    for (var i = 0; i < 9; i++)
+    {
+        probe.impulse[i] = BlurBloomSamples(ImpulseAt(i),
+            ImpulseLinear(float(i) + 18.0 / 13), ImpulseLinear(float(i) - 18.0 / 13),
+            ImpulseLinear(float(i) + 42.0 / 13), ImpulseLinear(float(i) - 42.0 / 13));
+    }
+    probe.constantBlur = BlurBloomSamples(float3(2, 4, 8), float3(2, 4, 8), float3(2, 4, 8), float3(2, 4, 8), float3(2, 4, 8));
+    probe.invalidBlur = BlurBloomSamples(probe.special, probe.special, probe.special, probe.special, probe.special);
+    probe.combined[0] = CombineBloom(float3(4, 2, 1), float3(2, 1, 0.5), 0.25);
+    probe.combined[1] = CombineBloom(float3(4, 2, 1), float3(2, 1, 0.5), 0);
+    probe.combined[2] = CombineBloom(float3(65504), float3(65504), 16);
+    probe.combined[3] = CombineBloom(probe.special, float3(1), -1);
+}
+
+// Ordinary staged views retain the game's singleton resource bindings.
+frag PostResource(Vertex vertex, out Color color, Texture source, PostProbe probe)
+{
+    Color a = source.Sample(vertex.uv);
+    Color b = probe.extra.Sample(vertex.uv);
+    color = Color(float3(a.r + b.r, a.g + b.g, a.b + b.b), 1);
+}
+
+[Stage(Render3D.Stages.PostPrepare, 1)]
+view BeforeBloom(mut Renderer renderer, mut PostProbe probe)
+{
+    if (!renderer.enabled || !renderer.ready) return;
+    probe.beforeSlot = renderer.postSourceSlot;
+    if (probe.mode == 3)
+    {
+        Texture source = renderer.output;
+        RenderTarget destination = NextPostTarget(renderer);
+        _ = PostScale(source, destination, 2);
+        CommitPost(renderer);
+    }
+    if (probe.mode == 4)
+    {
+        probe.firstPending = NextPostTarget(renderer);
+        probe.secondPending = NextPostTarget(renderer);
+        // Leave pending without publishing: the next BeginPost must clear it.
+    }
+}
+
+[Stage(Render3D.Stages.PostProcess, 1)]
+view AfterChain(mut Renderer renderer, mut PostProbe probe)
+{
+    if (!renderer.enabled || !renderer.ready) return;
+    probe.afterSlot = renderer.postSourceSlot;
+    if (probe.mode == 3)
+    {
+        probe.extra = renderer.hdr.color;
+        Texture source = renderer.output;
+        RenderTarget destination = NextPostTarget(renderer);
+        Draw.Blit(source, destination, PostResource);
+        CommitPost(renderer);
+        CommitPost(renderer); // No pending pass: must not change the result.
+    }
+    probe.finalSlot = renderer.postSourceSlot;
+    probe.finalPending = renderer.postPendingSlot;
+}

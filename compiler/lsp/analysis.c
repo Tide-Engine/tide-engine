@@ -501,6 +501,7 @@ static void type_tree(const type_ref *r, const type t)
             const type part = t.kind == TY_STRUCT && t.decl && t.decl->callable && i < t.decl->call_types.count
                 ? t.decl->call_types.items[i]
                 : t.kind == TY_STRUCT && t.decl && t.decl->task_handle && i == 0 ? t.decl->task_value
+                : t.kind == TY_STRUCT && t.decl && t.decl->asset_ref_of && i == 0 ? type_asset_reference_value(t.decl)
                 : t.kind == TY_STRUCT && t.decl && t.decl->skin_kind == SKIN_MESH
                 ? i == 0 ? t.decl->skin_vertex : t.decl->skin_contract ? (type){TY_STRUCT, t.decl->skin_contract} : (type){TY_ERROR, NULL}
                 : holds && i < t.decl->fields.count ? t.decl->fields.items[i].type : (type){TY_ERROR, NULL};
@@ -6639,7 +6640,7 @@ static type member_type(const type t, const str member)
     if (t.kind == TY_STRUCT && t.decl && t.decl->task_handle
         && (str_eq_c(member, "isRunning") || str_eq_c(member, "isCompleted") || str_eq_c(member, "isCancelled")))
         return (type){TY_BOOL, NULL};
-    if (t.kind == TY_STRUCT && t.decl && t.decl->asset_ref_of && str_eq_c(member, "Value")) return (type){TY_MESH, t.decl->asset_ref_of};
+    if (t.kind == TY_STRUCT && t.decl && t.decl->asset_ref_of && str_eq_c(member, "Value")) return type_asset_reference_value(t.decl);
     if (t.kind == TY_STRUCT && t.decl && t.decl->skin_kind) {
         const decl *d = t.decl;
         if (d->skin_kind == SKIN_MESH && str_eq_c(member, "animations")) return (type){TY_STRUCT, d->skin_animations};
@@ -6813,7 +6814,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
     }
     if (t.kind == TY_TEXTURE) item(c, "size", CK_PROPERTY, "int2", TEXTURE_SIZE_DOC, NULL);
     if (t.kind == TY_STRUCT && t.decl && t.decl->asset_ref_of) {
-        item(c, "Value", CK_PROPERTY, type_name((type){TY_MESH, t.decl->asset_ref_of}),
+        item(c, "Value", CK_PROPERTY, type_name(type_asset_reference_value(t.decl)),
              "The currently loaded mesh. Empty references read an empty mesh; assign a named asset to change the reference.", NULL);
         return;
     }
@@ -7680,8 +7681,8 @@ static void complete_value_types(completion *c, const unsigned which)
         item(c, "Map", CK_STRUCT, "Map<K, V>", builtin_type_doc(TY_MAP), "Map<$1, $2>");
         item(c, "Set", CK_STRUCT, "Set<K>", builtin_type_doc(TY_SET), "Set<$1>");
         if (!(which & VT_GPU)) {
-            item(c, "Asset", CK_STRUCT, "Asset<Mesh<V>>: checked persistent model reference",
-                 "Store a named static mesh asset in a component. Value reads the currently loaded mesh.", "Asset<Mesh<${1:Vertex3}>>");
+            item(c, "Asset", CK_STRUCT, "Asset<T>: checked persistent static or skinned model reference",
+                 "Store a named Mesh<V> or SkinnedMesh<V> asset in a component. Value reads the currently loaded model.", "Asset<Mesh<${1:Vertex3}>>");
             item(c, "SkinnedMesh", CK_STRUCT, "SkinnedMesh<V[, Contract]>",
                  "An immutable glTF or FBX model with geometry, a skeleton and animation catalogs. An optional struct contract promises named Animation and Bone members.", "SkinnedMesh<$1>");
             item(c, "AnimationCatalog", CK_STRUCT, "built-in type",

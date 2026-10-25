@@ -1,0 +1,144 @@
+// Twelve ordinary sampled resources, high-slot read kinds, and eight maps plus skinning.
+scene Main { }
+asset SkinnedMesh<Vertex3> model = "../../../platform/tests/skinned.gltf";
+asset Cubemap sky = "../e2e/cubes/sky/sky_??.png";
+local singleton CapacityArt
+{
+    List<Vertex> quad;
+    List<int> indices;
+    Texture pad0;
+    Texture pad1;
+    Texture pad2;
+    Texture pad3;
+    Texture pad4;
+    Texture pad5;
+    Texture pad6;
+    Texture pad7;
+    Texture high0;
+    Texture high1;
+    Texture high2;
+    Texture high3;
+    DepthTexture depth;
+    RenderTarget depthTarget;
+    List<int> words;
+    Filter footprint = Filter.Trilinear;
+    int mode;
+    bool made;
+}
+struct CapacityProbe { int slot; float2 scale; float2 offset; }
+frag CapacityTwelve(Vertex vertex, out Color color, CapacityArt art, CapacityProbe probe)
+{
+    float low = (art.pad0.Sample(vertex.uv, Filter.Point).r +
+        art.pad1.Sample(vertex.uv, Filter.Point).r +
+        art.pad2.Sample(vertex.uv, Filter.Point).r +
+        art.pad3.Sample(vertex.uv, Filter.Point).r +
+        art.pad4.Sample(vertex.uv, Filter.Point).r +
+        art.pad5.Sample(vertex.uv, Filter.Point).r +
+        art.pad6.Sample(vertex.uv, Filter.Point).r +
+        art.pad7.Sample(vertex.uv, Filter.Point).r) / 8;
+    float2 uv = vertex.uv * probe.scale + probe.offset;
+    Color a = art.high0.Sample(uv);
+    Color b = art.high1.Sample(uv);
+    Color c = art.high2.Sample(uv);
+    Color d = art.high3.Sample(uv);
+    float value = probe.slot == 0 ? a.r : probe.slot == 1 ? b.r : probe.slot == 2 ? c.r : d.r;
+    color = Color(value * low, value * low, value * low);
+}
+frag CapacityFixed(Vertex vertex, out Color color, CapacityArt art, CapacityProbe probe)
+{
+    float low = (art.pad0.Sample(vertex.uv, Filter.Point).r +
+        art.pad1.Sample(vertex.uv, Filter.Point).r +
+        art.pad2.Sample(vertex.uv, Filter.Point).r +
+        art.pad3.Sample(vertex.uv, Filter.Point).r +
+        art.pad4.Sample(vertex.uv, Filter.Point).r +
+        art.pad5.Sample(vertex.uv, Filter.Point).r +
+        art.pad6.Sample(vertex.uv, Filter.Point).r +
+        art.pad7.Sample(vertex.uv, Filter.Point).r) / 8;
+    float2 uv = vertex.uv * probe.scale + probe.offset;
+    Color a = art.high0.Sample(uv, Filter.Point, Wrap.Repeat);
+    Color b = art.high1.Sample(uv, Filter.Bilinear, Wrap.Mirror);
+    Color c = art.high2.Sample(uv, Filter.Trilinear, Wrap.Clamp);
+    Color d = art.high3.Sample(uv, Filter.Point, Wrap.Repeat);
+    float value = probe.slot == 0 ? a.r : probe.slot == 1 ? b.r : probe.slot == 2 ? c.r : d.r;
+    color = Color(value * low, value * low, value * low);
+}
+frag CapacityOne(Vertex vertex, out Color color, Texture image, CapacityProbe probe)
+{
+    Color sampled = image.Sample(vertex.uv * probe.scale + probe.offset);
+    color = Color(sampled.r, sampled.r, sampled.r);
+}
+vert CapacityReserve(mut Vertex vertex, CapacityArt art)
+{
+    float low = art.pad0.Sample(vertex.uv, Filter.Point).r +
+        art.pad1.Sample(vertex.uv, Filter.Point).r +
+        art.pad2.Sample(vertex.uv, Filter.Point).r +
+        art.pad3.Sample(vertex.uv, Filter.Point).r +
+        art.pad4.Sample(vertex.uv, Filter.Point).r +
+        art.pad5.Sample(vertex.uv, Filter.Point).r +
+        art.pad6.Sample(vertex.uv, Filter.Point).r +
+        art.pad7.Sample(vertex.uv, Filter.Point).r;
+    if (low < 7.5) vertex.position += float2(1000);
+}
+frag CapacityKinds(Vertex vertex, out Color color, CapacityArt art)
+{
+    float number = float(art.words[0]);
+    float depth = art.depth.Sample(vertex.uv);
+    float compared = art.depth.Compare(vertex.uv, 0.5);
+    Color cube = sky.Sample(float3(1, 0, 0), Filter.Point);
+    color = number == 7 && depth > 0.99 && compared > 0.99 && cube.r > 0.99 && cube.g < 0.01
+        ? Color.green : Color.red;
+}
+frag CapacitySkin(Vertex3 vertex, out Color color, CapacityArt art)
+{
+    float low = (art.pad0.Sample(vertex.uv, Filter.Point).r +
+        art.pad1.Sample(vertex.uv, Filter.Point).r +
+        art.pad2.Sample(vertex.uv, Filter.Point).r +
+        art.pad3.Sample(vertex.uv, Filter.Point).r +
+        art.pad4.Sample(vertex.uv, Filter.Point).r +
+        art.pad5.Sample(vertex.uv, Filter.Point).r +
+        art.pad6.Sample(vertex.uv, Filter.Point).r +
+        art.pad7.Sample(vertex.uv, Filter.Point).r) / 8;
+    color = Color(low, low, low);
+}
+view CapacityDraw(mut CapacityArt art)
+{
+    if (!art.made)
+    {
+        art.made = true;
+        art.quad = [Vertex { position = float2(0, 0), uv = float2(0, 0) },
+                    Vertex { position = float2(32, 0), uv = float2(1, 0) },
+                    Vertex { position = float2(32, 32), uv = float2(1, 1) },
+                    Vertex { position = float2(0, 32), uv = float2(0, 1) }];
+        art.indices = [0, 1, 2, 0, 2, 3];
+        art.words.Add(7);
+        art.depthTarget = RenderTarget(32, 32, 1, Format.Depth);
+        art.depth = art.depthTarget.depth;
+    }
+    art.depthTarget.Clear(Color.white);
+    Draw.SetScreen();
+    Draw.Clear(Color.black);
+    if (art.mode == 2)
+    {
+        Draw.Mesh(art.quad, art.indices, CapacityReserve, CapacityKinds);
+        return;
+    }
+    if (art.mode == 3)
+    {
+        Draw.SkinnedMesh(model, float4x4.identity, CapacitySkin);
+        return;
+    }
+    for (var slot = 0; slot < 4; slot++)
+    {
+        var probe = CapacityProbe { slot = slot,
+            scale = float2(art.footprint == Filter.Trilinear ? 8 : 1), offset = float2(-0.37, 0.19) };
+        Draw.Transform(float2(slot * 32, 0))
+        {
+            if (art.mode == 4) Draw.Mesh(art.quad, art.indices, CapacityFixed, probe);
+            else if (art.mode == 0) Draw.Mesh(art.quad, art.indices, CapacityTwelve, probe);
+            else if (slot == 0) Draw.Mesh(art.quad, art.indices, art.high0, CapacityOne, probe);
+            else if (slot == 1) Draw.Mesh(art.quad, art.indices, art.high1, CapacityOne, probe);
+            else if (slot == 2) Draw.Mesh(art.quad, art.indices, art.high2, CapacityOne, probe);
+            else Draw.Mesh(art.quad, art.indices, art.high3, CapacityOne, probe);
+        }
+    }
+}

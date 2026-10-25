@@ -1,0 +1,5 @@
+// expect: field 'model' is Asset<SkinnedMesh<Other>>, not SkinnedMesh<Vertex3>
+struct Other { float3 position; }
+asset SkinnedMesh<Vertex3> character = "../e2e/skinned/rest.gltf";
+component Art { Asset<SkinnedMesh<Other>> model = character; }
+scene Main;

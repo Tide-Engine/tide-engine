@@ -434,41 +434,51 @@ static inline tide_wrap tide_wrap_of(const int32_t wrap)
     return wrap == TIDE_WRAP_REPEAT || wrap == TIDE_WRAP_MIRROR ? (tide_wrap)wrap : TIDE_WRAP_CLAMP;
 }
 
-// How a shader's textures are sampled, a word for all of them (a
+enum { TIDE_SHADER_ATTRIBUTES = 16, TIDE_SHADER_TEXTURES = 12 };
+
+// How a shader's textures are sampled, two eight-texture banks (a
 // tide_draw_run's `sampling`): bit i is set for texture i read blended with
 // its neighbors, and clear for the nearest pixel, and the two bits from
 // TIDE_SAMPLING_WRAP + 2 * i are its tide_wrap. So a word with only its low
 // bits set clamps every texture. Bit TIDE_SAMPLING_MIPS + i is set, with bit
 // i, for one read between its smaller images too (TIDE_FILTER_TRILINEAR).
+// Slots 0..7 keep their original low 32 bits; slots 8..11 use the same
+// layout in the high 32 bits, with i starting at zero again.
 #define TIDE_SAMPLING_WRAP 8u
 #define TIDE_SAMPLING_MIPS 24u
 
-static inline uint32_t tide_sampling_wrapped(const uint32_t texture, const int32_t wrap)
+static inline uint64_t tide_sampling_wrapped(const uint32_t texture, const int32_t wrap)
 {
-    return (uint32_t)tide_wrap_of(wrap) << (TIDE_SAMPLING_WRAP + 2u * texture);
+    if (texture >= TIDE_SHADER_TEXTURES) return 0;
+    return (uint64_t)tide_wrap_of(wrap) << (32u * (texture / 8u) + TIDE_SAMPLING_WRAP + 2u * (texture % 8u));
 }
 
-static inline bool tide_sampling_blended(const uint32_t sampling, const uint32_t texture)
+static inline bool tide_sampling_blended(const uint64_t sampling, const uint32_t texture)
 {
-    return (sampling >> texture & 1u) != 0;
+    return texture < TIDE_SHADER_TEXTURES && (sampling >> (32u * (texture / 8u) + texture % 8u) & 1u) != 0;
 }
 
 // Texture `texture`'s filter in the word, and the word's bits for a filter.
-static inline tide_filter tide_sampling_filter(const uint32_t sampling, const uint32_t texture)
+static inline tide_filter tide_sampling_filter(const uint64_t sampling, const uint32_t texture)
 {
-    if (!(sampling >> texture & 1u)) return TIDE_FILTER_POINT;
-    return sampling >> (TIDE_SAMPLING_MIPS + texture) & 1u ? TIDE_FILTER_TRILINEAR : TIDE_FILTER_BILINEAR;
+    if (!tide_sampling_blended(sampling, texture)) return TIDE_FILTER_POINT;
+    return sampling >> (32u * (texture / 8u) + TIDE_SAMPLING_MIPS + texture % 8u) & 1u
+        ? TIDE_FILTER_TRILINEAR : TIDE_FILTER_BILINEAR;
 }
 
-static inline uint32_t tide_sampling_filtered(const uint32_t texture, const int32_t filter)
+static inline uint64_t tide_sampling_filtered(const uint32_t texture, const int32_t filter)
 {
+    if (texture >= TIDE_SHADER_TEXTURES) return 0;
     const tide_filter how = tide_filter_of(filter);
-    return (how != TIDE_FILTER_POINT ? 1u << texture : 0u) | (how == TIDE_FILTER_TRILINEAR ? 1u << (TIDE_SAMPLING_MIPS + texture) : 0u);
+    const uint32_t bank = 32u * (texture / 8u), lane = texture % 8u;
+    return (how != TIDE_FILTER_POINT ? UINT64_C(1) << (bank + lane) : 0u)
+         | (how == TIDE_FILTER_TRILINEAR ? UINT64_C(1) << (bank + TIDE_SAMPLING_MIPS + lane) : 0u);
 }
 
-static inline tide_wrap tide_sampling_wrap(const uint32_t sampling, const uint32_t texture)
+static inline tide_wrap tide_sampling_wrap(const uint64_t sampling, const uint32_t texture)
 {
-    return tide_wrap_of((int32_t)(sampling >> (TIDE_SAMPLING_WRAP + 2u * texture) & 3u));
+    if (texture >= TIDE_SHADER_TEXTURES) return TIDE_WRAP_CLAMP;
+    return tide_wrap_of((int32_t)(sampling >> (32u * (texture / 8u) + TIDE_SAMPLING_WRAP + 2u * (texture % 8u)) & 3u));
 }
 
 // Pixels to draw with, where the game keeps them. Nothing holds a texture on
@@ -778,12 +788,12 @@ static inline tide_texture_ref tide_texture_wrapped(const tide_texture_ref textu
 
 // What texture `texture` of a shader's adds to its run's `sampling` when it's
 // read as its reference says: its filter's bit, or its wrap's.
-static inline uint32_t tide_sampling_filter_of(const uint32_t texture, const tide_texture_ref from)
+static inline uint64_t tide_sampling_filter_of(const uint32_t texture, const tide_texture_ref from)
 {
     return tide_sampling_filtered(texture, (int32_t)tide_texture_filter(from));
 }
 
-static inline uint32_t tide_sampling_wrap_of(const uint32_t texture, const tide_texture_ref from)
+static inline uint64_t tide_sampling_wrap_of(const uint32_t texture, const tide_texture_ref from)
 {
     return tide_sampling_wrapped(texture, (int32_t)tide_texture_wrap(from));
 }
@@ -1266,7 +1276,6 @@ typedef enum tide_shader_format {
 
 // The most a shader takes: vertex attributes (its vertex's fields, and a
 // float4 or int4 of its instance's each), and textures.
-enum { TIDE_SHADER_ATTRIBUTES = 16, TIDE_SHADER_TEXTURES = 8 };
 
 // How a shader reads one of its textures. A color is read as it is, from
 // pixels or a target's color. A target's depth is read as a number, its
@@ -1376,7 +1385,7 @@ typedef struct tide_draw_run {
     uint32_t first;    // Its instances: where they start in tide_draw_list.instances, in bytes...
     uint32_t count;    // ...and how many, tide_shader_instance_size each
     uint32_t uniforms; // Its uniforms of the game's: where they start in tide_draw_list.uniforms, in bytes
-    uint32_t sampling; // How each texture is sampled: blended or the nearest, and its wrap (see TIDE_SAMPLING_WRAP)
+    uint64_t sampling; // Two eight-texture sampling banks (see TIDE_SAMPLING_WRAP).
     uint32_t textures[TIDE_SHADER_TEXTURES]; // 1 + each one's place in tide_draw_list.textures, or 0 for none: white
     tide_color tint;   // What its pixels' colors are multiplied by
     uint32_t moved;    // Whether a 2D shader's mesh goes through `transform` before the camera
@@ -2312,13 +2321,13 @@ void tide_draw_mesh_fill_bytes(tide_draw_list *d, uint32_t mesh, const void *ver
 // same uniforms, textures and sampling, are one command, which renderers draw
 // at once.
 void tide_draw_shaded(tide_draw_list *d, const tide_shader *shader, uint32_t mesh, const void *instance,
-                      const void *uniforms, const uint32_t *textures, uint32_t sampling);
+                      const void *uniforms, const uint32_t *textures, uint64_t sampling);
 
 // The same for `count` instances, tide_shader_instance_size bytes each,
 // copied in their order into one run. A shader with no instance bytes may
 // take NULL with a positive count. A count of zero records nothing.
 void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, uint32_t mesh, const void *instances,
-                                uint32_t count, const void *uniforms, const uint32_t *textures, uint32_t sampling);
+                                uint32_t count, const void *uniforms, const uint32_t *textures, uint64_t sampling);
 
 // Runs a frag over the entire selected destination. The fixed Vertex mesh has
 // clip-space positions, top-left uvs, and white color. The camera is identity,
@@ -2328,7 +2337,7 @@ void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, ui
 // bindings and packed shader data are the same as tide_draw_shaded's.
 // Sampling the destination is refused.
 void tide_draw_blit(tide_draw_list *d, const tide_shader *shader, tide_blend blend, const void *instance,
-                   const void *uniforms, const uint32_t *textures, uint32_t sampling);
+                   const void *uniforms, const uint32_t *textures, uint64_t sampling);
 // ---------------------------------------------------------------------------
 // 3D primitives: solid meshes, through the 3D camera and with depth, as
 // tide_draw_mesh_3d. Every shape is centered on `center`; its geometry is

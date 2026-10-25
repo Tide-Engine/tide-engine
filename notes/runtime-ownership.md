@@ -1,5 +1,18 @@
 # Runtime written by Claude for now
 
+## Twelve texture drawing boundary (2026-10-25)
+
+The owner-authorized Render3D extension completes the existing drawing/platform
+boundary at twelve shader textures. Existing tide_draw_shaded, shaded_instances,
+blit and mesh-shaded wrappers take uint64_t sampling instead of uint32_t; no
+runtime entry point is added. tide_shader/tide_draw_run and GPU descriptor
+layouts grow, so hosts, game libraries and generated games rebuild together.
+Texture reference storage, capture ownership, skin palette/influence functions
+and simulation state are unchanged. The platform's existing pipeline bridge
+takes a second read-kind bank; the recorded pipeline shape and matching Unity
+consumer move together to embed ABI 6. Contracts and scoped validation are in
+drawing.md, rendering.md, web.md, unity.md and shaders.md.
+
 ## GUI priority follow-up boundary (2026-10-25)
 
 Within the owner's delegated GUI/API/performance task, generated code gains

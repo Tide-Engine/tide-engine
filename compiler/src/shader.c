@@ -6511,8 +6511,8 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
         diag_note("read fewer of their fields in the frag and the vert: only what they read is sent");
         return NULL;
     }
-    if (sh->textures.count > 8) {
-        diag_error(call->at, "this draw samples %d textures, and a draw takes 8", sh->textures.count);
+    if (sh->textures.count > 12) {
+        diag_error(call->at, "this draw samples %d textures, and a draw takes 12", sh->textures.count);
         diag_note("a texture sampled with another filter or another wrap counts again, and so does a depth that's both read "
                   "and compared, and each list the code reads is one; put several images side by side in one texture");
         return NULL;

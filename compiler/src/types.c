@@ -337,6 +337,17 @@ static bool skin_catalog_guarantees(const decl *wanted, const decl *known)
     return true;
 }
 
+type type_asset_reference_value(const decl *reference)
+{
+    const decl *model = reference->asset_ref_of;
+    return (type){model->skin_kind == SKIN_MESH ? TY_STRUCT : TY_MESH, (decl *)model};
+}
+
+bool type_asset_reference_accepts(const decl *reference, const type asset)
+{
+    return type_assignable(type_asset_reference_value(reference), asset);
+}
+
 bool type_assignable(const type to, const type from)
 {
     if (to.kind == TY_ERROR || from.kind == TY_ERROR) return true;

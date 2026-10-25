@@ -373,7 +373,7 @@ static int global_type(translation *x, const gdecl *g)
 static int handle_slot(translation *x, const gdecl *g, const bool sampler)
 {
     const int b = g->at.binding;
-    if (g->at.group != 0 || b < 1 || b > 2 * 8 || (b % 2 == 0) != sampler) {
+    if (g->at.group != 0 || b < 1 || b > 2 * 12 || (b % 2 == 0) != sampler) {
         fail(x, g->line, g->col, "'%.*s' isn't at a binding a texture or its sampler has here", g->len, g->name);
     }
     return sampler ? (b - 2) / 2 : (b - 1) / 2;
@@ -445,7 +445,11 @@ static int name_expr(translation *x, const expr *e, hs *o)
     switch (T(x, t)->kind) {
     case K_TEXTURE: hprintf(o, "_TideTexture%d", handle_slot(x, g, false)); return t;
     case K_SAMPLER:
-    case K_SAMPLER_CMP: hprintf(o, "((_TideSampling >> %du) & 15u)", 4 * handle_slot(x, g, true)); return t;
+    case K_SAMPLER_CMP: {
+        const int slot = handle_slot(x, g, true);
+        hprintf(o, "((%s >> %du) & 15u)", slot < 8 ? "_TideSampling" : "_TideSamplingHigh", 4 * (slot % 8));
+        return t;
+    }
     default: break;
     }
     if (g->space == SPACE_UNIFORM) fail(x, e->line, e->col, "the uniform block is read by its members here");
@@ -2044,7 +2048,7 @@ static const char *const prelude[] = {
     "float _TideFlip, _TideHeight, _TideLinear;\n"
     "float4 _TideAttributes[16];\n"
     "float4 _TideSlots[3];\n"
-    "uint _TideOffset0, _TideOffset1, _TideOffset2, _TideFirst, _TideSampling;\n"
+    "uint _TideOffset0, _TideOffset1, _TideOffset2, _TideFirst, _TideSampling, _TideSamplingHigh;\n"
     "#if TIDEHL_TEXTURE_BUFFERS\n"
     "Texture2D<float4> _TideVertices0, _TideVertices1, _TideVertices2;\n"
     "#else\n"

@@ -1,0 +1,4 @@
+// expect: field 'model' is Asset<SkinnedMesh<Vertex3>>, not Mesh<Vertex3>
+asset Mesh<Vertex3> box = "../e2e/assets/meshes/box.obj";
+component Art { Asset<SkinnedMesh<Vertex3>> model = box; }
+scene Main;

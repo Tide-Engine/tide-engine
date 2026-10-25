@@ -23,7 +23,7 @@ typedef struct tide_embed tide_embed;
 
 // What another language binds against: a change to anything here that it lays
 // out or calls changes the number, and tide_embed_abi says it.
-#define TIDE_EMBED_ABI 5u
+#define TIDE_EMBED_ABI 6u
 uint32_t tide_embed_abi(void);
 
 typedef struct tide_embed_desc {
@@ -186,7 +186,7 @@ typedef enum tide_embed_render_op {
     TIDE_EMBED_RENDER_CUBE_FACE, // target id, cube id, face, its depth texture's id
     // id, its shaders' key as two uint32_ts (low first: FNV-1a's 64 bits of its SPIR-V words, or of its WGSL where
     // it has none, which tide unity names the shader it writes by), slot_count, 3 slots of stride and per_instance,
-    // attribute_count, 16 attributes of slot, format and offset, uniform_size, texture_count, 8 reads, blend,
+    // attribute_count, 16 attributes of slot, format and offset, uniform_size, texture_count, texture_count reads, blend,
     // depth, cull, stencil_test, stencil_op, into, outputs, then its name's length and bytes
     TIDE_EMBED_RENDER_PIPELINE,
     TIDE_EMBED_RENDER_PIPELINE_FREE, // id

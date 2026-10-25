@@ -96,6 +96,8 @@ if(NOT TIDE_ANDROID)
     tide_add_game(bench_render3d NAME game SOURCES render3d/game.tide
         PACKAGES Render3D "${PROJECT_SOURCE_DIR}/packages/render3d/pbr.tide"
                           "${PROJECT_SOURCE_DIR}/packages/render3d/materials.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/vertex.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/post.tide"
                           "${PROJECT_SOURCE_DIR}/packages/render3d/render3d.tide"
         HOST render3d/main.c render3d/direct.c)
     target_link_libraries(bench_render3d PRIVATE tide_platform tide_render3d)

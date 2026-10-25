@@ -1,5 +1,32 @@
 # Unity as a front end
 
+## Twelve texture slots and embed ABI 6 (2026-10-25)
+
+The coordinated internal capacity completion raises TideRender's sampled arrays
+and texture property IDs to twelve. Slots 0..7 keep _TideSampling's original
+four-bit modes; slots 8..11 use _TideSamplingHigh, supplied separately per draw.
+HLSL reads that high word only for high slots. The recorded pipeline contains
+one read entry per actual texture, replacing eight fixed entries. Native and
+managed embed ABI constants are both 6; stale hosts are rejected and the whole
+host/library/generated-shader set must rebuild. The separate draw packet stays
+at its existing version. No new runtime function, device baseline or vertex
+buffer transport is introduced. Twelve game textures plus the three GLES/WebGL
+vertex-buffer textures fit the existing sixteen vertex-texture baseline.
+The native zero-through-twelve packet fixture and strict FXC compilation of the
+capacity fixture passed. Unity player execution remains unvalidated locally.
+
+Integration audit against b4655dfd (2026-10-25): the merged hot-reload fix below
+keeps only vertex layout arrays in each pipeline's MaterialPropertyBlock.
+Both procedural draw paths retain that block; each command separately captures
+both sampling words and sets both globals immediately before drawing. The
+twelve-slot arrays, actual-count pipeline parsing and both ABI 6 constants
+survived the merge. Disable/enable discards pipelines and recordings; Fresh
+requests a render reset, and every shaded draw supplies its actual sample slots.
+The Sample's twelve checked-in shaders still declare only the low sampling word
+and reference slot zero; they do not exercise high slots and need regeneration
+with the complete rebuilt toolchain. This was a source audit only: no Unity,
+compiler or build execution was performed for the merge.
+
 Proposed and built 2026-10-20, early: the owner asked for every phase "most of
 the way there" to test and then list tweaks. What's built is in the "as built"
 sections below; the proposal's text above them is the design they follow.

@@ -369,6 +369,12 @@ and functions (what `--declarations` builds): a component a new prefab needs is
 in Unity before the code that spawns the prefab builds. The game itself keeps
 running its last build.
 
+Package functions and shaders remain available for their field types and callback
+defaults, including Render3D materials. Package bodies, assets and defaults still
+need to check normally. Fields that require game-defined shader types or callback
+defaults still need a successful game build; those game declarations are omitted
+by this fallback.
+
 `--assets Assets` makes the project's prefabs and scenes part of the game:
 each one holding GameObjects with the package's TideEntity component is a Tide
 prefab named after its file, read from its saved file (Unity's Force Text

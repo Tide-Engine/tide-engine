@@ -61,6 +61,10 @@ bool type_is_integer(type t);
 // An immutable asset glob's resource references, borrowed by synchronous helpers.
 bool type_is_asset_collection(type t);
 
+// The model value a checked Asset<T> resolves, without acquiring ownership.
+type type_asset_reference_value(const decl *reference);
+bool type_asset_reference_accepts(const decl *reference, type asset);
+
 // 2, 3 or 4 for float/double square matrices; 0 otherwise.
 int matrix_dim(type t);
 

@@ -1,5 +1,7 @@
 // The reference below deliberately retains the original per-caster Mesh loop.
 // It must not share preparation, grouping, transforms or handedness with Cast.
+// Integration: ShadowProbe.deform opts two consecutive static casters into
+// distinct owned 20-float captures; regenerate game.h before running the host.
 scene Main;
 asset Render3D.Mesh3D batchQuad = "quad.obj";
 asset Render3D.Mesh3D batchOther = "slanted.obj";
@@ -25,6 +27,7 @@ local singleton ShadowProbe
     bool showAtlas;
     bool disabled;
     bool noShadows;
+    bool deform;
     int resolution = 64;
     int budget = 8;
     int lodMode;
@@ -147,6 +150,34 @@ view ConfigureShadowBatches(mut Render3D.Renderer renderer, ShadowProbe probe)
     renderer.shadowDistance = 30;
 }
 
+struct BatchVertexCapture { float4x4 shape; float4 shift; }
+
+void BatchDeform(Render3D.VertexInput input, mut Render3D.MeshVertex vertex, BatchVertexCapture capture)
+{
+    float4 posed = Math.Mul(capture.shape, float4(vertex.position, 1));
+    vertex.position = posed.xyz + capture.shift.xyz * (posed.w + capture.shift.w);
+}
+
+[Before(Render3D.Stages.Prepare)]
+view BindBatchDeformation(ShadowItem item, mut Render3D.Material material, ShadowProbe probe)
+{
+    material.vertex = null;
+    if (!probe.deform || item.index > 1) return;
+    mut var capture = BatchVertexCapture {
+        shape = float4x4(float4(4, 0.0625, 0.03125, 0.015625),
+            float4(-0.125, 3, 0.046875, -0.03125), float4(0.09375, -0.0625, 1.125, 0.0078125),
+            item.index == 0 ? float4(6, 8, -1.5, 1) : float4(14, 6, -2, 1)),
+        shift = item.index == 0 ? float4(0.25, 0.375, -0.25, 0.5) : float4(-0.5, 0.625, 0.5, 0.5)
+    };
+    material.vertex = Render3D.Deform {
+        vertex = (Render3D.VertexInput input, mut Render3D.MeshVertex vertex) => BatchDeform(input, vertex, capture)
+    };
+    // The attached binding owns the earlier whole value, including every
+    // matrix/vector word, after these construction locals are overwritten.
+    capture.shape = float4x4.Scale(float3(99));
+    capture.shift = float4(123);
+}
+
 [Stage(Render3D.Stages.Lights, 4)]
 view PrepareShadowReference(Render3D.Renderer renderer, mut ShadowProbe probe)
 {
@@ -201,7 +232,7 @@ view PrepareShadowReference(Render3D.Renderer renderer, mut ShadowProbe probe)
 
 [Stage(Render3D.Stages.Shadows, 1)]
 view OriginalShadowCast(Render3D.Renderer renderer, mut ShadowProbe probe, World world,
-    query (Render3D.MeshRenderer mesh, with Render3D.Material) casters)
+    query (Render3D.MeshRenderer mesh, Render3D.Material material) casters)
 {
     if (!renderer.enabled || !renderer.ready) return;
     foreach (var shadow in renderer.shadowViews)
@@ -215,8 +246,12 @@ view OriginalShadowCast(Render3D.Renderer renderer, mut ShadowProbe probe, World
         foreach (var caster in casters)
         {
             if (!caster.mesh.visible || !caster.mesh.castShadows) continue;
-            probe.reference.Mesh(caster.mesh.mesh.Value, world.LocalToWorld(caster.entity),
-                Render3D.AtlasVertex, Render3D.ShadowTile { uvRect = shadow.uvRect });
+            if (caster.material.vertex is Render3D.Deform binding)
+                probe.reference.Mesh(caster.mesh.mesh.Value, world.LocalToWorld(caster.entity),
+                    Render3D.DeformShadow { deform = binding.vertex }, Render3D.ShadowTile { uvRect = shadow.uvRect });
+            else
+                probe.reference.Mesh(caster.mesh.mesh.Value, world.LocalToWorld(caster.entity),
+                    Render3D.AtlasVertex, Render3D.ShadowTile { uvRect = shadow.uvRect });
             probe.referenceItems++;
         }
     }

@@ -1,0 +1,5 @@
+// expect: AnimationCatalog has no checked member 'move'
+asset SkinnedMesh<Vertex3> character = "../e2e/skinned/models/a.gltf";
+component Art { Asset<SkinnedMesh<Vertex3>> model = character; }
+Animation Read(Art art) { return art.model.Value.animations.move; }
+scene Main;

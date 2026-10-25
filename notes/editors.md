@@ -1,5 +1,17 @@
 # The language server and the editors
 
+## Checked skinned asset references (2026-10-25)
+
+Asset<SkinnedMesh<V>> uses the approved typed-reference completion. The shared
+type-tree walker follows its model argument, including aliases. Reference members
+offer Value without exposing identity; the Value chain offers the declared
+skinned type's dynamic skeleton/catalog and geometry API, with no inferred-name
+forwarding. Asset completion help names both static and skinned model kinds.
+lsp_skinned_asset_reference_aliases_and_dynamic_value_members passes in the full
+native suite, including after the Changed-trigger merge. No adapter, native
+model preview or grammar change is introduced. Compiler contracts and combined
+validation are recorded in notes/language.md and notes/render3d.md.
+
 ## `Changed<...>` triggers (2026-10-25)
 
 `local event(Changed<Health.value> change)`: the language server places the
@@ -11,6 +23,13 @@ type's field. The TextMate grammar's handler rules accept the trigger
 (`#changed-trigger`, both copies). Tests: `lsp_changed_triggers`, grammar
 cases in `tools/tide-syntax/test`. The feature itself is in
 notes/verified-and-local-handlers.md.
+
+## Merge integration (2026-10-25)
+
+The one-round merge of origin/dev at b4655dfd into feature commit 2b0edc69
+keeps both complete sections above. Only this note conflicted. This text
+resolution changes no source and makes no new validation claim; root owns
+merge completion and the full native/web suite repeats.
 
 ## Editor CI cleanup and empty-edit fixes (2026-10-25)
 

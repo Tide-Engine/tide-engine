@@ -18489,13 +18489,23 @@ static void gen_assets(gen *g)
     }
     for (int i = 0; i < prog->asset_refs.count; i++) {
         const decl *ref = prog->asset_refs.items[i];
-        sb_printf(o, "\nTIDE_HELPER tide_mesh_lists tide_resolve_%s(const %s ref)\n{\n    switch (ref.id) {\n", type_cname(ref), type_cname(ref));
+        const type value = type_asset_reference_value(ref);
+        sb_printf(o, "\nTIDE_HELPER %s tide_resolve_%s(const %s ref)\n{\n    switch (ref.id) {\n", c_type(value), type_cname(ref), type_cname(ref));
         for (int a = 0; a < prog->assets.count; a++) {
             const decl *asset = prog->assets.items[a];
-            if (asset->return_type.kind != TY_MESH || asset->return_type.decl != ref->asset_ref_of) continue;
-            sb_printf(o, "    case INT64_C(%llu): return %s;\n", (unsigned long long)asset_reference_id(asset), asset_cname(asset));
+            if (!type_asset_reference_accepts(ref, asset->return_type)) continue;
+            sb_printf(o, "    case INT64_C(%llu): return ", (unsigned long long)asset_reference_id(asset));
+            if (value.kind == TY_MESH) sb_printf(o, "%s;\n", asset_cname(asset));
+            else {
+                // An imported model has an inferred catalog's C type. Carry
+                // its original pack handles into the declared model type:
+                // acquiring owned lists here would lose palette/LOD proofs.
+                const char *name = asset_cname(asset);
+                sb_printf(o, "(%s){.data = %s.data, .vertices = %s.vertices, .indices = %s.indices};\n",
+                          c_type(value), name, name, name);
+            }
         }
-        sb_put(o, "    default: return (tide_mesh_lists){0};\n    }\n}\n");
+        sb_printf(o, "    default: return (%s){0};\n    }\n}\n", c_type(value));
     }
     if (!prog->assets.count) return;
     if (g->asset_dependencies.count || g->skinned_fingerprints.count) {
@@ -21810,7 +21820,7 @@ static void gen_shaders(gen *g)
         // What its code's rolls are made of this frame, and the seed it reads: the frame's (tide_frame)
         if (sh->rolled_at >= 0) sb_printf(o, "    tide_uniforms.i[%d] = (int32_t)tide_gpu_rolled;\n", sh->rolled_at);
         if (sh->seed_at >= 0) sb_printf(o, "    tide_uniforms.i[%d] = tide_gpu_seed;\n", sh->seed_at);
-        unsigned blended = 0; // How its textures are sampled, but the draw's own: tide_draw_run's `sampling`
+        uint64_t blended = 0; // How its textures are sampled, but the draw's own: tide_draw_run's `sampling`
         for (int v = 0; v < sh->values.count; v++) {
             const shader_value *value = &sh->values.items[v];
             if (sh->instanced && (value->source == sh->instance_type
@@ -21832,7 +21842,7 @@ static void gen_shaders(gen *g)
             sb_printf(&access, "tide_%sb%d->%s", value->field->is_local ? "l" : "", b, field_cname(value->field));
             gen_shader_value(o, to, value->field->type, access.data, &f, &i);
         }
-        sb_put(o, "    uint32_t tide_textures[TIDE_SHADER_TEXTURES] = {0};\n");
+        sb_printf(o, "    uint32_t tide_textures[%d] = {0};\n", sh->textures.count ? sh->textures.count : 1);
         if (sh->skinned && !sh->instanced) gen_shader_skin(o, sh);
         for (int t = 0; t < sh->sizes.count; t++) {
             const shader_texture *texture = &sh->sizes.items[t];
@@ -21874,12 +21884,12 @@ static void gen_shaders(gen *g)
             }
             if (filter_carried) sb_printf(&carried, " | tide_sampling_filter_of(%du, %s)", (unsigned)t, from.data);
             if (wrap_carried) sb_printf(&carried, " | tide_sampling_wrap_of(%du, %s)", (unsigned)t, from.data);
-            else blended |= (unsigned)texture->wrap << (8 + 2 * t); // TIDE_SAMPLING_WRAP
+            else blended |= (uint64_t)texture->wrap << (32 * (t / 8) + 8 + 2 * (t % 8)); // TIDE_SAMPLING_WRAP
             if (filter_carried) {
                 // Its bit comes with the texture
             } else if (texture->filter) {
-                blended |= 1u << t;
-                if (texture->filter == 2) blended |= 1u << (24 + t); // TIDE_SAMPLING_MIPS
+                blended |= UINT64_C(1) << (32 * (t / 8) + t % 8);
+                if (texture->filter == 2) blended |= UINT64_C(1) << (32 * (t / 8) + 24 + t % 8); // TIDE_SAMPLING_MIPS
             }
             if (texture->read == READ_DATA) { // A list: its elements as numbers, and how many, for the draw
                 const decl *holds = texture->asset ? texture->asset->return_type.decl : texture->field->type.decl;
@@ -21966,7 +21976,8 @@ static void gen_shaders(gen *g)
                           field_is_raw(texture->field) ? "_raw" : "", texture->field->is_local ? "l" : "", b, field_cname(texture->field), grid_shape_name(texture->field->type.decl));
         }
         sb sampling = {0};
-        sb_printf(&sampling, "0x%xu%s", blended, carried.data ? carried.data : "");
+        if (blended <= UINT32_MAX) sb_printf(&sampling, "0x%xu%s", (unsigned)blended, carried.data ? carried.data : "");
+        else sb_printf(&sampling, "0x%llxull%s", (unsigned long long)blended, carried.data ? carried.data : "");
         if (sh->instanced && instance) {
             if (!sh->skinned) {
                 sb_put(o, "    const uint64_t tide_bytes = (uint64_t)(uint32_t)tide_count * sizeof tide_instance;\n"
@@ -22193,10 +22204,13 @@ bool codegen(program *prog, const codegen_options *opts)
     collect_borrows(&g);
     if (prog->asset_refs.count) for (int i = 0; i < prog->assets.count; i++) {
         const decl *a = prog->assets.items[i];
-        if (a->return_type.kind != TY_MESH) continue;
+        if (a->return_type.kind != TY_MESH
+            && !(a->return_type.kind == TY_STRUCT && a->return_type.decl->skin_kind == SKIN_MESH)) continue;
         for (int j = 0; j < i; j++) {
             const decl *b = prog->assets.items[j];
-            if (b->return_type.kind == TY_MESH && asset_reference_id(a) == asset_reference_id(b)) {
+            if ((b->return_type.kind == TY_MESH
+                 || (b->return_type.kind == TY_STRUCT && b->return_type.decl->skin_kind == SKIN_MESH))
+                && asset_reference_id(a) == asset_reference_id(b)) {
                 diag_error(a->at, "asset reference identity clashes with '" STR_FMT "'; rename one asset", STR_ARG(b->qualified));
                 return false;
             }

@@ -1,0 +1,248 @@
+// Source-prepared integration coverage; compile/run after the shared build slot.
+// Public contract: Asset<SkinnedMesh3D>, attached Pose? (null => authored rest),
+// and Material.vertex = Deform { vertex = callback }. No playback controller.
+scene Main;
+asset Render3D.SkinnedMesh3D skinRibbon = "skinning.gltf";
+[LOD] asset Render3D.SkinnedMesh3D skinLod = "../../../compiler/tests/e2e/assets/lod/arm.glb";
+asset Render3D.Mesh3D skinQuad = "quad.obj";
+
+component SkinningActor { int role; Pose matchPose; }
+singleton SkinningFixture { int scenario; bool reverse; bool built; }
+local singleton SkinningProbe
+{
+    bool initialized;
+    bool disabled;
+    bool hook = true;
+    bool mutateAfter;
+    int poseMode = 1; // 0: omitted rest; 1: sampled Slide; 2: explicit invalid Pose.
+    int side = 1;
+    int forceLOD = -1;
+    int mutations;
+    int frames;
+    int views;
+    [Filter(Filter.Point)] Grid2<Color> cutout = Grid2(2, 1);
+    [Raw] [Filter(Filter.Point)] Grid2<Color> normal = Grid2(1, 1);
+    [Raw] [Filter(Filter.Point)] Grid2<Color> orm = Grid2(1, 1);
+    [Raw] [Filter(Filter.Point)] Grid2<Color> height = Grid2(1, 1);
+    [Filter(Filter.Point)] Grid2<Color> emission = Grid2(1, 1);
+}
+
+float SkinningDepth(int role)
+{
+    return role == 0 ? -1 : role == 1 ? 1 : role == 2 ? -0.5 : 0.5;
+}
+
+float3 SkinningEmission(int role)
+{
+    return role == 0 ? float3(2, 0, 0) : role == 1 ? float3(0, 4, 0)
+        : role == 2 ? float3(0, 0, 6) : float3(2, 2, 0);
+}
+
+system BuildSkinning(mut SkinningFixture fixture)
+{
+    if (fixture.built) return;
+    fixture.built = true;
+    if (fixture.scenario == 0)
+    {
+        for (var role = 0; role < 5; role++)
+            Spawn(SkinningActor { role = role, matchPose = skinRibbon.animations.slide.Sample(0.5) },
+                Render3D.SkinnedMeshRenderer { mesh = skinRibbon },
+                Render3D.Material { emission = float3(2, 0.25, 0.125), doubleSided = true },
+                Transform { localPosition = float3(float(role - 2) * 2, 0, 0), localScale = float3(0.6) });
+        Spawn(Render3D.DirectionalLight { direction = float3(0, 0, 1), radiance = float3(0) });
+        Spawn(Render3D.DirectionalLight { direction = float3(0, 0, 1), radiance = float3(0) });
+        return;
+    }
+    if (fixture.scenario == 3)
+    {
+        for (var i = 0; i < 4; i++)
+        {
+            int role = fixture.reverse ? 3 - i : i;
+            var material = Render3D.Material {
+                mode = Render3D.SurfaceMode.Transparent, doubleSided = true,
+                baseColor = Color(1, 1, 1, 0.5), emission = SkinningEmission(role)
+            };
+            var transform = Transform { localPosition = float3(0, 0, SkinningDepth(role)) };
+            if (role % 2 == 0)
+                Spawn(SkinningActor { role = role }, Render3D.SkinnedMeshRenderer { mesh = skinRibbon }, material, transform);
+            else
+                Spawn(SkinningActor { role = role }, Render3D.MeshRenderer { mesh = skinQuad }, material,
+                    Transform { localPosition = float3(0, 0, SkinningDepth(role)), localScale = float3(2) });
+        }
+    }
+    else if (fixture.scenario == 4)
+    {
+        Spawn(SkinningActor { role = 0 }, Render3D.SkinnedMeshRenderer { mesh = skinLod },
+            Render3D.Material { emission = float3(1), doubleSided = true }, Transform { localScale = float3(10000) });
+        Spawn(SkinningActor { role = 1 }, Render3D.SkinnedMeshRenderer { mesh = skinLod },
+            Render3D.Material { emission = float3(1), doubleSided = true },
+            Transform { localPosition = float3(0, 0, 900), localScale = float3(0.001) });
+    }
+    else
+    {
+        Spawn(SkinningActor { role = 0 }, Render3D.SkinnedMeshRenderer { mesh = skinRibbon },
+            Render3D.Material {
+                mode = fixture.scenario == 1 ? Render3D.SurfaceMode.Cutout : Render3D.SurfaceMode.Opaque,
+                emission = float3(2, 0, 0), doubleSided = true, heightScale = fixture.scenario == 2 ? 0.03 : 0
+            }, Transform);
+        if (fixture.scenario == 1)
+            Spawn(Render3D.MeshRenderer { mesh = skinQuad, castShadows = false },
+                Render3D.Material { emission = float3(0, 0, 0.25), doubleSided = true },
+                Transform { localPosition = float3(0, 0, 1), localScale = float3(12, 6, 1) });
+    }
+    // Zero radiance still produces a real shadow view. Transparent objects
+    // deliberately retain castShadows=true; accidentally casting is observable.
+    Spawn(Render3D.DirectionalLight { direction = float3(2, 0, 1), radiance = float3(0) });
+}
+
+[Before(Render3D.Stages.Prepare)]
+view ConfigureSkinning(mut Render3D.Renderer renderer, mut SkinningProbe probe)
+{
+    renderer.enabled = !probe.disabled;
+    renderer.background = Color.black;
+    renderer.camera = Render3D.Camera {
+        position = float3(0, 0, probe.side > 0 ? -6 : 6),
+        rotation = probe.side > 0 ? quaternion.identity : quaternion.Euler(0, 180deg, 0), verticalFov = 60deg
+    };
+    renderer.shadowResolution = 256;
+    renderer.shadowExtent = 4;
+    renderer.shadowDistance = 20;
+    renderer.shadowCenter = float3(0, 0, 0.5);
+    renderer.shadowBias = 0;
+    renderer.shadowSlopeBias = 0;
+    renderer.maxShadowMaps = 2;
+    probe.frames++;
+    probe.mutations = 0;
+    if (probe.initialized) return;
+    probe.initialized = true;
+    probe.cutout[0, 0] = Color(1, 1, 1, 0);
+    probe.cutout[1, 0] = Color.white;
+    // Numeric alpha-zero witnesses catch accidental premultiplication.
+    probe.normal[0, 0] = Color(1, 128.0 / 255, 128.0 / 255, 0);
+    probe.orm[0, 0] = Color(1, 1, 0, 0);
+    probe.height[0, 0] = Color(0.5, 0, 0, 0);
+    probe.emission[0, 0] = Color.white;
+}
+
+void SkinningBend(Render3D.VertexInput input, mut Render3D.MeshVertex vertex, float gain)
+{
+    // Scaling AFTER skinning multiplies Slide's displacement as well. If the
+    // callback moves before skinning, both analytic silhouettes fail.
+    float expected = Math.Mul(input.localToWorld, float4(vertex.position, 1)).x;
+    if (Math.Abs(input.world.x - expected) > 0.0001 || input.eye.z != -6) vertex.position.x += 100;
+    vertex.position.x *= gain;
+}
+
+void SkinningCoverage(Render3D.SurfaceInput input, mut Render3D.Coverage coverage)
+{
+    if (input.uv.y < 0.25) coverage.alpha = 0;
+}
+
+void SkinningNormal(Render3D.SurfaceInput input, mut Render3D.Surface surface)
+{
+    surface.emission = surface.normal * 0.5 + float3(0.5);
+    surface.albedo = float3(0);
+}
+
+[Before(Render3D.Stages.Prepare), After(ConfigureSkinning)]
+view BindSkinning(SkinningActor actor, mut Render3D.SkinnedMeshRenderer mesh,
+                  mut Render3D.Material material, SkinningProbe probe, SkinningFixture fixture)
+{
+    mesh.pose = null;
+    if (fixture.scenario == 0)
+    {
+        if (actor.role == 1) mesh.pose = skinRibbon.animations.slide.Sample(1);
+        if (actor.role == 2) mesh.pose = actor.matchPose;
+        if (actor.role == 3) { Pose invalid = default; mesh.pose = invalid; }
+        if (actor.role == 4) mesh.pose = skinRibbon.defaultPose;
+    }
+    else if (fixture.scenario != 4)
+    {
+        if (probe.poseMode == 1) mesh.pose = skinRibbon.animations.slide.Sample(1);
+        if (probe.poseMode == 2) { Pose invalid = default; mesh.pose = invalid; }
+    }
+    material.vertex = null;
+    if ((fixture.scenario == 1 || fixture.scenario == 2) && probe.hook)
+    {
+        mut float gain = 1.5;
+        material.vertex = Render3D.Deform {
+            vertex = (Render3D.VertexInput input, mut Render3D.MeshVertex vertex) => SkinningBend(input, vertex, gain)
+        };
+        gain = 17; // The configured callback owns the earlier numeric capture.
+    }
+    if (fixture.scenario == 1)
+    {
+        material.baseMap = probe.cutout;
+        material.coverage = SkinningCoverage;
+    }
+    if (fixture.scenario == 2)
+    {
+        material.normalMap = probe.normal;
+        material.maskMap = probe.orm;
+        material.heightMap = probe.height;
+        material.emissionMap = probe.emission;
+        material.shader = Render3D.Lit { surface = SkinningNormal };
+    }
+}
+
+[Stage(Render3D.Stages.Lights, 5)]
+view SkinningShadowLOD(Render3D.Renderer renderer, mut SkinningProbe probe)
+{
+    probe.views = renderer.shadowViews.count;
+    renderer.shadowMap.SetLOD();
+    if (probe.forceLOD >= 0) renderer.shadowMap.SetLOD(probe.forceLOD);
+}
+
+[Stage(Render3D.Stages.Color, 1)]
+view SkinningColorLOD(Render3D.Renderer renderer, SkinningProbe probe)
+{
+    renderer.hdr.SetLOD();
+    if (probe.forceLOD >= 0) renderer.hdr.SetLOD(probe.forceLOD);
+}
+
+struct SkinningShadowPoint { float3 world; }
+frag SkinningShadowWitness(Vertex vertex, out Color color, Render3D.Renderer renderer, SkinningShadowPoint point)
+{
+    var view = renderer.shadowViews[0];
+    float4 clip = Math.Mul(view.worldToClip, float4(point.world, 1));
+    float2 uv = view.uvRect.xy + float2(clip.x / clip.w * 0.5 + 0.5, 0.5 - clip.y / clip.w * 0.5) * view.uvRect.zw;
+    // Direct interior comparison, independent of ShadowVisibility/PCF/bias.
+    float visibility = renderer.shadow.Compare(uv, clip.z / clip.w * 0.5 + 0.5);
+    color = Color(visibility, visibility, visibility);
+}
+
+[After(Render3D.Stages.Present)]
+view SkinningShadowPixels(Render3D.Renderer renderer, SkinningFixture fixture)
+{
+    if (!renderer.enabled || !renderer.ready || fixture.scenario != 1) return;
+    Draw.Screen()
+    {
+        Draw.SetBlend(Blend.Replace);
+        Draw.SetCull();
+        // Interior/exterior rays stay away from every rest/posed/deformed
+        // silhouette edge; comparison filtering deliberately blends edges.
+        float[6] receiverX = [-0.5, 0.22, 0.76, 1.75, 2.4, 0.76];
+        for (var i = 0; i < 6; i++)
+        {
+            float x = float(2 + i * 8);
+            float3 point = float3(receiverX[i], i < 5 ? 0 : 0.8, 1);
+            Draw.Mesh([Vertex { position = float2(x, 2) }, Vertex { position = float2(x + 4, 2) },
+                       Vertex { position = float2(x + 4, 6) }, Vertex { position = float2(x, 6) }],
+                [0, 1, 2, 0, 2, 3], SkinningShadowWitness, SkinningShadowPoint { world = point });
+        }
+    }
+}
+
+[After(Render3D.Stages.Present)]
+view MutateSkinningAfterCapture(SkinningActor actor, mut Render3D.SkinnedMeshRenderer mesh,
+                               mut SkinningProbe probe, SkinningFixture fixture)
+{
+    if (!probe.mutateAfter || fixture.scenario != 0 || actor.role == 3) return;
+    if (mesh.pose is Pose original)
+    {
+        mut var changed = original;
+        changed[skinRibbon.skeleton.bones.tip].position.x = -9;
+        mesh.pose = changed;
+        probe.mutations++;
+    }
+}

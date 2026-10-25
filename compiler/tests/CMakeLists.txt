@@ -60,9 +60,11 @@ tide_e2e_test(prefabs SOURCES e2e/prefabs.tide e2e/prefabs.tprefab)
 tide_e2e_test(scene_startup SOURCES e2e/scene_startup.tide e2e/scene_startup.tprefab)
 tide_e2e_test(asset_references SOURCES e2e/asset_references.tide e2e/asset_references.tprefab)
 tide_e2e_test(asset_reference_empty)
+tide_e2e_test(skinned_asset_references) # Typed current-pack identities preserve skinned palette and LOD provenance
 tide_e2e_test(function_acts) # Functions and methods that send, spawn and change entities, as their callers would
 tide_e2e_test(component_values SOURCES e2e/component_values.tide e2e/component_values.tprefab) # Copied component and payload values
 tide_e2e_test(texture_size) # Metadata-only CPU/GPU image dimensions, aliases and resource lifetime
+tide_e2e_test(texture_capacity SOURCES shaders/texture_capacity.tide) # Twelve bindings, high sampling banks and ten-binding skinning.
 tide_e2e_test(raw_texture_fields LAYOUT) # Raw texture references, captures, pack lifetime and role migration
 if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_raw_texture_fields PRIVATE tide_platform)
@@ -553,6 +555,7 @@ add_test(NAME tidec_unity_folder_names
 
 add_test(NAME tidec_declarations_only
     COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/declarations_only"
+            "-DCC=${TIDE_CLANG}" "-DTARGET=${CMAKE_C_COMPILER_TARGET}" "-DSYSROOT=${CMAKE_SYSROOT}"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/declarations_only.cmake")
 add_test(NAME tidec_prefab_error_once
     COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/prefab_error_once"

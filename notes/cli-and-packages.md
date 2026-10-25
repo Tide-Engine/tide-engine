@@ -387,9 +387,15 @@ but DEBUG) quietly through `sys_run`, so the build's own errors are the only one
 said. `--declarations` (`build_options.declarations`, implies `--once`) is
 `tide_unity_declared`: `write_unity_library`, `build_library` and
 `write_unity_schema` into that folder with `codegen_options.declarations_only`,
-which `compile_inputs` applies before checking (`keep_declarations` drops the
-game's `DECL_SYSTEM`, `DECL_FUNCTION` and `DECL_SHADER`, builtins kept, before
-the embed taps are added). It writes `Packages/com.tide.game` from that schema,
+which `compile_inputs` applies before checking (`keep_declarations` drops every
+nonbuiltin `DECL_SYSTEM`, including package systems/views/handlers, plus the
+game's own `DECL_FUNCTION` and `DECL_SHADER`, before the embed taps are added).
+Builtins and package functions/shaders remain: package fields such as Render3D's
+Material need real callback defaults and shader binding types. Package bodies,
+assets and defaults retain ordinary checking/generation; retained draw helpers
+can plan and emit GPU shaders. No checker mode, stub or asset bypass is added.
+Game-defined shader-typed fields and callback defaults which need omitted game
+functions remain a limitation of this fallback. It writes `Packages/com.tide.game` from that schema,
 but not the shaders (`unity_shaders_write` is skipped: the game's would go), and
 through `unity_code_add`, which takes no component script away: an engine
 component only the game's code gives entities (`Owner`) isn't listed in a build
@@ -402,7 +408,11 @@ hash the new C# doesn't match, so live values wait for the next build that works
 (`compiler/tests/declarations_only.cmake`: a game spawning a prefab that isn't
 there fails whole and builds declared, with its component and event in the header
 and neither its system nor its function in the code; a component's own error still
-fails). A separate process was picked over a second `generate` in the same one
+fails). Its Render3D consumer additionally checks every component, real callback
+dependencies, omitted incomplete game code, retained package shader plans and
+strict C17 syntax, plus unchanged missing-asset/package-body errors. The focused
+native tidec build and this regression pass (1/1, including the C17 probe); root
+owns full native/web suite repeats. A separate process was picked over a second `generate` in the same one
 because `generate` replaces the build's outline, info, sources and shaders.
 
 ## Terminal editor configuration helper (2026-10-18)

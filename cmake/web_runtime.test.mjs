@@ -49,6 +49,54 @@ test('checked-in runtime matches sources without loading minifier dependencies',
     assert.doesNotMatch(release, /<tide run>|EventSource|\/__tide\/build/);
 });
 
+test('WebGPU preserves every read kind in high texture slots and builds matching layouts', async () => {
+    const source = await readFile(resolve(root, 'platform/web/tide.js'), 'utf8');
+    const begin = source.indexOf('        gpu_pipeline_begin(');
+    const end = source.indexOf('\n        gpu_pipeline_slot:', begin);
+    const layoutBegin = source.indexOf('    function layoutFor(reads) {');
+    const layoutEnd = source.indexOf('\n    // A pass', layoutBegin);
+    assert.ok(begin >= 0 && end > begin && layoutBegin >= 0 && layoutEnd > layoutBegin);
+    const method = source.slice(begin, end);
+    for (let highSlot = 8; highSlot < 12; highSlot++) {
+        for (let kind = 0; kind < 5; kind++) {
+            const wanted = Array.from({ length: 12 }, (_, i) => i % 5);
+            wanted[highSlot] = kind;
+            let low = 0, high = 0;
+            wanted.forEach((read, i) => {
+                if (i < 8) low |= read << (3 * i);
+                else high |= read << (3 * (i - 8));
+            });
+            let entries;
+            const sandbox = {
+                low, high, string: () => '', stencilTests: ['always'], stencilOps: ['keep'],
+                colorFormats: () => [], samplesOf: () => 1, layouts: new Map(),
+                READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, readsDepth: read => read === 1 || read === 2,
+                GPUShaderStage: { VERTEX: 1, FRAGMENT: 2 },
+                device: {
+                    createBindGroupLayout: desc => { entries = desc.entries; return {}; },
+                    createPipelineLayout: () => ({}),
+                },
+            };
+            const reads = vm.runInNewContext(`(() => {
+                let building;
+                const backend = { ${method} };
+                backend.gpu_pipeline_begin(0, 0, 0, 12, low, high, 0, 0, 0, 0, 1, 0, 0);
+                ${source.slice(layoutBegin, layoutEnd)}
+                layoutFor(building.reads);
+                return building.reads;
+            })()`, sandbox);
+            assert.deepEqual(Array.from(reads), wanted);
+            assert.equal(entries.length, 25);
+            const texture = entries[1 + 2 * highSlot];
+            const sampler = entries[2 + 2 * highSlot];
+            assert.equal(texture.binding, 1 + 2 * highSlot);
+            assert.equal(texture.texture.sampleType, ['float', 'depth', 'depth', 'float', 'sint'][kind]);
+            assert.equal(texture.texture.viewDimension, kind === 3 ? 'cube' : undefined);
+            assert.equal(sampler.sampler.type, kind === 2 ? 'comparison' : kind === 1 || kind === 4 ? 'non-filtering' : 'filtering');
+        }
+    }
+});
+
 test('synchronous release decoder preserves bytes and checks gzip corruption', () => {
     for (const input of [Buffer.alloc(0), Buffer.from('a'), Buffer.alloc(32768, 42),
         Buffer.from(Array.from({ length: 65537 }, (_, i) => (i * 17 + (i >>> 7)) & 255))]) {

@@ -1,5 +1,19 @@
 # Drawing: `Draw`, its settings, shapes and meshes
 
+## Twelve texture capture slots (2026-10-25)
+
+Shader runs hold twelve texture slots and uint64_t sampling, two eight-slot
+banks with the original low 32-bit layout preserved. Existing shaded drawing
+and mesh wrappers take the wider value; ordinary Texture references and their
+four sampling bits are unchanged. Recording zeroes unused slots, compares only
+the bounded actual texture prefix, and append remaps only that prefix. Hosts,
+libraries and generated games must rebuild together for the C ABI/layout change.
+No runtime function is added. draw_sampling_banks and draw_twelve_textures
+regressions cover independent sampling, batching and owned append captures.
+All 82 native draw-filter tests passed, including both new regressions; the
+generated twelve/ten-binding consumer and packet tests also passed. All 82 draw
+tests and the generated consumer passed under WASI as well.
+
 ## Scoped transparent packet ordering (2026-10-25)
 
 Render3D's approved transparent pass uses private package C helpers in

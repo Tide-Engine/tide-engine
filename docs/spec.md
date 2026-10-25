@@ -1861,28 +1861,35 @@ Picks made as `Mesh` assets were built (2026-10-08), awaiting the owner. That a 
 
 Components may store checked references to named model assets. Prefab text assigns
 the asset name; the compiler validates the referenced asset and its type. The
-editor previews its geometry, while game views decide how to render it (owner,
+editor previews static model geometry, while game views decide how to render it (owner,
 2026-10-12).
 
 References of the same canonical asset-reference type support `==` and `!=` by
 stable declaration identity, independently of geometry reloads (owner, 2026-10-25).
 
+`Asset<T>` supports static `Mesh<V>` and `SkinnedMesh<V>` model assets, including
+transparent aliases (owner, 2026-10-25). Resolving a skinned reference preserves
+the current packed model's borrowed geometry and skinning data.
+
 ### Provisional
 
-The first implementation uses `Asset<Mesh<V>>`. A matching singular mesh asset
+Use `Asset<Mesh<V>>` or `Asset<SkinnedMesh<V>>`. A matching singular model asset
 name converts to this reference where its expected type is known, including
 component defaults, prefab overrides, arguments and list elements. A borrowed
-`Mesh<V>` variable cannot convert: it has no declaration identity. References
+model variable cannot convert: it has no declaration identity. References
 can be stored in either world using ordinary placement rules.
 
-`reference.Value` reads the currently loaded `Mesh<V>`, subject to the existing
-borrowed-mesh lifetime and read-only rules. `default` is an empty reference and
+`reference.Value` reads the currently loaded model of the declared type. Static
+mesh values retain their borrowed lifetime; skinned resolution returns the
+original pack handles, preserving palette sharing and imported LOD metadata.
+Ordinary persistent assignment of that model still acquires its usual value
+ownership. `default` is an empty reference and
 reads an empty mesh; unknown received identities do too. The reference stores
 only a stable numeric identity derived from the qualified asset name. Geometry
 replacement preserves it; changing the declaration name changes it. Identity
 collisions are compile errors. No pointer or runtime type registry enters a world.
 
-`==` and `!=` compare references of the same canonical `Asset<Mesh<V>>` type by
+`==` and `!=` compare references of the same canonical `Asset<T>` type by
 that stable declaration identity. Geometry reloads do not change equality, and
 different declarations remain different even when their geometry is identical.
 Two empty references are equal. Unknown received identities compare by their
@@ -1892,10 +1899,10 @@ their existing conversions when the other operand supplies the reference type.
 References to different vertex types do not compare. Ordering and direct access
 to the stored identity are not supported.
 
-This initial type supports singular static meshes only. Collection elements,
-skinned models, other resource types, JSON asset-name serialization and persistent
+References name singular model declarations. Collection elements,
+other resource types, JSON asset-name serialization and persistent
 identity migration across declaration renames are not implemented. The native
-editor previews named references and constant aliases at each entity's composed
+editor previews static named references and constant aliases at each entity's composed
 Transform; preview materials and lighting are editor choices, not game rendering.
 
 ## Skinned meshes and animation
@@ -2893,7 +2900,7 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
     - **One wrap for both axes.** A second is an error.
     - **In a mesh draw it's a value, as the filter is**: a field, a local, `tiled ? Wrap.Repeat : Wrap.Clamp`. One made of a number that's none of the three (`Wrap(7)`) is `Wrap.Clamp`. **In `Sample` it's written there, as the filter is** (`Wrap.Repeat`, never a variable): the GPU is told how a texture is read before any pixel runs.
     - **A draw's filter and wrap are its texture's for that draw**, whichever way the mesh is drawn: the engine's own vertices, a vertex struct of the game's with no frag, and a frag or a vert that takes the texture as its `Texture` parameter, whose `Sample`s that say nothing then read it so (until 2026-10-07 a draw through a frag took neither, an error).
-    - **Each way a texture is read in a frag or a vert is one of its draw's 8 textures**: one sampled with another filter or another wrap counts again, and the same way again doesn't. For a `Texture` parameter or field, a `Sample` that says nothing and one that says the default are two ways, as the texture may say otherwise.
+    - **Each way a texture is read in a frag or a vert is one of its draw's 12 textures**: one sampled with another filter or another wrap counts again, and the same way again doesn't. For a `Texture` parameter or field, a `Sample` that says nothing and one that says the default are two ways, as the texture may say otherwise.
     - **It's for every texture**: a `Grid2<Color>`, an asset's, a `Texture`, a render target's color, of any size (not only powers of two). A grid with no size still samples white.
     - **Blended** (`Filter.Bilinear`), a cell at the texture's edge is blended with what the wrap says is past it: with `Wrap.Repeat` the cell at the opposite edge, and with `Wrap.Clamp` and `Wrap.Mirror` itself.
     - **The same pixels on every backend.**
@@ -2986,7 +2993,7 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
   - `uv` is a color's: (0, 0) at the target's top left corner, (1, 1) at its bottom right, and past them, the pixels at the edge: neither read takes a `Wrap`.
   - **A draw into a target that reads that target's depth is passed by,** with a line that says so, when it's drawn: what a frag reads comes through a field, which the compiler can't follow to a target. It's what a draw that samples its own destination's color through a field gets, where `Draw.Blit(target.color, target, frag)` is refused as it's written. So is a draw that samples the `color` of a target of depth alone, which has none.
   - A depth is 24 bits, with the 8 bits of stencil beside it, in every target and in the window.
-  - Each way a frag reads a depth is one of the draw's 8 textures: a depth it both samples and compares counts twice.
+  - Each way a frag reads a depth is one of the draw's 12 textures: a depth it both samples and compares counts twice.
   - **Not there:** a `DepthTexture` as a draw's own source or a frag's own parameter; a comparison other than "isn't nearer"; writing a pixel's depth from a frag; reading a depth back into Tide; and skipping a frag that can't discard in a target of depth alone, which a backend may do some day and changes no picture.
   - **Where a point of the world is in a target's image is the game's to work out,** for a frag that looks one up (a shadow map does): through the target's camera as a matrix, `target.WorldToClip()` (see The cameras as matrices, above: the projection, after z turned around, after the camera's transform undone, which a game spelled out itself until that was built); then `uv` is `(x * 0.5 + 0.5, 0.5 - y * 0.5)` of that point and its depth `z * 0.5 + 0.5`, each over `w` under a perspective.
 - **Several colors and float images** (built 2026-10-07; a format for each color image after a target's size, four at the most, `target.colors[i]`, a frag's outputs to them by their order with the rest of either dropped or left, and floats where a GPU draws into them with bytes and a line where one doesn't, are decided, above; everything here is a pick, to confirm):
@@ -3154,7 +3161,7 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
     - **A function samples the textures it takes** (built 2026-10-08. The owner asked that a function only GPU code calls take a `DepthTexture` and call `Sample` and `Compare` on it, and the same for a `Texture`, with a call from the CPU an error that says so, after Tag's and Sumo's frags each carried a copy of one shadow lookup; a `Cubemap` and a grid by the same rule, and every other rule here, are Claude's picks, Provisional).
       - `float Lit(DepthTexture shadow, float3 at)`, `Color Tile(Texture image, float2 uv)`, `Color Above(Cubemap sky, float3 way)`: a function or a method reads a texture parameter as a frag reads a field, `Sample` with a filter and a wrap or without, a depth's `Compare`, a cube's `Sample(direction)`. A `Grid2<Color>` or `Grid2<float>` parameter is sampled too, and goes where a `Texture` parameter is.
       - The call names the texture: a field of a component or a singleton the frag or vert takes, its own `Texture`, an asset, or in a function, a parameter of its own, which it passes on. One that's picked or made as the code runs (`flag ? a : b`, a function's result) is an error that says a texture there is one the frag or vert was given, by a name. Which texture it is is known as the shader is written, so the function is written once for each texture it's called with and takes nothing for it, as for a list.
-      - What a `Sample` there leaves out is the texture's own, as in a frag: its declaration's for a grid's field or an asset, and for a `Texture` field or the frag's own `Texture`, whatever the texture it holds says. Each way each texture is read is one of the draw's 8.
+      - What a `Sample` there leaves out is the texture's own, as in a frag: its declaration's for a grid's field or an asset, and for a `Texture` field or the frag's own `Texture`, whatever the texture it holds says. Each way each texture is read is one of the draw's 12.
       - A function samples its own parameter, or an asset by its name. A texture in a singleton or a component the function takes is an error that says to take the texture itself: a struct with a texture in it is no value on the GPU.
       - **Such a function, and one that calls it, is the GPU's alone**: no C is written for it, and a call from a system, a view or a handler is an error that says so ("'Lit' reads a render target's depth, which only code the GPU runs does"), with where it reads it. A function that takes a texture and samples none is still everyone's: the CPU's hands it on (to C, say), and the GPU's is written with nothing for it. An operator, an extern, an async function, an `audio` declaration and a function that takes an Action sample nothing, as they take no grid.
       - A texture parameter that's sampled takes no `mut` or `out`; none is returned, kept in a local or in a struct.
@@ -3163,7 +3170,7 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
       - A grid parameter is one of the draw's textures of numbers whether the function reads its cells or not, as it was, and another where it's sampled: a function that only samples takes a `Texture`.
       - Not there: a texture's local (`var shadow = lamp.shadow;`), and `Filter.Trilinear` through a function, which would take working the `uv` out at the frag's start from the call's arguments.
     - No size is declared, and none is fixed: a list is sent as it is that frame, up to 2,097,152 pixels of four numbers each (an element of one or two numbers shares a pixel with the next; a bigger one takes whole pixels), and elements past that aren't sent.
-    - Each list a draw reads counts as one of its 8 textures, and its count is among the draw's values. A list that didn't change isn't sent again.
+    - Each list a draw reads counts as one of its 12 textures, and its count is among the draw's values. A list that didn't change isn't sent again.
     - **What's sent is what's read, and what changed** (built 2026-10-08; the owner: "only sending data that we actually use vs the entire thing, or upload only what changes"; each rule is Claude's pick, Provisional).
       - Of an element (a list's, a grid's cell, a map's value), the parts that some frag or vert of the game reads are sent, and no others. A part is a struct's field, a struct's own fields each apart, and anything else whole (a vector, a matrix, an array). It's one layout for the game, the parts any of its code reads, so every draw that reads the list shares one texture.
       - A part is read by a chain of fields (`lights[i].notch.deep`), through a `foreach`'s variable, and through a local that isn't `mut` and holds an element or a part of one (`var light = lights[i];`, `var notch = light.notch;`), by what the code then reads of the local. Anything else that takes an element reads all of it: an argument, a result, an operator, a `mut` local, `TryGet`'s `out` value. A function that takes a list reads of each list it's called with what it reads of its parameter.
@@ -3179,13 +3186,13 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
       - A local names one and a function takes one as a list's does, by the same rules: no `mut`, none made, returned or picked as the code runs.
       - Read-only. `Add`, `Remove`, `Clear` and assigning `map[key]` are errors, and so is `Get`, whose `V?` the GPU has none of.
       - `TryGet`'s `out` argument is a whole local there (`out var value`, or a variable), not a field of one: a pick, as WGSL hands a function a pointer to a whole variable.
-      - It's one of the draw's 8 textures, and two of its values (how many entries, and how many slots its index has). What's sent is the live entries, in order, and an index made for the GPU: a lookup hashes the key with `Math.Hash`, which is the same number on the CPU and the GPU, and probes. Not the CPU's own index, whose hash is of 64 bits, which these GPUs can't compute; the answers are the same, as keys are compared by their bits on both.
+      - It's one of the draw's 12 textures, and two of its values (how many entries, and how many slots its index has). What's sent is the live entries, in order, and an index made for the GPU: a lookup hashes the key with `Math.Hash`, which is the same number on the CPU and the GPU, and probes. Not the CPU's own index, whose hash is of 64 bits, which these GPUs can't compute; the answers are the same, as keys are compared by their bits on both.
       - A map that didn't change isn't sent again. One that changed is made again whole, as a key that's added or removed moves what's after it, and the rows of its texture that came out otherwise are sent.
     - Not built: a list, a map or a grid as a function's result, a `mut` local, or one picked as the code runs; `Sample` of a grid or a texture through a local; a glob's list of assets, and an asset's text; a grid's local in a function that takes no grid; a map's `Get`, and `TryGet` into a field; `foreach` over a grid's cells (on the CPU a grid with an open axis goes through the chunks it has, which the GPU isn't told); storage buffers where a backend has them (Vulkan and WebGPU do).
   - Never there: making or changing a list, a map or a set, maps and sets keyed by text, longs, entities or players, text, entities and players, `long`, `Rect`, spawning, sending and the other changes to the world, `Draw`, the GUI, `Screen`, `Devices`, `Cursor`, `Frame`, `Debug`, C, tasks, errors and `T?`, recursion, and grids used any other way than sampled. A frag's `this` is its pixel; verts and ordinary functions have no `this`. Each unavailable feature is an error where it's written, which says what to do instead, and for code in a function, which frag or vert reaches it. Bytes and longs should be converted to an `int` or `float` in local code before being supplied to a shader.
   - A function a frag or vert calls takes `mut` and `out` parameters as anywhere, and a call that changes a variable that isn't a whole one (a field, a swizzle) is a statement of its own there.
   - A frag can't read an int field of its vertex, as ints don't blend across a triangle. A vert can.
-  - What a GPU takes, on every backend, is checked at the draw, which says what the draw reads and what to do about it: 16 values for each vertex (each field of the vertex struct, 4 for a 3D mesh's transform, and one for every 4 floats or 4 ints the code reads of components and an explicit instance struct); 15 values from the mesh's corners to its pixels (each field of the vertex the frag reads, the pixel's place in the world, and one for every 4 floats or 4 ints the frag reads of components and an explicit instance struct); 3984 bytes of singletons' fields for a draw; and 8 texture slots, an image sampled with both filters counting twice.
+  - What a GPU takes, on every backend, is checked at the draw, which says what the draw reads and what to do about it: 16 values for each vertex (each field of the vertex struct, 4 for a 3D mesh's transform, and one for every 4 floats or 4 ints the code reads of components and an explicit instance struct); 15 values from the mesh's corners to its pixels (each field of the vertex the frag reads, the pixel's place in the world, and one for every 4 floats or 4 ints the frag reads of components and an explicit instance struct); 3984 bytes of singletons' fields for a draw; and 12 texture slots, an image sampled with both filters counting twice.
   - Instances of one mesh drawn in a row through the same vert and frag, with the same singletons' values and the same grids, are one draw.
   - A function both the CPU and the GPU run compiles for both.
   - `tide shaders` (`tidec --shaders`) prints each shader, as GLSL and as WGSL. No game sees a shader compiler's error: what tidec writes always compiles.

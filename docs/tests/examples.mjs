@@ -194,7 +194,7 @@ try {
         // Crop the static scene above the controls and stats. This comparison
         // witnesses camera movement rather than a changing FPS counter.
         const clip = { x: rect.left + box.x + 4, y: rect.top + box.y + 4, width: rect.width - 8,
-            height: Math.min(140, rect.height - 220), scale: 1 };
+            height: Math.min(id === 'render3d-effects' ? 100 : 140, rect.height - 220), scale: 1 };
         assert.ok(clip.height > 0, `${id}: scene is visible above controls`);
         const capture = async (name) => {
             const pixels = Buffer.from((await command('Page.captureScreenshot', { format: 'png', clip })).data, 'base64');
@@ -205,6 +205,16 @@ try {
             const previous = await evaluate('example.querySelector("iframe").contentWindow.__draws');
             await until(`example.querySelector("iframe").contentWindow.__draws > ${previous + 20}`, `${id}: camera frame`);
         };
+        const click = async (localX, localY) => {
+            const x = rect.left + localX, y = rect.top + localY;
+            await command('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+            await command('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1, x, y });
+            await afterFrames();
+            await command('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', buttons: 0, clickCount: 1, x, y });
+            await afterFrames();
+        };
+        // Freeze the example's own visual clock before pixel comparisons.
+        if (id === 'render3d-effects') await click(32, rect.height - 212);
         await afterFrames();
         const initial = await capture('initial');
         const x = rect.left + rect.width * 0.5, y = rect.top + 80;
@@ -220,7 +230,8 @@ try {
         // Embedded games deliberately leave wheel events to the docs page.
         // Exercise the visible zoom button instead of changing that contract.
         const zoomX = rect.left + (id === 'render3d' ? 55 : 175);
-        const zoomY = rect.top + rect.height - (id === 'render3d' ? 208 - 92 : 256 - 26);
+        const zoomY = rect.top + rect.height - (id === 'render3d' ? 208 - 92 :
+            (id === 'render3d-effects' ? 272 : 256) - 26);
         await command('Input.dispatchMouseEvent', { type: 'mouseMoved', x: zoomX, y: zoomY });
         await command('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1, x: zoomX, y: zoomY });
         await afterFrames();
@@ -228,15 +239,29 @@ try {
         await afterFrames();
         assert.notEqual(await capture(), orbited, `${id}: zoom control changes the scene`);
         await shoot(`${id}-camera`);
+        if (id === 'render3d-effects') {
+            await click(105, rect.height - 246); // Reset the camera at the frozen pose.
+            assert.equal(await capture('reset'), initial, `${id}: reset restores the camera`);
+            await click(110, rect.height - 180); // Bloom.
+            const noBloom = await capture('no-bloom');
+            assert.notEqual(noBloom, initial, `${id}: bloom changes the HDR scene`);
+            await click(32, rect.height - 180); // Deformation on both static and skinned objects.
+            const noDeform = await capture('no-deform');
+            assert.notEqual(noDeform, noBloom, `${id}: shared vertex deformation changes geometry`);
+            await click(110, rect.height - 212); // Authored rest versus sampled pose.
+            const rest = await capture('rest');
+            assert.notEqual(rest, noDeform, `${id}: pose changes the skinned silhouette`);
+            await click(32, rect.height - 80); // Custom HDR tint callback.
+            assert.notEqual(await capture('tint'), rest, `${id}: custom HDR pass changes scene colors`);
+            await click(48, rect.height - 246); // Collapse, then zoom above the stats corner.
+            clip.height = Math.min(240, rect.height - 108);
+            const collapsed = await capture();
+            await click(175, rect.height - 70);
+            assert.notEqual(await capture('collapsed'), collapsed, `${id}: collapsed zoom works above stats`);
+            await shoot(`${id}-effects-controls`);
+            return;
+        }
         if (id !== 'render3d-materials') return;
-        const click = async (localX, localY) => {
-            const x = rect.left + localX, y = rect.top + localY;
-            await command('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
-            await command('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1, x, y });
-            await afterFrames();
-            await command('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', buttons: 0, clickCount: 1, x, y });
-            await afterFrames();
-        };
         await click(105, rect.height - 230); // Reset above the open maps panel.
         assert.equal(await capture('reset'), initial, `${id}: reset restores the camera`);
         // Height edits travel through the demo's typed command; compare only
@@ -307,7 +332,7 @@ try {
             await until(`example.querySelectorAll("iframe").length === ${players}`, `${id}: every player's frame`);
             for (const src of await evaluate('Array.from(example.querySelectorAll("iframe"), frame => frame.src)')) stats(src, `${id}: embedded frame`);
             await shoot(id);
-            if (id === 'render3d' || id === 'render3d-materials') await cameraControls(id);
+            if (id === 'render3d' || id === 'render3d-materials' || id === 'render3d-effects') await cameraControls(id);
             // Stopped, so that the page runs one game at a time here.
             await evaluate('example.querySelector("[data-example-stop]").click();');
             console.log(`${id}: source and rendering passed (${backend})`);

@@ -2183,8 +2183,8 @@ static type resolve_named(const checker *c, const type_ref *r, const type_place 
         }
         const type mesh = resolve_type(c, r->args.items[0], PLACE_ASSET, at);
         if (mesh.kind == TY_ERROR) return T_ERR;
-        if (mesh.kind != TY_MESH) {
-            diag_error(at, "Asset currently references a static Mesh<V>, not %s", type_name(mesh));
+        if (mesh.kind != TY_MESH && !(mesh.kind == TY_STRUCT && mesh.decl->skin_kind == SKIN_MESH)) {
+            diag_error(at, "Asset references a Mesh<V> or SkinnedMesh<V>, not %s", type_name(mesh));
             return T_ERR;
         }
         for (int i = 0; i < c->prog->asset_refs.count; i++) {
@@ -2616,7 +2616,7 @@ static type check_expr_want_any(checker *c, expr *e, const type stored, const bo
     }
     const type t = checked ? e->type : check_expr_any(c, e);
     if (inner.kind == TY_STRUCT && inner.decl->asset_ref_of && e->bind == BIND_ASSET
-        && same_type((type){TY_MESH, inner.decl->asset_ref_of}, t)) {
+        && type_asset_reference_accepts(inner.decl, t)) {
         e->asset_reference = true;
         return e->type = inner;
     }
@@ -4991,7 +4991,7 @@ static bool arg_fits(const expr *arg, const param *p)
     if (t.kind == TY_ERROR || p->type.kind == TY_ERROR) return true;
     if (p->mode == PARAM_MUT) return same_type(p->type, t); // The variable itself
     if (inner.kind == TY_STRUCT && inner.decl->asset_ref_of && arg->bind == BIND_ASSET
-        && same_type((type){TY_MESH, inner.decl->asset_ref_of}, t)) return true;
+        && type_asset_reference_accepts(inner.decl, t)) return true;
     if (type_assignable(p->type, t)) return true;
     int64_t value; // As in C#, an int constant fits a byte
     return inner.kind == TY_BYTE && t.kind == TY_INT && fold_int(arg, &value) && value >= 0 && value <= 255;
@@ -8390,7 +8390,7 @@ static void note_missing_operator(const tok_kind op, const type l, const type r,
     const type t = l.kind == TY_STRUCT ? l : r;
     const bool comparison = op == T_EQ || op == T_NE || op == T_LT || op == T_LE || op == T_GT || op == T_GE;
     if (t.decl && t.decl->asset_ref_of) {
-        diag_note("asset references compare with '==' and '!=' between the same Asset<Mesh<V>> type");
+        diag_note("asset references compare with '==' and '!=' between the same Asset<T> type");
     } else if (t.decl && t.decl->builtin && t.decl->fields.count) { // Random, Vertex: nowhere to declare an operator
         diag_note("%s is the engine's, and has no operators: work with its fields, like 'a." STR_FMT " %s b." STR_FMT "'",
                   type_name(t), STR_ARG(t.decl->fields.items[0].name), op_symbol(op), STR_ARG(t.decl->fields.items[0].name));
@@ -9091,7 +9091,7 @@ static type check_member(checker *c, expr *e)
             return T_ERR;
         }
         e->asset_ref_value = true;
-        return (type){TY_MESH, obj.decl->asset_ref_of};
+        return type_asset_reference_value(obj.decl);
     }
 
     if (obj.kind == TY_TEXTURE) {

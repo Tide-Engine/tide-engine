@@ -1,0 +1,231 @@
+namespace Render3D;
+
+// A true result publishes a fully overwritten destination. False bypasses it.
+// Resources are explicit arguments; captures remain owned plain values.
+using PostEffect = Func<Texture, RenderTarget, bool>;
+
+struct BloomSettings
+{
+    bool enabled;
+    float threshold = 1; // Scene-linear radiance, before exposure.
+    float softness = 1;  // Half-width of the soft knee, in the same units.
+    float intensity = 0.25;
+    float radius = 1;    // Blur spacing in physical quarter-resolution pixels.
+    int iterations = 2;  // Horizontal/vertical pairs.
+}
+
+BloomSettings ClampBloom(BloomSettings settings)
+{
+    return BloomSettings {
+        enabled = settings.enabled,
+        threshold = Math.Clamp(settings.threshold, 0, 65504),
+        softness = Math.Clamp(settings.softness, 0, 65504),
+        intensity = Math.Clamp(settings.intensity, 0, 16),
+        radius = Math.Clamp(settings.radius, 0, 8),
+        iterations = Math.Clamp(settings.iterations, 1, 4)
+    };
+}
+
+float3 ClampHdr(float3 radiance)
+{
+    return Math.Clamp(radiance, float3(0), float3(65504));
+}
+
+float3 HdrRgb(Color color)
+{
+    return ClampHdr(float3(color.r, color.g, color.b));
+}
+
+// Extract excess light through a quadratic soft knee. The scalar preserves
+// hue and never creates more energy than the sampled radiance, even when the
+// knee is wider than the threshold. Zero softness gives a hard threshold.
+float3 BloomBright(float3 radiance, BloomSettings settings)
+{
+    float3 light = ClampHdr(radiance);
+    float brightness = Math.Max(Math.Max(light.x, light.y), light.z);
+    if (brightness <= 0) return float3(0);
+    float threshold = Math.Clamp(settings.threshold, 0, 65504);
+    float knee = Math.Clamp(settings.softness, 0, 65504);
+    mut float excess = Math.Max(brightness - threshold, 0);
+    if (knee > 0)
+    {
+        float soft = Math.Clamp(brightness - threshold + knee, 0, 2 * knee);
+        excess = Math.Max(excess, (soft * soft) / (4 * knee));
+    }
+    return light * (Math.Min(excess, brightness) / brightness);
+}
+
+// Paired bilinear taps of the normalized nine-tap kernel
+// [6,20,45,72,84,72,45,20,6] / 370.
+float3 BlurBloomSamples(float3 center, float3 nearPlus, float3 nearMinus,
+                        float3 farPlus, float3 farMinus)
+{
+    return ClampHdr(ClampHdr(center) * (84.0 / 370)
+         + (ClampHdr(nearPlus) + ClampHdr(nearMinus)) * (117.0 / 370)
+         + (ClampHdr(farPlus) + ClampHdr(farMinus)) * (26.0 / 370));
+}
+
+float3 CombineBloom(float3 scene, float3 glow, float intensity)
+{
+    return ClampHdr(ClampHdr(scene) + ClampHdr(glow) * Math.Clamp(intensity, 0, 16));
+}
+
+void DisposeBloom(mut Renderer renderer)
+{
+    renderer.bloomA.Dispose();
+    renderer.bloomB.Dispose();
+    renderer.bloomA = default;
+    renderer.bloomB = default;
+    renderer.bloomImage = default;
+    renderer.bloomReady = false;
+}
+
+// Call before recording, from the renderer's ordinary Dispose path.
+void DisposePost(mut Renderer renderer)
+{
+    renderer.postA.Dispose();
+    renderer.postB.Dispose();
+    renderer.postA = default;
+    renderer.postB = default;
+    renderer.postReady = false;
+    DisposeBloom(renderer);
+    renderer.output = default;
+    renderer.postSourceSlot = 0;
+    renderer.postPendingSlot = 0;
+}
+
+// Call at the start of Prepare, including when the renderer is disabled.
+// Full-size scratch stays retained for staged custom passes until disposal.
+void PreparePostResources(mut Renderer renderer)
+{
+    if (!renderer.enabled)
+    {
+        DisposePost(renderer);
+        return;
+    }
+    BloomSettings bloom = ClampBloom(renderer.bloom);
+    if ((!bloom.enabled || bloom.intensity <= 0) && renderer.bloomReady)
+        DisposeBloom(renderer);
+}
+
+// PostPrepare: no allocation and no command. Every frame starts from scene HDR.
+void BeginPost(mut Renderer renderer)
+{
+    renderer.output = default;
+    renderer.postSourceSlot = 0;
+    renderer.postPendingSlot = 0;
+    if (renderer.enabled && renderer.ready) renderer.output = renderer.hdr.color;
+}
+
+// Legal between PostPrepare and Present. Repeated Next without Commit returns
+// the same destination. Neither scratch target ever aliases original HDR.
+RenderTarget NextPostTarget(mut Renderer renderer)
+{
+    renderer.postPendingSlot = 0;
+    if (!renderer.enabled || !renderer.ready) return default;
+    // Independent of renderer.ready: new fields can be empty after hot reload.
+    if (!renderer.postReady)
+    {
+        renderer.postA = RenderTarget.Window(Format.Rgba16f);
+        renderer.postB = RenderTarget.Window(Format.Rgba16f);
+        renderer.postReady = true;
+    }
+    renderer.postPendingSlot = renderer.postSourceSlot == 1 ? 2 : 1;
+    return renderer.postPendingSlot == 1 ? renderer.postA : renderer.postB;
+}
+
+void CommitPost(mut Renderer renderer)
+{
+    if (renderer.enabled && renderer.ready && renderer.postReady)
+    {
+        if (renderer.postPendingSlot == 1)
+        {
+            renderer.output = renderer.postA.color;
+            renderer.postSourceSlot = 1;
+        }
+        else if (renderer.postPendingSlot == 2)
+        {
+            renderer.output = renderer.postB.color;
+            renderer.postSourceSlot = 2;
+        }
+    }
+    renderer.postPendingSlot = 0;
+}
+
+frag ExtractBloom(Vertex vertex, out Color color, Texture source, BloomSettings settings)
+{
+    float2 pixel = 1.0 / float2(Math.Max(source.size, int2(1)));
+    // Four bilinear samples cover a 4x4 source footprint for aligned quarter
+    // targets. Physical source dimensions also handle scale and odd sizes.
+    float3 light = (HdrRgb(source.Sample(vertex.uv + float2(-pixel.x, -pixel.y), Filter.Bilinear, Wrap.Clamp))
+                  + HdrRgb(source.Sample(vertex.uv + float2(pixel.x, -pixel.y), Filter.Bilinear, Wrap.Clamp))
+                  + HdrRgb(source.Sample(vertex.uv + float2(-pixel.x, pixel.y), Filter.Bilinear, Wrap.Clamp))
+                  + HdrRgb(source.Sample(vertex.uv + float2(pixel.x, pixel.y), Filter.Bilinear, Wrap.Clamp))) * 0.25;
+    color = Color(BloomBright(light, settings), 1);
+}
+
+struct BloomStep { float2 direction; }
+
+frag BlurBloom(Vertex vertex, out Color color, Texture source, BloomStep step)
+{
+    float2 pixel = step.direction / float2(Math.Max(source.size, int2(1)));
+    float2 near = pixel * (18.0 / 13);
+    float2 far = pixel * (42.0 / 13);
+    float3 light = BlurBloomSamples(
+        HdrRgb(source.Sample(vertex.uv, Filter.Bilinear, Wrap.Clamp)),
+        HdrRgb(source.Sample(vertex.uv + near, Filter.Bilinear, Wrap.Clamp)),
+        HdrRgb(source.Sample(vertex.uv - near, Filter.Bilinear, Wrap.Clamp)),
+        HdrRgb(source.Sample(vertex.uv + far, Filter.Bilinear, Wrap.Clamp)),
+        HdrRgb(source.Sample(vertex.uv - far, Filter.Bilinear, Wrap.Clamp)));
+    color = Color(light, 1);
+}
+
+frag CompositeBloom(Vertex vertex, out Color color, Texture source, Renderer renderer, BloomSettings settings)
+{
+    float3 light = CombineBloom(HdrRgb(source.Sample(vertex.uv, Filter.Bilinear, Wrap.Clamp)),
+                               HdrRgb(renderer.bloomImage.Sample(vertex.uv, Filter.Bilinear, Wrap.Clamp)), settings.intensity);
+    color = Color(light, 1);
+}
+
+// Bloom: extract/blur at quarter resolution, then publish one HDR composite.
+void ApplyBloom(mut Renderer renderer)
+{
+    if (!renderer.enabled || !renderer.ready) return;
+    BloomSettings bloom = ClampBloom(renderer.bloom);
+    if (!bloom.enabled || bloom.intensity <= 0) return;
+    if (!renderer.bloomReady)
+    {
+        renderer.bloomA = RenderTarget.Window(0.25, Format.Rgba16f);
+        renderer.bloomB = RenderTarget.Window(0.25, Format.Rgba16f);
+        renderer.bloomReady = true;
+    }
+    Draw.Blit(renderer.output, renderer.bloomA, ExtractBloom, bloom);
+    if (bloom.radius > 0)
+    {
+        for (var iteration = 0; iteration < bloom.iterations; iteration++)
+        {
+            Draw.Blit(renderer.bloomA.color, renderer.bloomB, BlurBloom,
+                      BloomStep { direction = float2(bloom.radius, 0) });
+            Draw.Blit(renderer.bloomB.color, renderer.bloomA, BlurBloom,
+                      BloomStep { direction = float2(0, bloom.radius) });
+        }
+    }
+    renderer.bloomImage = renderer.bloomA.color;
+    Texture source = renderer.output;
+    RenderTarget destination = NextPostTarget(renderer);
+    Draw.Blit(source, destination, CompositeBloom, bloom);
+    CommitPost(renderer);
+}
+
+// PostProcess: a bypass never advances the source or next destination.
+void ApplyPostEffects(mut Renderer renderer)
+{
+    if (!renderer.enabled || !renderer.ready) return;
+    foreach (var effect in renderer.postEffects)
+    {
+        Texture source = renderer.output;
+        RenderTarget destination = NextPostTarget(renderer);
+        if (effect(source, destination)) CommitPost(renderer);
+        else renderer.postPendingSlot = 0;
+    }
+}
