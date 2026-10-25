@@ -1527,7 +1527,8 @@ other platforms' tests). All picks mine (Provisional).
   terrain sampled whole and a 513 one every fourth with a coarse hole only where all sixteen are, filled into a
   component, its grid's lines; the Fan's and Ridge's points shown back as authored. By hand: a scratch project listing
   both packages compiles every generated component in Unity (batch, no errors).
-- **Runs:** tide_cli_tests, `tide_cli_unity_physics`; the Sample's EditMode 24/24 and PlayMode 16/16.
+- **Runs:** native debug 2777/2777 and web debug 2680/2680 (both without the `private-prototype` label), the docs
+  build; the Sample's EditMode 24/24 and PlayMode 16/16.
 - **Not verified:** what's drawn and the handles, in a window (the geometry is tested, not its pixels); joints and
   terrains in a running Unity game.
 
