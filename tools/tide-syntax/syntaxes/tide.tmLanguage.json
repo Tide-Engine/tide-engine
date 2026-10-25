@@ -271,7 +271,7 @@
         },
         {
           "comment": "local event(Hit hit) ShowHit(Body body, query (Body other, with Fighter) fighters): a handler's parameter list, where a local handler takes queries as a system does",
-          "begin": "(?:^|(?<=\\]))\\s*(?:(local|async|worker|virtual|override)\\s+)?(?:((?:local|async|worker|virtual|override)(?:\\s+(?:local|async|worker|virtual|override))?)\\s+)?(event)\\s*(\\()\\s*(?:(verified)\\s+(?=[A-Za-z_]))?([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\\s+([A-Za-z_][A-Za-z0-9_]*))?\\s*(\\))\\s*((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)\\s*(\\()",
+          "begin": "(?:^|(?<=\\]))\\s*(?:(local|async|worker|virtual|override)\\s+)?(?:((?:local|async|worker|virtual|override)(?:\\s+(?:local|async|worker|virtual|override))?)\\s+)?(event)\\s*(\\()\\s*(?:(verified)\\s+(?=[A-Za-z_]))?(Changed\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*>|[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\\s+([A-Za-z_][A-Za-z0-9_]*))?\\s*(\\))\\s*((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)\\s*(\\()",
           "end": "\\)",
           "beginCaptures": {
             "1": { "name": "storage.modifier.tide" },
@@ -279,7 +279,7 @@
             "3": { "name": "storage.type.tide" },
             "4": { "name": "punctuation.parenthesis.open.tide" },
             "5": { "name": "storage.modifier.verified.tide" },
-            "6": { "patterns": [{ "include": "#type-name" }] },
+            "6": { "patterns": [{ "include": "#changed-trigger" }, { "include": "#type-name" }] },
             "7": { "name": "variable.parameter.tide" },
             "8": { "name": "punctuation.parenthesis.close.tide" },
             "9": {
@@ -302,14 +302,14 @@
         },
         {
           "comment": "event(Hit hit) TakeHit: an event handler, with the event it handles. local event(verified Died died) ShowDeath: 'verified' is a word of its own where an event follows it, and an event's name where none does",
-          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|worker|virtual|override)\\s+)?(?:((?:local|async|worker|virtual|override)(?:\\s+(?:local|async|worker|virtual|override))?)\\s+)?(event)\\s*(\\()\\s*(?:(verified)\\s+(?=[A-Za-z_]))?([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\\s+([A-Za-z_][A-Za-z0-9_]*))?\\s*(\\))\\s*((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)",
+          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|worker|virtual|override)\\s+)?(?:((?:local|async|worker|virtual|override)(?:\\s+(?:local|async|worker|virtual|override))?)\\s+)?(event)\\s*(\\()\\s*(?:(verified)\\s+(?=[A-Za-z_]))?(Changed\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*>|[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\\s+([A-Za-z_][A-Za-z0-9_]*))?\\s*(\\))\\s*((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
             "1": { "name": "storage.modifier.tide" },
             "2": { "name": "storage.modifier.tide" },
             "3": { "name": "storage.type.tide" },
             "4": { "name": "punctuation.parenthesis.open.tide" },
             "5": { "name": "storage.modifier.verified.tide" },
-            "6": { "patterns": [{ "include": "#type-name" }] },
+            "6": { "patterns": [{ "include": "#changed-trigger" }, { "include": "#type-name" }] },
             "7": { "name": "variable.parameter.tide" },
             "8": { "name": "punctuation.parenthesis.close.tide" },
             "9": {
@@ -703,6 +703,16 @@
           ]
         }
       ]
+    },
+    "changed-trigger": {
+      "comment": "local event(Changed<Health.value> change): a handler's trigger, a field of the match that changed over a tick",
+      "match": "\\b(Changed)\\s*(<)\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)\\s*(>)",
+      "captures": {
+        "1": { "name": "support.class.tide" },
+        "2": { "name": "punctuation.definition.typeparameters.begin.tide" },
+        "3": { "patterns": [{ "include": "#type-name" }] },
+        "4": { "name": "punctuation.definition.typeparameters.end.tide" }
+      }
     },
     "generics": {
       "patterns": [

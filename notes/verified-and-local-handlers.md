@@ -1,5 +1,63 @@
 # `verified` and local handlers of match events
 
+## Field changes: `Changed<Health.value>` (2026-10-25)
+
+Owner-approved: local handlers can hear a match field that changed over a
+tick, `local event(Changed<Health.value> change)`, with `change.old` and
+`change.value`; the syntax is the owner's pick. Local handlers only for now.
+Everything else is Claude's pick, Provisional in `docs/spec.md` (Events);
+match handlers of a change, whole-component watches and containers are open.
+
+- **Parser**: `parse_handler` reads `Changed<path>` into the trigger with
+  `param.changed`, the dotted path in `type_name`.
+- **Checker**: `check_changed` runs once field types resolve (after
+  `resolve_field_types`). It finds the shortest start of the path naming a
+  component or singleton, then the fields through structs, and makes one
+  built-in `DECL_EVENT` per watched field (`program.changed`, `decl.watches`,
+  `decl.watch_path`): name `Changed<Health.value>`, C name
+  `tide_changed_Health_value`, fields `old`/`value` copied from the field with
+  no source location (editors refuse to rename them), appended to
+  `program.events`/`decls` after `collect_decls`. A singleton's event is a world
+  event. Errors: local fields/components, engine-owned types, no field, heap or
+  `Resident` fields, a match handler, and components on a singleton's handler.
+  Being built in, it skips the "nothing sends" warning, embed taps and the
+  outline; a game can't name it to send it.
+- **Codegen** (`gen_changes`, `program_watches`): `tide_changes_begin` at the
+  start of `tide_world_tick_on` and `tide_changes_end` after its commands and
+  tasks settle (before `Time.tick++`), both only while `tide_listening` and not
+  on a visibility server journaling for clients. Begin stores, per watched
+  field, a thread-local array indexed by entity slot (`generation`, `present`,
+  value), sized to `entities.next_unused`, filled by gathering only the lanes
+  the field occupies (`watched_offset`). End walks the archetypes storing the
+  component (sparse presence checked) and calls the ordinary `tide_hear_<Event>`
+  for each entity present at both ends with the same generation whose field
+  bytes differ. Singletons copy and compare one value. Nothing is added to the
+  world, its hash, snapshots, packing or traffic; occurrence identity is the
+  usual tick/event/entity/fields hash, so rollback dedup, `verified` delivery,
+  ownership filters and recorded query rows come from the existing hearing.
+- **Cost**: per recorded tick and watched field, a memset of
+  `next_unused` slots and two lane gathers per row of the component. Not
+  measured. A possible improvement is skipping chunks whose column pages are
+  unchanged, which needs a write signal that also holds without snapshots.
+- **Editors**: `walk_param` places the component as a type and each field as
+  a member (hover, rename); `format_param` prints `Changed<...>`; the formatter
+  keeps `Changed<...>` tight; a handler's hover describes the change. The
+  TextMate grammar (`#changed-trigger`) scopes the trigger in both copies.
+- **Tests**: `compiler/tests/e2e/changed_events` (plain host: one change per
+  tick from net writes, unwatched fields, spawn/destroy/Add silent, a handler's
+  write, nested struct path, unaligned byte and `double2` fields, singleton,
+  world hash unchanged by recording; network: a mispredicted change heard once
+  and never verified); six `tidec_error_changed_*` fixtures;
+  `lsp_changed_triggers`; grammar cases in `tools/tide-syntax/test`. A
+  visibility game with change handlers was generated and compiled with
+  `-Werror` as a scratch check only.
+- User docs: `docs/game/events.md`, When a field changes.
+- Validation: warning-free native and web debug builds; native CTest
+  2,788/2,789, the one failure `cracked_tests`' pinned match hash (private
+  prototype; its generated C is identical to HEAD's tidec output but for the
+  simulation ID, so not this change); web CTest 2,686/2,686 without private
+  prototypes; grammar test 303/303; docs production build.
+
 Recorded containers (2026-10-19): owner-approved text/list/map/set/grid reads
 now follow existing event-turn, tick-end query and verified timing. Private
 read analysis includes helper/query forwarding; unread containers are omitted.

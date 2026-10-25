@@ -2519,10 +2519,22 @@ static decl *parse_handler(parser *p, const bool command)
         trigger.verified = true;
         trigger.verified_at = advance(p)->at;
     }
-    const qname type = parse_qname(p, "the event it handles, like 'event(Hit hit)'");
-    trigger.type_name = type.text;
-    trigger.type_qual_at = type.at;
-    trigger.type_at = type.name_at;
+    // `event(Changed<Health.value> c)`: a field of the match that changed over a tick
+    if (!command && at(p, T_IDENT) && str_eq_c(peek(p)->text, "Changed") && peek_at(p, 1)->kind == T_LT) {
+        trigger.changed = true;
+        advance(p);
+        advance(p);
+        const qname field = parse_qname(p, "the field it watches, like 'Changed<Health.value>'");
+        trigger.type_name = field.text;
+        trigger.type_qual_at = field.at;
+        trigger.type_at = field.at;
+        expect(p, T_GT, "'>' after the field it watches");
+    } else {
+        const qname type = parse_qname(p, "the event it handles, like 'event(Hit hit)'");
+        trigger.type_name = type.text;
+        trigger.type_qual_at = type.at;
+        trigger.type_at = type.name_at;
+    }
     if (at(p, T_IDENT)) {
         trigger.name_at = peek(p)->at;
         trigger.name = advance(p)->text;

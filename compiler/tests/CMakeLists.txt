@@ -254,6 +254,7 @@ tide_e2e_test(local_fields WARNINGS "'box' is declared mut but never written")
 tide_e2e_test(local_fields_plain) # ...whose match is the same without them
 tide_e2e_test(local_fields_net) # ...and what a client's wrong predictions do to them, on a network
 tide_e2e_test(local_events) # Local handlers of the match's events: heard once, whatever a client predicted
+tide_e2e_test(changed_events) # Changed<Health.value>: a field that changed over a tick, heard by local handlers
 tide_e2e_test(visibility_lifecycle) # Local availability differs from genuine match lifecycle
 tide_e2e_test(local_events_same) # Events only local code handles: the match they cost nothing,
 tide_e2e_test(local_events_plain) # ...which is the same without them

@@ -1,0 +1,188 @@
+// Changed<...>: local handlers hear a field of the match that changed over a
+// tick, with what it was and what it is. A shield one player raises decides
+// whether a tick hurts, so a client that hasn't heard of the shield yet
+// predicts a change the server never made.
+
+struct Stats
+{
+    int armor;
+    int level;
+}
+
+component Unit
+{
+    int id;
+    Stats stats;
+}
+
+component Health
+{
+    int value = 10;
+    local int changes; // Changes its handler heard for this entity
+}
+
+// Fields that aren't where a lane starts, nor a lane's width
+component Lamp
+{
+    byte tone;
+    bool lit;
+    double2 aim;
+}
+
+component Player { }
+
+singleton Guard
+{
+    bool up;
+}
+
+singleton Score
+{
+    int points;
+    int steady;
+}
+
+input Controls
+{
+    bool shield;
+}
+
+scene Main { }
+
+event Struck { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Unit { id = 1 }, Health { }, Lamp { });
+    Spawn(Unit { id = 2 }, Health { });
+    Spawn(Unit { id = 3 });
+}
+
+event(PlayerJoined joined) AddPlayer()
+{
+    Spawn(Player, Owner { player = joined.player });
+}
+
+event(Struck) TakeHit(mut Health health)
+{
+    health.value -= 1;
+}
+
+system Lower(mut Guard guard)
+{
+    guard.up = false;
+}
+
+system Raise(Controls controls, mut Guard guard, with Player)
+{
+    if (controls.shield) guard.up = true;
+}
+
+// The shield is up around tick 90
+system Hurt(mut Health health, Unit unit, Guard guard, Time time)
+{
+    if (unit.id == 1 && time.tick == 30) health.value -= 1;
+    // Taken and given back in one tick: no change
+    if (unit.id == 1 && time.tick == 40) health.value -= 5;
+    if (unit.id == 1 && time.tick == 90 && !guard.up) health.value -= 2;
+    if (unit.id == 3 && time.tick == 110) health.value -= 1;
+}
+
+system Heal(mut Health health, Unit unit, Time time)
+{
+    if (unit.id == 1 && time.tick == 40) health.value += 5;
+}
+
+system Grow(mut Unit unit, Time time)
+{
+    if (unit.id != 2 || time.tick != 50) return;
+    unit.stats.level = 3;
+    unit.stats.armor = 7; // Not watched
+}
+
+system Change(Unit unit, Time time)
+{
+    // A spawn, a destroy and a component added change nothing
+    if (unit.id == 1 && time.tick == 70) Spawn(Unit { id = 4 }, Health { value = 3 });
+    if (unit.id == 2 && time.tick == 80) this.Destroy();
+    if (unit.id == 3 && time.tick == 100) this.Add(Health { value = 1 });
+    // A handler's change is the tick's too
+    if (unit.id == 1 && time.tick == 120) this.Send(Struck { });
+}
+
+system Light(mut Lamp lamp, Time time)
+{
+    if (time.tick == 55) lamp.lit = true;
+    if (time.tick == 56) lamp.aim = double2(0.5, -2);
+    if (time.tick == 57) lamp.tone = 9; // Not watched
+}
+
+system Count(mut Score score, Time time)
+{
+    if (time.tick == 60) score.points = 10;
+    if (time.tick == 61) score.steady = 0; // The same value: no change
+}
+
+// What this machine heard, as it predicted and once the server confirmed it
+local singleton Heard
+{
+    int health;     // Changes of a Health's value
+    int sum;        // ...each its old value times 100 plus its new one, added up
+    int ids;        // ...a bit for each unit's id
+    int ticks;      // ...each Time.tick, added up
+    int wrong;      // ...heard for tick 90, which the server's tick didn't change
+    int sureHealth;
+    int sureSum;
+    int sureWrong;
+    int levels;
+    int level;      // Unit 2's level, as old * 100 + new, and its id * 10000
+    int points;
+    int pointsLast;
+    int steady;
+    int lit;
+    double aimed;   // The aim as heard: its y and its x times 10, less its old x
+}
+
+local event(Changed<Health.value> change) HearHealth(Unit unit, mut Health health, mut Heard heard, Time time)
+{
+    heard.health += 1;
+    heard.sum += change.old * 100 + change.value;
+    heard.ids |= 1 << unit.id;
+    heard.ticks += time.tick;
+    if (time.tick == 90) heard.wrong += 1;
+    health.changes += 1;
+}
+
+local event(verified Changed<Health.value> change) SureHealth(mut Heard heard, Time time)
+{
+    heard.sureHealth += 1;
+    heard.sureSum += change.old * 100 + change.value;
+    if (time.tick == 90) heard.sureWrong += 1;
+}
+
+local event(Changed<Unit.stats.level> change) HearLevel(Unit unit, mut Heard heard)
+{
+    heard.levels += 1;
+    heard.level = change.old * 100 + change.value + unit.id * 10000;
+}
+
+local event(Changed<Score.points> change) HearPoints(mut Heard heard)
+{
+    heard.points += 1;
+    heard.pointsLast = change.old * 100 + change.value;
+}
+
+local event(Changed<Score.steady>) HearSteady(mut Heard heard)
+{
+    heard.steady += 1;
+}
+
+local event(Changed<Lamp.lit> change) HearLit(mut Heard heard)
+{
+    if (!change.old && change.value) heard.lit += 1;
+}
+
+local event(Changed<Lamp.aim> change) HearAim(mut Heard heard)
+{
+    heard.aimed += change.value.y + change.value.x * 10 - change.old.x;
+}
