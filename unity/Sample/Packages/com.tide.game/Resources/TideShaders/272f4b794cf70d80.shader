@@ -1,6 +1,6 @@
-// the renderer's solid_shape
+// the renderer's smooth_shape
 // Made by tide unity from the game's WGSL. Do not edit: it's made again as the game is built.
-Shader "Hidden/Tide/112ba53b11418515"
+Shader "Hidden/Tide/272f4b794cf70d80"
 {
     Properties
     {
@@ -339,24 +339,20 @@ cbuffer TideUniforms {
     float4 tidehl_u_fix;
 };
 
-Corner vertex(float2 corner, float4 shape, float4 color, float kind, float radius);
+Corner vertex(float2 corner, float4 shape, float4 color, float kind, float4 turn, float2 fade, float4 color2, float4 rim_color);
 float4 whiten(float4 c, float by);
 float4 over(float4 p, float4 tint, float by);
 float ellipse(float2 at, float2 radii);
 float4 fragment(Corner in_w);
 
-Corner vertex(float2 corner, float4 shape, float4 color, float kind, float radius)
+Corner vertex(float2 corner, float4 shape, float4 color, float kind, float4 turn, float2 fade, float4 color2, float4 rim_color)
 {
-    float4 turn = float4(1.0, 0.0, radius, 0.0);
-    float2 fade = float2(0.0, 0.0);
-    float4 color2 = color;
-    float4 rim_color = ((float4)(0.0));
     float2 c = ((corner * 2.0) - 1.0);
     Corner out_w = ((Corner)0);
     float2 p = ((float2)0);
     if ((kind > 4.5)) {
         out_w.extent = abs(shape.zw);
-        out_w.local = (c * ((out_w.extent + max(fade.x, 0.0)) + 1.0));
+        out_w.local = (c * ((out_w.extent + ((kind > 7.5) ? 0.0 : max(fade.x, 0.0))) + 1.0));
         p = (shape.xy + float2(((out_w.local.x * turn.x) - (out_w.local.y * turn.y)), ((out_w.local.x * turn.y) + (out_w.local.y * turn.x))));
     } else if ((kind > 3.5)) {
         float2 d = (shape.zw - shape.xy);
@@ -379,7 +375,7 @@ Corner vertex(float2 corner, float4 shape, float4 color, float kind, float radiu
     }
     out_w.tint = color;
     out_w.form = kind;
-    out_w.look = float4(turn.z, turn.w, fade.x, 0.0);
+    out_w.look = ((kind > 7.5) ? float4(turn.zw, fade) : float4(turn.z, turn.w, fade.x, 0.0));
     out_w.gap = float2(cos(fade.y), sin(fade.y));
     out_w.tint2 = color2;
     out_w.rim = rim_color;
@@ -467,7 +463,15 @@ float4 fragment(Corner in_w)
         float px = ((tidehl_u_scale.x + tidehl_u_scale.y) * 0.5);
         float d = ((float)0);
         float outline = in_w.look.y;
-        if ((in_w.form > 6.5)) {
+        float soft = ((in_w.form > 7.5) ? 0.0 : in_w.look.z);
+        if ((in_w.form > 7.5)) {
+            float top = ((in_w.local.x < 0.0) ? in_w.look.x : in_w.look.y);
+            float bottom = ((in_w.local.x < 0.0) ? in_w.look.w : in_w.look.z);
+            float r = ((in_w.local.y < 0.0) ? top : bottom);
+            float2 q = ((abs(in_w.local) - in_w.extent) + r);
+            d = ((length(max(q, ((float2)(0.0)))) + min(max(q.x, q.y), 0.0)) - r);
+            outline = 0.0;
+        } else if ((in_w.form > 6.5)) {
             float2 q = float2(in_w.local.x, abs(in_w.local.y));
             float ring = (abs(((length(q) - in_w.extent.x) + (outline * 0.5))) - (outline * 0.5));
             float wedge = dot(q, float2((-in_w.gap.y), in_w.gap.x));
@@ -487,11 +491,11 @@ float4 fragment(Corner in_w)
             d = ((length(max(q, ((float2)(0.0)))) + min(max(q.x, q.y), 0.0)) - in_w.look.x);
         }
         float cover = clamp((0.5 - (d * px)), 0.0, 1.0);
-        if ((in_w.look.z > 0.0)) {
-            float glow = clamp((1.0 - (((d * px) + 0.5) / ((in_w.look.z * px) + 1.0))), 0.0, 1.0);
+        if ((soft > 0.0)) {
+            float glow = clamp((1.0 - (((d * px) + 0.5) / ((soft * px) + 1.0))), 0.0, 1.0);
             cover = (glow * glow);
-        } else if ((in_w.look.z < 0.0)) {
-            float glow = clamp((1.0 + (((d * px) - 0.5) / (1.0 - (in_w.look.z * px)))), 0.0, 1.0);
+        } else if ((soft < 0.0)) {
+            float glow = clamp((1.0 + (((d * px) - 0.5) / (1.0 - (soft * px)))), 0.0, 1.0);
             cover = (cover * (glow * glow));
         }
         if ((cover <= (tidehl_u_fix.y * 0.00400000019))) {
@@ -535,9 +539,15 @@ tidehl_varyings tidehl_vertex(uint tidehl_v : SV_VertexID, uint tidehl_instance 
     tidehl_p2 = tidehl_float_attribute(2u, tidehl_vertex, tidehl_instance);
     float tidehl_p3;
     tidehl_p3 = tidehl_float_attribute(3u, tidehl_vertex, tidehl_instance).x;
-    float tidehl_p4;
-    tidehl_p4 = tidehl_float_attribute(4u, tidehl_vertex, tidehl_instance).x;
-    Corner tidehl_r = vertex(tidehl_p0, tidehl_p1, tidehl_p2, tidehl_p3, tidehl_p4);
+    float4 tidehl_p4;
+    tidehl_p4 = tidehl_float_attribute(4u, tidehl_vertex, tidehl_instance);
+    float2 tidehl_p5;
+    tidehl_p5 = tidehl_float_attribute(5u, tidehl_vertex, tidehl_instance).xy;
+    float4 tidehl_p6;
+    tidehl_p6 = tidehl_float_attribute(6u, tidehl_vertex, tidehl_instance);
+    float4 tidehl_p7;
+    tidehl_p7 = tidehl_float_attribute(7u, tidehl_vertex, tidehl_instance);
+    Corner tidehl_r = vertex(tidehl_p0, tidehl_p1, tidehl_p2, tidehl_p3, tidehl_p4, tidehl_p5, tidehl_p6, tidehl_p7);
     tidehl_varyings tidehl_o;
     tidehl_o.position = tidehl_clip(tidehl_r.position);
     tidehl_o.l0 = tidehl_r.local;
@@ -898,24 +908,20 @@ cbuffer TideUniforms {
     float4 tidehl_u_fix;
 };
 
-Corner vertex(float2 corner, float4 shape, float4 color, float kind, float radius);
+Corner vertex(float2 corner, float4 shape, float4 color, float kind, float4 turn, float2 fade, float4 color2, float4 rim_color);
 float4 whiten(float4 c, float by);
 float4 over(float4 p, float4 tint, float by);
 float ellipse(float2 at, float2 radii);
 float4 fragment(Corner in_w);
 
-Corner vertex(float2 corner, float4 shape, float4 color, float kind, float radius)
+Corner vertex(float2 corner, float4 shape, float4 color, float kind, float4 turn, float2 fade, float4 color2, float4 rim_color)
 {
-    float4 turn = float4(1.0, 0.0, radius, 0.0);
-    float2 fade = float2(0.0, 0.0);
-    float4 color2 = color;
-    float4 rim_color = ((float4)(0.0));
     float2 c = ((corner * 2.0) - 1.0);
     Corner out_w = ((Corner)0);
     float2 p = ((float2)0);
     if ((kind > 4.5)) {
         out_w.extent = abs(shape.zw);
-        out_w.local = (c * ((out_w.extent + max(fade.x, 0.0)) + 1.0));
+        out_w.local = (c * ((out_w.extent + ((kind > 7.5) ? 0.0 : max(fade.x, 0.0))) + 1.0));
         p = (shape.xy + float2(((out_w.local.x * turn.x) - (out_w.local.y * turn.y)), ((out_w.local.x * turn.y) + (out_w.local.y * turn.x))));
     } else if ((kind > 3.5)) {
         float2 d = (shape.zw - shape.xy);
@@ -938,7 +944,7 @@ Corner vertex(float2 corner, float4 shape, float4 color, float kind, float radiu
     }
     out_w.tint = color;
     out_w.form = kind;
-    out_w.look = float4(turn.z, turn.w, fade.x, 0.0);
+    out_w.look = ((kind > 7.5) ? float4(turn.zw, fade) : float4(turn.z, turn.w, fade.x, 0.0));
     out_w.gap = float2(cos(fade.y), sin(fade.y));
     out_w.tint2 = color2;
     out_w.rim = rim_color;
@@ -1026,7 +1032,15 @@ float4 fragment(Corner in_w)
         float px = ((tidehl_u_scale.x + tidehl_u_scale.y) * 0.5);
         float d = ((float)0);
         float outline = in_w.look.y;
-        if ((in_w.form > 6.5)) {
+        float soft = ((in_w.form > 7.5) ? 0.0 : in_w.look.z);
+        if ((in_w.form > 7.5)) {
+            float top = ((in_w.local.x < 0.0) ? in_w.look.x : in_w.look.y);
+            float bottom = ((in_w.local.x < 0.0) ? in_w.look.w : in_w.look.z);
+            float r = ((in_w.local.y < 0.0) ? top : bottom);
+            float2 q = ((abs(in_w.local) - in_w.extent) + r);
+            d = ((length(max(q, ((float2)(0.0)))) + min(max(q.x, q.y), 0.0)) - r);
+            outline = 0.0;
+        } else if ((in_w.form > 6.5)) {
             float2 q = float2(in_w.local.x, abs(in_w.local.y));
             float ring = (abs(((length(q) - in_w.extent.x) + (outline * 0.5))) - (outline * 0.5));
             float wedge = dot(q, float2((-in_w.gap.y), in_w.gap.x));
@@ -1046,11 +1060,11 @@ float4 fragment(Corner in_w)
             d = ((length(max(q, ((float2)(0.0)))) + min(max(q.x, q.y), 0.0)) - in_w.look.x);
         }
         float cover = clamp((0.5 - (d * px)), 0.0, 1.0);
-        if ((in_w.look.z > 0.0)) {
-            float glow = clamp((1.0 - (((d * px) + 0.5) / ((in_w.look.z * px) + 1.0))), 0.0, 1.0);
+        if ((soft > 0.0)) {
+            float glow = clamp((1.0 - (((d * px) + 0.5) / ((soft * px) + 1.0))), 0.0, 1.0);
             cover = (glow * glow);
-        } else if ((in_w.look.z < 0.0)) {
-            float glow = clamp((1.0 + (((d * px) - 0.5) / (1.0 - (in_w.look.z * px)))), 0.0, 1.0);
+        } else if ((soft < 0.0)) {
+            float glow = clamp((1.0 + (((d * px) - 0.5) / (1.0 - (soft * px)))), 0.0, 1.0);
             cover = (cover * (glow * glow));
         }
         if ((cover <= (tidehl_u_fix.y * 0.00400000019))) {
@@ -1094,9 +1108,15 @@ tidehl_varyings tidehl_vertex(uint tidehl_v : SV_VertexID, uint tidehl_instance 
     tidehl_p2 = tidehl_float_attribute(2u, tidehl_vertex, tidehl_instance);
     float tidehl_p3;
     tidehl_p3 = tidehl_float_attribute(3u, tidehl_vertex, tidehl_instance).x;
-    float tidehl_p4;
-    tidehl_p4 = tidehl_float_attribute(4u, tidehl_vertex, tidehl_instance).x;
-    Corner tidehl_r = vertex(tidehl_p0, tidehl_p1, tidehl_p2, tidehl_p3, tidehl_p4);
+    float4 tidehl_p4;
+    tidehl_p4 = tidehl_float_attribute(4u, tidehl_vertex, tidehl_instance);
+    float2 tidehl_p5;
+    tidehl_p5 = tidehl_float_attribute(5u, tidehl_vertex, tidehl_instance).xy;
+    float4 tidehl_p6;
+    tidehl_p6 = tidehl_float_attribute(6u, tidehl_vertex, tidehl_instance);
+    float4 tidehl_p7;
+    tidehl_p7 = tidehl_float_attribute(7u, tidehl_vertex, tidehl_instance);
+    Corner tidehl_r = vertex(tidehl_p0, tidehl_p1, tidehl_p2, tidehl_p3, tidehl_p4, tidehl_p5, tidehl_p6, tidehl_p7);
     tidehl_varyings tidehl_o;
     tidehl_o.position = tidehl_clip(tidehl_r.position);
     tidehl_o.l0 = tidehl_r.local;
