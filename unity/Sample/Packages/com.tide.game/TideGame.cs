@@ -5,7 +5,7 @@ namespace Tide.Game
     // What this game's C# was made from: a view packet of another build isn't read by it.
     public static class TideGameSchema
     {
-        public const string Hash = "D3C97F1BC8DF4B04";
+        public const string Hash = "5B0119D514217A29";
         public const string Game = "Bounce";
         public const int TickRate = 30;
         public static readonly string[] Scenes = {  };
@@ -361,6 +361,10 @@ namespace Tide.Game
         public bool pressed;
         public bool focused;
         public bool clicked;
+        public bool down;
+        public bool up;
+        public bool cancelled;
+        public global::UnityEngine.Vector2 position;
 
         public static GUIControl From(Value v, global::Tide.TidePacket packet, global::Tide.TideRunner runner)
         {
@@ -369,6 +373,10 @@ namespace Tide.Game
             s.pressed = v.pressed;
             s.focused = v.focused;
             s.clicked = v.clicked;
+            s.down = v.down;
+            s.up = v.up;
+            s.cancelled = v.cancelled;
+            s.position = v.position;
             return s;
         }
 
@@ -379,18 +387,26 @@ namespace Tide.Game
             v.pressed = pressed;
             v.focused = focused;
             v.clicked = clicked;
+            v.down = down;
+            v.up = up;
+            v.cancelled = cancelled;
+            v.position = position;
             return v;
         }
 
         // Tide's struct GUIControl, as the game's C lays it out
         [global::Tide.TideType("GUIControl")]
-        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 4)]
+        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 16)]
         public unsafe partial struct Value
         {
             [global::System.Runtime.InteropServices.FieldOffset(0)] public bool hovered;
             [global::System.Runtime.InteropServices.FieldOffset(1)] public bool pressed;
             [global::System.Runtime.InteropServices.FieldOffset(2)] public bool focused;
             [global::System.Runtime.InteropServices.FieldOffset(3)] public bool clicked;
+            [global::System.Runtime.InteropServices.FieldOffset(4)] public bool down;
+            [global::System.Runtime.InteropServices.FieldOffset(5)] public bool up;
+            [global::System.Runtime.InteropServices.FieldOffset(6)] public bool cancelled;
+            [global::System.Runtime.InteropServices.FieldOffset(8)] public global::UnityEngine.Vector2 position;
         }
     }
 }

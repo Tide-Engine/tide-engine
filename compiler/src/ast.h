@@ -330,6 +330,9 @@ typedef struct param {
     // confirmed, in a view; in a local handler's trigger, once the server confirmed the tick that sent the event
     bool verified;
     loc verified_at; // ...the word
+    // `event(Changed<Health.value> c)`: a trigger heard when a match field changed over a tick. type_name is
+    // the field's path, "Health.value", type_at its first part; the checker makes the event (check_changed)
+    bool changed;
     bool placement_local; // `local Component value`: access to machine-local storage of a shared component type
     loc placement_at;
     bool function_param; // A method's or function's: a copy, or with mut, the caller's variable itself
@@ -655,6 +658,10 @@ typedef struct decl {
     const struct decl *needs_target; // A handler that takes data from the entity the event is sent to, or NULL
     VEC(struct decl *) handlers;     // Its handlers, in the order they run
     VEC(struct decl *) listeners;    // A match event's local handlers (decl.listens), in the order they run
+    // `Changed<Health.value>`, an event the engine records as a tick ends: the match component or singleton
+    // whose field changed over the tick, and the field, through the structs it's in, outermost first
+    struct decl *watches;
+    VEC(const struct field *) watch_path;
 
     // Structs and components: their methods
     VEC(struct decl *) methods;
@@ -1522,6 +1529,7 @@ typedef struct program {
     decl *connected;     // Built-in local events: this machine joined a match, and left it
     decl *disconnected;
     decl *forgotten;     // ...and a match entity's local fields are going, as it's gone
+    VEC(decl *) changed; // The `Changed<Health.value>` events local handlers hear (decl.watches), once each
     VEC(decl *) local_parts; // The local parts of the match's components and singletons (decl.local_part), in their order
     VEC(decl *) start_scenes; // Scenes Session.Start starts matches in
     bool out_args;       // Some call has an `out` argument: generated C declares the locals they make before their statements

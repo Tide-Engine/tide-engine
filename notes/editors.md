@@ -11,6 +11,25 @@ lsp_skinned_asset_reference_aliases_and_dynamic_value_members is source-prepared
 but not yet compiled/run. No adapter, native model preview or grammar change is
 introduced. Compiler contracts and pending validation: notes/language.md.
 
+## `Changed<...>` triggers (2026-10-25)
+
+`local event(Changed<Health.value> change)`: the language server places the
+component as a type and each field as a member (hover, rename), prints the
+trigger in headers, describes the change in a handler's hover, and the
+formatter keeps `Changed<...>` tight (`generic_type`). The change's `old` and
+`value` have no source location, so renaming them is refused as a built-in
+type's field. The TextMate grammar's handler rules accept the trigger
+(`#changed-trigger`, both copies). Tests: `lsp_changed_triggers`, grammar
+cases in `tools/tide-syntax/test`. The feature itself is in
+notes/verified-and-local-handlers.md.
+
+## Merge integration (2026-10-25)
+
+The one-round merge of origin/dev at b4655dfd into feature commit 2b0edc69
+keeps both complete sections above. Only this note conflicted. This text
+resolution changes no source and makes no new validation claim; root owns
+merge completion and the full native/web suite repeats.
+
 ## Editor CI cleanup and empty-edit fixes (2026-10-25)
 
 Run `40152905815` at `5d5f6172` failed Windows release's Play workspace-removal

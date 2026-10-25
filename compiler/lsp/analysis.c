@@ -1193,6 +1193,37 @@ static void walk_param(const param *p, const decl *d)
                                  .param_of = d, .name = p->type_name});
             return;
         }
+        // `event(Changed<Health.value> change)`: the component or singleton as a type is, then each field as a member is
+        if (p->changed) {
+            const decl *event = p->type.kind == TY_EVENT ? p->type.decl : NULL;
+            if (event && event->watches) {
+                int end = p->type_name.len; // Where the component's or singleton's name ends
+                for (int n = 0; n < event->watch_path.count && end > 0; n++) {
+                    end--;
+                    while (end > 0 && p->type_name.ptr[end] != '.') end--;
+                }
+                int last = end; // ...and its last part starts
+                while (last > 0 && p->type_name.ptr[last - 1] != '.') last--;
+                const loc name_at = {p->type_qual_at.line, p->type_qual_at.col + last, p->type_qual_at.file};
+                const type watched = {event->watches->kind == DECL_SINGLETON ? TY_SINGLETON : TY_COMPONENT, event->watches};
+                type_written(p->type_qual_at, name_at, (str){p->type_name.ptr, end}, watched);
+                const decl *owner = event->watches;
+                int at = end + 1;
+                for (int n = 0; n < event->watch_path.count; n++) {
+                    const field *f = event->watch_path.items[n];
+                    add_occ((occurrence){.at = {p->type_qual_at.line, p->type_qual_at.col + at, p->type_qual_at.file},
+                                         .len = f->name.len, .kind = OCC_FIELD, .field = f, .decl = owner, .name = f->name,
+                                         .type = f->type});
+                    at += f->name.len + 1;
+                    owner = f->type.decl;
+                }
+            }
+            if (p->name.len > 0) {
+                add_occ((occurrence){.at = p->name_at, .len = p->name.len, .kind = OCC_PARAM, .declaration = true, .param = p,
+                                     .param_of = d, .name = p->name, .type = p->type});
+            }
+            return;
+        }
         // `with scene Arena`: the scene's name, as a type's is, for its hover and its renames
         const type placed = p->scene && p->scene_of ? (type){TY_COMPONENT, p->scene_of}
                          : p->call_binding ? p->call_binding->type : p->type;
@@ -1798,7 +1829,8 @@ static void format_param(const param *p, sb *out)
     }
     if (p->verified_at.line > 0) sb_put(out, "verified "); // As written, where the checker refused it too
     if (p->placement_local) sb_put(out, "local ");
-    sb_printf(out, STR_FMT, STR_ARG(p->type_name));
+    if (p->changed) sb_printf(out, "Changed<" STR_FMT ">", STR_ARG(p->type_name));
+    else sb_printf(out, STR_FMT, STR_ARG(p->type_name));
     if (p->name.len > 0) sb_printf(out, " " STR_FMT, STR_ARG(p->name));
     if (p->default_value) sb_printf(out, " = " STR_FMT, STR_ARG(p->default_text)); // One a call can leave out
 }
@@ -3140,7 +3172,21 @@ static void describe(const occurrence *o, sb *out)
             const str event = o->decl->event->name;
             const char *when = o->decl->is_local ? "frame" : "tick";
             const char *to = o->decl->per_entity ? " to an entity that matches its parameters" : "";
-            if (o->decl->listens && o->decl->listens_verified) {
+            const decl *watched = o->decl->event->watches;
+            if (o->decl->listens && watched) {
+                const field *f = o->decl->event->watch_path.items[o->decl->event->watch_path.count - 1];
+                sb_printf(out, "\n\nA local handler of a change: it runs on this machine at the start of a frame, before the "
+                               "views, ");
+                if (watched->kind == DECL_SINGLETON) sb_printf(out, "each time a tick%s changed `" STR_FMT "`'s `" STR_FMT "`",
+                                                               o->decl->listens_verified ? " the server confirmed" : "",
+                                                               STR_ARG(watched->name), STR_ARG(f->name));
+                else sb_printf(out, "for each entity whose `" STR_FMT "` a tick%s changed", STR_ARG(f->name),
+                               o->decl->listens_verified ? " the server confirmed" : "");
+                sb_printf(out, ", with what it was (`old`) and what it is (`value`). A change is the tick's, from its start "
+                               "to its end; spawns, destroys and added or removed components change nothing. It hears each "
+                               "once, %s.", o->decl->listens_verified ? "when the server confirmed its tick"
+                                                                      : "whatever ticks are run again");
+            } else if (o->decl->listens && o->decl->listens_verified) {
                 sb_printf(out, "\n\nA local handler of the match's `" STR_FMT "`: it runs on this machine at the start of a "
                                "frame, before the views, for each `" STR_FMT "` sent%s in the ticks the server confirmed "
                                "since the last frame. It hears each once, when the server confirmed its tick, with what it "
@@ -11846,10 +11892,11 @@ static bool is_argument_colon(const int i)
         && (DOC->toks[i - 2].kind == T_LPAREN || DOC->toks[i - 2].kind == T_COMMA);
 }
 
-// A type written with others in <>, which the formatter keeps tight: List<int>, Map<int, float>.
+// A type written with others in <>, which the formatter keeps tight: List<int>, Map<int, float>, and a handler's
+// Changed<Health.value>.
 static bool generic_type(const str name)
 {
-    return str_eq_c(name, "Task") || str_eq_c(name, "LocalTask") || str_eq_c(name, "Func") || str_eq_c(name, "List") || str_eq_c(name, "Map") || str_eq_c(name, "Set") || str_eq_c(name, "Grid2")
+    return str_eq_c(name, "Changed") || str_eq_c(name, "Task") || str_eq_c(name, "LocalTask") || str_eq_c(name, "Func") || str_eq_c(name, "List") || str_eq_c(name, "Map") || str_eq_c(name, "Set") || str_eq_c(name, "Grid2")
         || str_eq_c(name, "Grid3") || str_eq_c(name, "Mesh") || str_eq_c(name, "SkinnedMesh") || str_eq_c(name, "Asset");
 }
 

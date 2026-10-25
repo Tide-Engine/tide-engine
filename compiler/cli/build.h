@@ -28,6 +28,9 @@ typedef struct build_options {
     // tide unity --notified: the editor says when the project's files change (a `changed` line on its input), so
     // between builds tide looks at the files it knows rather than going over all of Assets
     bool notified;
+    // tide unity --declarations: the game's types alone (its systems, views, handlers, functions and shaders left
+    // out), for the C# of its components while its code doesn't build. Run by tide unity itself, quietly.
+    bool declarations;
 } build_options;
 
 // Builds a game with the engine files installed in `root`.

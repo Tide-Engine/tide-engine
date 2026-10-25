@@ -31,6 +31,8 @@ static void usage(void)
             "  --no-line      don't map generated code back to .tide lines for debuggers\n"
             "  --layout       also describe the data layout, as tide run does for hot reloading\n"
             "  --embed        ...and what another program needs to run the game (tide/embed.h), as tide unity builds it\n"
+            "  --declarations the game's types alone: its systems, views, handlers, functions, frags and verts\n"
+            "                 left out, as tide unity builds them while the code doesn't build\n"
             "  --strip-unused-assets  leave unreferenced assets out of generated loaders and the pack\n"
             "  --server               preserve the client identity and emit server build metadata\n"
             "  --strip-server-assets  also retain only simulation assets (explicit C dependency promise)\n"
@@ -203,6 +205,8 @@ int main(const int argc, char **argv)
             opts.layout = true;
         } else if (strcmp(argv[i], "--embed") == 0) {
             opts.embed = true;
+        } else if (strcmp(argv[i], "--declarations") == 0) {
+            opts.declarations_only = true;
         } else if (strcmp(argv[i], "--editor-prefab") == 0 && i + 1 < argc) {
             opts.editor_prefab = argv[++i];
         } else if (strcmp(argv[i], "--editor-local") == 0) {

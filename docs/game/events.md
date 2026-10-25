@@ -369,6 +369,37 @@ local event(Spawned) CrateLanded(Body body, with Crate)
 - **Ticks that were skipped say nothing**: when a client's world went wrong and the server sent it again, the ticks in between were never run there. Existing entities that are newly available receive `Shown` as that world arrives; nothing a machine already had is shown again.
 - **A match that changes hands** goes on from the new host's last confirmed tick (see [Host migration](../multiplayer/matches.md#host-migration)), so the ticks after it are heard again on a machine that had heard them. The entities it had before aren't new to it, and aren't heard again.
 
+### When a field changes
+
+`Changed<Health.value>` hears a field of the match that changed over a tick, with what it was, `old`, and what it is, `value`. Nothing has to send it, and a view needn't keep the last value to compare:
+
+```csharp
+component Health
+{
+    int value = 100;
+    local float flash; // This machine's
+}
+
+local event(Changed<Health.value> change) Hurt(Body body, mut Health health, mut Fx fx)
+{
+    if (change.value < change.old) health.flash = 1; // It went down
+    fx.numbers.Add(DamageNumber { at = body.position, amount = change.old - change.value });
+}
+
+// A singleton's field: the handler runs once, and takes no components
+local event(Changed<Score.points> change) Cheer(mut Fx fx)
+{
+    fx.confetti = change.value - change.old;
+}
+```
+
+- **A change is the tick's.** As a tick ends, after its events and changes are done, the field is compared with what it was as the tick began. Several writes in a tick are one change, from the first value to the last, and a field written back to what it was didn't change. It's compared bit for bit, as the match's hash compares it.
+- **It's sent to the entity whose field changed**, which its handler takes components of, as the tick left it. A singleton's change is sent to the world.
+- **Only fields that were there before and after change.** Spawning, destroying, adding or removing the component, and an entity this machine comes to have, change nothing: `Spawned`, `Destroyed`, `Shown` and `Hidden` say those.
+- **The path goes through structs**: `Changed<Unit.stats.level>` watches one field of a struct in a component. A field of text, a list, a map, a set or a grid can't be watched; watch a count or a version kept beside it.
+- **It's like any match event a local handler hears.** It's heard once under rollback, `verified` hears it once the server has confirmed the tick, and ownership filters work. Only the field is compared, and only on machines with a handler of it, so the match's bytes, hash and traffic are what they'd be without it.
+- **Its handlers are local.** Match code reacts where it changes the field, or sends an event from there.
+
 ### Ownership filters
 
 Use `with ownership` or `without ownership` as in a view:

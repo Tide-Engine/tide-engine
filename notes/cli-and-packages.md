@@ -376,6 +376,35 @@ program, which has no SPIR-V. Test: `unity_shaders_written` (`compiler/cli/tests
 files named by key, with the right Shader names and the HLSL's markers, removes a
 stale file and its meta, and removes the game's file once the game has no shaders.
 
+**Builds the editor shows, and C# from a game that doesn't build (2026-10-25).**
+Watching, `tide unity` prints `tide: building game-<n>` (`building`) before each
+build, the one an asset change makes too, which also says `tide: built game-<n>`
+now; the package shows a status-bar task from that line to the result
+(`notes/unity.md`, Closing the gaps). After a build that failed, the first one
+included, `write_unity_declarations` runs `tide unity <folder> -o <path>/declared
+--declarations --assets <Assets>` (with `--release` and the build's `--define`s
+but DEBUG) quietly through `sys_run`, so the build's own errors are the only ones
+said. `--declarations` (`build_options.declarations`, implies `--once`) is
+`tide_unity_declared`: `write_unity_library`, `build_library` and
+`write_unity_schema` into that folder with `codegen_options.declarations_only`,
+which `compile_inputs` applies before checking (`keep_declarations` drops the
+game's `DECL_SYSTEM`, `DECL_FUNCTION` and `DECL_SHADER`, builtins kept, before
+the embed taps are added). It writes `Packages/com.tide.game` from that schema,
+but not the shaders (`unity_shaders_write` is skipped: the game's would go), and
+through `unity_code_add`, which takes no component script away: an engine
+component only the game's code gives entities (`Owner`) isn't listed in a build
+of the declarations, and its script would have gone and come back. The child is
+tide's own executable (`sys_exe_dir`), not `build.compiler`, which is clang where
+tide hasn't it built in.
+Nothing loads its library: the editor's game keeps its last build, whose schema
+hash the new C# doesn't match, so live values wait for the next build that works.
+`tidec --declarations` is the same option. Test: `tidec_declarations_only`
+(`compiler/tests/declarations_only.cmake`: a game spawning a prefab that isn't
+there fails whole and builds declared, with its component and event in the header
+and neither its system nor its function in the code; a component's own error still
+fails). A separate process was picked over a second `generate` in the same one
+because `generate` replaces the build's outline, info, sources and shaders.
+
 ## Terminal editor configuration helper (2026-10-18)
 
 `tide ide emacs|vim|neovim` prints ready-to-copy init configuration from the

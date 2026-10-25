@@ -46,6 +46,9 @@ typedef struct codegen_options {
     const char *editor_prefab; // Internal native-editor build: qualified prefab to instantiate without gameplay startup.
     bool editor_local;
     const char *editor_source, *editor_text; // Unsaved source overlay, retaining the original path and asset scope.
+    // The game's types alone: its systems, views, handlers, functions, frags and verts are left out before checking,
+    // so code that doesn't build yet doesn't keep its types from building (tide unity --declarations)
+    bool declarations_only;
 } codegen_options;
 
 // Writes <out_dir>/<name>.h and <out_dir>/<name>.c. Returns false on I/O errors.

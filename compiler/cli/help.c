@@ -196,11 +196,16 @@ static const argument_help arguments[] = {
      "unity builds when a `changed` line comes on its input, and between builds\n"
      "looks only at the files it built, not every file of Assets: what Unity's\n"
      "package passes, as Unity says when its assets change.", UNITY},
+    {"--declarations", "--declarations", "Build the game's types alone, for their C#",
+     "unity builds the game's declarations once, leaving out its systems, views,\n"
+     "handlers, functions, frags and verts, and writes the project's\n"
+     "Packages/com.tide.game from them. tide unity runs it itself after a build\n"
+     "that failed, so a component's C# comes before the code that uses it builds.", UNITY},
     {"--assets", "--assets <folder>", "Include a Unity project's prefabs and scenes",
      "Reads a Unity project's Assets folder: each prefab and scene holding\n"
      "TideEntity objects is a Tide prefab named after its file, and Build\n"
      "Settings' first scene loads as Main starts. build and run take it for a\n"
-     "server, or any build, of a game made in Unity.", UNITY | BUILD | RUN},
+     "server, or any build, of a game made in Unity; schedule to check one.", UNITY | BUILD | RUN | SCHEDULE},
     {"--no-open", "--no-open", "Serve a web run without opening a browser",
      "Use with tide run --web. TIDE_HIDDEN also prevents opening a browser.", RUN},
     {"--host", "--host [port]", "Open the startup match for others to join",

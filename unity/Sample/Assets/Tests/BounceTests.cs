@@ -440,6 +440,18 @@ public sealed unsafe class BounceTests
         yield return DrawsIntoUnitysFrame();
     }
 
+    // ...and after a hot reload, as an edit of the game's code makes one: the same drawing, the screen's too
+    [UnityTest]
+    public IEnumerator TideDrawsIntoUnitysFrameAfterAHotReload()
+    {
+        if (SystemInfo.graphicsDeviceType == UnityEngine.Rendering.GraphicsDeviceType.Null)
+        {
+            Assert.Ignore("no GPU in this run (-nographics)");
+            yield break;
+        }
+        yield return DrawsIntoUnitysFrame(reload: true);
+    }
+
     // ...in URP too, through its pass (Tide.Runtime.URP), with the project's pipeline URP's for the while.
     [UnityTest]
     public IEnumerator TideDrawsIntoUnitysFrameInURP()
@@ -483,7 +495,7 @@ public sealed unsafe class BounceTests
 #endif
     }
 
-    IEnumerator DrawsIntoUnitysFrame(bool universal = false)
+    IEnumerator DrawsIntoUnitysFrame(bool universal = false, bool reload = false)
     {
         SceneManager.LoadScene(Bounce);
         yield return null;
@@ -515,6 +527,46 @@ public sealed unsafe class BounceTests
                 r.material = new Material(lit) { color = color };
             }
         }
+        Check(camera, target, ball, "");
+        if (reload)
+        {
+            // The same build again, as tide makes one for an edit of the game's code: the embed takes the newest
+            // game-<n> of the build folder at its next check, a tenth of a second on, and goes on with the match
+            var folder = TideLibrary.BuildFolder;
+            // The embed runs a copy of the build it took, loaded-<n>, and deletes the one it ran before
+            int Newest(string prefix)
+            {
+                var newest = 0;
+                foreach (var file in System.IO.Directory.GetFiles(folder, prefix + "*" + TideLibrary.LibrarySuffix))
+                {
+                    var name = System.IO.Path.GetFileNameWithoutExtension(file);
+                    if (int.TryParse(name.Substring(prefix.Length), out var n) && n > newest) newest = n;
+                }
+                return newest;
+            }
+            var running = Newest("loaded-");
+            var built = Newest("game-");
+            Assert.Greater(running, 0, "the embed runs a build of the game");
+            System.IO.File.Copy(System.IO.Path.Combine(folder, $"game-{built}{TideLibrary.LibrarySuffix}"),
+                System.IO.Path.Combine(folder, $"game-{built + 1}{TideLibrary.LibrarySuffix}"), true);
+            yield return Until(() => Newest("loaded-") > running, 5f);
+            Assert.Greater(Newest("loaded-"), running, "a newer build took over");
+#if UNITY_EDITOR
+            // A build of another layout refreshes the editor's assets in Play (the game's new C#), which empties what a
+            // material keeps that its shader doesn't declare: an import in Play, as that refresh's
+            UnityEditor.AssetDatabase.ImportAsset("Assets/Tide/Bounce.tide", UnityEditor.ImportAssetOptions.ForceUpdate);
+            UnityEditor.AssetDatabase.Refresh();
+#endif
+            yield return Until(() => false, 0.5f);
+            Check(camera, target, ball, "after a hot reload: ");
+        }
+        camera.targetTexture = null;
+        Object.Destroy(target);
+    }
+
+    // The frame `camera` renders into `target` has Tide's drawing as DrawsIntoUnitysFrame says
+    static void Check(Camera camera, RenderTexture target, TideEntityView ball, string when)
+    {
         camera.Render(); // A batch run's frames have no end to wait for: this frame's drawing, again, now
         var read = new Texture2D(640, 480, TextureFormat.RGBA32, false);
         RenderTexture.active = target;
@@ -522,6 +574,7 @@ public sealed unsafe class BounceTests
         read.Apply();
         RenderTexture.active = null;
         var dump = System.Environment.GetEnvironmentVariable("TIDE_UNITY_DUMP"); // A picture of it, to look at
+        if (!string.IsNullOrEmpty(dump) && when.Length > 0) dump = System.IO.Path.ChangeExtension(dump, null) + "-reloaded.png";
         if (!string.IsNullOrEmpty(dump)) System.IO.File.WriteAllBytes(dump, read.EncodeToPNG());
         Color At(Vector3 world)
         {
@@ -530,13 +583,13 @@ public sealed unsafe class BounceTests
         }
         var orange = new Color(1f, 0.5f, 0f);
         var blue = new Color(0.1f, 0.4f, 1f);
-        Assert.IsTrue(Near(At(new Vector3(-1.1f, 0.02f, -2.25f)), orange, 0.03f), $"the plate over the floor shows its orange stripe: {At(new Vector3(-1.1f, 0.02f, -2.25f))}");
-        Assert.IsTrue(Near(At(new Vector3(-0.375f, 0.02f, -2.25f)), blue, 0.03f), $"and its blue one: {At(new Vector3(-0.375f, 0.02f, -2.25f))}");
+        Assert.IsTrue(Near(At(new Vector3(-1.1f, 0.02f, -2.25f)), orange, 0.03f), $"{when}the plate over the floor shows its orange stripe: {At(new Vector3(-1.1f, 0.02f, -2.25f))}");
+        Assert.IsTrue(Near(At(new Vector3(-0.375f, 0.02f, -2.25f)), blue, 0.03f), $"{when}and its blue one: {At(new Vector3(-0.375f, 0.02f, -2.25f))}");
         var under = At(new Vector3(-1.1f, -0.05f, 1.75f));
-        Assert.IsFalse(Near(under, orange, 0.2f) || Near(under, blue, 0.2f), $"the plate under the floor is hidden: {under}");
+        Assert.IsFalse(Near(under, orange, 0.2f) || Near(under, blue, 0.2f), $"{when}the plate under the floor is hidden: {under}");
         var live = ball.GetComponent<Tide.Game.Ball>();
         var cube = At(ball.transform.position + new Vector3(0, 1.2f, 0));
-        Assert.IsTrue(Near(cube, live.color, 0.03f), $"the cube over the ball has its color: {cube} for {live.color}");
+        Assert.IsTrue(Near(cube, live.color, 0.03f), $"{when}the cube over the ball has its color: {cube} for {live.color}");
         // The ring: a pixel of nearly the ball's color on its lower half, 24 pixels from its middle (its edge is
         // smooth, so the floor shows through some)
         var middle = camera.WorldToScreenPoint(ball.transform.position);
@@ -555,7 +608,7 @@ public sealed unsafe class BounceTests
                 }
             }
         }
-        Assert.Greater(ringed, 10, "the ring is drawn around the ball");
+        Assert.Greater(ringed, 10, $"{when}the ring is drawn around the ball");
         // The Hud's white text, from 16 pixels across and 30 down
         var white = 0;
         for (var x = 16; x < 110; x++)
@@ -566,27 +619,26 @@ public sealed unsafe class BounceTests
                 if (c.r > 0.9f && c.g > 0.9f && c.b > 0.9f) white++;
             }
         }
-        Assert.Greater(white, 20, "the Hud's text is drawn at the top left");
+        Assert.Greater(white, 20, $"{when}the Hud's text is drawn at the top left");
         // The render target, shown at the top right with its rows from the top: yellow at its top left, green
         // elsewhere. Unity's rows here are from the bottom
         var yellow = new Color(1f, 1f, 0f);
         var green = new Color(0f, 0.6f, 0f);
         Color Screen(int x, int y) => read.GetPixel(x, 480 - 1 - y);
-        Assert.IsTrue(Near(Screen(640 - 80 + 8, 16 + 4), yellow, 0.03f), $"the target's top left is yellow: {Screen(640 - 80 + 8, 16 + 4)}");
-        Assert.IsTrue(Near(Screen(640 - 80 + 8, 16 + 50), green, 0.03f), $"its bottom left green: {Screen(640 - 80 + 8, 16 + 50)}");
-        Assert.IsTrue(Near(Screen(640 - 80 + 50, 16 + 4), green, 0.03f), $"its top right green: {Screen(640 - 80 + 50, 16 + 4)}");
+        Assert.IsTrue(Near(Screen(640 - 80 + 8, 16 + 4), yellow, 0.03f), $"{when}the target's top left is yellow: {Screen(640 - 80 + 8, 16 + 4)}");
+        Assert.IsTrue(Near(Screen(640 - 80 + 8, 16 + 50), green, 0.03f), $"{when}its bottom left green: {Screen(640 - 80 + 8, 16 + 50)}");
+        Assert.IsTrue(Near(Screen(640 - 80 + 50, 16 + 4), green, 0.03f), $"{when}its top right green: {Screen(640 - 80 + 50, 16 + 4)}");
         // Stencil: the square is cyan inside the circle alone
         var cyan = new Color(0f, 1f, 1f);
-        Assert.IsTrue(Near(Screen(640 - 80, 480 - 80), cyan, 0.03f), $"the square shows inside the circle: {Screen(640 - 80, 480 - 80)}");
-        Assert.IsFalse(Near(Screen(640 - 80 - 36, 480 - 80 - 36), cyan, 0.3f), "and not at its corners, outside it");
+        Assert.IsTrue(Near(Screen(640 - 80, 480 - 80), cyan, 0.03f), $"{when}the square shows inside the circle: {Screen(640 - 80, 480 - 80)}");
+        Assert.IsFalse(Near(Screen(640 - 80 - 36, 480 - 80 - 36), cyan, 0.3f), $"{when}and not at its corners, outside it");
         // The multisampled target's depth, resolved: the cube nearer than the far limit in its middle, the far limit
         // at its corners
         var middleDepth = Screen(48, 480 - 16 - 32);
         var cornerDepth = Screen(18, 480 - 16 - 62);
-        Assert.Less(middleDepth.r, 0.95f, $"the cube's depth shows in the middle: {middleDepth}");
-        Assert.Greater(cornerDepth.r, 0.97f, $"and the far limit at the corner: {cornerDepth}");
-        camera.targetTexture = null;
-        Object.Destroy(target);
+        Assert.Less(middleDepth.r, 0.95f, $"{when}the cube's depth shows in the middle: {middleDepth}");
+        Assert.Greater(cornerDepth.r, 0.97f, $"{when}and the far limit at the corner: {cornerDepth}");
+        Object.Destroy(read);
     }
 
     // An editor scene view shows the frame's 3D through its own camera (tide_embed_render_view): the cube over the ball

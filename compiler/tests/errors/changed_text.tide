@@ -1,0 +1,8 @@
+// expect: 'Changed' watches values, and 'name' is string
+component Tag { string name; }
+local singleton Log { int count; }
+scene Main { }
+
+event(Spawned) Setup(with Main) { Spawn(Tag { name = "a" }); }
+
+local event(Changed<Tag.name>) Renamed(mut Log log) { log.count += 1; }

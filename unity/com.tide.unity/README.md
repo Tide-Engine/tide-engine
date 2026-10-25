@@ -29,6 +29,17 @@ lines are in the Console, and clicking one selects what it's about. It also
 keeps `Packages/com.tide.game`: the game's schema, from which the package
 makes C# types of every Tide type (`Tide.Game.Health`). Keep that folder in
 source control, so a fresh clone compiles before tide has built anything.
+While the game's code doesn't build, its components still come from what it
+declares, so a component a new prefab needs is there before the code that
+spawns that prefab builds. A build in progress shows as a Tide task in the
+editor's status bar, not in the Console.
+
+Some of Tide's types share a name with Unity's: Tide's `Transform`, `Time` and
+`Font`, or a package's, like Box3D's `Collider`. Neither is renamed or hidden.
+A script with `using Tide.Game;` beside `using UnityEngine;` writes the
+namespace of the one it means, `UnityEngine.Transform` or
+`Tide.Game.Transform`, as C# asks when a name is ambiguous, so everyone reading
+it knows which it is. Tide code does the same for its own names.
 
 ## Author
 
@@ -157,14 +168,18 @@ the runner's "Draw Tide" is on: 2D, text, 3D with the camera's depth, render
 targets and the game's own shaders, in Unity's built-in render pipeline and in
 URP.
 
-Unity's own physics components are a physics package's, where the game has one
-that says so: with `box3d`, a `Rigidbody` is a Box3D body and a `BoxCollider`,
-`SphereCollider` or Y-axis `CapsuleCollider` its shape, sized by the
-GameObject's scale, and a collider with no `Rigidbody` is static; with `box2d`,
-the 2D ones are Box2D's. Unity draws and edits them as it does its own, and the
-GameObject shows where the body is. What isn't one to one (a collider under
-another GameObject's `Rigidbody`, a capsule along X) gets a warning and is left
-out. See the [Box3D](https://tide-engine.dev/packages/box3d) package's page.
+A physics package's components are on GameObjects like the game's own: with
+`box3d`, a `Body` and a `Box`, `Sphere` or `Capsule` (Add Component, Tide/Box3D).
+A shape's size is by the GameObject's scale, as a collider's is, a selected one
+is drawn in the Scene view, and Edit Shape gives it handles. The body starts
+where the GameObject is, and the GameObject follows it. A shape on a child
+GameObject with a `Part` is on the body above it, where the child puts it. A
+mesh collider fills from the GameObject's MeshFilter, a height field from its
+Terrain, and a joint's anchors and a 2D polygon's or chain's points have
+handles too. Fields and components the package keeps for itself are hidden.
+Unity's own `Rigidbody` and colliders do nothing in the match. See the
+[Box3D](https://tide-engine.dev/packages/box3d) and
+[Box2D](https://tide-engine.dev/packages/box2d) packages' pages.
 
 The game's sound (`Audio.Play`, `Sound` fields, its `audio` declarations)
 plays through Unity's audio: an AudioSource under the runner, "Tide Audio", so

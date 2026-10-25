@@ -82,6 +82,9 @@ namespace Tide
             public int uniformSize, textureCount, blend, depth, cull, stencilTest, stencilOp;
             public int looked, made; // The frame its shader was last looked for, while it isn't there, and the pipeline's
             public readonly Dictionary<int, Material> materials = new Dictionary<int, Material>();
+            // Its attributes and slots, which each draw takes with it: a material keeps no array of its shader's that
+            // isn't a property it declares, and an asset refresh in the editor (as a new build's C# comes) empties them
+            public MaterialPropertyBlock properties;
         }
 
         enum Kind : byte { Begin, End, Scissor, Draw, Mipmaps, ResolveDepth }
@@ -94,6 +97,7 @@ namespace Tide
             public bool clear, flipped;
             public int x, y, width, height; // Scissor
             public Material material; // Draw
+            public MaterialPropertyBlock properties; // ...and its pipeline's attributes and slots
             public GraphicsBuffer v0, v1, v2, index;
             public Texture w0, w1, w2; // The vertices of OpenGL ES 3.0 and WebGL 2, in textures
             public int o0, o1, o2, count, instances, textures, textureCount, uniformAt, uniformSize;
@@ -840,6 +844,9 @@ namespace Tide
             at += 2; // into, outputs: the target says what it holds
             var nameLength = (int)W(at++);
             made.name = Marshal.PtrToStringAnsi((IntPtr)(p + 4 * at), nameLength);
+            made.properties = new MaterialPropertyBlock();
+            made.properties.SetVectorArray(Attributes, made.attributes);
+            made.properties.SetVectorArray(Slots, made.slots);
             made.shader = ShaderOf(made.key);
             made.looked = made.made = Time.frameCount;
             pipelines[W(0)] = made;
@@ -909,8 +916,6 @@ namespace Tide
             m.SetFloat(StencilComp, (float)tests[Math.Min(p.stencilTest, 7)]);
             m.SetFloat(StencilPass, (float)ops[Math.Min(p.stencilOp, 5)]);
             m.SetFloat(StencilRef, stencil);
-            m.SetVectorArray(Attributes, p.attributes);
-            m.SetVectorArray(Slots, p.slots);
             p.materials[key] = m;
             return m;
         }
@@ -957,7 +962,8 @@ namespace Tide
             if (pipeline.shader == null) return;
             var c = new Command
             {
-                kind = Kind.Draw, material = MaterialFor(pipeline), count = count, instances = instances, first = indexed ? 0 : first,
+                kind = Kind.Draw, material = MaterialFor(pipeline), properties = pipeline.properties, count = count,
+                instances = instances, first = indexed ? 0 : first,
                 v0 = VertexBuffer(0), v1 = VertexBuffer(1), v2 = VertexBuffer(2),
                 w0 = VertexWords(0), w1 = VertexWords(1), w2 = VertexWords(2),
                 o0 = (int)vertexOffset[0], o1 = (int)vertexOffset[1], o2 = (int)vertexOffset[2],
@@ -1082,8 +1088,12 @@ namespace Tide
                         cb.SetGlobalInteger(Sampling, (int)c.sampling);
                         cb.SetGlobalInteger(SamplingHigh, (int)c.samplingHigh);
                         if (c.uniformSize > 0) cb.SetGlobalConstantBuffer(r.uniformBuffer, Uniforms, c.uniformAt, c.uniformSize);
-                        if (c.index != null) cb.DrawProcedural(c.index, Matrix4x4.identity, c.material, 0, MeshTopology.Triangles, c.count, c.instances);
-                        else cb.DrawProcedural(Matrix4x4.identity, c.material, 0, MeshTopology.Triangles, c.count, c.instances);
+                        if (c.index != null)
+                        {
+                            cb.DrawProcedural(c.index, Matrix4x4.identity, c.material, 0, MeshTopology.Triangles, c.count, c.instances,
+                                c.properties);
+                        }
+                        else cb.DrawProcedural(Matrix4x4.identity, c.material, 0, MeshTopology.Triangles, c.count, c.instances, c.properties);
                         break;
                 }
             }

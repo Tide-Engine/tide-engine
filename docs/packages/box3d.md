@@ -742,9 +742,16 @@ Removing `Body` removes its native body, parts and joints at the next physics st
 
 ## In Unity
 
-In a Unity project ([Unity](../tools/cli.md#unity)), Unity's own physics components on a TideEntity GameObject are Box3D's: tide translates them as it reads the scene or prefab. A `Rigidbody` is a `Body` (Kinematic when it's kinematic, else Dynamic; `useGravity` as `gravityScale` 1 or 0; its drags as the dampings). A `BoxCollider` is a `Box`, a `SphereCollider` a `Sphere` and a Y-axis `CapsuleCollider` a `Capsule`, sized by the GameObject's scale as Unity sizes them, `isTrigger` as `sensor`. A collider with no `Rigidbody` is on a static body, as in Unity. A body starts where the GameObject is, and Unity shows it where Box3D has it.
+In a Unity project ([Unity](../tools/cli.md#unity)), Box3D's components go on a TideEntity GameObject like any of the game's, from Add Component's Tide/Box3D menu: a `Body`, and a `Box`, `Sphere` or `Capsule` for its shape. Unity's own `Rigidbody` and colliders aren't Box3D's, and do nothing in the match.
 
-Only what's one to one is translated, and what isn't is left out with a warning that says why: a collider under another GameObject's `Rigidbody` (a [part](#parts) in Box3D), a capsule along X or Z, a second collider of one kind on a GameObject. A `Rigidbody`'s mass isn't one to one either, as a body weighs what its shapes' densities make it: give the GameObject the shape's Box3D component to say its density, which then stands in for the collider. A Box3D component of the GameObject's own always wins over the translation of a Unity one.
+- A shape's size is by the GameObject's scale, as a collider's is: a `Box` of size 1 on a cube scaled (12, 1, 12) is 12 by 1 by 12 in the match. A `Sphere`'s radius is by the largest axis of the scale, and a `Capsule`'s radius by the larger of x and z, its height by y. In Play the component shows what you authored, the match's value divided by the scale.
+- A selected shape is drawn in the Scene view, and its Edit Shape button (also in the Scene view's tools) gives it handles, as Edit Collider does.
+- A body starts where its GameObject is, and the GameObject follows the body.
+- A body of several shapes is a `Body` with a shape, and a child GameObject for each other shape with that shape and a `Part`, as colliders on a Rigidbody's children are. A `Part` whose `Of` is empty is a part of the nearest GameObject above it with a `Body`. Its shape is on the body where the child puts it, which the Scene view shows. A shape can't turn on its body, so a part turned against its body is a warning (a `Sphere` turns any way).
+- A `MeshCollider` or `HullCollider` takes its triangles from a Unity Mesh: added to a GameObject with a MeshFilter, it starts with the filter's mesh, and its Inspector has a Mesh field and Copy to take another. Its `scale` is by the GameObject's scale, so a mesh scaled in the Scene collides as it's drawn. A selected one's triangles are drawn in the Scene view, a hull's points.
+- A `HeightFieldCollider` takes its heights from a Unity Terrain: added to a Terrain's GameObject, on a static `Body`, it starts with the terrain's data, and its Inspector has a Terrain field and Copy to take another. A terrain of more than 65,536 samples is copied every second, fourth or more sample (a 513 by 513 one as 129 by 129), and a cell is a hole where all of the terrain's in it are. The GameObject is the terrain's corner, as it is for Unity's. Its grid is drawn in the Scene view.
+- Joints go on a GameObject of their own with `Joint` and one kind's component, such as `RevoluteJoint`; `A` and `B` are the bodies' GameObjects. A selected joint is drawn from anchor to anchor, and Edit Shape moves its anchors and turns their frames, in their bodies' frames. A joint's `force` and `torque` show in Play under From its package, and aren't authored.
+- The fields Box3D keeps for itself, such as a body's `id` and its `step` values, aren't in the Inspector or the scene.
 
 ## Multiplayer
 
@@ -806,7 +813,7 @@ In that implementation the serialized state was 3.5 MB, about a kilobyte and a h
 
 - Native compound-container assets are not exposed; assemble compound bodies with `Part` entities.
 - A parting from a destroyed entity still identifies it as `default`.
-- Automatic conversion from imported rendering meshes and Unity translations for the new colliders, joints and controls are not provided.
+- Automatic conversion from imported rendering meshes is not provided outside Unity.
 - Cooked geometry remains in the resident world after its last collider is removed. Continually creating unique geometry consumes that space.
 - The resident arena has a fixed 64 MiB limit; exhaustion stops the program. One Box3D arena per process means switching worlds costs a page restore.
 

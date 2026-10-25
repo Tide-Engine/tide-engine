@@ -257,7 +257,7 @@ static bool task_handle_local(const gen *g, const decl *handle);
 // would collide.
 static const char *make_cname(const decl *d)
 {
-    if ((d->skin_kind || d->placement_of) && d->c_name) return d->c_name;
+    if ((d->skin_kind || d->placement_of || d->watches) && d->c_name) return d->c_name;
     const str ns = decl_home(d) ? decl_home(d)->ns : (str){"", 0}; // An override's is that of what it replaced
     if (d->c_suffix) { // One of several that share the name: its parameters' types go on, Damage_float_Weapon
         sb b = {0};
@@ -11975,6 +11975,8 @@ static void gen_hear_rows(gen *g)
 // and then a tide_heard_<Event> (the event, and the components and singletons
 // its listeners take), and tide_hear_<Event>, which records one as the
 // event's turn comes, when the tick was given a log.
+static void gen_changes(gen *g);
+
 static void gen_hear(gen *g)
 {
     const program *prog = g->prog;
@@ -12222,6 +12224,135 @@ static void gen_hear(gen *g)
         sb_put(o, "}\n\n");
     }
     gen_hear_rows(g);
+    gen_changes(g);
+}
+
+// Whether a recorded tick watches fields for local handlers of Changed<Health.value>.
+static bool program_watches(const program *prog)
+{
+    for (int i = 0; i < prog->changed.count; i++) {
+        if (prog->changed.items[i]->listeners.count) return true;
+    }
+    return false;
+}
+
+// Where a Changed<...> event's field is in its component or singleton: its
+// first byte, through the structs it's in.
+static int watched_offset(const decl *event)
+{
+    int offset = 0;
+    const decl *in = event->watches;
+    for (int n = 0; n < event->watch_path.count; n++) {
+        const field *f = event->watch_path.items[n];
+        int *pad = arena_alloc(sizeof(int) * (size_t)(in->fields.count + 1));
+        decl_layout_padded(in, pad);
+        for (int i = 0; i < in->fields.count; i++) {
+            offset += pad[i];
+            if (&in->fields.items[i] == f) break;
+            offset += type_layout(in->fields.items[i].type).size;
+        }
+        in = f->type.decl;
+    }
+    return offset;
+}
+
+// Changed<Health.value>: as a recorded tick begins, tide_changes_begin keeps
+// what each field watched is, by entity index, beside the world; as it ends,
+// once its events and changes are done, tide_changes_end records the event for
+// each entity that had the component then and has it now, with its field not
+// the same bytes. An entity spawned, destroyed, or that gained or lost the
+// component over the tick changed nothing. Nothing of it is in the world.
+static void gen_changes(gen *g)
+{
+    const program *prog = g->prog;
+    sb *o = &g->c;
+    if (!program_watches(prog)) return;
+    for (int k = 0; k < prog->changed.count; k++) {
+        const decl *e = prog->changed.items[k];
+        if (!e->listeners.count) continue;
+        const field *last = e->watch_path.items[e->watch_path.count - 1];
+        sb_printf(o, "// " STR_FMT "\n", STR_ARG(e->name));
+        if (e->watches->kind == DECL_COMPONENT) {
+            sb_printf(o, "typedef struct tide_was%d { uint32_t generation; uint32_t present; %s value; } tide_was%d;\n"
+                         "static TIDE_THREAD_LOCAL tide_was%d *tide_was%d_rows;\n"
+                         "static TIDE_THREAD_LOCAL uint32_t tide_was%d_room, tide_was%d_count;\n\n",
+                      k, c_type(last->type), k, k, k, k, k);
+        } else {
+            sb_printf(o, "static TIDE_THREAD_LOCAL %s tide_was%d_value;\n\n", c_type(last->type), k);
+        }
+    }
+    for (int end = 0; end < 2; end++) {
+        sb_printf(o, "static void tide_changes_%s(%stide_world *w)\n{\n", end ? "end" : "begin", end ? "" : "const ");
+        for (int k = 0; k < prog->changed.count; k++) {
+            const decl *e = prog->changed.items[k];
+            if (!e->listeners.count) continue;
+            const char *name = type_cname(e);
+            sb path = {0};
+            for (int n = 0; n < e->watch_path.count; n++) sb_printf(&path, ".%s", field_cname(e->watch_path.items[n]));
+            sb_printf(o, "    { // " STR_FMT "\n", STR_ARG(e->name));
+            if (e->watches->kind == DECL_SINGLETON) {
+                const char *single = type_cname(e->watches);
+                if (!end) sb_printf(o, "        memcpy(&tide_was%d_value, &w->%s%s, sizeof tide_was%d_value);\n", k, single, path.data, k);
+                else {
+                    sb_printf(o, "        if (memcmp(&tide_was%d_value, &w->%s%s, sizeof tide_was%d_value) != 0) {\n"
+                                 "            %s tide_v;\n            memset(&tide_v, 0, sizeof tide_v);\n"
+                                 "            memcpy(&tide_v.old, &tide_was%d_value, sizeof tide_v.old);\n"
+                                 "            memcpy(&tide_v.value, &w->%s%s, sizeof tide_v.value);\n"
+                                 "            tide_hear_%s(w, (tide_entity){0, 0}, &tide_v);\n        }\n",
+                              k, single, path.data, k, name, k, single, path.data, name);
+                }
+                sb_put(o, "    }\n");
+                continue;
+            }
+            const int c = e->watches->index;
+            const char *comp = type_cname(e->watches);
+            // Only the lanes the field is in are read
+            const int width = comp_width(e->watches);
+            const int offset = watched_offset(e);
+            const int first = offset / width;
+            const int lanes = (offset + type_layout(e->watch_path.items[e->watch_path.count - 1]->type).size - 1) / width - first + 1;
+            if (!end) {
+                sb_printf(o, "        const uint32_t tide_n = w->entities.next_unused;\n"
+                             "        if (tide_n > tide_was%d_room) {\n"
+                             "            free(tide_was%d_rows);\n"
+                             "            tide_was%d_room = tide_n > UINT32_MAX - tide_n / 2u ? tide_n : tide_n + tide_n / 2u;\n"
+                             "            tide_was%d_rows = tide_alloc_zeroed(tide_was%d_room, sizeof *tide_was%d_rows);\n"
+                             "        } else if (tide_n) memset(tide_was%d_rows, 0, (size_t)tide_n * sizeof *tide_was%d_rows);\n"
+                             "        tide_was%d_count = tide_n;\n",
+                          k, k, k, k, k, k, k, k, k);
+            }
+            for (int a = 0; a < prog->archetypes.count; a++) {
+                if (arch_local(g, a) || !arch_stores(g, a, c)) continue;
+                sb_printf(o, "        for (uint32_t tide_row = 0; tide_row < w->%s.count; tide_row++) { // %s\n", arch_name(g, a), arch_label(g, a));
+                if (comp_sparse(g, c)) sb_printf(o, "            if (!%s) continue;\n", presence_cell(g, "w", a, c, "tide_row", false));
+                sb_printf(o, "            const tide_entity tide_e = *(const tide_entity *)tide_table_get(&w->%s, %s, tide_row, 0);\n",
+                          arch_name(g, a), arch_columns(g, a));
+                if (end) {
+                    sb_printf(o, "            if (tide_e.index >= tide_was%d_count) continue;\n"
+                                 "            const tide_was%d *tide_was_at = &tide_was%d_rows[tide_e.index];\n"
+                                 "            if (!tide_was_at->present || tide_was_at->generation != tide_e.generation) continue;\n", k, k, k);
+                }
+                sb_printf(o, "            %s tide_c;\n"
+                             "            tide_table_gather(&w->%s, %s, tide_row, %d, %du, %du, (uint8_t *)&tide_c + %d);\n",
+                          comp, arch_name(g, a), arch_columns(g, a), arch_column(g, a, c) + first, lanes, width, first * width);
+                if (!end) {
+                    sb_printf(o, "            tide_was%d *tide_was_at = &tide_was%d_rows[tide_e.index];\n"
+                                 "            tide_was_at->generation = tide_e.generation;\n            tide_was_at->present = 1u;\n"
+                                 "            memcpy(&tide_was_at->value, &tide_c%s, sizeof tide_was_at->value);\n", k, k, path.data);
+                } else {
+                    sb_printf(o, "            if (memcmp(&tide_was_at->value, &tide_c%s, sizeof tide_was_at->value) == 0) continue;\n"
+                                 "            %s tide_v;\n            memset(&tide_v, 0, sizeof tide_v);\n"
+                                 "            memcpy(&tide_v.old, &tide_was_at->value, sizeof tide_v.old);\n"
+                                 "            memcpy(&tide_v.value, &tide_c%s, sizeof tide_v.value);\n"
+                                 "            tide_hear_%s(w, tide_e, &tide_v);\n",
+                              path.data, name, path.data, name);
+                }
+                sb_put(o, "        }\n");
+            }
+            sb_put(o, "    }\n");
+        }
+        sb_put(o, "}\n\n");
+    }
 }
 
 // Availability is per listener's complete component/filter requirements. A
@@ -19004,6 +19135,10 @@ static void gen_api(gen *g)
     // (tide/profile.h): the systems' part of the tick, and what follows them
     sb_put(o, "    tide_profile *tide_p = jobs ? jobs->profile : NULL;\n"
               "    const uint64_t tide_began = tide_profile_now(tide_p);\n");
+    // What Changed<...> handlers watch, as the tick begins. A server journaling for its players records none: their
+    // changes are of their own worlds, as their own custom events are
+    const char *watching = journals_clients(prog) ? "tide_listening && !tide_client_listening" : "tide_listening";
+    if (program_watches(prog)) sb_printf(o, "    const bool tide_watching = %s;\n    if (tide_watching) tide_changes_begin(w);\n", watching);
     if (prog->match_devices) sb_put(o, "    tide_device_edges(w);\n");
     if (handlers_roll(prog)) sb_put(o, "    tide_turn = 0u;\n");
     if (prog->systems.count) {
@@ -19017,6 +19152,7 @@ static void gen_api(gen *g)
     sb_put(o, "    tide_apply_commands(w);\n");
     if (prog->task_slots[0]) sb_put(o, "    tide_task_match_collect(w);\n");
     if (completions) sb_printf(o, "    tide_rows_finish_tick(tide_completions, %du, &w->entities);\n    w->tide_completions = NULL;\n", completions);
+    if (program_watches(prog)) sb_put(o, "    if (tide_watching) tide_changes_end(w); // ...and what changed of it\n");
     if (prog->input) sb_put(o, "    memcpy(w->previous_inputs, w->inputs, sizeof w->inputs);\n");
     // Time.t is worked out from the tick each time, never added to, so it doesn't drift
     sb_put(o, "    w->Time.tick++;\n    w->Time.t = (float)w->Time.tick * w->Time.dt;\n");

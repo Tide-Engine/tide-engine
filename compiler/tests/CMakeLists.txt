@@ -256,6 +256,7 @@ tide_e2e_test(local_fields WARNINGS "'box' is declared mut but never written")
 tide_e2e_test(local_fields_plain) # ...whose match is the same without them
 tide_e2e_test(local_fields_net) # ...and what a client's wrong predictions do to them, on a network
 tide_e2e_test(local_events) # Local handlers of the match's events: heard once, whatever a client predicted
+tide_e2e_test(changed_events) # Changed<Health.value>: a field that changed over a tick, heard by local handlers
 tide_e2e_test(visibility_lifecycle) # Local availability differs from genuine match lifecycle
 tide_e2e_test(local_events_same) # Events only local code handles: the match they cost nothing,
 tide_e2e_test(local_events_plain) # ...which is the same without them
@@ -552,6 +553,9 @@ add_test(NAME tidec_unity_folder_names
     COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/unity_folder_names"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/unity_folder_names.cmake")
 
+add_test(NAME tidec_declarations_only
+    COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/declarations_only"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/declarations_only.cmake")
 add_test(NAME tidec_prefab_error_once
     COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/prefab_error_once"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/prefab_error_once.cmake")

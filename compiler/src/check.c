@@ -16102,6 +16102,11 @@ static void check_trigger(const checker *c, decl *handler, param *p, decl *d)
         if (handler->is_async) diag_error(handler->async_at, "a command handler can't be async; it validates and handles one submission immediately");
         return;
     }
+    if (d->watches && !handler->is_local) {
+        diag_error(at, "a change is this machine's to show: handle it with 'local event(Changed<" STR_FMT "> ...) " STR_FMT "(...)'",
+                   STR_ARG(p->type_name), STR_ARG(handler->name));
+        diag_note("match code reacts where it changes the field, or by sending an event from there");
+    }
     if ((d == c->prog->shown || d == c->prog->hidden) && !handler->is_local) {
         diag_error(at, "'" STR_FMT "' describes this machine's visibility: handle it with 'local event(" STR_FMT ")'",
                    STR_ARG(d->name), STR_ARG(d->name));
@@ -16114,6 +16119,154 @@ static void check_trigger(const checker *c, decl *handler, param *p, decl *d)
     if (d->is_local && !handler->is_local) {
         diag_error(at, "'" STR_FMT "' is local, so its handlers are too: 'local event(" STR_FMT " ...) " STR_FMT "(...)'",
                    STR_ARG(d->name), STR_ARG(d->name), STR_ARG(handler->name));
+    }
+}
+
+// `local event(Changed<Health.value> c) Flash(...)`: the field's path names a
+// match component or singleton, then a field, through the structs it's in.
+// Each field watched gets one built-in event of its own, `old` and `value` of
+// the field's type, which the tick records as it ends for each entity whose
+// field isn't what it was as the tick began (gen_changes). Its handlers are
+// local, so it's a listener's event: nothing of it is in the match.
+static void check_changed(checker *c)
+{
+    program *prog = c->prog;
+    decl_list handlers = {0};
+    for (int i = 0; i < prog->decls.count; i++) {
+        decl *h = prog->decls.items[i];
+        if (h->kind == DECL_SYSTEM && h->is_handler && h->params.count > 0 && h->params.items[0].changed) vec_push(handlers, h);
+    }
+    for (int i = 0; i < handlers.count; i++) {
+        decl *h = handlers.items[i];
+        param *p = &h->params.items[0];
+        p->type = T_ERR;
+        c->unit = h->unit;
+        const str path = p->type_name;
+        // The component or singleton: the shortest start of the path that names one
+        decl *of = NULL;
+        int at = 0; // Where its fields start in the path
+        for (int k = 0; k < path.len && !of; k++) {
+            if (path.ptr[k] != '.') continue;
+            decl *other;
+            decl *d = lookup(prog, c->unit, (str){path.ptr, k}, NAME_TYPE, &other);
+            if (d && (d->kind == DECL_COMPONENT || d->kind == DECL_SINGLETON)) of = d, at = k + 1;
+        }
+        if (!of) {
+            int dot = 0;
+            while (dot < path.len && path.ptr[dot] != '.') dot++;
+            if (dot == path.len) {
+                diag_error(p->type_at, "'Changed' watches a field of a component or singleton, like 'Changed<Health.value>'");
+            } else {
+                diag_error(p->type_at, "unknown component or singleton '%.*s' in 'Changed<" STR_FMT ">'", dot, path.ptr, STR_ARG(path));
+                suggestion s = suggest_start((str){path.ptr, dot});
+                suggest_decls(&s, prog, true, true, true);
+                suggest_note(&s);
+            }
+            continue;
+        }
+        if (of->is_local) {
+            diag_error(p->type_at, "'" STR_FMT "' is local, and 'Changed' watches the match", STR_ARG(of->name));
+            diag_note("local code changes local state itself, and can act where it does");
+            continue;
+        }
+        if (of->builtin) {
+            diag_error(p->type_at, "'" STR_FMT "' is the engine's, and 'Changed' watches the game's components and singletons",
+                       STR_ARG(of->name));
+            continue;
+        }
+        // The fields, through the structs they're in
+        VEC(const field *) fields = {0};
+        const decl *in = of;
+        bool ok = true;
+        while (ok && at < path.len) {
+            int end = at;
+            while (end < path.len && path.ptr[end] != '.') end++;
+            const str name = {path.ptr + at, end - at};
+            const field *f = NULL;
+            for (int k = 0; in && k < in->fields.count && !f; k++) {
+                if (!in->fields.items[k].hidden && str_eq(in->fields.items[k].name, name)) f = &in->fields.items[k];
+            }
+            if (!f) {
+                bool local = false;
+                for (int k = 0; in && in->local_part && k < in->local_part->fields.count; k++) {
+                    local |= str_eq(in->local_part->fields.items[k].name, name);
+                }
+                if (local) {
+                    diag_error(p->type_at, "'" STR_FMT "' is a local field of '" STR_FMT "', which this machine changes itself, "
+                               "and 'Changed' watches the match's", STR_ARG(name), STR_ARG(in->name));
+                } else if (in) {
+                    diag_error(p->type_at, "'" STR_FMT "' has no field '" STR_FMT "'", STR_ARG(in->name), STR_ARG(name));
+                } else {
+                    diag_error(p->type_at, "'Changed' goes into a field through the structs it's in, and '%.*s' isn't one",
+                               at - 1, path.ptr);
+                    diag_note("watch the whole field: 'Changed<%.*s>'", at - 1, path.ptr);
+                }
+                ok = false;
+                break;
+            }
+            vec_push(fields, f);
+            in = f->type.kind == TY_STRUCT ? f->type.decl : NULL;
+            at = end + 1;
+        }
+        if (!ok) continue;
+        if (fields.count == 0) {
+            diag_error(p->type_at, "'Changed' watches a field of '" STR_FMT "', like 'Changed<" STR_FMT ".%s>'", STR_ARG(of->name),
+                       STR_ARG(of->qualified), of->fields.count ? of->fields.items[0].name.ptr : "value");
+            continue;
+        }
+        const field *last = fields.items[fields.count - 1];
+        if (last->type.kind == TY_ERROR) continue;
+        if (holds_heap(last->type) || last->type.kind == TY_RESIDENT) {
+            diag_error(p->type_at, "'Changed' watches values, and '" STR_FMT "' is %s", STR_ARG(last->name), type_name(last->type));
+            diag_note("watch a field it's counted or told apart by, like its count or a version number kept beside it");
+            continue;
+        }
+        // One event for each field watched
+        decl *event = NULL;
+        for (int k = 0; k < prog->changed.count && !event; k++) {
+            decl *e = prog->changed.items[k];
+            bool same = e->watches == of && e->watch_path.count == fields.count;
+            for (int n = 0; same && n < fields.count; n++) same = e->watch_path.items[n] == fields.items[n];
+            if (same) event = e;
+        }
+        if (!event) {
+            sb name = {0}, cname = {0};
+            sb_printf(&name, "Changed<" STR_FMT, STR_ARG(of->qualified));
+            sb_put(&cname, "tide_changed_");
+            for (int k = 0; k < of->qualified.len; k++) sb_putn(&cname, of->qualified.ptr[k] == '.' ? "_" : &of->qualified.ptr[k], 1);
+            for (int n = 0; n < fields.count; n++) {
+                sb_printf(&name, "." STR_FMT, STR_ARG(fields.items[n]->name));
+                sb_printf(&cname, "_" STR_FMT, STR_ARG(fields.items[n]->name));
+            }
+            sb_put(&name, ">");
+            event = NEW(decl);
+            event->kind = DECL_EVENT;
+            event->name = (str){name.data, (int)name.len};
+            event->qualified = event->name;
+            event->c_name = cname.data;
+            event->builtin = true;
+            event->at = of->at;
+            event->unit = of->unit;
+            event->world_event = of->kind == DECL_SINGLETON;
+            event->watches = of;
+            for (int n = 0; n < fields.count; n++) vec_push(event->watch_path, fields.items[n]);
+            static const char *const names[] = {"old", "value"};
+            for (int n = 0; n < 2; n++) {
+                field f = *last;
+                f.name = str_from(names[n]);
+                f.at = f.type_at = f.type_qual_at = (loc){0, 0, 0}; // The engine's: no place in the code to go to or rename
+                f.type_ref = NULL;
+                f.default_value = NULL;
+                memset(&f.attributes, 0, sizeof f.attributes);
+                f.view_correction = 0;
+                vec_push(event->fields, f);
+            }
+            event->index = prog->events.count;
+            vec_push(prog->events, event);
+            vec_push(prog->decls, event);
+            vec_push(prog->changed, event);
+        }
+        p->type = (type){TY_EVENT, event};
     }
 }
 
@@ -16586,7 +16739,7 @@ static void check_params(const checker *c, decl *sys)
             check_scene_filter(c, sys, p);
             continue;
         }
-        decl *d = p->mode == PARAM_QUERY ? NULL : find_type(c, p->type_name, p->type_at);
+        decl *d = p->mode == PARAM_QUERY || p->changed ? NULL : find_type(c, p->type_name, p->type_at);
         if (d && d->kind == DECL_COMPONENT) d = component_placement(c->prog, d, p->placement_local || d->is_local, p->type_at);
         else if (p->placement_local) diag_error(p->placement_at, "local access qualifies a component");
         const bool is_entity = names_type_as(c, p->type_name, "Entity");
@@ -16609,6 +16762,10 @@ static void check_params(const checker *c, decl *sys)
                 diag_error(p->type_at, "a command sender is PlayerID, supplied by the connection");
                 p->type = T_ERR;
             } else p->type = (type){TY_PLAYER, NULL};
+            continue;
+        }
+        if (p->mode == PARAM_EVENT && p->changed) { // Its event was made with the fields' types (check_changed)
+            if (p->type.kind == TY_EVENT) check_trigger(c, sys, p, p->type.decl);
             continue;
         }
         if (p->mode == PARAM_EVENT) {
@@ -16881,7 +17038,11 @@ static void check_params(const checker *c, decl *sys)
     // A handler that takes components reads the entity its event is sent to,
     // so every Send of that event must name one (see check_sends).
     if (sys->is_handler && sys->event && sys->per_entity) {
-        if (sys->event->world_event) {
+        if (sys->event->watches && sys->event->watches->kind == DECL_SINGLETON) {
+            diag_error(sys->at, "'" STR_FMT "' is a singleton's, which no entity has, so '" STR_FMT "' can't take components",
+                       STR_ARG(sys->event->name), STR_ARG(sys->name));
+            diag_note("take the singleton itself, or find the entities with a query");
+        } else if (sys->event->world_event) {
             diag_error(sys->at, "'" STR_FMT "' is sent to the world, not to an entity, so '" STR_FMT "' can't take "
                        "components", STR_ARG(sys->event->name), STR_ARG(sys->name));
             diag_note("read what the event carries instead, like its 'player'");
@@ -21100,6 +21261,7 @@ bool check(program *prog)
         c.unit = prog->local_parts.items[i]->unit;
         resolve_field_types(&c, prog->local_parts.items[i]);
     }
+    check_changed(&c); // Changed<Health.value>'s events, with the fields' types
     // Field references can instantiate a model before a later contract's
     // fields resolve. Build their checked catalogs once all field types exist.
     for (int i = 0; i < prog->skinned_types.count; i++) {

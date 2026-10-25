@@ -338,7 +338,15 @@ its input, which the package writes as Unity imports, moves or deletes the
 game's files, and looks itself only at the files it built, so an edit saved
 while Unity is in the background still builds at once. A `sync <n>` line asks
 it to say `tide: synced <n>` once it has built everything it was told of,
-which Play waits for.
+which Play waits for. Each build starts with a `tide: building game-<n>` line,
+which the editor shows as a task in its status bar until the build ends.
+
+The game's components come to Unity as C# in `Packages/com.tide.game`, which
+it writes from each build. While the game's code doesn't build, it writes them
+from the game's declarations alone, leaving out its systems, views, handlers
+and functions (what `--declarations` builds): a component a new prefab needs is
+in Unity before the code that spawns the prefab builds. The game itself keeps
+running its last build.
 
 `--assets Assets` makes the project's prefabs and scenes part of the game:
 each one holding GameObjects with the package's TideEntity component is a Tide
@@ -368,7 +376,11 @@ fields are on their components, shown in Play. Every Tide type has its C#: a
 struct is a C# struct, and `List`, `Set`, `Map` and `Grid2`/`Grid3` are
 `List<T>`, `Tide.TideSet<T>`, `Dictionary<K, V>` and `Tide.TideGrid2<T>`. A
 component's struct, list, set, array and `char` fields are set in the
-inspector and baked; its maps and grids are filled in by game code.
+inspector and baked; its maps and grids are filled in by game code. Tide's
+types keep their names where Unity has one too (Tide's `Transform`, `Time` and
+`Font`, Box3D's `Collider`): a script using both namespaces writes the one it
+means, `Tide.Game.Transform` or `UnityEngine.Transform`, as C# asks of an
+ambiguous name.
 Older projects list components on the TideEntity itself, which tide still reads:
 Tools > Tide > Convert TideEntity Lists to Components makes them components of
 their own. Everything from Unity is under the
@@ -407,14 +419,17 @@ Tide's 3D too, through its own camera. The game's sound plays through Unity's
 audio, and `Clip.Microphone` is Unity's microphone; a WebGL player's Tide
 program plays through the page, and hears its microphone, itself.
 
-Unity's own components are a package's where the package says they're one to
-one, in a `unity.json` of its folder (see
-[Packages](../packages/using-and-writing.md#unity-components)):
-with `box3d`, a `Rigidbody` is a Box3D body and a `BoxCollider` a box on it.
+A package's components are authored on GameObjects like the game's own, as
+a `unity.json` in its folder says (see
+[Packages](../packages/using-and-writing.md#unity-components)): with `box3d`,
+a `Box` is sized by the GameObject's scale as a collider is, and drawn and
+edited in the Scene view.
 
 `tide build` and `tide run` take `--assets` too, for a dedicated server, or any
 build, of a game made in Unity: `tide build --server --assets Assets` has the
-same prefabs and scenes as the Unity players it serves.
+same prefabs and scenes as the Unity players it serves. `tide schedule Assets
+--assets Assets` checks such a game, its prefabs and scenes and its packages'
+Tide for Unity, without building it.
 
 `--web` builds the game once for a Unity WebGL player instead: `tide-game.js`,
 which Unity's Tide package puts in the player's page beside Unity's own, and

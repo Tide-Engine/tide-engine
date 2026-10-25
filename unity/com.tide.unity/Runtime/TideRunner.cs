@@ -42,6 +42,7 @@ namespace Tide
     // view rule that matches it.
     [DefaultExecutionOrder(-10000)]
     [DisallowMultipleComponent]
+    [Icon(TideIcon.Tide)]
     public sealed unsafe class TideRunner : MonoBehaviour
     {
         [Tooltip("As the game's command line: --host [port], --join <code>, --connect <address>, --seed <n>, --data-dir <folder>, --stats")]

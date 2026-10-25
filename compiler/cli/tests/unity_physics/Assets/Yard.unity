@@ -8,6 +8,7 @@ GameObject:
   - component: {fileID: 101}
   - component: {fileID: 102}
   - component: {fileID: 103}
+  - component: {fileID: 104}
   m_Layer: 0
   m_Name: Floor
   m_IsActive: 1
@@ -29,16 +30,25 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 4f7d2c1e9a8b4b6c8d3e2f1a0b9c8d7e, type: 3}
   components: []
   references: []
---- !u!65 &103
-BoxCollider:
+--- !u!114 &103
+MonoBehaviour:
   m_ObjectHideFlags: 0
   m_GameObject: {fileID: 100}
-  m_Material: {fileID: 0}
-  m_IsTrigger: 0
   m_Enabled: 1
-  serializedVersion: 3
-  m_Size: {x: 1, y: 1, z: 1}
-  m_Center: {x: 0, y: 0.25, z: 0}
+  m_Script: {fileID: 11500000, guid: 33333333333333333333333333333333, type: 3}
+  id: 7
+  type: 0
+  stepType: 2
+  gravityScale: 1
+--- !u!114 &104
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 100}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: 44444444444444444444444444444444, type: 3}
+  size: {x: 1, y: 1, z: 1}
+  offset: {x: 0, y: 0.25, z: 0}
+  sensor: 0
 --- !u!1 &200
 GameObject:
   m_ObjectHideFlags: 0
@@ -59,8 +69,7 @@ Transform:
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: 0, y: 3, z: 0}
   m_LocalScale: {x: 2, y: 3, z: 1}
-  m_Children:
-  - {fileID: 211}
+  m_Children: []
   m_Father: {fileID: 0}
 --- !u!114 &202
 MonoBehaviour:
@@ -70,64 +79,23 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 4f7d2c1e9a8b4b6c8d3e2f1a0b9c8d7e, type: 3}
   components: []
   references: []
---- !u!54 &203
-Rigidbody:
-  m_ObjectHideFlags: 0
-  m_GameObject: {fileID: 200}
-  serializedVersion: 5
-  m_Mass: 1
-  m_LinearDamping: 0.25
-  m_AngularDamping: 0.5
-  m_UseGravity: 1
-  m_IsKinematic: 0
---- !u!135 &204
-SphereCollider:
-  m_ObjectHideFlags: 0
-  m_GameObject: {fileID: 200}
-  m_IsTrigger: 0
-  m_Enabled: 1
-  serializedVersion: 3
-  m_Radius: 0.5
-  m_Center: {x: 0, y: 0.5, z: 0}
---- !u!1 &210
-GameObject:
-  m_ObjectHideFlags: 0
-  serializedVersion: 6
-  m_Component:
-  - component: {fileID: 211}
-  - component: {fileID: 212}
-  - component: {fileID: 213}
-  m_Layer: 0
-  m_Name: Arm
-  m_IsActive: 1
---- !u!4 &211
-Transform:
-  m_ObjectHideFlags: 0
-  m_GameObject: {fileID: 210}
-  serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 1, y: 0, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
-  m_Children: []
-  m_Father: {fileID: 201}
---- !u!114 &212
+--- !u!114 &203
 MonoBehaviour:
   m_ObjectHideFlags: 0
-  m_GameObject: {fileID: 210}
+  m_GameObject: {fileID: 200}
   m_Enabled: 1
-  m_Script: {fileID: 11500000, guid: 4f7d2c1e9a8b4b6c8d3e2f1a0b9c8d7e, type: 3}
-  components: []
-  references: []
---- !u!65 &213
-BoxCollider:
+  m_Script: {fileID: 11500000, guid: 33333333333333333333333333333333, type: 3}
+  type: 2
+  gravityScale: 0.5
+--- !u!114 &204
+MonoBehaviour:
   m_ObjectHideFlags: 0
-  m_GameObject: {fileID: 210}
-  m_Material: {fileID: 0}
-  m_IsTrigger: 0
+  m_GameObject: {fileID: 200}
   m_Enabled: 1
-  serializedVersion: 3
-  m_Size: {x: 1, y: 1, z: 1}
-  m_Center: {x: 0, y: 0, z: 0}
+  m_Script: {fileID: 11500000, guid: 55555555555555555555555555555555, type: 3}
+  radius: 0.5
+  offset: {x: 0, y: 0.5, z: 0}
+  sensor: 0
 --- !u!1 &300
 GameObject:
   m_ObjectHideFlags: 0
@@ -136,6 +104,7 @@ GameObject:
   - component: {fileID: 301}
   - component: {fileID: 302}
   - component: {fileID: 303}
+  - component: {fileID: 304}
   m_Layer: 0
   m_Name: Pillar
   m_IsActive: 1
@@ -157,16 +126,23 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 4f7d2c1e9a8b4b6c8d3e2f1a0b9c8d7e, type: 3}
   components: []
   references: []
---- !u!136 &303
-CapsuleCollider:
+--- !u!114 &303
+MonoBehaviour:
   m_ObjectHideFlags: 0
   m_GameObject: {fileID: 300}
-  m_IsTrigger: 0
   m_Enabled: 1
-  m_Radius: 0.5
-  m_Height: 2
-  m_Direction: 1
-  m_Center: {x: 0, y: 0, z: 0}
+  m_Script: {fileID: 11500000, guid: 33333333333333333333333333333333, type: 3}
+  type: 0
+--- !u!114 &304
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 300}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: 66666666666666666666666666666666, type: 3}
+  radius: 0.5
+  height: 2
+  offset: {x: 0, y: 0, z: 0}
+  sensor: 0
 --- !u!1 &400
 GameObject:
   m_ObjectHideFlags: 0
@@ -175,8 +151,10 @@ GameObject:
   - component: {fileID: 401}
   - component: {fileID: 402}
   - component: {fileID: 403}
+  - component: {fileID: 404}
+  - component: {fileID: 405}
   m_Layer: 0
-  m_Name: Log
+  m_Name: Mirror
   m_IsActive: 1
 --- !u!4 &401
 Transform:
@@ -185,7 +163,7 @@ Transform:
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
   m_LocalPosition: {x: -4, y: 1, z: 0}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalScale: {x: -2, y: 1, z: 1}
   m_Children: []
   m_Father: {fileID: 0}
 --- !u!114 &402
@@ -196,16 +174,28 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 4f7d2c1e9a8b4b6c8d3e2f1a0b9c8d7e, type: 3}
   components: []
   references: []
---- !u!136 &403
-CapsuleCollider:
+--- !u!114 &403
+MonoBehaviour:
   m_ObjectHideFlags: 0
   m_GameObject: {fileID: 400}
-  m_IsTrigger: 0
   m_Enabled: 1
-  m_Radius: 0.5
-  m_Height: 2
-  m_Direction: 0
-  m_Center: {x: 0, y: 0, z: 0}
+  m_Script: {fileID: 11500000, guid: 33333333333333333333333333333333, type: 3}
+  type: 1
+--- !u!114 &404
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 400}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: 44444444444444444444444444444444, type: 3}
+  size: {x: 1, y: 1, z: 1}
+  offset: {x: 1, y: 0, z: 0}
+  sensor: 1
+--- !u!114 &405
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 400}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: 77777777777777777777777777777777, type: 3}
 --- !u!1 &500
 GameObject:
   m_ObjectHideFlags: 0
@@ -214,19 +204,20 @@ GameObject:
   - component: {fileID: 501}
   - component: {fileID: 502}
   - component: {fileID: 503}
-  - component: {fileID: 504}
   m_Layer: 0
-  m_Name: Gate
+  m_Name: Cart
   m_IsActive: 1
 --- !u!4 &501
 Transform:
   m_ObjectHideFlags: 0
   m_GameObject: {fileID: 500}
   serializedVersion: 2
-  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: 5}
-  m_LocalScale: {x: 3, y: 2, z: 0.5}
-  m_Children: []
+  m_LocalRotation: {x: 0, y: 0, z: 1, w: 0}
+  m_LocalPosition: {x: 0, y: 2, z: 5}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_Children:
+  - {fileID: 601}
+  - {fileID: 701}
   m_Father: {fileID: 0}
 --- !u!114 &502
 MonoBehaviour:
@@ -236,23 +227,13 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 4f7d2c1e9a8b4b6c8d3e2f1a0b9c8d7e, type: 3}
   components: []
   references: []
---- !u!65 &503
-BoxCollider:
-  m_ObjectHideFlags: 0
-  m_GameObject: {fileID: 500}
-  m_Material: {fileID: 0}
-  m_IsTrigger: 1
-  m_Enabled: 1
-  serializedVersion: 3
-  m_Size: {x: 1, y: 1, z: 1}
-  m_Center: {x: 0, y: 0, z: 0}
---- !u!114 &504
+--- !u!114 &503
 MonoBehaviour:
   m_ObjectHideFlags: 0
   m_GameObject: {fileID: 500}
   m_Enabled: 1
   m_Script: {fileID: 11500000, guid: 33333333333333333333333333333333, type: 3}
-  type: 1
+  type: 2
 --- !u!1 &600
 GameObject:
   m_ObjectHideFlags: 0
@@ -261,8 +242,9 @@ GameObject:
   - component: {fileID: 601}
   - component: {fileID: 602}
   - component: {fileID: 603}
+  - component: {fileID: 604}
   m_Layer: 0
-  m_Name: Off
+  m_Name: Wheel
   m_IsActive: 1
 --- !u!4 &601
 Transform:
@@ -270,10 +252,10 @@ Transform:
   m_GameObject: {fileID: 600}
   serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: -5}
-  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_LocalPosition: {x: 1, y: -0.5, z: 0}
+  m_LocalScale: {x: 2, y: 2, z: 2}
   m_Children: []
-  m_Father: {fileID: 0}
+  m_Father: {fileID: 501}
 --- !u!114 &602
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -282,16 +264,22 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 4f7d2c1e9a8b4b6c8d3e2f1a0b9c8d7e, type: 3}
   components: []
   references: []
---- !u!65 &603
-BoxCollider:
+--- !u!114 &603
+MonoBehaviour:
   m_ObjectHideFlags: 0
   m_GameObject: {fileID: 600}
-  m_Material: {fileID: 0}
-  m_IsTrigger: 0
-  m_Enabled: 0
-  serializedVersion: 3
-  m_Size: {x: 1, y: 1, z: 1}
-  m_Center: {x: 0, y: 0, z: 0}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: 55555555555555555555555555555555, type: 3}
+  radius: 0.25
+  offset: {x: 0, y: 0.1, z: 0}
+  sensor: 0
+--- !u!114 &604
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 600}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: 88888888888888888888888888888888, type: 3}
+  of: {fileID: 0}
 --- !u!1 &700
 GameObject:
   m_ObjectHideFlags: 0
@@ -299,29 +287,387 @@ GameObject:
   m_Component:
   - component: {fileID: 701}
   - component: {fileID: 702}
+  - component: {fileID: 703}
+  - component: {fileID: 704}
   m_Layer: 0
-  m_Name: Decor
+  m_Name: Fin
   m_IsActive: 1
 --- !u!4 &701
 Transform:
   m_ObjectHideFlags: 0
   m_GameObject: {fileID: 700}
   serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 1, z: 0, w: 0}
+  m_LocalPosition: {x: 0, y: 0.5, z: -1}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_Children: []
+  m_Father: {fileID: 501}
+--- !u!114 &702
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 700}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: 4f7d2c1e9a8b4b6c8d3e2f1a0b9c8d7e, type: 3}
+  components: []
+  references: []
+--- !u!114 &703
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 700}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: 44444444444444444444444444444444, type: 3}
+  size: {x: 1, y: 1, z: 1}
+  offset: {x: 0, y: 0, z: 0}
+  sensor: 0
+--- !u!114 &704
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 700}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: 88888888888888888888888888888888, type: 3}
+  of: {fileID: 500}
+--- !u!1 &800
+GameObject:
+  m_ObjectHideFlags: 0
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 801}
+  - component: {fileID: 802}
+  - component: {fileID: 803}
+  - component: {fileID: 804}
+  m_Layer: 0
+  m_Name: Hinge
+  m_IsActive: 1
+--- !u!4 &801
+Transform:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 800}
+  serializedVersion: 2
   m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
-  m_LocalPosition: {x: 0, y: 0, z: -8}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_Children: []
   m_Father: {fileID: 0}
---- !u!65 &702
-BoxCollider:
+--- !u!114 &802
+MonoBehaviour:
   m_ObjectHideFlags: 0
-  m_GameObject: {fileID: 700}
-  m_Material: {fileID: 0}
-  m_IsTrigger: 0
+  m_GameObject: {fileID: 800}
   m_Enabled: 1
-  serializedVersion: 3
-  m_Size: {x: 1, y: 1, z: 1}
-  m_Center: {x: 0, y: 0, z: 0}
+  m_Script: {fileID: 11500000, guid: 4f7d2c1e9a8b4b6c8d3e2f1a0b9c8d7e, type: 3}
+  components: []
+  references: []
+--- !u!114 &803
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 800}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: 99999999999999999999999999999999, type: 3}
+  a: {fileID: 500}
+  b: {fileID: 200}
+  anchorA: {x: 0, y: 1, z: 0}
+--- !u!114 &804
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 800}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa, type: 3}
+  enableMotor: 1
+--- !u!1 &900
+GameObject:
+  m_ObjectHideFlags: 0
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 901}
+  - component: {fileID: 902}
+  - component: {fileID: 903}
+  - component: {fileID: 904}
+  m_Layer: 0
+  m_Name: Ramp
+  m_IsActive: 1
+--- !u!4 &901
+Transform:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 900}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: -6}
+  m_LocalScale: {x: 2, y: 1, z: 1}
+  m_Children: []
+  m_Father: {fileID: 0}
+--- !u!114 &902
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 900}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: 4f7d2c1e9a8b4b6c8d3e2f1a0b9c8d7e, type: 3}
+  components: []
+  references: []
+--- !u!114 &903
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 900}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: 33333333333333333333333333333333, type: 3}
+  type: 0
+--- !u!114 &904
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 900}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb, type: 3}
+  vertices:
+  - {x: 0, y: 0, z: 0}
+  - {x: 0, y: 0, z: 1}
+  - {x: 1, y: 0, z: 0}
+  indices: 000000000100000002000000
+  scale: {x: 1, y: 1, z: 1}
+  offset: {x: 0, y: 0, z: 0}
+--- !u!1 &1000
+GameObject:
+  m_ObjectHideFlags: 0
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1001}
+  - component: {fileID: 1002}
+  - component: {fileID: 1003}
+  - component: {fileID: 1004}
+  m_Layer: 0
+  m_Name: Kite
+  m_IsActive: 1
+--- !u!4 &1001
+Transform:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1000}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 1, w: 0}
+  m_LocalPosition: {x: 10, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_Children:
+  - {fileID: 1101}
+  - {fileID: 1301}
+  m_Father: {fileID: 0}
+--- !u!114 &1002
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1000}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: 4f7d2c1e9a8b4b6c8d3e2f1a0b9c8d7e, type: 3}
+  components: []
+  references: []
+--- !u!114 &1003
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1000}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: cccccccccccccccccccccccccccccccc, type: 3}
+  type: 2
+  gravityScale: 0.25
+--- !u!114 &1004
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1000}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: dddddddddddddddddddddddddddddddd, type: 3}
+  size: {x: 1, y: 2}
+  offset: {x: 0, y: 0}
+--- !u!1 &1100
+GameObject:
+  m_ObjectHideFlags: 0
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1101}
+  - component: {fileID: 1102}
+  - component: {fileID: 1103}
+  - component: {fileID: 1104}
+  m_Layer: 0
+  m_Name: Tail
+  m_IsActive: 1
+--- !u!4 &1101
+Transform:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1100}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 2, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_Children: []
+  m_Father: {fileID: 1001}
+--- !u!114 &1102
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1100}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: 4f7d2c1e9a8b4b6c8d3e2f1a0b9c8d7e, type: 3}
+  components: []
+  references: []
+--- !u!114 &1103
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1100}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee, type: 3}
+  radius: 0.5
+  offset: {x: 0, y: 1}
+--- !u!114 &1104
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1100}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: ffffffffffffffffffffffffffffffff, type: 3}
+  of: {fileID: 0}
+--- !u!1 &1200
+GameObject:
+  m_ObjectHideFlags: 0
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1201}
+  - component: {fileID: 1202}
+  - component: {fileID: 1203}
+  - component: {fileID: 1204}
+  m_Layer: 0
+  m_Name: Stray
+  m_IsActive: 1
+--- !u!4 &1201
+Transform:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1200}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 20}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_Children: []
+  m_Father: {fileID: 0}
+--- !u!114 &1202
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1200}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: 4f7d2c1e9a8b4b6c8d3e2f1a0b9c8d7e, type: 3}
+  components: []
+  references: []
+--- !u!114 &1203
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1200}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: 55555555555555555555555555555555, type: 3}
+  radius: 0.5
+  offset: {x: 0, y: 0, z: 0}
+  sensor: 0
+--- !u!114 &1204
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1200}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: 88888888888888888888888888888888, type: 3}
+  of: {fileID: 0}
+--- !u!1 &1300
+GameObject:
+  m_ObjectHideFlags: 0
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1301}
+  - component: {fileID: 1302}
+  - component: {fileID: 1303}
+  - component: {fileID: 1304}
+  - component: {fileID: 1305}
+  m_Layer: 0
+  m_Name: Fan
+  m_IsActive: 1
+--- !u!4 &1301
+Transform:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1300}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 1, w: 0}
+  m_LocalPosition: {x: 0, y: 3, z: 0}
+  m_LocalScale: {x: 2, y: 1, z: 1}
+  m_Children: []
+  m_Father: {fileID: 1001}
+--- !u!114 &1302
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1300}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: 4f7d2c1e9a8b4b6c8d3e2f1a0b9c8d7e, type: 3}
+  components: []
+  references: []
+--- !u!114 &1303
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1300}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: 13131313131313131313131313131313, type: 3}
+  points:
+  - {x: 1, y: 0}
+  - {x: 0, y: 1}
+  - {x: -1, y: 0}
+  radius: 0.1
+--- !u!114 &1304
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1300}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: 12121212121212121212121212121212, type: 3}
+  a: {x: 0, y: -0.5}
+  b: {x: 0, y: 0.5}
+  radius: 0.25
+--- !u!114 &1305
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1300}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: ffffffffffffffffffffffffffffffff, type: 3}
+  of: {fileID: 0}
+--- !u!1 &1400
+GameObject:
+  m_ObjectHideFlags: 0
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1401}
+  - component: {fileID: 1402}
+  - component: {fileID: 1403}
+  - component: {fileID: 1404}
+  m_Layer: 0
+  m_Name: Ridge
+  m_IsActive: 1
+--- !u!4 &1401
+Transform:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1400}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: -10, z: 0}
+  m_LocalScale: {x: -1, y: 1, z: 1}
+  m_Children: []
+  m_Father: {fileID: 0}
+--- !u!114 &1402
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1400}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: 4f7d2c1e9a8b4b6c8d3e2f1a0b9c8d7e, type: 3}
+  components: []
+  references: []
+--- !u!114 &1403
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1400}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: cccccccccccccccccccccccccccccccc, type: 3}
+  type: 0
+  gravityScale: 1
+--- !u!114 &1404
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1400}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: 14141414141414141414141414141414, type: 3}
+  points:
+  - {x: 0, y: 0}
+  - {x: 1, y: 0}
+  - {x: 2, y: 1}
+  loop: 0
 --- !u!1660057539 &9999
 SceneRoots:
   m_ObjectHideFlags: 0
@@ -331,5 +677,8 @@ SceneRoots:
   - {fileID: 301}
   - {fileID: 401}
   - {fileID: 501}
-  - {fileID: 601}
-  - {fileID: 701}
+  - {fileID: 801}
+  - {fileID: 901}
+  - {fileID: 1001}
+  - {fileID: 1201}
+  - {fileID: 1401}
