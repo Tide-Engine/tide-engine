@@ -1,5 +1,31 @@
 # Benchmarks
 
+## Local voxel worker controls (2026-10-25)
+
+bench/workers adds a CPU-only 32³ culled-face mesher with a one-cell halo,
+exact independent face/checksum validation, optional parallel foreground
+simulation and bounded completion. Quick pool, one-slot fallback and contention
+checks run in both suites. Its separate flat-grid C timing is only a kernel
+reference, not equivalent async work. The paired runner and methodology are
+in bench/workers/README.md and bench/results/worker-controls/run.ps1.
+
+Release baseline 807e34b2 and the candidate use identical mesher/driver work
+(baseline-only removal of the new host API fields). The first clean 24-row
+batch is retained, including small/fallback regressions. Median worst view
+turns fall 37.27 to 4.65 ms for 256 chunks, while 64-chunk and fallback burst
+completion regress about 12% and 16%. Pure worker statement checks were reduced
+in response, preserving loop/body/helper stopping. The second frozen 24-row
+comparison passed the unchanged guard after one timeout amid other CTests.
+Both binary hashes match the source manifest. For 256 chunks, median burst
+time is 60.84 / 44.21 ms and worst view turn 31.01 / 4.06 ms; 64-chunk bursts
+remain about 10% slower by medians, with overlapping/noisy duration ranges.
+Fallback median completion is 18.58 / 17.53 ms and still stalls for synchronous
+compute. Contention's worst-tick median is adverse at 0.78 / 1.05 ms; its turn/
+total-tick counts differ, so burst duration is not equal-total-work throughput.
+Both raw batches and all caveats are retained in
+bench/results/worker-controls/README.md. These unpaced polling observations
+are not display FPS or delivery-latency predictions. All 48 rows validate.
+
 ## Render3D measured static cubes (2026-10-25)
 
 Measured `a1d962c99d93657d23f79ba54b0c836f635905e8`, native optimized Vulkan,

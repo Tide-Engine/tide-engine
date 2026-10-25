@@ -1,6 +1,7 @@
 #include "game.h"
 #include "tide_test.h"
 #include "tide/time.h"
+#include "tide/worker.h"
 #ifdef TIDE_WORKER_THREADS
 #include "tide/platform.h"
 #endif
@@ -16,6 +17,8 @@ TIDE_TEST(workers_keep_nested_values_arrays_optionals_and_errors)
         tide_world_init(&world, 1.0f);
         tide_local_init(&local);
         gui.jobs = NULL;
+        const tide_worker_limits limits = {.pending = 1, .transfer_bytes = 1};
+        gui.worker_limits = &limits;
 #ifdef TIDE_WORKER_THREADS
         if (pass) gui.jobs = tide_platform_jobs();
 #else
@@ -31,5 +34,6 @@ TIDE_TEST(workers_keep_nested_values_arrays_optionals_and_errors)
         tide_local_free(&local);
         tide_world_free(&world);
         tide_draw_free(&draw);
+        gui.worker_limits = NULL;
     }
 }

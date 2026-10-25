@@ -1,0 +1,303 @@
+using IntBuild = LocalTask<int>;
+using CheckedBuild = Task<int fails MeshError>;
+
+local singleton Results
+{
+    IntBuild build;
+    LocalTask firstWaiter;
+    LocalTask secondWaiter;
+    bool started;
+    bool cancelFirst;
+    bool cancelBuild;
+    int first;
+    int second;
+    int calls;
+    LocalTask<int> worker;
+    int workerValue;
+    bool valuesRight;
+    int order;
+    int inferred;
+    int polymorphic;
+    bool engineWaitsRight;
+    bool readStored;
+    int stored;
+    LocalTask self;
+    int afterCancel;
+    int independent;
+    int attached;
+}
+
+local worker int Double(int value) { return value * 2; }
+
+async int Pure() { return 13; }
+
+async int InferredLater()
+{
+    var task = Pure();
+    await Wait.Frames(1);
+    return await task;
+}
+
+async int Polymorphic()
+{
+    var task = Pure();
+    return await task;
+}
+
+LocalTask<int> CreateLocal() { return Pure(); }
+
+async void CheckInference(mut Results results)
+{
+    results.inferred = await InferredLater();
+    var local = CreateLocal();
+    results.polymorphic = await Polymorphic() + await local;
+}
+
+async void CheckEngineWait(mut Results results)
+{
+    LocalTask timer = Wait.Frames(2);
+    var copy = timer;
+    var running = timer.isRunning && timer == copy && timer != default;
+    await timer;
+    await copy;
+    results.engineWaitsRight = running && timer.isCompleted && !timer.isCancelled;
+}
+
+async void Independent(mut Results results)
+{
+    await Wait.Frames(1);
+    results.independent++;
+}
+
+void CancelSelfHelper(mut Results results)
+{
+    results.self.Cancel();
+    results.afterCancel++;
+}
+
+async void SelfChild(mut Results results)
+{
+    Independent(results);
+    CancelSelfHelper(results);
+    results.afterCancel += 10;
+}
+
+async void Self(mut Results results)
+{
+    await Wait.Frames(1);
+    await SelfChild(results);
+    results.afterCancel += 100;
+}
+
+enum MeshError { Bad }
+
+async int Checked(int value) fails MeshError
+{
+    await Wait.Frames(1);
+    if (value < 0) fail MeshError.Bad;
+    return value;
+}
+
+local worker int CheckedWorker(int value) fails MeshError
+{
+    if (value < 0) fail MeshError.Bad;
+    return value;
+}
+
+async List<int> Numbers()
+{
+    await Wait.Frames(1);
+    return [2, 3, 5];
+}
+
+async void CheckValues(mut Results results)
+{
+    LocalTask<int fails MeshError> good = Checked(7);
+    LocalTask<int fails MeshError> bad = Checked(-1);
+    LocalTask<int fails MeshError> worker = CheckedWorker(-1);
+    LocalTask<List<int>> numbers = Numbers();
+    mut var first = await numbers;
+    first[0] = 99;
+    var second = await numbers;
+    mut var right = (await good ?? 0) == 7;
+    right = right && await bad is MeshError.Bad;
+    right = right && await worker is MeshError.Bad;
+    results.valuesRight = right && first[0] == 99 && second[0] == 2;
+}
+
+async void ReadWorker(LocalTask<int> worker, mut Results results)
+{
+    results.workerValue = await worker;
+}
+
+async int Child()
+{
+    await Wait.Frames(1);
+    return 1;
+}
+
+async void Parent(mut Results results)
+{
+    await Wait.Frames(1);
+    var child = Child();
+    var value = await child;
+    results.order = results.order * 10 + value;
+}
+
+async void Unrelated(mut Results results)
+{
+    await Wait.Frames(2);
+    results.order = results.order * 10 + 2;
+}
+
+async int Calculate(mut Results results)
+{
+    results.calls++;
+    await Wait.Frames(2);
+    return 21;
+}
+
+async void Read(LocalTask<int> build, mut Results results, int which)
+{
+    var value = await build;
+    var again = await build;
+    if (which == 1) results.first = value + again;
+    else if (which == 2) results.second = value + again;
+    else results.stored = value + again;
+}
+
+view Start(mut Results results)
+{
+    if (!results.started)
+    {
+        results.started = true;
+        results.build = Calculate(results);
+        results.firstWaiter = Read(results.build, results, 1);
+        results.secondWaiter = Read(results.build, results, 2);
+        results.worker = Double(17);
+        ReadWorker(results.worker, results);
+        CheckValues(results);
+        Parent(results);
+        Unrelated(results);
+        CheckInference(results);
+        CheckEngineWait(results);
+        results.self = Self(results);
+    }
+    if (results.cancelFirst)
+    {
+        results.firstWaiter.Cancel();
+        results.cancelFirst = false;
+    }
+    if (results.cancelBuild)
+    {
+        results.build.Cancel();
+        results.cancelBuild = false;
+    }
+    if (results.readStored)
+    {
+        results.readStored = false;
+        Read(results.build, results, 3);
+    }
+}
+
+scene Main;
+
+component Attached
+{
+    local LocalTask<int> build;
+    local bool started;
+    local bool read;
+}
+
+event(Spawned) CreateAttached(with Main) { Spawn(Attached); }
+
+async void ReadAttached(LocalTask<int> build, mut Results results)
+{
+    results.attached = await build;
+}
+
+view StartAttached(mut Attached attached, mut Results results)
+{
+    if (!attached.started)
+    {
+        attached.started = true;
+        attached.build = Double(9);
+    }
+    if (attached.build.isCompleted && !attached.read)
+    {
+        attached.read = true;
+        ReadAttached(attached.build, results);
+    }
+}
+
+singleton MatchResults
+{
+    CheckedBuild build;
+    Task reader;
+    bool started;
+    bool cancel;
+    int answer;
+    bool failed;
+    int polymorphic;
+}
+
+async int MatchBuild(int value) fails MeshError
+{
+    await Wait.Ticks(2);
+    if (value < 0) fail MeshError.Bad;
+    return value;
+}
+
+async void MatchRead(Task<int fails MeshError> build, mut MatchResults results)
+{
+    results.answer = await build ?? -1;
+    results.failed = await build is MeshError.Bad;
+    results.polymorphic = await Polymorphic();
+}
+
+system MatchStart(mut MatchResults results)
+{
+    if (!results.started)
+    {
+        results.started = true;
+        results.build = MatchBuild(11);
+        results.reader = MatchRead(results.build, results);
+    }
+    if (results.cancel)
+    {
+        results.build.Cancel();
+        results.cancel = false;
+    }
+}
+
+struct Link { LocalTask<Link> next; }
+
+local singleton Links
+{
+    LocalTask<Link> first;
+    LocalTask<Link> second;
+    bool started;
+    bool clear;
+}
+
+async Link MakeLink(Links links, bool first)
+{
+    await Wait.Frames(1);
+    return Link { next = first ? links.second : links.first };
+}
+
+view StartLinks(mut Links links)
+{
+    if (!links.started)
+    {
+        links.started = true;
+        links.first = MakeLink(links, true);
+        links.second = MakeLink(links, false);
+    }
+    if (links.clear)
+    {
+        links.clear = false;
+        links.first = default;
+        links.second = default;
+    }
+}

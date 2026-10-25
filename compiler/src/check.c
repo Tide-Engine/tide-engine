@@ -1304,11 +1304,26 @@ static bool holds_render_resource(const type t)
 static bool holds_local_handle(const type t, const int depth)
 {
     if (t.kind == TY_LOCAL_ENTITY) return true;
+    if (t.kind == TY_STRUCT && t.decl->task_handle && t.decl->task_local) return true;
     if (!t.decl || depth > 64 || (t.kind != TY_STRUCT && t.kind != TY_OPTIONAL && t.kind != TY_ARRAY
         && t.kind != TY_LIST && t.kind != TY_MAP && t.kind != TY_SET && t.kind != TY_GRID)) return false;
     for (int i = 0; i < t.decl->fields.count; i++) {
         if (holds_local_handle(t.decl->fields.items[i].type, depth + 1)) return true;
     }
+    return false;
+}
+
+static bool holds_local_task_in(const type t, const resource_outer *outer)
+{
+    if (!t.decl) return false;
+    if (t.decl->task_handle) return t.decl->task_origin
+        ? t.decl->task_origin->task_side == TASK_LOCAL : t.decl->task_local;
+    if (t.kind != TY_STRUCT && t.kind != TY_LIST && t.kind != TY_MAP && t.kind != TY_SET
+        && t.kind != TY_ARRAY && t.kind != TY_OPTIONAL && t.kind != TY_FAILABLE && t.kind != TY_GRID) return false;
+    for (const resource_outer *p = outer; p; p = p->previous) if (p->type == t.decl) return false;
+    const resource_outer here = {t.decl, outer};
+    for (int i = 0; i < t.decl->fields.count; i++)
+        if (holds_local_task_in(t.decl->fields.items[i].type, &here)) return true;
     return false;
 }
 
@@ -1858,6 +1873,82 @@ static type resolve_alias_at(const checker *c, decl *d, type_place place, loc at
 
 #include "callable_types.inc"
 
+// Task identities have a fixed, opaque representation. The declared completion
+// type is metadata, so Task<Node> can be a field of Node without making Node
+// infinitely large. Results are stored separately in the owning world's tables.
+static void ensure_task_slots(program *prog, bool local);
+static type task_handle_of(program *prog, const type value, const bool local, decl *origin)
+{
+    for (int i = 0; i < prog->task_handles.count; i++) {
+        decl *d = prog->task_handles.items[i];
+        if (d->task_local == local && d->task_origin == origin && same_type(d->task_value, value)) return (type){TY_STRUCT, d};
+    }
+    decl *d = NEW(decl);
+    d->kind = DECL_STRUCT;
+    d->builtin = true;
+    d->task_handle = true;
+    d->task_local = local;
+    d->task_origin = origin;
+    d->task_value = value;
+    sb name = {0}, cname = {0};
+    sb_put(&name, local ? "LocalTask" : "Task");
+    if (value.kind != TY_VOID) sb_printf(&name, "<%s>", type_name(value));
+    d->name = d->qualified = str_from(name.data);
+    sb_printf(&cname, "tide_task_handle%d", prog->task_handles.count);
+    d->c_name = cname.data;
+    d->gen_name = cname.data;
+    static const char *const fields[] = {"tide_id", "tide_slot", "tide_pad"};
+    for (int i = 0; i < 3; i++) {
+        field f = {0};
+        f.name = str_from(fields[i]);
+        f.hidden = true;
+        f.type = i ? T_INT_ : T_LONG_;
+        vec_push(d->fields, f);
+    }
+    vec_push(prog->task_handles, d);
+    order_struct(prog, d);
+    return (type){TY_STRUCT, d};
+}
+
+static void ensure_task_slots(program *prog, const bool local)
+{
+    if (prog->task_slots[local]) return;
+    decl *slot = NEW(decl);
+    slot->kind = DECL_STRUCT;
+    slot->builtin = true;
+    slot->name = slot->qualified = str_from(local ? "tide_local_task_slot" : "tide_match_task_slot");
+    slot->c_name = str_to_cstr(slot->name);
+    static const char *const names[] = {"id", "code", "row", "state", "next", "flags"};
+    for (int i = 0; i < 6; i++) {
+        field f = {0};
+        f.name = str_from(names[i]);
+        f.type = i < 2 ? T_LONG_ : T_INT_;
+        f.hidden = true;
+        vec_push(slot->fields, f);
+    }
+    order_struct(prog, slot);
+    decl *store = NEW(decl);
+    store->kind = DECL_SINGLETON;
+    store->builtin = true;
+    store->is_local = local;
+    store->name = store->qualified = str_from(local ? "tide_local_task_slots" : "tide_match_task_slots");
+    store->c_name = str_to_cstr(store->name);
+    const type slots = list_of(prog, (type){TY_STRUCT, slot});
+    static const char *const stored[] = {"slots", "serial", "free"};
+    for (int i = 0; i < 3; i++) {
+        field f = {0};
+        f.name = str_from(stored[i]);
+        f.type = i == 0 ? slots : i == 1 ? T_LONG_ : T_INT_;
+        f.hidden = true;
+        vec_push(store->fields, f);
+    }
+    store->index = prog->singletons.count;
+    vec_push(prog->singletons, store);
+    prog->task_slots[local] = store;
+    prog->uses_heap = true;
+    if (local) prog->local_heap = true;
+}
+
 // What's written in a generic type's <>, resolved and checked against what
 // the form takes there (generic_arg, types.h): a list's element or a map's
 // value, a key, or a grid's cell. `key` is the key type where it's a map's
@@ -2043,6 +2134,46 @@ static type resolve_named(const checker *c, const type_ref *r, const type_place 
     const str name = r->name;
     type t;
     if (str_eq_c(name, "Func")) return resolve_callable(c, r, at);
+    if (str_eq_c(name, "Task") || str_eq_c(name, "LocalTask")) {
+        type value = T_VOID_;
+        if (r->args.count > 1) {
+            diag_error(at, "a Task takes its complete result type, like 'Task<int fails Error>'");
+            return T_ERR;
+        }
+        if (r->args.count) {
+            const type_ref *held = r->args.items[0];
+            type_ref plain = *held;
+            plain.optional = false;
+            plain.failure = NULL;
+            value = resolve_type(c, &plain, PLACE_RETURN, held->at);
+            if (value.kind == TY_ERROR) return T_ERR;
+            if (!result_value_ok(value, held->at, "a task's result")) return T_ERR;
+            if (held->optional && held->failure) {
+                diag_error(held->at, "a task's result can be optional or fail, as its function can, but not both");
+                return T_ERR;
+            }
+            if (held->optional) value = optional_type(c, value, held->at);
+            if (held->failure) {
+                const type error = resolve_type(c, held->failure, PLACE_FUNCTION, held->failure->at);
+                if (error.kind == TY_ERROR) return T_ERR;
+                if (error.kind == TY_VOID || error.kind == TY_OPTIONAL || error.kind == TY_FAILABLE) {
+                    diag_error(held->failure->at, "a task's declared error is a value type, not %s", type_name(error));
+                    return T_ERR;
+                }
+                if (!result_value_ok(error, held->failure->at, "a task's error")) return T_ERR;
+                if (same_type(error, value)) {
+                    diag_error(held->failure->at, "a task's error needs a type of its own: 'is' must distinguish it from the result");
+                    return T_ERR;
+                }
+                value = result_of(c->prog, value, error, false);
+            }
+        }
+        const bool local = str_eq_c(name, "LocalTask");
+        // Keep the serial if a reload removes every producer while leaving
+        // declared handles. Reintroducing a producer cannot reuse their IDs.
+        ensure_task_slots(c->prog, local);
+        return task_handle_of(c->prog, value, local, NULL);
+    }
     if (r->args.count > 0 && str_eq_c(name, "Asset")) {
         if (r->args.count != 1) {
             diag_error(at, "Asset takes one mesh type, like 'Asset<Mesh<Vertex3>>'");
@@ -2490,6 +2621,9 @@ static type check_expr_want_checked(checker *c, expr *e, const type stored, cons
 {
     const type want = read_type(stored);
     const type t = check_expr_want_any(c, e, want, checked);
+    if (want.kind == TY_STRUCT && t.kind == TY_STRUCT && want.decl->task_handle && t.decl->task_handle
+        && t.decl->task_origin && !want.decl->task_origin && same_type(want.decl->task_value, t.decl->task_value))
+        note_side(t.decl->task_origin, want.decl->task_local ? TASK_LOCAL : TASK_MATCH, e->at);
     if (is_wrapped(t) && !(t.kind == want.kind && t.decl == want.decl)) {
         unwrap_error(e, t);
         unwrap_fix(c, e, t);
@@ -3462,6 +3596,60 @@ static bool local_code(const checker *c)
     return is_local_code(c->system);
 }
 
+static bool task_registry_access(checker *c, const bool local, const bool writes, const loc at)
+{
+    decl *code = reading_code(c);
+    if (!code || c->in_input || (in_routine(c) && !inherits(c) && !async_code(c))) {
+        diag_error(at, "task handles are used by world code and its helpers, not %s", c->in_input ? input_code(c) : "this code");
+        return false;
+    }
+    if (!in_routine(c) && !async_code(c) && local && !local_code(c)) {
+        diag_error(at, "a LocalTask belongs to this machine; use it from local code");
+        return false;
+    }
+    if (!in_routine(c) && !async_code(c) && !local && writes && local_code(c)) {
+        diag_error(at, "local code can't cancel a match Task; send a command to match code");
+        return false;
+    }
+    if (in_async_function(c) && (local || writes) && !note_side(code, local ? TASK_LOCAL : TASK_MATCH, at)) return false;
+    ensure_task_slots(c->prog, local);
+    code->task_access[local] |= writes ? 3u : 1u;
+    if (local) code->world_local = true;
+    else code->world_match = true;
+    if (writes) {
+        code->acts[local] = true;
+        code->acts_at[local] = at;
+        code->acts_what[local] = local ? "changes local tasks" : "changes match tasks";
+        note_text_write(c, true);
+    }
+    return true;
+}
+
+static bool task_handle_access(checker *c, decl *handle, const bool writes, const loc at)
+{
+    if (!handle->task_origin) return task_registry_access(c, handle->task_local, writes, at);
+    handle->task_access[0] |= writes ? 3u : 1u;
+    return true; // Its enclosing async function's world is settled after all bodies.
+}
+
+static void check_task_registry_calls(const checker *c)
+{
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (int i = 0; i < c->calls.count; i++) {
+            const call_site *site = &c->calls.items[i];
+            for (int side = 0; side < 2; side++) {
+                const unsigned access = site->to->task_access[side];
+                if (!access || (site->from->task_access[side] & access) == access) continue;
+                site->from->task_access[side] |= access;
+                if (side) site->from->world_local = true;
+                else site->from->world_match = true;
+                changed = true;
+            }
+        }
+    }
+}
+
 // Whether code on this side may create, change or remove component `d`. Local
 // code only changes local state; match code never touches it.
 static bool check_component_side(const checker *c, const expr *arg, const decl *d)
@@ -3653,6 +3841,8 @@ static decl *web_decl(const program *prog, const char *name, const decl_kind kin
     return NULL;
 }
 
+static type builtin_task_start(checker *c, expr *e, type result, int side);
+
 // await request.Send(): the request goes out, by this machine, and the task
 // waits for its answer, as with Web.Fetch. An answer of any status is its
 // value, a WebResponse; it fails with IOError when none came.
@@ -3663,11 +3853,6 @@ static type check_web_send(checker *c, expr *e)
     if (e->args.count) {
         diag_error(e->at, "Send takes nothing: 'var response = await request.Send();'");
         diag_note("what a request sends is set before it: 'request.SetMethod(\"POST\").SetBody(bytes)'");
-        return T_ERR;
-    }
-    if (c->awaiting != e) {
-        diag_error(e->at, "Send is awaited: 'var response = await request.Send();'");
-        diag_note("it takes a while, so the task waits for it, and local code reads what came in a frame to come");
         return T_ERR;
     }
     decl *const response = web_decl(c->prog, "WebResponse", DECL_STRUCT);
@@ -3681,7 +3866,8 @@ static type check_web_send(checker *c, expr *e)
     c->prog->uses_text = true;
     decl *code = c->method ? c->method : c->system;
     if (code) code->uses_fetch = true; // Its task's frame keeps the ticket
-    return result_of(c->prog, decl_type(response), (type){TY_ENUM, c->prog->io_error}, false);
+    const type result = result_of(c->prog, decl_type(response), (type){TY_ENUM, c->prog->io_error}, false);
+    return c->awaiting == e ? result : builtin_task_start(c, e, result, TASK_LOCAL);
 }
 
 // Frame.dt: how long this machine's frame is, which its host says before each
@@ -4646,6 +4832,10 @@ static void check_arg_types(checker *c, expr *e, decl *m)
     for (int i = 0; i < e->args.count; i++) {
         const param *p = &m->params.items[i];
         expr *arg = e->args.items[i];
+        if (p->type.kind == TY_STRUCT && arg->type.kind == TY_STRUCT && p->type.decl->task_handle
+            && arg->type.decl->task_handle && arg->type.decl->task_origin && !p->type.decl->task_origin
+            && same_type(p->type.decl->task_value, arg->type.decl->task_value))
+            note_side(arg->type.decl->task_origin, p->type.decl->task_local ? TASK_LOCAL : TASK_MATCH, arg->at);
         if (arg == p->default_value) continue;
         if (type_is_asset_collection(p->type)) {
             const bool source = arg->bind == BIND_ASSET || (arg->kind == E_NAME && arg->bind == BIND_PARAM
@@ -4994,12 +5184,8 @@ static void check_task_call(checker *c, expr *e, decl *fn)
 {
     const bool awaited = c->awaiting == e;
     decl *from = reading_code(c);
-    if (!awaited && c->statement_call != e) {
-        diag_error(e->at, "'" STR_FMT "' is async: 'await' it for its %s, or call it as a statement to start it as a task",
-                   STR_ARG(fn->name), fn->return_type.kind == TY_VOID ? "end" : "value");
-        diag_note("a task goes on by itself, and a statement that starts one doesn't wait for it");
-        return;
-    }
+    e->task_start_value = !awaited && c->statement_call != e;
+    if (e->task_start_value) fn->handles_tasks = true;
     if (!awaited && in_routine(c) && !inherits(c)) {
         if (c->method->is_interpolate) {
             diag_error(e->at, "Interpolate blends a value between ticks, for views, so it can't start a task, and calling '"
@@ -5071,15 +5257,99 @@ static void check_task_call(checker *c, expr *e, decl *fn)
     }
 }
 
+static type task_call_result(checker *c, expr *e, decl *fn)
+{
+    if (e->task_start_value || (fn->is_async && c->awaiting != e)) {
+        decl *from = reading_code(c);
+        const bool declared_local = from && !from->is_async && from->return_type.kind == TY_STRUCT
+            && from->return_type.decl->task_handle && from->return_type.decl->task_local;
+        const bool local = fn->is_worker || fn->task_side == TASK_LOCAL || local_code(c) || declared_local
+            || (from && from->is_async && from->task_side == TASK_LOCAL);
+        decl *origin = from && from->is_async && from->task_side == TASK_EITHER && fn->task_side == TASK_EITHER && !fn->is_worker ? from : NULL;
+        const type handle = task_handle_of(c->prog, fn->result, local, origin);
+        if (e->task_start_value) task_handle_access(c, handle.decl, true, e->at);
+        return handle;
+    }
+    return fn->result;
+}
+
+static type builtin_task_start(checker *c, expr *e, const type result, const int side)
+{
+    expr *authored = NEW(expr); *authored = *e;
+    decl *fn = NEW(decl);
+    sb name = {0}; sb_printf(&name, "tide_async_builtin_" STR_FMT "_%d", STR_ARG(e->name), c->prog->decls.count);
+    fn->name = fn->qualified = str_from(name.data);
+    fn->kind = DECL_FUNCTION;
+    fn->builtin = fn->is_async = fn->body_checked = fn->params_checked = true;
+    fn->unit = c->unit;
+    fn->at = fn->end = e->at;
+    fn->task_side = side;
+    fn->task_side_at = e->at;
+    fn->result = result;
+    fn->return_type = result.kind == TY_FAILABLE ? wrapped_value(result) : result;
+    fn->fails = result.kind == TY_FAILABLE ? wrapped_error(result) : T_VOID_;
+    fn->uses_io = e->storage_flush || e->web_fetch;
+    fn->uses_fetch = e->web_fetch;
+    expr *operation = NEW(expr); *operation = *e;
+    operation->type = result;
+    operation->args.count = operation->args.cap = 0; operation->args.items = NULL;
+    operation->arg_want.count = operation->arg_want.cap = 0; operation->arg_want.items = NULL;
+    operation->arg_order.count = operation->arg_order.cap = 0; operation->arg_order.items = NULL;
+    const bool receiver = e->web_request;
+    if (receiver) {
+        vec_push(e->args, e->object);
+        vec_push(e->arg_want, e->object->type);
+    }
+    for (int i = 0; i < e->args.count; i++) {
+        param arg = {0};
+        sb arg_name = {0}; sb_printf(&arg_name, "value%d", i);
+        arg.name = str_from(arg_name.data);
+        arg.type = e->arg_want.items[i];
+        arg.mode = PARAM_READ;
+        arg.function_param = arg.read = true;
+        arg.at = arg.name_at = e->at;
+        vec_push(fn->params, arg);
+    }
+    for (int i = 0; i < fn->params.count; i++) {
+        expr *arg = NEW(expr);
+        arg->kind = E_NAME; arg->bind = BIND_PARAM; arg->param = &fn->params.items[i];
+        arg->name = arg->param->name; arg->type = arg->param->type; arg->at = e->at;
+        if (receiver) operation->object = arg;
+        else { vec_push(operation->args, arg); vec_push(operation->arg_want, arg->type); }
+    }
+    expr *wait = NEW(expr);
+    wait->kind = E_AWAIT; wait->lhs = operation; wait->type = result; wait->at = e->at;
+    expr *value = wait;
+    if (result.kind == TY_FAILABLE) {
+        value = NEW(expr); value->kind = E_TRY; value->lhs = wait; value->type = fn->return_type; value->at = e->at;
+    }
+    stmt *body = NEW(stmt), *done = NEW(stmt);
+    body->kind = S_BLOCK; body->at = e->at;
+    done->kind = fn->return_type.kind == TY_VOID ? S_EXPR : S_RETURN;
+    done->value = value; done->at = e->at;
+    vec_push(body->stmts, done);
+    fn->body = body;
+    vec_push(c->prog->decls, fn);
+    e->kind = E_CALL; e->call = CALL_FUNCTION; e->method = fn; e->object = NULL;
+    e->storage_flush = e->web_fetch = e->web_request = false;
+    check_task_call(c, e, fn);
+    const type handle = task_call_result(c, e, fn);
+    authored->type = handle;
+    e->task_source = authored;
+    return handle;
+}
+
 static type check_function_call(checker *c, expr *e, decl *fn)
 {
     fn = check_routine_args(c, e, fn);
     if (!fn) return T_ERR;
-    if (fn->is_async) check_task_call(c, e, fn);
+    if (fn->is_async || (fn->is_worker && c->awaiting != e)) check_task_call(c, e, fn);
     if (fn->is_worker) {
         decl *from = reading_code(c);
         if (c->awaiting != e) {
-            diag_error(e->at, "a local worker is awaited from local async code: 'var result = await " STR_FMT "(...)'", STR_ARG(fn->name));
+            e->task_start_value = true;
+            fn->handles_tasks = true;
+            note_side(fn, TASK_LOCAL, e->at);
         } else if (from && from->is_async) {
             from->uses_workers = true;
             note_side(from, TASK_LOCAL, e->at);
@@ -5093,7 +5363,7 @@ static type check_function_call(checker *c, expr *e, decl *fn)
             vec_push(c->method->callee_at, e->at);
         }
     }
-    return fn->result;
+    return task_call_result(c, e, fn);
 }
 
 static type check_block_call(const checker *c, expr *e, param *p)
@@ -5814,7 +6084,7 @@ static type check_wait(checker *c, expr *e)
     if (ticks || frames) {
         if (in_async_function(c)) {
             if (!note_task_side(c, frames ? TASK_LOCAL : TASK_MATCH, e->at)) return T_ERR;
-        } else if (local_code(c) != frames) {
+        } else if (!inherits(c) && local_code(c) != frames) {
             diag_error(e->at, frames ? "frames are this machine's, and the match counts ticks: 'await Wait.Ticks(n);'"
                                      : "ticks are the match's, and local code counts frames: 'await Wait.Frames(n);'");
             return T_ERR;
@@ -5822,7 +6092,7 @@ static type check_wait(checker *c, expr *e)
     }
     e->call = CALL_WAIT;
     vec_push(e->arg_want, want);
-    return T_VOID_;
+    return c->awaiting == e ? T_VOID_ : builtin_task_start(c, e, T_VOID_, frames ? TASK_LOCAL : ticks ? TASK_MATCH : TASK_EITHER);
 }
 
 static bool names_wait(const checker *c, const expr *e)
@@ -7457,10 +7727,7 @@ static type check_method(checker *c, expr *e)
         diag_note("the World's methods do: 'world.Get<Health>(entity)', in code that takes 'World world'");
     }
     if (names_wait(c, e->object)) {
-        if (c->awaiting == e) return check_wait(c, e);
-        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
-        diag_error(e->at, "Wait." STR_FMT " is waited for: 'await Wait." STR_FMT "(...);'", STR_ARG(e->name), STR_ARG(e->name));
-        return T_ERR;
+        return check_wait(c, e);
     }
     if (e->object->kind == E_NAME && str_eq_c(e->object->name, "Scene") && !find_local(c, e->object->name)
         && !find_param(c, e->object->name)) {
@@ -7496,15 +7763,6 @@ static type check_method(checker *c, expr *e)
         }
         if (io || flush || fetch) {
             if (!check_io_use(c, e->at, fetch ? "Web.Fetch" : str_to_cstr(owner), fetch)) return T_ERR;
-            if (flush && c->awaiting != e) {
-                diag_error(e->at, "Storage.Flush is awaited: 'await Storage.Flush()'");
-                return T_ERR;
-            }
-            if (fetch && c->awaiting != e) {
-                diag_error(e->at, "Web.Fetch is awaited: 'var bytes = await Web.Fetch(url);'");
-                diag_note("it takes a while, so the task waits for it, and local code reads what came in a frame to come");
-                return T_ERR;
-            }
             if (io || fetch) {
                 const type bytes = list_of(c->prog, (type){TY_BYTE, NULL});
                 const type paths = list_of(c->prog, (type){TY_STRING, NULL});
@@ -7572,7 +7830,8 @@ static type check_method(checker *c, expr *e)
             }
             if (str_eq_c(e->name, "Exists")) return result;
             if (io) vec_push(c->prog->io_calls, e);
-            return result_of(c->prog, result, (type){TY_ENUM, c->prog->io_error}, false);
+            const type complete = result_of(c->prog, result, (type){TY_ENUM, c->prog->io_error}, false);
+            return (flush || fetch) && c->awaiting != e ? builtin_task_start(c, e, complete, TASK_LOCAL) : complete;
         }
         if (str_eq_c(owner, "Path")) {
             if (gpu_refuses(c, e->at, "work with paths", "work with paths in CPU code")) return T_ERR;
@@ -7629,6 +7888,16 @@ static type check_method(checker *c, expr *e)
     const expr *previous_asset = c->asset_value;
     c->asset_value = e->object;
     const type obj = check_expr(c, e->object);
+    if (obj.kind == TY_STRUCT && obj.decl->task_handle) {
+        for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+        if (!str_eq_c(e->name, "Cancel") || e->args.count) {
+            diag_error(e->at, "a task handle has Cancel() and isRunning, isCompleted and isCancelled properties");
+            return T_ERR;
+        }
+        if (!task_handle_access(c, obj.decl, true, e->at)) return T_ERR;
+        e->call = CALL_TASK;
+        return T_VOID_;
+    }
     c->asset_value = previous_asset;
     if (obj.decl && (obj.kind == TY_STRUCT || obj.kind == TY_COMPONENT || obj.kind == TY_SINGLETON)) {
         const field *f = callable_field_named(obj.decl, e->name);
@@ -8206,6 +8475,14 @@ static type binary_result(const program *prog, const tok_kind op, const type l, 
     *overload = NULL;
     if (l.kind == TY_ERROR || r.kind == TY_ERROR) return T_ERR;
     if ((op == T_EQ || op == T_NE) && l.kind == TY_STRUCT && r.kind == TY_STRUCT
+        && l.decl->task_handle && r.decl->task_handle && type_assignable(l, r)) {
+        if (l.decl->task_origin && !r.decl->task_origin)
+            note_side(l.decl->task_origin, r.decl->task_local ? TASK_LOCAL : TASK_MATCH, at);
+        if (r.decl->task_origin && !l.decl->task_origin)
+            note_side(r.decl->task_origin, l.decl->task_local ? TASK_LOCAL : TASK_MATCH, at);
+        return T_BOOL_;
+    }
+    if ((op == T_EQ || op == T_NE) && l.kind == TY_STRUCT && r.kind == TY_STRUCT
         && l.decl == prog->visibility_group && r.decl == prog->visibility_group) return T_BOOL_;
     // Two audiences are equal when they have the same players
     if ((op == T_EQ || op == T_NE) && l.kind == TY_STRUCT && r.kind == TY_STRUCT
@@ -8738,6 +9015,16 @@ static type check_member(checker *c, expr *e)
     c->member_object = e->object;
     const type obj = check_expr(c, e->object);
     if (obj.kind == TY_ERROR) return T_ERR;
+
+    if (obj.kind == TY_STRUCT && obj.decl->task_handle) {
+        if (!str_eq_c(e->member, "isRunning") && !str_eq_c(e->member, "isCompleted") && !str_eq_c(e->member, "isCancelled")) {
+            diag_error(e->at, "a task handle exposes isRunning, isCompleted and isCancelled; await it for its result");
+            return T_ERR;
+        }
+        if (!task_handle_access(c, obj.decl, false, e->at)) return T_ERR;
+        e->task_completion = true;
+        return T_BOOL_;
+    }
 
     property *prop = find_property(obj.decl, e->member);
     if (prop) return check_property(c, e, prop, obj.decl);
@@ -10296,6 +10583,11 @@ static type check_defaulted(checker *c, expr *e)
     const type t = check_expr_any(c, e->lhs);
     if (t.kind == TY_ERROR) return T_ERR;
     if (!is_wrapped(t)) {
+        if (t.kind == TY_STRUCT && t.decl->task_handle) {
+            diag_error(e->at, "'!' unwraps a result, but this is %s; await the task first", type_name(t));
+            diag_note("write '(await operation)!' to use its default result on failure");
+            return T_ERR;
+        }
         diag_error(e->at, "'!' after a call carries on with the default when it fails, and %s can't fail",
                    wrapped_what(e->lhs));
         if (t.kind == TY_BOOL) diag_note("'!' before a bool negates it: '!value'");
@@ -10474,6 +10766,12 @@ static type check_await(checker *c, expr *e)
         return T_ERR;
     }
     if (t.kind == TY_ERROR) return T_ERR;
+    if (t.kind == TY_STRUCT && t.decl->task_handle) {
+        if (!t.decl->task_origin && in_async_function(c)
+            && !note_side(c->method, t.decl->task_local ? TASK_LOCAL : TASK_MATCH, e->at)) return T_ERR;
+        if (!task_handle_access(c, t.decl, false, e->at)) return T_ERR;
+        return t.decl->task_value;
+    }
     if (call->call == CALL_WAIT) return T_VOID_;
     if (call->storage_flush || call->web_fetch) return t;
     if ((call->kind == E_CALL || call->kind == E_METHOD) && call->call == CALL_FUNCTION && (call->method->is_async || call->method->is_worker)) return t;
@@ -12490,7 +12788,7 @@ static bool stands_alone(const expr *e)
         || (called->kind == E_CALL && call == CALL_SPAWN) || call == CALL_METHOD || call == CALL_FUNCTION
         || call == CALL_SEND || call == CALL_LOAD || call == CALL_UNLOAD
         || call == CALL_GUI || call == CALL_ACTION || call == CALL_SESSION || call == CALL_CLIPBOARD || call == CALL_AUDIO
-        || call == CALL_SNAP || call == CALL_DISCARD
+        || call == CALL_SNAP || call == CALL_DISCARD || call == CALL_TASK
         || (call == CALL_SKINNED && (skinned_lookup(called->skin_operation)
             || called->skin_operation == SKIN_OP_POSE_SAMPLE || called->skin_operation == SKIN_OP_POSE_BLEND))
         || called->io_operation
@@ -14291,6 +14589,9 @@ static void check_fields(checker *c, const decl *d)
     for (int i = 0; i < d->fields.count; i++) {
         field *f = &d->fields.items[i];
         if (f->hidden) continue;
+        if (holds_local_task_in(f->type, NULL) && d->kind != DECL_STRUCT && d->kind != DECL_COMPONENT && !d->is_local) {
+            diag_error(f->at, "LocalTask belongs to this machine: keep this field in local state");
+        }
         if (holds_callable(f->type) && d->kind != DECL_STRUCT && !d->is_local && d->kind != DECL_COMPONENT) {
             diag_error(f->at, "callable and shader bindings belong in local state: make this field local");
         }
@@ -15225,8 +15526,10 @@ static void check_async_decl(decl *fn)
         return;
     }
     if (fn->takes_action) diag_error(fn->async_at, "a function that takes an Action can't be async yet");
+    if (holds_local_task_in(fn->result, NULL)) note_side(fn, TASK_LOCAL, fn->return_type_qual_at);
     for (int i = 0; i < fn->params.count; i++) {
         param *p = &fn->params.items[i];
+        if (holds_local_task_in(p->type, NULL)) note_side(fn, TASK_LOCAL, p->type_at.line ? p->type_at : p->at);
         if (p->is_out) { // As in C#: its call returns before the task has made anything
             diag_error(p->out_at, "an async function goes on after its call returns, so it can't make the caller's '" STR_FMT "'",
                        STR_ARG(p->name));
@@ -16571,7 +16874,7 @@ static bool call_acts(const expr *e)
     switch (e->call) {
     case CALL_SPAWN: case CALL_LOAD: case CALL_UNLOAD: case CALL_SEND: case CALL_ADD:
     case CALL_REMOVE: case CALL_DESTROY: case CALL_PARENT: case CALL_GUI: case CALL_ACTION: case CALL_SESSION:
-    case CALL_CLIPBOARD: case CALL_AUDIO: case CALL_SNAP: case CALL_GRID: case CALL_RANDOM: case CALL_ROLL:
+    case CALL_CLIPBOARD: case CALL_AUDIO: case CALL_SNAP: case CALL_GRID: case CALL_RANDOM: case CALL_ROLL: case CALL_TASK:
         return true;
     case CALL_DRAW: return e->type.kind == TY_VOID; // Draw.MeasureText and the conversions only give a value
     case CALL_SKINNED: return skinned_lookup(e->skin_operation)
@@ -16584,7 +16887,7 @@ static bool call_acts(const expr *e)
     case CALL_METHOD: {
         const decl *m = e->method;
         if (!m) return false;
-        if (m->is_extern || m->calls_c || m->draws || m->rolls || m->is_async || m->is_mut_method || m->takes_action) return true;
+        if (m->is_extern || m->calls_c || m->draws || m->rolls || m->is_async || m->is_worker || m->is_mut_method || m->takes_action) return true;
         if (m->acts[0] || m->acts[1] || m->starts_tasks) return true; // It sends, spawns, changes entities or starts tasks, as its caller would
         for (int i = 0; i < m->params.count; i++) {
             if (m->params.items[i].mode == PARAM_MUT) return true; // It changes the caller's variable
@@ -17551,7 +17854,8 @@ static void add_device_records(program *prog)
 static bool is_builtin_name(const str name)
 {
     type dummy;
-    return builtin_type_named(name, &dummy) || str_eq_c(name, "Math") || builtin_draw_owner(name) || builtin_old_draw_owner(name)
+    return builtin_type_named(name, &dummy) || str_eq_c(name, "Task") || str_eq_c(name, "LocalTask")
+        || str_eq_c(name, "Math") || builtin_draw_owner(name) || builtin_old_draw_owner(name)
         || str_eq_c(name, "Devices") || str_eq_c(name, "Spawn") || str_eq_c(name, "Send") || str_eq_c(name, "Scene")
         || str_eq_c(name, "GUI") || str_eq_c(name, "GUILayout") || str_eq_c(name, "Screen") || str_eq_c(name, "Cursor")
         || str_eq_c(name, "Frame") || str_eq_c(name, "File") || str_eq_c(name, "Directory") || str_eq_c(name, "Path")
@@ -20881,6 +21185,16 @@ bool check(program *prog)
     if (prog->random->named) order_struct(prog, prog->random);
     for (int i = 0; i < prog->asset_refs.count; i++) order_struct(prog, prog->asset_refs.items[i]);
     check_sends(&c);
+    check_task_registry_calls(&c);
+    for (bool changed = true; changed;) {
+        changed = false;
+        for (int i = 0; i < c.calls.count; i++) {
+            const call_site *site = &c.calls.items[i];
+            if (!(site->from->is_async || site->from->task_cpu) || site->to->is_extern
+                || site->to->is_async || site->to->is_worker || site->to->task_cpu) continue;
+            site->to->task_cpu = changed = true;
+        }
+    }
     check_acts(&c);
     check_render_resource_calls(&c);
     check_io_calls(&c);
@@ -20890,6 +21204,36 @@ bool check(program *prog)
     check_audio_bodies(&c);
     check_audio_sizes(&c);
     resolve_tasks(&c);
+    for (int i = 0; i < prog->task_handles.count; i++) {
+        decl *handle = prog->task_handles.items[i], *origin = handle->task_origin;
+        if (!origin) continue;
+        handle->task_local = origin->task_side == TASK_LOCAL;
+        for (int side = 0; side < 2; side++) {
+            if (origin->task_side != TASK_EITHER && (origin->task_side == TASK_LOCAL) != (side != 0)) continue;
+            if (origin->task_side == TASK_EITHER && !origin->runs_in[side]) continue;
+            if (!handle->task_access[0]) continue;
+            ensure_task_slots(prog, side != 0);
+            origin->task_access[side] |= handle->task_access[0];
+            if (side) origin->world_local = true;
+            else origin->world_match = true;
+        }
+        if (origin->task_side != TASK_EITHER) {
+            sb name = {0};
+            sb_put(&name, handle->task_local ? "LocalTask" : "Task");
+            if (handle->task_value.kind != TY_VOID) sb_printf(&name, "<%s>", type_name(handle->task_value));
+            handle->name = handle->qualified = str_from(name.data);
+        }
+    }
+    check_task_registry_calls(&c);
+    if (prog->shards && prog->task_slots[0]) {
+        loc at = {1, 1, 0};
+        for (int i = 0; i < prog->decls.count; i++) {
+            const decl *d = prog->decls.items[i];
+            if (!d->builtin && d->task_access[0]) { at = d->at; break; }
+        }
+        diag_error(at, "match Task handles aren't supported in sharded games yet");
+        diag_note("use LocalTask handles for local work, or directly await/discard match async calls; distributed task ownership is a separate feature");
+    }
     check_this_calls(&c);
     check_drawing_calls(&c);
     check_raw_uses(&c);

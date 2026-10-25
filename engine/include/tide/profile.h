@@ -38,6 +38,11 @@ typedef struct tide_profile {
     // threads add up to more than the tick took.
     tide_profile_times systems;
     tide_profile_times views; // A frame's views, in the frame's order
+    // Local worker queue delay and elapsed computation, published on the frame
+    // thread after provider completion. These intervals can overlap each other
+    // and frames; they are not parts to add to a frame's time.
+    tide_profile_times workers;
+    uint64_t worker_runs; // Completed measured calculations since clear
     // Since it was cleared:
     uint32_t ticks;    // Ticks that ran
     double systems_ms; // ...their systems, all together

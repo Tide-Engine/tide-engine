@@ -4,7 +4,7 @@
 
 static bool client_singleton(const program *prog, const decl *d)
 {
-    return !d->is_local && d != prog->visibility_state && d != prog->hierarchy[0];
+    return !d->is_local && d != prog->visibility_state && d != prog->hierarchy[0] && d != prog->task_slots[0];
 }
 
 static void gen_client_hierarchy_codec(gen *g)

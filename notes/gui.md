@@ -71,6 +71,17 @@ passes 96 runtime/profile cases; gui_custom passes seven end-to-end cases.
 The production docs build passed, retaining the existing examples/lists/maps/
 grids 404 reports. No test guard, hash pin or timeout was weakened.
 
+Integration with origin/dev through a21a81a8 retained the incoming task/worker
+cleanup and the scroll writeback hook in gen_open/closing. The single C conflict
+was the GUI container initializer; the notes' concurrent prepend sections were
+both retained. GUI.worker_limits is kept as the incoming optional borrowed
+pointer. Overlap validation passes 101 native and 97 web cases across the
+selected compiler/runtime/editor/GPU checks and the newly built worker quick
+checks. The initial overlap selection found three unbuilt worker executables
+on each backend; they were built and all three checks passed. The merged docs
+build passed. No GUI behavior or simulation conflict required repeating the
+unrelated full suites.
+
 Other operating systems, Android/real phones and sanitizers were not run on this
 Windows machine. The Vulkan validation layer is unavailable; actual Vulkan and
 OpenGL functional rendering passed. No workflow was manually dispatched.

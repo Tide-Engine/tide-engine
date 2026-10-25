@@ -12,6 +12,32 @@ caret/selection state instead. It binds the optional clipboard callback; its
 existing document-undo shortcuts already exclude active text editing. The
 unchanged inspector/UI scripted regressions exercise that integration.
 
+## Task handle syntax and editor surface (2026-10-25)
+
+Task/LocalTask completion retains full optional/failable result type text.
+The type walker follows declared failure annotations, and Task members offer
+Cancel/isRunning/isCompleted/isCancelled without exposing hidden storage.
+Match Cancel is omitted in local contexts. Hovers and formatting preserve
+Task<T fails E>; engine-awaitable lowering retains authored source symbols
+for hover/navigation instead of generated wrapper names.
+
+The shared and JetBrains TextMate grammars handle nested task generic regions
+and contextual fails. Vim/Emacs include both builtin type names. The focused
+LSP regression checks members, inference, failure references, engine-call
+hover and idempotent formatting; shared grammar checks pass 290/290.
+The older Web Request test now accepts retained/discarded Send handles and
+checks handle completion rather than requiring immediate await. Full-suite
+validation: language.md.
+
+Integration retains alias/custom-GUI editor support and synchronizes the
+JetBrains grammar snapshot with the combined shared grammar. All 299 grammar
+cases, the complete native LSP suite and production docs build pass.
+The full native run exposed a PID-file readiness race in the editor Play
+fixture: file creation can be observed before its write. The fixture now uses
+a newline-terminated PID and waits for the complete line under its unchanged
+three-second bound. The rebuilt Play test passes; production process handling
+is unchanged.
+
 ## Transparent type aliases (2026-10-24)
 
 The shared TextMate grammar distinguishes `using Name = Type;` declarations

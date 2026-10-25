@@ -2072,7 +2072,7 @@ Picks made to build it, awaiting the owner.
 
 ### Decided
 
-- `async` and `await`, as in C#. `async` before a function lets it wait with `await`, and pick up where it stopped. There's no `Task<T>`: the function's type is its value's, `async int Doubled(int x)`, and `await Doubled(3)` gives it.
+- `async` and `await`, as in C#. `async` before a function lets it wait and pick up where it stopped. Declarations name their completion value, `async int Doubled(int x)`, and `await Doubled(3)` gives it. The approved first-class handle model below extends how calls can be kept and awaited.
 - A call of an async function that isn't awaited starts a task, which goes on by itself.
 - Tasks run in the match as well as in local code. A match task is part of the match: snapshots, hashes and rollback hold it, players who join get it, and it carries on when the match changes hands. Match code only waits for what's the same on every machine (ticks, time, events); a service's answer reaches the match through input.
 - A task ends when whatever started it does.
@@ -2112,9 +2112,9 @@ system Start(Round round)
 Implemented, awaiting approval:
 
 - `async` goes before a function or an event handler, before or after `local` if it has one (`local async event(...)`); before anything else it's an error that says where it goes. Methods can't be async yet, nor extern functions or functions that take an Action. `await` is a keyword, and binds like `try`: `await Doubled(3) + 1` adds 1 to the value. A `!` after an awaited call is the awaited value's: `await Fetch(name)!`.
-- An async call is awaited, from async code (async functions and handlers), or a statement of its own, which starts a task; using its value without `await` is an error that says which to write. A started task's value is dropped; one that can fail is warned about as a call that can fail is, and `Load(name)!;` starts it without the warning. Systems, views, handlers and async code start tasks, and so does a plain function or method, as the code that calls it could (see Functions and blocks): the input's `Sample`, `Sanitize` and `Predict`, code the GPU runs, operators and `Interpolate` start none.
-- `await` waits for an async call, or for `Wait.Ticks(n)` (the match's ticks; match code only), `Wait.Frames(n)` (this machine's frames; local code only) or `Wait.Seconds(s)`: in the match, the nearest whole number of ticks, at least one; in local code, this machine's time, which hosts give each frame (`tide_local_frame_time`) and a task counts down frame by frame, within a tenth of a millisecond. A wait of 0 or less doesn't wait. `Wait` only goes after `await`. `await` isn't allowed in a block written after a call.
-- Async code is a state machine, as in C#: a call of an async function runs until it first waits, inside the code that calls it. An awaited call's frame is part of the caller's, so a task is one frame however deep it awaits, and an async function can't await itself (it can start itself again, as a task of its own).
+- An async call returns a started handle, as specified below. Systems, views, handlers and async code start tasks, and so does a plain function or method, as the code that calls it could (see Functions and blocks): the input's `Sample`, `Sanitize` and `Predict`, code the GPU runs, operators and `Interpolate` start none. A discarded ordinary async call continues without retaining its result.
+- `await` waits for a handle or immediate async call. `Wait.Ticks(n)` starts a match timer, `Wait.Frames(n)` a local timer, and `Wait.Seconds(s)` a timer in its caller's world: in the match, the nearest whole number of ticks, at least one; in local code, this machine's time, which hosts give each frame (`tide_local_frame_time`) and a task counts down frame by frame, within a tenth of a millisecond. A wait of 0 or less doesn't wait. `await` isn't allowed in a block written after a call.
+- Async code is a state machine, as in C#: a call of an async function runs until it first waits, inside the code that calls it. A directly awaited call can share its caller's private frame; kept handles identify separate started operations. An async function can't directly await itself through that private frame; it can start itself again and keep the resulting handle.
 - A task keeps its parameters and locals while it waits, copied, with their text and lists in its world's heap. An async function's component and singleton parameters aren't kept: it gets them again each time it goes on, as they are then, from the entity it belongs to, so the caller passes its own (a parameter), and a task whose entity lost one ends. Its `mut` parameters are only components and singletons; it can't keep the caller's other variables, and it has no `out` parameters: its call returns before it has made anything, so it returns a struct instead.
 - An async handler is a task per event: its event is copied into the task, and its components are the entity's, got again after each wait.
 - A plain function an async function calls counts too: one that sends a match event makes it match code, and one that sends a local event or a command makes it local (see Functions).
@@ -2128,11 +2128,68 @@ Implemented, awaiting approval:
 
 - Awaiting an event: `await Hit` on an entity, which a task would wake for in the event's turn.
 - Async C functions, which C finishes later (a service's answer), for local code.
-- Holding a running call to await later, like C#'s `Task.WhenAll`: `var` could hold it without its type being written, as with errors.
-- Cancelling a task from code, through a handle, and cancelling a request that was sent (`await request.Send()`): nothing designed says how code names either. A request ends by itself with a time limit (`SetTimeout`, see Local files); a task that waits for one ends with what it belongs to.
+- Combining task completions (`WhenAll`, `WhenAny`): no API is decided. Keeping and awaiting individual calls is covered by the approved handle model below.
+- Cancelling an underlying external request independently of its task. Task-handle cancellation is covered below; an external C/provider operation may still need its own protocol.
 - Methods and functions that take an Action being async, and `await` inside a block written after a call.
 - Local handlers of match events (see Events), which a local task awaiting a match event would need too.
 - Whether what's written before an `await` in its statement is read before the wait, as in C#: `score.value + await Bonus()` reads `score.value` once the task goes on today, unless a call that writes comes after it in the statement (see Evaluation order).
+
+### Started task handles (decided 2026-10-25)
+
+Async functions, local workers and engine awaitables share a started-operation
+model. Declarations name completion types; calls return handles.
+
+- Declarations keep their completion types: `async T F(...)` and
+  `local worker T F(...)`. A call returns a started handle; awaiting it gives
+  the declared result. Calling and awaiting immediately is the same operation
+  as keeping that handle and awaiting it later.
+- Match async calls produce `Task<T>`, local async and local worker calls
+  produce `LocalTask<T>`. `Task` and `LocalTask` are the void forms. World
+  placement follows the existing caller-capability rules. Bare match workers
+  remain reserved; this decision introduces no cross-tick match computation.
+  First-class match handles are currently rejected in sharded games; distributed
+  identity, result retention and cancellation are a separate pass. Existing
+  directly awaited/discarded match async calls and local handles remain supported.
+- Preserve the complete result type: `Task<T fails E>` and
+  `LocalTask<T fails E>` retain their declared error type, and optional results
+  retain their optionality. `await handle` has the same value/failure type as
+  `await F(...)`; failures remain values, not exceptions.
+- Handles copied or stored refer to the same operation. Awaiting does not
+  restart it. Repeated/multiple awaits obtain the same logical result using
+  ordinary Tide value-copy rules, so one recipient's edits cannot change
+  another recipient's result.
+- `handle.Cancel()` cancels that operation; cancelling a completed operation
+  has no effect. Default/stale handles are harmless and never refer to a
+  subsequently created operation. `isRunning` reports whether it is pending
+  or running. `isCompleted` includes cancellation, and `isCancelled` is true for
+  cancelled, default and stale handles. Equality compares operation identity.
+- Cancellation propagates through an ordinary await by ending that awaiting
+  task's continuation. Cancelling one awaiting task does not cancel a shared
+  operation that still has another consumer. An unused directly awaited
+  worker can be abandoned automatically; a queued callback is skipped and a
+  running calculation stops at generated Tide safe points. An extern C call
+  finishes normally.
+- Discarding the return of an ordinary async call retains fire-and-forget
+  behavior. Entity/world ownership still ends tasks with their existing
+  owners. Match task identities, results and cancellation are match state;
+  local ones remain outside match snapshots, hashes and networking.
+  Per-recipient visibility preserves authoritative server task execution:
+  registries, continuations and cached results are private. A projected client
+  cannot start a retained match operation; a published handle whose operation
+  is absent there is stale. Publish ordinary permitted progress/results for views.
+- A compatible local save/reload preserves the logical connection between a
+  stored handle and its surviving task. Provider pointers, native callbacks
+  and live worker execution never enter saved state; pending local workers
+  still restart after restoration/reload.
+- `Wait` timers, `Storage.Flush`, `Web.Fetch` and request `Send` return the same
+  handle types with their complete declared results. Awaiting a retained timer
+  waits for its original deadline; it does not start a new delay or request.
+
+Result reclamation, operation indexing, continuation scheduling and worker
+admission are internal implementation choices. Cached results remain available
+to reachable consumers and unreachable cycles are reclaimed. Preserve observable
+ordering and serial results. No public shared-result mutation, multiple-result
+stream, explicit cancellation outcome API or `WhenAll` syntax is decided here.
 
 ### Local workers
 
@@ -2164,13 +2221,14 @@ include text, nested lists/maps/sets, ordinary structs, fixed arrays, optionals
 and failable results.
 Reachable helpers have no world, frame, drawing/audio, file/network, task-start
 or implicit match-randomness capabilities. Explicit Random values retain their
-ordinary calculation rules. Extern C remains trusted. Worker calls currently
-require `await`; start a local async wrapper from a view or local handler.
+ordinary calculation rules. Extern C remains trusted. A call returns a started
+`LocalTask<T>`; local async code awaits its result.
 
 Captures are fully materialized, including packed geometry lists, before
 dispatch. Results are acquired on the frame thread. Owner loss drops the
 continuation and discards pending output; abandoned queued calculations are
-skipped, while a running calculation may finish privately. Local state disposal
+skipped, while a running calculation stops at generated Tide safe points.
+Trusted extern C finishes its current call. Local state disposal
 and retained reload drain jobs before their callbacks can be unloaded.
 Restored/retained tasks restart a pending worker
 from their current saved arguments and component bindings.
@@ -2185,8 +2243,8 @@ Snapshot capture copies the directory and existing chunks on the calling thread.
 Capture follows written argument order. An earlier grid capture survives later
 argument mutations or waits as privately owned task state until dispatch.
 
-**Open:** deterministic match workers, priorities, explicit cancellation,
-cooperative interruption and public worker/task handles.
+**Open:** deterministic match workers, invocation priorities, distributed match
+task handles and explicit cancellation outcomes beyond status properties.
 
 ### Proposed worker extensions (not implemented)
 
@@ -2200,19 +2258,14 @@ No new syntax or runtime behavior below is part of the current implementation.
   it neither interrupts running calculations nor removes the cost of capture.
   Invocation spelling and any foreground-capacity reservation need decisions
   and measurements before implementation.
-- **Explicit cancellation:** first expose cancellation of an owning local task,
-  using a typed, owner-bound local handle. Cancel ends its continuation and
-  abandons pending worker publication, matching existing owner loss. A call is
-  nonblocking and cannot undo a result already published. Queued work is skipped;
-  running work keeps its private capture until completion. Independent worker
-  handles, multiple awaiters and an explicit Cancelled result are a separate
-  API choice. Define handle behavior across save/restore and reload before
-  exposing it; no handle belongs in match state.
-- **Cooperative interruption:** avoid terminating threads or interrupting C.
-  An eventual local cancellation context could offer safe checks in long Tide
-  loops. It would observe only cancellation, release private work safely and
-  leave C calls to finish. Priorities alone do not provide preemption. This needs
-  a cancellation/result contract first.
+- **Explicit cancellation outcomes:** ordinary await cancellation ends its
+  continuation. If game code needs to continue after cancellation, consider a
+  separate outcome-returning await API that preserves success, declared failure
+  and cancellation as distinct cases. Its spelling is undecided; no cancellation
+  value is injected into `T fails E`.
+- **Distributed match handles:** retain the current compiler restriction until
+  operation identity, result ownership, cross-shard waits/cancellation and handoff
+  are designed together. Local workers remain machine-local.
 - **Match workers:** keep bare `worker` reserved. The existing ECS scheduler
   already distributes same-tick work deterministically. A worker that finishes
   before the tick's dependency barrier is straightforward but cannot advance

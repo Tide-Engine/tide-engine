@@ -169,7 +169,7 @@ static void recipient_state_schema(asset_usage *w)
     ctext(w, "Tide recipient logical state schema 2");
     for (int i = 0; i < prog->singletons.count; i++) {
         decl *d = prog->singletons.items[i];
-        if (d->is_local || d == prog->visibility_state || d == prog->hierarchy[0]) continue;
+        if (d->is_local || d == prog->visibility_state || d == prog->hierarchy[0] || d == prog->task_slots[0]) continue;
         recipient_schema_type(w, &schema, (type){TY_SINGLETON, d});
     }
     number(w, UINT64_MAX);
@@ -400,6 +400,7 @@ static void declaration(asset_usage *w, const decl *d)
 
 static void expression(asset_usage *w, const expr *e)
 {
+    if (e->task_source) { queue(w, USAGE_EXPR, e->task_source); return; }
     number(w, e->kind);
     value_type(w, e->type);
     text(w, e->text);

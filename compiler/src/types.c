@@ -49,6 +49,8 @@ static const struct {
 #define BUILTIN_COUNT (sizeof builtins / sizeof builtins[0])
 
 static const generic_form generic_forms[] = {
+    {"Task", 1, {GENERIC_VALUE}, {"the task's result type, like 'Task<int>'"}, NULL, "'>' after the task's result"},
+    {"LocalTask", 1, {GENERIC_VALUE}, {"the local task's result type, like 'LocalTask<int>'"}, NULL, "'>' after the task's result"},
     {"Asset", 1, {GENERIC_VALUE}, {"the referenced mesh type, like 'Asset<Mesh<Vertex3>>'"}, NULL, "'>' after the referenced mesh type"},
     {"List", 1, {GENERIC_ELEMENT}, {"the list's element type, like 'List<int>'"}, NULL, "'>' after the list's element type"},
     {"Map", 2, {GENERIC_KEY, GENERIC_ELEMENT},
@@ -339,6 +341,12 @@ bool type_assignable(const type to, const type from)
 {
     if (to.kind == TY_ERROR || from.kind == TY_ERROR) return true;
     if (to.kind == from.kind && to.decl == from.decl) return true;
+    if (to.kind == TY_STRUCT && from.kind == TY_STRUCT && to.decl->task_handle && from.decl->task_handle
+        && to.decl->task_value.kind == from.decl->task_value.kind && to.decl->task_value.decl == from.decl->task_value.decl) {
+        const int to_side = to.decl->task_origin ? to.decl->task_origin->task_side : to.decl->task_local ? TASK_LOCAL : TASK_MATCH;
+        const int from_side = from.decl->task_origin ? from.decl->task_origin->task_side : from.decl->task_local ? TASK_LOCAL : TASK_MATCH;
+        return to_side == TASK_EITHER || from_side == TASK_EITHER || to_side == from_side;
+    }
     if (to.kind == TY_COMPONENT && from.kind == TY_COMPONENT
         && (to.decl->placement_of ? to.decl->placement_of : to.decl)
             == (from.decl->placement_of ? from.decl->placement_of : from.decl)) return true;

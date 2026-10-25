@@ -8,6 +8,17 @@ The callback is optional for custom hosts; hidden runs retain the platform's
 existing refusal to access the system clipboard. GUI layout changes require
 hosts/games to rebuild together. Contracts and validation: notes/gui.md.
 
+## Worker limits and profile rows (2026-10-25)
+
+Custom hosts can supply tide_gui.worker_limits; zero fields select the internal
+64 pending/64 MiB capture/4 MiB per-frame transfer defaults. The standard host
+uses those defaults. These are soft private-job limits, not a process memory
+cap; first-class task argument state follows normal allocation rules.
+The profiler adds Workers per-job rows (queue/compute/capture/transfer) and
+Worker copies frame cost. Callbacks only record timestamps; the frame thread
+updates profile structures after safe provider completion. Contracts and
+measurements: language.md, schedule-and-threads.md, benchmarks.md.
+
 ## Local workers (2026-10-24)
 
 The standard host supplies its existing platform pool in tide_gui.jobs before

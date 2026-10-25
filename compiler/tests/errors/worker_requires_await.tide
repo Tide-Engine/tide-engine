@@ -1,4 +1,5 @@
-// expect: a local worker is awaited from local async code
+// expect: can't assign LocalTask<int> to int
 local worker int Build(int value) { return value; }
-view Start() { Build(1); }
+local singleton Result { int value; }
+view Start(mut Result result) { result.value = Build(1); }
 scene Main;

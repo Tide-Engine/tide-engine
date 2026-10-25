@@ -1,0 +1,7 @@
+// expect: can't assign LocalTask<int fails First> to LocalTask<int fails Second>
+enum First { Bad }
+enum Second { Bad }
+async int Build() fails First { await Wait.Frames(1); return 1; }
+local singleton State { LocalTask<int fails Second> task; }
+view Start(mut State state) { state.task = Build(); }
+scene Main;

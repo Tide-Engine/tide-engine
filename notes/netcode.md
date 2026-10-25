@@ -1,5 +1,23 @@
 # Netcode: sessions, prediction, commands
 
+## Task handles follow authoritative visibility (2026-10-25)
+
+The generated match task registry is excluded from recipient singleton codecs
+and their simulation schema, alongside existing private continuations.
+Cached result tables remain private too. Ordinary public Task fields carry
+only identity; in a projection whose operation is absent they are stale,
+with no remote-status/result lookup. Retained match starts on a projected
+client return the default handle. Games publish permitted ordinary task
+progress/results through state, as before.
+
+task_visibility checks private cached/input markers are absent, canonical
+projection hashes agree before/after repair, projected status is stale, and
+client starts cannot alias the server's operation. No session wire protocol
+or runtime callback changed. The owner deferred distributed match task
+ownership: sharded games reject first-class match handle use for now, while
+direct/discarded match async and local handles/workers remain supported.
+Validation: language.md.
+
 ## Session cookie proof, protocol 19 (2026-10-24)
 
 The owner approved the wire-protocol change after the packet audit below.

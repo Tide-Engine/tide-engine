@@ -1,5 +1,21 @@
 # Hot reloading
 
+## Task handles and cached results (2026-10-25)
+
+Compatible reload carries operation identities, registry state and typed
+completion tables through ordinary layout migration. Frame fingerprints now
+include nested result/container/enum shapes, preventing same-sized schema
+changes from reinterpreting retained payloads. A removed/incompatible task
+table leaves stale handles, which validate as cancelled and cannot affect
+another operation. Pending workers retain owned arguments and restart after
+the old provider/code is drained.
+
+task_handles exercises actual layout migration with running and completed
+operations and deliberately dropped tables. task_layout changes an int leaf
+to a same-sized float inside List<Box> and requires both active and cached
+table fingerprints to change. worker_handles covers retained rebind with a
+shared grid-input operation and both waiters. Final validation: language.md.
+
 ## Pending local workers (2026-10-24)
 
 Generated local headers exclude worker-group/provider pointers from saved bytes.

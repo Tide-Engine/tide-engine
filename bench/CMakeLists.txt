@@ -50,6 +50,12 @@ add_executable(bench_hash hash/hash.c)
 target_link_libraries(bench_hash PRIVATE tide)
 add_test(NAME bench_hash COMMAND bench_hash --quick)
 
+tide_add_game(bench_workers SOURCES workers/game.tide NAME game HOST workers/main.c)
+target_link_libraries(bench_workers PRIVATE tide_platform)
+add_test(NAME bench_workers COMMAND bench_workers --quick)
+add_test(NAME bench_workers_fallback COMMAND bench_workers --quick --fallback --pending 1)
+add_test(NAME bench_workers_simulation COMMAND bench_workers --quick --simulate)
+
 # C against Tide: concepts written both ways, as fast as each language allows,
 # timed on the same work (see versus/versus.h).
 add_subdirectory(versus)

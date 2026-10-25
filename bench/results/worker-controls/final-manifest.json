@@ -1,0 +1,16 @@
+{
+  "head": "259e7a54e48a08aba95b90f1677cbc7f95d104ef",
+  "purpose": "final frozen voxel worker benchmark source identity after worker statement-safe-point reduction",
+  "sources": {
+    "compiler/src/codegen.c": "e8feb4ab8d144000adae6f8813b71b7964b184062fcf4b2b180b510d4de321f7",
+    "compiler/src/worker_codegen.inc": "e32e68a65e0f99afcc2ec890bcb3aa6e43eb8cc1f2160914d2d8eedcf5e5bed2",
+    "compiler/src/task_codegen.inc": "3932fd7f28f97722d6328767c46cbeb4e06f9fa568d5c23bba2f2b12883c16a7",
+    "compiler/src/task_trace_codegen.inc": "0f9a260f330ddc6d99d195b0d7b94bda3f8ae392a769b6da9b6c923444f140c2",
+    "engine/src/worker.c": "234066c2aad614ff246646b6b7d681cba441bb0d94087e80888025a754d16249",
+    "engine/include/tide/worker.h": "00a04e0605d0f6937b9e4763cace2fcd4eb54ad2c5e61e450ed1f2b426d21981",
+    "bench/workers/main.c": "bbf893b4a54096f48b67c30834a76a69aad19be6778c0184cdb679e494b6682e",
+    "bench/workers/game.tide": "83e9733b3fd279c8815bca2c061826500e287af3b06b31031bc65c5ceb016387"
+  },
+  "candidate_binary": "1822117a5fa94ca79544a4986981e7bd9a36815ed3ed10a3c21d017bd704e947",
+  "baseline_binary": "fb5e928ae978afd83edc56239097351246f1a474921bf435884b79ee9fbe92e0"
+}

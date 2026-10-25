@@ -1,7 +1,8 @@
-// expect: Wait.Ticks is waited for: 'await Wait.Ticks(...);'
+// expect: a task handle exposes isRunning, isCompleted and isCancelled; await it for its result
 scene Main { }
 
 async void Later()
 {
-    Wait.Ticks(1);
+    var waiting = Wait.Ticks(1);
+    Debug.Log(waiting.result);
 }

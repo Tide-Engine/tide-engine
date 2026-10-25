@@ -30,7 +30,9 @@ local singleton Fetches
 
 async void Run(mut Fetches f)
 {
-    f.hello = await Web.Fetch(f.origin + "/hello") ?? [];
+    LocalTask<List<byte> fails IOError> hello = Web.Fetch(f.origin + "/hello");
+    f.hello = await hello ?? [];
+    f.hello = await hello ?? [];
     f.missing = await Web.Fetch(f.origin + "/missing") is IOError.NotFound;
     f.failed = await Web.Fetch(f.origin + "/error") is IOError.Failed;
     f.invalid = await Web.Fetch("ftp://example.com/file") is IOError.InvalidPath;
@@ -71,8 +73,11 @@ async int Requests(string origin)
     mut var right = 0;
     var echo = origin + "/echo";
     // A POST with a header and a body, built in one line
-    var posted = await Web.Request(echo).SetMethod("POST").SetHeader("X-Tide", "hello").SetBody([1, 2, 3]).Send();
-    if (posted is WebResponse a && Echoed(a, 200, 4, 5, 3)) right |= 1;
+    LocalTask<WebResponse fails IOError> sending = Web.Request(echo).SetMethod("POST").SetHeader("X-Tide", "hello").SetBody([1, 2, 3]).Send();
+    var posted = await sending;
+    var postedAgain = await sending;
+    if (posted is WebResponse a && Echoed(a, 200, 4, 5, 3)
+        && postedAgain is WebResponse againPosted && Echoed(againPosted, 200, 4, 5, 3)) right |= 1;
     // A request with nothing set is a GET
     var got = await Web.Request(echo).Send();
     if (got is WebResponse b && Echoed(b, 200, 3, 0, 0)) right |= 2;

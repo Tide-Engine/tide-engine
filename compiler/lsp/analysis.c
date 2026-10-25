@@ -470,6 +470,13 @@ static void type_written(const loc qual_at, const loc at, const str text, const 
 // and the one a T? holds, each where it's written.
 static void type_tree(const type_ref *r, const type t)
 {
+    if (r->failure) {
+        type_ref plain = *r;
+        plain.failure = NULL;
+        type_tree(&plain, t.kind == TY_FAILABLE && t.decl ? t.decl->fields.items[0].type : (type){TY_ERROR, NULL});
+        type_tree(r->failure, t.kind == TY_FAILABLE && t.decl ? t.decl->fields.items[1].type : (type){TY_ERROR, NULL});
+        return;
+    }
     if (r->optional) { // int?: the type it holds
         const type inner = t.kind == TY_OPTIONAL && t.decl ? t.decl->fields.items[0].type : (type){TY_ERROR, NULL};
         type_ref plain = *r;
@@ -493,6 +500,7 @@ static void type_tree(const type_ref *r, const type t)
         for (int i = 0; i < r->args.count; i++) {
             const type part = t.kind == TY_STRUCT && t.decl && t.decl->callable && i < t.decl->call_types.count
                 ? t.decl->call_types.items[i]
+                : t.kind == TY_STRUCT && t.decl && t.decl->task_handle && i == 0 ? t.decl->task_value
                 : t.kind == TY_STRUCT && t.decl && t.decl->skin_kind == SKIN_MESH
                 ? i == 0 ? t.decl->skin_vertex : t.decl->skin_contract ? (type){TY_STRUCT, t.decl->skin_contract} : (type){TY_ERROR, NULL}
                 : holds && i < t.decl->fields.count ? t.decl->fields.items[i].type : (type){TY_ERROR, NULL};
@@ -678,6 +686,7 @@ static void walk_value(const expr *e);
 static void walk_expr(const expr *e)
 {
     if (!e) return;
+    if (e->task_source) { walk_expr(e->task_source); return; }
     if (!e->is_out) {
         walk_value(e);
         return;
@@ -951,7 +960,10 @@ static void walk_value(const expr *e)
             const type read = e->call == CALL_JSON && e->type.kind == TY_OPTIONAL ? e->type.decl->fields.items[0].type : type_of_decl(e->type_decl);
             type_place(e->type_arg_ref, e->type_arg_qual_at, e->type_arg_at, e->type_arg, read);
         }
-        if (e->call == CALL_VISIBILITY) {
+        if (e->call == CALL_TASK) {
+            o.kind = OCC_METHOD;
+            add_occ(o);
+        } else if (e->call == CALL_VISIBILITY) {
             o.kind = (e->visibility_operation & VISIBILITY_RECEIVER) ? OCC_METHOD : OCC_FUNCTION;
             if (o.kind == OCC_FUNCTION) {
                 o.owner = e->object->name;
@@ -2169,6 +2181,11 @@ static const method_form wait_calls[] = {
      "this machine's time, frame by frame."},
 };
 
+static const method_form task_calls[] = {
+    {"Cancel", "Cancel() -> void",
+     "Requests cooperative cancellation of this operation and ends its waiters. Cancelling one awaiting task preserves other consumers. Completed and stale handles are harmless."},
+};
+
 // A list's methods, as the checker takes them.
 static const method_form list_calls[] = {
     {"Add", "Add(T item)", "Adds an element at the end."},
@@ -2480,6 +2497,7 @@ static const method_form *methods_of(const type t, size_t *count)
 {
     const method_form *forms = NULL;
     *count = 0;
+    if (t.kind == TY_STRUCT && t.decl && t.decl->task_handle) { *count = sizeof task_calls / sizeof task_calls[0]; return task_calls; }
     if (t.decl && t.decl == A.prog->audience) { *count = sizeof audience_calls / sizeof audience_calls[0]; return audience_calls; }
     if (t.decl && t.decl == A.prog->visibility) { *count = sizeof visibility_calls / sizeof visibility_calls[0]; return visibility_calls; }
     if (t.kind == TY_STRUCT && t.decl) {
@@ -3502,8 +3520,8 @@ static void describe(const occurrence *o, sb *out)
                 sb_printf(out, "\n\nC function `%s`, which the game's C files or libraries define.",
                           o->decl->c_name ? o->decl->c_name : "?");
             } else if (m->is_async) {
-                sb_put(out, "\n\nAsync function: `await` it for its value, or call it as a statement to start it as a "
-                            "task, which goes on by itself.");
+                sb_put(out, "\n\nAsync function: calling starts the operation and returns a Task or LocalTask handle. "
+                            "`await` gives its complete declared result. A discarded call continues by itself.");
             } else {
                 sb_put(out, "\n\nFunction: runs when it's called.");
             }
@@ -3634,6 +3652,12 @@ static void describe(const occurrence *o, sb *out)
         }
         break;
     case OCC_MEMBER:
+        if (o->object_type.kind == TY_STRUCT && o->object_type.decl && o->object_type.decl->task_handle) {
+            sb_printf(&code, "bool %s." STR_FMT, type_name(o->object_type), STR_ARG(o->name));
+            code_block(out, code.data);
+            sb_put(out, "\n\nRead-only operation status. isCompleted includes cancellation; a default or stale handle is cancelled. Await the handle for its declared result.");
+            break;
+        }
         sb_printf(&code, "%s " STR_FMT, type_name(o->type), STR_ARG(o->name));
         code_block(out, code.data);
         if (o->object_type.decl && o->object_type.decl->skin_kind) {
@@ -6559,6 +6583,9 @@ static type read_type(const type t)
 
 static type member_type(const type t, const str member)
 {
+    if (t.kind == TY_STRUCT && t.decl && t.decl->task_handle
+        && (str_eq_c(member, "isRunning") || str_eq_c(member, "isCompleted") || str_eq_c(member, "isCancelled")))
+        return (type){TY_BOOL, NULL};
     if (t.kind == TY_STRUCT && t.decl && t.decl->asset_ref_of && str_eq_c(member, "Value")) return (type){TY_MESH, t.decl->asset_ref_of};
     if (t.kind == TY_STRUCT && t.decl && t.decl->skin_kind) {
         const decl *d = t.decl;
@@ -6723,6 +6750,14 @@ static void method_snippet(const method_form *form, sb *out)
 
 static void list_members(completion *c, const type t, const bool edges, const scope *sc)
 {
+    if (t.kind == TY_STRUCT && t.decl && t.decl->task_handle) {
+        const bool local = sc->decl && (sc->decl->is_view || sc->decl->is_local || (sc->decl->is_async && sc->decl->task_side == TASK_LOCAL));
+        if (t.decl->task_local || !local) item(c, "Cancel", CK_METHOD, task_calls[0].form, task_calls[0].doc, "Cancel()");
+        item(c, "isRunning", CK_PROPERTY, "bool", "True while this operation is running or waiting.", NULL);
+        item(c, "isCompleted", CK_PROPERTY, "bool", "True after completion or cancellation.", NULL);
+        item(c, "isCancelled", CK_PROPERTY, "bool", "True after cancellation, or for a default or stale handle.", NULL);
+        return;
+    }
     if (t.kind == TY_TEXTURE) item(c, "size", CK_PROPERTY, "int2", TEXTURE_SIZE_DOC, NULL);
     if (t.kind == TY_STRUCT && t.decl && t.decl->asset_ref_of) {
         item(c, "Value", CK_PROPERTY, type_name((type){TY_MESH, t.decl->asset_ref_of}),
@@ -7580,6 +7615,12 @@ static void complete_value_types(completion *c, const unsigned which)
     }
     if (which & VT_TEXT) item(c, "string", CK_STRUCT, "built-in type", builtin_type_doc(TY_STRING), NULL);
     if (which & VT_LIST) {
+        if (!(which & VT_GPU)) {
+            item(c, "Task", CK_STRUCT, "Task<T fails E> or Task",
+                 "A started match operation. Await it for its full declared result; Cancel requests cancellation.", "Task<$1>");
+            item(c, "LocalTask", CK_STRUCT, "LocalTask<T fails E> or LocalTask",
+                 "A started local async operation or worker. Copied handles share the operation and repeated awaits copy its result.", "LocalTask<$1>");
+        }
         item(c, "Func", CK_STRUCT, "Func<Arguments..., Result>",
              "A typed local callable with owned captures. GPU calls use generated dispatch over build-known targets.", "Func<${1:float3}, ${2:float}>");
         item(c, "List", CK_STRUCT, "List<T>", builtin_type_doc(TY_LIST), "List<$1>");
@@ -11347,6 +11388,9 @@ static int call_param_names(const expr *call, str *names, const int max)
             if (str_eq_c(call->name, wait_calls[i].name)) vec_push(list.labels, wait_calls[i].form);
         }
         break;
+    case CALL_TASK:
+        vec_push(list.labels, task_calls[0].form);
+        break;
     case CALL_CLIPBOARD:
         vec_push(list.labels, CLIPBOARD_COPY_FORM);
         break;
@@ -11793,7 +11837,7 @@ static bool is_argument_colon(const int i)
 // A type written with others in <>, which the formatter keeps tight: List<int>, Map<int, float>.
 static bool generic_type(const str name)
 {
-    return str_eq_c(name, "Func") || str_eq_c(name, "List") || str_eq_c(name, "Map") || str_eq_c(name, "Set") || str_eq_c(name, "Grid2")
+    return str_eq_c(name, "Task") || str_eq_c(name, "LocalTask") || str_eq_c(name, "Func") || str_eq_c(name, "List") || str_eq_c(name, "Map") || str_eq_c(name, "Set") || str_eq_c(name, "Grid2")
         || str_eq_c(name, "Grid3") || str_eq_c(name, "Mesh") || str_eq_c(name, "SkinnedMesh") || str_eq_c(name, "Asset");
 }
 

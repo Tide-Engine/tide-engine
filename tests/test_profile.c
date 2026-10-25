@@ -201,6 +201,31 @@ TIDE_TEST(profiler_says_where_a_frame_and_a_tick_went)
     tide_profiler_free(&p);
 }
 
+TIDE_TEST(profiler_worker_intervals_are_per_job_without_frame_share_bars)
+{
+    tide_profiler p = {0};
+    measured(&p, 0);
+    tide_profile_count(&p.profile.workers, 4);
+    tide_profile_add(&p.profile.workers, 0, "Queue wait", 0, 6 * MS);
+    tide_profile_add(&p.profile.workers, 1, "Compute", 0, 10 * MS);
+    tide_profile_add(&p.profile.workers, 2, "Input capture", 0, 9 * MS);
+    tide_profile_add(&p.profile.workers, 3, "Result transfer", 0, 3 * MS);
+    p.profile.worker_runs = 2;
+    tide_profiler_end(&p, 100);
+    const tide_profiler_row *row = row_named(&p, 0, "Workers");
+    TIDE_REQUIRE(row);
+    TIDE_CHECK(strcmp(row->value, "5.00 ms") == 0);
+    TIDE_CHECK(strcmp(row->note, "2 done, wait 3.00 ms/job") == 0);
+    TIDE_CHECK(row->share == 0.0f && row->depth == 0);
+    const tide_profiler_row *copies = row_named(&p, 0, "Worker copies");
+    TIDE_REQUIRE(copies);
+    TIDE_CHECK(strcmp(copies->value, "0.40 ms") == 0 && copies->share == 0.0f);
+    TIDE_CHECK(strcmp(copies->note, "capture 0.30, result 0.10 ms/frame") == 0);
+    TIDE_CHECK(p.profile.worker_runs == 0);
+    TIDE_CHECK(p.profile.workers.items[1].measurements == 1);
+    tide_profiler_free(&p);
+}
+
 TIDE_TEST(profiler_waits_to_take_stock)
 {
     static tide_profiler p;
