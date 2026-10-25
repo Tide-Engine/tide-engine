@@ -1808,6 +1808,35 @@ all agree what it is".
   tests 19/19, Sample EditMode 19/19 and PlayMode 16/16, and the docs build (a link's anchor fixed:
   `shards.md#a-c-library-s-state`).
 
+### Tide's drawing after a hot reload (2026-10-25)
+
+The owner: "last time i tried it (before this work) hot reloading broke screen space rendering?". Their playground's
+only Tide drawing is the rooms package's menu, in screen space.
+
+- **Cause:** each pipeline's material held its vertex layout as vector arrays (`_TideAttributes`, `_TideSlots`,
+  `Material.SetVectorArray`). A material keeps no array its shader doesn't declare as a property (ShaderLab can't
+  declare arrays), and Unity empties them when it reloads its materials: an asset import in Play does, as
+  `TideSchemaWatcher`'s refresh does when a build of another layout writes new C#, and so does entering Play with
+  Enter Play Mode Options skipping the domain and scene reload (the owner's project: `m_EnterPlayModeOptions: 3`).
+  With them empty every vertex reads nothing, so all of Tide's drawing went, while Tide's own command stream, the
+  draw packet, every material, shader, buffer and texture stayed as they were (traced: identical streams before and
+  after). A reload of the same layout writes no C#, refreshes nothing, and kept drawing.
+- **Fix:** the arrays are each pipeline's `MaterialPropertyBlock` (`Pipeline.properties`, made in `MakePipeline`),
+  which each draw takes (`Command.properties`, `CommandBuffer.DrawProcedural`'s last argument). A material keeps
+  only what its shader declares (blend, depth, cull and stencil), which survive.
+- **Test:** BounceTests `TideDrawsIntoUnitysFrameAfterAHotReload`: the frame's checks of `TideDrawsIntoUnitysFrame`
+  (now `Check`), then the newest `game-<n>` copied to the next number, the embed's newer `loaded-<n>` awaited (it
+  deletes the one it ran), a forced import of `Bounce.tide` and a refresh in Play, and the checks again. It fails
+  without the fix (the plates and everything else of Tide's gone) and passes with it. Sample PlayMode 17/17 and
+  EditMode 24/24 on D3D11; the drawing tests also on Vulkan, OpenGL Core and D3D12. Reproduced first on a scratch
+  copy of the owner's playground (its rooms menu: gone after a layout reload, and a frame after the first under its
+  Enter Play Mode Options; shown in both with the fix).
+- **Found on the way, not changed:** a host takes any `game-<n>` that loads, with no check that the same tide made
+  it. A copy of the playground whose ProjectSettings named another tide (`tidePath`) loaded an embed of one tide and a
+  build of the other, and Unity crashed in `tide_run_bind_io` (a pointer of the game's table, laid out otherwise).
+  The same could come of tide's installation changing under a running editor, as each build reads the installed
+  sources and libraries while the embed Unity loaded stays (not tried).
+
 ## Web
 
 **Owner:** the web is very important and goes first. Option B is tried first:
