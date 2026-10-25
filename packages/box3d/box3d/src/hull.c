@@ -2143,37 +2143,52 @@ b3HullData* b3CreateHull( const b3Vec3* points, int pointCount, int maxVertexCou
 	char* work = b3Alloc( sizes.totalBytes );
 
 	b3HullBuilder builder;
-	b3HullBuilder_Init( &builder, work, &sizes );
 
 	b3Vec3* shiftedPoints = (b3Vec3*)( work + sizes.offsetShiftedPoints );
 
-	bool ok = b3HullBuilder_Construct( &builder, points, pointCount, clampedMaxCount, origin, shiftedPoints );
-	if ( ok == false )
-	{
-		b3Free( work, sizes.totalBytes );
-		return NULL;
-	}
-
-	if ( builder.finalVertexCount > B3_MAX_HULL_VERTICES )
-	{
-		b3Log( "hull final vertex count of %d exceeds limit of %d", builder.finalVertexCount, B3_MAX_HULL_VERTICES );
-		b3Free( work, sizes.totalBytes );
-		return NULL;
-	}
-
-	if ( builder.finalFaceCount > B3_MAX_HULL_FACES )
-	{
-		b3Log( "hull final face count of %d exceeds limit of %d", builder.finalFaceCount, B3_MAX_HULL_FACES );
-		b3Free( work, sizes.totalBytes );
-		return NULL;
-	}
-
+	// Tide: the vertex budget alone doesn't keep a hull within its face and edge limits: a hull
+	// of many vertices has up to 2V - 4 faces and 6V - 12 half edges, so a smooth one of more
+	// than about 44 vertices was refused here. When the hull built is over a limit, build it
+	// again with a smaller budget, scaled down by how far over it was, until it fits. The
+	// builder adds the furthest points first, so the hull kept is the best of that many.
 	int maxHalfEdgeCount = 2 * B3_MAX_HULL_EDGES;
-	if ( builder.finalHalfEdgeCount > maxHalfEdgeCount )
+	int budget = clampedMaxCount;
+	for ( ;; )
 	{
-		b3Log( "hull final half edge count of %d exceeds limit of %d", builder.finalHalfEdgeCount, maxHalfEdgeCount );
-		b3Free( work, sizes.totalBytes );
-		return NULL;
+		b3HullBuilder_Init( &builder, work, &sizes );
+		bool ok = b3HullBuilder_Construct( &builder, points, pointCount, budget, origin, shiftedPoints );
+		if ( ok == false )
+		{
+			b3Free( work, sizes.totalBytes );
+			return NULL;
+		}
+
+		bool fits = builder.finalVertexCount <= B3_MAX_HULL_VERTICES && builder.finalFaceCount <= B3_MAX_HULL_FACES &&
+					builder.finalHalfEdgeCount <= maxHalfEdgeCount;
+		if ( fits )
+		{
+			break;
+		}
+
+		int vertexCount = builder.finalVertexCount;
+		int next = vertexCount;
+		if ( builder.finalFaceCount > B3_MAX_HULL_FACES )
+		{
+			next = b3MinInt( next, vertexCount * B3_MAX_HULL_FACES / builder.finalFaceCount );
+		}
+		if ( builder.finalHalfEdgeCount > maxHalfEdgeCount )
+		{
+			next = b3MinInt( next, vertexCount * maxHalfEdgeCount / builder.finalHalfEdgeCount );
+		}
+		next = b3MinInt( next, b3MinInt( budget, vertexCount ) - 1 );
+		if ( next < 4 )
+		{
+			b3Log( "hull of %d vertices, %d faces and %d half edges exceeds the limits of %d, %d and %d", builder.finalVertexCount,
+				   builder.finalFaceCount, builder.finalHalfEdgeCount, B3_MAX_HULL_VERTICES, B3_MAX_HULL_FACES, maxHalfEdgeCount );
+			b3Free( work, sizes.totalBytes );
+			return NULL;
+		}
+		budget = next;
 	}
 
 	// Walk lists into temp arrays bounded by B3_HULL_MAX_COUNT, stamping finalIndex on each node so

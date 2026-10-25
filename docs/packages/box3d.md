@@ -223,7 +223,7 @@ Spawn(Body { position = float3(0, 3, 0) }, HullCollider {
 });
 ```
 
-It has `vertices`, `scale = float3(1)`, `offset`, `density = 1000`, `friction = 0.6`, `bounce = 0` and `sensor = false`. Scale, then offset, apply in body space. Scale can be mirrored but has no zero component. Supply 4–65,536 points; the native cooker reduces the result to at most 128 vertices. Concavities are filled, so use a static `MeshCollider` or several convex parts for a concave object. Coplanar or otherwise uncookable data makes no shape.
+It has `vertices`, `scale = float3(1)`, `offset`, `density = 1000`, `friction = 0.6`, `bounce = 0` and `sensor = false`. Scale, then offset, apply in body space. Scale can be mirrored but has no zero component. Supply 4–65,536 points. Box3D keeps a hull to 128 vertices, 128 faces and 128 edges, and a smooth shape reaches the edge limit first, at about 45 vertices: the native cooker keeps the furthest points that fit, so a pin turned on a lathe of 121 points cooks to 45 vertices within 8% of its volume, and a ball of 458 to 86% of a sphere's. Shapes that need more detail than that are several parts. Concavities are filled, so use a static `MeshCollider` or several convex parts for a concave object. Coplanar or otherwise uncookable data makes no shape.
 
 `HeightFieldCollider` is a static terrain grid:
 

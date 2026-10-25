@@ -4,6 +4,11 @@
 #include <string.h>
 #include "complete.h"
 #include "tide_test.h"
+// Box3D's own header, warned for nothing, as the bridge has it
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Weverything"
+#include "../box3d/src/box3d/box3d.h"
+#pragma clang diagnostic pop
 
 void b3t_check(bool on, bool whenever);
 void b3t_forget(void);
@@ -227,4 +232,56 @@ TIDE_TEST(box3d_complete_snapshot_replay)
     for (int i=0;i<100;i++) tide_world_tick(&saved);
     TIDE_CHECK(tide_world_hash(&saved)==tide_world_hash(&w));
     tide_world_free(&saved); tide_world_free(&w);
+}
+
+// A smooth hull of many points: a bowling pin turned on a lathe (ten rings of twelve and its tip) and a
+// ball of 21 rings of 24. Box3D keeps 128 vertices, faces and edges at most, and a hull of 128
+// vertices has hundreds of edges, so these were refused with only a log line. The cooker now keeps as
+// many of the furthest points as fit (some 45), and the hull is close to the shape: the pin within 8% of
+// its volume, the ball 86% of a sphere's (an icosahedron's 76%). A hull that fits at first is cooked as before.
+TIDE_TEST(box3d_smooth_hulls_are_cooked_within_the_limits)
+{
+    static const float pin[][2] = {{0, 1.016f}, {0.4f, 1.5f}, {1, 1.82f}, {2, 2.13f}, {3, 2.31f}, {4.5f, 2.383f}, {5.88f, 2.3f},
+                                   {13.5f, 1.26f}, {14.3f, 1.06f}, {14.8f, 0.66f}};
+    b3Vec3 points[600];
+    int count = 0;
+    for (int ring = 0; ring < 10; ring++) {
+        for (int k = 0; k < 12; k++) {
+            const float turn = (float)k * 6.2831853f / 12;
+            points[count++] = (b3Vec3){cosf(turn) * pin[ring][1] * 0.0254f, pin[ring][0] * 0.0254f, sinf(turn) * pin[ring][1] * 0.0254f};
+        }
+    }
+    points[count++] = (b3Vec3){0, 15 * 0.0254f, 0};
+    b3HullData *lathe = b3CreateHull(points, count, B3_MAX_HULL_VERTICES);
+    TIDE_REQUIRE(lathe != NULL);
+    printf("    a pin of %d points: %d vertices, %d faces, %d half edges, %.6f m3\n", count, lathe->vertexCount, lathe->faceCount,
+           lathe->edgeCount, (double)lathe->volume);
+    TIDE_CHECK(lathe->vertexCount <= B3_MAX_HULL_VERTICES && lathe->faceCount <= B3_MAX_HULL_FACES && lathe->edgeCount <= 2 * B3_MAX_HULL_EDGES);
+    // The twelve-sided hull of the whole outline, without the cooker's cap: 0.002619 cubic meters
+    TIDE_CHECK(fabsf(lathe->volume - 0.002619f) < 0.002619f * 0.08f);
+    b3DestroyHull(lathe);
+
+    count = 0;
+    for (int ring = 0; ring <= 20; ring++) {
+        const float tilt = (float)ring * 3.1415927f / 20;
+        for (int k = 0; k < 24; k++) {
+            const float turn = (float)k * 6.2831853f / 24;
+            points[count++] = (b3Vec3){sinf(tilt) * cosf(turn), cosf(tilt), sinf(tilt) * sinf(turn)};
+            if (ring == 0 || ring == 20) break;
+        }
+    }
+    b3HullData *ball = b3CreateHull(points, count, B3_MAX_HULL_VERTICES);
+    TIDE_REQUIRE(ball != NULL);
+    printf("    a ball of %d points: %d vertices, %d faces, %d half edges, %.4f of a sphere's volume\n", count, ball->vertexCount,
+           ball->faceCount, ball->edgeCount, (double)(ball->volume / 4.18879f));
+    TIDE_CHECK(ball->vertexCount <= B3_MAX_HULL_VERTICES && ball->faceCount <= B3_MAX_HULL_FACES && ball->edgeCount <= 2 * B3_MAX_HULL_EDGES);
+    TIDE_CHECK(ball->volume > 4.18879f * 0.84f && ball->volume < 4.18879f);
+    b3DestroyHull(ball);
+
+    // Few enough points to fit: every one of them a vertex, as before
+    const b3Vec3 tetrahedron[4] = {{0, 0, 0}, {1, 0, 0}, {0, 1, 0}, {0, 0, 1}};
+    b3HullData *small = b3CreateHull(tetrahedron, 4, B3_MAX_HULL_VERTICES);
+    TIDE_REQUIRE(small != NULL);
+    TIDE_CHECK(small->vertexCount == 4 && small->faceCount == 4 && small->edgeCount == 12);
+    b3DestroyHull(small);
 }

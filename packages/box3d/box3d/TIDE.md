@@ -11,6 +11,16 @@ them with no include path, which a game's C has none of.
 
 ## What's changed
 
+Hull limits (2026-10-25): `b3CreateHull` (`hull.c`) builds a hull again with a
+smaller vertex budget when the one it built has more faces or half edges than
+`B3_MAX_HULL_FACES` and `2 * B3_MAX_HULL_EDGES` allow, scaled down by how far
+over it was, until it fits or would have fewer than four vertices. Upstream
+logged and returned nothing: the vertex budget alone (128) doesn't keep a
+hull's edges within their 128, and a smooth hull reaches that at about 45
+vertices, so a pin turned on a lathe of 121 points made no shape. A hull that
+fits the first time is built exactly as before. The builder adds the furthest
+remaining point first, so a smaller budget keeps the best hull of that many.
+
 Package completion (2026-10-22):
 
 - `world_snapshot.c`/`box3d.h`: `b3World_InternHeightField` retains and

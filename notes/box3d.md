@@ -1,5 +1,30 @@
 # The Box3D package
 
+## Smooth hulls within Box3D's limits (2026-10-25)
+
+Reported by the PINFALL prototype (tide-prototypes `notes/pinfall.md`): a
+bowling pin's hull of ten rings of twelve points made no shape, with only
+`hull final half edge count of 480 exceeds limit of 256` on stderr, though the
+guide promised 4 to 65,536 points reduced to 128 vertices. Box3D keeps 128
+vertices, faces and edges, and a hull's half edges are up to 6V - 12, so the
+vertex budget alone let through hulls the edge limit refused. `b3CreateHull`
+now rebuilds with a budget scaled down by how far over the face or edge limit
+it was, until it fits (`box3d/TIDE.md`, Hull limits); the log line is only for
+a hull that can't fit at four vertices. Hulls that fit at once are unchanged,
+so no existing pin moves.
+
+`box3d_smooth_hulls_are_cooked_within_the_limits` (`complete_test.c`, which
+now includes Box3D's header as the bridge does, with its warnings off): the
+121-point pin cooks to 45 vertices, 83 faces and 252 half edges, within 8% of
+the twelve-sided outline's volume; a 458-point ball to 43 vertices and 86% of
+a sphere's volume; a tetrahedron is still four vertices. The guide and the
+package README say the practical limit.
+
+Validation on Windows: full native debug 2,810/2,810 and web debug 2,724/2,724
+(one disabled Newton test in each), with the main tide-prototypes checkout's
+games in both through `TIDE_EXTERNAL_DIRS`, the Box3D ones (BANKED, FOLDLINE)
+among them. Linux, macOS, MinGW and sanitizers are CI's.
+
 ## Sharded worlds (2026-10-23)
 
 `Physics` holds Box3D's world as `[Native]` state, `Body.position` (a `[Position]`) decides where a body is, and the handles in components are `[Native]` fields, so a body that crosses a border is made anew on the next shard from its `Body` and the old shard drops it (`Shards.moves` into `b3t_topology`, then `Begin`'s ownership check). `[Ghosts] CopyBodies` keeps a kinematic or static copy of each neighbour's body near the border, with its box, sphere or capsule (`b3t_copy`, `b3t_drop_copy`, `Physics.copies`/`copyOf`), and `Report` tells only owned entities. Joints wait while their bodies are on two shards. `Physics` is 352 bytes; world-hash pins changed, body, image and answer pins didn't.
