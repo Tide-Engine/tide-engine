@@ -120,5 +120,48 @@
     "web": "same targets;21/21 Earth checks,3/3 benchmark cases. CTest4/4,47.19s.",
     "native_gpu": "12-frame Vulkan validation and OpenGL captures; no diagnostics.",
     "other_platforms": "Not run on Android or other OSes."
+  },
+  "publication": {
+    "release": "9e2e449241882444fede36fd21a29c4531a9d6439be19af67a44cabb6ce178c7",
+    "project": "29c727eab929afcbef23455a6bf73125",
+    "play": "https://play.tide-engine.dev/g/29c727eab929afcbef23455a6bf73125/",
+    "room": "966ANR/0",
+    "manifest": {
+      "format": 1,
+      "tide": "0.5.0-dev",
+      "simulation": "21404e58fa7de45e0343e42e98a40cee27e4a61fda18c22c5b921f842c232d77",
+      "files": [
+        {
+          "name": "server.wasm",
+          "size": 436677,
+          "sha256": "c581ac6c4b12fb9c44b221628d6969c0947b8a70b16ebd09b1f259df1d60f27a"
+        },
+        {
+          "name": "client.html",
+          "size": 1737765,
+          "sha256": "0a779589f96aa49a41da4c8e67c207f854cf76763bc214c8aea74cf42bce3749"
+        }
+      ]
+    },
+    "production_program_matches_bundle": true,
+    "live_checks": {
+      "webgl": {
+        "room": "966ANR",
+        "size": [
+          412,
+          915
+        ],
+        "errors": []
+      },
+      "webgpu": {
+        "room": "966ANR",
+        "size": [
+          412,
+          915
+        ],
+        "errors": []
+      }
+    },
+    "live_checks_note": "Downloaded production program equals bundle. Muted iGPU browser, 412x915 DPR1, actual hosted room. Land, walk, drive; inspected car/scenery/online status. Correctness only, no timing claim."
   }
 }

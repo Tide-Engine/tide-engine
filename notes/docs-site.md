@@ -9,7 +9,7 @@ exact seed-zero simplex gradient indices for its four broad biome octaves
 (frequencies 3, 7, 11 and 19). A sized local 512 x 343 Grid2<float> holds all
 56 cubed lattice points in [-28, 27]. The largest skewed unit-vector
 coordinate is 19 * sqrt(2); the offset dry octave is smaller. Point samples
-read exact integers 0–15 from the renderer's R16F texture. The shader retains
+read exact integers 0-15 from the renderer's R16F texture. The shader retains
 simplex corner ranking, tie priority, float interpolation and scale 32.5,
 with the original Math.Simplex fallback outside the cached cube. The 61,
 900, 4000, 20000, flower and star fields keep their original implementation.
@@ -41,6 +41,17 @@ WebGPU: 14 before/after pairs with fatal GPU diagnostics enabled. These
 isolate the terrain with a null match world; hosted walking/driving and
 publication are recorded after deployment below. Android hardware was not
 available. No engine/compiler or private prototype source was changed.
+
+Published on dev as `56ee43be`, then uploaded Earth release
+`9e2e449241882444fede36fd21a29c4531a9d6439be19af67a44cabb6ce178c7`.
+The downloaded production program matches the deployment bundle. Its
+client/server compatibility identity is `21404e58` (previously `e0be6825`);
+all existing exact simulation pins remain unchanged. The managed room is
+still 966ANR/0. Muted iGPU WebGL and WebGPU clients join it, land, walk and
+drive with zero errors; inspected 412 x 915 DPR 1 captures show the car,
+scenery and online status. These are live correctness checks, not new
+performance measurements. The optional clean timing request was withdrawn
+to finish publication under the ongoing shared-machine load.
 
 
 ## Earth on the Ryzen integrated GPU (2026-10-25)
