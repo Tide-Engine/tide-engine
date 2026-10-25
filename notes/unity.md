@@ -1458,6 +1458,12 @@ picks (Provisional):
   rules refused). `tide_cli_unity_physics` (`unity_physics_test.cmake`: the fixture as a Unity project listing the
   real packages, `tide schedule --assets` compiles it with both packages' `source`, and says the two warnings).
   `tidec_outline_game` (a `[Native]` field marked).
+- **Runs:** native debug 2760 of 2763 (one disabled; `tide_render3d_pixels_opengl` segfaulted while Unity held the
+  GPU and passed alone; the private prototype `cracked_tests` fails its pinned match hash, `TIDE_EXTERNAL_DIRS`'s
+  checkout against this dev, nothing this touches); web debug: every engine test passed, the run ending in the
+  private prototypes' play tests, which weren't run again. `tide unity --once` on a copy of Coin Rush (Box3D listed)
+  writes Box3D's components with the real rules and no error; its PlayMode 2/2. The Sample's EditMode 18/18 and
+  PlayMode 16/16 (D3D11), its com.tide.game written again by tide unity from this dev (schema hash, renderer shaders).
 - **Not verified:** the mesh inspector, the parts' wireframes in Play and joints in a running Unity game were compiled
   and unit-tested, not looked at or played (no editor window from agent runs).
 
