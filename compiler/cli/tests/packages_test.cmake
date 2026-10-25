@@ -556,3 +556,26 @@ tide("${game}" ARGS schedule . FAILS EXPECT "a prefab entry must name an ordinar
 file(WRITE "${game}/Enemy.tprefab" "prefab Enemy { Transform; entity Child { Transform; } }\n")
 tide("${game}" ARGS schedule .)
 file(REMOVE "${game}/Enemy.tprefab")
+
+# ---------------------------------------------------------------------------
+# tide pin: `tide = <version>` in the game's tide.packages, in place of its `tide` line or first; a whole version alone;
+# none for a build of tide's own source, which no release is, which builds a pinned game anyway (packages_pin_kept)
+set(pinned "${WORK}/pinned")
+file(MAKE_DIRECTORY "${pinned}")
+file(WRITE "${pinned}/main.tide" "scene Main { }\n")
+file(WRITE "${pinned}/tide.packages" "# Ours\ntide 0.1  # the oldest\n")
+tide("${pinned}" ARGS pin FAILS EXPECT "which no release is" "tide pin 0.5.0")
+tide("${pinned}" ARGS pin 0.5 FAILS EXPECT "'0.5' isn't a whole version")
+tide("${pinned}" ARGS pin 0.5.0-nightly.12 EXPECT "tide: the game builds with tide 0.5.0-nightly.12")
+expect_file("${pinned}/tide.packages" "# Ours\ntide = 0.5.0-nightly.12 # the oldest\n")
+tide("${pinned}" ARGS pin v0.6.0 EXPECT "tide: the game builds with tide 0.6.0")
+expect_file("${pinned}/tide.packages" "tide = 0.6.0 # the oldest\n")
+tide("${pinned}" ARGS schedule . EXPECT "pinned: 0 systems")
+file(WRITE "${pinned}/tide.packages" "../shared\n")
+tide("${pinned}" ARGS pin 0.5.0 EXPECT "tide: the game builds with tide 0.5.0")
+expect_file("${pinned}/tide.packages" "tide = 0.5.0\n../shared\n")
+# Only a game pins: a package says the oldest it builds with
+file(MAKE_DIRECTORY "${WORK}/shared")
+file(WRITE "${WORK}/shared/tide.packages" "package Shared\ntide = 0.5.0\n")
+tide("${pinned}" ARGS schedule . FAILS EXPECT "only a game pins its tide")
+tide("${WORK}/shared" ARGS pin 0.5.0 FAILS EXPECT "only a game pins its tide")

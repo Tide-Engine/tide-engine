@@ -99,6 +99,7 @@ int tide_editors(const char *root, const bool only_updates) { (void)root; (void)
 int tide_ide(const char *root, int count, const char *const *args) { (void)root; (void)count; (void)args; abort(); }
 int tide_add(const char *folder, const char *what) { (void)folder; (void)what; abort(); }
 int tide_eject(const char *folder, const char *name) { (void)folder; (void)name; abort(); }
+int tide_pin(const char *folder, const char *version) { (void)folder; (void)version; abort(); }
 int tide_update(const char *folder, const char *const *names, const int count)
 {
     (void)folder;

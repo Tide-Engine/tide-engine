@@ -48,6 +48,14 @@ function github() {
         if (path === '/releases?per_page=100') return Response.json(state.list);
         if (path === '/releases/latest') return state.latest ? Response.json(state.latest) : new Response('', { status: 404 });
         if (path === '/releases/tags/v0.1.0') return Response.json(state.old);
+        // A history: each commit, the tag that's it and the tags before it
+        const compared = /^\/compare\/(v[^.]+\.[^.]+\.[^.]+(?:-[^.]+(?:\.\d+)?)?)\.\.\.([0-9a-f]+)$/.exec(path);
+        if (compared) {
+            const commit = state.commits?.[compared[2]];
+            if (!commit) return new Response('', { status: 404 });
+            const status = commit.at === compared[1] ? 'identical' : commit.after.includes(compared[1]) ? 'ahead' : 'behind';
+            return Response.json({ status, html_url: `https://github.com/${repo}/compare` });
+        }
         const id = /^\/releases\/assets\/(\d+)$/.exec(path)?.[1];
         if (id) {
             assert.equal(options.redirect, 'manual');
@@ -201,4 +209,46 @@ test('a slow or failing analytics callback cannot delay or break a download redi
     const failure = createReleases({ token: 'the-token', repo, fetch: hub.fetch,
         onDownload: () => { throw new Error('analytics disk is away'); } });
     assert.equal((await get(failure, '/releases/v0.3.0-nightly.2/tide-windows-x64.zip')).status, 302);
+});
+
+test('a commit is the highest release at it or before it', async () => {
+    const hub = github();
+    // c1 is v0.2.0's commit; c2 came after it; c3 is v0.3.0-nightly.1's, after v0.2.0; c4 after both nightlies
+    hub.commits = {
+        aaaaaaa1: { at: 'v0.2.0', after: [] },
+        aaaaaaa2: { at: null, after: ['v0.2.0'] },
+        aaaaaaa3: { at: 'v0.3.0-nightly.1', after: ['v0.2.0'] },
+        aaaaaaa4: { at: null, after: ['v0.2.0', 'v0.3.0-nightly.1', 'v0.3.0-nightly.2'] },
+        aaaaaaa5: { at: null, after: [] },
+    };
+    let clock = 0;
+    const handle = createReleases({ token: 'the-token', repo, fetch: hub.fetch, now: () => clock });
+    const tagOf = async (commit) => {
+        const answer = await get(handle, `/releases/for/${commit}`);
+        return answer.status === 200 ? JSON.parse(answer.body).tag_name : answer.status;
+    };
+    assert.equal(await tagOf('aaaaaaa1'), 'v0.2.0', 'a release\'s own commit');
+    assert.equal(await tagOf('aaaaaaa2'), 'v0.2.0', 'a commit after it, before the next');
+    assert.equal(await tagOf('aaaaaaa3'), 'v0.3.0-nightly.1');
+    assert.equal(await tagOf('AAAAAAA4'), 'v0.3.0-nightly.2', 'the highest of those before it');
+    assert.equal(await tagOf('aaaaaaa5'), 404, 'a commit before every release');
+    assert.equal(await tagOf('bbbbbbb1'), 404, 'a commit GitHub hasn\'t');
+    assert.equal(await tagOf('nope'), 404, 'no commit at all');
+    const body = (await get(handle, '/releases/for/aaaaaaa4')).body;
+    assert.doesNotMatch(body, /someone|secret-repo|github/i);
+    assert.equal(JSON.parse(body).assets[0].browser_download_url, `${origin}/releases/v0.3.0-nightly.2/tide-windows-x64.zip`);
+    // Kept a while: asked again, GitHub isn't; later, a release made since counts
+    const asked = hub.asked.length;
+    await tagOf('aaaaaaa2');
+    assert.equal(hub.asked.length, asked);
+    hub.commits.aaaaaaa2 = { at: 'v0.3.0-nightly.1', after: ['v0.2.0'] };
+    clock += 11 * 60_000;
+    assert.equal(await tagOf('aaaaaaa2'), 'v0.3.0-nightly.1');
+});
+
+test('tags order as semantic versioning does', async () => {
+    const { compareTags } = await import('../releases.js');
+    const sorted = ['v0.3.0-nightly.10', 'v0.2.0', 'v0.3.0', 'v0.3.0-nightly.2', 'v1.0.0-rc.1', 'v0.10.0']
+        .sort(compareTags);
+    assert.deepEqual(sorted, ['v0.2.0', 'v0.3.0-nightly.2', 'v0.3.0-nightly.10', 'v0.3.0', 'v0.10.0', 'v1.0.0-rc.1']);
 });

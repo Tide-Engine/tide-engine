@@ -50,7 +50,7 @@ foreach(alias help --help -h)
     endif()
 endforeach()
 
-foreach(command run build deploy login logout schedule shaders add update eject fetch publish editors ide open upgrade version telemetry help)
+foreach(command run build deploy login logout schedule shaders add update eject pin fetch publish editors ide open upgrade version telemetry help)
     contains("${overview}" "${command}")
     help(0 help "${command}")
     contains("${out}" "usage: tide ${command}")

@@ -1837,6 +1837,48 @@ only Tide drawing is the rooms package's menu, in screen space.
   The same could come of tide's installation changing under a running editor, as each build reads the installed
   sources and libraries while the embed Unity loaded stays (not tried).
 
+### One tide for a project (2026-10-25)
+
+The owner: "what if my buddy has another tide version installed ... we need to be able to use a specific version tied
+to that branch", then "we should be able to have maybe parallel tide installations? that way a unity project can
+install it if it isnt and use it", "that should also handle CI? imagine GameCI", and on how: "for unity we can maybe
+use the commit hash" (Unity's packages-lock records the package's commit) "otherwise for tide itself pinning it in the
+tide.packages", with only Unity switching versions (the CLI's pin: `notes/cli-and-packages.md`, A game pins its tide).
+
+- **The package's version** (`Editor/TideVersions.cs`): `PackageInfo.FindForAssembly` gives the package's source; for
+  git its locked commit (`git.hash`) and what it follows (`git.revision`). A revision that's a release tag
+  (`OfTag`: `v0.5.0-nightly.12`) is that version; any other commit asks the site (`/releases/for/<commit>`,
+  `notes/releases-and-ci.md`), and the answer is kept in `Library/Tide/version.json` by commit; a lookup that failed is
+  asked again a minute on, not at each repaint. A package that isn't from git (file:, embedded: the Sample, the owner's
+  playground) has none, and builds as before (PATH, the installer's folder).
+- **Side by side:** `TIDE_VERSIONS`, else the `versions` folder of where the installer puts tide
+  (`%LOCALAPPDATA%\Tide\versions\<version>`, `~/.tide/versions/<version>`; `tide upgrade` replaces only the entries
+  its package has, so the folder stays). `Executable` takes `<version>/bin/tide` whose `VERSION` is the version, or
+  the installer's tide when it's that version. `Install`: `/releases/v<version>.json` from the site
+  (`TIDE_RELEASES_SITE`, default tide-engine.dev; `file://` for tests), this platform's package (`PackageName`, as the
+  installers name them) and `SHA256SUMS`, checked; unpacked (zip by `ZipFile`, tar.gz by `tar`, which keeps what runs
+  runnable) into `.<version>-<guid>`, whose `VERSION` must be the version, then moved into its place last; another
+  editor's install meanwhile is taken.
+- **When:** `TideToolchain.Find(out where, install, wait)`: your own command first (`TideUserSettings`, below), then
+  the package's version: in a batch run installed at once (a build server: GameCI needs nothing beforehand); in the
+  editor asked once a session (a dialog), then installed off the editor's thread with a `Progress` task, the build
+  service restarting as it's in place; a player build (`wait`) installs it with a progress bar. Project Settings >
+  Tide says which tide and has Install. With the package's version (`Pinned`), tide's runs get `TIDE_NO_UPDATE_CHECK`.
+  A game's `tide =` pin the package's tide isn't is that tide's error (packages.c), its note saying to pin that tide
+  or move the package.
+- **Your own tide command** (`TideUserSettings`, `UserSettings/TideSettings.asset`, which source control leaves out)
+  replaced the project's `tidePath`, which put one machine's path in source control (the owner's playground had
+  `%LOCALAPPDATA%\TideDev\playground-tide`). It's moved from the project's asset once (`Loaded`), and takes the place of
+  the package's version, as for a build of tide being worked on.
+- **Picks (mine, Provisional):** the site answers a commit with the highest release at or before it (so `#dev`
+  works); a package newer than every release then builds with the newest release, whose embed ABI the package checks
+  (`TideLibrary.Abi`): following a tag is the advice for teams and CI. Installing asks first in the editor.
+- **Tests:** the Sample's EditMode `VersionTests` (a site and versions folder in a scratch folder: a tag is its
+  version with nothing asked; a commit the site's answer, kept; an unknown commit's reason; a version installed beside
+  others, once, leaving no work folder; a damaged checksum and a package of another version installing nothing);
+  `docs/tests/releases.test.mjs`. Sample EditMode 28/28, PlayMode 17/17. Not run: a git package resolving and installing against the
+  real site (the endpoint deploys with this), macOS's and Linux's tar path, the dialog.
+
 ## Web
 
 **Owner:** the web is very important and goes first. Option B is tried first:

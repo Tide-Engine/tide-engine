@@ -110,9 +110,11 @@ namespace Tide.Editor
             if (tide == null)
             {
                 state = where;
-                Debug.LogWarning("Tide: " + where);
+                // Installing, the status bar says so; it starts building once it's in place
+                if (!where.StartsWith("Installing")) Debug.LogWarning("Tide: " + where);
                 return;
             }
+            var pinned = TideToolchain.Pinned;
             var start = new ProcessStartInfo
             {
                 FileName = tide,
@@ -125,6 +127,7 @@ namespace Tide.Editor
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
             };
+            if (pinned) start.EnvironmentVariables["TIDE_NO_UPDATE_CHECK"] = "1"; // The package's version: no newer one to hear of
             try
             {
                 process = new Process { StartInfo = start, EnableRaisingEvents = true };

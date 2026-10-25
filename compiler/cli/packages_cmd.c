@@ -8,6 +8,7 @@
 #include "fetch.h"
 #include "packages.h"
 #include "sys.h"
+#include "version.h"
 
 static char *dup(const char *s)
 {
@@ -610,4 +611,51 @@ int tide_eject(const char *folder, const char *name)
     free(source);
     packages_free_file(&game);
     return add_needed(folder) ? 0 : 1;
+}
+
+// ---------------------------------------------------------------------------
+// tide pin
+
+int tide_pin(const char *folder, const char *version)
+{
+    const char *pin = version ? version : tide_version_text();
+    if (pin[0] == 'v') pin++;
+    const size_t length = strlen(pin);
+    if (!version && length > 4 && strcmp(pin + length - 4, "-dev") == 0) {
+        fprintf(stderr, "tide: this is a build of tide's own source (%s), which no release is\n", pin);
+        fprintf(stderr, "  = note: give the version to pin, like `tide pin 0.5.0`\n");
+        return 2;
+    }
+    if (!packages_exact_version(pin)) {
+        fprintf(stderr, "tide: '%s' isn't a whole version\n", pin);
+        fprintf(stderr, "  = note: write it as `tide version` says it, like 0.5.0 or 0.5.0-nightly.12\n");
+        return 2;
+    }
+    packages_file game;
+    if (!packages_read(folder, &game, report, NULL)) return 1;
+    if (game.name) {
+        fprintf(stderr, "%s: error: only a game pins its tide\n", game.path);
+        fprintf(stderr, "  = note: a package says the oldest tide it builds with, like `tide 0.5`\n");
+        packages_free_file(&game);
+        return 1;
+    }
+    char line[96];
+    snprintf(line, sizeof line, "tide = %s", pin);
+    packages_text t = load(folder);
+    const int number = game.pinned_line ? game.pinned_line : game.tide_line;
+    if (number) {
+        set_line(&t, number, line);
+    } else {
+        // The first line: it's the same in every build, so before any #if
+        const size_t size = strlen(t.text) + strlen(line) + 4;
+        char *out = malloc(size);
+        if (!out) abort();
+        snprintf(out, size, "%s%s%s", line, t.newline, t.text);
+        free(t.text);
+        t.text = out;
+    }
+    packages_free_file(&game);
+    if (!save(&t)) return 1;
+    printf("tide: the game builds with tide %s\n", pin);
+    return 0;
 }

@@ -39,8 +39,9 @@ namespace Tide.Editor
             {
                 throw new BuildFailedException($"Tide: players build for {native} and WebGL on this machine, for now: the game's library is built by this machine's tide, not for {target}.");
             }
-            var tide = TideToolchain.Find(out var where);
+            var tide = TideToolchain.Find(out var where, true, true);
             if (tide == null) throw new BuildFailedException("Tide: " + where);
+            var pinned = TideToolchain.Pinned;
             if (Directory.Exists(Built)) Directory.Delete(Built, true);
             Directory.CreateDirectory(Built);
             var start = new ProcessStartInfo
@@ -53,6 +54,7 @@ namespace Tide.Editor
                 RedirectStandardOutput = true,
                 RedirectStandardError = true,
             };
+            if (pinned) start.EnvironmentVariables["TIDE_NO_UPDATE_CHECK"] = "1"; // The package's version: no newer one to hear of
             using var process = Process.Start(start);
             var output = process.StandardOutput.ReadToEndAsync();
             var errors = process.StandardError.ReadToEnd();
