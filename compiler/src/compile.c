@@ -39,13 +39,16 @@ const char *path_stem(const char *path)
 }
 
 // The game's types alone (codegen_options.declarations_only): what it wrote that runs, its systems, views, handlers,
-// functions, frags and verts, is left out, and the rest checked and generated as it would be. Tide's own stay.
+// functions, frags and verts, is left out, and the rest checked and generated as it would be. Tide's own and
+// package functions/shaders stay: a package's field types/defaults can need their signatures and real callbacks.
 static void keep_declarations(program *prog)
 {
     int kept = 0;
     for (int i = 0; i < prog->decls.count; i++) {
         decl *const d = prog->decls.items[i];
-        const bool runs = d->kind == DECL_SYSTEM || d->kind == DECL_FUNCTION || d->kind == DECL_SHADER;
+        const bool package = d->unit && d->unit->src && d->unit->src->package;
+        const bool runs = d->kind == DECL_SYSTEM
+            || (!package && (d->kind == DECL_FUNCTION || d->kind == DECL_SHADER));
         if (runs && !d->builtin) continue;
         prog->decls.items[kept++] = d;
     }

@@ -1,5 +1,11 @@
 # Code the GPU runs: frags and verts
 
+Generated-golden whitespace: texture_capacity.txt intentionally ends with two
+LFs, like all 43 shader goldens. The shader expectation runner normalizes CRLF
+but compares the complete text without trimming. Git's new-file diff check
+therefore reports its final blank line; keep that exact generated output rather
+than weakening the comparison or changing the repository's whitespace policy.
+
 ## Twelve texture bindings (2026-10-25)
 
 The approved Render3D skinning extension needs eight material/scene bindings

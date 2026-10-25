@@ -88,14 +88,39 @@ WebGPU, including mapped skin palette/influence reads in high slots, captured
 deformation/cutout agreement, mixed transparency and device recreation. Added
 BloomChain cases independently verify bloom-before-callback routing at exposures
 .5 and 2 across every size/scale row. Actual skinned pack unload/reload and
-deferred captures pass on native/WASI. All 282 actual-consumer FXC /WX stage/API
+deferred captures pass on native/WASI. All 372 actual-consumer FXC /WX stage/API
 checks pass. Fresh Asset, capacity, post and pipeline source reviews are clean
 after correcting the written Bend example's Jacobian and stale API sentence.
 Old-layout post migration and Unity player execution remain untested.
 
-The interactive effects example and browser controls are recorded in
-docs-site.md. One incoming compiler/Unity overlap requires merge compatibility
-review and repeat native/web integration; those final results remain pending.
+The one-round merge of origin/dev at b4655dfd is fa8c3bf3. Its only conflict was
+the editor note, resolved preserving both sections. Independent merge review
+cleared the Asset/callback/capacity/Unity lifecycle overlaps and found one
+inherited declaration-only bootstrap issue. The bounded compile.c correction
+retains package functions/shaders like builtins; game routines remain omitted,
+and ordinary asset/body/default checking remains. The actual Render3D bootstrap
+and strict native/WASI C17 regressions pass; a fresh correction review is clean.
+Game-defined shader/callback field dependencies remain an existing limitation
+of that Unity fallback, documented in language.md and cli-and-packages.md.
+
+After that correction both whole debug builds pass, and both full engine suites
+are green: 2,800 enabled native CTests (192.66 s) and 2,696 enabled web CTests
+(536.35 s). The original disabled Microduck case remains disabled. These caches
+explicitly omit external prototype directories, per this engine-only task's
+scope. New static opaque coverage additionally exercises two consecutive casters
+with distinct owned 20-float callbacks and overwritten construction locals.
+Exact matrix/uniform/order/frame/atlas comparisons, all capture words and the
+16-main/9-shadow attribute limits pass on all five backends; the ordinary
+267-item run retains the >256 witness. Its independent fixture review is clean.
+
+Svelte check has zero errors/warnings, the merged production docs build passes,
+and all 304 grammar checks pass. Interactive effects/browser validation is in
+docs-site.md. No Unity player/high-slot reload, old-layout post migration,
+spirv-val, Vulkan validation-layer, mobile, other native OS or sanitizer coverage
+is claimed locally. The one isolated Vulkan crash above remains unexplained;
+Vulkan checks in both subsequent whole native runs pass without a correction
+for it. The final rebuilt effects demo also passes source/stats/camera and GUI
+pose/deform/bloom/tint/collapsed-zoom checks on WebGL and WebGPU after the merge.
 
 ## Mapped materials and interactive docs (2026-10-25)
 

@@ -30,8 +30,11 @@ and exercises real GUI actions for pose, deformation, bloom, tint and collapsed
 zoom. Captures were retained under build/render3d-ext-browser-* and native
 build/render3d-ext-captures. T3 preview opened/navigated but both snapshot attempts
 failed with 'Preview automation snapshot timed out after 15000ms.'; the named
-repository runner supplied browser validation. Engine compiler/Unity incoming
-work is being merged separately and does not change the example controls.
+repository runner supplied browser validation. After the compiler/Unity merge
+and declaration-bootstrap correction, the whole native/web builds and suites
+pass; the freshly staged effects demo repeats all source/stats/camera/GUI checks
+successfully on WebGL and WebGPU. Final captures are under
+build/render3d-ext-final-browser-*. No example controls changed during the merge.
 
 ## Interactive Render3D materials and docs stats (2026-10-25)
 

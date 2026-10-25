@@ -1,5 +1,7 @@
 // Compare production Cast with the independent original Tide loop, after LOD
 // gathering. Registry slots and batch boundaries are not observable draw data.
+// Source-prepared integration: regenerate the fixture's game.h for the new
+// ShadowProbe.deform field. The opt-in case keeps the original strict oracle.
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -155,6 +157,39 @@ static int wanted_casters(const int step)
     return count;
 }
 
+static bool deformed_witness(const shadow_event *event, const unsigned item, const bool color)
+{
+    CHECK(item < 2 && world.ShadowState.step == 0);
+    const tide_shader *shader = event->run->shader;
+    CHECK(strcmp(shader->name, color ? "Deform and Lit on MeshVertex" : "DeformShadow on MeshVertex") == 0);
+    CHECK(shader->attribute_count == 5);
+    CHECK(shader->instance_floats == (color ? 9u : 4u) && shader->instance_ints == (color ? 2u : 0u));
+    CHECK(shader->attribute_count + shader->instance_floats + shader->instance_ints <= TIDE_SHADER_ATTRIBUTES);
+    const float captures[2][20] = {
+        {4, 0.0625f, 0.03125f, 0.015625f, -0.125f, 3, 0.046875f, -0.03125f,
+         0.09375f, -0.0625f, 1.125f, 0.0078125f, 6, 8, -1.5f, 1, 0.25f, 0.375f, -0.25f, 0.5f},
+        {4, 0.0625f, 0.03125f, 0.015625f, -0.125f, 3, 0.046875f, -0.03125f,
+         0.09375f, -0.0625f, 1.125f, 0.0078125f, 14, 6, -2, 1, -0.5f, 0.625f, 0.5f, 0.5f}
+    };
+    CHECK(shader->uniform_floats >= 5);
+    CHECK((uint64_t)event->run->uniforms + tide_shader_uniform_size(shader) <= draw.uniform_used);
+    bool captured = false;
+    for (uint32_t word = 0; word + 20u <= shader->uniform_floats * 4u; word++)
+        captured |= memcmp(draw.uniforms + event->run->uniforms + word * sizeof(float),
+                           captures[item], sizeof captures[item]) == 0;
+    CHECK(captured); // All twenty original words, never the later 99/123 values.
+    const tide_float4x4 parent = tide_trs_f4x4(tide_f3(0, 0, 0),
+        tide_euler_q(tide_f3(0, tide_radians_f(20), 0)), tide_f3(1.7f, 0.6f, 1.2f));
+    const tide_float4x4 child = tide_trs_f4x4(tide_f3(((float)item - 8.5f) * 0.14f, -7.0f * 0.14f, 0),
+        tide_euler_q(tide_f3(0, 0, tide_radians_f(37))), tide_f3(0.12f, 0.14f, 1));
+    const tide_float4x4 expected = tide_mul_f4x4(parent, child);
+    float actual_words[16], expected_words[16];
+    memcpy(actual_words, event->instance, sizeof actual_words);
+    memcpy(expected_words, &expected, sizeof expected_words);
+    for (unsigned word = 0; word < 16; word++) CHECK(fabsf(actual_words[word] - expected_words[word]) < 0.00001f);
+    return true;
+}
+
 static bool compare_casts(const bool require_witnesses)
 {
     const Render3D_Renderer *renderer = &local.Render3D_Renderer;
@@ -173,6 +208,7 @@ static bool compare_casts(const bool require_witnesses)
     tide_draw_prepare(&draw, NULL);
     shadow_iterator actual = iterate(renderer->shadowMap.id), reference = iterate(probe->reference.id);
     uint32_t count = 0, max_run = 0, camera_count = 0;
+    unsigned deformed = 0;
     bool full_lod = false, simplified_lod = false, mirrored = false, ordinary = false, sheared = false;
     tide_float4x4 previous_camera = {0};
     uint32_t previous_clip = 0;
@@ -191,6 +227,10 @@ static bool compare_casts(const bool require_witnesses)
             previous_clip = a.clip;
         }
         if (a.run->count > max_run) max_run = a.run->count;
+        if (probe->deform && strcmp(a.run->shader->name, "DeformShadow on MeshVertex") == 0) {
+            CHECK(deformed_witness(&a, deformed % 2u, false));
+            deformed++;
+        }
         const tide_draw_mesh_data *base = a.mesh->base ? &draw.meshes[a.mesh->base - 1u] : a.mesh;
         if (base->levels) {
             full_lod |= a.mesh->level == 0;
@@ -207,6 +247,18 @@ static bool compare_casts(const bool require_witnesses)
     CHECK(count == (uint32_t)probe->referenceItems);
     CHECK(count == (uint32_t)(wanted_casters(world.ShadowState.step) * probe->views));
     if (count) CHECK(camera_count == (uint32_t)probe->views);
+    if (probe->deform) {
+        CHECK(deformed == 2u * (unsigned)probe->views);
+        shadow_iterator color = iterate(renderer->hdr.id);
+        shadow_event event;
+        unsigned colored = 0;
+        while (next_event(&color, &event)) {
+            if (strcmp(event.run->shader->name, "Deform and Lit on MeshVertex") != 0) continue;
+            CHECK(deformed_witness(&event, colored, true));
+            colored++;
+        }
+        CHECK(!color.failed && colored == 2);
+    }
     if (require_witnesses) {
         CHECK(max_run > 256 && full_lod && simplified_lod && mirrored && ordinary && sheared);
         CHECK(probe->views == 8);
@@ -265,6 +317,20 @@ static bool gpu_pair(const float scale, const bool atlas)
                 puts("FAIL: original and optimized shadow atlases change complete color-frame pixels");
                 good = false;
             }
+            if (good && local.ShadowProbe.deform) {
+                local.ShadowProbe.referenceColor = false;
+                local.ShadowProbe.deform = false;
+                record_frame();
+                good = compare_casts(false);
+                if (good) {
+                    tide_platform_read_pixels_as(&draw, FRAME_WIDTH, FRAME_HEIGHT, scale, points, count, reference);
+                    if (memcmp(actual, reference, (size_t)count * sizeof *actual) == 0) {
+                        puts("FAIL: the captured static deformation has no visible color-frame witness");
+                        good = false;
+                    }
+                }
+                local.ShadowProbe.deform = true;
+            }
         }
     }
     free(reference);
@@ -296,6 +362,19 @@ static bool exercise(void)
         if (step == 0 || step == 3) CHECK(gpu_pair(1, true));
         CHECK(tide_world_hash(&world) == hash);
 #endif
+        if (step == 0) {
+            // Same mesh, winding and opaque mode, adjacent in the original
+            // query: production Cast must prepare a deformed batch of two.
+            local.ShadowProbe.deform = true;
+            record_frame();
+            CHECK(compare_casts(true));
+#ifdef SHADOW_BATCHES_GPU
+            CHECK(gpu_pair(1, false));
+            CHECK(gpu_pair(1, true));
+#endif
+            CHECK(tide_world_hash(&world) == hash);
+            local.ShadowProbe.deform = false;
+        }
     }
     // Reuse the same local state across no-view frames, atlas resizes, LOD
     // overrides and disable/re-enable. Invocation scratch must not leak draws.

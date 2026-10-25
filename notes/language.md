@@ -1,5 +1,30 @@
 # Language features, as tidec builds them
 
+## Declaration-only package dependencies (2026-10-25)
+
+The inherited --declarations filter removed package functions/shaders before
+checking package field types/defaults. A real Render3D consumer failed with six
+errors for Lit, Deform and the StandardUV/StandardCoverage/StandardSurface
+callbacks. The filter now retains package functions/shaders like builtins;
+all nonbuiltin systems/views/handlers and the game's own functions/shaders are
+still excluded before checking. The change is only compile.c's existing filter.
+Normal compilation, package body checking, asset imports and defaults are
+unchanged. There are no checker flags, signature stubs or substituted values.
+Retained package draw helpers can plan/emit GPU shaders; the Unity caller already
+skips publishing shaders for this fallback. Game-defined shader/callback field
+dependencies remain an existing limitation rather than a new mode contract.
+
+tidec_declarations_only uses the real Render3D sources with incomplete game code,
+checks every package component and concrete callback dependency, and syntax-checks
+the generated C17 with the configured clang/target. It also pins package shader
+planning and ordinary missing-asset and invalid-package-body rejection. The
+existing data-error/header/game-code exclusion probes remain. The focused native
+tidec build and tidec_declarations_only pass (1/1; 1.14 s), including strict C17
+syntax with the configured clang. No generated program or GPU work ran here;
+the final full native/web debug builds and suites now pass, including the
+web-target C probe: 2,800 native and 2,696 web enabled CTests. The original
+disabled fixture remains disabled. Independent correction review is clean.
+
 ## Checked skinned asset references (2026-10-25)
 
 The owner approved Asset<SkinnedMesh<V>> alongside static Asset<Mesh<V>>.

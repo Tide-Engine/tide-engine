@@ -1,15 +1,16 @@
 # The language server and the editors
 
-## Checked skinned asset references (2026-10-25, validation pending)
+## Checked skinned asset references (2026-10-25)
 
 Asset<SkinnedMesh<V>> uses the approved typed-reference completion. The shared
 type-tree walker follows its model argument, including aliases. Reference members
 offer Value without exposing identity; the Value chain offers the declared
 skinned type's dynamic skeleton/catalog and geometry API, with no inferred-name
 forwarding. Asset completion help names both static and skinned model kinds.
-lsp_skinned_asset_reference_aliases_and_dynamic_value_members is source-prepared
-but not yet compiled/run. No adapter, native model preview or grammar change is
-introduced. Compiler contracts and pending validation: notes/language.md.
+lsp_skinned_asset_reference_aliases_and_dynamic_value_members passes in the full
+native suite, including after the Changed-trigger merge. No adapter, native
+model preview or grammar change is introduced. Compiler contracts and combined
+validation are recorded in notes/language.md and notes/render3d.md.
 
 ## `Changed<...>` triggers (2026-10-25)
 
