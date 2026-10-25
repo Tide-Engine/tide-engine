@@ -13,7 +13,7 @@ syntax keyword tideStatement return break continue fail try await
 syntax keyword tideType void bool byte ushort char int int2 int3 int4 long
 syntax keyword tideType double double2 double3 double4 double2x2 double3x3 double4x4
 syntax keyword tideType float float2 float3 float4 float2x2 float3x3 float4x4 quaternion string
-syntax keyword tideType Entity LocalEntity PlayerID Color Rect World List Map Set Grid2 Grid3 Asset
+syntax keyword tideType Entity LocalEntity PlayerID Color Rect World List Map Set Grid2 Grid3 Asset Task LocalTask
 syntax keyword tideBoolean true false null
 syntax match tideType '\<[A-Z][A-Za-z0-9_]*\>'
 syntax match tideDirective '^\s*#\s*\(if\|elif\|else\|endif\|define\|undef\)\>'

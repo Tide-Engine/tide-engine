@@ -90,6 +90,7 @@ bool world_reads_own_writes(const decl *sys)
 bool system_splits(const decl *sys)
 {
     if (sys->is_view || !sys->per_entity || sys->writes_text) return false;
+    if ((sys->task_access[0] | sys->task_access[1]) & 2u) return false;
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
         if (p->type.kind == TY_SINGLETON && p->mode == PARAM_MUT) return false;
@@ -135,7 +136,7 @@ typedef struct access_list {
 // is: its Owner, after its parameters, unless one of them is the Owner.
 static access_list accesses_of(const program *prog, const decl *sys)
 {
-    access_list list = {arena_alloc(sizeof(access) * (size_t)(sys->params.count + sys->world_uses.count + 2)), 0};
+    access_list list = {arena_alloc(sizeof(access) * (size_t)(sys->params.count + sys->world_uses.count + 4)), 0};
     bool any_entity = false;
     bool by_owner = false, takes_owner = false;
     for (int i = 0; i < sys->params.count; i++) {
@@ -151,6 +152,10 @@ static access_list accesses_of(const program *prog, const decl *sys)
         takes_owner |= data && data == prog->owner;
     }
     if (by_owner && sys->per_entity && !takes_owner && prog->owner) list.items[list.count++] = (access){prog->owner, false, false};
+    for (int side = 0; side < 2; side++) {
+        if (sys->task_access[side] && prog->task_slots[side])
+            list.items[list.count++] = (access){prog->task_slots[side], (sys->task_access[side] & 2u) != 0, true};
+    }
     return list;
 }
 

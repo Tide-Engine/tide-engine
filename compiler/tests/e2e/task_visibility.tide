@@ -1,0 +1,41 @@
+singleton State
+{
+    Task<string> cached;
+    Task<string> pending;
+    Task<string> later;
+    bool started;
+    bool startLater;
+}
+
+async string Cached() { return "PRIVATE-CACHED-TASK-RESULT"; }
+async string Pending(string secret)
+{
+    await Wait.Ticks(8);
+    return secret;
+}
+
+system Start(mut State state)
+{
+    if (!state.started)
+    {
+        state.started = true;
+        state.cached = Cached();
+        state.pending = Pending("PRIVATE-WAITING-TASK-INPUT");
+    }
+    if (state.startLater)
+    {
+        state.startLater = false;
+        state.later = Cached();
+    }
+}
+
+local singleton Observed { bool cached; bool pending; bool absent; }
+view Observe(State state, mut Observed observed)
+{
+    observed.cached = state.cached.isCompleted;
+    observed.pending = state.pending.isRunning;
+    observed.absent = state.cached.isCancelled && state.pending.isCancelled;
+}
+
+scene Main;
+event(Spawned) Setup(with Main) { Spawn(Visibility); }

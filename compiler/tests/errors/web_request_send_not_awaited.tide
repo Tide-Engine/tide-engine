@@ -1,7 +1,9 @@
-// expect: Send is awaited: 'var response = await request.Send();'
+// expect: can't assign LocalTask<WebResponse fails IOError> to int
 local scene Main { }
 async void Go()
 {
-    Web.Request("http://example.com").Send();
+    mut var result = 0;
+    result = Web.Request("http://example.com").Send();
+    Debug.Log(result);
 }
 view Start() { Go(); }

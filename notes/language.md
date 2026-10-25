@@ -47,6 +47,124 @@ quick checks (1.45 s). Its final state review is clean; no compiler changed or
 full suite rerun was needed for that package completion. No performance result
 is claimed here; no runtime source changed.
 
+## Started task handles and worker controls (2026-10-25)
+
+The owner approved calls returning started handles, `rebuild.Cancel()` and
+`await build`, consistently for async functions and workers. Declarations keep
+completion types. Match/local placement uses Task<T>/LocalTask<T>, with void
+forms Task/LocalTask and complete `Task<T fails E>` result spelling. Copies
+share one operation and repeated awaits receive value copies. Cancellation
+propagates to the cancelled operation's waiters; cancelling one waiter leaves
+other consumers intact. Unused directly awaited workers can be abandoned.
+Compatible local save/reload must preserve surviving logical handles.
+
+The implementation uses opaque 16-byte identities, world-owned
+slot registries and typed completion tables. Generational lookup validates the
+operation's code, row and identity, and old/default handles cannot alias new
+operations. Ordinary async starts retain fire-and-forget; worker adapters are
+rooted by their consumers. Iterative tracing follows handles in world values,
+active frames and cached results, reclaims unreachable result cycles and trims
+dead registry tails. Hidden handle-bearing frame slots that leave scope are
+released at suspension. Repeated awaits copy ordinary values independently.
+
+Calls of Wait, Storage.Flush, Web.Fetch and request.Send also produce handles
+through private checked async entries. Source metadata preserves their authored
+editor/identity occurrences. Task result arguments retain optionality and the
+complete fails type. World-neutral async bodies defer handle placement until
+their own world is settled; helpers with explicit LocalTask returns retain that
+capability. All handle C aliases share one fixed representation, with source
+types remaining invariant.
+
+Task passes resolve already-waiting dependencies before their continuations
+using an iterative walk over start-ordered due rows. Generated thread-local
+execution context carries cancellation through directly awaited children and
+synchronous helpers, and is saved/restored around independent starts. No native
+callback, pointer or execution context enters match or saved local state.
+Frame-layout fingerprints now include nested container, enum and result shapes.
+No public cancellation outcome or WhenAll API was approved; bare match workers
+stay reserved.
+
+Focused native task_handles (ten cases), worker_handles (six deferred-provider
+cases), IO and fetch checks pass. Coverage includes shared cancellation, repeated
+failable/list values, stale identity reuse, result cycles, 128 bursts with stable
+heap use, match snapshots/packed state, local saves, inferred placement, engine
+timers and self-cancellation through helpers while an independent task survives.
+The new LSP case passes, as do all 290 shared grammar checks. The first
+broad native build found the shard handoff's positional tide_due initializer;
+it now uses named members after the private scheduling record grew.
+
+The owner deferred distributed match handles to a separate pass. Sharded games
+now reject first-class match handle use with an explicit diagnostic; local
+handles/workers and existing directly awaited/discarded match async calls remain
+supported, with a positive sharded local-worker fixture. Per-recipient visibility
+treats tasks as authoritative server work: private registries, waiting arguments
+and cached results are omitted from projection/schema. Published handles are
+stale where their operation is absent; projected clients cannot start retained
+match operations. task_visibility checks privacy markers, hashes, repair and
+absence of identity aliasing.
+
+The same pass replaces worker ticket list scans with a hash index and targeted
+retirement, adds provisional admission/transfer limits and frame-thread worker
+profiling, and adds generated cooperative safe points.
+Focused worker/runtime/one-slot/nested-await/grid restoration checks
+pass. A frame-release audit also found that compiler-private captured
+grid slots need explicit grid release; that correction is part of this pass.
+
+Actual layout migration preserves running/completed handles and makes handles
+to dropped tables harmless. Nested same-sized result changes invalidate both
+active/cached fingerprints. Declared handle types keep their world's serial
+registry even if a reload removes every producer, preventing later identity
+reuse. An attached-field regression keeps a worker result reachable only
+through a component's local fields. Starting its consumer exposed an existing
+gen_entity_copies bug: local callers must not store/reload read-only presentation
+copies of match components merely because their attached fields are mutable.
+Local fields remain accessed in place; no async attached-field capability is
+introduced.
+
+Validation before dev integration: both complete Windows debug builds are
+warning-free. Full suites cover 2,661 enabled native checks (215.87 s) and
+2,556 enabled web checks (402.28 s), including Vulkan/OpenGL, WebGL/D3D11/WebGPU,
+browser rooms/migration, threaded workers and unchanged deterministic pins.
+Two native/one web failures were obsolete immediate-await expectations in LSP
+and Fetch diagnostics; they now check started handles and the actionable
+await-before-unwrapping diagnostic. After those corrections and the attached
+boundary fix, all 44 affected native and 42 web checks pass. The production
+docs build passes. Both suites retain the existing disabled MicroDuck
+right-turn case. Clang is 23.1.2, Node 24.22.1, TIDE_EXTERNAL_DIRS is empty,
+and hidden/muted test safeguards remain enabled. Vulkan validation-layer,
+other OS, Android, MinGW and sanitizer coverage remain CI work. No CI was
+dispatched. Clean paired performance measurements and dev integration remain
+pending; no timing claim is made while the shared gate sees other builds.
+
+Dev integration through 1a1e4f7f/259e7a54 retains incoming aliases, custom GUI
+composition and shader/Earth work. Scope cleanup now preserves both owned worker
+temporaries and reverse-order GUI/Draw restoration on each captured draw list.
+The incoming has_local match-copy guard is retained. Task aliases exercise
+canonical local and failable match handles; task_layout also requires a
+producer-free declaration to retain its serial registry. The JetBrains grammar
+snapshot includes both incoming aliases and task types.
+
+Both refreshed complete debug builds pass. All 2,626 enabled web tests pass
+(614.90 s); the 2,731 enabled native run (342.39 s) found only an editor test
+PID-file race. Its child now writes a terminated PID line and the reader waits
+for that complete line within the same three-second bound; the rebuilt editor
+Play check passes. No production editor behavior or timeout was changed.
+All task/worker/alias/GUI, deterministic and browser/GPU checks pass.
+The merged production docs build and all 299 shared grammar checks pass.
+The pre-existing disabled MicroDuck right-turn test and unavailable platform
+coverage above remain unchanged. No extra CI run was dispatched.
+
+The first quiet-gated 24-row voxel comparison is retained, including adverse
+small/fallback results. It motivated removing redundant per-statement checks
+from pure worker bodies, while retaining loop/body/helper safe points and
+statement checks in async tasks and their synchronous helper chains.
+The final frozen 24-row batch passed the unchanged guard after one timeout
+amid other checkout CTests; all rows validate and both binary identities match
+the manifest. Large-burst copying stalls improve substantially, with mixed
+small-burst/contention tradeoffs. Full methodology, both raw batches and
+limitations are in notes/benchmarks.md and bench/results/worker-controls/.
+No deterministic expectation, guard or disabled test was weakened.
+
 ## Transparent type aliases (2026-10-24)
 
 Owner-approved general language feature: `using Name = Type;` declares a

@@ -216,6 +216,7 @@ typedef struct type_ref {
     VEC(loc) arg_mut;           // Func's argument qualifiers: the `mut` location, or zero for read-only.
     VEC(expr *) sizes;           // T[N][M]: what's in each [] after it, the first the outer; constant expressions
     bool optional;   // `T?`
+    struct type_ref *failure; // Task<T fails E>: the declared completion error type
     loc question_at; // ...the '?'
     str text;        // As written, without spaces but the one after a map's comma
     loc end;         // Just past its last token
@@ -600,6 +601,14 @@ typedef struct decl {
     int long_arrays;       // A struct: whether it holds an array of more than 4,096 elements (0 not worked out, 1 no, 2 yes: check.c, holds_long_array)
     skinned_kind skin_kind;
     struct decl *asset_ref_of; // Asset<Mesh<V>>: persistent named identity, resolved to borrowed mesh on .Value
+    bool task_handle; // Task<T>/LocalTask<T>: shared operation identity, not an owned result
+    bool task_local;
+    type task_value; // The complete result, including optional/failure wrapping
+    struct decl *task_origin; // A world-polymorphic creator, until its side is settled
+    struct decl *worker_adapter; // Private async entry for a first-class worker call
+    struct decl *task_result_store; // Private completed-result storage declaration
+    bool handles_tasks; // Values of calls of this async function escape as handles
+    unsigned task_access[2]; // Match/local operation registry: 1 read, 2 write
     type skin_vertex;
     struct decl *skin_contract;
     struct decl *skin_animations;
@@ -850,6 +859,7 @@ typedef struct decl {
     // workers also have CPU bodies; actual GPU sampling remains GPU-only.
     bool gpu_only;
     bool worker_cpu; // Reachable from a local worker: grid-reading helpers also have CPU bodies.
+    bool task_cpu; // Reachable synchronous helper of async code: cooperative task stop checks.
     bool gpu_sampling; // Samples GPU resources, directly or transitively; never worker CPU code.
     loc gpu_only_at;
     type_kind gpu_only_reads;     // ...what it reads there: TY_GRID for a grid it takes, or the type it samples
@@ -935,6 +945,7 @@ typedef enum builtin_call {
     CALL_LIST,      // items.Add(...), a list's methods: `name` says which
     CALL_MAP,       // scores.Has(k), a map's or a set's methods: `name` says which; type_decl is the map
     CALL_WAIT,      // Wait.Ticks(n), Wait.Seconds(s) and Wait.Frames(n), awaited: `name` says which
+    CALL_TASK,      // A shared task handle's Cancel() or completion query
     CALL_GRID,      // cells.Clear(), a grid's methods: `name` says which; type_decl is the grid
     CALL_NEW_GRID,  // Grid2(1024, 1024) or Grid3(...): a grid with that size (0: open), whose type comes from where it goes
     CALL_DISCARD,   // this.Discard(), in a frag: the pixel isn't drawn
@@ -1111,6 +1122,9 @@ struct expr {
     const char *c_pack;     // ...and the function that makes the one value it takes of its arguments, or NULL
     VEC(type) arg_want;     // CALL_BUILTIN, CALL_METHOD and CALL_FUNCTION: the type each argument converts to.
     struct decl *method;    // CALL_METHOD and CALL_FUNCTION: the method or function called
+    bool task_start_value; // This async/worker call returns a started task handle
+    struct expr *task_source; // Authored engine awaitable before private async lowering
+    bool task_completion; // A Task.isRunning/isCompleted/isCancelled property
     comp_mask spawn_mask; // CALL_SPAWN: components the new entity has.
     int spawn_archetype;  // CALL_SPAWN: index into the archetype list.
     bool local_world;     // CALL_SPAWN, CALL_ADD, CALL_REMOVE, CALL_DESTROY and CALL_SEND: in the local world
@@ -1519,6 +1533,8 @@ typedef struct program {
     VEC(decl *) arrays;  // Every T[N] type, one per element type and length
     VEC(decl *) meshes;  // Every Mesh<V> type, one per vertex struct
     VEC(decl *) asset_refs; // Persistent Asset<Mesh<V>> value types
+    VEC(decl *) task_handles; // One opaque task type per result and placement
+    decl *task_slots[2]; // Compiler-private match/local operation registries
     VEC(decl *) skinned_types; // Owned model values and their inferred/contracted catalog views.
     decl *animation, *bone, *skeleton, *pose, *bone_transform, *animations, *bones, *playback;
     bool asset_metadata_only; // tidels reads model names without importing geometry or fetching URLs.

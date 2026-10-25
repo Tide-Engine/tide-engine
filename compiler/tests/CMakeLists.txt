@@ -3,13 +3,17 @@
 # WARNINGS are the ones tidec has to give, and PACKAGES the files of packages
 # the game builds with, each after its package's name, as for tide_add_game.
 function(tide_e2e_test name)
-    cmake_parse_arguments(ARG "" "" "SOURCES;WARNINGS;PACKAGES;DEFINES" ${ARGN})
+    cmake_parse_arguments(ARG "LAYOUT" "" "SOURCES;WARNINGS;PACKAGES;DEFINES" ${ARGN})
     set(sources "e2e/${name}.tide")
     if(ARG_SOURCES)
         set(sources ${ARG_SOURCES})
     endif()
     set(target tidec_e2e_${name})
-    tide_add_game(${target} SOURCES ${sources} NAME game WARNINGS ${ARG_WARNINGS} PACKAGES ${ARG_PACKAGES} DEFINES ${ARG_DEFINES}
+    set(layout)
+    if(ARG_LAYOUT)
+        set(layout LAYOUT)
+    endif()
+    tide_add_game(${target} ${layout} SOURCES ${sources} NAME game WARNINGS ${ARG_WARNINGS} PACKAGES ${ARG_PACKAGES} DEFINES ${ARG_DEFINES}
         HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/${name}_test.c")
     target_include_directories(${target} PRIVATE "${PROJECT_SOURCE_DIR}/tests")
     add_test(NAME ${target} COMMAND ${target})
@@ -231,6 +235,10 @@ add_test(NAME tidec_map_layout
     COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}"
         "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/map_layout"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/map_layout.cmake")
+add_test(NAME tidec_task_layout
+    COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}"
+        "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/task_layout"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/task_layout.cmake")
 tide_e2e_test(local)
 # `local` fields of the match's components and singletons: this machine's, outside the match
 tide_e2e_test(local_fields WARNINGS "'box' is declared mut but never written")
@@ -256,6 +264,13 @@ tide_e2e_test(actions)
 tide_e2e_test(tasks)
 tide_e2e_test(tasks_local)
 tide_e2e_test(local_workers)
+tide_e2e_test(task_handles LAYOUT)
+tide_e2e_test(task_visibility)
+tide_e2e_test(worker_handles)
+if(TIDE_PLATFORM)
+    target_link_libraries(tidec_e2e_task_handles PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_task_handles PRIVATE TIDE_TASK_MIGRATION=1)
+endif()
 tide_e2e_test(worker_values)
 tide_e2e_test(worker_grids)
 if(TIDE_PLATFORM)

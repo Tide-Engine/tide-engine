@@ -288,7 +288,7 @@ Some code never sends or spawns, whoever calls it: a `Sort`'s comparison and a `
 
 ### Starting a task
 
-A function or a method starts a [task](../game/tasks.md) the same way, by calling an async function as a statement, and the same rule holds: it starts it as the code that calls it could.
+A function or a method starts a [task](../game/tasks.md) by calling an async function, and the same rule holds: it starts it as the code that calls it could. It can return the started `Task<T>` or `LocalTask<T>` handle, including `Task<T fails E>` for a failable result. A discarded ordinary async call continues by itself.
 
 ```csharp
 singleton Round

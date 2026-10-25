@@ -42,7 +42,9 @@ view ReadInOrder(mut Results results)
 
 async void Barrier() fails IOError
 {
-    try await Storage.Flush();
+    LocalTask<void fails IOError> flush = Storage.Flush();
+    try await flush;
+    try await flush;
 }
 
 async void Commit(mut Results results)

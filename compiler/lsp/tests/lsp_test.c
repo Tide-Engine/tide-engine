@@ -3338,6 +3338,47 @@ TIDE_TEST(lsp_local_workers)
     TIDE_CHECK(has(request("textDocument/completion"), "\"label\":\"Add\""));
 }
 
+TIDE_TEST(lsp_task_handles_preserve_results_members_and_source_types)
+{
+    start();
+    static const char head[] = "scene Main;\nenum MeshError { Bad }\nstruct Mesh { int faces; }\n"
+                              "async Mesh Build() fails MeshError { await Wait.Frames(1); return Mesh { faces = 6 }; }\n";
+    char source[1024];
+    snprintf(source, sizeof source, "%sview Show() { LocalTask<Mesh fails MeshError> build = Build(); build.$ }\n", head);
+    const char *members = complete(source);
+    TIDE_CHECK(offers(members, "Cancel") && offers(members, "isRunning"));
+    TIDE_CHECK(offers(members, "isCompleted") && offers(members, "isCancelled"));
+    TIDE_CHECK(!offers(members, "tide_id") && !offers(members, "tide_slot"));
+
+    snprintf(source, sizeof source, "%sview Show() { var bu$ild = Build(); build.Cancel(); }\n", head);
+    open_document(source);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "LocalTask<Mesh fails MeshError>"));
+
+    snprintf(source, sizeof source, "%sview Show() { LocalTask<Mesh fails Mesh$Error> build = Build(); build.Cancel(); }\n", head);
+    open_document(source);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 3);
+
+    open_document("scene Main;\nview Show() { var timer = Wait.Fra$mes(2); timer.Cancel(); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *wait = request("textDocument/hover");
+    TIDE_CHECK(has(wait, "Wait.Frames") && !has(wait, "tide_async_builtin"));
+
+    open_document("scene Main;\nview Show() { var timer = Wait.Frames(2); timer.Ca$ncel(); }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "cooperative cancellation"));
+    open_document("scene Main;\nview Show() { var timer = Wait.Frames(2); var running = timer.isRun$ning; Debug.Log(running); }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "Read-only operation status"));
+
+    const char *decls = complete("scene Main;\nlocal singleton State { $ }\n");
+    TIDE_CHECK(offers(decls, "Task") && offers(decls, "LocalTask"));
+    static const char messy[] = "scene Main;\nenum Error { Bad }\nlocal singleton State { LocalTask< int fails Error > task; }\n";
+    format_reply(messy);
+    const char *formatted = apply_reply(messy, NULL);
+    TIDE_CHECK(has(formatted, "LocalTask<int fails Error>"));
+    TIDE_CHECK(has(format_reply(formatted), "\"result\":[]"));
+}
+
 TIDE_TEST(lsp_empty_scene_declarations)
 {
     start();
@@ -9121,7 +9162,9 @@ TIDE_TEST(lsp_web_requests)
                                        "    answer.$\n}\n");
     TIDE_CHECK(offers(answer, "status") && offers(answer, "body"));
     open_document(TASK "    Web.Request(\"http://example.com\").Send();\n}\nview Start() { Go(); }\n");
-    TIDE_CHECK(has(last_sent(), "Send is awaited"));
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *send = complete(TASK "    var request = Web.Request(\"http://example.com\").Send();\n    request.$\n}\n");
+    TIDE_CHECK(offers(send, "Cancel") && offers(send, "isRunning") && !offers(send, "body"));
     open_document("local scene Main { }\nview Start() { }\n");
     TIDE_CHECK(!has(last_sent(), "web.tide"));
 #undef TASK

@@ -173,13 +173,15 @@ static void gen_workers(gen *g)
         }
         sb_put(o, fn->result.kind == TY_STRING ? "));\n" : ");\n");
         if (fn->result.kind != TY_VOID) {
+            sb_put(o, "    if (!tide_worker_cancelled()) {\n");
             gen_worker_snapshot(g, fn->result, "v->result", 0);
             gen_worker_own(g, fn->result, "v->result", "TIDE_IN_LOCAL");
+            sb_put(o, "    }\n");
         }
         sb_put(o, "    tide_worker_leave(previous);\n    if (!mark) tide_scratch_free();\n    else tide_scratch_reset(mark);\n    tide_text_use(saved_match, saved_local);\n}\n\n");
-        sb_printf(o, "TIDE_HELPER uint32_t tide_worker_begin_%s(tide_local *local", id);
+        sb_printf(o, "TIDE_HELPER void tide_worker_begin_%s(tide_local *local, uint32_t ticket", id);
         for (int k = 0; k < fn->params.count; k++) sb_printf(o, ", %s input%d", c_type(fn->params.items[k].type), k);
-        sb_printf(o, ")\n{\n    tide_worker_%s *v = tide_alloc_zeroed(1, sizeof *v);\n", id);
+        sb_printf(o, ")\n{\n    const uint64_t began = tide_worker_transfer_begin(local->tide_workers);\n    tide_worker_%s *v = tide_alloc_zeroed(1, sizeof *v);\n", id);
         sb_put(o, "    const uint32_t mark = tide_scratch_mark();\n"
                   "    tide_heap *saved_match = tide_world_heaps[TIDE_IN_MATCH], *saved_local = tide_world_heaps[TIDE_IN_LOCAL];\n"
                   "    v->jobs = local->tide_worker_jobs;\n");
@@ -199,10 +201,10 @@ static void gen_workers(gen *g)
             gen_worker_own(g, fn->params.items[k].type, place.data, "TIDE_IN_MATCH");
         }
         sb_put(o, "    tide_text_use(saved_match, saved_local);\n    tide_scratch_reset(mark);\n");
-        sb_printf(o, "    return tide_worker_start(&local->tide_workers, local->tide_worker_jobs, tide_worker_run_%s, tide_worker_release_%s, v);\n}\n\n", id, id);
+        sb_printf(o, "    tide_worker_transferred(local->tide_workers, sizeof *v + (uint64_t)v->input_heap.used, began, false);\n    tide_worker_submit(local->tide_workers, ticket, tide_worker_run_%s, tide_worker_release_%s, v, sizeof *v + (uint64_t)v->input_heap.used);\n}\n\n", id, id);
         sb_printf(o, "TIDE_HELPER bool tide_worker_take_%s(tide_local *local, uint32_t ticket", id);
         if (fn->result.kind != TY_VOID) sb_printf(o, ", %s *out", c_type(fn->result));
-        sb_printf(o, ")\n{\n    tide_worker_%s *v = tide_worker_poll(local->tide_workers, ticket);\n    if (!v) return false;\n", id);
+        sb_printf(o, ")\n{\n    if (!tide_worker_transfer_ready(local->tide_workers)) return false;\n    tide_worker_%s *v = tide_worker_poll(local->tide_workers, ticket);\n    if (!v) return false;\n    const uint64_t began = tide_worker_transfer_begin(local->tide_workers);\n", id);
         if (fn->result.kind != TY_VOID) {
             sb_put(o, "    tide_heap *saved_match = tide_world_heaps[TIDE_IN_MATCH], *saved_local = tide_world_heaps[TIDE_IN_LOCAL];\n"
                       "    tide_text_use(&v->input_heap, &v->output_heap);\n");
@@ -211,7 +213,7 @@ static void gen_workers(gen *g)
             sb_put(o, fn->result.kind == TY_STRING ? "    *out = tide_text_view(result);\n" : "    *out = result;\n");
             sb_put(o, "    tide_text_use(saved_match, saved_local);\n");
         }
-        sb_put(o, "    tide_worker_forget(local->tide_workers, ticket);\n    return true;\n}\n\n");
+        sb_put(o, "    tide_worker_transferred(local->tide_workers, v->output_heap.used, began, true);\n    tide_worker_forget(local->tide_workers, ticket);\n    return true;\n}\n\n");
     }
 }
 
@@ -232,19 +234,34 @@ static void gen_worker_await(gen *g, expr *e, const char *name)
     gen_task *t = g->task;
     const expr *call = e->lhs;
     const decl *fn = call->method;
-    const int k = ++t->points;
-    line(g, o, "tide_f->tide_worker_ticket = 0;");
-    line(g, o, "tide_worker_resume%d:;", k);
-    line(g, o, "if (!tide_f->tide_worker_ticket) {");
-    g->indent++;
-    const int mark = task_mark(g);
-    bool grids = false, ordered = false;
+    bool grids = false, ordered = false, waits = false;
     for (int i = 0; i < call->args.count; i++) {
         grids |= fn->params.items[i].type.kind == TY_GRID;
-        ordered |= holds_writer(call->args.items[i]) || worker_argument_waits(call->args.items[i]);
+        waits |= worker_argument_waits(call->args.items[i]);
+        ordered |= holds_writer(call->args.items[i]) || waits;
     }
+    const int k = ++t->points;
+    sb ticket_name = {0};
+    sb_printf(&ticket_name, "tide_worker_ticket%d", k);
+    const char *ticket = task_slot_for(g, ticket_name.data, (type){TY_INT, NULL});
+    line(g, o, "tide_f->%s = 0;", ticket);
+    line(g, o, "tide_worker_resume%d:;", k);
+    line(g, o, "if (!tide_f->%s) {", ticket);
+    g->indent++;
+    if (waits) line(g, o, "if (!tide_worker_can_reserve(tide_l->tide_workers)) {");
+    else {
+        line(g, o, "tide_f->%s = (int32_t)tide_worker_reserve(&tide_l->tide_workers, tide_l->tide_worker_jobs);", ticket);
+        line(g, o, "if (!tide_f->%s) {", ticket);
+    }
+    g->indent++;
+    gen_spill_live(g);
+    line(g, o, "tide_f->tide_state = %d;", k);
+    line(g, o, "return tide_l->tide_frames + 1;");
+    g->indent--;
+    line(g, o, "}");
+    const int mark = task_mark(g);
     const char **inputs = NULL;
-    if (grids && ordered) {
+    if ((grids && ordered) || waits) {
         // Freeze each argument in written order. A grid captured before a later
         // await belongs to a hidden frame slot until the invocation is ready.
         inputs = arena_alloc(sizeof *inputs * (size_t)call->args.count);
@@ -269,8 +286,33 @@ static void gen_worker_await(gen *g, expr *e, const char *name)
             task_declare(g, temp, input);
         }
     } else hoist_arguments(g, call);
+    if (waits) {
+        // Restoring a frame abandons transient reservations. Arguments already
+        // evaluated before a later await stay in its frame and are not replayed.
+        const int r = ++t->points;
+        line(g, o, "tide_worker_submit%d:;", r);
+        line(g, o, "if (!tide_f->%s) {", ticket);
+        g->indent++;
+        line(g, o, "tide_f->%s = (int32_t)tide_worker_reserve(&tide_l->tide_workers, tide_l->tide_worker_jobs);", ticket);
+        line(g, o, "if (!tide_f->%s) {", ticket);
+        g->indent++;
+        gen_spill_live(g);
+        line(g, o, "tide_f->tide_state = %d;", r);
+        line(g, o, "return tide_l->tide_frames + 1;");
+        g->indent--;
+        line(g, o, "}");
+        g->indent--;
+        line(g, o, "}");
+        line(g, o, "if (0) {");
+        line(g, o, "tide_resume%d:;", r);
+        g->indent++;
+        gen_reload_live(g);
+        line(g, o, "goto tide_worker_submit%d;", r);
+        g->indent--;
+        line(g, o, "}");
+    }
     indent(g, o);
-    sb_printf(o, "tide_f->tide_worker_ticket = (int32_t)tide_worker_begin_%s(tide_l", routine_cname(fn));
+    sb_printf(o, "tide_worker_begin_%s(tide_l, (uint32_t)tide_f->%s", routine_cname(fn), ticket);
     for (int i = 0; i < call->args.count; i++) {
         sb_put(o, ", ");
         if (inputs) sb_put(o, inputs[i]);
@@ -289,7 +331,7 @@ static void gen_worker_await(gen *g, expr *e, const char *name)
     g->indent--;
     line(g, o, "}");
     if (e->type.kind != TY_VOID) line(g, o, "%s %s;", c_type(e->type), name);
-    line(g, o, "if (!tide_worker_take_%s(tide_l, (uint32_t)tide_f->tide_worker_ticket%s%s)) {", routine_cname(fn),
+    line(g, o, "if (!tide_worker_take_%s(tide_l, (uint32_t)tide_f->%s%s%s)) {", routine_cname(fn), ticket,
          e->type.kind == TY_VOID ? "" : ", &", e->type.kind == TY_VOID ? "" : name);
     g->indent++;
     gen_spill_live(g);
@@ -297,7 +339,7 @@ static void gen_worker_await(gen *g, expr *e, const char *name)
     line(g, o, "return tide_l->tide_frames + 1;");
     g->indent--;
     line(g, o, "}");
-    line(g, o, "tide_f->tide_worker_ticket = 0;");
+    line(g, o, "tide_f->%s = 0;", ticket);
     e->hoisted = e->type.kind == TY_VOID ? "0" : name;
     line(g, o, "if (0) {");
     line(g, o, "tide_resume%d:;", k);
@@ -317,8 +359,12 @@ static void gen_frame_workers(gen *g, const task_info *ti)
     for (int forget = 0; forget < 2; forget++) {
         sb_printf(o, "TIDE_HELPER void tide_%s_workers_%s(%s *v%s)\n{\n",
                   forget ? "forget" : "reset", name, name, forget ? ", tide_workers *workers" : "");
-        if (forget) sb_put(o, "    tide_worker_forget(workers, (uint32_t)v->tide_worker_ticket);\n");
-        sb_put(o, "    v->tide_worker_ticket = 0;\n");
+        for (int k = 0; k < ti->frame->fields.count; k++) {
+            const field *f = &ti->frame->fields.items[k];
+            if (f->name.len < 18 || memcmp(f->name.ptr, "tide_worker_ticket", 18) != 0) continue;
+            if (forget) sb_printf(o, "    tide_worker_forget(workers, (uint32_t)v->%s);\n", field_cname(f));
+            sb_printf(o, "    v->%s = 0;\n", field_cname(f));
+        }
         for (int i = 0; i < ti->fn->awaits.count; i++) {
             const task_info *child = task_of(g, ti->fn->awaits.items[i]);
             if (!child->fn->uses_workers) continue;

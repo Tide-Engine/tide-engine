@@ -227,6 +227,7 @@ typedef struct tide_gui_kept {
 
 typedef struct tide_gui {
     const struct tide_jobs *jobs; // Optional host pool for local calculations
+    const struct tide_worker_limits *worker_limits; // Optional local-worker admission limits
     // The screen this frame (Screen in Tide).
     float width;
     float height;

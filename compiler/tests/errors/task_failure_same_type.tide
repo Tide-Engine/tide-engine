@@ -1,0 +1,3 @@
+// expect: a task's error needs a type of its own
+local singleton State { LocalTask<int fails int> task; }
+scene Main;
