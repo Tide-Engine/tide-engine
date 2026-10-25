@@ -27,6 +27,13 @@ while ordinary async calls retain fire-and-forget. Disposal/rebind still drains
 provider completion before unloading code. Tests and timing: language.md,
 benchmarks.md.
 
+The first clean voxel batch showed extra pure-worker safe-point overhead.
+Pure workers now keep loop/body and helper-call checks without redundant checks
+before every ordinary statement. Async tasks and task_cpu helper chains retain
+statement checks, including immediate stopping after Cancel in a helper.
+Full merged native/web coverage retains queued/running cancellation, shared
+waiters, parallel helper stopping, self-cancel and teardown regressions.
+
 ## Background local calculations (2026-10-24)
 
 Local workers share the platform's bounded pool with tick rounds. Their separate

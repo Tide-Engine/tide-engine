@@ -89,6 +89,32 @@ other OS, Android, MinGW and sanitizer coverage remain CI work. No CI was
 dispatched. Clean paired performance measurements and dev integration remain
 pending; no timing claim is made while the shared gate sees other builds.
 
+Dev integration through 1a1e4f7f/259e7a54 retains incoming aliases, custom GUI
+composition and shader/Earth work. Scope cleanup now preserves both owned worker
+temporaries and reverse-order GUI/Draw restoration on each captured draw list.
+The incoming has_local match-copy guard is retained. Task aliases exercise
+canonical local and failable match handles; task_layout also requires a
+producer-free declaration to retain its serial registry. The JetBrains grammar
+snapshot includes both incoming aliases and task types.
+
+Both refreshed complete debug builds pass. All 2,626 enabled web tests pass
+(614.90 s); the 2,731 enabled native run (342.39 s) found only an editor test
+PID-file race. Its child now writes a terminated PID line and the reader waits
+for that complete line within the same three-second bound; the rebuilt editor
+Play check passes. No production editor behavior or timeout was changed.
+All task/worker/alias/GUI, deterministic and browser/GPU checks pass.
+The merged production docs build and all 299 shared grammar checks pass.
+The pre-existing disabled MicroDuck right-turn test and unavailable platform
+coverage above remain unchanged. No extra CI run was dispatched.
+
+The first quiet-gated 24-row voxel comparison is retained, including adverse
+small/fallback results. It motivated removing redundant per-statement checks
+from pure worker bodies, while retaining loop/body/helper safe points and
+statement checks in async tasks and their synchronous helper chains. The final
+paired binaries are frozen; their unchanged shared guard timed out once while
+other checkout CTests remained active and is being retried. Timing conclusions
+are recorded separately in notes/benchmarks.md.
+
 
 ## Transparent type aliases (2026-10-24)
 

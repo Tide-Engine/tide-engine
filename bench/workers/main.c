@@ -148,7 +148,7 @@ int main(int argc, char **argv)
         good &= *(const int32_t *)tide_list_at(world.Simulation.values, (int32_t)i, sizeof(int32_t)) == (int32_t)value;
     qsort(frame_ms, frames, sizeof *frame_ms, compare_double);
     qsort(tick_ms, frames, sizeof *tick_ms, compare_double);
-    const uint32_t median = frames ? frames / 2u : 0, p95 = frames ? (frames - 1u) * 95u / 100u : 0;
+    const uint32_t median = frames ? frames / 2u : 0, p95 = frames ? (frames * 95u + 99u) / 100u - 1u : 0;
     printf("{\"benchmark\":\"workers\",\"chunks\":%u,\"threads\":%u,\"simulation\":%u,\"pending_limit\":%u,"
            "\"profile\":%s,\"frames\":%u,\"faces\":%llu,\"checksum\":%llu,\"burst_ms\":%.6f,"
            "\"c_serial_kernel_ms\":%.6f,\"view_median_ms\":%.6f,\"view_p95_ms\":%.6f,\"view_max_ms\":%.6f,"

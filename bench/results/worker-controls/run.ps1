@@ -3,6 +3,7 @@
 param(
     [Parameter(Mandatory=$true)][string]$Baseline,
     [Parameter(Mandatory=$true)][string]$Candidate,
+    [string]$CandidateRevision = 'worktree',
     [string]$Output = "$PSScriptRoot/raw.jsonl"
 )
 $env:TIDE_HIDDEN = '1'
@@ -29,7 +30,7 @@ try {
     $programs = @{baseline = (Resolve-Path -LiteralPath $Baseline).Path; candidate = (Resolve-Path -LiteralPath $Candidate).Path}
     $metadata = @{
         type = 'metadata'; at = [DateTime]::UtcNow.ToString('o')
-        baseline = '807e34b2'; candidate = 'uncommitted worker/task gap pass'
+        baseline = '807e34b2'; candidate = $CandidateRevision
         baseline_binary_sha256 = (Get-FileHash -LiteralPath $programs.baseline).Hash
         candidate_binary_sha256 = (Get-FileHash -LiteralPath $programs.candidate).Hash
         processor = (Get-CimInstance Win32_Processor | Select-Object Name, NumberOfCores, NumberOfLogicalProcessors)

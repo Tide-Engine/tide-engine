@@ -11,6 +11,13 @@ integer workload beside meshing and verifies every final element against a
 serial oracle. Quick CTests exercise pool, fallback/one-slot and contention.
 
 JSON reports burst time, view/tick median/p95/max, frame count and exact work.
+Frames are unpaced polling turns, not a display cadence. Idle polls can
+dominate percentiles; maximum view cost is the useful stall observation here.
+Backpressure spreads transfers across turns. At an actual display cadence
+those turns take additional wall time; these results are not FPS or delivery
+latency predictions. The contention case ticks once per turn, so different
+turn counts mean different total foreground work. Compare its per-tick costs
+and exact per-tick oracle, not its burst duration as equal total work.
 The C timing is a flat, serial kernel reference. It omits grid lookup,
 allocation, captures, publication, scheduling and simulation and therefore
 is not an equivalent asynchronous implementation or an end-to-end speed ratio.
@@ -25,3 +32,8 @@ its driver omits only the new worker limit field and worker profile rows.
 Use the same Clang RelWithDebInfo configuration for both. Binary hashes,
 machine metadata and raw rows are saved with the result. Keep adverse results;
 do not interpret loaded or incomplete batches as clean measurements.
+
+Raw `pending_limit: 0` records the requested default: unbounded in the baseline,
+64 private jobs in the candidate. Initial rows used a lower-neighbor p95
+estimate; final rows use nearest rank. Burst durations and maxima in both
+batches are unaffected by that reporting correction.

@@ -9,10 +9,15 @@ checks run in both suites. Its separate flat-grid C timing is only a kernel
 reference, not equivalent async work. The paired runner and methodology are
 in bench/workers/README.md and bench/results/worker-controls/run.ps1.
 
-Release baseline 807e34b2 and the candidate are built with identical mesher/
-driver work (baseline-only removal of the new host API fields). Timing is
-pending: the shared guard still sees other checkout builds. No loaded run,
-speedup or responsiveness number is claimed.
+Release baseline 807e34b2 and the candidate use identical mesher/driver work
+(baseline-only removal of the new host API fields). The first clean 24-row
+batch is retained, including small/fallback regressions. Median worst view
+turns fall 37.27 to 4.65 ms for 256 chunks, while 64-chunk and fallback burst
+completion regress about 12% and 16%. Pure worker statement checks were reduced
+in response, preserving loop/body/helper stopping. A second frozen comparison
+is waiting on the unchanged guard after one timeout amid other checkout CTests.
+Raw data, caveats and final status: bench/results/worker-controls/README.md.
+No loaded-run or post-adjustment timing claim is made.
 
 ## Render3D measured static cubes (2026-10-25)
 

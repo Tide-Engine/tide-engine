@@ -17,6 +17,15 @@ The older Web Request test now accepts retained/discarded Send handles and
 checks handle completion rather than requiring immediate await. Full-suite
 validation: language.md.
 
+Integration retains alias/custom-GUI editor support and synchronizes the
+JetBrains grammar snapshot with the combined shared grammar. All 299 grammar
+cases, the complete native LSP suite and production docs build pass.
+The full native run exposed a PID-file readiness race in the editor Play
+fixture: file creation can be observed before its write. The fixture now uses
+a newline-terminated PID and waits for the complete line under its unchanged
+three-second bound. The rebuilt Play test passes; production process handling
+is unchanged.
+
 ## Transparent type aliases (2026-10-24)
 
 The shared TextMate grammar distinguishes `using Name = Type;` declarations

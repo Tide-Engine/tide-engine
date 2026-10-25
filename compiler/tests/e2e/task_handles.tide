@@ -1,6 +1,9 @@
+using IntBuild = LocalTask<int>;
+using CheckedBuild = Task<int fails MeshError>;
+
 local singleton Results
 {
-    LocalTask<int> build;
+    IntBuild build;
     LocalTask firstWaiter;
     LocalTask secondWaiter;
     bool started;
@@ -229,7 +232,7 @@ view StartAttached(mut Attached attached, mut Results results)
 
 singleton MatchResults
 {
-    Task<int fails MeshError> build;
+    CheckedBuild build;
     Task reader;
     bool started;
     bool cancel;

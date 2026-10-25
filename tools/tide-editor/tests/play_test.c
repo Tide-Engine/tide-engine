@@ -31,7 +31,7 @@ static const char *arg_value(const int argc, char **argv, const char *name)
 
 static int child(const char *pid_file)
 {
-    char pid[40]; snprintf(pid, sizeof pid, "%u", sys_pid());
+    char pid[40]; snprintf(pid, sizeof pid, "%u\n", sys_pid());
     if (!sys_write_text(pid_file, pid)) return 1;
     sys_sleep_ms(10000); // Safety bound even if the process-tree assertion fails.
     return 0;
@@ -131,10 +131,16 @@ static uint32_t wait_pid(const char *directory, const char *name)
 {
     char *path = path_join(directory, name);
     const int64_t until = sys_now_ms() + 3000;
-    char *text = NULL;
-    while (!(text = sys_read_file(path, NULL)) && sys_now_ms() < until) sys_sleep_ms(10);
-    const uint32_t pid = text ? (uint32_t)strtoul(text, NULL, 10) : 0;
-    free(path); free(text);
+    uint32_t pid = 0;
+    do {
+        char *text = sys_read_file(path, NULL);
+        // Creating the file precedes writing it. Wait for the complete line,
+        // rather than treating an observed empty/partial file as process 0.
+        if (text && strchr(text, '\n')) pid = (uint32_t)strtoul(text, NULL, 10);
+        free(text);
+        if (!pid) sys_sleep_ms(10);
+    } while (!pid && sys_now_ms() < until);
+    free(path);
     return pid;
 }
 

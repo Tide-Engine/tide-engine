@@ -39,3 +39,17 @@ endforeach()
 if(integer_running STREQUAL floating_running OR integer_completed STREQUAL floating_completed)
     message(FATAL_ERROR "nested result schema change must invalidate running and cached task rows")
 endif()
+
+# Removing every producer while keeping declared handles must preserve the
+# serial registry, or a later reload could reuse one of their identities.
+file(MAKE_DIRECTORY "${OUT}/no_producers")
+file(WRITE "${OUT}/no_producers.tide" "local singleton State { LocalTask<int> kept; }\nscene Main;\n")
+execute_process(COMMAND "${TIDEC}" "${OUT}/no_producers.tide" -o "${OUT}/no_producers" --name game --layout
+    RESULT_VARIABLE result ERROR_VARIABLE diagnostics)
+if(NOT result EQUAL 0)
+    message(FATAL_ERROR "handle-only layout failed: ${diagnostics}")
+endif()
+file(READ "${OUT}/no_producers/game.h" header)
+if(NOT header MATCHES "tide_local_task_slots tide_local_task_slots;")
+    message(FATAL_ERROR "declared handles must retain their serial registry without producers")
+endif()

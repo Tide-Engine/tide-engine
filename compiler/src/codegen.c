@@ -6824,7 +6824,11 @@ static void gen_stmt(gen *g, const stmt *s)
     sb *o = &g->c;
     const bool bare = g->bare == s;
     if (s->kind != S_BLOCK && !bare) line_directive(g, s->at);
-    if (!bare && s->kind != S_BLOCK) gen_worker_checkpoint(g);
+    // A worker is a private pure calculation: loop/body and helper-call safe
+    // points suffice. Per-statement task checks remain necessary for Cancel()
+    // followed by another side effect in the same synchronous helper.
+    if (!bare && s->kind != S_BLOCK && (g->task || (g->routine && g->routine->task_cpu)))
+        gen_worker_checkpoint(g);
 
     // The locals `out` arguments declare in the statement: the enclosing
     // block's, as in C#, so they're declared here, before it. A loop's
