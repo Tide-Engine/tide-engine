@@ -5,6 +5,7 @@
 
 #include "game.h"
 #include "tide/mesh.h"
+#include "tide/pack.h"
 #include "tide/shard_client.h"
 #include "tide/shards.h"
 #include "tide_test.h"
@@ -15,11 +16,18 @@ static tide_local local;
 static tide_draw_list draw;
 static tide_gui gui;
 static tide_devices devices;
+extern const unsigned char tide_game_pack[];
+extern const size_t tide_game_pack_size;
+static bool assets_loaded;
 
 static tide_float3 ground_at(tide_float3 direction);
 
 static void draw_world(const tide_world *w, const tide_player_id who)
 {
+    if (!assets_loaded) {
+        TIDE_REQUIRE(tide_assets_load(tide_game_pack, tide_game_pack_size));
+        assets_loaded = true;
+    }
     tide_local_set_session(&local, TIDE_SESSION_CONNECTED, who, 0, true, false, "");
     tide_local_frame_time(&local, 1.0f / 60.0f);
     tide_draw_reset(&draw);
@@ -185,7 +193,7 @@ TIDE_TEST(earth_ground_detail_is_seamless_and_cached)
     draw_world(NULL, player(0));
     const tide_draw_texture *texture = NULL;
     for (uint32_t i = 0; i < draw.texture_count; i++) {
-        if (draw.textures[i].format == TIDE_TEXELS_BYTES && draw.textures[i].width == 256 && draw.textures[i].height == 256)
+        if (draw.textures[i].space != TIDE_PIXELS_PACK_CUBE && draw.textures[i].format == TIDE_TEXELS_BYTES && draw.textures[i].width == 256 && draw.textures[i].height == 256)
             texture = &draw.textures[i];
     }
     TIDE_REQUIRE(texture != NULL);
@@ -216,6 +224,48 @@ TIDE_TEST(earth_ground_detail_is_seamless_and_cached)
         TIDE_CHECK(fabsf(tide_dot_f3(normal, local.Atlas.froms.at[i])) < 0.00001f);
         TIDE_CHECK(fabsf(tide_dot_f3(normal, local.Atlas.tos.at[i])) < 0.00001f);
     }
+    tide_draw_free(&draw);
+    tide_local_free(&local);
+}
+
+// Check the actual imported cube, including its face convention and alpha,
+// against Tide's procedural fields. This also detects a stale/missing bake.
+TIDE_TEST(earth_globe_climate_is_packed_and_reused)
+{
+    tide_local_init(&local);
+    memset(&devices, 0, sizeof devices);
+    memset(&gui, 0, sizeof gui);
+    draw_world(NULL, player(0));
+    const tide_draw_texture *cube = NULL;
+    for (uint32_t i = 0; i < draw.texture_count; i++)
+        if (draw.textures[i].space == TIDE_PIXELS_PACK_CUBE) cube = &draw.textures[i];
+    TIDE_REQUIRE(cube && cube->width == 256 && cube->height == 256);
+    const uint8_t *const *faces = (const uint8_t *const *)cube->pixels;
+    TIDE_REQUIRE(faces != NULL);
+    for (int face = 0; face < 6; face++) {
+        TIDE_REQUIRE(faces[face] != NULL);
+        for (int y = 3; y < 256; y += 31) for (int x = 3; x < 256; x += 31) {
+            const float u = 2 * ((x + 0.5f) / 256) - 1, v = 2 * ((y + 0.5f) / 256) - 1;
+            const tide_float3 p = face == 0 ? tide_f3(1, -v, -u) : face == 1 ? tide_f3(-1, -v, u)
+                : face == 2 ? tide_f3(u, 1, v) : face == 3 ? tide_f3(u, -1, -v)
+                : face == 4 ? tide_f3(u, -v, 1) : tide_f3(-u, -v, -1);
+            const tide_float3 n = tide_normalize_f3(p);
+            const float forest = tide_simplex_f3(times(n, 7), 0) * 0.6f + tide_simplex_f3(times(n, 19), 0) * 0.3f;
+            const float dry = tide_simplex_f3(tide_add_f3(times(n, 3), tide_f3(5, 0, 0)), 0) * 0.7f
+                + tide_simplex_f3(times(n, 11), 0) * 0.3f;
+            const uint8_t *pixel = faces[face] + (y * 256 + x) * 4;
+            TIDE_CHECK(fabsf(pixel[0] * (2.0f / 255) - 1 - forest) <= 1.0f / 255 + 0.00001f);
+            TIDE_CHECK(fabsf(pixel[1] * (2.0f / 255) - 1 - dry) <= 1.0f / 255 + 0.00001f);
+            TIDE_CHECK(pixel[2] == 0 && pixel[3] == 255);
+        }
+    }
+    const uint64_t id = cube->id, version = cube->version;
+    draw_world(NULL, player(0));
+    bool reused = false;
+    for (uint32_t i = 0; i < draw.texture_count; i++)
+        if (draw.textures[i].space == TIDE_PIXELS_PACK_CUBE && draw.textures[i].id == id)
+            reused = draw.textures[i].version == version && draw.textures[i].pixels == (const void *)faces;
+    TIDE_CHECK(reused);
     tide_draw_free(&draw);
     tide_local_free(&local);
 }
@@ -406,7 +456,7 @@ TIDE_TEST(earth_hills_match_the_drawn_surface_and_stay_gentle)
     TIDE_CHECK(local.Flora.plants.at == plants);
     local.Land.revision = local.Flora.revision = 0;
     draw_world(NULL, player(0));
-    TIDE_CHECK(local.Land.revision == 1 && local.Flora.revision == 1);
+    TIDE_CHECK(local.Land.revision == 2 && local.Flora.revision == 2);
     TIDE_CHECK(tide_list_count(local.Land.shown) > 0 && tide_list_count(local.Flora.plants) > 0);
     tide_draw_free(&draw);
     tide_local_free(&local);

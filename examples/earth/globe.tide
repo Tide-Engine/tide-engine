@@ -62,7 +62,9 @@ float Marking(float across, float along, float wide)
 // detail sample keeps grass crisp without recomputing several noise octaves.
 float Grain(float3 n, float wide, Texture noise)
 {
-    return DetailNoise(n * 6000, noise) * Math.Saturate(1 - wide / 1.5);
+    mut float grain = 0;
+    if (wide < 1.5) grain = DetailNoise(n * 6000, noise) * Math.Saturate(1 - wide / 1.5);
+    return grain;
 }
 
 Color Grass(float3 n, float wide, float grain, float3 climate)

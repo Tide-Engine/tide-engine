@@ -1,0 +1,273 @@
+{
+  "date": "2026-10-25",
+  "classification": "exploratory; no reserved quiet window or controlled clocks; ordinary correctness overlapped part of these runs",
+  "baseline_game_commit": "3d7fff14",
+  "engine_checkpoint": "4ac9256a",
+  "machine": "Ryzen 9 7900X Radeon RDNA 2 iGPU device 164e; Chrome 155.0.8059.85; D3D11 LUID 0,69023",
+  "viewport": {
+    "css": [
+      412,
+      915
+    ],
+    "dpr": 3,
+    "pixels": [
+      1236,
+      2745
+    ]
+  },
+  "workload": "fixed globe camera, terrain/sky only, null match; no scenery/network/stats; both generated games compiled O2 with strict floats against identical web-debug libraries; 120 frames",
+  "warmup": {
+    "webgl": "discard first 30 frames; asynchronous disjoint timer queries around drawing",
+    "webgpu": "discard first 60 frames; engine GPU timestamp result read once per frame"
+  },
+  "summary": {
+    "webgl": {
+      "before_ms": 24.820115,
+      "after_ms": 11.856589999999999,
+      "reduction_percent": 52.22991513133602
+    },
+    "webgpu": {
+      "before_ms": 19.529728,
+      "after_ms": 9.568256,
+      "reduction_percent": 51.00671140939597
+    }
+  },
+  "processes": [
+    {
+      "backend": "webgl",
+      "round": 1,
+      "phase": "before",
+      "report": {
+        "mode": "before-1",
+        "scene": "0",
+        "adapter": null,
+        "pixels": [
+          1236,
+          2745
+        ],
+        "renderer": "ANGLE (AMD, AMD Radeon(TM) Graphics (0x0000164E) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+        "samples": 89,
+        "median": 24.86658,
+        "p95": 25.06742,
+        "errors": []
+      },
+      "log_sha256": "28154536030b7158aa930ce2d2f2186b73c01f9a93a200383798a79eee291d4d",
+      "gpu": {
+        "samples": 89,
+        "median": 24.86658,
+        "p95": 25.06742
+      }
+    },
+    {
+      "backend": "webgl",
+      "round": 1,
+      "phase": "after",
+      "report": {
+        "mode": "after-1",
+        "scene": "0",
+        "adapter": null,
+        "pixels": [
+          1236,
+          2745
+        ],
+        "renderer": "ANGLE (AMD, AMD Radeon(TM) Graphics (0x0000164E) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+        "samples": 89,
+        "median": 11.850249999999999,
+        "p95": 12.291139999999999,
+        "errors": []
+      },
+      "log_sha256": "54d59d700fd94c740c0295be218138db2ec1b6ae3a889b22f4716d93373a9853",
+      "gpu": {
+        "samples": 89,
+        "median": 11.850249999999999,
+        "p95": 12.291139999999999
+      }
+    },
+    {
+      "backend": "webgl",
+      "round": 2,
+      "phase": "before",
+      "report": {
+        "mode": "before-2",
+        "scene": "0",
+        "adapter": null,
+        "pixels": [
+          1236,
+          2745
+        ],
+        "renderer": "ANGLE (AMD, AMD Radeon(TM) Graphics (0x0000164E) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+        "samples": 89,
+        "median": 24.77365,
+        "p95": 25.05417,
+        "errors": []
+      },
+      "log_sha256": "ca385a5d9ecd74f39f3bf74f0e97f492bcc2a36a0bb860196ec9430f84d5130d",
+      "gpu": {
+        "samples": 89,
+        "median": 24.77365,
+        "p95": 25.05417
+      }
+    },
+    {
+      "backend": "webgl",
+      "round": 2,
+      "phase": "after",
+      "report": {
+        "mode": "after-2",
+        "scene": "0",
+        "adapter": null,
+        "pixels": [
+          1236,
+          2745
+        ],
+        "renderer": "ANGLE (AMD, AMD Radeon(TM) Graphics (0x0000164E) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+        "samples": 89,
+        "median": 11.862929999999999,
+        "p95": 12.15039,
+        "errors": []
+      },
+      "log_sha256": "c14ebc87c431d15c3d80a735546c46cb6c143aad7606c22a07816202d72c194f",
+      "gpu": {
+        "samples": 89,
+        "median": 11.862929999999999,
+        "p95": 12.15039
+      }
+    },
+    {
+      "backend": "webgpu",
+      "round": 1,
+      "phase": "before",
+      "report": {
+        "mode": "before-1",
+        "scene": "0",
+        "adapter": {
+          "vendor": "amd",
+          "architecture": "rdna-2",
+          "isFallbackAdapter": false
+        },
+        "pixels": [
+          1236,
+          2745
+        ],
+        "renderer": null,
+        "samples": 0,
+        "errors": []
+      },
+      "log_sha256": "f7dfc97df36b617953701aed387a45b6e74b113d83485db3d60f4e13d970a910",
+      "gpu": {
+        "samples": 27,
+        "median": 19.529728,
+        "p95": 19.726336
+      }
+    },
+    {
+      "backend": "webgpu",
+      "round": 1,
+      "phase": "after",
+      "report": {
+        "mode": "after-1",
+        "scene": "0",
+        "adapter": {
+          "vendor": "amd",
+          "architecture": "rdna-2",
+          "isFallbackAdapter": false
+        },
+        "pixels": [
+          1236,
+          2745
+        ],
+        "renderer": null,
+        "samples": 0,
+        "errors": []
+      },
+      "log_sha256": "7ff512e3d5cd9579b6555602e789fd259130d1a72891700bfd1d315ad66a380c",
+      "gpu": {
+        "samples": 28,
+        "median": 9.568256,
+        "p95": 9.699328
+      }
+    },
+    {
+      "backend": "webgpu",
+      "round": 2,
+      "phase": "before",
+      "report": {
+        "mode": "before-2",
+        "scene": "0",
+        "adapter": {
+          "vendor": "amd",
+          "architecture": "rdna-2",
+          "isFallbackAdapter": false
+        },
+        "pixels": [
+          1236,
+          2745
+        ],
+        "renderer": null,
+        "samples": 0,
+        "errors": []
+      },
+      "log_sha256": "4707c6851e9f3e633aa4ff2727c6c4059eca31c5ed54c8d4c8a8f5573775a826",
+      "gpu": {
+        "samples": 27,
+        "median": 19.529728,
+        "p95": 19.6608
+      }
+    },
+    {
+      "backend": "webgpu",
+      "round": 2,
+      "phase": "after",
+      "report": {
+        "mode": "after-2",
+        "scene": "0",
+        "adapter": {
+          "vendor": "amd",
+          "architecture": "rdna-2",
+          "isFallbackAdapter": false
+        },
+        "pixels": [
+          1236,
+          2745
+        ],
+        "renderer": null,
+        "samples": 0,
+        "errors": []
+      },
+      "log_sha256": "d7aa99ec531f01180d4963de707fd8f4a5263471f94aaa08b18f865b27fc7af5",
+      "gpu": {
+        "samples": 28,
+        "median": 9.568256,
+        "p95": 9.764864
+      }
+    }
+  ],
+  "hashes": {
+    "build\\globe-perf\\before-source\\game.c": "9c06aeb2b6d079b339742c2a13f07fcbaa6e36101fbcff4e669d84c938284c3b",
+    "build\\globe-perf\\before-source\\game.h": "ee8e8273064a6a10d83f3c8e420d1d1574370543e57b29682f67170bfc2c0eba",
+    "build\\globe-perf\\before-source\\game_pack.c": "55b25d43a9ca1b5e41e1693d8ccc5462bbb408327c448ac4e1ba7be906139ab6",
+    "build\\globe-perf\\before.html": "abead37ab3c467607361eec36d67798952566ba7a4a5e3010c450f7577839279",
+    "build\\globe-perf\\before.wasm": "89c0c6380caf6cc6ca9779e51c8dd3127bc3c619ef3dfc5dba5f10ba964226d5",
+    "build\\globe-perf\\after-source\\game.c": "1164df9f8dab3c77beefb352f13bcc4887108af1aaee0c6dcc2ae7e9a83b70cd",
+    "build\\globe-perf\\after-source\\game.h": "bd22547064004c112c22ddd2a36996d44ad6ad4bb9c04e475fb4adb6cca27194",
+    "build\\globe-perf\\after-source\\game_pack.c": "63d28c54f3cc2c3eb6abf49f05b11ab39932cc25a401bc967eabd9212cb081f6",
+    "build\\globe-perf\\after.html": "d5180da09f71ea119d567d98e050153a53f82d4e5dc013b4b516c66d33084719",
+    "build\\globe-perf\\after.wasm": "2f0370712bd6a1699dcf40f33c6ddcdf58ee74135443fc3b072247cd4c64dc52",
+    "examples\\earth\\art\\climate_nx.png": "0f23d8eb65360bdff8701b0c5d302d591c6b825561ede5e729bc5db2a44521b3",
+    "examples\\earth\\art\\climate_ny.png": "86705d3149a2b4a8a4574d4781283e8538bd4920da7d4283a749eeb57d13278e",
+    "examples\\earth\\art\\climate_nz.png": "eee921e3b401149fe8f3012f15e9456949b8a8eb3dab42824d281b28d21dc919",
+    "examples\\earth\\art\\climate_px.png": "89bf748cc453234fedfb27b4880b2b637cc2c06dc9cb9bb13c8a349d67444c43",
+    "examples\\earth\\art\\climate_py.png": "02f3f35d55dfb4f8b29a918751a25620da91021cf9fde328472c8775e898ee17",
+    "examples\\earth\\art\\climate_pz.png": "b2f634f420b2293c0c8a02580df390a92cb246d5027fce3a21d9d779afbee710",
+    "examples\\earth\\globe.tide": "c77a96c863fe3e579be0555464c2d3a3b2aeb42ae1ed9732f6876331e42a4107",
+    "examples\\earth\\terrain.tide": "2b3e878b15024bad36c81d14ee08221aa689fd4c2280411d6179bea265d3701b",
+    "examples\\earth\\tools\\climate.py": "5d588f5999f359ddd337677c588a0044c335191786e124b29d22f0dc58f4338f"
+  },
+  "limits": [
+    "Not Pixel performance or shipping FPS.",
+    "Two alternating pairs per backend, not a clean timing claim.",
+    "Cached broad fields are bilinear approximations; fine forest octave, roads, snow, lighting and full framebuffer remain.",
+    "Cube adds 1.5 MiB base / about 2 MiB with mips and about 0.91 MiB source PNGs.",
+    "Cold mesh/cache generation and browser shader compilation are excluded from warmed GPU medians."
+  ]
+}

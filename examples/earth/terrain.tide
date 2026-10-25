@@ -2,7 +2,7 @@
 // foundations; the country rolls gently between them, with roads on top.
 // Bump this when changing cached height, climate, plant or mesh formulas so
 // a native code reload regenerates retained local geometry too.
-const int TERRAIN_REVISION = 1;
+const int TERRAIN_REVISION = 2;
 
 float TerrainHeight(float3 n)
 {
@@ -65,6 +65,11 @@ float3 Climate(float3 n)
     float dry = Math.Simplex(n * 3 + float3(5, 0, 0)) * 0.7 + Math.Simplex(n * 11) * 0.3;
     return float3(forest, dry, Math.Abs(n.y));
 }
+
+// The globe reuses its fixed broad fields instead of running five simplex
+// octaves at every pixel, every frame. tools/climate.py bakes the four broad
+// octaves with Tide math; the small forest octave stays procedural and crisp.
+asset Cubemap climateMap = "art/climate_??.png";
 
 enum Biome { Meadow, Woods, Dry, Frost }
 
@@ -250,7 +255,10 @@ void DrawLand(mut Land land, Pilot pilot, Atlas atlas)
             if (Math.Dot(n, eyeUp) < Math.Cos(Math.Min(visible + width * 1.5, Math.PI))) continue;
             var delta = n * R - pilot.eye;
             float distance = Math.Max(Math.Length(delta) - R * width * 0.75, 1);
-            if (tile.level < 8 && R * width > Math.Max(distance * 0.5, 30))
+            // A few more distant tiles tighten each road/town bound, so globe
+            // pixels don't scan the entire road network. The near LOD stays
+            // driven by distance, and both views reuse the same chunk cache.
+            if (tile.level < 3 || (tile.level < 8 && R * width > Math.Max(distance * 0.5, 30)))
             {
                 for (var child = 0; child < 4; child++)
                     land.pending.Add(LandTile { face = tile.face, level = tile.level + 1, x = tile.x * 2 + child % 2, y = tile.y * 2 + child / 2 });
@@ -311,6 +319,8 @@ frag GlobeLandPixel(LandCorner corner, out Color color, Sky sky, Atlas atlas, La
 {
     var n = Math.Normalize(this.world - sky.center);
     float wide = GroundFootprint(this.world, n, sky);
-    var surface = Ground(n, wide, atlas, land.noise, Climate(n), -2, 2047);
+    var cached = climateMap.Sample(n, Filter.Trilinear);
+    var climate = float3(cached.r * 2 - 1 + Math.Simplex(n * 61) * 0.1, cached.g * 2 - 1, Math.Abs(n.y));
+    var surface = Ground(n, wide, atlas, land.noise, climate, wide > 64 ? -2 : int(Math.Round(corner.town)), wide > 64 ? 2047 : int(Math.Round(corner.roads)));
     color = FinishLand(surface, this.world, corner.normal, sky);
 }
