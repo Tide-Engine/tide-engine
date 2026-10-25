@@ -1,10 +1,10 @@
 ---
-description: "Use the optional Render3D package for opaque mesh materials, directional shadows, linear PBR lighting and HDR tone mapping."
+description: "Use the optional Render3D package for opaque meshes, directional, point and spot lights, shadow atlases, linear PBR lighting and HDR tone mapping."
 ---
 
 # Render3D
 
-`render3d` is an optional package for opaque 3D meshes. Add mesh and material components to match entities; the package's views draw their shadows, light them into an HDR target and present the result. This first slice has one camera, one directional sun and one shadow volume.
+`render3d` is an optional package for opaque 3D meshes. Add mesh and material components to match entities, then spawn directional, point or spot lights. The package's views draw shadows, light the meshes into an HDR target and present the result through one camera. There is no implicit light: without light entities, only material emission lights a surface.
 
 ## Add the package
 
@@ -18,22 +18,33 @@ Its line in `tide.packages` is `render3d`, and its namespace is `Render3D`. Game
 
 ## Meshes and materials
 
-Import a static mesh with the package's vertex type, then give an entity both components:
+Supply a cube mesh at `art/cube.obj`, then spawn a white cube, a directional light and a spotlight:
 
 ```csharp
-asset Mesh<Render3D.MeshVertex> Model = "art/model.glb";
+asset Render3D.Mesh3D Cube = "art/cube.obj";
 
 scene Main;
 
 event(Spawned) Build(with Main)
 {
     Spawn(Transform,
-        Render3D.MeshRenderer { mesh = Model },
-        Render3D.Material { baseColor = Color(0.98, 0.75, 0.14), roughness = 0.6 });
+        Render3D.MeshRenderer { mesh = Cube },
+        Render3D.Material { baseColor = Color.white });
+    Spawn(Render3D.DirectionalLight { radiance = float3(2) });
+    Spawn(Transform { localPosition = float3(0, 3, -2) },
+        Render3D.SpotLight { direction = float3(0, -3, 2),
+                             intensity = float3(25), castShadows = true });
+}
+
+[Before(Render3D.Stages.Prepare)]
+view ConfigureRenderer(mut Render3D.Renderer renderer)
+{
+    renderer.camera.position = float3(0, 2, -5);
+    renderer.camera.rotation = quaternion.LookRotation(float3(0, -2, 5), float3(0, 1, 0));
 }
 ```
 
-`art/model.glb` is a file supplied by the game. See [Mesh assets](../game/assets.md#meshes) for supported imports. `Render3D.MeshVertex` contains `float3 position`, `float3 normal`, `float2 uv` and `Color color`, which defaults to white. The package places the mesh with the entity's `Transform`, including its parents.
+`Render3D.Mesh3D` is a transparent [type alias](../language/namespaces.md#type-aliases) for `Mesh<Render3D.MeshVertex>`. With `using Render3D;`, the asset declaration can use `asset Mesh3D Cube = "art/cube.obj";`. See [Mesh assets](../game/assets.md#meshes) for supported imports. `MeshVertex` contains `float3 position`, `float3 normal`, `float2 uv` and `Color color`, which defaults to white. Meshes follow the entity's stored `Transform` hierarchy.
 
 These are **match entities**: create them with ordinary `Spawn`, not `local Spawn`. `Material` contains attached local resource fields, which currently prevent placing it on local-world entities. Its texture and shader stay on each machine, outside match snapshots and hashes; its ordinary material fields and the mesh asset handle are match data. See [Local fields](../game/local-state.md#local-fields).
 
@@ -41,14 +52,14 @@ Both `MeshRenderer` and `Material` must be present for an entity to draw or cast
 
 | Component field | Default | Meaning |
 |---|---|---|
-| `MeshRenderer.mesh` | No asset | `Asset<Mesh<Render3D.MeshVertex>>` to draw |
+| `MeshRenderer.mesh` | No asset | `Asset<Render3D.Mesh3D>` to draw |
 | `MeshRenderer.visible` | `true` | Draw the mesh and allow it to cast shadows |
 | `MeshRenderer.castShadows` | `true` | Include the visible mesh in the shadow pass |
 | `Material.baseColor` | `Color.white` | Display-space RGB tint |
 | `Material.metallic` | `0` | Metallic weight, from 0 to 1 |
 | `Material.roughness` | `0.5` | Surface roughness; lighting clamps it to 0.05–1 |
 | `Material.emission` | `float3(0)` | Linear HDR emission, which may exceed 1 |
-| `Material.receiveShadows` | `true` | Apply the sun's shadow to this surface |
+| `Material.receiveShadows` | `true` | Apply available light shadows to this surface |
 | `Material.baseMap` | `Render3D.White` | Attached local `Texture`, white by default |
 | `Material.shader` | `Render3D.Lit { surface = Render3D.StandardSurface }` | Attached local shader binding |
 
@@ -56,7 +67,7 @@ The base map, base color and vertex color each supply display-space RGB. The sha
 
 ## A complete example
 
-::: tide-example render3d Mesh materials, sunlight and shadows
+::: tide-example render3d Mesh materials, multiple lights and shadows
 
 <<< @/examples/render3d.tide
 
@@ -64,20 +75,7 @@ The base map, base color and vertex color each supply display-space RGB. The sha
 
 ## Camera and renderer
 
-`Render3D.Renderer` is a local singleton on each machine. Set its camera, sun and other settings in a view ordered before the package prepares the frame:
-
-```csharp
-[Before(Render3D.Stages.Prepare)]
-view ConfigureRenderer(mut Render3D.Renderer renderer)
-{
-    renderer.camera.position = float3(0, 2, -5);
-    renderer.camera.rotation = quaternion.LookRotation(float3(0, -1, 5), float3(0, 1, 0));
-    renderer.camera.verticalFov = 60deg;
-    renderer.sun.direction = float3(1, -2, 1);
-    renderer.sun.radiance = float3(4);
-    renderer.exposure = 1;
-}
-```
+`Render3D.Renderer` is a local singleton on each machine. Configure it in a `[Before(Render3D.Stages.Prepare)]` view, as in the cube example above.
 
 `Render3D.Camera` looks along its rotation's `+z`, with `+y` up. Its fields are:
 
@@ -89,28 +87,56 @@ view ConfigureRenderer(mut Render3D.Renderer renderer)
 | `near` | `0.1` | Distance to the near plane |
 | `far` | `1000` | Distance to the far plane |
 
-The `sun` is a `Render3D.DirectionalLight`. Its `direction` is the direction photons **travel**, defaulting to `float3(1, -2, 1)`. The package normalizes it. Its `radiance` is linear RGB, defaulting to `float3(4)`, independent of exposure.
-
 | Renderer setting | Default | Meaning |
 |---|---|---|
 | `enabled` | `true` | Run the package's renderer |
 | `camera` | Defaults above | This machine's camera |
-| `sun` | Defaults above | One directional light |
 | `background` | `Color(0.06, 0.08, 0.12)` | Display-space background, decoded before rendering |
 | `exposure` | `1` | Linear multiplier before tone mapping; 2 doubles the light |
-| `shadows` | `true` | Cast and receive the sun's shadows |
-| `shadowResolution` | `1024` | Square map size in pixels, clamped to 16–4096 |
-| `shadowCenter` | `float3(0)` | World-space center of the shadow volume |
-| `shadowExtent` | `10` | Half-width and half-height of the shadow volume, in world units |
-| `shadowDistance` | `40` | Depth of the shadow volume, in world units |
+| `maxLights` | `32` | Maximum retained lights; negative values act as 0 |
+| `shadows` | `true` | Enable shadow casting and sampling |
+| `maxShadowMaps` | `8` | Shadow-view budget, clamped to 0–16 |
+| `shadowResolution` | `1024` | Requested atlas cell size in pixels, including gutters |
+| `shadowCenter` | `float3(0)` | World-space center of directional shadow volumes |
+| `shadowExtent` | `10` | Half-width and half-height of directional shadow volumes, in world units |
+| `shadowDistance` | `40` | Depth of directional shadow volumes, in world units |
+| `shadowNear` | `0.05` | Point/spot shadow near plane, in world units; at least 0.001 |
 | `shadowBias` | `0.0005` | Constant offset in normalized comparison depth |
 | `shadowSlopeBias` | `0.002` | Additional normalized depth offset as the surface turns away from the light |
 
-The shadow volume is orthographic and does not follow the camera automatically. Move `shadowCenter` with the area that needs shadows. Surfaces outside the volume receive full sunlight. Biases are comparison-depth offsets, not world distances; too little can produce self-shadowing, while too much separates shadows from their casters.
+The package retains its window-sized `Format.Rgba16f` scene target and depth atlas in `Renderer`, resizing as needed. The depth resource ID survives atlas resizing. Setting `enabled = false` before preparation disposes them; re-enabling recreates them. `Render3D.Dispose(renderer)` also releases them explicitly; an enabled renderer recreates them on its next preparation. An enabled renderer still presents its background when there is no match.
 
-The package caches its window-sized `Format.Rgba16f` scene target and depth shadow target in `Renderer`, resizing as needed. Leave these resource and derived fields to the package. Setting `enabled = false` before preparation disposes the targets; re-enabling recreates them. `Render3D.Dispose(renderer)` also releases them explicitly; an enabled renderer recreates them on its next preparation. Setting `shadows = false` skips casting and shadow sampling, but retains the shadow target. An enabled renderer still presents its background when there is no match.
+Leave the resource and derived fields to the package. Call `Render3D.Dispose` before `Render3D.Stages.Prepare`. Recorded draws run after the views finish, so disposing after `Present` still invalidates that frame's rendering and presentation.
 
-Call `Render3D.Dispose` before `Render3D.Stages.Prepare`. Recorded draws run after the views finish, so disposing after `Present` still invalidates that frame's rendering and presentation.
+## Light components
+
+`DirectionalLight`, `PointLight` and `SpotLight` can belong to match entities (`Spawn`) or machine-local entities (`local Spawn`). All three default to `enabled = true` and `priority = 0`. Directional lights default to `castShadows = true`; point and spot lights default to `false`.
+
+| Component field | Default | Meaning |
+|---|---|---|
+| `DirectionalLight.direction` | `float3(1, -2, 1)` | Local direction photons travel |
+| `DirectionalLight.radiance` | `float3(4)` | Linear RGB light, independent of distance |
+| `PointLight.intensity`, `SpotLight.intensity` | `float3(10)` | Linear RGB light at one world unit, before range/cone attenuation |
+| `PointLight.range`, `SpotLight.range` | `10` | Finite range in world units; nonpositive values disable the light |
+| `SpotLight.direction` | `float3(0, 0, 1)` | Local cone axis, pointing away from the light |
+| `SpotLight.innerAngle` | `25deg` | Full cone opening at full strength |
+| `SpotLight.outerAngle` | `40deg` | Full outer cone opening |
+
+Positions and directions come from `World.LocalToWorld`: the stored transform hierarchy, without presentation interpolation. The matrix transforms local directions, including its scale, then the package normalizes them. Without a transform on the entity or its ancestors, the matrix is identity. Light ranges remain in world units.
+
+Radiance and intensity clamp negative channels to zero. Point and spot lights use inverse-square falloff with a 0.01-world-unit distance floor and a smooth window that reaches zero at `range`. Their intensity describes the unwindowed light at one world unit. Spot angles are **radians**; `deg` literals convert to radians. `outerAngle` clamps to 1–179 degrees and `innerAngle` to 0–`outerAngle`. Light fades smoothly between the cones; equal angles give a hard edge.
+
+Each frame, the renderer keeps up to `maxLights` lights in descending `priority`. Equal priorities retain collection order: directionals, then spots, then points, with match entities before local entities within each kind. `Renderer.droppedLights` counts otherwise eligible lights excluded by this limit. There is no `Renderer.sun` field; configure a directional light through its component.
+
+## Shadows
+
+Shadow allocation follows the retained light order. A directional or spot light uses one atlas cell; a point light needs six contiguous cells, allocated together or not at all. A shadow request that cannot fit in `maxShadowMaps` still illuminates without shadows; later requests can use the remaining cells. Point/spot lights whose range does not exceed the effective shadow near plane also illuminate without shadows. `Renderer.unshadowedLights` counts retained lights requesting shadows that receive none, including when shadows are globally disabled.
+
+Directional shadow volumes are orthographic and share `shadowCenter`, `shadowExtent` and `shadowDistance`. They do not follow the camera automatically. Move `shadowCenter` with the area that needs shadows. Spot shadow volumes follow their cone; point shadows cover six faces. Surfaces outside a shadow view are unshadowed by that view. The global biases are comparison-depth offsets, not world distances; too little can produce self-shadowing, while too much separates shadows from their casters.
+
+The atlas uses the smallest square grid that fits the allocated views. Each cell has a two-pixel gutter on every edge, so its usable interior is `cellSize - 4` pixels per side. `shadowResolution` clamps to 16 through `floor(2048 / gridSize)`; the atlas never exceeds 2048 pixels per side. `Renderer.activeShadowResolution` reports the actual cell size, including gutters; `Renderer.atlasSize` reports the atlas side length. For example, eight views use a 3×3 grid: a request of 1024 yields 682-pixel cells in a 2046-pixel atlas.
+
+With no allocated shadow views, including `shadows = false`, the renderer retains the atlas size (initially 16×16), clears it to far depth and reports `activeShadowResolution = 0`. The depth resource remains valid for the shader's bound sampler. Disabling shadows skips shadow drawing and sampling; lights and emission still render.
 
 ## Frame order and drawing UI
 
@@ -118,7 +144,8 @@ The package owns these named view stages, in order:
 
 | Stage | Work |
 |---|---|
-| `Render3D.Stages.Prepare` | Prepare targets and the shadow camera |
+| `Render3D.Stages.Prepare` | Prepare retained targets and reset per-frame light data |
+| `Render3D.Stages.Lights` | Collect and select lights, allocate shadow views and clear the atlas |
 | `Render3D.Stages.Shadows` | Draw all visible shadow casters |
 | `Render3D.Stages.Color` | Set the scene camera and clear the HDR target |
 | `Render3D.Stages.Opaque` | Draw opaque meshes with their materials |
@@ -169,8 +196,8 @@ Use `Render3D.SrgbToLinear` when supplying display-space colors inside a callbac
 
 ## Lighting and current limits
 
-Lighting uses a metallic-roughness BRDF with GGX specular, Smith visibility, Schlick Fresnel and Lambert diffuse. The sun and emission produce linear HDR RGB. Presentation multiplies by `exposure`, applies Reinhard tone mapping (`x / (1 + x)`) and encodes sRGB once. Keep callback emission and lighting values linear; do not encode them before presentation.
+Lighting uses a metallic-roughness BRDF with GGX specular, Smith visibility, Schlick Fresnel and Lambert diffuse. Direct contributions from all retained lights are summed; nonnegative emission is added once, including with zero lights. There is no ambient or indirect approximation. Presentation multiplies linear HDR RGB by `exposure`, applies Reinhard tone mapping (`x / (1 + x)`) and encodes sRGB once. Keep callback emission and lighting values linear; do not encode them before presentation.
 
 Base-map sampling currently filters display-space texels **before** decoding them to linear light. This can produce different edges and mip colors from linear-light filtering; automatic hardware sRGB sampling is not part of this slice. On devices unable to render into float targets, the engine's existing [RGBA8 fallback](../game/render-targets.md#what-a-target-holds) clips HDR values before tone mapping.
 
-The current path draws opaque static mesh assets, which can move with their entity transforms. It has no point lights, cascades, transparency, skinning, normal or mask maps, GI, probes or light baker. There is one base map, base color, metallic/roughness pair and emission per material; model texture and metallic/roughness import is not automatic. Broader rendering features remain future work.
+The current path draws opaque static mesh assets, which can move with their entity transforms. It has no `LightMode`, baked or area lights, cascades, transparency, skinning, normal or mask maps, GI, probes or light baker. There is one base map, base color, metallic/roughness pair and emission per material; model texture and metallic/roughness import is not automatic. Broader rendering features remain future work.

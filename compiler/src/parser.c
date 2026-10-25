@@ -1967,6 +1967,20 @@ static decl *parse_asset(parser *p)
     return d;
 }
 
+static decl *parse_alias(parser *p)
+{
+    const token *name = expect_ident(p, "a type alias name");
+    decl *d = new_decl(DECL_ALIAS, name);
+    if (at(p, T_LT)) {
+        diag_error(peek(p)->at, "a type alias names a closed type: write 'using Name = Type;' without alias type parameters");
+        longjmp(p->fail, 1);
+    }
+    expect(p, T_ASSIGN, "'=' and the aliased type, like 'using Point = float3;'");
+    d->alias_ref = parse_decl_type(p, "the aliased type");
+    d->end = expect(p, T_SEMI, "';' after the type alias")->at;
+    return d;
+}
+
 // name = value;: one of the settings in a settings block, which the checker
 // knows the types of.
 static void parse_setting(parser *p, decl *d)
@@ -2416,9 +2430,10 @@ static decl *parse_enum(parser *p)
     const token *name = expect_ident(p, "enum name");
     decl *d = new_decl(DECL_ENUM, name);
     if (accept(p, T_COLON)) { // enum Voxel : byte, as in C#
-        const token *backing = expect_ident(p, "what the enum is stored as: 'byte', 'ushort' or 'int'");
+        const type_ref *backing = parse_type(p, "what the enum is stored as: 'byte', 'ushort' or 'int'");
+        d->backing_ref = backing;
         d->backing = backing->text;
-        d->backing_at = backing->at;
+        d->backing_at = backing->name_at;
     }
     expect(p, T_LBRACE, "'{'");
     while (!at(p, T_RBRACE)) {
@@ -2846,7 +2861,9 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         // Contextual keywords: only special at the start of a declaration or a
         // file, so they can still name parameters and locals.
         const bool followed_by_name = peek_at(&p, 1)->kind == T_IDENT;
-        if (t->kind == T_IDENT && followed_by_name && (str_eq_c(t->text, "namespace") || str_eq_c(t->text, "using"))) {
+        const bool alias = t->kind == T_IDENT && str_eq_c(t->text, "using") && followed_by_name
+                           && (peek_at(&p, 2)->kind == T_ASSIGN || peek_at(&p, 2)->kind == T_LT);
+        if (!alias && t->kind == T_IDENT && followed_by_name && (str_eq_c(t->text, "namespace") || str_eq_c(t->text, "using"))) {
             advance(&p);
             if (local) diag_error(local->at, "'local' goes before a declaration, like 'local singleton Fx { ... }'");
             if (replace_word) refuse_replace_word(replace_word, "a namespace is where names are, and has no code of its own");
@@ -2888,7 +2905,8 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         decl *d;
         const bool function = at_method_from(&p, 0, p.overriding);
         if (!function) advance(&p);
-        if (function) d = parse_method(&p, NULL);
+        if (alias) d = parse_alias(&p);
+        else if (function) d = parse_method(&p, NULL);
         else if (t->kind == T_COMPONENT) d = parse_data_decl(&p, DECL_COMPONENT, false);
         else if (t->kind == T_SINGLETON) d = parse_data_decl(&p, DECL_SINGLETON, false);
         else if (t->kind == T_SYSTEM) d = parse_system(&p, false);

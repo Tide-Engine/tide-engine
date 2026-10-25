@@ -20,6 +20,25 @@ The language Tide games and the engine's built-in systems are written in. It tra
 - A file can put its declarations in a namespace, and namespaces are how large games keep names apart.
 - Code outside the namespace names its declarations with it (`Combat.Health`), or imports it with `using Combat;`.
 
+### Type aliases
+
+- `using Name = Type;` declares another name for a closed type. It goes at namespace scope: at the top level of a file, in that file's namespace (or the global namespace), or inside a namespace block. It is distinct from the namespace import `using Namespace;`.
+- File-scoped namespace headers and namespace imports precede aliases, as they precede other declarations. Namespace blocks and aliases can appear among declarations.
+- An alias follows ordinary namespace lookup: code can use its plain name in scope, qualify it (`Game.Point`), or import its namespace. Its target is resolved in the namespace context of the alias declaration.
+- Targets include primitives, built-in vectors and matrices, structs, enums, components and closed containers, with qualified names and aliases allowed inside the type. An alias can name another alias; chains resolve to their underlying type. Cycles are errors.
+- Aliases are transparent: an alias and its underlying type are the same type, including for assignments, overload signatures, container elements and component identity. They add no conversion, storage or distinct type identity, and retain the underlying type's members, defaults, capabilities and placement restrictions.
+- An alias declares no type parameters: `using Points = List<float3>;` is valid; `using Points<T> = List<T>;` is not. Every type argument in its target must be supplied.
+
+```csharp
+namespace Game
+{
+    using Point = float3;
+    using Points = List<Point>;
+    using Matrix = float4x4;
+    using Health = Combat.Health;
+}
+```
+
 ### Order of systems
 
 - Systems run in one deterministic order, the same on every platform. By default it follows the files, sorted by path, then the order of declarations in each file.
@@ -39,6 +58,7 @@ The language Tide games and the engine's built-in systems are written in. It tra
 - `component` declares a component.
 - `singleton` declares world-wide state (what other ECSs call a resource). There is exactly one instance **per world**, not per process.
 - `struct` declares a value type for fields and locals (see Structs).
+- `using Name = Type;` declares a transparent type alias (see Type aliases).
 - `system` declares a system.
 - `event` declares an event, and `event(...)` code that runs when one is sent (see Events).
 - `enum` declares an enum (see Enums and switch).
@@ -744,17 +764,17 @@ Initial implementation choices, 2026-10-24, provisional:
   - A block's name is inside the namespace it's written in: in a file of `namespace Game;`, `namespace Combat { }` is `Game.Combat`, and a block inside it named `Rules` is `Game.Combat.Rules`. A block's name can be dotted too.
   - A namespace is a set of names, not a place: the same one can be a block twice in a file, a block in several files, and a file's own namespace in another. What any of them declares is one namespace's.
   - What's inside a block is declared as anywhere: its order among the file's declarations is where it's written, so a block changes no system's order.
-  - Provisional: `using` stays at the top of the file, and is every block's of the file. A `using` inside a block is an error.
+  - Provisional: namespace imports (`using Physics;`) stay at the top of the file, and are every block's of the file. A namespace import inside a block is an error. Type aliases (`using Name = Type;`) are namespace declarations and can go inside a block (see Type aliases).
   - Provisional: the line form comes before any declaration, a block being one: a file says its own namespace first, and blocks after it are inside that.
   - Provisional: a block takes no attributes, `local`, `virtual` or `override`: they go before the declarations inside it.
   - Provisional: a qualified name is still exact, from the global namespace: inside `Combat`, the block `Rules`' function is `Combat.Rules.Cap`, not `Rules.Cap`. (C# also reads a qualified name's first part from the namespaces around the code. Not built.)
   - Provisional: a package's blocks are in its namespace or one inside it, as its files are: a package file with no namespace line can have everything in `namespace Package { ... }`.
   - Where a file is half typed, editors and the errors after a first one tell where a block's declarations start by their column: the first line's after the `{`, which the formatter makes one step in from the block's `namespace`.
-- `using Physics;` at the top of a file lets it name Physics' declarations without the prefix. `namespace Name;` and `using` come before any declaration.
+- `using Physics;` at the top of a file lets it name Physics' declarations without the prefix. `namespace Name;` and namespace imports come before any declaration.
 - A plain name is looked up in the namespace of the code that writes it (its block's, or its file's), then the namespaces around it out to the global namespace, then the `using` namespaces, as in C# (agreed 2026-10-05). So what a game declares itself is what its code means, whatever a namespace it imports also has by that name: a game with a `Body` of its own that says `using Physics;` means its own by `Body`, and writes `Physics.Body` for the other. If two `using` namespaces both have a name and nothing nearer does, it's ambiguous: write the namespace.
 - Qualified names work wherever a type is named: parameters (`mut Combat.Health health`), `with` and `without`, component values (`Combat.Health { value = 10 }`), `Spawn`, `Add` and `Remove`.
 - The same name can be declared in different namespaces. Built-in names can't start a namespace (`namespace Math;` is an error).
-- In generated C, namespaced declarations are prefixed with their namespace: `Combat.Health` is `Combat_Health`, read with `tide_get_Combat_Health`.
+- In generated C, namespaced declarations are prefixed with their namespace: `Combat.Health` is `Combat_Health`, read with `tide_get_Combat_Health`. Type aliases use their canonical underlying type.
 - There can be at most one `scene Main` in a game, in any file or namespace; it is required only without an explicit startup selection. `namespace` and `using` are only keywords where a declaration can start: anywhere else they're names like any other.
 
 ```csharp
@@ -3210,7 +3230,7 @@ view DrawHud(Arena arena)
 - Containers take a block, and they're ordinary functions with an `Action` parameter (see Functions): `GUILayout.Horizontal() { ... }`, `GUILayout.Vertical() { ... }` and `GUILayout.Area(...) { ... }`. Calls always have parentheses.
 - Widgets edit values through `mut` parameters, and return whether the value changed: `GUILayout.Toggle("Fullscreen", settings.fullscreen)`. A button returns whether it was pressed.
 - **Entered fields** (agreed 2026-10-06): a view can tell that the player pressed Enter in a field they typed into. `TextField`, `IntField` and `FloatField` each have a second version, in `GUILayout` and in `GUI`, with an `out bool entered` parameter (see Out parameters): `GUILayout.TextField("Code", lobby.code, out var entered)`. It's true in the frame Enter ends the typing in that field. What the field returns stays whether the value changed, and without the argument the field is the one there always was. The details are picks, under Provisional.
-- Widgets have no IDs to write. They're told apart by where they're called from and the entity the view runs for.
+- Widgets have automatic identity from where they're called and the entity the view runs for. Reorderable data can supply a stable key for a block of controls.
 - The engine builds nothing a game couldn't build itself: containers are functions with an `Action`, and widgets are made of pieces games can use too.
 - Gamepad and keyboard navigation are built in: focus moves between widgets, the south button presses, the east button goes back.
 - Whatever the GUI is using, such as a click on a button or typing in a field, is hidden from the input's `Sample`.
@@ -3222,7 +3242,7 @@ view DrawHud(Arena arena)
   - It takes the pointer for its rect by itself, as the GUI's own widgets do: a press on it never reaches the input's `Sample` or the other views, from the frame it lands in.
   - It joins Tab and Shift+Tab, arrow, d-pad and left stick navigation alongside the built-in widgets, in the order they're called. Enter, Space and the gamepad's south button click it.
   - `GUI.Disabled(...) { }` and modals stop it like any widget.
-  - What a view draws is under the GUI's own widgets, and under a modal's dim, since the GUI draws last.
+  - Custom controls can reserve layout space and draw alongside built-in widgets, in the GUI's declaration order. Ordinary world drawing stays under the GUI.
 - **Themes:** the GUI stays bare: one look, and a simple theme for it. `GUITheme` is a built-in struct of the colors the GUI's widgets use and their corners' radius, and nothing else: no styles for single widgets, no text sizes, no fonts. Its defaults are the look the widgets have without one, so a theme names only what it changes, and a game that sets none looks as it always did.
   - `GUI.Theme(theme) { ... }` wraps a block: its widgets have the theme, and the look it found is back when the block ends. `GUI.SetTheme(theme)` stays for the widgets that follow, in this view and the ones after it, until it's set again or the frame ends. Every frame starts from the defaults. It's the rule for every setting of a frame with two forms, `Draw`'s too: the plain name around a block, and `Set` for what follows.
   - Round corners are `Draw`'s round rects.
@@ -3315,6 +3335,12 @@ view Tools(Devices devices, mut Toolbox box)
 
 ### Provisional
 
+- **Custom control composition** (2026-10-24; the owner delegated implementation and API choices, prioritizing performance and API):
+  - `GUILayout.Reserve(float2 size)` returns the next layout `Rect`, with the requested width and height, without drawing, claiming input or joining focus navigation. `Reserve(size, minWidth, expandWidth)` allows horizontal shrinking to `minWidth` and optional expansion to the column's remembered natural width. Heights stay explicit. Negative and nonfinite dimensions become zero; `minWidth` is clamped to the requested width. Layout executes game code once per frame.
+  - `GUI.Draw() { ... }` sends its ordinary `Draw` calls, and those in helpers it calls, to the GUI's list. It starts in screen pixels, at its position in GUI declaration order, above the enclosing panel and below later GUI content. The window's drawing settings are restored on every exit, including `Set` changes inside the block. Render-target settings remain their destination's. Screen-space 2D shapes, text, sprites, indexed meshes, shader runs and clips follow an anchored area's placement; explicit custom cameras and 3D draws retain their own coordinates. This is not a layout or hit-testing transform. The block is skipped if no container nesting space remains, so unscoped drawing cannot leak settings.
+  - `GUI.Key(int key) { ... }`, with `long` and `string` forms, adds a scoped data key to child widget and container identities, through helper calls as well. Keys must be unique among siblings from the same call site; zero and the empty string are valid. Reordering or omitting different keys does not transfer focus or pointer capture. Unkeyed repeated sites retain occurrence identity. Identity remains a bounded 32-bit runtime hash, not a persistent application identifier.
+  - `GUIControl.down` is the pointer press edge owned by the control, `up` its release edge even outside the rect, and `cancelled` an active gesture aborted because the control became disabled or covered by a modal. Cancellation is reported once while the control is still declared; removal has no callback. `position` is the pointer position in GUI pixels, including while held outside. Existing `pressed` still means held; keyboard/gamepad submission sets `clicked`, without inventing pointer edges. Native capture-loss cancellation is not yet represented separately.
+
 Implemented, awaiting approval:
 
 - Positions and sizes are in pixels, as on a web page, so widgets keep their size when the window changes size. On a display scaled to 150%, a pixel is the display's logical one, 1.5 real pixels wide, as CSS pixels are.
@@ -3356,15 +3382,16 @@ Implemented, awaiting approval:
 - Views that claim the same device all go on reading it: which of their widgets is on top is theirs to know. Up to 16 views claim in one frame and go on reading; past that, a claim still hides.
 - A modal is an anchored area over the screen, dimmed. The one drawn last is on top, and only its widgets work. Its first widget takes the focus the frame after it comes up, and back doesn't close it on the frame it came up, so the press that opened it doesn't. `GUI` has no modal at a rect yet.
 - The drawing: a dark panel behind each area and the engine's default font, in the theme's colors.
-- `GUI.Control(Rect rect) -> GUIControl`. `GUIControl` is a built-in struct of four bools, named as a `Devices` button's are:
+- `GUI.Control(Rect rect) -> GUIControl`. Its interaction flags follow the device naming convention:
   - `hovered`: the pointer is on it, with nothing of the GUI's over it.
   - `pressed`: the pointer holds it, from a press on it until it lets go, wherever it goes meanwhile, as `devices.mouse.left.pressed` is true while the button is held. A button looks down while it's `pressed` and `hovered`, and a handle follows the pointer while it's `pressed`. It's false in the frame the pointer lets go, and Enter held on it doesn't count.
   - `focused`: the keyboard and the gamepad are on it.
   - `clicked`: a press on it let go on it, or Enter, Space or the south button went down while it had the focus. For one frame.
-- A click with the pointer doesn't give a control the focus, as it doesn't a button. In a Disabled block or outside the modal that's up, nothing of it is true, the focus skips it, and the pointer on it is still the GUI's.
+  - `down`, `up`, `cancelled` and `position`: the pointer edges, cancellation and position described under Custom control composition above.
+- A click with the pointer doesn't give a control the focus, as it doesn't a button. In a Disabled block or outside the modal that's up, it cannot hover, hold, focus or click; an active gesture reports cancellation once. The focus skips it, and the pointer on it is still the GUI's.
 - While a control has the focus, the view that called it goes on reading the keyboard and the gamepad, but for what moves the focus and clicks: the arrows, Tab, Enter, Space and Escape, and the d-pad, the left stick and the south and east buttons. The input's `Sample` and the other views read none of it, as with any focused widget. So a menu's own shortcuts (a card's number) work while one of its cards has the focus, and a control can be a text field: its view reads `devices.keyboard.text`. A view that runs once per entity is one view. Under a modal, no view reads anything.
-- Controls made in a loop come from one call, so they're told apart by their turn, as the GUI's own widgets in a loop are: the first one made, the second, and so on. A loop that makes the same ones every frame, in the same order, is all that takes. One that leaves an earlier one out gives its turn to the next: what was hovered, held or focused there goes on with the control that's now in its place.
-- `GUILayout` has no control: `GUI.Control` takes its rect. A laid out one would hand back a rect inside an area, and what a view draws there is under the area's panel, which the GUI draws last; and an anchored area finds its place when it closes, after the control was drawn. It waits until views can draw among the GUI's widgets.
+- Unkeyed repeated calls use occurrence identity. `GUI.Key` makes repeated controls follow application keys instead.
+- `GUILayout.Reserve` supplies layout space for `GUI.Control`, and `GUI.Draw` places its custom visuals among the GUI's widgets.
 - `GUITheme`'s fields, all `Color` but the last: `text` (text, and a slider's thumb), `panel` (an area's background), `control` (a button, a toggle's box, a slider's rail, a color field's frame), `hot` (those with the pointer on them), `pressed` (a button held down), `field` (a field to type into), `fieldHot` (one with the pointer on it), `accent` (the focus's outline, a toggle's check, a slider's filled part) and `float radius` (the corners', in pixels; 0, its default, is square). A modal's dim isn't in it, nor how much a disabled widget fades.
 - A part is no rounder than half its smaller side, so a slider's rail and a toggle's box end as a pill and a circle under a big radius. A part drawn around another (the focus's outline) or inside one (a toggle's check) is rounder or less round by how far it is from it. With a radius of 0 the widgets are the plain rects they always were.
 - An area's panel has the theme it opened with, whatever its block sets. `GUI.SetTheme` inside a `GUI.Theme` block ends with the block, which puts back what it found. `GUI.Theme` lays nothing out, like `GUI.Disabled`. Blocks nest up to 32 deep with containers; past that, a `GUI.Theme` changes nothing.

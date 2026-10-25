@@ -18,6 +18,17 @@ use existing list/table/heap/layout APIs and add no runtime task function.
 Contracts, measurements and validation: language.md, schedule-and-threads.md
 and benchmarks.md.
 
+## Custom GUI composition (2026-10-24)
+
+Owner-delegated GUI work continues the existing GUI/drawing maintenance exception.
+Generated calls add `tide_gui_layout_reserve`, `_reserve_flexible`,
+`tide_gui_begin_draw`, and `tide_gui_begin_key`, `_key_long`, `_key_text`.
+GUIControl's adapter copies four new interaction fields. The GUI uses the new
+drawing helpers `tide_draw_restore_window` and `tide_draw_move_gui`; these are
+not language builtins. No renderer backend, simulation or networking interface
+changes. Hosts/games rebuild for GUI/group/control layout additions. Contracts
+and validation: `notes/gui.md`, Custom control composition.
+
 ## Local worker runtime (2026-10-24)
 
 The owner approved local workers with owned inputs/results, local async callers

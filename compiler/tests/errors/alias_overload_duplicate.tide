@@ -1,0 +1,5 @@
+// expect: 'Pick' is already declared with these parameters
+using Scalar = float;
+float Pick(Scalar value) { return value; }
+float Pick(float value) { return value; }
+scene Main;

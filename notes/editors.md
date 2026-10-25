@@ -17,6 +17,56 @@ The older Web Request test now accepts retained/discarded Send handles and
 checks handle completion rather than requiring immediate await. Full-suite
 validation: language.md.
 
+## Transparent type aliases (2026-10-24)
+
+The shared TextMate grammar distinguishes `using Name = Type;` declarations
+from namespace imports, including aliases inside namespace blocks. Alias
+names and target types receive type scopes; nested containers, Func modes,
+optional types and fixed arrays retain their existing scopes. The all-E2E
+grammar check also counts files containing only alias declarations.
+
+tidels indexes DECL_ALIAS, its target tree and the compiler's authored
+type_ref.alias/expr.type_alias identity separately from the canonical type.
+Hover shows the alias declaration; definitions, references and rename retain
+the alias spelling, including constructors, static receivers and qualified
+enum backing types. Ordinary enum backing types retain their storage help.
+Aliases appear in outline/workspace symbols, semantic type tokens, ordinary
+type/namespace completion and unfinished alias targets. Enum and instance
+member completion uses the underlying type. A declaration snippet supplies
+`using Name = Type;`. Formatting keeps nested generic closers tight.
+
+Validation: the grammar suite passes 290 checks on Node 24.22.1. The rebuilt
+native tidels_tests passes all 256 checks, including all five alias protocol
+cases, enum backing and attribute navigation, and qualified constructors/World
+type arguments. The complete suite passes after the final compiler rebuilding.
+Final full native/web and docs integration results follow below.
+No editor adapter or protocol change is needed.
+
+Final integration after the GUI/local-worker merge passes the full native/web
+debug suites (2716/2611 enabled tests), production docs build and live Render3D
+example.
+The combined 257 native LSP and 295 shared grammar checks pass. Toolchain/platform
+coverage is recorded in language.md and render3d.md.
+
+Review follow-up: qualified primitive/Grid/Random constructors and bare Random
+constructors retain their authored alias occurrences. Stage/Before/After/Channel
+and asset Filter/Wrap resolve aliases to canonical enums; attribute type
+occurrences recover the authored alias through namespace/import lookup while
+member occurrences retain the canonical enum. No AST layout change is needed.
+`lsp_type_alias_qualified_constructors_and_world` covers constructor references
+and World/Spawn component aliases; `lsp_type_alias_enum_attributes` covers
+ordering/channel navigation and rename. The existing asset sampling regression
+also covers imported and qualified enum aliases. These follow-up cases pass
+in the complete rebuilt native language-server suite above.
+
+## Custom GUI composition (2026-10-24)
+
+The common builtin catalog supplies GUI.Draw/Key block snippets, Reserve
+overloads and signature help. GUIControl completion/hover includes pointer down,
+up, cancellation and GUI-space position. `lsp_gui` checks these additions.
+No editor-specific protocol or grammar change. API/contracts/validation:
+`notes/gui.md`, Custom control composition.
+
 ## Local worker declarations (2026-10-24)
 
 The shared compiler parses/checks local workers. Routine hovers, override

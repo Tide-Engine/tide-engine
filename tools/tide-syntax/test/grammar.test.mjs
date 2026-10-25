@@ -83,6 +83,37 @@ function checkLinesEndText(file, lines) {
 
 const probe = tokenize(fs.readFileSync(path.join(here, 'probe.tide'), 'utf8'));
 
+test('type aliases distinguish their declaration and target from namespace imports', () => {
+    const lines = tokenize('using Physics;\nusing Distance = float;\nusing Scores = Map<int, List<Combat.Score>>;\n'
+        + 'namespace Game\n{\n    using Shade = Func<mut Vertex, void>;\n    using Maybe = Combat.Score?;\n'
+        + '    using Samples = float[32]; // stored samples\n}\nstruct Following { int count; }');
+    check(lines[0], ['using', 'keyword.other.namespace']);
+    check(lines[0], ['Physics', 'entity.name.namespace']);
+    check(lines[1], ['using', 'keyword.other.namespace']);
+    check(lines[1], ['Distance', 'entity.name.type']);
+    check(lines[1], ['Distance', '!entity.name.namespace']);
+    check(lines[1], ['=', 'keyword.operator.assignment']);
+    check(lines[1], ['float', 'storage.type.primitive']);
+    check(lines[2], ['Map', 'support.class']);
+    check(lines[2], ['List', 'support.class']);
+    check(lines[2], ['Score', 'entity.name.type']);
+    check(lines[2], ['Score', '!entity.name.namespace']);
+    check(lines[5], ['Shade', 'entity.name.type']);
+    check(lines[5], ['Func', 'support.class']);
+    check(lines[5], ['mut', 'storage.modifier']);
+    check(lines[6], ['?', 'keyword.operator.optional']);
+    check(lines[7], ['32', 'constant.numeric.integer']);
+    check(lines[7], ['// stored samples', 'comment.line']);
+    check(lines[9], ['struct', 'storage.type']);
+    check(lines[9], ['Following', 'entity.name.type']);
+    const [inline] = tokenize('namespace More { using Number = float; using SetOf = List<int>; }');
+    check(inline, ['More', 'entity.name.namespace']);
+    check(inline, ['Number', 'entity.name.type']);
+    check(inline, ['SetOf', 'entity.name.type']);
+    check(inline, ['float', 'storage.type.primitive']);
+    check(inline, ['List', 'support.class']);
+});
+
 test('typed callable signatures keep generic type highlighting', () => {
     const lines = tokenize('Func<float2, float> distance;');
     check(lines[0], ['Func', 'support.class']);
@@ -648,7 +679,7 @@ test('indenting ignores braces in text and comments', () => {
 
 // Every program in compiler/tests/e2e, with its declarations found without the
 // grammar: data declarations, systems, views, frags, verts, handlers,
-// functions, constants and externs at the start of a line, and methods in a
+// functions, constants, type aliases and externs at the start of a line, and methods in a
 // type's body, which the formatter indents by four spaces. An override's name
 // can be written with what it's in (Combat.Move, Stats.Hurt): its last part
 // is the name.
@@ -666,6 +697,7 @@ const declarations = [
     [new RegExp(String.raw`^const\s+${type}\s+(\w+)\s*=`), 'variable.other.constant'],
     [new RegExp(String.raw`^extern\s+${type}\s+(\w+)\s*\(`), 'entity.name.function'],
     [new RegExp(String.raw`^${modifiers}(?:mut\s+)?(${type})\s+([\w.]+)\s*\(`), 'entity.name.function'],
+    [/^using\s+(\w+)\s*=/, 'entity.name.type'],
 ];
 const method = new RegExp(String.raw`^    (?:virtual\s+)?(?:mut\s+)?(${type})\s+(\w+)\s*\(`);
 

@@ -47,6 +47,8 @@ Everything is a value: assigning copies it, and nothing is shared, text and list
 
 The type arguments in `List<T>`, `Map<K, V>` and the other containers pick what they hold. Containers can nest, such as `Map<string, List<int>>`. Declaring your own generic types or functions isn't supported yet; a struct or function names the concrete types it uses.
 
+Give a concrete type another name with a [type alias](./namespaces.md#type-aliases), declared at namespace scope: `using Points = List<float3>;`. `Points` is the same type as `List<float3>`, with the same behavior and restrictions. Aliases don't declare type parameters of their own.
+
 ### Numbers
 
 - `byte` stores one byte. It converts to `int`, `long` and `float` by itself, and arithmetic promotes it to `int`. Integer constants from 0 to 255 fit a byte: `byte value = 255; List<byte> bytes = [0, 128, 255];`. Other numbers need `byte(x)`, which keeps their low 8 bits; a float first converts with `int(x)`. Compound assignments and `++`/`--` wrap back into the byte range.

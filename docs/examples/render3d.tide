@@ -1,12 +1,14 @@
 settings { title = "Render3D: PBR, shadows and custom surfaces"; }
 scene Main;
 
-asset Mesh<Render3D.MeshVertex> sphere = "assets/render3d/sphere.obj";
-asset Mesh<Render3D.MeshVertex> cube = "assets/render3d/cube.obj";
+asset Render3D.Mesh3D sphere = "assets/render3d/sphere.obj";
+asset Render3D.Mesh3D cube = "assets/render3d/cube.obj";
 
 component Bands { local bool configured; }
+component Sun { }
 local singleton Controls
 {
+    bool lightsCreated;
     float exposure = 1;
     float sunlight = 5;
     bool shadows = true;
@@ -32,6 +34,25 @@ event(Spawned) BuildScene(with Main)
                       localRotation = quaternion.Euler(float3(0, 30deg, 0)) });
 }
 
+// Local lights can be adjusted by this machine's UI.
+[Before(Render3D.Stages.Prepare)]
+view BuildLights(mut Controls controls)
+{
+    if (controls.lightsCreated) return;
+    controls.lightsCreated = true;
+    local Spawn(Sun {}, Render3D.DirectionalLight { direction = float3(-1, -2, 1), radiance = float3(5) });
+    local Spawn(Render3D.DirectionalLight {
+        direction = float3(1, -0.4, -1), radiance = float3(0.12, 0.18, 0.3), castShadows = false
+    });
+    local Spawn(Transform { localPosition = float3(2.1, 4, -1) }, Render3D.SpotLight {
+        direction = float3(0, -1, 0.3), intensity = float3(10, 20, 30), range = 8,
+        innerAngle = 25deg, outerAngle = 55deg, castShadows = true
+    });
+    local Spawn(Transform { localPosition = float3(-3, 2, -2) }, Render3D.PointLight {
+        intensity = float3(6, 1.5, 0.5), range = 7
+    });
+}
+
 // A material changes a numeric surface, while the package owns lighting/passes.
 void Striped(Render3D.SurfaceInput input, mut Render3D.Surface surface)
 {
@@ -49,6 +70,12 @@ view SetCustomSurface(mut Bands bands, mut Render3D.Material material)
 }
 
 [Before(Render3D.Stages.Prepare)]
+view ConfigureSun(mut local Render3D.DirectionalLight light, with local Sun, Controls controls)
+{
+    light.radiance = float3(controls.sunlight);
+}
+
+[Before(Render3D.Stages.Prepare)]
 view CameraAndLight(mut Render3D.Renderer renderer, Controls controls)
 {
     float3 eye = float3(6, 4.5, -8);
@@ -57,7 +84,6 @@ view CameraAndLight(mut Render3D.Renderer renderer, Controls controls)
         rotation = quaternion.LookRotation(float3(0, 0.5, 0) - eye, float3(0, 1, 0)),
         verticalFov = 45deg
     };
-    renderer.sun = Render3D.DirectionalLight { direction = float3(-1, -2, 1), radiance = float3(controls.sunlight) };
     renderer.exposure = controls.exposure;
     renderer.shadows = controls.shadows;
     renderer.shadowCenter = float3(0, 0.5, 0);
@@ -70,7 +96,7 @@ view Overlay(mut Controls controls)
 {
     GUILayout.Area(Rect(12, 12, 280, 160))
     {
-        GUILayout.Label("Default PBR + a custom surface");
+        GUILayout.Label("PBR + directional, spot and point lights");
         GUILayout.Slider("Exposure", controls.exposure, 0.25, 3);
         GUILayout.Slider("Sunlight", controls.sunlight, 0, 12);
         GUILayout.Toggle("Shadows", controls.shadows);

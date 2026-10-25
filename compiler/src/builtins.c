@@ -1167,6 +1167,20 @@ static void build_signatures(void)
                "a gamepad's south button, ends the typing in this field.");
     add_gui("GUILayout", "Space", T_NONE, "tide_gui_layout_space", "float size", 0,
             "Empty space: down in a vertical container, across in a horizontal one.");
+    add_gui("GUILayout", "Reserve", T_RECT, "tide_gui_layout_reserve", "float2 size", 0,
+            "Reserves a fixed-size layout slot for custom content. Returns its rect in GUI pixels; draws nothing.");
+    add_gui("GUILayout", "Reserve", T_RECT, "tide_gui_layout_reserve_flexible", "float2 size, float minWidth, bool expandWidth", 0,
+            "Reserves layout space that can shrink to minWidth and optionally expand to the column's width.");
+    add_gui("GUI", "Draw", T_NONE, "tide_gui_begin_draw", "", GUI_CONTAINER | GUI_DRAW | GUI_SKIPS,
+            "Draw calls in this block join the GUI in declaration order, above its panel. Starts in screen pixels "
+            "and restores the GUI's drawing settings when the block ends. Helpers draw into the same list.");
+    add_gui("GUI", "Key", T_NONE, "tide_gui_begin_key", "int key", GUI_CONTAINER | GUI_KEY,
+            "Gives this block a stable data key. Its controls retain identity when loop items move or disappear. "
+            "Use unique keys for siblings; zero is a valid key.");
+    add_gui("GUI", "Key", T_NONE, "tide_gui_begin_key_long", "long key", GUI_CONTAINER | GUI_KEY,
+            "A stable 64-bit data key for this block's controls, independent of loop order.");
+    add_gui("GUI", "Key", T_NONE, "tide_gui_begin_key_text", "string key", GUI_CONTAINER | GUI_KEY,
+            "A stable text key for this block's controls, independent of loop order. Labels can change without changing the key.");
     add_gui("GUILayout", "Vertical", T_NONE, "tide_gui_begin_vertical", "", GUI_ID | GUI_CONTAINER,
             "Stacks the widgets in its block top to bottom.");
     add_gui("GUILayout", "Horizontal", T_NONE, "tide_gui_begin_horizontal", "", GUI_ID | GUI_CONTAINER,

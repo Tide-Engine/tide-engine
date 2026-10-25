@@ -1,0 +1,4 @@
+// expect: a field can't be a Mesh
+using Model = Mesh<Vertex3>;
+component Prop { Model model; }
+scene Main;

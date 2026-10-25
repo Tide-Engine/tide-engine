@@ -178,7 +178,7 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | `compiler/cli/`, package resolution, built-in clang, package contents | `notes/cli-and-packages.md` |
 | `.github/`, installers, release/upgrade code and nightlies | `notes/releases-and-ci.md` |
 | `packages/box2d/` | `notes/box2d.md` |
-| `packages/render3d/`, default PBR, directional shadows and HDR presentation | `notes/render3d.md` |
+| `packages/render3d/`, default PBR, light components, shadows and HDR presentation | `notes/render3d.md` |
 | `packages/box3d/`, resident state | `notes/box3d.md` |
 | `packages/newton/`, experimental NVIDIA Newton articulated CPU physics | `notes/newton.md` |
 | `packages/rooms/` | `notes/rooms-package.md` |

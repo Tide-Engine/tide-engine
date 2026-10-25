@@ -1,0 +1,5 @@
+// expect: refers to itself
+using First = Second;
+using Second = Third;
+using Third = First;
+scene Main;

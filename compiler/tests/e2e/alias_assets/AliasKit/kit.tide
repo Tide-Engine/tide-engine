@@ -1,0 +1,8 @@
+namespace AliasKit;
+
+using Corner = Vertex3;
+using BaseMesh = Mesh<Corner>;
+using ChainedMesh = BaseMesh;
+using Meshes = List<ChainedMesh>;
+using NamedMeshes = Map<string, ChainedMesh>;
+using Reference = Asset<ChainedMesh>;

@@ -1,0 +1,3 @@
+// expect: GUI.Key takes a block: 'GUI.Key(...) { ... }'
+scene Main { }
+view Paint() { GUI.Key(0); }

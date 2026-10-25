@@ -86,6 +86,31 @@ if(NOT TIDE_ANDROID)
     endif()
 endif()
 
+# Static Render3D PBR and equivalent cached public-C direct submission.
+# All referenced sources exist before this registration is added; no common
+# compiler/runtime/platform build settings change for this benchmark.
+if(NOT TIDE_ANDROID)
+    tide_add_game(bench_render3d NAME game SOURCES render3d/game.tide
+        PACKAGES Render3D "${PROJECT_SOURCE_DIR}/packages/render3d/pbr.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/render3d.tide"
+        HOST render3d/main.c render3d/direct.c)
+    target_link_libraries(bench_render3d PRIVATE tide_platform)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/render3d/mesh.obj")
+    file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/render3d/mesh.obj" render3d_mesh_sha256)
+    target_compile_definitions(bench_render3d PRIVATE
+        TIDE_BENCH_RESULTS="${CMAKE_CURRENT_SOURCE_DIR}/results"
+        TIDE_RENDER3D_MESH_SHA256="${render3d_mesh_sha256}")
+    if(TIDE_WEB)
+        tide_web_page(bench_render3d SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
+        tide_add_web_test(bench_render3d TARGET bench_render3d QUERY "quick" WEBGPU EXPECT "Render3D benchmark correctness passed")
+    else()
+        add_test(NAME bench_render3d COMMAND bench_render3d --quick)
+        add_test(NAME bench_render3d_opengl COMMAND bench_render3d --quick)
+        tide_gpu_test(bench_render3d)
+        tide_gpu_test(bench_render3d_opengl OPENGL)
+    endif()
+endif()
+
 # Tide's drawing benchmark's workloads by hand in OpenGL and Vulkan, timed the same way
 if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     add_subdirectory(draw)

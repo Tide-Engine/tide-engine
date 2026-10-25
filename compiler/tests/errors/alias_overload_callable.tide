@@ -1,0 +1,6 @@
+// expect: 'Apply' is already declared with these parameters
+using Scalar = float;
+using Callback = Func<Scalar, Scalar>;
+float Apply(Callback function) { return function(1); }
+float Apply(Func<float, float> function) { return function(1); }
+scene Main;

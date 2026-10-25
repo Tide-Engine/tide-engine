@@ -1,0 +1,167 @@
+{
+  "date": "2026-10-25",
+  "baseline_commit": "e757c631",
+  "method": "Fixed terrain-only renderer, null match world. 412x915 CSS, DPR3. Muted Chrome 155, forced AMD RDNA2 iGPU 164e, driver32.0.11034.2. No global settings changed.",
+  "timing_status": "Exploratory only. No coordinated clean window granted; competing work not excluded.",
+  "frozen_html_sha256": {
+    "before": "2322914cd4f9d69b79be4df235766216dda7a6788d4bf3ecc5fa7692ea7b8ae7",
+    "after": "e0aff737e94739bdd2f68746dc9effe7b44dadb5b00c0a9b697b6443d56db217"
+  },
+  "webgl_country_gpu_ms": {
+    "before": 41.35564,
+    "after": 38.84108,
+    "reduction_percent": 6.080331485620826,
+    "samples_each": 146,
+    "disjoint": 0
+  },
+  "invalid_probes": "CPU-grid probes game-cache4 and game-vectors omitted explicit grid dimensions; they bound no texture. Their timings are INVALID and excluded. Replaced by valid game-cache5, with an actual-texture regression test.",
+  "visual_pairs": [
+    {
+      "backend": "webgl",
+      "scene": 0,
+      "pixels_identical": true,
+      "before_png_sha256": "77a6066a41bce42d3f700a83e901f2639be55558e98736ab3e9f934dfc65f39a",
+      "after_png_sha256": "77a6066a41bce42d3f700a83e901f2639be55558e98736ab3e9f934dfc65f39a"
+    },
+    {
+      "backend": "webgl",
+      "scene": 1,
+      "pixels_identical": true,
+      "before_png_sha256": "77a6066a41bce42d3f700a83e901f2639be55558e98736ab3e9f934dfc65f39a",
+      "after_png_sha256": "77a6066a41bce42d3f700a83e901f2639be55558e98736ab3e9f934dfc65f39a"
+    },
+    {
+      "backend": "webgl",
+      "scene": 2,
+      "pixels_identical": true,
+      "before_png_sha256": "77a6066a41bce42d3f700a83e901f2639be55558e98736ab3e9f934dfc65f39a",
+      "after_png_sha256": "77a6066a41bce42d3f700a83e901f2639be55558e98736ab3e9f934dfc65f39a"
+    },
+    {
+      "backend": "webgl",
+      "scene": 3,
+      "pixels_identical": true,
+      "before_png_sha256": "77a6066a41bce42d3f700a83e901f2639be55558e98736ab3e9f934dfc65f39a",
+      "after_png_sha256": "77a6066a41bce42d3f700a83e901f2639be55558e98736ab3e9f934dfc65f39a"
+    },
+    {
+      "backend": "webgl",
+      "scene": 14,
+      "pixels_identical": true,
+      "before_png_sha256": "77a6066a41bce42d3f700a83e901f2639be55558e98736ab3e9f934dfc65f39a",
+      "after_png_sha256": "77a6066a41bce42d3f700a83e901f2639be55558e98736ab3e9f934dfc65f39a"
+    },
+    {
+      "backend": "webgl",
+      "scene": 25,
+      "pixels_identical": true,
+      "before_png_sha256": "77a6066a41bce42d3f700a83e901f2639be55558e98736ab3e9f934dfc65f39a",
+      "after_png_sha256": "77a6066a41bce42d3f700a83e901f2639be55558e98736ab3e9f934dfc65f39a"
+    },
+    {
+      "backend": "webgl",
+      "scene": 26,
+      "pixels_identical": true,
+      "before_png_sha256": "77a6066a41bce42d3f700a83e901f2639be55558e98736ab3e9f934dfc65f39a",
+      "after_png_sha256": "77a6066a41bce42d3f700a83e901f2639be55558e98736ab3e9f934dfc65f39a"
+    },
+    {
+      "backend": "webgpu",
+      "scene": 0,
+      "pixels_identical": true,
+      "before_png_sha256": "a958fc78924c814f79642d16fa58aa06e7d3ed59e30a40c71dc9e204c0b8e93e",
+      "after_png_sha256": "a958fc78924c814f79642d16fa58aa06e7d3ed59e30a40c71dc9e204c0b8e93e"
+    },
+    {
+      "backend": "webgpu",
+      "scene": 1,
+      "pixels_identical": true,
+      "before_png_sha256": "77ee5fc1985bd3c8c259575fe4fd05e6881267862c737055a05964791cd7aaf1",
+      "after_png_sha256": "77ee5fc1985bd3c8c259575fe4fd05e6881267862c737055a05964791cd7aaf1"
+    },
+    {
+      "backend": "webgpu",
+      "scene": 2,
+      "pixels_identical": true,
+      "before_png_sha256": "9aa9e5c3d065848b054c6cc174d2f9cf8e76289fe633b44faaaa8751dee8a1a6",
+      "after_png_sha256": "9aa9e5c3d065848b054c6cc174d2f9cf8e76289fe633b44faaaa8751dee8a1a6"
+    },
+    {
+      "backend": "webgpu",
+      "scene": 3,
+      "pixels_identical": true,
+      "before_png_sha256": "91ef2f103af2859106e0c697ff36f96a54fa23f39a00e2316ee4d28c4f318ac6",
+      "after_png_sha256": "91ef2f103af2859106e0c697ff36f96a54fa23f39a00e2316ee4d28c4f318ac6"
+    },
+    {
+      "backend": "webgpu",
+      "scene": 14,
+      "pixels_identical": true,
+      "before_png_sha256": "bad079bc6b82e1e9a7cde2f2f59ffd05f91429075a21f1f63fbc541bc990c549",
+      "after_png_sha256": "bad079bc6b82e1e9a7cde2f2f59ffd05f91429075a21f1f63fbc541bc990c549"
+    },
+    {
+      "backend": "webgpu",
+      "scene": 25,
+      "pixels_identical": true,
+      "before_png_sha256": "79a7f55383a7c0d2fff944a428b945ed91ca1523017547cfdac1ff088255b95f",
+      "after_png_sha256": "79a7f55383a7c0d2fff944a428b945ed91ca1523017547cfdac1ff088255b95f"
+    },
+    {
+      "backend": "webgpu",
+      "scene": 26,
+      "pixels_identical": true,
+      "before_png_sha256": "cf9134fe247b508c4738d4e1c51934ff532991bec6d2d2db7385473d8fc22e69",
+      "after_png_sha256": "cf9134fe247b508c4738d4e1c51934ff532991bec6d2d2db7385473d8fc22e69"
+    }
+  ],
+  "validation": {
+    "native": "earth, earth_tests, bench_earth targets; 21/21 Earth checks, 3/3 benchmark cases. CTest4/4,42.28s.",
+    "web": "same targets;21/21 Earth checks,3/3 benchmark cases. CTest4/4,47.19s.",
+    "native_gpu": "12-frame Vulkan validation and OpenGL captures; no diagnostics.",
+    "other_platforms": "Not run on Android or other OSes."
+  },
+  "publication": {
+    "release": "9e2e449241882444fede36fd21a29c4531a9d6439be19af67a44cabb6ce178c7",
+    "project": "29c727eab929afcbef23455a6bf73125",
+    "play": "https://play.tide-engine.dev/g/29c727eab929afcbef23455a6bf73125/",
+    "room": "966ANR/0",
+    "manifest": {
+      "format": 1,
+      "tide": "0.5.0-dev",
+      "simulation": "21404e58fa7de45e0343e42e98a40cee27e4a61fda18c22c5b921f842c232d77",
+      "files": [
+        {
+          "name": "server.wasm",
+          "size": 436677,
+          "sha256": "c581ac6c4b12fb9c44b221628d6969c0947b8a70b16ebd09b1f259df1d60f27a"
+        },
+        {
+          "name": "client.html",
+          "size": 1737765,
+          "sha256": "0a779589f96aa49a41da4c8e67c207f854cf76763bc214c8aea74cf42bce3749"
+        }
+      ]
+    },
+    "production_program_matches_bundle": true,
+    "live_checks": {
+      "webgl": {
+        "room": "966ANR",
+        "size": [
+          412,
+          915
+        ],
+        "errors": []
+      },
+      "webgpu": {
+        "room": "966ANR",
+        "size": [
+          412,
+          915
+        ],
+        "errors": []
+      }
+    },
+    "live_checks_note": "Downloaded production program equals bundle. Muted iGPU browser, 412x915 DPR1, actual hosted room. Land, walk, drive; inspected car/scenery/online status. Correctness only, no timing claim."
+  }
+}

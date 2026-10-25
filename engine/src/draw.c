@@ -732,6 +732,105 @@ void tide_draw_pop(tide_draw_list *d, const uint32_t mark)
     refresh(d);
 }
 
+void tide_draw_restore_window(tide_draw_list *d, const tide_draw_place *before, const uint32_t mark)
+{
+    tide_draw_pop(d, mark);
+    tide_draw_render_target(d, (tide_render_target){.id = TIDE_RENDER_WINDOW});
+    const tide_draw_place played = d->place;
+    d->place = *before;
+    d->place.played_2d = played.played_2d;
+    d->place.played_3d = played.played_3d;
+    d->place.played_clip = played.played_clip;
+    d->place.played_stencil = played.played_stencil;
+    refresh(d);
+}
+
+void tide_draw_move_gui(tide_draw_list *d, const uint32_t commands, const uint32_t plains, const uint32_t clips,
+                        const tide_float2 offset)
+{
+    if (d->plain_open) {
+        tide_draw_command *run = &d->commands[d->plain_open - 1u];
+        run->plain.count = d->plain_count - run->plain.first;
+    }
+    uint32_t target = 0;
+    bool screen = true;
+    bool marked = false;
+    for (uint32_t i = commands; i < d->count; i++) {
+        tide_draw_command *c = &d->commands[i];
+        if (c->kind == TIDE_DRAW_TARGET) target = c->target;
+        if (target) continue;
+        if (c->kind == TIDE_DRAW_SCREEN) screen = true;
+        if (c->kind == TIDE_DRAW_CAMERA) screen = false;
+        if (!screen && c->kind != TIDE_DRAW_CLIP) continue;
+        switch (c->kind) {
+        case TIDE_DRAW_RECT: case TIDE_DRAW_WIRE_RECT: case TIDE_DRAW_CIRCLE: case TIDE_DRAW_WIRE_CIRCLE:
+        case TIDE_DRAW_TEXT: case TIDE_DRAW_SHAPE:
+            c->a = tide_f2(c->a.x + offset.x, c->a.y + offset.y);
+            break;
+        case TIDE_DRAW_LINE:
+            c->a = tide_f2(c->a.x + offset.x, c->a.y + offset.y);
+            c->b = tide_f2(c->b.x + offset.x, c->b.y + offset.y);
+            break;
+        case TIDE_DRAW_PLAIN:
+            for (uint32_t j = c->plain.first < plains ? plains : c->plain.first; j < c->plain.first + c->plain.count; j++) {
+                tide_draw_plain *p = &d->plains[j];
+                p->a = tide_f2(p->a.x + offset.x, p->a.y + offset.y);
+                if (p->kind == TIDE_DRAW_LINE) p->b = tide_f2(p->b.x + offset.x, p->b.y + offset.y);
+            }
+            break;
+        case TIDE_DRAW_QUADS:
+            for (uint32_t j = c->mesh.first; j < c->mesh.first + c->mesh.count; j++) {
+                tide_draw_quad *q = &d->quads[j];
+                q->from = tide_f2(q->from.x + offset.x, q->from.y + offset.y);
+                q->to = tide_f2(q->to.x + offset.x, q->to.y + offset.y);
+            }
+            break;
+        case TIDE_DRAW_SHADED: {
+            tide_draw_run *run = &d->runs[c->shaded.run];
+            if (run->shader && run->shader->dims == 2) {
+                if (!run->moved) run->transform = tide_draw_transform_moved(tide_f2(0.0f, 0.0f));
+                run->transform.offset = tide_f2(run->transform.offset.x + offset.x, run->transform.offset.y + offset.y);
+                run->moved = 1;
+            }
+            break;
+        }
+        case TIDE_DRAW_MESH: case TIDE_DRAW_CLIP:
+            // Indexed vertices and shared clip ancestors move once, even when
+            // several commands reference them. Reuse append's scratch buffer;
+            // ordinary shape-only areas never need it.
+            if (!marked) {
+                const uint64_t count = (uint64_t)d->vertex_count + d->clip_count;
+                d->remap = grow(d->remap, 0, &d->remap_capacity, count, sizeof *d->remap, 16u);
+                if (count) memset(d->remap, 0, (size_t)count * sizeof *d->remap);
+                marked = true;
+            }
+            if (c->kind == TIDE_DRAW_MESH) {
+                for (uint32_t j = c->mesh.first; j < c->mesh.first + c->mesh.count; j++) {
+                    const uint32_t vertex = d->indices[j];
+                    if (vertex >= d->vertex_count || d->remap[vertex]) continue;
+                    d->remap[vertex] = 1;
+                    tide_float2 *p = &d->vertices[vertex].position;
+                    *p = tide_f2(p->x + offset.x, p->y + offset.y);
+                }
+            } else {
+                for (uint32_t clip = c->clip; clip > clips && clip <= d->clip_count;) {
+                    const size_t slot = (size_t)d->vertex_count + clip - 1u;
+                    if (d->remap[slot]) break;
+                    d->remap[slot] = 1;
+                    tide_draw_clip_data *p = &d->clips[clip - 1u];
+                    if (p->camera && d->cameras[p->camera - 1u].screen) {
+                        p->rect.x += offset.x;
+                        p->rect.y += offset.y;
+                    }
+                    clip = p->parent;
+                }
+            }
+            break;
+        default: break; // State records, render-target content and 3D geometry keep their own coordinates
+        }
+    }
+}
+
 // How the selected destination's commands go over what's there: its own, as its cameras are.
 void tide_draw_set_blend(tide_draw_list *d, const tide_blend blend)
 {

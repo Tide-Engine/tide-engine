@@ -1,0 +1,3 @@
+// expect: GUI.Draw takes a block: 'GUI.Draw(...) { ... }'
+scene Main { }
+view Paint() { GUI.Draw(); }

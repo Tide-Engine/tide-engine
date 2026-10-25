@@ -861,6 +861,9 @@ struct Rest
     int2 wrongInts;
     float4 perlins;   // Noise in each size, with a seed and without
     float4 simplexes;
+    float4 simplexOrders; // Negative coordinates/seeds and all six coordinate orders
+    float4 simplexTies;   // Equal-coordinate ranking, origin and extreme seeds
+    float4 simplexPairs;  // Pairwise ties above/below the remaining coordinate
     float4 cells;
     float4 steps;     // ++ and -- as values: a variable's value after it changed, or before
     float4 chars;     // Chars, ints there: what they compare and add to, a switch on one, and char(n)
@@ -1192,6 +1195,13 @@ Rest RestOf(Given given)
     float3 n3 = q3 * 0.83 + 0.37;
     rest.perlins = float4(Math.Perlin(n2), Math.Perlin(n2, given.one), Math.Perlin(n3), Math.Perlin(n3, given.big));
     rest.simplexes = float4(Math.Simplex(n2), Math.Simplex(n2, given.one), Math.Simplex(n3), Math.Simplex(n3, given.big));
+    rest.simplexOrders = float4(Math.Simplex(-n3.xyz, -given.one), Math.Simplex(-n3.xzy, -given.big),
+                                Math.Simplex(n3.yxz, -given.one), Math.Simplex(n3.yzx, given.big));
+    rest.simplexTies = float4(Math.Simplex(n3.zxy, -given.big), Math.Simplex(n3.zyx, given.one),
+                              Math.Simplex(float3(given.one) * -0.37, -2147483647 - 1),
+                              Math.Simplex(float3(given.zero), 2147483647));
+    rest.simplexPairs = float4(Math.Simplex(float3(a, a, -a), -given.one), Math.Simplex(float3(a, -a, a), given.big),
+                               Math.Simplex(float3(-a, a, a), -given.big), Math.Simplex(float3(-a, -a, a), given.one));
     rest.cells = float4(Math.Cellular(n2), Math.Cellular(n3, given.one));
 
     // ++ and -- where a value goes: run before their statement, on the GPU as on the CPU
@@ -1231,6 +1241,8 @@ bool SameRest(Rest a, Rest b)
     same = same && Close4(a.none, b.none) && Close4(a.turnedPowers, b.turnedPowers) && Close4(a.corners, b.corners);
     same = same && Close4(a.edges, b.edges) && Close4(a.zeroEdges, b.zeroEdges) && Close4(a.zeroEdges, float4(0, 1, 1, 0)) && Close2(a.wrong, b.wrong);
     same = same && Close4(a.perlins, b.perlins) && Close4(a.simplexes, b.simplexes) && Close4(a.cells, b.cells) && Close4(a.steps, b.steps);
+    same = same && Close4(a.simplexOrders, b.simplexOrders) && Close4(a.simplexTies, b.simplexTies);
+    same = same && Close4(a.simplexPairs, b.simplexPairs);
     same = same && Close4(a.chars, b.chars);
     return same && a.wrongInts.x == b.wrongInts.x && a.wrongInts.y == b.wrongInts.y;
 }

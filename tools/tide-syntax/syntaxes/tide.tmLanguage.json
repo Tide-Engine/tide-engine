@@ -71,9 +71,28 @@
     "namespaces": {
       "patterns": [
         {
+          "comment": "using Scores = Map<int, float>;: a transparent type alias, distinct from a namespace import",
+          "begin": "(?:^|(?<=[;{}]))\\s*(using)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(=)",
+          "end": ";|$",
+          "beginCaptures": {
+            "1": { "name": "keyword.other.namespace.tide" },
+            "2": { "name": "entity.name.type.tide" },
+            "3": { "name": "keyword.operator.assignment.tide" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.terminator.tide" }
+          },
+          "patterns": [
+            { "include": "#comments" },
+            { "include": "#type-name" },
+            { "include": "#literals" },
+            { "include": "#operators" }
+          ]
+        },
+        {
           "comment": "namespace Game.Combat; using Physics;",
           "begin": "^\\s*(namespace|using)\\b(?=\\s+[A-Za-z_])",
-          "end": ";|$",
+          "end": "(?=\\{)|;|$",
           "beginCaptures": {
             "1": { "name": "keyword.other.namespace.tide" }
           },

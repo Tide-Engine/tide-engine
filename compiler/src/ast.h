@@ -208,6 +208,7 @@ typedef struct unit {
 // messages and editors write it: "List<Grid2<Color>>", "Map<K, V>" with that
 // comma and space, "int?".
 typedef struct type_ref {
+    decl *alias; // The authored alias name, while the checked type keeps its underlying identity.
     str name;    // "List", "Combat.Health", "int"
     loc at;      // Where it starts: its namespace if it's qualified
     loc name_at; // Its last part: the name itself
@@ -454,6 +455,7 @@ typedef enum decl_kind {
     DECL_SETTINGS, // settings { tickRate = 30; }: the engine's settings, as fields; in program.settings
     DECL_SHADER,   // frag Shade(...) { ... } and vert Wave(...) { ... }: code the GPU runs for a mesh's pixels or vertices
     DECL_ASSET,    // asset Grid2<Color> hero = "art/hero.png";: a file's contents under a name, read-only, packed with the game
+    DECL_ALIAS,    // using Name = Type;: a namespace-scoped name for an existing closed type.
 } decl_kind;
 
 // How a frag or vert reads a texture: a color, or a target's depth, as a
@@ -522,6 +524,9 @@ typedef struct command_channel {
 
 typedef struct decl {
     decl_kind kind;
+    const type_ref *alias_ref;
+    type alias_type;
+    int alias_state; // 0 unresolved, 1 resolving (cycle guard), 2 resolved.
     str name;
     str qualified; // With its namespace, for messages: "Combat.Health"
     loc at;
@@ -658,6 +663,7 @@ typedef struct decl {
     VEC(enum_member) members;
     str backing;    // `enum Voxel : byte`: the type it's stored as, or empty for int
     loc backing_at;
+    const type_ref *backing_ref; // Authored enum backing type, including a qualified alias.
     int width;      // ...in bytes: 1 (byte), 2 (ushort) or 4 (int), once checked
 
     // Methods and functions
@@ -962,6 +968,8 @@ enum {
     GUI_SKIPS = 4,     // A container whose block doesn't always run: it returns -1 then
     DRAW_BLOCK = 8,    // A draw setting around a block, which puts back what it found: Draw.Blend(...) { ... }
     DRAW_SET = 16,     // ...and its other form, for the draws that follow, which takes no block: Draw.SetBlend(...)
+    GUI_KEY = 32,      // A keyed scope uses its source site without occurrence counting
+    GUI_DRAW = 64,     // Draw calls in this block record into the GUI's list
 };
 
 // How a constructor call builds its value.
@@ -1071,6 +1079,7 @@ struct expr {
     param *param;       // BIND_PARAM
     stmt *local;        // BIND_LOCAL: the S_VAR declaring it
     decl *type_decl;    // BIND_TYPE, E_LITERAL's type, CALL_SEND's event, and CTOR_ENUM's enum
+    decl *type_alias;   // The authored alias, separate from its canonical type declaration.
     decl *constant;     // BIND_CONST, on an E_NAME or E_MEMBER
     bool asset_reference; // BIND_ASSET converted to its checked persistent reference
     bool asset_ref_value; // .Value on an Asset<Mesh<V>>

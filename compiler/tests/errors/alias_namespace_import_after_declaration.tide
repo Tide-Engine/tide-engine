@@ -1,0 +1,5 @@
+// expect: 'using' goes at the top of the file, before any declaration
+using Count = int;
+using Imported;
+namespace Imported { struct Value { int value; } }
+scene Main;

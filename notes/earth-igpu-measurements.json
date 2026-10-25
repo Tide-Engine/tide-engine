@@ -1,0 +1,405 @@
+{
+  "date": "2026-10-25",
+  "release": "7ae5960b52672cce1392b547457ac608a28e55c2ab249a557878b946ae273ce1",
+  "cpu": "AMD Ryzen 9 7900X",
+  "gpu": "AMD Radeon(TM) Graphics, vendor 1002, device 164e, RDNA 2 integrated GPU",
+  "driver": "32.0.11034.2 / 24.10.34",
+  "browser": "Chrome 155.0.8059.85",
+  "selection": "DXGI enumeration; process-local --use-adapter-luid; WebGL renderer and WebGPU adapter.info verified AMD; no Windows graphics preferences changed",
+  "method": "Downloaded production client, live room 966ANR; 412x915 CSS viewport at DPR 1 or 3; hidden muted browser with hardware acceleration. Walk window 12-16 s, drive window 20-27 s, 31 s run. Tide.netcode reports host CPU work and session update; EXT_disjoint_timer_query_webgl2 measures game drawing on WebGL, excluding stats overlay; query results are asynchronous and all disjoint counts are zero. Drawer/profile instrumentation is enabled. Frame intervals are callback wall-clock intervals, not physical display scanout.",
+  "controls": "DPR 1 and constant-material runs are diagnostic controls only. flat-ground bypasses Ground, retaining sphere/atmosphere and all geometry/CPU work. flat-grass bypasses Grass, retaining Grain, roads and towns. full-fixed substitutes the single-return Ground GLSL emitted from the corrected game, with other shader source unchanged. None of the controls was deployed.",
+  "limitations": "One run per backend/DPR/control, live trajectories may differ slightly, other desktop applications remained running, no clock normalization. Some native/web CPU-only test work overlapped the early low-density controls. This is not a Pixel emulator or phone timing. WebGL production baseline emits ANGLE X4000 and is retained as an adverse validation result; full-fixed and the fatal Radeon shader fixture are warning-free. Forced AMD-only Vulkan initialization failed with ERROR_OUT_OF_HOST_MEMORY; these measurements use D3D11 WebGL and D3D12 WebGPU.",
+  "source_sha256": "2c75e64a6b2f6770c405c31c465d6597d7a16d0eeb859a3f571d534d654139c8",
+  "runs": [
+    {
+      "room": "966ANR",
+      "css": [
+        412,
+        915
+      ],
+      "pixels": [
+        1236,
+        2745
+      ],
+      "dpr": 3,
+      "renderer": "ANGLE (AMD, AMD Radeon(TM) Graphics (0x0000164E) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "adapter": null,
+      "disjoint": 0,
+      "errors": [
+        "tide: shaders linked with warnings:\n(730,1): warning X4000: use of potentially uninitialized variable (f_tf_Ground__tt_Atlas_0)\n\n\n"
+      ],
+      "summary": {
+        "globe": {
+          "samples": 288,
+          "interval_median": 6.935000061988831,
+          "interval_p95": 8.964999914169312,
+          "cpu_median": 0.565,
+          "update_median": 0.105,
+          "gpu_samples": 288,
+          "gpu_median": 0.91597,
+          "gpu_p95": 0.97624
+        },
+        "walk": {
+          "samples": 83,
+          "interval_median": 48.81499993801117,
+          "interval_p95": 99.03999996185303,
+          "cpu_median": 2.105,
+          "update_median": 0.215,
+          "gpu_samples": 83,
+          "gpu_median": 48.93268,
+          "gpu_p95": 49.12676
+        },
+        "drive": {
+          "samples": 150,
+          "interval_median": 44.62999999523163,
+          "interval_p95": 105.26999998092651,
+          "cpu_median": 2.455,
+          "update_median": 0.25,
+          "gpu_samples": 150,
+          "gpu_median": 45.328759999999996,
+          "gpu_p95": 45.858
+        }
+      },
+      "artifact": "igpu-webgl-3.json"
+    },
+    {
+      "room": "966ANR",
+      "css": [
+        412,
+        915
+      ],
+      "pixels": [
+        1236,
+        2745
+      ],
+      "dpr": 3,
+      "renderer": null,
+      "adapter": {
+        "vendor": "amd",
+        "architecture": "rdna-2",
+        "isFallbackAdapter": false
+      },
+      "disjoint": 0,
+      "errors": [],
+      "summary": {
+        "globe": {
+          "samples": 63,
+          "interval_median": 32.00499999523163,
+          "interval_p95": 34.269999980926514,
+          "cpu_median": 0.635,
+          "update_median": 0.21,
+          "gpu_samples": 0,
+          "gpu_median": null,
+          "gpu_p95": null
+        },
+        "walk": {
+          "samples": 83,
+          "interval_median": 48.36999988555908,
+          "interval_p95": 49.764999985694885,
+          "cpu_median": 1.625,
+          "update_median": 0.19,
+          "gpu_samples": 0,
+          "gpu_median": null,
+          "gpu_p95": null
+        },
+        "drive": {
+          "samples": 162,
+          "interval_median": 43.264999985694885,
+          "interval_p95": 45.99500000476837,
+          "cpu_median": 1.665,
+          "update_median": 0.18,
+          "gpu_samples": 0,
+          "gpu_median": null,
+          "gpu_p95": null
+        }
+      },
+      "artifact": "igpu-webgpu-3.json"
+    },
+    {
+      "room": "966ANR",
+      "css": [
+        412,
+        915
+      ],
+      "pixels": [
+        412,
+        915
+      ],
+      "dpr": 1,
+      "renderer": "ANGLE (AMD, AMD Radeon(TM) Graphics (0x0000164E) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "adapter": null,
+      "disjoint": 0,
+      "errors": [
+        "tide: shaders linked with warnings:\n(730,1): warning X4000: use of potentially uninitialized variable (f_tf_Ground__tt_Atlas_0)\n\n\n"
+      ],
+      "summary": {
+        "globe": {
+          "samples": 288,
+          "interval_median": 6.950000047683716,
+          "interval_p95": 8.054999947547913,
+          "cpu_median": 0.5549999999999999,
+          "update_median": 0.11499999999999999,
+          "gpu_samples": 288,
+          "gpu_median": 0.17332,
+          "gpu_p95": 4.871379999999999
+        },
+        "walk": {
+          "samples": 575,
+          "interval_median": 6.945000052452087,
+          "interval_p95": 8.420000076293945,
+          "cpu_median": 1.78,
+          "update_median": 0.105,
+          "gpu_samples": 575,
+          "gpu_median": 5.95928,
+          "gpu_p95": 6.339239999999999
+        },
+        "drive": {
+          "samples": 1009,
+          "interval_median": 6.929999947547913,
+          "interval_p95": 7.620000004768372,
+          "cpu_median": 1.5499999999999998,
+          "update_median": 0.09,
+          "gpu_samples": 1009,
+          "gpu_median": 5.81236,
+          "gpu_p95": 6.36696
+        }
+      },
+      "artifact": "igpu-webgl-1.json"
+    },
+    {
+      "room": "966ANR",
+      "css": [
+        412,
+        915
+      ],
+      "pixels": [
+        412,
+        915
+      ],
+      "dpr": 1,
+      "renderer": null,
+      "adapter": {
+        "vendor": "amd",
+        "architecture": "rdna-2",
+        "isFallbackAdapter": false
+      },
+      "disjoint": 0,
+      "errors": [],
+      "summary": {
+        "globe": {
+          "samples": 280,
+          "interval_median": 7.024999976158142,
+          "interval_p95": 8.110000014305115,
+          "cpu_median": 0.595,
+          "update_median": 0.11,
+          "gpu_samples": 0,
+          "gpu_median": null,
+          "gpu_p95": null
+        },
+        "walk": {
+          "samples": 556,
+          "interval_median": 7.075000047683716,
+          "interval_p95": 9.15499997138977,
+          "cpu_median": 2.155,
+          "update_median": 0.11,
+          "gpu_samples": 0,
+          "gpu_median": null,
+          "gpu_p95": null
+        },
+        "drive": {
+          "samples": 989,
+          "interval_median": 7.0299999713897705,
+          "interval_p95": 8.68500006198883,
+          "cpu_median": 2.245,
+          "update_median": 0.11,
+          "gpu_samples": 0,
+          "gpu_median": null,
+          "gpu_p95": null
+        }
+      },
+      "artifact": "igpu-webgpu-1.json"
+    },
+    {
+      "mode": "full-fixed",
+      "room": "966ANR",
+      "css": [
+        412,
+        915
+      ],
+      "pixels": [
+        1236,
+        2745
+      ],
+      "dpr": 3,
+      "renderer": "ANGLE (AMD, AMD Radeon(TM) Graphics (0x0000164E) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "adapter": null,
+      "disjoint": 0,
+      "errors": [],
+      "summary": {
+        "globe": {
+          "samples": 288,
+          "interval_median": 6.925000071525574,
+          "interval_p95": 7.570000052452087,
+          "cpu_median": 0.57,
+          "update_median": 0.105,
+          "gpu_samples": 288,
+          "gpu_median": 0.9136299999999999,
+          "gpu_p95": 0.9718399999999999
+        },
+        "walk": {
+          "samples": 84,
+          "interval_median": 48.4099999666214,
+          "interval_p95": 99.87000000476837,
+          "cpu_median": 1.77,
+          "update_median": 0.19499999999999998,
+          "gpu_samples": 84,
+          "gpu_median": 48.32892,
+          "gpu_p95": 48.86644
+        },
+        "drive": {
+          "samples": 153,
+          "interval_median": 45.230000019073486,
+          "interval_p95": 95.4650000333786,
+          "cpu_median": 1.69,
+          "update_median": 0.185,
+          "gpu_samples": 153,
+          "gpu_median": 45.7222,
+          "gpu_p95": 46.11792
+        }
+      },
+      "artifact": "igpu-webgl-3-full-fixed.json"
+    },
+    {
+      "mode": "flat-ground",
+      "room": "966ANR",
+      "css": [
+        412,
+        915
+      ],
+      "pixels": [
+        1236,
+        2745
+      ],
+      "dpr": 3,
+      "renderer": "ANGLE (AMD, AMD Radeon(TM) Graphics (0x0000164E) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "adapter": null,
+      "disjoint": 0,
+      "errors": [],
+      "summary": {
+        "globe": {
+          "samples": 288,
+          "interval_median": 6.934999942779541,
+          "interval_p95": 7.799999952316284,
+          "cpu_median": 0.6799999999999999,
+          "update_median": 0.125,
+          "gpu_samples": 288,
+          "gpu_median": 3.01983,
+          "gpu_p95": 4.24839
+        },
+        "walk": {
+          "samples": 576,
+          "interval_median": 6.930000066757202,
+          "interval_p95": 7.644999980926514,
+          "cpu_median": 1.655,
+          "update_median": 0.09999999999999999,
+          "gpu_samples": 576,
+          "gpu_median": 3.2136,
+          "gpu_p95": 3.88544
+        },
+        "drive": {
+          "samples": 1008,
+          "interval_median": 6.935000061988831,
+          "interval_p95": 7.879999995231628,
+          "cpu_median": 1.7899999999999998,
+          "update_median": 0.105,
+          "gpu_samples": 1008,
+          "gpu_median": 3.4875599999999998,
+          "gpu_p95": 4.7919
+        }
+      },
+      "artifact": "igpu-webgl-3-flat-ground.json"
+    },
+    {
+      "mode": "flat-grass",
+      "room": "966ANR",
+      "css": [
+        412,
+        915
+      ],
+      "pixels": [
+        1236,
+        2745
+      ],
+      "dpr": 3,
+      "renderer": "ANGLE (AMD, AMD Radeon(TM) Graphics (0x0000164E) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "adapter": null,
+      "disjoint": 0,
+      "errors": [],
+      "summary": {
+        "globe": {
+          "samples": 120,
+          "interval_median": 14.950000047683716,
+          "interval_p95": 17.304999947547913,
+          "cpu_median": 0.69,
+          "update_median": 0.16499999999999998,
+          "gpu_samples": 120,
+          "gpu_median": 14.7266,
+          "gpu_p95": 14.83076
+        },
+        "walk": {
+          "samples": 144,
+          "interval_median": 27.319999933242798,
+          "interval_p95": 58.13499999046326,
+          "cpu_median": 1.8199999999999998,
+          "update_median": 0.16,
+          "gpu_samples": 144,
+          "gpu_median": 27.331159999999997,
+          "gpu_p95": 27.628
+        },
+        "drive": {
+          "samples": 264,
+          "interval_median": 25.55999994277954,
+          "interval_p95": 73,
+          "cpu_median": 1.8399999999999999,
+          "update_median": 0.16499999999999998,
+          "gpu_samples": 264,
+          "gpu_median": 25.6696,
+          "gpu_p95": 25.9364
+        }
+      },
+      "artifact": "igpu-webgl-3-flat-grass.json"
+    }
+  ],
+  "pixel_comparison": [
+    {
+      "scene": 0,
+      "changed": 0,
+      "maximum": 0
+    },
+    {
+      "scene": 1,
+      "changed": 0,
+      "maximum": 0
+    },
+    {
+      "scene": 2,
+      "changed": 0,
+      "maximum": 0
+    },
+    {
+      "scene": 14,
+      "changed": 0,
+      "maximum": 0
+    },
+    {
+      "scene": 25,
+      "changed": 0,
+      "maximum": 0
+    },
+    {
+      "scene": 26,
+      "changed": 0,
+      "maximum": 0
+    }
+  ]
+}
