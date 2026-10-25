@@ -754,7 +754,7 @@ static rgba to_rgba(const tide_color c)
 // their edge.
 
 enum { SHAPE_RECT, SHAPE_WIRE_RECT, SHAPE_CIRCLE, SHAPE_WIRE_CIRCLE, SHAPE_LINE,
-       SHAPE_BOX, SHAPE_ELLIPSE, SHAPE_ARC };
+       SHAPE_BOX, SHAPE_ELLIPSE, SHAPE_ARC, SHAPE_CORNERS };
 
 typedef struct shape {
     float a[2];       // Its middle, or a line's start
@@ -788,7 +788,7 @@ typedef struct shape_extra {
 // rects, plain circles on a scaled display, and plain shapes among either.
 static inline bool solid_shape(const shape *s, const shape_extra *e)
 {
-    return s->kind != (float)SHAPE_ARC && e->turn[0] == 1.0f && e->turn[1] == 0.0f && e->outline == 0.0f
+    return s->kind < (float)SHAPE_ARC && e->turn[0] == 1.0f && e->turn[1] == 0.0f && e->outline == 0.0f
         && e->soft == 0.0f && memcmp(e->color2, s->color, sizeof e->color2) == 0;
 }
 
@@ -1145,7 +1145,7 @@ static void add_smooth(const int kind, const float x, const float y, const float
 static uint32_t add_smooth_run(const tide_draw_list *list, uint32_t at, const camera *cam)
 {
     static const int kinds[] = {[TIDE_SHAPE_BOX] = SHAPE_BOX, [TIDE_SHAPE_ELLIPSE] = SHAPE_ELLIPSE,
-                                [TIDE_SHAPE_ARC] = SHAPE_ARC};
+                                [TIDE_SHAPE_ARC] = SHAPE_ARC, [TIDE_SHAPE_CORNERS] = SHAPE_CORNERS};
     const uint8_t blend = list->commands[at].blend;
     if (!run_goes_on(STEP_SHAPES)) start_shapes();
     draw_step *const run = &steps[step_count - 1u];
@@ -1166,7 +1166,7 @@ static uint32_t add_smooth_run(const tide_draw_list *list, uint32_t at, const ca
             if (c->shape >= list->shape_count) continue;
             const tide_draw_shape_data *s = &list->shapes[c->shape];
             const uint32_t form = s->form & (uint32_t)TIDE_SHAPE_FORMS;
-            if (form > TIDE_SHAPE_ARC) continue;
+            if (form > TIDE_SHAPE_CORNERS) continue;
             // Its lengths in window pixels, and its angles as the screen has them, where y goes down
             const tide_float2 center = to_screen(cam, c->a);
             const rgba color = to_rgba(c->color);
@@ -1175,7 +1175,7 @@ static uint32_t add_smooth_run(const tide_draw_list *list, uint32_t at, const ca
             const float outline = s->form & (uint32_t)TIDE_SHAPE_HAIRLINE ? 1.0f : s->outline * scale, soft = s->soft * scale;
             // A solid one (solid_shape's test, on the numbers its extra would have), while the run's are: its radius
             // alone, its extra never made. The same color's bits are the same bytes
-            if (radius && form != TIDE_SHAPE_ARC && s->turn.x == 1.0f && s->turn.y == 0.0f && outline == 0.0f && soft == 0.0f) {
+            if (radius && form < TIDE_SHAPE_ARC && s->turn.x == 1.0f && s->turn.y == 0.0f && outline == 0.0f && soft == 0.0f) {
                 bool one_color = memcmp(&s->color2, &c->color, sizeof s->color2) == 0;
                 if (!one_color) {
                     const rgba bottom = to_rgba(s->color2);
@@ -1193,7 +1193,7 @@ static uint32_t add_smooth_run(const tide_draw_list *list, uint32_t at, const ca
                                    // A hairline is a logical pixel wide, whatever the camera
                                    .outline = outline,
                                    .soft = soft,
-                                   .sweep = s->sweep,
+                                   .sweep = form == TIDE_SHAPE_CORNERS ? s->sweep * scale : s->sweep,
                                    .color2 = {color2.r, color2.g, color2.b, color2.a},
                                    .rim = {rim.r, rim.g, rim.b, rim.a}};
             if (radius) {

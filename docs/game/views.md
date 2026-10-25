@@ -190,6 +190,17 @@ Shapes of every kind drawn one after another go to the GPU together, in one draw
 
 Those calls are short for `Draw.Shape`, which takes everything a shape can have:
 
+For a rectangle already represented by a `Rect`, use `Draw.Rect(rect, color)`,
+`Draw.Rect(rect, radius, color)` or `Draw.Rect(rect, radii, color)`. All three
+have antialiased edges, including square corners. A `float4` gives the top-left,
+top-right, bottom-right and bottom-left radii; each is clamped to half the
+smaller side. Equal radii use the ordinary rounded-box path. These filled boxes
+need no GUI theme and work inside `GUI.Draw` as well as ordinary views.
+
+The center/size `Draw.Rect` overload keeps its whole-pixel behavior for seamless
+adjacent tiles. `Shape` continues to provide gradients, outlines and soft edges
+with a uniform corner radius.
+
 ```csharp
 struct Shape // Built in
 {

@@ -160,12 +160,12 @@ static const char shape_glsl_fragment[] =
     "    vec2 p;\n"                                                                                                    \
     "    if (kind > 4.5) {\n" /* A smooth shape: turned about its middle, with room for its edge and what fades past it */ \
     "        extent = abs(shape.zw);\n"                                                                                \
-    "        local = c * (extent + max(fade.x, 0.0) + 1.0);\n"                                                         \
+    "        local = c * (extent + (kind > 7.5 ? 0.0 : max(fade.x, 0.0)) + 1.0);\n"                                                         \
     "        p = shape.xy + vec2(local.x * turn.x - local.y * turn.y, local.x * turn.y + local.y * turn.x);\n"         \
     "    } else " SHAPE_GLSL_PLACE                                                                                     \
     "    tint = color;\n"                                                                                              \
     "    form = kind;\n"                                                                                               \
-    "    look = vec4(turn.z, turn.w, fade.x, 0.0);\n"                                                                  \
+    "    look = kind > 7.5 ? vec4(turn.zw, fade) : vec4(turn.z, turn.w, fade.x, 0.0);\n"                                                                  \
     "    gap = vec2(cos(fade.y), sin(fade.y));\n"                                                                      \
     "    tint2 = color2;\n"                                                                                            \
     "    rim = rim_color;\n"                                                                                           \
@@ -254,7 +254,13 @@ static const char smooth_shape_glsl_fragment[] =
     "    float px = (scale.x + scale.y) * 0.5;\n"
     "    float d;\n"
     "    float outline = look.y;\n"
-    "    if (form > 6.5) {\n" // Part of a ring `outline` thick inside its radius
+    "    float soft = form > 7.5 ? 0.0 : look.z;\n"
+    "    if (form > 7.5) {\n"
+    "        float r = local.y < 0.0 ? (local.x < 0.0 ? look.x : look.y) : (local.x < 0.0 ? look.w : look.z);\n"
+    "        vec2 q = abs(local) - extent + r;\n"
+    "        d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - r;\n"
+    "        outline = 0.0;\n"
+    "    } else if (form > 6.5) {\n" // Part of a ring `outline` thick inside its radius
     "        vec2 q = vec2(local.x, abs(local.y));\n"
     "        float ring = abs(length(q) - extent.x + outline * 0.5) - outline * 0.5;\n"
     "        float wedge = dot(q, gap) > 0.0 ? dot(q, vec2(-gap.y, gap.x)) : (gap.x > 0.0 ? length(q) : -length(q));\n"
@@ -267,11 +273,11 @@ static const char smooth_shape_glsl_fragment[] =
     "        d = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - look.x;\n"
     "    }\n"
     "    float cover = clamp(0.5 - d * px, 0.0, 1.0);\n"
-    "    if (look.z > 0.0) {\n" // Its color goes on past its edge, fading
-    "        float glow = clamp(1.0 - (d * px + 0.5) / (look.z * px + 1.0), 0.0, 1.0);\n"
+    "    if (soft > 0.0) {\n" // Its color goes on past its edge, fading
+    "        float glow = clamp(1.0 - (d * px + 0.5) / (soft * px + 1.0), 0.0, 1.0);\n"
     "        cover = glow * glow;\n"
-    "    } else if (look.z < 0.0) {\n" // It fades inwards from its edge
-    "        float glow = clamp(1.0 + (d * px - 0.5) / (1.0 - look.z * px), 0.0, 1.0);\n"
+    "    } else if (soft < 0.0) {\n" // It fades inwards from its edge
+    "        float glow = clamp(1.0 + (d * px - 0.5) / (1.0 - soft * px), 0.0, 1.0);\n"
     "        cover *= glow * glow;\n"
     "    }\n"
     "    if (cover <= fix.y * 0.004) discard;\n"
@@ -369,13 +375,13 @@ static const char *const shape_wgsl = WGSL(
     "    var p: vec2f;\n"                                                                                              \
     "    if (kind > 4.5) {\n"                                                                                          \
     "        out.extent = abs(shape.zw);\n"                                                                            \
-    "        out.local = c * (out.extent + max(fade.x, 0.0) + 1.0);\n"                                                 \
+    "        out.local = c * (out.extent + select(max(fade.x, 0.0), 0.0, kind > 7.5) + 1.0);\n"                                                 \
     "        p = shape.xy + vec2f(out.local.x * turn.x - out.local.y * turn.y,\n"                                      \
     "                             out.local.x * turn.y + out.local.y * turn.x);\n"                                     \
     "    } else " SHAPE_WGSL_PLACE                                                                                     \
     "    out.tint = color;\n"                                                                                          \
     "    out.form = kind;\n"                                                                                           \
-    "    out.look = vec4f(turn.z, turn.w, fade.x, 0.0);\n"                                                             \
+    "    out.look = select(vec4f(turn.z, turn.w, fade.x, 0.0), vec4f(turn.zw, fade), kind > 7.5);\n"                                                             \
     "    out.gap = vec2f(cos(fade.y), sin(fade.y));\n"                                                                 \
     "    out.tint2 = color2;\n"                                                                                        \
     "    out.rim = rim_color;\n"                                                                                       \
@@ -441,7 +447,15 @@ static const char *const smooth_shape_wgsl_fragment = WGSL(
     "    let px = (u.scale.x + u.scale.y) * 0.5;\n"
     "    var d: f32;\n"
     "    var outline = in.look.y;\n"
-    "    if (in.form > 6.5) {\n"
+    "    let soft = select(in.look.z, 0.0, in.form > 7.5);\n"
+    "    if (in.form > 7.5) {\n"
+    "        let top = select(in.look.y, in.look.x, in.local.x < 0.0);\n"
+    "        let bottom = select(in.look.z, in.look.w, in.local.x < 0.0);\n"
+    "        let r = select(bottom, top, in.local.y < 0.0);\n"
+    "        let q = abs(in.local) - in.extent + r;\n"
+    "        d = length(max(q, vec2f(0.0))) + min(max(q.x, q.y), 0.0) - r;\n"
+    "        outline = 0.0;\n"
+    "    } else if (in.form > 6.5) {\n"
     "        let q = vec2f(in.local.x, abs(in.local.y));\n"
     "        let ring = abs(length(q) - in.extent.x + outline * 0.5) - outline * 0.5;\n"
     "        var wedge = dot(q, vec2f(-in.gap.y, in.gap.x));\n"
@@ -457,11 +471,11 @@ static const char *const smooth_shape_wgsl_fragment = WGSL(
     "        d = length(max(q, vec2f(0.0))) + min(max(q.x, q.y), 0.0) - in.look.x;\n"
     "    }\n"
     "    var cover = clamp(0.5 - d * px, 0.0, 1.0);\n"
-    "    if (in.look.z > 0.0) {\n"
-    "        let glow = clamp(1.0 - (d * px + 0.5) / (in.look.z * px + 1.0), 0.0, 1.0);\n"
+    "    if (soft > 0.0) {\n"
+    "        let glow = clamp(1.0 - (d * px + 0.5) / (soft * px + 1.0), 0.0, 1.0);\n"
     "        cover = glow * glow;\n"
-    "    } else if (in.look.z < 0.0) {\n"
-    "        let glow = clamp(1.0 + (d * px - 0.5) / (1.0 - in.look.z * px), 0.0, 1.0);\n"
+    "    } else if (soft < 0.0) {\n"
+    "        let glow = clamp(1.0 + (d * px - 0.5) / (1.0 - soft * px), 0.0, 1.0);\n"
     "        cover *= glow * glow;\n"
     "    }\n"
     "    if (cover <= u.fix.y * 0.004) { discard; }\n"

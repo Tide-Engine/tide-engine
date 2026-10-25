@@ -18,6 +18,7 @@ static const type T_D = {TY_DOUBLE, NULL};
 static const type T_WHOLE = {TY_INT, NULL};
 static const type T_F2 = {TY_FLOAT2, NULL};
 static const type T_F3 = {TY_FLOAT3, NULL};
+static const type T_F4 = {TY_FLOAT4, NULL};
 static const type T_COLOR = {TY_COLOR, NULL};
 static const type T_STR = {TY_STRING, NULL};
 static const type T_CHR = {TY_CHAR, NULL};
@@ -832,6 +833,15 @@ static void build_signatures(void)
     add_draw("RoundRect", "tide_draw_round_rect", "center, size, radius, color",
                "A filled rectangle whose corners are round, by `radius`: up to half its smaller side, which makes a pill.",
                4, &T_F2, &T_F2, &T_F, &T_COLOR);
+    add_draw("Rect", "tide_draw_rect_area", "rect, color",
+             "An antialiased rectangle at a Rect. No theme is needed. Unlike the center/size version, its edges keep fractional pixel positions.",
+             2, &T_RECT, &T_COLOR);
+    add_draw("Rect", "tide_draw_rect_area_radius", "rect, radius, color",
+             "An antialiased rectangle with round corners. The radius is clamped to half its smaller side.",
+             3, &T_RECT, &T_F, &T_COLOR);
+    add_draw("Rect", "tide_draw_rect_area_corners", "rect, radii, color",
+             "An antialiased rectangle with independent corner radii: top left, top right, bottom right, bottom left. Each is clamped to half its smaller side.",
+             3, &T_RECT, &T_F4, &T_COLOR);
     add_draw("RoundRect", "tide_draw_round_rect_rotated", "center, size, radius, rotation, color",
                "A filled rectangle with round corners, turned about its center. `rotation` is in radians, from +x "
                "towards +y: counterclockwise under a camera, clockwise on the screen.",
@@ -1185,6 +1195,15 @@ static void build_signatures(void)
             "Stacks the widgets in its block top to bottom.");
     add_gui("GUILayout", "Horizontal", T_NONE, "tide_gui_begin_horizontal", "", GUI_ID | GUI_CONTAINER,
             "Puts the widgets in its block side by side.");
+    add_gui("GUILayout", "Scroll", T_NONE, "tide_gui_begin_layout_scroll", "float2 size, mut float2 offset",
+            GUI_ID | GUI_CONTAINER | GUI_SKIPS | GUI_SCROLL,
+            "A clipped layout viewport. Offset is in pixels from the content's top left. Wheel input scrolls the innermost hovered viewport and bubbles at its edge; navigation reveals the focused control.");
+    add_gui("GUI", "Scroll", T_NONE, "tide_gui_begin_scroll", "Rect rect, mut float2 offset",
+            GUI_ID | GUI_CONTAINER | GUI_SKIPS | GUI_SCROLL, "A clipped viewport at an explicit Rect, with layout content inside it.");
+    add_gui("GUI", "FocusNext", T_NONE, "tide_gui_focus_next", "", 0,
+            "Gives the next enabled control focus. Call conditionally immediately before that control.");
+    add_gui("GUI", "ClearFocus", T_NONE, "tide_gui_clear_focus", "", 0,
+            "Clears keyboard and gamepad focus. A number field keeps valid editing when it next runs.");
     add_gui("GUILayout", "Area", T_NONE, "tide_gui_begin_area_at", "Anchor anchor", GUI_ID | GUI_CONTAINER,
             "A panel on the screen, sized to its block's widgets, at one of nine anchors like `Anchor.MiddleCenter`.");
     add_gui("GUILayout", "Area", T_NONE, "tide_gui_begin_area", "Rect rect", GUI_ID | GUI_CONTAINER,

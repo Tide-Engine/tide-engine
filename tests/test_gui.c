@@ -1658,32 +1658,19 @@ TIDE_TEST(gui_the_keyboard_moves_the_focus_to_controls_and_clicks_them)
 {
     start();
     card_frame();
-    TIDE_CHECK(card_press(&devices.keyboard.downArrow) == 0);
+    TIDE_CHECK(card_press(&devices.keyboard.tab) == 0);
     TIDE_CHECK(gui.focus == 10);
-    TIDE_CHECK(card_press(&devices.keyboard.downArrow) == FOCUSED);
-    TIDE_CHECK(card_frame() == FOCUSED);
-    TIDE_CHECK(draw.count == 5);
-
-    key(&devices.keyboard.enter, true);
-    TIDE_CHECK(card_frame() == (FOCUSED | CLICKED));
-    TIDE_CHECK(card_frame() == FOCUSED);
-    key(&devices.keyboard.enter, false);
-    card_frame();
+    TIDE_CHECK(card_press(&devices.keyboard.tab) == FOCUSED);
+    TIDE_CHECK(card_press(&devices.keyboard.enter) == (FOCUSED | CLICKED));
     TIDE_CHECK(card_press(&devices.keyboard.space) == (FOCUSED | CLICKED));
     TIDE_CHECK(card_press(&devices.keyboard.numpadEnter) == (FOCUSED | CLICKED));
-
-    TIDE_CHECK(card_press(&devices.keyboard.rightArrow) == 0);
-    TIDE_CHECK(gui.focus == 20);
-    TIDE_CHECK(card_press(&devices.keyboard.leftArrow) == FOCUSED);
     TIDE_CHECK(card_press(&devices.keyboard.upArrow) == 0);
-    TIDE_CHECK(gui.focus == 10);
-    TIDE_CHECK(card_press(&devices.keyboard.tab) == FOCUSED);
-    TIDE_CHECK(card_press(&devices.keyboard.tab) == 0);
-    TIDE_CHECK(gui.focus == 20);
+    TIDE_CHECK(gui.focus == 20); // Geometrically above the card, nearer than Play.
+    TIDE_CHECK(card_press(&devices.keyboard.rightArrow) == FOCUSED);
     key(&devices.keyboard.leftShift, true);
-    TIDE_CHECK(card_press(&devices.keyboard.tab) == FOCUSED);
+    TIDE_CHECK(card_press(&devices.keyboard.tab) == 0);
+    TIDE_CHECK(gui.focus == 10); // Shift+Tab still follows declaration order.
     key(&devices.keyboard.leftShift, false);
-
     tide_devices sampled = devices;
     key(&sampled.keyboard.w, true);
     tide_gui_hide(&gui, &sampled);
@@ -1705,16 +1692,9 @@ TIDE_TEST(gui_a_gamepad_moves_the_focus_to_controls_and_clicks_them)
     devices.gamepad.leftStick = tide_f2(0.0f, 0.0f);
     card_frame();
     TIDE_CHECK(card_press(&devices.gamepad.buttonSouth) == (FOCUSED | CLICKED));
-    TIDE_CHECK(card_press(&devices.gamepad.dpad.right) == 0);
-    TIDE_CHECK(gui.focus == 20);
-    TIDE_CHECK(card_press(&devices.gamepad.dpad.left) == FOCUSED);
     TIDE_CHECK(card_press(&devices.gamepad.dpad.up) == 0);
-    TIDE_CHECK(gui.focus == 10);
-    devices.gamepad.leftStick = tide_f2(0.0f, -1.0f);
-    TIDE_CHECK(card_frame() == FOCUSED);
-    devices.gamepad.leftStick = tide_f2(0.0f, 0.0f);
-    card_frame();
-
+    TIDE_CHECK(gui.focus == 20);
+    TIDE_CHECK(card_press(&devices.gamepad.dpad.right) == FOCUSED);
     tide_devices sampled = devices;
     key(&sampled.gamepad.buttonNorth, true);
     tide_gui_hide(&gui, &sampled);
@@ -1768,6 +1748,10 @@ TIDE_TEST(gui_left_and_right_stay_with_the_widgets_that_step)
     key(&devices.keyboard.leftArrow, true);
     steppers(&volume, &players);
     key(&devices.keyboard.leftArrow, false);
+    TIDE_CHECK(gui.focus == 30 && players == 3);
+    key(&devices.keyboard.upArrow, true);
+    steppers(&volume, &players);
+    key(&devices.keyboard.upArrow, false);
     TIDE_CHECK(gui.focus == 20 && players == 3);
 }
 
@@ -1791,7 +1775,7 @@ TIDE_TEST(gui_navigate_lets_the_arrows_start_while_the_game_reads_them)
         TIDE_CHECK(gui.focus == (frame == 0 ? 0u : 10u));
     }
     tide_gui_hide(&gui, &sampled);
-    TIDE_CHECK(card_press(&devices.gamepad.dpad.down) == FOCUSED);
+    TIDE_CHECK(card_press(&devices.gamepad.dpad.right) == FOCUSED);
     TIDE_CHECK(card_press(&devices.gamepad.buttonEast) == 0);
     TIDE_CHECK(gui.focus == 0);
     tide_gui_hide(&gui, &sampled);
@@ -2481,6 +2465,192 @@ static int entry_tap(tide_button *b)
 static bool name_is(const char *text)
 {
     return entry_name.bytes == (int32_t)strlen(text) && memcmp(entry_name.ptr, text, strlen(text)) == 0;
+}
+
+TIDE_TEST(gui_text_selection_edits_unicode_and_undoes_without_moving_focus)
+{
+    entry_start();
+    entry_name = tide_str_add(TIDE_STR_EMPTY, tide_str_from_cstr("a\xc3\xa9z"));
+    entries();
+    gui.focus = 5;
+    entry_tap(&devices.keyboard.enter);
+    TIDE_REQUIRE(gui.editing == 5);
+    TIDE_CHECK(gui.edit_caret == 4);
+    entry_tap(&devices.keyboard.leftArrow);
+    TIDE_CHECK(gui.focus == 5 && gui.edit_caret == 3);
+    key(&devices.keyboard.leftShift, true);
+    entry_tap(&devices.keyboard.leftArrow);
+    key(&devices.keyboard.leftShift, false);
+    TIDE_CHECK(gui.edit_caret == 1 && gui.edit_anchor == 3);
+    type("Q");
+    entries();
+    TIDE_CHECK(name_is("aQz"));
+    key(&devices.keyboard.leftCtrl, true);
+    entry_tap(&devices.keyboard.z);
+    TIDE_CHECK(name_is("a\xc3\xa9z"));
+    entry_tap(&devices.keyboard.y);
+    TIDE_CHECK(name_is("aQz"));
+    entry_tap(&devices.keyboard.a);
+    key(&devices.keyboard.leftCtrl, false);
+    entry_tap(&devices.keyboard.delete);
+    TIDE_CHECK(name_is("") && gui.edit_caret == 0);
+}
+
+TIDE_TEST(gui_spatial_focus_uses_geometry_and_tab_keeps_declaration_order)
+{
+    start();
+    const tide_rect rects[] = {{0, 0, 40, 30}, {0, 80, 40, 30}, {100, 0, 40, 30}, {100, 80, 40, 30}};
+    for (int frame = 0; frame < 4; frame++) {
+        if (frame == 1) key(&devices.keyboard.tab, true);
+        if (frame == 2) { key(&devices.keyboard.tab, false); key(&devices.keyboard.rightArrow, true); }
+        if (frame == 3) { key(&devices.keyboard.rightArrow, false); key(&devices.keyboard.downArrow, true); }
+        begin();
+        for (uint32_t i = 0; i < 4; i++) tide_gui_control(&gui, i + 10, rects[i]);
+        end();
+        if (frame == 1) TIDE_CHECK(gui.focus == 10);
+        if (frame == 2) TIDE_CHECK(gui.focus == 12);
+        if (frame == 3) TIDE_CHECK(gui.focus == 13);
+    }
+    key(&devices.keyboard.downArrow, false);
+    key(&devices.keyboard.tab, true);
+    begin();
+    for (uint32_t i = 0; i < 4; i++) tide_gui_control(&gui, i + 10, rects[i]);
+    end();
+    TIDE_CHECK(gui.focus == 10);
+}
+
+static void scroll_buttons(tide_float2 *offset, const bool focus_last)
+{
+    const int scroll = tide_gui_begin_scroll(&gui, 500, (tide_rect){100, 100, 120, 60}, offset);
+    for (uint32_t i = 0; i < 5; i++) {
+        if (focus_last && i == 4) tide_gui_focus_next(&gui);
+        tide_gui_layout_button(&gui, 1000 + i, "item");
+    }
+    tide_gui_close(&gui, scroll);
+}
+
+TIDE_TEST(gui_scroll_clips_input_routes_wheel_and_reveals_requested_focus)
+{
+    start();
+    tide_float2 offset = {0};
+    mouse(110, 200, false); // On a hidden child below the viewport.
+    begin(); scroll_buttons(&offset, false); end();
+    tide_devices sampled = devices;
+    tide_gui_hide(&gui, &sampled);
+    mouse(110, 200, true);
+    begin(); scroll_buttons(&offset, false); end();
+    TIDE_CHECK(gui.active == 0);
+    mouse(110, 110, false);
+    devices.mouse.poll_scroll = tide_f2(0, -2);
+    begin(); scroll_buttons(&offset, false); end();
+    TIDE_CHECK(offset.y == 56 && offset.x == 0);
+    TIDE_CHECK(gui.list.place.clip == 0 && gui.scrolling_count == 0);
+    for (uint32_t i = 0; i < gui.rect_count; i++) {
+        TIDE_CHECK(gui.rects[i].rect.height == 0 ||
+                   (gui.rects[i].rect.y >= 100 && gui.rects[i].rect.y + gui.rects[i].rect.height <= 160));
+    }
+    devices.mouse.poll_scroll = tide_f2(0, 0);
+    begin(); scroll_buttons(&offset, true); end();
+    TIDE_CHECK(gui.focus == 1004 && offset.y == 100);
+    TIDE_CHECK(gui.focus_rect.y + gui.focus_rect.height == 160);
+    offset = tide_f2(NAN, INFINITY);
+    begin(); scroll_buttons(&offset, false); end();
+    TIDE_CHECK(offset.x == 0 && offset.y == 0);
+}
+
+TIDE_TEST(gui_nested_scroll_consumes_wheel_once_and_bubbles_at_the_edge)
+{
+    start();
+    tide_float2 outer = {0}, inner = {0};
+    mouse(30, 30, false);
+    for (int frame = 0; frame < 4; frame++) {
+        if (frame) devices.mouse.poll_scroll = tide_f2(0, -2);
+        begin();
+        const int a = tide_gui_begin_scroll(&gui, 10, (tide_rect){20, 20, 140, 100}, &outer);
+        const int b = tide_gui_begin_layout_scroll(&gui, 20, tide_f2(120, 60), &inner);
+        for (uint32_t i = 0; i < 4; i++) tide_gui_layout_button(&gui, i + 30, "item");
+        tide_gui_close(&gui, b);
+        tide_gui_layout_space(&gui, 200);
+        tide_gui_close(&gui, a);
+        end();
+        if (frame == 1) TIDE_CHECK(inner.y == 56 && outer.y == 0);
+        if (frame == 2) TIDE_CHECK(inner.y == 67 && outer.y == 45);
+    }
+    TIDE_CHECK(gui.scrolling_count == 0 && gui.list.place.clip == 0);
+}
+
+TIDE_TEST(gui_first_scroll_frame_clamps_large_offsets_without_losing_layout_precision)
+{
+    start();
+    tide_float2 offset = {FLT_MAX, FLT_MAX};
+    begin(); scroll_buttons(&offset, false); end();
+    TIDE_CHECK(offset.x == 0 && offset.y == 100);
+    TIDE_REQUIRE(gui.nav_last_count == 5);
+    TIDE_CHECK(gui.nav_rects[4].y == 132 && gui.nav_rects[4].height == 28);
+}
+
+TIDE_TEST(gui_touch_scroll_cancels_the_child_gesture_without_clicking)
+{
+    start();
+    tide_float2 offset = {0};
+    for (int frame = 0; frame < 4; frame++) {
+        tide_touches_poll(&devices.touchscreen);
+        if (frame) tide_touch_event(&devices.touchscreen,
+            frame == 1 ? TIDE_TOUCH_BEGAN : frame == 2 ? TIDE_TOUCH_MOVED : TIDE_TOUCH_ENDED,
+            1, tide_f2(110, 1080 - (frame == 1 ? 140 : 110)));
+        tide_pointer_poll(&devices, false);
+        tide_gui_begin(&gui, &devices, tide_f2(1920, 1080), NULL);
+        const int a = tide_gui_begin_scroll(&gui, 500, (tide_rect){100, 100, 120, 60}, &offset);
+        tide_gui_layout_space(&gui, 33);
+        const tide_rect r = tide_gui_layout_reserve(&gui, tide_f2(120, 28));
+        const tide_control control = tide_gui_control(&gui, 1001, r);
+        tide_gui_layout_space(&gui, 200);
+        tide_gui_close(&gui, a);
+        end();
+        if (frame == 1) TIDE_CHECK(control.pressed && control.down);
+        if (frame == 2) TIDE_CHECK(control.cancelled && !control.pressed && offset.y == 30);
+        TIDE_CHECK(!control.clicked);
+    }
+}
+
+TIDE_TEST(gui_touch_motion_does_not_steal_a_press_when_content_cannot_scroll)
+{
+    start();
+    tide_float2 offset = {0};
+    for (int frame = 0; frame < 4; frame++) {
+        tide_touches_poll(&devices.touchscreen);
+        if (frame) tide_touch_event(&devices.touchscreen,
+            frame == 1 ? TIDE_TOUCH_BEGAN : frame == 2 ? TIDE_TOUCH_MOVED : TIDE_TOUCH_ENDED,
+            1, tide_f2(110, 1080 - (frame == 1 ? 140 : 110)));
+        tide_pointer_poll(&devices, false);
+        tide_gui_begin(&gui, &devices, tide_f2(1920, 1080), NULL);
+        const int a = tide_gui_begin_scroll(&gui, 500, (tide_rect){100, 100, 120, 60}, &offset);
+        const tide_rect r = tide_gui_layout_reserve(&gui, tide_f2(120, 60));
+        const tide_control control = tide_gui_control(&gui, 1001, r);
+        tide_gui_close(&gui, a);
+        end();
+        TIDE_CHECK(!control.cancelled && offset.y == 0);
+        if (frame == 2) TIDE_CHECK(control.pressed);
+        if (frame == 3) TIDE_CHECK(control.clicked);
+    }
+}
+
+TIDE_TEST(gui_editing_repeats_cursor_keys_without_repeating_focus_navigation)
+{
+    entry_start();
+    entry_name = tide_str_from_cstr("abc");
+    entries();
+    gui.focus = 5;
+    entry_tap(&devices.keyboard.enter);
+    key(&devices.keyboard.leftArrow, true);
+    entries();
+    TIDE_CHECK(gui.edit_caret == 2 && gui.focus == 5);
+    gui.edit_repeat_at = 0; // The repeat is due; no wall-clock sleep in a test.
+    entries();
+    TIDE_CHECK(gui.edit_caret == 1 && gui.focus == 5);
+    key(&devices.keyboard.leftArrow, false);
+    entries();
+    TIDE_CHECK(gui.edit_repeat == 0);
 }
 
 TIDE_TEST(gui_float_fields_keep_untouched_values)

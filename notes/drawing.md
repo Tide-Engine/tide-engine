@@ -1,5 +1,21 @@
 # Drawing: `Draw`, its settings, shapes and meshes
 
+## Rect-based SDF boxes and independent corners (2026-10-25)
+
+Draw.Rect accepts Rect/color, Rect/radius/color and Rect/float4-radii/color.
+The first two wrappers inline into tide_draw_round_rect, including radius zero;
+center/size Rect stays pixel-aligned. Equal four-radii values use the uniform
+path. TIDE_SHAPE_CORNERS reuses radius/outline/soft/sweep as TL/TR/BR/BL lengths,
+with the tag distinguishing these from effects. fit_shape bounds each radius;
+alter_shape scales all four and swaps the vertical pair on reflection. Records,
+append and transforms preserve this tag without enlarging shape data. Gradients,
+outlines and soft effects remain Shape's uniform-radius path.
+
+The renderer recognizes the new form and reuses its existing flexible instance
+format and pipelines; common plain and solid-radius streams stay unchanged.
+The GUI follow-up adds scroll relocation using tide_draw_move_gui and resolves
+input clips after placement. Contracts, tests and performance status: gui.md.
+
 ## Custom GUI drawing (2026-10-24)
 
 `GUI.Draw` records into the existing GUI list in declaration order and restores

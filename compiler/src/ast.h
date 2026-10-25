@@ -970,6 +970,7 @@ enum {
     DRAW_SET = 16,     // ...and its other form, for the draws that follow, which takes no block: Draw.SetBlend(...)
     GUI_KEY = 32,      // A keyed scope uses its source site without occurrence counting
     GUI_DRAW = 64,     // Draw calls in this block record into the GUI's list
+    GUI_SCROLL = 128,  // A scroll offset is staged across the block, then checked-written back
 };
 
 // How a constructor call builds its value.

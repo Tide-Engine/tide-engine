@@ -59,12 +59,21 @@ Microduck fixture. The docs build and all 300 grammar tests pass. Independent
 source and resolved-notes reviews find no actionable compatibility issue.
 The optimized benchmark fixture also rebuilds against this merged source.
 
+The subsequent GUI refresh through c7234d3c merges the container cleanup and
+primitive drawing changes without source conflicts. Both complete builds pass;
+the affected GUI/drawing/shader/compiler/Render3D checks pass on native (263,
+11.29 s) and web (258, 226.80 s). The docs build, independent overlap review
+and optimized Vulkan/OpenGL smoke checks (two, 1.14 s) pass. This narrower
+overlap uses affected checks rather than another full-suite repeat. The ready
+optimized executable has SHA-256
+e94238145d22e53af0f3ef3fd3f95c2b70ef702c8fb98b80d8d5056d01f75681.
+
 The coordinator deferred the paired timing attempt for active correctness/P1
 work before any paired measurement process or benchmark gate started. A fresh
 explicit quiet window is required. The original a1d962c9 executable remains
 frozen (SHA-256 9d3ab3ba54b734334b87e9276c331fc1bf97177583ae71802e19ae4d424d1ce9);
 the first merged 90368d1e build had SHA-256
-c9a5aafe13fcc1e208a1d957ee54249350cad9d5b32421ff4061dd008ef11251).
+c9a5aafe13fcc1e208a1d957ee54249350cad9d5b32421ff4061dd008ef11251.
 No post-optimization timing result or speedup is claimed. Historical
 measurements below retain their original source/executable identities.
 

@@ -103,8 +103,32 @@ static int frame(void *user, const float seconds)
         tide_web_eval("{ const f = document.activeElement;"
                       " f.dispatchEvent(new InputEvent('input', {inputType: 'insertLineBreak'})); }");
         return TIDE_KEEP_RUNNING;
-    default:
+    case 11:
         check(devices.keyboard.enter.down && devices.keyboard.text.count == 0, "a line break typed into the field is Enter too");
+        tide_devices_consume(&devices); // Separate that prior Enter edge from the composition under test.
+        tide_web_eval("{ const f = document.activeElement;"
+                      " f.dispatchEvent(new CompositionEvent('compositionstart'));"
+                      " f.dispatchEvent(new InputEvent('input', {inputType: 'insertCompositionText', data: 'n', isComposing: true}));"
+                      " f.dispatchEvent(new KeyboardEvent('keydown', {code: 'Enter', key: 'Enter', isComposing: true, bubbles: true})); }");
+        return TIDE_KEEP_RUNNING;
+    case 12:
+        check(!devices.keyboard.enter.held && !devices.keyboard.enter.down && devices.keyboard.text.count == 0, "IME preedit neither types nor submits");
+        tide_web_eval("{ const f = document.activeElement;"
+                      " f.dispatchEvent(new CompositionEvent('compositionend', {data: '\\u65e5'}));"
+                      " f.dispatchEvent(new InputEvent('input', {inputType: 'insertFromComposition', data: '\\u65e5'})); }");
+        return TIDE_KEEP_RUNNING;
+    case 13:
+        check(devices.keyboard.text.count == 1 && devices.keyboard.text.chars[0] == 0x65e5, "IME commit is typed exactly once");
+        tide_web_eval("{ const f = document.activeElement;"
+                      " f.dispatchEvent(new InputEvent('input', {inputType: 'insertText', data: '\\u65e5'})); }");
+        return TIDE_KEEP_RUNNING;
+    case 14:
+        check(devices.keyboard.text.count == 1 && devices.keyboard.text.chars[0] == 0x65e5, "an identical later character is not mistaken for a duplicate commit");
+        tide_web_eval("{ const f = document.activeElement;"
+                      " f.dispatchEvent(new InputEvent('input', {inputType: 'deleteContentForward'})); }");
+        return TIDE_KEEP_RUNNING;
+    default:
+        check(devices.keyboard.delete.down && devices.keyboard.text.count == 0, "forward deletion is Delete");
         tide_platform_typing(false);
         return failures == 0 ? 0 : 1;
     }

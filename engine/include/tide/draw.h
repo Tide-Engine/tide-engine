@@ -260,6 +260,7 @@ typedef enum tide_shape_form {
     TIDE_SHAPE_BOX,
     TIDE_SHAPE_ELLIPSE,
     TIDE_SHAPE_ARC, // Its size is the ring's, and its outline's width how thick the ring is
+    TIDE_SHAPE_CORNERS, // A filled box: radius/outline/soft/sweep are TL/TR/BR/BL radii, not effects
     TIDE_SHAPE_FORMS = 0xFF, // What a tide_draw_shape_data's `form` has of these...
     // ...and with this, its outline is a pixel of the screen wide, whatever the camera: the outline of a
     // rect or a circle that a transform turned or stretched
@@ -1883,6 +1884,19 @@ void tide_draw_round_rect_rotated(tide_draw_list *d, tide_float2 center, tide_fl
                                   tide_color color);
 void tide_draw_wire_round_rect(tide_draw_list *d, tide_float2 center, tide_float2 size, float radius, float width,
                                tide_color color);
+
+// Rect-based smooth boxes. Radii run clockwise from top left in the drawing's
+// coordinates. Each is clamped to half the smaller side; invalid radii are 0.
+static inline void tide_draw_rect_area_radius(tide_draw_list *d, const tide_rect rect, const float radius, const tide_color color)
+{
+    tide_draw_round_rect(d, tide_f2(rect.x + rect.width * 0.5f, rect.y + rect.height * 0.5f),
+                        tide_f2(rect.width, rect.height), radius, color);
+}
+static inline void tide_draw_rect_area(tide_draw_list *d, const tide_rect rect, const tide_color color)
+{
+    tide_draw_rect_area_radius(d, rect, 0.0f, color);
+}
+void tide_draw_rect_area_corners(tide_draw_list *d, tide_rect rect, tide_float4 radii, tide_color color);
 
 // An ellipse: `radii` is half its width and half its height.
 void tide_draw_ellipse(tide_draw_list *d, tide_float2 center, tide_float2 radii, tide_color color);

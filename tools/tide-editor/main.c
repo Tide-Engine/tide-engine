@@ -72,7 +72,6 @@ typedef struct editor {
     int drag_node;
     tide_float2 drag_origin;
     bool tree_dragging;
-    uint32_t text_selection;
     inspector_edit *edit, *edit_first, *edit_last;
     uint64_t inspector_folded[128];
     int inspector_folded_count;
@@ -152,11 +151,6 @@ static void clear_field(editor *e)
 static bool text_field(editor *e, uint32_t id, tide_rect r, const char *label_text, char **value, bool *entered)
 {
     if (!*value) *value = own("");
-    const bool ctrl = e->devices.keyboard.leftCtrl.pressed || e->devices.keyboard.rightCtrl.pressed;
-    if (e->gui.editing == id && ctrl && e->devices.keyboard.a.down) e->text_selection = id;
-    if (e->gui.editing == id && e->text_selection == id && (e->gui.text.count || e->devices.keyboard.backspace.down)) {
-        replace(value, ""); e->gui.edit_len = 0; e->gui.edit[0] = '\0'; e->text_selection = 0;
-    }
     tide_str text = tide_str_from_cstr(*value);
     bool done;
     const bool changed = tide_gui_text_field_entered(&e->gui,id,r,label_text,(tide_textref){.local=&text},&done);
@@ -180,11 +174,6 @@ static void open_dialog(editor *e, dialog_kind kind, const char *name, const cha
 static bool layout_text_field(editor *e, uint32_t id, const char *label_text, char **value, bool *entered)
 {
     if (!*value) *value=own("");
-    const bool ctrl=e->devices.keyboard.leftCtrl.pressed || e->devices.keyboard.rightCtrl.pressed;
-    if(e->gui.editing==id && ctrl && e->devices.keyboard.a.down) e->text_selection=id;
-    if(e->gui.editing==id && e->text_selection==id && (e->gui.text.count || e->devices.keyboard.backspace.down)) {
-        replace(value,""); e->gui.edit_len=0; e->gui.edit[0]='\0'; e->text_selection=0;
-    }
     tide_str text=tide_str_from_cstr(*value); bool done;
     const bool changed=tide_gui_layout_text_field_entered(&e->gui,id,label_text,(tide_textref){.local=&text},&done);
     if(changed) replace(value,tide_str_c(text));
@@ -651,7 +640,7 @@ static int frame(void *user, float seconds)
     }
     if (e->doc.revision != revision) {
         e->drag.active = false;
-        e->gui.editing=e->gui.focus=0; e->text_selection=0;
+        e->gui.editing=e->gui.focus=0;
         e->selected = 0;
         for (int i = 0; selected_path && i < e->doc.nodes.count; i++) if (str_eq_c(e->doc.nodes.items[i].path, selected_path)) e->selected = i;
         clear_field(e);
@@ -681,6 +670,7 @@ static int frame(void *user, float seconds)
         arena_rewind(mark); tide_scratch_reset(scratch); return TIDE_KEEP_RUNNING;
     }
     tide_gui_begin(&e->gui, &e->devices, size, tide_platform_measure_text);
+    e->gui.copy = tide_platform_copy;
     inspector_prepare(e);
     tide_gui_theme theme = tide_gui_theme_default();
     theme.text=ink; theme.panel=rgb(.22f,.22f,.22f); theme.control=rgb(.28f,.28f,.28f);

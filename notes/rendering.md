@@ -1,5 +1,17 @@
 # The platform layer and the renderer
 
+## Independent rectangle corners (2026-10-25)
+
+SHAPE_CORNERS uses the existing 32-byte shape_extra: radius/outline/soft/sweep
+carry TL/TR/BR/BL radii, with rotation in turn. The vertex shader passes those
+four lengths in look and reserves only normal AA padding. The fragment selects
+the quadrant's radius, evaluates the same rounded-box distance and uses ordinary
+target-pixel coverage/premultiplied alpha. There is no outline or fade on this
+form. It shares the flexible pipeline with other shapes; equal radii record the
+ordinary box form and keep the compact solid-radius path. No GPU attribute,
+buffer stride, target, depth or stencil contract changes. Native/web pixel and
+batch-count regressions are in platform/tests/draw.c; validation: gui.md.
+
 ## Pipelines made before they're drawn (2026-10-22)
 
 The owner asked for shaders to be made while the game loads rather than at

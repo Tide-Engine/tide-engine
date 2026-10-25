@@ -1,5 +1,16 @@
 # Input devices and pixels in the platform layer
 
+## GUI editing and browser IME commits (2026-10-25)
+
+The hidden browser typing field preserves active composition instead of clearing
+its value on every intermediate input. Preedit stays out of the committed text
+queue. compositionend commits once; a duplicate final input is suppressed, and
+isComposing/keyCode 229 keys do not submit the GUI. deleteContentForward maps
+to Delete. Synthetic web_keys cases cover preedit, candidate Enter, duplicate
+commit and forward deletion. No real phone/IME session was exercised. Device
+layouts and match input sampling are unchanged. GUI-local caret/editing-key
+repeat and the standard host's optional clipboard callback are in gui.md.
+
 ## Input borrowing through helpers (2026-10-18)
 
 Ordinary synchronous functions/methods now take the caller's input parameter

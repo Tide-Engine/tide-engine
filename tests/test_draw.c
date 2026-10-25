@@ -9,6 +9,28 @@
 
 static tide_draw_list list;
 
+TIDE_TEST(draw_rect_areas_have_aa_and_bounded_independent_corners)
+{
+    tide_draw_reset(&list);
+    const tide_rect rect = {10.25f, 20.25f, 80, 40};
+    tide_draw_rect_area(&list, rect, TIDE_COLOR_RED);
+    tide_draw_rect_area_corners(&list, rect, tide_f4(0, 4, 12, 100), TIDE_COLOR_BLUE);
+    TIDE_REQUIRE(list.shape_count == 2);
+    TIDE_CHECK(list.shapes[0].form == TIDE_SHAPE_BOX && list.shapes[0].radius == 0);
+    TIDE_CHECK(list.commands[0].a.x == 50.25f && list.commands[0].a.y == 40.25f);
+    const tide_draw_shape_data *s = &list.shapes[1];
+    TIDE_CHECK(s->form == TIDE_SHAPE_CORNERS && s->radius == 0 && s->outline == 4 && s->soft == 12 && s->sweep == 20);
+    tide_draw_rect_area_corners(&list, rect, tide_f4(8, 8, 8, 8), TIDE_COLOR_BLUE);
+    TIDE_CHECK(list.shapes[2].form == TIDE_SHAPE_BOX && list.shapes[2].radius == 8);
+    tide_draw_rect_area(&list, (tide_rect){0, 0, -1, 20}, TIDE_COLOR_BLUE);
+    TIDE_CHECK(list.shape_count == 3);
+    tide_draw_set_transform(&list, tide_draw_transform_trs(tide_f2(0, 0), 0, tide_f2(2, -2)));
+    tide_draw_rect_area_corners(&list, rect, tide_f4(0, 4, 12, 20), TIDE_COLOR_BLUE);
+    s = &list.shapes[3];
+    TIDE_CHECK(s->radius == 40 && s->outline == 24 && s->soft == 8 && s->sweep == 0);
+    tide_draw_unset_transform(&list);
+}
+
 TIDE_TEST(draw_records_in_order)
 {
     tide_draw_reset(&list);

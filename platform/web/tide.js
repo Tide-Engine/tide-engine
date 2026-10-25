@@ -227,6 +227,8 @@
     const keepFromBrowser = new Set(['Space', 'Tab', 'Backspace', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
         'PageUp', 'PageDown', 'Home', 'End']);
     function onKey(event, held) {
+        // Enter confirms the IME candidate; it must not submit the GUI field.
+        if (held && (event.isComposing || event.keyCode === 229)) return;
         // A phone's keyboard says no position for its keys: Enter is the one
         // the GUI needs from it, as what it types comes through the field.
         const index = keyIndex.get(event.code || (event.key === 'Enter' ? 'Enter' : ''));
@@ -268,15 +270,38 @@
         Object.assign(field.style, { position: 'fixed', left: '0', bottom: '0', width: '1px', height: '1px',
             opacity: '0', border: '0', padding: '0', fontSize: '16px' });
         field.value = ' ';
-        field.addEventListener('input', event => {
-            if (event.inputType === 'deleteContentBackward') tapKey('Backspace');
-            else if (event.inputType === 'insertLineBreak') tapKey('Enter');
-            else if (event.data) {
-                for (const ch of event.data) {
-                    const c = ch.codePointAt(0);
-                    if (c >= 32 && c !== 127 && typed.length < 1024) typed.push(c);
-                }
+        let composing = false;
+        let committed = null;
+        const append = text => {
+            for (const ch of text || '') {
+                const c = ch.codePointAt(0);
+                if (c >= 32 && c !== 127 && typed.length < 1024) typed.push(c);
             }
+        };
+        field.addEventListener('compositionstart', () => { composing = true; committed = null; });
+        field.addEventListener('compositionend', event => {
+            composing = false;
+            const token = { text: event.data || '' };
+            committed = token;
+            append(token.text);
+            // Deduplicate the final input in this event burst, without
+            // swallowing an identical character typed in a later event.
+            queueMicrotask(() => { if (committed === token) committed = null; });
+            field.value = ' ';
+        });
+        field.addEventListener('input', event => {
+            if (composing || event.isComposing) return;
+            // Some browsers send a final input after compositionend as well.
+            if (committed !== null && event.data === committed.text) {
+                committed = null;
+                field.value = ' ';
+                return;
+            }
+            committed = null;
+            if (event.inputType === 'deleteContentBackward') tapKey('Backspace');
+            else if (event.inputType === 'deleteContentForward') tapKey('Delete');
+            else if (event.inputType === 'insertLineBreak') tapKey('Enter');
+            else if (event.data) append(event.data);
             field.value = ' ';
         });
         document.body.appendChild(field);

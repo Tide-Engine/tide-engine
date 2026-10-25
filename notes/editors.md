@@ -1,5 +1,17 @@
 # The language server and the editors
 
+## GUI rectangle, scroll and focus additions (2026-10-25)
+
+The common builtin catalog supplies Rect-based SDF overloads, GUI/GUILayout.Scroll
+block snippets and mut-offset signatures, and GUI.FocusNext/ClearFocus. lsp_gui
+pins completion for scroll/focus. GUIControl.cancelled hover also names touch
+scroll cancellation. There is no separate editor-only API table. Runtime and
+compiler contracts/validation: gui.md. The native scene editor removes its
+old Ctrl+A shim that manually reset the GUI buffer, and uses the common
+caret/selection state instead. It binds the optional clipboard callback; its
+existing document-undo shortcuts already exclude active text editing. The
+unchanged inspector/UI scripted regressions exercise that integration.
+
 ## Task handle syntax and editor surface (2026-10-25)
 
 Task/LocalTask completion retains full optional/failable result type text.

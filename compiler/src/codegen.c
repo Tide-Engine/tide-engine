@@ -65,6 +65,7 @@ typedef struct gen_open {
     bool draw;        // A draw setting's, rather than the GUI's
     const char *cleanup; // An owned argument temporary, released on early exit too.
     const char *list;  // Captured destination: GUI.Draw can shadow tide_draw inside this block
+    const char *after; // Checked writeback after a scroll closes, including early exits
 } gen_open;
 
 // A switch or loop being generated: what `break` and `continue` go to. In a
@@ -6219,6 +6220,7 @@ static const char *closing(const gen *g, const int from)
         if (c->cleanup) sb_printf(&out, "%s ", c->cleanup);
         else if (c->draw) sb_printf(&out, "tide_draw_pop(%s, %s); ", c->list, c->mark);
         else sb_printf(&out, "tide_gui_close(tide_ui, %s); ", c->mark);
+        if (c->after) sb_put(&out, c->after);
     }
     return out.len ? out.data : NULL;
 }
@@ -6615,17 +6617,61 @@ static void gen_body_stmt(gen *g, const stmt *s)
 
 // GUILayout.Vertical() { ... }: opens the container, runs the block, and
 // closes it, and whatever the block left open.
+// Freeze an indexed offset's indices, not its storage address. Its checked
+// writeback resolves storage again after the body may have grown its heap.
+static void scroll_indices(gen *g, expr *e)
+{
+    if (e->kind != E_MEMBER && e->kind != E_INDEX) return;
+    scroll_indices(g, e->object);
+    if (e->kind == E_INDEX) {
+        expr *index = e->lhs;
+        const char *name = made_up(g, "scroll_index");
+        indent(g, &g->c);
+        sb_printf(&g->c, "%s = ", const_decl(index->type, name));
+        gen_expr(g, &g->c, index);
+        sb_put(&g->c, ";\n");
+        index->hoisted = name;
+    }
+}
+
 static void gen_container(gen *g, const expr *e)
 {
     sb *o = &g->c;
     const char *depth = made_up(g, "depth");
     line(g, o, "{");
     g->indent++;
+    expr call = *e, held[2], *args[2];
+    const char *after = NULL;
+    if (e->gui & GUI_SCROLL) {
+        const char *names[2];
+        for (int n = 0; n < 2; n++) {
+            const int i = arg_in_turn(e, n);
+            expr *arg = e->args.items[i];
+            if (i == 1) scroll_indices(g, arg);
+            names[i] = made_up(g, "scroll_arg");
+            indent(g, o);
+            sb_printf(o, "%s %s = ", c_type(arg->type), names[i]);
+            gen_expr(g, o, arg);
+            sb_put(o, ";\n");
+            held[i] = (expr){.kind = E_NAME, .type = arg->type, .hoisted = names[i]};
+            args[i] = &held[i];
+        }
+        call.args.items = args;
+        // Reuse ordinary assignment lowering for lists, maps, grids, arrays
+        // and their member paths. No raw game-memory pointer crosses the block.
+        gen writer = *g;
+        writer.c = (sb){0};
+        writer.indent = 0;
+        stmt set = {.kind = S_ASSIGN, .target = e->args.items[1], .value = &held[1], .op = T_ASSIGN};
+        writer.bare = &set;
+        gen_stmt(&writer, &set);
+        after = writer.c.data;
+        g->call_temps = writer.call_temps;
+    }
     indent(g, o);
     sb_printf(o, "const int %s = ", depth);
-    gen_gui_call(g, o, e);
+    gen_gui_call(g, o, &call);
     sb_put(o, ";\n");
-    // A modal that isn't up runs nothing, and has nothing to close.
     const bool skips = (e->gui & GUI_SKIPS) != 0;
     if (skips) {
         line(g, o, "if (%s >= 0) {", depth);
@@ -6638,11 +6684,12 @@ static void gen_container(gen *g, const expr *e)
         line(g, o, "tide_draw_list *const tide_draw = &tide_ui->list;");
         line(g, o, "(void)tide_draw;");
     }
-    const gen_open open = {.mark = depth};
+    const gen_open open = {.mark = depth, .after = after};
     vec_push(g->containers, open);
     gen_body_stmt(g, e->block);
     g->containers.count--;
     line(g, o, "tide_gui_close(tide_ui, %s);", depth);
+    if (after) line(g, o, "%s", after);
     if (skips) {
         g->indent--;
         line(g, o, "}");

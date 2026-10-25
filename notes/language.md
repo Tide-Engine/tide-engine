@@ -47,6 +47,17 @@ quick checks (1.45 s). Its final state review is clean; no compiler changed or
 full suite rerun was needed for that package completion. No performance result
 is claimed here; no runtime source changed.
 
+## Scoped GUI offset writeback (2026-10-25)
+
+The owner's next GUI priorities introduce GUI_SCROLL lowering, without changing
+general language semantics. Its two arguments are staged in written order;
+mutable-path indices are frozen once. The active runtime receives only a C
+local offset. gen_open.after adds ordinary checked assignment after close,
+including return/break/continue cleanup. Existing list/map/grid/array assignment
+lowering resolves current storage and refuses removed list indices. No game-heap
+pointer survives the body. Shared builtin signatures expose Rect overloads,
+Scroll and FocusNext/ClearFocus. Full contracts and tests: notes/gui.md.
+
 ## Started task handles and worker controls (2026-10-25)
 
 The owner approved calls returning started handles, `rebuild.Cancel()` and
