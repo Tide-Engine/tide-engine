@@ -122,6 +122,14 @@ Vulkan checks in both subsequent whole native runs pass without a correction
 for it. The final rebuilt effects demo also passes source/stats/camera and GUI
 pose/deform/bloom/tint/collapsed-zoom checks on WebGL and WebGPU after the merge.
 
+The final fetch brought 6f3c781e's independent Unity version-pinning work,
+merged cleanly as 12c03844. It changes no compiler/src, engine, platform,
+Render3D or Unity runtime rendering files; both declaration/bootstrap and
+Render3D documentation sections survive. The affected native CLI and language
+server targets rebuild, all seven scoped CLI/LSP CTests pass, and all eleven
+release-service tests pass. Per the one-round merge rule, the already-green
+whole native/web suites were not restarted for this unrelated clean merge.
+
 ## Mapped materials and interactive docs (2026-10-25)
 
 The owner approved opaque/cutout/transparent materials, normal/ORM/emission and

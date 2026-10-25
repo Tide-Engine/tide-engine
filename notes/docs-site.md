@@ -35,6 +35,9 @@ and declaration-bootstrap correction, the whole native/web builds and suites
 pass; the freshly staged effects demo repeats all source/stats/camera/GUI checks
 successfully on WebGL and WebGPU. Final captures are under
 build/render3d-ext-final-browser-*. No example controls changed during the merge.
+The final clean 6f3c781e version-pinning merge preserves the Render3D guide and
+CLI bootstrap paragraph; its eleven release-service tests pass. It changes no
+example/browser runtime files, and no new UI run is claimed for that merge.
 
 ## Interactive Render3D materials and docs stats (2026-10-25)
 
