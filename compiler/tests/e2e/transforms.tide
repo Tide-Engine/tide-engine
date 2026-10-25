@@ -39,6 +39,18 @@ local singleton LocalControl
     int value;
 }
 
+local singleton Observed
+{
+    float3 root;
+    float3 child;
+    quaternion rotation;
+    float3 scale;
+    float3 confirmed;
+    float3 localRoot;
+    float3 property;
+    float3 stored;
+}
+
 scene Main { }
 
 event(Spawned) Setup(with Main, mut Control control)
@@ -81,8 +93,38 @@ system Probe(mut Control control, World world)
             control.a.Destroy();
             control.b.SetParent(control.a, false);
             break;
+        case 9:
+            control.b.SetParent(null);
+            control.b.Snap();
+            break;
     }
     control.action = 0;
+}
+
+view Capture(Transform transform, Control control, World world, mut Observed observed)
+{
+    if (this == control.a)
+    {
+        observed.root = transform.localPosition;
+        observed.rotation = transform.localRotation;
+        observed.scale = transform.localScale;
+    }
+    if (this == control.b)
+    {
+        observed.child = transform.localPosition;
+        observed.property = transform.position;
+        observed.stored = world.LocalToWorld(this).c3.xyz;
+    }
+}
+
+view Confirm(verified Transform transform, Control control, mut Observed observed)
+{
+    if (this == control.a) observed.confirmed = transform.localPosition;
+}
+
+view CaptureLocal(local Transform transform, LocalControl control, mut Observed observed)
+{
+    if (this == control.a) observed.localRoot = transform.localPosition;
 }
 
 view LocalSetup(mut LocalControl control, World world)

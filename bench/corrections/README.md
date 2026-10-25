@@ -1,20 +1,24 @@
 # Transform correction smoothing cost
 
 This CPU-only experiment measures the existing `[Position]` / `[Rotation]`
-implementation before deciding whether to give built-in `Transform` those
-defaults. It changes no compiler/runtime behavior or language contract.
+implementation. Its saved pre-default comparison motivated enabling those roles
+on built-in `Transform`; the benchmark itself changes no runtime behavior.
 
 Four separate generated games read the same position, quaternion and scale
 fields in one minimal per-entity view:
 
-- `transform`: the actual built-in `Transform`, currently untagged.
+- `transform`: the actual built-in `Transform`, now smoothing position and rotation
+  by default. The saved 2026-10-25 experiment predates that change and used an
+  untagged built-in control; its original source is in commit df9c397b.
+  New result rows mark `transform_defaults: true`; the analyzer still accepts
+  historical rows without that flag as the old untagged control.
 - `plain`: an ordinary `Pose` component with precisely Transform's field types,
   order, offsets, 40-byte size and defaults, without tags.
 - `position`: that same component with `[Position]` on `localPosition`.
 - `both`: also `[Rotation]` on `localRotation`.
 
 Compare the three `Pose` variants to isolate annotation cost. The built-in
-control checks the representativeness of the proxy's untagged view. This is
+control now checks the actual default against the tagged proxy. This is
 not a patched built-in Transform or a hierarchy-performance/continuity test.
 In particular, adding `[Position]` to the built-in must retain its existing
 special handling for shard placement; this experiment makes no such change.

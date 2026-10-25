@@ -13,6 +13,7 @@
 typedef Transform Pose;
 #define tide_get_Pose tide_get_Transform
 #define tide_set_Pose tide_set_Transform
+#define tide_corrections_Pose tide_corrections_Transform
 #endif
 
 _Static_assert(sizeof(Pose) == 40, "Transform-equivalent payload");
@@ -137,7 +138,7 @@ static void verify(uint32_t count, uint32_t changed)
 #ifdef TIDE_HAS_VIEW_CORRECTIONS
     require(rows() == changed, "active error row count");
     require(near(local.Observed.position.x, a.position.x), "position continuity");
-    if (strcmp(BENCH_MODE, "both") == 0)
+    if (BENCH_TRANSFORM || strcmp(BENCH_MODE, "both") == 0)
         require(near(local.Observed.rotation.y, a.rotation.y), "rotation continuity");
     else require(near(local.Observed.rotation.y, b.rotation.y), "ordinary rotation");
     tide_local_frame_time(&local, 0.075f);
@@ -200,8 +201,9 @@ static void run(uint32_t count, uint32_t changed, const char *scenario, bool qui
             view[sample - 1] = (double)vn / divisor;
             total[sample - 1] = (double)(end - start) / divisor;
         }
-        printf("{\"mode\":\"%s\",\"count\":%u,\"changed\":%u,\"scenario\":\"%s\",\"samples\":%u,\"batch\":%u,\"active_rows\":%u,\"correction_bytes\":%zu,\"pose_bytes\":%zu,\"local_bytes\":%zu,\"cold\":",
-               BENCH_MODE, count, changed, scenario, SAMPLES, BATCH, rows(), correction_bytes(), sizeof(Pose), sizeof(tide_local));
+        printf("{\"mode\":\"%s\",\"count\":%u,\"changed\":%u,\"scenario\":\"%s\",\"samples\":%u,\"batch\":%u,\"active_rows\":%u,\"transform_defaults\":%s,\"correction_bytes\":%zu,\"pose_bytes\":%zu,\"local_bytes\":%zu,\"cold\":",
+               BENCH_MODE, count, changed, scenario, SAMPLES, BATCH, rows(), BENCH_TRANSFORM ? "true" : "false",
+               correction_bytes(), sizeof(Pose), sizeof(tide_local));
         stats(cold, SAMPLES); printf(",\"correction\":");
         stats(correction, SAMPLES); printf(",\"decay\":"); stats(decay, SAMPLES);
         printf(",\"view\":"); stats(view, SAMPLES); printf(",\"combined\":"); stats(total, SAMPLES);

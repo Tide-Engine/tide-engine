@@ -37,7 +37,8 @@ def summarize(directory):
             expected_changed = {"steady": 0, "unchanged": 0, "sparse": row["count"] // 100, "dense": row["count"]}[row["scenario"]]
             assert row["changed"] == expected_changed
             assert row["samples"] == 31 and row["batch"] == 32 and row["pose_bytes"] == 40
-            assert row["active_rows"] == (expected_changed if row["mode"] in ("position", "both") else 0)
+            tagged = row["mode"] in ("position", "both") or (row["mode"] == "transform" and row.get("transform_defaults", False))
+            assert row["active_rows"] == (expected_changed if tagged else 0)
             assert row["correction_bytes"] >= row["active_rows"] * 60
             assert math.isfinite(row["checksum"])
             for phase in ("cold", "correction", "decay", "view", "combined"):
