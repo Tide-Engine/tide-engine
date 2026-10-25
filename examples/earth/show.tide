@@ -211,11 +211,12 @@ view Buttons(mut Pilot pilot, Scenery scenery)
         // Only on the ground: on the way there they'd do nothing
         if (pilot.blend > 0.5)
         {
-            if (GUI.Button(Rect(Screen.width - 104, Screen.height - 38, 94, 28), pilot.driving ? "Walk" : "Car")) pilot.morphing = 0.15;
-            if (GUI.Button(Rect(Screen.width - 204, Screen.height - 38, 94, 28), "Jump")) pilot.jumping = 0.15;
+            // The engine's stats line owns the bottom-right corner.
+            if (GUI.Button(Rect(Screen.width - 104, Screen.height - 82, 94, 28), pilot.driving ? "Walk" : "Car")) pilot.morphing = 0.15;
+            if (GUI.Button(Rect(Screen.width - 204, Screen.height - 82, 94, 28), "Jump")) pilot.jumping = 0.15;
             if (!pilot.driving)
             {
-                if (GUI.Button(Rect(Screen.width - 304, Screen.height - 38, 94, 28), "Wave")) pilot.waving = 0.15;
+                if (GUI.Button(Rect(Screen.width - 304, Screen.height - 82, 94, 28), "Wave")) pilot.waving = 0.15;
             }
         }
     }
@@ -768,7 +769,7 @@ view Picture(mut Scenery scenery, mut Pilot pilot, Shapes shapes, Roster roster,
             }
             string hint = pilot.walking && pilot.moves > 0 ? "Going there..."
                         : pilot.had && pilot.placed ? "Click anywhere to go there, or Back" : "Click anywhere on the planet to go there";
-            Backed(hint, float2(Screen.width * 0.5 - Draw.MeasureText(hint, 13).x * 0.5, Screen.height - 38), 13, bright);
+            Backed(hint, float2(Screen.width * 0.5 - Draw.MeasureText(hint, 13).x * 0.5, Screen.height - 82), 13, bright);
         }
         else if (pilot.placed)
         {
@@ -777,7 +778,7 @@ view Picture(mut Scenery scenery, mut Pilot pilot, Shapes shapes, Roster roster,
             if (pilot.driving)
             {
                 string fast = $"{int(Math.Abs(pilot.speed) * 3.6)} km/h";
-                Backed(fast, float2(Screen.width * 0.5 - Draw.MeasureText(fast, 16).x * 0.5, Screen.height - 82), 16, bright);
+                Backed(fast, float2(Screen.width * 0.5 - Draw.MeasureText(fast, 16).x * 0.5, Screen.height - 126), 16, bright);
             }
             string keys = pilot.driving ? "W drive · S brake · A/D steer · C walk"
                         : "WASD walk · tap to go · C car · Space jump · E wave · Esc globe";

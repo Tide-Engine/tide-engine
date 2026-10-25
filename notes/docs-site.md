@@ -171,6 +171,91 @@ after that review. Final native captures at both requested sizes confirm the
 framing; final WebGL/WebGPU scene-pixel checks confirm camera and material
 interactions as recorded above.
 
+Final one-round integration merges `origin/dev` `56a951d9` after feature
+`4c0b27f3`. Its Earth climate cubemap/cache and UI placement changes are
+independent of the material/compiler and docs launch-wrapper changes. Both
+complete histories and the final validation above are retained. No repeat
+tests are claimed for this merge; the root's earlier checks do not claim
+coverage of the newest Earth binary. The incoming Earth author's separate
+validation and publication record remains below.
+
+## Faster globe material (2026-10-25)
+
+The owner asks to continue optimizing the globe while moving Earth to the
+opt-in docs page below. A diagnostic removing the biome fields alone reduced
+the iGPU globe's GPU time from about 24.8 to 14.9 ms. The final implementation
+keeps the same four broad simplex bands in a packed, immutable 256-pixel
+cubemap. R stores forest frequencies 7/19, G dry frequencies 3/11, encoded
+from [-1,1] into [0,1], B is zero and alpha 255. The original frequency-61
+forest octave stays procedural, retaining fine detail that the first complete
+climate bake softened. Snow latitude is still calculated from the direction.
+Bilinear/trilinear reconstruction approximates the broad fields; this is not
+an exact-pixel-preservation claim. Fine grass, roads, towns, lighting, haze
+and relief retain their material formulas and the full framebuffer resolution.
+Grain now skips its noise read where the existing coverage is exactly zero.
+
+`examples/earth/tools/climate.py` compiles a bounded helper with the checkout's
+Tide noise implementation and strict float flags, then writes the six PNGs
+with standard Python. Run it after updating the broad Climate formula. The
+regression checks actual imported face bytes/directions and immutable reuse.
+Changed output touches terrain.tide so the CMake game target rebuilds its
+pack; identical regeneration leaves the files alone. The six PNGs total
+952,269 bytes; the cube costs 1.5 MiB at base level / about 2 MiB with mips.
+It has no runtime bake or CPU noise-table generation and restores through
+ordinary pack-image/device handling. Server builds prune this visual asset.
+
+The globe uses the terrain's existing conservative town hint and road mask,
+with the same all-candidates fallback for footprints over 64 m. Minimum tile
+level 3 tightens those bounds and improves the distant silhouette: the fixed
+globe selects 247 chunks instead of 41. Near selection remains distance driven
+beyond that minimum; the bounded 2,048-chunk cache and 32 m movement reuse
+remain. `TERRAIN_REVISION = 2` invalidates old retained meshes/plants on reload.
+No match fields, inputs, movement, network assertions or pins change.
+
+Two alternating iGPU pairs per backend at 412 x 915, DPR 3 (1236 x 2745)
+give GPU medians WebGL 24.82 -> 11.86 ms (52% less), WebGPU 19.53 -> 9.57 ms
+(51% less). Both games use O2 strict-float generated C and identical web-debug
+libraries; the workload draws the fixed globe/sky without match scenery,
+networking or stats. Measurements remain exploratory: no reserved quiet
+window or clock control, and ordinary correctness overlapped part of the
+runs. They exclude cold generation/shader compilation and are not Pixel FPS.
+Frozen file/source hashes, all eight process results and limitations are in
+`earth-globe-measurements.json`; scratch pages/captures are in build/globe-perf.
+
+Validation: repeat baking produces identical PNGs. Native and web debug Earth
+targets pass all 24 checks and all three benchmark cases (CTest 4/4 each,
+110.51/125.83 s), preserving pins `2d4f30cae27728fa` / `77140ad82e885ede`.
+Radeon WebGL/WebGPU probes have no shader/validation errors. Both backends
+also render opposite cube-corner globe views and the walking view; inspected
+captures show no visible cube seams. Native Vulkan validation passes the
+globe and scripted landing/walking/driving captures. Other OS/device and Pixel
+coverage is unavailable locally. Engine/compiler/runtime source is unchanged.
+Published the globe as release `bfdafb77`, then fixed the stats-corner overlap
+found in the hosted phone smoke: action buttons, driving speed and the globe
+hint move up 44 pixels. All 21 GLSL/WGSL arrays remain byte-identical to the
+measured candidate. Rebuilt native/web Earth targets pass all 24 checks and
+three benchmark cases again (69.33/76.55 s). No timing rerun was needed for
+this CPU-side GUI layout change.
+
+Final release
+`832c9712a61510f782836f57b797915d06e62768966f332c20f8a7c39d688ca3`
+is live at the same project / room 966ANR/0. Both embedded program and asset
+pack match the deployment bundle; the simulation identity remains
+`bb14b391a43e4fc37986378cc664b89c32b3427968738d25bcb93ba0fd63a113`.
+The raw client HTML is 3,986,232 bytes (previous stats release 1,828,622);
+the first globe release's observed Brotli HTTP transfer was 2,080,042 bytes.
+This trades a larger opt-in download and fixed texture memory for less
+per-frame work. Native/web/browser correctness is not a phone FPS claim.
+
+Downloaded final WebGL/WebGPU clients join the actual hosted room, land,
+walk, and click the relocated Car button to drive, with zero reported errors;
+inspected 412 x 915 captures show the car, separate action row and FPS/ping
+line. One initial smoke wrapper nested a script tag in its diagnostic setup
+and was discarded; the corrected wrappers preserve the production program
+and pack unchanged. Publication identities/hashes are appended to the JSON.
+The docs move is pushed but `/guide/earth` still returns 404 before its normal
+site deployment; no CI run was dispatched or awaited.
+
 ## Earth moves to an opt-in docs demo (2026-10-25)
 
 The owner elects to remove the live planet from the homepage because mobile
