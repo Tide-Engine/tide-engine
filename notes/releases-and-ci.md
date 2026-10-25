@@ -1,5 +1,22 @@
 # Releases, installing and CI
 
+## Editor failures in run 40152905815 (2026-10-25)
+
+The completed Build at `5d5f6172` has two underlying failures: Windows release's
+`tide_editor_play` workspace cleanup assertion and Linux sanitizer's
+`tide_editor_document` null empty-vector qsort call. All three packages, other
+native/web/MinGW suites, Docs deployment and JetBrains verification pass.
+Aggregate Build gates fail/cancel and Release/Marketplace are skipped; this run
+publishes no nightly. The previously adjusted MicroDuck sanitizer rollback case
+passes in 169.35 s, within its existing 600-second instrumented budget.
+
+The scoped editor fixes, controlled Windows failure reproduction, readiness-race
+correction and validation are recorded in notes/editors.md, Editor CI cleanup
+and empty-edit fixes. Workflow gates, existing assertions and test deadlines are
+unchanged. The fix follows local tool validation and direct integration into dev;
+its push uses the ordinary automatic Build trigger. No old-commit retry or extra
+workflow dispatch is needed.
+
 ## Node security updates (2026-10-23)
 
 Every Build and Docs `actions/setup-node` step requests `^24.22.1` with

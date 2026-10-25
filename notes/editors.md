@@ -1,5 +1,48 @@
 # The language server and the editors
 
+## Editor CI cleanup and empty-edit fixes (2026-10-25)
+
+Run `40152905815` at `5d5f6172` failed Windows release's Play workspace-removal
+assertion and Linux ASan/UBSan's prefab extraction. `edited_slice` passed a
+null empty edit vector to qsort, whose base argument must be nonnull even for
+zero elements. document.c now sorts only vectors with more than one element,
+including the two source-discovery sorts with the same empty-vector risk.
+Existing extraction tests exercise the empty-edit path; source bytes, reference
+rebasing and undo contracts are unchanged.
+
+Play previously ignored a failed private-workspace deletion and forgot its path.
+It now retries removal for at most one second after terminating the process tree.
+A persistent failure reports the path and retains ownership for another Stop or
+Play attempt; another build cannot start until cleanup succeeds. Close reports
+any remaining failure on stderr before releasing its in-memory bookkeeping.
+Only the already-owned workspace is removed. Windows tests hold the generated
+executable open without delete sharing: a delayed release reproduces the old
+cleanup assertion; a persistent lock checks error/path retention, refused restart
+and successful fresh Play after release. The original hosted lock holder is not
+identified by its log; the controlled regression establishes the failure mode,
+not the identity of another process on that runner.
+
+An unchanged-code stress run also exposed the fixture compiler exiting after
+its child's PID file appeared but before the complete PID was written. The
+compiler now uses the existing newline-aware readiness helper as its parent
+already does, retaining the three-second guard. Production process-tree handling
+is unchanged.
+
+All seven final Windows debug editor CTests pass (26.14 s), including native
+Vulkan validation, inspector and embedded/scripted UI checks. Optimized Play
+passes ten consecutive runs (26.24 s); its final expanded restart regression
+passes again (3.70 s). Clang 23.1.2 and Node 24.22.1 are used. The production docs
+build passes with the existing unstaged-example 404 placeholders; dependency
+audit reports zero vulnerabilities. These are tools/docs-only changes: full
+engine native/web suites were not repeated for this scope.
+
+Focused Linux validation under WSL also passes both Play and the complete
+document/startup/geometry executable with Clang 23.1.2 ASan/UBSan (15.40 s),
+leak detection disabled as in the sanitize preset and nonrecovering sanitizer
+checks retained. This covers the hosted null-qsort failure without suppressing
+its diagnostic. Actual hosted runners, macOS and Android were not rerun locally;
+no workflow was manually dispatched or retried.
+
 ## GUI rectangle, scroll and focus additions (2026-10-25)
 
 The common builtin catalog supplies Rect-based SDF overloads, GUI/GUILayout.Scroll

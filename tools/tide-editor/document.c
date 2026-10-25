@@ -145,7 +145,7 @@ static void read_folder(inputs *in, const char *folder)
     folder_find_own(with_slash, ".tide", found, in);
     folder_find_own(with_slash, ".tprefab", found, in);
     free(with_slash);
-    qsort(in->paths.items, (size_t)in->paths.count, sizeof(char *), compare);
+    if (in->paths.count > 1) qsort(in->paths.items, (size_t)in->paths.count, sizeof(char *), compare);
     char *manifest = path_join(folder, PACKAGES_FILE);
     in->stamp = stamp_next(in->stamp, sys_file_stamp(manifest));
     free(manifest);
@@ -523,7 +523,7 @@ void editor_poll(editor_document *d)
         w.stamp = stamp_next(w.stamp, sys_file_stamp(manifest)); free(manifest);
         in.paths.count = 0; char *slash = path_join(folder, "");
         folder_find_own(slash, ".tide", found, &in); folder_find_own(slash, ".tprefab", found, &in); free(slash);
-        qsort(in.paths.items, (size_t)in.paths.count, sizeof(char *), compare);
+        if (in.paths.count > 1) qsort(in.paths.items, (size_t)in.paths.count, sizeof(char *), compare);
         for (int i = 0; i < in.paths.count; i++) watch_file(&w, in.paths.items[i]);
     }
     packages_free(&packages); arena_rewind(mark);
@@ -937,7 +937,7 @@ static int compare_edits(const void *a, const void *b)
 
 static char *edited_slice(const editor_document *d, text_edits *edits, const size_t from, const size_t to)
 {
-    qsort(edits->items, (size_t)edits->count, sizeof(*edits->items), compare_edits);
+    if (edits->count > 1) qsort(edits->items, (size_t)edits->count, sizeof(*edits->items), compare_edits);
     sb b = {0}; size_t at = from;
     for (int i = 0; i < edits->count; i++) {
         const text_edit e = edits->items[i];
