@@ -58,8 +58,8 @@ absence of identity aliasing.
 
 The same pass replaces worker ticket list scans with a hash index and targeted
 retirement, adds provisional admission/transfer limits and frame-thread worker
-profiling, and adds generated cooperative safe points. These changes are not
-merged yet. Focused worker/runtime/one-slot/nested-await/grid restoration checks
+profiling, and adds generated cooperative safe points.
+Focused worker/runtime/one-slot/nested-await/grid restoration checks
 pass. A frame-release audit also found that compiler-private captured
 grid slots need explicit grid release; that correction is part of this pass.
 
@@ -110,10 +110,13 @@ coverage above remain unchanged. No extra CI run was dispatched.
 The first quiet-gated 24-row voxel comparison is retained, including adverse
 small/fallback results. It motivated removing redundant per-statement checks
 from pure worker bodies, while retaining loop/body/helper safe points and
-statement checks in async tasks and their synchronous helper chains. The final
-paired binaries are frozen; their unchanged shared guard timed out once while
-other checkout CTests remained active and is being retried. Timing conclusions
-are recorded separately in notes/benchmarks.md.
+statement checks in async tasks and their synchronous helper chains.
+The final frozen 24-row batch passed the unchanged guard after one timeout
+amid other checkout CTests; all rows validate and both binary identities match
+the manifest. Large-burst copying stalls improve substantially, with mixed
+small-burst/contention tradeoffs. Full methodology, both raw batches and
+limitations are in notes/benchmarks.md and bench/results/worker-controls/.
+No deterministic expectation, guard or disabled test was weakened.
 
 
 ## Transparent type aliases (2026-10-24)

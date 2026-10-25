@@ -42,8 +42,30 @@ Requested pending_limit 0 means the baseline's unbounded admission and the
 candidate's default 64 private jobs. Soft transfer budgets spread copying
 across turns; at a real display cadence this also delays burst delivery.
 
-## Final batch status
+## Final batch
 
-The final paired binaries and source manifest are frozen. One ten-minute guard
-wait expired while other checkouts still ran CTests, without producing samples;
-the same guard is being retried. No post-adjustment speed claim is made yet.
+final.jsonl retains all 24 final paired rows, each validated. Both binary
+hashes match final-manifest.json. One ten-minute guard wait expired amid other
+CTests without producing samples; the retry passed the unchanged quiet gate.
+
+| Workload | Burst baseline/candidate ms | Worst view turn baseline/candidate ms |
+|---|---:|---:|
+| 64 chunks | 10.26 / 11.25 | 6.68 / 3.72 |
+| 256 chunks | 60.84 / 44.21 | 31.01 / 4.06 |
+| 16 chunks, no provider | 18.58 / 17.53 | 18.45 / 15.05 |
+| 64 chunks beside simulation | 15.03 / 12.33 | 9.01 / 3.13 |
+
+The large burst completes about 27% sooner and its median worst view turn
+falls about 87%. The 64-chunk burst remains about 10% slower by these medians;
+its paired durations vary substantially (baseline 10.11–13.90 ms, candidate
+11.08–13.29 ms). Fallback remains a long synchronous compute turn, with
+lower observed completion/peak costs in this batch. This is a feature
+tradeoff with improved copying stalls, not a universal speedup claim.
+Contention's median per-run worst tick is 0.78 / 1.05 ms, an adverse observation
+retained alongside the shorter view turns. Different total foreground ticks
+preclude treating its burst duration as an equal-work throughput result.
+
+Only three pairs per case are reported; no statistical significance,
+real-display latency, threadless responsiveness guarantee or equivalent
+handwritten-C pipeline ratio follows from them. Exact work and final
+simulation oracles pass throughout. No deterministic expectation was changed.
