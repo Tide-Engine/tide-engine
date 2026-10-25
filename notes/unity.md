@@ -1738,6 +1738,12 @@ all agree what it is".
   spawning `UnityEngine.Prefabs.CrateBox`, which isn't there: `tide unity --once` says that one error, and
   `Crate.cs` is written with `Owner.cs` kept. Sample EditMode 19/19 and PlayMode 16/16 (D3D11, a GPU, batch).
   Not seen in a window: the status-bar task itself.
+- **Runs** (this round with the physics work merged in): native debug 2761/2762 before the merge, the one failure
+  `cracked_tests` (tide-prototypes' pinned match hash, a private prototype the environment's `TIDE_EXTERNAL_DIRS`
+  adds; no simulation code changed here); web debug passed through test 2658, the same `cracked_tests` failing,
+  stopped before the private prototypes' browser play tests; after the merge `tidec_*` 2509/2509, the CLI and Unity
+  tests 19/19, Sample EditMode 19/19 and PlayMode 16/16, and the docs build (a link's anchor fixed:
+  `shards.md#a-c-library-s-state`).
 
 ## Web
 

@@ -239,7 +239,7 @@ In a Unity project, a package's components are on GameObjects like the game's ow
 }
 ```
 
-Every component and field it names must be the package's: a rule for one the package doesn't have, such as one left from an earlier version, is an error that names it. A component's [`[Native]`](../multiplayer/shards.md#a-c-librarys-state) fields are the package's own without being listed: they aren't in the Inspector, baked or read.
+Every component and field it names must be the package's: a rule for one the package doesn't have, such as one left from an earlier version, is an error that names it. A component's [`[Native]`](../multiplayer/shards.md#a-c-library-s-state) fields are the package's own without being listed: they aren't in the Inspector, baked or read.
 
 - `hidden` is a list of the component's fields that aren't in the Inspector or baked from the scene, as the package sets them itself; or `true` for a component that isn't in Add Component, one the package adds itself.
 - `scaled` gives fields that are by the GameObject's scale, as a collider's size is. They're authored without the scale and baked times it, and in Play the component shows the match's value divided by it. Each one's scale is one of `scale` and `absScale` (each axis, with its sign or without), `largestScale`, `largestScaleXY`, `largestScaleXZ` (the largest axis without its sign), `scaleX`, `scaleY` or `scaleZ`.
