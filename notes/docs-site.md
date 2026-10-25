@@ -27,7 +27,19 @@ actual iframe load: all are identical. Both retain the same iframe on Expand.
 Inspected phone/desktop skeleton captures and the WebGL stats-open capture.
 Native/web Earth targets and all 23 game checks plus three benchmark cases
 pass again (CTest 4/4 each, 82.80/85.08 s); simulation pins are unchanged.
-Browser smoke and publication of the stats build are recorded below.
+Muted Radeon WebGL/WebGPU checks of the bundled client open the drawer with
+F8, with zero errors; both captures were inspected. Published release
+`7b5b277124e37203aee69323ef4b394fa20b13b2bd07913acff1afcc2fef210c`
+to the same hosted project and room. The production program matches the
+bundle exactly, and the simulation identity remains
+`bb14b391a43e4fc37986378cc664b89c32b3427968738d25bcb93ba0fd63a113`.
+Downloaded production WebGL and WebGPU clients join room 966ANR, open the
+drawer with a click on the bottom FPS line, and report zero errors; inspected
+captures show online status and the detailed stats. These are correctness
+checks, not comparative timings. Source is pushed to dev; the placeholder
+will reach the site through its normal deployment. The public homepage was
+still serving its prior placeholder at the time of the post-push check.
+No CI run was dispatched or awaited.
 
 ## Earth relief, biomes and cheaper ground shading (2026-10-25)
 
