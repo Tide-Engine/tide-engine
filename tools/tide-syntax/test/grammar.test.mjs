@@ -488,6 +488,16 @@ const cases = {
             ['CountDeath', 'entity.name.function'], ['CountDeath', '!entity.name.function.call'],
         ]],
     ],
+    'Changed<...> triggers': [
+        ['local event(Changed<Health.value> change) Flash(', [
+            ['local', 'storage.modifier'], ['event', 'storage.type'], ['Changed', 'support.class'],
+            ['<', 'punctuation.definition.typeparameters.begin'], ['>', 'punctuation.definition.typeparameters.end'],
+            ['change', 'variable.parameter'], ['Flash', 'entity.name.function'],
+        ]],
+        ['local event(verified Changed<Combat.Unit.stats.level>) LevelUp(', [
+            ['verified', 'storage.modifier.verified'], ['Changed', 'support.class'], ['LevelUp', 'entity.name.function'],
+        ]],
+    ],
     'verified is a name anywhere else': [
         ['local event(verified) HearVerified(', [
             ['verified', '!storage.modifier'], ['verified', 'entity.name.type'], ['HearVerified', 'entity.name.function'],

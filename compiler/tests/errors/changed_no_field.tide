@@ -1,0 +1,8 @@
+// expect: 'Health' has no field 'amount'
+component Health { int value; }
+local singleton Log { int count; }
+scene Main { }
+
+event(Spawned) Setup(with Main) { Spawn(Health); }
+
+local event(Changed<Health.amount>) Flash(mut Log log) { log.count += 1; }

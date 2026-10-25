@@ -4435,6 +4435,38 @@ TIDE_TEST(lsp_verified)
     "local event(Rang rang) HearRang(mut Fx fx) { fx.flashes += rang.at; }\n"                                   \
     "local event(Spawned) Born(Body body, mut Fx fx) { if (body.radius > 0) fx.flashes += 1; }\n"
 
+// `local event(Changed<Body.radius> change)`: the component and each field are named as a type and members are
+TIDE_TEST(lsp_changed_triggers)
+{
+    start();
+    open_document(GAME_TYPES
+                  "struct Stats { int level; }\n"
+                  "component Unit { Stats stats; }\n"
+                  "local singleton Fx { int flashes; }\n"
+                  "local event(Changed<Body.radius> change) Flash(mut Fx fx) { fx.flashes += 1; }\n"
+                  "local event(Changed<Unit.stats.level> change) Up(mut Fx fx) { fx.flashes += change.value - change.old; }\n");
+    TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 25, 21, ""), "component Body"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 26, 32, ""), "level"));
+    const char *flash = request_at("file:///test.tide", "textDocument/hover", 25, 44, "");
+    TIDE_CHECK(has(flash, "local event(Changed<Body.radius> change) Flash(mut Fx fx)"));
+    TIDE_CHECK(has(flash, "for each entity whose `radius` a tick changed, with what it was (`old`)"));
+    const char *body = rename_at(25, 21, "Ball");
+    TIDE_CHECK(has(body, "\"start\":{\"line\":25,\"character\":20}") && has(body, "\"start\":{\"line\":0,\"character\":10}"));
+    const char *radius = rename_at(25, 26, "size");
+    TIDE_CHECK(has(radius, "\"start\":{\"line\":25,\"character\":25}") && has(radius, "\"start\":{\"line\":3,\"character\":10}"));
+    const char *level = rename_at(26, 32, "rank");
+    TIDE_CHECK(has(level, "\"start\":{\"line\":26,\"character\":31}") && has(level, "\"start\":{\"line\":22,\"character\":19}"));
+    // The change's own fields are the engine's
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 26, 99, ""), "old"));
+    TIDE_CHECK(has(rename_at(26, 99, "before"), "Fields of built-in types can't be renamed."));
+    // The formatter writes it as a generic type is written
+    static const char formatted[] = "component Health\n{\n    int value;\n}\nlocal singleton Fx\n{\n    int flashes;\n}\n"
+                                    "local event(verified Changed<Health.value> change) Flash(mut Fx fx)\n{\n"
+                                    "    fx.flashes += change.old - change.value;\n}\n";
+    TIDE_CHECK(has(format_reply(formatted), "\"result\":[]"));
+}
+
 // Local handlers of the match's events, `local event(Hit hit)` and `local event(verified Hit hit)`: hovers, lenses, implementations.
 TIDE_TEST(lsp_local_handlers_of_match_events)
 {

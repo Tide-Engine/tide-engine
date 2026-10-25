@@ -1,0 +1,10 @@
+// expect: a change is this machine's to show: handle it with 'local event(Changed<Health.value> ...) Flash(...)'
+component Health { int value; }
+scene Main { }
+
+event(Spawned) Setup(with Main) { Spawn(Health); }
+
+event(Changed<Health.value> change) Flash(mut Health health)
+{
+    health.value = change.old;
+}

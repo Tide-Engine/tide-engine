@@ -339,6 +339,9 @@ view ConfirmedAcrossLines(
 local event(verified Died died) ShowDeath(Body body, mut local Toast toast) { }
 local event(verified Combat.Died) CountDeath(mut local Toast toast) { }
 local event(verified) HearVerified(mut local Toast toast) { }
+// Changed<...>: a field of the match that changed over a tick
+local event(Changed<Health.value> change) Flash(mut Health health) { }
+local event(verified Changed<Combat.Unit.stats.level>) LevelUp(mut local Toast toast) { }
 view Trusted(verified trust, with verified) { }
 int Checked(Stats? verified) { if (verified is Stats checked) return Twice(verified, verified); }
 struct Proof
