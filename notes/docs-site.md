@@ -1,5 +1,27 @@
 # The docs site
 
+## Earth moves to an opt-in docs demo (2026-10-25)
+
+The owner elects to remove the live planet from the homepage because mobile
+performance remains below expectations, while continuing globe optimization.
+The homepage restores its static Tide mark: no Earth readiness request,
+iframe, WASM download or game workers. `/guide/earth` has the dedicated demo,
+linked from the docs sidebar and Samples page. It loads nothing until Play
+Earth is pressed, irrespective of motion/data preferences. Stop removes the
+iframe and leaves the match; Expand keeps the same document and reserves its
+slot. The prior ready check, hosted project, local fallback, backend override,
+keyboard-focus release and separate-tab link remain. Controls and the stats
+drawer are documented on that page. Its static planet placeholder stays the
+same size through loading. The earlier homepage skeleton is superseded by
+this move rather than retained as an autoplay experience.
+
+Validation: production docs build passes; Svelte check has zero errors and
+warnings. Muted Chrome checks at phone and desktop widths confirm no game
+requests/iframes on the homepage, no iframe before Play on the docs page,
+actual hosted loading, Expand preserving the iframe, and Stop removing it
+and enabling Play again. Screenshots were inspected. Globe measurements and
+changes follow separately; this move changes no engine or game behavior.
+
 ## Homepage loading placeholder and Earth stats (2026-10-25)
 
 The owner confirms walking/driving is much faster, with the globe still slow,

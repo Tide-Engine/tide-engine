@@ -32,6 +32,7 @@ export const sidebar: Group[] = [
             { text: 'Quick reference', link: '/guide/ai-context' },
             { text: 'Playground', link: '/guide/playground' },
             { text: 'Samples', link: '/guide/samples' },
+            { text: 'Earth demo', link: '/guide/earth' },
         ],
     },
     {

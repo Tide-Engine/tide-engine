@@ -6,6 +6,8 @@ description: "Play Tide Engine sample games in your browser, from falling sand a
 
 Choose a game to play in your browser. Each thumbnail opens the full game in a new tab. Use **Source** to browse its code on GitHub.
 
+Explore a shared planet in the [Earth demo](./earth.md), with walking, driving and biome-specific scenery. It starts only when you choose **Play Earth**.
+
 To play together, open a room with the game's **Host** or **Invite** button and send its code to a friend. They open the same game and choose **Join**.
 
 <ul class="sample-grid" role="list" aria-label="Sample games">
