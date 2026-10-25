@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Reflection;
 using NUnit.Framework;
 using Tide.Editor;
@@ -77,9 +78,9 @@ public class ConsoleTests
     }
 
     // A build is a task in the editor's status bar, from tide's "building" line to how it went, and nothing in the
-    // Console
-    [Test]
-    public void ABuildIsATaskInTheStatusBarAndNoneOfTheConsoles()
+    // Console. Unity starts and takes away tasks at its next update.
+    [UnityTest]
+    public IEnumerator ABuildIsATaskInTheStatusBarAndNoneOfTheConsoles()
     {
         Assume.That(entries != null, "this Unity has the Console's entries");
         var before = Count();
@@ -92,17 +93,31 @@ public class ConsoleTests
             return false;
         }
 
-        TideBuildService.Hear("tide: building game-41");
-        Assert.IsTrue(TideBuildService.Busy);
-        Assert.IsTrue(Shown());
-        TideBuildService.Hear("tide: built game-41");
-        Assert.IsFalse(TideBuildService.Busy);
-        Assert.IsFalse(Shown());
+        // The editor's own tide, whose lines would come in the frames between, stops for the while
+        var running = TideBuildService.Running;
+        TideBuildService.Stop();
+        try
+        {
+            TideBuildService.Hear("tide: building game-41");
+            Assert.IsTrue(TideBuildService.Busy);
+            yield return null;
+            Assert.IsTrue(Shown());
+            TideBuildService.Hear("tide: built game-41");
+            Assert.IsFalse(TideBuildService.Busy);
+            yield return null;
+            Assert.IsFalse(Shown());
 
-        TideBuildService.Hear("tide: building game-42");
-        Assert.IsTrue(Shown());
-        TideBuildService.Hear("tide: the game keeps running its last build", true);
-        Assert.IsFalse(Shown());
-        Assert.AreEqual(before, Count());
+            TideBuildService.Hear("tide: building game-42");
+            yield return null;
+            Assert.IsTrue(Shown());
+            TideBuildService.Hear("tide: the game keeps running its last build");
+            yield return null;
+            Assert.IsFalse(Shown());
+            Assert.AreEqual(before, Count());
+        }
+        finally
+        {
+            if (running) TideBuildService.Start();
+        }
     }
 }

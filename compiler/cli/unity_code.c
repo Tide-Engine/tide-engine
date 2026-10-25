@@ -1478,8 +1478,8 @@ static void sweep_entry(void *user, const char *name, const bool is_dir)
     free(path);
 }
 
-bool unity_code_write(const char *dir, const char *schema_text, const char *outline_text, const unity_package *packages,
-                      const int package_count)
+static bool write_code(const char *dir, const char *schema_text, const char *outline_text, const unity_package *packages,
+                       const int package_count, const bool sweeps)
 {
     // What the packages say of their components, read before the schema: JSON's trees go together
     unity_mappings mappings;
@@ -1581,7 +1581,7 @@ bool unity_code_write(const char *dir, const char *schema_text, const char *outl
     write_if_changed(map_path, map.s, &failed);
     // Scripts of components the game no longer has go, so Unity says Missing where they were
     const sweep s = {&k, components, ""};
-    sys_list(components, sweep_entry, (void *)&s);
+    if (sweeps) sys_list(components, sweep_entry, (void *)&s);
     for (int i = 0; i < k.count; i++) free(k.paths[i]);
     free(k.paths);
     free(meta.s);
@@ -1596,4 +1596,16 @@ bool unity_code_write(const char *dir, const char *schema_text, const char *outl
     json_release();
     unity_mappings_free(&mappings);
     return !failed;
+}
+
+bool unity_code_write(const char *dir, const char *schema, const char *outline, const unity_package *packages,
+                      const int package_count)
+{
+    return write_code(dir, schema, outline, packages, package_count, true);
+}
+
+bool unity_code_add(const char *dir, const char *schema, const char *outline, const unity_package *packages,
+                    const int package_count)
+{
+    return write_code(dir, schema, outline, packages, package_count, false);
 }

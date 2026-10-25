@@ -19,6 +19,10 @@
 // False after saying what's wrong.
 bool unity_code_write(const char *dir, const char *schema, const char *outline, const unity_package *packages, int package_count);
 
+// The same, but taking no component script away: from a build of the game's declarations alone (tide unity
+// --declarations), which leaves out components only its code gives entities (Owner), whose scripts then stay.
+bool unity_code_add(const char *dir, const char *schema, const char *outline, const unity_package *packages, int package_count);
+
 // A component's script GUID: from its Tide name, the same on every machine and build ("tide component <name>"'s
 // SHA-256, its first 16 bytes as hex). `out` gets 32 digits and a NUL.
 void unity_code_guid(const char *name, char out[33]);

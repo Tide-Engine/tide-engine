@@ -2740,7 +2740,8 @@ static bool write_unity_package(const run *r, const char *schema, const uint32_t
     unity_package *packages = calloc((size_t)r->b.packages.count + 1, sizeof *packages);
     if (!packages) abort();
     for (int i = 0; i < r->b.packages.count; i++) packages[i] = (unity_package){r->b.packages.items[i].folder, r->b.packages.items[i].name};
-    ok = ok && unity_code_write(dir, schema, r->b.outline, packages, r->b.packages.count);
+    // ...and from the declarations alone, taking none away: components only the game's code gives entities aren't in them
+    ok = ok && (r->b.opts->declarations ? unity_code_add : unity_code_write)(dir, schema, r->b.outline, packages, r->b.packages.count);
     free(packages);
     // A build of the declarations alone has no shaders of the game's: the last build's stay until the next one's
     if (!r->b.opts->declarations) ok = ok && unity_shaders_write(dir, r->b.shaders, r->b.shaders_size);
@@ -3085,11 +3086,14 @@ static void write_unity_declarations(const run *r)
     const build_options *opts = r->b.opts;
     if (!opts->unity_assets) return;
     char *dir = path_join(r->dir, "declared");
+    char *bin = sys_exe_dir();
+    char *tide = path_join(bin, "tide" EXE_SUFFIX); // Itself: the compiler is clang where tide hasn't it built in
+    free(bin);
     const int fixed = 9;
     const char **argv = calloc((size_t)(fixed + 2 * opts->define_count + 1), sizeof *argv);
     if (!argv) abort();
     int n = 0;
-    argv[n++] = r->b.compiler;
+    argv[n++] = tide;
     argv[n++] = "unity";
     argv[n++] = r->b.folder;
     argv[n++] = "-o";
@@ -3106,6 +3110,7 @@ static void write_unity_declarations(const run *r)
     argv[n] = NULL;
     sys_run(argv, NULL, true);
     free(argv);
+    free(tide);
     free(dir);
 }
 

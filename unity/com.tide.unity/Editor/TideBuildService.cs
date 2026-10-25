@@ -82,7 +82,11 @@ namespace Tide.Editor
 
         static void Idle()
         {
-            if (Busy) Progress.Remove(task);
+            if (Busy)
+            {
+                Progress.Finish(task); // At once: Unity takes a task away at its next update
+                Progress.Remove(task);
+            }
             task = -1;
         }
 
@@ -380,11 +384,11 @@ namespace Tide.Editor
             KeepErrorsShown();
         }
 
-        // A line as tide says it, taken at once (tests)
-        internal static void Hear(string line, bool error = false)
+        // A line as tide says it, taken at once, before what the running tide said since (tests)
+        internal static void Hear(string line)
         {
-            lines.Enqueue((line, error));
-            Drain();
+            Flush();
+            pending.Append(line);
             Flush();
         }
 
