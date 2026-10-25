@@ -172,10 +172,14 @@ A physics package's components are on GameObjects like the game's own: with
 `box3d`, a `Body` and a `Box`, `Sphere` or `Capsule` (Add Component, Tide/Box3D).
 A shape's size is by the GameObject's scale, as a collider's is, a selected one
 is drawn in the Scene view, and Edit Shape gives it handles. The body starts
-where the GameObject is, and the GameObject follows it. Fields and components
-the package keeps for itself are hidden. Unity's own `Rigidbody` and colliders
-do nothing in the match. See the [Box3D](https://tide-engine.dev/packages/box3d)
-package's page.
+where the GameObject is, and the GameObject follows it. A shape on a child
+GameObject with a `Part` is on the body above it, where the child puts it. A
+mesh collider fills from the GameObject's MeshFilter, a height field from its
+Terrain, and a joint's anchors and a 2D polygon's or chain's points have
+handles too. Fields and components the package keeps for itself are hidden.
+Unity's own `Rigidbody` and colliders do nothing in the match. See the
+[Box3D](https://tide-engine.dev/packages/box3d) and
+[Box2D](https://tide-engine.dev/packages/box2d) packages' pages.
 
 The game's sound (`Audio.Play`, `Sound` fields, its `audio` declarations)
 plays through Unity's audio: an AudioSource under the runner, "Tide Audio", so

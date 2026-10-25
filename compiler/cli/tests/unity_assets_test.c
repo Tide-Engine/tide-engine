@@ -269,6 +269,12 @@ TIDE_TEST(unity_physics_components_by_their_rules)
                             "        Box2D.Box { size = float2(1, 2), offset = float2(0, 0) };\n") != NULL);
     TIDE_CHECK(strstr(yard, "            Box2D.Circle { radius = 0.5, offset = float2(2, 1) };\n"
                             "            Box2D.Part { of = default };\n") != NULL);
+    // Its fan, a part 3 up the kite, scaled (2, 1) and turned half a turn: a polygon's and a capsule's points times
+    // the scale, turned and moved into the kite's frame, which points can be; their radii by the larger scale
+    TIDE_CHECK(strstr(yard, "            Box2D.Polygon { points = [float2(-2, 3), float2(0, 2), float2(2, 3)], radius = 0.2 };\n"
+                            "            Box2D.Capsule { a = float2(0, 3.5), b = float2(0, 2.5), radius = 0.5 };\n") != NULL);
+    // A ridge mirrored in x: its chain's points mirrored, in the other order, so its sides stay its sides
+    TIDE_CHECK(strstr(yard, "        Box2D.Chain { points = [float2(-2, 1), float2(-1, 0), float2(0, 0)], loop = false };\n") != NULL);
     const char *glue = text_of(&s, "Library/Tide/Unity.Box3D.tide");
     TIDE_CHECK(glue && strstr(glue, "    system StartAtTransform(mut Body body, Transform transform)\n") != NULL
                && strstr(glue, "    system PartOfTheBodyAbove(mut Part part, World world)\n") != NULL);

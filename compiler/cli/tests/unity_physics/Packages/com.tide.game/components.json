@@ -11,7 +11,10 @@
   {"name": "Box2D.Body", "guid": "cccccccccccccccccccccccccccccccc", "fields": [{"name": "type", "key": "type", "shape": 8}, {"name": "gravityScale", "key": "gravityScale", "shape": 1}]},
   {"name": "Box2D.Box", "guid": "dddddddddddddddddddddddddddddddd", "fields": [{"name": "size", "key": "size", "shape": 9}, {"name": "offset", "key": "offset", "shape": 9}]},
   {"name": "Box2D.Circle", "guid": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "fields": [{"name": "radius", "key": "radius", "shape": 1}, {"name": "offset", "key": "offset", "shape": 9}]},
-  {"name": "Box2D.Part", "guid": "ffffffffffffffffffffffffffffffff", "fields": [{"name": "of", "key": "of", "shape": 4}]}
+  {"name": "Box2D.Part", "guid": "ffffffffffffffffffffffffffffffff", "fields": [{"name": "of", "key": "of", "shape": 4}]},
+  {"name": "Box2D.Capsule", "guid": "12121212121212121212121212121212", "fields": [{"name": "a", "key": "a", "shape": 9}, {"name": "b", "key": "b", "shape": 9}, {"name": "radius", "key": "radius", "shape": 1}]},
+  {"name": "Box2D.Polygon", "guid": "13131313131313131313131313131313", "fields": [{"name": "points", "key": "points", "shape": 10}, {"name": "radius", "key": "radius", "shape": 1}]},
+  {"name": "Box2D.Chain", "guid": "14141414141414141414141414141414", "fields": [{"name": "points", "key": "points", "shape": 10}, {"name": "loop", "key": "loop", "shape": 3}]}
 ], "shapes": [
   {"form": "enum", "type": "Box3D.BodyType", "enum": "Box3D.BodyType"},
   {"form": "number", "type": "float"},
@@ -22,7 +25,8 @@
   {"form": "list", "type": "List<int>", "element": 5},
   {"form": "list", "type": "List<float3>", "element": 2},
   {"form": "enum", "type": "Box2D.BodyType", "enum": "Box2D.BodyType"},
-  {"form": "float2", "type": "float2"}
+  {"form": "float2", "type": "float2"},
+  {"form": "list", "type": "List<float2>", "element": 9}
 ], "enums": [
   {"name": "Box3D.BodyType", "members": ["Static", "Kinematic", "Dynamic"], "values": [0, 1, 2]},
   {"name": "Box2D.BodyType", "members": ["Static", "Kinematic", "Dynamic"], "values": [0, 1, 2]}

@@ -57,7 +57,8 @@
       "placed": "offset",
       "mesh": {
         "vertices": "vertices",
-        "indices": "indices"
+        "indices": "indices",
+        "scale": "scale"
       }
     },
     "Box3D.HullCollider": {
@@ -67,12 +68,22 @@
       },
       "placed": "offset",
       "mesh": {
-        "vertices": "vertices"
+        "vertices": "vertices",
+        "scale": "scale"
       }
     },
     "Box3D.HeightFieldCollider": {
       "scaled": {
         "scale": "absScale"
+      },
+      "terrain": {
+        "heights": "heights",
+        "holes": "holes",
+        "columns": "columns",
+        "rows": "rows",
+        "scale": "scale",
+        "minimum": "minimumHeight",
+        "maximum": "maximumHeight"
       }
     },
     "Box3D.Part": {
@@ -85,7 +96,15 @@
       "readBack": [
         "force",
         "torque"
-      ]
+      ],
+      "joint": {
+        "a": "a",
+        "b": "b",
+        "anchorA": "anchorA",
+        "anchorB": "anchorB",
+        "rotationA": "rotationA",
+        "rotationB": "rotationB"
+      }
     }
   },
   "sourceAbout": "Added to a Unity project's game: a body starts where its entity's Transform (Unity's placement) is, and the Transform follows the body; a part that names no body is one of the nearest body above it",

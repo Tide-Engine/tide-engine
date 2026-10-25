@@ -584,8 +584,8 @@ In a Unity project ([Unity](../tools/cli.md#unity)), Box2D's components go on a 
 - A selected shape is drawn in the Scene view, in the XY plane, and its Edit Shape button gives it handles.
 - A body starts where its GameObject is in x and y, turned as it's turned about z, and the GameObject follows the body.
 - A body of more shapes than a `Box` and a `Circle` has a child GameObject for each other shape, with its `Box` or `Circle` and a `Part`. A `Part` whose `Of` is empty is a part of the nearest GameObject above it with a `Body`, and its shape is on the body where the child puts it. A part turned against its body is a warning, unless its shape is a `Circle`.
-- A `Capsule`'s and a `Segment`'s points are by the GameObject's scale.
-- Joints go on a GameObject of their own with `Joint` and one kind's component; `A` and `B` are the bodies' GameObjects. A joint's `force` and `torque` show in Play, and aren't authored.
+- A `Capsule`'s, `Segment`'s, `Polygon`'s and `Chain`'s points are in the GameObject's own space, by its scale, and drawn in the Scene view, where Edit Shape gives each point a handle. A `Polygon` is drawn as its points' hull. On a part they're where the child puts them on its body, turned with it too; a chain mirrored by the scale keeps its sides.
+- Joints go on a GameObject of their own with `Joint` and one kind's component; `A` and `B` are the bodies' GameObjects. A selected joint is drawn from anchor to anchor, and Edit Shape moves its anchors and turns their angles, in their bodies' frames. A joint's `force` and `torque` show in Play, and aren't authored.
 - The fields Box2D keeps for itself, such as a body's `id`, aren't in the Inspector or the scene, and the components it adds itself aren't in Add Component.
 
 ## Multiplayer

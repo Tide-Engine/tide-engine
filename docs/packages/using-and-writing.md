@@ -230,10 +230,13 @@ In a Unity project, a package's components are on GameObjects like the game's ow
     },
     "Box3D.MeshCollider": {
       "placed": "offset",
-      "mesh": { "vertices": "vertices", "indices": "indices" }
+      "mesh": { "vertices": "vertices", "indices": "indices", "scale": "scale" }
     },
     "Box3D.Part": { "part": { "of": "of", "body": "Box3D.Body" } },
-    "Box3D.Joint": { "readBack": ["force", "torque"] }
+    "Box3D.Joint": {
+      "readBack": ["force", "torque"],
+      "joint": { "a": "a", "b": "b", "anchorA": "anchorA", "anchorB": "anchorB" }
+    }
   },
   "source": ["namespace Box3D", "{", "    ...", "}"]
 }
@@ -246,7 +249,11 @@ Every component and field it names must be the package's: a rule for one the pac
 - `shape` is what the Scene view draws of a selected component, and gives handles with Edit Shape: one of `box`, `sphere` or `capsule`, or in the XY plane `rect` or `circle`, naming its size field (a radius for the round ones). `center` names its centre's field, and a capsule's `height` its height's.
 - `placed` names the field that places the component on its entity's body, such as a shape's offset. A shape's `center` is its placed field unless another is named.
 - `part` says the component makes its entity a part of another's body: `of` names its entity field for the body, and `body` the body's component. When `of` is left empty, it's the nearest GameObject above with that component, and the package's `source` should find the same at run time. A part's placed fields are baked where its GameObject puts them on its body, in the body's frame, and in Play they're shown from the body's GameObject again. A part turned against its body is a warning, unless its shape is round, as a shape's offset can't turn.
-- `mesh` names a component's lists that Unity fills from a Mesh: `vertices` (a list of `float3`) and `indices` (a list of `int`, three for each triangle; left out for a hull). The component's Inspector has a Mesh field and Copy, and a component added to a GameObject with a MeshFilter starts with its mesh. Unity's triangles go in as they are: their front is the side they're clockwise from, as in Tide.
+- `mesh` names a component's lists that Unity fills from a Mesh: `vertices` (a list of `float3`) and `indices` (a list of `int`, three for each triangle; left out for a hull), and `scale`, the field the vertices are scaled by. The component's Inspector has a Mesh field and Copy, and a component added to a GameObject with a MeshFilter starts with its mesh. Unity's triangles go in as they are: their front is the side they're clockwise from, as in Tide. A selected one's triangles are drawn in the Scene view, a hull's points.
+- `points` lists fields that are a shape's points in its GameObject's own space: a `float2` or `float3`, or a list of them. They're baked times the GameObject's scale, each axis with its sign, and on a part turned and moved into its body's frame, which points can be (a flat shape's part turned other than about z is a warning). Where the scale mirrors a list, it's baked in the other order, so a chain's sides stay its sides. In Play the component shows them as authored.
+- `outline` is what the Scene view draws of a shape of points, with a handle on each point in Edit Shape: `points` names its point fields in order, `radius` the field rounding it, `closed` is `true` or names a bool field saying when it's closed, and `hull` draws the points' convex hull, as a polygon made of them is.
+- `joint` is what the Scene view draws of a joint: a line between its anchors, with handles in Edit Shape that move them and turn their frames. `a` and `b` name its entity fields, `anchorA` and `anchorB` its anchors in their bodies' frames (each body's position and turn, not its scale), and `rotationA` and `rotationB`, if it has them, the frames' turns: a quaternion, or an angle about z.
+- `terrain` names the fields of a height field that Unity fills from a Terrain: `heights` (a list of `float`, `x + z * columns`), `holes` (a list of `byte`, one for each cell, nonzero for a hole), `columns`, `rows`, `scale` (a cell's size in x and z, the heights' in y), and its bounds, `minimum` and `maximum`. The Inspector has a Terrain field and Copy, and a component added to a Terrain's GameObject starts with its data. A terrain of more samples than Box3D takes (65,536, 4,096 a side) is copied every second, fourth or more sample, and a cell is a hole where every one of the terrain's in it is. The Scene view draws its grid.
 - `readBack` lists fields the package writes for code to read, such as a joint's force. They're shown in Play, never authored or baked.
 - `source` is lines of Tide that the game has in a Unity project alone, in the package's namespace. Box3D's starts a body where its entity's Transform is, has the Transform follow the body, and makes a part that names no body a part of the nearest body above it.
 

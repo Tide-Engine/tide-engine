@@ -477,6 +477,10 @@ typedef struct owned {
     reference *refs;
     int ref_count, ref_capacity;
     bool removed; // An instance's m_RemovedComponents took it away
+    // Where each path is in `flats`, by its hash (open addressing, -1 for none), once there are many: a mesh's or a
+    // terrain's lists are tens of thousands of paths, each read once
+    int *index;
+    int index_capacity;
 } owned;
 
 struct node {
@@ -543,6 +547,7 @@ static void free_node(node *n)
             free(o->flats[k].value);
         }
         free(o->flats);
+        free(o->index);
         free(o->refs);
     }
     free(n->owned);
@@ -733,29 +738,76 @@ static int owned_slot(node *n, const map_component *c)
         if (n->owned[i].component == c) return i;
     }
     grow((void **)&n->owned, &n->owned_capacity, n->owned_count, sizeof *n->owned);
-    n->owned[n->owned_count] = (owned){c, NULL, 0, 0, NULL, 0, 0, false};
+    n->owned[n->owned_count] = (owned){c, NULL, 0, 0, NULL, 0, 0, false, NULL, 0};
     return n->owned_count++;
+}
+
+enum { FLATS_INDEXED = 32 }; // Fewer paths are looked for one by one
+
+static uint32_t path_hash(const char *s)
+{
+    uint32_t h = 2166136261u;
+    for (; *s; s++) h = (h ^ (uint8_t)*s) * 16777619u;
+    return h;
+}
+
+// Where `path` is in a's flats, -1 for nowhere
+static int flat_slot(const owned *a, const char *path)
+{
+    if (!a->index) {
+        for (int i = 0; i < a->flat_count; i++) {
+            if (strcmp(a->flats[i].path, path) == 0) return i;
+        }
+        return -1;
+    }
+    const uint32_t mask = (uint32_t)a->index_capacity - 1u;
+    for (uint32_t at = path_hash(path) & mask;; at = (at + 1u) & mask) {
+        const int i = a->index[at];
+        if (i < 0) return -1;
+        if (strcmp(a->flats[i].path, path) == 0) return i;
+    }
+}
+
+static void index_flat(owned *a, const int i)
+{
+    const uint32_t mask = (uint32_t)a->index_capacity - 1u;
+    uint32_t at = path_hash(a->flats[i].path) & mask;
+    while (a->index[at] >= 0) at = (at + 1u) & mask;
+    a->index[at] = i;
+}
+
+// The index made again, a power of two at least four times the paths, so it's at most half full until they double
+static void reindex_flats(owned *a)
+{
+    int capacity = 64;
+    while (capacity < a->flat_count * 4) capacity *= 2;
+    free(a->index);
+    a->index = malloc(sizeof *a->index * (size_t)capacity);
+    if (!a->index) abort();
+    for (int i = 0; i < capacity; i++) a->index[i] = -1;
+    a->index_capacity = capacity;
+    for (int i = 0; i < a->flat_count; i++) index_flat(a, i);
 }
 
 static void set_flat(owned *a, const char *path, const char *value)
 {
-    for (int i = 0; i < a->flat_count; i++) {
-        if (strcmp(a->flats[i].path, path) == 0) {
-            free(a->flats[i].value);
-            a->flats[i].value = dup(value);
-            return;
-        }
+    const int i = flat_slot(a, path);
+    if (i >= 0) {
+        free(a->flats[i].value);
+        a->flats[i].value = dup(value);
+        return;
     }
     grow((void **)&a->flats, &a->flat_capacity, a->flat_count, sizeof *a->flats);
     a->flats[a->flat_count++] = (flat){dup(path), dup(value)};
+    if (a->flat_count < FLATS_INDEXED) return;
+    if (!a->index || a->flat_count * 2 > a->index_capacity) reindex_flats(a);
+    else index_flat(a, a->flat_count - 1);
 }
 
 static const char *get_flat(const owned *a, const char *path)
 {
-    for (int i = 0; i < a->flat_count; i++) {
-        if (strcmp(a->flats[i].path, path) == 0) return a->flats[i].value;
-    }
-    return NULL;
+    const int i = flat_slot(a, path);
+    return i >= 0 ? a->flats[i].value : NULL;
 }
 
 static const map_field *field_in(const map_field *fields, const int count, const char *key, const size_t n)
@@ -1868,6 +1920,100 @@ static bool put_placed(const node *n, const owned *o, const map_shape *s, const 
     return true;
 }
 
+// A point of a shape (unity.json's "points") as the match has it: Unity's value times the GameObject's scale, each
+// axis's with its sign, and for a part of `body`'s turned and moved into the body's frame.
+static void place_point(const node *n, const node *body, const double scale[3], const double v[3], double out[3])
+{
+    double local[3];
+    for (int a = 0; a < 3; a++) local[a] = v[a] * scale[a];
+    if (!body) {
+        memcpy(out, local, sizeof local);
+        return;
+    }
+    const trs part = world_of(n), frame = world_of(body);
+    double turned[3], from[3], back[4];
+    rotate(part.rot, local, turned);
+    for (int a = 0; a < 3; a++) from[a] = part.pos[a] + turned[a] - frame.pos[a];
+    conjugate(frame.rot, back);
+    rotate(back, from, out);
+}
+
+// The vector at `path` (`axes` of them) Unity has, false for none
+static bool read_vector(const owned *o, const char *path, const int axes, double v[3])
+{
+    char key[512];
+    bool any = false;
+    v[0] = v[1] = v[2] = 0;
+    for (int a = 0; a < axes; a++) {
+        snprintf(key, sizeof key, "%s.%c", path, "xyz"[a]);
+        const char *value = get_flat(o, key);
+        if (value) v[a] = strtod(value, NULL);
+        any = any || value;
+    }
+    return any;
+}
+
+static void put_vector(text *t, const char *form, const int axes, const double v[3])
+{
+    putf(t, "%s(", form);
+    for (int a = 0; a < axes; a++) {
+        if (a) puts_(t, ", ");
+        number(t, v[a]);
+    }
+    puts_(t, ")");
+}
+
+// A field of a shape's points (unity.json's "points"), a float2 or float3 or a list of them, as the match has them
+// (place_point): a list's order reversed where the scale mirrors it, so a chain's sides stay its sides. False for one
+// Unity has none of, or of another form.
+static bool put_points(emitter *e, const node *n, const owned *o, const map_shape *s, const char *path, const node *body, text *t)
+{
+    const bool list = s && strcmp(s->form, "list") == 0;
+    const map_shape *point = list ? shape_of(e->p, s->element) : s;
+    const char *form = point ? point->form : "";
+    const int axes = strcmp(form, "float2") == 0 ? 2 : strcmp(form, "float3") == 0 ? 3 : 0;
+    if (!axes) return false;
+    double scale[3], v[3], at[3];
+    lossy_scale(n, scale);
+    if (axes == 2) scale[2] = 1; // A flat shape's points are in the GameObject's plane
+    if (!list) {
+        if (!read_vector(o, path, axes, v)) return false;
+        place_point(n, body, scale, v, at);
+        put_vector(t, form, axes, at);
+        return true;
+    }
+    char key[512];
+    snprintf(key, sizeof key, "%s.Array.size", path);
+    const char *size = get_flat(o, key);
+    if (!size) return false;
+    const long count = strtol(size, NULL, 10);
+    const bool mirrored = (axes == 2 ? scale[0] * scale[1] : scale[0] * scale[1] * scale[2]) < 0;
+    puts_(t, "[");
+    for (long i = 0; i < count && i < 1000000; i++) {
+        snprintf(key, sizeof key, "%s.Array.data[%ld]", path, mirrored ? count - 1 - i : i);
+        read_vector(o, key, axes, v);
+        place_point(n, body, scale, v, at);
+        if (i) puts_(t, ", ");
+        put_vector(t, form, axes, at);
+    }
+    puts_(t, "]");
+    return true;
+}
+
+// Whether a part's GameObject is turned against its body's other than about z, which a flat shape's points can't be
+static bool tilted_against(const node *n, const node *body)
+{
+    const trs part = world_of(n), frame = world_of(body);
+    double back[4], relative[3], forward[3] = {0, 0, 1};
+    // The part's z in the body's frame: still z where the turn is about z alone
+    double turned[3];
+    rotate(part.rot, forward, turned);
+    conjugate(frame.rot, back);
+    rotate(back, turned, relative);
+    const double length = sqrt(relative[0] * relative[0] + relative[1] * relative[1] + relative[2] * relative[2]);
+    return length > 0 && relative[2] / length < 0.9999999;
+}
+
 // Whether a part's GameObject is turned against its body's, which a shape's offset can't say
 static bool turned_against(const node *n, const node *body)
 {
@@ -1897,11 +2043,25 @@ static void write_owned(emitter *e, const node *n, const owned *o, const int dep
     }
     text values = {0};
     puts_(&values, "");
+    bool said_tilt = false;
     for (int i = 0; i < o->component->field_count; i++) {
         const map_field *f = &o->component->fields[i];
         if (unity_field_hidden(rules, f->name)) continue;
         text value = {0};
         puts_(&value, "");
+        if (unity_field_point(rules, f->name)) {
+            const map_shape *s = shape_of(e->p, f->shape);
+            const map_shape *point = s && strcmp(s->form, "list") == 0 ? shape_of(e->p, s->element) : s;
+            if (body && !said_tilt && point && strcmp(point->form, "float2") == 0 && tilted_against(n, body)) {
+                said_tilt = true;
+                fprintf(stderr, "%s: warning: %s is tilted against %s, the body its %s is a part of, whose points are in "
+                                "its plane: they're baked where they fall on it. Turn the GameObject about z alone\n",
+                        e->file->local, n->name, body->name, o->component->name);
+            }
+            if (put_points(e, n, o, s, f->key, body, &value)) putf(&values, "%s%s = %s", values.n ? ", " : "", f->name, value.s);
+            free(value.s);
+            continue;
+        }
         const unity_scale by = unity_field_scale(rules, f->name);
         const bool placed = body && rules && rules->placed && strcmp(rules->placed, f->name) == 0;
         if (placed && turned_against(n, body)

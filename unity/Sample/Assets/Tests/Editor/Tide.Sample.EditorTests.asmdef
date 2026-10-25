@@ -5,13 +5,14 @@
         "UnityEditor.TestRunner",
         "Tide.Runtime",
         "Tide.Game",
-        "Tide.Editor"
+        "Tide.Editor",
+        "Tide.Sample.Tests"
     ],
     "includePlatforms": [
         "Editor"
     ],
     "excludePlatforms": [],
-    "allowUnsafeCode": false,
+    "allowUnsafeCode": true,
     "overrideReferences": true,
     "precompiledReferences": [
         "nunit.framework.dll"

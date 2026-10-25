@@ -1428,8 +1428,8 @@ picks (Provisional):
   `TideParts.Placed` (Runtime/TideShape.cs): the part's `[TidePart(of)]` component's live `of` GameObject gives the
   body's frame, and the value goes back into the part's own space, divided by its scale; without a body it's
   `TideScale.Unscale` as before. So the Scene-view wireframe, drawn in the part's GameObject from the field, is where
-  the match has the shape, outside and in Play. Box2D's parts are boxes and circles; its capsules, polygons, segments
-  and chains have points, not an offset, and aren't placed.
+  the match has the shape, outside and in Play. Box2D's capsules, polygons, segments and chains have points, not an
+  offset: placed since by `"points"` (Physics in Unity's last gaps, below).
 - **Meshes (`"mesh": {"vertices", "indices"}`).** `[TideMesh(vertices, indices)]` on the component (indices empty for
   a hull). Editor/TideMeshes.cs: `ObjectFactory.componentWasAdded` fills an empty one from the GameObject's
   MeshFilter (Add Component), and the inspector (`TideComponentEditor.MeshFields`) has a Mesh field (the filter's at
@@ -1439,13 +1439,12 @@ picks (Provisional):
   out of the front (Unity's quad: its triangle 0, 3, 1 gives (0, 0, -1), its normal); Box3D's own mesh test feeds a
   floor whose triangles' cross points up. Vertices are the mesh's own, unscaled: the component's `scale` field takes
   the GameObject's (`scaled`). In the editor `Mesh.vertices` reads any mesh; it isn't read in players. Box3D's
-  `MeshCollider` and `HullCollider` have it. Not built: a `HeightFieldCollider` from a Terrain (its heights, holes and
-  resolution would map, but Terrain data is a binary asset the converter can't read and the inspector would have to
-  copy, as for meshes; not asked for yet).
+  `MeshCollider` and `HullCollider` have it. A `HeightFieldCollider` from a Terrain: built since, copied by the
+  inspector as meshes are (below).
 - **Joints** need nothing new: `a` and `b` are entity fields, GameObject references baked as paths. `"readBack"`
   fields (Box3D's and Box2D's `Joint.force`, `torque`) are `[NonSerialized, TideReadBack]` live fields, never in
   components.json, shown in Play under "From its package" (`TideComponentEditor.Section`, before "Local fields").
-  Anchors aren't by the scale and joints have no Scene-view handles.
+  Anchors aren't by the scale; their Scene-view handles came since (below).
 - **Box2D's** unity.json: `Capsule` and `Segment` points by `scale`, a capsule's radius by `largestScaleXY`; parts;
   joints read back; `BoxMade`/`CircleMade` still hidden (Box2D still has them).
 - **`tide schedule --assets`** reads a Unity project's prefabs, scenes and its packages' `source` as `tide unity`
@@ -1468,6 +1467,69 @@ picks (Provisional):
   PlayMode 16/16 (D3D11), its com.tide.game written again by tide unity from this dev (schema hash, renderer shaders).
 - **Not verified:** the mesh inspector, the parts' wireframes in Play and joints in a running Unity game were compiled
   and unit-tested, not looked at or played (no editor window from agent runs).
+
+**Physics in Unity's last gaps (2026-10-25).** The owner, on the list left: "lets tackle the todos" (apart from
+other platforms' tests). All picks mine (Provisional).
+
+- **Points (`"points": [fields]`).** Fields that are a shape's points in the GameObject's own space, a float2 or
+  float3 or a list of them (`unity_field_point`; another type is an error, as only those have C# to read them back).
+  The converter (`put_points`, `place_point`) bakes each times the lossy scale, each axis with its sign (a float2's z
+  scale is 1), and on a part turned and moved into its body's frame, which points can be: unlike an offset, a turned
+  part is no warning, but a flat shape's part tilted other than about z is (`tilted_against`: the part's z in the
+  body's frame), its points baked where they fall on the plane. A list is baked in the other order where the scale
+  mirrors it (x times y negative for float2s, all three for float3s), so a one-sided chain keeps its solid side. In
+  Play `TideParts.Points` (four overloads) reads them back: from the body's frame, divided by the scale, a mirrored
+  list put back in order. Box2D's `Capsule` (`a`, `b`), `Segment` (`a`, `b`), `Polygon` (`points`) and `Chain`
+  (`points`) have it (Box2D's `FixtureOwner` already put them on a part's body); a capsule's and polygon's radius by
+  `largestScaleXY`.
+- **Outlines (`"outline": {"points", "radius", "closed", "hull"}`).** `[TideOutline(points[], radius, closed, loops,
+  hull)]`. Editor/TideGeometry.cs (`Outline`, `Hull`: Andrew's monotone chain, counterclockwise) gives the points in
+  order and TideShapes.cs draws them through the GameObject's transform: a plain line, or with a radius (times the
+  largest scale, of x and y for a flat one) each side of an open one with a disc at each end, and the outside of a
+  closed one (each edge's side away from the points' middle) with arcs between edges. Edit Shape (`TideShapeTool`, now
+  available for outlines and joints too, `Editable`) has a `FreeMoveHandle` on each point, moved back into the
+  GameObject's space (`InverseTransformPoint`, so the scale is the field's own; a Vector2 drops z). Box2D's capsule
+  (`a`, `b` rounded), segment, polygon (closed, a hull, rounded) and chain (closed while `loop`).
+- **Joints (`"joint": {"a", "b", "anchorA", "anchorB", "rotationA", "rotationB"}`).** `[TideJoint(...)]`.
+  `TideGeometry.JointOf`: each anchor in the world from its body's GameObject's position and turn (not its scale, as a
+  body has none); a body not set stands in as the joint's own GameObject. Drawn as a line between the anchors, dotted
+  from each body to its anchor. Edit Shape: a `PositionHandle` on each anchor (in its frame's turn) put back into the
+  body's frame (`AnchorIn`), and a turn: `RotationHandle` for a quaternion, a `Disc` about the body's z for an angle
+  (`TurnIn`: radians, -pi to pi). Box3D's `Joint` (`rotationA`/`B`) and Box2D's (`angleA`/`B`).
+- **Meshes drawn.** `"mesh"` takes `"scale"`; `[TideMesh(vertices, indices, scale, offset)]` (offset: the placed
+  field). `TideGeometry.MeshOf`: each triangle's three edges, its vertices times the scale and moved by the offset in
+  the GameObject's matrix, at most 20,000 triangles (spread over the mesh beyond), or a hull's points as dots.
+- **Terrains (`"terrain": {"heights", "holes", "columns", "rows", "scale", "minimum", "maximum"}`).**
+  `[TideTerrain(...)]`; Editor/TideTerrains.cs fills one from a `TerrainData` (Add Component on a Terrain's
+  GameObject, or the inspector's Terrain field and Copy, with Undo and prefab overrides), as meshes are copied rather
+  than read by the converter (TerrainData is a binary asset). `TideGeometry.Sample`: Box3D takes 65,536 samples at
+  most, 4,096 a side (`live_height`), so every `step`th sample, a power of two, the fewest that fit (Unity's 513 is 129
+  by 129; its 257 too, as 257 by 257 is 66,049); heights 0 to 1 (`GetHeights`, [z, x], into x + z * columns), scale a
+  cell's size (`size / (count - 1)` in x and z) and `size.y`, bounds 0 and 1 (Box3D clamps to them and keeps 16 bits
+  between, as Unity's heightmap does). Holes: a coarse cell is a hole where every one of the terrain's in it is
+  (`GetHoles`, true for ground), none listed where there's none. Box3D's height field starts at its body's origin, as
+  a Terrain does at its GameObject's (`b3CreateHeightField`'s bounds from 0). Drawn as its grid, at most 64 lines each
+  way. The `scale` field stays by `absScale` (a Terrain's GameObject isn't scaled by Unity, so 1).
+- **The converter's flats are indexed.** A component's serialized paths were found one by one, so a list of n
+  numbers baked in n squared string compares (a 16,641-sample terrain, or a mesh of thousands of vertices: seconds).
+  `owned.index` (open addressing by FNV-1a, made at 32 paths, at most half full) serves `set_flat` and `get_flat`.
+- **Tests:** `unity_physics_components_by_their_rules` adds a Fan, a part 3 up the kite, scaled (2, 1) and turned half
+  a turn, with a polygon and a capsule (their points turned and moved into the kite's frame, radii doubled), and a
+  Ridge mirrored in x with a chain (points mirrored and reversed); its components.json has Box2D's `Capsule`,
+  `Polygon`, `Chain` and a `List<float2>` shape. `unity_code_writes_a_physics_packages_rules` now reads the real
+  `packages/box3d` and `packages/box2d` unity.json over tests/unity_rules_physics, its schema and outline the ones
+  `tide unity` writes for a game listing both, cut to the components the rules name (its own unity.json is gone):
+  the joint, terrain, mesh and outline attributes, `TideParts.Points` reads, and three more wrong rules refused. The
+  Sample's EditMode `GeometryTests` (components of the rules' attributes in Assets/Tests/Geometry, the runtime test
+  assembly, as Unity adds none from an Editor folder; the editor tests reference it, and allow unsafe code for
+  `ReadLive`): a hull without its inside point and a chain closed as it loops; a joint's anchors in a turned, scaled
+  body's frame and back; a mesh's edges by scale and offset, the triangles spread at a limit, a hull's points; a 33
+  terrain sampled whole and a 513 one every fourth with a coarse hole only where all sixteen are, filled into a
+  component, its grid's lines; the Fan's and Ridge's points shown back as authored. By hand: a scratch project listing
+  both packages compiles every generated component in Unity (batch, no errors).
+- **Runs:** tide_cli_tests, `tide_cli_unity_physics`; the Sample's EditMode 24/24 and PlayMode 16/16.
+- **Not verified:** what's drawn and the handles, in a window (the geometry is tested, not its pixels); joints and
+  terrains in a running Unity game.
 
 ### The game is Assets (2026-10-21)
 

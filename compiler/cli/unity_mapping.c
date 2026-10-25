@@ -69,6 +69,23 @@ double unity_scale_factor(const unity_scale by, const double scale[3], const int
     return 1;
 }
 
+// A field's name, or a list of them, into `out`: false for anything else
+static bool names(const json *v, char ***out, int *count)
+{
+    if (json_str(v)) {
+        *out = more(*out, *count, sizeof **out);
+        (*out)[(*count)++] = copy(json_str(v));
+        return true;
+    }
+    if (!v || v->kind != JSON_ARRAY) return false;
+    for (int i = 0; i < v->count; i++) {
+        if (!json_str(v->items[i])) return false;
+        *out = more(*out, *count, sizeof **out);
+        (*out)[(*count)++] = copy(json_str(v->items[i]));
+    }
+    return true;
+}
+
 // One component's rules: false for what isn't one, with `why` said.
 static bool read_rules(unity_component_rules *r, const json *spec, const char **why)
 {
@@ -130,8 +147,54 @@ static bool read_rules(unity_component_rules *r, const json *spec, const char **
     if (mesh) {
         r->vertices = copy(json_str(json_get(mesh, "vertices")));
         r->indices = copy(json_str(json_get(mesh, "indices")));
-        if (!r->vertices || (json_get(mesh, "indices") && !r->indices)) {
-            return *why = "a \"mesh\" names its list of float3, \"vertices\", and its list of int, \"indices\" (none for a hull)",
+        r->mesh_scale = copy(json_str(json_get(mesh, "scale")));
+        if (!r->vertices || (json_get(mesh, "indices") && !r->indices) || (json_get(mesh, "scale") && !r->mesh_scale)) {
+            return *why = "a \"mesh\" names its list of float3, \"vertices\", its list of int, \"indices\" (none for a hull), "
+                          "and the float3 they're scaled by, \"scale\"",
+                   false;
+        }
+    }
+    const json *points = json_get(spec, "points"), *outline = json_get(spec, "outline");
+    const json *joint = json_get(spec, "joint"), *terrain = json_get(spec, "terrain");
+    if (points && !names(points, &r->points, &r->point_count)) return *why = "\"points\" is a list of fields", false;
+    if (outline) {
+        const json *closed = json_get(outline, "closed"), *hull = json_get(outline, "hull");
+        r->outline_radius = copy(json_str(json_get(outline, "radius")));
+        r->outline_closed = copy(json_str(closed));
+        r->outline_loops = closed && closed->kind == JSON_TRUE;
+        r->outline_hull = hull && hull->kind == JSON_TRUE;
+        if (!names(json_get(outline, "points"), &r->outline, &r->outline_count) || !r->outline_count
+            || (json_get(outline, "radius") && !r->outline_radius) || (closed && !r->outline_closed && closed->kind != JSON_TRUE
+                                                                       && closed->kind != JSON_FALSE)) {
+            return *why = "an \"outline\" names its \"points\", a field or a list of them, and may name its \"radius\", and "
+                          "say it's \"closed\" (true, or a bool field) and drawn as its points' \"hull\"",
+                   false;
+        }
+    }
+    if (joint) {
+        r->joint_a = copy(json_str(json_get(joint, "a")));
+        r->joint_b = copy(json_str(json_get(joint, "b")));
+        r->anchor_a = copy(json_str(json_get(joint, "anchorA")));
+        r->anchor_b = copy(json_str(json_get(joint, "anchorB")));
+        r->rotation_a = copy(json_str(json_get(joint, "rotationA")));
+        r->rotation_b = copy(json_str(json_get(joint, "rotationB")));
+        if (!r->joint_a || !r->joint_b || !r->anchor_a || !r->anchor_b || (!r->rotation_a) != (!r->rotation_b)) {
+            return *why = "a \"joint\" names its entity fields \"a\" and \"b\", their anchors \"anchorA\" and \"anchorB\", and "
+                          "may name both of their turns, \"rotationA\" and \"rotationB\"",
+                   false;
+        }
+    }
+    if (terrain) {
+        r->heights = copy(json_str(json_get(terrain, "heights")));
+        r->holes = copy(json_str(json_get(terrain, "holes")));
+        r->columns = copy(json_str(json_get(terrain, "columns")));
+        r->rows = copy(json_str(json_get(terrain, "rows")));
+        r->terrain_scale = copy(json_str(json_get(terrain, "scale")));
+        r->minimum = copy(json_str(json_get(terrain, "minimum")));
+        r->maximum = copy(json_str(json_get(terrain, "maximum")));
+        if (!r->heights || !r->columns || !r->rows || !r->terrain_scale || (!r->minimum) != (!r->maximum)) {
+            return *why = "a \"terrain\" names its \"heights\", \"columns\", \"rows\" and \"scale\", and may name its \"holes\" and "
+                          "both of its bounds, \"minimum\" and \"maximum\"",
                    false;
         }
     }
@@ -219,6 +282,16 @@ void unity_mappings_free(unity_mappings *m)
         free(r->part_body);
         free(r->vertices);
         free(r->indices);
+        free(r->mesh_scale);
+        for (int k = 0; k < r->point_count; k++) free(r->points[k]);
+        free(r->points);
+        for (int k = 0; k < r->outline_count; k++) free(r->outline[k]);
+        free(r->outline);
+        free(r->outline_radius);
+        free(r->outline_closed);
+        char *const owned[] = {r->joint_a, r->joint_b, r->anchor_a, r->anchor_b, r->rotation_a, r->rotation_b, r->heights,
+                               r->holes, r->columns, r->rows, r->terrain_scale, r->minimum, r->maximum};
+        for (size_t k = 0; k < sizeof owned / sizeof owned[0]; k++) free(owned[k]);
     }
     free(m->components);
     for (int i = 0; i < m->glue_count; i++) {
@@ -276,6 +349,22 @@ int unity_rules_fields(const unity_component_rules *r, const char **out, const i
     NAMED(r->part_of);
     NAMED(r->vertices);
     NAMED(r->indices);
+    NAMED(r->mesh_scale);
+    for (int i = 0; i < r->point_count; i++) NAMED(r->points[i]);
+    for (int i = 0; i < r->outline_count; i++) NAMED(r->outline[i]);
+    NAMED(r->outline_radius);
+    NAMED(r->outline_closed);
+    const char *const more_named[] = {r->joint_a, r->joint_b, r->anchor_a, r->anchor_b, r->rotation_a, r->rotation_b,
+                                      r->heights, r->holes, r->columns, r->rows, r->terrain_scale, r->minimum, r->maximum};
+    for (size_t i = 0; i < sizeof more_named / sizeof more_named[0]; i++) NAMED(more_named[i]);
 #undef NAMED
     return n;
+}
+
+bool unity_field_point(const unity_component_rules *r, const char *field)
+{
+    for (int i = 0; r && i < r->point_count; i++) {
+        if (strcmp(r->points[i], field) == 0) return true;
+    }
+    return false;
 }

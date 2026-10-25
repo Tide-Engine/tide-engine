@@ -1233,8 +1233,29 @@ static void write_class(out *o, game *g, const type *t, out *map)
                  rules->center ? rules->center : "", rules->height ? rules->height : "");
         }
         if (rules && rules->vertices) {
-            // Lists its inspector fills from a Mesh (com.tide.unity's TideMeshes)
-            putf(o, "    [global::Tide.TideMesh(\"%s\", \"%s\")]\n", rules->vertices, rules->indices ? rules->indices : "");
+            // Lists its inspector fills from a Mesh (com.tide.unity's TideMeshes), which the Scene view draws
+            putf(o, "    [global::Tide.TideMesh(\"%s\", \"%s\", \"%s\", \"%s\")]\n", rules->vertices,
+                 rules->indices ? rules->indices : "", rules->mesh_scale ? rules->mesh_scale : "", rules->placed ? rules->placed : "");
+        }
+        if (rules && rules->outline_count) {
+            // A shape of points the Scene view draws, and edits with a handle each (com.tide.unity's TideShapes)
+            puts_(o, "    [global::Tide.TideOutline(new[] { ");
+            for (int k = 0; k < rules->outline_count; k++) putf(o, "%s\"%s\"", k ? ", " : "", rules->outline[k]);
+            putf(o, " }, \"%s\", \"%s\", %s, %s)]\n", rules->outline_radius ? rules->outline_radius : "",
+                 rules->outline_closed ? rules->outline_closed : "", rules->outline_loops ? "true" : "false",
+                 rules->outline_hull ? "true" : "false");
+        }
+        if (rules && rules->joint_a) {
+            // Its anchors the Scene view draws, and edits with handles (com.tide.unity's TideJoints)
+            putf(o, "    [global::Tide.TideJoint(\"%s\", \"%s\", \"%s\", \"%s\", \"%s\", \"%s\")]\n", rules->joint_a, rules->joint_b,
+                 rules->anchor_a, rules->anchor_b, rules->rotation_a ? rules->rotation_a : "",
+                 rules->rotation_b ? rules->rotation_b : "");
+        }
+        if (rules && rules->heights) {
+            // Fields its inspector fills from a Terrain (com.tide.unity's TideTerrains), which the Scene view draws
+            putf(o, "    [global::Tide.TideTerrain(\"%s\", \"%s\", \"%s\", \"%s\", \"%s\", \"%s\", \"%s\")]\n", rules->heights,
+                 rules->holes ? rules->holes : "", rules->columns, rules->rows, rules->terrain_scale,
+                 rules->minimum ? rules->minimum : "", rules->maximum ? rules->maximum : "");
         }
         if (rules && rules->part_of) {
             // Its entity's shapes are on another's body: where they are is shown from it in Play (TideParts)
@@ -1292,8 +1313,10 @@ static void write_class(out *o, game *g, const type *t, out *map)
         } else if (authorable(g, ct)) {
             char *cs = live_cs(g, ct, false);
             const unity_scale by = unity_field_scale(rules, f->name);
+            const bool point = unity_field_point(rules, f->name);
             if (unity_field_hidden(rules, f->name)) puts_(o, "        [global::UnityEngine.HideInInspector] // Its package's own\n");
             if (by != UNITY_SCALE_NONE) puts_(o, "        [global::UnityEngine.Tooltip(\"By the GameObject's scale, as a collider's size is\")]\n");
+            if (point) puts_(o, "        [global::UnityEngine.Tooltip(\"In the GameObject's own space, with its scale\")]\n");
             putf(o, "        public %s %s", cs, id);
             out initial = {0};
             puts_(&initial, "");
@@ -1310,7 +1333,10 @@ static void write_class(out *o, game *g, const type *t, out *map)
                 snprintf(by_name, sizeof by_name, "%s", unity_scale_name(by));
                 by_name[0] = (char)(by_name[0] - 'a' + 'A');
             }
-            if (rules && rules->placed && strcmp(rules->placed, f->name) == 0 && ct->kind == CK_PRIM
+            if (point) {
+                // The match has its points with the scale, a part's in its body's frame: shown in the GameObject's own
+                putf(&live, "            %s = global::Tide.TideParts.Points(%s, this);\n", id, id);
+            } else if (rules && rules->placed && strcmp(rules->placed, f->name) == 0 && ct->kind == CK_PRIM
                 && (strcmp(prims[ct->prim].tide, "float2") == 0 || strcmp(prims[ct->prim].tide, "float3") == 0)) {
                 putf(&live, "            %s = global::Tide.TideParts.Placed(%s, this%s%s);\n", id, id,
                      by_name[0] ? ", global::Tide.TideScale.By." : "", by_name);
@@ -1537,6 +1563,18 @@ static bool rules_name_the_game(const game *g, const unity_mappings *m)
             fprintf(stderr, "%s: error: %s's \"part\" names the body %s, which isn't a component of the game's packages\n",
                     r->file, r->name, r->part_body);
             ok = false;
+        }
+        for (int k = 0; k < r->point_count; k++) {
+            for (int f = 0; f < t->field_count; f++) {
+                const char *type = t->fields[f].type;
+                if (strcmp(t->fields[f].name, r->points[k]) != 0 || strcmp(type, "float2") == 0 || strcmp(type, "float3") == 0
+                    || strcmp(type, "List<float2>") == 0 || strcmp(type, "List<float3>") == 0) {
+                    continue;
+                }
+                fprintf(stderr, "%s: error: %s's \"points\" names '%s', a %s: points are a float2 or float3, or a list of them\n",
+                        r->file, r->name, r->points[k], type);
+                ok = false;
+            }
         }
         const char *named[256];
         const int count = unity_rules_fields(r, named, (int)(sizeof named / sizeof named[0]));

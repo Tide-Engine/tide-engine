@@ -128,8 +128,9 @@ registration, handover and ended-room cases. No CI run was dispatched.
 `packages/box2d/unity.json` says how the package's components are in a Unity project: fields and components it keeps
 for itself hidden, shapes sized by the GameObject's scale and drawn in the Scene view; and the Tide a Unity project
 alone gets: a body starts at its entity's Transform, which follows it, and a part naming no body is one of the
-nearest body above it (2026-10-25: parts placed where their GameObjects are, capsule and segment points by the
-scale, joints' force and torque read back; `[Native]` fields hidden without being listed). The package's own `.tide` is
+nearest body above it (2026-10-25: parts placed where their GameObjects are; capsule, segment, polygon and chain points
+by the scale, on a part in its body's frame, drawn and edited as outlines; joints' anchors drawn and edited, their force
+and torque read back; `[Native]` fields hidden without being listed). The package's own `.tide` is
 unchanged, so games outside Unity are too. Unity's own physics components aren't the package's. Contracts and tests:
 `notes/unity.md`, Packages' components in Unity.
 

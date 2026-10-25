@@ -37,7 +37,20 @@
 //   against its body, which only a round shape can be, is a warning.
 // - "mesh" names a component's list fields that Unity fills from a Mesh (com.tide.unity's inspector; the GameObject's
 //   MeshFilter's as the component's added): "vertices" (float3), and "indices" (int, three a triangle; none for a
-//   hull).
+//   hull), with "scale", the field the vertices are scaled by, for the Scene view's wireframe.
+// - "points" are fields that are a shape's points in its entity's frame (float2 or float3, or a list of them): baked
+//   times the scale, each axis's with its sign, and on a part turned and moved into its body's frame, which a point
+//   can be (a turn not about z is a warning for float2s); a list is reversed where the scale mirrors it, so a chain's
+//   sides stay its sides.
+// - "outline" is what the Scene view draws of a shape of points, and edits with a handle each: {"points": a field or
+//   a list of them, in order, "radius": rounded by, "closed": true or a bool field, "hull": true (drawn as the points'
+//   convex hull)}.
+// - "joint" is what the Scene view draws of a joint, and edits with handles: {"a", "b": its entity fields, "anchorA",
+//   "anchorB": its anchors in their bodies' frames, "rotationA", "rotationB": their turns, a quaternion or an angle
+//   about z}.
+// - "terrain" names the fields a Unity Terrain fills (com.tide.unity's inspector; the GameObject's as the component's
+//   added): {"heights" (List<float>, x + z * columns), "holes" (List<byte>, a cell each, nonzero for a hole),
+//   "columns", "rows", "scale" (float3: a cell's size, and the heights'), "minimum", "maximum"}.
 // - "readBack" fields are the package's answers (a joint's force): shown in Play, never authored or baked.
 // - "source" is compiled as a source of the package's own, in a Unity project alone ("Library/Tide/Unity.<package>.tide"):
 //   its glue for Unity (Box3D's bodies start at their entities' Transforms, which follow them).
@@ -84,8 +97,24 @@ typedef struct unity_component_rules {
     char *part_body; // ...and the body's component
     char *vertices;  // A mesh's list fields, or NULL
     char *indices;
+    char *mesh_scale; // ...and the field its vertices are scaled by, or NULL
     char **read_back;
     int read_back_count;
+    char **points;   // Fields that are points in the entity's frame, a vector or a list of them
+    int point_count;
+    char **outline;  // The points the Scene view draws as a line, in order
+    int outline_count;
+    char *outline_radius; // ...rounded by this field, or NULL
+    char *outline_closed; // ...closed while this bool field is true, or NULL
+    bool outline_loops;   // ...always closed
+    bool outline_hull;    // ...as the convex hull of the points
+    char *joint_a, *joint_b;         // A joint's entity fields naming its bodies, or NULL: no joint
+    char *anchor_a, *anchor_b;       // ...its anchors in their frames
+    char *rotation_a, *rotation_b;   // ...and its frames' turns (a quaternion, or an angle about z), or NULL
+    char *heights, *holes;           // A terrain's fields: its heights (float, x + z * columns), its holes (byte a cell)
+    char *columns, *rows;            // ...its counts (int)
+    char *terrain_scale;             // ...a cell's size and the heights' scale (float3)
+    char *minimum, *maximum;         // ...and the heights' bounds, or NULL
 } unity_component_rules;
 
 typedef struct unity_glue {
@@ -111,6 +140,7 @@ const unity_component_rules *unity_rules_of(const unity_mappings *m, const char 
 bool unity_field_hidden(const unity_component_rules *r, const char *field);
 unity_scale unity_field_scale(const unity_component_rules *r, const char *field);
 bool unity_field_read_back(const unity_component_rules *r, const char *field);
+bool unity_field_point(const unity_component_rules *r, const char *field);
 
 // The fields a component's rules name, to check they're its: up to `capacity` into `out`; how many.
 int unity_rules_fields(const unity_component_rules *r, const char **out, int capacity);

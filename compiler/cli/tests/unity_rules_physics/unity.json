@@ -1,9 +1,0 @@
-{
-  "about": "Rules of a physics package's components, for unity_code_writes_a_physics_packages_rules (schema.json and outline.json beside it are its game's)",
-  "components": {
-    "Box3D.Sphere": {"scaled": {"radius": "largestScale", "offset": "scale"}, "shape": {"sphere": "radius", "center": "offset"}},
-    "Box3D.MeshCollider": {"scaled": {"scale": "scale", "offset": "scale"}, "placed": "offset", "mesh": {"vertices": "vertices", "indices": "indices"}},
-    "Box3D.Part": {"part": {"of": "of", "body": "Box3D.Body"}},
-    "Box3D.Joint": {"readBack": ["force", "torque"]}
-  }
-}

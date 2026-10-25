@@ -128,10 +128,13 @@ static bool refused(const char *dir, const char *schema, const char *outline, co
     return !unity_code_write(dir, schema, outline, wrong, 1);
 }
 
-// A physics package's rules (tests/unity_rules_physics: a game's schema and outline, as tide writes them, and its
-// unity.json): a [Native] field is no C# field and isn't authored; a part's shapes, and anything whose field places
-// it on its body, are shown in Play from where the body is; a mesh's lists are filled from a Mesh; a field read back
-// is shown in Play, never authored. A rule naming a component or a field the game hasn't is an error.
+// The physics packages' rules (their real unity.json files, over tests/unity_rules_physics: the schema and outline
+// tide writes for a game listing box3d and box2d, cut to their components the rules name): a [Native] field is no C#
+// field and isn't authored; a part's shapes, and anything whose field places it on its body, are shown in Play from
+// where the body is; a mesh's lists are filled from a Mesh and drawn by their scale; a shape's points are shown in the
+// GameObject's own space, and drawn as an outline; a joint's anchors and a height field are drawn; a field read back
+// is shown in Play, never authored. A rule naming a component or a field the game hasn't, or points of another type,
+// is an error.
 TIDE_TEST(unity_code_writes_a_physics_packages_rules)
 {
     const char *base = sys_env("TEMP") ? sys_env("TEMP") : sys_env("TMPDIR") ? sys_env("TMPDIR") : "/tmp";
@@ -142,8 +145,8 @@ TIDE_TEST(unity_code_writes_a_physics_packages_rules)
     char *schema = read_written(TIDE_UNITY_RULES_PHYSICS, "schema.json");
     char *outline = read_written(TIDE_UNITY_RULES_PHYSICS, "outline.json");
     TIDE_REQUIRE(schema && outline);
-    const unity_package rules[] = {{TIDE_UNITY_RULES_PHYSICS, "Box3D"}};
-    TIDE_REQUIRE(unity_code_write(dir, schema, outline, rules, 1));
+    const unity_package rules[] = {{TIDE_BOX3D_PACKAGE, "Box3D"}, {TIDE_BOX2D_PACKAGE, "Box2D"}};
+    TIDE_REQUIRE(unity_code_write(dir, schema, outline, rules, 2));
     char *body = read_written(dir, "Components/Box3D/Body.cs");
     TIDE_CHECK(body && strstr(body, "public float gravityScale = 1f;") != NULL && strstr(body, "        public long id") == NULL);
     free(body);
@@ -155,13 +158,34 @@ TIDE_TEST(unity_code_writes_a_physics_packages_rules)
                && strstr(sphere, "            radius = global::Tide.TideScale.Unscale(radius, transform, global::Tide.TideScale.By.LargestScale);\n") != NULL);
     free(sphere);
     char *mesh = read_written(dir, "Components/Box3D/MeshCollider.cs");
-    TIDE_CHECK(mesh && strstr(mesh, "    [global::Tide.TideMesh(\"vertices\", \"indices\")]\n") != NULL
+    TIDE_CHECK(mesh && strstr(mesh, "    [global::Tide.TideMesh(\"vertices\", \"indices\", \"scale\", \"offset\")]\n") != NULL
                && strstr(mesh, "public global::System.Collections.Generic.List<global::UnityEngine.Vector3> vertices") != NULL
                && strstr(mesh, "            offset = global::Tide.TideParts.Placed(offset, this, global::Tide.TideScale.By.Scale);\n") != NULL);
     free(mesh);
     char *joint = read_written(dir, "Components/Box3D/Joint.cs");
-    TIDE_CHECK(joint && strstr(joint, "        [global::System.NonSerialized, global::Tide.TideReadBack] public global::UnityEngine.Vector3 force;\n") != NULL);
+    TIDE_CHECK(joint && strstr(joint, "        [global::System.NonSerialized, global::Tide.TideReadBack] public global::UnityEngine.Vector3 force;\n") != NULL
+               && strstr(joint, "    [global::Tide.TideJoint(\"a\", \"b\", \"anchorA\", \"anchorB\", \"rotationA\", \"rotationB\")]\n") != NULL);
     free(joint);
+    char *joint2 = read_written(dir, "Components/Box2D/Joint.cs");
+    TIDE_CHECK(joint2 && strstr(joint2, "    [global::Tide.TideJoint(\"a\", \"b\", \"anchorA\", \"anchorB\", \"angleA\", \"angleB\")]\n") != NULL);
+    free(joint2);
+    char *field = read_written(dir, "Components/Box3D/HeightFieldCollider.cs");
+    TIDE_CHECK(field && strstr(field, "    [global::Tide.TideTerrain(\"heights\", \"holes\", \"columns\", \"rows\", \"scale\", "
+                                      "\"minimumHeight\", \"maximumHeight\")]\n") != NULL
+               && strstr(field, "public global::System.Collections.Generic.List<float> heights") != NULL);
+    free(field);
+    char *capsule = read_written(dir, "Components/Box2D/Capsule.cs");
+    TIDE_CHECK(capsule && strstr(capsule, "    [global::Tide.TideOutline(new[] { \"a\", \"b\" }, \"radius\", \"\", false, false)]\n") != NULL
+               && strstr(capsule, "            a = global::Tide.TideParts.Points(a, this);\n") != NULL
+               && strstr(capsule, "            radius = global::Tide.TideScale.Unscale(radius, transform, global::Tide.TideScale.By.LargestScaleXY);\n") != NULL);
+    free(capsule);
+    char *polygon = read_written(dir, "Components/Box2D/Polygon.cs");
+    TIDE_CHECK(polygon && strstr(polygon, "    [global::Tide.TideOutline(new[] { \"points\" }, \"radius\", \"\", true, true)]\n") != NULL
+               && strstr(polygon, "            points = global::Tide.TideParts.Points(points, this);\n") != NULL);
+    free(polygon);
+    char *chain = read_written(dir, "Components/Box2D/Chain.cs");
+    TIDE_CHECK(chain && strstr(chain, "    [global::Tide.TideOutline(new[] { \"points\" }, \"\", \"loop\", false, false)]\n") != NULL);
+    free(chain);
     // components.json: what the converter bakes, none of the native or read back fields (Value keeps the layout)
     char *map = read_written(dir, "components.json");
     TIDE_CHECK(map && strstr(map, "{\"name\": \"Box3D.Body\", \"guid\": ") != NULL && strstr(map, "\"id\"") == NULL
@@ -172,6 +196,10 @@ TIDE_TEST(unity_code_writes_a_physics_packages_rules)
     TIDE_CHECK(refused(dir, schema, outline, "{\"components\": {\"Box3D.Joint\": {\"readBack\": [\"forces\"]}}}\n"));
     TIDE_CHECK(refused(dir, schema, outline, "{\"components\": {\"Box3D.Part\": {\"part\": {\"of\": \"of\", \"body\": \"Box3D.Corpse\"}}}}\n"));
     TIDE_CHECK(refused(dir, schema, outline, "{\"components\": {\"Box3D.MeshCollider\": {\"mesh\": {\"indices\": \"indices\"}}}}\n"));
+    // Points of a number, a joint without its anchors, an outline without its points
+    TIDE_CHECK(refused(dir, schema, outline, "{\"components\": {\"Box2D.Polygon\": {\"points\": [\"radius\"]}}}\n"));
+    TIDE_CHECK(refused(dir, schema, outline, "{\"components\": {\"Box3D.Joint\": {\"joint\": {\"a\": \"a\", \"b\": \"b\"}}}}\n"));
+    TIDE_CHECK(refused(dir, schema, outline, "{\"components\": {\"Box2D.Chain\": {\"outline\": {\"closed\": true}}}}\n"));
     free(schema);
     free(outline);
     sys_remove_tree(dir);

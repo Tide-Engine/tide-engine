@@ -8,22 +8,25 @@ namespace Tide.Editor
     // A Tide component's inspector: Unity's own, its fields as authored, and in Play its entity's values, which the
     // match decides: shown, not edited, as a change there would reach neither the match nor the scene. In Play what
     // its package answers (TideReadBack) and its local fields follow, which Unity doesn't keep. One with a shape
-    // (TideShape) has Edit Shape; one of a mesh's lists (TideMesh), a Mesh to copy them from.
+    // (TideShape), outline (TideOutline) or anchors (TideJoint) has Edit Shape; one of a mesh's lists (TideMesh), a
+    // Mesh to copy them from; a height field (TideTerrain), a Terrain's.
     [CustomEditor(typeof(TideComponent), true)]
     [CanEditMultipleObjects]
     sealed class TideComponentEditor : UnityEditor.Editor
     {
         Mesh copyFrom;
+        TerrainData copyTerrain;
 
         public override void OnInspectorGUI()
         {
             var playing = EditorApplication.isPlayingOrWillChangePlaymode;
-            if (!playing && TideShapes.Read(target as TideComponent, out _))
+            if (!playing && TideShapeTool.Editable(target as TideComponent))
             {
                 // Its shape's handles in the Scene view (TideShapeTool), as a collider's Edit Collider
                 EditorGUILayout.EditorToolbarForTarget(EditorGUIUtility.TrTempContent("Edit Shape"), this);
             }
             if (!playing) MeshFields();
+            if (!playing) TerrainFields();
             using (new EditorGUI.DisabledScope(playing)) DrawDefaultInspector();
             if (!EditorApplication.isPlaying || targets.Length != 1) return;
             var shown = Array.FindAll(target.GetType().GetFields(BindingFlags.Instance | BindingFlags.Public),
@@ -62,6 +65,34 @@ namespace Tide.Editor
                         foreach (var t in targets)
                         {
                             if (TideMeshes.Read(t as TideComponent, out var each)) TideMeshes.Fill((TideComponent)t, each, copyFrom);
+                        }
+                    }
+                }
+            }
+            EditorGUILayout.LabelField(" ", said, EditorStyles.miniLabel);
+        }
+
+        // A height field's samples, and a Terrain's data to copy them from (the GameObject's Terrain's to begin with)
+        void TerrainFields()
+        {
+            var c = target as TideComponent;
+            var of = TideTerrains.Of(c);
+            if (of == null) return;
+            if (copyTerrain == null) copyTerrain = TideTerrains.Found(c);
+            var columns = c.GetType().GetField(of.Columns)?.GetValue(c) is int x ? x : 0;
+            var rows = c.GetType().GetField(of.Rows)?.GetValue(c) is int z ? z : 0;
+            var said = $"{columns} by {rows} samples";
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                copyTerrain = (TerrainData)EditorGUILayout.ObjectField(new GUIContent("Terrain", said), copyTerrain,
+                    typeof(TerrainData), false);
+                using (new EditorGUI.DisabledScope(copyTerrain == null))
+                {
+                    if (GUILayout.Button("Copy", GUILayout.Width(52)))
+                    {
+                        foreach (var t in targets)
+                        {
+                            if (TideTerrains.Of(t as TideComponent) != null) TideTerrains.Fill((TideComponent)t, copyTerrain);
                         }
                     }
                 }

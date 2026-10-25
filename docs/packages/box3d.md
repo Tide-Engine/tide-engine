@@ -748,8 +748,9 @@ In a Unity project ([Unity](../tools/cli.md#unity)), Box3D's components go on a 
 - A selected shape is drawn in the Scene view, and its Edit Shape button (also in the Scene view's tools) gives it handles, as Edit Collider does.
 - A body starts where its GameObject is, and the GameObject follows the body.
 - A body of several shapes is a `Body` with a shape, and a child GameObject for each other shape with that shape and a `Part`, as colliders on a Rigidbody's children are. A `Part` whose `Of` is empty is a part of the nearest GameObject above it with a `Body`. Its shape is on the body where the child puts it, which the Scene view shows. A shape can't turn on its body, so a part turned against its body is a warning (a `Sphere` turns any way).
-- A `MeshCollider` or `HullCollider` takes its triangles from a Unity Mesh: added to a GameObject with a MeshFilter, it starts with the filter's mesh, and its Inspector has a Mesh field and Copy to take another. Its `scale` is by the GameObject's scale, so a mesh scaled in the Scene collides as it's drawn.
-- Joints go on a GameObject of their own with `Joint` and one kind's component, such as `RevoluteJoint`; `A` and `B` are the bodies' GameObjects. A joint's `force` and `torque` show in Play under From its package, and aren't authored.
+- A `MeshCollider` or `HullCollider` takes its triangles from a Unity Mesh: added to a GameObject with a MeshFilter, it starts with the filter's mesh, and its Inspector has a Mesh field and Copy to take another. Its `scale` is by the GameObject's scale, so a mesh scaled in the Scene collides as it's drawn. A selected one's triangles are drawn in the Scene view, a hull's points.
+- A `HeightFieldCollider` takes its heights from a Unity Terrain: added to a Terrain's GameObject, on a static `Body`, it starts with the terrain's data, and its Inspector has a Terrain field and Copy to take another. A terrain of more than 65,536 samples is copied every second, fourth or more sample (a 513 by 513 one as 129 by 129), and a cell is a hole where all of the terrain's in it are. The GameObject is the terrain's corner, as it is for Unity's. Its grid is drawn in the Scene view.
+- Joints go on a GameObject of their own with `Joint` and one kind's component, such as `RevoluteJoint`; `A` and `B` are the bodies' GameObjects. A selected joint is drawn from anchor to anchor, and Edit Shape moves its anchors and turns their frames, in their bodies' frames. A joint's `force` and `torque` show in Play under From its package, and aren't authored.
 - The fields Box3D keeps for itself, such as a body's `id` and its `step` values, aren't in the Inspector or the scene.
 
 ## Multiplayer
@@ -812,7 +813,7 @@ In that implementation the serialized state was 3.5 MB, about a kilobyte and a h
 
 - Native compound-container assets are not exposed; assemble compound bodies with `Part` entities.
 - A parting from a destroyed entity still identifies it as `default`.
-- Automatic conversion from imported rendering meshes is not provided outside Unity. In Unity a `HeightFieldCollider` isn't filled from a Terrain, and joints and mesh shapes have no Scene-view handles.
+- Automatic conversion from imported rendering meshes is not provided outside Unity.
 - Cooked geometry remains in the resident world after its last collider is removed. Continually creating unique geometry consumes that space.
 - The resident arena has a fixed 64 MiB limit; exhaustion stops the program. One Box3D arena per process means switching worlds costs a page restore.
 

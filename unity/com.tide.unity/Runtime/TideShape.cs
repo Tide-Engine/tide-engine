@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace Tide
@@ -23,16 +24,79 @@ namespace Tide
 
     // A component whose lists its inspector fills from a Mesh (its package's unity.json, "mesh"): the vertices' field
     // (float3s), and the indices' (ints, three a triangle; none for a hull). The GameObject's MeshFilter's mesh as the
-    // component's added.
+    // component's added. The Scene view draws it, its vertices times the scale field and moved by the offset (none:
+    // as they are).
     [AttributeUsage(AttributeTargets.Class, Inherited = false)]
     public sealed class TideMeshAttribute : Attribute
     {
-        public readonly string Vertices, Indices;
+        public readonly string Vertices, Indices, Scale, Offset;
 
-        public TideMeshAttribute(string vertices, string indices = "")
+        public TideMeshAttribute(string vertices, string indices = "", string scale = "", string offset = "")
         {
             Vertices = vertices;
             Indices = indices;
+            Scale = scale;
+            Offset = offset;
+        }
+    }
+
+    // A shape of points the Scene view draws as a line through them, and edits with a handle each (its package's
+    // unity.json, "outline"): its point fields in order (each a Vector2 or Vector3, or a list of them), rounded by the
+    // radius field, closed always or while the bool field is true, and drawn as the points' convex hull.
+    [AttributeUsage(AttributeTargets.Class, Inherited = false)]
+    public sealed class TideOutlineAttribute : Attribute
+    {
+        public readonly string[] Points;
+        public readonly string Radius, Closed;
+        public readonly bool Loops, Hull;
+
+        public TideOutlineAttribute(string[] points, string radius = "", string closed = "", bool loops = false, bool hull = false)
+        {
+            Points = points;
+            Radius = radius;
+            Closed = closed;
+            Loops = loops;
+            Hull = hull;
+        }
+    }
+
+    // A joint the Scene view draws, and edits with handles (its package's unity.json, "joint"): its fields naming its
+    // bodies' GameObjects, its anchors in their frames (each body's position and turn, not its scale), and their turns
+    // (a Quaternion, or an angle about z in radians), none for neither.
+    [AttributeUsage(AttributeTargets.Class, Inherited = false)]
+    public sealed class TideJointAttribute : Attribute
+    {
+        public readonly string A, B, AnchorA, AnchorB, RotationA, RotationB;
+
+        public TideJointAttribute(string a, string b, string anchorA, string anchorB, string rotationA = "", string rotationB = "")
+        {
+            A = a;
+            B = b;
+            AnchorA = anchorA;
+            AnchorB = anchorB;
+            RotationA = rotationA;
+            RotationB = rotationB;
+        }
+    }
+
+    // A height field its inspector fills from a Terrain (its package's unity.json, "terrain"), the GameObject's as the
+    // component's added: its heights (x + z * columns), holes (a byte a cell, nonzero for one), counts, scale (a cell's
+    // size in x and z, the heights' in y) and the heights' bounds. The Scene view draws it.
+    [AttributeUsage(AttributeTargets.Class, Inherited = false)]
+    public sealed class TideTerrainAttribute : Attribute
+    {
+        public readonly string Heights, Holes, Columns, Rows, Scale, Minimum, Maximum;
+
+        public TideTerrainAttribute(string heights, string holes, string columns, string rows, string scale, string minimum = "",
+            string maximum = "")
+        {
+            Heights = heights;
+            Holes = holes;
+            Columns = columns;
+            Rows = rows;
+            Scale = scale;
+            Minimum = minimum;
+            Maximum = maximum;
         }
     }
 
@@ -110,6 +174,42 @@ namespace Tide
             var body = BodyOf(shape);
             return body != null ? (Vector2)FromBody(value, shape, body) : value;
         }
+
+        // A shape's points (its unity.json's "points") as authored, from the match's: in the GameObject's own space
+        // without its scale, a part's from its body's frame, a list in the order it was in where the scale mirrors it
+        public static Vector3 Points(Vector3 value, Component shape) => Point(value, shape, BodyOf(shape), false);
+
+        public static Vector2 Points(Vector2 value, Component shape) => Point(value, shape, BodyOf(shape), true);
+
+        public static List<Vector3> Points(List<Vector3> values, Component shape)
+        {
+            if (values == null) return null;
+            var body = BodyOf(shape);
+            var points = values.ConvertAll(v => Point(v, shape, body, false));
+            if (Mirrored(shape.transform.lossyScale, false)) points.Reverse();
+            return points;
+        }
+
+        public static List<Vector2> Points(List<Vector2> values, Component shape)
+        {
+            if (values == null) return null;
+            var body = BodyOf(shape);
+            var points = values.ConvertAll(v => (Vector2)Point(v, shape, body, true));
+            if (Mirrored(shape.transform.lossyScale, true)) points.Reverse();
+            return points;
+        }
+
+        public static bool Mirrored(Vector3 scale, bool flat) => (flat ? scale.x * scale.y : scale.x * scale.y * scale.z) < 0;
+
+        static Vector3 Point(Vector3 value, Component shape, GameObject body, bool flat)
+        {
+            var local = body != null ? FromBody(value, shape, body) : value;
+            var s = shape.transform.lossyScale;
+            if (flat) s.z = 1;
+            return new Vector3(Divide(local.x, s.x), Divide(local.y, s.y), Divide(local.z, s.z));
+        }
+
+        static float Divide(float value, float by) => by != 0 ? value / by : value;
     }
 
     // A field by the GameObject's scale (its package's unity.json, "scaled"): authored without it, as Unity's colliders'

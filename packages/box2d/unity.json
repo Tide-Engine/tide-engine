@@ -33,16 +33,54 @@
       }
     },
     "Box2D.Capsule": {
+      "points": [
+        "a",
+        "b"
+      ],
       "scaled": {
-        "a": "scale",
-        "b": "scale",
         "radius": "largestScaleXY"
+      },
+      "outline": {
+        "points": [
+          "a",
+          "b"
+        ],
+        "radius": "radius"
       }
     },
     "Box2D.Segment": {
+      "points": [
+        "a",
+        "b"
+      ],
+      "outline": {
+        "points": [
+          "a",
+          "b"
+        ]
+      }
+    },
+    "Box2D.Polygon": {
+      "points": [
+        "points"
+      ],
       "scaled": {
-        "a": "scale",
-        "b": "scale"
+        "radius": "largestScaleXY"
+      },
+      "outline": {
+        "points": "points",
+        "radius": "radius",
+        "closed": true,
+        "hull": true
+      }
+    },
+    "Box2D.Chain": {
+      "points": [
+        "points"
+      ],
+      "outline": {
+        "points": "points",
+        "closed": "loop"
       }
     },
     "Box2D.Part": {
@@ -61,7 +99,15 @@
       "readBack": [
         "force",
         "torque"
-      ]
+      ],
+      "joint": {
+        "a": "a",
+        "b": "b",
+        "anchorA": "anchorA",
+        "anchorB": "anchorB",
+        "rotationA": "angleA",
+        "rotationB": "angleB"
+      }
     }
   },
   "sourceAbout": "Added to a Unity project's game: a body starts where its entity's Transform (Unity's placement) is in x and y, turned about z, and the Transform follows the body; a part that names no body is one of the nearest body above it",

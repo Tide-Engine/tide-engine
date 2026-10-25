@@ -444,6 +444,7 @@ Transform:
   m_LocalScale: {x: 1, y: 1, z: 1}
   m_Children:
   - {fileID: 1101}
+  - {fileID: 1301}
   m_Father: {fileID: 0}
 --- !u!114 &1002
 MonoBehaviour:
@@ -560,6 +561,113 @@ MonoBehaviour:
   m_Enabled: 1
   m_Script: {fileID: 11500000, guid: 88888888888888888888888888888888, type: 3}
   of: {fileID: 0}
+--- !u!1 &1300
+GameObject:
+  m_ObjectHideFlags: 0
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1301}
+  - component: {fileID: 1302}
+  - component: {fileID: 1303}
+  - component: {fileID: 1304}
+  - component: {fileID: 1305}
+  m_Layer: 0
+  m_Name: Fan
+  m_IsActive: 1
+--- !u!4 &1301
+Transform:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1300}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 1, w: 0}
+  m_LocalPosition: {x: 0, y: 3, z: 0}
+  m_LocalScale: {x: 2, y: 1, z: 1}
+  m_Children: []
+  m_Father: {fileID: 1001}
+--- !u!114 &1302
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1300}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: 4f7d2c1e9a8b4b6c8d3e2f1a0b9c8d7e, type: 3}
+  components: []
+  references: []
+--- !u!114 &1303
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1300}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: 13131313131313131313131313131313, type: 3}
+  points:
+  - {x: 1, y: 0}
+  - {x: 0, y: 1}
+  - {x: -1, y: 0}
+  radius: 0.1
+--- !u!114 &1304
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1300}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: 12121212121212121212121212121212, type: 3}
+  a: {x: 0, y: -0.5}
+  b: {x: 0, y: 0.5}
+  radius: 0.25
+--- !u!114 &1305
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1300}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: ffffffffffffffffffffffffffffffff, type: 3}
+  of: {fileID: 0}
+--- !u!1 &1400
+GameObject:
+  m_ObjectHideFlags: 0
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 1401}
+  - component: {fileID: 1402}
+  - component: {fileID: 1403}
+  - component: {fileID: 1404}
+  m_Layer: 0
+  m_Name: Ridge
+  m_IsActive: 1
+--- !u!4 &1401
+Transform:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1400}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: -10, z: 0}
+  m_LocalScale: {x: -1, y: 1, z: 1}
+  m_Children: []
+  m_Father: {fileID: 0}
+--- !u!114 &1402
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1400}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: 4f7d2c1e9a8b4b6c8d3e2f1a0b9c8d7e, type: 3}
+  components: []
+  references: []
+--- !u!114 &1403
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1400}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: cccccccccccccccccccccccccccccccc, type: 3}
+  type: 0
+  gravityScale: 1
+--- !u!114 &1404
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_GameObject: {fileID: 1400}
+  m_Enabled: 1
+  m_Script: {fileID: 11500000, guid: 14141414141414141414141414141414, type: 3}
+  points:
+  - {x: 0, y: 0}
+  - {x: 1, y: 0}
+  - {x: 2, y: 1}
+  loop: 0
 --- !u!1660057539 &9999
 SceneRoots:
   m_ObjectHideFlags: 0
@@ -573,3 +681,4 @@ SceneRoots:
   - {fileID: 901}
   - {fileID: 1001}
   - {fileID: 1201}
+  - {fileID: 1401}
