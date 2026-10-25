@@ -35,7 +35,9 @@ target_compile_definitions(tide_cli_tests PRIVATE "TIDE_UNITY_FIXTURE=\"${CMAKE_
     "TIDE_UNITY_SCRATCH=\"${CMAKE_CURRENT_BINARY_DIR}/unity_unsaved_test\""
     "TIDE_UNITY_PHYSICS_FIXTURE=\"${CMAKE_CURRENT_SOURCE_DIR}/tests/unity_physics/Assets\""
     "TIDE_BOX3D_PACKAGE=\"${PROJECT_SOURCE_DIR}/packages/box3d\""
-    "TIDE_UNITY_RULES_PACKAGE=\"${CMAKE_CURRENT_SOURCE_DIR}/tests/unity_rules\"")
+    "TIDE_BOX2D_PACKAGE=\"${PROJECT_SOURCE_DIR}/packages/box2d\""
+    "TIDE_UNITY_RULES_PACKAGE=\"${CMAKE_CURRENT_SOURCE_DIR}/tests/unity_rules\""
+    "TIDE_UNITY_RULES_PHYSICS=\"${CMAKE_CURRENT_SOURCE_DIR}/tests/unity_rules_physics\"")
 target_link_libraries(tide_cli_tests PRIVATE tide tidec_core)
 if(NOT WIN32)
     target_link_libraries(tide_cli_tests PRIVATE Threads::Threads ${CMAKE_DL_LIBS})
@@ -115,6 +117,12 @@ add_test(NAME tide_cli_ide
     COMMAND "${CMAKE_COMMAND}" "-DTIDE=$<TARGET_FILE:tide_cli>" "-DTIDELS=$<TARGET_FILE:tidels>"
             "-DSOURCE=${PROJECT_SOURCE_DIR}" "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/ide_test"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/ide_test.cmake")
+
+# A Unity project's game with the physics packages, as their unity.json bakes it, checked against them.
+add_test(NAME tide_cli_unity_physics
+    COMMAND "${CMAKE_COMMAND}" "-DTIDE=$<TARGET_FILE:tide_cli>" "-DSOURCE=${PROJECT_SOURCE_DIR}"
+            "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/unity_physics_test"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/unity_physics_test.cmake")
 
 # tide upgrade, with a folder that stands in for the site's releases.
 add_test(NAME tide_cli_upgrade

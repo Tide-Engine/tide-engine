@@ -21,6 +21,97 @@ namespace Tide
         }
     }
 
+    // A component whose lists its inspector fills from a Mesh (its package's unity.json, "mesh"): the vertices' field
+    // (float3s), and the indices' (ints, three a triangle; none for a hull). The GameObject's MeshFilter's mesh as the
+    // component's added.
+    [AttributeUsage(AttributeTargets.Class, Inherited = false)]
+    public sealed class TideMeshAttribute : Attribute
+    {
+        public readonly string Vertices, Indices;
+
+        public TideMeshAttribute(string vertices, string indices = "")
+        {
+            Vertices = vertices;
+            Indices = indices;
+        }
+    }
+
+    // A component that makes its entity a part of another's body (its package's unity.json, "part"): `Of`, its field
+    // naming the body's GameObject (none: the nearest above with the body, which the package finds as the match starts).
+    [AttributeUsage(AttributeTargets.Class, Inherited = false)]
+    public sealed class TidePartAttribute : Attribute
+    {
+        public readonly string Of;
+
+        public TidePartAttribute(string of)
+        {
+            Of = of;
+        }
+    }
+
+    // A field that's its package's answer (a joint's force: its unity.json's "readBack"): shown in Play, never authored
+    [AttributeUsage(AttributeTargets.Field, Inherited = false)]
+    public sealed class TideReadBackAttribute : Attribute
+    {
+    }
+
+    // Where a shape is on its body, as the match has it (in the body's frame, its unity.json's "placed"), shown from the
+    // GameObject as authored: a part's from its body's GameObject, any other's divided by its scale.
+    public static class TideParts
+    {
+        static readonly System.Collections.Generic.Dictionary<Type, System.Reflection.FieldInfo> partFields =
+            new System.Collections.Generic.Dictionary<Type, System.Reflection.FieldInfo>();
+
+        // The GameObject whose body `shape`'s entity is a part of, or null for none
+        public static GameObject BodyOf(Component shape)
+        {
+            foreach (var c in shape.GetComponents<TideComponent>())
+            {
+                var type = c.GetType();
+                if (!partFields.TryGetValue(type, out var field))
+                {
+                    var part = (TidePartAttribute)Attribute.GetCustomAttribute(type, typeof(TidePartAttribute), false);
+                    field = part != null ? type.GetField(part.Of) : null;
+                    partFields[type] = field;
+                }
+                if (field?.GetValue(c) is GameObject body && body != shape.gameObject) return body;
+            }
+            return null;
+        }
+
+        static Vector3 FromBody(Vector3 value, Component shape, GameObject body)
+        {
+            var world = body.transform.position + body.transform.rotation * value;
+            return Quaternion.Inverse(shape.transform.rotation) * (world - shape.transform.position);
+        }
+
+        public static Vector3 Placed(Vector3 value, Component shape, TideScale.By by)
+        {
+            var body = BodyOf(shape);
+            return body != null ? TideScale.Unscale(FromBody(value, shape, body), shape.transform, by)
+                : TideScale.Unscale(value, shape.transform, by);
+        }
+
+        public static Vector3 Placed(Vector3 value, Component shape)
+        {
+            var body = BodyOf(shape);
+            return body != null ? FromBody(value, shape, body) : value;
+        }
+
+        public static Vector2 Placed(Vector2 value, Component shape, TideScale.By by)
+        {
+            var body = BodyOf(shape);
+            return body != null ? TideScale.Unscale((Vector2)FromBody(value, shape, body), shape.transform, by)
+                : TideScale.Unscale(value, shape.transform, by);
+        }
+
+        public static Vector2 Placed(Vector2 value, Component shape)
+        {
+            var body = BodyOf(shape);
+            return body != null ? (Vector2)FromBody(value, shape, body) : value;
+        }
+    }
+
     // A field by the GameObject's scale (its package's unity.json, "scaled"): authored without it, as Unity's colliders'
     // sizes are, baked and in the match times it. In Play a component shows its entity's value divided by it again.
     public static class TideScale
