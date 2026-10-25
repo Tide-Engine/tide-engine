@@ -44,9 +44,22 @@ crashed without diagnostics; its isolated run, five debugger runs, full suite
 and final focused round pass. No cause or source correction is claimed for that
 unreproduced crash. The web cache uses SDK 34 rather than pinned SDK 24;
 spirv-val/Vulkan layers, other native operating systems, mobile and sanitizer
-coverage remain unavailable. Paired measurements are pending; the
-historical measurements below remain evidence for their original source and
-executable.
+coverage remain unavailable.
+
+The clean origin/dev merge through 1a1e4f7f brings GPU simplex/Earth changes.
+The affected shader/HLSL, renderer, benchmark and Earth checks pass: 98 native
+(49.01 s) and 62 web (243.05 s), plus two optimized benchmark smoke checks
+(1.18 s). Render3D's regenerated C/header differ from the pre-merge build only
+in simulation build identity. No unrelated full-suite repeat is claimed.
+
+The coordinator deferred the paired timing attempt for active correctness/P1
+work before any paired measurement process or benchmark gate started. A fresh
+explicit quiet window is required. The original a1d962c9 executable remains
+frozen (SHA-256 9d3ab3ba54b734334b87e9276c331fc1bf97177583ae71802e19ae4d424d1ce9);
+the merged 90368d1e build is ready (SHA-256
+c9a5aafe13fcc1e208a1d957ee54249350cad9d5b32421ff4061dd008ef11251).
+No post-optimization timing result or speedup is claimed. Historical
+measurements below retain their original source/executable identities.
 
 ## Measured static-cube workload (2026-10-25)
 
