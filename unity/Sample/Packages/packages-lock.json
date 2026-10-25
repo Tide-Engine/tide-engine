@@ -10,7 +10,9 @@
       "version": "file:../../com.tide.unity",
       "depth": 0,
       "source": "local",
-      "dependencies": {}
+      "dependencies": {
+        "com.unity.modules.unitywebrequest": "1.0.0"
+      }
     },
     "com.unity.burst": {
       "version": "2.0.0",

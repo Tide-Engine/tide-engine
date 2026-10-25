@@ -4,7 +4,7 @@
 import { spawn } from 'node:child_process';
 import { createSocket } from 'node:dgram';
 import { once } from 'node:events';
-import { mkdtempSync, readdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -21,15 +21,27 @@ function serve(frames) {
   const server = spawn(serverPath, ['--anonymous', '--udp-only', '--port', String(port), '--frames', String(frames),
     '--shards', '2', '--shard-width', '40', '--shard-journal', folder], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'], env });
   let output = '';
-  server.stderr.on('data', chunk => { output += chunk; });
-  return { server, output: () => output, ended: once(server, 'close') };
+  const begun = Date.now();
+  // When each thing came, for a run that times out
+  let log = '';
+  const at = what => { log += `  ${((Date.now() - begun) / 1000).toFixed(2)} s: ${what}\n`; };
+  server.stderr.on('data', chunk => { output += chunk; at(String(chunk).trimEnd()); });
+  server.on('exit', (code, signal) => at(`exited (${code ?? signal})`));
+  return { server, output: () => output, log: () => log, ended: once(server, 'close') };
 }
 
 const started = Date.now();
 let phase = 'the first run';
 let current = null;
 const deadline = setTimeout(() => {
-  console.error(`timed out in ${phase}; it said: ${current?.output() ?? ''}`);
+  let kept = '';
+  try {
+    kept = readdirSync(folder).map(name => `${name} ${statSync(join(folder, name)).size}`).join(', ');
+  } catch (error) {
+    kept = String(error);
+  }
+  console.error(`timed out in ${phase}, ${((Date.now() - started) / 1000).toFixed(1)} s in; the folder has ${kept}; ` +
+    `since the run began:\n${current?.log() ?? ''}`);
   process.exit(1);
 }, 25000);
 try {
@@ -43,7 +55,7 @@ try {
   if (!kept.includes('checkpoint') || !kept.some(name => name.startsWith('shard-'))) throw new Error(`kept: ${kept}`);
   // Again: from the checkpoint and what it kept since
   for (const run of [1, 2]) {
-    phase = `run ${run + 1}, begun ${((Date.now() - started) / 1000).toFixed(1)} s in`;
+    phase = `run ${run + 1} (begun ${((Date.now() - started) / 1000).toFixed(1)} s in)`;
     const again = current = serve(200);
     const [code] = await again.ended;
     if (code !== 0 || !again.output().includes('goes on from its journal'))

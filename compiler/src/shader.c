@@ -140,9 +140,10 @@ typedef struct emit {
     VEC(shader_function) done; // The functions written, callees first, each for the lists and grids it's called with
     sb functions;
     bool helpers[H_COUNT];
-    bool lists[8]; // The shader's textures that are lists or grids whose reader is written (need_data)
-    bool finds[8]; // ...that are maps or sets whose lookup is written (need_find)
-    bool tries[8]; // ...that are maps whose TryGet is written (need_try)
+    // A draw's textures, up to 12 (TIDE_SHADER_TEXTURES)
+    bool lists[12]; // The shader's textures that are lists or grids whose reader is written (need_data)
+    bool finds[12]; // ...that are maps or sets whose lookup is written (need_find)
+    bool tries[12]; // ...that are maps whose TryGet is written (need_try)
     VEC(data_alias) aliases;   // The locals of the code being written that name a list or a grid (data_of)
     const given *spec;         // By the parameter of the function being written: the list, grid or texture it's called with
     VEC(const decl *) arrays;  // The array types whose element reader is written (need_array)
