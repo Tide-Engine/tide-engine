@@ -4,6 +4,8 @@
 //   GET /releases.json              the versions out, newest first
 //   GET /releases/<tag>.json        one version, by its tag (v0.3.0)
 //   GET /releases/<tag>/<file>      a file of it: a redirect to the download
+//   GET /releases/for/<commit>      the version a commit of tide's source is: the highest whose tag is that commit
+//                                   or one before it (Unity's Tide package, whose commit its project locks)
 //
 // The releases are a private GitHub repository's. This asks GitHub for them
 // with a token that can only read that repository (TIDE_RELEASES_TOKEN, with
@@ -24,6 +26,31 @@ const listAge = 60_000;
 const linkAge = 180_000;
 const tagsKept = 256;
 const movesFollowed = 3;
+const commitPattern = /^[0-9a-f]{7,40}$/;
+const commitAge = 600_000; // A commit's version, which a release made later at it or before it can change
+const commitsKept = 256;
+const commitsTried = 40; // Releases compared with a commit at most, highest first
+
+// Two tags as semantic versioning orders them: < 0, 0 or > 0 (a pre-release before its version, its parts by number
+// where both are numbers)
+export function compareTags(a, b) {
+    const split = (tag) => {
+        const [core, pre] = tag.slice(1).split(/-(.*)/s);
+        return { core: core.split('.').map(Number), pre: pre ? pre.split('.') : null };
+    };
+    const x = split(a), y = split(b);
+    for (let i = 0; i < 3; i++) if (x.core[i] !== y.core[i]) return x.core[i] - y.core[i];
+    if (!x.pre || !y.pre) return (x.pre ? -1 : 0) - (y.pre ? -1 : 0);
+    for (let i = 0; i < Math.max(x.pre.length, y.pre.length); i++) {
+        const p = x.pre[i], q = y.pre[i];
+        if (p === undefined || q === undefined) return p === undefined ? -1 : 1;
+        const pn = /^\d+$/.test(p), qn = /^\d+$/.test(q);
+        if (pn && qn && Number(p) !== Number(q)) return Number(p) - Number(q);
+        if (pn !== qn) return pn ? -1 : 1;
+        if (p !== q) return p < q ? -1 : 1;
+    }
+    return 0;
+}
 
 export function createReleases({ token, repo, fetch = globalThis.fetch, now = Date.now, onDownload } = {}) {
     const headers = { authorization: `Bearer ${token}`, 'user-agent': 'tide-releases', 'x-github-api-version': '2022-11-28' };
@@ -81,6 +108,28 @@ export function createReleases({ token, repo, fetch = globalThis.fetch, now = Da
         return found;
     };
 
+    // The version `commit` is: the highest release whose tag is the commit or one of those before it, as GitHub
+    // compares them (`ahead`: the commit came after the tag), or null for a commit after none or not the
+    // repository's. Kept a while, as a release made later at it or before it can be a higher one.
+    const versions = new Map(); // commit -> { at, release }
+    const versionOf = async (commit) => {
+        const had = versions.get(commit);
+        if (had && now() - had.at < commitAge) return had.release;
+        const candidates = [...await releases()].sort((a, b) => compareTags(b.tag, a.tag)).slice(0, commitsTried);
+        let found = null;
+        for (const r of candidates) {
+            const compared = await ask(`/compare/${r.tag}...${commit}`);
+            if (!compared) return null; // GitHub knows no such commit
+            if (compared.status === 'ahead' || compared.status === 'identical') {
+                found = r;
+                break;
+            }
+        }
+        if (versions.size >= commitsKept) versions.delete(versions.keys().next().value);
+        versions.set(commit, { at: now(), release: found });
+        return found;
+    };
+
     // A repository that was renamed or moved answers under its old name with
     // where it is now, on GitHub's API, before the redirect to the file. That
     // one is followed, as the token is GitHub's API's alone to see; the file's
@@ -128,6 +177,13 @@ export function createReleases({ token, repo, fetch = globalThis.fetch, now = Da
                 return true;
             }
             const parts = path.slice('/releases/'.length).split('/');
+            if (parts.length === 2 && parts[0] === 'for') {
+                const commit = parts[1].toLowerCase();
+                const found = commitPattern.test(commit) ? await versionOf(commit) : null;
+                if (found) json(res, 200, shown(found, origin));
+                else text(res, 404, 'No release is that commit or one before it.\n');
+                return true;
+            }
             if (parts.length === 1 && parts[0].endsWith('.json')) {
                 const tag = parts[0].slice(0, -'.json'.length);
                 const found = tagPattern.test(tag) ? await release(tag) : null;

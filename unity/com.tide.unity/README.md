@@ -9,13 +9,25 @@ repository's `notes/unity.md`.
 
 ## Install
 
-1. Install tide (tide-engine.dev). The package finds it on `PATH` or where the
-   installer puts it; Project Settings > Tide can name another.
-2. In Unity, Window > Package Manager > + > Add package from git URL:
+1. In Unity, Window > Package Manager > + > Add package from git URL. A
+   release tag keeps everyone on the project, and its build server, on one
+   version:
 
    ```
-   https://github.com/Tide-Engine/tide-engine.git?path=/unity/com.tide.unity#dev
+   https://github.com/Tide-Engine/tide-engine.git?path=/unity/com.tide.unity#v0.5.0-nightly.12
    ```
+
+   or `#dev` to follow the newest.
+2. The package builds with the `tide` of its own commit, which Unity locks in
+   `Packages/packages-lock.json`: a release tag is that version, any other
+   commit the newest release at it or before it. The first time, it asks to
+   install that version, beside any other `tide`, in
+   `%LOCALAPPDATA%\Tide\versions` or `~/.tide/versions` (or the folder
+   `TIDE_VERSIONS` names). A build server (Unity in batch mode, as GameCI runs
+   it) installs it with no question and nothing installed beforehand: keep
+   `TIDE_VERSIONS` in its cache to download it once. Project Settings > Tide
+   can name your own `tide` instead, kept for you alone, as for a build of tide
+   you're working on.
 
 3. Put the game's `.tide` files anywhere in `Assets`: every one is the game's,
    as every C# script is, but those in folders Unity leaves out (hidden ones,

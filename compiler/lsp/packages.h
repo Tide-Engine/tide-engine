@@ -40,6 +40,8 @@ typedef struct packages_file {
     char *name;   // `package Physics`: the package this folder is; NULL for a game
     int tide[3];  // `tide 0.3`: the oldest tide it builds with; zeros for any
     int tide_line;
+    char *pinned; // A game's `tide = 0.5.0-nightly.12`: the one tide it builds with, without the `v`; NULL for none
+    int pinned_line;
     package_line *lines;
     int count;
     // The package lines a false #if leaves out of this build: no part of it,
@@ -58,6 +60,13 @@ typedef void (*packages_report_fn)(void *user, const char *where, int line, cons
 // packages. False after reporting what's wrong with the file; what could be
 // read is in `out` either way.
 bool packages_read(const char *folder, packages_file *out, packages_report_fn report, void *user);
+
+// Whether `text` is a whole version, as `tide = ...` pins one: 0.5.0, or 0.5.0-nightly.12
+bool packages_exact_version(const char *text);
+
+// Whether a tide of `version` builds a game that pins `pinned` (`tide = ...`): that one alone, everyone working on
+// the game building the same; or a build of tide's own source (`-dev`), which is someone working on tide
+bool packages_pin_kept(const char *pinned, const char *version);
 void packages_free_file(packages_file *f);
 
 // One of a game's packages, ready to compile.

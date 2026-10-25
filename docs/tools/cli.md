@@ -20,6 +20,7 @@ tide <command> [folder] [options]
 | `tide add <source>` | Adds a package to the game in the current folder: from git, a folder, or one that comes with `tide` |
 | `tide update [package]` | Moves the game's packages from git to the newest commit of what they follow |
 | `tide eject <package>` | Copies one of the game's packages into the game's folder, to change as the game's own |
+| `tide pin [version]` | Pins the version of `tide` the game builds with, in its `tide.packages` ([Packages](../packages/using-and-writing.md)) |
 | `tide fetch [folder]` | Downloads the game's packages from git that this machine doesn't have yet, and builds nothing |
 | `tide editors` | Installs bundled plugins into detected VS Code family editors and existing JetBrains IDE profiles |
 | `tide ide <editor>` | Prints setup for Emacs, Vim or Neovim using the installed Tide files |
@@ -321,6 +322,26 @@ and an outline of what each file declares and which packages the
 game has, which the package's inspectors show. It ends when its input closes, as the editor's package closes it.
 `--once` builds once and ends. Unity and other Tide builds of the same game
 play in the same matches. This is early, and its details may change.
+
+The package builds with the version of `tide` its own commit is, which Unity
+locks in `Packages/packages-lock.json`, so a branch of the project and everyone
+on it build with one. A package that follows a release tag
+(`...com.tide.unity#v0.5.0-nightly.12`) is that version; any other commit is
+the highest release at it or before it, which the site answers
+(`https://tide-engine.dev/releases/for/<commit>`, kept in `Library/Tide`).
+Versions are installed side by side in the `versions` folder of where the
+installer puts `tide` (`%LOCALAPPDATA%\Tide\versions\<version>`,
+`~/.tide/versions/<version>`), or in the folder `TIDE_VERSIONS` names. A
+version that isn't there yet is downloaded from the site and checked against its
+release's checksums: in the editor once you say so (or Project Settings >
+Tide's Install), while the editor goes on, and in a batch run, as on a build
+server like GameCI, at once, with nothing installed beforehand. Point
+`TIDE_VERSIONS` at a folder the server keeps between builds to download each
+version once. A package in a folder on this machine has no commit: it builds
+with the `tide` on `PATH` or where the installer puts it. Your own `tide`
+command in Project Settings > Tide, kept in `UserSettings` out of source
+control, takes the place of all of these, as for a build of `tide` you're
+working on.
 
 In a Unity project the game is the whole of `Assets`: every `.tide` file in it,
 as every C# script is, but those in folders Unity leaves out (hidden ones, and

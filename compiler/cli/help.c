@@ -9,7 +9,7 @@ enum {
     LOGOUT = 1u << 4, SCHEDULE = 1u << 5, SHADERS = 1u << 6, ADD = 1u << 7,
     UPDATE = 1u << 8, EJECT = 1u << 9, FETCH = 1u << 10, PUBLISH = 1u << 11,
     EDITORS = 1u << 12, OPEN = 1u << 13, UPGRADE = 1u << 14, VERSION = 1u << 15,
-    HELP = 1u << 16, CC = 1u << 17, IDE = 1u << 18, UNITY = 1u << 19, TELEMETRY = 1u << 20,
+    HELP = 1u << 16, CC = 1u << 17, IDE = 1u << 18, UNITY = 1u << 19, TELEMETRY = 1u << 20, PIN = 1u << 21,
     COMPILE = RUN | BUILD | SCHEDULE | SHADERS | UNITY,
     FOLDERS = COMPILE | DEPLOY | FETCH | PUBLISH
 };
@@ -79,6 +79,14 @@ static const command_help commands[] = {
      "replaces its tide.packages line with that local path. It stays a package,\n"
      "with the same namespace and dependencies. An existing destination fails.\n\n"
      "Example: tide eject rooms", EJECT},
+    {"pin", "pin [version]", "Build the game with one version of tide",
+     "Writes `tide = <version>` in the current game's tide.packages: this tide's\n"
+     "version, or the one given. A tide of another version then refuses to\n"
+     "build the game, saying how to install the pinned one, so everyone working\n"
+     "on it builds the same. In a Unity project, Tide's package uses the tide\n"
+     "of its own commit, and a pin it doesn't match is an error.\n\n"
+     "Examples: tide pin\n"
+     "          tide pin 0.5.0-nightly.12", PIN},
     {"fetch", "fetch [folder]", "Download missing git packages",
      "Downloads the game's missing git packages at their pinned commits.\n"
      "Builds nothing and does not move the pins; use tide update for that.", FETCH},
@@ -329,7 +337,7 @@ static const argument_help arguments[] = {
      "where it goes, the install ID and the settings folder.", TELEMETRY},
     {"--help", "--help, -h", "Show help for a command",
      "Use tide <command> --help or tide <command> -h. For argument details,\n"
-     "use tide help <argument> or tide help <command> <argument>.", FOLDERS | LOGIN | LOGOUT | ADD | UPDATE | EJECT | EDITORS | OPEN | UPGRADE | VERSION | HELP | TELEMETRY},
+     "use tide help <argument> or tide help <command> <argument>.", FOLDERS | LOGIN | LOGOUT | ADD | UPDATE | EJECT | PIN | EDITORS | OPEN | UPGRADE | VERSION | HELP | TELEMETRY},
 };
 
 static const command_help *find_command(const char *name)

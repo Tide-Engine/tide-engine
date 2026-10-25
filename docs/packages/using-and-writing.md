@@ -105,6 +105,8 @@ github.com/someone/tide-physics b01aac4d779e32c9c415283b65e40c86d691e7ab
 
 A name is lower-case letters and digits, and it's never a folder: a folder of that name beside the game is still written as a path, `./box2d`. The line has no commit and follows no branch, since the package is the version your `tide` came with: `tide upgrade` updates both, and `tide update` leaves the line alone. So two machines build the same code of it when they have the same version of `tide`. A `tide 0.3` line in the game's `tide.packages` says the oldest one the game builds with.
 
+A `tide = 0.5.0-nightly.12` line pins the one version the game builds with, so everyone working on it, and a build server, build the same: another version refuses to build it, and says how to install the pinned one (`tide upgrade --version 0.5.0-nightly.12`). `tide pin` writes the line for the `tide` you have, or `tide pin <version>` for another. Only a game pins: a package says the oldest version it builds with. A build of `tide`'s own source (its version ends in `-dev`) builds a pinned game anyway, as someone working on `tide` would. In a Unity project, [Tide's package](../tools/cli.md#unity) builds with the version of its own commit, and a pin it doesn't match is an error.
+
 A name no package has is an error that lists the ones there are. They're folders of the installation's `src/packages` folder, each named as its line is, where the editors' go to definition takes you.
 
 ## Packages for some builds only

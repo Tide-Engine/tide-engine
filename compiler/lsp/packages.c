@@ -410,7 +410,33 @@ void packages_free_file(packages_file *f)
     free(f->path);
     free(f->folder);
     free(f->name);
+    free(f->pinned);
     memset(f, 0, sizeof *f);
+}
+
+bool packages_pin_kept(const char *pinned, const char *version)
+{
+    // A build of tide's own source (`-dev`) is someone working on tide, who builds with what they have
+    const size_t length = strlen(version);
+    if (length > 4 && strcmp(version + length - 4, "-dev") == 0) return true;
+    return strcmp(pinned, version) == 0;
+}
+
+bool packages_exact_version(const char *text)
+{
+    // Three numbers, then perhaps a pre-release of letters, digits, dots and dashes
+    const char *p = text;
+    for (int part = 0; part < 3; part++) {
+        if (!isdigit((unsigned char)*p)) return false;
+        while (isdigit((unsigned char)*p)) p++;
+        if (part < 2 && *p++ != '.') return false;
+    }
+    if (!*p) return true;
+    if (*p++ != '-' || !*p) return false;
+    for (; *p; p++) {
+        if (!isalnum((unsigned char)*p) && *p != '.' && *p != '-') return false;
+    }
+    return true;
 }
 
 // Its words, up to `max`: false if there are more.
@@ -690,11 +716,11 @@ bool packages_read(const char *folder, packages_file *out, const packages_report
                 break;
             }
         }
-        char *words[3];
-        const int count = split_words(line, words, 2);
+        char *words[4];
+        const int count = split_words(line, words, 3);
         line = next;
         if (count == 0) continue;
-        if (count > 2) {
+        if (count > 2 && !(count == 3 && strcmp(words[0], "tide") == 0 && strcmp(words[1], "=") == 0)) {
             report_at(report, user, path, number, "a line is a package and its commit, or `package Name`, or `tide 0.3`",
                       "this line has more than two words");
             ok = false;
@@ -719,8 +745,32 @@ bool packages_read(const char *folder, packages_file *out, const packages_report
             }
             continue;
         }
+        if (strcmp(words[0], "tide") == 0 && count >= 2 && strcmp(words[1], "=") == 0) {
+            // `tide = 0.5.0-nightly.12`: the game builds with that tide alone (resolve says when this isn't it)
+            const char *pin = count == 3 && words[2][0] == 'v' ? words[2] + 1 : count == 3 ? words[2] : "";
+            if (count != 3 || !packages_exact_version(pin)) {
+                report_at(report, user, path, number, "write the whole version it builds with, like `tide = 0.5.0` or "
+                          "`tide = 0.5.0-nightly.12`, as `tide version` says it (`tide pin` writes it)",
+                          "`tide =` needs a whole version");
+                ok = false;
+            } else if (out->tide_line || out->pinned_line) {
+                report_at(report, user, path, number, NULL, "the version of tide is already given on line %d",
+                          out->tide_line ? out->tide_line : out->pinned_line);
+                ok = false;
+            } else {
+                out->pinned = dup(pin);
+                out->pinned_line = number;
+            }
+            continue;
+        }
         if (strcmp(words[0], "tide") == 0) {
             int version[3];
+            if (out->pinned_line) {
+                report_at(report, user, path, number, NULL, "the version of tide is already given on line %d",
+                          out->pinned_line);
+                ok = false;
+                continue;
+            }
             if (count != 2 || !tide_version_parse(words[1], (int)strlen(words[1]), version)) {
                 report_at(report, user, path, number, "write the oldest version it builds with, like `tide 0.3`",
                           "`tide` needs a version");
@@ -1222,6 +1272,20 @@ static bool resolve(const char *folder, game_packages *out, const packages_fetch
                   "this needs tide %d.%d or newer, and this is %s", game->tide[0], game->tide[1], tide_version_text());
         ok = false;
     }
+    const char *version = tide_version_text();
+    if (game->pinned && !packages_pin_kept(game->pinned, version)) {
+        char note[256];
+        if (packages_unity_assets(game->folder)) {
+            // Unity's Tide package builds with the tide of its own commit
+            snprintf(note, sizeof note, "in a Unity project, Tide's package builds with the tide of its commit: `tide pin %s` "
+                     "pins that, or move the package to tide %s's", version, game->pinned);
+        } else {
+            snprintf(note, sizeof note, "run `tide upgrade --version %s`, or `tide pin` to pin this one", game->pinned);
+        }
+        report_at(report, user, game->path, game->pinned_line, note, "this game builds with tide %s, and this is %s",
+                  game->pinned, version);
+        ok = false;
+    }
     if (game->count == 0) return ok;
 
     // Each package the game lists, with its own tide.packages.
@@ -1289,6 +1353,11 @@ static bool resolve(const char *folder, game_packages *out, const packages_fetch
             }
             report_at(report, user, game->path, line->line, note, "%s needs tide %d.%d or newer, and this is %s",
                       pf->name, pf->tide[0], pf->tide[1], tide_version_text());
+            ok = false;
+        }
+        if (pf->pinned_line) {
+            report_at(report, user, pf->path, pf->pinned_line, "a package says the oldest tide it builds with, like `tide 0.5`",
+                      "only a game pins its tide");
             ok = false;
         }
         bool taken = false;

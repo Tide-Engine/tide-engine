@@ -7,22 +7,44 @@ using UnityEngine;
 
 namespace Tide.Editor
 {
-    // Finds the tide command: the project's setting, then PATH, then where
-    // tide's installer puts it (%LOCALAPPDATA%\Tide\bin on Windows, ~/.tide/bin
+    // Finds the tide command: yours (Project Settings > Tide, your own setting), then the version this package's
+    // commit is, installed side by side (TideVersions: installing it when asked to), then for a package that isn't
+    // from git PATH, then where tide's installer puts it (%LOCALAPPDATA%\Tide\bin on Windows, ~/.tide/bin
     // elsewhere). Nothing about this machine is written into the project.
     public static class TideToolchain
     {
         static string ExecutableName => Application.platform == RuntimePlatform.WindowsEditor ? "tide.exe" : "tide";
 
-        // The tide command's full path, or null; `where` says how it was found, or what to do.
-        public static string Find(out string where)
+        // Whether the tide Find gave is the package's own version: its daily look for a newer one says nothing
+        public static bool Pinned { get; private set; }
+
+        // The tide command's full path, or null; `where` says how it was found, or what to do. `install`: the
+        // package's version may be installed, now in a batch run (a build server), or in the editor once you say so;
+        // `wait`: now in the editor too, as a player build waits for it.
+        public static string Find(out string where, bool install = true, bool wait = false)
         {
-            var set = TideSettings.instance.tidePath;
+            Pinned = false;
+            var set = TideUserSettings.Loaded.tidePath;
             if (!string.IsNullOrEmpty(set))
             {
-                where = "the project's setting";
+                where = "your setting";
                 if (File.Exists(set)) return Path.GetFullPath(set);
-                where = $"The tide command set in Project Settings > Tide isn't there: {set}";
+                where = $"Your tide command set in Project Settings > Tide isn't there: {set}";
+                return null;
+            }
+            var wanted = TideVersions.Wanted(out var why);
+            if (wanted != null)
+            {
+                Pinned = true;
+                if (install) return TideVersions.Ensure(wanted, out where, wait);
+                var exe = TideVersions.Executable(wanted);
+                where = exe != null ? $"tide {wanted}, which this project's Tide package is"
+                    : $"This project's Tide package builds with tide {wanted}, which isn't installed";
+                return exe;
+            }
+            if (why != null)
+            {
+                where = $"This project's Tide package is from git, and {why}";
                 return null;
             }
             var path = Environment.GetEnvironmentVariable("PATH") ?? "";

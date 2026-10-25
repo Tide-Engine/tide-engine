@@ -140,6 +140,15 @@ static int command_main(const int argc, char **argv)
         return tide_update(folder, (const char *const *)argv + 2, argc - 2);
     }
 
+    if (strcmp(command, "pin") == 0) {
+        if (argc > 3 || (argc == 3 && argv[2][0] == '-')) {
+            fprintf(stderr, "tide: pin takes the version to pin, or none for this tide's, like `tide pin 0.5.0`\n");
+            return 2;
+        }
+        char *folder = command_folder(path_absolute("."));
+        return tide_pin(folder, argc == 3 ? argv[2] : NULL);
+    }
+
     if (strcmp(command, "eject") == 0) {
         if (argc != 3 || argv[2][0] == '-') {
             fprintf(stderr, "tide: eject takes the name of one of the game's packages, like `tide eject rooms`\n");

@@ -191,6 +191,44 @@ TIDE_TEST(cli_packages_files_say_what_they_are)
     packages_free_file(&f);
 }
 
+// `tide = 0.5.0-nightly.12` pins the one tide a game builds with: written with or without its `v`, a whole version,
+// once, and not beside `tide 0.3`. Only that tide keeps it, and a build of tide's own source (`-dev`) builds anyway.
+TIDE_TEST(cli_packages_pin_one_tide)
+{
+    char *dir = write_packages("pin", "# The game\ntide = v0.5.0-nightly.12  # everyone's\n../shared\n");
+    packages_file f;
+    reports r = {0};
+    TIDE_CHECK(packages_read(dir, &f, collect, &r));
+    TIDE_CHECK(r.count == 0);
+    TIDE_CHECK(f.pinned && strcmp(f.pinned, "0.5.0-nightly.12") == 0 && f.pinned_line == 2 && f.tide_line == 0);
+    TIDE_CHECK(f.count == 1);
+    packages_free_file(&f);
+    free(dir);
+
+    dir = write_packages("pin_mistakes", "tide = 0.5\n"            // Not whole
+                                         "tide = 0.5.0 0.6.0\n"     // A word too many
+                                         "tide = 0.5.0-\n"          // An empty pre-release
+                                         "tide = 0.5.0\n"
+                                         "tide 0.3\n"               // Given already, as a pin
+                                         "tide = 0.6.0\n");         // ...again
+    r = (reports){0};
+    TIDE_CHECK(!packages_read(dir, &f, collect, &r));
+    TIDE_CHECK(r.count == 5);
+    TIDE_CHECK(f.pinned && strcmp(f.pinned, "0.5.0") == 0 && f.pinned_line == 4);
+    TIDE_CHECK(r.last_line == 6 && strstr(r.last, "already given on line 4"));
+    packages_free_file(&f);
+    free(dir);
+
+    TIDE_CHECK(packages_exact_version("0.5.0") && packages_exact_version("12.0.3-nightly.7")
+               && packages_exact_version("1.0.0-rc.1"));
+    TIDE_CHECK(!packages_exact_version("0.5") && !packages_exact_version("v0.5.0") && !packages_exact_version("0.5.0-")
+               && !packages_exact_version("0.5.x") && !packages_exact_version(""));
+    TIDE_CHECK(packages_pin_kept("0.5.0-nightly.12", "0.5.0-nightly.12"));
+    TIDE_CHECK(!packages_pin_kept("0.5.0-nightly.12", "0.5.0-nightly.13"));
+    TIDE_CHECK(!packages_pin_kept("0.5.0", "0.5.0-nightly.12"));
+    TIDE_CHECK(packages_pin_kept("0.4.0", "0.5.0-dev")); // Someone working on tide
+}
+
 // Everything reported, a line each: "<line>: <message> (<note>)".
 typedef struct said {
     char text[4096];
