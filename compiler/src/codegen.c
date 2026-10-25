@@ -2688,6 +2688,11 @@ static void gen_binary(gen *g, sb *o, const tok_kind op, expr *l, expr *r, const
         sb_put(o, op == T_EQ ? "== (" : "!= ("); gen_expr(g, o, r); sb_put(o, ").id)");
         return;
     }
+    if (lt.kind == TY_STRUCT && lt.decl->asset_ref_of && (op == T_EQ || op == T_NE)) {
+        sb_put(o, "(("); gen_expr(g, o, l); sb_put(o, ").id ");
+        sb_put(o, op == T_EQ ? "== (" : "!= ("); gen_expr(g, o, r); sb_put(o, ").id)");
+        return;
+    }
     if (lt.kind == TY_STRUCT && lt.decl == g->prog->audience && (op == T_EQ || op == T_NE)) {
         sb_put(o, op == T_EQ ? "tide_audience_equal(" : "!tide_audience_equal(");
         gen_expr(g, o, l);
@@ -10130,8 +10135,19 @@ static void gen_component_access(gen *g)
                 sb_printf(o, "    case %d: ", a);
                 // A sparse one the row hasn't got isn't there to load or store
                 if (comp_sparse(g, c)) sb_printf(o, "if (!%s) return false; ", presence_cell(g, "w", a, c, "loc.row", false));
-                sb_printf(o, "tide_table_%s(&w->%s, %s, loc.row, %d, %du, %du, v); return true;\n", put ? "scatter" : "gather",
-                          arch_name(g, a), arch_columns(g, a), arch_column(g, a, c), lanes, width);
+                if (put) {
+                    sb_printf(o, "tide_table_scatter(&w->%s, %s, loc.row, %d, %du, %du, v); return true;\n",
+                              arch_name(g, a), arch_columns(g, a), arch_column(g, a, c), lanes, width);
+                } else {
+                    // As tide_gather_<Component>, with fixed-size copies of every lane, including padding.
+                    // tide_table_get supplies the current chunk/row stride without retaining lane pointers.
+                    sb_put(o, "\n");
+                    for (int k = 0; k < lanes; k++) {
+                        sb_printf(o, "        memcpy((uint8_t *)v + %d, tide_table_get(&w->%s, %s, loc.row, %d), %d);\n",
+                                  k * width, arch_name(g, a), arch_columns(g, a), arch_column(g, a, c) + k, width);
+                    }
+                    sb_put(o, "        return true;\n");
+                }
             }
             sb_put(o, "    default: return false;\n    }\n}\n\n");
         }

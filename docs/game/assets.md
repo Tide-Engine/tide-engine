@@ -195,6 +195,11 @@ reads the currently loaded mesh; the stored reference survives geometry reloads
 and world snapshots. `default` reads an empty mesh. The compiler rejects missing
 assets and mismatched vertex types. A borrowed mesh variable or a collection
 element cannot become a persistent reference in this first version.
+Use `==` and `!=` to compare references of the same mesh type, including aliases:
+`model.model == rock` or `model.model != default`. Equality identifies the named
+declaration, so reloading its geometry preserves equality; two declarations
+naming identical files remain different. References have no ordering or public
+numeric identity.
 The [native editor](../tools/editors.md#native-scene-editor) can browse, assign
 and preview these fields; your views still choose materials and drawing.
 

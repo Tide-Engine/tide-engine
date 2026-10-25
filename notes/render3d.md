@@ -1,5 +1,53 @@
 # Render3D package
 
+## CPU recording preparation (2026-10-25)
+
+The owner requested further performance work after the static-cube measurements.
+Existing per-view profiling identifies Cast and DrawMesh as the recording work;
+light collection and pass setup are small in the 1,000-cube/eight-view probe.
+Private sparse inner timers also identify both hierarchy resolution and shaded
+recording, with material timer overhead. These diagnostic means are attribution
+probes, not a gated before/after performance result.
+
+Cast prepares current visible, shadow-casting query rows once per invocation.
+Contiguous mesh-reference and transform-handedness runs share a transform list
+across the light views. Single-item runs retain ordinary Mesh submission and
+store their matrix inline, avoiding a list allocation for every distinct mesh.
+Larger runs use existing Instanced drawing after each view's camera and clip
+are set. Winding uses the runtime's exact determinant expression and operation
+order; splitting there retains prepared LOD ordering across mirrored runs.
+The existing per-view LOD/culling behavior, geometry, AtlasVertex, depth, atlas
+gutters and receiver shading remain the drawing runtime's.
+
+Prepared values are scratch-local to this Cast invocation, rebuilt from current
+mesh selection, hierarchy and flags. There is no cross-frame scene cache or new
+renderer state/lifetime. Zero shadow views skip preparation while retaining
+Cast's destination clip reset. DrawMesh/material
+textures, configured callbacks and numeric instance values retain their existing
+path. The compiler's fixed-size component loads and owner-approved typed asset
+identity comparison are documented in language.md; no runtime API was added.
+
+The independent original per-caster reference compares prepared geometry,
+instance bytes, winding, LOD order, camera/clip state, full-frame pixels and
+atlas depth, including dynamic changes, A/B/A meshes, hierarchy shear and
+mirroring, more than 256 transforms, all point faces and no-view state. Review
+found a per-view nested-list copy; direct indexed reads remove it, confirmed in
+generated C. Final state review also confirms the no-view clip reset witness.
+
+Full native debug passes all 2,726 enabled CTests (181.02 s), followed by all
+nine focused Render3D/benchmark checks after the no-view clip completion (6.81 s).
+Full web debug passes all 2,622 enabled CTests (572.99 s); all eleven focused
+web Render3D/benchmark checks pass after the clip completion (93.89 s), including
+WebGL, ANGLE D3D11 and WebGPU. Optimized native Vulkan/OpenGL benchmark quick
+checks pass (two CTests, 1.45 s). The production docs build passes. One earlier existing OpenGL pixel process
+crashed without diagnostics; its isolated run, five debugger runs, full suite
+and final focused round pass. No cause or source correction is claimed for that
+unreproduced crash. The web cache uses SDK 34 rather than pinned SDK 24;
+spirv-val/Vulkan layers, other native operating systems, mobile and sanitizer
+coverage remain unavailable. Paired measurements are pending; the
+historical measurements below remain evidence for their original source and
+executable.
+
 ## Measured static-cube workload (2026-10-25)
 
 `bench_render3d` measures source a1d962c99d93657d23f79ba54b0c836f635905e8,

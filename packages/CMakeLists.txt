@@ -23,7 +23,27 @@ tide_add_game(tide_render3d_pipeline SOURCES render3d/test/pipeline.tide NAME ga
 target_include_directories(tide_render3d_pipeline PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 add_test(NAME tide_render3d_pipeline COMMAND tide_render3d_pipeline)
 
+tide_add_game(tide_render3d_shadow_batches SOURCES render3d/test/shadow_batches.tide NAME game
+    PACKAGES Render3D ${render3d_sources}
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" render3d/test/shadow_batches_test.c)
+target_include_directories(tide_render3d_shadow_batches PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tide_render3d_shadow_batches COMMAND tide_render3d_shadow_batches)
+
 if(TARGET tide_platform AND NOT TIDE_ANDROID)
+    tide_add_game(tide_render3d_shadow_batches_pixels SOURCES render3d/test/shadow_batches.tide NAME game
+        PACKAGES Render3D ${render3d_sources} HOST render3d/test/shadow_batches_test.c)
+    target_compile_definitions(tide_render3d_shadow_batches_pixels PRIVATE SHADOW_BATCHES_GPU)
+    target_link_libraries(tide_render3d_shadow_batches_pixels PRIVATE tide_platform)
+    if(TIDE_WEB)
+        tide_web_page(tide_render3d_shadow_batches_pixels SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
+        tide_add_web_test(tide_render3d_shadow_batches_pixels TARGET tide_render3d_shadow_batches_pixels
+            WEBGPU EXPECT "renderer: WebGPU" D3D11)
+    else()
+        add_test(NAME tide_render3d_shadow_batches_pixels COMMAND tide_render3d_shadow_batches_pixels)
+        add_test(NAME tide_render3d_shadow_batches_pixels_opengl COMMAND tide_render3d_shadow_batches_pixels)
+        tide_gpu_test(tide_render3d_shadow_batches_pixels)
+        tide_gpu_test(tide_render3d_shadow_batches_pixels_opengl OPENGL)
+    endif()
     tide_add_game(tide_render3d_pixels SOURCES render3d/test/pipeline.tide NAME game
         PACKAGES Render3D ${render3d_sources} HOST render3d/test/pixels.c)
     target_link_libraries(tide_render3d_pixels PRIVATE tide_platform)

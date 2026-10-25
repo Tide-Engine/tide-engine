@@ -28,6 +28,10 @@ if(TIDE_PLATFORM)
     target_compile_definitions(tidec_e2e_rows PRIVATE TIDE_ROWS_THREADS=1)
 endif()
 tide_e2e_test(world) # Other entities' components through the World
+tide_e2e_test(component_loads) # Fixed-size entity loads preserve full layouts, current pages and absence on both worlds
+add_test(NAME tidec_component_loads_codegen
+    COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_component_loads/game.c"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/component_loads_codegen.cmake")
 tide_e2e_test(world_set_own) # ...and this entity's own, beside a parameter that reads it
 
 tide_e2e_test(world_set_read) # Read parameters follow preceding cross-entity Set writes and snapshot page replacement

@@ -1,5 +1,52 @@
 # Language features, as tidec builds them
 
+## Constant-size component loads and typed asset equality (2026-10-25)
+
+These are separate compiler changes during the Render3D CPU recording work.
+Entity component loads now emit the existing gather convention's fixed-size
+`memcpy` per lane through inline `tide_table_get`, replacing the generic gather
+call inside private generated `tide_load_<Component>` helpers. Canonical layout
+still supplies the lane width, byte offsets and padding, and the existing table
+descriptor supplies chunk/row addressing. Match/local placement, entity-generation
+and sparse-presence checks, missing-value behavior, copies and current-page reads
+are unchanged. Empty components keep their existing one-byte C representation.
+Stores, runtime functions/interfaces, storage and deterministic arithmetic are
+unchanged. There is no retained pointer or cache. `component_loads` covers 1/2/4
+byte lanes, exact padded layouts, aliases, second-chunk match/local rows, current
+replacement pages with an immutable snapshot, tags and absent/stale entities or
+components. Its generated-C check also rejects a return to generic entity loads.
+Existing world_functions/world_set_read/world_set_mut, sparse, rows, transforms
+and type_aliases retain broader semantic coverage.
+
+The owner separately approved typed asset identity equality. `==`/`!=` accept
+the same canonical Asset<Mesh<V>> type and compare its existing stable identity;
+the hidden field remains hidden. Existing contextual named-asset/default
+conversions apply, with no new implicit conversions, ordering, cross-vertex-type
+comparison, runtime call or worker/GPU capability. Known-reference bool folding
+uses declaration identity (collisions remain compile errors), including empty
+reference constants. Ordinary ordered operands preserve once-only evaluation and
+snapshots beside writes. asset_references and alias_assets cover same/different
+names, equal geometry under different names, aliases/helpers/defaults, constant
+folding, side-effect order, unknown received identities through packed state and
+changed geometry on reload. Diagnostics pin ordering, incompatible vertex types
+and borrowed mesh comparison. The provisional checked-reference spec and asset
+guide describe the approved behavior.
+
+Final compiler validation: warning-free full native/web debug builds; all 2,726
+enabled native CTests pass (181.02 s), as do all 2,622 enabled web CTests
+(572.99 s). The production docs build passes. The earlier 14 focused native
+checks also pass, including generated-C loads, equality diagnostics and existing
+hidden-field/borrowed-value/worker boundaries. Final independent compiler review
+is clean; compiler source did not change after the full suites. Web validation
+uses the existing SDK 34 cache rather than pinned SDK 24. Standalone spirv-val,
+Vulkan validation layers, other operating systems, mobile and sanitizer coverage
+remain unavailable on this machine. The later package-only zero-view clip
+completion passes nine targeted native checks (6.81 s), eleven web checks
+(93.89 s), including WebGL/D3D11/WebGPU, and both optimized native Vulkan/OpenGL
+quick checks (1.45 s). Its final state review is clean; no compiler changed or
+full suite rerun was needed for that package completion. No performance result
+is claimed here; no runtime source changed.
+
 ## Transparent type aliases (2026-10-24)
 
 Owner-approved general language feature: `using Name = Type;` declares a

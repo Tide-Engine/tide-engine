@@ -55,4 +55,6 @@ system Read(mut Probe probe, World world)
     probe.forwarded = Indices(single);
     ModelReference none = default;
     probe.empty = Indices(none);
+    Debug.Assert(reference == probe.held && single == probe.held && probe.held != qualified);
+    Debug.Assert(none == default && default != reference);
 }

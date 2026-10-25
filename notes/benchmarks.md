@@ -1,5 +1,43 @@
 # Benchmarks
 
+## Render3D before/current package runner (2026-10-25)
+
+`bench/render3d/run-paired.ps1` readies the CPU-performance comparison against
+the frozen `a1d962c9` executable (SHA-256
+`9d3ab3ba54b734334b87e9276c331fc1bf97177583ae71802e19ae4d424d1ce9`).
+Unlike `run.ps1`'s package/cached-direct comparison, both executable inputs use
+`--ways package --repeat 1 --frames 100 --warmup 20`. Every selected count/case
+gets three adjacent process pairs, alternating before/current, current/before,
+before/current, with identical lights, shadows and resolution. Each process
+saves its full final 1920x1080 PNG. Both binaries, historical workload evidence,
+current relevant source/generated-C/pack/build inputs, logs, rows and captures
+are copied/hashed; current source-to-binary correspondence is the caller's duty.
+Workload bytes are pinned, including the exact documented `game.tide`
+batching-comment correction; no other workload source variation is accepted.
+
+The shared `Local\TideClaudeContinuationBenchmark` gate, known repository Node
+WASI/browser-runner detection and 250 ms contention polling remain. Quiet time
+defaults to 90 continuous seconds; an explicit override is recorded. Gate/quiet
+waits stop at ten minutes and each process at fifteen; only owned children are
+stopped. Inventory failures stop the runner. Failed, partial, contended and
+adverse attempts stay intact; existing evidence directories are refused.
+
+The offline standard-library `compare-paired.py` verifier checks raw hashes,
+three-pair launch/argument identities, world hashes and equal counts/calls/
+uploads/lights/shadow views across binaries and rounds. It requires 100 GPU
+samples per row and compares all captured RGB pixels, retaining PNG/RGB hashes
+(PNG omits alpha; the host's separate in-process check compares native RGBA).
+Summaries retain every process median/p95 and paired ratio, mark contention and
+do not pool frames or add CPU/GPU intervals. README documents invocation and
+the caller's build/validation responsibilities. This runner work adds no
+performance result; actual validation and timing remain with the coordinator.
+Local checks are limited to PowerShell/Python syntax and isolated synthetic
+mocks: known runner/inventory failure detection, CRT quoting, quiet completion
+and deadline rejection, six-process evidence verification, adverse/contention
+retention and missing/changed arguments, world hashes or full-frame RGB rejection.
+No build, engine/compiler/game/browser/GPU execution or timing was performed
+for this runner task.
+
 ## Render3D measured static cubes (2026-10-25)
 
 Measured `a1d962c99d93657d23f79ba54b0c836f635905e8`, native optimized Vulkan,

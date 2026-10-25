@@ -1855,6 +1855,9 @@ the asset name; the compiler validates the referenced asset and its type. The
 editor previews its geometry, while game views decide how to render it (owner,
 2026-10-12).
 
+References of the same canonical asset-reference type support `==` and `!=` by
+stable declaration identity, independently of geometry reloads (owner, 2026-10-25).
+
 ### Provisional
 
 The first implementation uses `Asset<Mesh<V>>`. A matching singular mesh asset
@@ -1869,6 +1872,16 @@ reads an empty mesh; unknown received identities do too. The reference stores
 only a stable numeric identity derived from the qualified asset name. Geometry
 replacement preserves it; changing the declaration name changes it. Identity
 collisions are compile errors. No pointer or runtime type registry enters a world.
+
+`==` and `!=` compare references of the same canonical `Asset<Mesh<V>>` type by
+that stable declaration identity. Geometry reloads do not change equality, and
+different declarations remain different even when their geometry is identical.
+Two empty references are equal. Unknown received identities compare by their
+stored identity; resolving both to empty meshes does not make them equal.
+Aliases preserve the canonical type. A matching named asset and `default` use
+their existing conversions when the other operand supplies the reference type.
+References to different vertex types do not compare. Ordering and direct access
+to the stored identity are not supported.
 
 This initial type supports singular static meshes only. Collection elements,
 skinned models, other resource types, JSON asset-name serialization and persistent

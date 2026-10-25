@@ -356,6 +356,25 @@ view FinishLights(mut Renderer renderer)
 
 struct ShadowTile { float4 uvRect; }
 
+// Rebuilt from current caster values for this invocation, then shared by the
+// light views. Contiguous runs retain the existing mesh and winding boundaries.
+struct ShadowBatch
+{
+    Asset<Mesh3D> mesh;
+    bool mirrored;
+    int count;
+    float4x4 first;
+    List<float4x4> transforms;
+}
+
+bool Mirrors(float4x4 matrix)
+{
+    // Match the drawing runtime's determinant, including its operation order.
+    return matrix.c0.x * (matrix.c1.y * matrix.c2.z - matrix.c1.z * matrix.c2.y)
+         + matrix.c0.y * (matrix.c1.z * matrix.c2.x - matrix.c1.x * matrix.c2.z)
+         + matrix.c0.z * (matrix.c1.x * matrix.c2.y - matrix.c1.y * matrix.c2.x) < 0;
+}
+
 vert AtlasVertex(mut MeshVertex vertex, out float4 clip, ShadowTile tile)
 {
     float4 raw = this.clip;
@@ -368,6 +387,35 @@ vert AtlasVertex(mut MeshVertex vertex, out float4 clip, ShadowTile tile)
 view Cast(Renderer renderer, World world, query (MeshRenderer mesh, with Material) casters)
 {
     if (!renderer.enabled || !renderer.ready) return;
+    if (renderer.shadowViews.count == 0)
+    {
+        renderer.shadowMap.SetClip();
+        return;
+    }
+    mut List<ShadowBatch> batches = [];
+    mut ShadowBatch current = default;
+    foreach (var caster in casters)
+    {
+        if (!caster.mesh.visible || !caster.mesh.castShadows) continue;
+        var transform = world.LocalToWorld(caster.entity);
+        bool mirrored = Mirrors(transform);
+        if (current.count > 0 &&
+            (current.mesh != caster.mesh.mesh || current.mirrored != mirrored))
+        {
+            batches.Add(current);
+            current = default;
+        }
+        current.mesh = caster.mesh.mesh;
+        current.mirrored = mirrored;
+        if (current.count == 0) current.first = transform;
+        else
+        {
+            if (current.count == 1) current.transforms.Add(current.first);
+            current.transforms.Add(transform);
+        }
+        current.count++;
+    }
+    if (current.count > 0) batches.Add(current);
     foreach (var shadow in renderer.shadowViews)
     {
         renderer.shadowMap.SetCamera(shadow.camera, shadow.projection);
@@ -376,11 +424,16 @@ view Cast(Renderer renderer, World world, query (MeshRenderer mesh, with Materia
             renderer.shadowMap.SetClip(Rect(shadow.uvRect.x * renderer.atlasSize, shadow.uvRect.y * renderer.atlasSize,
                                            shadow.uvRect.z * renderer.atlasSize, shadow.uvRect.w * renderer.atlasSize));
         }
-        foreach (var caster in casters)
+        // Read the prepared list in place: copying a batch would copy its
+        // nested transforms again for every light view.
+        for (var i = 0; i < batches.count; i++)
         {
-            if (!caster.mesh.visible || !caster.mesh.castShadows) continue;
-            renderer.shadowMap.Mesh(caster.mesh.mesh.Value, world.LocalToWorld(caster.entity),
-                                    AtlasVertex, ShadowTile { uvRect = shadow.uvRect });
+            if (batches[i].count == 1)
+                renderer.shadowMap.Mesh(batches[i].mesh.Value, batches[i].first,
+                                        AtlasVertex, ShadowTile { uvRect = shadow.uvRect });
+            else
+                renderer.shadowMap.Instanced(batches[i].mesh.Value, batches[i].transforms,
+                                            AtlasVertex, ShadowTile { uvRect = shadow.uvRect });
         }
     }
     renderer.shadowMap.SetClip();

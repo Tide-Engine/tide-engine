@@ -184,3 +184,58 @@ The runner does not alter the shared results ledger. Preserve adverse attempts
 as well as final ones; the final measurement report should cite the exact
 executable/source identity, observed clock range, sample counts and unavailable
 platform coverage. No performance claim is made by adding the harness.
+
+## Before/current package pairs
+
+`run-paired.ps1` compares **two already-built executables**, both measuring the
+package path. The old input defaults to
+`build/render3d-perf/baseline/bench_render3d.exe`, frozen from
+`a1d962c99d93657d23f79ba54b0c836f635905e8`; its required SHA-256 is
+`9d3ab3ba54b734334b87e9276c331fc1bf97177583ae71802e19ae4d424d1ce9`.
+The current input is `<CurrentBuildDirectory>/bin/bench_render3d.exe`
+(`build/release` by default). Build and validate it separately, then supply the
+actual built source identity, including local changes, as `-CurrentRevision`.
+The runner does not build, execute quick checks, query Git or change its state.
+
+```powershell
+$env:TIDE_HIDDEN = '1'
+pwsh bench/render3d/run-paired.ps1 -Label render3d-cpu-pairs -CurrentRevision '<built source identity>' -MonitorClocks
+python bench/render3d/compare-paired.py build/render3d-measurements/render3d-cpu-pairs --output build/render3d-measurements/render3d-cpu-pairs/summary.json
+```
+
+Each selected count/case runs in its own process so its final full-frame capture
+is retained. Three adjacent pairs alternate before/current, current/before,
+before/current. Both inputs always receive `--ways package --repeat 1
+--frames 100 --warmup 20`, the same count, case, light/budget overrides and
+shadow-cell request. Defaults select all twelve configurations (72 processes,
+7,200 measured frames). `-Counts 1000,10000 -Cases point,mixed` selects four
+configurations (24 processes). Light overrides use `-Directional`, `-Point`,
+`-Spot`, `-ShadowMaps` and `-ShadowResolution`, as in `run.ps1`.
+
+The same shared mutex, known repository WASI/browser-runner command-line
+detection, 250 ms polling, ten-minute gate/quiet limits, fifteen-minute process
+limit and owned-child cleanup apply. Process-inventory failures stop this
+runner. Continuous quiet time defaults to 90 seconds; `-QuietSeconds` changes it
+only when explicitly passed and records the override. Sources, generated C,
+pack/build inputs, sealed baseline evidence and both executable copies are
+retained and hashed before the full quiet window. The workload/host/direct/mesh
+source bytes must match the historical evidence, accepting only the separately
+pinned, documented batching-comment correction in `game.tide`. Both comment
+variants' identities are retained. Snapshots identify inputs;
+the caller remains responsible for matching the current build to those sources.
+
+Run the Python standard-library verifier **after timing**. It verifies raw
+artifact hashes, process/round/argument identities, work and world hashes across
+all six processes per configuration, and requires all 100 GPU samples per row.
+It checks every decoded RGB byte of the 1920x1080 captures across both revisions
+and rounds, retaining separate PNG/RGB SHA-256s. Tide's PNG encoder omits alpha;
+the host's existing in-process package/direct check separately compares native
+RGBA. `scene_digest` is intentionally excluded from cross-process comparisons.
+Only Tide's RGB8/filter-zero capture format is accepted.
+
+The summary retains all three per-process medians/p95s and paired ratios,
+including adverse and contended timings. It marks contention and abandoned-gate
+comparisons, never filters or retries them. Failed/partial attempts remain in
+their original evidence directory and cannot produce a verified summary. A new
+label/directory is required for a rerun; existing summary output is also refused.
+CPU/GPU overlap and synchronized readback limits described above still apply.

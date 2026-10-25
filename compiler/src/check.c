@@ -8074,7 +8074,9 @@ static void note_missing_operator(const tok_kind op, const type l, const type r,
 {
     const type t = l.kind == TY_STRUCT ? l : r;
     const bool comparison = op == T_EQ || op == T_NE || op == T_LT || op == T_LE || op == T_GT || op == T_GE;
-    if (t.decl && t.decl->builtin && t.decl->fields.count) { // Random, Vertex: nowhere to declare an operator
+    if (t.decl && t.decl->asset_ref_of) {
+        diag_note("asset references compare with '==' and '!=' between the same Asset<Mesh<V>> type");
+    } else if (t.decl && t.decl->builtin && t.decl->fields.count) { // Random, Vertex: nowhere to declare an operator
         diag_note("%s is the engine's, and has no operators: work with its fields, like 'a." STR_FMT " %s b." STR_FMT "'",
                   type_name(t), STR_ARG(t.decl->fields.items[0].name), op_symbol(op), STR_ARG(t.decl->fields.items[0].name));
     } else if (unary) {
@@ -8205,6 +8207,7 @@ static type binary_result(const program *prog, const tok_kind op, const type l, 
 {
     *overload = NULL;
     if (l.kind == TY_ERROR || r.kind == TY_ERROR) return T_ERR;
+    if ((op == T_EQ || op == T_NE) && l.kind == TY_STRUCT && l.decl->asset_ref_of && same_type(l, r)) return T_BOOL_;
     if ((op == T_EQ || op == T_NE) && l.kind == TY_STRUCT && r.kind == TY_STRUCT
         && l.decl == prog->visibility_group && r.decl == prog->visibility_group) return T_BOOL_;
     // Two audiences are equal when they have the same players
@@ -10594,9 +10597,17 @@ static type check_expr_any_raw(checker *c, expr *e)
             c->short_circuit_side = "on the right side of && or ||";
         }
         c->input_value = e->rhs;
-        type r = e->rhs == dflt ? T_ERR : compared && e->rhs->enum_shorthand ? check_expr_want(c, e->rhs, l) : check_expr(c, e->rhs);
+        type r = e->rhs == dflt ? T_ERR
+            : compared && (e->rhs->enum_shorthand || (l.kind == TY_STRUCT && l.decl->asset_ref_of))
+                ? check_expr_want(c, e->rhs, l) : check_expr(c, e->rhs);
         c->input_value = previous_input;
         if (infer_left) l = check_expr_want(c, e->lhs, r);
+        // A typed reference supplies the existing named-asset conversion on either side.
+        // Borrowed mesh values and references to other vertex types still do not convert.
+        if (compared && l.kind == TY_STRUCT && l.decl->asset_ref_of && e->rhs != dflt)
+            r = check_expr_want_checked(c, e->rhs, l, true);
+        if (compared && r.kind == TY_STRUCT && r.decl->asset_ref_of && e->lhs != dflt)
+            l = check_expr_want_checked(c, e->lhs, r, true);
         if (short_circuit) {
             c->short_circuit_depth--;
             c->short_circuit_side = outer_side;
@@ -12038,6 +12049,33 @@ static bool fold_int(const expr *e, int64_t *out)
     }
 }
 
+// A known reference names its declaration independently of the loaded geometry.
+// Zero is distinct from every named declaration, including when that asset is absent.
+static bool fold_asset_reference(const expr *e, const decl **asset)
+{
+    if (e->type.kind != TY_STRUCT || !e->type.decl->asset_ref_of) return false;
+    if (e->kind == E_DEFAULT) {
+        *asset = NULL;
+        return true;
+    }
+    if (e->asset_reference && e->bind == BIND_ASSET) {
+        *asset = e->constant;
+        return true;
+    }
+    if ((e->kind == E_NAME || e->kind == E_MEMBER) && e->bind == BIND_CONST) {
+        const decl *k = e->constant;
+        return k->index == 2 && fold_asset_reference(k->value, asset);
+    }
+    bool condition;
+    if (e->kind == E_CONDITIONAL && fold_bool(e->cond, &condition))
+        return fold_asset_reference(condition ? e->lhs : e->rhs, asset);
+    if (e->kind == E_SWITCH) {
+        const int choice = switch_choice(e);
+        return choice >= 0 && fold_asset_reference(e->args.items[choice], asset);
+    }
+    return false;
+}
+
 // Conditions of compile-time integer choices: bool constants, comparisons
 // of known integers and bools, and the same short-circuit logic as at runtime.
 bool fold_bool(const expr *e, bool *out)
@@ -12062,6 +12100,14 @@ bool fold_bool(const expr *e, bool *out)
         return true;
     }
     if (e->kind != E_BINARY || e->method || e->type.kind != TY_BOOL) return false;
+    if ((e->op == T_EQ || e->op == T_NE) && e->lhs->type.kind == TY_STRUCT && e->lhs->type.decl->asset_ref_of
+        && same_type(e->lhs->type, e->rhs->type)) {
+        const decl *a;
+        const decl *b;
+        if (!fold_asset_reference(e->lhs, &a) || !fold_asset_reference(e->rhs, &b)) return false;
+        *out = e->op == T_EQ ? a == b : a != b;
+        return true;
+    }
     if (e->lhs->type.kind == TY_BOOL && fold_bool(e->lhs, &l)) {
         if ((e->op == T_AND && !l) || (e->op == T_OR && l)) {
             *out = l;

@@ -1,0 +1,255 @@
+// The reference below deliberately retains the original per-caster Mesh loop.
+// It must not share preparation, grouping, transforms or handedness with Cast.
+scene Main;
+asset Render3D.Mesh3D batchQuad = "quad.obj";
+asset Render3D.Mesh3D batchOther = "slanted.obj";
+[LOD] asset Render3D.Mesh3D batchLod = "shadow_batches_lod.obj";
+
+component ShadowItem { int index; }
+component ShadowParent { }
+singleton ShadowState
+{
+    bool built;
+    int step;
+    Entity parent;
+    Entity alternate;
+}
+local singleton ShadowProbe
+{
+    RenderTarget reference;
+    bool referenceReady;
+    int referenceSize;
+    DepthTexture actualDepth;
+    DepthTexture referenceDepth;
+    bool referenceColor;
+    bool showAtlas;
+    bool disabled;
+    bool noShadows;
+    int resolution = 64;
+    int budget = 8;
+    int lodMode;
+    int views;
+    int referenceItems;
+}
+
+float3 BatchForward(int face)
+{
+    if (face == 0) return float3(1, 0, 0);
+    if (face == 1) return float3(-1, 0, 0);
+    if (face == 2) return float3(0, 1, 0);
+    if (face == 3) return float3(0, -1, 0);
+    if (face == 4) return float3(0, 0, 1);
+    return float3(0, 0, -1);
+}
+
+system SetupShadowBatches(mut ShadowState state)
+{
+    if (state.built) return;
+    state.built = true;
+    state.parent = Spawn(ShadowParent, Transform {
+        localScale = float3(1.7, 0.6, 1.2), localRotation = quaternion.Euler(float3(0, 20deg, 0))
+    });
+    state.alternate = Spawn(Transform {
+        localPosition = float3(0.4, -0.2, 0.3), localScale = float3(-0.8, 1.4, 1),
+        localRotation = quaternion.Euler(float3(0, -15deg, 0))
+    });
+    // A run beyond the 256-item boundary, then B and A again. A negative
+    // instance at the end of the first run also separates handedness.
+    for (var i = 0; i < 272; i++)
+    {
+        mut Asset<Render3D.Mesh3D> selected = batchQuad;
+        if (i == 270) selected = batchOther;
+        var entity = Spawn(ShadowItem { index = i },
+            Render3D.MeshRenderer { mesh = selected },
+            Render3D.Material { baseColor = Color(0.4, 0.6, 0.8), roughness = 0.7 },
+            Transform {
+                localPosition = float3((float(i % 18) - 8.5) * 0.14, (float(i / 18) - 7) * 0.14, 0),
+                localScale = float3(i == 269 ? -0.12 : 0.12, 0.14, 1),
+                localRotation = quaternion.Euler(float3(0, 0, 37deg))
+            });
+        entity.SetParent(state.parent, false);
+    }
+    // Strongly different projected sizes force both authored geometry and a
+    // genuine generated LOD. Alternating levels within handedness segments
+    // distinguishes the original gather boundaries from bulk LOD sorting.
+    for (var i = 0; i < 12; i++)
+    {
+        float size = i % 3 == 0 ? 0.00001 : i % 3 == 1 ? 0.3 : 10000;
+        Spawn(ShadowItem { index = 272 + i }, Render3D.MeshRenderer { mesh = batchLod },
+            Render3D.Material { roughness = 1 }, Transform {
+                localPosition = float3(float(i - 6) * 0.6, 2, 4),
+                localScale = float3((i / 3) % 2 == 0 ? size : -size, size, size)
+            });
+    }
+    // Actual geometry on all six point-light axes, including the vertical
+    // faces' special up vectors. These are not six copies of one camera.
+    for (var face = 0; face < 6; face++)
+    {
+        float3 forward = BatchForward(face);
+        float3 up = face == 2 ? float3(0, 0, -1) : face == 3 ? float3(0, 0, 1) : float3(0, 1, 0);
+        Spawn(ShadowItem { index = 284 + face }, Render3D.MeshRenderer { mesh = batchQuad },
+            Render3D.Material {}, Transform {
+                localPosition = float3(0, 0, -2) + forward * 2,
+                localRotation = quaternion.LookRotation(forward, up), localScale = float3(0.6)
+            });
+    }
+    Spawn(Render3D.MeshRenderer { mesh = batchQuad, castShadows = false },
+        Render3D.Material { roughness = 1, emission = float3(0.02, 0.03, 0.04) },
+        Transform { localPosition = float3(0, 0, 3), localScale = float3(12, 8, 1) });
+    Spawn(Render3D.DirectionalLight { direction = float3(0.4, -0.3, 1), priority = 3 });
+    Spawn(Render3D.SpotLight { direction = float3(0, 0, 1), range = 20,
+        innerAngle = 70deg, outerAngle = 100deg, castShadows = true, priority = 2 },
+        Transform { localPosition = float3(0, 0, -3) });
+    Spawn(Render3D.PointLight { range = 16, castShadows = true, priority = 1 },
+        Transform { localPosition = float3(0, 0, -2) });
+}
+
+system EditShadowItems(ShadowItem item, mut Render3D.MeshRenderer mesh, mut Transform transform, ShadowState state)
+{
+    if (state.step == 1)
+    {
+        mesh.visible = item.index % 7 != 0;
+        mesh.castShadows = item.index % 11 != 0;
+        if (item.index < 272 && item.index % 13 == 0) mesh.mesh = batchOther;
+        transform.localPosition.y += 0.25;
+    }
+    if (state.step == 2)
+    {
+        if (item.index % 3 == 0) this.SetParent(state.alternate, false);
+        if (item.index % 17 == 0) this.Remove(Render3D.Material);
+        if (item.index % 19 == 0) this.Destroy();
+    }
+    if (state.step == 3) mesh.visible = false;
+    if (state.step == 4)
+    {
+        mesh.visible = item.index % 5 == 0;
+        mesh.castShadows = true;
+    }
+}
+
+system EditShadowParent(with ShadowParent, mut Transform transform, ShadowState state)
+{
+    if (state.step != 1) return;
+    transform.localScale = float3(-1.1, 0.9, 1.3);
+    transform.localRotation = quaternion.Euler(float3(10deg, -25deg, 12deg));
+}
+
+[Before(Render3D.Stages.Prepare)]
+view ConfigureShadowBatches(mut Render3D.Renderer renderer, ShadowProbe probe)
+{
+    renderer.enabled = !probe.disabled;
+    renderer.shadows = !probe.noShadows;
+    renderer.camera = Render3D.Camera { position = float3(0, 1, -7), verticalFov = 70deg };
+    renderer.background = Color.black;
+    renderer.shadowResolution = probe.resolution;
+    renderer.maxShadowMaps = probe.budget;
+    renderer.shadowExtent = 5;
+    renderer.shadowDistance = 30;
+}
+
+[Stage(Render3D.Stages.Lights, 4)]
+view PrepareShadowReference(Render3D.Renderer renderer, mut ShadowProbe probe)
+{
+    probe.views = 0;
+    probe.referenceItems = 0;
+    if (!renderer.enabled || !renderer.ready)
+    {
+        probe.reference.Dispose();
+        probe.reference = default;
+        probe.referenceReady = false;
+        probe.referenceSize = 0;
+        probe.actualDepth = default;
+        probe.referenceDepth = default;
+        return;
+    }
+    if (!probe.referenceReady)
+    {
+        probe.reference = RenderTarget(renderer.atlasSize, renderer.atlasSize, 1, Format.Depth);
+        probe.referenceReady = true;
+    }
+    else if (probe.referenceSize != renderer.atlasSize) probe.reference.Resize(renderer.atlasSize, renderer.atlasSize);
+    probe.referenceSize = renderer.atlasSize;
+    probe.actualDepth = renderer.shadowMap.depth;
+    probe.referenceDepth = probe.reference.depth;
+    probe.views = renderer.shadowViews.count;
+    Render3D.ResetTarget(probe.reference);
+    probe.reference.Clear(Color.white);
+    // Exercise destination-local LOD controls without changing the renderer.
+    renderer.shadowMap.SetLOD();
+    probe.reference.SetLOD();
+    renderer.shadowMap.SetLODCamera();
+    probe.reference.SetLODCamera();
+    if (probe.lodMode == 1)
+    {
+        renderer.shadowMap.SetLOD(0);
+        probe.reference.SetLOD(0);
+    }
+    if (probe.lodMode == 2)
+    {
+        var camera = float4x4.Translate(float3(0, 0, -7));
+        var projection = float4x4.PerspectiveFov(70deg, 1, 0.1, 100);
+        renderer.shadowMap.SetLODCamera(camera, projection);
+        probe.reference.SetLODCamera(camera, projection);
+    }
+    if (renderer.shadowViews.count == 0)
+    {
+        // No-view Cast still resets its destination's clip.
+        renderer.shadowMap.Screen() { renderer.shadowMap.SetClip(Rect(2, 3, 7, 9)); }
+        probe.reference.Screen() { probe.reference.SetClip(Rect(2, 3, 7, 9)); }
+    }
+}
+
+[Stage(Render3D.Stages.Shadows, 1)]
+view OriginalShadowCast(Render3D.Renderer renderer, mut ShadowProbe probe, World world,
+    query (Render3D.MeshRenderer mesh, with Render3D.Material) casters)
+{
+    if (!renderer.enabled || !renderer.ready) return;
+    foreach (var shadow in renderer.shadowViews)
+    {
+        probe.reference.SetCamera(shadow.camera, shadow.projection);
+        probe.reference.Screen()
+        {
+            probe.reference.SetClip(Rect(shadow.uvRect.x * renderer.atlasSize, shadow.uvRect.y * renderer.atlasSize,
+                shadow.uvRect.z * renderer.atlasSize, shadow.uvRect.w * renderer.atlasSize));
+        }
+        foreach (var caster in casters)
+        {
+            if (!caster.mesh.visible || !caster.mesh.castShadows) continue;
+            probe.reference.Mesh(caster.mesh.mesh.Value, world.LocalToWorld(caster.entity),
+                Render3D.AtlasVertex, Render3D.ShadowTile { uvRect = shadow.uvRect });
+            probe.referenceItems++;
+        }
+    }
+    probe.reference.SetClip();
+}
+
+[Stage(Render3D.Stages.Color, -1)]
+view SelectShadowAtlas(mut Render3D.Renderer renderer, ShadowProbe probe)
+{
+    if (!renderer.enabled || !renderer.ready) return;
+    renderer.shadow = probe.referenceColor ? probe.referenceDepth : probe.actualDepth;
+}
+
+frag CompareShadowAtlases(Vertex vertex, out Color color, ShadowProbe probe)
+{
+    float actual = probe.actualDepth.Sample(vertex.uv);
+    float reference = probe.referenceDepth.Sample(vertex.uv);
+    color = Color(actual == reference ? 0 : 1, 0, actual < 1 ? 1 : 0);
+}
+
+[Stage(Render3D.Stages.Present, 1)]
+view InspectShadowAtlas(ShadowProbe probe, Render3D.Renderer renderer)
+{
+    if (!probe.showAtlas || !renderer.enabled || !renderer.ready) return;
+    Draw.Screen()
+    {
+        Draw.SetBlend(Blend.Replace);
+        Draw.SetDepth();
+        Draw.SetCull();
+        Draw.Mesh([Vertex { position = float2(0, 0), uv = float2(0, 0) },
+            Vertex { position = float2(Screen.width, 0), uv = float2(1, 0) },
+            Vertex { position = float2(Screen.width, Screen.height), uv = float2(1, 1) },
+            Vertex { position = float2(0, Screen.height), uv = float2(0, 1) }],
+            [0, 1, 2, 0, 2, 3], CompareShadowAtlases);
+    }
+}
