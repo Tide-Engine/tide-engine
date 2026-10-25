@@ -69,17 +69,42 @@ Earth guide and Samples route already lead to that component. Both complete
 notes histories are retained. The root owns merged Svelte/build and live
 Earth/material validation; no new build or browser result is claimed here.
 
+Markdown export integration replaces the Earth component's standalone prose
+placeholder with `[Play Earth](https://tide-engine.dev/earth/?stats)`, using
+the stable local build rather than a hosted publication ID. Fenced/indented
+code remains outside the transformation, and the marker must occupy its own
+prose line. Export assertions distinguish Samples' 14 runtime game links
+from its one ordinary Earth guide Markdown link, retaining all 14 distinct
+source links and requiring stats exactly once on every runtime URL. Earth
+exports must remove the marker and retain one runnable stats-enabled link.
+Existing code, link and header checks remain strict. Final Svelte check,
+production build and all three export/admin HTTP checks pass after this
+correction.
+
 Final integration: the full native and web builds pass. The native full suite
 passes 2,773 of 2,774 enabled tests; its sole failure is the unchanged private
 CRACKED hash failure, reproduced on the pre-existing baseline. Repository web
-checks pass, including 11 scenarios on all three backends. Optional private
-InsideOut WebGL play has a mismatch under read-only attribution, and remaining
-optional private playthroughs are still running; final overall web-suite status
-remains pending. Final Svelte check reports zero errors and warnings, and the
+checks pass, including 11 scenarios on all three backends. The full web run
+passes 2,687 of 2,689 enabled tests; the same CRACKED hash and an optional
+InsideOut WebGL exact-text-image comparison fail. Independent attribution
+finds one blue-channel step in one unchanged text pixel, with matching move
+counts; pre-existing status for this visual failure is not claimed. The
+WebGPU playthrough and all other optional browser checks pass. The existing
+disabled Microduck fixture remains unchanged. Details and receipts are in
+render3d.md. Final Svelte check reports zero errors and warnings, and the
 production docs build passes after staging. All three exports/admin HTTP
 checks and all 301 grammar checks pass. The latest five-test playground rerun
-is active. The procedural asset generator, isolated launch-plumbing syntax
+passes. The procedural asset generator, isolated launch-plumbing syntax
 checks and diff checks also pass.
+
+After merging the Transform/Earth changes, both builds and all affected checks
+pass: 67 native CPU/compiler/editor/Earth, six native Render3D GPU and 69 web
+tests. Live WebGL/WebGPU probes exercise both material demos and the new Earth
+guide's local fallback Play, stats-enabled links/runtime, rendering and Stop.
+Earth is discovered from Samples' actual prose link, fixing an initially
+unreachable harness branch; the fresh follow-up review is clean. Pixel probes
+wait for the iframe's fade to complete and disable background pipeline
+compilation, retaining exact reset and scene-change assertions.
 
 The owner subsequently approved `[Raw]` Texture fields following existing Raw
 grid fields. The compiler child's contract allows Raw assets, Raw texture

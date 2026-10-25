@@ -50,9 +50,10 @@ prototype hash failure below. All six packet and thirteen engine draw-level
 cases pass. Original Render3D pixels and the independent exact shadow-reference
 frame/atlas checks pass on Vulkan/OpenGL and WebGL/ANGLE D3D11/WebGPU. All eleven
 new material scenarios pass on those five backends, including strict alpha-zero
-raw-data witnesses. The web repository checks pass; the optional private
-prototype playthroughs are still completing. No complete green web-suite claim
-is made at this checkpoint.
+raw-data witnesses. The complete web run passes 2,687 of 2,689 enabled CTests
+(3,231.48 s): only the two private prototype checks described below fail.
+Repository checks pass; no complete green configured-suite claim is made.
+Both configurations retain the existing disabled Microduck right-turn fixture.
 
 Numeric fixtures independently cover transformed tangent bases and hooks,
 indirect-only AO and emission invariance. Pixel fixtures additionally check
@@ -79,7 +80,9 @@ systems, mobile and sanitizers remain unavailable local coverage. An initial
 material Vulkan process exited without diagnostics; its debugger run, five
 isolated repeats and both subsequent full native rounds pass. No cause or
 source correction is claimed for that unreproduced event. No new performance
-measurement or speedup is claimed.
+measurement or speedup is claimed. Later performance comparisons need equivalent
+material/mesh layouts; earlier frozen CPU-preparation candidates describe their
+earlier source rather than this expanded material layout.
 
 The initial full native run also found a CRACKED prototype deterministic-hash
 failure. An isolated clean control at engine commit
@@ -105,6 +108,30 @@ page requests --stats. No direct route from this feature to the label was found.
 This supports a small visual quantization difference, but no baseline browser
 control was executed and pre-existing status is not claimed. The private source,
 assertion and hash pins remain unchanged; raw output and captures are retained.
+The full WebGPU playthrough and both backends' dedicated material/shutter checks
+pass, as do all other optional playthroughs in that run.
+
+The origin/dev merge through 1a12d872 adds Transform correction defaults, editor
+Play cleanup, Earth terrain and the click-to-play Earth guide. Compiler overlap
+is confined to independent checker blocks. Resolved notes retain both complete
+histories; the homepage retains incoming static behavior. EarthDemo's initial
+separate-tab link and hosted/local runtime URLs request stats once, retaining
+the readiness URL and incoming controls. The adapted browser smoke discovers
+Samples' actual prose link to the guide, rather than assuming an Earth game
+card. Review caught that initially unreachable test branch; explicit link
+discovery resolves it and the fresh follow-up review is clean.
+
+Both merged builds pass, with all 67 focused native CPU/compiler/editor/Earth
+checks (92.11 s), six Vulkan/OpenGL Render3D checks (1.49 s) and 69 affected web
+checks (123.00 s) passing. The latter includes WebGL/ANGLE D3D11/WebGPU material
+and shadow-reference checks plus both stats paths. Final Svelte check is clean,
+the staged production build passes, and all three export/admin HTTP checks pass
+after adapting the Earth guide's Markdown play link. Both material demos and
+Earth's local fallback Play/Stop/stats path pass live on WebGL and WebGPU.
+Snapshot probes now wait for the iframe's CSS fade to finish and disable
+background pipeline compilation; exact camera-reset pixel assertions remain.
+No repeat of the unrelated optional playthroughs is required for this scoped
+merge overlap.
 
 ## CPU recording preparation (2026-10-25)
 

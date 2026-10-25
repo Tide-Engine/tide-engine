@@ -74,6 +74,7 @@ function withoutWebsite(source: string): string {
     const containers: string[] = [];
     return prose(source, (text) => text
         .replace(/<div data-tide-ai-setup><\/div>/g, '')
+        .replace(/^ {0,3}<div data-tide-earth><\/div>[ \t]*$/gm, `[Play Earth](${siteUrl('/earth/?stats')})`)
         .replace(/<ul\b[^>]*class="sample-grid"[^>]*>([\s\S]*?)<\/ul>/g, (_, cards: string) =>
             [...cards.matchAll(/<li><a\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>([\s\S]*?)<\/li>/g)].map(([, href, body, links]) => {
                 const field = (name: string) => plainHtml(new RegExp(`<[^>]+class="${name}"[^>]*>([\\s\\S]*?)<\\/(?:span|strong)>`).exec(body)?.[1] ?? '');

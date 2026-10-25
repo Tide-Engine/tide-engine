@@ -172,7 +172,8 @@ try {
         // A GL error stops a game and names the call, where WebGL would only warn
         let config;
         Object.defineProperty(window, 'Tide', { configurable: true, get: () => config, set: value => {
-            config = value; config.checkGL = true; config.relay = ${JSON.stringify(relayUrl)}; config.backend = ${JSON.stringify(backend)};
+            config = value; config.checkGL = true; config.backgroundPipelines = false;
+            config.relay = ${JSON.stringify(relayUrl)}; config.backend = ${JSON.stringify(backend)};
         } });
     ` });
     await command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
@@ -187,6 +188,7 @@ try {
         writeFileSync(join(shots, `${name}.png`), Buffer.from(screenshot.data, 'base64'));
     };
     async function cameraControls(id) {
+        await until('getComputedStyle(example.querySelector("iframe")).opacity === "1"', `${id}: canvas finishes appearing`);
         const box = await evaluate('({ rect: example.querySelector("iframe").getBoundingClientRect().toJSON(), x: scrollX, y: scrollY })');
         const rect = box.rect;
         // Crop the static scene above the controls and stats. This comparison
@@ -194,14 +196,17 @@ try {
         const clip = { x: rect.left + box.x + 4, y: rect.top + box.y + 4, width: rect.width - 8,
             height: Math.min(140, rect.height - 220), scale: 1 };
         assert.ok(clip.height > 0, `${id}: scene is visible above controls`);
-        const capture = async () => createHash('sha256')
-            .update((await command('Page.captureScreenshot', { format: 'png', clip })).data, 'base64').digest('hex');
+        const capture = async (name) => {
+            const pixels = Buffer.from((await command('Page.captureScreenshot', { format: 'png', clip })).data, 'base64');
+            if (shots && name) writeFileSync(join(shots, `${id}-${name}-scene.png`), pixels);
+            return createHash('sha256').update(pixels).digest('hex');
+        };
         const afterFrames = async () => {
             const previous = await evaluate('example.querySelector("iframe").contentWindow.__draws');
             await until(`example.querySelector("iframe").contentWindow.__draws > ${previous + 20}`, `${id}: camera frame`);
         };
         await afterFrames();
-        const initial = await capture();
+        const initial = await capture('initial');
         const x = rect.left + rect.width * 0.5, y = rect.top + 80;
         await command('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
         await command('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1, x, y });
@@ -233,7 +238,7 @@ try {
             await afterFrames();
         };
         await click(105, rect.height - 230); // Reset above the open maps panel.
-        assert.equal(await capture(), initial, `${id}: reset restores the camera`);
+        assert.equal(await capture('reset'), initial, `${id}: reset restores the camera`);
         // Height edits travel through the demo's typed command; compare only
         // scene pixels, excluding the slider and the FPS counter.
         await click(rect.width / 2 + 66, rect.height - 164);
@@ -331,8 +336,13 @@ try {
     await command('Page.navigate', { url: `${origin}/guide/samples` });
     await until(`location.pathname === '/guide/samples' && document.readyState !== 'loading' && document.querySelectorAll('a.sample-card[data-sample]').length > 0`, 'samples page');
     const cards = await evaluate(`Array.from(document.querySelectorAll('a.sample-card[data-sample]'), a => ({ id: a.dataset.sample, href: a.href }))`);
+    // Earth is linked in the prose, rather than represented by a game card.
+    const earthGuide = await evaluate(`Array.from(document.querySelectorAll('article.prose a[href]'))
+        .find(link => new URL(link.href).pathname === '/guide/earth')?.href`);
+    assert.ok(earthGuide, 'Samples links to the Earth demo page');
+    if (!cards.some(card => card.id === 'earth')) cards.push({ id: 'earth', href: earthGuide });
     for (const { id, href } of cards) {
-        stats(href, `${id}: gallery link`);
+        if (id !== 'earth') stats(href, `${id}: gallery link`);
         if (only && !only.has(id)) continue;
         const url = new URL(href);
         const path = url.pathname;
