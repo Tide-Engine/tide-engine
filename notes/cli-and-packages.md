@@ -390,7 +390,12 @@ said. `--declarations` (`build_options.declarations`, implies `--once`) is
 which `compile_inputs` applies before checking (`keep_declarations` drops the
 game's `DECL_SYSTEM`, `DECL_FUNCTION` and `DECL_SHADER`, builtins kept, before
 the embed taps are added). It writes `Packages/com.tide.game` from that schema,
-but not the shaders (`unity_shaders_write` is skipped: the game's would go).
+but not the shaders (`unity_shaders_write` is skipped: the game's would go), and
+through `unity_code_add`, which takes no component script away: an engine
+component only the game's code gives entities (`Owner`) isn't listed in a build
+of the declarations, and its script would have gone and come back. The child is
+tide's own executable (`sys_exe_dir`), not `build.compiler`, which is clang where
+tide hasn't it built in.
 Nothing loads its library: the editor's game keeps its last build, whose schema
 hash the new C# doesn't match, so live values wait for the next build that works.
 `tidec --declarations` is the same option. Test: `tidec_declarations_only`

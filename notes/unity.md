@@ -1657,6 +1657,15 @@ all agree what it is".
   package already write every name from `global::`. Tide's own names follow the same rule (Unity prefabs of one name
   in two folders: "write the one you mean"). User docs: the package's README and `docs/tools/cli.md`, Unity.
 - **Already closed:** the walks over Assets were answered by `--notified` (The game is Assets).
+- **Tests:** `tidec_declarations_only`; the Sample's `ConsoleTests.ABuildIsATaskInTheStatusBarAndNoneOfTheConsoles`
+  (a `[UnityTest]`: the service's own tide stopped for the while, lines given through `TideBuildService.Hear`, the
+  task looked for in `Progress.EnumerateItems` a frame later, as Unity starts and takes away tasks at its next
+  update) and `AnErrorAboutAnAssetOpensItAndNoneHasACSharpStack` (an error naming no file is an entry with none, and
+  goes with `RemoveLocated`); `IconTests.TideScriptsHaveTideIcons`, run for the first time (the editor tests'
+  assembly references `Tide.Game` for it). By hand on a copy of the Sample: a `Crate` component and a handler
+  spawning `UnityEngine.Prefabs.CrateBox`, which isn't there: `tide unity --once` says that one error, and
+  `Crate.cs` is written with `Owner.cs` kept. Sample EditMode 19/19 and PlayMode 16/16 (D3D11, a GPU, batch).
+  Not seen in a window: the status-bar task itself.
 
 ## Web
 
