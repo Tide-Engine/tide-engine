@@ -1,0 +1,32 @@
+{
+  "analysisSha256": "5D1A4D2BEA78DAE67A9C846F6AE0E1978D113B0D87892EEC1F1558D92C4D881F",
+  "unchangedMeasuredInputs": true,
+  "libraries": [
+    {
+      "sha256": "57676EE4EE8D925965143EA161EC28B5613D8F81DDBCCFEC069C563A28B9CD32",
+      "path": "build/release/engine/tide.lib"
+    },
+    {
+      "sha256": "5A6D67FEC538989A260FB5B82694520E309F1730388AEDC0AA6567F7E9AF6FA6",
+      "path": "build/web-release/engine/libtide.a"
+    }
+  ],
+  "validation": [
+    {
+      "logSha256": "ACFE5D60F8493601F3B2F9873F72C63A277B87A4D89577C9AC6FF4F40F457276",
+      "preset": "debug"
+    },
+    {
+      "logSha256": "4A42E1EBA1D59D35E2D2F6C1059F0E0E24DE961C017E3F7821840A687E209573",
+      "preset": "web-debug"
+    },
+    {
+      "logSha256": "7417BAEC4F77EBD56ABD6557BB1796D6887753B4962B0DFA569081246DD80809",
+      "preset": "release"
+    },
+    {
+      "logSha256": "1BAFFB36EAAA5F76B6E15D65A2FCBD723F535B53D4A154032228FF670CBF0C28",
+      "preset": "web-release"
+    }
+  ]
+}

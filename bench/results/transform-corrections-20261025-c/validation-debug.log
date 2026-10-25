@@ -1,0 +1,131 @@
+Start testing: Oct 25 11:58 Romance Standard Time
+----------------------------------------------------------
+2632/2762 Testing: bench_corrections_transform
+2632/2762 Test: bench_corrections_transform
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/debug/bin/bench_corrections_transform.exe" "--quick"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/debug/bench/corrections
+"bench_corrections_transform" start time: Oct 25 11:58 Romance Standard Time
+Output:
+----------------------------------------------------------
+transform: correction benchmark correctness passed
+<end of output>
+Test time =   0.05 sec
+----------------------------------------------------------
+Test Passed.
+"bench_corrections_transform" end time: Oct 25 11:58 Romance Standard Time
+"bench_corrections_transform" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2633/2762 Testing: bench_corrections_transform_large
+2633/2762 Test: bench_corrections_transform_large
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/debug/bin/bench_corrections_transform.exe" "--quick" "--count" "10000"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/debug/bench/corrections
+"bench_corrections_transform_large" start time: Oct 25 11:58 Romance Standard Time
+Output:
+----------------------------------------------------------
+transform: correction benchmark correctness passed
+<end of output>
+Test time =   0.07 sec
+----------------------------------------------------------
+Test Passed.
+"bench_corrections_transform_large" end time: Oct 25 11:58 Romance Standard Time
+"bench_corrections_transform_large" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2634/2762 Testing: bench_corrections_plain
+2634/2762 Test: bench_corrections_plain
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/debug/bin/bench_corrections_plain.exe" "--quick"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/debug/bench/corrections
+"bench_corrections_plain" start time: Oct 25 11:58 Romance Standard Time
+Output:
+----------------------------------------------------------
+plain: correction benchmark correctness passed
+<end of output>
+Test time =   0.05 sec
+----------------------------------------------------------
+Test Passed.
+"bench_corrections_plain" end time: Oct 25 11:58 Romance Standard Time
+"bench_corrections_plain" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2635/2762 Testing: bench_corrections_plain_large
+2635/2762 Test: bench_corrections_plain_large
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/debug/bin/bench_corrections_plain.exe" "--quick" "--count" "10000"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/debug/bench/corrections
+"bench_corrections_plain_large" start time: Oct 25 11:58 Romance Standard Time
+Output:
+----------------------------------------------------------
+plain: correction benchmark correctness passed
+<end of output>
+Test time =   0.07 sec
+----------------------------------------------------------
+Test Passed.
+"bench_corrections_plain_large" end time: Oct 25 11:58 Romance Standard Time
+"bench_corrections_plain_large" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2636/2762 Testing: bench_corrections_position
+2636/2762 Test: bench_corrections_position
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/debug/bin/bench_corrections_position.exe" "--quick"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/debug/bench/corrections
+"bench_corrections_position" start time: Oct 25 11:58 Romance Standard Time
+Output:
+----------------------------------------------------------
+position: correction benchmark correctness passed
+<end of output>
+Test time =   0.04 sec
+----------------------------------------------------------
+Test Passed.
+"bench_corrections_position" end time: Oct 25 11:58 Romance Standard Time
+"bench_corrections_position" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2637/2762 Testing: bench_corrections_position_large
+2637/2762 Test: bench_corrections_position_large
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/debug/bin/bench_corrections_position.exe" "--quick" "--count" "10000"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/debug/bench/corrections
+"bench_corrections_position_large" start time: Oct 25 11:58 Romance Standard Time
+Output:
+----------------------------------------------------------
+position: correction benchmark correctness passed
+<end of output>
+Test time =   0.10 sec
+----------------------------------------------------------
+Test Passed.
+"bench_corrections_position_large" end time: Oct 25 11:58 Romance Standard Time
+"bench_corrections_position_large" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2638/2762 Testing: bench_corrections_both
+2638/2762 Test: bench_corrections_both
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/debug/bin/bench_corrections_both.exe" "--quick"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/debug/bench/corrections
+"bench_corrections_both" start time: Oct 25 11:58 Romance Standard Time
+Output:
+----------------------------------------------------------
+both: correction benchmark correctness passed
+<end of output>
+Test time =   0.05 sec
+----------------------------------------------------------
+Test Passed.
+"bench_corrections_both" end time: Oct 25 11:58 Romance Standard Time
+"bench_corrections_both" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2639/2762 Testing: bench_corrections_both_large
+2639/2762 Test: bench_corrections_both_large
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/debug/bin/bench_corrections_both.exe" "--quick" "--count" "10000"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/debug/bench/corrections
+"bench_corrections_both_large" start time: Oct 25 11:58 Romance Standard Time
+Output:
+----------------------------------------------------------
+both: correction benchmark correctness passed
+<end of output>
+Test time =   0.11 sec
+----------------------------------------------------------
+Test Passed.
+"bench_corrections_both_large" end time: Oct 25 11:58 Romance Standard Time
+"bench_corrections_both_large" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Oct 25 11:58 Romance Standard Time

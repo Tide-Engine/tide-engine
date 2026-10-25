@@ -1,0 +1,2231 @@
+{
+  "state": "failed",
+  "startedUtc": "2026-10-25T10:50:26.8781675Z",
+  "revision": "0abf66a53764c7c45c3a655cd7f61aa26801760c",
+  "rounds": 3,
+  "quietSeconds": 90,
+  "gate": "Local\\TideClaudeContinuationBenchmark",
+  "affinity": 256,
+  "cpu": {
+    "Name": "AMD Ryzen 9 7900X 12-Core Processor            ",
+    "NumberOfCores": 12,
+    "NumberOfLogicalProcessors": 24
+  },
+  "node": "v24.22.1",
+  "clang": "clang version 23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+  "detection": "Known build/test/benchmark process names and repository Node command lines; 250 ms polling; other desktop activity/clocks uncontrolled",
+  "inputs": [
+    {
+      "sha256": "4CF0F31072BECAAF5D523CA3B3A2A2D96649C7229BD48E3EFFE6BA8FE85F810E",
+      "path": "bench/corrections/main.c"
+    },
+    {
+      "sha256": "684A0AC35ACFC79CAEF6C25D5C9AA909152C7E137FBC41521EE285A2284C917D",
+      "path": "bench/corrections/game.tide.in"
+    },
+    {
+      "sha256": "344DEAC31EF84DA1098F263B16942BFA9D3D377D05C966D96B0FC26518BD0B70",
+      "path": "bench/corrections/CMakeLists.txt"
+    },
+    {
+      "sha256": "DCE45874D3C578C23B48ECA99F4C1A9C4C769EAEB2FDB50BBF184349BABE8BD0",
+      "path": "bench/corrections/run.ps1"
+    },
+    {
+      "sha256": "D4F998F66EF28569005DFCF0BBCD54C8A4B3288429F7C938B8BFB15BFD606D50",
+      "path": "bench/corrections/summarize.py"
+    },
+    {
+      "sha256": "7D99D2B62B8D96E5237AF5DAE38C818641B029F5568270EB358614DF611F4BDA",
+      "path": "CMakePresets.json"
+    },
+    {
+      "sha256": "C90000AF80412C6690A27C40FDD1BC00178B46247F3D9B7133FBC2DFB9F6E4C3",
+      "path": "cmake/TideFlags.cmake"
+    },
+    {
+      "sha256": "D860A03D735FD85BAED23FB0E2FE407C8A95002F0E9EC1FFEC0F5A07B4983F5C",
+      "path": "build/release/bin/bench_corrections_transform.exe"
+    },
+    {
+      "sha256": "DEACCED4B7D95F985EDDE506596C5250C8059C944CEE9DFDCC81DEEE97EBEB4E",
+      "path": "build/release/bench/corrections/tide/bench_corrections_transform/game.c"
+    },
+    {
+      "sha256": "ABB154B784C0676A5B711391BD18D0732ED671FE6FFA44AA33894321B2318EC6",
+      "path": "build/release/bench/corrections/tide/bench_corrections_transform/game.h"
+    },
+    {
+      "sha256": "C30156927F0FFC1428ED5343737278970A73EBC3C5A4FD9B8BCBB4469168D650",
+      "path": "build/release/bin/bench_corrections_plain.exe"
+    },
+    {
+      "sha256": "B390427063B6D5A32DC04517D5924BD09A2DA6E1E3E718E932A5943F5D05E950",
+      "path": "build/release/bench/corrections/tide/bench_corrections_plain/game.c"
+    },
+    {
+      "sha256": "84D462D1048AB5B73D223D7797683ED0B04DA07D59ACCBED8032D4DF67B80906",
+      "path": "build/release/bench/corrections/tide/bench_corrections_plain/game.h"
+    },
+    {
+      "sha256": "744CFE8438010EE1B1E746EEE647C9745C603F58DF4980099CA99DD343BDAE39",
+      "path": "build/release/bin/bench_corrections_position.exe"
+    },
+    {
+      "sha256": "EF7D339DF65786292C3288D40D0753C4AA6576044DFCA488BE110B63635A68AE",
+      "path": "build/release/bench/corrections/tide/bench_corrections_position/game.c"
+    },
+    {
+      "sha256": "5F3C6EECC95F762C02644DB8C282E1005AD1CB51BDD37F6E7915598B8554F9F4",
+      "path": "build/release/bench/corrections/tide/bench_corrections_position/game.h"
+    },
+    {
+      "sha256": "D45BD0B16217C8AE3D8EB391A7DB983FEE9E05ED3FDBBAFFAF59D3678AF33775",
+      "path": "build/release/bin/bench_corrections_both.exe"
+    },
+    {
+      "sha256": "8B3334E7E119A223EE77F1B9A67BC808B8E34EAD6A195094F88ADB89770EE2D9",
+      "path": "build/release/bench/corrections/tide/bench_corrections_both/game.c"
+    },
+    {
+      "sha256": "35E6CFCEF400F3F8C0CBEFB66BB3D4784B84E51B4605A608B5D7F2391CF90400",
+      "path": "build/release/bench/corrections/tide/bench_corrections_both/game.h"
+    },
+    {
+      "sha256": "BBBE9A0CAAE219FD017DDD400DF81E4C60360EEAFF2FD594471E5A6E587E8821",
+      "path": "build/web-release/bin/bench_corrections_transform.wasm"
+    },
+    {
+      "sha256": "AE5B2C26C5A8E0286A048CB8CF224BFB0D3EE422C1723CD2D5978B3D8CEF4FEC",
+      "path": "build/web-release/bench/corrections/tide/bench_corrections_transform/game.c"
+    },
+    {
+      "sha256": "A43887F85D4ADACA67FBD4F16B81695226405C520398238A119D2D819B46956B",
+      "path": "build/web-release/bench/corrections/tide/bench_corrections_transform/game.h"
+    },
+    {
+      "sha256": "E5B22D6EF953B0C37A9142E9E00698866CFB086416C8201FF491F51321506CDE",
+      "path": "build/web-release/bin/bench_corrections_plain.wasm"
+    },
+    {
+      "sha256": "3A9F75FB3A29A1FC23F2FC9F012BADA221BE094E3CEE0442890EDAB14F5627F2",
+      "path": "build/web-release/bench/corrections/tide/bench_corrections_plain/game.c"
+    },
+    {
+      "sha256": "72E7DFAF06C8E9A2F61864C486DFA5D99FB8C3CBF74E15C898F63BA9936E9B24",
+      "path": "build/web-release/bench/corrections/tide/bench_corrections_plain/game.h"
+    },
+    {
+      "sha256": "E2891D36F8128861F1153846661EF5CF405F1911FB3525C6E72B61ED0C3D213E",
+      "path": "build/web-release/bin/bench_corrections_position.wasm"
+    },
+    {
+      "sha256": "D81582A16B54DDED117516A2B9E6601357A21776C1198BBA866F50C45E1AB12F",
+      "path": "build/web-release/bench/corrections/tide/bench_corrections_position/game.c"
+    },
+    {
+      "sha256": "7660A57DAF8712E390AF5924783F7A8B6E309FE215BF04D01DB8A9BDFBAE6898",
+      "path": "build/web-release/bench/corrections/tide/bench_corrections_position/game.h"
+    },
+    {
+      "sha256": "9572F11672002BF8D62929309B59437070E32A10CEE59E44CEAFB278A1E53063",
+      "path": "build/web-release/bin/bench_corrections_both.wasm"
+    },
+    {
+      "sha256": "F9C3F0058C7B25B33099BEE0575040C04FE18A65E0221BB92D008A71F821BA98",
+      "path": "build/web-release/bench/corrections/tide/bench_corrections_both/game.c"
+    },
+    {
+      "sha256": "A07EFC10536C2C8CBFADEED1419A1DF35E669A30A1C3141DF52EB0DC151C2EF0",
+      "path": "build/web-release/bench/corrections/tide/bench_corrections_both/game.h"
+    }
+  ],
+  "runs": [],
+  "contention": [
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:28.8679702Z",
+      "processes": [
+        {
+          "pid": 19236,
+          "name": "clang"
+        },
+        {
+          "pid": 42288,
+          "name": "clang"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 22500,
+          "name": "ctest"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        },
+        {
+          "pid": 25588,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:29.6004706Z",
+      "processes": [
+        {
+          "pid": 1788,
+          "name": "clang"
+        },
+        {
+          "pid": 20736,
+          "name": "clang"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 22500,
+          "name": "ctest"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        },
+        {
+          "pid": 25588,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:30.3519837Z",
+      "processes": [
+        {
+          "pid": 16244,
+          "name": "clang"
+        },
+        {
+          "pid": 38620,
+          "name": "clang"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 22500,
+          "name": "ctest"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        },
+        {
+          "pid": 25588,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:31.0538040Z",
+      "processes": [
+        {
+          "pid": 38620,
+          "name": "clang"
+        },
+        {
+          "pid": 69204,
+          "name": "clang"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 22500,
+          "name": "ctest"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        },
+        {
+          "pid": 25588,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:31.6958033Z",
+      "processes": [
+        {
+          "pid": 33224,
+          "name": "clang"
+        },
+        {
+          "pid": 50020,
+          "name": "clang"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 22500,
+          "name": "ctest"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        },
+        {
+          "pid": 25588,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:32.2840290Z",
+      "processes": [
+        {
+          "pid": 53972,
+          "name": "clang"
+        },
+        {
+          "pid": 72896,
+          "name": "clang"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 22500,
+          "name": "ctest"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        },
+        {
+          "pid": 25588,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:32.9483118Z",
+      "processes": [
+        {
+          "pid": 14076,
+          "name": "clang"
+        },
+        {
+          "pid": 78184,
+          "name": "clang"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 22500,
+          "name": "ctest"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        },
+        {
+          "pid": 25588,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:33.6299951Z",
+      "processes": [
+        {
+          "pid": 57240,
+          "name": "clang"
+        },
+        {
+          "pid": 63328,
+          "name": "clang"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 22500,
+          "name": "ctest"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        },
+        {
+          "pid": 25588,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:34.3374489Z",
+      "processes": [
+        {
+          "pid": 34744,
+          "name": "clang"
+        },
+        {
+          "pid": 38676,
+          "name": "clang"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 22500,
+          "name": "ctest"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        },
+        {
+          "pid": 25588,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:35.0741437Z",
+      "processes": [
+        {
+          "pid": 8908,
+          "name": "clang"
+        },
+        {
+          "pid": 50164,
+          "name": "clang"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 22500,
+          "name": "ctest"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        },
+        {
+          "pid": 25588,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:35.7161584Z",
+      "processes": [
+        {
+          "pid": 33256,
+          "name": "clang"
+        },
+        {
+          "pid": 43456,
+          "name": "clang"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 22500,
+          "name": "ctest"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        },
+        {
+          "pid": 25588,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:36.4380334Z",
+      "processes": [
+        {
+          "pid": 58036,
+          "name": "clang"
+        },
+        {
+          "pid": 69924,
+          "name": "clang"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 22500,
+          "name": "ctest"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        },
+        {
+          "pid": 25588,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:37.1714488Z",
+      "processes": [
+        {
+          "pid": 19496,
+          "name": "clang"
+        },
+        {
+          "pid": 38008,
+          "name": "clang"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 22500,
+          "name": "ctest"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        },
+        {
+          "pid": 25588,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:37.8575153Z",
+      "processes": [
+        {
+          "pid": 62248,
+          "name": "clang"
+        },
+        {
+          "pid": 78040,
+          "name": "clang"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 22500,
+          "name": "ctest"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        },
+        {
+          "pid": 25588,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:38.5745726Z",
+      "processes": [
+        {
+          "pid": 63508,
+          "name": "clang"
+        },
+        {
+          "pid": 73652,
+          "name": "clang"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 22500,
+          "name": "ctest"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        },
+        {
+          "pid": 25588,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:39.2470069Z",
+      "processes": [
+        {
+          "pid": 74104,
+          "name": "clang"
+        },
+        {
+          "pid": 77152,
+          "name": "clang"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 22500,
+          "name": "ctest"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        },
+        {
+          "pid": 25588,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:39.9307897Z",
+      "processes": [
+        {
+          "pid": 74104,
+          "name": "clang"
+        },
+        {
+          "pid": 77152,
+          "name": "clang"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 22500,
+          "name": "ctest"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        },
+        {
+          "pid": 25588,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:40.5492957Z",
+      "processes": [
+        {
+          "pid": 71336,
+          "name": "clang"
+        },
+        {
+          "pid": 74104,
+          "name": "clang"
+        },
+        {
+          "pid": 18140,
+          "name": "cmake"
+        },
+        {
+          "pid": 43336,
+          "name": "cmake"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 15160,
+          "name": "ninja"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:41.1662799Z",
+      "processes": [
+        {
+          "pid": 71336,
+          "name": "clang"
+        },
+        {
+          "pid": 74104,
+          "name": "clang"
+        },
+        {
+          "pid": 18140,
+          "name": "cmake"
+        },
+        {
+          "pid": 43336,
+          "name": "cmake"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 15160,
+          "name": "ninja"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:41.7923602Z",
+      "processes": [
+        {
+          "pid": 31812,
+          "name": "clang"
+        },
+        {
+          "pid": 73796,
+          "name": "clang"
+        },
+        {
+          "pid": 18140,
+          "name": "cmake"
+        },
+        {
+          "pid": 43336,
+          "name": "cmake"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 15160,
+          "name": "ninja"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:42.4249385Z",
+      "processes": [
+        {
+          "pid": 67620,
+          "name": "clang"
+        },
+        {
+          "pid": 73796,
+          "name": "clang"
+        },
+        {
+          "pid": 18140,
+          "name": "cmake"
+        },
+        {
+          "pid": 43336,
+          "name": "cmake"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 15160,
+          "name": "ninja"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:43.0775894Z",
+      "processes": [
+        {
+          "pid": 16016,
+          "name": "clang"
+        },
+        {
+          "pid": 67620,
+          "name": "clang"
+        },
+        {
+          "pid": 43336,
+          "name": "cmake"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 15160,
+          "name": "ninja"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:43.7560989Z",
+      "processes": [
+        {
+          "pid": 8180,
+          "name": "clang"
+        },
+        {
+          "pid": 22660,
+          "name": "clang"
+        },
+        {
+          "pid": 30164,
+          "name": "clang"
+        },
+        {
+          "pid": 62544,
+          "name": "clang"
+        },
+        {
+          "pid": 43336,
+          "name": "cmake"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 15160,
+          "name": "ninja"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:44.4582963Z",
+      "processes": [
+        {
+          "pid": 51740,
+          "name": "clang"
+        },
+        {
+          "pid": 58284,
+          "name": "clang"
+        },
+        {
+          "pid": 77700,
+          "name": "clang"
+        },
+        {
+          "pid": 43336,
+          "name": "cmake"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 15160,
+          "name": "ninja"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:45.1239598Z",
+      "processes": [
+        {
+          "pid": 7792,
+          "name": "clang"
+        },
+        {
+          "pid": 40212,
+          "name": "clang"
+        },
+        {
+          "pid": 56948,
+          "name": "clang"
+        },
+        {
+          "pid": 43336,
+          "name": "cmake"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 15160,
+          "name": "ninja"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:45.8321481Z",
+      "processes": [
+        {
+          "pid": 7792,
+          "name": "clang"
+        },
+        {
+          "pid": 19524,
+          "name": "clang"
+        },
+        {
+          "pid": 40212,
+          "name": "clang"
+        },
+        {
+          "pid": 64080,
+          "name": "clang"
+        },
+        {
+          "pid": 43336,
+          "name": "cmake"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 15160,
+          "name": "ninja"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:46.4571521Z",
+      "processes": [
+        {
+          "pid": 27180,
+          "name": "clang"
+        },
+        {
+          "pid": 63604,
+          "name": "clang"
+        },
+        {
+          "pid": 75496,
+          "name": "clang"
+        },
+        {
+          "pid": 77156,
+          "name": "clang"
+        },
+        {
+          "pid": 43336,
+          "name": "cmake"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 15160,
+          "name": "ninja"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:47.0919085Z",
+      "processes": [
+        {
+          "pid": 22636,
+          "name": "clang"
+        },
+        {
+          "pid": 32728,
+          "name": "clang"
+        },
+        {
+          "pid": 43720,
+          "name": "clang"
+        },
+        {
+          "pid": 52052,
+          "name": "clang"
+        },
+        {
+          "pid": 43336,
+          "name": "cmake"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 15160,
+          "name": "ninja"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:47.7631421Z",
+      "processes": [
+        {
+          "pid": 28236,
+          "name": "clang"
+        },
+        {
+          "pid": 41284,
+          "name": "clang"
+        },
+        {
+          "pid": 42820,
+          "name": "clang"
+        },
+        {
+          "pid": 52052,
+          "name": "clang"
+        },
+        {
+          "pid": 43336,
+          "name": "cmake"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 15160,
+          "name": "ninja"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:48.4826918Z",
+      "processes": [
+        {
+          "pid": 28236,
+          "name": "clang"
+        },
+        {
+          "pid": 41264,
+          "name": "clang"
+        },
+        {
+          "pid": 67212,
+          "name": "clang"
+        },
+        {
+          "pid": 79060,
+          "name": "clang"
+        },
+        {
+          "pid": 43336,
+          "name": "cmake"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 15160,
+          "name": "ninja"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        },
+        {
+          "pid": 9744,
+          "name": "wasm-ld"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:49.1623802Z",
+      "processes": [
+        {
+          "pid": 38476,
+          "name": "clang"
+        },
+        {
+          "pid": 41264,
+          "name": "clang"
+        },
+        {
+          "pid": 67212,
+          "name": "clang"
+        },
+        {
+          "pid": 43336,
+          "name": "cmake"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 15160,
+          "name": "ninja"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:49.8392534Z",
+      "processes": [
+        {
+          "pid": 41264,
+          "name": "clang"
+        },
+        {
+          "pid": 67212,
+          "name": "clang"
+        },
+        {
+          "pid": 70060,
+          "name": "clang"
+        },
+        {
+          "pid": 74196,
+          "name": "clang"
+        },
+        {
+          "pid": 43336,
+          "name": "cmake"
+        },
+        {
+          "pid": 56752,
+          "name": "cmake"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 13916,
+          "name": "ninja"
+        },
+        {
+          "pid": 15160,
+          "name": "ninja"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        },
+        {
+          "pid": 28988,
+          "name": "wasm-ld"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:50.5647701Z",
+      "processes": [
+        {
+          "pid": 19944,
+          "name": "clang"
+        },
+        {
+          "pid": 36792,
+          "name": "clang"
+        },
+        {
+          "pid": 41264,
+          "name": "clang"
+        },
+        {
+          "pid": 49184,
+          "name": "clang"
+        },
+        {
+          "pid": 56292,
+          "name": "clang"
+        },
+        {
+          "pid": 43336,
+          "name": "cmake"
+        },
+        {
+          "pid": 56752,
+          "name": "cmake"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 13916,
+          "name": "ninja"
+        },
+        {
+          "pid": 15160,
+          "name": "ninja"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        },
+        {
+          "pid": 18920,
+          "name": "wasm-ld"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:51.2691248Z",
+      "processes": [
+        {
+          "pid": 4076,
+          "name": "clang"
+        },
+        {
+          "pid": 12304,
+          "name": "clang"
+        },
+        {
+          "pid": 19284,
+          "name": "clang"
+        },
+        {
+          "pid": 56292,
+          "name": "clang"
+        },
+        {
+          "pid": 43336,
+          "name": "cmake"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 15160,
+          "name": "ninja"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        },
+        {
+          "pid": 80376,
+          "name": "wasm-ld"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:52.0020663Z",
+      "processes": [
+        {
+          "pid": 2228,
+          "name": "clang"
+        },
+        {
+          "pid": 16876,
+          "name": "clang"
+        },
+        {
+          "pid": 19284,
+          "name": "clang"
+        },
+        {
+          "pid": 56292,
+          "name": "clang"
+        },
+        {
+          "pid": 43336,
+          "name": "cmake"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 15160,
+          "name": "ninja"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        },
+        {
+          "pid": 25568,
+          "name": "wasm-ld"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:52.7330408Z",
+      "processes": [
+        {
+          "pid": 10008,
+          "name": "clang"
+        },
+        {
+          "pid": 19284,
+          "name": "clang"
+        },
+        {
+          "pid": 56292,
+          "name": "clang"
+        },
+        {
+          "pid": 43336,
+          "name": "cmake"
+        },
+        {
+          "pid": 69692,
+          "name": "cmake"
+        },
+        {
+          "pid": 15160,
+          "name": "ninja"
+        },
+        {
+          "pid": 76616,
+          "name": "ninja"
+        },
+        {
+          "pid": 59792,
+          "name": "wasm-ld"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:53.4398880Z",
+      "processes": [
+        {
+          "pid": 19284,
+          "name": "clang"
+        },
+        {
+          "pid": 22940,
+          "name": "clang"
+        },
+        {
+          "pid": 43336,
+          "name": "cmake"
+        },
+        {
+          "pid": 41024,
+          "name": "ctest"
+        },
+        {
+          "pid": 15160,
+          "name": "ninja"
+        },
+        {
+          "pid": 5024,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:54.1728767Z",
+      "processes": [
+        {
+          "pid": 7240,
+          "name": "clang"
+        },
+        {
+          "pid": 22940,
+          "name": "clang"
+        },
+        {
+          "pid": 43336,
+          "name": "cmake"
+        },
+        {
+          "pid": 41024,
+          "name": "ctest"
+        },
+        {
+          "pid": 15160,
+          "name": "ninja"
+        },
+        {
+          "pid": 58076,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:54.8387075Z",
+      "processes": [
+        {
+          "pid": 7240,
+          "name": "clang"
+        },
+        {
+          "pid": 22940,
+          "name": "clang"
+        },
+        {
+          "pid": 43336,
+          "name": "cmake"
+        },
+        {
+          "pid": 41024,
+          "name": "ctest"
+        },
+        {
+          "pid": 15160,
+          "name": "ninja"
+        },
+        {
+          "pid": 11228,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:55.4708603Z",
+      "processes": [
+        {
+          "pid": 7240,
+          "name": "clang"
+        },
+        {
+          "pid": 55844,
+          "name": "clang"
+        },
+        {
+          "pid": 43336,
+          "name": "cmake"
+        },
+        {
+          "pid": 41024,
+          "name": "ctest"
+        },
+        {
+          "pid": 62180,
+          "name": "lld-link"
+        },
+        {
+          "pid": 15160,
+          "name": "ninja"
+        },
+        {
+          "pid": 39768,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:56.1542682Z",
+      "processes": [
+        {
+          "pid": 20336,
+          "name": "clang"
+        },
+        {
+          "pid": 43336,
+          "name": "cmake"
+        },
+        {
+          "pid": 41024,
+          "name": "ctest"
+        },
+        {
+          "pid": 28592,
+          "name": "lld-link"
+        },
+        {
+          "pid": 15160,
+          "name": "ninja"
+        },
+        {
+          "pid": 39768,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:56.7958995Z",
+      "processes": [
+        {
+          "pid": 3880,
+          "name": "ctest"
+        },
+        {
+          "pid": 41024,
+          "name": "ctest"
+        },
+        {
+          "pid": 41792,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:57.3353173Z",
+      "processes": [
+        {
+          "pid": 3880,
+          "name": "ctest"
+        },
+        {
+          "pid": 41024,
+          "name": "ctest"
+        },
+        {
+          "pid": 41792,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:57.9616330Z",
+      "processes": [
+        {
+          "pid": 3880,
+          "name": "ctest"
+        },
+        {
+          "pid": 41024,
+          "name": "ctest"
+        },
+        {
+          "pid": 31964,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:58.5227299Z",
+      "processes": [
+        {
+          "pid": 3880,
+          "name": "ctest"
+        },
+        {
+          "pid": 41024,
+          "name": "ctest"
+        },
+        {
+          "pid": 31964,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:59.0873784Z",
+      "processes": [
+        {
+          "pid": 3880,
+          "name": "ctest"
+        },
+        {
+          "pid": 41024,
+          "name": "ctest"
+        },
+        {
+          "pid": 57876,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:50:59.7454027Z",
+      "processes": [
+        {
+          "pid": 77588,
+          "name": "cmake"
+        },
+        {
+          "pid": 41024,
+          "name": "ctest"
+        },
+        {
+          "pid": 58548,
+          "name": "ninja"
+        },
+        {
+          "pid": 57876,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:51:00.4315373Z",
+      "processes": [
+        {
+          "pid": 77588,
+          "name": "cmake"
+        },
+        {
+          "pid": 77900,
+          "name": "cmake"
+        },
+        {
+          "pid": 41024,
+          "name": "ctest"
+        },
+        {
+          "pid": 58548,
+          "name": "ninja"
+        },
+        {
+          "pid": 37528,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:51:01.1737245Z",
+      "processes": [
+        {
+          "pid": 77588,
+          "name": "cmake"
+        },
+        {
+          "pid": 77900,
+          "name": "cmake"
+        },
+        {
+          "pid": 41024,
+          "name": "ctest"
+        },
+        {
+          "pid": 58548,
+          "name": "ninja"
+        },
+        {
+          "pid": 62500,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:51:01.8719270Z",
+      "processes": [
+        {
+          "pid": 77588,
+          "name": "cmake"
+        },
+        {
+          "pid": 77900,
+          "name": "cmake"
+        },
+        {
+          "pid": 41024,
+          "name": "ctest"
+        },
+        {
+          "pid": 58548,
+          "name": "ninja"
+        },
+        {
+          "pid": 62500,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:51:02.4671272Z",
+      "processes": [
+        {
+          "pid": 77588,
+          "name": "cmake"
+        },
+        {
+          "pid": 41024,
+          "name": "ctest"
+        },
+        {
+          "pid": 58548,
+          "name": "ninja"
+        },
+        {
+          "pid": 62500,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:51:03.1107928Z",
+      "processes": [
+        {
+          "pid": 12052,
+          "name": "clang"
+        },
+        {
+          "pid": 79848,
+          "name": "clang"
+        },
+        {
+          "pid": 77588,
+          "name": "cmake"
+        },
+        {
+          "pid": 41024,
+          "name": "ctest"
+        },
+        {
+          "pid": 58548,
+          "name": "ninja"
+        },
+        {
+          "pid": 62500,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:51:03.7935376Z",
+      "processes": [
+        {
+          "pid": 22532,
+          "name": "clang"
+        },
+        {
+          "pid": 61800,
+          "name": "clang"
+        },
+        {
+          "pid": 77588,
+          "name": "cmake"
+        },
+        {
+          "pid": 41024,
+          "name": "ctest"
+        },
+        {
+          "pid": 58548,
+          "name": "ninja"
+        },
+        {
+          "pid": 77196,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:51:04.3939311Z",
+      "processes": [
+        {
+          "pid": 51428,
+          "name": "clang"
+        },
+        {
+          "pid": 76688,
+          "name": "clang"
+        },
+        {
+          "pid": 77588,
+          "name": "cmake"
+        },
+        {
+          "pid": 41024,
+          "name": "ctest"
+        },
+        {
+          "pid": 58548,
+          "name": "ninja"
+        },
+        {
+          "pid": 5340,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:51:05.0062790Z",
+      "processes": [
+        {
+          "pid": 21968,
+          "name": "clang"
+        },
+        {
+          "pid": 80448,
+          "name": "clang"
+        },
+        {
+          "pid": 77588,
+          "name": "cmake"
+        },
+        {
+          "pid": 41024,
+          "name": "ctest"
+        },
+        {
+          "pid": 58548,
+          "name": "ninja"
+        },
+        {
+          "pid": 17532,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:51:05.6517143Z",
+      "processes": [
+        {
+          "pid": 39728,
+          "name": "clang"
+        },
+        {
+          "pid": 77588,
+          "name": "cmake"
+        },
+        {
+          "pid": 41024,
+          "name": "ctest"
+        },
+        {
+          "pid": 58548,
+          "name": "ninja"
+        },
+        {
+          "pid": 63440,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:51:06.3355418Z",
+      "processes": [
+        {
+          "pid": 63752,
+          "name": "clang"
+        },
+        {
+          "pid": 79956,
+          "name": "clang"
+        },
+        {
+          "pid": 77588,
+          "name": "cmake"
+        },
+        {
+          "pid": 41024,
+          "name": "ctest"
+        },
+        {
+          "pid": 58548,
+          "name": "ninja"
+        },
+        {
+          "pid": 33276,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:51:06.9923773Z",
+      "processes": [
+        {
+          "pid": 2892,
+          "name": "clang"
+        },
+        {
+          "pid": 64740,
+          "name": "clang"
+        },
+        {
+          "pid": 77588,
+          "name": "cmake"
+        },
+        {
+          "pid": 41024,
+          "name": "ctest"
+        },
+        {
+          "pid": 58548,
+          "name": "ninja"
+        },
+        {
+          "pid": 60808,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:51:07.6354621Z",
+      "processes": [
+        {
+          "pid": 2892,
+          "name": "clang"
+        },
+        {
+          "pid": 64740,
+          "name": "clang"
+        },
+        {
+          "pid": 77588,
+          "name": "cmake"
+        },
+        {
+          "pid": 41024,
+          "name": "ctest"
+        },
+        {
+          "pid": 58548,
+          "name": "ninja"
+        },
+        {
+          "pid": 27424,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:51:08.3315833Z",
+      "processes": [
+        {
+          "pid": 2892,
+          "name": "clang"
+        },
+        {
+          "pid": 64740,
+          "name": "clang"
+        },
+        {
+          "pid": 77588,
+          "name": "cmake"
+        },
+        {
+          "pid": 41024,
+          "name": "ctest"
+        },
+        {
+          "pid": 58548,
+          "name": "ninja"
+        },
+        {
+          "pid": 66316,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:51:08.9651770Z",
+      "processes": [
+        {
+          "pid": 63804,
+          "name": "clang"
+        },
+        {
+          "pid": 67524,
+          "name": "clang"
+        },
+        {
+          "pid": 77588,
+          "name": "cmake"
+        },
+        {
+          "pid": 41024,
+          "name": "ctest"
+        },
+        {
+          "pid": 58548,
+          "name": "ninja"
+        },
+        {
+          "pid": 66316,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:51:09.5773417Z",
+      "processes": [
+        {
+          "pid": 63804,
+          "name": "clang"
+        },
+        {
+          "pid": 67524,
+          "name": "clang"
+        },
+        {
+          "pid": 77588,
+          "name": "cmake"
+        },
+        {
+          "pid": 41024,
+          "name": "ctest"
+        },
+        {
+          "pid": 58548,
+          "name": "ninja"
+        },
+        {
+          "pid": 67072,
+          "name": "node"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:51:10.2304567Z",
+      "processes": [
+        {
+          "pid": 63804,
+          "name": "clang"
+        },
+        {
+          "pid": 67524,
+          "name": "clang"
+        },
+        {
+          "pid": 77588,
+          "name": "cmake"
+        },
+        {
+          "pid": 58548,
+          "name": "ninja"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:51:10.8726097Z",
+      "processes": [
+        {
+          "pid": 15528,
+          "name": "clang"
+        },
+        {
+          "pid": 63804,
+          "name": "clang"
+        },
+        {
+          "pid": 77588,
+          "name": "cmake"
+        },
+        {
+          "pid": 58548,
+          "name": "ninja"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:51:11.4576249Z",
+      "processes": [
+        {
+          "pid": 15528,
+          "name": "clang"
+        },
+        {
+          "pid": 17448,
+          "name": "clang"
+        },
+        {
+          "pid": 77588,
+          "name": "cmake"
+        },
+        {
+          "pid": 58548,
+          "name": "ninja"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:51:12.0037876Z",
+      "processes": [
+        {
+          "pid": 15528,
+          "name": "clang"
+        },
+        {
+          "pid": 17448,
+          "name": "clang"
+        },
+        {
+          "pid": 77588,
+          "name": "cmake"
+        },
+        {
+          "pid": 58548,
+          "name": "ninja"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:51:12.5690358Z",
+      "processes": [
+        {
+          "pid": 17448,
+          "name": "clang"
+        },
+        {
+          "pid": 31924,
+          "name": "clang"
+        },
+        {
+          "pid": 77588,
+          "name": "cmake"
+        },
+        {
+          "pid": 58548,
+          "name": "ninja"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:51:13.1335461Z",
+      "processes": [
+        {
+          "pid": 8552,
+          "name": "clang"
+        },
+        {
+          "pid": 79156,
+          "name": "clang"
+        },
+        {
+          "pid": 77588,
+          "name": "cmake"
+        },
+        {
+          "pid": 58548,
+          "name": "ninja"
+        },
+        {
+          "pid": 16408,
+          "name": "wasm-ld"
+        },
+        {
+          "pid": 78892,
+          "name": "wasm-ld"
+        }
+      ]
+    },
+    {
+      "phase": "quiet",
+      "utc": "2026-10-25T10:51:13.7309955Z",
+      "processes": [
+        {
+          "pid": 77220,
+          "name": "ctest"
+        },
+        {
+          "pid": 78712,
+          "name": "node"
+        }
+      ]
+    }
+  ],
+  "quietResets": 69,
+  "error": "Cannot inspect Node process 59728",
+  "endedUtc": "2026-10-25T10:51:14.3337277Z"
+}
