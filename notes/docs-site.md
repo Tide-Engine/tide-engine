@@ -1,5 +1,59 @@
 # The docs site
 
+## Earth exact biome gradient cache (2026-10-25)
+
+The owner authorized game-side optimization while preserving the visuals,
+after the engine shader update remained sluggish on the Pixel 9 Pro.
+Earth now caches the fixed road-plane normals in its local Atlas and the
+exact seed-zero simplex gradient indices for its four broad biome octaves
+(frequencies 3, 7, 11 and 19). A sized local 512 x 343 Grid2<float> holds all
+56 cubed lattice points in [-28, 27]. The largest skewed unit-vector
+coordinate is 19 * sqrt(2); the offset dry octave is smaller. Point samples
+read exact integers 0-15 from the renderer's R16F texture. The shader retains
+simplex corner ranking, tie priority, float interpolation and scale 32.5,
+with the original Math.Simplex fallback outside the cached cube. The 61,
+900, 4000, 20000, flower and star fields keep their original implementation.
+This adds about 0.75 MiB of local grid chunks and 343 KiB of GPU data, built
+once with no image download. Ordinary CPU-backed texture restoration handles
+device loss; rebinding the grid each frame also survives local heap restore.
+The road initializer detects missing normals after migration of the old
+Atlas layout. These are local presentation data; no match fields, simulation
+or benchmark pins changed.
+
+The first dense GPU-generated cache layouts cost more than they saved and
+were discarded. Two subsequent CPU-grid probes accidentally omitted their
+finite dimensions and therefore bound no texture; their earlier reported
+speedups are invalid. The regression now inspects the actual half-float
+texture recorded by Planet, checking every index, the dimensions, immutable
+reuse, and road-normal reconstruction. The corrected candidate's exploratory
+WebGL country GPU median is 38.84 ms against 41.36 ms (about 6% less). A clean
+paired timing window was requested but not granted because other threads
+were building/testing. No timing here is called clean, and this desktop
+proxy does not establish a Pixel frame rate. Frozen before/after HTML hashes
+and valid evidence are in `earth-game-measurements.json`.
+
+Native and web Earth targets build and pass all 21 Earth checks and all
+three benchmark cases, retaining the existing pins. Twelve-frame native
+Vulkan validation and OpenGL captures pass. Seven fixed views (globe,
+plaza, country, town edge, road midpoint, near globe, far globe) at 1236 x
+2745 pixels match the previous build pixel for pixel in both WebGL and
+WebGPU: 14 before/after pairs with fatal GPU diagnostics enabled. These
+isolate the terrain with a null match world; hosted walking/driving and
+publication are recorded after deployment below. Android hardware was not
+available. No engine/compiler or private prototype source was changed.
+
+Published on dev as `56ee43be`, then uploaded Earth release
+`9e2e449241882444fede36fd21a29c4531a9d6439be19af67a44cabb6ce178c7`.
+The downloaded production program matches the deployment bundle. Its
+client/server compatibility identity is `21404e58` (previously `e0be6825`);
+all existing exact simulation pins remain unchanged. The managed room is
+still 966ANR/0. Muted iGPU WebGL and WebGPU clients join it, land, walk and
+drive with zero errors; inspected 412 x 915 DPR 1 captures show the car,
+scenery and online status. These are live correctness checks, not new
+performance measurements. The optional clean timing request was withdrawn
+to finish publication under the ongoing shared-machine load.
+
+
 ## Earth on the Ryzen integrated GPU (2026-10-25)
 
 The owner suggested using the CPU's integrated graphics as a local proxy for

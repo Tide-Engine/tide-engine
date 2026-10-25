@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "game.h"
+#include "tide/mesh.h"
 #include "tide/shard_client.h"
 #include "tide/shards.h"
 #include "tide_test.h"
@@ -167,6 +168,49 @@ TIDE_TEST(earth_town_ground_regions_do_not_overlap)
             const float chord = length3(minus(local.Atlas.towns.at[a], local.Atlas.towns.at[b])) * PLANET;
             TIDE_CHECK(chord > 2 * (110 + 20));
         }
+    }
+    tide_draw_free(&draw);
+    tide_local_free(&local);
+}
+
+// Check the actual half-float texture recorded by Planet, including its
+// dimensions and every lattice address. All gradient indices are exact in
+// half precision; a second frame must reuse the same immutable pixels.
+TIDE_TEST(earth_biome_lookup_keeps_the_original_gradients)
+{
+    tide_local_init(&local);
+    memset(&devices, 0, sizeof devices);
+    memset(&gui, 0, sizeof gui);
+    draw_world(NULL, player(0));
+    TIDE_REQUIRE(local.Biomes.made);
+    const tide_draw_texture *texture = NULL;
+    for (uint32_t i = 0; i < draw.texture_count; i++) {
+        if (draw.textures[i].format == TIDE_TEXELS_HALF && draw.textures[i].width == 512 && draw.textures[i].height == 343)
+            texture = &draw.textures[i];
+    }
+    TIDE_REQUIRE(texture != NULL);
+    const uint16_t *pixels = (const uint16_t *)texture->pixels;
+    for (int i = 0; i < 56 * 56 * 56; i++) {
+        const tide_int4 cell = {i % 56 - 28, i / 56 % 56 - 28, i / (56 * 56) - 28, 0};
+        TIDE_REQUIRE(pixels[i] == tide_half_from_float((float)(tide_hash_i4(cell) & 15)));
+    }
+    const uint64_t id = texture->id, version = texture->version;
+    draw_world(NULL, player(0));
+    bool kept = false;
+    for (uint32_t i = 0; i < draw.texture_count; i++) {
+        if (draw.textures[i].id == id && draw.textures[i].version == version && draw.textures[i].pixels == (const uint8_t *)pixels)
+            kept = true;
+    }
+    TIDE_CHECK(kept);
+    // A reload from the previous layout has no cached road normals yet.
+    // Retaining Atlas.made must still rebuild those planes.
+    memset(&local.Atlas.normals, 0, sizeof local.Atlas.normals);
+    draw_world(NULL, player(0));
+    for (int i = 0; i < 11; i++) {
+        const tide_float3 normal = local.Atlas.normals.at[i];
+        TIDE_CHECK(fabsf(length3(normal) - 1) < 0.00001f);
+        TIDE_CHECK(fabsf(tide_dot_f3(normal, local.Atlas.froms.at[i])) < 0.00001f);
+        TIDE_CHECK(fabsf(tide_dot_f3(normal, local.Atlas.tos.at[i])) < 0.00001f);
     }
     tide_draw_free(&draw);
     tide_local_free(&local);

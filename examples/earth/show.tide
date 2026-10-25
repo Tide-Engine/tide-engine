@@ -254,10 +254,10 @@ view Mine(Walker walker, mut Pilot pilot, with ownership)
     if (walker.moves > pilot.moves) pilot.moves = walker.moves;
 }
 
-view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atlas, Devices devices)
+view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atlas, mut Biomes biomes, Devices devices)
 {
     if (shapes.ball.count == 0) Build(shapes);
-    if (!atlas.made)
+    if (!atlas.made || Math.Dot(atlas.normals[0], atlas.normals[0]) < 0.5)
     {
         for (var i = 0; i < TOWNS; i++)
         {
@@ -269,9 +269,20 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
         {
             atlas.froms[i] = Up(Road(i).x);
             atlas.tos[i] = Up(Road(i).y);
+            atlas.normals[i] = Math.Normalize(Math.Cross(atlas.froms[i], atlas.tos[i]));
         }
         atlas.made = true;
     }
+    if (!biomes.made)
+    {
+        for (var index = 0; index < 56 * 56 * 56; index++)
+        {
+            var cell = int3(index % 56, (index / 56) % 56, index / (56 * 56)) - int3(28);
+            biomes.gradients[index & 511, index >> 9] = Math.Hash(int4(cell.x, cell.y, cell.z, 0)) & 15;
+        }
+        biomes.made = true;
+    }
+    biomes.lookup = biomes.gradients;
     float dt = Math.Min(Frame.dt, 0.05);
     scenery.lastShown = scenery.shown;
     scenery.shown = 0;
