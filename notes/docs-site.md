@@ -51,7 +51,31 @@ also render opposite cube-corner globe views and the walking view; inspected
 captures show no visible cube seams. Native Vulkan validation passes the
 globe and scripted landing/walking/driving captures. Other OS/device and Pixel
 coverage is unavailable locally. Engine/compiler/runtime source is unchanged.
-Publication and hosted checks follow after deployment.
+Published the globe as release `bfdafb77`, then fixed the stats-corner overlap
+found in the hosted phone smoke: action buttons, driving speed and the globe
+hint move up 44 pixels. All 21 GLSL/WGSL arrays remain byte-identical to the
+measured candidate. Rebuilt native/web Earth targets pass all 24 checks and
+three benchmark cases again (69.33/76.55 s). No timing rerun was needed for
+this CPU-side GUI layout change.
+
+Final release
+`832c9712a61510f782836f57b797915d06e62768966f332c20f8a7c39d688ca3`
+is live at the same project / room 966ANR/0. Both embedded program and asset
+pack match the deployment bundle; the simulation identity remains
+`bb14b391a43e4fc37986378cc664b89c32b3427968738d25bcb93ba0fd63a113`.
+The raw client HTML is 3,986,232 bytes (previous stats release 1,828,622);
+the first globe release's observed Brotli HTTP transfer was 2,080,042 bytes.
+This trades a larger opt-in download and fixed texture memory for less
+per-frame work. Native/web/browser correctness is not a phone FPS claim.
+
+Downloaded final WebGL/WebGPU clients join the actual hosted room, land,
+walk, and click the relocated Car button to drive, with zero reported errors;
+inspected 412 x 915 captures show the car, separate action row and FPS/ping
+line. One initial smoke wrapper nested a script tag in its diagnostic setup
+and was discarded; the corrected wrappers preserve the production program
+and pack unchanged. Publication identities/hashes are appended to the JSON.
+The docs move is pushed but `/guide/earth` still returns 404 before its normal
+site deployment; no CI run was dispatched or awaited.
 
 ## Earth moves to an opt-in docs demo (2026-10-25)
 

@@ -269,5 +269,35 @@
     "Cached broad fields are bilinear approximations; fine forest octave, roads, snow, lighting and full framebuffer remain.",
     "Cube adds 1.5 MiB base / about 2 MiB with mips and about 0.91 MiB source PNGs.",
     "Cold mesh/cache generation and browser shader compilation are excluded from warmed GPU medians."
-  ]
+  ],
+  "final_ui_adjustment": {
+    "description": "Reserve the stats corner by moving action buttons, driving speed and globe hint up 44 pixels.",
+    "all_21_shader_arrays_byte_identical_to_measured_candidate": true,
+    "show_tide_sha256": "2083c2f9a2c03605691aea6037ea789d0227e289b75bfe763ae11b177c2e6ba2"
+  },
+  "publication": {
+    "release": "832c9712a61510f782836f57b797915d06e62768966f332c20f8a7c39d688ca3",
+    "manifest": {
+      "format": 1,
+      "tide": "0.5.0-dev",
+      "simulation": "bb14b391a43e4fc37986378cc664b89c32b3427968738d25bcb93ba0fd63a113",
+      "files": [
+        {
+          "name": "server.wasm",
+          "size": 441018,
+          "sha256": "9e7d4dd1b56f206018cfdff3489ab97127a7890e547e3b7cc0bc478b99e4bbfb"
+        },
+        {
+          "name": "client.html",
+          "size": 3986232,
+          "sha256": "24c302acd05a9275df6480022de0263ab160baae49f8c5cdbe3c29c68c4e6a0d"
+        }
+      ]
+    },
+    "production_embedded_matches_bundle": true,
+    "embedded": {
+      "TIDE_PROGRAM": "5e7689f0f47d2142dfecb7fe4f4e7f18366e37a7ba223fbccda52b83e48bc536",
+      "TIDE_PACK": "ea3bb61b0e4d0ab92aff352304c052d2a18749642c714256318b8eadbaa5247d"
+    }
+  }
 }
