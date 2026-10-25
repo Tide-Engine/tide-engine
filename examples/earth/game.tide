@@ -10,6 +10,7 @@
 settings
 {
     title = "Earth";
+    stats = true;
     maxPlayers = 64;
     shards = true;
     reach = 320;   // Metres: further than anything here looks for anything else, a player's sight among it

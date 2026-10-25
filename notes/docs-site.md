@@ -1,5 +1,34 @@
 # The docs site
 
+## Homepage loading placeholder and Earth stats (2026-10-25)
+
+The owner confirms walking/driving is much faster, with the globe still slow,
+and requests a skeleton to prevent the homepage moving during load and the
+engine stats display. The square already reserved its size; inserting the
+caption after load changed the image column's height and the hero's alignment.
+The caption now exists from initial HTML with visibility hidden until ready,
+so its exact wrapped height is reserved at every width. A dark planet skeleton
+fills the square while loading, with a gentle opacity animation disabled for
+reduced motion and stopped once ready. Readers saving motion/data keep the
+static placeholder and do not start a game, preserving the existing policy.
+Expand retains the same iframe and the slot's original space.
+
+Earth sets `stats = true`: the engine's existing FPS/ping line is present in
+hosted, fallback and separate-tab builds. Tap/click the line (or F8) to open
+CPU/render, GPU time when supported, draw calls, vertices, networking and
+system timings. It starts collapsed, as the public game setting specifies,
+so it fits the small homepage frame; profiling begins only when opened.
+No new engine API, runtime flag or browser query parameter was added.
+
+Validation: docs production build passes; Svelte check has zero errors and
+warnings. Muted Radeon Chrome delayed-ready checks at 412 x 915 and 1440 x
+915 compare the demo, caption, words and features rectangles before/after
+actual iframe load: all are identical. Both retain the same iframe on Expand.
+Inspected phone/desktop skeleton captures and the WebGL stats-open capture.
+Native/web Earth targets and all 23 game checks plus three benchmark cases
+pass again (CTest 4/4 each, 82.80/85.08 s); simulation pins are unchanged.
+Browser smoke and publication of the stats build are recorded below.
+
 ## Earth relief, biomes and cheaper ground shading (2026-10-25)
 
 The owner reports the Pixel still slow after the exact-gradient cache, with
@@ -80,7 +109,15 @@ its custom Walker/Car position fields; rebuilt native/web Earth targets pass
 all 23 checks and three pins again (63.29/73.64 s). All 21 merged GLSL/WGSL
 texts remain byte-identical to the measured candidate. Optimized CLI/client
 builds and deployment staging are refreshed for that compiler dependency.
-Publication and hosted checks are recorded after deployment below.
+Published Earth release
+`e8b0e6e23fcdc0b82d2ee2a874f6d88004e633053423974644e8ca4ac26c1fa7`
+to project `29c727eab929afcbef23455a6bf73125` / room `966ANR/0`.
+The downloaded production program matches the deployment bundle exactly.
+Muted Radeon WebGL and WebGPU clients join the actual room, land, walk and
+drive with zero reported errors at 412 x 915; the actual homepage frames the
+hosted project. These are correctness checks, not timing measurements.
+The owner subsequently reports the improvement on their phone. The separate
+stats follow-up above replaces this release without changing the relief.
 
 
 ## Earth exact biome gradient cache (2026-10-25)

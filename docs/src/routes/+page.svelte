@@ -8,15 +8,16 @@
     const external = (link: string) => /^https?:/.test(link);
 
     // The planet beside the hero (examples/earth): a game of its own in a
-    // frame, which takes the logo's place once it has drawn. It's the world
+    // frame, which takes the skeleton's place once it has drawn. It's the world
     // everyone on this page shares, hosted (Tide-Engine/tide-services), when
     // that can be played now; else this machine's own, from this site, with
     // bots. It starts by itself, but for a reader who asked for less motion
     // or less data, and stops once the hero is well out of view. A build
-    // without the game keeps the logo.
+    // without the game keeps the placeholder.
     const shared = 'https://play.tide-engine.dev/g/29c727eab929afcbef23455a6bf73125/';
     let place: HTMLElement;
     let shown = $state(false);
+    let loading = $state(false);
     let full = $state('/earth/');
     // Bigger: the frame over the whole page, as it is (no new page, so the game goes on where it was)
     let big = $state(false);
@@ -35,6 +36,7 @@
         const title = 'A little planet for everyone on this page, to walk and drive round together';
         async function open() {
             const asked = ++opening;
+            loading = true;
             const backend = new URLSearchParams(location.search).get('backend');
             let hosted = false;
             try {
@@ -64,7 +66,10 @@
                 opened.src = url.href;
                 opened.addEventListener('load', async () => {
                     const page = game(opened);
-                    if (typeof page?.start !== 'function') return opened.remove();
+                    if (typeof page?.start !== 'function') {
+                        if (frame === opened) loading = false;
+                        return opened.remove();
+                    }
                     await page.start();
                     if (frame === opened) shown = true;
                 }, { once: true });
@@ -78,6 +83,7 @@
             frame?.remove();
             frame = undefined;
             shown = false;
+            loading = false;
         }
         const watching = new IntersectionObserver(([entry]) => {
             if (entry.isIntersecting && !frame) void open();
@@ -116,16 +122,17 @@
         <div class="image">
             <div class="slot">
                 <div class="earth" class:shown class:big bind:this={place}>
-                    <img src="/favicon.svg" alt="" width="320" height="320" />
+                    <div class="skeleton" class:loading aria-hidden={shown}>
+                        <div class="planet-placeholder" aria-hidden="true"></div>
+                        <span role="status">{loading ? 'Loading planet…' : 'Live planet'}</span>
+                    </div>
                 </div>
             </div>
             {#if big}
                 <button type="button" class="backdrop" aria-label="Back to the page" onclick={() => (big = false)}></button>
                 <button type="button" class="shrink" onclick={() => (big = false)}>Close ✕</button>
             {/if}
-            {#if shown}
-                <p class="caption">Live: walk or drive round a little planet with whoever's there. <button type="button" class="expand" onclick={() => (big = true)}>Expand</button> · <a href={full} target="_blank">New tab</a></p>
-            {/if}
+            <p class="caption" class:pending={!shown}>Live: walk or drive round a little planet with whoever's there. <button type="button" class="expand" onclick={() => (big = true)}>Expand</button> · <a href={full} target="_blank">New tab</a></p>
         </div>
     </section>
 
@@ -252,16 +259,41 @@
         aspect-ratio: 1;
         border-radius: 16px;
         overflow: hidden;
-        transition: background-color 0.4s;
+        background: #161618;
     }
 
-    .earth img {
-        width: 78%;
-        height: 78%;
+    .skeleton {
+        position: absolute;
+        inset: 0;
+        display: grid;
+        place-items: center;
         transition: opacity 0.4s;
     }
 
-    /* The game's frame, unseen until it has drawn, then over the logo */
+    .planet-placeholder {
+        width: 58%;
+        aspect-ratio: 1;
+        border-radius: 50%;
+        background: radial-gradient(circle at 35% 30%, #41464d, #272d35 55%, #1a1e24 80%);
+        box-shadow: 0 0 28px #596b8226;
+    }
+
+    .skeleton span {
+        position: absolute;
+        bottom: 7%;
+        color: #a8adb5;
+        font-size: 13px;
+    }
+
+    .skeleton.loading .planet-placeholder {
+        animation: breathe 2s ease-in-out infinite alternate;
+    }
+
+    @keyframes breathe {
+        to { opacity: 0.5; }
+    }
+
+    /* The game's frame, unseen until it has drawn, then over the skeleton */
     .earth :global(iframe) {
         position: absolute;
         inset: 0;
@@ -272,16 +304,22 @@
         transition: opacity 0.4s;
     }
 
-    .earth.shown {
-        background: #161618;
+    .earth.shown .skeleton {
+        opacity: 0;
+        visibility: hidden;
     }
 
-    .earth.shown img {
-        opacity: 0;
+    .earth.shown .planet-placeholder {
+        animation: none;
     }
 
     .earth.shown :global(iframe) {
         opacity: 1;
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .skeleton.loading .planet-placeholder { animation: none; }
+        .skeleton, .earth :global(iframe) { transition: none; }
     }
 
     .earth.big {
@@ -336,6 +374,11 @@
 
     .caption a {
         color: var(--brand-1);
+    }
+
+    /* Keep the complete caption's height before the game is ready. */
+    .caption.pending {
+        visibility: hidden;
     }
 
     .features {
