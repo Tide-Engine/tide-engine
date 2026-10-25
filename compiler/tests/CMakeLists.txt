@@ -541,6 +541,9 @@ add_test(NAME tidec_unity_folder_names
     COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/unity_folder_names"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/unity_folder_names.cmake")
 
+add_test(NAME tidec_declarations_only
+    COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/declarations_only"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/declarations_only.cmake")
 add_test(NAME tidec_prefab_error_once
     COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/prefab_error_once"
             -P "${CMAKE_CURRENT_SOURCE_DIR}/prefab_error_once.cmake")

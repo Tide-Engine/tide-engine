@@ -67,8 +67,42 @@ public class ConsoleTests
         Assert.AreEqual(before, Count());
 
         TideBuildService.Log("tide: can't do what a test made up", true);
-        (message, _, _) = Last();
+        Assert.AreEqual(before + 1, Count());
+        (message, file, _) = Last();
         StringAssert.StartsWith("tide: can't do what a test made up", message);
         StringAssert.DoesNotContain("TideBuildService", message);
+        Assert.IsEmpty(file);
+        TideBuildService.RemoveLocated(); // An error naming no file goes with the next build too
+        Assert.AreEqual(before, Count());
+    }
+
+    // A build is a task in the editor's status bar, from tide's "building" line to how it went, and nothing in the
+    // Console
+    [Test]
+    public void ABuildIsATaskInTheStatusBarAndNoneOfTheConsoles()
+    {
+        Assume.That(entries != null, "this Unity has the Console's entries");
+        var before = Count();
+        bool Shown()
+        {
+            foreach (var item in UnityEditor.Progress.EnumerateItems())
+            {
+                if (item.name == TideBuildService.TaskName && item.running) return true;
+            }
+            return false;
+        }
+
+        TideBuildService.Hear("tide: building game-41");
+        Assert.IsTrue(TideBuildService.Busy);
+        Assert.IsTrue(Shown());
+        TideBuildService.Hear("tide: built game-41");
+        Assert.IsFalse(TideBuildService.Busy);
+        Assert.IsFalse(Shown());
+
+        TideBuildService.Hear("tide: building game-42");
+        Assert.IsTrue(Shown());
+        TideBuildService.Hear("tide: the game keeps running its last build", true);
+        Assert.IsFalse(Shown());
+        Assert.AreEqual(before, Count());
     }
 }

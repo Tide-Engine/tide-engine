@@ -38,6 +38,20 @@ const char *path_stem(const char *path)
     return out;
 }
 
+// The game's types alone (codegen_options.declarations_only): what it wrote that runs, its systems, views, handlers,
+// functions, frags and verts, is left out, and the rest checked and generated as it would be. Tide's own stay.
+static void keep_declarations(program *prog)
+{
+    int kept = 0;
+    for (int i = 0; i < prog->decls.count; i++) {
+        decl *const d = prog->decls.items[i];
+        const bool runs = d->kind == DECL_SYSTEM || d->kind == DECL_FUNCTION || d->kind == DECL_SHADER;
+        if (runs && !d->builtin) continue;
+        prog->decls.items[kept++] = d;
+    }
+    prog->decls.count = kept;
+}
+
 // For another program (tidec --embed): a local handler of each of the match's own events, as it's heard and once it's
 // verified, so the program hears what the game's local handlers would, once each under rollback. Their bodies are
 // generated (gen_heard: tide_embed_heard_<Event>); nothing of them is in the match, as for any local handler.
@@ -137,6 +151,7 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
         if (!toks || !parse_file(prog, src, toks, false)) return false;
         prog->editor_create = prog->decls.items[before];
     }
+    if (opts->declarations_only) keep_declarations(prog);
     if (opts->embed && !add_embed_taps(prog)) return false;
     prog->game_folder = opts->game_folder;
     if (!check(prog)) return false;

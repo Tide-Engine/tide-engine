@@ -2048,7 +2048,8 @@ static bool generate(build *b, const char *gen, const bool layout)
                                      .external_identity = has_external ? external_identity : NULL,
                                      .scene = b->opts->scene,
                                      .editor_prefab = b->opts->editor_prefab, .editor_local = b->opts->editor_local,
-                                     .editor_source = b->opts->editor_source, .editor_text = editor_text};
+                                     .editor_source = b->opts->editor_source, .editor_text = editor_text,
+                                     .declarations_only = b->opts->declarations};
     const bool ok = compile_inputs(inputs, count, &codegen, NULL);
     if (!ok) telemetry_fail(TELEMETRY_ERROR_COMPILE);
     free(editor_text);
@@ -2741,7 +2742,8 @@ static bool write_unity_package(const run *r, const char *schema, const uint32_t
     for (int i = 0; i < r->b.packages.count; i++) packages[i] = (unity_package){r->b.packages.items[i].folder, r->b.packages.items[i].name};
     ok = ok && unity_code_write(dir, schema, r->b.outline, packages, r->b.packages.count);
     free(packages);
-    ok = ok && unity_shaders_write(dir, r->b.shaders, r->b.shaders_size);
+    // A build of the declarations alone has no shaders of the game's: the last build's stay until the next one's
+    if (!r->b.opts->declarations) ok = ok && unity_shaders_write(dir, r->b.shaders, r->b.shaders_size);
     free(dir);
     free(project);
     free(assets);
@@ -3073,9 +3075,65 @@ done:
     return code;
 }
 
+// While the game's code doesn't build, the C# of its components still comes: a project starts with code that spawns a
+// Unity prefab, which doesn't build until the prefab is made, which needs the component the code declares. So after a
+// build that failed, tide unity builds the game's declarations alone (--declarations, quietly: the errors are the
+// build's own) into <-o>/declared, which writes the project's Packages/com.tide.game from them. Nothing runs that
+// build: the editor's game goes on with its last, and the next build that works writes the C# again.
+static void write_unity_declarations(const run *r)
+{
+    const build_options *opts = r->b.opts;
+    if (!opts->unity_assets) return;
+    char *dir = path_join(r->dir, "declared");
+    const int fixed = 9;
+    const char **argv = calloc((size_t)(fixed + 2 * opts->define_count + 1), sizeof *argv);
+    if (!argv) abort();
+    int n = 0;
+    argv[n++] = r->b.compiler;
+    argv[n++] = "unity";
+    argv[n++] = r->b.folder;
+    argv[n++] = "-o";
+    argv[n++] = dir;
+    argv[n++] = "--declarations";
+    argv[n++] = "--assets";
+    argv[n++] = opts->unity_assets;
+    if (opts->release) argv[n++] = "--release";
+    for (int i = 0; i < opts->define_count; i++) {
+        if (strcmp(opts->defines[i], "DEBUG") == 0) continue; // Every build's but --release's, said again there
+        argv[n++] = "--define";
+        argv[n++] = opts->defines[i];
+    }
+    argv[n] = NULL;
+    sys_run(argv, NULL, true);
+    free(argv);
+    free(dir);
+}
+
+// A build starting, which the editor shows as it waits (com.tide.unity's TideBuildService), as it shows its end: the
+// "built" line, or the errors and "keeps running its last build".
+static void building(const run *r)
+{
+    printf("tide: building game-%u\n", (unsigned)(r->builds + 1u));
+    fflush(stdout);
+}
+
+// tide unity --declarations: the game's types alone, and the C# made of them (write_unity_declarations).
+static int tide_unity_declared(const char *root, const build_options *opts)
+{
+    run r = {0};
+    if (!build_setup(&r.b, root, opts, true)) return 1;
+    r.dir = path_absolute(opts->output);
+    r.gen = path_join(r.dir, "gen");
+    if (!sys_mkdirs(r.gen)) return 1;
+    r.builds = highest_numbered(r.dir, "game-", LIBRARY_SUFFIX);
+    r.packs = highest_numbered(r.dir, "pack-", "");
+    return write_unity_library(&r) && build_library(&r) && write_unity_schema(&r) ? 0 : 1;
+}
+
 int tide_unity(const char *root, const build_options *opts)
 {
     if (opts->web) return tide_unity_web(root, opts);
+    if (opts->declarations) return tide_unity_declared(root, opts);
     run r = {0};
     if (!build_setup(&r.b, root, opts, true)) return 1;
     r.dir = path_absolute(opts->output);
@@ -3089,6 +3147,7 @@ int tide_unity(const char *root, const build_options *opts)
     r.packs = highest_numbered(r.dir, "pack-", "");
     if (!write_unity_library(&r) || !build_embed_host(&r)) return 1;
     if (!build_library(&r) || !write_unity_schema(&r)) {
+        write_unity_declarations(&r);
         if (!opts->watch) return 1;
         fprintf(stderr, "tide: the game will build once its files are fixed\n");
     }
@@ -3140,13 +3199,21 @@ int tide_unity(const char *root, const build_options *opts)
         if (changed_at >= 0 && sys_now_ms() - changed_at >= SETTLE_MS) {
             changed_at = -1;
             assets_changed_at = -1; // A build brings the pack as the files are now
-            if (build_library(&r) && write_unity_schema(&r)) printf("tide: built game-%u\n", (unsigned)r.builds);
-            else fprintf(stderr, "tide: the game keeps running its last build\n");
+            building(&r);
+            if (build_library(&r) && write_unity_schema(&r)) {
+                printf("tide: built game-%u\n", (unsigned)r.builds);
+            } else {
+                write_unity_declarations(&r);
+                fprintf(stderr, "tide: the game keeps running its last build\n");
+            }
             fflush(stdout);
         } else if (assets_changed_at >= 0 && sys_now_ms() - assets_changed_at >= SETTLE_MS) {
             assets_changed_at = -1;
             if (r.b.info.assets_affect_match) {
-                if (!build_library(&r)) fprintf(stderr, "tide: the game keeps running its last build\n");
+                building(&r);
+                if (build_library(&r)) printf("tide: built game-%u\n", (unsigned)r.builds);
+                else fprintf(stderr, "tide: the game keeps running its last build\n");
+                fflush(stdout);
             } else {
                 repack(&r);
             }

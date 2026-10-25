@@ -520,7 +520,9 @@ Tide's status shows instead, nor a player build's output unless it warns. The
 one other line is "the game's errors are fixed", as the errors before it stay
 in the Console. Unity's internal sticky entries (`Debug.LogSticky`,
 `RemoveLogEntriesByEntityId`, keyed by `EntityId` in 6000.6) could take fixed
-errors away instead; not tried.
+errors away instead; not tried. (Since 2026-10-25 builds are a status-bar task,
+and errors naming no file go as compiler messages too, so the fixed line is
+gone: Closing the gaps, below.)
 
 Tests: the sample's ball is `Assets/Sample/Roller.prefab` (TideEntity with
 `Ball`; since 2026-10-22 a `Ball` component of its own), spawned by `Spawn(Roller, ...)`; `Bounce.unity` has two pillars named
@@ -1620,6 +1622,41 @@ Checked on Windows: a 64-bit player of the sample, run with `-batchmode
 -nographics -tide-smoke` (`Assets/Scripts/PlayerSmoke.cs`), ran the match,
 showed its own ball on the floor and turned the pillars. Not checked: Linux
 (where the game's library may need the embed's symbols visible) and macOS.
+
+### Closing the gaps (2026-10-25)
+
+The owner, after a review of what was left: "yes do both" (a progress indicator outside Play, and icons on the
+generated components and TideEntity), "also lets close the gaps (apart from the tests in other platforms)", and on
+C# names Tide and Unity share: "for ambiguous names we should have to explicitly type their namespace such that we
+all agree what it is".
+
+- **The earlier session's last work reached dev with this round.** Packages' components in Unity (above) and the
+  script icons (Icons, above) were built on 2026-10-22 and left uncommitted in that session's worktree; they were
+  carried over as they were, then brought up to date with the physics packages (Packages' components in Unity).
+- **A build is a task in the status bar** (`TideBuildService.Working`/`Idle`, Unity's `Progress` API, indefinite,
+  named `Tide`), never a Console line: from tide starting to its first build's end (`tide: building the game for
+  Unity ...`), from each `tide: building game-<n>` (`notes/cli-and-packages.md`) to `built` or `keeps running its
+  last build`, and while Play waits for tide to build the scenes as they are, from the `sync` to its answer. It goes
+  as tide stops, and a task a script reload left is removed as the service loads. Project Settings > Tide says
+  "building the game" meanwhile. Unity's own task for compiling the C# tide wrote follows it. My pick: removed as it
+  ends, failed or not, rather than left finished (a failed build's errors are in the Console already).
+- **Errors that name no file go as the rest do.** They went in as ordinary logs, which stayed, with "the game's
+  errors are fixed" after them; now they're compiler messages too, with no file (`LogLocated` with `""`), which the
+  next build takes away (`RemoveLocated`), as is "the game has errors: fix them before Play". The fixed line is left
+  for a Unity without compiler messages alone.
+- **The game's C# comes while its code doesn't build** (Coin Rush's item 5): after a failed build tide builds the
+  game's declarations alone and writes `Packages/com.tide.game` from them (`notes/cli-and-packages.md`). So a new
+  component is in Unity before the code spawning the prefab that needs it builds: make the component, the prefab,
+  and the game builds. The editor's game keeps its last build; the new C#'s hash isn't its schema's, so live values
+  wait for a build that works. My pick: every type the game declares, rather than writing C# only for a build failing
+  at Unity names alone, so a component also comes while a system is half written.
+- **Names Tide and Unity share are written whole (owner).** Tide's `Transform`, `Time` and `Font`, and a package's
+  types such as Box3D's `Collider`, keep their names in `Tide.Game`; a script using both namespaces gets C#'s error
+  for an ambiguous name and writes `Tide.Game.Transform` or `UnityEngine.Transform`. Nothing is renamed, hidden or
+  moved to another namespace (the two proposals in Coin Rush's item 6 are withdrawn). The generated C# and the
+  package already write every name from `global::`. Tide's own names follow the same rule (Unity prefabs of one name
+  in two folders: "write the one you mean"). User docs: the package's README and `docs/tools/cli.md`, Unity.
+- **Already closed:** the walks over Assets were answered by `--notified` (The game is Assets).
 
 ## Web
 

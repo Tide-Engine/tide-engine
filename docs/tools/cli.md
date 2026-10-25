@@ -336,7 +336,15 @@ its input, which the package writes as Unity imports, moves or deletes the
 game's files, and looks itself only at the files it built, so an edit saved
 while Unity is in the background still builds at once. A `sync <n>` line asks
 it to say `tide: synced <n>` once it has built everything it was told of,
-which Play waits for.
+which Play waits for. Each build starts with a `tide: building game-<n>` line,
+which the editor shows as a task in its status bar until the build ends.
+
+The game's components come to Unity as C# in `Packages/com.tide.game`, which
+it writes from each build. While the game's code doesn't build, it writes them
+from the game's declarations alone, leaving out its systems, views, handlers
+and functions (what `--declarations` builds): a component a new prefab needs is
+in Unity before the code that spawns the prefab builds. The game itself keeps
+running its last build.
 
 `--assets Assets` makes the project's prefabs and scenes part of the game:
 each one holding GameObjects with the package's TideEntity component is a Tide
@@ -366,7 +374,11 @@ fields are on their components, shown in Play. Every Tide type has its C#: a
 struct is a C# struct, and `List`, `Set`, `Map` and `Grid2`/`Grid3` are
 `List<T>`, `Tide.TideSet<T>`, `Dictionary<K, V>` and `Tide.TideGrid2<T>`. A
 component's struct, list, set, array and `char` fields are set in the
-inspector and baked; its maps and grids are filled in by game code.
+inspector and baked; its maps and grids are filled in by game code. Tide's
+types keep their names where Unity has one too (Tide's `Transform`, `Time` and
+`Font`, Box3D's `Collider`): a script using both namespaces writes the one it
+means, `Tide.Game.Transform` or `UnityEngine.Transform`, as C# asks of an
+ambiguous name.
 Older projects list components on the TideEntity itself, which tide still reads:
 Tools > Tide > Convert TideEntity Lists to Components makes them components of
 their own. Everything from Unity is under the

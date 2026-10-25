@@ -29,6 +29,17 @@ lines are in the Console, and clicking one selects what it's about. It also
 keeps `Packages/com.tide.game`: the game's schema, from which the package
 makes C# types of every Tide type (`Tide.Game.Health`). Keep that folder in
 source control, so a fresh clone compiles before tide has built anything.
+While the game's code doesn't build, its components still come from what it
+declares, so a component a new prefab needs is there before the code that
+spawns that prefab builds. A build in progress shows as a Tide task in the
+editor's status bar, not in the Console.
+
+Some of Tide's types share a name with Unity's: Tide's `Transform`, `Time` and
+`Font`, or a package's, like Box3D's `Collider`. Neither is renamed or hidden.
+A script with `using Tide.Game;` beside `using UnityEngine;` writes the
+namespace of the one it means, `UnityEngine.Transform` or
+`Tide.Game.Transform`, as C# asks when a name is ambiguous, so everyone reading
+it knows which it is. Tide code does the same for its own names.
 
 ## Author
 
