@@ -1,0 +1,90 @@
+// Raw roles stay on declarations; stored values use the ordinary Texture reference.
+using Image = Texture;
+using Pixels = Grid2<Color>;
+
+[Raw, Filter(Filter.Point), Wrap(Wrap.Repeat)]
+asset Image numbers = "assets/hero.png";
+[Raw] asset Pixels cells = "assets/hero.png";
+
+scene Main { }
+component Panel
+{
+    [Raw] local Image initial = numbers;
+    [Raw] local Image image;
+}
+event(Spawned) Setup(with Main) { Spawn(Panel); }
+
+local singleton Art
+{
+    List<Vertex> vertices = [Vertex { }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }];
+    List<int> indices = [0, 1, 2];
+    [Raw] Image initial = numbers;
+    [Raw] Image assigned;
+    [Raw] Image forwarded;
+    [Raw] Image fromGrid;
+    [Raw] Image fromCells = cells;
+    [Raw] Image none = default;
+    [Raw, Filter(Filter.Point), Wrap(Wrap.Repeat)] Pixels values = Grid2(2, 1);
+    bool ready;
+    int2 initialSize;
+    int2 assetSize;
+    int2 gridSize;
+    int2 cellsSize;
+    int2 attachedInitialSize;
+    int2 attachedSize;
+    int2 noneSize;
+}
+
+// GPU helper parameters keep ordinary Texture syntax and specialize for each source's role.
+Color SamplePair(Texture image, float2 uv)
+{
+    return image.Sample(uv, Filter.Bilinear) + image.Sample(uv, Filter.Point, Wrap.Mirror);
+}
+Color Forward(Image image, float2 uv) { return SamplePair(image, uv); }
+float2 Moved(float2 uv) { return uv * 0.5 + float2(0.25, 0.25); }
+int2 Dimensions(Texture source) { return source.size; }
+
+frag ReadAsset(Vertex vertex, out Color color, Art art)
+{
+    color = Forward(art.forwarded, vertex.uv) + art.initial.Sample(vertex.uv);
+}
+frag ReadGrid(Vertex vertex, out Color color, Art art)
+{
+    color = Forward(art.fromGrid, vertex.uv) + art.fromGrid.Sample(Moved(vertex.uv), Filter.Trilinear)
+          + Color(float(Dimensions(art.values).x), 0, 0);
+}
+frag ReadAttached(Vertex vertex, out Color color, Panel panel)
+{
+    color = Forward(panel.image, vertex.uv) + panel.initial.Sample(vertex.uv, Filter.Point)
+          + Color(float(Dimensions(cells).x), 0, 0);
+}
+
+[Before(Show)]
+view Fill(mut Art art, mut Panel panel)
+{
+    if (!art.ready)
+    {
+        art.ready = true;
+        art.values[0, 0] = Color(0.25, 0.5, 1, 0);
+        art.values[1, 0] = Color(1, 0.5, 0.25, 0.5);
+        art.assigned = numbers;
+        art.forwarded = art.assigned;
+        art.fromGrid = art.values;
+        art.fromCells = cells;
+        panel.image = art.fromCells;
+    }
+    art.initialSize = art.initial.size;
+    art.assetSize = art.forwarded.size;
+    art.gridSize = art.fromGrid.size;
+    art.cellsSize = art.fromCells.size;
+    art.attachedInitialSize = panel.initial.size;
+    art.attachedSize = panel.image.size;
+    art.noneSize = art.none.size;
+    art.none = default;
+}
+view Show(Art art, with Panel)
+{
+    Draw.Mesh(art.vertices, art.indices, ReadAsset);
+    Draw.Mesh(art.vertices, art.indices, ReadGrid);
+    Draw.Mesh(art.vertices, art.indices, ReadAttached);
+}

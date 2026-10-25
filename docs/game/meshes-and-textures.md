@@ -39,7 +39,7 @@ A mesh's corners can be a struct of your own instead, with whatever fields the m
 
 ## Textures
 
-A `Texture` is what you draw with. It comes from an asset, `asset Texture hero = "art/hero.png";` (see [Assets](./assets.md#images-to-draw-with)), from a render target, `target.color` (see [Targets](./render-targets.md)), or from a grid you paint: a `Grid2<Color>` or a `Grid2<float>` with a size (see [Grids](../language/grids.md)) is a `Texture` wherever one is wanted.
+A color `Texture` is what you draw with. It comes from an asset, `asset Texture hero = "art/hero.png";` (see [Assets](./assets.md#images-to-draw-with)), from a render target, `target.color` (see [Targets](./render-targets.md)), or from a grid you paint: an ordinary `Grid2<Color>` or a `Grid2<float>` with a size (see [Grids](../language/grids.md)) is a `Texture` wherever one is wanted. Numeric [`[Raw]` sources](./shaders.md#textures-that-are-numbers) use Raw fields and shader sampling instead of ordinary color draws.
 
 `Draw.Mesh` takes one after its indices. With no frag, each pixel is the triangle's color times the texture's at its `uv`: (0, 0) is the first pixel's outer corner, and (1, 1) the last pixel's outer corner.
 
@@ -122,7 +122,7 @@ view Runners(Runner runner)
 
 ### A Texture is a value
 
-A `Texture` is a small value that names an image: a field or a local holds one, a function takes one and gives one back, and copying it copies no pixels. A grid goes wherever a `Texture` does, and is the texture it is there:
+An ordinary color `Texture` is a small value that names an image: a field or a local holds one, a function takes one and gives one back, and copying it copies no pixels. An ordinary color grid, or a float grid, goes wherever a `Texture` does, and is the texture it is there:
 
 ```csharp
 local singleton Art
@@ -148,6 +148,7 @@ view Panel(mut Art art)
 - A texture made of a grid is that grid, not a copy: it draws what the grid holds when it's drawn. It lasts as long as the grid does. One kept past its grid (the entity the grid was a field of is gone, the match ended) draws nothing, or whatever took the grid's place: it's a name, as an `Entity` kept past its entity is.
 - The default `Texture`, what a field starts as, is no texture: a mesh drawn with it draws its colors alone.
 - It belongs to this machine: views, local state and the functions they call have them, and the match doesn't.
+- A [`[Raw] Texture` field](./shaders.md#textures-that-are-numbers) keeps a numeric image for shaders, such as a normal or mask map. Assign a Raw asset, another Raw texture field, a Raw color-grid field/asset or `default`; ordinary color textures are rejected. Its field annotation controls numeric sampling, so it cannot be copied into an ordinary `Texture` local or field or drawn directly.
 - `texture.size` gives its base-level width and height as an `int2` of physical pixels, in local CPU code and shaders. It reads metadata without copying or uploading pixels. Assets and grids report their image dimensions; render-target aliases follow resize, display scale and the device's size limit. Missing, unloaded or disposed images give `int2(0)`. No code reads a `Texture`'s pixels; a grid's cells are read as the grid.
 
 For example, a shader can use `float2 texel = 1.0 / float2(image.size);` for pixel-sized UV offsets. A CPU helper can return `image.size` through ordinary Texture parameters. Custom C hosts provide `draw.target_pixels = tide_platform_target_pixels` before `tide_frame` to resolve target dimensions; the standard host does this automatically. Without that frame metadata, target sizes are zero.

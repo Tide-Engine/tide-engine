@@ -49,6 +49,13 @@ asset List<Mesh<Corner>> all = "assets/meshes/*.glb";            // pair.glb, qu
 asset Map<string, Mesh<Corner>> named = "assets/meshes/*.gl*";   // inline.gltf, pair.glb, quad.glb, strip.gltf
 asset List<Mesh<Corner>> one = "assets/meshes/box.obj";          // One file where the type holds many
 
+// The same mirrored UV source in both consumer orders. Only float4 tangent
+// consumers may acquire extra vertices at its shared handedness seam.
+asset Mesh<Point> seamPlainFirst = "assets/tangent-seams.obj";
+asset Mesh<Corner> seamMappedSecond = "assets/tangent-seams.obj";
+asset Mesh<Corner> seamMappedFirst = "assets/tangent-seams.obj";
+asset Mesh<Point> seamPlainSecond = "assets/tangent-seams.obj";
+
 asset string laterRules = "assets/rules.txt";
 asset List<byte> laterTable = "assets/table.bin";
 asset List<string> laterList = "assets/notes/*.txt";
@@ -69,6 +76,14 @@ singleton Seen
     List<int> boxFaces;
     List<Vertex3> plain;
     List<Point> points;
+    List<Point> seamPlainFirst;
+    List<int> seamPlainFirstFaces;
+    List<Corner> seamMappedSecond;
+    List<int> seamMappedSecondFaces;
+    List<Corner> seamMappedFirst;
+    List<int> seamMappedFirstFaces;
+    List<Point> seamPlainSecond;
+    List<int> seamPlainSecondFaces;
     int all;
     int allCorners;
     int named;
@@ -111,6 +126,14 @@ system Read(mut Seen seen)
     seen.boxFaces = box.indices;
     seen.plain = plain.vertices;
     seen.points = points.vertices;
+    seen.seamPlainFirst = seamPlainFirst.vertices;
+    seen.seamPlainFirstFaces = seamPlainFirst.indices;
+    seen.seamMappedSecond = seamMappedSecond.vertices;
+    seen.seamMappedSecondFaces = seamMappedSecond.indices;
+    seen.seamMappedFirst = seamMappedFirst.vertices;
+    seen.seamMappedFirstFaces = seamMappedFirst.indices;
+    seen.seamPlainSecond = seamPlainSecond.vertices;
+    seen.seamPlainSecondFaces = seamPlainSecond.indices;
     seen.all = all.count;
     foreach (var mesh in all) seen.allCorners += mesh.vertices.count;
     seen.named = named.count;

@@ -175,7 +175,7 @@ block('tide-example', (tokens, idx) => {
     const match = /^tide-example\s+([a-z][a-z0-9-]*)\s+(.+)$/.exec(token.info.trim());
     if (!match) throw new Error('Use ::: tide-example <file-name> <title>');
     const [, id, title] = match;
-    const src = `/examples/${id}/`;
+    const src = `/examples/${id}/?stats`;
     return `<section class="tide-example" data-example-src="${src}" aria-label="${escape(title)}">
 <div class="example-heading"><strong>${escape(title)}</strong><span>Live Tide example${touchHint}</span></div>
 <div class="example-columns"><div class="example-preview">
@@ -202,7 +202,7 @@ function players(name: string, match: boolean) {
         const parts = /^\S+\s+([a-z][a-z0-9-]*)\s+(?:lag=(\d+)\s+)?(.+)$/.exec(token.info.trim());
         if (!parts || (parts[2] && !match)) throw new Error(`Use ::: ${name} <file-name> ${match ? '[lag=<ms>] ' : ''}<title>`);
         const [, id, lag, title] = parts;
-        const src = `/examples/${id}/`;
+        const src = `/examples/${id}/?stats`;
         const ping = Math.min(Number(lag ?? 0), 500);
         const slider = match
             ? `<label class="example-lag">Ping <input type="range" min="0" max="500" step="25" value="${ping}" data-example-lag><output>${ping} ms</output><span class="example-lag-min" hidden></span></label>`

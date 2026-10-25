@@ -267,7 +267,8 @@ TIDE_TEST(mesh_assets_merge_a_files_parts_where_its_nodes_place_them)
         TIDE_CHECK(at(c->position, places[i][0], places[i][1], places[i][2]));
         TIDE_CHECK(at(c->normal, 0, 0, 1)); // The file's for the first three, and the triangle's own for the rest
         TIDE_CHECK(i < 3 ? colored(c->color, 1, 0, 0, 1) : colored(c->color, gray, gray, gray, 0.5f));
-        TIDE_CHECK(c->uv.x == 0.0f && c->uv.y == 0.0f && c->tangent.w == 0.0f && c->glow == 0.5f && c->kind == 7);
+        TIDE_CHECK(c->uv.x == 0.0f && c->uv.y == 0.0f && c->tangent.w == 1.0f && c->glow == 0.5f && c->kind == 7);
+        TIDE_CHECK(near(c->tangent.x, 1) && near(c->tangent.y, 0) && near(c->tangent.z, 0));
     }
     TIDE_CHECK(gray > 0.73f && gray < 0.74f);
     static const int32_t wound[6] = {0, 2, 1, 3, 4, 5};
@@ -321,6 +322,37 @@ TIDE_TEST(mesh_assets_read_obj)
     }
     static const int32_t wound[9] = {0, 1, 2, 0, 3, 1, 4, 5, 6};
     TIDE_CHECK(faces(seen->boxFaces, wound, 9));
+    finish();
+}
+
+TIDE_TEST(mesh_assets_float4_tangents_do_not_change_same_source_position_layouts)
+{
+    start();
+    const tide_list plain[2] = {world.Seen.seamPlainFirst, world.Seen.seamPlainSecond};
+    const tide_list plain_faces[2] = {world.Seen.seamPlainFirstFaces, world.Seen.seamPlainSecondFaces};
+    const tide_list mapped[2] = {world.Seen.seamMappedFirst, world.Seen.seamMappedSecond};
+    const tide_list mapped_faces[2] = {world.Seen.seamMappedFirstFaces, world.Seen.seamMappedSecondFaces};
+    static const float places[4][3] = {{0, 0, 0}, {-1, 1, 0}, {-1, 0, 0}, {0, 1, 0}};
+    static const int32_t original[6] = {0, 1, 2, 0, 3, 1};
+    for (uint32_t order = 0; order < 2u; order++) {
+        TIDE_REQUIRE(tide_list_count(plain[order]) == 4 && tide_list_count(mapped[order]) == 6);
+        TIDE_CHECK(faces(plain_faces[order], original, 6));
+        for (int32_t i = 0; i < 4; i++) {
+            const Point *p = tide_list_at(plain[order], i, sizeof(Point));
+            TIDE_REQUIRE(p);
+            TIDE_CHECK(memcmp(&p->position, places[i], sizeof places[i]) == 0);
+        }
+        for (int32_t i = 0; i < 6; i++) {
+            const int32_t *index = tide_list_at(mapped_faces[order], i, sizeof(int32_t));
+            TIDE_REQUIRE(index);
+            const Corner *c = corner(mapped[order], *index);
+            TIDE_REQUIRE(c);
+            TIDE_CHECK(memcmp(&c->position, places[original[i]], sizeof places[0]) == 0);
+            TIDE_CHECK(at(c->normal, 0, 0, 1) && near(c->tangent.x, i < 3 ? -1 : 1));
+            TIDE_CHECK(c->tangent.y == 0 && c->tangent.z == 0 && c->tangent.w == (i < 3 ? 1 : -1));
+            TIDE_CHECK(c->glow == 0.5f && c->kind == 7 && c->spare == 0.0f);
+        }
+    }
     finish();
 }
 

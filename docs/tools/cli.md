@@ -147,7 +147,7 @@ still performs only front-end validation, even with a preview flag.
 Choose a startup without writing a `Main` scene:
 
 ```sh
-tide run . --scene Levels.Start
+tide run . --scene Levels.Start --stats
 tide build . --scene Levels.Start
 ```
 
@@ -203,6 +203,8 @@ settings
 
 They're a drawer. Closed, it's one line: the frame rate, and in a match another machine runs, your ping. A click or a tap on that line opens it, and so does **F8**: the rest is listed above the line, which stays where it is, so a click in the same place closes it again.
 
+Documentation examples, sample games and the playground enable stats by default, including their separate playable pages. A web game's `stats` query option passes `--stats` to the program: `game.html?stats`, or `game.html?backend=webgl&stats` alongside other options. This enables the drawer without changing its configured initial open/closed state; an ordinary standalone page starts with the one line.
+
 - **It starts closed** when the game asks, with its `stats` setting, and when a build does (`tide build --stats`, CMake's `STATS`): what players get is the one line. **`tide run --stats` starts it open**, since whoever typed that wants to read it. Under `tide run`, a hot reload leaves it as you left it.
 - **A click or a tap on it is never the game's.** Neither the game's input nor its views read that press, from the frame it lands in. A press that began elsewhere and crosses the drawer stays the game's. The game still sees F8, as it sees every key.
 - **Closed, it measures nothing.** The frame rate is a count of frames. What the list shows (a frame's work, each system's time, the memory) is measured while the list is open, so a game can ship with the line.
@@ -243,7 +245,7 @@ Cross-Origin-Opener-Policy: same-origin
 Cross-Origin-Embedder-Policy: require-corp
 ```
 
-`tide run --web` serves the page with them. Where a page is put online, the host has to send them: on itch.io, it's the **SharedArrayBuffer support** option in the game's embed settings. A page without them, or opened from disk, runs the same game on one thread, with the same results, so web players on either kind of page play together. Workers only start once a tick has enough work for them.
+`tide run --web --stats` serves the page with them. Where a page is put online, the host has to send them: on itch.io, it's the **SharedArrayBuffer support** option in the game's embed settings. A page without them, or opened from disk, runs the same game on one thread, with the same results, so web players on either kind of page play together. Workers only start once a tick has enough work for them.
 
 ## Android
 
@@ -298,7 +300,7 @@ Carrying the game over works like this:
 
 When the game gets into a state you don't want, press **Ctrl+R** in the game, or type `r` and press Enter in `tide`'s terminal, to fully reload it. On the web, Cmd+R does the same on macOS. This starts the match, local state, GUI and the game's C or C++ globals over, without carrying state from the old run. With a match on several windows (`--host` in one, `--connect localhost` in another), each window hot reloads when you save, and players stay in the match. A window that joined another's match joins it again a second after that match ends without it: when the other window starts it over, or is still on a build with another data layout. On the web, a hot reload goes on with the match closed for now: the room closes, and the other players drop out.
 
-`tide run --web` hot reloads too. `tide` serves the game's page at an address on your machine, like `http://127.0.0.1:52407/`, opens it in your browser, and keeps running until you press Ctrl+C. What each hot reload did shows in the browser's console. VS Code and JetBrains IDEs can play it beside your code instead (see [Editors](editors.md)).
+`tide run --web --stats` hot reloads too. `tide` serves the game's page at an address on your machine, like `http://127.0.0.1:52407/?stats`, opens it in your browser, and keeps running until you press Ctrl+C. What each hot reload did shows in the browser's console. VS Code and JetBrains IDEs can play it beside your code instead (see [Editors](editors.md)).
 
 Hot reload is for `tide run`. `tide build` makes a plain program, or a page with nothing of it. Runs [without a window](#without-a-window) play once, with no hot reload.
 
@@ -509,7 +511,7 @@ With `?embedded`, the wheel always scrolls the page around the game. On a touchs
 Scripted runs use the game's normal saves unless you select a separate directory:
 
 ```sh
-tide run --frames 300 --data-dir test-saves --capture play.png
+tide run --frames 300 --data-dir test-saves --capture play.png --stats
 ```
 
 `--data-dir` overrides `Application.persistentDataPath` and relative file paths.
@@ -523,7 +525,7 @@ servers.
 `tide run` can play a game with no window at all, to see what it draws or to check it still runs: from a script, on a build server, or for an agent that shouldn't open windows on your screen. The game runs once, as it was built, and `tide` ends with the game's exit code. Nothing is watched or reloaded.
 
 ```
-tide run --frames 300 --capture menu.png
+tide run --frames 300 --capture menu.png --stats
 ```
 
 | Option | What it does |
@@ -568,7 +570,7 @@ A game `tide build` made takes the same options itself, so a build server needs 
 `--players <n>` plays the game `n` times at once, with no window, as the `n` players of one match, and takes a picture from each:
 
 ```
-tide run --players 2 --script play.txt --size 640 360
+tide run --players 2 --script play.txt --size 640 360 --stats
 ```
 
 Each player is a copy of the game, a program of its own, as on a machine of its own. The copies go a frame at a time, together, so frame 300 is the same moment for every player. Their network is made up, as the run's time and input are: what one sends in a frame, the others read in the next, in the same order every run. Nothing leaves the machine: no port opens, and no relay is asked. So a run of several repeats exactly, as a run of one does, and goes as fast as the machine plays it.
@@ -603,7 +605,7 @@ Set the `TIDE_HIDDEN` environment variable where nobody is there to look at a wi
 
 - A run with no window goes as ever: `--frames`, `--capture` and `--script`.
 - Any other run is refused, with exit code 2, before anything is built or opened. Only closing its window would end it, and nobody could. The message says what to give the run instead.
-- `tide run --web` serves the page and opens no browser.
+- `tide run --web --stats` serves the page and opens no browser.
 - Nobody listens there either: a program that opens its window hidden, as a test does, opens no audio device and no microphone.
 - A game that stops says why on stderr and shows no dialog. On Windows, a debug build that stops would otherwise show one and wait for a click.
 
@@ -624,7 +626,7 @@ A script is a text file. Each line is the frame something happens at, then what 
 ```
 
 ```
-tide run --script play.txt --size 1280 720
+tide run --script play.txt --size 1280 720 --stats
 ```
 
 | Line | What happens |

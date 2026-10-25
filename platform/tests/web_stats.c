@@ -1,5 +1,7 @@
 // Web only: the standard host's stats (tide/host.h, tide/stats.h), in its own
-// loop, over stats.tide, which asks for them with its setting. They're a
+// loop, over stats.tide, which asks for them with its setting. Argument probes
+// also use a build without that setting: --stats enables the drawer while
+// preserving the host's initial open/closed choice. They're a
 // drawer: closed, one line, for which nothing is measured; F8, a click and a
 // tap open it and close it; a press on it never reaches the game; and whether
 // it's open is the host's, whatever build of the game runs. The page draws
@@ -198,6 +200,23 @@ int main(const int argc, char **argv)
     game_without.stats = false;
     host_without = tide_host_game_api;
     host_without.game = &game_without;
+
+    // Configure the real host before opening any platform resources. No game
+    // setting can mask a missing runtime --stats argument in these checks.
+    tide_run_game = &host_without;
+    char *plain[] = {"stats"};
+    char *requested[] = {"stats", "--stats"};
+    char *repeated[] = {"stats", "--stats", "--stats"};
+    tide_run_configure(&(tide_run_desc){.argc = 1, .argv = plain});
+    check(!tide_run_stats() && !tide_run_drawer.open, "without a setting or argument, stats remain disabled");
+    tide_run_configure(&(tide_run_desc){.argc = 2, .argv = requested});
+    check(tide_run_stats() && !tide_run_drawer.open && !tide_run_settings.stats_open,
+          "runtime --stats enables a collapsed drawer without changing the host's initial state");
+    tide_run_configure(&(tide_run_desc){.stats_open = true, .argc = 2, .argv = requested});
+    check(tide_run_stats() && tide_run_drawer.open && tide_run_settings.stats_open,
+          "runtime --stats preserves a host's preconfigured open drawer, as tide run --stats supplies");
+    tide_run_configure(&(tide_run_desc){.argc = 3, .argv = repeated});
+    check(tide_run_stats() && !tide_run_drawer.open, "repeated --stats arguments still leave a collapsed drawer");
 
     tide_run_game = &tide_host_game_api;
     tide_run_configure(&(tide_run_desc){.title = "stats", .stats = true, .stats_open = true, .argc = argc, .argv = argv});

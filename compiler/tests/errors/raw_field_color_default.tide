@@ -1,0 +1,4 @@
+// expect: a [Raw] Texture field takes a [Raw] Texture asset, field or grid, not a color texture
+asset Texture colors = "../e2e/assets/hero.png";
+local singleton Art { [Raw] Texture image = colors; }
+scene Main { }

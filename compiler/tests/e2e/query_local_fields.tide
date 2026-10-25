@@ -78,6 +78,12 @@ view Drive(Control control, mut Seen seen, query (Body body) reads, query (mut B
     if (control.mode == 7) foreach (var row in writes) WithAction(row.body) { seen.total += 1; }
     if (control.mode == 8) seen.total = Combine(ReadRows(reads), Bump(writes), ReadRows(reads));
 }
+view SeparateLoops(Control control, mut Seen seen, query (Body body) rows)
+{
+    if (control.mode != 14) return;
+    foreach (var row in rows) seen.before += row.body.id;
+    foreach (var row in rows) seen.total += Read(row.body);
+}
 view Confirmed(Control control, mut Seen seen, query (mut verified Body body) bodies)
 {
     if (control.mode != 4) return;

@@ -7,6 +7,7 @@
 // lobby's buttons) is the platform tests' and the games' own, and the docs
 // only have to come up.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { rm } from 'node:fs/promises';
@@ -42,7 +43,7 @@ const games = [];
             if (!['build', 'node_modules', 'static', 'src', 'tests'].includes(entry.name) && !entry.name.startsWith('.')) find(path);
         } else if (entry.name.endsWith('.md')) {
             const page = '/' + relative(docs, path).split(sep).join('/').replace(/(?:^|\/)index\.md$|\.md$/, '');
-            for (const found of readFileSync(path, 'utf8').matchAll(/^<iframe class="demo-frame roomy" src="\/([a-z][a-z0-9-]*)\/\?embedded"/gm)) games.push({ page, id: found[1] });
+            for (const found of readFileSync(path, 'utf8').matchAll(/^<iframe class="demo-frame roomy" src="\/([a-z][a-z0-9-]*)\/\?[^\"]*\bembedded\b[^\"]*"/gm)) games.push({ page, id: found[1] });
             const ids = Array.from(readFileSync(path, 'utf8').matchAll(/^::: tide-(?:example|players|match)\s+([a-z][a-z0-9-]*)/gm), (found) => found[1]);
             if (!ids.length) continue;
             for (const id of ids) written.add(id);
@@ -170,11 +171,80 @@ try {
     const shots = process.env.TIDE_DOCS_SCREENSHOTS;
     if (shots) mkdirSync(shots, { recursive: true });
     const drawn = (which) => `${which}?.contentWindow.__draws > 5`;
+    const stats = (href, label) => assert.equal(new URL(href).searchParams.getAll('stats').length, 1, `${label}: stats enabled once`);
     const shoot = async (name) => {
         if (!shots) return;
         const screenshot = await command('Page.captureScreenshot');
         writeFileSync(join(shots, `${name}.png`), Buffer.from(screenshot.data, 'base64'));
     };
+    async function cameraControls(id) {
+        const box = await evaluate('({ rect: example.querySelector("iframe").getBoundingClientRect().toJSON(), x: scrollX, y: scrollY })');
+        const rect = box.rect;
+        // Crop the static scene above the controls and stats. This comparison
+        // witnesses camera movement rather than a changing FPS counter.
+        const clip = { x: rect.left + box.x + 4, y: rect.top + box.y + 4, width: rect.width - 8,
+            height: Math.min(140, rect.height - 220), scale: 1 };
+        assert.ok(clip.height > 0, `${id}: scene is visible above controls`);
+        const capture = async () => createHash('sha256')
+            .update((await command('Page.captureScreenshot', { format: 'png', clip })).data, 'base64').digest('hex');
+        const afterFrames = async () => {
+            const previous = await evaluate('example.querySelector("iframe").contentWindow.__draws');
+            await until(`example.querySelector("iframe").contentWindow.__draws > ${previous + 20}`, `${id}: camera frame`);
+        };
+        await afterFrames();
+        const initial = await capture();
+        const x = rect.left + rect.width * 0.5, y = rect.top + 80;
+        await command('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+        await command('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1, x, y });
+        await afterFrames();
+        await command('Input.dispatchMouseEvent', { type: 'mouseMoved', buttons: 1, x: x + 55, y: y + 15 });
+        await afterFrames();
+        await command('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', buttons: 0, clickCount: 1, x: x + 55, y: y + 15 });
+        await afterFrames();
+        const orbited = await capture();
+        assert.notEqual(orbited, initial, `${id}: dragging orbits the scene`);
+        // Embedded games deliberately leave wheel events to the docs page.
+        // Exercise the visible zoom button instead of changing that contract.
+        const zoomX = rect.left + (id === 'render3d' ? 55 : 175);
+        const zoomY = rect.top + rect.height - (id === 'render3d' ? 208 - 92 : 256 - 26);
+        await command('Input.dispatchMouseEvent', { type: 'mouseMoved', x: zoomX, y: zoomY });
+        await command('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1, x: zoomX, y: zoomY });
+        await afterFrames();
+        await command('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', buttons: 0, clickCount: 1, x: zoomX, y: zoomY });
+        await afterFrames();
+        assert.notEqual(await capture(), orbited, `${id}: zoom control changes the scene`);
+        await shoot(`${id}-camera`);
+        if (id !== 'render3d-materials') return;
+        const click = async (localX, localY) => {
+            const x = rect.left + localX, y = rect.top + localY;
+            await command('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+            await command('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1, x, y });
+            await afterFrames();
+            await command('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', buttons: 0, clickCount: 1, x, y });
+            await afterFrames();
+        };
+        await click(105, rect.height - 230); // Reset above the open maps panel.
+        assert.equal(await capture(), initial, `${id}: reset restores the camera`);
+        // Height edits travel through the demo's typed command; compare only
+        // scene pixels, excluding the slider and the FPS counter.
+        await click(rect.width / 2 + 66, rect.height - 164);
+        assert.notEqual(await capture(), initial, `${id}: height slider changes mapped relief`);
+        await click(148, rect.height - 196); // Cutout exhibit.
+        const cutout = await capture();
+        await shoot(`${id}-cutout`);
+        await click(140, rect.height - 74);
+        assert.notEqual(await capture(), cutout, `${id}: cutoff slider changes coverage`);
+        await click(220, rect.height - 140); // Blend exhibit, with its shorter panel.
+        const blend = await capture();
+        await shoot(`${id}-blend`);
+        await click(140, rect.height - 74);
+        assert.notEqual(await capture(), blend, `${id}: opacity slider changes blending`);
+        await click(48, rect.height - 174); // Hide controls, leaving the stats corner free.
+        const collapsed = await capture();
+        await click(245, rect.height - 70);
+        assert.notEqual(await capture(), collapsed, `${id}: collapsed zoom works above stats`);
+        await shoot(`${id}-collapsed`);
+    }
     const visited = new Set();
     for (const page of pages) {
         // The page's `backend=` goes on to its games.
@@ -194,6 +264,7 @@ try {
                 assert.equal(await evaluate('example.querySelector("pre code").textContent'), source, `${id}: displayed source`);
                 sourced.add(id);
             }
+            stats(await evaluate('example.querySelector(".example-controls a").href'), `${id}: standalone link`);
             if (only && !only.has(id)) continue;
             const players = await evaluate('example.querySelectorAll(".example-viewport").length');
             // It starts by itself once it's in view, and its frame shows once
@@ -220,7 +291,9 @@ try {
             });
             await until(drawn('example.querySelector("iframe")'), `${id}: draws`);
             await until(`example.querySelectorAll("iframe").length === ${players}`, `${id}: every player's frame`);
+            for (const src of await evaluate('Array.from(example.querySelectorAll("iframe"), frame => frame.src)')) stats(src, `${id}: embedded frame`);
             await shoot(id);
+            if (id === 'render3d' || id === 'render3d-materials') await cameraControls(id);
             // Stopped, so that the page runs one game at a time here.
             await evaluate('example.querySelector("[data-example-stop]").click();');
             console.log(`${id}: source and rendering passed (${backend})`);
@@ -236,7 +309,10 @@ try {
         await until(`location.pathname === '${page}' && document.querySelector('iframe.demo-frame')`, `${page} page`);
         const game = 'document.querySelector("iframe.demo-frame")';
         await evaluate(`${game}.scrollIntoView({block:'center'})`);
-        assert.ok((await evaluate(`${game}.src`)).endsWith(`/${id}/?embedded`), `${id}: the game's own page, in the page's scroll`);
+        const src = new URL(await evaluate(`${game}.src`));
+        assert.equal(src.pathname, `/${id}/`, `${id}: the game's own page`);
+        assert.ok(src.searchParams.has('embedded'), `${id}: in the page's scroll`);
+        stats(src.href, `${id}: whole game frame`);
         await until(drawn(game), `${id}: draws`);
         await shoot(id);
         console.log(`${id}: its page's frame draws (${backend})`);
@@ -245,10 +321,14 @@ try {
     // own page, where it draws.
     await command('Page.navigate', { url: `${origin}/guide/samples` });
     await until(`location.pathname === '/guide/samples' && document.readyState !== 'loading' && document.querySelectorAll('a.sample-card[data-sample]').length > 0`, 'samples page');
-    const cards = await evaluate(`Array.from(document.querySelectorAll('a.sample-card[data-sample]'), a => ({ id: a.dataset.sample, path: new URL(a.href).pathname }))`);
-    for (const { id, path } of cards) {
+    const cards = await evaluate(`Array.from(document.querySelectorAll('a.sample-card[data-sample]'), a => ({ id: a.dataset.sample, href: a.href }))`);
+    for (const { id, href } of cards) {
+        stats(href, `${id}: gallery link`);
         if (only && !only.has(id)) continue;
-        await command('Page.navigate', { url: `${origin}${path}?backend=${backend}` });
+        const url = new URL(href);
+        const path = url.pathname;
+        url.searchParams.set('backend', backend);
+        await command('Page.navigate', { url: url.href });
         await until(`location.pathname === '${path}' && window.__draws > 5`, `${id}: its page draws`);
         await shoot(`sample-${id}`);
         console.log(`${id}: the gallery's game draws on its page (${backend})`);
@@ -259,6 +339,7 @@ try {
         await command('Page.navigate', { url: `${origin}/guide/playground?backend=${backend}` });
         await until(`location.pathname === '/guide/playground' && document.querySelector('#playground-source')`, 'playground page');
         await until(`document.querySelector('iframe')?.contentWindow.__draws > 5`, 'playground initial game draws');
+        stats(await evaluate('document.querySelector("iframe").src'), 'playground runtime');
         const source = readFileSync(join(docs, 'playground/demo.tide'), 'utf8');
         assert.equal(await evaluate('document.querySelector("#playground-source").value'), source);
         const frozen = source.replace('const float SPEED = 1;', 'const float SPEED = 0;')

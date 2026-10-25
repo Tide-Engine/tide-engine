@@ -136,7 +136,7 @@ Object.assign(mime_types, { '.html': 'text/html', '.wasm': 'application/wasm', '
     for (const card of cards) assert.ok(catalogHtml.includes(card.title.replaceAll('&', '&amp;')), card.title);
     assert.deepEqual([...catalogHtml.matchAll(/data-prototype="([^"]+)"/g)].map((match) => match[1]).sort(), [...prototypeIds].sort());
     for (const id of prototypeIds) {
-        assert.match(catalogHtml, new RegExp(`href="/prototypes/${id}/"`));
+        assert.match(catalogHtml, new RegExp(`href="/prototypes/${id}/\\?stats"`));
         assert.match(catalogHtml, new RegExp(`src="/prototypes/${id}/thumbnail.png"`));
     }
     for (const [route, bytes] of files) {

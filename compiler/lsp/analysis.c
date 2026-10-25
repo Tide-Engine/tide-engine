@@ -3229,9 +3229,11 @@ static void describe(const occurrence *o, sb *out)
                             "`Sample(direction)`.");
             }
             if (o->decl->asset_kind == ASSET_TEXTURE) {
-                sb_put(out, " A `Texture` is an image to draw with, this machine's: no code reads its pixels, and the match "
-                            "can't use it. For cells code reads, the same file is a `Grid2<Color>`, which is a Texture "
-                            "too wherever one is drawn with.");
+                sb_put(out, o->decl->sample_raw
+                                ? " A `Texture` is an image resource local to this machine; the match can't use it."
+                                : " A `Texture` is an image to draw with, this machine's: no code reads its pixels, and the match "
+                                  "can't use it. For cells code reads, the same file is a `Grid2<Color>`, which is a Texture "
+                                  "too wherever one is drawn with.");
             }
             if (o->decl->asset_kind == ASSET_CLIP) {
                 sb_put(out, " A `Clip` is a sound to play, this machine's (WAV, Ogg Vorbis, MP3 or FLAC): `Audio.Play(name)` in a view "
@@ -3272,8 +3274,10 @@ static void describe(const occurrence *o, sb *out)
                 sb_put(out, " An `Animation` asset imports the only clip in a glTF or FBX file, or the exact clip selected by [Name(\"source name\")].");
             }
             if (o->decl->sample_raw) {
-                sb_put(out, "\n\nIt's `[Raw]`: its pixels are numbers, kept as the file has them, which a frag or a vert reads "
-                            "by this name. It's no texture to draw with or hand on.");
+                sb_put(out, "\n\nIt's `[Raw]`: its pixels are numbers, kept as the file has them. It can initialize "
+                            "`[Raw] Texture` fields and be borrowed by GPU sampling and metadata helpers, preserving the "
+                            "original source's Raw role. `.size` is readable on the CPU and GPU. It cannot be drawn or "
+                            "escape to ordinary Texture storage, CPU arguments or returns.");
             }
             if (o->decl->sample_filter || o->decl->sample_wrap) { // [Filter] and [Wrap] before it
                 sb_put(out, "\n\nWhere a draw or a `Sample` doesn't say, it's sampled with ");
@@ -3757,8 +3761,11 @@ static void describe(const occurrence *o, sb *out)
              "This texture's pixels are numbers, not colors to draw: they're kept as the file or the grid has them, with "
              "no alpha worked into them, and a `Sample` gives them as they are. A texture of colors has no color in a "
              "pixel whose alpha is 0, which is what a mask or a lookup table kept beside an alpha can't have. It goes "
-             "before an asset that's one `Texture` or one `Grid2<Color>` and before a field that's a `Grid2<Color>`. "
-             "A frag or a vert reads it by its name, `masks.Sample(uv)`: it's no `Texture` to draw with or hand on."},
+             "before an asset that's one `Texture` or one `Grid2<Color>`, or before `Texture` fields and `Grid2<Color>` "
+             "fields. `[Raw] Texture` fields accept Raw Texture or Raw Grid2<Color> assets and fields, or `default`, "
+             "and keep their Raw role. A frag or a vert samples them directly or through GPU sampling and metadata "
+             "helpers that borrow the original source. `.size` is readable on the CPU and GPU. Raw textures cannot "
+             "escape to ordinary Texture storage, CPU arguments or returns, or draws."},
             {"Wrap", "[Wrap(Wrap.Repeat)]",
              "What a `uv` past this texture's edges reads wherever a draw or a `Sample` doesn't say: `Wrap.Clamp` "
              "(what's read without it) for the cells at the edge, `Wrap.Repeat` for the texture over again, "
@@ -9428,7 +9435,9 @@ void analysis_completion(const int line, const int character, jbuf *out)
                  "What a uv past the edges of an asset that's a Texture or a Grid2<Color> reads, where a draw doesn't say.",
                  "Wrap(Wrap.${1:Repeat})");
             item(&c, "Raw", CK_FUNCTION, "[Raw]",
-                 "An asset that's a Texture or a Grid2<Color> of numbers, kept as the file has them: a frag reads it by its name.",
+                 "Marks Texture or Grid2<Color> assets and fields as numeric data. [Raw] Texture fields keep their Raw role; "
+                 "GPU sampling and metadata helpers borrow the original source. .size works on the CPU and GPU. "
+                 "Raw textures cannot be drawn or escape as ordinary Texture values.",
                  "Raw");
             item(&c, "LOD", CK_FUNCTION, "[LOD]",
                  "An asset that's a Mesh<V> or a SkinnedMesh<V> has simpler versions made, which its draws pick among by its size on screen.",
@@ -9458,7 +9467,9 @@ void analysis_completion(const int line, const int character, jbuf *out)
                  "What a uv past the edges of this grid, or of this RenderTarget's color, reads, where a draw doesn't say.",
                  "Wrap(Wrap.${1:Repeat})");
             item(&c, "Raw", CK_FUNCTION, "[Raw]",
-                 "This Grid2<Color>'s cells are numbers, kept as they are as a texture: a frag reads it by its name.", "Raw");
+                 "Marks Texture fields or Grid2<Color> fields as numeric data. [Raw] Texture fields accept Raw Texture or "
+                 "Raw Grid2<Color> assets and fields, or default. GPU sampling and metadata helpers borrow the original "
+                 "source. .size works on the CPU and GPU; Raw textures cannot be drawn or escape as ordinary Texture values.", "Raw");
             item(&c, "Json", CK_FUNCTION, "[Json(\"key\")]",
                  "This struct field's key in JSON, where it isn't the field's name: what Json.Read and Json.Write call it.",
                  "Json(\"$1\")");

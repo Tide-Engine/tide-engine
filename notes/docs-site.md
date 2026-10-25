@@ -1,5 +1,140 @@
 # The docs site
 
+## Interactive Render3D materials and docs stats (2026-10-25)
+
+The owner requested transparency/cutout, AO/normal/height and other PBR maps,
+interactive examples, movable cameras and stats on all docs play paths.
+`docs/examples/render3d.tide` now has drag/swipe orbit, two-finger pinch, zoom
+buttons, reset and collapsible controls. Gestures starting in the controls
+do not orbit. `render3d-materials.tide` adds three camera-selectable exhibits:
+normal/height/ORM/emission maps, double-sided cutout leaves and their shadow,
+and overlapping transparent cards around an opaque sphere. Its sliders compare
+normal strength, true material height scale, AO, roughness, metallic, emission,
+cutoff and opacity; ORM and shadows have toggles. Height uses a targeted
+`SetHeight` match command, with a bounded handler, because numeric Material
+fields are match data. Local surface/coverage captures drive the other visual
+comparisons. The demo explicitly supplies diffuse ambient irradiance so AO
+has a lighting term to affect. AO does not modulate direct light or emission.
+
+The six original 128-square PNG maps and quad live in
+`docs/examples/assets/render3d/`, reproduced by `make_materials.py` with only
+Python's standard library. Color base/emission maps are display sRGB;
+normal/ORM/height assets are `[Raw]`. Mask channels are R occlusion,
+G roughness, B metallic. All optional maps (normal, mask, emission and height)
+default to empty handles in the final package contract; only baseMap defaults
+to White. Empty optional maps skip their texture fetches, including emission
+when only its numeric value is set. The docs CMake package map includes the new
+example; the existing glob/staging path supplies native and web targets. Its displayed
+source is the running file, as for other examples.
+
+The package page and README document map/scalar multiplication, diffuse ambient
+irradiance, all surface modes, double-sided shading, UV/coverage hooks and
+their order, and the package's small C transparent-sorting helper. They
+distinguish single-sample UV parallax from displacement,
+and object-sorted alpha blending from refraction or per-triangle sorting.
+Transparent materials do not cast shadows. The mesh import table and spec
+remove the obsolete missing-tangent zeros/unbuilt claim for static layouts
+declaring float4 tangent,
+describing UV-derivative corner-angle generation, orthogonal normalized tangent
+directions, handedness seam splits and finite fallback, without claiming
+MikkTSpace bake compatibility or changing the skinned contract. Generated
+tangents have normalized orthogonal directions; authored tangents retain
+their existing conversion, including authored zero/nonorthogonal values.
+Generation and opposite-handedness seam duplicates are restricted to those
+static float4 tangent layouts. Layouts without tangent or with float3 tangent,
+and all skinned meshes, retain their prior streams, counts, indices, hashes
+and v2 LOD cache keys. Metadata-only editor/LSP reads generate no variants.
+LOD handedness preservation applies to static float4 tangent layouts only;
+no additional XYZ tangent metric is claimed.
+
+Docs launch plumbing requests `?stats` for embedded/standalone examples,
+generated Markdown Run links, whole-game frames, Samples, playground,
+homepage Earth and admin prototype links, retaining existing options and
+avoiding a second stats request. Docs commands use `--stats` where applicable.
+Browser/export/admin assertions cover these launch URLs. Shared integration adds
+the `stats` query-to-`--stats` mapping in `platform/web/tide.js` and standard-host
+runtime parsing, enabling stats while preserving the configured drawer state
+(`notes/standard-host.md`). The root owns release-runtime regeneration; an older
+already-published cross-origin Earth release will need its matching runtime
+redeployed to recognize that query. This docs task does not deploy Earth.
+
+Final integration: the full native and web builds pass. The native full suite
+passes 2,773 of 2,774 enabled tests; its sole failure is the unchanged private
+CRACKED hash failure, reproduced on the pre-existing baseline. Repository web
+checks pass, including 11 scenarios on all three backends. Optional private
+InsideOut WebGL play has a mismatch under read-only attribution, and remaining
+optional private playthroughs are still running; final overall web-suite status
+remains pending. Final Svelte check reports zero errors and warnings, and the
+production docs build passes after staging. All three exports/admin HTTP
+checks and all 301 grammar checks pass. The latest five-test playground rerun
+is active. The procedural asset generator, isolated launch-plumbing syntax
+checks and diff checks also pass.
+
+The owner subsequently approved `[Raw]` Texture fields following existing Raw
+grid fields. The compiler child's contract allows Raw assets, Raw texture
+fields, Raw Grid2<Color> fields/assets and default into Raw destinations;
+ordinary color sources and Raw-to-plain values/draws remain errors. GPU Texture
+helpers preserve the original Raw source, and size remains ordinary metadata.
+The generic shader/asset/texture docs, package page and README now document
+that contract and restore the valid map-binding recipe. The compiler child
+owns the matching spec changes. No new resource type or runtime Raw bit is
+claimed, and no alpha workaround was used. The final builds include the
+integrated Raw-field compiler and material-demo binding recipe.
+
+Node argv/query tests and both WebGL/WebGPU stats tests pass.
+Native material-demo runs with `--frames 240 --stats` at 376 x 400 and 960 x 540
+pass and visually fit the complete cube above the open controls, with stats
+collapsed at bottom right. Captures are
+`build/render3d-materials-fit-small.png` and
+`build/render3d-materials-fit-wide.png`. The earlier native base-demo capture
+also shows the collapsed 60 FPS line. Fresh combined material code/docs
+integration review is clean.
+
+Final selected `docs/tests/examples.mjs` runs pass for both demos on WebGL and
+WebGPU. Actual scene-pixel witnesses cover orbit, zoom, exact camera Reset
+restoration, the height command, cutoff and opacity sliders, and collapsed
+zoom above the stats line. Displayed-source and stats-URL deduplication checks
+pass. Captures are in `build/material-docs-final-webgl` and
+`build/material-docs-final-webgpu`; the WebGL cutout, blend and collapsed shots
+were visually inspected. The existing embedded contract reserves the wheel
+for page scrolling; the package guide and README distinguish standalone wheel
+zoom from embedded zoom buttons/pinch. This implementation child ran no
+game/browser, commit or push.
+
+A fresh docs review found that the material demo's collapsed toolbar overlapped
+the bottom-right stats line on narrow embeds. Both demos now place their
+44-pixel collapsed area 96 pixels above the bottom, reserving a 52-pixel lower
+margin. Each camera uses that same 96-pixel exclusion boundary for pointer and
+touch gesture starts, so toolbar presses cannot begin an orbit. Open panel
+positions and sizes remain unchanged (208 in the base demo; 256/200 for the
+material exhibits). This leaves the host's stats input contract intact.
+Source/diff checks pass. Fresh independent GUI/stats contract review finds no
+actionable issue: collapsed button hit areas lie H-84 through H-56, above the
+bottom 40-pixel stats corner, and gesture exclusions match. Final builds and
+native captures pass as recorded above. The final WebGL/WebGPU browser runs
+also witness collapsed zoom controls above the stats line.
+
+The root's first actual material-demo capture then found the mapped cube's top
+cropped at 960 x 540 by the hardcoded open-panel focus height. The materials
+camera now fits the active exhibit's known box corners into the space above
+the controls, using the screen aspect and the panel's NDC fraction. Its bounds
+cover the unit cube at scale 1.8 and its Y rotation, the complete leaf card, and
+the union of transparent cards and their sphere. Top/bottom/side constraints
+include perspective depth and leave 15% of the visible span as margin. The
+focus shift places the exhibit center in the available region, including at
+376 x 400. The floor remains a receiver outside the exhibit bounds.
+
+The local distance control is now a zoom multiplier over that fitted distance,
+initially/reset to 1. Zoom + scales it by 0.85 and Zoom - by its reciprocal;
+it is not clamped back to the fit threshold. Pinch and standalone wheel zoom
+use the same multiplier. The base camera and all open/collapsed control
+rectangles are unchanged. A fresh independent source/math review finds no
+actionable issue with geometry bounds, corner inequalities, focus equations,
+the two requested viewport sizes or zoom behavior. Camera source is frozen
+after that review. Final native captures at both requested sizes confirm the
+framing; final WebGL/WebGPU scene-pixel checks confirm camera and material
+interactions as recorded above.
+
 ## Earth exact biome gradient cache (2026-10-25)
 
 The owner authorized game-side optimization while preserving the visuals,

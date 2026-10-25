@@ -7830,7 +7830,8 @@ static void gen_fields(const gen *g, sb *o, const decl *d)
         if (pad[i]) sb_printf(o, "    uint8_t tide_pad%d[%d];\n", pads++, pad[i]);
         if (i == d->fields.count) break;
         const field *f = &d->fields.items[i];
-        sb_printf(o, "    %s %s;\n", f->type.kind == TY_STRING ? "tide_text" : c_type(f->type), field_cname(f));
+        sb_printf(o, "    %s %s;%s\n", f->type.kind == TY_STRING ? "tide_text" : c_type(f->type), field_cname(f),
+                  o == &g->h && f->type.kind == TY_TEXTURE && field_is_raw(f) ? " // [Raw] Texture" : "");
     }
     (void)g;
 }
@@ -13442,6 +13443,7 @@ static void gen_query_foreach(gen *g, const stmt *s)
         sb_printf(o, "const %s tide_query_fresh_%s_%s = ", type_cname(local_part_of(p->type)), name, field_cname(f));
         gen_value(g, o, local_part_of(p->type), NULL, 0);
         sb_put(o, ";\n");
+        line(g, o, "(void)tide_query_fresh_%s_%s;", name, field_cname(f));
     }
     if (selection->query_rows) { // The rows it was handed, retaining the caller's timing.
         // Found by name: bind_views may have grown the view's parameters since `q` was taken, leaving it pointing at
@@ -18600,14 +18602,17 @@ static bone_weights bone_weights_of(const uint8_t *model, const size_t size, con
 // The levels of detail of an asset marked [LOD] (docs/spec.md, Levels of detail): made of what the file has, once
 // a file (mesh_lod_cached). `skinned` is a skinned model's bytes, whose bones' weights are weighed too. False for
 // a mesh that has none, which is packed as one with no [LOD] is. `key` gets what tells these levels from any other.
-static bool mesh_levels(const gen *g, const mesh_file *m, const uint8_t *skinned, const size_t skinned_size, tide_mesh_levels *levels,
-                        uint8_t key[32])
+static bool mesh_levels(const gen *g, const mesh_file *m, const uint8_t *skinned, const size_t skinned_size, const bool tangents,
+                        tide_mesh_levels *levels, uint8_t key[32])
 {
-    static const char version[] = "tide levels of detail 2, of 500 triangles at the least";
+    static const char plain_version[] = "tide levels of detail 2, of 500 triangles at the least";
+    static const char tangent_version[] = "tide levels of detail 3, of 500 triangles at the least, with tangent handedness seams";
     _Static_assert(MESH_LOD_TRIANGLES_LEAST == 500, "the levels' version says the fewest triangles one has");
+    const bool tangent_sides = tangents && !skinned;
     tide_sha256 s;
     tide_sha256_init(&s);
-    tide_sha256_add(&s, version, sizeof version);
+    if (tangent_sides) tide_sha256_add(&s, tangent_version, sizeof tangent_version);
+    else tide_sha256_add(&s, plain_version, sizeof plain_version);
     tide_sha256_add(&s, m->hash, sizeof m->hash);
     if (skinned) {
         uint8_t model[32];
@@ -18619,6 +18624,7 @@ static bool mesh_levels(const gen *g, const mesh_file *m, const uint8_t *skinned
     const mesh_lod_source source = {
         .vertices = m->vertices, .position = m->position, .normal = m->normal, .uv = m->has_uvs ? m->uv : NULL,
         .uv2 = m->has_uvs2 ? m->uv2 : NULL, .color = m->has_colors ? m->color : NULL, .index = m->index, .indices = m->indices,
+        .tangent = tangent_sides ? m->tangent : NULL,
         .apart = bones.first ? bones_apart : NULL, .user = &bones, .triangles_least = MESH_LOD_TRIANGLES_LEAST};
     const mesh_lod *made = mesh_lod_cached(key, &source, g->prog->game_folder);
     free(bones.first), free(bones.count), free(bones.palette), free(bones.weight);
@@ -18641,6 +18647,7 @@ static void pack_mesh(gen *g, tide_pack_builder *b, const asset_match *item, con
     const layout whole = decl_layout_padded(vertex, pad);
     uint8_t *bytes = calloc(m->vertices ? m->vertices : 1u, (size_t)whole.size);
     if (!bytes) abort();
+    bool tangent_sides = false;
     int at = 0;
     for (int i = 0; i < vertex->fields.count; i++) {
         const field *f = &vertex->fields.items[i];
@@ -18654,7 +18661,7 @@ static void pack_mesh(gen *g, tide_pack_builder *b, const asset_match *item, con
         case FILL_UV: from = m->uv, each = 2u; break;
         case FILL_UV2: from = m->uv2, each = 2u; break;
         case FILL_COLOR: from = m->color, each = 4u; break;
-        case FILL_TANGENT: from = m->tangent, each = 4u; break;
+        case FILL_TANGENT: from = m->tangent, each = 4u; tangent_sides = f->type.kind == TY_FLOAT4; break;
         default: break;
         }
         const size_t take = (size_t)size < each * sizeof(float) ? (size_t)size : each * sizeof(float); // A float3 tangent: its xyz
@@ -18671,7 +18678,8 @@ static void pack_mesh(gen *g, tide_pack_builder *b, const asset_match *item, con
     // ...and by its levels of detail, where it has any: the same file without them is another mesh to the list
     tide_mesh_levels levels;
     uint8_t leveled[32];
-    const bool has = lod && mesh_levels(g, m, skinned ? item->skinned : NULL, skinned ? item->skinned_size : 0u, &levels, leveled);
+    const bool has = lod && mesh_levels(g, m, skinned ? item->skinned : NULL, skinned ? item->skinned_size : 0u,
+                                        tangent_sides, &levels, leveled);
     if (has) tide_sha256_add(&s, leveled, sizeof leveled);
     tide_sha256_end(&s, content);
     tide_pack_mesh_levels(b, content, bytes, (uint32_t)whole.size, m->vertices, m->index, m->indices, has ? &levels : NULL, offsets);
@@ -21306,7 +21314,8 @@ static void gen_layout(gen *g)
                                                 : -1;
             const int dim = type_dim(t) > 0 ? type_dim(t) : t.kind == TY_LONG ? 1 : 0;
             sb_printf(o, "    {\"" STR_FMT "\", \"%s\", %s, %d, %d, offsetof(%s, %s), sizeof(((%s *)0)->%s)},\n",
-                      STR_ARG(f->name), layout_field_name(t), layout_kind(t), dim, ref, name, field_cname(f), name,
+                      STR_ARG(f->name), t.kind == TY_TEXTURE && field_is_raw(f) ? "[Raw] Texture" : layout_field_name(t),
+                      layout_kind(t), dim, ref, name, field_cname(f), name,
                       field_cname(f));
         }
         sb_put(o, "};\n\n");
@@ -21699,6 +21708,13 @@ static void gen_shaders(gen *g)
                 while (sh->bound.items[b] != texture->source) b++;
                 sb_printf(&from, "tide_%sb%d->%s", texture->field->is_local ? "l" : "", b, field_cname(texture->field));
             }
+            const type source_type = texture->asset ? texture->asset->return_type
+                                   : texture->field ? texture->field->type : (type){TY_TEXTURE, NULL};
+            if (source_type.kind == TY_GRID) {
+                sb converted = {0};
+                sb_printf(&converted, "tide_texture_of_grid(%s, &%s, 0u)", from.data, grid_shape_name(source_type.decl));
+                from = converted;
+            }
             sb_printf(o, "    const tide_int2 tide_size%d = tide_texture_size(%s);\n"
                          "    tide_uniforms.i[%d] = tide_size%d.x;\n    tide_uniforms.i[%d] = tide_size%d.y;\n",
                       t, from.data, texture->count_at, t, texture->count_at + 1, t);
@@ -21795,9 +21811,17 @@ static void gen_shaders(gen *g)
             }
             int b = 0;
             while (sh->bound.items[b] != texture->source) b++;
-            if (texture->field->type.kind == TY_TEXTURE)
-                sb_printf(o, "    tide_textures[%d] = tide_draw_texture_source(tide_draw, tide_%sb%d->%s);\n", t,
-                          texture->field->is_local ? "l" : "", b, field_cname(texture->field));
+            if (texture->field->type.kind == TY_TEXTURE) {
+                if (field_is_raw(texture->field)) {
+                    sb_printf(o, "    tide_grid tide_raw_grid%d;\n    tide_grid_shape tide_raw_shape%d;\n"
+                                 "    tide_textures[%d] = tide_texture_grid(tide_%sb%d->%s, &tide_raw_grid%d, &tide_raw_shape%d)\n"
+                                 "        ? tide_draw_grid_texture_raw(tide_draw, tide_raw_grid%d, &tide_raw_shape%d)\n"
+                                 "        : tide_draw_texture_source(tide_draw, tide_%sb%d->%s);\n",
+                              t, t, t, texture->field->is_local ? "l" : "", b, field_cname(texture->field), t, t, t, t,
+                              texture->field->is_local ? "l" : "", b, field_cname(texture->field));
+                } else sb_printf(o, "    tide_textures[%d] = tide_draw_texture_source(tide_draw, tide_%sb%d->%s);\n", t,
+                                 texture->field->is_local ? "l" : "", b, field_cname(texture->field));
+            }
             else if (texture->field->type.kind == TY_DEPTH_TEXTURE)
                 sb_printf(o, "    tide_textures[%d] = tide_draw_depth_source(tide_draw, tide_%sb%d->%s);\n", t,
                           texture->field->is_local ? "l" : "", b, field_cname(texture->field));

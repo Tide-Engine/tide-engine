@@ -129,7 +129,7 @@ selected too, including a local scene for a menu outside a match.
 For one run or build, override the project selection:
 
 ```sh
-tide run . --scene Levels.Start
+tide run . --scene Levels.Start --stats
 tide build . --scene Levels.Start
 ```
 

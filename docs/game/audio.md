@@ -248,7 +248,7 @@ Make the struct smaller: a shorter array, or fewer fields. Code that rolls keeps
 A [run with no window](../tools/cli.md#without-a-window) mixes what the game plays, a 60th of a second a frame, and writes it out:
 
 ```
-tide run --frames 300 --capture-audio run.wav
+tide run --frames 300 --capture-audio run.wav --stats
 ```
 
 `--capture-audio` writes the whole run as a WAV of 16-bit stereo at 48 kHz, and a script's `capture-audio hit.wav` line writes what played since the last such line. The mixer is the engine's own arithmetic, so a run plays the same bytes on every machine.

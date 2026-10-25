@@ -84,7 +84,7 @@ Nothing below has been done yet. For a first run against the real thing:
 
 1. The Steam client is running and signed in, on two machines with two accounts that both own the game (or use App ID 480, Valve's test app, while trying).
 2. `steam_appid.txt` with the App ID is beside the program, and the SDK's library for the platform is in the game's folder.
-3. `tide run --define STEAM` on both. The first thing to see is the sign-in: the title page's buttons work, and `client.me.id` is a 17-digit Steam ID.
+3. `tide run --define STEAM --stats` on both. The first thing to see is the sign-in: the title page's buttons work, and `client.me.id` is a 17-digit Steam ID.
 4. **Create a lobby** on one, **Browse lobbies** on the other: the lobby shows, with its name and player count. Join it, set ready on each, and see the other change.
 5. **Start the match** on the owner: both are in it, `Session.room` is the owner's Steam ID on both, and input from each moves on the other.
 6. Leave the lobby on the host with `hostMigration` on: the other machine goes on with the match as its host.

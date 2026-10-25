@@ -1,7 +1,7 @@
-// Opaque forward PBR. Configure before Prepare and draw HUDs after Present.
+// Forward PBR. Configure before Prepare and draw HUDs after Present.
 namespace Render3D;
 
-enum Stages { Prepare, Lights, Shadows, Color, Opaque, Present }
+enum Stages { Prepare, Lights, Shadows, Color, Opaque, Transparent, Present }
 
 struct MeshVertex
 {
@@ -9,6 +9,7 @@ struct MeshVertex
     float3 normal;
     float2 uv;
     Color color = Color.white;
+    float4 tangent;
 }
 
 using Mesh3D = Mesh<MeshVertex>;
@@ -63,12 +64,26 @@ component MeshRenderer
 
 component Material
 {
+    SurfaceMode mode;
     Color baseColor = Color.white;
     float metallic;
     float roughness = 0.5;
     float3 emission;
     bool receiveShadows = true;
+    bool doubleSided;
+    float alphaCutoff = 0.5;
+    float normalScale = 1;
+    float occlusionStrength = 1;
+    float heightScale;
+    float2 uvScale = float2(1);
+    float2 uvOffset;
     local Texture baseMap = White;
+    [Raw] local Texture normalMap;
+    [Raw] local Texture maskMap;
+    local Texture emissionMap;
+    [Raw] local Texture heightMap;
+    local Func<SurfaceInput, mut float2, void> uv = Render3D.StandardUV;
+    local Func<SurfaceInput, mut Coverage, void> coverage = Render3D.StandardCoverage;
     local Lit shader = Lit { surface = Render3D.StandardSurface };
 }
 
@@ -104,6 +119,7 @@ local singleton Renderer
     Camera camera;
     Color background = Color(0.06, 0.08, 0.12);
     float exposure = 1;
+    float3 ambientIrradiance;
     int maxLights = 32;
     bool shadows = true;
     int maxShadowMaps = 8; // Directional/spot: one; point: six together.
@@ -354,7 +370,7 @@ view FinishLights(mut Renderer renderer)
     renderer.shadowMap.Clear(Color.white);
 }
 
-struct ShadowTile { float4 uvRect; }
+struct ShadowTile { float4 uvRect; MaterialMaps maps; }
 
 // Rebuilt from current caster values for this invocation, then shared by the
 // light views. Contiguous runs retain the existing mesh and winding boundaries.
@@ -362,6 +378,7 @@ struct ShadowBatch
 {
     Asset<Mesh3D> mesh;
     bool mirrored;
+    bool doubleSided;
     int count;
     float4x4 first;
     List<float4x4> transforms;
@@ -384,7 +401,7 @@ vert AtlasVertex(mut MeshVertex vertex, out float4 clip, ShadowTile tile)
 }
 
 [Stage(Stages.Shadows)]
-view Cast(Renderer renderer, World world, query (MeshRenderer mesh, with Material) casters)
+view Cast(Renderer renderer, World world, query (MeshRenderer mesh, Material material) casters)
 {
     if (!renderer.enabled || !renderer.ready) return;
     if (renderer.shadowViews.count == 0)
@@ -393,20 +410,29 @@ view Cast(Renderer renderer, World world, query (MeshRenderer mesh, with Materia
         return;
     }
     mut List<ShadowBatch> batches = [];
+    mut List<float4x4> cutoutTransforms = [];
     mut ShadowBatch current = default;
     foreach (var caster in casters)
     {
         if (!caster.mesh.visible || !caster.mesh.castShadows) continue;
+        if (caster.material.mode == SurfaceMode.Transparent) continue;
         var transform = world.LocalToWorld(caster.entity);
+        if (caster.material.mode == SurfaceMode.Cutout)
+        {
+            cutoutTransforms.Add(transform);
+            continue;
+        }
         bool mirrored = Mirrors(transform);
         if (current.count > 0 &&
-            (current.mesh != caster.mesh.mesh || current.mirrored != mirrored))
+            (current.mesh != caster.mesh.mesh || current.mirrored != mirrored ||
+             current.doubleSided != caster.material.doubleSided))
         {
             batches.Add(current);
             current = default;
         }
         current.mesh = caster.mesh.mesh;
         current.mirrored = mirrored;
+        current.doubleSided = caster.material.doubleSided;
         if (current.count == 0) current.first = transform;
         else
         {
@@ -428,6 +454,7 @@ view Cast(Renderer renderer, World world, query (MeshRenderer mesh, with Materia
         // nested transforms again for every light view.
         for (var i = 0; i < batches.count; i++)
         {
+            renderer.shadowMap.SetCull(batches[i].doubleSided ? Cull.None : Cull.Back);
             if (batches[i].count == 1)
                 renderer.shadowMap.Mesh(batches[i].mesh.Value, batches[i].first,
                                         AtlasVertex, ShadowTile { uvRect = shadow.uvRect });
@@ -435,8 +462,38 @@ view Cast(Renderer renderer, World world, query (MeshRenderer mesh, with Materia
                 renderer.shadowMap.Instanced(batches[i].mesh.Value, batches[i].transforms,
                                             AtlasVertex, ShadowTile { uvRect = shadow.uvRect });
         }
+        if (cutoutTransforms.count > 0)
+        {
+            mut int cutout = 0;
+            foreach (var caster in casters)
+            {
+                if (!caster.mesh.visible || !caster.mesh.castShadows || caster.material.mode != SurfaceMode.Cutout) continue;
+                var transform = cutoutTransforms[cutout];
+                cutout++;
+                CastMasked(renderer, caster.mesh, caster.material, transform, shadow.uvRect);
+            }
+        }
     }
+    renderer.shadowMap.SetCull();
     renderer.shadowMap.SetClip();
+}
+
+MaterialMaps Maps(Material material, float4x4 transform)
+{
+    return MaterialMaps {
+        normal = material.normalMap.size.x > 0 && material.normalScale != 0,
+        mask = material.maskMap.size.x > 0,
+        emission = material.emissionMap.size.x > 0 && Math.LengthSq(material.emission) > 0,
+        height = material.heightMap.size.x > 0 && material.heightScale != 0,
+        handedness = Mirrors(transform) ? -1 : 1
+    };
+}
+
+void CastMasked(Renderer renderer, MeshRenderer mesh, Material material, float4x4 transform, float4 rect)
+{
+    renderer.shadowMap.SetCull(material.doubleSided ? Cull.None : Cull.Back);
+    renderer.shadowMap.Mesh(mesh.mesh.Value, transform, AtlasVertex, ShadowCutout,
+                           ShadowTile { uvRect = rect, maps = Maps(material, transform) });
 }
 
 [Stage(Stages.Color)]
@@ -482,51 +539,44 @@ float ShadowVisibility(DepthTexture atlas, ShadowView shadow, float3 world, floa
           + atlas.Compare(Math.Clamp(uv + float2(step, step), minimum, maximum), depth)) * 0.25;
 }
 
-frag Lit(MeshVertex vertex, out Color color, Instance instance, Material material, Renderer renderer,
-         Func<SurfaceInput, mut Surface, void> surface)
-{
-    float3 normal = instance.Normal(vertex.normal);
-    float3 viewDirection = Math.Normalize(renderer.eye - this.world);
-    Color sampled = material.baseMap.Sample(vertex.uv);
-    float3 texel = SrgbToLinear(float3(sampled.r, sampled.g, sampled.b));
-    float3 tint = SrgbToLinear(float3(material.baseColor.r, material.baseColor.g, material.baseColor.b));
-    float3 vertexColor = SrgbToLinear(float3(vertex.color.r, vertex.color.g, vertex.color.b));
-    mut Surface result = Surface {
-        albedo = texel * tint * vertexColor, normal = normal,
-        metallic = material.metallic, roughness = material.roughness, emission = material.emission
-    };
-    surface(SurfaceInput { world = this.world, normal = normal, uv = vertex.uv, viewDirection = viewDirection }, result);
-    mut float3 radiance = Math.Max(result.emission, float3(0));
-    foreach (var light in renderer.lights)
-    {
-        float3 toward = light.kind == LightKind.Directional ? -light.direction : Math.Normalize(light.position - this.world);
-        mut float attenuation = 1;
-        if (light.kind != LightKind.Directional)
-        {
-            attenuation = PointAttenuation(Math.Length(light.position - this.world), light.range);
-            if (light.kind == LightKind.Spot)
-                attenuation *= SpotAttenuation(Math.Dot(light.direction, -toward), light.innerCosine, light.outerCosine);
-        }
-        if (attenuation <= 0) continue;
-        mut float visibility = 1;
-        if (renderer.shadows && material.receiveShadows && light.shadowIndex >= 0)
-        {
-            int face = light.kind == LightKind.Point ? PointFace(this.world - light.position) : 0;
-            float facing = Math.Saturate(Math.Dot(normal, toward));
-            float bias = Math.Max(renderer.shadowBias, 0) + Math.Max(renderer.shadowSlopeBias, 0) * (1 - facing);
-            visibility = ShadowVisibility(renderer.shadow, renderer.shadowViews[light.shadowIndex + face], this.world, bias, renderer.shadowTexel,
-                                          light.kind == LightKind.Point);
-        }
-        radiance += EvaluateDirectPbr(result, viewDirection, toward, light.intensity * attenuation, visibility);
-    }
-    color = Color(radiance.x, radiance.y, radiance.z);
-}
-
 [Stage(Stages.Opaque)]
 view DrawMesh(MeshRenderer mesh, Material material, Renderer renderer, World world)
 {
-    if (!renderer.enabled || !renderer.ready || !mesh.visible) return;
-    renderer.hdr.Mesh(mesh.mesh.Value, world.LocalToWorld(this), material.shader);
+    if (!renderer.enabled || !renderer.ready || !mesh.visible || material.mode == SurfaceMode.Transparent) return;
+    DrawMaterial(renderer, mesh, material, world.LocalToWorld(this));
+}
+
+void DrawMaterial(Renderer renderer, MeshRenderer mesh, Material material, float4x4 transform)
+{
+    renderer.hdr.Cull(material.doubleSided ? Cull.None : Cull.Back)
+    {
+        renderer.hdr.Mesh(mesh.mesh.Value, transform, material.shader, Maps(material, transform));
+    }
+}
+
+// The package sorts captured instance packets, retaining each component's
+// current resource/callback bindings without storing borrowed query rows.
+extern int TransparentMark(DrawList list);
+extern void SortTransparent(DrawList list, int first, float3 eye, float3 forward);
+
+[Stage(Stages.Transparent)]
+view DrawTransparent(Renderer renderer, World world, query (MeshRenderer mesh, Material material) meshes)
+{
+    if (!renderer.enabled || !renderer.ready) return;
+    mut int first = -1;
+    renderer.hdr.SetBlend(Blend.Alpha);
+    renderer.hdr.SetDepth(Depth.Read);
+    foreach (var object in meshes)
+    {
+        if (!object.mesh.visible || object.material.mode != SurfaceMode.Transparent) continue;
+        if (first < 0) first = TransparentMark(Draw.list);
+        DrawMaterial(renderer, object.mesh, object.material, world.LocalToWorld(object.entity));
+    }
+    renderer.hdr.SetDepth();
+    renderer.hdr.SetBlend(Blend.Replace);
+    if (first >= 0)
+        SortTransparent(Draw.list, first, renderer.eye,
+                        Math.Normalize(Math.Rotate(renderer.camera.rotation, float3(0, 0, 1))));
 }
 
 struct Presentation { float exposure = 1; }

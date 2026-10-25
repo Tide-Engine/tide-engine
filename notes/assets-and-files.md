@@ -1,5 +1,110 @@
 # Assets and local files
 
+## Missing static tangents for normal maps (2026-10-25)
+
+The owner approved normal maps in Render3D and the corresponding static-import
+completion. `mesh_file_read` retains the original canonical import, including
+zero missing tangents and unsplit vertices. `mesh_file_with_tangents` makes an
+owned copy for static consumers whose vertex layout declares `float4 tangent`,
+then generates missing tangents after the existing node/coordinate transforms
+and flat-normal creation, for glTF, converted FBX and OBJ. Supplied tangents
+retain their exact existing conversion path, even when zero, nonorthogonal or
+present in only some primitives. Skinned import and
+runtime Decode are unchanged; no runtime function, representation or language
+syntax was added. `has_tangents` continues to mean authored source data for
+editor metadata, rather than whether the filled tangent stream is usable.
+
+Generation uses the standard UV-derivative/Gram-Schmidt basis described by
+[Eric Lengyel](https://terathon.com/blog/tangent-space.html), with normalized
+per-corner directions weighted by corner angle. Differences, products and sums
+use doubles; angles use Tide's existing deterministic `tide_atan2_f` of cross
+magnitude and dot (the native compiler does not link the double transcendental
+backend). This keeps narrow valid corners whose cosine rounds to 1; when the
+sine is below float range, it is also the angle to better than float precision
+and remains a double weight. Arithmetic order
+and FP contraction stay fixed. No MikkTSpace source was already vendored, and
+this implementation adds no third-party source or license. It does not promise
+exact agreement with a MikkTSpace normal-map bake; export authored tangents for
+that basis.
+
+Generated xyz is finite, normalized and orthogonal to the imported normal;
+w is +1 or -1, with bitangent `w * cross(normal, tangent.xyz)`. Opposite signs
+never share an accumulator. A vertex used by both signs gets one duplicate,
+in original vertex order: position, normal, both UVs and color are copied
+byte-for-byte, and only negative-sign corners are remapped. Existing vertex
+order, triangles/winding, materials, source attribute seams and bounds remain
+unchanged. These duplicates exist only in the float4-tangent variant. Other
+layouts retain the original counts, indices, every attribute and canonical
+mesh hash exactly, including zero missing float3 tangents. No other welding,
+reordering or compaction is added.
+
+`asset_files.c` keeps the canonical mesh and a separate lazy generated variant
+per cached source file. `check_asset_decl` selects that variant by value only
+for a static float4-tangent consumer, including collections, before codegen or
+identity calculation. Metadata-only/editor checking keeps canonical data even
+when the variant is warm. Generation deep-copies every mutable stream and
+index; it never reimports a file or changes another declaration's data.
+Source/side-buffer metadata changes and explicit notifications invalidate both
+cached meshes, including independent failed-generation state. Private source
+presence bits are retained with the canonical import but excluded from its
+hash and packed bytes. Original source digests remain `asset_match.hash`.
+
+Degenerate geometry/UVs, omitted UVs and projections too close to parallel use
+a deterministic least-aligned-axis fallback; zero/invalid normals use +Z as
+the fallback plane without changing the normal stream. Double intermediates
+avoid overflow/underflow for finite float geometry/UV derivatives. Nonfinite
+source attributes retain their existing diagnostics; nonfinite results of an
+extreme node transform cannot contaminate generated tangents. Private source
+bits distinguish missing OBJ UV corners from authored (0, 0), so partial UV
+triangles use fallback rather than inventing a mapping.
+
+`mesh_lod_source` has a compiler-private optional float4 tangent stream.
+`mesh_lod.c` adds only its sign to chart identity, separately from the existing
+weighted values: no tangent direction seam, error weight or unit changes.
+Codegen supplies it only for static layouts containing float4 tangent, leaving
+skinned and non-tangent LOD behavior unchanged. Canonical/skinned consumers
+retain their exact version-2 LOD cache keys. Only the static float4-tangent
+variant uses version 3, so authored models with tangents cannot reuse old
+sign-blind levels. Variant mesh hashes include the final generated
+stream, duplicates and remapped indices. Pack/LOD metadata layout is unchanged.
+
+Regressions in `mesh_files_test.c` cover a plane, flat normals, shared mirrored
+UVs, authored UV seams, corner-angle weighting, narrow valid corners, missing/degenerate/extreme
+inputs, nearly parallel normals, nonuniform/mirrored node transforms and
+transform overflow, nonfinite attribute rejection, exact authored preservation,
+mixed authored/generated primitives and OBJ's flipped/partly absent UVs. They
+check normalized orthogonality, reconstructed bitangent UV direction, repeatable
+hashes and every indexed non-tangent stream against authored controls.
+`mesh_lod_test.c` checks opposite signs with otherwise identical UV/normal data
+at every level, each side's area/bounds, and exact unchanged indices/errors
+when only tangent direction changes. `mesh_variants_test.c` checks cold/warm
+both-order typed selection, canonical hashes and all streams, float3 and warm
+editor isolation, actual per-name packed payloads, and physical mirrored-grid
+LOD cache/order consistency. The side-buffer notification regression warms and
+invalidates both variants while pinning source size/time. `asset_meshes` also
+declares the same mirrored source as position-only and normal-mapped vertices
+in both orders, checks original plain counts/indices/bytes and mapped seams
+through actual match reads, and checks the generated fallback rather than zero.
+
+Focused native validation: `tidec`, importer/asset-files/LOD test executables,
+`tidec_e2e_asset_meshes` and `tidec_e2e_lod` build warning-free. All five focused
+CTests pass, including 25 importer and 11 LOD cases, the new typed cache/pack/
+metadata/LOD regressions, same-size side-buffer invalidation, both-order match
+reads, and existing exact-allocation cut/corruption coverage. Full native/web
+suites remain the parent task's validation; no full suite, web build, commit,
+merge, push or CI dispatch was run by this implementation sub-agent.
+
+Final review additionally found the narrow-corner cosine-rounding case above.
+The atan2 correction and its regression (including a sub-float-angle aspect
+ratio) rebuild warning-free and pass both focused CTests again. Integration
+review then required typed variant isolation to preserve non-tangent CPU data;
+the source and new regressions above implement it. All five focused native
+CTests pass after that correction. Fresh review found no blocking correctness
+issues. Remaining coverage gaps: an equal-hash authored-tangent source with a
+seeded legacy LOD disk cache, and controlled generation-only failure with
+repeated diagnostics and invalidation recovery (ordinary success/invalidation
+is covered; forcing the real split vertex limit is impractical for a unit test).
+
 Resource collection helpers (2026-10-18) borrow existing Clip, Texture and
 Mesh<V> asset lists/maps through ordinary read-only synchronous parameters.
 Direct assets and forwarded borrows pass their current handles without copying
@@ -278,7 +383,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **Hot reload** needed nothing of its own: `tide run` packs again when a named file changes, the mesh has another version, and the draw list makes another; the one nothing draws goes as any does.
   - **Editors:** `notes/editors.md`, Assets, the editor side.
   - **Tests:** `tidec_mesh_files` (the numbers it reads, a .glb, a .gltf and an .obj cut and spoiled anywhere, what a description says that its bytes don't bear out); `compiler/tests/e2e/asset_meshes` with the files `asset_meshes_make.mjs` writes into `e2e/assets/meshes/` (every field by its name against values worked out by hand: a node that moves, nodes in nodes that scale, one that mirrors, one that turns; bytes as positions, a strip, a fan, a sparse accessor, a buffer beside the file and one inside it; a part with no normals; an OBJ; the same file as three structs; a glob as a list and a map, one file for a list; a Mesh in a local, a parameter and a result; the fields no file fills; a copy changed with the mesh as it was; the draws as runs, one mesh however it's named, a step in the Mesh's expression run once, the pack loaded again; a pack of another layout). `mesh_assets_defaults_read_forward_assets_of_the_current_pack` checks single/list/map meshes whose vertex defaults read later text, byte-list, text-list, text-map and mesh assets, on first and repeated loads and after replacing the UTF-8 text with a shorter value and restoring it. `asset_defaults` continues to pin declared sampling carried into field defaults. `compiler/tests/errors/asset_mesh_*.tide`, a file a diagnostic, with the refused files in `e2e/assets/meshes/bad/`; `pack_meshes_*` in `tests/test_pack.c` (two lists, a list and a map, versions, the vertices to write, drawn once, loaded again elsewhere and edited; blocks cut short); pass 21 of `tide_platform_shaders` (`Models` in `platform/tests/shaders.tide`, `run_model_checks`: a file's front is what's drawn with nothing said and its back isn't, mirrored with both sides, its uvs the texture as it is, a vertex of the game's through a frag with its default, an .obj the same square as a .glb, instances, a list's, a map's, by its two lists: the same pixels on OpenGL 3.3, WebGL 2 and WebGPU, where the device is then lost and found); `lsp_asset_meshes`. The docs' `model` example draws a .glb of several meshes and nodes with no normals, looked at with no window. Not run: Android, and OpenGL on a Mac. The original glTF/OBJ test files are made by scripts from their specifications. FBX now has real Blender and Maya exporter fixtures as recorded above; real exporter GLB/OBJ files remain unproven here.
-  - **Not built:** the textures inside a model file (declare supported images separately), a material beyond its color, a file's parts apart, skins, animation and morph targets, `Mesh<V>` as a field's type (for a mesh a game makes, or naming an asset's as a `Texture` does), a mesh read from bytes while the game runs, a 2D mesh from a file, tangents worked out, and a frag or a vert reading `mesh.vertices` (`data_of` in `shader.c` resolves an asset by its declaration alone, with no part of one; it's an error that says what to write, and a gap by the rule that GPU code refuses only what a GPU can't do).
+  - **Not built:** the textures inside a model file (declare supported images separately), a material beyond its color, a file's parts apart, skins, animation and morph targets, `Mesh<V>` as a field's type (for a mesh a game makes, or naming an asset's as a `Texture` does), a mesh read from bytes while the game runs, a 2D mesh from a file, and a frag or a vert reading `mesh.vertices` (`data_of` in `shader.c` resolves an asset by its declaration alone, with no part of one; it's an error that says what to write, and a gap by the rule that GPU code refuses only what a GPU can't do).
 - Runtime loading (built 2026-10-06, from the Assets design in `docs/spec.md`, Provisional, Decoding and Fetching; the picks beyond it are listed there): `grid.Decode(bytes)` and `await Web.Fetch(url)`. What's built, and what code relies on:
   - **The PNG reader is the engine's** (`engine/include/tide/png.h`, `engine/src/png_read.c`, from RFC 2083 with its own inflate from RFC 1951 under zlib's wrapper, no code of anyone else's): `tide_png_decode` gives a whole picture as `tide_color`s, `tide_png_decode_rows` hands rows over as they're decoded (an interlaced picture's pass by pass), `tide_inflate` is the raw deflate stream into a sink, and `tide_grid_decode` is `grid.Decode`: it decodes into a new grid in the world's heap, writes each row's cells a chunk's span at a time (a span of zeros makes no chunk), and only once the whole picture decoded lets the old grid go, so a failed decode leaves the grid as it was. A sample is `v / max` in floats, which IEEE 754 defines, so a picture decoded in a tick is the same bits on every machine (`compiler/tests/e2e/decode` pins the world's hash, native and web). What's made for a decode is a few rows, so a picture past the heap ends in `tide_out_of_memory` and nothing else (`compiler/tests/safety/decode.tide`, 8192 by 8192 white pixels a bit each). `tide_platform_png_decode` (`platform/tests/png_decode.mjs`) reads back pictures Node's zlib wrote of every color type, depth, filter and interlacing, and refuses files wrong in each way. The asset card decodes at build time with the same reader.
   - **tidec:** `Decode` is a grid method beside `Clear` (`check_grid_decode` in `compiler/src/check.c`, `CALL_GRID` with the name), on a `Grid2<Color>` only, taking a `List<byte>`, written like any grid write (`check_writable`), refused on the GPU, giving `void fails IOError`; generated C calls `tide_checked_grid_decode`, an adapter `gen_io_adapters` writes when a game decodes (`program.decodes`), and only such a game's header includes `tide/png.h`. `Web.Fetch` is a built-in owner like `Storage` (`compiler/src/builtins.c`): awaited only, local only through `check_io_use` (the message says the network, not files: `decl.io_network`), with `expr.web_fetch` beside `storage_flush` wherever that's a predicate (codegen's hoisting, the shader writer, parallel steps). Its await is `gen_await`'s: `tide_web_fetch_begin` once, `tide_web_fetch_poll` each frame, the frame's `tide_fetch_ticket` (a field of its own, `decl.uses_fetch`, which `tide_forget_io_*` lets go of with the flush's), the body a scratch list the local copies as any. A program that calls neither generates the C it did, byte for byte.

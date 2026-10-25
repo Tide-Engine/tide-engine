@@ -12,6 +12,14 @@ local singleton Controls
     float exposure = 1;
     float sunlight = 5;
     bool shadows = true;
+    float yaw = 0.64;
+    float pitch = 0.38;
+    float distance = 10.8;
+    bool dragging;
+    float pinch;
+    int firstFinger;
+    int secondFinger;
+    bool open = true;
 }
 
 event(Spawned) BuildScene(with Main)
@@ -76,12 +84,62 @@ view ConfigureSun(mut local Render3D.DirectionalLight light, with local Sun, Con
 }
 
 [Before(Render3D.Stages.Prepare)]
-view CameraAndLight(mut Render3D.Renderer renderer, Controls controls)
+view CameraAndLight(mut Render3D.Renderer renderer, mut Controls controls, Devices devices)
 {
-    float3 eye = float3(6, 4.5, -8);
+    // GUI coordinates count down from the top; device coordinates count up.
+    float panelTop = Screen.height - (controls.open ? 208 : 96);
+    var pointer = devices.pointer;
+    if (pointer.press.down) controls.dragging = Screen.Flip(pointer.position).y < panelTop;
+    if (!pointer.press.pressed) controls.dragging = false;
+    mut int fingers = 0;
+    mut float2 firstPosition = float2(0);
+    mut float2 secondPosition = float2(0);
+    mut int firstId = 0;
+    mut int secondId = 0;
+    foreach (var touch in devices.touchscreen.touches)
+    {
+        if (!touch.press.pressed || Screen.Flip(touch.startPosition).y >= panelTop) continue;
+        if (fingers == 0)
+        {
+            firstPosition = touch.position;
+            firstId = touch.id;
+        }
+        if (fingers == 1)
+        {
+            secondPosition = touch.position;
+            secondId = touch.id;
+        }
+        fingers += 1;
+    }
+    if (fingers >= 2)
+    {
+        float span = Math.Distance(firstPosition, secondPosition);
+        if (controls.pinch > 0 && firstId == controls.firstFinger && secondId == controls.secondFinger)
+            controls.distance *= controls.pinch / Math.Max(span, 1);
+        controls.pinch = span;
+        controls.firstFinger = firstId;
+        controls.secondFinger = secondId;
+        controls.dragging = false;
+    }
+    else
+    {
+        controls.pinch = 0;
+        if (controls.dragging)
+        {
+            controls.yaw -= pointer.delta.x * 0.008;
+            controls.pitch -= pointer.delta.y * 0.008;
+        }
+    }
+    if (Screen.Flip(devices.mouse.position).y < panelTop)
+        controls.distance *= Math.Pow(0.85, devices.mouse.scroll.y);
+    controls.pitch = Math.Clamp(controls.pitch, 0.08, 1.35);
+    controls.distance = Math.Clamp(controls.distance, 4, 18);
+    float3 target = float3(0, controls.open ? -0.8 : 0.5, 0);
+    float3 eye = target + float3(Math.Sin(controls.yaw) * Math.Cos(controls.pitch),
+        Math.Sin(controls.pitch), -Math.Cos(controls.yaw) * Math.Cos(controls.pitch)) * controls.distance;
     renderer.camera = Render3D.Camera {
         position = eye,
-        rotation = quaternion.LookRotation(float3(0, 0.5, 0) - eye, float3(0, 1, 0)),
+        rotation = quaternion.LookRotation(target - eye, float3(0, 1, 0)),
         verticalFov = 45deg
     };
     renderer.exposure = controls.exposure;
@@ -94,11 +152,31 @@ view CameraAndLight(mut Render3D.Renderer renderer, Controls controls)
 [After(Render3D.Stages.Present)]
 view Overlay(mut Controls controls)
 {
-    GUILayout.Area(Rect(12, 12, 280, 160))
+    GUI.SetTheme(GUITheme { radius = 6 });
+    // Leave the bottom-right stats line its own 40-pixel corner.
+    GUILayout.Area(Rect(12, Screen.height - (controls.open ? 208 : 96), Screen.width - 24, controls.open ? 196 : 44))
     {
-        GUILayout.Label("PBR + directional, spot and point lights");
-        GUILayout.Slider("Exposure", controls.exposure, 0.25, 3);
-        GUILayout.Slider("Sunlight", controls.sunlight, 0, 12);
-        GUILayout.Toggle("Shadows", controls.shadows);
+        GUILayout.Horizontal()
+        {
+            if (GUILayout.Button(controls.open ? "Hide controls" : "Controls")) controls.open = !controls.open;
+            if (GUILayout.Button("Reset camera"))
+            {
+                controls.yaw = 0.64;
+                controls.pitch = 0.38;
+                controls.distance = 10.8;
+            }
+        }
+        if (controls.open)
+        {
+            GUILayout.Label("Drag / swipe to orbit; pinch to zoom");
+            GUILayout.Horizontal()
+            {
+                if (GUILayout.Button("Zoom +")) controls.distance = Math.Max(4, controls.distance - 1);
+                if (GUILayout.Button("Zoom -")) controls.distance = Math.Min(18, controls.distance + 1);
+            }
+            GUILayout.Slider("Exposure", controls.exposure, 0.25, 3);
+            GUILayout.Slider("Sunlight", controls.sunlight, 0, 12);
+            GUILayout.Toggle("Shadows", controls.shadows);
+        }
     }
 }

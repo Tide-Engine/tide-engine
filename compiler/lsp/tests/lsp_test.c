@@ -11186,28 +11186,49 @@ TIDE_TEST(lsp_asset_textures_and_declared_sampling)
                                    "local singleton Art\n"
                                    "{\n"
                                    "    [Raw] Grid2<Color> kept = Grid2(2, 2);\n"
+                                   "    [Raw] Texture image = masks;\n"
+                                   "    int2 imageSize;\n"
                                    "}\n"
+                                   "Color SampleRaw(Texture image, float2 uv) { return image.Sample(uv); }\n"
+                                   "Color ForwardRaw(Texture image, float2 uv) { return SampleRaw(image, uv); }\n"
+                                   "int2 RawSize(Texture image) { return image.size; }\n"
                                    "frag Read(Vertex vertex, out Color color, Art art)\n"
                                    "{\n"
-                                   "    color = masks.Sample(vertex.uv) + art.kept.Sample(vertex.uv);\n"
+                                   "    color = masks.Sample(vertex.uv) + art.kept.Sample(vertex.uv)\n"
+                                   "          + ForwardRaw(art.image, vertex.uv)\n"
+                                   "          + Color(float(art.image.size.x + RawSize(art.image).x), 0, 0);\n"
                                    "}\n"
-                                   "view V()\n"
+                                   "view V(mut Art art)\n"
                                    "{\n"
+                                   "    art.image = art.kept;\n"
+                                   "    art.imageSize = art.image.size;\n"
                                    "    Draw.Mesh([Vertex { }], [0, 0, 0], Read);\n"
                                    "}\n";
     open_uri(uri_main, raw_file);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     hover = request_at(uri_main, "textDocument/hover", 0, 2, "");
     TIDE_CHECK(has(hover, "[Raw]") && has(hover, "pixels are numbers, not colors to draw"));
+    TIDE_CHECK(has(hover, "`[Raw] Texture` fields") && has(hover, "GPU sampling and metadata helpers"));
     hover = request_at(uri_main, "textDocument/hover", 0, 21, "");
     TIDE_CHECK(has(hover, "asset Texture masks") && has(hover, "It's `[Raw]`"));
+    TIDE_CHECK(has(hover, "`[Raw] Texture` fields") && has(hover, "GPU sampling and metadata helpers"));
+    TIDE_CHECK(!has(hover, "an image to draw with") && !has(hover, "or hand on"));
     hover = request_at(uri_main, "textDocument/hover", 4, 6, "");
     TIDE_CHECK(has(hover, "[Raw]") && has(hover, "no alpha worked into them"));
-    open_uri(uri_main, "[] asset Texture masks = \"art/tile.png\";\nscene Main { }\nlocal singleton Art\n{\n    [] Grid2<Color> kept = Grid2(2, 2);\n}\n");
+    hover = request_at(uri_main, "textDocument/hover", 5, 6, "");
+    TIDE_CHECK(has(hover, "`[Raw] Texture` fields") && has(hover, "`.size` is readable on the CPU and GPU"));
+    hover = request_at(uri_main, "textDocument/hover", 5, 19, "");
+    TIDE_CHECK(has(hover, "Texture image = masks") && !has(hover, "RawTexture"));
+    snprintf(asset_code, sizeof asset_code, "%sview Escape(Art art) { var lost = art.image; _ = lost.size; }\n", raw_file);
+    open_uri(uri_main, asset_code);
+    TIDE_CHECK(has(last_sent(), "'image' is [Raw], its pixels numbers and not colors to draw"));
+    open_uri(uri_main, "[] asset Texture masks = \"art/tile.png\";\nscene Main { }\nlocal singleton Art\n{\n    [] Texture image;\n}\n");
     completion = request_at(uri_main, "textDocument/completion", 0, 1, "");
     TIDE_CHECK(offers(completion, "Raw") && offers(completion, "Filter"));
+    TIDE_CHECK(has(completion, "[Raw] Texture fields") && has(completion, "GPU sampling and metadata helpers"));
     completion = request_at(uri_main, "textDocument/completion", 4, 5, "");
     TIDE_CHECK(offers(completion, "Raw") && offers(completion, "Wrap"));
+    TIDE_CHECK(has(completion, "[Raw] Texture fields") && has(completion, "GPU sampling and metadata helpers"));
     open_uri(uri_main, "[Raw] asset Texture masks = \"art/tile.png\";\nscene Main { }\nview V()\n{\n"
                        "    Draw.Mesh([Vertex { }], [0, 0, 0], masks);\n}\n");
     TIDE_CHECK(has(last_sent(), "'masks' is [Raw], its pixels numbers and not colors to draw"));
@@ -11250,6 +11271,7 @@ TIDE_TEST(lsp_asset_textures_and_declared_sampling)
     start();
     const char *before = complete("[$]\nsingleton Rules\n{\n    int rounds;\n}\nscene Main { }\n");
     TIDE_CHECK(offers(before, "Filter") && offers(before, "Wrap") && offers(before, "Stage"));
+    TIDE_CHECK(offers(before, "Raw") && has(before, "[Raw] Texture fields") && has(before, "GPU sampling and metadata helpers"));
     const char *field = complete("scene Main { }\nlocal singleton Art\n{\n    [$] Grid2<Color> paint = Grid2(2, 2);\n}\n");
     TIDE_CHECK(offers(field, "Filter") && offers(field, "Wrap") && offers(field, "Snap"));
 }

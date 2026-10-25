@@ -128,6 +128,7 @@ export function liveExamples(article: HTMLElement) {
             const backend = new URLSearchParams(location.search).get('backend');
             if (backend) url.searchParams.set('backend', backend);
             url.searchParams.set('embedded', '');
+            url.searchParams.set('stats', '');
             for (const [name, value] of Object.entries(options)) url.searchParams.set(name, value);
             return url.href;
         }

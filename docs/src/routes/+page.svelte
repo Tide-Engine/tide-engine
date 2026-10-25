@@ -17,7 +17,7 @@
     const shared = 'https://play.tide-engine.dev/g/29c727eab929afcbef23455a6bf73125/';
     let place: HTMLElement;
     let shown = $state(false);
-    let full = $state('/earth/');
+    let full = $state('/earth/?stats');
     // Bigger: the frame over the whole page, as it is (no new page, so the game goes on where it was)
     let big = $state(false);
     $effect(() => {
@@ -48,19 +48,22 @@
             if (hosted) {
                 // Another site's page: it starts as it loads, and says nothing of when it has drawn
                 const url = new URL(shared);
-                url.searchParams.set('embedded', '');
+                url.searchParams.set('stats', '');
                 if (backend) url.searchParams.set('backend', backend);
+                full = url.href;
+                url.searchParams.set('embedded', '');
                 opened.src = url.href;
                 opened.allow = 'cross-origin-isolated; fullscreen';
                 opened.addEventListener('load', () => setTimeout(() => {
                     if (frame === opened) shown = true;
                 }, 1500), { once: true });
-                full = shared;
             } else {
                 const url = new URL('/earth/', location.href);
+                url.searchParams.set('stats', '');
+                if (backend) url.searchParams.set('backend', backend);
+                full = url.href;
                 url.searchParams.set('embedded', '');
                 url.searchParams.set('wait', '');
-                if (backend) url.searchParams.set('backend', backend);
                 opened.src = url.href;
                 opened.addEventListener('load', async () => {
                     const page = game(opened);
@@ -68,7 +71,6 @@
                     await page.start();
                     if (frame === opened) shown = true;
                 }, { once: true });
-                full = '/earth/';
             }
             place.append(opened);
             frame = opened;

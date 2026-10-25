@@ -1,5 +1,111 @@
 # Render3D package
 
+## Mapped materials and interactive docs (2026-10-25)
+
+The owner approved opaque/cutout/transparent materials, normal/ORM/emission and
+height maps, interactive examples with movable cameras, and stats enabled on
+documentation launches. Material modes are explicit. Optional maps default to
+empty references; CPU size checks produce numeric sampling flags, preserving
+the no-map fetch path. Base color keeps the white default. Raw numeric texture
+binding exposed a language gap: the owner approved extending `[Raw]` to
+`Texture` fields, following raw grid fields. Raw assets/fields/grids bind only
+in an explicit raw field context, with no new runtime representation or
+function. Checker, capture, helper specialization and role-change migration
+contracts and focused validation are recorded in textures.md.
+
+Lit and ShadowCutout share scaled/offset UV evaluation, the UV callback,
+centered single-sample bilinear height parallax, and final-UV coverage/cutoff.
+Parallax uses the main eye in both passes, with .5 neutral height and a .05
+grazing denominator floor; it changes UV relief, not geometry or depth. The
+world tangent frame reconstructs the forward tangent from inverse-transpose
+normals, corrects the exact CPU determinant sign and orthogonalizes it. Missing
+tangents have a stable axis fallback. Double-sided shading faces the geometric
+normal and bitangent toward the main eye. Static import generation is selected
+only for layouts declaring float4 tangent; other layouts and editor reads keep
+canonical geometry/hashes and prior LOD keys. Generation and tangent-sign LOD
+charts are described in assets-and-files.md.
+
+ORM channels are R occlusion, G roughness, B metallic. Roughness/metallic map
+channels multiply material scalars. Occlusion affects diffuse ambient
+irradiance only; that explicit irradiance defaults to zero. Emission maps decode
+sRGB and multiply linear emission, which is added once. UV and coverage hooks
+live in attached local state; the existing configured Lit surface callback
+remains valid. The maximum stock material uses eight sampled bindings.
+
+Opaque shadow batches retain the prior contiguous mesh/handedness policy and
+also split cull state. Cutout transforms are prepared once, while their shadow
+draws retain each query row's material resource/callback context. Transparent
+materials draw after opaque/cutout into HDR with alpha blending and read-only
+depth; they cast no shadows. A small package C helper stably sorts owned
+captured packets by camera-forward transformed mesh-center depth without
+retaining query rows or resources. It uses cached bounds, a base-LOD sphere
+fallback, or the origin when neither is available. Empty transparent sets add
+no packet barrier. The drawing
+runtime preserves depth-read blended LOD order through recording/preparation;
+packet ownership/barriers and append contracts are in drawing.md.
+
+Both full native/web debug builds pass. The native suite passes 2,773 of 2,774
+enabled CTests (295.69 s), with only the independently reproduced private
+prototype hash failure below. All six packet and thirteen engine draw-level
+cases pass. Original Render3D pixels and the independent exact shadow-reference
+frame/atlas checks pass on Vulkan/OpenGL and WebGL/ANGLE D3D11/WebGPU. All eleven
+new material scenarios pass on those five backends, including strict alpha-zero
+raw-data witnesses. The web repository checks pass; the optional private
+prototype playthroughs are still completing. No complete green web-suite claim
+is made at this checkpoint.
+
+Numeric fixtures independently cover transformed tangent bases and hooks,
+indirect-only AO and emission invariance. Pixel fixtures additionally check
+cutout holes/shadows, parallax coverage, raw resource/callback retention,
+transparent depth state and mixed-LOD order. Actual material-consumer exports
+pass all 36 HLSL API/stage compilations with FXC /WX. Compiler purity/query
+fixes and Raw field checker/capture/metadata/migration validation are recorded
+in shaders.md and textures.md. Fresh material integration, transparent safety,
+center ordering, Raw and typed-tangent reviews have no blocking findings.
+
+Svelte check reports zero errors/warnings; the staged production docs build,
+three export/admin HTTP checks, five playground tests and 301 grammar cases
+pass. Both examples pass live WebGL/WebGPU source, stats URL and camera checks.
+The mapped example additionally witnesses reset, real height-command edits,
+cutoff/opacity changes and collapsed zoom above stats through scene pixels.
+Native 240-frame --stats captures at 376x400 and 960x540 show the complete
+exhibit above its controls, and browser cutout/blend/collapsed captures were
+visually inspected. One initial UI probe clicked outside a slider; correcting
+the test coordinates preserves its scene-pixel assertions.
+
+The recreated web cache now uses the checked-in WASI SDK 24 toolchain, unlike
+the historical SDK 34 runs below. Vulkan layers/spirv-val, other native operating
+systems, mobile and sanitizers remain unavailable local coverage. An initial
+material Vulkan process exited without diagnostics; its debugger run, five
+isolated repeats and both subsequent full native rounds pass. No cause or
+source correction is claimed for that unreproduced event. No new performance
+measurement or speedup is claimed.
+
+The initial full native run also found a CRACKED prototype deterministic-hash
+failure. An isolated clean control at engine commit
+5d5f61729aff7b94fd269be543b6f95bcb7cc9d4 and private prototype commit
+6ae2af1d1a763b58aa579e7bc98ef8ffd3499f51 reproduces the identical actual
+0xbf53c0610c47764e versus pinned 0x0a216d532fa6445c after 3,000 ticks (816
+bullets, one round, zero points, map zero). All 122 prototype input hashes are
+unchanged. The control ran only that test and exited 1; no expected hash or
+prototype source was changed. Its command/identity/output receipts are retained
+under the isolated t3-6f56361c worktree's build/baseline-control directory.
+
+The optional Inside Out WebGL playthrough also fails its exact cross-player
+tutorial-label PNG comparison. Independent read-only attribution finds one
+blue-channel step at global pixel (1123,41): RGB (157,145,126) versus
+(157,145,125). Both labels read "10 moves / par 10"; the entire 1280x76 header
+otherwise matches, as do earlier move-label and home-region captures. The
+private assertion compares PNG buffers byte-for-byte; its -1 result is not a
+pixel difference count. The failure captures are frozen completed frames.
+Inside Out uses procedural position/normal geometry, no Raw fields or Render3D,
+and its scene passes use Depth.ReadWrite/Blend.Replace. The label uses unchanged
+Draw.Text/font paths; its Normal helper does no sampled UV lifting, and neither
+page requests --stats. No direct route from this feature to the label was found.
+This supports a small visual quantization difference, but no baseline browser
+control was executed and pre-existing status is not claimed. The private source,
+assertion and hash pins remain unchanged; raw output and captures are retained.
+
 ## CPU recording preparation (2026-10-25)
 
 The owner requested further performance work after the static-cube measurements.

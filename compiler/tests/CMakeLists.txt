@@ -63,6 +63,11 @@ tide_e2e_test(asset_reference_empty)
 tide_e2e_test(function_acts) # Functions and methods that send, spawn and change entities, as their callers would
 tide_e2e_test(component_values SOURCES e2e/component_values.tide e2e/component_values.tprefab) # Copied component and payload values
 tide_e2e_test(texture_size) # Metadata-only CPU/GPU image dimensions, aliases and resource lifetime
+tide_e2e_test(raw_texture_fields LAYOUT) # Raw texture references, captures, pack lifetime and role migration
+if(TIDE_PLATFORM)
+    target_link_libraries(tidec_e2e_raw_texture_fields PRIVATE tide_platform)
+    target_compile_definitions(tidec_e2e_raw_texture_fields PRIVATE TIDE_RAW_TEXTURE_MIGRATION=1)
+endif()
 tide_e2e_test(function_tasks) # ...and start tasks, in their callers' worlds and for their callers' entities
 tide_e2e_test(queries) # Read-only iteration over a separate entity set
 tide_e2e_test(handler_queries) # Current-world queries at match event/command turns, with ordinary deferred changes
@@ -235,6 +240,10 @@ add_test(NAME tidec_map_layout
     COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}"
         "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/map_layout"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/map_layout.cmake")
+add_test(NAME tidec_raw_texture_layout
+    COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}"
+        "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/raw_texture_layout"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/raw_texture_layout.cmake")
 add_test(NAME tidec_task_layout
     COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}"
         "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/task_layout"
@@ -650,7 +659,7 @@ if(TARGET tidec_core)
     target_compile_definitions(tidec_model_metadata_tests PRIVATE MODEL_METADATA_WORK="${CMAKE_CURRENT_BINARY_DIR}/model_metadata")
     target_link_libraries(tidec_model_metadata_tests PRIVATE tide tidec_core)
     add_test(NAME tidec_model_metadata COMMAND tidec_model_metadata_tests)
-    add_executable(tidec_asset_files_tests asset_files_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    add_executable(tidec_asset_files_tests asset_files_test.c mesh_variants_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
     target_include_directories(tidec_asset_files_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
     target_compile_definitions(tidec_asset_files_tests PRIVATE ASSET_FILES_WORK="${CMAKE_CURRENT_BINARY_DIR}/asset_files")
     target_link_libraries(tidec_asset_files_tests PRIVATE tide tidec_core)

@@ -1,0 +1,4 @@
+// expect: a [Raw] Texture field takes a [Raw] Texture asset, field or grid, not a color texture
+local singleton Art { [Raw] Texture image; Texture color; }
+scene Main { }
+view V(mut Art art) { art.image = art.color; }

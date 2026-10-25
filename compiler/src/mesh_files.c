@@ -87,7 +87,8 @@ static bool more_vertices(builder *b, const uint64_t more)
     b->m.uv2 = realloc(b->m.uv2, (size_t)room * 2u * sizeof(float));
     b->m.color = realloc(b->m.color, (size_t)room * 4u * sizeof(float));
     b->m.tangent = realloc(b->m.tangent, (size_t)room * 4u * sizeof(float));
-    if (!b->m.position || !b->m.normal || !b->m.uv || !b->m.uv2 || !b->m.color || !b->m.tangent) abort();
+    b->m.sources = realloc(b->m.sources, (size_t)room * sizeof *b->m.sources);
+    if (!b->m.position || !b->m.normal || !b->m.uv || !b->m.uv2 || !b->m.color || !b->m.tangent || !b->m.sources) abort();
     b->vertex_room = room;
     return true;
 }
@@ -146,6 +147,7 @@ static void put_vertex(builder *b, const part *p, const uint32_t from, const uin
     memcpy(m->color + (size_t)to * 4u, p->color + (size_t)from * 4u, 4u * sizeof(float));
     if (p->tangent) memcpy(m->tangent + (size_t)to * 4u, p->tangent + (size_t)from * 4u, 4u * sizeof(float));
     else memset(m->tangent + (size_t)to * 4u, 0, 4u * sizeof(float));
+    b->m.sources[to] = (p->tangent ? 1u : 0u) | (p->uv ? 2u : 0u);
 }
 
 // Adds a part to the mesh. One with normals keeps its vertices as they are,
@@ -203,6 +205,194 @@ static float unit(const float v)
     return !(v > 0.0f) ? 0.0f : v >= 1.0f ? 1.0f : v;
 }
 
+// Missing static tangents use the usual UV derivatives and Gram-Schmidt basis
+// (https://terathon.com/blog/tangent-space.html), with corner-angle weighting.
+// Authored streams keep their existing import/transform path. No vertices are
+// welded: UV/normal/material seams already present in the source stay separate.
+// Only opposite handedness at one shared vertex needs an additional vertex.
+typedef struct tangent_sum {
+    double direction[2][3];
+    uint32_t split;
+    uint8_t sides;
+} tangent_sum;
+
+static double tangent_dot(const double a[3], const double b[3])
+{
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+static bool tangent_unit(double v[3])
+{
+    const double length = sqrt(tangent_dot(v, v));
+    if (!(length > 0.0) || !isfinite(length)) return false;
+    for (uint32_t k = 0; k < 3u; k++) v[k] /= length;
+    return true;
+}
+
+static void tangent_normal(const mesh_file *m, const uint32_t vertex, double n[3])
+{
+    for (uint32_t k = 0; k < 3u; k++) n[k] = m->normal[(size_t)vertex * 3u + k];
+    // A zero/invalid authored normal or a collapsed triangle has no plane.
+    // Pick a fixed plane for its tangent without changing the normal stream.
+    if (!tangent_unit(n)) n[0] = n[1] = 0.0, n[2] = 1.0;
+}
+
+static bool tangent_project(double t[3], const double n[3])
+{
+    const double before = tangent_dot(t, t);
+    // A second projection removes cancellation residue before normalization.
+    // Nearly parallel directions have no reliable tangent plane projection.
+    for (uint32_t pass = 0; pass < 2u; pass++) {
+        const double along = tangent_dot(n, t);
+        for (uint32_t k = 0; k < 3u; k++) t[k] -= n[k] * along;
+    }
+    if (!(tangent_dot(t, t) > before * 1e-24)) return false;
+    return tangent_unit(t);
+}
+
+// A triangle's U/V directions, and its geometric edges. Differences/products
+// of finite floats fit in doubles, including very small UV/geometry scales;
+// normalizing the signed numerators avoids division by a tiny UV determinant.
+static bool tangent_triangle(const builder *b, const uint32_t at, double edge[3][3], double u[3], double v[3])
+{
+    const mesh_file *m = &b->m;
+    const uint32_t *index = m->index + at;
+    const float *position[3], *uv[3];
+    for (uint32_t j = 0; j < 3u; j++) {
+        if (!(b->m.sources[index[j]] & 2u)) return false;
+        position[j] = m->position + (size_t)index[j] * 3u;
+        uv[j] = m->uv + (size_t)index[j] * 2u;
+        for (uint32_t k = 0; k < 3u; k++) if (!isfinite(position[j][k])) return false;
+        for (uint32_t k = 0; k < 2u; k++) if (!isfinite(uv[j][k])) return false;
+    }
+    for (uint32_t k = 0; k < 3u; k++) {
+        edge[0][k] = (double)position[1][k] - position[0][k];
+        edge[1][k] = (double)position[2][k] - position[0][k];
+        edge[2][k] = (double)position[2][k] - position[1][k];
+    }
+    double facing[3] = {edge[0][1] * edge[1][2] - edge[0][2] * edge[1][1],
+                        edge[0][2] * edge[1][0] - edge[0][0] * edge[1][2],
+                        edge[0][0] * edge[1][1] - edge[0][1] * edge[1][0]};
+    if (!tangent_unit(facing)) return false;
+    const double du1 = (double)uv[1][0] - uv[0][0], dv1 = (double)uv[1][1] - uv[0][1];
+    const double du2 = (double)uv[2][0] - uv[0][0], dv2 = (double)uv[2][1] - uv[0][1];
+    const double determinant = du1 * dv2 - du2 * dv1;
+    if (determinant == 0.0) return false;
+    const double side = determinant < 0.0 ? -1.0 : 1.0;
+    for (uint32_t k = 0; k < 3u; k++) {
+        u[k] = (edge[0][k] * dv2 - edge[1][k] * dv1) * side;
+        v[k] = (edge[1][k] * du1 - edge[0][k] * du2) * side;
+    }
+    return tangent_unit(u) && tangent_unit(v);
+}
+
+static uint32_t tangent_side(const mesh_file *m, const uint32_t vertex, const double u[3], const double v[3], double t[3])
+{
+    double n[3];
+    tangent_normal(m, vertex, n);
+    memcpy(t, u, 3u * sizeof(double));
+    if (!tangent_project(t, n)) return 0u;
+    const double bitangent[3] = {n[1] * t[2] - n[2] * t[1], n[2] * t[0] - n[0] * t[2], n[0] * t[1] - n[1] * t[0]};
+    const double side = tangent_dot(bitangent, v);
+    return side < 0.0 ? 2u : side > 0.0 ? 1u : 0u;
+}
+
+static void tangent_write(mesh_file *m, const uint32_t vertex, const double direction[3], const uint32_t side)
+{
+    double n[3], t[3];
+    tangent_normal(m, vertex, n);
+    memcpy(t, direction, sizeof t);
+    if (!tangent_project(t, n)) {
+        // Project the least-aligned coordinate axis: a finite unit direction
+        // even with no UVs, a collapsed mapping, or cancelling contributions.
+        uint32_t axis = 0;
+        if (fabs(n[1]) < fabs(n[axis])) axis = 1u;
+        if (fabs(n[2]) < fabs(n[axis])) axis = 2u;
+        t[0] = t[1] = t[2] = 0.0;
+        t[axis] = 1.0;
+        (void)tangent_project(t, n);
+    }
+    float *out = m->tangent + (size_t)vertex * 4u;
+    for (uint32_t k = 0; k < 3u; k++) out[k] = (float)t[k] + 0.0f;
+    out[3] = side == 2u ? -1.0f : 1.0f;
+}
+
+static double tangent_angle(const double a[3], const double b[3], const bool opposite)
+{
+    const double cross[3] = {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
+    const double sine = sqrt(tangent_dot(cross, cross));
+    const double cosine = tangent_dot(a, b) * (opposite ? -1.0 : 1.0);
+    // acos(float(dot)) loses narrow valid corners when the cosine rounds to
+    // one. atan2 keeps their sine; below float's range the angle equals the
+    // sine to much better than float precision, so retain that double weight.
+    const double angle = tide_atan2_f((float)sine, (float)cosine);
+    return angle > 0.0 ? angle : sine;
+}
+
+static bool make_tangents(builder *b)
+{
+    mesh_file *m = &b->m;
+    const uint32_t vertices = m->vertices;
+    bool missing = false;
+    for (uint32_t i = 0; i < vertices; i++) missing |= !(b->m.sources[i] & 1u);
+    if (!missing) return true;
+    tangent_sum *sums = zeroed(vertices, sizeof *sums);
+    for (uint32_t at = 0; at < m->indices; at += 3u) {
+        if (b->m.sources[m->index[at]] & 1u) continue;
+        double edge[3][3], u[3], v[3];
+        if (!tangent_triangle(b, at, edge, u, v)) continue;
+        for (uint32_t j = 0; j < 3u; j++) (void)tangent_unit(edge[j]);
+        // At corners 0, 1, 2: edges (01,02), (-01,12), (-02,-12).
+        for (uint32_t j = 0; j < 3u; j++) {
+            const uint32_t vertex = m->index[at + j];
+            double t[3];
+            const uint32_t side = tangent_side(m, vertex, u, v, t);
+            if (!side || (b->m.sources[vertex] & 1u)) continue;
+            tangent_sum *sum = sums + vertex;
+            sum->sides |= (uint8_t)side;
+            const double weight = tangent_angle(edge[j == 2u ? 1u : 0u], edge[j == 0u ? 1u : 2u], j == 1u);
+            for (uint32_t k = 0; k < 3u; k++) sum->direction[side - 1u][k] += t[k] * weight;
+        }
+    }
+    uint32_t splits = 0;
+    for (uint32_t i = 0; i < vertices; i++) splits += sums[i].sides == 3u;
+    if (!more_vertices(b, splits)) {
+        free(sums);
+        return false;
+    }
+    for (uint32_t i = 0; i < vertices; i++) {
+        if (b->m.sources[i] & 1u) continue;
+        tangent_sum *sum = sums + i;
+        if (sum->sides == 3u) {
+            const uint32_t to = m->vertices++;
+            sum->split = to;
+            memcpy(m->position + (size_t)to * 3u, m->position + (size_t)i * 3u, 3u * sizeof(float));
+            memcpy(m->normal + (size_t)to * 3u, m->normal + (size_t)i * 3u, 3u * sizeof(float));
+            memcpy(m->uv + (size_t)to * 2u, m->uv + (size_t)i * 2u, 2u * sizeof(float));
+            memcpy(m->uv2 + (size_t)to * 2u, m->uv2 + (size_t)i * 2u, 2u * sizeof(float));
+            memcpy(m->color + (size_t)to * 4u, m->color + (size_t)i * 4u, 4u * sizeof(float));
+            b->m.sources[to] = b->m.sources[i];
+            tangent_write(m, to, sum->direction[1], 2u);
+        }
+        const uint32_t side = sum->sides == 2u ? 2u : 1u;
+        tangent_write(m, i, sum->direction[side - 1u], side);
+    }
+    if (splits) {
+        for (uint32_t at = 0; at < m->indices; at += 3u) {
+            if (b->m.sources[m->index[at]] & 1u) continue;
+            double edge[3][3], u[3], v[3];
+            if (!tangent_triangle(b, at, edge, u, v)) continue;
+            for (uint32_t j = 0; j < 3u; j++) {
+                const uint32_t vertex = m->index[at + j];
+                double t[3];
+                if (sums[vertex].split && tangent_side(m, vertex, u, v, t) == 2u) m->index[at + j] = sums[vertex].split;
+            }
+        }
+    }
+    free(sums);
+    return true;
+}
+
 static void finish(builder *b)
 {
     mesh_file *m = &b->m;
@@ -229,6 +419,7 @@ void mesh_file_free(mesh_file *m)
     free(m->color);
     free(m->tangent);
     free(m->index);
+    free(m->sources);
     *m = (mesh_file){0};
 }
 
@@ -724,6 +915,7 @@ static uint32_t new_vertex(obj *o, const corner c, const float *flat)
     memcpy(b->m.uv + (size_t)at * 2u, uv, sizeof uv);
     memset(b->m.uv2 + (size_t)at * 2u, 0, 2u * sizeof(float));
     memset(b->m.tangent + (size_t)at * 4u, 0, 4u * sizeof(float));
+    b->m.sources[at] = c.uv >= 0 ? 2u : 0u;
     return at;
 }
 
@@ -960,6 +1152,37 @@ bool mesh_file_read(const uint8_t *data, const size_t size, const char *name, co
     }
     if (ok && !b.m.indices) ok = fail(&r, NULL, "has no triangles: there's nothing in it to draw");
     if (!ok) {
+        mesh_file_free(&b.m);
+        return false;
+    }
+    finish(&b);
+    *out = b.m;
+    return true;
+}
+
+bool mesh_file_with_tangents(const mesh_file *source, mesh_file *out, char why[256], char note[256])
+{
+    why[0] = note[0] = '\0';
+    *out = (mesh_file){0};
+    reader r = {.why = why, .note = note};
+    builder b = {.m = *source, .r = &r};
+    b.m.position = b.m.normal = b.m.uv = b.m.uv2 = b.m.color = b.m.tangent = NULL;
+    b.m.index = NULL;
+    b.m.sources = NULL;
+    if (!source->sources) return fail(&r, NULL, "isn't a canonical static mesh import for tangent generation");
+    if (!more_vertices(&b, 0u) || !more_indices(&b, 0u)) {
+        mesh_file_free(&b.m);
+        return false;
+    }
+    memcpy(b.m.position, source->position, (size_t)source->vertices * 3u * sizeof(float));
+    memcpy(b.m.normal, source->normal, (size_t)source->vertices * 3u * sizeof(float));
+    memcpy(b.m.uv, source->uv, (size_t)source->vertices * 2u * sizeof(float));
+    memcpy(b.m.uv2, source->uv2, (size_t)source->vertices * 2u * sizeof(float));
+    memcpy(b.m.color, source->color, (size_t)source->vertices * 4u * sizeof(float));
+    memcpy(b.m.tangent, source->tangent, (size_t)source->vertices * 4u * sizeof(float));
+    memcpy(b.m.index, source->index, (size_t)source->indices * sizeof(uint32_t));
+    memcpy(b.m.sources, source->sources, (size_t)source->vertices * sizeof *source->sources);
+    if (!make_tangents(&b)) {
         mesh_file_free(&b.m);
         return false;
     }

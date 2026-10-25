@@ -1,5 +1,67 @@
 # Drawing: `Draw`, its settings, shapes and meshes
 
+## Scoped transparent packet ordering (2026-10-25)
+
+Render3D's approved transparent pass uses private package C helpers in
+`packages/render3d/transparent.c`, through ordinary extern declarations. There
+is no new engine API, retained cache or world state. `TransparentMark` returns
+a checked command index, or -1 when it cannot be represented. When the previous
+command is shaded, it first inserts an empty 3D mesh command so subsequent
+compatible recording cannot merge into a run before the mark. Render3D marks
+lazily on its first eligible transparent row, leaving opaque-only frames alone.
+
+`SortTransparent` orders already captured 3D shaded Alpha/Depth.Read instances
+back to front by `(transformed mesh center - eye) dot forward`. It reads the
+finite cached geometry AABB center only when its valid bounds and position-field
+metadata match the shader. A selected LOD follows its base mesh; a finite valid
+LOD sphere center is the fallback when no matching geometry bounds were cached,
+then the mesh origin when neither is available. No vertices are scanned by the
+sorter. The captured matrix transforms the center with double intermediates,
+including rotation, scale and shear. The key approximates each mesh by one
+center; custom vertex deformation can require a different sort in game code.
+
+Iterative stable merge sort takes O(N log N) comparisons and O(N) temporary
+descriptors; copying is
+linear in captured instance bytes. Equal keys retain submission order, including
+instances originally merged into one run. Finite binary32 inputs use double
+intermediates, so extreme centers/transforms/directions do not overflow the key.
+Invalid object positions/transformed-center coefficients have key zero;
+nonfinite eye/forward values leave the list unchanged. Negative/out-of-range
+marks and empty scopes do nothing.
+
+Camera, clip, destination, stencil and other draw commands are barriers and
+retain their order and contents. Within each span, full shader, selected mesh/LOD,
+uniform, texture, sampling, tint and mirrored-cull bindings accompany each
+instance. Normal consecutive capture bytes are staged then reordered in the
+same owned arena span, rebuilding compatible consecutive runs. Nonconsecutive
+public packets retain their checked source offsets. Repeated sorting does not
+grow the instance arena. No query row, component, texture reference or callback
+context is stored by the helper; it uses only the draw list's owned bytes and
+indices and frees its temporary allocations before returning. Size products,
+spans and allocation counts are checked before addressing or narrowing.
+
+Blended Depth.Read LOD recording now splits consecutive selected levels in
+original instance order, for shaded and ordinary 3D meshes. Preparation skips
+level gathering for those recorded commands even after destination settings are
+restored. ReadWrite and Read/Replace retain finest-first gathering, including
+opaque/shadow batching. Append prepares its source and preserves the resulting
+owned packet order.
+
+The original five standalone `tide_render3d_transparent` packet regressions pass
+in the native debug build: merged instances, stable ties, complete numeric/
+function/uniform captures, different textures/materials/shader strides, A/B/A meshes, mirrored
+cull and LODs, state/draw barriers, source disposal after append, invalid marks,
+nonfinite/extreme keys and repeated 1,025-instance frames without capture growth.
+The bounded center-key completion adds one off-center geometry regression with
+opposing origin/center order under rotated/scaled transforms, stable ties,
+cached-AABB and base-LOD-center paths, and unavailable-bounds origin fallback.
+This completion awaits focused execution and fresh review in the containing task.
+Four `draw_levels_*` regressions in `tests/test_draw_levels.c` cover bulk and
+individual shaded/ordinary recording, repeated preparation and append, culled
+mirrored survivors, restored settings and opaque/Replace controls. Strict C17
+warning-as-error syntax checks pass for the helper and both test files. Complete
+native/web and rendered-pixel validation belong to the containing Render3D task.
+
 ## Rect-based SDF boxes and independent corners (2026-10-25)
 
 Draw.Rect accepts Rect/color, Rect/radius/color and Rect/float4-radii/color.

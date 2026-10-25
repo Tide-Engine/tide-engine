@@ -19,7 +19,7 @@ They're off until the game, or whoever starts it, asks for them:
   }
   ```
 
-- Whoever starts it asks with `--debug-views`: `tide run --debug-views`, or a built game's own command line, like `mygame --debug-views`. On a web page, it's `debug-views` in the page's address: `https://example.com/game.html?debug-views`. This works whatever the setting says, so a build made to ship can be looked into without building it again.
+- Whoever starts it asks with `--debug-views`: `tide run --debug-views --stats`, or a built game's own command line, like `mygame --debug-views --stats`. On a web page, it's `debug-views` in the page's address: `https://example.com/game.html?debug-views&stats`. These examples also enable the stats drawer. This works whatever the setting says, so a build made to ship can be looked into without building it again.
 
 With either, **F7** shows the profiler, and F7 again hides it. The profiler measures while it is visible; the [stats](cli.md#stats) also measure while their drawer is open. With the profiler hidden and the stats closed, neither asks for timings. The game sees the key too.
 
