@@ -56,7 +56,9 @@ void b3t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took);
 static tide_world a;
 static tide_world b;
 static tide_world kept;
+#ifdef BOX3D_TEST_JOBS
 static tide_world kept_too;
+#endif
 
 static void start(tide_world *w, const int crates)
 {

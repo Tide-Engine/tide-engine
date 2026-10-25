@@ -353,7 +353,13 @@ try {
             assert.equal(await evaluate('document.querySelectorAll(".demo iframe").length'), 0, 'Earth waits for Play');
             stats(await evaluate('document.querySelector(".demo .controls a").href'), 'Earth standalone link');
             await evaluate('document.querySelector(".demo").scrollIntoView({block:"center"})');
-            await evaluate('Array.from(document.querySelectorAll(".demo button")).find(button => button.textContent === "Play Earth").click()');
+            // The page's own HTML has the button before Svelte gives it its
+            // handler, so a click can come too soon: clicked until it starts
+            await until(`(() => {
+                const play = Array.from(document.querySelectorAll(".demo button")).find(button => button.textContent === "Play Earth");
+                if (!play.disabled) play.click();
+                return play.disabled;
+            })()`, 'Earth starts on Play');
             await until('document.querySelector(".earth.shown iframe")?.contentWindow.__draws > 5', 'Earth draws after Play');
             stats(await evaluate('document.querySelector(".earth iframe").src'), 'Earth embedded runtime');
             await shoot('sample-earth');

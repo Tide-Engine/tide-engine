@@ -108,6 +108,7 @@ typedef struct serve_world {
     FILE **logs;
     uint32_t log_room;
     uint32_t known; // Shards whose logs a journal read on starting may have left
+    bool written; // Records since the last flush
     bool failed;
     // Recovering: each shard's records as read, back to back
     uint8_t **read;
@@ -170,16 +171,20 @@ static void serve_record(void *user, const uint32_t shard, const uint32_t tick, 
     FILE *f = serve_log(j, shard, "ab");
     const uint8_t length[4] = {(uint8_t)size, (uint8_t)(size >> 8), (uint8_t)(size >> 16), (uint8_t)(size >> 24)};
     if (f && (fwrite(length, 1, 4, f) != 4 || fwrite(record, 1, size, f) != size)) j->failed = true;
+    j->written = true;
 }
 
 // Every record so far on the disk before anything the shards sent goes on;
-// a journal that can't be kept stops the server, rather than go on unkept
+// a journal that can't be kept stops the server, rather than go on unkept.
+// An update with no tick wrote nothing: syncing then would cost a flush of
+// the disk's cache on Windows, an update at a time.
 static void serve_flush(void *user)
 {
     serve_world *j = user;
-    for (uint32_t i = 0; i < j->log_room; i++) {
+    for (uint32_t i = 0; j->written && i < j->log_room; i++) {
         if (j->logs[i] && !serve_sync(j->logs[i])) j->failed = true;
     }
+    j->written = false;
     if (j->failed) {
         fputs("tide: the shard journal couldn't be kept; stopping\n", stderr);
         exit(1);

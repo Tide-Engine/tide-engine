@@ -33,9 +33,11 @@ import { pathToFileURL } from 'node:url';
 const [browser, pagePath, profile, ...rest] = process.argv.slice(2);
 let expected = null; // A line the program has to print
 let routesPath = null;
+let seconds = 100; // How long the page has to give its result
 let query = '';
 for (let i = 0; i < rest.length; i++) {
     if (rest[i] === '--expect') expected = rest[++i];
+    else if (rest[i] === '--seconds') seconds = Number(rest[++i]);
     else if (rest[i] === '--routes') routesPath = rest[++i];
     else query = rest[i];
 }
@@ -259,8 +261,8 @@ const timeout = setTimeout(async () => {
             note(`asked to try a timer, IndexedDB and a request, the page says 3 seconds later: ${await value('JSON.stringify(window.tideTries)')}`);
         }
     }
-    finish('no result within 100 seconds');
-}, 100000);
+    finish(`no result within ${seconds} seconds`);
+}, seconds * 1000);
 
 const code = await result;
 clearTimeout(timeout);

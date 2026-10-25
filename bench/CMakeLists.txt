@@ -106,7 +106,10 @@ if(NOT TIDE_ANDROID)
         TIDE_RENDER3D_MESH_SHA256="${render3d_mesh_sha256}")
     if(TIDE_WEB)
         tide_web_page(bench_render3d SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
-        tide_add_web_test(bench_render3d TARGET bench_render3d QUERY "quick" WEBGPU EXPECT "Render3D benchmark correctness passed")
+        # Its four light setups take CI's software WebGPU about a minute, and
+        # twice that beside other tests
+        tide_add_web_test(bench_render3d TARGET bench_render3d QUERY "quick" WEBGPU EXPECT "Render3D benchmark correctness passed"
+            SECONDS 240)
     else()
         add_test(NAME bench_render3d COMMAND bench_render3d --quick)
         add_test(NAME bench_render3d_opengl COMMAND bench_render3d --quick)

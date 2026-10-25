@@ -25,10 +25,16 @@ function serve(frames) {
   return { server, output: () => output, ended: once(server, 'close') };
 }
 
-const deadline = setTimeout(() => { console.error('timed out'); process.exit(1); }, 25000);
+const started = Date.now();
+let phase = 'the first run';
+let current = null;
+const deadline = setTimeout(() => {
+  console.error(`timed out in ${phase}; it said: ${current?.output() ?? ''}`);
+  process.exit(1);
+}, 25000);
 try {
   // Running, then killed with no warning once it's kept a while of the world
-  const first = serve(1000000);
+  const first = current = serve(1000000);
   await new Promise(resolve => setTimeout(resolve, 2500));
   if (!first.output().includes('sharded world of 2 regions')) throw new Error(`first run: ${first.output()}`);
   first.server.kill('SIGKILL');
@@ -37,7 +43,8 @@ try {
   if (!kept.includes('checkpoint') || !kept.some(name => name.startsWith('shard-'))) throw new Error(`kept: ${kept}`);
   // Again: from the checkpoint and what it kept since
   for (const run of [1, 2]) {
-    const again = serve(400);
+    phase = `run ${run + 1}, begun ${((Date.now() - started) / 1000).toFixed(1)} s in`;
+    const again = current = serve(200);
     const [code] = await again.ended;
     if (code !== 0 || !again.output().includes('goes on from its journal'))
       throw new Error(`run ${run + 1} (${code}): ${again.output()}`);

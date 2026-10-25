@@ -47,7 +47,9 @@ void b2t_images(int32_t *whole, int32_t *in_parts);
 static tide_world a;
 static tide_world b;
 static tide_world kept;
+#ifdef BOX2D_TEST_JOBS
 static tide_world kept_too;
+#endif
 
 static void start(tide_world *w, const int crates)
 {
