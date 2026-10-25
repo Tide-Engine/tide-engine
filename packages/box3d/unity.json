@@ -1,9 +1,8 @@
 {
-  "about": "How Box3D's components are in a Unity project, which tide unity reads (compiler/cli/unity_mapping.h)",
+  "about": "How Box3D's components are in a Unity project, which tide unity reads (compiler/cli/unity_mapping.h). Native fields are the package's own without saying",
   "components": {
     "Box3D.Body": {
       "hidden": [
-        "id",
         "position",
         "rotation",
         "stepPosition",
@@ -54,30 +53,42 @@
       "scaled": {
         "scale": "scale",
         "offset": "scale"
+      },
+      "placed": "offset",
+      "mesh": {
+        "vertices": "vertices",
+        "indices": "indices"
+      }
+    },
+    "Box3D.HullCollider": {
+      "scaled": {
+        "scale": "scale",
+        "offset": "scale"
+      },
+      "placed": "offset",
+      "mesh": {
+        "vertices": "vertices"
+      }
+    },
+    "Box3D.HeightFieldCollider": {
+      "scaled": {
+        "scale": "absScale"
       }
     },
     "Box3D.Part": {
-      "hidden": [
-        "box",
-        "sphere",
-        "capsule",
-        "mesh"
+      "part": {
+        "of": "of",
+        "body": "Box3D.Body"
+      }
+    },
+    "Box3D.Joint": {
+      "readBack": [
+        "force",
+        "torque"
       ]
-    },
-    "Box3D.BoxMade": {
-      "hidden": true
-    },
-    "Box3D.SphereMade": {
-      "hidden": true
-    },
-    "Box3D.CapsuleMade": {
-      "hidden": true
-    },
-    "Box3D.MeshMade": {
-      "hidden": true
     }
   },
-  "sourceAbout": "Added to a Unity project's game: a body starts where its entity's Transform (Unity's placement) is, and the Transform follows the body",
+  "sourceAbout": "Added to a Unity project's game: a body starts where its entity's Transform (Unity's placement) is, and the Transform follows the body; a part that names no body is one of the nearest body above it",
   "source": [
     "namespace Box3D",
     "{",
@@ -97,6 +108,17 @@
     "    {",
     "        transform.position = body.position;",
     "        transform.localRotation = body.rotation;",
+    "    }",
+    "",
+    "    // A part that names no body is a part of the nearest entity above it with one, as a collider on a Rigidbody's",
+    "    // child is in Unity: tide unity bakes its shapes' offsets where its GameObject is on that body.",
+    "    [Stage(PhysicsStages.Step, 0)]",
+    "    system PartOfTheBodyAbove(mut Part part, World world)",
+    "    {",
+    "        if (part.of != default) return;",
+    "        mut var above = world.Parent(this);",
+    "        while (above != default && !world.Has<Body>(above)) above = world.Parent(above);",
+    "        part.of = above;",
     "    }",
     "}"
   ]

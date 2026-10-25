@@ -1783,13 +1783,118 @@ static bool put_scaled(const node *n, const owned *o, const map_shape *s, const 
     return true;
 }
 
+// The GameObject's placement in its file's world: through every parent, as Unity's localToWorldMatrix is (a scale
+// that isn't uniform under a turn is kept per axis, as compose does)
+static trs world_of(const node *n)
+{
+    return n->parent ? compose(world_of(n->parent), trs_of(n)) : trs_of(n);
+}
+
+static bool has_component(const node *n, const char *name)
+{
+    for (int i = 0; i < n->owned_count; i++) {
+        if (!n->owned[i].removed && strcmp(n->owned[i].component->name, name) == 0) return true;
+    }
+    for (int i = 0; i < n->component_count; i++) {
+        if (strcmp(n->components[i].type, name) == 0) return true;
+    }
+    return false;
+}
+
+// The GameObject whose body `n`'s shapes are on, where a component of `n`'s makes it a part (its package's unity.json
+// says "part"): the one its entity field names, else the nearest above with the body's component, as the package's
+// Tide for Unity finds at run time. NULL for no part, or a part of nothing. `part` gets the part's component.
+static const node *body_of(const emitter *e, const node *n, const owned **part, const unity_component_rules **rules)
+{
+    *part = NULL;
+    *rules = NULL;
+    for (int i = 0; i < n->owned_count && !*part; i++) {
+        const unity_component_rules *r = unity_rules_of(&e->p->mappings, n->owned[i].component->name);
+        if (n->owned[i].removed || !r || !r->part_of) continue;
+        *part = &n->owned[i];
+        *rules = r;
+    }
+    if (!*part) return NULL;
+    const map_component *c = (*part)->component;
+    for (int i = 0; i < c->field_count; i++) {
+        if (strcmp(c->fields[i].name, (*rules)->part_of) != 0) continue;
+        const char *v = get_flat(*part, c->fields[i].key);
+        const long k = v && v[0] == '@' ? strtol(v + 1, NULL, 10) : -1;
+        if (k >= 0 && k < (*part)->ref_count && (*part)->refs[k].object) return (*part)->refs[k].target;
+    }
+    for (const node *at = n->parent; at; at = at->parent) {
+        if (has_component(at, (*rules)->part_body)) return at;
+    }
+    return NULL;
+}
+
+static void conjugate(const double q[4], double out[4])
+{
+    out[0] = -q[0];
+    out[1] = -q[1];
+    out[2] = -q[2];
+    out[3] = q[3];
+}
+
+// A field placing a component on its body (unity.json's "placed"), of an entity that's a part of `body`'s: where the
+// GameObject puts it, Unity's value times the scale in the GameObject's world, in the body's frame, which a shape's
+// offset is in. False for one Unity has none of, or of a form that isn't a float2 or float3.
+static bool put_placed(const node *n, const owned *o, const map_shape *s, const char *path,
+                       const unity_scale by, const node *body, text *t)
+{
+    const char *form = s ? s->form : "";
+    const int axes = strcmp(form, "float2") == 0 ? 2 : strcmp(form, "float3") == 0 ? 3 : 0;
+    if (!axes) return false;
+    double scale[3], local[3] = {0, 0, 0};
+    lossy_scale(n, scale);
+    char key[512];
+    for (int a = 0; a < axes; a++) {
+        snprintf(key, sizeof key, "%s.%c", path, "xyz"[a]);
+        const char *v = get_flat(o, key);
+        local[a] = (v ? strtod(v, NULL) : 0) * (by != UNITY_SCALE_NONE ? unity_scale_factor(by, scale, a) : 1);
+    }
+    const trs part = world_of(n), frame = world_of(body);
+    double turned[3], from[3], at[3], back[4];
+    rotate(part.rot, local, turned);
+    for (int a = 0; a < 3; a++) from[a] = part.pos[a] + turned[a] - frame.pos[a];
+    conjugate(frame.rot, back);
+    rotate(back, from, at);
+    putf(t, "%s(", form);
+    for (int a = 0; a < axes; a++) {
+        if (a) puts_(t, ", ");
+        number(t, at[a]);
+    }
+    puts_(t, ")");
+    return true;
+}
+
+// Whether a part's GameObject is turned against its body's, which a shape's offset can't say
+static bool turned_against(const node *n, const node *body)
+{
+    const trs part = world_of(n), frame = world_of(body);
+    const double *a = frame.rot, *b = part.rot;
+    // The relative turn's w: a's conjugate times b
+    const double w = a[3] * b[3] + a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    const double length = sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2] + a[3] * a[3]) *
+                          sqrt(b[0] * b[0] + b[1] * b[1] + b[2] * b[2] + b[3] * b[3]);
+    return length > 0 && fabs(w) / length < 0.9999999; // About a twentieth of a degree
+}
+
 // An own component's declaration of an entity: its type, with the fields Unity serialized, but those its package says
-// are its own (hidden), and those by the GameObject's scale times it. Nothing of a component its package keeps to
-// itself.
+// are its own (hidden), and those by the GameObject's scale times it, a part's placed ones in its body's frame.
+// Nothing of a component its package keeps to itself.
 static void write_owned(emitter *e, const node *n, const owned *o, const int depth)
 {
     const unity_component_rules *rules = unity_rules_of(&e->p->mappings, o->component->name);
     if (rules && rules->hidden) return;
+    const owned *part = NULL;
+    const unity_component_rules *part_rules = NULL;
+    const node *body = body_of(e, n, &part, &part_rules);
+    if (body == n) body = NULL; // A part of its own body is no part
+    if (part == o && !body) {
+        fprintf(stderr, "%s: warning: %s's %s is part of nothing: set its %s, or put it under a GameObject with %s\n",
+                e->file->local, n->name, o->component->name, part_rules->part_of, part_rules->part_body);
+    }
     text values = {0};
     puts_(&values, "");
     for (int i = 0; i < o->component->field_count; i++) {
@@ -1798,7 +1903,15 @@ static void write_owned(emitter *e, const node *n, const owned *o, const int dep
         text value = {0};
         puts_(&value, "");
         const unity_scale by = unity_field_scale(rules, f->name);
-        const bool given = by != UNITY_SCALE_NONE ? put_scaled(n, o, shape_of(e->p, f->shape), f->key, by, &value)
+        const bool placed = body && rules && rules->placed && strcmp(rules->placed, f->name) == 0;
+        if (placed && turned_against(n, body)
+            && !(rules->shape && (strcmp(rules->shape, "sphere") == 0 || strcmp(rules->shape, "circle") == 0))) {
+            fprintf(stderr, "%s: warning: %s is turned against %s, the body its %s is a part of, which a shape can't be: "
+                            "it's baked as if it weren't turned. Turn the GameObject as its body is, or make it a body of "
+                            "its own and join them\n", e->file->local, n->name, body->name, o->component->name);
+        }
+        const bool given = placed ? put_placed(n, o, shape_of(e->p, f->shape), f->key, by, body, &value)
+                         : by != UNITY_SCALE_NONE ? put_scaled(n, o, shape_of(e->p, f->shape), f->key, by, &value)
                                                   : put_form(e, n, o, shape_of(e->p, f->shape), f->key, &value);
         if (given) putf(&values, "%s%s = %s", values.n ? ", " : "", f->name, value.s);
         free(value.s);

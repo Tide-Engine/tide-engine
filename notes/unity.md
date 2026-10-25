@@ -1371,10 +1371,11 @@ gizmos. Flagging Unity's colliders on a TideEntity wasn't picked, so they're sil
   and names (`unity_package`), and a `unity_source` says the package it's of. A unity.json with rules tide doesn't
   read is an error naming the component. A package the game drops leaves its last `Unity.<package>.tide` in
   Library/Tide, compiled by nothing.
-- **Box3D's** (`packages/box3d/unity.json`): `Body` hides id, position, rotation and the step fields; `Box` (size by
-  absScale, offset by scale, a box shape), `Sphere` (radius by largestScale), `Capsule` (radius by largestScaleXZ,
-  height by scaleY), `MeshCollider` (scale and offset by scale); `Part` hides its made shapes; the `*Made` markers are
-  hidden. Its `source`: `StartAtTransform` (stage offset 0: a body with id 0 takes the entity's `transform.position`
+- **Box3D's** (`packages/box3d/unity.json`, as of 2026-10-25 below): `Body` hides position, rotation and the step
+  fields; `Box` (size by absScale, offset by scale, a box shape), `Sphere` (radius by largestScale), `Capsule` (radius
+  by largestScaleXZ, height by scaleY), `MeshCollider` and `HullCollider` (scale and offset by scale, a mesh),
+  `HeightFieldCollider` (scale by absScale), `Part` (a part of a `Body`), `Joint` (force and torque read back). Its
+  `source`: `StartAtTransform` (stage offset 0: a body with id 0 takes the entity's `transform.position`
   and `localRotation`) and `FollowTransform` (offset 19, after the history systems). In the package itself those
   systems would have put an empty Transform table into every Box3D game's world: every pinned hash and `order.txt` of
   the package tests changed, though nothing moved differently. **Box2D's** likewise (rect and circle shapes in XY,
@@ -1396,6 +1397,77 @@ gizmos. Flagging Unity's colliders on a TideEntity wasn't picked, so they're sil
 - **Frictions:** Box3D's `Collider` type makes `Collider` ambiguous in a script `using Tide.Game.Box3D` with
   UnityEngine (Coin Rush's setup needed `UnityEngine.Collider`). A shape's size by the scale ignores a parent's
   rotation, as Unity's lossy scale does.
+
+**The rest of the physics (2026-10-25).** The owner: "lets close the gaps". The gaps listed under the translation
+(Box2D's untested in Unity, physics materials, compound colliders, mesh colliders, joints) are re-read for packages'
+own components: materials are the shapes' own fields (friction, bounce, density), so nothing to do. The rest, all my
+picks (Provisional):
+
+- **Rules name the package's.** `unity_code_write` checks every component and field a unity.json names against the
+  game's schema (`rules_name_the_game`, `unity_rules_fields`): one the game hasn't is an error naming the file, the
+  component and the field. Box3D's unity.json had rules for `BoxMade` and the other `*Made` markers, gone from the
+  package since, which nothing said. Each rule keeps its file (`unity_component_rules.file`).
+- **`[Native]` fields are hidden by intent.** `print_outline` marks a field `"native": true` (`compiler/src/outline.c`,
+  the `field.native` the checker sets), and `unity_code.c` (`native_field`, from the outline it's given) writes no C#
+  field for one of a component or singleton: nothing in Unity shows, authors, bakes or reads it. `Value` keeps it, as
+  the layout. So the unity.json files don't list ids and handles: Box3D's `Body.id`, `settingsApplied`, each shape's
+  `cache`, `Part`'s handles, `Joint.id`; Box2D's `Body.id`, `Part`'s handles, `Joint.id` and `configuration`.
+- **Parts (`"part": {"of": field, "body": component}`).** A component that makes its entity a part of another's body
+  (Box3D's and Box2D's `Part`). The body is the GameObject the entity field names, else the nearest above with the
+  body's component. Tide prefab text can't name a prefab's root from a child (paths are from the root, `this` is the
+  block's own), so a part's empty `of` is filled at run time instead: each package's `source` has
+  `PartOfTheBodyAbove` (stage offset 0, before parts are prepared, `world.Parent` up to the first with a `Body`). The
+  converter (`body_of`) finds the same body and bakes each of the part's placed fields (`"placed"`, else the shape's
+  `center`: a shape's offset) in the body's frame (`put_placed`): Unity's value times the scale (the field's `scaled`
+  rule), turned and moved by the part's world placement, then into the body's frame by the body's inverse (`world_of`
+  composes through every parent, as `compose` does). A part turned against its body (relative turn's |w| below
+  0.9999999, about a twentieth of a degree) whose shape isn't a sphere or circle is a warning: "Fin is turned against
+  Cart, the body its Box3D.Box is a part of, which a shape can't be: it's baked as if it weren't turned. Turn the
+  GameObject as its body is, or make it a body of its own and join them". A part of nothing (no `of`, no body above) is
+  a warning too, as the package destroys it. In Play, the generated `ReadLive` shows a placed field through
+  `TideParts.Placed` (Runtime/TideShape.cs): the part's `[TidePart(of)]` component's live `of` GameObject gives the
+  body's frame, and the value goes back into the part's own space, divided by its scale; without a body it's
+  `TideScale.Unscale` as before. So the Scene-view wireframe, drawn in the part's GameObject from the field, is where
+  the match has the shape, outside and in Play. Box2D's parts are boxes and circles; its capsules, polygons, segments
+  and chains have points, not an offset, and aren't placed.
+- **Meshes (`"mesh": {"vertices", "indices"}`).** `[TideMesh(vertices, indices)]` on the component (indices empty for
+  a hull). Editor/TideMeshes.cs: `ObjectFactory.componentWasAdded` fills an empty one from the GameObject's
+  MeshFilter (Add Component), and the inspector (`TideComponentEditor.MeshFields`) has a Mesh field (the filter's at
+  first), its counts and Copy, with Undo and prefab overrides. Unity's `vertices` and every triangle submesh's
+  indices go in unchanged: Box3D's "counterclockwise from the front" is in its right-handed terms, and the front it
+  means is the direction of cross(b - a, c - a), which for Unity's (and Tide's) clockwise-front triangles also points
+  out of the front (Unity's quad: its triangle 0, 3, 1 gives (0, 0, -1), its normal); Box3D's own mesh test feeds a
+  floor whose triangles' cross points up. Vertices are the mesh's own, unscaled: the component's `scale` field takes
+  the GameObject's (`scaled`). In the editor `Mesh.vertices` reads any mesh; it isn't read in players. Box3D's
+  `MeshCollider` and `HullCollider` have it. Not built: a `HeightFieldCollider` from a Terrain (its heights, holes and
+  resolution would map, but Terrain data is a binary asset the converter can't read and the inspector would have to
+  copy, as for meshes; not asked for yet).
+- **Joints** need nothing new: `a` and `b` are entity fields, GameObject references baked as paths. `"readBack"`
+  fields (Box3D's and Box2D's `Joint.force`, `torque`) are `[NonSerialized, TideReadBack]` live fields, never in
+  components.json, shown in Play under "From its package" (`TideComponentEditor.Section`, before "Local fields").
+  Anchors aren't by the scale and joints have no Scene-view handles.
+- **Box2D's** unity.json: `Capsule` and `Segment` points by `scale`, a capsule's radius by `largestScaleXY`; parts;
+  joints read back; `BoxMade`/`CircleMade` still hidden (Box2D still has them).
+- **`tide schedule --assets`** reads a Unity project's prefabs, scenes and its packages' `source` as `tide unity`
+  does, so a game made in Unity is checked without building it (help and docs/tools/cli.md).
+- **Tests:** `unity_physics_components_by_their_rules` (was `unity_box3d_components_by_its_rules`; tests/unity_physics
+  with Box3D's and Box2D's real unity.json: the earlier objects, a cart turned half a turn about z with a scaled wheel
+  part naming no body and a turned fin naming the cart, a hinge joint naming the cart and the ball, a ramp's mesh on a
+  scaled GameObject, a 2D kite turned half a turn with a tail part, a part of nothing; the fixture's components.json
+  as tide writes it now, without `Body.id`). `unity_code_writes_a_physics_packages_rules` (tests/unity_rules_physics:
+  a schema and outline as tide writes them; a native field with no C# field and not in components.json, a part's
+  attribute, placed fields through `TideParts.Placed`, the mesh attribute, a read-back field; four stale or wrong
+  rules refused). `tide_cli_unity_physics` (`unity_physics_test.cmake`: the fixture as a Unity project listing the
+  real packages, `tide schedule --assets` compiles it with both packages' `source`, and says the two warnings).
+  `tidec_outline_game` (a `[Native]` field marked).
+- **Runs:** native debug 2760 of 2763 (one disabled; `tide_render3d_pixels_opengl` segfaulted while Unity held the
+  GPU and passed alone; the private prototype `cracked_tests` fails its pinned match hash, `TIDE_EXTERNAL_DIRS`'s
+  checkout against this dev, nothing this touches); web debug: every engine test passed, the run ending in the
+  private prototypes' play tests, which weren't run again. `tide unity --once` on a copy of Coin Rush (Box3D listed)
+  writes Box3D's components with the real rules and no error; its PlayMode 2/2. The Sample's EditMode 18/18 and
+  PlayMode 16/16 (D3D11), its com.tide.game written again by tide unity from this dev (schema hash, renderer shaders).
+- **Not verified:** the mesh inspector, the parts' wireframes in Play and joints in a running Unity game were compiled
+  and unit-tested, not looked at or played (no editor window from agent runs).
 
 ### The game is Assets (2026-10-21)
 

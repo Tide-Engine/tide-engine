@@ -1,0 +1,4 @@
+{"declarations": [
+  {"kind": "component", "name": "Box3D.Body", "file": "box3d.tide", "line": 1, "column": 11, "fields": [{"name": "id", "type": "long", "native": true}, {"name": "gravityScale", "type": "float"}]},
+  {"kind": "component", "name": "Box3D.Part", "file": "box3d.tide", "line": 2, "column": 11, "fields": [{"name": "of", "type": "Entity"}, {"name": "box", "type": "long", "native": true}]}
+]}

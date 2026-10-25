@@ -223,21 +223,34 @@ In a Unity project, a package's components are on GameObjects like the game's ow
 ```json
 {
   "components": {
-    "Box3D.Body": { "hidden": ["id", "stepPosition", "stepVelocity"] },
+    "Box3D.Body": { "hidden": ["stepPosition", "stepVelocity"] },
     "Box3D.Box": {
       "scaled": { "size": "absScale", "offset": "scale" },
       "shape": { "box": "size", "center": "offset" }
     },
-    "Box3D.BoxMade": { "hidden": true }
+    "Box3D.MeshCollider": {
+      "placed": "offset",
+      "mesh": { "vertices": "vertices", "indices": "indices" }
+    },
+    "Box3D.Part": { "part": { "of": "of", "body": "Box3D.Body" } },
+    "Box3D.Joint": { "readBack": ["force", "torque"] }
   },
   "source": ["namespace Box3D", "{", "    ...", "}"]
 }
 ```
 
+Every component and field it names must be the package's: a rule for one the package doesn't have, such as one left from an earlier version, is an error that names it. A component's [`[Native]`](../multiplayer/shards.md#a-c-librarys-state) fields are the package's own without being listed: they aren't in the Inspector, baked or read.
+
 - `hidden` is a list of the component's fields that aren't in the Inspector or baked from the scene, as the package sets them itself; or `true` for a component that isn't in Add Component, one the package adds itself.
 - `scaled` gives fields that are by the GameObject's scale, as a collider's size is. They're authored without the scale and baked times it, and in Play the component shows the match's value divided by it. Each one's scale is one of `scale` and `absScale` (each axis, with its sign or without), `largestScale`, `largestScaleXY`, `largestScaleXZ` (the largest axis without its sign), `scaleX`, `scaleY` or `scaleZ`.
 - `shape` is what the Scene view draws of a selected component, and gives handles with Edit Shape: one of `box`, `sphere` or `capsule`, or in the XY plane `rect` or `circle`, naming its size field (a radius for the round ones). `center` names its centre's field, and a capsule's `height` its height's.
-- `source` is lines of Tide that the game has in a Unity project alone, in the package's namespace. Box3D's starts a body where its entity's Transform is, and has the Transform follow the body.
+- `placed` names the field that places the component on its entity's body, such as a shape's offset. A shape's `center` is its placed field unless another is named.
+- `part` says the component makes its entity a part of another's body: `of` names its entity field for the body, and `body` the body's component. When `of` is left empty, it's the nearest GameObject above with that component, and the package's `source` should find the same at run time. A part's placed fields are baked where its GameObject puts them on its body, in the body's frame, and in Play they're shown from the body's GameObject again. A part turned against its body is a warning, unless its shape is round, as a shape's offset can't turn.
+- `mesh` names a component's lists that Unity fills from a Mesh: `vertices` (a list of `float3`) and `indices` (a list of `int`, three for each triangle; left out for a hull). The component's Inspector has a Mesh field and Copy, and a component added to a GameObject with a MeshFilter starts with its mesh. Unity's triangles go in as they are: their front is the side they're clockwise from, as in Tide.
+- `readBack` lists fields the package writes for code to read, such as a joint's force. They're shown in Play, never authored or baked.
+- `source` is lines of Tide that the game has in a Unity project alone, in the package's namespace. Box3D's starts a body where its entity's Transform is, has the Transform follow the body, and makes a part that names no body a part of the nearest body above it.
+
+`tide schedule Assets --assets Assets` checks a Unity project's game with its packages' rules and `source`, without building it.
 
 ## Editors
 

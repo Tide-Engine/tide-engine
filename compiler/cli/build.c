@@ -3766,10 +3766,30 @@ bool tide_schedule(const build_options *opts, const bool shaders)
     int count = 0;
     compile_input *inputs = find_packages(folder, &packages) ? game_inputs(folder, &packages, &paths, &count, NULL) : NULL;
     if (!inputs) return false;
+    // A Unity project's prefabs and scenes, and its packages' Tide for Unity, as tide unity has them
+    unity_sources unity = {0};
+    if (opts->unity_assets) {
+        unity_package *listed = calloc((size_t)packages.count + 1, sizeof *listed);
+        if (!listed) abort();
+        for (int i = 0; i < packages.count; i++) listed[i] = (unity_package){packages.items[i].folder, packages.items[i].name};
+        const bool read = unity_assets_read(opts->unity_assets, listed, packages.count, &unity);
+        free(listed);
+        if (!read) {
+            unity_sources_free(&unity);
+            free(inputs);
+            return false;
+        }
+        inputs = realloc(inputs, sizeof(compile_input) * (size_t)(count + unity.count + 1));
+        if (!inputs) abort();
+        for (int i = 0; i < unity.count; i++) inputs[count++] = (compile_input){unity.items[i].path, unity.items[i].package, unity.items[i].text};
+    }
     const codegen_options codegen = {.name = game_name(folder), .line_directives = true, .shaders = shaders, .game_folder = folder,
                                      .defines = opts->defines, .define_count = opts->define_count};
     sb text = {0};
-    if (!compile_inputs(inputs, count, &codegen, &text)) {
+    const bool ok = compile_inputs(inputs, count, &codegen, &text);
+    unity_sources_free(&unity);
+    free(inputs);
+    if (!ok) {
         telemetry_fail(TELEMETRY_ERROR_COMPILE);
         return false;
     }

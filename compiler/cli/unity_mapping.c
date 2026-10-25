@@ -116,6 +116,32 @@ static bool read_rules(unity_component_rules *r, const json *spec, const char **
                    false;
         }
     }
+    const json *placed = json_get(spec, "placed"), *part = json_get(spec, "part"), *mesh = json_get(spec, "mesh");
+    const json *read_back = json_get(spec, "readBack");
+    if (placed && !json_str(placed)) return *why = "\"placed\" names a field", false;
+    r->placed = copy(placed ? json_str(placed) : r->center);
+    if (part) {
+        r->part_of = copy(json_str(json_get(part, "of")));
+        r->part_body = copy(json_str(json_get(part, "body")));
+        if (!r->part_of || !r->part_body) {
+            return *why = "a \"part\" names its entity field naming the body, \"of\", and the body's component, \"body\"", false;
+        }
+    }
+    if (mesh) {
+        r->vertices = copy(json_str(json_get(mesh, "vertices")));
+        r->indices = copy(json_str(json_get(mesh, "indices")));
+        if (!r->vertices || (json_get(mesh, "indices") && !r->indices)) {
+            return *why = "a \"mesh\" names its list of float3, \"vertices\", and its list of int, \"indices\" (none for a hull)",
+                   false;
+        }
+    }
+    if (read_back && read_back->kind != JSON_ARRAY) return *why = "\"readBack\" is a list of fields", false;
+    for (int i = 0; read_back && i < read_back->count; i++) {
+        const char *field = json_str(read_back->items[i]);
+        if (!field) return *why = "\"readBack\" is a list of fields", false;
+        r->read_back = more(r->read_back, r->read_back_count, sizeof *r->read_back);
+        r->read_back[r->read_back_count++] = copy(field);
+    }
     return true;
 }
 
@@ -145,6 +171,7 @@ static bool read_file(unity_mappings *out, const char *path, const char *package
     }
     for (int i = 0; components && components->kind == JSON_OBJECT && i < components->count; i++) {
         unity_component_rules r = {0};
+        r.file = copy(path);
         r.name = copy_n(components->keys[i], components->key_lens[i]);
         const char *why = NULL;
         if (!read_rules(&r, components->items[i], &why)) {
@@ -179,11 +206,19 @@ void unity_mappings_free(unity_mappings *m)
         free(r->hidden_fields);
         for (int k = 0; k < r->scaled_count; k++) free(r->scaled[k].field);
         free(r->scaled);
+        for (int k = 0; k < r->read_back_count; k++) free(r->read_back[k]);
+        free(r->read_back);
+        free(r->file);
         free(r->name);
         free(r->shape);
         free(r->size);
         free(r->height);
         free(r->center);
+        free(r->placed);
+        free(r->part_of);
+        free(r->part_body);
+        free(r->vertices);
+        free(r->indices);
     }
     free(m->components);
     for (int i = 0; i < m->glue_count; i++) {
@@ -217,4 +252,30 @@ unity_scale unity_field_scale(const unity_component_rules *r, const char *field)
         if (strcmp(r->scaled[i].field, field) == 0) return r->scaled[i].scale;
     }
     return UNITY_SCALE_NONE;
+}
+
+bool unity_field_read_back(const unity_component_rules *r, const char *field)
+{
+    for (int i = 0; r && i < r->read_back_count; i++) {
+        if (strcmp(r->read_back[i], field) == 0) return true;
+    }
+    return false;
+}
+
+int unity_rules_fields(const unity_component_rules *r, const char **out, const int capacity)
+{
+    int n = 0;
+#define NAMED(f) do { if ((f) && n < capacity) out[n++] = (f); } while (0)
+    for (int i = 0; i < r->hidden_count; i++) NAMED(r->hidden_fields[i]);
+    for (int i = 0; i < r->scaled_count; i++) NAMED(r->scaled[i].field);
+    for (int i = 0; i < r->read_back_count; i++) NAMED(r->read_back[i]);
+    NAMED(r->size);
+    NAMED(r->height);
+    NAMED(r->center);
+    NAMED(r->placed);
+    NAMED(r->part_of);
+    NAMED(r->vertices);
+    NAMED(r->indices);
+#undef NAMED
+    return n;
 }

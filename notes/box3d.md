@@ -124,7 +124,8 @@ Coverage and current limits:
   are exact and allocation/cook-free while unchanged. Mesh/height source
   comparisons remain proportional to input size.
 - Native compound-container assets remain unexposed; compound bodies use
-  Parts. No imported render-mesh conversion or new Unity translations.
+  Parts. No imported render-mesh conversion outside Unity (in Unity: a Mesh
+  fills MeshCollider and HullCollider, notes/unity.md).
   Unique cooked geometry remains retained, and the resident arena is still
   fixed at 64 MiB with fatal exhaustion. Visibility-aware physics is not
   added. Existing deleted-entity Parted/default behavior remains.
@@ -158,7 +159,9 @@ boxes; no native step/commit. Other existing body/query/digest pins still hold.
 
 `packages/box3d/unity.json` says how the package's components are in a Unity project: fields and components it keeps
 for itself hidden, shapes sized by the GameObject's scale and drawn in the Scene view; and the Tide a Unity project
-alone gets: a body starts at its entity's Transform, which follows it. The package's own `.tide` is unchanged, so
+alone gets: a body starts at its entity's Transform, which follows it, and a part naming no body is one of the
+nearest body above it (2026-10-25: parts placed where their GameObjects are, meshes and hulls from a Unity Mesh, joints'
+force and torque read back; `[Native]` fields hidden without being listed). The package's own `.tide` is unchanged, so
 games outside Unity are too. Unity's own physics components aren't the package's. Contracts and tests:
 `notes/unity.md`, Packages' components in Unity.
 

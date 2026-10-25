@@ -229,14 +229,17 @@ TIDE_TEST(unity_components_as_tide_components)
     unity_sources_free(&s);
 }
 
-// Box3D's own components on TideEntity GameObjects, baked by the box3d package's unity.json (tests/unity_physics):
-// shapes by the GameObject's scale, as Unity's colliders' sizes are (a size without the scale's sign, an offset with
-// it); the package's own fields and components left out; and its Tide for a Unity project, a source of the package's.
-TIDE_TEST(unity_box3d_components_by_its_rules)
+// Box3D's and Box2D's own components on TideEntity GameObjects, baked by their packages' unity.json
+// (tests/unity_physics, whose components.json is as tide writes it: no [Native] field, as Body's id, and no field
+// that's read back, as Joint's force): shapes by the GameObject's scale, as Unity's colliders' sizes are (a size
+// without the scale's sign, an offset with it); the packages' own fields and components left out; a part's shapes
+// where its GameObject is on its body, the body above it or the one it names, in 3D and 2D; a joint naming its
+// bodies; a mesh's lists; and their Tide for a Unity project, each a source of its package's.
+TIDE_TEST(unity_physics_components_by_their_rules)
 {
-    const unity_package packages[] = {{TIDE_BOX3D_PACKAGE, "Box3D"}};
+    const unity_package packages[] = {{TIDE_BOX3D_PACKAGE, "Box3D"}, {TIDE_BOX2D_PACKAGE, "Box2D"}};
     unity_sources s;
-    TIDE_REQUIRE(unity_assets_read(TIDE_UNITY_PHYSICS_FIXTURE, packages, 1, &s));
+    TIDE_REQUIRE(unity_assets_read(TIDE_UNITY_PHYSICS_FIXTURE, packages, 2, &s));
     const char *yard = text_of(&s, "Assets/Yard.unity");
     TIDE_REQUIRE(yard != NULL);
     // A floor scaled (10, 1, 10): no id or stepType, which Unity has of it
@@ -246,18 +249,39 @@ TIDE_TEST(unity_box3d_components_by_its_rules)
     TIDE_CHECK(strstr(yard, "        Box3D.Sphere { radius = 1.5, offset = float3(0, 1.5, 0), sensor = false };\n") != NULL);
     // A pillar scaled (2, 1.5, 1)
     TIDE_CHECK(strstr(yard, "        Box3D.Capsule { radius = 1, height = 3, offset = float3(0, 0, 0), sensor = false };\n") != NULL);
-    // A mirrored box, and no BoxMade
+    // A mirrored box, and no CircleMade, which is Box2D's own
     TIDE_CHECK(strstr(yard, "        Box3D.Box { size = float3(2, 1, 1), offset = float3(-2, 0, 0), sensor = true };\n    }\n") != NULL);
-    TIDE_CHECK(strstr(yard, "BoxMade") == NULL && strstr(yard, "stepType") == NULL && strstr(yard, "id = 7") == NULL);
+    TIDE_CHECK(strstr(yard, "CircleMade") == NULL && strstr(yard, "stepType") == NULL && strstr(yard, "id = 7") == NULL);
+    // A cart turned upside down about z: its wheel, scaled 2, is a part of it with no body named, its sphere where the
+    // wheel puts it on the cart; its fin, turned, names the cart, its box where it is but unturned
+    TIDE_CHECK(strstr(yard, "            Box3D.Sphere { radius = 0.5, offset = float3(1, -0.3, 0), sensor = false };\n"
+                            "            Box3D.Part { of = default };\n") != NULL);
+    TIDE_CHECK(strstr(yard, "            Box3D.Box { size = float3(1, 1, 1), offset = float3(0, 0.5, -1), sensor = false };\n"
+                            "            Box3D.Part { of = Cart };\n") != NULL);
+    // A hinge between the cart and the ball, whose force is read back, never authored
+    TIDE_CHECK(strstr(yard, "        Box3D.Joint { a = Cart, b = Ball, anchorA = float3(0, 1, 0) };\n"
+                            "        Box3D.RevoluteJoint { enableMotor = true };\n") != NULL);
+    // A ramp's mesh: its triangle as Unity has it, its scale the GameObject's
+    TIDE_CHECK(strstr(yard, "        Box3D.MeshCollider { vertices = [float3(0, 0, 0), float3(0, 0, 1), float3(1, 0, 0)], "
+                            "indices = [0, 1, 2], scale = float3(2, 1, 1), offset = float3(0, 0, 0) };\n") != NULL);
+    // A kite in 2D, turned upside down: its tail's circle where the tail puts it, in the kite's frame
+    TIDE_CHECK(strstr(yard, "        Box2D.Body { type = Box2D.BodyType.Dynamic, gravityScale = 0.25 };\n"
+                            "        Box2D.Box { size = float2(1, 2), offset = float2(0, 0) };\n") != NULL);
+    TIDE_CHECK(strstr(yard, "            Box2D.Circle { radius = 0.5, offset = float2(2, 1) };\n"
+                            "            Box2D.Part { of = default };\n") != NULL);
     const char *glue = text_of(&s, "Library/Tide/Unity.Box3D.tide");
-    TIDE_CHECK(glue && strstr(glue, "    system StartAtTransform(mut Body body, Transform transform)\n") != NULL);
-    TIDE_CHECK(s.items[s.count - 1].package && strcmp(s.items[s.count - 1].package, "Box3D") == 0);
+    TIDE_CHECK(glue && strstr(glue, "    system StartAtTransform(mut Body body, Transform transform)\n") != NULL
+               && strstr(glue, "    system PartOfTheBodyAbove(mut Part part, World world)\n") != NULL);
+    glue = text_of(&s, "Library/Tide/Unity.Box2D.tide");
+    TIDE_CHECK(glue && strstr(glue, "    system PartOfTheBodyAbove(mut Part part, World world)\n") != NULL);
+    TIDE_CHECK(s.items[s.count - 1].package && strcmp(s.items[s.count - 1].package, "Box2D") == 0);
     unity_sources_free(&s);
     // With no package's rules, every field Unity has, as it has it
     TIDE_REQUIRE(unity_assets_read(TIDE_UNITY_PHYSICS_FIXTURE, NULL, 0, &s));
     yard = text_of(&s, "Assets/Yard.unity");
     TIDE_CHECK(yard && strstr(yard, "Box3D.Box { size = float3(1, 1, 1), offset = float3(0, 0.25, 0), sensor = false };") != NULL
-               && strstr(yard, "id = 7") != NULL);
+               && strstr(yard, "            Box3D.Sphere { radius = 0.25, offset = float3(0, 0.1, 0), sensor = false };\n") != NULL
+               && strstr(yard, "Box2D.CircleMade;") != NULL);
     unity_sources_free(&s);
 }
 

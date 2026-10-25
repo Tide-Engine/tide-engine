@@ -9,11 +9,17 @@
 //   {
 //     "source": [lines of the package's Tide that a Unity project alone compiles],
 //     "components": {
-//       "Box3D.Body": {"hidden": ["id", "stepPosition"]},
-//       "Box3D.BoxMade": {"hidden": true},
-//       "Box3D.Box": {"scaled": {"size": "absScale", "offset": "scale"}, "shape": {"box": "size", "center": "offset"}}
+//       "Box3D.Body": {"hidden": ["stepPosition"]},
+//       "Box2D.BoxMade": {"hidden": true},
+//       "Box3D.Box": {"scaled": {"size": "absScale", "offset": "scale"}, "shape": {"box": "size", "center": "offset"}},
+//       "Box3D.Part": {"part": {"of": "of", "body": "Box3D.Body"}},
+//       "Box3D.MeshCollider": {"placed": "offset", "mesh": {"vertices": "vertices", "indices": "indices"}},
+//       "Box3D.Joint": {"readBack": ["force", "torque"]}
 //     }
 //   }
+//
+// Every component and field named is one of the package's: unity_code_write says which isn't. A component's [Native]
+// fields are its package's own without saying so: no C# field, never authored or baked.
 //
 // - "hidden" fields are the package's own: not shown, authored or baked. A component "hidden": true isn't one a
 //   GameObject is given in Unity (no Add Component entry), and isn't baked.
@@ -23,6 +29,16 @@
 // - "shape" is what the Scene view draws of the component, and edits with handles: {"box": size, "center": offset},
 //   {"sphere": radius, "center": ...}, {"capsule": radius, "height": height, "center": ...} (standing along y), and
 //   in Unity's XY plane {"rect": size, ...} and {"circle": radius, ...}, each naming the component's fields.
+// - "placed" is the field that places the component on its entity's body (a shape's offset): the shape's "center"
+//   without saying. On a part (below) it's baked where the GameObject is against its body's.
+// - "part" makes its entity a part of another's body: "of", its entity field naming the body (none: the nearest
+//   entity above with the "body" component, which the package's "source" gives it at run time too), and "body", that
+//   component's Tide name. The entity's placed fields are baked in the body's frame, after the scale; a part turned
+//   against its body, which only a round shape can be, is a warning.
+// - "mesh" names a component's list fields that Unity fills from a Mesh (com.tide.unity's inspector; the GameObject's
+//   MeshFilter's as the component's added): "vertices" (float3), and "indices" (int, three a triangle; none for a
+//   hull).
+// - "readBack" fields are the package's answers (a joint's force): shown in Play, never authored or baked.
 // - "source" is compiled as a source of the package's own, in a Unity project alone ("Library/Tide/Unity.<package>.tide"):
 //   its glue for Unity (Box3D's bodies start at their entities' Transforms, which follow them).
 
@@ -52,6 +68,7 @@ typedef struct unity_scaled {
 } unity_scaled;
 
 typedef struct unity_component_rules {
+    char *file;      // The unity.json it's in, for what's said of it
     char *name;      // The component's Tide name: "Box3D.Box"
     bool hidden;     // The package's own: no GameObject is given it in Unity
     char **hidden_fields;
@@ -62,6 +79,13 @@ typedef struct unity_component_rules {
     char *size;      // The shape's size field: a box's or rect's size, a sphere's, capsule's or circle's radius
     char *height;    // A capsule's height field
     char *center;    // Its offset field, or NULL
+    char *placed;    // The field placing it on its body: "placed", else the shape's center; NULL for none
+    char *part_of;   // A part's entity field naming its body, or NULL: no part
+    char *part_body; // ...and the body's component
+    char *vertices;  // A mesh's list fields, or NULL
+    char *indices;
+    char **read_back;
+    int read_back_count;
 } unity_component_rules;
 
 typedef struct unity_glue {
@@ -86,6 +110,10 @@ void unity_mappings_free(unity_mappings *m);
 const unity_component_rules *unity_rules_of(const unity_mappings *m, const char *name);
 bool unity_field_hidden(const unity_component_rules *r, const char *field);
 unity_scale unity_field_scale(const unity_component_rules *r, const char *field);
+bool unity_field_read_back(const unity_component_rules *r, const char *field);
+
+// The fields a component's rules name, to check they're its: up to `capacity` into `out`; how many.
+int unity_rules_fields(const unity_component_rules *r, const char **out, int capacity);
 
 // The name of a scale as unity.json and the C# say it ("absScale"), or NULL for none.
 const char *unity_scale_name(unity_scale scale);

@@ -425,7 +425,9 @@ edited in the Scene view.
 
 `tide build` and `tide run` take `--assets` too, for a dedicated server, or any
 build, of a game made in Unity: `tide build --server --assets Assets` has the
-same prefabs and scenes as the Unity players it serves.
+same prefabs and scenes as the Unity players it serves. `tide schedule Assets
+--assets Assets` checks such a game, its prefabs and scenes and its packages'
+Tide for Unity, without building it.
 
 `--web` builds the game once for a Unity WebGL player instead: `tide-game.js`,
 which Unity's Tide package puts in the player's page beside Unity's own, and
