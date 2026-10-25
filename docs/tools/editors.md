@@ -157,6 +157,8 @@ Fix compiler errors and resolve outside conflicts or recovery before playing.
 The build can still report C, link or full-asset errors. **Stop** ends the play
 session and discards runtime state. Runtime changes are not written into the
 authored tree; the next Play starts fresh.
+If another program keeps Play's temporary files locked, cleanup reports their
+location in Console. Close that program and try Play again.
 
 **Set startup** saves the current scene and writes its qualified name to project
 `settings { startScene = ...; }`. It preserves other settings and any existing

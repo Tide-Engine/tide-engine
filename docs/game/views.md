@@ -406,6 +406,8 @@ This smooths the value views read. Convert to rendering coordinates after subtra
 
 The error decays exponentially with frame time toward zero, or the identity rotation, with a provisional half-life of 75 ms. Another correction accumulates with whatever error remains. Ordinary movement follows the corrected simulation, so moving and aiming stay responsive. Untagged fields keep ordinary tick interpolation.
 
+The built-in `Transform` already uses this behavior for its match fields: `localPosition` is a `[Position]` and `localRotation` a `[Rotation]`. Its scale uses ordinary tick interpolation. These defaults apply to view bindings; `World.LocalToWorld` and other stored-state queries retain their existing behavior. Local-entity Transforms read their current values.
+
 This state belongs to this machine's presentation. Simulation values and collisions correct immediately, and snapshots, hashes and network state are unaffected. `entity.Snap()` and `singleton.Snap()` also clear any accumulated error, keeping intentional jumps immediate. A new match, a hot reload or a replacement world with no comparable presentation history clears the error too. While a host migration reconnects, the frozen presentation retains its error; adopting the new network timeline clears it.
 
 The tags take no arguments. Use them on match fields; local state, inputs and events cannot carry them. A field cannot combine `[Position]`, `[Rotation]` and `[Snap]`.

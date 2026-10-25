@@ -17219,6 +17219,10 @@ static void add_builtins(program *prog)
         field f = {0};
         f.name = str_from(transform_fields[i][0]);
         f.type_name = str_from(transform_fields[i][1]);
+        // Match Transform bindings smooth corrections by default. Keep this
+        // separate from note_position: shard placement uses the hierarchy root,
+        // after explicit game/package positions, rather than this local field.
+        f.view_correction = i < 2 ? i + 1 : 0;
         if (i == 1) {
             f.default_value = NEW(expr);
             f.default_value->kind = E_MEMBER;

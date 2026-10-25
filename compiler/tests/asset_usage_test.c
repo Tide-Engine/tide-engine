@@ -42,6 +42,20 @@ static void done(void)
     lex_symbols_reset();
 }
 
+TIDE_TEST(transform_correction_defaults_preserve_explicit_two_dimensional_shard_positions)
+{
+    program *p = checked("settings { shards = true; reach = 1; } "
+        "component Place { [Position] float2 position; } scene Main {} "
+        "event(Spawned) Start(with Main) { Spawn(Place, Transform); }");
+    TIDE_REQUIRE(p);
+    TIDE_CHECK(p->transform->fields.items[0].view_correction == 1);
+    TIDE_CHECK(p->transform->fields.items[1].view_correction == 2);
+    TIDE_CHECK(p->transform->fields.items[2].view_correction == 0);
+    TIDE_REQUIRE(p->positions.count == 1);
+    TIDE_CHECK(str_eq_c(p->positions.items[0].component->name, "Place"));
+    done();
+}
+
 TIDE_TEST(simulation_identity_tracks_match_helpers_but_not_view_helpers_or_local_defaults)
 {
     static const char *const sources[] = {

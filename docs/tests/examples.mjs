@@ -160,6 +160,15 @@ try {
                 };
             }
         }
+        // Exercise the site's local Earth build through the same unavailable-
+        // hosting fallback it uses offline, without depending on a publication.
+        const fetchPage = window.fetch.bind(window);
+        window.fetch = (input, ...args) => {
+            const url = new URL(typeof input === 'string' ? input : input.url ?? String(input), location.href);
+            if (url.hostname === 'play.tide-engine.dev' && url.pathname.endsWith('/ready'))
+                return Promise.resolve(new Response(null, { status: 503 }));
+            return fetchPage(input, ...args);
+        };
         // A GL error stops a game and names the call, where WebGL would only warn
         let config;
         Object.defineProperty(window, 'Tide', { configurable: true, get: () => config, set: value => {
@@ -329,6 +338,20 @@ try {
         const path = url.pathname;
         url.searchParams.set('backend', backend);
         await command('Page.navigate', { url: url.href });
+        if (id === 'earth' && path === '/guide/earth') {
+            await until(`location.pathname === '${path}' && document.querySelector('.demo .controls button')`, 'Earth demo page');
+            assert.equal(await evaluate('document.querySelectorAll(".demo iframe").length'), 0, 'Earth waits for Play');
+            stats(await evaluate('document.querySelector(".demo .controls a").href'), 'Earth standalone link');
+            await evaluate('document.querySelector(".demo").scrollIntoView({block:"center"})');
+            await evaluate('Array.from(document.querySelectorAll(".demo button")).find(button => button.textContent === "Play Earth").click()');
+            await until('document.querySelector(".earth.shown iframe")?.contentWindow.__draws > 5', 'Earth draws after Play');
+            stats(await evaluate('document.querySelector(".earth iframe").src'), 'Earth embedded runtime');
+            await shoot('sample-earth');
+            await evaluate('Array.from(document.querySelectorAll(".demo button")).find(button => button.textContent === "Stop").click()');
+            await until('!document.querySelector(".earth iframe")', 'Earth Stop removes the game');
+            console.log(`earth: click-to-play, stats, local rendering and stop passed (${backend})`);
+            continue;
+        }
         await until(`location.pathname === '${path}' && window.__draws > 5`, `${id}: its page draws`);
         await shoot(`sample-${id}`);
         console.log(`${id}: the gallery's game draws on its page (${backend})`);

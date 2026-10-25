@@ -123,6 +123,8 @@ Each ball below is an entity with a `Ball` and a `Health`. Tap one to `Add` a `P
 
 `Transform` is built in, with `float3 localPosition` (zero), `quaternion localRotation` (identity), and `float3 localScale` (one). Each is relative to the entity's parent; a root's values are its world placement. Add it like any other component.
 
+Match `Transform` fields have [correction smoothing](./views.md#provisional-correction-smoothing) built in: `localPosition` behaves as `[Position]`, and `localRotation` as `[Rotation]`. Views preserve their displayed values across prediction corrections and let the error decay. Scale keeps ordinary tick interpolation; local entities use their current values. Use `entity.Snap()` for an intentional jump. This smooths view bindings; `World` queries and the ancestors read by `position` still use stored state.
+
 Its computed `float3 position` property reads world position. Setting it converts the requested position into parent space and changes `localPosition`; it needs a mutable Transform and leaves the parent unchanged:
 
 ```csharp

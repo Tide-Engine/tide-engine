@@ -1,0 +1,199 @@
+{
+  "date": "2026-10-25",
+  "baseline_game_commit": "1a1e4f7f",
+  "engine_compiler_commit": "0abf66a53764c7c45c3a655cd7f61aa26801760c",
+  "method": "Fixed terrain-only renderer, null match world; 412x915 CSS, DPR3,1236x2745 actual pixels. Both game C files compiled O2 with strict floats against the same web-debug engine. Muted Chrome155.0.8059.85; forced AMD Radeon RDNA2 iGPU164e driver32.0.11034.2. No global GPU settings changed.",
+  "timing_status": "EXPLORATORY. No quiet window requested or granted for this pass; competing work and clocks not controlled. Not a Pixel emulation, FPS result or clean paired benchmark.",
+  "webgl": {
+    "before": {
+      "mode": "terrain-before-webgl-final",
+      "scene": "2",
+      "adapter": null,
+      "pixels": [
+        1236,
+        2745
+      ],
+      "renderer": "ANGLE (AMD, AMD Radeon(TM) Graphics (0x0000164E) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "samples": 87,
+      "median": 38.82588,
+      "p95": 38.94452,
+      "errors": []
+    },
+    "after": {
+      "mode": "terrain-current-webgl",
+      "scene": "2",
+      "adapter": null,
+      "pixels": [
+        1236,
+        2745
+      ],
+      "renderer": "ANGLE (AMD, AMD Radeon(TM) Graphics (0x0000164E) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+      "samples": 89,
+      "median": 12.774899999999999,
+      "p95": 12.96717,
+      "errors": []
+    },
+    "reduction_percent": 67.09694667577399
+  },
+  "webgpu": {
+    "before": {
+      "samples": 25,
+      "median": 32.178176,
+      "p95": 32.44032
+    },
+    "after": {
+      "samples": 29,
+      "median": 9.764864,
+      "p95": 10.092544
+    },
+    "adapter": {
+      "vendor": "amd",
+      "architecture": "rdna-2",
+      "isFallbackAdapter": false
+    },
+    "reduction_percent": 69.65376782077392
+  },
+  "source_sha256": {
+    "city.tide": "b6f991a2532750b710dbd0e92b2ac817621013f0ae72ae3897f7b33b21fb8988",
+    "game.tide": "52fae449a1a81494b2fa9f89f14d53695e664859ab784866b9dc38e58a25b9ab",
+    "globe.tide": "73e871a871a5c3f2db83a7345be36497ad4f3627b1959a63249fe76f9ffc57c2",
+    "layout.tide": "abaddf36ff9482d617a8ab13f260ed6474a4d53a9c9f710fa1c4cb9504a8d143",
+    "shapes.tide": "f97518e3e68ab6dff9f9cd1ff067ce72af9969cdf3955b8f12aefd8f98018fd5",
+    "show.tide": "5fa70185fdc09db65fe414b78e61f53856216ef6159783f3f8d7565df4db7d01",
+    "terrain.tide": "a943da3e45c6d7a3bdad90e40f4ab4400703c4247e7d4ae2e47a60c072b48bec",
+    "plants.tide": "2fb70856909f77f05c6e3fa56614bab1d5362a745e7bbffdee8c5e9e7bcde2ba"
+  },
+  "frozen_html_sha256": {
+    "before": "7067f541a1d1374dd66c34975a451141e6ba71694422afa18f30b730c2600a29",
+    "after": "a7a49806b7db16078bc311ede84c1fbd476a198006c41364651f5f83d845b290"
+  },
+  "shader_texts": [
+    {
+      "name": "tide_shader_0_vertex",
+      "sha256": "790f8a8c1dadb657823f7b132724ff074df5f1813249095610e9a2411d635f03",
+      "present_in_measured_wasm": true
+    },
+    {
+      "name": "tide_shader_0_fragment",
+      "sha256": "cadbd707c956c5c818e1705d16cc227a52baf1ce46d24cdecaa88c580ee1d80f",
+      "present_in_measured_wasm": true
+    },
+    {
+      "name": "tide_shader_0_wgsl",
+      "sha256": "b9e77004ccc0597a62c13e6868129e88a4471716072ef24c88926fdfb63020e7",
+      "present_in_measured_wasm": true
+    },
+    {
+      "name": "tide_shader_1_vertex",
+      "sha256": "d2ca7df07ad074f1707b9cfbef6edb63183e2bb81d5af332d30a36d196877a57",
+      "present_in_measured_wasm": true
+    },
+    {
+      "name": "tide_shader_1_fragment",
+      "sha256": "414a6c71b5f0b4852803637ec8483b8159f94b7f85f6c1fba603868a31eb7191",
+      "present_in_measured_wasm": true
+    },
+    {
+      "name": "tide_shader_1_wgsl",
+      "sha256": "6e36a407e0255bb879577c1dd02c2433809cbf409544a0219193a530037be4c7",
+      "present_in_measured_wasm": true
+    },
+    {
+      "name": "tide_shader_2_vertex",
+      "sha256": "889398bccdb16ec1256259de25264514635e6ae464a6c3d89ee4a3a6f0efca1b",
+      "present_in_measured_wasm": true
+    },
+    {
+      "name": "tide_shader_2_fragment",
+      "sha256": "1c18a7acd791c24cf67fa9149b54cd995afb2e143fadb8794f27c21c8f4e0e4c",
+      "present_in_measured_wasm": true
+    },
+    {
+      "name": "tide_shader_2_wgsl",
+      "sha256": "597d79d93ba6e49529f1cd4647480169c8be71aa7d862fc95192be4bb1d90fbb",
+      "present_in_measured_wasm": true
+    },
+    {
+      "name": "tide_shader_3_vertex",
+      "sha256": "7f8feaf08774f9b623d1eae42ad28bdb554f3f3ade1fc6683dd9cd18e9a776e2",
+      "present_in_measured_wasm": true
+    },
+    {
+      "name": "tide_shader_3_fragment",
+      "sha256": "be83da35d25061bfa3d393364a67019739aaca6af231fd0f097205b2aabedebe",
+      "present_in_measured_wasm": true
+    },
+    {
+      "name": "tide_shader_3_wgsl",
+      "sha256": "66f707c2df13f7d393fd1ab91513977dee771ee482b11df109b140708c218952",
+      "present_in_measured_wasm": true
+    },
+    {
+      "name": "tide_shader_4_vertex",
+      "sha256": "e25e8bec13695e3ee9cdad1fb7857fe0569ba7871633413134fc5be6a87951e1",
+      "present_in_measured_wasm": true
+    },
+    {
+      "name": "tide_shader_4_fragment",
+      "sha256": "b764b797503c1d7ce7623682e13329de55622bee9ccc733754c350aeba4da196",
+      "present_in_measured_wasm": true
+    },
+    {
+      "name": "tide_shader_4_wgsl",
+      "sha256": "165411a25c4fdb23cf258814130f71c0ee956aae499e3c4f3b7c9e38b5b9447c",
+      "present_in_measured_wasm": true
+    },
+    {
+      "name": "tide_shader_5_vertex",
+      "sha256": "e8f3f6c5bae61a1f838eb1cb20b51671208334f038190141c82c1f38477b2e84",
+      "present_in_measured_wasm": true
+    },
+    {
+      "name": "tide_shader_5_fragment",
+      "sha256": "a9b90e3f47a32b44140350dc5c1e1dee49ac40f6812610ed3613cbf3056783a3",
+      "present_in_measured_wasm": true
+    },
+    {
+      "name": "tide_shader_5_wgsl",
+      "sha256": "68b3af0ccf767a4f56a83152043f2116e3fe944b847e0546b73583067c19a798",
+      "present_in_measured_wasm": true
+    },
+    {
+      "name": "tide_shader_6_vertex",
+      "sha256": "7f8feaf08774f9b623d1eae42ad28bdb554f3f3ade1fc6683dd9cd18e9a776e2",
+      "present_in_measured_wasm": true
+    },
+    {
+      "name": "tide_shader_6_fragment",
+      "sha256": "e78c075799a1ae4f1f201ecac6644d3738de2930290ad866fb2e46b568d4ff8b",
+      "present_in_measured_wasm": true
+    },
+    {
+      "name": "tide_shader_6_wgsl",
+      "sha256": "180ddc8ef97665fe7882b788700b7154ef5e4e079021ec56b235f61aaffb5bbb",
+      "present_in_measured_wasm": true
+    }
+  ],
+  "source_correspondence": "Final revision-aware local cache initialization added after timing. Every final GLSL/WGSL text is present byte-for-byte in the measured candidate WASM. Timing claims concern GPU drawing, not final whole-binary CPU throughput.",
+  "cold_cost": "First candidate C frame recorded123ms of CPU generation and134ms total in WebGPU before shader compilation amortization. Native O2 cached recording was about0.25ms. Initial/rebuilt terrain patches can still hitch on a phone.",
+  "discarded_probes": "Dense8x8 tile grids, material shader root splits and whole-grass draw splits did not yield sufficient wins and were removed. Early WebGPU diagnostic read the consuming timing getter twice, producing invalid -1 summaries; excluded. Final getter reads once per frame. A constant-material isolation retained geometry and took4.43ms WebGL; not a deployed visual.",
+  "validation": {
+    "debug_native": "23/23 Earth checks;3/3 benchmark cases. CTest4/4,55.92s.",
+    "debug_web": "23/23 Earth checks;3/3 benchmark cases. CTest4/4,57.12s.",
+    "optimized": "Native release and web-release Earth targets built;3/3 benchmark cases each.",
+    "pins": {
+      "ordinary_and_diverge": "0x2d4f30cae27728fa",
+      "split": "0x77140ad82e885ede"
+    },
+    "native_gpu": "Vulkan validation scripted walking/driving captures; forest crowns,cacti,sparse rocky scrub,roads/plaza and hills inspected.",
+    "coverage_limits": "No actual Pixel/Android or other OS hardware coverage."
+  },
+  "integration": {
+    "incoming": "85aebc66",
+    "own_implementation": "3967a2af",
+    "notes_conflict": "Kept both Earth relief and incoming Transform correction benchmark entries.",
+    "native": "Earth targets rebuilt;23/23 game checks and3/3 benchmark cases, CTest4/4 in63.29s.",
+    "web": "Earth targets rebuilt;23/23 game checks and3/3 benchmark cases, CTest4/4 in73.64s.",
+    "shader_texts_still_match_measured_wasm": 21
+  }
+}

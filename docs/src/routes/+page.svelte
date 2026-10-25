@@ -1,102 +1,10 @@
 <script lang="ts">
-    import { onMount } from 'svelte';
     import Seo from '#lib/components/Seo.svelte';
-    import { eager, game } from '#lib/examples.ts';
 
     let { data } = $props();
 
     const external = (link: string) => /^https?:/.test(link);
 
-    // The planet beside the hero (examples/earth): a game of its own in a
-    // frame, which takes the logo's place once it has drawn. It's the world
-    // everyone on this page shares, hosted (Tide-Engine/tide-services), when
-    // that can be played now; else this machine's own, from this site, with
-    // bots. It starts by itself, but for a reader who asked for less motion
-    // or less data, and stops once the hero is well out of view. A build
-    // without the game keeps the logo.
-    const shared = 'https://play.tide-engine.dev/g/29c727eab929afcbef23455a6bf73125/';
-    let place: HTMLElement;
-    let shown = $state(false);
-    let full = $state('/earth/?stats');
-    // Bigger: the frame over the whole page, as it is (no new page, so the game goes on where it was)
-    let big = $state(false);
-    $effect(() => {
-        document.body.style.overflow = big ? 'hidden' : '';
-        const out = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') big = false;
-        };
-        if (big) document.addEventListener('keydown', out);
-        return () => document.removeEventListener('keydown', out);
-    });
-    onMount(() => {
-        if (!eager()) return;
-        let frame: HTMLIFrameElement | undefined;
-        let opening = 0;
-        const title = 'A little planet for everyone on this page, to walk and drive round together';
-        async function open() {
-            const asked = ++opening;
-            const backend = new URLSearchParams(location.search).get('backend');
-            let hosted = false;
-            try {
-                hosted = (await fetch(`${shared}ready`, { signal: AbortSignal.timeout(4000) })).ok;
-            } catch {
-                // Not there, or not playable: this machine's own
-            }
-            if (asked !== opening) return;
-            const opened = document.createElement('iframe');
-            opened.title = title;
-            if (hosted) {
-                // Another site's page: it starts as it loads, and says nothing of when it has drawn
-                const url = new URL(shared);
-                url.searchParams.set('stats', '');
-                if (backend) url.searchParams.set('backend', backend);
-                full = url.href;
-                url.searchParams.set('embedded', '');
-                opened.src = url.href;
-                opened.allow = 'cross-origin-isolated; fullscreen';
-                opened.addEventListener('load', () => setTimeout(() => {
-                    if (frame === opened) shown = true;
-                }, 1500), { once: true });
-            } else {
-                const url = new URL('/earth/', location.href);
-                url.searchParams.set('stats', '');
-                if (backend) url.searchParams.set('backend', backend);
-                full = url.href;
-                url.searchParams.set('embedded', '');
-                url.searchParams.set('wait', '');
-                opened.src = url.href;
-                opened.addEventListener('load', async () => {
-                    const page = game(opened);
-                    if (typeof page?.start !== 'function') return opened.remove();
-                    await page.start();
-                    if (frame === opened) shown = true;
-                }, { once: true });
-            }
-            place.append(opened);
-            frame = opened;
-        }
-        function close() {
-            opening++;
-            frame?.remove();
-            frame = undefined;
-            shown = false;
-        }
-        const watching = new IntersectionObserver(([entry]) => {
-            if (entry.isIntersecting && !frame) void open();
-            else if (!entry.isIntersecting) close();
-        }, { rootMargin: '100% 0px' });
-        watching.observe(place);
-        // A press on the page takes the keyboard back from the game
-        const elsewhere = () => {
-            if (frame && document.activeElement === frame) frame.blur();
-        };
-        document.addEventListener('pointerdown', elsewhere, true);
-        return () => {
-            watching.disconnect();
-            document.removeEventListener('pointerdown', elsewhere, true);
-            close();
-        };
-    });
 </script>
 
 <Seo title={data.title} description={data.description} path="/" />
@@ -116,18 +24,7 @@
             </div>
         </div>
         <div class="image">
-            <div class="slot">
-                <div class="earth" class:shown class:big bind:this={place}>
-                    <img src="/favicon.svg" alt="" width="320" height="320" />
-                </div>
-            </div>
-            {#if big}
-                <button type="button" class="backdrop" aria-label="Back to the page" onclick={() => (big = false)}></button>
-                <button type="button" class="shrink" onclick={() => (big = false)}>Close ✕</button>
-            {/if}
-            {#if shown}
-                <p class="caption">Live: walk or drive round a little planet with whoever's there. <button type="button" class="expand" onclick={() => (big = true)}>Expand</button> · <a href={full} target="_blank">New tab</a></p>
-            {/if}
+            <img src="/favicon.svg" alt="" width="320" height="320" />
         </div>
     </section>
 
@@ -240,104 +137,10 @@
         width: 360px;
     }
 
-    /* Keeps the frame's place in the hero while it's over the whole page */
-    .slot {
+    .image img {
+        display: block;
         width: 100%;
-        aspect-ratio: 1;
-    }
-
-    .earth {
-        position: relative;
-        display: grid;
-        place-items: center;
-        width: 100%;
-        aspect-ratio: 1;
-        border-radius: 16px;
-        overflow: hidden;
-        transition: background-color 0.4s;
-    }
-
-    .earth img {
-        width: 78%;
-        height: 78%;
-        transition: opacity 0.4s;
-    }
-
-    /* The game's frame, unseen until it has drawn, then over the logo */
-    .earth :global(iframe) {
-        position: absolute;
-        inset: 0;
-        width: 100%;
-        height: 100%;
-        border: 0;
-        opacity: 0;
-        transition: opacity 0.4s;
-    }
-
-    .earth.shown {
-        background: #161618;
-    }
-
-    .earth.shown img {
-        opacity: 0;
-    }
-
-    .earth.shown :global(iframe) {
-        opacity: 1;
-    }
-
-    .earth.big {
-        position: fixed;
-        inset: 4vh 4vw;
-        z-index: 101;
-        width: auto;
-        aspect-ratio: auto;
-        box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
-    }
-
-    .backdrop {
-        position: fixed;
-        inset: 0;
-        z-index: 100;
-        border: 0;
-        background: rgba(0, 0, 0, 0.6);
-        cursor: zoom-out;
-    }
-
-    .shrink {
-        position: fixed;
-        top: calc(4vh + 10px);
-        left: 50%;
-        z-index: 102;
-        transform: translateX(-50%);
-        padding: 4px 14px;
-        border: 0;
-        border-radius: 14px;
-        background: rgba(13, 13, 16, 0.7);
-        color: #eeeef0;
-        font: inherit;
-        font-size: 13px;
-        cursor: pointer;
-    }
-
-    .expand {
-        padding: 0;
-        border: 0;
-        background: none;
-        color: var(--brand-1);
-        font: inherit;
-        cursor: pointer;
-    }
-
-    .caption {
-        margin: 8px 0 0;
-        color: var(--text-2);
-        font-size: 13px;
-        text-align: center;
-    }
-
-    .caption a {
-        color: var(--brand-1);
+        height: auto;
     }
 
     .features {
@@ -422,15 +225,6 @@
         .image {
             width: 100%;
             max-width: 420px;
-        }
-
-        .earth.big {
-            inset: 0;
-            border-radius: 0;
-        }
-
-        .shrink {
-            top: 10px;
         }
 
         .feature {

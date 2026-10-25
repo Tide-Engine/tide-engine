@@ -165,7 +165,7 @@ bool Behind(float3 eye, float3 place)
 // Upright at a place, facing a way along the ground
 quaternion Standing(float3 place, float3 facing)
 {
-    var up = Math.Normalize(place);
+    var up = TerrainNormal(Math.Normalize(place));
     var ahead = Flat(facing, up);
     return quaternion.LookRotation(Math.Length(ahead) > 0.0001 ? Math.Normalize(ahead) : EastOf(up), up);
 }
@@ -254,7 +254,7 @@ view Mine(Walker walker, mut Pilot pilot, with ownership)
     if (walker.moves > pilot.moves) pilot.moves = walker.moves;
 }
 
-view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atlas, mut Biomes biomes, Devices devices)
+view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atlas, mut Land land, mut Flora flora, Devices devices)
 {
     if (shapes.ball.count == 0) Build(shapes);
     if (!atlas.made || Math.Dot(atlas.normals[0], atlas.normals[0]) < 0.5)
@@ -273,16 +273,6 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
         }
         atlas.made = true;
     }
-    if (!biomes.made)
-    {
-        for (var index = 0; index < 56 * 56 * 56; index++)
-        {
-            var cell = int3(index % 56, (index / 56) % 56, index / (56 * 56)) - int3(28);
-            biomes.gradients[index & 511, index >> 9] = Math.Hash(int4(cell.x, cell.y, cell.z, 0)) & 15;
-        }
-        biomes.made = true;
-    }
-    biomes.lookup = biomes.gradients;
     float dt = Math.Min(Frame.dt, 0.05);
     scenery.lastShown = scenery.shown;
     scenery.shown = 0;
@@ -428,15 +418,15 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
         float distance = pilot.back * (pilot.driving ? 1.6 : 1);
         var from = pilot.look * Math.Cos(pilot.tilt) - up * Math.Sin(pilot.tilt);
         mut var walkEye = target - from * distance;
-        if (Math.Length(walkEye) < R + 0.6) walkEye = Math.Normalize(walkEye) * (R + 0.6);
+        if (Math.Length(walkEye) < R + TerrainHeight(Math.Normalize(walkEye)) + 0.6) walkEye = Surface(Math.Normalize(walkEye), 0.6);
         var walkTurned = quaternion.LookRotation(Math.Normalize(target - walkEye), up);
         float s = Math.SmoothStep(0, 1, pilot.blend);
-        float low = Math.Max(Math.Length(walkEye) - R, 0.5);
+        float low = Math.Max(Math.Length(walkEye) - R - TerrainHeight(Math.Normalize(walkEye)), 0.5);
         float height = Math.Exp(Math.Lerp(Math.Log(globeHeight), Math.Log(low), s));
         // Across as far as it's come down, so that near the ground it's over the walker whatever's left of the blend
         float across = Math.Clamp(1 - (height - low) / Math.Max(globeHeight - low, 1), 0, 1);
         var way = Math.Normalize(Math.Lerp(Math.Normalize(eye), Math.Normalize(walkEye), across));
-        eye = way * (R + height);
+        eye = way * (R + height + TerrainHeight(way) * s);
         if (s >= 1) eye = walkEye;
         turned = Math.Slerp(globeTurned, walkTurned, s);
     }
@@ -449,13 +439,10 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
     var projection = float4x4.PerspectiveFov(Math.Radians(pilot.fov), Screen.width / Screen.height, near, above + R * 3);
     Draw.SetCamera(float4x4.TRS(float3(0), turned, float3(1)), projection);
 
-    // Where a ray from the eye through a pixel meets the ground
-    var ray = Draw.ScreenRayDirection(screen);
-    float b = -Math.Dot(ray, eye);
-    float c = above * (2 * R + above);
-    float disc = b * b - c;
-    bool hits = disc > 0 && b > 0;
-    var hit = hits ? Math.Normalize(eye + ray * (c / (b + Math.Sqrt(disc)))) * R : float3(0, 0, 0);
+    // Pick the same relief that walkers, cars and the cached mesh use.
+    mut var hit = float3(0);
+    mut bool hits = false;
+    if (click) hits = PickTerrain(eye, Draw.ScreenRayDirection(screen), out hit);
     // A click on the globe: there, or the square of a town near it
     if (click && (!pilot.walking || !there || pilot.blend <= 0.5) && hits)
     {
@@ -512,6 +499,7 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
     {
         Draw.Mesh(shapes.sky, shapes.skyFaces, float4x4.TRS(float3(0), quaternion.identity, float3(near * 4)), Planet, pilot.sky);
     }
+    DrawLand(land, pilot, atlas);
     // The towns near: their buildings, their trees, their fountains
     for (var town = 0; town < TOWNS; town++)
     {
@@ -538,60 +526,7 @@ view Look(mut Pilot pilot, mut Scenery scenery, mut Shapes shapes, mut Atlas atl
         scenery.rounds.Add(Placed { transform = float4x4.TRS(Place(town, float2(0, 0), 1.5) - eye, square, float3(0.45, 1.3, 0.45)),
                                     paint = Color(0.75, 0.73, 0.70) });
     }
-    // Trees out in the country, near the eye: one in some cells of a grid of latitude and longitude, never on a road or in a town
-    if (above < 300)
-    {
-        var at = Math.Normalize(eye);
-        float lat = Math.Asin(Math.Clamp(at.y, -1, 1));
-        float lon = Math.Atan2(at.z, at.x);
-        float step = 16 / R;
-        int row0 = int(Math.Floor(lat / step));
-        // Far enough that an ordinary ground camera sees trees disappear
-        // behind the actual horizon before they reach the drawing limit.
-        for (var row = row0 - 26; row <= row0 + 26; row++)
-        {
-            // Each row has a fixed grid. Using the eye's latitude for this
-            // spacing moved every tree whenever the player walked north/south.
-            float rowLat = (row + 0.5) * step;
-            if (Math.Abs(rowLat) >= Math.PI * 0.5) continue;
-            int columns = int(Math.Floor(Math.TAU * Math.Max(Math.Cos(rowLat), 0.2) / step));
-            float across = Math.TAU / columns;
-            int column0 = int(Math.Floor(lon / across));
-            float narrowest = Math.Max(Math.Cos(Math.Abs(rowLat) + step * 0.5), 0.0001);
-            int span = int(Math.Ceil(400 / (R * across * narrowest))) + 2;
-            // Near a pole the neighborhood may include the whole row, once.
-            int firstColumn = column0 - span;
-            int lastColumn = Math.Min(column0 + span, firstColumn + columns - 1);
-            for (var column = firstColumn; column <= lastColumn; column++)
-            {
-                int wrapped = (column % columns + columns) % columns;
-                int h = Math.Hash(int2(row, wrapped));
-                float jitterA = (h % 1000) / 1000.0;
-                float jitterB = ((h / 1000) % 1000) / 1000.0;
-                float tLat = (row + jitterA) * step;
-                float tLon = (wrapped + jitterB) * across;
-                var n = float3(Math.Cos(tLat) * Math.Cos(tLon), Math.Sin(tLat), Math.Cos(tLat) * Math.Sin(tLon));
-                var place = n * R;
-                float coverage = (1 - Math.SmoothStep(320, 400, Math.Length(place - eye))) * (1 - Math.SmoothStep(200, 300, above));
-                if (coverage <= 0) continue;
-                float forest = Math.Simplex(n * 7) * 0.6 + Math.Simplex(n * 19) * 0.3 + Math.Simplex(n * 61) * 0.1;
-                if ((h / 1000000) % 100 > (forest > 0.1 ? 70 : 12)) continue;
-                if (Paved(place) || TownAt(place, 8) >= 0) continue;
-                mut bool roadside = false;
-                for (var road = 0; road < ROADS && !roadside; road++)
-                {
-                    if (RoadDistance(n, Up(Road(road).x), Up(Road(road).y)) < ROAD + 3) roadside = true;
-                }
-                if (roadside) continue;
-                float tall = 4 + (h % 7) * 0.6;
-                var standing = Standing(place, NorthOf(n));
-                scenery.boxes.Add(Placed { transform = float4x4.TRS(place + n * (tall * 0.35 - 0.05) - eye, standing, float3(0.35, tall * 0.7 + 0.1, 0.35)),
-                                           paint = Color(0.40, 0.30, 0.22, coverage) });
-                scenery.rounds.Add(Placed { transform = float4x4.TRS(place + n * (tall * 0.85) - eye, standing, float3(1.9, 1.7, 1.9)),
-                                            paint = Color(0.20 + (h % 3) * 0.03, 0.44 + (h % 5) * 0.03, 0.24, coverage) });
-            }
-        }
-    }
+    ShowPlants(flora, scenery, pilot);
 }
 
 // A walker: a body, a head with eyes, hands and feet that step as it walks.
@@ -649,7 +584,7 @@ view People(mut Walker walker, mut Scenery scenery, Pilot pilot, Time time)
     }
     // A shadow under it, and a player's name over them
     var lying = quaternion.LookRotation(up, Flat(walker.forward, up));
-    var ground = Math.Normalize(walker.position) * (R + 0.03) - pilot.eye;
+    var ground = Surface(Math.Normalize(walker.position), 0.03) - pilot.eye;
     var shadow = Math.Lerp(float3(0.55, 0.55, 1), float3(1.2, 2.3, 1), t);
     scenery.shades.Add(Placed { transform = float4x4.TRS(ground, lying, shadow), paint = Color(0, 0, 0, 0.45) });
     if (player && Math.Length(at) < 120)
@@ -713,7 +648,7 @@ view Cars(Car car, mut Scenery scenery, Pilot pilot)
         scenery.rounds.Add(Placed { transform = float4x4.TRS(at + Math.Rotate(turned, wheel), turned, float3(0.16, 0.38, 0.38)), paint = Color(0.12, 0.12, 0.14) });
     }
     var lying = quaternion.LookRotation(up, Flat(car.forward, up));
-    scenery.shades.Add(Placed { transform = float4x4.TRS(Math.Normalize(car.position) * (R + 0.03) - pilot.eye, lying, float3(1.2, 2.3, 1)),
+    scenery.shades.Add(Placed { transform = float4x4.TRS(Surface(Math.Normalize(car.position), 0.03) - pilot.eye, lying, float3(1.2, 2.3, 1)),
                                 paint = Color(0, 0, 0, 0.4) });
 }
 

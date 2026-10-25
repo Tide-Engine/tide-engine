@@ -7,7 +7,10 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifndef _WIN32
+#ifdef _WIN32
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -16,6 +19,7 @@ static int failures;
 #define CHECK(test) do { if (!(test)) { fprintf(stderr, "%s:%d: %s\n", __FILE__, __LINE__, #test); failures++; } } while (0)
 
 static char *self;
+static uint32_t wait_pid(const char *directory, const char *name);
 
 static bool has_arg(const int argc, char **argv, const char *name)
 {
@@ -74,10 +78,7 @@ static int builder(const int argc, char **argv)
     }
     if (strstr(text, "leave-child")) {
         sys_process *p = start_child(directory, "builder-child.pid");
-        char *pid = path_join(directory, "builder-child.pid");
-        const int64_t until = sys_now_ms() + 3000;
-        while (p && !sys_exists(pid) && sys_now_ms() < until) sys_sleep_ms(10);
-        free(pid);
+        if (!p || !wait_pid(directory, "builder-child.pid")) { free(text); free(directory); return 6; }
         // Deliberately outlive this fixture compiler; the editor must own it.
     }
     free(text);
@@ -151,6 +152,43 @@ static bool dead(const uint32_t pid)
     return !sys_process_alive(pid);
 }
 
+#ifdef _WIN32
+static DWORD WINAPI release_file(void *handle)
+{
+    Sleep(50);
+    CloseHandle(handle);
+    return 0;
+}
+
+static void cleanup_tests(editor_play *p, editor_document *d, const editor_play_options *options)
+{
+    CHECK(editor_play_start(p, d, options)); CHECK(wait_state(p, EDITOR_PLAY_FINISHED, 5000));
+    char *directory = path_absolute(p->directory);
+    HANDLE held = CreateFileA(p->executable, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+    CHECK(held != INVALID_HANDLE_VALUE);
+    HANDLE release = CreateThread(NULL, 0, release_file, held, 0, NULL); CHECK(release != NULL);
+    editor_play_stop(p);
+    if (release) { WaitForSingleObject(release, INFINITE); CloseHandle(release); }
+    CHECK(!sys_exists(directory)); CHECK(p->state == EDITOR_PLAY_STOPPED);
+    free(directory);
+
+    CHECK(editor_play_start(p, d, options)); CHECK(wait_state(p, EDITOR_PLAY_FINISHED, 5000));
+    directory = path_absolute(p->directory);
+    held = CreateFileA(p->executable, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+    CHECK(held != INVALID_HANDLE_VALUE);
+    editor_play_stop(p);
+    CHECK(p->state == EDITOR_PLAY_FAILED && p->directory && !p->process);
+    CHECK(strstr(p->message, directory) != NULL); CHECK(sys_exists(directory));
+    CHECK(!editor_play_start(p, d, options));
+    CHECK(p->directory && !strcmp(p->directory, directory) && !p->process);
+    CloseHandle(held);
+    CHECK(editor_play_start(p, d, options)); CHECK(!sys_exists(directory));
+    CHECK(wait_state(p, EDITOR_PLAY_FINISHED, 5000));
+    editor_play_stop(p); CHECK(p->state == EDITOR_PLAY_STOPPED && !p->directory);
+    free(directory);
+}
+#endif
+
 static int control_tests(const char *work)
 {
     CHECK(sys_hidden());
@@ -179,6 +217,9 @@ static int control_tests(const char *work)
     CHECK(p.state == EDITOR_PLAY_STOPPED && !p.arguments);
     char *disk = sys_read_file(file, NULL); CHECK(disk && !strcmp(disk, prefab)); free(disk);
     CHECK(editor_dirty(&d));
+#ifdef _WIN32
+    cleanup_tests(&p, &d, &options);
+#endif
     editor_play_close(&p); editor_close(&d); free(file);
 
     file = fixture(work, "finished-compiler", code, "// leave-child\nprefab Level { Health; }\n");

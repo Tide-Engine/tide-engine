@@ -39,6 +39,8 @@ bool editor_play_start(editor_play *p, const editor_document *d, const editor_pl
 // launches the normal game host, including its session, systems and all views.
 void editor_play_poll(editor_play *p, int wait_ms);
 // Stops the compiler/game tree and removes this play's private artifacts.
+// Failed cleanup retains ownership and reports FAILED; retry Stop after
+// releasing the files. Close reports any remaining cleanup error on stderr.
 // Authored text, recovery, project sources and startup settings are untouched.
 void editor_play_stop(editor_play *p);
 void editor_play_close(editor_play *p);

@@ -4,6 +4,7 @@
     import Seo from '#lib/components/Seo.svelte';
     import Playground from '#lib/components/Playground.svelte';
     import AISetup from '#lib/components/AISetup.svelte';
+    import EarthDemo from '#lib/components/EarthDemo.svelte';
 
     let { data } = $props();
 
@@ -47,6 +48,10 @@
             {@html data.html.split('<div data-tide-playground></div>')[0]}
             <Playground />
             {@html data.html.split('<div data-tide-playground></div>')[1]}
+        {:else if data.path === '/guide/earth'}
+            {@html data.html.split('<div data-tide-earth></div>')[0]}
+            <EarthDemo />
+            {@html data.html.split('<div data-tide-earth></div>')[1]}
         {:else if data.path === '/guide/ai'}
             {@html data.html.split('<div data-tide-ai-setup></div>')[0]}
             <AISetup prompt={data.starterPrompt ?? ''} />

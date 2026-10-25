@@ -49,14 +49,25 @@ no additional XYZ tangent metric is claimed.
 
 Docs launch plumbing requests `?stats` for embedded/standalone examples,
 generated Markdown Run links, whole-game frames, Samples, playground,
-homepage Earth and admin prototype links, retaining existing options and
+the Earth docs demo and admin prototype links, retaining existing options and
 avoiding a second stats request. Docs commands use `--stats` where applicable.
 Browser/export/admin assertions cover these launch URLs. Shared integration adds
 the `stats` query-to-`--stats` mapping in `platform/web/tide.js` and standard-host
 runtime parsing, enabling stats while preserving the configured drawer state
-(`notes/standard-host.md`). The root owns release-runtime regeneration; an older
-already-published cross-origin Earth release will need its matching runtime
-redeployed to recognize that query. This docs task does not deploy Earth.
+(`notes/standard-host.md`). The root owns release-runtime regeneration. This
+docs task does not deploy Earth; the incoming Earth notes below record its
+subsequent stats-enabled published releases.
+
+The merge with origin/dev retains the incoming static homepage and opt-in
+`/guide/earth` demo, including Play/Stop/Expand, readiness selection, local
+fallback, backend override, focus handling and the incoming terrain/game
+changes. `EarthDemo.svelte` initializes its separate-tab link with `?stats`
+and sets the stats parameter before saving that link and adding iframe
+options. Hosted and fallback playable URLs therefore receive one stats key;
+the shared project's base URL stays unchanged for its readiness probe. The
+Earth guide and Samples route already lead to that component. Both complete
+notes histories are retained. The root owns merged Svelte/build and live
+Earth/material validation; no new build or browser result is claimed here.
 
 Final integration: the full native and web builds pass. The native full suite
 passes 2,773 of 2,774 enabled tests; its sole failure is the unchanged private
@@ -134,6 +145,160 @@ the two requested viewport sizes or zoom behavior. Camera source is frozen
 after that review. Final native captures at both requested sizes confirm the
 framing; final WebGL/WebGPU scene-pixel checks confirm camera and material
 interactions as recorded above.
+
+## Earth moves to an opt-in docs demo (2026-10-25)
+
+The owner elects to remove the live planet from the homepage because mobile
+performance remains below expectations, while continuing globe optimization.
+The homepage restores its static Tide mark: no Earth readiness request,
+iframe, WASM download or game workers. `/guide/earth` has the dedicated demo,
+linked from the docs sidebar and Samples page. It loads nothing until Play
+Earth is pressed, irrespective of motion/data preferences. Stop removes the
+iframe and leaves the match; Expand keeps the same document and reserves its
+slot. The prior ready check, hosted project, local fallback, backend override,
+keyboard-focus release and separate-tab link remain. Controls and the stats
+drawer are documented on that page. Its static planet placeholder stays the
+same size through loading. The earlier homepage skeleton is superseded by
+this move rather than retained as an autoplay experience.
+
+Validation: production docs build passes; Svelte check has zero errors and
+warnings. Muted Chrome checks at phone and desktop widths confirm no game
+requests/iframes on the homepage, no iframe before Play on the docs page,
+actual hosted loading, Expand preserving the iframe, and Stop removing it
+and enabling Play again. Screenshots were inspected. Globe measurements and
+changes follow separately; this move changes no engine or game behavior.
+
+## Homepage loading placeholder and Earth stats (2026-10-25)
+
+The owner confirms walking/driving is much faster, with the globe still slow,
+and requests a skeleton to prevent the homepage moving during load and the
+engine stats display. The square already reserved its size; inserting the
+caption after load changed the image column's height and the hero's alignment.
+The caption now exists from initial HTML with visibility hidden until ready,
+so its exact wrapped height is reserved at every width. A dark planet skeleton
+fills the square while loading, with a gentle opacity animation disabled for
+reduced motion and stopped once ready. Readers saving motion/data keep the
+static placeholder and do not start a game, preserving the existing policy.
+Expand retains the same iframe and the slot's original space.
+
+Earth sets `stats = true`: the engine's existing FPS/ping line is present in
+hosted, fallback and separate-tab builds. Tap/click the line (or F8) to open
+CPU/render, GPU time when supported, draw calls, vertices, networking and
+system timings. It starts collapsed, as the public game setting specifies,
+so it fits the small homepage frame; profiling begins only when opened.
+No new engine API, runtime flag or browser query parameter was added.
+
+Validation: docs production build passes; Svelte check has zero errors and
+warnings. Muted Radeon Chrome delayed-ready checks at 412 x 915 and 1440 x
+915 compare the demo, caption, words and features rectangles before/after
+actual iframe load: all are identical. Both retain the same iframe on Expand.
+Inspected phone/desktop skeleton captures and the WebGL stats-open capture.
+Native/web Earth targets and all 23 game checks plus three benchmark cases
+pass again (CTest 4/4 each, 82.80/85.08 s); simulation pins are unchanged.
+Muted Radeon WebGL/WebGPU checks of the bundled client open the drawer with
+F8, with zero errors; both captures were inspected. Published release
+`7b5b277124e37203aee69323ef4b394fa20b13b2bd07913acff1afcc2fef210c`
+to the same hosted project and room. The production program matches the
+bundle exactly, and the simulation identity remains
+`bb14b391a43e4fc37986378cc664b89c32b3427968738d25bcb93ba0fd63a113`.
+Downloaded production WebGL and WebGPU clients join room 966ANR, open the
+drawer with a click on the bottom FPS line, and report zero errors; inspected
+captures show online status and the detailed stats. These are correctness
+checks, not comparative timings. Source is pushed to dev; the placeholder
+will reach the site through its normal deployment. The public homepage was
+still serving its prior placeholder at the time of the post-push check.
+No CI run was dispatched or awaited.
+
+## Earth relief, biomes and cheaper ground shading (2026-10-25)
+
+The owner reports the Pixel still slow after the exact-gradient cache, with
+cost increasing with window size, and explicitly permits changing the tiny
+ground pattern. This pass also includes requested gentle hills and
+biome-specific plants. Animal behavior is a separate feature.
+
+`terrain.tide` replaces the analytic per-pixel ground with cached cube-sphere
+mesh tiles. Six face quadtrees select 4x4-cell leaves, capped at level 8
+(about 6 m finest spacing), with 6 m skirts and a conservative horizon bound.
+A bounded 2,048-chunk LRU uses integer tile keys; a combined visible patch is
+rebuilt after the eye travels 32 m, so camera turns normally reuse one mesh.
+Height, normals and broad climate fields are calculated at cached corners.
+The mesh writes ordinary depth, replacing the sphere-only Underground test
+in object shaders. The globe has a separate material root retaining the
+original broad procedural fields; the walking root uses interpolated fields.
+
+Road and town calculations keep their original geometry/material formulas.
+Each tile supplies a conservative town hint and an 11-bit road-plane mask,
+including 64 m of pixel-filter reach. Hints travel as exact float integers and
+are rounded in the fragment. Pixels wider than 64 m and the globe use all
+candidates. Tests probe actual triangle interiors against every town cap and
+road plane to reject false exclusions. This supplied the largest remaining
+shader win; splitting whole grass draws did not help and was discarded.
+
+Fine detail is now one filtered world-space value-noise sample: a local
+256x256 RGBA grid stores adjacent z slices in R/G, repeats at its boundaries,
+and reconstructs smooth 3D noise. Grain uses frequency 6,000, coverage fades
+with pixel footprint, and meadow flower flecks reuse that sample. Broad
+forest/dry colors and snow remain; exact fine grain changed with approval.
+There are no downloaded textures. The earlier 175,616-entry exact-gradient
+cache is removed. CPU-backed meshes/textures restore normally after device
+loss. `TERRAIN_REVISION` must be bumped when cached formulas/topology change;
+it invalidates retained terrain and plant data after a native code reload.
+
+Simulation and presentation share Surface/TerrainHeight: two deterministic
+simplex bands (14 m at frequency 12 and 5 m at 31), eased to zero within 128 m of each
+town and graded back into the country by 210 m. Walking, jumping, vehicle
+routes, local placement, camera clearance, roots and shadows use that same
+surface. Occasional pointer picking marches on the CPU inside the expanded
+sphere; there is no per-pixel height ray march. The bounds allow 24 m of
+terrain relief. No match schema/input fields were added.
+
+`plants.tide` caches stable 16 m latitude/longitude cells within 480 m and moves
+the cache after 48 m. Draw fading remains 320-400 m and 200-300 m above ground.
+Meadows have sparse broad crowns, woods layered evergreen crowns, dry
+regions cacti, and frost sparse rocky scrub. Climate thresholds are shared
+with the terrain. The four-biome regression checks actual stored plants and
+settles them with the actual movement systems; camera turns keep their roots
+and mesh data. Copying an owning LandChunk during every cache search was
+found to clone its list repeatedly; lookups now use a Map and plain fields.
+Scratch exhaustion in that rejected prototype reached a NULL copy in the
+runtime and was reported separately to the architecture coordinator; no
+runtime change or general safety fix is claimed here.
+
+The same muted Radeon iGPU diagnostic at 412 x 915, DPR 3 shows WebGL GPU medians
+38.83 -> 12.77 ms and WebGPU 32.18 -> 9.76 ms (roughly 67%/70% less). These remain
+exploratory, without a reserved quiet window or controlled clocks; they are
+terrain-only, not Pixel FPS. Native cached CPU recording is about 0.25 ms,
+while first-frame WASM generation is about 123 ms before shader/upload costs.
+Initial terrain generation and travel-triggered rebuilds still need a phone
+verdict. Frozen page hashes, source hashes, raw summaries and final shader
+correspondence are in `earth-terrain-measurements.json`; artifacts are in
+`build/earth-perf/`. The final cache-version change leaves all measured shader
+texts byte-identical. No timing here is called clean.
+
+Native/web debug Earth targets pass all 23 game checks and three benchmark
+cases. Native and web optimized builds confirm the same new pins: ordinary
+and diverge `2d4f30cae27728fa`, split `77140ad82e885ede`. These intentionally replace
+`642d3bbe3c5fb58c` / `db65d449fe39c077` because match positions now include relief;
+client/server verification, recovery and traffic assertions are unchanged.
+Native Vulkan validation walking/driving captures and Radeon WebGL/WebGPU
+shader checks pass. Android/Pixel hardware and other operating systems were
+not available. Engine/compiler/CLI source is unchanged by this pass.
+Integration merges dev's independent Transform-default smoothing change
+`85aebc66`. The sole notes conflict retains both benchmark records. Earth uses
+its custom Walker/Car position fields; rebuilt native/web Earth targets pass
+all 23 checks and three pins again (63.29/73.64 s). All 21 merged GLSL/WGSL
+texts remain byte-identical to the measured candidate. Optimized CLI/client
+builds and deployment staging are refreshed for that compiler dependency.
+Published Earth release
+`e8b0e6e23fcdc0b82d2ee2a874f6d88004e633053423974644e8ca4ac26c1fa7`
+to project `29c727eab929afcbef23455a6bf73125` / room `966ANR/0`.
+The downloaded production program matches the deployment bundle exactly.
+Muted Radeon WebGL and WebGPU clients join the actual room, land, walk and
+drive with zero reported errors at 412 x 915; the actual homepage frames the
+hosted project. These are correctness checks, not timing measurements.
+The owner subsequently reports the improvement on their phone. The separate
+stats follow-up above replaces this release without changing the relief.
+
 
 ## Earth exact biome gradient cache (2026-10-25)
 

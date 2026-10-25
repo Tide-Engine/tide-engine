@@ -26,9 +26,8 @@ static bool active(const editor_play *p)
     return p->state == EDITOR_PLAY_BUILDING || p->state == EDITOR_PLAY_RUNNING;
 }
 
-static void free_work(editor_play *p)
+static void release_work(editor_play *p)
 {
-    if (p->directory) sys_remove_tree(p->directory);
     free(p->directory); free(p->executable); free(p->log);
     free(p->project); free(p->source); free(p->scene);
     for (int i = 0; i < p->argument_count; i++) free(p->arguments[i]);
@@ -38,11 +37,33 @@ static void free_work(editor_play *p)
     p->arguments = NULL; p->argument_count = 0;
 }
 
+static bool free_work(editor_play *p)
+{
+    if (p->directory) {
+        // Process exit does not guarantee that Windows has released every
+        // file lock. Keep ownership until removal succeeds or a bounded wait
+        // ends; a failed Stop can then be retried without losing the path.
+        const int64_t until = sys_now_ms() + 1000;
+        while (!sys_remove_tree(p->directory)) {
+            if (sys_now_ms() >= until) {
+                p->state = EDITOR_PLAY_FAILED;
+                p->exit_code = 2;
+                snprintf(p->message, sizeof p->message,
+                    "Cannot remove private Play artifacts at %s. Close programs holding these files and try Play again.", p->directory);
+                return false;
+            }
+            sys_sleep_ms(10);
+        }
+    }
+    release_work(p);
+    return true;
+}
+
 void editor_play_stop(editor_play *p)
 {
     if (p->process) sys_kill(p->process);
     p->process = NULL;
-    free_work(p);
+    if (!free_work(p)) return;
     p->state = EDITOR_PLAY_STOPPED;
     p->exit_code = 0;
     snprintf(p->message, sizeof p->message, "Stopped; runtime state discarded.");
@@ -51,6 +72,7 @@ void editor_play_stop(editor_play *p)
 void editor_play_close(editor_play *p)
 {
     editor_play_stop(p);
+    if (p->directory) { fprintf(stderr, "%s\n", p->message); release_work(p); }
     *p = (editor_play){0};
 }
 
@@ -117,7 +139,7 @@ bool editor_play_start(editor_play *p, const editor_document *d, const editor_pl
     if (sys_hidden() && !bounded(arguments))
         return refuse(p, "TIDE_HIDDEN requires Play arguments --frames <n>, --capture <file.png> or --script <file>.");
 
-    free_work(p);
+    if (!free_work(p)) return false;
     p->exit_code = 0;
     p->revision = d->revision;
     p->project = copy_text(d->project);
@@ -132,7 +154,7 @@ bool editor_play_start(editor_play *p, const editor_document *d, const editor_pl
     if (!p->arguments) abort();
     for (int i = 0; i < p->argument_count; i++) p->arguments[i] = copy_text(arguments[i]);
     if (!make_work(p)) {
-        free_work(p);
+        if (!free_work(p)) return false;
         return refuse(p, "Cannot create the private Play build directory.");
     }
     char *draft = path_join(p->directory, "draft.txt");
@@ -148,7 +170,7 @@ bool editor_play_start(editor_play *p, const editor_document *d, const editor_pl
     if (wrote) p->process = sys_start_tree_logged(argv, p->project, p->log);
     free(draft); free(cache); free(cli);
     if (!p->process) {
-        free_work(p);
+        if (!free_work(p)) return false;
         return refuse(p, wrote ? "Cannot start the Play compiler; check the Tide installation." : "Cannot write the applied Play document.");
     }
     p->state = EDITOR_PLAY_BUILDING;
