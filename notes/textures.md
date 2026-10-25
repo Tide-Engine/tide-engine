@@ -1,5 +1,42 @@
 # Textures and how they are sampled
 
+## Raw Texture fields (2026-10-25)
+
+The owner approved extending [Raw] to Texture fields using the existing raw-grid
+pattern. Classification is static, with ordinary Texture references and sampling
+bits. Numeric pack bytes already stay raw; grid-backed references are captured
+through tide_texture_grid and tide_draw_grid_texture_raw, preserving channels
+even at alpha zero. There is no runtime role, new function or ABI. Metadata reads
+do not capture pixels and remain zero for absent resources. Static role checks
+prevent color/raw mismatches and unannotated escapes; read-only GPU helpers keep
+their source's role through specialization. Alias and attached-field placement,
+grid reference lifetimes and sampling remain ordinary behavior.
+
+raw_texture_fields records singular asset defaults/assignments, raw grid assets,
+Tide-owned numeric grids, field forwarding, aliases, attached fields, empty size,
+alpha-zero channels, filter/wrap/mip flags and pack unload/reload with retained
+references. Its golden and HLSL checks cover GLSL/WGSL numeric reads and helper
+forwarding. Existing Raw diagnostics remain, with new field-flow, whole-expression
+destination and overloaded CPU grid-escape fixtures. The former negative
+raw_on_texture_field case is replaced by the color-default mismatch fixture.
+Role-change migration is described and tested in hot-reload.md.
+
+Focused native validation passes 34 CTests (3.08 s), including all six capture/
+pack/migration cases, 28 Raw diagnostics, layout identity, GLSL/WGSL goldens and
+HLSL `/WX`; the focused Raw LSP protocol case passes too. The stock Render3D
+pipeline consumer regenerates and passes Clang strict C17 with warnings as errors.
+Full native/web and pixel validation belong to the combined integration.
+The final grid-source metadata capture correction also passes the six affected
+E2E/layout/golden/HLSL checks (1.55 s), including exact captured helper dimensions
+for local and asset grids and missing-pack metadata. Its standalone generated-C
+probe now compiles under the same strict C17 flags.
+The full scoped Raw review and a separate fresh review of the final metadata
+correction are clean. The latter inspected conversion, capture assertions,
+shader goldens and role-layout checks after the final source freeze.
+Combined native validation found the cubemap_asset_raw fixture's exact usage-note
+expectation still omitted Texture fields. It now pins the complete updated note
+while retaining the same Cubemap rejection; no compiler diagnostic changed.
+
 ## Texture dimensions (2026-10-18)
 
 The owner's request to clear conventional API gaps adds read-only

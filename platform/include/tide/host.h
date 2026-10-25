@@ -39,7 +39,7 @@ typedef struct tide_run_desc {
     // The debug views are on, as with the game's debugViews setting or
     // --debug-views on the command line: F7 shows the profiler (tide/profiler.h)
     bool debug_views;
-    // The command line: --host, --join and --connect, --debug-views, --size,
+    // The command line: --host, --join and --connect, --stats, --debug-views, --size,
     // and --capture, --frames, --script, --scale and --players for a run with
     // no window (see tide/run.h)
     int argc;
@@ -601,7 +601,7 @@ static inline uint32_t tide_run_whole(int *i, const char *flag, const uint32_t m
 }
 
 // How tide_run_game runs: what `desc` says, with the defaults for what it and
-// the game's settings leave out, and what its command line says: --debug-views,
+// the game's settings leave out, and what its command line says: --stats, --debug-views,
 // the window's size, its matches' seed, and a run with no window.
 static inline void tide_run_configure(const tide_run_desc *desc)
 {
@@ -624,7 +624,9 @@ static inline void tide_run_configure(const tide_run_desc *desc)
     bool scaled = false;
     for (int i = 1; i < tide_run_settings.argc; i++) {
         const char *arg = tide_run_settings.argv[i];
-        if (strcmp(arg, "--debug-views") == 0) {
+        if (strcmp(arg, "--stats") == 0) {
+            tide_run_settings.stats = true; // Keep the host's chosen initial drawer state.
+        } else if (strcmp(arg, "--debug-views") == 0) {
             tide_run_settings.debug_views = true;
         } else if (strcmp(arg, "--data-dir") == 0) {
             tide_run_data_directory = tide_run_value(&i, arg, "a save directory, like --data-dir test-saves");

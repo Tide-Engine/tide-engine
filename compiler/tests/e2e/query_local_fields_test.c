@@ -142,3 +142,18 @@ TIDE_TEST(query_local_fields_readonly_outer_and_row_borrows_observe_query_writes
         tide_local_free(&l); tide_world_free(&w);
     }
 }
+TIDE_TEST(query_local_fields_separate_loops_read_match_fields_then_attached_helper_defaults)
+{
+    tide_world w = {0}; tide_local l = {0};
+    tide_world_init(&w, 1.0f / 60); tide_local_init(&l);
+    const uint64_t hash = tide_world_hash(&w);
+    l.Control.mode = 14; frame(&w, NULL, &l);
+    TIDE_CHECK(l.Seen.before == 3 && l.Seen.total == 18);
+    TIDE_CHECK(!tide_has_Body_local(&l, FIRST) && !tide_has_Body_local(&l, SECOND));
+    l.Control.mode = 2; frame(&w, NULL, &l);
+    l.Seen.before = 0; l.Seen.total = 0;
+    l.Control.mode = 14; frame(&w, NULL, &l);
+    TIDE_CHECK(l.Seen.before == 3 && l.Seen.total == 28);
+    TIDE_CHECK(tide_world_hash(&w) == hash);
+    tide_local_free(&l); tide_world_free(&w);
+}

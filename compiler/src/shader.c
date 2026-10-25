@@ -3338,7 +3338,7 @@ bool declared_raw(const expr *texture)
 {
     if (!texture) return false;
     if (texture->bind == BIND_ASSET && texture->constant) return texture->constant->sample_raw;
-    return texture->kind == E_MEMBER && texture->field && texture->type.kind == TY_GRID && field_is_raw(texture->field);
+    return texture->field && (texture->type.kind == TY_GRID || texture->type.kind == TY_TEXTURE) && field_is_raw(texture->field);
 }
 
 void declared_sampling(const expr *texture, int *filter, int *wrap)
@@ -3414,7 +3414,7 @@ static bool has_roll(const expr *e, const int depth)
 // Whether a frag can work an expression out as it starts, before any branch:
 // it's made of the frag's parameters, constants, locals that are never
 // assigned again and whose own values are so, and what changes nothing
-// (arithmetic, Math, constructors, functions that take everything by value,
+// (arithmetic, Math, Instance.Normal, constructors, functions that take everything by value,
 // and a texture read at its own pixels). A frag asks how fast a Sample's uv
 // changes from pixel to pixel there, which a GPU only answers outside
 // branches and loops.
@@ -3474,7 +3474,7 @@ static bool liftable(const emit *em, const expr *e, const int depth)
                 const param *p = &fn->params.items[i];
                 if (p->mode == PARAM_MUT || p->is_out || p->type.decl == em->prog->pixel) return false;
             }
-        } else if (e->call != CALL_CONSTRUCT && e->call != CALL_BUILTIN) {
+        } else if (e->call != CALL_CONSTRUCT && e->call != CALL_BUILTIN && e->call != CALL_NORMAL) {
             return false;
         }
         if (on_value && !liftable(em, e->object, depth + 1)) return false;

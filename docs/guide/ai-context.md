@@ -18,7 +18,7 @@ Save the following as `game.tide` in an otherwise empty game folder. It is the s
 
 <<< @/examples/first-game.tide
 
-Build with `tide build`. For a human's interactive session, `tide run` watches files and reloads when they change. Automated checks (a script, CI or an AI agent) use a bounded hidden run instead, as shown below.
+Build with `tide build`. For a human's interactive session, `tide run --stats` watches files and reloads when they change. Automated checks (a script, CI or an AI agent) use a bounded hidden run instead, as shown below.
 
 ## The model
 
@@ -117,16 +117,16 @@ For automated native runs, set `TIDE_HIDDEN=1` in that shell before running the 
 
 ```powershell
 $env:TIDE_HIDDEN = '1'
-tide run --frames 120 --capture smoke.png
+tide run --frames 120 --capture smoke.png --stats
 ```
 
 POSIX:
 
 ```sh
-TIDE_HIDDEN=1 tide run --frames 120 --capture smoke.png
+TIDE_HIDDEN=1 tide run --frames 120 --capture smoke.png --stats
 ```
 
-This finishes after 120 frames and captures the final picture. Add `--size 640 360` to test a particular logical window size; use `Screen.width` and `Screen.height` for responsive layout. Open the PNG and inspect it; a successful build alone does not establish that the game draws or behaves correctly. If inspection is inconclusive, take a later capture or check simulation values with `Debug.Log`/`Debug.Assert` before concluding the game is blank or broken. For input, use `tide run --script smoke.txt --frames 180 --capture smoke.png`, with a script such as:
+This finishes after 120 frames and captures the final picture. Add `--size 640 360` to test a particular logical window size; use `Screen.width` and `Screen.height` for responsive layout. Open the PNG and inspect it; a successful build alone does not establish that the game draws or behaves correctly. If inspection is inconclusive, take a later capture or check simulation values with `Debug.Log`/`Debug.Assert` before concluding the game is blank or broken. For input, use `tide run --script smoke.txt --frames 180 --capture smoke.png --stats`, with a script such as:
 
 ```text
 1 key d down

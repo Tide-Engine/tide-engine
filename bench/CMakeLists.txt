@@ -95,9 +95,10 @@ endif()
 if(NOT TIDE_ANDROID)
     tide_add_game(bench_render3d NAME game SOURCES render3d/game.tide
         PACKAGES Render3D "${PROJECT_SOURCE_DIR}/packages/render3d/pbr.tide"
+                          "${PROJECT_SOURCE_DIR}/packages/render3d/materials.tide"
                           "${PROJECT_SOURCE_DIR}/packages/render3d/render3d.tide"
         HOST render3d/main.c render3d/direct.c)
-    target_link_libraries(bench_render3d PRIVATE tide_platform)
+    target_link_libraries(bench_render3d PRIVATE tide_platform tide_render3d)
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/render3d/mesh.obj")
     file(SHA256 "${CMAKE_CURRENT_SOURCE_DIR}/render3d/mesh.obj" render3d_mesh_sha256)
     target_compile_definitions(bench_render3d PRIVATE

@@ -1,5 +1,35 @@
 # Language features, as tidec builds them
 
+## Statically Raw Texture fields (2026-10-25)
+
+Owner-approved extension of [Raw] to Texture fields, following raw grids.
+Field initializers, defaults and assignments accept direct Raw assets/Texture
+fields/Color grids or default, including aliases and attached local state.
+Shared post-checking validates complete destination expressions, so switch arms
+cannot bypass the role requirement. Raw Texture reads join the existing deferred
+use check; size, destinations and read-only GPU helper source substitutions are
+permitted. Unannotated scalar storage, returns, CPU/mut/out arguments and direct
+draws retain the escape diagnostic. Selected overload conversions now apply the
+same Raw-grid rule as ordinary calls. Whole structs retain declared field roles;
+no new type, C storage, runtime bit or ABI is introduced. Shader/capture, reload
+and focused validation contracts are in shaders.md, textures.md and hot-reload.md.
+Editor Raw help and its existing protocol regression cover the extension.
+
+## Repeated query loops and attached defaults (2026-10-25)
+
+Render3D material integration exposed an unused generated const when one
+foreach reads only match fields and a later foreach of the same query forwards
+the component to an attached-local helper. The query's existing shared read
+analysis supplies the default local part to both loops. Each declaration now
+gets the generator's ordinary `(void)` marker, retaining its scope, initialization
+and attached lookup behavior under strict C17 warnings as errors. No runtime,
+capability, match layout or language/API change is introduced. The added
+query_local_fields case exercises both loops, nonallocating declared defaults,
+current attached values after writes and unchanged match hashes. Its complete
+12-case native E2E and the existing query safety fixture pass within the 15
+focused native compiler checks recorded in shaders.md. Full native/web validation
+remains for the combined integration.
+
 ## Transform correction defaults (2026-10-25)
 
 After the measured comparison in notes/benchmarks.md, the owner approved making

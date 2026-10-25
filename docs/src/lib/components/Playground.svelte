@@ -112,7 +112,7 @@
 
     onMount(() => {
         const backend = new URL(location.href).searchParams.get('backend');
-        previewUrl = '/playground/runtime.html' + (backend === 'webgl' || backend === 'webgpu' ? `?backend=${backend}` : '');
+        previewUrl = '/playground/runtime.html?stats' + (backend === 'webgl' || backend === 'webgpu' ? `&backend=${backend}` : '');
         const message = ({ origin, source: sender, data }: MessageEvent) => {
             if (origin !== location.origin || sender !== frame?.contentWindow) return;
             if (data.type === 'tide-ready') {

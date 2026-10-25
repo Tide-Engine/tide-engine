@@ -102,8 +102,8 @@
         for (const line of lines) (fd === 1 ? print : printErr)(line);
     }
 
-    // The program's arguments are the page's. `debug-views` in the page's
-    // address is --debug-views, as for a desktop game started with it, and
+    // The program's arguments are the page's. `stats` and `debug-views` in
+    // the page's address are --stats and --debug-views, as for a desktop game, and
     // `host` and `join=K7QF2M` are --host and --join K7QF2M (`join=K7QF2M/0`
     // a match of the room's server, as a sharded world's is): a page that shows
     // a game, or a link to one, says which match it's in. The page's own
@@ -116,6 +116,9 @@
     if (address.get('background-pipelines') === 'off') config.backgroundPipelines = false;
     if (address.has('debug-views') && !words.includes('--debug-views')) {
         words.push('--debug-views');
+    }
+    if (address.has('stats') && !words.includes('--stats')) {
+        words.push('--stats');
     }
     if (!words.some(word => word === '--host' || word === '--join' || word === '--connect')) {
         // A code is letters and digits, and a match after a slash: the program says what's wrong with one that isn't a room's

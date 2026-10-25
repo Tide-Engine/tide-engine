@@ -656,7 +656,7 @@ frag Shade(Corner corner, out Color color, Models models, Texture source)
 - **What a `Sample` there leaves out is still the texture's**: `Soft(tiles, ...)` reads `tiles` as its declaration says, and `Soft(source, ...)` as the texture the draw gave says. Each way each texture is read counts among the draw's 8.
 - **A function that samples is the GPU's alone**: frags, verts and the functions they call call it. A view or a system that calls one is an error that says so, as nothing on the CPU reads a texture's pixels. A function that only takes a texture and passes it to C, say, is still everyone's.
 - **A function's `Sample` reads the texture's own pixels, never between its smaller copies.** `Filter.Trilinear` is for a frag's own `Sample`, of a `uv` the frag can work out as it starts, and a function's `uv` is its call's. In a function a frag reaches, it's an error where the `Sample` says `Filter.Trilinear` or leaves its filter to a texture that says it, and a warning where it leaves it to a `Texture` that may (a field, the frag's own): write `Filter.Bilinear` there, or sample in the frag.
-- **A [`[Raw]`](#textures-that-are-numbers) texture is read by its name** in a function as in a frag, and isn't passed to one as a `Texture`.
+- **A [`[Raw]`](#textures-that-are-numbers) source keeps numeric sampling through GPU helpers.** Pass the original Raw asset, Raw texture field or Raw grid field expression to the helper's `Texture` parameter. The compiler specializes the helper for that source; this does not allow a Raw texture to escape through an ordinary CPU `Texture` value.
 
 ### Textures that are numbers
 
@@ -668,20 +668,34 @@ A texture is colors, each with how much of it there is: where a pixel's alpha is
 local singleton Terrain
 {
     [Raw] Grid2<Color> blend = Grid2(64, 64);    // ...or as code wrote its cells
+    [Raw] Texture mask;                        // A retained numeric texture
+}
+
+view BindTerrain(mut Terrain terrain)
+{
+    terrain.mask = masks;                      // Raw asset into a Raw field
+}
+
+Color ReadMask(Texture image, float2 uv)
+{
+    return image.Sample(uv, Filter.Bilinear);  // Keeps its source's Raw sampling
 }
 
 frag Ground(Vertex vertex, out Color color, Terrain terrain)
 {
-    Color mask = masks.Sample(vertex.uv);                 // Four numbers, as they are
+    Color mask = ReadMask(terrain.mask, vertex.uv);        // Four numbers, as they are
     Color weights = terrain.blend.Sample(vertex.uv);      // Blended between cells as numbers
     color = Color(mask.r * weights.r, mask.g, mask.b * weights.a);
 }
 ```
 
-- It goes before an asset that's one `Texture` or one `Grid2<Color>`, and on a field that's a `Grid2<Color>`. A `Grid2<float>` needs none: it has no alpha.
-- A frag or a vert reads it **by its name**, as above, and so does a function they call. It isn't a texture to draw with, to give a draw for its frag's `Texture` parameter, to pass to a function as a `Texture`, or to keep in a `Texture` field: each is an error that says so, as everything that draws a texture takes it for colors, and a `Texture` handed on doesn't say which kind it is.
+- It goes before an asset that's one `Texture` or one `Grid2<Color>`, and on a `Texture` or `Grid2<Color>` field. A match component uses an attached local field, such as `[Raw] local Texture mask;`, because textures belong to this machine. A `Grid2<float>` needs none: it has no alpha.
+- A `[Raw] Texture` field accepts `default`, a singular `[Raw] Texture` asset, another `[Raw] Texture` field, or a `[Raw] Grid2<Color>` field or asset. A grid-backed texture still names the grid's cells, with the [same lifetime rules](./meshes-and-textures.md#a-texture-is-a-value). Assigning an ordinary color texture to a Raw field is an error.
+- A frag or a vert samples the Raw asset or field by name, directly or through a [GPU texture helper](#in-a-function). Samples preserve the channel numbers, including where alpha is zero. The Raw field declaration determines numeric sampling; there is no separate Raw texture type or runtime Raw marker carried by arbitrary `Texture` values.
+- Raw sources cannot become ordinary `Texture` fields or CPU locals, be returned as `Texture`, or be supplied directly to a draw or blit. These uses are errors. Keep the original Raw source expression when forwarding it through GPU helpers.
+- `rawField.size` is available as ordinary texture metadata, including `int2(0)` for a default or unavailable image; pack reload follows the currently bound asset. Reading its size does not read or convert its pixels.
 - The same file can be declared twice, once `[Raw]` and once not: they're two textures.
-- `[Filter]` and `[Wrap]` go beside it as on any texture, and code reads a `[Raw]` grid's cells as it reads any grid's.
+- `[Filter]` and `[Wrap]` go beside Raw assets and grid fields as on other textures. A `Texture` field retains the bound texture's filter/wrap settings; those attributes do not go on the field itself. Code reads a `[Raw]` grid's cells as it reads any grid's.
 
 ## A target's depth
 

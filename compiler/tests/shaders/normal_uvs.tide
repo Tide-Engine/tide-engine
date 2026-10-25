@@ -1,0 +1,41 @@
+// Pure Instance.Normal values stay liftable through frame construction and
+// UV helpers, so both explicit and texture-carried trilinear reads use gradients.
+scene Main { }
+
+struct Corner
+{
+    float3 position;
+    float3 normal;
+    float2 uv;
+}
+struct MaterialInput
+{
+    float3 normal;
+    float2 uv;
+}
+local singleton Art
+{
+    Texture image;
+    List<Corner> corners;
+    List<int> faces;
+}
+
+MaterialInput MakeInput(float2 uv, float3 normal)
+{
+    return MaterialInput { normal = normal, uv = uv };
+}
+float2 MaterialUV(MaterialInput input)
+{
+    return input.uv + input.normal.xy * 0.125;
+}
+frag Surface(Corner vertex, out Color color, Instance instance, Texture source)
+{
+    var frame = MakeInput(vertex.uv, instance.Normal(vertex.normal));
+    var uv = MaterialUV(frame);
+    if (vertex.uv.x > 0.5) color = source.Sample(uv, Filter.Trilinear);
+    else color = source.Sample(instance.Normal(vertex.normal).xy);
+}
+view Show(Art art)
+{
+    Draw.Mesh(art.corners, art.faces, float4x4.identity, art.image, Surface);
+}

@@ -91,7 +91,7 @@ It's for what this machine shows, so match code can't ask it: the match is one w
 `tide run` runs every shard of a sharded game's match on this machine. To try borders out, split it into regions along x:
 
 ```sh
-tide run --shards 2 --shard-width 100
+tide run --shards 2 --shard-width 100 --stats
 ```
 
 `--shard-width` is each region's width in world units, 16 times `reach` without it.

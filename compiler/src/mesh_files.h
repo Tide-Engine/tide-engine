@@ -24,11 +24,12 @@ typedef struct mesh_file {
     float *uv;         // 2: (0, 0) at the texture's top left; zeros where the file has none
     float *uv2;        // 2: its second set, the same way
     float *color;      // 4: the vertex's color times its material's, as the screen shows it; white where the file has neither
-    float *tangent;    // 4: xyz and which way the bitangent goes; zeros where the file has none
+    float *tangent;    // 4: xyz and bitangent handedness; zeros where the file has none
     uint32_t *index;
     bool has_normals, has_uvs, has_uvs2, has_colors, has_tangents; // What any part of the file had, for the editor
     uint32_t parts;    // How many meshes of the file it's made of: a glTF's primitives as its nodes place them, an OBJ's one
     uint8_t hash[32];  // SHA-256 of all of the above: what's in the mesh, whatever files it came from
+    uint8_t *sources;  // Private import provenance per vertex: authored tangent (1), first UV (2); not hashed/packed
 } mesh_file;
 
 // A file a .gltf names beside it (its buffers'), by the path it writes, from
@@ -41,6 +42,11 @@ typedef const uint8_t *(*mesh_side_fn)(void *user, const char *path, size_t *siz
 // there's something to do about it, what in `note` (else empty).
 bool mesh_file_read(const uint8_t *data, size_t size, const char *name, mesh_side_fn side, void *user, mesh_file *out,
                     char why[256], char note[256]);
+
+// An owned copy of a canonical static import, with missing tangents generated
+// and opposite handedness split. Only consumers with float4 tangent select it;
+// mesh_file_read and its metadata/other-layout consumers retain original data.
+bool mesh_file_with_tangents(const mesh_file *source, mesh_file *out, char why[256], char note[256]);
 
 void mesh_file_free(mesh_file *m);
 

@@ -9,13 +9,26 @@
 # and not what tidec says of each wait.
 set(TIDE_PACKAGE_ORDER "${CMAKE_CURRENT_BINARY_DIR}/expect_order.cmake")
 
-# Render3D is pure Tide; consuming it introduces no runtime library.
-set(render3d_sources render3d/pbr.tide render3d/render3d.tide)
+# Rendering stays in Tide; a small C helper sorts owned transparent packets.
+add_library(tide_render3d STATIC render3d/transparent.c)
+target_link_libraries(tide_render3d PUBLIC tide)
+add_executable(tide_render3d_transparent "${PROJECT_SOURCE_DIR}/tests/test_main.c"
+    render3d/test/transparent_test.c)
+target_include_directories(tide_render3d_transparent PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_render3d_transparent PRIVATE tide_render3d)
+add_test(NAME tide_render3d_transparent COMMAND tide_render3d_transparent)
+set(render3d_sources render3d/pbr.tide render3d/materials.tide render3d/render3d.tide)
 tide_add_game(tide_render3d_pbr SOURCES render3d/test/pbr.tide NAME game
     PACKAGES Render3D render3d/pbr.tide
     HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" render3d/test/pbr_test.c)
 target_include_directories(tide_render3d_pbr PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 add_test(NAME tide_render3d_pbr COMMAND tide_render3d_pbr)
+
+tide_add_game(tide_render3d_materials SOURCES render3d/test/materials.tide NAME game
+    PACKAGES Render3D ${render3d_sources}
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" render3d/test/materials_test.c)
+target_include_directories(tide_render3d_materials PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tide_render3d_materials COMMAND tide_render3d_materials)
 
 tide_add_game(tide_render3d_pipeline SOURCES render3d/test/pipeline.tide NAME game
     PACKAGES Render3D ${render3d_sources}
@@ -30,6 +43,19 @@ target_include_directories(tide_render3d_shadow_batches PRIVATE "${PROJECT_SOURC
 add_test(NAME tide_render3d_shadow_batches COMMAND tide_render3d_shadow_batches)
 
 if(TARGET tide_platform AND NOT TIDE_ANDROID)
+    tide_add_game(tide_render3d_material_pixels SOURCES render3d/test/material_pixels.tide NAME game
+        PACKAGES Render3D ${render3d_sources} HOST render3d/test/material_pixels.c)
+    target_link_libraries(tide_render3d_material_pixels PRIVATE tide_platform tide_render3d)
+    if(TIDE_WEB)
+        tide_web_page(tide_render3d_material_pixels SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
+        tide_add_web_test(tide_render3d_material_pixels TARGET tide_render3d_material_pixels
+            WEBGPU EXPECT "ok: Render3D material maps" D3D11)
+    else()
+        add_test(NAME tide_render3d_material_pixels COMMAND tide_render3d_material_pixels)
+        add_test(NAME tide_render3d_material_pixels_opengl COMMAND tide_render3d_material_pixels)
+        tide_gpu_test(tide_render3d_material_pixels)
+        tide_gpu_test(tide_render3d_material_pixels_opengl OPENGL)
+    endif()
     tide_add_game(tide_render3d_shadow_batches_pixels SOURCES render3d/test/shadow_batches.tide NAME game
         PACKAGES Render3D ${render3d_sources} HOST render3d/test/shadow_batches_test.c)
     target_compile_definitions(tide_render3d_shadow_batches_pixels PRIVATE SHADOW_BATCHES_GPU)
@@ -57,6 +83,12 @@ if(TARGET tide_platform AND NOT TIDE_ANDROID)
         tide_gpu_test(tide_render3d_pixels_opengl OPENGL)
     endif()
 endif()
+foreach(target IN ITEMS tide_render3d_materials tide_render3d_pipeline tide_render3d_shadow_batches
+        tide_render3d_shadow_batches_pixels tide_render3d_pixels)
+    if(TARGET ${target})
+        target_link_libraries(${target} PRIVATE tide_render3d)
+    endif()
+endforeach()
 file(WRITE "${TIDE_PACKAGE_ORDER}" [=[
 execute_process(
     COMMAND "${TIDEC}" "${GAME}" --package "${PACKAGE}" "${SOURCE}" --schedule

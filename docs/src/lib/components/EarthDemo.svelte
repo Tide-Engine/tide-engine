@@ -9,7 +9,7 @@
     let running = $state(false);
     let shown = $state(false);
     let message = $state('A little planet to explore together');
-    let full = $state(shared);
+    let full = $state(`${shared}?stats`);
     let big = $state(false);
 
     $effect(() => {
@@ -41,6 +41,7 @@
         opened.title = 'Earth: a shared planet to walk and drive around';
         opened.allow = 'cross-origin-isolated; fullscreen';
         const url = new URL(hosted ? shared : '/earth/', location.href);
+        url.searchParams.set('stats', '');
         full = url.href;
         url.searchParams.set('embedded', '');
         if (backend) url.searchParams.set('backend', backend);

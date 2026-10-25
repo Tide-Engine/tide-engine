@@ -247,7 +247,7 @@ grabbing. A static infinite
 plane supports both ducks and four shared balls; the drawn floor is 4 × 3 m.
 Each duck's exclusion group suppresses internal collisions while retaining
 contacts with the floor, the other duck and balls.
-Run it with `tide run examples/robotics/microduck --release`; the unoptimized
+Run it with `tide run examples/robotics/microduck --release --stats`; the unoptimized
 CLI solver build is too slow for this full articulation.
 
 The default learned controller runs at 50 Hz without external balance or lane

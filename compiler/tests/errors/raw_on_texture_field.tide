@@ -1,9 +1,0 @@
-// expect: [Raw] says a texture's pixels are numbers with no alpha worked into them, and 'kept' is Texture
-local singleton Art
-{
-    [Raw] Texture kept;
-}
-
-scene Main
-{
-}

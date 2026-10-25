@@ -1,10 +1,11 @@
 # Render3D
 
-Optional opaque 3D rendering with mesh/material components, directional, point
+Optional 3D rendering with opaque, cutout and transparent mesh/material components, directional, point
 and spot lights, a shadow atlas, linear PBR lighting and HDR tone mapping. The
-package owns its lighting, shadow, color and presentation passes. Its namespace
-is `Render3D`. There is no implicit light: spawn light entities to light a surface;
-without them, only material emission contributes.
+package owns its lighting, shadow, color and presentation passes and includes a
+small C helper for transparent-object sorting. Its namespace
+is `Render3D`. Lights and ambient irradiance default to zero; with neither
+configured, only material emission contributes.
 
 ## Using it
 
@@ -46,25 +47,69 @@ With `using Render3D;`, write `asset Mesh3D Cube = "art/cube.obj";`.
 
 Full API and runnable example: [Render3D](https://tide-engine.dev/packages/render3d).
 The example's source is [docs/examples/render3d.tide](../../docs/examples/render3d.tide).
+Drag or swipe to orbit; use a pinch gesture or zoom buttons, and reset the
+camera from its controls. Standalone pages also support wheel zoom; the wheel
+scrolls the documentation page when an example is embedded. The [material example](../../docs/examples/render3d-materials.tide)
+compares normal/height/ORM/emission maps, cutout shadows and sorted transparency.
 
 ## Components and settings
 
-- `MeshVertex`: position, normal, UV and color (white by default).
+- `MeshVertex`: position, normal, tangent (`float4`), UV and color (white by default).
 - `MeshRenderer`: `Asset<Mesh3D> mesh`, `visible = true` and
   `castShadows = true`.
 - `Material`: display-space `baseColor` (white), `metallic` (0), `roughness`
   (0.5), linear HDR `emission` (0), and `receiveShadows = true`. Attached local
   `baseMap` defaults to the package's white texture; attached local `shader`
   defaults to `Render3D.Lit { surface = Render3D.StandardSurface }`.
+- Surface controls: `mode = SurfaceMode.Opaque` (`Cutout` and `Transparent` are
+  also available), `alphaCutoff = 0.5`, `doubleSided = false`, `normalScale = 1`,
+  `occlusionStrength = 1`, `heightScale = 0`, `uvScale = float2(1)`,
+  `uvOffset = float2(0)`.
+- Attached local maps: only `baseMap` defaults to `White`. `normalMap`,
+  `maskMap`, `emissionMap` and `heightMap` default to empty handles (`default`).
+  Empty maps leave the geometric normal, scalar roughness/metallic, occlusion 1
+  and scalar emission unchanged, with no height parallax. Unused optional maps
+  are not sampled, including empty maps on emissive materials. `FlatNormal` is
+  available for explicit assignment. ORM mask channels
+  are **R** ambient occlusion, **G** roughness, **B** metallic. Roughness and
+  metallic multiply their scalars; decoded emission multiplies linear HDR
+  `emission`. Normal/ORM/height channels are numeric; base and emission RGB
+  are display sRGB, and alpha is linear.
+
+`normalMap`, `maskMap` and `heightMap` are `[Raw] local Texture` fields.
+Bind Raw image assets, other Raw texture fields, Raw `Grid2<Color>` fields/assets
+or `default`. Ordinary color textures are rejected. `baseMap` and `emissionMap`
+are color fields. The Raw field annotation preserves the channel numbers,
+including zero-alpha pixels, through sampling and GPU texture helpers:
+
+```csharp
+[Raw] asset Texture normal = "art/normal.png";
+[Raw] asset Texture orm = "art/orm.png";
+[Raw] asset Texture height = "art/height.png";
+
+[Before(Render3D.Stages.Prepare)]
+view BindMaps(mut Render3D.Material material)
+{
+    material.normalMap = normal;
+    material.maskMap = orm;
+    material.heightMap = height;
+}
+```
+
+There is no separate Raw texture type. Raw sources cannot pass through ordinary
+`Texture` locals/fields, be returned as textures or be drawn directly. Keep
+the Raw source expression when passing it through a GPU texture helper.
 
 Put `MeshRenderer` and `Material` on **match entities**, using ordinary `Spawn`.
 Both are required to draw or cast shadows. Attached local resource fields prevent
 local-world material placement. Meshes follow the stored `Transform` hierarchy;
-textures and shader bindings stay machine-local.
+textures and shader bindings stay machine-local. Numeric material fields are
+match state: change them in match code or through a command from local UI.
 
 The per-machine local singleton `Renderer` has `enabled = true`, `camera`,
 display-space `background = Color(0.06, 0.08, 0.12)` and linear-multiplier
-`exposure = 1`. `Camera` defaults to position `(0,2,-5)`, identity rotation,
+`exposure = 1`, plus linear diffuse `ambientIrradiance = float3(0)`.
+`Camera` defaults to position `(0,2,-5)`, identity rotation,
 `verticalFov = 60deg` in **radians**,
 `near = 0.1` and `far = 1000`.
 
@@ -127,29 +172,65 @@ frame's recorded draws and presentation.
 
 ## Ordering and custom surfaces
 
-The package views run `Prepare → Lights → Shadows → Color → Opaque → Present`, from
+The package views run `Prepare → Lights → Shadows → Color → Opaque → Transparent → Present`, from
 `Render3D.Stages`. All casters finish before color rendering. Configure camera,
 lighting and attached local material fields in `[Before(Render3D.Stages.Prepare)]`
 views; draw window UI in `[After(Render3D.Stages.Present)]` views.
 
 Assign `material.shader = Render3D.Lit { surface = CustomSurface }` in a view.
 The callback is `Func<SurfaceInput, mut Surface, void>`: input contains `world`,
-`normal`, `uv` and `viewDirection`; the initialized surface contains linear
-`albedo`, world-space `normal`, `roughness`, `metallic` and linear HDR `emission`.
+`normal`, world-space `tangent`/`bitangent`, `uv` and `viewDirection`; the
+initialized surface contains linear `albedo`, world-space `normal`, `roughness`,
+`metallic`, linear HDR `emission` and `occlusion = 1`.
 Owned plain-value captures work; resource and heap captures do not. Callbacks
 change appearance, not shadow geometry; no custom vertex-deformation API is
 offered here. Compatible shader/mesh/texture/uniform/state draws can batch;
 different materials need not share a draw.
 
+`Material.uv` is an attached local
+`Func<SurfaceInput, mut float2, void>` initialized to `StandardUV`. It runs
+after `uvScale`/`uvOffset` and before height parallax. `Material.coverage` is an
+attached local `Func<SurfaceInput, mut Coverage, void>` initialized to
+`StandardCoverage`; it receives final UVs and the sampled alpha/cutoff.
+`Coverage` declares `alpha = 1`, `cutoff = 0.5`; the package initializes them from
+base-map/base-color/vertex alpha and the material cutoff. Both hooks run for
+cutout shadows too. The original `Lit { surface = CustomSurface }` form remains
+valid. A surface callback cannot change coverage.
+
+Opaque and cutout materials write depth. Cutout discards alpha below its cutoff
+in both color and shadow passes. Transparent materials draw after opaque/cutout
+with source-alpha blending, depth testing and no depth writes or shadow casting.
+Objects sort back to front; intersecting geometry and self-overlapping triangles
+can blend incorrectly because triangles are not sorted. `doubleSided` draws
+both sides and turns the shading frame toward the viewed side. No refraction
+or physically modeled glass transmission is provided.
+
+Normal maps use the mesh tangent frame, including mirrored/nonuniform transforms.
+Only static `Mesh<V>` layouts declaring `float4 tangent`, including `Mesh3D`,
+generate missing UV tangents and duplicate vertices at opposing generated
+handedness seams. Generated xyz is normalized and orthogonal to the normal,
+with w of +1 or -1 and finite fallbacks for degenerate UVs. Authored tangents
+retain their existing coordinate/node-transform conversion, including zero and
+nonorthogonal values. Layouts without tangents or with `float3 tangent`, and
+skinned meshes, retain their prior streams, counts, indices and canonical hashes.
+LOD preserves tangent signs only for static `float4 tangent` layouts, without a
+new xyz error metric; other layouts and skinned meshes retain their prior LOD
+behavior and cache keys. Generated tangents do not promise MikkTSpace bake compatibility. Height
+mapping shifts UVs with one height sample; it changes no geometry, depth or
+silhouette. Keep the scale modest, especially near grazing views.
+
 ## Current scope
 
-One camera; opaque static mesh assets with a base map, base color,
-metallic/roughness and emission. No `LightMode`, baked or area lights, cascades,
-transparency, skinning, normal/mask maps, GI, probes or light baker in this slice.
+One camera; static mesh assets with material maps and scalar values.
+No `LightMode`, baked or area lights, cascades, skinning, environment specular,
+GI, probes or light baker in this slice.
 Model texture and metallic/roughness import is not automatic.
 
 The package requests RGBA16F, sums direct light in linear HDR and adds nonnegative
-emission once, even with zero lights. There is no ambient/indirect approximation.
+emission once, even with zero lights. Optional diffuse ambient contributes
+`albedo * (1 - metallic) * ambientIrradiance * occlusion / Math.PI`.
+AO only affects this term, not direct lights or emission. This supplies no
+environment specular or automatic occlusion bake.
 It then applies linear exposure, Reinhard tone mapping and one sRGB encode.
 Base-map filtering currently happens in display space before decoding; it is not
 automatic hardware sRGB sampling.

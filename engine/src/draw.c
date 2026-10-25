@@ -2686,6 +2686,13 @@ static uint8_t *level_room(tide_draw_list *d, const uint64_t bytes, const uint32
     return d->level_room;
 }
 
+// Blended depth-read draws compose in submission order. Levels can split a
+// consecutive run, but cannot gather instances across a different level.
+static bool ordered_levels(const uint32_t depth, const uint32_t blend)
+{
+    return depth == TIDE_DEPTH_READ && blend != TIDE_BLEND_REPLACE;
+}
+
 static bool same_color(const tide_color a, const tide_color b)
 {
     return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
@@ -3013,6 +3020,17 @@ void tide_draw_shaded_instances(tide_draw_list *d, const tide_shader *shader, co
         counts[levels[i]]++;
     }
     d->leveled = 1;
+    if (ordered_levels(p->depth, p->blend)) {
+        for (uint32_t first = 0; first < count;) {
+            uint32_t end = first + 1u;
+            while (end < count && levels[end] == levels[first]) end++;
+            const uint32_t drawn = levels[first] ? level_mesh(d, mesh, levels[first]) : mesh;
+            const void *theirs = instances ? (const uint8_t *)instances + (size_t)first * size : NULL;
+            shaded_placed(d, shader, drawn, theirs, end - first, uniforms, textures, sampling);
+            first = end;
+        }
+        return;
+    }
     uint32_t starts[TIDE_MESH_LEVELS + 1];
     uint32_t at = 0;
     for (uint32_t level = 0; level <= TIDE_MESH_LEVELS; level++) {
@@ -3262,6 +3280,16 @@ void tide_draw_instances(tide_draw_list *d, const uint32_t mesh, const tide_floa
         counts[levels[i]]++;
     }
     d->leveled = 1;
+    if (ordered_levels(p->depth, p->blend)) {
+        for (uint32_t first = 0; first < count;) {
+            uint32_t end = first + 1u;
+            while (end < count && levels[end] == levels[first]) end++;
+            const uint32_t drawn = levels[first] ? level_mesh(d, mesh, levels[first]) : mesh;
+            instances_placed(d, drawn, transforms + first, end - first, texture, filter, wrap);
+            first = end;
+        }
+        return;
+    }
     if (counts[levels[0]] == count) { // All at one level: as they are
         instances_placed(d, levels[0] ? level_mesh(d, mesh, levels[0]) : mesh, transforms, count, texture, filter, wrap);
         return;
@@ -3464,6 +3492,12 @@ void tide_draw_gather_levels(const tide_draw_list *d)
         uint32_t end = i + 1u;
         const bool shaded = c->kind == TIDE_DRAW_SHADED;
         if (!shaded && c->kind != TIDE_DRAW_MESH_3D) {
+            i = end;
+            continue;
+        }
+        // Use recorded state: the caller may already have restored its depth
+        // and blend settings before preparation (or append) reaches this list.
+        if (ordered_levels(c->depth, c->blend)) {
             i = end;
             continue;
         }

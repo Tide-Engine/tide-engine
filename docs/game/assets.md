@@ -87,7 +87,7 @@ component Sign
 - The field gets the asset's value where the default is given: as an entity is spawned, as a match or this machine's local state starts, and for an entity's [local fields](./local-state.md) nothing wrote yet.
 - Text, bytes and a glob's list or map become independent field values: changing one changes neither the asset nor another field. Asset-backed lists can share immutable bytes until the first write, when that value detaches into owned storage. A field keeps the value it was assigned across asset reloads.
 - A `Texture`, a [`Clip`](./audio.md#clips) and a `Cubemap` name their asset, so they cost nothing to give, and under `tide run` a saved file shows through them.
-- A `Grid2<Color>` field can't start as an asset's grid, since a grid is never copied: read the asset's by its name, or give it to a `Texture` field, `Texture face = hero;`.
+- A `Grid2<Color>` field can't start as an asset's grid, since a grid is never copied: read the asset's by its name, or give an ordinary color grid to a `Texture` field, `Texture face = hero;`. A numeric `[Raw]` grid uses a [Raw texture field](./shaders.md#textures-that-are-numbers).
 - One of a glob's, like `run[0]` or `icons["art/icons/star.png"]`, isn't a default yet: a view assigns it.
 - Only a field's default takes one. A `const`, a setting, an attribute's bound, an asset's path and a parameter's default are constants alone, as the compiler works those out while it builds.
 
@@ -115,12 +115,14 @@ view Show(mut Player player)
 }
 ```
 
-- A `Texture` is a value (see [A Texture is a value](./meshes-and-textures.md#a-texture-is-a-value)): a draw's texture in 2D and 3D, the source a [frag's `Texture` parameter](./shaders.md#textures) is given, a [`Draw.Blit`](./render-targets.md#post-processing)'s source, something a field or a local holds and a function takes. A frag samples one by its name too: `hero.Sample(uv)`.
+- An ordinary color `Texture` is a value (see [A Texture is a value](./meshes-and-textures.md#a-texture-is-a-value)): a draw's texture in 2D and 3D, the source a [frag's `Texture` parameter](./shaders.md#textures) is given, a [`Draw.Blit`](./render-targets.md#post-processing)'s source, something a field or a local holds and a function takes. A frag samples one by its name too: `hero.Sample(uv)`. Numeric Raw sources follow the field rules below.
 - Its exact fallback keeps a byte per channel: a quarter of what the same image takes as a `Grid2<Color>`. Eligible color images also have a smaller compressed GPU copy, described below.
 - `texture.size` reads its base-level dimensions as an `int2`, without uploading pixels. An image whose pixels the game needs is a `Grid2<Color>`, which draws as a `Texture` too, and one file can be declared both ways.
 - It's this machine's, like everything that's drawn: views, local handlers and frags use it, and match code can't name one. The match reads a `Grid2<Color>`.
 - What a field keeps of `hero` or of `run[2]` is that image as the files have it now: under `tide run`, a saved picture shows through the copies a game kept, as it does through `hero` itself.
 - How it's sampled can be said once, on its declaration: `[Filter(Filter.Point), Wrap(Wrap.Repeat)]` before the asset (see [Saying it once, on the texture](./meshes-and-textures.md#saying-it-once-on-the-texture)). The `Texture` carries it: what a field keeps of `hero` is sampled as `hero` is.
+
+For numeric images, declare `[Raw] asset Texture masks = "art/masks.png";` and retain it in a `[Raw] Texture` field, or sample the asset by name in a shader. Raw images preserve all channels and stay out of ordinary color draws and `Texture` values. See [Textures that are numbers](./shaders.md#textures-that-are-numbers) for field assignments and GPU helper forwarding.
 
 ### GPU compression
 
@@ -247,12 +249,16 @@ The rocket below is a `.glb` as a modelling tool exports one: five meshes with a
 | `uv` | `float2` | Where in a texture the vertex is, (0, 0) at its top left. (0, 0) where the file has none. |
 | `uv2` | `float2` | The file's second set of those, which a lightmap uses. |
 | `color` | `Color` | The vertex's color times its material's. White where the file has neither. |
-| `tangent` | `float4` | Along the surface, for normal maps: `xyz`, and in `w` the side the bitangent is on, 1 or -1. Zero where the file has none. |
+| `tangent` | `float4` or `float3` | Tangent direction in `xyz`; a `float4` also carries bitangent handedness in `w`. Missing tangents are generated only for static `Mesh<V>` layouts declaring `float4 tangent`. |
 
 - A struct has the ones it needs, in any order: `Corner` above takes no uvs, so the pack holds none.
 - **A field of any other name keeps its default.** So one struct serves the meshes a game makes in code and the ones it loads: `float glow = 1;` is 1 at every vertex of a file's. A default can read another asset, even one declared later; each pack load supplies its current value and refreshes what is drawn when that value changes.
 - A field with one of those names and another type is an error at the declaration, which says the type the file's is.
 - The built-in [`Vertex3`](./3d.md) is a position, a uv and a color: `asset Mesh<Vertex3> crate = "art/crate.glb";` draws with no frag, `Draw.Mesh(crate, transform, wood)`.
+
+Only a static `Mesh<V>` whose vertex layout declares `float4 tangent` gets a tangent-generation variant. For its primitives without authored tangents, import derives tangents from triangle UV gradients and averages them with corner-angle weights. Generated `xyz` is normalized and orthogonal to the imported normal, with handedness `w` of +1 or -1; the bitangent is `w * cross(normal, tangent.xyz)`. A vertex shared by generated corners with opposite UV handedness splits at that seam. Missing or degenerate UVs get a finite fallback frame. Authored tangents retain their existing coordinate/node-transform conversion, including authored zero and nonorthogonal values; the generated-basis guarantees do not apply to them. Generated tangents support ordinary tangent-space normal maps but do not guarantee a match to a MikkTSpace normal-map bake.
+
+Layouts without a tangent field, layouts with `float3 tangent`, and skinned meshes retain their prior imported streams, vertex counts, indices and canonical hashes. Missing `float3` tangents remain zero. Generating a variant for one declaration does not change another declaration's canonical import. Metadata-only language-server checks use canonical imports and do not generate tangent variants.
 
 **It's two lists.** `tree.vertices` is a `List<Corner>` and `tree.indices` a `List<int>`, three for each triangle, and `Draw.Mesh(tree.vertices, tree.indices, transform, Look)` is the same draw. Any code reads them, the match too, since every machine has the same pack, to the bit: a system can build a collider from a rock's own triangles. They're read-only, like every asset; copy one to change it, `mut var mine = tree.vertices;`.
 
@@ -302,6 +308,7 @@ That's all there is to write. There are no distances to set, no levels to author
 
 - **It's opt-in.** A mesh without `[LOD]` is drawn as it always was, with nothing made for it.
 - **A level is fewer of the mesh's own triangles.** Each has about half the triangles of the one before, over the same vertices: none is added or moved, so the pack grows by the levels' triangles alone, about as much again as the mesh's own. Open edges stay where they are, and so do the seams where a texture or a color changes, so no hole opens and no texture tears.
+- **Static layouts with a `float4 tangent` preserve opposite handedness signs as separate seams.** Tangent `xyz` adds no simplification error metric. Other vertex layouts and skinned meshes retain their previous LOD behavior and cache keys.
 - **No level has fewer than 500 triangles.** A level only pays by the triangles it takes off a draw, and picking one costs a little for each instance. So a chain stops before it gets that small, and a mesh of under 1,000 triangles gets no levels at all: it draws exactly as if it weren't marked, with nothing picked.
 - **A draw picks the simplest level that looks the same.** Each level knows how far its surface is from the full mesh's. A draw takes the simplest one whose difference is under a pixel where the mesh is, so a mesh drawn large keeps all its detail at any distance.
 - **Each instance picks its own.** `Draw.Instanced` over a field of rocks draws the near ones whole and the far ones simple: one GPU draw for each level in use, the instances of each in the order the list has them. A view that runs for each entity is grouped the same way.

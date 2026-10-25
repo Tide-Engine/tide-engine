@@ -1,0 +1,48 @@
+// Raw Texture fields keep their role through aliases and ordinary GPU helper parameters.
+using Image = Texture;
+using Pixels = Grid2<Color>;
+[Raw] asset Image numbers = "../e2e/assets/hero.png";
+asset Image colors = "../e2e/assets/hero.png";
+[Raw] asset Pixels cells = "../e2e/assets/hero.png";
+scene Main { }
+component Panel { [Raw] local Image image = numbers; }
+event(Spawned) Setup(with Main) { Spawn(Panel); }
+local singleton Art
+{
+    [Raw] Image initial = numbers;
+    [Raw] Image image;
+    [Raw] Image numeric;
+    [Raw] Image packed;
+    [Raw] Image none = default;
+    Image color = colors;
+    [Raw] Pixels values = Grid2(2, 1);
+}
+Color SamplePair(Texture source, float2 uv)
+{
+    return source.Sample(uv, Filter.Bilinear) + source.Sample(uv, Filter.Point, Wrap.Repeat);
+}
+Color Forward(Image source, float2 uv) { return SamplePair(source, uv); }
+Color Forward(int source, float2 uv) { return Color(float(source), uv); }
+int2 Dimensions(Texture source) { return source.size; }
+float2 Moved(float2 uv) { return uv * 0.5 + float2(0.25, 0.25); }
+frag ReadFields(Vertex vertex, out Color color, Art art, Panel panel)
+{
+    color = Forward(art.image, vertex.uv) + Forward(art.numeric, vertex.uv)
+          + art.packed.Sample(Moved(vertex.uv), Filter.Trilinear) + Forward(panel.image, vertex.uv)
+          + Color(float(art.none.size.x), 0, 0);
+}
+frag ReadRoles(Vertex vertex, out Color color, Art art)
+{
+    color = Forward(art.image, vertex.uv) + Forward(art.color, vertex.uv)
+          + Forward(art.values, vertex.uv) + Forward(numbers, vertex.uv)
+          + Color(float(Dimensions(art.image).x + Dimensions(art.values).x + Dimensions(cells).y), 0, 0);
+}
+view Show(mut Art art, mut Panel panel)
+{
+    art.image = art.initial;
+    art.numeric = art.values;
+    art.packed = cells;
+    panel.image = art.image;
+    Draw.Mesh([Vertex { }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }], [0, 1, 2], ReadFields);
+    Draw.Mesh([Vertex { }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }], [0, 1, 2], ReadRoles);
+}

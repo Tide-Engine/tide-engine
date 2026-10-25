@@ -1,0 +1,118 @@
+using Render3D;
+
+scene Main;
+singleton MaterialSimulation { int marker = 53; }
+
+local singleton MaterialResults
+{
+    SurfaceInput[8] frames;
+    float3[7] normals;
+    float2[5] uvs;
+    Coverage[5] coverage;
+    float3[5] indirect;
+    float3[2] direct;
+    float3[2] emission;
+    int framesEvaluated;
+}
+
+// CPU equivalent of the existing Instance.Normal contract, supplied explicitly
+// to the numeric frame helper. The C expectations below use analytic landmarks.
+float3 FrameNormal(float4x4 matrix, float3 normal)
+{
+    float3 a = Math.Cross(matrix.c1.xyz, matrix.c2.xyz);
+    float3 b = Math.Cross(matrix.c2.xyz, matrix.c0.xyz);
+    float3 c = Math.Cross(matrix.c0.xyz, matrix.c1.xyz);
+    float sign = Math.Dot(matrix.c0.xyz, a) < 0 ? -1 : 1;
+    return Math.Normalize((a * normal.x + b * normal.y + c * normal.z) * sign);
+}
+
+SurfaceInput MaterialFrame(float4x4 matrix, float3 normal, float4 tangent, float3 viewDirection, bool doubleSided)
+{
+    float handedness = Mirrors(matrix) ? -1 : 1;
+    return MaterialInput(float3(2, 4, 6), FrameNormal(matrix, normal), tangent,
+        FrameNormal(matrix, TangentPlaneNormal(normal, tangent)),
+        FrameNormal(matrix, TangentPlaneSecond(normal, tangent)),
+        handedness, float2(0.25, 0.75), viewDirection, doubleSided);
+}
+
+void ApplyOffsetUV(SurfaceInput input, mut float2 uv, float amount)
+{
+    uv += float2(amount, input.world.x * amount);
+}
+
+Func<SurfaceInput, mut float2, void> OffsetUV(float amount)
+{
+    return (SurfaceInput input, mut float2 uv) => ApplyOffsetUV(input, uv, amount);
+}
+
+void ApplyFromUV(SurfaceInput input, mut Coverage coverage, float amount)
+{
+    coverage.alpha = input.uv.x + amount;
+    coverage.cutoff = input.uv.y;
+}
+
+Func<SurfaceInput, mut Coverage, void> FromUV(float amount)
+{
+    return (SurfaceInput input, mut Coverage coverage) => ApplyFromUV(input, coverage, amount);
+}
+
+view EvaluateMaterials(mut MaterialResults results)
+{
+    float3 n = float3(0, 0, 1);
+    float4 t = float4(1, 0, 0, 1);
+    var identity = float4x4.Scale(float3(1));
+    var scale = float4x4.Scale(float3(2, 3, 4));
+    var mirror = float4x4.Scale(float3(-2, 3, 4));
+    var shear = float4x4(float4(2, 0, 0, 0), float4(1, 3, 0, 0),
+                         float4(0.5, 0.25, 4, 0), float4(0, 0, 0, 1));
+    results.frames[0] = MaterialFrame(identity, n, t, n, false);
+    results.frames[1] = MaterialFrame(scale, n, t, n, false);
+    results.frames[2] = MaterialFrame(shear, Math.Normalize(float3(1, 1, 1)), float4(1, -1, 0, 1), n, false);
+    results.frames[3] = MaterialFrame(mirror, n, t, n, false);
+    results.frames[4] = MaterialFrame(mirror, n, float4(1, 0, 0, -1), n, false);
+    results.frames[5] = MaterialFrame(identity, n, float4(0), n, false);
+    results.frames[6] = MaterialFrame(identity, float3(0), float4(0), n, false);
+    results.frames[7] = MaterialFrame(identity, n, t, -n, true);
+    results.normals[0] = MaterialNormal(results.frames[0], float3(0.5, 0.5, 1), 1);
+    results.normals[1] = MaterialNormal(results.frames[0], float3(1, 0.5, 0.5), 1);
+    results.normals[2] = MaterialNormal(results.frames[3], float3(1, 0.5, 0.5), 1);
+    results.normals[3] = MaterialNormal(results.frames[4], float3(0.5, 1, 0.5), 1);
+    results.normals[4] = MaterialNormal(results.frames[7], float3(0.5, 1, 0.5), 1);
+    results.normals[5] = MaterialNormal(results.frames[0], float3(1, 0.5, 1), 0);
+    results.normals[6] = MaterialNormal(results.frames[6], float3(0.5), 1);
+
+    SurfaceInput input = results.frames[0];
+    results.uvs[0] = MaterialUV(input, float2(2, 0.5), float2(-0.25, 0.125), StandardUV);
+    results.uvs[1] = MaterialUV(input, float2(2, 0.5), float2(-0.25, 0.125), OffsetUV(0.125));
+    SurfaceInput oblique = MaterialUVInput(input, results.uvs[1]);
+    mut SurfaceInput viewed = oblique;
+    viewed.viewDirection = Math.Normalize(float3(1, 0, 1));
+    results.uvs[2] = ParallaxUV(viewed, oblique.uv, 1, 0.2);
+    results.uvs[3] = ParallaxUV(viewed, oblique.uv, 0.5, 0.2);
+    results.uvs[4] = ParallaxUV(viewed, oblique.uv, 1, 0);
+    results.coverage[0] = MaterialCoverage(input, 0.25, 0.5, StandardCoverage);
+    results.coverage[1] = MaterialCoverage(input, -1, 2, StandardCoverage);
+    results.coverage[2] = MaterialCoverage(input, 2, -1, StandardCoverage);
+    SurfaceInput finalInput = MaterialUVInput(viewed, results.uvs[2]);
+    results.coverage[3] = MaterialCoverage(finalInput, 0, 0, FromUV(0.125));
+    results.coverage[4] = MaterialCoverage(finalInput, 0.5, 0.5, default);
+
+    mut Surface surface = Surface { albedo = float3(0.25, 0.5, 1), metallic = 0.25, occlusion = 0.5 };
+    results.indirect[0] = EvaluateIndirectPbr(surface, float3(Math.PI));
+    surface.occlusion = 0;
+    results.indirect[1] = EvaluateIndirectPbr(surface, float3(Math.PI));
+    results.direct[0] = EvaluateDirectPbr(surface, float3(0, 1, 0), float3(0, 1, 0), float3(1), 1);
+    surface.occlusion = 1;
+    results.direct[1] = EvaluateDirectPbr(surface, float3(0, 1, 0), float3(0, 1, 0), float3(1), 1);
+    results.indirect[2] = EvaluateIndirectPbr(surface, float3(-1));
+    surface.metallic = 1;
+    results.indirect[3] = EvaluateIndirectPbr(surface, float3(Math.PI));
+    surface = Surface { albedo = float3(-1, 0.5, 2), metallic = -1, occlusion = 2 };
+    results.indirect[4] = EvaluateIndirectPbr(surface, float3(Math.PI));
+    surface.emission = float3(2, 4, 8);
+    surface.occlusion = 0;
+    results.emission[0] = EvaluatePbr(surface, float3(0), n, float3(1), 1);
+    surface.occlusion = 1;
+    results.emission[1] = EvaluatePbr(surface, float3(0), n, float3(1), 1);
+    results.framesEvaluated++;
+}

@@ -1,5 +1,52 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Runtime stats argument and documentation pages (2026-10-25)
+
+The standard host now recognizes `--stats` in its runtime command line and
+enables `tide_run_settings.stats`. It leaves `stats_open` and the drawer's
+configured initial open/closed state unchanged. Ordinary standalone builds
+therefore start with the collapsed line; a CLI `tide run --stats` host keeps
+its existing generated `stats_open = true` choice. No runtime API, layout,
+measurement policy or reload ownership changed. The embed's independent
+option parsing retains its existing behavior.
+
+`platform/web/tide.js` maps the presence of `stats` in a page's query to
+`--stats`, unless the page-owned `Tide.arguments` already contains it. Repeated
+query keys still add one argument; existing host/join/connect selection and
+debug-view options keep their behavior. Docs embedded and standalone launch
+paths request this query (`notes/docs-site.md`). The root owns regeneration
+of the checked-in release web runtime before builds or publication.
+
+`platform/tests/web_stats.c` configures the real host against a copied game
+without its stats setting, checking disabled-by-default, runtime enable with
+a collapsed drawer, preservation of a preconfigured open drawer and repeated
+arguments. The existing browser drawer/input/timing checks remain intact.
+`cmake/web_runtime.test.mjs` executes the production argument-assembly block
+in a VM, checking exact NUL-terminated WASI argv for no query, unrelated keys,
+stats, duplicate query/config requests and concurrent debug/join/host options.
+
+Final integration: the full native and web builds pass. The native full suite
+passes 2,773 of 2,774 enabled tests; the sole failure is the unchanged private
+CRACKED hash failure reproduced on the pre-existing baseline. Repository web
+checks pass, including 11 scenarios on all three backends. Optional private
+InsideOut WebGL play has a mismatch under read-only attribution, and remaining
+optional private playthroughs are running; final overall web-suite status
+remains pending. Node argv/query tests and both WebGL/WebGPU stats tests pass.
+Native material-demo runs with
+`--frames 240 --stats` at 376 x 400 and 960 x 540 pass, fit the cube above open
+controls and show the collapsed stats line at bottom right; the base-demo
+capture also shows its collapsed 60 FPS line. Final Svelte check reports zero
+errors/warnings, the staged production docs build passes, and fresh combined
+material code/docs integration review is clean. Final selected docs browser
+runs pass for both demos on WebGL/WebGPU, with scene-pixel witnesses for orbit,
+zoom, exact camera Reset restoration, height command, cutoff/opacity sliders
+and collapsed zoom above stats, plus displayed-source and stats-URL deduplication
+checks. Captures are `build/material-docs-final-webgl` and
+`build/material-docs-final-webgpu`; WebGL cutout/blend/collapsed shots were
+visually inspected. All three exports/admin HTTP checks and 301 grammar checks
+pass; the latest five-test playground rerun is active. Isolated JavaScript
+syntax and diff checks pass; this child ran no browser.
+
 ## GUI selection clipboard callback (2026-10-25)
 
 The standard host binds tide_gui.copy to tide_platform_copy after begin, allowing

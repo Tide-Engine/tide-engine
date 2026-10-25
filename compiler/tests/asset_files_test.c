@@ -130,6 +130,16 @@ TIDE_TEST(asset_mesh_side_notifications_override_unchanged_metadata)
         TIDE_CHECK(value->items[0].mesh.vertices == 3 && value->items[0].mesh.position[3] == -1.0f);
         uint8_t original[32];
         memcpy(original, value->items[0].mesh.hash, sizeof original);
+        uint8_t tangent_original[32] = {0};
+        if (k == 0u) {
+            const float *canonical = value->items[0].mesh.position;
+            TIDE_REQUIRE(asset_mesh_tangents(value, (loc){0}));
+            TIDE_CHECK(value->items[0].mesh.position != canonical && value->items[0].mesh.tangent[3] == 1.0f);
+            memcpy(tangent_original, value->items[0].mesh.hash, sizeof tangent_original);
+            value = asset_resolve(source, str_from("shape.gltf"), kinds[k], false, false, (loc){0}, NULL);
+            TIDE_REQUIRE(value && value->items[0].mesh.position == canonical);
+            TIDE_CHECK(memcmp(value->items[0].mesh.hash, original, sizeof original) == 0);
+        }
         triangle.positions[3] = 2.0f;
         TIDE_REQUIRE(write_bytes(side, &triangle, sizeof triangle) && pin_time(side));
         TIDE_REQUIRE(folder_file_info(side, &changed_bytes, &changed_time));
@@ -137,11 +147,20 @@ TIDE_TEST(asset_mesh_side_notifications_override_unchanged_metadata)
         value = asset_resolve(source, str_from("shape.gltf"), kinds[k], false, false, (loc){0}, NULL);
         TIDE_REQUIRE(value && value->count == 1);
         TIDE_CHECK(memcmp(value->items[0].mesh.hash, original, sizeof original) == 0);
+        if (k == 0u) {
+            TIDE_REQUIRE(asset_mesh_tangents(value, (loc){0}));
+            TIDE_CHECK(memcmp(value->items[0].mesh.hash, tangent_original, sizeof tangent_original) == 0);
+        }
         asset_files_changed(side);
         value = asset_resolve(source, str_from("shape.gltf"), kinds[k], false, false, (loc){0}, NULL);
         TIDE_REQUIRE(value && value->count == 1);
         TIDE_CHECK(value->items[0].mesh.position[3] == -2.0f);
         TIDE_CHECK(memcmp(value->items[0].mesh.hash, original, sizeof original) != 0);
+        if (k == 0u) {
+            TIDE_REQUIRE(asset_mesh_tangents(value, (loc){0}));
+            TIDE_CHECK(value->items[0].mesh.position[3] == -2.0f);
+            TIDE_CHECK(memcmp(value->items[0].mesh.hash, tangent_original, sizeof tangent_original) != 0);
+        }
         triangle.positions[3] = 1.0f;
         TIDE_REQUIRE(write_bytes(side, &triangle, sizeof triangle) && pin_time(side));
         asset_files_changed(side);
@@ -149,6 +168,11 @@ TIDE_TEST(asset_mesh_side_notifications_override_unchanged_metadata)
         TIDE_REQUIRE(value && value->count == 1);
         TIDE_CHECK(value->items[0].mesh.position[3] == -1.0f);
         TIDE_CHECK(memcmp(value->items[0].mesh.hash, original, sizeof original) == 0);
+        if (k == 0u) {
+            TIDE_REQUIRE(asset_mesh_tangents(value, (loc){0}));
+            TIDE_CHECK(value->items[0].mesh.position[3] == -1.0f);
+            TIDE_CHECK(memcmp(value->items[0].mesh.hash, tangent_original, sizeof tangent_original) == 0);
+        }
     }
     // Skinned imports detect valid glTF by content even under another suffix.
     // The OBJ-specific guidance only replaces a failed import's diagnostic.

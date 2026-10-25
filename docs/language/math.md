@@ -339,7 +339,7 @@ A `Random` has one field, `long state`, which is all there is to it: copy it to 
 
 ### The match's seed
 
-`Random.seed` is an `int` from 0 to 2147483647 that the machine starting a match picks, so matches can vary (but in a game run [without a window](../tools/cli.md#without-a-window), where it's 0, so the run repeats). `tide run --seed 7` picks it, to play a match's rolls again or to try others. It's part of the match: a player who joins gets it with the world, and players don't send a seed separately. The match's rolls come from it, the engine seeds the match's generators from it, and a game reads it, with no parameter, where it wants numbers by place:
+`Random.seed` is an `int` from 0 to 2147483647 that the machine starting a match picks, so matches can vary (but in a game run [without a window](../tools/cli.md#without-a-window), where it's 0, so the run repeats). `tide run --seed 7 --stats` picks it, to play a match's rolls again or to try others. It's part of the match: a player who joins gets it with the world, and players don't send a seed separately. The match's rolls come from it, the engine seeds the match's generators from it, and a game reads it, with no parameter, where it wants numbers by place:
 
 ```csharp
 // The same cave on every machine, and another one every match.

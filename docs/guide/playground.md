@@ -46,5 +46,5 @@ Renaming or removing state can reset it. Web reload currently closes connections
 to other players, so this playground demonstrates a solo match.
 
 For a complete project, [install Tide](./install.md) and follow
-[Your first game](./first-game.md). Use `tide run --web` for the same browser
+[Your first game](./first-game.md). Use `tide run --web --stats` for the same browser
 preview with local project files and watched rebuilds.

@@ -74,6 +74,7 @@ function withoutWebsite(source: string): string {
     const containers: string[] = [];
     return prose(source, (text) => text
         .replace(/<div data-tide-ai-setup><\/div>/g, '')
+        .replace(/^ {0,3}<div data-tide-earth><\/div>[ \t]*$/gm, `[Play Earth](${siteUrl('/earth/?stats')})`)
         .replace(/<ul\b[^>]*class="sample-grid"[^>]*>([\s\S]*?)<\/ul>/g, (_, cards: string) =>
             [...cards.matchAll(/<li><a\b[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>([\s\S]*?)<\/li>/g)].map(([, href, body, links]) => {
                 const field = (name: string) => plainHtml(new RegExp(`<[^>]+class="${name}"[^>]*>([\\s\\S]*?)<\\/(?:span|strong)>`).exec(body)?.[1] ?? '');
@@ -84,7 +85,11 @@ function withoutWebsite(source: string): string {
         .replace(/<iframe\b([^>]*)>[\s\S]*?<\/iframe>/g, (_, attrs: string) => {
             const src = /\bsrc="([^"]+)"/.exec(attrs)?.[1];
             const title = /\btitle="([^"]+)"/.exec(attrs)?.[1] ?? 'Open game';
-            return src ? `[${title}](${src.replace(/\?embedded\b/, '')})` : '';
+            if (!src) return '';
+            const url = new URL(md.utils.unescapeAll(src), SITE_ORIGIN);
+            url.searchParams.delete('embedded');
+            url.searchParams.set('stats', '');
+            return `[${title}](${url.href})`;
         })
         .replace(/^ {0,3}:{3,}[ \t]*(.*)$/gm, (line, info: string) => {
             if (!info.trim()) return containers.pop() ? '' : line;
@@ -95,7 +100,7 @@ function withoutWebsite(source: string): string {
             if (name.startsWith('tide-')) {
                 const id = rest.shift();
                 if (rest[0]?.startsWith('lag=')) rest.shift();
-                return `**${rest.join(' ')}** ([Run example](${siteUrl(`/examples/${id}/`)}))`;
+                return `**${rest.join(' ')}** ([Run example](${siteUrl(`/examples/${id}/?stats`)}))`;
             }
             const label = name[0].toUpperCase() + name.slice(1);
             return `**${label}${rest.length ? `: ${rest.join(' ')}` : ''}**`;

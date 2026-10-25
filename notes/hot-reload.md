@@ -1,5 +1,17 @@
 # Hot reloading
 
+## Raw Texture field roles (2026-10-25)
+
+Owner-approved Raw Texture fields retain their ordinary C reference layout.
+Annotated fields receive a generated header comment so a role flip changes the
+game header hash and selects migration, plus private layout spelling
+`[Raw] Texture` instead of `Texture`. Existing migration therefore keeps a
+compatible Raw reference and resets Raw/plain role changes to destination defaults.
+No migration runtime, metadata ABI, match storage or simulation identity changes.
+The Raw-free header is unchanged. raw_texture_layout checks role-sensitive game
+hashes, identical C headers aside from the marker and unchanged simulation IDs;
+raw_texture_fields exercises actual packed-local migration and pack reload.
+
 ## Task handles and cached results (2026-10-25)
 
 Compatible reload carries operation identities, registry state and typed

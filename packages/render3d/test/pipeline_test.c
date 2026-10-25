@@ -354,8 +354,12 @@ TIDE_TEST(render3d_point_face_matrices_boundaries_four_textures_and_batched_shad
                 if (run->count >= 2) batched = true;
             } else {
                 TIDE_CHECK(hdr_started && !presented && destination == local.Render3D_Renderer.hdr.id);
-                TIDE_CHECK(run->shader->texture_count == 4);
-                for (int texture = 0; texture < 4; texture++) TIDE_CHECK(run->textures[texture] != 0);
+                TIDE_CHECK(run->shader->texture_count == 8);
+                int bound = 0;
+                for (int texture = 0; texture < 8; texture++) bound += run->textures[texture] != 0;
+                // Base color, shadow atlas and the two light/view data lists.
+                // The four omitted material maps bind the neutral fallback.
+                TIDE_CHECK(bound == 4);
                 color_draws++;
             }
         }

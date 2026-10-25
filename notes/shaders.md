@@ -1,5 +1,40 @@
 # Code the GPU runs: frags and verts
 
+## Raw Texture field specialization (2026-10-25)
+
+The owner's Raw Texture field completion keeps the role on the resolved field,
+including attached local fields and aliases. declared_raw reads that marker for
+Texture fields as for grids. Existing texture_of/given.sampled specialization
+preserves the original source through helper chains; numeric samples omit
+tide_straight while ordinary colors keep it. The new raw_texture_fields golden
+pins both languages, helper forwarding, several sources and direct trilinear
+gradients. Codegen detects grid-backed Raw field references with existing
+tide_texture_grid, then calls tide_draw_grid_texture_raw; already-raw pack images
+use tide_draw_texture_source. No binding count, runtime API or backend changes
+are introduced. Grid sources forwarded to a Texture size helper convert through
+existing tide_texture_of_grid before tide_texture_size; this fixes a reproduced
+strict-C17 grid/reference type mismatch, with captured metadata checks for a local
+grid and an asset grid. Carried filter/wrap/mip bits retain their existing paths.
+Byte/capture and reload checks are recorded in textures.md.
+
+## Normal-derived material UV gradients (2026-10-25)
+
+`liftable` now accepts the existing pure `CALL_NORMAL`, preserving its ordinary
+receiver/argument checks. Immutable UVs derived from `Instance.Normal` therefore
+retain trilinear gradients, including through numeric MaterialInput construction
+and UV helper calls. The new normal_uvs golden pins GLSL `dFdx`/`dFdy` and
+`textureGrad`, plus WGSL `dpdx`/`dpdy` and `textureSampleGrad`, with derivatives
+before the branch and local declarations. It covers direct normal-derived UVs
+and helper forwarding, with explicit and texture-carried sampling filters.
+Sampling remains in the frag; helper sampling and changing/loop UV restrictions
+retain their existing diagnostics. No language, runtime, shader binding or API
+change is introduced. Warning-free native builds and all 15 focused checks pass
+(6.31 s): the query E2E/safety checks, normal_uvs/normals/mipmaps goldens and HLSL
+`/WX` checks, and five trilinear errors plus two carried-filter warnings. Golden
+generation also has empty stderr. Independent scoped review is clean.
+Full native/web validation remains for the
+combined integration; standalone spirv-val coverage is unavailable here.
+
 ## GPU simplex work reuse (2026-10-25)
 
 The owner requested engine improvements before changes to Earth's game code.

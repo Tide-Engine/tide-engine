@@ -11,14 +11,14 @@ Every match runs on a server, and this machine's player connects to it. When the
 A game whose selected entry is a prefab or match scene starts playing at once. Startup uses `--scene` first, then `settings.startScene`, then `Main`. `tide run` can open it to others, or join one instead:
 
 ```sh
-tide run --host                 # others can join: in a room, and on UDP port 7777
-tide run --host 8000            # on another port
-tide run --connect 192.168.1.5  # join another machine's match, by its address
-tide run --join K7QF2M          # join the room with this code
-tide run --web --host           # on the web, in a room only
+tide run --host --stats                 # others can join: in a room, and on UDP port 7777
+tide run --host 8000 --stats            # on another port
+tide run --connect 192.168.1.5 --stats  # join another machine's match, by its address
+tide run --join K7QF2M --stats          # join the room with this code
+tide run --web --host --stats           # on the web, in a room only
 ```
 
-To check a match with several players without opening a window for each, `tide run --players 2 --script play.txt` plays them all at once with no window, and takes a picture from each machine (see [Several players](../tools/cli.md#several-players)).
+To check a match with several players without opening a window for each, `tide run --players 2 --script play.txt --stats` plays them all at once with no window, and takes a picture from each machine (see [Several players](../tools/cli.md#several-players)).
 
 ## Starting a match from code
 

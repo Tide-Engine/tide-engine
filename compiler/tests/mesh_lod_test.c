@@ -12,20 +12,20 @@
 
 typedef struct shape {
     uint32_t vertices, indices;
-    float *position, *normal, *uv, *color;
+    float *position, *normal, *uv, *color, *tangent;
     uint32_t *index;
 } shape;
 
 static void shape_free(shape *s)
 {
-    free(s->position), free(s->normal), free(s->uv), free(s->color), free(s->index);
+    free(s->position), free(s->normal), free(s->uv), free(s->color), free(s->tangent), free(s->index);
     *s = (shape){0};
 }
 
 static mesh_lod_source source_of(const shape *s)
 {
     return (mesh_lod_source){.vertices = s->vertices, .position = s->position, .normal = s->normal, .uv = s->uv,
-                             .color = s->color, .index = s->index, .indices = s->indices};
+                             .color = s->color, .tangent = s->tangent, .index = s->index, .indices = s->indices};
 }
 
 // A flat square of `side` by `side` cells in x and z, from 0 to 1, facing up, its uvs its place.
@@ -227,6 +227,63 @@ TIDE_TEST(mesh_lod_keeps_a_seam_of_colors_whole)
     }
     mesh_lod_free(&lod);
     shape_free(&left);
+    shape_free(&s);
+}
+
+TIDE_TEST(mesh_lod_keeps_opposite_tangent_handedness_separate_without_weighing_it)
+{
+    shape half = grid(16);
+    shape s = {.vertices = half.vertices * 2u, .indices = half.indices * 2u};
+    s.position = calloc(s.vertices * 3u, sizeof(float));
+    s.normal = calloc(s.vertices * 3u, sizeof(float));
+    s.uv = calloc(s.vertices * 2u, sizeof(float));
+    s.tangent = calloc(s.vertices * 4u, sizeof(float));
+    s.index = calloc(s.indices, sizeof(uint32_t));
+    for (uint32_t part = 0; part < 2u; part++) {
+        for (uint32_t v = 0; v < half.vertices; v++) {
+            const uint32_t to = part * half.vertices + v;
+            memcpy(s.position + to * 3u, half.position + v * 3u, 3u * sizeof(float));
+            s.position[to * 3u] += (float)part;
+            s.normal[to * 3u + 1u] = 1.0f;
+            s.uv[to * 2u] = s.position[to * 3u];
+            s.uv[to * 2u + 1u] = s.position[to * 3u + 2u];
+            s.tangent[to * 4u] = 1.0f;
+            s.tangent[to * 4u + 3u] = 1.0f;
+        }
+        for (uint32_t i = 0; i < half.indices; i++) s.index[part * half.indices + i] = half.index[i] + part * half.vertices;
+    }
+    mesh_lod_source source = source_of(&s);
+    mesh_lod plain, same, split;
+    source.tangent = NULL;
+    mesh_lod_make(&source, &plain);
+    source.tangent = s.tangent;
+    // Direction changes alone do not make hard seams or add approximation error.
+    for (uint32_t v = half.vertices; v < s.vertices; v++) s.tangent[v * 4u] = 0.0f, s.tangent[v * 4u + 2u] = 1.0f;
+    mesh_lod_make(&source, &same);
+    TIDE_REQUIRE(plain.levels >= 3u && same.levels == plain.levels && same.indices == plain.indices);
+    TIDE_CHECK(memcmp(plain.index, same.index, plain.indices * sizeof(uint32_t)) == 0);
+    TIDE_CHECK(memcmp(plain.error, same.error, sizeof plain.error) == 0);
+    TIDE_CHECK(memcmp(plain.count, same.count, sizeof plain.count) == 0);
+    for (uint32_t v = half.vertices; v < s.vertices; v++) s.tangent[v * 4u + 3u] = -1.0f;
+    mesh_lod_make(&source, &split);
+    TIDE_REQUIRE(split.levels >= 3u);
+    TIDE_CHECK(levels_hold(&s, &split));
+    TIDE_CHECK(split.radius == plain.radius && memcmp(split.center, plain.center, sizeof split.center) == 0);
+    for (uint32_t level = 0; level < split.levels; level++) {
+        const uint32_t *index = split.index + split.first[level];
+        double positive = 0.0, negative = 0.0;
+        for (uint32_t i = 0; i < split.count[level]; i += 3u) {
+            const bool first = s.tangent[index[i] * 4u + 3u] > 0.0f;
+            TIDE_CHECK((s.tangent[index[i + 1u] * 4u + 3u] > 0.0f) == first);
+            TIDE_CHECK((s.tangent[index[i + 2u] * 4u + 3u] > 0.0f) == first);
+            if (first) positive += area_of(&s, index + i, 3u);
+            else negative += area_of(&s, index + i, 3u);
+        }
+        TIDE_CHECK(fabs(positive - 1.0) < 1e-9 && fabs(negative - 1.0) < 1e-9);
+        TIDE_CHECK(split.error[level] < 1e-5f);
+    }
+    mesh_lod_free(&plain), mesh_lod_free(&same), mesh_lod_free(&split);
+    shape_free(&half);
     shape_free(&s);
 }
 

@@ -1,0 +1,5 @@
+// expect: 'image' is [Raw], its pixels numbers and not colors to draw: it's no Texture to draw with or hand on
+local singleton Art { [Raw] Texture image; }
+scene Main { }
+void Replace(out Texture image) { image = default; }
+view V(mut Art art) { Replace(out art.image); }

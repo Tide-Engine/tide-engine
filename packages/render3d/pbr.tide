@@ -4,6 +4,8 @@ struct SurfaceInput
 {
     float3 world;
     float3 normal;
+    float3 tangent;
+    float3 bitangent;
     float2 uv;
     float3 viewDirection;
 }
@@ -17,11 +19,21 @@ struct Surface
     float roughness = 0.5;
     float metallic;
     float3 emission;
+    float occlusion = 1;
 }
 
 // The default callback leaves the caller's material and geometric normal alone.
 void StandardSurface(SurfaceInput input, mut Surface surface)
 {
+}
+
+// Diffuse-only indirect light. AO never attenuates direct light or emission.
+// Irradiance is linear incident light, before the Lambert 1/pi factor.
+float3 EvaluateIndirectPbr(Surface surface, float3 irradiance)
+{
+    return Math.Clamp(surface.albedo, float3(0), float3(1))
+        * (1 - Math.Clamp(surface.metallic, 0, 1))
+        * Math.Clamp(surface.occlusion, 0, 1) * Math.Max(irradiance, float3(0)) / Math.PI;
 }
 
 // Direct metallic-roughness BRDF: GGX, height-correlated Smith and Schlick,

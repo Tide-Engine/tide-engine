@@ -13,6 +13,34 @@ const release = await readFile(resolve(root, 'platform/web/tide.release.js'), 'u
 const context = vm.createContext({ location: { hash: '#download' } });
 await vm.runInContext(release, context);
 
+test('page stats query reaches WASI argv once and preserves other launch options', async () => {
+    const source = await readFile(resolve(root, 'platform/web/tide.js'), 'utf8');
+    const begin = source.indexOf('    const words = [...(config.arguments || [])];');
+    const end = source.indexOf('\n    // `Tide.wait`', begin);
+    assert.ok(begin >= 0 && end > begin, 'the production argument assembly is present');
+    const block = source.slice(begin, end);
+    const args = (search, configured = []) => {
+        const config = { arguments: [...configured] };
+        const encoded = vm.runInNewContext(`(() => { ${block}\nreturn args; })()`, {
+            config, location: { search }, URLSearchParams, encoder: new TextEncoder(),
+        });
+        assert.deepEqual(config.arguments, configured, 'page-owned arguments remain unchanged');
+        return Array.from(encoded, bytes => {
+            assert.equal(bytes[bytes.length - 1], 0, 'each WASI argument is NUL terminated');
+            return Buffer.from(bytes).subarray(0, bytes.length - 1).toString('utf8');
+        });
+    };
+    assert.deepEqual(args(''), ['program']);
+    assert.deepEqual(args('?statistics'), ['program'], 'an unrelated query does not enable stats');
+    assert.deepEqual(args('?stats'), ['program', '--stats']);
+    assert.deepEqual(args('?stats&stats'), ['program', '--stats'], 'repeated query keys add one flag');
+    assert.deepEqual(args('?stats', ['--stats']), ['program', '--stats'], 'an explicit page argument is not duplicated');
+    assert.deepEqual(args('?stats&debug-views&join=K7QF2M%2F0'),
+        ['program', '--debug-views', '--stats', '--join', 'K7QF2M/0']);
+    assert.deepEqual(args('?stats&host', ['--join', 'CUSTOM/0']),
+        ['program', '--join', 'CUSTOM/0', '--stats'], 'stats coexist with the page-owned match selection');
+});
+
 test('checked-in runtime matches sources without loading minifier dependencies', () => {
     const result = run('cmake/web_runtime.mjs', ['--check']);
     assert.equal(result.status, 0, result.stderr);

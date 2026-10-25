@@ -18,7 +18,9 @@
 
 typedef struct checker {
     program *prog;
-    VEC(expr *) raw_uses;     // Each place a [Raw] Texture asset is named: the object of a Sample, or an error (check_raw_uses)
+    VEC(expr *) raw_uses;     // Raw Texture sources: sampled, inspected, stored in a Raw field or rejected (check_raw_uses).
+    const expr *raw_value;    // The direct initializer/assignment of a statically [Raw] Texture field.
+    const expr *texture_arg;  // Texture argument conversions whose Raw permission waits for GPU call propagation.
     bool fields_ordered;      // Every struct's fields are resolved, and infinitely big containment was refused.
     const unit *unit;         // The file being checked: its namespace and `using`s decide what names mean.
     decl *system;             // Whose parameters are in scope: a system or view, a method, or the input when checking its Sample.
@@ -2521,13 +2523,14 @@ static bool fold_int(const expr *e, int64_t *out);
 // [Raw] says a texture's pixels are numbers: they're kept as the file or the
 // grid has them, with no alpha worked into them, and a Sample gives them as
 // they are. Everything that draws a texture takes it for colors with how much
-// of each there is, and a Texture handed on doesn't say which it is, so a raw
-// one is read in a frag or a vert, by its name, and goes nowhere else.
+// of each there is. Raw Texture fields retain a static role, while ordinary
+// Texture values carry none; GPU helpers substitute their original sources.
 static void raw_note(void)
 {
     diag_note("read it in a frag or a vert, by its name: 'color = masks.Sample(vertex.uv);' gives its numbers as they are. "
               "A texture that's drawn, or handed to a frag as its Texture, is a color and how much of it there is: "
               "declare that one without [Raw]");
+    diag_note("keep numeric images in '[Raw] Texture' fields; those fields also accept [Raw] grids and other [Raw] Texture fields");
 }
 
 // A [Raw] grid where a Texture goes: false, and said.
@@ -2548,14 +2551,27 @@ static bool check_sprite_args(const checker *c, const expr *e)
     return e->args.count == 0 || refuse_raw_grid(e->args.items[0]);
 }
 
-// Every [Raw] Texture asset's name that wasn't a Sample's object.
+// Every Raw Texture source must retain a static role, or only expose its size.
 static void check_raw_uses(const checker *c)
 {
+    // GPU helpers substitute the original source expression, including its Raw field marker. No runtime value
+    // carries that permission to an ordinary CPU Texture helper or a draw.
+    for (int i = 0; i < c->calls.count; i++) {
+        const call_site *site = &c->calls.items[i];
+        const bool gpu = !site->to->is_extern && (site->from->kind == DECL_SHADER || site->from->gpu_only || site->to->gpu_only);
+        for (int k = 0; k < site->call->args.count && k < site->to->params.count; k++) {
+            const param *p = &site->to->params.items[k];
+            expr *arg = site->call->args.items[k];
+            if (p->type.kind != TY_TEXTURE || !declared_raw(arg)) continue;
+            if (gpu && p->mode == PARAM_READ && !p->is_out) arg->raw_sampled = true;
+            else refuse_raw_grid(arg);
+        }
+    }
     for (int i = 0; i < c->raw_uses.count; i++) {
         const expr *e = c->raw_uses.items[i];
         if (e->raw_sampled) continue;
         diag_error(e->at, "'" STR_FMT "' is [Raw], its pixels numbers and not colors to draw: it's no Texture to draw with or "
-                   "hand on", STR_ARG(e->constant->name));
+                   "hand on", STR_ARG(e->bind == BIND_ASSET ? e->constant->name : e->field->name));
         raw_note();
     }
 }
@@ -2604,7 +2620,7 @@ static type check_expr_want_any(checker *c, expr *e, const type stored, const bo
         e->asset_reference = true;
         return e->type = inner;
     }
-    if (inner.kind == TY_TEXTURE && !refuse_raw_grid(e)) return e->type = T_ERR;
+    if (inner.kind == TY_TEXTURE && c->raw_value != e && c->texture_arg != e && !refuse_raw_grid(e)) return e->type = T_ERR;
     // As in C#, int constants fit a byte where the expected type supplies it.
     int64_t value;
     if (inner.kind == TY_BYTE && t.kind == TY_INT && fold_int(e, &value) && value >= 0 && value <= 255) {
@@ -2635,6 +2651,28 @@ static type check_expr_want_checked(checker *c, expr *e, const type stored, cons
 static type check_expr_want(checker *c, expr *e, const type want)
 {
     return check_expr_want_checked(c, e, want, false);
+}
+
+static type check_raw_field_value(expr *e, const type t)
+{
+    if (t.kind == TY_ERROR || e->kind == E_DEFAULT) return t;
+    if (!declared_raw(e)) {
+        diag_error(e->at, "a [Raw] Texture field takes a [Raw] Texture asset, field or grid, not a color texture");
+        diag_note("declare numeric sources with [Raw], or keep color images in a Texture field without [Raw]");
+        return e->type = T_ERR;
+    }
+    e->raw_sampled = true;
+    return t;
+}
+
+static type check_field_value(checker *c, expr *e, const field *f)
+{
+    const expr *saved = c->raw_value;
+    const bool raw = f && f->type.kind == TY_TEXTURE && field_is_raw(f);
+    c->raw_value = raw ? e : NULL;
+    const type t = check_expr_want(c, e, f ? f->type : T_ERR);
+    c->raw_value = saved;
+    return raw ? check_raw_field_value(e, t) : t;
 }
 
 // The `default` arguments of a built-in call, which resolving it left
@@ -2741,7 +2779,7 @@ static type check_literal(checker *c, expr *e)
         for (int j = 0; j < d->fields.count; j++) {
             if (str_eq(d->fields.items[j].name, init->name) && !d->fields.items[j].hidden) init->field = &d->fields.items[j];
         }
-        const type value = check_expr_want(c, init->value, init->field ? init->field->type : T_ERR);
+        const type value = check_field_value(c, init->value, init->field);
         if (!init->field && local_field_of(d, init->name)) {
             diag_error(init->at, "'" STR_FMT "' is a local field of '" STR_FMT "', so a value of it doesn't have it",
                        STR_ARG(init->name), STR_ARG(d->name));
@@ -4751,7 +4789,10 @@ static void check_method_args(checker *c, expr *e, decl *m)
             const expr *previous_asset = c->asset_value;
             if (p && p->type.kind == TY_INPUT) c->input_value = arg;
             if (p && type_is_asset_collection(p->type)) c->asset_value = arg;
+            const expr *previous_texture = c->texture_arg;
+            if (p && p->type.kind == TY_TEXTURE) c->texture_arg = arg;
             check_expr_want(c, arg, p ? p->type : T_ERR);
+            c->texture_arg = previous_texture;
             c->input_value = previous;
             c->asset_value = previous_asset;
         }
@@ -5148,7 +5189,12 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
             continue;
         }
         const param *taken_by = &m->params.items[param_of[best][i]];
-        if (taken_by->mode != PARAM_MUT && arg->bind == BIND_ASSET) check_expr_want_checked(c, arg, want, true);
+        if (taken_by->mode != PARAM_MUT && (arg->bind == BIND_ASSET || want.kind == TY_TEXTURE)) {
+            const expr *previous_texture = c->texture_arg;
+            if (want.kind == TY_TEXTURE) c->texture_arg = arg;
+            check_expr_want_checked(c, arg, want, true);
+            c->texture_arg = previous_texture;
+        }
         if ((arg->type.kind == TY_STRUCT || arg->type.kind == TY_ARRAY) && holds_long_array(arg->type)
             && (taken_by->mode != PARAM_MUT || taken_by->is_out)) {
             diag_error(arg->at, "'%s' is never copied: it holds an array of more than %d elements, so the parameter that takes it is 'mut'",
@@ -11019,6 +11065,7 @@ static type check_expr_any_raw(checker *c, expr *e)
     }
     e->type = t;
     // Text and lists, including a struct's owned fields, go in the scratch area.
+    if (t.kind == TY_TEXTURE && e->field && declared_raw(e) && builds(c->prog)) vec_push(c->raw_uses, e);
     if (holds_heap(t) && (t.kind != TY_STRING || e->kind != E_STRING)) c->prog->uses_text = true;
     if (!whole_ok) note_device_value(c, e, t);
     return t;
@@ -12024,7 +12071,8 @@ static void check_assign(checker *c, const stmt *s)
     const type target = check_expr_any(c, s->target); // A T? local, or one that holds a failable call's result
     c->property_target = outer_property;
     c->write_root = outer_root;
-    const type value = check_expr_want(c, s->value, target);
+    s->target->raw_sampled = true; // A Raw field's destination is not an escaping read of its pixels.
+    const type value = s->target->field ? check_field_value(c, s->value, s->target->field) : check_expr_want(c, s->value, target);
     if (target.kind == TY_ERROR) return;
     if (s->target->property) {
         if ((s->op == T_PLUS_PLUS || s->op == T_MINUS_MINUS) && !type_is_integer(target) && target.kind != TY_FLOAT && target.kind != TY_DOUBLE) {
@@ -13775,7 +13823,7 @@ static bool asset_type(checker *c, decl *k, asset_kind *kind, bool *many, bool *
 static void check_raw_attribute(decl *d, const attribute *attr)
 {
     const char *usage = "it goes before an asset that's one Texture or one Grid2<Color>, like '[Raw] asset Texture masks = "
-                        "\"art/masks.png\";', or before a field that's a Grid2<Color>";
+                        "\"art/masks.png\";', or before a field that's a Texture or a Grid2<Color>";
     if (d->kind != DECL_ASSET) {
         diag_error(attr->at, "Raw says a texture's pixels are numbers, and '" STR_FMT "' isn't a texture", STR_ARG(d->name));
         diag_note("%s", usage);
@@ -13998,6 +14046,15 @@ static void check_asset_decl(checker *c, decl *k)
         } else if (!c->prog->asset_metadata_only || (kind != ASSET_SKINNED && kind != ASSET_ANIMATIONS && kind != ASSET_ANIMATION)) {
             const expr *path = k->asset_paths.items[0];
             k->asset = asset_resolve(k->unit->src->path, path->text, kind, many, is_map, path->at, c->prog->game_folder);
+            if (k->asset && kind == ASSET_MESH && !c->prog->asset_metadata_only) {
+                const decl *vertex = asset_mesh_vertex(k->return_type);
+                bool tangents = false;
+                for (int f = 0; f < vertex->fields.count; f++) {
+                    const field *v = &vertex->fields.items[f];
+                    tangents |= v->type.kind == TY_FLOAT4 && str_eq_c(v->name, "tangent");
+                }
+                if (tangents && !asset_mesh_tangents(k->asset, path->at)) k->asset = NULL;
+            }
         }
         if (kind == ASSET_SKINNED || kind == ASSET_ANIMATIONS)
             skinned_asset_catalogs(c, k, k->asset_paths.items[0]);
@@ -14039,7 +14096,11 @@ static void check_default(checker *c, const field *f)
         suggest_constant(c, value);
         return;
     }
-    const type t = check_constant_expr(c, value, true, f->type);
+    const expr *saved_raw = c->raw_value;
+    c->raw_value = f->type.kind == TY_TEXTURE && field_is_raw(f) ? value : NULL;
+    type t = check_constant_expr(c, value, true, f->type);
+    if (c->raw_value == value) t = check_raw_field_value(value, t);
+    c->raw_value = saved_raw;
     c->assets_constant = false;
     if (f->type.kind == TY_GRID && t.kind == TY_GRID && !own_grid(value)) {
         diag_error(value->at, "a grid can't be copied: every chunk would be");
@@ -14146,13 +14207,13 @@ static void check_dont_predict_attribute(const decl *d, const field *f, const at
 static void check_field_raw(const field *f, const attribute *a)
 {
     if (f->type.kind == TY_ERROR) return;
-    const bool colors = type_is_texture_grid(f->type) && f->type.decl->fields.items[0].type.kind == TY_COLOR;
+    const bool colors = f->type.kind == TY_TEXTURE || (type_is_texture_grid(f->type) && f->type.decl->fields.items[0].type.kind == TY_COLOR);
     if (!colors) {
         diag_error(a->at, "[Raw] says a texture's pixels are numbers with no alpha worked into them, and '" STR_FMT "' is %s",
                    STR_ARG(f->name), type_name(f->type));
         diag_note(f->type.kind == TY_GRID && type_is_texture_grid(f->type)
                       ? "a Grid2<float> has no alpha: its numbers are kept as they are already"
-                      : "it goes on a field that's a Grid2<Color>, or before an asset that's a Texture or a Grid2<Color>");
+                      : "it goes on a field that's a Texture or a Grid2<Color>, or before an asset that's a Texture or a Grid2<Color>");
         return;
     }
     for (const attribute *before = f->attributes.items; before < a; before++) {

@@ -107,16 +107,39 @@ async function exportsOverHttp(base, compareSource) {
             assert.deepEqual(fences(parsed.tokens), fences(original), `${route}: exact authored/included code, including outside docs/`);
             assert.deepEqual(inlineCode(parsed.tokens), inlineCode(original), `${route}: inline code is unchanged`);
         }
-        assert.ok(!parsed.tokens.some((token) => token.type === 'html_block' && /<iframe\b|data-tide-(?:ai-setup|playground)|class="sample-grid"/.test(token.content)), `${route}: website UI was removed`);
+        assert.ok(!parsed.tokens.some((token) => token.type === 'html_block' && /<iframe\b|data-tide-(?:ai-setup|playground|earth)|class="sample-grid"/.test(token.content)), `${route}: website UI was removed`);
         all.set(route, parsed);
     }
     assert.equal(new Set([...all.values()].map(({ metadata }) => metadata.documentation_sha256)).size, 1, 'one source fingerprint across downloads');
     for (const parsed of all.values()) validateLinks(parsed, all);
+    for (const [route, parsed] of all) {
+        for (const href of destinations(parsed.tokens).filter((href) => new URL(href, origin).pathname.startsWith('/examples/'))) {
+            assert.equal(new URL(href, origin).searchParams.getAll('stats').length, 1, `${route}: exported example enables stats once`);
+        }
+    }
 
     const samples = all.get('/guide/samples');
     const sourceLinks = destinations(samples.tokens).filter((href) => href.startsWith('https://github.com/Tide-Engine/tide-engine/tree/dev/'));
     assert.equal(sourceLinks.length, 14, 'every sample keeps its source link in Markdown exports');
     assert.equal(new Set(sourceLinks).size, 14, 'each sample links to its own source folder');
+    const sampleLinks = destinations(samples.tokens).filter((href) => new URL(href, origin).origin === origin);
+    assert.equal(sampleLinks.length, 15, 'Samples keeps its 14 playable cards and the Earth guide link');
+    const guideLinks = sampleLinks.filter((href) => new URL(href, origin).pathname.endsWith('.md'));
+    assert.deepEqual(guideLinks, [`${origin}/guide/earth.md`], 'Earth remains an ordinary Markdown guide link');
+    const playLinks = sampleLinks.filter((href) => new URL(href, origin).pathname.endsWith('/'));
+    assert.equal(playLinks.length, 14, 'every sample keeps its playable link in Markdown exports');
+    assert.equal(new Set(playLinks).size, 14, 'each sample links to its own runtime game');
+    for (const href of playLinks) assert.equal(new URL(href, origin).searchParams.getAll('stats').length, 1, 'exported sample enables stats once');
+
+    const earth = all.get('/guide/earth');
+    assert.ok(!earth.body.includes('data-tide-earth'), 'Earth export removes its website placeholder');
+    assert.ok(earth.body.includes(`[Play Earth](${origin}/earth/?stats)`), 'Earth export provides a stable local play link');
+    const earthPlayLinks = destinations(earth.tokens).filter((href) => {
+        const url = new URL(href, origin);
+        return url.origin === origin && url.pathname === '/earth/';
+    });
+    assert.deepEqual(earthPlayLinks, [`${origin}/earth/?stats`], 'Earth export contains one runnable Earth URL');
+    assert.equal(new URL(earthPlayLinks[0]).searchParams.getAll('stats').length, 1, 'exported Earth enables stats once');
 
     const indexResponse = await fetch(`${base}/llms.txt`);
     assert.equal(indexResponse.status, 200);

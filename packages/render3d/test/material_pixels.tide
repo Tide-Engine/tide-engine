@@ -1,0 +1,310 @@
+// All surfaces below are submitted by the actual Render3D package passes.
+// The C host supplies independent analytic/pattern expectations, never PBR helpers.
+scene Main;
+asset Render3D.Mesh3D materialQuad = "quad.obj";
+asset Render3D.Mesh3D materialSlanted = "slanted.obj";
+[LOD] asset Render3D.Mesh3D materialLod = "shadow_batches_lod.obj";
+
+component MaterialPixelPatch { int role; }
+singleton MaterialPixelFixture { int scenario; bool reverse; bool built; }
+
+local singleton MaterialPixelProbe
+{
+    bool initialized;
+    bool disabled;
+    bool useMask = true;
+    bool useHeight = true;
+    int side = 1;
+    int lodMode;
+    int shadowViews;
+    Render3D.MaterialMaps[4] flags;
+    [Filter(Filter.Point)] Grid2<Color> cutout = Grid2(8, 8);
+    [Raw] [Filter(Filter.Point)] Grid2<Color> orm = Grid2(1, 1);
+    [Raw] [Filter(Filter.Point)] Grid2<Color> ao = Grid2(1, 1);
+    [Raw] [Filter(Filter.Point)] Grid2<Color> normal = Grid2(1, 1);
+    [Raw] [Filter(Filter.Point)] Grid2<Color> height = Grid2(1, 1);
+    [Filter(Filter.Point)] Grid2<Color> glow = Grid2(1, 1);
+    [Filter(Filter.Point)] Grid2<Color> stripes = Grid2(2, 1);
+    [Filter(Filter.Point)] Grid2<Color> red = Grid2(1, 1);
+    [Filter(Filter.Point)] Grid2<Color> green = Grid2(1, 1);
+}
+
+system BuildMaterialPixels(mut MaterialPixelFixture fixture)
+{
+    if (fixture.built) return;
+    fixture.built = true;
+    if (fixture.scenario == 3)
+    {
+        Spawn(MaterialPixelPatch { role = 0 }, Render3D.MeshRenderer { mesh = materialQuad },
+            Render3D.Material { doubleSided = true }, Transform {
+                localPosition = float3(-3, 1, 0), localScale = float3(1.6, 1.2, 0.4)
+            });
+        var parent = Spawn(Transform { localPosition = float3(0, 1, 0), localScale = float3(2, 1, 1) });
+        var child = Spawn(MaterialPixelPatch { role = 1 }, Render3D.MeshRenderer { mesh = materialQuad },
+            Render3D.Material { doubleSided = true }, Transform { localRotation = quaternion.Euler(0, 0, 45deg) });
+        child.SetParent(parent, false); // Genuine shear: unequal parent scale after child rotation.
+        Spawn(MaterialPixelPatch { role = 2 }, Render3D.MeshRenderer { mesh = materialQuad },
+            Render3D.Material {}, Transform {
+                localPosition = float3(3, 1, 0), localScale = float3(-1.6, 1.2, 0.4)
+            });
+        Spawn(MaterialPixelPatch { role = 3 }, Render3D.MeshRenderer { mesh = materialSlanted },
+            Render3D.Material { normalScale = 0, doubleSided = true }, Transform {
+                localPosition = float3(0, -2, 0), localScale = float3(-1.5, 1.5, 0.5)
+            });
+        return;
+    }
+    if (fixture.scenario == 4 || fixture.scenario == 7)
+    {
+        Spawn(MaterialPixelPatch { role = 0 }, Render3D.MeshRenderer { mesh = materialQuad },
+            Render3D.Material {
+                mode = Render3D.SurfaceMode.Cutout, doubleSided = true, emission = float3(2, 0, 0),
+                baseColor = Color(1, 1, 1, fixture.scenario == 4 ? 0.75 : 1),
+                uvOffset = fixture.scenario == 7 ? float2(-0.125, 0) : float2(0),
+                heightScale = fixture.scenario == 7 ? 0.8 : 0
+            },
+            Transform { localScale = float3(4, 2, 1) });
+        Spawn(MaterialPixelPatch { role = 1 }, Render3D.MeshRenderer { mesh = materialQuad, castShadows = false },
+            Render3D.Material { baseColor = Color(0.73535698, 0.73535698, 0.73535698), roughness = 1,
+                                emission = fixture.scenario == 7 ? float3(0, 0.4, 0) : float3(0) },
+            Transform { localPosition = float3(0, 0, 1), localScale = float3(12, 6, 1) });
+        Spawn(Render3D.DirectionalLight {
+            direction = fixture.scenario == 4 ? float3(2, 0, 1) : float3(0, 0, 1),
+            radiance = fixture.scenario == 4 ? float3(0, 4, 0) : float3(0), castShadows = true
+        });
+        return;
+    }
+    if (fixture.scenario >= 8)
+    {
+        for (var i = 0; i < 2; i++)
+        {
+            int role = fixture.reverse ? 1 - i : i;
+            float z = role == 0 ? -1 : 1;
+            float size = fixture.scenario == 10 ? (role == 0 ? 100 : 0.3) : 4;
+            Spawn(MaterialPixelPatch { role = role }, Render3D.MeshRenderer {
+                mesh = fixture.scenario == 10 ? materialLod : materialQuad
+            }, Render3D.Material {
+                mode = Render3D.SurfaceMode.Transparent, doubleSided = true,
+                baseColor = Color(1, 1, 1, fixture.scenario == 10 ? 0.5 : 1),
+                emission = role == 0 ? float3(2, 0, 0) : float3(0, 4, 0)
+            }, Transform {
+                localPosition = float3(0, 0, z),
+                localScale = float3(fixture.scenario != 10 && role == 0 ? -size : size, size,
+                                    fixture.scenario == 10 ? (role == 0 ? 1 : size) : 1)
+            });
+        }
+        if (fixture.scenario == 9)
+            Spawn(MaterialPixelPatch { role = 2 }, Render3D.MeshRenderer { mesh = materialQuad, castShadows = false },
+                Render3D.Material { emission = float3(0, 0, 3), doubleSided = true },
+                Transform { localPosition = float3(0, 0, -2), localScale = float3(1.5) });
+        // Zero radiance still reserves a real view. Transparent castShadows is
+        // deliberately left true, so any accidental transparent caster is observable.
+        Spawn(Render3D.DirectionalLight { direction = float3(0, 0, 1), radiance = float3(0) });
+        return;
+    }
+    Spawn(MaterialPixelPatch { role = 0 }, Render3D.MeshRenderer { mesh = materialQuad, castShadows = false },
+        Render3D.Material {
+            doubleSided = true, roughness = fixture.scenario == 1 ? 0.8 : 1,
+            metallic = fixture.scenario == 1 ? 0.6 : 0,
+            occlusionStrength = fixture.scenario == 1 ? 0.5 : 1,
+            baseColor = fixture.scenario == 5 ? Color(0.73535698, 0.73535698, 0.73535698) : Color.white,
+            emission = fixture.scenario == 0 ? float3(2, 4, 8)
+                : fixture.scenario == 2 ? float3(8, 4, 2)
+                : fixture.scenario == 5 ? float3(0, 2, 0)
+                : fixture.scenario == 6 ? float3(4) : float3(0),
+            uvOffset = fixture.scenario == 6 ? float2(-0.125, 0) : float2(0),
+            heightScale = fixture.scenario == 6 ? 0.8 : 0
+        }, Transform { localScale = float3(4, 3, 1) });
+    if (fixture.scenario == 5)
+        Spawn(Render3D.DirectionalLight { direction = float3(0, 0, 1), radiance = float3(4, 0, 0), castShadows = false });
+}
+
+[Before(Render3D.Stages.Prepare)]
+view ConfigureMaterialPixels(mut Render3D.Renderer renderer, mut MaterialPixelProbe probe, MaterialPixelFixture fixture)
+{
+    renderer.enabled = !probe.disabled;
+    renderer.background = Color.black;
+    renderer.camera = Render3D.Camera {
+        position = float3(0, 0, probe.side > 0 ? -8 : 8),
+        rotation = probe.side > 0 ? quaternion.identity : quaternion.Euler(0, 180deg, 0), verticalFov = 60deg
+    };
+    if (fixture.scenario == 6 || fixture.scenario == 7)
+    {
+        float3 eye = float3(float(probe.side) * 4, 0, -8);
+        renderer.camera.position = eye;
+        renderer.camera.rotation = quaternion.LookRotation(-eye, float3(0, 1, 0));
+    }
+    renderer.ambientIrradiance = fixture.scenario == 5 ? float3(0, 0, Math.PI) : float3(0);
+    renderer.shadowResolution = 256;
+    renderer.shadowExtent = 8;
+    renderer.shadowDistance = 24;
+    renderer.shadowCenter = float3(0, 0, 0.5);
+    renderer.shadowBias = 0.003;
+    renderer.shadowSlopeBias = 0;
+    renderer.maxShadowMaps = 1;
+    if (probe.initialized) return;
+    probe.initialized = true;
+    // Plain grid references are captured at the material binding's color/raw
+    // policy. Numeric alpha-zero RGB must survive the raw source path exactly.
+    probe.orm[0, 0] = Color(64.0 / 255, 128.0 / 255, 192.0 / 255, 0);
+    probe.ao[0, 0] = Color(0, 1, 1, 0);
+    probe.normal[0, 0] = Color(1, 128.0 / 255, 128.0 / 255, 0);
+    probe.height[0, 0] = Color(1, 0, 0, 0);
+    probe.glow[0, 0] = Color(128.0 / 255, 64.0 / 255, 1, 1);
+    probe.stripes[0, 0] = Color(1, 0, 0, 1);
+    probe.stripes[1, 0] = Color(0, 0, 1, 1);
+    probe.red[0, 0] = Color(1, 0, 0, 128.0 / 255);
+    probe.green[0, 0] = Color(0, 1, 0, 192.0 / 255);
+    for (var y = 0; y < 8; y++)
+        for (var x = 0; x < 8; x++) probe.cutout[x, y] = Color(1, 1, 1, x < 4 ? 0 : 1);
+}
+
+void PixelEmissionOnly(Render3D.SurfaceInput input, mut Render3D.Surface surface)
+{
+    surface.albedo = float3(0);
+    surface.normal = float3(0);
+}
+
+void PixelMaskNumbers(Render3D.SurfaceInput input, mut Render3D.Surface surface)
+{
+    surface.emission = float3(surface.occlusion, surface.roughness, surface.metallic);
+    surface.albedo = float3(0);
+    surface.normal = float3(0);
+}
+
+void PixelNormalNumbers(Render3D.SurfaceInput input, mut Render3D.Surface surface)
+{
+    surface.emission = surface.normal * 0.5 + float3(0.5);
+    surface.albedo = float3(0);
+    surface.normal = float3(0);
+}
+
+void PixelOffset(Render3D.SurfaceInput input, mut float2 uv, float amount) { uv.x += amount; }
+Func<Render3D.SurfaceInput, mut float2, void> PixelUV(float amount)
+{
+    return (Render3D.SurfaceInput input, mut float2 uv) => PixelOffset(input, uv, amount);
+}
+
+void PixelGain(Render3D.SurfaceInput input, mut Render3D.Coverage coverage, float gain)
+{
+    coverage.alpha *= Math.Abs(gain);
+    if (gain >= 0)
+    {
+        if (input.uv.y < 0.5) coverage.alpha = 0;
+        coverage.cutoff = 0.3;
+    }
+}
+Func<Render3D.SurfaceInput, mut Render3D.Coverage, void> PixelCoverage(float gain)
+{
+    return (Render3D.SurfaceInput input, mut Render3D.Coverage coverage) => PixelGain(input, coverage, gain);
+}
+
+[Before(Render3D.Stages.Prepare), After(ConfigureMaterialPixels)]
+view CustomizeMaterialPixels(MaterialPixelPatch patch, mut Render3D.Material material,
+                              MaterialPixelProbe probe, MaterialPixelFixture fixture)
+{
+    material.shader = Render3D.Lit { surface = PixelEmissionOnly };
+    if (fixture.scenario == 1)
+    {
+        material.maskMap = probe.orm;
+        material.shader = Render3D.Lit { surface = PixelMaskNumbers };
+    }
+    if (fixture.scenario == 2)
+    {
+        material.emissionMap = probe.glow;
+    }
+    if (fixture.scenario == 3)
+    {
+        material.normalMap = probe.normal;
+        material.shader = Render3D.Lit { surface = PixelNormalNumbers };
+    }
+    if (fixture.scenario == 4)
+    {
+        if (patch.role == 0)
+        {
+            material.baseMap = probe.cutout;
+            material.uv = PixelUV(0.25);
+            material.coverage = PixelCoverage(0.5);
+        }
+        else material.shader = Render3D.Lit { surface = Render3D.StandardSurface };
+    }
+    if (fixture.scenario == 5)
+    {
+        material.maskMap = default;
+        if (probe.useMask) material.maskMap = probe.ao;
+        material.shader = Render3D.Lit { surface = Render3D.StandardSurface };
+    }
+    if (fixture.scenario == 6 || fixture.scenario == 7)
+    {
+        if (patch.role == 0)
+        {
+            material.heightMap = default;
+            if (probe.useHeight) material.heightMap = probe.height;
+            if (fixture.scenario == 6)
+            {
+                material.emissionMap = probe.stripes;
+            }
+            else material.baseMap = probe.cutout;
+        }
+    }
+    if (fixture.scenario == 8 || fixture.scenario == 9)
+    {
+        if (patch.role < 2)
+        {
+            if (patch.role == 0) material.baseMap = probe.red;
+            else material.baseMap = probe.green;
+            material.coverage = PixelCoverage(patch.role == 0 ? -0.5 : -1);
+        }
+    }
+}
+
+[Stage(Render3D.Stages.Lights, 4)]
+view MaterialPixelViews(Render3D.Renderer renderer, mut MaterialPixelProbe probe)
+{
+    probe.shadowViews = renderer.shadowViews.count;
+}
+
+[Stage(Render3D.Stages.Color, 1)]
+view MaterialPixelLOD(Render3D.Renderer renderer, MaterialPixelProbe probe)
+{
+    renderer.hdr.SetLOD();
+    if (probe.lodMode != 0) renderer.hdr.SetLOD(0);
+}
+
+[Stage(Render3D.Stages.Opaque, -1)]
+view MaterialPixelFlags(MaterialPixelPatch patch, Render3D.Material material,
+                        mut MaterialPixelProbe probe, World world)
+{
+    if (patch.role < 4) probe.flags[patch.role] = Render3D.Maps(material, world.LocalToWorld(this));
+}
+
+struct MaterialShadowPoint { float3 world; }
+frag MaterialShadowWitness(Vertex vertex, out Color color, Render3D.Renderer renderer, MaterialShadowPoint point)
+{
+    var shadowView = renderer.shadowViews[0];
+    float4 clip = Math.Mul(shadowView.worldToClip, float4(point.world, 1));
+    float2 uv = shadowView.uvRect.xy + float2(clip.x / clip.w * 0.5 + 0.5, 0.5 - clip.y / clip.w * 0.5) * shadowView.uvRect.zw;
+    // A single interior depth comparison, without the package's bias/PCF helper.
+    // The geometric ray intersects either the known cutout or the cleared atlas.
+    float visibility = renderer.shadow.Compare(uv, clip.z / clip.w * 0.5 + 0.5);
+    color = Color(visibility, visibility, visibility);
+}
+
+[Stage(Render3D.Stages.Present, 1)]
+view MaterialShadowPixels(Render3D.Renderer renderer, MaterialPixelFixture fixture)
+{
+    if (!renderer.enabled || !renderer.ready || (fixture.scenario != 4 && fixture.scenario != 7)) return;
+    Draw.Screen()
+    {
+        Draw.SetBlend(Blend.Replace);
+        Draw.SetDepth();
+        Draw.SetCull();
+        for (var i = 0; i < (fixture.scenario == 4 ? 2 : 1); i++)
+        {
+            float x = float(2 + i * 8);
+            float3 point = fixture.scenario == 4 ? float3(i == 0 ? 2 : 3.5, 0.5, 1) : float3(0, 0, 1);
+            Draw.Mesh([Vertex { position = float2(x, 2) }, Vertex { position = float2(x + 4, 2) },
+                       Vertex { position = float2(x + 4, 6) }, Vertex { position = float2(x, 6) }],
+                [0, 1, 2, 0, 2, 3], MaterialShadowWitness, MaterialShadowPoint { world = point });
+        }
+    }
+}
