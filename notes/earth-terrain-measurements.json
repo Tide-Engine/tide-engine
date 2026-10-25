@@ -187,5 +187,13 @@
     },
     "native_gpu": "Vulkan validation scripted walking/driving captures; forest crowns,cacti,sparse rocky scrub,roads/plaza and hills inspected.",
     "coverage_limits": "No actual Pixel/Android or other OS hardware coverage."
+  },
+  "integration": {
+    "incoming": "85aebc66",
+    "own_implementation": "3967a2af",
+    "notes_conflict": "Kept both Earth relief and incoming Transform correction benchmark entries.",
+    "native": "Earth targets rebuilt;23/23 game checks and3/3 benchmark cases, CTest4/4 in63.29s.",
+    "web": "Earth targets rebuilt;23/23 game checks and3/3 benchmark cases, CTest4/4 in73.64s.",
+    "shader_texts_still_match_measured_wasm": 21
   }
 }

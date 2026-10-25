@@ -3678,6 +3678,7 @@ Further authoring/editor work:
 ### Decided
 
 - One built-in `Transform` component works in match or local placement, with `localPosition`, `localRotation` and `localScale`. These values are relative to the parent, and root values place it in the world.
+- Match `Transform` bindings use correction smoothing by default: `localPosition` has the `[Position]` role and `localRotation` the `[Rotation]` role. `localScale` retains ordinary tick interpolation. Local placement remains current-value access, and `World` hierarchy queries retain stored-state reads. The default roles are decided; the correction algorithm and half-life retain their provisional status under Views.
 - Its computed `position` reads world position and writes `localPosition` in parent space. Component storage remains the three local TRS fields.
 - Parenting is an entity relationship, independent of component value types. Descendants move with their parent and are destroyed when their parent is destroyed.
 - Reparenting follows Unity's default of preserving world placement, with an option to retain local values. Detaching preserves world placement by default. Cycles are rejected without changing the hierarchy.

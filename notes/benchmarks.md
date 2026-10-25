@@ -12,6 +12,49 @@ benchmark's existing Earth source list. Game contracts and exploratory GPU
 data are in `docs-site.md` and `earth-terrain-measurements.json`.
 
 
+## Transform correction smoothing cost (2026-10-25)
+
+The owner's request to benchmark proposed Transform defaults adds
+`bench/corrections`: actual untagged Transform plus three separate generated
+games whose Pose has its exact 40-byte field layout, without tags, with Position,
+and with Position/Rotation. No compiler/runtime/default/semantic change is made.
+One minimal view consumes all ten fields into double accumulators; both tick
+endpoints are present. At 100/1,000/10,000 entities, scenarios have no correction
+callback, an unchanged callback, or 1%/100% evenly spread errors renewed every
+frame. Timings separate the first empty-table correction, recurring callback,
+frame-time/decay, view and actual combined interval. Correction-table requested
+allocations are counted separately; simulation/spawn, hierarchy, replay,
+networking, GPU/browser and birth-metadata costs are outside the measurement.
+Contracts, checks and reproduction: `bench/corrections/README.md`.
+
+Windows/Ryzen 9 7900X, Clang 23.1.2, native optimized and WASI under Node
+24.22.1; shared gate, logical CPU mask 0x100, explicitly shortened 15-second
+quiet guard and 250 ms contention polling. Three alternating rounds preserve
+24 successful processes/288 rows. Three overlapped builds and are retained but
+excluded, leaving two native and three WASI clean pairs for both tags. Median
+paired extra combined cost over plain at 1,000 is 0.00263/0.00478 ms with no
+correction, 0.06173/0.09001 with 1% renewed every frame, and 0.14726/0.18678
+with all renewed (native/WASI). At 10,000 the corresponding extras are
+0.04190/0.03866, 0.65278/0.93673 and 1.60387/2.39659 ms. Dense tagged totals
+are 1.76001/2.61465 ms; unchanged-value correction scans alone cost
+0.59966/0.85918 ms at that count. Small steady deltas approach run variation.
+These support considering defaults at modest counts, while broad correction
+scans and rotation decay remain meaningful costs. They are not shipping FPS,
+phone/browser timings or evidence for hierarchy/reparenting behavior.
+
+At 10,000 active errors the requested correction-table allocation is
+750,112/737,824 bytes; fresh no-error tables allocate none dynamically. Each
+active row keeps the full Pose, even when only position is tagged. World birth
+metadata, allocator overhead/pools and fixed local state are excluded. All
+32 scoped correctness CTests pass across native/web debug and optimized builds,
+including 10,000-entity cases; timed workloads and the analyzer check continuity,
+position half-life, counts and identical native/WASI match hashes across tags.
+Full production suites, browser/GPU, other OS/mobile/sanitizers and manual CI
+were not run for this benchmark-only change. The earlier process-inventory race
+and float-checksum precision failure remain as excluded partial attempts.
+Raw rows, identities, paired ranges, phase costs, contention/limits and analysis
+hash are in `bench/results/transform-corrections-20261025-c/README.md`.
+
 ## Render3D before/current package runner (2026-10-25)
 
 `bench/render3d/run-paired.ps1` readies the CPU-performance comparison against

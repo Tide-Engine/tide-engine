@@ -1,0 +1,23 @@
+// Exactly Transform's stored fields, with only the two tags varied.
+@POSE_DECL@
+
+singleton Setup { int count; bool ready; }
+local singleton Observed { double3 position; double4 rotation; double3 scale; int count; }
+scene Main { }
+
+system Populate(mut Setup setup)
+{
+    if (setup.ready) return;
+    for (int i = 0; i < setup.count; i++)
+        Spawn(@POSE_TYPE@ { localPosition = float3(float(i % 256), float(i / 256), float(i % 7)),
+                           localRotation = quaternion(0, 0.6, 0, 0.8) });
+    setup.ready = true;
+}
+
+view Read(@POSE_TYPE@ pose, mut Observed observed)
+{
+    observed.position += double3(pose.localPosition);
+    observed.rotation += double4(pose.localRotation.value);
+    observed.scale += double3(pose.localScale);
+    observed.count++;
+}

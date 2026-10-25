@@ -1,5 +1,56 @@
 # Language features, as tidec builds them
 
+## Transform correction defaults (2026-10-25)
+
+After the measured comparison in notes/benchmarks.md, the owner approved making
+position and rotation smoothing built-in Transform defaults. Its synthesized
+localPosition/localRotation fields now carry the existing view_correction roles
+1/2; localScale stays ordinary interpolation. This reuses the generated
+correction/decay/Snap/reset paths without introducing a runtime entry point or
+changing match storage or the algorithm. Generated local state gains the usual
+transient correction table, and match entities keep the existing birth metadata
+used by tagged components. No source attributes are injected into note_position:
+explicit game and package positions still precede the existing hierarchy-root Transform fallback,
+and a Transform in a 2D sharded game does not introduce a conflicting 3D position.
+Local bindings remain current and verified bindings bypass prediction errors.
+
+World.LocalToWorld, ParentToWorld and World.Get retain their stored-state
+contract. Transform.position reads the presented receiver's localPosition with
+stored ancestors, as before; this does not implement hierarchy presentation
+interpolation or continuous reparenting. An intentional reparent plus Snap clears
+the child's error through the ordinary mechanism. Transform retains its existing
+40-byte TRS layout, simulation values, snapshot/packing and hash behavior.
+
+Three transforms E2E cases cover correction continuity and 75 ms decay of
+position/quaternion, untouched scale, zero-error/shortest-path tick interpolation,
+confirmed/local bindings, hierarchy-property versus stored-query reads,
+reparent/Snap/reset, transient local packing and immutable world hashes. An AST
+regression pins both roles and preservation of explicit 2D shard positions. The
+benchmark's real Transform control now follows the tagged default. New rows mark
+transform_defaults, while the analyzer continues accepting historical untagged
+control rows; the saved pre-default measurements and identities stay unchanged.
+
+Validation: warning-free full native/web debug builds. All 2,749 enabled engine
+native checks pass, and the engine-only web suite passes all 2,645 enabled checks
+(512.73 s), including WebGL/D3D11/WebGPU. Both retain the existing disabled
+MicroDuck right-turn case. The transforms and real-Transform benchmark targets
+also pass optimized native/WASI checks (six CTests). The final benchmark metadata
+adjustment passes all 16 native/web debug benchmark checks, and its analyzer
+validates the historical 24-process/288-row evidence in an ignored scratch copy.
+The production docs build passes. Existing simulation/math/random pins are
+unchanged. Clang 23.1.2, Node 24.22.1, pinned WASI SDK 24; no Vulkan validation
+layer, other OS, Android, MinGW, sanitizer or manual CI validation is claimed.
+
+The initial cached native configuration also included private prototypes:
+2,760/2,761 enabled checks pass (315.41 s); only Cracked's pre-existing match pin
+fails, at bf53c0610c47764e. All 2,749 engine test names are independently matched
+to passing results. A baseline compiler built here from df9c397b's check.c and
+the otherwise unchanged compiler objects generates byte-identical Cracked
+game.h/game_pack.c and identical game.c after normalizing only its emitted
+output filename in debug line directives. This change has no effect on that
+failure; no prototype or pin is edited. Both debug caches now exclude external
+prototypes, and the final web suite is engine-only.
+
 ## Constant-size component loads and typed asset equality (2026-10-25)
 
 These are separate compiler changes during the Render3D CPU recording work.

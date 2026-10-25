@@ -1,0 +1,131 @@
+Start testing: Oct 25 11:58 Romance Standard Time
+----------------------------------------------------------
+2530/2678 Testing: bench_corrections_transform
+2530/2678 Test: bench_corrections_transform
+Command: "C:/Program Files/nodejs/node.exe" "--no-warnings" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/cmake/run_wasi.mjs" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/web-debug/bin/bench_corrections_transform.wasm" "--quick"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/web-debug/bench/corrections
+"bench_corrections_transform" start time: Oct 25 11:58 Romance Standard Time
+Output:
+----------------------------------------------------------
+transform: correction benchmark correctness passed
+<end of output>
+Test time =   0.11 sec
+----------------------------------------------------------
+Test Passed.
+"bench_corrections_transform" end time: Oct 25 11:58 Romance Standard Time
+"bench_corrections_transform" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2531/2678 Testing: bench_corrections_transform_large
+2531/2678 Test: bench_corrections_transform_large
+Command: "C:/Program Files/nodejs/node.exe" "--no-warnings" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/cmake/run_wasi.mjs" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/web-debug/bin/bench_corrections_transform.wasm" "--quick" "--count" "10000"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/web-debug/bench/corrections
+"bench_corrections_transform_large" start time: Oct 25 11:58 Romance Standard Time
+Output:
+----------------------------------------------------------
+transform: correction benchmark correctness passed
+<end of output>
+Test time =   0.16 sec
+----------------------------------------------------------
+Test Passed.
+"bench_corrections_transform_large" end time: Oct 25 11:58 Romance Standard Time
+"bench_corrections_transform_large" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2532/2678 Testing: bench_corrections_plain
+2532/2678 Test: bench_corrections_plain
+Command: "C:/Program Files/nodejs/node.exe" "--no-warnings" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/cmake/run_wasi.mjs" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/web-debug/bin/bench_corrections_plain.wasm" "--quick"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/web-debug/bench/corrections
+"bench_corrections_plain" start time: Oct 25 11:58 Romance Standard Time
+Output:
+----------------------------------------------------------
+plain: correction benchmark correctness passed
+<end of output>
+Test time =   0.07 sec
+----------------------------------------------------------
+Test Passed.
+"bench_corrections_plain" end time: Oct 25 11:58 Romance Standard Time
+"bench_corrections_plain" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2533/2678 Testing: bench_corrections_plain_large
+2533/2678 Test: bench_corrections_plain_large
+Command: "C:/Program Files/nodejs/node.exe" "--no-warnings" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/cmake/run_wasi.mjs" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/web-debug/bin/bench_corrections_plain.wasm" "--quick" "--count" "10000"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/web-debug/bench/corrections
+"bench_corrections_plain_large" start time: Oct 25 11:58 Romance Standard Time
+Output:
+----------------------------------------------------------
+plain: correction benchmark correctness passed
+<end of output>
+Test time =   0.16 sec
+----------------------------------------------------------
+Test Passed.
+"bench_corrections_plain_large" end time: Oct 25 11:58 Romance Standard Time
+"bench_corrections_plain_large" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2534/2678 Testing: bench_corrections_position
+2534/2678 Test: bench_corrections_position
+Command: "C:/Program Files/nodejs/node.exe" "--no-warnings" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/cmake/run_wasi.mjs" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/web-debug/bin/bench_corrections_position.wasm" "--quick"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/web-debug/bench/corrections
+"bench_corrections_position" start time: Oct 25 11:58 Romance Standard Time
+Output:
+----------------------------------------------------------
+position: correction benchmark correctness passed
+<end of output>
+Test time =   0.07 sec
+----------------------------------------------------------
+Test Passed.
+"bench_corrections_position" end time: Oct 25 11:58 Romance Standard Time
+"bench_corrections_position" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2535/2678 Testing: bench_corrections_position_large
+2535/2678 Test: bench_corrections_position_large
+Command: "C:/Program Files/nodejs/node.exe" "--no-warnings" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/cmake/run_wasi.mjs" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/web-debug/bin/bench_corrections_position.wasm" "--quick" "--count" "10000"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/web-debug/bench/corrections
+"bench_corrections_position_large" start time: Oct 25 11:58 Romance Standard Time
+Output:
+----------------------------------------------------------
+position: correction benchmark correctness passed
+<end of output>
+Test time =   0.21 sec
+----------------------------------------------------------
+Test Passed.
+"bench_corrections_position_large" end time: Oct 25 11:58 Romance Standard Time
+"bench_corrections_position_large" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2536/2678 Testing: bench_corrections_both
+2536/2678 Test: bench_corrections_both
+Command: "C:/Program Files/nodejs/node.exe" "--no-warnings" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/cmake/run_wasi.mjs" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/web-debug/bin/bench_corrections_both.wasm" "--quick"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/web-debug/bench/corrections
+"bench_corrections_both" start time: Oct 25 11:58 Romance Standard Time
+Output:
+----------------------------------------------------------
+both: correction benchmark correctness passed
+<end of output>
+Test time =   0.08 sec
+----------------------------------------------------------
+Test Passed.
+"bench_corrections_both" end time: Oct 25 11:58 Romance Standard Time
+"bench_corrections_both" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2537/2678 Testing: bench_corrections_both_large
+2537/2678 Test: bench_corrections_both_large
+Command: "C:/Program Files/nodejs/node.exe" "--no-warnings" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/cmake/run_wasi.mjs" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/web-debug/bin/bench_corrections_both.wasm" "--quick" "--count" "10000"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-b582b3be/build/web-debug/bench/corrections
+"bench_corrections_both_large" start time: Oct 25 11:58 Romance Standard Time
+Output:
+----------------------------------------------------------
+both: correction benchmark correctness passed
+<end of output>
+Test time =   0.22 sec
+----------------------------------------------------------
+Test Passed.
+"bench_corrections_both_large" end time: Oct 25 11:58 Romance Standard Time
+"bench_corrections_both_large" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Oct 25 11:58 Romance Standard Time

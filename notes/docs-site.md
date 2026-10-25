@@ -74,6 +74,12 @@ client/server verification, recovery and traffic assertions are unchanged.
 Native Vulkan validation walking/driving captures and Radeon WebGL/WebGPU
 shader checks pass. Android/Pixel hardware and other operating systems were
 not available. Engine/compiler/CLI source is unchanged by this pass.
+Integration merges dev's independent Transform-default smoothing change
+`85aebc66`. The sole notes conflict retains both benchmark records. Earth uses
+its custom Walker/Car position fields; rebuilt native/web Earth targets pass
+all 23 checks and three pins again (63.29/73.64 s). All 21 merged GLSL/WGSL
+texts remain byte-identical to the measured candidate. Optimized CLI/client
+builds and deployment staging are refreshed for that compiler dependency.
 Publication and hosted checks are recorded after deployment below.
 
 

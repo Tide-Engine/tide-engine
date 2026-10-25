@@ -50,6 +50,9 @@ add_executable(bench_hash hash/hash.c)
 target_link_libraries(bench_hash PRIVATE tide)
 add_test(NAME bench_hash COMMAND bench_hash --quick)
 
+# Presentation correction costs, without changing Transform's defaults.
+add_subdirectory(corrections)
+
 tide_add_game(bench_workers SOURCES workers/game.tide NAME game HOST workers/main.c)
 target_link_libraries(bench_workers PRIVATE tide_platform)
 add_test(NAME bench_workers COMMAND bench_workers --quick)
