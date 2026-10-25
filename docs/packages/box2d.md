@@ -578,9 +578,15 @@ Removing `Body` from an entity that stays doesn't take its body out of the world
 
 ## In Unity
 
-In a Unity project ([Unity](../tools/cli.md#unity)), Unity's own 2D physics components on a TideEntity GameObject are Box2D's: tide translates them as it reads the scene or prefab. A `Rigidbody2D` is a `Body` (its body type, gravity scale and dampings), a `BoxCollider2D` a `Box` and a `CircleCollider2D` a `Circle`, sized by the GameObject's scale as Unity sizes them, with their density and `isTrigger` as `sensor`. A collider with no `Rigidbody2D` is on a static body, as in Unity. A body starts where the GameObject is in x and y, turned as it's turned about z, and Unity shows it where Box2D has it.
+In a Unity project ([Unity](../tools/cli.md#unity)), Box2D's components go on a TideEntity GameObject like any of the game's, from Add Component's Tide/Box2D menu: a `Body`, and a `Box` or `Circle` for its shape. Unity's own `Rigidbody2D` and 2D colliders aren't Box2D's, and do nothing in the match.
 
-Only what's one to one is translated, and what isn't is left out with a warning that says why, such as a collider under another GameObject's `Rigidbody2D` (a part in Box2D). A Box2D component of the GameObject's own always wins over the translation of a Unity one.
+- A shape's size is by the GameObject's scale, as a 2D collider's is: a `Box`'s size by x and y, a `Circle`'s radius by the larger of them. In Play the component shows what you authored.
+- A selected shape is drawn in the Scene view, in the XY plane, and its Edit Shape button gives it handles.
+- A body starts where its GameObject is in x and y, turned as it's turned about z, and the GameObject follows the body.
+- A body of more shapes than a `Box` and a `Circle` has a child GameObject for each other shape, with its `Box` or `Circle` and a `Part`. A `Part` whose `Of` is empty is a part of the nearest GameObject above it with a `Body`, and its shape is on the body where the child puts it. A part turned against its body is a warning, unless its shape is a `Circle`.
+- A `Capsule`'s and a `Segment`'s points are by the GameObject's scale.
+- Joints go on a GameObject of their own with `Joint` and one kind's component; `A` and `B` are the bodies' GameObjects. A joint's `force` and `torque` show in Play, and aren't authored.
+- The fields Box2D keeps for itself, such as a body's `id`, aren't in the Inspector or the scene, and the components it adds itself aren't in Add Component.
 
 ## Multiplayer
 

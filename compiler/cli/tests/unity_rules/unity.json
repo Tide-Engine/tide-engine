@@ -1,0 +1,7 @@
+{
+  "about": "A package of rules for the Sample's components, for unity_code_writes_a_packages_rules",
+  "components": {
+    "Spinner": {"hidden": ["badge"], "scaled": {"speed": "largestScale"}, "shape": {"sphere": "speed"}},
+    "Owner": {"hidden": true}
+  }
+}

@@ -1,6 +1,70 @@
 {
-  "about": "Unity's 2D physics components that are Box2D's one to one, which tide unity translates (notes/unity.md, Packages' translations of Unity's components)",
-  "sourceAbout": "Added to a Unity project's game: a body starts where its entity's Transform (Unity's placement) is in x and y, turned about z, and the Transform follows the body",
+  "about": "How Box2D's components are in a Unity project, which tide unity reads (compiler/cli/unity_mapping.h). Native fields are the package's own without saying",
+  "components": {
+    "Box2D.Body": {
+      "hidden": [
+        "position",
+        "angle",
+        "stepPosition",
+        "stepAngle",
+        "stepVelocity",
+        "stepSpin",
+        "stepAsleep"
+      ]
+    },
+    "Box2D.Box": {
+      "scaled": {
+        "size": "absScale",
+        "offset": "scale"
+      },
+      "shape": {
+        "rect": "size",
+        "center": "offset"
+      }
+    },
+    "Box2D.Circle": {
+      "scaled": {
+        "radius": "largestScaleXY",
+        "offset": "scale"
+      },
+      "shape": {
+        "circle": "radius",
+        "center": "offset"
+      }
+    },
+    "Box2D.Capsule": {
+      "scaled": {
+        "a": "scale",
+        "b": "scale",
+        "radius": "largestScaleXY"
+      }
+    },
+    "Box2D.Segment": {
+      "scaled": {
+        "a": "scale",
+        "b": "scale"
+      }
+    },
+    "Box2D.Part": {
+      "part": {
+        "of": "of",
+        "body": "Box2D.Body"
+      }
+    },
+    "Box2D.BoxMade": {
+      "hidden": true
+    },
+    "Box2D.CircleMade": {
+      "hidden": true
+    },
+    "Box2D.Joint": {
+      "readBack": [
+        "force",
+        "torque"
+      ]
+    }
+  },
+  "sourceAbout": "Added to a Unity project's game: a body starts where its entity's Transform (Unity's placement) is in x and y, turned about z, and the Transform follows the body; a part that names no body is one of the nearest body above it",
   "source": [
     "namespace Box2D",
     "{",
@@ -26,39 +90,17 @@
     "        transform.position = float3(body.position.x, body.position.y, at.z);",
     "        transform.localRotation = quaternion.Euler(0, 0, body.angle);",
     "    }",
+    "",
+    "    // A part that names no body is a part of the nearest entity above it with one, as a collider on a Rigidbody2D's",
+    "    // child is in Unity: tide unity bakes its shapes' offsets where its GameObject is on that body.",
+    "    [Stage(PhysicsStages.Step, 0)]",
+    "    system PartOfTheBodyAbove(mut Part part, World world)",
+    "    {",
+    "        if (part.of != default) return;",
+    "        mut var above = world.Parent(this);",
+    "        while (above != default && !world.Has<Body>(above)) above = world.Parent(above);",
+    "        part.of = above;",
+    "    }",
     "}"
-  ],
-  "unity": {
-    "Rigidbody2D": {
-      "as": "Box2D.Body",
-      "fields": {
-        "type": {"from": "m_BodyType", "values": {"0": "Box2D.BodyType.Dynamic", "1": "Box2D.BodyType.Kinematic", "2": "Box2D.BodyType.Static"}},
-        "gravityScale": "m_GravityScale",
-        "linearDamping": "m_LinearDamping",
-        "angularDamping": "m_AngularDamping"
-      }
-    },
-    "BoxCollider2D": {
-      "as": "Box2D.Box",
-      "fields": {
-        "size": "m_Size * absScale",
-        "offset": "m_Offset * scale",
-        "density": "m_Density",
-        "sensor": "m_IsTrigger"
-      },
-      "needs": "Box2D.Body { type = Box2D.BodyType.Static }",
-      "notUnder": ["Rigidbody2D", "a collider under a Rigidbody2D is a shape of that body, which is Box2D.Part, not one to one"]
-    },
-    "CircleCollider2D": {
-      "as": "Box2D.Circle",
-      "fields": {
-        "radius": "m_Radius * largestScaleXY",
-        "offset": "m_Offset * scale",
-        "density": "m_Density",
-        "sensor": "m_IsTrigger"
-      },
-      "needs": "Box2D.Body { type = Box2D.BodyType.Static }",
-      "notUnder": ["Rigidbody2D", "a collider under a Rigidbody2D is a shape of that body, which is Box2D.Part, not one to one"]
-    }
-  }
+  ]
 }

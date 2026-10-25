@@ -95,6 +95,7 @@ static void put_fields(sb *out, const decl *d)
             sb_put(out, ", \"type\": ");
             put_json_c(out, type_name(f->type));
             if (part || f->is_local) sb_put(out, ", \"local\": true");
+            if (f->native) sb_put(out, ", \"native\": true"); // A C library's state: nothing a game writes
             // A text field's default, as written between its quotes, which the schema's default bytes don't hold
             if (f->default_value && f->default_value->kind == E_STRING) {
                 sb_put(out, ", \"text\": ");

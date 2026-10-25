@@ -39,7 +39,7 @@ TIDE_TEST(unity_code_writes_the_samples_package)
     size_t size = 0;
     char *schema = sys_read_file(from, &size);
     TIDE_REQUIRE(schema != NULL);
-    TIDE_REQUIRE(unity_code_write(dir, schema, NULL));
+    TIDE_REQUIRE(unity_code_write(dir, schema, NULL, NULL, 0));
     free(schema);
     static const char *const files[] = {
         "TideGame.cs", "TideGame.cs.meta", "components.json", "Components/Ball.cs", "Components/Ball.cs.meta",
@@ -56,9 +56,124 @@ TIDE_TEST(unity_code_writes_the_samples_package)
     snprintf(from, sizeof from, "%s/schema.json", TIDE_UNITY_SAMPLE_PACKAGE);
     schema = sys_read_file(from, &size);
     TIDE_REQUIRE(schema != NULL);
-    TIDE_REQUIRE(unity_code_write(dir, schema, NULL));
+    TIDE_REQUIRE(unity_code_write(dir, schema, NULL, NULL, 0));
     free(schema);
     TIDE_CHECK(!sys_exists(to));
+    sys_remove_tree(dir);
+}
+
+// A package's unity.json (tests/unity_rules) in the C# of its components: a field of its own hidden, a component of its
+// own kept from Add Component, a shape for the Scene view, and a field by the scale shown in Play divided by it. A
+// unity.json with rules tide doesn't read is an error.
+TIDE_TEST(unity_code_writes_a_packages_rules)
+{
+    const char *base = sys_env("TEMP") ? sys_env("TEMP") : sys_env("TMPDIR") ? sys_env("TMPDIR") : "/tmp";
+    char dir[1024], path[1024];
+    snprintf(dir, sizeof dir, "%s/tide_unity_rules_test", base);
+    sys_remove_tree(dir);
+    TIDE_REQUIRE(sys_mkdirs(dir));
+    snprintf(path, sizeof path, "%s/schema.json", TIDE_UNITY_SAMPLE_PACKAGE);
+    size_t size = 0;
+    char *schema = sys_read_file(path, &size);
+    TIDE_REQUIRE(schema != NULL);
+    const unity_package rules[] = {{TIDE_UNITY_RULES_PACKAGE, "Rules"}};
+    TIDE_REQUIRE(unity_code_write(dir, schema, NULL, rules, 1));
+    snprintf(path, sizeof path, "%s/Components/Spinner.cs", dir);
+    char *spinner = sys_read_file(path, &size);
+    TIDE_REQUIRE(spinner != NULL);
+    TIDE_CHECK(strstr(spinner, "    [global::UnityEngine.AddComponentMenu(\"Tide/Spinner\")]\n"
+                               "    [global::UnityEngine.DisallowMultipleComponent]\n"
+                               "    [global::UnityEngine.Icon(global::Tide.TideIcon.Component)]\n"
+                               "    [global::Tide.TideShape(\"sphere\", \"speed\", \"\", \"\")]\n") != NULL);
+    TIDE_CHECK(strstr(spinner, "        [global::UnityEngine.Tooltip(\"By the GameObject's scale, as a collider's size is\")]\n"
+                               "        public float speed = 1f;\n") != NULL);
+    TIDE_CHECK(strstr(spinner, "        [global::UnityEngine.HideInInspector] // Its package's own\n"
+                               "        public int badge = 83;\n") != NULL);
+    TIDE_CHECK(strstr(spinner, "            speed = global::Tide.TideScale.Unscale(speed, transform, global::Tide.TideScale.By.LargestScale);\n") != NULL);
+    free(spinner);
+    snprintf(path, sizeof path, "%s/Components/Owner.cs", dir);
+    char *owner = sys_read_file(path, &size);
+    TIDE_CHECK(owner && strstr(owner, "    [global::UnityEngine.AddComponentMenu(\"\")]\n") != NULL && !strstr(owner, "Tide/Owner"));
+    free(owner);
+    // A capsule without its height
+    char bad[1024];
+    snprintf(bad, sizeof bad, "%s/bad", dir);
+    TIDE_REQUIRE(sys_mkdirs(bad));
+    snprintf(path, sizeof path, "%s/unity.json", bad);
+    TIDE_REQUIRE(sys_write_text(path, "{\"components\": {\"Spinner\": {\"shape\": {\"capsule\": \"speed\"}}}}\n"));
+    const unity_package wrong[] = {{bad, "Bad"}};
+    TIDE_CHECK(!unity_code_write(dir, schema, NULL, wrong, 1));
+    free(schema);
+    sys_remove_tree(dir);
+}
+
+static char *read_written(const char *dir, const char *file)
+{
+    char path[1024];
+    snprintf(path, sizeof path, "%s/%s", dir, file);
+    size_t size = 0;
+    return sys_read_file(path, &size);
+}
+
+// Whether a unity.json of `text` beside the physics fixture's game is refused
+static bool refused(const char *dir, const char *schema, const char *outline, const char *text)
+{
+    char bad[1024], path[1024];
+    snprintf(bad, sizeof bad, "%s/bad", dir);
+    sys_remove_tree(bad);
+    if (!sys_mkdirs(bad)) return false;
+    snprintf(path, sizeof path, "%s/unity.json", bad);
+    if (!sys_write_text(path, text)) return false;
+    const unity_package wrong[] = {{bad, "Bad"}};
+    return !unity_code_write(dir, schema, outline, wrong, 1);
+}
+
+// A physics package's rules (tests/unity_rules_physics: a game's schema and outline, as tide writes them, and its
+// unity.json): a [Native] field is no C# field and isn't authored; a part's shapes, and anything whose field places
+// it on its body, are shown in Play from where the body is; a mesh's lists are filled from a Mesh; a field read back
+// is shown in Play, never authored. A rule naming a component or a field the game hasn't is an error.
+TIDE_TEST(unity_code_writes_a_physics_packages_rules)
+{
+    const char *base = sys_env("TEMP") ? sys_env("TEMP") : sys_env("TMPDIR") ? sys_env("TMPDIR") : "/tmp";
+    char dir[1024];
+    snprintf(dir, sizeof dir, "%s/tide_unity_physics_rules_test", base);
+    sys_remove_tree(dir);
+    TIDE_REQUIRE(sys_mkdirs(dir));
+    char *schema = read_written(TIDE_UNITY_RULES_PHYSICS, "schema.json");
+    char *outline = read_written(TIDE_UNITY_RULES_PHYSICS, "outline.json");
+    TIDE_REQUIRE(schema && outline);
+    const unity_package rules[] = {{TIDE_UNITY_RULES_PHYSICS, "Box3D"}};
+    TIDE_REQUIRE(unity_code_write(dir, schema, outline, rules, 1));
+    char *body = read_written(dir, "Components/Box3D/Body.cs");
+    TIDE_CHECK(body && strstr(body, "public float gravityScale = 1f;") != NULL && strstr(body, "        public long id") == NULL);
+    free(body);
+    char *part = read_written(dir, "Components/Box3D/Part.cs");
+    TIDE_CHECK(part && strstr(part, "    [global::Tide.TidePart(\"of\")]\n") != NULL && strstr(part, "        public long box") == NULL);
+    free(part);
+    char *sphere = read_written(dir, "Components/Box3D/Sphere.cs");
+    TIDE_CHECK(sphere && strstr(sphere, "            offset = global::Tide.TideParts.Placed(offset, this, global::Tide.TideScale.By.Scale);\n") != NULL
+               && strstr(sphere, "            radius = global::Tide.TideScale.Unscale(radius, transform, global::Tide.TideScale.By.LargestScale);\n") != NULL);
+    free(sphere);
+    char *mesh = read_written(dir, "Components/Box3D/MeshCollider.cs");
+    TIDE_CHECK(mesh && strstr(mesh, "    [global::Tide.TideMesh(\"vertices\", \"indices\")]\n") != NULL
+               && strstr(mesh, "public global::System.Collections.Generic.List<global::UnityEngine.Vector3> vertices") != NULL
+               && strstr(mesh, "            offset = global::Tide.TideParts.Placed(offset, this, global::Tide.TideScale.By.Scale);\n") != NULL);
+    free(mesh);
+    char *joint = read_written(dir, "Components/Box3D/Joint.cs");
+    TIDE_CHECK(joint && strstr(joint, "        [global::System.NonSerialized, global::Tide.TideReadBack] public global::UnityEngine.Vector3 force;\n") != NULL);
+    free(joint);
+    // components.json: what the converter bakes, none of the native or read back fields (Value keeps the layout)
+    char *map = read_written(dir, "components.json");
+    TIDE_CHECK(map && strstr(map, "{\"name\": \"Box3D.Body\", \"guid\": ") != NULL && strstr(map, "\"id\"") == NULL
+               && strstr(map, "\"box\"") == NULL && strstr(map, "\"force\"") == NULL && strstr(map, "\"vertices\"") != NULL);
+    free(map);
+    // Rules of a component the game hasn't (one its package had once), of a field it hasn't, and a part of no body
+    TIDE_CHECK(refused(dir, schema, outline, "{\"components\": {\"Box3D.BoxMade\": {\"hidden\": true}}}\n"));
+    TIDE_CHECK(refused(dir, schema, outline, "{\"components\": {\"Box3D.Joint\": {\"readBack\": [\"forces\"]}}}\n"));
+    TIDE_CHECK(refused(dir, schema, outline, "{\"components\": {\"Box3D.Part\": {\"part\": {\"of\": \"of\", \"body\": \"Box3D.Corpse\"}}}}\n"));
+    TIDE_CHECK(refused(dir, schema, outline, "{\"components\": {\"Box3D.MeshCollider\": {\"mesh\": {\"indices\": \"indices\"}}}}\n"));
+    free(schema);
+    free(outline);
     sys_remove_tree(dir);
 }
 

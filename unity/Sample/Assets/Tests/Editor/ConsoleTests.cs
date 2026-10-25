@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Reflection;
 using NUnit.Framework;
 using Tide.Editor;
@@ -67,8 +68,56 @@ public class ConsoleTests
         Assert.AreEqual(before, Count());
 
         TideBuildService.Log("tide: can't do what a test made up", true);
-        (message, _, _) = Last();
+        Assert.AreEqual(before + 1, Count());
+        (message, file, _) = Last();
         StringAssert.StartsWith("tide: can't do what a test made up", message);
         StringAssert.DoesNotContain("TideBuildService", message);
+        Assert.IsEmpty(file);
+        TideBuildService.RemoveLocated(); // An error naming no file goes with the next build too
+        Assert.AreEqual(before, Count());
+    }
+
+    // A build is a task in the editor's status bar, from tide's "building" line to how it went, and nothing in the
+    // Console. Unity starts and takes away tasks at its next update.
+    [UnityTest]
+    public IEnumerator ABuildIsATaskInTheStatusBarAndNoneOfTheConsoles()
+    {
+        Assume.That(entries != null, "this Unity has the Console's entries");
+        var before = Count();
+        bool Shown()
+        {
+            foreach (var item in UnityEditor.Progress.EnumerateItems())
+            {
+                if (item.name == TideBuildService.TaskName && item.running) return true;
+            }
+            return false;
+        }
+
+        // The editor's own tide, whose lines would come in the frames between, stops for the while
+        var running = TideBuildService.Running;
+        TideBuildService.Stop();
+        try
+        {
+            TideBuildService.Hear("tide: building game-41");
+            Assert.IsTrue(TideBuildService.Busy);
+            yield return null;
+            Assert.IsTrue(Shown());
+            TideBuildService.Hear("tide: built game-41");
+            Assert.IsFalse(TideBuildService.Busy);
+            yield return null;
+            Assert.IsFalse(Shown());
+
+            TideBuildService.Hear("tide: building game-42");
+            yield return null;
+            Assert.IsTrue(Shown());
+            TideBuildService.Hear("tide: the game keeps running its last build");
+            yield return null;
+            Assert.IsFalse(Shown());
+            Assert.AreEqual(before, Count());
+        }
+        finally
+        {
+            if (running) TideBuildService.Start();
+        }
     }
 }

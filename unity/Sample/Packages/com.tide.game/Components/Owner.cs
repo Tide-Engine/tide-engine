@@ -5,6 +5,7 @@ namespace Tide.Game
     // Tide's component Owner: its fields as authored outside Play, its entity's values in Play (TideComponent)
     [global::UnityEngine.AddComponentMenu("Tide/Owner")]
     [global::UnityEngine.DisallowMultipleComponent]
+    [global::UnityEngine.Icon(global::Tide.TideIcon.Component)]
     public sealed partial class Owner : global::Tide.TideComponent
     {
         public uint player = 0u;

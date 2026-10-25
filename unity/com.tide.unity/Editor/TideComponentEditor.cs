@@ -6,26 +6,67 @@ using UnityEngine;
 namespace Tide.Editor
 {
     // A Tide component's inspector: Unity's own, its fields as authored, and in Play its entity's values, which the
-    // match decides: shown, not edited, as a change there would reach neither the match nor the scene. In Play its
-    // local fields follow, this machine's own, which Unity doesn't keep.
+    // match decides: shown, not edited, as a change there would reach neither the match nor the scene. In Play what
+    // its package answers (TideReadBack) and its local fields follow, which Unity doesn't keep. One with a shape
+    // (TideShape) has Edit Shape; one of a mesh's lists (TideMesh), a Mesh to copy them from.
     [CustomEditor(typeof(TideComponent), true)]
     [CanEditMultipleObjects]
     sealed class TideComponentEditor : UnityEditor.Editor
     {
+        Mesh copyFrom;
+
         public override void OnInspectorGUI()
         {
             var playing = EditorApplication.isPlayingOrWillChangePlaymode;
+            if (!playing && TideShapes.Read(target as TideComponent, out _))
+            {
+                // Its shape's handles in the Scene view (TideShapeTool), as a collider's Edit Collider
+                EditorGUILayout.EditorToolbarForTarget(EditorGUIUtility.TrTempContent("Edit Shape"), this);
+            }
+            if (!playing) MeshFields();
             using (new EditorGUI.DisabledScope(playing)) DrawDefaultInspector();
             if (!EditorApplication.isPlaying || targets.Length != 1) return;
-            var locals = Array.FindAll(target.GetType().GetFields(BindingFlags.Instance | BindingFlags.Public),
+            var shown = Array.FindAll(target.GetType().GetFields(BindingFlags.Instance | BindingFlags.Public),
                 f => f.IsNotSerialized);
-            if (locals.Length == 0) return;
+            Section("From its package", Array.FindAll(shown, f => f.IsDefined(typeof(TideReadBackAttribute), false)));
+            Section("Local fields", Array.FindAll(shown, f => !f.IsDefined(typeof(TideReadBackAttribute), false)));
+        }
+
+        void Section(string title, FieldInfo[] fields)
+        {
+            if (fields.Length == 0) return;
             EditorGUILayout.Space();
-            EditorGUILayout.LabelField("Local fields", EditorStyles.boldLabel);
+            EditorGUILayout.LabelField(title, EditorStyles.boldLabel);
             using (new EditorGUI.DisabledScope(true))
             {
-                foreach (var f in locals) Show(ObjectNames.NicifyVariableName(f.Name), f.GetValue(target));
+                foreach (var f in fields) Show(ObjectNames.NicifyVariableName(f.Name), f.GetValue(target));
             }
+        }
+
+        // A mesh's lists: how many it has, and a Mesh to copy them from (the GameObject's MeshFilter's to begin with)
+        void MeshFields()
+        {
+            var c = target as TideComponent;
+            if (!TideMeshes.Read(c, out var lists)) return;
+            if (copyFrom == null) copyFrom = TideMeshes.Filtered(c);
+            var vertices = TideMeshes.Count(lists.Vertices, c);
+            var said = lists.Indices != null
+                ? $"{vertices} vertices, {TideMeshes.Count(lists.Indices, c) / 3} triangles" : $"{vertices} vertices";
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                copyFrom = (Mesh)EditorGUILayout.ObjectField(new GUIContent("Mesh", said), copyFrom, typeof(Mesh), false);
+                using (new EditorGUI.DisabledScope(copyFrom == null))
+                {
+                    if (GUILayout.Button("Copy", GUILayout.Width(52)))
+                    {
+                        foreach (var t in targets)
+                        {
+                            if (TideMeshes.Read(t as TideComponent, out var each)) TideMeshes.Fill((TideComponent)t, each, copyFrom);
+                        }
+                    }
+                }
+            }
+            EditorGUILayout.LabelField(" ", said, EditorStyles.miniLabel);
         }
 
         static void Show(string label, object value)

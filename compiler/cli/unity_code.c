@@ -188,6 +188,7 @@ struct ctype;
 struct shape;
 
 typedef struct game {
+    const unity_mappings *mappings; // What the game's packages say of their components in Unity
     type *types;
     int type_count;
     enumeration *enums;
@@ -910,8 +911,8 @@ static bool put_default(out *o, game *g, const ctype *t, const uint8_t *d, const
     return true;
 }
 
-// A text field's default, as its declaration writes it between its quotes (print_outline's "text"), or NULL.
-static const char *text_default(const game *g, const type *t, const field *f)
+// A field's declaration, as print_outline says it, or NULL.
+static const json *declared_field(const game *g, const type *t, const field *f)
 {
     const json *declarations = json_get(g->outline, "declarations");
     for (int i = 0; declarations && declarations->kind == JSON_ARRAY && i < declarations->count; i++) {
@@ -919,10 +920,23 @@ static const char *text_default(const game *g, const type *t, const field *f)
         if (strcmp(str(d, "name"), t->bare) != 0) continue;
         const json *fields = json_get(d, "fields");
         for (int k = 0; fields && fields->kind == JSON_ARRAY && k < fields->count; k++) {
-            if (strcmp(str(fields->items[k], "name"), f->name) == 0) return json_str(json_get(fields->items[k], "text"));
+            if (strcmp(str(fields->items[k], "name"), f->name) == 0) return fields->items[k];
         }
     }
     return NULL;
+}
+
+// A text field's default, as its declaration writes it between its quotes (print_outline's "text"), or NULL.
+static const char *text_default(const game *g, const type *t, const field *f)
+{
+    return json_str(json_get(declared_field(g, t, f), "text"));
+}
+
+// A [Native] field: a C library's state, its package's own, which nothing in Unity shows, authors or reads.
+static bool native_field(const game *g, const type *t, const field *f)
+{
+    const json *native = json_get(declared_field(g, t, f), "native");
+    return native && native->kind == JSON_TRUE;
 }
 
 // An authorable field's initial value: its declared default, else an empty container where it's one. False for none.
@@ -1194,17 +1208,38 @@ static void write_class(out *o, game *g, const type *t, out *map)
 {
     const bool component = t->component, command = strcmp(t->base, "TideCommand") == 0;
     const bool event = strcmp(t->base, "TideEvent") == 0;
+    const unity_component_rules *rules = component ? unity_rules_of(g->mappings, t->bare) : NULL;
     if (component) {
         putf(o, "    // Tide's component %s: its fields as authored outside Play, its entity's values in Play (TideComponent)\n", t->bare);
-        puts_(o, "    [global::UnityEngine.AddComponentMenu(\"Tide/");
-        for (const char *c = t->bare; *c; c++) {
-            if (*c == '.') puts_(o, "/");
-            else if (*c == '"' || *c == '\\') {
-                putn(o, "\\", 1);
-                putn(o, c, 1);
-            } else putn(o, c, 1);
+        if (rules && rules->hidden) {
+            puts_(o, "    // Its package's own (its unity.json): no GameObject is given it in Unity\n"
+                     "    [global::UnityEngine.AddComponentMenu(\"\")]\n");
+        } else {
+            puts_(o, "    [global::UnityEngine.AddComponentMenu(\"Tide/");
+            for (const char *c = t->bare; *c; c++) {
+                if (*c == '.') puts_(o, "/");
+                else if (*c == '"' || *c == '\\') {
+                    putn(o, "\\", 1);
+                    putn(o, c, 1);
+                } else putn(o, c, 1);
+            }
+            puts_(o, "\")]\n");
         }
-        puts_(o, "\")]\n    [global::UnityEngine.DisallowMultipleComponent]\n");
+        puts_(o, "    [global::UnityEngine.DisallowMultipleComponent]\n"
+                 "    [global::UnityEngine.Icon(global::Tide.TideIcon.Component)]\n");
+        if (rules && rules->shape) {
+            // What the Scene view draws of it, and edits with handles (com.tide.unity's TideShapes)
+            putf(o, "    [global::Tide.TideShape(\"%s\", \"%s\", \"%s\", \"%s\")]\n", rules->shape, rules->size,
+                 rules->center ? rules->center : "", rules->height ? rules->height : "");
+        }
+        if (rules && rules->vertices) {
+            // Lists its inspector fills from a Mesh (com.tide.unity's TideMeshes)
+            putf(o, "    [global::Tide.TideMesh(\"%s\", \"%s\")]\n", rules->vertices, rules->indices ? rules->indices : "");
+        }
+        if (rules && rules->part_of) {
+            // Its entity's shapes are on another's body: where they are is shown from it in Play (TideParts)
+            putf(o, "    [global::Tide.TidePart(\"%s\")]\n", rules->part_of);
+        }
     } else if (command) {
         putf(o, "    // Tide's command %s: TideRunner.Send sends it, as local code's Send does (TideCommand)\n", t->bare);
     } else if (event) {
@@ -1232,7 +1267,9 @@ static void write_class(out *o, game *g, const type *t, out *map)
         const ctype *ct = field_ctype(g, f);
         out from = {0};
         putf(&from, "v.%s", id);
-        if (command) {
+        if (!command && !event && native_field(g, t, f)) {
+            // A C library's state: nothing of Unity's
+        } else if (command) {
             // Its declared default, and its part of Pack
             char *cs = packs(g, ct) ? live_cs(g, ct, false) : NULL;
             if (cs) {
@@ -1249,8 +1286,14 @@ static void write_class(out *o, game *g, const type *t, out *map)
             free(cs);
         } else if (!component) {
             put_live_field(o, &live, g, ct, id, from.s, "", "", "        ");
+        } else if (unity_field_read_back(rules, f->name)) {
+            // The package's answer, as the match has it: shown in Play, never authored
+            put_live_field(o, &live, g, ct, id, from.s, "", "[global::System.NonSerialized, global::Tide.TideReadBack] ", "        ");
         } else if (authorable(g, ct)) {
             char *cs = live_cs(g, ct, false);
+            const unity_scale by = unity_field_scale(rules, f->name);
+            if (unity_field_hidden(rules, f->name)) puts_(o, "        [global::UnityEngine.HideInInspector] // Its package's own\n");
+            if (by != UNITY_SCALE_NONE) puts_(o, "        [global::UnityEngine.Tooltip(\"By the GameObject's scale, as a collider's size is\")]\n");
             putf(o, "        public %s %s", cs, id);
             out initial = {0};
             puts_(&initial, "");
@@ -1260,6 +1303,20 @@ static void write_class(out *o, game *g, const type *t, out *map)
             putf(&live, "            %s = ", id);
             put_conv(&live, g, ct, from.s, "packet", "runner", false, 0);
             puts_(&live, ";\n");
+            // The match has it by the scale: shown as authored, divided by it. Where it places the component on its
+            // body, which a part's is another's, it's shown from where that is.
+            char by_name[32] = "";
+            if (by != UNITY_SCALE_NONE) {
+                snprintf(by_name, sizeof by_name, "%s", unity_scale_name(by));
+                by_name[0] = (char)(by_name[0] - 'a' + 'A');
+            }
+            if (rules && rules->placed && strcmp(rules->placed, f->name) == 0 && ct->kind == CK_PRIM
+                && (strcmp(prims[ct->prim].tide, "float2") == 0 || strcmp(prims[ct->prim].tide, "float3") == 0)) {
+                putf(&live, "            %s = global::Tide.TideParts.Placed(%s, this%s%s);\n", id, id,
+                     by_name[0] ? ", global::Tide.TideScale.By." : "", by_name);
+            } else if (by_name[0]) {
+                putf(&live, "            %s = global::Tide.TideScale.Unscale(%s, transform, global::Tide.TideScale.By.%s);\n", id, id, by_name);
+            }
             free(cs);
             if (mapped++) puts_(map, ", ");
             puts_(map, "{\"name\": ");
@@ -1454,22 +1511,73 @@ static void sweep_entry(void *user, const char *name, const bool is_dir)
     free(path);
 }
 
-bool unity_code_write(const char *dir, const char *schema_text, const char *outline_text)
+static const type *component_named(const game *g, const char *name)
 {
+    for (int i = 0; name && i < g->type_count; i++) {
+        if (g->types[i].component && strcmp(g->types[i].bare, name) == 0) return &g->types[i];
+    }
+    return NULL;
+}
+
+// Whether every component and field the packages' rules name is one the game has: a rule that names none, left from
+// a package's earlier version, is an error, as it would be nothing silently. False after saying which.
+static bool rules_name_the_game(const game *g, const unity_mappings *m)
+{
+    bool ok = true;
+    for (int i = 0; i < m->component_count; i++) {
+        const unity_component_rules *r = &m->components[i];
+        const type *t = component_named(g, r->name);
+        if (!t) {
+            fprintf(stderr, "%s: error: it has rules for %s, which isn't a component of the game's packages: take them out, "
+                            "or name the component as its package declares it\n", r->file, r->name);
+            ok = false;
+            continue;
+        }
+        if (r->part_body && !component_named(g, r->part_body)) {
+            fprintf(stderr, "%s: error: %s's \"part\" names the body %s, which isn't a component of the game's packages\n",
+                    r->file, r->name, r->part_body);
+            ok = false;
+        }
+        const char *named[256];
+        const int count = unity_rules_fields(r, named, (int)(sizeof named / sizeof named[0]));
+        for (int k = 0; k < count; k++) {
+            bool has = false;
+            for (int f = 0; f < t->field_count && !has; f++) has = strcmp(t->fields[f].name, named[k]) == 0;
+            if (!has) {
+                fprintf(stderr, "%s: error: %s's rules name '%s', which isn't one of its fields\n", r->file, r->name, named[k]);
+                ok = false;
+            }
+        }
+    }
+    return ok;
+}
+
+static bool write_code(const char *dir, const char *schema_text, const char *outline_text, const unity_package *packages,
+                       const int package_count, const bool sweeps)
+{
+    // What the packages say of their components, read before the schema: JSON's trees go together
+    unity_mappings mappings;
+    if (!unity_mappings_read(packages, package_count, &mappings)) {
+        unity_mappings_free(&mappings);
+        return false;
+    }
     json *schema = json_parse(schema_text, strlen(schema_text));
     if (!schema) {
         fprintf(stderr, "tide: the game's schema isn't JSON\n");
+        unity_mappings_free(&mappings);
         return false;
     }
     json *outline = outline_text ? json_parse(outline_text, strlen(outline_text)) : NULL;
     game g = {0};
     g.outline = outline;
+    g.mappings = &mappings;
     if (!read_game(schema, &g)) {
         json_release();
+        unity_mappings_free(&mappings);
         fprintf(stderr, "tide: the game's schema has no types\n");
         return false;
     }
-    bool failed = false;
+    bool failed = !rules_name_the_game(&g, &mappings);
     char *components = path_join(dir, "Components");
     kept k = {NULL, 0, components, false};
     out map = {0};
@@ -1547,7 +1655,7 @@ bool unity_code_write(const char *dir, const char *schema_text, const char *outl
     write_if_changed(map_path, map.s, &failed);
     // Scripts of components the game no longer has go, so Unity says Missing where they were
     const sweep s = {&k, components, ""};
-    sys_list(components, sweep_entry, (void *)&s);
+    if (sweeps) sys_list(components, sweep_entry, (void *)&s);
     for (int i = 0; i < k.count; i++) free(k.paths[i]);
     free(k.paths);
     free(meta.s);
@@ -1560,5 +1668,18 @@ bool unity_code_write(const char *dir, const char *schema_text, const char *outl
     free_trees(&g);
     free_game(&g);
     json_release();
+    unity_mappings_free(&mappings);
     return !failed;
+}
+
+bool unity_code_write(const char *dir, const char *schema, const char *outline, const unity_package *packages,
+                      const int package_count)
+{
+    return write_code(dir, schema, outline, packages, package_count, true);
+}
+
+bool unity_code_add(const char *dir, const char *schema, const char *outline, const unity_package *packages,
+                    const int package_count)
+{
+    return write_code(dir, schema, outline, packages, package_count, false);
 }

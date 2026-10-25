@@ -23,6 +23,7 @@ namespace Tide
     // whose entity is meant.
     [DisallowMultipleComponent]
     [AddComponentMenu("Tide/Tide Entity")]
+    [Icon(TideIcon.Entity)]
     public sealed class TideEntity : MonoBehaviour
     {
         public List<TideAuthoredComponent> components = new List<TideAuthoredComponent>();

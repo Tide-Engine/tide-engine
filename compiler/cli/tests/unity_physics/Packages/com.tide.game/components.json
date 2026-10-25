@@ -1,13 +1,29 @@
 {"hash": "0000000000000000", "components": [
-  {"name": "Box3D.Body", "guid": "33333333333333333333333333333333", "fields": [{"name": "type", "key": "type", "shape": 0}, {"name": "gravityScale", "key": "gravityScale", "shape": 1}, {"name": "linearDamping", "key": "linearDamping", "shape": 1}, {"name": "angularDamping", "key": "angularDamping", "shape": 1}]},
-  {"name": "Box3D.Box", "guid": "44444444444444444444444444444444", "fields": [{"name": "size", "key": "size", "shape": 2}, {"name": "offset", "key": "offset", "shape": 2}, {"name": "density", "key": "density", "shape": 1}, {"name": "sensor", "key": "sensor", "shape": 3}]},
+  {"name": "Box3D.Body", "guid": "33333333333333333333333333333333", "fields": [{"name": "type", "key": "type", "shape": 0}, {"name": "gravityScale", "key": "gravityScale", "shape": 1}, {"name": "stepType", "key": "stepType", "shape": 0}]},
+  {"name": "Box3D.Box", "guid": "44444444444444444444444444444444", "fields": [{"name": "size", "key": "size", "shape": 2}, {"name": "offset", "key": "offset", "shape": 2}, {"name": "sensor", "key": "sensor", "shape": 3}]},
   {"name": "Box3D.Sphere", "guid": "55555555555555555555555555555555", "fields": [{"name": "radius", "key": "radius", "shape": 1}, {"name": "offset", "key": "offset", "shape": 2}, {"name": "sensor", "key": "sensor", "shape": 3}]},
-  {"name": "Box3D.Capsule", "guid": "66666666666666666666666666666666", "fields": [{"name": "radius", "key": "radius", "shape": 1}, {"name": "height", "key": "height", "shape": 1}, {"name": "offset", "key": "offset", "shape": 2}, {"name": "sensor", "key": "sensor", "shape": 3}]}
+  {"name": "Box3D.Capsule", "guid": "66666666666666666666666666666666", "fields": [{"name": "radius", "key": "radius", "shape": 1}, {"name": "height", "key": "height", "shape": 1}, {"name": "offset", "key": "offset", "shape": 2}, {"name": "sensor", "key": "sensor", "shape": 3}]},
+  {"name": "Box2D.CircleMade", "guid": "77777777777777777777777777777777", "fields": []},
+  {"name": "Box3D.Part", "guid": "88888888888888888888888888888888", "fields": [{"name": "of", "key": "of", "shape": 4}]},
+  {"name": "Box3D.Joint", "guid": "99999999999999999999999999999999", "fields": [{"name": "a", "key": "a", "shape": 4}, {"name": "b", "key": "b", "shape": 4}, {"name": "anchorA", "key": "anchorA", "shape": 2}]},
+  {"name": "Box3D.RevoluteJoint", "guid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "fields": [{"name": "enableMotor", "key": "enableMotor", "shape": 3}]},
+  {"name": "Box3D.MeshCollider", "guid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "fields": [{"name": "vertices", "key": "vertices", "shape": 7}, {"name": "indices", "key": "indices", "shape": 6}, {"name": "scale", "key": "scale", "shape": 2}, {"name": "offset", "key": "offset", "shape": 2}]},
+  {"name": "Box2D.Body", "guid": "cccccccccccccccccccccccccccccccc", "fields": [{"name": "type", "key": "type", "shape": 8}, {"name": "gravityScale", "key": "gravityScale", "shape": 1}]},
+  {"name": "Box2D.Box", "guid": "dddddddddddddddddddddddddddddddd", "fields": [{"name": "size", "key": "size", "shape": 9}, {"name": "offset", "key": "offset", "shape": 9}]},
+  {"name": "Box2D.Circle", "guid": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", "fields": [{"name": "radius", "key": "radius", "shape": 1}, {"name": "offset", "key": "offset", "shape": 9}]},
+  {"name": "Box2D.Part", "guid": "ffffffffffffffffffffffffffffffff", "fields": [{"name": "of", "key": "of", "shape": 4}]}
 ], "shapes": [
   {"form": "enum", "type": "Box3D.BodyType", "enum": "Box3D.BodyType"},
   {"form": "number", "type": "float"},
   {"form": "float3", "type": "float3"},
-  {"form": "bool", "type": "bool"}
+  {"form": "bool", "type": "bool"},
+  {"form": "entity", "type": "Entity"},
+  {"form": "number", "type": "int"},
+  {"form": "list", "type": "List<int>", "element": 5},
+  {"form": "list", "type": "List<float3>", "element": 2},
+  {"form": "enum", "type": "Box2D.BodyType", "enum": "Box2D.BodyType"},
+  {"form": "float2", "type": "float2"}
 ], "enums": [
-  {"name": "Box3D.BodyType", "members": ["Static", "Kinematic", "Dynamic"], "values": [0, 1, 2]}
+  {"name": "Box3D.BodyType", "members": ["Static", "Kinematic", "Dynamic"], "values": [0, 1, 2]},
+  {"name": "Box2D.BodyType", "members": ["Static", "Kinematic", "Dynamic"], "values": [0, 1, 2]}
 ]}

@@ -5,6 +5,7 @@ namespace Tide.Game
     // Tide's component Spinner: its fields as authored outside Play, its entity's values in Play (TideComponent)
     [global::UnityEngine.AddComponentMenu("Tide/Spinner")]
     [global::UnityEngine.DisallowMultipleComponent]
+    [global::UnityEngine.Icon(global::Tide.TideIcon.Component)]
     public sealed partial class Spinner : global::Tide.TideComponent
     {
         public float speed = 1f;

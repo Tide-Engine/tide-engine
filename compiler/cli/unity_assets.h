@@ -28,6 +28,8 @@
 
 #include <stdbool.h>
 
+#include "unity_mapping.h"
+
 // What the package's TideEntity.cs.meta says: how its components are found in a Unity file.
 #define TIDE_UNITY_ENTITY_GUID "4f7d2c1e9a8b4b6c8d3e2f1a0b9c8d7e"
 
@@ -37,34 +39,20 @@ typedef struct unity_source {
     char *package; // A package's Tide for a Unity project (its unity.json's "source"), by the package's name; else NULL
 } unity_source;
 
-// One of the game's packages, for its unity.json (UNITY_MAPPING_FILE)
-typedef struct unity_package {
-    const char *folder;
-    const char *name;
-} unity_package;
-
 typedef struct unity_sources {
     unity_source *items; // UnityEngine.Source's declaration first, when there are any
     int count;
     char *map; // JSON: {"assets": [{"guid": "...", "path": "Assets/...", "scene": false, "nodes": ["", "Body"]}]}
 } unity_sources;
 
-// A package's translations of Unity's own components into its own, where they're one to one: a JSON object, each of
-// "unity"'s keys a Unity component ("BoxCollider"), its value {"as": the package's component, "fields": {its field:
-// Unity's key, "m_Size * absScale" for a size by the GameObject's scale, or {"from": key, "values": {Unity's: Tide's}}},
-// "when": [key, value, why it's no one to one else], "needs": a component the entity then has where nothing else gives
-// it one of that type, "notUnder": [a Unity component above it that makes it no one to one, why]}. And "source", lines
-// of the package's Tide that a Unity project alone has, as "Library/Tide/Unity.<package>.tide": its glue for Unity's
-// placement (Box3D's bodies start at their entities' Transforms, which follow them).
-#define UNITY_MAPPING_FILE "unity.json"
-
 #define UNITY_SOURCE_PATH "Library/Tide/Unity.tide" // Where messages say UnityEngine.Source is declared
 
 // The prefabs and scenes under `assets` (a Unity project's Assets folder) that hold TideEntity objects, as Tide
 // source. False after saying what's wrong: an asset in binary serialization, one that doesn't read, two prefabs of
-// one name, a reference to something that isn't an entity. `packages` are the game's, whose unity.json (where one has
-// it) says which of Unity's own components are which of the package's: a Rigidbody a Box3D.Body, a BoxCollider a
-// Box3D.Box (UNITY_MAPPING_FILE); its "source" is a source of that package's, after the assets'.
+// one name, a reference to something that isn't an entity.
+// `packages` are the game's: each one's unity.json (unity_mapping.h) says which of its components' fields are hidden
+// (not baked) and which are by the GameObject's scale (baked times it), and its "source" is a source of that
+// package's, after the assets'.
 bool unity_assets_read(const char *assets, const unity_package *packages, int package_count, unity_sources *out);
 void unity_sources_free(unity_sources *sources);
 

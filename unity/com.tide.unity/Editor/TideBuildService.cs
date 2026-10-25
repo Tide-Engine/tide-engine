@@ -26,6 +26,11 @@ namespace Tide.Editor
         {
             // An asset import worker is a Unity process of its own, which loads this too: the editor builds, not it
             if (AssetDatabase.IsAssetImportWorkerProcess()) return;
+            // A task the editor kept through a script reload, which no one ends now
+            foreach (var item in Progress.EnumerateItems())
+            {
+                if (item.name == TaskName) Progress.Remove(item.id);
+            }
             AssemblyReloadEvents.beforeAssemblyReload += Stop;
             EditorApplication.quitting += Stop;
             EditorApplication.update += Drain;
@@ -57,7 +62,32 @@ namespace Tide.Editor
 
         public static string Describe()
         {
-            return process != null && !process.HasExited ? "building while the game's files change" : state;
+            if (process == null || process.HasExited) return state;
+            return Busy ? "building the game" : "building while the game's files change";
+        }
+
+        // What tide is doing, as a task in the editor's status bar (Unity's Background Tasks), never the Console: a
+        // build, from tide starting or saying "tide: building game-<n>" to how it went, and Play waiting for tide to
+        // have built the scenes as they are.
+        internal const string TaskName = "Tide";
+        static int task = -1;
+
+        internal static bool Busy => task >= 0 && Progress.Exists(task);
+
+        static void Working(string what)
+        {
+            if (Busy) Progress.SetDescription(task, what);
+            else task = Progress.Start(TaskName, what, Progress.Options.Indefinite);
+        }
+
+        static void Idle()
+        {
+            if (Busy)
+            {
+                Progress.Finish(task); // At once: Unity takes a task away at its next update
+                Progress.Remove(task);
+            }
+            task = -1;
         }
 
         public static void Restart()
@@ -104,6 +134,7 @@ namespace Tide.Editor
                 process.BeginOutputReadLine();
                 process.BeginErrorReadLine();
                 state = "building";
+                Working("Building the game");
             }
             catch (Exception e)
             {
@@ -233,6 +264,7 @@ namespace Tide.Editor
             Synced = false;
             changesSynced = changes;
             Tell("sync " + ++syncs);
+            Working("Building the scenes for Play");
             return true;
         }
 
@@ -268,6 +300,7 @@ namespace Tide.Editor
             process.Dispose();
             process = null;
             state = "stopped";
+            Idle();
         }
 
         // A message tide is saying: a diagnostic's first line, then its source line, caret and notes, which come as
@@ -338,6 +371,7 @@ namespace Tide.Editor
                 process.Dispose();
                 process = null;
                 Synced = true; // Nothing more comes
+                Idle();
             }
             if (waiting && Synced)
             {
@@ -350,6 +384,14 @@ namespace Tide.Editor
             KeepErrorsShown();
         }
 
+        // A line as tide says it, taken at once, before what the running tide said since (tests)
+        internal static void Hear(string line)
+        {
+            Flush();
+            pending.Append(line);
+            Flush();
+        }
+
         static void Flush()
         {
             if (pending.Length == 0) return;
@@ -358,14 +400,27 @@ namespace Tide.Editor
             var first = message.Split('\n')[0];
             // A compiler's error or warning says so; the rest of what tide says is progress, and how a build went
             var isError = first.Contains(": error") || first.StartsWith("tide: can't") || first.Contains("FAILED");
+            if (first.StartsWith("tide: building game-"))
+            {
+                Working(Synced ? "Building the game" : "Building the scenes for Play");
+                return;
+            }
+            if (first.StartsWith("tide: building the game for Unity"))
+            {
+                // Its first build is over, as it went (its errors came before), and it watches the game's files
+                if (Synced) Idle();
+                return;
+            }
             if (first.StartsWith("tide: synced"))
             {
                 if (first != "tide: synced " + syncs) return; // An earlier question's
                 if (changes == changesSynced) changedSinceBuild = false;
                 Synced = true;
+                Idle();
             }
             else if (first.StartsWith("tide: built"))
             {
+                if (Synced) Idle(); // Play waiting for tide goes on till it's said it's synced
                 Finished();
                 building.Clear();
                 built = true;
@@ -377,6 +432,7 @@ namespace Tide.Editor
             }
             else if (first.Contains("keeps running its last build") || first.Contains("will build once its files are fixed"))
             {
+                if (Synced) Idle();
                 built = true; // The errors after this are another build's
                 said = 0;
                 Finished();
@@ -407,14 +463,16 @@ namespace Tide.Editor
             if (!again && said++ == 0) RemoveLocated();
             var context = ContextOf(ref message, out var file, out var line, out var column);
             if (!message.StartsWith("tide: ")) message = "tide: " + message;
-            if (file != null && LogLocated(message, file, line, column, isError)) return;
+            // One naming no file goes in as a compiler message too, with none, so the next build takes it away as well
+            if (LogLocated(message, file ?? "", line, column, isError)) return;
             if (isError) plainErrors = true;
             // With no C# stack under it: where it came from is tide, not this package's code
             Debug.LogFormat(isError ? LogType.Error : LogType.Warning, LogOption.NoStacktrace, context, "{0}", message);
         }
 
         static int said; // Errors and warnings of the build going on, which tide hasn't said the end of
-        static bool plainErrors; // An error went in as an ordinary log, which stays: a line then says it's fixed
+        // An error went in as an ordinary log (a Unity without compiler messages), which stays: a line then says it's fixed
+        static bool plainErrors;
 
         // Unity's own compiler messages (internal, through reflection): an entry with a file and line, which a double
         // click opens there, and which Unity's Clear leaves, as a C# error. Ours go by our identifier. Where this Unity
@@ -499,7 +557,7 @@ namespace Tide.Editor
             foreach (var error in SessionState.GetString(ErrorsKey, "").Split(Separator)) Log(error, true, true);
             const string message = "Fix the game's Tide errors before Play: see the Console";
             foreach (SceneView view in SceneView.sceneViews) view.ShowNotification(new GUIContent(message));
-            Debug.LogError("tide: the game has errors: fix them before Play (they're above)");
+            Log("tide: the game has errors: fix them before Play (they're above)", true, true); // The next build takes it away
             // Nobody can fix them in a batch run (tests), which would wait for Play forever: it fails
             if (Application.isBatchMode) EditorApplication.Exit(1);
         }
