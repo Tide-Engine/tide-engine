@@ -98,9 +98,9 @@ Tide is where the game's types are declared; their C# follows them:
 
 ## Author
 
-Add `TideEntity` (Add Component > Tide > Tide Entity) to a GameObject of a
-prefab or a scene, and its Tide components with Add Tide Component: each field
-is drawn by its Tide type, and one you don't set keeps its default. An entity
+Add the game's components with Add Component > Tide; Unity also adds the
+`TideEntity` that makes the GameObject an entity. Each field starts at its
+declared Tide default and is authored in its component's inspector. An entity
 field names another TideEntity's GameObject. The GameObject's Transform is the
 entity's, and its parent the entity's parent (through GameObjects that aren't
 entities).
