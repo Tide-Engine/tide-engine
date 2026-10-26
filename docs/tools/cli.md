@@ -433,6 +433,15 @@ fresh clone compiles before tide has built anything. Renaming a component or a
 field in your editor (tidels) renames it in the project's prefabs and scenes
 too, so they keep their values.
 
+In Play, Window > Tide > Time Travel pauses a match the editor runs, steps it
+a tick at a time, shows any tick since it started again (the GameObjects,
+inspectors and Tide's drawing following it), goes on from a tick shown, and
+saves and replays recordings of matches, each tick checked against the
+recording, so a tester's bug report replays bit for bit and a changed build
+shows the first tick it changes. With other machines in the match, it never
+stops for them: the match goes on behind the tick shown. The package's README
+has the details.
+
 Tide's views draw in Unity's frame with Tide's own renderer: 2D, text, 3D
 drawn with the camera's depth (so Tide's meshes and Unity's scene hide each
 other), render targets, stencil and the game's own frags and verts, as Tide

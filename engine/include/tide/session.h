@@ -231,6 +231,11 @@ typedef struct tide_game {
     bool (*command)(void *world, tide_player_id sender, uint32_t channel, uint32_t sequence, const uint8_t *data,
                     uint32_t size);
     bool (*command_applied)(const void *world, tide_player_id player, uint32_t id);
+    // With commands: `to`'s record of which of each player's commands are in
+    // it (command_sequence's, command_applied's) becomes `from`'s. A
+    // debugger's rewind (tide_session_rewind) keeps the match's, so no
+    // command is lost or runs twice, however far back it goes.
+    void (*keep_commands)(void *to, const void *from);
     // How many channels its commands are in, the default counted: 0 for 1
     uint32_t command_channels;
     // Whether the match is over: its last scene unloaded, and Main is local,
@@ -400,6 +405,20 @@ typedef struct tide_server_desc {
 bool tide_replay(const tide_game *game, void *world, const uint8_t *record, uint32_t size, const tide_jobs *jobs);
 // The tick a journal record is of, or false for bytes that aren't one.
 bool tide_replay_tick(const uint8_t *record, uint32_t size, uint32_t *tick);
+
+typedef enum tide_replay_result {
+    TIDE_REPLAY_SAME,       // The tick ran again to the world the server made: its hash
+    TIDE_REPLAY_DIFFERENT,  // ...to another world: `got`, where the server's was `expected`
+    TIDE_REPLAY_UNREADABLE, // Bytes this build can't run (not a record, or another input, command or player count):
+                            // the world is in whatever state reading them left it
+} tide_replay_result;
+
+// tide_replay, saying which of those it was, with the hash the record says the
+// server's world had after the tick, and the hash of the world it made (0 when
+// unreadable). A debugger's replay (tide/timeline.h) goes on after a world that
+// differs, to show where it goes from there.
+tide_replay_result tide_replay_check(const tide_game *game, void *world, const uint8_t *record, uint32_t size,
+                                     const tide_jobs *jobs, uint64_t *expected, uint64_t *got);
 
 tide_server *tide_server_create(const tide_server_desc *desc, double now);
 // Tells every player the match is over, and closes the transports.
@@ -785,6 +804,40 @@ void tide_session_set_game(tide_session *s, const tide_game *game);
 // Hot reloading can add or remove correction attributes without changing the
 // simulation layout. Refresh the optional presentation callback with its table.
 void tide_session_set_view_corrector(tide_session *s, tide_view_correct_fn correct_views);
+
+// What records the match this machine runs, for a debugger to show its ticks
+// again and replay them (tide/timeline.h). `begin` says it's recorded from
+// `world`, as it is before tick `tick` (ticks its server ran so far): when the
+// recorder is set while a match runs, as a match starts here, as this machine
+// takes over another's, and as a build of another data layout carries the
+// match over. Then `tick` after each tick the server runs: its journal record
+// (tide_server_desc.journal) and the world after it. Both are called on the
+// thread updating the session, the world and bytes theirs only for the call.
+// Matches on other machines and sharded ones aren't recorded.
+typedef struct tide_session_recorder {
+    void *user;
+    void (*begin)(void *user, const void *world, uint32_t tick);
+    void (*tick)(void *user, uint32_t tick, const uint8_t *record, uint32_t size, const void *world);
+} tide_session_recorder;
+
+// Copied; NULL stops recording.
+void tide_session_record(tide_session *s, const tide_session_recorder *recorder);
+
+// Players on other machines in the match this machine runs (connected, or
+// joining); 0 for none, and on a client.
+uint32_t tide_session_remote_players(const tide_session *s);
+
+// The match this machine runs goes on from `world` (a world of it, such as
+// one a recorder kept: copied), its ticks numbered on from where they are: a
+// debugger's "continue from here". Which commands are in it stays the
+// match's as it is (tide_game.keep_commands), so a command of the ticks let
+// go doesn't come again and none on its way is lost: the world it goes on
+// from is `world` with that, which the recorder isn't told of
+// (tide_timeline_cut takes it). This machine's player takes it at once;
+// players of other machines find their next tick isn't the server's and are
+// sent the world, as when a client goes wrong. False, changing nothing, on a
+// client, or in a sharded match.
+bool tide_session_rewind(tide_session *s, const void *world);
 
 // Makes `to`, a zeroed world of the new build, from `from`, a world of the old.
 typedef bool (*tide_migrate_fn)(void *user, const void *from, void *to);

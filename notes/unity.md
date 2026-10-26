@@ -1,5 +1,125 @@
 # Unity as a front end
 
+## Time travel (2026-10-26)
+
+The owner asked for a time-travel debugger in Unity: pause a match in Play, step it a tick at a time, scrub back
+through recent ticks with Unity's GameObjects, inspectors and Tide's drawing showing the tick, and record and replay a
+session bit for bit (a tester's file too), with the first tick that differs when the build changed.
+
+**Owner's decisions** (asked during the work, 2026-10-26):
+
+- With other machines in the match, pausing never blocks them: "continue the main simulation in the background such
+  that everything plays as normal and when I unpause I jump to the present ... if we don't have other players
+  connected we can pause the simulation". Built: with nobody else in it (`tide_session_remote_players` 0) Pause is a
+  real pause (no tick runs, no time passes for the match); with others in it, or one joining during a pause, the match
+  runs behind the tick shown and Resume shows its latest. This machine's player sends input as if it let go of
+  everything meanwhile (a zeroed `tide_embed_input` to the unseen frame): **Provisional (mine)**.
+- "Continue from here" was asked for, then "should work for multiplayer with clients too". Built for both: the
+  match goes back to the tick shown, the ticks after it gone, other machines' clients included.
+
+**The boundary.** Real play has no engine-imposed pause and still hasn't: time travel is a debugger the embed offers
+when the other program asks (`tide_embed_travel_keep`), the runner's Time Travel setting deciding where
+(`TideTimeTravel.Editor` by default: Play in the editor; `EditorAndPlayers` lets a game save testers' recordings;
+`Off`). Only a match this machine runs is recorded (the server's journal is the source); a client of another
+machine's match, and a sharded match, say why not (`tide_embed_travel.why`).
+
+What's built:
+
+- **The session's recorder** (`engine/src/session.c`, `tide/session.h`; notes/netcode.md): `tide_session_record` takes
+  `begin(world, tick)` and `tick(tick, record, size, world)`, fed by the server's journal (`tide_server_desc.journal`,
+  the shards' recovery records), `begin` as the recorder is set on a running match, as a match starts, as this machine
+  takes one over, and as a layout reload migrates it. `tide_replay_check` is `tide_replay` saying same, different
+  (with both hashes) or unreadable. `tide_session_rewind(world)` and `tide_session_remote_players`.
+- **The timeline** (`platform/include/tide/timeline.h`, `platform/src/timeline.c`): every record since the start
+  (64 MiB of them at most, then it starts again from the first world kept), the start world, a ring of the latest
+  `keep` worlds (COW copies, so the cost is the pages that changed), a world made again from the start for a tick
+  before the ring (`seek`, kept for the next tick on), and replay checks (the first tick that differs, its hashes,
+  the first unreadable). Tick n is the world after n ticks. `tide_timeline_cut(tick, world)` is Continue From Here's:
+  records after the tick go, the next record is whichever server tick comes, and `world` (the rewound world with the
+  match's command state, below) is kept as that tick's, recorded as a **jump** when it isn't what replaying makes, so
+  a replay goes there too. Saved as bytes (`TIDETIME`, version 1, little-endian): layout hash and simulation ID, tick
+  rate, the recording machine's player, the first tick, worlds packed as `pack_delta` against nothing (portable
+  between native and wasm; raw packs only for a game without deltas), the records, the jumps. Loading refuses another
+  layout hash ("laid out otherwise ... replay it with a build of that layout"); another simulation ID loads and says
+  `other_build`.
+- **The embed** (`tide/embed.h`, embed ABI 7): `tide_embed_travel_of` (state, first/kept/last/shown, tick rate,
+  replay checks, `background`, the shown world's hash, `why` and `refused`), `_travel_keep(seconds)`, `_pause`,
+  `_step`, `_show`, `_continue`, `_recording`, `_replay`, `_replay_end`.
+  - Paused at the latest tick with nobody else in the match, frames are `tide_run_frame` with no time, through
+    `tide_host.h`'s `tide_run_unblended` (views and the packet show the latest tick as it is, not blended into the one
+    before). Local code runs; its commands and requests go to the session and wait for the next tick; devices latch, so
+    a key pressed while paused is in the step's tick. A step is one frame of `tide_session_until_tick` plus 1 µs, with
+    the commands local code (or C#) sent handed to the session first (`tide_run_send_commands`, the loop
+    `tide_run_frame` ends with, factored out of it), so a command sent while paused is in the step's tick rather than
+    the one after (the Sample's scrubbing test found it).
+  - Showing another tick (scrubbed back, background mode, or a recording) is `show_frame`: the views run on that world
+    with a local state of their own (`travel.local`), with no session; its devices are consumed and its commands and
+    requests dropped, so nothing of an older tick's picture reaches the match, and the match's local state is as it
+    was when it goes on. The packet's player is this machine's, or a recording's player.
+  - Background mode: each frame runs the match's own frame unseen (zeroed input), then `show_frame` of the tick shown.
+  - A recording shown pauses a match this machine runs (refused for one it can't pause) and plays at its tick rate
+    (`playing`, at most a quarter second of ticks a frame).
+  - Hot reload: `reload_library.inc`'s `reload_before(old, next)`, which only the embed sets, runs before a swap or
+    full reload while the old build's code is there: the separate local state goes; a build of the same layout keeps
+    the timelines (`tide_timeline_set_game`); another layout or a full reload drops them (the session's next `begin`
+    starts the recording again from the migrated world), keeping the pause. While paused the embed still checks for
+    builds with the frames' real time.
+  - Web: `tide unity --web`'s program exports `tide_unity_travel` and the rest, `Tide.jslib` has `TideWebTravel` and
+    the rest, `TideLibrary` calls them.
+- **Continue From Here** (`tide_embed_continue`): `tide_session_rewind` copies the kept world into the server's,
+  then the generated `tide_game.keep_commands` (codegen.c, new) copies the live world's `tide_command_state` over it,
+  so each player's command sequences and unordered windows stay where the match had them: a command applied after the
+  tick doesn't run again, and one on its way (a client's pending, numbered on from the live world) goes in as it would
+  have. This machine's player takes the server's world at once (`take_server_world`); other machines' clients find
+  their next tick's hash isn't theirs and repair or resync as on any divergence. The world the match goes on from is
+  therefore the kept tick plus the command state, which the timeline records as a jump. No wire protocol change; the
+  generated header's Session ABI marker gained `rewind (1)` for the new `tide_game` member.
+- **The package**: `TideTravel` and `TideTravelState` (TideNative.cs), TideLibrary's bindings (ABI 7), and
+  TideRunner's `timeTravel`, `keepSeconds`, `Travel`, `Pause`, `Resume`, `Step`, `ShowTick`, `ContinueFromHere`,
+  `Recording`, `SaveRecording`, `Replay`, `ReplayFile`, `EndReplay`. `Editor/TideTimeTravelWindow.cs` (Window >
+  Tide > Time Travel, IMGUI, repainting in Play): what's going on (`Describe`), Pause/Resume, Step, Continue From
+  Here, a Tick slider, Save Recording / Replay This Match / Open Recording (`.tiderec`), and in a replay Play/Stop,
+  Step and Back to the Match with the check's result.
+
+**Picks (mine, Provisional):** Resume from a scrubbed tick goes to the latest (Continue From Here is the other);
+the separate local state for other ticks' frames (local handlers don't hear replayed or scrubbed ticks' events, and
+views' accumulated local state starts fresh there); a replay needs the same data layout rather than migrating its
+worlds; 10 seconds kept by default; 64 MiB of records; the `.tiderec` extension; a step's 1 µs past the tick.
+
+**Tests:**
+
+- `tide_platform_travel` (`platform/tests/travel.c`, `travel.tide`; native): off until kept; pause and step one tick
+  (no tick in a second of paused frames, the latest tick unblended, input and a press while paused in the step's
+  tick, no burst after resuming); kept ticks shown again (hashes and what the views drew equal, ticks before the ring
+  made again from the start, a B pressed on an old tick's picture sending nothing, steps from a shown tick); record
+  and replay bit for bit with input, commands and a view's command (played at the tick rate, every tick checked, and
+  replayed again in another embed in no match); a flipped record hash reported at its tick with both hashes, another
+  layout and a cut-short file refused; continuing from a tick (a Bump after it gone for good, a later one once, the
+  recording with its jump replaying bit for bit); a match never stopping for another machine (the game's own network,
+  a loopback, opened to a second session: a real pause becomes the background mode as it joins, the guest stays
+  connected and current, Continue From Here takes the guest's verified world back too). Session-level, three machines
+  over a lossy loopback: three players' input and commands replayed bit for bit (and before a ring of 8, from the
+  start); a build whose tick changes at its 50th tick (same layout, another simulation ID) differing at tick 50 with
+  both hashes and `other_build`; a rewind with two clients in the match, a command on its way going in once, and the
+  recording replaying bit for bit.
+- The Sample's PlayMode `TravelTests`: pause holds the match and a step runs one tick; scrubbing shows a kept tick
+  with its GameObjects (the tossed ball gone before its toss, the player's ball where it was, the live `Ball`
+  component's values and the world hash as they were); a recording saved to a file replays bit for bit (every hash,
+  the ball where the match had it, the recording's `Say`), and another layout is refused; Continue From Here takes the
+  match back (the toss gone for good, a later one in); a hot reload while paused keeps the pause and its ticks, and
+  the new build steps. EditMode `TravelWindowTests`: what the window says, and its menu item.
+
+**Runs:** native debug 2801/2801 and web debug 2696/2696 (both without `private-prototype`; one disabled test
+each, MicroDuck's turn as before), `tide_platform_travel` 10/10; the Sample's EditMode 30/30 and PlayMode 22/22
+(D3D11, a GPU, batch), with a tide installed from this checkout's mingw-release and debug builds and the Sample's
+`com.tide.game` written again by it (the schema hash moved with the Session ABI marker). Not run: Unity on the web
+(the jslib and exports are built and compiled, not played), the window's drawing in a window, Linux and macOS.
+
+**Not done / gaps:** local handlers and the packet's EVENTS for replayed or scrubbed ticks (the separate local state
+hears nothing); a client of another machine's match can't time travel (it has no journal; its verified worlds could be
+kept, not built); sharded matches; replays across a layout change (the old layout's description isn't in the
+recording); the window's drawing seen in a window (batch runs have none).
+
 ## Twelve texture slots and embed ABI 6 (2026-10-25)
 
 The coordinated internal capacity completion raises TideRender's sampled arrays

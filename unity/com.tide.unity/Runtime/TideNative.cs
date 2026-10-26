@@ -76,6 +76,60 @@ namespace Tide
         public const int Size = 376;
     }
 
+    // tide_embed_travel_state: what time travel is doing (TideRunner.Travel)
+    public enum TideTravelState : uint
+    {
+        Off = 0,     // Nothing kept: TideRunner.timeTravel is off
+        None = 1,    // No match it can pause (TideTravel.Why says why), and no recording shown
+        Live = 2,    // The match runs, recorded
+        Paused = 3,  // Paused, showing TideTravel.shown; with `background`, the match goes on behind it
+        Replay = 4,  // Showing a recording; the match, if any, is paused
+    }
+
+    // tide_embed_travel: where time travel is. Tick n is the world after n ticks.
+    [StructLayout(LayoutKind.Sequential)]
+    public unsafe struct TideTravel
+    {
+        public TideTravelState state;
+        public uint first;      // The first tick that shows
+        public uint kept;       // ...the first that shows at once (the ones before are made again from the start)
+        public uint last;       // ...and the last
+        public uint shown;      // The tick shown
+        public uint tickRate;
+        public uint checkedTo;  // Replaying: ticks made again and checked so far
+        public uint differs;    // ...the first whose world wasn't the recording's (0: none)
+        public uint unreadable; // ...the first this build couldn't replay (0: none)
+        public byte playing;    // Replaying: it plays at the tick rate
+        public byte otherBuild; // The recording was made by a build whose simulation code was another
+        public byte background; // Other machines are in the match: it goes on behind what's shown
+        public byte pad;
+        public ulong hash;      // The shown world's
+        public ulong expected, got; // At `differs`: the recording's hash, and this build's
+        public fixed byte why[128];
+        public fixed byte refused[128];
+
+        public const int Size = 320;
+
+        // Why the match can't pause now, "" when it can
+        public string Why
+        {
+            get { fixed (byte* p = why) return Nul(p, 128); }
+        }
+
+        // Why the last recording given to replay wasn't, "" when it was
+        public string Refused
+        {
+            get { fixed (byte* p = refused) return Nul(p, 128); }
+        }
+
+        static string Nul(byte* bytes, int capacity)
+        {
+            var n = 0;
+            while (n < capacity && bytes[n] != 0) n++;
+            return System.Text.Encoding.UTF8.GetString(bytes, n);
+        }
+    }
+
     public enum TideSessionState : uint
     {
         Offline = 0,

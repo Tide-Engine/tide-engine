@@ -156,6 +156,71 @@ var TideWebLibrary = {
         if (size && !at) return 0;
         return x.tide_unity_command(type, index, generation, at, size);
     },
+
+    // Time travel (tide/embed.h): the program's own match, recorded, paused and replayed
+    TideWebTravel__deps: ['$TideWeb'],
+    TideWebTravel: function (travel, size) {
+        var x = TideWeb.program();
+        if (!x) {
+            HEAPU8.fill(0, travel, travel + size);
+            return;
+        }
+        var at = x.tide_unity_travel();
+        HEAPU8.set(TideWeb.memory().subarray(at, at + size), travel);
+    },
+
+    TideWebTravelKeep__deps: ['$TideWeb'],
+    TideWebTravelKeep: function (seconds) {
+        var x = TideWeb.program();
+        if (x) x.tide_unity_travel_keep(seconds);
+    },
+
+    TideWebPause__deps: ['$TideWeb'],
+    TideWebPause: function (paused) {
+        var x = TideWeb.program();
+        return x ? x.tide_unity_pause(paused) : 0;
+    },
+
+    TideWebStep__deps: ['$TideWeb'],
+    TideWebStep: function () {
+        var x = TideWeb.program();
+        return x ? x.tide_unity_step() : 0;
+    },
+
+    TideWebShow__deps: ['$TideWeb'],
+    TideWebShow: function (tick) {
+        var x = TideWeb.program();
+        return x ? x.tide_unity_show(tick) : 0;
+    },
+
+    TideWebContinue__deps: ['$TideWeb'],
+    TideWebContinue: function () {
+        var x = TideWeb.program();
+        return x ? x.tide_unity_continue() : 0;
+    },
+
+    TideWebRecording__deps: ['$TideWeb'],
+    TideWebRecording: function (size) {
+        var x = TideWeb.program();
+        var at = x ? x.tide_unity_recording() : 0, n = x ? x.tide_unity_recording_size() : 0;
+        HEAPU32[size >> 2] = at ? n : 0;
+        return at && n ? TideWeb.copyOut('recording', at, n) : 0;
+    },
+
+    TideWebReplay__deps: ['$TideWeb'],
+    TideWebReplay: function (data, size) {
+        var x = TideWeb.program();
+        if (!x) return 0;
+        var at = size ? TideWeb.copyIn(x, data, size) : 0;
+        if (size && !at) return 0;
+        return x.tide_unity_replay(at, size);
+    },
+
+    TideWebReplayEnd__deps: ['$TideWeb'],
+    TideWebReplayEnd: function () {
+        var x = TideWeb.program();
+        if (x) x.tide_unity_replay_end();
+    },
 };
 
 autoAddDeps(TideWebLibrary, '$TideWeb');

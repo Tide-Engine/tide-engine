@@ -23,7 +23,7 @@ typedef struct tide_embed tide_embed;
 
 // What another language binds against: a change to anything here that it lays
 // out or calls changes the number, and tide_embed_abi says it.
-#define TIDE_EMBED_ABI 6u
+#define TIDE_EMBED_ABI 7u
 uint32_t tide_embed_abi(void);
 
 typedef struct tide_embed_desc {
@@ -270,6 +270,103 @@ void tide_embed_audio(tide_embed *e, float *out, uint32_t frames, uint32_t rate,
 // (1 to 8, interleaved) at `rate`, which voices of Clip.Microphone play. From
 // the frame's thread.
 void tide_embed_microphone(tide_embed *e, const float *samples, uint32_t frames, uint32_t rate, uint32_t channels);
+
+// ---------------------------------------------------------------------------
+// Time travel: a debugger's, for a match this machine runs (an editor's Play).
+// A match is deterministic and its worlds are cheap to keep, so the embed
+// keeps the worlds of its latest ticks and what went into every tick since the
+// match started (its server's journal: inputs, joins and leaves, commands).
+// Paused, the match runs no ticks and its local code waits, while the frames
+// show a tick of it: the latest, or any kept one, through the views, the view
+// packet and the drawing as the other program reads them. A recording is
+// those ticks as bytes, which replay on any machine with a build of the same
+// data layout, each tick's world checked against the hash the server's had.
+//
+// Only a match this machine runs: tide_embed_travel says why not otherwise.
+// With players of other machines in it, pausing never stops it for them: the
+// match goes on behind what's shown (`background`), this machine's player as
+// if it let go of everything, and going on shows its latest tick again. A
+// frame that shows another tick than the latest runs the views on a local
+// state of their own, so the match's is as it was when it goes on, and what's
+// pressed or sent there never reaches the match.
+
+typedef enum tide_embed_travel_state {
+    TIDE_TRAVEL_OFF,    // Nothing kept: tide_embed_travel_keep wasn't given a time
+    TIDE_TRAVEL_NONE,   // No match it can pause (`why` says why), and no recording shown
+    TIDE_TRAVEL_LIVE,   // The match runs, recorded
+    TIDE_TRAVEL_PAUSED, // The match is paused, showing `shown`: or goes on behind it, with `background`
+    TIDE_TRAVEL_REPLAY, // Showing a recording (tide_embed_replay); the match, if any, is paused
+} tide_embed_travel_state;
+
+#define TIDE_EMBED_TRAVEL_TEXT 128u
+
+typedef struct tide_embed_travel {
+    uint32_t state;      // tide_embed_travel_state
+    uint32_t first;      // The first tick shown (the recording's start; tick n is the world after n ticks)...
+    uint32_t kept;       // ...the first shown at once, the ones before made again from the start...
+    uint32_t last;       // ...and the last: the match's latest, or the recording's last
+    uint32_t shown;      // The tick the frames show
+    uint32_t tick_rate;  // Ticks a second
+    // Replaying: ticks replayed and checked so far; the first whose world wasn't the recording's, and its hashes
+    // (the recording's `expected`, this build's `got`); the first this build couldn't replay at all; 0 for none
+    uint32_t checked;
+    uint32_t differs;
+    uint32_t unreadable;
+    uint8_t playing;     // Replaying: it goes on at the tick rate (tide_embed_pause false)
+    uint8_t other_build; // The recording was made by a build whose simulation was another
+    uint8_t background;  // Players of other machines are in the match: it goes on behind what's shown
+    uint8_t tide_pad[1];
+    uint64_t hash;       // The shown world's
+    uint64_t expected, got;
+    char why[TIDE_EMBED_TRAVEL_TEXT];     // Why it can't pause the match now, "" when it can
+    char refused[TIDE_EMBED_TRAVEL_TEXT]; // Why the last recording given to replay wasn't, "" when it was
+} tide_embed_travel;
+
+_Static_assert(sizeof(tide_embed_travel) == 64 + 2 * TIDE_EMBED_TRAVEL_TEXT,
+               "tide_embed_travel has no padding the compiler adds");
+
+void tide_embed_travel_of(const tide_embed *e, tide_embed_travel *out);
+
+// Keeps the worlds of the last `seconds` of ticks, and records the match from
+// its start, or from now for one that runs; 0 (the default) keeps nothing,
+// letting go of what it kept and of a recording shown.
+void tide_embed_travel_keep(tide_embed *e, float seconds);
+
+// Pauses the match (true) where it can, or goes on (false) from its latest
+// tick, whatever was shown. Showing a recording, it stops or plays that.
+// False when there's nothing to pause or play.
+bool tide_embed_pause(tide_embed *e, bool paused);
+
+// Paused: one tick on. At the latest, the match runs its next tick at the
+// next frame, with this machine's input then; before it (or with the match
+// going on behind), the next tick is shown. A recording shows its next tick.
+// False when it can't.
+bool tide_embed_step(tide_embed *e);
+
+// Paused or replaying: shows the world after `tick` ticks, from first to last.
+// False outside them, or for a tick this build can't replay.
+bool tide_embed_show(tide_embed *e, uint32_t tick);
+
+// Paused: the match goes back to the tick shown and on from there, the ticks
+// after it let go, for players of other machines too, whose worlds are sent
+// again (tide_session_rewind). Which commands are in it stays as it was, so
+// none comes twice. The recording goes on from there too. False when it's
+// not paused, or showing a recording.
+bool tide_embed_continue(tide_embed *e);
+
+// The match's recording, from its start: bytes for tide_embed_replay, on this
+// machine or another. Valid until the next call; NULL with nothing recorded.
+const uint8_t *tide_embed_recording(tide_embed *e, uint32_t *size);
+
+// Shows a recording (copied), from its first tick, paused: the match, if any,
+// pauses until tide_embed_replay_end. Its ticks are made again with this
+// build as they're shown, each world checked against the recording's. False,
+// saying why in tide_embed_travel's `refused`, for bytes that aren't a
+// recording, one of another data layout, or a match that can't pause.
+bool tide_embed_replay(tide_embed *e, const uint8_t *data, uint32_t size);
+
+// Back to the match from a recording, paused where it was.
+void tide_embed_replay_end(tide_embed *e);
 
 // The app went to the background (true) or came back. A phone leaves its match
 // there, which hands a match it hosted over where host migration is on, rather
