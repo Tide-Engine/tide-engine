@@ -367,7 +367,14 @@ it writes from each build. While the game's code doesn't build, it writes them
 from the game's declarations alone, leaving out its systems, views, handlers
 and functions (what `--declarations` builds): a component a new prefab needs is
 in Unity before the code that spawns the prefab builds. The game itself keeps
-running its last build.
+running its last build. Each generated type carries its Tide declaration's
+doc (its comment lines) and the file it's declared in, as an XML `<summary>`
+for C# editors' hovers; the line isn't written, so a line moving above a
+declaration changes no C#. Each time it writes the C#, `tide unity` records
+what became of the names the C# had before, a rename (with where the new name
+is declared) or a removal, in `Library/Tide/renamed.json`, which the package
+reads to explain a script's error on one of them. `tidels` renames reach the
+project's C# as well; see [Editors](editors.md).
 
 Package functions and shaders remain available for their field types and callback
 defaults, including Render3D materials. Package bodies, assets and defaults still

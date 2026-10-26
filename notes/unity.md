@@ -758,21 +758,97 @@ Owner: "lets bridge any gaps".
   `Value` field's `Value_` key. Every one of the repo's 330 games built with `--embed` compiles under `-Werror`
   (which found unused command helpers in four games with text or byte-list commands: `TIDE_HELPER` now).
 
-### Tide types and their C# twins: declaration locations (2026-10-26)
+### Tide types and their C# twins (2026-10-26)
 
-**Owner:** "File only, line looked up live (your pick)" (hub answer
-`mvp14nl24360`). The generated C# twins in `Packages/com.tide.game` carry the
-Tide doc comment and the declaration's file, for example "Declared in Tide in
-Assets/Tide/Bounce.tide", without a line number. Edit Script and a double-click
-on the Script field are to resolve the declaration's current line from
-`Library/Tide/outline.json` when opening the `.tide` file. Shifting lines above
-a declaration alone must not rewrite its C# documentation and trigger Unity's
-script compilation and domain reload, including during Tide hot reload in Play.
+The owner asked for the seams between Tide's types and their C# twins closed, Tide staying the source of truth (every
+twin still written into `Packages/com.tide.game` by `unity_code.c`): renames reaching C# scripts, a twin leading back
+to its Tide declaration, and C# errors that explain a Tide rename. **Owner** (2026-10-26, hub card `mvp14nl24360`):
+"File only, line looked up live (your pick)": the generated C# names the declaration's file, not its line, so a line
+moving above a declaration rewrites no C# (a recompile and domain reload, in Play too, on most saves); the line comes
+from `Library/Tide/outline.json` when Unity opens the declaration. Everything else here is my pick (Provisional).
 
-This records the decision only; no generator or generated package change is
-needed for this answer. Validation: checked the diff and the outline's file and
-line fields in `Editor/TideOutline.cs`; no build or test suite for this notes-only
-change. The rest of the type boundary implementation is separate work.
+- **One naming, shared** (`compiler/lsp/unity_names.c`, compiled into tide and tidels as `json.c` is): the C# name of
+  every type (namespace parts after `Tide.Game`, an identifier C# takes, `Local` after a local part, `_` after a
+  second of one name in one namespace, in schema order), field (`_` after the type's own name and, for a class or a
+  struct of Unity code's, `Value`, `TideName`, `ReadLive`, `Pack`, `From`, `Tick`, `Verified`, `Target`,
+  `TargetEntity`; a class's local fields after its own, among them) and enum member (a second of one identifier left
+  out), from the schema's names. `unity_code.c` takes every name from it (its own `identifier`, `taken` and `reserve`
+  are gone); the Sample's package came out byte for byte the same.
+- **Renames reach C#** (`compiler/lsp/csharp.c`, from `unity_renames` in `analysis.c`, for a type, a field or an enum
+  member of a component, singleton, event, command, struct, input or enum): reads the project's
+  `Packages/com.tide.game/schema.json`, names everything as the C# has it and again with the rename (`unity_cs_assign`
+  over the changed Tide names), and edits what changed in every `.cs` of `Assets` (not in folders ending `~` or
+  hidden), of embedded packages (`Packages/*`, but the one whose package.json is com.tide.game) and of local ones (the
+  manifest's `file:` dependencies, `..` folded so the URIs are the editor's). The edits join the rename's
+  WorkspaceEdit, so the editor previews and undoes them with the rest. The C# is lexed (comments, strings, characters
+  and preprocessor lines skipped; an interpolated string's holes lexed as code, up to a format or an alignment) and
+  read conservatively, with no compiler:
+  - a type where a dotted name resolves to `Tide.Game.<twin>` as written, through `global::`, an alias's target, or a
+    namespace the file opens (its usings, its namespaces and those above them); not where the first name is a type
+    the project declares, a variable in scope there, or assigned (`Mode = ...`); a single name the project also
+    declares as a variable or member anywhere only where only a type can be (after `new`, `is`, `as`, `<`, `typeof(`,
+    or before a declared name). Only a name written as the type's own is edited, not an alias's.
+  - a member where its value's type is known: a variable, field, property or parameter declared of a twin (in scope: a
+    type's body, the rest of a block, a method's or lambda's body, a foreach statement; two of one name in one scope
+    of different types are neither), `var` given `new`, a generic call or another known value, `out var` in a generic
+    call, a lambda's parameter in a generic call (`On<Hit>(hit => ...)`), a generic call's type argument
+    (`GetComponent<T>()`, `runner.Get<T>()`; an indexer or a foreach over it its element), `new T { a = ... }`'s
+    initializer, an enum's member after its enum, and on through the twins' fields, lists and arrays
+    (`h.trail.length`). A class's members are its fields and its local fields; its `Value`'s, its fields.
+  - Test: `lsp_rename_reaches_unity_scripts` (scripts in Assets, an embedded and a local package, and com.tide.game's
+    own script, never edited): a field through a variable, `var` of `GetComponent`, an interpolated string's hole, a
+    foreach over `GetComponents`, a method's parameter, a qualified field; not Shield's or another class's `hp`, a
+    comment's, a string's, nor `Samples~`'s; the type in a using alias, a field, generic arguments, `Tide.Game.` and
+    `global::` names, not the alias's uses; a local field; `Value_` renamed to a plain name and a plain one to
+    `Value_`; a struct's field through a component's field, not the project's own `Trail`'s, and the struct itself only
+    where qualified, as the project has a `Trail`; a singleton's field after `runner.Get<Extras>()`, an event's in a
+    lambda, a command's in an initializer (not a variable named `text`); an enum and its member; a namespaced
+    component and its field by the namespace's using.
+- **Docs and where** (`unity_code.c`, from the outline): `print_outline` (`compiler/src/outline.c`) gives a
+  declaration's `doc` (the `//` lines just above it, attributes allowed between, a blank line or code ending them;
+  slashes and one space dropped), each field's `line` and `doc` (above it, else a comment after it on its line), and
+  an enum's `memberDocs`. The C# has a `/// <summary>` (XML escaped) on each class, struct and enum of the game's,
+  its last paragraph "Tide's component Ball, declared in Assets/Tide/Bounce.tide." (`where_declared`: a game file
+  from Assets, a package's as "the Box3D package's body.tide", none for tide's own in Library/Tide, which get no docs),
+  and on each field and enum member with a doc. Tests: `unity_code_writes_tides_docs_and_where_each_type_is` (fixture
+  `compiler/cli/tests/unity_names`), `tidec_outline_game` (docs above and after, two lines, a member's).
+- **Opening the declaration** (`Editor/TideDeclarations.cs`): `[OnOpenAsset(0)]` (an `EntityId` from 6000.2, as
+  com.unity.timeline's), for a script opened with no line that's a `TideComponent` whose `Value` has `[TideType(name)]`:
+  the outline's component of that name, opened by `InternalEditorUtility.OpenFileAtLineExternal` at its line and column
+  (`Opener`, which tests replace). A double click on the Script field, Edit Script and the Project window all come
+  through `AssetDatabase.OpenAsset`. A script opened at a line (a C# error in it) opens as itself, as does one before
+  the game has built. `TideOutline` reads `doc` and fields' `line` and `doc`.
+- **Errors that explain a rename:** `unity_code_record` (tide, after each C# write, from `write_unity_package`) diffs
+  the names of the schema the C# had (the com.tide.game schema.json it replaces) with the new one's: a type by name,
+  else the one gone and the one come of its kind with the same fields, else the only ones of their kind; a field by
+  name, else in its place with its type, else the only one gone and come of its type; local fields through their
+  parts; an enum by name, else the only one; members by name, else in their place. Into `Library/Tide/renamed.json`
+  (`{"renamed": [{"was": "Combat.Health.hp", "now": "Combat.Health.health", "file": "Assets/Tide/combat.tide",
+  "line": 8}, {"was": "Shield", "removed": true}]}`, names after `Tide.Game.`): a new entry replaces one of its name,
+  one whose `now` is renamed again follows it, one whose name the C# has again goes, the newest 100 stay, and a build
+  of the declarations alone records no removals (it leaves some out). Written only when it changes; Library is never
+  in source control. `Editor/TideRenames.cs`: at `CompilationPipeline.assemblyCompilationFinished`, each error saying
+  a member (CS0117, CS1061), a type (CS0246, CS0103), a type in a namespace (CS0234) or in a type (CS0426) isn't there
+  is looked up (`Tide.Game.` and `global::` dropped, `.Value.` as the class's field, else an entry ending in it, for a
+  namespaced type written short), and a note goes in as a compiler message (a warning) of its own identifier
+  (`0x7469646e`): "tide: `Ball.speed` is now `Ball.velocity` (Assets/Tide/Bounce.tide:124)", located at the new
+  declaration, or "tide: `Paddle` was removed from the game's Tide code" at the script's line; each once, all gone at
+  `compilationStarted`. `TideBuildService.LogLocated`/`RemoveLocated` take the identifier. Test:
+  `unity_code_records_what_became_of_names` (a field renamed in place, a local field, a struct by its fields, an enum
+  member, a field whose type changed too removed; renamed again, back again, declarations alone).
+- **Sample tests** (EditMode `TypeBoundaryTests`): Ball's script opens `Assets/Tide/Bounce.tide` at `component Ball`
+  through `AssetDatabase.OpenAsset` (BallTint's isn't the game's); the regenerated `Ball.cs` has Ball's doc, its file,
+  and `velocity`'s and `heard`'s docs; a probe script of renamed and removed names compiled apart (`AssemblyBuilder`,
+  against Tide.Game and Tide.Runtime) gets the three notes from Roslyn's own messages, each once in the Console, and
+  none after `Clear`. The Sample's Ball and its `velocity` have doc comments to pin.
+  `unity_code_writes_the_samples_package` passes the Sample's outline (`compiler/cli/tests/unity_sample/outline.json`,
+  cut to Bounce.tide's declarations, from the Sample's `Library/Tide/outline.json`): copy it again with the Sample's
+  package when Bounce.tide's docs change.
+- **Gaps:** renaming a namespace doesn't reach C#; a member through a method's or property's result, a cast, `as`, a
+  pattern variable outside its if, a field of a partial class declared in another file, `dynamic` and reflection are
+  left alone; doc comments' `<see cref>` aren't edited; a project type of a twin's name keeps bare uses of the twin
+  unrenamed everywhere (qualified ones are); notes come from compiles after the package loaded (the editor's first
+  compile at startup isn't explained until the next).
 
 ### Scenes as built (2026-10-20)
 

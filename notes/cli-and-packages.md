@@ -353,7 +353,12 @@ line, whose line is 0; `line`, `source`, `ref`, `commit`), `builtin`
 (`packages_builtin_names`), and the declarations `print_outline` gave the last
 good generate (`codegen_options.outline_to`, copied to `build.outline` out of
 the arena, which the next generate resets). The package's inspectors read it
-(`notes/unity.md`, File inspectors).
+(`notes/unity.md`, File inspectors). Since 2026-10-26 its declarations carry
+`doc` (their comment lines), fields `line` and `doc`, and enums `memberDocs`,
+and after writing the C# `write_unity_package` records what became of the old
+C#'s names in `<-o>/renamed.json` (`unity_code_record`, from the
+`Packages/com.tide.game/schema.json` it replaces): `notes/unity.md`, Tide types
+and their C# twins.
 
 `tide unity --web` (once: `--web` turns watching off) is `tide_unity_web`: a
 standalone wasm build of `generate`'s game with `unity_web_main` (and
