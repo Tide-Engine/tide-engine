@@ -1,5 +1,5 @@
 # tide_add_game(<target> [SOURCES <file.tide|file.c|file.cpp>...] [HOST <file.c>...] [WINDOW] [NAME <name>]
-#               [TITLE <title>] [STATS] [LAYOUT] [EMBED] [WARNINGS <text>...]
+#               [TITLE <title>] [STATS] [LAYOUT] [EMBED] [VISUALIZERS] [WARNINGS <text>...]
 #               [PACKAGES <Name> <file.tide>... [<Name> <file.tide>...]]
 #               [DEFINES <SYMBOL>...] [SHELL <page.html>])
 #
@@ -40,6 +40,10 @@
 # another program needs to run it (tide_game_embed, tide/embed_game.h, which
 # tide/run.h's table then has: TIDE_HAS_EMBED is defined for the HOST files),
 # and the layout with it.
+#
+# VISUALIZERS writes how debuggers show the game's values beside its generated
+# files, as tide's debug builds do: <name>.natvis, which a Windows program's
+# .pdb carries, and <name>_lldb.py for LLDB (`command script import` it).
 #
 # The generated files land in the build tree and are regenerated whenever a
 # .tide file or tidec changes. Every game is also listed in
@@ -121,7 +125,7 @@ function(tide_web_page target)
 endfunction()
 
 function(tide_add_game target)
-    cmake_parse_arguments(ARG "STATS;LAYOUT;EMBED;WINDOW;SERVER;STRIP_SERVER_ASSETS" "NAME;TITLE;SHELL" "SOURCES;HOST;WARNINGS;PACKAGES;DEFINES" ${ARGN})
+    cmake_parse_arguments(ARG "STATS;LAYOUT;EMBED;WINDOW;SERVER;STRIP_SERVER_ASSETS;VISUALIZERS" "NAME;TITLE;SHELL" "SOURCES;HOST;WARNINGS;PACKAGES;DEFINES" ${ARGN})
     if(ARG_SERVER AND (TIDE_WEB OR TIDE_ANDROID OR ARG_HOST OR ARG_WINDOW OR ARG_LAYOUT))
         message(FATAL_ERROR "tide_add_game(${target} SERVER) is a standalone native server")
     endif()
@@ -306,11 +310,19 @@ function(tide_add_game target)
     if(NOT ARG_HOST AND NOT c_sources AND NOT ARG_LAYOUT AND NOT ARG_EMBED)
         set(strip_assets "$<CONFIG:Release,RelWithDebInfo,MinSizeRel>")
     endif()
+    # VISUALIZERS: how debuggers show the game's values, <name>.natvis (in a Windows program's .pdb) and
+    # <name>_lldb.py, as tide's debug builds have them (compiler/src/debug_views_codegen.inc)
+    set(visualizers "")
+    set(visualizer_outputs "")
+    if(ARG_VISUALIZERS AND NOT TIDE_WEB AND NOT TIDE_ANDROID)
+        set(visualizers --visualizers)
+        set(visualizer_outputs "${out_dir}/${name}.natvis" "${out_dir}/${name}_lldb.py")
+    endif()
     add_custom_command(
-        OUTPUT "${out_c}" "${out_h}" ${pack_outputs}
+        OUTPUT "${out_c}" "${out_h}" ${pack_outputs} ${visualizer_outputs}
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${out_dir}"
         COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DEXPECTED=${expected}" "-DSTRIP_UNUSED_ASSETS=${strip_assets}" -P "${TIDE_RUN_TIDEC}"
-            -- "@${listed}" -o "${out_dir}" --name "${name}" ${layout} ${pack_c} ${defines} ${server_flags}
+            -- "@${listed}" -o "${out_dir}" --name "${name}" ${layout} ${pack_c} ${defines} ${server_flags} ${visualizers}
         DEPENDS ${TIDEC_DEPENDS} ${sources} ${package_sources} ${asset_files} "${expected}" "${listed}" "${TIDE_RUN_TIDEC}"
         COMMENT "tidec ${target}"
         VERBATIM)
@@ -390,6 +402,18 @@ int main(int argc, char **argv)
         endif()
     endif()
     target_include_directories(${target} PRIVATE "${out_dir}")
+    if(visualizers)
+        target_sources(${target} PRIVATE ${visualizer_outputs})
+        # Every type the game declares: one only the generated plumbing names (a list's element, a map's
+        # entry) would otherwise be left out with the plumbing's debug info, as tide's debug builds keep it;
+        # and no columns, as generated C's would point into .tide lines at places that mean nothing there
+        target_compile_options(${target} PRIVATE -fno-eliminate-unused-debug-types -gno-column-info)
+        if(MINGW)
+            target_link_options(${target} PRIVATE "LINKER:-Xlink=-natvis:${out_dir}/${name}.natvis")
+        elseif(WIN32)
+            target_link_options(${target} PRIVATE "LINKER:/NATVIS:${out_dir}/${name}.natvis")
+        endif()
+    endif()
     if(ARG_SERVER)
         target_compile_options(${target} PRIVATE -ffunction-sections -fdata-sections)
         if(APPLE)

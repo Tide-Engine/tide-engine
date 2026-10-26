@@ -15,6 +15,13 @@ add_custom_command(OUTPUT "${fingerprint}"
         -P "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
     DEPENDS "${PROJECT_SOURCE_DIR}/compiler/src/pack_fingerprint.inc" "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
     VERBATIM)
+set(debug_views "${CMAKE_CURRENT_BINARY_DIR}/debug_views_py.c")
+add_custom_command(OUTPUT "${debug_views}"
+    COMMAND "${CMAKE_COMMAND}" "-DINPUT=${PROJECT_SOURCE_DIR}/compiler/src/debug_views.py"
+        "-DOUTPUT=${debug_views}" -DNAME=tide_debug_views_py
+        -P "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+    DEPENDS "${PROJECT_SOURCE_DIR}/compiler/src/debug_views.py" "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+    VERBATIM)
 add_library(tide_playground_importers STATIC
     "${PROJECT_SOURCE_DIR}/compiler/third_party/ufbx/ufbx.c"
     "${PROJECT_SOURCE_DIR}/compiler/third_party/ufbx/ufbx_math.c"
@@ -23,7 +30,7 @@ target_compile_definitions(tide_playground_importers PRIVATE UFBX_EXTERNAL_MATH 
     UFBX_NO_FORMAT_OBJ UFBX_NO_SUBDIVISION UFBX_NO_TESSELLATION UFBX_NO_GEOMETRY_CACHE)
 target_compile_options(tide_playground_importers PRIVATE -w)
 target_link_libraries(tide_playground_importers PRIVATE tide_flags)
-add_executable(tidec_browser ${browser_sources} "${fingerprint}" host.c)
+add_executable(tidec_browser ${browser_sources} "${fingerprint}" "${debug_views}" host.c)
 target_include_directories(tidec_browser PRIVATE "${PROJECT_SOURCE_DIR}/compiler/src")
 target_include_directories(tidec_browser SYSTEM PRIVATE
     "${PROJECT_SOURCE_DIR}/compiler/third_party/ufbx"

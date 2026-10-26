@@ -71,6 +71,14 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
             -P "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
         DEPENDS src/pack_fingerprint.inc "${PROJECT_SOURCE_DIR}/cmake/embed.cmake" VERBATIM)
     target_sources(tidec_core PRIVATE "${TIDEC_PACK_FINGERPRINT_C}")
+    # The part of every game's LLDB views (tidec --visualizers) that's the same for all.
+    set(TIDEC_DEBUG_VIEWS_C "${CMAKE_CURRENT_BINARY_DIR}/debug_views_py.c")
+    add_custom_command(OUTPUT "${TIDEC_DEBUG_VIEWS_C}"
+        COMMAND "${CMAKE_COMMAND}" "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/src/debug_views.py"
+            "-DOUTPUT=${TIDEC_DEBUG_VIEWS_C}" "-DNAME=tide_debug_views_py"
+            -P "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+        DEPENDS src/debug_views.py "${PROJECT_SOURCE_DIR}/cmake/embed.cmake" VERBATIM)
+    target_sources(tidec_core PRIVATE "${TIDEC_DEBUG_VIEWS_C}")
     # `#if TIDE_0_3_OR_NEWER` and packages' `tide 0.3` compare with it (version.h).
     target_link_libraries(tidec_core PUBLIC tide_flags)
     # tidec reads the device member lists from tide/devices.h so Tide and C agree.

@@ -1,0 +1,59 @@
+// The game the debugger tests stop in (natvis_test.cmake, lldb_test.cmake).
+// A line a test stops at or steps to ends with a marker comment, `// [name]`,
+// which the test finds it by.
+
+enum Mode { Idle, Running, Done }
+
+struct Pair
+{
+    int a;
+    float b;
+}
+
+component Player
+{
+    int score;
+    List<int> history;
+    string name;
+    Mode mode;
+    Entity buddy;
+    Map<string, int> scores;
+    Set<int> seen;
+}
+
+singleton Totals
+{
+    int count;
+    List<Pair> pairs;
+}
+
+scene Main;
+
+event(Spawned) Setup(with Main)
+{
+    var first = Spawn(Player { score = 1, name = "ana" });
+    Spawn(Player { score = 10, name = "bo", buddy = first });
+}
+
+int Sum(List<int> values)
+{
+    mut int total = 0;
+    foreach (int v in values)
+    {
+        total += v; // [sum]
+    }
+    return total;
+}
+
+system Score(mut Player player, mut Totals totals)
+{
+    int gained = player.score + 1; // [gained]
+    List<int> recent = [1, 2, gained]; // [recent]
+    player.history.Add(gained);
+    player.mode = Mode.Running;
+    player.scores["ann"] = gained;
+    player.seen.Add(gained);
+    player.score = Sum(recent); // [call]
+    totals.count += 1;
+    totals.pairs.Add(Pair { a = gained, b = 0.5 }); // [pairs]
+}

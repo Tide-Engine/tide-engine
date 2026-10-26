@@ -602,6 +602,7 @@ typedef struct build {
     char *unity_map;        // With opts->unity_assets: the map of its UnityEngine.Source numbers, from its last generate (unity_assets.h)
     char *outline;          // With opts->unity: what its last generate declared (print_outline), for outline.json
     char *shaders;          // ...and its shaders, each a name and its WGSL, NUL after each (unity_shaders.h)
+    char *views;            // A debug native build's: its generate's folder, where tidec wrote game.natvis and game_lldb.py
     size_t shaders_size;
 } build;
 
@@ -624,6 +625,13 @@ static void config_flags(args *a, const build *b, const bool cpp, const bool eng
     arg_list(a, cpp ? cpp_flags : c_flags);
     arg_list(a, common_flags);
     arg_list(a, b->opts->release ? release_flags : engine ? engine_debug_flags : debug_flags);
+    // Every type the game declares, for its debug views: a type only the generated plumbing names
+    // (a list's element, a map's entry) would otherwise be left out with the plumbing's debug info.
+    // No columns: generated C's would point into .tide lines at places that mean nothing there.
+    if (!b->opts->release && !engine) {
+        arg(a, "-fno-eliminate-unused-debug-types");
+        arg(a, "-gno-column-info");
+    }
     if (b->opts->release || b->opts->server) arg_list(a, release_sections);
     // A library's code works wherever it's loaded, and Android's games are libraries.
     // On Linux and Android, a function whose locals take more than a page
@@ -1624,6 +1632,7 @@ static bool link_objects(const build *b, const file_list *objects, const c_side 
 {
     const build_options *opts = b->opts;
     args a = {0};
+    char *natvis = b->views ? format("-Xlink=-natvis:%s/game.natvis", b->views, NULL) : NULL;
     arg_compiler(&a, b->compiler);
     if (build_target.flag) {
         arg(&a, build_target.flag);
@@ -1679,6 +1688,11 @@ static bool link_objects(const build *b, const file_list *objects, const c_side 
 #endif
 #ifdef _WIN32
         arg(&a, "-fuse-ld=lld");
+        // The game's natvis goes in its .pdb, which Visual Studio, VS Code, CLion and WinDbg read it from
+        if (natvis) {
+            arg(&a, "-Xlinker"); // Not -Wl, which would split a path at its commas
+            arg(&a, natvis);
+        }
         if (shared) {
             if (pdb) {
                 pdb_flag = format("-Wl,--pdb=%s", pdb, NULL);
@@ -1711,6 +1725,7 @@ static bool link_objects(const build *b, const file_list *objects, const c_side 
     free(pdb_flag);
     free(ld_flag);
     free(imports_flag);
+    free(natvis);
     if (code == -1) fprintf(stderr, "tide: couldn't start %s\n", b->compiler);
     return code == 0;
 }
@@ -1935,6 +1950,12 @@ static void collect_shader(void *user, const char *name, const char *wgsl)
     sb_putn(o, wgsl, strlen(wgsl) + 1u);
 }
 
+// Whether a build writes how debuggers show the game's values (place_debug_views): a native one with debug info.
+static bool debug_views(const build_options *opts)
+{
+    return !opts->web && !opts->android && !opts->managed && !opts->release;
+}
+
 static bool generate(build *b, const char *gen, const bool layout)
 {
     if (!find_packages(b->folder, &b->packages)) return false;
@@ -2036,7 +2057,10 @@ static bool generate(build *b, const char *gen, const bool layout)
     char *editor_text = b->opts->editor_draft ? sys_read_file(b->opts->editor_draft, NULL) : NULL;
     if (b->opts->editor_draft && !editor_text) { fprintf(stderr, "tide: cannot read the source overlay replacement: %s\n", b->opts->editor_draft); free(pack); free_files(&paths); free(inputs); unity_sources_free(&unity); return false; }
     sb outline = {0}, shaders = {0};
+    free(b->views);
+    b->views = debug_views(b->opts) ? format("%s", gen, NULL) : NULL;
     const codegen_options codegen = {.name = "game", .out_dir = gen, .line_directives = true, .layout = layout,
+                                     .visualizers = b->views != NULL,
                                      .embed = b->opts->unity, .externs = &b->externs,
                                      .outline_to = b->opts->unity ? &outline : NULL,
                                      .shader_out = b->opts->unity ? collect_shader : NULL, .shader_user = &shaders,
@@ -2084,6 +2108,50 @@ static bool generate(build *b, const char *gen, const bool layout)
 
 // Puts the pack `from` at `to` when there is one, and takes away what was at
 // `to` when there isn't: a game whose assets went has none left beside it.
+static bool place_pack(const char *from, const char *to);
+
+// Beside a debug native program or library: how debuggers show its values,
+// as <stem>.natvis and <stem>_lldb.py (codegen_options.visualizers). macOS
+// also gets a dSYM with the LLDB views in it, which LLDB loads by itself with
+// `settings set target.load-script-from-symbol-file true`.
+static bool place_debug_views(const build *b, const char *output, const char *stem)
+{
+    if (!b->views) return true;
+    char *dir = path_dir(output);
+    char *natvis = path_join(b->views, "game.natvis");
+    char *lldb = path_join(b->views, "game_lldb.py");
+    char *natvis_to = format("%s/%s.natvis", dir, stem);
+    char *lldb_to = format("%s/%s_lldb.py", dir, stem);
+    bool ok = place_pack(natvis, natvis_to) && place_pack(lldb, lldb_to);
+#ifdef __APPLE__
+    // dsymutil, from the toolchain that built it, gathers the debug info out of the objects
+    char *dsymutil = sys_which("dsymutil");
+    if (ok && dsymutil) {
+        const char *argv[] = {dsymutil, output, NULL};
+        if (sys_run(argv, NULL, true) == 0) {
+            // LLDB loads Contents/Resources/Python/<the program's name, as a Python name>.py
+            char *python = format("%s.dSYM/Contents/Resources/Python", output, NULL);
+            char *module = format("%s", path_base(output), NULL);
+            for (char *c = module; *c; c++) {
+                if (!((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') || (*c >= '0' && *c <= '9'))) *c = '_';
+            }
+            char *script = format("%s/%s.py", python, module);
+            ok = sys_mkdirs(python) && place_pack(lldb, script);
+            free(python);
+            free(module);
+            free(script);
+        }
+    }
+    free(dsymutil);
+#endif
+    free(dir);
+    free(natvis);
+    free(lldb);
+    free(natvis_to);
+    free(lldb_to);
+    return ok;
+}
+
 static bool place_pack(const char *from, const char *to)
 {
     size_t size = 0;
@@ -2138,6 +2206,14 @@ static char *build_game(const char *root, const build_options *opts, const char 
         program = path_join(b.cache, file);
     }
     if (!link_objects(&b, &objects, &c, program, false, NULL)) return NULL;
+    if (!opts->web) {
+        char *stem = format("%s", path_base(program), NULL);
+        char *dot = strrchr(stem, '.');
+        if (dot && strcmp(dot, EXE_SUFFIX) == 0 && dot != stem) *dot = 0;
+        const bool placed = place_debug_views(&b, program, stem);
+        free(stem);
+        if (!placed) return NULL;
+    }
     char *pack = pack_of(gen);
     if (opts->web && !opts->managed && !make_page(root, program, output, pack, args, opts->release && !opts->watch)) return NULL;
     if (!opts->web || opts->managed) { // Beside the program, as <name>.pack, which tide/run.h loads
@@ -2265,6 +2341,7 @@ static bool build_library(run *r)
         fprintf(stderr, "tide: can't write %s\n", library);
         ok = false;
     }
+    if (ok && !r->web) ok = place_debug_views(&r->b, library, "game"); // Each build's own is in its .pdb or dSYM
     if (ok) ok = write_pack(r);
     if (ok) {
         r->builds = n;
