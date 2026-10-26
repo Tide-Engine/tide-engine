@@ -12,6 +12,20 @@ namespace Tide.Editor
     {
         static TideSchema schema;
         static DateTime seen;
+        static Dictionary<string, Type> generated;
+        static DateTime generatedSeen;
+
+        [Serializable]
+        sealed class ComponentMap
+        {
+            public ComponentEntry[] components;
+        }
+
+        [Serializable]
+        sealed class ComponentEntry
+        {
+            public string name, guid;
+        }
 
         public static TideSchema Current
         {
@@ -47,6 +61,33 @@ namespace Tide.Editor
                 if (t != null && !t.scene && !t.name.StartsWith("UnityEngine.") && t.name != "Transform") yield return t;
             }
         }
+
+        // The game's own component of a Tide name, as tide made it into com.tide.game and Unity compiled it, or null.
+        internal static Type ComponentType(string name)
+        {
+            var path = Path.Combine(TideSettings.ProjectFolder, "Packages", "com.tide.game", "components.json");
+            try
+            {
+                var written = File.Exists(path) ? File.GetLastWriteTimeUtc(path) : default;
+                if (written != generatedSeen || generated == null)
+                {
+                    generatedSeen = written;
+                    generated = new Dictionary<string, Type>();
+                    var map = written == default ? null : JsonUtility.FromJson<ComponentMap>(File.ReadAllText(path));
+                    foreach (var c in map?.components ?? Array.Empty<ComponentEntry>())
+                    {
+                        var script = AssetDatabase.LoadAssetAtPath<MonoScript>(AssetDatabase.GUIDToAssetPath(c.guid));
+                        var type = script != null ? script.GetClass() : null;
+                        if (type != null) generated[c.name] = type;
+                    }
+                }
+            }
+            catch (IOException)
+            {
+                // tide is writing it: what was read will do
+            }
+            return name != null && generated != null && generated.TryGetValue(name, out var t) ? t : null;
+        }
     }
 
     // TideEntity's inspector: its Tide components, each field by what its type is
@@ -80,12 +121,6 @@ namespace Tide.Editor
             var playing = EditorApplication.isPlayingOrWillChangePlaymode;
             using (new EditorGUI.DisabledScope(playing))
             {
-                if (Enumerable.Range(0, components.arraySize)
-                    .Any(i => TideMigration.ComponentType(components.GetArrayElementAtIndex(i).FindPropertyRelative("type").stringValue) != null))
-                {
-                    EditorGUILayout.HelpBox("The game's components are Unity components of their own now (Add Component > Tide): " +
-                                            "Tools > Tide > Convert TideEntity Lists to Components makes these listed ones that.", MessageType.Info);
-                }
                 for (var i = 0; i < components.arraySize; i++)
                 {
                     if (i > 0) EditorGUILayout.Space(2);
@@ -112,7 +147,7 @@ namespace Tide.Editor
             {
                 var name = t.name;
                 // The game's own component where tide has made it (com.tide.game), else a listed one
-                var own = TideMigration.ComponentType(name);
+                var own = TideEditorSchema.ComponentType(name);
                 if (have.Contains(name) || (own != null && go.GetComponent(own) != null)) menu.AddDisabledItem(new GUIContent(name.Replace('.', '/')));
                 else if (own != null) menu.AddItem(new GUIContent(name.Replace('.', '/')), false, () => Undo.AddComponent(go, own));
                 else menu.AddItem(new GUIContent(name.Replace('.', '/')), false, () => Add(name));

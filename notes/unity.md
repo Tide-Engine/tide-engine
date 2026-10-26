@@ -1,5 +1,23 @@
 # Unity as a front end
 
+## Retired list conversion tool (2026-10-26)
+
+Owner: no pre-1.0 compatibility tooling is needed for the old TideEntity lists.
+Removed the project-wide list-to-component converter, its Tools menu and batch
+entry point, its inspector prompt, and its migration-only tests and metas.
+The inspector's generated-component lookup now belongs to `TideEditorSchema`,
+with only the component names and script GUIDs it needs from `components.json`.
+Add Tide Component still adds the generated Unity component where available.
+The existing listed authoring format and CLI asset reader are unchanged by
+this menu/tool removal. The package README describes adding the game's own
+components through Unity's Add Component menu.
+
+Validation: Unity 6000.6.0f1 compiled the package in a scratch copy of the
+Sample and passed `EntityEditorTests` 3/3 (EditMode, batch, `-nographics`,
+`TIDE_HIDDEN=1`, automatic Tide builds disabled). No C# warnings or errors;
+no remaining conversion-tool references in `unity/`. Inspector drawing in a
+window was not exercised; no runtime or web code changed.
+
 ## Debugging the game in the editor (2026-10-26)
 
 Each `game-<n>` library `tide unity` builds is a debug build whose `.pdb`
@@ -773,21 +791,11 @@ already added, as a C# initializer's doesn't).
   members by value, `this`/paths/`default` for entities, lists in `[]`); a field
   with nothing serialized keeps its default. A script GUID the game hasn't, and
   a key its component hasn't, are left out silently (owner's rule above).
-- **Converting** (`Editor/TideMigration.cs`, Tools > Tide > Convert TideEntity
-  Lists to Components, or `-executeMethod Tide.Editor.TideMigration.ConvertProject`):
-  every prefab and scene with TideEntity lists or instance changes of them,
-  prefabs first after the prefabs they instance, everything recorded before
-  anything is written (hierarchy paths by sibling index). A listed component
-  becomes its component with its fields (`TideLiterals.Split`, then numbers,
-  vectors with one argument splatted and `Color(r, g, b)` opaque, strings,
-  `@k`/`this`/`default`, `Enum.Member`, lists, literals); an instance's patch
-  sets those fields over its prefab's component (overrides); an added one is an
-  added component; an instance's other type at a prefab's index removes the
-  prefab's. Lists then keep what couldn't convert (a type the game hasn't made,
-  `Transform`'s values over the placement, an expression), an instance's
-  following its prefab's again. Each stays-listed item is one Console warning.
-  The entity inspector's Add Tide Component adds the component itself where tide
-  made one (`TideMigration.ComponentType`), and says how to convert listed ones.
+- **Converting (retired 2026-10-26):** the one-time editor tool converted the
+  original TideEntity lists to generated Unity components. It and its tests
+  were removed at the owner's request; see Retired list conversion tool above.
+  The entity inspector's Add Tide Component still adds the component itself
+  where tide made one (`TideEditorSchema.ComponentType`).
 - **Renames** (tidels, `unity_renames` in `compiler/lsp/analysis.c`): a
   component's rename gives its objects the new name's GUID and
   `m_EditorClassIdentifier`; a field's renames its key in those objects and an
@@ -803,9 +811,8 @@ channel, an entity to the scene's own and removing a component);
 package byte for byte, line endings aside, and sweeps a stale script) and
 `unity_code_guid_is_the_names`; `lsp_rename_reaches_unity_assets` (the GUID,
 class identifier, a key, an instance's `propertyPath`, not another component's
-field of that name); the Sample's `MigrationTests` (a prefab and a prefab holding
-it: fields, an instance's override, an added component, what stays listed, and
-nothing the second time) and PlayMode tests reading Ball and Spinner through
+field of that name); the now-retired conversion tests covered a prefab and a
+prefab holding it, and PlayMode tests read Ball and Spinner through
 their components, live. The Sample was converted by the command (4 components).
 Gaps then, bridged the same day (Every type in C#, below): asset fields, `char` lists and structs as literals, a
 field whose C# name had `_` added for a clash not renamed by tidels, the owner's project not converted.
@@ -871,8 +878,7 @@ Owner: "lets bridge any gaps".
   converter reads recursively (`flatten_shaped`, `put_form`): a struct as `Hold { mass = 12, owner = Pilot }`, a set
   from its `items`, an array of exactly its length, a `char` as `'A'` (`put_char`: Tide's escapes, `char(n)` for a
   control character), an entity anywhere in it a reference of the component's own, and an instance's change of any
-  of them by its property path (`shape_at_path`). The conversion command reads the same shapes (`TideMigration.Set`:
-  struct literals, sets, arrays, chars). A component's struct field's declared default is its C# initializer
+  of them by its property path (`shape_at_path`). A component's struct field's declared default is its C# initializer
   (`new Trail { length = 0f, ... }`).
 - **Renames** (tidels): a struct's field is renamed wherever an authored component holds the struct, through
   structs, lists and arrays, in YAML keys (followed by indent, `- ` items as "[]") and instance changes'
@@ -884,7 +890,7 @@ Owner: "lets bridge any gaps".
 - **The Sample**: `Trail trail` on `Ball`, `char badge = 'S'` on `Spinner`, `Set<PlayerID> speakers` and
   `Grid2<byte> board` in `Extras` (filled by `Say`). Tests: PlayMode checks the set's count, the grid's size and the
   cell `Say` counted, a cell nothing set, the room's `Dictionary` of balls whose value is the ball's GameObject, the
-  pillars' `badge`; EditMode's `MigrationTests` converts `trail = Trail { ... }` and `badge = 'x'`.
+  pillars' `badge`; the retired conversion tests also covered struct literals and chars.
   `unity_components_as_tide_components` covers every shape, nested entities and instance changes of them;
   `lsp_rename_reaches_unity_assets` a struct's field in a struct, a list's element and an instance's change, and a
   `Value` field's `Value_` key. Every one of the repo's 330 games built with `--embed` compiles under `-Werror`
