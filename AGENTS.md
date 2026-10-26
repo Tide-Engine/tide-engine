@@ -188,6 +188,7 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | `packages/voice/`, Opus voice chat, local session data and host integration | `notes/voice-package.md` |
 | Reload/migration runtime, CLI serving and generated layouts | `notes/hot-reload.md` |
 | `compiler/lsp/`, `tools/` | `notes/editors.md` |
+| Native debuggers: `.tide` line mapping, natvis and LLDB views, editors' debug configurations, debugger tests | `notes/debugging.md` |
 | Temporary runtime maintenance, generated-C boundary, CPU skinning/pose contracts | `notes/runtime-ownership.md` |
 | Input devices, desktop/mobile/web input | `notes/input-devices.md` |
 | `extern`, `out List<T>`, C systems and rows/jobs ABI | `notes/c-interop.md` |

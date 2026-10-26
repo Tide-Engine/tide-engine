@@ -54,6 +54,28 @@ Developer Tools** shows it: the integrated browser's developer tools for the
 game's tab, or in the Simple Browser (where it's also a button above the
 page), the window's.
 
+## Debugging
+
+Breakpoints go in `.tide` files. The **Tide** debug configurations (in
+**Run and Debug**, add a configuration) stop at them in a native debugger,
+with locals under their Tide names and lists, maps, text, enums and entities
+shown as Tide's:
+
+- **Attach to Unity (Tide)** attaches to the Unity editor running the project,
+  whose game is `Library/Tide`'s library; with several editors open, it asks
+  which.
+- **Debug Tide game** builds the game to debug (`tide build`, into its
+  `.tide/debugger` folder) and starts it under the debugger. `args` passes it
+  arguments (`--host`, `--join <code>`).
+- **Attach to Tide game (tide run)** attaches to the game **Tide: Run** plays,
+  which goes on reloading as files are saved.
+
+They become a native debugger's configurations: Microsoft's C/C++ extension's
+(`cppvsdbg`) on Windows, with the game's natvis; LLVM's LLDB DAP (`lldb-dap`)
+or CodeLLDB (`lldb`) on macOS and Linux, importing the game's `game_lldb.py`.
+In Restricted Mode they don't start, since debugging runs the game's code.
+More: [Debugging](https://tide-engine.dev/tools/debugging).
+
 ## Settings
 
 - `tide.server.path`: another language server to run.
@@ -74,7 +96,7 @@ In a workspace you haven't trusted, nothing from it runs: the language server
 is the `tidels` that comes with tide (or one your user settings name outside
 the workspace), never the workspace's `build/tools/tidels` or one its settings
 name. Servers on `PATH` inside the workspace are skipped too, including paths
-through symlinks or junctions. Games don't run, since running one runs its code.
+through symlinks or junctions. Games don't run or debug, since running one runs its code.
 Trusting the workspace restarts the server.
 
 ## Testing
@@ -95,4 +117,5 @@ The optional fourth argument also checks actual native prefab frame display in
 the webview, panel reuse and backend shutdown.
 It leaves logs in the printed temporary folder and changes no installed
 extensions or personal settings. This opt-in test needs a desktop editor;
-CTest runs the dependency-free adapter suite.
+CTest runs the dependency-free adapter suite, `test/extension.test.mjs` and
+`test/debug.test.mjs` (the debug configurations).

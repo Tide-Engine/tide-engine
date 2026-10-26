@@ -200,6 +200,25 @@ Unity's volume and mute apply, through the runner's Audio Output mixer group.
 first time the game listens. In a WebGL player Tide's program plays through the
 page itself, and hears the page's microphone.
 
+## Debug
+
+The game's Tide code can be debugged in the editor as Tide: each library tide
+builds for the editor has debug information that maps its C back to the
+`.tide` lines, with how its values look beside it (`Library/Tide/game.natvis`,
+also inside its `.pdb` on Windows, and `game_lldb.py`). Attach a native
+debugger to the Unity editor, not Unity's C# debugger:
+
+- VS Code: the **Attach to Unity (Tide)** debug configuration of Tide's
+  extension.
+- CLion: **Run > Attach to Unity (Tide)**, with Tide's plugin.
+- Visual Studio: **Debug > Attach to Process**, native code, `Unity.exe`.
+
+Breakpoints in `.tide` files stop there, stepping goes Tide line by Tide line,
+the call stack is the game's systems and functions, and lists, maps, text,
+enums and entities show as Tide's. A new build swapped into the running match
+keeps the breakpoints. More:
+[Debugging](https://tide-engine.dev/tools/debugging).
+
 ## Build
 
 A player build (File > Build Profiles) builds the game with it, optimized, for

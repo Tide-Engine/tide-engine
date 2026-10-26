@@ -1,5 +1,15 @@
 # Unity as a front end
 
+## Debugging the game in the editor (2026-10-26)
+
+Each `game-<n>` library `tide unity` builds is a debug build whose `.pdb`
+carries the game's natvis, with `Library/Tide/game.natvis` and `game_lldb.py`
+beside it. A native debugger attached to the Unity editor (VS Code's Attach
+to Unity (Tide), CLion's Run > Attach to Unity (Tide), Visual Studio's Attach
+to Process) stops at `.tide` breakpoints in the `loaded-<n>` copy the embed
+host loads. Checked with a host loading `tide_embed.dll` as `TideRunner` does,
+not with the editor itself. `notes/debugging.md`; package README, Debug.
+
 ## Twelve texture slots and embed ABI 6 (2026-10-25)
 
 The coordinated internal capacity completion raises TideRender's sampled arrays

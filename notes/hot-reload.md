@@ -1,5 +1,14 @@
 # Hot reloading
 
+## Reloaded libraries under a debugger (2026-10-26)
+
+Each `game-<n>` library names its own `.pdb` by absolute path, with that
+build's natvis inside, so the host's `loaded-<n>` copy finds its debug
+information and a debugger binds `.tide` breakpoints as each loads. A debug
+library build also writes `game.natvis` and `game_lldb.py` beside it (the
+newest build's; LLDB imports them again after a layout change). macOS watched
+builds skip dsymutil. `notes/debugging.md`.
+
 ## Raw Texture field roles (2026-10-25)
 
 Owner-approved Raw Texture fields retain their ordinary C reference layout.

@@ -1,5 +1,14 @@
 # `tide`, packages and the package
 
+## Debug builds carry their debugger views (2026-10-26)
+
+Native non-release builds (`debug_views` in `build.c`) generate with
+`.visualizers`, compile game objects with `-fno-eliminate-unused-debug-types
+-gno-column-info`, link the natvis into the PDB on Windows (`-Xlinker
+-Xlink=-natvis:...`), and put `<stem>.natvis` and `<stem>_lldb.py` beside the
+program or `game-<n>` library (`place_debug_views`); a macOS standalone debug
+program also gets a dSYM with the LLDB views. `notes/debugging.md`.
+
 ## Direct authored startup and native editor Play (2026-10-24)
 
 `tide build` and `tide run` accept `--scene <qualified-name>`, also exposed by

@@ -1,5 +1,10 @@
 # Releases, installing and CI
 
+## LLDB on Linux runners (2026-10-26)
+
+`build.yml`'s Linux tool step installs `lldb-$major` beside clang, for
+`tidec_debugger_lldb` (`notes/debugging.md`). Not yet seen on a runner.
+
 ## Editor failures in run 40152905815 (2026-10-25)
 
 The completed Build at `5d5f6172` has two underlying failures: Windows release's

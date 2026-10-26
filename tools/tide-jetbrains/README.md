@@ -48,6 +48,28 @@ browser server is needed. Mesh picking, Move/Rotate/Scale, validation, save/undo
 and recovery stay in the native backend. Closing a content tab/project closes
 its process. The standalone app remains available for a resizable window.
 
+## Debugging
+
+In CLion (and IDEs with CLion's native debugger), breakpoints go in `.tide`
+files: a game's C maps each line back to its `.tide` line, so the debugger
+stops there, steps from one Tide line to the next and shows the stack as the
+game's systems and functions. Values show as Tide's from the game's natvis
+(Windows) or LLDB views.
+
+- **Run > Debug Tide Game**, also in a `.tide` file's context menu, plays the
+  game as its Tide run configuration does (when it isn't running already) and
+  attaches the debugger. Saving a file reloads it, still under the debugger.
+- **Run > Attach to Unity (Tide)** attaches to the Unity editor running the
+  project; with several open, it asks which.
+
+Both attach through the platform's attach API, as **Run > Attach to Process**
+does, preferring a native debugger. On Windows, put the **Visual Studio**
+toolchain first: its debugger reads the game's `.pdb` and the natvis in it.
+The breakpoint support (`TideBreakpoints`, in `tide-cidr.xml`) loads only in an
+IDE with that debugger; it compiles against a stub of its extension point
+(`src/cidrStubs`), which isn't packaged, and `verifyPlugin` checks it against
+CLion. More: [Debugging](https://tide-engine.dev/tools/debugging).
+
 ## Colors
 
 JetBrains' dark schemes draw type names like plain text, as in Java, so

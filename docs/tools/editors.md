@@ -328,6 +328,10 @@ Starting a replacement waits for the preceding run's processes to stop. Closing 
 
 On the web, each reload says what it did in the page's console: **Tide: Game Developer Tools** shows it.
 
+### Debugging
+
+Breakpoints go in `.tide` files, and the **Tide** debug configurations (**Run and Debug**, then add a configuration) stop at them, with your values shown as Tide's: **Attach to Unity (Tide)**, **Debug Tide game**, which builds the game to debug and starts it, and **Attach to Tide game (tide run)**, for the game **Tide: Run** plays. They use Microsoft's C/C++ extension on Windows, and LLVM's LLDB DAP or CodeLLDB on macOS and Linux. In Restricted Mode they don't start. See [Debugging](debugging.md).
+
 ## JetBrains IDEs
 
 CLion, Rider, IntelliJ and the others, 2024.2 or later: Tide's installer adds
@@ -383,6 +387,10 @@ Right-click a `.tide` file and pick **Run**, or press Ctrl+Shift+F10 in it (Ctrl
 - **mygame (Android)** plays it on the Android phone or emulator that's connected, as `tide run --android` does (see [Android](cli.md#android)).
 
 They're Tide run configurations, which you can also make and edit under **Run > Edit Configurations**, where **Play it** picks among the three. They use `tide run`. `tide`'s output is in the Run tool window, where an error's place links to the file: saving a file reloads the game (on Android, builds it again and starts it over), and typing `r` and Enter there starts it over. The first run on Android may ask to download Android's tools from Google: type `y` and Enter there to accept. A run configuration can run another `tide`.
+
+### Debugging
+
+In CLion, breakpoints go in `.tide` files. **Run > Debug Tide Game** (also in a `.tide` file's context menu) plays the game as its run configuration does and attaches the debugger; **Run > Attach to Unity (Tide)** attaches to the Unity editor running the project. Both stop at your breakpoints and show your values as Tide's. On Windows, put the **Visual Studio** toolchain first, whose debugger reads the game's `.pdb`. See [Debugging](debugging.md).
 
 ## Emacs
 

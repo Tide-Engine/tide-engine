@@ -1,5 +1,16 @@
 # The language server and the editors
 
+## Debugging from the editors (2026-10-26)
+
+VS Code contributes breakpoints for `tide` and a `tide` debug type
+(`src/debug.js`): Attach to Unity (Tide), Debug Tide game and Attach to Tide
+game (tide run), resolved to `cppvsdbg` or `lldb-dap`/CodeLLDB with the game's
+natvis or LLDB views; `test/debug.test.mjs` is in the CTest adapter suite. The
+JetBrains plugin adds CLion's `.tide` line breakpoints (`TideBreakpoints`,
+optional `tide-cidr.xml`, compiled against `src/cidrStubs`) and Run > Attach
+to Unity (Tide) / Debug Tide Game (`TideAttach`). Details, what ran and gaps:
+`notes/debugging.md`.
+
 ## Checked skinned asset references (2026-10-25)
 
 Asset<SkinnedMesh<V>> uses the approved typed-reference completion. The shared

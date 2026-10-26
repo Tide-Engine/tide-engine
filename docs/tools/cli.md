@@ -171,7 +171,7 @@ existing live instances. Restart the run to play from fresh initial state.
 `--scene` leaves the output filename unchanged; use `-o` for a separate build
 artifact.
 
-The engine is optimized in every build. Without `--release`, generated game code and the game's and packages' C/C++ stay unoptimized for debugging; engine and game code retain debug symbols and assertions, and `DEBUG` is defined. Engine objects are cached, so ordinary game edits reuse them. This applies to native, web and Android builds, including hot reload.
+The engine is optimized in every build. Without `--release`, generated game code and the game's and packages' C/C++ stay unoptimized for debugging; engine and game code retain debug symbols and assertions, and `DEBUG` is defined. A native debugger stops at breakpoints in `.tide` files and shows the game's values as Tide's, with `<name>.natvis` (also in the `.pdb` on Windows) and `<name>_lldb.py` beside the program (see [Debugging](debugging.md)). Engine objects are cached, so ordinary game edits reuse them. This applies to native, web and Android builds, including hot reload.
 
 `tide build --release --web` makes one self-contained `.html` file with the game inside. It opens straight from disk, and can be put online as it is.
 
@@ -305,6 +305,8 @@ When the game gets into a state you don't want, press **Ctrl+R** in the game, or
 
 Hot reload is for `tide run`. `tide build` makes a plain program, or a page with nothing of it. Runs [without a window](#without-a-window) play once, with no hot reload.
 
+A debugger attached to the game stays attached across reloads: each build is a library with its own debug information, and breakpoints in `.tide` files carry over to it (see [Debugging](debugging.md)).
+
 ## Unity
 
 ```sh
@@ -322,6 +324,9 @@ and an outline of what each file declares and which packages the
 game has, which the package's inspectors show. It ends when its input closes, as the editor's package closes it.
 `--once` builds once and ends. Unity and other Tide builds of the same game
 play in the same matches. This is early, and its details may change.
+Each library is a debug build: a native debugger attached to the Unity editor
+stops at breakpoints in `.tide` files, with the game's natvis in its `.pdb` and
+`game.natvis` and `game_lldb.py` beside it (see [Debugging](debugging.md)).
 
 The package builds with the version of `tide` its own commit is, which Unity
 locks in `Packages/packages-lock.json`, so a branch of the project and everyone
