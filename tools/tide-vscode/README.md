@@ -30,7 +30,9 @@ once you trust the folder.
 In a trusted project, the extension selects both `tide` and `tidels` from the
 version pinned in `tide.packages`. Unity projects follow their locked Tide
 package: open Unity once to resolve/install it, and the IDE uses Unity's selected
-installation, including a custom command. Versions share the `TIDE_VERSIONS`
+installation. A `-tide-command <path>` development launch is followed only while
+that Unity process is alive; closing it or a crash restores the project pin.
+Versions share the `TIDE_VERSIONS`
 cache; a missing pinned version gives an error instead of using another version.
 Package/lock changes restart the server. Each open workspace folder has its own
 server, so different projects can use different versions. Explicit path settings

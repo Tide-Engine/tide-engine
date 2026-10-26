@@ -343,18 +343,19 @@ Tide's Install), while the editor goes on, and in a batch run, as on a build
 server like GameCI, at once, with nothing installed beforehand. Point
 `TIDE_VERSIONS` at a folder the server keeps between builds to download each
 version once. A package in a folder on this machine has no commit: it builds
-with the `tide` on `PATH` or where the installer puts it. Your own `tide`
-command in Project Settings > Tide, kept in `UserSettings` out of source
-control, takes the place of all of these, as for a build of `tide` you're
-working on.
+with the `tide` on `PATH` or where the installer puts it.
 
-That custom command stays in force after a package update. If Play reports an
-embed ABI mismatch, use **Project Settings > Tide > Use package version**, then
-**Build now**, or rebuild the custom compiler to match the package. Tide checks
-the existing host before entering Play. Updated VS Code and JetBrains Tide
-plugins follow Unity's selected installation too; their language server switches
-when the project's package lock changes. A development package newer than the
-latest published compiler needs a matching development build or release tag.
+For engine development, launch Unity with `-tide-command "<local Tide>/bin/tide"`
+(`tide.exe` on Windows). That editor process uses the local compiler/runtime,
+including across script reloads; Project Settings > Tide shows the override.
+Restart without the argument to follow the project pin. No override path is
+saved, and old saved paths are ignored. A missing executable or malformed argument
+fails explicitly. If Play reports an embed ABI mismatch, rebuild the development
+compiler to match the package or relaunch normally. Tide checks the existing host
+before entering Play. Updated VS Code and JetBrains plugins follow the active
+selection and return to the pin when that editor exits, including after a crash.
+A development package newer than the latest published compiler needs a matching
+development build or release tag.
 
 In a Unity project the game is the whole of `Assets`: every `.tide` file in it,
 as every C# script is, but those in folders Unity leaves out (hidden ones, and

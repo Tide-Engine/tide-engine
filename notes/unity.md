@@ -1,5 +1,39 @@
 # Unity as a front end
 
+## Development overrides belong to the editor launch (2026-10-26)
+
+Owner decision, replacing the persistent override introduced below: normal use
+must follow the project pin; engine iteration opts in when launching Unity.
+`-tide-command <executable>` selects a development compiler for that editor
+process only. Missing/repeated values and missing executables fail explicitly.
+Every lookup reads the launch arguments, so domain reloads retain the selection.
+Project Settings > Tide displays it and warns, but edits no path. The
+TideUserSettings class, saved tidePath field, migration and path-picker UI are
+removed; old ProjectSettings/UserSettings paths are ignored, not migrated again.
+Without the flag, existing git-package version resolution/install behavior and
+local-package PATH/installed fallback are unchanged. ABI diagnostics now say to
+relaunch without the argument or rebuild the development compiler.
+
+The IDE cache is format 2. A development selection carries the editor PID and
+UTC process-start epoch seconds, as well as the existing lock hash/commit.
+Normal selections have sessionPid 0 and the resolved pinned version; IDEs check
+the installation's VERSION before reusing them, so a global upgrade cannot
+silently change a project pin. A normal quit deletes
+only this process's development selection; IDEs validate process identity too,
+so a crash or PID reuse cannot revive it. Old unscoped caches are ignored.
+An unavailable/unresolved pin is reported, never replaced by a stale override.
+The editor/frontend implementations and exit observation are in editors.md.
+
+Validation: Unity 6000.6.0f1 VersionTests 8/8 on a normal batch launch and 8/8
+on a second launch with the real -tide-command argument (path includes spaces).
+They cover actual argument selection, ignoring a saved legacy path, malformed
+arguments, session metadata/quit cleanup, missing executable, normal cache kept,
+and rejecting the checkout-built ABI-5 host with the appropriate fix. The
+development launch's cache was absent after its process exited. Builds were
+disabled in this test project; no stand-in compiler was executed. Existing
+version/download/checksum checks remain included. No runtime C/ABI changed;
+native/web game suites and other operating systems weren't needed/run.
+
 ## IDE toolchain selection and an old host after a package update (2026-10-26)
 
 The owner reported Play loading embed ABI 5 after updating to an ABI-7 package.

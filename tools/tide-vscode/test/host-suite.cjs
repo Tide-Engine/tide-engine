@@ -85,6 +85,44 @@ exports.run = async function () {
     await until('pin-file watcher switches the first project to 0.6.0', switched);
     await until('hover after pin-file restart', async () => (await hover())?.length);
     log('HOST: two pinned project servers and automatic pin switch passed');
+    // Simulate a development editor crashing without removing its selection file. The IDE must notice the
+    // process exit itself and select the normal pin, rather than wait for another Unity launch to repair it.
+    const { spawn, execFile } = require('node:child_process');
+    const session = spawn(process.env.TIDE_HOST_NODE, ['-e',
+        `setInterval(()=>{try{process.kill(${process.env.TIDE_HOST_RUNNER_PID},0)}catch{process.exit(0)}},100)`],
+        { windowsHide:true, stdio:'ignore' });
+    await new Promise((resolve,reject)=>{session.once('spawn',resolve);session.once('error',reject);});
+    const lockFile = path.join(folder,'Packages','packages-lock.json'), cacheFile = path.join(folder,'Library','Tide','toolchain.json');
+    const readLogs = () => fs.readdirSync(process.env.TIDE_HOST_LOGS).map(date=>{
+        const file=path.join(process.env.TIDE_HOST_LOGS,date,'window1/exthost/tide-engine.tide/Tide.log');
+        return fs.existsSync(file)?fs.readFileSync(file,'utf8').toLowerCase():'';
+    }).join('\n');
+    try {
+        const windows=process.platform==='win32';
+        const args=windows?['-NoProfile','-NonInteractive','-Command',`([DateTimeOffset][Diagnostics.Process]::GetProcessById(${session.pid}).StartTime).ToUnixTimeSeconds()`]
+            :['-p',String(session.pid),'-o','lstart='];
+        const text=await new Promise((resolve,reject)=>execFile(windows?'powershell.exe':'ps',args,
+            {windowsHide:true,env:{...process.env,LC_ALL:'C',TZ:'UTC'}},(error,stdout)=>error?reject(error):resolve(stdout.trim())));
+        const started=windows?Number(text):Math.floor(Date.parse(text+' UTC')/1000);
+        fs.mkdirSync(path.dirname(lockFile),{recursive:true});fs.mkdirSync(path.dirname(cacheFile),{recursive:true});
+        fs.writeFileSync(lockFile,JSON.stringify({dependencies:{'com.tide.unity':{source:'git',hash:'session-test',version:'url#v0.6.0'}}}));
+        const command=path.join(process.env.TIDE_VERSIONS,'0.5.0','bin','tide'+(windows?'.exe':''));
+        fs.writeFileSync(cacheFile,JSON.stringify({format:2,commit:'session-test',tide:command,sessionPid:session.pid,sessionStarted:started}));
+        let after=readLogs().length;
+        await vscode.commands.executeCommand('tide.restartServer');
+        await until('development session selects its own real language server',()=>readLogs().slice(after).includes(`0.5.0${path.sep}bin${path.sep}tidels`));
+        after=readLogs().length;
+        session.kill();
+        await until('session exit automatically restores the pin with an unchanged cache file',()=>
+            readLogs().slice(after).includes(`0.6.0${path.sep}bin${path.sep}tidels`));
+        await until('hover after development session exit',async()=>(await hover())?.length);
+        assert.ok(fs.existsSync(cacheFile),'the test must exercise a stale cache, not file deletion');
+        log('HOST: development session exit restores the project pin without restarting the IDE');
+    } finally {
+        if(session.exitCode===null)session.kill();
+        if(fs.existsSync(lockFile))fs.unlinkSync(lockFile);
+        if(fs.existsSync(cacheFile))fs.unlinkSync(cacheFile);
+    }
     // Restore the CLI fixture used by the process-lifetime checks below.
     fs.writeFileSync(path.join(folder, 'tide.packages'), '');
     await vscode.workspace.getConfiguration('tide').update('server.path', process.env.TIDE_HOST_SERVER, vscode.ConfigurationTarget.Workspace);

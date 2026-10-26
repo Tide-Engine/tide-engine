@@ -25,21 +25,24 @@ repository's `notes/unity.md`.
    `%LOCALAPPDATA%\Tide\versions` or `~/.tide/versions` (or the folder
    `TIDE_VERSIONS` names). A build server (Unity in batch mode, as GameCI runs
    it) installs it with no question and nothing installed beforehand: keep
-   `TIDE_VERSIONS` in its cache to download it once. Project Settings > Tide
-   can name your own `tide` instead, kept for you alone, as for a build of tide
-   you're working on.
+   `TIDE_VERSIONS` in its cache to download it once.
 
-   That custom command overrides the package even after updating it. If Play
-   reports different embed ABI versions, Project Settings > Tide shows the
-   command being used: **Use package version** clears the override, then
-   **Build now** rebuilds. A development package newer than the published
-   compiler needs a matching development build or a matching release tag.
-   Tide checks the existing host before entering Play.
+   To test a local Tide compiler/runtime, launch Unity with
+   `-tide-command "<local Tide>/bin/tide"` (`tide.exe` on Windows). This overrides
+   the package pin for that editor process only, including its script reloads.
+   Project Settings > Tide shows the active command and the override warning;
+   it stores no compiler path. Restart Unity without the argument to follow the
+   pin again. Old saved compiler overrides are ignored. A missing executable or
+   malformed argument reports an error instead of substituting another compiler.
+   Tide checks the existing host's ABI before entering Play; a development build
+   must match the package, or Play explains how to return to the pin.
 
    Updated VS Code and JetBrains Tide plugins use the same selected installation
    for their language server, runs and prefab editor. Unity writes its selection
    to `Library/Tide/toolchain.json`, tied to the package lock; keep it out of
-   source control. Changing the package lock makes the IDE select again.
+   source control. A development selection identifies the running editor process:
+   closing it (or a crash) returns the IDE to the pin. Changing the package lock
+   makes the IDE select again.
 
 3. Put the game's `.tide` files anywhere in `Assets`: every one is the game's,
    as every C# script is, but those in folders Unity leaves out (hidden ones,
