@@ -340,7 +340,7 @@ async function webRunTest(tide, root, release = false) {
         await waitFor(async () => await buildNumber() === 1, "initial web build");
         const cache = join(game, ".tide", `web-${release ? "release" : "debug"}`);
         let before = mark(cache);
-        const generated = [...before.keys()].find((file) => /^run\/\d+\/game\.o$/.test(file));
+        const generated = [...before.keys()].find((file) => /^run\/watch-\d+\/game\.o$/.test(file));
         check(generated, "web run's generated object not found");
         put(c, "int Native(int value) { return value + 2; }\n");
         await waitFor(async () => await buildNumber() === 2, "C-only hot reload");
@@ -428,6 +428,53 @@ async function webRunTest(tide, root, release = false) {
         child.kill();
         await closed;
     }
+}
+
+// A watching run in the folder another left, and one beside a run that's still going.
+async function webRerunTest(tide, root) {
+    console.log("Cache correctness: web runs one after another");
+    const game = join(root, "web-rerun");
+    mkdirSync(game);
+    put(join(game, "game.tide"), "scene Main { }\nsingleton State { int value; }\nsystem Update(mut State state) { state.value += 1; }\n");
+    const cache = join(game, ".tide", "web-debug");
+    async function start() {
+        const child = spawn(tide, ["run", game, "--web", "--no-open"], { cwd: game, env, shell: false, windowsHide: true });
+        let output = "", exited = false;
+        const closed = new Promise((accept) => {
+            child.on("error", () => { exited = true; accept(); });
+            child.on("close", () => { exited = true; accept(); });
+        });
+        child.stdout.on("data", (data) => { output += data; });
+        child.stderr.on("data", (data) => { output += data; });
+        const deadline = Date.now() + 120000;
+        for (;;) {
+            const url = output.match(/the game is at (http:\/\/127\.0\.0\.1:\d+\/)/)?.[1];
+            if (url) {
+                const built = await fetch(`${url}build`, { signal: AbortSignal.timeout(5000) }).catch(() => null);
+                if (built?.ok && Number((await built.text()).split(" ")[0]) === 1) break;
+            }
+            check(!exited, `web rerun: tide exited:\n${output}`);
+            check(Date.now() < deadline, `web rerun: timed out waiting for the first build:\n${output}`);
+            await new Promise((accept) => setTimeout(accept, 50));
+        }
+        return async () => { child.kill(); await closed; };
+    }
+    const first = join(cache, "run", "watch-1");
+    const stop = await start();
+    await stop();
+    check(existsSync(join(first, "game.o")) && !existsSync(join(first, "game-2.wasm")), "a web run keeps its objects in watch-1");
+    const before = mark(cache);
+    const program = join(first, "game-1.wasm");
+    const stopAgain = await start();
+    expectWrites(cache, before, [], "a second run in the same folder compiles nothing");
+    const linked = statSync(program, { bigint: true }).mtimeNs;
+    const stopBeside = await start();
+    check(existsSync(join(cache, "run", "watch-2", "game-1.wasm")), "a run beside a running one builds in a folder of its own");
+    await stopBeside();
+    await stopAgain();
+    const stopLast = await start();
+    check(statSync(program, { bigint: true }).mtimeNs === linked, "an unchanged run reuses its first build's link");
+    await stopLast();
 }
 
 async function nativeRunTest(tide, root) {
@@ -744,6 +791,7 @@ async function main() {
         if (!opts.serverOnly && !opts.stripOnly && (opts.web || opts.watchOnly)) {
             await webRunTest(tide, root);
             await webRunTest(tide, root, true);
+            await webRerunTest(tide, root);
         }
         if (opts.gpu && !opts.watchOnly && !opts.stripOnly && !opts.serverOnly) await nativeRunTest(tide, root);
         if (!opts.serverOnly && !opts.watchOnly && !opts.stripOnly) await serverTests(tide, root);

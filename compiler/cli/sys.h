@@ -81,6 +81,12 @@ int sys_capture_all(const char *const *argv, char *out, size_t size);
 
 uint32_t sys_pid(void);                // This process's
 bool sys_process_alive(uint32_t pid); // Whether a process with that ID is running
+// Takes the file at `path` (made if it isn't there) for this process alone,
+// until sys_unlock or the process ends, however it ends: NULL while another
+// has it. The programs tide starts don't have it.
+typedef struct sys_lock sys_lock;
+sys_lock *sys_lock_file(const char *path);
+void sys_unlock(sys_lock *lock);
 
 // Reads lines typed into the terminal, in the background: sys_typed_line
 // returns the latest one (without its line break) once it's whole.

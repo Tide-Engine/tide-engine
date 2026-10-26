@@ -1000,14 +1000,6 @@ static bool run_compiles(build *b, compiles *list)
     return ok;
 }
 
-// Compiles one C or C++ file; `gen`, the generated files' folder, may be NULL.
-static bool compile_c(build *b, const char *source, const char *object, const char *gen)
-{
-    compiles list = {0};
-    queue_compile(&list, b, source, object, gen, false);
-    return run_compiles(b, &list);
-}
-
 // Finds the compiler and makes the game's .tide folder. False after saying
 // what's wrong.
 static bool setup(build *b, const char *root, const build_options *opts, const bool library)
@@ -1253,6 +1245,29 @@ static uint64_t header_stamp(const char *folder)
     return h;
 }
 
+// Lists `source` when the stamp beside `object` isn't `h`, what it would be
+// compiled from, `first` for the one to start ahead of its turn.
+static void queue_unless_stamped(const build *b, compiles *list, const char *source, const char *object, const char *gen,
+                                 const uint64_t h, const bool first)
+{
+    char stamp[32];
+    snprintf(stamp, sizeof stamp, "%016llx", (unsigned long long)h);
+    char *stamp_path = format("%s.stamp", object, NULL);
+    char *old = sys_read_file(stamp_path, NULL);
+    if (!old || strcmp(old, stamp) != 0 || !sys_exists(object)) {
+        // A failed compile may leave a partial object: never reuse it, even
+        // if the source is then put back exactly as it was before the failure.
+        // The stamp goes as the compile starts (run_compiles).
+        compile_job *job = queue_compile(list, b, source, object, gen, false);
+        job->stamp_path = stamp_path;
+        job->stamp = copy_text(stamp);
+        job->first = first;
+    } else {
+        free(stamp_path);
+    }
+    free(old);
+}
+
 // tidec still checks the whole game, but its files are written again even
 // when their contents haven't changed. Keep generated objects by contents,
 // not modification times: a C-only edit needn't compile the game or launcher.
@@ -1290,22 +1305,7 @@ static bool queue_generated(const build *b, compiles *list, const char *source, 
     free(flags);
     free(text);
     free(header);
-    char stamp[32];
-    snprintf(stamp, sizeof stamp, "%016llx", (unsigned long long)h);
-    char *stamp_path = format("%s.stamp", object, NULL);
-    char *old = sys_read_file(stamp_path, NULL);
-    if (!old || strcmp(old, stamp) != 0 || !sys_exists(object)) {
-        // A failed compile may leave a partial object: never reuse it, even
-        // if the source is then put back exactly as it was before the failure.
-        // The stamp goes as the compile starts (run_compiles).
-        compile_job *job = queue_compile(list, b, source, object, gen, false);
-        job->stamp_path = stamp_path;
-        job->stamp = copy_text(stamp);
-        job->first = first;
-    } else {
-        free(stamp_path);
-    }
-    free(old);
+    queue_unless_stamped(b, list, source, object, gen, h, first);
     return true;
 }
 
@@ -1623,12 +1623,33 @@ static void explain_link(const build *b, const char *const *argv)
     free(text);
 }
 
+// What a link is made of: its command line, and each file it names as it is
+// now, but what it makes (after -o); and the debug views it puts in a .pdb.
+static uint64_t link_stamp(const args *a, const build *b)
+{
+    uint64_t h = 0xCBF29CE484222325ull;
+    for (int i = 0; i < a->count; i++) {
+        h = (hash_text(h, a->items[i]) ^ 0xFFu) * 0x100000001B3ull;
+        if (i == 0 || strcmp(a->items[i - 1], "-o") != 0) h = (h ^ sys_file_stamp(a->items[i])) * 0x100000001B3ull;
+    }
+    if (b->views) {
+        char *path = path_join(b->views, "game.natvis");
+        char *natvis = sys_read_file(path, NULL);
+        h = hash_text(h, natvis ? natvis : "");
+        free(natvis);
+        free(path);
+    }
+    return h;
+}
+
 // Links `objects`, the game's C (`c`, NULL for tide run's host) and the
 // engine's objects into `output`: a program, with the platform layer, or with
 // `shared`, a library of the game for a host to load (see tide/host.h), whose
-// debug info on Windows goes in `pdb`.
+// debug info on Windows goes in `pdb`. With `kept`, only when it would make
+// something other than what it made there last time: <output>.stamp says what
+// that was made of.
 static bool link_objects(const build *b, const file_list *objects, const c_side *c, const char *output,
-                         const bool shared, const char *pdb)
+                         const bool shared, const char *pdb, const bool kept)
 {
     const build_options *opts = b->opts;
     args a = {0};
@@ -1717,7 +1738,19 @@ static bool link_objects(const build *b, const file_list *objects, const c_side 
         if (opts->web) arg(&a, "-lc");
         arg(&a, build_target.builtins);
     }
-    const int code = sys_run(a.items, NULL, false);
+    char *stamp_path = kept ? format("%s.stamp", output, NULL) : NULL;
+    char stamp[32] = "";
+    bool same = false;
+    if (stamp_path) {
+        snprintf(stamp, sizeof stamp, "%016llx", (unsigned long long)link_stamp(&a, b));
+        char *old = sys_read_file(stamp_path, NULL);
+        same = old && strcmp(old, stamp) == 0 && sys_exists(output) && (!pdb || sys_exists(pdb));
+        free(old);
+        if (!same) sys_remove(stamp_path); // A link cut short leaves nothing that passes
+    }
+    const int code = same ? 0 : sys_run(a.items, NULL, false);
+    if (code == 0 && stamp_path && !same) sys_write_text(stamp_path, stamp);
+    free(stamp_path);
     if (code > 0) explain_link(b, a.items);
     free(a.items);
     free(lib_dir);
@@ -2209,7 +2242,7 @@ static char *build_game(const char *root, const build_options *opts, const char 
         snprintf(file, sizeof file, "%s.wasm", b.name);
         program = path_join(b.cache, file);
     }
-    if (!link_objects(&b, &objects, &c, program, false, NULL)) return NULL;
+    if (!link_objects(&b, &objects, &c, program, false, NULL, false)) return NULL;
     if (!opts->web) {
         char *stem = format("%s", path_base(program), NULL);
         char *dot = strrchr(stem, '.');
@@ -2259,6 +2292,7 @@ typedef struct run {
     char *gen;       // ...and its generated files
     uint32_t builds; // Made so far, game-1 to game-<builds>
     uint32_t packs;  // Packs of the game's assets written so far, pack-1 to pack-<packs>: with each build, and as a named file changes
+    bool watch_folder; // dir is a watch-<n> folder, which runs one after another use (open_run)
 } run;
 
 // The game's pack as the last generate left it, into the run's folder as the
@@ -2320,8 +2354,10 @@ static char *build_path(const run *r, const uint32_t n, const char *suffix)
 
 // Builds the game's next library (or web program), game-<builds + 1>, linked
 // to another name and renamed once it's whole: the host (or the page) takes
-// it as soon as it's there, and says what it did with it. False after saying
-// what's wrong.
+// it as soon as it's there, and says what it did with it. A run's first in
+// its watch-<n> folder (open_run), which nothing takes before the run starts
+// the host or serves the page, links in place, and only when the last run
+// there didn't leave the same one. False after saying what's wrong.
 static bool build_library(run *r)
 {
     if (!generate(&r->b, r->gen, true)) return false;
@@ -2336,12 +2372,13 @@ static bool build_library(run *r)
     if (ok) copy_dynamic(&c, r->dir); // Next to the host, which loads the game's library
     if (ok) place_moltenvk(&r->b, r->dir);
     const uint32_t n = r->builds + 1u;
-    char *linked = build_path(r, n, ".tmp");
+    const bool in_place = n == 1 && r->watch_folder;
+    char *linked = build_path(r, n, in_place ? suffix : ".tmp");
     char *pdb = build_path(r, n, ".pdb");
     char *library = build_path(r, n, suffix);
-    ok = ok && link_objects(&r->b, &objects, &c, linked, !r->web, r->b.opts->release || r->web ? NULL : pdb);
+    ok = ok && link_objects(&r->b, &objects, &c, linked, !r->web, r->b.opts->release || r->web ? NULL : pdb, in_place);
     free_game_c(&c);
-    if (ok && !sys_rename(linked, library)) {
+    if (ok && !in_place && !sys_rename(linked, library)) {
         fprintf(stderr, "tide: can't write %s\n", library);
         ok = false;
     }
@@ -2407,8 +2444,14 @@ static bool build_host(run *r, const char *program)
     char *host_c = path_join(r->gen, "host.c");
     file_list objects = {0};
     add_file(&objects, path_join(r->dir, "host.o"));
-    const bool ok = sys_write_text(host_c, text) && compile_c(&r->b, host_c, objects.items[0], NULL)
-                 && link_objects(&r->b, &objects, NULL, program, false, NULL);
+    // Compiled again only when it changed, or what it's compiled with: the run's folder keeps it (clear_run_entry)
+    char *flags = stamp_of(&r->b, false);
+    const uint64_t h = hash_text(hash_text(hash_text(0xCBF29CE484222325ull, flags), host_c), text);
+    free(flags);
+    compiles list = {0};
+    bool ok = sys_write_text(host_c, text);
+    if (ok) queue_unless_stamped(&r->b, &list, host_c, objects.items[0], NULL, h, false);
+    ok = ok && run_compiles(&r->b, &list) && link_objects(&r->b, &objects, NULL, program, false, NULL, true);
     free(host_c);
     free_files(&objects);
     return ok;
@@ -2503,26 +2546,85 @@ static uint64_t game_stamp(const build *b)
 // editors can save in steps.
 #define SETTLE_MS 200
 
-// This run's folder, made anew, after removing those of runs that ended.
-static void open_run(run *r)
+typedef struct run_folder {
+    const char *dir;
+    bool busy; // Something in it couldn't go: a program of a run that ended without its tide is still using it
+} run_folder;
+
+// Whether `path` + `suffix` + ".stamp" is there.
+static bool stamped(const char *path, const size_t len, const char *suffix)
+{
+    char *stamp = malloc(len + strlen(suffix) + sizeof ".stamp");
+    if (!stamp) abort();
+    snprintf(stamp, len + strlen(suffix) + sizeof ".stamp", "%.*s%s.stamp", (int)len, path, suffix);
+    const bool there = sys_exists(stamp);
+    free(stamp);
+    return there;
+}
+
+// Removes what a watching run made in its folder but its generated files and
+// what was made of them with a stamp, objects and links (queue_unless_stamped,
+// link_objects): the next run there makes them from the same paths, so what
+// hasn't changed since isn't made again.
+static void clear_run_entry(void *user, const char *name, const bool is_dir)
+{
+    run_folder *folder = user;
+    char *path = path_join(folder->dir, name);
+    const size_t n = strlen(path);
+    const bool kept = is_dir ? strcmp(name, "gen") == 0
+                             : (n > 6 && strcmp(path + n - 6, ".stamp") == 0) || stamped(path, n, "")
+                                   || (n > 4 && strcmp(path + n - 4, ".pdb") == 0
+                                       && (stamped(path, n - 4, EXE_SUFFIX) || stamped(path, n - 4, LIBRARY_SUFFIX)));
+    if (!kept && !sys_remove_tree(path)) folder->busy = true;
+    free(path);
+}
+
+// This run's folder, after removing those of runs that ended. A watching run
+// takes the first watch-<n> no other run has, as it was left, and the rest
+// one named for tide's process ID, made anew.
+static void open_run(run *r, const bool watching)
 {
     char *runs = path_join(r->b.cache, "run");
     sys_mkdirs(runs);
     sys_list(runs, remove_ended_run, (void *)runs);
-    char pid[32];
-    snprintf(pid, sizeof pid, "%u", (unsigned)sys_pid());
-    r->dir = path_join(runs, pid);
+    // A folder is a run's while its tide has watch-<n>.lock, which the system lets go of however tide ends
+    for (unsigned n = 1; watching && !r->dir && n <= 64; n++) {
+        char name[32];
+        snprintf(name, sizeof name, "watch-%u", n);
+        char *dir = path_join(runs, name);
+        char *lock = format("%s.lock", dir, NULL);
+        run_folder folder = {dir, false};
+        if (sys_lock_file(lock)) sys_list(dir, clear_run_entry, &folder); // Kept until tide ends
+        else folder.busy = true;
+        if (folder.busy) free(dir);
+        else r->dir = dir;
+        free(lock);
+    }
+    r->watch_folder = r->dir != NULL;
+    if (!r->dir) {
+        char pid[32];
+        snprintf(pid, sizeof pid, "%u", (unsigned)sys_pid());
+        r->dir = path_join(runs, pid);
+        sys_remove_tree(r->dir); // A run that ended with the same process ID
+    }
     r->gen = path_join(r->dir, "gen");
-    sys_remove_tree(r->dir); // A run that ended with the same process ID
     sys_mkdirs(r->gen);
     free(runs);
+}
+
+// Removes what the run made for itself alone, as it ends.
+static void close_run(const run *r)
+{
+    run_folder folder = {r->dir, false};
+    if (r->watch_folder) sys_list(r->dir, clear_run_entry, &folder);
+    else sys_remove_tree(r->dir);
 }
 
 int tide_run_native(const char *root, const build_options *opts, const char *const *game_args)
 {
     run r = {0};
     if (!build_setup(&r.b, root, opts, false)) return 1;
-    open_run(&r);
+    open_run(&r, false);
     char file[512];
     snprintf(file, sizeof file, "%s%s", r.b.name, EXE_SUFFIX);
     char *output = path_join(r.dir, file);
@@ -2562,7 +2664,7 @@ int tide_run_reloading(const char *root, const build_options *opts, const char *
 {
     run r = {0};
     if (!build_setup(&r.b, root, opts, true)) return 1;
-    open_run(&r);
+    open_run(&r, true);
 
     char file[512];
     snprintf(file, sizeof file, "%s%s", r.b.name, EXE_SUFFIX);
@@ -2617,7 +2719,7 @@ int tide_run_reloading(const char *root, const build_options *opts, const char *
             }
         }
     }
-    sys_remove_tree(r.dir);
+    close_run(&r);
     if (code != 0) telemetry_fail(TELEMETRY_ERROR_GAME);
     return code;
 }
@@ -3176,7 +3278,7 @@ static int tide_unity_web(const char *root, const build_options *opts)
     add_file(&objects, path_join(b.cache, "unity-game.o"));
     add_file(&objects, path_join(b.cache, "unity-main.o"));
     if (!compile_game(&b, gen, game_c, main_c, &objects, &c) || !find_libraries(&b, &c)) goto done;
-    if (!link_objects(&b, &objects, &c, program, false, NULL)) goto done;
+    if (!link_objects(&b, &objects, &c, program, false, NULL, false)) goto done;
     pack = pack_of(gen);
     if (!write_unity_script(root, program, script, pack, opts->release)) goto done;
     const char *mapped = b.unity_map ? b.unity_map : "{\"assets\": []}\n";
@@ -3476,7 +3578,7 @@ int tide_run_web(const char *root, const build_options *opts, const bool open_pa
     r->web = true;
     if (opts->watch) {
         if (!build_setup(&r->b, root, opts, false)) return 1;
-        open_run(r);
+        open_run(r, true);
         w.page = web_page(root, args);
         if (!w.page || !write_web_main(r) || !build_library(r)) return 1;
     } else {

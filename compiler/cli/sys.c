@@ -22,6 +22,7 @@
 #include <poll.h>
 #include <pthread.h>
 #include <signal.h>
+#include <sys/file.h>
 #include <sys/wait.h>
 #include <unistd.h>
 #ifdef __APPLE__
@@ -1076,6 +1077,42 @@ bool sys_process_alive(const uint32_t pid)
 }
 
 #endif
+
+struct sys_lock {
+#ifdef _WIN32
+    HANDLE file;
+#else
+    int file;
+#endif
+};
+
+sys_lock *sys_lock_file(const char *path)
+{
+    sys_lock *lock = malloc(sizeof *lock);
+    if (!lock) abort();
+#ifdef _WIN32
+    // Shared with nobody, and not inherited
+    lock->file = CreateFileA(path, GENERIC_READ | GENERIC_WRITE, 0, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (lock->file != INVALID_HANDLE_VALUE) return lock;
+#else
+    // Closed in the programs tide starts, which would otherwise hold it too
+    lock->file = open(path, O_RDWR | O_CREAT | O_CLOEXEC, 0644);
+    if (lock->file >= 0 && flock(lock->file, LOCK_EX | LOCK_NB) == 0) return lock;
+    if (lock->file >= 0) close(lock->file);
+#endif
+    free(lock);
+    return NULL;
+}
+
+void sys_unlock(sys_lock *lock)
+{
+#ifdef _WIN32
+    CloseHandle(lock->file);
+#else
+    close(lock->file);
+#endif
+    free(lock);
+}
 
 // Lines typed into the terminal: a thread reads them, and hands each one over
 // through `typed`, waiting until it's taken.
