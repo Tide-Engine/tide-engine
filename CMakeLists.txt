@@ -147,7 +147,8 @@ add_subdirectory(compiler)
 if(TIDE_NODE)
     # Adapter tests use editor/process doubles and run without VS Code on any host.
     add_test(NAME tide_vscode_adapter COMMAND "${TIDE_NODE}" --test
-        "${CMAKE_CURRENT_SOURCE_DIR}/tools/tide-vscode/test/extension.test.mjs")
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/tide-vscode/test/extension.test.mjs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/tide-vscode/test/debug.test.mjs")
     add_test(NAME relay COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/relay/relay.test.mjs"
         "${CMAKE_CURRENT_SOURCE_DIR}/relay/lobbies.test.mjs")
     # The Android wrapper's file transfers, with adb mocked and no device.

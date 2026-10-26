@@ -2111,10 +2111,12 @@ static bool generate(build *b, const char *gen, const bool layout)
 static bool place_pack(const char *from, const char *to);
 
 // Beside a debug native program or library: how debuggers show its values,
-// as <stem>.natvis and <stem>_lldb.py (codegen_options.visualizers). macOS
-// also gets a dSYM with the LLDB views in it, which LLDB loads by itself with
-// `settings set target.load-script-from-symbol-file true`.
-static bool place_debug_views(const build *b, const char *output, const char *stem)
+// as <stem>.natvis and <stem>_lldb.py (codegen_options.visualizers). A program
+// on macOS (`dsym`) also gets a dSYM with the LLDB views in it, which LLDB
+// loads by itself with `settings set target.load-script-from-symbol-file true`.
+// A watched build's library goes without, so a reload waits for no dsymutil:
+// LLDB reads its debug info from its objects, which stay in the game's cache.
+static bool place_debug_views(const build *b, const char *output, const char *stem, const bool dsym)
 {
     if (!b->views) return true;
     char *dir = path_dir(output);
@@ -2125,7 +2127,7 @@ static bool place_debug_views(const build *b, const char *output, const char *st
     bool ok = place_pack(natvis, natvis_to) && place_pack(lldb, lldb_to);
 #ifdef __APPLE__
     // dsymutil, from the toolchain that built it, gathers the debug info out of the objects
-    char *dsymutil = sys_which("dsymutil");
+    char *dsymutil = dsym ? sys_which("dsymutil") : NULL;
     if (ok && dsymutil) {
         const char *argv[] = {dsymutil, output, NULL};
         if (sys_run(argv, NULL, true) == 0) {
@@ -2143,6 +2145,8 @@ static bool place_debug_views(const build *b, const char *output, const char *st
         }
     }
     free(dsymutil);
+#else
+    (void)dsym;
 #endif
     free(dir);
     free(natvis);
@@ -2210,7 +2214,7 @@ static char *build_game(const char *root, const build_options *opts, const char 
         char *stem = format("%s", path_base(program), NULL);
         char *dot = strrchr(stem, '.');
         if (dot && strcmp(dot, EXE_SUFFIX) == 0 && dot != stem) *dot = 0;
-        const bool placed = place_debug_views(&b, program, stem);
+        const bool placed = place_debug_views(&b, program, stem, true);
         free(stem);
         if (!placed) return NULL;
     }
@@ -2341,7 +2345,7 @@ static bool build_library(run *r)
         fprintf(stderr, "tide: can't write %s\n", library);
         ok = false;
     }
-    if (ok && !r->web) ok = place_debug_views(&r->b, library, "game"); // Each build's own is in its .pdb or dSYM
+    if (ok && !r->web) ok = place_debug_views(&r->b, library, "game", false); // Each build's own natvis is in its .pdb
     if (ok) ok = write_pack(r);
     if (ok) {
         r->builds = n;

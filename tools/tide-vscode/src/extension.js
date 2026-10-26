@@ -834,6 +834,18 @@ function activate(context) {
         vscode.workspace.onDidGrantWorkspaceTrust(restart),
         { dispose: () => Object.values(runs).forEach(r => r?.dispose()) },
         { dispose: () => [...prefabProcesses].forEach(editor => editor.dispose()) },
+        require('./debug.js').register(vscode, {
+            output,
+            // The game the active .tide file is in, as Tide: Run would play it
+            gameOf: () => {
+                const file = vscode.window.activeTextEditor?.document.uri.fsPath;
+                return file && /\.(tide|tprefab)$/.test(file) ? gameFolder(file).folder : lastGame;
+            },
+            findTide: game => {
+                const configured = settingProgram('path', 'tide', vscode.Uri.file(game));
+                return configured ? configured.file : installedProgram('tide');
+            },
+        }),
     );
     serially(start);
 }
