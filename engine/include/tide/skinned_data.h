@@ -18,6 +18,60 @@
 #define TIDE_SKINNED_CLIP_SIZE 20u
 #define TIDE_SKINNED_CHANNEL_SIZE 24u
 
+// ---------------------------------------------------------------------------
+// Limits: what a file's bytes can ask of a decode (tide_skinned_data_decode,
+// below). Bytes can come from anywhere (a fetched URL, a player's file), and
+// SkinnedMesh<V>.Decode runs in match code on every machine, so a small
+// hostile file mustn't end the program or take minutes. Each limit is only
+// its number here: change it and nothing else changes. A file past one is
+// refused (InvalidData) from the counts it says, before what it asks for is
+// made or done; an accessor with no buffer view (zeros, which take no bytes)
+// counts as one with bytes. tidec's SkinnedMesh and Animations imports are
+// held to the same limits, so what builds also decodes.
+//
+// At these numbers a decode's peak memory is about 500 MiB for a model at
+// every limit at once, plus about 100 bytes for each JSON value and twice the
+// file's own size; its work is about TIDE_SKINNED_MAX_READS numbers read, plus the file's size.
+
+// A file's bytes, and the decoded model's: the most either is.
+#define TIDE_SKINNED_MAX_BYTES (512u << 20)
+
+// JSON values in the file's description (numbers, strings, arrays, objects,
+// each one), each about 100 bytes once read. A description is small beside
+// its binary data: 65,536 nodes with all their fields are under a million.
+#define TIDE_SKINNED_MAX_JSON_VALUES (1u << 22)
+
+// Nodes (the skeleton has one more, its root), skins, animations and
+// buffers a file has.
+#define TIDE_SKINNED_MAX_NODES 65536u
+#define TIDE_SKINNED_MAX_SKINS 4096u
+#define TIDE_SKINNED_MAX_CLIPS 65536u
+#define TIDE_SKINNED_MAX_BUFFERS 65536u
+
+// The decoded model's vertices (80 bytes each: 80 MiB) and triangle corners
+// (4 bytes each: 24 MiB), and the elements one accessor has. A part with no
+// normals has three vertices a triangle of its own.
+#define TIDE_SKINNED_MAX_VERTICES (1u << 20)
+#define TIDE_SKINNED_MAX_INDICES (3u << 21)
+
+// Inverse binds (a skin's joints, and one for each part no skin moves: 68
+// bytes each, 17 MiB) and vertex influences (8 bytes each, 64 MiB: eight a
+// vertex at the most vertices; a part's joint and weight sets are refused
+// before they're read when they'd be more).
+#define TIDE_SKINNED_MAX_PALETTES (1u << 18)
+#define TIDE_SKINNED_MAX_INFLUENCES (1u << 23)
+
+// Animation channels (24 bytes each) and key numbers, times and values
+// together (4 bytes each: 64 MiB, four million rotation keys).
+#define TIDE_SKINNED_MAX_CHANNELS (1u << 18)
+#define TIDE_SKINNED_MAX_KEY_NUMBERS (1u << 24)
+
+// Numbers read from accessors over the whole decode: an accessor several
+// parts name is read again for each, so this bounds the work, not the counts
+// a file says once. A model at the vertex, index, influence and key limits
+// reads about 56 million.
+#define TIDE_SKINNED_MAX_READS (1u << 26)
+
 // Header words: magic, version, byte size, attribute flags, then count/offset
 // pairs for nodes, palettes, vertices, indices, clips, channels and influences.
 // Words 18/19 give the strings' offset/byte size, 20/21 the key data's offset/byte

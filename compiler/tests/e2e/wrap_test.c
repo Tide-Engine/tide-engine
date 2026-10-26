@@ -2,6 +2,7 @@
 
 #include "game.h"
 #include "tide_test.h"
+#include "draw_test.h"
 
 static tide_world world;
 static tide_local local;
@@ -29,6 +30,7 @@ static void frame(void)
     local.Art.target = (tide_render_target){.id = 11, .size = {.width = 16, .height = 12}};
     tide_draw_reset(&draw);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
+    tide_test_flatten(&draw); // Its plain shapes a command each, as the checks read them
     draw_count = 0;
     uint32_t target = 0;
     for (uint32_t i = 0; i < draw.count; i++) {

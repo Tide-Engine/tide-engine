@@ -1,5 +1,1091 @@
 # The docs site
 
+## Corner Culling package guide (2026-10-26)
+
+The package overview and sidebar now include Corner Culling. Its guide documents
+the optional pure Tide box-query API, half-extents, masks, cached certificates,
+immediate update/refit, motion/network horizons, game-owned audiences, performance
+and existing physics/projection limitations. The source include is the actual
+usage fixture compiled by tide_cornerculling. No example game/browser, website
+infrastructure, language spec or renderer behavior changes. Package contracts,
+measurements and validation: `notes/corner-culling.md`.
+
+## Render3D skinning, shared deformation and effects (2026-10-25)
+
+The owner requested extending Render3D with skinned models, a shared vertex
+hook and post-processing/bloom. The package guide/README now cover local render
+pose ownership and authored rest, optional configured Deform bindings, callback
+coordinates and normal/tangent responsibilities, bloom defaults/order and the
+HDR callback/staged-view interfaces. Existing surface bindings remain valid.
+
+The new render3d-effects example combines an authored nine-vertex/two-bone ribbon,
+local clip sampling, derivative-aware shear on static/skinned geometry, bloom
+and a custom warm HDR tint. Play freezes its own animation clock; Pose, Deform,
+Bloom and tint toggles allow comparisons. Orbit/pinch/zoom and responsive camera
+framing follow the mapped-material example. Both open and collapsed controls
+reserve 52 pixels above the bottom stats area. The source and self-contained
+glTF are part of the example; no external model download is required. All docs
+launch paths retain their existing stats defaults.
+
+Native --frames 180 --stats captures at 376x400 and 960x540 were visually checked.
+The complete exhibit and controls fit without the stats overlap found in the
+first draft. Native and web example targets build warning-free. Svelte check
+reports zero errors/warnings and the first production docs build passes. The
+written Bend snippet's initial varying-rotation normal error was corrected to
+the runnable example's analytic shear Jacobian; fresh review confirms that
+correction and the production build passes afterward. All three Render3D
+examples pass the repository's muted WebGL/WebGPU source, stats and interaction
+runner. The new regression freezes Play before exact camera/pixel comparisons
+and exercises real GUI actions for pose, deformation, bloom, tint and collapsed
+zoom. Captures were retained under build/render3d-ext-browser-* and native
+build/render3d-ext-captures. T3 preview opened/navigated but both snapshot attempts
+failed with 'Preview automation snapshot timed out after 15000ms.'; the named
+repository runner supplied browser validation. After the compiler/Unity merge
+and declaration-bootstrap correction, the whole native/web builds and suites
+pass; the freshly staged effects demo repeats all source/stats/camera/GUI checks
+successfully on WebGL and WebGPU. Final captures are under
+build/render3d-ext-final-browser-*. No example controls changed during the merge.
+The final clean 6f3c781e version-pinning merge preserves the Render3D guide and
+CLI bootstrap paragraph; its eleven release-service tests pass. It changes no
+example/browser runtime files, and no new UI run is claimed for that merge.
+
+## Interactive Render3D materials and docs stats (2026-10-25)
+
+The owner requested transparency/cutout, AO/normal/height and other PBR maps,
+interactive examples, movable cameras and stats on all docs play paths.
+`docs/examples/render3d.tide` now has drag/swipe orbit, two-finger pinch, zoom
+buttons, reset and collapsible controls. Gestures starting in the controls
+do not orbit. `render3d-materials.tide` adds three camera-selectable exhibits:
+normal/height/ORM/emission maps, double-sided cutout leaves and their shadow,
+and overlapping transparent cards around an opaque sphere. Its sliders compare
+normal strength, true material height scale, AO, roughness, metallic, emission,
+cutoff and opacity; ORM and shadows have toggles. Height uses a targeted
+`SetHeight` match command, with a bounded handler, because numeric Material
+fields are match data. Local surface/coverage captures drive the other visual
+comparisons. The demo explicitly supplies diffuse ambient irradiance so AO
+has a lighting term to affect. AO does not modulate direct light or emission.
+
+The six original 128-square PNG maps and quad live in
+`docs/examples/assets/render3d/`, reproduced by `make_materials.py` with only
+Python's standard library. Color base/emission maps are display sRGB;
+normal/ORM/height assets are `[Raw]`. Mask channels are R occlusion,
+G roughness, B metallic. All optional maps (normal, mask, emission and height)
+default to empty handles in the final package contract; only baseMap defaults
+to White. Empty optional maps skip their texture fetches, including emission
+when only its numeric value is set. The docs CMake package map includes the new
+example; the existing glob/staging path supplies native and web targets. Its displayed
+source is the running file, as for other examples.
+
+The package page and README document map/scalar multiplication, diffuse ambient
+irradiance, all surface modes, double-sided shading, UV/coverage hooks and
+their order, and the package's small C transparent-sorting helper. They
+distinguish single-sample UV parallax from displacement,
+and object-sorted alpha blending from refraction or per-triangle sorting.
+Transparent materials do not cast shadows. The mesh import table and spec
+remove the obsolete missing-tangent zeros/unbuilt claim for static layouts
+declaring float4 tangent,
+describing UV-derivative corner-angle generation, orthogonal normalized tangent
+directions, handedness seam splits and finite fallback, without claiming
+MikkTSpace bake compatibility or changing the skinned contract. Generated
+tangents have normalized orthogonal directions; authored tangents retain
+their existing conversion, including authored zero/nonorthogonal values.
+Generation and opposite-handedness seam duplicates are restricted to those
+static float4 tangent layouts. Layouts without tangent or with float3 tangent,
+and all skinned meshes, retain their prior streams, counts, indices, hashes
+and v2 LOD cache keys. Metadata-only editor/LSP reads generate no variants.
+LOD handedness preservation applies to static float4 tangent layouts only;
+no additional XYZ tangent metric is claimed.
+
+Docs launch plumbing requests `?stats` for embedded/standalone examples,
+generated Markdown Run links, whole-game frames, Samples, playground,
+the Earth docs demo and admin prototype links, retaining existing options and
+avoiding a second stats request. Docs commands use `--stats` where applicable.
+Browser/export/admin assertions cover these launch URLs. Shared integration adds
+the `stats` query-to-`--stats` mapping in `platform/web/tide.js` and standard-host
+runtime parsing, enabling stats while preserving the configured drawer state
+(`notes/standard-host.md`). The root owns release-runtime regeneration. This
+docs task does not deploy Earth; the incoming Earth notes below record its
+subsequent stats-enabled published releases.
+
+The merge with origin/dev retains the incoming static homepage and opt-in
+`/guide/earth` demo, including Play/Stop/Expand, readiness selection, local
+fallback, backend override, focus handling and the incoming terrain/game
+changes. `EarthDemo.svelte` initializes its separate-tab link with `?stats`
+and sets the stats parameter before saving that link and adding iframe
+options. Hosted and fallback playable URLs therefore receive one stats key;
+the shared project's base URL stays unchanged for its readiness probe. The
+Earth guide and Samples route already lead to that component. Both complete
+notes histories are retained. The root owns merged Svelte/build and live
+Earth/material validation; no new build or browser result is claimed here.
+
+Markdown export integration replaces the Earth component's standalone prose
+placeholder with `[Play Earth](https://tide-engine.dev/earth/?stats)`, using
+the stable local build rather than a hosted publication ID. Fenced/indented
+code remains outside the transformation, and the marker must occupy its own
+prose line. Export assertions distinguish Samples' 14 runtime game links
+from its one ordinary Earth guide Markdown link, retaining all 14 distinct
+source links and requiring stats exactly once on every runtime URL. Earth
+exports must remove the marker and retain one runnable stats-enabled link.
+Existing code, link and header checks remain strict. Final Svelte check,
+production build and all three export/admin HTTP checks pass after this
+correction.
+
+Final integration: the full native and web builds pass. The native full suite
+passes 2,773 of 2,774 enabled tests; its sole failure is the unchanged private
+CRACKED hash failure, reproduced on the pre-existing baseline. Repository web
+checks pass, including 11 scenarios on all three backends. The full web run
+passes 2,687 of 2,689 enabled tests; the same CRACKED hash and an optional
+InsideOut WebGL exact-text-image comparison fail. Independent attribution
+finds one blue-channel step in one unchanged text pixel, with matching move
+counts; pre-existing status for this visual failure is not claimed. The
+WebGPU playthrough and all other optional browser checks pass. The existing
+disabled Microduck fixture remains unchanged. Details and receipts are in
+render3d.md. Final Svelte check reports zero errors and warnings, and the
+production docs build passes after staging. All three exports/admin HTTP
+checks and all 301 grammar checks pass. The latest five-test playground rerun
+passes. The procedural asset generator, isolated launch-plumbing syntax
+checks and diff checks also pass.
+
+After merging the Transform/Earth changes, both builds and all affected checks
+pass: 67 native CPU/compiler/editor/Earth, six native Render3D GPU and 69 web
+tests. Live WebGL/WebGPU probes exercise both material demos and the new Earth
+guide's local fallback Play, stats-enabled links/runtime, rendering and Stop.
+Earth is discovered from Samples' actual prose link, fixing an initially
+unreachable harness branch; the fresh follow-up review is clean. Pixel probes
+wait for the iframe's fade to complete and disable background pipeline
+compilation, retaining exact reset and scene-change assertions.
+
+The owner subsequently approved `[Raw]` Texture fields following existing Raw
+grid fields. The compiler child's contract allows Raw assets, Raw texture
+fields, Raw Grid2<Color> fields/assets and default into Raw destinations;
+ordinary color sources and Raw-to-plain values/draws remain errors. GPU Texture
+helpers preserve the original Raw source, and size remains ordinary metadata.
+The generic shader/asset/texture docs, package page and README now document
+that contract and restore the valid map-binding recipe. The compiler child
+owns the matching spec changes. No new resource type or runtime Raw bit is
+claimed, and no alpha workaround was used. The final builds include the
+integrated Raw-field compiler and material-demo binding recipe.
+
+Node argv/query tests and both WebGL/WebGPU stats tests pass.
+Native material-demo runs with `--frames 240 --stats` at 376 x 400 and 960 x 540
+pass and visually fit the complete cube above the open controls, with stats
+collapsed at bottom right. Captures are
+`build/render3d-materials-fit-small.png` and
+`build/render3d-materials-fit-wide.png`. The earlier native base-demo capture
+also shows the collapsed 60 FPS line. Fresh combined material code/docs
+integration review is clean.
+
+Final selected `docs/tests/examples.mjs` runs pass for both demos on WebGL and
+WebGPU. Actual scene-pixel witnesses cover orbit, zoom, exact camera Reset
+restoration, the height command, cutoff and opacity sliders, and collapsed
+zoom above the stats line. Displayed-source and stats-URL deduplication checks
+pass. Captures are in `build/material-docs-final-webgl` and
+`build/material-docs-final-webgpu`; the WebGL cutout, blend and collapsed shots
+were visually inspected. The existing embedded contract reserves the wheel
+for page scrolling; the package guide and README distinguish standalone wheel
+zoom from embedded zoom buttons/pinch. This implementation child ran no
+game/browser, commit or push.
+
+A fresh docs review found that the material demo's collapsed toolbar overlapped
+the bottom-right stats line on narrow embeds. Both demos now place their
+44-pixel collapsed area 96 pixels above the bottom, reserving a 52-pixel lower
+margin. Each camera uses that same 96-pixel exclusion boundary for pointer and
+touch gesture starts, so toolbar presses cannot begin an orbit. Open panel
+positions and sizes remain unchanged (208 in the base demo; 256/200 for the
+material exhibits). This leaves the host's stats input contract intact.
+Source/diff checks pass. Fresh independent GUI/stats contract review finds no
+actionable issue: collapsed button hit areas lie H-84 through H-56, above the
+bottom 40-pixel stats corner, and gesture exclusions match. Final builds and
+native captures pass as recorded above. The final WebGL/WebGPU browser runs
+also witness collapsed zoom controls above the stats line.
+
+The root's first actual material-demo capture then found the mapped cube's top
+cropped at 960 x 540 by the hardcoded open-panel focus height. The materials
+camera now fits the active exhibit's known box corners into the space above
+the controls, using the screen aspect and the panel's NDC fraction. Its bounds
+cover the unit cube at scale 1.8 and its Y rotation, the complete leaf card, and
+the union of transparent cards and their sphere. Top/bottom/side constraints
+include perspective depth and leave 15% of the visible span as margin. The
+focus shift places the exhibit center in the available region, including at
+376 x 400. The floor remains a receiver outside the exhibit bounds.
+
+The local distance control is now a zoom multiplier over that fitted distance,
+initially/reset to 1. Zoom + scales it by 0.85 and Zoom - by its reciprocal;
+it is not clamped back to the fit threshold. Pinch and standalone wheel zoom
+use the same multiplier. The base camera and all open/collapsed control
+rectangles are unchanged. A fresh independent source/math review finds no
+actionable issue with geometry bounds, corner inequalities, focus equations,
+the two requested viewport sizes or zoom behavior. Camera source is frozen
+after that review. Final native captures at both requested sizes confirm the
+framing; final WebGL/WebGPU scene-pixel checks confirm camera and material
+interactions as recorded above.
+
+Final one-round integration merges `origin/dev` `56a951d9` after feature
+`4c0b27f3`. Its Earth climate cubemap/cache and UI placement changes are
+independent of the material/compiler and docs launch-wrapper changes. Both
+complete histories and the final validation above are retained. No repeat
+tests are claimed for this merge; the root's earlier checks do not claim
+coverage of the newest Earth binary. The incoming Earth author's separate
+validation and publication record remains below.
+
+## Faster globe material (2026-10-25)
+
+The owner asks to continue optimizing the globe while moving Earth to the
+opt-in docs page below. A diagnostic removing the biome fields alone reduced
+the iGPU globe's GPU time from about 24.8 to 14.9 ms. The final implementation
+keeps the same four broad simplex bands in a packed, immutable 256-pixel
+cubemap. R stores forest frequencies 7/19, G dry frequencies 3/11, encoded
+from [-1,1] into [0,1], B is zero and alpha 255. The original frequency-61
+forest octave stays procedural, retaining fine detail that the first complete
+climate bake softened. Snow latitude is still calculated from the direction.
+Bilinear/trilinear reconstruction approximates the broad fields; this is not
+an exact-pixel-preservation claim. Fine grass, roads, towns, lighting, haze
+and relief retain their material formulas and the full framebuffer resolution.
+Grain now skips its noise read where the existing coverage is exactly zero.
+
+`examples/earth/tools/climate.py` compiles a bounded helper with the checkout's
+Tide noise implementation and strict float flags, then writes the six PNGs
+with standard Python. Run it after updating the broad Climate formula. The
+regression checks actual imported face bytes/directions and immutable reuse.
+Changed output touches terrain.tide so the CMake game target rebuilds its
+pack; identical regeneration leaves the files alone. The six PNGs total
+952,269 bytes; the cube costs 1.5 MiB at base level / about 2 MiB with mips.
+It has no runtime bake or CPU noise-table generation and restores through
+ordinary pack-image/device handling. Server builds prune this visual asset.
+
+The globe uses the terrain's existing conservative town hint and road mask,
+with the same all-candidates fallback for footprints over 64 m. Minimum tile
+level 3 tightens those bounds and improves the distant silhouette: the fixed
+globe selects 247 chunks instead of 41. Near selection remains distance driven
+beyond that minimum; the bounded 2,048-chunk cache and 32 m movement reuse
+remain. `TERRAIN_REVISION = 2` invalidates old retained meshes/plants on reload.
+No match fields, inputs, movement, network assertions or pins change.
+
+Two alternating iGPU pairs per backend at 412 x 915, DPR 3 (1236 x 2745)
+give GPU medians WebGL 24.82 -> 11.86 ms (52% less), WebGPU 19.53 -> 9.57 ms
+(51% less). Both games use O2 strict-float generated C and identical web-debug
+libraries; the workload draws the fixed globe/sky without match scenery,
+networking or stats. Measurements remain exploratory: no reserved quiet
+window or clock control, and ordinary correctness overlapped part of the
+runs. They exclude cold generation/shader compilation and are not Pixel FPS.
+Frozen file/source hashes, all eight process results and limitations are in
+`earth-globe-measurements.json`; scratch pages/captures are in build/globe-perf.
+
+Validation: repeat baking produces identical PNGs. Native and web debug Earth
+targets pass all 24 checks and all three benchmark cases (CTest 4/4 each,
+110.51/125.83 s), preserving pins `2d4f30cae27728fa` / `77140ad82e885ede`.
+Radeon WebGL/WebGPU probes have no shader/validation errors. Both backends
+also render opposite cube-corner globe views and the walking view; inspected
+captures show no visible cube seams. Native Vulkan validation passes the
+globe and scripted landing/walking/driving captures. Other OS/device and Pixel
+coverage is unavailable locally. Engine/compiler/runtime source is unchanged.
+Published the globe as release `bfdafb77`, then fixed the stats-corner overlap
+found in the hosted phone smoke: action buttons, driving speed and the globe
+hint move up 44 pixels. All 21 GLSL/WGSL arrays remain byte-identical to the
+measured candidate. Rebuilt native/web Earth targets pass all 24 checks and
+three benchmark cases again (69.33/76.55 s). No timing rerun was needed for
+this CPU-side GUI layout change.
+
+Final release
+`832c9712a61510f782836f57b797915d06e62768966f332c20f8a7c39d688ca3`
+is live at the same project / room 966ANR/0. Both embedded program and asset
+pack match the deployment bundle; the simulation identity remains
+`bb14b391a43e4fc37986378cc664b89c32b3427968738d25bcb93ba0fd63a113`.
+The raw client HTML is 3,986,232 bytes (previous stats release 1,828,622);
+the first globe release's observed Brotli HTTP transfer was 2,080,042 bytes.
+This trades a larger opt-in download and fixed texture memory for less
+per-frame work. Native/web/browser correctness is not a phone FPS claim.
+
+Downloaded final WebGL/WebGPU clients join the actual hosted room, land,
+walk, and click the relocated Car button to drive, with zero reported errors;
+inspected 412 x 915 captures show the car, separate action row and FPS/ping
+line. One initial smoke wrapper nested a script tag in its diagnostic setup
+and was discarded; the corrected wrappers preserve the production program
+and pack unchanged. Publication identities/hashes are appended to the JSON.
+The docs move is pushed but `/guide/earth` still returns 404 before its normal
+site deployment; no CI run was dispatched or awaited.
+
+## Earth moves to an opt-in docs demo (2026-10-25)
+
+The owner elects to remove the live planet from the homepage because mobile
+performance remains below expectations, while continuing globe optimization.
+The homepage restores its static Tide mark: no Earth readiness request,
+iframe, WASM download or game workers. `/guide/earth` has the dedicated demo,
+linked from the docs sidebar and Samples page. It loads nothing until Play
+Earth is pressed, irrespective of motion/data preferences. Stop removes the
+iframe and leaves the match; Expand keeps the same document and reserves its
+slot. The prior ready check, hosted project, local fallback, backend override,
+keyboard-focus release and separate-tab link remain. Controls and the stats
+drawer are documented on that page. Its static planet placeholder stays the
+same size through loading. The earlier homepage skeleton is superseded by
+this move rather than retained as an autoplay experience.
+
+Validation: production docs build passes; Svelte check has zero errors and
+warnings. Muted Chrome checks at phone and desktop widths confirm no game
+requests/iframes on the homepage, no iframe before Play on the docs page,
+actual hosted loading, Expand preserving the iframe, and Stop removing it
+and enabling Play again. Screenshots were inspected. Globe measurements and
+changes follow separately; this move changes no engine or game behavior.
+
+## Homepage loading placeholder and Earth stats (2026-10-25)
+
+The owner confirms walking/driving is much faster, with the globe still slow,
+and requests a skeleton to prevent the homepage moving during load and the
+engine stats display. The square already reserved its size; inserting the
+caption after load changed the image column's height and the hero's alignment.
+The caption now exists from initial HTML with visibility hidden until ready,
+so its exact wrapped height is reserved at every width. A dark planet skeleton
+fills the square while loading, with a gentle opacity animation disabled for
+reduced motion and stopped once ready. Readers saving motion/data keep the
+static placeholder and do not start a game, preserving the existing policy.
+Expand retains the same iframe and the slot's original space.
+
+Earth sets `stats = true`: the engine's existing FPS/ping line is present in
+hosted, fallback and separate-tab builds. Tap/click the line (or F8) to open
+CPU/render, GPU time when supported, draw calls, vertices, networking and
+system timings. It starts collapsed, as the public game setting specifies,
+so it fits the small homepage frame; profiling begins only when opened.
+No new engine API, runtime flag or browser query parameter was added.
+
+Validation: docs production build passes; Svelte check has zero errors and
+warnings. Muted Radeon Chrome delayed-ready checks at 412 x 915 and 1440 x
+915 compare the demo, caption, words and features rectangles before/after
+actual iframe load: all are identical. Both retain the same iframe on Expand.
+Inspected phone/desktop skeleton captures and the WebGL stats-open capture.
+Native/web Earth targets and all 23 game checks plus three benchmark cases
+pass again (CTest 4/4 each, 82.80/85.08 s); simulation pins are unchanged.
+Muted Radeon WebGL/WebGPU checks of the bundled client open the drawer with
+F8, with zero errors; both captures were inspected. Published release
+`7b5b277124e37203aee69323ef4b394fa20b13b2bd07913acff1afcc2fef210c`
+to the same hosted project and room. The production program matches the
+bundle exactly, and the simulation identity remains
+`bb14b391a43e4fc37986378cc664b89c32b3427968738d25bcb93ba0fd63a113`.
+Downloaded production WebGL and WebGPU clients join room 966ANR, open the
+drawer with a click on the bottom FPS line, and report zero errors; inspected
+captures show online status and the detailed stats. These are correctness
+checks, not comparative timings. Source is pushed to dev; the placeholder
+will reach the site through its normal deployment. The public homepage was
+still serving its prior placeholder at the time of the post-push check.
+No CI run was dispatched or awaited.
+
+## Earth relief, biomes and cheaper ground shading (2026-10-25)
+
+The owner reports the Pixel still slow after the exact-gradient cache, with
+cost increasing with window size, and explicitly permits changing the tiny
+ground pattern. This pass also includes requested gentle hills and
+biome-specific plants. Animal behavior is a separate feature.
+
+`terrain.tide` replaces the analytic per-pixel ground with cached cube-sphere
+mesh tiles. Six face quadtrees select 4x4-cell leaves, capped at level 8
+(about 6 m finest spacing), with 6 m skirts and a conservative horizon bound.
+A bounded 2,048-chunk LRU uses integer tile keys; a combined visible patch is
+rebuilt after the eye travels 32 m, so camera turns normally reuse one mesh.
+Height, normals and broad climate fields are calculated at cached corners.
+The mesh writes ordinary depth, replacing the sphere-only Underground test
+in object shaders. The globe has a separate material root retaining the
+original broad procedural fields; the walking root uses interpolated fields.
+
+Road and town calculations keep their original geometry/material formulas.
+Each tile supplies a conservative town hint and an 11-bit road-plane mask,
+including 64 m of pixel-filter reach. Hints travel as exact float integers and
+are rounded in the fragment. Pixels wider than 64 m and the globe use all
+candidates. Tests probe actual triangle interiors against every town cap and
+road plane to reject false exclusions. This supplied the largest remaining
+shader win; splitting whole grass draws did not help and was discarded.
+
+Fine detail is now one filtered world-space value-noise sample: a local
+256x256 RGBA grid stores adjacent z slices in R/G, repeats at its boundaries,
+and reconstructs smooth 3D noise. Grain uses frequency 6,000, coverage fades
+with pixel footprint, and meadow flower flecks reuse that sample. Broad
+forest/dry colors and snow remain; exact fine grain changed with approval.
+There are no downloaded textures. The earlier 175,616-entry exact-gradient
+cache is removed. CPU-backed meshes/textures restore normally after device
+loss. `TERRAIN_REVISION` must be bumped when cached formulas/topology change;
+it invalidates retained terrain and plant data after a native code reload.
+
+Simulation and presentation share Surface/TerrainHeight: two deterministic
+simplex bands (14 m at frequency 12 and 5 m at 31), eased to zero within 128 m of each
+town and graded back into the country by 210 m. Walking, jumping, vehicle
+routes, local placement, camera clearance, roots and shadows use that same
+surface. Occasional pointer picking marches on the CPU inside the expanded
+sphere; there is no per-pixel height ray march. The bounds allow 24 m of
+terrain relief. No match schema/input fields were added.
+
+`plants.tide` caches stable 16 m latitude/longitude cells within 480 m and moves
+the cache after 48 m. Draw fading remains 320-400 m and 200-300 m above ground.
+Meadows have sparse broad crowns, woods layered evergreen crowns, dry
+regions cacti, and frost sparse rocky scrub. Climate thresholds are shared
+with the terrain. The four-biome regression checks actual stored plants and
+settles them with the actual movement systems; camera turns keep their roots
+and mesh data. Copying an owning LandChunk during every cache search was
+found to clone its list repeatedly; lookups now use a Map and plain fields.
+Scratch exhaustion in that rejected prototype reached a NULL copy in the
+runtime and was reported separately to the architecture coordinator; no
+runtime change or general safety fix is claimed here.
+
+The same muted Radeon iGPU diagnostic at 412 x 915, DPR 3 shows WebGL GPU medians
+38.83 -> 12.77 ms and WebGPU 32.18 -> 9.76 ms (roughly 67%/70% less). These remain
+exploratory, without a reserved quiet window or controlled clocks; they are
+terrain-only, not Pixel FPS. Native cached CPU recording is about 0.25 ms,
+while first-frame WASM generation is about 123 ms before shader/upload costs.
+Initial terrain generation and travel-triggered rebuilds still need a phone
+verdict. Frozen page hashes, source hashes, raw summaries and final shader
+correspondence are in `earth-terrain-measurements.json`; artifacts are in
+`build/earth-perf/`. The final cache-version change leaves all measured shader
+texts byte-identical. No timing here is called clean.
+
+Native/web debug Earth targets pass all 23 game checks and three benchmark
+cases. Native and web optimized builds confirm the same new pins: ordinary
+and diverge `2d4f30cae27728fa`, split `77140ad82e885ede`. These intentionally replace
+`642d3bbe3c5fb58c` / `db65d449fe39c077` because match positions now include relief;
+client/server verification, recovery and traffic assertions are unchanged.
+Native Vulkan validation walking/driving captures and Radeon WebGL/WebGPU
+shader checks pass. Android/Pixel hardware and other operating systems were
+not available. Engine/compiler/CLI source is unchanged by this pass.
+Integration merges dev's independent Transform-default smoothing change
+`85aebc66`. The sole notes conflict retains both benchmark records. Earth uses
+its custom Walker/Car position fields; rebuilt native/web Earth targets pass
+all 23 checks and three pins again (63.29/73.64 s). All 21 merged GLSL/WGSL
+texts remain byte-identical to the measured candidate. Optimized CLI/client
+builds and deployment staging are refreshed for that compiler dependency.
+Published Earth release
+`e8b0e6e23fcdc0b82d2ee2a874f6d88004e633053423974644e8ca4ac26c1fa7`
+to project `29c727eab929afcbef23455a6bf73125` / room `966ANR/0`.
+The downloaded production program matches the deployment bundle exactly.
+Muted Radeon WebGL and WebGPU clients join the actual room, land, walk and
+drive with zero reported errors at 412 x 915; the actual homepage frames the
+hosted project. These are correctness checks, not timing measurements.
+The owner subsequently reports the improvement on their phone. The separate
+stats follow-up above replaces this release without changing the relief.
+
+
+## Earth exact biome gradient cache (2026-10-25)
+
+The owner authorized game-side optimization while preserving the visuals,
+after the engine shader update remained sluggish on the Pixel 9 Pro.
+Earth now caches the fixed road-plane normals in its local Atlas and the
+exact seed-zero simplex gradient indices for its four broad biome octaves
+(frequencies 3, 7, 11 and 19). A sized local 512 x 343 Grid2<float> holds all
+56 cubed lattice points in [-28, 27]. The largest skewed unit-vector
+coordinate is 19 * sqrt(2); the offset dry octave is smaller. Point samples
+read exact integers 0-15 from the renderer's R16F texture. The shader retains
+simplex corner ranking, tie priority, float interpolation and scale 32.5,
+with the original Math.Simplex fallback outside the cached cube. The 61,
+900, 4000, 20000, flower and star fields keep their original implementation.
+This adds about 0.75 MiB of local grid chunks and 343 KiB of GPU data, built
+once with no image download. Ordinary CPU-backed texture restoration handles
+device loss; rebinding the grid each frame also survives local heap restore.
+The road initializer detects missing normals after migration of the old
+Atlas layout. These are local presentation data; no match fields, simulation
+or benchmark pins changed.
+
+The first dense GPU-generated cache layouts cost more than they saved and
+were discarded. Two subsequent CPU-grid probes accidentally omitted their
+finite dimensions and therefore bound no texture; their earlier reported
+speedups are invalid. The regression now inspects the actual half-float
+texture recorded by Planet, checking every index, the dimensions, immutable
+reuse, and road-normal reconstruction. The corrected candidate's exploratory
+WebGL country GPU median is 38.84 ms against 41.36 ms (about 6% less). A clean
+paired timing window was requested but not granted because other threads
+were building/testing. No timing here is called clean, and this desktop
+proxy does not establish a Pixel frame rate. Frozen before/after HTML hashes
+and valid evidence are in `earth-game-measurements.json`.
+
+Native and web Earth targets build and pass all 21 Earth checks and all
+three benchmark cases, retaining the existing pins. Twelve-frame native
+Vulkan validation and OpenGL captures pass. Seven fixed views (globe,
+plaza, country, town edge, road midpoint, near globe, far globe) at 1236 x
+2745 pixels match the previous build pixel for pixel in both WebGL and
+WebGPU: 14 before/after pairs with fatal GPU diagnostics enabled. These
+isolate the terrain with a null match world; hosted walking/driving and
+publication are recorded after deployment below. Android hardware was not
+available. No engine/compiler or private prototype source was changed.
+
+Published on dev as `56ee43be`, then uploaded Earth release
+`9e2e449241882444fede36fd21a29c4531a9d6439be19af67a44cabb6ce178c7`.
+The downloaded production program matches the deployment bundle. Its
+client/server compatibility identity is `21404e58` (previously `e0be6825`);
+all existing exact simulation pins remain unchanged. The managed room is
+still 966ANR/0. Muted iGPU WebGL and WebGPU clients join it, land, walk and
+drive with zero errors; inspected 412 x 915 DPR 1 captures show the car,
+scenery and online status. These are live correctness checks, not new
+performance measurements. The optional clean timing request was withdrawn
+to finish publication under the ongoing shared-machine load.
+
+
+## Earth on the Ryzen integrated GPU (2026-10-25)
+
+The owner suggested using the CPU's integrated graphics as a local proxy for
+the sluggish Pixel. This machine has an enabled Radeon RDNA 2 iGPU in its
+Ryzen 9 7900X, alongside the RTX 4080 SUPER. A disposable muted Chrome process
+uses the iGPU's enumerated DXGI LUID through `--use-adapter-luid`; WebGL's
+unmasked renderer identifies AMD Radeon Graphics/device 164e and WebGPU's
+adapter identifies AMD/RDNA 2 with no software fallback. No Windows graphics
+preferences, devices or drivers were changed. The forced AMD-only Vulkan ICD
+could not initialize (ERROR_OUT_OF_HOST_MEMORY); browser D3D11/D3D12 paths work.
+
+The downloaded production release `7ae5960b` joins the actual hosted room.
+At 412 x 915 CSS pixels and DPR 3 (1236 x 2745 actual pixels), it reproduces
+the reported kind of ground-view slowdown. WebGL GPU medians are 48.93 ms
+walking and 45.33 ms driving, while host CPU medians are 2.11/2.46 ms and
+session updates 0.22/0.25 ms. WebGPU has similar callback intervals,
+48.37/43.26 ms, with CPU work 1.63/1.67 ms. WebGL disjoint timer queries
+measure game drawing asynchronously, excluding the stats overlay; WebGPU
+GPU milliseconds were not collected in the page callback. The same CSS
+viewport at DPR 1 is a diagnostic control: WebGL GPU medians fall to
+5.96/5.81 ms, while CPU work stays around 1.6–1.8 ms. The iGPU is useful for
+finding a graphics bottleneck; its desktop CPU, driver, architecture, clocks
+and browser are not a Pixel emulation. One live trajectory per case is not
+a controlled before/after performance claim.
+
+Material isolation retains the full 3.39-million-pixel viewport and all
+geometry/CPU work. With the warning correction below, the full ground is
+48.33/45.72 ms on the GPU. A scratch shader replacing Ground's material with
+a constant, while retaining the analytic sphere and atmosphere, takes
+3.21/3.49 ms. Replacing only Grass (retaining Grain, roads and towns) takes
+27.33/25.67 ms. These material substitutions and DPR 1 are local attribution
+probes, never deployed visual changes. They identify the procedural
+per-pixel material as the main graphics cost here; the earlier 0.8–0.9 ms
+desktop CPU scenery profile does not make scenery generation the dominant
+bottleneck on this iGPU. Caching static material work is the next relevant
+quality-preserving investigation, rather than assuming geometry or the
+sphere intersection is expensive.
+
+The production shader also exposes ANGLE D3D11 X4000 on Ground's early
+return, naming its potentially uninitialized return temporary. The game now
+keeps one initialized color and one return, with the opaque plaza fast path
+in an if/else. The same Radeon shader then compiles without warnings. This
+changes no material formula, resolution, geometry or match behavior; all six
+native release comparison captures are byte-identical. All 20 Earth checks
+and three unchanged benchmark pins pass on native/web debug. Radeon WebGL
+and WebGPU fixtures with fatal shader validation pass. Native/web release builds pass;
+the corrected game source has not been redeployed as part of this hardware
+investigation.
+
+Integration merges dev's independent GUI/local-worker dependency changes,
+rebuilds Earth and its benchmark, and passes the same 20 checks and three
+pins on native/web debug again. The merged compiler emits byte-identical
+GLSL/WGSL to the validated shader, and the merged Radeon WebGL fatal-warning
+fixture passes. This integration makes no additional performance claim.
+
+`notes/earth-igpu-measurements.json` retains all seven backend/DPR/material
+summaries, the adverse production WebGL warning, sample counts, GPU and CPU
+quantiles, adapter identity, caveats and pixel comparisons. Raw frame/query
+samples, the bounded scripts and captures remain in `build/earth-perf/`.
+Browser callbacks and GPU queries measure work/arrival intervals, not display
+scanout or touch-to-display latency. Other desktop applications stayed running;
+no clocks were controlled, and some CPU-only tests overlapped low-density runs.
+
+## Earth ground shading without a quality reduction (2026-10-24)
+
+The owner reported lag while walking/driving on a Pixel 9 Pro and requested
+cheaper ground rendering with the visuals preserved. `globe.tide` retains the
+analytic sphere, full display resolution, procedural frequencies and weights,
+flowers, paving, kerbs, road markings, distance coverage, lighting and atmosphere.
+The match, geometry and tree placement are unchanged.
+
+The shader rejects distant towns using a conservative squared chord bound
+before calculating their curved distance. The ten towns' 130 m ground caps
+are disjoint, so it retains the single relevant town instead of carrying all
+ten through the material work. `earth_town_ground_regions_do_not_overlap`
+checks all 45 pairs in the actual atlas built by the view. A fully covered
+plaza pixel finishes with its paving immediately. Roads accumulate their
+paint and the remaining meadow coverage before noise is evaluated: fully
+opaque asphalt skips the meadow, retaining grain when a town lawn needs it.
+Partial coverage and overlapping roads keep their original layer order.
+
+Road planes also have a conservative linear rejection before arc-end and
+asin calculations. Along-road atan2/sin run only where a centre stripe can
+contribute. Noise octaves whose existing footprint weight is zero, flowers
+outside their existing footprint/forest conditions, and sky/stars behind an
+opaque ground hit are not evaluated. These are removed calculations, not
+coarser textures, reduced density or new distance cutoffs.
+
+Validation: all 20 Earth checks and all three unchanged Earth benchmark pins
+pass on native/web debug with Clang 23.1.2 and Node 24.22.1; the native and
+web release game builds pass. Native release renders the actual four-region
+game on OpenGL/Vulkan, with sampled walking and driving on OpenGL. Comparing those
+two full-game captures against the original changes only one/two pixels,
+respectively, by one byte step. A bounded custom host
+compares the original and revised terrain at 1440 x 900 on OpenGL/Vulkan:
+27 viewpoints each (ten town centres, eleven road midpoints, country/town
+edge and three globe heights). No detail or region is missing. GPU arithmetic
+is not bit-identical: OpenGL changes at most 554 of 1,296,000 pixels in one
+capture, with at most six differing by more than one byte step; Vulkan
+changes at most 14 pixels, with at most one above one step. Larger isolated
+differences are paving grout threshold pixels. Muted Chrome WebGL/WebGPU
+checks render plaza, country, road and near/far globe views with fatal shader
+validation enabled; their captures were inspected. Actual phone hardware and
+Android GPU coverage remain unavailable here.
+
+GPU measurements use that terrain-only host, OpenGL 3.3 on an RTX 4080 SUPER
+(Windows 11, driver 617.42), release at 1440 x 900. Three alternating process
+pairs per view each discard 60 warmup frames and collect 300 asynchronous
+elapsed queries, with no readback in measured frames. Median of the three
+process medians, in milliseconds:
+
+| View | Original | Revised | Ratio |
+| --- | ---: | ---: | ---: |
+| Globe | 0.201728 | 0.081920 | 2.46x |
+| Amberhold plaza | 0.569344 | 0.070656 | 8.06x |
+| Country | 0.498688 | 0.214016 | 2.33x |
+| Road midpoint | 0.491520 | 0.140288 | 3.50x |
+
+These are terrain draw timings, not whole-game frame rates or Pixel results.
+Other desktop applications remained running; clocks were not controlled or
+normalized. The road's revised process medians are 0.479232/0.140288/0.140288
+ms: the slower first run is retained, and no independent cause is established.
+`notes/earth-ground-measurements.json` retains all 24 process rows, 54 image
+comparisons, source/harness digests and full-game pixel comparison counts.
+The bounded harness and captures remain in this checkout's `build/earth-perf/`.
+Published source `5bd07774` with a CLI and web platform staged from this
+checkout to the existing Earth project as release
+`7ae5960b52672cce1392b547457ac608a28e55c2ab249a557878b946ae273ce1`.
+The public hosted page's embedded WASM payload matches the deployed bundle
+(the hosting service adds the join address to its HTML). Muted Chrome WebGL
+and WebGPU clients join room 966ANR, land, walk and become cars without game
+or renderer errors. Their final captures show one/two online players on the
+hosted shard, rather than the local fallback. The browser checks use the
+downloaded production page and its live relay/server; the test enables fatal
+renderer validation. Existing homepage tabs need to reload to get the release.
+
+## Render3D example and pure Tide packages (2026-10-24)
+
+docs/examples/render3d.tide uses the optional Render3D package, with exposure,
+sunlight/shadow controls and a custom surface callback. Its OBJ assets live beside the
+example. docs/examples/CMakeLists.txt accepts pure Tide packages without a dummy
+C library, while packages with C sources still require their tide_<name> target.
+The example now uses the Mesh3D alias and local directional, point and spot
+lights, with a second directional fill. The example has native/web targets and
+normal example-page staging. Package
+contracts and final validation are in notes/render3d.md.
+
+## City-exit driving and the orbit camera (2026-10-24)
+
+After another report of cities pulling the player back, a fresh production
+client walked from Amberhold's fountain into the countryside. The previous
+edge test only started 115 m from one town, so coverage now includes the
+whole street: all 22 road ends, on foot and in a car, from the square to
+at least 160 m from the town centre. Twenty actual server/client trips cover
+every city in both
+modes, including townsfolk/traffic, 144 Hz clients, 50 ms one-way latency,
+10 ms jitter and 1% packet loss; authoritative and predicted positions must
+both leave, with continued verification. No remaining walking wall reproduced
+in these tests or the refreshed production walking check.
+
+The driving sequence found a further bug: walk backwards, become a car, then
+press W. The camera could remain opposite the car because normalizing a
+linear blend of opposite directions never rotates it. Driving input also
+followed that camera, so W could command reverse or turn back toward town.
+The camera now turns by a signed angle around the surface normal, including
+a half-turn. W/A/D and the stick follow the car's heading while its camera
+turns or looks elsewhere; S remains a brake and walking remains camera-relative.
+Tap-to-go keeps its world-space destination. Both the antipodal camera and
+sideways/backward driving-input regressions fail before their fixes.
+
+Validation: all 19 Earth checks and its three unchanged benchmark pins pass
+on native/web debug; the release web build passes. Native bounded four-region
+captures and browser city exits cover the actual views and sampled controls.
+Source `c5b26cf2` is published to the existing Earth project as release
+`9529611c9a5d54169a59a1ccb23a8596b9564bb9054fc304b70bee187b17ba6c`;
+the production client's embedded payload matches its bundle. Two live muted
+Chrome clients start in Amberhold (WebGL) and Frostgate (WebGPU), walk backward,
+become cars and press W immediately, without waiting for the camera to turn.
+After 45 seconds both are in the countryside, moving forward (81/56 km/h),
+still in the hosted room and showing two online players on one shard, without
+renderer errors. The native four-region capture also exits Amberhold at
+115 km/h. No hosting/service code or limits changed.
+
+Final integration merges dev's independent protocol-19 session changes after
+publishing this game release. Rebuilt Earth, its tests/benchmark, the complete
+engine test executable and the shard-player fixture against that dependency;
+all six selected CTests pass on native and web, including all 19 Earth checks
+and unchanged simulation pins. The immutable production release above retains
+its matching client/server runtime; this task did not redeploy protocol 19.
+
+## Town-edge collision correction (2026-10-24)
+
+The reported invisible boundary also reproduces without a shard border.
+`city.tide`'s Local used an orthographic projection while Place used a tangent
+plane. Repeated Settle calls pulled positions toward a town; cars treated
+that correction as a wall and lost speed. Local now inverts Place, dividing
+by the direction's component along the town's up axis (bounded away from
+zero). The collision-free town-edge regression starts on foot and in a car
+115 m from Pinecrest's centre and requires outward progress, and continued
+car acceleration, across the town's collision boundary.
+
+The zero/negative online count was separately reproduced after recovery of a
+checkpoint plus newer departure records. The engine fix preserves cookies
+and exactly-once logical membership across recovery (`notes/sharding.md`,
+Border and recovery audit). The demo's counter is not clamped or replaced
+to conceal that lifecycle error.
+
+Published merged engine/game source `2848e7ce` to the existing hosting project
+as release `0909a3821941f523d8a6780e213bb0acf310a1333cc003ba0d183a4c7cb0424a`.
+The production client payload matches its bundle. Two live clients pass 75
+seconds of walking on WebGL/WebGPU without leaving the shared room or renderer
+errors, showing two online players on one shard. After both leave and the
+idle minute passes, a fresh client walks with one online player on one shard.
+Full validation and the distinction between this one-shard production world
+and isolated multi-host border tests are in `notes/sharding.md`.
+
+## Earth distance transitions, foundations and braking (2026-10-24)
+
+Country trees now extend to 400 m, beyond the ordinary ground camera's
+tree-top horizon, with coverage fading over 320–400 m and camera heights
+200–300 m. Enumeration includes every relevant longitude cell, once even
+near a pole. World positions and cell IDs stay fixed. The former 170 m
+cutoff was in plain sight. Road centre stripes integrate coverage across
+their width and fade unresolved dashes continuously rather than switching
+them off at a one-metre pixel footprint.
+
+All solid geometry, shadows and glows now test against the same analytic
+sphere as the ground shader. The separate low-resolution, sunken depth hull
+left objects and shadow cards visible through the actual curved surface.
+Buildings extend their foundations below the whole footprint, keeping their
+roofs in place; trunks also extend slightly below the surface. Car S/down
+and backward stick input now brake independently of camera direction;
+walking backward is unchanged. The driving hint names the brake.
+
+All ten Earth checks and its three benchmark pins pass on native/web debug.
+New checks exercise sampled S through a moving car until stopped without
+turning, actual drawn foundation corners below the sphere, and a moving
+240 Hz client with a 60 Hz server, latency and jitter for 65 seconds.
+Bounded native four-region country/town/car captures and muted Chrome
+WebGL/WebGPU landing/walking checks pass. Preview snapshots timed out twice;
+browser checks use the repository's documented Chrome DevTools workflow.
+
+The production server remains alive when the reported local fallback occurs.
+A 240 Hz moving client reproduces a timeout with hosting's former 6,000/minute
+incoming-packet cutoff. A 144 Hz client produced 6,455 session packets in a
+steady minute: input and acknowledgement news can exceed the tick rate even
+with redundant sends suppressed. The companion service change replaces the
+minute blackout with a bounded, continuously replenished per-route allowance
+(`tide-services/notes/managed-hosting.md`). No engine protocol change is needed.
+
+Published source `4d6910dc` as Earth release
+`277e6fbb4bac77e03c37fb37d9ddc17d52cb0a77747f6f5cdcdea169a671b08c`;
+the production page's embedded client payload matches that bundle. The new
+world `20d210d637b4d02d8d143dca09bc0388` runs and checkpoints on this release.
+The hosting packet fix is deployed too; clients open before the restart need
+to reload. The updated production client passes 75 seconds of continuous
+walking on each of WebGL and WebGPU without leaving the hosted room or
+reporting renderer errors; their final captures show online players on the
+shared shard.
+
+## Node and build dependency security updates (2026-10-23)
+
+The site image pins `node:24.22.1-alpine`, including the October 21 Node
+security fixes. Docs CI requests `^24.22.1` with `check-latest: true` so
+future 24.x patches are selected instead of an older runner-cached version.
+The live website already reported 24.22.1 before this change.
+
+markdown-it advances from 15.0.2 to 15.0.3 (pathological parsing/rendering
+denial of service) and Vite from 8.3.2 to 8.3.3 (development-server/editor
+security fixes). Existing caret ranges are retained; the lockfile changes
+only those packages and markdown-it's required argparse patch. No site content,
+server API, language semantics or release-runtime generator dependency changed.
+
+Validation with Node 24.22.1: Svelte check reports zero errors/warnings;
+production build passes, retaining the allowed unstaged-example 404s; all 49
+access/release/analytics/admin/telemetry/export/SEO/production HTTP tests pass.
+The dependency audit reports zero vulnerabilities. The production Docker image
+builds and reports v24.22.1. Workflow structural comparison and whitespace
+checks pass. Browser/grammar coverage runs in the full native/web suites
+recorded in `notes/testing.md`; no separate docs workflow was dispatched.
+
+## Example startup smoke and late scrolling (2026-10-22)
+
+Build run 39790751086 built the site and passed exports/SEO/HTTP checks, then
+timed out at draw3d's "starts in view" assertion. Its log contains no example
+status or frame geometry, so the hosted cause is not established. The unchanged
+smoke passes locally on Windows and Linux Chrome 155, including a one-CPU Linux
+run and a Windows run with 12x CPU throttling.
+
+The test now reselects the example and keeps its viewport on screen while waiting
+for automatic startup, covering late layout changes or scroll restoration after
+the original single scroll. It still requires iframe.shown and actual draw calls
+within the existing guards. An unavailable example fails immediately; a timeout
+reports scroll position, viewport bounds, visible status and each frame's source,
+document readiness, start function and draw count. No site/runtime behavior or
+timeout changed.
+
+A controlled delayed scroll-to-top reproduces the old exact 20-second draw3d
+timeout with scrollY=0, its viewport below the screen and no frames; the revised
+check passes the same probe. This demonstrates the test race, not proof of the
+original hosted cause. The revised complete WebGL examples/gallery/playground
+smoke, all five playground compiler integration tests, focused draw3d WebGPU
+smoke and all seven exports/SEO/access/admin HTTP tests pass (Node 24.19.0).
+The production build passes and Svelte check reports no errors or warnings.
+
+Integration with origin/dev 3a880ea7 is clean. Its shader/math dependency change
+was rebuilt into all staged docs examples, samples and standalone games before
+rebuilding the production site. All seven HTTP checks pass again. The first
+merged browser run passed every rendering/playground assertion but failed at
+Windows profile removal (EPERM). Teardown now waits for the child's close event,
+including inherited pipes, and awaits asynchronous profile removal with the
+same five retries and 200 ms retry delay. Its five-second shutdown fallback is
+unchanged. The final full WebGL smoke and five compiler integration tests pass
+with that teardown. This task changes only the docs runner and plugin packaging;
+full native/web engine suites were not rerun and no workflow was dispatched.
+
+## Schedule display grouped by stage (2026-10-22)
+
+The schedule guide groups Steer and Expire together in stage 1 and separates
+successive stage groups, matching the CLI. It explains stable within-stage tick
+order and Fire starting after Steer even while Expire runs. No language or
+runtime behavior changes. Implementation and validation: schedule-and-threads.md.
+
+## Simpler navigation and sample source links (2026-10-22)
+
+Package sidebar entries now use just Box2D, Box3D, Newton, Rooms, Lobby,
+Steam and Voice chat. Removed the Live examples index and the separate Duel,
+Towers and Sumo walkthrough pages; the examples remain on their subject pages.
+Every Samples card has a separate Source link to its game folder on GitHub's
+`dev` branch, including Sand's `bench/sand` and the two distinct Sumo games.
+References to removed walkthroughs now link directly to source. Markdown exports
+retain all fourteen source links, with export coverage checking that none vanish.
+
+Validation: production docs build and both development/production HTTP export
+tests pass, including page/sidebar/link/anchor checks (Node 24.22.0). Unstaged
+playable pages still produce the build's existing allowed 404s. Muted headless
+Chrome checks at 1440 and 390 pixels confirm fourteen visible source links,
+no horizontal overflow, and no page exceptions; screenshots were inspected.
+The collaborative preview snapshot timed out twice, so these layout checks
+used the repository's Chrome DevTools workflow. Game code is unchanged.
+
+## Optional Opus voice package (2026-10-22)
+
+Packages now lists `voice` as the sixth optional package, with its own sidebar
+page for setup, push-to-talk, receive gain/mute, optional cost, platform and
+global-audience limits. Audio links to it instead of deferring voice; the spec
+separates the approved feature from provisional APIs/limits. The production
+build passes; the documented sample is also compiled by an installed checkout
+CLI. Implementation, validation and remaining device coverage are recorded in
+`notes/voice-package.md`. No live demo or site infrastructure changes.
+
+## Bundled JetBrains editor setup (2026-10-21)
+
+Install, Editor setup, CLI and README now describe automatic installation into
+existing standard JetBrains profiles, the plugin bundled with the CLI version,
+missing LSP4IJ installation, restart/locked-file guidance and first launch for
+new IDEs. Custom configuration/plugin paths remain manual and Marketplace
+updates retain their independent channel. No site navigation, spec or product
+UI changed. Production npm build passes on Node 24.21.0 with existing allowed
+unstaged-example 404s. CLI/package and full native/web validation are recorded
+in notes/cli-and-packages.md, Bundled JetBrains installation.
+
+## CLI usage data, admin tab and privacy page (2026-10-21)
+
+The site receives the tide CLI's anonymous usage data (CLI side:
+`notes/cli-and-packages.md`, Usage data).
+
+- **`docs/telemetry.js`** (`createTelemetry({file, now})`): SQLite through
+  Node's built-in `node:sqlite` (`DatabaseSync`; no dependency). Checked in
+  `node:24-alpine` (Node 24.22.0, SQLite 3.53.4) and locally on 24.21.0, with
+  no experimental warning. `TIDE_TELEMETRY_FILE` (`/data/telemetry.db` in
+  `fly.toml`, on the existing `access_requests` volume; `.svelte-kit/telemetry/`
+  locally) names the database; WAL journal. One `events` table, `STRICT`:
+  `hour` (receipt time as hours since 1970, so truncated to the hour), `install`,
+  `command`, `target`, `version`, `os`, `arch`, `ci` (0/1), `ms`, `outcome`,
+  `error`, `files`, `packages`, indexed by `hour`. No address, user agent or
+  any other request data is stored.
+- **`POST /telemetry`** (`handle`, before admin and releases in `server.js`
+  and the Vite dev middleware): `application/json` only (415), body at most
+  64 KiB (413, by header and while reading), `{"events": [...]}` of at most 100
+  (400), 30 requests a minute per address (`Fly-Client-IP` on Fly, the socket
+  locally; in memory, 10,000 addresses at most) (429). `validEvent` keeps an
+  event only if every field is from the CLI's sets (`allowed`, the version
+  pattern, a 32-hex ID, a boolean `ci`, an integer `ms` up to a day, `error`
+  exactly when `failed`) and drops unknown fields; a batch with none valid is
+  400 (the CLI's curl `-f` then drops it), otherwise 204, `no-store`.
+- **Retention**: `prune` deletes rows before 13 calendar months back
+  (`setUTCMonth`); `start()` prunes at once and every six hours (unref'd
+  timer); `stop()` closes the database at shutdown.
+- **Admin**: `createAdmin` takes `telemetry`; `/admin/api/telemetry?days=1|7|30|90`
+  behind the same session (401 anonymous, 503 without a store or password).
+  `summary(days)`: daily commands, active installs and failures; weekly
+  (seven-day windows back from today) distinct installs; totals (installs in
+  range, today, last 7 days; CI share); per-command runs, failures and
+  installs; failures by command and kind; versions and OS/arch by distinct
+  installs; successful `build` times by target at the nearest-rank median, p90
+  and p99. `/admin/telemetry` ("CLI usage") follows the Analytics page's
+  layout, refreshes every minute and sits between Analytics and Prototypes in
+  all three pages' tabs.
+- **Pages**: `docs/tools/telemetry.md` ("Usage data", in Tools) lists every
+  field and value, the notice, opt-outs, the dev-build/`TIDE_HIDDEN` rules,
+  queueing, the endpoint, retention and the settings folder. `/privacy`
+  (`src/routes/privacy`, prerendered, in the sitemap with its own social card
+  and SEO checks) covers the site's aggregate counts and the access form, CLI
+  usage data, and the relay: checked against `relay/`, which keeps addresses
+  only in memory (per-address connection counts while connected, lobby rate
+  buckets for about a minute), never writes them to disk or logs, and passes
+  ICE candidates so players connect directly or through Cloudflare TURN. A
+  small "Privacy" link is in the docs pages' footer (under the pager) and at
+  the bottom of the home page; the site had no global footer. `tools/cli.md`
+  has a `telemetry` row and section; README has a Usage data section.
+- `Dockerfile`'s COPY list, `.dockerignore`'s allowlist, and the deployment
+  copies in `admin-http`, `seo` and `exports` tests include `telemetry.js`
+  (the latter two also gained `prototypes.js`, which `server.js` imports).
+
+Tests: `tests/telemetry.test.mjs` (in `npm run test:analytics`): field
+validation for every allowed value and 26 invalid shapes; a summary over two
+installs and two ranges with exact daily/weekly/totals/commands/failures/
+versions/platforms/percentiles; hour truncation, 13-month pruning by `prune`
+and `start`, and the table's columns; the HTTP handler's 405/415/400/413/204/
+429/404 answers with no address or unknown-field text in the database or its
+WAL; admin API sign-in, ranges and 503 without a store. `admin-http.test.mjs`
+posts an event to the production `server.js`, reads it back through the admin
+API and `/admin/telemetry`, and checks the stored bytes have no address.
+A muted headless Chrome pass over the built site (scratch script, not kept)
+checked the admin tab with 60 events at desktop and 390-pixel widths, the
+privacy page, the docs page and the home footer, with no page exceptions.
+
+Validation (Node 24.21.0): `npm run check` with no errors or warnings, the
+production build (existing allowed unstaged-example 404s), `test:analytics`
+25/25, `test:admin-http` 1/1, `test:seo` 3/3, `test:exports` 2/2,
+`test:access` 8/8, `test:access-http` 1/1, `test:releases` 9/9.
+
+Making it live needs a site deploy (the Docs workflow on `dev`) and a release
+containing the new CLI; the volume needs nothing new.
+
+## Prototype catalog from its own repository (2026-10-21)
+
+The prototypes moved to `Tide-Engine/tide-prototypes` (`notes/repository.md`,
+Other repositories), with their notes, cards and thumbnails. The site no longer
+names any: `docs/prototypes.js` reads `prototypes.json` beside the server,
+which that repository's `private_games` stages with the thumbnails and pages
+under `static/prototypes/<id>/` (all ignored by git). Its ids make the public
+roots `admin.js` lets through and the retired-alias patterns that `admin.js`
+and the build's asset check refuse; the catalog page reads the cards at request
+time and still keeps them out of client bundles, search and the sitemap.
+Without the file the catalog is empty and `/prototypes/<id>/` is an ordinary
+path. The Docker image takes the file when present (`prototypes.jso[n]`). The
+Docs workflow checks out the repository with `PROTOTYPES_DEPLOY_KEY` and
+refuses to deploy without it. Earlier entries below name game notes that are
+now in that repository, and their fixed id lists are history.
+
+Tests: `admin.test.mjs` and `admin-http.test.mjs` use stand-in cards
+(`two-forks`, `paper-boat`, `lantern`), or the staged catalog's real games and
+thumbnails when `docs/prototypes.json` exists, generating every retired alias
+from the ids; a new case covers reading/validating the file and the patterns,
+including none.
+
+## AI game-author onboarding and Markdown exports (2026-10-21)
+
+Added `/guide/ai` (setup, copy prompt and download controls) and
+`/guide/ai-context` (compact agent overview), linked from Get started, the
+introduction, first-game page and README. Project AGENTS.md/CLAUDE.md starters
+and a plain starter prompt are served under `/ai/`; these describe game authoring,
+not engine contributor ownership or merge rules. A portable `tide` skill is authored
+under `docs/static/ai/tide`; `/ai/tide-skill.zip` adds the generated overview reference
+and optional agents/openai.yaml. The UI prompt is read by the prerendered server
+loader from the same static source, avoiding Vite's public-asset import warning.
+
+`content.ts` exposes expanded page sources. `exports.ts` generates all 63 public
+page Markdown downloads (`/index.md`, `/guide.md`, `/game/commands.md`, etc.),
+`/llms.txt` from navigation, `/llms-full.txt` excluding the spec, and
+`/llms-full-with-spec.txt` preserving its decided/provisional/open distinctions.
+Sources/code are shared with HTML; includes expand to real code, website controls
+are removed, page anchors remain valid and bundles have unique internal anchors.
+Metadata identifies the Git revision, clean/modified/unknown state and a content
+fingerprint; downloads explicitly are website-source docs, not a release archive.
+No CLI release bundling or automatic update of a game's pinned files is implied.
+
+Exports and ZIP prerender at build time and serve from a copied adapter-node
+deployment without Git, repository sources or node_modules. Unknown export pages
+return 404. Vite intercepts known Markdown downloads before its raw-source file
+middleware. HTML normalizes `.md` only for known documentation routes, preserving
+static AGENTS.md/CLAUDE.md download names and query strings. Public HTML advertises
+its Markdown alternate and llms index. No MCP service or new dependency was added.
+
+Five fresh Luna/Claude game trials informed narrow guide corrections for screen
+axes, player identity versus UI seats, filters, test sizes and evidence checks.
+Inputs, output sources, reports, parent corrections and native/WebGL/WebGPU probes
+are recorded in `notes/ai-onboarding.md` and its evidence folder. The overview download
+uses `TIDE.md`, matching the starter instructions' local lookup; server.js restores
+that attachment header for the prerendered file because adapter-node does not retain
+the endpoint's custom download headers. The reusable skill
+passes quick_validate.py. The exact published bounded input script was executed
+with this checkout's starter game after correcting its first frame to one.
+
+Validation uses Node 24.21.0 and LLVM 23.1.2: Svelte check has zero warnings/errors;
+the production build passes with existing allowed unstaged-game/example 404s.
+`test:exports` tests development and a source-free production deployment, every
+page/code block/inline code/link/anchor, both offline bundles, ZIP membership/CRC,
+static starters, and rejection of unknown exports. Its Windows teardown stops the
+server before removing its working directory. Production desktop/mobile Chrome
+checks verify clipboard contents, downloads, layout and no JS exceptions. All seven
+export/SEO/access-form/admin production HTTP checks pass.
+The Docs workflow now runs test:exports after its production build. No CI or site
+deployment is dispatched by this task; hosted/other-platform checks remain separate.
+
+
+## Empty scene shorthand (2026-10-20)
+
+The Scenes page and decided spec document `scene Name;` and `local scene Name;`
+as complete empty declarations equivalent to braces. The Main example uses the
+short form. Production docs/grammar validation is recorded in notes/language.md.
+
+## Double Position correction documentation (2026-10-20)
+
+Views and the spec document Position on double scalars/vectors, add a custom
+large-world position example, retain float rendering and describe correction
+precision without changing Rotation or the existing smoothing rules.
+Production build/grammar validation: notes/language.md.
+
+## Double math and matrix completion (2026-10-20)
+
+Basics, Math and the spec now describe complete existing component-wise double
+math, binary64 constants, double matrix types/builders/conversions, CPU/GPU
+boundaries and accuracy limits. Prior deferrals of trig/matrices are superseded;
+double noise, double quaternions and automatic camera-relative rendering remain
+separate. Production/docs grammar validation: notes/language.md.
+
+## Double numeric documentation (2026-10-20)
+
+Basics, Math, Text and lists, JSON, Input, Determinism and the spec document the new
+binary64 scalar/vector values. They keep defaults and float rendering APIs clear,
+show subtract-before-narrowing for large coordinates, describe full precision
+text/JSON/input and distinguish the owner-approved types from first-build
+conversion/wire choices and the deferred double math/rendering work. Production
+build and all 268 shared grammar cases pass; no site deployment or CI dispatch.
+Compiler/runtime validation: notes/language.md.
+
+## Shared player ceiling documentation (2026-10-20)
+
+The language settings table, Matches player-count section and spec report the
+owner-approved 65,536 maxPlayers ceiling, shared with dedicated connections.
+Matches distinguishes per-match capacity from the host's aggregate capacity;
+defaults and the existing layout/restart and workload-scaling guidance remain.
+Compiler help agrees. Validation: production docs build passes; networking
+and compiler validation are recorded in notes/netcode.md.
+
+Recorded containers (2026-10-19): Events, Functions and the spec describe
+read-driven capture, ordinary copy/borrow rules, event-turn/tick-end/confirmed
+timing and current attached local state. The old omission/error and open-item
+statements are removed. Provisional codec/identity details remain distinguished
+from the owner's decided behavior. No navigation or deployment changes.
+Validation: notes/language.md.
+
+Query local fields (2026-10-19): the decided spec and Views, Functions, Events
+and Systems describe current attached local reads, mutable bindings, helper
+capabilities and verified/recorded match timing. Views includes the approved
+MarkDead example. Remaining local-world component/query lifetime restrictions
+stay explicit. No navigation/deployment change. Validation: language.md.
+
+Recorded-owner event filters (2026-10-19): Events replaces the manual Owner /
+Session guard workaround with with/without ownership, including verified,
+replay and Shown/Hidden endpoint behavior. The decided spec records the owner's
+event-turn rule and the remaining local-world/query restrictions. No navigation
+or deployment changes. Validation is in notes/verified-and-local-handlers.md.
+
+Mutable World.Set overlap (2026-10-19): Systems, Functions, Events and the
+decided spec describe owner-approved active-binding replacement through
+helpers, captured read-only/copy values and ordinary subsequent write-back.
+The stale helper-overlap sentence on Systems is corrected too. No site
+navigation or deployment changed. Validation is recorded in notes/language.md.
+
 Editor setup discovery (2026-10-18): moved the single Editors sidebar entry
 into Get started, between Install and Your first game, labelled Editor setup.
 The route stays /tools/editors for existing links. Its opening table links
@@ -128,7 +1214,7 @@ prints expected 404s for unstaged example pages in this checkout; the build
 still exits successfully. Native/web engine integration validation is tracked
 in the lifecycle/netcode notes. No docs deployment or CI was requested.
 
-Final integration with `origin/dev` `a50f7818` preserves the visibility guide,
+Final integration with `origin/dev` `2c6de193` preserves the visibility guide,
 managed-hosting guide, both sidebar entries and their separate spec contracts.
 The merged production docs build and all three SEO checks pass with Node
 24.21.0, including page/link/anchor validation, both routes' metadata, sitemap
@@ -158,7 +1244,7 @@ Both custom-domain `/health` requests return HTTPS 200 with `{"ok":true}`, and
 the console homepage returns 200 with GitHub sign-in. No provider login/payment
 was performed during these probes.
 
-Source 1f81a312 deployed directly to tide-website as release 282, image
+Source 2ca71d1d deployed directly to tide-website as release 282, image
 deployment-01M501F063DS5S441CCCWYX27T, with its existing machine/volume and a
 passing health check. The public homepage now has the Console link; muted
 headless Chrome verifies the live desktop and mobile menu target with no
@@ -210,7 +1296,7 @@ retains its existing allowed unstaged-example placeholders. The owner requested 
 workflow after merge to validate Linux setup, all staged examples and deployment.
 
 Hosted confirmation: requested [Docs run 38557265795](https://github.com/Tide-Engine/tide-engine/actions/runs/38557265795)
-on 9b81435d passed and deployed successfully. Both web and native-host CMake
+on 7333e64c passed and deployed successfully. Both web and native-host CMake
 configuration select Clang 23.1.2. The full grammar/access/release/analytics,
 SEO/HTTP and examples/gallery checks pass, including the playground's complete
 WebGL smoke and all five compiler/staging tests. Compiler tools were ready in
@@ -387,7 +1473,7 @@ and audio are preserved. Game-only geometry, shadow mapping and SSAO use
 existing rendering APIs. Public routes and catalog authentication are unchanged.
 Current validation and deployment evidence are recorded in `notes/inside-out.md`.
 
-Source `482c066b` deployed to the existing Fly site as release 264, image
+Source `d2da43a1` deployed to the existing Fly site as release 264, image
 `deployment-01M4PHAKNDKRHZZ2MGVTEA16JV`, with passing machine health checks.
 All four public prototype pages and thumbnails match the production package.
 Inside Out uses the final 3D renderer and refreshed gameplay thumbnail.
@@ -403,7 +1489,7 @@ with two small robots (`notes/inside-out.md`). Public serving and catalog
 authentication remain unchanged; Underfoot, Inside Out, CRACKED and Two Forks
 are retained. Game-specific contracts and evidence are in `notes/inside-out.md`.
 
-Integrated through `origin/dev` `825c6542`: all 64 playable release pages were
+Integrated through `origin/dev` `c70a0c22`: all 64 playable release pages were
 rebuilt/restaged and agree with the production package, as do all four
 prototype thumbnails. Check has zero errors/warnings; 227 grammar, eighteen
 analytics/admin and five production HTTP/SEO/access tests pass. Production
@@ -411,7 +1497,7 @@ build and full WebGL example/gallery smoke pass. Inside Out native/WASI and
 both two-browser GPU backends pass; exact asset hashes are in its notes.
 No CI was dispatched.
 
-Source `7a44440f` deployed directly to the existing Fly site as release 263,
+Source `8c5bdf6d` deployed directly to the existing Fly site as release 263,
 image `deployment-01M4PF2HHN71TH2ZJ2C4S8M4XF`, with passing health checks.
 All four public prototype pages/thumbnails match the package. Inside Out's
 downloaded page passes two-player WebGPU play through the production relay
@@ -582,6 +1668,21 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - In a Build run the site is beside the release, not part of it: neither waits for the other, so the site deploys whatever the packages and suites do, and a nightly is published whether or not the site built. A failure of either fails the run.
   - One docs job at a time for a ref, whichever workflow asked (`docs-<ref>`, with `cancel-in-progress: false`): a request made while the site deploys waits for it. It cancelled the one before it while pushes started it; that would now stop a job of a release's run.
 - The workflow builds sand, Duel, Towers and Sumo for the web (`web-release`, targets `sand`, `duel`, `towers` and `sumo`) and puts them at `sand/`, `duel/`, `towers/` and `sumo/`, linked by the Samples gallery. The dedicated Duel, Towers and Sumo docs explain their implementation. Sand also serves as a benchmark (see Benchmarks); Duel is a standalone game in `examples/duel/`, and Towers and Sumo are the physics games in `examples/towers/` and `examples/sumo/` (see The physics games). To see them locally, copy each `build/web-release/bin/<game>.html` to `docs/static/<game>/index.html`; a build without them still works: the prerender lets a link to one of those four pages pass (`docs/vite.config.ts`), as nothing serves `static/` while it runs.
+- **Earth on the home page** (2026-10-24; the owner: "lets maybe do some fun experience on the homepage, maybe a earth scale thing where everyone can travel and see others or something"; everything below is Claude's pick, Provisional). The hero's logo gives way to a live planet, `examples/earth/`: a sharded game where everyone who opens the page is a little walker on one little planet, 3 km in radius, with ten towns, the roads between them, their townsfolk and their traffic. Walk anywhere, or turn into a car and drive.
+  - **Walking/camera follow-up, the same day:** country trees use each latitude row's fixed spacing and wrapped longitude cell IDs, rather than recomputing every tree's longitude from the moving eye's latitude. The camera blend stops at its target: at 1 it previously stepped backwards, then forwards over three frames forever, moving the camera and toggling whole-globe Watch/Unwatch. Pending landings retain globe rotation, zoom and destination selection. A disconnected player continuing in their own world lands at their last shown position, with a fresh request count, rather than back at their first destination; the counter calls it a local world. Tests exercise actual views/Sample, a delayed landing, stationary tree positions across movement and the longitude seam, stable settled camera and fallback position. All seven Earth checks and three benchmark pins pass on native/web; muted WebGL/WebGPU smoke lands and walks without errors. Native four-region captures cover 96 seconds of continuous walking without resetting. The hosted world was failed and refused admission; its saved checkpoint/journal reproduces missing private shard effects, fixed in the engine (notes/netcode.md). New deployment starts a fresh world; missing old journal effects cannot be recovered.
+  - **Published follow-up:** engine source `18a6bc3f` deployed to the same project as release `52176ec898ccbeec49c953ff0aab0b7a230ed93da3ff60919df903ee7669fe07`. Its fresh world runs and checkpoints. Two muted Chrome instances of the downloaded released client, WebGL and WebGPU, walked for 70 seconds through the production relay and ended on the ground showing two online players on one shard. Their only stderr line was the expected dedicated-match join notice; a corrected smoke runner additionally asserts the hosted room remains connected. A copy of the new live checkpoint and journal loads, replays all 1,888 following records and begins its shard successfully. Raw live saves stay in ignored build storage, outside the commit. Preview screenshots repeatedly timed out, so browser checks used the repository's Chrome DevTools workflow. No service code, hosting limits, account policy or manual CI dispatch changed.
+  - **How it got here**, all the same day. The first version flew paper planes over the real Earth, lighting lanterns. The owner played it: "dragging globe is inverted ... the flying with the plane feels bad ... a player counter ... make it little walking guys instead? ... npcs or cars driving around ... reduce the size", then "just use noise to generate a fantasy world": the second was walkers in twelve towns on an Earth-sized world of noise, gone between by clicking the globe. Then "make it clear which are npcs and which are real players", "easy to join other players", "instead of flying maybe we can transform into a fast car ... transformers style ... fun animations" and "we can't walk from city to city? i was expecting an open world thing"; asked, the owner picked the small planet over keeping the Earth's size ("Small planet (Recommended)"), as at the Earth's size towns are thousands of kilometres apart.
+  - **The match** (`game.tide`, `city.tide`, `layout.tide`): `Walker` (`[Position] float3` from the planet's center, a `forward` along the ground, a velocity, a jump's height; `driving` and its `speed`; a player's `tag`, which names them), `Person` (a townsperson's town and goal), `Car` (a townsperson's, along a road between two towns, turning round at the squares), `Roster` (the root's: players to walkers, `online`). Positions are floats: at 3 km they're good to a fraction of a millimetre. A walker moves along the ground and is carried round the planet (`Move`: the position by the velocity, settled out of buildings and the fountain, then the velocity and the facing turned into the ground where it now is). On foot (`Step`) it accelerates toward the input; as a car (`Drive`) it steers toward the input at up to 2.6 radians a second, faster on a road (55 m/s, round the planet in six minutes) than across country (32), reverses when asked straight back, and slows against a wall. `input.car.down` turns it into a car or back. A player's walker waits over the north pole, unseen, until their input asks for a place (`drop`, a direction, and `moves`, a counter that's taken only when newer: a shard that has the walker before its player's input guesses zeros). It lands a step or two from where it was asked (so two asking for one place don't land in each other), facing the nearest town's middle. `Bump` pushes walkers apart (a car hardly gives way to someone on foot, who gets out of its way), out of the townsfolk's cars and back out of walls, and gives two on foot waving within 2.2 m a high five each (`HighFive`, for confetti). Townsfolk stroll round their town and wave back at a player who waves near them. The traffic goes up and down the roads in its lane and stops for anyone or any car in front of it. The towns' places and their 214 buildings are tables (`layout.tide`, made by `tools/towns.mjs`, which places each building round its town clear of the roads that leave it and of the others): worked out in the game, they made the tests 20 times slower, as every walker's collision placed every building again.
+  - **Drawing** (`globe.tide`, `shapes.tide`, `show.tide`): everything is placed around the eye. The planet is no mesh: the frag `Planet` runs on a ball around the eye (`this.world` is a pixel's ray) and finds the sphere from the eye's height, kept as `h(2R + h)` rather than the difference of two large squares; it paints meadows, forests, dry grass and snow toward the poles from noise, the roads (each a great-circle arc between two towns, from the local `Atlas`) with kerbs and a dashed line, each town's mown lawns, ring road and paved square, all as sharp as a pixel at any height. A finer ball 1.2 m under the ground (`Unseen`: black, added) writes depth alone, so what's past the horizon, which is about 100 m off for a walker, is hidden. Buildings (`Wall`: rows of windows), the fountains and trees are drawn for towns near the eye; trees out in the country are cells of a latitude and longitude grid near the eye, more in the forests, never on a road or in a town, the same on every machine. A walker is eight parts; a car is a body, a cabin, two lamps and four wheels; turning from one to the other, each part leaps, spins and lands where it goes in the other (body to chassis, head to cabin, eyes to lamps, hands and feet to wheels, each a little after the one before; `Part`), with sparks, as `local float morph` goes from 0 to 1 in 0.8 s. **Shards** paints walkers and cars by `Shards.Of`.
+  - **Who has what** (the owner: "maybe we should use visibility since most things are out of my visibility", then "yeah lets give the same treatment for players"): a player's machine has the players within 300 m (`SIGHT`) and the townsfolk and traffic within 340 m (`FURTHER`, so whatever a player it has bumps into or waves at is there too), and none of the rest: 6 of the 60 townsfolk in a town. Each townsperson and car has a visibility group of its own, whose audience the server sets from who's near (`SeeTownsfolk`, `SeeTraffic`, kept in `Seen`, which is the server's alone: `Grouped` restricts it to no one). A player's walker is everyone's, but its `Walker` only its own player's and those within 300 m (`SeePlayers`: `visibility.Set<Walker>` on the walker's own `Visibility`, set every look, keeping nothing); what everyone has is its `Beacon` (where it is, zero until it lands, its color and tag), which follows it every 3 s when it's 20 m stale (`BEACON`, `STALE`). Everything is looked at on one tick every 30 (`LOOK`) and beacons move on one: a machine can't work out what it doesn't have, so each change is a correction from the server, and together they're one. The globe's dots, the towns' counts, the crowds for Join and the other-player list come from beacons (the `Beacons` view; this machine's own is left out by entity), and `People` draws only walkers it has. `reach` is 320 m, so a shard has every player near its border to count. As first built, clients worked out audiences and beacons themselves from walkers they didn't have, and every machine fell a second behind with 32 players; `bench_earth` found it (`notes/benchmarks.md`, Earth under load, which also has what's left and the numbers). `earth_tests` checks the player's machine has the 6 of its town in each of two towns on two shards, and, with a second player in town 4 on the same shard 2.7 km off, their Beacon and not their Walker, then both once they come to town 3. That found an engine bug: a `Visibility`'s overrides were lost when its entity changed shards (`notes/sharding.md`).
+  - **Telling players from townsfolk, and finding them**: a player wears one of eight bright colors and has a name over their head (`Called`: two words from their `tag`, "Swift Otter"; "You" over this machine's), drawn over walls so they're found; townsfolk wear quiet colors, are a little smaller and have none. **Join N players** (on the globe and on the ground, whenever there are other players) goes to where most of them are together. On the globe, players are dots and each town's name says how many are in it.
+  - **Controls**: on the globe, a drag turns it the way the pointer goes, and it coasts after; a click goes there, to a town's square when it's near one. On the ground, WASD or the arrows (as the camera looks), a finger's tap on the ground walks or drives there (a mouse's click doesn't: the owner kept being "pushed slowly", as the click that gives the frame the keyboard walked the walker off toward it, and a car, never within the 0.8 m that ended a walk, circled it; a car's arrives within 5 m now, and turning into one or out drops it), a drag looks round, Space jumps (a car hops), E or **Wave** waves, C or **Car** / **Walk** turns into a car or back, Escape or **Globe** goes back; two fingers zoom. A car's camera swings in behind it, the view widens with its speed and a speedometer shows it; a car turns at least 60% as hard when crawling, so it gets off a wall it's driven into. On a screen under 600 pixels wide, where it is and a short hint are at the top, clear of the buttons along the bottom. Jump, Wave and Car show only once the camera is on the ground; on the way the globe says "Going there...". The page's place requests go on from the walker's count (a page reloaded or put back in its frame comes back to its walker within 20 seconds) and ask again after 6 seconds of not getting there. The camera goes between the globe and the walker by height, as a log, and across as far as it has come down. The HUD's text is on dark pills (`Backed`). A walker's facing is a vector now, so nothing blends an angle the long way round.
+  - **Size**: the page is 647 KB (it was 1.3 MB with the first version's 2,048 × 1,024 land texture, 8 MB raw in the pack, half a megabyte deflated in the page; the world is noise now, and nothing is stored for it). What's left is the engine: its program (860 KB of code, 280 KB of data, of which the Tuffy font is 172 KB), deflated and in base64 in the page, and `tide.js`. The hosted page is 623 KB.
+  - **Where it runs.** Its page (`examples/earth/page.html`, `tide_add_game`'s `SHELL`) gives the program `--shards 4 --shard-width 1600`: four regions along x across the planet, all in the reader's browser. Given `join=ROOMID/0` (which `tide.js` now passes with its slash), it joins that world instead, and a world that isn't there, or goes, starts its own (`local event(Disconnected)` → `Session.Start()`).
+  - **The shared world** (deployed 2026-10-24, the owner: "deploy it yes"): the owner's hosting project `earth` (`examples/earth/tide.deploy.json`, project `29c727eab929afcbef23455a6bf73125`, room `966ANR/0`), deployed with `tide deploy examples/earth` from a CLI staged from the tree (`build/dist/tide`). The test is in `test/` with its own `tide.packages`, as Sumo's is, so a deploy of the folder leaves its C out. The home page frames the hosted page, `https://play.tide-engine.dev/g/<project>/?embedded`, not this site's `/earth/`: a release's client and server are one build, while a client this site builds would stop matching the release's simulation identity at the next change to the engine's runtime (the identity has the version and a hash of the runtime's sources). So the hosted world changes only when it's deployed again, which nothing does by itself: run `tide deploy examples/earth` after a change to the game (or the engine, to carry it there). A world that's running keeps its release until it stops, 60 seconds after its last player leaves, and the page gives its players that release's client meanwhile (until the service's fix of the same day, it gave the newest, which the running world turned away, so a home page that kept the world busy would have kept newcomers out of it). The hosting service sends `Cross-Origin-Resource-Policy: cross-origin` for a game's page, so this site's isolated pages can frame it, and answers `/g/<project>/ready` (CORS) when it can be played (`Tide-Engine/tide-services`, `hosting/README.md`). On the service it's one shard (no host machines; the split thresholds are out of reach there), a Small match while anyone is in it, on the owner's account, which is a house account (2026-10-24, the owner: "its using my plan credits lol; maybe we should have some admin account"): hosted without a plan or credit, within the usual limits (`Tide-Engine/tide-services`, `notes/managed-hosting.md`, House accounts). Empty, it stops after 60 seconds, and the next visitor starts it again from its checkpoint; it stays one shard there until host machines are provisioned and the project may have more matches, as splitting by load is built but needs somewhere to put a second shard. The hosted page is built with the default shell, so a reader who falls back to their own world there has it in one region.
+  - **The page** (`docs/src/routes/+page.svelte`): for a reader who didn't ask for less motion or data (`eager` from `examples.ts`), once the hero is within a screen of the view, it asks the hosted world's `ready` (4 seconds at most). Ready: it frames the hosted page (`allow="cross-origin-isolated; fullscreen"`), which starts as it loads and, being another site's, says nothing of when it has drawn, so the frame fades in 1.5 seconds after it loaded. Not ready, unreachable or refused (no CORS header, so the fetch fails): it frames `/earth/?embedded&wait`, starts it with `Tide.start()`, and fades it in once it has drawn: this machine's own world with its townsfolk. Either way the frame goes over the logo; more than a screen away it's removed (`IntersectionObserver`, `rootMargin: 100%`). A build without the game keeps the logo. A caption under it has **Expand** (the owner: "can we add a way to go bigger without a new window?"): the same frame over the whole page (`position: fixed`, 4% of the window round it, all of a phone's), with a dimmed page behind and **Close** over its top; a press on the page around, the button or Escape (while the page has the keyboard: the game takes its own Escape) puts it back. The frame isn't moved in the document, so the game isn't loaded again and goes on where it was. And **New tab**, its page on its own. At phone width it's the hero's width, up to 420 pixels.
+  - **Staging**: the Docs workflow builds `earth` with the four games and copies it to `docs/static/earth/index.html` (ignored); `server.js` sends noindex for it, which `test:seo` checks with the others; `vite.config.ts` lets a link to `/earth/` pass the prerender.
+  - **Validation**: `earth_tests` natively and on the web: in one world, the townsfolk and traffic, two players landing by a town's fountain (out of it), walking about 5 m in a second on the ground, turning into a car and driving across country to over 15 m/s, and back, a townsperson's car stopping short of a player standing in front of it and going on, two players high-fiving once, a leaving player's walker gone; and in four regions, a player going to a town on one shard then one on another, owned once all along, gone 25 seconds after leaving. Scripted native captures and the web-release page over WebGL and WebGPU in headless Chrome: the globe, a town, the country, the transform half done, driving. Not tried: a phone, a slow GPU (the planet's frag loops over eleven roads and ten towns a pixel), many players at once.
 - A whole game is one frame on its page (the owner, 2026-10-06, of Siege, which Towers has since taken the place of, and of Alley, the game Sumo took the place of, which were two frames in one match: "make it only one game instance with a lobby setup"): an iframe in the page's Markdown, `<iframe class="demo-frame" src="/<name>/?embedded" ...>`, as Duel's is, and the game's own lobby is how a reader gets other machines in. `roomy` beside `demo-frame` (`docs/src/app.css`) gives a game that opens on a lobby the height it needs at narrow widths, as `duel` gives Duel. Nothing shows two frames of a whole game any more: `::: tide-game` is gone, with its CSS and its part of the test. A frame that was in the page as it came, and clicked before the page's script ran, shows its focus all the same (`showsFocus` in `docs/src/lib/examples.ts` looks at `document.activeElement`).
 - Pages have live examples beside their code, wherever a small game says it better (`docs/guide/examples.md` lists them all, and a page that explains something a game can show gets one). Each is a standalone game in `docs/examples/<id>.tide`, included as code with `<<< @/examples/<id>.tide` inside `::: tide-example <id> <title>`. Code and the running game come from the same source, and a page shows the source of every example it runs.
   - An example starts by itself once it's in view, and stops once it's more than a screen away, so a page runs what its reader is looking at and nothing else (agreed: the owner asked why they'd have to start each one). In view is half of where it draws on screen, and still there a moment later, so scrolling past starts nothing. Stop holds until the reader presses Run, Restart starts it over, and leaving the page disposes its frames. A reader who asked their system for less motion or less data starts each one themselves. `backend=` in a docs page's address goes on to its games.
@@ -650,7 +1751,7 @@ the web-release game. Game-specific contracts and validation are recorded in
 `notes/inside-out.md`. The public URL and catalog access boundaries are retained.
 
 The revision was deployed to the existing `tide-website` Fly app directly
-from `0530c23f` (release 255); its health checks passed. Anonymous Inside Out
+from `09b68b4b` (release 255); its health checks passed. Anonymous Inside Out
 HTML/thumbnail requests return 200 and match the tested release bytes. A
 two-browser check of those downloaded bytes with the production relay passed.
 The packaged catalog retains the incoming CRACKED, Inside Out and Two Forks
@@ -664,7 +1765,7 @@ production build passes, and all 23 analytics/admin and production HTTP/SEO/
 access checks pass. Camera, audio and gameplay evidence belongs in
 `notes/inside-out.md`.
 
-That focused-view revision deployed directly from `f8f61e9e` to the existing
+That focused-view revision deployed directly from `c298c929` to the existing
 Fly site (release 256); health checks passed. Anonymous game and thumbnail
 requests return 200 and match the validated release hashes. The packaged
 catalog still contains only Inside Out, CRACKED and Two Forks.
@@ -681,7 +1782,7 @@ Release, staged and packaged Inside Out HTML are byte-identical. Game-specific
 camera, movement, campaign and audio evidence is in `notes/inside-out.md`.
 
 The maker-passage follow-up retains that public serving contract. After the
-clean integration through `origin/dev` `1e969c61`, all 64 staged pages match
+clean integration through `origin/dev` `6adfbae9`, all 64 staged pages match
 their release artifacts, including the incoming Underfoot and CRACKED pages.
 The authenticated catalog retains Underfoot, Inside Out, CRACKED and Two
 Forks. All 225 grammar checks and the full WebGL docs/gallery smoke pass;
@@ -689,11 +1790,11 @@ Svelte check has zero errors/warnings, eighteen analytics/admin checks pass,
 and the final production build and five HTTP/SEO/access checks pass.
 Inside Out's final packaged HTML hash is recorded in `notes/inside-out.md`.
 
-Final integration through `origin/dev` `7c4e0835` brought unrelated CRACKED
+Final integration through `origin/dev` `4df2b647` brought unrelated CRACKED
 and Underfoot updates, which were rebuilt/restaged before deployment. All
 64 playable pages and four prototype thumbnails match the final package;
 the production build and five HTTP/SEO/access checks pass again. Source
-`9d25977b` deployed directly to the existing Fly app as release 258 and passed
+`a701de03` deployed directly to the existing Fly app as release 258 and passed
 health checks. Anonymous Inside Out HTML/thumbnail requests return 200 with
 the tested final hashes, and two-browser gameplay of those downloaded bytes
 through the production relay passes. No CI was dispatched.
@@ -707,14 +1808,14 @@ analytics/admin plus five production HTTP/SEO/access tests pass. Release,
 staged and packaged Inside Out page/thumbnail bytes match; their hashes and
 game-specific camera validation are in `notes/inside-out.md`.
 
-The clean merge through `origin/dev` `e377d0a9` brought shared compiler,
+The clean merge through `origin/dev` `39fe3e4f` brought shared compiler,
 platform/web and docs updates plus current Underfoot changes. All 64 playable
 pages were rebuilt/restaged and match their production-package copies; all
 four prototype thumbnails match as well. Docs check has zero errors/warnings,
 226 grammar tests pass, and the production build plus five HTTP/SEO/access
 checks pass again. The integrated Inside Out hash is in `notes/inside-out.md`.
 
-Source `ebbd0649` deployed directly to the existing Fly site as release 259
+Source `ff775a99` deployed directly to the existing Fly site as release 259
 and passed health checks. Public Inside Out HTML and thumbnail return 200
 with the tested integrated hashes; the catalog retains all four prototypes.
 Two-browser gameplay of the downloaded page through the production relay
@@ -731,14 +1832,14 @@ admin plus five HTTP/SEO/access tests pass. All 64 playable pages and four
 prototype thumbnails match their release/staged/packaged copies. Final
 hashes and game-specific evidence are recorded in `notes/inside-out.md`.
 
-Integration through `origin/dev` `27ddca74` brought compiler/shared asset
+Integration through `origin/dev` `430961d7` brought compiler/shared asset
 runtime and Underfoot updates. All 64 playable pages were rebuilt/restaged;
 their release, static and production-package bytes agree, as do all four
 thumbnails. The site check stays clean, 227 grammar checks pass, and the final
 production build plus five HTTP/SEO/access tests pass. The final Inside Out
 hash is in `notes/inside-out.md`. No CI was dispatched.
 
-Source `0fa243a2` deployed directly to the existing Fly site as release 260
+Source `421f1f25` deployed directly to the existing Fly site as release 260
 and passed health checks. Public Inside Out page/thumbnail requests return
 200 with the tested final hashes. Two-player WebGPU gameplay of the downloaded
 page through the production relay passes, including the nearby partner glimpse
@@ -780,3 +1881,13 @@ allowed 404s cover unstaged game/example HTML. Node is 24.15.0 in this shell;
 no Node test suite or game was run. The collaborative browser confirms the new
 overview, catalogue and navigation on the local development site. No site
 deployment or CI dispatch was requested.
+
+## Box3D component completion (2026-10-22)
+
+The package page now documents all nine joint settings, HullCollider, static
+HeightFieldCollider, BodySettings, collision/query filters, live geometry and
+material edits, and deferred component removal. Its obsolete read-once and
+missing-feature claims are removed. Contracts, validation, determinism and
+measurements live in notes/box3d.md; the README has the same public API.
+`npm run build` passes, including link/anchor checks. Expected 404s are the
+unstaged playable examples in this fresh checkout. No site deployment.

@@ -5,16 +5,19 @@ stage 1  Move(Body, Speed, with Player)  (per entity)
          reads Speed
          writes Body
          alongside nothing
+
 stage 2  Settle  (per entity)
          writes Body
          after Move(Body, Speed, with Player): both write Body
          alongside nothing
+
 stage 3  Watch  (per entity)
          reads Body
          writes Log
          after Move(Body, Speed, with Player): it writes Body, which this reads (and through Settle)
          after Settle: it writes Body, which this reads
          alongside nothing
+
 stage 4  Move(Body, Speed, with Enemy)  (per entity)
          reads Speed
          writes Body

@@ -19,7 +19,7 @@ TIDE_TEST(move_clamp_main_spawns)
     TIDE_REQUIRE(PROPS.count == 1);
     TIDE_CHECK(TIDE_AT(&world, arch0_TestTransform_Player, TestTransform, 0).position.y == 10.0f);
     TIDE_CHECK(TIDE_AT(&world, arch0_TestTransform_Player, TestTransform, 0).scale.x == 1.0f);
-    TIDE_CHECK(TIDE_AT(&world, arch0_TestTransform_Player, TestTransform, 0).rotation.x == 0.0f); // Unset fields are zero.
+    TIDE_CHECK(TIDE_AT(&world, arch0_TestTransform_Player, TestTransform, 0).rotation.x == 0.0f);
     TIDE_CHECK(TIDE_AT(&world, arch1_TestTransform_Prop, Prop, 0).id == 7);
 }
 

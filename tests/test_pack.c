@@ -57,7 +57,6 @@ TIDE_TEST(pack_compressed_texture_metadata_is_checked_without_changing_exact_pix
 // Grid2<Color>, as tidec shapes it: cells of 16 bytes, chunks of 32 by 32.
 static const tide_grid_shape color_shape = {16u, 2u, {5u, 5u, 0u}};
 
-// A map from text, as generated code describes one for tide_map_find.
 static uint32_t hash_key(const void *key)
 {
     const tide_str s = tide_text_view(*(const tide_text *)key);
@@ -75,7 +74,6 @@ static bool equal_key(const void *key, const void *probe)
     return tide_str_eq(tide_text_view(*(const tide_text *)key), *(const tide_str *)probe);
 }
 
-// Its entries: order, the key, and a value that's a handle (a grid's, or a text's).
 typedef struct handle_entry {
     int64_t live;
     tide_text key;
@@ -103,16 +101,14 @@ static uint8_t *build(size_t *size)
     uint8_t h[32];
     uint32_t chars;
     hash_of("rules", h);
-    // Text whose characters aren't a byte each: a text's block, which says how many they are...
     const uint32_t rules = tide_pack_string(&b, h, "héllo wörld", 13, &chars);
     TIDE_CHECK(chars == 11);
     uint32_t again_chars = 0;
-    TIDE_CHECK(tide_pack_string(&b, h, "héllo wörld", 13, &again_chars) == rules && again_chars == 11); // The same content once
-    // ...and the same file's bytes a list's, beside it: once too
+    TIDE_CHECK(tide_pack_string(&b, h, "héllo wörld", 13, &again_chars) == rules && again_chars == 11);
     const uint32_t rules_bytes = tide_pack_bytes(&b, h, "héllo wörld", 13, &again_chars);
     TIDE_CHECK(rules_bytes != rules && again_chars == 11);
     TIDE_CHECK(tide_pack_bytes(&b, h, "héllo wörld", 13, &again_chars) == rules_bytes);
-    TIDE_CHECK(tide_pack_string(&b, h, "héllo wörld", 13, &again_chars) == rules); // Still the text's, with the bytes there
+    TIDE_CHECK(tide_pack_string(&b, h, "héllo wörld", 13, &again_chars) == rules);
     tide_pack_name(&b, "Game.rules", TIDE_PACK_TEXT, rules, 13, chars);
     tide_pack_name(&b, "Game.rulesBytes", TIDE_PACK_BYTES, rules_bytes, 13, chars);
 
@@ -128,7 +124,6 @@ static uint8_t *build(size_t *size)
     uint8_t k1[32], k2[32];
     hash_of("a.txt", k1);
     hash_of("b.txt", k2);
-    // Text of a byte a character is the block its bytes are, whichever was asked for first
     const uint32_t a = tide_pack_string(&b, k1, "alpha", 5, &chars);
     TIDE_CHECK(chars == 5 && tide_pack_bytes(&b, k1, "alpha", 5, &chars) == a);
     const uint32_t bb = tide_pack_bytes(&b, k2, "beta", 4, &chars);
@@ -145,7 +140,6 @@ static uint8_t *build(size_t *size)
     const uint32_t map = tide_pack_map(&b, (const uint32_t[]){key0, key1}, (const uint32_t[]){hero, hero}, 2, &index);
     tide_pack_name(&b, "Game.run", TIDE_PACK_MAP, map, index, 2);
 
-    // A map from text to text, keys and values of characters that take two bytes
     uint8_t w1[32], w2[32], w3[32];
     hash_of("mots/clé.txt", w1);
     hash_of("mots/été.txt", w2);
@@ -168,19 +162,16 @@ TIDE_TEST(pack_values_read_as_a_worlds_do)
     TIDE_REQUIRE(tide_pack_load(bytes, size));
     TIDE_CHECK(tide_pack_region_slots == 1u);
 
-    // Text: a tide_str into the region, with its characters counted
     const tide_pack_entry *rules = tide_pack_find("Game.rules", TIDE_PACK_TEXT);
     TIDE_REQUIRE(rules != NULL);
     const tide_str s = tide_pack_text(rules);
     TIDE_CHECK(s.bytes == 13 && s.chars == 11 && memcmp(s.ptr, "héllo wörld", 13) == 0 && s.ptr[13] == '\0');
-    TIDE_CHECK(tide_pack_find("Game.rules", TIDE_PACK_GRID) == NULL); // Another kind: a stale pack
+    TIDE_CHECK(tide_pack_find("Game.rules", TIDE_PACK_GRID) == NULL);
     TIDE_CHECK(tide_pack_find("Game.nothing", TIDE_PACK_TEXT) == NULL);
 
-    // ...which its block says too, for whatever reads it by its handle
     const tide_str by_handle = tide_text_view((tide_text){tide_pack_handle(rules)});
     TIDE_CHECK(by_handle.ptr == s.ptr && by_handle.bytes == 13 && by_handle.chars == 11);
 
-    // Bytes: a list in the scratch area's slots, read as any list
     const tide_list bytes_list = {tide_pack_handle(tide_pack_find("Game.rulesBytes", TIDE_PACK_BYTES))};
     TIDE_CHECK(tide_pack_holds(bytes_list.at));
     TIDE_CHECK(tide_list_count(bytes_list) == 13);
@@ -190,7 +181,6 @@ TIDE_TEST(pack_values_read_as_a_worlds_do)
     tide_list_cache cache = {0};
     TIDE_CHECK(*(const uint8_t *)tide_list_cached_at(&cache, bytes_list, 0, 1) == 'h');
 
-    // A grid: its cells through peeks and caches, its size, its chunks left out
     const tide_grid hero = {tide_pack_handle(tide_pack_find("Game.hero", TIDE_PACK_GRID))};
     const tide_grid_dir *dir = tide_grid_dir_of(hero);
     TIDE_REQUIRE(dir != NULL);
@@ -217,7 +207,6 @@ TIDE_TEST(pack_values_read_as_a_worlds_do)
     while (tide_grid_rows_next(&rows, &x0, &x1, &ry, &rz)) count += (int32_t)(x1 - x0);
     TIDE_CHECK(count == 70 * 40);
 
-    // ...and as a texture, with a version that's the file's, so the draw list copies it once
     static tide_draw_list draw;
     tide_draw_reset(&draw);
     const uint32_t slot = tide_draw_grid_texture(&draw, hero, &color_shape);
@@ -227,10 +216,9 @@ TIDE_TEST(pack_values_read_as_a_worlds_do)
     uint64_t want_version;
     memcpy(&want_version, want_hash, sizeof want_version);
     TIDE_CHECK(draw.textures[slot - 1].version == want_version && tide_pack_grid_version(hero) == want_version);
-    TIDE_CHECK(draw.textures[slot - 1].pixels[(10 * 70 + 35) * 4 + 2] == 64); // 0.25 as a byte
+    TIDE_CHECK(draw.textures[slot - 1].pixels[(10 * 70 + 35) * 4 + 2] == 64);
     TIDE_CHECK(tide_draw_grid_texture(&draw, hero, &color_shape) == slot);
 
-    // A list of texts: handles into the region, each a text with its bytes and its characters
     const tide_list texts = {tide_pack_handle(tide_pack_find("Game.texts", TIDE_PACK_LIST))};
     TIDE_CHECK(tide_list_count(texts) == 3);
     const tide_text *first = tide_list_at(texts, 0, sizeof(tide_text));
@@ -239,12 +227,11 @@ TIDE_TEST(pack_values_read_as_a_worlds_do)
     TIDE_CHECK(second && tide_str_eq(tide_text_view(*second), tide_str_from_cstr("beta")) && tide_text_view(*second).chars == 4);
     const tide_text *third = tide_list_at(texts, 2, sizeof(tide_text));
     TIDE_REQUIRE(third != NULL);
-    TIDE_CHECK(tide_text_view(*third).bytes == 13 && tide_text_view(*third).chars == 11); // Not its bytes: two of them take two
-    TIDE_CHECK(tide_str_eq(tide_text_view(*third), s) && tide_text_view(*third).ptr == s.ptr); // The text alone names the same block
-    const tide_str world = tide_str_substring_from(tide_text_view(*third), 6); // "wörld": what's cut from it goes by its characters
+    TIDE_CHECK(tide_text_view(*third).bytes == 13 && tide_text_view(*third).chars == 11);
+    TIDE_CHECK(tide_str_eq(tide_text_view(*third), s) && tide_text_view(*third).ptr == s.ptr);
+    const tide_str world = tide_str_substring_from(tide_text_view(*third), 6);
     TIDE_CHECK(world.bytes == 6 && world.chars == 5);
 
-    // A map from paths to grids: found as the game's lookups find keys
     const tide_map run = tide_pack_map_of(tide_pack_find("Game.run", TIDE_PACK_MAP));
     TIDE_CHECK(tide_map_count(run) == 2 && tide_map_entries(run) == 2 && run.last_order == 2 && run.reserved == 0);
     int64_t order = 0;
@@ -263,7 +250,6 @@ TIDE_TEST(pack_values_read_as_a_worlds_do)
     memcpy(&value, entry + offsetof(handle_entry, value), sizeof value);
     TIDE_CHECK(value.at == hero.at);
 
-    // A map from text to text: its keys are found by their bytes, and keys and values say their characters
     const tide_map words = tide_pack_map_of(tide_pack_find("Game.words", TIDE_PACK_MAP));
     TIDE_CHECK(tide_map_count(words) == 2);
     const char *const word_keys[2] = {"mots/clé.txt", "mots/été.txt"};
@@ -280,7 +266,6 @@ TIDE_TEST(pack_values_read_as_a_worlds_do)
         TIDE_CHECK(tide_text_view(said).bytes == value_bytes[i] && tide_text_view(said).chars == value_chars[i]);
     }
 
-    // The scratch area still works beside it
     const uint32_t mark = tide_scratch_mark();
     const tide_str made = tide_str_add(TIDE_STR_EMPTY, s);
     TIDE_CHECK(tide_str_eq(made, s));
@@ -297,8 +282,8 @@ TIDE_TEST(pack_refuses_what_isnt_one)
     TIDE_CHECK(!tide_pack_load((const uint8_t *)"not a pack at all, not a pack at all", 36));
     size_t size;
     uint8_t *bytes = build(&size);
-    TIDE_CHECK(!tide_pack_load(bytes, size - 1)); // Its region cut short
-    bytes[9] ^= 1; // Another version
+    TIDE_CHECK(!tide_pack_load(bytes, size - 1));
+    bytes[9] ^= 1;
     TIDE_CHECK(!tide_pack_load(bytes, size));
     free(bytes);
     TIDE_CHECK(tide_pack_find("Game.rules", TIDE_PACK_TEXT) == NULL);
@@ -372,7 +357,6 @@ TIDE_TEST(pack_clip_maps_keep_orders_when_expanded_and_copied)
 // ---------------------------------------------------------------------------
 // Images to draw with
 
-// A map from text to textures, as generated code describes one.
 typedef struct icon_entry {
     int64_t live;
     tide_text key;
@@ -381,7 +365,6 @@ typedef struct icon_entry {
 
 static const tide_map_kind text_texture_kind = {sizeof(icon_entry), offsetof(icon_entry, key), hash_key, hash_probe, equal_key};
 
-// An image's bytes, each from its place and the image's own number.
 static void image_of(uint8_t *rgba, const int width, const int height, const int seed)
 {
     for (int i = 0; i < width * height * 4; i++) rgba[i] = (uint8_t)(seed + i * 7);
@@ -415,7 +398,7 @@ static uint8_t *build_textures(size_t *size, const bool lead, const int hero_see
     image_of(second, 3, 5, 100);
     hash_of(hero_seed == 1 ? "hero.png" : "hero-edited.png", h);
     const uint32_t hero = tide_pack_texture(&b, h, 6, 4, first);
-    TIDE_CHECK(tide_pack_texture(&b, h, 6, 4, first) == hero); // The same file once
+    TIDE_CHECK(tide_pack_texture(&b, h, 6, 4, first) == hero);
     tide_pack_name(&b, "Game.hero", TIDE_PACK_TEXTURE, hero, 0, 0);
     hash_of("other.png", h);
     const uint32_t other = tide_pack_texture(&b, h, 3, 5, second);
@@ -445,7 +428,6 @@ static uint8_t *build_textures(size_t *size, const bool lead, const int hero_see
     return tide_pack_end(&b, size);
 }
 
-// The image a Texture names, as the loaded pack has it: its pixels, or NULL.
 static const uint8_t *pixels_of(const tide_texture_ref texture, int32_t *width, int32_t *height, uint64_t *version)
 {
     tide_texture image;
@@ -465,12 +447,11 @@ TIDE_TEST(pack_textures_are_drawn_where_the_pack_has_them)
     image_of(first, 6, 4, 1);
     image_of(second, 3, 5, 100);
 
-    // A Texture holds no pixels: it names its declaration's image, which the pack has
     const tide_texture_ref hero = tide_pack_texture_of(tide_pack_find("Game.hero", TIDE_PACK_TEXTURE));
     TIDE_CHECK(!hero.image.pixels && !hero.target.id && hero.image.width == 6 && hero.image.height == 4 && hero.image.version);
     const tide_texture_ref none = tide_pack_texture_of(NULL);
     TIDE_CHECK(!none.image.version && !none.image.width && !none.image.pixels);
-    TIDE_CHECK(!tide_pack_texture_of(tide_pack_find("Game.frames", TIDE_PACK_LIST)).image.version); // Another kind's entry
+    TIDE_CHECK(!tide_pack_texture_of(tide_pack_find("Game.frames", TIDE_PACK_LIST)).image.version);
     TIDE_CHECK(tide_pack_find("Game.hero", TIDE_PACK_GRID) == NULL);
 
     int32_t width, height;
@@ -478,12 +459,11 @@ TIDE_TEST(pack_textures_are_drawn_where_the_pack_has_them)
     const uint8_t *pixels = pixels_of(hero, &width, &height, &version);
     TIDE_REQUIRE(pixels != NULL);
     TIDE_CHECK(width == 6 && height == 4 && memcmp(pixels, first, sizeof first) == 0);
-    TIDE_CHECK(version == version_of("hero.png")); // What's in it: the file's hash
+    TIDE_CHECK(version == version_of("hero.png"));
     tide_texture image;
-    TIDE_CHECK(!tide_pack_texture_find(version, &image)); // ...which names no declaration
+    TIDE_CHECK(!tide_pack_texture_find(version, &image));
     TIDE_CHECK(!tide_pack_texture_find(0, &image));
 
-    // The draw list draws with them where they are: no copy of its own
     static tide_draw_list draw;
     tide_draw_reset(&draw);
     const uint32_t slot = tide_draw_texture_source(&draw, hero);
@@ -494,7 +474,6 @@ TIDE_TEST(pack_textures_are_drawn_where_the_pack_has_them)
     TIDE_CHECK(tide_draw_texture_source(&draw, hero) == slot && draw.texture_count == 1);
     TIDE_CHECK(tide_draw_texture_source(&draw, none) == 0);
 
-    // A list of them: Textures side by side, which loading lays out, each named by its place
     const tide_list frames = {tide_pack_handle(tide_pack_find("Game.frames", TIDE_PACK_LIST))};
     TIDE_CHECK(tide_pack_holds(frames.at) && tide_list_count(frames) == 3);
     const tide_texture_ref *frame0 = tide_list_at(frames, 0, sizeof(tide_texture_ref));
@@ -502,19 +481,17 @@ TIDE_TEST(pack_textures_are_drawn_where_the_pack_has_them)
     const tide_texture_ref *frame2 = tide_list_at(frames, 2, sizeof(tide_texture_ref));
     TIDE_REQUIRE(frame0 && frame1 && frame2);
     TIDE_CHECK(frame0->image.version && frame0->image.version != hero.image.version && frame0->image.version != frame2->image.version);
-    TIDE_CHECK(pixels_of(*frame0, NULL, NULL, NULL) == pixels && pixels_of(*frame2, NULL, NULL, NULL) == pixels); // One image
+    TIDE_CHECK(pixels_of(*frame0, NULL, NULL, NULL) == pixels && pixels_of(*frame2, NULL, NULL, NULL) == pixels);
     TIDE_CHECK(frame1->image.width == 3 && frame1->image.height == 5 && !frame1->image.pixels);
     TIDE_CHECK(tide_list_at(frames, 3, sizeof(tide_texture_ref)) == NULL);
     const tide_texture_ref other = *frame1;
-    const tide_texture_ref first_frame = *frame0; // Kept: the list itself goes with its pack
-    // Two names of one file are one texture of the list's, and another file is another
+    const tide_texture_ref first_frame = *frame0;
     TIDE_CHECK(tide_draw_texture_source(&draw, *frame0) == slot && tide_draw_texture_source(&draw, *frame2) == slot);
     const uint32_t other_slot = tide_draw_texture_source(&draw, other);
     TIDE_REQUIRE(other_slot != 0 && other_slot != slot);
     TIDE_CHECK(draw.textures[other_slot - 1].version == version_of("other.png"));
     TIDE_CHECK(memcmp(draw.textures[other_slot - 1].pixels, second, sizeof second) == 0);
 
-    // A map of them, found as the game's lookups find keys, each named by its key
     const tide_map icons = tide_pack_map_of(tide_pack_find("Game.icons", TIDE_PACK_TEXTURES));
     TIDE_CHECK(tide_map_count(icons) == 2 && tide_map_entries(icons) == 2 && icons.last_order == 2);
     int64_t order = 0;
@@ -538,7 +515,6 @@ TIDE_TEST(pack_textures_are_drawn_where_the_pack_has_them)
     TIDE_CHECK(tide_map_find(icons, &text_texture_kind, &key_c) == -1);
     TIDE_CHECK(draw.texture_count == 2);
 
-    // Many of them: each found by its name
     const tide_list small = {tide_pack_handle(tide_pack_find("Game.small", TIDE_PACK_LIST))};
     TIDE_CHECK(tide_list_count(small) == MANY);
     bool all = true;
@@ -549,7 +525,6 @@ TIDE_TEST(pack_textures_are_drawn_where_the_pack_has_them)
     }
     TIDE_CHECK(all);
 
-    // A list added after another keeps drawing with the pack's own pixels
     static tide_draw_list over;
     tide_draw_reset(&over);
     const uint32_t mark = tide_scratch_mark();
@@ -567,7 +542,6 @@ TIDE_TEST(pack_textures_are_drawn_where_the_pack_has_them)
     TIDE_CHECK(under.textures[appended - 1].space == TIDE_PIXELS_PACK && under.textures[appended - 1].capacity == 0);
     TIDE_CHECK(under.textures[appended - 1].pixels == pixels_of(other, NULL, NULL, NULL));
 
-    // Frames that draw without them let them go, and free nothing of the pack's
     tide_draw_reset(&draw);
     tide_draw_reset(&draw);
     TIDE_CHECK(draw.texture_count == 0);
@@ -576,13 +550,11 @@ TIDE_TEST(pack_textures_are_drawn_where_the_pack_has_them)
     tide_draw_free(&over);
     tide_draw_free(&under);
 
-    // With the pack gone, a Texture kept from it is no texture, as the default one is
     tide_pack_unload();
     TIDE_CHECK(tide_draw_texture_source(&draw, hero) == 0 && draw.texture_count == 0);
     TIDE_CHECK(pixels_of(hero, NULL, NULL, NULL) == NULL);
     free(bytes);
 
-    // The pack again, with the image elsewhere in it: the Texture kept from before names it still
     bytes = build_textures(&size, true, 1);
     TIDE_REQUIRE(tide_pack_load(bytes, size));
     const tide_texture_ref again = tide_pack_texture_of(tide_pack_find("Game.hero", TIDE_PACK_TEXTURE));
@@ -597,8 +569,6 @@ TIDE_TEST(pack_textures_are_drawn_where_the_pack_has_them)
     TIDE_CHECK(draw.textures[found_again - 1].version == version);
     free(bytes);
 
-    // ...and with the file edited, as tide run packs again when one is saved: the Texture kept from before is
-    // the declaration's image as it is now, and to the list it's another texture
     bytes = build_textures(&size, false, 2);
     TIDE_REQUIRE(tide_pack_load(bytes, size));
     const tide_texture_ref edited = tide_pack_texture_of(tide_pack_find("Game.hero", TIDE_PACK_TEXTURE));
@@ -610,11 +580,9 @@ TIDE_TEST(pack_textures_are_drawn_where_the_pack_has_them)
     TIDE_CHECK(memcmp(draw.textures[edited_slot - 1].pixels, first, sizeof first) == 0);
     TIDE_CHECK(draw.textures[edited_slot - 1].version == version_of("hero-edited.png"));
     TIDE_CHECK(draw.textures[edited_slot - 1].version != version);
-    // One of a list is its place's image as it is now
     TIDE_CHECK(tide_draw_texture_source(&draw, first_frame) == edited_slot);
     free(bytes);
 
-    // A pack with no such declaration: no texture
     tide_pack_builder b = {0};
     bytes = tide_pack_end(&b, &size);
     TIDE_REQUIRE(tide_pack_load(bytes, size));
@@ -627,8 +595,6 @@ TIDE_TEST(pack_textures_are_drawn_where_the_pack_has_them)
     free(bytes);
 }
 
-// A pack whose texture blocks aren't whole reads as the default Texture, and
-// its lists of them as far as they're whole: a file is only bytes.
 TIDE_TEST(pack_textures_cut_short_are_none)
 {
     tide_pack_builder b = {0};
@@ -644,7 +610,6 @@ TIDE_TEST(pack_textures_cut_short_are_none)
     tide_pack_header header;
     memcpy(&header, bytes, sizeof header);
 
-    // Its size says more pixels than the region has
     const int32_t huge[2] = {30000, 30000};
     memcpy(bytes + header.region_at + at + sizeof(tide_block), huge, sizeof huge);
     TIDE_REQUIRE(tide_pack_load(bytes, size));
@@ -654,7 +619,6 @@ TIDE_TEST(pack_textures_cut_short_are_none)
     const tide_texture_ref *one = tide_list_at(list, 1, sizeof(tide_texture_ref));
     TIDE_CHECK(one && !one->image.version && !one->image.width);
 
-    // ...and a size under 1
     const int32_t flat[2] = {0, 2};
     memcpy(bytes + header.region_at + at + sizeof(tide_block), flat, sizeof flat);
     TIDE_REQUIRE(tide_pack_load(bytes, size));
@@ -691,7 +655,6 @@ static uint8_t *build_cubes(size_t *size, const bool lead, const int side, const
     tide_pack_name(&b, "Game.sky", TIDE_PACK_CUBEMAP, tide_pack_list(&b, faces, TIDE_CUBE_FACES), TIDE_CUBE_FACES, (uint32_t)side);
     tide_pack_name(&b, "Game.skyAgain", TIDE_PACK_CUBEMAP, tide_pack_list(&b, faces, TIDE_CUBE_FACES), TIDE_CUBE_FACES, (uint32_t)side);
     tide_pack_name(&b, "Game.up", TIDE_PACK_TEXTURE, faces[2], 0, 0);
-    // One with a face too few
     tide_pack_name(&b, "Game.five", TIDE_PACK_CUBEMAP, tide_pack_list(&b, faces, TIDE_CUBE_FACES - 1), TIDE_CUBE_FACES - 1, (uint32_t)side);
     return tide_pack_end(&b, size);
 }
@@ -702,14 +665,12 @@ TIDE_TEST(pack_cubemaps_are_six_images_named_as_one)
     uint8_t *bytes = build_cubes(&size, false, 4, 4, 1);
     TIDE_REQUIRE(tide_pack_load(bytes, size));
 
-    // A Cubemap holds no pixels and no target: it names its declaration's cube, which the pack has
     const tide_cubemap_ref sky = tide_pack_cubemap_of(tide_pack_find("Game.sky", TIDE_PACK_CUBEMAP));
     TIDE_REQUIRE(sky.named != 0 && sky.target.id == 0);
     TIDE_CHECK(tide_pack_cubemap_of(NULL).named == 0);
-    TIDE_CHECK(tide_pack_cubemap_of(tide_pack_find("Game.up", TIDE_PACK_TEXTURE)).named == 0); // Another kind's entry
+    TIDE_CHECK(tide_pack_cubemap_of(tide_pack_find("Game.up", TIDE_PACK_TEXTURE)).named == 0);
     TIDE_CHECK(tide_pack_find("Game.sky", TIDE_PACK_TEXTURE) == NULL && tide_pack_find("Game.sky", TIDE_PACK_LIST) == NULL);
 
-    // Its six faces, in order, where the pack has them: 4 bytes a pixel, rows from the top
     int32_t side = 0;
     uint64_t version = 0;
     const uint8_t *const *faces = NULL;
@@ -719,8 +680,6 @@ TIDE_TEST(pack_cubemaps_are_six_images_named_as_one)
         image_of(wanted, 4, 4, face == 0 ? 1 : 10 * face);
         TIDE_CHECK(memcmp(faces[face], wanted, sizeof wanted) == 0);
     }
-    // A second declaration of the same six files is another name of the same images, and one of
-    // the files as a Texture is that face's pixels: each file is in the pack once
     const tide_cubemap_ref again = tide_pack_cubemap_of(tide_pack_find("Game.skyAgain", TIDE_PACK_CUBEMAP));
     int32_t side_again = 0;
     uint64_t version_again = 0;
@@ -730,13 +689,11 @@ TIDE_TEST(pack_cubemaps_are_six_images_named_as_one)
     TIDE_CHECK(version_again == version && faces_again != faces && faces_again[0] == faces[0] && faces_again[5] == faces[5]);
     const tide_texture_ref up = tide_pack_texture_of(tide_pack_find("Game.up", TIDE_PACK_TEXTURE));
     TIDE_CHECK(pixels_of(up, NULL, NULL, NULL) == faces[2]);
-    // No name, a name the pack has no cube under, and a cube of five faces are no cube
     TIDE_CHECK(!tide_pack_cubemap_find(0, &side_again, &version_again, &faces_again));
     TIDE_CHECK(!tide_pack_cubemap_find(version, &side_again, &version_again, &faces_again));
     const tide_cubemap_ref five = tide_pack_cubemap_of(tide_pack_find("Game.five", TIDE_PACK_CUBEMAP));
     TIDE_CHECK(five.named != 0 && !tide_pack_cubemap_find(five.named, &side_again, &version_again, &faces_again));
 
-    // The draw list reads it where it is: its texture points at the pack's six, told by what's in them
     static tide_draw_list draw;
     tide_draw_reset(&draw);
     const uint32_t slot = tide_draw_cube_source(&draw, sky);
@@ -745,11 +702,9 @@ TIDE_TEST(pack_cubemaps_are_six_images_named_as_one)
     TIDE_CHECK(t->space == TIDE_PIXELS_PACK_CUBE && t->width == 4 && t->height == 4 && t->version == version && t->id == version);
     TIDE_CHECK((const uint8_t *const *)(uintptr_t)t->pixels == faces && t->capacity == 0);
     TIDE_CHECK(tide_draw_cube_source(&draw, sky) == slot && draw.texture_count == 1);
-    TIDE_CHECK(tide_draw_cube_source(&draw, again) == slot); // Two names of one cube are one texture
+    TIDE_CHECK(tide_draw_cube_source(&draw, again) == slot);
     TIDE_CHECK(tide_draw_cube_source(&draw, five) == 0 && tide_draw_cube_source(&draw, (tide_cubemap_ref){0}) == 0);
-    // Its faces are no targets, and it's no texture of two dimensions
     TIDE_CHECK(tide_cubemap_face(sky, 0).id == TIDE_RENDER_INVALID);
-    // Another list takes it over as it is, and frames that drop it free nothing of the pack's
     static tide_draw_list other;
     tide_draw_reset(&other);
     tide_draw_append(&other, &draw);
@@ -758,8 +713,6 @@ TIDE_TEST(pack_cubemaps_are_six_images_named_as_one)
     tide_draw_reset(&draw);
     TIDE_CHECK(memcmp(faces[1], (const uint8_t[4]){10, 17, 24, 31}, 4) == 0);
 
-    // Loaded again with everything elsewhere, and with the first face's file edited: the same name
-    // is the cube as it is now, another version, and so another texture of a list's
     free(bytes);
     bytes = build_cubes(&size, true, 4, 4, 2);
     TIDE_REQUIRE(tide_pack_load(bytes, size));
@@ -774,7 +727,6 @@ TIDE_TEST(pack_cubemaps_are_six_images_named_as_one)
     TIDE_REQUIRE(next != 0);
     TIDE_CHECK(draw.textures[next - 1].version == edited && (const uint8_t *const *)(uintptr_t)draw.textures[next - 1].pixels == faces);
 
-    // Faces that aren't one size are no cube: tidec refuses them, and a pack from elsewhere draws nothing
     free(bytes);
     bytes = build_cubes(&size, false, 4, 2, 1);
     TIDE_REQUIRE(tide_pack_load(bytes, size));
@@ -782,7 +734,6 @@ TIDE_TEST(pack_cubemaps_are_six_images_named_as_one)
     tide_draw_reset(&draw);
     TIDE_CHECK(tide_draw_cube_source(&draw, sky) == 0);
 
-    // The pack gone, so is the cube
     tide_pack_unload();
     TIDE_CHECK(!tide_pack_cubemap_find(sky.named, &side, &edited, &faces) && tide_draw_cube_source(&draw, sky) == 0);
     tide_draw_free(&draw);
@@ -800,7 +751,6 @@ typedef struct corner {
     float glow; // No file fills it: the game's default, given as the pack is loaded
 } corner;
 
-// A map from text to meshes, as generated code describes one.
 typedef struct prop_entry {
     int64_t live;
     tide_text key;
@@ -834,7 +784,7 @@ static uint8_t *build_meshes(size_t *size, const bool lead, const float height)
     hash_of(named, h);
     tide_pack_mesh(&b, h, tree, sizeof(corner), 4, tree_faces, 6, tree_blocks);
     uint32_t again[2];
-    tide_pack_mesh(&b, h, tree, sizeof(corner), 4, tree_faces, 6, again); // The same file, laid out the same: the same blocks
+    tide_pack_mesh(&b, h, tree, sizeof(corner), 4, tree_faces, 6, again);
     TIDE_CHECK(again[0] == tree_blocks[0] && again[1] == tree_blocks[1]);
     hash_of("rock.glb", h);
     tide_pack_mesh(&b, h, rock, sizeof(corner), 3, rock_faces, 3, rock_blocks);
@@ -857,16 +807,11 @@ static uint8_t *build_meshes(size_t *size, const bool lead, const float height)
     return tide_pack_end(&b, size);
 }
 
-// A mesh in the pack is two lists, which what reads a world's lists reads;
-// a glob's are a list and a map of those. Each list says what's in it, so a
-// draw tells a mesh by its file with no vertex read, and keeps it through a
-// pack loaded again with the same file in it.
 TIDE_TEST(pack_meshes_are_two_lists_told_by_whats_in_them)
 {
     size_t size;
     uint8_t *bytes = build_meshes(&size, false, 1.0f);
     TIDE_REQUIRE(tide_pack_load(bytes, size));
-    // By its vertices' layout: a build whose vertex struct is another finds none
     TIDE_CHECK(tide_pack_find_mesh("Game.tree", TIDE_PACK_MESH, CORNER_LAYOUT + 1u) == NULL);
     const tide_pack_entry *e = tide_pack_find_mesh("Game.tree", TIDE_PACK_MESH, CORNER_LAYOUT);
     TIDE_REQUIRE(e != NULL);
@@ -878,13 +823,12 @@ TIDE_TEST(pack_meshes_are_two_lists_told_by_whats_in_them)
     for (int32_t i = 0; i < 6; i++) TIDE_CHECK(*(const uint32_t *)tide_list_at(tree.indices, i, sizeof(uint32_t)) == tree_faces[i]);
     TIDE_CHECK(tide_list_at(tree.vertices, 4, sizeof(corner)) == NULL);
 
-    // A list of them, in order, and a map by their paths
     const tide_list props = {tide_pack_handle(tide_pack_find_mesh("Game.props", TIDE_PACK_MESH_LIST, CORNER_LAYOUT))};
     TIDE_REQUIRE(tide_list_count(props) == 2);
     const tide_mesh_lists *rock = tide_list_at(props, 0, sizeof(tide_mesh_lists));
     const tide_mesh_lists *second = tide_list_at(props, 1, sizeof(tide_mesh_lists));
     TIDE_CHECK(tide_list_count(rock->vertices) == 3 && tide_list_count(rock->indices) == 3);
-    TIDE_CHECK(second->vertices.at == tree.vertices.at && second->indices.at == tree.indices.at); // One file, in the pack once
+    TIDE_CHECK(second->vertices.at == tree.vertices.at && second->indices.at == tree.indices.at);
     const tide_map named = tide_pack_mesh_map_of(tide_pack_find_mesh("Game.named", TIDE_PACK_MESHES, CORNER_LAYOUT));
     TIDE_REQUIRE(tide_map_count(named) == 2 && tide_map_entries(named) == 2 && named.last_order == 2);
     int64_t order = 0;
@@ -899,7 +843,6 @@ TIDE_TEST(pack_meshes_are_two_lists_told_by_whats_in_them)
     TIDE_CHECK(entry->value.vertices.at == tree.vertices.at);
     TIDE_CHECK(!tide_pack_mesh_map_of(NULL).entries.at);
 
-    // What's in each list, by its block: no other list of the pack says, and none says it of another element
     uint64_t vertices = 0, indices = 0, other = 0;
     TIDE_CHECK(tide_pack_list_version(tree.vertices, sizeof(corner), &vertices) && tide_pack_list_version(tree.indices, 4u, &indices));
     TIDE_CHECK(vertices && indices && vertices != indices);
@@ -907,24 +850,22 @@ TIDE_TEST(pack_meshes_are_two_lists_told_by_whats_in_them)
     TIDE_CHECK(!tide_pack_list_version((tide_list){tide_pack_handle(tide_pack_find("Game.table", TIDE_PACK_BYTES))}, 1u, &other));
     TIDE_CHECK(!tide_pack_list_version(props, sizeof(tide_mesh_lists), &other) && !tide_pack_list_version((tide_list){0}, 4u, &other));
 
-    // The fields no file fills: each mesh of an entry, to write, once
     uint32_t count = 0;
     corner *open = tide_pack_mesh_open(e, 0, sizeof(corner), &count);
     TIDE_REQUIRE(open && count == 4);
     for (uint32_t i = 0; i < count; i++) open[i].glow = 0.5f;
     TIDE_CHECK(((const corner *)tide_list_at(tree.vertices, 3, sizeof(corner)))->glow == 0.5f);
     TIDE_CHECK(tide_pack_mesh_open(e, 1, sizeof(corner), &count) == NULL && count == 0);
-    TIDE_CHECK(tide_pack_mesh_open(e, 0, 12u, &count) != NULL && count == 0); // Not vertices of that size: none to write
+    TIDE_CHECK(tide_pack_mesh_open(e, 0, 12u, &count) != NULL && count == 0);
     const tide_pack_entry *listed = tide_pack_find("Game.props", TIDE_PACK_MESH_LIST), *mapped = tide_pack_find("Game.named", TIDE_PACK_MESHES);
     TIDE_CHECK(tide_pack_mesh_open(listed, 0, sizeof(corner), &count) && count == 3);
     TIDE_CHECK(tide_pack_mesh_open(listed, 1, sizeof(corner), &count) == (void *)open && count == 4);
     TIDE_CHECK(tide_pack_mesh_open(listed, 2, sizeof(corner), &count) == NULL);
     TIDE_CHECK(tide_pack_mesh_open(mapped, 1, sizeof(corner), &count) == (void *)open && tide_pack_mesh_open(mapped, 2, sizeof(corner), &count) == NULL);
     TIDE_CHECK(tide_pack_mesh_open(NULL, 0, sizeof(corner), &count) == NULL);
-    const tide_pack_entry elsewhere = *e; // Not an entry of the loaded pack's
+    const tide_pack_entry elsewhere = *e;
     TIDE_CHECK(tide_pack_mesh_open(&elsewhere, 0, sizeof(corner), &count) == NULL);
 
-    // Drawn: one mesh in the list however often, told by what its file had
     static tide_draw_list draw;
     const tide_mesh_lists plain = tide_pack_mesh_of(tide_pack_find("Game.plain", TIDE_PACK_MESH), sizeof(tide_vertex3));
     tide_draw_reset(&draw);
@@ -933,7 +874,6 @@ TIDE_TEST(pack_meshes_are_two_lists_told_by_whats_in_them)
     TIDE_REQUIRE(draw.mesh_count == 1 && draw.meshes[0].vertex_count == 3 && draw.meshes[0].index_count == 3);
     const uint64_t drawn = draw.meshes[0].version;
 
-    // The pack again, everything elsewhere in it: the same mesh to the list, which has it
     free(bytes);
     bytes = build_meshes(&size, true, 1.0f);
     TIDE_REQUIRE(tide_pack_load(bytes, size));
@@ -942,7 +882,6 @@ TIDE_TEST(pack_meshes_are_two_lists_told_by_whats_in_them)
     tide_draw_reset(&draw);
     tide_draw_mesh3_lists(&draw, moved.vertices, moved.indices, tide_identity_f4x4());
     TIDE_CHECK(draw.mesh_count == 1 && draw.meshes[0].version == drawn);
-    // ...and with a file edited, that mesh is another
     uint64_t before = 0, after = 0;
     const tide_mesh_lists same = tide_pack_mesh_of(tide_pack_find("Game.tree", TIDE_PACK_MESH), sizeof(corner));
     TIDE_CHECK(tide_pack_list_version(same.vertices, sizeof(corner), &before) && before == vertices);
@@ -956,8 +895,6 @@ TIDE_TEST(pack_meshes_are_two_lists_told_by_whats_in_them)
     free(bytes);
 }
 
-// A pack whose mesh blocks aren't whole reads as empty meshes, alone and in
-// a list or a map: a file is only bytes, and nothing reads past them.
 TIDE_TEST(pack_meshes_cut_short_are_empty)
 {
     size_t size;
@@ -968,7 +905,6 @@ TIDE_TEST(pack_meshes_cut_short_are_empty)
     tide_block had;
     memcpy(&had, region + tree_blocks[0], sizeof had);
 
-    // More vertices said than the block has
     tide_block wrong = had;
     wrong.a = 1000000u;
     memcpy(region + tree_blocks[0], &wrong, sizeof wrong);
@@ -977,21 +913,19 @@ TIDE_TEST(pack_meshes_cut_short_are_empty)
     const tide_list props = {tide_pack_handle(tide_pack_find("Game.props", TIDE_PACK_MESH_LIST))};
     TIDE_REQUIRE(tide_list_count(props) == 2);
     const tide_mesh_lists *rock = tide_list_at(props, 0, sizeof(tide_mesh_lists)), *tree = tide_list_at(props, 1, sizeof(tide_mesh_lists));
-    TIDE_CHECK(tide_list_count(rock->vertices) == 3 && !tree->vertices.at && !tree->indices.at); // The one beside it is whole
+    TIDE_CHECK(tide_list_count(rock->vertices) == 3 && !tree->vertices.at && !tree->indices.at);
     const tide_map named = tide_pack_mesh_map_of(tide_pack_find("Game.named", TIDE_PACK_MESHES));
     const prop_entry *entry = tide_map_entry(named, 1, &text_mesh_kind);
     TIDE_CHECK(tide_map_count(named) == 2 && !entry->value.vertices.at);
     uint32_t count = 7;
     TIDE_CHECK(tide_pack_mesh_open(tide_pack_find("Game.tree", TIDE_PACK_MESH), 0, sizeof(corner), &count) != NULL && count == 0);
 
-    // What says what's in it, said to be past the region's end
     wrong = had;
     wrong.next = header.region_size;
     memcpy(region + tree_blocks[0], &wrong, sizeof wrong);
     TIDE_REQUIRE(tide_pack_load(bytes, size));
     TIDE_CHECK(!tide_pack_mesh_of(tide_pack_find("Game.tree", TIDE_PACK_MESH), sizeof(corner)).vertices.at);
 
-    // Indices that aren't ints
     memcpy(region + tree_blocks[0], &had, sizeof had);
     tide_block faces;
     memcpy(&faces, region + tree_blocks[1], sizeof faces);
@@ -1000,7 +934,6 @@ TIDE_TEST(pack_meshes_cut_short_are_empty)
     TIDE_REQUIRE(tide_pack_load(bytes, size));
     TIDE_CHECK(!tide_pack_mesh_of(tide_pack_find("Game.tree", TIDE_PACK_MESH), sizeof(corner)).vertices.at);
 
-    // An entry whose indices are no block of the region's
     const uint32_t four = 4u;
     memcpy(region + tree_blocks[1] + faces.next + sizeof(uint64_t), &four, sizeof four);
     tide_pack_entry *entries = (tide_pack_entry *)(void *)(bytes + sizeof header);
@@ -1009,7 +942,6 @@ TIDE_TEST(pack_meshes_cut_short_are_empty)
     }
     TIDE_REQUIRE(tide_pack_load(bytes, size));
     TIDE_CHECK(!tide_pack_mesh_of(tide_pack_find("Game.tree", TIDE_PACK_MESH), sizeof(corner)).vertices.at);
-    // ...and the list, whose meshes are whole, reads as it did
     const tide_list whole = {tide_pack_handle(tide_pack_find("Game.props", TIDE_PACK_MESH_LIST))};
     const tide_mesh_lists *still = tide_list_at(whole, 1, sizeof(tide_mesh_lists));
     TIDE_CHECK(tide_list_count(whole) == 2 && tide_list_count(still->vertices) == 4 && tide_list_count(still->indices) == 6);
@@ -1300,7 +1232,6 @@ TIDE_TEST(pack_skinned_proof_identities_follow_loaded_blocks)
     uint64_t identity, version, same, other;
     TIDE_REQUIRE(tide_pack_skinned_proof(model.data, &identity, &version));
     TIDE_CHECK(identity != 0u);
-    // No channels: the stronger sampling fact is vacuously true.
     bool nonnegative = false;
     TIDE_REQUIRE(tide_pack_skinned_sample_proof(model.data, &nonnegative));
     TIDE_CHECK(nonnegative && tide_pack_skinned_sample_proof(model.data, NULL));
@@ -1474,7 +1405,6 @@ TIDE_TEST(pack_skinned_spoiled_models_and_counts_clear_all_handles)
     tide_pack_header header;
     memcpy(&header, bytes, sizeof header);
     uint8_t *region = bytes + header.region_at;
-    // Invalid node parent: a geometry block alone is insufficient to load.
     const uint32_t parent = 0u;
     memcpy(region + skinned_blocks[0][0] + sizeof(tide_block) + 120u, &parent, sizeof parent);
     TIDE_REQUIRE(tide_pack_load(bytes, size));
@@ -1571,7 +1501,6 @@ TIDE_TEST(pack_skinned_content_preflight_keeps_the_loaded_pack)
     uint8_t *copy = malloc(size);
     TIDE_REQUIRE(copy != NULL);
     memcpy(copy, bytes, size);
-    // Still valid portable data, but authored for another build.
     skin_float(copy + header.region_at + skinned_blocks[0][0] + sizeof(tide_block), 244u, 2.0f);
     TIDE_CHECK(!tide_pack_skinned_content(copy, size, "Game.actor", TIDE_PACK_SKINNED, CORNER_LAYOUT, hashes, 1));
     const tide_skinned_lists kept = tide_pack_skinned_of(tide_pack_find("Game.actor", TIDE_PACK_SKINNED), sizeof(corner));
@@ -1617,10 +1546,6 @@ TIDE_TEST(pack_skinned_content_preflight_keeps_the_loaded_pack)
     free(bytes);
 }
 
-// A mesh's levels of detail are a block the mesh's indices name: simpler
-// lists of triangles over its own vertices, with how far off each is and the
-// ball the mesh is in. The lists code reads are the full mesh's either way,
-// and the same file without levels is another mesh.
 static uint32_t leveled_blocks[2], unleveled_blocks[2];
 
 static uint8_t *build_levels(size_t *size, const bool lead)
@@ -1643,7 +1568,6 @@ static uint8_t *build_levels(size_t *size, const bool lead)
     tide_pack_mesh_levels(&b, h, tree, sizeof(corner), 4, whole, 12, NULL, unleveled_blocks);
     tide_pack_name(&b, "Game.tree", TIDE_PACK_MESH, leveled_blocks[0], leveled_blocks[1], CORNER_LAYOUT);
     tide_pack_name(&b, "Game.plain", TIDE_PACK_MESH, unleveled_blocks[0], unleveled_blocks[1], CORNER_LAYOUT);
-    // The same as the built-in vertex, which a draw takes with no shader
     const tide_vertex3 flat[4] = {{.position = {0, 0, 0}}, {.position = {1, 0, 0}}, {.position = {1, 1, 0}}, {.position = {0, 1, 0}}};
     uint32_t flat_blocks[2];
     hash_of("flat.glb with levels", h);
@@ -1654,13 +1578,12 @@ static uint8_t *build_levels(size_t *size, const bool lead)
 
 TIDE_TEST(pack_meshes_have_levels_of_detail_beside_their_lists)
 {
-    for (int lead = 0; lead < 2; lead++) { // A pack whose first block is the levels', and one where it's elsewhere
+    for (int lead = 0; lead < 2; lead++) {
         size_t size;
         uint8_t *bytes = build_levels(&size, lead != 0);
         TIDE_REQUIRE(tide_pack_load(bytes, size));
         const tide_mesh_lists tree = tide_pack_mesh_of(tide_pack_find("Game.tree", TIDE_PACK_MESH), sizeof(corner));
         const tide_mesh_lists plain = tide_pack_mesh_of(tide_pack_find("Game.plain", TIDE_PACK_MESH), sizeof(corner));
-        // The lists are the full mesh's
         TIDE_REQUIRE(tide_list_count(tree.vertices) == 4 && tide_list_count(tree.indices) == 12 && tide_list_count(plain.indices) == 12);
         TIDE_CHECK(*(const uint32_t *)tide_list_at(tree.indices, 11, sizeof(uint32_t)) == 2u);
         TIDE_CHECK(tree.indices.at != plain.indices.at);
@@ -1671,11 +1594,9 @@ TIDE_TEST(pack_meshes_have_levels_of_detail_beside_their_lists)
         TIDE_CHECK(found.first[0] == 0 && found.indices[0] == 6 && found.first[1] == 6 && found.indices[1] == 3);
         TIDE_REQUIRE(found.index != NULL);
         TIDE_CHECK(found.index[0] == 0 && found.index[1] == 2 && found.index[8] == 1);
-        // The mesh with none, a mesh's vertices, and what's no list of the pack's have none
         tide_mesh_levels none = {.count = 9};
         TIDE_CHECK(!tide_pack_list_levels(plain.indices, &none) && none.count == 9);
         TIDE_CHECK(!tide_pack_list_levels(tree.vertices, &none) && !tide_pack_list_levels((tide_list){0}, &none));
-        // A draw of its lists has them, and picks among them
         tide_draw_list d = {0};
         tide_draw_reset(&d);
         tide_draw_set_lod(&d, 2);
@@ -1691,9 +1612,6 @@ TIDE_TEST(pack_meshes_have_levels_of_detail_beside_their_lists)
     }
 }
 
-// What a pack says of its levels is read with care: a count that's too many,
-// a level past the indices, a block cut short, an error that's no number and
-// a place outside the region are all a mesh with no levels, which draws whole.
 TIDE_TEST(pack_levels_of_detail_spoiled_are_none)
 {
     size_t size;
@@ -1725,11 +1643,10 @@ TIDE_TEST(pack_levels_of_detail_spoiled_are_none)
         words[spoils[i].word] = spoils[i].value;
         TIDE_REQUIRE(tide_pack_load(bytes, size));
         const tide_mesh_lists tree = tide_pack_mesh_of(tide_pack_find("Game.tree", TIDE_PACK_MESH), sizeof(corner));
-        TIDE_CHECK(tide_list_count(tree.indices) == 12); // The mesh is whole whatever its levels say
+        TIDE_CHECK(tide_list_count(tree.indices) == 12);
         TIDE_CHECK(!tide_pack_list_levels(tree.indices, &found));
         memcpy(words, kept, sizeof kept);
     }
-    // Named somewhere it isn't: past the region, and where no word starts
     const uint32_t places[] = {header.region_size + 1u, header.region_size - 3u, named + 2u, UINT32_MAX};
     for (size_t i = 0; i < sizeof places / sizeof places[0]; i++) {
         memcpy(names, &places[i], sizeof named);

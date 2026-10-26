@@ -1,0 +1,3 @@
+// expect: functions can't return grids
+local worker Grid2<int> Build(Grid2<int> cells) { return cells; }
+scene Main;

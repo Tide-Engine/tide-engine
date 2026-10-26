@@ -39,7 +39,7 @@ Requires CMake 3.25+, Ninja and clang. The toolchain finds clang through `$LLVM_
 | Configure, build and test web debug | `cmake --workflow --preset web-debug` |
 | Run web tests | `ctest --preset web-debug` |
 
-`debug` has no optimization; `release` is optimized with debug information. `sanitize` enables ASan and UBSan on Linux/macOS. Web, MinGW, Android and packaging presets are in `CMakePresets.json`; read their notes before using them. Windows Node-based tests require Node 24.16 or newer (`notes/testing.md`).
+`debug` has no optimization; `release` is optimized with debug information. `sanitize` enables ASan and UBSan on Linux/macOS. Web, MinGW, Android and packaging presets are in `CMakePresets.json`; read their notes before using them. Use Node 24.22.1 or a newer 24.x patch for Node-based tooling and services (`notes/testing.md`); this includes the October 2026 security fixes and the Windows crash fix from 24.16.
 
 Desktop configuration downloads pinned GLFW. Linux desktop builds need X11 development headers. `-DTIDE_PLATFORM=OFF` omits the platform layer and targets requiring it, useful offline. Native builds copy `tidels` to `build/tools/tidels` for the editors. Build integration and layout details are in `notes/repository.md` and `notes/tide-programs.md`.
 
@@ -51,15 +51,14 @@ Warnings are errors. Fix warnings encountered during validation, including ones 
 
 ### Testing and merging
 
-Test the change once locally before merging, according to scope:
+Test only what the change needs, once, before merging: the Build workflow runs every suite on every platform for each push to `dev` and catches the rest, and full local suites are slow (owner, 2026-10-26). Run the tests of what changed and of what depends on it (`ctest -R`, a test binary's name filter), on native and web only where the changed code runs on both; a full suite only for a change that reaches broadly (codegen every game goes through, the shared runtime, the build system). Don't repeat a run for wording, notes or a fix outside what it tested. A failure in CI after the push is fixed then, first.
 
 | Scope | Required validation |
 |---|---|
-| Compiler, engine, platform or build | Full native and web debug suites |
+| Compiler, engine, platform or build | The affected targets' tests, native and web where the code runs on both; full suites only for broad changes (above) |
 | Repository game, including a benchmark or prototype | Its targets and tests, native and web |
 | `docs/` only | `npm run build` in `docs/` |
 | `relay/` only | `node --test relay/relay.test.mjs relay/lobbies.test.mjs` |
-| `builds/` only | `node --test builds/builds.test.mjs`; also `builds/page.test.mjs` with a web-capable tide when the builder or what it runs changes |
 | `tools/` only | That tool's tests |
 | Unbuilt text, including this guide and notes | No build or test suite; check references and the diff |
 
@@ -72,7 +71,15 @@ Merge procedure: fetch, merge `origin/dev` into the task branch, then push `HEAD
 - Same-file/subsystem overlap or conflicts require tests for that overlap on native/web as applicable. Run both full suites again only for overlap that broad.
 - One round: if `dev` moves again with unrelated work, merge and push without restarting validation.
 
-CI runs only when manually requested. Pushes and pull requests trigger neither Build nor Docs. The requested Build workflow tests platforms, builds the docs site, and on `dev` deploys docs and publishes a nightly after success. Do not dispatch it automatically. Report when changes need validation this machine cannot run. When asked to run CI, inspect its completed run and fix failures attributable to this work before anything else. See `notes/releases-and-ci.md`.
+### Other repositories
+
+The owner's prototype games are in `Tide-Engine/tide-prototypes` and the managed hosting and build services in `Tide-Engine/tide-services`, both private. Each follows this repo's `dev` with no pinned version and has its own guide, notes and `dev`; this repo never depends on them. A change spanning repos merges here first, then in the other.
+
+- Prototypes build as part of an engine checkout: configure with `-DTIDE_EXTERNAL_DIRS=<tide-prototypes checkout>` (or that environment variable, a path list). The Docs workflow builds them that way to stage the website's prototype pages and admin catalog (`docs/prototypes.js`).
+- Engine changes need no prototype or service validation unless the task names one. A task changing an interface they use (`tide_add_game`, `docs/static/prototypes/`, `relay/`, `tide deploy`/`tide publish`) also builds or tests that repository against the change and reports any breakage.
+- The split is described, with how to carry a branch made before it, in `notes/repository.md`.
+
+Build runs on every push to `dev` and `release` and on pull requests (the repository is public, so runs cost nothing). It tests every platform, builds the docs site, and after success on `dev` deploys docs and publishes a nightly; on `release` it publishes a stable release by tag alone, committing nothing back, so a stable release is a fast-forward `git push origin dev:release` that nobody waits for. Don't wait on a run after pushing, and don't dispatch extra runs unless asked. Report when changes need validation this machine cannot run. When asked about a run, inspect it and fix failures attributable to this work before anything else. See `notes/releases-and-ci.md`.
 
 ### Cross-platform determinism tests
 
@@ -104,7 +111,7 @@ Do not depend on C's unspecified argument evaluation order. Draw random inputs i
 
 Simulation never includes platform headers. Views read the world and draw without modifying simulation state. Device input enters through `Devices`. Keep generated game headers separate from system/GLFW headers because type names collide; hosts use `tide/platform.h`.
 
-`frag` and `vert` compile to GLSL for OpenGL/OpenGL ES/WebGL, WGSL for WebGPU, and SPIR-V for Vulkan, which tidec translates from the WGSL. Desktop and Android draw with Vulkan where the device has 1.3 (MoltenVK, which tide ships, on a Mac without a loader), OpenGL 3.3 and OpenGL ES 3 being the fallbacks. GPU results are visual only, never match state. Read `notes/rendering.md` before changing backend design.
+`frag` and `vert` compile to GLSL for OpenGL/OpenGL ES/WebGL, WGSL for WebGPU, and SPIR-V for Vulkan and HLSL for Unity, both of which tidec translates from the WGSL. Desktop and Android draw with Vulkan where the device has 1.3 (MoltenVK, which tide ships, on a Mac without a loader), OpenGL 3.3 and OpenGL ES 3 being the fallbacks. GPU results are visual only, never match state. Read `notes/rendering.md` before changing backend design.
 
 ## Networking
 
@@ -116,7 +123,7 @@ Simulation never includes platform headers. Views read the world and draw withou
 - Repair NaN/infinite input fields to their defaults before `Sanitize`. Math should avoid propagating invalid values: preserve forgiving clamp/min/max/normalize behavior in `tide/math.h`.
 - Hash and check the world **every tick, in every build**. Optimize its cost rather than making it periodic. Verified ticks have received required state and corrections; later ticks are predicted.
 - Visibility is decided dynamically by the server for entities and whole components, with ordinary state behind it; there is no field visibility. Hidden state is absent from the recipient's simulation. Put secrets in restricted components or scenes, not public match singletons or public payloads. Client verification hashes permitted logical values and repairs from an acknowledged authoritative baseline. Availability (Shown/Hidden) is distinct from actual lifetime (Spawned/Destroyed). Current transfer, prediction and migration limitations are in `notes/netcode.md` and `notes/language.md`.
-- Managed hosting runs one bounded WebAssembly instance per match, including game C. `extern` remains allowed inside the sandbox; match code and its C must build for web, and server builds may omit local code/views. Local artifact builds are the default; remote source builds remain deferred. GitHub sign-in, Stripe monthly subscriptions with included usage and opt-in prepaid extra usage, and Fly.io are selected. Monthly allowance expires; purchased credit carries forward. Contracts, validation and the remaining public-launch work are in `notes/managed-hosting.md`.
+- Managed hosting runs one bounded WebAssembly instance per match, including game C. `extern` remains allowed inside the sandbox; match code and its C must build for web, and server builds may omit local code/views. Local artifact builds are the default; remote source builds remain deferred. The service, its business decisions, contracts and remaining launch work are in `Tide-Engine/tide-services`.
 
 ## Modding
 
@@ -141,7 +148,9 @@ Given the same build and inputs, simulation results must be bit-identical across
 
 ## Packaging and releases
 
-Users install the `tide` command; see `README.md`. Versions follow conventional commits: `fix:` is a patch, `feat:` is a minor, and breaking changes (`feat!:`) are minor while versions start with 0. Avoid breaking changes where possible. `.releaserc.json` and `notes/releases-and-ci.md` describe release machinery.
+Tide is licensed `MIT OR Apache-2.0` (`LICENSE-MIT`, `LICENSE-APACHE`). Users install the `tide` command; see `README.md`.
+
+The CLI's usage data is anonymous and limited to the fields `docs/tools/telemetry.md` documents, from fixed sets or numbers in ranges: never paths, project or file names, code or message text. Development builds (`-dev` versions) and `TIDE_HIDDEN` runs send nothing. A new field is the owner's decision and updates that page, the CLI and the site's validation together (`notes/cli-and-packages.md`, Usage data). Versions follow conventional commits: `fix:` is a patch, `feat:` is a minor, and breaking changes (`feat!:`) are minor while versions start with 0. Avoid breaking changes where possible. `.releaserc.json` and `notes/releases-and-ci.md` describe release machinery.
 
 ## Notes index
 
@@ -149,7 +158,7 @@ Read the notes for every subsystem the task touches. Paths and former section re
 
 | Area / files | Notes |
 |---|---|
-| Repository layout, build navigation, legacy section redirects, guide maintenance | `notes/repository.md` |
+| Repository layout, other repositories and the split, build navigation, legacy section redirects, guide maintenance | `notes/repository.md` |
 | Windows/platform layer, GPU backends, fonts, renderer steps | `notes/rendering.md` |
 | Draw API, draw lists, primitives, camera/settings, instancing | `notes/drawing.md` |
 | `compiler/src/shader.c`, GPU declarations and shader fixtures | `notes/shaders.md` |
@@ -164,25 +173,23 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | MinGW/Android toolchains, APKs, signing, Android runner | `notes/android-and-mingw.md` |
 | `bench/`, harness and saved measurements | `notes/benchmarks.md` |
 | `cmake/Tide.cmake`, `run_tidec.cmake`, generated host API/header | `notes/tide-programs.md` |
-| Docs site, pages/examples, SEO, hosting and docs workflow | `notes/docs-site.md` |
+| Docs site, pages/examples, SEO, hosting and docs workflow, `examples/earth/` (the home page's planet) | `notes/docs-site.md` |
 | `examples/towers/`, `examples/sumo/` | `notes/physics-games.md` |
-| Prototype catalog and staging | `notes/private-prototypes.md` |
-| `prototypes/cracked/` | `notes/cracked.md` |
-| `prototypes/inside-out/` | `notes/inside-out.md` |
-| `prototypes/underfoot/` | `notes/underfoot.md` |
-| `prototypes/foldline/` | `notes/foldline.md` |
-| `prototypes/sunday-supper/` | `notes/sunday-supper.md` |
-| `prototypes/gravewake/` | `notes/gravewake.md` |
 | `compiler/cli/`, package resolution, built-in clang, package contents | `notes/cli-and-packages.md` |
 | `.github/`, installers, release/upgrade code and nightlies | `notes/releases-and-ci.md` |
 | `packages/box2d/` | `notes/box2d.md` |
+| `packages/render3d/`, default PBR, light components, shadows and HDR presentation | `notes/render3d.md` |
+| `packages/cornerculling/`, conservative CPU box occlusion and candidate caches | `notes/corner-culling.md` |
 | `packages/box3d/`, resident state | `notes/box3d.md` |
+| `packages/newton/`, experimental NVIDIA Newton articulated CPU physics | `notes/newton.md` |
 | `packages/rooms/` | `notes/rooms-package.md` |
 | `packages/lobby/`, the client of the relay's lobbies and its menu | `notes/lobby-package.md` |
 | `tide/network.h`, a game's own match network, `examples/network/`, `packages/test/network_players.h` | `notes/own-network.md` |
 | `packages/steam/`, the lobby package's slots on Steam, and its fake | `notes/lobby-steam-package.md` |
+| `packages/voice/`, Opus voice chat, local session data and host integration | `notes/voice-package.md` |
 | Reload/migration runtime, CLI serving and generated layouts | `notes/hot-reload.md` |
 | `compiler/lsp/`, `tools/` | `notes/editors.md` |
+| Native debuggers: `.tide` line mapping, natvis and LLDB views, editors' debug configurations, debugger tests | `notes/debugging.md` |
 | Temporary runtime maintenance, generated-C boundary, CPU skinning/pose contracts | `notes/runtime-ownership.md` |
 | Input devices, desktop/mobile/web input | `notes/input-devices.md` |
 | `extern`, `out List<T>`, C systems and rows/jobs ABI | `notes/c-interop.md` |
@@ -193,9 +200,10 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | Scheduler analysis, tick threads, parallel loops and temporary handles | `notes/schedule-and-threads.md` |
 | Session/net/delta runtime, inputs, commands, lead, migration and verification | `notes/netcode.md` |
 | Dedicated server builds, multiple matches, match IDs and authentication/admission | `notes/dedicated-servers.md` |
-| Managed WASM hosting, local-build deployment, simulation compatibility, recovery and prepaid billing | `notes/managed-hosting.md` |
+| Shards: one world split across servers, ghosts, handoff, the engine's orchestrator | `notes/sharding.md` |
+| Managed WASM hosting, local-build deployment, simulation compatibility, recovery and prepaid billing | `notes/managed-hosting.md` in `Tide-Engine/tide-services` |
 | Verified/local event handlers and generated listeners | `notes/verified-and-local-handlers.md` |
 | RTC, rooms, UDP/relay transport and peer tests | `notes/webrtc-and-rooms.md` |
 | Modding requirements, implementation status and withdrawn decisions | `notes/modding.md` |
-| `builds/`, `tide publish`, inactive build service | `notes/build-service.md` |
-| Relocated standalone mockup.games repository | `notes/mockup-games.md` |
+| `tide publish`, inactive build service | `notes/build-service.md` in `Tide-Engine/tide-services` |
+| `unity/`, `tide unity`, `tide/embed.h`, `tide/timeline.h`: Unity as an authoring/rendering front end, its time travel | `notes/unity.md` |

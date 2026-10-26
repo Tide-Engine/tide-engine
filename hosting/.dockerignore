@@ -1,8 +1,0 @@
-node_modules
-build
-.svelte-kit
-data
-*.test.mjs
-fixtures.mjs
-README.md
-*.log

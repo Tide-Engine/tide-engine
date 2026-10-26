@@ -1,0 +1,5 @@
+// expect: 'image' is [Raw], its pixels numbers and not colors to draw: it's no Texture to draw with or hand on
+local singleton Art { [Raw] Texture image; }
+scene Main { }
+int Width(Texture image) { return image.size.x; }
+view V(Art art) { _ = Width(art.image); }

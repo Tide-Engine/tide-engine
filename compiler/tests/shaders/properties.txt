@@ -1,0 +1,139 @@
+// Property on Corner: GLSL, vertex
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+};
+layout(location = 0) in vec2 tide_a0;
+layout(location = 1) in vec2 tide_a1;
+out vec2 tide_s1;
+struct tt_Corner {
+    vec2 m_position;
+    vec2 m_uv;
+};
+void main() {
+    tt_Corner tide_vertex = tt_Corner(tide_a0, tide_a1);
+    vec4 tide_place = vec4(tide_vertex.m_position, 0.0, 1.0);
+    gl_Position = tide_camera * tide_place;
+    tide_s1 = tide_vertex.m_uv;
+}
+
+// Property on Corner: GLSL, fragment
+layout(std140) uniform uniforms {
+    mat4 tide_camera;
+    vec4 tide_screen;
+    vec4 tide_tint;
+};
+in vec2 tide_s1;
+out vec4 tide_pixel;
+struct tt_Corner {
+    vec2 m_position;
+    vec2 m_uv;
+};
+struct tt_Gauge {
+    float m_stored;
+};
+void tf_Gauge_2m1(inout tt_Gauge tide_self, float t_value) {
+    tide_self.m_stored = (t_value * 0.5);
+}
+
+float tf_Gauge_2m0(tt_Gauge tide_self) {
+    return (tide_self.m_stored * 2.0);
+}
+
+float tf_Gauge_2m2(tt_Gauge tide_self) {
+    return (tf_Gauge_2m0(tide_self) + 1.0);
+}
+
+void ts_Property(tt_Corner t_vertex, inout vec4 t_color) {
+    tt_Gauge t_gauge = tt_Gauge(0.0);
+    tf_Gauge_2m1(t_gauge, t_vertex.m_uv.x);
+    tf_Gauge_2m1(t_gauge, (tf_Gauge_2m0(t_gauge) + 2.0));
+    float tide_property_was0 = tf_Gauge_2m0(t_gauge);
+    float tide_property_next0 = (tide_property_was0 + 1.0);
+    tf_Gauge_2m1(t_gauge, tide_property_next0);
+    float t_before = tide_property_was0;
+    float tide_property_was1 = tf_Gauge_2m0(t_gauge);
+    float tide_property_next1 = (tide_property_was1 + 1.0);
+    tf_Gauge_2m1(t_gauge, tide_property_next1);
+    float t_after = tide_property_next1;
+    t_color = vec4(tf_Gauge_2m0(t_gauge), tf_Gauge_2m2(t_gauge), t_before, t_after);
+}
+
+void main() {
+    vec4 tide_color = vec4(1.0, 1.0, 1.0, 1.0);
+    ts_Property(tt_Corner(vec2(0.0), tide_s1), tide_color);
+    tide_color = tide_color * tide_tint;
+    tide_color.rgb = tide_color.rgb * tide_color.a;
+    if (tide_screen.w > 0.0) tide_color.rgb = tide_color.rgb + (1.0 - tide_color.a);
+    tide_pixel = tide_color;
+}
+
+// Property on Corner: WGSL
+struct tide_uniforms {
+    tide_camera: mat4x4f,
+    tide_screen: vec4f,
+    tide_tint: vec4f,
+}
+@group(0) @binding(0) var<uniform> tide_block: tide_uniforms;
+var<private> tide_at: vec4f;
+var<private> tide_world: vec3f;
+struct tide_corner {
+    @builtin(position) tide_at: vec4f,
+    @location(0) tide_s1: vec2f,
+}
+struct tt_Corner {
+    m_position: vec2f,
+    m_uv: vec2f,
+}
+struct tt_Gauge {
+    m_stored: f32,
+}
+fn tf_Gauge_2m1(tide_self: ptr<function, tt_Gauge>, t_value: f32) {
+    (*tide_self).m_stored = (t_value * 0.5);
+}
+
+fn tf_Gauge_2m0(tide_self: tt_Gauge) -> f32 {
+    return (tide_self.m_stored * 2.0);
+}
+
+fn tf_Gauge_2m2(tide_self: tt_Gauge) -> f32 {
+    return (tf_Gauge_2m0(tide_self) + 1.0);
+}
+
+fn ts_Property(t_vertex: tt_Corner, t_color: ptr<function, vec4f>) {
+    var t_gauge: tt_Gauge = tt_Gauge(f32());
+    tf_Gauge_2m1(&t_gauge, t_vertex.m_uv.x);
+    tf_Gauge_2m1(&t_gauge, (tf_Gauge_2m0(t_gauge) + 2.0));
+    let tide_property_was0: f32 = tf_Gauge_2m0(t_gauge);
+    let tide_property_next0: f32 = (tide_property_was0 + 1.0);
+    tf_Gauge_2m1(&t_gauge, tide_property_next0);
+    var t_before: f32 = tide_property_was0;
+    let tide_property_was1: f32 = tf_Gauge_2m0(t_gauge);
+    let tide_property_next1: f32 = (tide_property_was1 + 1.0);
+    tf_Gauge_2m1(&t_gauge, tide_property_next1);
+    var t_after: f32 = tide_property_next1;
+    (*t_color) = vec4f(tf_Gauge_2m0(t_gauge), tf_Gauge_2m2(t_gauge), t_before, t_after);
+}
+
+@vertex fn vertex(@location(0) tide_a0: vec2f, @location(1) tide_a1: vec2f) -> tide_corner {
+    var tide_vertex: tt_Corner = tt_Corner(tide_a0, tide_a1);
+    let tide_place = vec4f(tide_vertex.m_position, 0.0, 1.0);
+    let tide_clip = tide_block.tide_camera * tide_place;
+    var out: tide_corner;
+    out.tide_at = vec4f(tide_clip.xy, (tide_clip.z + tide_clip.w) * 0.5, tide_clip.w);
+    out.tide_s1 = tide_vertex.m_uv;
+    return out;
+}
+@fragment fn fragment(in: tide_corner) -> @location(0) vec4f {
+    tide_at = in.tide_at;
+    var tide_color: vec4f = vec4f(1.0, 1.0, 1.0, 1.0);
+    ts_Property(tt_Corner(vec2f(), in.tide_s1), &tide_color);
+    tide_color = tide_color * tide_block.tide_tint;
+    tide_color = vec4f(tide_color.rgb * tide_color.a, tide_color.a);
+    if (tide_block.tide_screen.w > 0.0) {
+        tide_color = vec4f(tide_color.rgb + (1.0 - tide_color.a), tide_color.a);
+    }
+    return tide_color;
+}
+

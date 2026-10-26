@@ -1,0 +1,3 @@
+// expect: ',' between the map's key and value types
+using Bad = Map<int>;
+scene Main;

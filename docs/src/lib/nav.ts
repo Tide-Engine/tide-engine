@@ -28,12 +28,11 @@ export const sidebar: Group[] = [
             { text: 'Install', link: '/guide/install' },
             { text: 'Editor setup', link: '/tools/editors' },
             { text: 'Your first game', link: '/guide/first-game' },
+            { text: 'Using Tide with AI', link: '/guide/ai' },
+            { text: 'Quick reference', link: '/guide/ai-context' },
             { text: 'Playground', link: '/guide/playground' },
-            { text: 'Live examples', link: '/guide/examples' },
             { text: 'Samples', link: '/guide/samples' },
-            { text: 'Duel code tour', link: '/guide/duel' },
-            { text: 'Towers walkthrough', link: '/guide/towers' },
-            { text: 'Sumo walkthrough', link: '/guide/sumo' },
+            { text: 'Earth demo', link: '/guide/earth' },
         ],
     },
     {
@@ -74,11 +73,15 @@ export const sidebar: Group[] = [
         items: [
             { text: 'Overview', link: '/packages' },
             { text: 'Using and writing packages', link: '/packages/using-and-writing' },
-            { text: 'Box2D — 2D physics', link: '/packages/box2d' },
-            { text: 'Box3D — 3D physics', link: '/packages/box3d' },
-            { text: 'Rooms — Play, Host and Join', link: '/packages/rooms' },
-            { text: 'Lobby — lobbies and matchmaking', link: '/packages/lobby' },
+            { text: 'Render3D', link: '/packages/render3d' },
+            { text: 'Corner Culling', link: '/packages/cornerculling' },
+            { text: 'Box2D', link: '/packages/box2d' },
+            { text: 'Box3D', link: '/packages/box3d' },
+            { text: 'Newton', link: '/packages/newton' },
+            { text: 'Rooms', link: '/packages/rooms' },
+            { text: 'Lobby', link: '/packages/lobby' },
             { text: 'Steam', link: '/packages/steam' },
+            { text: 'Voice chat', link: '/packages/voice' },
         ],
     },
     {
@@ -86,6 +89,7 @@ export const sidebar: Group[] = [
         items: [
             { text: 'Matches', link: '/multiplayer/matches' },
             { text: 'Managed hosting', link: '/multiplayer/hosting' },
+            { text: 'Shards', link: '/multiplayer/shards' },
             { text: 'Your own network and service', link: '/multiplayer/own-network' },
             { text: 'Networking', link: '/multiplayer/networking' },
             { text: 'Determinism', link: '/multiplayer/determinism' },
@@ -109,7 +113,9 @@ export const sidebar: Group[] = [
         text: 'Tools',
         items: [
             { text: 'The tide command', link: '/tools/cli' },
+            { text: 'Debugging', link: '/tools/debugging' },
             { text: 'Debug views', link: '/tools/debug-views' },
+            { text: 'Usage data', link: '/tools/telemetry' },
         ],
     },
     {

@@ -1,6 +1,6 @@
 # Editor support in the package's editors/ folder. The TextMate grammar is for
-# editors that read TextMate bundles; JetBrains IDEs get the Marketplace plugin
-# instead (tools/tide-jetbrains). Its test stays here.
+# editors that read TextMate bundles. JetBrains' offline installer is built
+# once by Gradle and added to all platform archives by cmake/package.cmake.
 install(DIRECTORY tide-syntax DESTINATION editors COMPONENT tide PATTERN test EXCLUDE)
 install(DIRECTORY tide-emacs tide-vim DESTINATION editors COMPONENT tide PATTERN test EXCLUDE)
 
@@ -28,10 +28,13 @@ if(TIDE_EDITOR_EXTENSIONS)
             tide-vscode/icons/tide.svg
             tide-vscode/src/extension.js
             tide-vscode/src/prefab-client.js
+            tide-vscode/src/debug.js
             tide-syntax/language-configuration.json
             tide-syntax/syntaxes/tide.tmLanguage.json
         COMMENT "Building the VS Code extension"
         VERBATIM)
     add_custom_target(tide_vscode ALL DEPENDS "${vsix}")
     install(FILES "${vsix}" DESTINATION editors COMPONENT tide)
+    # The licenses of what its bundle has in it, which vsix.cmake collects
+    install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/tide-vscode/licenses/" DESTINATION licenses COMPONENT tide)
 endif()

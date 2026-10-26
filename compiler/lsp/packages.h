@@ -40,6 +40,8 @@ typedef struct packages_file {
     char *name;   // `package Physics`: the package this folder is; NULL for a game
     int tide[3];  // `tide 0.3`: the oldest tide it builds with; zeros for any
     int tide_line;
+    char *pinned; // A game's `tide = 0.5.0-nightly.12`: the one tide it builds with, without the `v`; NULL for none
+    int pinned_line;
     package_line *lines;
     int count;
     // The package lines a false #if leaves out of this build: no part of it,
@@ -58,6 +60,13 @@ typedef void (*packages_report_fn)(void *user, const char *where, int line, cons
 // packages. False after reporting what's wrong with the file; what could be
 // read is in `out` either way.
 bool packages_read(const char *folder, packages_file *out, packages_report_fn report, void *user);
+
+// Whether `text` is a whole version, as `tide = ...` pins one: 0.5.0, or 0.5.0-nightly.12
+bool packages_exact_version(const char *text);
+
+// Whether a tide of `version` builds a game that pins `pinned` (`tide = ...`): that one alone, everyone working on
+// the game building the same; or a build of tide's own source (`-dev`), which is someone working on tide
+bool packages_pin_kept(const char *pinned, const char *version);
 void packages_free_file(packages_file *f);
 
 // One of a game's packages, ready to compile.
@@ -179,3 +188,24 @@ char *packages_builtin_unknown(const char *name, const char *folder);
 // `path` (absolute) relative to the folder `from` (absolute, ending in '/'),
 // like "../shared"; or `path` itself where it can't be. malloc'd.
 char *packages_relative(const char *from, const char *path);
+
+// A game made in Unity is the whole of a Unity project's
+// Assets folder. Each folder in it whose tide.packages says `package Name` is
+// one of its packages with no line for it, found as Unity finds an assembly
+// definition; packages_resolve adds them. The game's own C is only ever a
+// package's: tide builds no C, headers or libraries of the Assets folder
+// itself, where Unity's plugins are. Folders Unity leaves out, hidden ones and
+// those whose names end in '~' (Samples~), are no part of it.
+
+// Whether `folder` is a Unity project's Assets folder: Assets, beside the
+// project's ProjectSettings/ProjectVersion.txt.
+bool packages_unity_assets(const char *folder);
+
+// The Assets folder of the Unity project `folder` (absolute) is in, ending in
+// '/', for a command run in it: the game, unless a folder on the way up has a
+// tide.packages of its own (a package's). NULL for none. malloc'd.
+char *packages_unity_game(const char *folder);
+
+// Whether a path in a game made in Unity, from its Assets folder, is in a
+// folder Unity leaves out: a hidden one or one whose name ends in '~'.
+bool packages_unity_left_out(const char *relative);

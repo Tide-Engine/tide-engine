@@ -124,8 +124,8 @@ TIDE_TEST(cli_an_upgrade_replaces_the_package_and_keeps_the_rest)
     sys_remove_tree(WORK);
 }
 
-// What the upgrade that deleted most of an installation left: its new tide,
-// headers of the version before, and nothing else of the package.
+// An installation an upgrade half-finished: its new tide, headers of the
+// version before, and nothing else of the package.
 TIDE_TEST(cli_an_upgrade_finishes_one_that_stopped_partway)
 {
     old_installation();
@@ -171,7 +171,7 @@ TIDE_TEST(cli_an_upgrade_gets_past_a_folder_an_editor_watches)
     new_package();
     const HANDLE editor = watch(ROOT, "include/tide", FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE);
     TIDE_REQUIRE(editor != INVALID_HANDLE_VALUE);
-    // What the old upgrade tripped on: the folder above it doesn't move.
+    // The folder above the open file doesn't move either.
     TIDE_CHECK(!sys_rename(ROOT "/include", ROOT "/include.moved"));
     char failed[1024];
     TIDE_CHECK(install(failed));

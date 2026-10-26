@@ -45,8 +45,8 @@ void b2t_images(int32_t *whole, int32_t *in_parts);
 // The server's world in the match below, on every platform and in every
 // configuration: Box2D's math, its image and the netcode, byte for byte.
 // Once in the middle of the first round, and once after a new game.
-#define RACING_HASH UINT64_C(0x87e3c4d07d3233f3)
-#define MATCH_HASH UINT64_C(0xaab79fc2ab3032d2)
+#define RACING_HASH UINT64_C(0xf66b10f843c81e94)
+#define MATCH_HASH UINT64_C(0x4d2b61e5dd9fec8e)
 
 static tide_world world;
 
@@ -180,7 +180,6 @@ static bool put(const int who, const int column, const int quarter)
     for (int i = 0; i < 600; i++) {
         const tide_entity brick = falling(&world, who);
         if (!tide_has_Falling(&world, brick)) {
-            // Their hands are off again: the seat is dealt no more until they're asked for another
             tide_world_set_input(&world, player(who), (Controls){0});
             return true;
         }
@@ -236,11 +235,9 @@ TIDE_TEST(towers_builds_four_plinths_and_seats_its_players)
         const Box2D_Body body = tide_get_Box2D_Body(&world, plinth(&world, seat));
         TIDE_CHECK(body.type == Box2D_BodyType_Kinematic && body.position.x == home(seat) && body.position.y == -DEPTH / 2);
     }
-    // The first two seats are the players', and the other two nobody's
     TIDE_CHECK(tide_get_Owner(&world, plinth(&world, 0)).player.id == player(0).id);
     TIDE_CHECK(tide_get_Owner(&world, plinth(&world, 1)).player.id == player(1).id);
     TIDE_CHECK(!tide_has_Owner(&world, plinth(&world, 2)) && !tide_has_Owner(&world, plinth(&world, 3)));
-    // A player who leaves gives their seat up, and the next to join takes it
     tide_world_player_left(&world, player(0));
     tick(1);
     TIDE_CHECK(!tide_has_Owner(&world, plinth(&world, 0)));
@@ -249,7 +246,6 @@ TIDE_TEST(towers_builds_four_plinths_and_seats_its_players)
     tick(1);
     TIDE_CHECK(tide_get_Owner(&world, plinth(&world, 0)).player.id == player(2).id);
     TIDE_CHECK(tide_get_Owner(&world, plinth(&world, 2)).player.id == player(3).id);
-    // With the bots off and nobody's hands on a brick, nothing is dealt
     tick(200);
     TIDE_CHECK(count(&world, tide_has_Falling) == 0 && count(&world, tide_has_Brick) == 0);
     tide_world_free(&world);
@@ -264,12 +260,10 @@ TIDE_TEST(towers_a_brick_is_steered_then_becomes_a_body)
     Falling steered = tide_get_Falling(&world, brick);
     Box2D_Body body = tide_get_Box2D_Body(&world, brick);
     const Kind kind = tide_get_Piece(&world, brick).kind;
-    // It's the first player's, a kinematic body over their plinth, and nothing of the second's is dealt
     TIDE_CHECK(tide_get_Owner(&world, brick).player.id == player(0).id);
     TIDE_CHECK(body.type == Box2D_BodyType_Kinematic && body.position.y == DROP);
     TIDE_CHECK(body.position.x == home(0) + (float)steered.column * 0.5f);
     TIDE_CHECK(!tide_has_Falling(&world, falling(&world, 1)));
-    // Five half cells to the right, and a quarter turn: half a cell every other tick, and the turn at once
     const int from = steered.column;
     for (int i = 0; i < 14; i++) {
         steer(&world, 0, 0, from + 5, 1, false);
@@ -280,20 +274,16 @@ TIDE_TEST(towers_a_brick_is_steered_then_becomes_a_body)
     TIDE_CHECK(steered.column == from + 5 && steered.quarter == 1);
     TIDE_CHECK(body.position.x == home(0) + (float)(from + 5) * 0.5f);
     TIDE_CHECK(tide_abs_f(body.angle + TIDE_PI_F / 2) < 0.001f);
-    // It falls at its own pace whatever it's asked for across, and faster when asked
     TIDE_CHECK(tide_abs_f(body.velocity.y + FALL) < 0.001f && body.position.y < DROP - 0.5f && body.position.y > DROP - 1.5f);
-    // An input that names another brick steers nothing
     tide_world_set_input(&world, player(0), (Controls){.hands = true, .serial = steered.serial + SEATS, .column = -8});
     tick(6);
     TIDE_CHECK(tide_get_Falling(&world, brick).column == from + 5);
     steer(&world, 0, 0, from + 5, 1, true);
     tick(2);
     TIDE_CHECK(tide_abs_f(tide_get_Box2D_Body(&world, brick).velocity.y + FAST) < 0.001f);
-    // While it falls it has a body and no shape: it touches nothing, and what's in its way is asked
     const int shapes = world.Box2D_Physics.shapes;
     const int bodies = world.Box2D_Physics.bodies;
     TIDE_CHECK(!tide_has_Box2D_Box(&world, brick) && count(&world, tide_has_Box2D_Part) == 0);
-    // It falls at that speed until the tick it would reach the plinth, and is put on it there, at rest
     float lowest = DROP;
     for (int i = 0; i < 120 && tide_has_Falling(&world, brick); i++) {
         steer(&world, 0, 0, from + 5, 1, true);
@@ -301,7 +291,6 @@ TIDE_TEST(towers_a_brick_is_steered_then_becomes_a_body)
         TIDE_CHECK(tide_abs_f(tide_get_Box2D_Body(&world, brick).velocity.y + FAST) < 0.001f);
         tide_world_tick(&world);
     }
-    // It landed: the same entity, a brick now and no falling one, and its body the same one, a dynamic body
     TIDE_REQUIRE(tide_has_Brick(&world, brick) && !tide_has_Falling(&world, brick) && !tide_has_Owner(&world, brick));
     const tide_entity landed = brick;
     Box2D_Body lands = tide_get_Box2D_Body(&world, landed);
@@ -311,8 +300,6 @@ TIDE_TEST(towers_a_brick_is_steered_then_becomes_a_body)
     TIDE_CHECK(count(&world, tide_has_Brick) == 1 && count(&world, tide_has_Falling) == 0);
     TIDE_CHECK(tide_get_Brick(&world, landed).seat == 0 && tide_get_Piece(&world, landed).kind == kind);
     TIDE_CHECK(world.Box2D_Physics.bodies == bodies);
-    // Its boxes are on its body from the next step: the first is its own, and a brick of two has the second as a
-    // part, an entity of its own that names the brick
     const bool two = kind != Kind_I && kind != Kind_O;
     tick(2);
     TIDE_CHECK(tide_has_Box2D_Box(&world, landed) && world.Box2D_Physics.shapes == shapes + (two ? 2 : 1));
@@ -329,9 +316,7 @@ TIDE_TEST(towers_a_brick_is_steered_then_becomes_a_body)
     TIDE_CHECK(tide_abs_f(rests.position.x - (home(0) + (float)(from + 5) * 0.5f)) < 0.1f);
     TIDE_CHECK(rests.position.y > 0.4f && rests.position.y < 2.6f && tide_abs_f(rests.angle + TIDE_PI_F / 2) < 0.05f);
     TIDE_CHECK(tide_abs_f(rests.velocity.x) + tide_abs_f(rests.velocity.y) < 0.01f);
-    // It came to rest where it was put, to the centimeter: it landed where it touched
     TIDE_CHECK(tide_abs_f(rests.position.y - lands.position.y) < 0.02f);
-    // The tower is as high as the brick, and the seat's next one is on its way
     TIDE_CHECK(seat_of(&world, 0).top > 0.9f && seat_of(&world, 0).top < 4.1f);
     TIDE_CHECK(tide_has_Falling(&world, falling(&world, 0)) && seat_of(&world, 0).dealt == 2);
     tide_world_free(&world);
@@ -360,7 +345,6 @@ TIDE_TEST(towers_a_falling_brick_keeps_out_of_what_is_in_its_way)
     tick(60);
     const Box2D_Body stood = tide_get_Box2D_Body(&world, first);
     TIDE_CHECK(tide_abs_f(stood.angle) < 0.01f && stood.position.y < 1.1f);
-    // The next one comes down two meters to the left, until it's beside the first
     steer(&world, 0, 0, -4, 0, false);
     TIDE_REQUIRE(until_falling(0, true, 300));
     const tide_entity brick = falling(&world, 0);
@@ -370,7 +354,6 @@ TIDE_TEST(towers_a_falling_brick_keeps_out_of_what_is_in_its_way)
         tide_world_tick(&world);
     }
     TIDE_REQUIRE(tide_has_Falling(&world, brick) && tide_get_Falling(&world, brick).column == -4);
-    // Asked all the way across to where the first is: it goes as far as the first lets it
     int reached = -4;
     for (int i = 0; i < 120 && tide_has_Falling(&world, brick); i++) {
         steer(&world, 0, 0, 4, 0, false);
@@ -386,7 +369,6 @@ TIDE_TEST(towers_a_falling_brick_keeps_out_of_what_is_in_its_way)
            (double)(stood.position.x - home(0)), (int)kind, (double)reached * 0.5, (double)(rests.position.x - home(0)),
            (double)rests.position.y);
     TIDE_CHECK(reached > -4 && reached < 4);
-    // It landed on the plinth beside the first, which it never touched on its way: that one is where it was
     TIDE_CHECK(rests.position.y < 1.6f && rests.position.x < stood.position.x - 0.9f);
     TIDE_CHECK(tide_abs_f(after.position.x - stood.position.x) + tide_abs_f(after.position.y - stood.position.y) < 0.02f);
     TIDE_CHECK(count(&world, tide_has_Brick) == 2 && bricks_down(&world) == 0);
@@ -402,7 +384,6 @@ TIDE_TEST(towers_a_brick_lands_on_the_bricks_under_it)
     TIDE_REQUIRE(there >= 3 && top > 1.5f && count(&world, tide_has_Falling) == 0);
     tide_world before = {0};
     tide_world_copy(&before, &world);
-    // The player's brick comes down on their tower, in its middle: it's a body where it met the tower, not on the plinth
     TIDE_REQUIRE(put(0, 0, 0));
     hands_off();
     tick(90);
@@ -415,7 +396,6 @@ TIDE_TEST(towers_a_brick_lands_on_the_bricks_under_it)
         TIDE_CHECK(body.position.y > 1.4f && body.position.y < top + 2.1f && tide_abs_f(body.position.x - home(0)) < 3.5f);
         TIDE_CHECK(tide_abs_f(body.velocity.x) + tide_abs_f(body.velocity.y) < 0.05f);
     }
-    // The tower took it, and stands as it did: no brick of it moved far
     int compared = 0;
     for (uint32_t i = 0; i < before.entities.next_unused; i++) {
         const tide_entity e = tide_entity_in_slot(&before.entities, i);
@@ -438,15 +418,12 @@ TIDE_TEST(towers_a_tower_over_the_line_for_long_enough_takes_the_round)
     hands_off();
     tick(30);
     TIDE_CHECK(count(&world, tide_has_Brick) == 2 && count(&world, tide_has_Falling) == 0);
-    // The second seat's plinth, put so that its top is over the line, as a
-    // tower's would be: a kinematic body goes where its position is written
     const tide_entity high = plinth(&world, 1);
     Box2D_Body body = tide_get_Box2D_Body(&world, high);
     body.position.y = FINISH + 1 - DEPTH / 2;
     tide_set_Box2D_Body(&world, high, body);
     tick(40);
     TIDE_CHECK(seat_of(&world, 1).top > FINISH && seat_of(&world, 1).above > 20 && seat_of(&world, 0).above == 0);
-    // Back under it before three seconds are up: it counts from nothing again
     body = tide_get_Box2D_Body(&world, high);
     body.position.y = FINISH - 4 - DEPTH / 2;
     tide_set_Box2D_Body(&world, high, body);
@@ -464,17 +441,14 @@ TIDE_TEST(towers_a_tower_over_the_line_for_long_enough_takes_the_round)
     TIDE_CHECK(world.Towers.phase == Phase_Over && world.Towers.winner == 1 && took >= HOLD && took < HOLD + 10);
     tick(1);
     TIDE_CHECK(seat_of(&world, 1).wins == 1 && seat_of(&world, 0).wins == 0);
-    // Nothing is dealt while a round is over, and what was falling is gone
     tick(30);
     TIDE_CHECK(count(&world, tide_has_Falling) == 0);
-    // The plinths sink, the winner's last, and the bricks come down with them
     const float winners = tide_get_Box2D_Body(&world, high).position.y;
     TIDE_CHECK(tide_get_Box2D_Body(&world, plinth(&world, 0)).position.y < -DEPTH / 2 - 5.0f);
     TIDE_CHECK(winners == FINISH + 1 - DEPTH / 2);
     tick(200);
     TIDE_CHECK(tide_get_Box2D_Body(&world, high).position.y < winners - 5.0f);
     TIDE_CHECK(count(&world, tide_has_Brick) == 2);
-    // And the next round starts from nothing, with the plinths back
     tick(OVER);
     TIDE_CHECK(world.Towers.phase == Phase_Play && world.Towers.round == 2 && world.Towers.winner == -1);
     TIDE_CHECK(count(&world, tide_has_Brick) == 0);
@@ -495,7 +469,6 @@ TIDE_TEST(towers_a_brick_off_its_tower_costs_and_is_cleared)
     hands_off();
     tick(20);
     TIDE_CHECK(seat_of(&world, 0).lost == 0 && seat_of(&world, 0).wait <= PAUSE);
-    // The first player's brick, put over the ground beside their plinth
     tide_entity fell = (tide_entity){0};
     for (uint32_t i = 0; i < world.entities.next_unused; i++) {
         const tide_entity e = tide_entity_in_slot(&world.entities, i);
@@ -508,11 +481,9 @@ TIDE_TEST(towers_a_brick_off_its_tower_costs_and_is_cleared)
     const int waited = seat_of(&world, 0).wait;
     for (int i = 0; i < 120 && !tide_get_Brick(&world, fell).down; i++) tide_world_tick(&world);
     tick(1);
-    // It's off its tower: whoever put it there waits longer for their next, and nobody else does
     TIDE_CHECK(tide_get_Brick(&world, fell).down && seat_of(&world, 0).lost == 1 && seat_of(&world, 1).lost == 0);
     TIDE_CHECK(seat_of(&world, 0).wait >= STUN && seat_of(&world, 0).wait > waited);
     TIDE_CHECK(seat_of(&world, 0).top == 0.0f);
-    // It lies on the ground a while, and is cleared
     tick(120);
     TIDE_CHECK(tide_has_Brick(&world, fell) && tide_get_Box2D_Body(&world, fell).position.y < -5.0f);
     tick(RUBBLE);
@@ -525,13 +496,11 @@ TIDE_TEST(towers_the_line_comes_down_on_a_round_that_goes_on_long)
     start(false, 2);
     tick(60);
     TIDE_CHECK(world.Towers.line == FINISH && world.Towers.clock > 50);
-    // A minute and a half in, it starts down, a meter every four seconds or so
     world.Towers.clock = LIMIT - 10;
     tick(10);
     TIDE_CHECK(world.Towers.line == FINISH);
     tick(250);
     TIDE_CHECK(world.Towers.line < FINISH - 0.9f && world.Towers.line > FINISH - 1.1f);
-    // A tower that was under the line is over it once the line has come down past it, and takes the round
     Box2D_Body body = tide_get_Box2D_Body(&world, plinth(&world, 1));
     body.position.y = FINISH - 6 - DEPTH / 2;
     tide_set_Box2D_Body(&world, plinth(&world, 1), body);
@@ -540,7 +509,6 @@ TIDE_TEST(towers_the_line_comes_down_on_a_round_that_goes_on_long)
     world.Towers.clock = LIMIT + 1700;
     for (int i = 0; i < 400 && world.Towers.phase == Phase_Play; i++) tide_world_tick(&world);
     TIDE_CHECK(world.Towers.phase == Phase_Over && world.Towers.winner == 1 && world.Towers.line < FINISH - 6.0f);
-    // It never comes lower than this, and the next round's is back where it was
     world.Towers.phase = Phase_Play;
     world.Towers.clock = LIMIT + 100000;
     tick(2);
@@ -589,8 +557,6 @@ static float blown(const tide_world *w, const int seat)
 
 TIDE_TEST(towers_what_a_tower_earns_acts_on_the_others)
 {
-    // A gust: against the tallest of the other towers, away from whoever sent it. Two players with a brick each
-    // on their plinths, and nothing on the other two: the gust the first sends is against the second's
     start(false, 2);
     TIDE_REQUIRE(put(1, 0, 0));
     TIDE_REQUIRE(put(0, 0, 0));
@@ -599,7 +565,6 @@ TIDE_TEST(towers_what_a_tower_earns_acts_on_the_others)
     TIDE_REQUIRE(standing(&world, 1) == 1 && standing(&world, 0) == 1 && seat_of(&world, 1).top > 0.9f);
     tide_world rest = {0};
     tide_world_copy(&rest, &world);
-    // Nothing at rest moves by itself
     tick(120);
     for (int seat = 0; seat < SEATS; seat++) TIDE_CHECK(disturbed(&world, &rest, seat) < 0.005f);
     earn(0, Power_Gust);
@@ -610,7 +575,6 @@ TIDE_TEST(towers_what_a_tower_earns_acts_on_the_others)
     const int winds[SEATS] = {world.Towers.winds.x, world.Towers.winds.y, world.Towers.winds.z, world.Towers.winds.w};
     for (int seat = 0; seat < SEATS; seat++) TIDE_CHECK(gusts[seat] == (seat == 1 ? GUST - 1 : 0));
     TIDE_CHECK(winds[1] == 1);
-    // While it blows, the bricks at the top of that tower are pushed along it, faster each tick, and nothing else is
     float fastest = 0;
     for (int i = 0; i < GUST; i++) {
         tide_world_tick(&world);
@@ -622,18 +586,15 @@ TIDE_TEST(towers_what_a_tower_earns_acts_on_the_others)
            (double)fastest, (double)disturbed(&world, &rest, 1), (double)disturbed(&world, &rest, 0));
     TIDE_CHECK(fastest > 0.8f && disturbed(&world, &rest, 1) > 0.1f && disturbed(&world, &rest, 0) < 0.005f);
     TIDE_CHECK(world.Towers.gusts.x + world.Towers.gusts.y + world.Towers.gusts.z + world.Towers.gusts.w == 0);
-    // Using what hasn't been earned does nothing
     TIDE_REQUIRE(command(&world, TIDE_COMMAND_ID_Use, 0));
     tick(3);
     TIDE_CHECK(world.Towers.gusts.x + world.Towers.gusts.y + world.Towers.gusts.z + world.Towers.gusts.w == 0);
 
-    // Two players again, and four towers that built themselves and came to rest
     start(false, 2);
     grow(900);
     for (int seat = 0; seat < SEATS; seat++) TIDE_REQUIRE(standing(&world, seat) >= 5 && seat_of(&world, seat).top > 3.0f);
     TIDE_CHECK(bricks_set(&world) == 0);
 
-    // Cement: every brick at rest in the tower that used it is set solid, a kinematic body, and no other tower's
     tick(300);
     const int there = standing(&world, 1);
     TIDE_REQUIRE(there >= 4);
@@ -650,8 +611,6 @@ TIDE_TEST(towers_what_a_tower_earns_acts_on_the_others)
         TIDE_CHECK(set == (tide_abs_f(tide_get_Box2D_Body(&world, e).position.x - home(1)) < PITCH * 0.5f));
     }
 
-    // A quake: every plinth but the one that sent it shakes, and is back where it was. What's loose on
-    // one is shaken about; what's set solid goes there and back with its plinth, and no further
     tick(60);
     tide_world_copy(&rest, &world);
     earn(0, Power_Quake);
@@ -675,7 +634,6 @@ TIDE_TEST(towers_what_a_tower_earns_acts_on_the_others)
     TIDE_CHECK(tide_get_Box2D_Body(&world, plinth(&world, 1)).position.x == home(1));
     TIDE_CHECK(tide_get_Box2D_Body(&world, plinth(&world, 1)).velocity.x == 0.0f);
 
-    // When the round is over, what was set is let go with the rest, from the bottom up, and comes down
     Box2D_Body body = tide_get_Box2D_Body(&world, plinth(&world, 0));
     body.position.y = FINISH + 1 - DEPTH / 2;
     tide_set_Box2D_Body(&world, plinth(&world, 0), body);
@@ -701,7 +659,6 @@ TIDE_TEST(towers_a_tall_tower_is_loose_all_the_way_down)
     start(true, 0);
     int ticks = 0;
     while (seat_of(&world, 0).top < 24.0f && ticks < 6000) {
-        // What a tower earns isn't used here: Cement would set it, and the others' gusts and quakes shake it
         for (int seat = 0; seat < SEATS; seat++) earn(seat, Power_None);
         tide_world_tick(&world);
         ticks++;
@@ -728,7 +685,6 @@ TIDE_TEST(towers_a_tall_tower_is_loose_all_the_way_down)
            "parts\n",
            (double)top, ticks / 60.0, loose, lost, parts);
     TIDE_CHECK(top >= 22.0f && loose >= 25 && bricks_set(&world) == 0 && parts > 20);
-    // It stands: at rest, a minute on, with every brick where it was
     tide_world before = {0};
     tide_world_copy(&before, &world);
     tick(3600);
@@ -740,7 +696,6 @@ TIDE_TEST(towers_a_tall_tower_is_loose_all_the_way_down)
 TIDE_TEST(towers_nobodys_towers_build_by_themselves)
 {
     start(true, 1);
-    // The player's menu is up: their tower builds by itself too
     tide_world_set_input(&world, player(0), (Controls){0});
     tick(1500);
     for (int seat = 0; seat < SEATS; seat++) {
@@ -748,7 +703,6 @@ TIDE_TEST(towers_nobodys_towers_build_by_themselves)
                standing(&world, seat), seat_of(&world, seat).lost);
         TIDE_CHECK(seat_of(&world, seat).top > 4.0f && standing(&world, seat) >= 7);
     }
-    // The Bots button stops them: what's falling lands, and nothing more comes
     TIDE_REQUIRE(command(&world, TIDE_COMMAND_ID_Bots, 0));
     tick(400);
     TIDE_CHECK(!world.Towers.bots && count(&world, tide_has_Falling) == 0);
@@ -757,7 +711,6 @@ TIDE_TEST(towers_nobodys_towers_build_by_themselves)
     tick(200);
     for (int seat = 0; seat < SEATS; seat++) dealt -= seat_of(&world, seat).dealt;
     TIDE_CHECK(dealt == 0 && count(&world, tide_has_Falling) == 0);
-    // ...and starts them again. One of them gets over the line in the end, and takes the round
     TIDE_REQUIRE(command(&world, TIDE_COMMAND_ID_Bots, 0));
     int ticks = 2100;
     int most = 0;
@@ -788,7 +741,6 @@ TIDE_TEST(towers_a_new_game_starts_from_nothing)
     for (int seat = 0; seat < SEATS; seat++) {
         TIDE_CHECK(seat_of(&world, seat).wins == 0 && seat_of(&world, seat).dealt == 0 && seat_of(&world, seat).top == 0.0f);
     }
-    // And builds again
     tick(600);
     TIDE_CHECK(count(&world, tide_has_Brick) > 8);
     tide_world_free(&world);
@@ -797,7 +749,6 @@ TIDE_TEST(towers_a_new_game_starts_from_nothing)
 TIDE_TEST(towers_a_player_who_joins_late_starts_level)
 {
     start(false, 1);
-    // The first player's tower stands eight meters and a brick high: their plinth is put there, for the test
     Box2D_Body body = tide_get_Box2D_Body(&world, plinth(&world, 0));
     body.position.y = 8.0f - DEPTH / 2;
     tide_set_Box2D_Body(&world, plinth(&world, 0), body);
@@ -806,7 +757,6 @@ TIDE_TEST(towers_a_player_who_joins_late_starts_level)
     tick(60);
     const float theirs = seat_of(&world, 0).top;
     TIDE_REQUIRE(theirs > 8.9f && theirs < 10.1f);
-    // A second joins: their plinth rises until its top is level with that tower's, to the meter under
     tide_world_player_joined(&world, player(1));
     tick(2);
     TIDE_CHECK(tide_get_Owner(&world, plinth(&world, 1)).player.id == player(1).id);
@@ -816,12 +766,10 @@ TIDE_TEST(towers_a_player_who_joins_late_starts_level)
     printf("    the first tower stands %.2f m high, and the plinth of a player who joined rose to %.2f\n", (double)theirs, (double)risen.base);
     TIDE_CHECK(risen.lift <= 0.0f && risen.base > theirs - 1.1f && risen.base < theirs + 0.1f && risen.top == risen.base);
     TIDE_CHECK(tide_get_Box2D_Body(&world, plinth(&world, 1)).velocity.y == 0.0f);
-    // They build from there, and the first player's plinth stayed where it was
     TIDE_REQUIRE(put(1, 0, 0));
     hands_off();
     tick(40);
     TIDE_CHECK(seat_of(&world, 1).top > risen.base + 0.9f && seat_of(&world, 0).base == 8.0f);
-    // It doesn't rise again in the same round, for one who leaves and comes back
     tide_world_player_left(&world, player(1));
     tick(2);
     body = tide_get_Box2D_Body(&world, plinth(&world, 0));
@@ -831,7 +779,6 @@ TIDE_TEST(towers_a_player_who_joins_late_starts_level)
     tide_world_player_joined(&world, player(1));
     tick(120);
     TIDE_CHECK(seat_of(&world, 1).lift <= 0.0f && seat_of(&world, 1).base == risen.base);
-    // A new round puts every plinth back
     TIDE_REQUIRE(command(&world, TIDE_COMMAND_ID_Rebuild, 0));
     tick(4);
     TIDE_CHECK(seat_of(&world, 1).base == 0.0f && seat_of(&world, 0).base == 0.0f && !seat_of(&world, 1).lifted);
@@ -887,8 +834,6 @@ static uint32_t asked(void)
 TIDE_TEST(towers_opens_on_its_lobby_unless_it_was_told_which_match)
 {
     start(true, 2);
-    // Started with nothing said: a match of its own, closed, behind the title.
-    // The player's tower builds by itself while the lobby is up
     machine(TIDE_SESSION_CONNECTED, 0, true, false, "");
     frame(&world);
     frame(&world);
@@ -897,12 +842,10 @@ TIDE_TEST(towers_opens_on_its_lobby_unless_it_was_told_which_match)
     TIDE_CHECK(asked() == TIDE_REQUEST_NONE);
     tide_local_free(&local);
 
-    // --host, or a page's ?host: the match is open by the first frame, and no lobby is in the way
     machine(TIDE_SESSION_CONNECTED, 0, true, true, "K7QF2M");
     frame(&world);
     frame(&world);
     TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Playing && local.Hand.playing && plays());
-    // A page up over the match: the hands are off the brick until it closes
     local.Rooms_Lobby.page = Rooms_Page_Room;
     frame(&world);
     TIDE_CHECK(!plays());
@@ -911,7 +854,6 @@ TIDE_TEST(towers_opens_on_its_lobby_unless_it_was_told_which_match)
     TIDE_CHECK(plays());
     tide_local_free(&local);
 
-    // --join <code>, or ?join=<code>: joining by the first frame. The page says so until the match's world is here
     machine(TIDE_SESSION_CONNECTING, -1, false, false, "K7QF2M");
     frame(NULL);
     TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Join && local.Rooms_Lobby.joining && !plays());
@@ -922,7 +864,6 @@ TIDE_TEST(towers_opens_on_its_lobby_unless_it_was_told_which_match)
     frame(&world);
     TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Playing && !local.Rooms_Lobby.joining && plays());
     TIDE_CHECK(local.Rooms_Lobby.mine == 1);
-    // That match ends: back on the title, with a line that says so, and a match of its own asked for
     tide_local_disconnected(&local, TIDE_DISCONNECT_ENDED, "");
     tide_local_set_session(&local, TIDE_SESSION_OFFLINE, (tide_player_id){0}, 0, false, false, "");
     frame(NULL);
@@ -931,7 +872,6 @@ TIDE_TEST(towers_opens_on_its_lobby_unless_it_was_told_which_match)
     TIDE_CHECK(asked() == TIDE_REQUEST_START);
     tide_local_free(&local);
 
-    // A code nobody has: the page it was typed on stays, to try again from
     machine(TIDE_SESSION_CONNECTING, -1, false, false, "");
     frame(NULL);
     tide_local_disconnected(&local, TIDE_DISCONNECT_FAILED, "");
@@ -940,7 +880,6 @@ TIDE_TEST(towers_opens_on_its_lobby_unless_it_was_told_which_match)
     frame(NULL);
     TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Join && !local.Rooms_Lobby.joining && says_something());
     TIDE_CHECK(asked() == TIDE_REQUEST_START);
-    // This machine leaving a match, as when it starts or joins another, says nothing
     tide_local_disconnected(&local, TIDE_DISCONNECT_LEFT, "");
     frame(NULL);
     frame(NULL);
@@ -980,9 +919,7 @@ TIDE_TEST(towers_a_players_hand_steers_their_brick)
     tick_and_show();
     TIDE_REQUIRE(tide_has_Falling(&world, falling(&world, 0)));
     const Falling dealt = tide_get_Falling(&world, falling(&world, 0));
-    // The hand is on the brick that's falling, where it was dealt
     TIDE_CHECK(local.Hand.serial == dealt.serial && local.Hand.column == dealt.column && local.Hand.quarter == 0 && !local.Hand.drop);
-    // The right arrow, pressed and let go, three times: three half cells
     for (int i = 0; i < 3; i++) {
         key(&devices.keyboard.rightArrow, true);
         tick_and_show();
@@ -990,7 +927,6 @@ TIDE_TEST(towers_a_players_hand_steers_their_brick)
         tick_and_show();
     }
     TIDE_CHECK(local.Hand.column == dealt.column + 3);
-    // Up turns it, a quarter each press
     key(&devices.keyboard.upArrow, true);
     tick_and_show();
     key(&devices.keyboard.upArrow, false);
@@ -998,7 +934,6 @@ TIDE_TEST(towers_a_players_hand_steers_their_brick)
     TIDE_CHECK(local.Hand.quarter == 1);
     Falling now = tide_get_Falling(&world, falling(&world, 0));
     TIDE_CHECK(now.column == dealt.column + 3 && now.quarter == 1);
-    // A drag steps it across by how far it goes: 66 pixels to the left is six half cells here
     devices.pointer.position = tide_f2(200, 200);
     key(&devices.pointer.press, true);
     tick_and_show();
@@ -1011,15 +946,13 @@ TIDE_TEST(towers_a_players_hand_steers_their_brick)
     key(&devices.pointer.press, false);
     for (int i = 0; i < 12; i++) tick_and_show();
     TIDE_CHECK(tide_get_Falling(&world, falling(&world, 0)).column == dealt.column - 3);
-    TIDE_CHECK(local.Hand.quarter == 1); // A drag that's let go isn't a tap
-    // A tap turns it
+    TIDE_CHECK(local.Hand.quarter == 1);
     key(&devices.pointer.press, true);
     tick_and_show();
     key(&devices.pointer.press, false);
     tick_and_show();
     tick_and_show();
     TIDE_CHECK(local.Hand.quarter == 2 && tide_get_Falling(&world, falling(&world, 0)).quarter == 2);
-    // Down drops it, and goes on dropping nothing once the next brick is there, until it's let go
     key(&devices.keyboard.downArrow, true);
     tick_and_show();
     key(&devices.keyboard.downArrow, true);
@@ -1055,7 +988,6 @@ TIDE_TEST(towers_effects_come_from_what_the_match_sends)
     TIDE_CHECK(tide_list_read_count(&local.heap, local.Fx.bits) == 0);
     for (int i = 0; i < 60 && !tide_has_Falling(&world, falling(&world, 0)); i++) tick_and_show();
     TIDE_CHECK(local.Fx.seat == 0);
-    // The brick lands: dust under it, this machine's camera feels it, and the brick is lit
     key(&devices.keyboard.downArrow, true);
     for (int i = 0; i < 200 && count(&world, tide_has_Brick) == 0; i++) tick_and_show();
     key(&devices.keyboard.downArrow, false);
@@ -1071,7 +1003,6 @@ TIDE_TEST(towers_effects_come_from_what_the_match_sends)
         if (tide_get_Brick_local(&local, e).lit > 0.0f) lit = true;
     }
     TIDE_CHECK(lit);
-    // It's put off its tower: a word floats up from where it went
     Box2D_Body body = tide_get_Box2D_Body(&world, landed);
     body.position = tide_f2(home(0) + 5.0f, -1.0f);
     tide_set_Box2D_Body(&world, landed, body);
@@ -1081,12 +1012,10 @@ TIDE_TEST(towers_effects_come_from_what_the_match_sends)
         labelled = tide_list_read_count(&local.heap, local.Fx.labels) > 0;
     }
     TIDE_CHECK(labelled && seat_of(&world, 0).lost == 1);
-    // What the tower earned is used: the words over the world know what, and whose
     earn(0, Power_Quake);
     TIDE_REQUIRE(command(&world, TIDE_COMMAND_ID_Use, 0));
     for (int i = 0; i < 4; i++) tick_and_show();
     TIDE_CHECK(local.Flow.struck == Power_Quake && local.Flow.striker == 0 && local.Flow.cast < 0.2f);
-    // A round ends, and the next starts: the words know who took it
     body = tide_get_Box2D_Body(&world, plinth(&world, 2));
     body.position.y = FINISH - DEPTH / 2;
     tide_set_Box2D_Body(&world, plinth(&world, 2), body);
@@ -1202,10 +1131,6 @@ TIDE_TEST(towers_three_players_stay_in_one_match_over_a_bad_network)
     TIDE_REQUIRE(authority != NULL);
     TIDE_CHECK(seat_with(authority, m.players[0]) == 0 && seat_with(authority, m.players[1]) == 1);
 
-    // They build, and the two towers nobody has build by themselves. The
-    // third player joins in the middle of it: the world it's sent has Box2D's
-    // state in it, with every brick that's in the air. Their plinth is the
-    // third seat's, with the tower that built itself there.
     bool used = false;
     uint32_t joined_at = 0;
     while (tide_server_tick(m.server) < 1500) {
@@ -1216,14 +1141,12 @@ TIDE_TEST(towers_three_players_stay_in_one_match_over_a_bad_network)
         if (m.players[2] && joined_at == 0 && tide_client_status_of(m.players[2]).state == TIDE_SESSION_CONNECTED) {
             joined_at = tide_server_tick(m.server);
         }
-        // A second after it's in, the one who joined late is no further ahead of what's confirmed than the others
         if (joined_at != 0 && tide_server_tick(m.server) == joined_at + 60) {
             const tide_client_status late = tide_client_status_of(m.players[2]);
             printf("    a second after joining, the third player is %u ticks ahead of what's confirmed\n",
                    late.predicted_tick - late.verified_tick);
             TIDE_CHECK(late.predicted_tick - late.verified_tick <= 15);
         }
-        // The first player uses what their tower earned, once it has: a command, which the server gives a tick
         authority = tide_server_world(m.server);
         if (!used && seat_of(authority, 0).power != Power_None && tide_server_tick(m.server) > 700) used = send(&m, 0, TIDE_COMMAND_ID_Use);
         advance(&m);
@@ -1244,15 +1167,11 @@ TIDE_TEST(towers_three_players_stay_in_one_match_over_a_bad_network)
     TIDE_CHECK(tide_server_tick(m.server) == 1500);
     TIDE_CHECK(racing == RACING_HASH);
 
-    // The second player presses New game: a first round again
     TIDE_REQUIRE(send(&m, 1, TIDE_COMMAND_ID_Rebuild));
     while (tide_server_tick(m.server) < 1800) advance(&m);
     authority = tide_server_world(m.server);
     TIDE_CHECK(authority->Towers.round == 1 && count(authority, tide_has_Brick) < 20);
 
-    // No machine's world ever went another way than the server's: what each
-    // predicted wrong it ran again, and every tick it confirmed had the
-    // server's hash, Box2D's state in it. The one who joined late too.
     for (int i = 0; i < 3; i++) {
         const tide_client_status status = tide_client_status_of(m.players[i]);
         printf("    player %d ran %u predicted ticks again, and was sent the world again %u times\n", i + 1,
@@ -1288,7 +1207,6 @@ static void cost(const char *what, const int ticks)
     int32_t parts_before;
     b2t_images(&whole_before, &parts_before);
     for (int i = 0; i < ticks; i++) {
-        // A client keeps each tick's world, and hashes it
         const uint64_t began = tide_time_now_ns();
         tide_world_tick(&world);
         const uint64_t ticked = tide_time_now_ns();
@@ -1342,7 +1260,6 @@ static void again(const char *what)
 TIDE_TEST(towers_costs)
 {
     start(true, 0);
-    // Until a tower is most of the way to the line
     int ticks = 0;
     float tallest = 0;
     while (tallest < FINISH - 8 && ticks < 30000 && world.Towers.phase == Phase_Play) {
@@ -1361,7 +1278,6 @@ TIDE_TEST(towers_costs)
            standing(&world, 0) + standing(&world, 1) + standing(&world, 2) + standing(&world, 3), set);
     cost("late in a round, the towers building", 300);
     again("the towers building");
-    // The same world with the bots off: what's falling lands, what fell is cleared, and everything comes to rest
     tide_world playing = {0};
     tide_world_copy(&playing, &world);
     world.Towers.bots = false;
@@ -1378,7 +1294,6 @@ TIDE_TEST(towers_costs)
         quiet = world.Box2D_Physics.moved || fallen ? 0 : quiet + 1;
     }
     cost("the same towers at rest", 300);
-    // And with the round over: every plinth sinks, and every tower comes down
     tide_world_copy(&world, &playing);
     for (int seat = 0; seat < SEATS; seat++) {
         Seat over = seat_of(&world, seat);
@@ -1396,7 +1311,6 @@ TIDE_TEST(towers_costs)
     tide_world_free(&playing);
     tide_world_free(&world);
 
-    // And what a player who joins late in a round is sent: the world, with Box2D's state in it
     b2t_forget();
     static match m;
     m = (match){.net = tide_loopback_create(77)};

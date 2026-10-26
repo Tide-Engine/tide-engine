@@ -1,0 +1,6 @@
+// expect: Session.Watch takes the area's center and size: 'Session.Watch(camera.position, float3(200, 200, 200))'
+local scene Main { }
+view Look()
+{
+    Session.Watch();
+}

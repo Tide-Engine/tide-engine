@@ -16,21 +16,25 @@ function deferred() {
     return { promise, resolve };
 }
 
-async function runtime(watch = true) {
+async function runtime(watch = true, notReady = null) {
     const listeners = new Map(), timers = [], programs = [], errors = [], messages = [], requests = [];
     const memory = new Uint8Array(32);
     new DataView(memory.buffer).setUint32(8, 8, true);
-    let saves = 0, rooms = 0, active = 0, maximum = 0, fetchGate = null, instantiateGate = null;
+    let saves = 0, rooms = 0, active = 0, maximum = 0, fetchGate = null, instantiateGate = null, asked = 0;
     let build = 1, restarts = 0, offline = false;
     const context = {
-        config: { reload: watch }, platform: {}, gl: null, device: null, exports: null,
+        config: { reload: watch }, platform: {}, gl: null, device: null, exports: null, performance,
         stopped: false, failed: false, packBytes: null,
         keyIndex: new Map([['KeyR', 0]]), keysHeld: [1], keysTapped: [1],
         u8: () => memory, view: () => new DataView(memory.buffer),
         print: message => messages.push(message), printErr: error => errors.push(error),
         closeRoom() { rooms++; },
         addEventListener(name, callback) { listeners.set(name, callback); },
-        setTimeout(callback, milliseconds) { assert.equal(milliseconds, 250); timers.push(callback); },
+        setTimeout(callback, milliseconds) {
+            if (milliseconds === 4) { Promise.resolve().then(callback); return; } // Waiting for a sharded match to be ready
+            assert.equal(milliseconds, 250);
+            timers.push(callback);
+        },
         async fetch(path) {
             requests.push(path);
             if (offline) throw new context.TypeError('the watching server has stopped');
@@ -53,6 +57,7 @@ async function runtime(watch = true) {
         begin(program) {
             programs.push({ ...program, resumed: context.platform.resume_size() });
             context.exports = { tide_reload_save() { saves++; return 8; } };
+            if (notReady !== null) context.exports.tide_reload_ready = () => ++asked > notReady;
         },
     };
     // Errors raised by fetch must belong to the page's realm: production
@@ -63,6 +68,7 @@ async function runtime(watch = true) {
     return {
         context, programs, errors, messages, requests,
         get saves() { return saves; }, get rooms() { return rooms; }, get maximum() { return maximum; },
+        get asked() { return asked; },
         latest(next, restart = restarts) { build = next; restarts = restart; },
         offline() { offline = true; },
         holdFetch() { fetchGate = deferred(); return fetchGate; },
@@ -172,6 +178,18 @@ async function runtime(watch = true) {
     assert.equal(test.programs.at(-1).build, 1, 'the cached running build is available for a full reload');
     assert.equal(test.programs.at(-1).resumed, 0, 'the offline reload starts fresh');
     assert.equal(test.saves, 0);
+    assert.deepEqual(test.errors, []);
+}
+
+// A sharded match hands its state over only once it's ready (tide_reload_ready):
+// the page asks until it is, and a program never ready is left to start over
+{
+    const test = await runtime(true, 5);
+    test.latest(2);
+    await test.tick();
+    assert.equal(test.asked, 6, 'the page asked until the running program was ready');
+    assert.equal(test.saves, 1);
+    assert.equal(test.programs.at(-1).resumed, 8, 'then it carried its state over');
     assert.deepEqual(test.errors, []);
 }
 

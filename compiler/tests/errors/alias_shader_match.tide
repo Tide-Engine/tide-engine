@@ -1,0 +1,8 @@
+// expect: callable and shader bindings belong in local state
+using Binding = Shade;
+frag Shade(Vertex vertex, out Color color, Func<float, float> convert)
+{
+    color = Color(convert(vertex.uv.x), 0, 0);
+}
+singleton State { Binding fragment; }
+scene Main;

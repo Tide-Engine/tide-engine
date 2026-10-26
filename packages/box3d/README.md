@@ -79,13 +79,120 @@ Spawn(Body { type = BodyType.Static }, MeshCollider {
 
 Indices are zero-based triples, counterclockwise from the front (upwards in this example). The collider preserves concave surfaces and gaps. `scale` defaults to `float3(1)` and may be nonuniform or mirrored, with no zero component; `offset` is added after scaling, in body space. The body's position and rotation then place it in the world. `friction` defaults to 0.6 and `bounce` to 0. Mesh colliders have no density or sensor setting.
 
-Geometry and material are read once, like the other shapes. To change one, replace its part. A mesh on a dynamic or kinematic body makes no shape; a mesh part whose body is unsuitable is destroyed. Once a body has a mesh, requests to change its type are reset to `Static`. Its position and rotation can still be written.
+Geometry and material edits apply at the next physics step, like the other shapes. A mesh on a dynamic or kinematic body makes no shape; the same applies to a mesh part on an unsuitable body. Once a body has a mesh, requests to change its type are reset to `Static`. Its position and rotation can still be written.
 
-Each collider accepts 3–65,536 vertices and 1–65,536 triangles. All indices must be in range, and the index count must be divisible by three. Coordinates after scale and offset must be finite and within ±1,000,000 on each axis; friction must be finite and nonnegative, bounce finite in [0, 1]. Invalid geometry makes no shape. Degenerate triangles are discarded; an entirely degenerate mesh makes no shape. A failed attachment is attempted once, as with other shapes.
+Each collider accepts 3–65,536 vertices and 1–65,536 triangles. All indices must be in range, and the index count must be divisible by three. Coordinates after scale and offset must be finite and within ±1,000,000 on each axis; friction must be finite and nonnegative, bounce finite in [0, 1]. Invalid geometry makes no shape. Degenerate triangles are discarded; an entirely degenerate mesh makes no shape. Unchanged rejected data is not retried; editing it retries attachment.
 
 Current and rewound rays, primitive casts and overlaps include meshes. Rays and casts meet triangle fronts; a mesh is a surface with no solid interior. `Body.rewind` includes its meshes too. Prepared rewind scenes retain triangle values and index them in their spatial tree, so they survive rollback and native-world replacement. Preparation and retained history cost memory proportional to triangle count; ordinary physics ticks capture none when rewind history is disabled.
 
 Cooked geometry belongs to the match's resident state and is deduplicated by its bytes. As with box hulls, unused geometry remains until the world is destroyed. Imported rendering meshes need their positions and indices supplied explicitly; there is no automatic render-mesh collider conversion.
+
+## Additional body controls
+
+Add `BodySettings` beside `Body` for controls that a simple body does not need:
+
+```csharp
+Spawn(Body { position = float3(0, 3, 0) }, Box,
+      BodySettings { lockRotationX = true, lockRotationZ = true, sleeping = false });
+```
+
+- `force` and `torque` are world-space vectors, applied at the center of mass for one tick and then cleared. Their units are newtons and newton meters. Write them every tick for a continuous force.
+- `enabled` defaults to true. False removes the body from simulation and live queries while retaining its components and attachments; true puts it back.
+- `sleeping` defaults to true and permits automatic sleeping for this body. `sleepSpeed` defaults to 0.05. This differs from `Body.asleep`, which requests or reports its current sleeping state.
+- `lockPositionX`, `lockPositionY`, `lockPositionZ`, `lockRotationX`, `lockRotationY` and `lockRotationZ` default to false and lock motion on the corresponding world axes.
+- `safetyFactor` defaults to 0.5, with a supported range of 0.01–0.5. It controls when Box3D considers motion fast enough to need continuous collision checks. `fastRotation` defaults to false and permits rotations beyond the usual per-step limit; `contactRecycling` defaults to true and reuses cached contacts.
+
+These fields are live. Removing `BodySettings` restores the defaults at the next physics step. Nonfinite force/torque vectors are ignored and cleared; invalid `sleepSpeed` (nonfinite or negative) or `safetyFactor` leaves the previous native setting in effect.
+
+## Convex hulls and height fields
+
+`HullCollider` cooks the convex hull of supplied points. It works on static, kinematic and dynamic bodies, and on their parts:
+
+```csharp
+Spawn(Body { position = float3(0, 3, 0) }, HullCollider {
+    vertices = [float3(-1, 0, -1), float3(1, 0, -1), float3(0, 0, 1), float3(0, 2, 0)],
+    density = 500
+});
+```
+
+It has `vertices`, `scale = float3(1)`, `offset`, `density = 1000`, `friction = 0.6`, `bounce = 0` and `sensor = false`. Scale, then offset, apply in body space. Scale can be mirrored but has no zero component. Supply 4–65,536 points. Box3D keeps a hull to 128 vertices, 128 faces and 128 edges, and a smooth shape reaches the edge limit first, at about 45 vertices: the native cooker keeps the furthest points that fit, so a pin turned on a lathe of 121 points cooks to 45 vertices within 8% of its volume, and a ball of 458 to 86% of a sphere's. Shapes that need more detail than that are several parts. Concavities are filled, so use a static `MeshCollider` or several convex parts for a concave object. Coplanar or otherwise uncookable data makes no shape.
+
+`HeightFieldCollider` is a static terrain grid:
+
+```csharp
+Spawn(Body { type = BodyType.Static }, HeightFieldCollider {
+    columns = 3, rows = 3,
+    heights = [0, 0, 0, 0, 1, 0, 0, 0, 0],
+    minimumHeight = 0, maximumHeight = 1,
+    scale = float3(2, 1, 2)
+});
+```
+
+`heights` is row-major, indexed by `x + z * columns`. Both dimensions are 2–4,096, and their product is at most 65,536. `scale` defaults to `float3(1)` and must be finite and positive: x/z set grid spacing and y scales height. `minimumHeight = 0` and `maximumHeight = 1` bound the native 16-bit height compression; finite samples outside that interval are clamped. Optional `holes` is a `List<byte>` with one entry per cell, indexed by `x + z * (columns - 1)`; nonzero removes that cell's two triangles. Leave it empty for solid terrain. `friction` defaults to 0.6 and `bounce` to 0. There is no density, sensor or offset; place the grid with its body's pose. Height fields can also be parts of a static body.
+
+Both colliders require finite coordinates, with the cooked geometry within ±1,000,000 per axis. Density and friction are finite and nonnegative, and bounce is finite in [0, 1]. Height fields have the same static-body restriction as meshes: an attached surface keeps its body's type static. Invalid data makes no shape and can be repaired by editing its component.
+
+Current and rewound rays, primitive casts, overlaps and all-hit queries include both. Hulls have a solid interior; height fields are triangle surfaces, including their holes. Rewind contexts retain geometry values and survive later edits, component removal and world restoration. Hull history stores the cooked convex geometry; terrain history costs memory proportional to triangle count. Cooked hull, mesh and height-field data belongs to the resident world, is deduplicated, and remains until that world is destroyed even if no collider still uses it.
+
+## Live collider changes and removal
+
+Every collider's geometry, offset, scale, material and supported sensor setting follows component edits at the next physics step, including edits to individual list elements. Invalid edits take the old shape out; correcting the component attaches it again. Unchanged rejected data is not repeatedly cooked.
+
+Primitive and hull geometry edits preserve the native shape handle. Mesh and height-field geometry edits replace the shape, and changing `sensor` replaces a primitive or hull shape. Material-only edits keep the handle. Replacements use Box3D's usual contact removal and creation events. Geometry changes update mass and wake affected bodies.
+
+Removing a collider component removes that shape while keeping its entity and other shapes. Removing `Body` removes the native body, its joints and its parts while keeping the body's entity. Removing `Part` takes its shapes off the former owner; with no `Body` of its own, the surviving entity has no physics attachments. Writing `Part.of` moves its shapes to the new body; an invalid owner destroys the part. Structural changes follow Tide's deferred component rules; the physics step after the removal has taken effect sees the new membership. Queries see the last completed physics step.
+
+The `id`, `step…`, `settingsApplied`, `cache` and attachment bookkeeping fields are the package's own; game code should not write them.
+
+## Collision and query filters
+
+`CollisionFilter` applies to all colliders on its entity. A part uses its own filter, independently of its owner's:
+
+```csharp
+Spawn(Body, Sphere, CollisionFilter { category = 2, mask = 1 });
+```
+
+`category` and `mask` are 64-bit `long` bit sets, defaulting to 1 and -1 (all bits). Two colliders pass the mask test when both `(a.category & b.mask) != 0` and `(b.category & a.mask) != 0`. Equal nonzero `group` values override masks: positive groups always pass and negative groups never pass. Other native rules still apply, such as static bodies not colliding with each other. Sensors use the package's reserved group -1, so they never report other sensors. Filter changes are live; removing the component restores the defaults.
+
+All `Raycast`, `Cast`, `RaycastAll`, `CastAll` and `Overlap` overloads, on both `Physics` and rewound `Query`, accept an optional final `filter: QueryFilter`. It has `category = 1` and `mask = -1` and uses the same mutual mask test against each collider; collision groups do not override query masks:
+
+```csharp
+physics.Raycast(from, to, out var hit, ignore: body, filter: QueryFilter { mask = 2 });
+physics.RaycastAll(from, to, out var hits, includeSensors: true, filter: QueryFilter { mask = 2 });
+```
+
+An all-hit list can still be filtered by components, teams or other game rules afterward. `Inside` reports the sensor's actual overlaps, which already obey collision filters. Rewind captures filter bits with shape membership at the upper endpoint, rather than interpolating them.
+
+## Joints
+
+A joint is an entity with `Joint` and exactly one settings component. Its endpoints are entities with `Body`:
+
+```csharp
+var fixedBody = Spawn(Body { type = BodyType.Static, position = float3(0, 4, 0) }, Box);
+var weight = Spawn(Body { position = float3(0, 2, 0) }, Sphere);
+Spawn(Joint { a = fixedBody, b = weight }, DistanceJoint { length = 2 });
+```
+
+`anchorA` and `anchorB` default to zero and are local to each body's origin. `rotationA` and `rotationB` default to `quaternion.identity` and orient those local frames. Nonzero finite quaternions are normalized. `constraintHertz = 60` and `constraintDampingRatio = 2` tune the constrained axes. `collideConnected` defaults to false. After each step `force` and `torque` report the native constraint force and torque in newtons and newton meters; `id` is internal.
+
+| Settings component | Constraint and live settings |
+|---|---|
+| `DistanceJoint` | Distance between anchors. `length = 1`; `enableSpring`, `hertz`, `dampingRatio`, `lowerSpringForce = -1e12`, `upperSpringForce = 1e12`; `enableLimit`, `minLength = 0`, `maxLength = 1e6`; `enableMotor`, `maxMotorForce`, `motorSpeed`. |
+| `MotorJoint` | Drives the relative frames. `linearVelocity`, `angularVelocity`, `maxVelocityForce`, `maxVelocityTorque`; `linearHertz`, `linearDampingRatio`, `maxSpringForce`; `angularHertz`, `angularDampingRatio`, `maxSpringTorque`. All default to zero. |
+| `FilterJoint` | Prevents the connected bodies colliding, without a motion constraint. Its `enabled = true` can independently disable the filter joint. |
+| `ParallelJoint` | Keeps the local frame z axes parallel. `hertz = 1`, `dampingRatio = 1`, `maxTorque = 1e12`. |
+| `PrismaticJoint` | Slides along local x. `enableSpring`, `hertz`, `dampingRatio`, `targetTranslation`; `enableLimit`, `lowerTranslation`, `upperTranslation`; `enableMotor`, `maxMotorForce`, `motorSpeed`. |
+| `RevoluteJoint` | Hinges around local z. `enableSpring`, `targetAngle`, `hertz`, `dampingRatio`; `enableLimit`, `lowerAngle`, `upperAngle`; `enableMotor`, `maxMotorTorque`, `motorSpeed`. |
+| `SphericalJoint` | Holds anchors together. `enableSpring`, `hertz`, `dampingRatio`, `targetRotation = quaternion.identity`; `enableConeLimit`, `coneAngle`; `enableTwistLimit`, `lowerTwistAngle`, `upperTwistAngle`; `enableMotor`, `maxMotorTorque`, `motorVelocity`. Cone and twist use local z (frame A for the cone, frame B for twist). |
+| `WeldJoint` | Holds both frames together. `linearHertz`, `angularHertz`, `linearDampingRatio`, `angularDampingRatio`, all zero by default. |
+| `WheelJoint` | Suspension along local x, wheel spin around local z. `enableSuspensionSpring = true`, `suspensionHertz = 1`, `suspensionDampingRatio = 0.7`; `enableSuspensionLimit`, `lowerSuspensionLimit`, `upperSuspensionLimit`; `enableSpinMotor`, `maxSpinTorque`, `spinSpeed`; `enableSteering`, `steeringHertz = 1`, `steeringDampingRatio = 0.7`, `targetSteeringAngle`, `maxSteeringTorque`; `enableSteeringLimit`, `lowerSteeringLimit`, `upperSteeringLimit`. |
+
+Unless shown otherwise, switches default to false and scalars to zero. Lengths are meters, angles radians, linear speeds meters per second, angular speeds radians per second, spring frequencies cycles per second, forces newtons and torques newton meters. Damping ratios are dimensionless.
+
+Settings and local frames apply at the next physics step. Normal edits preserve the native joint and its warm-start state; changing the endpoint bodies or joint type replaces it. `Joint.enabled = false` removes the native joint while retaining its entity, and true recreates it. Destroying the joint entity or removing `Joint` removes its native constraint. Missing endpoints, an endpoint without `Body`, no settings component or several settings components destroy the joint entity. Removing its sole settings component has that same effect.
+
+Invalid settings on an enabled joint also destroy the joint entity. Scalars and anchor/vector components must be finite and within ±1e12; frequencies, damping, lengths and maximum force/torque settings must be nonnegative, and lower limits must not exceed upper limits. `DistanceJoint.length` must be positive; native distance lengths and limits have a minimum of 0.005 meters. A spherical cone angle is in [0, π/2]. These checks run before entering the native engine. Joints, their settings and solver impulses follow snapshots, rollback, packing, joins and reloads with the bodies.
+
 
 ### Asking the world
 
@@ -146,13 +253,13 @@ That's the one way. The package's own systems (`Enter`, `Simulate`, `Leave` and 
 
 Box3D's persistent memory belongs to the match through `Physics.state`, a `Resident` field the package's C uses. The engine allocates it in an arena at a fixed address for the process, so Box3D's pointers stay valid when an older state is restored. After a step, the package commits the arena's touched 16 KiB pages into the world; its snapshots share those pages. A normal tick writes no serialized image or geometry list.
 
-- **Everything that changes Box3D's world goes through the match**, which is why code moves a body by writing its component, and never calls Box3D. The stamp is the stamp before it and everything done to the world since, hashed. Each commit also supplies Box3D's deterministic digest: its counts, awake bodies and their contacts' impulses. The match's hash covers the stamp and digest, not the arena's raw bytes, which contain pointers and may have another allocation order on another machine.
+- **Everything that changes Box3D's world goes through the match**, which is why code moves a body by writing its component, and never calls Box3D. The stamp is the stamp before it and everything done to the world since, hashed. Each commit also supplies Box3D's deterministic digest: its counts, awake bodies, contact impulses and persistent joint impulses. The match's hash covers the stamp and digest, not the arena's raw bytes, which contain pointers and may have another allocation order on another machine.
 - **A commit copies what Box3D may have written.** Box3D marks its allocations and changed bodies, shapes, contacts, trees and sleeping sets; the bridge marks its own persistent bookkeeping. Every touched page is copied, without first comparing or serializing it, and an untouched page stays shared with the previous state. This is a conservative set: a touched page need not have different bytes. A change the marks don't follow, or a world with most bodies awake, can copy every page.
 - **A rollback restores pages, without making Box3D's world again.** Before stepping a state, the bridge compares the resident's page identities with the pages last committed or restored into the arena, and copies the ones that differ. It checks those identities even when the stamp matches: two runs of the same simulation state can have different pointers and allocation order. Allocator state, the world's persistent arrays and geometry are restored together.
 - **Canonical bytes are for sending a world and carrying it across builds.** A join, resync, host migration or reload that packs the world writes Box3D's snapshot and the geometry it names. The receiving machine builds its arena from those bytes and commits it. A network delta currently carries the resident's canonical state whole when it differs from the base. Raw arena pages never cross machines. `box3d/TIDE.md` describes the changes that keep the simulation and canonical bytes the same on desktop and the web.
 - **What a box is made of is kept once.** Box3D keeps a box as a hull (its corners, edges and faces), shared by crates of that size. It lives in the resident arena with the rest of the persistent state, and is serialized with the snapshot only when the world is packed.
 - **A query restores the state it asks about.** The process has one arena for Box3D. A view of a confirmed world can restore that world's pages while this machine predicts ahead; the next tick restores its own pages before it steps. Queries themselves change no match state.
-- **A world at rest isn't stepped.** Nothing awake, nothing written to any body and the gravity it had: there's no step or commit, and nothing of the match is written. What's left is looking at each body's fields for what code wrote.
+- **A world at rest isn't stepped.** Nothing awake, nothing written to any body and the gravity it had: there's no step or commit, and nothing of the match is written. What's left is checking body controls and comparing collider source data for edits.
 - **Sensors and contacts are resident too.** What a sensor has in it, and the contact speeds and impulses that the next step and `Hit` use, survive a rollback with the rest of the world.
 - **Whether a body is asleep is told like its place**: `Body` has what the last step left (`stepAsleep`) beside `asleep`, so a write is the two differing, found with no call into Box3D, as a body's settings are. A body may already have been woken by another body earlier in the tick, so comparing against Box3D itself would mistake that for code putting it back to sleep. Both bytes fit beside `bullet`, so the component is as big as it was. Requests to sleep are applied last, before the step. `Leave` also reads back the bodies Box3D put to sleep with them.
 - **A native hot reload can keep the arena.** It outlives the game's library, and the new build relinks callbacks before using it. A reload that carries the world through canonical bytes, as the web does, rebuilds its arena instead. The resident type and its engine interface are Provisional; for now they're for libraries that come with Tide.
@@ -163,9 +270,13 @@ A resident tick pays for copying touched pages and computing the digest, plus th
 
 These costs depend on how much of the arena is touched, not only on how many bodies move: trees, contacts, sleeping sets and allocator metadata can touch pages too. A body's type changing or many bodies waking can mark the whole state. A world at rest skips the commit.
 
+### Live collider checking (2026-10-22)
+
+Live geometry requires exact source comparisons each tick, including list contents. Unchanged shapes do not cook, allocate or wake bodies. An optimized Windows sample with 2,400 resting boxes took about 0.085 ms per tick, including about 0.07 ms checking boxes; no native step or resident commit was needed. This was a single contended-machine diagnostic, not a controlled comparison with the historical measurements below. Mesh and height-field checks scale with their input list sizes, and edits pay for cooking as well.
+
 ### Resident comparison (2026-10-07)
 
-Three alternating runs of the image-list baseline (`14df837`) and resident build, Windows clang 23 release and WebAssembly release through Node's WASI, not a browser. The machine remained busy: CPU load was 63% before the rounds and 24% after. Each entry is the median (minimum–maximum) across those runs, in milliseconds. The costs combine the tick with keeping its snapshot and hashing on one thread, since the resident commit replaced work formerly split between the image, list and hash.
+Three alternating runs of the image-list baseline (`0cec11e`) and resident build, Windows clang 23 release and WebAssembly release through Node's WASI, not a browser. The machine remained busy: CPU load was 63% before the rounds and 24% after. Each entry is the median (minimum–maximum) across those runs, in milliseconds. The costs combine the tick with keeping its snapshot and hashing on one thread, since the resident commit replaced work formerly split between the image, list and hash.
 
 | 2,400 crates | Windows image list | Windows resident | Node image list | Node resident |
 |---|---|---|---|---|
@@ -211,16 +322,14 @@ The owner approved the all-hit and ignore-body additions on 2026-10-18. The foll
 - **`contactStiffness`, `contactDamping`, `contactSpeed`, `bounceSpeed`, `hitSpeed` and `sleeping`**, with Box3D's defaults. A tuning that changes while the world is at rest doesn't step it, but for `sleeping` turned off.
 - **The package's own that a game can see**: `Body`'s `stepType`, `stepGravityScale`, `stepLinearDamping`, `stepAngularDamping` and `stepBullet`, `Physics`' `goneShapes`, `parts` and `sensors`, the structs `Contact`, `Strike`, `Found` and `Sensors`, and the functions `Ready`, `Met`, `Owners` and `PartOf`.
 
-## Not there yet
+## Remaining limits
 
-- Hulls other than boxes, height fields, compounds and joints. Box3D's canonical snapshot holds height fields and joints already, with their geometry, but the package exposes none of them. A world with a compound has no canonical snapshot, as a compound's bytes aren't the same on every machine.
-- A hull no shape has any more stays in the resident arena: a game that makes boxes of ever new sizes keeps them all.
-- A parting from an entity that was destroyed doesn't say which entity: that would take keeping whose each body was for a tick after it's gone.
-- A shape's fields don't follow later changes: its size, its `density`, `friction` and `bounce`, and whether it's a sensor are read when it's put on its body. A part that's destroyed and spawned again is how a shape changes.
-- Removing `Body` from an entity that stays leaves its body in the world, and removing a shape's component leaves the shape on its body: destroy the entity, or make the shape a part and destroy that.
-- No layers or masks, for collisions or queries. Queries can ignore one body; `RaycastAll` and `CastAll` allow further filtering in game code.
-- A per-body setting for whether it may sleep, locks on the axes a body moves and turns on, and joints.
-- The resident arena is fixed in size (64 MiB for Box3D), and exhaustion stops the program. There is one arena for the package in a process; switching between worlds restores their pages. Resident support for arbitrary user C libraries and deltas of the canonical state against a base aren't built.
+- Native compound-container assets are not exposed; assemble compound bodies with `Part` entities.
+- A parting from a destroyed entity still identifies it as `default`.
+- Automatic conversion from imported rendering meshes and Unity translations for the new colliders, joints and controls are not provided.
+- Cooked geometry remains in the resident world after its last collider is removed. Continually creating unique geometry consumes that space.
+- The resident arena has a fixed 64 MiB limit; exhaustion stops the program. One Box3D arena per process means switching worlds costs a page restore.
+
 
 ## Rewinding queries
 
@@ -247,7 +356,7 @@ system Fire(Controls controls, Body body, Physics physics)
 
 The context has every current query form, including `RaycastAll`, every `CastAll` shape, overlaps, sensor `Inside` queries and ignore-body overloads. All-hit methods also accept `includeSensors: true`. It is detached geometry: preparing and querying it moves no live body, changes no contacts and sends no events. Query output is temporary unless the game saves it.
 
-`Body.rewind` opts the entire body and its parts in. Their poses interpolate between retained physics steps, with `Snap()` preventing interpolation across a teleport. Shape geometry and membership use the upper endpoint. Non-opted bodies remain current, so a wall still blocks a rewound player. A moving door can opt in too. Despawned historical shapes can be hit; their entity handles retain their generations, and the game must check that a damage target is still alive. A newly spawned opted-in body has no shape in an older frame. An existing body that opts out uses its current geometry.
+`Body.rewind` opts the entire body and its parts in. Their poses interpolate between retained physics steps, with `Snap()` preventing interpolation across a teleport. Shape geometry, filter bits and membership use the upper endpoint. Non-opted bodies remain current, so a wall still blocks a rewound player. A moving door can opt in too. Despawned historical shapes can be hit; their entity handles retain their generations, and the game must check that a damage target is still alive. A newly spawned opted-in body has no shape in an older frame. An existing body that opts out uses its current geometry.
 
 `Rewind` returns false for disabled history, invalid, stale or future times, or an unavailable endpoint. The output then contains no queryable geometry. No time is clamped and no current-world fallback is substituted. History begins after the first completed physics step and follows the same snapshot, rollback and serialization path as the match. Geometry is that of the physics step, as with current queries; write movement before `PhysicsStages.Step` when presentation and collider poses should agree.
 

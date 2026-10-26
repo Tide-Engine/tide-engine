@@ -1,5 +1,139 @@
 # The Box2D package
 
+## Sharded worlds (2026-10-23)
+
+As Box3D's (`notes/box3d.md`, Sharded worlds): `Physics` with `[Native]` state, `Body.position` deciding where a body is, `[Native]` handles (`Body.id`, `Part`'s shapes, `Joint.id` and `configuration`), departures dropped through `tide_shard_moves_now` in `b2t_topology` and `Begin` (bodies, fixtures and sensors this shard doesn't own), and `CopyBodies` with `b2t_copy`, `b2t_copy_box`, `b2t_copy_circle` and `b2t_drop_copy`. `DropCopies` runs after `Begin` opens Box2D's world (offset 3). `Physics` is 312 bytes; world-hash pins changed (packages and Towers), body and image pins didn't. Test: `tide_box2d_shards`.
+
+Since (same day), as Box3D's: settings the root's, every shape copied (`b2t_copy_capsule`, `_polygon`, `_segment`, `_chain`, each synced with a zero fixture) and parts by `CopyParts`, and `[Together]` on `Joint.a` and `Joint.b`. `Body` is 96 bytes and `Physics` 336.
+
+Copies of dynamic bodies are dynamic since (same day), as heavy as their shapes make them, with the body's gravity scale and dampings, put back where the owner last had them each tick (`b2t_copy`): a crate running into one across the border shares its speed, where a kinematic copy stopped it dead. `Report` takes a `World` and says `Shards.Together` as two dynamic bodies begin to touch and `Shards.Apart` for every touch that ends (`Pushing`), so the two are on one shard while they touch. No world-hash or order pin moved. Test: the crates 22/23 (Box2D 16/17) in the package's shards test.
+
+## Joints, collider completion and live settings (2026-10-22)
+
+The owner requested completion of the missing Box2D package features, including
+joints. `box2d.tide`, `bridge.c`, `joints.inc` and `colliders.inc` now expose all
+nine joint types in the pinned Box2D: distance, filter, motor, mover, pogo,
+prismatic, revolute, weld and wheel. A joint entity has `Joint` and exactly one
+settings component. Its anchors and angles are local frames at each body's
+origin. Motors, springs, limits and common settings follow edits through native
+setters; reaction force/torque are read after stepping. Disabling removes the
+native constraint while retaining the entity. Rebinding or changing the type
+recreates it. Pogo's creation-only normal, force bounds and initial state also
+recreate it; hertz, damping and rest length have setters. Missing bodies, the
+same body twice, invalid settings or a missing/ambiguous settings component
+destroy the joint entity. Removing `Joint` removes its native constraint.
+
+Creation stamps explicitly include the joint type. Default prismatic and
+revolute definitions otherwise record identical scalar bytes despite different
+constraints, so their native caches could share an incorrect stamp. The new
+two-world regression checks those otherwise-identical replacements have
+different stamps. The unchanged Box3D adapter uses the same older recording
+pattern and should receive a separate audit; it was not changed here.
+
+Capsules, convex polygons, two-sided segments and one-sided open/loop chains
+join boxes and circles, directly or as parts. Polygons hull three to eight
+vertices. Open-chain ghost vertices extrapolate the endpoint edges; chains
+require static/kinematic bodies and distinct consecutive points more than
+5 mm apart. Geometry/material/filter/sensor edits rebuild fixtures and update
+mass. Invalid geometry removes its fixture and repairing it attaches again.
+The README and user docs specify the finite numeric bounds. Chains enable the
+same contact/hit and sensor-detection events as the other native shapes.
+
+`Physics.fixtures` stores each entity's six attachment records and segment
+handles in ordinary match lists/maps. Component removal and body replacement
+are reconciled against the world, including `Body` removed from a surviving
+entity, a removed shape or `Part`, and `Part.of` changes. Stored handles hide a
+destroyed part from queries immediately and retain end-contact body ownership
+until the step. An exact, bounded snapshot of entity-slot metadata gates the
+cleanup scan; zero body handles also invalidate it. This is match state, not
+process identity. Source bytes are retained through the ordinary Tide writers.
+
+The common box/circle checks run as native row systems. Their per-world cache
+compares the actual source lanes, body generation and filter presence, and is
+invalidated by restore and topology changes. Cache misses reconcile against
+the match's fixture records. Only changed records return through Tide's owned
+list/map writers. Existing sparse `BoxMade`/`CircleMade` registration markers
+are retained: removing them changed ECS traversal and the existing Towers
+simulation. Stage offsets are distinct through preparation, creation and
+reconciliation, so a game's ordering against one named system cannot move
+joint cleanup ahead of opening the correct native world.
+
+`CollisionFilter` provides 64-bit `category`/`mask` and signed `group`, with the
+same defaults/names as Box3D. Optional trailing `QueryFilter` arguments apply
+to current and rewound rays, casts, all-hit queries and overlaps. Capsules,
+polygons and segments have every convex query overload. Historical records
+retain exact geometry kind and filtering, and use native polygon/capsule/
+segment narrow phases, including chain ray sidedness. `Inside` follows the
+sensor's collision masks/groups. Sensors still ignore other sensors, including
+explicit positive groups: a pure native filter callback is installed at every
+create/restore, and enabled for filtered sensors. No callback pointer is saved
+in match state. Existing query ordering and native image/body/answer pins stay
+unchanged.
+
+`Body` gravity scale, linear/angular damping, sleep speed, fixed rotation and
+bullet mode follow later writes. Changed native settings wake the body, before
+the existing final deferred sleep pass. Native setting caches are invalidated
+on restore. `Physics` is 256 bytes (the old fields retain their offsets),
+`Body` remains 96, `Joint` is 88, historical `Collider` is 152, and the checked
+inline polygon `Hull` is 88. The new match records change whole-world/sequence
+pins; native/WASI agree on replacements. The original stack body pin remains
+`a2292c6100587813`, native image-byte pin `b43aa576ef744d1e`, and query-answer
+pin `53abf452b7c6e40b`. The complete fixture sequence is `39d1697495a58b42`.
+
+One vendored correction: `b2GetJointConstraintTorque` now returns zero for
+mover and pogo joints instead of asserting on valid linear constraints. It is
+marked `Tide:` and recorded in `box2d/TIDE.md`. No solver equation, engine,
+compiler or platform API changed, and no game workaround was introduced.
+
+`tide_box2d_complete` adds eleven tests: all joint families actually constrain
+or drive bodies; all live settings replay after native restore; disabling,
+rebinding types and component removal; geometry and filter edits; masks and
+positive/negative groups; sensor contents and one-sided rays; current and
+historical convex query families; malformed geometry/joints; body settings;
+and snapshot/packing/forced-native-restore replay. Every incremental native
+image is checked against a whole image. Its sequence pin agrees in native and
+WASI debug/release. Existing package, Towers, order and rewind-network fixtures
+remain covered, with original motion/image/answer pins unchanged.
+
+Release cost comparison against the previous engine checkout (`f8468b30`),
+2,400 crates, three alternating runs of `box2d_costs`: least moving tick
+0.646 ms before / 0.748 after, one crate pushed 0.070 / 0.109, and rest
+0.013 / 0.044. The added steady edit checks have a fixed per-body cost; the
+image remains 2,549,152 bytes with identical bytes and whole/partial counts.
+These are local timings with other sessions active, not a quiet benchmark.
+An initial per-entity Tide scan cost 1.2 ms at rest and was replaced by the
+gated cleanup/native row path before delivery. Remaining event limits are
+listed in the README: own shapes on one entity share its part identity, and a
+departed destroyed entity is still reported as `default`.
+
+Validation: full native debug ran 2,594 tests (one existing MicroDuck case is
+disabled). The JetBrains installer fixture failed its synthetic update once
+and passed unchanged on its focused rerun; all other native tests passed.
+Full web debug passed 2,456 tests, including WebGL/D3D11/WebGPU (the same
+existing MicroDuck case is disabled). The final native cache fast-path change
+also passed the complete Box2D/Towers group and stack/complete in release;
+WASI debug/release agree on the pins. The production docs build passed with
+Node 24.21.0; native GPU validation used the local Vulkan SDK. Other operating
+systems, Android and sanitizers were not run on this Windows machine.
+
+After merging `origin/dev` through `ca7f77ff`, both full debug builds and the
+production docs build passed. Incoming changes were confined to web invites,
+Rooms and the sanitizer-only MicroDuck timeout. The affected physics/Towers/
+Rooms/invite group passed 16 native and 18 web tests, including the browser
+registration, handover and ended-room cases. No CI run was dispatched.
+
+
+## In Unity (2026-10-22)
+
+`packages/box2d/unity.json` says how the package's components are in a Unity project: fields and components it keeps
+for itself hidden, shapes sized by the GameObject's scale and drawn in the Scene view; and the Tide a Unity project
+alone gets: a body starts at its entity's Transform, which follows it, and a part naming no body is one of the
+nearest body above it (2026-10-25: parts placed where their GameObjects are; capsule, segment, polygon and chain points
+by the scale, on a part in its body's frame, drawn and edited as outlines; joints' anchors drawn and edited, their force
+and torque read back; `[Native]` fields hidden without being listed). The package's own `.tide` is
+unchanged, so games outside Unity are too. Unity's own physics components aren't the package's. Contracts and tests:
+`notes/unity.md`, Packages' components in Unity.
+
 ## All-hit queries and game filtering (2026-10-18)
 
 The owner approved `RaycastAll`/`CastAll` and ignore-body overloads after the
@@ -87,7 +221,7 @@ An experiment the owner asked for (2026-10-05: "we can always remove it"), writt
   - **Putting a body to sleep and waking one are calls Box2D's image in parts follows** (`b2SnapNoteOp`, which named `b2Body_SetAwake` already, for the wake of a body that code moves): `tide_box2d_sleep` runs with every image in parts compared with the image written whole (`b2t_check`), 253 of its scripted match's 320, and `tide_box2d_parts` puts bodies to sleep at random right after a restore too, which it kept away from until `b2TrySleepIsland` was changed.
   - **Pins.** The bodies' pin (`BODIES_HASH`), Box2D's own images' (`BYTES_HASH`) and what was answered (`ANSWERS_HASH`) didn't move: every image is the bytes it was. The worlds' did (the stack's two, the sensors' two, the kit's three, and Towers' two), with the worlds stepping as they did: a sleeping body's `asleep` and `stepAsleep` are 1 where its component had two zeros, and a stamp notes a body's component as code wrote it, so a body that was asleep when code pushed it is noted otherwise, which every stamp after it carries (with the two bytes left out of the note, the pinned match's last world had the hash it had before: tried).
   - `tide_box2d_sleep` (`test/sleep.tide`, `sleep_test.c`: a game built with the package as tide builds one that lists it) is its tests, each a few bodies: a resting crate put to sleep, which then costs nothing, and woken in a world at rest, where the write is seen; one made static while it sleeps; a world whose bodies don't fall asleep; a falling crate put to sleep, which hangs where it was until a ball hits it, and one put somewhere else and to sleep in one tick; a plank and the crate sliding on it, a lift and the crate on it, and one of an island put to sleep while another is pushed, either way round; a stack from its bottom crate, with a crate on its way down that wakes it; bodies spawned asleep, three of them on each other; gravity; and a match that does all of it from a system, at its ticks, whose hashes are pinned, the same in debug, release and on the web, and which is run again from a snapshot three times, from its packed bytes, and with C's world made from the image before every tick.
-  - **What it costs against `dev` at `6011c2b`**: `box2d_costs`, release, 2,400 crates, seven alternating runs behind the continuation benchmark gate. The least tick was 0.739 ms before and 0.910 after with everything moving, 0.084 and 0.078 with one crate pushed, and 0.019 and 0.019 at rest. The moving ticks ranged from 0.739 to 1.317 before and 0.910 to 1.284 after, with concurrent browser tests and builds taking about 43% CPU before the round: these do not establish the cost of the extra field under quiet conditions. No regression is visible with one crate moving or at rest. The image is still 2,549,152 bytes, the same bytes as before; the moving run writes all 120 images whole, the one-crate run 13 whole and 227 in parts, and rest writes none. The image's least time was 0.092 and 0.141 ms for the whole moving world, and 0.013 and 0.013 in the one-crate run. This round supersedes the comparison made before Box2D's image in parts was merged; its raw runs remain in the task's `build/sleep-wake-costs-contended.txt`.
+  - **What it costs against `dev` at `c5753f2`**: `box2d_costs`, release, 2,400 crates, seven alternating runs behind the continuation benchmark gate. The least tick was 0.739 ms before and 0.910 after with everything moving, 0.084 and 0.078 with one crate pushed, and 0.019 and 0.019 at rest. The moving ticks ranged from 0.739 to 1.317 before and 0.910 to 1.284 after, with concurrent browser tests and builds taking about 43% CPU before the round: these do not establish the cost of the extra field under quiet conditions. No regression is visible with one crate moving or at rest. The image is still 2,549,152 bytes, the same bytes as before; the moving run writes all 120 images whole, the one-crate run 13 whole and 227 in parts, and rest writes none. The image's least time was 0.092 and 0.141 ms for the whole moving world, and 0.013 and 0.013 in the one-crate run. This round supersedes the comparison made before Box2D's image in parts was merged; its raw runs remain in the task's `build/sleep-wake-costs-contended.txt`.
 - **A sensor sends `Touched` and `Parted`** (`b2t_touches`, `b2t_touch`: the step's contact events, then its sensor events, each a sensor's shape and the shape that came into it or left). What code relies on:
   - Box2D only reports a shape to a sensor when both were made with `enableSensorEvents`, which is off by default, for a sensor too: every shape is made with it (`shape_def`). It's a byte of each shape in the image, which is what moved the pinned hashes when sensors were built (below).
   - Sensors see each other in this Box2D, each reporting the other: the package's are made in one collision group below zero (`filter.groupIndex = -1`), which Box2D never sets against each other, so a sensor doesn't report another, and nothing is heard twice.

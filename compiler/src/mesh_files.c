@@ -17,14 +17,18 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tide/internal/count_text.h"
 #include "tide/math.h"
 #include "tide/sha256.h"
 
 #pragma STDC FP_CONTRACT OFF
 
-// What one mesh holds at the most: its indices are ints, and its vertices go to the GPU side by side.
-#define VERTICES_MOST (1u << 24)
-#define INDICES_MOST (3u << 25)
+// What one mesh holds at the most (the limits, mesh_files.h), as the shared glTF readers name them.
+#define VERTICES_MOST TIDE_MESH_MAX_VERTICES
+#define INDICES_MOST TIDE_MESH_MAX_INDICES
+#define INDICES_MOST_NAME "TIDE_MESH_MAX_INDICES"
+#define READS_MOST TIDE_MESH_MAX_READS
+#define READS_MOST_NAME "TIDE_MESH_MAX_READS"
 
 // What's wrong with the file being read: said once, the first thing found.
 typedef struct reader {
@@ -45,6 +49,22 @@ static bool fail(reader *r, const char *note, const char *fmt, ...)
     va_end(args);
     snprintf(r->note, 256, "%s", note ? note : "");
     return false;
+}
+
+// A limit of mesh_files.h refused the file. The message says what it has
+// against the limit and ends with the limit's name, so a report says which:
+// "has 20,000,000 vertices, more than the 16,777,216 one Mesh holds
+// (TIDE_MESH_MAX_VERTICES)". `have` is UINT64_MAX where the count stopped at
+// the limit.
+static bool past_limit(reader *r, const char *name, const uint64_t most, const char *what, const uint64_t have)
+{
+    char counted[32], limit[32];
+    const char *note = "a mesh that big is better split into several files, each a Mesh of its own";
+    if (have == UINT64_MAX) {
+        return fail(r, note, "has more %s than the %s one Mesh holds (%s)", what, tide_count_text(most, limit), name);
+    }
+    return fail(r, note, "has %s %s, more than the %s one Mesh holds (%s)", tide_count_text(have, counted), what,
+                tide_count_text(most, limit), name);
 }
 
 static void *zeroed(const size_t count, const size_t size)
@@ -74,10 +94,7 @@ typedef struct builder {
 static bool more_vertices(builder *b, const uint64_t more)
 {
     const uint64_t need = (uint64_t)b->m.vertices + more;
-    if (need > VERTICES_MOST) {
-        return fail(b->r, "a mesh that big is better split into several files, each a Mesh of its own",
-                    "has more than %u vertices, the most one Mesh holds", (unsigned)VERTICES_MOST);
-    }
+    if (need > VERTICES_MOST) return past_limit(b->r, "TIDE_MESH_MAX_VERTICES", VERTICES_MOST, "vertices", need);
     if (need <= b->vertex_room) return true;
     uint32_t room = b->vertex_room ? b->vertex_room : 256u;
     while (room < need) room *= 2u;
@@ -87,7 +104,8 @@ static bool more_vertices(builder *b, const uint64_t more)
     b->m.uv2 = realloc(b->m.uv2, (size_t)room * 2u * sizeof(float));
     b->m.color = realloc(b->m.color, (size_t)room * 4u * sizeof(float));
     b->m.tangent = realloc(b->m.tangent, (size_t)room * 4u * sizeof(float));
-    if (!b->m.position || !b->m.normal || !b->m.uv || !b->m.uv2 || !b->m.color || !b->m.tangent) abort();
+    b->m.sources = realloc(b->m.sources, (size_t)room * sizeof *b->m.sources);
+    if (!b->m.position || !b->m.normal || !b->m.uv || !b->m.uv2 || !b->m.color || !b->m.tangent || !b->m.sources) abort();
     b->vertex_room = room;
     return true;
 }
@@ -95,10 +113,7 @@ static bool more_vertices(builder *b, const uint64_t more)
 static bool more_indices(builder *b, const uint64_t more)
 {
     const uint64_t need = (uint64_t)b->m.indices + more;
-    if (need > INDICES_MOST) {
-        return fail(b->r, "a mesh that big is better split into several files, each a Mesh of its own",
-                    "has more than %u triangles, the most one Mesh holds", (unsigned)(INDICES_MOST / 3u));
-    }
+    if (need > INDICES_MOST) return past_limit(b->r, "TIDE_MESH_MAX_INDICES", INDICES_MOST / 3u, "triangles", need / 3u);
     if (need <= b->index_room) return true;
     uint32_t room = b->index_room ? b->index_room : 512u;
     while (room < need) room *= 2u;
@@ -146,6 +161,7 @@ static void put_vertex(builder *b, const part *p, const uint32_t from, const uin
     memcpy(m->color + (size_t)to * 4u, p->color + (size_t)from * 4u, 4u * sizeof(float));
     if (p->tangent) memcpy(m->tangent + (size_t)to * 4u, p->tangent + (size_t)from * 4u, 4u * sizeof(float));
     else memset(m->tangent + (size_t)to * 4u, 0, 4u * sizeof(float));
+    b->m.sources[to] = (p->tangent ? 1u : 0u) | (p->uv ? 2u : 0u);
 }
 
 // Adds a part to the mesh. One with normals keeps its vertices as they are,
@@ -203,6 +219,194 @@ static float unit(const float v)
     return !(v > 0.0f) ? 0.0f : v >= 1.0f ? 1.0f : v;
 }
 
+// Missing static tangents use the usual UV derivatives and Gram-Schmidt basis
+// (https://terathon.com/blog/tangent-space.html), with corner-angle weighting.
+// Authored streams keep their existing import/transform path. No vertices are
+// welded: UV/normal/material seams already present in the source stay separate.
+// Only opposite handedness at one shared vertex needs an additional vertex.
+typedef struct tangent_sum {
+    double direction[2][3];
+    uint32_t split;
+    uint8_t sides;
+} tangent_sum;
+
+static double tangent_dot(const double a[3], const double b[3])
+{
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+}
+
+static bool tangent_unit(double v[3])
+{
+    const double length = sqrt(tangent_dot(v, v));
+    if (!(length > 0.0) || !isfinite(length)) return false;
+    for (uint32_t k = 0; k < 3u; k++) v[k] /= length;
+    return true;
+}
+
+static void tangent_normal(const mesh_file *m, const uint32_t vertex, double n[3])
+{
+    for (uint32_t k = 0; k < 3u; k++) n[k] = m->normal[(size_t)vertex * 3u + k];
+    // A zero/invalid authored normal or a collapsed triangle has no plane.
+    // Pick a fixed plane for its tangent without changing the normal stream.
+    if (!tangent_unit(n)) n[0] = n[1] = 0.0, n[2] = 1.0;
+}
+
+static bool tangent_project(double t[3], const double n[3])
+{
+    const double before = tangent_dot(t, t);
+    // A second projection removes cancellation residue before normalization.
+    // Nearly parallel directions have no reliable tangent plane projection.
+    for (uint32_t pass = 0; pass < 2u; pass++) {
+        const double along = tangent_dot(n, t);
+        for (uint32_t k = 0; k < 3u; k++) t[k] -= n[k] * along;
+    }
+    if (!(tangent_dot(t, t) > before * 1e-24)) return false;
+    return tangent_unit(t);
+}
+
+// A triangle's U/V directions, and its geometric edges. Differences/products
+// of finite floats fit in doubles, including very small UV/geometry scales;
+// normalizing the signed numerators avoids division by a tiny UV determinant.
+static bool tangent_triangle(const builder *b, const uint32_t at, double edge[3][3], double u[3], double v[3])
+{
+    const mesh_file *m = &b->m;
+    const uint32_t *index = m->index + at;
+    const float *position[3], *uv[3];
+    for (uint32_t j = 0; j < 3u; j++) {
+        if (!(b->m.sources[index[j]] & 2u)) return false;
+        position[j] = m->position + (size_t)index[j] * 3u;
+        uv[j] = m->uv + (size_t)index[j] * 2u;
+        for (uint32_t k = 0; k < 3u; k++) if (!isfinite(position[j][k])) return false;
+        for (uint32_t k = 0; k < 2u; k++) if (!isfinite(uv[j][k])) return false;
+    }
+    for (uint32_t k = 0; k < 3u; k++) {
+        edge[0][k] = (double)position[1][k] - position[0][k];
+        edge[1][k] = (double)position[2][k] - position[0][k];
+        edge[2][k] = (double)position[2][k] - position[1][k];
+    }
+    double facing[3] = {edge[0][1] * edge[1][2] - edge[0][2] * edge[1][1],
+                        edge[0][2] * edge[1][0] - edge[0][0] * edge[1][2],
+                        edge[0][0] * edge[1][1] - edge[0][1] * edge[1][0]};
+    if (!tangent_unit(facing)) return false;
+    const double du1 = (double)uv[1][0] - uv[0][0], dv1 = (double)uv[1][1] - uv[0][1];
+    const double du2 = (double)uv[2][0] - uv[0][0], dv2 = (double)uv[2][1] - uv[0][1];
+    const double determinant = du1 * dv2 - du2 * dv1;
+    if (determinant == 0.0) return false;
+    const double side = determinant < 0.0 ? -1.0 : 1.0;
+    for (uint32_t k = 0; k < 3u; k++) {
+        u[k] = (edge[0][k] * dv2 - edge[1][k] * dv1) * side;
+        v[k] = (edge[1][k] * du1 - edge[0][k] * du2) * side;
+    }
+    return tangent_unit(u) && tangent_unit(v);
+}
+
+static uint32_t tangent_side(const mesh_file *m, const uint32_t vertex, const double u[3], const double v[3], double t[3])
+{
+    double n[3];
+    tangent_normal(m, vertex, n);
+    memcpy(t, u, 3u * sizeof(double));
+    if (!tangent_project(t, n)) return 0u;
+    const double bitangent[3] = {n[1] * t[2] - n[2] * t[1], n[2] * t[0] - n[0] * t[2], n[0] * t[1] - n[1] * t[0]};
+    const double side = tangent_dot(bitangent, v);
+    return side < 0.0 ? 2u : side > 0.0 ? 1u : 0u;
+}
+
+static void tangent_write(mesh_file *m, const uint32_t vertex, const double direction[3], const uint32_t side)
+{
+    double n[3], t[3];
+    tangent_normal(m, vertex, n);
+    memcpy(t, direction, sizeof t);
+    if (!tangent_project(t, n)) {
+        // Project the least-aligned coordinate axis: a finite unit direction
+        // even with no UVs, a collapsed mapping, or cancelling contributions.
+        uint32_t axis = 0;
+        if (fabs(n[1]) < fabs(n[axis])) axis = 1u;
+        if (fabs(n[2]) < fabs(n[axis])) axis = 2u;
+        t[0] = t[1] = t[2] = 0.0;
+        t[axis] = 1.0;
+        (void)tangent_project(t, n);
+    }
+    float *out = m->tangent + (size_t)vertex * 4u;
+    for (uint32_t k = 0; k < 3u; k++) out[k] = (float)t[k] + 0.0f;
+    out[3] = side == 2u ? -1.0f : 1.0f;
+}
+
+static double tangent_angle(const double a[3], const double b[3], const bool opposite)
+{
+    const double cross[3] = {a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]};
+    const double sine = sqrt(tangent_dot(cross, cross));
+    const double cosine = tangent_dot(a, b) * (opposite ? -1.0 : 1.0);
+    // acos(float(dot)) loses narrow valid corners when the cosine rounds to
+    // one. atan2 keeps their sine; below float's range the angle equals the
+    // sine to much better than float precision, so retain that double weight.
+    const double angle = tide_atan2_f((float)sine, (float)cosine);
+    return angle > 0.0 ? angle : sine;
+}
+
+static bool make_tangents(builder *b)
+{
+    mesh_file *m = &b->m;
+    const uint32_t vertices = m->vertices;
+    bool missing = false;
+    for (uint32_t i = 0; i < vertices; i++) missing |= !(b->m.sources[i] & 1u);
+    if (!missing) return true;
+    tangent_sum *sums = zeroed(vertices, sizeof *sums);
+    for (uint32_t at = 0; at < m->indices; at += 3u) {
+        if (b->m.sources[m->index[at]] & 1u) continue;
+        double edge[3][3], u[3], v[3];
+        if (!tangent_triangle(b, at, edge, u, v)) continue;
+        for (uint32_t j = 0; j < 3u; j++) (void)tangent_unit(edge[j]);
+        // At corners 0, 1, 2: edges (01,02), (-01,12), (-02,-12).
+        for (uint32_t j = 0; j < 3u; j++) {
+            const uint32_t vertex = m->index[at + j];
+            double t[3];
+            const uint32_t side = tangent_side(m, vertex, u, v, t);
+            if (!side || (b->m.sources[vertex] & 1u)) continue;
+            tangent_sum *sum = sums + vertex;
+            sum->sides |= (uint8_t)side;
+            const double weight = tangent_angle(edge[j == 2u ? 1u : 0u], edge[j == 0u ? 1u : 2u], j == 1u);
+            for (uint32_t k = 0; k < 3u; k++) sum->direction[side - 1u][k] += t[k] * weight;
+        }
+    }
+    uint32_t splits = 0;
+    for (uint32_t i = 0; i < vertices; i++) splits += sums[i].sides == 3u;
+    if (!more_vertices(b, splits)) {
+        free(sums);
+        return false;
+    }
+    for (uint32_t i = 0; i < vertices; i++) {
+        if (b->m.sources[i] & 1u) continue;
+        tangent_sum *sum = sums + i;
+        if (sum->sides == 3u) {
+            const uint32_t to = m->vertices++;
+            sum->split = to;
+            memcpy(m->position + (size_t)to * 3u, m->position + (size_t)i * 3u, 3u * sizeof(float));
+            memcpy(m->normal + (size_t)to * 3u, m->normal + (size_t)i * 3u, 3u * sizeof(float));
+            memcpy(m->uv + (size_t)to * 2u, m->uv + (size_t)i * 2u, 2u * sizeof(float));
+            memcpy(m->uv2 + (size_t)to * 2u, m->uv2 + (size_t)i * 2u, 2u * sizeof(float));
+            memcpy(m->color + (size_t)to * 4u, m->color + (size_t)i * 4u, 4u * sizeof(float));
+            b->m.sources[to] = b->m.sources[i];
+            tangent_write(m, to, sum->direction[1], 2u);
+        }
+        const uint32_t side = sum->sides == 2u ? 2u : 1u;
+        tangent_write(m, i, sum->direction[side - 1u], side);
+    }
+    if (splits) {
+        for (uint32_t at = 0; at < m->indices; at += 3u) {
+            if (b->m.sources[m->index[at]] & 1u) continue;
+            double edge[3][3], u[3], v[3];
+            if (!tangent_triangle(b, at, edge, u, v)) continue;
+            for (uint32_t j = 0; j < 3u; j++) {
+                const uint32_t vertex = m->index[at + j];
+                double t[3];
+                if (sums[vertex].split && tangent_side(m, vertex, u, v, t) == 2u) m->index[at + j] = sums[vertex].split;
+            }
+        }
+    }
+    free(sums);
+    return true;
+}
+
 static void finish(builder *b)
 {
     mesh_file *m = &b->m;
@@ -229,6 +433,7 @@ void mesh_file_free(mesh_file *m)
     free(m->color);
     free(m->tangent);
     free(m->index);
+    free(m->sources);
     *m = (mesh_file){0};
 }
 
@@ -252,6 +457,7 @@ typedef struct gltf {
     uint32_t buffer_count;
     bool *placed; // A node the scene has placed: a node is in it once
     uint32_t node_count;
+    uint64_t reads; // Numbers read from accessors so far, against READS_MOST
 } gltf;
 
 #include "tide/internal/gltf_read.h"
@@ -288,6 +494,7 @@ static bool read_floats(gltf *g, const jnode *index, const uint32_t want, const 
     if (a.width != want && !(want == 4u && fill == 1.0f && a.width == 3u && strcmp(what, "colors") == 0)) {
         return fail(g->r, NULL, "has %s with the wrong number of components", what);
     }
+    if (!spend_reads(g, (uint64_t)pick->count * want)) return false;
     const uint32_t each = component_bytes(a.type);
     const uint32_t element = each * a.width;
     const uint32_t take = a.width < want ? a.width : want;
@@ -371,10 +578,7 @@ static bool add_primitive(gltf *g, const jnode *primitive, const float world[16]
     accessor counted;
     if (!accessor_of(g, positions, &counted, "positions")) return false;
     const uint64_t count = counted.count;
-    if (count > VERTICES_MOST) {
-        return fail(r, "a mesh that big is better split into several files, each a Mesh of its own",
-                    "has more than %u vertices, the most one Mesh holds", (unsigned)VERTICES_MOST);
-    }
+    if (count > VERTICES_MOST) return past_limit(r, "TIDE_MESH_MAX_VERTICES", VERTICES_MOST, "vertices in a part", count);
     part p = {0};
     vertex_pick pick = {0};
     uint32_t *listed = NULL;
@@ -383,6 +587,8 @@ static bool add_primitive(gltf *g, const jnode *primitive, const float world[16]
     // Pick only the vertices complete triangles use. A shared accessor can cover
     // all of a model's materials, while this primitive uses a small part of it.
     uint64_t listed_count = count;
+    // What's made and walked for the accessor's every vertex below, whichever the triangles use
+    if (!spend_reads(g, count)) return false;
     if (jget(primitive, "indices")) {
         listed = read_indices(g, jget(primitive, "indices"), &listed_count);
         ok = listed != NULL;
@@ -395,8 +601,7 @@ static bool add_primitive(gltf *g, const jnode *primitive, const float world[16]
     }
     const uint64_t triangles = !ok ? 0u : mode == 4 ? listed_count / 3u : listed_count >= 3u ? listed_count - 2u : 0u;
     if (ok && triangles * 3u > INDICES_MOST) {
-        ok = fail(r, "a mesh that big is better split into several files, each a Mesh of its own",
-                  "has more than %u triangles, the most one Mesh holds", (unsigned)(INDICES_MOST / 3u));
+        ok = past_limit(r, "TIDE_MESH_MAX_INDICES", INDICES_MOST / 3u, "triangles in a part", triangles);
     }
     if (ok) {
         const uint64_t used = mode == 4 ? triangles * 3u : triangles ? listed_count : 0u;
@@ -545,12 +750,15 @@ static bool place_node(gltf *g, const int64_t index, const float parent[16], con
 
 static bool read_gltf(reader *r, builder *b, const char *text, const size_t length, const uint8_t *bin, const uint64_t bin_size)
 {
-    jparser j = {.p = text, .end = text + length};
+    jparser j = {.p = text, .end = text + length, .values_left = TIDE_MESH_MAX_JSON_VALUES};
     const jnode *root = jvalue(&j, 0);
     jspace(&j);
     gltf g = {.r = r, .b = b, .root = root, .bin = bin, .bin_size = bin_size};
     bool ok = true;
-    if (!root || j.bad || j.p != j.end || root->kind != J_OBJECT) {
+    if (j.too_many) {
+        ok = past_limit(r, "TIDE_MESH_MAX_JSON_VALUES", TIDE_MESH_MAX_JSON_VALUES, "JSON values in its description", UINT64_MAX);
+    }
+    if (ok && (!root || j.bad || j.p != j.end || root->kind != J_OBJECT)) {
         ok = fail(r, NULL, "isn't a glTF that reads: its description isn't JSON");
     }
     if (ok) {
@@ -656,8 +864,13 @@ typedef struct floats {
     uint32_t count, room;
 } floats;
 
-static void push_floats(floats *list, const float *values, const uint32_t count)
+// Most numbers a list keeps: the room doubles up to it and no further. Each takes a line of a file.
+#define FLOATS_MOST (1u << 30)
+
+// False for a list that would have more than FLOATS_MOST.
+static bool push_floats(floats *list, const float *values, const uint32_t count)
 {
+    if ((uint64_t)list->count + count > FLOATS_MOST) return false;
     if (list->count + count > list->room) {
         list->room = list->room ? list->room * 2u : 1024u;
         while (list->room < list->count + count) list->room *= 2u;
@@ -666,6 +879,7 @@ static void push_floats(floats *list, const float *values, const uint32_t count)
     }
     memcpy(list->items + list->count, values, (size_t)count * sizeof(float));
     list->count += count;
+    return true;
 }
 
 // A corner as a face names it: a position, a uv and a normal by their places, from 0, or -1 for none.
@@ -724,6 +938,7 @@ static uint32_t new_vertex(obj *o, const corner c, const float *flat)
     memcpy(b->m.uv + (size_t)at * 2u, uv, sizeof uv);
     memset(b->m.uv2 + (size_t)at * 2u, 0, 2u * sizeof(float));
     memset(b->m.tangent + (size_t)at * 4u, 0, 4u * sizeof(float));
+    b->m.sources[at] = c.uv >= 0 ? 2u : 0u;
     return at;
 }
 
@@ -827,7 +1042,7 @@ static bool read_obj(reader *r, builder *b, const char *text, const size_t lengt
 {
     obj o = {.r = r, .b = b};
     const char *end = text + length;
-    int line_number = 0;
+    unsigned long long line_number = 0;
     bool ok = true;
     corner *face = NULL;
     uint32_t face_room = 0;
@@ -847,25 +1062,29 @@ static bool read_obj(reader *r, builder *b, const char *text, const size_t lengt
             uint32_t count = 0;
             while (ok && count < 7u && next_word(&p, line_end, &from, &to) && *from != '#') {
                 if (!mesh_number(from, to, &numbers[count++])) {
-                    ok = fail(r, NULL, "isn't an OBJ that reads: line %d has '%.*s' where a number goes", line_number,
+                    ok = fail(r, NULL, "isn't an OBJ that reads: line %llu has '%.*s' where a number goes", line_number,
                               (int)(to - from > 40 ? 40 : to - from), from);
                 }
             }
             if (ok && count < (uv ? 1u : 3u)) {
-                ok = fail(r, NULL, "isn't an OBJ that reads: line %d has %u numbers, and a %s has %s", line_number, (unsigned)count,
+                ok = fail(r, NULL, "isn't an OBJ that reads: line %llu has %u numbers, and a %s has %s", line_number, (unsigned)count,
                           uv ? "uv" : position ? "vertex" : "normal", uv ? "one or two" : "three");
             }
             if (!ok) break;
             if (position) {
                 // A color after the position, which some tools write: x y z r g b, or with a weight before it
                 static const float white[3] = {1.0f, 1.0f, 1.0f};
-                push_floats(&o.positions, numbers, 3u);
-                push_floats(&o.colors, count >= 6u ? numbers + (count == 7u ? 4 : 3) : white, 3u);
+                ok = push_floats(&o.positions, numbers, 3u)
+                  && push_floats(&o.colors, count >= 6u ? numbers + (count == 7u ? 4 : 3) : white, 3u);
                 o.colored |= count >= 6u;
             } else if (normal) {
-                push_floats(&o.normals, numbers, 3u);
+                ok = push_floats(&o.normals, numbers, 3u);
             } else {
-                push_floats(&o.uvs, numbers, 2u);
+                ok = push_floats(&o.uvs, numbers, 2u);
+            }
+            if (!ok) {
+                ok = fail(r, "a mesh that big is better split into several files",
+                          "isn't an OBJ Tide reads: line %llu has more vertex, normal or uv lines before it than a mesh file holds", line_number);
             }
             continue;
         }
@@ -879,7 +1098,7 @@ static bool read_obj(reader *r, builder *b, const char *text, const size_t lengt
                               place_named(first ? first + 1 : to, second ? second : to, o.uvs.count / 2u),
                               place_named(second ? second + 1 : to, to, o.normals.count / 3u)};
             if (c.position < 0 || c.uv == -2 || c.normal == -2) {
-                ok = fail(r, NULL, "isn't an OBJ that reads: the face on line %d names '%.*s', and there's no such vertex, uv or "
+                ok = fail(r, NULL, "isn't an OBJ that reads: the face on line %llu names '%.*s', and there's no such vertex, uv or "
                           "normal before it", line_number, (int)(to - from > 40 ? 40 : to - from), from);
                 break;
             }
@@ -960,6 +1179,37 @@ bool mesh_file_read(const uint8_t *data, const size_t size, const char *name, co
     }
     if (ok && !b.m.indices) ok = fail(&r, NULL, "has no triangles: there's nothing in it to draw");
     if (!ok) {
+        mesh_file_free(&b.m);
+        return false;
+    }
+    finish(&b);
+    *out = b.m;
+    return true;
+}
+
+bool mesh_file_with_tangents(const mesh_file *source, mesh_file *out, char why[256], char note[256])
+{
+    why[0] = note[0] = '\0';
+    *out = (mesh_file){0};
+    reader r = {.why = why, .note = note};
+    builder b = {.m = *source, .r = &r};
+    b.m.position = b.m.normal = b.m.uv = b.m.uv2 = b.m.color = b.m.tangent = NULL;
+    b.m.index = NULL;
+    b.m.sources = NULL;
+    if (!source->sources) return fail(&r, NULL, "isn't a canonical static mesh import for tangent generation");
+    if (!more_vertices(&b, 0u) || !more_indices(&b, 0u)) {
+        mesh_file_free(&b.m);
+        return false;
+    }
+    memcpy(b.m.position, source->position, (size_t)source->vertices * 3u * sizeof(float));
+    memcpy(b.m.normal, source->normal, (size_t)source->vertices * 3u * sizeof(float));
+    memcpy(b.m.uv, source->uv, (size_t)source->vertices * 2u * sizeof(float));
+    memcpy(b.m.uv2, source->uv2, (size_t)source->vertices * 2u * sizeof(float));
+    memcpy(b.m.color, source->color, (size_t)source->vertices * 4u * sizeof(float));
+    memcpy(b.m.tangent, source->tangent, (size_t)source->vertices * 4u * sizeof(float));
+    memcpy(b.m.index, source->index, (size_t)source->indices * sizeof(uint32_t));
+    memcpy(b.m.sources, source->sources, (size_t)source->vertices * sizeof *source->sources);
+    if (!make_tangents(&b)) {
         mesh_file_free(&b.m);
         return false;
     }

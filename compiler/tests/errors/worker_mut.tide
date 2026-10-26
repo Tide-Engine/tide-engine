@@ -1,0 +1,3 @@
+// expect: a worker owns its inputs; return the result instead of taking 'mut' or 'out'
+local worker int Build(mut int value) { return value; }
+scene Main;

@@ -1,5 +1,6 @@
 #include "game.h"
 #include "tide_test.h"
+#include "draw_test.h"
 
 static tide_world world;
 static tide_local local;
@@ -10,6 +11,7 @@ static void frame(void)
 {
     tide_draw_reset(&draw);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
+    tide_test_flatten(&draw);
 }
 
 static const tide_draw_command *command(const uint32_t i)
@@ -36,7 +38,7 @@ TIDE_TEST(meshes_3d_draw_through_their_camera)
     TIDE_CHECK(command(2)->kind == TIDE_DRAW_MESH_3D && command(2)->mesh3.count == 1 && command(2)->mesh3.texture == 0);
     TIDE_CHECK(draw.matrices[command(2)->mesh3.first].c3.z == 10.0f);
     TIDE_CHECK(mesh_of(2)->vertex_count == 3 && mesh_of(2)->vertices[1].position.x == 1.0f);
-    TIDE_CHECK(mesh_of(2)->vertices[0].color.r == 1.0f && mesh_of(2)->vertices[0].color.a == 1.0f); // White, left out
+    TIDE_CHECK(mesh_of(2)->vertices[0].color.r == 1.0f && mesh_of(2)->vertices[0].color.a == 1.0f);
 
     // Each tree, one command, with the grid as the texture
     const tide_draw_command *trees = command(3);

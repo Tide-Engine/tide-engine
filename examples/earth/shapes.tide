@@ -1,0 +1,71 @@
+// The meshes everything is drawn with, made once as the game starts: a ball
+// of rings (heads, bodies, wheels, trees, and the sky's rays), a box
+// (buildings, cars) and a card (glows
+// and shadows).
+
+local singleton Shapes
+{
+    List<Around> sky;
+    List<int> skyFaces;
+    List<Corner> ball;
+    List<int> ballFaces;
+    List<Corner> box;
+    List<int> boxFaces;
+    List<Corner> card;
+    List<int> cardFaces;
+}
+
+// A ball of radius 1, `rings` from top to bottom and twice as many round, its normals its corners
+void Ball(mut List<Corner> corners, mut List<int> faces, int rings)
+{
+    int steps = rings * 2;
+    for (var ring = 0; ring <= rings; ring++)
+    {
+        for (var step = 0; step <= steps; step++)
+        {
+            float across = step * Math.TAU / steps;
+            float down = ring * Math.PI / rings;
+            var at = float3(Math.Sin(down) * Math.Cos(across), Math.Cos(down), Math.Sin(down) * Math.Sin(across));
+            corners.Add(Corner { position = at, normal = at });
+            if (ring < rings && step < steps)
+            {
+                int first = ring * (steps + 1) + step;
+                faces.Add(first);
+                faces.Add(first + 1);
+                faces.Add(first + steps + 1);
+                faces.Add(first + 1);
+                faces.Add(first + steps + 2);
+                faces.Add(first + steps + 1);
+            }
+        }
+    }
+}
+
+void Build(mut Shapes shapes)
+{
+    Ball(shapes.ball, shapes.ballFaces, 8);
+    foreach (var corner in shapes.ball) shapes.sky.Add(Around { position = corner.position });
+    shapes.skyFaces = shapes.ballFaces;
+    // A box from -0.5 to 0.5, four corners a side so each side has its own normal
+    for (var side = 0; side < 6; side++)
+    {
+        var normal = side == 0 ? float3(1, 0, 0) : side == 1 ? float3(-1, 0, 0) : side == 2 ? float3(0, 1, 0)
+                   : side == 3 ? float3(0, -1, 0) : side == 4 ? float3(0, 0, 1) : float3(0, 0, -1);
+        var u = Math.Abs(normal.y) > 0.5 ? float3(1, 0, 0) : Math.Cross(float3(0, 1, 0), normal);
+        var v = Math.Cross(normal, u);
+        int first = shapes.box.count;
+        shapes.box.Add(Corner { position = (normal - u - v) * 0.5, normal = normal });
+        shapes.box.Add(Corner { position = (normal - u + v) * 0.5, normal = normal });
+        shapes.box.Add(Corner { position = (normal + u + v) * 0.5, normal = normal });
+        shapes.box.Add(Corner { position = (normal + u - v) * 0.5, normal = normal });
+        shapes.boxFaces.Add(first);
+        shapes.boxFaces.Add(first + 1);
+        shapes.boxFaces.Add(first + 2);
+        shapes.boxFaces.Add(first);
+        shapes.boxFaces.Add(first + 2);
+        shapes.boxFaces.Add(first + 3);
+    }
+    shapes.card = [Corner { position = float3(-1, -1, 0), normal = float3(0, 0, -1) }, Corner { position = float3(-1, 1, 0), normal = float3(0, 0, -1) },
+                   Corner { position = float3(1, 1, 0), normal = float3(0, 0, -1) }, Corner { position = float3(1, -1, 0), normal = float3(0, 0, -1) }];
+    shapes.cardFaces = [0, 1, 2, 0, 2, 3];
+}

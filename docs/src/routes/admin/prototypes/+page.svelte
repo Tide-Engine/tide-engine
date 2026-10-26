@@ -19,6 +19,7 @@
     </div>
     <nav class="admin-nav" aria-label="Admin sections">
         <a href="/admin">Analytics</a>
+        <a href="/admin/telemetry">CLI usage</a>
         <a href="/admin/prototypes" aria-current="page">Prototypes</a>
     </nav>
 
@@ -36,7 +37,7 @@
                     <div class="card-footer">
                         <span class="players">{prototype.players}</span>
                         {#if prototype.available}
-                            <a class="play" href={prototype.href} target="_blank" rel="noopener" data-prototype={prototype.id}>Play prototype <span aria-hidden="true">↗</span><span class="visually-hidden"> (opens in a new tab)</span></a>
+                            <a class="play" href={`${prototype.href}?stats`} target="_blank" rel="noopener" data-prototype={prototype.id}>Play prototype <span aria-hidden="true">↗</span><span class="visually-hidden"> (opens in a new tab)</span></a>
                         {:else}
                             <span class="pending">In development</span>
                         {/if}

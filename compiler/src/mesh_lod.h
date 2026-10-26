@@ -11,7 +11,7 @@
 // Triangles go by collapsing an edge onto one of its ends, the cheapest
 // first, by how far the surface and what's on it (normals, uvs, colors) move.
 // Open edges only collapse along themselves, and so do the seams where a
-// position has two uvs or two colors, so no hole opens and no texture tears.
+// position has two uvs, colors or tangent handedness, so no hole opens and no texture tears.
 //
 // Everything is basic float arithmetic in a fixed order, so a file gives the
 // same levels whichever machine builds.
@@ -20,7 +20,7 @@ enum { MESH_LOD_MOST = 7 }; // Levels after the full mesh, at the most
 
 // The fewest triangles a level is made with, for a game's meshes: a level only pays by the triangles it takes
 // off, against what picking one costs each instance and a draw call more, so a mesh of under twice as many has
-// no levels at all, and draws as one with no [LOD] does. Measured on one desktop GPU (notes/assets-and-files.md).
+// no levels at all, and draws as one with no [LOD] does.
 enum { MESH_LOD_TRIANGLES_LEAST = 500 };
 
 // What's weighed of a mesh. `position` is 3 floats a vertex; the others are
@@ -32,6 +32,7 @@ typedef struct mesh_lod_source {
     const float *uv;     // 2
     const float *uv2;    // 2
     const float *color;  // 4
+    const float *tangent; // 4: only handedness is a hard seam; not part of the error metric
     const uint32_t *index;
     uint32_t indices; // Three a triangle
     // How much more than their distance apart moving vertex `from` onto `to` costs, as a share of that

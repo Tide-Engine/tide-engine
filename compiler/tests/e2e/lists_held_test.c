@@ -17,7 +17,7 @@ TIDE_TEST(lists_held_all_checks_pass)
     TIDE_CHECK(tide_scratch_mark() == 0);
 }
 
-// A struct's list is the world's, like a component's own: in its snapshots and its hash
+// A struct's list is the world's, like a component's own: in its snapshots and its hash.
 TIDE_TEST(lists_held_are_in_snapshots)
 {
     tide_world_init(&world, 1.0f);

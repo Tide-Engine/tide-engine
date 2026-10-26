@@ -10,6 +10,8 @@
         its own, and each system's schedule above it, for <code>.tide</code> files.</p>
         <p>Run a game from its <code>.tide</code> files: in a window of its own, on the web, in the IDE, or on an Android
         phone or emulator. Saving a file reloads it as it runs.</p>
+        <p>Debug it as Tide in CLion: breakpoints in <code>.tide</code> files, stepping through Tide lines, and its lists,
+        maps, text and entities as Tide's, with Run | Debug Tide Game or Run | Attach to Unity (Tide).</p>
         <p>It runs <code>tidels</code>, the language server that comes with tide: install tide first
         (see the <a href="https://tide-engine.dev/guide/install">install steps</a>), or choose a
         <code>tidels</code> under Settings | Languages &amp; Frameworks | Tide. Then open your game's folder, the one
@@ -19,6 +21,7 @@
     <depends>com.intellij.modules.platform</depends>
     <depends>com.redhat.devtools.lsp4ij</depends>
     <depends>org.jetbrains.plugins.textmate</depends>
+    <depends optional="true" config-file="tide-cidr.xml">com.intellij.modules.cidr.debugger</depends>
 
     <extensions defaultExtensionNs="com.redhat.devtools.lsp4ij">
         <server id="tidels" name="Tide" factoryClass="io.github.blenminer.tide.TidelsFactory">
@@ -32,6 +35,7 @@
     <extensions defaultExtensionNs="com.intellij">
         <textmate.bundleProvider implementation="io.github.blenminer.tide.TideTextMateBundle"/>
         <fileIconProvider implementation="io.github.blenminer.tide.TideFileIcon"/>
+        <enterHandlerDelegate implementation="io.github.blenminer.tide.TideEnterBetweenBraces" order="first"/>
         <applicationConfigurable parentId="language" instance="io.github.blenminer.tide.TideConfigurable"
                                  id="io.github.blenminer.tide" displayName="Tide"/>
         <editorNotificationProvider implementation="io.github.blenminer.tide.TidelsBanner"/>
@@ -39,10 +43,23 @@
         <runConfigurationProducer implementation="io.github.blenminer.tide.TideRunProducer$Desktop"/>
         <runConfigurationProducer implementation="io.github.blenminer.tide.TideRunProducer$Web"/>
         <runConfigurationProducer implementation="io.github.blenminer.tide.TideRunProducer$Android"/>
+        <notificationGroup id="Tide" displayType="BALLOON"/>
         <toolWindow id="Tide Game" anchor="right" icon="AllIcons.General.Web" doNotActivateOnStart="true"
                     factoryClass="io.github.blenminer.tide.TideGamePage$Window"/>
     </extensions>
+    <applicationListeners>
+        <listener class="io.github.blenminer.tide.TideVersionsChanged" topic="com.intellij.openapi.vfs.newvfs.BulkFileListener"/>
+    </applicationListeners>
     <actions>
+        <action id="Tide.AttachUnity" class="io.github.blenminer.tide.TideAttach$Unity" text="Attach to Unity (Tide)"
+                description="Debug the Tide game the Unity editor runs, stopping at breakpoints in .tide files">
+            <add-to-group group-id="RunMenu" anchor="last"/>
+        </action>
+        <action id="Tide.DebugGame" class="io.github.blenminer.tide.TideAttach$Game" text="Debug Tide Game"
+                description="Run the game with tide run, as the Tide run configuration does, and attach the debugger to it">
+            <add-to-group group-id="RunMenu" anchor="last"/>
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
         <action id="Tide.EditPrefab" class="io.github.blenminer.tide.TidePrefabEditor$Open" text="Edit Tide Prefab in IDE"
                 description="Edit this prefab with Tide's native renderer embedded in the IDE">
             <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>

@@ -444,3 +444,11 @@ touching or moves within the awake set or the graph, and weren't noticed all
 taken out together. The other 13 weren't tried together, or are under calls
 that write the next image whole anyway (joints, `b2MergeSolverSets`,
 `b2TransferBody`).
+
+## Joint torque queries (2026-10-22)
+
+`joint.c`, `b2GetJointConstraintTorque`: mover and pogo joints return zero, as
+linear constraints do. Upstream's switch omitted these valid joint types and
+asserted when the package read their reaction loads. The package's complete
+fixture steps all nine joint types, reads each load and replays snapshots on
+native and WASI. No solver equations or snapshot representation changed.

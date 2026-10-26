@@ -1,5 +1,427 @@
 # The platform layer and the renderer
 
+## Twelve shader textures and recorded ABI 6 (2026-10-25)
+
+The approved material/skinning boundary completion raises the internal texture
+capacity to twelve. Backend descriptors and bound arrays follow that capacity;
+draw uploads, bindings and descriptor writes keep their actual-count loops.
+Vulkan's shared layout is twenty-five descriptors including uniforms, within
+the thirty-two push-descriptor baseline. OpenGL's scratch upload unit is twelve.
+WebGPU/HLSL transport changes are recorded in web.md and shaders.md.
+
+Recorded pipelines now contain texture_count read entries rather than eight
+fixed entries. The embed ABI is 6, with the Unity consumer changed together;
+the separate legacy draw packet version is unchanged. The packet regression
+checks each count from zero through twelve. Texture-capacity pixel fixtures
+compare slots 8..11 against independent low-slot draws for every filter/wrap
+combination and check data/depth/compare/cube reads, including device recreation.
+Native Vulkan and OpenGL pixel fixtures and the actual-count packet regression
+passed. WebGL2, Direct3D11 ANGLE and WebGPU comparisons passed, including WebGPU
+device loss and recreation. Vulkan validation layers were unavailable on this
+machine. No performance measurement is claimed.
+
+## Independent rectangle corners (2026-10-25)
+
+SHAPE_CORNERS uses the existing 32-byte shape_extra: radius/outline/soft/sweep
+carry TL/TR/BR/BL radii, with rotation in turn. The vertex shader passes those
+four lengths in look and reserves only normal AA padding. The fragment selects
+the quadrant's radius, evaluates the same rounded-box distance and uses ordinary
+target-pixel coverage/premultiplied alpha. There is no outline or fade on this
+form. It shares the flexible pipeline with other shapes; equal radii record the
+ordinary box form and keep the compact solid-radius path. No GPU attribute,
+buffer stride, target, depth or stencil contract changes. Native/web pixel and
+batch-count regressions are in platform/tests/draw.c; validation: gui.md.
+
+## Pipelines made before they're drawn (2026-10-22)
+
+The owner asked for shaders to be made while the game loads rather than at
+their first draw ("maybe the engine should compile before the game starts or
+something?"): BANKED's first felled pine hitched on Vulkan as four new frags
+drew for the first time, and the game drew each once unseen to hide it. The
+design below is Claude's, Provisional.
+
+- **Where the cost is** (measured on this machine, RTX 4080 SUPER, driver
+  617.42, BANKED's 25 shaders, NVIDIA's own disk cache pointed at an empty
+  folder with `__GL_SHADER_DISK_CACHE_PATH`, temporary instrumentation):
+  - Vulkan: `vkCreateShaderModule` is nothing; `vkCreateGraphicsPipelines`
+    compiles, 20 to 230 ms a pipeline cold (BANKED's first frames: 17
+    pipelines, 835 to 900 ms; its later first uses: HewnModel 75 ms,
+    NotchFace 52, Snowlump 28, HewnShadow 24, Arm 87, AxeLit 50, Ice 119),
+    0.2 ms with the driver's and `pipelines.vulkan`'s caches warm. The driver
+    compiles again for much of the key, not only the shader: a pipeline
+    made for the window's kind of target first left another for a float
+    target at about 80% of its cold cost, one for a depth-only target at
+    two thirds, `TIDE_DEPTH_READ` for `READ_WRITE` at all of it, `ADD` for
+    `ALPHA` at 6%, and other samples or cull at nothing. (A first experiment
+    with Tag, its driver cache warm, saw 6 ms become 0.03 ms for a different
+    target: the driver's disk cache answering, not reuse.)
+  - Desktop GL (NVIDIA): the link compiles, 250 to 430 ms for BANKED's big
+    frags cold, 4 ms from the driver's disk cache. Blend, depth, cull and
+    the target are set at the draw, so one program serves every key.
+  - WebGPU: `createRenderPipelineAsync` per key, in the background; Dawn
+    compiles per pipeline. WebGL: compile and link per program, in parallel
+    where `KHR_parallel_shader_compile` is. Not measured beyond the tests.
+- **What the compiler knows:** every shader combination a draw can use
+  (`program.shaders`): its sources, vertex layout, `dims`, outputs and
+  whether it's a blit. Not the target it draws into (a `RenderTarget` is a
+  value) nor the settings it draws with (settings are a stack at run time),
+  which is most of what the drivers compile for.
+- **The table:** tidec writes `const tide_shader *const tide_game_shaders[]`
+  in the game's C (not the header, which is the game's hash), every shader
+  and `NULL` after them, in every game (`gen_shader_table`), and
+  `tide_shader.blit` for blits' shaders. `tide/run.h` declares it and fills
+  the new last member of `tide_host_game`, `shaders`. Generated code calls no
+  new runtime function. Hosts and libraries rebuild together for the
+  `tide_host_game` and `tide_shader` layout changes.
+- **`tide_platform_prewarm(shaders, count)`** (`tide/platform.h`): makes
+  the renderer's own pipelines for the window's kind of target (default
+  blend, depth and cull), and for each of the game's shaders:
+  - every key it drew with before, by the shader's name (`used_key`: an
+    FNV-1a of `tide_shader.name`, its kind, and `into`, blend, depth, cull
+    and stencil state), so a shader whose code changed (another id, the same
+    name) is made too;
+  - for a shader that never drew, once a shader of its kind (2D or 3D, a
+    blit, its outputs) drew: for each kind of target its kind drew into, the
+    key most of them drew with there (`kind_keys`, at most 8). So BANKED's
+    HewnShadow gets the depth map's key as well as the scene's, and a model
+    the scene's (and the depth map's, unused).
+  It's asked again cheaply: nothing happens till the table, the device
+  (`tide_gpu.epoch`) or the keys drawn change (`used_changes`). Prewarmed
+  pipelines of the current table (`shader_pipeline.warmed`) survive the
+  first frame of another build (`forget_pipelines`); another table lets
+  them go there. `tide_platform_prewarm_waiting()` counts those asked for
+  that the backend is still making in the background.
+- **The keys file:** `pipelines.keys` in the game's temporary cache folder,
+  beside `pipelines.vulkan`: `TIDEKEY1`, a count, 4 zero bytes, an FNV-1a of
+  the keys, then 24 bytes a key, 4,096 keys at most. Read as the folder is
+  known (`follow_cache_folder`), written as the window closes (`finish`) and
+  as the folder changes, and only when a draw drew with a key that wasn't
+  there. A file cut short, changed, or with a key out of range is left out
+  whole; keys of shaders not in the last table go when it's written. Native
+  only: a page has no such folder, so it keeps its own run's keys.
+- **The standard host** (`tide_run_prewarm` in `tide/host.h`) gives it
+  `tide_game_shaders` in `tide_run_begin` (after `tide_run_bind_io` named the
+  game, so both files are read first) and every frame before
+  `tide_platform_draw`, which covers a reloaded build and a new device. Not
+  in a headless run (nobody waits for its frames, and they stay as they
+  were) or embedded. Background pipelines stay as they were: on for games,
+  so a page's prewarming doesn't hold its first frame.
+- **OpenGL shares programs** (`gl_program` in `gpu_gl.c`): pipelines with the
+  same sources and texture count, by FNV-1a, are one program, counted, so a
+  shader's other keys cost a vertex array. A program begun in the background
+  is finished at once for a pipeline asked for with background off.
+- **Measured after** (BANKED, a debug build, whose cost here is the
+  driver's, 120 headless frames with prewarming forced on by temporary
+  instrumentation, NVIDIA's cache emptied for the cold runs):
+  - First run, no keys file: the first frames make what they draw as before
+    (17 pipelines, 849 ms on Vulkan); frame 5, the first after its 3D draws,
+    makes the 7 shaders that hadn't drawn, for the scene's target and the
+    depth maps (14 pipelines, 690 ms Vulkan, 585 ms GL, where GL's second
+    key cost 0.03 ms each).
+  - Second run, its keys file, the driver cold: 31 pipelines as the game
+    starts, 1.5 to 1.6 s on Vulkan, 1.9 to 2.0 s on GL; none in any frame.
+  - Second run, the driver warm: 31 pipelines as it starts, 12 ms on Vulkan
+    (25 ms GL); none in any frame. The felling's shaders' first draws make
+    nothing, where before each made its pipeline then.
+- **Tests:**
+  - `tide_platform_draw`'s prewarm phase (after the background one), native
+    Vulkan, OpenGL and descriptor sets, WebGL and WebGPU: a frame draws one
+    shader of each kind after the list forgot; prewarming a table of others
+    makes a pipeline for each (on WebGPU in the background), the same table
+    again makes nothing; once made, the scene, a 3D shader of the drawn one's
+    name with another id, and a blit that never drew each draw in their first
+    frame (WebGPU's first frame through a pipeline not made leaves it out)
+    and make no pipeline; another build's first frame keeps them, and lets
+    them go once another table is given. Prewarming each key with its cull
+    changed, on purpose, fails it.
+  - `tide_platform_shaders`, every backend and ANGLE's D3D11: after all its
+    checks, the list forgets, a build's first frame lets the pipelines it
+    didn't draw with go, and prewarming the 172 shaders remakes the 131 gone
+    the ways they drew; every check then draws again, the same pixels, making
+    no pipeline.
+  - `tide_platform_prewarm` (`platform/tests/prewarm.tide`, `prewarm.c`,
+    run by `prewarm.cmake` in a folder of its own, Vulkan and OpenGL; once
+    in a page, WebGL and WebGPU): the standard host over a game whose late
+    mesh and blit draw once the test says. With no file nothing of the
+    game's is made as it starts, the late mesh is once the early one drew,
+    and the blit is made at its draw; with the file left, all three are made
+    as it starts and the late frame makes none and draws them all; a file
+    with a byte changed or cut short is left out and written over whole.
+- **Validation:** the native debug suite passed 2,540 of 2,540 and the web
+  debug suite 2,441 of 2,441, warning-free.
+- **Not done, and open for the owner:**
+  - A brand-new shader whose kind hasn't drawn yet is made at its first
+    draw, and so is one drawn into a kind of target its kind never drew into,
+    or with a setting other than its kind's commonest there (a decal's
+    `Depth.Read`): the next run has its key.
+  - Guessing costs: in a first run every not-yet-drawn shader is compiled
+    for each kind of target its kind drew into, some of which it never draws
+    into (BANKED: 7 of 14 unused); with the driver's cache warm that's a
+    fraction of a millisecond each.
+  - Vulkan makes them one at a time on the render thread: a cold start of
+    BANKED's 31 takes 1.5 s. Making them on the job pool's threads
+    (`vkCreateGraphicsPipelines` may be called from several), or
+    `VK_EXT_graphics_pipeline_library` to compile shaders apart from state,
+    would cut that; not built.
+  - A page keeps no keys between visits (`localStorage` through `tide.js`
+    would; a new import, not built). Its prewarming is the guess alone.
+  - Nothing lets a game wait for prewarming (a loading screen reading
+    `tide_platform_prewarm_waiting`), nor turn it off: language surface, the
+    owner's to decide. Headless runs never prewarm.
+  - Not run: the Vulkan validation layer (no SDK on this machine), drivers
+    other than NVIDIA's, Android, macOS.
+
+## Recording, for Unity (2026-10-22)
+
+`platform/src/gpu_record.c` is a `tide_gpu` that draws nothing. It writes each call as
+`tide_embed_render`'s commands (`tide/embed.h`, `tide_embed_render_op`), for Unity's
+`TideRender.cs` to replay. The renderer is unchanged.
+`tide_platform_embed_render` (`platform.c`, `embedded.h`) points `gpu` at it and runs
+`draw_list` on the frame's list into target 0. Target 0 is the other program's, so
+the window's first pass asks to clear it, and the replay ignores that.
+`tide_platform_embed_render_reset` bumps its epoch, so `gpu_ready` makes everything again.
+`tide_platform_embed_render_view` (the other program's scene views) draws the same list again, `over`, with
+`view_only_3d` set: only the window's 3D steps (`window_3d_step`: STEP_MESH_3D, and STEP_SHADED through a 3D
+shader) draw, each through `view_world_to_clip` (`camera_3d_to_clip`), and target switches leave the targets
+alone. Its commands follow the frame's, the same objects.
+Objects are numbers it gives out from 1. A target's color and depth textures get
+theirs when it is made, and a multisampled one's depth gets its number at
+`resolve_depth`. It keeps texture shapes for part writes, sending only the part's
+rows. A pipeline carries a key: FNV-1a 64 of its SPIR-V words, or of its WGSL where
+it has none. `tide unity` names a shader file by the same key.
+`texture_blocks` returns 0, so the renderer sends RGBA. `target_read` gives
+nothing, because the pixels are drawn later by the other program. `float_targets` is
+true; `target_samples` rounds down to 1, 2, 4 or 8. Test: `embed_render`
+(`platform/tests/embed.c`): the commands parse whole, a pass on target 0 asks to
+clear, every pipeline key is a built-in SPIR-V's hash, the next frame makes no
+pipelines, and after a reset they are made again from low numbers.
+
+
+## Recorded quads and faster conversion (2026-10-20, third round)
+
+The owner asked to close drawing's gap to hand-written C further, recording
+being where most of it was (notes/drawing.md, Recording inline and quads as
+quads, for the list's side; notes/benchmarks.md, Drawing, third round, for the
+numbers). Every benchmark frame, all 13 workloads, is the same bytes before
+and after on Vulkan and OpenGL (`--dump-frames`, compared with round two's
+binaries).
+
+- **TIDE_DRAW_QUADS** (`add_quads`): a run of the list's quads
+  (`tide_draw_quad`) goes into a mesh step as the quads `add_mesh` makes of
+  the same two triangles: `make_quad_across`'s box of p and r through the
+  camera, a lane each as there, their uvs' bits, `to_rgba` of their color, and
+  the pattern as recorded. A step a mesh command already turned to triangles
+  takes them as `corner_of`'s corners of `tide_draw_quad_corner`'s vertices.
+  So a run that mixes recorded quads and meshes is one step, as before:
+  quads then a triangle that isn't one turn back (`triangles_instead`), and
+  quads after triangles go on as triangles.
+- **TIDE_DRAW_PLAIN** (`add_plain_run`): a run of the list's plain-shape
+  records goes into the shape step in pieces of 4,096, each one's arithmetic
+  what a plain command's was, to the bit, its color copied as recorded (the
+  same bytes `to_rgba` made of the float). A circle on a scaled destination
+  is still a smooth shape (`add_circle`), between the pieces. Unknown kinds
+  draw nothing, and a run's first and count (`tide_draw_plain_run`, the open
+  run's being the list's records from its first on) are kept within the
+  list's records.
+- **Solid smooth shapes** (`add_smooth_run`): a shape is tested for being
+  solid (`solid_shape`'s test: a box or an ellipse, unturned, no outline, no
+  fade, its bottom color's bytes its top's) on the numbers its extra would
+  have before the extra is made, converting the bottom color only where its
+  float bits differ from the top's; the extra and its outline's color are
+  made only for one that isn't. Converting 65,536 round rects took about a
+  third less.
+- **`to_rgba`** converts a color's four channels in one vector (maxnum and
+  minnum, a multiply, an add, a truncating conversion), where four calls of
+  `color_channel` did each: the same byte for each of the 2^32 floats, checked
+  exhaustively with the engine's flags (`-O2 -ffp-contract=off`). It's
+  `tide_draw_color_bytes` in `tide/draw.h` now, which the list records plain
+  shapes' colors with too.
+- Measured and not built: converting straight into GPU-visible memory. Upload
+  is write-combined memory at about 19 GB/s either way (65,536 rects' 1.5 MB
+  took 78 µs), so fusing conversion with it saves only their overlap, about
+  70 µs of a rects frame; skipping the GPU-side copy measured about 10 µs.
+  It would also need Vulkan memory kept past a mid-list flush (`flush_if_full`
+  at a pass's start) until the frame's done. A per-phase timing (temporary)
+  found no fixed per-frame cost in the upload phase: its first frame makes the
+  pipelines.
+
+## Quads, solid shapes and a fenced flush (2026-10-20, second round)
+
+Round 2 of the performance pass against the handwritten drawing baseline
+(`notes/benchmarks.md`, Drawing, second round). Internal, Claude's; no API
+changed. Every benchmark frame is the same bytes before and after on Vulkan
+and OpenGL, all 13 workloads (`tide_platform_draw --bench --dump-frames`).
+
+- **Quads** (`quad`, `make_quad`, `make_quad_across`, `triangles_instead`,
+  `add_glyph` in `platform/src/platform.c`). Two of a 2D mesh's or of text's
+  triangles go to the GPU as one 40-byte instance where their six corners'
+  places take two numbers at most on each axis, as their uvs do, and they're of
+  one color: a sprite, a tile, an upright glyph, in any order of corners and
+  triangles. The instance has the two numbers of each axis (`box`, `span`), the
+  color, and 4 bits a corner (`pattern`) saying which number each of the six
+  takes. `PIPELINE_QUADS` and `PIPELINE_TEXT_QUADS` read it per instance
+  (`quad_glsl_vertex`, `QUAD_WGSL_VERTEX`, by `gl_VertexID` / `vertex_index`)
+  into the meshes' and text's own fragment shaders, with the arithmetic of
+  their vertex shader, so the GPU draws the same triangles from the same
+  numbers: 40 bytes where six vertices were 120. A run (`draw_step.quads`)
+  starts as quads; the first two triangles that aren't one (a turned glyph,
+  corners of two colors, a lone triangle) turn its quads back into the
+  vertices they stood for, to the bit, and it goes on as triangles. One step
+  is still one draw call, and six vertices a quad are counted
+  (`tide_platform_draw_vertices`). `make_quad_across` is the common case,
+  triangles p q r and p r s with p and r opposite: it compares the list's
+  vertices as they are, by their bits, four lanes at once (clang's
+  `ext_vector_type`, SSE2 here, NEON on arm64, scalars on wasm), since a
+  corner's place on the screen is worked out from its own on that axis alone,
+  and works out p's and r's only. `make_quad` takes any other order. The
+  first version, every corner converted into a `mesh_vertex` and compared a
+  field at a time, built quads slower than the triangles it replaced (474 ->
+  650-760 µs a frame of 65,536): the compiler spilled and branched, and wide
+  loads over the structs' narrower stores waited.
+- **Solid shapes** (`solid_shape`, `settle_radii`, `smooth_instead`). A run of
+  smooth shapes whose smooth ones are all solid (a box or an ellipse,
+  unturned, one color top to bottom, no outline, no fade) has a radius for
+  each of its shapes, 4 bytes, where it would have a 32-byte extra:
+  `PIPELINE_SOLID_SHAPES`, whose vertex shader (`solid_shape_glsl_vertex`,
+  `solid_shape_wgsl_vertex`) sets the extra's other numbers as constants
+  before the same lines as the smooth shapes' (`SMOOTH_SHAPE_GLSL_MAIN`,
+  `SMOOTH_SHAPE_WGSL_MAIN`), into the same fragment shader. That's round
+  rects, plain circles on a scaled display and the plain shapes among them.
+  The first smooth shape that isn't solid gives the run's shapes the extras
+  they stood for and it goes on as before. Those extras differ from what
+  `add_smooth_run` would have written only where no shader reads them (an
+  arc's sweep, an outline's color with no outline) and in the sign of a zero
+  (turn.y), which places nothing differently.
+- **Vulkan's flush** submits with a fence of its own (`vk.flushed`) and waits
+  for it, which waits for everything submitted before it, where it waited for
+  the queue to go idle, and a command pool none of whose buffers was begun
+  since its last reset isn't reset again (`flush`, `tide_gpu_vk_present`).
+- Tests: `runs_drawn_alike` in `platform/tests/draw.c` draws quads (four
+  orders of corners, flipped uvs, places that aren't whole), text in both
+  weights, and solid shapes with rects and circles among them, at scales 1 and
+  2, three ways: alone; after something in the same run that keeps it from
+  being quads or solid (a lone triangle, turned text, part of a ring); and
+  with that last, which turns it back. All three are the same pixels and as
+  many draw calls, on Vulkan (before and after its device is lost), OpenGL,
+  WebGL and WebGPU. A quad with its uvs swapped, or solid shapes given no
+  radius, fail it (checked by breaking each on purpose). The renderer's SPIR-V
+  is ten shaders now (`tide_spirv_shaders_valid`).
+- Tried and dropped: one `vkCmdPipelineBarrier` for each pass's barriers and
+  layout turns, with their stage masks joined (no change beyond noise to an
+  empty frame or rects, and it would have the next pass's vertices wait for
+  the last one's fragments).
+- Not built:
+  - Converting shapes straight into GPU-visible memory. Uploads are bound by
+    the bus: Vulkan's ring is device-local host-visible memory, which the
+    CPU writes at about 20 GB/s here (1.5 MB of rects takes 0.08 ms, 7.8 MB
+    of triangles took 0.38). Writing instances there as they're converted
+    would save the CPU's copy of what it just converted (about 0.07 ms for
+    65,536 rects, 0.19 for round rects before solid shapes). It needs a
+    `gpu.h` call that hands out room which lasts until the list's last pass
+    is recorded: `flush_if_full` can flush mid-list, which frees the ring and
+    may destroy a ring that grew. WebGL and WebGPU would keep `buffer_write`.
+  - OpenGL's empty frame (0.17-0.29 ms against C's 0.01-0.02): the hidden
+    window's swap, which the next readback waits for. Skipping the swap made
+    uploads slower (round 1), as NVIDIA recycles `glBufferSubData`'s memory at
+    swaps; uploads through an unsynchronized ring with fences would have to
+    come first.
+
+## Readback, upload memory and runs of shapes (2026-10-20)
+
+From the performance pass against the handwritten drawing baseline
+(`bench/draw/versus_draw`, `notes/benchmarks.md`, Drawing against
+handwritten OpenGL and Vulkan). Internal changes, Claude's; pixels are the
+same bytes before and after on both backends for all 13 benchmark workloads.
+
+- `tide_platform_read_pixels` reads back only the box around the points it's
+  asked for, through `gpu.h`'s optional `target_read_part` (OpenGL, so WebGL
+  too, and Vulkan; WebGPU has none and reads whole targets as before). Vulkan's
+  blue-first-to-red-first swizzle of what's read back is a `restrict` loop that
+  vectorizes; done a byte at a time it was an eighth of the benchmark's own CPU
+  time while it read whole frames. Vulkan's empty benchmark frame: 0.137 -> 0.065 ms.
+- `draw_list` turns a run of plain shapes (`add_plain_run`: rects, their
+  outlines, lines, and circles where the destination isn't scaled) and a run
+  of smooth shapes (`add_smooth_run`) into steps in one loop each, with the
+  camera's numbers read once and the arithmetic of the cases they replace,
+  bit for bit. `rect_corner` and `add_smooth_shape` went into them.
+- `color_channel` keeps a channel from 0 to 1 with `fminf`/`fmaxf` (NaN as 0)
+  instead of branching, so a color converts four channels at once; it gives
+  the same byte for all 2^32 floats (checked exhaustively, same flags).
+- `add_mesh` reads its camera's numbers once. A small cache of converted
+  corners (a quad's two triangles share two) was slower, and was dropped.
+- Vulkan's per-frame upload ring (the source of buffer and texture copies,
+  and the uniforms) is allocated in device-local host-visible memory where the
+  device has such a type (all of a desktop GPU's memory with resizable BAR,
+  else a 256 MB window; any integrated GPU's), for rings up to 32 MB
+  (`UPLOAD_LOCAL_BYTES`), else, or when that allocation fails, in host memory
+  as before. Copies out of it then don't cross the bus as the GPU runs: with
+  per-phase timers (not committed), submission to pixel read back went 0.21 ->
+  0.14-0.18 ms for 65,536 rects and 0.44 -> 0.27 ms for 65,536 cubes'
+  transforms, while the CPU's copy into the ring rose slightly (0.075 -> 0.086 ms).
+- Tried and not kept: OpenGL swapping the window only after a frame drew in
+  it (as Vulkan presents only an image it drew in), flushing otherwise. A
+  hidden window's swap costs the next readback about 0.09 ms (measured in the
+  baseline too: 0.025 -> 0.111 ms with a swap between frames), and the empty
+  frame went 0.131 -> 0.034 ms, but frames that upload a lot got 1.5 to 5 times
+  slower (round rects 0.84 -> 3.95 ms): NVIDIA's driver evidently recycles
+  `glBufferSubData`'s memory at swaps. Every test frame through
+  `tide_platform_read_pixels` still swaps the hidden window.
+
+## Pipelines made in the background (2026-10-20)
+
+Cause of the first-use hitch the owner saw in GRAVEWAKE on the web: each GPU
+pipeline (shader + blend/depth/cull/target key) is made on its first draw, and
+both web backends made it synchronously. WebGPU's `createRenderPipeline`
+compiled before the frame could submit. WebGL queried `COMPILE_STATUS` and
+`LINK_STATUS` straight after compiling and linking, which waits for the driver.
+A new effect's first frame therefore stalled. Separately, idle pack images expired after 60 lists,
+so a texture shown now and then (a boss's animation) was uploaded again each
+time it returned (see `notes/textures.md`).
+
+- `tide_gpu` gained optional `background(bool)` and `pipeline_ready(id)`. With
+  background on, `pipeline` starts one and returns at once; `pipeline_ready`
+  polls. NULL on backends that only make them synchronously (Vulkan, desktop GL).
+  The renderer's `pipeline_made` leaves out steps (shapes, clear, mesh, mesh 3D,
+  shaded, blit, text) whose pipeline isn't made yet. The step is simply not
+  drawn that frame; nothing waits.
+- `tide_platform_background_pipelines(bool)` (`tide/platform.h`) turns it on;
+  `gpu_ready` passes it to the backend each frame. Off by default. The standard
+  host (`tide_run_bind_io` in `host.h`) turns it on except in headless runs,
+  whose frames are read back and must draw the same every time. Custom hosts and
+  tests keep synchronous pipelines unless they ask.
+- WebGPU (`tide.js`): `createRenderPipelineAsync`, the entry's `pipeline` set
+  when it resolves on the same device. A rejection fails the page under
+  `checkGL`, otherwise prints. WebGL: `KHR_parallel_shader_compile` is enabled
+  where present; `gpu_gl.c` splits compile/link from their status checks
+  (`gl_pipeline_finish`), and on wasm `gl_pipeline_ready` polls
+  `GL_COMPLETION_STATUS_KHR` before finishing. Without the extension the
+  completion query answers true, so it finishes on the first poll as before.
+  Desktop GL keeps immediate finishing; Vulkan has its disk pipeline cache.
+- Test: `platform/tests/draw.c` adds a background phase after all other checks.
+  It forgets the list, draws a frame without the shaders (their pipelines go),
+  turns background on and draws `shaded_scene()` each frame until (32,32) is
+  orange, then runs `shaded_checks()` on it (600-frame limit). On WebGPU frame 1
+  must leave the draws out. Measured on this machine: native Vulkan/GL and
+  WebGL draw it in frame 1 (WebGL's compile finished before the poll); WebGPU
+  leaves frame 1 out and draws it in frame 3. The rgba-fallback page variants
+  pass too.
+- Pages that step frames and compare screenshots turn it off with
+  `Tide.backgroundPipelines = false` (see `notes/web.md`).
+- Gap: on the web, a shader's first appearance is one or a few frames late
+  rather than hitching; nothing prewarms pipelines before they are drawn.
+  Closed in part by Pipelines made before they're drawn (2026-10-22, above):
+  what's left is listed there.
+
+## Window scale getter (2026-10-20)
+
+`tide_platform_screen_scale()` exposes the existing `window_scale()` float2,
+physical/logical pixel ratios independently on each axis. The standard host
+passes it to generated frames as draw-list metadata for `Screen.scale`. It adds
+no backend call, allocation, device query or target invalidation rule. The float
+bits platform fixture also checks frame access against this getter. See
+`notes/drawing.md` and `notes/language.md` for contracts and validation.
+
+
 ## Target dimensions for local metadata (2026-10-18)
 
 tide_platform_target_pixels exposes the existing target_extent calculation to
@@ -90,7 +512,7 @@ The owner asked for Vulkan ("lets get Vulkan implemented"), the agreed next back
   - `cmake/MoltenVK.cmake` downloads the release's `MoltenVK-macos.tar` on Apple, pinned by SHA-256 as GLFW is. Its universal `libMoltenVK.dylib` (x86_64 and arm64, 10.9 MB) goes beside the build's programs (`bin/`), and into the package's `lib/native` with its license (`licenses/moltenvk`).
   - `tide build` and `tide run` put it beside a macOS game's program (`place_moltenvk`, `compiler/cli/build.c`). Only the slice for the game's CPU goes, found by `lib_universal_slice` (`compiler/cli/libraries.c`, tested by `cli_libraries_universal_slice`). That's about 5 MB, and each slice keeps the code signature it was built with.
   - `desktop/glfw.c`'s `find_vulkan`, before GLFW starts: a system loader (`libvulkan.1.dylib`, as the Vulkan SDK installs it, with its validation layer) first. Else `libMoltenVK.dylib` beside the program, or in an app bundle's `../Frameworks`. Its `vkGetInstanceProcAddr` goes to `glfwInitVulkanLoader`, so GLFW makes the window's surface with it (`VK_EXT_metal_surface`). With neither, the window draws with OpenGL as before. `gpu_vk.c` already enabled `VK_KHR_portability_enumeration` and `VK_KHR_portability_subset` where they're listed.
-  - Tested: `tide_platform_moltenvk` (Apple only, no window or GPU, so CI's Macs run it) loads the MoltenVK beside it. It checks the instance has `VK_KHR_surface` and `VK_EXT_metal_surface`, is Vulkan 1.3 or newer, and makes an instance. Its first CI run (Build `38623397915`, macOS arm64) found MoltenVK 1.4.2 loading and reporting Vulkan 1.4 with both extensions. That run also showed MoltenVK has no `VK_KHR_portability_enumeration` when used directly: that extension is the Vulkan loader's. The test had wrongly required it, and now asks for it only where it's listed, as `gpu_vk.c` always did. With that, Build `38626860832` (`02330785`) passed every job, including the Android emulator tests in the Linux package, and published `v0.4.0-nightly.1`. Then it prints each device it lists, with whether it has push descriptors and a swapchain. The Mac-only C was checked on Windows by compiling for `arm64-apple-macos13` with `-Wall -Wextra -Wpedantic -Werror` against stand-in system headers.
+  - Tested: `tide_platform_moltenvk` (Apple only, no window or GPU, so CI's Macs run it) loads the MoltenVK beside it. It checks the instance has `VK_KHR_surface` and `VK_EXT_metal_surface`, is Vulkan 1.3 or newer, and makes an instance. Its first CI run (Build `38623397915`, macOS arm64) found MoltenVK 1.4.2 loading and reporting Vulkan 1.4 with both extensions. That run also showed MoltenVK has no `VK_KHR_portability_enumeration` when used directly: that extension is the Vulkan loader's. The test had wrongly required it, and now asks for it only where it's listed, as `gpu_vk.c` always did. With that, Build `38626860832` (`fe678b81`) passed every job, including the Android emulator tests in the Linux package, and published `v0.4.0-nightly.1`. Then it prints each device it lists, with whether it has push descriptors and a swapchain. The Mac-only C was checked on Windows by compiling for `arm64-apple-macos13` with `-Wall -Wextra -Wpedantic -Werror` against stand-in system headers.
   - Not tested: drawing on a Mac. Nothing here has one, and CI's runs no GPU test. The renderer's paths on MoltenVK (its portability subset, Apple GPUs' lack of `D24_UNORM_S8_UINT`, for which `D32_SFLOAT_S8_UINT` is the fallback) need a Mac to run the GPU tests.
 - **Not done:** storage buffers. A real device loss (a driver that starts over) is only simulated: `tide_gpu_vk_lose` takes the same path a lost device's errors do. A minimized window's swapchain isn't tested, since a hidden window can't be. Linux and macOS Vulkan need CI or a machine of theirs.
 

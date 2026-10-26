@@ -1,0 +1,3 @@
+// expect: type alias 'Loop' refers to itself
+using Loop = Func<Loop, void>;
+scene Main;

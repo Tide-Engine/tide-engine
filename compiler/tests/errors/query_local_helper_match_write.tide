@@ -1,0 +1,5 @@
+// expect: a query row's match fields are read-only
+component Body { int health; local int flash; }
+scene Main { }
+void Update(mut Body body) { body.health = 1; }
+view Show(query (mut Body body) bodies) { foreach (var row in bodies) Update(row.body); }

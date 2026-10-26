@@ -1,0 +1,8 @@
+// expect: 'Changed' watches a field of a component or singleton, like 'Changed<Health.value>'
+component Health { int value; }
+local singleton Log { int count; }
+scene Main { }
+
+event(Spawned) Setup(with Main) { Spawn(Health); }
+
+local event(Changed<Health>) Flash(mut Log log) { log.count += 1; }

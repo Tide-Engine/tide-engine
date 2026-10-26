@@ -12,13 +12,32 @@ The language Tide games and the engine's built-in systems are written in. It tra
 
 - Source files use the `.tide` extension.
 - The compiler (transpiler) is `tidec`.
-- A game is one or more `.tide` files: by default, every `.tide` file in the game's folder and its subfolders, and those of the packages it lists (see Packages). Every declaration is visible from every file of the game; there are no imports between files.
+- A game is one or more `.tide` files: by default, every `.tide` file in the game's folder and its subfolders, but for hidden folders (a name starting with `.`, as tide's own `.tide/` and `.build/`), and those of the packages it lists (see Packages). Every declaration is visible from every file of the game; there are no imports between files.
 - A game needs no C: the engine runs it. A custom C host is optional, for tests or special hosts. A game can call C of its own, from `.c` files, `.cpp` files and libraries in its folder (see C functions).
 
 ### Namespaces
 
 - A file can put its declarations in a namespace, and namespaces are how large games keep names apart.
 - Code outside the namespace names its declarations with it (`Combat.Health`), or imports it with `using Combat;`.
+
+### Type aliases
+
+- `using Name = Type;` declares another name for a closed type. It goes at namespace scope: at the top level of a file, in that file's namespace (or the global namespace), or inside a namespace block. It is distinct from the namespace import `using Namespace;`.
+- File-scoped namespace headers and namespace imports precede aliases, as they precede other declarations. Namespace blocks and aliases can appear among declarations.
+- An alias follows ordinary namespace lookup: code can use its plain name in scope, qualify it (`Game.Point`), or import its namespace. Its target is resolved in the namespace context of the alias declaration.
+- Targets include primitives, built-in vectors and matrices, structs, enums, components and closed containers, with qualified names and aliases allowed inside the type. An alias can name another alias; chains resolve to their underlying type. Cycles are errors.
+- Aliases are transparent: an alias and its underlying type are the same type, including for assignments, overload signatures, container elements and component identity. They add no conversion, storage or distinct type identity, and retain the underlying type's members, defaults, capabilities and placement restrictions.
+- An alias declares no type parameters: `using Points = List<float3>;` is valid; `using Points<T> = List<T>;` is not. Every type argument in its target must be supplied.
+
+```csharp
+namespace Game
+{
+    using Point = float3;
+    using Points = List<Point>;
+    using Matrix = float4x4;
+    using Health = Combat.Health;
+}
+```
 
 ### Order of systems
 
@@ -39,6 +58,7 @@ The language Tide games and the engine's built-in systems are written in. It tra
 - `component` declares a component.
 - `singleton` declares world-wide state (what other ECSs call a resource). There is exactly one instance **per world**, not per process.
 - `struct` declares a value type for fields and locals (see Structs).
+- `using Name = Type;` declares a transparent type alias (see Type aliases).
 - `system` declares a system.
 - `event` declares an event, and `event(...)` code that runs when one is sent (see Events).
 - `enum` declares an enum (see Enums and switch).
@@ -122,7 +142,7 @@ system Hurt(mut Unit unit)
 - A method only reads the fields, unless it's `mut`. Calling a `mut` method changes what it's called on, so it needs write access, like an assignment: `unit.stats.Hurt(5)` needs `mut Unit unit`, and the system's signature still says what it writes. A read-only method can't call a `mut` one.
 - A method returns a value with `return value;`, on every path, unless it returns `void`.
 - A method sees its fields, its parameters and `Math`. It can't draw: views do. It sends events, spawns and changes entities as a function does, for the code that calls it (see Functions).
-- A component's method has `this`: the entity whose component it's called on. A method that uses it, itself or through another of its methods, can only be called on a component the code runs for, a parameter of a system, view or handler: a copy belongs to no entity. A struct's methods and `Interpolate` have no `this`.
+- A component's method has `this`: the entity whose component it's called on. Attached component parameters and query bindings retain their owning entity/world through synchronous helper calls. Explicit copies and returned values are detached. A struct's methods and `Interpolate` have no `this`.
 - Methods can share a name when their parameters differ, as functions can (see Default values, named arguments and overloads). A method can't share one with a field.
 - Singleton methods operate on their explicit receiver, with no implicit world access or local sidecar fields. Like struct methods, they have no entity `this`. Inputs have only `Sample`, `Sanitize` and `Predict`.
 - Parameters work as in functions: they can have default values, and calls can name them.
@@ -147,14 +167,32 @@ system Burn(mut Unit unit)
 }
 ```
 
+### Properties
+
+- Structs, components and singletons support user-defined computed properties with C#-style `Type name { get { ... } set { ... } }` accessors. The engine uses the same facilities.
+- Getters read the receiver; setters can change it and need a writable receiver. The assigned value is available as `value`. Properties add no stored component fields or runtime dispatch.
+- An attached component can access its owning entity and world, subject to caller capabilities. Context remains transient and is passed only where needed; ordinary field access retains its existing cost.
+- `Transform.position` exposes world position, including through an attached Transform passed to a helper. Setting it updates `localPosition` by converting through its parent and leaves the parent unchanged.
+
 ### Functions
+
+- **Callable shaders (agreed 2026-10-24).** Functions can be supplied to GPU
+  code and forwarded through helpers. Frags and verts have explicit named
+  binding initializers, `Shade { distance = Circle }`, with no positional
+  binding shorthand. Configured stages can be kept in local component state.
+  Instance records may select different functions in a shared draw through
+  generated dispatch. Callable signatures can mark explicit arguments `mut`,
+  as in `Func<mut Vertex, void>`; calls forward the caller's writable value
+  through helpers, with ordinary access rules. Captures remain read-only.
+  The initial representation and other restrictions
+  are provisional under Callable shader values below.
 
 - A function is code that other code calls: systems, views, the input's `Sample`, `Sanitize` and `Predict`, methods and other functions. The engine never runs one by itself.
 - A plain value parameter is a copy, read-only. A `mut` parameter is the caller's variable itself, which the function changes: the caller passes something it can write, and its signature still shows the write, so `Heal(unit.stats, 5)` needs `mut Unit unit`. The argument's type matches exactly.
 - Parameters are built-in types, structs, components and singletons. Return values are built-in types, structs and components; singleton return values aren't supported.
 - Singleton parameters and method receivers are explicit values, with the same read-only copy and `mut` caller-variable rules as components. They bind no singleton from the world and grant no world access: a function reaches other entities through a `World` parameter, which its caller passes its own (see The World). Existing restrictions on copying or passing grids and rendering resources still apply.
 - Caller access remains decisive, through helper chains: match systems and handlers can pass match state they can write; views can read match state and change local state; the input's `Sample` only reads local state. Helper reads and writes count toward the caller's access and scheduling. For a match component or singleton with local fields, only an actual bound parameter supplies them to an ordinary function, not a plain copy (see Local state). Match code can't call a helper that uses local fields, and local code can't call one that writes match fields. Methods don't receive local fields.
-- Engine-owned singleton instances stay read-only through calls. A helper can read stored fields of `Time` or `Session`, but passing `Session` grants no session operations: a function makes session calls as the code that calls it could, with a `Session` or without (see Functions and blocks). Ordinary helpers can't read `session.room` or format a whole `Session` as text; pass the room code as a separate `string`.
+- Engine-owned singleton instances stay read-only through calls. A helper can read stored fields of `Time` or `Session`, but passing `Session` grants no session operations: a function makes session calls as the code that calls it could, with a `Session` or without (see Functions and blocks). Ordinary helpers can't read `session.room` or `session.invite`, or format a whole `Session` as text; pass the room code or the invite as a separate `string`.
 - Functions follow the rules of methods: they see their parameters and `Math`, and return a value on every path unless they return `void`.
 - Functions and methods can take and return event and command payload values, with the same copy and `mut` rules as other values. Passing or constructing a payload grants no sending, world or sender capability. Payloads cannot be stored fields.
 - Ordinary synchronous functions and methods can borrow input with an ordinary parameter, such as `bool WantsJump(Controls controls)`. The caller passes its input parameter directly; current and previous tick stay together through forwarding, preserving the selected player, nested `.down`/`.up` edges and prediction/replay behavior. See Input for the borrow's lifetime and restrictions.
@@ -421,7 +459,7 @@ system ClampPlayer(mut Transform trs, with Player)
 }
 ```
 
-- A view has one filter more, by who owns the entity: `with ownership` and `without ownership` (see Views and drawing). In match code they're errors.
+- Views and local handlers of match events also filter by who owns the entity: `with ownership` and `without ownership` (see Views and drawing, and Events). In match code they're errors.
 - In code that runs for an entity, `this` is that entity: `if (health.value <= 0) this.Destroy();`. It's an `Entity`, or a `LocalEntity` in code that runs for local entities. In a frag, `this` is its pixel, and in a vert its vertex as the engine would place it (see Views and drawing). `this` is a keyword everywhere, and it can't be assigned.
 - A system, view or handler has `this` when it runs once per entity: it takes a component or filters by one (`with Player`). A component's method has its entity too (see Methods), a frag has its pixel, and a vert its vertex. Other code has none, including ordinary functions; the error says why.
 - The entity isn't a parameter: an `Entity` or `LocalEntity` parameter is an error that points to `this`.
@@ -441,8 +479,8 @@ system BulletHits(Body shot, Bullet bullet, query (Body body, with Fighter) figh
 ```
 
 - The outer parameters still select the entities the code runs for. `fighters` selects a separate set: its `Body` and `Fighter` requirements do not filter the bullet entity. A system with only query parameters runs once per tick, and a view with only query parameters once per frame.
-- The nested list accepts named read-only component bindings and `with`/`without` component filters. Bindings follow ordinary parameter naming rules, with `entity` reserved for the row handle. It accepts no `mut`, singleton, input, `World` or nested query. A system's is of the match's components; a view's and a local handler's are all the match's or all local (below).
-- `foreach (var fighter in fighters)` yields a read-only row. Its `entity` member is the matching entity's handle; each named binding exposes that entity's component value. Code can copy a component value or pass it to an ordinary function. As with other component copies, a method that uses `this` cannot be called on it. Code cannot write through a row or store a query or whole row. Whole rows cannot be passed to functions; queries can be borrowed by synchronous functions and methods, below. Queries are iterated in ordinary control flow, outside parallel loops and callback blocks. Async handlers and tasks take none yet.
+- The nested list accepts named component bindings and `with`/`without` component filters. Match data remains read-only. In local code, `mut` on a binding permits writes to its attached local fields (below). Bindings follow ordinary parameter naming rules, with `entity` reserved for the row handle. It accepts no singleton, input, `World` or nested query. A system's is of the match's components; a view's and a local handler's are all the match's or all local (below).
+- `foreach (var fighter in fighters)` yields a row whose `entity` handle and match component values are read-only. Code can copy a component value or pass it to an ordinary function. A method that uses `this` cannot be called on it. Queries and whole rows cannot be stored; whole rows cannot be passed to functions. Component copies omit attached local fields. Queries can be borrowed by synchronous functions and methods, below. Iteration stays outside parallel loops and callback blocks. Async handlers and tasks take none yet.
 - Every foreach traverses matching entities in normal deterministic ECS order, checking sparse component presence and filters per row. An empty set performs no iterations. Queries promise neither Entity-ID order nor distance or hit sorting; game code calculates intersections and chooses the earliest hit itself.
 - In a system, component bindings read the current world, with the same semantics as `World.Get`. Their reads participate in access analysis, system ordering, the schedule and editor hints as reads of any entity's component. Filters access no component data. If a system also writes a component it queries, it follows the existing `World` reads-own-writes rule: it runs on one thread and sees rows changed earlier in that run.
 - `Send`, `Spawn`, `Add`, `Remove` and `Destroy` keep their deferred behavior. Recording one through a row's entity does not change query membership or component data during the code's run.
@@ -461,15 +499,16 @@ view DrawFighter(Body body, Fighter fighter, query (Platform box) platforms)
   - **`verified` inside a query** follows the rule for views (see Views and drawing): a binding marked `verified` comes from the world the server has confirmed. `query (verified Health health) confirmed` loops over the confirmed world's entities; a query that mixes marked and unmarked bindings takes the entities that are in both, the same entity and not just the same handle. The filters `with verified X` and `without verified X` work in a query too.
   - **A query is all local or all the match's**, as a view is: a view may loop over local entities too, like its own sparks.
 - **Local handlers take queries too** (`local event(Hit hit) Show(..., query (Body body, with Fighter) fighters)`): they're local code that reads the match as views do. Their rows are as the handler's own match parameters are: from the tick that sent the event.
+- **Attached local fields through query rows** (agreed 2026-10-19). In local code, a binding reads its entity's current attached local fields. `query (mut Fighter fighter) fighters` can write those fields; match fields and the entity handle remain read-only. This applies to views, verified bindings and local match-event handlers: local fields have no predicted, verified or recorded history. A direct binding passed to a synchronous helper retains its local-field capability; an explicit component copy has none. Read-only borrows accept mutable sources; a helper requiring a mutable binding needs a mutable source. Helpers cannot acquire this access from match code or write a row's match fields. Mutable bindings currently require a match component with attached local fields; local-world component queries retain read-only bindings. Birth identity distinguishes replaced entities sharing a handle. Read-only default access creates no attached row; mutable access prepares owned storage when the fields are used. Active mutable outer parameters share storage with query access.
 
 #### Borrowed queries in functions and methods
 
 Decided (2026-10-18): an ordinary synchronous function or method borrows a query with the same parameter syntax, such as `float TotalMass(query (Body body) bodies)`. A caller passes its query directly, `TotalMass(enemies)`. The function receives that selection for the call; its signature does not create a new world query.
 
 - A helper's bindings describe required row data. Each must match one unambiguous named binding of the same component type in the argument; binding names and order can differ. Extra bindings are allowed. A filter-only `with Body` does not grant a helper the right to read Body data: the caller must bind it. A helper's `with`/`without` filters require the caller's query to guarantee that presence/absence; they do not filter the argument again. Extra caller filters remain in effect. If a source binds the same component twice, such as predicted and verified Body, pass a separate query with the desired single binding.
-- The source retains its traversal order and timing: live match/local queries remain live, views supply their blended/verified rows, and local handlers supply recorded rows. Borrowing creates no list, snapshot or whole-set copy. Forwarding through further helpers preserves the same source. Recorded rows still contain only the data their journal captures; forwarding supplies none of the omitted heap fields.
+- The source retains its traversal order and timing: live match/local queries remain live, views supply their blended/verified rows, and local handlers supply recorded rows. Borrowing creates no list, snapshot or whole-set copy. Forwarding through further helpers preserves the same source. Container fields read through a borrowed recorded query are included in its journal capture.
 - Match and local entity domains stay distinct. A helper borrows local rows with local component bindings, such as `query (local Spark spark) sparks`; their handles are LocalEntity. `verified` stays on the source view's query, rather than a helper parameter: the helper reads the values it is passed.
-- The borrow lasts for the synchronous call. Queries have no `mut`, `out` or default, cannot be stored or returned, and cannot be captured by callback blocks, parallel steps or tasks. Whole rows cannot escape either; ordinary component value copies keep their existing rules. Ordinary helpers can still send events and start tasks with permitted ordinary arguments under the caller's capabilities.
+- The borrow lasts for the synchronous call. The query parameter itself has no `mut`, `out` or default; a nested binding can be `mut` for attached local fields. Queries cannot be stored or returned, or captured by callback blocks, parallel steps or tasks. Whole rows cannot escape either; ordinary component value copies keep their existing rules. Ordinary helpers can still send events and start tasks with permitted ordinary arguments under the caller's capabilities.
 - A query grants only its declared row access, without an implicit World, singleton lookup or entity `this`. Existing explicit World access and its write rules remain separate. Query reads and any explicit writes retain the caller's scheduling and evaluation-order rules, including observing completed earlier World.Set writes.
 - Queries are CPU parameters of ordinary Tide functions and methods. Externs, operators, audio declarations, shaders and async routines take none.
 
@@ -497,14 +536,14 @@ system Heal(Healer healer, mut World world)
 
 - What a system reaches through its `World` is access to every entity's component, which the schedule takes from the calls in its body: `Get<T>` and `Has<T>` read every entity's `T`, and `Set<T>` writes every entity's `T` and keeps the system on one thread. A system that reads through its `World` a component it also changes through a parameter runs on one thread too, and reads the rows it changed earlier in the same run.
 - `Set<T>` can target any entity beside a read-only `T` parameter, directly or through helpers (extended 2026-10-18). Each invocation takes the component as the code comes to that entity, including preceding invocations' writes. That parameter keeps its value until the invocation returns; a task gets it again when it resumes. `Set` changes the stored component immediately, so a following `Get` or query reads the new value. Snapshot sharing does not change these results. This also applies to local components in local code.
-  - `Set<T>` beside `mut T` remains an error: the mutable parameter's write-back could overwrite the same entity's `Set`. Change it through the parameter, or route changes through events.
+  - `Set<T>` also works beside `mut T` (agreed 2026-10-19). Setting the current entity replaces both its stored component and its active mutable parameter immediately, including through synchronous helper chains. Setting another entity leaves the current binding unchanged. For example, setting health to 20 and then incrementing its mutable parameter finishes at 21. This is a whole-value replacement: unfinished edits to the parameter are discarded, and its containers acquire the replacement value under the ordinary ownership rules. Subsequent parameter edits retain ordinary write-back timing; a `Get` or query sees the value published by `Set` until those edits are written back. Explicit copies and read-only parameters keep their captured values. An async handler establishes fresh bindings whenever it resumes; no active binding is retained across a wait.
 - The signature doesn't list those components, so tooling does: `tidec --schedule` says what each system reads and writes through its `World`, and so do the language server's hover and the line above each system.
 - A `World` parameter that's never used is a warning, and so is a `mut World` that never calls `Set`.
 - Views take `World` to read the match, never to change it: `Set` of the match's component in a view is an error.
 - **Functions and methods take the World too** (agreed 2026-10-05: it's how the work is carried out, not what the language means), as their caller's, passed on: `bool TryFind(Entity target, World world, out Health health)`, called as `TryFind(healer.patient, world, out var health)`. A function has no World of its own: the argument is the `World` parameter of the system, view or handler that calls it, or of the function in between.
   - What a function reaches through it is what each of its callers reaches, through however many functions it's passed. So the schedule counts it as the system's own, on the same lines (`reads any entity's Health, through World`), a system that sets through a function runs on one thread, and one that reads through a function a component it also changes reads the rows it changed earlier in the same run.
   - `Set` needs `mut World` there as anywhere, and a caller passes a `mut World` to it: a read-only one is an error that says to declare it `mut`.
-  - The rules that depend on who calls are said at the call: the match can't reach a local component, a local handler's World is this machine's, a view changes nothing of the match, a parallel loop's step and a sort's comparison set nothing, and a system that takes a mutable component parameter can't call a function that sets that component through the World. A read-only component parameter allows these calls.
+  - The rules that depend on who calls are said at the call: the match can't reach a local component, a local handler's World is this machine's, a view changes nothing of the match, and a parallel loop's step and a sort's comparison set nothing. Component parameters retain the captured-read or active-mutable-binding rules above through these calls.
   - Provisional: a function takes one World at most, with no default, and it's neither `out` nor a value to keep or return. Operators and `extern` functions take none, and neither do async functions yet: an async handler takes it itself.
   - In generated C the function is handed the worlds it reaches, where its World parameter is written: the match's, read-only unless it sets, and this machine's for local components.
 - `World` is built in: a game can't declare a type of that name outside a namespace.
@@ -526,9 +565,9 @@ e.Remove(Stunned);
 
 ### Entry point
 
-- The scene named `Main` is where the program starts (see Scenes). There is exactly one.
-- A local `Main` starts the program in it, usually a menu. A match `Main` starts a single-player match with it right away, the same as a menu starting one.
-- `Main` sets up the first scene, not the game loop: the engine runs the tick.
+- Project startup can select an authored prefab or an ordinary scene (see Scenes). An authored prefab starts directly as a match scene, without a handwritten `Main`.
+- Without a startup selection, the scene named `Main` is where the program starts. There must then be exactly one. A local startup scene starts outside a match, usually in a menu; a match startup starts a single-player match right away.
+- The startup scene sets up the first scene, not the game loop: the engine runs the tick.
 
 ```csharp
 scene Main { }
@@ -551,17 +590,29 @@ event(Spawned) Setup(with Main)
 - There are no archetype declarations. The compiler derives every archetype from the code: the component set at each spawn site, plus every combination reachable through adding and removing components.
 - Reachable means by the code as written: `this.Add(X)` in a system only reaches the entities its parameters, `with` and `without` admit; `e.Add(X)` on an `e` that a `Spawn` or `Scene.Load` in the same code made (a local that isn't `mut`) reaches that one; `Add` or `Remove` on an entity read from a field or a parameter may reach any entity. The changes recorded for an entity in one tick apply in any order, so every combination of the components those sites add and remove is reachable from it.
 
+### Double precision values
+
+- `double`, `double2`, `double3` and `double4` are built-in 64-bit floating-point values (owner-approved 2026-10-20). Existing numeric defaults remain unchanged. Rendering continues to use floats; introducing these values does not change Transform, camera or physics coordinates.
+- Simulation double arithmetic follows Tide's deterministic IEEE basic-operation, evaluation-order, noncontraction and denormal rules, as floats do.
+
 ## Provisional: implemented in v0, awaiting approval
 
 tidec v0 needed answers to these to work end to end. They're implemented, but the owner hasn't approved them yet, so any of them can change.
 
 ### Types and values
 
-- Built-in scalar types are `bool`, `byte` (unsigned 8-bit), `int` (32-bit), `long` (64-bit), `float` (32-bit), `char` (one character of text: see Text), `Entity` and `LocalEntity` (see Local state). There is no `double`. Vector types are under Vector math, `Color` under Views and drawing, `string` under Text and `List<T>` under Lists.
+- Built-in scalar types are `bool`, `byte` (unsigned 8-bit), `int` (32-bit), `long` (64-bit), `float` (32-bit), `double` (64-bit), `char` (one character of text: see Text), `Entity` and `LocalEntity` (see Local state). Vector types are under Vector math, `Color` under Views and drawing, `string` under Text and `List<T>` under Lists.
 - `byte` holds 0 to 255 in one byte, aligned to one byte, including in structs, components, input, `List<byte>` and grid cells. `byte` widens implicitly to `int`, `long` and `float`. Arithmetic and bitwise operators promote a byte to `int`; unary `-` and `~` do too. `byte(x)` keeps an integer's low 8 bits; for a float it first uses `int(x)` (truncated, saturating, NaN to 0), then keeps those bits. An `int` constant from 0 to 255 fits where a byte is expected, including in a list literal; other integers require `byte(x)`. Compound assignments and `++`/`--` narrow their integer result back to byte, wrapping. Input sends a byte as 8 bits; deltas send whether it changed and its 8 bits when it did. Hot reload carries byte fields over to `int`, `long` or `float` fields of the same name.
 - `1.5` is a `float`; the `f` suffix is optional. The zero before the point can be left out: `.5` and `.5f` are `0.5`. An `int` converts to `float` implicitly, never the other way.
+- Double spelling and conversions for this first implementation: a decimal `d`/`D` suffix selects binary64 (`1d`, `.5D`, `1e100d`), while unsuffixed and `f`/`F` literals remain binary32 regardless of their destination. `byte`, `char`, `int`, `long` and `float` widen implicitly to double; matching int/float vectors widen to double vectors. Long conversion rounds to 53-bit integer precision where needed. Double operands promote numeric arithmetic to double, splatting a scalar beside a vector. Comparisons are scalar; floating remainder and bitwise operations remain unsupported.
+- Narrowing is explicit through `float(x)`, `floatN(x)`, `int(x)`, `intN(x)`, `long(x)` or `byte(x)`. Double-to-int/long truncates, saturates and maps NaN to zero; byte applies the int conversion then keeps its low eight bits. Double-to-float rounds to nearest/even, overflows to signed infinity and canonicalizes NaN. Vector conversions apply the scalar rule to each component. Floating conversions do not change defaults or camera coordinates.
+- Doubles occupy eight bytes per component with eight-byte alignment. They work in ordinary fields, arrays, list/map values, grid cells, optionals, tasks, C signatures, event/command payloads, snapshots, hashes and packing. Views interpolate them with double arithmetic and the frame's existing float fraction; `[Snap]` retains its usual meaning. `[Position]` supports double scalars/vectors as well as floats; `[Rotation]` remains limited to float radians and quaternion. Floating map/set keys remain unsupported.
+- Input and command double components pack as 64 raw bits, low word first; an input delta sends one changed bit and the 64 bits when changed. Nonfinite input/command doubles repair to their declared defaults before bounds and, for input, Sanitize. Hot reload preserves double values and widens matching byte/int/long/float fields to double; narrowing resets the field to its new default.
+- Double text uses shortest exact round-tripping digits, or `F0` through `F17`. `double.TryParse` and scalar JSON double fields round directly to binary64 with exact integer arithmetic, including subnormals and ties to even; overflow fails. JSON writes negative zero as `-0` and nonfinite values as `null`, as floats do. Vector JSON support remains unchanged.
+- Double math includes the existing component-wise functions, including trigonometry, exponentials, logarithms and Pow, plus vector geometry. Portable binary64 kernels compile with Tide's strict arithmetic flags; no platform transcendental calls, FMA or excess precision enter their results. As with float math, correctly rounded results for every input are not promised. `Math.Hash` hashes binary64 bits with the existing xxHash32 convention. `double.PI`, `double.TAU` and `double.E` are binary64 constants; existing Math constants remain floats. Double noise and a double quaternion type remain unimplemented. GPU code rejects doubles and asks for a conversion in local code before drawing.
+- `double2x2`, `double3x3` and `double4x4` (owner-requested 2026-10-20) have the same column storage, construction, operators and matrix math as float matrices, with eight-byte components and alignment. Matching float matrices widen implicitly; narrowing is explicit. `double3x3(quaternion)` widens components before matrix arithmetic; `double4x4(rotation, translation)` takes a double3x3 and double3. Transform/Rotate and the Translate/Scale/TRS/PerspectiveFov/Ortho constructors have double versions. Double TRS accepts a double3x3 or quaternion rotation. A quaternion retains its input float precision. Matrices participate in ordinary storage, input/command repair and packing, snapshots and view interpolation. Hot reload preserves the same matrix type; changing matrix precision resets to the new declared default, as a matrix type change did before.
 - A decimal literal with the lowercase suffix `deg` is a `float` in radians: `180deg`, `.5deg`, `1e2deg` and `1_8_0deg`. The number is first read as a 32-bit float, then converted at compile time with the same bits as `Math.Radians` of that float. Unary minus works normally (`-90deg`). The suffix touches the number, cannot combine with `f` or `L`, and is not accepted on hex or binary literals. It introduces no new type or implicit conversion; `quaternion.Euler(0, 180deg, 0)` receives radians.
-- `long` is a 64-bit integer, for counters, sums and hashes that outgrow an `int`: tick counts over months, scores, money, IDs from outside. An `int` converts to `long` implicitly, and `int` and `long` mix in arithmetic, comparisons and bitwise operators, giving a `long`. Nothing else converts by itself: `float(x)` makes a `long` a `float` (rounded to the nearest), `long(x)` a `float` a `long` (truncated toward zero, saturating, NaN to 0) and `int(x)` a `long` an `int` (its low 32 bits, as C#'s unchecked cast). A `long` with a `float` is an error that says which to write. There are no `long` vectors, and shift counts stay `int`s. `long` arithmetic wraps and divides by zero to 0 like `int`'s; shifts use the count's low 6 bits. A `long` literal has an `L` suffix (`5L`), and a literal past the `int` range is a `long` by itself: decimal up to 9223372036854775807, hex and binary up to 64 bits, read as the bit pattern (`0xFFFFFFFF` is the `int` -1; `0xFFFFFFFFL` is 4294967295). `Math.Abs`, `Sign`, `Min`, `Max`, `Clamp` and `Hash` take longs; `switch` works on them; text shows them with the same formats as ints (`X` up to `X16`). A `long` field is 8 bytes, aligned to 8, in components, inputs (sent as a 64-bit varint, and as a delta by how much it changed), lists and grid cells. On hot reload an `int` field carries over to a `long` of the same name, and a `long` to a `float`.
+- `long` is a 64-bit integer, for counters, sums and hashes that outgrow an `int`: tick counts over months, scores, money, IDs from outside. An `int` converts to `long` implicitly, and `int` and `long` mix in arithmetic, comparisons and bitwise operators, giving a `long`. Apart from widening to `double`, nothing else converts by itself: `float(x)` makes a `long` a `float` (rounded to the nearest), `long(x)` a `float` a `long` (truncated toward zero, saturating, NaN to 0) and `int(x)` a `long` an `int` (its low 32 bits, as C#'s unchecked cast). A `long` with a `float` is an error that says which to write. There are no `long` vectors, and shift counts stay `int`s. `long` arithmetic wraps and divides by zero to 0 like `int`'s; shifts use the count's low 6 bits. A `long` literal has an `L` suffix (`5L`), and a literal past the `int` range is a `long` by itself: decimal up to 9223372036854775807, hex and binary up to 64 bits, read as the bit pattern (`0xFFFFFFFF` is the `int` -1; `0xFFFFFFFFL` is 4294967295). `Math.Abs`, `Sign`, `Min`, `Max`, `Clamp` and `Hash` take longs; `switch` works on them; text shows them with the same formats as ints (`X` up to `X16`). A `long` field is 8 bytes, aligned to 8, in components, inputs (sent as a 64-bit varint, and as a delta by how much it changed), lists and grid cells. On hot reload an `int` field carries over to a `long` of the same name, and a `long` to a `float`.
 - In `cond ? a : b`, the condition is a `bool`, and the two sides have the same type or one converts to the other's, as in C#: `ready ? 1 : 0.5` is a `float`. It binds looser than every binary operator and groups to the right.
 - Integer arithmetic wraps on overflow. Integer division and modulo by zero give 0, so no input can crash the simulation.
 - Bitwise operators `& | ^ ~ << >>` work on `int` and `long`, with compound forms `&= |= ^= <<= >>=`. As in C#, shift counts use their low 5 bits (`1 << 33` is `2`; an `int` shift) or 6 (a `long` shift) and `>>` keeps the sign. Operator precedence follows C#.
@@ -630,6 +681,47 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
 - A call whose value is read several times runs once: `float4(Corner(counter), 0, 1)` and `Corner(counter).yx` each call `Corner` once.
 - Arguments passed by name are worked out in the order the call writes them, not the parameters': in `Pack(ones: Next(counter), tens: Next(counter))`, `ones` gets the first `Next`. A default the call leaves out is a constant, so it has no turn.
 
+### Callable shader values
+
+Initial implementation choices, 2026-10-24, provisional:
+
+- `Func<A, B, R>` is a local value taking A and B and returning R. Zero to 16
+  arguments are supported, read-only unless marked `mut`; the final type is the result, including
+  `void`. Named synchronous non-extern, non-failable functions match exact
+  parameter types/modes and result types. Typed expression lambdas take their
+  signature from context and declare matching parameter modes. Generated
+  dispatchers forward mutable parameters using ordinary mutable-call semantics;
+  default/unknown targets leave those arguments unchanged. Results cannot be
+  qualified `mut`; `out` callable parameters remain unsupported.
+- Lambdas copy captured plain values at construction and own those copies.
+  Their lifetime is independent of the source stack. Numeric structs and
+  fixed arrays work; heap containers, rendering-resource captures, borrowed
+  entity/component/world/input context, nested lambdas and recursive capture
+  layouts are diagnosed. Explicit helper parameters and asset references
+  retain their existing capabilities and GPU rules.
+- Each Func signature has a closed set of targets. Stored values contain a
+  target tag and typed capture fields, never native code pointers. CPU and
+  GPU invocations use generated switches and ordinary calls. Default or
+  unknown tags return the result's default, or do nothing for void. GPU
+  reachability and resource/effect checks include the dispatcher and targets.
+- A frag or vert's name also denotes its local configured-stage type.
+  Initializers bind all function slots by name; other shader inputs retain
+  existing draw binding rules. Locals, attached local fields, local-world
+  components, singletons, helper arguments/results and local collections can
+  retain these values. Function bindings cannot enter match state. A configured
+  stage with a missing/unknown required target is skipped at draw submission.
+- Instanced draws upload function tags and captures as ordinary instance data.
+  Different targets share a shader and draw when its normal state and resource
+  bindings allow it. Ordinary per-draw values stay shared uniforms. Captures
+  reserve fields per target of a signature; GPU attribute/uniform limits remain.
+- Named function identities derive from qualified names and signatures, and
+  captures have named fields for normal local serialization/migration.
+  Lambda identities also include their enclosing declaration and source
+  location. Moving a lambda can invalidate old bindings; reconstruct those
+  bindings after such a hot reload. Identity collisions are diagnosed for
+  callable targets. Automatic specialization of constant targets and compact
+  overlapping capture payloads remain optimizations to explore.
+
 ### Functions and blocks
 
 - A call with a block after it is a statement, and the block's braces go on lines of their own, like any other's. A function that takes an Action returns nothing, since its call is a statement: it changes what its caller passes as `mut` instead.
@@ -646,7 +738,7 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
   - **It's the caller's in the schedule too:** a system that calls a function that spawns hands out entity IDs (it waits for the spawning systems before it, or settles its handles when it splits), and one whose function records text changes its world's heap, as if the `Spawn` or the `Send` were written in the system. Sending makes nothing wait, there as anywhere. A foreach over a grid whose step calls one goes in order.
   - **Its calls keep their order:** what a function records goes where it's called among what the caller records itself, and a call that gives a value runs in its turn, like one that writes (see Evaluation order).
   - `Add` and `Remove` in a function are on an entity read from a parameter, so they may reach any entity (see Archetypes): a helper makes more combinations than `this.Add` in the system does.
-  - **Session calls and `Clipboard.Copy` are a view's and a local handler's, so a function's that they call** (the owner, 2026-10-11, of functions that couldn't call them yet: "yes lets improve the session stuff"). `Session.Start`, `Open`, `Close`, `Join`, `Connect`, `Leave`, `Kick`, `KickAll` and `End`, and `Clipboard.Copy`, are written in a function or a method as in a view, and are this machine's: a call from the match is an error at that call, which names the function and the line it asks on, as is one from `Sample`, `Sanitize` or `Predict`, a parallel loop's step or a comparison. An operator and `Interpolate` still can't, where they're written. Provisional: `session.room` and a whole `Session` as text stay the view's to read and pass, as the room is no part of the `Session` value a function is handed.
+  - **Session calls and `Clipboard.Copy` are a view's and a local handler's, so a function's that they call** (the owner, 2026-10-11, of functions that couldn't call them yet: "yes lets improve the session stuff"). `Session.Start`, `Open`, `Close`, `Join`, `Connect`, `Leave`, `Kick`, `KickAll` and `End`, and `Clipboard.Copy`, are written in a function or a method as in a view, and are this machine's: a call from the match is an error at that call, which names the function and the line it asks on, as is one from `Sample`, `Sanitize` or `Predict`, a parallel loop's step or a comparison. An operator and `Interpolate` still can't, where they're written. Provisional: `session.room`, `session.invite` and a whole `Session` as text stay the view's to read and pass, as the room is no part of the `Session` value a function is handed.
   - **Starting a task is a function's too, as the code that calls it could** (built 2026-10-11, on the owner's two rules: a function does what its caller could, with an error only at a call from code that can't, and no "not yet" where a feature could work; each point a pick awaiting the owner). An async function called as a statement in a function or a method starts a task, as in a system.
     - **Which world** is the task's own (see Tasks): a function that starts a task that changes the match is the match's to call, and one that starts a task that uses local state is a view's, a local handler's or a local task's. A call from the other side is an error at that call, which names the function, the task and the line that starts it. A task whose world nothing decides starts in the world of the code that calls the function, so one function serves both.
     - **Whom it belongs to:** the entity the calling code runs for, through however many functions, as a task that code started itself would: it ends with that entity, and what it spawns joins that entity's scene. Code that runs for no entity starts tasks that belong to its world.
@@ -672,18 +764,18 @@ tidec v0 needed answers to these to work end to end. They're implemented, but th
   - A block's name is inside the namespace it's written in: in a file of `namespace Game;`, `namespace Combat { }` is `Game.Combat`, and a block inside it named `Rules` is `Game.Combat.Rules`. A block's name can be dotted too.
   - A namespace is a set of names, not a place: the same one can be a block twice in a file, a block in several files, and a file's own namespace in another. What any of them declares is one namespace's.
   - What's inside a block is declared as anywhere: its order among the file's declarations is where it's written, so a block changes no system's order.
-  - Provisional: `using` stays at the top of the file, and is every block's of the file. A `using` inside a block is an error.
+  - Provisional: namespace imports (`using Physics;`) stay at the top of the file, and are every block's of the file. A namespace import inside a block is an error. Type aliases (`using Name = Type;`) are namespace declarations and can go inside a block (see Type aliases).
   - Provisional: the line form comes before any declaration, a block being one: a file says its own namespace first, and blocks after it are inside that.
   - Provisional: a block takes no attributes, `local`, `virtual` or `override`: they go before the declarations inside it.
   - Provisional: a qualified name is still exact, from the global namespace: inside `Combat`, the block `Rules`' function is `Combat.Rules.Cap`, not `Rules.Cap`. (C# also reads a qualified name's first part from the namespaces around the code. Not built.)
   - Provisional: a package's blocks are in its namespace or one inside it, as its files are: a package file with no namespace line can have everything in `namespace Package { ... }`.
   - Where a file is half typed, editors and the errors after a first one tell where a block's declarations start by their column: the first line's after the `{`, which the formatter makes one step in from the block's `namespace`.
-- `using Physics;` at the top of a file lets it name Physics' declarations without the prefix. `namespace Name;` and `using` come before any declaration.
+- `using Physics;` at the top of a file lets it name Physics' declarations without the prefix. `namespace Name;` and namespace imports come before any declaration.
 - A plain name is looked up in the namespace of the code that writes it (its block's, or its file's), then the namespaces around it out to the global namespace, then the `using` namespaces, as in C# (agreed 2026-10-05). So what a game declares itself is what its code means, whatever a namespace it imports also has by that name: a game with a `Body` of its own that says `using Physics;` means its own by `Body`, and writes `Physics.Body` for the other. If two `using` namespaces both have a name and nothing nearer does, it's ambiguous: write the namespace.
 - Qualified names work wherever a type is named: parameters (`mut Combat.Health health`), `with` and `without`, component values (`Combat.Health { value = 10 }`), `Spawn`, `Add` and `Remove`.
 - The same name can be declared in different namespaces. Built-in names can't start a namespace (`namespace Math;` is an error).
-- In generated C, namespaced declarations are prefixed with their namespace: `Combat.Health` is `Combat_Health`, read with `tide_get_Combat_Health`.
-- There's exactly one `Main` in a game, in any file or namespace. `namespace` and `using` are only keywords where a declaration can start: anywhere else they're names like any other.
+- In generated C, namespaced declarations are prefixed with their namespace: `Combat.Health` is `Combat_Health`, read with `tide_get_Combat_Health`. Type aliases use their canonical underlying type.
+- There can be at most one `scene Main` in a game, in any file or namespace; it is required only without an explicit startup selection. `namespace` and `using` are only keywords where a declaration can start: anywhere else they're names like any other.
 
 ```csharp
 // combat.tide
@@ -771,7 +863,7 @@ view Effects() { ... }
 
 Follows Unity.Mathematics, with Tide's naming. Everything in this section is decided.
 
-- Types: `float2`, `float3`, `float4`, `int2`, `int3`, `int4`, `quaternion`, `float2x2`, `float3x3` and `float4x4`. They're lowercase built-in value types, like `float`.
+- Types: `double2x2`, `double3x3`, `double4x4`, `double2`, `double3`, `double4`, `float2`, `float3`, `float4`, `int2`, `int3`, `int4`, `quaternion`, `float2x2`, `float3x3` and `float4x4`. They're lowercase built-in value types, like `float`.
 - Math functions live on `Math` and follow the PascalCase method convention: `Math.Dot(a, b)`, `Math.Normalize(v)`, `Math.Mul(q, r)`. This overrides Unity.Mathematics' lowercase `math.dot`.
 - Swizzles read any combination of components: `v.xz`, `v.zyx`, `v.xxyy`.
 - Angles are in radians. A decimal degree literal (`180deg`) converts to an ordinary float in radians at compile time. `Math.Radians(degrees)` and `Math.Degrees(radians)` convert values.
@@ -802,7 +894,8 @@ float2 flat = trs.localPosition.xz;
 - Vectors have `x`, `y`, `z`, `w`. Swizzles can also be assigned (`v.xz = float2(1, 2)`), as long as no component repeats.
 - `quaternion` has `value`, a `float4` with (x, y, z) as the vector part. Matrices are stored column by column and have columns `c0` to `c3`.
 - `Math.PI`, `Math.TAU`, `Math.E`, `quaternion.identity`, `float2x2.identity`, `float3x3.identity`, `float4x4.identity`.
-- `quaternion.AxisAngle(axis, angle)`, `quaternion.Euler(radians)` from a `float3` or `quaternion.Euler(x, y, z)` from three angles in radians (equivalent to `quaternion.Euler(float3(x, y, z))`; Z first, then X, then Y, Unity's default order), `quaternion.LookRotation(forward, up)`, `float4x4.TRS(translation, rotation, scale)`, `float4x4.Translate(translation)`.
+- `quaternion.AxisAngle(axis, angle)`, `quaternion.Euler(radians)` from a `float3` or `quaternion.Euler(x, y, z)` from three angles in radians (equivalent to `quaternion.Euler(float3(x, y, z))`; Z first, then X, then Y, Unity's default order), `float4x4.TRS(translation, rotation, scale)`, `float4x4.Translate(translation)`.
+- `quaternion.LookRotation(float3 forward, float3 up)` gives the unit rotation taking +z to normalized `forward` and +y to the unit vector in the plane of `up` and `forward` that is perpendicular to `forward` on `up`'s side. Neither argument need be unit length; finite nonzero vectors across the float range are accepted. A zero or nonfinite `forward` gives identity. When normalized `up` crossed with normalized `forward` is shorter than 1e-5 (Unity's `Vector3.kEpsilon`), including a zero or nonfinite `up` and one along `forward` either way, the result is `quaternion.FromToRotation(float3(0, 0, 1), forward)`, as Unity's `Quaternion.LookRotation` falls back. This is decided behavior (2026-10-22).
 - `quaternion.FromToRotation(float3 from, float3 to)` gives the shortest rotation between directions without requiring unit lengths. Finite nonzero directions across the float range are accepted; a zero or nonfinite direction gives identity. Exact opposite directions cross normalized `from` with its least-aligned cardinal axis and normalize the result, with X, Y, Z as the tie order. This is decided behavior (2026-10-18).
 - `float4x4.Scale(float3 scale)` builds a diagonal scale matrix, with no rotation or translation; zero and negative scales are valid. This is decided behavior (2026-10-18).
 - Projections, as Unity.Mathematics': `float4x4.PerspectiveFov(verticalFov, aspect, near, far)`, with the field of view in radians and `aspect` width over height, and `float4x4.Ortho(width, height, near, far)`. They take a view looking down -z, as OpenGL's and Unity's, to clip space, where z goes from -1 at `near` to 1 at `far`.
@@ -822,7 +915,8 @@ float2 flat = trs.localPosition.xz;
 - Quaternions: `Mul` (two rotations, or a rotation and a `float3`, which it rotates), `Rotate`, `Inverse`, `Conjugate`, `Normalize` (the identity for a quaternion too short to normalize, like a field nothing set), `Dot`, `Slerp`, `Nlerp`, `Forward`, `Up`, `Right`, `Angle`.
 - Matrices: `Mul` (two matrices, or a matrix and a vector of its size), `Transpose`, `Inverse`, `Determinant`, and for `float4x4`, `Transform` (a point) and `Rotate` (a direction).
 - Everything is deterministic (see AGENTS.md). The transcendental functions are Tide's own, accurate to about 1 ulp but not correctly rounded.
-- `Math.Hash(value)` on an `int`, `int2`, `int3` or `int4` gives random numbers that keep no state: the same int for the same value on every machine, like `Math.Hash(int3(x, y, seed)) % 6`. Code the GPU runs gets the same numbers (GPU code, under Views and drawing).
+- `Math.Hash(value)` on an `int`, `long`, `int2`, `int3`, `int4`, `float`, `float2`, `float3` or `float4` gives random numbers that keep no state: the same int for the same value on every machine, like `Math.Hash(int3(x, y, seed)) % 6`. Code the GPU runs gets the same numbers (GPU code, under Views and drawing).
+- **Bit reinterpretation (conventional completion, 2026-10-20).** `Math.AsInt` maps float/float2/float3/float4 to their int equivalents without numeric conversion; `Math.AsFloat` is the inverse for int/int2/int3/int4. Each component preserves its 32 bits. Float/vector `Math.Hash` is exactly the existing integer hash of `Math.AsInt(value)`, so signed zeros differ. These operations work in CPU and GPU code; existing float arithmetic/determinism rules remain unchanged. Private CPU aggregate borrowing preserves ordinary value semantics and adds no source-level alias or reference behavior.
 - Noise: `Math.Perlin(point[, seed])`, `Math.Simplex(point[, seed])` and `Math.Cellular(point[, seed])`, of a `float2` or a `float3`, which keep no state and give the same bits on every machine, so noise can be in the match. The owner asked for noise functions in `Math` that work on the GPU too (2026-10-07); which functions, their names and the rules below are picks.
 
 ### Provisional
@@ -1008,6 +1102,9 @@ event(Spawned) Arm(with Player)
   - **Once, under rollback.** Each tick remembers the events it delivered locally. When a tick is run again, the same event (the same tick, event, entity and fields) stays silent; one only the corrected tick has is heard then, late; one the correction removed isn't taken back.
   - **Events only local code handles.** The match can send an event no match handler takes, purely for what's shown, like `Impact { float2 at; float2 normal; }`. It costs the match nothing: the world's bytes, hash, snapshots and what's sent are what they'd be without it, and a machine with nobody to show it to does no work for it.
   - **`verified`** before the event, `local event(verified Died died) ShowDeath(...)`, hears it once the server has confirmed the tick that sent it: late by the prediction's lead, never wrong, never taken back. What the handler takes of the match comes from that confirmed tick, as the event's turn left it, so nothing else is marked. A predicted handler and a verified one of the same event can both exist. See Views and drawing for `verified` in views.
+  - **Ownership filters** (agreed 2026-10-19). `with ownership` and `without ownership` work in local handlers of match events, including verified handlers. They compare the entity's recorded `Owner.player` with this machine's `Session.player`, without requiring either parameter. Ownership is captured at the event's turn, after match handlers, before destruction; a later transfer or removal cannot redirect that event. `with ownership` requires a permitted Owner belonging to this player; `without ownership` is its complement, including entities with no permitted Owner. Other component filters retain their usual meaning. An ownership filter alone makes the handler entity-targeted and makes a local Spawned/Destroyed handler hear the match. Shown/Hidden compare ownership at their respective delivered availability endpoints, so gaining or losing ownership changes that handler's availability. Ordinary event replay retains occurrence deduplication; a correction changing only captured ownership does not repeat a predicted event, while verified delivery uses its confirmed recording. Local-world events, Forgotten and query filters don't accept ownership.
+  - **Field changes** (agreed 2026-10-25): `local event(Changed<Health.value> change) Flash(...)` hears a field of the match that changed over a tick, with `change.old` and `change.value`, instead of a view keeping the last value to compare. Its handlers are local for now; match handlers of a change are open (below).
+  - **Recorded containers** (agreed 2026-10-19). Local handlers read the match's text, lists, maps, sets and grids with the same timing as other recorded fields: direct event/component/singleton parameters come from the event's turn, query rows from tick end, and verified delivery from the confirmed recording. Captured values remain valid after later writes or destruction. Match data is read-only; ordinary explicit copies into local state keep their existing value rules, including the restriction on copying grids. Only container fields a handler may read are captured, including reads through synchronous helpers and borrowed queries; unread containers add no capture cost. Conditional reads count as possible reads, and copying a whole value reads its fields. Handlers sharing a recorded query share its captured values. Attached local fields still use current local state.
 
 ```csharp
 // The match sends Hit to the fighter, and handles it; each machine shows it.
@@ -1039,8 +1136,8 @@ local event(verified Died died) ShowDeath(Body body, mut Fx fx) { ... }
   - **The same event** is one of the same tick, event and fields, sent to the same entity. An entity is the same by what it was born as (see Local state, an entity after a rollback), where a machine knows that of both. Full-world birth identities can distinguish corrected spawns on one handle and follow the same spawn to another handle. The provisional recipient-safe identity in visibility games includes the spawn tick and handle, so changed values alone preserve identity and a different handle starts another local identity. Otherwise comparison uses the handle. Two alike in one tick are two: each is heard once.
   - `Spawned` and `Destroyed` come from both worlds. A local handler of one hears the match's when it takes something of the match (a component, a filter or a singleton) or is `verified`; taking only local state, it's the local world's, as before. One that takes a local component and something of the match is an error.
   - What it takes of the match is a copy from the event's turn: after the match's handlers of that event ran, and for `Destroyed`, before the entity goes. `Time` is the tick the event was sent in. An event sent to an entity that's gone by its turn isn't heard, as it isn't handled.
-  - **Text, lists, maps, sets and grids of the match aren't heard yet:** naming one, in the event or in a component or singleton the handler takes, is an error that says so, a copy of the value has them empty, and they don't count towards two events being the same. Local state has them as ever.
-  - It can't take the `World` (it's the match as it is now, not as the event left it), `Devices`, the input, or `with ownership` (it takes `Owner owner` and `Session session`, and compares). It can't be `async` yet: it starts a task with what the task needs.
+  - The decided recorded-container rule above supersedes the earlier omission of heap fields. Journals own serialized values rather than match-heap handles. Event-payload container fields that local code may read contribute their captured contents to occurrence identity; unread containers remain omitted. Component/singleton/query data does not change occurrence identity. Recipient lifecycle records retain whole-component visibility restrictions.
+  - It can't take the `World` (it's the match as it is now, not as the event left it), `Devices` or the input. It can't be `async` yet: it starts a task with what the task needs.
   - Local fields are the entity's, whether or not it's still there: what a handler writes for an entity that's gone goes with the rest at that frame (below), `Forgotten` first.
   - A frame runs them first: then the local fields of entities that are gone go, then the views run. What they spawn, change and send locally is handled at the end of the frame, like a view's. They send commands as views do.
   - An event's local handlers run in declaration order, and `[Before]` and `[After]` order them among themselves, apart from the match's handlers of the event. An event has 64 at most.
@@ -1054,6 +1151,12 @@ local event(verified Died died) ShowDeath(Body body, mut Fx fx) { ... }
   - `Shown` and `Hidden` are local notifications, cannot take local-world components, and cannot be sent by game code. Match components' local fields and local singletons remain writable. Provisional delivery reconciles complete handler availability at local presentation boundaries, separately for predicted and verified endpoints. Hidden reads the old endpoint and queries before local-field cleanup, then Shown prepares the new endpoint. Transient intra-tick/between-frame toggles coalesce; a canceled predicted conceal restores Shown, unchanged replay emits nothing, and a newly eligible listener initializes independently. A local rebuild clears private availability history and prepares existing entities again; preparation must safely reuse or replace retained local resources.
   - In visibility-enabled games only genuine `Spawned`/`Destroyed` are journaled authoritatively per recipient. Custom local/verified events still come from the client's permitted simulation; a generic server-to-audience event API remains open.
   - A handler of an event nothing sends is a warning, like a match handler's, and `tidec --schedule` lists each event's local handlers after the match's.
+  - **`Changed<...>`** (Claude's picks, 2026-10-25):
+    - The path is a match component or singleton (the shortest start of the path that names one), then a field, through structs: `Changed<Unit.stats.level>`. Local fields, the engine's own components and singletons, and fields holding text, lists, maps, sets, grids or `Resident` state are errors. Each field watched is one built-in event, `old` and `value` of its type, which games can't send.
+    - A change is the tick's: as it ends, after its events and changes settled, each entity that had the component as it began and has it now (by handle and generation) is compared, bit for bit, with its field then. Several writes are one change, and one written back is none. Spawns, destroys, adding or removing the component, arrival and visibility change nothing.
+    - It's sent to that entity (a singleton's to the world), recorded after the tick's other events, in the order of the fields' first handlers, then of the world's storage. `Time` is that tick. Its handlers take the match as the tick left it; a singleton's take no components.
+    - Rollback, `verified`, ownership filters and queries are as for any match event a local handler hears; the same change is the same tick, entity, field, old value and value. Only recording ticks compare, so the match's bytes, hash, snapshots and traffic are the same with handlers of changes or without.
+    - Open: match handlers of a change (whether a handler's own write counts in its tick or the next, and chains), watching a whole component, and containers.
 - `event` is only a keyword at the start of a declaration, like `input`.
 - A trigger's name is optional for any event: a handler that doesn't read the event leaves it out.
 - `Spawned` handlers run as the spawn is applied, and `Destroyed` handlers just before the entity goes, both in the queue's order. A spawn's `Spawned` handlers run before the next change in the queue.
@@ -1068,7 +1171,7 @@ local event(verified Died died) ShowDeath(Body body, mut Fx fx) { ... }
 
 - Events for a component being added or removed.
 - Queries in async handlers and tasks, including query-row lifetimes across waits. Synchronous handlers already iterate matching entities with ordinary query parameters.
-- Local handlers: text and lists of the match in what they hear; the `World` as an event left it; async ones; reading `verified` components in a handler that hears a tick as it's predicted; an event's local handler that follows the same entity when a replay gives it another handle on a machine that doesn't know what it was born as.
+- Local handlers: the `World` as an event left it; async ones; reading `verified` components in a handler that hears a tick as it's predicted; an event's local handler that follows the same entity when a replay gives it another handle on a machine that doesn't know what it was born as.
 
 ## Commands
 
@@ -1243,7 +1346,7 @@ system Advance(mut Match match)
   - **`int.TryParse(text, out value)`, `long.TryParse` and `float.TryParse`** give whether the whole text is a number of that type, which goes to `value`, an `out` argument as a function's is (`out var n`, `out n`, `out _`); otherwise false, and `value` is 0. A call can stand as a statement of its own. An int and a long are digits, with `-` before them for a negative one, zeros before them allowed. A float is that with a point among the digits and an exponent after: `-12.5`, `.5`, `5.`, `1e-3`, `2.5E+10`. Nothing else is a number: no spaces before or after (`Trim` first), no `+` before it, no hex, no digit separators, no `f` or `deg` after it, no `NaN` or `Infinity`. A number the type doesn't hold is false too: an int past its range, a float past the biggest float (one too small to tell from zero is zero). There's no `byte.TryParse`, and no `Parse` that fails.
   - **A float read from text is the one nearest the number written**, a tie going to the even one, as IEEE 754 rounds, whatever the number of digits: worked out with exact integer arithmetic, never the platform's `strtof`, so the same text is the same bits on every machine, and the match can read numbers. What text shows of a float (its shortest digits, or with a format) reads back as that float.
   - They run in any CPU code, the match's too; code the GPU runs has no text. A `Split`'s list and a `ToBytes`'s are in the scratch area, like any list code makes.
-- `GUILayout.TextField(label, mut text)` and `GUI.TextField(rect, label, mut text)`: a field the player types into, which changes the text as they type. Enter or Escape stop typing, and Backspace takes off the last character. With `out bool entered` after the text, it also says whether Enter ended the typing (see GUI).
+- `GUILayout.TextField(label, mut text)` and `GUI.TextField(rect, label, mut text)`: a field the player types into, which changes the text as they type. Enter or Escape stop typing; caret, selection and editing keys are described under GUI. With `out bool entered` after the text, it also says whether Enter ended the typing (see GUI).
 - Systems that change the match's text or lists wait for each other, as their heap is one: `tidec --schedule` says "both change text or lists".
 
 ### Open
@@ -1252,7 +1355,7 @@ system Advance(mut Match match)
 - `Join`, `Split` by several separators or with a count, `byte.TryParse`, a `Parse` that fails with an error, and reading hex.
 - The GUI's number fields (`GUILayout.FloatField`) still read what's typed with the platform's `strtof`: local code only, so no match depends on it, but they could read with `float.TryParse`'s code.
 - `++`, `--` and `+=` on a char, and `\r`, `\t` and `\0` in text's literals, which a char's have.
-- Text with a caret that moves, and selection, in text fields.
+- Grapheme-cluster caret movement, bidirectional editing and inline IME preedit in text fields.
 - Case for letters past ASCII.
 
 ## JSON
@@ -1401,7 +1504,7 @@ Built 2026-10-06 on that; each point beyond it is a pick, awaiting the owner.
 - Taking a whole list out of a field or variable copies it; its elements, count, methods and `foreach` don't. A read-only list argument is passed without a copy unless a `mut` argument of the same call could change it.
 - Lists in code (not in a world) live in the scratch area, like text.
 - `parallel (var i in items) { ... }` goes through a list's elements at once, on threads, as it does a grid's cells (see Grids): its places are the elements' indices, so `i` is an `int`, and the step reads the element as `items[i]`. Each step reads the list as the loop found it and changes only its own element, `items[i]`, so the result is the same on any number of threads. `parallel (var i in items by 2 offset o)` gives each step a block of elements from `i` up to the block's size, which it changes as `items[i + 1]` and the like; blocks start at the offset plus any multiple of their size, and one that would go past the list's end is left out. The step's rules are a grid's: it changes nothing else (not the list's count either: no `Add`, `RemoveAt`, `Resize` or `Clear`), can't end the loop, wait, spawn or send, and so on.
-- A parallel loop goes through a list the world keeps, a component's or a singleton's, not a variable's, and one whose elements hold no text: steps run on threads, where text can't be made.
+- A parallel loop goes through a list the world keeps, a component's or a singleton's, or an owned local list in a `local worker`. Its elements are plain values with no text or containers. Ordinary function-local lists retain their existing restriction.
 - `items.Sort(a, b) { return a.x < b.x; }` sorts a list, stable, by a comparison written after the call: its two names are the elements it compares, read-only copies of the element type, and the block says whether the first goes before the second, as `return a.x < b.x;`, on every path. Elements the comparison doesn't order keep their order. It runs again and again as the list sorts, in an order nothing promises, so it changes nothing outside it (not the list, not a field, not an outer variable), and can't spawn, send, wait, draw, use the GUI, change scenes or the session, or call C; it reads what it likes: fields, the code's parameters and variables. `break`, `continue` and the comparison's `return` are its own, not the code's around it. It sorts in systems, views, handlers and plain functions, and not yet in methods, async code, functions that take an Action, blocks written after a call, or the input's code. Merge sort, so the same comparisons in the same order on every machine.
 
 ### Open
@@ -1476,13 +1579,13 @@ Implemented on the owner's go-ahead, to be revisited once games use them:
 - Cells are plain values: numbers, bools, chars, enums, vectors, quaternions, matrices, `Color`, `Rect`, `Entity`, `PlayerID`, and structs of those. Not text, lists or grids, which say to keep them elsewhere and a number for them in the cell.
 - `cells[x, y]` is `cells[int2(x, y)]`, and `cells[x, y, z]` is `cells[int3(x, y, z)]`. `cells.size` is the grid's size, 0 on open axes. `cells.Clear()` sets every cell back to zero and keeps the size; `cells = Grid2(...)` gives the field a new, empty grid.
 - A cell is a copy, like a list's element: `cells[p].heat = 1` is an error that says to take it out, change it and put it back. `cells[p] += 1` works on numbers. Setting a cell to zero where there's no chunk makes none.
-- A grid is never copied, since every chunk would be: a local can't hold one, nor a component or singleton that has one, and a grid field is only assigned a new grid. Functions can't take or return grids yet. `Grid2(...)` takes its cell type from the field it goes in; anywhere else it's an error that says so.
+- A grid stays in its component or singleton: a local can't hold a copy, and a grid field is only assigned a new grid. Local workers can take independent read-only grid snapshots; their synchronous helpers and shader code can read and forward grid parameters. Other CPU callers cannot pass grids. Functions cannot return grids. `Grid2(...)` takes its cell type from the field it goes in; anywhere else it's an error that says so.
 - A chunk is the engine's: 4096 cells (64 by 64, or 16 by 16 by 16 in 3D), or for cells bigger than four bytes, as many as fit in a page (16 KiB), a power of two along each axis, the first axes the most.
 - A loop over a grid with a size on every axis goes through every cell within it. An open axis goes on forever, so there a loop goes through the cells of the chunks the grid has, where something was set: in blocks, every block that takes in part of one. A foreach over an open grid goes through them in the same order, rows from the first, skipping what has no chunk.
 - A parallel loop's step changes only its own cell or block, `at` plus constants (`at + int2(1, 0)`, `int2(at.x + 1, at.y)`), and the variables it declares. Anything else it changes is an error that says why: a variable outside the loop (to add up, use a `for` loop or a foreach that goes in order), another cell, the whole grid (`Clear`), through a `mut` argument too. It can't `break` out of the loop (`continue` ends the step), return, wait, start tasks, spawn, send, add, remove or destroy, load scenes, draw, use the GUI, or hold another parallel loop. It can call functions, and C.
 - A block is 1 to 64 cells along each axis, a size known while compiling: a constant int, or `int2`/`int3`. The offset can be any int: blocks start at it plus any multiple of their size, so with blocks of 2, an offset of 2 gives the same blocks as 0.
 - An open axis ends where the ints do. A block that would go past the last int is left out, as one past a grid's size is, so no block's cells wrap around; a step that reads past that edge, `cells[at + int2(1, 0)]` at the last int, reads the cell its own arithmetic wraps to, as an int wraps anywhere else. A foreach reaches the cells at both ends. (Picked while testing that no loop can go wrong there: see Open, at the end.)
-- A parallel loop goes in a system, a view or an event handler that isn't async: not in functions, methods, async code or an input's `Sample`. A foreach there whose steps only touch their own cell runs at once; anywhere else, it goes in order.
+- A parallel loop goes in a system, a view, a synchronous event handler or a `local worker`: not in ordinary functions, methods, async code or an input's `Sample`. A grid foreach there whose steps are independent runs at once; anywhere else, it goes in order. Worker grid inputs are read-only; explicit parallel loops in workers write owned lists and may read those snapshots.
 - A foreach over a grid can't wait inside it: it goes through the cells as they are.
 - Each step writes into a copy of its chunk, made from the chunk as it was, and the loop's end puts the copies into the grid in order, chunk by chunk, so where the steps ran never shows. The schedule says how many parallel loops each system has: `(once, 2 parallel loops)`. A tick with one runs on threads, and the loop's steps spread across them when there are enough to be worth it.
 - Hosts read a world's cells with `tide_grid_read(&w->heap, w->Field.cells, x, y, 0, &tide_shape_Grid2_int)`: the generated header names each grid type's shape.
@@ -1649,7 +1752,7 @@ asset string credits = "https://example.com/credits.txt";
 
 view Hero(Body body)
 {
-    Draw.Mesh(Quad(body.position), QuadIndices, hero);
+    Draw.Sprite(hero, body.position, float2(1, 1));
 }
 
 command SetBackground { List<byte> png; }
@@ -1673,7 +1776,7 @@ Picks made to build it, awaiting the owner.
 - **Where the pack is:** in a file beside the program on desktop (`<game>.pack`), inside the self-contained page on the web, and in the APK's assets on Android. Under `tide run` there's no pack: the game reads the source files, and tide watches them, so a saved image is in the running game at once, with no rebuild, as it's data. A web build can keep the pack beside the page rather than inside it, so the page stays small and the pack is fetched from wherever it's hosted; the option's name is open.
 - **Sharing** is by SHA-256 of the bytes, among declarations that read the file as the same thing. A `Grid2<Color>` of the pack lives in a read-only region every world can name, outside every heap, so no world copies, hashes or sends it, and it's the same memory to every reference. A file read as two things is in the pack as each where they're kept differently: an image as a `Grid2<Color>` and as a `Texture`, and a text with a character of several bytes as a `string` and as a `List<byte>` (text says how many characters it is, which isn't its bytes then; text that's all ASCII and its bytes are in the pack once).
 - **Decoding:** `grid.Decode(bytes)` reads a PNG into a `Grid2<Color>` field of a component, singleton or scene, sizing the grid as the image is, and fails with `IOError.InvalidData`. It's pure, so it runs in match code, and it runs where it's called, which in a tick is on every machine. **Fetching:** `await Web.Fetch(url)` is a local async operation giving `List<byte>` and failing with `IOError`, like `File.ReadAllBytes`, which is the other way bytes come in at runtime; so loading a player's image is `grid.Decode(File.ReadAllBytes(path))`, and there's no asset handle type beside the plain ones. On the web it's `fetch`, so the server's CORS applies; on desktop it's the HTTPS the relay's connection uses; on Android, Java's.
-  - Both are built (2026-10-06), with these picks. `Decode` reads every kind of PNG the specification has (gray, color, a palette, with and without alpha, 1 to 16 bits a sample, interlaced or not) with the engine's own reader (`tide/png.h`); a sample becomes a channel by one division, so the pixels are the same bits on every machine. A side past 16384 pixels is `InvalidData` before anything is made for it. A failed decode leaves the grid as it was. A pixel that's clear black is a cell that's zero, which takes no chunk. Rows go into the grid as they're decoded, so nothing the picture's size is made beside it; a picture too big for the world's heap ends the program as running out of memory does. `Web.Fetch` is a GET that follows up to 5 redirects; `NotFound` is a 404 and every other status outside 200 to 299 is `Failed`, as is a body past 64 MiB (read no further) and a certificate the system doesn't trust; nothing times out, as a browser's `fetch` doesn't. On Android it's the same client as desktop's over the TLS the relay's connection uses there (Java's `SSLEngine`), not `HttpsURLConnection`. A fetch still going when its task ends (a reload, the program's end) is forgotten, and stops.
+  - Both are built (2026-10-06), with these picks. `Decode` reads every kind of PNG the specification has (gray, color, a palette, with and without alpha, 1 to 16 bits a sample, interlaced or not) with the engine's own reader (`tide/png.h`); a sample becomes a channel by one division, so the pixels are the same bits on every machine. A side past 16384 pixels, or more than 4096 × 4096 pixels in all (16,777,216, 256 MiB of cells, a quarter of a world's heap), is `InvalidData` before anything is made for it, as is compressed data that inflates to more than 1 MiB past the last row: bytes can come from anywhere, and deflate packs a run of one color about a thousand to one, so a file of a few kilobytes could otherwise end every machine's program or take each minutes (Provisional, 2026-10-26: the owner asked for limits that are clear and easy to change; the numbers are Claude's picks, one `#define` each in `tide/png.h`). A failed decode leaves the grid as it was. A pixel that's clear black is a cell that's zero, which takes no chunk. Rows go into the grid as they're decoded, so nothing the picture's size is made beside it; pictures within the limit that together fill the world's heap end the program as running out of memory does. `Web.Fetch` is a GET that follows up to 5 redirects; `NotFound` is a 404 and every other status outside 200 to 299 is `Failed`, as is a body past 64 MiB (read no further) and a certificate the system doesn't trust; nothing times out, as a browser's `fetch` doesn't. On Android it's the same client as desktop's over the TLS the relay's connection uses there (Java's `SSLEngine`), not `HttpsURLConnection`. A fetch still going when its task ends (a reload, the program's end) is forgotten, and stops.
 - **Finding a moved file:** tide keeps the SHA-256 of every file an `asset` named in `.tide/`; when one is missing, the error says where a file with the same bytes is now in the game's folder (or packages), with a quick fix to the new path, and else lists files of the same name. The language server takes the editor's rename of a file or folder (`workspace/willRenameFiles`) and rewrites every reference to it.
 - **An `asset` is a declaration** of its file's namespace, named like a constant, usable in every kind of code (match, local, GPU, C through a `List<byte>` or a grid as any value is passed), and never `mut`, assigned, or a parameter's default. A path has to be a constant expression; anything else is an error that says why: the dependency tree is static.
 
@@ -1714,7 +1817,7 @@ Picks made as `Texture` assets were built (2026-10-07), awaiting the owner. That
 
 Picks made as PSD images were built (2026-10-08), awaiting the owner. Reading a PSD's saved composite without Photoshop is decided, above:
 
-- **PSD images.** `asset Texture hero = "art/hero.psd";` and `asset Grid2<Color> hero = "art/hero.psd";`, alone, as a list or map, and a `Cubemap`'s faces. The file is an ordinary PSD (version 1), RGB with 8 or 16 bits per channel, at most 16384 pixels per side, whose image data is uncompressed, RLE, ZIP or ZIP with prediction. The compiler's own reader decodes its saved composite, never its layers; saving with Photoshop's Maximize Compatibility includes that picture. A missing or damaged composite, PSB, other color modes (CMYK among them), 32-bit samples and unsupported compression are errors at the path. Color profiles aren't applied; sRGB art keeps matching display colors. Each sample becomes a float channel of a `Grid2<Color>` or the nearest byte of a `Texture`, and only the decoded pixels go in the pack, as with PNG. No Photoshop installation is needed at build time or runtime, and no PSD decoder is added to a game. `grid.Decode(bytes)` continues to read PNG only.
+- **PSD images.** `asset Texture hero = "art/hero.psd";` and `asset Grid2<Color> hero = "art/hero.psd";`, alone, as a list or map, and a `Cubemap`'s faces. The file is an ordinary PSD (version 1), RGB with 8 or 16 bits per channel, at most 16384 pixels per side and 8192 × 8192 in all (2026-10-26, Provisional, Claude's pick: a compressed composite under a megabyte could otherwise ask for 4 GiB), whose image data is uncompressed, RLE, ZIP or ZIP with prediction. The compiler's own reader decodes its saved composite, never its layers; saving with Photoshop's Maximize Compatibility includes that picture. A missing or damaged composite, PSB, other color modes (CMYK among them), 32-bit samples and unsupported compression are errors at the path. Color profiles aren't applied; sRGB art keeps matching display colors. Each sample becomes a float channel of a `Grid2<Color>` or the nearest byte of a `Texture`, and only the decoded pixels go in the pack, as with PNG. No Photoshop installation is needed at build time or runtime, and no PSD decoder is added to a game. `grid.Decode(bytes)` continues to read PNG only.
 
 Picks made as `Mesh` assets were built (2026-10-08), awaiting the owner. That a model is a `Mesh<V>`, filled by field names, drawn both ways and one mesh a file, is decided, above:
 
@@ -1722,7 +1825,9 @@ Picks made as `Mesh` assets were built (2026-10-08), awaiting the owner. That a 
 
 - **Mesh assets.** `asset Mesh<V> name = "path";`, alone or as a glob's `List<Mesh<V>>` or `Map<string, Mesh<V>>` (one file where the type holds many is a list or a map of that one, as for any asset). `V` is a struct that can be a 3D mesh's vertex: a `float3 position`, and fields of floats, ints, their vectors and colors, 12 at the most.
   - **The fields a file fills, and their types:** `position` (`float3`), `normal` (`float3`), `uv` and `uv2` (`float2`), `color` (`Color`) and `tangent` (`float4`, its `w` the side the bitangent is on, or `float3` for the direction alone). One of those names with another type is an error at the declaration. Names follow the built-in vertex and Unity's vertex attributes.
-  - **What a file hasn't got:** a `normal` is each triangle's own, the way its front faces, for vertices that triangle doesn't share (what glTF says a mesh with no normals is drawn as); `uv`, `uv2` and `tangent` are zeros; `color` is white. No tangents are worked out.
+  - **What a file hasn't got:** a `normal` is each triangle's own, the way its front faces, for vertices that triangle doesn't share (what glTF says a mesh with no normals is drawn as); `uv` and `uv2` are zeros; `color` is white. Only static `Mesh<V>` layouts declaring `float4 tangent` select a tangent-generation variant. Missing tangents in that variant are generated from triangle UV derivatives, with corner-angle weighting, normalized `xyz` orthogonal to the normal and handedness `w` of +1 or -1. Vertices shared by generated corners with opposite UV handedness split at that seam only in this variant. Missing or degenerate UVs use a finite fallback frame. This is not a MikkTSpace bake-compatibility guarantee. These generation details are provisional implementation choices (2026-10-25).
+  - **Canonical imports are unchanged.** Layouts with no tangent or with `float3 tangent`, and skinned meshes, retain their prior streams, counts, indices and canonical hashes exactly; missing `float3` tangents remain zero. A generated variant is separate from the canonical import and cannot change another declaration's data. Metadata-only language-server checking uses canonical data and does not generate variants.
+  - **Authored tangents** retain their existing coordinate/node-transform conversion, including authored zero and nonorthogonal values. The normalization and orthogonality guarantees above apply to generated tangents only. Within a static `float4 tangent` variant, authored tangents in one primitive do not prevent generation for another primitive that has none.
   - **A field of any other name is given its default as the pack is loaded**, by the game's own code, so it's exactly what a vertex made in code starts as, whatever expression the default is.
   - **Axes.** glTF is right-handed, `+y` up, its fronts counterclockwise; Tide follows Unity, left-handed with fronts clockwise. A file's `x` is negated (positions, normals, tangents, whose `w` turns too) and its triangles wound the other way, but under a node that mirrors, which has turned them already. So `+y` stays up, what faces `+z` in the file faces `+z` here, as Unity's glTF importer has it, and nothing is mirrored. An OBJ says nothing of its axes: it's read the same way, as tools write it.
   - **A uv is (0, 0) at a texture's top left**, as glTF's is and Tide's; an OBJ's counts from the bottom, so its second number is turned over.
@@ -1731,15 +1836,15 @@ Picks made as `Mesh` assets were built (2026-10-08), awaiting the owner. That a 
   - **From an OBJ:** `v`, `vt`, `vn` and `f`, places counted from the end (`-1`), faces of any number of corners as fans, and a color after a position (`v x y z r g b`). A vertex of the mesh is each combination of position, uv and normal a face uses. Its `.mtl`, groups, lines and smoothing are passed over.
   - **From an FBX:** polygon meshes triangulated during import, node transforms, normals, tangents, two uv sets, vertex colors and material base colors. The source's axes and units become right-handed Y-up meters before the existing Tide coordinate conversion. Geometry and inheritance transforms use unnamed helper nodes when needed. A static mesh takes the rest geometry and ignores animation and deformation. Textures and other material properties stay outside the import. The compiler's ufbx reader is build-time code only; generated C and the runtime use the existing mesh representation.
   - **The same bits whichever machine builds.** The pack's vertices are what match code reads, so everything that makes them is the basic float operations in a fixed order: a decimal number becomes a float by a reader of tidec's own (the C library's isn't promised to round the same everywhere), a node's matrices and the normals through them are plain arithmetic, and the sRGB curve is the engine's `pow`.
-  - **Limits:** 16,777,216 vertices and 33,554,432 triangles a mesh.
+  - **Limits:** 16,777,216 vertices and 8,388,608 triangles a mesh, 4,194,304 JSON values in a glTF's description, and 536,870,912 numbers read from its accessors in all (an accessor counts again for each part naming it; one without a buffer view, which is zeros, counts like one with bytes). A file past one is refused from the counts it says, before what they ask for is made, since tidels reads a game's mesh files at every keystroke and a file can be anyone's URL; a mesh at every limit takes about 3 GiB to read (Provisional, 2026-10-26: the owner asked for limits that are clear and easy to change; the numbers are Claude's picks, one `#define` each in `compiler/src/mesh_files.h`).
   - **Where a `Mesh<V>` can be:** an asset's type, and what passes one on within a frame: a local, a loop's variable, a function's read-only parameter (no `mut`, `out` or default) and what it returns. Not a field, a constant, an `is` pattern, or an element of a list or a map that's no asset's; not an `extern` function's (C takes the two lists), an operator's or an `audio` declaration's; and nothing of a task's (an `async` function's parameter, local or result), which would keep it while it waits.
   - **Why nothing keeps one:** a `Mesh` value is two handles into the loaded pack, and a pack is loaded again between frames (`tide run` does when a file is saved). What a game keeps is which mesh: a place in a list or a key of a map.
   - **Read-only through whatever holds it:** `mesh.vertices` and `mesh.indices` of a `mut` local are the pack's too. A copy of a list is the code's own: `mut var mine = tree.vertices;`.
   - **A draw's Mesh is worked out once**, though it stands for two arguments: `Draw.Mesh(models[next++], ...)` steps once.
   - **In the pack** a mesh is two lists' blocks, its vertices laid out as the struct is, shared by what's in the file and how the struct lays it out: two declarations of one file and one struct are one mesh, in the pack and on the GPU; the same file as two structs is two. An entry says its vertices' layout as a number, and a pack another build made, of a struct that's changed since, hasn't got the mesh: it reads as empty, and the program says so once. The draw list tells a pack's mesh by what its file had, with no vertex read, so a pack loaded again with the file as it was draws the mesh the GPU has.
-  - **Not there:** the textures inside a model file (declare each texture separately) and a material beyond its color; a file's parts or materials apart; skins, animation and morph targets; `Mesh<V>` as the type of a mesh a game makes, in a field; a mesh read from bytes while the game runs, as `grid.Decode` reads a picture; a 2D mesh from a file; tangents worked out; and a frag or a vert reading `mesh.vertices` as a list, which is an error that says to copy what it needs into a singleton's list, and is a gap by the rule that GPU code refuses only what a GPU can't do.
+  - **Not there:** the textures inside a model file (declare each texture separately) and a material beyond its color; a file's parts or materials apart; skins, animation and morph targets; `Mesh<V>` as the type of a mesh a game makes, in a field; a mesh read from bytes while the game runs, as `grid.Decode` reads a picture; a 2D mesh from a file; and a frag or a vert reading `mesh.vertices` as a list, which is an error that says to copy what it needs into a singleton's list, and is a gap by the rule that GPU code refuses only what a GPU can't do.
 
-- **JPEG, TGA and BMP images** (built 2026-10-10): build-time `Texture`, `Grid2<Color>`, their lists/maps and cubemap faces import these alongside PNG/PSD through the existing types. Maximum dimensions remain 16384 per side; new decoder/output allocations and source size are bounded to 512 MiB. Only pixels enter the pack, and runtime `grid.Decode` remains PNG-only. Profiles and JPEG EXIF orientation are not applied. See [Assets](./game/assets.md#image-formats) for supported variants and source-format limits.
+- **JPEG, TGA and BMP images** (built 2026-10-10): build-time `Texture`, `Grid2<Color>`, their lists/maps and cubemap faces import these alongside PNG/PSD through the existing types. Maximum dimensions remain 16384 per side; new decoder/output allocations and source size are bounded to 512 MiB, and a progressive JPEG has at most 256 scans (2026-10-26, Provisional: each scan decodes the whole picture again; Claude's pick, `TIDE_IMAGE_MAX_JPEG_SCANS` in `compiler/src/image_files.h`). Only pixels enter the pack, and runtime `grid.Decode` remains PNG-only. Profiles and JPEG EXIF orientation are not applied. See [Assets](./game/assets.md#image-formats) for supported variants and source-format limits.
 
 ### Open
 
@@ -1756,28 +1861,48 @@ Picks made as `Mesh` assets were built (2026-10-08), awaiting the owner. That a 
 
 Components may store checked references to named model assets. Prefab text assigns
 the asset name; the compiler validates the referenced asset and its type. The
-editor previews its geometry, while game views decide how to render it (owner,
+editor previews static model geometry, while game views decide how to render it (owner,
 2026-10-12).
+
+References of the same canonical asset-reference type support `==` and `!=` by
+stable declaration identity, independently of geometry reloads (owner, 2026-10-25).
+
+`Asset<T>` supports static `Mesh<V>` and `SkinnedMesh<V>` model assets, including
+transparent aliases (owner, 2026-10-25). Resolving a skinned reference preserves
+the current packed model's borrowed geometry and skinning data.
 
 ### Provisional
 
-The first implementation uses `Asset<Mesh<V>>`. A matching singular mesh asset
+Use `Asset<Mesh<V>>` or `Asset<SkinnedMesh<V>>`. A matching singular model asset
 name converts to this reference where its expected type is known, including
 component defaults, prefab overrides, arguments and list elements. A borrowed
-`Mesh<V>` variable cannot convert: it has no declaration identity. References
+model variable cannot convert: it has no declaration identity. References
 can be stored in either world using ordinary placement rules.
 
-`reference.Value` reads the currently loaded `Mesh<V>`, subject to the existing
-borrowed-mesh lifetime and read-only rules. `default` is an empty reference and
+`reference.Value` reads the currently loaded model of the declared type. Static
+mesh values retain their borrowed lifetime; skinned resolution returns the
+original pack handles, preserving palette sharing and imported LOD metadata.
+Ordinary persistent assignment of that model still acquires its usual value
+ownership. `default` is an empty reference and
 reads an empty mesh; unknown received identities do too. The reference stores
 only a stable numeric identity derived from the qualified asset name. Geometry
 replacement preserves it; changing the declaration name changes it. Identity
 collisions are compile errors. No pointer or runtime type registry enters a world.
 
-This initial type supports singular static meshes only. Collection elements,
-skinned models, other resource types, JSON asset-name serialization and persistent
+`==` and `!=` compare references of the same canonical `Asset<T>` type by
+that stable declaration identity. Geometry reloads do not change equality, and
+different declarations remain different even when their geometry is identical.
+Two empty references are equal. Unknown received identities compare by their
+stored identity; resolving both to empty meshes does not make them equal.
+Aliases preserve the canonical type. A matching named asset and `default` use
+their existing conversions when the other operand supplies the reference type.
+References to different vertex types do not compare. Ordering and direct access
+to the stored identity are not supported.
+
+References name singular model declarations. Collection elements,
+other resource types, JSON asset-name serialization and persistent
 identity migration across declaration renames are not implemented. The native
-editor previews named references and constant aliases at each entity's composed
+editor previews static named references and constant aliases at each entity's composed
 Transform; preview materials and lighting are editor choices, not game rendering.
 
 ## Skinned meshes and animation
@@ -1890,9 +2015,10 @@ pose.Sample(movement.run, seconds, Playback.Loop);
 Draw.SkinnedMesh(hero, transform, pose);
 ```
 
+- **Explicit skinned instances** (agreed 2026-10-20). `Draw.Instanced(model, instances[, texture[, filter[, wrap]]][, vert][, frag][, values])` and a render target's `Instanced` accept `SkinnedMesh<V>`. Instance structs use the existing optional `float4x4 transform` field, with identity when absent, and an optional `Pose pose` field. If present, `pose` must be a Pose; an invalid or incompatible value skips only that item. If absent, the item uses authored rest, including models without clips. `List<float4x4>` draws rest instances. Ordinary instance shader fields retain their existing read-only binding and selective upload; Pose remains CPU-only. Each item captures its pose before return, including separate-file binding through the same rules as `SkinnedMesh`. Compatible captures use the existing palette batching and attribute-limit fallback.
 - **Separate-file binding** (name/hierarchy rule agreed 2026-10-11). Required nodes match by unique exact source names and their parent chains. Node order, authored default poses and unrelated unanimated branches may differ. Required source local transforms are copied directly, including unanimated required ancestors; no adaptation of proportions or coordinate spaces is performed. An unnamed identity scene wrapper directly under the canonical root is transparent only while its source pose and relevant clip channels remain at rest; animated wrappers and deeper unnamed ancestors are rejected. In-place sampling requires the selected clip's animated nodes and their ancestors, and starts other target nodes at rest. Drawing a source Pose also binds procedurally changed nodes and every source clip's channel targets and ancestors, since a Pose does not retain its selected clip. Missing or ambiguous required names and changed parents reject binding. Exact skeleton compatibility, Bone identity and blending still include authored rest transforms. Sampling into `hero.defaultPose` gives a Pose that can use `hero.skeleton.bones` for edits and sockets. Direct drawing of `movement.run.Sample(seconds)` is also supported, but its Pose retains the animation file's skeleton identity.
 - **Standalone catalogs.** `AnimationCatalog` assets accept animation-only or model-containing glTF 2.0 (`.gltf`, `.glb`) or binary/ASCII FBX (`.fbx`) files and expose `count`, `TryGetAt`, `TryGetByName` and inferred direct clip members. A plain `asset AnimationCatalog movement` accepts one path, a glob or a nonempty list of constant string paths/globs, producing one combined catalog (agreed 2026-10-11). Files follow list order, each glob follows path-byte order, repeated resolved files occur once, and clips retain source order. When cleaned names collide across combined sources, cleaned filename stems prefix those aliases (`walkRoot0TargetingPose`); remaining collisions receive flattened source ordinals. `TryGetAt` uses flattened clip order; `TryGetByName` searches exact original names across all sources and returns false for ambiguity, assigning `default` to its output. Each clip retains its original source skeleton; no merged rig is constructed. These are build-time imports, with no runtime `AnimationCatalog.Decode`. `var` retains checked members; explicit `AnimationCatalog` annotations and list/map asset elements expose the dynamic API. An `asset Animation run = "run.fbx"` requires exactly one source clip; `[Name("Root|Run")]` selects a unique exact original clip from one file. Missing, ambiguous and implicit zero/multiple-clip selections are errors; singular Animation assets do not accept globs or file lists.
-- **Import and runtime loading.** Assets accept glTF 2.0 `.gltf` and `.glb`, and binary or ASCII `.fbx`. Node hierarchy and authored local transforms are preserved, including animated non-joint parents; the skeleton contains all source nodes and a synthetic identity root. Several skins keep their own inverse-bind palettes; glTF's supplied consecutive joint/weight sets are preserved and positive weights are normalized in a fixed order. glTF animation channels support STEP, LINEAR and CUBICSPLINE. FBX imports linear or rigid skin weights and converts declared axes and units to Y-up meters. Animation stacks become clips shifted to zero with their authored duration; nonlinear transform curves are resampled at 60 samples per second into LINEAR channels, retaining source keys within the clip and stepped changes. Geometry and inheritance transforms can add unnamed helper nodes. Skinned FBX rejects dual-quaternion skinning, several skin deformers on one mesh and external vertex caches. Morph targets are rejected. Vertex fields follow the static mesh's naming/default rules. `SkinnedMesh<V>.Decode(List<byte> bytes)` and the contracted form return a model `fails IOError`, accepting self-contained GLB bytes and returning `IOError.InvalidData` for malformed data, external resources or unmet contracts. Fetching remains separate. Model bytes, animation values and mutable poses use ordinary list/struct ownership and can be stored in match or local fields.
+- **Import and runtime loading.** Assets accept glTF 2.0 `.gltf` and `.glb`, and binary or ASCII `.fbx`. Node hierarchy and authored local transforms are preserved, including animated non-joint parents; the skeleton contains all source nodes and a synthetic identity root. Several skins keep their own inverse-bind palettes; glTF's supplied consecutive joint/weight sets are preserved and positive weights are normalized in a fixed order. glTF animation channels support STEP, LINEAR and CUBICSPLINE. FBX imports linear or rigid skin weights and converts declared axes and units to Y-up meters. Animation stacks become clips shifted to zero with their authored duration; nonlinear transform curves are resampled at 60 samples per second into LINEAR channels, retaining source keys within the clip and stepped changes. Geometry and inheritance transforms can add unnamed helper nodes. Skinned FBX rejects dual-quaternion skinning, several skin deformers on one mesh and external vertex caches. Morph targets are rejected. Vertex fields follow the static mesh's naming/default rules. `SkinnedMesh<V>.Decode(List<byte> bytes)` and the contracted form return a model `fails IOError`, accepting self-contained GLB bytes and returning `IOError.InvalidData` for malformed data, external resources or unmet contracts. A file past a decode limit is also `InvalidData`, refused from the counts it says before what they ask for is made: 1,048,576 vertices, 6,291,456 triangle corners, 65,536 nodes, animations and buffers, 4,096 skins, 262,144 inverse binds, 8,388,608 vertex influences (each joint/weight set counts four a vertex), 262,144 channels, 16,777,216 key numbers, 67,108,864 numbers read from accessors over the decode (an accessor counts again for each part naming it; one without a buffer view counts like one with bytes), 4,194,304 JSON values and 512 MiB of file or decoded model, so a model at every limit takes about 500 MiB to decode and a small hostile file can't take every machine's memory or minutes. Build-time `SkinnedMesh` and `Animations` imports use the same decoder and limits (Provisional, 2026-10-26: the owner asked for limits that are clear and easy to change; the numbers are Claude's picks, one `#define` each in `tide/skinned_data.h`). Fetching remains separate. Model bytes, animation values and mutable poses use ordinary list/struct ownership and can be stored in match or local fields.
 - **Type boundaries.** `var` retains a single known asset's catalog. Explicit plain generic types expose dynamic catalogs; contracted helper parameters and list/map elements expose their common contract. Inferred or contracted model conversions are checked against the destination requirements. Collection asset imports provide their common type rather than per-item inferred dot members; selection does not invent a union of unrelated catalogs.
 - **Drawing and shaders.** `Draw.SkinnedMesh(mesh, transform[, pose][, texture][, vert][, frag][, values])` has the same form on a render target. Omission supplies authored rest; an explicit invalid Pose remains invalid. Skinning precedes the user `vert`, providing mesh-local positions, normals and tangents before the draw transform and camera. Inverse-bind offsets apply to deformation, not to `pose.Model(bone)`, which is suitable for sockets. The renderer supports nonuniform scale and tangent handedness. A draw captures its current pose; later edits and samples cannot change that capture. Consecutive compatible draws of an imported model can batch even with different poses; shader, texture, uniform and draw-setting differences still separate batches. Pose lists use ordinary copy/snapshot rules and have no automatic view interpolation; a view can sample from its chosen playback time. Sampling does not move entities or send animation events.
 - **Responsive editor metadata.** A dedicated cached reader extracts catalogs and hierarchy from `.gltf` JSON or a `.glb` JSON chunk without reading geometry, sample buffers, side files or the BIN chunk. FBX inspection reads its source while skipping geometry, animation curves and embedded content. Watched changes invalidate metadata even with unchanged size/time; source and contract edits reuse unchanged metadata. URLs use an existing local cache without fetching, retaining the original URL's source extension for format detection. Invalid and unavailable imports are diagnosed separately from missing checked members, and contract completion remains available. Cold inspection is synchronous: 16 MiB of glTF JSON, or 64 MiB of FBX source with 128 MiB each for temporary and result parser allocations. No asynchronous indexing protocol is built. Full builds perform authoritative import validation. Details and measurements are in `notes/editors.md`.
@@ -1902,7 +2028,7 @@ Draw.SkinnedMesh(hero, transform, pose);
 
 - **Playback and interpolation.** Transitions, masks, additive layers, automatic `Play`/`Update` state, long-running clock precision and a convenience rule for view interpolation. A wrapped clock must not interpolate through the wrong part of a clip.
 - **Root motion and events.** An explicit root-motion delta over a time interval, including loop crossings, for a system to apply through its own movement rules; removal of extracted motion from the displayed pose. Root selection, translation/rotation/scale behavior and animation markers or event queries remain open. Sampling must not implicitly move entities or send events.
-- **Further model APIs.** Retargeting, hierarchy-path lookup, pre-skin vertex access and an explicit instanced call taking a list with an independent pose per instance. `Draw.SkinnedInstanced` is a suggested name; automatic batching of ordinary skinned draws does not add that call.
+- **Further model APIs.** Retargeting, hierarchy-path lookup and pre-skin vertex access.
 - **Further match-content policy.** Admission of arbitrary runtime content and convenience rules for replacing a rig while retaining older rollback history. Imported content already participates in build compatibility; runtime content reaches the match through synchronized state.
 - **Further behavior.** IK, morph-target animation and an automatic animation controller are outside the current implementation. Background metadata indexing and explicit editor URL refresh remain open.
 
@@ -1936,7 +2062,7 @@ Picks made to build it, awaiting the owner.
 - **Where `[LOD]` goes:** an `asset Mesh<V>` or `asset SkinnedMesh<V>` (with or without a contract), alone or as a glob's list or map, where it applies to every file. It takes nothing. On any other asset, and on any other declaration, it's an error that says what it's for. `[Lod]` is an unknown attribute, with `LOD` suggested.
 - **A level is a shorter index list over the mesh's own vertices.** No vertex is added, moved or copied, so the pack grows by index data only, about as much again as the mesh's indices for a full chain. Each level has about half the triangles of the one before, and there are 7 at the most. The chain ends where a step can't remove a quarter of what's left without opening a hole or tearing a seam, and where a level would be off by more than half the mesh's own reach, which is a mesh a few pixels across wherever it's picked. A mesh that's simple already gets no levels, and draws as if it had no `[LOD]`.
   - **No level has fewer than 500 triangles** (the owner, 2026-10-11, after measuring: a fixed floor; the number is a pick). A level pays by the triangles it takes off a draw, against what picking costs each instance and a draw call more for each level in use: a ball of 960 triangles drawn 40,000 times was slower picked than whole, up close. So the chain stops before a level that small, and a mesh of under 1,000 triangles has no levels and nothing picked.
-  - Triangles go by collapsing an edge onto one of its ends, the cheapest first. What's weighed: positions, and the fields a file fills (`normal`, `uv`, `uv2`, `color`), so a level's error is how far its surface and what's on it are from the full mesh's. Tangents and fields of other names aren't weighed.
+  - Triangles go by collapsing an edge onto one of its ends, the cheapest first. What's weighed: positions, and the fields a file fills (`normal`, `uv`, `uv2`, `color`), so a level's error is how far its surface and what's on it are from the full mesh's. Tangent `xyz` and fields of other names aren't weighed. Only static vertex layouts containing `float4 tangent` add its handedness sign to chart identity, preserving opposite signs as separate seams without a new tangent-direction error metric. Other vertex layouts and skinned LOD behavior are unchanged by this sign preservation.
   - An open edge only collapses along itself, so the mesh's outline keeps its shape. A position with two uvs or two colors is a seam, which only collapses along itself too. Vertices at one position that differ by their normals alone (a mesh shaded flat, each triangle with corners of its own) are one position, so such a mesh loses triangles as a smooth one does.
   - Edges more than two triangles share, and surfaces whose triangles don't agree on their front, stay as they are.
 - **A draw picks by error on screen, not by distance.** Each level records how far it's off. A draw takes the simplest level whose error, as big as the draw's transform makes it, covers no more than one pixel at the nearest point of the mesh's bounds to the camera. So a level is taken when the difference is too small to see, with nothing to tune for each mesh, and a mesh drawn large keeps its full detail at any distance.
@@ -1959,7 +2085,7 @@ Picks made to build it, awaiting the owner.
 - **A game's vert isn't known to the pick.** The bounds are the mesh's as the file has it, through the draw's transform. A vert that moves vertices far from there, or grows the mesh, gets levels picked for where the mesh would have been. That's the game's to know, which is what opting in is for.
 - **A skinned mesh's levels are made from its rest geometry**, and a pose deforms a level as it deforms the full mesh, since the vertices and their weights are the same ones. Moving a vertex onto one that follows its bones differently costs the edge's length times how differently, so the vertices around a joint outlast the ones along a limb. Its bounds for the pick are the rest pose's.
 - **The GPU has each vertex once.** A level is drawn with the full mesh's vertex buffer and an index buffer of its own, made when a frame first draws it and let go when none does.
-- **The cache** is in the game's `.tide/assets/lod/`, by what's in the file (and a skinned model's bytes) and the version of what makes the levels. A file there that's cut, or names vertices the mesh hasn't got, is made again. With no game folder, a build makes them each time. Under `tide run`, a saved model has its levels made again with the pack.
+- **The cache** is in the game's `.tide/assets/lod/`, by what's in the file (and a skinned model's bytes) and the version of what makes the levels. Only static `float4 tangent` variants use the sign-preserving version-3 keys; layouts without tangents, `float3 tangent` layouts and skinned meshes retain their exact prior version-2 keys. A file there that's cut, or names vertices the mesh hasn't got, is made again. With no game folder, a build makes them each time. Under `tide run`, a saved model has its levels made again with the pack.
 - **Not there:** a way for a game to say how many pixels a level may be off by (the runtime has it, `tide_draw_lod_pixels`; the language doesn't); levels an artist made, read from a file; blending or dithering between two levels; a flat picture in place of a far mesh; levels for a model decoded while the game runs (`SkinnedMesh<V>.Decode`), which has no declaration to mark; and leaving out what the camera can't see, which is a separate matter.
 
 ### Open
@@ -1975,7 +2101,7 @@ Picks made to build it, awaiting the owner.
 
 ### Decided
 
-- `async` and `await`, as in C#. `async` before a function lets it wait with `await`, and pick up where it stopped. There's no `Task<T>`: the function's type is its value's, `async int Doubled(int x)`, and `await Doubled(3)` gives it.
+- `async` and `await`, as in C#. `async` before a function lets it wait and pick up where it stopped. Declarations name their completion value, `async int Doubled(int x)`, and `await Doubled(3)` gives it. The approved first-class handle model below extends how calls can be kept and awaited.
 - A call of an async function that isn't awaited starts a task, which goes on by itself.
 - Tasks run in the match as well as in local code. A match task is part of the match: snapshots, hashes and rollback hold it, players who join get it, and it carries on when the match changes hands. Match code only waits for what's the same on every machine (ticks, time, events); a service's answer reaches the match through input.
 - A task ends when whatever started it does.
@@ -2015,9 +2141,9 @@ system Start(Round round)
 Implemented, awaiting approval:
 
 - `async` goes before a function or an event handler, before or after `local` if it has one (`local async event(...)`); before anything else it's an error that says where it goes. Methods can't be async yet, nor extern functions or functions that take an Action. `await` is a keyword, and binds like `try`: `await Doubled(3) + 1` adds 1 to the value. A `!` after an awaited call is the awaited value's: `await Fetch(name)!`.
-- An async call is awaited, from async code (async functions and handlers), or a statement of its own, which starts a task; using its value without `await` is an error that says which to write. A started task's value is dropped; one that can fail is warned about as a call that can fail is, and `Load(name)!;` starts it without the warning. Systems, views, handlers and async code start tasks, and so does a plain function or method, as the code that calls it could (see Functions and blocks): the input's `Sample`, `Sanitize` and `Predict`, code the GPU runs, operators and `Interpolate` start none.
-- `await` waits for an async call, or for `Wait.Ticks(n)` (the match's ticks; match code only), `Wait.Frames(n)` (this machine's frames; local code only) or `Wait.Seconds(s)`: in the match, the nearest whole number of ticks, at least one; in local code, this machine's time, which hosts give each frame (`tide_local_frame_time`) and a task counts down frame by frame, within a tenth of a millisecond. A wait of 0 or less doesn't wait. `Wait` only goes after `await`. `await` isn't allowed in a block written after a call.
-- Async code is a state machine, as in C#: a call of an async function runs until it first waits, inside the code that calls it. An awaited call's frame is part of the caller's, so a task is one frame however deep it awaits, and an async function can't await itself (it can start itself again, as a task of its own).
+- An async call returns a started handle, as specified below. Systems, views, handlers and async code start tasks, and so does a plain function or method, as the code that calls it could (see Functions and blocks): the input's `Sample`, `Sanitize` and `Predict`, code the GPU runs, operators and `Interpolate` start none. A discarded ordinary async call continues without retaining its result.
+- `await` waits for a handle or immediate async call. `Wait.Ticks(n)` starts a match timer, `Wait.Frames(n)` a local timer, and `Wait.Seconds(s)` a timer in its caller's world: in the match, the nearest whole number of ticks, at least one; in local code, this machine's time, which hosts give each frame (`tide_local_frame_time`) and a task counts down frame by frame, within a tenth of a millisecond. A wait of 0 or less doesn't wait. `await` isn't allowed in a block written after a call.
+- Async code is a state machine, as in C#: a call of an async function runs until it first waits, inside the code that calls it. A directly awaited call can share its caller's private frame; kept handles identify separate started operations. An async function can't directly await itself through that private frame; it can start itself again and keep the resulting handle.
 - A task keeps its parameters and locals while it waits, copied, with their text and lists in its world's heap. An async function's component and singleton parameters aren't kept: it gets them again each time it goes on, as they are then, from the entity it belongs to, so the caller passes its own (a parameter), and a task whose entity lost one ends. Its `mut` parameters are only components and singletons; it can't keep the caller's other variables, and it has no `out` parameters: its call returns before it has made anything, so it returns a struct instead.
 - An async handler is a task per event: its event is copied into the task, and its components are the entity's, got again after each wait.
 - A plain function an async function calls counts too: one that sends a match event makes it match code, and one that sends a local event or a command makes it local (see Functions).
@@ -2031,11 +2157,153 @@ Implemented, awaiting approval:
 
 - Awaiting an event: `await Hit` on an entity, which a task would wake for in the event's turn.
 - Async C functions, which C finishes later (a service's answer), for local code.
-- Holding a running call to await later, like C#'s `Task.WhenAll`: `var` could hold it without its type being written, as with errors.
-- Cancelling a task from code, through a handle, and cancelling a request that was sent (`await request.Send()`): nothing designed says how code names either. A request ends by itself with a time limit (`SetTimeout`, see Local files); a task that waits for one ends with what it belongs to.
+- Combining task completions (`WhenAll`, `WhenAny`): no API is decided. Keeping and awaiting individual calls is covered by the approved handle model below.
+- Cancelling an underlying external request independently of its task. Task-handle cancellation is covered below; an external C/provider operation may still need its own protocol.
 - Methods and functions that take an Action being async, and `await` inside a block written after a call.
 - Local handlers of match events (see Events), which a local task awaiting a match event would need too.
 - Whether what's written before an `await` in its statement is read before the wait, as in C#: `score.value + await Bonus()` reads `score.value` once the task goes on today, unless a call that writes comes after it in the statement (see Evaluation order).
+
+### Started task handles (decided 2026-10-25)
+
+Async functions, local workers and engine awaitables share a started-operation
+model. Declarations name completion types; calls return handles.
+
+- Declarations keep their completion types: `async T F(...)` and
+  `local worker T F(...)`. A call returns a started handle; awaiting it gives
+  the declared result. Calling and awaiting immediately is the same operation
+  as keeping that handle and awaiting it later.
+- Match async calls produce `Task<T>`, local async and local worker calls
+  produce `LocalTask<T>`. `Task` and `LocalTask` are the void forms. World
+  placement follows the existing caller-capability rules. Bare match workers
+  remain reserved; this decision introduces no cross-tick match computation.
+  First-class match handles are currently rejected in sharded games; distributed
+  identity, result retention and cancellation are a separate pass. Existing
+  directly awaited/discarded match async calls and local handles remain supported.
+- Preserve the complete result type: `Task<T fails E>` and
+  `LocalTask<T fails E>` retain their declared error type, and optional results
+  retain their optionality. `await handle` has the same value/failure type as
+  `await F(...)`; failures remain values, not exceptions.
+- Handles copied or stored refer to the same operation. Awaiting does not
+  restart it. Repeated/multiple awaits obtain the same logical result using
+  ordinary Tide value-copy rules, so one recipient's edits cannot change
+  another recipient's result.
+- `handle.Cancel()` cancels that operation; cancelling a completed operation
+  has no effect. Default/stale handles are harmless and never refer to a
+  subsequently created operation. `isRunning` reports whether it is pending
+  or running. `isCompleted` includes cancellation, and `isCancelled` is true for
+  cancelled, default and stale handles. Equality compares operation identity.
+- Cancellation propagates through an ordinary await by ending that awaiting
+  task's continuation. Cancelling one awaiting task does not cancel a shared
+  operation that still has another consumer. An unused directly awaited
+  worker can be abandoned automatically; a queued callback is skipped and a
+  running calculation stops at generated Tide safe points. An extern C call
+  finishes normally.
+- Discarding the return of an ordinary async call retains fire-and-forget
+  behavior. Entity/world ownership still ends tasks with their existing
+  owners. Match task identities, results and cancellation are match state;
+  local ones remain outside match snapshots, hashes and networking.
+  Per-recipient visibility preserves authoritative server task execution:
+  registries, continuations and cached results are private. A projected client
+  cannot start a retained match operation; a published handle whose operation
+  is absent there is stale. Publish ordinary permitted progress/results for views.
+- A compatible local save/reload preserves the logical connection between a
+  stored handle and its surviving task. Provider pointers, native callbacks
+  and live worker execution never enter saved state; pending local workers
+  still restart after restoration/reload.
+- `Wait` timers, `Storage.Flush`, `Web.Fetch` and request `Send` return the same
+  handle types with their complete declared results. Awaiting a retained timer
+  waits for its original deadline; it does not start a new delay or request.
+
+Result reclamation, operation indexing, continuation scheduling and worker
+admission are internal implementation choices. Cached results remain available
+to reachable consumers and unreachable cycles are reclaimed. Preserve observable
+ordering and serial results. No public shared-result mutation, multiple-result
+stream, explicit cancellation outcome API or `WhenAll` syntax is decided here.
+
+### Local workers
+
+**Decided (2026-10-24).** `local worker Result Build(Input input) { ... }`
+declares a CPU calculation whose scheduling belongs to this machine. A local
+async function or handler awaits it with `await Build(input)`. Inputs and results
+are owned values, independent of live worlds and frame storage. The calling
+task publishes results in local state. Worker completion never enters match
+state, tick order, snapshots, hashes or networking. Bare `worker` is reserved
+for a future match contract and is currently rejected.
+
+Workers share the bounded host pool, and can distribute independent loop work
+through the same pool. Existing loop ordering and independence rules remain.
+Explicit `parallel` loops also accept a worker's owned local list. A step cannot
+append to a shared list or write another step's output.
+
+**Decided (2026-10-24, grid extension).** Read-only `Grid2<T>` and `Grid3<T>`
+worker inputs capture independent snapshots before dispatch. Both grid fields
+and grid assets can supply a snapshot. Synchronous helpers can read and forward
+it through explicit grid parameters without obtaining live-world access.
+Existing grid foreach independence and ordering rules apply within workers.
+Grid locals, returns and writable worker grid parameters remain unsupported;
+ordinary CPU callers cannot pass grids to helpers. GPU sampling remains GPU-only.
+
+**Implemented choices, provisional.** Workers are synchronous function bodies,
+without `async`, `mut`/`out` parameters, bindings, World, queries, devices,
+resource/asset references or borrows, or callable/shader bindings. Owned CPU values
+include text, nested lists/maps/sets, ordinary structs, fixed arrays, optionals
+and failable results.
+Reachable helpers have no world, frame, drawing/audio, file/network, task-start
+or implicit match-randomness capabilities. Explicit Random values retain their
+ordinary calculation rules. Extern C remains trusted. A call returns a started
+`LocalTask<T>`; local async code awaits its result.
+
+Captures are fully materialized, including packed geometry lists, before
+dispatch. Results are acquired on the frame thread. Owner loss drops the
+continuation and discards pending output; abandoned queued calculations are
+skipped, while a running calculation stops at generated Tide safe points.
+Trusted extern C finishes its current call. Local state disposal
+and retained reload drain jobs before their callbacks can be unloaded.
+Restored/retained tasks restart a pending worker
+from their current saved arguments and component bindings.
+
+A custom host supplies optional background/help callbacks through `gui.jobs`;
+the standard host uses its platform pool. Parallel waiters execute queued loop
+helpers to avoid requiring a free thread. No provider means synchronous
+execution when the task polls its worker, which can stall that frame. List
+foreach and ordinary for loops retain their ordered semantics. Grid foreach
+uses the existing independence analysis in workers, with ordered reductions.
+Snapshot capture copies the directory and existing chunks on the calling thread.
+Capture follows written argument order. An earlier grid capture survives later
+argument mutations or waits as privately owned task state until dispatch.
+
+**Open:** deterministic match workers, invocation priorities, distributed match
+task handles and explicit cancellation outcomes beyond status properties.
+
+### Proposed worker extensions (not implemented)
+
+These are recommendations for the owner's review, not approved requirements.
+No new syntax or runtime behavior below is part of the current implementation.
+
+- **Priorities:** put scheduling metadata on an invocation, so the same mesher
+  can serve visible and distant chunks. Start with three queue priorities:
+  Urgent, Normal and Background, FIFO within each and aging to avoid starvation.
+  Tick work retains precedence. Priority changes only when queued work starts;
+  it neither interrupts running calculations nor removes the cost of capture.
+  Invocation spelling and any foreground-capacity reservation need decisions
+  and measurements before implementation.
+- **Explicit cancellation outcomes:** ordinary await cancellation ends its
+  continuation. If game code needs to continue after cancellation, consider a
+  separate outcome-returning await API that preserves success, declared failure
+  and cancellation as distinct cases. Its spelling is undecided; no cancellation
+  value is injected into `T fails E`.
+- **Distributed match handles:** retain the current compiler restriction until
+  operation identity, result ownership, cross-shard waits/cancellation and handoff
+  are designed together. Local workers remain machine-local.
+- **Match workers:** keep bare `worker` reserved. The existing ECS scheduler
+  already distributes same-tick work deterministically. A worker that finishes
+  before the tick's dependency barrier is straightforward but cannot advance
+  simulation while unfinished. Work spanning ticks needs explicit resumable
+  progress and a deterministic work-unit budget; inputs, cursor, result and
+  cancellation enter snapshots/hashes, and thread speed cannot choose its
+  completion tick or entity/event order. Recommend that model only for a
+  concrete workload that needs it. Outside-service answers still enter as input;
+  local completion timing must never become match state directly.
 
 ## Input
 
@@ -2043,7 +2311,7 @@ Implemented, awaiting approval:
 
 - One `input` declaration per game describes one player's input for one tick. It's what the network sends.
 - Input is one value per player per tick. The engine writes it, and the simulation can only read it.
-- `Owner` is a built-in component that ties an entity to a player. It's a normal component: it can be read, written, added and removed. Writing it hands control over. A view runs for the entities this machine's player owns with `with ownership` (see Views and drawing).
+- `Owner` is a built-in component that ties an entity to a player. It's a normal component: it can be read, written, added and removed. Writing it hands control over. Views and local handlers of match events use `with ownership` to filter for this machine's player (see Views and drawing, and Events).
 - Players are identified by a built-in `PlayerID` type, not an `int`. Like `Entity`, it's opaque, comparable with `==`, and has a null value. The simulation only sees `PlayerID`s and never connections, so a player who reconnects and gets their `PlayerID` back keeps everything they owned. `PlayerID(0)` names a player by index, for local play and tests.
 - **Sampling is Tide code:** the input's `Sample(Devices devices)` method. The engine calls it on the client once per tick. Fields start at their defaults, and `Sample` assigns them by name, without `mut`. It runs outside the simulation: it reads this machine's `Devices`, and the local singletons it takes, but not the match.
 - **Device access always takes a parameter**, `Devices devices`. Views and the input's `Sample` receive this machine's devices; match code receives the devices of the player who owns the entity, or the server's, as with an input parameter. The input sends what match code reads of them, and nothing else, and the engine repairs them, since it knows their ranges.
@@ -2198,7 +2466,7 @@ component Pose
 }
 ```
 
-- `[Position]` applies to a float or floating-point vector. Tick interpolation stays linear. A correction accumulates the additive difference needed to preserve the displayed value, and the presentation removes that error over time.
+- `[Position]` applies to `float`, `double` and their vector types. Tick interpolation stays linear. A correction accumulates the additive difference needed to preserve the displayed value, and the presentation removes that error over time. Double positions, differences and retained errors use binary64 arithmetic; the frame fraction and shared decay factor remain floats, widened when used with a double field. Matrices and optional/array fields are not supported by this attribute.
 - `[Rotation]` applies to a float in radians or a quaternion. A float interpolates and corrects through the shortest wrapped angular difference; a quaternion uses the shortest relative rotation. Its correction error decays toward zero angle or the identity rotation.
 - Error is local to presentation and decays exponentially with frame time, with a provisional half-life of 75 ms. Further corrections accumulate with the error still present. Ordinary motion follows the corrected simulation; it is not low-passed along with the correction.
 - Untagged fields keep ordinary tick interpolation. An ordinary struct can contain annotated built-in fields, including through nested ordinary structs. Correction smoothing through a type with its own `Interpolate` remains deferred; no companion custom-type method is agreed.
@@ -2253,7 +2521,7 @@ view Board(verified Duel duel) { ... }
   - A third argument is its pixels per unit, the display's scale when left out: `RenderTarget(320, 180, 1)` is exactly 320 by 180 pixels whatever the display, for pixel art and anything that must not depend on the display.
   - `RenderTarget.Window()` is a target that's always the window's size, and `RenderTarget.Window(factor)` one that's always that part of it: `RenderTarget.Window(0.5)` is half as wide and half as high. The engine makes it again when the window's size or the display's scale changes, and the game never calls `Resize` on it. What was drawn in it is lost then, which doesn't matter for a target a game draws again every frame.
   - When the display's scale changes (the window moves to another monitor, a browser zooms), targets at the display's scale are made again and lose their contents, as with a lost device. Targets with pixels per unit of their own aren't touched.
-  - Nothing reads the display's scale: there's no `Screen.scale`.
+  - `Screen.scale` is read-only float2 frame metadata (conventional completion, 2026-10-20): current window physical pixels per logical pixel independently on x/y. Views and their helpers read it; match/GPU code and assignments are refused like other Screen measurements. A zeroed custom-host axis defaults to 1. It does not report render-target contents or validity.
   - A target's color and depth persist across frames otherwise. Copies, including `.color` references, share the image. `target.Resize(width, height)` changes the size of a target that isn't the window's to size, and discards its contents, even at the same size. `target.Dispose()` invalidates all aliases and releases its attachments; repeated disposal is harmless. A default target is invalid. These operations cannot run in field defaults or the match. Invalid destinations and disposed sources skip drawing with a diagnostic, including already-recorded uses of an image disposed in the frame. `Draw.window` cannot be resized or disposed. Hot reload retains managed sizes, pixels per unit, whether a target follows the window, and shared aliases, adopting their state natively and recreating their images on the web; borrowed references are cleared and rendered contents are discarded. Device loss discards GPU contents.
 - **`Texture` is the one name a draw and a `Sample` take** (agreed 2026-10-07, item 3 of the reshaping of the drawing surface; built the same day). A `Grid2<Color>` converts to one implicitly where a draw or a `Sample` wants one, and so does a `Grid2<float>`, a texture of one channel (a heightmap, a lookup table). A `Texture` value carries its filter and its wrap, so `art.sprite = tiles` draws as `tiles` declared: the `[Filter]` and `[Wrap]` attributes are the sampling a `Texture` is born with, and a draw's or a `Sample`'s arguments an override, which leaves two places to say it where there were three. No fourth CPU image type. What was picked to build it is under Provisional, Textures.
 - A grid stays the CPU's pixels: its cells can be local or match state, the ones that changed are uploaded again when they change (those cells, not the grid: see What's sent, under Lists and arrays on the GPU), and the texture it converts to is the grid, not a copy. Rendering into a target never writes a grid's cells.
@@ -2500,8 +2768,9 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
   - **`Sample` gives the color itself:** what the texture holds, blended between its pixels, divided by its alpha. A pixel with no alpha is `Color(0, 0, 0, 0)`. So a frag reads and writes colors as they are, and what's blended between an opaque pixel and a clear one is the opaque one's color with less alpha. A depth and a `Grid2<float>` are read as they were.
   - **A target holds each color times its alpha.** Drawn from (`target.color` in a draw), it goes over what's there as what was drawn into it would have. Onto the window, which has no alpha, a color replaced with an alpha under 1 shows darker by that much.
   - **What's lost:** the color of a pixel whose alpha is 0, and, in an image of bytes, the finer steps of a color that's nearly clear. An image whose alpha isn't how clear it is says so with `[Raw]` (below).
-  - **`[Raw]` marks a texture as numbers** (built 2026-10-07, the owner having approved an attribute for it with the rest; its name and each rule here are picks). Before an asset that's one `Texture` or one `Grid2<Color>`, or on a field that's a `Grid2<Color>`: its pixels are kept as the file or the cells have them, with no alpha worked in, and a `Sample` gives them as they are, blended between pixels as numbers. **It's read by its name in a frag or a vert, and goes nowhere else:** drawing with it, giving it to a draw for a frag's `Texture` parameter, a blit's source, a `Texture` field, local, parameter or return are each an error. That's what keeps it out of everything that blends, with nothing for a `Texture` value to carry: whether a sample divides is known as the game is compiled. So it isn't on a glob's list or map (one of those has no name of its own to sample by), on a `Grid2<float>` (no alpha), a `RenderTarget` or a `Texture` field. The same file declared both ways is two images. Code reads a `[Raw]` grid's cells as any grid's.
-  - **Not built:** a `[Raw]` texture as a `Texture` value (it would have to carry the mark to a frag handed it); C's own pixels as numbers. An sRGB `Format`, a texture marked as sRGB, and `Math` helpers between light and the display's values: a game that works in light converts in its own frags (see the users' page, Colors).
+  - **`[Raw]` marks a texture as numbers** (built 2026-10-07; extending it to `Texture` fields following raw grid fields is owner-approved, 2026-10-25). Before an asset that's one `Texture` or one `Grid2<Color>`, or on a field of either type: pixels are kept as the file or cells have them, with no alpha worked in, and `Sample` gives them as numbers. A `[Raw] Texture` field keeps an ordinary reference with a statically declared numeric role, including attached local fields and fields reached through type aliases. Its initializer or assignment accepts a singular `[Raw] Texture` asset, another `[Raw] Texture` field, a `[Raw] Grid2<Color>` asset/field, or `default`. Ordinary color sources cannot initialize it. Whole values containing annotated fields preserve their roles. Direct `.size` reads remain valid on CPU/GPU, including zero dimensions for missing resources. Raw grid references retain the ordinary borrowed lifetime and bounds checks.
+  - Raw sources sample by name or through read-only GPU helper parameters, whose shader specialization retains the original source and its role. They cannot escape into an unannotated `Texture` field/local/return, ordinary CPU Texture parameter, mutable/out Texture parameter, direct draw texture or blit source. A scalar conditional/switch or getter does not acquire a Raw role; choose a declared field with ordinary control flow. There is no new `RawTexture` type or runtime sampling bit. `[Raw]` remains invalid on a glob's list/map, `Grid2<float>` (already numeric without alpha), and `RenderTarget`. The same file declared both ways is two images; code reads raw grid cells as any grid's. Changing a Texture field's role on hot reload resets it to the destination default; compatible Raw fields retain their references.
+  - **Not built:** an unrestricted Raw Texture value with a runtime role, or C's own pixels as numbers. An sRGB `Format`, a texture marked as sRGB, and `Math` helpers between light and the display's values: a game that works in light converts in its own frags (see the users' page, Colors).
 - What a frag and a vert write, where the agreed rules leave a choice (built 2026-10-07, to confirm):
   - **By type.** A vert's struct and the frag's parameter are matched by type, as a system finds a component: `out FromLamp lamp` in the vert, `FromLamp lamp` in the frag, whatever each names it. So a frag and a vert each take a struct type once.
   - **A vert can write several structs,** each its own `out` parameter, and a frag take any of them: nothing limits it to one but the 15 values a GPU carries from a mesh's corners to its pixels, which the draw checks. Only the fields a frag reads are carried, each one value: a field no frag reads costs nothing, and neither does a struct the draw's frag doesn't take, or a draw with no frag.
@@ -2509,6 +2778,12 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
   - **The vert writes all of it:** each field, on every path that ends, a field at a time or the whole struct at once, before reading it (see Out parameters). `lamp = default;` fills it where there's nothing to give.
   - **A path that ends in `this.Discard()` owes the frag's color nothing,** as `fail` owes an `out` parameter nothing: no pixel is drawn.
   - **A frag's struct is the vert's or the instances'** (or, since, the draw's values: below). A frag's read-only struct was an element of the list `Instanced` draws; it's now that, or what the draw's vert writes, by its type, and a frag can take one of each. A draw whose vert writes a struct of the type its instances are is an error at the draw, as a frag couldn't tell them apart. A vert's read-only struct is an instance's or the draw's values.
+- **A sprite in one call** (the owner's "yes do it", 2026-10-20, to a call for sprites; built 2026-10-21; each rule here is Claude's pick, to confirm): `Draw.Sprite(texture, center, size, color)` draws a texture upright over a box, where a mesh takes four corners and six indices.
+  - **Its box is a rect's.** `center` and `size` are `Draw.Rect`'s, and the texture's top left corner is at the box's top left. The top is towards the top of the screen, up the world's y under a camera and down the screen's in `Screen`, as text's is. A negative width or height mirrors it.
+  - **Its forms:** `Draw.Sprite(texture, center, size)`, white; `(texture, center, size, color)`; `(texture, center, size, rotation, color)`; `(texture, center, size, part, color)`; and `(texture, center, size, part, rotation, color)`. The texture is first, as text's string is. `part` is a `Rect` of uvs, (0, 0) the texture's top left corner and (1, 1) its bottom right, as Unity's `Graphics.DrawTexture` takes its source rectangle in uvs (with y up there): a sheet's frame or an atlas's picture. `rotation` turns it about its center, in radians from +x towards +y, as `Draw.Rect`'s does.
+  - **It's read as a mesh's texture is:** a filter and a wrap after the rest, the texture's own where the call leaves them out. A render target has it as a method, `target.Sprite(...)`.
+  - **It's the quad it is.** Unturned, and where no tint or transform changes it, it's the record a mesh of one quad is kept as, more of the last command's run where that has the same texture, filter, wrap and blend, whatever their colors. Otherwise it's four corners and two triangles from its top left round, which a tint or a transform changes as a mesh's. Either way, it's the same pixels as the mesh of those corners.
+  - Not built: a pivot other than the center, and a part in the texture's pixels.
 - **A clear of depth alone** (built 2026-10-13; the owner asked for the engine to be fixed where a game had worked around there being none, and each rule is Claude's pick, to confirm): `Draw.ClearDepth()`, and a target's `target.ClearDepth()`, with no arguments.
   - **It sets depth back to the far side and leaves everything else:** every color image as it is, and stencil too, where `Clear` fills the colors and sets stencil to 0. So the 3D meshes drawn after it are in front of everything drawn before.
   - **It's a clear in every other way:** over the whole destination or what the clip leaves of it, whatever blend, tint, transform, depth, cull and stencil are set, and in a target of depth alone too.
@@ -2625,7 +2900,7 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
     - **One wrap for both axes.** A second is an error.
     - **In a mesh draw it's a value, as the filter is**: a field, a local, `tiled ? Wrap.Repeat : Wrap.Clamp`. One made of a number that's none of the three (`Wrap(7)`) is `Wrap.Clamp`. **In `Sample` it's written there, as the filter is** (`Wrap.Repeat`, never a variable): the GPU is told how a texture is read before any pixel runs.
     - **A draw's filter and wrap are its texture's for that draw**, whichever way the mesh is drawn: the engine's own vertices, a vertex struct of the game's with no frag, and a frag or a vert that takes the texture as its `Texture` parameter, whose `Sample`s that say nothing then read it so (until 2026-10-07 a draw through a frag took neither, an error).
-    - **Each way a texture is read in a frag or a vert is one of its draw's 8 textures**: one sampled with another filter or another wrap counts again, and the same way again doesn't. For a `Texture` parameter or field, a `Sample` that says nothing and one that says the default are two ways, as the texture may say otherwise.
+    - **Each way a texture is read in a frag or a vert is one of its draw's 12 textures**: one sampled with another filter or another wrap counts again, and the same way again doesn't. For a `Texture` parameter or field, a `Sample` that says nothing and one that says the default are two ways, as the texture may say otherwise.
     - **It's for every texture**: a `Grid2<Color>`, an asset's, a `Texture`, a render target's color, of any size (not only powers of two). A grid with no size still samples white.
     - **Blended** (`Filter.Bilinear`), a cell at the texture's edge is blended with what the wrap says is past it: with `Wrap.Repeat` the cell at the opposite edge, and with `Wrap.Clamp` and `Wrap.Mirror` itself.
     - **The same pixels on every backend.**
@@ -2718,7 +2993,7 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
   - `uv` is a color's: (0, 0) at the target's top left corner, (1, 1) at its bottom right, and past them, the pixels at the edge: neither read takes a `Wrap`.
   - **A draw into a target that reads that target's depth is passed by,** with a line that says so, when it's drawn: what a frag reads comes through a field, which the compiler can't follow to a target. It's what a draw that samples its own destination's color through a field gets, where `Draw.Blit(target.color, target, frag)` is refused as it's written. So is a draw that samples the `color` of a target of depth alone, which has none.
   - A depth is 24 bits, with the 8 bits of stencil beside it, in every target and in the window.
-  - Each way a frag reads a depth is one of the draw's 8 textures: a depth it both samples and compares counts twice.
+  - Each way a frag reads a depth is one of the draw's 12 textures: a depth it both samples and compares counts twice.
   - **Not there:** a `DepthTexture` as a draw's own source or a frag's own parameter; a comparison other than "isn't nearer"; writing a pixel's depth from a frag; reading a depth back into Tide; and skipping a frag that can't discard in a target of depth alone, which a backend may do some day and changes no picture.
   - **Where a point of the world is in a target's image is the game's to work out,** for a frag that looks one up (a shadow map does): through the target's camera as a matrix, `target.WorldToClip()` (see The cameras as matrices, above: the projection, after z turned around, after the camera's transform undone, which a game spelled out itself until that was built); then `uv` is `(x * 0.5 + 0.5, 0.5 - y * 0.5)` of that point and its depth `z * 0.5 + 0.5`, each over `w` under a perspective.
 - **Several colors and float images** (built 2026-10-07; a format for each color image after a target's size, four at the most, `target.colors[i]`, a frag's outputs to them by their order with the rest of either dropped or left, and floats where a GPU draws into them with bytes and a line where one doesn't, are decided, above; everything here is a pick, to confirm):
@@ -2760,7 +3035,7 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
   - Outside a match, a view with a `verified` parameter doesn't run, like any view that reads the match.
   - `verified` is a word of its own before a parameter's type where a type and a name follow, after `with` or `without` where a name follows, and before an event in a handler's `event(...)`. Anywhere else it's a name like any other.
 - **Queries in views and local handlers**, beyond what's decided (see Read-only entity queries):
-  - **Rows are read-only, and have the match's fields only.** `mut` on a binding is an error, in a view as in a system, and a row doesn't reach an entity's local fields, to read or to write: those are a view's that runs for the entity, through its own parameter. Naming one through a row is an error that says so.
+  - Match fields remain read-only. The decided 2026-10-19 rule above permits current attached local fields, with `mut` required for writes, including through verified and recorded rows.
   - `entry.entity` is an `Entity` for the match's entities, the confirmed world's handle in a query whose bindings and filters are all `verified`, and a `LocalEntity` for a local query's.
   - **Outside a match, a view with a query over the match doesn't run**, like any view that reads the match: a view only runs when everything it reads exists. A query that names no component is the match's in a view. A game that wants the rest of the view to go on outside a match keeps the query in a view of its own.
   - A view's rows are made once a frame for the view, when it first runs for an entity, so a view no entity matches makes none, and a view that runs for each of its entities doesn't blend a query's again for each. Correction smoothing (`[Position]`, `[Rotation]`) applies to them as to the view's own parameters. Text and lists of the world the view draws are read through a row as through a parameter.
@@ -2769,7 +3044,7 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
   - `ownership` isn't a query filter, in a view either: an error, as in a system.
   - **A local handler's rows are its event's tick's once that tick is done**: after all its events and changes, not as each event's turn left things, where the handler's own components are. So an entity the tick destroyed is in no row, the one the event was sent to included, and one it spawned is in them. They aren't blended. The tick records them once, whichever of its events have a handler that reads them, and only when it sent one.
   - Under rollback, a handler that hears a tick as it's predicted gets the rows of the run that first sent its event, and one of a `verified` event the confirmed run's.
-  - Nothing in a local handler's query says `verified`: its event does, for all of it. Text, lists, maps, sets and grids of the match aren't in its rows (an error to name, and empty in a copy), as for what the handler takes itself.
+  - Nothing in a local handler's query says `verified`: its event does, for all of it. Container fields the handler may read are captured with the other recorded match data, under the decided recorded-container rule.
   - A query of this machine's entities in a local handler is the local world as it is when the handler runs. A handler of a local event, `Forgotten` among them, takes only those. A query over the match counts as something of the match's for `Spawned` and `Destroyed`: a local handler of one that takes it hears the match's.
 - `frag` and `vert` declare code the GPU runs for a mesh's pixels and vertices (above, and GPU code below).
 - `view` declares a view. It looks like a system and takes the same parameters, but it runs once per rendered frame instead of once per tick. Its `mut` parameters, `Spawn`, `Add`, `Remove`, `Destroy` and `Send` are local (see Local state): a `mut` parameter is a local component or singleton, or one of the match's that has local fields, which are all the view writes of it. Input parameters are errors in a view.
@@ -2880,22 +3155,22 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
     - **A list or a grid has other names there: a local, and a function's or a method's parameter** (built 2026-10-08, from the rule above; every rule is Claude's pick, Provisional). Which list or grid a name stands for is known as the shader is written, never as it runs: neither GLSL ES 3 nor WGSL hands a texture to a function on every backend, so a function that takes one is written once for each list or grid it's called with, and takes nothing for it.
       - `var items = lights.items;` names a field of what the frag or vert takes, an asset, another such local or a parameter. It isn't `mut`, and it isn't a list that's picked or made as the code runs (`flag ? a : b`, a function's result, a literal): an error that says a list there is one the code was given, by a name.
       - `float Sum(List<float> numbers)` is the function the CPU's code calls too. On the GPU its argument is such a name, and the parameter isn't `mut` or `out`. A function passes its own on.
-      - `int Cell(Grid2<int> cells, int2 at)`: a function or a method takes a grid, to read `cells[x, y]` and `cells.size`. Such a function, and one that calls it, is the GPU's alone: called from a system, a view or a handler it's an error that says to read the cells through the grid's component or singleton, and no C is written for it. Its grid parameter takes no `mut`, `out` or default, and an operator, an extern, an async function and one that takes an Action take none. A grid's local is in a frag, a vert or a function that takes a grid; anywhere else it's the error it was.
+      - `int Cell(Grid2<int> cells, int2 at)`: a function or a method takes a grid, to read `cells[x, y]` and `cells.size`. Such helpers are callable from shader code and local workers; worker-reachable helpers also have CPU bodies over captured grid inputs. A direct call from an ordinary system, view or handler remains an error that says to read cells through their component or singleton. Its grid parameter takes no `mut`, `out` or default, and an operator, an extern, an async function and one that takes an Action take none. A grid alias local is supported only along the shader path; a worker and its helpers read or forward parameters directly, without grid locals.
       - An asset's list or grid is read by its name in a function a frag or vert calls, too.
       - A function still returns no list and no grid, and a struct that holds one isn't a value there.
     - **A function samples the textures it takes** (built 2026-10-08. The owner asked that a function only GPU code calls take a `DepthTexture` and call `Sample` and `Compare` on it, and the same for a `Texture`, with a call from the CPU an error that says so, after Tag's and Sumo's frags each carried a copy of one shadow lookup; a `Cubemap` and a grid by the same rule, and every other rule here, are Claude's picks, Provisional).
       - `float Lit(DepthTexture shadow, float3 at)`, `Color Tile(Texture image, float2 uv)`, `Color Above(Cubemap sky, float3 way)`: a function or a method reads a texture parameter as a frag reads a field, `Sample` with a filter and a wrap or without, a depth's `Compare`, a cube's `Sample(direction)`. A `Grid2<Color>` or `Grid2<float>` parameter is sampled too, and goes where a `Texture` parameter is.
       - The call names the texture: a field of a component or a singleton the frag or vert takes, its own `Texture`, an asset, or in a function, a parameter of its own, which it passes on. One that's picked or made as the code runs (`flag ? a : b`, a function's result) is an error that says a texture there is one the frag or vert was given, by a name. Which texture it is is known as the shader is written, so the function is written once for each texture it's called with and takes nothing for it, as for a list.
-      - What a `Sample` there leaves out is the texture's own, as in a frag: its declaration's for a grid's field or an asset, and for a `Texture` field or the frag's own `Texture`, whatever the texture it holds says. Each way each texture is read is one of the draw's 8.
+      - What a `Sample` there leaves out is the texture's own, as in a frag: its declaration's for a grid's field or an asset, and for a `Texture` field or the frag's own `Texture`, whatever the texture it holds says. Each way each texture is read is one of the draw's 12.
       - A function samples its own parameter, or an asset by its name. A texture in a singleton or a component the function takes is an error that says to take the texture itself: a struct with a texture in it is no value on the GPU.
       - **Such a function, and one that calls it, is the GPU's alone**: no C is written for it, and a call from a system, a view or a handler is an error that says so ("'Lit' reads a render target's depth, which only code the GPU runs does"), with where it reads it. A function that takes a texture and samples none is still everyone's: the CPU's hands it on (to C, say), and the GPU's is written with nothing for it. An operator, an extern, an async function, an `audio` declaration and a function that takes an Action sample nothing, as they take no grid.
       - A texture parameter that's sampled takes no `mut` or `out`; none is returned, kept in a local or in a struct.
       - **A function's `Sample` reads the texture's own pixels, never between its smaller images.** A frag asks how fast a `uv` changes as it starts, of a `uv` it can work out there, and a function's `uv` is its call's. So in what a frag reaches, a `Sample` in a function that says `Filter.Trilinear`, or leaves its filter to a texture whose declaration says it, is an error, and one that leaves it to a `Texture` that may say it, in a game that names `Filter.Trilinear`, is a warning, said once: what a frag's own `Sample` gets for a `uv` it can't work out as it starts. A vert has no pixels to compare, there or in a function. Argued against reading blended without a word: a texture that shimmers is found late.
-      - A `[Raw]` texture is read by its name in a function, as in a frag, and isn't passed to one as a `Texture`.
+      - A `[Raw]` texture may be read by name or passed through a read-only GPU `Texture` helper parameter. Specialization retains the original asset/grid/field role, so its sample does not divide by alpha. This grants no ordinary CPU Texture argument or mutable/out permission.
       - A grid parameter is one of the draw's textures of numbers whether the function reads its cells or not, as it was, and another where it's sampled: a function that only samples takes a `Texture`.
       - Not there: a texture's local (`var shadow = lamp.shadow;`), and `Filter.Trilinear` through a function, which would take working the `uv` out at the frag's start from the call's arguments.
     - No size is declared, and none is fixed: a list is sent as it is that frame, up to 2,097,152 pixels of four numbers each (an element of one or two numbers shares a pixel with the next; a bigger one takes whole pixels), and elements past that aren't sent.
-    - Each list a draw reads counts as one of its 8 textures, and its count is among the draw's values. A list that didn't change isn't sent again.
+    - Each list a draw reads counts as one of its 12 textures, and its count is among the draw's values. A list that didn't change isn't sent again.
     - **What's sent is what's read, and what changed** (built 2026-10-08; the owner: "only sending data that we actually use vs the entire thing, or upload only what changes"; each rule is Claude's pick, Provisional).
       - Of an element (a list's, a grid's cell, a map's value), the parts that some frag or vert of the game reads are sent, and no others. A part is a struct's field, a struct's own fields each apart, and anything else whole (a vector, a matrix, an array). It's one layout for the game, the parts any of its code reads, so every draw that reads the list shares one texture.
       - A part is read by a chain of fields (`lights[i].notch.deep`), through a `foreach`'s variable, and through a local that isn't `mut` and holds an element or a part of one (`var light = lights[i];`, `var notch = light.notch;`), by what the code then reads of the local. Anything else that takes an element reads all of it: an argument, a result, an operator, a `mut` local, `TryGet`'s `out` value. A function that takes a list reads of each list it's called with what it reads of its parameter.
@@ -2911,13 +3186,13 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
       - A local names one and a function takes one as a list's does, by the same rules: no `mut`, none made, returned or picked as the code runs.
       - Read-only. `Add`, `Remove`, `Clear` and assigning `map[key]` are errors, and so is `Get`, whose `V?` the GPU has none of.
       - `TryGet`'s `out` argument is a whole local there (`out var value`, or a variable), not a field of one: a pick, as WGSL hands a function a pointer to a whole variable.
-      - It's one of the draw's 8 textures, and two of its values (how many entries, and how many slots its index has). What's sent is the live entries, in order, and an index made for the GPU: a lookup hashes the key with `Math.Hash`, which is the same number on the CPU and the GPU, and probes. Not the CPU's own index, whose hash is of 64 bits, which these GPUs can't compute; the answers are the same, as keys are compared by their bits on both.
+      - It's one of the draw's 12 textures, and two of its values (how many entries, and how many slots its index has). What's sent is the live entries, in order, and an index made for the GPU: a lookup hashes the key with `Math.Hash`, which is the same number on the CPU and the GPU, and probes. Not the CPU's own index, whose hash is of 64 bits, which these GPUs can't compute; the answers are the same, as keys are compared by their bits on both.
       - A map that didn't change isn't sent again. One that changed is made again whole, as a key that's added or removed moves what's after it, and the rows of its texture that came out otherwise are sent.
     - Not built: a list, a map or a grid as a function's result, a `mut` local, or one picked as the code runs; `Sample` of a grid or a texture through a local; a glob's list of assets, and an asset's text; a grid's local in a function that takes no grid; a map's `Get`, and `TryGet` into a field; `foreach` over a grid's cells (on the CPU a grid with an open axis goes through the chunks it has, which the GPU isn't told); storage buffers where a backend has them (Vulkan and WebGPU do).
   - Never there: making or changing a list, a map or a set, maps and sets keyed by text, longs, entities or players, text, entities and players, `long`, `Rect`, spawning, sending and the other changes to the world, `Draw`, the GUI, `Screen`, `Devices`, `Cursor`, `Frame`, `Debug`, C, tasks, errors and `T?`, recursion, and grids used any other way than sampled. A frag's `this` is its pixel; verts and ordinary functions have no `this`. Each unavailable feature is an error where it's written, which says what to do instead, and for code in a function, which frag or vert reaches it. Bytes and longs should be converted to an `int` or `float` in local code before being supplied to a shader.
   - A function a frag or vert calls takes `mut` and `out` parameters as anywhere, and a call that changes a variable that isn't a whole one (a field, a swizzle) is a statement of its own there.
   - A frag can't read an int field of its vertex, as ints don't blend across a triangle. A vert can.
-  - What a GPU takes, on every backend, is checked at the draw, which says what the draw reads and what to do about it: 16 values for each vertex (each field of the vertex struct, 4 for a 3D mesh's transform, and one for every 4 floats or 4 ints the code reads of components and an explicit instance struct); 15 values from the mesh's corners to its pixels (each field of the vertex the frag reads, the pixel's place in the world, and one for every 4 floats or 4 ints the frag reads of components and an explicit instance struct); 3984 bytes of singletons' fields for a draw; and 8 texture slots, an image sampled with both filters counting twice.
+  - What a GPU takes, on every backend, is checked at the draw, which says what the draw reads and what to do about it: 16 values for each vertex (each field of the vertex struct, 4 for a 3D mesh's transform, and one for every 4 floats or 4 ints the code reads of components and an explicit instance struct); 15 values from the mesh's corners to its pixels (each field of the vertex the frag reads, the pixel's place in the world, and one for every 4 floats or 4 ints the frag reads of components and an explicit instance struct); 3984 bytes of singletons' fields for a draw; and 12 texture slots, an image sampled with both filters counting twice.
   - Instances of one mesh drawn in a row through the same vert and frag, with the same singletons' values and the same grids, are one draw.
   - A function both the CPU and the GPU run compiles for both.
   - `tide shaders` (`tidec --shaders`) prints each shader, as GLSL and as WGSL. No game sees a shader compiler's error: what tidec writes always compiles.
@@ -2964,7 +3239,7 @@ view DrawHud(Arena arena)
 
 - Drawing from systems, with the prediction stage (verified, predicted, replayed) visible to the code.
 - `verified World`: the confirmed world's other entities, by their handles.
-- Queries in local code: `mut` on a binding, to write a row's local fields, and reading them through a row; `with ownership` in a query; a local handler's rows as each event's turn left things, where they're the tick's once it's done.
+- Queries in local code: `with ownership` in a query; a local handler's match rows as each event's turn left things, where they're the tick's once it's done. Attached local-field reads and mutable bindings are decided above.
 - Views reading input, for example to draw where the local player aims before the tick runs.
 - GPU code: which side of a triangle a pixel is on; the camera; a frag's output of another type than a `Color`; code that computes rather than draws; `while` and `switch` there. What was agreed of the GPU side, built since, is in What the GPU side gains.
 - Target formats beyond the three: floats of 32 bits, which keep a place in a big world where 16 bits don't (WebGPU neither blends them nor reads them blended without features a device may lack, and OpenGL ES 3 needs more extensions for the same, so they'd be read at the nearest pixel and replace what's there, everywhere); images of one or two channels, which take less memory for a mask, a speed or a shadow's two moments; and a byte format that isn't a color's.
@@ -2973,7 +3248,7 @@ view DrawHud(Arena arena)
 - The cameras' matrices (see Provisional, The cameras as matrices): a camera's matrix in code the GPU runs with nothing handed over (`pixel` or a built-in for the draw's own camera); the inverses, from clip space back to the world; whether a 2D camera should also give a `float4x4` to clip space, for a 2D shader's own arithmetic.
 - 3D: meshes in the grid's chunks, for voxels.
 - The cursor: hiding it without locking it, keeping it in the window without hiding it, and images for it; its lock on Android.
-- Layers, and a sprite in one call (a textured rectangle is a mesh of four corners for now).
+- Layers.
 - Textures: a pixel of a byte a channel, a quarter of a `Color`'s memory; sending only the part that changed. Pixels from image files are assets (see Assets).
 
 ## GUI
@@ -2985,7 +3260,7 @@ view DrawHud(Arena arena)
 - Containers take a block, and they're ordinary functions with an `Action` parameter (see Functions): `GUILayout.Horizontal() { ... }`, `GUILayout.Vertical() { ... }` and `GUILayout.Area(...) { ... }`. Calls always have parentheses.
 - Widgets edit values through `mut` parameters, and return whether the value changed: `GUILayout.Toggle("Fullscreen", settings.fullscreen)`. A button returns whether it was pressed.
 - **Entered fields** (agreed 2026-10-06): a view can tell that the player pressed Enter in a field they typed into. `TextField`, `IntField` and `FloatField` each have a second version, in `GUILayout` and in `GUI`, with an `out bool entered` parameter (see Out parameters): `GUILayout.TextField("Code", lobby.code, out var entered)`. It's true in the frame Enter ends the typing in that field. What the field returns stays whether the value changed, and without the argument the field is the one there always was. The details are picks, under Provisional.
-- Widgets have no IDs to write. They're told apart by where they're called from and the entity the view runs for.
+- Widgets have automatic identity from where they're called and the entity the view runs for. Reorderable data can supply a stable key for a block of controls.
 - The engine builds nothing a game couldn't build itself: containers are functions with an `Action`, and widgets are made of pieces games can use too.
 - Gamepad and keyboard navigation are built in: focus moves between widgets, the south button presses, the east button goes back.
 - Whatever the GUI is using, such as a click on a button or typing in a field, is hidden from the input's `Sample`.
@@ -2997,7 +3272,7 @@ view DrawHud(Arena arena)
   - It takes the pointer for its rect by itself, as the GUI's own widgets do: a press on it never reaches the input's `Sample` or the other views, from the frame it lands in.
   - It joins Tab and Shift+Tab, arrow, d-pad and left stick navigation alongside the built-in widgets, in the order they're called. Enter, Space and the gamepad's south button click it.
   - `GUI.Disabled(...) { }` and modals stop it like any widget.
-  - What a view draws is under the GUI's own widgets, and under a modal's dim, since the GUI draws last.
+  - Custom controls can reserve layout space and draw alongside built-in widgets, in the GUI's declaration order. Ordinary world drawing stays under the GUI.
 - **Themes:** the GUI stays bare: one look, and a simple theme for it. `GUITheme` is a built-in struct of the colors the GUI's widgets use and their corners' radius, and nothing else: no styles for single widgets, no text sizes, no fonts. Its defaults are the look the widgets have without one, so a theme names only what it changes, and a game that sets none looks as it always did.
   - `GUI.Theme(theme) { ... }` wraps a block: its widgets have the theme, and the look it found is back when the block ends. `GUI.SetTheme(theme)` stays for the widgets that follow, in this view and the ones after it, until it's set again or the frame ends. Every frame starts from the defaults. It's the rule for every setting of a frame with two forms, `Draw`'s too: the plain name around a block, and `Set` for what follows.
   - Round corners are `Draw`'s round rects.
@@ -3090,6 +3365,19 @@ view Tools(Devices devices, mut Toolbox box)
 
 ### Provisional
 
+- **Rectangle and GUI follow-up** (2026-10-25; owner requested the proposed priorities and a performance pass):
+  - `Draw.Rect(Rect rect, Color color)`, `(rect, float radius, color)` and `(rect, float4 radii, color)` draw filled SDF boxes with target-pixel AA. Four radii run clockwise from top left; invalid/negative radii become zero, and each is capped at half the smaller side. Equal radii use the existing uniform-radius path. Center/size `Draw.Rect` keeps whole-pixel coverage for adjacent tiles. Themes are not required.
+  - `GUILayout.Scroll(float2 size, mut float2 offset) { ... }` reserves a fixed viewport; `GUI.Scroll(Rect rect, mut float2 offset)` places one explicitly. Their layout content is clipped for drawing and pointer hits. Offset is in pixels from the content origin, sanitized and clamped to its measured bounds. Wheel residuals bubble from the innermost hovered viewport to parents. A touch drag beyond six pixels cancels a child's pending press, then belongs to that viewport until release. Focus navigation reveals the selected child. Content executes once, without virtualization or inertia.
+  - A scroll offset is read on entry and checked-written back on close, including early exits. Indexed paths evaluate indices once and reacquire current storage at writeback; list removal makes the write a no-op; maps and grids use ordinary assignment semantics. No raw pointer into game heap storage survives the block. At the nesting ceiling the block is skipped.
+  - `GUI.FocusNext()` selects the next enabled control, including inside a keyed item; `GUI.ClearFocus()` clears focus. Directional navigation uses screen positions while Tab retains declaration order.
+  - Single-line fields support pointer caret/drag selection, Unicode-code-point Left/Right, Shift selection, Home/End, Ctrl word movement/select-all/copy/cut, Backspace/Delete, and 15 undo steps with Ctrl+Z/Y or Shift+Ctrl+Z. Editing keys repeat after 450 ms, at 50 ms intervals with at most one repeat per frame. Text remains bounded to 255 UTF-8 bytes. Number fields initially select their value; numeric commit/Escape behavior remains unchanged. Browser composition commits once and candidate Enter does not submit; inline preedit and grapheme/bidirectional editing remain open.
+
+- **Custom control composition** (2026-10-24; the owner delegated implementation and API choices, prioritizing performance and API):
+  - `GUILayout.Reserve(float2 size)` returns the next layout `Rect`, with the requested width and height, without drawing, claiming input or joining focus navigation. `Reserve(size, minWidth, expandWidth)` allows horizontal shrinking to `minWidth` and optional expansion to the column's remembered natural width. Heights stay explicit. Negative and nonfinite dimensions become zero; `minWidth` is clamped to the requested width. Layout executes game code once per frame.
+  - `GUI.Draw() { ... }` sends its ordinary `Draw` calls, and those in helpers it calls, to the GUI's list. It starts in screen pixels, at its position in GUI declaration order, above the enclosing panel and below later GUI content. The window's drawing settings are restored on every exit, including `Set` changes inside the block. Render-target settings remain their destination's. Screen-space 2D shapes, text, sprites, indexed meshes, shader runs and clips follow an anchored area's placement; explicit custom cameras and 3D draws retain their own coordinates. This is not a layout or hit-testing transform. The block is skipped if no container nesting space remains, so unscoped drawing cannot leak settings.
+  - `GUI.Key(int key) { ... }`, with `long` and `string` forms, adds a scoped data key to child widget and container identities, through helper calls as well. Keys must be unique among siblings from the same call site; zero and the empty string are valid. Reordering or omitting different keys does not transfer focus or pointer capture. Unkeyed repeated sites retain occurrence identity. Identity remains a bounded 32-bit runtime hash, not a persistent application identifier.
+  - `GUIControl.down` is the pointer press edge owned by the control, `up` its release edge even outside the rect, and `cancelled` an active gesture aborted because the control became disabled or covered by a modal. Cancellation is reported once while the control is still declared; removal has no callback. `position` is the pointer position in GUI pixels, including while held outside. Existing `pressed` still means held; keyboard/gamepad submission sets `clicked`, without inventing pointer edges. Native capture-loss cancellation is not yet represented separately.
+
 Implemented, awaiting approval:
 
 - Positions and sizes are in pixels, as on a web page, so widgets keep their size when the window changes size. On a display scaled to 150%, a pixel is the display's logical one, 1.5 real pixels wide, as CSS pixels are.
@@ -3106,7 +3394,7 @@ Implemented, awaiting approval:
 - Widget IDs come from where each call is in the program, mixed with the entity a view runs for, and for a function that draws, with where it's called from. Calls from one place with the same entity count up, in the order they run.
 - Widgets draw as they're called, so, like `Spawn`, they can't be on the right of `&&` or `||` or in a side of `?:`. A statement with several runs them left to right.
 - Navigation: Tab and Shift+Tab move the focus between widgets, in the order they were drawn. The arrows, d-pad and left stick move it once a widget has it, and only start moving it while the game isn't reading the devices, so a HUD's button never takes the d-pad from the player. Enter, Space and the south button press; Escape and the east button let go. With the focus, left and right step a slider or number field.
-- Down and right go on to the next widget and up and left go back, in the order the widgets are called, whatever their places on the screen: three cards side by side are reached with left and right. A slider and a number field keep left and right, to step their value, and the press that brought the focus to one doesn't step it too. From a button, a toggle, a text field or a control, left and right move the focus.
+- Arrows, d-pad and stick choose a nearby control in the requested screen direction, using last frame's placed rectangles. At an edge focus stays put. Tab/Shift+Tab wrap through declaration order. Sliders and number fields keep horizontal input for stepping; an editing field uses it for caret movement. The directional edge that first focuses a stepper does not also step it.
 - `GUI.Navigate()` says a menu is up: the arrows, the d-pad and the left stick can start moving the focus though the match reads the devices, as in a menu over a match that goes on behind it. A view, or a function it calls, calls it every frame the menu is up, as with `GUI.ShowKeyboard()`. Without it, only Tab starts the focus there. Once a widget has the focus, the keyboard and the gamepad are hidden from the input's `Sample`, as ever.
 - Typing: clicking a number field, or pressing Enter on it, starts typing into it with its value selected, so the first character replaces it; typing a number into a focused field starts too. Enter or leaving the field keeps a valid number; Escape keeps the old value.
 - **Entered fields**, beyond what's agreed (see Decided). Picks, awaiting the owner:
@@ -3131,15 +3419,16 @@ Implemented, awaiting approval:
 - Views that claim the same device all go on reading it: which of their widgets is on top is theirs to know. Up to 16 views claim in one frame and go on reading; past that, a claim still hides.
 - A modal is an anchored area over the screen, dimmed. The one drawn last is on top, and only its widgets work. Its first widget takes the focus the frame after it comes up, and back doesn't close it on the frame it came up, so the press that opened it doesn't. `GUI` has no modal at a rect yet.
 - The drawing: a dark panel behind each area and the engine's default font, in the theme's colors.
-- `GUI.Control(Rect rect) -> GUIControl`. `GUIControl` is a built-in struct of four bools, named as a `Devices` button's are:
+- `GUI.Control(Rect rect) -> GUIControl`. Its interaction flags follow the device naming convention:
   - `hovered`: the pointer is on it, with nothing of the GUI's over it.
   - `pressed`: the pointer holds it, from a press on it until it lets go, wherever it goes meanwhile, as `devices.mouse.left.pressed` is true while the button is held. A button looks down while it's `pressed` and `hovered`, and a handle follows the pointer while it's `pressed`. It's false in the frame the pointer lets go, and Enter held on it doesn't count.
   - `focused`: the keyboard and the gamepad are on it.
   - `clicked`: a press on it let go on it, or Enter, Space or the south button went down while it had the focus. For one frame.
-- A click with the pointer doesn't give a control the focus, as it doesn't a button. In a Disabled block or outside the modal that's up, nothing of it is true, the focus skips it, and the pointer on it is still the GUI's.
+  - `down`, `up`, `cancelled` and `position`: the pointer edges, cancellation and position described under Custom control composition above.
+- A click with the pointer doesn't give a control the focus, as it doesn't a button. In a Disabled block or outside the modal that's up, it cannot hover, hold, focus or click; an active gesture reports cancellation once. The focus skips it, and the pointer on it is still the GUI's.
 - While a control has the focus, the view that called it goes on reading the keyboard and the gamepad, but for what moves the focus and clicks: the arrows, Tab, Enter, Space and Escape, and the d-pad, the left stick and the south and east buttons. The input's `Sample` and the other views read none of it, as with any focused widget. So a menu's own shortcuts (a card's number) work while one of its cards has the focus, and a control can be a text field: its view reads `devices.keyboard.text`. A view that runs once per entity is one view. Under a modal, no view reads anything.
-- Controls made in a loop come from one call, so they're told apart by their turn, as the GUI's own widgets in a loop are: the first one made, the second, and so on. A loop that makes the same ones every frame, in the same order, is all that takes. One that leaves an earlier one out gives its turn to the next: what was hovered, held or focused there goes on with the control that's now in its place.
-- `GUILayout` has no control: `GUI.Control` takes its rect. A laid out one would hand back a rect inside an area, and what a view draws there is under the area's panel, which the GUI draws last; and an anchored area finds its place when it closes, after the control was drawn. It waits until views can draw among the GUI's widgets.
+- Unkeyed repeated calls use occurrence identity. `GUI.Key` makes repeated controls follow application keys instead.
+- `GUILayout.Reserve` supplies layout space for `GUI.Control`, and `GUI.Draw` places its custom visuals among the GUI's widgets.
 - `GUITheme`'s fields, all `Color` but the last: `text` (text, and a slider's thumb), `panel` (an area's background), `control` (a button, a toggle's box, a slider's rail, a color field's frame), `hot` (those with the pointer on them), `pressed` (a button held down), `field` (a field to type into), `fieldHot` (one with the pointer on it), `accent` (the focus's outline, a toggle's check, a slider's filled part) and `float radius` (the corners', in pixels; 0, its default, is square). A modal's dim isn't in it, nor how much a disabled widget fades.
 - A part is no rounder than half its smaller side, so a slider's rail and a toggle's box end as a pill and a circle under a big radius. A part drawn around another (the focus's outline) or inside one (a toggle's check) is rounder or less round by how far it is from it. With a radius of 0 the widgets are the plain rects they always were.
 - An area's panel has the theme it opened with, whatever its block sets. `GUI.SetTheme` inside a `GUI.Theme` block ends with the block, which puts back what it found. `GUI.Theme` lays nothing out, like `GUI.Disabled`. Blocks nest up to 32 deep with containers; past that, a `GUI.Theme` changes nothing.
@@ -3152,8 +3441,8 @@ Implemented, awaiting approval:
 - A field for any enum. A game couldn't write one itself until there are generics.
 - Styles and themes.
 - More than one block per function, like Swift's labelled trailing closures.
-- The pieces widgets are made of, so a game can build its own like the built-in ones: a control's ID, which the compiler derives from the call as for the built-in widgets, whether it's hovered, pressed or focused, and drawing in the GUI's layer, over its panels (`Draw.Screen()` draws in its pixels, under it).
-- Scrolling, clipping, and keys that repeat while held.
+- Public control handles for explicit navigation links; custom composition, scoped keys and GUI-layer drawing are implemented above.
+- Scrollbar visuals, list virtualization, kinetic touch scrolling and navigation overrides. Editing keys repeat; general widget navigation repeat remains open.
 
 ## Prefabs and authored scenes
 
@@ -3181,12 +3470,24 @@ Implemented, awaiting approval:
 - A prefab instance's complete tree, components, references and parenting exist
   before any of its `Spawned` handlers run. Handlers then run root-first (owner
   decision, 2026-10-12).
+- Inherited descendants support per-instance field-value overrides using matching
+  nested `entity` blocks. Only values of existing component fields may change;
+  inherited components and children cannot be added, removed or replaced. Nested
+  instance roots retain their existing component and child additions (approved
+  2026-10-24). Reference scopes, defaults, construction order and entity counts
+  are unchanged.
+- The native editor supports creating a scene, adding and arranging objects,
+  extracting an authored subtree as a prefab, placing instances and playing the
+  selected tree directly. Play runs the normal game lifecycle, camera and input;
+  Stop discards runtime state. Project startup is a separate persistent choice.
+  Existing `Main` code remains unchanged and is the default without a selection
+  (approved 2026-10-24).
 
 ### Provisional
 
-**First text/compiler implementation (2026-10-12).** The spelling and initial
-limits below remain provisional. Transform and parenting are implemented
-separately in the following section. The first native editor is described below.
+**Current text/compiler implementation (2026-10-24).** The spellings and initial
+limits below remain provisional except for the decisions above. Transform and
+parenting are described separately in the following section.
 
 Use `.tprefab`, normally one named declaration per file, such as
 `Enemy.tprefab`. Its body is its root entity. Ordinary component values use the
@@ -3231,10 +3532,13 @@ component Aim
 
 - `entity Weapon : Pistol` instantiates Pistol as that child and applies the
   component values in Weapon's block as overrides on its root. Its named
-  descendants participate in paths such as `Weapon.Muzzle`. Additional named
-  children can be added. Removing/replacing inherited children and top-level
-  prefab variants are later work; overlapping inherited names must not be
-  resolved by silently taking whichever file was read last.
+  descendants participate in paths such as `Weapon.Muzzle`. Its root can add
+  named children and components. A matching `entity Muzzle { Transform {
+  localPosition = float3(0, 0, 0.8) }; }` inside Weapon overrides an existing
+  descendant's fields; nested matching blocks reach deeper descendants. These
+  descendant blocks require nonempty component field assignments: no bare or new
+  component, new child, base prefab, removal or replacement. Duplicate matching
+  blocks or fields are errors. Top-level prefab variants are not implemented.
 - Authoring expressions are literals, the existing constant/default expressions,
   assets and named entity references. They do not call game functions, run
   statements, read live worlds or start tasks. Entity names/paths are resolved
@@ -3294,22 +3598,45 @@ component Aim
   declarations are also accepted in `.tide` files. Every declaration is validated,
   including unused prefabs and required fields. Composition is initially bounded
   to 1024 entities per instance and 128 levels of nesting.
-- First native editor (2026-10-12): `tide open <file.tprefab>` opens an existing
-  authored file in a desktop app. `--project <folder>` explicitly selects its
+- Native editor: `tide open <file.tprefab>` opens an authored file in a desktop
+  app; New Scene/New Prefab create another rooted `.tprefab` in the project.
+  `--project <folder>` explicitly selects its
   game; otherwise the nearest enclosing tide.packages selects the root, with
   the file's folder as the no-manifest fallback. The root is displayed. Only
   that folder's sources and resolved packages provide components; arbitrary
   ancestor scripts are not gathered. CMake manifest/shared-package consumer
   selection are future work. Checking uses DEBUG and package symbols, matching
   ordinary IDE analysis; custom build defines are not selected yet.
-- The first app provides a composed hierarchy, component/default/override
-  inspection, Tide expression editing, child/prefab insertion and subtree
-  deletion. Inherited descendants are read-only; nested roots can override their
-  component values. Source-span edits retain untouched text and comments.
-  Syntax-invalid edits are rejected; project compiler errors block Save.
+- The app provides a composed hierarchy, component/default/override inspection,
+  direct bool/int/float/vector/Euler controls, checked entity/enum/asset choices
+  and optional inline Tide expressions. Authored objects support named child and
+  prefab insertion, deletion, rename, duplicate and drag reparenting. Checked
+  same-file references are rewritten; operations requiring edits in another
+  source file are refused. Reparenting preserves local TRS, so world placement
+  can change. Inherited descendants allow field overrides, while their structure
+  remains read-only; Open source prefab navigates to their definition.
+  Source-span edits retain untouched text and comments.
+  Syntax-invalid edits are rejected. Semantic/project errors remain visible and
+  may be saved; syntax errors in the current document and disk conflicts block Save.
   Saving compares the original disk text before replacement. Undo/redo retain
   64 edits; recovery drafts retain the original source baseline under .tide/editor.
   This is front-end/asset-metadata authoring validation, not game compilation.
+- Save as Prefab extracts an ordinary authored child subtree into an exclusively
+  created new asset and replaces that child with an instance of it. Incoming
+  references keep their paths. Outgoing references beyond the subtree, descendant
+  references to the selected root (which the language cannot express in the new
+  prefab), an already-instanced selected root and consumer-sensitive cross-file
+  changes are refused. The source replacement is one current-document undo;
+  undo retains the new asset. New files never overwrite an existing destination.
+- Play checks the whole project, builds the selected prefab as the normal startup
+  scene with applied unsaved text, and launches the normal game host. It requires
+  no compiler errors or unresolved conflict/recovery. Gameplay runs in a separate
+  window with normal handlers, systems, views, game camera, input and services.
+  Stop ends the build/game process tree and discards runtime state; authored text
+  and project startup are retained. Authoring preview below remains separate.
+  Set startup writes `settings { startScene = Qualified.Name; }` in project code,
+  preserving other settings and existing `Main`. New Scene selects itself for
+  startup only when the project has neither a `Main` nor an explicit startup.
 - The viewport uses transform markers with local TRS/parent composition, XY or
   isometric projection, zoom and pan. It interprets a limited set of constant
   TRS expressions; unsupported transforms and their subtrees are visibly omitted.
@@ -3333,7 +3660,8 @@ component Aim
   authored transforms, choosing nearest depth in the editor camera. It does not
   derive proxies from arbitrary view draws, custom shader deformation or cameras.
   Move/rotate/scale gizmos patch one local TRS field on release, with one undo
-  entry, cancellation and optional snapping. Inherited children are read-only.
+  entry, cancellation and optional snapping. Inherited children receive ordinary
+  per-instance field overrides.
   Compiled views refresh after release; overlays/fixed meshes follow the drag.
 - IDE launch actions open this native app for .tprefab files in a trusted
   game context. VS Code also embeds its frames in an editor tab; JetBrains uses
@@ -3347,22 +3675,19 @@ component Aim
 
 Further authoring/editor work:
 
-- Root identity filters and prefab Main. The first implementation gives a prefab
-  no implicit component/type; use explicit root components for filters and keep
-  today's `.tide` `scene Main` startup convention. A future prefab startup
-  convention needs a separate decision.
-- Rename/completion for authored entity paths. Component/field/prefab symbol
-  renames are implemented; authored child names currently require text edits.
+- Root identity filters. A prefab has no implicit component/type; use explicit
+  root components for filters.
+- Language-server rename/completion for authored entity paths. Native hierarchy
+  refactors handle checked same-file paths; cross-file operations remain limited.
 - Authoring machine-local fields on match entities, including model/material
   selection, without putting rendering resources in match snapshots or trusting
   serialized executable code. A basic data tree alone does not solve this.
 - Defaults-versus-overrides during live editing/hot reload of existing instances.
   The first slice can instantiate new trees; automatic modification of existing
   gameplay instances needs a separate policy.
-- GPU/frame transport improvements, dynamic picking proxies, authored
-  reparent/rename refactoring, new-file creation and conflict merge UI. The first
-  native app edits existing files and keeps conflicting drafts without merging
-  them automatically. CMake/consumer project selection and remembered context
+- GPU/frame transport improvements, dynamic picking proxies and conflict merge
+  UI. The native app keeps conflicting drafts without merging them automatically.
+  CMake/consumer project selection and remembered context
   remain open tooling work.
 
 ## Transform and entity parenting
@@ -3370,6 +3695,8 @@ Further authoring/editor work:
 ### Decided
 
 - One built-in `Transform` component works in match or local placement, with `localPosition`, `localRotation` and `localScale`. These values are relative to the parent, and root values place it in the world.
+- Match `Transform` bindings use correction smoothing by default: `localPosition` has the `[Position]` role and `localRotation` the `[Rotation]` role. `localScale` retains ordinary tick interpolation. Local placement remains current-value access, and `World` hierarchy queries retain stored-state reads. The default roles are decided; the correction algorithm and half-life retain their provisional status under Views.
+- Its computed `position` reads world position and writes `localPosition` in parent space. Component storage remains the three local TRS fields.
 - Parenting is an entity relationship, independent of component value types. Descendants move with their parent and are destroyed when their parent is destroyed.
 - Reparenting follows Unity's default of preserving world placement, with an option to retain local values. Detaching preserves world placement by default. Cycles are rejected without changing the hierarchy.
 - Static access and typed entity handles preserve the match/local boundary. Match hierarchy state participates in deterministic snapshots, hashes and transfer; local hierarchy state stays outside it.
@@ -3380,6 +3707,9 @@ Implemented first-build interface and details:
 
 - `entity.SetParent(parent, worldPositionStays = true)` records a deferred structural change. `null` or `default` detaches. Local entity handles require local parents. Commands validate cycles and live generations in deterministic application order.
 - `world.LocalToWorld(entity)` returns a `float4x4` composed root to leaf; `world.Parent(entity)` returns the same kind of handle as its argument. Both read stored state, with normal caller capabilities and Transform read dependencies. Dead entities give identity/null, and absent Transform components contribute identity.
+- `world.ParentToWorld(entity)` returns the root-to-parent matrix, including a retained visibility anchor where a projected parent is hidden. Ordinary roots and dead entities give identity. `Transform.position` applies this to the binding's current local position. Its setter ignores singular parent matrices, nonfinite inputs and nonfinite converted results.
+- Implemented computed properties have explicit accessor bodies, with getter-only and setter-only forms. Compound assignment evaluates the receiver once, then getter, right-hand expression and setter. Numeric prefix increments return the calculated value supplied to the setter, postfix increments the getter's original value. A property cannot be passed by `mut`/`out` or written through a returned subfield. Literals initialize stored fields. Accessors follow ordinary method capabilities, scheduling and GPU restrictions.
+- The component context is written `this` and contextual `world`. A local component helper qualifies its parameter with `local`. Verified bindings retain their selected world. Recorded match-event bindings retain identity but grant no historical World query. Component methods use either contextual world access or an explicit World parameter. These spelling and edge choices are implementation details, not additional owner-approved language designs.
 - Transform defaults are zero position, identity rotation and unit scale. World rotation composes normalized quaternions. Keeping world placement adjusts local TRS; shear from nonuniform scale and rotation cannot be preserved exactly. Singular/nonfinite results are rejected, without changing local values or links. Keeping world placement requires a Transform on the child.
 - Destruction walks descendants before the root and invokes existing Destroyed handlers while each entity still exists. Loaded scene entities remain independent roots. An ordinary subtree parented into another scene transfers membership there; detaching retains its scene.
 - The compiler emits private per-world links using existing world-owned containers and checked command queues. No engine runtime registry or new public runtime entry point is required.
@@ -3465,7 +3795,7 @@ system Shrink(mut Box box) { box.verts.Clear(); }
 
 ### Provisional
 
-Implemented placement spellings: `Spawn(...)` creates match entities; `local Spawn(...)` creates local entities. A `local` component access qualifier selects local storage in views, local handlers, queries, shader bindings and async parameters, for example `mut local Transform transform` or `query (local Transform transform) transforms`. Ordinary function parameters are values without a placement qualifier. Component methods are specialized for each placement they are called on: implicit `this` is `Entity` or `LocalEntity` accordingly. Explicit entity parameter and return types retain their meaning. An unused method is checked once in match placement. `Get`, `Has`, `TryGet`, `Set`, `Add` and `Remove` select placement from the typed entity handle. Component declarations cannot be `local`. Rendering resources and LocalEntity fields restrict a component to local placement. Components with attached `local` fields currently require match placement; supporting those same definitions on local entities remains open.
+Implemented placement spellings: `Spawn(...)` creates match entities; `local Spawn(...)` creates local entities. A `local` component access qualifier selects local storage in views, local handlers, queries, shader bindings and async parameters, for example `mut local Transform transform` or `query (local Transform transform) transforms`. Ordinary helper parameters retain value/`mut` rules; `local Transform transform` selects local ownership when the helper uses component context. Component methods are specialized for each placement they are called on: implicit `this` is `Entity` or `LocalEntity` accordingly. Explicit entity parameter and return types retain their meaning. An unused user method is checked once in match placement; engine accessors are instantiated only when called. `Get`, `Has`, `TryGet`, `Set`, `Add` and `Remove` select placement from the typed entity handle. Component declarations cannot be `local`. Rendering resources and LocalEntity fields restrict a component to local placement. Components with attached `local` fields currently require match placement; supporting those same definitions on local entities remains open.
 
 
 
@@ -3575,18 +3905,21 @@ local event(Forgotten) FreeModel(Model model, mut Loaded loaded)
 
 - A scene is a group of entities that load and unload together: a menu, a level, an arena. Several scenes can be loaded at once, and several copies of the same one.
 - `scene Arena { ... }` declares one. A loaded scene is an entity like any other: the declaration is its component, and its fields are the scene's state. A system that takes `Arena` runs once per loaded arena.
+- An empty scene can end with a semicolon: `scene Main;` means the same as `scene Main { }`. This also applies to `local scene Main;`; braces remain valid.
 - `local scene` declares a local one (see Local state). A scene only holds entities of its own side.
 - `Scene.Load(Arena { size = 30 })` loads a scene into the current world and returns its entity. `Scene.Unload(scene)` unloads it, destroying every entity it owns. `Spawn` of a scene is an error that says to use `Scene.Load`.
 - Loading and unloading happen at the end of the tick, like `Spawn` and `Destroy`. `Spawned` handlers set a scene up, and its entities get `Destroyed` when it unloads, both within that tick (see Events).
 - **Ownership:** a spawn joins the scene of the entity the code runs for. In a handler, that's the entity the event was sent to. Code that isn't running for an entity, like a system that runs once per tick, spawns into no scene, and those entities live until they're destroyed.
 - A scene is never owned: it lives until it's unloaded, whoever loaded it.
-- `Main` is the fallback: when the last scene of `Main`'s world unloads, `Main` loads again, set up by its `Spawned` handlers as at the start. A match `Main` comes back in the match, a local one in the local state.
-- When `Main` is local, a match can't load it, so a match whose last scene unloads ends. Every machine in it goes offline, back to its local `Main`, with `Disconnected` and the reason `Ended` (see Sessions).
+- Project startup selects a prefab or scene independently of its name. A prefab starts as an ordinary loaded match scene with its authored root and complete construction before root-first `Spawned`, followed by normal game systems, views, camera and input. No wrapper entity or handwritten `Main` is required. A selected ordinary scene retains its match/local placement. Without a selection, existing `scene Main` startup is unchanged.
+- `settings { startScene = Qualified.Name; }` persists that selection. `tide run/build <project> --scene Name` overrides it for that build without changing source or existing `Main` declarations (approved 2026-10-24).
+- The selected startup is also the fallback, or `Main` without a selection: when the last scene of its world unloads, it loads again, initialized as at the start. A match startup comes back in the match, a local one in local state.
+- When startup is local, a match can't load it, so a match whose last scene unloads ends. Every machine in it goes offline with `Disconnected` and the reason `Ended` (see Sessions); local state carries on.
 - Loaded scenes share their world: the same systems, singletons and `Time`. Scenes that share nothing are separate worlds, which never communicate. Only the server creates worlds, so match code can't (see Open).
 - **Visibility:** scenes, entities and whole components use one audience mechanism at different scopes. A loaded scene root's `Visibility` group limits all entities owned by that scene, including later spawns. Scenes are public by default. `Visibility.Set(group, audience)` changes the shared live audience; a player newly included receives the scene's permitted state. Entity and component restrictions intersect the enclosing scene audience and cannot broaden it. Scene ownership and lifetime remain independent of audience groups.
 - A scene whose group audience is empty exists only on the server, which is where secrets like RNG seeds go. Code that reads a private scene only predicts correctly on machines that see it, and the server corrects the others.
 - A client never loads match scenes on its own: it has the ones the server has it in.
-- A system named `Main` is an ordinary system. Without a `scene Main`, the missing entry point's error says so.
+- A system named `Main` is an ordinary system. Without a selected startup or a `scene Main`, compilation reports a missing entry point.
 
 ```csharp
 scene Arena
@@ -3628,9 +3961,10 @@ system Collapse(Arena arena)
 - Entities unload in archetype order, each archetype's from its last row, and the scene's own entity last. Each gets its `Destroyed` handlers.
 - `Scene.Load(Scene { ... }, Component { ... }, ...)` accepts ordinary root components, including `Visibility { group = group }`, before initialization handlers run. Root components are positional, unique and use the same placement/value rules as Spawn; `Scene.Load(scene: Arena)` remains valid when no root components follow. Authored prefab loads use their ordinary root overrides. Local scenes can take ordinary local root components, but no Visibility.
 - Scene components contain only their declared state; audience policy lives in the root Visibility and shared group directory. There is no separate scene visibility enum or player-membership API.
-- The engine loads `Main` itself: `tide_world_init` loads a match `Main`, and `tide_local_init` a local one, with `TIDE_MAIN_IS_LOCAL` defined. `tide/run.h` starts without a match when `Main` is local.
-- The `Main` scene is the world's first entity.
-- The fallback waits for the end of the tick (the frame, in local state), once every change and handler has applied, so unloading one scene and loading another in the same tick never brings `Main` back. Entities in no scene don't count. `Main` comes back at most once a tick: one that unloads itself as it loads leaves the world without a scene until the next.
+- **Scene filters** (the spelling is the owner's; the rest is provisional): `with scene Arena` and `without scene Arena` in a system's, a view's or an event handler's parameters take only the entities of a loaded `Arena`, or only those of none. An entity's scene is the one it was spawned into (see Ownership above); a scene's own entity is one of its entities, its scene being itself. `with Arena` still filters by the component, so it takes a scene's own entity alone: `event(Spawned) Setup(with Main)` runs once. Several scene filters can be given, each a scene of the entities' own side. A scene filter alone runs for every entity of the scenes, as an `Entity` parameter alone does. `scene` is a word of its own there only right before a name; a filter naming a prefab, or a component that isn't a scene, is an error that says so.
+- Startup name resolution: the selection names a declaration, not a string, constructed value or runtime expression. Settings resolve through their source file's namespace/using context; a CLI name has no such context and an unqualified name resolves only in global scope. Invalid or duplicate persistent settings remain errors even with a CLI override. A prefab loads in match placement with normal placement/reference checks; a prefab merely named Main is not the default entry point.
+- The engine loads the effective startup itself: `tide_world_init` loads a match startup, and `tide_local_init` a local one, with `TIDE_MAIN_IS_LOCAL` defined. `tide/run.h` starts without a match when startup is local. The startup root is the world's first entity.
+- The fallback waits for the end of the tick (the frame, in local state), once every change and handler has applied, so unloading one scene and loading another in the same tick never brings it back. Entities in no scene don't count. It returns at most once a tick: one that unloads itself as it loads leaves the world without a scene until the next.
 - A match that ends runs no more ticks after the one that left it without a scene. The server tells every player then, and anyone who tries to join. Only the match ends: local state carries on as it was, so whatever local scenes were loaded stay loaded.
 
 ### Open
@@ -3651,7 +3985,7 @@ system Collapse(Arena arena)
 
 ### Provisional
 
-- `Audience` is a copied value: `Audience.All`, `Audience.None`, `Audience.Only(PlayerID)` and `Audience.From(List<PlayerID>)`. Mutable values have `Add(PlayerID)` and `Remove(PlayerID)`; `Contains(PlayerID)` is read-only.
+- `Audience` is a copied value: `Audience.All`, `Audience.None`, `Audience.Only(PlayerID)` and `Audience.From(List<PlayerID>)`. Mutable values have `Add(PlayerID)` and `Remove(PlayerID)`; `Contains(PlayerID)` is read-only. Two audiences are equal (`==`, `!=`) when they have the same players.
 - `Visibility.CreateGroup(Audience)` returns an opaque `VisibilityGroup`. `Visibility.Set(group, audience)` replaces its live audience; `Visibility.DestroyGroup(group)` makes stale references empty. Handles are not reused in that match. A default handle means all players.
 - `Visibility { group = group }` supplies entity policy. An entity with no `Visibility` is public subject to its enclosing scene. An entity's mutable `Visibility` has `Set<T>(Audience)`, `Set<T>(VisibilityGroup)` and `Reset<T>()`, where `T` is one ordinary whole component. Reset removes the component override. These writes belong to match code and their helper effects participate in scheduling. Ordinary transform parenting does not inherit visibility; the scene root is the enclosing policy.
 - Group tables and policy memberships remain authoritative. Recipient projections contain permitted values rather than the private audience table. Match singletons remain public; per-entity secrets belong in components or private scenes.
@@ -3668,12 +4002,71 @@ system Collapse(Arena arena)
 - A general authoritative outward-event API and its explicit audience/payload rules.
 - Server-side task prediction alternatives and opt-in safe projections for opaque resident libraries.
 
+## Shards
+
+One match world split across servers by where things are, for worlds larger than one server holds: a shared canvas with thousands of players, a planet. The agreed design (2026-10-22), built in part since: what's built and what isn't is in `notes/sharding.md`.
+
+### Decided
+
+- **A shard is an ordinary match.** Each region of the world runs as its own match world on its own server. What another shard tells it (state near the border, an entity arriving, a borrowed entity, an event) comes in as input stamped with the receiving shard's tick, like a command. So each shard keeps every guarantee a match has: determinism given its own input log, rollback for its clients, a hash every tick, cheap snapshots, replays.
+- **A split world need not match the same game on one server.** Results depend on when messages crossed between shards; each shard is exactly reproducible from its own log (the owner: "acceptable of course").
+- **Seamless, in one build.** Game code doesn't name shards or borders: the world is split and joined automatically, and the whole design is built together rather than zones first.
+- **Turned on by settings; where an entity is comes from its position.** A game turns sharding on with a setting. Where an entity lives is decided by the position it already has: a `[Position]` field, which also marks it for correction smoothing, or its `Transform`'s world position.
+- **A range the game sets.** How far the game's code looks around (sight, reach) is the game's own setting, in world units; region sizes don't change its meaning.
+- **Convenience over explicitness, without duplicating anything.** Code that touches entities across a border works without change, and nothing can be duplicated or lost by it:
+  - Every entity has exactly one owner at every tick. Moving it between shards is a move: the old shard never writes it again once it has sent it.
+  - Messages between shards take effect exactly once, including across crashes and restores.
+  - Code that would change something this shard doesn't own isn't applied from stale copies: it waits until this shard owns everything it changes and then runs again from the start, rechecking its guards with fresh state.
+- **Global entity handles.** An entity's handle is the same on every shard and stays the same when it moves; references never need remapping.
+- **A game can tell.** Code can find out that it ran late because it waited for a border, and whether this shard owns an entity. Code that ignores both still works.
+- **Singletons and the clock live with the orchestrator,** not on any one region's shard. Every shard reads them; changing one is a border write like any other.
+- **Saved worlds.** The record that makes cross-shard messages exactly-once is also the world's durable save, which a hosted world keeps.
+- **Engine and service.** The engine (open source) has the shard protocol and an orchestrator for one machine: all shards in one process or on one box, for development, tests and small self-hosted worlds. Tide's hosting service runs the orchestrator across machines: regions split and merged by load, durable saves, recovery of failed shards and monitoring.
+- **Intent, not mechanism** (the owner, 2026-10-23): shards shouldn't be a game's concern. What the engine can work out it does; what it needs from a game, it asks as a fact about the game (how far things reach, where they are, what holds what together), not as an instruction about shards. C libraries take more care, but that doesn't show where they're used. Agreed on these grounds: `reach`, `[Position]` deciding where an entity is, `[Native]` and `[Together]`, replacing `shardRange`, `[Partition]`, `[PerShard]`, `[Shared]`, `[Ghosts]`, `[GoesWith]` and `Shards.moves`.
+- **Sharding on demand** (the owner, 2026-10-23): a world isn't a preset number of shards. A region whose shard struggles is split, and quiet ones merge back.
+- **Physics and C state** (2026-10-23, the owner agreeing to the agent's recommendation): a library's state for an entity goes with the entity, and bodies near a border see their neighbours' copies as kinematic. A consensus model across shards for bodies that touch was raised as food for thought, not adopted.
+- **Visibility** applies per shard, to that shard's own clients (2026-10-23, as recommended).
+- **Hot reload** changes every shard's build at one tick boundary (2026-10-23, as recommended).
+- **Billing**: one running shard is one machine of the project's preset (the owner, 2026-10-23).
+
+### Provisional
+
+Picks for the first build; names and details to confirm.
+
+- **Settings.** `settings { shards = true; reach = 64; }`. `reach` is how far anything in the game looks or acts, in world units: sight, an attack's range, a query for what's nearby. It's required with `shards`, as no default suits every scale; the error says what the number is. Both are part of the build and the simulation identity.
+- **Where an entity is**: its first `[Position]` field of two or three axes on a match component, the game's components before packages' (Box3D's and Box2D's `Body.position`), in declaration order; without one, the world position of its `Transform` root. Every such `[Position]` in a sharded game has as many axes, and an entity in a `Transform` hierarchy always lives with its root.
+- **Entities with no position** live with their `Transform` root; others go with the first entity their fields name (a part with its body, a bag with its `owner`), or else with the entity whose code spawned them, wherever it goes, a tick or two behind it. One spawned by code for no entity and naming none stays on the root, and a scene goes nowhere: its entities are on every shard.
+- **Regions** are never narrower than twice `reach`, so a shard isn't split a few units from its neighbour unless the game's range is that small. They are chosen by the orchestrator and change while the world runs: a region is split when its shard owns more entities than a limit, or is steadily busier than a share of its time (the host measures how long its updates take), and two neighbouring regions merge when together they're a quarter of both. The hosting service splits by load; the one-process orchestrator only by entities unless told, as its shards share one machine.
+- **One shard until it's needed.** A world split into one region (the hosting service's, and `--shards 1`) is the root alone, owning all of it. When its load comes back down after splitting, its last two regions merge, and the last region left merges into the root: the world is one shard again, as it started.
+- **`[Native]`** marks a field holding a C library's state, like a handle (for library authors; nothing a game writes). On a component it's a number or a bool, 0 wherever its entity arrives or is copied, with no default. On a singleton it's anything, and each shard keeps its own: such a singleton's other fields are the world's, the root's on every shard (plain values only, so a list or map there is an error unless it's `[Native]` too), and the library's own code for no entity that takes it runs on every shard, for that shard. A game's code using it is ordinary: code for no entity runs once, on the root, so a setting a game writes is every shard's; code for an entity on a region that writes a setting has it there at once, and the root takes it as the world's a tick or two later.
+- **`[Together]` on a component's `Entity` field**: what it names is kept on one shard with the entity that has it, as a joint keeps its bodies. Everything `[Together]` ties, directly or through others (a chain or a ring of joints), is one group, which goes where its lead is: the member with a position and the lowest handle. The shard that has the lead asks for any member another shard has. Inferring it from references would tie two players together for good because something names both, so it's written.
+- **`Shards.Together(a, b)` and `Shards.Apart(a, b)`** (for library authors, like `[Together]`; match code only): two entities act on each other for now, like two bodies that touch, and are one group like `[Together]`'s until as many `Apart` calls say they don't. Each shard counts its own pairs, in match state, summed from its tick's last run in a fixed order whatever threads said them; a pair goes when its count is 0 or neither entity is on the shard. Nothing in a game that isn't sharded.
+- **`Shards.Spans(entity, center, size)`** (for library authors; match code only; agreed with the owner, 2026-10-24, the name Provisional): the entity covers that box this tick, past its position, like a floor or a terrain, so every shard whose region is within `reach` of any of it has a copy, not only those near its position. Said each tick it holds; a span within `reach` of the entity's position changes nothing. **`Shards.on`** is whether the game is sharded, a constant, so a library's work for this compiles away in a game that isn't. The physics packages say it for their static bodies (Newton's for a body with a plane, which goes on for ever).
+- **Entities with no position** another shard has a copy of: one goes where the entity it goes with is (a part with its body), and so does its copy.
+- **Physics packages.** Box3D's and Box2D's `Physics` holds their worlds as `[Native]` state and their settings as the world's; their handles are `[Native]` fields; a body that arrives is made anew from its `Body` (where it was and as fast), and a copy system keeps a copy of each neighbour's body near the border, of its type (a dynamic one as heavy as the body, put back where its owner last had it each tick), with every shape it has: its own, its parts' (which go with their body, by what they name), meshes, hulls and height fields. Each side reports touches and hits to the entities it owns. A joint's `a` and `b` are `[Together]`, so a joint holds across borders, and two dynamic bodies that touch are `Shards.Together` while they do, so they're on one shard, each with its weight against the other. Newton's step has its neighbours' bodies near the border in it as they are, with their mass, and its joints are `[Together]`. A static body that reaches past its position (a long floor, a terrain, a plane) is copied to every shard it reaches.
+- **Visibility.** The groups' directory lives with the root like a singleton: every shard reads its copy, and code elsewhere that creates, changes or destroys a group waits on the border. Other shards see a change a tick or two later, as no shard can act on what hasn't reached it: a group narrowed on the root hides its members from the root's players at once and from other shards' players that much later. Making every shard switch at one tick would only delay it on the root too, so it isn't done (the owner, 2026-10-24, as recommended); a game that must hide something from a moment on narrows it that much before. Each shard projects its own world for its own clients.
+- **Hot reload** under `tide run --shards`: a new build waits for a quiet moment (no delivery or destroy waiting on a border, no message holding the old build's values on its way, no checkpoint being gathered), at most three seconds, then every shard changes build together, carrying its world over to another layout as a match's is; ghosts on their way are dropped and sent again whole. Never quiet in time, the game starts over and says why. On the web the old program hands the whole match over as a checkpoint.
+- **What a shard runs.** Systems, handlers and tasks run for the entities a shard owns. A task goes with the entity it belongs to when that moves or is lent, and goes on there. A shard also holds read-only copies (ghosts) of its neighbours' entities within `reach` of its region, and of the singletons; queries, `world.Get` and `world.Has` read them, a tick or two behind. Code running for no entity runs once for the world, beside the singletons.
+- **Events** sent to an entity another shard owns go to that shard and run there, a tick or two later, all of their handlers. An event sent to no entity runs on the shard that sends it; `PlayerJoined` and `PlayerLeft` run on the root.
+- **Waiting on a border.** Changing an entity or singleton this shard doesn't own (`world.Set`, `Add`, `Remove`, `Destroy`, parenting, a `mut` singleton) makes the code that did it wait. The tick runs again without it, so nothing it did is kept; this shard asks for what it touched, and holds what it borrowed while it waits. A waiting handler or command runs once, in full, at the first tick this shard owns everything it changes. A waiting system's row is retried each tick until then. So is a waiting task's resume. Reading by handle an entity this shard holds no copy of finds nothing, as for one that's destroyed: code that reads what's farther than `reach` keeps it in range or sends it an event. A shard keeps what it borrowed (for a while) or what its own waiting code needs from a shard with a higher number that asks for it, until that code has run; a shard with a lower number always gets what it asks for, so no two shards wait on each other forever. Borrowed entities return by position once nothing holds them. A destroy whose `Destroyed` handlers change what this shard doesn't own waits with them: until they can run, the entity (and the entities parented to it) stays, read by queries and `world.Get` as before, but no system or handler runs for it.
+- **`Shards.delay`** (int, ticks) is how long the running code waited for a border: 0 except in code that waited. **`Shards.Owns(entity)`** is whether this shard owns it now. Both are read-only, in match code.
+- **Writing a singleton every tick** from systems on every shard serialises the world on it; in a sharded game the compiler warns about a system that takes a singleton `mut` and runs for each entity, and suggests state on an entity or scene, or an event, instead.
+- **Players** join the world at the root, which gives them their PlayerID and sends `PlayerJoined`; every other shard takes them as the same player. `PlayerLeft` comes once no shard has them.
+- **Clients** play in their home shard, the one that owns most of their player's entities: it's the world local code and local handlers see. A client also follows every shard that owns any of the player's entities and every region within `reach` of them, sending each its input, so moving home switches at once with nothing to download. While an entity is on its way from one shard to another, a player's machine keeps following both.
+- **Views draw every shard a client follows**, each entity once: from the shard that owns it, or, while it's on its way between two (or owned by a shard the client doesn't follow), from the first world that has a copy, the home's first. A view for each entity runs for each shard's own entities, reading that shard's world (its singletons and `Shards.Owns`); a view for no entity reads the home's; a view's query has every followed shard's rows, and a view's `World`, and a function's it calls, finds an entity in the world that owns it. Near a border, that's the neighbour's own entities rather than the home's copies of them.
+- **`Shards.Of(entity)`** (an int; the name Provisional, Claude's pick of 2026-10-24 for the Earth demo, which paints what each shard owns) is, in a view or local code, the number of the shard that owns an entity as this machine sees it: the drawn world that owns it, else the shard a copy came from, from 0; -1 for an entity no followed world has. It's for showing the split, not for game rules: in a match system or handler it's an error that says the match is one world. Always 0 in a game that isn't sharded.
+- **Local handlers** hear every followed shard's events, each where it was sent, once. `Shown` and `Hidden` are of the followed worlds together: an entity is shown when the first of them has it and hidden when none has it any more, whichever shards it moves between. Correction smoothing applies to each entity from the shard that owns it.
+- **Watching an area** (agreed with the owner, 2026-10-23; the names are Provisional): `Session.Watch(center, size)` in local code makes this machine follow the shards whose regions are within `reach` of that box too, wherever its player is, so views draw what they own: a camera zoomed out over the world, a spectator, a map. It holds until `Session.Unwatch()`; calling it again as the camera moves changes the area. `center` and `size` are a `float2` or `float3` (or `double2`, `double3`), both alike; a 2D game's z is ignored. In a world that isn't sharded it does nothing, as that machine has the whole world already.
+- **The clock.** Shards tick at the same rate with the same tick numbers, set by the orchestrator.
+- **Running one.** A sharded game's match started on a machine runs every shard there; the standard host's `--shards` and `--shard-width` split it into regions along x to try borders out. A dedicated server (`--shards`, `--shard-width`, `--shard-most`) runs each shard as one of its matches and a player asking for match 0 joins the world.
+- **Exactly once by replay.** A shard's input log (players' inputs and shards' messages) is recorded durably before the messages its ticks produce leave it, and its world is checkpointed now and then. A shard that fails is restored from its checkpoint and log, which, being deterministic, reproduces the same messages; receivers drop repeats by sequence number. A message's sender keeps it until every shard has applied what it was handed and its ticks are kept. The world's own changes of shape (splits, merges, more entity indices) happen only when nothing is on its way, each followed by a checkpoint. A dedicated server keeps it all in a folder (`--shard-journal`), and started again with it, goes on where the world was; players there have 20 seconds to come back as themselves.
+
 ## Sessions
 
 ### Decided
 
 - Single-player and multiplayer are the same: every match runs on a server, and this machine's player connects to it, over a loopback transport when the server is on this machine. The engine assumes nothing about what a game does with it, like pausing; games build that from inputs and state.
-- Local code decides which match this machine is in: `Session.Start(scene)` starts one on this machine, `Session.Join(code)` joins the match in a room by its code, `Session.Connect(address, port)` joins another machine's by its address, and `Session.Leave()` leaves. `Start` names the scene the match starts in, with its values like `Scene.Load`'s: `Session.Start(Arena { size = 30 })`; `Session.Start()` names none, and starts in `Main` with its defaults, which is for code that can't name the game's scenes (a package's menu), and an error where `Main` is local. `Join` and `Connect` get whatever the server runs.
+- Local code decides which match this machine is in: `Session.Start(scene)` starts one on this machine, `Session.Join(code)` joins the match in a room by its code, `Session.Connect(address, port)` joins another machine's by its address, and `Session.Leave()` leaves. `Start` names the scene the match starts in, with its values like `Scene.Load`'s: `Session.Start(Arena { size = 30 })`. `Session.Start()` uses the selected startup, or `Main` without a selection, with its initial values. This lets code such as a package's menu start a match without naming the game's scenes; it is an error when startup is local. `Join` and `Connect` get whatever the server runs.
 - There's one kind of match. Whether others can join it is a switch on it, not another way to start one: a match starts closed, `Session.Open()` lets others join the match this machine runs, and `Session.Close()` stops letting them, at any time. Single-player is a match nobody else was let into.
 - The machine that runs a match sends players out of it with `Session.Kick(player, message)`, or every other machine's with `Session.KickAll(message)`. The message is text, so a game can say anything, and kicked players get it with their `Disconnected`. A kick isn't a ban.
 - The machine that runs a match says what it means by leaving it: `Session.Leave()` leaves, and with host migration the match goes on without this machine; `Session.End()` ends the match for everyone, who go offline with `Ended`. A crash, or closing the window, is a `Leave`.
@@ -3724,8 +4117,12 @@ local event(Disconnected gone) BackToMenu()
 
 Implemented, awaiting approval:
 
-- `Session` has `state` (`SessionState.Offline`, `Connecting` or `Connected`), `player` (this machine's `PlayerID`, once connected), `ping` (the network's round trip to the server, in milliseconds: from when this machine sent to when the answer arrived, less what the server held it, so no wait for a frame is in it), `server` (whether this machine runs it), `open` (whether others can join it, which only the server's machine knows) and `room` (the code of the room the match is in, or `""`, as it is while the match is closed). It's read-only. A single-player match is `Connected` too, with `server` true and `open` false.
-- `Connected` is sent once the match's world has arrived and this machine plays in it; `Disconnected { DisconnectReason reason; string message; }` when it leaves: `Left` (it called `Leave`, or started another match), `TimedOut` (the server stopped answering, or never did), `Refused` (another build of the game, no room left, or a closed match), `ServerLeft` (the server's machine left, which ended the match), `Failed` (it couldn't start: no network, a port in use, an address that isn't one, a room nobody has) `Ended` (the match's last scene unloaded, and `Main` is local; see Scenes) or `Kicked` (the server's machine sent it away). `message` is the kick's, and `""` for the other reasons.
+- `Session` has `state` (`SessionState.Offline`, `Connecting` or `Connected`), `player` (this machine's `PlayerID`, once connected), `ping` (the network's round trip to the server, in milliseconds: from when this machine sent to when the answer arrived, less what the server held it, so no wait for a frame is in it), `server` (whether this machine runs it), `open` (whether others can join it, which only the server's machine knows) `room` (the code of the room the match is in, or `""`, as it is while the match is closed) and `invite` (below). It's read-only. A single-player match is `Connected` too, with `server` true and `open` false.
+- **`Session.invite`** (the owner asked for host a room, copy a link, send it, 2026-10-21; the name and what it is off the web are the agent's picks, which the owner accepted): what others open to join the match, for `Clipboard.Copy(session.invite)`, read wherever `session.room` is and refused wherever it is. `""` whenever `room` is.
+  - On the web, a link: the page's address without its query or fragment (`origin` and `pathname`), then `?join=` and the room's code, like `https://example.com/my-game/?join=K7QF2M`, so it works wherever the page is served (a site, `localhost`, a LAN address). Opening it joins the room, as `?join=` always did. A web host's invite stays `""` until the relay confirms its room is registered, even if `room` already has a code. A page that's no place to link to (not `http:`, `https:` or `file:`), a link longer than 255 bytes, and a `room` that `?join=` wouldn't pass on whole (a game's own network's text with anything but letters, digits and `/`, which `ROOMID/0` has) have the room's text itself.
+  - Natively (desktop, Android), where there's no page to link to, the room's code itself: what a friend types to join.
+  - Up to 255 bytes of printable ASCII, so `Clipboard.Copy` takes it whole.
+- `Connected` is sent once the match's world has arrived and this machine plays in it; `Disconnected { DisconnectReason reason; string message; }` when it leaves: `Left` (it called `Leave`, or started another match), `TimedOut` (the server stopped answering, or never did), `Refused` (another build of the game, no room left, or a closed match), `ServerLeft` (the server's machine left, which ended the match), `Failed` (it couldn't start: no network, a port in use, an address that isn't one, a room nobody has) `Ended` (the match's last scene unloaded, and startup is local; see Scenes) or `Kicked` (the server's machine sent it away). `message` is the kick's, and `""` for the other reasons.
 - `Session.Kick(player)` and `Session.KickAll()` send no message. A kicked player leaves the match at once, as if they had left: `PlayerLeft` follows, and they can join again, as the same player, while the match is open. A goodbye can be lost: a kicked player who didn't hear it is told again whenever they're in touch, while they still send to the server and when they join it again, before they're let in (taking a match over with host migration included). Once they've heard, they can join again. Kicks only change a match this machine runs: on a client, or offline, they do nothing, and this machine's own player can't be kicked (it calls `Leave`). A message is up to 255 bytes of UTF-8, cut where a character starts. A frame takes up to 16 kicks; a `Start`, `Join`, `Connect` or `Leave` after them drops them, as it does Opens. A machine kicked from a match it joined with `--join` or `--connect` doesn't join it again by itself.
 - `Session.Open(port)` takes players in a room, and on `port` too, 7777 without one, except on the web, which has no ports. A closed match turns away anyone who isn't in it, coming back or not; the players in it stay. Opened again, it takes players in the same room and on the same port. `Open` and `Close` only change a match this machine runs: on a client, or offline, they do nothing. When it can take players neither in a room nor on the port, the match stays closed. Opens and Closes before a `Start`, `Join`, `Connect` or `Leave` in the same frame were for the match it ends, so they're dropped. `Session.Play` and `Session.Host` are errors that point to `Start` and `Open`.
 - `Session.Connect(address, port)` takes `"192.168.1.5"`, `"192.168.1.5:7777"` or a name like `"localhost"`, and the port is 7777 without one.
@@ -3746,8 +4143,8 @@ Implemented, awaiting approval:
 - A match can't start in a scene that holds text or lists yet.
 - Starting a match leaves the one this machine is in first, which sends `Disconnected` with `Left` before the new one's `Connected`.
 - The server's player joins before the match's first tick, as `PlayerJoined` handled at the end of it; the server only starts ticking then.
-- When `Main` is the match's, `tide/run.h` starts it at once, and opens it with `--host [port]`, or joins another with `--join code` and `--connect address` on the command line (and `tide run --host`, `--join` and `--connect`).
-- A match takes up to the game's `maxPlayers` players, 16 without the setting and 256 at most (see Settings). One more is refused, as from a full match.
+- When startup is the match's, `tide/run.h` starts it at once, and opens it with `--host [port]`, or joins another with `--join code` and `--connect address` on the command line (and `tide run --host`, `--join` and `--connect`).
+- A match takes up to the game's `maxPlayers` players, 16 without the setting and 65536 at most (see Settings). One more is refused, as from a full match.
 - A client predicts at most a second ahead of the last tick the server confirmed, however many ticks that is at the match's tick rate; beyond it, it waits for the server. The server keeps four seconds of ticks to send again; a player further behind gets its complete permitted world again. A player that was sent the world has every tick since kept for it until it catches up, however long the world took to arrive, up to 32 seconds: one that can't catch up in that long gets the world again.
 - Joining takes a round trip and a half: a hello gets a welcome, and the world comes once the player writes back, so that a hello from an address that isn't the player's costs the server a datagram and never puts a player in the match. One that never writes back is forgotten in two seconds. Players who join in the same tick are sent one packing of the world.
 - **Coming back:** joining a server gives this machine a cookie, and joining the same server again (the same room, or the same address) presents it, so the player gets their `PlayerID` back, and with it whatever the game kept for them. If the server still has them connected (their old connection went quiet), the new one takes over with no events at all; if they'd left, `PlayerJoined` comes again with the same `PlayerID`. A server keeps a slot for a player who left until it has no slot that was never used; then it gives away the one away longest, and that player's cookie stops working.
@@ -3803,7 +4200,7 @@ compatibility are distinct. No production hot reload or native client code
 delivery is implied.
 
 **Provisional, implemented:** `tide login/logout/deploy`, GitHub developer OAuth,
-Stripe prepaid fulfillment and the single-host Fly service in `hosting/`.
+Stripe prepaid fulfillment and the single-host Fly service (a separate repository).
 Each match runs inside a worker-owned WASM instance with bounded imports,
 memory and execution. Project-scoped runtime credentials can control matches
 without publishing authority. Default occupied lifetime has an empty grace;
@@ -3811,7 +4208,7 @@ explicit worlds save/recover on their original release and stable ID, subject
 to credit, capacity and finite save retention. Game C may supply save/load
 callbacks; the default checkpoint has exact-release scope. Concrete interfaces,
 operator limits, tests and unbuilt production/operational work are recorded in
-`notes/managed-hosting.md` and `hosting/README.md`. This adds no Tide syntax and
+the service's own repository. This adds no Tide syntax and
 does not declare a publicly launched hosting service.
 
 Generated `tide_game.simulation`/`TIDE_SIMULATION_ID` use a canonical checked
@@ -3828,7 +4225,7 @@ Mismatches use the existing Refused reason with update guidance in the message.
 - `settings` is a keyword only at the top level of a file, so it still works as a name everywhere else.
 - Every setting has a default, so a block only lists what it changes.
 - A game can have several blocks, in any of its files, and together they're one list of what it sets: each sets what the others don't. A setting that two of them set is an error, as one set twice in a block is. A second block is no error by itself: what clashes is two that set the same thing.
-- Values are constant expressions, and can name constants.
+- Values are constant expressions, and can name constants. The startup selection names a prefab or scene declaration instead (see Scenes).
 - Settings are part of the build, so every machine in a match has the same ones.
 - The editor completes the settings' names and shows each one's default and what it does. A name that isn't a setting is an error that says which one was meant.
 - The first settings are `title` (the window's), `tickRate` (ticks per second, 60 by default), `maxPlayers` (how many players a match takes, 16 by default), `hostMigration` (see Sessions), `prediction` (how clients keep up with the match, see below), `appId` (the app's ID on phones), `version` (the version people see), `stats` (the stats overlay, see below) and `debugViews` (the engine's debug views, like the profiler, see below). The window's size and the default port can come later.
@@ -3843,14 +4240,17 @@ settings
 }
 ```
 
+- **Shared player ceiling (Decided).** `maxPlayers` accepts 1 through 65,536 players, defaulting to 16. Dedicated-server total connections use the same supported ceiling, with a separate capacity setting.
+
 ### Provisional
 
 Implemented, awaiting approval:
 
 - `hostMigration` is true or false, or a constant that is.
+- `shards` and `reach`: see Shards.
 - `debugViews` is true or false, or a constant that is, false by default: the engine's debug views are on in the game. The standard host then shows the profiler at F7, and hides it at F7 again: where a frame's time goes (input, the match's ticks and its netcode, each view, drawing) and a tick's (each system, then its changes and events), as averages over half a second. `--debug-views` on the game's command line (`debug-views` in a web page's address), `tide run --debug-views` and `tide_run_desc.debug_views` turn them on whatever the setting says. Nothing is measured while the profiler is hidden. In generated C it's `tide_game_api.debug_views`, read each frame, so under `tide run` a reload changes it. The names (`debugViews`, `--debug-views`), the key and what the profiler shows are to confirm.
 - **Confirmed presentation and collider rewind (Decided, implemented).** Verified view values interpolate by default on a separate confirmed clock and hold at the latest confirmation. `settings { maxRewind = 0.25; }` enables a finite nonnegative window in seconds (default 0). With it, the input gains read-only `ViewTime viewTime` (`int tick`, `float alpha`, `bool valid`), stamped after sampling from the last presented confirmed interval. Its time is `tick - 1 + alpha`. The server validates it as an untrusted client claim against fraction/range, its connection snapshot, advertised server time and the configured window. Invalid claims become invalid timestamps; ordinary input remains usable. Physics packages explicitly opt whole bodies into history with `rewind = true`, and `physics.Rewind(time, out query)` returns a detached read-only query scene or false. Historical opted-in geometry collides with current non-opted geometry. All existing query forms are available on `query`; neither preparing nor using it changes simulation geometry or contacts. Missing history never clamps or falls back. Games still validate shooter, origin, aim, weapons and damage from authoritative state; a timestamp cannot prove what a modified client displayed.
-- `maxPlayers` is an int from 1 to 256, known while compiling: how many players a match takes. The world keeps an input for each, and the server's after them, so it's part of the game's data layout: builds with different `maxPlayers` are different games, which can't share a match, and under `tide run` a reload that changes it starts the match over. Every player's input goes to every other each tick, so a match's traffic grows with the square of its players: the limit is what the game is built for, not a number to raise for the sake of it. In generated C it's `TIDE_GAME_PLAYERS` and `tide_game_api.max_players`.
+- `maxPlayers` is an int known while compiling: how many players a match takes. The world keeps an input for each, and the server's after them, so it's part of the game's data layout: builds with different `maxPlayers` are different games, which can't share a match, and under `tide run` a reload that changes it starts the match over. In a full-world match every player's input goes to every other each tick, so traffic can grow with the square of the player count. Visibility can restrict recipient input and state delivery; practical capacity depends on the game and workload. In generated C it's `TIDE_GAME_PLAYERS` and `tide_game_api.max_players`.
 - `prediction` is `Prediction.Rollback` or `Prediction.Delay`, or a constant that is. It's the client's: the server runs the match the same either way, and players of both kinds share a match. In generated C it's `tide_game_api.prediction`, a `tide_prediction`.
 - The input delay (`tide_client_status.delay_ticks`, which `tide run --stats` shows) is how many ticks before a tick runs its input is sampled. A client samples inputs as its clock says, as far ahead as it ever predicted, and runs ticks that many short of them. Predicting, it starts at none, and adds a tick when the ticks it would run again cost more than its budget (`tide_client_desc.resim_budget`, 4 ms a frame unless the host says, measured with the host's clock; without one, as in tests and benchmarks, there's no delay), one change per round trip. Not predicting, it starts at the lead and round trip its inputs go ahead by, plus half a round trip for the frame to come back and two ticks for it to be late by; it adds a tick when its clock reached a tick whose frame hadn't come, and takes one back once frames have come three ticks early for five seconds. Either way, a frame whose tick the clock hasn't reached waits for the clock, so ticks run at the match's pace however early their frames come, and views blend up to the clock less the delay.
 - `tickRate` is an int from 1 to 1000, known while compiling. The machine that runs a match decides its rate (its desc's, or its game's), and the players who join tick at it. A new `tickRate` under `tide run` takes effect when a match starts.
@@ -4124,7 +4524,7 @@ override system Move(mut Position position, Velocity velocity, Time time)
 - **Names in tools and generated C.** An override in place goes by the replaced declaration's name, with its namespace: `Combat.Move` in `tide schedule`, the profiler and messages, `tide_system_Combat_Move` in generated C. A game that uses neither word generates the C it did, byte for byte.
 - **Editors.** Hover says what an override replaces and what replaced a declaration, and so does a line above each. Go to definition on an override's name, or on `override`, goes to what it replaces; on a use of the name, to what's built under it. Go to implementation on a virtual declaration goes to its override. Find usages and rename treat an override and what it replaces as one name. After `override`, completion lists the virtual declarations of other packages that nothing replaces yet, each written out as the file would write it.
 
-The service's first slice. Implemented, and on hold (the owner, 2026-10-06: it may be too complicated, from the service's side): the code is `builds/` in the repository, and nothing of it is deployed. It ran for a day at `builds.tide-engine.dev`. A developer publishes a version of a game's source; whoever has the game's key asks for a build of that version with a set of mods; the service builds it as a web page in a machine made for that build, signs it, and serves it at a link anyone can open. It was agreed for this slice that a game is an id and a key, with no accounts; that a build is named by a SHA-256 of the game's id, the version, its mods sorted, and tide's version; that builds are signed with a key per game, ECDSA on P-256, as 64 bytes; and that a build can be revoked. The picks:
+The service's first slice. Implemented, and on hold (the owner, 2026-10-06: it may be too complicated, from the service's side): the code is in the services' own repository, and nothing of it is deployed. It ran for a day at `builds.tide-engine.dev`. A developer publishes a version of a game's source; whoever has the game's key asks for a build of that version with a set of mods; the service builds it as a web page in a machine made for that build, signs it, and serves it at a link anyone can open. It was agreed for this slice that a game is an id and a key, with no accounts; that a build is named by a SHA-256 of the game's id, the version, its mods sorted, and tide's version; that builds are signed with a key per game, ECDSA on P-256, as 64 bytes; and that a build can be revoked. The picks:
 
 - Provisional: `tide publish [folder]`, the name proposed below. It sends what a build reads from the game's folder: its `.tide` files, its C and C++ with their headers, its libraries and its `tide.packages`, with the packages in folders inside the game's. Packages from git aren't sent, as their commits name them, and a package in a folder outside the game's is an error. It doesn't compile the game first: a version that doesn't build is found when a build is asked for.
 - Provisional: the game's key is in the environment, as `TIDE_GAME_KEY`, and nowhere else: no file. A key is the game's id, a dot and a secret, so one variable says which game too. An id is lower-case letters, digits, dots and dashes, as it's part of addresses. `TIDE_BUILDS_URL` names another service than ours.
@@ -4340,13 +4740,28 @@ Picks made as the microphone was built (2026-10-07, the eighth card), awaiting t
 - **A run with no window plays a file into it**: `--microphone <file>` (`tide_headless_desc.microphone`, a WAV or Ogg Vorbis, read before anything runs and refused with exit code 2 when it can't be), looped, a 60th of a second of it a frame through the same path a device's frames take, so a test hears it where a player would be heard; without it the microphone is silent.
 - **Capture validation:** `tide_platform_audio_device` opens and closes this machine's WASAPI capture (nothing checks what it hears: a muted one hears silence). A headless Chrome check with its fake microphone ran `getUserMedia`, the input worklet and the WebAssembly capture bridge through the resampler and mixer: nonzero samples reached a muted voice's effect, output stayed silent, and closing capture ended the stream's tracks. Six Node checks cover delayed permission and worklet answers after close/reopen, queued messages, sample delivery and the input processor. **Not run here:** CoreAudio, ALSA with a device, AAudio, and the browser's physical microphone or permission prompts. **Not built:** choosing a device, stereo capture, echo cancellation or gain control as choices (the web's `getUserMedia` has the browser's defaults), Android's permission result as a callback (the platform polls), a macOS bundle with its usage text, voice chat.
 
+### Optional voice package (2026-10-22)
+
+**Decided:** working voice chat through sessions is an optional package using Opus and the existing microphone. Games without the package do not compile/link its codec or allocate its buffers. Voice is local presentation, outside ticks, commands, rollback, snapshots and deterministic hashes.
+
+**Decided (2026-10-22):** the optional voice package also supports RNNoise microphone noise suppression, controlled by the local `VoiceClient.noiseSuppression` setting, defaulting to true.
+
+**Implemented provisional choices:** `voice` / namespace `Voice`, local `VoiceClient.enabled`, `transmitting` and `volume`, `ConfigureVoice` ordering, and `SetVolume(PlayerID, float)`. Both flags default false; microphone capture requires transmission in a connected session. The host relays unreliable packets to other subscribed players. Global chat, 48 kHz mono, 20 ms frames, 24 kbit/s, 40 ms initial receive buffering, Opus DTX/FEC/concealment, 32 receive slots and 32 player gains are first-build choices. C hosts use the optional `tide_voice_provider` and local-data session API; no language builtin or generated runtime call is added. [Voice chat](./packages/voice.md) documents use and limits. Teams, proximity routing and positional voice remain unbuilt; in Unity, voice plays through Unity's audio (2026-10-22).
+
+The older microphone implementation notes above describe the pre-package state; voice chat is no longer deferred.
+
+**Implemented provisional suppression choices:** suppression filters only outgoing capture. RNNoise 0.2's smaller built-in model runs on the frame thread in 480-sample blocks before Opus; its history resets on transmission start and setting changes. State is lazy and retained until client teardown; off means no filter work. The model ships with the optional voice package; games without it compile/link neither RNNoise nor Opus. No engine, simulation or wire-format change is needed.
+
+**Decided (2026-10-22):** game code can process received voice with custom audio effects and dynamic parameters, including radio effects.
+
+**Implemented provisional processing choices:** `VoiceClient.bus` is a local integer receive bus, default 0 (master). `Voice.SetBus(PlayerID, int)` overrides one speaker; negative removes the override, and other out-of-range buses fall back to master. Routes apply to existing playback without restarting codecs. At most 32 player routing overrides persist independently of volume overrides until changed or the local connection/match changes, with initial setup preserving them. The default bus persists across reconnects. Voice uses the existing 16 mixer buses: speakers on one bus are mixed before its ordinary `Audio.SetEffect`, sharing its effect state and live knobs. Processing affects only this receiver's playback, with no compiler, mixer, simulation or packet change.
+
 ### Open
 
 - Effects a game can't write itself: a reverb, which needs more state than a struct of plain fields (a `float[N]` delay line fits once arrays are in `audio` state structs, which is the first thing to try), and sends to a shared reverb bus.
 - A chain of `audio` declarations on one voice (`List<Effect>`), where v1 has one.
 - 3D audio beyond panning and distance: HRTF, occlusion, doppler (`pitch` by hand does the last).
 - Streaming a clip from a URL or a file at runtime (`Web.Fetch` gives the bytes; a `Clip` made of bytes is the missing piece), and recording to a file.
-- Voice chat as a package over the data channel, with the microphone as its source.
 - Sample-accurate scheduling (a sound that starts at a tick's exact time, music synced to the match's beat): `Audio.Play` starts at the next block.
 - Whether the simulation should ever hear audio (a rhythm game's match reading the music's position): today it reads `Time.t` and the view keeps the music to it.
 
@@ -4386,7 +4801,7 @@ Symbols beyond tide's versions (the owner, 2026-10-07: `#if` with no `#define` i
 
 ## Open
 
-- How entities authored as data (levels, prefabs) feed into archetype derivation.
+- Archetype derivation for additional authored forms beyond the current checked prefab composition.
 - Archetype growth past what reachability trims: an `Add` or `Remove` on an entity read from a field or a parameter still reaches every archetype of its world, so a game that toggles many components on arbitrary entities multiplies combinations. Sparse components (a presence bit in the row instead of an archetype of their own) are the way out; see Entities.
 - How modules, such as the engine's built-in systems, initialize when there's a single `Main`.
 - Access control: whether a namespace can keep declarations to itself.

@@ -14,9 +14,11 @@
 // map to tide/draw.h, and GUI and GUILayout to tide/gui.h.
 
 static const type T_F = {TY_FLOAT, NULL};
+static const type T_D = {TY_DOUBLE, NULL};
 static const type T_WHOLE = {TY_INT, NULL};
 static const type T_F2 = {TY_FLOAT2, NULL};
 static const type T_F3 = {TY_FLOAT3, NULL};
+static const type T_F4 = {TY_FLOAT4, NULL};
 static const type T_COLOR = {TY_COLOR, NULL};
 static const type T_STR = {TY_STRING, NULL};
 static const type T_CHR = {TY_CHAR, NULL};
@@ -140,6 +142,12 @@ void builtins_use_mesh(const decl *vertices, const decl *vertices3, const decl *
     transforms_decl = transforms;
 }
 
+void builtins_use_sampling(const decl *filter, const decl *wrap)
+{
+    filter_decl = filter;
+    wrap_decl = wrap;
+}
+
 // Whether `t` stands for one of the program's types Draw.Mesh takes.
 static bool mesh_type(const type t)
 {
@@ -225,7 +233,7 @@ static const struct {
 // The table is built once and kept for the whole process, so its strings are
 // malloc'd rather than taken from the arena, which the language server resets.
 
-#define MAX_PARAMS 6
+#define MAX_PARAMS 8
 
 typedef struct signature {
     const char *owner;
@@ -246,7 +254,7 @@ typedef struct signature {
     unsigned out;            // A bit per `out` parameter, which the call makes: its bit in `mut` is set too
 } signature;
 
-#define MAX_SIGNATURES 384
+#define MAX_SIGNATURES 448
 
 static signature signatures[MAX_SIGNATURES];
 static int signature_count;
@@ -438,6 +446,11 @@ static void build_signatures(void)
     add("Math", "Cross", T_F3, "tide_cross_f3", 2, T_F3, T_F3, T_NONE);
     for (int n = 1; n <= 4; n++) {
         const type v = vector_type(false, n);
+        const type f = vector_type(true, n);
+        describe(add("Math", "AsInt", v, c_function("asint", f), 1, f, T_NONE, T_NONE), "value",
+                 "The same 32 bits as an int, component by component. This reinterprets float bits without a numeric conversion; Math.AsFloat reverses it.");
+        describe(add("Math", "AsFloat", f, c_function("asfloat", v), 1, v, T_NONE, T_NONE), "bits",
+                 "The same 32 bits as a float, component by component. This reinterprets int bits without a numeric conversion; Math.AsInt reverses it.");
         describe(add("Math", "Hash", (type){TY_INT, NULL}, c_function("hash", v), 1, v, T_NONE, T_NONE), "value",
                  "A well-mixed int from 0 to 2147483647, the same for the same value on every machine: random numbers "
                  "from cells, indices and seeds, like `Math.Hash(int3(x, y, seed)) % 6`. It's xxHash32 of the "
@@ -447,6 +460,11 @@ static void build_signatures(void)
              "A well-mixed int from 0 to 2147483647, the same for the same value on every machine: xxHash32 of the "
              "long's 8 bytes, without the top bit. A GPU has no long: a frag or vert hashes its halves, "
              "`Math.Hash(int2(int(x), int(x >> 32)))`, which is the same number.");
+    for (int n = 1; n <= 4; n++) {
+        const type f = vector_type(true, n);
+        describe(add("Math", "Hash", (type){TY_INT, NULL}, c_function("hash", f), 1, f, T_NONE, T_NONE), "value",
+                 "xxHash32 of the float's exact bits, component by component, without the top bit. The same as Math.Hash(Math.AsInt(value)); positive and negative zero hash differently.");
+    }
 
     // Noise (engine/src/noise.c): a point, and a seed a call can leave out.
     // On the GPU it's the same formulas (shader.c), so a frag draws what the match computed.
@@ -499,6 +517,29 @@ static void build_signatures(void)
     describe(add("Random", "NextQuaternionRotation", T_Q, "tide_random_next_quaternion_rotation", 0, T_NONE, T_NONE, T_NONE), NULL,
              "A rotation, every one as likely.");
 
+    // Double hashes and vector geometry
+    for (int n = 1; n <= 4; n++) {
+        const type v = double_vector_type(n);
+        describe(add("Math", "Hash", (type){TY_INT, NULL}, c_function("hash", v), 1, v, T_NONE, T_NONE), "value",
+                 "xxHash32 of the double's exact binary64 bits, component by component, without the top bit; signed zeros hash differently.");
+    }
+    for (int n = 2; n <= 4; n++) {
+        const type v = double_vector_type(n);
+        const type scalar = {TY_DOUBLE, NULL};
+        add("Math", "Dot", scalar, c_function("dot", v), 2, v, v, T_NONE);
+        add("Math", "Length", scalar, c_function("length", v), 1, v, T_NONE, T_NONE);
+        add("Math", "LengthSq", scalar, c_function("lengthsq", v), 1, v, T_NONE, T_NONE);
+        add("Math", "Distance", scalar, c_function("distance", v), 2, v, v, T_NONE);
+        add("Math", "DistanceSq", scalar, c_function("distancesq", v), 2, v, v, T_NONE);
+        describe(add("Math", "Normalize", v, c_function("normalize", v), 1, v, T_NONE, T_NONE), "vector",
+                 "A double vector at length 1; a squared length at or below the smallest normal double, or NaN, gives zero.");
+        add("Math", "Reflect", v, c_function("reflect", v), 2, v, v, T_NONE);
+        add("Math", "Csum", scalar, c_function("csum", v), 1, v, T_NONE, T_NONE);
+        add("Math", "Cmin", scalar, c_function("cmin", v), 1, v, T_NONE, T_NONE);
+        add("Math", "Cmax", scalar, c_function("cmax", v), 1, v, T_NONE, T_NONE);
+    }
+    add("Math", "Cross", double_vector_type(3), "tide_cross_d3", 2, double_vector_type(3), double_vector_type(3), T_NONE);
+
     // Quaternions
     add("Math", "Dot", T_F, "tide_dot_q", 2, T_Q, T_Q, T_NONE);
     describe(add("Math", "Normalize", T_Q, "tide_normalize_q", 1, T_Q, T_NONE, T_NONE), "rotation",
@@ -531,6 +572,21 @@ static void build_signatures(void)
     add("Math", "Transform", T_F3, "tide_transform_f4x4", 2, T_F4X4, T_F3, T_NONE);
     add("Math", "Rotate", T_F3, "tide_rotate_f4x4", 2, T_F4X4, T_F3, T_NONE);
 
+    // Double matrices
+    for (int n = 2; n <= 4; n++) {
+        const type m = double_matrix_type(n);
+        const type v = double_vector_type(n);
+        char mul_vec[64];
+        snprintf(mul_vec, sizeof mul_vec, "tide_mul_%s_%s", type_suffix(m), type_suffix(v));
+        add("Math", "Mul", m, c_function("mul", m), 2, m, m, T_NONE);
+        add("Math", "Mul", v, mul_vec, 2, m, v, T_NONE);
+        add("Math", "Transpose", m, c_function("transpose", m), 1, m, T_NONE, T_NONE);
+        add("Math", "Inverse", m, c_function("inverse", m), 1, m, T_NONE, T_NONE);
+        add("Math", "Determinant", T_D, c_function("determinant", m), 1, m, T_NONE, T_NONE);
+    }
+    add("Math", "Transform", double_vector_type(3), "tide_transform_d4x4", 2, double_matrix_type(4), double_vector_type(3), T_NONE);
+    add("Math", "Rotate", double_vector_type(3), "tide_rotate_d4x4", 2, double_matrix_type(4), double_vector_type(3), T_NONE);
+
     // Ways to build quaternions and matrices
     describe(add("quaternion", "AxisAngle", T_Q, "tide_axisangle_q", 2, T_F3, T_F, T_NONE),
              "axis, angle", "A rotation of `angle` radians around `axis`.");
@@ -562,6 +618,28 @@ static void build_signatures(void)
     ortho->params[3] = T_F;
     describe(ortho, "width, height, near, far",
              "An orthographic projection, for `Draw.Camera(transform, projection)`: a box `width` by `height` "
+             "around the camera's axis, from `near` to `far`, with no perspective.");
+
+    describe(add("double4x4", "TRS", double_matrix_type(4), "tide_trsq_d4x4", 3, double_vector_type(3), T_Q, double_vector_type(3)),
+             "translation, rotation, scale", "Scale, then rotate with a quaternion widened before matrix arithmetic, then translate.");
+    describe(add("double4x4", "TRS", double_matrix_type(4), "tide_trs_d4x4", 3, double_vector_type(3), double_matrix_type(3), double_vector_type(3)),
+             "translation, rotation, scale", "Scale, then rotate with a double3x3, then translate.");
+    describe(add("double4x4", "Translate", double_matrix_type(4), "tide_translate_d4x4", 1, double_vector_type(3), T_NONE, T_NONE),
+             "translation", "A translation matrix.");
+    describe(add("double4x4", "Scale", double_matrix_type(4), "tide_scaling_d4x4", 1, double_vector_type(3), T_NONE, T_NONE),
+             "scale", "A scale matrix, without rotation or translation.");
+    signature *double_perspective = add("double4x4", "PerspectiveFov", double_matrix_type(4), "tide_perspectivefov_d4x4", 3, T_D, T_D, T_D);
+    double_perspective->argc = 4;
+    double_perspective->params[3] = T_D;
+    describe(double_perspective, "verticalFov, aspect, near, far",
+             "A binary64 perspective projection: `verticalFov` in radians, and "
+             "`aspect` the screen's width over its height. It takes what a camera sees, looking down -z as "
+             "OpenGL's and Unity's views do, to the screen, from `near` to `far`.");
+    signature *double_ortho = add("double4x4", "Ortho", double_matrix_type(4), "tide_ortho_d4x4", 3, T_D, T_D, T_D);
+    double_ortho->argc = 4;
+    double_ortho->params[3] = T_D;
+    describe(double_ortho, "width, height, near, far",
+             "A binary64 orthographic projection: a box `width` by `height` "
              "around the camera's axis, from `near` to `far`, with no perspective.");
 
     // Sound, in local code: tide/audio.h. Codegen passes the frame's audio list first, and a Clip through
@@ -755,6 +833,15 @@ static void build_signatures(void)
     add_draw("RoundRect", "tide_draw_round_rect", "center, size, radius, color",
                "A filled rectangle whose corners are round, by `radius`: up to half its smaller side, which makes a pill.",
                4, &T_F2, &T_F2, &T_F, &T_COLOR);
+    add_draw("Rect", "tide_draw_rect_area", "rect, color",
+             "An antialiased rectangle at a Rect. No theme is needed. Unlike the center/size version, its edges keep fractional pixel positions.",
+             2, &T_RECT, &T_COLOR);
+    add_draw("Rect", "tide_draw_rect_area_radius", "rect, radius, color",
+             "An antialiased rectangle with round corners. The radius is clamped to half its smaller side.",
+             3, &T_RECT, &T_F, &T_COLOR);
+    add_draw("Rect", "tide_draw_rect_area_corners", "rect, radii, color",
+             "An antialiased rectangle with independent corner radii: top left, top right, bottom right, bottom left. Each is clamped to half its smaller side.",
+             3, &T_RECT, &T_F4, &T_COLOR);
     add_draw("RoundRect", "tide_draw_round_rect_rotated", "center, size, radius, rotation, color",
                "A filled rectangle with round corners, turned about its center. `rotation` is in radians, from +x "
                "towards +y: counterclockwise under a camera, clockwise on the screen.",
@@ -818,6 +905,27 @@ static void build_signatures(void)
     // and its wrap, where the call says them, are the texture's for this draw (gen_expr)
     describe(sampled(add("Draw", "Mesh", T_NONE, "tide_draw_mesh_texture", 3, T_VERTICES, T_INDICES, T_TEXTURE), 3),
              "vertices, indices, texture, filter, wrap", mesh_doc);
+    // A texture in one call, upright over a box: its filter and its wrap after the rest, as a mesh's are after its
+    // texture, and white where it says no color (gen_expr)
+    static const char sprite_doc[] =
+        "A texture drawn upright over a box, through the 2D camera: `center` and `size` as `Draw.Rect`'s, the "
+        "texture's top left corner at the box's top left (the top being towards the top of the screen, under a camera "
+        "too), each pixel times `color`, white where the call says none. A negative width or height mirrors it. "
+        "`part` is the part of the texture it shows, in uvs: (0, 0) its top left corner and (1, 1) its bottom right, as "
+        "a sheet's frame or an atlas's picture is. `rotation` turns it about its center, in radians from +x towards +y: "
+        "counterclockwise under a camera, clockwise on the screen. `filter` and `wrap`, after the rest, are how it's "
+        "read, as `Draw.Mesh`'s are: the texture's own where the call leaves them out.";
+    sampled(add_draw("Sprite", "tide_draw_sprite", "texture, center, size, filter, wrap", sprite_doc,
+                     3, &T_TEXTURE, &T_F2, &T_F2), 3);
+    sampled(add_draw("Sprite", "tide_draw_sprite", "texture, center, size, color, filter, wrap", sprite_doc,
+                     4, &T_TEXTURE, &T_F2, &T_F2, &T_COLOR), 4);
+    sampled(add_draw("Sprite", "tide_draw_sprite_rotated", "texture, center, size, rotation, color, filter, wrap",
+                     sprite_doc, 5, &T_TEXTURE, &T_F2, &T_F2, &T_F, &T_COLOR), 5);
+    sampled(add_draw("Sprite", "tide_draw_sprite_part", "texture, center, size, part, color, filter, wrap", sprite_doc,
+                     5, &T_TEXTURE, &T_F2, &T_F2, &T_RECT, &T_COLOR), 5);
+    sampled(add_draw("Sprite", "tide_draw_sprite_part_rotated",
+                     "texture, center, size, part, rotation, color, filter, wrap", sprite_doc,
+                     6, &T_TEXTURE, &T_F2, &T_F2, &T_RECT, &T_F, &T_COLOR), 6);
     static const char mesh3_doc[] =
         "A 3D mesh, placed in the world by `transform`, through the 3D camera: triangles, three of `indices` each, "
         "places in `vertices`, the nearest in front. Each pixel is its corners' colors blended across the "
@@ -832,7 +940,9 @@ static void build_signatures(void)
     static const char instanced_doc[] =
         "Draws one mesh for each element of `instances`, in order: a List<float4x4> of 3D transforms, or a List<T> "
         "of structs whose fields a vert or frag reads through a read-only T parameter. A 3D struct's float4x4 "
-        "transform places it; without one it uses the identity. A vert places 2D instances.";
+        "transform places it; without one it uses the identity. A vert places 2D instances. "
+        "A SkinnedMesh<V> can replace the vertices and indices: an optional Pose pose field animates each item; "
+        "without it the model uses authored rest. Invalid poses skip their item.";
     describe(add("Draw", "Instanced", T_NONE, "tide_draw_mesh3_instances_lists", 3, T_VERTICES3, T_INDICES, T_TRANSFORMS),
              "vertices, indices, instances", instanced_doc);
     signature *instances_texture_sampled = add("Draw", "Instanced", T_NONE, "tide_draw_mesh3_instances_texture", 3,
@@ -940,6 +1050,34 @@ static void build_signatures(void)
     // Text's methods: tide/text.h, with the text first. Positions and lengths
     // count characters, and are clamped to the text, never out of range.
     const type t_int = {TY_INT, NULL};
+    // Shards: what a sharded game's code can ask about the border (docs/spec.md, Shards)
+    describe(add("Shards", "Owns", T_BOOL, "tide_shard_owns_now", 1, (type){TY_ENTITY, NULL}, T_NONE, T_NONE), "entity",
+             "Whether this shard owns the entity now, so code running here can change it at once. Code that changes an "
+             "entity another shard owns waits until this one does, and runs again then: see `Shards.delay`. Always true "
+             "in a game that isn't sharded, or a match that isn't split.");
+    describe(add("Shards", "Together", T_NONE, "tide_shard_together", 2, (type){TY_ENTITY, NULL}, (type){TY_ENTITY, NULL}, T_NONE),
+             "a, b",
+             "For a library's code: the two entities act on each other from now on, like two bodies that touch, so a "
+             "sharded world keeps them on one shard until as many `Shards.Apart(a, b)` say they don't. Nothing in a game "
+             "that isn't sharded.");
+    {
+        const type kinds[4] = {{TY_FLOAT3, NULL}, {TY_DOUBLE3, NULL}, {TY_FLOAT2, NULL}, {TY_DOUBLE2, NULL}};
+        for (int i = 0; i < 4; i++) {
+            describe(add("Shards", "Spans", T_NONE, "tide_shard_spans", 3, (type){TY_ENTITY, NULL}, kinds[i], kinds[i]),
+                     "entity, center, size",
+                     "For a library's code: the entity covers that box this tick, past its position, like a floor or a "
+                     "terrain, so every shard near any of it has a copy of it. Say it each tick it does. Nothing in a game "
+                     "that isn't sharded: `Shards.on` says which, so the work of finding the box can be left out.");
+        }
+    }
+    describe(add("Shards", "Apart", T_NONE, "tide_shard_apart", 2, (type){TY_ENTITY, NULL}, (type){TY_ENTITY, NULL}, T_NONE),
+             "a, b",
+             "For a library's code: one `Shards.Together(a, b)` no longer holds, like two bodies that stopped touching. "
+             "With none left, the two go where each is. Nothing in a game that isn't sharded.");
+    describe(add("Shards", "Of", t_int, "tide_shard_of", 1, (type){TY_ENTITY, NULL}, T_NONE, T_NONE), "entity",
+             "For a view or a local handler: the number of the shard that owns the entity, as this machine sees it, "
+             "from 0, like a map coloring each shard's own. -1 for an entity no shard this machine follows has. "
+             "Always 0 in a game that isn't sharded.");
     // Debug: output for whoever runs the game, which changes nothing in the match
     describe(add("Debug", "Log", T_NONE, "tide_debug_log", 1, T_STR, T_NONE, T_NONE), "text",
              "Prints a line: to the terminal under `tide run`, the browser's console on the web and the system's log on "
@@ -1003,6 +1141,9 @@ static void build_signatures(void)
     // The GUI, in views: tide/gui.h. Codegen passes the view's GUI first, then
     // the widget's ID, then a mut argument's address.
     add_widget("Label", T_NONE, "label", "string text", 0, "Text.");
+    add_gui("double", "TryParse", T_BOOL, "tide_str_parse_double", "string text, out double value", 0,
+            "Reads the whole decimal text as the nearest double, ties to even, with identical bits on every platform. Invalid text or overflow gives false and zero.");
+
     add_widget("Button", T_BOOL, "button", "string text", GUI_ID, "A button. Returns whether it was pressed.");
     add_widget("Toggle", T_BOOL, "toggle", "string text, mut bool value", GUI_ID,
                "A checkbox for `value`. Returns whether it changed it.");
@@ -1036,10 +1177,33 @@ static void build_signatures(void)
                "a gamepad's south button, ends the typing in this field.");
     add_gui("GUILayout", "Space", T_NONE, "tide_gui_layout_space", "float size", 0,
             "Empty space: down in a vertical container, across in a horizontal one.");
+    add_gui("GUILayout", "Reserve", T_RECT, "tide_gui_layout_reserve", "float2 size", 0,
+            "Reserves a fixed-size layout slot for custom content. Returns its rect in GUI pixels; draws nothing.");
+    add_gui("GUILayout", "Reserve", T_RECT, "tide_gui_layout_reserve_flexible", "float2 size, float minWidth, bool expandWidth", 0,
+            "Reserves layout space that can shrink to minWidth and optionally expand to the column's width.");
+    add_gui("GUI", "Draw", T_NONE, "tide_gui_begin_draw", "", GUI_CONTAINER | GUI_DRAW | GUI_SKIPS,
+            "Draw calls in this block join the GUI in declaration order, above its panel. Starts in screen pixels "
+            "and restores the GUI's drawing settings when the block ends. Helpers draw into the same list.");
+    add_gui("GUI", "Key", T_NONE, "tide_gui_begin_key", "int key", GUI_CONTAINER | GUI_KEY,
+            "Gives this block a stable data key. Its controls retain identity when loop items move or disappear. "
+            "Use unique keys for siblings; zero is a valid key.");
+    add_gui("GUI", "Key", T_NONE, "tide_gui_begin_key_long", "long key", GUI_CONTAINER | GUI_KEY,
+            "A stable 64-bit data key for this block's controls, independent of loop order.");
+    add_gui("GUI", "Key", T_NONE, "tide_gui_begin_key_text", "string key", GUI_CONTAINER | GUI_KEY,
+            "A stable text key for this block's controls, independent of loop order. Labels can change without changing the key.");
     add_gui("GUILayout", "Vertical", T_NONE, "tide_gui_begin_vertical", "", GUI_ID | GUI_CONTAINER,
             "Stacks the widgets in its block top to bottom.");
     add_gui("GUILayout", "Horizontal", T_NONE, "tide_gui_begin_horizontal", "", GUI_ID | GUI_CONTAINER,
             "Puts the widgets in its block side by side.");
+    add_gui("GUILayout", "Scroll", T_NONE, "tide_gui_begin_layout_scroll", "float2 size, mut float2 offset",
+            GUI_ID | GUI_CONTAINER | GUI_SKIPS | GUI_SCROLL,
+            "A clipped layout viewport. Offset is in pixels from the content's top left. Wheel input scrolls the innermost hovered viewport and bubbles at its edge; navigation reveals the focused control.");
+    add_gui("GUI", "Scroll", T_NONE, "tide_gui_begin_scroll", "Rect rect, mut float2 offset",
+            GUI_ID | GUI_CONTAINER | GUI_SKIPS | GUI_SCROLL, "A clipped viewport at an explicit Rect, with layout content inside it.");
+    add_gui("GUI", "FocusNext", T_NONE, "tide_gui_focus_next", "", 0,
+            "Gives the next enabled control focus. Call conditionally immediately before that control.");
+    add_gui("GUI", "ClearFocus", T_NONE, "tide_gui_clear_focus", "", 0,
+            "Clears keyboard and gamepad focus. A number field keeps valid editing when it next runs.");
     add_gui("GUILayout", "Area", T_NONE, "tide_gui_begin_area_at", "Anchor anchor", GUI_ID | GUI_CONTAINER,
             "A panel on the screen, sized to its block's widgets, at one of nine anchors like `Anchor.MiddleCenter`.");
     add_gui("GUILayout", "Area", T_NONE, "tide_gui_begin_area", "Rect rect", GUI_ID | GUI_CONTAINER,
@@ -1143,12 +1307,20 @@ static const struct {
     const char *c_constant;
 } members[] = {
     {"Application", "title", TY_STRING, "tide_str_from_cstr(tide_game_title)"},
+    {"Shards", "delay", TY_INT, "tide_shard_delay_now"},
+    {"Shards", "on", TY_BOOL, "TIDE_SHARDS_ON"}, // Whether the game is sharded: false compiles a library's shard work away
     {"Application", "persistentDataPath", TY_STRING, "tide_application_persistent_data_path(tide_l->tide_io)"},
     {"Application", "temporaryCachePath", TY_STRING, "tide_application_temporary_cache_path(tide_l->tide_io)"},
     {"Math", "PI", TY_FLOAT, "TIDE_PI_F"},
     {"Math", "TAU", TY_FLOAT, "TIDE_TAU_F"},
     {"Math", "E", TY_FLOAT, "TIDE_E_F"},
+    {"double", "PI", TY_DOUBLE, "0x1.921fb54442d18p+1"},
+    {"double", "TAU", TY_DOUBLE, "0x1.921fb54442d18p+2"},
+    {"double", "E", TY_DOUBLE, "0x1.5bf0a8b145769p+1"},
     {"quaternion", "identity", TY_QUATERNION, "tide_identity_q()"},
+    {"double2x2", "identity", TY_DOUBLE2X2, "tide_identity_d2x2()"},
+    {"double3x3", "identity", TY_DOUBLE3X3, "tide_identity_d3x3()"},
+    {"double4x4", "identity", TY_DOUBLE4X4, "tide_identity_d4x4()"},
     {"float2x2", "identity", TY_FLOAT2X2, "tide_identity_f2x2()"},
     {"float3x3", "identity", TY_FLOAT3X3, "tide_identity_f3x3()"},
     {"float4x4", "identity", TY_FLOAT4X4, "tide_identity_f4x4()"},
@@ -1169,6 +1341,7 @@ static const struct {
     {"Draw", "list", TY_DRAW_LIST, "tide_draw_render_target(tide_draw, (tide_render_target){.id = TIDE_RENDER_WINDOW})"},
     {"Screen", "width", TY_FLOAT, "tide_ui->width"},
     {"Screen", "height", TY_FLOAT, "tide_ui->height"},
+    {"Screen", "scale", TY_FLOAT2, "tide_f2(tide_draw->screen_scale.x > 0.0f ? tide_draw->screen_scale.x : 1.0f, tide_draw->screen_scale.y > 0.0f ? tide_draw->screen_scale.y : 1.0f)"},
     // In views and the functions they call. The input's Sample reads it of its own devices (see check_member).
     {"Cursor", "locked", TY_BOOL, "tide_ui->devices.mouse.locked"},
     // In local code and the functions it calls: what the host said of this frame (tide_local_frame_time)
@@ -1180,6 +1353,10 @@ static const struct {
 // What editors say of members[i], for the ones a type and a name don't explain; else NULL.
 static const char *member_doc(const size_t i)
 {
+    if (strcmp(members[i].owner, "Screen") == 0 && strcmp(members[i].member, "scale") == 0) {
+        return "Physical pixels per logical window pixel, as a float2 for x and y. Read-only frame metadata, "
+               "like Screen.width and Screen.height. A host that supplies no scale uses (1, 1).";
+    }
     if (strcmp(members[i].owner, "Color") == 0 && strcmp(members[i].member, "none") == 0) {
         return "No color, where one can be left out: a `Shape`'s `color2` by default, for a fill of one color. It's "
                "not a color to draw with: its alpha is under 0, so nothing shows.";
@@ -1246,7 +1423,7 @@ bool builtin_owner(const str name)
         || str_eq_c(name, "Screen") || str_eq_c(name, "Cursor") || str_eq_c(name, "Frame") || str_eq_c(name, "Debug")
         || str_eq_c(name, "File") || str_eq_c(name, "Directory") || str_eq_c(name, "Path")
         || str_eq_c(name, "Application") || str_eq_c(name, "Storage") || str_eq_c(name, "Web") || str_eq_c(name, "Audio")
-        || str_eq_c(name, "Json") || str_eq_c(name, "Audience")
+        || str_eq_c(name, "Json") || str_eq_c(name, "Audience") || str_eq_c(name, "Shards")
         || builtin_type_named(name, &ignored);
 }
 
@@ -1256,6 +1433,7 @@ static bool unify(const expr *e, const bool ints_ok, type *out)
 {
     int dim = 1;
     bool is_float = !ints_ok;
+    bool is_double = false;
     bool color = false;
     for (int i = 0; i < e->args.count; i++) {
         if (e->args.items[i]->kind == E_DEFAULT) continue;
@@ -1265,6 +1443,7 @@ static bool unify(const expr *e, const bool ints_ok, type *out)
             continue;
         }
         if (t.kind == TY_CHAR) continue; // Its code point, an int, as a char is wherever an int goes
+        if (t.kind == TY_LONG) { is_double = true; continue; }
         if (!type_is_numeric(t)) return false;
         const int d = type_dim(t);
         if (d > 1) {
@@ -1272,9 +1451,15 @@ static bool unify(const expr *e, const bool ints_ok, type *out)
             dim = d;
         }
         if (type_is_float_based(t)) is_float = true;
+        if (type_is_double_based(t)) is_double = true;
+    }
+    if (is_double) {
+        bool actual_double = false;
+        for (int i = 0; i < e->args.count; i++) actual_double |= type_is_double_based(e->args.items[i]->type);
+        if (!actual_double || color) return false;
     }
     if (color && dim > 1) return false;
-    *out = color ? T_COLOR : vector_type(is_float, dim);
+    *out = color ? T_COLOR : is_double ? double_vector_type(dim) : vector_type(is_float, dim);
     return true;
 }
 
@@ -1434,6 +1619,20 @@ static bool default_ambiguous(const int first, const expr *e)
         int theirs[MAX_PARAMS];
         bind(s, e, mine);
         bind(other, e, theirs);
+        // Concrete operands still determine precision beside a default. In
+        // Dot(default, float3(...)), widening both operands to double3 is a
+        // worse fit than retaining float3, rather than a new ambiguity.
+        bool better = false, no_worse = true;
+        for (int i = 0; i < e->args.count; i++) {
+            const expr *arg = e->args.items[i];
+            if (arg->kind == E_DEFAULT || arg->enum_shorthand || out_untyped(arg)) continue;
+            const type t = real_type(s->params[mine[i]]);
+            const type u = real_type(other->params[theirs[i]]);
+            if (t.kind == u.kind && t.decl == u.decl) continue;
+            if (!type_assignable(u, t)) no_worse = false;
+            else if (!type_assignable(t, u)) better = true;
+        }
+        if (better && no_worse) continue;
         for (int i = 0; i < e->args.count; i++) {
             const type t = real_type(s->params[mine[i]]);
             const type u = real_type(other->params[theirs[i]]);
@@ -1560,7 +1759,6 @@ type resolve_builtin_call(const str owner, expr *e)
     }
 
     if (!known) {
-        // There was a NormalizeSafe while Normalize gave NaN for a zero vector
         if (str_eq_c(owner, "Math") && str_eq_c(e->name, "NormalizeSafe")) {
             diag_error(e->at, "Math.NormalizeSafe is gone: write Math.Normalize");
             diag_note("Math.Normalize no longer gives NaN for a vector too short to normalize: it gives zero, and "
@@ -1904,6 +2102,7 @@ bool builtin_describe(const str owner, const str name, sb *out)
 // Settings
 
 static const setting settings[] = {
+    {"startScene", TY_VOID, "Main", "The prefab or scene the program starts in. Name its declaration, such as Levels.Start; --scene overrides it."},
     {"maxRewind", TY_FLOAT, "0", "Maximum historical physics query age in seconds. Zero disables collider history. "
      "Input viewTime is engine-stamped and server-validated; games still validate firing and aim."},
     {"title", TY_STRING, "the game's name",
@@ -1914,7 +2113,7 @@ static const setting settings[] = {
      "as `Time.tickRate`. The machine that runs "
      "the match decides, and every player ticks at its rate. A new rate takes effect when a match starts."},
     {"maxPlayers", TY_INT, "16",
-     "How many players a match takes, from 1 to 256. The world keeps an input for each, and every player's "
+     "How many players a match takes, from 1 to 65536. The world keeps an input for each, and every player's "
      "input goes to every other each tick, so a match's traffic grows with the square of its players. Builds "
      "with different maxPlayers can't play together."},
     {"appId", TY_STRING, "dev.tide.<the game's name>",
@@ -1941,6 +2140,14 @@ static const setting settings[] = {
      "that took longest in the last tick. Nothing is measured for them until then. It's part of the build, so what "
      "`tide build` makes shows them too: take it out before players get the game, unless the frame rate is theirs "
      "to see. `tide run --stats` shows them open."},
+    {"shards", TY_BOOL, "false",
+     "Splits the match's world across servers by where things are, for worlds bigger than one server holds: each "
+     "region a shard of its own, with entities moving between them as they move. Game code doesn't change; code that "
+     "changes something across a border waits until its shard owns it. Needs `reach`. Where an entity is comes "
+     "from its `[Position]` fields, or its `Transform`."},
+    {"reach", TY_FLOAT, "none",
+     "With `shards`: how far anything in the game looks or acts, in world units: sight, an attack's range, a query "
+     "for what's nearby. Code near a border sees that far across it, and no region is narrower than twice it."},
     {"debugViews", TY_BOOL, "false",
      "The engine's debug views are on in the game: F7 shows the profiler, which says where a frame's time goes (the "
      "match's ticks, each view, drawing) and a tick's (each system, then its changes and events). Nothing is measured "

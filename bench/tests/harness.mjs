@@ -6,7 +6,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { compareResults, comparisonKey } from "../compare.mjs";
+import { compareDraw, compareResults, comparisonKey } from "../compare.mjs";
 
 const compare = resolve(dirname(fileURLToPath(import.meta.url)), "..", "compare.mjs");
 function invoke(command, args, expected) {
@@ -24,6 +24,8 @@ for (const value of ["0", "-1", "1.5", "NaN", "Infinity", "9007199254740992", "b
 }
 invoke(process.execPath, [compare, "--last"], 1);
 invoke(process.execPath, [compare, "--unknown"], 1);
+invoke(process.execPath, [compare, "draw", "--tide"], 1);
+invoke(process.execPath, [compare, "draw", "--c", "--last"], 1);
 assert.match(invoke(process.execPath, [compare, "--help"], 0), /Usage:/);
 
 const legacy = {
@@ -66,6 +68,34 @@ try {
     console.error = originalError;
     // Only the exact fresh directory created above is removed.
     rmSync(folder, { recursive: true, force: true });
+}
+
+// Drawing: Tide's rows beside C's of the same renderer, rounds of a label together.
+{
+    const row = (label, renderer, workload, total, baseline) => ({
+        benchmark: "draw", label, date: "2026-10-20T00:00:00Z", renderer, workload, width: 256, height: 352, frames: 100,
+        machine: "CPU A", competitive_baseline: baseline, record_ms: { median: total / 4 }, render_readback_ms: { median: total / 2 },
+        total_ms: { median: total }, ...(baseline ? { way: "C", device: "GPU A" } : {}),
+    });
+    const rows = [
+        row("old", "Vulkan", "65536 rects", 9, false),
+        ...[1, 2, 3].map((r) => row(`base-r${r}`, "Vulkan", "65536 rects", r, false)),
+        ...[1, 2, 3].map((r) => row(`base-r${r}`, "Vulkan", "65536 rects", 0.5, true)),
+        row("base-r1", "OpenGL 3.3", "nothing", 0.3, false),
+        row("base-r1", "OpenGL 3.3", "nothing", 0.1, true),
+        row("only-c-r1", "Vulkan", "65536 rects", 0.25, true),
+    ];
+    const output = [], originalLog = console.log;
+    console.log = (...args) => output.push(args.join(" "));
+    try {
+        compareDraw(rows, { tide: "base", c: "base" });
+    } finally {
+        console.log = originalLog;
+    }
+    const text = output.join("\n");
+    assert.match(text, /draw, Vulkan: Tide 'base' \(3 runs\) against C by hand 'base' \(3 runs\)/);
+    assert.match(text, /65536 rects\s+0\.500\s+0\.125\s+1\.000\s+0\.250\s+2\.000\s+0\.500\s+4\.00x/, text);
+    assert.match(text, /draw, OpenGL 3\.3: .*\n.*\n.*\n.*\nnothing\s.*3\.00x/, text);
 }
 
 const [session, versus] = process.argv.slice(2);

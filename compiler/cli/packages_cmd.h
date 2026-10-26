@@ -22,3 +22,7 @@ int tide_update(const char *folder, const char *const *names, int count);
 // one that comes with tide, into packages/ in the game's folder, and makes
 // its line that folder: the package is the game's own to change from there.
 int tide_eject(const char *folder, const char *name);
+
+// Pins the tide the game in `folder` builds with: `tide = <version>` in its tide.packages, this tide's version or
+// `version`, in place of a `tide` line it has. A tide of another version then refuses to build it (packages.c).
+int tide_pin(const char *folder, const char *version);

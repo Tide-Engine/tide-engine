@@ -6,7 +6,6 @@
 
 #include "tide/list.h"
 
-// The game's Cell, with the padding it writes out.
 typedef struct cell {
     int32_t id;
     float weight;
@@ -48,7 +47,7 @@ void c_out_twice(tide_list_out *bytes, const int first, const int count, const i
 {
     uint8_t *room = tide_list_out_room(bytes, (uint32_t)first);
     for (int i = 0; i < first; i++) room[i] = 0xEE;
-    tide_list_out_count(bytes, (uint32_t)first); // Of the first room: asking again starts over
+    tide_list_out_count(bytes, (uint32_t)first);
     room = tide_list_out_room(bytes, (uint32_t)count);
     for (int i = 0; i < count; i++) room[i] = byte_at(i, seed);
     tide_list_out_count(bytes, (uint32_t)count);

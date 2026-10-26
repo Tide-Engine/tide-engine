@@ -11,7 +11,7 @@ typedef struct build_options {
     bool managed;       // Internal deploy target: single-match sandboxed WASM reactor.
     bool server_strip_assets; // Explicit promise that custom C has no hidden asset dependencies.
     bool watch;         // Interactive run: rebuild as the game's files change
-    const char *output; // Where the program goes; NULL for <folder>/build/<name>
+    const char *output; // Where the program goes; NULL for <folder>/.build/<name>
     const char *title;  // The window's title, over the game's title setting; NULL for that, or else the folder's name
     bool stats;         // Show the stats, whether or not the game's stats setting does: a drawer of one line, in a corner
     bool stats_open;    // ...which starts open: tide run's, for whoever typed --stats to read them
@@ -20,11 +20,21 @@ typedef struct build_options {
     const char *const *defines; // Kept by the caller for the build and every watched rebuild
     int define_count;
     const char *editor_prefab, *editor_source, *editor_draft;
+    const char *scene; // Explicit startup override.
+    const char *work; // Private isolated build-cache root, or NULL for .tide/.
     bool editor_local;
+    bool unity; // For Unity's Tide package (tide unity): the game built for another program to run (tidec --embed)
+    const char *unity_assets; // ...and the Unity project's Assets folder, whose prefabs and scenes it has (unity_assets.h)
+    // tide unity --notified: the editor says when the project's files change (a `changed` line on its input), so
+    // between builds tide looks at the files it knows rather than going over all of Assets
+    bool notified;
+    // tide unity --declarations: the game's types alone (its systems, views, handlers, functions and shaders left
+    // out), for the C# of its components while its code doesn't build. Run by tide unity itself, quietly.
+    bool declarations;
 } build_options;
 
-// Builds a game with the engine files installed in `root` (see AGENTS.md,
-// Packaging). Returns the program's path (malloc'd), or NULL after reporting
+// Builds a game with the engine files installed in `root`.
+// Returns the program's path (malloc'd), or NULL after reporting
 // what went wrong.
 char *tide_build(const char *root, const build_options *opts);
 // Internal authoring module build; output is a private directory owned by the editor.
@@ -34,6 +44,13 @@ char *tide_build_editor(const char *root, const build_options *opts);
 // game (--host, --join, --connect, --size, and a run with no window's), ending
 // with NULL. Returns the game's exit code.
 int tide_run_native(const char *root, const build_options *opts, const char *const *args);
+
+// `tide unity`: builds the game for Unity's Tide package into opts->output: the
+// host Unity loads (tide_embed, tide/embed.h), then the game's libraries
+// (game-<n>, with its pack-<n>), numbered on from what's there, a new one each
+// time the game's files change while opts->watch, which the running game swaps
+// in. A watching one ends when its input does. Returns its exit code.
+int tide_unity(const char *root, const build_options *opts);
 
 // Interactive run: the game is a library in a small host program, rebuilt whenever
 // one of its files changes and swapped into the running game (see tide/host.h).
@@ -59,7 +76,7 @@ char *tide_work_folder(const char *folder);
 // Every file a build reads from the game's folder: its tide.packages, its
 // .tide files, its C and C++ with their headers and its libraries, and those
 // of its packages in folders inside it (packages from git aren't its files:
-// they're named by their commit). Not what tide made there (.tide/, build/).
+// they're named by their commit). Not what tide made there (.tide/, .build/).
 // Paths from the folder, with forward slashes, in the same order on every
 // machine; `count` gets how many. malloc'd, as each path is. NULL after
 // saying what's wrong: its tide.packages, or a package in a folder outside

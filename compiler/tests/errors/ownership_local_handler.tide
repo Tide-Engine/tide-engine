@@ -1,4 +1,4 @@
-// expect: 'with ownership' filters the entities a view runs for, and this is a handler
+// expect: 'with ownership' filters match entities in views and local handlers of match events
 local event Blink { }
 scene Main { }
 view Show() { Send(Blink); }

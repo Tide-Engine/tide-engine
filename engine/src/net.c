@@ -4,7 +4,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-// See tide/net.h.
+#ifdef __wasm_simd128__
+#include <wasm_simd128.h>
+#endif
 
 // ---------------------------------------------------------------------------
 // Addresses
@@ -80,8 +82,8 @@ void tide_address_format(const tide_address a, char *out, const size_t size)
 typedef struct datagram {
     uint32_t to;
     tide_address from;
-    double at;      // When it arrives
-    uint64_t order; // Sent before the ones with higher numbers
+    double at;
+    uint64_t order;
     uint32_t size;
     uint8_t *data;
 } datagram;
@@ -90,7 +92,7 @@ typedef struct endpoint {
     tide_loopback *net;
     uint32_t number;
     bool open;
-    double arrived; // When the datagram it last gave arrived
+    double arrived;
 } endpoint;
 
 struct tide_loopback {
@@ -104,7 +106,6 @@ struct tide_loopback {
     endpoint endpoints[LOOPBACK_ENDPOINTS];
 };
 
-// splitmix64: a number from 0 to 1.
 static double chance(tide_loopback *net)
 {
     uint64_t z = (net->random += 0x9E3779B97F4A7C15ull);
@@ -621,37 +622,239 @@ uint64_t tide_hash(const void *data, const size_t size)
     return tide_hash_end(tide_hash_more(TIDE_HASH_START, data, size));
 }
 
-// Four chains, 32 bytes a round: chain k takes the words at 8k, 32 + 8k and on.
-// What's left after the last whole round goes a word a chain, from the first,
-// the last of them short and zeros past its bytes. Then the size and the four
-// chains are one chain's words, so two runs that differ in length, or anywhere
-// in a word, end as other numbers.
-uint64_t tide_hash_wide(const void *data, const size_t size)
+// ---------------------------------------------------------------------------
+// A page's hash: XXH3's accumulation, with keys and an end of our own. The run,
+// with zeros after it to a whole number of stripes of 64 bytes, goes a stripe
+// at a time into eight accumulators of 64 bits, one a word: for word j of a
+// stripe, d, and its key word k, accumulator j adds the product of the low
+// and high 32 bits of d ^ k, and accumulator j ^ 1 adds d itself (a product of
+// zero would lose the word otherwise, and a word's sum is never where its
+// product is). Stripe n of each block of 16 takes key words n to n + 7, and
+// after a block each accumulator a becomes ((a ^ a >> 47) ^ key[16 + j]) times
+// WIDE_SCRAMBLE. Then the size and the eight accumulators are tide_hash's
+// chain's words, and its end is tide_hash's. All of it is integer arithmetic,
+// so a way that takes vectors gives the bits the plain words give, everywhere;
+// 32 by 32 to 64-bit multiplies are what SSE2, NEON and WebAssembly's SIMD all
+// have, where a 64 by 64 to 128-bit one is several multiplies on wasm32.
+//
+// The keys and the accumulators' starting values are splitmix64's numbers
+// from 0x7469646568617368 ("tidehash"), the first 24 and the next 8.
+
+static const uint64_t wide_key[24] = {
+    0xF1D471BF300D2ACAull, 0xB98D6EEDD4DBCB43ull, 0xE41EE98106E4C3FCull, 0x9C8A5940DDCAF100ull,
+    0x11B96D3559621C0Full, 0x2F6492F64C4825C7ull, 0x4F68DFF234BD3F70ull, 0x5117AE9AB1A42248ull,
+    0xAD0C1209D1D3DB34ull, 0xAC457600ABAB1F16ull, 0x4B606D258A0FA763ull, 0x043784BAA9E95F59ull,
+    0x0AE390D1EF5642B1ull, 0x9D695D2FAB53C13Bull, 0x532E68DCA3E90347ull, 0xF8E6E506A1500E40ull,
+    0x47CDFC62D58F7BF2ull, 0x296BDD3EE2449306ull, 0x1F8513F3B10D4892ull, 0xDB64DF13CE0E619Full,
+    0xABEF04B0B493CF32ull, 0x5ECC859D5BDACECEull, 0x8D192B91AAD61BCDull, 0xC15E687D2404F4AAull,
+};
+
+static const uint64_t wide_start[8] = {
+    0xAD7D5C3025A25336ull, 0x2F00DA7797F2515Aull, 0x1934E91F08D7208Cull, 0xF312F6ED745EF31Aull,
+    0x0662C9D801DEFBCEull, 0xA776B25C6399975Aull, 0x7821036870D8D6C0ull, 0x0373291AABC48B14ull,
+};
+
+#define WIDE_STRIPE 64u
+#define WIDE_BLOCK 16u // Stripes a block
+#define WIDE_SCRAMBLE 0x9E3779B1u
+
+static uint64_t wide_end(const uint64_t acc[8], const size_t size)
 {
-    const uint8_t *p = data;
-    uint64_t chain[4];
-    for (uint64_t k = 0; k < 4u; k++) chain[k] = TIDE_HASH_START + k * 0xBF58476D1CE4E5B9ull;
-    size_t i = 0;
-    for (; i + 32u <= size; i += 32u) {
-        uint64_t words[4];
-        memcpy(words, p + i, 32);
-        chain[0] = add_word(chain[0], words[0]);
-        chain[1] = add_word(chain[1], words[1]);
-        chain[2] = add_word(chain[2], words[2]);
-        chain[3] = add_word(chain[3], words[3]);
-    }
-    uint32_t k = 0;
-    for (; i + 8u <= size; i += 8u, k++) {
-        uint64_t word;
-        memcpy(&word, p + i, 8);
-        chain[k] = add_word(chain[k], word);
-    }
-    if (i < size) {
-        uint64_t tail = 0;
-        for (size_t at = 0; i + at < size; at++) tail |= (uint64_t)p[i + at] << (8u * at);
-        chain[k] = add_word(chain[k], tail);
-    }
     uint64_t h = add_word(TIDE_HASH_START, (uint64_t)size);
-    for (k = 0; k < 4u; k++) h = add_word(h, chain[k]);
+    for (uint32_t j = 0; j < 8u; j++) h = add_word(h, acc[j]);
     return mix(h);
 }
+
+// Each way goes through whole blocks with the next block asked for meanwhile
+// (a hint, which changes no bits: hardware prefetchers stop at each 4 KiB of
+// memory, and a page is more), then the stripes left, then the last one short,
+// copied into zeros.
+#define WIDE_RUN(acc, stripe, scramble, prefetch)                                                  \
+    do {                                                                                            \
+        const uint8_t *p = data;                                                                    \
+        const size_t whole = size / WIDE_STRIPE;                                                    \
+        size_t n = 0;                                                                               \
+        for (; n + WIDE_BLOCK <= whole; n += WIDE_BLOCK) {                                          \
+            const bool more = n + 2u * WIDE_BLOCK <= whole;                                         \
+            for (uint32_t s = 0; s < WIDE_BLOCK; s += 2u) {                                         \
+                if (prefetch && more) __builtin_prefetch(p + (n + WIDE_BLOCK + s) * WIDE_STRIPE);   \
+                stripe(acc, p + (n + s) * WIDE_STRIPE, wide_key + s);                               \
+                if (prefetch && more) __builtin_prefetch(p + (n + WIDE_BLOCK + s + 1u) * WIDE_STRIPE); \
+                stripe(acc, p + (n + s + 1u) * WIDE_STRIPE, wide_key + s + 1u);                     \
+            }                                                                                       \
+            scramble(acc);                                                                          \
+        }                                                                                           \
+        for (; n < whole; n++) stripe(acc, p + n * WIDE_STRIPE, wide_key + n % WIDE_BLOCK);          \
+        if (size % WIDE_STRIPE) {                                                                   \
+            uint8_t last[WIDE_STRIPE] = {0};                                                        \
+            memcpy(last, p + n * WIDE_STRIPE, size % WIDE_STRIPE);                                  \
+            stripe(acc, last, wide_key + n % WIDE_BLOCK);                                           \
+            if (n % WIDE_BLOCK == WIDE_BLOCK - 1u) scramble(acc);                                   \
+        }                                                                                           \
+    } while (0)
+
+#ifdef __wasm_simd128__
+// WebAssembly's own: two vectors' low halves gathered into one vector and
+// their high halves into another, then extmul_low and extmul_high multiply
+// them, four products for two shuffles, where i64x2.mul is three multiplies a
+// vector under V8.
+static inline void wide_stripe_wasm(v128_t acc[4], const uint8_t *p, const uint64_t *key)
+{
+    for (uint32_t v = 0; v < 4u; v += 2u) {
+        const v128_t x = wasm_v128_load(p + 16u * v), y = wasm_v128_load(p + 16u * v + 16u);
+        const v128_t dx = wasm_v128_xor(x, wasm_v128_load(key + 2u * v));
+        const v128_t dy = wasm_v128_xor(y, wasm_v128_load(key + 2u * v + 2u));
+        const v128_t lo = wasm_i32x4_shuffle(dx, dy, 0, 2, 4, 6), hi = wasm_i32x4_shuffle(dx, dy, 1, 3, 5, 7);
+        acc[v] = wasm_i64x2_add(acc[v], wasm_i64x2_add(wasm_i64x2_shuffle(x, x, 1, 0), wasm_u64x2_extmul_low_u32x4(lo, hi)));
+        acc[v + 1u] =
+            wasm_i64x2_add(acc[v + 1u], wasm_i64x2_add(wasm_i64x2_shuffle(y, y, 1, 0), wasm_u64x2_extmul_high_u32x4(lo, hi)));
+    }
+}
+
+static inline void wide_scramble_wasm(v128_t acc[4])
+{
+    const v128_t by = wasm_i32x4_splat((int32_t)WIDE_SCRAMBLE);
+    for (uint32_t v = 0; v < 4u; v++) {
+        v128_t a = acc[v];
+        a = wasm_v128_xor(a, wasm_u64x2_shr(a, 47));
+        a = wasm_v128_xor(a, wasm_v128_load(wide_key + 16u + 2u * v));
+        // a * WIDE_SCRAMBLE as the products of its low and its high halves, the high one moved up
+        const v128_t halves = wasm_i32x4_shuffle(a, a, 0, 2, 1, 3);
+        acc[v] = wasm_i64x2_add(wasm_u64x2_extmul_low_u32x4(halves, by), wasm_i64x2_shl(wasm_u64x2_extmul_high_u32x4(halves, by), 32));
+    }
+}
+
+uint64_t tide_hash_wide_baseline(const void *data, const size_t size)
+{
+    v128_t acc[4];
+    memcpy(acc, wide_start, sizeof acc);
+    WIDE_RUN(acc, wide_stripe_wasm, wide_scramble_wasm, false);
+    uint64_t out[8];
+    memcpy(out, acc, sizeof out);
+    return wide_end(out, size);
+}
+#else
+// In clang's vectors of two words, which are SSE2's, NEON's and (where the
+// build has no SIMD) plain words: the product of a word's halves is pmuludq
+// on x86 and umlal on ARM.
+typedef uint64_t wide_v2 __attribute__((vector_size(16)));
+
+static inline wide_v2 wide_load2(const void *p)
+{
+    wide_v2 v;
+    memcpy(&v, p, 16);
+    return v;
+}
+
+static inline void wide_stripe2(wide_v2 acc[4], const uint8_t *p, const uint64_t *key)
+{
+    for (uint32_t v = 0; v < 4u; v++) {
+        const wide_v2 d = wide_load2(p + 16u * v);
+        const wide_v2 dk = d ^ wide_load2(key + 2u * v);
+        acc[v] += __builtin_shufflevector(d, d, 1, 0) + (dk & 0xFFFFFFFFu) * (dk >> 32);
+    }
+}
+
+static inline void wide_scramble2(wide_v2 acc[4])
+{
+    for (uint32_t v = 0; v < 4u; v++) {
+        wide_v2 a = acc[v];
+        a ^= a >> 47;
+        a ^= wide_load2(wide_key + 16u + 2u * v);
+        acc[v] = (a & 0xFFFFFFFFu) * WIDE_SCRAMBLE + (((a >> 32) * WIDE_SCRAMBLE) << 32);
+    }
+}
+
+uint64_t tide_hash_wide_baseline(const void *data, const size_t size)
+{
+    wide_v2 acc[4];
+    memcpy(acc, wide_start, sizeof acc);
+    WIDE_RUN(acc, wide_stripe2, wide_scramble2, true);
+    uint64_t out[8];
+    memcpy(out, acc, sizeof out);
+    return wide_end(out, size);
+}
+#endif
+
+#if defined(__x86_64__) || defined(_M_X64)
+// AVX2's vectors of four words, a stripe in two, where the CPU has them:
+// twice SSE2's speed on a page in cache.
+typedef uint64_t wide_v4 __attribute__((vector_size(32)));
+
+__attribute__((target("avx2"))) static inline void wide_stripe4(wide_v4 acc[2], const uint8_t *p, const uint64_t *key)
+{
+    for (uint32_t v = 0; v < 2u; v++) {
+        wide_v4 d, k;
+        memcpy(&d, p + 32u * v, 32);
+        memcpy(&k, key + 4u * v, 32);
+        const wide_v4 dk = d ^ k;
+        acc[v] += __builtin_shufflevector(d, d, 1, 0, 3, 2) + (dk & 0xFFFFFFFFu) * (dk >> 32);
+    }
+}
+
+__attribute__((target("avx2"))) static inline void wide_scramble4(wide_v4 acc[2])
+{
+    for (uint32_t v = 0; v < 2u; v++) {
+        wide_v4 a = acc[v], k;
+        memcpy(&k, wide_key + 16u + 4u * v, 32);
+        a ^= a >> 47;
+        a ^= k;
+        acc[v] = (a & 0xFFFFFFFFu) * WIDE_SCRAMBLE + (((a >> 32) * WIDE_SCRAMBLE) << 32);
+    }
+}
+
+__attribute__((target("avx2"))) static uint64_t wide_avx2(const void *data, const size_t size)
+{
+    wide_v4 acc[2];
+    memcpy(acc, wide_start, sizeof acc);
+    WIDE_RUN(acc, wide_stripe4, wide_scramble4, true);
+    uint64_t out[8];
+    memcpy(out, acc, sizeof out);
+    return wide_end(out, size);
+}
+
+static void wide_cpuid(const uint32_t leaf, uint32_t r[4])
+{
+    __asm__ volatile("cpuid" : "=a"(r[0]), "=b"(r[1]), "=c"(r[2]), "=d"(r[3]) : "a"(leaf), "c"(0u));
+}
+
+// AVX2, and the system saving AVX's registers (OSXSAVE, then XCR0's SSE and
+// AVX bits). Looked at once; threads that look at the same time find the same.
+static bool wide_has_avx2(void)
+{
+    static int known; // 0 until looked at, then 1 without AVX2 and 2 with it
+    int got = __atomic_load_n(&known, __ATOMIC_RELAXED);
+    if (!got) {
+        uint32_t r[4];
+        wide_cpuid(0, r);
+        bool avx2 = r[0] >= 7u;
+        if (avx2) {
+            wide_cpuid(1, r);
+            avx2 = (r[2] & (1u << 27 | 1u << 28)) == (1u << 27 | 1u << 28);
+        }
+        if (avx2) {
+            uint32_t low, high;
+            __asm__ volatile("xgetbv" : "=a"(low), "=d"(high) : "c"(0u));
+            (void)high;
+            avx2 = (low & 6u) == 6u;
+        }
+        if (avx2) {
+            wide_cpuid(7, r);
+            avx2 = (r[1] & 1u << 5) != 0;
+        }
+        got = avx2 ? 2 : 1;
+        __atomic_store_n(&known, got, __ATOMIC_RELAXED);
+    }
+    return got == 2;
+}
+
+uint64_t tide_hash_wide(const void *data, const size_t size)
+{
+    return wide_has_avx2() ? wide_avx2(data, size) : tide_hash_wide_baseline(data, size);
+}
+#else
+uint64_t tide_hash_wide(const void *data, const size_t size)
+{
+    return tide_hash_wide_baseline(data, size);
+}
+#endif

@@ -24,3 +24,8 @@ void tide_audio_out_close(void);
 // more channels given the two and silence. Called on the device's thread, or
 // the page's, one thread at a time.
 void tide_audio_out_fill(float *out, uint32_t frames, uint32_t rate, uint32_t channels);
+
+// Starts the pull over, from the mixer's next block: for an embedded game's
+// end (tide_embed_destroy), whose last block's rest is no next game's. From
+// the thread that fills, or with none filling.
+void tide_audio_out_reset(void);

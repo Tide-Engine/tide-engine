@@ -23,6 +23,11 @@ Drawing is immediate mode: views record their drawing calls every frame. Views r
 
 A view's `mut` parameters, `Spawn`, `Add`, `Remove`, `Destroy` and `Send` are all local: views can change this machine's own state, like particles or a menu, but not the match (see [Local state](./local-state.md)). Only views, and the functions they call, can draw.
 
+For expensive preparation such as voxel meshing, start a local async function
+that awaits a [local worker](./tasks.md#local-workers), and draw the last
+completed geometry while it works. A heavy calculation directly in a view
+blocks that frame.
+
 `[RunInEditor]` also runs a view in the native prefab editor's compiled preview.
 `[EditorOnly]` runs it only there; an unmarked view runs only in the game. Choose
 one attribute, without arguments. Both keep the ordinary view access rules.
@@ -99,6 +104,7 @@ Positions and sizes are in world units, with `y` up. The camera maps them to the
 | `Draw.MeasureText(text, size)` | Nothing: it returns how big `Draw.Text` would draw the text, a `float2` of its width and height (see [Measuring text](#measuring-text)). `MeasureText(text, size, font)` measures in a weight |
 | `Draw.Mesh(vertices, indices)` | Triangles, with a color at each corner (see [Meshes](./meshes-and-textures.md#meshes)) |
 | `Draw.Mesh(vertices, indices, texture)` | Triangles drawn with a texture, read as it says or with the filter and the wrap after it (see [Textures](./meshes-and-textures.md#textures)) |
+| `Draw.Sprite(texture, center, size, color)` | A texture upright over a box, its top left at the box's top left, times `color` (white without one). `Sprite(texture, center, size, part, color)` draws the part of it a `Rect` of uvs covers, and a `rotation` before the color turns it (see [Sprites](./meshes-and-textures.md#sprites)) |
 | `Draw.Blend(mode) { ... }` | How what's drawn in the block goes over what's there: added, multiplied, replaced (see [Blending](./draw-settings.md#blending)) |
 | `Draw.Tint(color) { ... }` | Fades or colors what's drawn in the block (see [Tints](./draw-settings.md#tints)) |
 | `Draw.Stencil(test, value, operation) { ... }` | What's drawn in the block is drawn only where a number kept for each pixel passes a test, and changes that number where it draws: masks, cut-outs, counting (see [Stencil](./draw-settings.md#stencil)) |
@@ -183,6 +189,17 @@ Shapes of every kind drawn one after another go to the GPU together, in one draw
 ### The general shape
 
 Those calls are short for `Draw.Shape`, which takes everything a shape can have:
+
+For a rectangle already represented by a `Rect`, use `Draw.Rect(rect, color)`,
+`Draw.Rect(rect, radius, color)` or `Draw.Rect(rect, radii, color)`. All three
+have antialiased edges, including square corners. A `float4` gives the top-left,
+top-right, bottom-right and bottom-left radii; each is clamped to half the
+smaller side. Equal radii use the ordinary rounded-box path. These filled boxes
+need no GUI theme and work inside `GUI.Draw` as well as ordinary views.
+
+The center/size `Draw.Rect` overload keeps its whole-pixel behavior for seamless
+adjacent tiles. `Shape` continues to provide gradients, outlines and soft edges
+with a uniform corner radius.
 
 ```csharp
 struct Shape // Built in
@@ -374,9 +391,22 @@ component Body
 }
 ```
 
-`[Position]` on a float or floating-point vector keeps linear tick interpolation and accumulates an additive presentation offset. `[Rotation]` on a float uses the shortest wrapped angular difference, in radians. On a quaternion it uses the shortest relative rotation, for both tick interpolation and correction smoothing.
+`[Position]` accepts `float`, `double` and their vector types. It keeps linear tick interpolation and accumulates an additive presentation offset in the field's own precision. Double positions and correction errors remain double, preserving small offsets at large world coordinates. `[Rotation]` on a float uses the shortest wrapped angular difference, in radians. On a quaternion it uses the shortest relative rotation, for both tick interpolation and correction smoothing.
+
+For a game with its own large-world transform, the same attribute works on double coordinates:
+
+```csharp
+component WorldPosition
+{
+    [Position] double3 position;
+}
+```
+
+This smooths the value views read. Convert to rendering coordinates after subtracting the camera position in double precision; the drawing APIs still take floats.
 
 The error decays exponentially with frame time toward zero, or the identity rotation, with a provisional half-life of 75 ms. Another correction accumulates with whatever error remains. Ordinary movement follows the corrected simulation, so moving and aiming stay responsive. Untagged fields keep ordinary tick interpolation.
+
+The built-in `Transform` already uses this behavior for its match fields: `localPosition` is a `[Position]` and `localRotation` a `[Rotation]`. Its scale uses ordinary tick interpolation. These defaults apply to view bindings; `World.LocalToWorld` and other stored-state queries retain their existing behavior. Local-entity Transforms read their current values.
 
 This state belongs to this machine's presentation. Simulation values and collisions correct immediately, and snapshots, hashes and network state are unaffected. `entity.Snap()` and `singleton.Snap()` also clear any accumulated error, keeping intentional jumps immediate. A new match, a hot reload or a replacement world with no comparable presentation history clears the error too. While a host migration reconnects, the frozen presentation retains its error; adopting the new network timeline clears it.
 

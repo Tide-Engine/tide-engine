@@ -1,5 +1,31 @@
 # Dedicated servers
 
+## Sharded worlds (2026-10-23)
+
+`tide_serve` of a sharded game runs the engine's orchestrator over its
+hosting, each shard a hosted match: `tide_hosting_keep` keeps one running
+with no players, and `tide_hosting_front` makes the root the match a request
+for match 0 joins, rather than creating one. `tide_hosting_server` gives a
+match's server. Options `--shards`, `--shard-width` and `--shard-most`, which
+`tide run --server` passes on. A player follows further shards over the
+connection they joined by, UDP or room (`tide_hosting_client_beside`), and
+regions' matches take join requests without credentials (`tide_hosting_open`):
+their servers admit by the root's cookie. Tested by `tide_server_shards` and
+`tide_server_shards_room`, a server and a client process. `--shard-journal <folder>` keeps
+the world in a folder and goes on from it (`tide_server_shards_journal` kills one
+outright and starts it again). Details and gaps:
+notes/sharding.md.
+
+## Shared player/connection ceiling (2026-10-20)
+
+TIDE_PLAYERS_MOST is the common 65,536 ceiling for a match's maxPlayers and a
+host's max_connections. Hosting and --max-connections validation reference the
+shared constant; defaults remain 16 per match and 256 across the host. The
+settings still limit independent resources. Native room peers now grow on
+demand to that ceiling instead of stopping at 256. Inner session protocol 16
+and caller-provided recovery buffers require host/game rebuilds; the outer
+hosting envelope remains version 2. Details and validation: netcode.md.
+
 ## CI corrections (2026-10-15)
 
 Run `38761765659` passed the full-pack/reduced-pack client checks over both
@@ -21,7 +47,7 @@ Requested Build 38772910822 passes the complete native, MinGW, web and sanitizer
 suites and publishes v0.4.0-nightly.3. Both transport integration cases pass on
 Windows, Linux, macOS and MinGW; the natural-exit fixtures pass as well.
 
-Run `38716371711` found two server-build defects in `bfc10e14`.
+Run `38716371711` found two server-build defects in `eea983cb`.
 The optional process hook now has a weak no-op definition on Apple targets:
 a standalone Mach-O executable cannot link an absent weak reference with the
 ordinary link flags, even with `weak_import`. A game's strong C definition
@@ -61,7 +87,7 @@ picks, Provisional in docs/spec.md. No Tide declaration syntax was approved or
 introduced. Managed/sandboxed hosting and the inactive build service are separate.
 
 The subsequent agreed managed-hosting design is recorded in
-[managed-hosting.md](managed-hosting.md): local artifact builds/uploads, WASM
+`notes/managed-hosting.md` of `Tide-Engine/tide-services`: local artifact builds/uploads, WASM
 match isolation, simulation compatibility, persistent recovery and prepaid
 billing. That first workflow is implemented locally, but has not been deployed.
 Native C globals remain process-wide; managed WASM isolates them per match.

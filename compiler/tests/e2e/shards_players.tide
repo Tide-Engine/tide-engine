@@ -1,0 +1,152 @@
+// A player walking across a shard's border (tests/e2e/shards_players_test.c):
+// they join the world at the root, which spawns their avatar; it moves to the
+// region it's in, and their machine follows it there and on across the border.
+settings
+{
+    shards = true;
+    reach = 8;
+    maxPlayers = 4;
+}
+
+input Controls { float2 move; }
+
+component Avatar
+{
+    [Position] float2 position;
+    int steps;
+    int moved;
+}
+
+scene Main { }
+
+event(PlayerJoined joined) Join()
+{
+    Spawn(Avatar { position = float2(-12, 0) }, Owner { player = joined.player });
+}
+
+system Walk(mut Avatar a, Controls input, Time time)
+{
+    a.position += input.move * (8.0 * time.dt);
+    a.steps += 1;
+    if (input.move.x != 0) a.moved += 1;
+}
+
+// Markers in the right region, one near the border, which the left region
+// holds a copy of, and three far from it: what a machine whose player is on
+// the left sees when it watches an area on the right
+// (shards_a_machine_watches_an_area_far_from_its_player)
+component Marker
+{
+    [Position] float2 position;
+    string name;
+    Grid2<int> cells; // A cell set where it is, which a query reads from its own shard's world
+}
+
+system Mark(mut Marker marker)
+{
+    if (marker.cells[int2(1, 1)] == 0) marker.cells[int2(1, 1)] = 7;
+}
+
+singleton Seeded { bool done; }
+
+system Seed(mut Seeded seeded)
+{
+    if (seeded.done) return;
+    seeded.done = true;
+    Spawn(Marker { position = float2(3, 0), name = "near" });
+    Spawn(Marker { position = float2(25, 0), name = "far" });
+    Spawn(Marker { position = float2(30, 0), name = "far" });
+    Spawn(Marker { position = float2(35, 0), name = "far" });
+}
+
+local singleton Sight
+{
+    bool watching;
+    int drawn;   // Markers the view for each ran for, this frame
+    int queried; // ...and a query's rows
+    int named;   // ...of them named "far", as the query has them
+    int found;   // ...and as World has them
+    int called;  // ...and as a function's World has them
+    int marked;  // ...and with their cell set, as the query has them
+    float x;     // The x of those the view for each ran for, added up
+    int avatars; // Avatars the view for each ran for
+    int blinks;  // Blinks local handlers heard, from wherever they were sent
+    int shown;   // Markers that came to be seen, and went
+    int hidden;
+    int of;      // The shard that owns each marker the view for each ran for (Shards.Of), added up
+    int rowsOf;  // ...and each of a query's rows
+    int avatarOf; // ...and the avatar's
+}
+
+// Each marker blinks twice a second, on whichever shard has it
+event Blink { }
+
+system Shine(Time time, with Marker)
+{
+    if (time.tick % 30 == 0) this.Send(Blink { });
+}
+
+local event(Blink) Blinked(mut Sight sight) { sight.blinks += 1; }
+local event(Shown) SeeMarker(mut Sight sight, with Marker) { sight.shown += 1; }
+local event(Hidden) LoseMarker(mut Sight sight, with Marker) { sight.hidden += 1; }
+
+view Look(mut Sight sight)
+{
+    if (sight.watching) Session.Watch(float2(30, 0), float2(20, 20));
+    else Session.Unwatch();
+    sight.drawn = 0;
+    sight.queried = 0;
+    sight.named = 0;
+    sight.found = 0;
+    sight.called = 0;
+    sight.marked = 0;
+    sight.x = 0;
+    sight.avatars = 0;
+    sight.of = 0;
+    sight.rowsOf = 0;
+}
+
+view DrawAvatar(mut Sight sight, with Avatar)
+{
+    sight.avatars += 1;
+    sight.avatarOf = Shards.Of(this);
+}
+
+view DrawMarker(Marker marker, mut Sight sight)
+{
+    sight.drawn += 1;
+    sight.x += marker.position.x;
+    sight.of += Shards.Of(this);
+}
+
+bool Far(World world, Entity marker)
+{
+    return world.Get<Marker>(marker).name == "far";
+}
+
+view QueryMarkers(query (Marker marker) markers, World world, mut Sight sight)
+{
+    foreach (var row in markers)
+    {
+        sight.queried += 1;
+        sight.rowsOf += Shards.Of(row.entity);
+        if (row.marker.name == "far") sight.named += 1;
+        if (row.marker.cells[int2(1, 1)] == 7) sight.marked += 1;
+        if (world.Has<Marker>(row.entity) && world.Get<Marker>(row.entity).name == "far") sight.found += 1;
+        if (Far(world, row.entity)) sight.called += 1;
+    }
+}
+
+// A singleton holding a C library's state, and a setting beside it: the
+// avatar's own code writes the setting on whichever region has it, and the
+// root takes it as the world's (shards_a_player_follows_their_avatar_across_borders)
+singleton Tuning
+{
+    [Native] long handle;
+    float speed = 1;
+}
+
+system Tune(Avatar avatar, mut Tuning tuning)
+{
+    if (avatar.position.x > 5 && tuning.speed == 1) tuning.speed = 2;
+}

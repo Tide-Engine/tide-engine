@@ -1,0 +1,119 @@
+// Events a system's one Send records in runs, and others sent one after
+// another, which the end of the tick takes in loops of their own: targets
+// found in their table by their handle, ones a
+// removal moved to another row, ones in another archetype than the handlers
+// take, ones gone by their turn and slots a handler's spawn took again, a
+// sparse filter, an event whose handlers take two archetypes, the world as the
+// target, a local handler that hears them, and what handlers send and spawn
+// meanwhile, across chunks and runs. events_runs_test.c works the same out in C.
+
+scene Main { }
+
+component Target { int id; }
+component Health { int value; }
+component Armor { int value; }
+[Sparse]
+component Shielded { }
+component Shooter { int id; Entity target; int damage; }
+
+singleton Log
+{
+    List<Entity> targets;
+    List<int> trace;
+    bool ready;
+}
+
+event Hit { int damage; int from; }
+event Ping { int from; }
+event Roll { int from; }
+event Echo { int from; }
+
+system Setup(mut Log log)
+{
+    if (log.ready) return;
+    log.ready = true;
+    for (var i = 0; i < 3000; i++)
+    {
+        if (i % 4 == 3)
+        {
+            log.targets.Add(Spawn(Target { id = i }, Armor { value = 50 }));
+            continue;
+        }
+        var e = Spawn(Target { id = i }, Health { value = 30 });
+        if (i % 6 == 1) e.Add(Shielded);
+        log.targets.Add(e);
+    }
+    for (var i = 0; i < 5000; i++) Spawn(Shooter { id = i, target = log.targets[(i * 7 + 3) % 3000], damage = 1 + i % 13 });
+}
+
+// Their Destroy is queued before the shots of the tick
+[After(Setup)]
+system Cull(Target target, Time time)
+{
+    if (time.tick == 3 && target.id % 9 == 2) this.Destroy();
+}
+
+[After(Cull)]
+system Shoot(Shooter shooter)
+{
+    shooter.target.Send(Hit { damage = shooter.damage, from = shooter.id });
+}
+
+[After(Shoot)]
+system PingAll(Shooter shooter)
+{
+    shooter.target.Send(Ping { from = shooter.id });
+}
+
+[After(PingAll)]
+system Announce(Shooter shooter)
+{
+    Send(Roll { from = shooter.id });
+}
+
+// Not one Send alone: each Hit an item of the queue, the ones after each other taken together
+[After(Announce)]
+system Graze(Shooter shooter)
+{
+    if (shooter.id % 3 == 0) shooter.target.Send(Hit { damage = 1, from = -1 - shooter.id });
+}
+
+event(Hit hit) TakeHit(mut Health health, Target target, without Shielded, mut Log log)
+{
+    health.value -= hit.damage;
+    log.trace.Add(hit.from * 10000 + target.id);
+    if (health.value <= 0)
+    {
+        health.value += 100;
+        this.Send(Echo { from = hit.from });
+    }
+    if (hit.damage == 13 && hit.from % 50 == 0) Spawn(Target { id = 100000 + hit.from }, Health { value = 5 });
+}
+
+event(Ping ping) PingHealth(mut Health health)
+{
+    health.value += 1;
+}
+
+event(Ping ping) PingArmor(mut Armor armor, Target target, mut Log log)
+{
+    armor.value -= 1;
+    log.trace.Add(-1 - (ping.from * 10000 + target.id));
+}
+
+event(Roll roll) Rolled(mut Log log)
+{
+    if (roll.from % 97 == 0) log.trace.Add(900000000 + roll.from);
+}
+
+event(Echo echo) Echoed(mut Log log)
+{
+    log.trace.Add(2000000000 - echo.from);
+}
+
+local singleton Heard { int sum; }
+
+local event(Ping ping) HeardPing(Target target, mut Heard heard)
+{
+    heard.sum += ping.from + target.id;
+}

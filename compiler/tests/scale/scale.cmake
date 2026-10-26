@@ -3,16 +3,10 @@
 # its own, with a singleton, an enum, structs with methods, constants,
 # functions, an event and its handler, systems and views, so that every kind
 # of name is looked up and written out thousands of times across many
-# namespaces. With 150 parts (26,000 lines), compiling it ran out of memory
-# after minutes, at 49 GB, while codegen built every declaration's C name
-# again at each use and checked each local's name against every declaration
-# (name_program in compiler/src/codegen.c). With 200, the schedule alone took
-# most of a minute, as every part's systems write the same components and
-# its analysis went through every pair of a system's waits, and with 800 the
-# checker took ten seconds to look names up among every declaration. With 600
-# parts (104,000 lines, 2,402 systems) it takes a few seconds now. The
-# ceiling is far above that, so machines of any speed pass, and a compiler
-# that goes quadratic again fails.
+# namespaces. Name lookup, codegen's C names and the schedule analysis must
+# stay near-linear in the number of declarations (600 parts is 104,000 lines
+# and 2,402 systems). The ceiling is far above the usual time, so machines of
+# any speed pass, and a compiler that goes quadratic fails.
 #
 # The files go to tidec as a list in a file (@list), as tide_add_game passes
 # them: 600 paths are more than a command line holds on Windows.

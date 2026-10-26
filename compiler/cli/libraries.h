@@ -7,7 +7,7 @@
 // Prebuilt libraries in a game's folder: which platform and CPU each was
 // built for, read from its contents, since a folder holds every platform's
 // and names don't say (`.a` is MinGW's, Linux's, macOS's and the web's).
-// A build links the ones built for its target (see AGENTS.md).
+// A build links the ones built for its target.
 
 typedef enum lib_platform {
     LIB_UNKNOWN,

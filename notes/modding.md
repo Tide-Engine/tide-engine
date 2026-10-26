@@ -1,6 +1,6 @@
 # Modding
 
-Subsystem requirements and status, moved from `AGENTS.md` on 2026-10-11. The language design, including provisional behavior and open questions, remains in `docs/spec.md`, Mods. The inactive service's implementation and tests are in `notes/build-service.md`.
+Subsystem requirements and status, moved from `AGENTS.md` on 2026-10-11. The language design, including provisional behavior and open questions, remains in `docs/spec.md`, Mods. The inactive service's implementation and tests are in `notes/build-service.md` of `Tide-Engine/tide-services`.
 
 ## Agreed requirements
 

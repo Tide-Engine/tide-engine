@@ -1,5 +1,39 @@
 # Audio
 
+## Inside another program (2026-10-22)
+
+An embedded game (`tide/embed.h`, Unity) now hands its frames' audio to the
+mixer as a window does, and the other program renders it on its own audio
+thread through `tide_embed_audio`, which is `tide_audio_out_fill` (it says
+`tide_mixer_rendered_elsewhere(true)`, so a reload's forget waits for that
+thread; NULL with 0 frames says the thread stopped). Its microphone comes in
+through `tide_embed_microphone` (`tide_audio_in_push`) while
+`tide_embed_status.microphone` says a frame names a microphone voice. On the
+web the page's program opens its own AudioWorklet at its first audio frame.
+The mixer itself didn't change: the pinned mix is the same. `embed_audio` in
+`tide_platform_embed` covers it; Unity's side is in `notes/unity.md`, Audio and
+the editor's workflow.
+
+## The listener alone includes tide/audio.h (2026-10-22)
+
+A game that called `Audio.SetListener` or `Audio.SetFalloff` before declaring
+any clip or `Sound` got a generated header that named `tide_audio_frame` (its
+local state's audio list, behind `uses_audio`) without including
+`tide/audio.h`, which only followed clips, named sounds and the microphone: a
+C error in the game's header, found while building a prototype. `codegen.c`
+now includes it whenever `uses_audio` is set too. `compiler/tests/e2e/audio_listener_only`
+places the listener with nothing to play, checks `TIDE_HAS_AUDIO`, and runs.
+
+## Optional Opus voice package (2026-10-22)
+
+`packages/voice` now adds session voice over the existing microphone and
+audio effects. A muted microphone effect copies bounded blocks to the frame
+thread for Opus; receive effects read decoded PCM queues. No mixer/capture
+backend, clip layout or generated audio API changed. Merely listing the
+package opens no device. Contracts, buffering, ownership and validation are
+in `notes/voice-package.md`; older "voice chat not built" entries below
+describe the pre-package implementation.
+
 Scalar Clip values without assets (2026-10-19) now request their existing C
 definition even when no Sound, microphone or clip asset is declared. The
 checker distinguishes using a Clip type/value from enabling playback; unused
@@ -85,3 +119,5 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 - Ogg CRC-32's lookup table in `engine/src/vorbis.c` is now immutable. The previous lazy table wrote `table[1]` before the rest of its entries and let simultaneous first-use Clip preparation race on mutable storage, potentially rejecting valid checksums. Existing reference decodes and corrupt-page checksum tests cover the constant values; removing initialization eliminates the first-use race.
 - Tests: `tidec_audio_files` checks exact 24-bit FLAC samples through float32 WAV, independent FFmpeg references and gapless lengths for stereo CBR and mono VBR MP3, truncated tags/frames, FLAC checksum damage and declared-length bounds, detailed WAV failures and identified unsupported containers. `compiler/tests/e2e/asset_audio_formats` checks the resulting pack on native and web, preserved raw MP3/FLAC byte assets, list/map playback, alias sharing, exact FLAC samples and kept clips across pack replacement. `asset_clip_mp3_truncated`, `asset_clip_flac_truncated`, `asset_clip_wav_codec`, `asset_clip_opus` and the existing bad-WAV/Ogg programs pin their compiler diagnostics. The synthetic fixture sources, encoder commands and independent reference descriptions are in `compiler/tests/e2e/audio_import/README.md`.
 - The audio unit target also pins conversion cache invalidation: editing MP3 encoder padding changes its decoded length by one frame without changing source size or mtime; the old conversion stays until `asset_files_changed`, then refreshes, while a byte asset reads the edited compressed bytes. Focused native asset/import/diagnostic checks passed 84/84. An isolated Linux clang 18 ASan/UBSan/leak run passed the six decoder unit cases and 36,200 exact-allocation inputs: every MP3/FLAC fixture prefix, bounded header/payload corruption and randomized format-prefixed short inputs. The cache case requires full compiler integration and is exercised by the native unit target.
+- **Vorbis decode limits** (2026-10-26, from fuzzing; `notes/memory-safety.md`, Remote assets). `tide_vorbis_open` walks every packet's framing (mode, previous and next window flags) through the helper the reader uses (`read_framing`, `framing_frames`) and records `tide_vorbis_frames_given`: exactly what a reader yields, the granule or fewer where the packets give fewer. `decode_clip` sizes a whole decode by that, never by the granule (which once made a 2.9 KB file ask for 8 GiB, wrapping on wasm32 into a write past the buffer). A clip is whole only within `tide_clips_whole_seconds` at a rate capped by `TIDE_CLIP_WHOLE_MAX_RATE` (384 kHz) and within `TIDE_CLIP_WHOLE_MAX_SAMPLES` (2^27, frames times channels in 64 bits); past either it streams, the same samples, and its read loop asks only for the frames left. Streamed clips report frames given. `tide_vorbis_decode` uses the same count and refuses output past `TIDE_SOUND_MAX_SAMPLES` (`tide/wav.h`, 2^30, shared with WAV and tidec; exactly 2^30 is refused too, as 4 GiB of floats wraps the web's `size_t`). Limits in `tide/vorbis.h`, refused at open before what they ask for is made: `TIDE_VORBIS_MAX_ENTRIES` (2^20 codebook entries a file; libvorbis writes at most 11,241), `TIDE_VORBIS_MAX_VALUES` (2^22 vector values; about 61,000) and `TIDE_VORBIS_MAX_WORK_PER_FRAME` (16 block samples a frame given, plus two long blocks; real files 2 to 2.5). The floor's inverse-dB table is a constant, as the CRC table is: its lazy fill raced between the preparation pool and the audio thread. Ogg page and packet arithmetic uses `size - at` and refuses a file too big rather than wrapping. Tests: `vorbis_decodes_the_same_bits` (hashes of the three reference decodes, which nothing pinned before; CI confirms them on other platforms and the web), `vorbis_refuses_codebooks_past_the_limits`, `vorbis_decode_sizes_by_its_packets_not_its_word`, and `audio_prepare_sizes_a_vorbis_clip_by_its_packets_not_its_word` in `tests/test_audio.c` (whole and streamed, a granule of 2^31 at the largest rate, a 255-channel copy refused).
+- **tidec decodes an Ogg Vorbis clip once at build** (2026-10-26), as MP3 and FLAC are, in 4096-frame blocks keeping no samples (`check_vorbis`, `compiler/src/audio_files.c`), and refuses a non-finite sample and a packet skipped or ending inside its floors or residue (`tide_vorbis_reader_damaged`). Until then it only opened the file, so a clip every player heard as silence or NaN passed the build. A granule past what the packets give is accepted: real encoders write them (a voice clip of `tide-prototypes/banked` says 283,200 frames and gives 281,280), and the file plays as its packets give, which is what a clip is sized by. A first version refused them and the prototype's build failed. Test: `audio_ogg_vorbis_is_decoded_once_at_build`.

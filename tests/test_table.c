@@ -44,7 +44,7 @@ TIDE_TEST(table_grows_in_chunks)
     tide_table t = {0};
     tide_entities entities = {0};
     fill(&t, &entities, 3);
-    TIDE_CHECK(t.chunks == 1 && t.last_room == 4); // The first chunk starts small
+    TIDE_CHECK(t.chunks == 1 && t.last_room == 4);
     fill(&t, &entities, 2);
     TIDE_CHECK(t.chunks == 1 && t.last_room == 8);
     fill(&t, &entities, 40);
@@ -62,11 +62,11 @@ TIDE_TEST(table_remove_moves_the_last_row_in)
     fill(&t, &entities, 17); // A second chunk with one row
     const tide_entity last = entity_at(&t, &columns, 16);
     tide_table_remove(&t, &columns, 3, &entities, 0);
-    TIDE_CHECK(t.count == 16 && t.chunks == 1); // The chunk left empty goes
+    TIDE_CHECK(t.count == 16 && t.chunks == 1);
     TIDE_CHECK(position(&t, 3)[0] == 16.0f);
     TIDE_CHECK(tide_entity_equal(entity_at(&t, &columns, 3), last));
     TIDE_CHECK(tide_entity_location(&entities, last).row == 3);
-    tide_table_remove(&t, &columns, 15, &entities, 0); // The last row: nothing moves
+    tide_table_remove(&t, &columns, 15, &entities, 0);
     TIDE_CHECK(t.count == 15 && position(&t, 14)[0] == 14.0f);
     tide_table_free(&t, &columns);
     tide_entities_free(&entities);
@@ -86,14 +86,12 @@ TIDE_TEST(table_move_keeps_shared_columns)
     TIDE_CHECK(*(const int32_t *)tide_table_get(&to, &wider, 0, 2) == 0);
     const tide_location at = tide_entity_location(&entities, moved);
     TIDE_CHECK(at.archetype == 1 && at.row == 0);
-    TIDE_CHECK(tide_entity_location(&entities, entity_at(&from, &columns, 1)).row == 1); // The last one, moved in
+    TIDE_CHECK(tide_entity_location(&entities, entity_at(&from, &columns, 1)).row == 1);
     tide_table_free(&from, &columns);
     tide_table_free(&to, &wider);
     tide_entities_free(&entities);
 }
 
-// A snapshot shares the table's pages; changing a column of a chunk copies
-// that page alone, and the hash only follows what's in use.
 TIDE_TEST(table_snapshots_share_until_changed)
 {
     tide_table t = {0};
@@ -106,14 +104,14 @@ TIDE_TEST(table_snapshots_share_until_changed)
 
     float *p = tide_table_cell(&t, &columns, 20, 1);
     p[0] = 100.0f;
-    TIDE_CHECK(t.pages[1 * 2 + 1] != snapshot.pages[1 * 2 + 1]); // Chunk 1's positions: copied
-    TIDE_CHECK(t.pages[1 * 2 + 0] == snapshot.pages[1 * 2 + 0]); // Its entities: still shared
-    TIDE_CHECK(t.pages[0 * 2 + 1] == snapshot.pages[0 * 2 + 1]); // Chunk 0: still shared
+    TIDE_CHECK(t.pages[1 * 2 + 1] != snapshot.pages[1 * 2 + 1]);
+    TIDE_CHECK(t.pages[1 * 2 + 0] == snapshot.pages[1 * 2 + 0]);
+    TIDE_CHECK(t.pages[0 * 2 + 1] == snapshot.pages[0 * 2 + 1]);
     TIDE_CHECK(position(&snapshot, 20)[0] == 20.0f);
     TIDE_CHECK(tide_table_hash(1, &t, &columns) != before);
 
-    p = tide_table_cell(&t, &columns, 20, 1); // Changed through the table, which keeps the hash up to date
-    p[0] = 20.0f;                            // As it was: the same hash again
+    p = tide_table_cell(&t, &columns, 20, 1);
+    p[0] = 20.0f;
     TIDE_CHECK(tide_table_hash(1, &t, &columns) == before);
 
     tide_table_copy(&t, &snapshot, &columns);
@@ -123,8 +121,6 @@ TIDE_TEST(table_snapshots_share_until_changed)
     tide_entities_free(&entities);
 }
 
-// A loop over a chunk's rows changes its lanes through tide_table_lanes_begin:
-// a shared page is copied only if a row changed.
 TIDE_TEST(table_lanes_stay_shared_unless_a_row_changed)
 {
     tide_table t = {0};
@@ -137,10 +133,9 @@ TIDE_TEST(table_lanes_stay_shared_unless_a_row_changed)
     uint8_t *lanes[1];
     TIDE_CHECK(tide_table_lanes_shared(&t, &columns, 1, 1, 1));
 
-    // Written as they were: nothing moves
     tide_table_lanes_begin(&t, &columns, 1, 1, 1, false, was, lanes);
-    TIDE_CHECK(lanes[0] != tide_page_data(t.pages[1 * 2 + 1])); // A copy, since the snapshot shares the page
-    TIDE_CHECK(was[0] == lanes[0]);                             // ...which is read where it's written
+    TIDE_CHECK(lanes[0] != tide_page_data(t.pages[1 * 2 + 1]));
+    TIDE_CHECK(was[0] == lanes[0]);
     for (uint32_t i = 0; i < 16; i++) {
         float *p = (float *)(lanes[0] + i * 8);
         p[0] = (float)(16 + i);
@@ -148,10 +143,9 @@ TIDE_TEST(table_lanes_stay_shared_unless_a_row_changed)
     }
     tide_table_lanes_end(&t, &columns, 1, 1, 1, lanes);
     TIDE_CHECK(t.pages[1 * 2 + 1] == snapshot.pages[1 * 2 + 1]);
-    TIDE_CHECK(t.pages[1 * 2 + 1]->hashed != UINT32_MAX); // Its hash still good
+    TIDE_CHECK(t.pages[1 * 2 + 1]->hashed != UINT32_MAX);
     TIDE_CHECK(tide_table_hash(1, &t, &columns) == before);
 
-    // One row changed: this table's own page, the snapshot's as it was
     tide_table_lanes_begin(&t, &columns, 1, 1, 1, false, was, lanes);
     ((float *)(lanes[0] + 4 * 8))[0] = 100.0f;
     tide_table_lanes_end(&t, &columns, 1, 1, 1, lanes);
@@ -161,7 +155,6 @@ TIDE_TEST(table_lanes_stay_shared_unless_a_row_changed)
     TIDE_CHECK(tide_table_hash(1, &t, &columns) != before);
     TIDE_CHECK(tide_table_hash(1, &snapshot, &columns) == before);
 
-    // A page the table alone has is written in place
     TIDE_CHECK(!tide_table_lanes_shared(&t, &columns, 1, 1, 1));
     tide_table_lanes_begin(&t, &columns, 1, 1, 1, false, was, lanes);
     TIDE_CHECK(lanes[0] == tide_page_data(t.pages[1 * 2 + 1]) && was[0] == lanes[0]);
@@ -172,8 +165,6 @@ TIDE_TEST(table_lanes_stay_shared_unless_a_row_changed)
     tide_entities_free(&entities);
 }
 
-// A loop that writes every row reads a lane where it is and writes it apart:
-// nothing is copied first, and a page that comes out as it was stays.
 TIDE_TEST(table_lanes_are_written_apart)
 {
     tide_table t = {0};
@@ -185,17 +176,15 @@ TIDE_TEST(table_lanes_are_written_apart)
     const uint8_t *was[1];
     uint8_t *lanes[1];
 
-    // Every row written as it was: the shared page stays, and its hash
     tide_table_lanes_begin(&t, &columns, 1, 1, 1, true, was, lanes);
-    TIDE_CHECK(was[0] == tide_page_data(t.pages[1 * 2 + 1])); // Read where it is
-    TIDE_CHECK(lanes[0] != was[0]);                           // ...and written somewhere else
+    TIDE_CHECK(was[0] == tide_page_data(t.pages[1 * 2 + 1]));
+    TIDE_CHECK(lanes[0] != was[0]);
     for (uint32_t i = 0; i < 16; i++) memcpy(lanes[0] + i * 8, was[0] + i * 8, 8);
     tide_table_lanes_end(&t, &columns, 1, 1, 1, lanes);
     TIDE_CHECK(t.pages[1 * 2 + 1] == snapshot.pages[1 * 2 + 1]);
     TIDE_CHECK(t.pages[1 * 2 + 1]->hashed != UINT32_MAX);
     TIDE_CHECK(tide_table_hash(1, &t, &columns) == before);
 
-    // Every row written, one of them otherwise: the page that was written is the table's
     tide_table_lanes_begin(&t, &columns, 1, 1, 1, true, was, lanes);
     for (uint32_t i = 0; i < 16; i++) memcpy(lanes[0] + i * 8, was[0] + i * 8, 8);
     ((float *)(lanes[0] + 4 * 8))[0] = 100.0f;
@@ -206,14 +195,13 @@ TIDE_TEST(table_lanes_are_written_apart)
     TIDE_CHECK(position(&snapshot, 20)[0] == 20.0f);
     TIDE_CHECK(tide_table_hash(1, &snapshot, &columns) == before);
 
-    // The same with a page the table alone has: apart too, as a loop that asks reads and writes two places
     const tide_page *own = t.pages[1 * 2 + 1];
     const uint64_t changed = tide_table_hash(1, &t, &columns);
     tide_table_lanes_begin(&t, &columns, 1, 1, 1, true, was, lanes);
     TIDE_CHECK(was[0] == tide_page_data(own) && lanes[0] != was[0]);
     for (uint32_t i = 0; i < 16; i++) memcpy(lanes[0] + i * 8, was[0] + i * 8, 8);
     tide_table_lanes_end(&t, &columns, 1, 1, 1, lanes);
-    TIDE_CHECK(t.pages[1 * 2 + 1] == own && tide_table_hash(1, &t, &columns) == changed); // As it was: it stays
+    TIDE_CHECK(t.pages[1 * 2 + 1] == own && tide_table_hash(1, &t, &columns) == changed);
     tide_table_lanes_begin(&t, &columns, 1, 1, 1, true, was, lanes);
     for (uint32_t i = 0; i < 16; i++) memcpy(lanes[0] + i * 8, was[0] + i * 8, 8);
     ((float *)(lanes[0] + 5 * 8))[1] = 7.0f;
@@ -226,10 +214,6 @@ TIDE_TEST(table_lanes_are_written_apart)
     tide_entities_free(&entities);
 }
 
-// A chunk whose rows are written in pieces: its lanes are begun once for all
-// of them, each piece asks where they are and writes its own rows, and they're
-// ended once. Apart, a page whose rows came out as they were goes, and the one
-// the snapshot shares is the table's again.
 TIDE_TEST(table_lanes_are_written_in_pieces)
 {
     tide_table t = {0};
@@ -242,19 +226,17 @@ TIDE_TEST(table_lanes_are_written_in_pieces)
     const uint8_t *was[1];
     uint8_t *lanes[1];
 
-    // Apart: the table has the page they write, which says the one they read
     tide_table_lanes_begin_pieces(&t, &columns, 1, 1, 1, true);
     TIDE_CHECK(t.pages[1 * 2 + 1] != shared && shared->refs == 2);
-    for (uint32_t piece = 0; piece < 4; piece++) { // Four rows each, as they were
+    for (uint32_t piece = 0; piece < 4; piece++) {
         TIDE_CHECK(tide_table_lanes_piece(&t, &columns, 1, 1, 1, was, lanes));
         TIDE_CHECK(was[0] == tide_page_data(shared) && lanes[0] == tide_page_data(t.pages[1 * 2 + 1]));
         memcpy(lanes[0] + piece * 4 * 8, was[0] + piece * 4 * 8, 4 * 8);
     }
     tide_table_lanes_end_pieces(&t, &columns, 1, 1, 1);
-    TIDE_CHECK(t.pages[1 * 2 + 1] == shared && shared->refs == 2 && shared->was == 0); // Shared as it was
+    TIDE_CHECK(t.pages[1 * 2 + 1] == shared && shared->refs == 2 && shared->was == 0);
     TIDE_CHECK(shared->hashed != UINT32_MAX && tide_table_hash(1, &t, &columns) == before);
 
-    // ...and with a row one piece changed: the page they wrote is the table's
     tide_table_lanes_begin_pieces(&t, &columns, 1, 1, 1, true);
     for (uint32_t piece = 0; piece < 4; piece++) {
         tide_table_lanes_piece(&t, &columns, 1, 1, 1, was, lanes);
@@ -266,19 +248,16 @@ TIDE_TEST(table_lanes_are_written_in_pieces)
     TIDE_CHECK(position(&t, 25)[0] == 100.0f && position(&t, 24)[0] == 24.0f && position(&t, 31)[0] == 31.0f);
     TIDE_CHECK(position(&snapshot, 25)[0] == 25.0f && tide_table_hash(1, &snapshot, &columns) == before);
 
-    // In place, for a page the table alone has: the pieces read and write it where it is
     tide_page *own = t.pages[1 * 2 + 1];
     tide_table_hash(1, &t, &columns);
     tide_table_lanes_begin_pieces(&t, &columns, 1, 1, 1, false);
-    TIDE_CHECK(t.pages[1 * 2 + 1] == own && own->hashed == UINT32_MAX); // It's about to change
+    TIDE_CHECK(t.pages[1 * 2 + 1] == own && own->hashed == UINT32_MAX);
     TIDE_CHECK(!tide_table_lanes_piece(&t, &columns, 1, 1, 1, was, lanes));
     TIDE_CHECK(was[0] == tide_page_data(own) && lanes[0] == tide_page_data(own));
     ((float *)(lanes[0] + 3 * 8))[1] = 7.0f;
     tide_table_lanes_end_pieces(&t, &columns, 1, 1, 1);
     TIDE_CHECK(t.pages[1 * 2 + 1] == own && position(&t, 19)[1] == 7.0f);
 
-    // Apart from a page the table alone has, as when another lane of the
-    // chunk is shared: the page it was goes once the new one is the table's
     tide_table_lanes_begin_pieces(&t, &columns, 1, 1, 1, true);
     tide_table_lanes_piece(&t, &columns, 1, 1, 1, was, lanes);
     TIDE_CHECK(was[0] == tide_page_data(own) && lanes[0] != was[0]);
@@ -287,7 +266,6 @@ TIDE_TEST(table_lanes_are_written_in_pieces)
     tide_table_lanes_end_pieces(&t, &columns, 1, 1, 1);
     TIDE_CHECK(position(&t, 16)[0] == -1.0f && position(&t, 19)[1] == 7.0f && position(&t, 25)[0] == 100.0f);
 
-    // The chunk with fewer rows than it has room for: past them the new page is zeros
     tide_table_lanes_begin_pieces(&t, &columns, 2, 1, 1, true);
     tide_table_lanes_piece(&t, &columns, 2, 1, 1, was, lanes);
     memcpy(lanes[0], was[0], 8 * 8);
@@ -302,8 +280,6 @@ TIDE_TEST(table_lanes_are_written_in_pieces)
     tide_entities_free(&entities);
 }
 
-// A row's lanes put back: one that's what's there already leaves its page as
-// it was, a snapshot's too and still hashed, and one that isn't is written.
 TIDE_TEST(table_scatter_writes_what_differs)
 {
     tide_table t = {0};
@@ -374,7 +350,6 @@ static note *push_note(tide_queue *q, const int32_t value, const uint32_t extra)
     return n;
 }
 
-// The notes' values are `first`, `first + 1` and so on, `count` of them, from `at`.
 static bool notes_from(const tide_queue *q, tide_queue_place at, const int32_t first, const int32_t count)
 {
     for (int32_t i = 0; i < count; i++) {
@@ -447,7 +422,6 @@ TIDE_TEST(table_queue_runs_keep_the_ordinary_format)
     for (uint32_t i = 0; i < sizeof groups / sizeof groups[0]; i++) {
         push_note_runs(&runs, &ordinary, first, groups[i].count, groups[i].extra);
         first += (int32_t)groups[i].count;
-        // Runs and ordinary pushes may be interleaved without changing order.
         push_note(&runs, first, 9);
         push_note(&ordinary, first++, 9);
     }
@@ -483,8 +457,6 @@ TIDE_TEST(table_queue_runs_keep_the_ordinary_format)
 
 TIDE_TEST(table_queue_runs_append_and_resume_reading)
 {
-    // The short append copies into a partial page, and the long one hands
-    // pages over. A reader waiting at the end must see both kinds of append.
     const uint32_t counts[] = {1, 1300};
     for (uint32_t i = 0; i < sizeof counts / sizeof counts[0]; i++) {
         tide_queue to = {0}, from = {0}, ordinary = {0}, part = {0}, snapshot = {0};
@@ -502,8 +474,6 @@ TIDE_TEST(table_queue_runs_append_and_resume_reading)
         TIDE_CHECK(notes_from(&to, end, 11, (int32_t)counts[i]));
         const note *next = tide_queue_next(&to, &at);
         TIDE_CHECK(next && next->value == 11);
-        // A copied queue keeps its records while the source's empty pages
-        // are reused, and appending never prevents a later run reservation.
         push_note_runs(&from, &part, 0, 700, 5);
         TIDE_CHECK(notes_from(&snapshot, (tide_queue_place){0}, 11, (int32_t)counts[i]));
         TIDE_CHECK(queues_equal(&from, &part));
@@ -521,24 +491,23 @@ TIDE_TEST(table_queue_runs_append_and_resume_reading)
 TIDE_TEST(table_queue_keeps_items_in_place)
 {
     tide_queue q = {0};
-    const tide_queue_place start = tide_queue_end(&q); // Of an empty queue: what's pushed is found from it
+    const tide_queue_place start = tide_queue_end(&q);
     note *first = push_note(&q, 5, 0);
     TIDE_CHECK(first->size == 8);
-    for (int32_t i = 1; i < 3000; i++) push_note(&q, 5 + i, (uint32_t)i % 5u * 12u); // Of several sizes, through many pages
+    for (int32_t i = 1; i < 3000; i++) push_note(&q, 5 + i, (uint32_t)i % 5u * 12u);
     TIDE_CHECK(q.count == 3000 && q.pages > 4);
-    TIDE_CHECK(first->value == 5 && notes_from(&q, start, 5, 3000)); // The first didn't move as the queue grew
+    TIDE_CHECK(first->value == 5 && notes_from(&q, start, 5, 3000));
     tide_queue_place at = {0, 0};
     TIDE_CHECK(tide_queue_next(&q, &at) == first);
     const note *second = tide_queue_next(&q, &at);
-    TIDE_CHECK(second->size == 24 && second->value == 6); // 8 and 12 more, in whole eights
+    TIDE_CHECK(second->size == 24 && second->value == 6);
 
-    // From the end, the next is what's pushed after: on this page, or the one after
     const tide_queue_place end = tide_queue_end(&q);
     at = end;
     TIDE_CHECK(tide_queue_next(&q, &at) == NULL && tide_queue_next(&q, &at) == NULL);
     for (int32_t i = 0; i < 700; i++) push_note(&q, 9000 + i, 0);
     TIDE_CHECK(notes_from(&q, end, 9000, 700));
-    const note *found = tide_queue_next(&q, &at); // The place that had reached the end goes on from it
+    const note *found = tide_queue_next(&q, &at);
     TIDE_CHECK(found && found->value == 9000);
 
     tide_queue copy = {0};
@@ -546,13 +515,13 @@ TIDE_TEST(table_queue_keeps_items_in_place)
     TIDE_CHECK(copy.count == q.count && tide_queue_hash(1, &copy) == tide_queue_hash(1, &q));
     const uint32_t pages = q.pages;
     tide_queue_clear(&q);
-    TIDE_CHECK(q.count == 0 && q.pages == 0 && q.kept == pages); // It keeps the pages it used
+    TIDE_CHECK(q.count == 0 && q.pages == 0 && q.kept == pages);
     at = (tide_queue_place){0, 0};
     TIDE_CHECK(tide_queue_next(&q, &at) == NULL);
     note *again = push_note(&q, 0, 0);
-    TIDE_CHECK(again == first && again->value == 0 && again->size == 8); // Its page kept, the item zeroed as it's pushed again
+    TIDE_CHECK(again == first && again->value == 0 && again->size == 8);
     tide_queue_clear(&q);
-    TIDE_CHECK(q.kept == 1); // ...and lets go of the ones this time didn't need
+    TIDE_CHECK(q.kept == 1);
     tide_queue_free(&q);
     tide_queue_free(&copy);
     TIDE_CHECK(q.page == NULL && q.kept == 0);
@@ -567,7 +536,6 @@ TIDE_TEST(table_queue_holds_an_item_bigger_than_a_page)
     push_note(&q, 3, 0);
     TIDE_CHECK(notes_from(&q, (tide_queue_place){0, 0}, 1, 3));
     TIDE_CHECK(((const uint8_t *)(big + 1))[3u * TIDE_QUEUE_PAGE - 1u] == 0x5a);
-    // Its page is kept, and takes small items too once it's emptied
     tide_queue_clear(&q);
     for (int32_t i = 0; i < 2000; i++) push_note(&q, i, 0);
     TIDE_CHECK(notes_from(&q, (tide_queue_place){0, 0}, 0, 2000));
@@ -576,8 +544,6 @@ TIDE_TEST(table_queue_holds_an_item_bigger_than_a_page)
 
 TIDE_TEST(table_queue_appends_in_order)
 {
-    // A few items are copied onto the end, and full pages are handed over:
-    // through both, with the page they land on empty, part full and full
     for (int32_t had = 0; had < 1400; had += 233) {
         for (int32_t more = 0; more < 2000; more += 371) {
             tide_queue to = {0}, from = {0};
@@ -586,7 +552,6 @@ TIDE_TEST(table_queue_appends_in_order)
             tide_queue_append(&to, &from);
             TIDE_CHECK(to.count == (uint32_t)(had + more) && from.count == 0 && from.pages == 0);
             TIDE_CHECK(notes_from(&to, (tide_queue_place){0, 0}, 0, had + more));
-            // What's pushed next goes after them
             push_note(&to, had + more, 0);
             TIDE_CHECK(notes_from(&to, (tide_queue_place){0, 0}, 0, had + more + 1));
             tide_queue_free(&to);
@@ -597,9 +562,6 @@ TIDE_TEST(table_queue_appends_in_order)
 
 TIDE_TEST(table_queue_hands_pages_over_and_gets_empty_ones_back)
 {
-    // As a tick's tasks and its world do: the task fills its queue, the world
-    // takes it and is cleared once it's applied. From the second tick on,
-    // nothing is copied and no page is made.
     tide_queue world = {0}, task = {0};
     const tide_queue_page *task_page = NULL;
     const tide_queue_page *world_page = NULL;
@@ -609,10 +571,10 @@ TIDE_TEST(table_queue_hands_pages_over_and_gets_empty_ones_back)
         if (tick >= 2) TIDE_CHECK(task.page[0] == task_page || task.page[0] == world_page);
         const tide_queue_page *filled = task.page[0];
         tide_queue_append(&world, &task);
-        TIDE_CHECK(world.count == 1000 && world.page[0] == filled); // The page itself
+        TIDE_CHECK(world.count == 1000 && world.page[0] == filled);
         TIDE_CHECK(task.count == 0 && task.pages == 0);
         TIDE_CHECK(notes_from(&world, (tide_queue_place){0, 0}, 0, 1000));
-        if (tick == 0) TIDE_CHECK(task.kept == 0); // The world had no page to give back yet
+        if (tick == 0) TIDE_CHECK(task.kept == 0);
         if (tick >= 1) TIDE_CHECK(task.kept == 2 && world.kept == 2);
         if (tick == 1) {
             task_page = task.page[0];
@@ -621,7 +583,6 @@ TIDE_TEST(table_queue_hands_pages_over_and_gets_empty_ones_back)
         }
         tide_queue_clear(&world);
     }
-    // A burst's pages go once a tick doesn't need them
     for (int32_t i = 0; i < 20000; i++) push_note(&task, i, 0);
     tide_queue_append(&world, &task);
     tide_queue_clear(&world);
@@ -637,19 +598,18 @@ TIDE_TEST(table_queue_hands_pages_over_and_gets_empty_ones_back)
 static bool note_fits(const void *item)
 {
     const note *n = item;
-    return n->value >= 0; // Stands in for a game's check of each change's size
+    return n->value >= 0;
 }
 
 TIDE_TEST(table_queue_packs_whatever_its_pages)
 {
-    // The same items, pushed straight in and handed over from two others
     tide_queue straight = {0}, moved = {0}, a = {0}, b = {0};
     for (int32_t i = 0; i < 900; i++) push_note(&straight, i, (uint32_t)i % 7u * 8u);
     for (int32_t i = 0; i < 300; i++) push_note(&a, i, (uint32_t)i % 7u * 8u);
     for (int32_t i = 300; i < 900; i++) push_note(&b, i, (uint32_t)i % 7u * 8u);
     tide_queue_append(&moved, &a);
     tide_queue_append(&moved, &b);
-    TIDE_CHECK(moved.page[2]->used != straight.page[2]->used); // Laid out otherwise
+    TIDE_CHECK(moved.page[2]->used != straight.page[2]->used);
     TIDE_CHECK(tide_queue_hash(7, &moved) == tide_queue_hash(7, &straight));
     const uint32_t size = tide_queue_packed_size(&moved);
     TIDE_CHECK(size == tide_queue_packed_size(&straight));
@@ -667,26 +627,25 @@ TIDE_TEST(table_queue_packs_whatever_its_pages)
     TIDE_CHECK(back.count == 900 && tide_queue_hash(7, &back) == tide_queue_hash(7, &straight));
     tide_queue_free(&back);
 
-    // Bytes from another machine: cut short, a size that isn't one, an item its check refuses
     tide_reader cut = {bytes, size - 5u, 0, false};
     TIDE_CHECK(!tide_queue_unpack(&back, &cut, note_fits));
     tide_queue_free(&back);
     const uint32_t sizes[] = {0u, 4u, 12u, 0xfffffff8u};
     for (int i = 0; i < 4; i++) {
         memcpy(other, bytes, size);
-        memcpy(other + 4, &sizes[i], 4); // The first item's size
+        memcpy(other + 4, &sizes[i], 4);
         tide_reader bad = {other, size, 0, false};
         TIDE_CHECK(!tide_queue_unpack(&back, &bad, note_fits));
         tide_queue_free(&back);
     }
     memcpy(other, bytes, size);
     const int32_t refused = -1;
-    memcpy(other + 8, &refused, 4); // The first item's value
+    memcpy(other + 8, &refused, 4);
     tide_reader bad = {other, size, 0, false};
     TIDE_CHECK(!tide_queue_unpack(&back, &bad, note_fits));
     tide_queue_free(&back);
     uint32_t many = 0xffffffffu;
-    memcpy(other, &many, 4); // More items than there are bytes for
+    memcpy(other, &many, 4);
     tide_reader few = {other, size, 0, false};
     TIDE_CHECK(!tide_queue_unpack(&back, &few, NULL));
     tide_queue_free(&back);

@@ -1,0 +1,539 @@
+// Earth: everyone who opens the page is a little walker on one little planet,
+// a few kilometres round, with ten towns and the roads between them, their
+// townsfolk and their traffic, which everyone sees doing the same. Walk
+// anywhere, or turn into a car and drive. The world is sharded: each region
+// of the planet can be a server of its own.
+//
+// The match is this file, the towns and roads city.tide. globe.tide draws the
+// planet, shapes.tide and show.tide what's on it.
+
+settings
+{
+    title = "Earth";
+    stats = true;
+    maxPlayers = 64;
+    shards = true;
+    reach = 320;   // Metres: further than anything here looks for anything else, a player's sight among it
+}
+
+const float WALK = 5;               // Metres a second
+const float STROLL = 1.4;           // ...a townsperson's
+const float BODY = 0.45;            // A walker's radius
+const float BUMPER = 1.8;           // ...a car's
+const float JUMP = 5;               // How fast a jump leaves the ground
+const float GRAVITY = 15;
+const int WAVE = 90;                // Ticks a wave lasts
+const float ON_ROAD = 55;           // A car's top speed on a road, metres a second: round the planet in six minutes
+const float OFF_ROAD = 32;          // ...and across country
+const float ACCELERATE = 16;
+const float BRAKE = 26;
+const float STEER = 2.6;            // Radians a second, turning as hard as it can
+const float LANE = 2.5;             // A car keeps to the right of the road's middle
+const float TRAFFIC = 14;           // How fast the townsfolk's cars go
+const int PEOPLE = 6;               // Townsfolk in each town
+const int CARS = 2;                 // Cars on each road
+const int COLORS = 8;
+const float SIGHT = 300;            // How far off a player's machine has other players: past the horizon
+// ...and the townsfolk and traffic, further: whatever a player it has bumps
+// into or waves at is on its machine too, or what it worked out would differ
+const float FURTHER = 40;
+const float STALE = 20;             // How far a walker goes before its beacon follows it
+// Ticks between looks at who's near, and between beacons' moves: everything at
+// once, so a machine whose world the server has to put right (it can't work out
+// what it doesn't have) is put right once for them all
+const int LOOK = 30;
+const int BEACON = 180;
+
+scene Main { }
+
+component Walker
+{
+    [Position] float3 position;     // From the planet's center
+    float3 forward = float3(0, 0, 1); // The way it faces, along the ground
+    float3 velocity;
+    float height;                   // Off the ground, jumping
+    float rise;
+    float speed;                    // A car's, along forward (backwards under 0)
+    int color;
+    int tag;                        // Which name its player goes by: a player's, the nth to arrive
+    int waving;                     // Ticks of a wave left
+    int moves;                      // The last place its player asked to go to
+    int fives;                      // High fives
+    int fived;                      // Ticks until it can high-five again
+    bool placed;                    // Its player has picked where to be
+    bool driving;                   // A car, for now
+    local float stride;             // This machine's: how far along its step it is
+    local float morph;              // ...and how far it has turned into a car
+}
+
+// A walker nobody plays: one of the townsfolk
+component Person
+{
+    int town;
+    float3 goal;
+    float rest;     // Seconds it stands before it goes on
+    float stuck;    // Seconds it hasn't got nearer its goal
+}
+
+// A townsperson's car, up and down a road between two towns
+component Car
+{
+    [Position] float3 position;
+    float3 forward;
+    int road;
+    float along;    // Metres from the road's first town
+    float way;      // 1 toward the second town, -1 back
+    float speed;
+    int color;
+}
+
+singleton Roster
+{
+    Map<PlayerID, Entity> walkers;
+    int online;
+    int next;
+    bool seeded;
+}
+
+// Who has a townsperson or a car on their machine (its group's audience): the
+// players near it, as last set. The server's alone: a machine without everyone
+// can't say who's near, and what it worked out would differ from the server's.
+component Seen
+{
+    VisibilityGroup group;
+    Audience audience;
+}
+
+// A player's walker is everyone's, but its Walker is only the players' near it
+// (and its own player's): far off, a machine has its Beacon alone, where it
+// is every few seconds, for the globe's dots, the towns' counts and Join
+component Beacon
+{
+    float3 at;
+    int color;
+    int tag;
+}
+
+event HighFive { }   // Sent to each walker of the two, for what's shown
+
+input Controls
+{
+    float3 move;    // Along the ground, as the camera has it: at most 1 long
+    bool brake;
+    bool jump;
+    bool wave;
+    bool car;       // Turns into a car, or back, as it goes down
+    float3 drop;    // Where to go, from the planet's center
+    int moves;      // Counts the places asked for: one the walker hasn't had takes it there
+
+    Sample(Devices devices, Pilot pilot)
+    {
+        drop = pilot.drop;
+        moves = pilot.moves;
+        if (!pilot.walking) return;
+        var keys = devices.keyboard;
+        mut var push = float2(0, 0);
+        if (keys.d.pressed || keys.rightArrow.pressed) push.x += 1;
+        if (keys.a.pressed || keys.leftArrow.pressed) push.x -= 1;
+        if (keys.w.pressed || keys.upArrow.pressed) push.y += 1;
+        if (keys.s.pressed || keys.downArrow.pressed) push.y -= 1;
+        push += devices.gamepad.leftStick;
+        // Back on foot; a brake in a car, independent of the camera's facing.
+        brake = pilot.driving && push.y < 0;
+        if (brake) push.y = 0;
+        // Driving follows the car while its orbit camera catches up or looks
+        // elsewhere. W must not reverse it toward what the camera faces.
+        var ahead = pilot.driving ? pilot.facing : pilot.ahead;
+        var right = pilot.driving ? Math.Cross(Math.Normalize(pilot.spot), pilot.facing) : pilot.right;
+        move = ahead * push.y + right * push.x;
+        if (pilot.going) move += pilot.toward;
+        jump = keys.space.pressed || devices.gamepad.buttonSouth.pressed || pilot.jumping > 0;
+        wave = keys.e.pressed || devices.gamepad.buttonWest.pressed || pilot.waving > 0;
+        car = keys.c.pressed || keys.q.pressed || devices.gamepad.buttonNorth.pressed || pilot.morphing > 0;
+    }
+}
+
+event(PlayerJoined joined) Arrive(mut Roster roster)
+{
+    // Over the north pole, unseen, until its player picks a place; its Walker its own player's alone until others come near
+    var mine = Audience.Only(joined.player);
+    mut var seen = Visibility { };
+    seen.Set<Walker>(mine);
+    roster.walkers[joined.player] = Spawn(
+        Walker { position = float3(0, R, 0), color = roster.next % COLORS, tag = roster.next },
+        Owner { player = joined.player }, seen, Beacon { color = roster.next % COLORS, tag = roster.next });
+    roster.next += 1;
+    roster.online += 1;
+}
+
+event(PlayerLeft left) Depart(mut Roster roster)
+{
+    if (roster.walkers.TryGet(left.player, out var walker))
+    {
+        walker.Destroy();
+        roster.walkers.Remove(left.player);
+    }
+    roster.online -= 1;
+}
+
+// The townsfolk of every town and the cars on every road, once
+system Seed(mut Roster roster)
+{
+    if (roster.seeded) return;
+    roster.seeded = true;
+    for (var town = 0; town < TOWNS; town++)
+    {
+        for (var i = 0; i < PEOPLE; i++)
+        {
+            var turn = Random.NextFloat(0, Math.TAU);
+            var at = Place(town, Clear(town, float2(Math.Sin(turn), Math.Cos(turn)) * Random.NextFloat(PLAZA, TOWN - 15), BODY), 0);
+            var group = Visibility.CreateGroup(Audience.None);
+            Spawn(Walker { position = at, color = 100 + Random.NextInt(6), placed = true },
+                  Person { town = town, goal = at, rest = Random.NextFloat(0, 4) }, Grouped(group), Seen { group = group });
+        }
+    }
+    for (var road = 0; road < ROADS; road++)
+    {
+        for (var i = 0; i < CARS; i++)
+        {
+            float way = i % 2 == 0 ? 1 : -1;
+            mut var car = Car { road = road, along = Length(road) * (0.3 + i * 0.4), way = way, speed = TRAFFIC, color = Random.NextInt(COLORS) };
+            OnRoad(car);
+            var group = Visibility.CreateGroup(Audience.None);
+            Spawn(car, Grouped(group), Seen { group = group });
+        }
+    }
+}
+
+// ------------------------------------------------------------ on a sphere
+
+// What of a direction lies along the ground where `up` is
+float3 Flat(float3 v, float3 up)
+{
+    return v - up * Math.Dot(v, up);
+}
+
+// How far a place is from the middle of the road between two towns, in metres
+// (very far past either end), and from a town's middle
+float RoadDistance(float3 n, float3 a, float3 b)
+{
+    var c = Math.Normalize(Math.Cross(a, b));
+    if (Math.Dot(Math.Cross(a, n), c) < 0 || Math.Dot(Math.Cross(n, b), c) < 0) return 1e9;
+    return Math.Abs(Math.Asin(Math.Clamp(Math.Dot(n, c), -1, 1))) * R;
+}
+
+float FromMiddle(float3 n, float3 town)
+{
+    return 2 * Math.Asin(Math.Min(Math.Length(n - town) * 0.5, 1)) * R;
+}
+
+// Whether a place is on a road, a ring road or a square
+bool Paved(float3 place)
+{
+    var n = Math.Normalize(place);
+    for (var road = 0; road < ROADS; road++)
+    {
+        var ends = Road(road);
+        if (RoadDistance(n, Up(ends.x), Up(ends.y)) < ROAD) return true;
+    }
+    for (var town = 0; town < TOWNS; town++)
+    {
+        float d = FromMiddle(n, Up(town));
+        if (Math.Abs(d - RING) < ROAD || d < PLAZA) return true;
+    }
+    return false;
+}
+
+// Moves a walker by its velocity over a tick, round the planet: out of
+// anything it would be inside, carrying its velocity and its facing into the
+// ground where it is now. A car held back by a wall slows.
+void Move(mut Walker walker, float dt, float radius)
+{
+    var meant = walker.position + walker.velocity * dt;
+    var next = Settle(meant, radius, 0);
+    var up = Math.Normalize(next);
+    float speed = Math.Length(walker.velocity);
+    var along = Flat(walker.velocity, up);
+    walker.velocity = Math.Length(along) > 0.0001 ? Math.Normalize(along) * speed : float3(0, 0, 0);
+    var facing = Flat(walker.forward, up);
+    if (Math.Length(facing) > 0.0001) walker.forward = Math.Normalize(facing);
+    if (walker.driving && Math.Length(Math.Normalize(meant) - up) * R > 0.05) walker.speed *= 0.6;
+    walker.position = Surface(up, walker.height);
+}
+
+void Hop(mut Walker walker, bool jump, float dt)
+{
+    if (jump && walker.height <= 0) walker.rise = JUMP;
+    walker.rise -= GRAVITY * dt;
+    walker.height = Math.Max(walker.height + walker.rise * dt, 0);
+    if (walker.height <= 0) walker.rise = 0;
+    walker.position = Surface(Math.Normalize(walker.position), walker.height);
+    if (walker.waving > 0) walker.waving -= 1;
+    if (walker.fived > 0) walker.fived -= 1;
+}
+
+// On foot: toward where it's asked to go, at most 1 long
+void Step(mut Walker walker, float3 toward, float speed, bool jump, float dt)
+{
+    var up = Math.Normalize(walker.position);
+    mut var want = Flat(toward, up);
+    if (Math.Length(want) > 1) want = Math.Normalize(want);
+    mut var change = want * speed - walker.velocity;
+    float most = 30 * dt;
+    if (Math.Length(change) > most) change = Math.Normalize(change) * most;
+    walker.velocity = Flat(walker.velocity + change, up);
+    if (Math.Length(walker.velocity) > 0.3) walker.forward = Math.Normalize(walker.velocity);
+    Move(walker, dt, BODY);
+    Hop(walker, jump, dt);
+}
+
+// A car: it turns toward where it's asked to go, as a car does, faster on the road
+void Drive(mut Walker walker, float3 toward, bool brake, bool jump, float dt)
+{
+    var up = Math.Normalize(walker.position);
+    var want = Flat(toward, up);
+    float push = Math.Min(Math.Length(want), 1);
+    mut float target = 0;
+    if (push > 0.1 && !brake)
+    {
+        var way = Math.Normalize(want);
+        float ahead = Math.Dot(walker.forward, way);
+        if (ahead < -0.6 && walker.speed < 2)
+        {
+            target = -8 * push; // Straight back: reverse
+        }
+        else
+        {
+            mut float angle = Math.Atan2(Math.Dot(Math.Cross(walker.forward, way), up), ahead);
+            float most = STEER * dt * Math.Clamp(Math.Abs(walker.speed) / 6, 0.6, 1); // Turns even crawling, as off a wall
+            angle = Math.Clamp(angle, -most, most);
+            walker.forward = Math.Normalize(walker.forward * Math.Cos(angle) + Math.Cross(up, walker.forward) * Math.Sin(angle));
+            target = (Paved(walker.position) ? ON_ROAD : OFF_ROAD) * push;
+        }
+    }
+    walker.speed += Math.Clamp(target - walker.speed, -BRAKE * dt, ACCELERATE * dt);
+    walker.velocity = walker.forward * walker.speed;
+    Move(walker, dt, BUMPER);
+    Hop(walker, jump, dt);
+}
+
+// ------------------------------------------------------------ the systems
+
+system Walk(mut Walker walker, Controls input, Time time, without Person)
+{
+    // A newer request than the last it took: never one a shard guesses before its player's input arrives, which is 0
+    if (input.moves > walker.moves && Math.Length(input.drop) > 0.5)
+    {
+        walker.moves = input.moves;
+        // A step or two from where it was asked to be, so that two asking for one place don't land in each other
+        var asked = Math.Normalize(input.drop);
+        var scatter = Random.NextFloat(0, Math.TAU);
+        var aside = EastOf(asked) * Math.Sin(scatter) + NorthOf(asked) * Math.Cos(scatter);
+        walker.position = Settle(asked * R + aside * Random.NextFloat(0.5, 2.5), BODY, 0);
+        var up = Math.Normalize(walker.position);
+        var town = Nearest(walker.position);
+        // Facing the middle of the nearest town, where everyone gathers
+        var toward = Flat(Up(town) - up, up);
+        walker.forward = Math.Length(toward) > 0.0001 ? Math.Normalize(toward) : EastOf(up);
+        walker.velocity = float3(0, 0, 0);
+        walker.height = 0;
+        walker.rise = 0;
+        walker.speed = 0;
+        walker.driving = false;
+        walker.placed = true;
+        return;
+    }
+    if (!walker.placed) return;
+    if (input.car.down)
+    {
+        walker.driving = !walker.driving;
+        walker.speed = Math.Dot(walker.velocity, walker.forward);
+        walker.waving = 0;
+    }
+    if (input.wave && walker.waving == 0 && !walker.driving) walker.waving = WAVE;
+    if (walker.driving) Drive(walker, input.move, input.brake, input.jump, time.dt);
+    else Step(walker, input.move, WALK, input.jump, time.dt);
+}
+
+// The townsfolk stroll round their town, and wave back
+system Stroll(mut Walker walker, mut Person person, Time time, query (Walker other, without Person) players)
+{
+    mut var toward = float3(0, 0, 0);
+    if (person.rest > 0)
+    {
+        person.rest -= time.dt;
+    }
+    else
+    {
+        var way = person.goal - walker.position;
+        float far = Math.Length(way);
+        person.stuck += time.dt;
+        if (far < 1.5 || person.stuck > 8)
+        {
+            var turn = Random.NextFloat(0, Math.TAU);
+            person.goal = Place(person.town, float2(Math.Sin(turn), Math.Cos(turn)) * Random.NextFloat(PLAZA * 0.6, TOWN - 12), 0);
+            person.rest = Random.NextFloat(1, 6);
+            person.stuck = 0;
+        }
+        else
+        {
+            toward = way / far;
+        }
+    }
+    foreach (var row in players)
+    {
+        if (!row.other.driving && row.other.waving > WAVE - 5 && Math.Length(row.other.position - walker.position) < 12 && walker.waving == 0)
+        {
+            walker.waving = WAVE;
+            var at = Flat(row.other.position - walker.position, Math.Normalize(walker.position));
+            if (Math.Length(at) > 0.001) walker.forward = Math.Normalize(at);
+            person.rest = 2;
+        }
+    }
+    Step(walker, toward, STROLL, false, time.dt);
+}
+
+// Walkers bump each other aside, cars push walkers out of the way, and two
+// on foot waving at each other high-five
+system Bump(mut Walker walker, query (Walker other) walkers, query (Car car) cars)
+{
+    if (!walker.placed) return;
+    float mine = walker.driving ? BUMPER : BODY;
+    foreach (var row in walkers)
+    {
+        if (row.entity == this || !row.other.placed || Math.Abs(row.other.height - walker.height) > 1.6) continue;
+        var apart = walker.position - row.other.position;
+        float theirs = row.other.driving ? BUMPER : BODY;
+        float reach = Math.Max(mine + theirs, 2.2);
+        if (Math.Abs(apart.x) >= reach || Math.Abs(apart.y) >= reach || Math.Abs(apart.z) >= reach) continue;
+        float d = Math.Length(apart);
+        if (d < mine + theirs && d > 0.0001)
+        {
+            // A car hardly moves for someone on foot; someone on foot gets out of a car's way
+            float share = walker.driving == row.other.driving ? 0.5 : walker.driving ? 0.1 : 0.9;
+            walker.position += apart / d * ((mine + theirs - d) * share);
+        }
+        if (d < 2.2 && !walker.driving && !row.other.driving && walker.waving > 0 && row.other.waving > 0 && walker.fived == 0)
+        {
+            walker.fives += 1;
+            walker.fived = WAVE * 2;
+            this.Send(HighFive { });
+        }
+    }
+    if (walker.height < 1.6)
+    {
+        foreach (var row in cars)
+        {
+            var apart = walker.position - row.car.position;
+            float d = Math.Length(apart);
+            if (d < mine + BUMPER && d > 0.0001) walker.position += apart / d * (mine + BUMPER - d);
+        }
+    }
+    // Pushed, but never into a wall or the fountain
+    walker.position = Settle(walker.position, mine, walker.height);
+}
+
+// How long a road is, from one town's middle to the other's
+float Length(int road)
+{
+    var ends = Road(road);
+    return FromMiddle(Up(ends.x), Up(ends.y));
+}
+
+// Puts a car where its road and its place along it say, in its lane
+void OnRoad(mut Car car)
+{
+    var ends = Road(car.road);
+    var a = Up(ends.x);
+    var b = Up(ends.y);
+    float whole = Length(car.road) / R;
+    float t = car.along / R;
+    var middle = (a * Math.Sin(whole - t) + b * Math.Sin(t)) / Math.Sin(whole);
+    var c = Math.Normalize(Math.Cross(a, b));
+    var forward = Math.Normalize(Math.Cross(c, middle)) * car.way;
+    var right = Math.Cross(middle, forward);
+    car.forward = forward;
+    car.position = Surface(Math.Normalize(middle * R + right * LANE), 0);
+}
+
+// The townsfolk's cars go up and down their roads, turning round at the
+// squares, and stop for whatever's in front of them
+system Traffic(mut Car car, Time time, query (Walker walker) walkers, query (Car other) cars)
+{
+    mut bool blocked = false;
+    foreach (var row in walkers)
+    {
+        if (!row.walker.placed || row.walker.height > 2) continue;
+        var to = row.walker.position - car.position;
+        float ahead = Math.Dot(to, car.forward);
+        if (ahead > 0 && ahead < 10 && Math.Length(to - car.forward * ahead) < 2.8) blocked = true;
+    }
+    foreach (var row in cars)
+    {
+        if (row.entity == this) continue;
+        var to = row.other.position - car.position;
+        float ahead = Math.Dot(to, car.forward);
+        if (ahead > 0 && ahead < 11 && Math.Length(to - car.forward * ahead) < 2.0 && Math.Dot(row.other.forward, car.forward) > 0) blocked = true;
+    }
+    float target = blocked ? 0 : TRAFFIC;
+    car.speed += Math.Clamp(target - car.speed, -BRAKE * time.dt, 6 * time.dt);
+    car.along += car.way * car.speed * time.dt;
+    float end = Length(car.road) - PLAZA - 6;
+    if (car.along > end && car.way > 0) car.way = -1;
+    if (car.along < PLAZA + 6 && car.way < 0) car.way = 1;
+    OnRoad(car);
+}
+
+// ------------------------------------------------------------ who sees what
+
+// The players near a place. Every machine can work it out, but only the
+// server's has every player, so what it says goes nowhere else: who sees
+// what's there (Seen, the server's alone), and a player's own Walker, whose
+// audience is behind the scenes.
+Audience Near(float3 place, float sight, Audience start, query (Walker other, Owner owner, without Person) players)
+{
+    mut var near = start;
+    foreach (var row in players)
+    {
+        if (row.other.placed && Math.Length(row.other.position - place) < sight) near.Add(row.owner.player);
+    }
+    return near;
+}
+
+// A townsperson's or a car's Visibility: its group's, its Seen no one's
+Visibility Grouped(VisibilityGroup group)
+{
+    mut var visibility = Visibility { group = group };
+    visibility.Set<Seen>(Audience.None);
+    return visibility;
+}
+
+// Changing a group's audience on a region waits on the border for the root's
+// directory, so only when it changes
+void See(mut Seen seen, Audience near)
+{
+    if (near == seen.audience) return;
+    seen.audience = near;
+    Visibility.Set(seen.group, near);
+}
+
+system SeeTownsfolk(mut Seen seen, Walker walker, Time time, query (Walker other, Owner owner, without Person) players)
+{
+    if (time.tick % LOOK == 0) See(seen, Near(walker.position, SIGHT + FURTHER, Audience.None, players));
+}
+
+system SeeTraffic(mut Seen seen, Car car, Time time, query (Walker other, Owner owner, without Person) players)
+{
+    if (time.tick % LOOK == 0) See(seen, Near(car.position, SIGHT + FURTHER, Audience.None, players));
+}
+
+// A player's walker: its Walker to the players near it and to its own, and to everyone where it is, every three
+// seconds when it has gone somewhere: each move is a correction for every machine without its Walker
+system SeePlayers(mut Visibility visibility, mut Beacon beacon, Walker walker, Owner owner, Time time,
+                  query (Walker other, Owner theirs, without Person) players, without Person)
+{
+    var at = walker.placed ? walker.position : float3(0, 0, 0);
+    if (time.tick % BEACON == 0 && Math.Length(at - beacon.at) > STALE) beacon.at = at;
+    if (time.tick % LOOK != 0) return;
+    visibility.Set<Walker>(walker.placed ? Near(walker.position, SIGHT, Audience.Only(owner.player), players) : Audience.Only(owner.player));
+}

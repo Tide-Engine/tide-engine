@@ -6,7 +6,7 @@ description: "Learn how Tide keeps ordinary float simulations bit-identical acro
 
 Given the same build and the same inputs and commands, Tide's simulation gives bit-identical results on every supported platform: Windows, Linux, macOS, Android and the web, on Intel, AMD and ARM. That's what lets desktop, phone and web players share one match.
 
-It uses ordinary 32-bit floats, not fixed point. Tide code gets this for free: there's nothing to avoid, and no special types to use. This page is about how the engine keeps it, for the curious, and for anyone writing C that touches the simulation.
+It uses ordinary IEEE 754 floats: 32-bit `float` and 64-bit `double`, rather than fixed point. Tide code gets this for free: there's nothing to avoid, and no special types to use. This page is about how the engine keeps it, for the curious, and for anyone writing C that touches the simulation.
 
 ## Floats
 
@@ -25,7 +25,7 @@ The engine compiles everything, your game included, with the flags that guarante
 
 NaN in the simulation is a bug: NaN's bit patterns aren't the same everywhere. The engine keeps it out where it can:
 
-- Inputs come from other machines, so NaN and infinite floats in them become the field's default before the game sees them (see [Input](../game/input.md)).
+- Inputs come from other machines, so NaN and infinite floats or doubles in them become the field's default before the game sees them (see [Input](../game/input.md)).
 - `Math.Clamp` always returns a value in range, `Math.Min` and `Math.Max` with one NaN return the other argument, and `Math.Normalize` gives zero for a zero vector, where dividing by its length would give NaN.
 
 ## Random numbers
@@ -40,7 +40,7 @@ A match that rolls dice still has to roll the same ones on every machine. [`Rand
   - **One for each entity.** A system that rolls with its entities' own generators can run them on several threads, and no thread's rolls depend on another's.
   - **Seeded by the match.** The machine that starts a match picks its seed, `Random.seed`, from the system's random number generator. The seed is in the world: a player who joins gets it with everything else, snapshots and host migration carry it, and nothing sends it separately. An entity's generator is seeded as the entity spawns, from the seed, the tick and the entity, which every machine has the same.
 
-Where nothing picks a seed (tests, benchmarks, a world a C host starts itself, a game run [without a window](../tools/cli.md#without-a-window)) it's 0, so a run repeats exactly. `tide run --seed 7` picks the seed, with or without a window: the same seed and the same input are the same match.
+Where nothing picks a seed (tests, benchmarks, a world a C host starts itself, a game run [without a window](../tools/cli.md#without-a-window)) it's 0, so a run repeats exactly. `tide run --seed 7 --stats` picks the seed, with or without a window: the same seed and the same input are the same match.
 
 ## Order
 

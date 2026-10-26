@@ -1,0 +1,68 @@
+// Entity loads must copy the complete canonical layout from the current row,
+// including 1/2/4-byte lanes, explicit padding, tags and sparse presence.
+component LoadBytes { byte a; byte b; byte c; }
+component LoadPair { byte a; byte b; }
+component LoadWide { byte a; double value; byte b; }
+component LoadTag { }
+[Sparse] component LoadOptional { int value = 19; }
+using LoadAlias = LoadWide;
+using LoadOptionalAlias = LoadOptional;
+
+singleton LoadProbe
+{
+    Entity selected;
+    Entity absent;
+    Entity other;
+    double seen;
+    int missing;
+    int fallback;
+    bool found;
+}
+local singleton LoadLocalProbe
+{
+    LocalEntity selected;
+    LocalEntity other;
+    double seen;
+    bool ready;
+}
+scene Main;
+
+event(Spawned) LoadSetup(with Main, mut LoadProbe probe)
+{
+    // The selected row is in the next chunk, with an absent sparse neighbor.
+    for (var i = 0; i < 2051; i++)
+    {
+        var entity = Spawn(LoadBytes { a = 17, b = 93, c = 241 }, LoadPair { a = 29, b = 157 },
+                           LoadWide { a = 7, value = 3.25, b = 211 }, LoadTag);
+        if (i % 2 == 0) entity.Add(LoadOptional { value = i });
+        if (i == 2049) probe.absent = entity;
+        probe.selected = entity;
+    }
+    probe.other = Spawn(LoadTag);
+}
+
+system LoadRead(mut LoadProbe probe, World world)
+{
+    probe.seen = world.Get<LoadAlias>(probe.selected).value;
+    probe.missing = world.Get<LoadOptionalAlias>(probe.absent).value;
+    probe.found = world.TryGet<LoadOptionalAlias>(probe.absent, out var missing);
+    probe.fallback = missing.value;
+    _ = world.Get<LoadTag>(probe.selected);
+}
+
+view LoadLocalSetup(mut LoadLocalProbe probe)
+{
+    if (probe.ready) return;
+    probe.ready = true;
+    for (var i = 0; i < 2051; i++)
+        probe.selected = local Spawn(LoadBytes { a = 17, b = 93, c = 241 }, LoadPair { a = 29, b = 157 },
+                                    LoadAlias { a = 7, value = 3.25, b = 211 }, LoadTag);
+    probe.other = local Spawn(LoadTag);
+}
+
+[After(LoadLocalSetup)]
+view LoadLocalRead(mut LoadLocalProbe probe, World world)
+{
+    probe.seen = world.Get<LoadAlias>(probe.selected).value;
+    _ = world.Get<LoadTag>(probe.selected);
+}

@@ -1,0 +1,662 @@
+{
+  "label": "perf-pass-baseline",
+  "revision": "b27a4d9037ba852b3bf6d850505c926cacad6f2f",
+  "machine": "AMD Ryzen 9 7900X 12C/24T; NVIDIA GeForce RTX 4080 SUPER; Windows; Clang 23.1.2",
+  "startedUtc": "2026-10-20T10:52:43.7007165Z",
+  "runs": [
+    {
+      "round": 1,
+      "label": "perf-pass-baseline-r1",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r1"
+      ],
+      "name": "versus_particles",
+      "exitCode": 0,
+      "wallSeconds": 0.6339473,
+      "competingWork": false
+    },
+    {
+      "round": 1,
+      "label": "perf-pass-baseline-r1",
+      "backend": null,
+      "arguments": [
+        "--kept",
+        "1",
+        "--save",
+        "perf-pass-baseline-r1"
+      ],
+      "name": "versus_particles_kept",
+      "exitCode": 0,
+      "wallSeconds": 1.0818409,
+      "competingWork": false
+    },
+    {
+      "round": 1,
+      "label": "perf-pass-baseline-r1",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r1"
+      ],
+      "name": "versus_wide",
+      "exitCode": 0,
+      "wallSeconds": 1.0561325,
+      "competingWork": false
+    },
+    {
+      "round": 1,
+      "label": "perf-pass-baseline-r1",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r1"
+      ],
+      "name": "versus_sand",
+      "exitCode": 0,
+      "wallSeconds": 0.7046327,
+      "competingWork": false
+    },
+    {
+      "round": 1,
+      "label": "perf-pass-baseline-r1",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r1"
+      ],
+      "name": "versus_life",
+      "exitCode": 0,
+      "wallSeconds": 0.2087951,
+      "competingWork": false
+    },
+    {
+      "round": 1,
+      "label": "perf-pass-baseline-r1",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r1"
+      ],
+      "name": "versus_churn",
+      "exitCode": 0,
+      "wallSeconds": 0.7905651,
+      "competingWork": false
+    },
+    {
+      "round": 1,
+      "label": "perf-pass-baseline-r1",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r1"
+      ],
+      "name": "versus_events",
+      "exitCode": 0,
+      "wallSeconds": 0.5472832,
+      "competingWork": false
+    },
+    {
+      "round": 1,
+      "label": "perf-pass-baseline-r1",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r1"
+      ],
+      "name": "versus_nbody",
+      "exitCode": 0,
+      "wallSeconds": 0.5311352,
+      "competingWork": false
+    },
+    {
+      "round": 1,
+      "label": "perf-pass-baseline-r1",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r1"
+      ],
+      "name": "versus_buckets",
+      "exitCode": 0,
+      "wallSeconds": 0.2145825,
+      "competingWork": false
+    },
+    {
+      "round": 1,
+      "label": "perf-pass-baseline-r1",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r1"
+      ],
+      "name": "versus_lookup",
+      "exitCode": 0,
+      "wallSeconds": 1.096538,
+      "competingWork": false
+    },
+    {
+      "round": 1,
+      "label": "perf-pass-baseline-r1",
+      "backend": null,
+      "arguments": [
+        "--changes",
+        "0",
+        "--save",
+        "perf-pass-baseline-r1"
+      ],
+      "name": "versus_lookup_steady",
+      "exitCode": 0,
+      "wallSeconds": 0.9613764,
+      "competingWork": false
+    },
+    {
+      "round": 1,
+      "label": "perf-pass-baseline-r1",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r1"
+      ],
+      "name": "bench_sand",
+      "exitCode": 0,
+      "wallSeconds": 2.9287055,
+      "competingWork": false
+    },
+    {
+      "round": 1,
+      "label": "perf-pass-baseline-r1",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r1"
+      ],
+      "name": "bench_gallery",
+      "exitCode": 0,
+      "wallSeconds": 0.8443252,
+      "competingWork": false
+    },
+    {
+      "round": 1,
+      "label": "perf-pass-baseline-r1",
+      "backend": "opengl",
+      "arguments": [
+        "--bench",
+        "--save",
+        "perf-pass-baseline-r1"
+      ],
+      "name": "draw_opengl",
+      "exitCode": 0,
+      "wallSeconds": 2.7956083,
+      "competingWork": false
+    },
+    {
+      "round": 1,
+      "label": "perf-pass-baseline-r1",
+      "backend": "vulkan",
+      "arguments": [
+        "--bench",
+        "--save",
+        "perf-pass-baseline-r1"
+      ],
+      "name": "draw_vulkan",
+      "exitCode": 0,
+      "wallSeconds": 2.1926635,
+      "competingWork": false
+    },
+    {
+      "round": 2,
+      "label": "perf-pass-baseline-r2",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r2"
+      ],
+      "name": "versus_particles",
+      "exitCode": 0,
+      "wallSeconds": 0.6074727,
+      "competingWork": false
+    },
+    {
+      "round": 2,
+      "label": "perf-pass-baseline-r2",
+      "backend": null,
+      "arguments": [
+        "--kept",
+        "1",
+        "--save",
+        "perf-pass-baseline-r2"
+      ],
+      "name": "versus_particles_kept",
+      "exitCode": 0,
+      "wallSeconds": 1.1016574,
+      "competingWork": false
+    },
+    {
+      "round": 2,
+      "label": "perf-pass-baseline-r2",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r2"
+      ],
+      "name": "versus_wide",
+      "exitCode": 0,
+      "wallSeconds": 1.0299477,
+      "competingWork": false
+    },
+    {
+      "round": 2,
+      "label": "perf-pass-baseline-r2",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r2"
+      ],
+      "name": "versus_sand",
+      "exitCode": 0,
+      "wallSeconds": 0.6811127,
+      "competingWork": false
+    },
+    {
+      "round": 2,
+      "label": "perf-pass-baseline-r2",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r2"
+      ],
+      "name": "versus_life",
+      "exitCode": 0,
+      "wallSeconds": 0.1849354,
+      "competingWork": false
+    },
+    {
+      "round": 2,
+      "label": "perf-pass-baseline-r2",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r2"
+      ],
+      "name": "versus_churn",
+      "exitCode": 0,
+      "wallSeconds": 0.6842236,
+      "competingWork": false
+    },
+    {
+      "round": 2,
+      "label": "perf-pass-baseline-r2",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r2"
+      ],
+      "name": "versus_events",
+      "exitCode": 0,
+      "wallSeconds": 0.5144273,
+      "competingWork": false
+    },
+    {
+      "round": 2,
+      "label": "perf-pass-baseline-r2",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r2"
+      ],
+      "name": "versus_nbody",
+      "exitCode": 0,
+      "wallSeconds": 0.5102579,
+      "competingWork": false
+    },
+    {
+      "round": 2,
+      "label": "perf-pass-baseline-r2",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r2"
+      ],
+      "name": "versus_buckets",
+      "exitCode": 0,
+      "wallSeconds": 0.1857117,
+      "competingWork": false
+    },
+    {
+      "round": 2,
+      "label": "perf-pass-baseline-r2",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r2"
+      ],
+      "name": "versus_lookup",
+      "exitCode": 0,
+      "wallSeconds": 1.0601542,
+      "competingWork": false
+    },
+    {
+      "round": 2,
+      "label": "perf-pass-baseline-r2",
+      "backend": null,
+      "arguments": [
+        "--changes",
+        "0",
+        "--save",
+        "perf-pass-baseline-r2"
+      ],
+      "name": "versus_lookup_steady",
+      "exitCode": 0,
+      "wallSeconds": 0.9262667,
+      "competingWork": false
+    },
+    {
+      "round": 2,
+      "label": "perf-pass-baseline-r2",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r2"
+      ],
+      "name": "bench_sand",
+      "exitCode": 0,
+      "wallSeconds": 2.9048169,
+      "competingWork": false
+    },
+    {
+      "round": 2,
+      "label": "perf-pass-baseline-r2",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r2"
+      ],
+      "name": "bench_gallery",
+      "exitCode": 0,
+      "wallSeconds": 0.6418047,
+      "competingWork": false
+    },
+    {
+      "round": 2,
+      "label": "perf-pass-baseline-r2",
+      "backend": "opengl",
+      "arguments": [
+        "--bench",
+        "--save",
+        "perf-pass-baseline-r2"
+      ],
+      "name": "draw_opengl",
+      "exitCode": 0,
+      "wallSeconds": 2.5040563,
+      "competingWork": false
+    },
+    {
+      "round": 2,
+      "label": "perf-pass-baseline-r2",
+      "backend": "vulkan",
+      "arguments": [
+        "--bench",
+        "--save",
+        "perf-pass-baseline-r2"
+      ],
+      "name": "draw_vulkan",
+      "exitCode": 0,
+      "wallSeconds": 2.047906,
+      "competingWork": false
+    },
+    {
+      "round": 3,
+      "label": "perf-pass-baseline-r3",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r3"
+      ],
+      "name": "versus_particles",
+      "exitCode": 0,
+      "wallSeconds": 0.5209426,
+      "competingWork": false
+    },
+    {
+      "round": 3,
+      "label": "perf-pass-baseline-r3",
+      "backend": null,
+      "arguments": [
+        "--kept",
+        "1",
+        "--save",
+        "perf-pass-baseline-r3"
+      ],
+      "name": "versus_particles_kept",
+      "exitCode": 0,
+      "wallSeconds": 1.0129692,
+      "competingWork": false
+    },
+    {
+      "round": 3,
+      "label": "perf-pass-baseline-r3",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r3"
+      ],
+      "name": "versus_wide",
+      "exitCode": 0,
+      "wallSeconds": 0.9703103,
+      "competingWork": false
+    },
+    {
+      "round": 3,
+      "label": "perf-pass-baseline-r3",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r3"
+      ],
+      "name": "versus_sand",
+      "exitCode": 0,
+      "wallSeconds": 0.6585406,
+      "competingWork": false
+    },
+    {
+      "round": 3,
+      "label": "perf-pass-baseline-r3",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r3"
+      ],
+      "name": "versus_life",
+      "exitCode": 0,
+      "wallSeconds": 0.1741403,
+      "competingWork": false
+    },
+    {
+      "round": 3,
+      "label": "perf-pass-baseline-r3",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r3"
+      ],
+      "name": "versus_churn",
+      "exitCode": 0,
+      "wallSeconds": 0.6114246,
+      "competingWork": false
+    },
+    {
+      "round": 3,
+      "label": "perf-pass-baseline-r3",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r3"
+      ],
+      "name": "versus_events",
+      "exitCode": 0,
+      "wallSeconds": 0.5019665,
+      "competingWork": false
+    },
+    {
+      "round": 3,
+      "label": "perf-pass-baseline-r3",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r3"
+      ],
+      "name": "versus_nbody",
+      "exitCode": 0,
+      "wallSeconds": 0.4924554,
+      "competingWork": false
+    },
+    {
+      "round": 3,
+      "label": "perf-pass-baseline-r3",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r3"
+      ],
+      "name": "versus_buckets",
+      "exitCode": 0,
+      "wallSeconds": 0.1866731,
+      "competingWork": false
+    },
+    {
+      "round": 3,
+      "label": "perf-pass-baseline-r3",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r3"
+      ],
+      "name": "versus_lookup",
+      "exitCode": 0,
+      "wallSeconds": 1.0424547,
+      "competingWork": false
+    },
+    {
+      "round": 3,
+      "label": "perf-pass-baseline-r3",
+      "backend": null,
+      "arguments": [
+        "--changes",
+        "0",
+        "--save",
+        "perf-pass-baseline-r3"
+      ],
+      "name": "versus_lookup_steady",
+      "exitCode": 0,
+      "wallSeconds": 0.9378098,
+      "competingWork": false
+    },
+    {
+      "round": 3,
+      "label": "perf-pass-baseline-r3",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r3"
+      ],
+      "name": "bench_sand",
+      "exitCode": 0,
+      "wallSeconds": 3.0201206,
+      "competingWork": false
+    },
+    {
+      "round": 3,
+      "label": "perf-pass-baseline-r3",
+      "backend": null,
+      "arguments": [
+        "--save",
+        "perf-pass-baseline-r3"
+      ],
+      "name": "bench_gallery",
+      "exitCode": 0,
+      "wallSeconds": 0.6659604,
+      "competingWork": false
+    },
+    {
+      "round": 3,
+      "label": "perf-pass-baseline-r3",
+      "backend": "opengl",
+      "arguments": [
+        "--bench",
+        "--save",
+        "perf-pass-baseline-r3"
+      ],
+      "name": "draw_opengl",
+      "exitCode": 0,
+      "wallSeconds": 2.5271222,
+      "competingWork": true
+    },
+    {
+      "round": 3,
+      "label": "perf-pass-baseline-r3",
+      "backend": "vulkan",
+      "arguments": [
+        "--bench",
+        "--save",
+        "perf-pass-baseline-r3"
+      ],
+      "name": "draw_vulkan",
+      "exitCode": 0,
+      "wallSeconds": 2.0124009,
+      "competingWork": false
+    }
+  ],
+  "binaries": [
+    {
+      "sha256": "77fb963b39c994e64cd6f921139759817612c6c62b6c29f7c597ada16cf5c163",
+      "name": "bench_gallery.exe"
+    },
+    {
+      "sha256": "ef318c6813ef1d6e662538e256917b887302971b0f34afa8f04881cb23d1159c",
+      "name": "bench_sand.exe"
+    },
+    {
+      "sha256": "d755b35ea43223a9e942ec928283681d4fd1a4033c1f8ab39035fb3e9a332602",
+      "name": "tide_platform_draw.exe"
+    },
+    {
+      "sha256": "6efdbde9362af3044096cfbcb9098b2eeb4e22d49b5071dee2460135a3203554",
+      "name": "versus_buckets.exe"
+    },
+    {
+      "sha256": "7f5698f5d02c5aa916ab4128baeb69790de3af3f05dfe712c296f50ae4fb01d4",
+      "name": "versus_churn.exe"
+    },
+    {
+      "sha256": "a2a6b953c4e6c7fadfd3e8acf6ed3bfe0bf3974369333217f33048ecc5aa8f61",
+      "name": "versus_events.exe"
+    },
+    {
+      "sha256": "3bd097379cc09ae336c8ba5c563e49d410b7e7a4ecdfaf85fd231fed864d2606",
+      "name": "versus_life.exe"
+    },
+    {
+      "sha256": "ec6f75b11c680af484696f10426485a346abdbda99df6fe51cc51878ed1c2634",
+      "name": "versus_lookup.exe"
+    },
+    {
+      "sha256": "488fecaefef8286dd470e8f4935aa93e04bf608b4b3cd9f4fbe6013238b5f279",
+      "name": "versus_nbody.exe"
+    },
+    {
+      "sha256": "0a98085afd351b672f2035abcea5ef4232210ac9693435b0f09afa2ff495d105",
+      "name": "versus_particles.exe"
+    },
+    {
+      "sha256": "50fdf42f7bebfd82dc0d7ea11cdcbd44df6aec0c4eeb16ae2e7ac5263692a8c4",
+      "name": "versus_sand.exe"
+    },
+    {
+      "sha256": "18d81a21a6fa21d5a248496bcadf723bf3f2ee14ac551f92a7dc13f9366bff71",
+      "name": "versus_wide.exe"
+    }
+  ],
+  "finishedUtc": "2026-10-20T10:55:02.5279233Z"
+}

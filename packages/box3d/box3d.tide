@@ -12,7 +12,7 @@
 namespace Box3D;
 
 // Where the package's systems are in a tick: all of them are one stage, in
-// the order they're written in here. A system of a game's that has to write
+// the order of their explicit stage offsets. A system of a game's that has to write
 // into this tick's step says so with [Before(PhysicsStages.Step)]: it then
 // runs before any of these, so what it writes into a body is what this tick
 // steps from. Any other runs after them, as a package's files compile before
@@ -51,9 +51,9 @@ enum BodyType
 // few frames, turning the short way. It changes nothing of the match.
 component Body
 {
-    long id; // Box3D's own handle: 0 until the body's first step
+    [Native] long id; // Box3D's own handle: 0 until the body's first step, and on a shard it came to
     BodyType type = BodyType.Dynamic;
-    [Position] float3 position;
+    [Position] float3 position; // Where it is: in a sharded world, which shard has it
     [Rotation] quaternion rotation = quaternion.identity;
     float3 velocity;
     float3 angularVelocity; // Around each axis, in radians a second
@@ -81,6 +81,7 @@ component Body
     float stepLinearDamping;
     float stepAngularDamping;
     bool rewind; // Opt this body and all its shapes into bounded collider history
+    [Native] bool settingsApplied; // The package's own: restore defaults if BodySettings is removed
 }
 
 // A box on the entity's body, `size` wide, high and deep around `offset`.
@@ -92,6 +93,7 @@ component Box
     float friction = 0.6;
     float bounce;
     bool sensor; // Bodies pass through it, and it sends Touched and Parted for the ones in it
+    [Native] int cache; // The package's own attachment record
 }
 
 // A sphere on the entity's body.
@@ -103,6 +105,7 @@ component Sphere
     float friction = 0.6;
     float bounce;
     bool sensor;
+    [Native] int cache; // The package's own attachment record
 }
 
 // A capsule on the entity's body, standing along its y: `height` from end to
@@ -116,11 +119,42 @@ component Capsule
     float friction = 0.6;
     float bounce;
     bool sensor;
+    [Native] int cache; // The package's own attachment record
+}
+
+// Optional controls beyond Body's pose, speeds and impulses. Forces are world
+// space, applied at the center of mass for one tick, and then cleared.
+component BodySettings
+{
+    float3 force;
+    float3 torque;
+    float sleepSpeed = 0.05;
+    float safetyFactor = 0.5;
+    bool enabled = true;
+    bool sleeping = true;
+    bool lockPositionX;
+    bool lockPositionY;
+    bool lockPositionZ;
+    bool lockRotationX;
+    bool lockRotationY;
+    bool lockRotationZ;
+    bool fastRotation;
+    bool contactRecycling = true;
+}
+
+// Shared by the shapes on this entity, including a Part's shapes. Categories
+// and masks are bit sets. Equal nonzero groups override the masks: positive
+// groups collide and negative groups do not. Sensors never see other sensors.
+component CollisionFilter
+{
+    long category = 1;
+    long mask = -1;
+    int group;
 }
 
 // An indexed triangle surface on a static body. Indices are zero-based triples,
 // counterclockwise from the front. Scale and then offset apply in body space.
-// Geometry and material are read once, when attached, like the other shapes.
+// Geometry and material changes apply at the next physics step.
 component MeshCollider
 {
     List<float3> vertices;
@@ -129,6 +163,33 @@ component MeshCollider
     float3 offset;
     float friction = 0.6;
     float bounce;
+    [Native] int cache; // The package's own attachment record
+}
+
+component HullCollider
+{
+    List<float3> vertices;
+    float3 scale = float3(1);
+    float3 offset;
+    float density = 1000;
+    float friction = 0.6;
+    float bounce;
+    bool sensor;
+    [Native] int cache; // The package's own attachment record
+}
+
+component HeightFieldCollider
+{
+    List<float> heights; // Row major: x + z * columns
+    List<byte> holes; // Optional: one byte per cell; nonzero means a hole
+    int columns;
+    int rows;
+    float3 scale = float3(1);
+    float minimumHeight;
+    float maximumHeight = 1;
+    float friction = 0.6;
+    float bounce;
+    [Native] int cache; // The package's own attachment record
 }
 
 // The entity's shapes are on another entity's body: `of`'s. An entity has one
@@ -138,27 +199,16 @@ component MeshCollider
 // `of` has no body when its shapes would be made is destroyed too.
 component Part
 {
-    Entity of;
+    Entity of; // The body it's part of
     // The package's own: Box3D's handles to the shapes made for this entity
-    long box;
-    long sphere;
-    long capsule;
-    long mesh;
+    [Native] long box;
+    [Native] long sphere;
+    [Native] long capsule;
+    [Native] long mesh;
+    [Native] long hull;
+    [Native] long heightField;
+    [Native] long body; // Resolved owner during the physics step
 }
-
-// The package's own: the entity's box, its sphere or its capsule is on its
-// body in Box3D
-[Sparse]
-component BoxMade { }
-
-[Sparse]
-component SphereMade { }
-
-[Sparse]
-component CapsuleMade { }
-
-// Dense because native systems filter whole runs of rows by this marker.
-component MeshMade { bool attached = true; }
 
 // Two bodies started touching, or stopped: sent to each, with the other, once
 // for each pair of their shapes. `part` is whose shape of this entity's it
@@ -199,6 +249,16 @@ event Hit
 // What a ray or a shape that's cast met first: the body's entity, the part
 // its shape is on (the entity itself, for a shape of its own), where, the
 // shape's surface there, and how far along the way from 0 to 1.
+struct QueryFilter
+{
+    long category = 1;
+    long mask = -1;
+    bool Accepts(Collider collider)
+    {
+        return (category & collider.mask) != 0 && (mask & collider.category) != 0;
+    }
+}
+
 struct RayHit
 {
     Entity entity;
@@ -208,6 +268,20 @@ struct RayHit
     float fraction;
 }
 
+struct ShapeRecord
+{
+    Entity owner;
+    long body;
+    long shape;
+    List<byte> source;
+    int kind;
+}
+struct ShapeSlots { int box; int sphere; int capsule; int mesh; int hull; int heightField; }
+struct ShapeChange { Entity owner; long body; long before; long after; int kind; bool sensor; }
+
+// Box3D's world. In a sharded world each shard keeps its own ([Native]) of
+// the bodies it owns, and a body that goes to another shard is made there anew
+// from its Body; the settings are the world's, as a game sets them.
 singleton Physics
 {
     float3 gravity = float3(0, -10, 0);
@@ -222,23 +296,37 @@ singleton Physics
     float bounceSpeed = 1; // Slower than this, in meters a second, nothing bounces
     float hitSpeed = 1; // Faster than this, two bodies that meet are sent Hit
     bool sleeping = true; // Bodies at rest fall asleep
-    int bodies; // Made so far
-    int shapes;
-    long stamp; // Which state `state` is, by all that was ever done to the world: what C's world is told apart by
-    Resident state; // Box3D's whole state after the last step, as pages of the world's (tide/resident.h): C's alone
-    bool moved; // The last tick stepped the world: nothing awake and nothing done to it, and it doesn't
-    List<long> gone; // Bodies whose entities were destroyed, until the next step
-    Map<long, Entity> owners; // Each body's entity
-    List<long> goneShapes; // Parts' shapes whose entities were destroyed, until the next step
-    Map<long, Entity> parts; // Each part's shape's entity
-    Map<Entity, Sensors> sensors; // The sensors of each entity that has any
+    [Native] int bodies; // Made so far
+    [Native] int shapes;
+    [Native] long stamp; // Which state `state` is, by all that was ever done to the world: what C's world is told apart by
+    [Native] Resident state; // Box3D's whole state after the last step, as pages of the world's (tide/resident.h): C's alone
+    [Native] bool moved; // The last tick stepped the world: nothing awake and nothing done to it, and it doesn't
+    [Native] List<long> gone; // Bodies whose entities were destroyed, until the next step
+    [Native] Map<long, Entity> owners; // Each body's entity
+    [Native] List<long> goneShapes; // Parts' shapes whose entities were destroyed, until the next step
+    [Native] Map<long, Entity> parts; // Each part's shape's entity
+    [Native] Map<Entity, Sensors> sensors; // The sensors of each entity that has any
 
-    float historyDt;
-    float historyLimit;
-    int historyTick;
-    Map<long, bool> selected;
-    List<Collider> pending;
-    List<HistoryFrame> history;
+    [Native] Map<long, Entity> joints; // Native joints and their owning entities
+
+    [Native] float historyDt;
+    [Native] float historyLimit;
+    [Native] int historyTick;
+    [Native] Map<long, bool> selected;
+    [Native] List<Collider> pending;
+    [Native] List<HistoryFrame> history;
+    [Native] List<ShapeRecord> colliders; // Native attachment records; the package's own
+    [Native] Map<Entity, ShapeSlots> colliderIndex;
+    [Native] List<int> freeColliders;
+    [Native] List<HullGeometry> pendingHulls;
+    [Native] List<byte> topology;
+    [Native] bool topologyChanged; // Entities changed, or came or went: what's Box3D's is looked over
+    [Native] long shardMoves; // How many entities came to this shard or left it, as the last tick had it (tide_shard_moves_now)
+    // In a sharded world: Box3D's copies of other shards' bodies near this
+    // one's border, by entity, and whose each copy is (CopyBodies)
+    [Native] Map<Entity, Copy> copies;
+    [Native] Map<long, Entity> copyOf;
+    [Native] Map<Entity, CopyPart> copiedParts;
 
     // A prepared, read-only scene: opted-in bodies at the presented time,
     // all other geometry at the current physics step. Invalid times fail.
@@ -259,14 +347,18 @@ singleton Physics
         if (upper < 0 || (time.alpha < 1 && lower < 0)) return false;
         if (!Ready()) return false;
         mut List<Collider> scene = [];
+        mut List<HullGeometry> hulls = [];
         foreach (var owner in owners)
         {
             if (selected.Has(owner.key) || gone.Contains(owner.key)) continue;
-            ReadColliders(owner.key, out var current);
+            ReadColliders(owner.key, out var current, out var currentHulls);
+            int hullBase = hulls.count;
+            foreach (var hull in currentHulls) hulls.Add(hull);
             foreach (var record in current)
             {
                 mut var collider = record;
                 if (goneShapes.Contains(collider.shape)) continue;
+                if (collider.geometry > 0) collider.geometry += hullBase;
                 collider.entity = owner.value;
                 collider.part = PartOf(parts, collider.shape, owner.value);
                 scene.Add(collider);
@@ -275,6 +367,8 @@ singleton Physics
         mut Map<long, Collider> previousShapes = default;
         if (time.alpha < 1)
             foreach (var before in history[lower].colliders) previousShapes[before.shape] = before;
+        int historicalHullBase = hulls.count;
+        foreach (var hull in history[upper].hulls) hulls.Add(hull);
         foreach (var record in history[upper].colliders)
         {
             mut var collider = record;
@@ -283,12 +377,13 @@ singleton Physics
             if (time.alpha < 1 && previousShapes.TryGet(collider.shape, out var before) &&
                 before.body == collider.body && before.snaps == collider.snaps)
                 collider = BlendCollider(before, collider, time.alpha);
+            if (collider.geometry > 0) collider.geometry += historicalHullBase;
             scene.Add(collider);
         }
         // Native handle order also determines overlap order and equal-distance ties.
         SortScene(scene);
         BuildScene(scene, out var nodes);
-        query = Query { colliders = scene, nodes = nodes };
+        query = Query { colliders = scene, nodes = nodes, hulls = hulls };
         return true;
     }
 
@@ -323,71 +418,71 @@ singleton Physics
         return hits.count > 0;
     }
 
-    bool RaycastAll(float3 from, float3 to, out List<RayHit> hits, bool includeSensors = false)
+    bool RaycastAll(float3 from, float3 to, out List<RayHit> hits, bool includeSensors = false, QueryFilter filter = default)
     {
-        return RaycastAll(from, to, out hits, default, includeSensors);
+        return RaycastAll(from, to, out hits, default, includeSensors, filter);
     }
 
-    bool RaycastAll(float3 from, float3 to, out List<RayHit> hits, Body ignore, bool includeSensors = false)
+    bool RaycastAll(float3 from, float3 to, out List<RayHit> hits, Body ignore, bool includeSensors = false, QueryFilter filter = default)
     {
         hits = [];
         if (!Ready()) return false;
-        CastRayAll(out var found, stamp, from, to, gone, gone.count, goneShapes, goneShapes.count, ignore.id, includeSensors);
+        CastRayAll(out var found, stamp, from, to, gone, gone.count, goneShapes, goneShapes.count, ignore.id, includeSensors, filter.category, filter.mask);
         return AllHits(found, out hits);
     }
 
-    bool CastAll(Box shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, bool includeSensors = false)
+    bool CastAll(Box shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, bool includeSensors = false, QueryFilter filter = default)
     {
-        return CastAll(shape, from, rotation, to, out hits, default, includeSensors);
+        return CastAll(shape, from, rotation, to, out hits, default, includeSensors, filter);
     }
 
-    bool CastAll(Box shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, Body ignore, bool includeSensors = false)
+    bool CastAll(Box shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, Body ignore, bool includeSensors = false, QueryFilter filter = default)
     {
         hits = [];
         if (!Ready()) return false;
-        CastBoxAll(out var found, stamp, shape, from, rotation, to, gone, gone.count, goneShapes, goneShapes.count, ignore.id, includeSensors);
+        CastBoxAll(out var found, stamp, shape, from, rotation, to, gone, gone.count, goneShapes, goneShapes.count, ignore.id, includeSensors, filter.category, filter.mask);
         return AllHits(found, out hits);
     }
 
-    bool CastAll(Sphere shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, bool includeSensors = false)
+    bool CastAll(Sphere shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, bool includeSensors = false, QueryFilter filter = default)
     {
-        return CastAll(shape, from, rotation, to, out hits, default, includeSensors);
+        return CastAll(shape, from, rotation, to, out hits, default, includeSensors, filter);
     }
 
-    bool CastAll(Sphere shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, Body ignore, bool includeSensors = false)
+    bool CastAll(Sphere shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, Body ignore, bool includeSensors = false, QueryFilter filter = default)
     {
         hits = [];
         if (!Ready()) return false;
-        CastSphereAll(out var found, stamp, shape, from, rotation, to, gone, gone.count, goneShapes, goneShapes.count, ignore.id, includeSensors);
+        CastSphereAll(out var found, stamp, shape, from, rotation, to, gone, gone.count, goneShapes, goneShapes.count, ignore.id, includeSensors, filter.category, filter.mask);
         return AllHits(found, out hits);
     }
 
-    bool CastAll(Capsule shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, bool includeSensors = false)
+    bool CastAll(Capsule shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, bool includeSensors = false, QueryFilter filter = default)
     {
-        return CastAll(shape, from, rotation, to, out hits, default, includeSensors);
+        return CastAll(shape, from, rotation, to, out hits, default, includeSensors, filter);
     }
 
-    bool CastAll(Capsule shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, Body ignore, bool includeSensors = false)
+    bool CastAll(Capsule shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, Body ignore, bool includeSensors = false, QueryFilter filter = default)
     {
         hits = [];
         if (!Ready()) return false;
-        CastCapsuleAll(out var found, stamp, shape, from, rotation, to, gone, gone.count, goneShapes, goneShapes.count, ignore.id, includeSensors);
+        CastCapsuleAll(out var found, stamp, shape, from, rotation, to, gone, gone.count, goneShapes, goneShapes.count, ignore.id, includeSensors, filter.category, filter.mask);
         return AllHits(found, out hits);
     }
 
     // The first thing on the way from one point to another: whether there's any,
     // and what. A ray says nothing of a shape it starts inside, and passes
     // through sensors.
-    bool Raycast(float3 from, float3 to, out RayHit hit)
+    bool Raycast(float3 from, float3 to, out RayHit hit, QueryFilter filter = default)
     {
-        return Raycast(from, to, out hit, default);
+        return Raycast(from, to, out hit, default, filter);
     }
 
-    bool Raycast(float3 from, float3 to, out RayHit hit, Body ignore)
+    bool Raycast(float3 from, float3 to, out RayHit hit, Body ignore, QueryFilter filter = default)
     {
         hit = default;
         if (!Ready()) return false;
-        Found found = CastRay(stamp, from, to, gone, gone.count, goneShapes, goneShapes.count, ignore.id);
+        Found found = CastRay(stamp, from, to, gone, gone.count, goneShapes, goneShapes.count, ignore.id, filter.category, filter.mask);
         if (found.body == 0) return false;
         hit = Met(found);
         return true;
@@ -398,49 +493,49 @@ singleton Physics
     // body is, with its size and its offset. `hit.point` is where the two touch.
     // What the shape is in at `from` is met there, with a fraction of 0 and no
     // normal.
-    bool Cast(Box shape, float3 from, quaternion rotation, float3 to, out RayHit hit)
+    bool Cast(Box shape, float3 from, quaternion rotation, float3 to, out RayHit hit, QueryFilter filter = default)
     {
-        return Cast(shape, from, rotation, to, out hit, default);
+        return Cast(shape, from, rotation, to, out hit, default, filter);
     }
 
-    bool Cast(Box shape, float3 from, quaternion rotation, float3 to, out RayHit hit, Body ignore)
+    bool Cast(Box shape, float3 from, quaternion rotation, float3 to, out RayHit hit, Body ignore, QueryFilter filter = default)
     {
         hit = default;
         if (!Ready()) return false;
         Found found = CastBox(stamp, shape, from, rotation, to, gone, gone.count, goneShapes,
-                              goneShapes.count, ignore.id);
+                              goneShapes.count, ignore.id, filter.category, filter.mask);
         if (found.body == 0) return false;
         hit = Met(found);
         return true;
     }
 
-    bool Cast(Sphere shape, float3 from, quaternion rotation, float3 to, out RayHit hit)
+    bool Cast(Sphere shape, float3 from, quaternion rotation, float3 to, out RayHit hit, QueryFilter filter = default)
     {
-        return Cast(shape, from, rotation, to, out hit, default);
+        return Cast(shape, from, rotation, to, out hit, default, filter);
     }
 
-    bool Cast(Sphere shape, float3 from, quaternion rotation, float3 to, out RayHit hit, Body ignore)
+    bool Cast(Sphere shape, float3 from, quaternion rotation, float3 to, out RayHit hit, Body ignore, QueryFilter filter = default)
     {
         hit = default;
         if (!Ready()) return false;
         Found found = CastSphere(stamp, shape, from, rotation, to, gone, gone.count, goneShapes,
-                                 goneShapes.count, ignore.id);
+                                 goneShapes.count, ignore.id, filter.category, filter.mask);
         if (found.body == 0) return false;
         hit = Met(found);
         return true;
     }
 
-    bool Cast(Capsule shape, float3 from, quaternion rotation, float3 to, out RayHit hit)
+    bool Cast(Capsule shape, float3 from, quaternion rotation, float3 to, out RayHit hit, QueryFilter filter = default)
     {
-        return Cast(shape, from, rotation, to, out hit, default);
+        return Cast(shape, from, rotation, to, out hit, default, filter);
     }
 
-    bool Cast(Capsule shape, float3 from, quaternion rotation, float3 to, out RayHit hit, Body ignore)
+    bool Cast(Capsule shape, float3 from, quaternion rotation, float3 to, out RayHit hit, Body ignore, QueryFilter filter = default)
     {
         hit = default;
         if (!Ready()) return false;
         Found found = CastCapsule(stamp, shape, from, rotation, to, gone, gone.count, goneShapes,
-                                  goneShapes.count, ignore.id);
+                                  goneShapes.count, ignore.id, filter.category, filter.mask);
         if (found.body == 0) return false;
         hit = Met(found);
         return true;
@@ -455,32 +550,32 @@ singleton Physics
 
     // The entities whose bodies a shape at a place overlaps or touches: whether
     // there's any, and which, each once, in the order of their bodies' ids.
-    bool Overlap(Box shape, float3 at, quaternion rotation, out List<Entity> found)
+    bool Overlap(Box shape, float3 at, quaternion rotation, out List<Entity> found, QueryFilter filter = default)
     {
         found = [];
         if (!Ready()) return false;
         OverlapBox(out var bodies, stamp, shape, at, rotation, gone, gone.count, goneShapes,
-                   goneShapes.count);
+                   goneShapes.count, filter.category, filter.mask);
         Owners(bodies, out found);
         return found.count > 0;
     }
 
-    bool Overlap(Sphere shape, float3 at, quaternion rotation, out List<Entity> found)
+    bool Overlap(Sphere shape, float3 at, quaternion rotation, out List<Entity> found, QueryFilter filter = default)
     {
         found = [];
         if (!Ready()) return false;
         OverlapSphere(out var bodies, stamp, shape, at, rotation, gone, gone.count, goneShapes,
-                      goneShapes.count);
+                      goneShapes.count, filter.category, filter.mask);
         Owners(bodies, out found);
         return found.count > 0;
     }
 
-    bool Overlap(Capsule shape, float3 at, quaternion rotation, out List<Entity> found)
+    bool Overlap(Capsule shape, float3 at, quaternion rotation, out List<Entity> found, QueryFilter filter = default)
     {
         found = [];
         if (!Ready()) return false;
         OverlapCapsule(out var bodies, stamp, shape, at, rotation, gone, gone.count, goneShapes,
-                       goneShapes.count);
+                       goneShapes.count, filter.category, filter.mask);
         Owners(bodies, out found);
         return found.count > 0;
     }
@@ -494,7 +589,7 @@ singleton Physics
         found = [];
         if (sensors.count == 0 || !sensors.TryGet(sensor, out var heldSensors)) return false;
         if (!Ready()) return false;
-        SensorBodies(out var bodies, stamp, heldSensors.box, heldSensors.sphere, heldSensors.capsule, gone, gone.count,
+        SensorBodies(out var bodies, stamp, heldSensors.box, heldSensors.sphere, heldSensors.capsule, heldSensors.hull, gone, gone.count,
                      goneShapes, goneShapes.count);
         Owners(bodies, out found);
         return found.count > 0;
@@ -536,6 +631,7 @@ struct Sensors
     long box;
     long sphere;
     long capsule;
+    long hull;
 }
 
 [NativeName("b3t_open")]
@@ -596,46 +692,46 @@ extern bool FindWorld(long stamp);
 extern void RebuildWorld(in Resident state);
 
 [NativeName("b3t_ray_all")]
-extern void CastRayAll(out List<Found> hits, long stamp, float3 from, float3 to, List<long> gone, int goneCount, List<long> goneShapes, int goneShapeCount, long ignore, bool includeSensors);
+extern void CastRayAll(out List<Found> hits, long stamp, float3 from, float3 to, List<long> gone, int goneCount, List<long> goneShapes, int goneShapeCount, long ignore, bool includeSensors, long queryCategory, long queryMask);
 
 [NativeName("b3t_cast_box_all")]
-extern void CastBoxAll(out List<Found> hits, long stamp, in Box shape, float3 from, quaternion rotation, float3 to, List<long> gone, int goneCount, List<long> goneShapes, int goneShapeCount, long ignore, bool includeSensors);
+extern void CastBoxAll(out List<Found> hits, long stamp, in Box shape, float3 from, quaternion rotation, float3 to, List<long> gone, int goneCount, List<long> goneShapes, int goneShapeCount, long ignore, bool includeSensors, long queryCategory, long queryMask);
 
 [NativeName("b3t_cast_sphere_all")]
-extern void CastSphereAll(out List<Found> hits, long stamp, in Sphere shape, float3 from, quaternion rotation, float3 to, List<long> gone, int goneCount, List<long> goneShapes, int goneShapeCount, long ignore, bool includeSensors);
+extern void CastSphereAll(out List<Found> hits, long stamp, in Sphere shape, float3 from, quaternion rotation, float3 to, List<long> gone, int goneCount, List<long> goneShapes, int goneShapeCount, long ignore, bool includeSensors, long queryCategory, long queryMask);
 
 [NativeName("b3t_cast_capsule_all")]
-extern void CastCapsuleAll(out List<Found> hits, long stamp, in Capsule shape, float3 from, quaternion rotation, float3 to, List<long> gone, int goneCount, List<long> goneShapes, int goneShapeCount, long ignore, bool includeSensors);
+extern void CastCapsuleAll(out List<Found> hits, long stamp, in Capsule shape, float3 from, quaternion rotation, float3 to, List<long> gone, int goneCount, List<long> goneShapes, int goneShapeCount, long ignore, bool includeSensors, long queryCategory, long queryMask);
 
 [NativeName("b3t_ray")]
-extern Found CastRay(long stamp, float3 from, float3 to, List<long> gone, int goneCount, List<long> goneShapes, int goneShapeCount, long ignore);
+extern Found CastRay(long stamp, float3 from, float3 to, List<long> gone, int goneCount, List<long> goneShapes, int goneShapeCount, long ignore, long queryCategory, long queryMask);
 
 [NativeName("b3t_cast_box")]
 extern Found CastBox(long stamp, in Box shape, float3 from, quaternion rotation, float3 to, List<long> gone, int goneCount,
-                     List<long> goneShapes, int goneShapeCount, long ignore);
+                     List<long> goneShapes, int goneShapeCount, long ignore, long queryCategory, long queryMask);
 
 [NativeName("b3t_cast_sphere")]
 extern Found CastSphere(long stamp, in Sphere shape, float3 from, quaternion rotation, float3 to, List<long> gone, int goneCount,
-                        List<long> goneShapes, int goneShapeCount, long ignore);
+                        List<long> goneShapes, int goneShapeCount, long ignore, long queryCategory, long queryMask);
 
 [NativeName("b3t_cast_capsule")]
 extern Found CastCapsule(long stamp, in Capsule shape, float3 from, quaternion rotation, float3 to, List<long> gone, int goneCount,
-                         List<long> goneShapes, int goneShapeCount, long ignore);
+                         List<long> goneShapes, int goneShapeCount, long ignore, long queryCategory, long queryMask);
 
 [NativeName("b3t_overlap_box")]
 extern void OverlapBox(out List<long> bodies, long stamp, in Box shape, float3 at, quaternion rotation, List<long> gone,
-                       int goneCount, List<long> goneShapes, int goneShapeCount);
+                       int goneCount, List<long> goneShapes, int goneShapeCount, long queryCategory, long queryMask);
 
 [NativeName("b3t_overlap_sphere")]
 extern void OverlapSphere(out List<long> bodies, long stamp, in Sphere shape, float3 at, quaternion rotation, List<long> gone,
-                          int goneCount, List<long> goneShapes, int goneShapeCount);
+                          int goneCount, List<long> goneShapes, int goneShapeCount, long queryCategory, long queryMask);
 
 [NativeName("b3t_overlap_capsule")]
 extern void OverlapCapsule(out List<long> bodies, long stamp, in Capsule shape, float3 at, quaternion rotation, List<long> gone,
-                           int goneCount, List<long> goneShapes, int goneShapeCount);
+                           int goneCount, List<long> goneShapes, int goneShapeCount, long queryCategory, long queryMask);
 
 [NativeName("b3t_inside")]
-extern void SensorBodies(out List<long> bodies, long stamp, long first, long second, long third, List<long> gone, int goneCount,
+extern void SensorBodies(out List<long> bodies, long stamp, long first, long second, long third, long fourth, List<long> gone, int goneCount,
                          List<long> goneShapes, int goneShapeCount);
 
 // C's world for this match, at the state the match is in: the one it has, or
@@ -646,10 +742,23 @@ extern void SensorBodies(out List<long> bodies, long stamp, long first, long sec
 // Each of these systems says where it is in the stage, so that nothing a game
 // orders its own systems by, naming the stage or one of these, can put them in
 // another order: each rests on what the ones before it did to C's world.
-[Stage(PhysicsStages.Step, 0)]
-system Begin(mut Physics physics)
+[Stage(PhysicsStages.Step, 1)]
+system Begin(World world, mut Physics physics)
 {
     OpenWorld(physics.state);
+    if (physics.topologyChanged) foreach (var entry in physics.owners)
+    {
+        if (!world.TryGet<Body>(entry.value, out var body) || body.id != entry.key || !Shards.Owns(entry.value))
+        {
+            if (!physics.gone.Contains(entry.key)) physics.gone.Add(entry.key);
+            physics.owners.Remove(entry.key);
+        }
+    }
+    // An entity that went to another shard takes its sensors with it
+    if (physics.topologyChanged && physics.sensors.count > 0) foreach (var entry in physics.sensors)
+    {
+        if (!Shards.Owns(entry.key)) physics.sensors.Remove(entry.key);
+    }
     if (physics.parts.count > 0)
     {
         for (int i = 0; i < physics.gone.count; i++)
@@ -661,7 +770,7 @@ system Begin(mut Physics physics)
                 if (physics.parts.TryGet(shape, out var part))
                 {
                     physics.parts.Remove(shape);
-                    part.Destroy();
+                    if (Shards.Owns(part)) part.Destroy(); // One that went to another shard went with its body
                 }
             }
         }
@@ -681,14 +790,14 @@ system Begin(mut Physics physics)
 // of the ones there's something to write for. A system written in Tide would
 // copy each body out to look at it. It takes Physics to write, which keeps it
 // on one thread: what it does to the world is noted in the order of its rows.
-[Stage(PhysicsStages.Step, 1)]
+[Stage(PhysicsStages.Step, 4)]
 [NativeName("b3t_enter")]
 extern system Enter(mut Body body, mut Physics physics);
 
 // The bodies Enter made are their entities' from here on: whose each body is,
 // the match keeps in a map, which is Tide's to write. C says which it made,
 // in the order it made them, so a tick that makes none asks once.
-[Stage(PhysicsStages.Step, 2)]
+[Stage(PhysicsStages.Step, 5)]
 system Own(mut Physics physics)
 {
     int made = CountMade();
@@ -699,163 +808,261 @@ system Own(mut Physics physics)
     }
 }
 
-[Stage(PhysicsStages.Step, 3)]
-system AttachBoxes(Body body, Box box, mut Physics physics, without BoxMade, without Part)
-{
-    long shape = AttachBox(body.id, box);
-    if (shape != 0)
-    {
-        physics.shapes += 1;
-        if (box.sensor)
-        {
-            mut var sensors = physics.sensors[this];
-            sensors.box = shape;
-            physics.sensors[this] = sensors;
-        }
-    }
-    this.Add(BoxMade);
-}
-
-[Stage(PhysicsStages.Step, 4)]
-system AttachSpheres(Body body, Sphere sphere, mut Physics physics, without SphereMade, without Part)
-{
-    long shape = AttachSphere(body.id, sphere);
-    if (shape != 0)
-    {
-        physics.shapes += 1;
-        if (sphere.sensor)
-        {
-            mut var sensors = physics.sensors[this];
-            sensors.sphere = shape;
-            physics.sensors[this] = sensors;
-        }
-    }
-    this.Add(SphereMade);
-}
-
 [Stage(PhysicsStages.Step, 5)]
-system AttachCapsules(Body body, Capsule capsule, mut Physics physics, without CapsuleMade, without Part)
+system PrepareParts(mut Part part, World world)
 {
-    long shape = AttachCapsule(body.id, capsule);
-    if (shape != 0)
-    {
-        physics.shapes += 1;
-        if (capsule.sensor)
-        {
-            mut var sensors = physics.sensors[this];
-            sensors.capsule = shape;
-            physics.sensors[this] = sensors;
-        }
-    }
-    this.Add(CapsuleMade);
+    part.body = 0;
+    if (world.TryGet<Body>(part.of, out var body)) part.body = body.id;
+    // In a sharded world, one whose body is another shard's waits: it goes where its body is
+    if (part.body == 0 && Shards.Owns(part.of)) this.Destroy();
 }
 
-// A part's shapes go on the body of the entity it names, which was made by
-// now if it was spawned by the last tick: after the bodies' own, so a game
-// with no part has its shapes made as it did. A part with no body to be on is
-// destroyed.
-[Stage(PhysicsStages.Step, 6)]
-system AttachBoxParts(Box box, mut Part part, World world, mut Physics physics, without BoxMade)
+[Stage(PhysicsStages.Step, 2)]
+[NativeName("b3t_begin_shapes")]
+extern system BeginShapes(mut Physics physics);
+
+long ColliderBody(World world, Entity entity)
 {
-    mut long shape = 0;
-    if (world.TryGet<Body>(part.of, out var body)) shape = AttachBox(body.id, box);
-    if (shape == 0)
+    if (world.TryGet<Part>(entity, out var part))
     {
-        this.Destroy();
-        return;
+        if (world.TryGet<Body>(part.of, out var parent)) return parent.id;
+        return 0;
     }
-    part.box = shape;
-    physics.shapes += 1;
-    physics.parts[shape] = this;
-    if (box.sensor)
-    {
-        mut var sensors = physics.sensors[this];
-        sensors.box = shape;
-        physics.sensors[this] = sensors;
-    }
-    this.Add(BoxMade);
+    if (world.TryGet<Body>(entity, out var body)) return body.id;
+    return 0;
 }
+
+// A copy of another shard's body near this one's border, and when it was last seen
+struct Copy
+{
+    long body;
+    int tick;
+}
+
+// ...and a part whose shapes are on a copy, and when it was last seen
+struct CopyPart
+{
+    Entity of;
+    long body;
+    int tick;
+}
+
+[NativeName("b3t_copy")]
+extern long CopyBody(long id, in Body body);
+
+[NativeName("b3t_copy_mesh")]
+extern long CopyMesh(long body, List<float3> vertices, int vertexCount, List<int> indices, int indexCount, float3 scale,
+                     float3 offset, float friction, float bounce);
+
+[NativeName("b3t_copy_hull")]
+extern long CopyHull(long body, List<float3> vertices, int count, float3 scale, float3 offset, float density, float friction,
+                     float bounce, bool sensor);
+
+[NativeName("b3t_copy_height")]
+extern long CopyHeightField(long body, List<float> heights, int heightCount, List<byte> holes, int holeCount, int columns,
+                            int rows, float3 scale, float minimumHeight, float maximumHeight, float friction, float bounce);
+
+// The shapes an entity has, on a copy
+void CopyShapes(World world, Entity entity, long body)
+{
+    if (world.TryGet<Box>(entity, out var box)) AttachBox(body, box);
+    if (world.TryGet<Sphere>(entity, out var sphere)) AttachSphere(body, sphere);
+    if (world.TryGet<Capsule>(entity, out var capsule)) AttachCapsule(body, capsule);
+    if (world.TryGet<MeshCollider>(entity, out var mesh))
+        CopyMesh(body, mesh.vertices, mesh.vertices.count, mesh.indices, mesh.indices.count, mesh.scale, mesh.offset, mesh.friction,
+                 mesh.bounce);
+    if (world.TryGet<HullCollider>(entity, out var hull))
+        CopyHull(body, hull.vertices, hull.vertices.count, hull.scale, hull.offset, hull.density, hull.friction, hull.bounce, hull.sensor);
+    if (world.TryGet<HeightFieldCollider>(entity, out var height))
+        CopyHeightField(body, height.heights, height.heights.count, height.holes, height.holes.count, height.columns, height.rows,
+                        height.scale, height.minimumHeight, height.maximumHeight, height.friction, height.bounce);
+}
+
+[NativeName("b3t_drop_copy")]
+extern void DropCopy(long id);
+
+// The box a body's shapes cover, by Box's handle
+struct Span
+{
+    float3 lo;
+    float3 hi;
+}
+
+[NativeName("b3t_span")]
+extern Span BodySpan(long id);
+
+// In a sharded world, the bodies other shards own near this one's border are
+// here as copies, and Box3D has each as a copy this shard's bodies run into:
+// kinematic (static for a static one), where its owner last had it and as
+// fast, with its shapes. In a world that isn't sharded, every body is this
+// shard's own, and these do nothing.
+[Stage(PhysicsStages.Step, 3)]
+system CopyBodies(World world, Time time, mut Physics physics, query (Body body) bodies)
+{
+    foreach (var row in bodies)
+    {
+        if (Shards.Owns(row.entity))
+        {
+            // A static body reaching past where it is, like a floor: every shard near any of it has a copy
+            if (Shards.on && row.body.type == BodyType.Static && row.body.id != 0)
+            {
+                Span span = BodySpan(row.body.id);
+                Shards.Spans(row.entity, (span.lo + span.hi) * 0.5, span.hi - span.lo);
+            }
+            continue;
+        }
+        long had = physics.copies.TryGet(row.entity, out var copy) ? copy.body : 0;
+        long made = CopyBody(had, row.body);
+        if (had != 0 && made != had) physics.copyOf.Remove(had);
+        if (made != 0 && made != had)
+        {
+            CopyShapes(world, row.entity, made);
+            physics.copyOf[made] = row.entity;
+        }
+        physics.copies[row.entity] = Copy { body = made, tick = time.tick };
+    }
+}
+
+// A part another shard owns, on a body copied here: its shapes are on the copy
+[Stage(PhysicsStages.Step, 4)]
+system CopyParts(World world, Time time, mut Physics physics, query (Part part) parts)
+{
+    if (physics.copies.count == 0) return;
+    foreach (var row in parts)
+    {
+        if (Shards.Owns(row.entity) || !physics.copies.TryGet(row.part.of, out var copy) || copy.body == 0) continue;
+        if (!physics.copiedParts.TryGet(row.entity, out var on) || on.body != copy.body) CopyShapes(world, row.entity, copy.body);
+        physics.copiedParts[row.entity] = CopyPart { of = row.part.of, body = copy.body, tick = time.tick };
+    }
+}
+
+// A copy whose ghost went last tick, or that this shard owns now, goes
+[Stage(PhysicsStages.Step, 2)]
+system DropCopies(Time time, mut Physics physics)
+{
+    if (physics.copies.count == 0) return;
+    // A copied part that went, or that this shard owns now: its body's copy is
+    // made again, without it
+    if (physics.copiedParts.count > 0) foreach (var entry in physics.copiedParts)
+    {
+        if (entry.value.tick >= time.tick - 1 && !Shards.Owns(entry.key)) continue;
+        if (physics.copies.TryGet(entry.value.of, out var copy) && copy.body == entry.value.body)
+        {
+            DropCopy(copy.body);
+            physics.copyOf.Remove(copy.body);
+            physics.copies.Remove(entry.value.of);
+        }
+        physics.copiedParts.Remove(entry.key);
+    }
+    foreach (var entry in physics.copies)
+    {
+        if (entry.value.tick >= time.tick - 1 && !Shards.Owns(entry.key)) continue;
+        DropCopy(entry.value.body);
+        physics.copyOf.Remove(entry.value.body);
+        physics.copies.Remove(entry.key);
+    }
+}
+
+[NativeName("b3t_drop_collider")]
+extern void DropCollider(int index, mut Resident state);
+
+[Stage(PhysicsStages.Step, 3)]
+system PruneShapes(World world, mut Physics physics)
+{
+    if (!physics.topologyChanged) return;
+    for (int i = 0; i < physics.colliders.count; i++)
+    {
+        long on = physics.colliders[i].body;
+        if (on == 0) continue;
+        Entity owner = physics.colliders[i].owner;
+        int kind = physics.colliders[i].kind & 7;
+        bool present = (kind == 0 && world.Has<Box>(owner)) || (kind == 1 && world.Has<Sphere>(owner)) ||
+            (kind == 2 && world.Has<Capsule>(owner)) || (kind == 3 && world.Has<MeshCollider>(owner)) ||
+            (kind == 4 && world.Has<HullCollider>(owner)) || (kind == 5 && world.Has<HeightFieldCollider>(owner));
+        if (!present || ColliderBody(world, owner) != on) DropCollider(i, physics.state);
+    }
+}
+
+[Stage(PhysicsStages.Step, 6)]
+[NativeName("b3t_live_box")]
+extern system AttachBoxes(Body body, mut Box shape, mut Physics physics, without Part);
+[Stage(PhysicsStages.Step, 9)]
+[NativeName("b3t_live_box_parts")]
+extern system AttachBoxesParts(Part part, mut Box shape, mut Physics physics);
 
 [Stage(PhysicsStages.Step, 7)]
-system AttachSphereParts(Sphere sphere, mut Part part, World world, mut Physics physics, without SphereMade)
-{
-    mut long shape = 0;
-    if (world.TryGet<Body>(part.of, out var body)) shape = AttachSphere(body.id, sphere);
-    if (shape == 0)
-    {
-        this.Destroy();
-        return;
-    }
-    part.sphere = shape;
-    physics.shapes += 1;
-    physics.parts[shape] = this;
-    if (sphere.sensor)
-    {
-        mut var sensors = physics.sensors[this];
-        sensors.sphere = shape;
-        physics.sensors[this] = sensors;
-    }
-    this.Add(SphereMade);
-}
+[NativeName("b3t_live_sphere")]
+extern system AttachSpheres(Body body, mut Sphere shape, mut Physics physics, without Part);
+[Stage(PhysicsStages.Step, 10)]
+[NativeName("b3t_live_sphere_parts")]
+extern system AttachSpheresParts(Part part, mut Sphere shape, mut Physics physics);
 
 [Stage(PhysicsStages.Step, 8)]
-system AttachCapsuleParts(Capsule capsule, mut Part part, World world, mut Physics physics, without CapsuleMade)
-{
-    mut long shape = 0;
-    if (world.TryGet<Body>(part.of, out var body)) shape = AttachCapsule(body.id, capsule);
-    if (shape == 0)
-    {
-        this.Destroy();
-        return;
-    }
-    part.capsule = shape;
-    physics.shapes += 1;
-    physics.parts[shape] = this;
-    if (capsule.sensor)
-    {
-        mut var sensors = physics.sensors[this];
-        sensors.capsule = shape;
-        physics.sensors[this] = sensors;
-    }
-    this.Add(CapsuleMade);
-}
-
-// Mesh creation reads list handles through native rows, with no caller-supplied
-// buffer counts. Part.mesh holds the body handle only between Prepare and Attach.
-[Stage(PhysicsStages.Step, 9)]
-[NativeName("b3t_attach_meshes")]
-extern system AttachMeshes(Body body, MeshCollider mesh, mut Physics physics, without MeshMade, without Part);
-
-[Stage(PhysicsStages.Step, 10)]
-system MarkMeshes(with MeshCollider, without MeshMade, without Part)
-{
-    this.Add(MeshMade);
-}
-
-[Stage(PhysicsStages.Step, 10)]
-system PrepareMeshParts(mut Part part, World world, with MeshCollider, without MeshMade)
-{
-    part.mesh = 0;
-    if (world.TryGet<Body>(part.of, out var body)) part.mesh = body.id;
-}
-
+[NativeName("b3t_live_capsule")]
+extern system AttachCapsules(Body body, mut Capsule shape, mut Physics physics, without Part);
 [Stage(PhysicsStages.Step, 11)]
-[NativeName("b3t_attach_mesh_parts")]
-extern system AttachMeshParts(MeshCollider mesh, mut Part part, mut Physics physics, without MeshMade);
+[NativeName("b3t_live_capsule_parts")]
+extern system AttachCapsulesParts(Part part, mut Capsule shape, mut Physics physics);
 
 [Stage(PhysicsStages.Step, 12)]
-system RegisterMeshParts(Part part, mut Physics physics, with MeshCollider, without MeshMade)
+[NativeName("b3t_live_mesh")]
+extern system AttachMeshes(Body body, mut MeshCollider shape, mut Physics physics, without Part);
+[Stage(PhysicsStages.Step, 13)]
+[NativeName("b3t_live_mesh_parts")]
+extern system AttachMeshesParts(Part part, mut MeshCollider shape, mut Physics physics);
+
+[Stage(PhysicsStages.Step, 14)]
+[NativeName("b3t_live_hull")]
+extern system AttachHulls(Body body, mut HullCollider shape, mut Physics physics, without Part);
+[Stage(PhysicsStages.Step, 15)]
+[NativeName("b3t_live_hull_parts")]
+extern system AttachHullsParts(Part part, mut HullCollider shape, mut Physics physics);
+
+[Stage(PhysicsStages.Step, 16)]
+[NativeName("b3t_live_height")]
+extern system AttachHeightFields(Body body, mut HeightFieldCollider shape, mut Physics physics, without Part);
+[Stage(PhysicsStages.Step, 17)]
+[NativeName("b3t_live_height_parts")]
+extern system AttachHeightFieldsParts(Part part, mut HeightFieldCollider shape, mut Physics physics);
+
+
+[NativeName("b3t_shape_changes")]
+extern int CountShapeChanges();
+[NativeName("b3t_shape_change")]
+extern ShapeChange ReadShapeChange(int index);
+
+[Stage(PhysicsStages.Step, 18)]
+system RegisterShapes(mut Physics physics)
 {
-    if (part.mesh == 0)
+    for (int i = 0; i < CountShapeChanges(); i++)
     {
-        this.Destroy();
-        return;
+        var change = ReadShapeChange(i);
+        if (change.before != 0) physics.parts.Remove(change.before);
+        if (change.after != 0 && change.owner != physics.owners[change.body]) physics.parts[change.after] = change.owner;
+        mut var sensors = physics.sensors[change.owner];
+        long sensor = change.sensor ? change.after : 0;
+        if (change.kind == 0) sensors.box = sensor;
+        if (change.kind == 1) sensors.sphere = sensor;
+        if (change.kind == 2) sensors.capsule = sensor;
+        if (change.kind == 4) sensors.hull = sensor;
+        if (sensors.box == 0 && sensors.sphere == 0 && sensors.capsule == 0 && sensors.hull == 0) physics.sensors.Remove(change.owner);
+        else physics.sensors[change.owner] = sensors;
     }
-    physics.parts[part.mesh] = this;
-    this.Add(MeshMade);
 }
 
-[Stage(PhysicsStages.Step, 13)]
+[Stage(PhysicsStages.Step, 18)]
+system RecordParts(mut Part part, Physics physics)
+{
+    var slots = physics.colliderIndex[this];
+    part.box = slots.box > 0 ? physics.colliders[slots.box - 1].shape : 0;
+    part.sphere = slots.sphere > 0 ? physics.colliders[slots.sphere - 1].shape : 0;
+    part.capsule = slots.capsule > 0 ? physics.colliders[slots.capsule - 1].shape : 0;
+    part.mesh = slots.mesh > 0 ? physics.colliders[slots.mesh - 1].shape : 0;
+    part.hull = slots.hull > 0 ? physics.colliders[slots.hull - 1].shape : 0;
+    part.heightField = slots.heightField > 0 ? physics.colliders[slots.heightField - 1].shape : 0;
+}
+
+[Stage(PhysicsStages.Step, 20)]
 // The step isn't named Step: games name the phase, PhysicsStages.Step.
 system Simulate(Time time, mut Physics physics)
 {
@@ -867,9 +1074,17 @@ system Simulate(Time time, mut Physics physics)
 }
 
 // Where the step left each body that it moved, into the fields that say so.
-[Stage(PhysicsStages.Step, 14)]
+[Stage(PhysicsStages.Step, 21)]
 [NativeName("b3t_leave")]
 extern system Leave(mut Body body, Physics physics);
+
+// Whose a body is: its entity's, or for a copy of another shard's body (in a
+// sharded world), the entity it copies
+Entity BodyOwner(Physics physics, long body)
+{
+    if (physics.owners.TryGet(body, out var owner)) return owner;
+    return physics.copyOf[body];
+}
 
 // The entity a shape is on: a part's, or else its body's own, and none for a
 // shape that's gone.
@@ -880,36 +1095,47 @@ Entity PartOf(Map<long, Entity> parts, long shape, Entity owner)
     return owner;
 }
 
-[Stage(PhysicsStages.Step, 14)]
-system Report(Physics physics)
+// Whether two bodies push each other: both dynamic. A sharded world keeps the two
+// on one shard while they touch, so each has its weight against the other; a
+// copy of a static or kinematic body pushes as the body itself does
+bool Pushing(World world, Entity a, Entity b)
+{
+    return world.Get<Body>(a).type == BodyType.Dynamic && world.Get<Body>(b).type == BodyType.Dynamic;
+}
+
+[Stage(PhysicsStages.Step, 21)]
+system Report(Physics physics, World world)
 {
     int count = physics.moved ? CountTouches(physics.stamp) : 0;
     for (int i = 0; i < count; i++)
     {
         Contact contact = ReadTouch(i);
-        Entity a = physics.owners[contact.a];
-        Entity b = physics.owners[contact.b];
+        Entity a = BodyOwner(physics, contact.a);
+        Entity b = BodyOwner(physics, contact.b);
         Entity partA = PartOf(physics.parts, contact.shapeA, a);
         Entity partB = PartOf(physics.parts, contact.shapeB, b);
+        // In a sharded world each side of a border tells its own entities, of a copy too: the copy's own shard tells it
         if (contact.began)
         {
-            a.Send(Touched { other = b, part = partA, otherPart = partB });
-            b.Send(Touched { other = a, part = partB, otherPart = partA });
+            if (Pushing(world, a, b)) Shards.Together(a, b);
+            if (Shards.Owns(a)) a.Send(Touched { other = b, part = partA, otherPart = partB });
+            if (Shards.Owns(b)) b.Send(Touched { other = a, part = partB, otherPart = partA });
         }
         else
         {
-            a.Send(Parted { other = b, part = partA, otherPart = partB });
-            b.Send(Parted { other = a, part = partB, otherPart = partA });
+            Shards.Apart(a, b); // As many as touched, whatever they are now: one that wasn't is nothing
+            if (Shards.Owns(a)) a.Send(Parted { other = b, part = partA, otherPart = partB });
+            if (Shards.Owns(b)) b.Send(Parted { other = a, part = partB, otherPart = partA });
         }
     }
     int hits = physics.moved ? CountHits() : 0;
     for (int i = 0; i < hits; i++)
     {
         Strike strike = ReadHit(i);
-        Entity a = physics.owners[strike.a];
-        Entity b = physics.owners[strike.b];
-        a.Send(Hit { other = b, point = strike.point, normal = -strike.normal, speed = strike.speed });
-        b.Send(Hit { other = a, point = strike.point, normal = strike.normal, speed = strike.speed });
+        Entity a = BodyOwner(physics, strike.a);
+        Entity b = BodyOwner(physics, strike.b);
+        if (Shards.Owns(a)) a.Send(Hit { other = b, point = strike.point, normal = -strike.normal, speed = strike.speed });
+        if (Shards.Owns(b)) b.Send(Hit { other = a, point = strike.point, normal = strike.normal, speed = strike.speed });
     }
 }
 
@@ -932,6 +1158,8 @@ event(Destroyed) RemovePart(Part part, mut Physics physics)
     if (part.sphere != 0 && physics.parts.Remove(part.sphere)) physics.goneShapes.Add(part.sphere);
     if (part.capsule != 0 && physics.parts.Remove(part.capsule)) physics.goneShapes.Add(part.capsule);
     if (part.mesh != 0 && physics.parts.Remove(part.mesh)) physics.goneShapes.Add(part.mesh);
+    if (part.hull != 0 && physics.parts.Remove(part.hull)) physics.goneShapes.Add(part.hull);
+    if (part.heightField != 0 && physics.parts.Remove(part.heightField)) physics.goneShapes.Add(part.heightField);
     if (physics.sensors.count > 0) physics.sensors.Remove(this);
 }
 
@@ -958,12 +1186,24 @@ struct Collider
     int count;
     float radius;
     bool sensor;
+    int geometry; // One-based index in the accompanying hull geometry list
+    long category;
+    long mask;
+}
+
+struct HullGeometry
+{
+    float3[128] points;
+    float4[128] planes;
+    int count;
+    int faces;
 }
 
 struct HistoryFrame
 {
     int tick;
     List<Collider> colliders;
+    List<HullGeometry> hulls;
 }
 
 struct SceneBounds { float3 min; float3 max; bool valid; }
@@ -975,71 +1215,72 @@ struct Query
 {
     List<Collider> colliders;
     List<SceneNode> nodes;
+    List<HullGeometry> hulls;
 
-    bool RaycastAll(float3 from, float3 to, out List<RayHit> hits, bool includeSensors = false)
+    bool RaycastAll(float3 from, float3 to, out List<RayHit> hits, bool includeSensors = false, QueryFilter filter = default)
     {
-        return RaycastAll(from, to, out hits, default, includeSensors);
+        return RaycastAll(from, to, out hits, default, includeSensors, filter);
     }
 
-    bool RaycastAll(float3 from, float3 to, out List<RayHit> hits, Body ignore, bool includeSensors = false)
+    bool RaycastAll(float3 from, float3 to, out List<RayHit> hits, Body ignore, bool includeSensors = false, QueryFilter filter = default)
     {
         mut List<SceneHit> found = [];
         foreach (var index in Candidates(SceneBounds { min = Math.Min(from, to), max = Math.Max(from, to), valid = true }))
         {
             var collider = colliders[index];
-            if ((!includeSensors && collider.sensor) || collider.body == ignore.id) continue;
-            AddSceneHit(found, collider, SceneRay(collider, from, to));
+            if (!filter.Accepts(collider) || (!includeSensors && collider.sensor) || collider.body == ignore.id) continue;
+            AddSceneHit(found, collider, (collider.geometry > 0 ? HullRay(collider, hulls[collider.geometry - 1], from, to) : SceneRay(collider, from, to)));
         }
         return FinishSceneHits(found, out hits);
     }
 
-    bool CastAll(Box shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, bool includeSensors = false)
+    bool CastAll(Box shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, bool includeSensors = false, QueryFilter filter = default)
     {
-        return CastAll(shape, from, rotation, to, out hits, default, includeSensors);
+        return CastAll(shape, from, rotation, to, out hits, default, includeSensors, filter);
     }
 
-    bool CastAll(Box shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, Body ignore, bool includeSensors = false)
+    bool CastAll(Box shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, Body ignore, bool includeSensors = false, QueryFilter filter = default)
     {
         mut List<SceneHit> found = [];
         foreach (var index in Candidates(BoxBounds(shape, rotation, from, to)))
         {
             var collider = colliders[index];
-            if ((!includeSensors && collider.sensor) || collider.body == ignore.id) continue;
-            AddSceneHit(found, collider, SceneCastBox(collider, shape, from, rotation, to));
+            if (!filter.Accepts(collider) || (!includeSensors && collider.sensor) || collider.body == ignore.id) continue;
+            AddSceneHit(found, collider, (collider.geometry > 0 ? HullCastBox(collider, hulls[collider.geometry - 1], shape, from, rotation, to) : SceneCastBox(collider, shape, from, rotation, to)));
         }
         return FinishSceneHits(found, out hits);
     }
 
-    bool CastAll(Sphere shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, bool includeSensors = false)
+    bool CastAll(Sphere shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, bool includeSensors = false, QueryFilter filter = default)
     {
-        return CastAll(shape, from, rotation, to, out hits, default, includeSensors);
+        return CastAll(shape, from, rotation, to, out hits, default, includeSensors, filter);
     }
 
-    bool CastAll(Sphere shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, Body ignore, bool includeSensors = false)
+    bool CastAll(Sphere shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, Body ignore, bool includeSensors = false, QueryFilter filter = default)
     {
         mut List<SceneHit> found = [];
         foreach (var index in Candidates(SphereBounds(shape, rotation, from, to)))
         {
             var collider = colliders[index];
-            if ((!includeSensors && collider.sensor) || collider.body == ignore.id) continue;
-            AddSceneHit(found, collider, SceneCastSphere(collider, shape, from, rotation, to));
+            if (!filter.Accepts(collider) || (!includeSensors && collider.sensor) || collider.body == ignore.id) continue;
+            AddSceneHit(found, collider, (collider.geometry > 0 ? HullCastSphere(collider, hulls[collider.geometry - 1], shape, from, rotation, to) : SceneCastSphere(collider, shape, from, rotation, to)));
         }
         return FinishSceneHits(found, out hits);
     }
 
-    bool CastAll(Capsule shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, bool includeSensors = false)
+    bool CastAll(Capsule shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, bool includeSensors = false, QueryFilter filter = default)
     {
-        return CastAll(shape, from, rotation, to, out hits, default, includeSensors);
+        return CastAll(shape, from, rotation, to, out hits, default, includeSensors, filter);
     }
 
-    bool CastAll(Capsule shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, Body ignore, bool includeSensors = false)
+    bool CastAll(Capsule shape, float3 from, quaternion rotation, float3 to, out List<RayHit> hits, Body ignore, bool includeSensors = false, QueryFilter filter = default)
     {
         mut List<SceneHit> found = [];
         foreach (var index in Candidates(CapsuleBounds(shape, rotation, from, to)))
         {
             var collider = colliders[index];
-            if ((!includeSensors && collider.sensor) || collider.body == ignore.id) continue;
-            AddSceneHit(found, collider, SceneCastCapsule(collider, shape, from, rotation, to));
+            if (!filter.Accepts(collider) || (!includeSensors && collider.sensor) || collider.body == ignore.id) continue;
+            AddSceneHit(found, collider, (collider.geometry > 0 ? HullCastCapsule(collider, hulls[collider.geometry - 1], shape, from, rotation, to) : SceneCastCapsule(collider, shape, from, rotation, to)));
         }
         return FinishSceneHits(found, out hits);
     }
@@ -1065,12 +1306,12 @@ struct Query
     }
 
 
-    bool Raycast(float3 from, float3 to, out RayHit hit)
+    bool Raycast(float3 from, float3 to, out RayHit hit, QueryFilter filter = default)
     {
-        return Raycast(from, to, out hit, default);
+        return Raycast(from, to, out hit, default, filter);
     }
 
-    bool Raycast(float3 from, float3 to, out RayHit hit, Body ignore)
+    bool Raycast(float3 from, float3 to, out RayHit hit, Body ignore, QueryFilter filter = default)
     {
         hit = default;
         mut bool any = false;
@@ -1078,8 +1319,8 @@ struct Query
         foreach (var index in Candidates(SceneBounds { min = Math.Min(from, to), max = Math.Max(from, to), valid = true }))
         {
             var collider = colliders[index];
-            if (collider.sensor || collider.body == ignore.id) continue;
-            var met = SceneRay(collider, from, to);
+            if (!filter.Accepts(collider) || collider.sensor || collider.body == ignore.id) continue;
+            var met = (collider.geometry > 0 ? HullRay(collider, hulls[collider.geometry - 1], from, to) : SceneRay(collider, from, to));
             if (met.body == 0 || (any && (met.fraction > hit.fraction ||
                 (met.fraction == hit.fraction && met.shape >= nearestShape)))) continue;
             hit = RayHit { entity = collider.entity, part = collider.part, point = met.point,
@@ -1090,12 +1331,12 @@ struct Query
         return any;
     }
 
-    bool Cast(Box shape, float3 from, quaternion rotation, float3 to, out RayHit hit)
+    bool Cast(Box shape, float3 from, quaternion rotation, float3 to, out RayHit hit, QueryFilter filter = default)
     {
-        return Cast(shape, from, rotation, to, out hit, default);
+        return Cast(shape, from, rotation, to, out hit, default, filter);
     }
 
-    bool Cast(Box shape, float3 from, quaternion rotation, float3 to, out RayHit hit, Body ignore)
+    bool Cast(Box shape, float3 from, quaternion rotation, float3 to, out RayHit hit, Body ignore, QueryFilter filter = default)
     {
         hit = default;
         mut bool any = false;
@@ -1103,8 +1344,8 @@ struct Query
         foreach (var index in Candidates(BoxBounds(shape, rotation, from, to)))
         {
             var collider = colliders[index];
-            if (collider.sensor || collider.body == ignore.id) continue;
-            var met = SceneCastBox(collider, shape, from, rotation, to);
+            if (!filter.Accepts(collider) || collider.sensor || collider.body == ignore.id) continue;
+            var met = (collider.geometry > 0 ? HullCastBox(collider, hulls[collider.geometry - 1], shape, from, rotation, to) : SceneCastBox(collider, shape, from, rotation, to));
             if (met.body == 0 || (any && (met.fraction > hit.fraction ||
                 (met.fraction == hit.fraction && met.shape >= nearestShape)))) continue;
             hit = RayHit { entity = collider.entity, part = collider.part, point = met.point,
@@ -1115,24 +1356,24 @@ struct Query
         return any;
     }
 
-    bool Overlap(Box shape, float3 at, quaternion rotation, out List<Entity> found)
+    bool Overlap(Box shape, float3 at, quaternion rotation, out List<Entity> found, QueryFilter filter = default)
     {
         found = [];
         foreach (var index in Candidates(BoxBounds(shape, rotation, at, at)))
         {
             var collider = colliders[index];
-            if (collider.sensor || found.Contains(collider.entity)) continue;
-            if (SceneOverlapBox(collider, shape, at, rotation)) found.Add(collider.entity);
+            if (!filter.Accepts(collider) || collider.sensor || found.Contains(collider.entity)) continue;
+            if ((collider.geometry > 0 ? HullOverlapBox(collider, hulls[collider.geometry - 1], shape, at, rotation) : SceneOverlapBox(collider, shape, at, rotation))) found.Add(collider.entity);
         }
         return found.count > 0;
     }
 
-    bool Cast(Sphere shape, float3 from, quaternion rotation, float3 to, out RayHit hit)
+    bool Cast(Sphere shape, float3 from, quaternion rotation, float3 to, out RayHit hit, QueryFilter filter = default)
     {
-        return Cast(shape, from, rotation, to, out hit, default);
+        return Cast(shape, from, rotation, to, out hit, default, filter);
     }
 
-    bool Cast(Sphere shape, float3 from, quaternion rotation, float3 to, out RayHit hit, Body ignore)
+    bool Cast(Sphere shape, float3 from, quaternion rotation, float3 to, out RayHit hit, Body ignore, QueryFilter filter = default)
     {
         hit = default;
         mut bool any = false;
@@ -1140,8 +1381,8 @@ struct Query
         foreach (var index in Candidates(SphereBounds(shape, rotation, from, to)))
         {
             var collider = colliders[index];
-            if (collider.sensor || collider.body == ignore.id) continue;
-            var met = SceneCastSphere(collider, shape, from, rotation, to);
+            if (!filter.Accepts(collider) || collider.sensor || collider.body == ignore.id) continue;
+            var met = (collider.geometry > 0 ? HullCastSphere(collider, hulls[collider.geometry - 1], shape, from, rotation, to) : SceneCastSphere(collider, shape, from, rotation, to));
             if (met.body == 0 || (any && (met.fraction > hit.fraction ||
                 (met.fraction == hit.fraction && met.shape >= nearestShape)))) continue;
             hit = RayHit { entity = collider.entity, part = collider.part, point = met.point,
@@ -1152,24 +1393,24 @@ struct Query
         return any;
     }
 
-    bool Overlap(Sphere shape, float3 at, quaternion rotation, out List<Entity> found)
+    bool Overlap(Sphere shape, float3 at, quaternion rotation, out List<Entity> found, QueryFilter filter = default)
     {
         found = [];
         foreach (var index in Candidates(SphereBounds(shape, rotation, at, at)))
         {
             var collider = colliders[index];
-            if (collider.sensor || found.Contains(collider.entity)) continue;
-            if (SceneOverlapSphere(collider, shape, at, rotation)) found.Add(collider.entity);
+            if (!filter.Accepts(collider) || collider.sensor || found.Contains(collider.entity)) continue;
+            if ((collider.geometry > 0 ? HullOverlapSphere(collider, hulls[collider.geometry - 1], shape, at, rotation) : SceneOverlapSphere(collider, shape, at, rotation))) found.Add(collider.entity);
         }
         return found.count > 0;
     }
 
-    bool Cast(Capsule shape, float3 from, quaternion rotation, float3 to, out RayHit hit)
+    bool Cast(Capsule shape, float3 from, quaternion rotation, float3 to, out RayHit hit, QueryFilter filter = default)
     {
-        return Cast(shape, from, rotation, to, out hit, default);
+        return Cast(shape, from, rotation, to, out hit, default, filter);
     }
 
-    bool Cast(Capsule shape, float3 from, quaternion rotation, float3 to, out RayHit hit, Body ignore)
+    bool Cast(Capsule shape, float3 from, quaternion rotation, float3 to, out RayHit hit, Body ignore, QueryFilter filter = default)
     {
         hit = default;
         mut bool any = false;
@@ -1177,8 +1418,8 @@ struct Query
         foreach (var index in Candidates(CapsuleBounds(shape, rotation, from, to)))
         {
             var collider = colliders[index];
-            if (collider.sensor || collider.body == ignore.id) continue;
-            var met = SceneCastCapsule(collider, shape, from, rotation, to);
+            if (!filter.Accepts(collider) || collider.sensor || collider.body == ignore.id) continue;
+            var met = (collider.geometry > 0 ? HullCastCapsule(collider, hulls[collider.geometry - 1], shape, from, rotation, to) : SceneCastCapsule(collider, shape, from, rotation, to));
             if (met.body == 0 || (any && (met.fraction > hit.fraction ||
                 (met.fraction == hit.fraction && met.shape >= nearestShape)))) continue;
             hit = RayHit { entity = collider.entity, part = collider.part, point = met.point,
@@ -1189,14 +1430,14 @@ struct Query
         return any;
     }
 
-    bool Overlap(Capsule shape, float3 at, quaternion rotation, out List<Entity> found)
+    bool Overlap(Capsule shape, float3 at, quaternion rotation, out List<Entity> found, QueryFilter filter = default)
     {
         found = [];
         foreach (var index in Candidates(CapsuleBounds(shape, rotation, at, at)))
         {
             var collider = colliders[index];
-            if (collider.sensor || found.Contains(collider.entity)) continue;
-            if (SceneOverlapCapsule(collider, shape, at, rotation)) found.Add(collider.entity);
+            if (!filter.Accepts(collider) || collider.sensor || found.Contains(collider.entity)) continue;
+            if ((collider.geometry > 0 ? HullOverlapCapsule(collider, hulls[collider.geometry - 1], shape, at, rotation) : SceneOverlapCapsule(collider, shape, at, rotation))) found.Add(collider.entity);
         }
         return found.count > 0;
     }
@@ -1212,7 +1453,7 @@ struct Query
             {
                 var collider = colliders[index];
                 if (collider.sensor || collider.body == volume.body || visitors.Contains(index)) continue;
-                if (SceneTouch(volume, collider)) visitors.Add(index);
+                if ((volume.geometry > 0 || collider.geometry > 0 ? HullTouch(volume, hulls[volume.geometry - 1], collider, hulls[collider.geometry - 1]) : SceneTouch(volume, collider))) visitors.Add(index);
             }
         }
         SortCandidates(visitors);
@@ -1324,7 +1565,7 @@ extern SceneBounds SphereBounds(in Sphere shape, quaternion rotation, float3 fro
 extern SceneBounds CapsuleBounds(in Capsule shape, quaternion rotation, float3 from, float3 to);
 
 [NativeName("b3t_read_colliders")]
-extern void ReadColliders(long body, out List<Collider> colliders);
+extern void ReadColliders(long body, out List<Collider> colliders, out List<HullGeometry> hulls);
 [NativeName("b3t_blend_collider")]
 extern Collider BlendCollider(in Collider before, in Collider current, float alpha);
 [NativeName("b3t_scene_ray")]
@@ -1344,7 +1585,7 @@ extern Found SceneCastCapsule(in Collider collider, in Capsule shape, float3 fro
 [NativeName("b3t_scene_overlap_capsule")]
 extern bool SceneOverlapCapsule(in Collider collider, in Capsule shape, float3 at, quaternion rotation);
 
-[Stage(PhysicsStages.Step, 15)]
+[Stage(PhysicsStages.Step, 22)]
 system BeginHistory(Time time, mut Physics physics)
 {
     if (!(time.maxRewind > 0))
@@ -1356,6 +1597,8 @@ system BeginHistory(Time time, mut Physics physics)
             physics.historyTick = 0;
             physics.selected.Clear();
             physics.pending = [];
+    physics.pendingHulls = [];
+            physics.pendingHulls = [];
             physics.history = [];
         }
         return;
@@ -1365,17 +1608,18 @@ system BeginHistory(Time time, mut Physics physics)
     physics.historyLimit = time.maxRewind;
     physics.selected.Clear();
     physics.pending = [];
+    physics.pendingHulls = [];
     // Keep the extra lower endpoint required by fractional timestamps.
     while (physics.history.count > 1 &&
            float(long(physics.historyTick) - long(physics.history[1].tick)) * time.dt > time.maxRewind)
         physics.history.RemoveAt(0);
 }
 
-[Stage(PhysicsStages.Step, 16)]
+[Stage(PhysicsStages.Step, 23)]
 [NativeName("b3t_capture_history")]
 extern system CaptureHistory(Body body, mut Physics physics);
 
-[Stage(PhysicsStages.Step, 17)]
+[Stage(PhysicsStages.Step, 24)]
 system EndHistory(mut Physics physics)
 {
     if (!(physics.historyLimit > 0)) return;
@@ -1386,10 +1630,10 @@ system EndHistory(mut Physics physics)
         physics.pending[i] = collider;
         physics.selected[collider.body] = true;
     }
-    physics.history.Add(HistoryFrame { tick = physics.historyTick, colliders = physics.pending });
+    physics.history.Add(HistoryFrame { tick = physics.historyTick, colliders = physics.pending, hulls = physics.pendingHulls });
 }
 
-[Stage(PhysicsStages.Step, 18)]
+[Stage(PhysicsStages.Step, 25)]
 [NativeName("b3t_seal_history")]
 extern system SealHistory(mut Physics physics);
 
@@ -1397,3 +1641,297 @@ void SortScene(mut List<Collider> scene)
 {
     scene.Sort(a, b) { return a.body < b.body || (a.body == b.body && a.shape < b.shape); }
 }
+
+// ---------------------------------------------------------------------------
+// Joints are entities with Joint and exactly one type's settings component.
+// Anchors and rotations are local to the corresponding body's origin.
+component Joint
+{
+    [Together] Entity a; // The bodies it joins, which in a sharded world are kept on one shard with it
+    [Together] Entity b;
+    float3 anchorA;
+    float3 anchorB;
+    quaternion rotationA = quaternion.identity;
+    quaternion rotationB = quaternion.identity;
+    float constraintHertz = 60;
+    float constraintDampingRatio = 2;
+    bool enabled = true;
+    bool collideConnected;
+    [Native] long id; // The package's own native handle, zero before attachment
+    float3 force; // Read back after the step, in newtons
+    float3 torque; // Read back after the step, in newton meters
+}
+
+component DistanceJoint
+{
+    float length = 1;
+    float lowerSpringForce = -1e12;
+    float upperSpringForce = 1e12;
+    float hertz = 0;
+    float dampingRatio = 0;
+    float minLength = 0;
+    float maxLength = 1e6;
+    float maxMotorForce = 0;
+    float motorSpeed = 0;
+    bool enableSpring = false;
+    bool enableLimit = false;
+    bool enableMotor = false;
+}
+
+component MotorJoint
+{
+    float3 linearVelocity = float3(0);
+    float3 angularVelocity = float3(0);
+    float maxVelocityForce = 0;
+    float maxVelocityTorque = 0;
+    float linearHertz = 0;
+    float linearDampingRatio = 0;
+    float maxSpringForce = 0;
+    float angularHertz = 0;
+    float angularDampingRatio = 0;
+    float maxSpringTorque = 0;
+}
+
+component FilterJoint
+{
+    bool enabled = true;
+}
+
+component ParallelJoint
+{
+    float hertz = 1;
+    float dampingRatio = 1;
+    float maxTorque = 1e12;
+}
+
+component PrismaticJoint
+{
+    float hertz = 0;
+    float dampingRatio = 0;
+    float targetTranslation = 0;
+    float lowerTranslation = 0;
+    float upperTranslation = 0;
+    float maxMotorForce = 0;
+    float motorSpeed = 0;
+    bool enableSpring = false;
+    bool enableLimit = false;
+    bool enableMotor = false;
+}
+
+component RevoluteJoint
+{
+    float targetAngle = 0;
+    float hertz = 0;
+    float dampingRatio = 0;
+    float lowerAngle = 0;
+    float upperAngle = 0;
+    float maxMotorTorque = 0;
+    float motorSpeed = 0;
+    bool enableSpring = false;
+    bool enableLimit = false;
+    bool enableMotor = false;
+}
+
+component SphericalJoint
+{
+    float hertz = 0;
+    float dampingRatio = 0;
+    quaternion targetRotation = quaternion.identity;
+    float coneAngle = 0;
+    float lowerTwistAngle = 0;
+    float upperTwistAngle = 0;
+    float maxMotorTorque = 0;
+    float3 motorVelocity = float3(0);
+    bool enableSpring = false;
+    bool enableConeLimit = false;
+    bool enableTwistLimit = false;
+    bool enableMotor = false;
+}
+
+component WeldJoint
+{
+    float linearHertz = 0;
+    float angularHertz = 0;
+    float linearDampingRatio = 0;
+    float angularDampingRatio = 0;
+}
+
+component WheelJoint
+{
+    float suspensionHertz = 1;
+    float suspensionDampingRatio = 0.7;
+    float lowerSuspensionLimit = 0;
+    float upperSuspensionLimit = 0;
+    float maxSpinTorque = 0;
+    float spinSpeed = 0;
+    float steeringHertz = 1;
+    float steeringDampingRatio = 0.7;
+    float targetSteeringAngle = 0;
+    float maxSteeringTorque = 0;
+    float lowerSteeringLimit = 0;
+    float upperSteeringLimit = 0;
+    bool enableSuspensionSpring = true;
+    bool enableSuspensionLimit = false;
+    bool enableSpinMotor = false;
+    bool enableSteering = false;
+    bool enableSteeringLimit = false;
+}
+
+[NativeName("b3t_sync_distance_joint")]
+extern bool SyncDistanceJoint(mut Joint joint, long a, long b, in DistanceJoint settings);
+
+[NativeName("b3t_sync_motor_joint")]
+extern bool SyncMotorJoint(mut Joint joint, long a, long b, in MotorJoint settings);
+
+[NativeName("b3t_sync_filter_joint")]
+extern bool SyncFilterJoint(mut Joint joint, long a, long b, in FilterJoint settings);
+
+[NativeName("b3t_sync_parallel_joint")]
+extern bool SyncParallelJoint(mut Joint joint, long a, long b, in ParallelJoint settings);
+
+[NativeName("b3t_sync_prismatic_joint")]
+extern bool SyncPrismaticJoint(mut Joint joint, long a, long b, in PrismaticJoint settings);
+
+[NativeName("b3t_sync_revolute_joint")]
+extern bool SyncRevoluteJoint(mut Joint joint, long a, long b, in RevoluteJoint settings);
+
+[NativeName("b3t_sync_spherical_joint")]
+extern bool SyncSphericalJoint(mut Joint joint, long a, long b, in SphericalJoint settings);
+
+[NativeName("b3t_sync_weld_joint")]
+extern bool SyncWeldJoint(mut Joint joint, long a, long b, in WeldJoint settings);
+
+[NativeName("b3t_sync_wheel_joint")]
+extern bool SyncWheelJoint(mut Joint joint, long a, long b, in WheelJoint settings);
+
+[NativeName("b3t_drop_joint")]
+extern void DropJoint(long id);
+[NativeName("b3t_read_joint")]
+extern void ReadJoint(mut Joint joint);
+
+// Removes orphaned handles too, including removal of the Joint component.
+[Stage(PhysicsStages.Step, 2)]
+system RemoveJoints(World world, mut Physics physics)
+{
+    foreach (var entry in physics.joints)
+    {
+        if (!world.TryGet<Joint>(entry.value, out var joint) || joint.id != entry.key)
+        {
+            DropJoint(entry.key);
+            physics.joints.Remove(entry.key);
+        }
+    }
+}
+
+[Stage(PhysicsStages.Step, 19)]
+system SynchronizeJoints(mut Joint joint, World world, mut Physics physics)
+{
+    long old = joint.id;
+    mut int count = 0;
+    if (world.Has<DistanceJoint>(this)) count += 1;
+    if (world.Has<MotorJoint>(this)) count += 1;
+    if (world.Has<FilterJoint>(this)) count += 1;
+    if (world.Has<ParallelJoint>(this)) count += 1;
+    if (world.Has<PrismaticJoint>(this)) count += 1;
+    if (world.Has<RevoluteJoint>(this)) count += 1;
+    if (world.Has<SphericalJoint>(this)) count += 1;
+    if (world.Has<WeldJoint>(this)) count += 1;
+    if (world.Has<WheelJoint>(this)) count += 1;
+    // In a sharded world, a joint whose bodies aren't both this shard's holds nothing until they are
+    if (!Shards.Owns(joint.a) || !Shards.Owns(joint.b))
+    {
+        if (joint.id != 0)
+        {
+            DropJoint(joint.id);
+            physics.joints.Remove(joint.id);
+            joint.id = 0;
+        }
+        return;
+    }
+    if (count != 1 || !world.TryGet<Body>(joint.a, out var a) || !world.TryGet<Body>(joint.b, out var b))
+    {
+        DropJoint(joint.id);
+        physics.joints.Remove(old);
+        this.Destroy();
+        return;
+    }
+    mut bool valid = false;
+    if (world.TryGet<DistanceJoint>(this, out var distance)) valid = SyncDistanceJoint(joint, a.id, b.id, distance);
+    else if (world.TryGet<MotorJoint>(this, out var motor)) valid = SyncMotorJoint(joint, a.id, b.id, motor);
+    else if (world.TryGet<FilterJoint>(this, out var filter)) valid = SyncFilterJoint(joint, a.id, b.id, filter);
+    else if (world.TryGet<ParallelJoint>(this, out var parallelSettings)) valid = SyncParallelJoint(joint, a.id, b.id, parallelSettings);
+    else if (world.TryGet<PrismaticJoint>(this, out var prismatic)) valid = SyncPrismaticJoint(joint, a.id, b.id, prismatic);
+    else if (world.TryGet<RevoluteJoint>(this, out var revolute)) valid = SyncRevoluteJoint(joint, a.id, b.id, revolute);
+    else if (world.TryGet<SphericalJoint>(this, out var spherical)) valid = SyncSphericalJoint(joint, a.id, b.id, spherical);
+    else if (world.TryGet<WeldJoint>(this, out var weld)) valid = SyncWeldJoint(joint, a.id, b.id, weld);
+    else if (world.TryGet<WheelJoint>(this, out var wheel)) valid = SyncWheelJoint(joint, a.id, b.id, wheel);
+    if (old != joint.id) physics.joints.Remove(old);
+    if (joint.id != 0) physics.joints[joint.id] = this;
+    if (!valid) this.Destroy();
+}
+
+[Stage(PhysicsStages.Step, 21)]
+system ReadJoints(mut Joint joint, Physics physics)
+{
+    if (physics.moved) ReadJoint(joint);
+}
+
+
+[Stage(PhysicsStages.Step, 19)]
+[NativeName("b3t_body_settings")]
+extern system ConfigureBodies(mut Body body, mut BodySettings settings, mut Physics physics);
+
+[NativeName("b3t_collider_filter")]
+extern void ApplyColliderFilter(int index, in CollisionFilter filter, bool present, mut Resident state);
+[Stage(PhysicsStages.Step, 18)]
+system FilterColliders(World world, mut Physics physics)
+{
+    if (!physics.topologyChanged) return;
+    for (int i = 0; i < physics.colliders.count; i++)
+    {
+        if ((physics.colliders[i].kind & 64) == 0) continue;
+        if (!world.Has<CollisionFilter>(physics.colliders[i].owner))
+            ApplyColliderFilter(i, default, false, physics.state);
+    }
+}
+
+[NativeName("b3t_hull_ray")]
+extern Found HullRay(in Collider collider, in HullGeometry hull, float3 from, float3 to);
+
+[NativeName("b3t_hull_touch")]
+extern bool HullTouch(in Collider a, in HullGeometry hullA, in Collider b, in HullGeometry hullB);
+
+[NativeName("b3t_hull_cast_box")]
+extern Found HullCastBox(in Collider collider, in HullGeometry hull, in Box shape, float3 from, quaternion rotation, float3 to);
+
+[NativeName("b3t_hull_overlap_box")]
+extern bool HullOverlapBox(in Collider collider, in HullGeometry hull, in Box shape, float3 at, quaternion rotation);
+
+[NativeName("b3t_hull_cast_sphere")]
+extern Found HullCastSphere(in Collider collider, in HullGeometry hull, in Sphere shape, float3 from, quaternion rotation, float3 to);
+
+[NativeName("b3t_hull_overlap_sphere")]
+extern bool HullOverlapSphere(in Collider collider, in HullGeometry hull, in Sphere shape, float3 at, quaternion rotation);
+
+[NativeName("b3t_hull_cast_capsule")]
+extern Found HullCastCapsule(in Collider collider, in HullGeometry hull, in Capsule shape, float3 from, quaternion rotation, float3 to);
+
+[NativeName("b3t_hull_overlap_capsule")]
+extern bool HullOverlapCapsule(in Collider collider, in HullGeometry hull, in Capsule shape, float3 at, quaternion rotation);
+
+[Stage(PhysicsStages.Step, 19)]
+[NativeName("b3t_default_body_settings")]
+extern system DefaultBodySettings(mut Body body, mut Physics physics, without BodySettings);
+
+[Stage(PhysicsStages.Step, 0)]
+[NativeName("b3t_topology")]
+extern system CheckTopology(mut Physics physics);
+[Stage(PhysicsStages.Step, 18)]
+[NativeName("b3t_apply_filters")]
+extern system ApplyFilters(CollisionFilter filter, mut Physics physics);
+
+// A remove/add can return an entity to exactly the same archetype and row.
+// Its fresh Body still has id zero, so the old owner must be pruned.
+[Stage(PhysicsStages.Step, 0)]
+[NativeName("b3t_check_bodies")]
+extern system CheckBodies(Body body, mut Physics physics);

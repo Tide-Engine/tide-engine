@@ -1,5 +1,1675 @@
 # Language features, as tidec builds them
 
+## Native debugging: pinned lines, Tide-code entry lines, plumbing without debug info (2026-10-26)
+
+Line mode only (`codegen_options.line_directives`; `--no-line` output is
+unchanged, checked over every game's source list): `pin_lines` repeats a
+statement's `#line` before each of its code lines, so C's line counting can't
+attribute them to the next Tide lines; `code_start` gives a Tide-code
+function's signature and prologue its declaration's line; `TIDE_HELPER` is
+`nodebug` (unless `TIDE_DEBUG_PLUMBING`) and Tide-code functions and their
+prototypes use `TIDE_CODE` (`code_helper`). `--visualizers` writes
+`<name>.natvis` and `<name>_lldb.py` (`debug_views_codegen.inc`), and gives
+list locals and by-value list parameters a struct of their own per element
+type, read as `<name>.list` (`typed_list_local`, `typed_list_param`).
+Contracts, tests and gaps: `notes/debugging.md`, Typed list locals.
+
+## Declaration-only package dependencies (2026-10-25)
+
+The inherited --declarations filter removed package functions/shaders before
+checking package field types/defaults. A real Render3D consumer failed with six
+errors for Lit, Deform and the StandardUV/StandardCoverage/StandardSurface
+callbacks. The filter now retains package functions/shaders like builtins;
+all nonbuiltin systems/views/handlers and the game's own functions/shaders are
+still excluded before checking. The change is only compile.c's existing filter.
+Normal compilation, package body checking, asset imports and defaults are
+unchanged. There are no checker flags, signature stubs or substituted values.
+Retained package draw helpers can plan/emit GPU shaders; the Unity caller already
+skips publishing shaders for this fallback. Game-defined shader/callback field
+dependencies remain an existing limitation rather than a new mode contract.
+
+tidec_declarations_only uses the real Render3D sources with incomplete game code,
+checks every package component and concrete callback dependency, and syntax-checks
+the generated C17 with the configured clang/target. It also pins package shader
+planning and ordinary missing-asset and invalid-package-body rejection. The
+existing data-error/header/game-code exclusion probes remain. The focused native
+tidec build and tidec_declarations_only pass (1/1; 1.14 s), including strict C17
+syntax with the configured clang. No generated program or GPU work ran here;
+the final full native/web debug builds and suites now pass, including the
+web-target C probe: 2,800 native and 2,696 web enabled CTests. The original
+disabled fixture remains disabled. Independent correction review is clean.
+
+## Checked skinned asset references (2026-10-25)
+
+The owner approved Asset<SkinnedMesh<V>> alongside static Asset<Mesh<V>>.
+The existing hidden declaration identity, expected-type conversions, aliases,
+equality, snapshots and serialization remain unchanged. Eligibility and Value
+typing share compiler-private type helpers; matching inferred skinned imports
+uses existing skinned assignment guarantees. Value exposes the declared model
+type, without forwarding inferred catalog names. Generated resolvers return
+the current global's three original pack handles in that type, acquiring no
+owned model storage and preserving current palette proof and imported LODs.
+Ordinary assignment of the resulting model still follows existing ownership.
+Server selection retains the complete matching dynamic resolver domain and
+vertex-default dependencies. Existing worker live-asset/value restrictions apply.
+No engine function, runtime API, pack kind or model representation is added.
+
+Source-prepared coverage: skinned_asset_references (conversion/aliases, prefab,
+match/local placement, identity/evaluation order, dynamic catalogs, snapshots,
+packed state, unknown IDs, never-loaded globals, matching reload, rejected missing
+entries/changed typed geometry, palette memo and imported LOD preservation); the asset-free reference fixture
+also resolves a skinned Value. New diagnostic fixtures preserve borrowed,
+static/skinned and vertex mismatch, read-only and ordering restrictions plus
+worker direct/nested/helper rejection. asset_usage adds dynamic server retention;
+the LSP case checks the reference and dynamic Value/catalog chain. User assets,
+animation docs and the decided/provisional spec are updated.
+
+Native/web debug builds and the Asset E2E pass after correcting its deferred
+local Spawn expectation. The full configured native run had one new diagnostic
+fixture reaching the older list-element-copy error before its expected Value
+error; assigning Value directly, as the static reference test does, fixes that
+fixture and its targeted check passes. Independent Asset review is clean.
+
+Actual-unload follow-up (2026-10-25): Value keeps a named
+asset global's borrowed lifetime, as the declared static Asset contract does.
+`tide_pack_unload` releases the region/proofs without clearing generated globals;
+it does not promise that a known reference becomes a default model or that stale
+typed lists support Count. The added E2E avoids stale typed-list dereferences,
+compares checked skinned catalog/direct draw behavior with the named asset,
+pins identity and unchanged match hashes, and restores catalog/packed palette/LOD
+paths after reload. A second draw list captures while loaded and prepares only
+after unload; its logical geometry, instance/uniform packets and palette/influence
+bytes must equal the list prepared before unload. Existing low-level tests keep
+ownership of palette arithmetic. skinned_asset_reference_erased_catalog rejects
+`.Value.animations.move` even when the referenced asset declares Move: plain Value
+exposes the declared dynamic catalog. No compiler/runtime changes or new engine
+entry point are needed. These follow-up E2E and catalog diagnostics pass on
+native and WASI. Combined renderer/suite results are in render3d.md; no separate
+client/server SimulationID parity fixture was added for this reference subtype.
+
+## Statically Raw Texture fields (2026-10-25)
+
+Owner-approved extension of [Raw] to Texture fields, following raw grids.
+Field initializers, defaults and assignments accept direct Raw assets/Texture
+fields/Color grids or default, including aliases and attached local state.
+Shared post-checking validates complete destination expressions, so switch arms
+cannot bypass the role requirement. Raw Texture reads join the existing deferred
+use check; size, destinations and read-only GPU helper source substitutions are
+permitted. Unannotated scalar storage, returns, CPU/mut/out arguments and direct
+draws retain the escape diagnostic. Selected overload conversions now apply the
+same Raw-grid rule as ordinary calls. Whole structs retain declared field roles;
+no new type, C storage, runtime bit or ABI is introduced. Shader/capture, reload
+and focused validation contracts are in shaders.md, textures.md and hot-reload.md.
+Editor Raw help and its existing protocol regression cover the extension.
+
+## Repeated query loops and attached defaults (2026-10-25)
+
+Render3D material integration exposed an unused generated const when one
+foreach reads only match fields and a later foreach of the same query forwards
+the component to an attached-local helper. The query's existing shared read
+analysis supplies the default local part to both loops. Each declaration now
+gets the generator's ordinary `(void)` marker, retaining its scope, initialization
+and attached lookup behavior under strict C17 warnings as errors. No runtime,
+capability, match layout or language/API change is introduced. The added
+query_local_fields case exercises both loops, nonallocating declared defaults,
+current attached values after writes and unchanged match hashes. Its complete
+12-case native E2E and the existing query safety fixture pass within the 15
+focused native compiler checks recorded in shaders.md. Full native/web validation
+remains for the combined integration.
+
+## Transform correction defaults (2026-10-25)
+
+After the measured comparison in notes/benchmarks.md, the owner approved making
+position and rotation smoothing built-in Transform defaults. Its synthesized
+localPosition/localRotation fields now carry the existing view_correction roles
+1/2; localScale stays ordinary interpolation. This reuses the generated
+correction/decay/Snap/reset paths without introducing a runtime entry point or
+changing match storage or the algorithm. Generated local state gains the usual
+transient correction table, and match entities keep the existing birth metadata
+used by tagged components. No source attributes are injected into note_position:
+explicit game and package positions still precede the existing hierarchy-root Transform fallback,
+and a Transform in a 2D sharded game does not introduce a conflicting 3D position.
+Local bindings remain current and verified bindings bypass prediction errors.
+
+World.LocalToWorld, ParentToWorld and World.Get retain their stored-state
+contract. Transform.position reads the presented receiver's localPosition with
+stored ancestors, as before; this does not implement hierarchy presentation
+interpolation or continuous reparenting. An intentional reparent plus Snap clears
+the child's error through the ordinary mechanism. Transform retains its existing
+40-byte TRS layout, simulation values, snapshot/packing and hash behavior.
+
+Three transforms E2E cases cover correction continuity and 75 ms decay of
+position/quaternion, untouched scale, zero-error/shortest-path tick interpolation,
+confirmed/local bindings, hierarchy-property versus stored-query reads,
+reparent/Snap/reset, transient local packing and immutable world hashes. An AST
+regression pins both roles and preservation of explicit 2D shard positions. The
+benchmark's real Transform control now follows the tagged default. New rows mark
+transform_defaults, while the analyzer continues accepting historical untagged
+control rows; the saved pre-default measurements and identities stay unchanged.
+
+Validation: warning-free full native/web debug builds. All 2,749 enabled engine
+native checks pass, and the engine-only web suite passes all 2,645 enabled checks
+(512.73 s), including WebGL/D3D11/WebGPU. Both retain the existing disabled
+MicroDuck right-turn case. The transforms and real-Transform benchmark targets
+also pass optimized native/WASI checks (six CTests). The final benchmark metadata
+adjustment passes all 16 native/web debug benchmark checks, and its analyzer
+validates the historical 24-process/288-row evidence in an ignored scratch copy.
+The production docs build passes. Existing simulation/math/random pins are
+unchanged. Clang 23.1.2, Node 24.22.1, pinned WASI SDK 24; no Vulkan validation
+layer, other OS, Android, MinGW, sanitizer or manual CI validation is claimed.
+
+The initial cached native configuration also included private prototypes:
+2,760/2,761 enabled checks pass (315.41 s); only Cracked's pre-existing match pin
+fails, at bf53c0610c47764e. All 2,749 engine test names are independently matched
+to passing results. A baseline compiler built here from df9c397b's check.c and
+the otherwise unchanged compiler objects generates byte-identical Cracked
+game.h/game_pack.c and identical game.c after normalizing only its emitted
+output filename in debug line directives. This change has no effect on that
+failure; no prototype or pin is edited. Both debug caches now exclude external
+prototypes, and the final web suite is engine-only.
+
+## Constant-size component loads and typed asset equality (2026-10-25)
+
+These are separate compiler changes during the Render3D CPU recording work.
+Entity component loads now emit the existing gather convention's fixed-size
+`memcpy` per lane through inline `tide_table_get`, replacing the generic gather
+call inside private generated `tide_load_<Component>` helpers. Canonical layout
+still supplies the lane width, byte offsets and padding, and the existing table
+descriptor supplies chunk/row addressing. Match/local placement, entity-generation
+and sparse-presence checks, missing-value behavior, copies and current-page reads
+are unchanged. Empty components keep their existing one-byte C representation.
+Stores, runtime functions/interfaces, storage and deterministic arithmetic are
+unchanged. There is no retained pointer or cache. `component_loads` covers 1/2/4
+byte lanes, exact padded layouts, aliases, second-chunk match/local rows, current
+replacement pages with an immutable snapshot, tags and absent/stale entities or
+components. Its generated-C check also rejects a return to generic entity loads.
+Existing world_functions/world_set_read/world_set_mut, sparse, rows, transforms
+and type_aliases retain broader semantic coverage.
+
+The owner separately approved typed asset identity equality. `==`/`!=` accept
+the same canonical Asset<Mesh<V>> type and compare its existing stable identity;
+the hidden field remains hidden. Existing contextual named-asset/default
+conversions apply, with no new implicit conversions, ordering, cross-vertex-type
+comparison, runtime call or worker/GPU capability. Known-reference bool folding
+uses declaration identity (collisions remain compile errors), including empty
+reference constants. Ordinary ordered operands preserve once-only evaluation and
+snapshots beside writes. asset_references and alias_assets cover same/different
+names, equal geometry under different names, aliases/helpers/defaults, constant
+folding, side-effect order, unknown received identities through packed state and
+changed geometry on reload. Diagnostics pin ordering, incompatible vertex types
+and borrowed mesh comparison. The provisional checked-reference spec and asset
+guide describe the approved behavior.
+
+Final compiler validation: warning-free full native/web debug builds; all 2,726
+enabled native CTests pass (181.02 s), as do all 2,622 enabled web CTests
+(572.99 s). The production docs build passes. The earlier 14 focused native
+checks also pass, including generated-C loads, equality diagnostics and existing
+hidden-field/borrowed-value/worker boundaries. Final independent compiler review
+is clean; compiler source did not change after the full suites. Web validation
+uses the existing SDK 34 cache rather than pinned SDK 24. Standalone spirv-val,
+Vulkan validation layers, other operating systems, mobile and sanitizer coverage
+remain unavailable on this machine. The later package-only zero-view clip
+completion passes nine targeted native checks (6.81 s), eleven web checks
+(93.89 s), including WebGL/D3D11/WebGPU, and both optimized native Vulkan/OpenGL
+quick checks (1.45 s). Its final state review is clean; no compiler changed or
+full suite rerun was needed for that package completion. No performance result
+is claimed here; no runtime source changed.
+
+## Scoped GUI offset writeback (2026-10-25)
+
+The owner's next GUI priorities introduce GUI_SCROLL lowering, without changing
+general language semantics. Its two arguments are staged in written order;
+mutable-path indices are frozen once. The active runtime receives only a C
+local offset. gen_open.after adds ordinary checked assignment after close,
+including return/break/continue cleanup. Existing list/map/grid/array assignment
+lowering resolves current storage and refuses removed list indices. No game-heap
+pointer survives the body. Shared builtin signatures expose Rect overloads,
+Scroll and FocusNext/ClearFocus. Full contracts and tests: notes/gui.md.
+
+## Started task handles and worker controls (2026-10-25)
+
+The owner approved calls returning started handles, `rebuild.Cancel()` and
+`await build`, consistently for async functions and workers. Declarations keep
+completion types. Match/local placement uses Task<T>/LocalTask<T>, with void
+forms Task/LocalTask and complete `Task<T fails E>` result spelling. Copies
+share one operation and repeated awaits receive value copies. Cancellation
+propagates to the cancelled operation's waiters; cancelling one waiter leaves
+other consumers intact. Unused directly awaited workers can be abandoned.
+Compatible local save/reload must preserve surviving logical handles.
+
+The implementation uses opaque 16-byte identities, world-owned
+slot registries and typed completion tables. Generational lookup validates the
+operation's code, row and identity, and old/default handles cannot alias new
+operations. Ordinary async starts retain fire-and-forget; worker adapters are
+rooted by their consumers. Iterative tracing follows handles in world values,
+active frames and cached results, reclaims unreachable result cycles and trims
+dead registry tails. Hidden handle-bearing frame slots that leave scope are
+released at suspension. Repeated awaits copy ordinary values independently.
+
+Calls of Wait, Storage.Flush, Web.Fetch and request.Send also produce handles
+through private checked async entries. Source metadata preserves their authored
+editor/identity occurrences. Task result arguments retain optionality and the
+complete fails type. World-neutral async bodies defer handle placement until
+their own world is settled; helpers with explicit LocalTask returns retain that
+capability. All handle C aliases share one fixed representation, with source
+types remaining invariant.
+
+Task passes resolve already-waiting dependencies before their continuations
+using an iterative walk over start-ordered due rows. Generated thread-local
+execution context carries cancellation through directly awaited children and
+synchronous helpers, and is saved/restored around independent starts. No native
+callback, pointer or execution context enters match or saved local state.
+Frame-layout fingerprints now include nested container, enum and result shapes.
+No public cancellation outcome or WhenAll API was approved; bare match workers
+stay reserved.
+
+Focused native task_handles (ten cases), worker_handles (six deferred-provider
+cases), IO and fetch checks pass. Coverage includes shared cancellation, repeated
+failable/list values, stale identity reuse, result cycles, 128 bursts with stable
+heap use, match snapshots/packed state, local saves, inferred placement, engine
+timers and self-cancellation through helpers while an independent task survives.
+The new LSP case passes, as do all 290 shared grammar checks. The first
+broad native build found the shard handoff's positional tide_due initializer;
+it now uses named members after the private scheduling record grew.
+
+The owner deferred distributed match handles to a separate pass. Sharded games
+now reject first-class match handle use with an explicit diagnostic; local
+handles/workers and existing directly awaited/discarded match async calls remain
+supported, with a positive sharded local-worker fixture. Per-recipient visibility
+treats tasks as authoritative server work: private registries, waiting arguments
+and cached results are omitted from projection/schema. Published handles are
+stale where their operation is absent; projected clients cannot start retained
+match operations. task_visibility checks privacy markers, hashes, repair and
+absence of identity aliasing.
+
+The same pass replaces worker ticket list scans with a hash index and targeted
+retirement, adds provisional admission/transfer limits and frame-thread worker
+profiling, and adds generated cooperative safe points.
+Focused worker/runtime/one-slot/nested-await/grid restoration checks
+pass. A frame-release audit also found that compiler-private captured
+grid slots need explicit grid release; that correction is part of this pass.
+
+Actual layout migration preserves running/completed handles and makes handles
+to dropped tables harmless. Nested same-sized result changes invalidate both
+active/cached fingerprints. Declared handle types keep their world's serial
+registry even if a reload removes every producer, preventing later identity
+reuse. An attached-field regression keeps a worker result reachable only
+through a component's local fields. Starting its consumer exposed an existing
+gen_entity_copies bug: local callers must not store/reload read-only presentation
+copies of match components merely because their attached fields are mutable.
+Local fields remain accessed in place; no async attached-field capability is
+introduced.
+
+Validation before dev integration: both complete Windows debug builds are
+warning-free. Full suites cover 2,661 enabled native checks (215.87 s) and
+2,556 enabled web checks (402.28 s), including Vulkan/OpenGL, WebGL/D3D11/WebGPU,
+browser rooms/migration, threaded workers and unchanged deterministic pins.
+Two native/one web failures were obsolete immediate-await expectations in LSP
+and Fetch diagnostics; they now check started handles and the actionable
+await-before-unwrapping diagnostic. After those corrections and the attached
+boundary fix, all 44 affected native and 42 web checks pass. The production
+docs build passes. Both suites retain the existing disabled MicroDuck
+right-turn case. Clang is 23.1.2, Node 24.22.1, TIDE_EXTERNAL_DIRS is empty,
+and hidden/muted test safeguards remain enabled. Vulkan validation-layer,
+other OS, Android, MinGW and sanitizer coverage remain CI work. No CI was
+dispatched. Clean paired performance measurements and dev integration remain
+pending; no timing claim is made while the shared gate sees other builds.
+
+Dev integration through 1a1e4f7f/259e7a54 retains incoming aliases, custom GUI
+composition and shader/Earth work. Scope cleanup now preserves both owned worker
+temporaries and reverse-order GUI/Draw restoration on each captured draw list.
+The incoming has_local match-copy guard is retained. Task aliases exercise
+canonical local and failable match handles; task_layout also requires a
+producer-free declaration to retain its serial registry. The JetBrains grammar
+snapshot includes both incoming aliases and task types.
+
+Both refreshed complete debug builds pass. All 2,626 enabled web tests pass
+(614.90 s); the 2,731 enabled native run (342.39 s) found only an editor test
+PID-file race. Its child now writes a terminated PID line and the reader waits
+for that complete line within the same three-second bound; the rebuilt editor
+Play check passes. No production editor behavior or timeout was changed.
+All task/worker/alias/GUI, deterministic and browser/GPU checks pass.
+The merged production docs build and all 299 shared grammar checks pass.
+The pre-existing disabled MicroDuck right-turn test and unavailable platform
+coverage above remain unchanged. No extra CI run was dispatched.
+
+The first quiet-gated 24-row voxel comparison is retained, including adverse
+small/fallback results. It motivated removing redundant per-statement checks
+from pure worker bodies, while retaining loop/body/helper safe points and
+statement checks in async tasks and their synchronous helper chains.
+The final frozen 24-row batch passed the unchanged guard after one timeout
+amid other checkout CTests; all rows validate and both binary identities match
+the manifest. Large-burst copying stalls improve substantially, with mixed
+small-burst/contention tradeoffs. Full methodology, both raw batches and
+limitations are in notes/benchmarks.md and bench/results/worker-controls/.
+No deterministic expectation, guard or disabled test was weakened.
+
+## Transparent type aliases (2026-10-24)
+
+Owner-approved general language feature: `using Name = Type;` declares a
+namespace-scoped name for a closed type. An alias is shared across that
+namespace's files and imported/qualified like ordinary types. It can appear
+among declarations, including inside namespace blocks; file-scoped namespace
+headers and namespace imports precede aliases, as other declarations. The target
+reads names in the alias's own declaration scope, supports ordinary forward types and other aliases,
+and is checked even when unused. Generic alias declarations are not supported.
+
+DECL_ALIAS retains the authored alias_ref, canonical alias_type and resolving
+state for cycle diagnostics. Uses resolve the same underlying type in their
+ordinary placement, preserving numeric conversions, overload identity,
+component IDs/capabilities, local/resource restrictions and container ownership.
+There is no generated alias type, new runtime function, layout or ABI. Primitive
+constructors and static APIs, struct/component literals, enum members/conversion
+and byte/int backing aliases, arrays/optionals, Func signatures, configured
+shader stages and Asset<Mesh<V>> use the same existing checked paths. Authored
+type_ref.alias and expr.type_alias remain separate for navigation and rename.
+The outline reports an alias with its canonical target. Editor contracts are
+in notes/editors.md; decided syntax/semantics are in docs/spec.md and the
+namespaces/types user pages.
+
+Asset classification now inspects resolved types instead of the written
+Mesh/List/Map syntax, including aliased element/key types and qualified package
+alias chains. Singular bytes remain distinct from byte-file collections;
+existing invalid-asset diagnostics, pack kinds/importers and borrowing rules
+are retained. Shader alias literals require the same function bindings as
+their stages; a qualified stage resolves Func aliases in its own namespace.
+
+Coverage: type_aliases exercises primitives and numeric/static operations,
+canonical ECS/query/World access, arrays/optional/list/map/set values,
+forward/declaration-scope name binding, Func captures/mut arguments and configured
+stages. alias_assets checks packaged Mesh aliases, singular/list/map imports,
+borrowed helpers, Asset references, snapshot/pack roundtrips and reload.
+Diagnostic fixtures cover cycles through several type forms, duplicate names
+and canonical overloads, invalid/open targets, missing shader bindings and the
+underlying mesh/resource/callable restrictions.
+
+Scoped validation: both native E2E targets and 67 selected alias/asset checks
+pass. The complete 1,999-test pre-existing compiler diagnostic run found only
+three asset wording regressions; their original messages were restored and
+their checks pass. Grammar passes 290 cases. All 256 native LSP cases pass,
+including five alias protocol cases. The foreign-stage/missing-binding and
+aliased Random/grid-constructor regressions
+pass in the selected checks. Final full integration results are below.
+No determinism expectation was changed.
+
+Independent review found and corrected canonical cache initialization for
+forward aliases reached from Func signatures, optional aliases bypassing
+field/function restrictions, composite aliases reaching ECS component fallback,
+aliased enum backing during forward constant folding, container aliases escaping
+constant-type checks, and enum aliases in Stage/Channel/Filter/Wrap attributes.
+Enum storage also resolves lazily before a conversion: an array bound evaluated
+while initially resolving aliases must use the canonical backing width before
+the ordinary enum prepass. alias_canonical_array checks matching int[2] alias
+and field identities with the backing alias declared before or after the array.
+Dedicated regressions cover each; source occurrence identity also covers
+qualified constructors, World type arguments, bare component names and aliased
+enum attributes. The existing header-order rule is pinned for aliases too.
+Two nested-optional alias diagnostics preserve the existing prohibition on a
+T? holding another T? and pass in the final selected checks.
+
+Final integration after the GUI/local-worker merge: full warning-free native/web
+debug builds and CTest suites pass (2716 native, 2611 web enabled tests, with the
+unchanged disabled Microduck right-turn fixture). The production docs build and
+live Render3D browser example
+pass; its Mesh3D asset alias is exercised on Vulkan/OpenGL/WebGL/D3D11/WebGPU.
+The aliased-stage consumer also passes six FXC /WX compilations across three
+Unity APIs and both stages. Web uses the existing SDK 34 cache rather than
+the pinned SDK 24 toolchain; remaining platform coverage is in render3d.md.
+
+Separate existing gap: a used Func with fixed-array arguments has a generated-C
+type-emission failure even without aliases. This task preserves that boundary;
+alias_canonical_array checks canonical array identity through outline output.
+
+## Alias and local-worker merge boundary (2026-10-25)
+
+The merge retains canonical alias types at worker boundaries and both editor
+and grammar paths. Owned-value restrictions still inspect the underlying type,
+including nested callable/shader bindings, resources and worlds. Readonly grid
+input snapshots follow the later Local worker audit contract below.
+
+The integration audit found that reading an Asset<Mesh<V>> reference's Value
+was not recognized as a live-asset borrow. The merged worker_invalid_expr retains
+the asset_ref_value check alongside BIND_ASSET in the incoming complete AST walk.
+Asset handles remain refused recursively at worker boundaries.
+worker_asset_reference pins the direct read and
+worker_alias_asset_reference pins aliases plus helper forwarding. This is a
+compiler-only correction with no runtime or ABI change. Both negative fixtures
+pass in the combined native/web suites.
+
+The mixed Render3D/worker consumer exposed task-start component synchronization
+writing through a view's readonly match world and reloading its presented match
+values. gen_entity_copies now leaves match component copies intact in local
+execution, while retaining match-side and local-world component flush/refresh.
+Attached local fields continue through their existing separate publication path.
+The local_workers regression starts an awaiting task after an attached-field
+write, preserves the blended numeric match value across that start, and checks
+the attached result plus unchanged current/previous match hashes. This changes
+only compiler emission; there is no const cast, runtime API or ABI change.
+Focused native builds pass, with all 7 local_workers and 5 function_acts checks.
+The reported Render3D mixed consumer regenerates and passes strict C17 syntax
+checking with warnings as errors. Independent review cleared both merge fixes.
+Initial combined warning-free full native/web builds and all 2700/2595 enabled
+CTests pass (520.36 s / 783.59 s), retaining the existing disabled Microduck case.
+The production docs build, live Render3D WebGL example, 257 native LSP tests
+and 293 shared grammar tests pass. Toolchain limitations remain as recorded
+above and in render3d.md; no runtime interface or determinism pin changed.
+
+The subsequent origin/dev merge through a6ed9bfd retains custom GUI composition,
+the broader worker asset walk, owned readonly grid snapshots and both sets of
+notes. The readonly match-copy guard in gen_entity_copies and the attached-field,
+blended-value/hash regression survive the automatic merge. This conflict
+resolution changes no runtime code or design. Independent merge review is clean.
+Refreshed warning-free full native/web builds and all 2716/2611 enabled CTests
+pass (298.33 s / 539.43 s), with the existing disabled Microduck case unchanged.
+The refreshed production docs build and live Render3D example, all 257 native
+LSP tests and all 295 shared grammar tests pass. The web build retains the
+existing SDK 34 cache and the platform-coverage limits recorded in render3d.md.
+
+## Custom GUI composition (2026-10-24)
+
+The owner delegated GUI implementation/API choices with performance first.
+`GUI.Draw`, `GUI.Key` and `GUILayout.Reserve` use the shared builtin catalog.
+GUI_KEY supplies an unsalted source seed; runtime scopes compose the data key.
+GUI_DRAW lexically redirects the implicit Draw list, including helper calls.
+Draw settings capture their original list; reverse-order early-exit cleanup
+restores both lists across GUI.Draw. UI code is never replayed for layout.
+GUIControl adds pointer edges/cancellation and a float2 position; its generated
+adapter leaves explicit padding zeroed. Contracts, tests, validation and remaining
+GUI work: `notes/gui.md`, Custom control composition.
+
+## Local worker audit (2026-10-24)
+
+The gap pass closes live-asset access through loop offset expressions, increment
+targets and Asset<Mesh<V>> handles. The worker's AST walk includes loop by/offset
+operands, step statements and drawing/skinning operands; asset-handle Value reads
+are borrows even when no asset declaration is named. Asset handles are refused
+recursively at input/result boundaries. The offset and two handle fixtures were
+accepted by the previous checker and now receive the required errors; the step
+fixture also pins the traversal. All 13 worker diagnostic fixtures pass locally.
+
+Runtime abandonment skips queued calculations. Disposal first abandons every
+item, then helps/drains the provider, so helping cannot start another calculation
+whose group is also being disposed. A callback that already observed a live item
+can finish privately; only provider-published completion permits release. No new
+runtime API, language spelling or match behavior is introduced.
+
+test_worker checks queued versus running/completed abandonment, provider-owned
+item lifetime, once-only release and cancellation of all deferred/fallback work
+on disposal. local_workers now awaits through an intermediate async function:
+owner loss, restoration and retained reload traverse its nested worker frame.
+Changing the source before pack/rebind still returns the child's saved arguments.
+The three runtime and six typed lifecycle cases pass on native initially.
+The platform job test also cancels a running background callback after its
+started signal, checking that its private capture survives until provider
+completion and is released once on the frame thread.
+
+The owner then approved read-only Grid2<T>/Grid3<T> worker input snapshots,
+preserving the restrictions on grid locals/results. A private generated capture
+helper copies the source directory and chunks into the job's input heap through
+existing heap APIs, including packed images, bounded empty grids and open grids.
+Inputs are copied before enqueueing and are never stored as live grid borrows in
+task frames. Restored tasks recapture their current saved arguments/bindings.
+
+Grid-reading helpers reachable from workers receive ordinary CPU bodies, using
+worker_cpu call reachability and a separate transitive gpu_sampling flag. This
+does not grant a normal view or match system permission to pass grids, and a
+worker calling a sampling helper is still rejected. Await does not propagate a
+worker's execution capabilities back to its local caller. Independent grid
+foreach bodies use the existing planner over the private input snapshot; a
+temporary handle slot keeps its parameter read-only. Reductions stay ordered.
+LSP completion retains CPU list operations when a worker calls a grid helper.
+
+worker_grids checks local and match bounded/sparse/open/empty grids, both int edges, ordered
+reductions, automatic foreach callbacks, list-parallel reads through a helper
+chain, source mutation, packed asset replacement, restore and fallback/real-pool
+execution, with unchanged match hashes during frames. Seven grid diagnostics preserve read-only, local/return, ordinary CPU
+caller and GPU sampling restrictions. The owner requested proposals too: spec.md
+records invocation priorities, structured task cancellation, cooperative
+interruption and deterministic resumable match workers as unapproved proposals.
+Worker-called helpers cannot use shader grid alias locals to evade the current
+grid-local restriction. Automatic worker foreach loops are settled again after
+transitive C effects are known, just like system loops; the two-helper C visit
+probe checks serial row order across chunk boundaries.
+
+Argument-order follow-up (2026-10-25): the new positional and nested-await grid
+cases reproduced late capture. Worker awaits now own argument lowering instead
+of having the outer ordering pass execute those arguments first. Calls with grid
+inputs and effectful/waiting arguments capture every argument in written order.
+Earlier grids enter private owned frame slots immediately, so later waits,
+failure, owner loss and pack/restore use ordinary frame ownership. Slots are
+released after dispatch captures its independent input. Pure calls retain the
+single-copy path. Capture refreshes source/destination addresses after heap
+allocation, including capture into the caller's local heap. worker_grids checks
+positional/named order and restore during a later argument's await; worker_values
+pins once-only positional/named scalar effects. No public grid local or runtime
+API was added.
+
+Final validation (2026-10-25): warning-free complete native/web debug builds;
+all 2,648 native and 2,543 web enabled CTests pass, including the final argument
+order/restoration cases, runtime cancellation stress, complete LSP executable,
+native GPU and browser WebGL/D3D11/WebGPU checks. The existing disabled MicroDuck
+right-turn test is unchanged. Production docs build and diff checks pass.
+Windows, Clang 23.1.2, Node 24.22.1; external prototype directories remain disabled.
+The checkout has no Vulkan validation layer. Other OSes, Android, MinGW and
+sanitizers remain CI coverage; no workflow was manually dispatched. Match
+determinism expectations are unchanged. No performance claim is derived from
+these validation runs, which overlapped other agents' integration work.
+
+## Local workers (2026-10-24)
+
+Owner-approved direction and spelling: `local worker` functions, awaited from
+local async code, with owned CPU inputs/results and existing loop rules.
+Bare `worker` stays rejected for a future deterministic-match contract.
+Implementation choices are distinguished from decisions in the spec's Tasks.
+worker_check.inc/worker_codegen.inc extend the existing checker/codegen.
+
+Calls decide an async caller's side as local and propagate through its normal
+starters/awaited parents. Bodies run to completion without awaiting. Reachable
+world/frame, rendering/audio, filesystem/network, live-asset, task-start and
+implicit match-randomness access is rejected. C stays trusted. Boundaries accept
+owned CPU values, including nested containers, plain fixed arrays and optional/
+failable results; bindings, resources, queries, devices, grids, Actions and
+mut/out parameters are refused. Overrides preserve worker execution kind.
+
+Generated walkers fully materialize inputs, including packed lists, into a
+private heap before dispatch. Each job also owns an output heap. The frame
+acquires detached scratch results before releasing a completed job. Ephemeral
+optional/failable strings own private bytes instead of caller scratch pointers.
+Only integer tickets enter local task frames; restore/rebind clears them and
+restarts pending calls. An owner disappearing abandons publication while the
+group retains captures until callback completion. Reload/disposal drains jobs
+before code unload.
+
+Explicit parallel loops accept owned local plain-value lists. Output lists and
+readonly captures are heap-backed before sharing, with the existing independent
+step rules. List foreach/for order is unchanged. Automatic foreach analysis is
+currently grid-only; workers do not take grids, so this does not extend that
+analysis. Worker callback emission also closes list-cache patches before
+gen_tasks switches output buffers; the otherwise-open patch caused a compiler
+crash with worker loops plus multiple async functions.
+
+Coverage: local_workers checks geometry/text ownership, discarded scratch and
+changed sources, real pool execution, owner loss, saved local state and retained
+rebind. worker_values checks nested text lists/maps, fixed arrays, optional
+strings, failable strings and void. Negative fixtures cover bare/misused worker
+declarations, match starts, mut inputs, bound values, frame helpers and assets.
+Pool stress runs more jobs than threads, each with parallel work. LSP and shared
+grammar pin hover/symbol/formatting/highlighting.
+
+Validation: warning-free native/web debug builds, full suites passing 2,604
+native and 2,499 web tests, with the existing disabled MicroDuck right-turn case
+unchanged. Final test additions pass all 12 selected checks on each target,
+including readonly worker captures, threaded optional/error values, all eight
+worker diagnostics, the complete 250-case LSP executable natively and a served
+browser frame running background/parallel work beside simulation. The shared
+grammar passes 282 cases and the production docs build passes. Clang 23.1.2,
+Node 24.22.1, Windows; native GPU/WebGL/D3D11/WebGPU checks pass. This checkout
+has no Vulkan validation layer. Android, other OSes, MinGW and sanitizers remain
+CI coverage; no CI workflow was dispatched. Existing determinism pins are intact.
+
+Remaining: owned grids, priorities, public handles/explicit cancellation,
+preemption and match workers. Existing async component/local-field restrictions
+are unchanged: publication currently uses local singletons or local entities.
+
+Integration with incoming callable/shader support retains both notes entries.
+Callable and shader-binding structs are explicitly excluded at worker value
+boundaries, including nested fields: they are local execution/rendering values,
+outside the initial owned CPU-data contract. worker_callable pins the rejection.
+Merged validation through origin/dev d90a787c: warning-free full native/web
+debug builds and all 2,636 native and 2,531 web enabled tests pass (245.43 s /
+425.05 s, four jobs), retaining the existing disabled MicroDuck case. This
+includes incoming callable/Render3D checks and native/browser worker coverage.
+All 286 shared grammar checks and the merged docs production build pass.
+
+## Mutable callable arguments (2026-10-24)
+
+Owner-approved: `Func<mut Vertex, void>` accepts a matching named function or
+typed expression lambda, forwards the caller's writable storage through helpers
+and generated dispatch, and leaves captures read-only. This applies to ordinary
+CPU values and GPU-local values under existing access rules; no runtime or
+backend interface changes. `out` callable parameters remain outside this change.
+
+The parser records each Func argument's mut location in `type_ref.arg_mut` and
+retains it in type text. `decl.call_mut` participates in signature interning,
+generated type/dispatcher identities, target identity and overload selection.
+Mode prefixes distinguish mutable slots in those identities. Inferred function values
+retain their modes. The generated dispatcher's ordinary parameters carry
+PARAM_MUT, so checking, ownership, evaluation order and C/GLSL/WGSL forwarding
+reuse normal calls. The result cannot be mut. A default/unknown target performs
+no writes. Lambda parameters now carry function_param, including mutable ones:
+without it WGSL treated a forwarded mutable lambda argument as a value and
+generated an invalid pointer-to-value copy. Captures are always PARAM_READ.
+
+`e2e/mut_callables` checks scalar and field writes, forwarding, returned captured
+lambdas, named/inferred targets, exact mode separation, multiple mutable aliases,
+left-to-right reads beside writes, defaults and unchanged match hashes. Array
+elements retain the ordinary take-out/change/put-back rule. Seven diagnostic
+fixtures cover wrong modes, lambda modes, read-only arguments/captures and a mut
+result. `e2e/gpu_functions` now deforms each SDF quad through distinct named or
+captured mutable callbacks, with compensated centers keeping the same pixel
+expectations; its frag also reads a nonvoid callback's result and changed argument.
+Configured mutable vert bindings are exercised too. The smaller `shaders/mut_callables`
+fixture pins GLSL/WGSL and joins available SPIR-V/HLSL validation.
+
+Validation: full native debug passed all 2,605 enabled tests (165.28 s, four
+jobs); full web debug passed all 2,501 (334.33 s, four jobs). Each retains the
+existing disabled Microduck right-turn limitation. Native pixels passed on
+Vulkan/OpenGL; web pixels passed on WebGL, ANGLE D3D11 and WebGPU. FXC validated
+the mutable-callable golden; the complete 250-test language-server executable,
+all 282 grammar tests and the docs production build passed. No determinism
+expectations changed. Web uses the same ignored SDK 34 fallback described below;
+pinned SDK 24 downloads and GitHub fetch still fail DNS resolution. There is no
+standalone spirv-val or Vulkan validation layer on this machine.
+
+Integration (2026-10-24): fetched and merged origin/dev through 85f14e4f after
+GitHub DNS recovered. Compiler/editor code merged cleanly; the two top-of-file
+notes conflicts retain both the callable entries and incoming editor/startup
+entries. The merged full native debug suite passed 2,621 enabled tests (211.08 s)
+and full web debug passed 2,515 (361.12 s), each at four jobs with the existing
+disabled Microduck right-turn limitation. New editor/startup coverage and the
+callable CPU/GPU probes pass together. The merged docs production build passed.
+Web retained the local SDK 34 fallback above. No code corrections or additional
+determinism expectation changes were required for integration.
+
+## Callable values and configured GPU stages (2026-10-24)
+
+Owner-approved foundation for separate `render3d` and future `render2d`
+packages: typed function parameters in GPU code, helper forwarding, explicit
+`Shade { distance = Circle }` bindings, local component storage, and heterogeneous
+instance callbacks dispatched in one shader. No rendering package is implemented
+here. Render3D's PBR, baked indirect lighting, probes, shadows and post-processing
+remain the agreed direction, not implemented features.
+
+`callable_types.inc` and `callable_check.inc` implement `Func<A..., R>` as private
+ordinary structs containing a target tag and owned typed capture fields. Named
+functions and typed expression lambdas populate a closed target set per resolved
+signature. Generated ordinary dispatcher functions initialize a result, switch
+over targets, and return once; this avoids ANGLE D3D11's X4000 on returns inside
+switch cases. CPU and GPU use the same checked AST and normal call/effect/resource
+analysis. There are no stored native function pointers, new runtime functions or
+generated-C/runtime ABI changes.
+
+The initial language spellings and restrictions are provisional in spec.md,
+Callable shader values. Captures copy plain values at construction, including
+numeric structs and fixed arrays; no stack borrow escapes. Resource/heap captures,
+borrowed component/world/query/input context, nested lambdas and recursive capture
+layouts are diagnosed. Explicit parameters and named assets retain their normal
+GPU rules. Missing/unknown callable tags return the result's default. Configured
+stages with invalid required tags skip submission. These values and their
+collections are local-only, including through nested structs and attached fields.
+
+A stage binding is a private struct associated with its declaration. Its public
+type is the stage's name. Each function parameter reads its named binding field;
+other stage parameters retain their existing source binding. Draw wrappers receive
+binding values explicitly, separately from ordinary draw values and components.
+The Mesh, Instanced, target, skinned and Blit paths share this machinery. Binding
+factories evaluate once, in written draw-operand order. Callable and stage types
+go through normal array wrapping; stored indexed stage values can be drawn.
+
+Capture fields and named function tags have stable qualified identities for
+ordinary local serialization/migration. Lambda identity also uses its containing
+declaration and source location: moving one may invalidate old bindings, which
+must then be reconstructed. Unknown identities never retarget arbitrary code.
+Target identity collisions are diagnosed. Captures currently reserve fields per
+target of a signature; compact overlapping payloads and static-target specialization
+remain performance work. Existing GPU uniform/attribute limits apply.
+
+Coverage: `e2e/gpu_functions` exercises exact overload selection, qualified function
+references, inferred named functions, helper forwarding, returned closures,
+capture-at-construction semantics, local/attached storage, local pack/unpack,
+stored/returned/inline/indexed stage bindings, fixed arrays, custom vert plus frag,
+Blit, zero-argument/void/default callables, skipped unconfigured stages, factory
+evaluation order and unchanged match hashes. Four distinct SDF instances remain
+one run. Nine GPU/CPU lambda capture variants force field-vector growth: earlier
+callable literals resolve their stable field names during emission, rather than
+losing initializers through stale arena-copy field pointers.
+`shaders/callables` pins GLSL/WGSL and joins SPIR-V/HLSL validation. Eight diagnostic
+fixtures cover invalid signatures, captures, placement and bindings. GPU pixels
+and actual draw counts are checked by `platform/tests/gpu_functions.c` on native
+and web; editor contracts are in editors.md.
+
+Validation: full native debug passed 2,595 enabled tests (final run 169.29 s,
+four jobs), and full web debug passed 2,492 (667.80 s). Each retains the existing
+disabled Microduck right-turn limitation. The final array/indexed-binding changes
+also passed all 13 scoped web checks after rebuilding the affected targets.
+The docs build and all 280 shared grammar tests passed. Native pixels ran on
+Vulkan and OpenGL; web pixels ran on WebGL, ANGLE D3D11 and WebGPU. FXC validated
+the HLSL fixture. Standalone spirv-val and a Vulkan validation layer were absent.
+
+GitHub DNS prevented downloading pinned WASI SDK 24. Web validation used an
+ignored local toolchain file with the already-installed SDK 34 sysroot/builtins,
+clang 23 and Node 24.22.1; all Tide tools/programs were built in this checkout.
+The checked-in toolchain is unchanged; pinned-SDK-24 coverage remains unavailable
+on this machine. External prototype directories were disabled for both presets.
+
+## Inherited prefab values and selected startup (2026-10-24)
+
+Owner-approved: matching nested `entity ExistingChild { Component { field =
+value }; }` blocks override inherited descendant values per instance. Only
+existing component fields may change; no inherited component/child additions,
+removals, replacement or alternate base. Nested-instance roots retain ordinary
+authored additions. prefab_check.inc merges matching blocks into the existing
+composition without adding entities or changing reference scopes, defaults,
+placement checks, complete-tree construction or root-first Spawned order.
+Duplicate blocks/fields and unknown/type-invalid/empty/bare/new component
+overrides are diagnosed. The native editor writes/reset these same value blocks.
+
+The project may choose `settings { startScene = Qualified.Name; }`; CLI
+`tide run/build <project> --scene Name` overrides that choice for compilation.
+Absent selection keeps existing Main generation. Names select prefab or scene
+declarations, never text/calls/initializers. CLI lookup has no source-file
+namespace/using context. A selected prefab lowers through a checked private
+Scene.Load factory, loading its authored root in match placement without a
+wrapper or handwritten Main. Ordinary selected scenes retain defaults and
+match/local placement. Normal lifecycle, views, input/camera, Session.Start()
+default and empty-world fallback use the selection. Main source is untouched;
+duplicate Main and invalid/duplicate persistent settings remain errors even
+with an override. Startup enters simulation identity and asset-use analysis.
+No generated-C/runtime API was introduced.
+
+The native editor's Play uses private original-path source replacement and an
+isolated cache to compile applied drafts, then the ordinary host; these private
+flags are intentionally absent from public docs/help. Persistent startup is
+written separately by Set startup. Authoring preview still skips gameplay
+initialization. Current user docs/spec replace earlier Main-only and inherited
+read-only statements; historical sections below describe their original builds.
+
+Validation: full native/web debug builds pass; the engine/compiler/platform
+checks, 249 LSP cases and all seven final editor CTests pass. Prefab coverage
+includes deep overrides/defaults/references/lifecycle/entity counts on match and
+local placement, plus twelve structural/value diagnostics. scene_startup pins
+normal lifecycle, default Session.Start/fallback, snapshots/packing, source
+identity/asset closure and CLI/persisted/overlay selection. Startup authoring
+passes 18 source-preservation/namespace/conflict cases; the complete native UI
+creation/extraction/instance loop and twelve inspector focus/undo regressions
+pass. The production docs build passes. The unrelated external Cracked hash-pin
+failure reproduces with the HEAD compiler, and optional external browser
+playthroughs were not completed; details and remaining platform coverage are in
+notes/editors.md. No expected deterministic result was changed.
+
+Remaining: inherited structure edits, top-level variants, language-server entity
+path refactors/completion, child-to-prefab-root path syntax, authored attached
+local fields and automatic live-instance reconciliation. Authoring transactions
+and extraction/reference limits are in notes/editors.md. CLI integration and
+validation belong to notes/cli-and-packages.md.
+
+## Shard attributes (2026-10-23)
+
+`reach`, `[Position]` deciding where an entity is, `[Native]` and `[Together]` (which replaced `shardRange`, `[Partition]`, `[PerShard]`, `[Shared]`, `[Ghosts]`, `[GoesWith]` and `Shards.moves` the same day): rules, checks and generated code are in `notes/sharding.md`, The language side; the spec's Shards section has them as Provisional. `field` has `native` as its last member, so positional `field` initializers end in `false`.
+
+## LookRotation of any length (2026-10-22)
+
+Found by the BANKED prototype's first-person arm IK:
+`quaternion.LookRotation(elbow - shoulder, up)` with a 0.29 m forward turned the
+bone the wrong way and scaled it by 0.58. `tide_lookrotation_q` used `forward`
+as the matrix's third column unnormalized, so any forward that wasn't unit
+length built a matrix that was no rotation and Shepperd's method returned a
+wrong, non-unit quaternion. The docs gave LookRotation no unit-length
+requirement, and FromToRotation (2026-10-18) and Unity accept any length, so
+it was a trap rather than a contract. A conventional completion under the
+existing math maintenance; no signature, builtin or generated call changed.
+
+- **Behavior (decided, spec and `docs/language/math.md`):** forward and up are
+  normalized with FromTo's rescaling (`tide_fromto_unit_f3`), so finite nonzero
+  vectors across the float range work. A zero or nonfinite forward gives
+  identity. If `cross(unit(up), unit(forward))` has squared length below 1e-10
+  (length 1e-5, Unity's `Vector3.kEpsilon`), which covers a zero or nonfinite
+  up and one along forward either way, the result is
+  `tide_fromto_q(float3(0, 0, 1), forward)`: Unity's own fallback
+  (`Quaternion.LookRotation(Vector3.up)` is euler (270, 0, 0)), reusing
+  FromTo's decided half-turn axis for forward = -z. Otherwise the side is
+  normalized, up becomes `normalize(cross(f, side))` and the right column
+  `cross(up, f)`, so the frame is orthonormal to rounding even when the first
+  cross product is inexact (up within a few degrees of forward), and the
+  quaternion is normalized. The threshold rather than exact zero also keeps
+  GPUs that fuse the cross product's arithmetic on the CPU's branch.
+- **Results change for every call,** unit inputs included, by the rescale and
+  final normalization (a few ulps); no cross-platform pin includes
+  LookRotation, and none changed. The previous parallel case returned the
+  degenerate matrix's quaternion, which only the old test's "no NaN" accepted.
+- **Tests:** `math_lookrotation_takes_any_length_and_keeps_its_frame` (the
+  arm's 0.29 m case, lengths from subnormal to the float maximum, agreement with
+  unit inputs, 10,000 random pairs at four scales checking a unit result,
+  forward equal to normalized forward, up perpendicular, on up's side and in
+  the plane of up and forward, and a frame 2e-5 off up outside the fallback);
+  `math_lookrotation_without_a_side_turns_from_z_and_without_forward_is_identity`
+  (zero/NaN/infinite forward give identity bits; up parallel, opposite, scaled,
+  1e-6 off, zero, NaN, infinite and the float maximum each equal FromTo from
+  +z bit for bit; straight up is Unity's (270, 0, 0)). The old parallel check in
+  `math_normalize_gives_zero_for_what_has_no_direction` now also requires a unit
+  result. GPU side and probes: `notes/shaders.md`. `compiler/tests/safety/math`
+  still calls it with arbitrary values.
+
+Validation: full native debug passed all 2,515 tests (Vulkan and OpenGL
+probes included). The full web debug run passed 2,415 of 2,416; the one
+failure was the new helper's X4000 on ANGLE D3D11, fixed with a single return,
+after which the three web shader pixel tests (WebGL, WebGL on D3D11, WebGPU),
+the golden/HLSL/SPIR-V checks, engine tests and math fixtures passed on both
+native and web. Other platforms are CI's; no workflow was dispatched.
+
+## Computed properties and attached component context (2026-10-21)
+
+Owner-approved: user-defined C#-style get/set properties, with the engine using
+the same facilities; world position on Transform; attached components can reach
+their entity/world; performance is a requirement. The decided/provisional split
+in docs/spec.md distinguishes that direction from the implementation spellings
+and edge choices below.
+
+Parser properties are separate from stored fields. Accessors are ordinary
+methods with independent component-placement bodies. Reads lower to getter
+calls; assignments lower to mut setter calls. `value` is an implicit read-only
+setter argument. Getter-only and setter-only declarations work. Compound
+assignment evaluates the receiver once, getter, RHS, then setter; numeric
+increments retain the calculated value before a clamping setter runs. CPU and
+GPU lowering agree. A returned property value cannot supply a writable subfield
+or mut/out reference. Literals initialize stored fields. Accessors inherit normal
+caller effects, scheduling, permissions, container ownership and GPU restrictions.
+
+Component methods/accessors have contextual `world` and existing entity `this`.
+Only direct component parameters/query bindings supply ownership; synchronous
+forwarding retains it and explicit copies detach. A fixed-point pass requests
+entity and world side arguments only for helper parameters that need them.
+Ordinary field-only helpers keep their existing ABI. `local Transform` on an
+ordinary helper selects local context; a value-only helper retains the existing
+copy rules. Task component references derive context anew on resume. Verified
+bindings retain their world through helper/query/Action forwarding. Recorded
+match-event values retain identity but do not grant historical World access.
+No pointer enters stored components, snapshots, journals or task frames.
+
+A component method uses contextual world access or an explicit World parameter,
+not both. Fields/parameters named world retain their existing shadowing. Structs
+and singletons gain properties but no implicit entity/world. Setter permissions
+follow mut-method permissions; match writes remain forbidden in views and local
+state remains forbidden in the match.
+
+Transform.position is parsed Tide accessor code, using public
+World.ParentToWorld(this) and its current localPosition. ParentToWorld is a
+generated hierarchy query, including retained visibility anchors when a parent
+has been projected away. Ordinary roots/dead handles give identity. The setter
+inverts that parent matrix and changes only localPosition. Nonfinite inputs,
+singular matrices and nonfinite results leave it unchanged. Identity parent
+matrices avoid inversion. Ancestors remain stored-state reads. Engine accessors
+instantiate only when called, so unused properties introduce no hierarchy state.
+Storage stays the three local TRS fields. No runtime export or cache was added.
+
+properties exercises explicit/implicit accessors, getter-only/setter-only forms,
+clamping prefix/postfix increments, compound order with C probes, checked array
+paths (including nested fields and invalid indexes), list ownership/copies,
+attached helper/query/Action forwarding, parent-relative conversion, in-flight
+local writes, local/verified worlds, unchanged frame hashes, singular parents,
+snapshot replay and packing. visibility_projection compares property positions
+bit-for-bit with composed stored matrices at hidden hierarchy boundaries, while
+retaining its existing hash pin. Nine negative fixtures cover invalid access,
+detached context and view writes. The old query-this/helper-this error fixtures
+now detach explicitly; their previous direct bindings are valid. Shader goldens
+and the CPU/frag/vert PropertyProbe cover accessors and clamping increments.
+
+Performance probe: Clang 23.1.2 -O3, no fast-math/FMA; generated game and baseline
+compiled together, linked against this checkout's debug engine. Baseline C takes
+the same bound Transform, checks its parent, returns localPosition at a root,
+otherwise transforms it by the stored parent matrix. No visibility policy in
+the probe. Two noinline wrappers keep call boundaries equal; inputs vary each
+iteration. Minimum of five alternating warmed C/property runs, repeated reads
+at depths 0/1/32/256 (1M/300K/30K/3K iterations per run). Native nanoseconds per
+read, C/property: 11.08/11.83, 74.56/76.81, 2436.88/2426.05,
+19112.60/19020.87. WASI with ordinary SIMD under Node 24.21.0:
+16.83/17.45, 129.18/130.32, 3520.14/3501.62, 27780.27/27621.30.
+Root overhead is below 1 ns in these runs; deeper differences approach noise.
+These are compiler-abstraction comparisons, not release-engine end-to-end
+benchmarks. Existing hierarchy traversal/scratch cost remains; no cache or
+arithmetic reordering was used to improve the numbers.
+
+Validation: complete warning-free native/web debug builds and both full suites
+completed (2,465 native / 2,406 web). Their only initial failures were the three
+obsolete this/query/World diagnostic expectations described above. Updated
+negative cases and final container/Action/packing/recovery additions pass all
+15 selected native and 14 selected web checks, including the full language-server
+test executable. Existing determinism pins are unchanged. Native GPU, OpenGL,
+WebGL/D3D11 and WebGPU tests pass; this machine has no Vulkan validation layer.
+All 274 shared grammar tests and the production docs build pass. Android, other
+operating systems and sanitizers remain CI coverage; no CI was dispatched.
+Integration: merged origin/dev through 97848ffe. Source merged cleanly; both
+notes retain the incoming entries. Rebuilt overlapping compiler/editor, hierarchy,
+prefab, engine/stats and embedding targets; all 1,974 selected native and 1,970
+selected web checks pass, including every compiler diagnostic, complete editor
+tests and the new prefab duplicate-error fixture. CLI/server tools rebuild;
+stdio, pipe, CLI unit and telemetry checks pass (4/4, telemetry repeated against
+the rebuilt CLI). The merged docs production build passes. A final narrow
+regression ensures a property called Interpolate stays a property rather than
+being interpreted as the engine's method callback; properties pass again on
+native/web after that guard. Existing actual Interpolate diagnostics retain
+their callback rules.
+
+## Names in other namespaces, and Unity's folder names (2026-10-21)
+
+An unknown name's error lists the declarations of that exact name in other
+namespaces, the first four and how many more (`other_namespaces_note` in
+`check.c`, before the "did you mean" note, which it takes the place of): one
+"there's 'A.B.X': write it so, or 'using' its namespace", several "there's
+'A.X' and 'B.X': write the one you mean". `find_in` falls back to
+`find_in_folders` for a name `UnityEngine.Prefabs`, `UnityEngine.Scenes` or
+`UnityEngine.SceneContents` hasn't: the one declaration of that name in their
+sub-namespaces, as tide unity names a project's prefabs and scenes by their
+folders (`notes/unity.md`, Named by their folders). It scans the declarations,
+on a miss in those three namespaces only. Test: `tidec_unity_folder_names`.
+
+## A diagnostic is said once (2026-10-21)
+
+The owner removed a field from a component and Unity's Console had each of the
+three prefabs' and scene's "has no field" errors twice. A prefab's values are
+checked on their own (`prefab_check_values(..., neutral)` in `check()`, so an
+unused prefab's errors show in editors) and again at each Spawn or Load of it
+(`check_prefab_spawn`), and each check said the same errors: a prefab spawned
+in three places said them four times. `common.c` now keeps a 64-bit FNV hash
+of each error, warning and info said since `diag_reset` (severity, file, line,
+column, message: `said_before`) and drops one it said already, with its
+notes and suggestions (`muted`, until the next diagnostic), and counts it as
+no error of its own; tidels gets one too, through the same path. Messages are
+formatted once (`message_of`, malloc'd past 1024 bytes, where the sink cut
+them at 1024 before). A collision of two hashes would drop a real
+diagnostic, which 64 bits make unlikely. A "has no field" error in a Unity
+prefab or scene (its source's path ends in `.prefab` or `.unity`:
+`unity_authored`) is neither: the value is left out of the literal, saying
+nothing (owner, the same day: `notes/unity.md`, Fields the component no longer
+has). Test:
+`tidec_prefab_error_once` (`compiler/tests/prefab_error_once.cmake`: a
+`.tprefab` spawned twice says the error once; the same text as a `.prefab`
+builds, saying nothing of it).
+
+## Word suggestions (2026-10-21)
+
+The owner, of hints: "the better hints the better code". AI trials wrote
+`keys.right` and `keys.left` and got no "did you mean", as no key is within two
+edits; the script parser already guessed `leftShift` for `shift`. `suggestion`
+(`compiler/src/common.h`) now also keeps the first candidate with the wrong name
+as a whole word of it, ignoring case (`word_rank` in `common.c`). A word starts
+the name, or starts at a capital, a digit or after a `_`, and ends at the name's
+end, a capital, a digit or a `_`. A first word beats a later one: `up` is
+`upArrow` rather than `pageUp`. Candidates of the same rank go by the order
+they're offered, which for fields is declaration order: `right` is `rightArrow`
+rather than `rightShift`. Wrong names under two characters get none.
+`suggest_note` prefers a close name, unless it is shorter than the wrong one and
+a word candidate exists (`up` is `upArrow`, not `u`). Every `suggest_note` caller
+gets the fallback, and so does the editors' quick fix through the suggestion sink.
+`suggest_close` alone (`tide add`'s package names) is unchanged. Tests:
+`tidec_error_key_word_first`, `_later` and `_prefix_wins`.
+
+## Scene filters: `with scene Arena` (2026-10-20)
+
+Owner's spelling (`with` alone would change `event(Spawned) Setup(with Main)`,
+which runs once, into every entity of Main); the rest is Provisional in the
+spec's Scenes. Parser: after `with`/`without`, the word `scene` before a name
+sets `param.scene`. Checker (`check_scene_filter`): the name must be a scene
+component (a prefab or another kind says so), pushed to `decl.in_scenes` /
+`out_scenes` (twice, or in and out, are errors), the param typed void with
+`scene_of` the scene; a scene filter alone makes the system per-entity, over
+the scene's side; a scene of the other side is an error. Override signatures
+compare `scene`/`scene_of`, and print `with scene Arena`. Codegen
+(`gen_scene_filters`): `tide_in_scene_<S>(entities, scene)` (alive, in an
+archetype with S) and `tide_entity_in_scene_<S>(w, e)` (by the entity's row's
+scene column) for each scene some code filters by. Rows: `scene_filtered`
+makes `rows_filtered` true; `gen_row_filter` skips by `tide_scn[tide_i]`;
+`gen_rows_count` counts passing rows by `tide_scenes` (from
+`gen_rows_presence`), so chunks with none are skipped and all-pass chunks take
+the unfiltered loop; C systems' run matcher includes it. Handlers: the per-row
+dispatch through `gen_row_filter`, async handlers' task start, availability
+listeners (`tide_available_<E>`) and heard events' listener bits
+(`tide_hear_<E>`) by the target. A scene load sets the root's scene column to
+itself, so the root counts, which the spec says. Also: the never-runs warning
+notes `with scene` when a system needs a scene's component; a filter naming a
+prefab says it's a prefab (`errors/system_filter_by_prefab`).
+
+Tests: `e2e/scene_filters` (systems in and not in an arena, a scene filter
+alone counting the arena's entities with its own, a Spawned handler, a
+targeted event's match handler and async handler, views with both filters; a
+local handler compiles), errors `scene_filter_not_a_scene`,
+`scene_filter_in_and_out`, LSP `lsp_scene_filter_names_its_scene` (rename
+reaches the filter, hover), and the grammar (`keyword.other.scene` right after
+with/without, before a name).
+
+## Map views (2026-10-20)
+
+Owner-approved runtime use (runtime-ownership.md): every function body that
+can index lists or maps declares, beside `tide_lc`, `tide_map_view tide_mv[n]`
+and `tide_map_views_none(tide_mv, n)` (`declare_list_caches`, both counts
+patched in by `close_list_caches`), a view for each map it reads or sets by
+key, slotted by what names the map (`view_slot`, as `cache_slot`), so
+`scores` and `seen` don't share one. `map_views` is on wherever `list_caches`
+is, parallel loops' tasks included. Through it, `m[k]` calls
+`tide_map%d_cget`, `m.Has` `_chas`, `m.Get` `_ctryget`, `m.TryGet(k, out v)`
+`_ctryget_out`, a path into a value (`m[k].x`) `_cat`, and `m[k] = v` (not on
+an element's slot) `_cset`. The plain helpers stay for the compiler's own
+generated code (visibility, hierarchy, client state) and anywhere without
+views, each now its `c` form with a view of its own. Only the views' handles
+are set at entry; a view's other fields are read only once it's found
+something. ecs.md, Map views across a function, has the runtime contract.
+
+## Events in runs (2026-10-20)
+
+Compiler-private, with no language, runtime-interface, layout or hash change
+(measured in notes/benchmarks.md, Events, second round). A system whose whole
+body is one batchable Send (`batch_event`, unchanged) used to reserve a
+24-byte `tide_command` per row; it now records runs:
+
+- `gen_sent_runs` (only in a game with such a system, `program_batches`):
+  `TIDE_CMD_EVENTS`, last in the kinds' enum, `tide_sent_<Event>` (the target,
+  then the value: 12 bytes for an `int` event), and `tide_sent_push_<Event>`,
+  which pushes one queue item through `tide_queue_push`: the ordinary head
+  (`id` the event, `depth` the system's `tide_chain`, `entity` null), the
+  count at `TIDE_COMMAND_HEAD`, then the entries at `TIDE_SENT_AT`, as many
+  as fit a queue page (`TIDE_SENT_MOST`, at least one). The chunk loop
+  (`gen_chunk`, `rows_batched`) pushes a run per page's worth of rows and
+  hands each row its entry (`tide_reserved` is a `tide_sent_<Event> *`; NULL
+  in rows functions that filter, which send the ordinary way).
+- `tide_apply_from` takes a run with `tide_apply_events`, which calls the
+  event's `tide_dispatch_run_<Event>`: each entry in order, its handlers, then
+  `tide_hear_<Event>` when the tick records, as `tide_apply_event` takes one
+  event. The run's depth is the one each event had; what handlers record goes
+  behind the whole queue as before.
+- Events sent the ordinary way get a loop of the same kind (`event_runs`: the
+  match's events that handlers or listeners take, not commands or events with
+  text). `tide_apply_event` (match) takes the queue's place too and hands the
+  item to `tide_dispatch_items_<Event>`, which counts the items right after it
+  in its page with its head (size, kind, event, depth: a page's items are back
+  to back, so that's `used` and the item's size, read before any is taken),
+  takes them all in order and moves the place past them. A system's loop
+  whose Send is in an `if` or a function, or a handler sending to many,
+  records such items. What a handler records meanwhile goes after them, as
+  before.
+- Both loops are `gen_dispatch_each`'s, `noinline` so each has the registers
+  to itself, and step from one event to the next by a count, not by reading
+  where the next one is, so the lookups of many targets are in flight at once.
+- Those events' dispatcher is split (`gen_dispatcher`, `split`): finding the
+  target (`gen_dispatch_locate`) and `tide_dispatch_at_<Event>(w, target,
+  loc, event)`, everything after it (`gen_dispatch_handlers`). Where one
+  archetype takes the event (`dispatch_candidate`), the loop reads that
+  table's count, page array and first handle once and finds each target by
+  `index - first` checked against the row's handle, with two calls of
+  `tide_dispatch_at`, so the found one knows its archetype; a miss (another
+  archetype, a moved row, a gone or reused handle, the null target) takes
+  `tide_entity_location`. That's sound because no handler moves an
+  archetype's rows: spawns, adds, removes and destroys wait in the queue,
+  and what a handler writes (its `mut` components, `World.Set`) changes lane
+  pages, never the entity column or the page array. Other events' loops call
+  `tide_dispatch_<Event>` for each.
+- `tide_settle_item` settles a run's targets and entity fields, though a
+  batched system never spawns, so its queue isn't settled.
+  `tide_command_fits` doesn't list the kind: a run is only in the queue during
+  the tick that sends it, never in a world's bytes, and one from bytes fails.
+- Old and new tidec over every game's source list (`--no-line`, the
+  simulation identity lines aside): 196 of 325 generate what they did, the
+  129 whose match events handlers or listeners take have the loops.
+  `tide_table_column_mut` (tide/table.h) no longer writes back a page pointer
+  that didn't change, for every game.
+- Tests: `compiler/tests/e2e/events_runs` (3,000 targets in two archetypes,
+  5,000 shooters, six ticks: runs of three events, items of a fourth sent in
+  an `if`, a sparse filter, an event whose handlers take two archetypes, the
+  world as target, a Destroy queued before the shots, rows a removal moved,
+  slots a handler's spawn took again, handlers that send and spawn, a local
+  handler that hears the runs) against the same worked out in C, on one
+  thread, through a pool that says it has four (each chunk's own queue) and
+  from the world as bytes. Breaking the found check, the fallback or the
+  items' count fails it. `events_batch` and `events_lookup` still pass.
+
+## Empty scene shorthand (2026-10-20)
+
+Owner-approved: `scene Name;` is a complete empty scene declaration equivalent
+to `scene Name { }`, including `local scene` and declarations in namespaces.
+Braces remain valid. Only scenes gain this shorthand; other data declarations
+still require braces. `parse_data_decl` receives the scene flag before reading
+the body and records the semicolon as the declaration's end. Checking, generated
+types, startup and scene lifetime use the existing paths, with no runtime change.
+
+The existing scenes_fallback and scenes_local E2E fixtures now exercise shorthand
+match/local Main startup and reloading. lsp_empty_scene_declarations covers
+namespaced loads, local scenes, hover/references/rename, outline/completion,
+formatting/idempotence, declaration boundaries and missing-body diagnostics.
+Shared grammar probes cover both spellings; the all-E2E grammar check recognizes
+that a shorthand scene has no body. The spec and Scenes page document the rule.
+
+Validation: warning-free native/web debug builds; all 2,477 native CTests
+(including 36 Vulkan/OpenGL GPU checks) and all 2,383 web CTests (including
+WebGL, D3D11 and 11 WebGPU checks) pass. The full LSP suite, all 268 grammar
+cases, production docs build and diff check pass. One-off comparisons of match
+fallback, local and namespaced scenes produce byte-identical generated C and
+headers for braced/semicolon forms with --no-line; no determinism pin changed.
+Clang 23.1.2, Node 24.21.0 and Chrome 155.0.8059.85 were used. Other OSes,
+Android, MinGW and sanitizers were not run on this Windows machine; CI was
+not dispatched.
+
+## Performance pass: list writes and grid windows (2026-10-20)
+
+Two compiler-private changes, no language or runtime-interface change (measured
+in notes/benchmarks.md, Performance pass):
+
+- A list type's cached write helpers (`tide_list<n>_cset`, `_cslot`) skip
+  `tide_list_prepare` when the function's cache is writable for that same list
+  and still holds (`CACHE_OWNS` in codegen.c, `tide_list_cached_at_mut`'s own
+  test). Only `tide_list_cache_fill_mut` makes a cache writable, after the
+  helper prepared the list; it never caches a scratch or pack list and refuses
+  an asset descriptor, and preparing only ever acts by changing the list's
+  handle, so it would change nothing. Every element a loop wrote used to pay
+  two block lookups and an asset-registry check for it.
+- A windowed parallel loop over a grid of one-cell blocks whose step writes
+  `cells[at]` at the top of its body before anything can end it
+  (`writes_own_cell`, `may_leave_step` in check.c: no return, fail, or
+  continue/break of the step before it; `stmt.writes_own`) no longer copies
+  its whole window into the copy the steps write: every cell put back is
+  written. A tile where the grid has no chunk, whose blocks are checked first
+  and may skip, still copies. `compiler/tests/e2e` grid fixtures and the
+  safety suite cover the loops; versus_life and versus_sand pin the results.
+
+## Building a game for another program: --embed (2026-10-20)
+
+`codegen_options.embed` (`tidec --embed`, `tide_add_game(EMBED)`, `tide unity`)
+writes the layout and `tide_game_embed` (`compiler/src/embed_codegen.inc`,
+after `gen_layout`) into the `.c` alone, so the header and the game's hash are
+the same as a plain build's (checked on three games). It holds: the view packet
+writer, modeled on `tide_world_print`'s walk over every match archetype and
+component (sparse presence included), blending each value with views'
+`tide_prev_<C>`/`tide_blend_<C>` (the owned variant where a custom
+interpolator reads the heap), owner flags from `Owner` against `Session.player`,
+parents from `tide_parent_of` where the game has a hierarchy, component and
+singleton local fields, and `TIDE_HELPER tide_embed_fix_<T>` turning text and
+plain-element list fields into STRINGS handles (maps, sets, grids and lists of
+heap-holding elements zeroed); command types' layouts appended after the
+layout's types and a dispatcher onto `tide_local_send_<C>` with the target,
+refusing a wrong size and commands holding text or lists; START by scene name
+over `start_scenes` with defaults (text zeroed); tables of components,
+singletons, local parts, whether each component is a scene's (`is_scene`),
+commands, scenes, prefabs and non-plain fields (text,
+list with element size and type, map, grid, entity); `schema`, through the
+engine's `tide_schema_json`; and `defaults` (`tide_embed_defaults`), each kept
+match component's `gen_value` with no inits, text and lists zeroed under a
+scratch mark as START's are, which the schema writes as hex. Entity rows end
+with `tide_entity_born`, and `entities_born` is true for any `--embed` build,
+so every spawn there keeps it (notes/unity.md, Identity and pooling). A build
+without `--embed` generates what it did.
+
+Check: every one of the 324 source lists in a debug build generated with
+`--embed` and compiled under `-Wall -Wextra -Wpedantic -Werror`; the first run
+found an unused `out` (fix helpers of types with only maps/grids) and an unused
+`place` (games with no component), both fixed. Runtime contract and tests:
+`notes/standard-host.md`, `notes/runtime-ownership.md`.
+
+**Events, text commands and command defaults for another program (2026-10-22, owner: "yeah I think that makes
+sense"; `notes/unity.md`, Events, commands and singletons in C#).**
+- **Taps.** With `--embed`, `add_embed_taps` (`compiler/src/compile.c`, after parsing, before checking) parses a
+  source `<tide-embed-events>` of two local handlers for each of the game's own match events (not built in, local
+  or a command): `local event(E heard) TideEmbedHeard<n>() { }` and its `verified` twin, flagged `decl.embed_tap`.
+  So another program hears what the game's local handlers would, by their machinery: predicted and verified, once
+  each under rollback, late joiners' arrivals, recorded text. `gen_heard` calls `tide_embed_heard_<E>(&event,
+  verified, target, tick)` for a tap instead of its handler; `collect_heard_reads` marks a tap's event read whole,
+  so its text and lists are recorded. `gen_embed_heard` (embed_codegen.inc, before `gen_heard`) keeps each heard
+  event's record (a 32-byte header, then the value with its text and lists copied into the store's own STRINGS)
+  in a static `tide_packet`, which the next view packet writes as its EVENTS section (the target's place among
+  the packet's entities where it's the same entity) and empties; outside a match it's dropped. The outline leaves
+  taps out, and the header's first line doesn't name their source.
+- **The same game.** A tap must change neither the header nor `TIDE_SIMULATION_ID`, or Unity builds wouldn't play
+  with other builds. The local state's event log (`tide_local.tide_heard`) is now there in any game declaring a
+  match event of its own (`program_has_match_events`), tapped or not, so a game with events and no local handlers
+  has it in every build (its plain header changed once, for that). `listener_wire` (`compiler/src/asset_usage.c`)
+  leaves taps out: they hear only the game's own events, which no server journals to recipients. Checked: every
+  one of the 330 source lists of a debug build gives the same header, but its first line, with `--embed` and
+  without (`TIDE_SIMULATION_ID` included); before `listener_wire` left taps out, two visibility games differed.
+- **Commands with text and lists.** `tide_embed_command` takes such a command's text and `List<byte>`s after its
+  value as STRINGS lays them out (a count, `{offset, length}` entries, bytes), each field holding its entry's
+  place + 1: `tide_embed_command_text` (UTF-8 checked, `tide_text_temp`) and `tide_embed_command_list`
+  (`tide_list_from`), under a scratch mark; the command is then written into a scratch buffer and checked
+  (`tide_write_command_<C>`, `tide_game_check_command`) before `tide_local_send_<C>`, so one too big says false
+  rather than ending the program as local code's Send does.
+- **Schema.** Commands' and tapped events' fields are in `tide_embed_fields` (by the schema's numbers, after the
+  layout's types), so their text and lists say so; extra types are the commands and then the tapped events;
+  `tide_embed_game.events` names the events; `defaults` gives commands' declared defaults too.
+- Tests: `embed_heard_events` (each Ticked heard once as predicted and once confirmed, with its label and its
+  entity's place), `embed_commands_and_scenes` (Rename's text and bytes, cut short, a missing entry, bad UTF-8),
+  `embed_schema` (Ticked an event, listed after the commands), all in `platform/tests/embed.c`.
+
+**Containers in the view packet (2026-10-22, owner: "lets bridge any gaps").** `gen_embed_packers` (embed_codegen.inc,
+emitted by `gen_embed_heard` before `gen_heard`, so heard events use them) writes a packer for every list
+(`tide_embed_list<n>`), map and set (`tide_embed_map<n>`) and grid type (`tide_embed_<shape>`) and every type's fix
+(`tide_embed_fix_<T>`, prototypes first, as they call each other): `embed_fix_value` makes a value's heap fields the
+packet's handles wherever they are, so a list's elements, a map's keys and values and a struct's fields can hold
+text and containers in turn. A list of plain elements is `tide_packet_list`; others are copied into the scratch area,
+fixed and written as one entry; a map walks `tide_map_next` in insertion order into count, keys (to 8 bytes),
+values; a grid writes its directory's chunks as they are (`tide_grid_records`, `tide_grid_chunk_at`), so it costs
+what it holds, with a 48-byte header (dims, cell, shifts, size, chunks); a grid of cells holding text is 0. The heard
+events' store copies its STRINGS into each packet first (`tide_embed_heard_strings`), so their handles are the
+packet's unchanged and nothing is remapped. `tide_packet_text`/`_list` start each entry from a multiple of 8
+(`align_text` in `engine/src/embed_game.c`), so another language reads elements in place. Packet version 4. Test:
+`embed_containers` (a singleton's `List<string>`, `List<Note>`, `Map<string, int>`, `Set<int>` and `Grid2<byte>`,
+each read back as the header says), and Ticked's `List<string>` through `embed_heard_events`.
+
+For `tide unity --assets`: `compile_input.text` gives a file's text in place
+of reading `path` (the CLI's Tide text of a Unity prefab or scene), and
+`parse_file` treats paths ending `.prefab` and `.unity` as `.tprefab` files,
+so they hold prefab declarations only (`notes/unity.md`, Authoring as built). A system's or view's parameter or filter naming a prefab (a Unity scene's too) says it's a prefab and how to filter its entities, rather than "unknown component" (`errors/system_filter_by_prefab`).
+
+## Double Position correction smoothing (2026-10-20)
+
+The owner requested [Position] on double coordinates. The checker now accepts
+double and double2/3/4, alongside existing float types, while retaining the
+match-only, no-arguments, Snap/conflict and custom-Interpolate restrictions.
+Double matrices remain invalid; Rotation still accepts float radians/quaternion.
+
+The existing generated correction path already stores the error in the field's
+declared C type and performs subtraction, accumulation, application and decay
+multiplication in that type. No numeric codegen or runtime helper was changed.
+The float frame interpolation fraction and existing float exponential decay
+coefficient widen for double arithmetic. The same 75 ms half-life and all float
+behavior remain unchanged. Errors remain private local presentation state,
+excluded from match hashes and local/match packing; snaps, identity changes,
+confirmed removal and timeline replacement retain their existing reset rules.
+
+Four double regressions extend view_corrections: all four scalar/vector sizes,
+nested structs and Snap boundaries, component and singleton presentation,
+billion-unit fractional offsets, fractional errors requiring binary64 precision,
+ordinary movement and accumulated corrections, decay, zero-error interpolation,
+two views, unchanged world hash/values/packed bytes and cache resets/lifetime.
+The seven existing float/rotation regressions remain intact. New diagnostics pin
+double matrix rejection and unchanged double Rotation rejection. LSP hover and
+user docs/spec identify the newly accepted types.
+
+Validation: full native debug passes 2,469/2,469, including 34 Vulkan/OpenGL
+GPU tests; full web debug passes 2,378/2,378 (2,367 ordinary/WebGL and 11 WebGPU).
+All 11 view_corrections cases pass native/WASI debug and optimized builds;
+all 16 correction diagnostics and the full LSP suite, including double Position
+hover, pass. Production docs build, all 268 shared grammar cases and the staged
+diff check pass. No determinism pin changed. Debug uses clang 23.1.2 with Node
+24.21.0 and Chrome 155.0.8059.85 for web; native optimized uses clang 18.1.8.
+Linux, macOS, Android, MinGW and sanitizer coverage were not run on this Windows
+machine; CI was not dispatched.
+
+## Double math and matrix completion (2026-10-20)
+
+The owner corrected the foundation's narrow scope: double trig and matrices
+belong with double support. All existing component-wise Math functions now
+accept doubles and double vectors, including Sin/Cos/Tan/Asin/Acos/Atan/Atan2,
+Exp/Exp2/Log/Log2/Log10/Pow. double.PI/TAU/E provide binary64 constants without
+changing existing Math constants. No old float arithmetic or pins change.
+
+Double2x2/3x3/4x4 kinds are appended, eight-byte aligned, with columns,
+row/column construction, identity, negation, addition/subtraction, scalar scaling,
+Mul/Transpose/Inverse/Determinant, Transform/Rotate and double4x4 builders.
+Matching float matrices widen implicitly and explicit constructors narrow per
+component. Mixed matrix addition/subtraction retains double precision. TRS
+accepts a double3x3 or the existing quaternion; quaternion construction widens
+components before matrix arithmetic but cannot restore absent input precision.
+The compiler walks double matrix columns for input/command repair and raw/delta
+bits, interpolation and inspection. Other storage uses the existing flat value
+paths. Layout metadata keeps matrices PLAIN as before: identical matrix types
+survive reload; a precision/type change retains the new default.
+
+engine/src/math64 vendors the portable non-FMA binary64 subset from musl 1.1.18
+(Sun fdlibm/FreeBSD), separate from unchanged in-house float functions. Its source
+and license notices, namespace/word-access adaptation and checksum are recorded
+in that directory's README. Correct rounding for every input is not promised.
+Tests compare 398 golden values generated independently with mpmath 1.3.0 at
+400 decimal digits, within one binary64 ulp, and cover special values, huge-angle
+reduction, subnormals and large-position matrix inverses. A new exact-result pin
+is A8DEFF186244546C; the existing 8D8432D419DF4D83 pin is unchanged. E2E exercises
+scalar/vector math, matrix builders/operators/conversions, command columns,
+raw/delta input, repair, snapshots, recipient state and interpolation. Compiler
+diagnostics, LSP column/constructor/math signatures and shared grammars cover
+the language/tooling boundaries. Double noise, double quaternions and automatic
+camera-relative rendering remain outside this work.
+
+Validation: full native debug passes 2,467/2,467, including 34 GPU tests with
+Vulkan validation/OpenGL; full web debug passes 2,376/2,376 (2,365 ordinary/WebGL
+and 11 WebGPU). Both debug builds use clang 23.1.2; Node 24.21.0 and Chrome
+155.0.8059.85 run web coverage. The eight focused double runtime tests and four
+E2E cases pass native/WASI debug and optimized builds, with both bit pins
+agreeing (native optimized also uses clang 18.1.8). The final optimized E2E
+rerun includes mixed-precision rotation construction and default-overload cases.
+All 398 reference cases pass within one binary64 ulp; regenerating the checked
+reference header is byte-identical. Full LSP tests, the production docs build,
+all 268 shared grammar cases and the staged diff check pass. No old pin changed.
+Linux, macOS, Android, MinGW and sanitizer coverage were not run on this Windows
+machine; CI was not dispatched.
+
+## Double scalar and vector foundation (2026-10-20)
+
+The owner approved double, double2, double3 and double4 as the first large-world
+increment. Existing literals/default types, Transform, cameras, physics and GPU
+values remain floats. The spec separates this approval from first-build spelling
+and conversion choices. Binary64 type kinds are appended so existing type IDs
+and their simulation-schema records do not change merely by adding the feature.
+
+Decimal d/D literals retain binary64 precision; unsuffixed/f literals still round
+to binary32 first. Byte/char/int/long/float widen to double, and matching int/float
+vectors widen to double vectors. Long conversion can round beyond 53 bits.
+Numeric arithmetic promotes to double before operating, including scalar splats;
+vector constructors/swizzles and explicit narrowing follow existing conventions.
+Float narrowing is nearest/even with signed infinity on overflow and canonical
+NaN; integer narrowing truncates, saturates and maps NaN to zero. Byte keeps the
+int conversion's low eight bits. Numeric defaults and floating remainder rules
+are unchanged. Concrete float operands continue to select float builtins beside
+`default`; a wider double overload is not an ambiguity by itself.
+
+Basic component-wise Math, square roots, interpolation and radians/degrees,
+vector dot/length/distance/normalize/reflect/reductions/cross and exact-bit Hash
+use inline tide_*_d/d2/d3/d4 helpers in the existing math maintenance area.
+Normalize uses the binary64 minimum-normal squared-length threshold. Transcendental
+and noise double functions, double matrices/quaternions, position correction
+attributes and automatic camera-relative rendering are outside this increment.
+Existing Math constants remain floats. Shader checking rejects doubles before
+numeric GPU packing and explains converting in local code before drawing.
+
+Ordinary fields, structs, arrays, list/map values, grid cells, optionals, tasks,
+extern signatures, events/commands, snapshots, packing, recipient codecs and
+view interpolation retain full double values. Each component is eight bytes,
+eight aligned; generated explicit padding/size assertions use that layout.
+Views retain the existing float interpolation fraction and operate on values in
+double precision. Input/command bits use two ordered 32-bit words, low first;
+input deltas use one changed flag plus the 64 bits when changed. Repair and
+bounds walk all double components before input Sanitize. No session protocol,
+container representation or exported networking function changed.
+
+Text generalizes the existing exact integer printer to binary64 with shortest
+round-tripping digits and fixed F0..F17. double.TryParse and scalar JSON double
+fields use exact integer division, not libc parsing. The reader retains 800
+significant digits and a nonzero tail, with 128-word bounded integers; the
+printer uses 40 words. Negative zero and nonfinite JSON match float rules.
+Hot reload adds an appended DOUBLE layout kind, preserves matching double
+fields and widens byte/int/long/float fields of matching dimensions; narrowing
+retains the new declared default.
+
+Coverage: double E2E checks billion-unit offsets, arithmetic, mixed promotions,
+constructors/swizzles, geometry, basic math/hash, safe casts, optional/list/map/
+array/grid values, text/JSON, C value/out ABI, source operand order, waiting tasks,
+commands including truncated payloads, raw input/deltas and repairs, COW replay,
+raw/recipient round trips and view interpolation. Eleven diagnostics cover
+narrowing, invalid operations/sizes/attributes, literal overflow, transcendentals
+and GPU use. Runtime tests cover all finite exponent classes of both signs,
+integer/float narrowing boundaries and NaNs, shortest/JSON round trips, exact
+rounding ties including a 2,200-character subnormal midpoint tail, and a 10,000
+case arithmetic/geometry/text bit pin: 8D8432D419DF4D83. No prior pin changed.
+Lexer, LSP, grammar and migration checks cover the tooling boundaries.
+
+Validation: all 2,465 native debug tests pass (2,431 ordinary and 34 GPU),
+including compiler diagnostics, the LSP harness, migration, Vulkan validation
+and OpenGL. The uppercase degree diagnostic fixture now expects `180DE` rather
+than `180D`: D is a double suffix before the continuation is rejected. The full
+web debug suite passes 2,374/2,374, including WASI, WebGL/ANGLE D3D11 and WebGPU.
+Both final debug builds use clang 23.1.2, Node 24.21.0 and Chrome 155.0.8059.85.
+The initial fallback clang 18.1.8 web build exhausted V8's call stack in the
+existing thousand-deep drawing fixture; rebuilding with clang 23 passes it
+without changing source, test depth or stack limits.
+
+The four focused runtime tests and four double E2E cases also pass optimized
+native and WASI builds. The new bit pin agrees in native/web debug and optimized
+builds; no prior determinism pin changed. Production docs build, all 268 shared
+grammar cases and the staged diff check pass. Linux, macOS, Android, MinGW and
+sanitizer coverage were not run on this Windows machine; CI was not dispatched.
+
+## Shared player ceiling (2026-10-20)
+
+The owner approved maxPlayers from 1 through 65,536, sharing the ceiling used
+by dedicated-server connections and native room peers. The default remains 16;
+the setting still determines the world's input layout, generated Audience size
+and build compatibility. Compiler diagnostics use TIDE_PLAYERS_MOST; builtin
+help and user documentation now report the same range. Values above it remain
+compile errors, with the existing full-input-traffic scaling explanation.
+
+Generated Session ABI headers identify player protocol 16. Generated raw-save,
+network-delta and page-hash/need headers use temporary heap buffers, including
+a separate baseline only when needed; all are freed after their synchronous
+codec operation. This avoids stack overflow from a large match's fixed input
+arrays without changing serialized values, padding, hash ordering or runtime
+function calls. No new generated-C runtime function is required.
+
+players_ceiling compiles the exact ceiling and tests input index 65,535, the
+separate server slot, Audience word 2047, snapshot/delta transfer and reconnect
+recovery. players now covers 270 real sessions and a 300-player projected
+Audience. Runtime/protocol contracts and final validation: notes/netcode.md.
+
+## Inside Out API and aggregate-copy completions (2026-10-20)
+
+Authorized conventional additions: `Math.AsInt` reinterprets float/float2/float3/
+float4 as int equivalents; `Math.AsFloat` is the inverse. Both use memcpy-based
+inline math helpers, not pointer aliasing or numeric conversions. Float/vector
+`Math.Hash` hashes exactly those int bits through the existing xxHash32 mixers
+and keeps its nonnegative 31-bit result. Positive/negative zero differ. Existing
+integer/long signatures precede float signatures so their overload resolution
+and deterministic pins stay unchanged. CPU tests cover normal/subnormal values,
+infinities and explicit NaN payloads; GPU tests compare finite input bits and
+all four hash arities against CPU results.
+
+Codegen also uses private const-pointer signatures for read-only aggregates of
+at least 128 bytes and read-only method receivers when it can prove no source
+mutation during the call. No Tide alias/reference behavior is added. Overlapping
+mutable input types (including nested fields/containers), world writes, sends,
+spawns, tasks, extern calls and Action helpers keep the ordinary value path.
+Extern, async, operator, Interpolate, audio and input entry ABIs are unchanged.
+Recursive type inspection is bounded and fails conservatively. Later argument
+side effects retain existing ordered snapshots; non-addressable values use
+caller-owned compound literals. Shared GPU helpers retain their shader ABI.
+
+`readonly_aggregates` runs 40 KB values through 96 recursive function and method
+calls and tests disjoint mutable results, overlapping values/fields, implicit
+method forwarding with container outputs, later operand mutation and C mutation.
+`float_bits` checks all scalar/vector bit-cast and hash overloads. `screen_scale`
+checks current-frame metadata, default scale and changes between frames; three
+diagnostics pin match/GPU/write rejection. Editor tests cover new math help and
+Screen metadata. `notes/private-prototypes.md` (tide-prototypes) saves all remaining design ideas.
+
+Validation: full warning-free native/web debug builds pass. All 2,452 native
+CTests (2,418 ordinary plus 34 GPU) and all 2,361 web CTests pass, including WASI
+execution, shader pins/SPIR-V validation and Vulkan/OpenGL/WebGL/WebGPU/D3D11-WARP
+checks. The 241 editor cases and production docs build pass. Actual
+unchanged Inside Out source generates successfully, with SeatOf/Together/HallOf
+receiving `const Workshop *`; that generated C passes strict native and WASI
+syntax checks. No private prototype browser playtest, CI dispatch or deployment
+was performed. Other OSes, Android and sanitizers remain CI coverage.
+
+## Explicit skinned instance overload (2026-10-20)
+
+Owner-approved `Draw.Instanced(SkinnedMesh<V>, instances, ...)` follows the existing
+instance struct convention, adding optional CPU `Pose pose` alongside optional
+`float4x4 transform`. Checker expansion preserves written operand order and
+rejects incorrectly typed pose fields; absent pose fields request authored rest.
+Each valid item captures its pose using the existing skinned runtime interface.
+The instance list follows the model/pose argument borrow rule when no later
+operand can change it; later Tide/C effects preserve nested value snapshots.
+No general GPU support for Pose or implicit shader inputs was added. See
+`notes/drawing.md` for the full contract, fixtures and validation.
+
+
+## Recorded containers for local handlers (2026-10-19)
+
+Owner-approved: local match-event handlers read text, lists, maps, sets and
+grids from their existing recorded endpoints. Direct parameters use the event
+turn; query rows use tick end; verified delivery uses the confirmed recording.
+Attached local fields remain current. Match data stays read-only and existing
+copy restrictions, including grids, are unchanged. This supersedes older
+omitted-heap statements below and in the local-handler/query notes.
+
+Private read analysis follows selected member paths through synchronous
+functions, method receivers, implicit method calls and borrowed queries to a
+fixed point. An explicit whole-value copy reads its fields; conditional reads
+are possible reads, and dynamic fixed-array indexes select the possible
+elements. Unread containers remain zero in the fixed record and have no tail
+encoding. Component/singleton captures use eligible listener masks; event
+payloads use the union of possible local reads, and shared query shapes use
+their readers' union. A container read captures that container's value, rather
+than specializing its representation to an individual count/index operation.
+
+The existing visibility value codec is shared in value_codec_codegen.inc.
+Generated journals append bounded, owned serialized tails after their fixed
+payload/rows. Existing log copy/take/replay/confirmation/clear/free operations
+therefore own the complete value lifetime, with no runtime interface change.
+Before local delivery the log is decoded once into a temporary heap, shared
+across its handlers/query rows and freed after delivery. The match/local heap
+resolvers and scratch mark are restored. Recording explicitly resolves each
+source world's heap, including old availability endpoints. Explicit local
+value assignments acquire their ordinary local ownership before that heap goes.
+
+Recipient validation retains zero-handle, canonical bool and private/Resident
+checks on fixed records, then validates tail spans/padding, presence flags and
+typed values in an isolated temporary heap before dispatch. It preserves
+component visibility and rejects bad data without consulting live heap offsets.
+Delivery tolerates listener subsets already reduced by occurrence deduplication;
+authoritative input validation still requires canonical capture presence.
+Value decoding retains the existing 256-level codec nesting guard. Journal
+build identity includes capture paths, reader masks and codec shape. Observed
+event-payload container contents contribute to occurrence identity; component,
+singleton and query snapshots do not. Unread event containers remain omitted.
+No world layout, allocator, deterministic hash/packing or engine API changed.
+
+event_containers has seven runtime cases: recorded turn versus tick-end data,
+lists/text/nested maps/sets/open grids, helper/method/query forwarding, local
+copies surviving world/journal disposal, chunked values, changed event content,
+replay/confirmation, destruction/log copies, recipient privacy/checked tails,
+old/new availability heaps and byte-identical journals beside three unread
+5,000-element containers. Three obsolete rejection fixtures are removed.
+visibility_lifecycle keeps its forged-handle tests with the now-variable tail.
+Public Events, Functions and the decided/provisional spec document the contract.
+Validation: both full debug builds pass without warnings. All 2,438 native
+CTest cases pass (2,406 non-GPU in 128.78 s, then 32 GPU in 14.94 s), including
+all 240 editor cases. All 2,348 web debug cases pass in 321.89 s, including the
+seven new runtime cases on WASI and WebGL/D3D11/WebGPU coverage. The production
+docs build passes. Final compiler-only comment/indent cleanup was rebuilt on
+both host tools; emitted behavior is unchanged. Exact determinism pins remain
+unchanged. Private prototypes stayed disabled; no Gravewake browser playtest,
+CI or deployment was run. Linux/macOS/MinGW, Android and sanitizer configurations
+were not run on this Windows machine.
+
+## Query rows reach attached local fields (2026-10-19)
+
+Owner-approved after reviewing the query(mut Fighter fighter) example: local
+code reads current attached local fields through query bindings, and mut
+bindings write only those fields. Match values and entity handles remain
+read-only. This includes verified and recorded match rows: local state has no
+history. Ordinary copies still omit local fields; a direct binding passed to
+an ordinary helper retains its capability. Read-only borrowed queries accept
+mutable sources; mutable helper bindings require mutable sources. Function,
+method and recursive forwarding preserve selection, match timing and local
+permission. Match systems/handlers cannot gain local access through helpers.
+Queries over local-world components still have read-only bindings: this task
+extends attached local fields, not whole-component query writes.
+
+Checker propagation follows nested query bindings and component arguments from
+rows, then derives local query effects for callers and warnings. Access warnings
+run after this propagation, so forwarding a mut binding does not suggest a
+capability-breaking remove-mut fix. Query mut calls count as writers for value
+evaluation order and dropped-call analysis. Views/local handlers keep existing
+serial order and named-phase constraints, without granting a match World write.
+Shader inputs still cause local-field propagation before access warnings.
+
+Generated match rows contain an extra private birth identity only when the
+query reaches local fields, propagated through borrowed source layouts. It is
+plain metadata; event journals never contain local fields or local heap handles.
+Purely read-only access resolves current attached state or borrowed defaults
+without allocating an attached row. A mutable binding that uses local fields prepares
+and borrows its owned cell at row entry, before the body, then keeps that stable
+reference. No lookup/reset is hidden inside a C operand. Mutable
+outer parameters sharing query access use attached storage up front, so pending
+local edits are immediately visible to that query. Read-only outer/row borrows
+also share the cell when their routine can mutate it through a query, preserving
+live aliasing rather than depending on whether defaults were stored already.
+Historical birth mismatches read defaults and mutable access runs
+Forgotten/releases/reinitializes in place;
+moving/removing that cell could invalidate an active outer alias. This follows
+existing listener birth-reset behavior while preserving live cell addresses.
+Private get/mut/reset helpers use existing attached/table/ownership functions;
+no new runtime API, public event header or match layout/hash/packing changed.
+Affected private query/journal layouts and their build identities change.
+
+query_local_fields has eleven runtime cases for borrowed reads/writes, methods,
+inlined Actions, default strings/lists/arrays, live reads after nested writes,
+outer aliases, source operand order, verified/current local state, delayed event
+delivery, birth reuse/Forgotten and an active alias across differing predicted
+and confirmed births, plus a filtered mixed verified/predicted row sharing local
+state, preparation before assignment operands and readonly outer/row aliases
+beside mutable helper queries. Its 5,002-row case preserves
+a COW match snapshot/hash.
+A scalar-only safety fixture exercises the same private helpers without heap
+fields. Seven new diagnostic fixtures replace three obsolete view/listener
+rejections. lsp_query_local_fields and existing query tests cover completion,
+hover and rejected match writes. Public spec, Views, Functions, Events and
+Systems document the contract.
+
+Validation: warning-free native and web debug builds. All 2,440 native CTest
+cases pass, split into 2,408 non-GPU cases (125.38 s) and 32 GPU cases (13.47 s)
+so native graphics did not overlap browser graphics. All 2,350 web debug cases
+pass (294.65 s), including WebGL, D3D11 and WebGPU coverage. These runs include
+all eleven query_local_fields runtime cases, the safety fixture and all 240
+editor cases. The production docs build passes. Exact cross-platform pins are
+unchanged. Linux/macOS/MinGW, Android and sanitizers were not run on this Windows
+machine; no CI or private prototype playtests were dispatched.
+
+Correction (2026-10-20): a view's or handler's pointer to a parameter's
+attached local fields was `restrict`, while its query rows reach the same cell
+and write it (the outer aliases above). That is undefined, and optimized builds
+acted on it: in release, query_local_fields failed two checks (the birth-reset
+outer alias read 4 rather than 5; ReadWhileWriting saw no change), passing in
+debug only because nothing took `restrict` at its word. The fields pointer is
+no longer `restrict` (`gen_system_body`'s signature; match-data pointers keep
+it, as local code never writes match data). All eleven cases pass in release.
+Release CTest wasn't in the validation above, which is how it went unnoticed.
+
+Recorded-owner local event filters (2026-10-19): the shared checker accepts
+with/without ownership in local handlers of match events, including verified
+and component-free entity listeners. Spawned/Destroyed infer the match side
+from the filter alone. Local-world events, Forgotten, conflicting filters and
+local-world components remain errors. Generated capture, delivery, availability,
+privacy and replay contracts and validation are in
+notes/verified-and-local-handlers.md. No new runtime function is used.
+
+## World.Set updates active mutable bindings (2026-10-19)
+
+Owner-approved: Set<T> may overlap a mut T parameter. A successful Set of the
+current entity replaces both the stored component and its active mutable
+binding immediately, through synchronous helper/method/recursive/Action calls
+too. Set to another entity leaves that binding alone; absent/stale targets
+remain no-ops. Setting health to 20, then incrementing the parameter, finishes
+at 21. Whole replacement discards unfinished edits. Subsequent parameter
+edits retain normal write-back timing, so Get/query reads keep seeing the
+value published by Set until the invocation puts its later edits back.
+Read-only parameters and explicit copies retain their own captured values.
+
+Generated C passes a private chain of typed component IDs, world/entity keys
+and mutable-copy addresses through synchronous helpers that can Set. Systems,
+handlers and each async-handler resume build that chain on the C stack. It
+never enters a task frame, world, header, snapshot, hash, wire format or reload
+layout. No runtime API or public C ABI changed. Ordinary World capability,
+match/local, view, parallel and comparison restrictions remain. Async ordinary
+functions still cannot take World.
+
+The private Set helper validates the target, takes current container ownership
+from an active mutable copy when present, assigns the replacement through the
+existing ownership helpers, then updates the stored and active values. Set
+arguments retain source order and copy container values before replacing their
+source. Read-only container arguments to a Set-capable helper are copied just
+as beside an explicit mutable argument. Final overlapping row write-back uses
+the current table rather than cached lane addresses, preserving COW snapshots
+and preceding-row visibility. Other component loops retain their normal path.
+
+Access warnings wait for transitive World effects: Set can itself write the
+active binding, so suggesting removal of mut after such a call would change
+the following read. The three old overlap error fixtures are replaced by
+world_set_mut execution coverage, with direct/helper no-warning LSP checks.
+While exercising awaited work, a pre-existing checker gap was corrected:
+async handlers now record their awaited-function dependency as async functions
+already did, so their frame includes the child state, ownership cleanup and
+fingerprint. This is an existing backend contract, not new async syntax.
+
+world_set_mut covers 5,000 rows over chunks/archetypes and sparse selection,
+self/other/missing/stale targets, two mutable bindings, recursive methods,
+by-reference aliases, Actions, expression ordering, read-only copies and nested
+list/map/set ownership, command/event dispatch, async resumes/awaited components,
+local views, threaded ticks, COW immutability, rollback and packed roundtrips.
+Public Systems, Functions, Events and the decided spec describe the new rule.
+
+Validation: warning-free full native/web debug builds, all 2,430 native cases
+(full run plus the corrected matching-entity LSP probe recheck), all 2,340 web
+cases, all 239 editor cases and the production docs build pass. The three old
+overlap rejection targets became one execution target. Coverage includes native
+Vulkan/OpenGL, WebGL/D3D11/WebGPU, the new seven-case fixture and unchanged exact
+math/random/physics/world pins. Node 24.19.0 and clang 23.1.2 were used locally.
+Android, other operating systems and sanitizers remain CI coverage; no CI was
+dispatched and no private prototype browser playtest was run.
+
 ## Scalar Clip values without assets (2026-10-19)
 
 Follow-up checking reproduced valid Tide generating invalid C when Clip was
@@ -104,11 +1774,12 @@ while taking read-only T, including through ordinary helpers, methods,
 recursion and inlined actions. Each invocation reads the current component on
 entry, including preceding invocations' writes, then keeps that value. World
 reads see Set immediately. Tasks get fresh component values on resuming.
-The existing mut T overlap, match/local, view, parallel and comparison rules
-remain in force; no new implicit World capability is introduced.
+Match/local, view, parallel and comparison rules remain in force; no new
+implicit World capability is introduced. Mutable overlap was subsequently
+extended by the owner-approved rule above.
 
-`check_world_call` and `check_world_passing` now reject only mutable overlapping
-component parameters. Existing transitive World effects already provide global
+At this stage check_world_call/check_world_passing still rejected mutable
+overlap; that restriction is superseded above. Transitive World effects provide global
 write dependencies, heap serialization and a single-threaded system traversal.
 Generated rows pass page-slot arrays for components those World effects write,
 and reload their current lane addresses at each row. Structural changes remain
@@ -128,7 +1799,7 @@ snapshot immutability, rollback replay, packed round-trips, the threaded
 scheduler, input selection after Owner replacement, local views and heap-bearing
 handler parameters through self/other writes and task resumes. The two former
 read-only rejection fixtures are replaced by this execution coverage. Existing
-mutable-overlap and capability diagnostics remain pinned.
+capability diagnostics remain pinned; mutable overlap is now execution coverage above.
 
 Validation: warning-free full native/web debug builds, all 2,411 native and
 2,320 web CTests, and the docs production build pass. This includes native
@@ -423,7 +2094,7 @@ Whole-singleton replacement was a stale report: current checking/codegen accepts
 ordinary `mut` singleton assignment, and `singleton_params` already executes it
 through `Replace`. A fresh direct-system probe also compiles. The documented
 Resident/grid ownership restrictions still apply. The exhaustive report inventory
-and remaining decisions are in `notes/private-prototypes.md`, Engine gap audit;
+and remaining decisions are in tide-prototypes' `notes/private-prototypes.md`, Engine gap audit;
 the host save-directory fix is recorded in `notes/standard-host.md`.
 
 Final validation passes all 2,372 native and 2,282 web debug CTests, including
@@ -484,7 +2155,7 @@ COW snapshot and packed bytes. Two error fixtures retain repeated-lane and
 temporary-swizzle rejection through an indexed element.
 
 This initial pass left the other reports unverified. The completed follow-up
-inventory in `notes/private-prototypes.md`, Engine gap audit, supersedes that
+inventory in tide-prototypes' `notes/private-prototypes.md`, Engine gap audit, supersedes that
 temporary list: attached arrays and save isolation are addressed, whole-singleton
 replacement already works, and the remaining restrictions/APIs have their actual
 design boundary recorded there. Original observations remain in the game notes.
@@ -579,7 +2250,11 @@ groups in a projected client world does not change server policy.
 `Audience.All`, `.None`, `.Only(PlayerID)` and `.From(List<PlayerID>)` construct
 value bitsets sized to `maxPlayers`. `mut` audiences have `Add(player)` and
 `Remove(player)`; `Contains(player)` only reads. Invalid/out-of-game player
-indices are ignored and never index outside the mask. A group's audience is a
+indices are ignored and never index outside the mask. Two audiences compare
+with `==` and `!=` (2026-10-24, Claude's pick, Provisional: Earth's own
+comparison only went through the first 64 players), every word of the mask
+(`tide_audience_equal`), as `VisibilityGroup` compares its id; the
+`visibility_groups` fixture covers a player in the third word. A group's audience is a
 live reference, not copied into every member. Per-component restrictions use
 `visibility.Set<Inventory>(group)` or `visibility.Set<Inventory>(audience)`;
 `visibility.Reset<Inventory>()` restores inheritance. They require an ordinary
@@ -681,9 +2356,9 @@ are recorded with the networking/editor changes after validation completes.
 Performance measurement (Windows clang 23.1.2, 2026-10-15): the projection
 fixture plus 10,000 visible PublicState rows with empty owned fields produced
 1,087,683 logical bytes. In release/O2, three runs of 200 calls measured
-2.12–2.92 ms per recipient canonical hash after changing every added row's integer
-column; unchanged worlds measured 2.22–3.54 ms. Full-world hashes measured
-4.19–9.76 us with that column dirty and 2.57–11.11 us unchanged. These operations
+2.12Ã¢â‚¬â€œ2.92 ms per recipient canonical hash after changing every added row's integer
+column; unchanged worlds measured 2.22Ã¢â‚¬â€œ3.54 ms. Full-world hashes measured
+4.19Ã¢â‚¬â€œ9.76 us with that column dirty and 2.57Ã¢â‚¬â€œ11.11 us unchanged. These operations
 do different work: full-world hashing reuses cached page hashes and only rehashes
 the changed integer-column pages, whereas recipient hashing currently traverses
 and serializes every permitted logical value and allocates the temporary byte
@@ -692,7 +2367,8 @@ hardware-independent tick budget. Debug/O0 (40 calls) measured 6.08 ms for the
 recipient hash versus 13.88 us for the changed-column full-world hash, and
 8.66 ms versus 36.31 us unchanged, including full-world cache warmup. The
 visibility path's linear work and allocation remain a performance limitation;
-no projection hash cache is implemented. The no-visibility path keeps its
+since 2026-10-24 each entity's part is hashed once a tick for every recipient
+(`gen_client_hashes`, `notes/netcode.md`). The no-visibility path keeps its
 ordinary cached full-world hash. The focused release projection fixture passes
 all 12 cases and the same canonical pin.
 
@@ -707,11 +2383,11 @@ renames; final incoming integration validation follows below. Android, other
 operating systems and sanitizers were not run; no CI was dispatched.
 
 Final integration validation: both complete standard builds remain warning-free
-after the compiler/session/Box3D overlap through a50f7818. All 2,359 native
+after the compiler/session/Box3D overlap through 2c6de193. All 2,359 native
 CTests pass (69.54 s, 31 GPU tests), as do all 2,272 web CTests (221.93 s,
 including WebGL/WebGPU). All seven simulation-identity cases pass. Cracked and
 Foldline targets/tests pass on native/web. The subsequent hosting-console and
-Foldline redesign merge through 7aff9694 changes no engine/compiler source;
+Foldline redesign merge through 9f1d3581 changes no engine/compiler source;
 the renderer overlap preserves the redesign with eleven Shown-to-Displayed
 helper renames. Fresh scoped Foldline checks pass 2/2 native (10.49 s) and 3/3
 web (92.66 s), including both rendering backends. The final production docs
@@ -834,7 +2510,7 @@ pass with mocked registry writes, and the production docs build passes.
 Other host OSes, Android, sanitizers and plugin verification against newer IDEs
 were not run; no CI workflow or real installer/association action was invoked.
 
-Integration: origin/dev eb4c09f3 merged cleanly in code; three top-of-file note
+Integration: origin/dev 83075834 merged cleanly in code; three top-of-file note
 conflicts retain both new sections. Incoming input prediction and render-target
 changes touch the compiler/runtime boundary, so complete native/web debug builds
 and suites were repeated: all 2,284 native and 2,249 web CTests pass, including
@@ -1538,12 +3214,12 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - A parameter typed `World` where no type of the game's has the name is `TY_WORLD` (`check_signature`, `check_world_param`): one a function at most, `World` or `mut World`, never `out`, with no default; operators, `extern` functions and async functions take none (an async handler takes it itself). As a value it's still nothing: a field, a local or a return type of it is `world_misplaced`.
   - The World is named as a value in one place, a call's argument that a `World` parameter takes (`checker.world_arg`, `world_value_ok`, which `check_name` reads; `check_world_args`), and `mut World` takes a `mut World`, as any `mut` argument. Nothing is passed for it in C: the function gets the worlds it reaches as hidden parameters, where its other hidden ones go, `tide_w` when it reaches the match's components (`decl.world_match`, `takes_world` in `compiler/src/codegen.c`; `const` unless it sets, `decl.world_sets`) and `tide_l` when it reaches local ones (`decl.world_local`, through `takes_local`), which are the names its caller has them under. So `world.Get` in a function is the code it is in a system.
   - `check_world_call` checks a function's calls as a system's, but for the rules that depend on who calls (`helper`), which wait. `check_world_passing`, once every body is checked, adds what each function reaches (`decl.world_uses`) to its callers', over the checker's list of calls until nothing grows, so a system's `world_uses` are its own whether it calls the World or a function does: the schedule (`accesses_of`), `world_reads_own_writes`, `system_splits`, `tidec --schedule` and the language server's lens need no rule of their own. Then it checks each call a system, view or handler makes: a local component from the match, the match's from a local handler, a view that would change the match, a `Set` in a parallel loop's step or a sort's comparison, and a `Set` of a component the caller takes as a parameter, read or `mut`.
-  - Read-only component parameters permit direct and helper `Set<T>` calls on any target. Each row reloads affected pages, then retains its invocation's value. Mutable component parameters still refuse overlapping Set calls because their write-back could replace the Set.
+  - Read-only component parameters permit direct and helper `Set<T>` calls on any target and retain their invocation's value. Mutable overlap follows the owner-approved active-binding replacement above. Each row reads the current affected pages, including preceding writes.
   - `world.TryGet<T>(entity, out value)` is the engine's own beside `Get` and `Has` (`check_world_call`, its `out` through `check_out_param`): `tide_tryget_<Component>`, only in the C of a game that calls it (`decl.tried`), which gives whether the entity has one and assigns the variable its copy or the component's `default`. A component with a grid has none, as it can't be copied.
   - A program that passes no `World` to a function and calls no `TryGet` generates the C it did, byte for byte: checked by running old and new tidec over every game's source list.
   - `compiler/tests/e2e/world_functions` runs it (functions, methods, a World passed through two functions, `mut World`, local components in a view, `TryGet` of every form) natively and on the web; `compiler/tests/schedule/world_functions` pins that a function's reach is in its system's schedule; `compiler/tests/errors/world_function_*.tide` and `world_try_get_*.tide` have a file for each diagnostic; `lsp_world_in_functions` checks the editor's side.
-  - Provisional, awaiting the owner: `mut World` in functions; methods taking it too; async functions and code the GPU runs taking none; a function that sets a component refused beside the caller's mutable parameter of it; `TryGet` giving the component's `default` where `Get` gives zeros. Read-only overlap is now supported, as recorded above.
-- **Functions and methods send, spawn and change entities as the code that calls them could** (the owner, 2026-10-08: "it should inherit their ability; if you say `Send` it should mean that what calls us can `Send` otherwise is a compiler error ONLY when its called from a place it can't"; `docs/spec.md`, Functions, with the picks made to build it Provisional under Functions and blocks). It was a recurring ask of the agent-written games (`GAME_TRIAL_FEEDBACK.md`), and Two Forks compared two copies of its board after a move to learn what to send. `Send`, `entity.Send`, `Spawn`, `Add`, `Remove` and `Destroy` are written in a function or a method as in a system. What's built, and what code relies on:
+  - Provisional implementation details: `mut World` in functions and methods; async functions and code the GPU runs taking none; `TryGet` giving the component's `default` where `Get` gives zeros. Read-only overlap and mutable active-binding replacement are owner-approved, as recorded above.
+- **Functions and methods send, spawn and change entities as the code that calls them could** (the owner, 2026-10-08: "it should inherit their ability; if you say `Send` it should mean that what calls us can `Send` otherwise is a compiler error ONLY when its called from a place it can't"; `docs/spec.md`, Functions, with the picks made to build it Provisional under Functions and blocks). It was a recurring ask of the agent-written games (the 2026-10-06 trial's report, `GAME_TRIAL_FEEDBACK.md`, removed 2026-10-21), and Two Forks compared two copies of its board after a move to learn what to send. `Send`, `entity.Send`, `Spawn`, `Add`, `Remove` and `Destroy` are written in a function or a method as in a system. What's built, and what code relies on:
   - **A function records what it does, and nothing is wrong with it there** (`inherits`, `note_act` in `compiler/src/check.c`): `decl.acts[2]`, the match's ([0]) and this machine's ([1]), with where and what for the messages (`acts_at`, `acts_what`: "sends 'Hit'"), `acts_spawn[2]` and `acts_text`. Which world is told by what's written, as an async function's is: an event's own (a command is this machine's), the entity's type (`Entity`, `LocalEntity`), the components'; `same_world` is the one error in the function, a `Spawn`'s, an `Add`'s or a `Remove`'s components of two worlds, and an event sent to an entity of the other. A `Spawn` with no components is the match's. `check_component_side` and `check_entity_side` let an inheriting function through, where they check a system's or a view's against its own world.
   - **`refuse_act`** is what still refuses where it's written: frags and verts (the old messages), a struct's operators and a component's `Interpolate` (messages of their own), and the input's code. `passes_acts` says which declarations inherit: plain functions and methods, not async ones (their world is what they do), not operators (an operator's call is handed its operands, the dice and the seed and nothing else: `gen_operator_call`), not `Interpolate`.
   - **`mark_act_callers`** carries it from a function to the functions and methods that call it, over the checker's list of calls until nothing grows. It runs twice: once every function's body is checked and before any system's, so a foreach over a grid whose step calls one goes in order (`own_cell_only_expr`), and again in `check_acts`.
@@ -1551,12 +3227,12 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **It's the calling system's in the schedule:** `check_acts` sets `decl.spawns` on a system, view or handler that calls a function that spawns, and `decl.writes_text` on one whose function records text, as `note_spawn` and `note_text_write` do for its own. So `analyze_parallelism`, `system_splits` and `system_settles` need no rule: a system that splits and calls a function that spawns gets temporary handles and settles them, in its queue and in the entity fields of its `mut` components, which is everything a function could have written one to. A function that sends keeps a system splitting.
   - **In generated C the function is handed what it records in**, where its other hidden parameters go (`gen_routine_signature`, `gen_routine_call` in `compiler/src/codegen.c`): `tide_world *tide_w`, not const (`takes_world`, `changes_world`), `tide_local *tide_l` (`takes_local`), and `tide_entity tide_scene` when it spawns in a world that has scenes (`takes_scene`, `scene_is_local`), which a call gives its own `tide_scene` when that's of the same world and the null entity otherwise. The `Send` and the `Spawn` in it are the lines a system has (`gen_send`, `gen_spawn`, `gen_method`), so they record through `tide_recording` into the queue of whatever task runs the caller, and `tide_new_entity` gives a temporary handle there. A function nothing could call (both worlds) still generates C that compiles.
   - **A call of one keeps its order** (`call_keeps_order`): one that gives a value runs before its statement when anything does, like a call to C. `call_acts` counts it as a call that does something, so the unused-local warning says to keep the call as a statement.
-  - **A system whose whole body is one `Send`** still writes its events as a run (`batch_event`); through a function it takes the ordinary push, one event at a time.
+  - **A system whose whole body is one `Send`** still writes its events as a run (`batch_event`; since 2026-10-20 one queue item a run, Events in runs at the top); through a function it takes the ordinary push, one event at a time.
   - A program with no such function generates the C it did, byte for byte: old and new tidec over every game's source list, with `--layout` and without (234 games).
   - Tests: `compiler/tests/e2e/function_acts` (the order among a system's own sends, a sum's calls, a block's; a struct's and a component's methods, a task and a command's handler; `Add`, `Remove` and `Destroy`; a spawn joining its caller's scene and going with it; one thread against a pool that says it has four, tick by tick, with events sent to entities spawned there; a view's functions sending a local event and a command and spawning and destroying local entities), natively and on the web; `compiler/tests/errors/function_acts_*.tide`, a file a diagnostic. `event_send_in_function` and `function_spawn`, which pinned the refusals, are gone.
   - **Editors:** completion offers `Spawn` and `Send` in a function or a method, with the events of both worlds, and an entity's `Add`, `Remove`, `Destroy` and `Send` after its dot there (`passed` in `list_members`, and the routine's branch of `complete_expression`, `compiler/lsp/analysis.c`), not in an operator, an `Interpolate` or an `audio` declaration, and never `Snap`. They were hidden in every function, async ones too, which could always send. `lsp_functions_send_and_spawn` checks them, and the diagnostic at a view's call.
   - **A dropped value warns, and `_ = value;` drops one on purpose** (built 2026-10-11, both the owner's, from `request.SetHeader(...)` written as a statement, which gave a request nobody kept). `check_stmt`'s `S_EXPR` notes a function's or method's call whose type isn't void, an error or failable (`checker.dropped`), and `warn_dropped_values`, after `warn_unused_locals`, warns for those `call_acts` says do nothing: it has to wait, as whether a function draws, calls C or acts is known once every body is checked. `_ = value;` is the parser's (`parse_simple`): a `var` named `_dropped_<line>_<column>`, marked `discard` and read, so a value dropped goes through everything a variable's does (a call's order, an `await`, text and lists) and generated C needed nothing. No game in the repository had such a call. Tests: `compiler/tests/warnings/dropped_value.tide`.
-  - **Session calls and `Clipboard.Copy` in a function or a method** (built 2026-10-11; the owner, asked whether to lift "functions can't call Session yet": "yes lets improve the session stuff on Tide"). They're this machine's acts: `check_session_call` and the clipboard's check let an inheriting function through and `note_act(c, true, ...)` with "calls Session.Open" or "calls Clipboard.Copy", as a command's send does, so `mark_act_callers` and `check_acts` need no rule for them and the errors are theirs (the match, `Sample`, a frag, a parallel loop's step, a comparison); `check_acts` words the match's as "the match runs the same on every machine" for a `what` that starts with "calls ". An operator and `Interpolate` are refused where written. Generated C needed nothing: `takes_local` is true of `acts[1]`, so the function is handed `tide_l`, which `gen_session_call` and `tide_request_copy` already name. "A statement of its own" still holds in a function. `session.room` and a whole `Session` as text stay refused in functions and methods (`singleton_param_session_room`, `_text`, `_append`): the room is beside the `Session` value, in the local state, and a helper gains no implicit lookup; making the room part of the value is the runtime's side and wasn't done. tidels offers `Session.` and `Clipboard.` there (`decides_session`). Tests: `tidec_e2e_session_main` (a function a function calls, a struct's method, the clipboard, a local handler's function), `compiler/tests/errors/session_in_function`, `clipboard_in_function`, `session_function_in_sample`, `session_in_operator`; `singleton_param_session_operation`, which pinned the refusal, is gone; `lsp_functions_send_and_spawn`.
+  - **Session calls and `Clipboard.Copy` in a function or a method** (built 2026-10-11; the owner, asked whether to lift "functions can't call Session yet": "yes lets improve the session stuff on Tide"). They're this machine's acts: `check_session_call` and the clipboard's check let an inheriting function through and `note_act(c, true, ...)` with "calls Session.Open" or "calls Clipboard.Copy", as a command's send does, so `mark_act_callers` and `check_acts` need no rule for them and the errors are theirs (the match, `Sample`, a frag, a parallel loop's step, a comparison); `check_acts` words the match's as "the match runs the same on every machine" for a `what` that starts with "calls ". An operator and `Interpolate` are refused where written. Generated C needed nothing: `takes_local` is true of `acts[1]`, so the function is handed `tide_l`, which `gen_session_call` and `tide_request_copy` already name. "A statement of its own" still holds in a function. `session.room` (and `session.invite`, 2026-10-21: the same branch of `check_member`, its own message, `singleton_param_session_invite`) and a whole `Session` as text stay refused in functions and methods (`singleton_param_session_room`, `_text`, `_append`): the room is beside the `Session` value, in the local state, and a helper gains no implicit lookup; making the room part of the value is the runtime's side and wasn't done. tidels offers `Session.` and `Clipboard.` there (`decides_session`). Tests: `tidec_e2e_session_main` (a function a function calls, a struct's method, the clipboard, a local handler's function), `compiler/tests/errors/session_in_function`, `clipboard_in_function`, `session_function_in_sample`, `session_in_operator`; `singleton_param_session_operation`, which pinned the refusal, is gone; `lsp_functions_send_and_spawn`.
   - Not built: `Snap`, `Scene.Load` and `Scene.Unload` in a function; operators that send; a hover or a lens saying what a function sends. Two Forks still compares its boards. Starting tasks in a function is built since: Functions and methods start tasks, at the top.
   - Provisional, awaiting the owner: everything under Functions and blocks in the spec. The owner's own words cover that it's bare, inherited from the caller, and an error only at a call from a place that can't; that it's all six operations and methods too is my reading of "there are depend on who calls them", said of `Spawn` and `Destroy`.
 - `virtual` and `override` follow C# (agreed 2026-10-05; `docs/spec.md`, Mods: Decided for what's agreed, Provisional for the picks made to build them). `virtual` before a declaration with code says another package can replace it, and `override` before one replaces the virtual declaration of that name and those parameters, while compiling. They're the first step of modding, and for any package. What's built, and what code relies on:
@@ -1691,7 +3367,7 @@ Remaining work: prefab text/editor authoring, hierarchy presentation interpolati
 world-matrix caching/deep-hierarchy performance measurements, richer hierarchy
 inspection, and broader platform CI (not requested for this Windows task).
 
-Integration through origin/dev f349c31a merges cleanly. Incoming CLI development
+Integration through origin/dev 9ae734b8 merges cleanly. Incoming CLI development
 optimization/cache changes rebuild warning-free and pass all 10 native CLI CTests;
 the production docs build passes again. Other incoming work is prototype content
 and benchmark evidence, with no compiler/runtime overlap requiring full repeats.

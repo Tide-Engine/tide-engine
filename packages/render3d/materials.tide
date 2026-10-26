@@ -1,0 +1,226 @@
+namespace Render3D;
+
+enum SurfaceMode { Opaque, Cutout, Transparent }
+
+[Raw] asset Texture FlatNormal = "flat-normal.png";
+
+struct Coverage
+{
+    float alpha = 1;
+    float cutoff = 0.5;
+}
+
+// CPU texture-identity checks disable optional samples for the common material.
+// The handedness is the sign of the draw transform's determinant.
+struct MaterialMaps
+{
+    bool normal;
+    bool mask;
+    bool emission;
+    bool height;
+    float handedness = 1;
+}
+
+void StandardUV(SurfaceInput input, mut float2 uv)
+{
+}
+
+void StandardCoverage(SurfaceInput input, mut Coverage coverage)
+{
+}
+
+// A stable tangent for missing/degenerate mesh UVs. Pick the least-aligned axis
+// so the cross product remains well conditioned, including an axis-aligned n.
+float3 FallbackTangent(float3 normal)
+{
+    float3 n = Math.Normalize(normal);
+    if (Math.LengthSq(n) < 0.5) return float3(1, 0, 0);
+    float3 absolute = Math.Abs(n);
+    float3 axis = absolute.x <= absolute.y && absolute.x <= absolute.z ? float3(1, 0, 0)
+        : absolute.y <= absolute.z ? float3(0, 1, 0) : float3(0, 0, 1);
+    return Math.Normalize(Math.Cross(axis, n));
+}
+
+// These are two vectors perpendicular to the object tangent. Their transformed
+// normal cross reconstructs the forward-transformed tangent without carrying
+// another four matrix columns from the vertex stage to the fragment stage.
+float3 TangentPlaneNormal(float3 normal, float4 tangent)
+{
+    mut float3 t = Math.Normalize(tangent.xyz);
+    if (Math.LengthSq(t) < 0.5) t = FallbackTangent(normal);
+    float3 b = Math.Normalize(Math.Cross(normal, t));
+    return Math.LengthSq(b) >= 0.5 ? b : FallbackTangent(t);
+}
+
+float3 TangentPlaneSecond(float3 normal, float4 tangent)
+{
+    mut float3 t = Math.Normalize(tangent.xyz);
+    if (Math.LengthSq(t) < 0.5) t = FallbackTangent(normal);
+    return Math.Cross(t, TangentPlaneNormal(normal, tangent));
+}
+
+SurfaceInput MaterialInput(float3 world, float3 normal, float4 tangent,
+                           float3 planeNormal, float3 planeSecond, float handedness,
+                           float2 uv, float3 viewDirection, bool doubleSided)
+{
+    // cross(A^-T b, A^-T c) has direction det(A) * A * t. Correct its
+    // reflection before Gram-Schmidt; the bitangent keeps the UV handedness.
+    mut float3 t = Math.Cross(planeNormal, planeSecond) * handedness;
+    t = Math.Normalize(t - normal * Math.Dot(normal, t));
+    if (Math.LengthSq(t) < 0.5) t = FallbackTangent(normal);
+    float3 n = Math.LengthSq(normal) >= 0.5 ? normal : float3(0, 1, 0);
+    float sign = (tangent.w < 0 ? -1 : 1) * handedness;
+    float3 b = Math.Normalize(Math.Cross(n, t)) * sign;
+    bool back = doubleSided && Math.Dot(normal, viewDirection) < 0;
+    return SurfaceInput {
+        world = world, normal = back ? -normal : normal, tangent = t,
+        bitangent = back ? -b : b, uv = uv, viewDirection = viewDirection
+    };
+}
+
+float2 MaterialUV(SurfaceInput input, float2 scale, float2 offset,
+                  Func<SurfaceInput, mut float2, void> hook)
+{
+    mut SurfaceInput scaled = input;
+    scaled.uv = input.uv * scale + offset;
+    mut float2 uv = scaled.uv;
+    hook(scaled, uv);
+    return uv;
+}
+
+// A single centered height sample shifts UVs only, never geometry/depth. Both
+// passes use the main camera's view direction, preserving the cutout silhouette.
+float2 ParallaxUV(SurfaceInput input, float2 uv, float height, float scale)
+{
+    float2 along = float2(Math.Dot(input.viewDirection, input.tangent),
+                          Math.Dot(input.viewDirection, input.bitangent));
+    float facing = Math.Max(Math.Dot(input.viewDirection, input.normal), 0.05);
+    return uv - along * ((Math.Clamp(height, 0, 1) - 0.5) * scale / facing);
+}
+
+// Explicit bilinear sampling is valid in GPU helpers. A pure, immutable UV
+// expression also lets direct color/normal/mask Samples retain trilinear LODs.
+float2 MaterialParallax(Texture image, SurfaceInput input, float2 uv, bool enabled, float scale)
+{
+    if (!enabled || scale == 0) return uv;
+    Color height = image.Sample(uv, Filter.Bilinear);
+    return ParallaxUV(input, uv, height.r, scale);
+}
+
+SurfaceInput MaterialUVInput(SurfaceInput input, float2 uv)
+{
+    mut SurfaceInput result = input;
+    result.uv = uv;
+    return result;
+}
+
+float3 MaterialNormal(SurfaceInput input, float3 sampled, float scale)
+{
+    float3 decoded = sampled * 2 - float3(1);
+    float3 tangentNormal = Math.Normalize(float3(decoded.xy * scale, decoded.z));
+    float3 n = Math.LengthSq(input.normal) >= 0.5 ? input.normal : float3(0, 1, 0);
+    float3 mapped = Math.Normalize(input.tangent * tangentNormal.x
+        + input.bitangent * tangentNormal.y + n * tangentNormal.z);
+    return Math.LengthSq(mapped) >= 0.5 ? mapped : n;
+}
+
+Coverage MaterialCoverage(SurfaceInput input, float alpha, float cutoff,
+                          Func<SurfaceInput, mut Coverage, void> hook)
+{
+    mut Coverage coverage = Coverage { alpha = alpha, cutoff = cutoff };
+    hook(input, coverage);
+    coverage.alpha = Math.Clamp(coverage.alpha, 0, 1);
+    coverage.cutoff = Math.Clamp(coverage.cutoff, 0, 1);
+    return coverage;
+}
+
+frag Lit(MeshVertex vertex, out Color color, Instance instance, Material material, Renderer renderer,
+         MaterialMaps maps, Func<SurfaceInput, mut Surface, void> surface)
+{
+    float3 normal = instance.Normal(vertex.normal);
+    float3 viewDirection = Math.Normalize(renderer.eye - this.world);
+    SurfaceInput frame = MaterialInput(this.world, normal, vertex.tangent,
+        instance.Normal(TangentPlaneNormal(vertex.normal, vertex.tangent)),
+        instance.Normal(TangentPlaneSecond(vertex.normal, vertex.tangent)),
+        maps.handedness, vertex.uv, viewDirection, material.doubleSided);
+    float2 hookedUV = MaterialUV(frame, material.uvScale, material.uvOffset, material.uv);
+    float2 uv = MaterialParallax(material.heightMap, frame, hookedUV, maps.height, material.heightScale);
+    SurfaceInput input = MaterialUVInput(frame, uv);
+    Color sampled = material.baseMap.Sample(uv);
+    Coverage coverage = MaterialCoverage(input, sampled.a * material.baseColor.a * vertex.color.a,
+                                         material.alphaCutoff, material.coverage);
+    if (material.mode == SurfaceMode.Cutout && coverage.alpha < coverage.cutoff) this.Discard();
+
+    float3 texel = SrgbToLinear(float3(sampled.r, sampled.g, sampled.b));
+    float3 tint = SrgbToLinear(float3(material.baseColor.r, material.baseColor.g, material.baseColor.b));
+    float3 vertexColor = SrgbToLinear(float3(vertex.color.r, vertex.color.g, vertex.color.b));
+    mut Surface result = Surface {
+        albedo = texel * tint * vertexColor, normal = input.normal,
+        metallic = material.metallic, roughness = material.roughness, emission = material.emission
+    };
+    if (maps.normal)
+    {
+        Color sampledNormal = material.normalMap.Sample(uv);
+        result.normal = MaterialNormal(input, float3(sampledNormal.r, sampledNormal.g, sampledNormal.b), material.normalScale);
+    }
+    if (maps.mask)
+    {
+        Color mask = material.maskMap.Sample(uv);
+        result.occlusion = Math.Lerp(1, Math.Clamp(mask.r, 0, 1), Math.Clamp(material.occlusionStrength, 0, 1));
+        result.roughness *= mask.g;
+        result.metallic *= mask.b;
+    }
+    if (maps.emission)
+    {
+        Color emission = material.emissionMap.Sample(uv);
+        result.emission *= SrgbToLinear(float3(emission.r, emission.g, emission.b));
+    }
+    surface(input, result);
+    mut float3 radiance = Math.Max(result.emission, float3(0));
+    // Preserve the original opaque path's arithmetic when indirect is disabled.
+    if (renderer.ambientIrradiance.x > 0 || renderer.ambientIrradiance.y > 0 || renderer.ambientIrradiance.z > 0)
+        radiance += EvaluateIndirectPbr(result, renderer.ambientIrradiance);
+    foreach (var light in renderer.lights)
+    {
+        float3 toward = light.kind == LightKind.Directional ? -light.direction : Math.Normalize(light.position - this.world);
+        mut float attenuation = 1;
+        if (light.kind != LightKind.Directional)
+        {
+            attenuation = PointAttenuation(Math.Length(light.position - this.world), light.range);
+            if (light.kind == LightKind.Spot)
+                attenuation *= SpotAttenuation(Math.Dot(light.direction, -toward), light.innerCosine, light.outerCosine);
+        }
+        if (attenuation <= 0) continue;
+        mut float visibility = 1;
+        if (renderer.shadows && material.receiveShadows && light.shadowIndex >= 0)
+        {
+            int face = light.kind == LightKind.Point ? PointFace(this.world - light.position) : 0;
+            float facing = Math.Saturate(Math.Dot(input.normal, toward));
+            float bias = Math.Max(renderer.shadowBias, 0) + Math.Max(renderer.shadowSlopeBias, 0) * (1 - facing);
+            visibility = ShadowVisibility(renderer.shadow, renderer.shadowViews[light.shadowIndex + face], this.world, bias, renderer.shadowTexel,
+                                          light.kind == LightKind.Point);
+        }
+        radiance += EvaluateDirectPbr(result, viewDirection, toward, light.intensity * attenuation, visibility);
+    }
+    float alpha = material.mode == SurfaceMode.Transparent ? coverage.alpha : 1;
+    color = Color(radiance.x, radiance.y, radiance.z, alpha);
+}
+
+frag ShadowCutout(MeshVertex vertex, out Color color, Instance instance, Material material,
+                  Renderer renderer, ShadowTile tile)
+{
+    float3 normal = instance.Normal(vertex.normal);
+    float3 viewDirection = Math.Normalize(renderer.eye - this.world);
+    SurfaceInput frame = MaterialInput(this.world, normal, vertex.tangent,
+        instance.Normal(TangentPlaneNormal(vertex.normal, vertex.tangent)),
+        instance.Normal(TangentPlaneSecond(vertex.normal, vertex.tangent)),
+        tile.maps.handedness, vertex.uv, viewDirection, material.doubleSided);
+    float2 hookedUV = MaterialUV(frame, material.uvScale, material.uvOffset, material.uv);
+    float2 uv = MaterialParallax(material.heightMap, frame, hookedUV, tile.maps.height, material.heightScale);
+    SurfaceInput input = MaterialUVInput(frame, uv);
+    Color sampled = material.baseMap.Sample(uv);
+    Coverage coverage = MaterialCoverage(input, sampled.a * material.baseColor.a * vertex.color.a,
+                                         material.alphaCutoff, material.coverage);
+    if (coverage.alpha < coverage.cutoff) this.Discard();
+    color = Color.white;
+}

@@ -83,6 +83,69 @@ function checkLinesEndText(file, lines) {
 
 const probe = tokenize(fs.readFileSync(path.join(here, 'probe.tide'), 'utf8'));
 
+test('type aliases distinguish their declaration and target from namespace imports', () => {
+    const lines = tokenize('using Physics;\nusing Distance = float;\nusing Scores = Map<int, List<Combat.Score>>;\n'
+        + 'namespace Game\n{\n    using Shade = Func<mut Vertex, void>;\n    using Maybe = Combat.Score?;\n'
+        + '    using Samples = float[32]; // stored samples\n}\nstruct Following { int count; }');
+    check(lines[0], ['using', 'keyword.other.namespace']);
+    check(lines[0], ['Physics', 'entity.name.namespace']);
+    check(lines[1], ['using', 'keyword.other.namespace']);
+    check(lines[1], ['Distance', 'entity.name.type']);
+    check(lines[1], ['Distance', '!entity.name.namespace']);
+    check(lines[1], ['=', 'keyword.operator.assignment']);
+    check(lines[1], ['float', 'storage.type.primitive']);
+    check(lines[2], ['Map', 'support.class']);
+    check(lines[2], ['List', 'support.class']);
+    check(lines[2], ['Score', 'entity.name.type']);
+    check(lines[2], ['Score', '!entity.name.namespace']);
+    check(lines[5], ['Shade', 'entity.name.type']);
+    check(lines[5], ['Func', 'support.class']);
+    check(lines[5], ['mut', 'storage.modifier']);
+    check(lines[6], ['?', 'keyword.operator.optional']);
+    check(lines[7], ['32', 'constant.numeric.integer']);
+    check(lines[7], ['// stored samples', 'comment.line']);
+    check(lines[9], ['struct', 'storage.type']);
+    check(lines[9], ['Following', 'entity.name.type']);
+    const [inline] = tokenize('namespace More { using Number = float; using SetOf = List<int>; }');
+    check(inline, ['More', 'entity.name.namespace']);
+    check(inline, ['Number', 'entity.name.type']);
+    check(inline, ['SetOf', 'entity.name.type']);
+    check(inline, ['float', 'storage.type.primitive']);
+    check(inline, ['List', 'support.class']);
+});
+
+test('typed callable signatures keep generic type highlighting', () => {
+    const lines = tokenize('Func<float2, float> distance;');
+    check(lines[0], ['Func', 'support.class']);
+});
+
+test('task handles keep failure result types and nested generics', () => {
+    const lines = tokenize('Task<List<Vertex3> fails MeshError> build;\nLocalTask<void fails IOError> flush;\nLocalTask running;');
+    check(lines[0], ['Task', 'support.class']);
+    check(lines[0], ['fails', 'storage.modifier']);
+    check(lines[1], ['LocalTask', 'support.class']);
+    check(lines[1], ['fails', 'storage.modifier']);
+    check(lines[2], ['LocalTask', 'support.class']);
+});
+
+test('mutable callable signatures keep argument modes and nested types', () => {
+    const lines = tokenize('Func<mut Vertex, float, mut Color, void> shade;\nFunc<mut Vertex, Func<mut Color, void>> factory;');
+    for (const line of lines) {
+        check(line, ['Func', 'support.class']);
+        check(line, ['mut', 'storage.modifier']);
+        check(line, ['mut', 'storage.modifier', 2]);
+        check(line, ['void', 'storage.type.primitive']);
+    }
+    check(lines[1], ['Func', 'support.class', 2]);
+});
+
+test('computed property accessors are contextual', () => {
+    const lines = tokenize('float diameter { get { return radius * 2; } set { radius = value / 2; } }\nint get = 1;\n');
+    check(lines[0], ['get', 'keyword.other.accessor']);
+    check(lines[0], ['set', 'keyword.other.accessor']);
+    assert.ok(!piecesOf(lines[1], 'get', 1).some(p => has(p.scopes, 'keyword.other.accessor')));
+});
+
 test('authored prefab and child declarations', () => {
     const lines = tokenize('prefab Enemy\n{\n    entity Weapon : Pistol\n    {\n        Transform;\n    }\n}');
     check(lines[0], ['prefab', 'storage.type']);
@@ -149,6 +212,8 @@ const cases = {
         ['Stats operator +(', [['operator', 'keyword.other.operator'], ['+', 'keyword.operator']]],
     ],
     'declaration words are keywords only where a declaration starts': [
+        ['scene Main;', [['scene', 'storage.type'], ['Main', 'entity.name.type']]],
+        ['local scene Menu;', [['local', 'storage.modifier'], ['scene', 'storage.type'], ['Menu', 'entity.name.type']]],
         ['input PlayerInput', [['input', 'storage.type'], ['PlayerInput', 'entity.name.type']]],
         ['system Steer(', [['system', 'storage.type'], ['Steer', 'entity.name.function'], ['input', '!storage'], ['events', '!storage']]],
         ['if (input is PlayerInput other)', [['input', '!storage'], ['input', '!keyword'], ['is', 'keyword.operator.expression.is'], ['is', '!entity.name.type']]],
@@ -172,6 +237,11 @@ const cases = {
         ]],
         ['local async event(Displayed) Glow(', [['local', 'storage.modifier'], ['async', 'storage.modifier'], ['event', 'storage.type'], ['Glow', 'entity.name.function']]],
         ['async void Countdown()', [['async', 'storage.modifier'], ['void', 'storage.type.primitive'], ['Countdown', 'entity.name.function'], ['Wait', 'support.class'], ['await', 'keyword.control']]],
+    ],
+    'local worker declarations': [
+        ['local worker List<int> Build(', [['local', 'storage.modifier'], ['worker', 'storage.modifier'], ['Build', 'entity.name.function']]],
+        ['worker local int Count(', [['local', 'storage.modifier'], ['worker', 'storage.modifier'], ['Count', 'entity.name.function']]],
+        ['var worker = 1;', [['worker', '!storage']]],
     ],
     'virtual and override, where a declaration starts': [
         ['virtual system Drift(', [['virtual', 'storage.modifier'], ['system', 'storage.type'], ['Drift', 'entity.name.function'], ['Drift', '!entity.name.function.call']]],
@@ -379,6 +449,10 @@ const cases = {
         ['world.Set<Health>(', [['Set', 'support.function'], ['Health', 'entity.name.type']]],
         ['var lookup =', [['lookup', '!storage'], ['<', 'keyword.operator.comparison']]],
     ],
+    "scene is a keyword right after with and without, before a scene's name": [
+        ['system InArena(', [['with', 'storage.modifier'], ['scene', 'keyword.other.scene'], ['Arena', 'entity.name.type']]],
+        ['system OutOfArena(', [['without', 'storage.modifier'], ['scene', 'keyword.other.scene']]],
+    ],
     'ownership is a keyword only right after with and without': [
         ['view Mine(', [['with', 'storage.modifier'], ['ownership', 'keyword.other.ownership']]],
         ['view Rest(', [
@@ -412,6 +486,16 @@ const cases = {
         ['local event(verified Combat.Died) CountDeath(', [
             ['verified', 'storage.modifier.verified'], ['Combat', 'entity.name.type'], ['Died', 'entity.name.type'],
             ['CountDeath', 'entity.name.function'], ['CountDeath', '!entity.name.function.call'],
+        ]],
+    ],
+    'Changed<...> triggers': [
+        ['local event(Changed<Health.value> change) Flash(', [
+            ['local', 'storage.modifier'], ['event', 'storage.type'], ['Changed', 'support.class'],
+            ['<', 'punctuation.definition.typeparameters.begin'], ['>', 'punctuation.definition.typeparameters.end'],
+            ['change', 'variable.parameter'], ['Flash', 'entity.name.function'],
+        ]],
+        ['local event(verified Changed<Combat.Unit.stats.level>) LevelUp(', [
+            ['verified', 'storage.modifier.verified'], ['Changed', 'support.class'], ['LevelUp', 'entity.name.function'],
         ]],
     ],
     'verified is a name anywhere else': [
@@ -536,6 +620,21 @@ for (const [name, lines] of Object.entries(cases)) {
 
 test('no text in probe.tide runs past its line', () => checkLinesEndText('probe.tide', probe));
 
+test('double types and literals retain their complete precision suffix', () => {
+    const lines = tokenize('double value = 1000000000.125d; double3 position = double3(.5D);\n'
+                         + 'double2 pair; double4 four; double2x3 unavailable; double2x2 a; double3x3 b; double4x4 c;');
+    check(lines[0], ['double', 'storage.type.primitive']);
+    check(lines[0], ['double3', 'storage.type.primitive']);
+    check(lines[0], ['1000000000.125d', 'constant.numeric']);
+    check(lines[0], ['.5D', 'constant.numeric']);
+    check(lines[1], ['double2', 'storage.type.primitive']);
+    check(lines[1], ['double4', 'storage.type.primitive']);
+    check(lines[1], ['double2x3', '!storage.type.primitive']);
+    check(lines[1], ['double2x2', 'storage.type.primitive']);
+    check(lines[1], ['double3x3', 'storage.type.primitive']);
+    check(lines[1], ['double4x4', 'storage.type.primitive']);
+});
+
 test('degree literals are whole float tokens with a lowercase suffix', () => {
     const lines = tokenize('float degrees = 180deg + .5deg + 1e2deg + 1_8_0deg + 1.2_5e+1deg - 90deg;\n'
         + 'quaternion turn = quaternion.Euler(0, 180deg, 0);\n'
@@ -590,7 +689,7 @@ test('indenting ignores braces in text and comments', () => {
 
 // Every program in compiler/tests/e2e, with its declarations found without the
 // grammar: data declarations, systems, views, frags, verts, handlers,
-// functions, constants and externs at the start of a line, and methods in a
+// functions, constants, type aliases and externs at the start of a line, and methods in a
 // type's body, which the formatter indents by four spaces. An override's name
 // can be written with what it's in (Combat.Move, Stats.Hurt): its last part
 // is the name.
@@ -598,7 +697,7 @@ const e2e = path.join(repo, 'compiler', 'tests', 'e2e');
 const programs = fs.readdirSync(e2e, { recursive: true })
     .filter(f => f.endsWith('.tide') && fs.statSync(path.join(e2e, f)).isFile()).sort();
 
-const modifiers = String.raw`(?:(?:local|async|virtual|override)\s+)*`;
+const modifiers = String.raw`(?:(?:local|async|worker|virtual|override)\s+)*`;
 const type = String.raw`[\w.]+(?:\s*<[\w.<>\s]*>)?\??`;
 const keywords = new Set(['return', 'if', 'else', 'var', 'await', 'fail', 'try', 'case', 'switch', 'while', 'for', 'foreach', 'parallel']);
 const declarations = [
@@ -608,6 +707,7 @@ const declarations = [
     [new RegExp(String.raw`^const\s+${type}\s+(\w+)\s*=`), 'variable.other.constant'],
     [new RegExp(String.raw`^extern\s+${type}\s+(\w+)\s*\(`), 'entity.name.function'],
     [new RegExp(String.raw`^${modifiers}(?:mut\s+)?(${type})\s+([\w.]+)\s*\(`), 'entity.name.function'],
+    [/^using\s+(\w+)\s*=/, 'entity.name.type'],
 ];
 const method = new RegExp(String.raw`^    (?:virtual\s+)?(?:mut\s+)?(${type})\s+(\w+)\s*\(`);
 
@@ -635,9 +735,10 @@ for (const program of programs) {
             for (const piece of line.pieces) {
                 assert.ok(!has(piece.scopes, 'invalid'), `${program}:${line.number}: "${piece.text}" is ${piece.scopes.join(' ')}`);
             }
-            if (/^(?:local\s+)?(?:component|singleton|struct|input|scene)\b/.test(text) && !text.includes('}')) inType = true;
+            if (/^(?:local\s+)?(?:component|singleton|struct|input|scene)\b/.test(text) && !text.includes('}') && !/^(?:local\s+)?scene\s+\w+\s*;/.test(text)) inType = true;
             else if (text === '}') inType = false;
             let name = null;
+            let nameAt = 0;
             let scope = null;
             for (const [pattern, wanted] of declarations) {
                 const match = pattern.exec(text);
@@ -645,17 +746,19 @@ for (const program of programs) {
                 const last = match[match.length - 1];
                 if (pattern === declarations[5][0] && keywords.has(match[1])) break;
                 name = last.split('.').pop();
+                nameAt = match.index + match[0].lastIndexOf(last) + last.lastIndexOf('.') + 1;
                 scope = wanted;
                 break;
             }
             const inside = inType && method.exec(text);
             if (inside && !keywords.has(inside[1])) {
                 name = inside[2];
+                nameAt = inside.index + inside[0].lastIndexOf(name);
                 scope = 'entity.name.function';
             }
             if (!name) continue;
             found++;
-            const index = text.search(new RegExp(String.raw`\b${name}\b`)) + (whole.length - text.length);
+            const index = nameAt + (whole.length - text.length);
             const pieces = line.pieces.filter(p => p.start < index + name.length && p.end > index);
             for (const piece of pieces) {
                 assert.ok(has(piece.scopes, scope) && !has(piece.scopes, 'entity.name.function.call'),

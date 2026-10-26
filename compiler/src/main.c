@@ -8,11 +8,13 @@
 static void usage(void)
 {
     fprintf(stderr,
-            "usage: tidec <file.tide>... -o <output-dir> [--name <name>] [--no-line] [--layout]\n"
+            "usage: tidec <file.tide>... -o <output-dir> [--name <name>] [--no-line] [--visualizers] [--layout] [--embed]\n"
             "             [--define <SYMBOL>]...\n"
             "       tidec <file.tide>... --schedule [--name <name>]\n"
             "       tidec <file.tide>... --shaders\n"
+            "       tidec <file.tide>... --outline\n"
             "       tidec <file.tide>... --spirv <dir>\n"
+            "       tidec <file.tide>... --hlsl <dir>\n"
             "\n"
             "Transpiles a Tide program, made of one or more files, to\n"
             "<output-dir>/<name>.h and <name>.c.\n"
@@ -25,8 +27,13 @@ static void usage(void)
             "                 a line of a list can say it too. PACKAGE_<NAME> is defined for\n"
             "                 each package named\n"
             "  --name <name>  base name of the generated files (default: the first file's name)\n"
+            "  --scene <name> start directly in this qualified prefab or scene, overriding settings.startScene\n"
             "  --no-line      don't map generated code back to .tide lines for debuggers\n"
+            "  --visualizers  also write <name>.natvis and <name>_lldb.py, how debuggers show the game's values\n"
             "  --layout       also describe the data layout, as tide run does for hot reloading\n"
+            "  --embed        ...and what another program needs to run the game (tide/embed.h), as tide unity builds it\n"
+            "  --declarations the game's types alone: its systems, views, handlers, functions, frags and verts\n"
+            "                 left out, as tide unity builds them while the code doesn't build\n"
             "  --strip-unused-assets  leave unreferenced assets out of generated loaders and the pack\n"
             "  --server               preserve the client identity and emit server build metadata\n"
             "  --strip-server-assets  also retain only simulation assets (explicit C dependency promise)\n"
@@ -36,8 +43,12 @@ static void usage(void)
             "                 wait, instead of generating code\n"
             "  --shaders      print the shaders the game's mesh draw calls draw through, as\n"
             "                 GLSL and WGSL, instead of generating code\n"
+            "  --outline      print what the game declares, file by file, as JSON: kinds, names,\n"
+            "                 places, fields, and what systems read, write and wait for,\n"
+            "                 instead of generating code\n"
             "  --spirv <dir>  write each of those shaders as SPIR-V, Vulkan's, into <dir>\n"
-            "                 as <n>.spv in --shaders' order, instead of generating code\n");
+            "                 as <n>.spv in --shaders' order, instead of generating code\n"
+            "  --hlsl <dir>   ...or as HLSL, Unity's (tide unity), as <n>.hlsl\n");
 }
 
 // A game's files as they're named, each with the package it's in.
@@ -51,6 +62,22 @@ typedef struct input_list {
 // The symbols `--define` named.
 static const char *defines[256];
 static int define_count;
+
+static char *overlay_text(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    fseek(f, 0, SEEK_END);
+    const long size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    char *text = size >= 0 ? malloc((size_t)size + 1u) : NULL;
+    const size_t read = text ? fread(text, 1, (size_t)size, f) : 0u;
+    const bool ok = text && read == (size_t)size && !ferror(f);
+    fclose(f);
+    if (!ok) { free(text); return NULL; }
+    text[read] = '\0';
+    return text;
+}
 
 static bool add_define(const char *name)
 {
@@ -76,7 +103,7 @@ static bool add_input(input_list *inputs, const char *path)
         inputs->items = realloc(inputs->items, (size_t)inputs->room * sizeof(compile_input));
         if (!inputs->items) return false;
     }
-    inputs->items[inputs->count++] = (compile_input){path, inputs->package};
+    inputs->items[inputs->count++] = (compile_input){path, inputs->package, NULL};
     return true;
 }
 
@@ -153,6 +180,16 @@ int main(const int argc, char **argv)
             opts.out_dir = argv[++i];
         } else if (strcmp(argv[i], "--name") == 0 && i + 1 < argc) {
             opts.name = argv[++i];
+        } else if (strcmp(argv[i], "--scene") == 0 && i + 1 < argc && !opts.scene) {
+            opts.scene = argv[++i];
+        } else if (strcmp(argv[i], "--source-overlay") == 0 && i + 2 < argc && !opts.editor_source) {
+            opts.editor_source = argv[++i];
+            const char *replacement = argv[++i];
+            opts.editor_text = overlay_text(replacement);
+            if (!opts.editor_text) {
+                fprintf(stderr, "tidec: can't read the source overlay replacement '%s'\n", replacement);
+                return 2;
+            }
         } else if (strcmp(argv[i], "--strip-unused-assets") == 0) {
             opts.strip_unused_assets = true;
         } else if (strcmp(argv[i], "--server") == 0) {
@@ -161,12 +198,18 @@ int main(const int argc, char **argv)
             opts.server = opts.strip_server_assets = true;
         } else if (strcmp(argv[i], "--no-line") == 0) {
             opts.line_directives = false;
+        } else if (strcmp(argv[i], "--visualizers") == 0) {
+            opts.visualizers = true;
         } else if (strcmp(argv[i], "--game") == 0 && i + 1 < argc) {
             opts.game_folder = argv[++i];
         } else if (strcmp(argv[i], "--pack-c") == 0) {
             pack_c = true;
         } else if (strcmp(argv[i], "--layout") == 0) {
             opts.layout = true;
+        } else if (strcmp(argv[i], "--embed") == 0) {
+            opts.embed = true;
+        } else if (strcmp(argv[i], "--declarations") == 0) {
+            opts.declarations_only = true;
         } else if (strcmp(argv[i], "--editor-prefab") == 0 && i + 1 < argc) {
             opts.editor_prefab = argv[++i];
         } else if (strcmp(argv[i], "--editor-local") == 0) {
@@ -176,10 +219,17 @@ int main(const int argc, char **argv)
         } else if (strcmp(argv[i], "--shaders") == 0) {
             schedule = true;
             opts.shaders = true;
+        } else if (strcmp(argv[i], "--outline") == 0) {
+            schedule = true;
+            opts.outline = true;
         } else if (strcmp(argv[i], "--spirv") == 0 && i + 1 < argc) {
             schedule = true;
             opts.shaders = true;
             opts.spirv_dir = argv[++i];
+        } else if (strcmp(argv[i], "--hlsl") == 0 && i + 1 < argc) {
+            schedule = true;
+            opts.shaders = true;
+            opts.hlsl_dir = argv[++i];
         } else if (strcmp(argv[i], "--package") == 0 && i + 1 < argc) {
             inputs.package = argv[++i];
         } else if (strcmp(argv[i], "--define") == 0 && i + 1 < argc) {

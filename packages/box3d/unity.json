@@ -1,0 +1,144 @@
+{
+  "about": "How Box3D's components are in a Unity project, which tide unity reads (compiler/cli/unity_mapping.h). Native fields are the package's own without saying",
+  "components": {
+    "Box3D.Body": {
+      "hidden": [
+        "position",
+        "rotation",
+        "stepPosition",
+        "stepRotation",
+        "stepVelocity",
+        "stepAngularVelocity",
+        "stepBullet",
+        "stepAsleep",
+        "stepType",
+        "stepGravityScale",
+        "stepLinearDamping",
+        "stepAngularDamping"
+      ]
+    },
+    "Box3D.Box": {
+      "scaled": {
+        "size": "absScale",
+        "offset": "scale"
+      },
+      "shape": {
+        "box": "size",
+        "center": "offset"
+      }
+    },
+    "Box3D.Sphere": {
+      "scaled": {
+        "radius": "largestScale",
+        "offset": "scale"
+      },
+      "shape": {
+        "sphere": "radius",
+        "center": "offset"
+      }
+    },
+    "Box3D.Capsule": {
+      "scaled": {
+        "radius": "largestScaleXZ",
+        "height": "scaleY",
+        "offset": "scale"
+      },
+      "shape": {
+        "capsule": "radius",
+        "height": "height",
+        "center": "offset"
+      }
+    },
+    "Box3D.MeshCollider": {
+      "scaled": {
+        "scale": "scale",
+        "offset": "scale"
+      },
+      "placed": "offset",
+      "mesh": {
+        "vertices": "vertices",
+        "indices": "indices",
+        "scale": "scale"
+      }
+    },
+    "Box3D.HullCollider": {
+      "scaled": {
+        "scale": "scale",
+        "offset": "scale"
+      },
+      "placed": "offset",
+      "mesh": {
+        "vertices": "vertices",
+        "scale": "scale"
+      }
+    },
+    "Box3D.HeightFieldCollider": {
+      "scaled": {
+        "scale": "absScale"
+      },
+      "terrain": {
+        "heights": "heights",
+        "holes": "holes",
+        "columns": "columns",
+        "rows": "rows",
+        "scale": "scale",
+        "minimum": "minimumHeight",
+        "maximum": "maximumHeight"
+      }
+    },
+    "Box3D.Part": {
+      "part": {
+        "of": "of",
+        "body": "Box3D.Body"
+      }
+    },
+    "Box3D.Joint": {
+      "readBack": [
+        "force",
+        "torque"
+      ],
+      "joint": {
+        "a": "a",
+        "b": "b",
+        "anchorA": "anchorA",
+        "anchorB": "anchorB",
+        "rotationA": "rotationA",
+        "rotationB": "rotationB"
+      }
+    }
+  },
+  "sourceAbout": "Added to a Unity project's game: a body starts where its entity's Transform (Unity's placement) is, and the Transform follows the body; a part that names no body is one of the nearest body above it",
+  "source": [
+    "namespace Box3D",
+    "{",
+    "    // A body whose entity has Tide's Transform (in Unity, every one): it starts where the Transform places it, whatever",
+    "    // its position said, and the Transform follows it after each step, so Unity shows the body where it is. A body's",
+    "    // place is the world's: one under an entity that turns isn't turned with it.",
+    "    [Stage(PhysicsStages.Step, 0)]",
+    "    system StartAtTransform(mut Body body, Transform transform)",
+    "    {",
+    "        if (body.id != 0) return;",
+    "        body.position = transform.position;",
+    "        body.rotation = transform.localRotation;",
+    "    }",
+    "",
+    "    [Stage(PhysicsStages.Step, 19)]",
+    "    system FollowTransform(Body body, mut Transform transform)",
+    "    {",
+    "        transform.position = body.position;",
+    "        transform.localRotation = body.rotation;",
+    "    }",
+    "",
+    "    // A part that names no body is a part of the nearest entity above it with one, as a collider on a Rigidbody's",
+    "    // child is in Unity: tide unity bakes its shapes' offsets where its GameObject is on that body.",
+    "    [Stage(PhysicsStages.Step, 0)]",
+    "    system PartOfTheBodyAbove(mut Part part, World world)",
+    "    {",
+    "        if (part.of != default) return;",
+    "        mut var above = world.Parent(this);",
+    "        while (above != default && !world.Has<Body>(above)) above = world.Parent(above);",
+    "        part.of = above;",
+    "    }",
+    "}"
+  ]
+}

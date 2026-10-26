@@ -1,0 +1,328 @@
+using Newton;
+using Rooms;
+
+// Game-owned bodies replace their external wrench every tick, including after
+// a failed step. A reset revision invalidates either player's old grab anchor.
+component SandboxBody { int revision; }
+component Grabbable { }
+component DuckSole { int foot; }
+component LooseBall { float3 home; float radius; Color color; }
+singleton DuckSandbox { Entity floor; List<Entity> balls; }
+
+const float DUCK_GRAB_FORCE_LIMIT = 12;
+const float DUCK_GRAB_TORQUE_LIMIT = 0.6;
+
+component DuckGrab
+{
+    bool requested;
+    Entity requestedCollider;
+    float3 requestedAnchor;
+    float3 requestedTarget;
+    int requestedRevision;
+    int serial;
+    int heartbeatTick;
+    float lease;
+    Entity collider;
+    Entity body;
+    float3 anchor;
+    float3 target;
+    float3 force;
+    float3 torque;
+}
+
+local singleton DuckHand
+{
+    bool active;
+    bool blocked;
+    Entity collider;
+    Entity body;
+    int revision;
+    int serial;
+    float3 anchor;
+    float3 target;
+    float3 planePoint;
+    float3 planeNormal;
+}
+
+int NextDuckSerial(int serial)
+{
+    return serial == 2147483647 ? 1 : serial + 1;
+}
+
+void MakeDuckSandbox(mut DuckSandbox sandbox)
+{
+    sandbox.floor = Spawn(Body { type = BodyType.Static }, Collider {
+        type = ColliderType.Plane, stiffness = 5600, damping = 3, frictionDamping = 1,
+        frictionModel = ContactFriction.Coulomb
+    }, SandboxBody);
+    for (int i = 0; i < 4; i += 1)
+    {
+        var radius = i == 0 ? 0.028 : i == 1 ? 0.035 : i == 2 ? 0.022 : 0.030;
+        var mass = i == 0 ? 0.045 : i == 1 ? 0.070 : i == 2 ? 0.030 : 0.050;
+        var home = i == 0 ? float3(-0.10, 0.08, 0.08)
+                 : i == 1 ? float3(0.08, 0.10, -0.12)
+                 : i == 2 ? float3(-0.35, 0.12, 0.22) : float3(0.35, 0.15, -0.22);
+        var color = i == 0 ? Color(0.95, 0.36, 0.25) : i == 1 ? Color(0.38, 0.65, 1)
+                  : i == 2 ? Color(0.73, 0.45, 0.95) : Color(0.95, 0.69, 0.22);
+        sandbox.balls.Add(Spawn(Body {
+            mass = mass, inertia = float3(0.4 * mass * radius * radius), position = home
+        }, Collider {
+            type = ColliderType.Sphere, radius = radius,
+            stiffness = 5600, damping = 3, frictionDamping = 1,
+            frictionModel = ContactFriction.Coulomb
+        }, LooseBall { home = home, radius = radius, color = color }, SandboxBody, Grabbable));
+    }
+}
+
+void ResetDuckBalls(DuckSandbox sandbox, mut World world)
+{
+    foreach (var entity in sandbox.balls)
+    {
+        if (!world.TryGet<LooseBall>(entity, out var ball)) continue;
+        if (!world.TryGet<Body>(entity, out mut var body)) continue;
+        if (!world.TryGet<SandboxBody>(entity, out mut var state)) continue;
+        body.position = ball.home;
+        body.rotation = quaternion.identity;
+        body.velocity = float3(0);
+        body.angularVelocity = float3(0);
+        body.force = float3(0);
+        body.torque = float3(0);
+        world.Set<Body>(entity, body);
+        state.revision = NextDuckSerial(state.revision);
+        world.Set<SandboxBody>(entity, state);
+        if (world.TryGet<Collider>(entity, out mut var collider))
+        {
+            collider.contactForce = float3(0);
+            world.Set<Collider>(entity, collider);
+        }
+    }
+}
+
+// Frozen collision data uses original MJCF link frames. The derived geometry
+// and procedural exceptions are documented in README-COLLISIONS.md. Only this
+// conversion knows about the principal-body frame.
+void DuckProxy(Entity body, quaternion principalRotation, int seat, float3 original,
+               float radius, mut List<Entity> colliders, mut List<Entity> soles, int foot = -1)
+{
+    var inverse = Math.Inverse(principalRotation);
+    var collider = Spawn(Collider {
+        body = body, type = ColliderType.Sphere,
+        position = Math.Rotate(inverse, original), rotation = inverse,
+        radius = radius, exclusionGroup = seat + 1,
+        stiffness = 5600, damping = 3, frictionDamping = 1,
+        friction = foot >= 0 ? 0.8 : 0,
+        frictionModel = ContactFriction.Coulomb
+    }, Grabbable);
+    colliders.Add(collider);
+    if (foot >= 0)
+    {
+        collider.Add(DuckSole { foot = foot });
+        soles.Add(collider);
+    }
+}
+
+void DuckCollisionShapes(List<Entity> bodies, List<DuckBodyDefinition> model, int seat,
+                         mut List<Entity> colliders, mut List<Entity> soles)
+{
+    foreach (var shape in DuckCollisionModel())
+        DuckProxy(bodies[shape.body], model[shape.body].principalRotation, seat,
+                  shape.position, shape.radius, colliders, soles, shape.foot);
+}
+
+float2 DuckFootLoads(Duck duck, World world)
+{
+    mut float2 load = float2(0);
+    foreach (var entity in duck.soles)
+    {
+        if (!world.TryGet<Collider>(entity, out var collider)) continue;
+        if (!world.TryGet<DuckSole>(entity, out var sole)) continue;
+        if (sole.foot == 0) load.x += collider.contactForce.y;
+        else load.y += collider.contactForce.y;
+    }
+    return load;
+}
+
+[Before(Drive)]
+[Before(PhysicsStages.Step)]
+system ClearSandboxForces(mut Body body, with SandboxBody)
+{
+    body.force = float3(0);
+    body.torque = float3(0);
+}
+
+[After(Drive)]
+[Before(PhysicsStages.Step)]
+system ApplyDuckGrab(DuckControls controls, mut DuckGrab grab, mut World world, Time time)
+{
+    grab.requested = controls.grab;
+    grab.requestedCollider = controls.grabCollider;
+    grab.requestedAnchor = controls.grabAnchor;
+    grab.requestedTarget = controls.grabTarget;
+    grab.requestedRevision = controls.grabRevision;
+    if (controls.grabSerial != grab.serial)
+    {
+        grab.serial = controls.grabSerial;
+        grab.heartbeatTick = time.tick;
+    }
+    // Derive elapsed time from ticks instead of accumulating float subtraction.
+    grab.lease = grab.serial == 0 ? 0.0 : Math.Max(0, 0.25 - (time.tick - grab.heartbeatTick) * time.dt);
+    grab.collider = default;
+    grab.body = default;
+    grab.anchor = float3(0);
+    grab.target = float3(0);
+    grab.force = float3(0);
+    grab.torque = float3(0);
+    if (!controls.grab || controls.reset || grab.lease <= 0) return;
+    if (!world.TryGet<Grabbable>(controls.grabCollider, out _)) return;
+    if (!world.TryGet<Collider>(controls.grabCollider, out var collider)) return;
+    if (!collider.enabled || collider.type != ColliderType.Sphere) return;
+    var entity = collider.body == default ? controls.grabCollider : collider.body;
+    if (!world.TryGet<SandboxBody>(entity, out var state)) return;
+    if (state.revision != controls.grabRevision) return;
+    if (!world.TryGet<Body>(entity, out mut var body) || body.type != BodyType.Dynamic) return;
+    // The request names a full generation-bearing collider and an anchor on its
+    // actual sphere. A forged handle, old reset or remote lever arm is harmless.
+    if (Math.Abs(Math.Distance(controls.grabAnchor, collider.position) - collider.radius) > 0.002) return;
+    var point = body.position + Math.Rotate(body.rotation, controls.grabAnchor);
+    var center = body.position + Math.Rotate(body.rotation, body.centerOfMass);
+    var arm = point - center;
+    var velocity = body.velocity + Math.Cross(body.angularVelocity, arm);
+    var pull = Math.Clamp(controls.grabTarget - point, float3(-2), float3(2));
+    mut var force = 35 * pull - 0.2 * Math.Clamp(velocity, float3(-100), float3(100));
+    var magnitude = Math.Length(force);
+    if (magnitude > DUCK_GRAB_FORCE_LIMIT) force *= DUCK_GRAB_FORCE_LIMIT / magnitude;
+    mut var torque = Math.Cross(arm, force);
+    var turn = Math.Length(torque);
+    if (turn > DUCK_GRAB_TORQUE_LIMIT)
+    {
+        // Scale the force too: the capped wrench still acts at this one point.
+        force *= DUCK_GRAB_TORQUE_LIMIT / turn;
+        torque = Math.Cross(arm, force);
+    }
+    body.force += force;
+    body.torque += torque;
+    world.Set<Body>(entity, body);
+    grab.collider = controls.grabCollider;
+    grab.body = entity;
+    grab.anchor = controls.grabAnchor;
+    grab.target = controls.grabTarget;
+    grab.force = force;
+    grab.torque = torque;
+}
+
+// Negative means no forward hit. The ray is normalized by Draw's conversion.
+float DuckSphereHit(float3 origin, float3 direction, float3 center, float radius)
+{
+    var offset = origin - center;
+    var along = Math.Dot(offset, direction);
+    var discriminant = along * along - (Math.Dot(offset, offset) - radius * radius);
+    if (discriminant < 0) return -1;
+    var root = Math.Sqrt(discriminant);
+    var near = -along - root;
+    return near >= 0 ? near : -along + root;
+}
+
+// View rows use the same interpolated/corrected poses as Parts and Balls.
+// World.Get would instead pick the unsmoothed pose of the latest match tick.
+bool DuckShownBody(Entity entity, query (Body body, SandboxBody state) bodies,
+                   out Body shown, out int revision)
+{
+    shown = Body { };
+    revision = 0;
+    foreach (var row in bodies)
+    {
+        if (row.entity != entity) continue;
+        shown = row.body;
+        revision = row.state.revision;
+        return true;
+    }
+    return false;
+}
+
+[Stage(DuckLayers.Robots)]
+view GrabPointer(Devices devices, mut DuckHand hand, World world, Lobby lobby,
+                 query (Collider collider, with Grabbable) colliders,
+                 query (Body body, SandboxBody state) bodies)
+{
+    hand.serial = NextDuckSerial(hand.serial);
+    var mouse = devices.mouse;
+    if (!mouse.left.pressed)
+    {
+        hand.active = false;
+        hand.blocked = false;
+        hand.collider = default;
+    }
+    if (!lobby.playing || devices.keyboard.r.pressed || devices.gamepad.buttonSouth.pressed)
+    {
+        hand.active = false;
+        hand.blocked = mouse.left.pressed;
+        return;
+    }
+    var screen = Screen.Flip(mouse.position);
+    var origin = Draw.ScreenRayOrigin(screen);
+    var direction = Draw.ScreenRayDirection(screen);
+    if (Math.LengthSq(direction) < 0.5)
+    {
+        hand.active = false;
+        hand.blocked = mouse.left.pressed;
+        return;
+    }
+    if (mouse.left.down && !hand.blocked)
+    {
+        hand.active = false;
+        mut float nearest = 4;
+        foreach (var row in colliders)
+        {
+            var collider = row.collider;
+            if (!collider.enabled || collider.type != ColliderType.Sphere) continue;
+            var entity = collider.body == default ? row.entity : collider.body;
+            if (!DuckShownBody(entity, bodies, out var body, out var revision)
+                || body.type != BodyType.Dynamic) continue;
+            var center = body.position + Math.Rotate(body.rotation, collider.position);
+            var hit = DuckSphereHit(origin, direction, center, collider.radius);
+            if (hit < 0 || hit >= nearest) continue;
+            nearest = hit;
+            var point = origin + direction * hit;
+            hand.active = true;
+            hand.collider = row.entity;
+            hand.body = entity;
+            hand.revision = revision;
+            hand.anchor = Math.Rotate(Math.Inverse(body.rotation), point - body.position);
+            hand.target = point;
+            hand.planePoint = point;
+            hand.planeNormal = direction;
+        }
+    }
+    if (!hand.active) return;
+    if (!DuckShownBody(hand.body, bodies, out var selected, out var selectedRevision)
+        || selectedRevision != hand.revision
+        || !world.TryGet<Collider>(hand.collider, out var selectedCollider)
+        || !selectedCollider.enabled
+        || (selectedCollider.body == default ? hand.collider : selectedCollider.body) != hand.body
+        || !world.TryGet<Grabbable>(hand.collider, out _))
+    {
+        hand.active = false;
+        hand.blocked = mouse.left.pressed;
+        return;
+    }
+    var denominator = Math.Dot(direction, hand.planeNormal);
+    if (Math.Abs(denominator) > 0.0001)
+    {
+        var distance = Math.Dot(hand.planePoint - origin, hand.planeNormal) / denominator;
+        if (distance >= 0 && distance <= 4)
+            hand.target = Math.Clamp(origin + direction * distance, float3(-1.5, -0.05, -1.5), float3(1.5));
+    }
+    var anchor = selected.position + Math.Rotate(selected.rotation, hand.anchor);
+    DuckRod(anchor, hand.target, 0.0015, Color(1, 0.9, 0.5));
+    Draw.Sphere(anchor, 0.0035, Color.white);
+    Draw.Sphere(hand.target, 0.0045, Color(1, 0.9, 0.5));
+}
+
+[Stage(DuckLayers.Robots)]
+view Balls(Body body, LooseBall ball)
+{
+    Draw.Sphere(body.position, ball.radius, ball.color);
+    var axis = Math.Rotate(body.rotation, float3(0, 1, 0));
+    DuckRod(body.position - axis * ball.radius * 0.98, body.position + axis * ball.radius * 0.98,
+            ball.radius * 0.12, Color(0.95, 0.95, 0.9));
+}

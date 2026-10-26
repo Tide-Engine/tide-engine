@@ -45,7 +45,7 @@ typedef struct tide_hosting_desc {
     tide_transport transport;
     const tide_jobs *jobs;
     uint32_t max_matches; // 0: 64; at most 4096.
-    uint32_t max_connections; // 0: 256; at most 65536.
+    uint32_t max_connections; // 0: 256; at most TIDE_PLAYERS_MOST (shared with matches).
     double idle_seconds; // Empty matches expire after this; 0: 60 seconds.
     bool allow_anonymous_create;
     bool allow_anonymous_join;
@@ -78,6 +78,17 @@ uint64_t tide_hosting_start(tide_hosting *host, const tide_server_desc *desc);
 bool tide_hosting_stop(tide_hosting *host, uint64_t match);
 uint32_t tide_hosting_match_count(const tide_hosting *host);
 const void *tide_hosting_world(const tide_hosting *host, uint64_t match);
+// A sharded world's shards are matches the host keeps (tide/shards.h): the
+// server of one, and keeping it running though no player is in it. The
+// front match is the one a request for match 0 joins, instead of creating
+// one: a sharded world's root, where its players join it (0: none).
+tide_server *tide_hosting_server(tide_hosting *host, uint64_t match);
+bool tide_hosting_keep(tide_hosting *host, uint64_t match);
+void tide_hosting_front(tide_hosting *host, uint64_t match);
+// Requests to join a match are accepted without a credential or authorize:
+// its server takes only players it admitted (tide_server_admit), as a sharded
+// world's regions do.
+bool tide_hosting_open(tide_hosting *host, uint64_t match);
 bool tide_hosting_player_identity(const tide_hosting *host, uint64_t match, tide_player_id player, uint8_t identity[32]);
 
 typedef struct tide_hosting_client_desc {
@@ -95,6 +106,13 @@ typedef struct tide_hosting_client_desc {
 
 // Owns the supplied transport on success only. Requests retry idempotently.
 tide_hosting_client *tide_hosting_client_create(const tide_hosting_client_desc *desc, double now);
+// Another admission to the same server over `first`'s transport, to join
+// `match` with no credential (a sharded world's other shards: see
+// tide_hosting_open). Each datagram goes to the admission it's for, whichever
+// is updated; the transport closes with the last of them.
+tide_hosting_client *tide_hosting_client_beside(tide_hosting_client *first, uint64_t match, uint64_t nonce, double now);
+// The admission a transport from tide_hosting_client_transport is of, or NULL.
+tide_hosting_client *tide_hosting_client_of(tide_transport transport);
 void tide_hosting_client_destroy(tide_hosting_client *client);
 void tide_hosting_client_update(tide_hosting_client *client, double now);
 tide_hosting_result tide_hosting_client_result(const tide_hosting_client *client);

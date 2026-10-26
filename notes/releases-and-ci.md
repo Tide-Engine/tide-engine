@@ -1,8 +1,168 @@
 # Releases, installing and CI
 
+## Journal deadline in run 40338328972 (2026-10-26)
+
+At `195c8f1d`, the completed MinGW suite passes 2,744 tests and fails only
+`tide_server_shards_journal`, whose third server process receives the last
+six seconds of a shared 25-second budget. All three packages, native suites,
+Linux sanitizers, Linux/Windows web, Docs deployment and JetBrains verification
+pass. macOS web is still running when inspected; the overall run has not
+completed and no successful publication is claimed.
+
+The scoped harness correction gives each process its own deadline and reaps
+the server on failure. Its reproduction, failure controls and local native
+validation are in notes/sharding.md, Journal integration-test deadlines.
+No workflow, assertion, simulation hash or publication gate changed. The fix
+uses the ordinary push-to-dev Build trigger; no old-commit retry or additional
+workflow dispatch is needed.
+
+## LLDB on Linux runners (2026-10-26)
+
+`build.yml`'s Linux tool step installs `lldb-$major` beside clang, for
+`tidec_debugger_lldb` (`notes/debugging.md`). Not yet seen on a runner.
+
+## Editor failures in run 40152905815 (2026-10-25)
+
+The completed Build at `5d5f6172` has two underlying failures: Windows release's
+`tide_editor_play` workspace cleanup assertion and Linux sanitizer's
+`tide_editor_document` null empty-vector qsort call. All three packages, other
+native/web/MinGW suites, Docs deployment and JetBrains verification pass.
+Aggregate Build gates fail/cancel and Release/Marketplace are skipped; this run
+publishes no nightly. The previously adjusted MicroDuck sanitizer rollback case
+passes in 169.35 s, within its existing 600-second instrumented budget.
+
+The scoped editor fixes, controlled Windows failure reproduction, readiness-race
+correction and validation are recorded in notes/editors.md, Editor CI cleanup
+and empty-edit fixes. Workflow gates, existing assertions and test deadlines are
+unchanged. The fix follows local tool validation and direct integration into dev;
+its push uses the ordinary automatic Build trigger. No old-commit retry or extra
+workflow dispatch is needed.
+
+## Node security updates (2026-10-23)
+
+Every Build and Docs `actions/setup-node` step requests `^24.22.1` with
+`check-latest: true`. This requires the October 21 security fixes while
+selecting subsequent 24.x patches even when the runner caches an older release.
+Workflow parsing and structural comparison verify that only these Node inputs
+changed; triggers, jobs, tests and publication/deployment gates are unchanged.
+The docs and relay images explicitly pin `node:24.22.1-alpine`; later image
+security updates require advancing that pin. Service-repository pins are
+maintained separately in `Tide-Engine/tide-services`.
+
+Docs dependencies also advance markdown-it to 15.0.3 and Vite to 8.3.3 for
+their published security fixes, preserving the existing compatible ranges.
+Both docs and release-note dependency audits report zero vulnerabilities.
+Release-note tests pass 3/3. Full local validation is recorded in
+`notes/testing.md`; docs and relay validation are in their subsystem notes.
+No workflow was manually dispatched.
+
+## MicroDuck sanitizer timeout (2026-10-22)
+
+Run `39842031157` at `f8468b30` confirms the arm-hash correction:
+all ordinary platform suites and all three package jobs pass. Its only
+completed underlying failure is the MicroDuck two-client rollback case's
+180-second Linux sanitizer timeout. Docs is still installing tools when
+inspected, so the overall run is not complete and publication is skipped.
+
+Only that case's instrumented deadline becomes 600 seconds; ordinary budgets,
+simulation work, assertions, sanitizers and workflow gates stay unchanged.
+A fresh Windows ASan/UBSan reproduction passes in 184.59 seconds with zero
+resyncs and no sanitizer diagnostics. Scope, CTest metadata validation and
+remaining hosted Linux confirmation are in `notes/newton.md`, Instrumented
+MicroDuck rollback budget. Full local debug suites pass 2,593 native and
+2,455 web tests, retaining the existing disabled right-turn limitation.
+No manual dispatch or retry was performed.
+
+## Matching JetBrains plugin in platform packages (2026-10-21)
+
+The JetBrains job also builds and uploads tide-jetbrains-installer.zip, an
+offline Tide/LSP4IJ bundle with the engine's exact version and upstream notices.
+The checks matrix waits for that job; package entries download the artifact to
+build/jetbrains before cmake/package.cmake adds it to editors/ and stages its
+notices under licenses/jetbrains. Packaging rejects absent/mismatched versions.
+The installed-package smoke step runs jetbrains_test.cmake with the real bundle,
+using isolated profiles and checking every installed Tide/LSP4IJ byte.
+
+The original single-plugin ZIP remains the Marketplace/release asset. The
+offline archive travels inside each platform package; no new public release
+asset, trigger, publication condition or Marketplace channel is introduced.
+YAML parsing and the job-dependency graph pass. Local Gradle, version/package
+fixtures, actual-archive install, docs and full native/web validation are in
+notes/cli-and-packages.md, Bundled JetBrains installation. No workflow was
+dispatched; actual hosted Linux/macOS packaging remains CI coverage.
+
+## Automatic runs and releases without a commit back (2026-10-21)
+
+With the repository public, Actions cost nothing, and the owner asked for workflows to run automatically and for releases not to hold up `dev`. Build now runs on pushes to `dev` and `release`, on pull requests, and on request. Its concurrency group per ref still finishes the current run and keeps only the newest waiting push, so a burst of pushes to `dev` publishes one nightly, of the last; a pull request's newer push cancels its older run. Pull requests publish nothing and, from forks, get no secrets (Docs then builds without the prototypes and doesn't deploy).
+
+A stable release no longer commits anything: `.releaserc.json` lost `@semantic-release/exec` (which wrote `VERSION`) and `@semantic-release/git` (which committed `chore(release): x [skip ci]` to `release`), so semantic-release only tags the commit and makes the GitHub release. `release` therefore never moves ahead of `dev`; a stable release is `git push origin dev:release`, a fast-forward the `release` ruleset allows, and the tag lands on a `dev` commit.
+
+Development builds take their version from the newest `v*` tag in their history (`git describe --tags --abbrev=0`, its pre-release part dropped: `0.5.0-dev` after `v0.5.0-nightly.3`), with `VERSION` as the floor for checkouts without tags (CI's shallow ones, an archive). It's read once, when `TIDE_VERSION` isn't cached yet. `VERSION` is now changed by hand only, to raise that floor.
+
+Validation: configure checks of the tag and fallback paths; the workflow was checked as YAML; no run was dispatched for this change (its first automatic run is the push itself).
+
+## Tide Marketplace channels (2026-10-21)
+
+The owner approved publishing both engine channels to the same Tide plugin
+listing, io.github.blenminer.tide: dev uses the opt-in nightly channel and
+release uses Stable (Gradle's default channel). No build publishes to the
+former PurrLang ID. The owner reports submitting the first Tide Stable upload;
+Marketplace approval/access is not established by this local change.
+
+The Release job now exposes published=true after its nightly step has either
+created the GitHub release successfully or verified the existing release and
+all its assets on a retry. The stable output stays semantic-release's
+new_release_published. Marketplace requires the successful Release dependency,
+its true publication output, and either dev or release. It passes the selected
+version and nightly/default channel as quoted Gradle properties, using the
+existing JETBRAINS_MARKETPLACE_TOKEN. A missing token retains the existing
+explicit skip. Upload errors fail the job. Other refs and unpublished versions
+do not reach Marketplace. Build triggers, suites and release gates are unchanged.
+
+The plugin README describes both channels and the custom nightly repository
+https://plugins.jetbrains.com/plugins/nightly/list. Plugin channel selection
+does not change the installed Tide/tidels engine channel. The public plugin
+repository retains source only; publication remains this engine workflow's.
+
+Actionlint 1.7.12 passes with only its unsupported existing concurrency.queue
+key excluded. Parsed workflow comparison confirms the only behavior changes
+are the nightly publication output and Marketplace routing/arguments. Executing
+the exact Bash blocks against isolated local command stubs checks both channel
+argument sets, missing-token skips, Gradle failures, successful new/existing
+nightly releases, failed Git pushes/uploads and invalid existing releases.
+Failed releases never set the publication output. No real token, tag, release
+or Marketplace upload is used by those checks. Full native debug passes all
+2,485 CTests, including 36 native GPU checks (96.98 seconds). Full web debug
+passes all 2,391 CTests, including WebGL, WebGPU and Windows ANGLE D3D11
+(282.52 seconds), with Clang 23.1.2 and Node 24.19.0.
+No CI run or actual Marketplace publication was dispatched.
+
+Implementation commit 6892c6d0 was merged into dev at 5bef2893. Incoming
+compiler/CLI/build and Unity work merged cleanly; neither the Marketplace
+workflow nor the plugin directory changed during that integration, so the
+scoped workflow checks required no repeat. The full engine suite results above
+precede that unrelated integration. The public plugin main was fast-forwarded
+to efc67411de0ce9c4508d45d629a1379b71d30f1f with only its README changed.
+All 24 public historical trees still match their canonical plugin subtrees;
+40 historical paths and 89 unique blobs were audited. The public remote still
+contains main only, with no engine tags or additional release workflow. This
+enables the next manually requested Build; no older run was retried.
+
+## Docs export regression gate (2026-10-21)
+
+The existing Docs workflow's Build the site step now runs `npm run test:exports`
+after `npm run build`, before its existing HTTP/browser checks and deployment.
+It validates prerendered AI/Markdown downloads in a source-free copied deployment
+as well as Vite's development responses. The workflow parses as YAML, its scoped
+comparison and whitespace check pass; actionlint is not available on PATH here.
+Local production/export/UI and fresh-model validation are recorded in
+`notes/docs-site.md` and `notes/ai-onboarding.md`. No triggers, release gates or
+deployment conditions changed, and no workflow was dispatched.
+
+
 ## Audio completion and browser scheduling (2026-10-18)
 
-Run `39128917687`, at `2c4c8e29`, failed Android's audio-device state-reclamation
+Run `39128917687`, at `7580cd99`, failed Android's audio-device state-reclamation
 assertion and Windows web's hidden-host room session. All other platform
 suites, Windows/macOS package checks, Docs and JetBrains verification passed.
 Linux packaging stopped at its failed Android suite; the aggregate Build gates
@@ -40,7 +200,7 @@ remain the next requested CI run's coverage; no workflow was dispatched.
 
 ## Nightly package/test fixture corrections (2026-10-15)
 
-Owner-requested run `38761765659` at ea0ad363 completed with four failing
+Owner-requested run `38761765659` at 08473d4b completed with four failing
 checks: Linux/macOS package cache comparisons and Windows native/MinGW
 dedicated-server harness shutdown. Windows packaging, Linux native/sanitizers,
 all three web suites, macOS native, Docs deployment and JetBrains verification
@@ -61,7 +221,7 @@ all 2,272 (282.54 seconds), including WebGL/WebGPU. The refreshed installed
 CLI also passes the complete native/web cache, stripping, failure-recovery,
 debug/release web-watch and bounded dedicated-server integration cases.
 
-Fresh requested run `38767273771` at a7aae14c found a separate macOS package
+Fresh requested run `38767273771` at dd5cb803 found a separate macOS package
 failure before the cache checks: the newer runner image combines standalone
 CLT 27 with default Xcode 26.6, exposing hardcoded SDK discovery inconsistent
 with Apple's selected linker. The fix, native cross-platform discovery fixture
@@ -95,7 +255,7 @@ seconds), including WebGL/WebGPU. The final preflight's release/request/cleanup
 assertions and all nine ordinary cases pass again; Node syntax and whitespace
 checks pass. No installer or workflow behavior changed.
 
-Final requested Build `38772910822`, at 16117bd1, completed successfully and
+Final requested Build `38772910822`, at ba52064b, completed successfully and
 published `v0.4.0-nightly.3` at 17:21:26 UTC on 2026-10-15. All native/web,
 MinGW, sanitizer and Android suites, all three packages and their installed
 smoke/C++/incremental checks, Google Play checks, JetBrains verification and
@@ -104,7 +264,7 @@ installer fixture in 22.83 seconds. Marketplace was skipped as intended for a
 nightly. The preceding run finished with only that installer fixture failing;
 its other suites and all package integrations passed too.
 
-Verified the published tag names exactly 16117bd1, the release is a nondraft
+Verified the published tag names exactly ba52064b, the release is a nondraft
 prerelease with all five nonempty uploaded assets, and the public release JSON
 reports the same assets. The public SHA256SUMS contains all three platform
 packages, and the deployed docs homepage responds HTTP 200. Both Windows
@@ -112,6 +272,10 @@ packages, and the deployed docs homepage responds HTTP 200. Both Windows
 These final notes are unbuilt text; no additional workflow dispatch is needed.
 
 ## Managed hosting deployment workflow (2026-10-15)
+
+Moved (2026-10-21) with the service to `Tide-Engine/tide-services`, where the
+workflow now checks out this repo's `dev` for the relay (`notes/repository.md`).
+The record below is its history here.
 
 At the owner's request, added `.github/workflows/hosting.yml` (Hosting), separate
 from Build and Docs. It runs only through `workflow_dispatch`: every ref runs
@@ -133,7 +297,7 @@ the Linux service image with Node 24.16.0: 29 passed, two staged-tool integratio
 cases skipped as documented. Dependency installation reports no vulnerabilities;
 the whitespace diff passes. No workflow was dispatched or service deployed.
 
-The owner's first Hosting run, 38754705649 on 4bb7b111, passed dependency
+The owner's first Hosting run, 38754705649 on 364983c5, passed dependency
 installation and all ordinary service tests but failed `flyctl config validate`
 with "no access token available". Local validation had inherited CLI login,
 hiding that this command also requires authentication. Supply the same
@@ -141,7 +305,7 @@ hiding that this command also requires authentication. Supply the same
 The owner explicitly requested a fresh run after the fix; follow its completed
 result rather than retrying the old commit's unchanged workflow.
 
-Run 38754895170 on 341051c4 then passed validation but deployment was rejected
+Run 38754895170 on 1ccb7430 then passed validation but deployment was rejected
 as unauthorized. Fly's token list showed the repository credential was scoped
 to `tide-website`. Created one-year deploy credentials for `tide-website` and
 `tide-hosting`, combined their FlyV1 macaroon bundles using Fly's supported
@@ -153,7 +317,7 @@ outside the repository in the private user-only hosting-setup directory; no
 token values were printed. These credentials expire in October 2027. Retried
 the corrected run after this credential update.
 
-Attempt 2 of 38754895170 passed all steps and deployed 341051c4. Fly reports one
+Attempt 2 of 38754895170 passed all steps and deployed 1ccb7430. Fly reports one
 started shared-cpu-1x/512 MiB machine in `fra`, one encrypted 1 GiB `hosting_data`
 volume and a passing health check. All four OAuth/Stripe secrets now show
 Deployed. An HTTPS request through `tide-hosting.fly.dev` with the configured
@@ -166,7 +330,7 @@ too and it was not changed as part of this fix.
 
 ## Stable upgrade fixture failure (2026-10-14)
 
-Build run 38577620235 builds release commit b23c42ff as 0.3.0 on the stable
+Build run 38577620235 builds release commit 8637bd0f as 0.3.0 on the stable
 channel. All five failed suites in attempt 1 failed only `tide_cli_upgrade`;
 All five repeated that single failure in attempt 2. Packages, web
 suites, Docs and JetBrains verification passed. The test's local release list
@@ -176,16 +340,16 @@ unrelated to the age of the previous stable release.
 
 The fixture now follows the built CLI's default channel; implementation and
 local reproduction are in notes/cli-and-packages.md, Upgrade fixture channels.
-An old-run retry still checks out b23c42ff. The owner approved merging the
-locally tested fix 5cfe6312 into `release` and starting a fresh stable Build.
-Run 38584459544 checks release merge 73bcb33e. No suite or publication gate
+An old-run retry still checks out 8637bd0f. The owner approved merging the
+locally tested fix f2f41897 into `release` and starting a fresh stable Build.
+Run 38584459544 checks release merge 184985b0. No suite or publication gate
 was removed. All native platform and MinGW suites passed 2,263 tests each,
 including `tide_cli_upgrade`; sanitizers passed 2,261. All web suites, Android,
 three package jobs, Docs and JetBrains build/verification passed too.
 
 The Release job published stable v0.3.0 at 15:17:36 UTC with the three platform
 packages, JetBrains ZIP and SHA256SUMS, and committed VERSION on `release`
-(a29162e2). The public `/releases/v0.3.0.json` endpoint confirms all five assets
+(c38b8c03). The public `/releases/v0.3.0.json` endpoint confirms all five assets
 and `prerelease: false`.
 
 The overall run completed with failure only in the subsequent JetBrains
@@ -193,7 +357,7 @@ Marketplace job (115935242705). Its plugin build/tests passed; upload of
 `io.github.blenminer.tide` was rejected with "Cannot find plugin" and the
 requirement for a first manual upload. JetBrains' publishing documentation
 requires that initial upload before Gradle publishing. The Tide rename commit
-2a394822 explicitly called for a new Marketplace listing; the previous stable
+7e4a88c9 explicitly called for a new Marketplace listing; the previous stable
 run 36837849506 skipped the Marketplace job. The current public plugin-ID lookup
 returns 404. These observations establish a Marketplace setup/access blocker,
 not a compiler failure; do not claim the overall workflow passed or rename the
@@ -213,7 +377,7 @@ installation has Bash pipefail and prints clang's version. The staging ABI
 guard, reproducer and local full-suite validation are in notes/docs-site.md.
 No triggers, suites, deployment/publishing gates or retry policy changed.
 The owner explicitly requested a new workflow run and following it to completion.
-Docs run 38557265795 on 9b81435d passed the full job with Clang 23.1.2,
+Docs run 38557265795 on 7333e64c passed the full job with Clang 23.1.2,
 including playground staging/browser checks, and deployed successfully to Fly.
 
 ## Optional Windows prefab registration (2026-10-13)
@@ -237,7 +401,7 @@ No installation or file association was changed on the owner's machine, and no
 CI workflow was dispatched. Remaining-platform validation follows the normal
 manually requested release workflow.
 
-Build run 38367850012 (2026-10-13, `dev` at b08fc1bc) failed three ways, fixed the same day:
+Build run 38367850012 (2026-10-13, `dev` at b1b07989) failed three ways, fixed the same day:
 
 - **Every Package job:** `tools/tide-editor` installs `tide-editor` in the `tide` component, and the Package step built neither tree's `tide_editor`, so `cmake --install` found no file (the native tree's on Linux and macOS, the MinGW tree's on Windows). The step now builds `tide_editor` in both. Not tried locally: the package preset needs the LLVM libraries.
 - **Docs:** `docs/tests/admin-http.test.mjs` refuses a catalog game's name anywhere in the public search index, which includes `docs/spec.md`. Two spec entries named the prototype they were built for. A docs change is checked with that test after `npm run build`, not the build alone.
@@ -254,6 +418,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - A download is GitHub's own link to the asset (the API's 302 for `Accept: application/octet-stream`), passed on: five minutes long, on `release-assets.githubusercontent.com`, with the repository's number and no name (looked at, 2026-10-07: the number resolves for nobody without access). So the bytes are GitHub's to send. The site keeps a link 3 minutes and the list 1, so a burst of upgrades costs GitHub a request or two, and it gives what it last had while GitHub is away.
   - A repository that's renamed or moved answers under its old name with a 301 to where it is now, on its API (`/repositories/<number>/...`). The list's requests follow redirects and went on working; a download's doesn't (`redirect: 'manual'`, to hand the file's link on), so every download answered 502 when the repository moved to `Tide-Engine/tide-engine` (2026-10-07) with `TIDE_RELEASES_REPO` still the old name. `link` follows such a move now, three at the most and only to GitHub's API, as the token goes nowhere else. The name in `docs/fly.toml` is still what a move has to change.
   - `tide upgrade` reads `https://tide-engine.dev/releases.json` (`TIDE_RELEASES` in `compiler/cli/upgrade.c`), sends no credentials and names no repository. `TIDE_RELEASES_URL` still points it at a list in a folder, for tests and for the installers.
+  - `/releases/for/<commit>` (2026-10-25, for Unity's Tide package, whose commit a project locks: `notes/unity.md`, One tide for a project) answers the release a commit of the source is: of the list's releases, highest first by semantic versioning (`compareTags`, exported), the first whose tag GitHub compares as `identical` to the commit or `ahead` of it (`/compare/<tag>...<commit>`), at most 40 compared; 404 for a commit after none, or one GitHub hasn't. Kept 10 minutes a commit (256 at most), as a release made later at it or before it can be a higher one. The answer is `/releases/<tag>.json`'s, and names no commit or repository. Tests: `docs/tests/releases.test.mjs` (a made-up history: a release's own commit, one after it, the highest of several before, one before every release, an unknown commit, kept and then asked again; tags' order).
   - The installers are the site's too (`/install.sh`, `/install.ps1`: the repo's files, copied into `docs/static/` as the site builds, `installers` in `docs/vite.config.ts`). Over a tide that's there they download and check the package themselves and hand it to that tide's updater as local files, whichever version it is: a tide from before this looks for releases at GitHub, where it finds none without access.
   - A tide installed before this can't upgrade itself any more unless it has access to the repository: running the installer again moves it over.
   - The request-access page (`docs/src/routes/request-access`) is still there and gates nothing; nothing links to it.
@@ -261,7 +426,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - Windows installer fixtures isolate module discovery to Windows PowerShell's stock `$PSHOME/Modules` and import its Utility manifest by absolute path (2026-10-10). Merely deleting `PSModulePath` allows user/vendor discovery, and supplying only the stock path still makes Windows PowerShell prepend the vendor directory at startup; the harness resets it before its first module command. Each case also has its own initially absent `PSModuleAnalysisCachePath`. Build run `38080715656` hit the first fixture's 30-second process guard in MinGW, with the next case taking 29.9 seconds before later cases ran quickly. Local probes confirmed the unwanted search paths but did not reproduce that hosted delay. All eight cases passed with isolated analysis caches from PowerShell 7 and Git Bash, including an unrelated inherited module/cache path, in 0.42–0.55 seconds per case. An independent probe with a poisoned vendor Utility module confirmed stock-only discovery and correct SHA256/JSON/file operations. Installer behavior and the 30-second guard are unchanged; process failures now include captured output for diagnosis.
   - Run `38081597158` passed all 2,044 MinGW tests, including the installer fixture in 12.07 seconds, but its native Windows job still hit the guard in the first two cases. The second had printed `Downloading...`, so module discovery alone does not explain the delay. That fixture started beside the rooms, asset and build-service tests; resource contention remains unproven. The harness now explicitly imports stock Management too and records wall/CPU times around module imports, mock requests/logging, the real SHA256 command and the unpack boundary. It verifies that the request/unpack commands resolve to its functions. On failure the assertion includes partial mock calls, available CPUs and the CTest parallel budget, and preserves the private fixture with stdout/stderr logs. Windows `TEMP`/`TMP` are contained in that fixture as well, including downloads left by a killed process. The 30-second guard, real checksum calculation and all installer assertions remain intact. All eight local cases passed in 0.33–0.40 seconds each; an injected 31-second mock stall hit the unchanged guard at 30.02 seconds and retained the last phase, three partial requests, stdout/stderr and both dummy downloads.
   - Run `38083005042` exposed an error in that new TEMP containment check: Node inherited the runner's `RUNNER~1` short path while PowerShell expanded its long spelling, so string comparison rejected the same private directory before installer execution. Containment now uses a marker stored inside the fixture's scratch directory, read through `GetTempPath`; its value identifies the expected fixture without comparing path spellings. A local NTFS 8.3 path reproduced the previous failure, and all eight cases passed with that same path after the fix, as they did with an ordinary long path. A deliberately different TEMP still fails and reports both actual and expected paths. This repairs the diagnostic fixture; the original hosted cold timeout remains unproven.
-  - Final Build run `38085091225` (`ea509d62`) passed the installer fixture on native Windows in 13.99 seconds and MinGW in 14.13 seconds, with the same 30-second guard and installer assertions. These passing results do not establish the cause of the original hosted cold timeout.
+  - Final Build run `38085091225` (`0100b415`) passed the installer fixture on native Windows in 13.99 seconds and MinGW in 14.13 seconds, with the same 30-second guard and installer assertions. These passing results do not establish the cause of the original hosted cold timeout.
   - The cold timeout came back on 2026-10-14: Build `38623397915` (both of the first two cases, native MinGW), and `38637433618` (the first case on Windows release and on MinGW). The phase timings showed where it goes.
     - In one case, 8 s went to the first `ConvertTo-Json | Add-Content` and 13.6 s to the first `ConvertFrom-Json`, while the process used 0.03 s of CPU in all. Another case stalled in its first `Import-Module`.
     - So the time goes to Windows PowerShell's first loads of its assemblies on a fresh runner (modules, `System.Web.Extensions` for JSON, file and hash cmdlets), waiting on the disk and the machine's scanner, not on the installer. Every later case ran in about a second.
@@ -325,7 +490,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   failure propagating its exit code. Chocolatey is isolated behind a stub;
   the real Ninja/zstd version commands run. Actionlint and whitespace checks
   pass, excluding only actionlint's existing unsupported `queue` key.
-  The original `6a8c9e24` run recovered with one failed-jobs-only retry:
+  The original `c4e5b0fd` run recovered with one failed-jobs-only retry:
   every required check passed and `v0.3.0-nightly.117` published all five
   assets. Successful jobs and their artifacts were reused. This preventive
   setup change was validated locally and landed after that release; the
@@ -354,7 +519,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   a failed-jobs-only retry of that run, reusing successful suites and artifacts.
   JetBrains passed unchanged on that retry in 5 minutes 33 seconds.
 - Publishing uses the default `GITHUB_TOKEN` unless repository secret `TIDE_PUBLISH_TOKEN` is configured. The optional token belongs to `Tide-Engine`, selects this repository, and needs Contents and Workflows write permission: GitHub requires workflow authorization when the selected commit's workflows differ from the default branch's. Version checks that difference before building packages when the optional token is absent; Release checks again because the default branch can move during a build. This publishing token is separate from the docs site's read-only `TIDE_RELEASES_TOKEN`. Nightly retries fetch existing tag and notes refs, reject a tag for another commit, and push both refs atomically so a rejected tag leaves no new notes behind.
-- **All CI jobs use GitHub-hosted runners** (the owner, 2026-10-09: "move the workflows back to pure github for now, not blacksmith"). Windows' package and suites run on `windows-2025`, Linux's on `ubuntu-24.04`, and macOS's (Apple Silicon) on `macos-latest`. The supporting jobs and Docs use `ubuntu-24.04` too. Both workflows use `actions/checkout@v4`, install their tools and restore their caches on fresh checkouts. Manual triggers, suites, publishing gates and `TIDE_HIDDEN` stay as before. `.github/runner/README.md` records the former self-hosted runners, which neither workflow selects.
+- **All CI jobs use GitHub-hosted runners** (the owner, 2026-10-09: "move the workflows back to pure github for now, not blacksmith"). Windows' package and suites run on `windows-2025`, Linux's on `ubuntu-24.04`, and macOS's (Apple Silicon) on `macos-latest`. The supporting jobs and Docs use `ubuntu-24.04` too. Both workflows use `actions/checkout@v4`, install their tools and restore their caches on fresh checkouts. Manual triggers, suites, publishing gates and `TIDE_HIDDEN` stay as before. The former self-hosted runners' notes were removed on 2026-10-21 (git history, `bf647de4`); `.github/runner/setup-linux.sh` remains for the Linux cross build's xwin setup.
   - Validation: both workflows parse as YAML, a comparison against their previous versions confirms only runner labels, checkout actions and the runner comment changed, and `git diff --check` passes. `actionlint` 1.7.12 passes with only its unsupported existing `queue` key excluded; `queue: single` is supported by [GitHub's concurrency documentation](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency). The hosted environments still need a manually requested workflow run; none was dispatched for this change.
 - Manual Build runs on `dev` and `release` finish the current run and keep only the newest pending request; a newer manual request replaces the older pending one. The Build workflow says `queue: single` explicitly in each ref's concurrency group, with `cancel-in-progress: false`. Nightlies are previews published when requested, with no nightly for every intermediate commit (the owner, 2026-10-07).
 - **Windows' package can also be built on Linux** (built 2026-10-07 for the former home-server runner). CI builds it on Windows, and the workflow has no step for the cross build any more: it's done by hand, with the presets below. The cross-build support remains:

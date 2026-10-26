@@ -1,0 +1,4 @@
+// expect: a task can't keep a Mesh while it waits
+using Model = Mesh<Vertex3>;
+async void Later(Model mesh) { await Wait.Seconds(1); }
+scene Main;

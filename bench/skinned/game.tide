@@ -11,8 +11,8 @@ struct Corner
     Color color;
 }
 
-// Experiment only: four influences from the unchanged benchmark fixture.
-// A resident 60 Hz palette table replaces per-character CPU pose capture.
+// Four influences from the benchmark fixture. A resident 60 Hz palette table
+// replaces per-character CPU pose capture.
 struct GpuCorner
 {
     float3 position;

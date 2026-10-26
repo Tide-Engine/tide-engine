@@ -10,9 +10,12 @@
 #include "ast.h"
 #include "builtins.h"
 #include "cdefs.h"
+#include "csharp.h"
+#include "unity_names.h"
 #include "folders.h"
 #include "lexer.h"
 #include "model_metadata.h"
+#include "sha256.h"
 #include "types.h"
 
 // Everything here points into the compiler's arena, so it all belongs to the
@@ -83,7 +86,6 @@ typedef struct occurrence {
     bool backing;       // An enum's backing type: byte in `enum Voxel : byte`
 } occurrence;
 
-// One file of the game being analysed.
 typedef struct afile {
     source src;
     const char *uri;
@@ -157,7 +159,6 @@ static struct {
     int root_count;
 } asset_roots;
 
-// The document requests are about.
 #define DOC (&A.files[A.doc])
 
 // ---------------------------------------------------------------------------
@@ -191,7 +192,6 @@ static int decl_col_at(const loc at)
     return u ? u->decl_col : 1;
 }
 
-// Whether a token is the '{' or the '}' of a namespace block.
 static bool namespace_brace(const loc at)
 {
     for (int i = 0; i < A.blocks.count; i++) {
@@ -219,7 +219,6 @@ static int utf16_col(const loc at)
     return units;
 }
 
-// A position in the current document.
 static loc from_lsp(const int line, const int character)
 {
     loc at = {0, 1, A.doc};
@@ -244,7 +243,6 @@ static void write_position(jbuf *out, const loc at)
     jb_printf(out, "{\"line\":%d,\"character\":%d}", at.line > 0 ? at.line - 1 : 0, utf16_col(at));
 }
 
-// A range on one line, `len` bytes long.
 static void write_range(jbuf *out, const loc at, const int len)
 {
     jb_put(out, "{\"start\":");
@@ -345,6 +343,11 @@ static const field *field_of(const decl *d, const int i)
 static void add_occ(occurrence o)
 {
     if (o.decl && o.decl->placement_of) o.decl = o.decl->placement_of;
+    if (o.decl && o.decl->accessor) {
+        const property *prop = o.decl->accessor;
+        o.write |= o.decl->is_mut_method;
+        o.decl = prop->get ? prop->get : prop->set;
+    }
     o.order = A.occs.count;
     if (o.at.line > 0 && o.len > 0) vec_push(A.occs, o);
 }
@@ -373,7 +376,7 @@ static const decl *replaced_or_self(const decl *d)
 
 static void list_written(void)
 {
-    for (int i = 0; i < A.prog->decls.count; i++) if (!A.prog->decls.items[i]->placement_of) vec_push(A.written, A.prog->decls.items[i]);
+    for (int i = 0; i < A.prog->decls.count; i++) if (!A.prog->decls.items[i]->placement_of && A.prog->decls.items[i] != A.prog->startup_create) vec_push(A.written, A.prog->decls.items[i]);
     for (int i = 0; i < A.prog->replaced.count; i++) {
         const decl *v = A.prog->replaced.items[i];
         vec_push(A.written, v->owner ? v->replaced_by : v); // A method that was replaced is in its type's body
@@ -453,7 +456,7 @@ static void type_written(const loc qual_at, const loc at, const str text, const 
     occurrence o = {.at = at, .len = name.len, .kind = OCC_TYPE, .name = name, .type = t};
     if (t.kind == TY_COMPONENT || t.kind == TY_SINGLETON || t.kind == TY_INPUT || t.kind == TY_RECORD
         || t.kind == TY_STRUCT || t.kind == TY_EVENT || t.kind == TY_ENUM) {
-        o.decl = t.decl;
+        o.decl = t.decl->binding_of ? t.decl->binding_of : t.decl;
     } else if (!builtin_type_named(name, &o.type)) {
         // Unresolved, for example a component used as a field type: still a type.
         for (int i = 0; i < A.prog->decls.count; i++) {
@@ -469,6 +472,13 @@ static void type_written(const loc qual_at, const loc at, const str text, const 
 // and the one a T? holds, each where it's written.
 static void type_tree(const type_ref *r, const type t)
 {
+    if (r->failure) {
+        type_ref plain = *r;
+        plain.failure = NULL;
+        type_tree(&plain, t.kind == TY_FAILABLE && t.decl ? t.decl->fields.items[0].type : (type){TY_ERROR, NULL});
+        type_tree(r->failure, t.kind == TY_FAILABLE && t.decl ? t.decl->fields.items[1].type : (type){TY_ERROR, NULL});
+        return;
+    }
     if (r->optional) { // int?: the type it holds
         const type inner = t.kind == TY_OPTIONAL && t.decl ? t.decl->fields.items[0].type : (type){TY_ERROR, NULL};
         type_ref plain = *r;
@@ -490,14 +500,23 @@ static void type_tree(const type_ref *r, const type t)
         add_occ((occurrence){.at = r->at, .len = r->name.len, .kind = OCC_TYPE, .name = r->name, .type = t});
         const bool holds = (t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID || t.kind == TY_MESH) && t.decl;
         for (int i = 0; i < r->args.count; i++) {
-            const type part = t.kind == TY_STRUCT && t.decl && t.decl->skin_kind == SKIN_MESH
+            const type part = t.kind == TY_STRUCT && t.decl && t.decl->callable && i < t.decl->call_types.count
+                ? t.decl->call_types.items[i]
+                : t.kind == TY_STRUCT && t.decl && t.decl->task_handle && i == 0 ? t.decl->task_value
+                : t.kind == TY_STRUCT && t.decl && t.decl->asset_ref_of && i == 0 ? type_asset_reference_value(t.decl)
+                : t.kind == TY_STRUCT && t.decl && t.decl->skin_kind == SKIN_MESH
                 ? i == 0 ? t.decl->skin_vertex : t.decl->skin_contract ? (type){TY_STRUCT, t.decl->skin_contract} : (type){TY_ERROR, NULL}
                 : holds && i < t.decl->fields.count ? t.decl->fields.items[i].type : (type){TY_ERROR, NULL};
             type_tree(r->args.items[i], part);
         }
         return;
     }
-    type_written(r->at, r->name_at, r->name, t);
+    if (r->alias) {
+        qualifier_ref(r->at, r->name_at, r->name);
+        const str name = last_part(r->name);
+        add_occ((occurrence){.at = r->name_at, .len = name.len, .kind = OCC_TYPE,
+                             .decl = r->alias, .name = name, .type = t});
+    } else type_written(r->at, r->name_at, r->name, t);
 }
 
 // A type where the parser kept a tree, or only its text (one the checker made).
@@ -511,6 +530,7 @@ static void type_place(const type_ref *r, const loc qual_at, const loc at, const
 static type type_of_decl(const decl *d)
 {
     if (!d) return (type){TY_ERROR, NULL};
+    if (d->kind == DECL_ALIAS) return d->alias_type;
     const type_kind kind = d->kind == DECL_COMPONENT ? TY_COMPONENT
                          : d->kind == DECL_SINGLETON ? TY_SINGLETON
                          : d->kind == DECL_INPUT     ? TY_INPUT
@@ -669,6 +689,7 @@ static void walk_value(const expr *e);
 static void walk_expr(const expr *e)
 {
     if (!e) return;
+    if (e->task_source) { walk_expr(e->task_source); return; }
     if (!e->is_out) {
         walk_value(e);
         return;
@@ -693,6 +714,19 @@ static void walk_expr(const expr *e)
 
 static void walk_value(const expr *e)
 {
+    if (e->callable_receiver) {
+        walk_expr(e->callable_receiver);
+        for (int i = 1; i < e->args.count; i++) walk_expr(e->args.items[i]);
+        return;
+    }
+    if (e->callable_source) {
+        const expr *source = e->callable_source;
+        if (source->kind == E_MEMBER) walk_expr(source->object);
+        const str name = source->kind == E_MEMBER ? source->member : source->name;
+        add_occ((occurrence){.at = source->at, .len = name.len, .kind = OCC_FUNCTION,
+                             .decl = source->method, .name = name, .type = e->type});
+        return;
+    }
     switch (e->kind) {
     case E_INT:
     case E_FLOAT:
@@ -753,6 +787,15 @@ static void walk_value(const expr *e)
             break;
         }
         occurrence o = {.at = e->at, .len = e->name.len, .name = e->name, .type = e->type, .write = e == walk_written};
+        if (e->bind == BIND_PARAM && e->param->capture_source) {
+            const expr *source = e->param->capture_source;
+            o.kind = source->bind == BIND_LOCAL ? OCC_LOCAL : source->bind == BIND_FIELD ? OCC_FIELD : OCC_PARAM;
+            o.local = source->local;
+            o.param = source->param;
+            o.field = source->field;
+            add_occ(o);
+            break;
+        }
         switch (e->bind) {
         case BIND_PARAM:
             o.kind = OCC_PARAM;
@@ -764,7 +807,7 @@ static void walk_value(const expr *e)
             break;
         case BIND_TYPE:
             o.kind = OCC_TYPE;
-            o.decl = e->type_decl;
+            o.decl = e->type_alias ? e->type_alias : e->type_decl;
             break;
         case BIND_FIELD:
             o.kind = OCC_FIELD;
@@ -799,17 +842,35 @@ static void walk_value(const expr *e)
             }
             break;
         }
+        if (o.kind == OCC_TYPE && e->type_alias) {
+            o.decl = e->type_alias;
+            o.name = e->type_alias->name;
+            o.len = o.name.len;
+        }
         add_occ(o);
         break;
     }
 
     case E_MEMBER: {
-        if (!e->enum_shorthand) walk_expr(e->object);
+        if (!e->enum_shorthand && !e->object->binding_object) walk_expr(e->object);
         occurrence o = {.at = e->at, .len = e->member.len, .name = e->member, .type = e->type,
                         .object_type = e->object->type, .write = e == walk_written};
-        if (e->bind == BIND_TYPE && e->type_decl) { // Combat.Health, in Spawn(Combat.Health)
+        const decl *stage = e->object->type.kind == TY_STRUCT ? e->object->type.decl->binding_of : NULL;
+        if (stage && e->field) {
+            for (int i = 0; i < stage->params.count; i++) {
+                const param *p = &stage->params.items[i];
+                if (!p->call_binding || !str_eq(p->name, e->member)) continue;
+                o.kind = OCC_PARAM;
+                o.param = p;
+                o.param_of = stage;
+                add_occ(o);
+                break;
+            }
+            break;
+        }
+        if (e->bind == BIND_TYPE && (e->type_decl || e->type_alias)) { // Combat.Health, in Spawn(Combat.Health)
             o.kind = OCC_TYPE;
-            o.decl = e->type_decl;
+            o.decl = e->type_alias ? e->type_alias : e->type_decl;
         } else if (e->bind == BIND_SHADER && e->type_decl) { // Effects.Shade, in Draw.Mesh(..., Effects.Shade)
             o.kind = OCC_SYSTEM;
             o.decl = e->type_decl;
@@ -844,24 +905,29 @@ static void walk_value(const expr *e)
     }
 
     case E_CALL: {
-        occurrence o = {.at = e->at, .len = e->name.len, .name = e->name, .type = e->type, .call = e->call};
+        occurrence o = {.at = e->at, .len = e->name.len, .name = e->name, .type = e->type, .call = e->call, .write = e == walk_written};
+        if (e->type_alias) {
+            o.name = e->type_alias->name;
+            o.len = o.name.len;
+        }
         // cells[x, y] is cells[int2(x, y)] to the checker: that int2 isn't in the source.
         const int name = token_at(e->at);
-        const bool in_source = name >= 0 && str_eq(A.files[e->at.file].toks[name].text, e->name);
+        const bool in_source = name >= 0 && str_eq(A.files[e->at.file].toks[name].text, o.name);
         if (e->call != CALL_NONE && in_source) vec_push(A.calls, e);
         if (converts_enum(e) && in_source) { // Card(2): the enum, even where its argument is refused
             o.kind = OCC_TYPE;
-            o.decl = e->type_decl;
+            o.decl = e->type_alias ? e->type_alias : e->type_decl;
             add_occ(o);
         } else if ((e->call == CALL_CONSTRUCT || e->call == CALL_NEW_GRID || (e->resource_operation && e->type.kind == TY_RENDER_TARGET)) && in_source) {
             o.kind = OCC_TYPE;
+            o.decl = e->type_alias;
             add_occ(o);
         } else if (e->call == CALL_SPAWN || e->call == CALL_SEND) {
             o.kind = OCC_FUNCTION;
             add_occ(o);
         } else if (e->call == CALL_BUILTIN && in_source && e->type.kind == TY_STRUCT && e->type.decl == A.prog->random) {
             o.kind = OCC_TYPE; // Random(seed): the type it makes
-            o.decl = A.prog->random;
+            o.decl = e->type_alias ? e->type_alias : A.prog->random;
             add_occ(o);
         } else if (e->call == CALL_METHOD || e->call == CALL_FUNCTION || e->call == CALL_EFFECT) { // IsDead() in a method, or Heal(...)
             o.kind = e->call == CALL_METHOD ? OCC_METHOD : OCC_FUNCTION;
@@ -886,14 +952,21 @@ static void walk_value(const expr *e)
                                  .name = local->name, .type = local->type});
         }
         occurrence o = {.at = e->at, .len = e->name.len, .name = e->name, .type = e->type, .object_type = e->object->type,
-                        .call = e->call};
+                        .call = e->call, .write = e == walk_written};
+        if (e->type_alias) {
+            o.name = e->type_alias->name;
+            o.len = o.name.len;
+        }
         if (e->call != CALL_NONE) vec_push(A.calls, e);
         // world.Get<Health>(e): the component in <>; Json.Read<LobbyInfo>(text): the type its T? holds
         if (e->type_arg.len > 0) {
             const type read = e->call == CALL_JSON && e->type.kind == TY_OPTIONAL ? e->type.decl->fields.items[0].type : type_of_decl(e->type_decl);
             type_place(e->type_arg_ref, e->type_arg_qual_at, e->type_arg_at, e->type_arg, read);
         }
-        if (e->call == CALL_VISIBILITY) {
+        if (e->call == CALL_TASK) {
+            o.kind = OCC_METHOD;
+            add_occ(o);
+        } else if (e->call == CALL_VISIBILITY) {
             o.kind = (e->visibility_operation & VISIBILITY_RECEIVER) ? OCC_METHOD : OCC_FUNCTION;
             if (o.kind == OCC_FUNCTION) {
                 o.owner = e->object->name;
@@ -903,9 +976,11 @@ static void walk_value(const expr *e)
                 }
             }
             add_occ(o);
-        } else if (converts_enum(e)) { // Combat.Stance(2): the enum, after its namespace
+        } else if (converts_enum(e) || (e->type_alias && (e->call == CALL_CONSTRUCT || e->call == CALL_NEW_GRID
+                   || (e->call == CALL_BUILTIN && e->type.kind == TY_STRUCT && e->type.decl == A.prog->random)))) {
+            // A qualified constructor: its namespace is walked above, its authored alias here.
             o.kind = OCC_TYPE;
-            o.decl = e->type_decl;
+            o.decl = e->type_alias ? e->type_alias : e->type_decl;
             o.object_type = (type){TY_ERROR, NULL};
             add_occ(o);
         } else if (e->call == CALL_ENUM_COUNT || e->call == CALL_SKINNED || (e->resource_operation && (e->object->type.kind == TY_RENDER_TARGET || e->object->type.kind == TY_CUBEMAP))) {
@@ -969,11 +1044,20 @@ static void walk_value(const expr *e)
         if (e->type_decl) {
             qualifier_ref(e->qual_at, e->at, e->name);
             const str name = last_part(e->name);
-            add_occ((occurrence){.at = e->at, .len = name.len, .kind = OCC_TYPE, .decl = e->type_decl, .name = name});
+            const decl *d = e->type_alias ? e->type_alias : e->type_decl->binding_of ? e->type_decl->binding_of : e->type_decl;
+            add_occ((occurrence){.at = e->at, .len = name.len, .kind = OCC_TYPE, .decl = d, .name = name, .type = e->type});
         }
         for (int i = 0; i < e->inits.count; i++) {
             const field_init *init = &e->inits.items[i];
-            if (init->field) {
+            const decl *stage = e->type_decl ? e->type_decl->binding_of : NULL;
+            if (stage && init->field) {
+                for (int j = 0; j < stage->params.count; j++) {
+                    const param *p = &stage->params.items[j];
+                    if (str_eq(p->name, init->name))
+                        add_occ((occurrence){.at = init->at, .len = init->name.len, .kind = OCC_PARAM, .param = p,
+                                             .param_of = stage, .name = init->name, .type = init->field->type});
+                }
+            } else if (init->field) {
                 add_occ((occurrence){.at = init->at, .len = init->name.len, .kind = OCC_FIELD, .field = init->field,
                                      .decl = e->type_decl, .name = init->name, .type = init->field->type});
             }
@@ -1035,8 +1119,9 @@ static void walk_stmt(const stmt *s)
         break;
     case S_VAR:
         type_place(s->type_ref, s->type_qual_at.line ? s->type_qual_at : s->type_at, s->type_at, s->type_name, s->type);
-        add_occ((occurrence){.at = s->name_at, .len = s->name.len, .kind = OCC_LOCAL, .declaration = true, .local = s,
-                             .name = s->name, .type = s->type});
+        if (!s->discard)
+            add_occ((occurrence){.at = s->name_at, .len = s->name.len, .kind = OCC_LOCAL, .declaration = true, .local = s,
+                                 .name = s->name, .type = s->type});
         walk_expr(s->value);
         break;
     case S_ASSIGN:
@@ -1088,6 +1173,7 @@ static void walk_stmt(const stmt *s)
 
 static void walk_param(const param *p, const decl *d)
 {
+    if (p->capture_source) return;
     if (p->mode == PARAM_QUERY) {
         const int keyword = token_at(p->at);
         if (keyword >= 0) A.files[p->at.file].query_keywords[keyword] = true;
@@ -1109,7 +1195,41 @@ static void walk_param(const param *p, const decl *d)
                                  .param_of = d, .name = p->type_name});
             return;
         }
-        type_place(p->type_ref, p->type_qual_at, p->type_at, p->type_name, p->type);
+        // `event(Changed<Health.value> change)`: the component or singleton as a type is, then each field as a member is
+        if (p->changed) {
+            const decl *event = p->type.kind == TY_EVENT ? p->type.decl : NULL;
+            if (event && event->watches) {
+                int end = p->type_name.len; // Where the component's or singleton's name ends
+                for (int n = 0; n < event->watch_path.count && end > 0; n++) {
+                    end--;
+                    while (end > 0 && p->type_name.ptr[end] != '.') end--;
+                }
+                int last = end; // ...and its last part starts
+                while (last > 0 && p->type_name.ptr[last - 1] != '.') last--;
+                const loc name_at = {p->type_qual_at.line, p->type_qual_at.col + last, p->type_qual_at.file};
+                const type watched = {event->watches->kind == DECL_SINGLETON ? TY_SINGLETON : TY_COMPONENT, event->watches};
+                type_written(p->type_qual_at, name_at, (str){p->type_name.ptr, end}, watched);
+                const decl *owner = event->watches;
+                int at = end + 1;
+                for (int n = 0; n < event->watch_path.count; n++) {
+                    const field *f = event->watch_path.items[n];
+                    add_occ((occurrence){.at = {p->type_qual_at.line, p->type_qual_at.col + at, p->type_qual_at.file},
+                                         .len = f->name.len, .kind = OCC_FIELD, .field = f, .decl = owner, .name = f->name,
+                                         .type = f->type});
+                    at += f->name.len + 1;
+                    owner = f->type.decl;
+                }
+            }
+            if (p->name.len > 0) {
+                add_occ((occurrence){.at = p->name_at, .len = p->name.len, .kind = OCC_PARAM, .declaration = true, .param = p,
+                                     .param_of = d, .name = p->name, .type = p->type});
+            }
+            return;
+        }
+        // `with scene Arena`: the scene's name, as a type's is, for its hover and its renames
+        const type placed = p->scene && p->scene_of ? (type){TY_COMPONENT, p->scene_of}
+                         : p->call_binding ? p->call_binding->type : p->type;
+        type_place(p->type_ref, p->type_qual_at, p->type_at, p->type_name, placed);
     }
     if (p->name.len > 0) {
         add_occ((occurrence){.at = p->name_at, .len = p->name.len, .kind = OCC_PARAM, .declaration = true, .param = p,
@@ -1122,17 +1242,17 @@ static void walk_params(const decl *d)
     for (int i = 0; i < d->params.count; i++) walk_param(&d->params.items[i], d);
 }
 
-// A method or function: its name, signature and body.
 static void walk_routine(const decl *m)
 {
     // An operator's `at` is its `operator` keyword.
-    add_occ((occurrence){.at = m->at, .len = m->is_operator ? 8 : m->name.len, .kind = m->owner ? OCC_METHOD : OCC_FUNCTION,
-                         .declaration = true, .decl = m, .name = m->name});
+    if (!m->accessor || !m->is_mut_method || !m->accessor->get)
+        add_occ((occurrence){.at = m->at, .len = m->is_operator ? 8 : m->name.len, .kind = m->owner ? OCC_METHOD : OCC_FUNCTION,
+                             .declaration = true, .decl = m, .name = m->name});
     if (!str_eq_c(m->return_type_name, "void")) {
         type_place(m->return_type_ref, m->return_type_qual_at, m->return_type_at, m->return_type_name, m->return_type);
     }
     type_place(m->fails_ref, m->fails_type_qual_at, m->fails_type_at, m->fails_name, m->fails);
-    walk_params(m);
+    if (!m->accessor) walk_params(m); // A setter's `value` is implicit, with no declaration token.
     walk_code = m;
     walk_stmt(m->body);
     walk_code = NULL;
@@ -1145,7 +1265,11 @@ static void signature_refs(const sig_item *items, const int count)
     for (int i = 0; i < count; i++) {
         const sig_item *item = &items[i];
         if (item->mode == PARAM_QUERY) signature_refs(item->query.items, item->query.count);
-        else if (item->param && !item->param->ownership) type_place(item->type_ref, item->type_qual_at, item->type_at, item->type_name, item->param->type);
+        else if (item->param && !item->param->ownership) {
+            const param *p = item->param;
+            type_place(item->type_ref, item->type_qual_at, item->type_at, item->type_name,
+                       p->scene && p->scene_of ? (type){TY_COMPONENT, p->scene_of} : p->type);
+        }
     }
 }
 
@@ -1177,6 +1301,15 @@ static void walk_prefab_bases(const prefab_node *node)
         const str name = last_part(node->base);
         add_occ((occurrence){.at = node->base_at, .len = name.len, .kind = OCC_TYPE, .decl = node->base_decl, .name = name});
     }
+    // Merged values keep the inherited component's location. Its written
+    // override still names the component; checked copies supply fields/values.
+    for (int i = 0; i < node->components.count; i++) {
+        const expr *written = node->components.items[i];
+        if (!written->type_decl) continue;
+        qualifier_ref(written->qual_at, written->at, written->name);
+        const str name = last_part(written->name);
+        add_occ((occurrence){.at = written->at, .len = name.len, .kind = OCC_TYPE, .decl = written->type_decl, .name = name});
+    }
     for (int i = 0; i < node->children.count; i++) walk_prefab_bases(node->children.items[i]);
 }
 
@@ -1188,6 +1321,35 @@ static int occ_order(const void *a, const void *b)
     const occurrence *y = b;
     const int c = loc_cmp(x->at, y->at);
     return c != 0 ? c : x->order - y->order;
+}
+
+// Attribute qnames keep the canonical enum for scheduling and asset sampling.
+// Recover its authored alias with the declaration's namespace lookup order.
+static const decl *attribute_enum_alias(const unit *u, const str text, const decl *enumeration)
+{
+    const bool qualified = memchr(text.ptr, '.', (size_t)text.len) != NULL;
+    str ns = u ? u->ns : (str){"", 0};
+    for (;;) {
+        for (int i = 0; i < A.prog->decls.count; i++) {
+            const decl *d = A.prog->decls.items[i];
+            if (!has_name(d) || d->kind == DECL_SYSTEM || d->kind == DECL_FUNCTION || d->kind == DECL_METHOD
+                || d->kind == DECL_CONST || d->kind == DECL_ASSET || d->kind == DECL_SHADER || d->kind == DECL_PREFAB) continue;
+            const str home = decl_home(d) ? decl_home(d)->ns : (str){"", 0};
+            if (qualified ? !str_eq(d->qualified, text) : !str_eq(d->name, text) || !str_eq(home, ns)) continue;
+            return d->kind == DECL_ALIAS && d->alias_type.kind == TY_ENUM && d->alias_type.decl == enumeration ? d : NULL;
+        }
+        if (qualified || ns.len == 0) break;
+        while (ns.len > 0 && ns.ptr[ns.len - 1] != '.') ns.len--;
+        if (ns.len > 0) ns.len--;
+    }
+    for (int k = 0; !qualified && u && k < u->usings.count; k++) {
+        for (int i = 0; i < A.prog->decls.count; i++) {
+            const decl *d = A.prog->decls.items[i];
+            if (d->kind == DECL_ALIAS && str_eq(d->name, text) && decl_home(d) && str_eq(decl_home(d)->ns, u->usings.items[k])
+                && d->alias_type.kind == TY_ENUM && d->alias_type.decl == enumeration) return d;
+        }
+    }
+    return NULL;
 }
 
 static void index_program(void)
@@ -1208,6 +1370,13 @@ static void index_program(void)
 
     for (int i = 0; i < A.written.count; i++) {
         const decl *d = A.written.items[i];
+        if (d->generated_callable && d->named_in) {
+            walk_params(d);
+            walk_code = d;
+            walk_stmt(d->body);
+            walk_code = NULL;
+            continue;
+        }
         if (d->builtin) continue;
         replace_refs(d);
         // Scheduling attributes: declarations or an enum and its phase member. An override in place has
@@ -1224,7 +1393,13 @@ static void index_program(void)
                     const int member_token = token_at(q->name_at);
                     if (member_token >= 2) {
                         const loc enum_at = A.files[q->at.file].toks[member_token - 2].at;
-                        type_written(q->at, enum_at, enum_name, (type){TY_ENUM, q->decl});
+                        const decl *alias = attribute_enum_alias(decl_home(d), enum_name, q->decl);
+                        if (alias) {
+                            qualifier_ref(q->at, enum_at, enum_name);
+                            const str alias_name = last_part(enum_name);
+                            add_occ((occurrence){.at = enum_at, .len = alias_name.len, .kind = OCC_TYPE,
+                                                 .decl = alias, .name = alias_name, .type = alias->alias_type});
+                        } else type_written(q->at, enum_at, enum_name, (type){TY_ENUM, q->decl});
                     }
                     add_occ((occurrence){.at = q->name_at, .len = name.len, .kind = OCC_ENUM_MEMBER,
                                          .decl = q->decl, .name = name});
@@ -1260,7 +1435,11 @@ static void index_program(void)
             continue;
         }
         add_occ((occurrence){.at = d->at, .len = d->name.len, .kind = OCC_TYPE, .declaration = true, .decl = d,
-                             .name = d->name});
+                             .name = d->name, .type = type_of_decl(d)});
+        if (d->kind == DECL_ALIAS) {
+            if (d->alias_ref) type_tree(d->alias_ref, d->alias_type);
+            continue;
+        }
         if (d->kind == DECL_PREFAB && d->prefab_checked) {
             walk_prefab_bases(d->prefab_root);
             for (int n = 0; n < d->prefab_checked->entities.count; n++) {
@@ -1270,8 +1449,9 @@ static void index_program(void)
             continue;
         }
         if (d->kind == DECL_ENUM && d->backing.len > 0) { // enum Voxel : byte
-            add_occ((occurrence){.at = d->backing_at, .len = d->backing.len, .kind = OCC_TYPE, .name = d->backing,
-                                 .type = {TY_INT, NULL}, .backing = true});
+            if (d->backing_ref && d->backing_ref->alias) type_tree(d->backing_ref, d->backing_ref->alias->alias_type);
+            else add_occ((occurrence){.at = d->backing_at, .len = d->backing.len, .kind = OCC_TYPE, .name = d->backing,
+                                      .type = {TY_INT, NULL}, .backing = true});
         }
         for (int m = 0; m < d->members.count; m++) {
             const enum_member *member = &d->members.items[m];
@@ -1443,7 +1623,6 @@ const char *analysis_file_path(const int file)
 // ---------------------------------------------------------------------------
 // Diagnostics
 
-// A range over the token at `at`, or a character where there's none.
 static void write_token_range(jbuf *out, const loc at)
 {
     const int t = token_at(at);
@@ -1541,6 +1720,9 @@ static const char *builtin_type_doc(const type_kind kind)
     case TY_INT: return "A 32-bit integer. Arithmetic wraps on overflow; dividing by zero gives 0.";
     case TY_LONG: return "A 64-bit integer. Arithmetic wraps on overflow; dividing by zero gives 0. An int converts to it "
                          "by itself; floats convert with long(x) and float(x), and int(x) keeps its low 32 bits.";
+    case TY_DOUBLE: return "A 64-bit IEEE float. Use d literals for full precision; float(x) explicitly narrows for rendering.";
+    case TY_DOUBLE2X2: case TY_DOUBLE3X3: case TY_DOUBLE4X4: return "A column-major matrix of 64-bit doubles. Convert explicitly to a float matrix before drawing.";
+    case TY_DOUBLE2: case TY_DOUBLE3: case TY_DOUBLE4: return "A vector of 64-bit doubles: x, y, z, w, with ordinary swizzles. Convert to a float vector before drawing.";
     case TY_FLOAT: return "A 32-bit float. Results are identical on every platform.";
     case TY_INT2: case TY_INT3: case TY_INT4: return "A vector of ints: x, y, z, w.";
     case TY_FLOAT2: case TY_FLOAT3: case TY_FLOAT4: return "A vector of floats: x, y, z, w. Swizzles like `v.xz` work.";
@@ -1606,6 +1788,7 @@ static const char *decl_keyword(const decl *d)
     case DECL_RESULT: return "result";
     case DECL_CONST: return "const";
     case DECL_ASSET: return "asset";
+    case DECL_ALIAS: return "using";
     case DECL_SETTINGS: return "settings";
     case DECL_SHADER: return d->is_frag ? "frag" : "vert";
     case DECL_SYSTEM: return d->is_view ? "view" : d->is_handler ? d->is_command ? "command" : "event" : "system";
@@ -1617,6 +1800,8 @@ static const char *decl_keyword(const decl *d)
 // and "local component" for what's local.
 static const char *decl_what(const decl *d)
 {
+    if (d->kind == DECL_ALIAS) return "type alias";
+    if (d->is_worker) return "local worker";
     const char *what = d->kind == DECL_SYSTEM && d->is_handler ? d->is_command ? "command handler" : "event handler"
                      : d->extern_system                        ? "extern system" // Written in C
                                                                : decl_keyword(d);
@@ -1646,7 +1831,8 @@ static void format_param(const param *p, sb *out)
     }
     if (p->verified_at.line > 0) sb_put(out, "verified "); // As written, where the checker refused it too
     if (p->placement_local) sb_put(out, "local ");
-    sb_printf(out, STR_FMT, STR_ARG(p->type_name));
+    if (p->changed) sb_printf(out, "Changed<" STR_FMT ">", STR_ARG(p->type_name));
+    else sb_printf(out, STR_FMT, STR_ARG(p->type_name));
     if (p->name.len > 0) sb_printf(out, " " STR_FMT, STR_ARG(p->name));
     if (p->default_value) sb_printf(out, " = " STR_FMT, STR_ARG(p->default_text)); // One a call can leave out
 }
@@ -1693,7 +1879,6 @@ static int extern_param_number(const decl *sys, const param *p)
     return -1;
 }
 
-// What the engine's own events are for.
 static const char *builtin_event_doc(const program *prog, const decl *d)
 {
     if (d == prog->spawned) return "Sent to each entity as it's spawned: its handlers set new entities up.";
@@ -1721,8 +1906,14 @@ static const char *builtin_event_doc(const program *prog, const decl *d)
 // `mut void Damage(float amount)`: a method's or function's signature.
 static void format_routine(const decl *m, sb *out)
 {
+    if (m->accessor) {
+        const property *p = m->accessor;
+        sb_printf(out, STR_FMT " " STR_FMT " { %s%s}", STR_ARG(p->type_ref->text), STR_ARG(p->name),
+                  p->get ? "get; " : "", p->set ? "set; " : "");
+        return;
+    }
     sb_printf(out, "%s%s%s%s" STR_FMT " " STR_FMT "(", m->is_virtual ? "virtual " : m->is_override ? "override " : "",
-              m->is_extern ? "extern " : "", m->is_async ? "async " : "", m->is_mut_method ? "mut " : "",
+              m->is_extern ? "extern " : "", m->is_worker ? "local worker " : m->is_async ? "async " : "", m->is_mut_method ? "mut " : "",
               STR_ARG(m->return_type_name), STR_ARG(m->name));
     for (int i = 0; i < m->params.count; i++) {
         if (i) sb_put(out, ", ");
@@ -1762,8 +1953,71 @@ static void format_default(const field *f, sb *out)
     format_value_after(f->at, out);
 }
 
+// How many lines of a prefab its hover shows: a big one's first ones, then its closing brace
+#define PREFAB_HOVER_LINES 24
+
+// A prefab as its file writes it, from its `prefab` line to its closing brace: its entities and components are
+// what it is, where a struct's fields are a struct's
+static void format_prefab(const decl *d, sb *out)
+{
+    const source *src = d->unit ? d->unit->src : NULL;
+    if (!src || !src->text || d->end.line < d->at.line) {
+        sb_printf(out, "prefab " STR_FMT, STR_ARG(d->name));
+        return;
+    }
+    const char *at = src->text, *end = src->text + src->len;
+    for (int line = 1; at < end && line < d->at.line; at++) line += *at == '\n';
+    size_t indent = 0;
+    while (at + indent < end && (at[indent] == ' ' || at[indent] == '\t')) indent++;
+    const int lines = d->end.line - d->at.line + 1;
+    for (int line = 0; at < end && line < lines; line++) {
+        const char *eol = memchr(at, '\n', (size_t)(end - at));
+        if (!eol) eol = end;
+        const bool shown = lines <= PREFAB_HOVER_LINES || line < PREFAB_HOVER_LINES - 2 || line == lines - 1;
+        if (shown) {
+            const char *text = at;
+            for (size_t k = 0; k < indent && text < eol && (*text == ' ' || *text == '\t'); k++) text++;
+            size_t n = (size_t)(eol - text);
+            if (n > 0 && text[n - 1] == '\r') n--;
+            if (line > 0) sb_put(out, "\n");
+            sb_putn(out, text, n);
+        } else if (line == PREFAB_HOVER_LINES - 2) {
+            sb_printf(out, "\n    // ...%d more lines", lines - PREFAB_HOVER_LINES + 1);
+        }
+        at = eol < end ? eol + 1 : end;
+    }
+}
+
+// A prefab tide made of a Unity prefab or scene (Library/Tide/prefabs/<asset>.tprefab): the asset's path, or NULL
+static const char *unity_prefab_asset(const decl *d)
+{
+    const char *path = d->unit && d->unit->src ? d->unit->src->path : NULL;
+    if (!path) return NULL;
+    const char *found = NULL;
+    for (const char *p = path; *p; p++) {
+        if (strncmp(p, "Tide/prefabs/", 13) == 0 || strncmp(p, "Tide\\prefabs\\", 13) == 0) found = p + 13;
+    }
+    if (!found) return NULL;
+    const size_t n = strlen(found);
+    if (n <= 8 || strcmp(found + n - 8, ".tprefab") != 0) return NULL;
+    char *asset = str_to_cstr((str){found, (int)n - 8});
+    for (char *p = asset; *p; p++) {
+        if (*p == '\\') *p = '/';
+    }
+    return asset;
+}
+
 static void format_data_decl(const decl *d, sb *out)
 {
+    if (d->kind == DECL_ALIAS) {
+        sb_printf(out, "using " STR_FMT " = %s;", STR_ARG(d->name),
+                  d->alias_ref ? str_to_cstr(d->alias_ref->text) : type_name(d->alias_type));
+        return;
+    }
+    if (d->kind == DECL_PREFAB) {
+        format_prefab(d, out);
+        return;
+    }
     sb_printf(out, "%s%s " STR_FMT, d->is_local ? "local " : "", decl_keyword(d), STR_ARG(d->name));
     if (d->kind == DECL_ENUM && d->backing.len > 0) sb_printf(out, " : " STR_FMT, STR_ARG(d->backing));
     sb_put(out, "\n{\n");
@@ -1781,6 +2035,7 @@ static void format_data_decl(const decl *d, sb *out)
         sb_put(out, ";\n");
     }
     for (int i = 0; i < d->methods.count; i++) {
+        if (d->methods.items[i]->accessor && d->methods.items[i]->is_mut_method && d->methods.items[i]->accessor->get) continue;
         sb_put(out, i == 0 && d->fields.count > 0 ? "\n    " : "    ");
         format_routine(d->methods.items[i], out);
         sb_put(out, ";\n");
@@ -1836,7 +2091,6 @@ static void put_names(sb *out, const method_form *forms, const size_t count)
     }
 }
 
-// Scene's functions.
 static const method_form scene_calls[] = {
     {"Load", "Scene.Load(scene, components...)",
      "Loads a scene and returns its entity. Optional root components are present before its `Spawned` handlers run at the end of the tick. A root `Visibility` group restricts the entire scene."},
@@ -1893,6 +2147,11 @@ static const method_form session_calls[] = {
     {"End", "Session.End()",
      "Ends the match this machine runs, for everyone: every player goes offline with `Ended`, and no other machine "
      "takes it over. On a client, it does nothing."},
+    {"Watch", "Session.Watch(float3 center, float3 size)",
+     "Sees an area of a sharded world wherever this machine's player is, like a camera zoomed out over it: this machine "
+     "follows the shards owning it, and views draw what they own. Call it as the area moves; it holds until "
+     "`Session.Unwatch`. A float2 center and size in a 2D game. A world that isn't sharded has all of itself anyway."},
+    {"Unwatch", "Session.Unwatch()", "Stops watching the area `Session.Watch` asked for: this machine sees what's near its player."},
 };
 
 #define GRID_SIZE_DOC                                                                                                  \
@@ -1955,6 +2214,11 @@ static const method_form wait_calls[] = {
     {"Seconds", "await Wait.Seconds(float seconds)",
      "Waits for `seconds`: in the match, the nearest whole number of ticks, the same on every machine; in local code, "
      "this machine's time, frame by frame."},
+};
+
+static const method_form task_calls[] = {
+    {"Cancel", "Cancel() -> void",
+     "Requests cooperative cancellation of this operation and ends its waiters. Cancelling one awaiting task preserves other consumers. Completed and stale handles are harmless."},
 };
 
 // A list's methods, as the checker takes them.
@@ -2065,14 +2329,12 @@ static bool is_mesh_draw(const str owner, const str name)
     return builtin_draw_owner(owner) && (str_eq_c(name, "Mesh") || str_eq_c(name, "Instanced") || str_eq_c(name, "SkinnedMesh"));
 }
 
-// A Pixel's one method, in a frag.
 static const method_form pixel_calls[] = {
     {"Discard", "Discard()",
      "Leaves the pixel undrawn, and ends the frag there: what's behind it stays. A statement of its own, in the frag "
      "itself."},
 };
 
-// An Instance's one method, in a frag or a vert.
 static const method_form instance_calls[] = {
     {"Normal", "Normal(float3 normal) -> float3",
      "A normal of the mesh as it is in the world, of length 1: `instance.Normal(vertex.normal)`. It's right however "
@@ -2185,6 +2447,10 @@ static const char *builtin_field_doc(const decl *d, const str name)
             return "Whether it was clicked this frame: a press on it let go on it, or Enter, Space or the gamepad's "
                    "south button went down while it had the focus.";
         }
+        if (str_eq_c(name, "down")) return "This frame's pointer press belongs to this control. Follow pressed while it is held.";
+        if (str_eq_c(name, "up")) return "This control's pointer was released this frame, even outside its rect.";
+        if (str_eq_c(name, "cancelled")) return "Its held gesture was aborted because the control became disabled, covered by a modal or taken by touch scrolling.";
+        if (str_eq_c(name, "position")) return "The pointer's position in GUI pixels from the top left, including while held outside the rect.";
     }
     return NULL;
 }
@@ -2204,6 +2470,7 @@ static const method_form entity_calls[] = {
 
 // The World's methods, in code that takes `World world`: T is the component in <>.
 static const method_form world_calls[] = {
+    {"ParentToWorld", "ParentToWorld(Entity entity) -> float4x4", "Maps the entity's parent space into the world, including a retained visibility anchor. Identity for an ordinary root."},
     {"LocalToWorld", "LocalToWorld(Entity entity) -> float4x4", "Reads the entity's composed world transform, including its ancestors."},
     {"Parent", "Parent(Entity entity) -> Entity", "Reads the entity's parent, or the null handle for a root."},
     {"Get", "Get<T>(Entity entity) -> T",
@@ -2265,6 +2532,7 @@ static const method_form *methods_of(const type t, size_t *count)
 {
     const method_form *forms = NULL;
     *count = 0;
+    if (t.kind == TY_STRUCT && t.decl && t.decl->task_handle) { *count = sizeof task_calls / sizeof task_calls[0]; return task_calls; }
     if (t.decl && t.decl == A.prog->audience) { *count = sizeof audience_calls / sizeof audience_calls[0]; return audience_calls; }
     if (t.decl && t.decl == A.prog->visibility) { *count = sizeof visibility_calls / sizeof visibility_calls[0]; return visibility_calls; }
     if (t.kind == TY_STRUCT && t.decl) {
@@ -2358,7 +2626,6 @@ static void format_method(const method_form *form, const type t, sb *out)
     }
 }
 
-// The form named `name` in `forms`, or NULL.
 static const method_form *find_form(const method_form *forms, const size_t count, const str name)
 {
     for (size_t i = 0; i < count; i++) {
@@ -2372,7 +2639,7 @@ static void describe_default(const type t, sb *out)
 {
     switch (t.kind) {
     case TY_BOOL: sb_put(out, "`false`"); break;
-    case TY_BYTE: case TY_INT: case TY_LONG: case TY_FLOAT: sb_put(out, "`0`"); break;
+    case TY_BYTE: case TY_INT: case TY_LONG: case TY_FLOAT: case TY_DOUBLE: sb_put(out, "`0`"); break;
     case TY_CHAR: sb_put(out, "`'\\0'`, which is no character"); break;
     case TY_ENTITY: case TY_LOCAL_ENTITY: sb_put(out, "The null entity"); break;
     case TY_PLAYER: sb_put(out, "No player"); break;
@@ -2796,7 +3063,6 @@ static void describe_out_param(const param *p, const decl *of, sb *out)
                    "one the code has assigns it, and `out _` leaves it out.", STR_ARG(p->name));
 }
 
-// Markdown for a hover over `o`.
 static void describe_replacing(const occurrence *o, sb *out);
 
 static void describe(const occurrence *o, sb *out)
@@ -2819,7 +3085,11 @@ static void describe(const occurrence *o, sb *out)
         } else if (o->decl) {
             format_data_decl(o->decl, &code);
             code_block(out, code.data);
-            if (o->decl->kind == DECL_EVENT && o->decl->builtin) sb_printf(out, "\n\n%s", builtin_event_doc(A.prog, o->decl));
+            if (o->decl->kind == DECL_ALIAS) {
+                sb_printf(out, "\n\nTransparent type alias for `%s`; it has the same type and restrictions.", type_name(o->decl->alias_type));
+            } else if (o->decl->kind == DECL_PREFAB && unity_prefab_asset(o->decl)) {
+                sb_printf(out, "\n\nFrom `%s` in the Unity project, as tide read it.", unity_prefab_asset(o->decl));
+            } else if (o->decl->kind == DECL_EVENT && o->decl->builtin) sb_printf(out, "\n\n%s", builtin_event_doc(A.prog, o->decl));
             else if (shader_record_doc(o->decl)) sb_printf(out, "\n\n%s", shader_record_doc(o->decl));
             else if (o->decl == A.prog->shape) {
                 sb_put(out, "\n\nWhat `Draw.Shape` draws: a box with round corners, or an ellipse, turned, with a fill "
@@ -2904,7 +3174,21 @@ static void describe(const occurrence *o, sb *out)
             const str event = o->decl->event->name;
             const char *when = o->decl->is_local ? "frame" : "tick";
             const char *to = o->decl->per_entity ? " to an entity that matches its parameters" : "";
-            if (o->decl->listens && o->decl->listens_verified) {
+            const decl *watched = o->decl->event->watches;
+            if (o->decl->listens && watched) {
+                const field *f = o->decl->event->watch_path.items[o->decl->event->watch_path.count - 1];
+                sb_printf(out, "\n\nA local handler of a change: it runs on this machine at the start of a frame, before the "
+                               "views, ");
+                if (watched->kind == DECL_SINGLETON) sb_printf(out, "each time a tick%s changed `" STR_FMT "`'s `" STR_FMT "`",
+                                                               o->decl->listens_verified ? " the server confirmed" : "",
+                                                               STR_ARG(watched->name), STR_ARG(f->name));
+                else sb_printf(out, "for each entity whose `" STR_FMT "` a tick%s changed", STR_ARG(f->name),
+                               o->decl->listens_verified ? " the server confirmed" : "");
+                sb_printf(out, ", with what it was (`old`) and what it is (`value`). A change is the tick's, from its start "
+                               "to its end; spawns, destroys and added or removed components change nothing. It hears each "
+                               "once, %s.", o->decl->listens_verified ? "when the server confirmed its tick"
+                                                                      : "whatever ticks are run again");
+            } else if (o->decl->listens && o->decl->listens_verified) {
                 sb_printf(out, "\n\nA local handler of the match's `" STR_FMT "`: it runs on this machine at the start of a "
                                "frame, before the views, for each `" STR_FMT "` sent%s in the ticks the server confirmed "
                                "since the last frame. It hears each once, when the server confirmed its tick, with what it "
@@ -2930,11 +3214,14 @@ static void describe(const occurrence *o, sb *out)
         break;
     case OCC_OWNERSHIP: {
         const bool with = o->param->mode == PARAM_WITH;
+        const bool listener = o->param_of && o->param_of->listens;
         code_block(out, with ? "with ownership" : "without ownership");
-        sb_put(out, with ? "\n\nFilter: the view runs for the entities this machine's player owns: those with an `Owner` "
+        sb_printf(out, "\n\nFilter: the %s runs for ", listener ? "local handler" : "view");
+        sb_put(out, with ? "the entities this machine's player owns: those with an `Owner` "
                            "whose `player` is `Session.player`. For entities any player owns, write `with Owner`."
-                         : "\n\nFilter: the view runs for the entities this machine's player doesn't own: another "
+                         : "the entities this machine's player doesn't own: another "
                            "player's, and those with no `Owner`. With `with Owner` too, only another player's.");
+        if (listener) sb_put(out, "\n\nOwnership is captured at the event's turn, after match handlers; later transfers don't redirect delivery. Shown and Hidden use their delivered availability endpoints.");
         break;
     }
     case OCC_VERIFIED:
@@ -2991,9 +3278,11 @@ static void describe(const occurrence *o, sb *out)
                             "`Sample(direction)`.");
             }
             if (o->decl->asset_kind == ASSET_TEXTURE) {
-                sb_put(out, " A `Texture` is an image to draw with, this machine's: no code reads its pixels, and the match "
-                            "can't use it. For cells code reads, the same file is a `Grid2<Color>`, which is a Texture "
-                            "too wherever one is drawn with.");
+                sb_put(out, o->decl->sample_raw
+                                ? " A `Texture` is an image resource local to this machine; the match can't use it."
+                                : " A `Texture` is an image to draw with, this machine's: no code reads its pixels, and the match "
+                                  "can't use it. For cells code reads, the same file is a `Grid2<Color>`, which is a Texture "
+                                  "too wherever one is drawn with.");
             }
             if (o->decl->asset_kind == ASSET_CLIP) {
                 sb_put(out, " A `Clip` is a sound to play, this machine's (WAV, Ogg Vorbis, MP3 or FLAC): `Audio.Play(name)` in a view "
@@ -3034,8 +3323,10 @@ static void describe(const occurrence *o, sb *out)
                 sb_put(out, " An `Animation` asset imports the only clip in a glTF or FBX file, or the exact clip selected by [Name(\"source name\")].");
             }
             if (o->decl->sample_raw) {
-                sb_put(out, "\n\nIt's `[Raw]`: its pixels are numbers, kept as the file has them, which a frag or a vert reads "
-                            "by this name. It's no texture to draw with or hand on.");
+                sb_put(out, "\n\nIt's `[Raw]`: its pixels are numbers, kept as the file has them. It can initialize "
+                            "`[Raw] Texture` fields and be borrowed by GPU sampling and metadata helpers, preserving the "
+                            "original source's Raw role. `.size` is readable on the CPU and GPU. It cannot be drawn or "
+                            "escape to ordinary Texture storage, CPU arguments or returns.");
             }
             if (o->decl->sample_filter || o->decl->sample_wrap) { // [Filter] and [Wrap] before it
                 sb_put(out, "\n\nWhere a draw or a `Sample` doesn't say, it's sampled with ");
@@ -3080,13 +3371,14 @@ static void describe(const occurrence *o, sb *out)
         const decl *of = o->param_of ? o->param_of : decl_of_param(o->param);
         if (o->param->mode == PARAM_QUERY) {
             if (o->param->function_param) {
-                sb_put(out, "\n\nA read-only query borrowed from the caller for this call. The caller's selection, "
+                sb_put(out, "\n\nA query borrowed from the caller for this call. The caller's selection, "
                             "traversal order and live, blended or recorded data timing are preserved. Bindings match by "
                             "component type; extra bindings and filters are allowed. It can be forwarded to another "
-                            "synchronous helper, but cannot be stored, returned or kept across await.");
+                            "synchronous helper, but cannot be stored, returned or kept across await. In local code, "
+                            "rows also reach current attached local fields; a mutable binding requires a mutable source binding.");
                 break;
             }
-            sb_printf(out, "\n\nA read-only second entity set, independent of the entity this %s runs for. "
+            sb_printf(out, "\n\nA second entity set, independent of the entity this %s runs for. "
                            "`foreach` yields rows with `entity` and the named component values. Traversal follows "
                            "the ECS; it does not sort by entity ID or distance.",
                       of && of->is_view ? "view" : of && of->is_handler ? "handler" : "system");
@@ -3111,10 +3403,12 @@ static void describe(const occurrence *o, sb *out)
                 sb_put(out, " Its rows read the current match at this handler's turn in the tick-end queue. "
                             "Events and structural changes recorded by the handler remain deferred.");
             }
+            sb_put(out, " Match fields are read-only. In local code, rows reach current attached local fields, with mut required for writes.");
             break;
         }
         if (o->param->query_source) {
-            sb_put(out, "\n\nRead-only component data from this query row.");
+            sb_put(out, "\n\nRead-only match data from this query row. Attached local fields use this entity's current local state.");
+            if (o->param->mode == PARAM_MUT) sb_put(out, " This binding can write those local fields.");
             if (o->param->verified) sb_put(out, " As the last tick the server confirmed has it.");
             break;
         }
@@ -3235,7 +3529,7 @@ static void describe(const occurrence *o, sb *out)
                                                          "views and the functions they call."
                       : str_eq_c(o->name, "GUILayout") ? "\n\nThe GUI's widgets, laid out one after another, and containers "
                                                          "that arrange them. In views and the functions they call."
-                      : str_eq_c(o->name, "Screen")    ? "\n\nThe window's size, in pixels. `Screen.Flip` gives a "
+                      : str_eq_c(o->name, "Screen")    ? "\n\nThe window's logical size and physical pixel scale. `Screen.Flip` gives a "
                                                          "position counted from its other edge: a device's, from "
                                                          "the bottom left, as the screen's, from the top left."
                       : str_eq_c(o->name, "Frame")     ? "\n\nThis machine's frame. `Frame.dt` is the seconds since the "
@@ -3279,8 +3573,8 @@ static void describe(const occurrence *o, sb *out)
                 sb_printf(out, "\n\nC function `%s`, which the game's C files or libraries define.",
                           o->decl->c_name ? o->decl->c_name : "?");
             } else if (m->is_async) {
-                sb_put(out, "\n\nAsync function: `await` it for its value, or call it as a statement to start it as a "
-                            "task, which goes on by itself.");
+                sb_put(out, "\n\nAsync function: calling starts the operation and returns a Task or LocalTask handle. "
+                            "`await` gives its complete declared result. A discarded call continues by itself.");
             } else {
                 sb_put(out, "\n\nFunction: runs when it's called.");
             }
@@ -3365,6 +3659,10 @@ static void describe(const occurrence *o, sb *out)
         if (is_routine(o->decl)) {
             format_routine(o->decl, &code);
             code_block(out, code.data);
+            if (o->decl->accessor) {
+                sb_printf(out, "\n\nComputed property of %s `" STR_FMT "`.", decl_keyword(o->decl->owner), STR_ARG(o->decl->owner->name));
+                break;
+            }
             if (o->decl->is_operator) {
                 sb_printf(out, "\n\nOperator of struct `" STR_FMT "`.", STR_ARG(o->decl->owner->name));
                 break;
@@ -3407,6 +3705,12 @@ static void describe(const occurrence *o, sb *out)
         }
         break;
     case OCC_MEMBER:
+        if (o->object_type.kind == TY_STRUCT && o->object_type.decl && o->object_type.decl->task_handle) {
+            sb_printf(&code, "bool %s." STR_FMT, type_name(o->object_type), STR_ARG(o->name));
+            code_block(out, code.data);
+            sb_put(out, "\n\nRead-only operation status. isCompleted includes cancellation; a default or stale handle is cancelled. Await the handle for its declared result.");
+            break;
+        }
         sb_printf(&code, "%s " STR_FMT, type_name(o->type), STR_ARG(o->name));
         code_block(out, code.data);
         if (o->object_type.decl && o->object_type.decl->skin_kind) {
@@ -3471,7 +3775,7 @@ static void describe(const occurrence *o, sb *out)
                                        "absolute field is kept."},
             {"Snap", "[Snap]", "Views see this field as it is at the latest tick, not blended between the last two: "
                                "for angles that wrap and values that jump."},
-            {"Position", "[Position]", "Provisional: a float or floating-point vector presented with linear tick interpolation and accumulated visual correction error."},
+            {"Position", "[Position]", "Provisional: a float or double scalar/vector presented with linear tick interpolation and accumulated visual correction error in its own precision."},
             {"Rotation", "[Rotation]", "Provisional: float radians or a quaternion presented through the shortest rotation, with accumulated visual correction error."},
             {"NativeName", "[NativeName(\"c_function\")]",
              "The C function the extern function after it calls, or the extern system after it is, when its name isn't the declaration's own."},
@@ -3506,8 +3810,11 @@ static void describe(const occurrence *o, sb *out)
              "This texture's pixels are numbers, not colors to draw: they're kept as the file or the grid has them, with "
              "no alpha worked into them, and a `Sample` gives them as they are. A texture of colors has no color in a "
              "pixel whose alpha is 0, which is what a mask or a lookup table kept beside an alpha can't have. It goes "
-             "before an asset that's one `Texture` or one `Grid2<Color>` and before a field that's a `Grid2<Color>`. "
-             "A frag or a vert reads it by its name, `masks.Sample(uv)`: it's no `Texture` to draw with or hand on."},
+             "before an asset that's one `Texture` or one `Grid2<Color>`, or before `Texture` fields and `Grid2<Color>` "
+             "fields. `[Raw] Texture` fields accept Raw Texture or Raw Grid2<Color> assets and fields, or `default`, "
+             "and keep their Raw role. A frag or a vert samples them directly or through GPU sampling and metadata "
+             "helpers that borrow the original source. `.size` is readable on the CPU and GPU. Raw textures cannot "
+             "escape to ordinary Texture storage, CPU arguments or returns, or draws."},
             {"Wrap", "[Wrap(Wrap.Repeat)]",
              "What a `uv` past this texture's edges reads wherever a draw or a `Sample` doesn't say: `Wrap.Clamp` "
              "(what's read without it) for the cells at the edge, `Wrap.Repeat` for the texture over again, "
@@ -3557,7 +3864,6 @@ static void describe(const occurrence *o, sb *out)
     describe_replacing(o, out);
 }
 
-// What a package is to a reader: "package Fast", or "the game".
 static const char *package_text(const decl *d)
 {
     const char *package = d->unit && d->unit->src ? d->unit->src->package : NULL;
@@ -3596,7 +3902,6 @@ static void describe_replacing(const occurrence *o, sb *out)
     }
 }
 
-// "3rd"
 static const char *ordinal(const int n)
 {
     static char buf[16];
@@ -3606,7 +3911,6 @@ static const char *ordinal(const int n)
     return buf;
 }
 
-// Where a system or view runs, and what it runs after: the schedule, visible.
 static void describe_order(const decl *d, sb *out)
 {
     if (d->order_enum && d->order_member) {
@@ -4120,7 +4424,6 @@ static void use_this_action(const param *p, jbuf *out, int *written)
     jb_put(out, "]}}}");
 }
 
-// The diagnostic at `at`, or NULL.
 static const diagnostic *diagnostic_at(const loc at)
 {
     for (int i = 0; i < A.diags.count; i++) {
@@ -4152,7 +4455,6 @@ static void quick_fix(jbuf *out, int *written, const char *title, const bool pre
     jb_put(out, "}]}}}");
 }
 
-// One change of a quick fix that makes several, in any of the game's files.
 typedef struct text_edit {
     loc start;
     loc end;
@@ -4161,7 +4463,6 @@ typedef struct text_edit {
 
 typedef VEC(text_edit) text_edits;
 
-// A quick fix that changes several places at once, file by file.
 static void quick_fix_edits(jbuf *out, int *written, const char *title, const bool preferred, const diagnostic *d,
                             const text_edits *edits)
 {
@@ -4438,6 +4739,26 @@ static void replace_word_action(const fix *f, jbuf *out, int *written)
     quick_fix_edits(out, written, title.data, true, diagnostic_at(f->at), &edits);
 }
 
+// Removes a parameter that's never used, with the comma that joins it to the others
+static void remove_param_action(const fix *f, jbuf *out, int *written)
+{
+    const param *p = f->param;
+    const int first = token_at(p->at);
+    const int name = token_at(p->name_at);
+    if (first < 0 || name < 0) return;
+    const token *toks = DOC->toks;
+    loc start = p->at;
+    loc end = token_end(&toks[name]);
+    if (toks[name + 1].kind == T_COMMA) {
+        end = toks[name + 2].at; // Up to the next parameter
+    } else if (first > 1 && toks[first - 1].kind == T_COMMA) {
+        start = token_end(&toks[first - 2]); // From the end of the one before
+    }
+    sb title = {0};
+    sb_printf(&title, "Remove '" STR_FMT "'", STR_ARG(p->name));
+    quick_fix(out, written, title.data, true, diagnostic_at(f->at), start, end, "");
+}
+
 static void asset_fix_actions(int start_line, int end_line, jbuf *out, int *written);
 
 void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
@@ -4453,6 +4774,10 @@ void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
         if (f->at.file != A.doc || f->at.line - 1 < start_line || f->at.line - 1 > end_line) continue;
         if (f->kind == FIX_USE_THIS) {
             use_this_action(f->param, out, &written);
+            continue;
+        }
+        if (f->kind == FIX_REMOVE_PARAM) {
+            remove_param_action(f, out, &written);
             continue;
         }
         if (f->kind == FIX_UNWRAP) {
@@ -4623,7 +4948,7 @@ void analysis_code_actions(const int start_line, const int end_line, jbuf *out)
             }
             break;
         }
-        case FIX_USE_THIS: case FIX_UNWRAP: case FIX_UNUSED_LOCAL: case FIX_REMOVE_LOCAL: case FIX_KEEP_CALL:
+        case FIX_USE_THIS: case FIX_REMOVE_PARAM: case FIX_UNWRAP: case FIX_UNUSED_LOCAL: case FIX_REMOVE_LOCAL: case FIX_KEEP_CALL:
         case FIX_ASSIGN_FIRST: case FIX_ADD_VIRTUAL: case FIX_ADD_OVERRIDE:
             continue; // Their own actions, above
         }
@@ -4782,7 +5107,7 @@ enum { SYMBOL_CLASS = 5, SYMBOL_METHOD = 6, SYMBOL_PROPERTY = 7, SYMBOL_FIELD = 
 static int symbol_kind(const decl *d)
 {
     return d->kind == DECL_COMPONENT || d->kind == DECL_STRUCT ? SYMBOL_STRUCT
-         : d->kind == DECL_SINGLETON                            ? SYMBOL_CLASS
+         : d->kind == DECL_SINGLETON || d->kind == DECL_ALIAS    ? SYMBOL_CLASS
          : d->kind == DECL_INPUT                                ? SYMBOL_INTERFACE
          : d->kind == DECL_EVENT                                ? SYMBOL_EVENT
          : d->kind == DECL_ENUM                                 ? SYMBOL_ENUM
@@ -4842,6 +5167,7 @@ void analysis_symbols(jbuf *out)
         }
         for (int k = 0; k < d->methods.count; k++) {
             const decl *m = method_written(d->methods.items[k]);
+            if (m->accessor && m->is_mut_method && m->accessor->get) continue;
             sb detail = {0};
             format_routine(m, &detail);
             if (!first_child) jb_put(out, ",");
@@ -4850,15 +5176,15 @@ void analysis_symbols(jbuf *out)
             jb_string_n(out, m->name.ptr, (size_t)m->name.len);
             jb_put(out, ",\"detail\":");
             jb_string(out, detail.data);
-            jb_printf(out, ",\"kind\":%d,\"range\":{\"start\":", SYMBOL_METHOD);
+            jb_printf(out, ",\"kind\":%d,\"range\":{\"start\":", m->accessor ? SYMBOL_PROPERTY : SYMBOL_METHOD);
             write_position(out, m->at);
             jb_put(out, ",\"end\":");
-            write_position(out, (loc){m->end.line, m->end.col + 1, m->end.file});
+            const loc end = m->accessor ? m->accessor->end : m->end;
+            write_position(out, (loc){end.line, end.col + 1, end.file});
             jb_put(out, "},\"selectionRange\":");
             write_range(out, m->at, m->name.len);
             jb_put(out, "}");
         }
-        // The input's Sample and Sanitize
         for (int k = 0; d->kind == DECL_INPUT && k < 3; k++) {
             const stmt *body = k == 0 ? d->body : k == 1 ? d->sanitize : d->predict;
             if (!body) continue;
@@ -4884,7 +5210,6 @@ void analysis_symbols(jbuf *out)
         }
         jb_put(out, "]}");
     }
-    // settings { ... }, with what it sets
     for (int b = 0; b < A.prog->settings.count; b++) {
         const decl *block = A.prog->settings.items[b];
         if (block->at.file != A.doc) continue;
@@ -5096,7 +5421,6 @@ static bool is_call(const occurrence *o)
     return (o->kind == OCC_FUNCTION || o->kind == OCC_METHOD) && !o->declaration && is_routine(o->decl);
 }
 
-// Who calls the item at the cursor: each caller once, with where it does.
 void analysis_incoming_calls(const int line, const int character, jbuf *out)
 {
     const arena_mark temporary = arena_checkpoint();
@@ -5377,7 +5701,6 @@ static void select_decl(const decl *d, const stmt *body, const loc at, span_list
     add_span(spans, at, (loc){first, 1, d->at.file}, (loc){end.line, end.col + 1, end.file});
 }
 
-// The spans around `at`, outermost first.
 static void selection_spans(const loc at, span_list *spans)
 {
     for (int i = 0; i < A.written.count; i++) {
@@ -5406,7 +5729,6 @@ static void selection_spans(const loc at, span_list *spans)
         for (int f = 0; f < d->fields.count + local_field_count(d); f++) select_in_expr(field_of(d, f)->default_value, at, spans);
         break;
     }
-    // The word at the cursor
     const afile *f = &A.files[at.file];
     for (int i = 0; i < f->tok_count; i++) {
         const token *t = &f->toks[i];
@@ -5538,7 +5860,6 @@ void analysis_folding_ranges(jbuf *out)
         }
         if (i < DOC->tok_count) p = next + token_len(&DOC->toks[i]);
     }
-    // using lines one after another
     const unit *u = doc_unit();
     for (int k = 0; u && k < u->using_at.count;) {
         const loc *at = u->using_at.items;
@@ -5618,7 +5939,6 @@ static int closing(const loc at, const int open)
 
 static loc stmt_end(const stmt *s);
 
-// Just past an expression's last token.
 static loc expr_end(const expr *e)
 {
     const afile *f = &A.files[e->at.file];
@@ -5670,7 +5990,6 @@ static loc expr_end(const expr *e)
     return t >= 0 ? token_end(&f->toks[t]) : e->at; // A literal, this, default, null, or a value's `!`
 }
 
-// Just past a statement's last token: its ';', or its block's '}'.
 static loc stmt_end(const stmt *s)
 {
     switch (s->kind) {
@@ -5796,7 +6115,8 @@ void analysis_workspace_symbols(const char *query, const workspace_symbol_fn sym
         for (int k = 0; k < d->methods.count; k++) {
             const decl *m = method_written(d->methods.items[k]);
             if (m->is_operator || !fuzzy_match(m->name, query)) continue;
-            workspace_symbol(symbol, user, m->name, SYMBOL_METHOD, m->at, m->name.len, d->qualified);
+            if (m->accessor && m->is_mut_method && m->accessor->get) continue;
+            workspace_symbol(symbol, user, m->name, m->accessor ? SYMBOL_PROPERTY : SYMBOL_METHOD, m->at, m->name.len, d->qualified);
         }
     }
 }
@@ -5816,7 +6136,8 @@ static bool is_keyword_type(const type t)
 {
     switch (t.kind) {
     case TY_BOOL: case TY_BYTE: case TY_CHAR: case TY_INT: case TY_LONG: case TY_INT2: case TY_INT3: case TY_INT4: case TY_FLOAT: case TY_FLOAT2:
-    case TY_FLOAT3: case TY_FLOAT4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4:
+    case TY_FLOAT3: case TY_FLOAT4: case TY_DOUBLE: case TY_DOUBLE2: case TY_DOUBLE3: case TY_DOUBLE4: case TY_QUATERNION: case TY_FLOAT2X2: case TY_FLOAT3X3: case TY_FLOAT4X4:
+    case TY_DOUBLE2X2: case TY_DOUBLE3X3: case TY_DOUBLE4X4:
         return true;
     default:
         return false;
@@ -5863,7 +6184,7 @@ static void classify(const occurrence *o, int *type, int *mods)
         *type = o->decl->kind == DECL_COMPONENT || o->decl->kind == DECL_STRUCT || o->decl->kind == DECL_EVENT ? ST_STRUCT
               : o->decl->kind == DECL_ENUM      ? ST_ENUM
               : o->decl->kind == DECL_INPUT     ? ST_INTERFACE
-              : o->decl->kind == DECL_RECORD    ? ST_TYPE
+              : o->decl->kind == DECL_RECORD || o->decl->kind == DECL_ALIAS ? ST_TYPE
                                                 : ST_CLASS;
         if (o->decl->builtin) *mods |= SM_DEFAULT_LIBRARY;
         break;
@@ -5899,7 +6220,8 @@ static void classify(const occurrence *o, int *type, int *mods)
             *type = ST_KEYWORD;
             *mods = 0;
         } else if (is_routine(o->decl)) {
-            *type = ST_METHOD;
+            *type = o->decl->accessor ? ST_PROPERTY : ST_METHOD;
+            if (o->decl->accessor && !o->decl->accessor->set) *mods |= SM_READONLY;
         } else if (o->decl && o->decl->kind == DECL_INPUT
                    && (str_eq_c(o->name, "Sample") || str_eq_c(o->name, "Sanitize") || str_eq_c(o->name, "Predict"))) { // The input's own members
             *type = ST_KEYWORD;
@@ -6082,7 +6404,6 @@ static void item(completion *c, const char *label, const int kind, const char *d
     jb_put(c->out, "}");
 }
 
-// What surrounds the cursor.
 typedef struct scope {
     const decl *decl;           // The system, view, method, function or input whose body holds the cursor, or NULL
     const decl *fields_of;      // Whose fields plain names refer to: the input in Sample, a type in its methods
@@ -6108,7 +6429,6 @@ static bool body_contains(const stmt *body, const loc at)
 
 static void collect_list(stmt *const *stmts, int count, loc at, scope *sc);
 
-// The locals of a body the cursor is in: a block's, or a braceless statement's.
 static void collect_body(stmt *const *body, const loc at, scope *sc)
 {
     if ((*body)->kind == S_BLOCK) collect_list((*body)->stmts.items, (*body)->stmts.count, at, sc);
@@ -6263,7 +6583,6 @@ static type this_type(const scope *sc)
     return (type){TY_ERROR, NULL};
 }
 
-// The type of a name in scope, or TY_ERROR.
 static type name_type(const scope *sc, const str name, const param **param_out)
 {
     *param_out = NULL;
@@ -6320,7 +6639,10 @@ static type read_type(const type t)
 
 static type member_type(const type t, const str member)
 {
-    if (t.kind == TY_STRUCT && t.decl && t.decl->asset_ref_of && str_eq_c(member, "Value")) return (type){TY_MESH, t.decl->asset_ref_of};
+    if (t.kind == TY_STRUCT && t.decl && t.decl->task_handle
+        && (str_eq_c(member, "isRunning") || str_eq_c(member, "isCompleted") || str_eq_c(member, "isCancelled")))
+        return (type){TY_BOOL, NULL};
+    if (t.kind == TY_STRUCT && t.decl && t.decl->asset_ref_of && str_eq_c(member, "Value")) return type_asset_reference_value(t.decl);
     if (t.kind == TY_STRUCT && t.decl && t.decl->skin_kind) {
         const decl *d = t.decl;
         if (d->skin_kind == SKIN_MESH && str_eq_c(member, "animations")) return (type){TY_STRUCT, d->skin_animations};
@@ -6350,7 +6672,7 @@ static type member_type(const type t, const str member)
         }
     }
     const int dim = type_dim(t);
-    if (dim >= 2 && is_swizzle(member, dim)) return vector_type(type_is_float_based(t), member.len);
+    if (dim >= 2 && is_swizzle(member, dim)) return type_is_double_based(t) ? double_vector_type(member.len) : vector_type(type_is_float_based(t), member.len);
     if (t.kind == TY_COLOR && member.len == 1 && strchr("rgba", member.ptr[0])) return (type){TY_FLOAT, NULL};
     if (t.kind == TY_RECT && (str_eq_c(member, "x") || str_eq_c(member, "y") || str_eq_c(member, "width")
                               || str_eq_c(member, "height"))) {
@@ -6367,7 +6689,7 @@ static type member_type(const type t, const str member)
     if (t.kind == TY_QUATERNION && str_eq_c(member, "value")) return (type){TY_FLOAT4, NULL};
     const int n = matrix_dim(t);
     if (n > 0 && member.len == 2 && member.ptr[0] == 'c' && member.ptr[1] >= '0' && member.ptr[1] < '0' + n) {
-        return vector_type(true, n);
+        return matrix_column(t);
     }
     return (type){TY_ERROR, NULL};
 }
@@ -6417,11 +6739,15 @@ static type loop_variable_type(const scope *sc, const int use)
     return (type){TY_ERROR, NULL};
 }
 
-// A method or function, with its signature, as `name` (its name by default).
 static void complete_routine(completion *c, const decl *m, const char *name)
 {
+    if (m->accessor && m->is_mut_method && m->accessor->get) return;
     sb detail = {0};
     format_routine(m, &detail);
+    if (m->accessor) {
+        item(c, str_to_cstr(m->accessor->name), CK_PROPERTY, detail.data, "Computed by ordinary inlineable accessors.", NULL);
+        return;
+    }
     sb snippet = {0};
     sb_printf(&snippet, "%s(%s)", name ? name : str_to_cstr(m->name), m->params.count > 0 ? "$1" : "");
     item(c, name ? name : str_to_cstr(m->name), m->owner ? CK_METHOD : CK_FUNCTION, detail.data, NULL, snippet.data);
@@ -6480,9 +6806,17 @@ static void method_snippet(const method_form *form, sb *out)
 
 static void list_members(completion *c, const type t, const bool edges, const scope *sc)
 {
+    if (t.kind == TY_STRUCT && t.decl && t.decl->task_handle) {
+        const bool local = sc->decl && (sc->decl->is_view || sc->decl->is_local || (sc->decl->is_async && sc->decl->task_side == TASK_LOCAL));
+        if (t.decl->task_local || !local) item(c, "Cancel", CK_METHOD, task_calls[0].form, task_calls[0].doc, "Cancel()");
+        item(c, "isRunning", CK_PROPERTY, "bool", "True while this operation is running or waiting.", NULL);
+        item(c, "isCompleted", CK_PROPERTY, "bool", "True after completion or cancellation.", NULL);
+        item(c, "isCancelled", CK_PROPERTY, "bool", "True after cancellation, or for a default or stale handle.", NULL);
+        return;
+    }
     if (t.kind == TY_TEXTURE) item(c, "size", CK_PROPERTY, "int2", TEXTURE_SIZE_DOC, NULL);
     if (t.kind == TY_STRUCT && t.decl && t.decl->asset_ref_of) {
-        item(c, "Value", CK_PROPERTY, type_name((type){TY_MESH, t.decl->asset_ref_of}),
+        item(c, "Value", CK_PROPERTY, type_name(type_asset_reference_value(t.decl)),
              "The currently loaded mesh. Empty references read an empty mesh; assign a named asset to change the reference.", NULL);
         return;
     }
@@ -6496,8 +6830,9 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         return;
     }
     // In a frag or vert: the GPU has no text, reads lists, maps and sets and changes none, and a grid there is a texture
-    // ...and in a function that takes a grid or samples a texture, which only those call
-    const bool gpu = is_shader(sc->decl) || (sc->decl && sc->decl->gpu_only);
+    // Grid helpers used by local workers also have ordinary CPU operations.
+    const bool gpu = is_shader(sc->decl) || (sc->decl && sc->decl->gpu_only
+        && !(sc->decl->worker_cpu && !sc->decl->gpu_sampling));
     if (t.decl && (t.decl == A.prog->audience || t.decl == A.prog->visibility)) {
         if (gpu) return;
         size_t count;
@@ -6660,7 +6995,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         // functions they call, and the frags and verts a view draws through.
         // The match can't see them.
         const bool local_code = sc->decl && !sc->decl->is_async && !sc->in_input
-                             && (sc->decl->kind == DECL_FUNCTION || gpu
+                             && (sc->decl->kind == DECL_FUNCTION || (sc->decl->kind == DECL_METHOD && sc->decl->borrows_queries) || gpu
                                  || (sc->decl->kind == DECL_SYSTEM && (sc->decl->is_view || sc->decl->is_local)));
         for (int i = 0; local_code && i < local_field_count(t.decl); i++) {
             const field *f = field_of(t.decl, t.decl->fields.count + i);
@@ -6677,6 +7012,11 @@ static void list_members(completion *c, const type t, const bool edges, const sc
                  "`Session.Join(code)`. On a network of the game's own, it's what that network says the match is "
                  "joined by.",
                  NULL);
+            item(c, "invite", CK_FIELD, "string",
+                 "What others open to join the match, or \"\" if it's in no room. On the web, a link: this page's "
+                 "address with `?join=` and the room's code, like \"https://example.com/game/?join=K7QF2M\". "
+                 "Elsewhere, the room's code itself. For `Clipboard.Copy(session.invite)`.",
+                 NULL);
         }
         if (t.kind == TY_EVENT && t.decl->builtin && str_eq_c(t.decl->name, "Disconnected")) {
             item(c, "message", CK_FIELD, "string", "With `Kicked`: why, as the server's `Session.Kick` said. \"\" otherwise.",
@@ -6691,12 +7031,12 @@ static void list_members(completion *c, const type t, const bool edges, const sc
     if (dim >= 2) {
         static const char *const components[] = {"x", "y", "z", "w"};
         static const char *const swizzles[] = {"xy", "xz", "yz", "xyz"};
-        const char *scalar = type_name(vector_type(type_is_float_based(t), 1));
+        const char *scalar = type_name(type_scalar(t));
         for (int i = 0; i < dim; i++) item(c, components[i], CK_PROPERTY, scalar, NULL, NULL);
         for (size_t i = 0; i < sizeof swizzles / sizeof swizzles[0]; i++) {
             const str s = str_from(swizzles[i]);
             if (is_swizzle(s, dim) && s.len < dim) {
-                item(c, swizzles[i], CK_PROPERTY, type_name(vector_type(type_is_float_based(t), s.len)), NULL, NULL);
+                item(c, swizzles[i], CK_PROPERTY, type_name(type_is_double_based(t) ? double_vector_type(s.len) : vector_type(type_is_float_based(t), s.len)), NULL, NULL);
             }
         }
     }
@@ -6726,7 +7066,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
     const int n = matrix_dim(t);
     for (int i = 0; i < n; i++) {
         static const char *const columns[] = {"c0", "c1", "c2", "c3"};
-        item(c, columns[i], CK_PROPERTY, type_name(vector_type(true, n)), "A column.", NULL);
+        item(c, columns[i], CK_PROPERTY, type_name(matrix_column(t)), "A column.", NULL);
     }
     if (t.kind == TY_WORLD) { // world.: its methods, each with the component in <>
         size_t count;
@@ -6940,8 +7280,9 @@ static void complete_members(completion *c, const int dot, const loc at, const o
         sb written = {0};
         for (int k = n - 1; k >= 0; k--) sb_printf(&written, "%s" STR_FMT, k == n - 1 ? "" : ".", STR_ARG(DOC->toks[ids[k]].text));
         for (int i = 0; i < A.prog->decls.count; i++) {
-            const decl *d = A.prog->decls.items[i];
-            if (d->kind != DECL_ENUM || strcmp(name_for(d), written.data) != 0) continue;
+            const decl *named = A.prog->decls.items[i];
+            const decl *d = named->kind == DECL_ALIAS && named->alias_type.kind == TY_ENUM ? named->alias_type.decl : named;
+            if (d->kind != DECL_ENUM || strcmp(name_for(named), written.data) != 0) continue;
             for (int m = 0; m < d->members.count; m++) {
                 char value[32];
                 snprintf(value, sizeof value, "%lld", (long long)d->members.items[m].number);
@@ -7031,7 +7372,6 @@ static const unit *from_unit(void)
     return block ? block : doc_unit();
 }
 
-// Can the current document name `d` without its namespace, where the request is?
 static bool visible_by_name(const decl *d)
 {
     const str ns = decl_home(d) ? decl_home(d)->ns : (str){"", 0};
@@ -7049,16 +7389,27 @@ static bool visible_by_name(const decl *d)
     return false;
 }
 
-// How the current document writes `d`: Health, or Combat.Health.
 static const char *name_for(const decl *d)
 {
     return str_to_cstr(visible_by_name(d) ? d->name : d->qualified);
+}
+
+static void complete_alias(completion *c, const decl *d)
+{
+    sb detail = {0};
+    format_data_decl(d, &detail);
+    item(c, name_for(d), CK_CLASS, detail.data, "A transparent name for the same underlying type.", NULL);
 }
 
 static void complete_types(completion *c, const bool components, const bool singletons, const bool input)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
+        if (d->kind == DECL_ALIAS) {
+            const type t = d->alias_type;
+            if ((components && t.kind == TY_COMPONENT) || (singletons && t.kind == TY_SINGLETON)
+                || (input && t.kind == TY_INPUT)) complete_alias(c, d);
+        }
         if (components && d->kind == DECL_COMPONENT) item(c, name_for(d), CK_STRUCT, decl_what(d), NULL, NULL);
         if (singletons && d->kind == DECL_SINGLETON) item(c, name_for(d), CK_CLASS, decl_what(d), NULL, NULL);
         if (input && d->kind == DECL_INPUT) item(c, name_for(d), CK_INTERFACE, "input", NULL, NULL);
@@ -7071,6 +7422,8 @@ static void complete_components_of(completion *c, const bool local)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
+        if (d->kind == DECL_ALIAS && d->alias_type.kind == TY_COMPONENT
+            && (!d->alias_type.decl->is_scene || d->alias_type.decl->is_local == local)) complete_alias(c, d);
         if (d->kind == DECL_COMPONENT && (!d->is_scene || d->is_local == local)) item(c, name_for(d), CK_STRUCT, decl_what(d), NULL, NULL);
     }
 }
@@ -7109,7 +7462,6 @@ static void complete_match_types(completion *c, const bool singletons)
     }
 }
 
-// The events code on one side can send.
 static void complete_events_of(completion *c, const bool local)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
@@ -7123,6 +7475,7 @@ static void complete_structs(completion *c)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
         const decl *d = A.prog->decls.items[i];
+        if (d->kind == DECL_ALIAS && (d->alias_type.kind == TY_STRUCT || d->alias_type.kind == TY_ENUM)) complete_alias(c, d);
         if (d->kind == DECL_STRUCT) item(c, name_for(d), CK_STRUCT, "struct", d == A.prog->random ? RANDOM_DOC
                                        : d == A.prog->audience ? AUDIENCE_DOC
                                        : d == A.prog->visibility_group ? VISIBILITY_GROUP_DOC : NULL, NULL);
@@ -7191,7 +7544,6 @@ static void complete_settings(completion *c, const int open, const int last)
     }
 }
 
-// Systems or views, for [Before(...)] and [After(...)].
 static void complete_systems(completion *c, const bool views)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
@@ -7202,7 +7554,6 @@ static void complete_systems(completion *c, const bool views)
     }
 }
 
-// Enums define scheduling phases, in Stage, Before and After.
 static void complete_phases(completion *c)
 {
     for (int i = 0; i < A.prog->decls.count; i++) {
@@ -7254,7 +7605,8 @@ static bool complete_in_namespace(completion *c, const str ns, const order_compl
                        : d->kind == DECL_SYSTEM || is_shader(d) ? CK_FUNCTION : d->kind == DECL_CONST ? CK_CONSTANT
                        : d->kind == DECL_ASSET ? CK_VARIABLE : CK_CLASS;
         sb detail = {0};
-        sb_put(&detail, decl_keyword(d));
+        if (d->kind == DECL_ALIAS) format_data_decl(d, &detail);
+        else sb_put(&detail, decl_keyword(d));
         if (d->kind == DECL_ASSET) sb_printf(&detail, " " STR_FMT, STR_ARG(d->return_type_name));
         item(c, str_to_cstr(d->name), kind, detail.data, NULL, NULL);
     }
@@ -7263,7 +7615,7 @@ static bool complete_in_namespace(completion *c, const str ns, const order_compl
 
 static const char *const value_types[] = {
     "bool", "byte", "char", "int", "long", "int2", "int3", "int4", "float", "float2", "float3", "float4", "quaternion",
-    "float2x2", "float3x3", "float4x4", "Entity", "LocalEntity", "PlayerID", "Color", "Rect",
+    "double", "double2", "double3", "double4", "double2x2", "double3x3", "double4x4", "float2x2", "float3x3", "float4x4", "Entity", "LocalEntity", "PlayerID", "Color", "Rect",
     "Texture", "DepthTexture", "Cubemap", "RenderTarget", "Clip",
 };
 
@@ -7282,6 +7634,27 @@ enum {
 
 static void complete_value_types(completion *c, const unsigned which)
 {
+    for (int i = 0; i < A.prog->decls.count; i++) {
+        const decl *d = A.prog->decls.items[i];
+        if (d->kind != DECL_ALIAS) continue;
+        const type t = d->alias_type;
+        unsigned kind = t.kind == TY_STRING ? VT_TEXT : t.kind == TY_GRID ? VT_GRID
+                      : t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_ARRAY
+                        || t.kind == TY_OPTIONAL || t.kind == TY_MESH ? VT_LIST : 0;
+        for (size_t k = 0; k < sizeof value_types / sizeof value_types[0]; k++) {
+            type builtin;
+            if (!builtin_type_named(str_from(value_types[k]), &builtin) || builtin.kind != t.kind) continue;
+            kind = t.kind == TY_BOOL ? VT_BOOL : t.kind == TY_ENTITY ? VT_ENTITY
+                 : t.kind == TY_LOCAL_ENTITY ? VT_LOCAL_ENTITY : VT_VALUES;
+        }
+        if (!(which & kind)) continue;
+        if ((which & VT_GPU) && (type_is_double_based(t) || t.kind == TY_LONG || t.kind == TY_PLAYER || t.kind == TY_RECT
+            || t.kind == TY_RENDER_TARGET || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_OPTIONAL
+            || t.kind == TY_ARRAY || t.kind == TY_MESH)) continue;
+        if ((t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET)
+            && !(which & (VT_LOCAL_ENTITY | VT_GPU))) continue;
+        complete_alias(c, d);
+    }
     for (size_t i = 0; i < sizeof value_types / sizeof value_types[0]; i++) {
         type t;
         builtin_type_named(str_from(value_types[i]), &t);
@@ -7290,7 +7663,7 @@ static void complete_value_types(completion *c, const unsigned which)
                             : t.kind == TY_LOCAL_ENTITY   ? VT_LOCAL_ENTITY
                                                           : VT_VALUES;
         // Its ints are 32 bits, and it has no handles into the world, nor rects
-        if ((which & VT_GPU) && (t.kind == TY_LONG || t.kind == TY_PLAYER || t.kind == TY_RECT || t.kind == TY_RENDER_TARGET
+        if ((which & VT_GPU) && (type_is_double_based(t) || t.kind == TY_LONG || t.kind == TY_PLAYER || t.kind == TY_RECT || t.kind == TY_RENDER_TARGET
                                  || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP)) continue; // A depth and a cube are read where they're a field, never a parameter
         if ((t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE || t.kind == TY_CUBEMAP || t.kind == TY_RENDER_TARGET)
             && !(which & (VT_LOCAL_ENTITY | VT_GPU))) continue;
@@ -7298,12 +7671,20 @@ static void complete_value_types(completion *c, const unsigned which)
     }
     if (which & VT_TEXT) item(c, "string", CK_STRUCT, "built-in type", builtin_type_doc(TY_STRING), NULL);
     if (which & VT_LIST) {
+        if (!(which & VT_GPU)) {
+            item(c, "Task", CK_STRUCT, "Task<T fails E> or Task",
+                 "A started match operation. Await it for its full declared result; Cancel requests cancellation.", "Task<$1>");
+            item(c, "LocalTask", CK_STRUCT, "LocalTask<T fails E> or LocalTask",
+                 "A started local async operation or worker. Copied handles share the operation and repeated awaits copy its result.", "LocalTask<$1>");
+        }
+        item(c, "Func", CK_STRUCT, "Func<Arguments..., Result>",
+             "A typed local callable with owned captures. GPU calls use generated dispatch over build-known targets.", "Func<${1:float3}, ${2:float}>");
         item(c, "List", CK_STRUCT, "List<T>", builtin_type_doc(TY_LIST), "List<$1>");
         item(c, "Map", CK_STRUCT, "Map<K, V>", builtin_type_doc(TY_MAP), "Map<$1, $2>");
         item(c, "Set", CK_STRUCT, "Set<K>", builtin_type_doc(TY_SET), "Set<$1>");
         if (!(which & VT_GPU)) {
-            item(c, "Asset", CK_STRUCT, "Asset<Mesh<V>>: checked persistent model reference",
-                 "Store a named static mesh asset in a component. Value reads the currently loaded mesh.", "Asset<Mesh<${1:Vertex3}>>");
+            item(c, "Asset", CK_STRUCT, "Asset<T>: checked persistent static or skinned model reference",
+                 "Store a named Mesh<V> or SkinnedMesh<V> asset in a component. Value reads the currently loaded model.", "Asset<Mesh<${1:Vertex3}>>");
             item(c, "SkinnedMesh", CK_STRUCT, "SkinnedMesh<V[, Contract]>",
                  "An immutable glTF or FBX model with geometry, a skeleton and animation catalogs. An optional struct contract promises named Animation and Bone members.", "SkinnedMesh<$1>");
             item(c, "AnimationCatalog", CK_STRUCT, "built-in type",
@@ -7579,6 +7960,8 @@ static void complete_expression(completion *c, const loc at, const bool statemen
             item(c, str_to_cstr(p->name), CK_VARIABLE, detail.data, NULL, NULL);
         }
         if (sc.fields_of) {
+            if (sc.fields_of->kind == DECL_COMPONENT && sc.decl && !sc.decl->is_interpolate)
+                item(c, "world", CK_VARIABLE, "World", "The attached component's owning world, with the caller's capabilities.", NULL);
             for (int i = 0; i < sc.fields_of->fields.count; i++) {
                 const field *f = &sc.fields_of->fields.items[i];
                 if (!f->hidden) item(c, str_to_cstr(f->name), CK_FIELD, type_name(f->type), NULL, NULL);
@@ -7647,7 +8030,7 @@ static void complete_expression(completion *c, const loc at, const bool statemen
         item(c, "Draw", CK_MODULE, "Drawing into the window: shapes, text, meshes, cameras and settings", NULL, NULL);
         item(c, "GUI", CK_MODULE, "Widgets at a Rect", NULL, NULL);
         item(c, "GUILayout", CK_MODULE, "Widgets laid out automatically", NULL, NULL);
-        item(c, "Screen", CK_MODULE, "The window's size, in pixels, and Flip for the devices' positions", NULL, NULL);
+        item(c, "Screen", CK_MODULE, "The window's logical size, pixel scale and Flip for the devices' positions", NULL, NULL);
     }
     // The mouse's cursor: views lock it, and they and the input's Sample read whether it's locked
     if (view || (routine && sc.decl->kind == DECL_FUNCTION) || (sc.in_input && !sc.in_sanitize)) {
@@ -7727,9 +8110,10 @@ static void complete_declarations(completion *c)
          "namespace ${1:Name}\n{\n    $0\n}");
     item(c, "using", CK_KEYWORD, "using Name;", "Names from another namespace, without writing it. Goes at the top.",
          "using ${1:Name};");
+    item(c, "using alias", CK_SNIPPET, "using Name = Type;", "A namespace-scoped, transparent name for a closed type.",
+         "using ${1:Name} = ${2:Type};");
 }
 
-// What `virtual` goes before: the declarations with code.
 static void complete_code_declarations(completion *c)
 {
     item(c, "system", CK_SNIPPET, "system Name(parameters) { ... }", NULL, "system ${1:Name}($2)\n{\n    $0\n}");
@@ -7803,6 +8187,7 @@ static void put_param_here(sb *out, const param *p)
               : p->mode == PARAM_WITHOUT ? "without " : "");
     if (p->verified) sb_put(out, "verified ");
     if (p->ownership) sb_put(out, "ownership");
+    else if (p->scene) sb_printf(out, "scene " STR_FMT, STR_ARG(p->type_name));
     else put_type_here(out, p->type, p->type_name);
     if (p->name.len > 0) sb_printf(out, " " STR_FMT, STR_ARG(p->name));
     if (p->default_value) sb_printf(out, " = " STR_FMT, STR_ARG(p->default_text));
@@ -7838,7 +8223,7 @@ static void complete_overrides(completion *c)
             } else if (v->kind == DECL_SHADER) {
                 sb_put(&header, v->is_frag ? "frag " : "vert ");
             } else {
-                sb_printf(&header, "%s%s", v->is_async ? "async " : "", v->is_mut_method ? "mut " : "");
+                sb_printf(&header, "%s%s", v->is_worker ? "local worker " : v->is_async ? "async " : "", v->is_mut_method ? "mut " : "");
                 if (v->return_type.kind == TY_VOID) sb_put(&header, "void");
                 else put_type_here(&header, v->return_type, v->return_type_name);
                 sb_put(&header, " ");
@@ -8025,7 +8410,6 @@ typedef struct frame {
 
 static bool is_word(const token *t);
 
-// The header a '(' at the top level opens, at token `i`.
 static header_kind top_header(const int i)
 {
     if (i < 1) return HEADER_NONE;
@@ -8050,6 +8434,26 @@ static bool local_trigger(const int open)
         if (!str_eq_c(DOC->toks[k].text, "async")) return false;
     }
     return false;
+}
+
+// A local handler's parameter header follows its trigger, even while its
+// incomplete parameters don't parse yet. Known local events have no owners.
+static bool local_match_handler(const int open)
+{
+    if (open < 3 || DOC->toks[open - 2].kind != T_RPAREN) return false;
+    int depth = 1, trigger = open - 3;
+    for (; trigger >= 0; trigger--) {
+        if (DOC->toks[trigger].kind == T_RPAREN) depth++;
+        if (DOC->toks[trigger].kind == T_LPAREN && --depth == 0) break;
+    }
+    if (trigger < 0 || !local_trigger(trigger)) return false;
+    int name = trigger + 1;
+    if (str_eq_c(DOC->toks[name].text, "verified")) name++;
+    for (int i = 0; i < A.prog->events.count; i++) {
+        const decl *event = A.prog->events.items[i];
+        if (str_eq(event->name, DOC->toks[name].text) && event->is_local) return false;
+    }
+    return !str_eq_c(DOC->toks[name].text, "Forgotten");
 }
 
 // The header a '(' in a type's body opens, at token `i`: the input's Sample or
@@ -8079,7 +8483,6 @@ static bool starts_function(const int i)
     return DOC->toks[k].kind == T_IDENT && DOC->toks[k + 1].kind == T_LPAREN;
 }
 
-// Whether the `{` at token `i` follows `) fails ParseError`: a function's body.
 static bool after_fails(const int i)
 {
     for (int k = i - 1; k > 0; k--) {
@@ -8152,7 +8555,6 @@ static bool loop_variable_named(const int i)
         && (DOC->toks[k - 1].kind == T_FOREACH || DOC->toks[k - 1].kind == T_PARALLEL);
 }
 
-// The '(' of the parallel loop whose header holds token `last`, or -1.
 static int parallel_header(const int last)
 {
     int parens = 0;
@@ -8569,7 +8971,6 @@ static int switch_of_brace(const int open)
     return -1;
 }
 
-// The switch whose `switch` is at `at`, in a statement or the ones inside it.
 static const stmt *switch_in(const stmt *s, const loc at)
 {
     if (!s) return NULL;
@@ -9013,6 +9414,19 @@ void analysis_completion(const int line, const int character, jbuf *out)
     switch (f.kind) {
     case CTX_TOP:
         if (complete_asset_type(&c, last)) break;
+        // An unfinished alias has no declaration AST yet. Its right side is a type,
+        // including the arguments of a closed built-in generic.
+        for (int first = last; first >= 0; first--) {
+            const tok_kind k = DOC->toks[first].kind;
+            if (k == T_SEMI || k == T_LBRACE || k == T_RBRACE) break;
+            if (first + 2 > last || k != T_IDENT || !str_eq_c(DOC->toks[first].text, "using")
+                || DOC->toks[first + 1].kind != T_IDENT || DOC->toks[first + 2].kind != T_ASSIGN) continue;
+            complete_value_types(&c, VT_LOCALS | VT_LOCAL_ENTITY | VT_GRID);
+            complete_structs(&c);
+            complete_types(&c, true, true, true);
+            complete_namespaces(&c, false);
+            goto done;
+        }
         if (pk == T_EOF || pk == T_RBRACE || pk == T_SEMI || pk == T_RBRACKET || (pk == T_LBRACE && namespace_brace(prev->at))) {
             complete_declarations(&c);
         } else if (pk == T_IDENT && str_eq_c(prev->text, "override")) { // What there is to replace, each written out
@@ -9070,7 +9484,9 @@ void analysis_completion(const int line, const int character, jbuf *out)
                  "What a uv past the edges of an asset that's a Texture or a Grid2<Color> reads, where a draw doesn't say.",
                  "Wrap(Wrap.${1:Repeat})");
             item(&c, "Raw", CK_FUNCTION, "[Raw]",
-                 "An asset that's a Texture or a Grid2<Color> of numbers, kept as the file has them: a frag reads it by its name.",
+                 "Marks Texture or Grid2<Color> assets and fields as numeric data. [Raw] Texture fields keep their Raw role; "
+                 "GPU sampling and metadata helpers borrow the original source. .size works on the CPU and GPU. "
+                 "Raw textures cannot be drawn or escape as ordinary Texture values.",
                  "Raw");
             item(&c, "LOD", CK_FUNCTION, "[LOD]",
                  "An asset that's a Mesh<V> or a SkinnedMesh<V> has simpler versions made, which its draws pick among by its size on screen.",
@@ -9100,7 +9516,9 @@ void analysis_completion(const int line, const int character, jbuf *out)
                  "What a uv past the edges of this grid, or of this RenderTarget's color, reads, where a draw doesn't say.",
                  "Wrap(Wrap.${1:Repeat})");
             item(&c, "Raw", CK_FUNCTION, "[Raw]",
-                 "This Grid2<Color>'s cells are numbers, kept as they are as a texture: a frag reads it by its name.", "Raw");
+                 "Marks Texture fields or Grid2<Color> fields as numeric data. [Raw] Texture fields accept Raw Texture or "
+                 "Raw Grid2<Color> assets and fields, or default. GPU sampling and metadata helpers borrow the original "
+                 "source. .size works on the CPU and GPU; Raw textures cannot be drawn or escape as ordinary Texture values.", "Raw");
             item(&c, "Json", CK_FUNCTION, "[Json(\"key\")]",
                  "This struct field's key in JSON, where it isn't the field's name: what Json.Read and Json.Write call it.",
                  "Json(\"$1\")");
@@ -9135,15 +9553,17 @@ void analysis_completion(const int line, const int character, jbuf *out)
             const frame outer = depth >= 1 ? stack[depth - 1] : f;
             const bool in_view = outer.kind == CTX_HEADER && outer.open >= 2 && DOC->toks[outer.open - 2].kind == T_IDENT
                               && str_eq_c(DOC->toks[outer.open - 2].text, "view");
+            const bool local_fields = in_view || outer.header == HEADER_ROUTINE || local_match_handler(outer.open);
             const bool confirmed = in_view && pk == T_IDENT && str_eq_c(prev->text, "verified") && last > f.open;
             const tok_kind marked = confirmed ? DOC->toks[last - 1].kind : T_EOF;
-            if (marked == T_LPAREN || marked == T_COMMA || marked == T_WITH || marked == T_WITHOUT) {
+            if (marked == T_LPAREN || marked == T_COMMA || marked == T_WITH || marked == T_WITHOUT || marked == T_MUT) {
                 complete_match_types(&c, false);
                 complete_namespaces(&c, false);
-            } else if (pk == T_LPAREN || pk == T_COMMA || pk == T_WITH || pk == T_WITHOUT) {
+            } else if (pk == T_LPAREN || pk == T_COMMA || pk == T_WITH || pk == T_WITHOUT || pk == T_MUT) {
                 if (pk == T_LPAREN || pk == T_COMMA) {
                     item(&c, "with", CK_KEYWORD, "Query entities must have this component", NULL, NULL);
                     item(&c, "without", CK_KEYWORD, "Query entities must not have this component", NULL, NULL);
+                    if (local_fields) item(&c, "mut", CK_KEYWORD, "Write the query binding's attached local fields", NULL, NULL);
                 }
                 if (in_view) {
                     item(&c, "verified", CK_KEYWORD,
@@ -9267,10 +9687,12 @@ void analysis_completion(const int line, const int character, jbuf *out)
                 complete_param_name(&c, prev->text);
             }
         } else if (pk == T_WITH || pk == T_WITHOUT) {
-            // view Camera(Player player, with ownership): by this machine's player, which only views ask
-            if (view) {
+            // Views and local match-event handlers can filter by this machine's player.
+            if (view || (f.header == HEADER_SYSTEM && local_match_handler(f.open))) {
                 item(&c, "ownership", CK_KEYWORD,
                      pk == T_WITH ? "Entities this machine's player owns" : "Entities this machine's player doesn't own", NULL, NULL);
+            }
+            if (view) {
                 // ...and with verified Dead: by the world the server has confirmed, which only they see
                 item(&c, "verified", CK_KEYWORD,
                      pk == T_WITH ? "Entities that have it in the world the server has confirmed"
@@ -9544,7 +9966,6 @@ done:
 // ---------------------------------------------------------------------------
 // References, highlights and rename: every occurrence of one symbol
 
-// Do `a` and `b` refer to the same thing?
 static bool same_symbol(const occurrence *a, const occurrence *b)
 {
     if (a->kind != b->kind) return false;
@@ -9617,7 +10038,6 @@ void analysis_highlights(const int line, const int character, jbuf *out)
     jb_put(out, "]");
 }
 
-// The occurrence at the cursor if it can be renamed, or an error for the user.
 static const char *rename_target(const int line, const int character, const occurrence **out)
 {
     if (A.syntax_errors > 0) return "Fix the syntax errors first: uses in code that doesn't parse would be missed.";
@@ -9635,14 +10055,20 @@ static const char *rename_target(const int line, const int character, const occu
     case OCC_ENUM_MEMBER:
         if (!o->decl || o->decl->builtin) return "Members of the engine's enums can't be renamed.";
         return NULL;
-    case OCC_SYSTEM:
     case OCC_PARAM:
+        if (o->param_of && o->param_of->accessor && o->param_of->is_mut_method)
+            return "A setter's 'value' parameter is implicit and can't be renamed.";
+        if (o->param_of && o->param == o->param_of->owner_world)
+            return "A component's contextual 'world' can't be renamed.";
+        return NULL;
+    case OCC_SYSTEM:
     case OCC_LOCAL:
     case OCC_NAMESPACE:
     case OCC_CONST:
         return NULL;
     case OCC_METHOD:
     case OCC_FUNCTION:
+        if (o->decl && o->decl->builtin) return "Built-in names can't be renamed.";
         if (is_operator_decl(o->decl)) return "Operators are named by their symbol, so they can't be renamed.";
         if (is_routine(o->decl)) return NULL;
         return "Built-in names can't be renamed.";
@@ -9718,7 +10144,6 @@ static bool local_named(const stmt *s, const str name)
     return s->kind == S_IF && (local_named(s->then_stmt, name) || local_named(s->else_stmt, name));
 }
 
-// The system, view or input whose body declares `local`.
 static const decl *decl_of_local(const stmt *local)
 {
     for (int i = 0; i < A.written.count; i++) {
@@ -9737,7 +10162,6 @@ static const decl *decl_of_local(const stmt *local)
     return NULL;
 }
 
-// The system, view or input that declares `p`.
 static const decl *decl_of_param(const param *p)
 {
     for (int i = 0; i < A.written.count; i++) {
@@ -9767,7 +10191,6 @@ static bool param_named(const decl *d, const str name)
     return false;
 }
 
-// Whether `name` can replace the target's name, or why not.
 static const char *check_new_name(const occurrence *target, const str name)
 {
     // Words the parser reads as keywords where a declaration or a part of one
@@ -9892,6 +10315,8 @@ static const char *check_new_name(const occurrence *target, const str name)
     return NULL;
 }
 
+static void unity_renames(const occurrence *target, const char *new_name, jbuf *out, int *files_written);
+
 const char *analysis_rename(const char *uri, const int line, const int character, const char *new_name, jbuf *out)
 {
     const occurrence *target;
@@ -9901,7 +10326,6 @@ const char *analysis_rename(const char *uri, const int line, const int character
     error = check_new_name(target, str_from(new_name));
     if (error) goto done; // Name checks return only literals or their static message buffer.
 
-    // Edits grouped by file: every file of the game that uses the name.
     (void)uri;
     jb_put(out, "{\"changes\":{");
     int files_written = 0;
@@ -9925,10 +10349,709 @@ const char *analysis_rename(const char *uri, const int line, const int character
         }
         if (written) jb_put(out, "]");
     }
+    unity_renames(target, new_name, out, &files_written);
     jb_put(out, "}}");
 done:
     arena_rewind(temporary);
     return error;
+}
+
+// ---------------------------------------------------------------------------
+// Renames reaching a Unity project (tide unity --assets): the game's folder in
+// its Assets, its prefabs and scenes. A component is in them two ways:
+// - As the game's own Unity component (com.tide.game's, which tide writes):
+//   its script's GUID is its name's (unity_code_guid in compiler/cli), so a
+//   rename gives each of its objects the new name's GUID (`m_Script`), and a
+//   field's rename changes its key there and in each prefab instance's change
+//   of it (`propertyPath: speed.x`), found through the prefabs instanced. A
+//   struct's field is renamed wherever a component holds the struct, through
+//   structs, lists and arrays (`trail: length:`, `holds.Array.data[0].mass`).
+//   Keys are the C# fields' names, as unity_code.c makes them (unity_key).
+// - Listed on a TideEntity (com.tide.unity): where it lists it
+//   (`- type: Combat.Health`) and where a prefab instance changes one's type;
+//   a field's, where the TideEntity's values for that component set it
+//   (`values: hp = 10, armor = 1`). Not a prefab instance's change of a listed
+//   component's values, whose YAML doesn't say which component's they are.
+
+#define UNITY_ENTITY_GUID "4f7d2c1e9a8b4b6c8d3e2f1a0b9c8d7e" // TideEntity.cs.meta's
+
+// A prefab or scene of the project, by the GUID its .meta gives it, and the IDs its objects of the renamed
+// components have in it, its instances' included, once they're known: each with which of the components it is.
+typedef struct unity_id {
+    int64_t id;
+    int which; // In unity_rename.guids
+} unity_id;
+
+typedef struct unity_asset {
+    char guid[33];
+    char *path;
+    unity_id *ids;
+    int id_count, id_capacity;
+    int known; // 0 not yet, 1 being worked out, 2 known
+} unity_asset;
+
+// Where a renamed field is in a component's YAML: the component (`which`), and the keys down to the field, its old
+// key last, "[]" for a list's or array's element.
+#define UNITY_PATH_MOST 16
+typedef struct unity_path {
+    int which;
+    char *segments[UNITY_PATH_MOST];
+    int count;
+} unity_path;
+
+// A component a rename moves (its own, or its namespace's): its qualified Tide names, its script's GUIDs and its C#
+// class's whole name (`Tide.Game.Combat.Health`), which Unity's m_EditorClassIdentifier ends with
+typedef struct unity_moved {
+    char type[256], new_type[256];
+    char guid[33], new_guid[33];
+    char cs[300], new_cs[300];
+    int which; // In unity_rename.guids, or -1 for a component that's none of the game's own in Unity
+} unity_moved;
+
+typedef struct unity_rename {
+    jbuf *out;
+    int *files_written;
+    unity_moved *moved; // A type's or a namespace's rename: the components it moves
+    int moved_count;
+    const char *type;              // A field's rename: its component's name in the files, for TideEntity lists' values
+    const char *field, *new_field; // ...and the field's
+    char (*guids)[33];             // The components whose objects the rename reaches
+    int guid_count;
+    unity_path *paths; // A field's rename: where it is in them
+    int path_count;
+    char new_key[256]; // ...and its new key
+    unity_asset *assets;
+    int asset_count, asset_capacity;
+    jbuf edits; // One file's
+    int edit_count;
+} unity_rename;
+
+// A component's script GUID, from its qualified Tide name: SHA-256's first 16 bytes, as tide unity makes it.
+static void unity_component_guid(const char *name, char out[33])
+{
+    char text[300], hex[65];
+    snprintf(text, sizeof text, "tide component %s", name);
+    sha256_hex(text, strlen(text), hex);
+    memcpy(out, hex, 32);
+    out[32] = '\0';
+}
+
+static char *unity_read(const char *path)
+{
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    jbuf text = {0};
+    char chunk[16384];
+    size_t n;
+    while ((n = fread(chunk, 1, sizeof chunk, f)) > 0) jb_putn(&text, chunk, n);
+    fclose(f);
+    if (!text.data) jb_put(&text, "");
+    return text.data;
+}
+
+static void unity_index_meta(void *user, const char *path)
+{
+    unity_rename *u = user;
+    const size_t n = strlen(path);
+    if (n < 5) return;
+    const char *base_end = path + n - 5; // Without ".meta"
+    const bool prefab = base_end - path > 7 && strncmp(base_end - 7, ".prefab", 7) == 0;
+    const bool scene = base_end - path > 6 && strncmp(base_end - 6, ".unity", 6) == 0;
+    if (!prefab && !scene) return;
+    char *meta = unity_read(path);
+    const char *g = meta ? strstr(meta, "\nguid: ") : NULL;
+    if (g) {
+        if (u->asset_count == u->asset_capacity) {
+            u->asset_capacity = u->asset_capacity ? u->asset_capacity * 2 : 32;
+            u->assets = realloc(u->assets, sizeof *u->assets * (size_t)u->asset_capacity);
+            if (!u->assets) abort();
+        }
+        unity_asset *a = &u->assets[u->asset_count++];
+        memset(a, 0, sizeof *a);
+        for (int i = 0; i < 32 && isxdigit((unsigned char)g[7 + i]); i++) a->guid[i] = g[7 + i];
+        a->path = malloc((size_t)(base_end - path) + 1);
+        if (!a->path) abort();
+        memcpy(a->path, path, (size_t)(base_end - path));
+        a->path[base_end - path] = '\0';
+    }
+    free(meta);
+}
+
+static unity_asset *unity_asset_of(unity_rename *u, const char *guid)
+{
+    for (int i = 0; i < u->asset_count; i++) {
+        if (strcmp(u->assets[i].guid, guid) == 0) return &u->assets[i];
+    }
+    return NULL;
+}
+
+static void unity_add_id(unity_asset *a, const int64_t id, const int which)
+{
+    if (a->id_count == a->id_capacity) {
+        a->id_capacity = a->id_capacity ? a->id_capacity * 2 : 8;
+        a->ids = realloc(a->ids, sizeof *a->ids * (size_t)a->id_capacity);
+        if (!a->ids) abort();
+    }
+    a->ids[a->id_count++] = (unity_id){id, which};
+}
+
+// Which of the renamed components a script line names, or -1.
+static int unity_which(const unity_rename *u, const char *line)
+{
+    for (int i = 0; i < u->guid_count; i++) {
+        if (strstr(line, u->guids[i])) return i;
+    }
+    return -1;
+}
+
+// The GUID after "guid: " in a line, into `out` ("" for none).
+static void unity_line_guid(const char *line, char out[33])
+{
+    out[0] = '\0';
+    const char *g = strstr(line, "guid: ");
+    if (!g) return;
+    int i = 0;
+    for (; i < 32 && isxdigit((unsigned char)g[6 + i]); i++) out[i] = g[6 + i];
+    out[i] = '\0';
+}
+
+// The IDs the renamed components' objects have in an asset: its own, and its prefab instances' (Unity numbers an
+// instance's objects (instance ^ their ID in the prefab)).
+static const unity_asset *unity_ids(unity_rename *u, unity_asset *a)
+{
+    if (!a || a->known) return a;
+    a->known = 1; // A prefab that includes itself adds nothing while it's worked out
+    char *text = unity_read(a->path);
+    int cls = 0;
+    int64_t doc = 0;
+    bool stripped = false;
+    for (char *line = text; line && *line;) {
+        char *next = strchr(line, '\n');
+        if (next) *next = '\0';
+        if (strncmp(line, "--- !u!", 7) == 0) {
+            cls = atoi(line + 7);
+            const char *amp = strchr(line, '&');
+            doc = amp ? strtoll(amp + 1, NULL, 10) : 0;
+            stripped = strstr(line, " stripped") != NULL;
+        } else if (cls == 114 && !stripped && strncmp(line, "  m_Script: ", 12) == 0) {
+            const int which = unity_which(u, line);
+            if (which >= 0) unity_add_id(a, doc, which);
+        } else if (cls == 1001 && strncmp(line, "  m_SourcePrefab: ", 18) == 0) {
+            char g[33];
+            unity_line_guid(line, g);
+            const unity_asset *source = unity_ids(u, unity_asset_of(u, g));
+            for (int i = 0; source && source->known == 2 && i < source->id_count; i++) {
+                unity_add_id(a, (int64_t)(((uint64_t)doc ^ (uint64_t)source->ids[i].id) & 0x7FFFFFFFFFFFFFFFull), source->ids[i].which);
+            }
+        }
+        line = next ? next + 1 : NULL;
+    }
+    free(text);
+    a->known = 2;
+    return a;
+}
+
+// Which renamed component (guid, id) is an object of, or -1.
+static int unity_component_of(unity_rename *u, const char *guid, const int64_t id)
+{
+    const unity_asset *a = unity_ids(u, unity_asset_of(u, guid));
+    for (int i = 0; a && i < a->id_count; i++) {
+        if (a->ids[i].id == id) return a->ids[i].which;
+    }
+    return -1;
+}
+
+// A byte offset in a line as LSP counts columns: UTF-16 code units.
+static int utf16_column(const char *line, const int bytes)
+{
+    int column = 0;
+    for (int i = 0; i < bytes && line[i]; i++) {
+        const unsigned char c = (unsigned char)line[i];
+        if ((c & 0xC0) == 0x80) continue; // A continuation byte
+        column += c >= 0xF0 ? 2 : 1;      // Past the BMP, a surrogate pair
+    }
+    return column;
+}
+
+static void unity_edit(unity_rename *u, const int line, const char *text, const int from, const int to, const char *replacement)
+{
+    if (u->edit_count++) jb_put(&u->edits, ",");
+    jb_printf(&u->edits, "{\"range\":{\"start\":{\"line\":%d,\"character\":%d},\"end\":{\"line\":%d,\"character\":%d}},\"newText\":",
+              line, utf16_column(text, from), line, utf16_column(text, to));
+    jb_string(&u->edits, replacement);
+    jb_put(&u->edits, "}");
+}
+
+// `prefix` then exactly `name` and the line's end: where the name starts, or -1.
+static int unity_names(const char *line, const char *prefix, const char *name)
+{
+    const char *p = line;
+    while (*p == ' ') p++;
+    const size_t n = strlen(prefix);
+    if (strncmp(p, prefix, n) != 0) return -1;
+    p += n;
+    const size_t m = strlen(name);
+    if (strncmp(p, name, m) != 0) return -1;
+    const char *end = p + m;
+    while (*end == ' ' || *end == '\r') end++;
+    return *end ? -1 : (int)(p - line);
+}
+
+// The field keys in a values line (`values: a = 1, b = float3(1, 2, 3)`, plain or single-quoted) that are `field`.
+static void unity_rename_keys(unity_rename *u, const int number, const char *line, const char *start)
+{
+    const char *p = start;
+    const bool quoted = *p == '\'';
+    if (quoted) p++;
+    int depth = 0;
+    char quote = 0;
+    const char *segment = p;
+    for (;; p++) {
+        const char c = *p;
+        if (quote && c) {
+            if (c == '\\' && p[1]) p++;
+            else if (c == quote) quote = 0;
+            continue;
+        }
+        if (c == '"') quote = c;
+        else if (c == '(' || c == '[' || c == '{') depth++;
+        else if (c == ')' || c == ']' || c == '}') depth--;
+        const bool end = !c || c == '\r' || (quoted && c == '\'' && p[1] != '\'');
+        if (end || ((c == ',' || c == ';') && depth == 0)) {
+            const char *key = segment;
+            while (*key == ' ') key++;
+            const char *eq = strchr(key, '=');
+            if (eq && eq < p) {
+                const char *key_end = eq;
+                while (key_end > key && key_end[-1] == ' ') key_end--;
+                if ((size_t)(key_end - key) == strlen(u->field) && strncmp(key, u->field, (size_t)(key_end - key)) == 0) {
+                    unity_edit(u, number, line, (int)(key - line), (int)(key_end - line), u->new_field);
+                }
+            }
+            if (end) break;
+            segment = p + 1;
+        }
+    }
+}
+
+static void unity_rename_file(void *user, const char *path)
+{
+    unity_rename *u = user;
+    char *data = unity_read(path);
+    bool wanted = data && (strstr(data, UNITY_ENTITY_GUID) || strstr(data, "propertyPath: "));
+    for (int i = 0; data && !wanted && i < u->guid_count; i++) wanted = strstr(data, u->guids[i]) != NULL;
+    if (!wanted) {
+        free(data);
+        return;
+    }
+    jbuf text = {data, strlen(data), strlen(data) + 1};
+    u->edits = (jbuf){0};
+    u->edit_count = 0;
+    char current[256] = ""; // The type of the TideEntity component whose entry the lines are in
+    bool type_change = false; // The line before changed a component's type in a prefab instance
+    int ours = -1;            // The document is an object of this renamed component
+    int cls = 0;
+    // The keys the lines are in, in one of its objects: each with its key's indent ("[]" a list's element)
+    const char *stack[UNITY_PATH_MOST * 2];
+    size_t stack_len[UNITY_PATH_MOST * 2];
+    int indents[UNITY_PATH_MOST * 2];
+    int depth = 0;
+    char target_guid[33] = ""; // What the prefab instance's change the lines are in changes
+    int64_t target = -1;
+    int number = 0;
+    for (char *line = text.data; line && *line; number++) {
+        char *next = strchr(line, '\n');
+        if (next) *next = '\0';
+        int at;
+        const char *p = line;
+        while (*p == ' ') p++;
+        if (strncmp(line, "--- !u!", 7) == 0) {
+            cls = atoi(line + 7);
+            ours = -1;
+            depth = 0;
+        } else if (cls == 114 && strncmp(line, "  m_Script: ", 12) == 0) {
+            ours = unity_which(u, line);
+            for (int k = 0; k < u->moved_count; k++) {
+                const char *g = u->moved[k].which >= 0 ? strstr(line, u->moved[k].guid) : NULL;
+                if (g) unity_edit(u, number, line, (int)(g - line), (int)(g - line) + 32, u->moved[k].new_guid);
+            }
+        } else if (ours >= 0 && u->moved_count && strncmp(line, "  m_EditorClassIdentifier: ", 27) == 0) {
+            // `Tide.Game::Tide.Game.Combat.Health`: from where the old and new class names part
+            const size_t len = strlen(line) - (line[strlen(line) - 1] == '\r' ? 1 : 0);
+            for (int k = 0; k < u->moved_count; k++) {
+                const unity_moved *m = &u->moved[k];
+                const size_t n = strlen(m->cs);
+                if (m->which != ours || len <= n || line[len - n - 1] != ':' || strncmp(line + len - n, m->cs, n) != 0) continue;
+                size_t common = 0;
+                while (m->cs[common] && m->cs[common] == m->new_cs[common]) common++;
+                while (common > 0 && m->cs[common - 1] != '.') common--;
+                unity_edit(u, number, line, (int)(len - n + common), (int)len, m->new_cs + common);
+            }
+        } else if (ours >= 0 && !u->moved_count && line[0] == ' ' && line[1] == ' ') {
+            // One of its serialized fields, or a field of one: the keys it's in, by their indents
+            const int indent = (int)(p - line);
+            const bool item = p[0] == '-' && p[1] == ' ';
+            const char *key = item ? p + 2 : p;
+            while (*key == ' ') key++;
+            const int key_indent = (int)(key - line);
+            if (item) {
+                while (depth > 0 && indents[depth - 1] > indent) depth--;
+                if (depth < UNITY_PATH_MOST * 2) {
+                    stack[depth] = "[]";
+                    stack_len[depth] = 2;
+                    indents[depth++] = indent + 1;
+                }
+            } else {
+                while (depth > 0 && indents[depth - 1] >= key_indent) depth--;
+            }
+            size_t n = 0;
+            while (isalnum((unsigned char)key[n]) || key[n] == '_' || (unsigned char)key[n] >= 0x80) n++;
+            if (n && key[n] == ':' && depth < UNITY_PATH_MOST * 2) {
+                stack[depth] = key;
+                stack_len[depth] = n;
+                indents[depth++] = key_indent;
+                for (int i = 0; i < u->path_count; i++) {
+                    const unity_path *up = &u->paths[i];
+                    bool same = up->which == ours && up->count == depth;
+                    for (int k = 0; same && k < depth; k++) {
+                        same = strlen(up->segments[k]) == stack_len[k] && strncmp(up->segments[k], stack[k], stack_len[k]) == 0;
+                    }
+                    if (same) unity_edit(u, number, line, key_indent, key_indent + (int)n, u->new_key);
+                }
+            }
+        }
+        if (strncmp(p, "- target: ", 10) == 0) {
+            unity_line_guid(p, target_guid);
+            const char *id = strstr(p, "fileID: ");
+            target = id ? strtoll(id + 8, NULL, 10) : -1;
+        } else if (!u->moved_count && strncmp(p, "propertyPath: ", 14) == 0 && target >= 0 && u->path_count) {
+            // A prefab instance's change of the field, or of what's in it (speed, speed.x, marks.Array.data[2],
+            // holds.Array.data[0].mass): its segments, "Array.data[i]" one ("[]"), against each path
+            const char *seg_at[UNITY_PATH_MOST * 2];
+            size_t seg_len[UNITY_PATH_MOST * 2];
+            int segs = 0;
+            for (const char *at = p + 14; *at && *at != '\r' && segs < UNITY_PATH_MOST * 2;) {
+                const char *end = at;
+                while (*end && *end != '.' && *end != '\r') end++;
+                if (strncmp(at, "Array.data[", 11) == 0 || (end - at == 5 && strncmp(at, "Array", 5) == 0 && strncmp(end, ".data[", 6) == 0)) {
+                    const char *close = strchr(at, ']');
+                    if (!close) break;
+                    seg_at[segs] = "[]";
+                    seg_len[segs++] = 2;
+                    at = close + 1;
+                    if (*at == '.') at++;
+                    continue;
+                }
+                seg_at[segs] = at;
+                seg_len[segs++] = (size_t)(end - at);
+                at = *end == '.' ? end + 1 : end;
+            }
+            const int which = unity_component_of(u, target_guid[0] ? target_guid : "", target);
+            for (int i = 0; which >= 0 && i < u->path_count; i++) {
+                const unity_path *up = &u->paths[i];
+                if (up->which != which || up->count > segs) continue;
+                bool same = true;
+                for (int k = 0; same && k < up->count; k++) {
+                    same = strlen(up->segments[k]) == seg_len[k] && strncmp(up->segments[k], seg_at[k], seg_len[k]) == 0;
+                }
+                const char *key = seg_at[up->count - 1];
+                if (same) unity_edit(u, number, line, (int)(key - line), (int)(key - line) + (int)seg_len[up->count - 1], u->new_key);
+            }
+        }
+        if (strncmp(p, "- type: ", 8) == 0) {
+            snprintf(current, sizeof current, "%s", p + 8);
+            const size_t len = strlen(current);
+            if (len && current[len - 1] == '\r') current[len - 1] = '\0';
+            for (int k = 0; k < u->moved_count; k++) {
+                if ((at = unity_names(line, "- type: ", u->moved[k].type)) >= 0) {
+                    unity_edit(u, number, line, at, at + (int)strlen(u->moved[k].type), u->moved[k].new_type);
+                }
+            }
+        } else if (!u->moved_count && u->type && strncmp(p, "values: ", 8) == 0 && strcmp(current, u->type) == 0) {
+            unity_rename_keys(u, number, line, p + 8);
+        } else if (u->moved_count && type_change) {
+            for (int k = 0; k < u->moved_count; k++) {
+                if ((at = unity_names(line, "value: ", u->moved[k].type)) >= 0) {
+                    unity_edit(u, number, line, at, at + (int)strlen(u->moved[k].type), u->moved[k].new_type);
+                }
+            }
+        }
+        // A component's entry is its type's line and its values' after it
+        if (strncmp(p, "- type: ", 8) != 0 && strncmp(p, "values: ", 8) != 0) current[0] = '\0';
+        type_change = strncmp(p, "propertyPath: components.Array.data[", 36) == 0 && strstr(p, "].type") != NULL;
+        line = next ? next + 1 : NULL;
+    }
+    if (u->edit_count) {
+        jbuf uri = {0};
+        jb_put(&uri, path[0] == '/' ? "file://" : "file:///");
+        for (const char *c = path; *c; c++) {
+            if (*c == ' ' || *c == '%' || *c == '#' || *c == '?') jb_printf(&uri, "%%%02X", (unsigned char)*c);
+            else jb_putn(&uri, c, 1);
+        }
+        if ((*u->files_written)++) jb_put(u->out, ",");
+        jb_string(u->out, uri.data);
+        jb_put(u->out, ":[");
+        jb_put(u->out, u->edits.data);
+        jb_put(u->out, "]");
+        jb_free(&uri);
+    }
+    jb_free(&u->edits);
+    jb_free(&text);
+}
+
+// A field's key in Unity's YAML: its C# name as unity_code.c makes it (an identifier, a keyword's without its @),
+// with _ after where it's a member of its class or struct, or its type's own name (`owner`'s C# name).
+static void unity_key(const str name, const char *owner, char *out, const size_t size)
+{
+    jbuf k = {0};
+    for (int i = 0; i < name.len; i++) {
+        const char c = name.ptr[i];
+        if (c == '?') jb_put(&k, "Optional");
+        else if (isalnum((unsigned char)c) || c == '_' || (unsigned char)c >= 0x80) jb_putn(&k, &c, 1);
+        else jb_put(&k, "_");
+    }
+    if (!k.data) jb_put(&k, "");
+    if (!k.data[0] || isdigit((unsigned char)k.data[0])) {
+        jbuf p = {0};
+        jb_put(&p, "_");
+        jb_put(&p, k.data);
+        jb_free(&k);
+        k = p;
+    }
+    static const char *const members[] = {"Value", "TideName", "ReadLive", "Pack", "From", "Tick", "Verified", "Target", "TargetEntity"};
+    bool reserved = strcmp(k.data, owner) == 0;
+    for (size_t i = 0; i < sizeof members / sizeof members[0]; i++) reserved |= strcmp(k.data, members[i]) == 0;
+    snprintf(out, size, "%s%s", k.data, reserved ? "_" : "");
+    jb_free(&k);
+}
+
+// A type's C# name, as its key's owner: its name without its namespace.
+static void unity_owner(const decl *d, char *out, const size_t size)
+{
+    jbuf k = {0};
+    for (int i = 0; i < d->name.len; i++) {
+        const char c = d->name.ptr[i];
+        if (isalnum((unsigned char)c) || c == '_' || (unsigned char)c >= 0x80) jb_putn(&k, &c, 1);
+        else jb_put(&k, "_");
+    }
+    snprintf(out, size, "%s", k.data ? k.data : "");
+    jb_free(&k);
+}
+
+// Whether a component is one of the game's own in Unity (unity_code.c's `authored`).
+static bool unity_authored(const decl *d)
+{
+    return d->kind == DECL_COMPONENT && !d->builtin && !d->is_local && !d->is_scene && d->unit
+        && !(d->qualified.len > 12 && strncmp(d->qualified.ptr, "UnityEngine.", 12) == 0)
+        && !(d->qualified.len == 9 && strncmp(d->qualified.ptr, "Transform", 9) == 0);
+}
+
+static int unity_guid_index(unity_rename *u, const decl *component)
+{
+    char name[256], guid[33];
+    snprintf(name, sizeof name, STR_FMT, STR_ARG(component->qualified));
+    unity_component_guid(name, guid);
+    for (int i = 0; i < u->guid_count; i++) {
+        if (strcmp(u->guids[i], guid) == 0) return i;
+    }
+    u->guids = realloc(u->guids, sizeof *u->guids * (size_t)(u->guid_count + 1));
+    if (!u->guids) abort();
+    memcpy(u->guids[u->guid_count], guid, 33);
+    return u->guid_count++;
+}
+
+static void unity_add_path(unity_rename *u, const int which, char **segments, const int count)
+{
+    u->paths = realloc(u->paths, sizeof *u->paths * (size_t)(u->path_count + 1));
+    if (!u->paths) abort();
+    unity_path *up = &u->paths[u->path_count++];
+    up->which = which;
+    up->count = count;
+    for (int i = 0; i < count; i++) {
+        up->segments[i] = malloc(strlen(segments[i]) + 1);
+        if (!up->segments[i]) abort();
+        strcpy(up->segments[i], segments[i]);
+    }
+}
+
+// Every place in `d`'s fields (a component's, or a struct's in one, at `segments`) where `owner`'s field `old_key`
+// is: through structs, lists and arrays of them, as Unity serializes them.
+static void unity_struct_paths(unity_rename *u, const int which, const decl *d, const decl *owner, const char *old_key,
+                               char **segments, const int count)
+{
+    if (count + 3 > UNITY_PATH_MOST) return;
+    char cls[256];
+    unity_owner(d, cls, sizeof cls);
+    for (int i = 0; i < d->fields.count; i++) {
+        const field *f = &d->fields.items[i];
+        if (f->is_local) continue;
+        type t = f->type;
+        char key[256];
+        unity_key(f->name, cls, key, sizeof key);
+        segments[count] = key;
+        int n = count + 1;
+        if ((t.kind == TY_LIST || t.kind == TY_ARRAY) && t.decl && t.decl->fields.count) {
+            segments[n++] = "[]";
+            t = t.decl->fields.items[0].type;
+        }
+        if (t.kind != TY_STRUCT || !t.decl) continue;
+        if (t.decl == owner) {
+            segments[n] = (char *)old_key;
+            unity_add_path(u, which, segments, n + 1);
+        } else {
+            unity_struct_paths(u, which, t.decl, owner, old_key, segments, n);
+        }
+    }
+}
+
+// A C# class's whole name, as unity_code.c names it (unity_names.h): `Tide.Game.Combat.Health` of `Combat.Health`
+static void unity_class_name(const char *qualified, char *out, const size_t size)
+{
+    const char *dot = strrchr(qualified, '.');
+    char *space = dot ? unity_cs_namespace(qualified, (size_t)(dot - qualified)) : NULL;
+    const char *last = dot ? dot + 1 : qualified;
+    char *name = unity_cs_identifier(last, strlen(last));
+    snprintf(out, size, "Tide.Game.%s%s%s", space ? space : "", space ? "." : "", name[0] == '@' ? name + 1 : name);
+    free(space);
+    free(name);
+}
+
+// A component the rename moves from `type` to `new_type`
+static void unity_move(unity_rename *u, const decl *component, const char *type, const char *new_type)
+{
+    u->moved = realloc(u->moved, sizeof *u->moved * (size_t)(u->moved_count + 1));
+    if (!u->moved) abort();
+    unity_moved *m = &u->moved[u->moved_count++];
+    memset(m, 0, sizeof *m);
+    snprintf(m->type, sizeof m->type, "%s", type);
+    snprintf(m->new_type, sizeof m->new_type, "%s", new_type);
+    unity_component_guid(type, m->guid);
+    unity_component_guid(new_type, m->new_guid);
+    unity_class_name(type, m->cs, sizeof m->cs);
+    unity_class_name(new_type, m->new_cs, sizeof m->new_cs);
+    m->which = unity_authored(component) ? unity_guid_index(u, component) : -1;
+}
+
+static void unity_renames(const occurrence *target, const char *new_name, jbuf *out, int *files_written)
+{
+    const decl *component = NULL, *structure = NULL;
+    const field *renamed = NULL;
+    if (target->kind == OCC_TYPE && target->decl && target->decl->kind == DECL_COMPONENT) component = target->decl;
+    if (target->kind == OCC_FIELD && target->field && target->decl && target->decl->kind == DECL_COMPONENT) {
+        component = target->decl;
+        renamed = target->field;
+    }
+    if (target->kind == OCC_FIELD && target->field && target->decl && target->decl->kind == DECL_STRUCT) {
+        structure = target->decl;
+        renamed = target->field;
+    }
+    if (!asset_roots.game_folder) return;
+    // The Unity project the game's folder is in: the folder above it with ProjectSettings and Assets
+    char project[1024];
+    snprintf(project, sizeof project, "%s", asset_roots.game_folder);
+    for (size_t len = strlen(project); len > 0;) {
+        while (len > 0 && (project[len - 1] == '/' || project[len - 1] == '\\')) project[--len] = '\0';
+        char probe[1100];
+        snprintf(probe, sizeof probe, "%s/ProjectSettings/ProjectVersion.txt", project);
+        if (folder_file_info(probe, NULL, NULL)) break;
+        while (len > 0 && project[len - 1] != '/' && project[len - 1] != '\\') project[--len] = '\0';
+        if (len == 0) return;
+    }
+    // The project's C#, which uses the game's types' C# twins (csharp.h)
+    const decl *d = target->decl;
+    const bool typed = d && (d->kind == DECL_COMPONENT || d->kind == DECL_SINGLETON || d->kind == DECL_STRUCT
+                             || d->kind == DECL_EVENT || d->kind == DECL_INPUT || d->kind == DECL_ENUM);
+    if (typed && (target->kind == OCC_TYPE || (target->kind == OCC_FIELD && target->field) || target->kind == OCC_ENUM_MEMBER)) {
+        char qualified[512], old_name[256];
+        snprintf(qualified, sizeof qualified, STR_FMT, STR_ARG(d->qualified));
+        const str named = target->kind == OCC_FIELD ? target->field->name : target->name;
+        snprintf(old_name, sizeof old_name, STR_FMT, STR_ARG(named));
+        const csharp_what what = target->kind == OCC_TYPE ? CSHARP_TYPE : target->kind == OCC_FIELD ? CSHARP_FIELD : CSHARP_MEMBER;
+        csharp_renames(project, what, qualified, what == CSHARP_TYPE ? NULL : old_name, new_name, out, files_written);
+    }
+    // A namespace's: every component in it moves, in the project's assets as in its C#
+    char space[512] = "";
+    if (target->kind == OCC_NAMESPACE && target->name.len) {
+        snprintf(space, sizeof space, STR_FMT, STR_ARG(target->name));
+        csharp_renames(project, CSHARP_NAMESPACE, space, NULL, new_name, out, files_written);
+    }
+    if (!component && !structure && !space[0]) return;
+    unity_rename u = {0};
+    u.out = out;
+    u.files_written = files_written;
+    u.new_field = new_name;
+    char type[256] = "", field_name[256] = "";
+    if (component && !renamed) {
+        // A namespaced component keeps its namespace: only its own name changes
+        char qualified[256], moved_to[256];
+        snprintf(qualified, sizeof qualified, STR_FMT, STR_ARG(component->qualified));
+        const char *dot = strrchr(qualified, '.');
+        snprintf(moved_to, sizeof moved_to, "%.*s%s", dot ? (int)(dot - qualified + 1) : 0, qualified, new_name);
+        unity_move(&u, component, qualified, moved_to);
+    } else if (component) {
+        snprintf(type, sizeof type, STR_FMT, STR_ARG(component->qualified));
+        u.type = type;
+        unity_guid_index(&u, component);
+    }
+    if (space[0]) {
+        // Its parent's path and the new name
+        const char *last = strrchr(space, '.');
+        char to[512];
+        snprintf(to, sizeof to, "%.*s%s", last ? (int)(last - space + 1) : 0, space, new_name);
+        const size_t n = strlen(space);
+        for (int i = 0; i < A.prog->decls.count; i++) {
+            const decl *c = A.prog->decls.items[i];
+            if (c->kind != DECL_COMPONENT || c->builtin || c->is_scene || !c->unit) continue;
+            char qualified[256], moved_to[256];
+            snprintf(qualified, sizeof qualified, STR_FMT, STR_ARG(c->qualified));
+            if (strncmp(qualified, space, n) != 0 || qualified[n] != '.') continue;
+            snprintf(moved_to, sizeof moved_to, "%s%s", to, qualified + n);
+            unity_move(&u, c, qualified, moved_to);
+        }
+        if (!u.moved_count) return;
+    }
+    if (renamed) snprintf(field_name, sizeof field_name, STR_FMT, STR_ARG(renamed->name));
+    u.field = field_name;
+    if (renamed) {
+        const decl *owner = component ? component : structure;
+        char cls[256], old_key[256];
+        unity_owner(owner, cls, sizeof cls);
+        unity_key(renamed->name, cls, old_key, sizeof old_key);
+        unity_key(str_from(new_name), cls, u.new_key, sizeof u.new_key);
+        char *segments[UNITY_PATH_MOST];
+        if (component) {
+            segments[0] = old_key;
+            unity_add_path(&u, 0, segments, 1);
+        } else {
+            for (int i = 0; i < A.prog->decls.count; i++) {
+                const decl *c = A.prog->decls.items[i];
+                if (!unity_authored(c)) continue;
+                const int before = u.path_count;
+                unity_struct_paths(&u, u.guid_count, c, structure, old_key, segments, 0);
+                if (u.path_count > before) {
+                    const int which = unity_guid_index(&u, c);
+                    for (int k = before; k < u.path_count; k++) u.paths[k].which = which;
+                }
+            }
+            if (!u.path_count) return;
+        }
+    }
+    char assets[1100];
+    snprintf(assets, sizeof assets, "%s/Assets/", project);
+    folder_find(assets, ".meta", unity_index_meta, &u);
+    folder_find(assets, ".prefab", unity_rename_file, &u);
+    folder_find(assets, ".unity", unity_rename_file, &u);
+    for (int i = 0; i < u.asset_count; i++) {
+        free(u.assets[i].path);
+        free(u.assets[i].ids);
+    }
+    free(u.assets);
+    for (int i = 0; i < u.path_count; i++) {
+        for (int k = 0; k < u.paths[i].count; k++) free(u.paths[i].segments[k]);
+    }
+    free(u.paths);
+    free(u.guids);
+    free(u.moved);
 }
 
 // ---------------------------------------------------------------------------
@@ -9988,7 +11111,6 @@ static label_spans label_split(const char *label)
     return (label_spans){.count = -1};
 }
 
-// Adds a signature, finding its parameters in the label: "Name(float2 center, float radius)".
 static void add_signature(signature_list *s, const char *label, const char *doc)
 {
     const label_spans spans = label_split(label);
@@ -10053,13 +11175,20 @@ static const struct {
      "its code point."},
     {"long", {"long(float value)", "long(int value)"}, "From a float: truncates toward zero and saturates at the long range; NaN gives 0. "
                                                      "An int converts by itself."},
-    {"float", {"float(int value)", "float(long value)"}, "A long rounds to the nearest float."},
+    {"float", {"float(int value)", "float(long value)", "float(double value)"}, "A long rounds to the nearest float."},
     {"int2", {"int2(int x, int y)", "int2(int value)", "int2(float2 value)"}, NULL},
     {"int3", {"int3(int x, int y, int z)", "int3(int2 xy, int z)", "int3(int value)"}, NULL},
     {"int4", {"int4(int x, int y, int z, int w)", "int4(int3 xyz, int w)", "int4(int value)"}, NULL},
     {"float2", {"float2(float x, float y)", "float2(float value)", "float2(int2 value)"}, NULL},
     {"float3", {"float3(float x, float y, float z)", "float3(float2 xy, float z)", "float3(float value)"}, NULL},
     {"float4", {"float4(float x, float y, float z, float w)", "float4(float3 xyz, float w)", "float4(float value)"}, NULL},
+    {"double", {"double(float value)", "double(int value)", "double(long value)"}, "Widens a number to binary64. Use a d-suffixed literal to retain decimal precision before conversion."},
+    {"double2", {"double2(double x, double y)", "double2(double value)", "double2(float2 value)", "double2(int2 value)"}, NULL},
+    {"double3", {"double3(double x, double y, double z)", "double3(double2 xy, double z)", "double3(double value)", "double3(float3 value)"}, NULL},
+    {"double4", {"double4(double x, double y, double z, double w)", "double4(double3 xyz, double w)", "double4(double value)", "double4(float4 value)"}, NULL},
+    {"double2x2", {"double2x2(double2 c0, double2 c1)", "double2x2(float2x2 matrix)"}, "Columns, or numbers row by row. A float matrix widens implicitly."},
+    {"double3x3", {"double3x3(double3 c0, double3 c1, double3 c2)", "double3x3(float3x3 matrix)"}, "Columns, or numbers row by row. A float matrix widens implicitly."},
+    {"double4x4", {"double4x4(double4 c0, double4 c1, double4 c2, double4 c3)", "double4x4(float4x4 matrix)"}, "Columns, or numbers row by row. A float matrix widens implicitly."},
     {"quaternion", {"quaternion(float x, float y, float z, float w)", "quaternion(float4 value)", "quaternion(float3x3 rotation)"}, NULL},
     {"float2x2", {"float2x2(float2 c0, float2 c1)", "float2x2(float m00, float m01, float m10, float m11)"}, "Columns, or numbers row by row."},
     {"float3x3", {"float3x3(float3 c0, float3 c1, float3 c2)", "float3x3(quaternion rotation)"}, NULL},
@@ -10270,12 +11399,13 @@ static const struct {
     [MESH_INSTANCES] = {"instances",
                         {"A List<T> of instance structs, one for each mesh. A vert or frag reads each through a read-only T parameter.",
                          "A List<float4x4> of transforms, or a List<T> of instance structs. A struct's float4x4 transform places "
-                         "the mesh; without one, it uses the identity."}},
+                         "the mesh; without one, it uses the identity. With a SkinnedMesh<V>, an optional Pose pose field "
+                         "animates each instance; without it the model uses authored rest. Invalid poses skip their item."}},
     [MESH_VALUES] = {"values",
                      {"A struct's value, after the vert and the frag: they read it through a read-only parameter of its type. "
                       "It's sent once for the draw, and only the fields they read."}},
     [MESH_WHOLE] = {"mesh", {"A `Mesh<V>`: an asset's vertices and its indices as one, like `asset Mesh<Corner> tree = "
-                             "\"art/tree.glb\";`. A vert and a frag take its vertex struct, V."}},
+                             "\"art/tree.glb\";`. Instanced also accepts a `SkinnedMesh<V>`. A vert and a frag take its vertex struct, V."}},
     [MESH_SKINNED] = {"mesh", {"An immutable `SkinnedMesh<V>` model. A vert and a frag take its ordinary vertex struct, V."}},
     [MESH_POSE] = {"pose", {"An optional Pose: skinning applies its transforms before the user vertex stage. Omit it to draw the model's authored rest pose."}},
 };
@@ -10405,6 +11535,9 @@ static int call_param_names(const expr *call, str *names, const int max)
             if (str_eq_c(call->name, wait_calls[i].name)) vec_push(list.labels, wait_calls[i].form);
         }
         break;
+    case CALL_TASK:
+        vec_push(list.labels, task_calls[0].form);
+        break;
     case CALL_CLIPBOARD:
         vec_push(list.labels, CLIPBOARD_COPY_FORM);
         break;
@@ -10504,12 +11637,14 @@ static void mesh_signature_help(const int open, const int commas, const loc at, 
     const str owner = str_from("Draw"); // A target's are Draw's too
     const decl *const drawn = mesh_vertex(&sc, args.first[0], args.last[0]);
     const bool skinned = str_eq_c(DOC->toks[open - 1].text, "SkinnedMesh");
+    const bool instanced = str_eq_c(DOC->toks[open - 1].text, "Instanced");
+    const type model = args.count > 0 ? names_type(&sc, args.first[0], args.last[0]) : (type){0};
     // A Mesh asset where the vertices go: it's its indices too, and always 3D
     const bool whole = args.count > 0 && args.first[0] <= args.last[0] && DOC->toks[args.first[0]].kind == T_IDENT
-                    && names_type(&sc, args.first[0], args.last[0]).kind == TY_MESH;
+                    && (model.kind == TY_MESH || (instanced && model.kind == TY_STRUCT && model.decl
+                                                 && model.decl->skin_kind == SKIN_MESH));
     const bool three_d = skinned || whole || (drawn ? vertex_is_3d(drawn)
                                          : args.count > 2 && mesh_argument(&sc, args.first[2], args.last[2]) == MESH_TRANSFORM);
-    const bool instanced = str_eq_c(DOC->toks[open - 1].text, "Instanced");
     const int *order = forms[skinned ? 5 : whole ? (instanced ? 4 : 3) : instanced ? 2 : three_d ? 1 : 0];
     const int count = whole ? 8 : instanced || three_d ? 9 : 8;
     const int fixed = skinned || whole ? 2 : instanced || three_d ? 3 : 2; // The lists or the Mesh, and a 3D mesh's transform or the instances
@@ -10747,7 +11882,6 @@ typedef struct fmt_item {
 
 typedef VEC(fmt_item) fmt_line;
 
-// 1-based line holding `p`.
 static int line_of(const char *p)
 {
     int lo = 0;
@@ -10760,7 +11894,6 @@ static int line_of(const char *p)
     return lo + 1;
 }
 
-// A line's text, without its line break.
 static str line_text(const int line)
 {
     const char *start = DOC->lines.items[line - 1];
@@ -10848,11 +11981,26 @@ static bool is_argument_colon(const int i)
         && (DOC->toks[i - 2].kind == T_LPAREN || DOC->toks[i - 2].kind == T_COMMA);
 }
 
-// A type written with others in <>, which the formatter keeps tight: List<int>, Map<int, float>.
+// A type written with others in <>, which the formatter keeps tight: List<int>, Map<int, float>, and a handler's
+// Changed<Health.value>.
 static bool generic_type(const str name)
 {
-    return str_eq_c(name, "List") || str_eq_c(name, "Map") || str_eq_c(name, "Set") || str_eq_c(name, "Grid2")
+    return str_eq_c(name, "Changed") || str_eq_c(name, "Task") || str_eq_c(name, "LocalTask") || str_eq_c(name, "Func") || str_eq_c(name, "List") || str_eq_c(name, "Map") || str_eq_c(name, "Set") || str_eq_c(name, "Grid2")
         || str_eq_c(name, "Grid3") || str_eq_c(name, "Mesh") || str_eq_c(name, "SkinnedMesh") || str_eq_c(name, "Asset");
+}
+
+// A nested type can end in one lexer token, `>>`, as in an alias of Map<int, List<float>>.
+static bool closes_generic_type(const int i)
+{
+    int depth = DOC->toks[i].kind == T_SHR ? 2 : 1;
+    for (int k = i - 1; k > 0; k--) {
+        const tok_kind kind = DOC->toks[k].kind;
+        if (kind == T_GT) depth++;
+        else if (kind == T_SHR) depth += 2;
+        else if (kind == T_LT && --depth == 0) return generic_type(DOC->toks[k - 1].text);
+        else if (kind != T_LT && kind != T_IDENT && kind != T_MUT && kind != T_DOT && kind != T_COMMA && kind != T_QUESTION) return false;
+    }
+    return false;
 }
 
 static bool space_between(const fmt_item *a, const fmt_item *b)
@@ -10880,11 +12028,7 @@ static bool space_between(const fmt_item *a, const fmt_item *b)
     // List<Item>: a type, not a comparison
     if (x == T_IDENT && y == T_LT && generic_type(DOC->toks[a->tok].text)) return false;
     if (x == T_LT && a->tok > 0 && generic_type(DOC->toks[a->tok - 1].text)) return false;
-    if (y == T_GT) { // ...past a map's key and the comma after it
-        int k = b->tok - 1;
-        while (k > 0 && (DOC->toks[k].kind == T_IDENT || DOC->toks[k].kind == T_DOT || DOC->toks[k].kind == T_COMMA)) k--;
-        if (k > 0 && DOC->toks[k].kind == T_LT && generic_type(DOC->toks[k - 1].text)) return false;
-    }
+    if ((y == T_GT || y == T_SHR) && closes_generic_type(b->tok)) return false;
     // i++ and ++i: against what they change
     if ((y == T_PLUS_PLUS || y == T_MINUS_MINUS) && ends_operand(x)) return false;
     if ((x == T_PLUS_PLUS || x == T_MINUS_MINUS) && !(a->tok > 0 && ends_operand(DOC->toks[a->tok - 1].kind))) return false;
@@ -11274,7 +12418,6 @@ const char *analysis_format(int tab_size, const bool insert_spaces, const int fi
         }
     }
 
-    // End with exactly one line break.
     if (!final_newline && last_content > 0 && last_content == line_count) {
         const loc end = {line_count, line_text(line_count).len + 1, A.doc};
         write_edit(&edits, end, end, newline, strlen(newline));
@@ -11347,7 +12490,6 @@ static char *arena_copy(const char *text)
     return str_to_cstr(str_from(text));
 }
 
-// The SHA-256 of the file at `path`, as hex. False when it can't be read.
 static bool read_hash(const char *path, const unsigned long long size, char hex[65])
 {
     FILE *f = fopen(path, "rb");
@@ -11441,7 +12583,6 @@ static void collect_assets(void)
     }
 }
 
-// The site whose path is token `tok` of the document, or NULL.
 static const asset_site *asset_site_at(const int tok)
 {
     for (int i = 0; i < A.assets.count; i++) {
@@ -11567,7 +12708,6 @@ static void check_assets(void)
     asset_hashes_free(&known);
 }
 
-// Where a site's path is written, between the quotes.
 static loc asset_path_start(const asset_site *site)
 {
     const loc at = A.files[site->file].toks[site->string].at;
@@ -11681,7 +12821,6 @@ static int name_order(const void *a, const void *b)
     return strcmp(*(const char *const *)a, *(const char *const *)b);
 }
 
-// A completion item that replaces `start` to `end` with `text`.
 static void asset_item(completion *c, const char *label, const int kind, const loc start, const loc end, const char *text,
                        const char *detail, const char sort)
 {
@@ -11741,17 +12880,12 @@ static void complete_asset_path(completion *c, const int tok, const loc at)
     folder_list(base, add_asset_entry, &entries);
     if (entries.folders.count > 0) qsort(entries.folders.items, (size_t)entries.folders.count, sizeof(char *), name_order);
     if (entries.files.count > 0) qsort(entries.files.items, (size_t)entries.files.count, sizeof(char *), name_order);
-    // Up a folder, while there's one above
     size_t top = 0;
     while (top < strlen(base) && !(base[top] == '/' && (top == 0 || base[top - 1] == ':'))) top++;
     if (strlen(base) > top + 1) asset_item(c, "../", KIND_FOLDER, start, at, "../", "The folder above", '0');
     for (int i = 0; i < entries.folders.count; i++) {
         sb label = {0};
         sb_printf(&label, "%s/", entries.folders.items[i]);
-        if (strcmp(entries.folders.items[i], "build") == 0 && asset_roots.game_folder
-            && !asset_path_under(base, asset_roots.game_folder) && asset_path_under(label.data, asset_roots.game_folder)) {
-            continue; // What tide makes, at the game's root
-        }
         asset_item(c, label.data, KIND_FOLDER, start, at, label.data, "A folder", '1');
     }
     if (site->many) {

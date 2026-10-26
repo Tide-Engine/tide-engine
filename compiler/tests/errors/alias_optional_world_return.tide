@@ -1,0 +1,4 @@
+// expect: a T?'s value can't be World
+using W = World?;
+W Read() { return null; }
+scene Main;

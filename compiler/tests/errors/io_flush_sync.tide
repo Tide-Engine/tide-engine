@@ -1,3 +1,4 @@
-// expect: Storage.Flush is awaited
+// expect: can't assign LocalTask<void fails IOError> to int
 local scene Main { }
-local event(Spawned) Setup(with Main) { Storage.Flush(); }
+local singleton Result { int value; }
+local event(Spawned) Setup(with Main, mut Result result) { result.value = Storage.Flush(); }

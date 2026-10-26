@@ -1,0 +1,137 @@
+local scene Main { }
+
+local singleton Menu
+{
+    int frames;
+    int picked = -1;
+    bool reverse;
+    bool omitFirst;
+    bool leave;
+    GUIControl control;
+    Rect slot;
+    bool shader;
+    bool scrolling;
+    bool focusLast;
+    float2 offset;
+    bool indexed;
+    bool clearOffsets;
+    int indexCalls;
+    List<float2> offsets = [float2(0)];
+    List<Vertex> vertices = [
+        Vertex { position = float2(0, 0), uv = float2(0, 0) },
+        Vertex { position = float2(64, 0), uv = float2(1, 0) },
+        Vertex { position = float2(0, 64), uv = float2(0, 1) }];
+    List<int> indices = [0, 1, 2];
+}
+
+frag CustomSdf(Vertex vertex, out Color color)
+{
+    var distance = Math.Length(vertex.uv * 2 - float2(1)) - 0.8;
+    color = Color(1, 0, 0, Math.Clamp(0.5 - distance * 32, 0, 1));
+}
+
+void Paint(Rect rect)
+{
+    Draw.Rect(rect, 8, Color.red);
+}
+
+void Controls(mut Menu menu)
+{
+    for (var i = 0; i < 3; i++)
+    {
+        var key = menu.reverse ? 2 - i : i;
+        if (menu.omitFirst && key == 0) continue;
+        GUI.Key(key)
+        {
+            var rect = GUILayout.Reserve(float2(120, 44));
+            var control = GUI.Control(rect);
+            GUI.Draw()
+            {
+                Paint(rect);
+                Draw.Text($"item {key}", float2(rect.x + 10, rect.y + 10), 16, Color.white);
+            }
+            if (control.clicked) menu.picked = key;
+        }
+    }
+}
+
+int OffsetIndex(mut Menu menu)
+{
+    menu.indexCalls++;
+    return 0;
+}
+
+view MenuView(mut Menu menu)
+{
+    menu.frames++;
+    if (menu.indexed)
+    {
+        GUILayout.Scroll(float2(160, 60), menu.offsets[OffsetIndex(menu)])
+        {
+            for (var i = 0; i < 64; i++) menu.offsets.Add(float2(i));
+            if (menu.clearOffsets) menu.offsets.Clear();
+            for (var i = 0; i < 8; i++)
+            {
+                if (i == 7) GUI.FocusNext();
+                GUILayout.Button("item");
+            }
+            if (menu.leave) return;
+        }
+        return;
+    }
+    if (menu.scrolling)
+    {
+        GUILayout.Scroll(float2(160, 60), menu.offset)
+        {
+            for (var i = 0; i < 8; i++)
+            {
+                if (menu.focusLast && i == 7) GUI.FocusNext();
+                var slot = GUILayout.Reserve(float2(140, 30));
+                GUI.Control(slot);
+                GUI.Draw()
+                {
+                    Draw.Rect(slot, Color.red);
+                    Draw.Rect(slot, float4(0, 4, 8, 12), Color.blue);
+                    if (menu.leave) return;
+                }
+            }
+        }
+        return;
+    }
+    Draw.SetScreen();
+    Draw.Tint(Color.blue)
+    {
+        GUILayout.Area(Anchor.MiddleCenter)
+        {
+            GUI.Draw()
+            {
+                Draw.SetTint(Color.green);
+                Draw.Text("custom", float2(40, 40), 16, Color.white);
+                if (menu.leave) return;
+            }
+            GUI.Key("nested")
+            {
+                GUI.Key(4294967296L)
+                {
+                    menu.slot = GUILayout.Reserve(float2(180, 36), minWidth: 80, expandWidth: true);
+                    menu.control = GUI.Control(menu.slot);
+                }
+            }
+            Controls(menu);
+            if (menu.shader)
+            {
+                var rect = GUILayout.Reserve(float2(64, 64));
+                GUI.Draw()
+                {
+                    Draw.Text("shader", float2(rect.x, rect.y), 16, Color.white);
+                    Draw.Transform(float2(rect.x, rect.y))
+                    {
+                        Draw.Mesh(menu.vertices, menu.indices, CustomSdf);
+                    }
+                }
+            }
+            GUILayout.Button("stock");
+        }
+    }
+    Draw.Text("world", float2(10, 10), 16, Color.white);
+}

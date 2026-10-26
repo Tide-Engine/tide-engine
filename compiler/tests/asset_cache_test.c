@@ -55,8 +55,7 @@ static bool write_file(const char *path, const void *bytes, const size_t size)
     return fclose(f) == 0 && ok;
 }
 
-// Independently confirm the OS kept the requested subsecond time, even when
-// folder_file_info is the old implementation that discards that precision.
+// Confirms independently that the OS kept the requested subsecond time.
 static bool set_time(const char *path, const long nanos)
 {
 #ifdef _WIN32

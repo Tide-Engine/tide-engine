@@ -1,0 +1,16 @@
+using AliasTypes;
+
+namespace AliasConsumer
+{
+    // A use site must not rebind AliasTypes.Imported's unqualified RHS here.
+    struct Remote { float wrong; }
+    struct Later { float wrong; }
+
+    system Read(mut Probe probe)
+    {
+        Imported imported = Imported { chosen = 23 };
+        Forward later = Forward { number = 31 };
+        AliasTypes.First pair = AliasTypes.Second { left = 5 };
+        probe.lexical = imported.chosen + later.number + pair.Sum();
+    }
+}

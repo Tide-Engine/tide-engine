@@ -410,7 +410,33 @@ void packages_free_file(packages_file *f)
     free(f->path);
     free(f->folder);
     free(f->name);
+    free(f->pinned);
     memset(f, 0, sizeof *f);
+}
+
+bool packages_pin_kept(const char *pinned, const char *version)
+{
+    // A build of tide's own source (`-dev`) is someone working on tide, who builds with what they have
+    const size_t length = strlen(version);
+    if (length > 4 && strcmp(version + length - 4, "-dev") == 0) return true;
+    return strcmp(pinned, version) == 0;
+}
+
+bool packages_exact_version(const char *text)
+{
+    // Three numbers, then perhaps a pre-release of letters, digits, dots and dashes
+    const char *p = text;
+    for (int part = 0; part < 3; part++) {
+        if (!isdigit((unsigned char)*p)) return false;
+        while (isdigit((unsigned char)*p)) p++;
+        if (part < 2 && *p++ != '.') return false;
+    }
+    if (!*p) return true;
+    if (*p++ != '-' || !*p) return false;
+    for (; *p; p++) {
+        if (!isalnum((unsigned char)*p) && *p != '.' && *p != '-') return false;
+    }
+    return true;
 }
 
 // Its words, up to `max`: false if there are more.
@@ -690,11 +716,11 @@ bool packages_read(const char *folder, packages_file *out, const packages_report
                 break;
             }
         }
-        char *words[3];
-        const int count = split_words(line, words, 2);
+        char *words[4];
+        const int count = split_words(line, words, 3);
         line = next;
         if (count == 0) continue;
-        if (count > 2) {
+        if (count > 2 && !(count == 3 && strcmp(words[0], "tide") == 0 && strcmp(words[1], "=") == 0)) {
             report_at(report, user, path, number, "a line is a package and its commit, or `package Name`, or `tide 0.3`",
                       "this line has more than two words");
             ok = false;
@@ -719,8 +745,32 @@ bool packages_read(const char *folder, packages_file *out, const packages_report
             }
             continue;
         }
+        if (strcmp(words[0], "tide") == 0 && count >= 2 && strcmp(words[1], "=") == 0) {
+            // `tide = 0.5.0-nightly.12`: the game builds with that tide alone (resolve says when this isn't it)
+            const char *pin = count == 3 && words[2][0] == 'v' ? words[2] + 1 : count == 3 ? words[2] : "";
+            if (count != 3 || !packages_exact_version(pin)) {
+                report_at(report, user, path, number, "write the whole version it builds with, like `tide = 0.5.0` or "
+                          "`tide = 0.5.0-nightly.12`, as `tide version` says it (`tide pin` writes it)",
+                          "`tide =` needs a whole version");
+                ok = false;
+            } else if (out->tide_line || out->pinned_line) {
+                report_at(report, user, path, number, NULL, "the version of tide is already given on line %d",
+                          out->tide_line ? out->tide_line : out->pinned_line);
+                ok = false;
+            } else {
+                out->pinned = dup(pin);
+                out->pinned_line = number;
+            }
+            continue;
+        }
         if (strcmp(words[0], "tide") == 0) {
             int version[3];
+            if (out->pinned_line) {
+                report_at(report, user, path, number, NULL, "the version of tide is already given on line %d",
+                          out->pinned_line);
+                ok = false;
+                continue;
+            }
             if (count != 2 || !tide_version_parse(words[1], (int)strlen(words[1]), version)) {
                 report_at(report, user, path, number, "write the oldest version it builds with, like `tide 0.3`",
                           "`tide` needs a version");
@@ -1007,6 +1057,134 @@ char *packages_folder(const package_line *line, const char *base)
     return out;
 }
 
+// ---------------------------------------------------------------------------
+// Games made in Unity
+
+static bool same_package(const package_line *a, const char *a_base, const package_line *b, const char *b_base);
+
+bool packages_unity_assets(const char *folder)
+{
+    char *dir = normalize_folder(folder);
+    const size_t n = strlen(dir);
+    bool is = n >= 7 && strcmp(dir + n - 7, "Assets/") == 0 && (n == 7 || dir[n - 8] == '/');
+    if (is) {
+        char *version = format("%.*sProjectSettings/ProjectVersion.txt", (int)(n - 7), dir);
+        is = file_exists(version);
+        free(version);
+    }
+    free(dir);
+    return is;
+}
+
+char *packages_unity_game(const char *folder)
+{
+    char *dir = normalize_folder(folder);
+    while (is_absolute(dir)) {
+        if (packages_unity_assets(dir)) return dir;
+        char *file = format("%s" PACKAGES_FILE, dir);
+        const bool own = file_exists(file);
+        free(file);
+        if (own) break;
+        size_t up = strlen(dir) - 1; // From its last '/' back over its last part
+        while (up > 0 && dir[up - 1] != '/') up--;
+        if (up == 0) break; // The root: nothing above
+        dir[up] = '\0';
+    }
+    free(dir);
+    return NULL;
+}
+
+bool packages_unity_left_out(const char *relative)
+{
+    const char *part = relative;
+    for (const char *p = relative;; p++) {
+        if (*p != '/' && *p != '\\' && *p) continue;
+        if (!*p) return false; // The file's own name
+        if (p > part && (part[0] == '.' || p[-1] == '~')) return true;
+        part = p + 1;
+    }
+}
+
+// Adds a line to `game` for each folder in `dir` (ending in '/', in the Assets
+// folder `game` is) whose tide.packages says `package Name`, but those it
+// lists already, and the folders in it; a folder with a tide.packages of a
+// game is an error, as the game is all of Assets.
+static bool add_unity_packages(packages_file *game, const char *dir, const packages_report_fn report, void *user)
+{
+    char **subs = NULL;
+    int count = 0;
+#ifdef _WIN32
+    char *pattern = format("%s*", dir);
+    WIN32_FIND_DATAA entry;
+    const HANDLE search = FindFirstFileA(pattern, &entry);
+    free(pattern);
+    if (search != INVALID_HANDLE_VALUE) {
+        do {
+            if (!(entry.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) || (entry.dwFileAttributes & FILE_ATTRIBUTE_REPARSE_POINT))
+                continue;
+            subs = realloc(subs, sizeof(char *) * (size_t)(count + 1));
+            if (!subs) abort();
+            subs[count++] = dup(entry.cFileName);
+        } while (FindNextFileA(search, &entry));
+        FindClose(search);
+    }
+#else
+    DIR *listing = opendir(dir);
+    for (const struct dirent *entry; listing && (entry = readdir(listing));) {
+        char *path = format("%s%s", dir, entry->d_name);
+        struct stat info;
+        if (lstat(path, &info) == 0 && S_ISDIR(info.st_mode)) {
+            subs = realloc(subs, sizeof(char *) * (size_t)(count + 1));
+            if (!subs) abort();
+            subs[count++] = dup(entry->d_name);
+        }
+        free(path);
+    }
+    if (listing) closedir(listing);
+#endif
+    if (count > 1) qsort(subs, (size_t)count, sizeof(char *), name_order);
+    bool ok = true;
+    for (int i = 0; i < count; i++) {
+        const char *name = subs[i];
+        const size_t n = strlen(name);
+        if (name[0] == '.' || name[n - 1] == '~') continue; // Hidden, or one Unity leaves out
+        char *sub = format("%s%s/", dir, name);
+        char *file = format("%s" PACKAGES_FILE, sub);
+        if (!file_exists(file)) {
+            ok = add_unity_packages(game, sub, report, user) && ok;
+        } else {
+            packages_file own;
+            packages_read(sub, &own, NULL, NULL);
+            if (!own.name) {
+                report_at(report, user, file, 0,
+                          "move it to the Assets folder, or start it with `package Name` to make this folder a package",
+                          "in a Unity project the game is the whole of Assets, so this folder can't be a game of its own");
+                ok = false;
+            } else {
+                char *source = format("./%.*s", (int)(strlen(sub) - strlen(game->folder) - 1), sub + strlen(game->folder));
+                const package_line line = {0, source, NULL, NULL, true, false};
+                bool listed = false;
+                for (int k = 0; k < game->count && !listed; k++) {
+                    listed = same_package(&line, game->folder, &game->lines[k], game->folder);
+                }
+                if (listed) {
+                    free(source);
+                } else {
+                    game->lines = realloc(game->lines, sizeof(package_line) * (size_t)(game->count + 1));
+                    if (!game->lines) abort();
+                    game->lines[game->count++] = line;
+                }
+            }
+            packages_free_file(&own);
+        }
+        free(file);
+        free(sub);
+    }
+    for (int i = 0; i < count; i++) free(subs[i]);
+    free(subs);
+    return ok;
+}
+
 // The same package, as two lines name it: the same folder, or the same
 // source, which for one that comes with tide is its name. `a_base` and
 // `b_base` are where each line's folder is from.
@@ -1087,10 +1265,25 @@ static bool resolve(const char *folder, game_packages *out, const packages_fetch
 {
     memset(out, 0, sizeof *out);
     bool ok = packages_read(folder, &out->file, report, user);
+    if (packages_unity_assets(out->file.folder)) ok = add_unity_packages(&out->file, out->file.folder, report, user) && ok;
     const packages_file *game = &out->file;
     if (game->tide_line && !tide_version_at_least(game->tide[0], game->tide[1], game->tide[2])) {
         report_at(report, user, game->path, game->tide_line, "run `tide upgrade`",
                   "this needs tide %d.%d or newer, and this is %s", game->tide[0], game->tide[1], tide_version_text());
+        ok = false;
+    }
+    const char *version = tide_version_text();
+    if (game->pinned && !packages_pin_kept(game->pinned, version)) {
+        char note[256];
+        if (packages_unity_assets(game->folder)) {
+            // Unity's Tide package builds with the tide of its own commit
+            snprintf(note, sizeof note, "in a Unity project, Tide's package builds with the tide of its commit: `tide pin %s` "
+                     "pins that, or move the package to tide %s's", version, game->pinned);
+        } else {
+            snprintf(note, sizeof note, "run `tide upgrade --version %s`, or `tide pin` to pin this one", game->pinned);
+        }
+        report_at(report, user, game->path, game->pinned_line, note, "this game builds with tide %s, and this is %s",
+                  game->pinned, version);
         ok = false;
     }
     if (game->count == 0) return ok;
@@ -1160,6 +1353,11 @@ static bool resolve(const char *folder, game_packages *out, const packages_fetch
             }
             report_at(report, user, game->path, line->line, note, "%s needs tide %d.%d or newer, and this is %s",
                       pf->name, pf->tide[0], pf->tide[1], tide_version_text());
+            ok = false;
+        }
+        if (pf->pinned_line) {
+            report_at(report, user, pf->path, pf->pinned_line, "a package says the oldest tide it builds with, like `tide 0.5`",
+                      "only a game pins its tide");
             ok = false;
         }
         bool taken = false;

@@ -18,10 +18,12 @@ float2 flat = trs.position.xz;
 
 | Type | What it is |
 |---|---|
-| `float2`, `float3`, `float4` | Float vectors |
+| `float2`, `float3`, `float4` | 32-bit float vectors |
+| `double2`, `double3`, `double4` | 64-bit double vectors |
 | `int2`, `int3`, `int4` | Int vectors |
 | `quaternion` | A rotation |
-| `float2x2`, `float3x3`, `float4x4` | Matrices, stored column by column |
+| `float2x2`, `float3x3`, `float4x4` | 32-bit matrices, stored column by column |
+| `double2x2`, `double3x3`, `double4x4` | 64-bit matrices with the same column storage |
 
 They're lowercase built-in value types, like `float`. Angles are in radians: `Math.Radians(degrees)` and `Math.Degrees(radians)` convert.
 
@@ -34,6 +36,41 @@ For a constant angle, add lowercase `deg` to a decimal number: `quaternion.Euler
 - An int vector converts to a float vector of the same size by itself, like `int` to `float`.
 - `quaternion(x, y, z, w)`, `quaternion(float4)` and `quaternion(float3x3)`.
 - Matrices take one vector per column, `float3x3(c0, c1, c2)`, or all their numbers row by row: in `float2x2(1, 2, 3, 4)`, `1, 2` is the first row. Also `float3x3(quaternion)`, and `float4x4(rotation, translation)` from a `float3x3` and a `float3`.
+
+## Double precision
+
+Use `double` and `double2`/`double3`/`double4` for high precision values. They support ordinary construction, swizzles and component-wise `+ - * /`. Integers and floats widen when mixed with doubles; converting back requires an explicit constructor.
+
+```csharp
+double3 objectPosition = double3(1_000_000_000.125d, 2d, 3d);
+double3 cameraPosition = double3(1_000_000_000d, 0d, 0d);
+float3 nearby = float3(objectPosition - cameraPosition);
+```
+
+Subtract in double precision **before** converting to float. This example preserves the 0.125 offset. It is an explicit conversion pattern; the camera and `Transform` APIs still take floats.
+
+Double math includes `Abs`, `Sign`, `Min`, `Max`, `Clamp`, `Floor`, `Ceil`, `Round`, `Trunc`, `Frac`, `Sqrt`, `Rsqrt`, `Saturate`, `Radians`, `Degrees`, `Step`, `Lerp`, `Unlerp` and `SmoothStep`, component by component. Vector geometry includes `Dot`, `Length`, `LengthSq`, `Distance`, `DistanceSq`, `Normalize`, `Reflect`, `Csum`, `Cmin`, `Cmax` and three-dimensional `Cross`. `Math.Hash` hashes all 64 bits of each component.
+
+The same deterministic arithmetic rules apply. `Normalize` gives zero when the squared length is NaN or at or below the smallest normal double (about 2.23e-308); otherwise it uses `v * (1 / Sqrt(Dot(v, v)))`.
+
+`Sin`, `Cos`, `Tan`, `Asin`, `Acos`, `Atan`, `Atan2`, `Exp`, `Exp2`, `Log`, `Log2`, `Log10` and `Pow` also work on doubles and double vectors, retaining binary64 input and output precision. They use portable source compiled with Tide's deterministic flags, including full-range argument reduction for large angles; they do not call the platform math library. Like the float implementations, these are accurate approximations, not a promise of correctly rounded results for every input.
+
+Use `double.PI`, `double.TAU` and `double.E` for binary64 constants. Existing `Math.PI`, `Math.TAU` and `Math.E` remain floats.
+
+Double matrices have the same operations as float matrices: columns, construction from columns or numbers row by row, `identity`, `+`, `-`, scalar `*`/`/`, and `Math.Mul`, `Transpose`, `Inverse` and `Determinant`. Matching float matrices widen implicitly; `float4x4(matrix)` explicitly narrows every component. `double3x3(quaternion)` widens quaternion components before evaluating the matrix. `double4x4(rotation, translation)` takes a double3x3 and a double3.
+
+`Math.Transform` and `Math.Rotate` accept double4x4 and double3. `double4x4` provides `Translate`, `Scale`, `TRS`, `PerspectiveFov` and `Ortho`. `TRS` accepts either a double3x3 rotation or a quaternion; a quaternion retains its original float precision, then the matrix arithmetic is double. Views interpolate double matrices column by column in double precision.
+
+```csharp
+double angle = double.PI / 4d;
+double c = Math.Cos(angle);
+double s = Math.Sin(angle);
+double3x3 rotation = double3x3(c, -s, 0d, s, c, 0d, 0d, 0d, 1d);
+double4x4 transform = double4x4.TRS(objectPosition, rotation, double3(1d));
+double3 worldPoint = Math.Transform(transform, double3(.125d, 0d, 0d));
+```
+
+Double noise and a double quaternion type remain unsupported. Doubles are CPU values: convert to float scalars, vectors or matrices in local code before supplying shader data. The renderer and cameras still take floats.
 
 ## Members
 
@@ -50,7 +87,7 @@ And these build values:
 
 - `quaternion.AxisAngle(axis, angle)`
 - `quaternion.Euler(radians)` takes a `float3`, or `quaternion.Euler(x, y, z)` takes three angles in radians. The scalar form equals `quaternion.Euler(float3(x, y, z))`. Both rotate Z first, then X, then Y, Unity's default order.
-- `quaternion.LookRotation(forward, up)`
+- `quaternion.LookRotation(forward, up)` turns +z to `forward` and +y as near `up` as it can go. Neither need be normalized. A zero or nonfinite `forward` gives identity; an `up` with no side to it (zero, nonfinite or along `forward`) gives `FromToRotation(float3(0, 0, 1), forward)`, as Unity does.
 - `quaternion.FromToRotation(from, to)` gives the shortest rotation between two `float3` directions. They need not be normalized. Zero or nonfinite directions give identity; opposite directions use a deterministic perpendicular axis.
 - `float4x4.TRS(translation, rotation, scale)`
 - `float4x4.Translate(translation)`
@@ -62,7 +99,11 @@ var aim = quaternion.FromToRotation(float3(0, 0, 1), target - position);
 var size = float4x4.Scale(float3(2, 1, 0.5));
 ```
 
-`FromToRotation` accepts finite nonzero directions across the full float range. For an exact half-turn, it crosses normalized `from` with the least-aligned cardinal axis, preferring X, then Y, then Z when tied. Both builders work in frags and verts too, with the GPU's usual float rounding.
+`FromToRotation` accepts finite nonzero directions across the full float range. For an exact half-turn, it crosses normalized `from` with the least-aligned cardinal axis, preferring X, then Y, then Z when tied.
+
+`LookRotation`'s result is a unit rotation whose forward is `forward` normalized, across the full float range. Its up is `up` with the part along `forward` taken out. When the cross product of the two normalized is shorter than 1e-5 (Unity's epsilon), they're along one line, or within about 1e-5 radians of it, and there's no side to take the up from: the result is `FromToRotation` from +z instead.
+
+These builders work in frags and verts too, with the GPU's usual float rounding.
 
 ## Operators
 
@@ -101,7 +142,7 @@ Each button below plots a function of `Math` from 0 to 1. The white dot goes alo
 
 **Hashing:**
 
-`Math.Hash(value)` turns an `int`, `long`, `int2`, `int3` or `int4` into a random-looking int from 0 to 2147483647. The same value always gives the same number, on every machine. It keeps no state, so it works anywhere, parallel loops included:
+`Math.Hash(value)` turns an `int`, `long`, `int2`, `int3`, `int4`, `float`, `float2`, `float3` or `float4` into a random-looking int from 0 to 2147483647. The same value always gives the same number, on every machine. It keeps no state, so it works anywhere, parallel loops included:
 
 ```csharp
 // About one cell in four starts as sand, the same cells everywhere.
@@ -111,6 +152,19 @@ if (Math.Hash(int2(x, y)) % 4 == 0) field.cells[x, y] = Material.Sand;
 Put a seed in the value to get other numbers for the same cell: `Math.Hash(int3(x, y, seed))`. It's xxHash32, so every bit of the value affects the result. With the match's seed, [`Random.seed`](#the-match-s-seed), matches can get different fields: `Math.Hash(int3(x, y, Random.seed))`. Reusing a seed repeats its field.
 
 It gives the same numbers in a [frag or vert](../game/shaders.md#math), so a pattern drawn from it is the same on every GPU. Only a `long`'s hash stays on the CPU.
+
+Float hashes use the exact input bits: `Math.Hash(value)` equals `Math.Hash(Math.AsInt(value))`. Positive and negative zero hash differently. This hashes represented values; float calculations on the GPU still have their usual rounding.
+
+**Bit casts:**
+
+`Math.AsInt(value)` reinterprets a `float`, `float2`, `float3` or `float4` as the corresponding int type. `Math.AsFloat(bits)` reverses it. These preserve the 32 bits of each component without a numeric conversion:
+
+```csharp
+int bits = Math.AsInt(1.0);          // 0x3f800000
+float value = Math.AsFloat(bits);   // 1.0
+```
+
+Both work on the CPU and in frags/verts. Use the ordinary `int(value)` or `float(value)` constructors for numeric conversions.
 
 ## Noise
 
@@ -285,7 +339,7 @@ A `Random` has one field, `long state`, which is all there is to it: copy it to 
 
 ### The match's seed
 
-`Random.seed` is an `int` from 0 to 2147483647 that the machine starting a match picks, so matches can vary (but in a game run [without a window](../tools/cli.md#without-a-window), where it's 0, so the run repeats). `tide run --seed 7` picks it, to play a match's rolls again or to try others. It's part of the match: a player who joins gets it with the world, and players don't send a seed separately. The match's rolls come from it, the engine seeds the match's generators from it, and a game reads it, with no parameter, where it wants numbers by place:
+`Random.seed` is an `int` from 0 to 2147483647 that the machine starting a match picks, so matches can vary (but in a game run [without a window](../tools/cli.md#without-a-window), where it's 0, so the run repeats). `tide run --seed 7 --stats` picks it, to play a match's rolls again or to try others. It's part of the match: a player who joins gets it with the world, and players don't send a seed separately. The match's rolls come from it, the engine seeds the match's generators from it, and a game reads it, with no parameter, where it wants numbers by place:
 
 ```csharp
 // The same cave on every machine, and another one every match.

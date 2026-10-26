@@ -75,11 +75,10 @@ static void init_targets()
 }
 
 // lld's drivers register every target LLVM was built with, for link-time
-// optimization, and naming a target's functions links the whole of it: 20 CPUs
-// and GPUs in LLVM's Linux release, a third of tide. So those of the targets
-// tide doesn't build for are defined here, empty, and the linker never takes
-// theirs out of LLVM's libraries. LLVM's own lists say which there are, so a
-// target a new LLVM adds is left out too.
+// optimization, and naming a target's functions links the whole of it. So those
+// of the targets tide doesn't build for are defined here, empty, and the linker
+// never takes theirs out of LLVM's libraries. LLVM's own lists say which there
+// are, so a target a new LLVM adds is left out too.
 #define TIDE_BUILDS_X86 ,
 #define TIDE_BUILDS_AArch64 ,
 #define TIDE_BUILDS_WebAssembly ,
@@ -174,8 +173,8 @@ static int cc1(llvm::ArrayRef<const char *> args, const char *self)
 // tide already needs for the SDK: /usr/bin/ld runs the one of the developer
 // folder xcode-select names. It reads the SDK's stubs (.tbd) whatever
 // targets they list, where lld rejects a stub that lists one it doesn't know,
-// and with it everything that stub defines: Apple's SDKs from October 2026
-// list arm64e.x1, which LLVM 23's lld doesn't, so every game failed to link.
+// and with it everything that stub defines (Apple's newer SDKs list targets,
+// like arm64e.x1, that LLVM 23's lld doesn't know).
 // clang's driver writes ld64's arguments for it, as it does for lld.
 static const char apple_ld[] = "/usr/bin/ld";
 

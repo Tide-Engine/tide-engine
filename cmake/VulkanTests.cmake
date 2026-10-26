@@ -3,7 +3,7 @@
 # a GPU test makes, where there's an SDK (VULKAN_SDK, as its installer sets
 # it, or TIDE_VULKAN_SDK). Neither is needed to build or to run the tests:
 # without them, the SPIR-V isn't checked by spirv-val and the GPU tests draw
-# with Vulkan unchecked (notes/rendering.md, Vulkan).
+# with Vulkan unchecked.
 set(TIDE_VULKAN_SDK "$ENV{VULKAN_SDK}" CACHE PATH "The Vulkan SDK, whose spirv-val and validation layer tests check with")
 if(TIDE_VULKAN_SDK)
     find_program(TIDE_SPIRV_VAL spirv-val HINTS "${TIDE_VULKAN_SDK}/Bin" "${TIDE_VULKAN_SDK}/bin" NO_DEFAULT_PATH)

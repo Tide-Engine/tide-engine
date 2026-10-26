@@ -1,0 +1,3 @@
+// expect: is too large for double
+singleton Data { double value = 1e309d; }
+scene Main { }

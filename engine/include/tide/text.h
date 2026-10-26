@@ -46,9 +46,20 @@ typedef struct tide_str {
 #define TIDE_SCRATCH_SLOTS (1u << (30u - TIDE_SCRATCH_SHIFT))
 
 // The scratch area: where it is now, and going back there, which frees
-// everything made since.
-uint32_t tide_scratch_mark(void);
-void tide_scratch_reset(uint32_t mark);
+// everything made since. Generated code does both around every row of a
+// system that makes text or lists, where nothing was made most of the time,
+// so they're inline: only a reset that frees something calls
+// tide_scratch_reset_to. tide_scratch_top is this thread's top of the area.
+extern TIDE_THREAD_LOCAL uint32_t tide_scratch_top;
+void tide_scratch_reset_to(uint32_t mark);
+static inline uint32_t tide_scratch_mark(void)
+{
+    return tide_scratch_top;
+}
+static inline void tide_scratch_reset(const uint32_t mark)
+{
+    if (mark < tide_scratch_top) tide_scratch_reset_to(mark);
+}
 // Frees this thread's scratch area; the next text made allocates it again.
 // For hot reloading, before a game's library is unloaded (tide/host.h).
 void tide_scratch_free(void);
@@ -65,6 +76,10 @@ tide_str tide_str_add_cstr(tide_str a, const char *s);
 tide_str tide_str_add_int(tide_str a, int32_t v, int32_t format);
 tide_str tide_str_add_long(tide_str a, int64_t v, int32_t format);
 tide_str tide_str_add_float(tide_str a, float v, int32_t format);
+tide_str tide_str_add_double(tide_str a, double value, int32_t format);
+tide_str tide_str_add_d2(tide_str a, tide_double2 value, int32_t format);
+tide_str tide_str_add_d3(tide_str a, tide_double3 value, int32_t format);
+tide_str tide_str_add_d4(tide_str a, tide_double4 value, int32_t format);
 tide_str tide_str_add_bool(tide_str a, bool v);
 tide_str tide_str_add_entity(tide_str a, tide_entity e, bool local);
 tide_str tide_str_add_player(tide_str a, tide_player_id p);
@@ -112,10 +127,11 @@ tide_str tide_str_replace(tide_str a, tide_str from, tide_str to);
 // the number, a tie going to the even one, worked out with exact integer
 // arithmetic, never strtof: the same text gives the same bits on every
 // platform, and what tide_str_add_float writes reads back as the float it
-// was.
+// was. Double parsing and formatting apply the same rules at binary64 precision.
 bool tide_str_parse_int(tide_str text, int32_t *value);
 bool tide_str_parse_long(tide_str text, int64_t *value);
 bool tide_str_parse_float(tide_str text, float *value);
+bool tide_str_parse_double(tide_str text, double *value);
 
 // Whether `count` bytes are UTF-8 through and through: every one part of a
 // character, in its shortest form, none half of a UTF-16 pair.

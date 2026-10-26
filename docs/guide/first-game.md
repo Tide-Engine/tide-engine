@@ -8,10 +8,12 @@ This page builds a small game: a ball bouncing around, and a player for everyone
 
 You'll need `tide` [installed](./install.md). [Set up your editor](../tools/editors.md)
 for highlighting, completion and diagnostics before writing your first file.
+Working with an AI coding agent? Use the [Tide overview and starter prompt](./ai.md)
+to give it the language context and validation commands.
 
 ## A folder of files
 
-A game is a folder of `.tide` files: every `.tide` file in it and its subfolders. Every declaration is visible from every file, with no imports. Make a new folder, and a file in it called `game.tide`.
+A game is a folder of `.tide` files: every `.tide` file in it and its subfolders, but for hidden ones, whose names start with a dot. Every declaration is visible from every file, with no imports. Make a new folder, and a file in it called `game.tide`.
 
 ## Data: components
 
@@ -82,7 +84,7 @@ The camera starts at the origin, one world unit per pixel, with `y` up.
 In the folder:
 
 ```sh
-tide run
+tide run --stats
 ```
 
 `tide` compiles the game and opens a window with the ball bouncing. It keeps its work in a hidden `.tide` folder, which you can delete any time. Whenever you save, `tide` rebuilds the game and the window picks up the new code (see [hot reload](../tools/cli.md#hot-reload)).
@@ -156,18 +158,18 @@ Save, then type `r` and press Enter in `tide`'s terminal, and steer with `WASD`.
 Single-player was already a match, on a server this machine ran for itself. So the same game plays with others. In one terminal:
 
 ```sh
-tide run --host
+tide run --host --stats
 ```
 
 And in another, on this machine or another one on the network:
 
 ```sh
-tide run --connect localhost
+tide run --connect localhost --stats
 ```
 
-Use the host's address instead of `localhost` from another machine, like `tide run --connect 192.168.1.5`. The host takes players on UDP port 7777; `--host 8000` picks another. Each player steers their own yellow body, with no input delay.
+Use the host's address instead of `localhost` from another machine, like `tide run --connect 192.168.1.5 --stats`. The host takes players on UDP port 7777; `--host 8000` picks another. Each player steers their own yellow body, with no input delay.
 
-Where nobody is there to steer (a test, a build server, an agent), `tide run --players 2 --frames 300 --capture match.png` plays both at once with no window, and writes a picture from each machine: `match-1.png` and `match-2.png` (see [Several players](../tools/cli.md#several-players)).
+Where nobody is there to steer (a test, a build server, an agent), `tide run --players 2 --frames 300 --capture match.png --stats` plays both at once with no window, and writes a picture from each machine: `match-1.png` and `match-2.png` (see [Several players](../tools/cli.md#several-players)).
 
 No input delay means a machine doesn't wait to hear what the other players did: it guesses, by repeating their last input for a moment, and puts the match right when the server's answer arrives. That moves their body in one frame, each time they start or stop, by up to what they move in 0.15 seconds (see [What other machines guess](../game/input.md#what-other-machines-guess)). Mark the position, and views draw the correction over a few frames instead:
 
@@ -190,7 +192,7 @@ Here are two machines in one match, each running [the whole game](#the-whole-gam
 ## Build it for the web
 
 ```sh
-tide run --web
+tide run --web --stats
 ```
 
 This builds the game as a web page, which draws with WebGPU (or WebGL 2 where the browser has none), and opens it in your browser. `tide` serves the page on your machine and keeps running until you stop it with Ctrl+C. Saving a file reloads the game in the page. For a page to put online:
@@ -199,7 +201,7 @@ This builds the game as a web page, which draws with WebGPU (or WebGL 2 where th
 tide build --release --web
 ```
 
-It goes in `build/`, as one self-contained `.html` file with the game inside, which opens straight from disk. Web and desktop players play together in rooms, which they join by a code (see [Matches](../multiplayer/matches.md#rooms)).
+It goes in `.build/`, as one self-contained `.html` file with the game inside, which opens straight from disk. Web and desktop players play together in rooms, which they join by a code (see [Matches](../multiplayer/matches.md#rooms)).
 
 ## The whole game
 
@@ -215,5 +217,4 @@ Click the game so it has the keyboard, and steer with `WASD`.
 
 - `tide schedule` shows which of these systems could run at the same time, and why the others wait. See [the schedule](../game/schedule.md).
 - Read what a game is made of, a topic at a time, starting with [components and entities](../game/entities.md). The language itself starts with [the basics](../language/basics.md).
-- Browse the [samples](./samples.md) for complete games to play in your browser.
-- The [Duel code tour](./duel.md) explains how a larger game separates its match rules, local effects and menus.
+- Browse the [samples](./samples.md) for complete games to play in your browser, with links to their source.

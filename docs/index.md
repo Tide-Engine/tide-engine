@@ -67,4 +67,4 @@ view DrawBalls(Ball ball)
 }
 ```
 
-Save it as `game.tide`, then run `tide run` in its folder. [Install tide](./guide/install) to get started, or see [your first game](./guide/first-game) for a longer tour.
+Save it as `game.tide`, then run `tide run --stats` in its folder. [Install tide](./guide/install) to get started, or see [your first game](./guide/first-game) for a longer tour.

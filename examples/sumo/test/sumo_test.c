@@ -66,8 +66,8 @@ void b3t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took);
 // The server's world in the match below, on every platform and in every
 // configuration: Box3D's math, its resident stamp and digest, and the netcode.
 // Once in the middle of a round, and once after a new game was asked for.
-#define BRAWL_HASH UINT64_C(0xc659a401358bc369)
-#define MATCH_HASH UINT64_C(0x3b39af7fab9a0826)
+#define BRAWL_HASH UINT64_C(0x42f32846a5eda645)
+#define MATCH_HASH UINT64_C(0x81d4b7d6364e1270)
 
 // Timings of a build that isn't optimized say nothing, so there the test that
 // measures does a tenth of it: enough to show that it runs.
@@ -242,7 +242,6 @@ static bool command(tide_world *w, const uint32_t id, const int sender)
 
 TIDE_TEST(sumo_raises_a_ring_that_stands)
 {
-    // Each of the three arrangements: thousands of crates, which come to rest where they were stacked
     for (int round = 1; round <= 3; round++) {
         b3t_forget();
         tide_world_free(&world);
@@ -265,18 +264,13 @@ TIDE_TEST(sumo_raises_a_ring_that_stands)
                " it was put; %d bytes of physics\n",
                round, crates, count(&world, tide_has_Keg), count(&world, tide_has_Tile), rested, (double)disturbed(&world, &built),
                physics_bytes(&world));
-        // Before the round starts, with nothing knocked
         TIDE_CHECK(rested >= 0 && rested < READY - 30);
         TIDE_CHECK(disturbed(&world, &built) < 0.3f && knocked(&world) == 0);
-        // The balls wait where their seats start: bots have the three seats nobody has
         TIDE_CHECK(count(&world, tide_has_Ball) == 4 && count(&world, tide_has_Seat) == 8);
         const tide_float3 first = tide_get_Box3D_Body(&world, ball_of(&world, 0)).position;
         TIDE_CHECK(tide_abs_f(first.x - 3.0f) < 0.05f && tide_abs_f(first.z + 12.0f) < 0.05f && first.y < BALL + 0.05f);
         tide_world_free(&built);
     }
-    // A match that was started with less on its rings has the whole floor, and
-    // what's stacked within that many tiles of the middle: here the middle's
-    // pile and the cabins around it. Its next ring is stacked as far.
     start_with(LIGHT, 1, false);
     const int light = count(&world, tide_has_Crate);
     printf("    a ring stacked two tiles out: %d crates and planks, and %d bytes of physics\n", light, physics_bytes(&world));
@@ -284,7 +278,6 @@ TIDE_TEST(sumo_raises_a_ring_that_stands)
     TIDE_REQUIRE(command(&world, TIDE_COMMAND_ID_Rebuild, 0));
     tick(3);
     TIDE_CHECK(world.Ring.phase == Phase_Ready && count(&world, tide_has_Tile) == TILES && count(&world, tide_has_Crate) == light);
-    // ...and with none of it, a bare floor
     start_with(BARE, 1, false);
     TIDE_CHECK(count(&world, tide_has_Tile) == TILES && count(&world, tide_has_Crate) == 0 && count(&world, tide_has_Ball) == 1);
     tide_world_free(&world);
@@ -294,21 +287,17 @@ TIDE_TEST(sumo_seats_its_players_and_fills_the_ring_with_bots)
 {
     start_with(BARE, 1, true);
     TIDE_CHECK(world.Ring.phase == Phase_Play && world.Ring.manned == 1);
-    // One player, and bots in the next three seats
     TIDE_CHECK(count(&world, tide_has_Ball) == 4);
     TIDE_CHECK(tide_get_Owner(&world, ball_of(&world, 0)).player.id == player(0).id);
     TIDE_CHECK(tide_get_Owner(&world, ball_of(&world, 1)).player.id != player(0).id);
-    // A second player has the first seat no player has, and the bot's ball with it, as it is
     const tide_entity bots = ball_of(&world, 1);
     tide_world_player_joined(&world, player(5));
     tick(2);
     TIDE_CHECK(world.Ring.manned == 3 && count(&world, tide_has_Ball) == 4);
     TIDE_CHECK(ball_of(&world, 1).index == bots.index && tide_get_Owner(&world, bots).player.id == player(5).id);
-    // Five players: the ring has its crowd, and no bot is left
     for (int i = 1; i <= 3; i++) tide_world_player_joined(&world, player(i));
     tick(RESPAWN + 4);
     TIDE_CHECK(world.Ring.manned == 31 && count(&world, tide_has_Ball) == 5);
-    // One leaves: four are a crowd still, and their ball goes with them. Three more do: bots keep the ring at four
     tide_world_player_left(&world, player(5));
     tick(2);
     TIDE_CHECK(world.Ring.manned == 29 && count(&world, tide_has_Ball) == 4 && !tide_has_Ball(&world, ball_of(&world, 1)));
@@ -316,7 +305,6 @@ TIDE_TEST(sumo_seats_its_players_and_fills_the_ring_with_bots)
     tick(4);
     TIDE_CHECK(world.Ring.manned == 1 && count(&world, tide_has_Ball) == 4);
     TIDE_CHECK(!tide_has_Ball(&world, ball_of(&world, 4)));
-    // Bots off: the player's ball is alone. And on again
     TIDE_REQUIRE(command(&world, TIDE_COMMAND_ID_Bots, 0));
     tick(3);
     TIDE_CHECK(!world.Ring.bots && count(&world, tide_has_Ball) == 1);
@@ -333,12 +321,10 @@ TIDE_TEST(sumo_a_ball_is_driven_by_pushes)
     tick(2);
     const tide_entity ball = ball_of(&world, 0);
     const tide_float3 from = tide_get_Box3D_Body(&world, ball).position;
-    // It answers in the tick its player pressed: the push is this tick's step's
     hold(0, 0, 1, false);
     tick(1);
     Box3D_Body body = tide_get_Box3D_Body(&world, ball);
     TIDE_CHECK(body.velocity.z > 0.2f && body.position.z > from.z);
-    // It's never put anywhere: it gathers speed, up to what the floor's drag allows, and rolls as it goes
     float before = body.velocity.z;
     bool faster = true;
     for (int i = 0; i < 20; i++) {
@@ -354,7 +340,6 @@ TIDE_TEST(sumo_a_ball_is_driven_by_pushes)
            (double)body.angularVelocity.x);
     TIDE_CHECK(body.velocity.z > 9.0f && body.velocity.z < 13.5f && tide_abs_f(body.velocity.x) < 0.05f);
     TIDE_CHECK(body.angularVelocity.x > 8.0f);
-    // Let go, it rolls on, slowing; pushed the other way, it stops much sooner
     hold(0, 0, 0, false);
     tick(30);
     const float coasting = tide_get_Box3D_Body(&world, ball).velocity.z;
@@ -362,7 +347,6 @@ TIDE_TEST(sumo_a_ball_is_driven_by_pushes)
     hold(0, 0, -1, false);
     tick(20);
     TIDE_CHECK(tide_get_Box3D_Body(&world, ball).velocity.z < 0.5f);
-    // A player whose hands are off drives nothing: the ball plays by itself, with nobody to go for
     tide_world_set_input(&world, player(0), (Controls){.move = {1, 0}, .away = true});
     tick(30);
     TIDE_CHECK(tide_get_Ball(&world, ball).drive.x < 0.99f);
@@ -375,7 +359,6 @@ TIDE_TEST(sumo_a_charge_winds_up_and_bursts)
     put(0, 0, BALL, -8);
     tick(2);
     const tide_entity ball = ball_of(&world, 0);
-    // Held, it winds up, and the ball drives less hard meanwhile
     hold(0, 0, 1, true);
     tick(24);
     Ball state = tide_get_Ball(&world, ball);
@@ -384,7 +367,6 @@ TIDE_TEST(sumo_a_charge_winds_up_and_bursts)
     state = tide_get_Ball(&world, ball);
     const float wound = tide_get_Box3D_Body(&world, ball).velocity.z;
     TIDE_CHECK(state.charge == 1.0f && wound < 9.0f);
-    // Let go: one impulse, the way it's driven
     hold(0, 0, 1, false);
     tick(1);
     state = tide_get_Ball(&world, ball);
@@ -392,7 +374,6 @@ TIDE_TEST(sumo_a_charge_winds_up_and_bursts)
     printf("    a charge wound all the way up takes a ball from %.1f m/s to %.1f\n", (double)wound, (double)burst);
     TIDE_CHECK(burst > wound + 14.0f && !state.winding && state.charge == 0.0f);
     TIDE_CHECK(state.cooldown == COOLDOWN && state.dash > 0);
-    // Not again until it's ready: held, nothing winds, and the ball is only driven, back the way it came here
     hold(0, 0, -1, true);
     tick(60);
     TIDE_CHECK(!tide_get_Ball(&world, ball).winding);
@@ -402,7 +383,6 @@ TIDE_TEST(sumo_a_charge_winds_up_and_bursts)
     hold(0, 1, 0, true);
     tick(10);
     TIDE_CHECK(tide_get_Ball(&world, ball).winding);
-    // A tap is a burst too, a small one, across the ring this time
     const float across = tide_get_Box3D_Body(&world, ball).velocity.x;
     hold(0, 1, 0, false);
     tick(1);
@@ -413,7 +393,6 @@ TIDE_TEST(sumo_a_charge_winds_up_and_bursts)
 TIDE_TEST(sumo_a_ring_out_scores_for_who_touched_last)
 {
     start_with(BARE, 2, false);
-    // The second player's ball near the rim, and the first's coming at it from inside, charged
     put(1, 0, BALL, 17);
     put(0, 0, BALL, 7);
     hold(0, 0, 1, true);
@@ -423,7 +402,6 @@ TIDE_TEST(sumo_a_ring_out_scores_for_who_touched_last)
     for (int i = 0; i < 240 && fell < 0; i++) {
         tide_world_tick(&world);
         if (!tide_has_Ball(&world, ball_of(&world, 1))) fell = i;
-        // Once it has hit, the first one holds back from the rim itself
         if (tide_has_Ball(&world, ball_of(&world, 1)) && tide_get_Ball(&world, ball_of(&world, 1)).last == 0) hold(0, 0, -1, false);
     }
     printf("    a charged ball threw another over the rim in %d ticks\n", fell);
@@ -432,7 +410,6 @@ TIDE_TEST(sumo_a_ring_out_scores_for_who_touched_last)
     TIDE_CHECK(seat_of(&world, 0).score == 1 && seat_of(&world, 0).round == 1 && seat_of(&world, 1).score == 0);
     TIDE_CHECK(!seat_of(&world, 1).up && seat_of(&world, 1).wait > RESPAWN - 5);
     TIDE_CHECK(tide_has_Ball(&world, ball_of(&world, 0)));
-    // It's back a moment later, dropped from over the ring, and nobody's to blame for it yet
     hold(0, 0, 0, false);
     tick(RESPAWN + 2);
     const tide_entity back = ball_of(&world, 1);
@@ -441,7 +418,6 @@ TIDE_TEST(sumo_a_ring_out_scores_for_who_touched_last)
     TIDE_CHECK(seat_of(&world, 1).up);
     tick(120);
     TIDE_CHECK(tide_get_Box3D_Body(&world, back).position.y < 1.0f);
-    // A ball that rolls off by itself scores for nobody
     hold(0, 0, 0, false);
     put(0, 0, BALL, 0);
     put(1, 17, BALL, 0);
@@ -471,9 +447,7 @@ TIDE_TEST(sumo_two_balls_that_meet_are_thrown_apart)
     }
     printf("    a ball going %.1f m/s threw one that stood still off at %.1f, without its grip for %d ticks\n", (double)closing,
            (double)thrown, dazed);
-    // Faster than what hit it: what Box3D makes of the hit, and the bump on top
     TIDE_CHECK(closing > 8.0f && thrown > closing && dazed > 10);
-    // Each knows who touched it
     TIDE_CHECK(tide_get_Ball(&world, ball_of(&world, 0)).last == 1 && tide_get_Ball(&world, ball_of(&world, 1)).last == 0);
     tide_world_free(&world);
 }
@@ -482,9 +456,7 @@ TIDE_TEST(sumo_the_floor_falls_away_from_the_rim_in)
 {
     start(1, false);
     const int crates = count(&world, tide_has_Crate);
-    put(0, 0, 12, 0); // On the pyramid in the middle, out of the way
-    // The first rim is marked five seconds before it goes, and goes after 35
-    // seconds: the clock is put on to just before, as nothing happens till then
+    put(0, 0, 12, 0);
     tick(60);
     played(2100 - WARN - 1);
     TIDE_CHECK(world.Ring.next == world.Ring.radius && world.Ring.gone == 0);
@@ -492,27 +464,23 @@ TIDE_TEST(sumo_the_floor_falls_away_from_the_rim_in)
     TIDE_CHECK(world.Ring.next < world.Ring.radius);
     tick(300);
     TIDE_CHECK(world.Ring.gone == 1 && world.Ring.radius == world.Ring.next);
-    // Its tiles let go one after another: each static tile is gone, and a loose one falls in its place
     tick(20);
     const int falling = crates_of(&world, Kind_Slab);
     TIDE_CHECK(falling > 0 && count(&world, tide_has_Tile) > 81 && count(&world, tide_has_Tile) < TILES);
     tick(240);
     printf("    after the first rim: %d tiles of %d, and %d crates of %d\n", count(&world, tide_has_Tile), TILES, count(&world, tide_has_Crate),
            crates);
-    // The pit took them, and what stood on them
     TIDE_CHECK(count(&world, tide_has_Tile) == 81 && crates_of(&world, Kind_Slab) == 0);
     TIDE_CHECK(count(&world, tide_has_Crate) < crates - 100);
-    // All three, after 65 seconds and after 90: the floor that's left is the middle's 37 tiles
     played(3900 - WARN - 1);
     tick(WARN + 262);
     TIDE_CHECK(world.Ring.gone == 2 && count(&world, tide_has_Tile) == 57);
     played(5400 - WARN - 1);
     tick(WARN + 262);
     TIDE_CHECK(world.Ring.gone == 3 && count(&world, tide_has_Tile) == 37);
-    // A ball on a tile that goes falls with it
     tide_world_free(&world);
     start_with(BARE, 1, false);
-    put(0, 6, BALL, -15); // A tile the first rim takes
+    put(0, 6, BALL, -15);
     played(2100 - WARN - 1);
     tick(WARN + 1);
     TIDE_CHECK(world.Ring.gone == 1 && seat_of(&world, 0).up);
@@ -552,7 +520,6 @@ TIDE_TEST(sumo_a_heavy_ball_is_another_body)
     const tide_float3 where = drop(Power_Heavy);
     put(0, where.x, BALL, where.z);
     tick(3);
-    // The pickup is gone, and the ball that took it is a bigger, heavier one: a body's shape is read once
     const tide_entity big = ball_of(&world, 0);
     TIDE_CHECK(count(&world, tide_has_Pickup) == 0 && count(&world, tide_has_Ball) == 2);
     TIDE_REQUIRE(tide_has_Ball(&world, big) && !tide_has_Ball(&world, small));
@@ -560,7 +527,6 @@ TIDE_TEST(sumo_a_heavy_ball_is_another_body)
     TIDE_CHECK(ball.heavy > HEAVY - 5 && ball.radius == BIG && ball.mass > 8000.0f);
     TIDE_CHECK(tide_get_Box3D_Sphere(&world, big).radius == BIG && seat_of(&world, 0).up);
     TIDE_CHECK(tide_get_Owner(&world, big).player.id == player(0).id);
-    // It answers its player as before, and the other ball is nothing to it
     const tide_float3 at = tide_get_Box3D_Body(&world, big).position;
     put(1, at.x + 6, BALL, at.z);
     hold(0, 1, 0, false);
@@ -575,7 +541,6 @@ TIDE_TEST(sumo_a_heavy_ball_is_another_body)
     }
     printf("    a heavy ball threw an ordinary one off at %.1f m/s, and went on at %.1f\n", (double)thrown, (double)slowed);
     TIDE_CHECK(thrown > 12.0f && slowed > 4.0f);
-    // After eight seconds it's its usual size again, where it was and as fast
     hold(0, 0, 0, false);
     tick(HEAVY);
     const tide_entity again = ball_of(&world, 0);
@@ -588,7 +553,6 @@ TIDE_TEST(sumo_a_heavy_ball_is_another_body)
 TIDE_TEST(sumo_a_shock_throws_everything_near)
 {
     start(2, false);
-    // The other ball close by, between the pickup and the rim
     const tide_float3 at = drop(Power_Shock);
     const tide_float3 out = tide_f3(at.x / flat(at), 0, at.z / flat(at));
     put(1, at.x + out.x * 2.5f, BALL, at.z + out.z * 2.5f);
@@ -614,7 +578,6 @@ TIDE_TEST(sumo_a_shock_throws_everything_near)
     printf("    a shock threw %d of the %d crates within its reach outward, and the other ball off at %.1f m/s\n", thrown, near,
            (double)flat(theirs.velocity));
     TIDE_CHECK(near > 20 && thrown > near / 2);
-    // The ball that set it off is left alone, and the other knows whose blast it was
     TIDE_CHECK(flat(mine.velocity) < 1.0f && theirs.velocity.x * out.x + theirs.velocity.z * out.z > 6.0f);
     TIDE_CHECK(tide_get_Ball(&world, ball_of(&world, 1)).last == 0);
     tide_world_free(&world);
@@ -623,7 +586,6 @@ TIDE_TEST(sumo_a_shock_throws_everything_near)
 TIDE_TEST(sumo_kegs_blow_up_one_after_another)
 {
     start(1, false);
-    // A keg, and the one beside it
     tide_entity keg = {0};
     for (uint32_t i = 0; i < world.entities.next_unused && !tide_has_Keg(&world, keg); i++) {
         const tide_entity e = tide_entity_in_slot(&world.entities, i);
@@ -632,12 +594,10 @@ TIDE_TEST(sumo_kegs_blow_up_one_after_another)
     TIDE_REQUIRE(tide_has_Keg(&world, keg));
     const int kegs = count(&world, tide_has_Keg);
     const tide_float3 at = tide_get_Box3D_Body(&world, keg).position;
-    // A ball that only leans on it does nothing
     const tide_float3 out = tide_f3(at.x / flat(at), 0, at.z / flat(at));
     put(0, at.x - out.x * 1.3f, BALL, at.z - out.z * 1.3f);
     tick(20);
     TIDE_CHECK(count(&world, tide_has_Keg) == kegs);
-    // One that hits it hard sets it off, and its blast lights the next one's fuse
     put(0, at.x - out.x * 5.0f, BALL, at.z - out.z * 5.0f);
     hold(0, out.x, out.z, false);
     int first = -1;
@@ -649,7 +609,6 @@ TIDE_TEST(sumo_kegs_blow_up_one_after_another)
     }
     printf("    a keg went off after %d ticks, and the one beside it %d ticks later\n", first, second - first);
     TIDE_CHECK(first >= 0 && second > first && second - first < 30);
-    // What stood near was thrown, and breaks up
     TIDE_CHECK(knocked(&world) > 0);
     tide_world_free(&world);
 }
@@ -658,7 +617,6 @@ TIDE_TEST(sumo_rubble_breaks_up)
 {
     start(1, false);
     const int crates = count(&world, tide_has_Crate);
-    // Into what stands in from where it starts
     hold(0, 0.5f, 1, true);
     tick(40);
     hold(0, 0.5f, 1, false);
@@ -667,7 +625,6 @@ TIDE_TEST(sumo_rubble_breaks_up)
     const int hit = knocked(&world);
     printf("    a ball knocked %d crates about\n", hit);
     TIDE_CHECK(hit > 10 && count(&world, tide_has_Crate) > crates - 4);
-    // A few seconds later they're gone, and nothing else is
     tick(420);
     printf("    %d of %d crates are left, %d of them knocked since\n", count(&world, tide_has_Crate), crates, knocked(&world));
     TIDE_CHECK(count(&world, tide_has_Crate) <= crates - hit + 4 && count(&world, tide_has_Crate) > crates - hit - 120);
@@ -698,7 +655,6 @@ static int brawl(const int ticks, int *met)
 
 TIDE_TEST(sumo_bots_stay_on_and_fight_and_the_next_round_is_raised)
 {
-    // A whole ring, for its first twenty seconds
     start(1, true);
     const int crates = count(&world, tide_has_Crate);
     int met = 0;
@@ -706,9 +662,7 @@ TIDE_TEST(sumo_bots_stay_on_and_fight_and_the_next_round_is_raised)
     printf("    twenty seconds of four bots at a whole ring: %d went over the rim, %d of the four met another, and %d of %d crates"
            " are left\n",
            early, (met & 1) + (met >> 1 & 1) + (met >> 2 & 1) + (met >> 3 & 1), count(&world, tide_has_Crate), crates);
-    // They stay on: while the whole floor is there, hardly any fall. And they find each other, through what's stacked
     TIDE_CHECK(early <= 3 && met == 15 && count(&world, tide_has_Crate) < crates - 100);
-    // The round's last half second: it's over for five seconds, and then the next ring is raised, another arrangement
     played(ROUND - 30);
     tick(31);
     TIDE_CHECK(world.Ring.phase == Phase_Over);
@@ -717,17 +671,12 @@ TIDE_TEST(sumo_bots_stay_on_and_fight_and_the_next_round_is_raised)
     TIDE_CHECK(world.Ring.round == 2 && world.Ring.phase == Phase_Ready && world.Ring.gone == 0);
     TIDE_CHECK(count(&world, tide_has_Tile) == TILES && count(&world, tide_has_Crate) > 2000 && knocked(&world) == 0);
     TIDE_CHECK(count(&world, tide_has_Ball) == 4 && count(&world, tide_has_Pickup) == 0);
-    // What was scored stays, and the next round starts from nothing
     TIDE_CHECK(seat_of(&world, 0).score == total && seat_of(&world, 0).round == 0);
-    // A new game is asked for: everything from nothing
     TIDE_REQUIRE(command(&world, TIDE_COMMAND_ID_Rebuild, 0));
     tick(3);
     TIDE_CHECK(world.Ring.round == 1 && world.Ring.phase == Phase_Ready && seat_of(&world, 0).score == 0);
     TIDE_CHECK(count(&world, tide_has_Crate) > 2000);
 
-    // And the round's last half minute, on what the third rim leaves, which
-    // is where they throw each other out. A ring with only its middle's pile,
-    // as two rims have gone and the third is about to be marked.
     start_with(1, 1, true);
     world.Ring.gone = 2;
     world.Ring.radius = world.Ring.next = 12.5f;
@@ -744,7 +693,6 @@ TIDE_TEST(sumo_bots_stay_on_and_fight_and_the_next_round_is_raised)
            " threw out %d\n",
            outs, scored, best);
     TIDE_CHECK(world.Ring.gone == 3 && count(&world, tide_has_Tile) == 37 && world.Ring.phase == Phase_Play);
-    // They fight: balls are thrown out, and few fall by themselves
     TIDE_CHECK(scored >= 2 && outs - scored <= 3 && best >= 1);
     tide_world_free(&world);
 }
@@ -807,8 +755,6 @@ static uint32_t asked(void)
 TIDE_TEST(sumo_opens_on_its_lobby_unless_it_was_told_which_match)
 {
     start_with(BARE, 3, true);
-    // Started with nothing said: a match of its own, closed, behind the title.
-    // The player's ball plays by itself while the lobby is up
     machine(TIDE_SESSION_CONNECTED, 0, true, false, "");
     frame(&world);
     frame(&world);
@@ -817,12 +763,10 @@ TIDE_TEST(sumo_opens_on_its_lobby_unless_it_was_told_which_match)
     TIDE_CHECK(asked() == TIDE_REQUEST_NONE);
     tide_local_free(&local);
 
-    // --host, or a page's ?host: the match is open by the first frame, and no lobby is in the way
     machine(TIDE_SESSION_CONNECTED, 0, true, true, "K7QF2M");
     frame(&world);
     frame(&world);
     TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Playing && local.Hand.playing && drives());
-    // A page up over the match: the hands are off the ball until it closes
     local.Rooms_Lobby.page = Rooms_Page_Room;
     frame(&world);
     TIDE_CHECK(!drives());
@@ -831,18 +775,16 @@ TIDE_TEST(sumo_opens_on_its_lobby_unless_it_was_told_which_match)
     TIDE_CHECK(drives());
     tide_local_free(&local);
 
-    // --join <code>, or ?join=<code>: joining by the first frame. The page says so until the match's world is here
     machine(TIDE_SESSION_CONNECTING, -1, false, false, "K7QF2M");
     frame(NULL);
     TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Join && local.Rooms_Lobby.joining && sampled().away);
     tide_local_connected(&local);
     tide_local_set_session(&local, TIDE_SESSION_CONNECTED, player(1), 30, false, false, "K7QF2M");
-    frame(&world); // The page closes as this frame ends...
-    frame(&world); // ...and the frame after it says nothing of what's held
+    frame(&world);
+    frame(&world);
     frame(&world);
     TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Playing && !local.Rooms_Lobby.joining && drives());
     TIDE_CHECK(local.Rooms_Lobby.mine == 1 && local.Fx.seat == 1);
-    // That match ends: back on the title, with a line that says so, and a match of its own asked for
     tide_local_disconnected(&local, TIDE_DISCONNECT_ENDED, "");
     tide_local_set_session(&local, TIDE_SESSION_OFFLINE, (tide_player_id){0}, 0, false, false, "");
     frame(NULL);
@@ -851,7 +793,6 @@ TIDE_TEST(sumo_opens_on_its_lobby_unless_it_was_told_which_match)
     TIDE_CHECK(asked() == TIDE_REQUEST_START);
     tide_local_free(&local);
 
-    // A code nobody has: the page it was typed on stays, to try again from
     machine(TIDE_SESSION_CONNECTING, -1, false, false, "");
     frame(NULL);
     tide_local_disconnected(&local, TIDE_DISCONNECT_FAILED, "");
@@ -860,7 +801,6 @@ TIDE_TEST(sumo_opens_on_its_lobby_unless_it_was_told_which_match)
     frame(NULL);
     TIDE_CHECK(local.Rooms_Lobby.page == Rooms_Page_Join && !local.Rooms_Lobby.joining && says_something());
     TIDE_CHECK(asked() == TIDE_REQUEST_START);
-    // This machine leaving a match, as when it starts or joins another, says nothing
     tide_local_disconnected(&local, TIDE_DISCONNECT_LEFT, "");
     frame(NULL);
     frame(NULL);
@@ -891,7 +831,6 @@ TIDE_TEST(sumo_enter_joins_the_room_whose_code_was_typed)
     hosted(&world);
     local.Rooms_Lobby.page = Rooms_Page_Join;
     hosted(&world);
-    // The page's field is its first widget, which takes the focus as the page comes up: what's typed goes into it
     hosted(&world);
     for (const char *c = "k7qf2m"; *c; c++) devices.keyboard.text.chars[devices.keyboard.text.count++] = (uint32_t)*c;
     hosted(&world);
@@ -930,9 +869,6 @@ TIDE_TEST(sumo_effects_come_from_what_the_match_sends)
     frame(&world);
     frame(&world);
     TIDE_CHECK(local.Fx.seat == 0 && local.Fx.here && tide_list_read_count(&local.heap, local.Air.sparks) == 0);
-    // Every crate is in the list that's drawn at once, every tile in the floor's, and each ball in the balls'.
-    // They're drawn for the window, and once more into the lamp's image, which is their shadows: one target,
-    // of depth alone, that the frame's draws go to before the window's
     TIDE_CHECK(tide_list_read_count(&local.heap, local.Fx.solids) == count(&world, tide_has_Crate));
     TIDE_CHECK(tide_list_read_count(&local.heap, local.Fx.tiles) == TILES);
     TIDE_CHECK(tide_list_read_count(&local.heap, local.Fx.rounds) == 2);
@@ -940,13 +876,11 @@ TIDE_TEST(sumo_effects_come_from_what_the_match_sends)
     TIDE_CHECK(draw.target_count == 1 && draw.targets[0].id == local.Shadow.map.id);
     TIDE_CHECK(draw.commands[0].kind == TIDE_DRAW_TARGET && draw.commands[0].target == 1);
 
-    // This machine's player's ball goes into a stack: splinters, and the camera feels it
     hold(0, 0.5f, 1, true);
     for (int i = 0; i < 40; i++) tick_and_show();
     TIDE_CHECK(local.Fx.winding && local.Fx.charge > 0.5f && local.Flow.charged);
     hold(0, 0.5f, 1, false);
     tick_and_show();
-    // The burst: a ring where it left from, and the wait for the next one shows
     TIDE_CHECK(tide_list_read_count(&local.heap, local.Air.waves) == 1 && local.Fx.cooldown > 0 && local.Fx.trauma > 0.0f);
     bool splintered = false;
     for (int i = 0; i < 90 && !splintered; i++) {
@@ -956,7 +890,6 @@ TIDE_TEST(sumo_effects_come_from_what_the_match_sends)
     TIDE_CHECK(splintered);
     hold(0, 0, 0, false);
 
-    // It's thrown over the rim by the other one: once that's certain, the point floats up and their score jumps
     clear_the_ring();
     put(0, 0, BALL, 17);
     put(1, 0, BALL, 7);
@@ -967,7 +900,6 @@ TIDE_TEST(sumo_effects_come_from_what_the_match_sends)
     for (int i = 0; i < 200 && seat_of(&world, 0).up; i++) {
         tick_and_show();
         clashed = clashed || tide_get_Ball_local(&local, ball_of(&world, 0)).flash > 0.0f;
-        // Once it has hit, the other one holds back from the rim itself
         if (tide_has_Ball(&world, ball_of(&world, 0)) && tide_get_Ball(&world, ball_of(&world, 0)).last == 1) hold(1, 0, -1, false);
     }
     tick_and_show();
@@ -975,7 +907,6 @@ TIDE_TEST(sumo_effects_come_from_what_the_match_sends)
     TIDE_CHECK(popped(1) > 0.5f && tide_list_read_count(&local.heap, local.Air.labels) == 1);
     TIDE_CHECK(local.Flow.fell < 0.1f && local.Flow.by == 1 && !local.Fx.here);
 
-    // A round ends, and the next is raised: the words know who took it
     world.Ring.timer = 2;
     tick_and_show();
     tick_and_show();
@@ -999,7 +930,6 @@ typedef struct match {
     tide_server *server;
     tide_client *players[PLAYERS];
     double now;
-    // One player's updates, looked at: the longest, and the most ticks one ran
     int watched; // Plus one: 0 for nobody
     uint64_t longest_ns;
     uint32_t most_ticks;
@@ -1012,12 +942,8 @@ typedef struct hand {
     const match *in;
 } hand;
 
-// What a player does at each tick of the match. For most of every four
-// seconds, each to their own beat, they go for the middle of the ring, where
-// the pile is and the others are, winding a charge up on the way and letting
-// it go. For the rest they roll one of eight ways. Their stick points one of
-// eight ways, so that their input changes a few times a second, as a
-// player's does.
+// A player's input at each tick: for most of every four seconds, each to their own beat, they head
+// for the middle of the ring charging and letting go; otherwise they roll one of eight ways.
 static void play(void *user, const uint32_t tick, void *input)
 {
     static const float ways[8][2] = {{0, 1}, {0.7071f, 0.7071f}, {1, 0}, {0.7071f, -0.7071f}, {0, -1}, {-0.7071f, -0.7071f}, {-1, 0},
@@ -1089,7 +1015,6 @@ static void join_late(match *m, const int who)
         waited++;
     }
     TIDE_REQUIRE(tide_client_status_of(m->players[who]).state == TIDE_SESSION_CONNECTED);
-    // Its first second with the world, from the update it came in: what it ran, and what its longest update took
     for (int i = 0; i < 60; i++) advance(m);
     const tide_client_status status = tide_client_status_of(m->players[who]);
     printf("    in its first second with the world, player %d ran %u ticks: %u the server sent and %u predicted, %u of those"
@@ -1122,12 +1047,8 @@ static bool send(match *m, const int who, const uint32_t id)
     return tide_game_api.check_command(bytes, size, NULL) && tide_client_send_command(m->players[who], bytes, size);
 }
 
-// The match is started with its rings stacked two tiles out: the middle's
-// pile and the cabins around it, a tenth of a whole ring's bodies. It's what
-// the network and the netcode do that's looked at here, with Box3D's state
-// in every world that's kept, sent and run again, and four machines each
-// keeping a whole ring made that take minutes where the code isn't optimized.
-// The test after this one has a whole ring, and one player.
+// The rings are stacked only two tiles out (a tenth of a whole ring's bodies): this checks the
+// network and netcode, and four machines each keeping a whole ring take minutes unoptimized.
 TIDE_TEST(sumo_three_players_stay_in_one_match_over_a_bad_network)
 {
     b3t_forget();
@@ -1148,16 +1069,12 @@ TIDE_TEST(sumo_three_players_stay_in_one_match_over_a_bad_network)
     const int crates = count(authority, tide_has_Crate);
     TIDE_CHECK(crates > 150 && count(authority, tide_has_Tile) == TILES);
 
-    // Two players and two bots go at the pile, and each other. Then a third
-    // player joins, while crates are in the air: the world they're sent has
-    // Box3D's state in it, every body where it is
     while (tide_server_tick(m.server) < 420) advance(&m);
     authority = tide_server_world(m.server);
     TIDE_CHECK(authority->Ring.phase == Phase_Play && knocked(authority) > 0);
     join_late(&m, 2);
     bool bots = false;
     while (tide_server_tick(m.server) < 640) {
-        // The second player turns the bots off: a command, which the server gives a tick
         if (!bots && tide_server_tick(m.server) >= 560) bots = send(&m, 1, TIDE_COMMAND_ID_Bots);
         advance(&m);
     }
@@ -1165,7 +1082,6 @@ TIDE_TEST(sumo_three_players_stay_in_one_match_over_a_bad_network)
     TIDE_REQUIRE(bots);
     for (int i = 0; i < PLAYERS; i++) {
         TIDE_REQUIRE(tide_client_status_of(m.players[i]).state == TIDE_SESSION_CONNECTED);
-        // Each has a seat, and its ball when it isn't on its way back
         TIDE_CHECK((authority->Ring.manned >> i & 1) == 1);
         if (seat_of(authority, i).up) TIDE_CHECK(seat_by(authority, m.players[i]) == i);
     }
@@ -1178,17 +1094,12 @@ TIDE_TEST(sumo_three_players_stay_in_one_match_over_a_bad_network)
     TIDE_CHECK(tide_server_tick(m.server) == 640);
     TIDE_CHECK(brawl == BRAWL_HASH);
 
-    // The third player asks for a new game: the ring is raised again, as it
-    // was, and the count is over once more
     TIDE_REQUIRE(send(&m, 2, TIDE_COMMAND_ID_Rebuild));
     while (tide_server_tick(m.server) < 880) advance(&m);
     authority = tide_server_world(m.server);
     TIDE_CHECK(authority->Ring.round == 1 && authority->Ring.phase == Phase_Play && count(authority, tide_has_Tile) == TILES);
     TIDE_CHECK(count(authority, tide_has_Crate) > crates - 60 && count(authority, tide_has_Ball) == 3);
 
-    // No machine's world ever went another way than the server's: what each
-    // predicted wrong it ran again, and every tick it confirmed had the
-    // server's hash, Box3D's state in it. The one who joined late too.
     for (int i = 0; i < PLAYERS; i++) {
         const tide_client_status status = tide_client_status_of(m.players[i]);
         printf("    player %d ran %u predicted ticks again, was sent the world again %u times, and is %u ticks ahead of"
@@ -1234,7 +1145,6 @@ TIDE_TEST(sumo_a_player_joins_a_whole_ring_that_bots_are_bringing_down)
     const tide_client_status status = tide_client_status_of(m.players[0]);
     printf("    it ran %u predicted ticks again, and was sent the world again %u times; %d crates stand, %d of them knocked about\n",
            status.again_ticks, status.resyncs, count(authority, tide_has_Crate), knocked(authority));
-    // All of the ring came, once, and the first seat's ball is theirs, as the bot left it
     TIDE_CHECK(status.state == TIDE_SESSION_CONNECTED && status.resyncs == 0 && status.world_bytes > 1500000u);
     TIDE_CHECK(authority->Ring.manned == 1 && count(authority, tide_has_Ball) == 4);
     if (seat_of(authority, 0).up) TIDE_CHECK(seat_by(authority, m.players[0]) == 0);
@@ -1263,18 +1173,10 @@ static void no_work(void *context, const uint32_t thread)
 }
 #endif
 
-// What things cost, for whoever reads this test's output: timings aren't
-// checked, as machines differ too much. A tick with the world kept and hashed
-// after it, as a client's is: with a fresh ring at rest, while four bots are
-// at it, and at the worst, a shock beside the middle's pyramid. How much of
-// Box3D's arena pages touched by a commit are counted too: those are copied
-// into the resident even if their bytes didn't change. The optional
-// full-arena check is inside the tick and no match's to pay, so it's taken off.
-//
-// Where the program has the platform's threads, every other tick's world is
-// hashed with what changed of it shared out over them, as a session with
-// threads hashes (tide_game.hash_world_on): the two are said apart, of ticks
-// taken in turn, so they're of the same scene.
+// Prints what a tick costs, with the world kept and hashed after it as a client's is (timings
+// aren't checked): a fresh ring at rest, four bots at it, and the worst, a shock beside the pyramid.
+// The optional full-arena check is inside the tick and is taken off. Where threads exist, every
+// other tick is hashed with tide_game.hash_world_on, and the two are reported apart.
 static void spend(const int ticks, const char *what, const bool away)
 {
     tide_world kept = {0};
@@ -1337,11 +1239,9 @@ static void spend(const int ticks, const char *what, const bool away)
     tide_world_free(&kept);
 }
 
-// What a client pays when it guessed another player's input wrong: its world
-// as it was `ahead` ticks ago, Box3D's resident pages are restored, and
-// those ticks run again with another input, each kept and hashed. The world
-// it's done to is a copy: the match goes on as it was. The least of the
-// times it's done says the most on a machine that's busy with other things.
+// What a client pays for a wrong guess of another player's input: its world from `ahead` ticks ago
+// is restored (Box3D's resident pages too) and those ticks run again, each kept and hashed, on a
+// copy. The least of the repeats is reported, as it is the steadiest on a busy machine.
 static void rerun(const int ahead, const int times, const char *what)
 {
     tide_world then = {0};
@@ -1349,8 +1249,8 @@ static void rerun(const int ahead, const int times, const char *what)
     tide_world kept = {0};
     uint64_t spent = 0;
     uint64_t least = UINT64_MAX;
-    uint64_t each[16] = {0}; // Each of the ticks, the least it took
-    uint64_t forward = UINT64_MAX; // The same ticks as the match ran them the first time, the least
+    uint64_t each[16] = {0};
+    uint64_t forward = UINT64_MAX;
     for (int k = 0; k < 16; k++) each[k] = UINT64_MAX;
     for (int i = 0; i < times; i++) {
         tide_world_copy(&then, &world);
@@ -1417,7 +1317,6 @@ TIDE_TEST(sumo_costs)
     world.Ring.bots = false;
     tick(READY - 2 - settling + RESPAWN);
     spend(MEASURED(120), "a fresh ring at rest, one ball that nobody drives", false);
-    // A world restored from its resident pages, as a client that predicted wrong does before rerunning ticks
     double again = 1e9;
     double restore = 1e9; // Of which Box3D's resident restore and the tick's commit
     for (int i = 0; i < 5; i++) {
@@ -1442,9 +1341,7 @@ TIDE_TEST(sumo_costs)
     spend(MEASURED(1500), "the 25 seconds after", true);
     printf("    by then %d crates stand, %d of them knocked about, and Box3D's state is %d bytes\n", count(&world, tide_has_Crate),
            knocked(&world), physics_bytes(&world));
-    // The worst: a shock beside the middle's pyramid of a full ring
     start(1, false);
-    // And what a frame's views take with all of it standing: every crate into the list that's drawn at once
     machine(TIDE_SESSION_CONNECTED, 0, true, true, "K7QF2M");
     frame(&world);
     uint64_t views = UINT64_MAX;

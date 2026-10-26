@@ -4,6 +4,7 @@
 #include <string.h>
 
 #include "ast.h"
+#include "hlsl.h"
 #include "spirv.h"
 #include "types.h"
 
@@ -63,7 +64,7 @@ enum {
     H_XXH, H_HASH1, H_HASH2, H_HASH3, H_HASH4,
     H_FADE, H_GRAD2, H_GRAD3, H_PERLIN2, H_PERLIN3, H_SIMPLEX2, H_SIMPLEX3, H_NEAREST, H_CELLULAR2, H_CELLULAR3, // noise.c's
     H_NORMALIZE_Q, H_MUL_Q, H_ROTATE_Q, H_INVERSE_Q, H_CONJUGATE_Q, H_NLERP_Q, H_SLERP_Q, H_ANGLE_Q, H_AXISANGLE_Q, H_EULER_Q,
-    H_Q_FROM_M3, H_LOOKROTATION_Q, H_FROMTO_UNIT3, H_FROMTO_Q, H_M3_FROM_Q, H_M4_FROM_M3, H_TRS, H_SCALE, H_PERSPECTIVE, H_ORTHO,
+    H_Q_FROM_M3, H_FROMTO_UNIT3, H_FROMTO_Q, H_LOOKROTATION_Q, H_M3_FROM_Q, H_M4_FROM_M3, H_TRS, H_SCALE, H_PERSPECTIVE, H_ORTHO,
     H_RECIPROCAL, H_INVERSE2, H_INVERSE3, H_INVERSE4, H_INT4_LANE,
     H_NORMALS, // tide_normals(m): what a mesh's normals go through to the world, for instance.Normal
     H_STRAIGHT, // tide_straight(c): a texture's pixel, which has its alpha worked into its color, as the color it is
@@ -139,9 +140,10 @@ typedef struct emit {
     VEC(shader_function) done; // The functions written, callees first, each for the lists and grids it's called with
     sb functions;
     bool helpers[H_COUNT];
-    bool lists[8]; // The shader's textures that are lists or grids whose reader is written (need_data)
-    bool finds[8]; // ...that are maps or sets whose lookup is written (need_find)
-    bool tries[8]; // ...that are maps whose TryGet is written (need_try)
+    // A draw's textures, up to 12 (TIDE_SHADER_TEXTURES)
+    bool lists[12]; // The shader's textures that are lists or grids whose reader is written (need_data)
+    bool finds[12]; // ...that are maps or sets whose lookup is written (need_find)
+    bool tries[12]; // ...that are maps whose TryGet is written (need_try)
     VEC(data_alias) aliases;   // The locals of the code being written that name a list or a grid (data_of)
     const given *spec;         // By the parameter of the function being written: the list, grid or texture it's called with
     VEC(const decl *) arrays;  // The array types whose element reader is written (need_array)
@@ -254,6 +256,7 @@ static bool is_struct_like(const type t)
 // False for a type it can't have.
 static bool type_words(const type t, int *floats, int *ints)
 {
+    if (type_is_double_based(t)) return false;
     if (t.kind == TY_BYTE) { // An int there, from 0 to 255
         *ints += 1;
         return true;
@@ -404,6 +407,9 @@ static bool type_fits(emit *em, const type t, const loc at)
         return false;
     }
     switch (t.kind) {
+    case TY_DOUBLE: case TY_DOUBLE2: case TY_DOUBLE3: case TY_DOUBLE4:
+    case TY_DOUBLE2X2: case TY_DOUBLE3X3: case TY_DOUBLE4X4:
+        why = "the GPU's floats are 32 bits: convert to a float scalar, vector or matrix in local code before drawing"; break;
     case TY_LONG: why = "the GPU's ints are 32 bits: convert it with int(x) before it gets there"; break;
     case TY_STRING: why = "text is the CPU's"; break;
     case TY_MESH: why = "a Mesh is drawn, 'Draw.Mesh(mesh, transform, ...)', which sends the GPU its vertices and its triangles"; break;
@@ -885,7 +891,20 @@ static const char *const helper_texts[H_COUNT] = {
                    "    float n2 = tide_corner2(tide_hash3(ivec3(i + 1, j + 1, seed)), x2, y2);\n"
                    "    return (n0 + n1 + n2) * 99.2;\n"
                    "}\n",
-    [H_SIMPLEX3] = "float tide_corner3(int h, float x, float y, float z) {\n"
+    // The four corners use only two coordinates per axis and one seed. Reuse
+    // the rotated xxHash lanes, retaining exactly hash4's unsigned sum and end.
+    // This changes no lattice/gradient bits or floating-point expression.
+    // Independent rank tests retain the CPU's x, then y, then z tie priority.
+    [H_SIMPLEX3] = "uint tide_simplex_lane(uint h, int w, uint r) {\n"
+                   "    uint v = tide_xxh_lane(h, w);\n"
+                   "    return (v << r) | (v >> (32u - r));\n"
+                   "}\n"
+                   "uint tide_simplex_pick(uint a, uint b, int high) {\n"
+                   "    uint v = a;\n"
+                   "    if (high != 0) { v = b; }\n"
+                   "    return v;\n"
+                   "}\n"
+                   "float tide_corner3(int h, float x, float y, float z) {\n"
                    "    float t = 0.6 - x * x - y * y - z * z;\n"
                    "    if (t < 0.0) { return 0.0; }\n"
                    "    float tt = t * t;\n"
@@ -906,35 +925,12 @@ static const char *const helper_texts[H_COUNT] = {
                    "    int i2 = 0;\n"
                    "    int j2 = 0;\n"
                    "    int k2 = 0;\n"
-                   "    if (x0 >= y0) {\n"
-                   "        if (y0 >= z0) {\n"
-                   "            i1 = 1;\n"
-                   "            i2 = 1;\n"
-                   "            j2 = 1;\n"
-                   "        } else if (x0 >= z0) {\n"
-                   "            i1 = 1;\n"
-                   "            i2 = 1;\n"
-                   "            k2 = 1;\n"
-                   "        } else {\n"
-                   "            k1 = 1;\n"
-                   "            i2 = 1;\n"
-                   "            k2 = 1;\n"
-                   "        }\n"
-                   "    } else {\n"
-                   "        if (y0 < z0) {\n"
-                   "            k1 = 1;\n"
-                   "            j2 = 1;\n"
-                   "            k2 = 1;\n"
-                   "        } else if (x0 < z0) {\n"
-                   "            j1 = 1;\n"
-                   "            j2 = 1;\n"
-                   "            k2 = 1;\n"
-                   "        } else {\n"
-                   "            j1 = 1;\n"
-                   "            i2 = 1;\n"
-                   "            j2 = 1;\n"
-                   "        }\n"
-                   "    }\n"
+                   "    if (x0 >= y0 && x0 >= z0) { i1 = 1; }\n"
+                   "    if (y0 > x0 && y0 >= z0) { j1 = 1; }\n"
+                   "    if (z0 > x0 && z0 > y0) { k1 = 1; }\n"
+                   "    if (x0 >= y0 || x0 >= z0) { i2 = 1; }\n"
+                   "    if (y0 > x0 || y0 >= z0) { j2 = 1; }\n"
+                   "    if (z0 > x0 || z0 > y0) { k2 = 1; }\n"
                    "    float x1 = x0 - float(i1) + 0.16666667;\n"
                    "    float y1 = y0 - float(j1) + 0.16666667;\n"
                    "    float z1 = z0 - float(k1) + 0.16666667;\n"
@@ -947,10 +943,23 @@ static const char *const helper_texts[H_COUNT] = {
                    "    int i = int(fi);\n"
                    "    int j = int(fj);\n"
                    "    int k = int(fk);\n"
-                   "    float n0 = tide_corner3(tide_hash4(ivec4(i, j, k, seed)), x0, y0, z0);\n"
-                   "    float n1 = tide_corner3(tide_hash4(ivec4(i + i1, j + j1, k + k1, seed)), x1, y1, z1);\n"
-                   "    float n2 = tide_corner3(tide_hash4(ivec4(i + i2, j + j2, k + k2, seed)), x2, y2, z2);\n"
-                   "    float n3 = tide_corner3(tide_hash4(ivec4(i + 1, j + 1, k + 1, seed)), x3, y3, z3);\n"
+                   "    uint ax = tide_simplex_lane(0x24234428u, i, 1u);\n"
+                   "    uint bx = tide_simplex_lane(0x24234428u, i + 1, 1u);\n"
+                   "    uint ay = tide_simplex_lane(0x85EBCA77u, j, 7u);\n"
+                   "    uint by = tide_simplex_lane(0x85EBCA77u, j + 1, 7u);\n"
+                   "    uint az = tide_simplex_lane(0u, k, 12u);\n"
+                   "    uint bz = tide_simplex_lane(0u, k + 1, 12u);\n"
+                   "    uint ds = tide_simplex_lane(0x61C8864Fu, seed, 18u);\n"
+                   "    int h0 = tide_xxh_end(ax + ay + az + ds + 16u);\n"
+                   "    int h1 = tide_xxh_end(tide_simplex_pick(ax, bx, i1) + tide_simplex_pick(ay, by, j1) + "
+                   "tide_simplex_pick(az, bz, k1) + ds + 16u);\n"
+                   "    int h2 = tide_xxh_end(tide_simplex_pick(ax, bx, i2) + tide_simplex_pick(ay, by, j2) + "
+                   "tide_simplex_pick(az, bz, k2) + ds + 16u);\n"
+                   "    int h3 = tide_xxh_end(bx + by + bz + ds + 16u);\n"
+                   "    float n0 = tide_corner3(h0, x0, y0, z0);\n"
+                   "    float n1 = tide_corner3(h1, x1, y1, z1);\n"
+                   "    float n2 = tide_corner3(h2, x2, y2, z2);\n"
+                   "    float n3 = tide_corner3(h3, x3, y3, z3);\n"
                    "    return (n0 + n1 + n2 + n3) * 32.5;\n"
                    "}\n",
     // The two shortest squared distances so far, with d among them
@@ -1112,10 +1121,6 @@ static const char *const helper_texts[H_COUNT] = {
                     "    if (s == 0.0) { s = 1.0; }\n"
                     "    return vec4((m[2].x + m[0].z) / s, (m[2].y + m[1].z) / s, 0.25 * s, (m[0].y - m[1].x) / s);\n"
                     "}\n",
-    [H_LOOKROTATION_Q] = "vec4 tide_lookrotation_q(vec3 f, vec3 u) {\n"
-                         "    vec3 t = tide_normalize3(cross(u, f));\n"
-                         "    return tide_q_from_m3(mat3(t, cross(f, t), f));\n"
-                         "}\n",
     [H_FROMTO_UNIT3] = "vec3 tide_fromto_unit3(vec3 v) {\n"
                        "    if ((floatBitsToInt(v.x) & 0x7f800000) == 0x7f800000 || (floatBitsToInt(v.y) & 0x7f800000) == 0x7f800000 || (floatBitsToInt(v.z) & 0x7f800000) == 0x7f800000) { return vec3(0.0); }\n"
                        "    float largest = max(max(abs(v.x), abs(v.y)), abs(v.z));\n"
@@ -1142,6 +1147,20 @@ static const char *const helper_texts[H_COUNT] = {
                    "    float sine = sqrt(0.5 * (1.0 - d));\n"
                    "    return tide_normalize_q(vec4(scaled * (sine / size), (largest * size) / (2.0 * sine)));\n"
                    "}\n",
+    // After FromTo, its fallback when up gives no side. One return: ANGLE's
+    // D3D11 compiler warns (X4000) of an early one returning FromTo's value.
+    [H_LOOKROTATION_Q] = "vec4 tide_lookrotation_q(vec3 f, vec3 u) {\n"
+                         "    vec3 z = tide_fromto_unit3(f);\n"
+                         "    vec3 side = cross(tide_fromto_unit3(u), z);\n"
+                         "    vec4 q = vec4(0.0, 0.0, 0.0, 1.0);\n"
+                         "    if (dot(side, side) < 1e-10) {\n"
+                         "        q = tide_fromto_q(vec3(0.0, 0.0, 1.0), f);\n"
+                         "    } else {\n"
+                         "        vec3 y = tide_normalize3(cross(z, tide_normalize3(side)));\n"
+                         "        q = tide_normalize_q(tide_q_from_m3(mat3(cross(y, z), y, z)));\n"
+                         "    }\n"
+                         "    return q;\n"
+                         "}\n",
     [H_M3_FROM_Q] = "mat3 tide_m3_from_q(vec4 q) {\n"
                     "    float x = q.x + q.x;\n"
                     "    float y = q.y + q.y;\n"
@@ -1452,7 +1471,7 @@ static void need(emit *em, const int h)
         need(em, H_GRAD2);
         break;
     case H_SIMPLEX3:
-        need(em, H_HASH4);
+        need(em, H_XXH);
         need(em, H_GRAD3);
         break;
     case H_CELLULAR2:
@@ -1479,6 +1498,7 @@ static void need(emit *em, const int h)
     case H_LOOKROTATION_Q:
         need(em, H_NORMALIZE3);
         need(em, H_Q_FROM_M3);
+        need(em, H_FROMTO_Q);
         break;
     case H_FROMTO_UNIT3:
         need(em, H_NORMALIZE3);
@@ -3093,10 +3113,21 @@ static void ex_math(emit *em, const expr *e)
         if (e->args.count > 1) put_arg(em, e, 1);
         else sb_put(em->o, "0");
         sb_put(em->o, ")");
-    } else if (str_eq_c(e->name, "Hash")) { // Integers: the CPU's number
-        char name[32];
-        snprintf(name, sizeof name, "tide_hash%d", type_dim(first));
-        put_helper_call(em, e, H_HASH1 + type_dim(first) - 1, name);
+    } else if (str_eq_c(e->name, "AsInt") || str_eq_c(e->name, "AsFloat")) {
+        if (em->l == GLSL) sb_put(em->o, str_eq_c(e->name, "AsInt") ? "floatBitsToInt(" : "intBitsToFloat(");
+        else sb_printf(em->o, "bitcast<%s>(", ty(em, e->type));
+        put_arg(em, e, 0);
+        sb_put(em->o, ")");
+    } else if (str_eq_c(e->name, "Hash")) { // xxHash of the same integer or float bits as the CPU
+        need(em, H_HASH1 + type_dim(first) - 1);
+        sb_printf(em->o, "tide_hash%d(", type_dim(first));
+        if (type_is_float_based(first)) {
+            if (em->l == GLSL) sb_put(em->o, "floatBitsToInt(");
+            else sb_printf(em->o, "bitcast<%s>(", ty(em, vector_type(false, type_dim(first))));
+        }
+        put_arg(em, e, 0);
+        if (type_is_float_based(first)) sb_put(em->o, ")");
+        sb_put(em->o, ")");
     } else if (quaternion && str_eq_c(e->name, "Mul")) { // Two rotations, or one and the vector it turns
         const bool turns = e->arg_want.items[1].kind != TY_QUATERNION;
         put_helper_call(em, e, turns ? H_ROTATE_Q : H_MUL_Q, turns ? "tide_rotate_q" : "tide_mul_q");
@@ -3308,7 +3339,7 @@ bool declared_raw(const expr *texture)
 {
     if (!texture) return false;
     if (texture->bind == BIND_ASSET && texture->constant) return texture->constant->sample_raw;
-    return texture->kind == E_MEMBER && texture->field && texture->type.kind == TY_GRID && field_is_raw(texture->field);
+    return texture->field && (texture->type.kind == TY_GRID || texture->type.kind == TY_TEXTURE) && field_is_raw(texture->field);
 }
 
 void declared_sampling(const expr *texture, int *filter, int *wrap)
@@ -3384,7 +3415,7 @@ static bool has_roll(const expr *e, const int depth)
 // Whether a frag can work an expression out as it starts, before any branch:
 // it's made of the frag's parameters, constants, locals that are never
 // assigned again and whose own values are so, and what changes nothing
-// (arithmetic, Math, constructors, functions that take everything by value,
+// (arithmetic, Math, Instance.Normal, constructors, functions that take everything by value,
 // and a texture read at its own pixels). A frag asks how fast a Sample's uv
 // changes from pixel to pixel there, which a GPU only answers outside
 // branches and loops.
@@ -3444,7 +3475,7 @@ static bool liftable(const emit *em, const expr *e, const int depth)
                 const param *p = &fn->params.items[i];
                 if (p->mode == PARAM_MUT || p->is_out || p->type.decl == em->prog->pixel) return false;
             }
-        } else if (e->call != CALL_CONSTRUCT && e->call != CALL_BUILTIN) {
+        } else if (e->call != CALL_CONSTRUCT && e->call != CALL_BUILTIN && e->call != CALL_NORMAL) {
             return false;
         }
         if (on_value && !liftable(em, e->object, depth + 1)) return false;
@@ -4151,6 +4182,7 @@ static void ex(emit *em, const expr *e)
         else put_int(em, int_literal(e));
         return;
     case E_FLOAT: {
+        if (e->is_double) { type_fits(em, e->type, e->at); return; }
         if (e->is_degrees) {
             put_float(em, e->float_value);
             return;
@@ -4254,7 +4286,8 @@ static void ex(emit *em, const expr *e)
             first = false;
             const expr *value = NULL;
             for (int k = 0; k < e->inits.count; k++) {
-                if (e->inits.items[k].field == f) value = e->inits.items[k].value;
+                if (e->inits.items[k].field == f || (t.decl->callable && str_eq(e->inits.items[k].name, f->name)))
+                    value = e->inits.items[k].value;
             }
             if (value) ex_as(em, value, f->type);
             else if (f->default_value && f->default_value->type.kind != TY_ERROR) ex_as(em, f->default_value, f->type);
@@ -4735,6 +4768,7 @@ static void st_outs(emit *em, const expr *e)
 // The variable a step changes: the local or parameter its target is, or is a part of.
 static const expr *step_variable(const expr *e)
 {
+    if (e->property && e->kind == E_METHOD) e = e->object;
     while (e->kind == E_MEMBER) e = e->object;
     return e->kind == E_NAME && (e->bind == BIND_LOCAL || e->bind == BIND_PARAM) ? e : NULL;
 }
@@ -4900,6 +4934,33 @@ static void st_steps(emit *em, const stmt *s, expr *e, const bool sometimes, ste
                    STR_ARG(var->name));
             diag_note("write the '%s' as a statement of its own, before or after this one", op);
             e->hoisted = "0"; // Said already
+            vec_push(*made, e);
+            return;
+        }
+        if (e->step->property_set) {
+            sb old = {0}, next = {0};
+            sb_printf(&old, "tide_property_was%d", em->temps);
+            sb_printf(&next, "tide_property_next%d", em->temps++);
+            line(em);
+            if (em->l == WGSL) sb_printf(em->o, "let %s: %s = ", old.data, ty(em, e->type));
+            else sb_printf(em->o, "%s %s = ", ty(em, e->type), old.data);
+            ex(em, e->lhs);
+            sb_put(em->o, ";\n");
+            expr before = {.kind = E_NAME, .at = e->at, .type = e->type, .hoisted = old.data};
+            expr value = {.kind = E_BINARY, .at = e->at, .type = e->type, .op = compound_op(e->op), .lhs = &before, .rhs = e->step->value};
+            line(em);
+            if (em->l == WGSL) sb_printf(em->o, "let %s: %s = ", next.data, ty(em, e->type));
+            else sb_printf(em->o, "%s %s = ", ty(em, e->type), next.data);
+            ex(em, &value);
+            sb_put(em->o, ";\n");
+            expr stepped = {.kind = E_NAME, .at = e->at, .type = e->type, .hoisted = next.data};
+            expr *argument = &stepped;
+            expr setter = *e->step->property_set;
+            setter.args.items = &argument;
+            stmt call = {.kind = S_EXPR, .at = e->at, .value = &setter};
+            line(em);
+            st_call(em, &call);
+            e->hoisted = e->postfix ? old.data : next.data;
             vec_push(*made, e);
             return;
         }
@@ -6193,7 +6254,8 @@ static void plan_reads(const program *prog, shader *sh, const decl *code)
         const bool explicit_instance = p->type.kind == TY_STRUCT && p->type.decl == sh->instance_type;
         // The struct the draw gives after its vert and frag: once for the draw, as a singleton's fields
         const bool given = p->type.kind == TY_STRUCT && !p->is_out && sh->values_type && p->type.decl == sh->values_type;
-        if (p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON && !explicit_instance && !given) continue;
+        const bool binding = p->type.kind == TY_STRUCT && p->type.decl->binding_of;
+        if (p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON && !explicit_instance && !given && !binding) continue;
         for (int k = 0; k < p->type.decl->fields.count; k++) {
             const field *f = &p->type.decl->fields.items[k];
             if (f->hidden || !(p->whole || (p->reads && p->reads[k]))) continue;
@@ -6310,6 +6372,7 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
     const field *position = field_called(vertex, "position");
     sh->dims = position->type.kind == TY_FLOAT3 ? 3 : 2;
     if (sh->instance_type && sh->dims == 3) sh->instance_transform = field_called(sh->instance_type, "transform");
+    if (sh->instance_type && sh->skinned) sh->instance_pose = field_called(sh->instance_type, "pose");
     sb name = {0}; // A vert or frag that shares its name goes with its parameters' types
     if (sh->vert) {
         if (sh->vert->signature) sb_printf(&name, "%s%s", sh->vert->signature, sh->frag ? " and " : " ");
@@ -6449,8 +6512,8 @@ static shader *plan(program *prog, const expr *call, const decl *vertex, const b
         diag_note("read fewer of their fields in the frag and the vert: only what they read is sent");
         return NULL;
     }
-    if (sh->textures.count > 8) {
-        diag_error(call->at, "this draw samples %d textures, and a draw takes 8", sh->textures.count);
+    if (sh->textures.count > 12) {
+        diag_error(call->at, "this draw samples %d textures, and a draw takes 12", sh->textures.count);
         diag_note("a texture sampled with another filter or another wrap counts again, and so does a depth that's both read "
                   "and compared, and each list the code reads is one; put several images side by side in one texture");
         return NULL;
@@ -6489,6 +6552,7 @@ void plan_shaders(program *prog)
         decl *view = draw->in;
         for (int b = 0; b < sh->bound.count; b++) {
             decl *d = sh->bound.items[b];
+            if (d->binding_of) continue;
             bool has = false;
             for (int k = 0; k < view->params.count; k++) {
                 param *p = &view->params.items[k];
@@ -6545,6 +6609,31 @@ bool write_spirv(const program *prog, const char *dir, sb *out)
             return false;
         }
         sb_printf(out, "%d.spv: %s\n", i, sh->name);
+    }
+    return true;
+}
+
+bool write_hlsl(const program *prog, const char *dir, sb *out)
+{
+    for (int i = 0; i < prog->shaders.count; i++) {
+        const shader *sh = prog->shaders.items[i];
+        char error[256];
+        char *hlsl = tide_wgsl_to_hlsl(sh->wgsl, error, sizeof error);
+        if (!hlsl) {
+            diag_error((loc){0}, "the WGSL tidec wrote for %s didn't become HLSL (%s): this is a bug in tidec", sh->name, error);
+            return false;
+        }
+        sb path = {0};
+        sb_printf(&path, "%s/%d.hlsl", dir, i);
+        FILE *file = fopen(path.data, "wb");
+        const size_t length = strlen(hlsl);
+        const bool written = file && fwrite(hlsl, 1, length, file) == length;
+        free(hlsl);
+        if ((file && fclose(file) != 0) || !written) {
+            diag_error((loc){0}, "can't write %s", path.data);
+            return false;
+        }
+        sb_printf(out, "%d.hlsl: %s\n", i, sh->name);
     }
     return true;
 }

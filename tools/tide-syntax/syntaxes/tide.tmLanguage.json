@@ -71,9 +71,28 @@
     "namespaces": {
       "patterns": [
         {
+          "comment": "using Scores = Map<int, float>;: a transparent type alias, distinct from a namespace import",
+          "begin": "(?:^|(?<=[;{}]))\\s*(using)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(=)",
+          "end": ";|$",
+          "beginCaptures": {
+            "1": { "name": "keyword.other.namespace.tide" },
+            "2": { "name": "entity.name.type.tide" },
+            "3": { "name": "keyword.operator.assignment.tide" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.terminator.tide" }
+          },
+          "patterns": [
+            { "include": "#comments" },
+            { "include": "#type-name" },
+            { "include": "#literals" },
+            { "include": "#operators" }
+          ]
+        },
+        {
           "comment": "namespace Game.Combat; using Physics;",
           "begin": "^\\s*(namespace|using)\\b(?=\\s+[A-Za-z_])",
-          "end": ";|$",
+          "end": "(?=\\{)|;|$",
           "beginCaptures": {
             "1": { "name": "keyword.other.namespace.tide" }
           },
@@ -163,7 +182,7 @@
       "patterns": [
         {
           "comment": "A system's or a view's parameter list, including read-only query (Body body, with Fighter) fighters. extern system Move(mut Position position): a system written in C",
-          "begin": "(?:^|(?<=\\]))\\s*(?:(local|async|virtual|override|extern)\\s+)?(?:((?:local|async|virtual|override)(?:\\s+(?:local|async|virtual|override))?)\\s+)?(system|view)\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)\\s*(\\()",
+          "begin": "(?:^|(?<=\\]))\\s*(?:(local|async|worker|virtual|override|extern)\\s+)?(?:((?:local|async|worker|virtual|override)(?:\\s+(?:local|async|worker|virtual|override))?)\\s+)?(system|view)\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)\\s*(\\()",
           "end": "\\)",
           "beginCaptures": {
             "1": { "name": "storage.modifier.tide" },
@@ -189,7 +208,7 @@
         },
         {
           "comment": "component Transform, singleton Time, struct Stats, input PlayerInput, event Hit, command Rename, scene Arena, enum Voxel : byte",
-          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|virtual|override)\\s+)?(?:((?:local|async|virtual|override)(?:\\s+(?:local|async|virtual|override))?)\\s+)?(component|singleton|struct|input|event|command|enum|scene|prefab|entity)\\s+([A-Za-z_][A-Za-z0-9_]*)(?:\\s*(:)\\s*([A-Za-z_][A-Za-z0-9_]*))?",
+          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|worker|virtual|override)\\s+)?(?:((?:local|async|worker|virtual|override)(?:\\s+(?:local|async|worker|virtual|override))?)\\s+)?(component|singleton|struct|input|event|command|enum|scene|prefab|entity)\\s+([A-Za-z_][A-Za-z0-9_]*)(?:\\s*(:)\\s*([A-Za-z_][A-Za-z0-9_]*))?",
           "captures": {
             "1": { "name": "storage.modifier.tide" },
             "2": { "name": "storage.modifier.tide" },
@@ -201,7 +220,7 @@
         },
         {
           "comment": "command(Rename rename, PlayerID sender) RenamePlayer: a command handler",
-          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|virtual|override)\\s+)?(?:((?:local|async|virtual|override)(?:\\s+(?:local|async|virtual|override))?)\\s+)?(command)\\s*(\\()\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\\s+([A-Za-z_][A-Za-z0-9_]*))?\\s*(,)\\s*(PlayerID)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(\\))\\s*((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)",
+          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|worker|virtual|override)\\s+)?(?:((?:local|async|worker|virtual|override)(?:\\s+(?:local|async|worker|virtual|override))?)\\s+)?(command)\\s*(\\()\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\\s+([A-Za-z_][A-Za-z0-9_]*))?\\s*(,)\\s*(PlayerID)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*(\\))\\s*((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
             "1": {
               "name": "storage.modifier.tide"
@@ -252,7 +271,7 @@
         },
         {
           "comment": "local event(Hit hit) ShowHit(Body body, query (Body other, with Fighter) fighters): a handler's parameter list, where a local handler takes queries as a system does",
-          "begin": "(?:^|(?<=\\]))\\s*(?:(local|async|virtual|override)\\s+)?(?:((?:local|async|virtual|override)(?:\\s+(?:local|async|virtual|override))?)\\s+)?(event)\\s*(\\()\\s*(?:(verified)\\s+(?=[A-Za-z_]))?([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\\s+([A-Za-z_][A-Za-z0-9_]*))?\\s*(\\))\\s*((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)\\s*(\\()",
+          "begin": "(?:^|(?<=\\]))\\s*(?:(local|async|worker|virtual|override)\\s+)?(?:((?:local|async|worker|virtual|override)(?:\\s+(?:local|async|worker|virtual|override))?)\\s+)?(event)\\s*(\\()\\s*(?:(verified)\\s+(?=[A-Za-z_]))?(Changed\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*>|[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\\s+([A-Za-z_][A-Za-z0-9_]*))?\\s*(\\))\\s*((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)\\s*(\\()",
           "end": "\\)",
           "beginCaptures": {
             "1": { "name": "storage.modifier.tide" },
@@ -260,7 +279,7 @@
             "3": { "name": "storage.type.tide" },
             "4": { "name": "punctuation.parenthesis.open.tide" },
             "5": { "name": "storage.modifier.verified.tide" },
-            "6": { "patterns": [{ "include": "#type-name" }] },
+            "6": { "patterns": [{ "include": "#changed-trigger" }, { "include": "#type-name" }] },
             "7": { "name": "variable.parameter.tide" },
             "8": { "name": "punctuation.parenthesis.close.tide" },
             "9": {
@@ -283,14 +302,14 @@
         },
         {
           "comment": "event(Hit hit) TakeHit: an event handler, with the event it handles. local event(verified Died died) ShowDeath: 'verified' is a word of its own where an event follows it, and an event's name where none does",
-          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|virtual|override)\\s+)?(?:((?:local|async|virtual|override)(?:\\s+(?:local|async|virtual|override))?)\\s+)?(event)\\s*(\\()\\s*(?:(verified)\\s+(?=[A-Za-z_]))?([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\\s+([A-Za-z_][A-Za-z0-9_]*))?\\s*(\\))\\s*((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)",
+          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|worker|virtual|override)\\s+)?(?:((?:local|async|worker|virtual|override)(?:\\s+(?:local|async|worker|virtual|override))?)\\s+)?(event)\\s*(\\()\\s*(?:(verified)\\s+(?=[A-Za-z_]))?(Changed\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*>|[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)(?:\\s+([A-Za-z_][A-Za-z0-9_]*))?\\s*(\\))\\s*((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
             "1": { "name": "storage.modifier.tide" },
             "2": { "name": "storage.modifier.tide" },
             "3": { "name": "storage.type.tide" },
             "4": { "name": "punctuation.parenthesis.open.tide" },
             "5": { "name": "storage.modifier.verified.tide" },
-            "6": { "patterns": [{ "include": "#type-name" }] },
+            "6": { "patterns": [{ "include": "#changed-trigger" }, { "include": "#type-name" }] },
             "7": { "name": "variable.parameter.tide" },
             "8": { "name": "punctuation.parenthesis.close.tide" },
             "9": {
@@ -304,7 +323,7 @@
         },
         {
           "comment": "system MovePlayer, view DrawBalls, frag Shade, vert Wave, audio Echo, extern system MoveInC",
-          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|virtual|override|extern)\\s+)?(?:((?:local|async|virtual|override)(?:\\s+(?:local|async|virtual|override))?)\\s+)?(system|view|frag|vert|audio)\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)",
+          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|worker|virtual|override|extern)\\s+)?(?:((?:local|async|worker|virtual|override)(?:\\s+(?:local|async|worker|virtual|override))?)\\s+)?(system|view|frag|vert|audio)\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)",
           "captures": {
             "1": { "name": "storage.modifier.tide" },
             "2": { "name": "storage.modifier.tide" },
@@ -376,7 +395,7 @@
         },
         {
           "comment": "Methods and functions: [virtual] [async] [mut] Type Name(, where Type can be List<T> or T?, at the start of a line. An override's name is written with what it's in: override float Combat.Damage(, override bool Stats.IsDead(",
-          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|virtual|override)\\s+)?(?:((?:local|async|virtual|override)(?:\\s+(?:local|async|virtual|override))?)\\s+)?(?:(mut)\\s+)?(?!(?:return|if|else|var|mut|with|without|system|view|frag|vert|audio|component|singleton|struct|input|event|command|enum|scene|prefab|entity|local|async|switch|case|default|break|while|for|foreach|parallel|continue|namespace|using|extern|const|asset|settings|fail|try|is|null|true|false|this|await|operator|virtual|override)\\b)([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*>)?\\s*>)?\\??)\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)(?=\\s*\\()",
+          "match": "(?:^|(?<=\\]))\\s*(?:(local|async|worker|virtual|override)\\s+)?(?:((?:local|async|worker|virtual|override)(?:\\s+(?:local|async|worker|virtual|override))?)\\s+)?(?:(mut)\\s+)?(?!(?:return|if|else|var|mut|with|without|system|view|frag|vert|audio|component|singleton|struct|input|event|command|enum|scene|prefab|entity|local|async|switch|case|default|break|while|for|foreach|parallel|continue|namespace|using|extern|const|asset|settings|fail|try|is|null|true|false|this|await|operator|virtual|override)\\b)([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*(?:\\s*<\\s*[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*\\s*>)?\\s*>)?\\??)\\s+((?:[A-Za-z_][A-Za-z0-9_]*\\.)*[A-Za-z_][A-Za-z0-9_]*)(?=\\s*\\()",
           "captures": {
             "1": { "name": "storage.modifier.tide" },
             "2": { "name": "storage.modifier.tide" },
@@ -437,6 +456,11 @@
     },
     "keywords": {
       "patterns": [
+          {
+            "comment": "Computed property accessors, contextual before their bodies",
+            "name": "keyword.other.accessor.tide",
+            "match": "\\b(get|set)\\b(?=\\s*\\{)"
+          },
         {
           "comment": "A parallel loop's header, whose blocks go 'by' a size from an 'offset': parallel (var at in cells by 2 offset o)",
           "begin": "\\b(parallel)\\s*(\\()",
@@ -523,6 +547,14 @@
           "match": "(?:(?<=[(,:])|^)\\s*(out)(?=\\s+(?!is\\b)[A-Za-z_])",
           "captures": {
             "1": { "name": "storage.modifier.tide" }
+          }
+        },
+        {
+          "comment": "system Spinning(Spin spin, with scene Arena), without scene Arena: a filter by the scene an entity is in. A word of its own right after with and without, before a name; a name anywhere else",
+          "match": "\\b(with|without)\\s+(scene)\\b(?=\\s+[A-Za-z_])",
+          "captures": {
+            "1": { "name": "storage.modifier.tide" },
+            "2": { "name": "keyword.other.scene.tide" }
           }
         },
         {
@@ -617,7 +649,7 @@
         },
         {
           "name": "constant.numeric.float.tide",
-          "match": "\\b[0-9][0-9_]*(\\.[0-9][0-9_]*)?([eE][+-]?[0-9][0-9_]*)?[fF]\\b|\\b[0-9][0-9_]*\\.[0-9][0-9_]*([eE][+-]?[0-9][0-9_]*)?\\b|\\b[0-9][0-9_]*[eE][+-]?[0-9][0-9_]*\\b|(?<![\\w.)\\]])\\.[0-9][0-9_]*([eE][+-]?[0-9][0-9_]*)?[fF]?\\b"
+          "match": "\\b[0-9][0-9_]*(\\.[0-9][0-9_]*)?([eE][+-]?[0-9][0-9_]*)?[fFdD]\\b|\\b[0-9][0-9_]*\\.[0-9][0-9_]*([eE][+-]?[0-9][0-9_]*)?\\b|\\b[0-9][0-9_]*[eE][+-]?[0-9][0-9_]*\\b|(?<![\\w.)\\]])\\.[0-9][0-9_]*([eE][+-]?[0-9][0-9_]*)?[fFdD]?\\b"
         },
         {
           "name": "constant.numeric.integer.tide",
@@ -672,8 +704,50 @@
         }
       ]
     },
+    "changed-trigger": {
+      "comment": "local event(Changed<Health.value> change): a handler's trigger, a field of the match that changed over a tick",
+      "match": "\\b(Changed)\\s*(<)\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*)\\s*(>)",
+      "captures": {
+        "1": { "name": "support.class.tide" },
+        "2": { "name": "punctuation.definition.typeparameters.begin.tide" },
+        "3": { "patterns": [{ "include": "#type-name" }] },
+        "4": { "name": "punctuation.definition.typeparameters.end.tide" }
+      }
+    },
     "generics": {
       "patterns": [
+        {
+          "comment": "Task<Result fails Error>: preserve the whole completion type",
+          "begin": "(?<!\\.)\\b(Task|LocalTask)\\s*(<)",
+          "end": ">|$",
+          "beginCaptures": {
+            "1": { "name": "support.class.tide" },
+            "2": { "name": "punctuation.definition.typeparameters.begin.tide" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.typeparameters.end.tide" }
+          },
+          "patterns": [
+            { "name": "storage.modifier.fails.tide", "match": "\\bfails\\b" },
+            { "include": "#type-name" }
+          ]
+        },
+        {
+          "comment": "Func<mut Vertex, void>: callable parameter modes and nested signatures",
+          "begin": "(?<!\\.)\\b(Func)\\s*(<)",
+          "end": ">|$",
+          "beginCaptures": {
+            "1": { "name": "support.class.tide" },
+            "2": { "name": "punctuation.definition.typeparameters.begin.tide" }
+          },
+          "endCaptures": {
+            "0": { "name": "punctuation.definition.typeparameters.end.tide" }
+          },
+          "patterns": [
+            { "name": "storage.modifier.tide", "match": "\\bmut\\b" },
+            { "include": "#type-name" }
+          ]
+        },
         {
           "comment": "world.Get<Health>(e): a method's type, which the call's '(' follows, so no comparison reads as one",
           "match": "(\\.)\\s*([A-Za-z_][A-Za-z0-9_]*)\\s*(<)\\s*([A-Za-z_][A-Za-z0-9_]*(?:\\s*\\.\\s*[A-Za-z_][A-Za-z0-9_]*)*)\\s*(>)(?=\\s*\\()",
@@ -702,12 +776,12 @@
         {
           "comment": "Built-in value types, void for what a method or function returns, text, Actions and the draw list C takes, and what an enum is stored as (enum Voxel : byte). Not after a '.': Draw.Rect is a function",
           "name": "storage.type.primitive.tide",
-          "match": "(?<!\\.)\\b(void|bool|int[234]?|long|float(?:2x2|3x3|4x4|[234])?|quaternion|Entity|LocalEntity|PlayerID|Color|Rect|Texture|RenderTarget|string|Action|DrawList|byte|ushort|char)\\b"
+          "match": "(?<!\\.)\\b(void|bool|int[234]?|long|double(?:2(?:x2)?|3(?:x3)?|4(?:x4)?)?|float(?:2x2|3x3|4x4|[234])?|quaternion|Entity|LocalEntity|PlayerID|Color|Rect|Texture|RenderTarget|string|Action|DrawList|byte|ushort|char)\\b"
         },
         {
           "comment": "Built-in singletons, components, events, enums, records, the World, generic types and function groups. Not after a '.': GUI.Button is a function",
           "name": "support.class.tide",
-          "match": "(?<!\\.)\\b(Time|Math|Draw|GUI|GUILayout|Screen|Cursor|Frame|Anchor|Vertex|Vertex3|Shape|GUITheme|GUIControl|Filter|Wrap|Font|Blend|Depth|Cull|StencilTest|StencilOp|Random|Owner|Visibility|VisibilityGroup|Audience|World|Devices|Keyboard|Mouse|Gamepad|Button|Dpad|Spawned|Destroyed|Shown|Hidden|PlayerJoined|PlayerLeft|Scene|Prediction|Debug|Session|SessionState|DisconnectReason|Connected|Disconnected|Wait|Clipboard|File|Directory|Path|Application|Storage|IOError|Json|List|Map|Set|Grid2|Grid3)\\b"
+          "match": "(?<!\\.)\\b(Time|Math|Draw|GUI|GUILayout|Screen|Cursor|Frame|Anchor|Vertex|Vertex3|Shape|GUITheme|GUIControl|Filter|Wrap|Font|Blend|Depth|Cull|StencilTest|StencilOp|Random|Owner|Visibility|VisibilityGroup|Audience|World|Devices|Keyboard|Mouse|Gamepad|Button|Dpad|Spawned|Destroyed|Shown|Hidden|PlayerJoined|PlayerLeft|Scene|Prediction|Debug|Session|SessionState|DisconnectReason|Connected|Disconnected|Wait|Clipboard|File|Directory|Path|Application|Storage|IOError|Json|List|Map|Set|Grid2|Grid3|Task|LocalTask)\\b"
         },
         {
           "comment": "Spawn(...), Send(...)",

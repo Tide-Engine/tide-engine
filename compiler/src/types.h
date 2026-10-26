@@ -41,14 +41,18 @@ extern const generic_form generic_fails;
 // Offers every built-in type name to a "did you mean" suggestion.
 void suggest_builtin_types(suggestion *s);
 
-// Number of components: 1 for byte, int and float, 2-4 for vectors, 0 for anything else.
+// Number of components: 1 for byte, int, float and double, 2-4 for vectors, 0 for anything else.
 int type_dim(type t);
 
-// float or a float vector / byte, int or an int vector.
+// Binary32 scalars/vectors and binary64 scalars/vectors/matrices.
 bool type_is_float_based(type t);
+bool type_is_double_based(type t);
+// The scalar of a numeric type: int, float or double (byte retains byte).
+type type_scalar(type t);
+// byte, int or an int vector.
 bool type_is_int_based(type t);
 
-// byte, int or float (dim 1) and int/float vectors (dim 2-4). Not long, which has no vectors.
+// byte, int, float or double (dim 1), and their vectors (dim 2-4). Not long.
 bool type_is_numeric(type t);
 
 // byte, int or long.
@@ -57,15 +61,18 @@ bool type_is_integer(type t);
 // An immutable asset glob's resource references, borrowed by synchronous helpers.
 bool type_is_asset_collection(type t);
 
-// 2, 3 or 4 for float2x2, float3x3, float4x4; 0 otherwise.
+// The model value a checked Asset<T> resolves, without acquiring ownership.
+type type_asset_reference_value(const decl *reference);
+bool type_asset_reference_accepts(const decl *reference, type asset);
+
+// 2, 3 or 4 for float/double square matrices; 0 otherwise.
 int matrix_dim(type t);
 
 // A type's bytes and alignment in generated C. Generated types have no padding
 // the compiler adds: tidec writes it out as members, so a struct's layout is
 // its fields' in order, each on its own alignment, and the checker knows a
-// value's size as the C compiler will have it. Every built-in type is 4-byte
-// aligned with a size that's a multiple of 4, except bool and byte; long is
-// 8-byte aligned.
+// value's size as the C compiler will have it. Numeric int/float vectors are
+// four-byte aligned; long and double scalars/vectors are eight-byte aligned.
 typedef struct layout {
     int size; // LAYOUT_MOST for anything bigger
     int align;
@@ -94,16 +101,19 @@ layout decl_layout(const decl *d);
 bool type_holds_long_array(type t);
 
 // Whether views see values of type `t` blended between the last two ticks:
-// floats, and what's made of them. A struct blends if any of its fields do.
+// floats, doubles and what's made of them. A struct blends if any of its fields do.
 bool type_blends(type t);
 
 // The int/float scalar or vector with `dim` components.
 type vector_type(bool is_float, int dim);
+type double_vector_type(int dim);
 type matrix_type(int dim);
+type double_matrix_type(int dim);
+type matrix_column(type t);
 
 // Can a value of type `from` be stored where `to` is expected? Exact matches,
-// plus byte -> int/long/float, int -> long/float and intN -> floatN widening. Errors are always accepted so
-// they don't cascade.
+// plus byte/char -> int/long/float/double, int -> long/float/double, long -> double,
+// float -> double and matching int/float -> double vectors. Errors are accepted.
 bool type_assignable(type to, type from);
 // A grid that's a texture where one is wanted: a Grid2<Color>, or a Grid2<float> (one channel).
 bool type_is_texture_grid(type t);

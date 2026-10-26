@@ -1,0 +1,3 @@
+// expect: lambda argument 1 must be mut to match this Func
+scene Main;
+view Test() { Func<mut float, float> fn = (float value) => value; mut float value = 0; _ = fn(value); }

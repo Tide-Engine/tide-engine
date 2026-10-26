@@ -6,7 +6,7 @@
 #include "tide/jobs.h"
 
 // C against Tide: a concept written both ways, each as fast as its language
-// allows, timed on the same work (see AGENTS.md, Benchmarks).
+// allows, timed on the same work.
 //
 // Every way of writing it ("Tide", "C", and maybe more C, with a trick Tide
 // can't do) starts from nothing and runs the same ticks, the first of which
@@ -15,11 +15,14 @@
 // result, bit for bit: they did the same work, so their times compare.
 //
 // The C is built with the same flags as the code tidec generates (no fast
-// math, no fused multiply-add: see AGENTS.md, Determinism), so what differs is
+// math, no fused multiply-add), so what differs is
 // the language and the engine under it, not the compiler's options.
 
 // A tick's length, as every way takes it: Time.dt in Tide.
 #define VERSUS_DT (1.0f / 60.0f)
+
+// `--threads-list 1,2,4,8,12` runs every way on each of those counts of
+// threads instead (0 for every core), for how each one scales.
 
 // A concept's own option, beside the common ones: --name <value>.
 typedef struct versus_flag {
@@ -44,6 +47,10 @@ typedef struct versus_way {
     void (*free)(void *state);
 } versus_way;
 
+// How long a way's latest tick spent in each of the concept's parts
+// (versus_desc.part_names), in milliseconds, into `ms`.
+typedef void (*versus_parts)(const void *state, double *ms);
+
 typedef struct versus_desc {
     const char *name;  // Of the concept, as reports say it
     const char *about; // What every way does, in a line
@@ -53,6 +60,13 @@ typedef struct versus_desc {
     uint32_t quick_warmup, quick_ticks; // --quick's, for tests
     const versus_way *ways;             // The first is Tide's, which the rest are compared with
     uint32_t way_count;
+    // Optional: the parts a tick is made of (a snapshot, the tick itself, a
+    // hash...), which ways that time them report beside the whole tick, at
+    // most 8. `parts` has a function for each way, NULL for one that doesn't
+    // time them; it's read after each timed tick, outside the tick's time.
+    const char *const *part_names;
+    uint32_t part_count;
+    const versus_parts *parts;
 } versus_desc;
 
 // Reads the command line, runs every way and reports. Returns the program's

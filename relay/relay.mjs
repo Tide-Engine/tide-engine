@@ -1,6 +1,6 @@
-// The relay: how players find each other's matches by a room code (see
-// AGENTS.md, Networking). A machine hosting a match opens a room under a code
-// it picked, and players joining with that code are introduced to it: the
+// The relay: how players find each other's matches by a room code. A machine
+// hosting a match opens a room under a code it picked, and players joining
+// with that code are introduced to it: the
 // relay passes along what WebRTC needs to connect them (offers, answers and
 // ICE candidates). Their packets then go straight between them, never through
 // here. Only the introductions do, so a room costs almost nothing.

@@ -1,0 +1,5 @@
+// expect: a stored callable captures owned plain values
+using Image = Texture;
+using Callback = Func<float2, Color>;
+Callback Make(Image image) { return (float2 uv) => image.Sample(uv); }
+scene Main;

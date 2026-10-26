@@ -4,6 +4,7 @@
     let { data } = $props();
 
     const external = (link: string) => /^https?:/.test(link);
+
 </script>
 
 <Seo title={data.title} description={data.description} path="/" />
@@ -22,7 +23,7 @@
                 {/each}
             </div>
         </div>
-        <div class="image" aria-hidden="true">
+        <div class="image">
             <img src="/favicon.svg" alt="" width="320" height="320" />
         </div>
     </section>
@@ -41,6 +42,8 @@
     <section class="prose more">
         {@html data.html}
     </section>
+
+    <footer class="site-links"><a href="/privacy">Privacy</a></footer>
 </main>
 
 <style>
@@ -131,15 +134,13 @@
 
     .image {
         flex: none;
-        display: grid;
-        place-items: center;
         width: 360px;
-        height: 360px;
     }
 
     .image img {
-        width: 280px;
-        height: 280px;
+        display: block;
+        width: 100%;
+        height: auto;
     }
 
     .features {
@@ -198,6 +199,21 @@
         margin-top: 0;
     }
 
+    .site-links {
+        margin-top: 64px;
+        padding-top: 20px;
+        border-top: 1px solid var(--divider);
+        font-size: 13px;
+    }
+
+    .site-links a {
+        color: var(--text-2);
+    }
+
+    .site-links a:hover {
+        color: var(--brand-1);
+    }
+
     @media (max-width: 959px) {
         .hero {
             flex-direction: column-reverse;
@@ -207,13 +223,8 @@
         }
 
         .image {
-            width: 200px;
-            height: 200px;
-        }
-
-        .image img {
-            width: 160px;
-            height: 160px;
+            width: 100%;
+            max-width: 420px;
         }
 
         .feature {

@@ -8,6 +8,7 @@
 #include "tide/jobs.h"
 #include "tide/net.h"
 #include "tide/player.h"
+#include "tide/shard.h"
 
 // Sessions: how a machine takes part in a match.
 //
@@ -40,6 +41,12 @@
 // events; if they'd left, PlayerJoined comes again, with the same PlayerID.
 // Single-player and hosting are the same: a server and its own player on one
 // machine, over a loopback transport (tide_session).
+// Connected packets in both directions prove that cookie and the current
+// connection attempt. A HELLO from the same address cannot replace a connection
+// without its cookie or a matching trusted admission identity. A client that
+// lost its cookie must wait for that address's old connection to time out.
+// Cookies prevent blind source-address spoofing; they are bearer credentials,
+// not UDP encryption or protection against a peer observing/modifying the path.
 //
 // Host migration (tide_game.host_migration): the server tells its players
 // where to meet when it goes, its room and the room's key, and the digests of
@@ -118,12 +125,21 @@ typedef struct tide_game {
     uint8_t *(*client_state)(const void *world, tide_player_id recipient, uint32_t *size);
     bool (*load_client_state)(void *world, const uint8_t *data, uint32_t size);
     uint64_t (*client_hash)(const void *world, tide_player_id recipient);
+    // Optional: client_hash for `count` recipients at once, into `out`, the
+    // same values; what's alike for them all is worked out once. The server
+    // asks for every player's after each tick.
+    void (*client_hashes)(const void *world, const tide_player_id *recipients, uint32_t count, uint64_t *out);
     // Restrict a copied slot input before sending it to this recipient.
     void (*filter_client_input)(const void *world, tide_player_id recipient, uint32_t slot, void *input);
     // The same for all max_players + 1 contiguous input_size slots at once;
     // the server slot is last. Preferred over the single-slot callback when
     // supplied, so visibility policy can inspect entities once per recipient.
     void (*filter_client_inputs)(const void *world, tide_player_id recipient, void *all_slots);
+    // Optional, with it: which input slots each of `count` recipients may
+    // have, at once, max_players + 1 bytes each (1: the slot's input, 0: it
+    // reads as `none`, input_size bytes, as filter_client_inputs writes).
+    void (*client_input_masks)(const void *world, const tide_player_id *recipients, uint32_t count, uint8_t *allowed,
+                               void *none);
     // Entities permitted in had that actually died, rather than becoming
     // hidden. NULL out/zero capacity asks for the count.
     uint32_t (*client_destroyed)(const void *world, const void *had, tide_player_id recipient,
@@ -145,8 +161,8 @@ typedef struct tide_game {
     uint64_t (*hash_world)(const void *world);
     // The same hash, with the pages that changed since the last one hashed on
     // `jobs`' threads first (tide/page.h), where that's megabytes: what a
-    // session with threads calls after a tick, never during one. NULL in a
-    // game built before there was one, and `hash_world` then.
+    // session with threads calls after a tick, never during one. NULL for a
+    // game without one, and `hash_world` then.
     uint64_t (*hash_world_on)(const void *world, const tide_jobs *jobs);
     // Lets go of what a world has, before its memory goes; NULL for worlds of
     // plain data.
@@ -215,6 +231,11 @@ typedef struct tide_game {
     bool (*command)(void *world, tide_player_id sender, uint32_t channel, uint32_t sequence, const uint8_t *data,
                     uint32_t size);
     bool (*command_applied)(const void *world, tide_player_id player, uint32_t id);
+    // With commands: `to`'s record of which of each player's commands are in
+    // it (command_sequence's, command_applied's) becomes `from`'s. A
+    // debugger's rewind (tide_session_rewind) keeps the match's, so no
+    // command is lost or runs twice, however far back it goes.
+    void (*keep_commands)(void *to, const void *from);
     // How many channels its commands are in, the default counted: 0 for 1
     uint32_t command_channels;
     // Whether the match is over: its last scene unloaded, and Main is local,
@@ -242,7 +263,15 @@ typedef struct tide_game {
     // 0 for TIDE_PLAYERS_DEFAULT. The world keeps an input for each, and the
     // server's after them, so it's part of the game's layout: its hash differs.
     uint32_t max_players;
+    // A sharded game's (settings { shards = true; }): tide/shard.h. NULL for others.
+    const struct tide_shard_game *shards;
 } tide_game;
+
+// Shard messages a server takes into one tick (tide_server_inject), and the
+// most bytes one carries in the tick's frame: a bigger one goes to every
+// player first, as a big command does, and into a tick once they all have it.
+#define TIDE_SHARD_MESSAGES_PER_TICK 64u
+#define TIDE_SHARD_MESSAGE_LIMIT (64u << 20)
 
 // A command of up to TIDE_COMMAND_BYTES goes in one datagram, as commands
 // always did. A bigger one, up to TIDE_COMMAND_LIMIT (a command with a
@@ -309,6 +338,9 @@ typedef struct tide_view_correction {
     uint32_t tick;
     float alpha;
     bool reset;
+    // From a shard beside the one this machine plays in (tide_client_set_beside):
+    // only that world's own entities' errors count, and it never resets the rest.
+    bool beside;
 } tide_view_correction;
 
 typedef void (*tide_view_correct_fn)(void *user, const tide_view_correction *correction);
@@ -345,6 +377,9 @@ typedef struct tide_server_desc {
     // it starts (tide_game.seeded): no two matches go the same. NULL: the seed
     // is `seed`, and a run repeats exactly (tests and benchmarks). A match
     // that goes on from `world` keeps the seed it has.
+    // Also seeds a private cookie-generation key, even for an unseeded game.
+    // Network hosts should supply system entropy; NULL retains a process/time
+    // fallback for test/benchmark hosts, without a secure-entropy guarantee.
     uint64_t (*entropy)(void);
     // With no entropy, the seed of the match it starts (Time.seed): its low 31
     // bits. 0 unless the host picked one.
@@ -354,7 +389,36 @@ typedef struct tide_server_desc {
     // that account; zero is anonymous. Never sent, snapshotted or hashed.
     void *identity_user;
     bool (*identity)(void *user, uint32_t transport, tide_address peer, uint8_t identity[32]);
+    // The match's journal: after each tick, a record of everything that went
+    // into it (its players' inputs, joins and leaves, commands and shard
+    // messages, their bytes whole), from which tide_replay makes the tick
+    // again from the world before it. The bytes are the server's until the
+    // call returns. NULL: none.
+    void *journal_user;
+    void (*journal)(void *user, uint32_t tick, const uint8_t *record, uint32_t size);
 } tide_server_desc;
+
+// Runs again, on `world` (the game's, at the record's tick), the tick a
+// journal record says (tide_server_desc.journal): false, with the world in
+// whatever state it reached, for bytes that aren't one, or when the world it
+// makes isn't the one the server made (its hash).
+bool tide_replay(const tide_game *game, void *world, const uint8_t *record, uint32_t size, const tide_jobs *jobs);
+// The tick a journal record is of, or false for bytes that aren't one.
+bool tide_replay_tick(const uint8_t *record, uint32_t size, uint32_t *tick);
+
+typedef enum tide_replay_result {
+    TIDE_REPLAY_SAME,       // The tick ran again to the world the server made: its hash
+    TIDE_REPLAY_DIFFERENT,  // ...to another world: `got`, where the server's was `expected`
+    TIDE_REPLAY_UNREADABLE, // Bytes this build can't run (not a record, or another input, command or player count):
+                            // the world is in whatever state reading them left it
+} tide_replay_result;
+
+// tide_replay, saying which of those it was, with the hash the record says the
+// server's world had after the tick, and the hash of the world it made (0 when
+// unreadable). A debugger's replay (tide/timeline.h) goes on after a world that
+// differs, to show where it goes from there.
+tide_replay_result tide_replay_check(const tide_game *game, void *world, const uint8_t *record, uint32_t size,
+                                     const tide_jobs *jobs, uint64_t *expected, uint64_t *got);
 
 tide_server *tide_server_create(const tide_server_desc *desc, double now);
 // Tells every player the match is over, and closes the transports.
@@ -368,8 +432,9 @@ uint32_t tide_server_player_count(const tide_server *s);
 // with the world at an update boundary; transport connections are never persisted.
 typedef struct tide_server_recovery {
     tide_player_set players, leaving;
-    uint64_t digests[TIDE_PLAYERS_MOST];
-    uint8_t identities[TIDE_PLAYERS_MOST][32];
+    // Caller-provided output arrays, each tide_game_players(game) entries.
+    uint64_t *digests;
+    uint8_t (*identities)[32];
     uint32_t tick_rate;
     uint32_t seed;
     float dt;
@@ -385,6 +450,34 @@ bool tide_server_player_identity(const tide_server *s, tide_player_id player, ui
 // once they know, they can join again while the match takes players. False
 // if they aren't in the match, or they're on its machine (local_first).
 bool tide_server_kick(tide_server *s, tide_player_id player, const char *message);
+// A shard message (tide/shard.h) for the match, from the orchestrator or
+// another shard: the server applies it at the start of a coming tick, in the
+// order they were handed it, and its players get it in that tick's frame and
+// apply it the same way. The bytes are copied. False when the game isn't
+// sharded, the message is bigger than TIDE_SHARD_MESSAGE_LIMIT, or there's no
+// memory for it.
+bool tide_server_inject(tide_server *s, const uint8_t *data, uint32_t size);
+// How many handed messages are still waiting for a tick.
+uint32_t tide_server_injected(const tide_server *s);
+// The `i`th of them, from the first to be applied: its bytes and size, NULL
+// past the last.
+const uint8_t *tide_server_injected_message(const tide_server *s, uint32_t i, uint32_t *size);
+// Drops those of a kind (their first byte, tide_shard_kind) still
+// waiting, and says how many: a reloaded sharded world drops its ghosts on
+// their way, which are sent again whole.
+uint32_t tide_server_drop_injected(tide_server *s, uint8_t kind);
+// Shards: a player of the world, who joins this shard's match as `player` by
+// presenting `cookie` (the one their first shard gave them), closed or not.
+// False when another player has the slot.
+bool tide_server_admit(tide_server *s, tide_player_id player, uint64_t cookie);
+// Releases that reservation once the player left the world. An unused
+// slot forgets its cookie/identity so another player's admission can use it;
+// an existing connection or migration reservation is unchanged.
+void tide_server_unadmit(tide_server *s, tide_player_id player);
+// Whether a player is in the match on a connection now, and their cookie (0
+// for none).
+bool tide_server_connected(const tide_server *s, tide_player_id player);
+uint64_t tide_server_cookie(const tide_server *s, tide_player_id player);
 
 // ---------------------------------------------------------------------------
 // Client
@@ -520,6 +613,9 @@ tide_view_worlds tide_client_view(const tide_client *c);
 // After drawing tide_client_view, record its timestamp. This alone copies no
 // worlds: old endpoints are kept only if a later replay replaces them.
 void tide_client_mark_presented(tide_client *c);
+// A sharded match's client of a shard beside the one its machine plays in
+// (tide/shard_client.h): what it corrects says so (tide_view_correction.beside).
+void tide_client_set_beside(tide_client *c, bool beside);
 
 // ---------------------------------------------------------------------------
 // Session: what a host program uses. Start runs a server with this machine's
@@ -527,6 +623,14 @@ void tide_client_mark_presented(tide_client *c);
 // another machine's server.
 
 typedef struct tide_session tide_session;
+
+// Unreliable machine-local data, outside simulation, commands and snapshots.
+// The server supplies the sender and a connection identity (not its secret
+// cookie). Bytes are borrowed only for the callback. Calls run on the frame
+// thread. A receiver must not change/destroy its session inside the callback.
+#define TIDE_LOCAL_DATA_BYTES 512u
+typedef void (*tide_local_data_fn)(void *user, tide_player_id sender, uint64_t connection,
+                                   const uint8_t *data, uint32_t size);
 
 typedef struct tide_session_desc {
     const tide_game *game;
@@ -537,9 +641,15 @@ typedef struct tide_session_desc {
     uint64_t (*now_ns)(void); // The real time, for its clients to keep within their budget (tide_client_desc), or NULL
     double resim_budget;      // Seconds a frame a client may spend running predicted ticks again; 0 for 0.004
     double guess_seconds;     // How long its clients guess that others' inputs stay as they were; 0 for 0.15 (tide_client_desc)
-    uint64_t (*entropy)(void); // For the seeds of the matches it starts (tide_server_desc), or NULL: they're `seed`
+    uint64_t (*entropy)(void); // For match seeds and private cookie keys (tide_server_desc); NULL: test/benchmark fallback
     uint32_t seed;             // With no entropy, the seed of every match it starts: 0 unless the host picked one
     tide_view_correct_fn correct_views; // Optional: presentation corrections, using `user`
+    // A sharded game's matches on this machine (tide/shards.h): the box the
+    // regions divide, regions along each axis to start with (0 counts as 1),
+    // and how many entities a region's shard owns before it splits (0: never).
+    tide_shard_box shard_world;
+    uint32_t shard_split[3];
+    uint32_t shard_most;
 } tide_session_desc;
 
 typedef enum tide_session_event_kind {
@@ -626,6 +736,17 @@ void tide_session_fail_message(tide_session *s, tide_disconnect_reason reason, c
 // browser that froze the page): the match goes on from where it stopped.
 void tide_session_update(tide_session *s, double now);
 bool tide_session_send_command(tide_session *s, const uint8_t *data, uint32_t size);
+// Subscribe, or unsubscribe with NULL. Only subscribed, connected players
+// receive data. The subscription follows this session across matches/migration.
+// The server relays to the other subscribed players, never back to the sender.
+// No listener means no subscription traffic or packet buffers. Payloads are
+// 1..TIDE_LOCAL_DATA_BYTES bytes; at most 60 packets/second, with a four-packet
+// burst. Lost, reordered and duplicate packets are the application's concern.
+void tide_session_listen_data(tide_session *s, tide_local_data_fn receive, void *user);
+bool tide_session_send_data(tide_session *s, const uint8_t *data, uint32_t size);
+// Local identity changes when this session starts/joins/adopts another match.
+// Used to discard presentation buffers even if player/cookie values repeat.
+uint64_t tide_session_data_generation(const tide_session *s);
 // Seconds from the last update until the match is due its next tick: when it
 // next needs an update, for a host with nothing else to do meanwhile, like one
 // whose window nobody sees (tide_platform_next_frame). Outside a match, or
@@ -635,6 +756,17 @@ double tide_session_until_tick(const tide_session *s);
 const void *tide_session_world(const tide_session *s);
 // What views draw, blended between ticks (see tide_view_worlds).
 tide_view_worlds tide_session_view(const tide_session *s);
+// In a sharded match, what views draw beside it: each other shard this
+// machine follows, its own entities, as tide_session_view has the home's (see
+// tide_view_use). Up to `capacity` of them, with which shard each is, and how
+// many there are; 0 for a match that isn't sharded.
+uint32_t tide_session_views(const tide_session *s, tide_view_worlds *out, uint32_t *shards, uint32_t capacity);
+#define TIDE_SESSION_VIEWS 64u // The most a sharded game's frame draws beside its own (tide_frame_shards)
+// An area of a sharded match this machine watches wherever its player is
+// (Session.Watch): it follows the shards owning it, which views then draw.
+// NULL stops. It holds across matches; a match that isn't sharded has all of
+// itself anyway.
+void tide_session_watch(tide_session *s, const tide_shard_box *area);
 // What the match sent since the host last took it, for the game's local
 // handlers (tide/events.h): the host hands it to the game's local state before
 // each frame (tide_local_events, tide_host_game.events), which empties it.
@@ -648,12 +780,64 @@ const void *tide_session_server_world(const tide_session *s);
 tide_session_status tide_session_status_of(const tide_session *s);
 // The next thing that happened since the last call, oldest first.
 bool tide_session_next_event(tide_session *s, tide_session_event *event);
+// The shards of a sharded match on this machine (tide/shards.h), for tests
+// and tools; NULL for any other session.
+struct tide_shards *tide_session_shards(const tide_session *s);
+// A sharded match on this machine whole, to go on in another program (a web
+// build's hot reload): a checkpoint of every shard (tide_shards_save) and
+// this machine's player's cookie. NULL elsewhere, or when it isn't quiet
+// (tide_session_can_reload); bytes to free().
+uint8_t *tide_session_save_shards(const tide_session *s, uint32_t *size, uint64_t *cookie);
+// ...and the match going on from them, its worlds carried over to this
+// build's layout first if need be (tide_shard_checkpoint_rewrite): every
+// shard, and this machine's player back in it as themselves.
+void tide_session_start_shards_from(tide_session *s, const uint8_t *data, uint32_t size, uint64_t cookie, double now);
+// Whether another build can take over now (tide_session_set_game,
+// tide_session_migrate). Always, but in a sharded match on this machine: all
+// its shards change build at once, at a moment nothing the old build wrote is
+// on its way between them (tide_shards_quiet). A host waits for one.
+bool tide_session_can_reload(const tide_session *s);
 // Runs another build of the same game from now on: new code with the same
-// data layout (the same hash), for hot reloading. The match goes on.
+// data layout (the same hash), for hot reloading. The match goes on, every
+// shard of a sharded one.
 void tide_session_set_game(tide_session *s, const tide_game *game);
 // Hot reloading can add or remove correction attributes without changing the
 // simulation layout. Refresh the optional presentation callback with its table.
 void tide_session_set_view_corrector(tide_session *s, tide_view_correct_fn correct_views);
+
+// What records the match this machine runs, for a debugger to show its ticks
+// again and replay them (tide/timeline.h). `begin` says it's recorded from
+// `world`, as it is before tick `tick` (ticks its server ran so far): when the
+// recorder is set while a match runs, as a match starts here, as this machine
+// takes over another's, and as a build of another data layout carries the
+// match over. Then `tick` after each tick the server runs: its journal record
+// (tide_server_desc.journal) and the world after it. Both are called on the
+// thread updating the session, the world and bytes theirs only for the call.
+// Matches on other machines and sharded ones aren't recorded.
+typedef struct tide_session_recorder {
+    void *user;
+    void (*begin)(void *user, const void *world, uint32_t tick);
+    void (*tick)(void *user, uint32_t tick, const uint8_t *record, uint32_t size, const void *world);
+} tide_session_recorder;
+
+// Copied; NULL stops recording.
+void tide_session_record(tide_session *s, const tide_session_recorder *recorder);
+
+// Players on other machines in the match this machine runs (connected, or
+// joining); 0 for none, and on a client.
+uint32_t tide_session_remote_players(const tide_session *s);
+
+// The match this machine runs goes on from `world` (a world of it, such as
+// one a recorder kept: copied), its ticks numbered on from where they are: a
+// debugger's "continue from here". Which commands are in it stays the
+// match's as it is (tide_game.keep_commands), so a command of the ticks let
+// go doesn't come again and none on its way is lost: the world it goes on
+// from is `world` with that, which the recorder isn't told of
+// (tide_timeline_cut takes it). This machine's player takes it at once;
+// players of other machines find their next tick isn't the server's and are
+// sent the world, as when a client goes wrong. False, changing nothing, on a
+// client, or in a sharded match.
+bool tide_session_rewind(tide_session *s, const void *world);
 
 // Makes `to`, a zeroed world of the new build, from `from`, a world of the old.
 typedef bool (*tide_migrate_fn)(void *user, const void *from, void *to);
@@ -663,13 +847,15 @@ typedef bool (*tide_migrate_fn)(void *user, const void *from, void *to);
 // world the server confirmed on a client of another machine. This machine's
 // own player takes its server's world. Players stay where they are. A client's
 // ticks ahead of the server run again, and a world that came out different
-// from the server's is sent again, as when a client goes wrong. False,
-// changing nothing, if `migrate` fails or there isn't the memory.
+// from the server's is sent again, as when a client goes wrong. A sharded
+// match carries every shard over, and every shard this machine follows. False,
+// changing nothing, if `migrate` fails, there isn't the memory, or a sharded
+// match on this machine isn't quiet (tide_session_can_reload).
 bool tide_session_migrate(tide_session *s, const tide_game *game, tide_migrate_fn migrate, void *user);
 
 // What local code asked for, with Session.Start, Join, Connect, Leave, Open,
-// Close, Kick, KickAll and End, and Clipboard.Copy, which isn't the session's
-// but goes to the host the same way.
+// Close, Kick, KickAll, End, Watch and Unwatch, and Clipboard.Copy, which isn't
+// the session's but goes to the host the same way.
 typedef enum tide_session_request_kind {
     TIDE_REQUEST_NONE,
     TIDE_REQUEST_START,
@@ -682,6 +868,8 @@ typedef enum tide_session_request_kind {
     TIDE_REQUEST_KICK_ALL,
     TIDE_REQUEST_END,     // The match this machine runs ends, for everyone
     TIDE_REQUEST_COPY,    // Text onto this machine's clipboard
+    TIDE_REQUEST_WATCH,   // An area of a sharded world this machine sees wherever its player is (tide_session_watch)
+    TIDE_REQUEST_UNWATCH, // ...and no longer
 } tide_session_request_kind;
 
 #define TIDE_DEFAULT_PORT 7777u
@@ -692,4 +880,5 @@ typedef struct tide_session_request {
     tide_player_id player;  // Kick: whom
     char text[TIDE_MESSAGE_BYTES]; // Join: the room's code. Connect: the server's address, "host" or "host:port".
                                    // Kick and KickAll: the message. Copy: the text
+    tide_shard_box area;           // Watch: the area
 } tide_session_request;

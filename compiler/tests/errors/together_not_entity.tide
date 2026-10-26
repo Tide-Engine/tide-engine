@@ -1,0 +1,4 @@
+// expect: [Together] names an entity kept with this one: an Entity, not int
+settings { shards = true; reach = 8; }
+scene Main { }
+component Rider { [Together] int horse; }

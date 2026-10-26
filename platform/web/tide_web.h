@@ -176,6 +176,12 @@ TIDE_WEB_IMPORT(room_end) void tide_web_room_end(uint32_t number);
 TIDE_WEB_IMPORT(room_close) void tide_web_room_close(uint32_t room);
 // The room's code into `out` (7 bytes), "" while it has none.
 TIDE_WEB_IMPORT(room_code) void tide_web_room_code(char *out);
+// The link that joins room `room` into `out`, with its NUL: the page's address
+// without its query or fragment, then `?join=` and the room. A hosted room's
+// invite is empty until the relay confirms it. Bytes written including the
+// NUL, or 0 and nothing written when it needs more than `size` bytes, or the
+// page's address is no place to link to (not http, https or file).
+TIDE_WEB_IMPORT(room_invite) uint32_t tide_web_room_invite(const char *room, char *out, uint32_t size);
 // The room joined isn't one, or it couldn't be reached.
 TIDE_WEB_IMPORT(room_failed) bool tide_web_room_failed(void);
 TIDE_WEB_IMPORT(room_send) void tide_web_room_send(uint32_t room, uint32_t to, const void *data, uint32_t size);

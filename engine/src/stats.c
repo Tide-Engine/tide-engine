@@ -9,8 +9,6 @@
 #include "tide/math.h"
 #include "tide/page.h"
 
-// See tide/stats.h.
-
 static const float TEXT = 16.0f;  // Its font size
 static const float PITCH = 20.0f; // From one line to the next
 static const float PAD_X = 8.0f;  // Inside the panel: beside its lines
@@ -362,14 +360,16 @@ static void fill(tide_stats *s, const tide_stats_values *v)
     char label[TIDE_PROFILE_NAME];
     const bool work = v->work_ms >= 0.0;
     if (work) line(s, "cpu", "%.1f ms", v->work_ms);
-    if (v->render_known) line(s, "render", "%.2f ms", v->render_ms)->indent = work;
-    if (v->gpu_known) {
-        snprintf(label, sizeof label, "gpu (%u draw calls)", (unsigned)v->draw_calls);
-        line(s, label, "%.2f ms", v->gpu_ms);
-    } else {
-        line(s, "draw calls", "%u", (unsigned)v->draw_calls);
+    if (!v->elsewhere) {
+        if (v->render_known) line(s, "render", "%.2f ms", v->render_ms)->indent = work;
+        if (v->gpu_known) {
+            snprintf(label, sizeof label, "gpu (%u draw calls)", (unsigned)v->draw_calls);
+            line(s, label, "%.2f ms", v->gpu_ms);
+        } else {
+            line(s, "draw calls", "%u", (unsigned)v->draw_calls);
+        }
+        line(s, "vertices", "%llu", (unsigned long long)v->vertices);
     }
-    line(s, "vertices", "%llu", (unsigned long long)v->vertices);
     if (v->match) {
         const uint32_t from = s->line_count;
         // The input's delay goes with the ping it comes of, where the ping is in the list

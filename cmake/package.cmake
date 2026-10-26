@@ -5,7 +5,8 @@
 #   cmake --preset mingw-release && cmake --build --preset mingw-release  (Windows)
 #   cmake --preset android-package-arm64 && cmake --build --preset android-package-arm64
 #   cmake --preset android-package-x86_64 && cmake --build --preset android-package-x86_64
-#   cmake -DNAME=tide-windows-x64 -P cmake/package.cmake
+#   First, in tools/tide-jetbrains: ./gradlew buildCliInstaller -PpluginVersion=<TIDE_VERSION>
+#   cmake -DNAME=tide-windows-x64 -DJETBRAINS=tools/tide-jetbrains/build/cli/tide-jetbrains-installer.zip -P cmake/package.cmake
 #
 # NAME is the archive's name: .zip for Windows, .tar.gz otherwise. It lands in
 # build/dist, next to the unpacked package (build/dist/tide) and a SHA256SUMS
@@ -73,6 +74,30 @@ endforeach()
 # installation whose VERSION isn't its own version for an upgrade that stopped
 # partway (compiler/cli/install.c), whatever the other trees were configured as.
 file(COPY_FILE "${NATIVE}/package/VERSION" "${stage}/VERSION")
+
+# One Gradle build supplies the exact plugin and dependency for every OS.
+if(NOT JETBRAINS)
+    set(JETBRAINS "${source}/build/jetbrains/tide-jetbrains-installer.zip")
+endif()
+if(NOT EXISTS "${JETBRAINS}")
+    message(FATAL_ERROR "No JetBrains CLI installer at ${JETBRAINS}: run buildCliInstaller and pass -DJETBRAINS=<archive>")
+endif()
+set(plugin_version_dir "${stage}/editors/.jetbrains-version")
+file(ARCHIVE_EXTRACT INPUT "${JETBRAINS}" DESTINATION "${plugin_version_dir}"
+    PATTERNS VERSION "lsp4ij/licenses/*")
+if(NOT EXISTS "${plugin_version_dir}/VERSION")
+    message(FATAL_ERROR "The JetBrains CLI installer has no VERSION; rebuild it with buildCliInstaller")
+endif()
+file(READ "${plugin_version_dir}/VERSION" plugin_version)
+file(READ "${stage}/VERSION" native_version)
+string(STRIP "${plugin_version}" plugin_version)
+string(STRIP "${native_version}" native_version)
+if(NOT plugin_version STREQUAL native_version)
+    message(FATAL_ERROR "JetBrains plugin ${plugin_version} does not match Tide ${native_version}; rebuild it with -PpluginVersion=${native_version}")
+endif()
+file(COPY "${plugin_version_dir}/lsp4ij/licenses/" DESTINATION "${stage}/licenses/jetbrains")
+file(REMOVE_RECURSE "${plugin_version_dir}")
+file(COPY_FILE "${JETBRAINS}" "${stage}/editors/tide-jetbrains-installer.zip")
 
 if(NAME MATCHES "windows")
     set(archive "${dist}/${NAME}.zip")

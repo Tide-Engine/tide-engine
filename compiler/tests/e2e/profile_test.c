@@ -3,6 +3,7 @@
 #include "game.h"
 #include "tide/profile.h"
 #include "tide_test.h"
+#include "draw_test.h"
 
 static tide_world world;
 static tide_world plain;
@@ -55,6 +56,7 @@ TIDE_TEST(profile_frames_say_their_views)
     for (int i = 0; i < 2; i++) {
         tide_draw_reset(&draw);
         tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
+        tide_test_flatten(&draw);
     }
     TIDE_REQUIRE(profile.views.count == 2);
     TIDE_CHECK(named(&profile.views, 0, "Backdrop") && named(&profile.views, 1, "Bodies"));
@@ -71,6 +73,7 @@ TIDE_TEST(profile_frames_say_their_views)
     gui.profile = NULL;
     tide_draw_reset(&draw);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
+    tide_test_flatten(&draw);
     TIDE_CHECK(draw.count == drawn && profile.views.items[1].total == 0.0);
     tide_profile_free(&profile);
     tide_draw_free(&draw);

@@ -1,5 +1,5 @@
 ---
-description: "Group Tide entities into scenes, start with Main, load and unload levels, and manage scene ownership and multiple instances."
+description: "Author rooted scenes and prefabs, choose a startup scene, load and unload levels, and manage scene ownership and multiple instances."
 ---
 
 # Scenes
@@ -14,6 +14,28 @@ scene Arena
 ```
 
 A loaded scene is an entity like any other. The declaration is its component, and its fields are the scene's state, so a system that takes `Arena` runs once per loaded arena.
+
+## Systems for one scene's entities
+
+`with scene Arena` runs a system, a view or an event handler only for the
+entities of a loaded arena; `without scene Arena`, only for the others:
+
+```csharp
+system Spinning(Spin spin, mut Transform transform, Time time, with scene Arena)
+{
+    transform.localRotation = Math.Mul(quaternion.Euler(0, spin.speed * time.dt, 0), transform.localRotation);
+}
+```
+
+An entity is in the scene it was spawned into: the scene of the entity the code
+that spawned it runs for. A loaded scene's own entity is one of its entities
+too. `with Arena`, without `scene`, still takes that entity alone, as it does
+for any component, so `event(Spawned) Setup(with Arena)` runs once per loaded
+arena. A scene filter on its own runs for every entity of the scene.
+
+For an empty scene, use `scene Arena;` as shorthand for `scene Arena { }`.
+The same works for local scenes: `local scene Main;`. Both forms are complete
+declarations, and braces remain valid.
 
 ## Authored prefabs
 
@@ -59,19 +81,70 @@ another named prefab; fields in its block override that prefab's root. Paths suc
 as `Weapon.Muzzle` resolve through nested instances, and omitted values use the
 authored prefab and component defaults.
 
+Override an inherited descendant by matching its existing name with another
+`entity` block. This changes values on this instance without changing Pistol:
+
+```csharp
+entity Weapon : Pistol
+{
+    entity Muzzle
+    {
+        Transform { localPosition = float3(0, 0, 0.8) };
+    }
+}
+```
+
+Inside an inherited descendant, only field values of existing components can
+change. Match further `entity` blocks to reach deeper descendants. These blocks
+cannot add, remove or replace components or children, or name another base
+prefab. A nested instance's root can still add components and new named children.
+Reference paths keep the scope of the prefab whose source wrote them; `this`
+means the entity containing the value. Overrides do not create extra entities.
+
 `local Spawn(Enemy)` creates local entities, and `Scene.Load` from local code
 loads into the local world. References must use the corresponding `Entity` or
 `LocalEntity` type. Prefab names are factories, so filters use explicit root
-components. Keep `scene Main` in `.tide` for startup. The initial limits are 1024
+components. The initial limits are 1024
 entities per instance and 128 nesting levels. Use `tide open Level.tprefab` for
 the [native scene editor](../tools/editors.md#native-scene-editor).
 
-## Main
+## Startup scene
 
-The game starts in the scene called `Main`, and there's exactly one. It sets up the first scene, not the game loop: the engine runs the tick.
+An authored scene can start the game directly. In an ordinary `.tide` file, name
+its declaration in project settings:
 
 ```csharp
-scene Main { }
+settings
+{
+    startScene = Levels.Start;
+}
+```
+
+`startScene` takes a prefab or scene name, including its namespace when needed,
+not a string or a call. A prefab starts as a match scene with its own root,
+authored values and complete tree. Normal `Spawned` handlers, systems, views,
+camera and input run; no handwritten `Main` is needed. An ordinary scene can be
+selected too, including a local scene for a menu outside a match.
+
+For one run or build, override the project selection:
+
+```sh
+tide run . --scene Levels.Start --stats
+tide build . --scene Levels.Start
+```
+
+This leaves project settings and any existing `Main` declaration unchanged.
+The [native scene editor](../tools/editors.md#native-scene-editor) also has
+**Play** for its current scene and **Set startup** to persist that choice.
+
+## Main
+
+Without a selected startup scene, the game starts in the scene called `Main`,
+and there must be exactly one. It sets up the first scene, not the game loop:
+the engine runs the tick.
+
+```csharp
+scene Main;
 
 event(Spawned) Setup(with Main)
 {
@@ -97,9 +170,18 @@ handlers run. Local scenes can also take root components, using local placement.
 
 Loading and unloading happen at the end of the tick, like `Spawn` and `Destroy`. A scene is set up by `Spawned` handlers, and its entities get `Destroyed` when it unloads, both within that tick.
 
-`Main` is the fallback. When the last scene of its world unloads, `Main` loads again at the end of that tick, set up by its `Spawned` handlers as at the start: a match `Main` in the match, a local one in the local state. Unloading one scene and loading another in the same tick never brings it back, and entities in no scene don't count. `Main` comes back at most once a tick: one that unloads itself as it loads leaves the world without a scene until the next.
+The startup scene is also the fallback: the selected scene or prefab, or `Main`
+without a selection. When the last scene of its world unloads, the fallback loads
+again at the end of that tick, initialized as at startup. A match startup returns
+in the match, and a local one in local state. Unloading one scene and loading
+another in the same tick never brings it back, and entities in no scene don't
+count. It returns at most once a tick: one that unloads itself as it loads leaves
+the world without a scene until the next.
 
-A match can't load a local `Main`, so when `Main` is local, a match whose last scene unloads ends there. Every machine in it goes back offline, to its `Main`, and gets `Disconnected` with the reason `Ended` (see [Matches](../multiplayer/matches.md)). Local state carries on as it was.
+A match can't load a local startup scene. When startup is local, a match whose
+last scene unloads ends there. Every machine in it goes back offline and gets
+`Disconnected` with the reason `Ended` (see [Matches](../multiplayer/matches.md)).
+Local state carries on as it was.
 
 ```csharp
 // Sets up each arena. The floor joins that arena.

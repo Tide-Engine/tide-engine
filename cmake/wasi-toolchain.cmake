@@ -51,6 +51,38 @@ _tide_wasi_fetch(wasi-sysroot-${TIDE_WASI_SDK_VERSION}.0.tar.gz 35172f7d2799485b
 _tide_wasi_fetch(libclang_rt.builtins-wasm32-wasi-${TIDE_WASI_SDK_VERSION}.0.tar.gz
     7e33c0df758b90469b1de3ca158e2d0a7f71934d5884525ba6a372de0b3b0ec7)
 
+# Their licenses, which the package carries (platform/CMakeLists.txt): wasi-sdk's
+# archives have none, so they come from the sources this wasi-sdk was built
+# from, the commits its src/wasi-libc and src/llvm-project are at. wasi-libc's
+# third-party parts in libc.a are cloudlibc and musl (with their own
+# licenses), and dlmalloc (CC0, said in its source).
+set(TIDE_WASI_LICENSES "${_tide_wasi_dir}/licenses")
+function(_tide_wasi_license to url hash)
+    get_filename_component(name "${url}" NAME)
+    if(EXISTS "${TIDE_WASI_LICENSES}/${to}/${name}")
+        return()
+    endif()
+    file(DOWNLOAD "${url}" "${TIDE_WASI_LICENSES}/${to}/${name}" EXPECTED_HASH SHA256=${hash} STATUS status)
+    list(GET status 0 code)
+    if(NOT code EQUAL 0)
+        message(FATAL_ERROR "Downloading ${url} failed: ${status}")
+    endif()
+endfunction()
+set(_tide_wasi_libc https://raw.githubusercontent.com/WebAssembly/wasi-libc/b9ef79d7dbd47c6c5bafdae760823467c2f60b70)
+_tide_wasi_license(wasi-libc "${_tide_wasi_libc}/LICENSE" 673f577e363e80e0058bd78214683f045d1d0c63930969a87f01a1d87d7cf1d6)
+_tide_wasi_license(wasi-libc "${_tide_wasi_libc}/LICENSE-APACHE"
+    a60eea817514531668d7e00765731449fe14d059d3249e0bc93b36de45f759f2)
+_tide_wasi_license(wasi-libc "${_tide_wasi_libc}/LICENSE-APACHE-LLVM"
+    268872b9816f90fd8e85db5a28d33f8150ebb8dd016653fb39ef1f94f2686bc5)
+_tide_wasi_license(wasi-libc "${_tide_wasi_libc}/LICENSE-MIT" 23f18e03dc49df91622fe2a76176497404e46ced8a715d9d2b67a7446571cca3)
+_tide_wasi_license(wasi-libc/cloudlibc "${_tide_wasi_libc}/libc-bottom-half/cloudlibc/LICENSE"
+    c8b789cf5a746611e6300a0cc7750dbf92b61912a709d04e639245f7290656d0)
+_tide_wasi_license(wasi-libc/musl "${_tide_wasi_libc}/libc-top-half/musl/COPYRIGHT"
+    f9bc4423732350eb0b3f7ed7e91d530298476f8fec0c6c427a1c04ade22655af)
+_tide_wasi_license(wasi-compiler-rt
+    https://raw.githubusercontent.com/llvm/llvm-project/26a1d6601d727a96f4301d0d8647b5a42760ae0c/compiler-rt/LICENSE.TXT
+    1a8f1058753f1ba890de984e48f0242a3a5c29a6a8f2ed9fd813f36985387e8d)
+
 set(TIDE_WASI_SYSROOT "${_tide_wasi_dir}/wasi-sysroot-${TIDE_WASI_SDK_VERSION}.0")
 set(TIDE_WASI_BUILTINS "${_tide_wasi_dir}/libclang_rt.builtins-wasm32-wasi-${TIDE_WASI_SDK_VERSION}.0/libclang_rt.builtins-wasm32.a")
 # Older wasi-sdk releases keep their libraries under the target's older name,

@@ -1,0 +1,8 @@
+// expect: a skinned instance struct's 'pose' is a Pose, and 'Item's is int
+scene Main { }
+struct Item { int pose; }
+view Show()
+{
+    SkinnedMesh<Vertex3> model = default;
+    Draw.Instanced(model, [Item { pose = 1 }]);
+}

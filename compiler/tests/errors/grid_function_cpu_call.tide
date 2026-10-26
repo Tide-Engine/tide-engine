@@ -1,4 +1,4 @@
-// expect: 'Twice' reads a grid it's passed, which only code the GPU runs does: a frag, a vert and the functions they call
+// expect: 'Twice' reads a grid it's passed, which shader code and local workers can call
 // expect: it takes or passes the grid on line 12
 scene Main { }
 

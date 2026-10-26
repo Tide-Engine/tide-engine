@@ -1,0 +1,11 @@
+// expect: this is a copy of its value, which has none
+component Body { int health; local int flash; }
+scene Main { }
+view Read(query (Body body) bodies)
+{
+    foreach (var row in bodies)
+    {
+        var copy = row.body;
+        Debug.Assert(copy.flash >= 0);
+    }
+}

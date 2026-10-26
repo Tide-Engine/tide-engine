@@ -248,7 +248,7 @@ Make the struct smaller: a shorter array, or fewer fields. Code that rolls keeps
 A [run with no window](../tools/cli.md#without-a-window) mixes what the game plays, a 60th of a second a frame, and writes it out:
 
 ```
-tide run --frames 300 --capture-audio run.wav
+tide run --frames 300 --capture-audio run.wav --stats
 ```
 
 `--capture-audio` writes the whole run as a WAV of 16-bit stereo at 48 kHz, and a script's `capture-audio hit.wav` line writes what played since the last such line. The mixer is the engine's own arithmetic, so a run plays the same bytes on every machine.
@@ -256,6 +256,8 @@ tide run --frames 300 --capture-audio run.wav
 ## The device
 
 A game with a window plays through the system's default output: WASAPI on Windows, CoreAudio on macOS, ALSA on Linux (loaded at run time, so games link nothing), AAudio on Android, and the browser's audio on the web. Whatever rate and channels the device has, the mixer's stereo at 48 kHz is resampled and mapped to it. A machine with no device, or none the game can open, says so once on stderr and plays nothing; nothing else differs.
+
+A game in Unity (see [the command line](../tools/cli.md#unity)) plays through Unity's audio instead, an AudioSource Unity's mixer and volume apply to, and hears Unity's microphone; in a WebGL player it plays through the page as any web game does.
 
 In a browser, sound starts after the player's first press or key. A web game's sound runs about 90 ms behind what the frame played, as the page's audio runs on a thread the game's code can't, and the game feeds it ahead. Tide continues a hidden tab's match with worker timers while the browser lets the page run (see [web builds](../tools/cli.md)). A suspended or closed page cannot keep simulating or playing sound; background execution is not guaranteed on phones.
 
@@ -279,4 +281,4 @@ view Listen(Devices devices, mut Voice voice)
 
 The device is open while a frame names such a `Sound` playing, and closed when none does. Phones and browsers ask the player the first time: until they allow it, and in a browser until they've touched the page, the sound is silence. A device that couldn't be opened is tried again every second; after declining a browser request, stop and start the `Sound` to ask again. An Android app only asks if the game says `Clip.Microphone` somewhere (its manifest then has `RECORD_AUDIO`); a macOS app needs a bundle that says why it listens (`NSMicrophoneUsageDescription`), which `tide build` doesn't make yet. Pitch doesn't apply to the microphone: it plays at the device's own pace, a few blocks behind it.
 
-A run with no window has no device: `--microphone voice.wav` plays a file into it instead, looped, so a test hears what a player would say (see [the command line](../tools/cli.md)). Nothing of what's heard reaches the match or the network: voice chat is a package for later, with the microphone as its source.
+A run with no window has no device: `--microphone voice.wav` plays a file into it instead, looped, so a test hears what a player would say (see [the command line](../tools/cli.md)). Microphone playback alone sends nothing over the network. The optional [Voice package](../packages/voice.md) adds Opus voice chat through sessions, outside match state.

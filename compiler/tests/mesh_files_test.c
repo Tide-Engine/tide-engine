@@ -3,6 +3,10 @@
 // never read past its bytes. What it makes of whole files is the end-to-end
 // test's (e2e/asset_meshes).
 
+#include <math.h>
+#include <stdarg.h>
+#include <float.h>
+#include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -38,8 +42,8 @@ TIDE_TEST(mesh_numbers_are_the_nearest_floats)
         {"0.000001", 0x1.0c6f7ap-20f},
         {"123456789012345678901234567890", 0x1.8ee910p+96f}, // More digits than a number keeps
         {"0.00000000000000000000000000000000000000000001", 0x1.cp-147f}, // Seven of the smallest float there is
-        {"1e-45", 0x1p-149f},                                           // ...and one of them
-        {"1e400", 0.0f},  // What no float holds is none
+        {"1e-45", 0x1p-149f},
+        {"1e400", 0.0f}, // What no float holds is none
         {"-1e400", 0.0f},
         {"1e-400", 0.0f},
         {"340282346638528859811704183484516925440", 0x1.fffffep+127f}, // The biggest
@@ -138,6 +142,373 @@ static bool read_exactly(const uint8_t *data, const size_t size, const char *nam
     return ok;
 }
 
+typedef struct tangent_bytes {
+    float position[8][3], normal[8][3], uv[8][2], uv2[8][2], color[8][4], tangent[8][4];
+    uint16_t index[12];
+} tangent_bytes;
+
+static tangent_bytes tangent_plane(void)
+{
+    tangent_bytes bytes = {.position = {{0, 0, 0}, {1, 0, 0}, {1, 1, 0}, {0, 1, 0}},
+                           .uv = {{0, 0}, {1, 0}, {1, 1}, {0, 1}}, .index = {0, 1, 2, 0, 2, 3}};
+    for (uint32_t i = 0; i < 8u; i++) {
+        bytes.normal[i][2] = 1.0f;
+        bytes.tangent[i][0] = bytes.tangent[i][3] = 1.0f;
+        bytes.uv2[i][0] = (float)i / 8.0f;
+        bytes.uv2[i][1] = 0.25f;
+        bytes.color[i][0] = (float)i / 8.0f;
+        bytes.color[i][1] = bytes.color[i][2] = 0.5f;
+        bytes.color[i][3] = 0.75f;
+    }
+    return bytes;
+}
+
+static bool read_tangent_mesh(const tangent_bytes *bytes, const uint32_t vertices, const uint32_t indices,
+                              const bool normals, const bool uvs, const int authored, const char *node,
+                              mesh_file *mesh, char why[256])
+{
+    char json[3072];
+    snprintf(json, sizeof json, "{\"asset\":{\"version\":\"2.0\"},\"nodes\":[{\"mesh\":0%s}],"
+                                "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0,\"TEXCOORD_1\":3,\"COLOR_0\":4%s%s%s},\"indices\":6}%s]}],"
+                                "\"accessors\":[{\"bufferView\":0,\"componentType\":5126,\"count\":%u,\"type\":\"VEC3\"},"
+                                "{\"bufferView\":1,\"componentType\":5126,\"count\":%u,\"type\":\"VEC3\"},"
+                                "{\"bufferView\":2,\"componentType\":5126,\"count\":%u,\"type\":\"VEC2\"},"
+                                "{\"bufferView\":3,\"componentType\":5126,\"count\":%u,\"type\":\"VEC2\"},"
+                                "{\"bufferView\":4,\"componentType\":5126,\"count\":%u,\"type\":\"VEC4\"},"
+                                "{\"bufferView\":5,\"componentType\":5126,\"count\":%u,\"type\":\"VEC4\"},"
+                                "{\"bufferView\":6,\"componentType\":5123,\"count\":%u,\"type\":\"SCALAR\"}],"
+                                "\"bufferViews\":[{\"buffer\":0,\"byteOffset\":%u,\"byteLength\":96},"
+                                "{\"buffer\":0,\"byteOffset\":%u,\"byteLength\":96},"
+                                "{\"buffer\":0,\"byteOffset\":%u,\"byteLength\":64},"
+                                "{\"buffer\":0,\"byteOffset\":%u,\"byteLength\":64},"
+                                "{\"buffer\":0,\"byteOffset\":%u,\"byteLength\":128},"
+                                "{\"buffer\":0,\"byteOffset\":%u,\"byteLength\":128},"
+                                "{\"buffer\":0,\"byteOffset\":%u,\"byteLength\":24}],\"buffers\":[{\"byteLength\":%u}]}",
+             node ? node : "", normals ? ",\"NORMAL\":1" : "", uvs ? ",\"TEXCOORD_0\":2" : "", authored ? ",\"TANGENT\":5" : "",
+             authored == 2 ? ",{\"attributes\":{\"POSITION\":0,\"NORMAL\":1,\"TEXCOORD_0\":2,\"TEXCOORD_1\":3,\"COLOR_0\":4},\"indices\":6}" : "",
+             (unsigned)vertices, (unsigned)vertices, (unsigned)vertices, (unsigned)vertices, (unsigned)vertices,
+             (unsigned)vertices, (unsigned)indices, (unsigned)offsetof(tangent_bytes, position), (unsigned)offsetof(tangent_bytes, normal),
+             (unsigned)offsetof(tangent_bytes, uv), (unsigned)offsetof(tangent_bytes, uv2), (unsigned)offsetof(tangent_bytes, color),
+             (unsigned)offsetof(tangent_bytes, tangent), (unsigned)offsetof(tangent_bytes, index), (unsigned)sizeof *bytes);
+    size_t size;
+    uint8_t *glb = make_glb(json, bytes, sizeof *bytes, &size);
+    mesh_file canonical;
+    bool ok = read_exactly(glb, size, "tangents.glb", &canonical, why);
+    if (ok) {
+        char note[256];
+        ok = mesh_file_with_tangents(&canonical, mesh, why, note);
+        mesh_file_free(&canonical);
+    }
+    free(glb);
+    return ok;
+}
+
+static bool tangent_is(const float *t, const float x, const float y, const float z, const float side)
+{
+    return fabsf(t[0] - x) < 0.00001f && fabsf(t[1] - y) < 0.00001f && fabsf(t[2] - z) < 0.00001f && t[3] == side;
+}
+
+static void check_tangent_basis(const mesh_file *mesh)
+{
+    for (uint32_t i = 0; i < mesh->vertices; i++) {
+        const float *t = mesh->tangent + i * 4u, *n = mesh->normal + i * 3u;
+        for (uint32_t k = 0; k < 4u; k++) TIDE_CHECK(isfinite(t[k]));
+        TIDE_CHECK(fabsf(t[0] * t[0] + t[1] * t[1] + t[2] * t[2] - 1.0f) < 0.00001f);
+        if (isfinite(n[0]) && isfinite(n[1]) && isfinite(n[2])) {
+            TIDE_CHECK(fabsf(t[0] * n[0] + t[1] * n[1] + t[2] * n[2]) < 0.00001f);
+        }
+        TIDE_CHECK(t[3] == -1.0f || t[3] == 1.0f);
+    }
+}
+
+static void check_tangent_uv_directions(const mesh_file *mesh)
+{
+    for (uint32_t i = 0; i < mesh->indices; i += 3u) {
+        const float *p = mesh->position + mesh->index[i] * 3u, *q = mesh->position + mesh->index[i + 1u] * 3u,
+                    *r = mesh->position + mesh->index[i + 2u] * 3u;
+        const float *a = mesh->uv + mesh->index[i] * 2u, *b = mesh->uv + mesh->index[i + 1u] * 2u,
+                    *c = mesh->uv + mesh->index[i + 2u] * 2u;
+        const double du1 = (double)b[0] - a[0], dv1 = (double)b[1] - a[1], du2 = (double)c[0] - a[0], dv2 = (double)c[1] - a[1];
+        const double side = du1 * dv2 - du2 * dv1 < 0.0 ? -1.0 : 1.0;
+        double u[3], v[3];
+        for (uint32_t k = 0; k < 3u; k++) {
+            u[k] = (((double)q[k] - p[k]) * dv2 - ((double)r[k] - p[k]) * dv1) * side;
+            v[k] = (((double)r[k] - p[k]) * du1 - ((double)q[k] - p[k]) * du2) * side;
+        }
+        for (uint32_t j = 0; j < 3u; j++) {
+            const float *n = mesh->normal + mesh->index[i + j] * 3u, *t = mesh->tangent + mesh->index[i + j] * 4u;
+            const double bitangent[3] = {(double)t[3] * (n[1] * t[2] - n[2] * t[1]),
+                                         (double)t[3] * (n[2] * t[0] - n[0] * t[2]),
+                                         (double)t[3] * (n[0] * t[1] - n[1] * t[0])};
+            TIDE_CHECK(t[0] * u[0] + t[1] * u[1] + t[2] * u[2] > 0.0);
+            TIDE_CHECK(bitangent[0] * v[0] + bitangent[1] * v[1] + bitangent[2] * v[2] > 0.0);
+        }
+    }
+}
+
+// All indexed non-tangent values survive, including vertices appended for a
+// tangent seam. This also pins the exact triangle winding/order and bounds.
+static void check_indexed_geometry(const mesh_file *mesh, const mesh_file *control)
+{
+    TIDE_REQUIRE(mesh->indices == control->indices);
+    TIDE_CHECK(mesh->parts == control->parts && mesh->has_normals == control->has_normals && mesh->has_uvs == control->has_uvs);
+    for (uint32_t i = 0; i < mesh->indices; i++) {
+        const uint32_t a = mesh->index[i], b = control->index[i];
+        TIDE_REQUIRE(a < mesh->vertices && b < control->vertices);
+        TIDE_CHECK(memcmp(mesh->position + a * 3u, control->position + b * 3u, 3u * sizeof(float)) == 0);
+        TIDE_CHECK(memcmp(mesh->normal + a * 3u, control->normal + b * 3u, 3u * sizeof(float)) == 0);
+        TIDE_CHECK(memcmp(mesh->uv + a * 2u, control->uv + b * 2u, 2u * sizeof(float)) == 0);
+        TIDE_CHECK(memcmp(mesh->uv2 + a * 2u, control->uv2 + b * 2u, 2u * sizeof(float)) == 0);
+        TIDE_CHECK(memcmp(mesh->color + a * 4u, control->color + b * 4u, 4u * sizeof(float)) == 0);
+    }
+}
+
+TIDE_TEST(mesh_missing_tangents_form_the_uv_basis_without_changing_geometry)
+{
+    const tangent_bytes bytes = tangent_plane();
+    mesh_file mesh, control;
+    char why[256];
+    TIDE_REQUIRE(read_tangent_mesh(&bytes, 4u, 6u, true, true, false, NULL, &mesh, why));
+    TIDE_REQUIRE(read_tangent_mesh(&bytes, 4u, 6u, true, true, true, NULL, &control, why));
+    TIDE_CHECK(mesh.vertices == 4u && !mesh.has_tangents && control.has_tangents);
+    TIDE_CHECK(memcmp(mesh.index, control.index, 6u * sizeof(uint32_t)) == 0);
+    check_indexed_geometry(&mesh, &control);
+    check_tangent_basis(&mesh);
+    check_tangent_uv_directions(&mesh);
+    for (uint32_t i = 0; i < mesh.vertices; i++) TIDE_CHECK(tangent_is(mesh.tangent + i * 4u, -1, 0, 0, -1));
+    mesh_file_free(&control);
+    mesh_file_free(&mesh);
+}
+
+TIDE_TEST(mesh_missing_tangents_split_only_shared_mirrored_handedness)
+{
+    tangent_bytes bytes = tangent_plane();
+    bytes.uv[3][0] = 2.0f;
+    mesh_file mesh, control, again;
+    char why[256];
+    TIDE_REQUIRE(read_tangent_mesh(&bytes, 4u, 6u, true, true, false, NULL, &mesh, why));
+    TIDE_REQUIRE(read_tangent_mesh(&bytes, 4u, 6u, true, true, true, NULL, &control, why));
+    TIDE_CHECK(mesh.vertices == 6u && control.vertices == 4u);
+    check_indexed_geometry(&mesh, &control);
+    check_tangent_basis(&mesh);
+    check_tangent_uv_directions(&mesh);
+    for (uint32_t i = 0; i < 6u; i++) {
+        const float *t = mesh.tangent + mesh.index[i] * 4u;
+        TIDE_CHECK(i < 3u ? tangent_is(t, -1, 0, 0, -1) : tangent_is(t, 1, 0, 0, 1));
+    }
+    TIDE_CHECK(mesh.index[0] != mesh.index[3] && mesh.index[1] != mesh.index[5]);
+    TIDE_REQUIRE(read_tangent_mesh(&bytes, 4u, 6u, true, true, false, NULL, &again, why));
+    TIDE_CHECK(memcmp(mesh.hash, again.hash, sizeof mesh.hash) == 0);
+    TIDE_CHECK(memcmp(mesh.index, again.index, 6u * sizeof(uint32_t)) == 0);
+    TIDE_CHECK(memcmp(mesh.tangent, again.tangent, mesh.vertices * 4u * sizeof(float)) == 0);
+    mesh_file_free(&again);
+    mesh_file_free(&control);
+    mesh_file_free(&mesh);
+}
+
+TIDE_TEST(mesh_missing_tangents_keep_authored_uv_seams_separate)
+{
+    tangent_bytes bytes = tangent_plane();
+    memcpy(bytes.position[3], bytes.position[0], sizeof bytes.position[0]);
+    memcpy(bytes.position[4], bytes.position[2], sizeof bytes.position[0]);
+    bytes.position[5][1] = 1.0f;
+    bytes.uv[3][0] = bytes.uv[3][1] = 0.0f;
+    bytes.uv[4][0] = bytes.uv[4][1] = bytes.uv[5][0] = 1.0f;
+    bytes.index[3] = 3u, bytes.index[4] = 4u, bytes.index[5] = 5u;
+    mesh_file mesh, control;
+    char why[256];
+    TIDE_REQUIRE(read_tangent_mesh(&bytes, 6u, 6u, true, true, false, NULL, &mesh, why));
+    TIDE_REQUIRE(read_tangent_mesh(&bytes, 6u, 6u, true, true, true, NULL, &control, why));
+    TIDE_CHECK(mesh.vertices == 6u);
+    check_indexed_geometry(&mesh, &control);
+    check_tangent_basis(&mesh);
+    for (uint32_t i = 0; i < 6u; i++) TIDE_CHECK(i < 3u ? tangent_is(mesh.tangent + i * 4u, -1, 0, 0, -1)
+                                                                     : tangent_is(mesh.tangent + i * 4u, 0, 1, 0, 1));
+    mesh_file_free(&control);
+    mesh_file_free(&mesh);
+}
+
+TIDE_TEST(mesh_missing_tangents_weight_directions_by_corner_angle)
+{
+    tangent_bytes bytes = tangent_plane();
+    const float position[5][3] = {{0, 0, 0}, {2, 0, 0}, {0, 2, 0}, {0, 1, 0}, {-1, 0, 0}};
+    const float uv[5][2] = {{0, 0}, {1, 0}, {0, 1}, {1, 0}, {0, 1}};
+    memcpy(bytes.position, position, sizeof position);
+    memcpy(bytes.uv, uv, sizeof uv);
+    bytes.index[4] = 3u, bytes.index[5] = 4u;
+    mesh_file mesh;
+    char why[256];
+    TIDE_REQUIRE(read_tangent_mesh(&bytes, 5u, 6u, true, true, false, NULL, &mesh, why));
+    TIDE_CHECK(mesh.vertices == 5u);
+    check_tangent_basis(&mesh);
+    const float diagonal = 0.7071067811865475f;
+    TIDE_CHECK(tangent_is(mesh.tangent, -diagonal, diagonal, 0, -1));
+    mesh_file_free(&mesh);
+}
+
+TIDE_TEST(mesh_missing_tangents_keep_the_uv_direction_at_narrow_valid_corners)
+{
+    static const float widths[] = {0.0001f, 1e-10f, 1e-30f, 1e-30f};
+    for (uint32_t scenario = 0; scenario < 4u; scenario++) {
+        tangent_bytes bytes = tangent_plane();
+        memset(bytes.position, 0, sizeof bytes.position);
+        memset(bytes.uv, 0, sizeof bytes.uv);
+        bytes.position[1][1] = bytes.position[2][1] = scenario == 3u ? 3e38f : 1.0f;
+        bytes.position[2][0] = widths[scenario];
+        bytes.uv[1][0] = bytes.uv[2][0] = bytes.uv[2][1] = 1.0f;
+        for (uint32_t i = 0; i < 3u; i++) bytes.normal[i][2] = -1.0f;
+        mesh_file mesh;
+        char why[256];
+        TIDE_REQUIRE(read_tangent_mesh(&bytes, 3u, 3u, true, true, false, NULL, &mesh, why));
+        TIDE_CHECK(mesh.vertices == 3u);
+        check_tangent_basis(&mesh);
+        check_tangent_uv_directions(&mesh);
+        for (uint32_t i = 0; i < mesh.vertices; i++) TIDE_CHECK(tangent_is(mesh.tangent + i * 4u, 0, 1, 0, -1));
+        mesh_file_free(&mesh);
+    }
+}
+
+TIDE_TEST(mesh_missing_tangents_are_finite_for_degenerate_and_extreme_inputs)
+{
+    for (uint32_t scenario = 0; scenario < 9u; scenario++) {
+        tangent_bytes bytes = tangent_plane();
+        if (scenario == 1u) memset(bytes.uv, 0, sizeof bytes.uv);
+        if (scenario == 2u || scenario == 5u) memset(bytes.position, 0, sizeof bytes.position);
+        if (scenario == 3u) for (uint32_t i = 0; i < 4u; i++) bytes.position[i][1] = 0.0f;
+        if (scenario == 4u) memset(bytes.normal, 0, sizeof bytes.normal);
+        if (scenario == 6u) for (uint32_t i = 0; i < 4u; i++) for (uint32_t k = 0; k < 2u; k++) bytes.uv[i][k] *= 1e-30f;
+        if (scenario >= 7u) for (uint32_t i = 0; i < 4u; i++) for (uint32_t k = 0; k < 3u; k++) bytes.position[i][k] *= scenario == 7u ? 1e-30f : FLT_MAX;
+        mesh_file mesh;
+        char why[256];
+        TIDE_REQUIRE(read_tangent_mesh(&bytes, 4u, 6u, scenario != 5u, scenario != 0u, false, NULL, &mesh, why));
+        TIDE_CHECK(mesh.vertices == (scenario == 5u ? 6u : 4u));
+        check_tangent_basis(&mesh);
+        for (uint32_t i = 0; i < mesh.vertices; i++) TIDE_CHECK(scenario < 4u || scenario == 5u
+            ? tangent_is(mesh.tangent + i * 4u, 1, 0, 0, 1) : tangent_is(mesh.tangent + i * 4u, -1, 0, 0, -1));
+        mesh_file_free(&mesh);
+    }
+}
+
+TIDE_TEST(mesh_missing_tangents_handle_flat_and_nearly_parallel_normals)
+{
+    tangent_bytes bytes = tangent_plane();
+    mesh_file flat;
+    char why[256];
+    TIDE_REQUIRE(read_tangent_mesh(&bytes, 4u, 6u, false, true, false, NULL, &flat, why));
+    TIDE_CHECK(flat.vertices == 6u && !flat.has_normals);
+    check_tangent_basis(&flat);
+    check_tangent_uv_directions(&flat);
+    mesh_file_free(&flat);
+    for (uint32_t scenario = 0; scenario < 3u; scenario++) {
+        for (uint32_t i = 0; i < 4u; i++) {
+            bytes.position[i][1] = bytes.position[i][0] + (i >= 2u ? 1.0f : 0.0f);
+            bytes.position[i][2] = bytes.position[i][0];
+            bytes.normal[i][0] = bytes.normal[i][1] = 1.0f;
+            bytes.normal[i][2] = scenario == 0u ? 1.0f : scenario == 1u ? 0x1.000002p0f : 1e-30f;
+        }
+        mesh_file mesh;
+        TIDE_REQUIRE(read_tangent_mesh(&bytes, 4u, 6u, true, true, false, NULL, &mesh, why));
+        check_tangent_basis(&mesh);
+        mesh_file_free(&mesh);
+    }
+}
+
+TIDE_TEST(mesh_missing_tangents_follow_nonuniform_and_mirrored_node_transforms)
+{
+    tangent_bytes bytes = tangent_plane();
+    for (uint32_t i = 0; i < 4u; i++) {
+        bytes.position[i][2] = bytes.position[i][0] + bytes.position[i][1];
+        bytes.normal[i][0] = bytes.normal[i][1] = -1.0f;
+    }
+    static const char *const nodes[] = {",\"scale\":[2,3,4]", ",\"scale\":[-2,3,4]", ",\"scale\":[3e38,3e38,3e38]"};
+    for (uint32_t i = 0; i < 3u; i++) {
+        mesh_file mesh, control;
+        char why[256];
+        TIDE_REQUIRE(read_tangent_mesh(&bytes, 4u, 6u, true, true, false, nodes[i], &mesh, why));
+        TIDE_REQUIRE(read_tangent_mesh(&bytes, 4u, 6u, true, true, true, nodes[i], &control, why));
+        TIDE_CHECK(mesh.vertices == 4u);
+        check_indexed_geometry(&mesh, &control);
+        check_tangent_basis(&mesh);
+        if (i < 2u) check_tangent_uv_directions(&mesh);
+        for (uint32_t k = 0; k < 4u; k++) TIDE_CHECK(i == 2u ? tangent_is(mesh.tangent + k * 4u, 1, 0, 0, 1)
+            : tangent_is(mesh.tangent + k * 4u, i ? 0.4472135955f : -0.4472135955f, 0, 0.894427191f, i ? 1 : -1));
+        mesh_file_free(&control);
+        mesh_file_free(&mesh);
+    }
+}
+
+TIDE_TEST(mesh_authored_tangents_keep_the_existing_values_even_when_not_orthogonal)
+{
+    tangent_bytes bytes = tangent_plane();
+    bytes.tangent[0][3] = 0.25f;
+    bytes.tangent[1][0] = 0.0f, bytes.tangent[1][2] = 2.0f, bytes.tangent[1][3] = -0.5f;
+    memset(bytes.tangent[2], 0, sizeof bytes.tangent[2]);
+    bytes.uv[3][0] = 2.0f; // Would need a handedness split without authored tangents.
+    mesh_file mesh;
+    char why[256];
+    TIDE_REQUIRE(read_tangent_mesh(&bytes, 4u, 6u, true, true, true, NULL, &mesh, why));
+    TIDE_CHECK(mesh.vertices == 4u && mesh.has_tangents);
+    const float expected[4][4] = {{-1, 0, 0, -0.25f}, {0, 0, 1, 0.5f}, {0, 0, 0, 0}, {-1, 0, 0, -1}};
+    TIDE_CHECK(memcmp(mesh.tangent, expected, sizeof expected) == 0);
+    mesh_file_free(&mesh);
+}
+
+TIDE_TEST(mesh_missing_tangents_do_not_replace_other_primitives_authored_tangents)
+{
+    tangent_bytes bytes = tangent_plane();
+    for (uint32_t i = 0; i < 4u; i++) {
+        bytes.tangent[i][0] = 0.0f, bytes.tangent[i][2] = 2.0f, bytes.tangent[i][3] = -0.25f;
+    }
+    mesh_file mesh;
+    char why[256];
+    TIDE_REQUIRE(read_tangent_mesh(&bytes, 4u, 6u, true, true, 2, NULL, &mesh, why));
+    TIDE_CHECK(mesh.vertices == 8u && mesh.parts == 2u && mesh.has_tangents);
+    for (uint32_t i = 0; i < 4u; i++) {
+        TIDE_CHECK(tangent_is(mesh.tangent + i * 4u, 0, 0, 1, 0.25f));
+        TIDE_CHECK(tangent_is(mesh.tangent + (i + 4u) * 4u, -1, 0, 0, -1));
+    }
+    mesh_file_free(&mesh);
+}
+
+TIDE_TEST(mesh_tangent_inputs_reject_nonfinite_authored_attributes)
+{
+    static const uint32_t nonfinite[] = {0x7f800000u, 0xff800000u, 0x7fc00000u};
+    static const char *const names[] = {"positions", "normals", "uvs", "tangents"};
+    for (uint32_t attribute = 0; attribute < 4u; attribute++) {
+        for (uint32_t i = 0; i < 3u; i++) {
+            tangent_bytes bytes = tangent_plane();
+            float *value = attribute == 0u ? bytes.position[0] : attribute == 1u ? bytes.normal[0] : attribute == 2u ? bytes.uv[0] : bytes.tangent[0];
+            memcpy(value, nonfinite + i, sizeof(float));
+            mesh_file mesh;
+            char why[256];
+            TIDE_CHECK(!read_tangent_mesh(&bytes, 4u, 6u, true, true, true, NULL, &mesh, why));
+            TIDE_CHECK(strstr(why, "non-finite") && strstr(why, names[attribute]));
+        }
+    }
+}
+
+TIDE_TEST(mesh_obj_missing_tangents_use_flipped_uvs_and_missing_corner_fallback)
+{
+    static const char *const objects[] = {
+        "v 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0 0\nvt 1 0\nvt 0 1\nvn 0 0 1\nf 1/1/1 2/2/1 3/3/1\n",
+        "v 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0 0\nvt 1 0\nvn 0 0 1\nf 1/1/1 2/2/1 3//1\n"
+    };
+    for (uint32_t i = 0; i < 2u; i++) {
+        mesh_file mesh;
+        char why[256];
+        mesh_file canonical;
+        char note[256];
+        TIDE_REQUIRE(read_exactly((const uint8_t *)objects[i], strlen(objects[i]), "tangents.obj", &canonical, why));
+        TIDE_REQUIRE(mesh_file_with_tangents(&canonical, &mesh, why, note));
+        mesh_file_free(&canonical);
+        TIDE_CHECK(mesh.vertices == 3u && mesh.indices == 3u && !mesh.has_tangents);
+        check_tangent_basis(&mesh);
+        for (uint32_t k = 0; k < 3u; k++) TIDE_CHECK(i ? tangent_is(mesh.tangent + k * 4u, 1, 0, 0, 1)
+                                                                    : tangent_is(mesh.tangent + k * 4u, -1, 0, 0, 1));
+        mesh_file_free(&mesh);
+    }
+}
+
 // Every length a file can be cut to, and every byte of it wrong, in turn: read, or refused, and nothing more.
 static void cut_and_spoil(const uint8_t *data, const size_t size, const char *name)
 {
@@ -171,7 +542,6 @@ TIDE_TEST(mesh_glb_reads_and_is_never_read_past_its_bytes)
     TIDE_CHECK(mesh.position[3] == -1.0f && mesh.position[7] == 1.0f && mesh.normal[2] == 1.0f);
     TIDE_CHECK(mesh.index[0] == 0 && mesh.index[1] == 2 && mesh.index[2] == 1);
     TIDE_CHECK(mesh.color[0] == 1.0f && mesh.color[3] == 1.0f && mesh.uv[0] == 0.0f && mesh.tangent[3] == 0.0f);
-    // The same file gives the same mesh, to the bit
     mesh_file again;
     TIDE_REQUIRE(read_exactly(glb, size, "triangle.glb", &again, why));
     TIDE_CHECK(memcmp(mesh.hash, again.hash, sizeof mesh.hash) == 0);
@@ -616,4 +986,112 @@ TIDE_TEST(mesh_gltf_reports_invalid_attributes_instead_of_changing_geometry)
         TIDE_CHECK(strstr(why, "non-finite positions") != NULL);
         free(bytes);
     }
+}
+
+// A .gltf's text built in pieces, for files at the limits (mesh_files.h).
+typedef struct limit_text {
+    char *at;
+    size_t length, room;
+} limit_text;
+
+static void limit_add(limit_text *t, const char *fmt, ...)
+{
+    for (;;) {
+        va_list args;
+        va_start(args, fmt);
+        const int n = vsnprintf(t->at ? t->at + t->length : NULL, t->at ? t->room - t->length : 0u, fmt, args);
+        va_end(args);
+        if (n < 0) abort();
+        if (t->at && t->length + (size_t)n < t->room) {
+            t->length += (size_t)n;
+            return;
+        }
+        t->room = (t->room ? t->room * 2u : 4096u) + (size_t)n;
+        t->at = realloc(t->at, t->room);
+        if (!t->at) abort();
+    }
+}
+
+// Whether reading the text as a .gltf refuses it, saying `with`.
+static bool limit_refused(limit_text *t, const char *with)
+{
+    mesh_file mesh;
+    char why[256];
+    const bool ok = read_exactly((const uint8_t *)t->at, t->length, "limit.gltf", &mesh, why);
+    free(t->at);
+    *t = (limit_text){0};
+    if (ok) {
+        mesh_file_free(&mesh);
+        printf("    read, where '%s' was expected\n", with);
+        return false;
+    }
+    if (!strstr(why, with)) printf("    refused with '%s', not '%s'\n", why, with);
+    return strstr(why, with) != NULL;
+}
+
+// One past each limit is refused from the counts the file says, before what
+// they ask for is made: accessors without a buffer view are zeros that take
+// no bytes, so most of these files are small.
+TIDE_TEST(mesh_gltf_refuses_files_past_its_limits)
+{
+    limit_text t = {0};
+    // A 256-byte file once made 6 million zero vertices and 100 million indices.
+    limit_add(&t, "{\"asset\":{\"version\":\"2.0\"},\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0,\"NORMAL\":0},"
+                  "\"indices\":1}]}],\"accessors\":[{\"componentType\":5126,\"count\":6000000,\"type\":\"VEC3\"},"
+                  "{\"componentType\":5125,\"count\":100663296,\"type\":\"SCALAR\"}]}");
+    TIDE_CHECK(limit_refused(&t, "elements in an accessor, more than the 25,165,824 one Mesh holds (TIDE_MESH_MAX_INDICES)"));
+    limit_add(&t, "{\"asset\":{\"version\":\"2.0\"},\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0}}]}],"
+                  "\"accessors\":[{\"componentType\":5126,\"count\":%u,\"type\":\"VEC3\"}]}", TIDE_MESH_MAX_VERTICES + 1u);
+    TIDE_CHECK(limit_refused(&t, "more than the 16,777,216 one Mesh holds (TIDE_MESH_MAX_VERTICES)"));
+    limit_add(&t, "{\"asset\":{\"version\":\"2.0\"},\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0},\"indices\":1}]}],"
+                  "\"accessors\":[{\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+                  "{\"componentType\":5125,\"count\":%u,\"type\":\"SCALAR\"}]}", TIDE_MESH_MAX_INDICES + 1u);
+    TIDE_CHECK(limit_refused(&t, "elements in an accessor, more than the 25,165,824 one Mesh holds (TIDE_MESH_MAX_INDICES)"));
+    // Without normals, each triangle's corners are vertices of their own: indices within their
+    // limit can still ask for more vertices than a mesh holds.
+    limit_add(&t, "{\"asset\":{\"version\":\"2.0\"},\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0},\"indices\":1}]}],"
+                  "\"accessors\":[{\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+                  "{\"componentType\":5125,\"count\":%u,\"type\":\"SCALAR\"}]}", (TIDE_MESH_MAX_VERTICES / 3u + 1u) * 3u);
+    TIDE_CHECK(limit_refused(&t, "more than the 16,777,216 one Mesh holds (TIDE_MESH_MAX_VERTICES)"));
+    // A part with no triangles over the most vertices, placed by many nodes, is walked again for each.
+    limit_add(&t, "{\"asset\":{\"version\":\"2.0\"},\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0},\"indices\":1}]}],"
+                  "\"accessors\":[{\"componentType\":5126,\"count\":%u,\"type\":\"VEC3\"},{\"componentType\":5125,\"count\":0,"
+                  "\"type\":\"SCALAR\"}],\"nodes\":[", TIDE_MESH_MAX_VERTICES);
+    const uint32_t placements = TIDE_MESH_MAX_READS / TIDE_MESH_MAX_VERTICES + 1u;
+    for (uint32_t i = 0; i < placements; i++) limit_add(&t, "%s{\"mesh\":0}", i ? "," : "");
+    limit_add(&t, "]}");
+    TIDE_CHECK(limit_refused(&t, "more than the 536,870,912 one Mesh holds (TIDE_MESH_MAX_READS)"));
+    // A description of one more value than the most
+    limit_add(&t, "{\"asset\":{\"version\":\"2.0\"},\"extras\":[0");
+    for (uint32_t i = 4u; i < TIDE_MESH_MAX_JSON_VALUES; i++) limit_add(&t, ",0");
+    limit_add(&t, "]}");
+    TIDE_CHECK(limit_refused(&t, "JSON values"));
+}
+
+// Objects with many keys are looked up by halves rather than by a walk, and a
+// key written twice still means its first: a triangle whose objects carry
+// many other keys, repeated ones among them, reads as the same mesh.
+TIDE_TEST(mesh_gltf_objects_with_many_keys_read_as_before)
+{
+    mesh_file plain, keyed;
+    char why[256];
+    size_t size;
+    uint8_t *glb = make_glb(triangle_json, &triangle, sizeof triangle, &size);
+    TIDE_REQUIRE(read_exactly(glb, size, "plain.glb", &plain, why));
+    free(glb);
+    char extra[512], json[4096];
+    size_t at = 0;
+    for (uint32_t i = 0; i < 24u; i++) at += (size_t)snprintf(extra + at, sizeof extra - at, "\"zz%02u\":%u,", i, i);
+    snprintf(json, sizeof json, "{%s\"asset\":{\"version\":\"2.0\"},\"scene\":0,\"scenes\":[{\"nodes\":[0]}],\"nodes\":[{\"mesh\":0}],"
+             TRIANGLE_MESH "\"accessors\":[{%s\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\",\"count\":2},"
+             "{\"bufferView\":1,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+             "{%s\"bufferView\":2,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\",\"bufferView\":0}],"
+             TRIANGLE_VIEWS ",\"scene\":4}", extra, extra, extra);
+    glb = make_glb(json, &triangle, sizeof triangle, &size);
+    TIDE_REQUIRE(read_exactly(glb, size, "keyed.glb", &keyed, why));
+    free(glb);
+    TIDE_CHECK(plain.vertices == keyed.vertices && plain.indices == keyed.indices);
+    TIDE_CHECK(memcmp(plain.hash, keyed.hash, sizeof plain.hash) == 0);
+    mesh_file_free(&plain);
+    mesh_file_free(&keyed);
 }

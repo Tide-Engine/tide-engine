@@ -1,0 +1,28 @@
+singleton Results { int checks; }
+system Verify(mut Results result)
+{
+    int[12] patterns = [0, 0x80000000, 0x3f800000, 0xbf800000, 1, 0x007fffff,
+                        0x00800000, 0x7f7fffff, 0x7f800000, 0xff800000, 0x7fc12345, 0xffc12345];
+    foreach (var bits in patterns)
+    {
+        float value = Math.AsFloat(bits);
+        Debug.Assert(Math.AsInt(value) == bits);
+        Debug.Assert(Math.Hash(value) == Math.Hash(bits));
+        int2 pair = int2(bits, 0x3f800000);
+        int3 triple = int3(pair, 0x80000000);
+        int4 four = int4(triple, 0xbf800000);
+        var v2 = Math.AsInt(Math.AsFloat(pair));
+        var v3 = Math.AsInt(Math.AsFloat(triple));
+        var v4 = Math.AsInt(Math.AsFloat(four));
+        Debug.Assert(v2.x == pair.x && v2.y == pair.y);
+        Debug.Assert(v3.x == triple.x && v3.y == triple.y && v3.z == triple.z);
+        Debug.Assert(v4.x == four.x && v4.y == four.y && v4.z == four.z && v4.w == four.w);
+        Debug.Assert(Math.Hash(Math.AsFloat(pair)) == Math.Hash(pair));
+        Debug.Assert(Math.Hash(Math.AsFloat(triple)) == Math.Hash(triple));
+        Debug.Assert(Math.Hash(Math.AsFloat(four)) == Math.Hash(four));
+        result.checks++;
+    }
+    Debug.Assert(Math.AsInt(1.0) == 0x3f800000 && Math.AsFloat(0x3f800000) == 1.0);
+    Debug.Assert(Math.Hash(0.0) != Math.Hash(Math.AsFloat(0x80000000)));
+}
+scene Main { }

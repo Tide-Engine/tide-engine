@@ -2,8 +2,8 @@
 // value goes into each bucket, over its oldest once it holds CAP of them: a
 // ring, as each way keeps it. Written as a list of lists, a list of CAP
 // cells for each bucket, which is what the concept is, and as one flat list
-// of every bucket's cells, which is what a game wrote before a list could
-// hold lists, and as a list of structs each with an int[CAP] array, which
+// of every bucket's cells, the way it is written without lists of lists, and
+// as a list of structs each with an int[CAP] array, which
 // needs no second list at all. So what's measured is reading and writing an
 // element of an inner list, of a flat list and of an array, the same work
 // apart from that.

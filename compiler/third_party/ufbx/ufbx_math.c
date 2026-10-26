@@ -2079,7 +2079,7 @@ ufbx_math_abi int ufbx_isnan(double x)
 	ufbxm_bits bx = ufbxm_to_bits(x);
 	hx = (bx.hi & 0x7fffffff);
 	lx = (ufbxm_int)bx.lo;
-	hx |= (ufbxm_int)((ufbxm_uint)(lx | (-lx)) >> 31);
+	hx |= (ufbxm_int)(((ufbxm_uint)lx | (0u - (ufbxm_uint)lx)) >> 31);
 	hx = 0x7ff00000 - hx;
 	return (int)(((ufbxm_uint)(hx)) >> 31);
 }

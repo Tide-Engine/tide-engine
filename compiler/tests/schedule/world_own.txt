@@ -4,6 +4,7 @@ A system starts once everything it runs after is done.
 stage 1  Game.Seed  (once)
          writes Game.World
          alongside nothing
+
 stage 2  Game.Grow  (per entity)
          reads Game.World
          writes Game.Health

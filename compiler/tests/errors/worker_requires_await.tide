@@ -1,0 +1,5 @@
+// expect: can't assign LocalTask<int> to int
+local worker int Build(int value) { return value; }
+local singleton Result { int value; }
+view Start(mut Result result) { result.value = Build(1); }
+scene Main;

@@ -1,0 +1,24 @@
+{"hash": "0000000000000000", "components": [
+  {"name": "Ship", "guid": "11111111111111111111111111111111", "fields": [{"name": "speed", "key": "speed", "shape": 0}, {"name": "heading", "key": "heading", "shape": 1}, {"name": "tint", "key": "tint", "shape": 2}, {"name": "title", "key": "title", "shape": 3}, {"name": "crew", "key": "crew", "shape": 4}, {"name": "marks", "key": "marks", "shape": 6}, {"name": "stops", "key": "stops", "shape": 8}, {"name": "mode", "key": "mode", "shape": 9}, {"name": "extra", "key": "extra", "shape": 10}, {"name": "fixed", "key": "fixed", "shape": 11}, {"name": "spare", "key": "spare", "shape": 0}, {"name": "cargo", "key": "cargo", "shape": 12}, {"name": "tags", "key": "tags", "shape": 13}, {"name": "initial", "key": "initial", "shape": 14}, {"name": "slots", "key": "slots", "shape": 15}, {"name": "holds", "key": "holds", "shape": 16}]},
+  {"name": "Cargo", "guid": "22222222222222222222222222222222", "fields": [{"name": "mass", "key": "mass", "shape": 0}]}
+], "shapes": [
+  {"form": "number", "type": "float"},
+  {"form": "float3", "type": "float3"},
+  {"form": "color", "type": "Color"},
+  {"form": "string", "type": "string"},
+  {"form": "entity", "type": "Entity"},
+  {"form": "number", "type": "int"},
+  {"form": "list", "type": "List<int>", "element": 5},
+  {"form": "float2", "type": "float2"},
+  {"form": "list", "type": "List<float2>", "element": 7},
+  {"form": "enum", "type": "Mode", "enum": "Mode"},
+  {"form": "literal", "type": "float4x4"},
+  {"form": "bool", "type": "bool"},
+  {"form": "struct", "type": "Hold", "fields": [{"name": "mass", "key": "mass", "shape": 5}, {"name": "owner", "key": "owner", "shape": 4}]},
+  {"form": "set", "type": "Set<int>", "element": 5},
+  {"form": "char", "type": "char"},
+  {"form": "array", "type": "int[3]", "element": 5, "length": 3},
+  {"form": "list", "type": "List<Hold>", "element": 12}
+], "enums": [
+  {"name": "Mode", "members": ["Slow","Fast"], "values": [0,1]}
+]}

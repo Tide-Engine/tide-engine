@@ -1,0 +1,4 @@
+// expect: 'g' is read-only
+struct Gauge { int stored; int amount { get { return stored; } set { stored = value; } } }
+scene Main;
+system Tick() { var g = Gauge {}; g.amount = 2; }

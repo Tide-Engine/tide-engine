@@ -1,0 +1,4 @@
+// expect: a query takes only components
+using Values = List<int>;
+system Step(query (Values value) values) { foreach (var row in values) { _ = row.value; } }
+scene Main;

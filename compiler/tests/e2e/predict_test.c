@@ -35,7 +35,7 @@ TIDE_TEST(predict_adjusts_guesses_and_preserves_samples_and_snapshots)
     tide_world_set_server_input(&world, input);
     tide_world_copy(&snapshot, &world);
     const uint64_t hash = tide_world_hash(&snapshot);
-    tide_player_set keep = {{0}};
+    tide_player_set keep = {0};
     tide_players_add(&keep, 0);
     const uint32_t scratch = tide_scratch_mark();
     TIDE_REQUIRE(tide_game_api.predict_inputs != NULL);
@@ -69,7 +69,7 @@ TIDE_TEST(predict_idle_guess_changes_nothing)
 {
     tide_world_init(&world, 1.0f / 60.0f);
     const uint64_t hash = tide_world_hash(&world);
-    const tide_player_set keep = {{0}};
+    const tide_player_set keep = {0};
     TIDE_CHECK(!tide_game_api.predict_inputs(&world, &keep));
     TIDE_CHECK(tide_world_hash(&world) == hash);
     tide_world_free(&world);

@@ -4,5 +4,8 @@
 !releases.js
 !analytics.js
 !admin.js
+!telemetry.js
 !server.js
 !build/
+!prototypes.js
+!prototypes.json

@@ -214,5 +214,19 @@ Managed WASM hosting uses the same `start` callback for scene selection, with
 project admission and trusted creation handled by its service. Guard server C
 with `#ifdef TIDE_SERVER_BUILD` before including `game.h`. Native process/auth
 hooks do not run inside managed guests. See [Managed hosting](../multiplayer/hosting.md)
-for deployment, credentials, lifetime and recovery. The service's optional C
-save/load callbacks are documented in `hosting/README.md` in the repository.
+for deployment, credentials, lifetime and recovery.
+
+A managed world can carry the game's own durable payload, through two optional
+callbacks supplied together:
+
+```c
+uint32_t tide_managed_write_save(const void *world, uint8_t *out, uint32_t capacity);
+bool tide_managed_read_save(void *zeroed_world, const uint8_t *data, uint32_t size);
+```
+
+Writing with `out == NULL` returns the required size; the next call writes that
+many bytes and returns the same size. Loading initializes a zeroed world and
+restores it, returning false on failure. Without the callbacks, the service
+saves the generated world packing as an exact-release checkpoint, with no
+cross-release compatibility promise. The host adds reconnect metadata outside
+the world's bytes, and a save is at most 8 MiB including it.

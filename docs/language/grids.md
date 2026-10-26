@@ -53,9 +53,9 @@ A grid keeps its cells in chunks of 64 by 64 cells, or 16 by 16 by 16 in 3D: 16 
 
 A match is snapshotted every tick and rolled back when a guess about another player went wrong (see [Networking](../multiplayer/networking.md#prediction-and-rollback)). Snapshots share the chunks nothing changed, and hashes cover each chunk on its own, so changing a few cells copies and hashes a few chunks, never the whole grid. A player joining gets only the chunks that exist.
 
-A grid is never copied, since every chunk would be: a local can't hold one, nor a component that has one, and functions can't take grids yet. Read and change cells through the component or singleton.
+A grid stays in its component or singleton: a local can't hold a copy, and functions cannot return grids. A [local worker](../game/tasks.md#local-workers) can take a read-only snapshot as an input. Ordinary helpers called by workers or shader code can read and forward a grid parameter; they cannot change it. Other CPU code reads and changes cells through their component or singleton.
 
-A `Grid2<Color>` or a `Grid2<float>` with a size is a `Texture` wherever one is wanted: a draw's texture, a frag's source, a `Texture` field or parameter (see [Textures](../game/meshes-and-textures.md#textures)). The texture is the grid, not a copy of it, so that's how a grid's pixels get to a function, which can't take the grid itself.
+A `Grid2<Color>` or a `Grid2<float>` with a size is a `Texture` wherever one is wanted: a draw's texture, a frag's source, a `Texture` field or parameter (see [Textures](../game/meshes-and-textures.md#textures)). The texture is the grid, not a copy of it. GPU sampling stays on the GPU; workers read their snapshot's cells by integer position.
 
 ## Going through every cell
 
@@ -101,7 +101,7 @@ To add things up, use a `for` loop, or a foreach that goes in order (see below).
 
 A list's elements go through a parallel loop the same way, by index (see [Lists](./text-and-lists.md#going-through-every-element-at-once)).
 
-A parallel loop goes in a system, a view, or an event handler that isn't async: not in functions, methods, async code or an input's `Sample`.
+A parallel loop goes in a system, a view, an event handler that isn't async, or a local worker: not in ordinary functions, methods, async code or an input's `Sample`. Workers can run parallel loops over their own lists, reading captured grids from each step. Their read-only grid inputs cannot be the writable output of an explicit parallel loop.
 
 ### Moving things: blocks
 
@@ -126,7 +126,7 @@ system Fall(Time time, mut Field field)
 }
 ```
 
-Blocks never overlap, so steps never fight over a cell. `offset` says where the blocks start, and changing it each tick moves where their edges are: a grain at the bottom of a block one tick is at the top of another the next, so it keeps falling. `by int2(1, 2)` gives blocks of 1 by 2, and `offset int2(0, 1)` moves them along one axis only. A block is 1 to 64 cells along each axis, a size known while compiling: numbers, or constants. The offset can be any int, or `int2` or `int3`, and can change every time. A block that would go past the grid's size is left out (on an open axis, past the last number an `int` holds), so along a sized edge some cells are only in every other tick's blocks: walls around the field keep sand off it, as in the [sand simulation](/sand/).
+Blocks never overlap, so steps never fight over a cell. `offset` says where the blocks start, and changing it each tick moves where their edges are: a grain at the bottom of a block one tick is at the top of another the next, so it keeps falling. `by int2(1, 2)` gives blocks of 1 by 2, and `offset int2(0, 1)` moves them along one axis only. A block is 1 to 64 cells along each axis, a size known while compiling: numbers, or constants. The offset can be any int, or `int2` or `int3`, and can change every time. A block that would go past the grid's size is left out (on an open axis, past the last number an `int` holds), so along a sized edge some cells are only in every other tick's blocks: walls around the field keep sand off it, as in the [sand simulation](/sand/?stats).
 
 ### In order: foreach
 

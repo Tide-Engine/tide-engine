@@ -11,6 +11,7 @@
 #include "tide/jobs.h"
 #include "tide/platform.h"
 #include "tide/time.h"
+#include "tide/worker.h"
 #include "tide_test.h"
 
 static tide_world one;      // Ticked on this thread
@@ -22,6 +23,125 @@ extern atomic_int jobs_tasks_slept;
 
 // The threads that took part in a round of work, a bit each.
 static uint32_t threads_seen;
+
+static TIDE_THREAD_LOCAL bool background_caller;
+typedef struct background_probe {
+    const tide_jobs *jobs;
+    uint32_t values[128];
+    uint32_t calls[128];
+    bool elsewhere;
+    bool released;
+} background_probe;
+
+static void background_step(void *context, const uint32_t index)
+{
+    background_probe *p = context;
+    p->values[index] = index * 7u + 3u;
+    __atomic_fetch_add(&p->calls[index], 1u, __ATOMIC_RELAXED);
+}
+
+static void background_work(void *context)
+{
+    background_probe *p = context;
+    p->elsewhere = !background_caller;
+    const tide_jobs *previous = tide_worker_enter(p->jobs);
+    tide_parallel_for(128, background_step, p, 1000000u);
+    tide_worker_leave(previous);
+}
+
+static void background_release(void *context)
+{
+    background_probe *p = context;
+    p->released = background_caller;
+}
+
+TIDE_TEST(jobs_background_workers_share_parallel_work_without_waiting_on_the_frame)
+{
+    const tide_jobs *jobs = tide_platform_jobs();
+    if (!jobs || !jobs->background) return;
+    background_caller = true;
+    tide_workers *workers = NULL;
+    background_probe probes[64] = {{0}};
+    uint32_t tickets[64];
+    const uint32_t count = jobs->threads * 2u < 64u ? jobs->threads * 2u : 64u;
+    for (uint32_t i = 0; i < count; i++) {
+        probes[i].jobs = jobs;
+        tickets[i] = tide_worker_start(&workers, jobs, background_work, background_release, &probes[i]);
+    }
+    const uint64_t until = tide_time_now_ns() + 10000000000ull;
+    for (uint32_t i = 0; i < count; i++) {
+        while (!tide_worker_poll(workers, tickets[i]) && tide_time_now_ns() < until) tide_yield();
+        TIDE_CHECK(tide_worker_poll(workers, tickets[i]) == &probes[i]);
+        TIDE_CHECK(probes[i].elsewhere);
+        for (uint32_t k = 0; k < 128; k++) {
+            TIDE_CHECK(probes[i].values[k] == k * 7u + 3u);
+            TIDE_CHECK(probes[i].calls[k] == 1u);
+        }
+        tide_worker_forget(workers, tickets[i]);
+        TIDE_CHECK(probes[i].released);
+    }
+    tide_workers_free(workers);
+    background_caller = false;
+}
+
+typedef struct running_probe {
+    uint32_t started, finish;
+    uint32_t value, releases;
+} running_probe;
+
+static void running_work(void *context)
+{
+    running_probe *probe = context;
+    __atomic_store_n(&probe->started, 1u, __ATOMIC_RELEASE);
+    while (!__atomic_load_n(&probe->finish, __ATOMIC_ACQUIRE)) tide_yield();
+    probe->value = 17;
+}
+
+static void running_release(void *context) { ((running_probe *)context)->releases++; }
+
+TIDE_TEST(jobs_abandoned_running_worker_keeps_captures_until_completion)
+{
+    const tide_jobs *jobs = tide_platform_jobs();
+    if (!jobs || !jobs->background) return;
+    tide_workers *workers = NULL;
+    running_probe probe = {0};
+    const uint32_t ticket = tide_worker_start(&workers, jobs, running_work, running_release, &probe);
+    const uint64_t until = tide_time_now_ns() + 10000000000ull;
+    while (!__atomic_load_n(&probe.started, __ATOMIC_ACQUIRE) && tide_time_now_ns() < until) tide_yield();
+    TIDE_CHECK(__atomic_load_n(&probe.started, __ATOMIC_ACQUIRE) == 1u);
+    tide_worker_forget(workers, ticket);
+    TIDE_CHECK(probe.releases == 0);
+    TIDE_CHECK(tide_worker_poll(workers, ticket) == NULL);
+    __atomic_store_n(&probe.finish, 1u, __ATOMIC_RELEASE);
+    tide_workers_free(workers);
+    TIDE_CHECK(probe.value == 17 && probe.releases == 1);
+}
+
+static void cooperative_work(void *context)
+{
+    running_probe *probe = context;
+    __atomic_store_n(&probe->started, 1u, __ATOMIC_RELEASE);
+    const uint64_t until = tide_time_now_ns() + UINT64_C(10000000000);
+    while (!tide_worker_cancelled() && tide_time_now_ns() < until) tide_yield();
+    probe->value = tide_worker_cancelled() ? 1u : 2u;
+}
+
+TIDE_TEST(jobs_running_worker_observes_abandonment_at_cooperative_safe_points)
+{
+    TIDE_CHECK(!tide_worker_cancelled());
+    const tide_jobs *jobs = tide_platform_jobs();
+    if (!jobs || !jobs->background) return;
+    tide_workers *workers = NULL;
+    running_probe probe = {0};
+    const uint32_t ticket = tide_worker_start(&workers, jobs, cooperative_work, running_release, &probe);
+    const uint64_t until = tide_time_now_ns() + UINT64_C(10000000000);
+    while (!__atomic_load_n(&probe.started, __ATOMIC_ACQUIRE) && tide_time_now_ns() < until) tide_yield();
+    TIDE_CHECK(__atomic_load_n(&probe.started, __ATOMIC_ACQUIRE) == 1u);
+    tide_worker_forget(workers, ticket);
+    tide_workers_free(workers);
+    TIDE_CHECK(probe.value == 1 && probe.releases == 1);
+    TIDE_CHECK(!tide_worker_cancelled());
+}
 
 static void note_thread(void *context, const uint32_t thread)
 {
@@ -349,8 +469,8 @@ TIDE_TEST(jobs_threads_come_back)
     };
     tide_queue queue = {0};
     tide_entities entities = {0};
-    const tide_tick_systems tick = {systems, 2, NULL, &queue, &entities, NULL};
-    const tide_jobs counted = {NULL, back_pool->threads, back_run, NULL, back_more, NULL};
+    const tide_tick_systems tick = {systems, 2, NULL, &queue, &entities, NULL, NULL};
+    const tide_jobs counted = {NULL, back_pool->threads, back_run, NULL, back_more, NULL, NULL, NULL};
     int ticks = 0;
     // A worker has to have joined the tick while its first system ran to have
     // left it: a few more ticks if none had yet
@@ -465,7 +585,7 @@ TIDE_TEST(jobs_thousands_of_systems)
     }
     tide_queue queue = {0};
     tide_entities entities = {0};
-    const tide_tick_systems tick = {many_systems, MANY, NULL, &queue, &entities, NULL};
+    const tide_tick_systems tick = {many_systems, MANY, NULL, &queue, &entities, NULL, NULL};
     const tide_jobs *jobs = tide_platform_jobs();
     for (int pass = 0; pass < (jobs ? 4 : 2); pass++) {
         const tide_jobs *with = pass >= 2 ? jobs : NULL; // On one thread, then on every core

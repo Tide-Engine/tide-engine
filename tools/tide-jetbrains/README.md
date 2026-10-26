@@ -1,9 +1,20 @@
 # Tide plugin for JetBrains IDEs
 
-On JetBrains Marketplace as `io.github.blenminer.tide`.
-Highlighting from the TextMate grammar in `tools/tide-syntax`, and
-everything else from `tidels` through the LSP4IJ plugin, which JetBrains
-Marketplace installs with it. It runs in every JetBrains IDE from 2024.2 on.
+Public source: [Tide-Engine/tide-jetbrains](https://github.com/Tide-Engine/tide-jetbrains).
+The plugin ID is `io.github.blenminer.tide`. Its initial Stable upload has been
+submitted to JetBrains Marketplace. You can also build the ZIP with the
+instructions below and use Settings > Plugins > Install Plugin from Disk.
+
+Tide's engine installer includes the matching plugin and adds it to existing
+JetBrains profiles (2024.2+), including LSP4IJ when missing. `tide upgrade`
+updates those profiles with its bundled version. For a newly installed IDE,
+open it once, run `tide editors`, then restart it. Custom IDE configuration or
+plugin paths need manual installation. Marketplace updates follow the IDE's
+chosen channel independently.
+
+Highlighting comes from the bundled TextMate grammar, and
+everything else from `tidels` through the required LSP4IJ plugin, available
+from JetBrains Marketplace. It runs in every JetBrains IDE from 2024.2 on.
 
 The plugin runs, in this order: the `tidels` chosen under Settings >
 Languages & Frameworks > **Tide**; the project's own `build/tools/tidels` (in
@@ -11,6 +22,18 @@ Tide's repo, the server your build made), once you trust the project;
 `tidels` on `PATH`; or the one where tide's installers put it. When there's
 none, the server stays off and `.tide` files say why, above the code, with
 links to install tide, choose `tidels`, or try again, which starts it.
+
+Before trying the global installation, a trusted project selects the version
+pinned in its `tide.packages`. Unity projects follow their locked Tide package:
+open Unity once to resolve/install it, and the IDE uses Unity's selected
+installation. A `-tide-command <path>` development launch is followed only while
+that Unity process is alive; closing it or a crash restores the project pin.
+`tide` for runs/debugging and prefab
+editing comes from that installation too. Missing pinned versions give an error;
+the plugin never silently substitutes another version. Package/lock changes
+restart the server. Different open projects can use different versions, sharing
+the `TIDE_VERSIONS` cache. An explicitly selected server or run command still
+takes precedence.
 
 ## Running the game
 
@@ -37,6 +60,28 @@ browser server is needed. Mesh picking, Move/Rotate/Scale, validation, save/undo
 and recovery stay in the native backend. Closing a content tab/project closes
 its process. The standalone app remains available for a resizable window.
 
+## Debugging
+
+In CLion (and IDEs with CLion's native debugger), breakpoints go in `.tide`
+files: a game's C maps each line back to its `.tide` line, so the debugger
+stops there, steps from one Tide line to the next and shows the stack as the
+game's systems and functions. Values show as Tide's from the game's natvis
+(Windows) or LLDB views.
+
+- **Run > Debug Tide Game**, also in a `.tide` file's context menu, plays the
+  game as its Tide run configuration does (when it isn't running already) and
+  attaches the debugger. Saving a file reloads it, still under the debugger.
+- **Run > Attach to Unity (Tide)** attaches to the Unity editor running the
+  project; with several open, it asks which.
+
+Both attach through the platform's attach API, as **Run > Attach to Process**
+does, preferring a native debugger. On Windows, put the **Visual Studio**
+toolchain first: its debugger reads the game's `.pdb` and the natvis in it.
+The breakpoint support (`TideBreakpoints`, in `tide-cidr.xml`) loads only in an
+IDE with that debugger; it compiles against a stub of its extension point
+(`src/cidrStubs`), which isn't packaged, and `verifyPlugin` checks it against
+CLion. More: [Debugging](https://tide-engine.dev/tools/debugging).
+
 ## Colors
 
 JetBrains' dark schemes draw type names like plain text, as in Java, so
@@ -57,9 +102,14 @@ After a server update, restart it (Language Servers tool window) to see changes.
 
 It needs a JDK 21 or later to build; Gradle downloads the JDK 21 it compiles
 with, and the IntelliJ Platform it compiles against, the first time.
+Clone this repository and run the commands from its root (`gradlew.bat` on
+Windows). No engine source checkout is required for the ordinary build/tests.
+Install [Tide](https://tide-engine.dev/guide/install) separately for `tidels`,
+running games and the native prefab editor.
 
 ```sh
 ./gradlew buildPlugin                  # build/distributions/tide-<version>.zip
+./gradlew buildCliInstaller            # build/cli/tide-jetbrains-installer.zip (Tide + LSP4IJ)
 ./gradlew test                         # adapter and isolated IntelliJ platform regressions
 ./gradlew runIde --args="<game folder>"  # an IDE with the plugin, for trying it
 ./gradlew verifyPlugin                 # against IntelliJ 2024.2 and the newest CLion
@@ -71,7 +121,7 @@ context-menu targets and game-folder selection in a headless test application.
 Plugin verification also rejects internal and override-only API calls, including
 tool-window registration, on the minimum IntelliJ platform and newest CLion.
 To exercise the real LSP4IJ client, a three-level child-process tree and JCEF,
-pass this checkout's built server, Node 24.16 or newer on Windows, and opt in
+pass a locally built Tide server, Node 24.16 or newer on Windows, and opt in
 to the muted embedded-browser test:
 
 ```sh
@@ -86,5 +136,28 @@ Add `-PtideTestEditor="<built tide-editor>"` to check actual native PNG renderin
 in the Swing prefab canvas and graceful backend shutdown. That check needs the
 native headless OpenGL context; it uses private temporary project files.
 
-The manually requested Build workflow builds and verifies it, and publishes it to Marketplace with
-each stable release (see `.github/workflows/build.yml`).
+## License and maintenance
+
+The Tide plugin source, icons, tests and bundled TextMate grammar are licensed
+under [MIT](LICENSE). Select **MIT** for the Marketplace listing and use
+https://github.com/Tide-Engine/tide-jetbrains/blob/main/LICENSE as its license URL.
+The Gradle wrapper retains its Apache-2.0 license; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+The MIT license is also included in the built plugin JAR.
+
+The engine repository keeps the canonical source under `tools/tide-jetbrains`.
+Issues and patches are welcome here; accepted changes are applied there before
+the next public export. Engine builds use the live `tools/tide-syntax` grammar;
+standalone clones use the `textmate` snapshot. Maintainers refresh that snapshot
+and the bundled host-process test fixture before exporting.
+
+The engine's manually requested Build workflow builds and verifies the plugin,
+then publishes it to the same Tide Marketplace listing after publishing the
+engine release: `release` uses Stable (the `default` channel), and `dev` uses
+`nightly`. Both use the same plugin ID; neither publishes to the former PurrLang
+listing. This public source repository does not start a second release workflow.
+
+To opt into nightly plugin updates, add
+`https://plugins.jetbrains.com/plugins/nightly/list` under Settings > Plugins >
+Manage Plugin Repositories. Stable users do not need that repository. The plugin
+still runs your separately installed `tidels`; choosing its nightly channel does
+not switch the engine's update channel. See [JetBrains' channel documentation](https://plugins.jetbrains.com/docs/intellij/publishing-plugin.html#specifying-a-release-channel).

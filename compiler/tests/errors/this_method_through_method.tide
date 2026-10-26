@@ -1,4 +1,4 @@
-// expect: 'Report' uses 'this', the entity its Health belongs to, and this one belongs to none
+// expect: 'health' needs an attached component: this value is a detached copy
 component Health
 {
     int value;
@@ -13,3 +13,4 @@ bool Check(Health health, Entity e)
 {
     return health.Report(e);
 }
+system Run() { _ = Check(Health {}, default); }

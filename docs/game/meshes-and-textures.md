@@ -39,7 +39,7 @@ A mesh's corners can be a struct of your own instead, with whatever fields the m
 
 ## Textures
 
-A `Texture` is what you draw with. It comes from an asset, `asset Texture hero = "art/hero.png";` (see [Assets](./assets.md#images-to-draw-with)), from a render target, `target.color` (see [Targets](./render-targets.md)), or from a grid you paint: a `Grid2<Color>` or a `Grid2<float>` with a size (see [Grids](../language/grids.md)) is a `Texture` wherever one is wanted.
+A color `Texture` is what you draw with. It comes from an asset, `asset Texture hero = "art/hero.png";` (see [Assets](./assets.md#images-to-draw-with)), from a render target, `target.color` (see [Targets](./render-targets.md)), or from a grid you paint: an ordinary `Grid2<Color>` or a `Grid2<float>` with a size (see [Grids](../language/grids.md)) is a `Texture` wherever one is wanted. Numeric [`[Raw]` sources](./shaders.md#textures-that-are-numbers) use Raw fields and shader sampling instead of ordinary color draws.
 
 `Draw.Mesh` takes one after its indices. With no frag, each pixel is the triangle's color times the texture's at its `uv`: (0, 0) is the first pixel's outer corner, and (1, 1) the last pixel's outer corner.
 
@@ -90,9 +90,39 @@ The argument after the texture says how it's read between pixels: `Filter.Biline
 
 A game's C can draw meshes too, with pixels of its own, like a font atlas a library made: see [Drawing from C](../c/functions.md#drawing-from-c).
 
+### Sprites
+
+`Draw.Sprite(texture, center, size, color)` draws a texture upright over a box in one call, where a mesh would take four corners and six indices. `center` and `size` are as `Draw.Rect`'s, and the texture's top left is at the box's top left: the top is towards the top of the screen, under a camera (y up) as in [the screen's pixels](./views.md#on-the-screen) (y down). Each pixel is the texture's times `color`, and a call can leave the color out for white.
+
+```csharp
+asset Texture hero = "art/hero.png";
+asset Texture sheet = "art/run.png"; // Four frames side by side
+
+component Runner
+{
+    float2 position;
+    bool left;
+    int frame; // 0 to 3
+    float spin;
+}
+
+view Runners(Runner runner)
+{
+    float2 size = float2(runner.left ? -1 : 1, 1); // A negative width mirrors it
+    Draw.Sprite(sheet, runner.position, size, Rect(runner.frame * 0.25, 0, 0.25, 1), Color.white);
+    Draw.Sprite(hero, runner.position + float2(0, 2), float2(1, 1), runner.spin, Color.white);
+}
+```
+
+- `Draw.Sprite(texture, center, size, part, color)` draws the part of the texture a `Rect` of uvs covers: (0, 0) is its top left corner and (1, 1) its bottom right, so a sheet's frame or an atlas's picture is one call.
+- A `rotation` before the color, in radians from +x towards +y, turns it about its center: `Draw.Sprite(texture, center, size, rotation, color)`, or after the part.
+- A negative width or height mirrors it.
+- A filter and a wrap after everything else read it as they say, as a mesh's do; a call that leaves them out reads it as the texture says.
+- Sprites one after another with the same texture, filter and wrap are drawn together, whatever their colors, as quads of the same texture drawn as meshes are.
+
 ### A Texture is a value
 
-A `Texture` is a small value that names an image: a field or a local holds one, a function takes one and gives one back, and copying it copies no pixels. A grid goes wherever a `Texture` does, and is the texture it is there:
+An ordinary color `Texture` is a small value that names an image: a field or a local holds one, a function takes one and gives one back, and copying it copies no pixels. An ordinary color grid, or a float grid, goes wherever a `Texture` does, and is the texture it is there:
 
 ```csharp
 local singleton Art
@@ -118,6 +148,7 @@ view Panel(mut Art art)
 - A texture made of a grid is that grid, not a copy: it draws what the grid holds when it's drawn. It lasts as long as the grid does. One kept past its grid (the entity the grid was a field of is gone, the match ended) draws nothing, or whatever took the grid's place: it's a name, as an `Entity` kept past its entity is.
 - The default `Texture`, what a field starts as, is no texture: a mesh drawn with it draws its colors alone.
 - It belongs to this machine: views, local state and the functions they call have them, and the match doesn't.
+- A [`[Raw] Texture` field](./shaders.md#textures-that-are-numbers) keeps a numeric image for shaders, such as a normal or mask map. Assign a Raw asset, another Raw texture field, a Raw color-grid field/asset or `default`; ordinary color textures are rejected. Its field annotation controls numeric sampling, so it cannot be copied into an ordinary `Texture` local or field or drawn directly.
 - `texture.size` gives its base-level width and height as an `int2` of physical pixels, in local CPU code and shaders. It reads metadata without copying or uploading pixels. Assets and grids report their image dimensions; render-target aliases follow resize, display scale and the device's size limit. Missing, unloaded or disposed images give `int2(0)`. No code reads a `Texture`'s pixels; a grid's cells are read as the grid.
 
 For example, a shader can use `float2 texel = 1.0 / float2(image.size);` for pixel-sized UV offsets. A CPU helper can return `image.size` through ordinary Texture parameters. Custom C hosts provide `draw.target_pixels = tide_platform_target_pixels` before `tide_frame` to resolve target dimensions; the standard host does this automatically. Without that frame metadata, target sizes are zero.

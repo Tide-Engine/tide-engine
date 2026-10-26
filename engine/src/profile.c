@@ -19,6 +19,8 @@ void tide_profile_clear(tide_profile *p)
 {
     clear_totals(&p->systems);
     clear_totals(&p->views);
+    clear_totals(&p->workers);
+    p->worker_runs = 0;
     p->ticks = 0;
     p->systems_ms = 0.0;
     p->changes_ms = 0.0;
@@ -28,6 +30,7 @@ void tide_profile_free(tide_profile *p)
 {
     free(p->systems.items);
     free(p->views.items);
+    free(p->workers.items);
     *p = (tide_profile){0};
 }
 

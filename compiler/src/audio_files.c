@@ -9,6 +9,7 @@
 #include <dr_flac.h>
 #include <dr_mp3.h>
 
+#include "tide/internal/count_text.h"
 #include "tide/vorbis.h"
 
 #define IMPORT_SOURCE_MOST ((size_t)128u * 1024u * 1024u)
@@ -78,7 +79,11 @@ static bool check_wav(const uint8_t *data, size_t size, char why[256])
         } else if (!memcmp(data + at, "data", 4)) {
             if (!fmt) return refuse(why, "WAV data precedes its format chunk");
             if (count % block) return refuse(why, "WAV data ends partway through a sample frame");
-            if (count / (bits / 8u) > (1u << 30)) return refuse(why, "WAV has too many decoded samples");
+            if (count / (bits / 8u) >= TIDE_SOUND_MAX_SAMPLES) {
+                char have[32], most[32];
+                return refuse(why, "WAV has %s samples, more than the %s a sound holds (TIDE_SOUND_MAX_SAMPLES)",
+                              tide_count_text(count / (bits / 8u), have), tide_count_text(TIDE_SOUND_MAX_SAMPLES - 1u, most));
+            }
             if (format == 3) {
                 const uint32_t width = bits / 8;
                 for (size_t i = 0; i < count; i += width) {
@@ -297,6 +302,31 @@ static bool import_flac(const uint8_t *data, size_t size, pcm_wave *wave, char w
     return ok;
 }
 
+// Decodes an Ogg Vorbis clip once as every player's runtime will, keeping no
+// samples: the file stays as it is, but one whose packets are cut short or
+// corrupt (which a player hears as silence), that says it holds more than
+// they give, or that decodes to a nonfinite sample is refused here.
+static bool check_vorbis(const tide_vorbis *vorbis, char why[256])
+{
+    tide_vorbis_reader *reader = tide_vorbis_reader_open(vorbis);
+    const uint32_t channels = tide_vorbis_channels(vorbis);
+    float pcm[DECODE_FRAMES * 2];
+    bool ok = true;
+    for (;;) {
+        const uint32_t got = tide_vorbis_read(reader, pcm, DECODE_FRAMES);
+        if (!got) break;
+        for (size_t i = 0; ok && i < (size_t)got * channels; i++) {
+            if (!finite_float(pcm[i])) ok = refuse(why, "Ogg Vorbis decoded a nonfinite sample; the file is corrupt");
+        }
+        if (!ok) break;
+    }
+    if (ok && tide_vorbis_reader_damaged(reader)) ok = refuse(why, "Ogg Vorbis audio packet is cut short or corrupt");
+    // A granule past what the packets give isn't refused: encoders write such
+    // files, and they play as the packets give, which is what a clip is sized by
+    tide_vorbis_reader_close(reader);
+    return ok;
+}
+
 bool audio_file_read(const uint8_t *data, size_t size, uint8_t **converted, size_t *converted_size, char why[256])
 {
     if (converted) *converted = NULL;
@@ -312,8 +342,9 @@ bool audio_file_read(const uint8_t *data, size_t size, uint8_t **converted, size
         const char *detail = NULL;
         tide_vorbis *vorbis = tide_vorbis_open(data, size, &detail);
         if (!vorbis) return refuse(why, "Ogg Vorbis: %s", detail ? detail : "file does not decode");
+        const bool ok = check_vorbis(vorbis, why);
         tide_vorbis_close(vorbis);
-        return true;
+        return ok;
     }
     const bool flac = size >= 4 && !memcmp(data, "fLaC", 4);
     const bool mp3 = (size >= 3 && !memcmp(data, "ID3", 3)) || (size >= 2 && data[0] == 0xff && (data[1] & 0xe0u) == 0xe0u);

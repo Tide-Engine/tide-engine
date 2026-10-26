@@ -306,3 +306,23 @@ TIDE_TEST(udp_addresses)
     TIDE_CHECK(!tide_platform_resolve("10.0.0.1:99999", 7777, &a));
     TIDE_CHECK(!tide_platform_resolve("", 7777, &a));
 }
+
+// Session.invite where there's no page to link to: the room's code itself,
+// or what a game's own network says, whole; "" for none.
+TIDE_TEST(rooms_invite_off_the_web_is_the_room)
+{
+    char invite[TIDE_INVITE_BYTES];
+    tide_platform_room_invite("K7QF2M", invite, sizeof invite);
+    TIDE_CHECK(strcmp(invite, "K7QF2M") == 0);
+    tide_platform_room_invite("127.0.0.1:50123", invite, sizeof invite);
+    TIDE_CHECK(strcmp(invite, "127.0.0.1:50123") == 0);
+    tide_platform_room_invite("", invite, sizeof invite);
+    TIDE_CHECK(invite[0] == '\0');
+    tide_platform_room_invite(NULL, invite, sizeof invite);
+    TIDE_CHECK(invite[0] == '\0');
+    char small[4] = "abc";
+    tide_platform_room_invite("K7QF2M", small, sizeof small);
+    TIDE_CHECK(strcmp(small, "K7Q") == 0);
+    tide_platform_room_invite("K7QF2M", small, 0); // Nothing written
+    TIDE_CHECK(strcmp(small, "K7Q") == 0);
+}

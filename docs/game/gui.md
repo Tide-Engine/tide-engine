@@ -35,7 +35,7 @@ Widgets edit values through `mut` parameters, and return whether they changed th
 
 The `mut` argument is the variable itself, so its type matches exactly: `Slider` takes a `float` variable, not an `int`.
 
-Widgets have no IDs to write. They're told apart by where they're called from and the entity the view runs for, and the ones a loop makes, by their turn in it.
+Widgets have automatic IDs from where they're called and the entity the view runs for. Repeated calls use their turn in the loop; use [`GUI.Key`](#stable-keys) when items can move or disappear.
 
 ## GUILayout and GUI
 
@@ -55,6 +55,7 @@ Widgets have no IDs to write. They're told apart by where they're called from an
 | `TextField`, `IntField` and `FloatField` with `out bool entered` last | The same fields, which also say [when the player entered what they typed](#when-a-field-is-entered) |
 | `ColorField(label, mut Color value)` | A swatch, and fields for r, g, b and a |
 | `GUILayout.Space(size)` | Empty space |
+| `GUILayout.Reserve(float2 size)` | A layout rect for custom content, without drawing or interaction |
 
 Try typing a name, changing the circles, and counting clicks. Turn on **Disable Click** to see how `GUI.Disabled` keeps a button visible while stopping it from acting. Reset restores the local defaults.
 
@@ -75,6 +76,8 @@ Try typing a name, changing the circles, and counting clicks. Turn on **Disable 
 | `GUILayout.Modal(anchor, mut bool open) { ... }` | A panel over the whole screen while `open` is true, like a pause menu |
 | `GUI.Disabled(bool disabled) { ... }` | Grays out its widgets while `disabled` is true (see [Disabled widgets](#disabled-widgets)) |
 | `GUI.Theme(GUITheme theme) { ... }` | Gives its widgets a look of your own (see [Themes](#themes)) |
+| `GUI.Draw() { ... }` | Records `Draw` calls alongside the GUI's widgets |
+| `GUI.Key(key) { ... }` | Gives repeated content a stable data key |
 
 ```csharp
 view Hud(mut Look look)
@@ -239,7 +242,9 @@ That's all a theme is: there are no styles for single widgets, no text sizes and
 
 ## Keyboard and gamepad
 
-Navigation is built in. Tab and Shift+Tab move the focus between widgets, in the order they're called, and so do the arrows, the d-pad and the left stick once a widget has the focus: down and right go on to the next, up and left go back. Enter, Space and the south button press, and Escape and the east button let go. A slider and a number field keep left and right, to step their value.
+Navigation is built in. Tab and Shift+Tab move the focus between widgets in declaration order, wrapping at the ends. Arrows, the d-pad and the left stick move to a nearby widget in that direction, using its position on screen; at an edge the focus stays put. Enter, Space and the south button press, and Escape and the east button let go. A slider and a number field keep left and right to step their value; while editing, a field uses them to move its caret.
+
+Call `GUI.FocusNext()` conditionally immediately before the control that should receive focus, such as a search field when opening a menu. It selects the next enabled control. `GUI.ClearFocus()` gives the keyboard and gamepad back; a valid number edit is kept when its field next runs.
 
 The arrows, the d-pad and the left stick only start moving the focus while no match reads the devices, so a button on a HUD never takes the d-pad from the player: there, Tab starts it. A menu that's up over a match says so, every frame it is, and they start it there too:
 
@@ -259,6 +264,10 @@ view Paused(Pause pause)
 Once a widget has the focus, the keyboard and the gamepad are the GUI's, and the input's `Sample` reads neither. A key or a button that goes down then stays the GUI's until it's let go, even if the widget is gone by the next frame: Space that clicks a menu's Play, and closes the menu, isn't also the game's Space while it's still held.
 
 Typing into a field uses the characters the player types, which follow their keyboard layout, not keys by position. Clicking a number field, or pressing Enter on it, starts typing into it; Enter or leaving the field keeps a valid number, and Escape keeps the old one. A view can ask a field [whether Enter ended the typing in it](#when-a-field-is-entered). On a phone, and in a phone's browser, the system's keyboard shows while the player types into a field, and goes when they stop.
+
+Click to place the caret, or drag to select. Left/Right move a Unicode code point, Home/End go to either end, and Shift extends the selection. Ctrl+Left/Right move by whitespace-separated words; Ctrl+A selects all. Backspace and Delete remove the selection or the adjacent code point. Ctrl+Z undoes, and Ctrl+Y or Ctrl+Shift+Z redoes. Ctrl+C/X copy or cut the selection in the standard host. Arrow and deletion keys repeat while held. Number fields initially select their whole value so typing replaces it.
+
+Editing is single-line and bounded to 255 UTF-8 bytes, with 15 undo steps for the active field. Long edits scroll horizontally to keep the caret visible. Browser IME input commits once and its candidate-confirmation Enter does not submit the field. Inline preedit text, grapheme-cluster movement and bidirectional editing are not yet provided.
 
 ## Copy and paste
 
@@ -283,6 +292,19 @@ Whatever the GUI is using, such as a click on a button, a finger on one, or typi
 The pointer is the GUI's wherever it's on a widget or an area, from the moment it's there: a finger that touches a button never reaches the game, not even for the frame it lands in. The engine goes by where the last frame drew its widgets, so the one thing that gets through is a press on a widget in the very frame it first appears.
 
 ## Widgets of your own
+
+Drawing a rectangle needs no theme or control:
+
+```csharp
+GUI.Draw()
+{
+    Draw.Rect(Rect(20, 20, 200, 60), Color.blue);
+    Draw.Rect(Rect(20, 100, 200, 60), 12, Color.blue);
+    Draw.Rect(Rect(20, 180, 200, 60), float4(0, 8, 16, 24), Color.blue);
+}
+```
+
+These `Rect` overloads have antialiased edges, including with zero roundness. Four radii run clockwise from top left; each is limited to half the smaller side. The existing center/size `Draw.Rect` fills whole pixels, which is useful for adjacent tiles.
 
 A widget with a look of its own is a control: the view draws it, with `Draw` or anything else, and the GUI handles its input.
 
@@ -323,6 +345,10 @@ The cards below are three controls, drawn from [smooth shapes](./views.md#smooth
 | `pressed` | The pointer holds it: from a press on it until it lets go, wherever it goes meanwhile |
 | `focused` | The keyboard and the gamepad are on it |
 | `clicked` | For one frame: a press on it let go on it, or Enter, Space or the south button went down with the focus on it |
+| `down` | This frame's pointer press belongs to the control |
+| `up` | Its pointer was released this frame, including outside the rect |
+| `cancelled` | Its held gesture was aborted because it became disabled, covered by a modal or taken by touch scrolling |
+| `position` | Pointer position in GUI pixels, including while held outside the rect |
 
 It works as a button of the GUI's does, and the GUI draws nothing for it, so showing that it's hovered or has the focus is the view's:
 
@@ -333,15 +359,75 @@ It works as a button of the GUI's does, and the GUI draws nothing for it, so sho
 
 While a control has the focus, its view goes on reading the keyboard and the gamepad, but for what moves the focus and clicks: the arrows, Tab, Enter, Space and Escape, and the d-pad, the left stick and the south and east buttons. So a menu's shortcuts still work with one of its buttons focused, and a control can be a text field: read `devices.keyboard.text`, and call `GUI.ShowKeyboard()` for phones. The input's `Sample` and the other views read none of it meanwhile.
 
-::: tip Controls in a loop
-The three cards above come from one call, so the GUI tells them apart by their turn: the first one made, the second, the third. Make the same ones every frame, in the same order, and each keeps its own hover and focus. A loop that leaves an earlier one out one frame gives its turn to the next, and the focus goes on with whatever is now in its place: leave out the drawing, not the call.
-:::
+`down` and `up` describe pointer gestures; keyboard or gamepad submission only sets `clicked`. Cancel an in-progress edit when `cancelled` is true. A control that disappears is no longer called, so it cannot report cancellation. Native pointer-capture loss is not yet reported separately.
 
-A control takes its rect, and `GUILayout` has none: what a view draws is under the GUI's own widgets, an area's panel included, so a control laid out inside an area would be drawn beneath it.
+### Custom controls in layout
 
-::: info What's drawn where
-The GUI's widgets are drawn last, over everything views draw. So a control you draw is under any widget of the GUI's that overlaps it, which also takes the pointer there, and under a modal's dim.
-:::
+Reserve space, interact with it, then draw into the GUI's list:
+
+```csharp
+bool Card(string title)
+{
+    var rect = GUILayout.Reserve(float2(200, 64));
+    var control = GUI.Control(rect);
+    GUI.Draw()
+    {
+        var center = float2(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5);
+        Draw.RoundRect(center, float2(rect.width, rect.height), 12,
+                       control.hovered || control.focused ? Color.blue : Color.gray);
+        Draw.Text(title, center, 18, Color.white, Anchor.MiddleCenter);
+    }
+    return control.clicked;
+}
+```
+
+`GUI.Draw` places these draws after the enclosing panel and before later widgets. It uses the existing renderer, including smooth shapes, sprites, meshes and custom shaders. Helpers called inside it draw into the same GUI list. The block starts in screen pixels and restores the GUI window's drawing settings when it ends, including changes made with `Draw.Set...` and when returning early.
+
+One `GUI.Draw` block can wrap a whole group of custom controls; a separate block per widget is optional. It uses the GUI's existing container nesting limit; a draw block beyond that limit is skipped.
+
+Screen-space content follows an anchored panel when it is placed. Explicit custom cameras and 3D geometry keep their own coordinates. Render-target calls still draw to the target they name. Outside `GUI.Draw`, ordinary view drawing is beneath the GUI.
+
+`Reserve(size)` keeps the requested size. `Reserve(size, minWidth: 80, expandWidth: true)` can shrink horizontally to 80 pixels or expand to the column's remembered natural width. Height is explicit; negative and nonfinite dimensions become zero. Reserving space alone draws nothing and takes no input. UI code runs once per frame.
+
+### Scrolling
+
+`GUILayout.Scroll(size, offset) { ... }` reserves a viewport and lays out its content inside it. Keep its `float2` offset in local state:
+
+```csharp
+GUILayout.Scroll(float2(320, 240), menu.scroll)
+{
+    for (var i = 0; i < items.count; i++)
+    {
+        GUI.Key(items[i].id)
+        {
+            if (GUILayout.Button(items[i].title)) menu.selected = items[i].id;
+        }
+    }
+}
+```
+
+`GUI.Scroll(rect, offset)` places the viewport at an explicit rect. Offsets are pixels from the content's top left and are clamped to its size. Drawing and pointer hits are clipped together. Wheel input goes to the innermost hovered viewport; unused motion reaches its parent at an edge. A touch can drag the content; moving more than six pixels cancels a child's pending press. The viewport retains that drag until release. Keyboard navigation and `GUI.FocusNext` scroll the focused control into view.
+
+The offset is read when the block opens and written back when it closes, including on an early return. An indexed argument evaluates its index once and checks its current storage again at writeback; removing that list element makes the write a no-op. Maps and grids use their ordinary assignment semantics. The content runs once per frame. Scrolling does not virtualize long lists; reserve and draw only the visible items when that is needed.
+
+### Stable keys
+
+Wrap reorderable items in `GUI.Key` using an application key:
+
+```csharp
+for (var i = 0; i < items.count; i++)
+{
+    var item = items[i];
+    GUI.Key(item.id)
+    {
+        if (Card(item.title)) menu.selected = item.id;
+    }
+}
+```
+
+Keys can be `int`, `long` or `string`. They must be unique among siblings from the same call site. Zero and an empty string are valid. Nested scopes compose, and helpers inherit the scope, so each item can contain the same reusable controls. Focus and held gestures follow the key when other items move or disappear. Keep displayed labels separate from identity when labels can change.
+
+Without a key, repeated calls still use their occurrence: omitting an earlier item gives its identity to the next one. Runtime identities are 32-bit hashes and should not be stored as application keys.
 
 ### Widgets that read the devices themselves
 

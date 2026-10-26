@@ -7,8 +7,10 @@
 // lobby's buttons) is the platform tests' and the games' own, and the docs
 // only have to come up.
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative, resolve, sep } from 'node:path';
@@ -41,7 +43,7 @@ const games = [];
             if (!['build', 'node_modules', 'static', 'src', 'tests'].includes(entry.name) && !entry.name.startsWith('.')) find(path);
         } else if (entry.name.endsWith('.md')) {
             const page = '/' + relative(docs, path).split(sep).join('/').replace(/(?:^|\/)index\.md$|\.md$/, '');
-            for (const found of readFileSync(path, 'utf8').matchAll(/^<iframe class="demo-frame roomy" src="\/([a-z][a-z0-9-]*)\/\?embedded"/gm)) games.push({ page, id: found[1] });
+            for (const found of readFileSync(path, 'utf8').matchAll(/^<iframe class="demo-frame roomy" src="\/([a-z][a-z0-9-]*)\/\?[^\"]*\bembedded\b[^\"]*"/gm)) games.push({ page, id: found[1] });
             const ids = Array.from(readFileSync(path, 'utf8').matchAll(/^::: tide-(?:example|players|match)\s+([a-z][a-z0-9-]*)/gm), (found) => found[1]);
             if (!ids.length) continue;
             for (const id of ids) written.add(id);
@@ -71,6 +73,7 @@ const child = spawn(browser, ['--headless', '--no-sandbox', '--no-first-run', '-
     ...(process.env.TIDE_RELAY ? [] : ['--disable-features=WebRtcHideLocalIpsWithMdns', '--allow-loopback-in-peer-connection']),
     'about:blank'],
     { stdio: ['ignore', 'ignore', 'pipe'], windowsHide: true });
+const closed = new Promise((done) => child.once('close', done));
 let socket;
 let closeBrowser;
 try {
@@ -157,10 +160,20 @@ try {
                 };
             }
         }
+        // Exercise the site's local Earth build through the same unavailable-
+        // hosting fallback it uses offline, without depending on a publication.
+        const fetchPage = window.fetch.bind(window);
+        window.fetch = (input, ...args) => {
+            const url = new URL(typeof input === 'string' ? input : input.url ?? String(input), location.href);
+            if (url.hostname === 'play.tide-engine.dev' && url.pathname.endsWith('/ready'))
+                return Promise.resolve(new Response(null, { status: 503 }));
+            return fetchPage(input, ...args);
+        };
         // A GL error stops a game and names the call, where WebGL would only warn
         let config;
         Object.defineProperty(window, 'Tide', { configurable: true, get: () => config, set: value => {
-            config = value; config.checkGL = true; config.relay = ${JSON.stringify(relayUrl)}; config.backend = ${JSON.stringify(backend)};
+            config = value; config.checkGL = true; config.backgroundPipelines = false;
+            config.relay = ${JSON.stringify(relayUrl)}; config.backend = ${JSON.stringify(backend)};
         } });
     ` });
     await command('Emulation.setDeviceMetricsOverride', { width: 1440, height: 1000, deviceScaleFactor: 1, mobile: false });
@@ -168,11 +181,109 @@ try {
     const shots = process.env.TIDE_DOCS_SCREENSHOTS;
     if (shots) mkdirSync(shots, { recursive: true });
     const drawn = (which) => `${which}?.contentWindow.__draws > 5`;
+    const stats = (href, label) => assert.equal(new URL(href).searchParams.getAll('stats').length, 1, `${label}: stats enabled once`);
     const shoot = async (name) => {
         if (!shots) return;
         const screenshot = await command('Page.captureScreenshot');
         writeFileSync(join(shots, `${name}.png`), Buffer.from(screenshot.data, 'base64'));
     };
+    async function cameraControls(id) {
+        await until('getComputedStyle(example.querySelector("iframe")).opacity === "1"', `${id}: canvas finishes appearing`);
+        const box = await evaluate('({ rect: example.querySelector("iframe").getBoundingClientRect().toJSON(), x: scrollX, y: scrollY })');
+        const rect = box.rect;
+        // Crop the static scene above the controls and stats. This comparison
+        // witnesses camera movement rather than a changing FPS counter.
+        const clip = { x: rect.left + box.x + 4, y: rect.top + box.y + 4, width: rect.width - 8,
+            height: Math.min(id === 'render3d-effects' ? 100 : 140, rect.height - 220), scale: 1 };
+        assert.ok(clip.height > 0, `${id}: scene is visible above controls`);
+        const capture = async (name) => {
+            const pixels = Buffer.from((await command('Page.captureScreenshot', { format: 'png', clip })).data, 'base64');
+            if (shots && name) writeFileSync(join(shots, `${id}-${name}-scene.png`), pixels);
+            return createHash('sha256').update(pixels).digest('hex');
+        };
+        const afterFrames = async () => {
+            const previous = await evaluate('example.querySelector("iframe").contentWindow.__draws');
+            await until(`example.querySelector("iframe").contentWindow.__draws > ${previous + 20}`, `${id}: camera frame`);
+        };
+        const click = async (localX, localY) => {
+            const x = rect.left + localX, y = rect.top + localY;
+            await command('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+            await command('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1, x, y });
+            await afterFrames();
+            await command('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', buttons: 0, clickCount: 1, x, y });
+            await afterFrames();
+        };
+        // Freeze the example's own visual clock before pixel comparisons.
+        if (id === 'render3d-effects') await click(32, rect.height - 212);
+        await afterFrames();
+        const initial = await capture('initial');
+        const x = rect.left + rect.width * 0.5, y = rect.top + 80;
+        await command('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y });
+        await command('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1, x, y });
+        await afterFrames();
+        await command('Input.dispatchMouseEvent', { type: 'mouseMoved', buttons: 1, x: x + 55, y: y + 15 });
+        await afterFrames();
+        await command('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', buttons: 0, clickCount: 1, x: x + 55, y: y + 15 });
+        await afterFrames();
+        const orbited = await capture();
+        assert.notEqual(orbited, initial, `${id}: dragging orbits the scene`);
+        // Embedded games deliberately leave wheel events to the docs page.
+        // Exercise the visible zoom button instead of changing that contract.
+        const zoomX = rect.left + (id === 'render3d' ? 55 : 175);
+        const zoomY = rect.top + rect.height - (id === 'render3d' ? 208 - 92 :
+            (id === 'render3d-effects' ? 272 : 256) - 26);
+        await command('Input.dispatchMouseEvent', { type: 'mouseMoved', x: zoomX, y: zoomY });
+        await command('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1, x: zoomX, y: zoomY });
+        await afterFrames();
+        await command('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', buttons: 0, clickCount: 1, x: zoomX, y: zoomY });
+        await afterFrames();
+        assert.notEqual(await capture(), orbited, `${id}: zoom control changes the scene`);
+        await shoot(`${id}-camera`);
+        if (id === 'render3d-effects') {
+            await click(105, rect.height - 246); // Reset the camera at the frozen pose.
+            assert.equal(await capture('reset'), initial, `${id}: reset restores the camera`);
+            await click(110, rect.height - 180); // Bloom.
+            const noBloom = await capture('no-bloom');
+            assert.notEqual(noBloom, initial, `${id}: bloom changes the HDR scene`);
+            await click(32, rect.height - 180); // Deformation on both static and skinned objects.
+            const noDeform = await capture('no-deform');
+            assert.notEqual(noDeform, noBloom, `${id}: shared vertex deformation changes geometry`);
+            await click(110, rect.height - 212); // Authored rest versus sampled pose.
+            const rest = await capture('rest');
+            assert.notEqual(rest, noDeform, `${id}: pose changes the skinned silhouette`);
+            await click(32, rect.height - 80); // Custom HDR tint callback.
+            assert.notEqual(await capture('tint'), rest, `${id}: custom HDR pass changes scene colors`);
+            await click(48, rect.height - 246); // Collapse, then zoom above the stats corner.
+            clip.height = Math.min(240, rect.height - 108);
+            const collapsed = await capture();
+            await click(175, rect.height - 70);
+            assert.notEqual(await capture('collapsed'), collapsed, `${id}: collapsed zoom works above stats`);
+            await shoot(`${id}-effects-controls`);
+            return;
+        }
+        if (id !== 'render3d-materials') return;
+        await click(105, rect.height - 230); // Reset above the open maps panel.
+        assert.equal(await capture('reset'), initial, `${id}: reset restores the camera`);
+        // Height edits travel through the demo's typed command; compare only
+        // scene pixels, excluding the slider and the FPS counter.
+        await click(rect.width / 2 + 66, rect.height - 164);
+        assert.notEqual(await capture(), initial, `${id}: height slider changes mapped relief`);
+        await click(148, rect.height - 196); // Cutout exhibit.
+        const cutout = await capture();
+        await shoot(`${id}-cutout`);
+        await click(140, rect.height - 74);
+        assert.notEqual(await capture(), cutout, `${id}: cutoff slider changes coverage`);
+        await click(220, rect.height - 140); // Blend exhibit, with its shorter panel.
+        const blend = await capture();
+        await shoot(`${id}-blend`);
+        await click(140, rect.height - 74);
+        assert.notEqual(await capture(), blend, `${id}: opacity slider changes blending`);
+        await click(48, rect.height - 174); // Hide controls, leaving the stats corner free.
+        const collapsed = await capture();
+        await click(245, rect.height - 70);
+        assert.notEqual(await capture(), collapsed, `${id}: collapsed zoom works above stats`);
+        await shoot(`${id}-collapsed`);
+    }
     const visited = new Set();
     for (const page of pages) {
         // The page's `backend=` goes on to its games.
@@ -192,16 +303,36 @@ try {
                 assert.equal(await evaluate('example.querySelector("pre code").textContent'), source, `${id}: displayed source`);
                 sourced.add(id);
             }
+            stats(await evaluate('example.querySelector(".example-controls a").href'), `${id}: standalone link`);
             if (only && !only.has(id)) continue;
             const players = await evaluate('example.querySelectorAll(".example-viewport").length');
             // It starts by itself once it's in view, and its frame shows once
             // its game has drawn. Of two players, the first is enough: the
             // second only draws once it's in the first one's match.
-            await evaluate(`example.querySelector('.example-viewport').scrollIntoView({block:'center'});`);
-            await until('example.querySelector("iframe.shown")', `${id}: starts in view`);
+            // Startup can still move the page (fonts, hydration or scroll
+            // restoration). Keep the viewport in view while waiting for its
+            // automatic start, with the same deadline as before.
+            await until(`(() => {
+                window.example = document.querySelectorAll('.tide-example')[${index}];
+                const viewport = example.querySelector('.example-viewport');
+                const box = viewport.getBoundingClientRect();
+                if (box.top < 0 || box.bottom > innerHeight) viewport.scrollIntoView({block:'center'});
+                return !!example.querySelector('iframe.shown');
+            })()`, `${id}: starts in view`, {
+                failure: `example.querySelector('.example-status').textContent.includes('unavailable')
+                    ? example.querySelector('.example-status').textContent : ''`,
+                details: `({ scrollY, status: example.querySelector('.example-status').textContent,
+                    viewport: example.querySelector('.example-viewport').getBoundingClientRect().toJSON(),
+                    frames: [...example.querySelectorAll('iframe')].map(frame => ({
+                        src: frame.src, ready: frame.contentDocument?.readyState,
+                        start: typeof frame.contentWindow?.Tide?.start, draws: frame.contentWindow?.__draws
+                    })) })`,
+            });
             await until(drawn('example.querySelector("iframe")'), `${id}: draws`);
             await until(`example.querySelectorAll("iframe").length === ${players}`, `${id}: every player's frame`);
+            for (const src of await evaluate('Array.from(example.querySelectorAll("iframe"), frame => frame.src)')) stats(src, `${id}: embedded frame`);
             await shoot(id);
+            if (id === 'render3d' || id === 'render3d-materials' || id === 'render3d-effects') await cameraControls(id);
             // Stopped, so that the page runs one game at a time here.
             await evaluate('example.querySelector("[data-example-stop]").click();');
             console.log(`${id}: source and rendering passed (${backend})`);
@@ -217,7 +348,10 @@ try {
         await until(`location.pathname === '${page}' && document.querySelector('iframe.demo-frame')`, `${page} page`);
         const game = 'document.querySelector("iframe.demo-frame")';
         await evaluate(`${game}.scrollIntoView({block:'center'})`);
-        assert.ok((await evaluate(`${game}.src`)).endsWith(`/${id}/?embedded`), `${id}: the game's own page, in the page's scroll`);
+        const src = new URL(await evaluate(`${game}.src`));
+        assert.equal(src.pathname, `/${id}/`, `${id}: the game's own page`);
+        assert.ok(src.searchParams.has('embedded'), `${id}: in the page's scroll`);
+        stats(src.href, `${id}: whole game frame`);
         await until(drawn(game), `${id}: draws`);
         await shoot(id);
         console.log(`${id}: its page's frame draws (${backend})`);
@@ -226,10 +360,39 @@ try {
     // own page, where it draws.
     await command('Page.navigate', { url: `${origin}/guide/samples` });
     await until(`location.pathname === '/guide/samples' && document.readyState !== 'loading' && document.querySelectorAll('a.sample-card[data-sample]').length > 0`, 'samples page');
-    const cards = await evaluate(`Array.from(document.querySelectorAll('a.sample-card[data-sample]'), a => ({ id: a.dataset.sample, path: new URL(a.href).pathname }))`);
-    for (const { id, path } of cards) {
+    const cards = await evaluate(`Array.from(document.querySelectorAll('a.sample-card[data-sample]'), a => ({ id: a.dataset.sample, href: a.href }))`);
+    // Earth is linked in the prose, rather than represented by a game card.
+    const earthGuide = await evaluate(`Array.from(document.querySelectorAll('article.prose a[href]'))
+        .find(link => new URL(link.href).pathname === '/guide/earth')?.href`);
+    assert.ok(earthGuide, 'Samples links to the Earth demo page');
+    if (!cards.some(card => card.id === 'earth')) cards.push({ id: 'earth', href: earthGuide });
+    for (const { id, href } of cards) {
+        if (id !== 'earth') stats(href, `${id}: gallery link`);
         if (only && !only.has(id)) continue;
-        await command('Page.navigate', { url: `${origin}${path}?backend=${backend}` });
+        const url = new URL(href);
+        const path = url.pathname;
+        url.searchParams.set('backend', backend);
+        await command('Page.navigate', { url: url.href });
+        if (id === 'earth' && path === '/guide/earth') {
+            await until(`location.pathname === '${path}' && document.querySelector('.demo .controls button')`, 'Earth demo page');
+            assert.equal(await evaluate('document.querySelectorAll(".demo iframe").length'), 0, 'Earth waits for Play');
+            stats(await evaluate('document.querySelector(".demo .controls a").href'), 'Earth standalone link');
+            await evaluate('document.querySelector(".demo").scrollIntoView({block:"center"})');
+            // The page's own HTML has the button before Svelte gives it its
+            // handler, so a click can come too soon: clicked until it starts
+            await until(`(() => {
+                const play = Array.from(document.querySelectorAll(".demo button")).find(button => button.textContent === "Play Earth");
+                if (!play.disabled) play.click();
+                return play.disabled;
+            })()`, 'Earth starts on Play');
+            await until('document.querySelector(".earth.shown iframe")?.contentWindow.__draws > 5', 'Earth draws after Play');
+            stats(await evaluate('document.querySelector(".earth iframe").src'), 'Earth embedded runtime');
+            await shoot('sample-earth');
+            await evaluate('Array.from(document.querySelectorAll(".demo button")).find(button => button.textContent === "Stop").click()');
+            await until('!document.querySelector(".earth iframe")', 'Earth Stop removes the game');
+            console.log(`earth: click-to-play, stats, local rendering and stop passed (${backend})`);
+            continue;
+        }
         await until(`location.pathname === '${path}' && window.__draws > 5`, `${id}: its page draws`);
         await shoot(`sample-${id}`);
         console.log(`${id}: the gallery's game draws on its page (${backend})`);
@@ -240,6 +403,7 @@ try {
         await command('Page.navigate', { url: `${origin}/guide/playground?backend=${backend}` });
         await until(`location.pathname === '/guide/playground' && document.querySelector('#playground-source')`, 'playground page');
         await until(`document.querySelector('iframe')?.contentWindow.__draws > 5`, 'playground initial game draws');
+        stats(await evaluate('document.querySelector("iframe").src'), 'playground runtime');
         const source = readFileSync(join(docs, 'playground/demo.tide'), 'utf8');
         assert.equal(await evaluate('document.querySelector("#playground-source").value'), source);
         const frozen = source.replace('const float SPEED = 1;', 'const float SPEED = 0;')
@@ -301,16 +465,16 @@ try {
 } finally {
     await closeBrowser?.().catch(() => {});
     socket?.close();
-    if (child.exitCode === null) {
-        await new Promise((done) => {
-            const timeout = setTimeout(() => { child.kill(); done(); }, 5000);
-            child.once('exit', () => { clearTimeout(timeout); done(); });
-        });
-    }
+    // close follows exit once the browser's inherited pipes have closed too.
+    let timeout;
+    await Promise.race([closed, new Promise((done) => {
+        timeout = setTimeout(() => { child.kill(); done(); }, 5000);
+    })]);
+    clearTimeout(timeout);
     await new Promise((done) => server.close(done));
     relay.close();
     // The only directory removed is the unique profile this test created.
     assert.equal(dirname(profile), resolve(tmpdir()));
     assert.ok(profile.startsWith(join(resolve(tmpdir()), 'tide-docs-examples-')));
-    rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
 }

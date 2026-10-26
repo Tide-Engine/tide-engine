@@ -14,7 +14,7 @@ static void alone_run(void *self, void (*work)(void *context, uint32_t thread), 
     work(context, 0);
 }
 
-static uint32_t asked; // Threads asked for (tide_jobs.more), in all
+static uint32_t asked;
 
 static void count_more(void *self, const uint32_t count)
 {
@@ -22,7 +22,6 @@ static void count_more(void *self, const uint32_t count)
     asked += count;
 }
 
-// What happened, in order: a letter a call.
 static char happened[128];
 
 static void note(const char what)
@@ -31,10 +30,9 @@ static void note(const char what)
     if (n + 1 < sizeof happened) happened[n] = what;
 }
 
-static uint32_t pieces_seen[3]; // Each system's, as its tasks were told
+static uint32_t pieces_seen[3];
 static uint32_t tasks_run[3];
 
-// Two chunks of heavy rows: fewer than the threads, and each worth pieces.
 static uint32_t heavy_count(const void *world, uint64_t *work)
 {
     (void)world;
@@ -80,40 +78,77 @@ static void own_2(void *world)
     note('(');
 }
 
-// A system's pages are made for its pieces once what it waits for is done,
-// and ended once its last piece is, before anything that waits for it starts.
 TIDE_TEST(jobs_pieces_are_begun_and_ended_around_their_system)
 {
     static const uint32_t after_first[1] = {0}, after_second[1] = {1};
     const tide_system_tasks systems[3] = {
-        {.count = heavy_count, .run = run_0, .splits = true, .name = "first"}, // It changes nothing: no pages to make
+        {.count = heavy_count, .run = run_0, .splits = true, .name = "first"},
         {.count = heavy_count, .run = run_1, .own = own_1, .done = done_1, .splits = true, .wait_count = 1, .waits = after_first,
          .name = "second"},
         {.count = light_count, .run = run_2, .own = own_2, .splits = true, .wait_count = 1, .waits = after_second, .name = "third"},
     };
     tide_queue queue = {0};
     tide_entities entities = {0};
-    const tide_tick_systems tick = {systems, 3, NULL, &queue, &entities, NULL};
+    const tide_tick_systems tick = {systems, 3, NULL, &queue, &entities, NULL, NULL};
     const tide_jobs eight = {.threads = 8, .run = alone_run, .more = count_more};
     memset(happened, 0, sizeof happened);
     memset(pieces_seen, 0, sizeof pieces_seen);
     memset(tasks_run, 0, sizeof tasks_run);
     asked = 0;
     tide_run_systems(NULL, &tick, &eight);
-    // Two chunks on eight threads: eight pieces each, sixteen tasks
     TIDE_CHECK(pieces_seen[0] == 8 && tasks_run[0] == 16);
     TIDE_CHECK(pieces_seen[1] == 8 && tasks_run[1] == 16);
-    // One chunk of next to no work goes whole, and makes no pages for pieces
     TIDE_CHECK(pieces_seen[2] == 1 && tasks_run[2] == 1);
     TIDE_CHECK(strcmp(happened, "aaaaaaaaaaaaaaaa[bbbbbbbbbbbbbbbb]c") == 0);
     if (strcmp(happened, "aaaaaaaaaaaaaaaa[bbbbbbbbbbbbbbbb]c") != 0) printf("    it went %s\n", happened);
-    // The threads for a system's pieces are asked for again once its pages are made
     TIDE_CHECK(asked >= 15);
     tide_queue_free(&queue);
     tide_entities_free(&entities);
 }
 
-// On one thread nothing goes in pieces, and nothing is made for them.
+static uint32_t many_count(const void *world, uint64_t *work)
+{
+    (void)world;
+    *work = 64u * 1000u;
+    return 64;
+}
+
+static uint32_t many_seen[64];
+
+static void run_many(void *world, const uint32_t task, const uint32_t pieces)
+{
+    (void)world;
+    pieces_seen[2] = pieces;
+    tasks_run[2]++;
+    if (task < 64u) many_seen[task]++;
+}
+
+TIDE_TEST(jobs_cheap_tasks_are_taken_a_few_at_a_time)
+{
+    static const uint32_t after_first[1] = {0};
+    const tide_system_tasks systems[2] = {
+        {.count = heavy_count, .run = run_0, .splits = true, .name = "first"},
+        {.count = many_count, .run = run_many, .splits = true, .wait_count = 1, .waits = after_first, .name = "many"},
+    };
+    tide_queue queue = {0};
+    tide_entities entities = {0};
+    const tide_tick_systems tick = {systems, 2, NULL, &queue, &entities, NULL, NULL};
+    const tide_jobs eight = {.threads = 8, .run = alone_run, .more = count_more};
+    memset(pieces_seen, 0, sizeof pieces_seen);
+    memset(tasks_run, 0, sizeof tasks_run);
+    memset(many_seen, 0, sizeof many_seen);
+    asked = 0;
+    tide_run_systems(NULL, &tick, &eight);
+    TIDE_CHECK(tasks_run[0] == 16 && tasks_run[2] == 64 && pieces_seen[2] == 1);
+    bool once = true;
+    for (uint32_t i = 0; i < 64u; i++) once &= many_seen[i] == 1u;
+    TIDE_CHECK(once);
+    TIDE_CHECK(asked == 7);
+    if (asked != 7) printf("    asked for %u threads\n", asked);
+    tide_queue_free(&queue);
+    tide_entities_free(&entities);
+}
+
 TIDE_TEST(jobs_on_one_thread_make_no_pieces)
 {
     static const uint32_t after_first[1] = {0};
@@ -124,7 +159,7 @@ TIDE_TEST(jobs_on_one_thread_make_no_pieces)
     };
     tide_queue queue = {0};
     tide_entities entities = {0};
-    const tide_tick_systems tick = {systems, 2, NULL, &queue, &entities, NULL};
+    const tide_tick_systems tick = {systems, 2, NULL, &queue, &entities, NULL, NULL};
     memset(happened, 0, sizeof happened);
     memset(pieces_seen, 0, sizeof pieces_seen);
     memset(tasks_run, 0, sizeof tasks_run);

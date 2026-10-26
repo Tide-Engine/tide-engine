@@ -5,8 +5,61 @@
 #include "tide/mesh.h"
 #include "tide/text.h"
 #include "tide_test.h"
+#include "draw_test.h"
 
 static tide_draw_list list;
+
+TIDE_TEST(draw_sampling_banks_keep_every_slot_independent)
+{
+    uint64_t sampling = 0;
+    for (uint32_t slot = 0; slot < TIDE_SHADER_TEXTURES; slot++) {
+        sampling |= tide_sampling_filtered(slot, (int32_t)(slot % 3u))
+                  | tide_sampling_wrapped(slot, (int32_t)((slot + 1u) % 3u));
+    }
+    for (uint32_t changed = 0; changed < TIDE_SHADER_TEXTURES; changed++) {
+        for (int32_t filter = 0; filter < 3; filter++) {
+            for (int32_t wrap = 0; wrap < 3; wrap++) {
+                const uint64_t mask = tide_sampling_filtered(changed, TIDE_FILTER_TRILINEAR);
+                const uint32_t shift = 32u * (changed / 8u) + TIDE_SAMPLING_WRAP + 2u * (changed % 8u);
+                const uint64_t cleared = sampling & ~(mask | UINT64_C(3) << shift);
+                const uint64_t edited = cleared | tide_sampling_filtered(changed, filter) | tide_sampling_wrapped(changed, wrap);
+                for (uint32_t slot = 0; slot < TIDE_SHADER_TEXTURES; slot++) {
+                    TIDE_CHECK(tide_sampling_filter(edited, slot) == (slot == changed ? (tide_filter)filter : (tide_filter)(slot % 3u)));
+                    TIDE_CHECK(tide_sampling_wrap(edited, slot) == (slot == changed ? (tide_wrap)wrap : (tide_wrap)((slot + 1u) % 3u)));
+                }
+            }
+        }
+    }
+    for (uint32_t slot = 0; slot < 8u; slot++) {
+        TIDE_CHECK(tide_sampling_filtered(slot, TIDE_FILTER_TRILINEAR) == ((UINT64_C(1) << slot) | (UINT64_C(1) << (24u + slot))));
+        TIDE_CHECK(tide_sampling_wrapped(slot, TIDE_WRAP_MIRROR) == UINT64_C(2) << (8u + 2u * slot));
+    }
+    TIDE_CHECK(tide_sampling_filtered(UINT32_MAX, 2) == 0 && tide_sampling_wrapped(12, 2) == 0);
+    TIDE_CHECK(tide_sampling_filter(UINT64_MAX, UINT32_MAX) == TIDE_FILTER_POINT);
+    TIDE_CHECK(tide_sampling_wrap(UINT64_MAX, 12) == TIDE_WRAP_CLAMP);
+}
+
+TIDE_TEST(draw_rect_areas_have_aa_and_bounded_independent_corners)
+{
+    tide_draw_reset(&list);
+    const tide_rect rect = {10.25f, 20.25f, 80, 40};
+    tide_draw_rect_area(&list, rect, TIDE_COLOR_RED);
+    tide_draw_rect_area_corners(&list, rect, tide_f4(0, 4, 12, 100), TIDE_COLOR_BLUE);
+    TIDE_REQUIRE(list.shape_count == 2);
+    TIDE_CHECK(list.shapes[0].form == TIDE_SHAPE_BOX && list.shapes[0].radius == 0);
+    TIDE_CHECK(list.commands[0].a.x == 50.25f && list.commands[0].a.y == 40.25f);
+    const tide_draw_shape_data *s = &list.shapes[1];
+    TIDE_CHECK(s->form == TIDE_SHAPE_CORNERS && s->radius == 0 && s->outline == 4 && s->soft == 12 && s->sweep == 20);
+    tide_draw_rect_area_corners(&list, rect, tide_f4(8, 8, 8, 8), TIDE_COLOR_BLUE);
+    TIDE_CHECK(list.shapes[2].form == TIDE_SHAPE_BOX && list.shapes[2].radius == 8);
+    tide_draw_rect_area(&list, (tide_rect){0, 0, -1, 20}, TIDE_COLOR_BLUE);
+    TIDE_CHECK(list.shape_count == 3);
+    tide_draw_set_transform(&list, tide_draw_transform_trs(tide_f2(0, 0), 0, tide_f2(2, -2)));
+    tide_draw_rect_area_corners(&list, rect, tide_f4(0, 4, 12, 20), TIDE_COLOR_BLUE);
+    s = &list.shapes[3];
+    TIDE_CHECK(s->radius == 40 && s->outline == 24 && s->soft == 8 && s->sweep == 0);
+    tide_draw_unset_transform(&list);
+}
 
 TIDE_TEST(draw_records_in_order)
 {
@@ -17,7 +70,8 @@ TIDE_TEST(draw_records_in_order)
     tide_draw_text(&list, "two", tide_f2(0.0f, 0.0f), 1.0f, TIDE_COLOR_WHITE);
     TIDE_REQUIRE(list.count == 4);
     TIDE_CHECK(list.commands[0].kind == TIDE_DRAW_CLEAR);
-    TIDE_CHECK(list.commands[1].kind == TIDE_DRAW_CIRCLE && list.commands[1].b.x == 3.0f);
+    TIDE_CHECK(list.commands[1].kind == TIDE_DRAW_PLAIN && tide_draw_plain_run(&list, &list.commands[1]) == 1);
+    TIDE_CHECK(list.plains[0].kind == TIDE_DRAW_CIRCLE && list.plains[0].b.x == 3.0f);
     TIDE_CHECK(strcmp(list.text + list.commands[2].text, "one") == 0);
     TIDE_CHECK(strcmp(list.text + list.commands[3].text, "two") == 0);
 
@@ -36,18 +90,20 @@ TIDE_TEST(draw_list_grows)
     memset(big, 'a', sizeof big - 1);
     tide_draw_text(&grown, big, tide_f2(0.0f, 0.0f), 1.0f, TIDE_COLOR_WHITE);
     tide_draw_text(&grown, "end", tide_f2(0.0f, 0.0f), 1.0f, TIDE_COLOR_WHITE);
-    TIDE_REQUIRE(grown.count == 100002u);
-    TIDE_CHECK(grown.commands[99999].a.x == 99999.0f);
-    TIDE_CHECK(strlen(grown.text + grown.commands[100000].text) == sizeof big - 1);
-    TIDE_CHECK(strcmp(grown.text + grown.commands[100001].text, "end") == 0);
+    // The rects are one run of plain shapes
+    TIDE_REQUIRE(grown.count == 3u && grown.plain_count == 100000u && tide_draw_plain_run(&grown, &grown.commands[0]) == 100000u);
+    TIDE_CHECK(grown.plains[99999].a.x == 99999.0f);
+    TIDE_CHECK(strlen(grown.text + grown.commands[1].text) == sizeof big - 1);
+    TIDE_CHECK(strcmp(grown.text + grown.commands[2].text, "end") == 0);
 
     // Appended, as the GUI's are over the world's, text and all
     tide_draw_list world = {0};
     tide_draw_text(&world, "world", tide_f2(0.0f, 0.0f), 1.0f, TIDE_COLOR_WHITE);
     tide_draw_append(&world, &grown);
-    TIDE_REQUIRE(world.count == 100003u);
+    TIDE_REQUIRE(world.count == 4u && world.plain_count == 100000u);
     TIDE_CHECK(strcmp(world.text + world.commands[0].text, "world") == 0);
-    TIDE_CHECK(strcmp(world.text + world.commands[100002].text, "end") == 0);
+    TIDE_CHECK(world.plains[99999].a.x == 99999.0f);
+    TIDE_CHECK(strcmp(world.text + world.commands[3].text, "end") == 0);
     tide_draw_free(&world);
     tide_draw_free(&grown);
     TIDE_CHECK(grown.count == 0 && grown.commands == NULL);
@@ -439,7 +495,7 @@ TIDE_TEST(draw_targets_say_their_samples_and_keep_them_through_a_reload)
     TIDE_CHECK(tide_render_target_samples(plain.id) == 1 && tide_render_target_samples(smooth.id) == 4);
     TIDE_CHECK(tide_render_target_colors(smooth.id) == 1 && tide_render_target_format(smooth.id) == TIDE_TARGET_RGBA8);
     TIDE_CHECK(smooth.size.width == 64.0f && smooth.size.height == 48.0f && smooth.size.scale == 0.0f);
-    TIDE_CHECK(sizeof(tide_render_target) == 24); // As ever: no field of its own for them
+    TIDE_CHECK(sizeof(tide_render_target) == 24); // No field of its own for them
     // Each count there is, with each way to make a target, and what it holds beside
     const tide_render_target one = tide_render_target_make_sampled(8.0f, 8.0f, two, 2, 1);
     const tide_render_target pair = tide_render_target_make_scaled_sampled(320.0f, 180.0f, 1.0f, two, 2, 2);
@@ -575,6 +631,145 @@ TIDE_TEST(draw_meshes_keep_their_triangles)
     TIDE_CHECK(d.commands[3].mesh.first == 3 && d.commands[3].mesh.count == 3);
     tide_draw_free(&d);
     TIDE_CHECK(d.vertices == NULL && d.indices == NULL && d.vertex_count == 0);
+}
+
+// A mesh of one quad, one color, is kept as the quad (tide_draw_quad): its
+// corners are those it was given, to the bit, and quads one after another
+// with the same image are one command; anything else is corners and triangles.
+TIDE_TEST(draw_meshes_of_one_quad_are_kept_as_quads)
+{
+    tide_draw_list d = {0};
+    tide_vertex sprite[4];
+    for (uint32_t i = 0; i < 4u; i++) sprite[i] = (tide_vertex){quad[i].position, quad[i].uv, {0.25f, 0.5f, 0.75f, 1.0f}};
+    sprite[2].position.x = -0.0f; // Told apart by its bits from 0, as the renderer tells them
+    sprite[1].position.x = -0.0f;
+    tide_draw_mesh(&d, sprite, 4, quad_indices, 6, NULL, TIDE_FILTER_BILINEAR);
+    tide_draw_mesh(&d, sprite, 4, quad_indices, 6, NULL, TIDE_FILTER_BILINEAR);
+    TIDE_REQUIRE(d.count == 1 && d.quad_count == 2 && d.vertex_count == 0 && d.index_count == 0);
+    TIDE_CHECK(d.commands[0].kind == TIDE_DRAW_QUADS && d.commands[0].mesh.first == 0 && d.commands[0].mesh.count == 2);
+    for (uint32_t k = 0; k < 6u; k++) { // p q r p r s
+        const tide_vertex v = tide_draw_quad_corner(&d.quads[1], k), want = sprite[quad_indices[k]];
+        TIDE_CHECK(memcmp(&v, &want, sizeof v) == 0);
+    }
+
+    // Through the same calls Tide's lists take, and after other meshes: a run of quads of its own
+    static const uint32_t other_way[6] = {2, 1, 0, 3, 2, 0};
+    tide_draw_mesh(&d, quad, 4, quad_indices, 6, NULL, TIDE_FILTER_BILINEAR); // Four colors: corners and triangles
+    tide_draw_mesh_with(&d, sprite, 4, quad_indices, 6, 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
+    tide_draw_mesh(&d, sprite, 4, other_way, 6, NULL, TIDE_FILTER_BILINEAR); // Its triangles share other corners
+    TIDE_REQUIRE(d.count == 4 && d.quad_count == 3 && d.vertex_count == 8 && d.index_count == 12);
+    TIDE_CHECK(d.commands[1].kind == TIDE_DRAW_MESH && d.commands[2].kind == TIDE_DRAW_QUADS
+               && d.commands[2].mesh.first == 2 && d.commands[3].kind == TIDE_DRAW_MESH);
+
+    // Tinted, it's corners and triangles, as a tint is worked into each corner
+    tide_draw_reset(&d);
+    tide_draw_set_tint(&d, (tide_color){0.5f, 0.5f, 0.5f, 1.0f});
+    tide_draw_mesh(&d, sprite, 4, quad_indices, 6, NULL, TIDE_FILTER_BILINEAR);
+    TIDE_CHECK(d.quad_count == 0 && d.vertex_count == 4);
+
+    // Another list's quads are this one's, with this one's textures
+    static const uint8_t pixels[4] = {9, 8, 7, 255};
+    tide_draw_list from = {0};
+    tide_draw_reset(&d);
+    tide_draw_rect(&d, tide_f2(0.0f, 0.0f), tide_f2(1.0f, 1.0f), TIDE_COLOR_WHITE);
+    tide_draw_mesh(&from, sprite, 4, quad_indices, 6, &(tide_texture){pixels, 1, 1, 5}, TIDE_FILTER_POINT);
+    tide_draw_mesh(&from, sprite, 4, quad_indices, 6, &(tide_texture){pixels, 1, 1, 5}, TIDE_FILTER_POINT);
+    TIDE_REQUIRE(from.count == 1 && from.quad_count == 2);
+    tide_draw_append(&d, &from);
+    TIDE_REQUIRE(d.quad_count == 2 && d.texture_count == 1);
+    const tide_draw_command *appended = &d.commands[d.count - 1u];
+    TIDE_CHECK(appended->kind == TIDE_DRAW_QUADS && appended->mesh.count == 2 && appended->mesh.texture == 1
+               && appended->mesh.filter == TIDE_FILTER_POINT);
+    TIDE_CHECK(memcmp(&d.quads[1], &from.quads[1], sizeof d.quads[1]) == 0);
+    tide_draw_free(&from);
+    tide_draw_free(&d);
+    TIDE_CHECK(d.quads == NULL && d.quad_count == 0);
+}
+
+static bool corner_is(const tide_vertex v, const float x, const float y, const float u, const float uv_y)
+{
+    return v.position.x == x && v.position.y == y && v.uv.x == u && v.uv.y == uv_y;
+}
+
+// A sprite is its texture upright over its box, its top at the top of the
+// screen under a camera and in the screen's pixels alike: one quad, more of a
+// run of them with its image. Turned, tinted or moved, it's corners and
+// triangles, as Draw.Mesh's are.
+TIDE_TEST(draw_sprites_are_quads_upright)
+{
+    static const uint8_t pixels[2 * 2 * 4] = {255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255};
+    const tide_texture_ref image = {.image = {pixels, 2, 2, 1}};
+    const tide_color shade = {0.25f, 0.5f, 0.75f, 1.0f};
+    tide_draw_list d = {0};
+    tide_draw_sprite(&d, image, tide_f2(10.0f, 20.0f), tide_f2(4.0f, 2.0f), shade);
+    TIDE_REQUIRE(d.count == 1 && d.commands[0].kind == TIDE_DRAW_QUADS && d.quad_count == 1 && d.texture_count == 1);
+    TIDE_CHECK(d.commands[0].mesh.texture == 1 && d.commands[0].mesh.filter == TIDE_FILTER_BILINEAR);
+    TIDE_CHECK(d.vertex_count == 0 && d.index_count == 0);
+    const tide_draw_quad *q = &d.quads[0];
+    // p q r p r s: its top left, top right and bottom right, then its bottom left. Up is +y under a camera
+    TIDE_CHECK(corner_is(tide_draw_quad_corner(q, 0), 8.0f, 21.0f, 0.0f, 0.0f));
+    TIDE_CHECK(corner_is(tide_draw_quad_corner(q, 1), 12.0f, 21.0f, 1.0f, 0.0f));
+    TIDE_CHECK(corner_is(tide_draw_quad_corner(q, 2), 12.0f, 19.0f, 1.0f, 1.0f));
+    TIDE_CHECK(corner_is(tide_draw_quad_corner(q, 5), 8.0f, 19.0f, 0.0f, 1.0f));
+    const tide_vertex p = tide_draw_quad_corner(q, 0), p_again = tide_draw_quad_corner(q, 3);
+    const tide_vertex r = tide_draw_quad_corner(q, 2), r_again = tide_draw_quad_corner(q, 4);
+    TIDE_CHECK(memcmp(&p, &p_again, sizeof p) == 0 && memcmp(&r, &r_again, sizeof r) == 0);
+    TIDE_CHECK(memcmp(&q->color, &shade, sizeof shade) == 0);
+
+    // The same image again is more of the run; a filter of its own is a run of its own
+    tide_draw_sprite(&d, image, tide_f2(0.0f, 0.0f), tide_f2(1.0f, 1.0f), TIDE_COLOR_WHITE);
+    TIDE_CHECK(d.count == 1 && d.commands[0].mesh.count == 2 && d.texture_count == 1);
+    tide_draw_sprite(&d, tide_texture_filtered(image, TIDE_FILTER_POINT), tide_f2(0.0f, 0.0f), tide_f2(1.0f, 1.0f),
+                     TIDE_COLOR_WHITE);
+    TIDE_REQUIRE(d.count == 2 && d.commands[1].kind == TIDE_DRAW_QUADS && d.commands[1].mesh.filter == TIDE_FILTER_POINT);
+
+    // A negative width mirrors it: its left edge has the texture's right; a part of it is those uvs
+    tide_draw_sprite(&d, image, tide_f2(10.0f, 20.0f), tide_f2(-4.0f, 2.0f), TIDE_COLOR_WHITE);
+    TIDE_CHECK(corner_is(tide_draw_quad_corner(&d.quads[d.quad_count - 1u], 0), 12.0f, 21.0f, 0.0f, 0.0f));
+    TIDE_CHECK(corner_is(tide_draw_quad_corner(&d.quads[d.quad_count - 1u], 1), 8.0f, 21.0f, 1.0f, 0.0f));
+    tide_draw_sprite_part(&d, image, tide_f2(10.0f, 20.0f), tide_f2(4.0f, 2.0f), (tide_rect){0.5f, 0.0f, 0.5f, 1.0f},
+                          TIDE_COLOR_WHITE);
+    TIDE_CHECK(corner_is(tide_draw_quad_corner(&d.quads[d.quad_count - 1u], 0), 8.0f, 21.0f, 0.5f, 0.0f));
+    TIDE_CHECK(corner_is(tide_draw_quad_corner(&d.quads[d.quad_count - 1u], 2), 12.0f, 19.0f, 1.0f, 1.0f));
+
+    // In the screen's pixels its top is the smaller y
+    tide_draw_set_screen(&d);
+    tide_draw_sprite(&d, image, tide_f2(10.0f, 20.0f), tide_f2(4.0f, 2.0f), TIDE_COLOR_WHITE);
+    TIDE_REQUIRE(d.commands[d.count - 1u].kind == TIDE_DRAW_QUADS);
+    TIDE_CHECK(corner_is(tide_draw_quad_corner(&d.quads[d.quad_count - 1u], 0), 8.0f, 19.0f, 0.0f, 0.0f));
+    TIDE_CHECK(corner_is(tide_draw_quad_corner(&d.quads[d.quad_count - 1u], 2), 12.0f, 21.0f, 1.0f, 1.0f));
+
+    // Turned, from +x towards +y: corners and triangles, in the same order, each its offset from the center turned
+    tide_draw_reset(&d);
+    tide_draw_sprite_rotated(&d, image, tide_f2(10.0f, 20.0f), tide_f2(4.0f, 2.0f), 0.5f, TIDE_COLOR_WHITE);
+    TIDE_REQUIRE(d.count == 1 && d.commands[0].kind == TIDE_DRAW_MESH && d.vertex_count == 4 && d.index_count == 6);
+    TIDE_CHECK(d.commands[0].mesh.texture == 1 && d.quad_count == 0);
+    const float c = tide_cos_f(0.5f), s = tide_sin_f(0.5f);
+    const tide_float2 offsets[4] = {{-2.0f, 1.0f}, {2.0f, 1.0f}, {2.0f, -1.0f}, {-2.0f, -1.0f}};
+    const tide_float2 uvs[4] = {{0.0f, 0.0f}, {1.0f, 0.0f}, {1.0f, 1.0f}, {0.0f, 1.0f}};
+    for (int i = 0; i < 4; i++) {
+        const tide_float2 o = offsets[i];
+        TIDE_CHECK(corner_is(d.vertices[i], 10.0f + (o.x * c - o.y * s), 20.0f + (o.x * s + o.y * c), uvs[i].x, uvs[i].y));
+    }
+    // A quarter turn whose corners come out whole is the quad they are
+    tide_draw_sprite_rotated(&d, image, tide_f2(10.0f, 20.0f), tide_f2(4.0f, 2.0f), 1.57079632679f, TIDE_COLOR_WHITE);
+    TIDE_CHECK(d.commands[d.count - 1u].kind == TIDE_DRAW_QUADS && d.quad_count == 1);
+    tide_draw_sprite_part_rotated(&d, image, tide_f2(10.0f, 20.0f), tide_f2(4.0f, 2.0f), (tide_rect){0.0f, 0.5f, 1.0f, 0.5f},
+                                  0.5f, TIDE_COLOR_WHITE);
+    TIDE_CHECK(d.vertex_count == 8 && d.vertices[4].uv.y == 0.5f && d.vertices[6].uv.y == 1.0f);
+
+    // Tinted: corners and triangles, each its color times the tint
+    tide_draw_reset(&d);
+    tide_draw_set_tint(&d, (tide_color){0.5f, 0.5f, 0.5f, 1.0f});
+    tide_draw_sprite(&d, image, tide_f2(10.0f, 20.0f), tide_f2(4.0f, 2.0f), TIDE_COLOR_WHITE);
+    TIDE_REQUIRE(d.count == 1 && d.commands[0].kind == TIDE_DRAW_MESH && d.quad_count == 0 && d.vertex_count == 4);
+    TIDE_CHECK(d.vertices[0].color.r == 0.5f && corner_is(d.vertices[0], 8.0f, 21.0f, 0.0f, 0.0f));
+
+    // No texture, a zeroed one: drawn as its color, as a mesh with none is
+    tide_draw_reset(&d);
+    tide_draw_sprite(&d, (tide_texture_ref){0}, tide_f2(0.0f, 0.0f), tide_f2(1.0f, 1.0f), TIDE_COLOR_RED);
+    TIDE_CHECK(d.count == 1 && d.commands[0].kind == TIDE_DRAW_QUADS && d.commands[0].mesh.texture == 0);
+    tide_draw_free(&d);
 }
 
 TIDE_TEST(draw_textures_are_copied_when_they_change)
@@ -1608,6 +1803,43 @@ TIDE_TEST(draw_shaded_instances_are_copied_and_batched)
 
     tide_draw_free(&appended);
     tide_draw_free(&d);
+    tide_scratch_reset(mark);
+}
+
+TIDE_TEST(draw_twelve_textures_keep_high_slots_through_batching_and_append)
+{
+    const uint32_t mark = tide_scratch_mark();
+    const tide_list vertices = tide_list_from(cube_corners, 4, sizeof(tide_vertex3));
+    const tide_list indices = tide_list_from(cube_indices, 6, sizeof(uint32_t));
+    const tide_float4x4 transform = tide_identity_f4x4();
+    static const tide_shader shader = {.dims = 3, .vertex_size = sizeof(tide_vertex3),
+        .instance_floats = 4, .texture_count = 12};
+    tide_draw_list source = {0}, appended = {0};
+    uint32_t textures[12];
+    uint64_t sampling = 0;
+    for (uint32_t i = 0; i < 12u; i++) {
+        uint8_t *pixels;
+        textures[i] = tide_draw_texture_slot(&source, TIDE_PIXELS_MEMORY, i + 1u, 1, 1, 1, &pixels);
+        pixels[0] = (uint8_t)(i + 1u); pixels[1] = 0; pixels[2] = 0; pixels[3] = 255;
+        sampling |= tide_sampling_filtered(i, (int32_t)(i % 3u)) | tide_sampling_wrapped(i, (int32_t)((i + 1u) % 3u));
+    }
+    tide_draw_mesh_shaded(&source, &shader, vertices, indices, &transform, NULL, textures, sampling);
+    tide_draw_mesh_shaded(&source, &shader, vertices, indices, &transform, NULL, textures, sampling);
+    TIDE_REQUIRE(source.run_count == 1 && source.runs[0].count == 2);
+    const uint64_t other = sampling ^ tide_sampling_wrapped(11, TIDE_WRAP_REPEAT);
+    tide_draw_mesh_shaded(&source, &shader, vertices, indices, &transform, NULL, textures, other);
+    TIDE_REQUIRE(source.run_count == 2);
+    tide_draw_append(&appended, &source);
+    TIDE_REQUIRE(appended.run_count == 2);
+    TIDE_CHECK(appended.runs[0].sampling == sampling && appended.runs[1].sampling == other);
+    for (uint32_t i = 0; i < 12u; i++) {
+        const uint32_t slot = appended.runs[0].textures[i];
+        TIDE_REQUIRE(slot && slot <= appended.texture_count);
+        TIDE_CHECK(appended.textures[slot - 1u].pixels[0] == i + 1u);
+    }
+    tide_draw_free(&source);
+    TIDE_CHECK(appended.textures[appended.runs[0].textures[11] - 1u].pixels[0] == 12u);
+    tide_draw_free(&appended);
     tide_scratch_reset(mark);
 }
 

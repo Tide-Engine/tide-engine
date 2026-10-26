@@ -9,8 +9,8 @@ enum {
     LOGOUT = 1u << 4, SCHEDULE = 1u << 5, SHADERS = 1u << 6, ADD = 1u << 7,
     UPDATE = 1u << 8, EJECT = 1u << 9, FETCH = 1u << 10, PUBLISH = 1u << 11,
     EDITORS = 1u << 12, OPEN = 1u << 13, UPGRADE = 1u << 14, VERSION = 1u << 15,
-    HELP = 1u << 16, CC = 1u << 17, IDE = 1u << 18,
-    COMPILE = RUN | BUILD | SCHEDULE | SHADERS,
+    HELP = 1u << 16, CC = 1u << 17, IDE = 1u << 18, UNITY = 1u << 19, TELEMETRY = 1u << 20, PIN = 1u << 21,
+    COMPILE = RUN | BUILD | SCHEDULE | SHADERS | UNITY,
     FOLDERS = COMPILE | DEPLOY | FETCH | PUBLISH
 };
 
@@ -33,6 +33,16 @@ static const command_help commands[] = {
      "A game includes .tide and .tprefab files, its C/C++ and libraries, and\n"
      "the packages listed in tide.packages. Work files are cached in .tide.\n\n"
      "Example: tide build --release --web", BUILD},
+    {"unity", "unity [folder] -o <path> [options]", "Build a game for Unity's Tide package",
+     "Builds the game for the Tide package in a Unity project, into the path\n"
+     "(the project's Library/Tide): the host Unity loads, then a library of the\n"
+     "game each time its files change, which the running game swaps in. It ends\n"
+     "when its input closes, as the Unity editor's package does. --once builds\n"
+     "once and ends. In a Unity project the game is all of Assets, and C is\n"
+     "only ever a package's. --notified builds when a `changed` line comes on\n"
+     "its input, rather than looking at every file of Assets, as the package\n"
+     "tells it.\n\n"
+     "Example: tide unity Assets -o Library/Tide --assets Assets", UNITY},
     {"deploy", "deploy [folder] [options]", "Build locally and upload to managed hosting",
      "Builds a release client and WASM server locally, then uploads them.\n"
      "Creates or reuses a folder-named project and saves its immutable ID and\n"
@@ -69,6 +79,14 @@ static const command_help commands[] = {
      "replaces its tide.packages line with that local path. It stays a package,\n"
      "with the same namespace and dependencies. An existing destination fails.\n\n"
      "Example: tide eject rooms", EJECT},
+    {"pin", "pin [version]", "Build the game with one version of tide",
+     "Writes `tide = <version>` in the current game's tide.packages: this tide's\n"
+     "version, or the one given. A tide of another version then refuses to\n"
+     "build the game, saying how to install the pinned one, so everyone working\n"
+     "on it builds the same. In a Unity project, Tide's package uses the tide\n"
+     "of its own commit, and a pin it doesn't match is an error.\n\n"
+     "Examples: tide pin\n"
+     "          tide pin 0.5.0-nightly.12", PIN},
     {"fetch", "fetch [folder]", "Download missing git packages",
      "Downloads the game's missing git packages at their pinned commits.\n"
      "Builds nothing and does not move the pins; use tide update for that.", FETCH},
@@ -78,7 +96,9 @@ static const command_help commands[] = {
      "Use tide deploy for managed hosting of locally built games.", PUBLISH},
     {"editors", "editors", "Install Tide support in supported code editors",
      "Installs Tide support in the VS Code, Cursor, VSCodium and Windsurf\n"
-     "installations it finds. JetBrains support is on JetBrains Marketplace.", EDITORS},
+     "installations it finds, and existing JetBrains IDE profiles (2024.2+).\n"
+     "Uses the plugins bundled with this Tide version. Restart JetBrains IDEs\n"
+     "after installation; open a new IDE once before running tide editors.", EDITORS},
     {"ide", "ide <editor>", "Print setup for Emacs, Vim or Neovim",
      "Prints configuration to copy into your editor's init file, using this\n"
      "installation's bundled modes and tidels. Changes no files and starts\n"
@@ -100,6 +120,13 @@ static const command_help commands[] = {
     {"version", "version", "Show version, installation and compilers",
      "Shows Tide's version and release channel, installation folder, and\n"
      "the built-in or external compilers it found.", VERSION},
+    {"telemetry", "telemetry <on|off|status>", "Turn anonymous usage data on or off",
+     "Each command sends one small anonymous event: the command, target,\n"
+     "version, OS and CPU, CI or not, duration, outcome and a coarse failure\n"
+     "kind, with file and package counts in ranges. Never paths, names, code\n"
+     "or messages. status shows exactly what is sent, where, and the install's\n"
+     "random ID. TIDE_TELEMETRY=0 or DO_NOT_TRACK=1 also turn it off.\n"
+     "Details: https://tide-engine.dev/tools/telemetry", TELEMETRY},
     {"help", "help [command | argument] [argument]", "Show command or argument details",
      "Without a topic, shows the short command list. Name a command for its\n"
      "usage and options, or an argument for its meaning and defaults. Add a\n"
@@ -147,7 +174,8 @@ static const argument_help arguments[] = {
      "Uses Clang's WebAssembly target. Pages use WebGPU with WebGL 2 fallback.\n"
      "build --release produces one self-contained HTML file. run serves the\n"
      "page and opens a browser unless --no-open or TIDE_HIDDEN is set.\n"
-     "Choose one target: native (default), --web or --android.", RUN | BUILD},
+     "unity --web builds tide-game.js, for a Unity WebGL player's page, once.\n"
+     "Choose one target: native (default), --web or --android.", RUN | BUILD | UNITY},
     {"--android", "--android", "Build an Android APK",
      "run installs and starts it on the connected phone or emulator, using adb.\n"
      "Saving rebuilds and restarts the app. Release builds also make an app\n"
@@ -158,6 +186,10 @@ static const argument_help arguments[] = {
      "each package. TIDE_ and PACKAGE_ prefixes are reserved.", COMPILE},
     {"--title", "--title <title>", "Override the game's window title",
      "Defaults to the game's title setting, or its folder name.", RUN | BUILD},
+    {"--scene", "--scene <qualified-name>", "Start directly in an authored prefab or scene",
+     "Overrides the project default: settings { startScene = Levels.Start; }.\n"
+     "Without either selection, the game starts in Main. Runs normal\n"
+     "Spawned handlers, systems and views, with the usual session and devices.", RUN | BUILD},
     {"--stats", "--stats", "Enable the stats drawer (F8)",
      "Shows frame rate, CPU/GPU time, ping, bandwidth, memory, draw calls and\n"
      "slow systems. run starts the drawer open; build starts it closed.\n"
@@ -165,11 +197,28 @@ static const argument_help arguments[] = {
     {"--debug-views", "--debug-views", "Enable the profiler (F7)",
      "F7 shows where frame and tick time go, as with the debugViews setting.", RUN | BUILD},
     {"-o", "-o <path>", "Select the built program's output path",
-     "Overrides the default output in <folder>/build.", BUILD},
+     "Overrides the default output in <folder>/build. unity requires it.", BUILD | UNITY},
+    {"--once", "--once", "Build once and end",
+     "unity builds the game once rather than as its files change, as a player build does.", UNITY},
+    {"--notified", "--notified", "Build when told the files changed",
+     "unity builds when a `changed` line comes on its input, and between builds\n"
+     "looks only at the files it built, not every file of Assets: what Unity's\n"
+     "package passes, as Unity says when its assets change.", UNITY},
+    {"--declarations", "--declarations", "Build the game's types alone, for their C#",
+     "unity builds the game's declarations once, leaving out its systems, views,\n"
+     "handlers, functions, frags and verts, and writes the project's\n"
+     "Packages/com.tide.game from them. tide unity runs it itself after a build\n"
+     "that failed, so a component's C# comes before the code that uses it builds.", UNITY},
+    {"--assets", "--assets <folder>", "Include a Unity project's prefabs and scenes",
+     "Reads a Unity project's Assets folder: each prefab and scene holding\n"
+     "TideEntity objects is a Tide prefab named after its file, and Build\n"
+     "Settings' first scene loads as Main starts. build and run take it for a\n"
+     "server, or any build, of a game made in Unity; schedule to check one.", UNITY | BUILD | RUN | SCHEDULE},
     {"--no-open", "--no-open", "Serve a web run without opening a browser",
      "Use with tide run --web. TIDE_HIDDEN also prevents opening a browser.", RUN},
-    {"--host", "--host [port]", "Open Main's match for others to join",
-     "Main must be the match's scene. Opens a WebRTC room and, on desktop,\n"
+    {"--host", "--host [port]", "Open the startup match for others to join",
+     "Requires a match startup, selected by --scene, settings.startScene or Main.\n"
+     "Opens a WebRTC room and, on desktop,\n"
      "a UDP port (7777 by default). Web hosts use the room only.", RUN},
     {"--join", "--join <code>", "Join a match by WebRTC room code",
      "Example: --join K7QF2M. For dedicated servers, room/0 requests a new\n"
@@ -196,6 +245,20 @@ static const argument_help arguments[] = {
      "Requires run --server. Limits admitted and pending connections.", RUN},
     {"--udp-only", "--udp-only", "Disable the server's WebRTC room",
      "Requires run --server. Clients connect by direct UDP address.", RUN},
+    {"--shards", "--shards <n>", "Split a sharded game's world into n regions",
+     "For a game with 'settings { shards = true; }': its match starts as n\n"
+     "regions along x, each a shard. On a server, each shard is one of its\n"
+     "matches and players join the world at match 0.", RUN},
+    {"--shard-width", "--shard-width <units>", "Each region's width, in world units",
+     "Default: 16 times the game's reach. Use with --shards.", RUN},
+    {"--shard-most", "--shard-most <n>", "Split a region whose shard owns more entities",
+     "Requires run --server. A region splits in two by where its entities\n"
+     "are, down to twice the game's reach across; two neighbouring\n"
+     "regions owning a quarter of n together merge back into one.", RUN},
+    {"--shard-journal", "--shard-journal <folder>", "Keep a sharded server's world in a folder",
+     "Requires run --server. A checkpoint now and then, and every shard's ticks\n"
+     "since, on the disk before anything a shard sends goes on: a server\n"
+     "started again with the same folder goes on where the world was.", RUN},
     {"--capture", "--capture <file.png>", "Save the last frame as a PNG",
      "Runs natively without a window; add --frames or a script's quit.\n"
      "The output path is relative to the directory where tide was invoked.", RUN | OPEN},
@@ -235,8 +298,9 @@ static const argument_help arguments[] = {
      "inputs repeat the same simulation.", RUN},
     {"--players", "--players <n>", "Run several players on a simulated network",
      "Native headless only: add --frames, --capture or --script. At most 32\n"
-     "players, limited by the game's maxPlayers. Player 1 hosts Main's match;\n"
-     "the others join. Script input can name a player: 120 player 2 key d down.\n"
+     "players, limited by the game's maxPlayers. With a match startup, player 1\n"
+     "hosts and the others join. A local startup leaves joining to game code.\n"
+     "Script input can name a player: 120 player 2 key d down.\n"
      "Captures gain player numbers, like fight-2.png. With --players 1, filenames\n"
      "have no number. Cannot combine with --host, --join or --connect.", RUN},
     {"--project", "--project <name-or-id>", "Select or relink the deployment project",
@@ -267,9 +331,13 @@ static const argument_help arguments[] = {
     {"--version", "--version <v>", "Install an exact Tide version",
      "Example: tide upgrade --version 0.4.0. Use tide version to inspect\n"
      "the current installation; tide --version is also accepted.", UPGRADE},
+    {"setting", "<on|off|status>", "Turn usage data on or off, or show it",
+     "off also deletes events not sent yet; on sends again from the next command.\n"
+     "status says whether anything is sent and why not, what an event holds,\n"
+     "where it goes, the install ID and the settings folder.", TELEMETRY},
     {"--help", "--help, -h", "Show help for a command",
      "Use tide <command> --help or tide <command> -h. For argument details,\n"
-     "use tide help <argument> or tide help <command> <argument>.", FOLDERS | LOGIN | LOGOUT | ADD | UPDATE | EJECT | EDITORS | OPEN | UPGRADE | VERSION | HELP},
+     "use tide help <argument> or tide help <command> <argument>.", FOLDERS | LOGIN | LOGOUT | ADD | UPDATE | EJECT | PIN | EDITORS | OPEN | UPGRADE | VERSION | HELP | TELEMETRY},
 };
 
 static const command_help *find_command(const char *name)

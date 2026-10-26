@@ -1,0 +1,3 @@
+// expect: a worker takes owned CPU values, not LocalTask<int>
+local worker int Read(LocalTask<int> task) { return task == default ? 0 : 1; }
+scene Main;

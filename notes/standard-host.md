@@ -1,5 +1,296 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Time travel inside another program (2026-10-26)
+
+`tide/embed.h` gained the debugger's calls (embed ABI 7; notes/unity.md, Time travel, has the design, decisions and
+tests): `tide_embed_travel_of`, `_travel_keep`, `_pause`, `_step`, `_show`, `_continue`, `_recording`, `_replay`,
+`_replay_end`, on `tide/timeline.h` (platform). The embed library and `tide unity --web`'s program export them
+(`embed_exports`, `unity_web_exports` in `compiler/cli/build.c`).
+
+The host's part: `tide_run_unblended` (`tide/host.h`), set by the embed for a paused match's frames, makes
+`tide_run_frame`'s views draw the session's latest tick with no previous world and alpha 1; nothing else of the frame
+changes, and no other host sets it. The loop handing local code's commands to the session at the end of
+`tide_run_frame` is `tide_run_send_commands` now, which the embed also calls before a paused match's step. `reload_library.inc` has `reload_before(old, next)`, called first in `swap` and
+`restart` while the old build's code is still loaded; only the embed sets it (time travel's worlds and local state
+are the old build's), so `tide run`'s host is unchanged. Frames that show another tick than the latest don't go
+through `tide_run_frame`: the embed's `show_frame` runs the views over that world with a local state of its own and
+the host's draw list, GUI and devices (consumed after it), and writes the view packet from it.
+
+## Runtime stats argument and documentation pages (2026-10-25)
+
+The standard host now recognizes `--stats` in its runtime command line and
+enables `tide_run_settings.stats`. It leaves `stats_open` and the drawer's
+configured initial open/closed state unchanged. Ordinary standalone builds
+therefore start with the collapsed line; a CLI `tide run --stats` host keeps
+its existing generated `stats_open = true` choice. No runtime API, layout,
+measurement policy or reload ownership changed. The embed's independent
+option parsing retains its existing behavior.
+
+`platform/web/tide.js` maps the presence of `stats` in a page's query to
+`--stats`, unless the page-owned `Tide.arguments` already contains it. Repeated
+query keys still add one argument; existing host/join/connect selection and
+debug-view options keep their behavior. Docs embedded and standalone launch
+paths request this query (`notes/docs-site.md`). The root owns regeneration
+of the checked-in release web runtime before builds or publication.
+
+`platform/tests/web_stats.c` configures the real host against a copied game
+without its stats setting, checking disabled-by-default, runtime enable with
+a collapsed drawer, preservation of a preconfigured open drawer and repeated
+arguments. The existing browser drawer/input/timing checks remain intact.
+`cmake/web_runtime.test.mjs` executes the production argument-assembly block
+in a VM, checking exact NUL-terminated WASI argv for no query, unrelated keys,
+stats, duplicate query/config requests and concurrent debug/join/host options.
+
+Final integration: the full native and web builds pass. The native full suite
+passes 2,773 of 2,774 enabled tests; the sole failure is the unchanged private
+CRACKED hash failure reproduced on the pre-existing baseline. Repository web
+checks pass, including 11 scenarios on all three backends. Optional private
+InsideOut WebGL play has a mismatch under read-only attribution, and remaining
+optional private playthroughs are running; final overall web-suite status
+remains pending. Node argv/query tests and both WebGL/WebGPU stats tests pass.
+Native material-demo runs with
+`--frames 240 --stats` at 376 x 400 and 960 x 540 pass, fit the cube above open
+controls and show the collapsed stats line at bottom right; the base-demo
+capture also shows its collapsed 60 FPS line. Final Svelte check reports zero
+errors/warnings, the staged production docs build passes, and fresh combined
+material code/docs integration review is clean. Final selected docs browser
+runs pass for both demos on WebGL/WebGPU, with scene-pixel witnesses for orbit,
+zoom, exact camera Reset restoration, height command, cutoff/opacity sliders
+and collapsed zoom above stats, plus displayed-source and stats-URL deduplication
+checks. Captures are `build/material-docs-final-webgl` and
+`build/material-docs-final-webgpu`; WebGL cutout/blend/collapsed shots were
+visually inspected. All three exports/admin HTTP checks and 301 grammar checks
+pass; the latest five-test playground rerun is active. Isolated JavaScript
+syntax and diff checks pass; this child ran no browser.
+
+## GUI selection clipboard callback (2026-10-25)
+
+The standard host binds tide_gui.copy to tide_platform_copy after begin, allowing
+Ctrl+C/X selection editing without including platform headers in the GUI runtime.
+The callback is optional for custom hosts; hidden runs retain the platform's
+existing refusal to access the system clipboard. GUI layout changes require
+hosts/games to rebuild together. Contracts and validation: notes/gui.md.
+
+## Worker limits and profile rows (2026-10-25)
+
+Custom hosts can supply tide_gui.worker_limits; zero fields select the internal
+64 pending/64 MiB capture/4 MiB per-frame transfer defaults. The standard host
+uses those defaults. These are soft private-job limits, not a process memory
+cap; first-class task argument state follows normal allocation rules.
+The profiler adds Workers per-job rows (queue/compute/capture/transfer) and
+Worker copies frame cost. Callbacks only record timestamps; the frame thread
+updates profile structures after safe provider completion. Contracts and
+measurements: language.md, schedule-and-threads.md, benchmarks.md.
+
+## Local workers (2026-10-24)
+
+The standard host supplies its existing platform pool in tide_gui.jobs before
+each generated frame. Local worker captures/results are private to generated
+local state. Missing platform background support keeps the synchronous poll
+fallback. Free/rebind drains callbacks before game code unload. Custom hosts
+opt in through the same optional GUI field; views keep their serial draw order.
+Contracts and coverage: notes/language.md and notes/schedule-and-threads.md.
+
+## Optional voice provider (2026-10-22)
+
+The host table's optional `voice` getter obtains registration from the game's
+own engine copy. After views and before audio submission, a non-embedded host
+runs its provider's frame callback with the session/audio list/current time.
+Teardown forgets audio before calling stop; retained native reload also stops
+the old provider before unload. Games with no registered provider allocate or
+send nothing for voice. The actual three-process headless capture regression
+and all C/API/lifetime contracts are in `notes/voice-package.md`.
+
+## Leave, drop and rejoin in a run of several players (2026-10-21)
+
+The owner approved Claude's proposal after AI trials could not test
+`PlayerLeft` or seat reuse: three script lines, each needing `player <n>` and
+`--players` of 2 or more (`script.c` refuses either missing, naming the fix).
+
+- `player <n> leave`: that player's host does what `Session.Leave` does
+  (`tide_run_request` with `TIDE_REQUEST_LEAVE`). The match hears `PlayerLeft` at once.
+- `player <n> drop`: `tide_platform_players_drop` (`players.c`) sets `silent`. From
+  that poll on, `end_send` drops whatever this player's ends send, and `deliver`
+  drops whatever comes for them, so each side times out (`TIMEOUT`, 5 s: 300
+  frames). Routing through the first player's process is untouched: a dropped
+  first player still routes the others.
+- `player <n> rejoin`: clears `silent` and asks the host to join again what it
+  last joined. The host keeps the last Join or Connect it made in
+  `tide_run_joined`; Main's automatic join at `tide_run_begin` and a game's own
+  `Session.Join`/`Connect` both count. The session keeps its cookie for the same
+  server, so the player is the same `PlayerID`. A match that already let it go
+  hears `PlayerJoined`; one that hadn't noticed the drop gets the takeover with
+  no events. A player that never joined says so on stderr and does nothing.
+- Leave and rejoin cross from the platform to the host as
+  `tide_platform_players_action` (`tide/platform.h`), a queue of up to 16
+  actions taken in the script's order right after the frame's poll, in
+  `tide_run_frame`. Drop needs no host. Web and Android compile the queue and
+  never fill it.
+- A host that leaves or drops is allowed (the proposal had refused player 1):
+  in a game that starts in a menu player 1 needn't host, and the others getting
+  `ServerLeft` or timing out is what a network does.
+
+Tests: `tide_platform_players_net_drop` (no GPU; every desktop in CI): a drop
+silences both ways, the queue returns rejoin then leave in order, and speech
+resumes after the rejoin. `tide_platform_players` runs `players_leave.tide`
+with three players. A leave is heard at once; a drop only at the timeout, on
+both sides; both rejoin as their old seats with no new `PlayerID`; a drop and
+rejoin inside the timeout is a takeover; the host leaving gives the others
+`ServerLeft`. The run repeats byte for byte. `tide_platform_players_refused`
+has the three refusals. User docs: CLI Scripts and Several players, and the AI overview.
+
+## Inside another program's frame (2026-10-20)
+
+`tide/embed.h` (`platform/src/embed.c`) runs the standard host's loop inside
+another program's frame loop with no window, GPU or audio device: phase 1 of the
+Unity front end the owner approved (`notes/unity.md`, Phase 1 interface).
+`tide_embed_create` takes a linked game's `tide_host_game` (`tide/run.h`'s
+`tide_host_game_api`), its pack, tick rate, command line and relay, and starts
+Main's match or what the command line asks, through `tide_run_begin`. Each
+`tide_embed_frame(e, seconds, input, width, height, scale)` is one
+`tide_run_frame`; the session's clock is the frames' summed lengths (NaN or
+negative add none). `tide_embed_status_of` gives a flat copy of
+`tide_session_status` (no compiler padding, size asserted, so C# lays it out
+the same on every platform), the room code (`tide_run_room`, what the frame
+told local code), a kick's message and what the game asked of the window
+(typing, cursor lock); `tide_embed_request` takes Session
+requests (Start of Main only for now: named scenes come with the schema);
+`tide_embed_background` leaves the match on Android and iOS, desktop nothing.
+`tide_embed_camera(e, transform, projection)` is the camera the frame's views
+start with, the other program's, as `tide_draw_set_camera_matrices` takes one:
+16 floats each, column by column. The transform places the camera, which looks
+along its +z (Unity's camera transform, unscaled). The projection is OpenGL's,
+looking down -z (`Camera.projectionMatrix`). It took a position, rotation and
+field of view from 2026-10-21; matrices came on 2026-10-22 so Tide's 3D shares
+Unity's depth, near and far planes, and orthographic cameras.
+`tide/host.h` keeps the matrices (`tide_run_view_camera_transform`,
+`_projection`) and sets them right after `tide_draw_reset` and before the views,
+so `Draw.WorldToScreen`/`ScreenToWorld` of a float3 and 3D draws go through it;
+a view's own `Draw.Camera` still wins. NULL for either, a value that isn't
+finite, or a matrix with a zero determinant goes back to Tide's first camera.
+One at a time: the host's statics are the process's.
+`tide_embed_abi()` returns `TIDE_EMBED_ABI`: 5 since `tide_embed_audio`,
+`tide_embed_microphone` and the status's `microphone` byte (2026-10-22: an
+embedded frame submits its audio, which the other program plays;
+`notes/audio.md`, Inside another program), 4 since `tide_embed_render` and the
+matrix camera, 3 since the first camera, 2 since `tide_embed_draw`. It changes
+with anything another language lays out or calls, so a binding refuses an
+embed built by another tide. Test: `embed_camera` (`platform/tests/embed.c`).
+`embed.tide`'s Show projects (0, 0, 5) and draws a circle there in screen
+pixels. Through Tide's camera it lands at the 800 by 600 screen's middle; through
+a camera 1 to the right with a 90-degree perspective projection, 60 pixels left
+of it; and in the middle again after a projection of zeros.
+
+`tide_embed_render(e, &size)` (2026-10-22) draws the frame's list with Tide's
+renderer through the recording backend (`notes/rendering.md`, Recording) and
+gives its commands, which Unity's TideRender replays (`notes/unity.md`, Tide's
+renderer in Unity). `tide_embed_render_reset` forgets the objects made, so the
+next render makes everything again. `tide_embed_destroy` frees the backend's
+memory, and the next embed numbers from 1. The embed host exports both.
+`tide_embed_render_view(e, transform, projection, width, height, &size)` draws the
+frame's 3D again through another camera (Unity's scene views): the window's 3D alone, through
+that camera's world-to-clip matrix (made as `tide_draw_set_camera_matrices` makes one), the
+2D, clips and targets left out. NULL for a size outside 1 to 16,384 or a value that isn't
+finite. Test: `embed_render` (also: the view's commands draw `embed.tide`'s cube alone,
+through the 3D meshes' pipeline, its uniforms that camera's matrix).
+
+Events and text commands (2026-10-22): the view packet is version 3, with an
+EVENTS section, the match's events this machine heard since the last packet as
+its local handlers hear them, each heard as predicted (flag 1) and again once
+confirmed (flag 2), with its tick, target and the target's place among the
+packet's entities; and `tide_embed_command` takes a command's text and byte
+lists after its value, as STRINGS lays them out, saying false for text that
+isn't UTF-8 or a command too big to send. Both are the generated game's
+(`notes/language.md`, Events, text commands and command defaults); the embed
+host passes them through unchanged, and `TIDE_EMBED_ABI` stays 3 (no function
+or struct of `tide/embed.h` changed; the packet says its own version). Tests:
+`embed_heard_events`, `embed_commands_and_scenes`. Version 4 the same day: lists, maps, sets and grids, what they
+hold included, each STRINGS entry from a multiple of 8 (`embed_containers`).
+
+Stats inside another program (2026-10-21, owner: `--stats` in the runner's
+Arguments did nothing). They were left out embedded ("the other program has
+stats of its own"), and the embed took no `--stats`. Now `embed_options`
+reads `--stats` as `tide run --stats` does (the setting, and the drawer
+starting open), and the game's `stats` setting counts too: `tide_run_frame`
+keeps the drawer embedded, drawn into `tide_run_draw` after the views and the
+GUI, so `tide_embed_draw` has it for the other program to draw, rather than
+into `tide_run_over` for a window. The values say `elsewhere`
+(`tide_stats_values`, `engine/include/tide/stats.h`), which leaves out the
+draw calls, vertices, render and GPU lines (the other program's), and memory
+is 0, as the process is the other program's. Tests: `embed_stats` (the
+packet has the "N fps" line and `cpu`, and no `draw calls`) and
+`stats_drawn_elsewhere_leave_out_the_other_programs_lines` (`tests/test_stats.c`).
+
+- Input is raw, as a window reports it (`tide_embed_input`: held keys as bits,
+  cursor, this frame's scroll and locked movement, buttons, one gamepad, typed
+  code points, this frame's touch events, all top-left y-down). The approved
+  draft named `tide_devices`; raw input replaced it so presses latch and
+  movement adds up in the platform's own poll, unchanged.
+  `tide_platform_embed_frame` (`platform/src/embedded.h`) makes it the poll's
+  source in the window's place, as a headless script is (`key_held`,
+  `mouse_state`, `gamepad_state`, `touchscreen`, `take_touch`, `take_char` in
+  `platform.c`), and sets the screen; sizes outside 1 to 16,384 and scales
+  outside 0.25 to 16 (NaN too) become 1. Embedded, typing and cursor lock are
+  kept for the status, the clipboard is left alone and no paste is taken.
+- `tide_run_embedded` (`tide/host.h`) keeps the frame off the GPU timers, the
+  draw and audio submission and the stats drawer; the draw list is still
+  recorded, and `tide_embed_draw` gives it to the other program as bytes (made
+  when asked, into a buffer the embed keeps): a 64-byte
+  `tide_embed_draw_header` (magic "TIDD", version 1, counts, this build's
+  struct sizes, the screen), then commands, shapes, vertices, indices, text,
+  matrices and text turns, each from a multiple of 8, zeroed between.
+- The host's own option parsing ends a program at a bad flag, so the embed gives
+  it none: `tide_run_arguments` still reads `--host`/`--join`/`--connect`, and
+  `--seed`/`--data-dir` are parsed apart, a bad one left out with a line.
+- `tide_platform_set_relay` (`rooms.c`) picks a relay over `TIDE_RELAY` and the
+  default on desktop; a page's is its own (`Tide.relay`), so it does nothing on
+  the web.
+
+- A game built with `--embed` (`tide_host_game.embed`, `tide/embed_game.h`;
+  `tide/run.h` fills it and `.layout` when `TIDE_HAS_EMBED` is defined) gets
+  its view packet written after every frame from `tide_session_view`'s worlds
+  (`tide_embed_view`), its schema from the game itself
+  (`tide_embed_game.schema`, built again when a new build comes in), commands
+  with an optional target (`tide_embed_command`) and START by a scene's name,
+  limited to the scenes `tide_start` has: those the game's code starts.
+- `desc.library_dir` (desktop): the newest `game-<n>` there and its newest
+  `pack-<n>`, loaded and swapped as `tide run`'s host does, through
+  `platform/src/reload_library.inc`: the helpers moved out of `reload.c` so
+  `embed.c` runs them on its own copy of the host's statics (each file that
+  includes `tide/host.h` has one). Embedded, a failed full restart leaves the
+  game stopped and saying why rather than exiting the program.
+
+Tests: `tide_platform_embed` (`platform/tests/embed.c`, `embed.tide`, built
+with EMBED; native only: on the web it builds, but needs a page's imports)
+runs Main at 30 Hz from made-up 60 Hz frames, one at a time, a one-frame key
+tap reaching one tick, the screen reaching `Screen.width`, requests (leave,
+start again, refused kinds), bad flags left out, NaN or negative frames and
+screens, the packet's bytes as another language reads them (two entities,
+owner flags, a root, blended values, text and a list through STRINGS, a
+singleton), the schema's types and kinds, a command reaching its handler and
+refusals of a wrong size or type, a scene started by name, and the draw
+packet (its header, parts, and the view's rect and text among its commands,
+nothing once ended). The library path is covered end to end by
+`unity/Sample`'s play mode test.
+
+On the web, `embed.c` runs in the program `tide unity --web` generates
+(`compiler/cli/build.c`, `unity_web_main`): `main` creates the embed with the
+page's pack (`tide_platform_pack`) and runs `tide_platform_run`, whose frame
+calls `tide_embed_frame` with the input Unity's jslib last copied in (zeroed
+for a frame without, as the worker's while the page is hidden), and exports
+`tide_unity_*` for the jslib (`notes/unity.md`, Web as built).
+
+## Window scale frame metadata (2026-10-20)
+
+The host supplies `tide_platform_screen_scale()` in the draw list's
+`screen_scale` before every frame, beside the existing target-pixel callback.
+Generated `Screen.scale` is the same read-only frame-local float2 as the
+renderer's physical/logical ratios. Zeroed custom-host metadata defaults to one
+per axis. This adds no frame pacing, simulation pause or lost-contents event.
+Hosts/libraries rebuild for the draw-list layout change. Validation is in
+`notes/language.md`; other new Inside Out ideas are saved in the prototype audit.
+
+
 Texture metadata (2026-10-18): before calling the generated frame the standard
 host supplies tide_platform_target_pixels in tide_draw_list.target_pixels.
 This borrowed callback crosses the host/game-library boundary explicitly;
@@ -103,8 +394,8 @@ submitted-geometry counter's scope.
   - **Ending.** `--frames` and `quit` are every process's, so all end at the same frame, and the last frame has no exchange. The first then hangs up and waits for the others (`tide_platform_players_finish`, from `finish`), and the run's exit code is the first that isn't 0. A run of one frame heard from nobody yet, so the first lets the others connect before it hangs up, or they'd find no run. When a player's process ends before the run does (it stopped, or couldn't write a picture), the first finds its connection closed at that frame's end, says whose game ended and at which frame, hangs up, and ends with that process's exit code, or 1 for one the system stopped; each of the others finds nobody at its own frame's end and ends with 1, saying nothing. So no process is left running, and none waits on a time.
   - **Measured** (2026-10-08, Windows, debug): Tag, two players, 1,200 frames at 640 by 360, in 3.4 seconds, where one player's run took 1.6.
   - Tests: `tide_platform_players_net` and `tide_platform_players_net_ended` (`platform/tests/players_net.c`, no GPU, every desktop's tests) are three processes with no window that send text through the network and check, frame by frame, when it arrives, in what order and from whom, what a room nobody opened says, that an end let go of is nobody's, and that a process that ends at frame 3 ends the run there with its exit code. `tide_platform_players` (`players.mjs`, label `gpu`) runs `players.tide`, whose Main is the match's, with two and three players and one, and `players_menu.tide`, which starts in a menu, where the script has the players open and join by the rooms' codes, an address and one nobody is at: it reads every player's pictures, runs each again for the same bytes, and has a game stop and a picture fail. `tide_platform_players_refused` is what such a run refuses, with no GPU, and `tide_cli_hidden` that `tide run` passes `--players` on and refuses it with a window. CI leaves the `gpu` label out, so `tide_platform_players_net` is what runs the processes and the sockets on Linux and macOS.
-  - Not built: several players with windows (two at one desk, in real time); a player whose game ends on purpose while the run goes on (`player 2 quit`); a network that's worse than a frame each way (a made-up lag or loss, which the first player's process could add, as every datagram goes through it); host migration on the made-up network; and players who start apart where `Main` is the match's.
-- That nothing an agent runs shows on the owner's screen doesn't rest on the agent remembering: `TIDE_HIDDEN` in the environment, set to anything but nothing or 0, says nobody watches a run (`tide_hidden`, `tide/page.h`), and then no Tide program shows a window or a dialog, or opens an audio device. Desktop only.
+  - Not built: several players with windows (two at one desk, in real time); a player whose game ends on purpose while the run goes on (`player 2 quit`; `leave`, `drop` and `rejoin`, above, cover its match); a network that's worse than a frame each way (a made-up lag or loss, which the first player's process could add, as every datagram goes through it); host migration on the made-up network; and players who start apart where `Main` is the match's.
+- That nothing an agent runs shows on the owner's screen doesn't rest on the agent remembering: `TIDE_HIDDEN` in the environment, set to anything but nothing or 0, says nobody watches a run (`tide_hidden`, `tide/page.h`), and then no Tide program shows a window or a dialog, or opens an audio device. Desktop only. Inside Unity, whose audio plays an embedded game's, the package's `TideAudio` clears each block it fills and opens no microphone under it (2026-10-22).
   - Where agents' shells get it, and the rules that stand beside it, are in `AGENTS.md`, Rendering and platform.
   - A window that isn't `hidden` has only its closing to end its run, which nobody could do, so the program is refused: it ends with exit code 2 before it opens anything, having said what to give it instead (decided over running hidden for a counted number of frames, which would end with 0 as if something had been checked, and as a run with no window that nothing ends is refused already). `tide_platform_open` refuses any such window (`platform/src/platform.c`), the standard host names its flags first (`tide_run_open` in `tide/host.h`), and `tide run` refuses before it builds (`compiler/cli/main.c`); `tide run --web` serves its page and opens no browser. A window that's `hidden`, as every test's is, and a run with no window go as they do without the variable, but for the window's sound (Nobody listens either, below). Under the refusal, `tide_window_open` shows no window whatever asked (`platform/desktop/glfw.c`).
   - A program that stops shows no dialog either. On Windows a debug build's `abort()`, which every stop of the engine's and of generated code ends in, shows one that waits for a click, a failed `assert` shows one in a program with no console, and the system shows its own for a crash or a library that's missing. With the variable they're off before `main` (`hidden_start` in `engine/src/page.c`, a constructor, there because every program of the engine's links that file: programs with no window stop too, and none has to remember it), and tide turns the system's off for what it starts (`sys_hidden`).

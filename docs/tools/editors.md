@@ -4,6 +4,10 @@ description: "Set up Tide in VS Code, JetBrains, Emacs, Vim or Neovim with highl
 
 # Editors
 
+Local worker declarations share normal function navigation and diagnostics.
+Hovers and symbol outlines identify them as `local worker`; syntax highlighting
+recognizes the modifier without reserving `worker` as an ordinary variable name.
+
 ## Choose your editor
 
 [Install Tide](../guide/install.md) first, then choose your setup:
@@ -11,7 +15,7 @@ description: "Set up Tide in VS Code, JetBrains, Emacs, Vim or Neovim with highl
 | Editor | Setup with Tide | Install through your editor's package manager |
 |---|---|---|
 | [VS Code, Cursor, VSCodium and Windsurf](#vs-code-cursor-vscodium-and-windsurf) | `tide editors` | Installed by Tide |
-| [JetBrains IDEs](#jetbrains-ides) | Install Tide from **Settings > Plugins > Marketplace** | JetBrains Marketplace |
+| [JetBrains IDEs](#jetbrains-ides) | Installed with Tide; run `tide editors` for a new IDE | Bundled plugin; Marketplace also available |
 | [Emacs 29.1+](#emacs) | `tide ide emacs` | [tide-emacs](https://github.com/Tide-Engine/tide-emacs) with built-in `package-vc` |
 | [Vim 8+](#vim-and-neovim) | `tide ide vim` | [tide-vim](https://github.com/Tide-Engine/tide-vim) with vim-plug |
 | [Neovim 0.11+](#vim-and-neovim) | `tide ide neovim` | [tide-vim](https://github.com/Tide-Engine/tide-vim) with lazy.nvim |
@@ -22,6 +26,20 @@ Tide. If you prefer your existing package manager, follow the install examples
 in [Emacs](#emacs) or [Vim and Neovim](#vim-and-neovim) below instead.
 Choose one installation method per editor.
 
+VS Code and JetBrains select a trusted project's pinned Tide version for both
+the compiler and language server. Standalone games use `tide = <version>` in
+`tide.packages`; Unity projects use their locked Tide package and the installation
+Unity selected. Open Unity once to resolve and install that version. Installations
+selected with Unity's `-tide-command <path>` are used only while that editor
+process is alive; closing it or a crash returns the IDE to the pin. Installations
+are shared in `TIDE_VERSIONS` (by default `%LOCALAPPDATA%/Tide/versions` or
+`~/.tide/versions`). A missing pinned version is reported rather than silently
+using another. Package/lock changes restart the language server; separate VS Code
+workspace folders and separate JetBrains projects can use different versions.
+Explicit executable settings and a trusted engine checkout's built server take
+precedence. In VS Code, `tide.path` also selects its sibling language server unless
+`tide.server.path` is set. Emacs/Vim/Neovim retain their configured server command.
+
 The standalone Emacs and Vim/Neovim plugins are MIT-licensed. **Emacs users:
 the mode is available directly from GitHub now, but is not listed on MELPA yet.**
 The plugins need Tide installed separately for its `tidels` language server.
@@ -30,15 +48,16 @@ The plugins need Tide installed separately for its `tidels` language server.
 
 Tide's language server, `tidels`, comes with `tide`. Open your game's folder, the one you run `tide run` in, and every `.tide` file in it is one game, with its [packages](../packages/using-and-writing.md). The server provides these features across the game; which appear depends on your editor's language server client:
 
-- Completion, and errors as you type, with quick fixes: a name spelled wrong, a missing `mut`, a missing or stray `out`, an error nothing handles, a name from another namespace, a local that's never read (which is faded).
+- Completion, and errors as you type, with quick fixes: a name spelled wrong, a missing `mut`, a missing or stray `out`, an error nothing handles, a name from another namespace, a local that's never read (which is faded), and a parameter that's never used (removed, or a component's made a `with` filter).
 - Enum assignments prioritize and preselect the expected enum type: after `zombie.state =`, `ZombieState` comes first, followed by its qualified members. With [enum shorthand](../language/basics.md#enums-and-switch), `zombie.state = .` offers just that enum's members. A leading dot also completes members in typed declarations, returns, comparisons, enum switch cases and arguments whose parameter type is unambiguous.
-- Hovers, go to definition or to a value's type, find usages, the uses of a name highlighted, and rename.
+- Hovers, go to definition or to a value's type, find usages, the uses of a name highlighted, and rename. A prefab's hover is the prefab as its file writes it, its components and entities (a big one's first lines), and for one made in Unity, the Unity asset it's of.
 - Go to implementation, from an event to its handlers, from the input to its `Sample`, `Sanitize` and `Predict` and from a `virtual` declaration to its [override](../language/overrides.md), and the call hierarchy: what calls a function, and what it calls.
 - Formatting, of a file or a selection, parameter hints and inlay hints. Parameter hints list every function that shares the name being called, with every parameter and its default, and follow an argument written by name; where an argument starts, completion offers the names the other parameters go by. Inlay parameter hints label written literal arguments; omitted defaults and arguments already written by name have no label.
 - The outline, symbols across the workspace's games, folding, growing a selection, and semantic highlighting. A shared package contributes the declarations active in each game that uses it, with identical symbols listed once.
 - After `asset`, completion offers the supported asset types as you start typing, with forms such as `Mesh<Vertex3>`, `Grid2<Color>` and `Map<string, Texture>`. Inside a list or map, it offers the supported element types; mesh vertex and contract arguments offer structs. Assets also complete by name, with their type's methods and parameter hints, including `Texture.Sample` in a frag or vert. They highlight as ordinary read-only variables; fields use the editor's property styling. The editor's theme chooses their colors.
 - A known [skinned model or animation asset](../game/animation.md) exposes its clip names in completion: `hero.animations.idle` or `movement.run`. Hover shows each clip's original source name, and a model exposes its bone names and `defaultPose` too. The editor reads the glTF JSON or FBX catalog without importing geometry or animation samples; invalid or unavailable metadata is diagnosed separately from an absent clip. Their asset paths complete `.glb`, `.gltf` and `.fbx` files.
 - Moving a declaration to a file of its own.
+- In a [Unity project](cli.md#unity), a rename also edits the prefabs and scenes that use the name and the project's C#: a component, field, singleton, event, command, struct, enum, enum member or namespace renamed in Tide is renamed in the scripts of `Assets` and of the project's embedded and local packages, as the C# twins in `Packages/com.tide.game` name it (`_` added where C# needs it). Only references known to be the game's are edited: a member of a value known to be of the game's type (declared as it, a cast, `as`, a pattern, a generic call, or a field, property or method of the project's own classes, partial ones too), a type or namespace the file's usings make the game's, and doc comments' `cref`s. Other comment text, strings, other types' members of the same name and names a type of the project's own also has are left alone.
 - Enum completion includes `EnumType.Count()`; hover and signature help explain its compile-time member count. A cast written as `(int)value` reports the Tide spelling, `int(value)`.
 - [Assets](../game/assets.md) kept in step with their files: renaming a file an `asset` names, or a folder above it, in the editor rewrites every path to it, in every file of the game and its packages, each relative to its own file (a glob isn't rewritten: a file it stops matching gets an error instead). Changes to watched asset files refresh their diagnostics, including external glTF buffers and replacement files that keep the same size and timestamp. A file moved outside the editor is found again by its bytes, which `tidels` and `tide` keep the SHA-256 of in the game's `.tide/`: the error says where it is now, with a quick fix that writes the path, or else lists the files of that name, a fix each. Inside an `asset`'s path, completion offers the folders and files it can lead to, the type's own files (`.png`, `.psd`, `.jpg`, `.jpeg`, `.tga` and `.bmp` for a `Grid2<Color>`, `Texture` or `Cubemap`; `.wav`, `.ogg`, `.mp3` and `.flac` for a `Clip`; `.glb`, `.gltf`, `.fbx` and `.obj` for a `Mesh`; `.glb`, `.gltf` and `.fbx` for a `SkinnedMesh`, `Animation` or `AnimationCatalog`), and `*` and `**/*` with each accepted format for a list, map, cubemap or combined `AnimationCatalog` catalog. Each literal in an animation file list supports the same path completion and rename edits; checked clip completion cleans exporter names and shows original names and source filenames on hover. Hovering a [`Mesh`](../game/assets.md#meshes) asset says what its file has: how many vertices and triangles, and whether it has normals, uvs, colors and tangents for the vertex struct to take.
 - Each system's place in [the schedule](../game/schedule.md) above it: its stage, what it reaches through its `World`, each system it waits for and why, and what runs alongside it. A part that names a system goes to it when clicked.
@@ -51,47 +70,135 @@ Tide's language server, `tidels`, comes with `tide`. Open your game's folder, th
 Open an authored tree in a desktop window alongside your code editor:
 
 ```sh
+tide open .
 tide open scenes/Level.tprefab --project .
 ```
+
+With a project folder, or no argument for the current folder, the app opens a
+workspace with **New Scene**, **New Prefab** and **Open file**. With a document
+open, use **File > New Scene...** or **File > New Prefab...** to create a named
+rooted `.tprefab`, and **File > Open...** / **Ctrl+O** to switch to another authored
+file. The toolbar's **New** / **Ctrl+N** creates another scene. Scenes and prefabs
+use the same format; a scene is a prefab loaded as a scene. New files need an
+unused name and a new filename in an existing project source folder. Opening another file saves the current
+draft first; a conflict or current-file syntax error must be resolved before
+switching. **Next** switches between declarations in one file.
+
+The dark workspace has a compact toolbar with **Q**, **W**, **E**, **R** tools and
+a centered **Play** / **Stop** control. The searchable **Hierarchy** is on the
+left, **Scene**, **Source** and **Models** tabs are in the center, and the
+**Inspector** fills the right side. **Project** and **Console** tabs sit below
+the hierarchy and scene area.
+
+With an authored file open, **Project** lists the current project's checked
+prefab declarations and static mesh assets, including collection items. Filter
+with **All Assets**, **Prefabs**, **Models** and the search field. Click a prefab
+to open that exact declaration, including when several share a source file;
+click a mesh to preview it in **Models**. **Console** shows compiler diagnostics.
+A failed view-preview build opens Console and keeps a visible status message;
+scroll the Console to read longer build logs.
+
+An existing blank file, including one containing only comments or namespace
+directives, opens a name field and **Create root**. This adds the first prefab
+to the current draft; the file stays unchanged until Save, and Undo removes the
+new root. Undoing a saved root can also be saved back to the original blank
+contents. An empty declaration such as `prefab Empty {}` already has a root and
+opens the normal hierarchy and inspector. Syntax errors must be fixed before
+creating a root; existing authored declarations are never replaced.
+
+Start with **New Scene**, add objects with **+ Create > Empty Object** in the
+hierarchy, arrange them in the viewport and save. **Actions ... > Save as Prefab...**
+turns an ordinary authored child subtree into a reusable asset and leaves an
+instance in its place. **+ Create > Prefab Instance...** places more instances
+beneath the selection. **Play** builds the selected tree directly,
+so this workflow needs no handwritten `Main`.
 
 The hierarchy shows the complete composition, including descendants inherited
 from nested prefabs. Select an entity in the hierarchy, click its viewport
 marker, or click a static mesh surface. Overlapping meshes select the nearest
-authored triangle. The inspector shows its components and effective field values, including
-defaults. Select a field, edit its Tide expression, then press Enter or **Apply**.
-**Ctrl+A** selects the whole value while typing. Values can name entities,
-assets, constants and ordinary struct/list literals, with the normal compiler
-checks. **Reset override** restores the component default or inherited value.
+authored triangle. Compact hierarchy rows have fold arrows to collapse branches;
+search finds entities by their composed paths. The inspector groups components
+under gray foldout headers and shows effective field values, including defaults.
+Edit booleans, integers, floats, strings and vector axes directly. Transform's
+**Position**, **Rotation** and **Scale** edit its local values with **X**, **Y**,
+**Z** fields; quaternion controls show Euler angles in degrees.
+Entity and enum fields open searchable choices, and model fields open the asset
+browser. **=** opens an inline Tide expression; press Enter or **Apply** to apply
+it. **Ctrl+A** selects the whole expression while typing. Values can name
+entities, assets, constants and ordinary struct/list literals, with the normal
+compiler checks. **Reset** restores the component default or inherited value.
 Untouched fields are not serialized.
 Direct entity references show their composed paths, so a nested prefab's `Lid`
 can be overridden as `Crates.Left.Lid`. When editing a more complex inherited
 expression, write its names in the current prefab's namespace and entity-path
 scope; compiler diagnostics check the resulting value.
 
-**Add component** lists this project's shared component definitions.
-**Child** adds an entity beneath the selection, and **Prefab** nests an existing
-prefab there. **Delete selected subtree** removes an authored child and its
-descendants. **Remove** deletes an authored component entry or override; it
+**Add Component** lists this project's shared component definitions.
+**+ Create > Empty Object** asks for a child's name, and
+**+ Create > Prefab Instance...** nests an existing prefab there. The hierarchy's
+**Actions ...** menu offers **Rename**, **Duplicate...**, **Save as Prefab...**,
+**Delete** and **Open Source Prefab**; these actions are also in **GameObject**.
+**Delete** removes an authored child and its descendants. **Remove** deletes an
+authored component entry or override; it
 cannot remove a component inherited from the base prefab. Inherited descendants
-are read-only here: edit their source prefab. **Next** switches between prefab
-declarations in a file. **Source** shows the current text draft.
+allow field-value overrides, marked in blue and with `*`; their components and
+children cannot be added, removed or replaced. A nested instance's root still
+accepts authored component and child additions. **Open Source Prefab** opens the
+base definition when you need to change its structure. **Source** shows a
+read-only view of the text draft.
+
+**Rename** / **F2** and **Duplicate** act on authored children. Drag an authored child
+onto another hierarchy row to change its parent. These operations check and
+rewrite affected entity references in the current file; duplication redirects
+references inside the copied subtree to the copy. Reparenting preserves local
+position, rotation and scale, so its world position can change. Invalid names,
+cycles and changes requiring a rewrite in another source file are refused.
+Resolve project errors before operations that change hierarchy paths.
+Path edits and extraction of conditional authored trees are also refused, so
+inactive build branches cannot keep stale references.
+
+**Save as Prefab...** creates a new asset from an ordinary authored child and
+replaces it with an instance, retaining incoming reference paths. The subtree
+must be self-contained: references to outside entities, and descendant references
+to the selected root, prevent extraction. A selected root that is already a
+prefab instance cannot be extracted again. Changes requiring updates to other
+files' consumers or overrides are refused. Extraction is one undo in the current
+document; undo restores the child but keeps the newly created asset.
+
+**Play** / **F5** checks and builds the project with the selected scene's applied draft,
+including unsaved edits, then opens the normal game window. It runs `Spawned`
+handlers, systems, all normal game views, the game's camera, input and services.
+Fix compiler errors and resolve outside conflicts or recovery before playing.
+The build can still report C, link or full-asset errors. **Stop** ends the play
+session and discards runtime state. Runtime changes are not written into the
+authored tree; the next Play starts fresh.
+If another program keeps Play's temporary files locked, cleanup reports their
+location in Console. Close that program and try Play again.
+
+**Set startup** saves the current scene and writes its qualified name to project
+`settings { startScene = ...; }`. It preserves other settings and any existing
+`Main`; normal `tide run` and `tide build` then start there. A new scene becomes
+startup automatically only if the project has neither `Main` nor a startup
+selection. Play itself does not change startup. See
+[Startup scene](../game/scenes.md#startup-scene) for settings and CLI overrides.
 
 The viewport draws referenced static models, unit wire cubes and axes, with parenting,
 local position, rotation and scale. Use the wheel to zoom, middle drag to pan,
-and **XY**/**Isometric** to change projection. Literal TRS, constants and basic
+and **2D / XY**/**Iso** to change projection. Literal TRS, constants and basic
 float arithmetic are previewed, including `quaternion.Euler(float3(...))`.
 Unsupported expressions and their subtrees are explicitly omitted from the
 preview. With **Views: off**, static models draw both sides with imported colors and editor lighting
 without executing game code.
 
-**Select / Move / Rotate / Scale** (Q / W / E / R, outside text fields) change
-the viewport tool. Move axes edit `localPosition` in the parent's coordinates;
-the center handle moves in the editor's world XY plane. Rotation rings and scale
+The toolbar's **Q / W / E / R** buttons choose **Select / Move / Rotate / Scale**;
+the same keys work outside text fields. Move axes edit `localPosition` in the
+parent's coordinates; the center handle moves in the editor's world XY plane.
+Rotation rings and scale
 handles use the entity's local axes; the scale center changes all axes together.
 Hold Shift to snap movement to 0.5 units, rotation to 15 degrees, or scale factors
-to 0.1 steps. Edge-on axes/rings are hidden; use Isometric to reach another axis.
+to 0.1 steps. Edge-on axes/rings are hidden; use **Iso** to reach another axis.
 The selected entity needs an editable `Transform` with constant previewable TRS.
-Inherited children remain read-only, while authored nested roots can be edited.
+Inherited children receive per-instance Transform field overrides too.
 A drag writes only its changed field on release and makes one undo entry.
 Escape cancels it. Descendant markers and fixed-preview meshes follow the drag;
 compiled views refresh with the new authored transform after release.
@@ -109,7 +216,7 @@ view Models(Model model, World world)
 }
 ```
 
-The editor constructs the selected prefab's whole tree from its authored values
+This authoring preview constructs the selected prefab's whole tree from its authored values
 and defaults. It does not start `Main`, run `Spawned` or other event handlers,
 tick systems, or start a session. A view can prepare its own local visual state
 using the usual view permissions; that state belongs to the preview. Systems
@@ -137,7 +244,7 @@ off releases it. Closing waits for an active compile to finish. Private build
 outputs and logs remain under `<project>/.tide/editor-preview/`.
 
 Declare a field such as `Asset<Mesh<Vertex3>> model` in your own component and
-add that component to an entity. Select its field and choose **Browse**, select
+add that component to an entity. Click its field to browse, select
 a matching singular mesh asset, then **Use for selected field**. The prefab
 stores the asset name as an ordinary checked override. Nested instances use
 their composed position, rotation and scale in the preview.
@@ -147,36 +254,45 @@ expressions are counted as omitted in the viewport footer; inspect their text.
 **Models** opens the project's static mesh asset browser, including collection
 items. Right drag orbits, the wheel zooms, **Frame model** resets the zoom and
 **Lit**/**Unlit** switches preview shading. Model files and glTF side buffers
-refresh when their filesystem metadata changes. Skinned-model previews and
+refresh when their filesystem metadata changes. With a singular mesh selected,
+**Place as Component.field** adds a named child with `Transform` and a compatible
+asset-reference component beneath the selection. Use Rename to change its
+generated name. Skinned-model previews and
 assigning collection items as persistent references are later work.
 
-**Save** / **Ctrl+S** updates the text file. **Undo** / **Ctrl+Z** and **Redo** /
-**Ctrl+Y** keep up to 64 edits. Source edits preserve surrounding comments,
-line endings and untouched values. Syntax-invalid edits are rejected so the
-inspector remains editable; type/reference errors remain visible and block Save.
+**File > Save** / **Ctrl+S** updates the text file. **Edit > Undo** / **Ctrl+Z**
+and **Edit > Redo** / **Ctrl+Y** keep up to 64 edits; Save, Undo and Redo are also
+on the toolbar. Source edits preserve surrounding comments, line endings and
+untouched values. Syntax-invalid edits are rejected so the
+inspector remains editable. Semantic errors, including type/reference errors
+and errors in other project files, remain visible and may be saved. Syntax errors
+in the current document and outside conflicts block Save. Play requires a clean
+compiler check.
 The compiler checks the whole project's scripts and prefabs as code changes,
 including `[SceneRequired]` references. This is front-end and asset-metadata
 validation; normal game builds still validate generated C and complete assets.
 
 Outside changes reload automatically while the document is clean. With unsaved
 edits, the draft stays in memory and Save refuses to overwrite changed source.
-**Reload** asks before discarding edits. Unsaved applied edits are also kept in
+**File > Reload** asks before discarding unsaved edits and reading the file again.
+Unsaved applied edits are also kept in
 `<project>/.tide/editor/`; opening the file again offers recovery. Recovery retains
 the original source baseline, so a newer outside edit still causes a conflict.
 These recovery files are local cache files, not authored project content.
 
-The first app opens existing `.tprefab` files and uses the folder/package project
+The app uses the folder/package project
 context described under [`tide open`](cli.md#open). It supports Tide expression
 fields rather than a full text editor: long expressions and source syntax errors
-are edited in your usual code editor. Entity rename/reparent authoring and
-new-file creation remain future work.
+are edited in your usual code editor. It does not merge conflicting outside edits
+or perform refactors that require changing another document.
 
 ## VS Code, Cursor, VSCodium and Windsurf
 
 VS Code and JetBrains recognize `.tprefab` files as Tide. They use the same
 game/package context as scripts, report invalid authored components and references,
 and include prefab files when renaming components, fields and named prefabs.
-Authored entity names and paths currently need manual text edits. See
+Language-server rename/completion for authored entity names and paths remains
+limited; use the native hierarchy's checked operations within one document. See
 [Authored prefabs](../game/scenes.md#authored-prefabs) for the text format.
 
 **Tide: Open Prefab Editor** in the Explorer context menu or above an open
@@ -227,9 +343,34 @@ Starting a replacement waits for the preceding run's processes to stop. Closing 
 
 On the web, each reload says what it did in the page's console: **Tide: Game Developer Tools** shows it.
 
+### Debugging
+
+Breakpoints go in `.tide` files, and the **Tide** debug configurations (**Run and Debug**, then add a configuration) stop at them, with your values shown as Tide's: **Attach to Unity (Tide)**, **Debug Tide game**, which builds the game to debug and starts it, and **Attach to Tide game (tide run)**, for the game **Tide: Run** plays. They use Microsoft's C/C++ extension on Windows, and LLVM's LLDB DAP or CodeLLDB on macOS and Linux. In Restricted Mode they don't start. See [Debugging](debugging.md).
+
 ## JetBrains IDEs
 
-CLion, Rider, IntelliJ and the others, 2024.2 or later: install the Tide plugin from **Settings > Plugins > Marketplace**. It brings the LSP4IJ plugin it needs.
+CLion, Rider, IntelliJ and the others, 2024.2 or later: Tide's installer adds
+the bundled plugin to existing IDE profiles. It includes LSP4IJ when that
+dependency isn't installed, without a Marketplace download. `tide upgrade`
+updates Tide in profiles that already have it, using the plugin from the same
+Tide release.
+
+For an IDE installed later, open it once to create its profile, then run:
+
+```sh
+tide editors
+```
+
+Restart the IDE after installation or an upgrade. If it holds the plugin's
+files open, close it and run `tide editors` again. Other plugins, settings and
+an existing LSP4IJ installation are preserved. A disabled Tide plugin stays
+disabled.
+
+Discovery uses the standard JetBrains profile locations on Windows, macOS
+and Linux (including Linux's `XDG_CONFIG_HOME` and `XDG_DATA_HOME`). Custom
+`idea.config.path` or `idea.plugins.path` locations need manual installation.
+You can also install Tide through **Settings > Plugins > Marketplace**;
+Marketplace updates follow its chosen channel independently of your CLI.
 
 An existing `.tprefab` offers **Open Tide Prefab Editor** in its project/editor
 context menu. It saves that prefab and launches the installed `tide` in the
@@ -261,6 +402,10 @@ Right-click a `.tide` file and pick **Run**, or press Ctrl+Shift+F10 in it (Ctrl
 - **mygame (Android)** plays it on the Android phone or emulator that's connected, as `tide run --android` does (see [Android](cli.md#android)).
 
 They're Tide run configurations, which you can also make and edit under **Run > Edit Configurations**, where **Play it** picks among the three. They use `tide run`. `tide`'s output is in the Run tool window, where an error's place links to the file: saving a file reloads the game (on Android, builds it again and starts it over), and typing `r` and Enter there starts it over. The first run on Android may ask to download Android's tools from Google: type `y` and Enter there to accept. A run configuration can run another `tide`.
+
+### Debugging
+
+In CLion, breakpoints go in `.tide` files. **Run > Debug Tide Game** (also in a `.tide` file's context menu) plays the game as its run configuration does and attaches the debugger; **Run > Attach to Unity (Tide)** attaches to the Unity editor running the project. Both stop at your breakpoints and show your values as Tide's. On Windows, put the **Visual Studio** toolchain first, whose debugger reads the game's `.pdb`. See [Debugging](debugging.md).
 
 ## Emacs
 

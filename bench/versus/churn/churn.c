@@ -117,7 +117,7 @@ static void fly(void *context, const uint32_t piece)
 static void tick(void *state, const tide_jobs *jobs)
 {
     churn *c = state;
-    // Threads pay from about a million (on a 12-core Ryzen 9 7900X)
+    // Threads pay from about a million bullets
     fly_job j = {c, versus_pieces(jobs, c->count, 1000000u)};
     uint32_t count;
     if (j.pieces == 1u) {

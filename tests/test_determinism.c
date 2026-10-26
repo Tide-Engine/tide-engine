@@ -1,6 +1,6 @@
 #include "tide_test.h"
 
-// Guards the float rules in AGENTS.md. A failure here means a compiler flag is wrong.
+// Guards the float rules (no FMA contraction, denormals kept). A failure here means a compiler flag is wrong.
 
 TIDE_TEST(fp_no_fma_contraction)
 {
@@ -20,7 +20,7 @@ TIDE_TEST(fp_no_fma_contraction)
 }
 
 // Denormals must not be flushed to zero on any platform: WebAssembly can't
-// flush them, so everyone keeps them (see AGENTS.md).
+// flush them, so everyone keeps them.
 TIDE_TEST(fp_denormals_are_kept)
 {
     const volatile float smallest_normal = 0x1p-126f;

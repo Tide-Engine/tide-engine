@@ -11,6 +11,7 @@
 
 #include "tide/png.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -189,7 +190,10 @@ static bool codes(inflater *f, const huff *lit, const huff *dist)
 
 static bool stored(inflater *f)
 {
-    f->bits = 0; // To a whole byte
+    // To a whole byte: the rest of this one goes, and whole bytes the bit
+    // buffer took ahead (a code's lookup takes up to FAST_BITS) go back
+    f->at -= f->bit_count / 8u;
+    f->bits = 0;
     f->bit_count = 0;
     if (f->size - f->at < 4) return false;
     const uint32_t n = f->in[f->at] | (uint32_t)f->in[f->at + 1] << 8;
@@ -296,16 +300,20 @@ bool tide_inflate(const uint8_t *in, const size_t size, const tide_inflate_fn ou
 // ---------------------------------------------------------------------------
 // PNG (RFC 2083)
 
-static uint32_t crc32_of(const uint8_t *data, const size_t size)
+// CRC-32's table, made for each read: one made once and shared would be
+// written by threads that read at once (grid.Decode in systems that run side
+// by side), and one could use entries another hadn't written yet.
+static void crc32_table(uint32_t table[256])
 {
-    static uint32_t table[256];
-    if (!table[1]) {
-        for (uint32_t i = 0; i < 256u; i++) {
-            uint32_t c = i;
-            for (int bit = 0; bit < 8; bit++) c = c & 1u ? 0xEDB88320u ^ (c >> 1) : c >> 1;
-            table[i] = c;
-        }
+    for (uint32_t i = 0; i < 256u; i++) {
+        uint32_t c = i;
+        for (int bit = 0; bit < 8; bit++) c = c & 1u ? 0xEDB88320u ^ (c >> 1) : c >> 1;
+        table[i] = c;
     }
+}
+
+static uint32_t crc32_of(const uint32_t table[256], const uint8_t *data, const size_t size)
+{
     uint32_t crc = 0xFFFFFFFFu;
     for (size_t i = 0; i < size; i++) crc = table[(crc ^ data[i]) & 0xFFu] ^ (crc >> 8);
     return ~crc;
@@ -341,8 +349,11 @@ typedef struct reader {
     bool done;
     // zlib's checksum of the inflated bytes
     uint32_t adler_a, adler_b;
+    size_t extra; // Inflated bytes past the last scanline (TIDE_PNG_MAX_EXTRA_BYTES)
+    char *why;    // Where a limit says why it refused, if anywhere
     tide_png_row_fn row;
     void *user;
+    uint32_t crc[256];
 } reader;
 
 static bool begin_pass(reader *r)
@@ -467,7 +478,8 @@ static bool row_done(reader *r)
     return true;
 }
 
-// Inflated bytes, into scanlines. Bytes past the last scanline are ignored.
+// Inflated bytes, into scanlines. Bytes past the last scanline are ignored,
+// up to TIDE_PNG_MAX_EXTRA_BYTES of them: more stops the inflate.
 static bool inflated(void *user, const uint8_t *bytes, size_t count)
 {
     reader *r = user;
@@ -501,6 +513,14 @@ static bool inflated(void *user, const uint8_t *bytes, size_t count)
         count -= n;
         if (r->row_fill == r->row_bytes + 1u && !row_done(r)) return false;
     }
+    if (count > TIDE_PNG_MAX_EXTRA_BYTES - r->extra) { // The picture's done: what's left is extra
+        if (r->why) {
+            snprintf(r->why, TIDE_PNG_WHY, "its compressed data goes on for more than %u MiB past its last row (TIDE_PNG_MAX_EXTRA_BYTES)",
+                     TIDE_PNG_MAX_EXTRA_BYTES >> 20);
+        }
+        return false;
+    }
+    r->extra += count;
     return true;
 }
 
@@ -511,7 +531,7 @@ typedef struct chunk {
 } chunk;
 
 // The next chunk, its check verified: false at the end or for anything wrong.
-static bool next_chunk(const uint8_t *bytes, const size_t size, size_t *at, chunk *c)
+static bool next_chunk(const uint32_t crc[256], const uint8_t *bytes, const size_t size, size_t *at, chunk *c)
 {
     if (size - *at < 12) return false;
     const uint8_t *p = bytes + *at;
@@ -520,7 +540,7 @@ static bool next_chunk(const uint8_t *bytes, const size_t size, size_t *at, chun
     memcpy(c->type, p + 4, 4);
     c->type[4] = 0;
     c->data = p + 8;
-    if (crc32_of(p + 4, 4u + c->size) != get32(p + 8 + c->size)) return false;
+    if (crc32_of(crc, p + 4, 4u + c->size) != get32(p + 8 + c->size)) return false;
     *at += 12u + c->size;
     return true;
 }
@@ -532,7 +552,14 @@ static bool read_header(reader *r, const chunk *c)
     r->height = get32(c->data + 4);
     r->depth = c->data[8];
     r->color = c->data[9];
-    if (!r->width || !r->height || r->width > TIDE_PNG_MAX_SIDE || r->height > TIDE_PNG_MAX_SIDE) return false;
+    if (!r->width || !r->height) return false;
+    if (r->width > TIDE_PNG_MAX_SIDE || r->height > TIDE_PNG_MAX_SIDE) {
+        if (r->why) {
+            snprintf(r->why, TIDE_PNG_WHY, "it's %u by %u pixels, more than %u each way (TIDE_PNG_MAX_SIDE)", r->width, r->height,
+                     TIDE_PNG_MAX_SIDE);
+        }
+        return false;
+    }
     if (c->data[10] != 0 || c->data[11] != 0 || c->data[12] > 1) return false; // Compression, filter, interlace methods
     r->interlaced = c->data[12] == 1;
     switch (r->color) {
@@ -589,19 +616,22 @@ static bool read_transparency(reader *r, const chunk *c)
 }
 
 bool tide_png_decode_rows(const uint8_t *bytes, const size_t size, const tide_png_began_fn began, const tide_png_row_fn row,
-                          void *user)
+                          void *user, char *why)
 {
+    if (why) why[0] = 0;
     static const uint8_t signature[8] = {0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'};
     if (!bytes || size < 8 + 12 || memcmp(bytes, signature, 8) != 0) return false;
     reader *r = tide_alloc_zeroed(1, sizeof *r);
     r->row = row;
     r->user = user;
+    r->why = why;
+    crc32_table(r->crc);
     bool ok = false;
     uint8_t *idat = NULL;
     size_t at = 8, idat_size = 0, idat_capacity = 0;
     chunk c;
     bool header = false, ended = false, seen_idat = false;
-    while (!ended && next_chunk(bytes, size, &at, &c)) {
+    while (!ended && next_chunk(r->crc, bytes, size, &at, &c)) {
         if (!header) {
             if (strcmp(c.type, "IHDR") != 0 || !read_header(r, &c)) goto done;
             header = true;
@@ -615,7 +645,10 @@ bool tide_png_decode_rows(const uint8_t *bytes, const size_t size, const tide_pn
             seen_idat = true;
             if (c.size > idat_capacity - idat_size) {
                 size_t capacity = idat_capacity ? idat_capacity : 4096u;
-                while (capacity - idat_size < c.size) capacity *= 2u;
+                // The chunks' data is never more than the file, so the file's
+                // size is room enough, and doubling stops there rather than
+                // wrapping where a size_t is 32 bits
+                while (capacity - idat_size < c.size) capacity = capacity > size / 2u ? size : capacity * 2u;
                 idat = tide_realloc(idat, idat_capacity, capacity);
                 idat_capacity = capacity;
             }
@@ -683,11 +716,11 @@ static bool image_row(void *user, const tide_png_row *row)
     return true;
 }
 
-bool tide_png_decode(const uint8_t *bytes, const size_t size, tide_png_image *out)
+bool tide_png_decode(const uint8_t *bytes, const size_t size, tide_png_image *out, char *why)
 {
     *out = (tide_png_image){0};
     image_rows rows = {out};
-    if (tide_png_decode_rows(bytes, size, image_began, image_row, &rows)) return true;
+    if (tide_png_decode_rows(bytes, size, image_began, image_row, &rows, why)) return true;
     free(out->pixels);
     *out = (tide_png_image){0};
     return false;

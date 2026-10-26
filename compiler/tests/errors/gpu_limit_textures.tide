@@ -1,4 +1,4 @@
-// expect: this draw samples 9 textures, and a draw takes 8
+// expect: this draw samples 13 textures, and a draw takes 12
 scene Main { }
 
 struct V
@@ -30,6 +30,10 @@ local singleton Models
     Grid2<Color> page6 = Grid2(2, 2);
     Grid2<Color> page7 = Grid2(2, 2);
     Grid2<Color> page8 = Grid2(2, 2);
+    Grid2<Color> page9 = Grid2(2, 2);
+    Grid2<Color> page10 = Grid2(2, 2);
+    Grid2<Color> page11 = Grid2(2, 2);
+    Grid2<Color> page12 = Grid2(2, 2);
 }
 
 event(Spawned) Setup(with Main)
@@ -39,7 +43,7 @@ event(Spawned) Setup(with Main)
 
 frag Shade(V vertex, out Color color, Models models)
 {
-    color = models.page0.Sample(vertex.uv) * models.page1.Sample(vertex.uv) * models.page2.Sample(vertex.uv) * models.page3.Sample(vertex.uv) * models.page4.Sample(vertex.uv) * models.page5.Sample(vertex.uv) * models.page6.Sample(vertex.uv) * models.page7.Sample(vertex.uv) * models.page8.Sample(vertex.uv);
+    color = models.page0.Sample(vertex.uv) * models.page1.Sample(vertex.uv) * models.page2.Sample(vertex.uv) * models.page3.Sample(vertex.uv) * models.page4.Sample(vertex.uv) * models.page5.Sample(vertex.uv) * models.page6.Sample(vertex.uv) * models.page7.Sample(vertex.uv) * models.page8.Sample(vertex.uv) * models.page9.Sample(vertex.uv) * models.page10.Sample(vertex.uv) * models.page11.Sample(vertex.uv) * models.page12.Sample(vertex.uv);
 }
 
 view Show(Box box, Models models)

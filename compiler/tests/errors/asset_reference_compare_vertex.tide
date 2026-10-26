@@ -1,0 +1,5 @@
+// expect: operator '==' can't be used with Asset<Mesh<Vertex3>> and Asset<Mesh<Other>>
+struct Other { float3 position; }
+component Art { Asset<Mesh<Vertex3>> a; Asset<Mesh<Other>> b; }
+scene Main;
+system Compare(Art art) { Debug.Log(art.a == art.b); }

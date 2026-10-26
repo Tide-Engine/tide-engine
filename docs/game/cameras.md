@@ -10,7 +10,7 @@ A view sets its cameras with `Draw.SetCamera`: `(center, size)` is the 2D one (s
 
 The conversion helpers use the currently selected camera, including a camera set earlier in the same frame. Their screen coordinates are logical pixels from the top left, with `y` down, as `Draw.Screen` and the GUI's are.
 
-`Screen.width` and `Screen.height` are the window's size in those pixels. Both are floats, so `Screen.width / Screen.height` is the screen's shape with nothing rounded away. Views, and the functions they call, read them.
+`Screen.width` and `Screen.height` are the window's size in those pixels. Both are floats, so `Screen.width / Screen.height` is the screen's shape with nothing rounded away. Views, and the functions they call, read them. `Screen.scale` is a read-only `float2`: physical pixels per logical pixel on x and y. It reflects the current window, independently of the selected render target. A custom host that supplies no scale reports `(1, 1)`; this metadata does not report whether a target lost its contents.
 
 | Function | Result |
 |---|---|

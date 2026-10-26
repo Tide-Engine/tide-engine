@@ -3,13 +3,10 @@
 #include "game.h"
 #include "tide_test.h"
 
-// Queries in views and local handlers (`query (Body body, with Fighter)
-// fighters`): what a machine's local code goes through of the match, as it
-// sees it. A view's rows are blended between two ticks like its own
-// parameters, or come from the world the server confirmed; a local handler's
-// are as the tick that sent its event left them. On a C host with one world,
-// with two worlds that disagree, and on a client that predicts wrong for a
-// while.
+// Queries in views and local handlers (`query (Body body, with Fighter) fighters`). A view's
+// rows are blended between two ticks like its parameters, or come from the server-confirmed
+// world; a local handler's are as the tick that sent its event left them. Covers a C host with
+// one world, two worlds that disagree, and a client that predicts wrong for a while.
 
 static tide_draw_list draw;
 static tide_gui gui;

@@ -1,5 +1,5 @@
 ---
-description: "Add the bundled Rooms package to a Tide game for Play, Host and Join menus, room codes, volume settings and customizable pages."
+description: "Add the bundled Rooms package to a Tide game for Play, Host and Join menus, room codes and invite links, volume settings and customizable pages."
 ---
 
 # Rooms
@@ -14,7 +14,9 @@ A game needs all of the above before two people can play it, and a menu to reach
 rooms
 ```
 
-The game then opens on a title page, with its name over **Play**, **Host a room** and **Join a room**; a page to type a friend's code into, which Enter joins from; and the room's page, with the code to copy, who's in it, **Resume** and **Leave the room**. In the match, **Menu** in the bottom left corner, or Escape, brings the room's page back. It's drawn over a live match: `Main` stays the match's, so the game runs behind the title, and **Play** closes the menu. A game started with `--host` or `--join`, or a page opened with `?host` or `?join=`, has no menu in its way. A match that ends, or a room that can't be joined, puts the machine back on the title with a line that says why.
+The game then opens on a title page, with its name over **Play**, **Host a room** and **Join a room**; a page to type a friend's code into, which Enter joins from; and the room's page, with its code and an invite to copy (on the web, **Copy the invite link**: a link to the game's page that joins the room when a friend opens it; elsewhere, **Copy the code**, for a friend to type in), who's in it, **Resume** and **Leave the room**. In the match, **Menu** in the bottom left corner, or Escape, brings the room's page back. It's drawn over a live match: `Main` stays the match's, so the game runs behind the title, and **Play** closes the menu. A game started with `--host` or `--join`, or a page opened with `?host` or `?join=`, has no menu in its way. A match that ends, or a room that can't be joined, puts the machine back on the title with a line that says why.
+
+On the web, copying the invite stays disabled until the relay confirms the room is registered. The code can already be visible while the room is opening.
 
 **Settings** on the title or room's page opens a **Volume** slider, from mute to full volume, for this machine's audio. Changes apply at once; **Back** or Escape returns to the page that opened it. The local `Lobby.volume` goes from `0` to `1` and starts at `1`. It stays through starting, joining and leaving matches while the game is open, and resets to full volume when the game restarts. The settings page has `Lobby.page == Page.Settings`, so the same HUD and input checks below cover it.
 
@@ -45,7 +47,7 @@ A game can tell the room's page about its match, each frame, from a view that wr
 
 ## Pages of your own
 
-Each page is a function too, which a game overrides to draw that page its own way while the others stay the package's: `Rooms.TitlePage(session, lobby)`, `Rooms.JoinPage(session, lobby)`, `Rooms.RoomPage(session, room, lobby)` (`room` is the room's code, `session.room`, which a function is handed) and `Rooms.SettingsPage(lobby)`. What a page's buttons do is a call each, so a page of the game's keeps the menu's way through its pages:
+Each page is a function too, which a game overrides to draw that page its own way while the others stay the package's: `Rooms.TitlePage(session, lobby)`, `Rooms.JoinPage(session, lobby)`, `Rooms.RoomPage(session, room, invite, lobby)` (`room` is the room's code, `session.room`, and `invite` what others open to join it, `session.invite`, which a function is handed) and `Rooms.SettingsPage(lobby)`. What a page's buttons do is a call each, so a page of the game's keeps the menu's way through its pages:
 
 ```csharp
 using Rooms;
@@ -69,6 +71,7 @@ override void Rooms.TitlePage(Session session, mut Lobby lobby)
 | `Join(lobby, code)` | Asks to join the room with that code |
 | `LeaveJoin(session, lobby)` | From the Join page to the title, out of a match that was being joined |
 | `ShowSettings(lobby)`, `LeaveSettings(lobby)` | To the settings, and back to the page they came from |
+| `CopyInvite(lobby, invite)` | Copies the room's invite: on the web a link that joins it, elsewhere its code |
 | `CopyCode(lobby, room)` | Copies the room's code |
 | `Leave(session, lobby)` | Out of the room, to the title |
 

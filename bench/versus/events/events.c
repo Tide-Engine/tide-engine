@@ -77,3 +77,68 @@ static void destroy(void *state)
 }
 
 const versus_way events_c = {"C", make, tick, digest, destroy};
+
+// The same as an event a handler takes at the end of the tick, as Tide's are:
+// each hit recorded (its target and damage, 8 bytes), then all of them taken
+// in the order they were sent. What deferring costs C, written as tightly as
+// C allows; the result is the same, as nothing reads health in between.
+typedef struct hit {
+    uint32_t target;
+    int32_t damage;
+} hit;
+
+typedef struct deferred {
+    events e;
+    hit *hits;
+} deferred;
+
+static void *make_deferred(const versus_flag *flags)
+{
+    deferred *d = tide_alloc_zeroed(1, sizeof *d);
+    d->e.targets = flags[0].value;
+    d->e.turrets = flags[1].value;
+    return d;
+}
+
+// One thread: taking the hits on threads, each piece the targets in a range of
+// its own going through every hit, was slower than one thread, as every thread
+// reads every hit and branches on where its target is.
+static void tick_deferred(void *state, const tide_jobs *jobs)
+{
+    (void)jobs;
+    deferred *d = state;
+    events *e = &d->e;
+    if (!e->ready) {
+        setup(e);
+        d->hits = tide_alloc(e->turrets * sizeof *d->hits);
+        e->ready = true;
+        return;
+    }
+    hit *restrict hits = d->hits;
+    const uint32_t *restrict aim = e->aim;
+    const int32_t *restrict damage = e->damage;
+    for (uint32_t i = 0; i < e->turrets; i++) hits[i] = (hit){aim[i], damage[i]};
+    int32_t *restrict health = e->health;
+    for (uint32_t i = 0; i < e->turrets; i++) {
+        int32_t *const h = &health[hits[i].target];
+        *h -= hits[i].damage;
+        if (*h <= 0) *h += 1000;
+    }
+}
+
+static uint64_t digest_deferred(const void *state)
+{
+    return digest(&((const deferred *)state)->e);
+}
+
+static void destroy_deferred(void *state)
+{
+    deferred *d = state;
+    free(d->e.health);
+    free(d->e.aim);
+    free(d->e.damage);
+    free(d->hits);
+    free(d);
+}
+
+const versus_way events_c_deferred = {"C, deferred", make_deferred, tick_deferred, digest_deferred, destroy_deferred};

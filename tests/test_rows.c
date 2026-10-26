@@ -68,7 +68,6 @@ static place place_at(const tide_table *t, const uint32_t row)
     return p;
 }
 
-// How many of a chunk's pages the table and its snapshot no longer share.
 static uint32_t apart(tide_table *t, tide_table *snapshot, const uint32_t chunk)
 {
     uint32_t count = 0;
@@ -84,7 +83,6 @@ TIDE_TEST(rows_are_read_where_they_are)
     tide_rows rows;
     tide_rows_begin(&rows, &t, &columns, 1, 0, 16, true, reads, 3, NULL, "Read");
     TIDE_CHECK(tide_rows_count(&rows) == 16);
-    // The arrays are the lanes themselves: nothing is gathered
     const float *x = tide_rows_floats(&rows, 0, offsetof(place, x));
     const float *y = tide_rows_floats(&rows, 0, offsetof(place, y));
     const int32_t *hits = tide_rows_ints(&rows, 0, offsetof(place, hits));
@@ -92,14 +90,12 @@ TIDE_TEST(rows_are_read_where_they_are)
     TIDE_CHECK((const void *)y == tide_table_column(&t, &columns, 1, PLACE + 1));
     TIDE_CHECK((const void *)hits == tide_table_column(&t, &columns, 1, PLACE + 2));
     TIDE_CHECK(x[0] == 16.0f && y[0] == -16.0f && hits[0] == 16 && x[15] == 31.0f && hits[15] == 31);
-    // A long is two lanes, its low half first
     const int32_t *low = tide_rows_ints(&rows, 1, offsetof(label, id));
     const int32_t *high = tide_rows_ints(&rows, 1, offsetof(label, id) + 4);
     TIDE_CHECK(low[3] == 1019 && high[3] == 0);
     TIDE_CHECK(tide_rows_floats(&rows, 1, offsetof(label, weight))[4] == 10.0f);
     const tide_entity *who = tide_rows_entities(&rows);
     TIDE_CHECK(who == tide_table_column(&t, &columns, 1, 0) && who[2].index == 18);
-    // A row at a time: any field, and a component that isn't in lanes of 4 bytes
     label l;
     tide_rows_get(&rows, 1, 5, &l);
     TIDE_CHECK(l.id == 1021 && l.weight == 10.5f && !l.lit);
@@ -108,7 +104,6 @@ TIDE_TEST(rows_are_read_where_they_are)
     TIDE_CHECK(w.a == 21 && w.b == 42 && w.c == 63);
     tide_rows_end(&rows);
 
-    // A piece of a chunk: its rows, from its first
     tide_rows_begin(&rows, &t, &columns, 2, 3, 4, false, reads, 3, NULL, "Read");
     TIDE_CHECK(tide_rows_count(&rows) == 4);
     TIDE_CHECK(tide_rows_floats(&rows, 0, offsetof(place, x))[0] == 35.0f && tide_rows_entities(&rows)[3].index == 38);
@@ -120,8 +115,6 @@ TIDE_TEST(rows_are_read_where_they_are)
     tide_entities_free(&entities);
 }
 
-// A system that asks for nothing to write leaves every page shared with the
-// snapshot, and asking and writing nothing new does too.
 TIDE_TEST(rows_written_as_they_were_stay_shared)
 {
     tide_table t = {0};
@@ -134,22 +127,22 @@ TIDE_TEST(rows_written_as_they_were_stay_shared)
     tide_rows rows;
 
     tide_rows_begin(&rows, &t, &columns, 1, 0, 16, true, writes, 3, held, "Write");
-    TIDE_CHECK(tide_rows_floats(&rows, 0, offsetof(place, x))[1] == 17.0f); // Reading a component it could write
+    TIDE_CHECK(tide_rows_floats(&rows, 0, offsetof(place, x))[1] == 17.0f);
     tide_rows_end(&rows);
     TIDE_CHECK(apart(&t, &snapshot, 1) == 0);
 
     tide_rows_begin(&rows, &t, &columns, 1, 0, 16, true, writes, 3, held, "Write");
     float *x = tide_rows_floats_mut(&rows, 0, offsetof(place, x));
-    TIDE_CHECK(*page(&t, 1, PLACE) != *page(&snapshot, 1, PLACE)); // A page of its own to write, with the rows in it
-    TIDE_CHECK(apart(&t, &snapshot, 1) == 1);                      // ...and only that lane's
+    TIDE_CHECK(*page(&t, 1, PLACE) != *page(&snapshot, 1, PLACE));
+    TIDE_CHECK(apart(&t, &snapshot, 1) == 1);
     TIDE_CHECK(x[0] == 16.0f && x[15] == 31.0f);
     for (uint32_t i = 0; i < 16; i++) x[i] = (float)(16 + i);
     place p;
     tide_rows_get(&rows, 0, 2, &p);
-    tide_rows_set(&rows, 0, 2, &p); // As it is: no lane is asked for
+    tide_rows_set(&rows, 0, 2, &p);
     TIDE_CHECK(apart(&t, &snapshot, 1) == 1);
     tide_rows_end(&rows);
-    TIDE_CHECK(apart(&t, &snapshot, 1) == 0); // No row changed: the snapshot's page again
+    TIDE_CHECK(apart(&t, &snapshot, 1) == 0);
     TIDE_CHECK((*page(&t, 1, PLACE))->hashed != UINT32_MAX);
     TIDE_CHECK(tide_table_hash(1, &t, &columns) == before);
 
@@ -158,7 +151,6 @@ TIDE_TEST(rows_written_as_they_were_stay_shared)
     tide_entities_free(&entities);
 }
 
-// Writing some lanes makes those pages the table's own, and no other.
 TIDE_TEST(rows_written_make_their_lanes_their_own)
 {
     tide_table t = {0};
@@ -173,7 +165,6 @@ TIDE_TEST(rows_written_make_their_lanes_their_own)
     tide_rows_begin(&rows, &t, &columns, 1, 0, 16, true, writes, 3, held, "Write");
     int32_t *hits = tide_rows_ints_mut(&rows, 0, offsetof(place, hits));
     hits[4] += 100;
-    // What's written is what's read from then on, by the array and a row at a time
     TIDE_CHECK(tide_rows_ints(&rows, 0, offsetof(place, hits))[4] == 120);
     place p;
     tide_rows_get(&rows, 0, 4, &p);
@@ -184,7 +175,6 @@ TIDE_TEST(rows_written_make_their_lanes_their_own)
     TIDE_CHECK(place_at(&t, 20).hits == 120 && place_at(&t, 21).hits == 21 && place_at(&snapshot, 20).hits == 20);
     TIDE_CHECK(tide_table_hash(1, &t, &columns) != before && tide_table_hash(1, &snapshot, &columns) == before);
 
-    // A row put back with one field changed: that field's lane, and no other
     tide_rows_begin(&rows, &t, &columns, 0, 0, 16, true, writes, 3, held, "Write");
     tide_rows_get(&rows, 0, 7, &p);
     p.y = 99.0f;
@@ -200,7 +190,6 @@ TIDE_TEST(rows_written_make_their_lanes_their_own)
     tide_table_gather(&t, &columns, 7, NARROW, 3, 2, &w);
     TIDE_CHECK(w.a == 7 && w.b == 14 && w.c == 5);
 
-    // A page the table alone has is written where it is, and hashed again
     const uint64_t changed = tide_table_hash(1, &t, &columns);
     const tide_page *own = *page(&t, 1, PLACE + 2);
     tide_rows_begin(&rows, &t, &columns, 1, 0, 16, true, writes, 3, held, "Write");
@@ -216,16 +205,13 @@ TIDE_TEST(rows_written_make_their_lanes_their_own)
     tide_entities_free(&entities);
 }
 
-// A page that's kept is zeros past its rows, whatever memory it was made of,
-// as every page of a table is.
 TIDE_TEST(rows_leave_zeros_past_the_rows)
 {
     tide_table t = {0};
     tide_table snapshot = {0};
     tide_entities entities = {0};
-    fill(&t, &entities, 40); // The last chunk has 8 rows of its 16
+    fill(&t, &entities, 40);
     tide_table_copy(&snapshot, &t, &columns);
-    // The page the run takes next: one that was let go of, with something in it
     tide_page *dirty = tide_page_take((*page(&t, 2, PLACE))->size);
     dirty->size = (*page(&t, 2, PLACE))->size;
     memset(tide_page_data(dirty), 0xff, dirty->size);
@@ -241,7 +227,6 @@ TIDE_TEST(rows_leave_zeros_past_the_rows)
     bool zeros = true;
     for (uint32_t i = 8; i < 16; i++) zeros &= x[i] == 0.0f;
     TIDE_CHECK(zeros);
-    // A row added there starts from zeros, as rows do
     const uint32_t row = tide_table_add(&t, &columns);
     TIDE_CHECK(row == 40 && place_at(&t, 40).x == 0.0f);
 
@@ -250,8 +235,6 @@ TIDE_TEST(rows_leave_zeros_past_the_rows)
     tide_entities_free(&entities);
 }
 
-// The pieces of a chunk write the pages the table was given of its own before
-// they started, each its rows.
 TIDE_TEST(rows_in_pieces_write_in_place)
 {
     tide_table t = {0};
@@ -259,7 +242,7 @@ TIDE_TEST(rows_in_pieces_write_in_place)
     tide_entities entities = {0};
     fill(&t, &entities, 32);
     tide_table_copy(&snapshot, &t, &columns);
-    for (uint32_t k = 0; k < 3; k++) tide_table_column_mut(&t, &columns, 1, PLACE + k); // As a system's `own` does
+    for (uint32_t k = 0; k < 3; k++) tide_table_column_mut(&t, &columns, 1, PLACE + k);
     const tide_page *own = *page(&t, 1, PLACE);
     tide_page *held[2][HELD];
     tide_rows piece[2];
@@ -280,7 +263,6 @@ TIDE_TEST(rows_in_pieces_write_in_place)
     tide_entities_free(&entities);
 }
 
-// A system that runs once a tick has a run of no rows.
 TIDE_TEST(rows_of_a_system_that_runs_once_are_none)
 {
     tide_rows rows;

@@ -25,10 +25,25 @@
 #define GLSL_VERSION "#version 330\n"
 #endif
 
+// Two shaders compiled and linked, which every pipeline of the same sources
+// shares: OpenGL sets how a draw blends, tests and culls at the draw, so
+// pipelines that differ only in those are one program, compiled once. A
+// shader's pipeline made before it's drawn (tide_platform_prewarm) has every
+// other of its pipelines compiled.
+typedef struct gl_program {
+    uint64_t key;        // FNV-1a of its sources, and of how many textures it samples
+    uint32_t refs;       // The pipelines that draw with it: none, a place that's free
+    GLuint program;
+    GLint target_height; // tide_gpu_height's place: 0 on the window, its height when drawing top-first into a texture
+    // Being made in the background (gl_background): its shaders, compiling and linking while frames go on, checked
+    // and let go of once the browser says it's done (gl_pipeline_ready). 0 once it's made
+    GLuint vertex, fragment;
+} gl_program;
+
 typedef struct gl_pipeline {
-    GLuint program, vao;         // No program: a place that's free
-    tide_gpu_pipeline_desc desc; // Its slots and attributes, how it blends and tests depth and stencil, and which side it draws
-    GLint target_height;         // 0 on the window, its height when drawing top-first into a texture
+    uint32_t program;            // 1 + its program's place (gl_program); 0: a place that's free
+    GLuint vao;
+    tide_gpu_pipeline_desc desc;
 } gl_pipeline;
 
 typedef struct gl_target {
@@ -65,6 +80,8 @@ typedef struct gl_texture {
 
 static gl_pipeline *pipelines; // A pipeline's id is 1 + its place, and a target's
 static uint32_t pipeline_count;
+static gl_program *programs;
+static uint32_t program_count;
 static gl_target *targets;
 static uint32_t target_count;
 static gl_buffer *buffers; // By name
@@ -361,7 +378,9 @@ static tide_gpu_id gl_cube(const tide_gpu_color color, const int size, const voi
     return texture;
 }
 
-static GLuint compile(const char *name, const GLenum kind, const char *source)
+// A shader begun: its source given and its compiling started, which goes on in the driver; nothing waits for it till
+// it's checked (compiled).
+static GLuint compile_begin(const GLenum kind, const char *source)
 {
     const GLuint shader = glCreateShader(kind);
     // OpenGL rasterizes from the bottom. A target's texture must instead have
@@ -399,6 +418,12 @@ static GLuint compile(const char *name, const GLenum kind, const char *source)
     glShaderSource(shader, 4, sources, NULL);
     free(fragment);
     glCompileShader(shader);
+    return shader;
+}
+
+// Whether a shader begun compiled, which waits for it to.
+static void compiled(const char *name, const GLenum kind, const GLuint shader)
+{
     GLint ok = 0;
     glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
     if (!ok) {
@@ -408,17 +433,20 @@ static GLuint compile(const char *name, const GLenum kind, const char *source)
                 kind == GL_VERTEX_SHADER ? "vertex" : "fragment", name, log);
         abort();
     }
-    return shader;
 }
 
-static tide_gpu_id gl_pipeline_make(const tide_gpu_pipeline_desc *desc)
+// Whether pipelines are made in the background (tide_gpu.background): the web's alone, where the browser compiles
+// in parallel (KHR_parallel_shader_compile); OpenGL on desktop is the fallback where there's no Vulkan, and makes them
+// as they're asked for.
+static bool background;
+
+// A program's shaders checked, which waits for them to be done, and what reads them set up: `desc` is a pipeline's
+// of it, for its name and textures.
+static void gl_program_finish(gl_program *g, const tide_gpu_pipeline_desc *desc)
 {
-    const GLuint vertex = compile(desc->name, GL_VERTEX_SHADER, desc->glsl_vertex);
-    const GLuint fragment = compile(desc->name, GL_FRAGMENT_SHADER, desc->glsl_fragment);
-    const GLuint program = glCreateProgram();
-    glAttachShader(program, vertex);
-    glAttachShader(program, fragment);
-    glLinkProgram(program);
+    const GLuint program = g->program;
+    compiled(desc->name, GL_VERTEX_SHADER, g->vertex);
+    compiled(desc->name, GL_FRAGMENT_SHADER, g->fragment);
     GLint ok = 0;
     glGetProgramiv(program, GL_LINK_STATUS, &ok);
     if (!ok) {
@@ -427,8 +455,9 @@ static tide_gpu_id gl_pipeline_make(const tide_gpu_pipeline_desc *desc)
         fprintf(stderr, "tide: the shaders of %s didn't link:\n%s\n", desc->name, log);
         abort();
     }
-    glDeleteShader(vertex); // The program keeps them
-    glDeleteShader(fragment);
+    glDeleteShader(g->vertex); // The program keeps them
+    glDeleteShader(g->fragment);
+    g->vertex = g->fragment = 0;
     // Its uniforms are in the uniform buffer, and each of its textures in the unit that's its place
     const GLuint block = glGetUniformBlockIndex(program, "uniforms");
     if (block != GL_INVALID_INDEX) glUniformBlockBinding(program, block, 0);
@@ -438,7 +467,50 @@ static tide_gpu_id gl_pipeline_make(const tide_gpu_pipeline_desc *desc)
         snprintf(name, sizeof name, "pixels%u", (unsigned)i);
         glUniform1i(glGetUniformLocation(program, name), (GLint)i); // Nowhere, for one its shaders don't sample
     }
+    g->target_height = glGetUniformLocation(program, "tide_gpu_height");
+    current = NULL; // Another program is in use
+}
 
+static uint64_t fnv1a(uint64_t hash, const void *bytes, const size_t size)
+{
+    for (size_t i = 0; i < size; i++) hash = (hash ^ ((const uint8_t *)bytes)[i]) * 0x100000001B3ull;
+    return hash;
+}
+
+// The program of a pipeline's sources: one that's made or being made, or begun now. 1 + its place.
+static uint32_t program_for(const tide_gpu_pipeline_desc *desc)
+{
+    uint64_t key = fnv1a(0xCBF29CE484222325ull, desc->glsl_vertex, strlen(desc->glsl_vertex) + 1u);
+    key = fnv1a(key, desc->glsl_fragment, strlen(desc->glsl_fragment) + 1u);
+    key = fnv1a(key, &desc->texture_count, sizeof desc->texture_count);
+    uint32_t place = program_count;
+    for (uint32_t i = 0; i < program_count; i++) {
+        if (programs[i].refs && programs[i].key == key) {
+            programs[i].refs++;
+            // One begun in the background, for a pipeline that's to be made before this returns
+            if (!background && programs[i].vertex) gl_program_finish(&programs[i], desc);
+            return i + 1u;
+        }
+        if (!programs[i].refs && place == program_count) place = i;
+    }
+    if (place == program_count) {
+        programs = tide_realloc(programs, program_count * sizeof(gl_program), (program_count + 1u) * sizeof(gl_program));
+        program_count++;
+    }
+    const GLuint vertex = compile_begin(GL_VERTEX_SHADER, desc->glsl_vertex);
+    const GLuint fragment = compile_begin(GL_FRAGMENT_SHADER, desc->glsl_fragment);
+    gl_program *g = &programs[place];
+    *g = (gl_program){.key = key, .refs = 1, .program = glCreateProgram(), .vertex = vertex, .fragment = fragment};
+    glAttachShader(g->program, g->vertex);
+    glAttachShader(g->program, g->fragment);
+    glLinkProgram(g->program);
+    if (!background) gl_program_finish(g, desc);
+    return place + 1u;
+}
+
+static tide_gpu_id gl_pipeline_make(const tide_gpu_pipeline_desc *desc)
+{
+    const uint32_t program = program_for(desc);
     uint32_t place = 0;
     while (place < pipeline_count && pipelines[place].program) place++;
     if (place == pipeline_count) {
@@ -447,8 +519,7 @@ static tide_gpu_id gl_pipeline_make(const tide_gpu_pipeline_desc *desc)
         pipeline_count++;
     }
     gl_pipeline *p = &pipelines[place];
-    *p = (gl_pipeline){.program = program, .desc = *desc,
-                      .target_height = glGetUniformLocation(program, "tide_gpu_height")};
+    *p = (gl_pipeline){.program = program, .desc = *desc};
     glGenVertexArrays(1, &p->vao);
     glBindVertexArray(p->vao);
     for (uint32_t i = 0; i < desc->attribute_count; i++) {
@@ -459,10 +530,39 @@ static tide_gpu_id gl_pipeline_make(const tide_gpu_pipeline_desc *desc)
     return place + 1u;
 }
 
+#ifdef __wasm__
+static void gl_background(const bool on)
+{
+    background = on;
+}
+
+// Whether a pipeline is made: one made in the background is once the browser says its program's done, without
+// waiting to hear it, and is then checked and set up.
+static bool gl_pipeline_ready(const tide_gpu_id pipeline)
+{
+    const gl_pipeline *p = &pipelines[pipeline - 1u];
+    gl_program *g = &programs[p->program - 1u];
+    if (!g->vertex) return true;
+    GLint done = 0;
+    glGetProgramiv(g->program, GL_COMPLETION_STATUS_KHR, &done);
+    if (!done) return false;
+    gl_program_finish(g, &p->desc);
+    return true;
+}
+#endif
+
 static void gl_pipeline_free(const tide_gpu_id pipeline)
 {
     gl_pipeline *p = &pipelines[pipeline - 1u];
-    glDeleteProgram(p->program);
+    gl_program *g = &programs[p->program - 1u];
+    if (--g->refs == 0) {
+        if (g->vertex) { // Never made
+            glDeleteShader(g->vertex);
+            glDeleteShader(g->fragment);
+        }
+        glDeleteProgram(g->program);
+        *g = (gl_program){0};
+    }
     glDeleteVertexArrays(1, &p->vao);
     *p = (gl_pipeline){0};
     current = NULL;
@@ -772,18 +872,25 @@ static void gl_resolve_depth(const tide_gpu_id target)
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-static void gl_target_read(const tide_gpu_id target, uint8_t *rgba)
+static void gl_target_read_part(const tide_gpu_id target, const int x, const int y, const int width, const int height,
+                                uint8_t *rgba)
 {
     const gl_target *t = &targets[target - 1u];
     if (!t->bytes) { // Depth alone, or floats first: no bytes to read
-        memset(rgba, 0, (size_t)t->width * (size_t)t->height * 4u);
+        memset(rgba, 0, (size_t)width * (size_t)height * 4u);
         return;
     }
     glBindFramebuffer(GL_FRAMEBUFFER, t->samples > 1u ? t->resolved[0] : t->framebuffer); // What its samples came to
     glPixelStorei(GL_PACK_ALIGNMENT, 1);
-    glReadPixels(0, 0, t->width, t->height, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
+    // The vertex wrapper draws the top row into OpenGL's first row, so rows count from the top here too
+    glReadPixels(x, y, width, height, GL_RGBA, GL_UNSIGNED_BYTE, rgba);
     glBindFramebuffer(GL_FRAMEBUFFER, 0);
-    // The vertex wrapper draws the top row into OpenGL's first row.
+}
+
+static void gl_target_read(const tide_gpu_id target, uint8_t *rgba)
+{
+    const gl_target *t = &targets[target - 1u];
+    gl_target_read_part(target, 0, 0, t->width, t->height, rgba);
 }
 
 static void gl_begin(const tide_gpu_id target, const bool clear)
@@ -884,8 +991,9 @@ static void gl_use(const tide_gpu_id pipeline)
                         "(tide_gpu_pipeline_desc.into)\n", current->desc.name ? current->desc.name : "a shader");
         abort();
     }
-    glUseProgram(current->program);
-    glUniform1i(current->target_height, pass_texture ? pass_height : 0);
+    const gl_program *g = &programs[current->program - 1u];
+    glUseProgram(g->program);
+    glUniform1i(g->target_height, pass_texture ? pass_height : 0);
     glBindVertexArray(current->vao);
     // Its outputs go to the target's color images in order, and the images past them are left alone
     if (pass_target && pass_target->color_count > 1) {
@@ -1025,6 +1133,10 @@ const tide_gpu tide_gpu_gl = {
     .mipmaps = gl_mipmaps,
     .pipeline = gl_pipeline_make,
     .pipeline_free = gl_pipeline_free,
+#ifdef __wasm__
+    .background = gl_background,
+    .pipeline_ready = gl_pipeline_ready,
+#endif
     .target = gl_target_make,
     .target_limit = gl_target_limit,
     .target_samples = gl_target_samples,
@@ -1034,6 +1146,7 @@ const tide_gpu tide_gpu_gl = {
     .resolve_depth = gl_resolve_depth,
     .target_free = gl_target_free,
     .target_read = gl_target_read,
+    .target_read_part = gl_target_read_part,
     .begin = gl_begin,
     .end = gl_end,
     .scissor = gl_scissor,

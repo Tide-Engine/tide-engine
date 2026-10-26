@@ -244,8 +244,12 @@ uint64_t tide_hash_end(uint64_t h);
 
 // A hash for a run that's long, like a page of a world: another number than
 // tide_hash's of the same bytes, and the same on every platform too. It's
-// four of that hash's chains side by side, each taking every fourth word, so
-// a CPU works on four words at once, where one chain has it wait for a word's
-// multiplies before it can start on the next: two to three times as many
-// bytes in the same time. What a world's pages keep is this one's (tide_page_hash).
+// XXH3's accumulation, 64 bytes a stripe into eight sums of 32 by 32-bit
+// products, which SSE2, NEON and WebAssembly's SIMD each do two or four at a
+// time, ending in tide_hash's steps (net.c defines it). What a world's pages keep is this one's (tide_page_hash).
 uint64_t tide_hash_wide(const void *data, size_t size);
+
+// The same number by the vectors every CPU of a platform has (SSE2's, NEON's,
+// WebAssembly's SIMD), where tide_hash_wide takes AVX2's where it finds them:
+// for tests that check both ways.
+uint64_t tide_hash_wide_baseline(const void *data, size_t size);

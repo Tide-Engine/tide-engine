@@ -16,15 +16,12 @@
 // program gets as `--port=<port>` among its arguments.
 //
 // A test that fails ends with an account: what the page asked this server
-// for, and what the browser itself said of the page meanwhile, each with
-// when. The browser says it over DevTools (--remote-debugging-pipe, as
-// platform/tests/rooms.mjs has it): where the page went, what it threw, what
-// it couldn't load and why, and whether its process crashed. A page that
-// gives no result is asked where it is before the test gives up (`where`,
-// below), so that "no result" says which of those it was: a page that never
-// loaded, one that waits for something that never came, one whose thread is
-// busy, or one that's gone. A page says how far it got in `window.tideSteps`,
-// lines its shell adds to as it goes.
+// for, and what the browser said of the page meanwhile (over DevTools,
+// --remote-debugging-pipe), each with when. A page that gives no result is
+// asked where it is before the test gives up (`where`, below), so that "no
+// result" says whether it never loaded, waits for something that never came,
+// has a busy thread, or is gone. A page says how far it got in
+// `window.tideSteps`, lines its shell adds to as it goes.
 
 import { spawn } from 'node:child_process';
 import { existsSync, mkdirSync, rmSync } from 'node:fs';
@@ -36,9 +33,11 @@ import { pathToFileURL } from 'node:url';
 const [browser, pagePath, profile, ...rest] = process.argv.slice(2);
 let expected = null; // A line the program has to print
 let routesPath = null;
+let seconds = 100; // How long the page has to give its result
 let query = '';
 for (let i = 0; i < rest.length; i++) {
     if (rest[i] === '--expect') expected = rest[++i];
+    else if (rest[i] === '--seconds') seconds = Number(rest[++i]);
     else if (rest[i] === '--routes') routesPath = rest[++i];
     else query = rest[i];
 }
@@ -262,8 +261,8 @@ const timeout = setTimeout(async () => {
             note(`asked to try a timer, IndexedDB and a request, the page says 3 seconds later: ${await value('JSON.stringify(window.tideTries)')}`);
         }
     }
-    finish('no result within 100 seconds');
-}, 100000);
+    finish(`no result within ${seconds} seconds`);
+}, seconds * 1000);
 
 const code = await result;
 clearTimeout(timeout);

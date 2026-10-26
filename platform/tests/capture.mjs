@@ -73,7 +73,7 @@ if (mode === 'refused') {
     line('5 text', '`text` takes the characters');
     line('5 capture', '`capture` takes the file');
     line('5 capture-audio', '`capture-audio` takes the file');
-    line('5 captur-audio x.wav', "'captur-audio' isn't something a line does", 'capture-audio or quit');
+    line('5 captur-audio x.wav', "'captur-audio' isn't something a line does", 'capture-audio, leave, drop, rejoin or quit');
     line('5', 'nothing happens');
     refused('a script that is no file', ['--script', join(scratch, 'none.txt')], "can't read the script", 'none.txt');
     refused('a run nothing ends', ['--capture', 'x.png'], 'nothing ends this run', '--frames');

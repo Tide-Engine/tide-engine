@@ -30,6 +30,7 @@
 // systems that spawn, and systems waiting for it start after it, so they
 // never see a temporary handle.
 
+struct tide_background;
 typedef struct tide_jobs {
     void *self;
     uint32_t threads; // That can run work: the pool's, and the caller's
@@ -53,11 +54,16 @@ typedef struct tide_jobs {
     void (*more)(void *self, uint32_t count);
     // As `run`, calling in at most `others` of the threads beside the caller's,
     // or NULL. For work that's known to be little, like hashing what a tick
-    // changed: every thread of a pool woken for a fraction of a millisecond's
-    // work slowed the caller's own code after it by more than the threads
-    // saved, when it was measured, where two or three that come take most of
-    // the work off it and cost the caller nothing after.
+    // changed: waking every thread of a pool for it costs the caller more than
+    // the threads save, while two or three take most of it off the caller.
     void (*run_some)(void *self, uint32_t others, void (*work)(void *context, uint32_t thread), void *context);
+    // Queues independent local work without blocking the caller. NULL where
+    // background threads are unavailable. `help` executes one queued item.
+    // Helpers take priority over ordinary jobs. help(self, true) runs only
+    // loop helpers, so a full pool can finish nested loops without recursing
+    // into another whole calculation.
+    void (*background)(void *self, struct tide_background *job);
+    bool (*help)(void *self, bool helpers_only);
 } tide_jobs;
 
 // The entities a system's spawns got as it settled them: what a temporary
@@ -114,6 +120,9 @@ typedef struct tide_tick_systems {
     tide_entities *entities;      // The world's
     // A recorded change or event, with the real handles for temporary ones
     void (*settle_item)(void *item, const tide_new_entities *settled);
+    // Makes a new entity in the world, where a sharded world gives its spawns
+    // handles of its own (tide/shard.h); NULL: tide_entity_create(entities)
+    tide_entity (*create)(void *world);
 } tide_tick_systems;
 
 // Runs the tick's systems on `world`: on `jobs`' threads when there's enough
@@ -132,6 +141,8 @@ static inline tide_queue *tide_recording(tide_queue *world)
 // The entity a Spawn makes: a temporary handle in a task of a system that
 // settles its spawns, or else a new entity in `t`.
 tide_entity tide_new_entity(tide_entities *t);
+// The same, making a new entity with `create` (NULL: tide_entity_create).
+tide_entity tide_new_entity_by(tide_entities *t, tide_entity (*create)(void *world), void *world);
 
 // Runs work(context, task) for every task from 0 to count - 1, and returns once
 // they're all done: a parallel loop's steps (see tide/grid.h). While systems

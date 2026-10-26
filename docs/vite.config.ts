@@ -9,6 +9,8 @@ import { defineConfig, type Plugin } from 'vite';
 import { headers } from './headers.js';
 import { createAnalytics } from './analytics.js';
 import { createAdmin } from './admin.js';
+import { createTelemetry } from './telemetry.js';
+import { prototypePatterns, readPrototypes } from './prototypes.js';
 import { pages } from './src/lib/nav.ts';
 
 // `npm run dev` serves what server.js does in production: the site's headers
@@ -17,10 +19,12 @@ const asInProduction: Plugin = {
     name: 'as-in-production',
     configureServer(server) {
         const analytics = createAnalytics({ file: process.env.TIDE_ANALYTICS_FILE || '.svelte-kit/analytics/analytics.json', knownPaths: ['/', ...pages.map((page) => page.link)] });
-        const admin = createAdmin({ analytics, password: process.env.TIDE_ADMIN_PASSWORD,
+        const telemetry = createTelemetry({ file: process.env.TIDE_TELEMETRY_FILE || '.svelte-kit/telemetry/telemetry.db' });
+        const admin = createAdmin({ analytics, telemetry, password: process.env.TIDE_ADMIN_PASSWORD, prototypes: readPrototypes().map((card) => card.id),
             relayUrl: process.env.TIDE_RELAY_STATS_URL, relayToken: process.env.TIDE_RELAY_STATS_TOKEN });
         admin.start();
-        server.httpServer?.once('close', () => admin.stop());
+        telemetry.start();
+        server.httpServer?.once('close', () => { void admin.stop(); telemetry.stop(); });
         server.middlewares.use((req, res, next) => {
             for (const [name, value] of Object.entries(headers)) res.setHeader(name, value);
             const [path, query] = (req.url ?? '').split('?');
@@ -29,9 +33,23 @@ const asInProduction: Plugin = {
             }
             next();
         });
+        // Vite would otherwise serve guide/foo.md straight from the source
+        // tree before SvelteKit sees its Markdown export endpoint.
+        server.middlewares.use((req, res, next) => {
+            const pathname = new URL(req.url ?? '/', 'http://localhost').pathname;
+            const at = pathname === '/index.md' ? '/' : pathname.endsWith('.md') ? pathname.slice(0, -3) : undefined;
+            if (!at || (at !== '/' && !pages.some((page) => page.link === at)) || !['GET', 'HEAD'].includes(req.method ?? 'GET')) return next();
+            server.ssrLoadModule('/src/lib/server/exports.ts').then(({ markdownExport, markdownFilename, textResponse }) => {
+                const response = textResponse(markdownExport(at), markdownFilename(at));
+                res.statusCode = response.status;
+                response.headers.forEach((value: string, name: string) => res.setHeader(name, value));
+                return response.text();
+            }).then((body) => res.end(req.method === 'HEAD' ? undefined : body)).catch(next);
+        });
         server.middlewares.use((req, res, next) => {
             const origin = `http://${req.headers.host}`;
-            admin.handle(req, res, origin).then((answered) => { if (!answered) next(); }).catch(next);
+            telemetry.handle(req, res).then((answered) => answered || admin.handle(req, res, origin))
+                .then((answered) => { if (!answered) next(); }).catch(next);
         });
     },
 };
@@ -50,11 +68,12 @@ const installers: Plugin = {
 const prototypeAssets: Plugin = {
     name: 'prototype-assets',
     buildStart() {
+        const { retired } = prototypePatterns(readPrototypes().map((card) => card.id));
         function check(directory: string) {
             for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
                 const name = `${directory}/${entry.name}`;
                 if (name === 'static/admin' || name === 'static/prototypes') continue;
-                if (/(?:^|[\/._-])(?:two[-_]forks|cracked|inside[-_]out|underfoot|foldline|sunday[-_]supper|gravewake)(?:[\/._-]|$)/i.test(name)) {
+                if (retired.test(name)) {
                     throw new Error(`Prototype asset must live under static/prototypes/: ${name}`);
                 }
                 if (entry.isDirectory()) check(name);
@@ -78,7 +97,7 @@ export default defineConfig(({ command }) => ({
                 handleHttpError: ({ path, message }) => {
                     // The games in static/ are built by CMake and copied in;
                     // a build without them still works.
-                    if (['/sand/', '/duel/', '/towers/', '/sumo/'].includes(path) || /^\/(?:examples|samples)\/[a-z][a-z0-9-]*\/$/.test(path)) return;
+                    if (['/sand/', '/duel/', '/towers/', '/sumo/', '/earth/'].includes(path) || /^\/(?:examples|samples)\/[a-z][a-z0-9-]*\/$/.test(path)) return;
                     throw new Error(message);
                 },
             },

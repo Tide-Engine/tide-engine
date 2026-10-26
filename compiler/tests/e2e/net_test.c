@@ -134,11 +134,11 @@ static uint32_t damaged_receive(void *self, tide_address *from, void *data, cons
     uint32_t size = damaged_inner.receive(damaged_inner.self, from, data, capacity);
     uint8_t *bytes = data;
     // Current wire header: magic, protocol and type. CHUNK is type 4, with
-    // uint32 number/index followed by uint16 byte count. WELCOME is type 2;
+    // cookie8/attempt4, uint32 number/index followed by uint16 byte count. WELCOME is type 2;
     // its uint32 snapshot byte/chunk counts start at offsets 27 and 31.
-    if (damaged_mode == 1 && size >= 14u && bytes[3] == 4u) {
-        bytes[12] = bytes[13] = 0;
-        size = 14u;
+    if (damaged_mode == 1 && size >= 26u && bytes[3] == 4u) {
+        bytes[24] = bytes[25] = 0;
+        size = 26u;
         damaged_count++;
     } else if (damaged_mode == 2 && size >= 35u && bytes[3] == 2u) {
         tide_reader r = {bytes + 27u, 8u, 0, false};
@@ -220,7 +220,7 @@ TIDE_TEST(net_players_keep_the_servers_world)
     for (int i = 0; i < 2; i++) {
         const tide_client_status s = tide_client_status_of(clients[i]);
         TIDE_CHECK(s.state == TIDE_SESSION_CONNECTED);
-        TIDE_CHECK(s.resyncs == 0); // Every tick's hash matched the server's
+        TIDE_CHECK(s.resyncs == 0);
         TIDE_CHECK(s.player.id == (uint32_t)i + 1u);
         // Close behind the server, and a little ahead of it with prediction
         TIDE_CHECK(s.verified_tick + 30u > tide_server_tick(server));
@@ -409,7 +409,7 @@ TIDE_TEST(net_a_client_over_its_budget_delays_its_input)
     TIDE_CHECK(b.delay_ticks >= 3u);
     TIDE_CHECK(b.predicted_tick - b.verified_tick <= 6u);
     TIDE_CHECK(b.verified_tick + 30u > tide_server_tick(server));
-    TIDE_CHECK(tide_client_status_of(clients[0]).delay_ticks == 0); // No clock: as it always was
+    TIDE_CHECK(tide_client_status_of(clients[0]).delay_ticks == 0);
     // Its ticks get cheap: it takes the delay back, a tick every half second or so
     fake_tick_ns = 1000;
     run(20.0);
@@ -487,7 +487,7 @@ TIDE_TEST(net_a_stall_leaves_no_lasting_delay)
     printf("    after the network stalled for 1.5 s it ran %u ticks ahead at the most, took %u ticks of delay at the most, and has %u"
            " four seconds on\n", furthest, most, a.delay_ticks);
     TIDE_CHECK(a.state == TIDE_SESSION_CONNECTED);
-    TIDE_CHECK(furthest >= 40u); // It did run far ahead: what the check is about
+    TIDE_CHECK(furthest >= 40u);
     TIDE_CHECK(most <= 2u);
     TIDE_CHECK(a.delay_ticks == 0);
     finish();
@@ -497,11 +497,14 @@ TIDE_TEST(net_a_stall_leaves_no_lasting_delay)
 // players, 50 ms away, for ten seconds after joining.
 static tide_transport counted_inner[3];
 static uint64_t counted_bytes[3];
+static uint64_t counted_proof_bytes[3];
 
 static void counted_send(void *self, const tide_address to, const void *data, const uint32_t size)
 {
     const intptr_t i = (intptr_t)self;
     counted_bytes[i] += size;
+    const uint8_t kind = size >= 4u ? ((const uint8_t *)data)[3] : 0u;
+    if (kind == 4u || kind == 5u || kind == 6u) counted_proof_bytes[i] += 12u; // Protocol 19 CHUNK/CLIENT/SERVER proof
     counted_inner[i].send(counted_inner[i].self, to, data, size);
 }
 
@@ -536,15 +539,21 @@ TIDE_TEST(net_a_match_costs_little_to_keep_going)
                                          .server = tide_loopback_address(1), .sample = sample, .user = &who[i], .lead = 2};
         clients[i] = tide_client_create(&client, now);
     }
-    run(1.0); // Joined, with the world
+    run(1.0);
     memset(counted_bytes, 0, sizeof counted_bytes);
+    memset(counted_proof_bytes, 0, sizeof counted_proof_bytes);
     run(11.0);
     for (int i = 0; i < 2; i++) TIDE_CHECK(tide_client_status_of(clients[i]).resyncs == 0);
-    // About 6.5 KB a second to each player and 2.5 KB a second from each, at
-    // 60 ticks a second, most of it the hashes of ticks sent again until a
-    // round trip says they came: 316 KB and 45 KB before the frames shrank.
-    TIDE_CHECK(counted_bytes[0] < 140000u);
-    TIDE_CHECK(counted_bytes[1] < 28000u && counted_bytes[2] < 28000u);
+    // About 6.5 KB a second to each player and 2.5 KB a second from each, at 60 ticks a second, most of it the
+    // hashes of ticks sent again until a round trip says they came.
+    // Retain the original payload ceilings while accounting for the exact
+    // mandatory cookie/attempt bytes. WELCOME/HELLO sizes are unchanged.
+    printf("    wire bytes %llu/%llu/%llu, proof bytes %llu/%llu/%llu\n",
+        (unsigned long long)counted_bytes[0], (unsigned long long)counted_bytes[1], (unsigned long long)counted_bytes[2],
+        (unsigned long long)counted_proof_bytes[0], (unsigned long long)counted_proof_bytes[1],
+        (unsigned long long)counted_proof_bytes[2]);
+    TIDE_CHECK(counted_bytes[0] - counted_proof_bytes[0] < 140000u);
+    TIDE_CHECK(counted_bytes[1] - counted_proof_bytes[1] < 28000u && counted_bytes[2] - counted_proof_bytes[2] < 28000u);
     finish();
 }
 
@@ -650,7 +659,7 @@ TIDE_TEST(net_a_player_who_left_comes_back_as_themselves)
     join(1);
     run(1.0);
     const uint64_t cookie = tide_client_status_of(clients[0]).cookie;
-    tide_client_destroy(clients[0]); // Leaves
+    tide_client_destroy(clients[0]);
     clients[0] = NULL;
     run(1.5);
     TIDE_CHECK(players_in(tide_server_world(server))->left == 1);
@@ -725,7 +734,9 @@ TIDE_TEST(net_recovery_restores_reconnect_cookie_metadata_outside_world_bytes)
     run(0.5);
     const tide_client_status before = tide_client_status_of(clients[0]);
     TIDE_REQUIRE(before.state == TIDE_SESSION_CONNECTED);
-    tide_server_recovery recovery;
+    uint64_t digests[TIDE_GAME_PLAYERS];
+    uint8_t identities[TIDE_GAME_PLAYERS][32];
+    tide_server_recovery recovery = {.digests = digests, .identities = identities};
     tide_server_recovery_state(server, &recovery);
     TIDE_CHECK(tide_players_has(&recovery.players, before.player.id - 1u));
     TIDE_CHECK(recovery.digests[before.player.id - 1u] != 0);
@@ -806,7 +817,7 @@ TIDE_TEST(net_local_code_starts_a_match)
     TIDE_REQUIRE(tide_local_take_request(&local, &request, &start));
     TIDE_CHECK(request.kind == TIDE_REQUEST_START);
     TIDE_CHECK(start.scene == 0 && start.value.Arena.size == 3);
-    TIDE_CHECK(!tide_local_take_request(&local, &request, &start)); // Taken
+    TIDE_CHECK(!tide_local_take_request(&local, &request, &start));
 
     tide_session_start(s, &start, t);
     bool connected = false;
@@ -873,9 +884,32 @@ TIDE_TEST(net_local_code_joins_rooms_and_connects_to_addresses)
     TIDE_CHECK(local.Menu.inRoom && local.Menu.roomLength == 6);
     TIDE_CHECK(shows(local.Menu.shown, "Session { state = Connected, player = PlayerID(0), ping = 20, server = true, "
                                        "open = true, room = \"K7QF2M\" }"));
+    // Session.invite is the room's code where there's no page to link to...
+    TIDE_CHECK(shows(local.Menu.invite, "K7QF2M"));
+    // ...and what the host says after: a page's link
+    tide_local_set_invite(&local, "https://example.com/game/?join=K7QF2M");
+    run_views();
+    TIDE_CHECK(shows(local.Menu.invite, "https://example.com/game/?join=K7QF2M") && local.Menu.inRoom);
+    // Only a whole link is one: too long for Clipboard.Copy, or with bytes that aren't printable ASCII, is none
+    char long_link[300];
+    memset(long_link, 'a', sizeof long_link - 1u);
+    long_link[sizeof long_link - 1u] = '\0';
+    tide_local_set_invite(&local, long_link);
+    run_views();
+    TIDE_CHECK(shows(local.Menu.invite, ""));
+    long_link[255] = '\0';
+    tide_local_set_invite(&local, long_link);
+    run_views();
+    TIDE_CHECK(shows(local.Menu.invite, long_link));
+    tide_local_set_invite(&local, "https://example.com/\n?join=K7QF2M");
+    run_views();
+    TIDE_CHECK(shows(local.Menu.invite, ""));
+    tide_local_set_invite(&local, NULL);
+    run_views();
+    TIDE_CHECK(shows(local.Menu.invite, ""));
     tide_local_set_session(&local, TIDE_SESSION_OFFLINE, (tide_player_id){0}, 0, false, false, "");
     run_views();
-    TIDE_CHECK(!local.Menu.inRoom && local.Menu.roomLength == 0);
+    TIDE_CHECK(!local.Menu.inRoom && local.Menu.roomLength == 0 && shows(local.Menu.invite, ""));
     TIDE_CHECK(shows(local.Menu.shown, "Session { state = Offline, player = PlayerID(none), ping = 0, server = false, "
                                        "open = false, room = \"\" }"));
 
@@ -1002,7 +1036,7 @@ TIDE_TEST(net_a_session_says_when_it_next_ticks)
             last = ticked;
         }
         TIDE_CHECK(every_one);
-        TIDE_CHECK(tide_session_status_of(s).client.verified_tick == (uint32_t)last); // Its player kept up
+        TIDE_CHECK(tide_session_status_of(s).client.verified_tick == (uint32_t)last);
         tide_session_destroy(s);
     }
 
@@ -1111,7 +1145,7 @@ TIDE_TEST(net_a_session_carries_its_match_over_to_another_layout)
 
     migrations = 0;
     TIDE_REQUIRE(tide_session_migrate(s, &new_build, copy_over, NULL));
-    TIDE_CHECK(migrations == 1); // The server's world: this machine's player takes it
+    TIDE_CHECK(migrations == 1);
     for (int frame = 0; frame < 60; frame++) {
         t += 1.0 / 60.0;
         tide_session_update(s, t);
@@ -1364,12 +1398,12 @@ TIDE_TEST(net_a_client_carries_its_match_over_to_another_layout)
 
     const tide_session_status after = tide_session_status_of(guest);
     TIDE_CHECK(after.client.state == TIDE_SESSION_CONNECTED);
-    TIDE_CHECK(after.client.player.id == before.client.player.id); // Still the same player
+    TIDE_CHECK(after.client.player.id == before.client.player.id);
     TIDE_CHECK(after.client.resyncs == 0);
     TIDE_CHECK(after.client.verified_tick >= before.client.verified_tick + 120u);
     TIDE_CHECK(tide_session_status_of(host).client.resyncs == 0);
     const Players *players = players_in(tide_session_server_world(host));
-    TIDE_CHECK(players->joined == 2 && players->left == 0); // Nobody left and came back
+    TIDE_CHECK(players->joined == 2 && players->left == 0);
     tide_session_destroy(guest);
     tide_session_destroy(host);
     tide_loopback_destroy(network);
@@ -1398,7 +1432,7 @@ TIDE_TEST(net_a_session_goes_on_from_a_world)
 
     tide_session *next = tide_session_create(&(tide_session_desc){.game = &tide_game_api, .tick_rate = 60, .sample = session_sample});
     t = 0.0;
-    tide_player_set in_it = {{0}};
+    tide_player_set in_it = {0};
     tide_players_add(&in_it, (uint32_t)player);
     tide_session_start_from(next, left, in_it, t);
     for (int frame = 0; frame < 60; frame++) {
@@ -1409,8 +1443,8 @@ TIDE_TEST(net_a_session_goes_on_from_a_world)
     TIDE_CHECK(after.client.state == TIDE_SESSION_CONNECTED);
     TIDE_CHECK(after.client.player.id == before.client.player.id);
     const tide_world *w = tide_session_server_world(next);
-    TIDE_CHECK(players_in(w)->joined == 1); // Not twice
-    TIDE_CHECK(w->Time.tick >= left->Time.tick + 55); // Went on from it
+    TIDE_CHECK(players_in(w)->joined == 1);
+    TIDE_CHECK(w->Time.tick >= left->Time.tick + 55);
     TIDE_CHECK(same(tide_session_world(next), w));
     tide_session_destroy(next);
     tide_world_free(left);

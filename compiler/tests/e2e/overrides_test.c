@@ -2,6 +2,7 @@
 
 #include "game.h"
 #include "tide_test.h"
+#include "draw_test.h"
 
 // virtual and override (overrides/game.tide with package Expansion): each
 // override runs in the place of what it replaced, and what was replaced, which
@@ -29,6 +30,7 @@ static void frame(void)
     tide_gui_begin(&gui, &devices, tide_f2(640, 480), NULL);
     tide_frame(&world, NULL, 1, &world, NULL, 1.0f, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
+    tide_test_flatten(&draw);
 }
 
 TIDE_TEST(overrides_systems_run_where_what_they_replace_did)

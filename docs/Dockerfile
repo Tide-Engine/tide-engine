@@ -2,13 +2,13 @@
 # pages need the rest of the repo (the grammar, the code they show, the demos),
 # so the image only takes what the build made. The server needs nothing from
 # node_modules: the build bundles it all.
-FROM node:24-alpine
+FROM node:24.22.1-alpine
 
 RUN apk add --no-cache su-exec
 
 WORKDIR /site
 ENV NODE_ENV=production PORT=3000
-COPY package.json headers.js releases.js analytics.js admin.js server.js ./
+COPY package.json headers.js releases.js analytics.js admin.js telemetry.js prototypes.js server.js prototypes.jso[n] ./
 COPY build ./build
 
 EXPOSE 3000

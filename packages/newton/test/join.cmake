@@ -1,0 +1,12 @@
+file(MAKE_DIRECTORY "${OUT}")
+if(EMULATOR MATCHES "run_android\\.mjs")
+    list(APPEND EMULATOR --fixture state.bin)
+endif()
+foreach(mode write read)
+    execute_process(COMMAND ${EMULATOR} "${PROGRAM}" "${mode}" state.bin
+        WORKING_DIRECTORY "${OUT}" RESULT_VARIABLE result OUTPUT_VARIABLE stdout ERROR_VARIABLE stderr TIMEOUT 35)
+    if(NOT result EQUAL 0)
+        message(FATAL_ERROR "Newton fresh-process ${mode} failed (${result}):\n${stdout}\n${stderr}")
+    endif()
+    message(STATUS "${stdout}")
+endforeach()

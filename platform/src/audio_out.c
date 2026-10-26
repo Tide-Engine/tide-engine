@@ -31,6 +31,11 @@ static void next_frame(void)
     pull.at++;
 }
 
+void tide_audio_out_reset(void)
+{
+    memset(&pull, 0, sizeof pull);
+}
+
 void tide_audio_out_fill(float *out, const uint32_t frames, const uint32_t rate, const uint32_t channels)
 {
     if (!pull.started) {

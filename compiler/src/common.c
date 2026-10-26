@@ -170,6 +170,14 @@ static void *sink_user;
 static diag_suggestion_sink suggestion_sink;
 static void *suggestion_user;
 
+// What was said since diag_reset, a hash of each diagnostic's place, kind and
+// message: one the checker reaches twice (a prefab's values are checked on
+// their own and again at each Spawn of it) is said once. Its notes and
+// suggestions go with it (`muted` until the next one).
+static uint64_t *said;
+static int said_count, said_room;
+static bool muted;
+
 // With TIDEC_TIMES set in the environment, says on stderr how long each phase
 // of a compile took: the time since the last call, under `what`.
 void diag_phase(const char *what)
@@ -193,6 +201,30 @@ void diag_reset(void)
 {
     source_count = 0;
     error_count = 0;
+    said_count = 0;
+    muted = false;
+}
+
+// Whether this diagnostic was said already; remembers it if not.
+static bool said_before(const diag_severity severity, const loc at, const char *message)
+{
+    uint64_t h = 1469598103934665603ull;
+    const int place[4] = {(int)severity, at.file, at.line, at.col};
+    for (size_t i = 0; i < sizeof place; i++) h = (h ^ ((const unsigned char *)place)[i]) * 1099511628211ull;
+    for (const char *c = message; *c; c++) h = (h ^ (unsigned char)*c) * 1099511628211ull;
+    for (int i = 0; i < said_count; i++) {
+        if (said[i] == h) return true;
+    }
+    if (said_count == said_room) {
+        said_room = said_room ? said_room * 2 : 64;
+        said = realloc(said, (size_t)said_room * sizeof *said);
+        if (!said) {
+            fprintf(stderr, "tidec: out of memory\n");
+            exit(1);
+        }
+    }
+    said[said_count++] = h;
+    return false;
 }
 
 void diag_add_source(source *src)
@@ -231,10 +263,8 @@ void diag_set_suggestion_sink(const diag_suggestion_sink new_sink, void *user)
     suggestion_user = user;
 }
 
-static void to_sink(const diag_severity severity, const loc at, const char *fmt, va_list args)
+static void to_sink(const diag_severity severity, const loc at, const char *message)
 {
-    char message[1024];
-    vsnprintf(message, sizeof message, fmt, args);
     sink(sink_user, severity, at, message);
 }
 
@@ -272,7 +302,6 @@ static const char *paint(const char *color)
     return diag_colored() ? color : "";
 }
 
-// An error's red, a warning's yellow.
 static const char *kind_color(const char *kind)
 {
     return kind[0] == 'e' ? "\x1b[1;31m" : "\x1b[1;33m";
@@ -329,35 +358,59 @@ static void print_excerpt(const source *src, const loc at, const char *color)
     fprintf(stderr, "%s^%s\n", paint(color), paint(PLAIN));
 }
 
-// Not const: va_list is an array on some targets, and vfprintf takes it as is.
-static void report(const loc at, const char *kind, const char *fmt, va_list args)
+static void report(const loc at, const char *kind, const char *message)
 {
     const source *src = diag_source(at.file);
     const char *color = kind_color(kind);
     if (src) fprintf(stderr, "%s%s:%d:%d:%s ", paint(BOLD), shown_path(src->path), at.line, at.col, paint(PLAIN));
     else fputs("tidec: ", stderr);
-    fprintf(stderr, "%s%s:%s %s", paint(color), kind, paint(PLAIN), paint(BOLD));
-    vfprintf(stderr, fmt, args);
-    fprintf(stderr, "%s\n", paint(PLAIN));
+    fprintf(stderr, "%s%s:%s %s%s%s\n", paint(color), kind, paint(PLAIN), paint(BOLD), message, paint(PLAIN));
     if (src && at.line > 0) print_excerpt(src, at, color);
+}
+
+// A diagnostic's message, in `fixed` where it fits, else malloc'd. Not const: va_list is an array on some targets.
+static char *message_of(char *fixed, const size_t room, const char *fmt, va_list args)
+{
+    va_list again;
+    va_copy(again, args);
+    const int n = vsnprintf(fixed, room, fmt, args);
+    char *message = fixed;
+    if (n >= 0 && (size_t)n >= room) {
+        message = malloc((size_t)n + 1u);
+        if (message) vsnprintf(message, (size_t)n + 1u, fmt, again);
+        else message = fixed;
+    }
+    va_end(again);
+    return message;
+}
+
+// Says a diagnostic, unless it was said already; false then, with its notes muted.
+static bool diagnose(const diag_severity severity, const char *kind, const loc at, const char *fmt, va_list args)
+{
+    char fixed[1024];
+    char *message = message_of(fixed, sizeof fixed, fmt, args);
+    muted = said_before(severity, at, message);
+    if (!muted) {
+        if (sink) to_sink(severity, at, message);
+        else report(at, kind, message);
+    }
+    if (message != fixed) free(message);
+    return !muted;
 }
 
 void diag_error(const loc at, const char *fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    if (sink) to_sink(DIAG_ERROR, at, fmt, args);
-    else report(at, "error", fmt, args);
+    if (diagnose(DIAG_ERROR, "error", at, fmt, args)) error_count++;
     va_end(args);
-    error_count++;
 }
 
 void diag_warning(const loc at, const char *fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    if (sink) to_sink(DIAG_WARNING, at, fmt, args);
-    else report(at, "warning", fmt, args);
+    diagnose(DIAG_WARNING, "warning", at, fmt, args);
     va_end(args);
 }
 
@@ -365,16 +418,19 @@ void diag_info(const loc at, const char *fmt, ...)
 {
     va_list args;
     va_start(args, fmt);
-    if (sink) to_sink(DIAG_INFO, at, fmt, args);
-    else report(at, "info", fmt, args);
+    diagnose(DIAG_INFO, "info", at, fmt, args);
     va_end(args);
 }
 
 // Not const: va_list is an array on some targets, and vfprintf takes it as is.
 static void note(const loc at, const char *fmt, va_list args)
 {
+    if (muted) return; // The diagnostic's said already, with its notes
     if (sink) {
-        to_sink(DIAG_NOTE, at, fmt, args);
+        char fixed[1024];
+        char *message = message_of(fixed, sizeof fixed, fmt, args);
+        to_sink(DIAG_NOTE, at, message);
+        if (message != fixed) free(message);
     } else {
         fprintf(stderr, "      %s= note:%s ", paint(CYAN), paint(PLAIN));
         vfprintf(stderr, fmt, args);
@@ -408,12 +464,37 @@ int diag_error_count(void)
 
 suggestion suggest_start(const str wrong)
 {
-    return (suggestion){wrong, {NULL, 0}, 1 << 30};
+    return (suggestion){wrong, {NULL, 0}, 1 << 30, {NULL, 0}, 2};
 }
 
 static char lower(const char c)
 {
     return c >= 'A' && c <= 'Z' ? (char)(c - 'A' + 'a') : c;
+}
+
+static bool upper_or_digit(const char c)
+{
+    return (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9');
+}
+
+// Where `wrong` is a whole word of `candidate`, ignoring case: 0 when it's the
+// first word (`right` of rightArrow), 1 when it's a later one (`shift` of
+// leftShift, `up` of pageUp), 2 when it's neither. A word starts the name, or
+// starts at a capital or after a '_', and ends at the name's end, a capital,
+// a digit or a '_'.
+static int word_rank(const str wrong, const str candidate)
+{
+    if (wrong.len < 2 || candidate.len <= wrong.len) return 2;
+    for (int at = 0; at + wrong.len <= candidate.len; at++) {
+        if (at > 0 && !upper_or_digit(candidate.ptr[at]) && candidate.ptr[at - 1] != '_') continue;
+        bool same = true;
+        for (int i = 0; i < wrong.len && same; i++) same = lower(candidate.ptr[at + i]) == lower(wrong.ptr[i]);
+        if (!same) continue;
+        const int end = at + wrong.len;
+        if (end < candidate.len && !upper_or_digit(candidate.ptr[end]) && candidate.ptr[end] != '_') continue;
+        return at == 0 ? 0 : 1;
+    }
+    return 2;
 }
 
 // Edits (insert, delete, replace, swap two neighbors) between two names,
@@ -449,6 +530,11 @@ void suggest_consider(suggestion *s, const str candidate)
         s->distance = d;
         s->best = candidate;
     }
+    const int rank = word_rank(s->wrong, candidate);
+    if (rank < s->word_rank) {
+        s->word_rank = rank;
+        s->word = candidate;
+    }
 }
 
 void suggest_consider_c(suggestion *s, const char *candidate)
@@ -465,14 +551,18 @@ bool suggest_close(const suggestion *s)
 
 void suggest_note(const suggestion *s)
 {
-    if (!suggest_close(s)) return;
-    diag_note("did you mean '" STR_FMT "'?", STR_ARG(s->best));
-    if (suggestion_sink) suggestion_sink(suggestion_user, s->wrong, s->best);
+    // A close name, unless it's shorter and a word of another fits: `up` is
+    // upArrow, not u.
+    const bool word = s->word.len > 0 && (!suggest_close(s) || s->best.len < s->wrong.len);
+    const str meant = word ? s->word : suggest_close(s) ? s->best : (str){NULL, 0};
+    if (meant.len == 0) return;
+    diag_note("did you mean '" STR_FMT "'?", STR_ARG(meant));
+    if (suggestion_sink && !muted) suggestion_sink(suggestion_user, s->wrong, meant);
 }
 
 void suggest_replacement(const str wrong, const char *instead)
 {
-    if (suggestion_sink) suggestion_sink(suggestion_user, wrong, str_from(instead));
+    if (suggestion_sink && !muted) suggestion_sink(suggestion_user, wrong, str_from(instead));
 }
 
 int path_compare(const char *a, const char *b)

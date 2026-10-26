@@ -48,6 +48,14 @@ int tide_platform_players_step(uint32_t frame);
 // for the others, and its exit code is the run's, the first that isn't 0.
 int tide_platform_players_finish(int code);
 
+// A script's `leave`, `drop` and `rejoin` lines for this player, at the
+// frame they're polled in (script.c): leave and rejoin wait for the host
+// (tide_platform_players_action); a drop silences this player's ends at once,
+// both ways, and a rejoin lets them speak again.
+void tide_platform_players_leave(void);
+void tide_platform_players_drop(void);
+void tide_platform_players_rejoin(void);
+
 // Where a file of this player's goes: `path` with the player's number before
 // its extension (fight-2.png) in a run of more than one, and `path` otherwise.
 // Memory of the caller's.

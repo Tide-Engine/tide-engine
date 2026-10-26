@@ -1,0 +1,4 @@
+// expect: a constant can't be an array yet
+using Values = int[2];
+const Values DATA = [1, 2];
+scene Main;

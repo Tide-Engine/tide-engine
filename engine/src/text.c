@@ -8,8 +8,6 @@
 #include "tide/list.h"
 #include "tide/pack.h"
 
-// See tide/text.h.
-
 // ---------------------------------------------------------------------------
 // The scratch area: a stack of bytes, one per thread, in pieces (see
 // tide/text.h).
@@ -29,7 +27,7 @@
 // what was made since the mark, never on what came and went before.
 
 TIDE_THREAD_LOCAL char *tide_scratch_slots[TIDE_SCRATCH_SLOTS];
-static TIDE_THREAD_LOCAL uint32_t scratch_used; // The top of the stack: an offset
+TIDE_THREAD_LOCAL uint32_t tide_scratch_top; // The top of the stack: an offset (tide/text.h)
 static TIDE_THREAD_LOCAL uint32_t scratch_end;  // Where the piece the top is in ends: no room past it
 
 typedef struct scratch_piece {
@@ -46,11 +44,6 @@ static TIDE_THREAD_LOCAL uint32_t piece_count;
 static TIDE_THREAD_LOCAL uint32_t piece_room;
 static TIDE_THREAD_LOCAL scratch_piece spare; // Let go, kept for the next piece; `memory` NULL for none
 
-uint32_t tide_scratch_mark(void)
-{
-    return scratch_used;
-}
-
 static void map_piece(const scratch_piece *p, const bool mapped)
 {
     for (uint32_t k = 0; k < p->slots; k++) {
@@ -58,10 +51,10 @@ static void map_piece(const scratch_piece *p, const bool mapped)
     }
 }
 
-void tide_scratch_reset(const uint32_t mark)
+void tide_scratch_reset_to(const uint32_t mark)
 {
-    if (mark >= scratch_used) return;
-    scratch_used = mark;
+    if (mark >= tide_scratch_top) return;
+    tide_scratch_top = mark;
     if (piece_count > 1 && pieces[piece_count - 1u].start >= mark) { // Pieces go: the biggest is the next spare
         free(spare.memory);
         spare.memory = NULL;
@@ -92,7 +85,7 @@ void tide_scratch_free(void)
     piece_room = 0;
     free(spare.memory);
     spare.memory = NULL;
-    scratch_used = 0;
+    tide_scratch_top = 0;
     scratch_end = 0;
 }
 
@@ -103,7 +96,7 @@ static _Noreturn void scratch_full(const char *what, const uint64_t bytes, const
     fprintf(stderr,
             "tide: out of memory: %s of %llu bytes can't go in the scratch area (%s), which holds %u bytes on this thread: the text, "
             "lists and grids code makes along the way, kept until their system, view or handler is done\n",
-            what, (unsigned long long)bytes, why, (unsigned)scratch_used);
+            what, (unsigned long long)bytes, why, (unsigned)tide_scratch_top);
     abort();
 }
 
@@ -136,7 +129,7 @@ static void add_piece(const uint64_t bytes, const char *what)
     }
     pieces[piece_count++] = p;
     map_piece(&p, true);
-    scratch_used = p.start;
+    tide_scratch_top = p.start;
     scratch_end = p.start + (p.slots << TIDE_SCRATCH_SHIFT);
 }
 
@@ -144,12 +137,12 @@ static void add_piece(const uint64_t bytes, const char *what)
 // `align` (a power of two): the offset. `what` is for when there's none.
 static uint32_t scratch_take(const uint32_t bytes, const uint32_t align, const char *what)
 {
-    uint32_t at = (scratch_used + align - 1u) & ~(align - 1u);
+    uint32_t at = (tide_scratch_top + align - 1u) & ~(align - 1u);
     if ((uint64_t)at + bytes > scratch_end) {
         add_piece(bytes, what); // Its start is a slot's: aligned
-        at = scratch_used;
+        at = tide_scratch_top;
     }
-    scratch_used = at + bytes;
+    tide_scratch_top = at + bytes;
     return at;
 }
 
@@ -164,8 +157,8 @@ static char *scratch_alloc(const uint32_t bytes)
 // Whether `a` is the newest text in the scratch area, so it can grow in place.
 static bool at_top(const tide_str a)
 {
-    if (!scratch_used) return false;
-    const uintptr_t top = (uintptr_t)tide_scratch_at(scratch_used - 1u) + 1u; // The byte after the last in use
+    if (!tide_scratch_top) return false;
+    const uintptr_t top = (uintptr_t)tide_scratch_at(tide_scratch_top - 1u) + 1u; // The byte after the last in use
     return (uintptr_t)a.ptr + (uintptr_t)a.bytes + 1u == top;
 }
 
@@ -173,8 +166,8 @@ static bool at_top(const tide_str a)
 // text and its piece has the room, or in a copy, and returns where they go.
 static char *grow(tide_str *a, const uint32_t more)
 {
-    if (at_top(*a) && more <= scratch_end - scratch_used) {
-        scratch_used += more;
+    if (at_top(*a) && more <= scratch_end - tide_scratch_top) {
+        tide_scratch_top += more;
         char *p = (char *)(uintptr_t)a->ptr;
         p[(uint32_t)a->bytes + more] = '\0';
         return p + a->bytes;
@@ -290,17 +283,18 @@ tide_str tide_str_add_bool(const tide_str a, const bool v)
 // Big integers, just enough to write floats exactly: a float is f * 2^e, and
 // the digits of that are found by exact integer arithmetic, not float math.
 
-#define BIG_WORDS 16
+#define BIG_WORDS 40
 
 typedef struct big {
     int n;               // Words in use; the top one is nonzero
     uint32_t w[BIG_WORDS]; // Least significant first
 } big;
 
-static void big_set(big *b, const uint32_t v)
+static void big_set(big *b, const uint64_t v)
 {
-    b->w[0] = v;
-    b->n = v != 0;
+    b->w[0] = (uint32_t)v;
+    b->w[1] = (uint32_t)(v >> 32);
+    b->n = b->w[1] ? 2 : v != 0;
 }
 
 static void big_mul_small(big *b, const uint32_t m)
@@ -394,7 +388,7 @@ static void big_sub(big *a, const big *b)
 // The decimal digits of `b`, most significant first. Returns how many.
 static int big_digits(big b, char *out)
 {
-    char reversed[160];
+    char reversed[384];
     int n = 0;
     do {
         uint64_t rest = 0;
@@ -418,9 +412,10 @@ typedef struct float_parts {
     bool negative;
     bool finite;
     bool nan;
-    uint32_t f;
+    uint64_t f;
     int e;
     bool denormal;
+    bool boundary; // The gap below this power of two is half the gap above.
 } float_parts;
 
 static float_parts split_float(const float v)
@@ -429,7 +424,7 @@ static float_parts split_float(const float v)
     memcpy(&bits, &v, sizeof bits);
     const uint32_t exponent = bits >> 23 & 0xFFu;
     const uint32_t fraction = bits & 0x7FFFFFu;
-    float_parts p = {bits >> 31 != 0, exponent != 0xFFu, exponent == 0xFFu && fraction != 0, 0, 0, exponent == 0};
+    float_parts p = {bits >> 31 != 0, exponent != 0xFFu, exponent == 0xFFu && fraction != 0, 0, 0, exponent == 0, false};
     if (exponent == 0) {
         p.f = fraction;
         p.e = -149;
@@ -437,6 +432,21 @@ static float_parts split_float(const float v)
         p.f = fraction | 0x800000u;
         p.e = (int)exponent - 150;
     }
+    p.boundary = p.f == 0x800000u && p.e > -149;
+    return p;
+}
+
+static float_parts split_double(const double v)
+{
+    uint64_t bits;
+    memcpy(&bits, &v, sizeof bits);
+    const uint32_t exponent = (uint32_t)(bits >> 52) & 0x7FFu;
+    const uint64_t fraction = bits & UINT64_C(0x000FFFFFFFFFFFFF);
+    float_parts p = {bits >> 63 != 0, exponent != 0x7FFu, exponent == 0x7FFu && fraction != 0,
+                     0, 0, exponent == 0, false};
+    p.f = exponent ? fraction | UINT64_C(0x0010000000000000) : fraction;
+    p.e = exponent ? (int)exponent - 1075 : -1074;
+    p.boundary = p.f == UINT64_C(0x0010000000000000) && p.e > -1074;
     return p;
 }
 
@@ -456,7 +466,7 @@ static int write_fixed(char *out, const float_parts *p, const int decimals)
         big_set(&one, 1);
         big_add(&n, &one);
     }
-    char digits[160];
+    char digits[384];
     const int count = big_digits(n, digits);
     const bool zero = count == 1 && digits[0] == '0';
     int len = 0;
@@ -490,7 +500,7 @@ static int shortest_digits(const float_parts *p, char *digits, int *point)
     // as IEEE rounding goes to even. Above a power of two, the gap below is
     // half the gap above.
     const bool even = (p->f & 1u) == 0;
-    const bool boundary = p->f == 0x800000u && p->e > -149;
+    const bool boundary = p->boundary;
     big r, s, up, down;
     if (p->e >= 0) {
         big_set(&r, p->f);
@@ -702,6 +712,17 @@ tide_str tide_str_add_float(const tide_str a, const float v, const int32_t forma
     return add_ascii(a, buf, write_float(buf, v, format));
 }
 
+tide_str tide_str_add_double(const tide_str a, const double v, const int32_t format)
+{
+    const float_parts p = split_double(v);
+    if (p.nan) return add_ascii(a, "NaN", 3);
+    if (!p.finite) return add_ascii(a, p.negative ? "-Infinity" : "Infinity", p.negative ? 9 : 8);
+    char buf[384]; // 309 integer digits, a sign/point and up to 17 fractional digits.
+    const char letter = (char)(format >> 8);
+    const int count = letter == 'F' || letter == 'f' ? write_fixed(buf, &p, format & 0xFF) : write_shortest(buf, &p);
+    return add_ascii(a, buf, count);
+}
+
 tide_str tide_str_add_entity(tide_str a, const tide_entity e, const bool local)
 {
     a = add_ascii(a, local ? "LocalEntity(" : "Entity(", local ? 12 : 7);
@@ -776,6 +797,39 @@ tide_str tide_str_add_f4(const tide_str a, const tide_float4 v, const int32_t fo
 {
     const float c[4] = {v.x, v.y, v.z, v.w};
     return add_floats(a, "(", c, 4, format);
+}
+
+tide_str tide_str_add_d2(tide_str a, const tide_double2 v, const int32_t format)
+{
+    a = add_ascii(a, "(", 1);
+    a = tide_str_add_double(a, v.x, format);
+    a = add_ascii(a, ", ", 2);
+    a = tide_str_add_double(a, v.y, format);
+    return add_ascii(a, ")", 1);
+}
+
+tide_str tide_str_add_d3(tide_str a, const tide_double3 v, const int32_t format)
+{
+    a = add_ascii(a, "(", 1);
+    a = tide_str_add_double(a, v.x, format);
+    a = add_ascii(a, ", ", 2);
+    a = tide_str_add_double(a, v.y, format);
+    a = add_ascii(a, ", ", 2);
+    a = tide_str_add_double(a, v.z, format);
+    return add_ascii(a, ")", 1);
+}
+
+tide_str tide_str_add_d4(tide_str a, const tide_double4 v, const int32_t format)
+{
+    a = add_ascii(a, "(", 1);
+    a = tide_str_add_double(a, v.x, format);
+    a = add_ascii(a, ", ", 2);
+    a = tide_str_add_double(a, v.y, format);
+    a = add_ascii(a, ", ", 2);
+    a = tide_str_add_double(a, v.z, format);
+    a = add_ascii(a, ", ", 2);
+    a = tide_str_add_double(a, v.w, format);
+    return add_ascii(a, ")", 1);
 }
 
 tide_str tide_str_add_q(const tide_str a, const tide_quaternion v, const int32_t format)

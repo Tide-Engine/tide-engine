@@ -1158,6 +1158,27 @@ const b3MeshData* b3World_InternMesh( b3WorldId worldId, const b3MeshData* mesh 
 	return (const b3MeshData*)geometry->entries[id].bytes;
 }
 
+// Tide: retain terrain through resident restores and canonical transfers.
+const b3HeightFieldData* b3World_InternHeightField( b3WorldId worldId, const b3HeightFieldData* heightField )
+{
+	b3World* world = b3GetWorldFromId( worldId );
+	b3SnapGeometry* geometry = b3GetSnapGeometry( world );
+	b3SnapTouchAll( world );
+	int i = geometry->bucketCount > 0 ? geometry->buckets[heightField->hash & (uint64_t)( geometry->bucketCount - 1 )] : B3_NULL_INDEX;
+	for ( ; i != B3_NULL_INDEX; i = geometry->entries[i].next )
+	{
+		b3SnapGeometryEntry* entry = geometry->entries + i;
+		if ( entry->kind == b3_geometryHeightField && entry->hash == heightField->hash && entry->byteCount == heightField->byteCount &&
+			 memcmp( entry->bytes, heightField, (size_t)heightField->byteCount ) == 0 )
+		{
+			return (const b3HeightFieldData*)entry->bytes;
+		}
+	}
+	int id = b3SnapGeometryAdd( geometry, b3_geometryHeightField, heightField, heightField->byteCount, NULL );
+	geometry->entries[id].source = geometry->entries[id].bytes;
+	return (const b3HeightFieldData*)geometry->entries[id].bytes;
+}
+
 void b3DestroySnapshotGeometry( b3World* world )
 {
 	b3SnapGeometry* geometry = world->snapGeometry;
@@ -3175,6 +3196,84 @@ uint64_t b3World_Digest( b3WorldId worldId )
 				h = b3DigestWords( h, &manifold->rollingImpulse, sizeof( b3Vec3 ) );
 			}
 			contactKey = contact->edges[contactKey & 1].nextKey;
+		}
+	}
+	// Tide: joint warm-start state also affects the next step, including joints
+	// in sleeping sets. Visit native ids, never allocation addresses or graph
+	// traversal order. Keep the no-joint digest unchanged.
+	if ( world->joints.count > 0 )
+	{
+		h = b3DigestWords( h, &world->joints.count, sizeof( int ) );
+		for ( int i = 0; i < world->joints.count; ++i )
+		{
+			b3Joint* joint = world->joints.data + i;
+			if ( joint->setIndex == B3_NULL_INDEX ) continue;
+			const b3JointSim* sim = b3GetJointSim( world, joint );
+			h = b3DigestWords( h, &i, sizeof( i ) );
+			h = b3DigestWords( h, &joint->generation, sizeof( joint->generation ) );
+			h = b3DigestWords( h, &joint->type, sizeof( joint->type ) );
+			// Derived solver frames, indices and effective masses are rebuilt
+			// after a canonical restore. Hash only persistent warm-start data.
+#define B3_DIGEST_IMPULSE( member, field ) h = b3DigestWords( h, &sim->member.field, sizeof( sim->member.field ) )
+			switch ( joint->type )
+			{
+			case b3_distanceJoint:
+				B3_DIGEST_IMPULSE( distanceJoint, impulse );
+				B3_DIGEST_IMPULSE( distanceJoint, lowerImpulse );
+				B3_DIGEST_IMPULSE( distanceJoint, upperImpulse );
+				B3_DIGEST_IMPULSE( distanceJoint, motorImpulse );
+				break;
+			case b3_motorJoint:
+				B3_DIGEST_IMPULSE( motorJoint, linearVelocityImpulse );
+				B3_DIGEST_IMPULSE( motorJoint, angularVelocityImpulse );
+				B3_DIGEST_IMPULSE( motorJoint, linearSpringImpulse );
+				B3_DIGEST_IMPULSE( motorJoint, angularSpringImpulse );
+				break;
+			case b3_parallelJoint:
+				B3_DIGEST_IMPULSE( parallelJoint, perpImpulse );
+				break;
+			case b3_prismaticJoint:
+				B3_DIGEST_IMPULSE( prismaticJoint, perpImpulse );
+				B3_DIGEST_IMPULSE( prismaticJoint, angularImpulse );
+				B3_DIGEST_IMPULSE( prismaticJoint, springImpulse );
+				B3_DIGEST_IMPULSE( prismaticJoint, motorImpulse );
+				B3_DIGEST_IMPULSE( prismaticJoint, lowerImpulse );
+				B3_DIGEST_IMPULSE( prismaticJoint, upperImpulse );
+				break;
+			case b3_revoluteJoint:
+				B3_DIGEST_IMPULSE( revoluteJoint, linearImpulse );
+				B3_DIGEST_IMPULSE( revoluteJoint, perpImpulse );
+				B3_DIGEST_IMPULSE( revoluteJoint, springImpulse );
+				B3_DIGEST_IMPULSE( revoluteJoint, motorImpulse );
+				B3_DIGEST_IMPULSE( revoluteJoint, lowerImpulse );
+				B3_DIGEST_IMPULSE( revoluteJoint, upperImpulse );
+				break;
+			case b3_sphericalJoint:
+				B3_DIGEST_IMPULSE( sphericalJoint, linearImpulse );
+				B3_DIGEST_IMPULSE( sphericalJoint, springImpulse );
+				B3_DIGEST_IMPULSE( sphericalJoint, motorImpulse );
+				B3_DIGEST_IMPULSE( sphericalJoint, lowerTwistImpulse );
+				B3_DIGEST_IMPULSE( sphericalJoint, upperTwistImpulse );
+				B3_DIGEST_IMPULSE( sphericalJoint, swingImpulse );
+				break;
+			case b3_weldJoint:
+				B3_DIGEST_IMPULSE( weldJoint, linearImpulse );
+				B3_DIGEST_IMPULSE( weldJoint, angularImpulse );
+				break;
+			case b3_wheelJoint:
+				B3_DIGEST_IMPULSE( wheelJoint, linearImpulse );
+				B3_DIGEST_IMPULSE( wheelJoint, angularImpulse );
+				B3_DIGEST_IMPULSE( wheelJoint, spinImpulse );
+				B3_DIGEST_IMPULSE( wheelJoint, suspensionSpringImpulse );
+				B3_DIGEST_IMPULSE( wheelJoint, lowerSuspensionImpulse );
+				B3_DIGEST_IMPULSE( wheelJoint, upperSuspensionImpulse );
+				B3_DIGEST_IMPULSE( wheelJoint, steeringSpringImpulse );
+				B3_DIGEST_IMPULSE( wheelJoint, lowerSteeringImpulse );
+				B3_DIGEST_IMPULSE( wheelJoint, upperSteeringImpulse );
+				break;
+			default: break;
+			}
+#undef B3_DIGEST_IMPULSE
 		}
 	}
 	h ^= h >> 32;

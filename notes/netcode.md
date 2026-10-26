@@ -1,5 +1,405 @@
 # Netcode: sessions, prediction, commands
 
+## A session's recorder and rewind (2026-10-26)
+
+For Unity's time travel (notes/unity.md, Time travel), host-side session calls; generated code calls nothing new.
+
+- `tide_session_record(s, recorder)`: `begin(world, tick)` then `tick(tick, record, size, world)` for the match this
+  machine runs, from the server's journal (`tide_server_desc.journal`, set on the session's server by
+  `record_server`). `begin` comes as it's set on a running match, at `start_server` (start, start_from), at
+  `take_over`, and after `tide_session_migrate` (another layout's world). Sharded matches aren't recorded. NULL
+  stops it (the server's journal is cleared).
+- `tide_replay_check(game, world, record, size, jobs, &expected, &got)`: `tide_replay`'s run of a record, saying
+  `TIDE_REPLAY_SAME`, `_DIFFERENT` (both hashes) or `_UNREADABLE`; `tide_replay` is a wrapper of it, as it was.
+- `tide_session_remote_players(s)`: connections on the server here that aren't this machine's (used, connected or
+  joining).
+- `tide_session_rewind(s, world)`: the server's world becomes `world`, then the new optional
+  `tide_game.keep_commands(to, from)` (generated for every game with commands: a copy of `tide_command_state`)
+  puts the live world's command bookkeeping back over it, so no command is lost or applied twice whatever the clients
+  have pending; `ended` is read again, presentation corrections reset, and this machine's player takes the world
+  (`take_server_world`). The server's tick count goes on. Clients of other machines aren't told: their next frame's
+  hash isn't their world's, and they repair (projection games) or resync as on any divergence, from the server's
+  history of frames before the rewind, which still describe the ticks their verified worlds are at. No wire change,
+  so `PROTOCOL` stays 19. The generated header's Session ABI marker says `rewind (1)` for the `tide_game` member, so
+  hosts and games rebuild together, and every game's layout hash moved once.
+
+Tests: `tide_platform_travel`'s timeline cases (three sessions over a lossy loopback: recording, replay bit for bit,
+a changed build's first differing tick, a rewind with two clients connected and a command in flight).
+
+## Task handles follow authoritative visibility (2026-10-25)
+
+The generated match task registry is excluded from recipient singleton codecs
+and their simulation schema, alongside existing private continuations.
+Cached result tables remain private too. Ordinary public Task fields carry
+only identity; in a projection whose operation is absent they are stale,
+with no remote-status/result lookup. Retained match starts on a projected
+client return the default handle. Games publish permitted ordinary task
+progress/results through state, as before.
+
+task_visibility checks private cached/input markers are absent, canonical
+projection hashes agree before/after repair, projected status is stale, and
+client starts cannot alias the server's operation. No session wire protocol
+or runtime callback changed. The owner deferred distributed match task
+ownership: sharded games reject first-class match handle use for now, while
+direct/discarded match async and local handles/workers remain supported.
+Validation: language.md.
+
+## Session cookie proof, protocol 19 (2026-10-24)
+
+The owner approved the wire-protocol change after the packet audit below.
+Every connected message in either direction now has the player's 64-bit cookie
+and the current 32-bit connection attempt immediately after its four-byte
+header. This includes inputs/acknowledgements, commands/uploads, frames/world
+chunks/downloads, handover, local data/subscriptions and disconnects. Receivers
+validate both before interpreting the payload or refreshing liveness. Unknown
+message kinds do not refresh liveness. Commands/uploads retain their previous
+attempt check through this common prefix. Protocol 19 prevents older peers
+from silently using the former unauthenticated layouts.
+
+HELLO cannot replace an existing connection at the same source address without
+its cookie or the same nonzero identity from the trusted admission callback.
+This check precedes replacement and game-mismatch disconnection. Genuine
+cookie reconnects keep their slot and event behavior. A fresh client which
+lost its cookie at an occupied address waits for the old connection's timeout;
+the address alone grants no takeover. An initial HELLO still only receives a
+WELCOME; its first valid cookie-bearing CLIENT proves receipt before joining.
+WELCOME already echoes the attempt and supplies the cookie; after acceptance,
+a later WELCOME cannot change that cookie. REFUSE now echoes the attempt and
+is accepted only before a welcome. BYE requires its complete valid payload;
+an ended server's initial HELLO reply echoes the offered cookie and attempt.
+A kick notice received before WELCOME checks the cookie offered in HELLO,
+so a player who missed a kick still hears it on reconnect.
+
+Cookies are generated by hashing a private 32-byte key with a fixed-length
+monotonic counter, rather than exposing reversible splitmix64 output. A player
+learning their own cookie cannot invert it to calculate later cookies. The
+existing host entropy callback seeds the key independently of match state,
+including for unseeded games; all-zero entropy fails server creation. A
+takeover now forwards that callback too. Custom network hosts must provide
+system entropy. With no callback, test/benchmark hosts retain a private
+process/time fallback without a cryptographic entropy guarantee; the standard
+host's deterministic headless/explicit-seed runs still select this fallback.
+No key/counter enters a world, hash, snapshot, journal or recovery metadata.
+Existing reconnect cookies/digests survive migration/recovery as before.
+
+These are bearer credentials against blind source-address spoofing, not a MAC
+or raw-UDP encryption. They do not authenticate an initial server against an
+on-path attacker or protect a cookie observed on plaintext UDP. WebRTC's
+encrypted transport remains the path protection; a malicious authenticated
+player still requires game-specific authoritative command/input validation.
+Normal CLIENT/SERVER/chunk/BYE traffic gains 12 bytes per packet, commands and
+uploads gain eight beyond their previous attempt, and local data gains four
+beyond its previous cookie. Packet capacities still bound their payloads.
+
+The eleven raw-peer/session packet cases cover wrong cookies, wrong/stale attempts,
+truncated proof prefixes, spoofed input/disconnect/server-clock packets,
+malformed disconnects/refusals, a live-address HELLO takeover, successful
+reconnect and valid disconnect, timeout despite forged heartbeats, failed
+entropy, plus the earlier upload/parser regressions. The voice fixture captures
+its actual attempt and additionally forges it with the right cookie. Command
+and damaged-snapshot wire fixtures follow protocol 19. All eleven packet cases
+pass with session.c instrumented by Windows AddressSanitizer.
+
+The local-events/plain traffic pins both move from 29,124/11,108 server/client
+bytes to 33,156/15,332, exactly 12 bytes on each of their 336/352 connected
+packets. World/delta pins stay unchanged. The ten-second bandwidth fixture
+keeps its previous payload ceilings and separately counts the proof bytes:
+native/WASI totals are 141,092/25,955/25,957 on the server/two clients, including
+14,568/6,000/6,000 proof bytes.
+
+Validation: both complete debug builds pass with warnings as errors. All 2,621
+enabled native CTests pass (123.34 s), and all 2,479 enabled web CTests pass
+(370.44 s), including Vulkan/OpenGL, WebGL/D3D11/WebGPU, browser rooms and
+migration, voice, dedicated admission, recovery, commands/uploads and the
+unchanged simulation/world/delta pins. Both retain the existing disabled
+MicroDuck right-turn limitation. These engine-only configurations explicitly
+omit TIDE_EXTERNAL_DIRS; no prototype/service changes or validation were
+required. Node is 24.22.1 and all runs retain TIDE_HIDDEN/muted browser flags.
+The eleven packet cases also pass with the final session.c under Windows ASan.
+Other operating systems, Android, MinGW and the full sanitizer suite remain
+CI coverage. No workflow was manually dispatched or deployment performed.
+
+Integration: origin/dev's scene startup, prefab overrides and editor/CLI work
+merged cleanly in `50bed96c`, with no session/runtime overlap. Since codegen is
+a dependency, rebuilt the affected native/WASI networking, commands, recovery,
+handover, players/ceiling, visibility, voice and prefab/startup targets. All 20
+selected CTests pass on each platform, including the incoming scene-startup
+script and the complete engine test executable. No full-suite repeat was
+needed for this dependency-only integration; the complete pre-merge results
+above remain the broad validation.
+
+Push retry integration: fetched the shard recovery/admission changes through
+`12f3cdac` after GitHub DNS became available through a command-scoped resolver
+override. The C merge retains both the cookie/attempt gate and the admitted-slot
+reuse exclusion/release; both prepend records are retained in the notes.
+Rebuilt the affected native/WASI engine, networking, command, visibility,
+voice, shard and Earth targets. All 25 selected CTests pass on each platform
+(19.56/21.65 s), including the 12 shard-player cases, 15 Earth cases, all three
+Earth benchmark pins and the packet regressions. The overlap is limited to
+admission/reconnect and shard recovery, so no full-suite repeat was required.
+
+## Shard recovery reserves player slots (2026-10-24)
+
+The server's anonymous-slot reuse scan now excludes `admitted` players as
+well as connected players and migration reservations. A restored full shard
+previously let an anonymous peer replace a reserved cookie before its owner
+returned. Global departures release admissions on every shard through
+`tide_server_unadmit`; an unused slot clears its old identity so a new cookie
+can be admitted there, while live connections and migration reservations keep
+theirs. Invalid/out-of-game IDs do nothing. The shard instruction uses cookie
+zero for release; this reservation fix left game packets unchanged (then
+protocol 18). The combined build uses protocol 19's cookie proof above.
+
+Neighbour retries preserve the player's cookie; terminal home kicks/refusals
+are no longer hidden by `outlive_home`. The checkpoint/journal lifecycle fix,
+its new internal checkpoint version and tests are in `notes/sharding.md`,
+Border and recovery audit. Cookies remain private host/checkpoint metadata;
+the generated membership bitset contains only public player-slot presence.
+
+## Hostile client packet validation (2026-10-24)
+
+`on_upload` now binds every chunk of an existing transfer number to its
+original command size and sequence before indexing the retained chunk map or
+copying payload bytes. Previously a peer could start a small upload, reuse its
+number with a larger size/index and access beyond both original allocations.
+A shorter size or changed sequence could also mix incompatible chunks. Rejected
+chunks leave the original transfer usable; a new number still replaces it.
+
+`on_client` now validates every input's span and codec, the exact packet end,
+known flags, acknowledgement against the authoritative tick and non-wrapping
+input tick arithmetic before greeting, acknowledging transfers or storing any
+input. Canonical whole inputs are staged in one reused server buffer, avoiding
+per-packet allocation after its capacity is established. Inputs beyond the
+server's bounded future window cannot change arrival-lead bookkeeping. HELLO
+also requires an exact packet end and known flags. Valid packet bytes, protocol
+18, generated-C APIs, snapshots and deterministic results are unchanged.
+
+`tests/test_session_packets.c` drives the public server with raw loopback
+packets: changed upload size/sequence, out-of-allocation chunk indices,
+truncated/empty/invalid final inputs, trailing bytes, future acknowledgements
+and wrapping input ticks, followed by valid traffic and transfer replacement.
+A far-future input followed by an ordinary input must still report subsequent
+missing inputs as late, rather than retaining the first input's positive wait.
+The original parser fails the atomic-input regression; a separately linked
+Windows AddressSanitizer build reproduces its heap-buffer-overflow in
+`on_upload`. The fixed session passes all five packet tests under ASan and
+on native/WASI, including malformed HELLO retention and valid input delivery.
+
+Validation: warning-free native/web debug builds; all 2,621 enabled native
+and 2,479 enabled web engine CTests pass, including Vulkan/OpenGL,
+WebGL/D3D11/WebGPU, rooms, migration and deterministic pins. Both retain the
+existing disabled MicroDuck right-turn test. The final engine test executable,
+with all five added packet cases, also passes as a whole on native/WASI.
+Node is 24.22.1; runs retain TIDE_HIDDEN and muted browser flags.
+
+The environment also configured tide-prototypes. Its Cracked direct-world
+3,000-tick hash pin fails on both native/WASI with the same actual
+`bf53c0610c47764e` versus expected `0a216d532fa6445c`; that test never calls
+the changed session code. No prototype source or pin was changed. After all
+engine checks finished, the remaining optional prototype browser playtests
+were stopped (Inside Out's active WebGL playtest and the queued prototype
+browser checks); they are not coverage for this task. Other operating systems,
+Android, MinGW and the full sanitizer suite remain CI coverage; only the
+targeted Windows session/packet ASan probe ran here. No CI was dispatched.
+
+Audit boundary at the end of the initial parsing pass: command payload validation and connection-derived sender,
+chunk/download bounds, recipient acknowledgement ownership and view-time
+validation were checked. This does not establish authentication of the source
+address: protocol 18 CLIENT and BYE still trust it, and a new HELLO can replace
+an existing connection at that address. A session-cookie wire-protocol change
+was raised with the owner separately and is not implemented by this parsing
+fix. The approved protocol-19 follow-up above closes that session boundary.
+Native/WebRTC transport security and game-specific command authorization
+remain separate boundaries; this is not a complete transport/cryptography audit.
+
+## A client sends at most once a tick unless it has news (2026-10-23)
+
+`update_client` used to send a packet every update, so a client updating faster than the tick rate (a 144 Hz browser, a native client without vsync) sent more than it needed, and more than the hosting router allows an admission (100 a second). `send_client` now builds the packet every update and sends it when it heard from the server since it last sent (`heard_since_sent`, set by any packet taken in: so acknowledgements and pings go out as promptly as before), when anything in it after its two times differs from the last one sent (kept after `packet`, `client_sent_size`: a tick verified, a frame or chunk had, a repair asked for, a new input), or when 0.99 of a tick has passed since it last sent (`client_sent`; the slack keeps a host updating once a tick sending every update, which float rounding of the clock otherwise skipped now and then). Nothing on the wire changed, so `PROTOCOL` stays 18.
+
+A first version sent on hearing, a new sample or a tick passing, and nothing else: a client's verification and repair requests made in an update with nothing heard waited for the tick, the hidden-effects test's worst verified lag (20% loss, 120 updates a second at 60 ticks) went from 104 ticks to 152 against its bound of 120, and a client updating once a tick skipped sends (the decode test's pinned hash moved). With the packet compared it's 107, and the decode pin is as it was. Loopback loss is drawn per packet, so fewer packets change which ones are lost: `rewind_network_test`'s seed moved from 82 to 83 with the first version (30 seeds compared, no change in the results' spread).
+
+## Shard messages by download in games without commands (2026-10-23)
+
+A sharded game's clients now report the progress of a download (a published command or shard message) in `MSG_CLIENT` whether or not the game has commands, and servers read it, as they did only for games with commands. A big shard message in a game without commands was never acknowledged, which held it and every later one at the server for good. `PROTOCOL` stays 18: only sharded games without commands send anything new, and their builds must match anyway. Server additions: `tide_server_injected_message`, `tide_server_drop_injected`. Session additions for sharded matches: `tide_session_can_reload`, `tide_session_save_shards`, `tide_session_start_shards_from`, `tide_session_shards`. Details: `notes/sharding.md`.
+
+## A server's journal (2026-10-23)
+
+Visibility recovery correction (2026-10-24): private commands and injected
+shard messages were applied but omitted from the common frame, which the
+journal had copied. The hosted Earth's saved journal reproduces a mismatch
+at tick 4291, after 717 successfully replayed records from its checkpoint.
+With projections and a journal enabled, dispatch now copies these effects
+into tick-local, server-only buffers. `journal_tick` appends their entries to
+a separate full replay frame; large payloads use record-local download IDs
+and bytes in the existing journal format. Recipient frames, downloads, wire
+protocol, tick order and hashes are unchanged. Games without a journal make
+no payload copies. No new public/generated runtime API is introduced.
+
+Every visibility-session case now replays every server record while checking
+the original privacy, loss, correction and command assertions, including two
+100 KB private uploads. A separate test covers small and 5 KB private shard
+messages. Earth's real four-region test replays each shard throughout joins,
+travel and leaves and compares final full-world hashes. Previously omitted
+effects cannot be reconstructed from the old records; the fix protects new
+journals rather than accepting an invalid historical hash.
+
+Validation: full Windows debug suites pass 2,621 enabled native and 2,479 web
+tests, including Vulkan/OpenGL, WebGL/D3D11/WebGPU and existing journal/recovery
+coverage. The existing MicroDuck right-turn test stays disabled. Final Earth
+presentation edits additionally pass its four CTests on native/web debug.
+Other operating systems, Android, MinGW and sanitizers remain CI coverage;
+no CI was manually dispatched.
+
+`tide_server_desc.journal` gets, after each tick, a record of what went into
+it: the tick's frame as players get it, then the bytes of every big command or
+shard message the frame names by download. `tide_replay` runs that tick again
+on the world from before it, as a client applies a frame, and checks the hash.
+Nothing on the wire changes; a server without a journal does nothing new. The
+orchestrator journals every shard and recovers from a checkpoint and records
+(notes/sharding.md, The journal).
+
+## Session protocol 18: shard messages (2026-10-23)
+
+A sharded game's servers take messages from other shards
+(`tide_server_inject`), applied before the tick after its commands and written
+in the frame (`FRAME_SHARD` 128) inline or, over `TIDE_COMMAND_BYTES`,
+published and named by download as a big command is. Clients apply them from
+the frame at the same point; such a frame is never as predicted. A closed
+server takes players `tide_server_admit` admitted with their cookie, as those
+players. `PROTOCOL` went to 18 (`tests/test_commands.c` and the voice test
+write it by hand); a game that isn't sharded sends nothing new. A sharded
+session can't migrate. Details, limits and tests: notes/sharding.md.
+
+## Unreliable local data for optional voice (2026-10-22)
+
+Sessions now expose the C-only listen/send/data-generation API described in
+`notes/voice-package.md`. Additive protocol-17 message kinds 12/13 carry
+leased subscriptions and 1..512-byte local payloads. The server validates an
+existing greeted sender and its cookie, applies a 60-packet/s four-burst limit,
+and forwards only to other subscribed connections with server-supplied sender
+identity/digest and the recipient's cookie. No payload is resent, run in a
+tick, saved, rolled back or hashed. Unused sessions emit no new messages.
+Existing protocol messages, world bytes and deterministic pins are unchanged.
+Servers relay without Opus or a voice provider. Hostile-packet, optional-cost,
+three-session loss/reconnect and actual three-process audio tests are recorded
+with the package, alongside complete native/web validation.
+
+## Session protocol 17: pages hashed by stripes (2026-10-20)
+
+`tide_hash_wide`, every page's hash and so every world hash, is a new function
+(notes/ecs.md, A page's hash by stripes). Peers already refuse another
+`PROTOCOL` in HELLO (`engine/src/session.c`), so it goes from 16 to 17: two
+builds that hash pages differently would otherwise connect and disagree about
+every tick, and a joiner's page-hash negotiation would want every page. Nothing
+else on the wire changed; `tests/test_commands.c` writes 17 by hand. Page
+hashes reach the wire in each tick's world hash, in a world delta's (the hash
+its receiver must come to) and in a joiner's list of page hashes
+(`*_hash_pages`), all covered by the protocol number. Raw packed worlds hold
+none (their bytes are unchanged, as the local fields/events fixtures pin), so
+a world unpacked by either build is hashed by that build's function. Pinned
+deltas moved in their bytes, not in size.
+
+## Double Position presentation errors (2026-10-20)
+
+Position-tagged double scalars/vectors now use the existing private correction
+path in their declared precision. Frame fractions/decay timing remain shared
+floats, widened for binary64 arithmetic. No session protocol, prediction,
+simulation state, packing or runtime API changes. The extended view_corrections
+E2E covers interpolation, correction/decay, cache privacy, snaps, identity and
+confirmed removal; final validation is in notes/language.md.
+
+## Double matrix columns (2026-10-20)
+
+Generated input/command codecs walk double matrix columns as double vectors,
+reusing the binary64 low-word-first representation and changed-bit deltas.
+Nonfinite components repair to declared defaults before game input. Command,
+raw/delta input, recipient state and replay E2E coverage now includes matrices;
+no transport/session protocol or runtime networking function changes.
+Validation: notes/language.md.
+
+## Double input and command fields (2026-10-20)
+
+Generated double scalar/vector payloads retain all 64 bits per component as two
+ordered 32-bit words, low first. An input delta sends a changed flag followed by
+those bits only when changed; +0/-0 and payload bits remain distinguishable.
+Readers never put two stateful bit reads in one C operand expression. Repair and
+bounds handle double leaves before input Sanitize/command dispatch. Existing
+schema identity distinguishes the new types; the session protocol is unchanged.
+The double E2E covers extreme bit patterns, whole/delta round trips, nonfinite
+repair and actual command submission/dispatch with truncation rejection.
+Full contracts and validation: notes/language.md.
+
+## Shared player/connection ceiling (2026-10-20)
+
+The owner approved 65,536 as the shared supported ceiling. TIDE_PLAYERS_MOST
+in tide/player.h now governs maxPlayers, native room peers, dedicated-host
+max_connections and the service CLI's validation. Defaults remain 16 players
+per match and 256 connections per dedicated host; those settings still bound
+different resources. This is a supported representation ceiling, not a measured
+65,536-player throughput claim.
+
+Session protocol 16 encodes welcome player indices, join/leave player indices,
+handover part indices and tick-piece indices as varints. Pending server events
+keep uint32 player indices. The generated Session ABI marker changes, so hosts
+and games rebuild together. Small indices retain their previous wire sizes.
+Tick sending retains its eight-packet update allowance and now resumes a large
+frame at its next unsent piece, rather than repeatedly starting at piece zero.
+Projected frames above 256 KB still use the existing chunked correction path as
+an internal reassembly bound; that threshold no longer reflects index width.
+
+Player sets remain bounded value bitsets (65,600 bits, including the server's
+input slot), with a maintained nonzero-word prefix so small sets do not scan
+the full ceiling. Initialize them with {0} and mutate through tide_players_*
+to preserve that prefix. Wire masks and frame/handover capacity bounds use the
+game's configured count. Per-player connections, inputs, Audience words and
+client handover digests use the configured count, not the global ceiling.
+The fixed bitsets are about 8 KiB of metadata each; they are not dynamically
+sized. Frame-capacity arithmetic widens before allocation; unsupported oversized
+handwritten game tables are refused. Kick validates against the game's own
+player count before indexing its connections.
+
+tide_server_recovery now takes caller-provided digest/identity output arrays,
+each tide_game_players(game) entries; its getter preserves those pointers and
+fills them. Managed checkpoint envelope 2 stores game-sized arrays without
+pointers, and save/restore allocate the checkpoint off the stack. Client
+handover metadata owns game-sized digest storage, released on replacement and
+destruction. Generated raw and network serialization headers also use temporary
+heap storage, so large configured input arrays do not exhaust the 1 MiB stack.
+Serialization contents and deterministic world hashes are unchanged for an
+unchanged game schema.
+
+The players fixture now runs 270 real loopback sessions with maxPlayers 300,
+including inputs, identity-preserving host migration, and all ten Audience
+words through actual recipient projection. players_ceiling compiles maxPlayers
+65536, exercises the last input/server slots and last Audience word, joins the
+last slot using a restored match with preceding slots reserved, verifies ticks
+and input delivery, round-trips its delta, reconnects with the same cookie, and
+checks leave delivery and rejection above the ceiling. It does not instantiate
+65,536 clients or benchmark that workload.
+
+Validation: warning-free Windows native/web debug builds; all 2,406 native
+and 2,353 web CTests are covered, including native Vulkan/OpenGL, WebGL,
+WebGPU, browser RTC/migration/threading, compiler/LSP and deterministic pins.
+The initial sole failure in each suite was the handwritten command fixture's
+protocol-15 packet; it now sends 16. After that fix and the final oversized-frame
+migration guards, the complete engine and eight affected session fixtures pass
+again on both native and WASI. The docs production build passes. A separately
+linked checkout-built WASM reactor with the ceiling fixture saves and restores
+an identical 3,170,841-byte managed checkpoint, and rejects an invalid player-set
+prefix. Its header also compiles under strict C17 with warnings as errors.
+Vulkan tests ran without a configured validation layer. Android, Linux/macOS,
+MinGW and sanitizer coverage remain CI work; no CI was dispatched.
+
+Integration: origin/dev advanced with disjoint math/Screen metadata and private
+aggregate-borrowing codegen. The two notes-only conflicts retain both records;
+code merged without conflicts. Both complete debug builds and the docs build
+pass after integration. The 21 affected native and 22 web checks pass, covering
+the engine/session/player fixtures, incoming float-bit/aggregate/Screen cases,
+Screen diagnostics, shader golden, native Vulkan/OpenGL and WebGL/WebGPU float
+checks, editor harness and native/browser rooms. The exact-ceiling managed
+checkpoint probe passes again against the merged runtime. No full-suite repeat
+was needed for the disjoint compiler hunks.
+
 Scene audience unification (2026-10-15): the compiler removed separate scene
 membership storage/APIs and uses the root Visibility group for the enclosing
 scene limit. Recipient projection, lifecycle journals, authoritative correction
@@ -102,9 +502,37 @@ world is projected before adoption.
 
 Hash/repair partitioning is currently internal and provisional: one canonical
 projection hash goes each tick, no hierarchical page-hash negotiation or inferred
-dependency graph is implemented. Hashing presently encodes the entire permitted
-projection per recipient, so CPU cost scales with that value size and recipients;
-unchanged asset/container values do not yet reuse cached canonical hashes.
+dependency graph is implemented. Steady corrections put a client's verified
+world up to 1.5 s behind at 133 ms round trips (`notes/benchmarks.md`, Earth
+under load).
+
+Every player's frame after a tick is built from what's alike for them worked
+out once (2026-10-24; they were 80 to 90% of a server's work from 64 players,
+and grew with the square of the players):
+- **Projection hashes** (`tide_game.client_hashes`, every greeted player's at
+  once; `client_hash` is the same for one). The projection hash is no longer
+  the hash of `client_state`'s bytes: it's the singletons' hash (the command
+  state each recipient's own), plus a sum of each permitted entity's hash (its
+  archetype, handle, snaps, scene and permitted components, by the value codec)
+  and of each input slot's, as permitted. An entity's audiences and its hash
+  with all it has are worked out once a tick; a recipient denied some of its
+  components gets another, computed once and kept for the next recipient with
+  the same mask. The sum doesn't depend on row order, which a client's tables,
+  missing hidden rows, needn't share with the server's. Games with transform
+  hierarchies keep hashing `client_state`'s bytes, as each recipient's cut links
+  and anchors differ. A transfer's check is now the hash of the bytes the
+  loaded world encodes to again (it compared `client_hash`, which was the same
+  hash). `recipient logical state schema 2` is in the simulation identity.
+- **Inputs** (`tide_game.client_input_masks`): which slots each recipient may
+  have, before and after the tick, from each slot's owner's entities' audiences
+  intersected once; the session reads every slot once and packs each changed
+  slot's delta once (`frame_inputs`), packing again only for a recipient whose
+  mask differs before and after. `filter_client_inputs` stays for the other
+  paths (endpoints, repairs).
+`earth_a_machine_hashes_its_world_as_the_server_does` checks a loaded
+projection hashes as the server's, together and one by one, for players who
+have each other's Walker and one who has neither's, and that the masks are
+the filter's. The Session ABI marker says `client hashes (2)`.
 Canonical insertion/removal can shift later byte regions and reduce delta reuse.
 Physical-page sharing still makes authoritative history snapshots cheap, but
 retained history and recipient journals add memory. These are optimization gaps,
@@ -209,7 +637,8 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **The local outbox** is `tide_outgoing_item`s (a malloc'd buffer, its size and channel) in the local state, `TIDE_COMMAND_OUTBOX` of them (32 a channel, the unordered ones counted as one), packed after the struct in `tide_local_pack` (each checked again as it's unpacked) and freed by `tide_local_free` and `tide_local_disconnected`.
   - Generated C: a game with no commands generates the C it did, byte for byte (old and new tidec over every game's source list); one with commands differs only in the contract's signatures, the outbox and `TIDE_COMMAND_CHANNELS` in its header, and so in its hash, which is one hash, not a layout change.
   - Tests: `compiler/tests/e2e/commands_channels` (channels numbered and their sequences apart, the window, a 3 MB command whole on one world and through the outbox's bytes, a chat line handled within half a second of a 3 MB upload on a lossy network while no player's verified tick falls behind, the same upload on a lossless one with no input late, 20 unordered commands once each under 30% loss, a late joiner's world with the sequences, a handover keeping every channel's and the window), natively and on the web; `compiler/tests/errors/command_channel_*.tide` and `command_unordered_*.tide`, one per diagnostic; `tests/test_commands.c` as it was, on the default channel.
-- A match takes as many players as the game says: its `maxPlayers` setting (`tide_game.max_players`, `TIDE_GAME_PLAYERS` in the generated header), 16 without one (`TIDE_PLAYERS_DEFAULT`) and 256 at most (`TIDE_PLAYERS_MOST`, `tide/player.h`). The world keeps an input for each and the server's in the slot after them, so the count is part of the layout: builds that differ in it are different games, and a reload that changes it starts the match over (`prepare_server` refuses). The netcode has no smaller limit of its own: a server's arrays by player are allocated for its game's count, sets of players are `tide_player_set` (320 bits: the players and the server's slot) and go on the wire as a varint of as many bits as they have (`write_players` in `engine/src/session.c`), so a match of a few players pays what a 32-bit set did; a tick's count of joins and leaves is a varint; and a handover record goes in parts of a datagram (`HANDOVER_PART`), as 256 digests don't fit one. Scene roots now use ordinary Visibility groups; Audience has as many 32-bit words as the game's players take (`add_audience_words` in `compiler/src/check.c`). `compiler/tests/e2e/players` retains its 150-machine loopback handover using an explicit test-only full-world `tide_game` adapter: all projection/filter/journal callbacks are cleared only for that legacy multiword/digest-transfer case, never for ordinary generated sessions. A separate case uses the unmodified generated projection API, joins all 200 players, checks all seven Audience words through the scene root's shared group, verifies recipient 199 receives its Table, then removes that member and proves Table is absent for 199 but still available to 198. All original migration identity/input/seating assertions remain. The three-case players fixture passes native and WASI (CTest 1.29/1.61 seconds).
+- A match takes its configured maxPlayers (16 by default), up to the shared TIDE_PLAYERS_MOST ceiling of 65,536. Its count is part of the input/Audience layout and build compatibility. Current protocol, storage and fixture contracts are in Shared player/connection ceiling above.
+
 - How late other players see you is the priority (the owner, 2026-10-05: "the entire point"; a player's own input was never the issue, and a change that made views draw the tick in progress was built by mistake and reverted the same day, as it also made each machine guess the others a tick further). What's between a key read on one machine and another's view showing it, beside the network: the wait for a tick to sample it, how early the client sends its inputs (the server holds each until its tick), the server's frame, and the watcher's.
   - A client sends its inputs as early as they have to be, and no earlier (`keep_early` in `engine/src/session.c`). The server says with everything it sends how long the player's inputs waited before their ticks ran (`note_wait`: from when each arrived, by its transport's clock, to the update that ran its tick, the least of the ticks an update ran; under 0 by a tick for each input missing when a tick ran, counted from the newest input the player sent, one that came too late among them: `connection.newest_sent`). It's said in 960ths of a second (`WAITS`), a signed varint after the newest input, which is a byte while the wait is under 65 ms; the tick before them went from 32 bits to a varint, so a SERVER is no bigger than it was for a match's first 9 hours at 60 ticks a second (a byte more after), and `PROTOCOL` went to 10. The least of those waits over a while is what counts, as being early is for the input that's nearly late.
   - What the client keeps that least at (`early_wanted`): its lead in ticks (`tide_client_desc.lead`: 0 on the server's machine, whose inputs go straight in), or, with `lead_frame`, which a session's player over a network has, one of its own frames where that's less (the owner, 2026-10-06, of what it saves: "1 tick would be huge"). A frame because inputs are read and sent a frame at a time, and every unacknowledged input goes again in each: so a frame that came late, or a datagram that was lost, still leaves the input in time. A machine's frame is the time between its updates, on the whole, the last while it watched (`frame`), and counts as a 60th of a second where it's shorter (`EARLY_FRAME`): that's what a match of 60 ticks a second has with a tick, so a fast display gets no less. Hosts that say `lead` alone keep whole ticks, as tests and benchmarks do.

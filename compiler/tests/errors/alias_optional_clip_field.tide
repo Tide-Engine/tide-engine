@@ -1,0 +1,4 @@
+// expect: a field can't be a rendering resource or nothing
+using OptionalClip = Clip?;
+local singleton Holder { OptionalClip value; }
+scene Main;

@@ -35,6 +35,36 @@ public final class TidePlatformTest extends BasePlatformTestCase {
             }
         }
     }
+    // The debug actions are in the Run menu, and the .tide breakpoints CLion's debugger takes are TextMate's files,
+    // which a .tide file is; the extension itself only loads where that debugger is (tide-cidr.xml)
+    public void testDebugActionsAreRegisteredAndTideFilesAreWhereBreakpointsGo() throws Exception {
+        for (final String id : new String[]{"Tide.AttachUnity", "Tide.DebugGame"}) {
+            final var action = ActionManager.getInstance().getAction(id);
+            assertNotNull(id, action);
+            final var data = SimpleDataContext.builder().add(CommonDataKeys.PROJECT, getProject()).build();
+            final var event = AnActionEvent.createFromAnAction(action, null, ActionPlaces.UNKNOWN, data);
+            action.update(event);
+            assertTrue(id, event.getPresentation().isEnabledAndVisible());
+        }
+        final var tide = myFixture.configureByText("game.tide", "system Go() { }\n").getVirtualFile();
+        assertTrue(new TideBreakpoints().getFileTypes().contains(tide.getFileType()));
+        assertNotNull(getClass().getResource("/META-INF/tide-cidr.xml"));
+    }
+    // Enter between a block's braces puts the caret on an indented line of its own and the closing brace under
+    // the opening one, as C#'s and C's editors do
+    public void testEnterBetweenBracesOpensTheBlock() {
+        myFixture.configureByText("game.tide", "system Go()\n{\n    if (true)\n    {<caret>}\n}\n");
+        myFixture.type('\n');
+        myFixture.checkResult("system Go()\n{\n    if (true)\n    {\n        <caret>\n    }\n}\n");
+        myFixture.configureByText("level.tprefab", "prefab Level {<caret>}\n");
+        myFixture.type('\n');
+        myFixture.checkResult("prefab Level {\n    <caret>\n}\n");
+        // Elsewhere Enter is the editor's own
+        myFixture.configureByText("game.tide", "scene Main { }<caret>\n");
+        myFixture.type('\n');
+        myFixture.checkResult("scene Main { }\n<caret>\n");
+    }
+
     public void testConsoleHyperlinkUsesFileAndOneBasedCoordinates() throws Exception {
         final Path folder = Files.createTempDirectory("tide-platform-");
         Files.writeString(folder.resolve("game file.tide"), "scene Main {}\n// target\n");

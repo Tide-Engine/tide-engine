@@ -1,0 +1,84 @@
+using System.Collections.Generic;
+using System.IO;
+using Tide;
+using UnityEditor;
+using UnityEditor.SceneManagement;
+using UnityEngine;
+
+// Temporary: writes the converter's test fixture (Unity's own YAML) into Assets/Fixture.
+public static class MakeFixture
+{
+    const string Folder = "Assets/Fixture";
+
+    public static void Make()
+    {
+        AssetDatabase.DeleteAsset(Folder);
+        Directory.CreateDirectory(Folder);
+        AssetDatabase.Refresh();
+
+        // Thing: a root with two parts, one under a GameObject that's no entity, and an inactive one
+        var thing = new GameObject("Thing");
+        Entity(thing, ("Health", "hp = 10, armor = 1"));
+        var arm = new GameObject("Arm");
+        arm.transform.SetParent(thing.transform, false);
+        arm.transform.localPosition = new Vector3(1, 0, 0);
+        Entity(arm, ("Part", ""));
+        var visual = new GameObject("Visual");
+        visual.transform.SetParent(thing.transform, false);
+        visual.transform.localPosition = new Vector3(0, 1, 0);
+        visual.transform.localScale = new Vector3(2, 2, 2);
+        var tip = new GameObject("Tip");
+        tip.transform.SetParent(visual.transform, false);
+        tip.transform.localPosition = new Vector3(0, 0.5f, 0);
+        Entity(tip, ("Part", "length = 2"));
+        var off = new GameObject("Off");
+        off.transform.SetParent(thing.transform, false);
+        Entity(off, ("Part", ""));
+        off.SetActive(false);
+        var thingPrefab = PrefabUtility.SaveAsPrefabAsset(thing, Folder + "/Thing.prefab");
+        Object.DestroyImmediate(thing);
+
+        // Variant: Thing with more hp, as the inspector writes it, the field it changes alone
+        var instance = (GameObject)PrefabUtility.InstantiatePrefab(thingPrefab);
+        var root = instance.GetComponent<TideEntity>();
+        root.components[0] = new TideAuthoredComponent { type = "Health", values = "hp = 20" };
+        PrefabUtility.RecordPrefabInstancePropertyModifications(root);
+        var variantPrefab = PrefabUtility.SaveAsPrefabAsset(instance, Folder + "/Variant.prefab");
+        Object.DestroyImmediate(instance);
+
+        // Holder: a Variant inside, its Tip longer, and the holder naming that Tip
+        var holder = new GameObject("Holder");
+        var inner = (GameObject)PrefabUtility.InstantiatePrefab(variantPrefab, holder.transform);
+        inner.transform.localPosition = new Vector3(5, 0, 0);
+        var innerTip = inner.transform.Find("Visual/Tip").GetComponent<TideEntity>();
+        innerTip.components[0] = new TideAuthoredComponent { type = "Part", values = "length = 3" };
+        PrefabUtility.RecordPrefabInstancePropertyModifications(innerTip);
+        var link = Entity(holder, ("Link", "target = @0, self = @1"));
+        link.references = new List<GameObject> { innerTip.gameObject, holder };
+        var holderPrefab = PrefabUtility.SaveAsPrefabAsset(holder, Folder + "/Holder.prefab");
+        Object.DestroyImmediate(holder);
+
+        // Level: a Holder moved, its inner Variant's armor set from the scene, and a mark of the scene's own
+        var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
+        var placed = (GameObject)PrefabUtility.InstantiatePrefab(holderPrefab);
+        placed.transform.position = new Vector3(2, 0, 0);
+        var variantRoot = placed.transform.GetChild(0).GetComponent<TideEntity>();
+        variantRoot.components[0] = new TideAuthoredComponent { type = "Health", values = "armor = 5" };
+        PrefabUtility.RecordPrefabInstancePropertyModifications(variantRoot);
+        var mark = new GameObject("Mark");
+        mark.transform.position = new Vector3(0, 0, 7);
+        Entity(mark, ("Part", "length = 9"));
+        new GameObject("Plain");
+        EditorSceneManager.SaveScene(scene, Folder + "/Level.unity");
+        AssetDatabase.SaveAssets();
+        Debug.Log("MakeFixture: made " + Folder);
+    }
+
+    static TideEntity Entity(GameObject on, params (string type, string values)[] components)
+    {
+        var entity = on.AddComponent<TideEntity>();
+        entity.components = new List<TideAuthoredComponent>();
+        foreach (var (type, values) in components) entity.components.Add(new TideAuthoredComponent { type = type, values = values });
+        return entity;
+    }
+}

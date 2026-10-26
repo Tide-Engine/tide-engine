@@ -1,5 +1,393 @@
 # Drawing: `Draw`, its settings, shapes and meshes
 
+## Twelve texture capture slots (2026-10-25)
+
+Shader runs hold twelve texture slots and uint64_t sampling, two eight-slot
+banks with the original low 32-bit layout preserved. Existing shaded drawing
+and mesh wrappers take the wider value; ordinary Texture references and their
+four sampling bits are unchanged. Recording zeroes unused slots, compares only
+the bounded actual texture prefix, and append remaps only that prefix. Hosts,
+libraries and generated games must rebuild together for the C ABI/layout change.
+No runtime function is added. draw_sampling_banks and draw_twelve_textures
+regressions cover independent sampling, batching and owned append captures.
+All 82 native draw-filter tests passed, including both new regressions; the
+generated twelve/ten-binding consumer and packet tests also passed. All 82 draw
+tests and the generated consumer passed under WASI as well.
+
+## Scoped transparent packet ordering (2026-10-25)
+
+Render3D's approved transparent pass uses private package C helpers in
+`packages/render3d/transparent.c`, through ordinary extern declarations. There
+is no new engine API, retained cache or world state. `TransparentMark` returns
+a checked command index, or -1 when it cannot be represented. When the previous
+command is shaded, it first inserts an empty 3D mesh command so subsequent
+compatible recording cannot merge into a run before the mark. Render3D marks
+lazily on its first eligible transparent row, leaving opaque-only frames alone.
+
+`SortTransparent` orders already captured 3D shaded Alpha/Depth.Read instances
+back to front by `(transformed mesh center - eye) dot forward`. It reads the
+finite cached geometry AABB center only when its valid bounds and position-field
+metadata match the shader. A selected LOD follows its base mesh; a finite valid
+LOD sphere center is the fallback when no matching geometry bounds were cached,
+then the mesh origin when neither is available. No vertices are scanned by the
+sorter. The captured matrix transforms the center with double intermediates,
+including rotation, scale and shear. The key approximates each mesh by one
+center; custom vertex deformation can require a different sort in game code.
+
+Iterative stable merge sort takes O(N log N) comparisons and O(N) temporary
+descriptors; copying is
+linear in captured instance bytes. Equal keys retain submission order, including
+instances originally merged into one run. Finite binary32 inputs use double
+intermediates, so extreme centers/transforms/directions do not overflow the key.
+Invalid object positions/transformed-center coefficients have key zero;
+nonfinite eye/forward values leave the list unchanged. Negative/out-of-range
+marks and empty scopes do nothing.
+
+Camera, clip, destination, stencil and other draw commands are barriers and
+retain their order and contents. Within each span, full shader, selected mesh/LOD,
+uniform, texture, sampling, tint and mirrored-cull bindings accompany each
+instance. Normal consecutive capture bytes are staged then reordered in the
+same owned arena span, rebuilding compatible consecutive runs. Nonconsecutive
+public packets retain their checked source offsets. Repeated sorting does not
+grow the instance arena. No query row, component, texture reference or callback
+context is stored by the helper; it uses only the draw list's owned bytes and
+indices and frees its temporary allocations before returning. Size products,
+spans and allocation counts are checked before addressing or narrowing.
+
+Blended Depth.Read LOD recording now splits consecutive selected levels in
+original instance order, for shaded and ordinary 3D meshes. Preparation skips
+level gathering for those recorded commands even after destination settings are
+restored. ReadWrite and Read/Replace retain finest-first gathering, including
+opaque/shadow batching. Append prepares its source and preserves the resulting
+owned packet order.
+
+The original five standalone `tide_render3d_transparent` packet regressions pass
+in the native debug build: merged instances, stable ties, complete numeric/
+function/uniform captures, different textures/materials/shader strides, A/B/A meshes, mirrored
+cull and LODs, state/draw barriers, source disposal after append, invalid marks,
+nonfinite/extreme keys and repeated 1,025-instance frames without capture growth.
+The bounded center-key completion adds one off-center geometry regression with
+opposing origin/center order under rotated/scaled transforms, stable ties,
+cached-AABB and base-LOD-center paths, and unavailable-bounds origin fallback.
+This completion awaits focused execution and fresh review in the containing task.
+Four `draw_levels_*` regressions in `tests/test_draw_levels.c` cover bulk and
+individual shaded/ordinary recording, repeated preparation and append, culled
+mirrored survivors, restored settings and opaque/Replace controls. Strict C17
+warning-as-error syntax checks pass for the helper and both test files. Complete
+native/web and rendered-pixel validation belong to the containing Render3D task.
+
+## Rect-based SDF boxes and independent corners (2026-10-25)
+
+Draw.Rect accepts Rect/color, Rect/radius/color and Rect/float4-radii/color.
+The first two wrappers inline into tide_draw_round_rect, including radius zero;
+center/size Rect stays pixel-aligned. Equal four-radii values use the uniform
+path. TIDE_SHAPE_CORNERS reuses radius/outline/soft/sweep as TL/TR/BR/BL lengths,
+with the tag distinguishing these from effects. fit_shape bounds each radius;
+alter_shape scales all four and swaps the vertical pair on reflection. Records,
+append and transforms preserve this tag without enlarging shape data. Gradients,
+outlines and soft effects remain Shape's uniform-radius path.
+
+The renderer recognizes the new form and reuses its existing flexible instance
+format and pipelines; common plain and solid-radius streams stay unchanged.
+The GUI follow-up adds scroll relocation using tide_draw_move_gui and resolves
+input clips after placement. Contracts, tests and performance status: gui.md.
+
+## Custom GUI drawing (2026-10-24)
+
+`GUI.Draw` records into the existing GUI list in declaration order and restores
+window settings via `tide_draw_restore_window`. `tide_draw_move_gui` relocates
+an anchored area's screen-space 2D content, including meshes/quads/shader runs
+and clips, without interpreting state-command unions as positions. Indexed
+vertices/shared clip ancestors move once using the existing remap scratch;
+target content, explicit world cameras and 3D keep their coordinates. No backend,
+shader ABI or batching rule changed. Contracts/tests/measurements: `notes/gui.md`,
+Custom control composition.
+
+## Callable instance data (2026-10-24)
+
+Configured stage values and callable fields extend compiler binding and shader
+packing, with no Draw runtime or backend change. Explicit instance lists can
+carry different SDF functions and numeric captures in one run; generated dispatch
+is inside the shared shader. `tide_platform_gpu_functions` checks four shapes in
+one actual GPU draw, plus the existing clear triangle. Ordinary per-draw values
+remain shared uniforms and existing batching/order boundaries still apply.
+Contracts, limits and full-suite validation are in language.md and shaders.md.
+
+## A sprite in one call (2026-10-21)
+
+The owner's "yes do it" (2026-10-20), to a call for sprites, which the third
+round found was what was left of textured quads' recording: the caller's four
+32-byte corners. `Draw.Sprite` is in the spec under Views and drawing,
+Provisional, every rule a pick; the user docs are in
+`docs/game/meshes-and-textures.md`, Sprites, and the Draw table.
+
+- **Forms** (`compiler/src/builtins.c`): `(texture, center, size)`,
+  `(..., color)`, `(..., rotation, color)`, `(..., part, color)` and
+  `(..., part, rotation, color)`, each with an optional filter and wrap after
+  it (`sampled`). `MAX_PARAMS` went from 6 to 8 for the last. Codegen
+  (`gen_expr`, the `tide_draw_sprite` names) writes the texture as a mesh's is
+  (`gen_draw_texture`, the filter and the wrap being the call's only enums),
+  then the rest, and `TIDE_COLOR_WHITE` where there's no color. A `[Raw]`
+  grid is refused as a mesh's is (`check_sprite_args`, which also has the Filter and Wrap resolved). Targets have it as a
+  method through the generic path.
+- **Runtime** (`tide/draw.h`: `tide_draw_sprite`, `_rotated`, `_part`,
+  `_part_rotated`, inline over `tide_draw_sprite_placed` in `draw.c`): the
+  slot from `tide_draw_texture_source`, filter and wrap from the reference.
+  The top is +y under a camera and -y where the destination's 2D camera is
+  `Screen` (`place.camera_2d`'s `screen`). Unturned and not `altered`, it
+  builds the `tide_draw_quad` itself (p top left, r bottom right, pattern
+  `TIDE_DRAW_QUAD_ROUND`) and `quad_placed` records it; otherwise four
+  corners from the top left round, `turn_by(rotation)` applied as
+  `center + (o.x * c - o.y * s, o.x * s + o.y * c)`, through
+  `tide_draw_mesh_with`, which tints and moves them (a turn whose corners
+  come out whole is the quad they are, as any mesh's).
+- **More of a run, inline** (`tide_draw_sprite_part`): where nothing set
+  changes it, the last command is a run of quads with the blend, filter and
+  wrap, its quads end the list's, there's room, and the texture is its run's
+  image (`tide_draw_same_source`: C's pixels as `tide_draw_same_image` tells
+  them, a pack image by the name `pack_slot` found last this frame), the quad
+  is stored there and the run's count raised. Out of line, recording 65,536
+  took 0.98 ms (best of 400, alone), as meshes of four corners 0.38: the quad
+  went to `quad_placed` through memory built a float at a time (a
+  store-forwarding stall), and the texture's slot was looked up each time.
+  Inline, 0.25 ms. `pack_slot` keeps the name it found last and the list's
+  texture for it, for the frame (`tide_draw_list.pack_named`, `pack_slot`,
+  `pack_frame`; `tide_draw_forget` drops it), so a run of sprites, or of
+  meshes, of one asset looks it up once. Grids and rendered images are found
+  each time, as a view can paint a grid between two draws.
+- Tests: `draw_sprites_are_quads_upright` (`tests/test_draw.c`: corners and
+  uvs to the bit under a camera and in Screen, runs, a filter's own run,
+  mirroring, parts, turned and tinted as corners, a zeroed texture);
+  `tidec_e2e_sprites` (each form from Tide, an asset's declared filter, the
+  call's filter and wrap, a grid mirrored, a target's color, into a target,
+  Screen); the platform pixel test `sprites_drawn_as_their_corners`
+  (`platform/tests/draw.c`, in `runs_drawn_alike`: the same pixels as the
+  meshes of their corners, under a camera and in Screen, and the texture's
+  first pixel at the top left).
+
+## Recording inline and quads as quads (2026-10-20, third round)
+
+The owner asked to close drawing's gap to hand-written C further: recording
+was 5 to 37 times C's, where C writes each instance once. Internal; the API is
+as it was, and every benchmark frame is the same bytes (notes/rendering.md,
+Recorded quads; numbers in notes/benchmarks.md, Drawing, third round).
+
+- **Inline common cases** (`tide/draw.h`): `tide_draw_rect`, `_circle`,
+  `_wire_rect`, `_wire_circle` and `_line` (`tide_draw_plain_kind`),
+  `tide_draw_round_rect`, `tide_draw_mesh(_wrapped)` and
+  `tide_draw_mesh_3d(_wrapped)` are header-inline: where nothing set changes
+  what's recorded (`altered`, `unsettled`) and there's room, their stores go
+  straight into the list from where the caller has the values (registers, as
+  often as not: on Windows a color or a matrix passed to a function goes by
+  its address, through memory). Everything else is the functions as they were,
+  renamed `tide_draw_plain_placed`, `tide_draw_round_rect_placed`,
+  `tide_draw_mesh_placed` and `tide_draw_mesh_3d_placed`. The mesh paths are
+  `always_inline`: clang otherwise kept them as calls. Same names, arguments and
+  results for every caller, generated code included.
+- **A 3D mesh's next instance**: the list keeps the place
+  `tide_draw_mesh_slot` found last (`tide_draw_list.mesh_last`, where a
+  thread-local was), which the inline path checks; the transform is stored as
+  the list's next matrix, and `tide_draw_instance_stored` culls and records it
+  as `instance_at` did, reading it where it is.
+- **Quads as quads** (`tide_draw_quad`, `TIDE_DRAW_QUADS`, `tide_draw_list.quads`):
+  a mesh of four corners and six indices, triangles p q r and p r s, whose
+  corners' places and uvs take p's and r's numbers on each axis (compared by
+  their bits, as the renderer does) and whose colors are one, is kept as a
+  52-byte quad (p's and r's places and uvs, the color, 4 bits a corner
+  saying which number each takes) where its corners and triangles took 152:
+  `tide_draw_quad_of`, `tide_draw_quad_corner` gives its corners back to the
+  bit. Not where a tint or a transform changes corners (`altered`): those stay
+  corners and triangles. Quads one after another with one image, blend,
+  filter and wrap are one command; a quad starts a run of its own after a
+  mesh of corners, and a mesh after quads, which the renderer still draws as
+  one step. `tide_draw_mesh_with` (a texture's slot already found) is what
+  Tide's lists go through (`mesh_lists`), so `Draw.Mesh` of a sprite's list is
+  a quad too. `tide_draw_append` carries quads (`quad_placed`, with the
+  destination's textures); forgetting textures clears a quads command's as a
+  mesh's. The embed host's packet (`platform/src/embed.c`, `unquad`) shows
+  them as the meshes they were, a `TIDE_DRAW_MESH` over their four corners, so
+  what reads it is unchanged.
+- **Plain shapes as records** (`tide_draw_plain`, `TIDE_DRAW_PLAIN`,
+  `tide_draw_list.plains`; the owner's "yes do it", 2026-10-20): rects,
+  circles, their outlines and one-pixel lines are kept as 24-byte records (two
+  points, the color as four bytes, the kind), where each was a 44-byte command
+  with a float color. A run of them is one `TIDE_DRAW_PLAIN` command
+  (`plain.first`, `plain.count`) that goes on while the blend is the same and
+  nothing is recorded between; what settles first (a camera, a clip) ends it.
+  A tint or a transform changes the shape as before (`plain_altered`) and then
+  records it. The color is the bytes the GPU gets (`tide_draw_color_bytes`,
+  the renderer's `to_rgba` conversion moved into `tide/draw.h` for both), so
+  every frame is the same bytes; read back (`tide_draw_plain_color`) it's
+  each byte over 255, not the float the call had. `tide_draw_expand` gives a
+  list's commands with each plain shape a command of its own, as they were:
+  the embed packet goes out that way (`unquad`, with its quads as meshes), so
+  what reads it is unchanged, and tests read lists through it
+  (`tests/draw_test.h`: `tide_test_flat`, a copy; `tide_test_flatten`, the
+  list itself; `tide_test_color_is`, within half a byte's step).
+  `tide_draw_append` carries the records. The GUI moves an area's records
+  with it once it's placed, and sizes a plain panel's record
+  (`tide_gui_group.panel_plain`, `commands_from`, `plains_from`).
+- **The open run** (`tide_draw_list.plain_open`): built first with the run's
+  count kept as each shape was recorded and the inline path checking the
+  last command (its kind, blend, and that the list's records end with it),
+  recording 65,536 rects took 0.183 ms where 44-byte commands took 0.113
+  (best of 400, alone), more than the renderer saved, so the frame was
+  slower (gated: Vulkan rects 0.463 -> 0.494 ms). Now the list keeps which
+  command is a run recording goes on with as it is (1 + its place), and the
+  inline path asks that and whether there's room, then stores the record and
+  the list's count: 0.108 ms. Everything that records another command or
+  changes a setting closes the run first, writing its count: `push`,
+  `push_state`, `refresh` (which the blend's setters, and
+  `tide_draw_append`'s last blend, now call too; `append` closes it where
+  another list's commands change the blend), and the round rect's inline
+  path, which leaves that to its out-of-line one. An open run's count is
+  the list's records from its first on: whatever reads a run's count asks
+  `tide_draw_plain_run`. `tide_draw_color_bytes` packs its four whole
+  numbers as a vector of bytes (`packuswb`), where shifting each in took
+  about 0.025 ms more for 65,536; the same bytes.
+- Measured (65,536 a frame, Vulkan, totals): rects 0.58 -> 0.47 ms, round
+  rects 1.23 -> about 0.7, textured quads 1.46 -> about 1.2, cubes 1.63 ->
+  1.35 (see benchmarks.md for the gated numbers). Recording rects 0.27 ->
+  0.15 ms, round rects 0.71 -> 0.21, cubes 1.21 -> 0.94; quads' recording is
+  now mostly the caller building four 32-byte corners for a call that takes
+  them, which only a call for sprites would avoid (an API question; built
+  since, A sprite in one call).
+- Tests: `draw_meshes_of_one_quad_are_kept_as_quads` (`tests/test_draw.c`:
+  a quad with -0 and 0 told apart, its corners to the bit, quads merging,
+  gradients, other corner orders and tints staying corners and triangles,
+  Tide lists' path, `tide_draw_append` with textures); `embed_draw_packet`
+  (`platform/tests/embed.c`) draws a sprite in Tide and finds it in the packet
+  as a mesh over its corners, with no quads command; the platform pixel tests
+  (`runs_drawn_alike` mixes recorded quads with meshes both ways) and every
+  draw test as before. With plain records: `draw_list_grows` (100,000 rects
+  are one run and one command, and appended as one), `draw_records_in_order`;
+  the rest read lists through `tests/draw_test.h`, colors to a byte.
+
+## Recording sprites and 3D instances (2026-10-20, second round)
+
+Round 2 of the performance pass (`notes/benchmarks.md`, Drawing, second
+round). Internal to `engine/src/draw.c`; recorded lists, culling decisions and
+pixels are unchanged, and no layout changed.
+
+- `texture_slot`: a mesh drawn with the image the last command drew a mesh
+  with, unchanged and already noted as drawn this frame, takes that command's
+  slot without hashing: what `texture_place` would find and do.
+- `tide_draw_triangles_with` keeps the list's index count in a register as it
+  copies a mesh's triangles; `grow`'s reallocating part is apart
+  (`grown`, never inlined), so what records a command keeps its registers.
+- One 3D instance (`instance_at`, what a view drawing a mesh for each entity
+  records), where the settings are settled, nothing is between the mesh and
+  the world, and the mesh is a valid one of `tide_vertex3`s without levels:
+  its transform is read once, into its place in the list's matrices, where
+  culling and the side it's drawn from read it, and the place is taken only
+  if it isn't culled. The same checks in the same order as before; anything
+  else goes through `instance_placed`, the code as it was, apart.
+- `bounds_visible` works out its rounding allowance only for a box past a
+  plane: the allowance is never under 0, so a box on a plane's inner side
+  passes it whatever the allowance is, and the answers are the same. Bounds
+  are passed by pointer, read where the list keeps them.
+- `tide_draw_mesh_slot` checks the place found last on its thread in a small
+  function, the hashing apart (`mesh_slot_found`), and `matrix_read` stores
+  what it reads a column at a time, which reads of any width after it find.
+- Measured (release, five gated rounds, medians, Vulkan / OpenGL): 65,536
+  textured quads recorded in 0.915 / 0.912 ms, from 1.117 / 1.114; 65,536
+  cube instances in 1.218 / 1.224, from 1.529 / 1.488; 65,536 round rects in
+  0.708 / 0.707, from 0.794 / 0.793 (`grown` apart: a shape's two arrays and
+  its command each grow). A sprite's four vertices copied 8 bytes at a time
+  instead of by `memcpy` (as `color_read` reads a color) recorded quads in
+  0.98 ms against 0.91, and was dropped; a struct-copy loop changed nothing.
+- Tests: the native suite's draw, frustum and settings tests (`tests/test_draw*.c`,
+  `tests/test_frustum.c`), the generated draw E2Es and the platform pixel tests,
+  all passing; nothing new was needed for recording, whose lists are as they were.
+
+## Recording reads what its caller just wrote (2026-10-20)
+
+From the performance pass against the handwritten drawing baseline
+(`notes/benchmarks.md`, Drawing against handwritten OpenGL and Vulkan).
+Internal to `engine/src/draw.c`; recorded lists, culling decisions and pixels
+are unchanged.
+
+- On Windows x64 a struct of more than 8 bytes (a `tide_color`, a
+  `tide_float4x4`) is passed by address, to a copy the caller has usually just
+  written a float or two at a time. A 16-byte load over several narrower
+  stores can't be forwarded from them and waits until they reach the cache;
+  the sampling profiler put about half of recording a rect there. `push` reads
+  its color a float at a time (`color_read`, `volatile` so the compiler can't
+  join the loads again), and a single instance's transform is read the same way
+  (`matrix_read`) into the list's matrices and the frustum test. Elsewhere
+  (System V passes these in registers) this costs a store and four loads.
+  Recording 65,536 rects: 0.337 -> 0.26 ms (Ryzen 9 7900X, Clang 23.1.2).
+- `tide_draw_instance` and `tide_draw_mesh_3d` pass the transform on by
+  address (`instance_at`, `mesh_3d_at`) instead of copying it into each call
+  below; `frustum_camera` compares its three cached numbers directly where it
+  built an array and compared it whole; `tide_draw_mesh_slot` keeps the place
+  it found last on its thread (`TIDE_THREAD_LOCAL`) and checks that place's
+  key first, as a view drawing one mesh per entity asks again and again (keys
+  are unique, as only it makes places, and a free place's space is
+  `TIDE_MESH_NONE`, which nobody asks for). Together: 65,536 cube instances
+  recorded in about 1.51 ms, from 1.58.
+- `solid` (round rects, turned rects, ellipses) writes a shape's numbers
+  into the list's slot a field at a time (`shape_slot`, `shape_placed`, which
+  `push_shape` also goes through) instead of building them and copying the
+  whole: 65,536 round rects 0.82 -> 0.795 ms. Copying a just-built shape or
+  vertex array a word at a time instead didn't help (shapes: no change; a
+  quad's four vertices: 1.13 -> 1.35 ms, slower), and was dropped.
+
+## Window pixel scale metadata (2026-10-20)
+
+`Screen.scale` is a read-only float2 in views and their drawing helpers: physical
+pixels per logical window pixel on x/y. It exposes the renderer's existing
+ratios, including rounding that can make the axes differ. It does not describe
+an arbitrary selected render target or imply target-content validity. The
+standard host sets `tide_draw_list.screen_scale` before the generated frame from
+`tide_platform_screen_scale`; a custom host may supply its own. A zeroed axis
+reads as 1. The metadata is local, needs no GPU allocation/readback and survives
+ordinary draw reset like other host metadata. All hosts/game libraries rebuild
+for the C layout change. Tests and validation are in `notes/language.md`.
+
+
+## Explicit skinned instances (2026-10-20)
+
+Owner-approved: `Draw.Instanced(model, instances[, texture/filter/wrap][, vert][, frag][, values])`
+and target receivers accept a `SkinnedMesh<V>`. Existing optional
+`float4x4 transform` instance fields place the mesh (identity when absent).
+An optional `Pose pose` field supplies each item's pose; omission means authored
+rest, including zero-clip models and `List<float4x4>`. A field named `pose` must
+have type Pose. Explicit invalid or incompatible poses skip only their item.
+Ordinary per-item shader fields remain selectively uploaded; pose data stays on
+the CPU and shader code cannot sample/read skeletons.
+
+The compiler adapter uses the existing skinned capture/retargeting functions and
+records each valid item through the ordinary shaded draw path. It owns each pose
+before return, then resets temporary retargeting scratch. Compatible items share
+palette pages and hardware-instanced runs; saturated 16-attribute layouts retain
+individual palettes. No runtime entry point, shader layout rule, deterministic
+pose operation or ownership contract was added. Shared texture/value bindings
+are prepared once per call. Written operands retain left-to-right snapshots.
+Stored instance lists borrow their current handles when no later operand can
+change them, avoiding a full nested-pose copy before capture. Later Tide or C
+effects retain an owned list/pose snapshot; `skinned_draw_borrow` checks both
+those mutations and the unchanged scratch mark for the ordinary borrowed call.
+
+`skinned_instanced` E2E checks separate-file binding, edited/captured poses,
+invalid-item skipping, list edits after capture, zero-clip rest transforms,
+identity without a transform field, texture/target calls, operand order, tint
+upload and two different poses in one run. The attribute-limit fixture covers
+explicit items in both atlas/spare-lane and saturated fallback shaders. Updated
+shader goldens and SPIR-V validation cover the custom vert/frag combination.
+Platform skinned pixels exercise explicit independent poses, per-item red/blue
+tints and depth-target drawing across device recreation. Error fixtures pin pose
+field types and CPU-only operations. Editor signature help identifies the model
+form and explains the conventions. User docs/spec describe the approved API.
+
+Validation: complete warning-free native/web debug builds passed, followed by
+all 2,442 native CTests (2,410 ordinary plus 32 GPU) and all 2,352 web CTests,
+with the production docs build passing. The final instance-list borrowing
+completion additionally passed all four focused skinned E2Es on native/WASI,
+including later list clearing and nested C pose mutation. Final platform pixel
+rechecks passed on Vulkan, OpenGL, WebGL and WebGPU. No private prototype browser playtest
+was run. Android, Linux/macOS, MinGW and sanitizer coverage remains CI work.
+
 ## Frame image metadata (2026-10-18)
 
 tide_draw_list.target_pixels is a borrowed host callback for physical target
@@ -36,7 +424,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - **It's a `TIDE_DRAW_CLEAR` command whose `a.x` is 1** (`tide_draw_clear_depth` in `engine/src/draw.c`), not a kind of its own: everything that carries or counts clears (`tide_draw_append`, the settings' settling, tests that count clears) is the code it was. A list filled by hand has 0 there, a clear as before.
   - **The renderer** (`platform/src/platform.c`): a `STEP_CLEAR` with `depth_alone`, drawn through `depth_clear_pipeline`: the clears' triangle and shaders with a clear color under `TIDE_GPU_BLEND_ALPHA`, which leaves every color image as it is, `TIDE_GPU_DEPTH_RESET`, and no stencil operation, where a clear stores 0. One pipeline for each kind of target (`engine_pipelines.depth_clear`). The clip cuts it as it cuts a clear, and it writes depth in a target of depth alone. No backend changed for it.
   - **Tests:** `check_render_samples` in `platform/tests/targets.c` draws a mesh behind two others with and without the clear, at 1, 4 and 8 samples, and reads the colors that have to stay and the depth after; `compiler/tests/e2e/render_targets` checks a target's and the window's commands.
-  - **Validation of both 2026-10-13 additions** (this and the multisampled depth read in `notes/render-targets.md`): see the end of `notes/foldline.md`, which records the suites run.
+  - **Validation of both 2026-10-13 additions** (this and the multisampled depth read in `notes/render-targets.md`): see the end of `notes/foldline.md` (tide-prototypes), which records the suites run.
   - **Not built:** a clear of stencil alone; a depth other than the far one.
 - **Texture slots are indexed by space and id** (`tide_draw_list.texture_index`, `engine/src/draw.c`), beside the retained texture array. Ordinary texture updates still reuse a slot; target images at different sizes or versions still have separate slots. Frame pruning rebuilds the index after compaction, forgetting clears it, and freeing the list releases it. See `notes/textures.md` for the tests and lookup measurements. The added fields change the C draw-list layout, so C hosts, engine/platform libraries and generated games must be rebuilt together.
 
@@ -136,7 +524,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - Loaded skinned records establish immutable canonical-byte provenance once (`tide_pack_skinned_version`, 2026-10-10), after all pack sanitization. Their draws reuse full validation and the exact influence-content hash from pack load, removing per-character scans of unchanged geometry and animation keys. Owned/copied/decoded models and unrelated packed byte lists keep the checked path. Replacement/unload discard proofs, and a packed geometry-default write invalidates any physically aliased model proof through a sorted span index.
   - **Repeated palette preparation** (2026-10-10, model identity shortcut 2026-10-11): a draw list owns a frame-local palette memo for currently proven packed models. Each generic pose lookup first checks current provenance. A matching unique pack proof identity establishes unchanged node/palette-table dependencies; different identities still compare their exact owned bytes, including equal-content reloads and version collisions. The pose's current 40-byte local transforms still receive exact comparisons. The immediate capture path also verifies the retained texture slot's identity/version/shape. Hashes only index those comparisons. Rest/shared values can reuse a captured palette; procedural edits, reused scratch handles, heap COW and snapshots are read as current values. No model or pose pointer survives the call. Distinct pose values prepare separate palettes; independently sampled equal values also reuse a capture. Reset clears the memo before texture pruning; forgetting clears it, and freeing releases its retained arena/index capacities. This adds a private pointer to the C draw-list layout, so all hosts and libraries rebuild together. Draw-only preparation reads already validated parent/inverse-bind words directly; public model-matrix/palette operations retain their checked boundary and exact arithmetic. `tests/test_skinned_cache.c` covers chunked ownership/snapshots, edits, hash-index growth, scratch reuse, list separation, slot changes, reset/forget/free, equal/changed same-offset pack replacement, inverse binds, invalidated proof and ordinary owned fallback.
   - **Omitted rest capture** (2026-10-11): generated adapters retain the known-rest case through specialized immediate/atlas calls. A draw-owned frame-local index uses the current pack proof's unique numeric identity to reuse the first owned rest capture, skipping repeated rest construction, transform hashing and model-table comparisons. Every hit rechecks current proof and retained texture/page guards; reload, unload and aliased writes cannot reuse an old identity. Rejected atlas palette slots take checked immediate capture with base zero. Reset/forget clear the index and free releases its capacities. Explicit Pose draws, including editable defaultPose values, keep their ordinary content checks and separate-rig binding. Three skinned_rest_capture runtime regressions and the rest/attribute-limit compiler fixtures cover parity, edits, growth, invalidation, slots, reset and append ownership.
-  - Pose-index hashing uses the existing four-chain `tide_hash_wide`, with exact owned-TRS comparisons still deciding equality. A contiguous scratch pose is borrowed only during synchronous capture; heap/chunked values are staged as before, and deferred preparation still receives an owned copy. Neither change affects public/world hashes, pose arithmetic, palette layout or shader uploads.
+  - Pose-index hashing uses the existing four-chain `tide_hash_wide` (stripes since 2026-10-20: ecs.md; a cache key, so nothing drawn changed), with exact owned-TRS comparisons still deciding equality. A contiguous scratch pose is borrowed only during synchronous capture; heap/chunked values are staged as before, and deferred preparation still receives an owned copy. Neither change affects public/world hashes, pose arithmetic, palette layout or shader uploads.
   - **Shared palette pages and preparation jobs** (2026-10-10): generated adapters with instance-attribute room call `tide_draw_skinned_atlas`, recording the same three counts plus a matrix base. The compiler packs that base into a spare instance-int lane or adds one integer attribute, within the existing 16-attribute limit; saturated layouts keep the immediate `tide_draw_skinned_data` path and implicit base zero. Currently proven packed models share retained palette pages, normally at most 65,536 matrices (4 MiB); a larger single valid palette gets its own page within the existing shader-data bound. Different poses can therefore join the ordinary mesh/material run with different per-instance bases. Counts and influence indexing remain per pose. Exact owned validated node/palette dependencies and current local TRS are captured at recording time; only matrix math waits for `tide_draw_prepare`. The renderer calls it with the platform pool, and append finalizes its source serially before copying. Sufficient work uses chunked disjoint output slices and at most three additional workers when `run_some` is available, otherwise the ordinary `run` contract; no pool or small work runs serially. Pose order, matrix arithmetic and bits are unchanged. Pages keep unique identities across frames and versions derived from ordered captured content; reset/forget discard pending work, free releases storage, and append copies receive immutable content identities so later source frames cannot overwrite earlier destination draws. Owned/unregistered/invalidated models retain immediate checked capture with base zero. Four `skinned_atlas_*` runtime regressions pin deferred ownership after scratch/heap/pack disposal, exact palette bits, page growth/splitting, stable frame identities, job dispatch/fallback, reset/forget, repeated append snapshots and checked fallback. The platform fixture also compares serial and real-pool preparation of 2,048 distinct poses; compiler E2Es cover different-pose merging and the attribute-limit fallback.
   - Tests: `tests/test_skinned.c` checks interpolation, hierarchy, aliasing, snapshot storage, malformed inputs, separate-file binding and palette capture, with exact pose bits pinned for native/WASI. `compiler/tests/e2e/skinned_rest` checks zero-clip rest poses, independent edits, omitted and explicit forms with textures/custom stages/targets, operand evaluation order, invalid explicit poses, and matching palettes when a separate animation is sampled into the target or drawn directly. `compiler/tests/shaders/skinned` pins generated GLSL/WGSL. `tide_platform_skinned` reads native/WebGL/WebGPU pixels for eight influences per vertex, independent poses, pre-user-vert deformation, custom fields, explicit clip placement with later world-position edits and matching depth/color passes.
-  - Not built: an explicit `Draw.Instanced` API with a Pose per list item, animation controllers, implicit playback clocks, and automatic shadow passes. Several explicitly posed draws can share the same model and batch automatically through palette pages.
+  - Not built: animation controllers, implicit playback clocks, and automatic shadow passes. Explicit `Draw.Instanced` poses were added 2026-10-20 as recorded above; ordinary posed draws also batch through palette pages.

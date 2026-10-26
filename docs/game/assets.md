@@ -87,7 +87,7 @@ component Sign
 - The field gets the asset's value where the default is given: as an entity is spawned, as a match or this machine's local state starts, and for an entity's [local fields](./local-state.md) nothing wrote yet.
 - Text, bytes and a glob's list or map become independent field values: changing one changes neither the asset nor another field. Asset-backed lists can share immutable bytes until the first write, when that value detaches into owned storage. A field keeps the value it was assigned across asset reloads.
 - A `Texture`, a [`Clip`](./audio.md#clips) and a `Cubemap` name their asset, so they cost nothing to give, and under `tide run` a saved file shows through them.
-- A `Grid2<Color>` field can't start as an asset's grid, since a grid is never copied: read the asset's by its name, or give it to a `Texture` field, `Texture face = hero;`.
+- A `Grid2<Color>` field can't start as an asset's grid, since a grid is never copied: read the asset's by its name, or give an ordinary color grid to a `Texture` field, `Texture face = hero;`. A numeric `[Raw]` grid uses a [Raw texture field](./shaders.md#textures-that-are-numbers).
 - One of a glob's, like `run[0]` or `icons["art/icons/star.png"]`, isn't a default yet: a view assigns it.
 - Only a field's default takes one. A `const`, a setting, an attribute's bound, an asset's path and a parameter's default are constants alone, as the compiler works those out while it builds.
 
@@ -115,12 +115,14 @@ view Show(mut Player player)
 }
 ```
 
-- A `Texture` is a value (see [A Texture is a value](./meshes-and-textures.md#a-texture-is-a-value)): a draw's texture in 2D and 3D, the source a [frag's `Texture` parameter](./shaders.md#textures) is given, a [`Draw.Blit`](./render-targets.md#post-processing)'s source, something a field or a local holds and a function takes. A frag samples one by its name too: `hero.Sample(uv)`.
+- An ordinary color `Texture` is a value (see [A Texture is a value](./meshes-and-textures.md#a-texture-is-a-value)): a draw's texture in 2D and 3D, the source a [frag's `Texture` parameter](./shaders.md#textures) is given, a [`Draw.Blit`](./render-targets.md#post-processing)'s source, something a field or a local holds and a function takes. A frag samples one by its name too: `hero.Sample(uv)`. Numeric Raw sources follow the field rules below.
 - Its exact fallback keeps a byte per channel: a quarter of what the same image takes as a `Grid2<Color>`. Eligible color images also have a smaller compressed GPU copy, described below.
 - `texture.size` reads its base-level dimensions as an `int2`, without uploading pixels. An image whose pixels the game needs is a `Grid2<Color>`, which draws as a `Texture` too, and one file can be declared both ways.
 - It's this machine's, like everything that's drawn: views, local handlers and frags use it, and match code can't name one. The match reads a `Grid2<Color>`.
 - What a field keeps of `hero` or of `run[2]` is that image as the files have it now: under `tide run`, a saved picture shows through the copies a game kept, as it does through `hero` itself.
 - How it's sampled can be said once, on its declaration: `[Filter(Filter.Point), Wrap(Wrap.Repeat)]` before the asset (see [Saying it once, on the texture](./meshes-and-textures.md#saying-it-once-on-the-texture)). The `Texture` carries it: what a field keeps of `hero` is sampled as `hero` is.
+
+For numeric images, declare `[Raw] asset Texture masks = "art/masks.png";` and retain it in a `[Raw] Texture` field, or sample the asset by name in a shader. Raw images preserve all channels and stay out of ordinary color draws and `Texture` values. See [Textures that are numbers](./shaders.md#textures-that-are-numbers) for field assignments and GPU helper forwarding.
 
 ### GPU compression
 
@@ -144,7 +146,7 @@ JPEG, TGA and BMP are decoded during the build, through the same `Texture`, `Gri
 | TGA | Non-interleaved raw/RLE RGB, grayscale or indexed images, with either vertical/horizontal origin; use 32-bit RGBA for pixel alpha |
 | BMP | 1/4/8/16/24/32-bit uncompressed pixels or RGB bitfields; no RLE or embedded JPEG/PNG |
 
-JPEG/TGA/BMP source data and combined decoder/output allocations are bounded to 512 MiB. Larger images get an error asking for smaller dimensions.
+JPEG/TGA/BMP source data and combined decoder/output allocations are bounded to 512 MiB. Larger images get an error asking for smaller dimensions. A progressive JPEG has at most 256 scans: each one decodes the whole picture again, so a small file of thousands of scans would take minutes to build. These limits, and the Photoshop and FBX ones below, are provisional.
 
 ### Photoshop images
 
@@ -159,6 +161,8 @@ asset List<Texture> portraits = "art/portraits/*.psd";
 Tide reads the composite image saved in the PSD: the visible layers combined into one picture. Save with Photoshop's **Maximize Compatibility** enabled so the file includes it. Tide doesn't read individual layers or render their effects, text or smart objects itself; their saved appearance is in that composite.
 
 The file must be an ordinary PSD (version 1) in RGB mode, with 8 or 16 bits per channel and at most 16,384 pixels per side. Uncompressed, RLE, ZIP and ZIP with prediction are supported. PSB files, other color modes such as CMYK, and 32-bit channels are errors at the asset's path, as is a missing or damaged composite. A `Texture` keeps a byte per channel, while a `Grid2<Color>` keeps each decoded channel as a float. Color profiles aren't applied; save RGB art as sRGB for matching display colors.
+
+A PSD is at most 16384 pixels a side and 8192 × 8192 in all.
 
 Only the decoded pixels are packed, as with a PNG. The game needs no Photoshop files or decoder when it runs. [`grid.Decode(bytes)`](#decoding-a-png) still reads PNG only.
 
@@ -195,8 +199,17 @@ reads the currently loaded mesh; the stored reference survives geometry reloads
 and world snapshots. `default` reads an empty mesh. The compiler rejects missing
 assets and mismatched vertex types. A borrowed mesh variable or a collection
 element cannot become a persistent reference in this first version.
+Use `==` and `!=` to compare references of the same mesh type, including aliases:
+`model.model == rock` or `model.model != default`. Equality identifies the named
+declaration, so reloading its geometry preserves equality; two declarations
+naming identical files remain different. References have no ordering or public
+numeric identity.
+The same reference rules support `Asset<SkinnedMesh<V>>`, including transparent
+type aliases. Its `.Value` preserves the packed model's skinning palette and LOD
+paths; persistent model assignment still uses ordinary owned value semantics.
+See [Skinned meshes and animation](./animation.md) for an example.
 The [native editor](../tools/editors.md#native-scene-editor) can browse, assign
-and preview these fields; your views still choose materials and drawing.
+and preview static mesh fields; your views still choose materials and drawing.
 
 
 A model an artist made, or one a tool generated, is a mesh file: glTF (a `.glb`, or a `.gltf` with its buffers), FBX (`.fbx`, binary or ASCII) or a Wavefront `.obj`. `asset Mesh<V>` declares one as vertices of a struct of yours, `V`, which the file fills by its fields' names:
@@ -242,12 +255,16 @@ The rocket below is a `.glb` as a modelling tool exports one: five meshes with a
 | `uv` | `float2` | Where in a texture the vertex is, (0, 0) at its top left. (0, 0) where the file has none. |
 | `uv2` | `float2` | The file's second set of those, which a lightmap uses. |
 | `color` | `Color` | The vertex's color times its material's. White where the file has neither. |
-| `tangent` | `float4` | Along the surface, for normal maps: `xyz`, and in `w` the side the bitangent is on, 1 or -1. Zero where the file has none. |
+| `tangent` | `float4` or `float3` | Tangent direction in `xyz`; a `float4` also carries bitangent handedness in `w`. Missing tangents are generated only for static `Mesh<V>` layouts declaring `float4 tangent`. |
 
 - A struct has the ones it needs, in any order: `Corner` above takes no uvs, so the pack holds none.
 - **A field of any other name keeps its default.** So one struct serves the meshes a game makes in code and the ones it loads: `float glow = 1;` is 1 at every vertex of a file's. A default can read another asset, even one declared later; each pack load supplies its current value and refreshes what is drawn when that value changes.
 - A field with one of those names and another type is an error at the declaration, which says the type the file's is.
 - The built-in [`Vertex3`](./3d.md) is a position, a uv and a color: `asset Mesh<Vertex3> crate = "art/crate.glb";` draws with no frag, `Draw.Mesh(crate, transform, wood)`.
+
+Only a static `Mesh<V>` whose vertex layout declares `float4 tangent` gets a tangent-generation variant. For its primitives without authored tangents, import derives tangents from triangle UV gradients and averages them with corner-angle weights. Generated `xyz` is normalized and orthogonal to the imported normal, with handedness `w` of +1 or -1; the bitangent is `w * cross(normal, tangent.xyz)`. A vertex shared by generated corners with opposite UV handedness splits at that seam. Missing or degenerate UVs get a finite fallback frame. Authored tangents retain their existing coordinate/node-transform conversion, including authored zero and nonorthogonal values; the generated-basis guarantees do not apply to them. Generated tangents support ordinary tangent-space normal maps but do not guarantee a match to a MikkTSpace normal-map bake.
+
+Layouts without a tangent field, layouts with `float3 tangent`, and skinned meshes retain their prior imported streams, vertex counts, indices and canonical hashes. Missing `float3` tangents remain zero. Generating a variant for one declaration does not change another declaration's canonical import. Metadata-only language-server checks use canonical imports and do not generate tangent variants.
 
 **It's two lists.** `tree.vertices` is a `List<Corner>` and `tree.indices` a `List<int>`, three for each triangle, and `Draw.Mesh(tree.vertices, tree.indices, transform, Look)` is the same draw. Any code reads them, the match too, since every machine has the same pack, to the bit: a system can build a collider from a rock's own triangles. They're read-only, like every asset; copy one to change it, `mut var mine = tree.vertices;`.
 
@@ -257,9 +274,9 @@ The rocket below is a `.glb` as a modelling tool exports one: five meshes with a
 
 - From a glTF: its meshes' positions, normals, tangents, two sets of uvs and vertex colors, its nodes' places, and each material's base color. Not its textures, nor the rest of a material; not skins, animation, morph targets, cameras or lights: a skinned model is the mesh as it stands. Required Draco/meshopt compression and other unsupported required extensions give an error with export guidance. Optional compression can use the file's valid uncompressed fallback.
 - From an OBJ: positions, uvs, normals and faces of any number of corners, with a color after a position where a tool wrote one. Not its materials file.
-- From an FBX: polygon meshes, node transforms, normals, tangents, two sets of uvs, vertex colors and material base colors. Polygons are triangulated, and the file's axes and units are converted to Y-up meters before Tide's coordinate conversion. Embedded textures and the rest of a material are not imported. A static `Mesh<V>` takes the rest geometry; use [`SkinnedMesh<V>`](./animation.md) for bones and animation.
+- From an FBX: polygon meshes, node transforms, normals, tangents, two sets of uvs, vertex colors and material base colors. Polygons are triangulated, and the file's axes and units are converted to Y-up meters before Tide's coordinate conversion. An attribute index past its array, which some exporters write, reads the array's last element, as Blender and Unity read the file. Embedded textures and the rest of a material are not imported. A static `Mesh<V>` takes the rest geometry; use [`SkinnedMesh<V>`](./animation.md) for bones and animation. A file's polygons can't take more than 2^32 steps to triangulate in all (a polygon's corners squared, summed: one polygon of 65,536 corners), and its animation takes bake to 16,777,216 keys at the most.
 - **A texture a model has is a file of its own**, using a supported image format, declared like any: `asset Texture bark = "art/bark.png";`, and given to the draw.
-- A mesh holds 16,777,216 vertices at the most.
+- A mesh holds 16,777,216 vertices and 8,388,608 triangles at the most. A glTF's description can have 4,194,304 JSON values, and 536,870,912 numbers are read from its accessors in all, an accessor counting again for each part that names it. A file past one of these is refused before anything is made for it. The numbers are provisional.
 
 **It comes in as Tide has the world.** Tide's world is left-handed with fronts [clockwise](./3d.md#which-side-draws), like Unity's. glTF is right-handed with fronts counterclockwise: a file's `x` is turned around and its triangles are wound the other way, so `+y` stays up and a model that faces `+z` still faces `+z`. OBJ uses the same conversion. FBX first converts its declared axes and units to right-handed Y-up meters, then uses that conversion too. A glTF's colors are light, and a `Color` is what the screen shows, so they're converted; an OBJ's are taken as written.
 
@@ -297,6 +314,7 @@ That's all there is to write. There are no distances to set, no levels to author
 
 - **It's opt-in.** A mesh without `[LOD]` is drawn as it always was, with nothing made for it.
 - **A level is fewer of the mesh's own triangles.** Each has about half the triangles of the one before, over the same vertices: none is added or moved, so the pack grows by the levels' triangles alone, about as much again as the mesh's own. Open edges stay where they are, and so do the seams where a texture or a color changes, so no hole opens and no texture tears.
+- **Static layouts with a `float4 tangent` preserve opposite handedness signs as separate seams.** Tangent `xyz` adds no simplification error metric. Other vertex layouts and skinned meshes retain their previous LOD behavior and cache keys.
 - **No level has fewer than 500 triangles.** A level only pays by the triangles it takes off a draw, and picking one costs a little for each instance. So a chain stops before it gets that small, and a mesh of under 1,000 triangles gets no levels at all: it draws exactly as if it weren't marked, with nothing picked.
 - **A draw picks the simplest level that looks the same.** Each level knows how far its surface is from the full mesh's. A draw takes the simplest one whose difference is under a pixel where the mesh is, so a mesh drawn large keeps all its detail at any distance.
 - **Each instance picks its own.** `Draw.Instanced` over a field of rocks draws the near ones whole and the far ones simple: one GPU draw for each level in use, the instances of each in the order the list has them. A view that runs for each entity is grouped the same way.
@@ -414,6 +432,8 @@ Bytes that every player should see go into the match through a [command](./comma
 
 `grid.Decode(bytes)` reads a PNG into a `Grid2<Color>` field of a component, singleton or scene, sizing the grid as the image is and writing every pixel. It fails with `IOError.InvalidData` for bytes that aren't a PNG, or are wrong anywhere, and then the grid is as it was.
 
+Bytes can come from anywhere, so a small file can't ask for much. A picture of more than 4096 × 4096 pixels (16,777,216) is `InvalidData` before anything is made for it, whatever its shape; at that size its cells are 256 MiB of the match. So is a file whose compressed data goes on for more than 1 MiB past its last row. These limits are the engine's, the same for every game, so every machine in a match refuses the same files. A picture refused for one says so on each machine's log, naming the limit: `tide: grid.Decode refused a PNG: it's 5000 by 5000 pixels, 25,000,000 in all, more than the 16,777,216 grid.Decode takes (TIDE_GRID_DECODE_MAX_PIXELS)`. Build-time imports past a limit are errors that name it the same way.
+
 It's pure, so it runs in match code as well as local code: a handler that decodes gives every machine the same pixels, bit for bit, because the engine's own reader does the decoding, with no system library in the way. The grid then draws as a texture like any `Grid2<Color>` (see [Meshes and textures](./meshes-and-textures.md#textures)).
 
 A player's own picture, decoded for this machine alone:
@@ -457,7 +477,7 @@ command(SetBackground value, PlayerID sender) Apply(mut Arena arena)
 
 A command's `List<byte>` goes to the server and on to every player, one that doesn't fit a datagram in chunks, so a few megabytes is fine; see [Commands](./commands.md).
 
-Every kind of PNG decodes: gray, color, with a palette, with or without alpha, 1 to 16 bits a sample, interlaced or not. A clear black pixel is a cell that's zero, which takes no memory. A picture past 16384 pixels a side is `InvalidData`. Decoding runs where it's called, on the frame's or the tick's thread: a 4K picture takes a frame, so decode once, when the picture arrives, not every frame.
+Every kind of PNG decodes: gray, color, with a palette, with or without alpha, 1 to 16 bits a sample, interlaced or not. A clear black pixel is a cell that's zero, which takes no memory. A picture past 16384 pixels a side, or past 4096 × 4096 in all, is `InvalidData`. Decoding runs where it's called, on the frame's or the tick's thread: a 4K picture takes a frame, so decode once, when the picture arrives, not every frame.
 
 ## Fetching a URL
 

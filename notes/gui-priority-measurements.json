@@ -1,0 +1,67 @@
+{
+  "status": "timings_deferred",
+  "reason": "The architecture coordinator explicitly deferred this optional 20-second attempt while P1 correctness and external Render3D validation remain active. No hold or late window is reserved. No timing process started. A future measurement requires a NEW explicit coordinated GO after inspected quiet inventory.",
+  "baseCommit": "a21a81a86c65c92ce655b7f73b183a541af4a703",
+  "hardware": {
+    "cpu": "AMD Ryzen 9 7900X 12-Core Processor",
+    "physicalCores": 12,
+    "logicalProcessors": 24
+  },
+  "compiler": "clang version 23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+  "flags": [
+    "-O2",
+    "-DNDEBUG",
+    "-std=c17",
+    "-Wall",
+    "-Wextra",
+    "-Wpedantic",
+    "-Werror",
+    "-fno-fast-math",
+    "-ffp-contract=off",
+    "-D_DLL",
+    "-D_MT",
+    "-Xclang",
+    "--dependent-lib=msvcrt",
+    "-DCURRENT=1"
+  ],
+  "baseline": {
+    "exe": "build/gui-pass/baseline.exe",
+    "exeSha256": "b31686c554da48b4589a2a7fc1ea59daaf4c0cbcfca4641a36162271e6b4a6f5",
+    "guiCsha256": "2b4928fafb8bd2233d5eef7d4caff3879290087210ea657f91bb0bd3181e67ed",
+    "guiHsha256": "fd3a352a1288eb9fa01cec1a82c975b150307d5a0ad7aeabe6f540f72d3d73a6"
+  },
+  "candidate": {
+    "exe": "build/gui-pass/current.exe",
+    "exeSha256": "67e0e5fa7d2e6ace7534c81132e5aff080972d509366c1197c31e3ec706a4892",
+    "guiCsha256": "8c067b11a97c56da4cc967ed53d522e8bc488013ed045666cbb4b98f4f010ea9",
+    "guiHsha256": "b1a5e0c38f223dc60c7481a3d798a373932abe506377983e396881f4f6b9af1a"
+  },
+  "sharedRuntime": {
+    "path": "build/release/engine/tide.lib",
+    "sha256": "8c96b32912469d140d0d704b09dfd5195b9b2feef7983436ea061ee1d12b3d96"
+  },
+  "probe": {
+    "path": "notes/gui-measurement.c",
+    "sha256": "4435ce7985b0ed118788361a85c112768763eff1dfad2331f2f715b5c3ec98a8",
+    "warmupFrames": 64,
+    "samples": 9,
+    "framesPerSample": 2000,
+    "controls": 256,
+    "rows": 32
+  },
+  "gate": "notes/gui-measurement.ps1: shared Local\\TideClaudeContinuationBenchmark mutex, five-second quiet preflight, three alternating process pairs, no ignored heavy processes, bounded by an absolute UTC deadline; contention invalidates the entire batch.",
+  "untimedStructuralChecks": {
+    "stockBaselineAndCandidate": "83ce5d69b9060b3f",
+    "customAndDirectCandidate": "5436392dbf1abd0b",
+    "recordedCommands": 513,
+    "baselineGroupBytes": 260,
+    "candidateGroupBytes": 264
+  },
+  "measurements": [],
+  "limits": [
+    "CPU layout/record/append only; no GPU or frame-rate claim.",
+    "Custom/direct comparison has precomputed IDs in the direct C reference.",
+    "Earlier build/gui-bench frozen files were absent when this follow-up began; their previous identities are not reused."
+  ],
+  "candidateCommit": "27d75edb57eb259c129fcc5f9748f5be072938ef"
+}

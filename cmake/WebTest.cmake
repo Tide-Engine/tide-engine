@@ -1,4 +1,4 @@
-# tide_add_web_test(<name> TARGET <target> [QUERY <query>] [WEBGPU [EXPECT <text>]] [D3D11])
+# tide_add_web_test(<name> TARGET <target> [QUERY <query>] [WEBGPU [EXPECT <text>] [SECONDS <n>]] [D3D11])
 #
 # Web builds: adds a test that opens <target>'s page in headless Chrome or Edge
 # and passes if the page exits with 0. It draws with WebGL 2 (backend=webgl in
@@ -13,7 +13,9 @@
 # WebGL), on the browser's software WebGPU. The browser only answers about its
 # GPU in real time, so the page is served (cmake/run_web_served_test.mjs), and
 # its shell must send its output and exit code back, as test_shell.html does.
-# EXPECT is a line the program has to print.
+# EXPECT is a line the program has to print. SECONDS is how long the page has
+# to give its result, 100 unless a test's work on the software renderer needs
+# more.
 # D3D11 adds a Windows-host test through ANGLE's software D3D11/WARP backend,
 # checking its renderer identity as well as the page's existing assertions.
 
@@ -41,7 +43,7 @@ if(NOT TIDE_WEB_TEST_PROCESSORS GREATER 0)
 endif()
 
 function(tide_add_web_test name)
-    cmake_parse_arguments(ARG "WEBGPU;D3D11" "TARGET;QUERY;EXPECT" "" ${ARGN})
+    cmake_parse_arguments(ARG "WEBGPU;D3D11" "TARGET;QUERY;EXPECT;SECONDS" "" ${ARGN})
     set(page "$<TARGET_FILE_DIR:${ARG_TARGET}>/${ARG_TARGET}.html")
     set(query "backend=webgl")
     set(webgpu_query "backend=webgpu")
@@ -77,12 +79,16 @@ function(tide_add_web_test name)
         if(ARG_EXPECT)
             set(expect --expect "${ARG_EXPECT}")
         endif()
+        if(NOT ARG_SECONDS)
+            set(ARG_SECONDS 100)
+        endif()
+        math(EXPR guard "${ARG_SECONDS} + 50")
         add_test(NAME ${name}_webgpu
             COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/cmake/run_web_served_test.mjs" "${TIDE_BROWSER}" "${page}"
-                "${CMAKE_CURRENT_BINARY_DIR}/${name}_webgpu-browser" "${webgpu_query}" ${expect})
-        # The runner gives up after 100 seconds by itself, and then asks the
+                "${CMAKE_CURRENT_BINARY_DIR}/${name}_webgpu-browser" "${webgpu_query}" ${expect} --seconds ${ARG_SECONDS})
+        # The runner gives up after its seconds by itself, and then asks the
         # page where it stands, which can take 30 more: this is the guard around it.
-        set_tests_properties(${name}_webgpu PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" LABELS webgpu TIMEOUT 150
+        set_tests_properties(${name}_webgpu PROPERTIES SKIP_REGULAR_EXPRESSION "SKIPPED:" LABELS webgpu TIMEOUT ${guard}
             PROCESSORS ${TIDE_WEB_TEST_PROCESSORS})
     endif()
 endfunction()

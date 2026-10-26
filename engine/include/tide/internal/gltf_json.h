@@ -90,6 +90,12 @@ static bool gltf_number(const char *s, const char *end, float *out)
 
 typedef enum jkind { J_NULL, J_BOOL, J_NUMBER, J_STRING, J_ARRAY, J_OBJECT } jkind;
 
+// An object's key, for looking keys up by halves: `index` is its place among the object's.
+typedef struct jkey {
+    const char *key;
+    uint32_t index;
+} jkey;
+
 typedef struct jnode {
     jkind kind;
     bool truth;
@@ -97,8 +103,44 @@ typedef struct jnode {
     uint32_t length;
     struct jnode **items; // An array's, or an object's values
     const char **keys;    // An object's
+    const jkey *sorted;   // An object's keys in order, where it has more than JSORT_FROM: NULL otherwise
     uint32_t count;
 } jnode;
+
+// An object with more keys than this keeps them sorted as well, so a lookup is
+// some halvings of them, not a walk through all of them: a file whose objects
+// have a million keys, looked up once for each of a million others, would
+// otherwise take hours. Fewer keys are walked, which is quicker for them.
+#define JSORT_FROM 8u
+
+// By the key as strcmp orders them, then by its place, so of keys that are the
+// same the first comes first: a lookup finds what a walk would.
+static bool jkey_before(const jkey *x, const jkey *y)
+{
+    const int by_key = strcmp(x->key, y->key);
+    return by_key ? by_key < 0 : x->index < y->index;
+}
+
+// Sorts `count` keys by merging runs of them (`spare` is as many), which takes
+// count times its logarithm comparisons whatever the keys are: the C library's
+// qsort can take count squared for keys a file chose.
+static jkey *jkey_sort(jkey *keys, jkey *spare, const uint32_t count)
+{
+    for (uint64_t run = 1; run < count; run *= 2u) {
+        for (uint64_t from = 0; from < count; from += run * 2u) {
+            const uint64_t middle = from + run < count ? from + run : count;
+            const uint64_t end = from + run * 2u < count ? from + run * 2u : count;
+            uint64_t a = from, b = middle, to = from;
+            while (a < middle && b < end) spare[to++] = jkey_before(&keys[b], &keys[a]) ? keys[b++] : keys[a++];
+            while (a < middle) spare[to++] = keys[a++];
+            while (b < end) spare[to++] = keys[b++];
+        }
+        jkey *swap = keys;
+        keys = spare;
+        spare = swap;
+    }
+    return keys;
+}
 
 typedef struct jblock {
     struct jblock *next;
@@ -109,7 +151,8 @@ typedef struct jparser {
     jblock *blocks;
     char *room;
     size_t left;
-    bool bad;
+    uint64_t values_left; // How many more values the importer reads: past them, bad and too_many
+    bool bad, too_many;
 } jparser;
 
 static void *jalloc(jparser *j, const size_t size)
@@ -226,10 +269,12 @@ static const char *jstring(jparser *j, uint32_t *length)
 static jnode *jvalue(jparser *j, const int depth)
 {
     jspace(j);
-    if (j->p >= j->end || depth > 64) {
+    if (j->p >= j->end || depth > 64 || !j->values_left) {
+        j->too_many = j->p < j->end && depth <= 64;
         j->bad = true;
         return NULL;
     }
+    j->values_left--;
     jnode *v = jalloc(j, sizeof *v);
     const char c = *j->p;
     if (c == '{' || c == '[') {
@@ -285,6 +330,11 @@ static jnode *jvalue(jparser *j, const int depth)
             if (object) {
                 v->keys = jalloc(j, count * sizeof *keys);
                 memcpy(v->keys, keys, count * sizeof *keys);
+                if (count > JSORT_FROM) {
+                    jkey *sorted = jalloc(j, count * sizeof *sorted), *spare = jalloc(j, count * sizeof *spare);
+                    for (uint32_t i = 0; i < count; i++) sorted[i] = (jkey){keys[i], i};
+                    v->sorted = jkey_sort(sorted, spare, count);
+                }
             }
             v->count = count;
         }
@@ -325,6 +375,15 @@ static jnode *jvalue(jparser *j, const int depth)
 static const jnode *jget(const jnode *object, const char *key)
 {
     if (!object || object->kind != J_OBJECT) return NULL;
+    if (object->sorted) { // The first of its keys not before `key`, which is the first `key` there is
+        uint32_t low = 0, high = object->count;
+        while (low < high) {
+            const uint32_t middle = low + (high - low) / 2u;
+            if (strcmp(object->sorted[middle].key, key) < 0) low = middle + 1u;
+            else high = middle;
+        }
+        return low < object->count && strcmp(object->sorted[low].key, key) == 0 ? object->items[object->sorted[low].index] : NULL;
+    }
     for (uint32_t i = 0; i < object->count; i++) {
         if (strcmp(object->keys[i], key) == 0) return object->items[i];
     }

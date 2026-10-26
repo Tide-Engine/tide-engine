@@ -6,7 +6,7 @@
 // In Restricted Mode (an untrusted workspace), nothing from the workspace
 // runs: the server is the one that comes with tide, and games don't run.
 
-const { spawn } = require('child_process');
+const { spawn, execFile } = require('child_process');
 const net = require('net');
 const fs = require('fs');
 const os = require('os');
@@ -27,9 +27,9 @@ class TideLanguageClient extends LanguageClient {
 }
 
 const suffix = process.platform === 'win32' ? '.exe' : '';
-let client = null;
-let output = null; // The Tide output channel, which every client shares
-let trace = null; // Where tide.trace.server shows what VS Code and tidels say
+let clients = [];
+let output = null;
+let trace = null;
 
 function isFile(file) {
     try {
@@ -149,18 +149,120 @@ async function missing(message, setting) {
 // build/tools/tidels, when it's Tide itself; else the one that comes with
 // tide. In an untrusted workspace, never one in the workspace. { file }, or
 // { error }.
-function findServer() {
-    const configured = settingProgram('server.path', 'language server');
+async function findServer(folder) {
+    const configured = settingProgram('server.path', 'language server', folder ? vscode.Uri.file(folder) : undefined);
     if (configured && !configured.untrusted) return configured;
     if (vscode.workspace.isTrusted) {
-        for (const folder of openFolders()) {
-            const built = path.join(folder, 'build', 'tools', 'tidels' + suffix);
+        if (folder) {
+            const command = settingProgram('path', 'tide', vscode.Uri.file(folder));
+            if (command) {
+                if (command.error) return command;
+                const file = path.join(path.dirname(command.file), 'tidels' + suffix);
+                return isFile(file) ? { file } : { error: `The tide.path override has no language server beside it: ${file}.` };
+            }
+        }
+        for (const root of folder ? [folder] : openFolders()) {
+            const built = path.join(root, 'build', 'tools', 'tidels' + suffix);
             if (isFile(built)) return { file: built };
+            const project = await projectProgram(root, 'tidels');
+            if (project) return project;
         }
     }
     const installed = installedProgram('tidels');
     if (installed) return { file: installed };
     return configured ?? { error: "couldn't find tidels, the language server that comes with tide. Install tide, or set tide.server.path." };
+}
+
+// A project chooses a version; installations stay shared on this machine. Unity resolves arbitrary git commits
+// and installs its version, so an IDE can use its cache without another network lookup or a second installer.
+async function projectProgram(folder, name) {
+    const read = file => { try { return fs.readFileSync(file, 'utf8'); } catch { return null; } };
+    const json = file => { try { return JSON.parse(read(file)); } catch { return null; } };
+    const exact = value => /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(value ?? '');
+    let version, manifestSeen = false;
+    for (let root = path.resolve(folder); ; root = path.dirname(root)) {
+        const lockPath = path.join(root, 'Packages', 'packages-lock.json');
+        const locked = json(lockPath);
+        if (isFile(lockPath) && !locked) return { error: `Couldn't read ${lockPath}. Fix the package lock before starting Tide tooling.` };
+        const lock = locked?.dependencies?.['com.tide.unity'];
+        const selected = lock ? json(path.join(root, 'Library', 'Tide', 'toolchain.json')) : null;
+        const matches = selected?.format === 2 && (selected?.lockHash
+            ? selected.lockHash === require('crypto').createHash('sha256').update(read(lockPath)).digest('hex')
+            : lock?.source === 'git' && lock.hash && selected?.commit === lock.hash);
+        const reusable = selected?.sessionPid === 0 && exact(selected.version) && typeof selected.tide === 'string'
+            && read(path.join(path.dirname(path.dirname(selected.tide)), 'VERSION'))?.trim() === selected.version;
+        if (matches && (reusable || await unitySessionAlive(selected.sessionPid, selected.sessionStarted))
+            && typeof selected.tide === 'string' && path.isAbsolute(selected.tide)) {
+            if (selected.sessionPid > 0) unitySessions.set(selected.sessionPid, selected.sessionStarted);
+            const file = path.join(path.dirname(selected.tide), name + suffix);
+            return isFile(file) ? { file } : { error: `${file} is missing. Open Unity and rebuild with the project's Tide package.` };
+        }
+        if (lock?.source === 'git') {
+            const commit = lock.hash;
+            const tag = lock.version?.split('#').at(-1)?.replace(/^v/, '');
+            const cached = json(path.join(root, 'Library', 'Tide', 'version.json'));
+            version = exact(tag) ? tag : commit && cached?.commit === commit ? cached.version : null;
+            if (!exact(version)) return { error: "Open this project in Unity to resolve and install its Tide package's version, then restart the Tide language server." };
+            break;
+        } else {
+            const manifest = read(path.join(root, 'tide.packages'));
+            if (!manifestSeen && manifest !== null) {
+                manifestSeen = true;
+                const pins = manifest.match(/^\s*tide\s*=.*$/gm);
+                if (pins?.length) {
+                    version = pins[0].replace(/^\s*tide\s*=\s*v?/, '').split('#')[0].trim();
+                    if (pins.length !== 1 || !exact(version)) return { error: `Invalid Tide version pin in ${path.join(root, 'tide.packages')}. Write tide = <whole version>.` };
+                }
+            }
+        }
+        if (path.dirname(root) === root) break;
+    }
+    if (version) {
+        const installed = process.platform === 'win32'
+            ? path.isAbsolute(process.env.LOCALAPPDATA ?? '') ? path.join(process.env.LOCALAPPDATA, 'Tide') : null
+            : path.join(os.homedir(), '.tide');
+        const versions = process.env.TIDE_VERSIONS || (installed && path.join(installed, 'versions'));
+        for (const place of [versions && path.join(versions, version), installed]) {
+            if (!place || !path.isAbsolute(place)) continue;
+            const file = path.join(place, 'bin', name + suffix);
+            if (read(path.join(place, 'VERSION'))?.trim() === version && isFile(file)) return { file };
+        }
+        return { error: `Tide ${version} is required by this project. Open Unity to install its package's version, or install that version of Tide; no other version will be used.` };
+    }
+    return null;
+}
+
+async function findTide(folder) {
+    const selected = settingProgram('path', 'tide', vscode.Uri.file(folder))
+        ?? (vscode.workspace.isTrusted ? await projectProgram(folder, 'tide') : null);
+    if (selected) return selected;
+    const file = installedProgram('tide');
+    return file ? { file } : { error: "couldn't find tide. Install it, or set tide.path." };
+}
+
+// PID plus start time distinguishes this Unity session from a later process reusing the same PID. Queries are
+// asynchronous and only needed for an explicit engine-development launch, never for ordinary pinned projects.
+const unitySessions = new Map();
+async function unitySessionAlive(pid, started) {
+    if (!Number.isSafeInteger(pid) || pid <= 0 || !Number.isSafeInteger(started) || started <= 0) return false;
+    try { process.kill(pid, 0); } catch { return false; }
+    const windows = process.platform === 'win32';
+    const file = windows ? 'powershell.exe' : 'ps';
+    const args = windows ? ['-NoProfile', '-NonInteractive', '-Command',
+        `try { ([DateTimeOffset][Diagnostics.Process]::GetProcessById(${pid}).StartTime).ToUnixTimeSeconds() } catch { exit 1 }`]
+        : ['-p', String(pid), '-o', 'lstart='];
+    const text = await new Promise(resolve => execFile(file, args,
+        { windowsHide: true, timeout: 3000, maxBuffer: 4096, env: { ...process.env, LC_ALL: 'C', TZ: 'UTC' } },
+        (error, stdout) => resolve(error ? '' : stdout.trim())));
+    return (windows ? Number(text || NaN) : Math.floor(Date.parse(text + ' UTC') / 1000)) === started;
+}
+
+async function checkUnitySessions() {
+    for (const [pid, started] of unitySessions) {
+        if (await unitySessionAlive(pid, started)) continue;
+        unitySessions.delete(pid);
+        if (!deactivating) restartSoon();
+    }
 }
 
 // The trace of what VS Code and tidels say to each other, as tide.trace.server
@@ -218,16 +320,23 @@ function lensCommand(command) {
 // Starts the language server. It never throws: what went wrong shows in a
 // notification, so that Restart Language Server always has a server to stop.
 async function start() {
-    const server = findServer();
+    for (const folder of openFolders().length ? openFolders() : [null]) await startFolder(folder);
+}
+
+async function startFolder(folder) {
+    const server = await findServer(folder);
     if (server.error) {
-        missing(`Tide: ${server.error}`, 'tide.server.path'); // Not awaited: the editor goes on meanwhile
+        missing(`Tide: ${server.error}`, 'tide.server.path');
         return;
     }
+    output?.appendLine(`Tide language server: ${server.file} (${folder ?? 'open files'})`);
     const next = new TideLanguageClient('tide', 'Tide', { command: server.file }, {
         documentSelector: [
-            { scheme: 'file', language: 'tide' },
-            { scheme: 'untitled', language: 'tide' },
+            // Client options use the protocol's RelativePattern (baseUri), not VS Code's RelativePattern.
+            { scheme: 'file', language: 'tide', ...(folder ? { pattern: { baseUri: vscode.Uri.file(folder).toString(), pattern: '**/*' } } : {}) },
+            ...(!folder || folder === openFolders()[0] ? [{ scheme: 'untitled', language: 'tide' }] : []),
         ],
+        ...(folder ? { workspaceFolder: vscode.workspace.workspaceFolders.find(f => f.uri.fsPath === folder) } : {}),
         outputChannel: output,
         traceOutputChannel: trace,
         middleware: {
@@ -238,25 +347,19 @@ async function start() {
             },
         },
     });
-    client = next;
+    clients.push(next);
     try {
         await next.start();
     } catch {
-        // The client said why, in a notification and in the Tide output.
     }
 }
 
 // Stops the language server, whatever state it's in: a server that failed to
 // start can't be stopped, only let go.
 async function stop() {
-    const running = client;
-    client = null;
-    if (!running) return;
-    try {
-        await running.dispose();
-    } catch {
-        // It never started, or it stopped already.
-    }
+    const running = clients;
+    clients = [];
+    await Promise.allSettled(running.map(server => server.dispose()));
 }
 
 // Starts and stops one after the other, as settings changes and the restart
@@ -272,6 +375,12 @@ function restart() {
         await stop();
         await start();
     });
+}
+
+let restartTimer;
+function restartSoon() {
+    clearTimeout(restartTimer);
+    restartTimer = setTimeout(() => { restartTimer = undefined; if (!deactivating) restart(); }, 150);
 }
 
 // ---------------------------------------------------------------------------
@@ -418,7 +527,7 @@ class Run {
         this.output = new vscode.EventEmitter();
         this.closed = new vscode.EventEmitter();
         this.process = null;
-        this.line = ''; // Typed, not sent yet
+        this.line = '';
         this.ended = false;
         this.disposed = false;
         this.stopping = false;
@@ -473,7 +582,7 @@ class Run {
         });
         child.stderr.setEncoding('utf8');
         child.stderr.on('data', text => this.print(text));
-        child.stdin.on('error', () => {}); // Typed after tide stopped
+        child.stdin.on('error', () => {});
         child.on('error', error => this.print(`Tide: couldn't run ${tide}: ${error.message}\n`));
         child.on('close', () => {
             this.process = null;
@@ -590,11 +699,11 @@ async function showPage(address, lastAddress, current) {
     return url;
 }
 
-const runs = { desktop: null, web: null, android: null }; // Running, or that ran last
+const runs = { desktop: null, web: null, android: null };
 const runQueues = { desktop: Promise.resolve(), web: Promise.resolve(), android: Promise.resolve() };
 let deactivating = false;
 let lastGame = null;
-let lastPage = null; // The web run's address in the editor
+let lastPage = null;
 
 // Runs the game, starting it over if it's running: in a window of its own, on
 // the web, in the editor, or on Android. Running a game runs its code, so not
@@ -616,10 +725,10 @@ async function beginRun(kind) {
     }
     const game = await pickGame(lastGame);
     if (!game || deactivating) return;
-    const configured = settingProgram('path', 'tide', vscode.Uri.file(game));
-    const tide = configured ? configured.file : installedProgram('tide');
+    const configured = await findTide(game);
+    const tide = configured.file;
     if (!tide) {
-        await missing(configured ? `Tide: ${configured.error}` : "Tide: couldn't find tide. Install it, or set tide.path.", 'tide.path');
+        await missing(`Tide: ${configured.error}`, 'tide.path');
         return;
     }
     lastGame = game;
@@ -667,12 +776,13 @@ async function openPrefab(resource) {
     }
     const found = gameFolder(uri.fsPath);
     if (found.error) { vscode.window.showErrorMessage(`Tide: ${found.error}`); return; }
-    const configured = settingProgram('path', 'tide', vscode.Uri.file(found.folder));
-    const tide = configured ? configured.file : installedProgram('tide');
+    const configured = await findTide(found.folder);
+    const tide = configured.file;
     if (!tide) {
-        await missing(configured ? `Tide: ${configured.error}` : "Tide: couldn't find tide. Install it, or set tide.path.", 'tide.path'); return;
+        await missing(`Tide: ${configured.error}`, 'tide.path'); return;
     }
     if (document?.uri.fsPath === uri.fsPath && document.isDirty && !await document.save()) return;
+    if (deactivating) return;
     const child = spawn(tide, ['open', uri.fsPath, '--project', found.folder],
         { cwd: found.folder, windowsHide: true, detached: true, stdio: 'ignore' });
     child.on('error', error => vscode.window.showErrorMessage(`Tide: couldn't open the prefab editor: ${error.message}`));
@@ -796,14 +906,14 @@ async function editPrefab(resource) {
     if (previous && !previous.disposed) { previous.panel.reveal(); return; }
     const found = gameFolder(uri.fsPath);
     if (found.error) { vscode.window.showErrorMessage(`Tide: ${found.error}`); return; }
-    const configured = settingProgram('path', 'tide', vscode.Uri.file(found.folder));
-    const tide = configured ? configured.file : installedProgram('tide');
-    if (!tide) { await missing(configured ? `Tide: ${configured.error}` : "Tide: couldn't find tide. Install it, or set tide.path.", 'tide.path'); return; }
+    const configured = await findTide(found.folder);
+    const tide = configured.file;
+    if (!tide) { await missing(`Tide: ${configured.error}`, 'tide.path'); return; }
     const executable = path.join(path.dirname(tide),'tide-editor'+suffix);
     if (!isFile(executable)) { vscode.window.showErrorMessage('Tide: tide-editor is missing beside tide. Install a desktop Tide package.'); return; }
     if (document?.uri.fsPath === uri.fsPath && document.isDirty && !await document.save()) return;
     if (deactivating) return;
-    const opened = prefabPanels.get(uri.fsPath); // Another command may have awaited the same Save.
+    const opened = prefabPanels.get(uri.fsPath);
     if (opened && !opened.disposed) { opened.panel.reveal(); return; }
     const editor = new PrefabPanel(executable,uri,found.folder);
     prefabPanels.set(uri.fsPath, editor); await editor.ready;
@@ -830,18 +940,65 @@ function activate(context) {
         vscode.commands.registerCommand('tide.prefabUndo', () => prefabAction('undo')),
         vscode.commands.registerCommand('tide.prefabRedo', () => prefabAction('redo')),
         vscode.workspace.onDidChangeConfiguration(e => {
-            if (e.affectsConfiguration('tide.server.path')) restart();
+            if (e.affectsConfiguration('tide.server.path') || e.affectsConfiguration('tide.path')) restartSoon();
         }),
         // Trusted now: the workspace's own server and settings can run.
         vscode.workspace.onDidGrantWorkspaceTrust(restart),
+        vscode.workspace.onDidChangeWorkspaceFolders(() => { watchVersions(); restartSoon(); }),
         { dispose: () => Object.values(runs).forEach(r => r?.dispose()) },
         { dispose: () => [...prefabProcesses].forEach(editor => editor.dispose()) },
+        require('./debug.js').register(vscode, {
+            output,
+            // The game the active .tide file is in, as Tide: Run would play it
+            gameOf: () => {
+                const file = vscode.window.activeTextEditor?.document.uri.fsPath;
+                return file && /\.(tide|tprefab)$/.test(file) ? gameFolder(file).folder : lastGame;
+            },
+            findTide: async game => {
+                return (await findTide(game)).file;
+            },
+        }),
     );
+    // Watch Unity's files even when only Assets (below the package lock and Library) is open. Narrow, explicit
+    // directory watches also work when the project's large Library tree is excluded from recursive watching.
+    let versionWatches = [];
+    function watchVersions() {
+        versionWatches.forEach(watch => watch.dispose());
+        versionWatches = [];
+        const patterns = new Set();
+        for (const folder of openFolders()) {
+            patterns.add(path.join(folder, 'tide.packages'));
+            for (let root = folder; ; root = path.dirname(root)) {
+                if (isFile(path.join(root, 'Packages', 'packages-lock.json'))) {
+                    patterns.add(path.join(root, 'Packages', 'packages-lock.json'));
+                    patterns.add(path.join(root, 'Library', 'Tide', 'toolchain.json'));
+                    patterns.add(path.join(root, 'Library', 'Tide', 'version.json'));
+                    break;
+                }
+                if (path.dirname(root) === root) break;
+            }
+        }
+        for (const file of patterns) {
+            const watch = vscode.workspace.createFileSystemWatcher(new vscode.RelativePattern(path.dirname(file), path.basename(file)));
+            versionWatches.push(watch, watch.onDidChange(restartSoon), watch.onDidCreate(restartSoon), watch.onDidDelete(restartSoon));
+        }
+    }
+    watchVersions();
+    context.subscriptions.push({ dispose: () => versionWatches.forEach(watch => watch.dispose()) });
+    let checkingSessions = false;
+    const sessionTimer = setInterval(async () => {
+        if (checkingSessions || deactivating || unitySessions.size === 0) return;
+        checkingSessions = true;
+        try { await checkUnitySessions(); } finally { checkingSessions = false; }
+    }, 2000);
+    context.subscriptions.push({ dispose: () => clearInterval(sessionTimer) });
     serially(start);
 }
 
 async function deactivate() {
     deactivating = true;
+    clearTimeout(restartTimer);
+    unitySessions.clear();
     await Promise.allSettled(Object.values(runs).map(r => r?.dispose()));
     await Promise.allSettled([...prefabProcesses].map(editor => editor.dispose()));
     await serially(stop);

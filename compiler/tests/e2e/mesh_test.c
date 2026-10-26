@@ -19,7 +19,6 @@ static const tide_draw_command *command(const uint32_t i)
     return &draw.commands[i];
 }
 
-// The list's texture of that size.
 static tide_draw_texture *texture(const int32_t width, const int32_t height)
 {
     for (uint32_t i = 0; i < draw.texture_count; i++) {
@@ -62,7 +61,7 @@ TIDE_TEST(meshes_draw_in_order)
     TIDE_CHECK(is_mesh(3, 3, theirs, TIDE_FILTER_POINT));
     const tide_vertex *corners = draw.vertices + draw.indices[command(1)->mesh.first];
     TIDE_CHECK(corners[0].position.x == 10.0f && corners[0].position.y == 20.0f);
-    TIDE_CHECK(corners[0].color.r == 1.0f && corners[0].color.g == 1.0f && corners[0].color.a == 1.0f); // White, left out
+    TIDE_CHECK(corners[0].color.r == 1.0f && corners[0].color.g == 1.0f && corners[0].color.a == 1.0f);
     TIDE_CHECK(corners[1].position.x == 12.0f && corners[1].uv.x == 1.0f && corners[1].uv.y == 0.0f);
     TIDE_CHECK(corners[1].color.r == 0.0f && corners[1].color.g == 1.0f);
     TIDE_CHECK(draw.indices[command(1)->mesh.first + 5] == draw.indices[command(1)->mesh.first] + 3);
@@ -72,7 +71,7 @@ TIDE_TEST(meshes_draw_in_order)
     TIDE_REQUIRE(command(4)->kind == TIDE_DRAW_CLIP && command(4)->clip && command(4)->clip <= draw.clip_count);
     const tide_rect clip = draw.clips[command(4)->clip - 1].rect;
     TIDE_CHECK(clip.x == 1.0f && clip.y == 2.0f && clip.width == 3.0f && clip.height == 4.0f);
-    TIDE_CHECK(draw.clips[command(4)->clip - 1].parent == 0); // Set, not inside the one before
+    TIDE_CHECK(draw.clips[command(4)->clip - 1].parent == 0);
     TIDE_CHECK(is_mesh(5, 3, checker, TIDE_FILTER_BILINEAR));
     TIDE_CHECK(is_mesh(6, 3, checker, TIDE_FILTER_POINT)); // Its triangle with an index past the list is left out
     TIDE_CHECK(is_mesh(7, 3, NULL, TIDE_FILTER_BILINEAR));
@@ -88,7 +87,7 @@ TIDE_TEST(meshes_draw_in_order)
     TIDE_CHECK(command(9)->kind == TIDE_DRAW_CLIP && is_mesh(10, 3, theirs, TIDE_FILTER_POINT));
     TIDE_CHECK(command(11)->kind == TIDE_DRAW_NO_CLIP);
     TIDE_CHECK(command(12)->kind == TIDE_DRAW_TEXT && strcmp(draw.text + command(12)->text, "3") == 0);
-    TIDE_CHECK(draw.vertices[draw.indices[command(10)->mesh.first]].color.g == 1.0f); // Cyan
+    TIDE_CHECK(draw.vertices[draw.indices[command(10)->mesh.first]].color.g == 1.0f);
 
     // The match's grid, as the tick left it
     TIDE_CHECK(command(13)->kind == TIDE_DRAW_CAMERA);

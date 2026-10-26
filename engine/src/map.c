@@ -4,8 +4,6 @@
 
 #include "tide/net.h"
 
-// See tide/map.h.
-
 #define LEAST_SLOTS 8u
 
 
@@ -31,16 +29,19 @@ static void set_slot(const tide_map m, const uint32_t s, const uint32_t value)
     if (p) *p = value;
 }
 
-// The slot a key with hash `h` lands in: the first empty one from its own.
 static uint32_t empty_slot(const tide_map m, const uint32_t h)
 {
-    const uint32_t mask = slots(m) - 1u;
+    tide_list_view index;
+    tide_list_view_find(&index, m.index, sizeof(uint32_t));
+    const uint32_t mask = index.count - 1u;
     uint32_t s = h & mask;
-    while (slot_at(m, s)) s = (s + 1u) & mask;
-    return s;
+    for (;;) {
+        const uint32_t *slot = tide_list_view_at(&index, s, sizeof *slot);
+        if (!slot || !*slot) return s;
+        s = (s + 1u) & mask;
+    }
 }
 
-// The index built again, with `count` slots: every live entry in its place.
 static void rebuild_index(tide_map *m, const tide_map_kind *k, const uint32_t count, const uint32_t where)
 {
     tide_list_clear(&m->index, sizeof(uint32_t));
@@ -56,7 +57,6 @@ static void rebuild_index(tide_map *m, const tide_map_kind *k, const uint32_t co
     }
 }
 
-// The live entries packed together, in their order, dropping the dead ones.
 static void compact(tide_map *m, const tide_map_kind *k, const uint32_t where)
 {
     tide_list packed = {0};

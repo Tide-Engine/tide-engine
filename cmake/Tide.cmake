@@ -1,7 +1,7 @@
 # tide_add_game(<target> [SOURCES <file.tide|file.c|file.cpp>...] [HOST <file.c>...] [WINDOW] [NAME <name>]
-#               [TITLE <title>] [STATS] [LAYOUT] [WARNINGS <text>...]
+#               [TITLE <title>] [STATS] [LAYOUT] [EMBED] [VISUALIZERS] [WARNINGS <text>...]
 #               [PACKAGES <Name> <file.tide>... [<Name> <file.tide>...]]
-#               [DEFINES <SYMBOL>...])
+#               [DEFINES <SYMBOL>...] [SHELL <page.html>])
 #
 # Builds a Tide game as the program <target>. The game is every .tide file
 # in the current source folder and its subfolders (new ones are picked up by
@@ -27,15 +27,24 @@
 # game's stats setting does: the frame rate, and at a click on it or F8, what
 # a frame's work takes, ping, bandwidth, tick, entity count, the threads ticks
 # run on, memory, draw calls and the slowest systems. On the web it's
-# <target>.html, and on Android an app (see tide_android_app).
+# <target>.html, around the canvas SHELL makes (see tide_web_page), and on
+# Android an app (see tide_android_app).
 #
 # With HOST, those C files are the program instead, for tests and custom hosts.
 # WINDOW says they open a window, so that on Android they're an app too, rather
 # than a program that runs from a shell.
 # They include the game's generated header, <name>.h (NAME defaults to
-# <target>), and drive the game through its API (see AGENTS.md). LAYOUT also
+# <target>), and drive the game through its API. LAYOUT also
 # describes the game's data layout, as tide run does for hot reloading
-# (tide_game_layout, see engine/include/tide/layout.h).
+# (tide_game_layout, see engine/include/tide/layout.h). EMBED adds what
+# another program needs to run it (tide_game_embed, tide/embed_game.h, which
+# tide/run.h's table then has: TIDE_HAS_EMBED is defined for the HOST files),
+# and the layout with it.
+#
+# VISUALIZERS writes how debuggers show the game's values beside its generated
+# files, as tide's debug builds do: <name>.natvis, which a Windows program's
+# .pdb carries, and <name>_lldb.py for LLDB (`command script import` it).
+# The TIDE_VISUALIZERS option gives every native game it.
 #
 # The generated files land in the build tree and are regenerated whenever a
 # .tide file or tidec changes. Every game is also listed in
@@ -75,7 +84,7 @@ set(TIDE_RUN_TIDEC "${CMAKE_CURRENT_LIST_DIR}/run_tidec.cmake")
 
 # A game's C++ is the language alone, as tide builds it (cpp_flags in
 # compiler/cli/build.c): no standard library, exceptions or RTTI, since tide
-# brings no C++ runtime (see AGENTS.md, Language). This project is C, so the C
+# brings no C++ runtime. This project is C, so the C
 # compiler compiles those files, and programs link as C: -x c++ and -std=c++20
 # go over what CMake says for a C file, which comes before them.
 set(TIDE_CPP_FLAGS -x c++ -std=c++20 -nostdinc++ -fno-exceptions -fno-rtti -fno-threadsafe-statics)
@@ -117,7 +126,7 @@ function(tide_web_page target)
 endfunction()
 
 function(tide_add_game target)
-    cmake_parse_arguments(ARG "STATS;LAYOUT;WINDOW;SERVER;STRIP_SERVER_ASSETS" "NAME;TITLE" "SOURCES;HOST;WARNINGS;PACKAGES;DEFINES" ${ARGN})
+    cmake_parse_arguments(ARG "STATS;LAYOUT;EMBED;WINDOW;SERVER;STRIP_SERVER_ASSETS;VISUALIZERS" "NAME;TITLE;SHELL" "SOURCES;HOST;WARNINGS;PACKAGES;DEFINES" ${ARGN})
     if(ARG_SERVER AND (TIDE_WEB OR TIDE_ANDROID OR ARG_HOST OR ARG_WINDOW OR ARG_LAYOUT))
         message(FATAL_ERROR "tide_add_game(${target} SERVER) is a standalone native server")
     endif()
@@ -154,18 +163,25 @@ function(tide_add_game target)
         set(manifest_paths ${sources})
     else()
         # CONFIGURE_DEPENDS: every build checks for new or deleted files first.
-        file(GLOB_RECURSE sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.tide" "${CMAKE_CURRENT_SOURCE_DIR}/*.tprefab")
+        # Not in hidden folders, like .tide/ and .build/, where tide keeps what it makes.
+        file(GLOB_RECURSE found CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.tide" "${CMAKE_CURRENT_SOURCE_DIR}/*.tprefab")
+        set(sources "")
+        foreach(path IN LISTS found)
+            file(RELATIVE_PATH relative "${CMAKE_CURRENT_SOURCE_DIR}" "${path}")
+            if(NOT relative MATCHES "(^|/)\\.")
+                list(APPEND sources "${path}")
+            endif()
+        endforeach()
         if(NOT sources)
             message(FATAL_ERROR "tide_add_game(${target}): there are no .tide files in ${CMAKE_CURRENT_SOURCE_DIR} "
                                 "or its subfolders. Add one, or list the game's files after SOURCES")
         endif()
-        # Not in hidden folders or build/, where tide keeps what it makes (.tide/),
-        # generated C included.
+        # Nor C, generated C included.
         file(GLOB_RECURSE found CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.c"
             "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/*.cc" "${CMAKE_CURRENT_SOURCE_DIR}/*.cxx")
         foreach(path IN LISTS found)
             file(RELATIVE_PATH relative "${CMAKE_CURRENT_SOURCE_DIR}" "${path}")
-            if(NOT relative MATCHES "(^|/)\\." AND NOT relative MATCHES "^build/")
+            if(NOT relative MATCHES "(^|/)\\.")
                 list(APPEND c_sources "${path}")
             endif()
         endforeach()
@@ -204,7 +220,9 @@ function(tide_add_game target)
     endforeach()
 
     set(layout "")
-    if(ARG_LAYOUT)
+    if(ARG_EMBED)
+        set(layout --embed)
+    elseif(ARG_LAYOUT)
         set(layout --layout)
     endif()
     # The symbols the game's #if lines read as defined: DEFINES', and DEBUG in a Debug build, as tide
@@ -290,14 +308,22 @@ function(tide_add_game target)
             list(APPEND server_flags --strip-server-assets)
         endif()
     endif()
-    if(NOT ARG_HOST AND NOT c_sources AND NOT ARG_LAYOUT)
+    if(NOT ARG_HOST AND NOT c_sources AND NOT ARG_LAYOUT AND NOT ARG_EMBED)
         set(strip_assets "$<CONFIG:Release,RelWithDebInfo,MinSizeRel>")
     endif()
+    # VISUALIZERS: how debuggers show the game's values, <name>.natvis (in a Windows program's .pdb) and
+    # <name>_lldb.py, as tide's debug builds have them (compiler/src/debug_views_codegen.inc)
+    set(visualizers "")
+    set(visualizer_outputs "")
+    if((ARG_VISUALIZERS OR TIDE_VISUALIZERS) AND NOT TIDE_WEB AND NOT TIDE_ANDROID)
+        set(visualizers --visualizers)
+        set(visualizer_outputs "${out_dir}/${name}.natvis" "${out_dir}/${name}_lldb.py")
+    endif()
     add_custom_command(
-        OUTPUT "${out_c}" "${out_h}" ${pack_outputs}
+        OUTPUT "${out_c}" "${out_h}" ${pack_outputs} ${visualizer_outputs}
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${out_dir}"
         COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DEXPECTED=${expected}" "-DSTRIP_UNUSED_ASSETS=${strip_assets}" -P "${TIDE_RUN_TIDEC}"
-            -- "@${listed}" -o "${out_dir}" --name "${name}" ${layout} ${pack_c} ${defines} ${server_flags}
+            -- "@${listed}" -o "${out_dir}" --name "${name}" ${layout} ${pack_c} ${defines} ${server_flags} ${visualizers}
         DEPENDS ${TIDEC_DEPENDS} ${sources} ${package_sources} ${asset_files} "${expected}" "${listed}" "${TIDE_RUN_TIDEC}"
         COMMENT "tidec ${target}"
         VERBATIM)
@@ -308,6 +334,9 @@ function(tide_add_game target)
         tide_android_app(${target} LABEL "${title}")
     elseif(ARG_HOST)
         add_executable(${target} ${ARG_HOST} "${out_c}" "${out_h}" "${out_pack_c}" ${c_sources})
+        if(ARG_EMBED)
+            target_compile_definitions(${target} PRIVATE TIDE_HAS_EMBED=1)
+        endif()
         target_link_libraries(${target} PRIVATE tide tide_font_bold)
     else()
         if(NOT TARGET tide_platform)
@@ -350,7 +379,12 @@ int main(int argc, char **argv)
                 COMMAND "${CMAKE_COMMAND}" "-DFROM=${out_pack}" "-DTO=$<TARGET_FILE_DIR:${target}>/${target}.pack"
                     -P "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/copy_pack.cmake"
                 VERBATIM)
-            tide_web_page(${target} PACK "${out_pack}")
+            if(ARG_SHELL)
+                get_filename_component(shell "${ARG_SHELL}" ABSOLUTE)
+                tide_web_page(${target} SHELL "${shell}" PACK "${out_pack}")
+            else()
+                tide_web_page(${target} PACK "${out_pack}")
+            endif()
         endif()
     endif()
     if(NOT ARG_HOST)
@@ -369,6 +403,18 @@ int main(int argc, char **argv)
         endif()
     endif()
     target_include_directories(${target} PRIVATE "${out_dir}")
+    if(visualizers)
+        target_sources(${target} PRIVATE ${visualizer_outputs})
+        # Every type the game declares: one only the generated plumbing names (a list's element, a map's
+        # entry) would otherwise be left out with the plumbing's debug info, as tide's debug builds keep it;
+        # and no columns, as generated C's would point into .tide lines at places that mean nothing there
+        target_compile_options(${target} PRIVATE -fno-eliminate-unused-debug-types -gno-column-info)
+        if(MINGW)
+            target_link_options(${target} PRIVATE "LINKER:-Xlink=-natvis:${out_dir}/${name}.natvis")
+        elseif(WIN32)
+            target_link_options(${target} PRIVATE "LINKER:/NATVIS:${out_dir}/${name}.natvis")
+        endif()
+    endif()
     if(ARG_SERVER)
         target_compile_options(${target} PRIVATE -ffunction-sections -fdata-sections)
         if(APPLE)

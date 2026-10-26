@@ -1,11 +1,9 @@
 #include "game.h"
 #include "tide_test.h"
 
-// A `Sort` with a comparison block, and a parallel loop, in a system or a view
-// that also takes a query (`query (Racer racer) racers`). The block and the
-// loop's step are functions of their own, given the parameters of the code
-// around them: a query among those is no C value, and the generated C named
-// it all the same, so such a game didn't build.
+// A `Sort` with a comparison block, and a parallel loop, in a system or a view that also takes a query
+// (`query (Racer racer) racers`). The block and the loop's step are functions of their own, given the parameters
+// of the code around them; a query among those is no C value and must not be named in the generated C.
 
 static tide_world world;
 static tide_local local;

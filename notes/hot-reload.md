@@ -1,5 +1,109 @@
 # Hot reloading
 
+## Reloaded libraries under a debugger (2026-10-26)
+
+Each `game-<n>` library names its own `.pdb` by absolute path, with that
+build's natvis inside, so the host's `loaded-<n>` copy finds its debug
+information and a debugger binds `.tide` breakpoints as each loads. A debug
+library build also writes `game.natvis` and `game_lldb.py` beside it (the
+newest build's; LLDB imports them again after a layout change). macOS watched
+builds skip dsymutil. `notes/debugging.md`.
+
+## A reload while a debugger pauses the match (2026-10-26)
+
+Unity's time travel (notes/unity.md) keeps worlds and a local state of the running build's. The embed's
+`reload_before` (`reload_library.inc`) lets go of that local state before every swap or full reload; a build of the
+same layout keeps the kept worlds and recording (`tide_timeline_set_game`: the new build frees and replays them),
+another layout or a full reload drops them while the old code is loaded, and the recording starts again from the
+migrated world (the session's recorder `begin`). The match stays paused at its tick through it, and the next step runs
+the new build. A paused embed still checks for builds by the frames' real time. Ticks recorded before a reload and
+replayed after it run the new code: a change that matters shows as the first tick that differs. The Sample's
+`TravelTests.AHotReloadWhilePausedKeepsThePause` covers a same-layout reload.
+
+## Raw Texture field roles (2026-10-25)
+
+Owner-approved Raw Texture fields retain their ordinary C reference layout.
+Annotated fields receive a generated header comment so a role flip changes the
+game header hash and selects migration, plus private layout spelling
+`[Raw] Texture` instead of `Texture`. Existing migration therefore keeps a
+compatible Raw reference and resets Raw/plain role changes to destination defaults.
+No migration runtime, metadata ABI, match storage or simulation identity changes.
+The Raw-free header is unchanged. raw_texture_layout checks role-sensitive game
+hashes, identical C headers aside from the marker and unchanged simulation IDs;
+raw_texture_fields exercises actual packed-local migration and pack reload.
+
+## Task handles and cached results (2026-10-25)
+
+Compatible reload carries operation identities, registry state and typed
+completion tables through ordinary layout migration. Frame fingerprints now
+include nested result/container/enum shapes, preventing same-sized schema
+changes from reinterpreting retained payloads. A removed/incompatible task
+table leaves stale handles, which validate as cancelled and cannot affect
+another operation. Pending workers retain owned arguments and restart after
+the old provider/code is drained.
+
+task_handles exercises actual layout migration with running and completed
+operations and deliberately dropped tables. task_layout changes an int leaf
+to a same-sized float inside List<Box> and requires both active and cached
+table fingerprints to change. worker_handles covers retained rebind with a
+shared grid-input operation and both waiters. Final validation: language.md.
+
+## Pending local workers (2026-10-24)
+
+Generated local headers exclude worker-group/provider pointers from saved bytes.
+Restored task tables reset process-local tickets and restart pending calls from
+saved arguments/current bindings. Retained reload's rebind_resources forgets
+tickets and drains old callbacks while their code is still loaded; changed
+layouts drain through old local_free. The platform publishes completion only
+after the callback returns, permitting safe unload. Owner loss only abandons
+publication; its group keeps captures until completion. local_workers pins
+saved-state and retained-rebind behavior.
+
+The gap pass also covers workers nested inside an awaited async helper, with
+changed source data before pack/rebind: the saved child arguments are retained.
+Draining abandons the entire group before helping, skipping queued calculations
+while still waiting for a provider's completion before old code can unload.
+
+## Sharded matches (2026-10-23)
+
+A sharded match on this machine (`tide run --shards`) reloads every shard at once: the host keeps a new build waiting until `tide_session_can_reload` (every frame, at most 3 seconds, then it starts over saying why), and `tide_session_set_game`/`tide_session_migrate` change every shard's server and every followed client together. On the web the page waits for `tide_reload_ready`, and the saved state carries the match as a checkpoint, each shard's world carried over with `tide_migrate_world` in the new program. Before this, a same-layout native reload left shards and followed clients on the unloaded build's table, and a web reload dropped a sharded match. Details: `notes/sharding.md`, Hot reload.
+
+## Optional voice lifecycle (2026-10-22)
+
+Retained native reload calls the old voice provider's stop after mixer forget
+and before library unload, detaching session callbacks and freeing private
+codec/sample state. Full restart uses the same stop through `tide_run_end`.
+No speech history is serialized or carried into the next build. Package
+contracts, sender-replacement/reconnect coverage and full validation are in
+`notes/voice-package.md`.
+
+Library loading for another program (2026-10-20): `reload.c`'s helpers for
+carrying state over and loading, checking and swapping `game-<n>` libraries
+moved, unchanged but for one line, into `platform/src/reload_library.inc`,
+which `reload.c` and `embed.c` both include: each file including `tide/host.h`
+has its own copy of the host's state, and these helpers work on it. Under
+`tide/embed.h`, a full restart whose library won't load leaves the game stopped
+instead of exiting. `tide run`'s behavior is unchanged. `notes/standard-host.md`.
+
+## Double matrices (2026-10-20)
+
+Double matrix fields use the existing PLAIN matrix layout category, preserving
+identical types by bytes. A float/double matrix type change retains the new
+default, as other matrix type changes did. Scalar/vector double widening from
+the preceding increment is unchanged. No new migration runtime helper or
+metadata enum is introduced. Validation: notes/language.md.
+
+## Double layout values (2026-10-20)
+
+TIDE_LAYOUT_DOUBLE is appended after the existing layout kinds, leaving their
+values unchanged. Generated double scalar/vector fields use eight-byte elements
+and ordinary numeric dimensions. Migration preserves identical double fields
+and widens matching byte/int/long/float fields, including float vectors; narrowing
+resets to the destination default. The new handwritten migration case checks
+all four widening sources, a vector, an unchanged double and refused narrowing.
+No new runtime function or layout-file structure is required. Validation:
+notes/language.md.
+
 Managed releases (2026-10-15): deployment does not hot-reload production worlds.
 Release IDs identify immutable bundles; Simulation IDs govern admission while
 `tide_game.hash` retains layout/migration identity. The new macro is appended
@@ -51,7 +155,8 @@ It's for quick iteration, enabled by default under `tide run`, native and web. `
 - A build that fails leaves the game running its last one. Ctrl+R in the watching game, or `r` and Enter in tide's terminal (through a `restart` file in the run's folder), fully reloads the game: match, local state, GUI and the game's C and C++ globals all start over, with no migration. On the web, Cmd+R does the same on macOS. The host says what each reload did, so under `tide run` it's a console program even with `--release`.
 - A game started with `--join` or `--connect` joins again a second after its match ends without it leaving: when the server starts over, or still runs an older layout.
 - Closing the native game window ends `tide run` with the game's exit code. The daily update check runs before a run, so no network request delays its ending.
-- Each run has its own folder, `.tide/<configuration>/run/<tide's process ID>`, so a server and a client run from one folder never build over each other. Runs without a window build a standalone program there and delete it when it ends. Watching runs keep the last two published builds and the host's own copy of the active library (`loaded-<n>`), so a full reload can reopen it even after newer builds failed to load and the CLI removed its published file. The host removes its previous copy after a successful swap. The folder is deleted when the run ends, or by a later run once its tide is gone.
+- Each run has its own folder, so a server and a client run from one folder never build over each other. Runs without a window use `.tide/<configuration>/run/<tide's process ID>`, build a standalone program there and delete it when it ends; the folder is deleted then, or by a later run once its tide is gone. Watching runs keep the last two published builds and the host's own copy of the active library (`loaded-<n>`), so a full reload can reopen it even after newer builds failed to load and the CLI removed its published file. The host removes its previous copy after a successful swap.
+- **Watching runs reuse a folder** (2026-10-26, native and web): `run/watch-<n>`, the first whose `watch-<n>.lock` tide can take (`sys_lock_file`: a file shared with nobody on Windows, `flock` elsewhere, held until tide ends however it ends, and not by the programs it starts). A run leaves behind, and the next one there keeps, its `gen/` and everything made with a `.stamp` beside it: `game.o`, `library.o`/`main.o`, `host.o`, the host program, `game-1` and their `.pdb`s; it removes every other file (`clear_run_entry`, at both ends of a run). The paths are the same, so the generated C is the same (its `#line`s name `gen/game.c`), and what hasn't changed isn't made again: `host.o` has a stamp of its own now, and the host's link and a run's first library link (`link_objects`' `kept`) are skipped when `<output>.stamp` matches the link's command line, the stamp of every file it names but its output, and the natvis it embeds. The first library links in place, as nothing loads it before the host starts or the page is served; later builds still link to `.tmp` and rename. A folder where something can't be removed (a host whose tide was killed still has its `loaded-<n>`) is passed over for the next. Measured on Windows (embedded clang, interactive run stopped just before starting the host, machine shared with other sessions): an unchanged rerun of Duel went from about 0.85 s to 0.15 s and Sumo from 1.2 s to 0.21 s, all of it tidec and tide's start now; before, each run compiled `game.c`/`library.c` (0.36 to 0.88 s), `host.c` (0.1 s) and linked both (0.16 to 0.9 s). A Tide edit compiles `game.c` and links the library, not the host. Tests: `a_locked_file_is_one_process_holders_at_a_time` (`sys_test.c`) and `webRerunTest` in `cache_test.mjs` (a second web run compiles nothing, a third keeps `game-1.wasm` as linked, a run beside a running one takes `watch-2`). Not covered by a test: a native watching run, which needs a window.
 - A game's library has its own copy of the engine code it uses. So everything the host and the library share is data: worlds and local state (with their pages, from the C library's heap, which every build of the game shares), devices, the draw list and the GUI. Render targets are what a library keeps track of itself, so the new build takes over those the local state holds (`tide_host_game.rebind_resources`, the generated `tide_local_rebind_resources`). The library frees its scratch area and what's left of its targets' bookkeeping before it's unloaded (`tide_host_game.unload`).
 - On Linux, a library's objects are compiled with `-fPIC`. The engine's are kept apart in `engine-pic`, so running and building don't rebuild each other's.
 - On the web, each build is a WebAssembly program of its own. `tide run --web` serves the page on 127.0.0.1 (`compiler/cli/serve.c`), opens it (unless `--no-open`), and keeps running until it's stopped. The editors run it with `--no-open` and show the page themselves, at the address tide prints (`tide: the game is at ...`): VS Code's **Tide: Run on the Web** in its browser, and the JetBrains plugin's Tide run configurations in the Tide Game tool window. The page asks tide for the newest build 4 times a second (`/build`: the build and restart numbers; `/game-<n>.wasm`).

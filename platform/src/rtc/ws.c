@@ -33,7 +33,6 @@ static void closed(rtc_ws *w)
     w->state = RTC_WS_CLOSED;
 }
 
-// Bytes to and from the relay, through TLS for wss://
 static int raw_send(rtc_ws *w, const void *data, const size_t size)
 {
     return w->tls ? rtc_tls_send(w->tls, w->socket, data, size) : rtc_tcp_send(w->socket, data, size);
@@ -167,7 +166,6 @@ void rtc_ws_update(rtc_ws *w, const double now)
             if (done == 0) return;
         }
         if (w->request[0]) {
-            // The request goes before anything else
             const size_t n = strlen(w->request);
             memmove(w->out + n, w->out, w->out_size);
             memcpy(w->out, w->request, n);

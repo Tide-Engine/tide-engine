@@ -1,0 +1,53 @@
+// Written by tide unity from the game's schema. Do not edit: it changes with the game.
+#pragma warning disable
+namespace Tide.Game
+{
+    // Tide's component Ball: its fields as authored outside Play, its entity's values in Play (TideComponent)
+    /// <summary>
+    /// Each player's ball, which Tide rolls and Unity shows (Roller.prefab)
+    /// <para>Tide's component Ball, declared in Assets/Tide/Bounce.tide.</para>
+    /// </summary>
+    [global::UnityEngine.AddComponentMenu("Tide/Ball")]
+    [global::UnityEngine.DisallowMultipleComponent]
+    [global::UnityEngine.Icon(global::Tide.TideIcon.Component)]
+    public sealed partial class Ball : global::Tide.TideComponent
+    {
+        /// <summary>Metres a second</summary>
+        public global::UnityEngine.Vector3 velocity = new global::UnityEngine.Vector3(0f, 0f, 0f);
+        public global::UnityEngine.Color color = new global::UnityEngine.Color(0f, 0f, 0f, 0f);
+        public int seat = 0;
+        public int bounces = 0;
+        public global::Tide.Game.Trail trail = new global::Tide.Game.Trail { length = 0f, tint = new global::UnityEngine.Color(0f, 0f, 0f, 0f) };
+        /// <summary>This machine's, as its local handler counts its bounces (Heard)</summary>
+        [global::System.NonSerialized] public int heard;
+
+        public override string TideName => "Ball";
+
+        protected override unsafe void ReadLive(byte* values, byte* locals, global::Tide.TidePacket packet, global::Tide.TideRunner runner)
+        {
+            var v = *(Value*)values;
+            velocity = v.velocity;
+            color = v.color;
+            seat = v.seat;
+            bounces = v.bounces;
+            trail = global::Tide.Game.Trail.From(v.trail, packet, runner);
+            if (locals != null)
+            {
+                var l = *(global::Tide.Game.BallLocal*)locals;
+                heard = l.heard;
+            }
+        }
+
+        // Tide's component Ball, as the game's C lays it out
+        [global::Tide.TideType("Ball")]
+        [global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = 56)]
+        public unsafe partial struct Value
+        {
+            [global::System.Runtime.InteropServices.FieldOffset(0)] public global::UnityEngine.Vector3 velocity;
+            [global::System.Runtime.InteropServices.FieldOffset(12)] public global::UnityEngine.Color color;
+            [global::System.Runtime.InteropServices.FieldOffset(28)] public int seat;
+            [global::System.Runtime.InteropServices.FieldOffset(32)] public int bounces;
+            [global::System.Runtime.InteropServices.FieldOffset(36)] public global::Tide.Game.Trail.Value trail;
+        }
+    }
+}

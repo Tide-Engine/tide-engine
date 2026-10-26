@@ -1,0 +1,3 @@
+// expect: lambda argument 1 is float; this Func requires float2
+scene Main;
+view Test() { Func<float2, float> distance = (float value) => value; _ = distance(float2(0)); }

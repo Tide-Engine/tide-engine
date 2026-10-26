@@ -15,6 +15,7 @@
 #include "font.h"
 #include "audio_in.h"
 #include "audio_out.h"
+#include "embedded.h"
 #include "tide/vorbis.h"
 #include "gpu.h"
 #include "mixer.h"
@@ -41,7 +42,7 @@ uint8_t *tide_platform_pack(size_t *size)
 }
 
 #ifdef __wasm__
-#include "tide_web.h" // The page's frame loop (platform/web/tide.js)
+#include "tide_web.h"
 #endif
 
 #define COUNT_OF(array) (sizeof(array) / sizeof((array)[0]))
@@ -97,6 +98,19 @@ static unsigned frames_counted;
 static bool headless;
 static tide_headless_desc headless_run;
 
+// Inside another program's frame (tide/embed.h): what its window read this
+// frame stands in for a window of Tide's own, as a headless run's script does,
+// and what the game asks of the window is kept for it to do.
+static bool embedded;
+static tide_embed_input embedded_input;
+static uint32_t embedded_text_at, embedded_touch_at; // The next of the frame's characters and touch events
+static bool embedded_typing, embedded_lock;
+static bool embedded_microphone; // The frame's audio has a voice of the microphone
+#ifdef __wasm__
+static bool embedded_heard; // The page's audio device is open for the program beside it
+#endif
+_Static_assert(TIDE_KEY_COUNT <= 8 * sizeof embedded_input.keys, "a bit for every key");
+
 // Whether nobody hears this window: in a run nobody watches (TIDE_HIDDEN,
 // tide/page.h) nobody listens either, so it opens no output device and no
 // microphone, and its mixer is handed frames and goes unheard, as on a machine
@@ -122,7 +136,6 @@ static uint32_t headless_frame; // The frame running, or the last one, counted f
 static float *headless_audio;
 static uint64_t played, captured, kept, audio_capacity;
 
-// Seconds since the window opened.
 static double now(void)
 {
     return (double)(tide_time_now_ns() - opened) * 1e-9;
@@ -304,7 +317,7 @@ static void headless_microphone(void)
         if (run > n) run = n;
         tide_audio_in_push(mic.file.samples + (size_t)mic.file_at * mic.file.channels, run, mic.file.rate, mic.file.channels);
         mic.file_at += run;
-        if (mic.file_at == mic.file.frames) mic.file_at = 0; // Looped
+        if (mic.file_at == mic.file.frames) mic.file_at = 0;
         n -= run;
     }
 }
@@ -315,6 +328,18 @@ void tide_platform_audio(const tide_audio_frame *frame)
     if (headless) {
         if (frame->microphone) headless_microphone();
         return;
+    }
+    if (embedded) {
+        embedded_microphone = frame->microphone;
+#ifndef __wasm__
+        return; // The other program plays the mixer, and hears the microphone for it (tide_embed_audio, _microphone)
+#else
+        // Beside the other program on the page: Tide's program's own AudioWorklet, and the page's microphone
+        if (!embedded_heard) {
+            embedded_heard = true;
+            tide_audio_out_open(); // With none, it said so, and the mixer goes unheard
+        }
+#endif
     }
     if (frame->microphone && !unheard) {
         if (mic.open) return;
@@ -348,10 +373,13 @@ static int headless_drawn(void)
     return last ? 0 : TIDE_KEEP_RUNNING;
 }
 
+static void write_used_keys(void);
+
 _Noreturn static void finish(int code)
 {
     code = tide_platform_players_finish(code); // A run of several players ends as one
     tide_platform_gpu_timing(false);
+    write_used_keys(); // How the game's shaders were drawn, for its next run to make them as it starts
     if (mic.open) tide_audio_in_close();
     tide_audio_out_close();
 #ifdef __wasm__
@@ -440,14 +468,102 @@ int tide_platform_fps(void)
 // Devices
 
 // What the devices say comes from the window, or for a headless one from
-// what was made up for it (script.h), which says it the same way.
+// what was made up for it (script.h), or inside another program's frame from
+// what its window read (tide/embed.h), which all say it the same way.
+
+void tide_platform_embed_frame(const tide_embed_input *input, const tide_float2 screen_size, const float screen_scale)
+{
+    embedded = true;
+    embedded_input = input ? *input : (tide_embed_input){0};
+    if (embedded_input.text_count > TIDE_TEXT_MAX) embedded_input.text_count = TIDE_TEXT_MAX;
+    if (embedded_input.touch_count > TIDE_EMBED_TOUCHES) embedded_input.touch_count = TIDE_EMBED_TOUCHES;
+    embedded_text_at = embedded_touch_at = 0;
+    // A size and scale that make no screen (NaN too) make the smallest one
+    const float scale = screen_scale >= 0.25f && screen_scale <= 16.0f ? screen_scale : 1.0f;
+    const float width = screen_size.x >= 1.0f && screen_size.x <= 16384.0f ? screen_size.x : 1.0f;
+    const float height = screen_size.y >= 1.0f && screen_size.y <= 16384.0f ? screen_size.y : 1.0f;
+    screen_width = (int)width;
+    screen_height = (int)height;
+    pixel_width = (int)((float)screen_width * scale + 0.5f);
+    pixel_height = (int)((float)screen_height * scale + 0.5f);
+}
+
+bool tide_platform_embed_typing(void)
+{
+    return embedded_typing;
+}
+
+bool tide_platform_embed_cursor_lock(void)
+{
+    return embedded_lock;
+}
+
+bool tide_platform_embed_microphone(void)
+{
+    return embedded_microphone;
+}
+
+static bool key_held(const tide_key key)
+{
+    if (embedded) return (embedded_input.keys[key / 8] >> (key % 8) & 1u) != 0;
+    return headless ? tide_script_key_held(key) : tide_window_key_held(key);
+}
+
+static void mouse_state(tide_window_mouse *out)
+{
+    if (embedded) {
+        const tide_embed_input *in = &embedded_input;
+        *out = (tide_window_mouse){.x = in->mouse_x, .y = in->mouse_y, .wheel_x = in->wheel_x, .wheel_y = in->wheel_y,
+                                   .buttons = in->mouse_buttons, .locked = in->mouse_locked,
+                                   .moved_x = in->moved_x, .moved_y = in->moved_y};
+    } else if (headless) {
+        tide_script_mouse_state(out);
+    } else {
+        tide_window_mouse_state(out);
+    }
+}
+
+static void gamepad_state(tide_window_gamepad *out)
+{
+    if (embedded) {
+        const tide_embed_input *in = &embedded_input;
+        *out = (tide_window_gamepad){.connected = in->gamepad, .left_x = in->left_x, .left_y = in->left_y,
+                                     .right_x = in->right_x, .right_y = in->right_y, .left_trigger = in->left_trigger,
+                                     .right_trigger = in->right_trigger, .buttons = in->gamepad_buttons};
+    } else if (headless) {
+        tide_script_gamepad_state(out);
+    } else {
+        tide_window_gamepad_state(out);
+    }
+}
+
+static bool touchscreen(void)
+{
+    if (embedded) return embedded_input.touchscreen;
+    return headless ? tide_script_touchscreen() : tide_window_touchscreen();
+}
+
+static bool take_touch(tide_touch_report *out)
+{
+    if (!embedded) return headless ? tide_script_take_touch(out) : tide_window_take_touch(out);
+    while (embedded_touch_at < embedded_input.touch_count) {
+        const tide_embed_touch *t = &embedded_input.touches[embedded_touch_at++];
+        if (t->phase > TIDE_TOUCH_CANCELED) continue; // Not a phase: left out
+        *out = (tide_touch_report){.phase = (tide_touch_phase)t->phase, .source = t->source, .x = t->x, .y = t->y};
+        return true;
+    }
+    return false;
+}
+
+static uint32_t take_char(void)
+{
+    if (embedded) return embedded_text_at < embedded_input.text_count ? embedded_input.text[embedded_text_at++] : 0;
+    return headless ? tide_script_take_char() : tide_window_take_char();
+}
 
 static void poll_keyboard(tide_keyboard *k)
 {
-    for (size_t i = 0; i < COUNT_OF(key_offsets); i++) {
-        const bool held = headless ? tide_script_key_held((tide_key)i) : tide_window_key_held((tide_key)i);
-        tide_button_set(BUTTON_AT(k, key_offsets[i]), held);
-    }
+    for (size_t i = 0; i < COUNT_OF(key_offsets); i++) tide_button_set(BUTTON_AT(k, key_offsets[i]), key_held((tide_key)i));
 }
 
 // The mouse; true if it was used: it moved or scrolled, or a button went down
@@ -457,8 +573,7 @@ static bool poll_mouse(tide_mouse *m)
     static float last_x, last_y;
     static bool polled;
     tide_window_mouse mouse;
-    if (headless) tide_script_mouse_state(&mouse);
-    else tide_window_mouse_state(&mouse);
+    mouse_state(&mouse);
     // How it moved: where the cursor went or, while the window holds the
     // cursor (Cursor.Lock), what the mouse says it moved, as the cursor stays.
     const float dx = mouse.locked ? mouse.moved_x : polled ? mouse.x - last_x : 0.0f;
@@ -485,13 +600,13 @@ static bool poll_mouse(tide_mouse *m)
 }
 
 // Fingers on a touchscreen: the page's on the web, the window's on Windows,
-// the activity's on Android. Other desktops have none yet.
+// the activity's on Android.
 static void poll_touches(tide_touchscreen *s)
 {
     tide_touches_poll(s);
-    s->connected = headless ? tide_script_touchscreen() : tide_window_touchscreen();
+    s->connected = touchscreen();
     tide_touch_report r;
-    while (headless ? tide_script_take_touch(&r) : tide_window_take_touch(&r)) {
+    while (take_touch(&r)) {
         tide_touch_event(s, r.phase, r.source, tide_f2(r.x, (float)screen_height - r.y));
     }
 }
@@ -499,8 +614,7 @@ static void poll_touches(tide_touchscreen *s)
 static void poll_gamepad(tide_gamepad *g)
 {
     tide_window_gamepad pad;
-    if (headless) tide_script_gamepad_state(&pad);
-    else tide_window_gamepad_state(&pad);
+    gamepad_state(&pad);
     g->connected = pad.connected;
     if (pad.connected) {
         g->leftStick = tide_f2(pad.left_x, -pad.left_y);
@@ -523,7 +637,8 @@ static uint32_t pasted_count, pasted_at;
 
 static void paste(void)
 {
-    const char *text = headless ? NULL : tide_window_take_paste(); // Never the system's clipboard into a headless run
+    // Never the system's clipboard into a headless run, and another program's window types what it pastes
+    const char *text = headless || embedded ? NULL : tide_window_take_paste();
     if (!text) return;
     for (uint32_t c; pasted_count < COUNT_OF(pasted) && (c = tide_utf8_next(&text)) != 0;) {
         if (c >= 32 && c != 127) pasted[pasted_count++] = c; // Not newlines or tabs
@@ -539,7 +654,7 @@ static void poll_text(tide_typed *text)
     while (pasted_at < pasted_count && text->count < TIDE_TEXT_MAX) text->chars[text->count++] = pasted[pasted_at++];
     if (pasted_at == pasted_count) pasted_at = pasted_count = 0;
     while (text->count < TIDE_TEXT_MAX) {
-        const uint32_t c = headless ? tide_script_take_char() : tide_window_take_char();
+        const uint32_t c = take_char();
         if (c == 0) break;
         text->chars[text->count++] = c;
     }
@@ -548,13 +663,16 @@ static void poll_text(tide_typed *text)
 void tide_platform_typing(const bool typing)
 {
     static bool was;
-    if (typing == was || headless) return;
+    embedded_typing = typing;
+    if (typing == was || headless || embedded) return;
     was = typing;
     tide_window_typing(typing);
 }
 
 void tide_platform_cursor_lock(const bool lock)
 {
+    embedded_lock = lock;
+    if (embedded) return; // The other program's window holds it, or not (tide_embed_input.mouse_locked)
     if (headless) {
         tide_script_cursor_lock(lock);
         return;
@@ -564,7 +682,9 @@ void tide_platform_cursor_lock(const bool lock)
 
 void tide_platform_copy(const char *text)
 {
-    if (headless) return; // A run nobody watches leaves the clipboard of whoever is at the machine alone
+    // A run nobody watches leaves the clipboard of whoever is at the machine alone, and another program's
+    // window has no clipboard of Tide's
+    if (headless || embedded) return;
     tide_window_copy(text);
 }
 
@@ -611,28 +731,19 @@ static tide_float2 to_screen(const camera *cam, const tide_float2 p)
     return tide_f2(width * 0.5f + (p.x - cam->center.x) * cam->scale, height * 0.5f - (p.y - cam->center.y) * cam->scale);
 }
 
-// A rect's top left corner on screen: y goes up in the world, down in the GUI.
-static tide_float2 rect_corner(const camera *cam, const tide_draw_command *c)
-{
-    const float half_height = cam->gui ? -c->b.y * 0.5f : c->b.y * 0.5f;
-    return to_screen(cam, tide_f2(c->a.x - c->b.x * 0.5f, c->a.y + half_height));
-}
-
 // A color as the GPU takes it: a byte each.
 typedef struct rgba {
     uint8_t r, g, b, a;
 } rgba;
 
-static uint8_t color_channel(const float v)
-{
-    if (!(v > 0.0f)) return 0; // Also NaN
-    if (v >= 1.0f) return 255;
-    return (uint8_t)(v * 255.0f + 0.5f);
-}
-
+// A color as the bytes a GPU gets for it: the list's own conversion (tide_draw_color_bytes), which plain shapes are
+// recorded with, so every color is the same bytes whichever converted it.
 static rgba to_rgba(const tide_color c)
 {
-    return (rgba){color_channel(c.r), color_channel(c.g), color_channel(c.b), color_channel(c.a)};
+    const uint32_t bytes = tide_draw_color_bytes(c);
+    rgba out;
+    memcpy(&out, &bytes, sizeof out);
+    return out;
 }
 
 // Shapes go to the GPU as instances of one quad, each its shape in window
@@ -643,7 +754,7 @@ static rgba to_rgba(const tide_color c)
 // their edge.
 
 enum { SHAPE_RECT, SHAPE_WIRE_RECT, SHAPE_CIRCLE, SHAPE_WIRE_CIRCLE, SHAPE_LINE,
-       SHAPE_BOX, SHAPE_ELLIPSE, SHAPE_ARC };
+       SHAPE_BOX, SHAPE_ELLIPSE, SHAPE_ARC, SHAPE_CORNERS };
 
 typedef struct shape {
     float a[2];       // Its middle, or a line's start
@@ -655,8 +766,7 @@ typedef struct shape {
 // What a smooth shape is drawn with besides. Few shapes are smooth ones, and
 // these are more than a shape again, so only a run that has some has them:
 // one for each of its shapes, in a buffer of their own, which a pipeline of
-// its own reads (see STEP_SHAPES). A run of the plain kinds alone, however
-// long, goes to the GPU as it always did.
+// its own reads (see STEP_SHAPES).
 typedef struct shape_extra {
     float turn[2];     // Its rotation's cos and sin, on the screen; an arc's, to its middle
     float radius;      // Its corners'
@@ -667,6 +777,21 @@ typedef struct shape_extra {
     uint8_t rim[4];    // Its outline's color
 } shape_extra;
 
+// Whether a smooth shape is a solid one, which needs no more of its extra than
+// its corners' radius to be drawn: a box or an ellipse, unturned, one color
+// from top to bottom, with no outline and no fade. Of the rest, an arc's sweep
+// and an outline's color are read by none of those, and the rest is zeros and
+// ones. A run whose smooth shapes are all solid ones has a radius for each of
+// its shapes (4 bytes) where it would have an extra (32), and goes through a
+// pipeline that has the rest as constants in place of the extra's, into the
+// same lines of the same shaders (shaders.h): the same pixels. That's round
+// rects, plain circles on a scaled display, and plain shapes among either.
+static inline bool solid_shape(const shape *s, const shape_extra *e)
+{
+    return s->kind < (float)SHAPE_ARC && e->turn[0] == 1.0f && e->turn[1] == 0.0f && e->outline == 0.0f
+        && e->soft == 0.0f && memcmp(e->color2, s->color, sizeof e->color2) == 0;
+}
+
 // A mesh's corner, in window pixels. Meshes go to the GPU as triangles, three
 // of these each: a run of them with one texture is one draw call. Text goes
 // the same way, two triangles a glyph, its uv in the font atlas's pixels.
@@ -675,6 +800,20 @@ typedef struct mesh_vertex {
     float uv[2];
     uint8_t color[4]; // RGBA
 } mesh_vertex;
+
+// Two of those triangles, as one instance of the quads' pipelines, where they
+// can be: their six corners' places take two numbers at most on each axis, as
+// their uvs do, and they're of one color. That's a sprite, a tile or a glyph
+// that isn't turned, in whatever order its corners and triangles come. Each
+// corner takes one number or the other on each axis, so the GPU draws the same
+// triangles from the same numbers as from six of the vertices above: the same
+// pixels, from 40 bytes where those are 120. A run of them is one draw call.
+typedef struct quad {
+    float box[4];     // The two numbers its places take on each axis, in window pixels: x and y, then the others
+    float span[4];    // ...and its uvs'
+    uint8_t color[4]; // RGBA
+    int32_t pattern;  // Which each corner takes, 4 bits a corner from the first: x, y, u and v, 1 for the second
+} quad;
 
 // What a list comes to, in order: runs of shapes, clears, runs of text, runs
 // of triangles, clips, runs of instances of 3D meshes, and runs of instances
@@ -702,6 +841,10 @@ typedef struct draw_step {
                       // a STEP_SHADED's too, for a 3D shader
     uint32_t fit;     // ...which is for a square screen (see TIDE_DRAW_CAMERA_3D)
     uint32_t smooth;  // STEP_SHAPES: for a run with smooth shapes, 1 + where its shapes' extras start; else 0
+    uint32_t solid;   // ...or for one whose smooth shapes are all solid ones, 1 + where their radii start (see
+                      // solid_shape), where `smooth` is 0
+    uint32_t quads;   // STEP_TEXT and STEP_MESH: 1 while every two of its triangles are a quad, which `first` and
+                      // `count` are then of, else 0 (see quad)
     camera through;   // STEP_SHADED: the camera its command was under, for a 2D shader
     tide_gpu_id pipeline; // What draws it, once it's found: its shader's, for a STEP_SHADED
     tide_color tint;  // STEP_MESH_3D: what its pixels' colors are multiplied by
@@ -715,8 +858,12 @@ static shape *shapes;
 static uint32_t shape_count, shape_capacity;
 static shape_extra *shape_extras;
 static uint32_t shape_extra_count, shape_extra_capacity;
+static float *shape_radii;
+static uint32_t shape_radius_count, shape_radius_capacity;
 static mesh_vertex *mesh_vertices;
 static uint32_t mesh_vertex_count, mesh_vertex_capacity;
+static quad *quads;
+static uint32_t quad_count, quad_capacity;
 static draw_step *steps;
 static uint32_t step_count, step_capacity;
 static uint32_t draw_target;
@@ -830,7 +977,6 @@ static bool target_extent(const tide_target_size size, const draw_root *to, floa
     return true;
 }
 
-// Room for `count` more extras after the ones there.
 static shape_extra *extra_room(const uint32_t count)
 {
     if (count > shape_extra_capacity - shape_extra_count) {
@@ -844,10 +990,22 @@ static shape_extra *extra_room(const uint32_t count)
     return shape_extras + shape_extra_count;
 }
 
+static shape *shape_room(const uint32_t count)
+{
+    if (count > shape_capacity - shape_count) {
+        uint64_t capacity = shape_capacity ? shape_capacity : 1024u;
+        while (capacity < (uint64_t)shape_count + count) capacity *= 2u;
+        if (capacity > UINT32_MAX / sizeof(shape)) tide_out_of_memory();
+        shapes = tide_realloc(shapes, shape_capacity * sizeof(shape), (size_t)capacity * sizeof(shape));
+        shape_capacity = (uint32_t)capacity;
+    }
+    return shapes + shape_count;
+}
+
 // Every shape of a run that has smooth ones has an extra, in the run's order.
-// Plain shapes don't say so as they're added, which keeps adding one as cheap
-// as it was: the ones added since the run's last smooth shape get theirs
-// here, zeroed, as nothing reads them. Called before the run's next smooth
+// Plain shapes don't say so as they're added, which keeps adding one cheap:
+// the ones added since the run's last smooth shape get theirs here, zeroed,
+// as nothing reads them. Called before the run's next smooth
 // shape, and once the run is over.
 static void settle_extras(void)
 {
@@ -860,9 +1018,58 @@ static void settle_extras(void)
     shape_extra_count += missing;
 }
 
+static float *radius_room(const uint32_t count)
+{
+    if (count > shape_radius_capacity - shape_radius_count) {
+        uint64_t capacity = shape_radius_capacity ? shape_radius_capacity : 1024u;
+        while (capacity < (uint64_t)shape_radius_count + count) capacity *= 2u;
+        if (capacity > UINT32_MAX / sizeof(float)) tide_out_of_memory();
+        shape_radii = tide_realloc(shape_radii, shape_radius_capacity * sizeof(float), (size_t)capacity * sizeof(float));
+        shape_radius_capacity = (uint32_t)capacity;
+    }
+    return shape_radii + shape_radius_count;
+}
+
+// ...and the same for a run of solid shapes' radii (see solid_shape): the
+// plain shapes since its last smooth one get theirs, 0.
+static void settle_radii(void)
+{
+    if (step_count == 0) return;
+    const draw_step *run = &steps[step_count - 1];
+    if (run->kind != STEP_SHAPES || !run->solid) return;
+    const uint32_t missing = run->count - (shape_radius_count - (run->solid - 1u));
+    if (missing == 0) return;
+    memset(radius_room(missing), 0, (size_t)missing * sizeof(float));
+    shape_radius_count += missing;
+}
+
+// The run of shapes `run`, the last there is, has a smooth shape that isn't a
+// solid one: its shapes get the extras they stood for (the plain ones', zeros),
+// in place of their radii, the last there are, and it goes on as a run of
+// smooth shapes.
+static void smooth_instead(draw_step *run)
+{
+    settle_radii();
+    const uint32_t radii = run->solid - 1u;
+    shape_extra *out = extra_room(run->count);
+    for (uint32_t i = 0; i < run->count; i++) {
+        const shape *s = &shapes[run->first + i];
+        out[i] = (shape_extra){0};
+        if (!(s->kind >= (float)SHAPE_BOX)) continue;
+        out[i].turn[0] = 1.0f;
+        out[i].radius = shape_radii[radii + i];
+        memcpy(out[i].color2, s->color, sizeof out[i].color2);
+    }
+    run->smooth = shape_extra_count + 1u;
+    run->solid = 0;
+    shape_extra_count += run->count;
+    shape_radius_count = radii;
+}
+
 static draw_step *add_step(const uint32_t kind)
 {
     settle_extras(); // The run before it, if it was one of shapes, is over
+    settle_radii();
     if (step_count == step_capacity) {
         const uint32_t capacity = step_capacity ? step_capacity * 2u : 64u;
         steps = tide_realloc(steps, step_capacity * sizeof(draw_step), capacity * sizeof(draw_step));
@@ -912,35 +1119,109 @@ static void add_smooth(const int kind, const float x, const float y, const float
                        const rgba color, const shape_extra extra)
 {
     if (!run_goes_on(STEP_SHAPES)) start_shapes();
-    if (!steps[step_count - 1].smooth) steps[step_count - 1].smooth = shape_extra_count + 1u;
+    draw_step *run = &steps[step_count - 1];
+    if (!run->smooth) { // A run of solid shapes while they are
+        if (!run->solid) run->solid = shape_radius_count + 1u;
+        settle_radii(); // The plain shapes before it in the run
+        const shape s = {{x, y}, {half_width, half_height}, {color.r, color.g, color.b, color.a}, (float)kind};
+        if (solid_shape(&s, &extra)) {
+            add_shape(kind, x, y, half_width, half_height, color);
+            *radius_room(1) = extra.radius;
+            shape_radius_count++;
+            return;
+        }
+        smooth_instead(run);
+    }
     settle_extras(); // The plain shapes before it in the run
     add_shape(kind, x, y, half_width, half_height, color);
     *extra_room(1) = extra;
     shape_extra_count++;
 }
 
-// A TIDE_DRAW_SHAPE command's shape, through the camera: its lengths in window
-// pixels, and its angles as the screen has them, where y goes down.
-static void add_smooth_shape(const tide_draw_list *list, const tide_draw_command *c, const camera *cam)
+// The TIDE_DRAW_SHAPE commands from `at` on, one after another with one
+// blend, each as add_smooth adds a shape and its extra, through the camera, in
+// one loop (a frame of many smooth shapes spends its time here). Returns where
+// the run ends.
+static uint32_t add_smooth_run(const tide_draw_list *list, uint32_t at, const camera *cam)
 {
-    if (c->shape >= list->shape_count) return;
     static const int kinds[] = {[TIDE_SHAPE_BOX] = SHAPE_BOX, [TIDE_SHAPE_ELLIPSE] = SHAPE_ELLIPSE,
-                                [TIDE_SHAPE_ARC] = SHAPE_ARC};
-    const tide_draw_shape_data *s = &list->shapes[c->shape];
-    const uint32_t form = s->form & (uint32_t)TIDE_SHAPE_FORMS;
-    if (form > TIDE_SHAPE_ARC) return;
-    const tide_float2 center = to_screen(cam, c->a);
+                                [TIDE_SHAPE_ARC] = SHAPE_ARC, [TIDE_SHAPE_CORNERS] = SHAPE_CORNERS};
+    const uint8_t blend = list->commands[at].blend;
+    if (!run_goes_on(STEP_SHAPES)) start_shapes();
+    draw_step *const run = &steps[step_count - 1u];
+    if (!run->smooth && !run->solid) run->solid = shape_radius_count + 1u; // A run of solid shapes while they are
+    settle_extras(); // The plain shapes before them in the run
+    settle_radii();
     const float scale = cam->scale;
-    const rgba color2 = to_rgba(s->color2), rim = to_rgba(s->outline_color);
-    add_smooth(kinds[form], center.x, center.y, c->b.x * scale * 0.5f, c->b.y * scale * 0.5f, to_rgba(c->color),
-               (shape_extra){.turn = {s->turn.x, cam->gui ? s->turn.y : -s->turn.y},
-                             .radius = s->radius * scale,
-                             // A hairline is a logical pixel wide, whatever the camera
-                             .outline = s->form & (uint32_t)TIDE_SHAPE_HAIRLINE ? 1.0f : s->outline * scale,
-                             .soft = s->soft * scale,
-                             .sweep = s->sweep,
-                             .color2 = {color2.r, color2.g, color2.b, color2.a},
-                             .rim = {rim.r, rim.g, rim.b, rim.a}});
+    for (;;) {
+        const uint32_t left = list->count - at, piece = left < 4096u ? left : 4096u;
+        shape *out = shape_room(piece);
+        // Room for each shape's extra, or while the run's are solid shapes, for its radius
+        shape_extra *extra = run->smooth ? extra_room(piece) : NULL;
+        float *radius = run->smooth ? NULL : radius_room(piece);
+        uint32_t taken = 0;
+        for (; taken < piece; taken++) {
+            const tide_draw_command *c = &list->commands[at + taken];
+            if (c->kind != TIDE_DRAW_SHAPE || c->blend != blend) break;
+            if (c->shape >= list->shape_count) continue;
+            const tide_draw_shape_data *s = &list->shapes[c->shape];
+            const uint32_t form = s->form & (uint32_t)TIDE_SHAPE_FORMS;
+            if (form > TIDE_SHAPE_CORNERS) continue;
+            // Its lengths in window pixels, and its angles as the screen has them, where y goes down
+            const tide_float2 center = to_screen(cam, c->a);
+            const rgba color = to_rgba(c->color);
+            *out = (shape){{center.x, center.y}, {c->b.x * scale * 0.5f, c->b.y * scale * 0.5f},
+                           {color.r, color.g, color.b, color.a}, (float)kinds[form]};
+            const float outline = s->form & (uint32_t)TIDE_SHAPE_HAIRLINE ? 1.0f : s->outline * scale, soft = s->soft * scale;
+            // A solid one (solid_shape's test, on the numbers its extra would have), while the run's are: its radius
+            // alone, its extra never made. The same color's bits are the same bytes
+            if (radius && form < TIDE_SHAPE_ARC && s->turn.x == 1.0f && s->turn.y == 0.0f && outline == 0.0f && soft == 0.0f) {
+                bool one_color = memcmp(&s->color2, &c->color, sizeof s->color2) == 0;
+                if (!one_color) {
+                    const rgba bottom = to_rgba(s->color2);
+                    one_color = memcmp(&bottom, &color, sizeof bottom) == 0;
+                }
+                if (one_color) {
+                    *radius++ = s->radius * scale;
+                    out++;
+                    continue;
+                }
+            }
+            const rgba color2 = to_rgba(s->color2), rim = to_rgba(s->outline_color);
+            const shape_extra e = {.turn = {s->turn.x, cam->gui ? s->turn.y : -s->turn.y},
+                                   .radius = s->radius * scale,
+                                   // A hairline is a logical pixel wide, whatever the camera
+                                   .outline = outline,
+                                   .soft = soft,
+                                   .sweep = form == TIDE_SHAPE_CORNERS ? s->sweep * scale : s->sweep,
+                                   .color2 = {color2.r, color2.g, color2.b, color2.a},
+                                   .rim = {rim.r, rim.g, rim.b, rim.a}};
+            if (radius) {
+                if (solid_shape(out, &e)) {
+                    *radius++ = e.radius;
+                    out++;
+                    continue;
+                }
+                // The first that isn't: what's added so far is counted, and the run's shapes get extras
+                const uint32_t added = (uint32_t)(out - (shapes + shape_count));
+                shape_count += added;
+                shape_radius_count += added;
+                run->count += added;
+                smooth_instead(run);
+                radius = NULL;
+                extra = extra_room(piece - taken);
+            }
+            *extra++ = e;
+            out++;
+        }
+        const uint32_t added = (uint32_t)(out - (shapes + shape_count));
+        shape_count += added;
+        if (radius) shape_radius_count += added;
+        else shape_extra_count += added;
+        run->count += added;
+        at += taken;
+        if (taken < piece || at == list->count) return at;
+    }
 }
 
 // A circle or its outline, `radius` window pixels around (x, y). The plain
@@ -965,7 +1246,80 @@ static void add_circle(const bool wire, const float x, const float y, const floa
                              .rim = {color.r, color.g, color.b, color.a}});
 }
 
-// Room for `count` more vertices after the ones there.
+// A run of the list's plain shapes (TIDE_DRAW_PLAIN: rects, their outlines, lines, and circles where the
+// destination isn't scaled) into the run of shapes there is, in one loop: a frame of many shapes spends its time
+// here. Each one's arithmetic matches add_shape's to the bit, its color as the list has it. A circle on a scaled
+// destination goes as the smooth shape it also is (add_circle), between them.
+static void add_plain_run(const tide_draw_list *list, const tide_draw_command *c, const camera *cam)
+{
+    const uint32_t first = c->plain.first < list->plain_count ? c->plain.first : list->plain_count;
+    const uint32_t run = tide_draw_plain_run(list, c);
+    const uint32_t count = run < list->plain_count - first ? run : list->plain_count - first;
+    const tide_draw_plain *in = list->plains + first, *const end = in + count;
+    const bool gui = cam->gui;
+    const float scale = cam->scale, cx = cam->center.x, cy = cam->center.y;
+    const float half_width = (draw_width > 0.0f ? draw_width : (float)screen_width) * 0.5f;
+    const float half_height = (draw_height > 0.0f ? draw_height : (float)screen_height) * 0.5f;
+    while (in < end) {
+        if (scaled && (in->kind == TIDE_DRAW_CIRCLE || in->kind == TIDE_DRAW_WIRE_CIRCLE)) {
+            const tide_float2 p = to_screen(cam, in->a);
+            rgba color;
+            memcpy(&color, &in->color, sizeof color);
+            add_circle(in->kind == TIDE_DRAW_WIRE_CIRCLE, p.x, p.y, in->b.x * cam->scale, color);
+            in++;
+            continue;
+        }
+        if (!run_goes_on(STEP_SHAPES)) start_shapes();
+        const uint32_t step = step_count - 1u;
+        // In pieces, so a long run takes room as it goes
+        const uint32_t left = (uint32_t)(end - in), piece = left < 4096u ? left : 4096u;
+        shape *const out_first = shape_room(piece);
+        shape *out = out_first;
+        for (const tide_draw_plain *const stop = in + piece; in < stop; in++) {
+            float ax, ay, bx, by;
+            int kind;
+            switch ((tide_draw_kind)in->kind) {
+            case TIDE_DRAW_RECT:
+            case TIDE_DRAW_WIRE_RECT: { // Its top left corner through to_screen: y goes up in the world, down in the GUI
+                const float x = in->a.x - in->b.x * 0.5f, y = in->a.y + (gui ? -in->b.y * 0.5f : in->b.y * 0.5f);
+                const float left_x = gui ? x * scale : half_width + (x - cx) * scale;
+                const float top_y = gui ? y * scale : half_height - (y - cy) * scale;
+                bx = in->b.x * scale * 0.5f;
+                by = in->b.y * scale * 0.5f;
+                ax = left_x + bx;
+                ay = top_y + by;
+                kind = in->kind == TIDE_DRAW_RECT ? SHAPE_RECT : SHAPE_WIRE_RECT;
+                break;
+            }
+            case TIDE_DRAW_CIRCLE:
+            case TIDE_DRAW_WIRE_CIRCLE:
+                if (scaled) goto done; // A smooth shape there (add_circle)
+                ax = gui ? in->a.x * scale : half_width + (in->a.x - cx) * scale;
+                ay = gui ? in->a.y * scale : half_height - (in->a.y - cy) * scale;
+                bx = by = in->b.x * scale;
+                kind = in->kind == TIDE_DRAW_CIRCLE ? SHAPE_CIRCLE : SHAPE_WIRE_CIRCLE;
+                break;
+            case TIDE_DRAW_LINE:
+                ax = gui ? in->a.x * scale : half_width + (in->a.x - cx) * scale;
+                ay = gui ? in->a.y * scale : half_height - (in->a.y - cy) * scale;
+                bx = gui ? in->b.x * scale : half_width + (in->b.x - cx) * scale;
+                by = gui ? in->b.y * scale : half_height - (in->b.y - cy) * scale;
+                kind = SHAPE_LINE;
+                break;
+            default: // No plain shape: nothing drawn
+                continue;
+            }
+            *out = (shape){{ax, ay}, {bx, by}, {0, 0, 0, 0}, (float)kind};
+            memcpy(out->color, &in->color, sizeof out->color);
+            out++;
+        }
+    done:;
+        const uint32_t added = (uint32_t)(out - out_first);
+        shape_count += added;
+        steps[step].count += added;
+    }
+}
+
 static mesh_vertex *mesh_room(const uint32_t count)
 {
     if (count > mesh_vertex_capacity - mesh_vertex_count) {
@@ -979,29 +1333,294 @@ static mesh_vertex *mesh_room(const uint32_t count)
     return mesh_vertices + mesh_vertex_count;
 }
 
+static quad *quad_room(const uint32_t count)
+{
+    if (count > quad_capacity - quad_count) {
+        uint64_t capacity = quad_capacity ? quad_capacity : 1024u;
+        while (capacity < (uint64_t)quad_count + count) capacity *= 2u;
+        if (capacity > UINT32_MAX / sizeof(quad)) tide_out_of_memory();
+        quads = tide_realloc(quads, quad_capacity * sizeof(quad), (size_t)capacity * sizeof(quad));
+        quad_capacity = (uint32_t)capacity;
+    }
+    return quads + quad_count;
+}
+
+_Static_assert(offsetof(mesh_vertex, uv) == 2 * sizeof(float) && offsetof(mesh_vertex, color) == 4 * sizeof(float),
+               "a mesh vertex's place and uv are its first four floats");
+
+// The quad whose six corners, in order, are corner[which[0]] to corner[which[5]], of `corners`, if it's one (see
+// quad): their places and uvs take two numbers at most on each axis, told apart by their bits, and they're of one
+// color. Nothing is written where it isn't.
+static bool make_quad(const mesh_vertex *corner, const uint32_t corners, const uint8_t *which, quad *q)
+{
+    uint32_t first[4], second[4], color, picks[6] = {0};
+    memcpy(first, &corner[0], sizeof first); // Its place, then its uv
+    memcpy(second, first, sizeof second);    // The same while no corner had another
+    memcpy(&color, corner[0].color, sizeof color);
+    for (uint32_t k = 1; k < corners; k++) {
+        uint32_t at[4], other;
+        memcpy(at, &corner[k], sizeof at);
+        memcpy(&other, corner[k].color, sizeof other);
+        if (other != color) return false;
+        for (uint32_t axis = 0; axis < 4; axis++) {
+            if (at[axis] == first[axis]) continue;
+            if (second[axis] == first[axis]) second[axis] = at[axis];
+            else if (at[axis] != second[axis]) return false;
+            picks[k] |= 1u << axis;
+        }
+    }
+    uint32_t pattern = 0;
+    for (uint32_t i = 0; i < 6; i++) pattern |= picks[which[i]] << (4u * i);
+    const uint32_t box[4] = {first[0], first[1], second[0], second[1]};
+    const uint32_t span[4] = {first[2], first[3], second[2], second[3]};
+    memcpy(q->box, box, sizeof box);
+    memcpy(q->span, span, sizeof span);
+    memcpy(q->color, &color, sizeof color);
+    q->pattern = (int32_t)pattern;
+    return true;
+}
+
+// A run of quads has two triangles that can't be one: its quads, the last there are, go back to being the six
+// vertices each they stood for, to the bit, and the run goes on as triangles.
+static void triangles_instead(draw_step *s)
+{
+    const uint32_t count = s->count;
+    mesh_vertex *out = mesh_room(6u * count);
+    for (uint32_t i = 0; i < count; i++) {
+        const quad *q = &quads[s->first + i];
+        uint32_t box[4], span[4];
+        memcpy(box, q->box, sizeof box);
+        memcpy(span, q->span, sizeof span);
+        for (uint32_t k = 0; k < 6; k++, out++) {
+            const uint32_t pick = (uint32_t)q->pattern >> (4u * k);
+            const uint32_t at[4] = {box[pick & 1u ? 2 : 0], box[pick & 2u ? 3 : 1], span[pick & 4u ? 2 : 0],
+                                    span[pick & 8u ? 3 : 1]};
+            memcpy(out, at, sizeof at);
+            memcpy(out->color, q->color, sizeof out->color);
+        }
+    }
+    quad_count = s->first;
+    s->first = mesh_vertex_count;
+    s->count = 6u * count;
+    s->quads = 0;
+    mesh_vertex_count += 6u * count;
+}
+
+// A run of triangles that starts as one of quads, until two of its triangles aren't one.
+static draw_step *start_quads(const uint32_t kind)
+{
+    draw_step *s = add_step(kind);
+    s->first = quad_count;
+    s->quads = 1;
+    return s;
+}
+
+// to_screen's arithmetic for a run of corners, with its camera's numbers read once.
+typedef struct corner_camera {
+    bool gui;
+    float scale, cx, cy, half_width, half_height;
+} corner_camera;
+
+static corner_camera corner_camera_of(const camera *cam)
+{
+    return (corner_camera){cam->gui, cam->scale, cam->center.x, cam->center.y,
+                           (draw_width > 0.0f ? draw_width : (float)screen_width) * 0.5f,
+                           (draw_height > 0.0f ? draw_height : (float)screen_height) * 0.5f};
+}
+
+static inline float corner_x(const corner_camera *k, const tide_vertex *v)
+{
+    return k->gui ? v->position.x * k->scale : k->half_width + (v->position.x - k->cx) * k->scale;
+}
+
+static inline float corner_y(const corner_camera *k, const tide_vertex *v)
+{
+    return k->gui ? v->position.y * k->scale : k->half_height - (v->position.y - k->cy) * k->scale;
+}
+
+static inline mesh_vertex corner_of(const corner_camera *k, const tide_vertex *v)
+{
+    const rgba color = to_rgba(v->color);
+    return (mesh_vertex){{corner_x(k, v), corner_y(k, v)}, {v->uv.x, v->uv.y}, {color.r, color.g, color.b, color.a}};
+}
+
+_Static_assert(offsetof(tide_vertex, uv) == 2 * sizeof(float) && offsetof(tide_vertex, color) == 4 * sizeof(float),
+               "a vertex's place and uv are its first four floats, and its color the next four");
+
+// Four 32-bit lanes, which clang makes one SIMD register where the target has them (SSE2 on x86-64, NEON on
+// arm64) and four scalars where it hasn't: a quad's corners compared all at once. Lane by lane, the arithmetic is
+// what the same floats get alone, IEEE's.
+typedef uint32_t lanes __attribute__((ext_vector_type(4)));
+typedef int32_t lane_mask __attribute__((ext_vector_type(4))); // What comparing lanes gives: -1 where they're equal
+typedef float float_lanes __attribute__((ext_vector_type(4)));
+
+static inline lanes lanes_of(const void *at)
+{
+    lanes v;
+    memcpy(&v, at, sizeof v);
+    return v;
+}
+
+// The quad of triangles p q r and p r s, as a quad's two mostly are, where p and r are its opposite corners on
+// both axes, and all four are of one color: what make_quad finds of them, sooner. It compares the vertices as the
+// list has them, by their bits: a corner's place on the screen is worked out from its own on that axis alone, so
+// two the same are the same there, and only p's and r's are worked out. Nothing is written where it isn't one
+// (make_quad may still find one).
+static bool make_quad_across(const corner_camera *k, const tide_vertex *const corner[4], quad *out)
+{
+    // A corner's x, y, u and v as bits, side by side, and its color's
+    const lanes p = lanes_of(&corner[0]->position), q = lanes_of(&corner[1]->position);
+    const lanes r = lanes_of(&corner[2]->position), s = lanes_of(&corner[3]->position);
+    const lanes color = lanes_of(&corner[0]->color);
+    const lane_mask qp = q == p, rp = r == p, sp = s == p;
+    const lane_mask fits = (qp | (q == r)) & (sp | (s == r)) & (lanes_of(&corner[1]->color) == color)
+                         & (lanes_of(&corner[2]->color) == color) & (lanes_of(&corner[3]->color) == color);
+    if (__builtin_reduce_and(fits) == 0) return false;
+    // Which number of each axis each corner takes: p the first, r the second where it's another
+    const lane_mask axis = {1, 2, 4, 8};
+    const uint32_t q_picks = (uint32_t)__builtin_reduce_or(~qp & axis), r_picks = (uint32_t)__builtin_reduce_or(~rp & axis);
+    const uint32_t s_picks = (uint32_t)__builtin_reduce_or(~sp & axis);
+    // p's and r's places on the screen, each lane as corner_x and corner_y work them out
+    const float_lanes at = (float_lanes)__builtin_shufflevector(p, r, 0, 1, 4, 5);
+    float_lanes box;
+    if (k->gui) {
+        box = at * k->scale;
+    } else {
+        const float_lanes moved = (at - (float_lanes){k->cx, k->cy, k->cx, k->cy}) * k->scale;
+        const float_lanes half = {k->half_width, k->half_height, k->half_width, k->half_height};
+        box = __builtin_shufflevector(half + moved, half - moved, 0, 5, 2, 7);
+    }
+    const lanes span = __builtin_shufflevector(p, r, 2, 3, 6, 7);
+    const rgba bytes = to_rgba(corner[0]->color);
+    memcpy(out->box, &box, sizeof out->box);
+    memcpy(out->span, &span, sizeof out->span);
+    memcpy(out->color, &bytes, sizeof out->color);
+    out->pattern = (int32_t)(q_picks << 4 | r_picks << 8 | r_picks << 16 | s_picks << 20); // p q r p r s
+    return true;
+}
+
 // A mesh command's triangles, their corners through the camera, after the
-// ones before it when nothing came between them.
+// ones before it when nothing came between them: two at a time as quads, as
+// long as they are.
 static void add_mesh(const tide_draw_list *list, const tide_draw_command *c, const camera *cam)
 {
     const uint32_t count = c->mesh.count;
-    mesh_vertex *out = mesh_room(count);
     draw_step *s = run_goes_on(STEP_MESH) ? &steps[step_count - 1] : NULL;
     if (!s || s->texture != c->mesh.texture || s->filter != c->mesh.filter || s->wrap != c->mesh.wrap) {
-        s = add_step(STEP_MESH);
-        s->first = mesh_vertex_count;
+        s = start_quads(STEP_MESH);
         s->texture = c->mesh.texture;
         s->filter = c->mesh.filter;
         s->wrap = c->mesh.wrap;
     }
-    s->count += count;
     const uint32_t *indices = list->indices + c->mesh.first;
-    for (uint32_t i = 0; i < count; i++) {
-        const tide_vertex *v = &list->vertices[indices[i]];
-        const tide_float2 p = to_screen(cam, v->position);
-        const rgba color = to_rgba(v->color);
-        out[i] = (mesh_vertex){{p.x, p.y}, {v->uv.x, v->uv.y}, {color.r, color.g, color.b, color.a}};
+    const tide_vertex *const vertices = list->vertices;
+    const corner_camera k = corner_camera_of(cam);
+    uint32_t i = 0;
+    if (s->quads) {
+        static const uint8_t four[6] = {0, 1, 2, 0, 2, 3}, six[6] = {0, 1, 2, 3, 4, 5};
+        quad *const first = quad_room(count / 6u), *out = first;
+        for (; i + 6u <= count; i += 6u, out++) {
+            const uint32_t *t = indices + i;
+            // Two triangles that share their first and last corners, as a quad's mostly do: four corners, once each
+            const bool shared = t[3] == t[0] && t[4] == t[2];
+            if (shared) {
+                const tide_vertex *const across[4] = {&vertices[t[0]], &vertices[t[1]], &vertices[t[2]], &vertices[t[5]]};
+                if (make_quad_across(&k, across, out)) continue;
+            }
+            mesh_vertex corner[6];
+            corner[0] = corner_of(&k, &vertices[t[0]]);
+            corner[1] = corner_of(&k, &vertices[t[1]]);
+            corner[2] = corner_of(&k, &vertices[t[2]]);
+            if (shared) {
+                corner[3] = corner_of(&k, &vertices[t[5]]);
+            } else {
+                for (uint32_t j = 3; j < 6; j++) corner[j] = corner_of(&k, &vertices[t[j]]);
+            }
+            if (!make_quad(corner, shared ? 4u : 6u, shared ? four : six, out)) break;
+        }
+        const uint32_t made = (uint32_t)(out - first);
+        quad_count += made;
+        s->count += made;
+        if (i == count) return;
+        triangles_instead(s);
     }
-    mesh_vertex_count += count;
+    mesh_vertex *out = mesh_room(count - i);
+    for (uint32_t j = i; j < count; j++) out[j - i] = corner_of(&k, &vertices[indices[j]]);
+    s->count += count - i;
+    mesh_vertex_count += count - i;
+}
+
+// A run of the quads the list kept as quads (TIDE_DRAW_QUADS), after the ones before it when nothing came between
+// them: the quads add_mesh makes of the same two triangles, or where the run's triangles already, those triangles.
+// The same numbers to the bit: make_quad_across's box of p and r through the camera, a lane each as there, and
+// corner_of's corners.
+static void add_quads(const tide_draw_list *list, const tide_draw_command *c, const camera *cam)
+{
+    draw_step *s = run_goes_on(STEP_MESH) ? &steps[step_count - 1] : NULL;
+    if (!s || s->texture != c->mesh.texture || s->filter != c->mesh.filter || s->wrap != c->mesh.wrap) {
+        s = start_quads(STEP_MESH);
+        s->texture = c->mesh.texture;
+        s->filter = c->mesh.filter;
+        s->wrap = c->mesh.wrap;
+    }
+    const uint32_t first = c->mesh.first < list->quad_count ? c->mesh.first : list->quad_count;
+    const uint32_t count = c->mesh.count < list->quad_count - first ? c->mesh.count : list->quad_count - first;
+    const tide_draw_quad *in = list->quads + first;
+    const corner_camera k = corner_camera_of(cam);
+    if (s->quads) {
+        quad *out = quad_room(count);
+        const float_lanes centers = {k.cx, k.cy, k.cx, k.cy};
+        const float_lanes half = {k.half_width, k.half_height, k.half_width, k.half_height};
+        for (uint32_t i = 0; i < count; i++, out++) {
+            const tide_draw_quad *q = &in[i];
+            const float_lanes at = {q->from.x, q->from.y, q->to.x, q->to.y};
+            float_lanes box;
+            if (k.gui) {
+                box = at * k.scale;
+            } else {
+                const float_lanes moved = (at - centers) * k.scale;
+                box = __builtin_shufflevector(half + moved, half - moved, 0, 5, 2, 7);
+            }
+            const float span[4] = {q->uv_from.x, q->uv_from.y, q->uv_to.x, q->uv_to.y};
+            const rgba bytes = to_rgba(q->color);
+            memcpy(out->box, &box, sizeof out->box);
+            memcpy(out->span, span, sizeof out->span);
+            memcpy(out->color, &bytes, sizeof out->color);
+            out->pattern = (int32_t)q->pattern;
+        }
+        quad_count += count;
+        s->count += count;
+        return;
+    }
+    mesh_vertex *out = mesh_room(6u * count);
+    for (uint32_t i = 0; i < count; i++) {
+        for (uint32_t corner = 0; corner < 6u; corner++) {
+            const tide_vertex v = tide_draw_quad_corner(&in[i], corner);
+            *out++ = corner_of(&k, &v);
+        }
+    }
+    s->count += 6u * count;
+    mesh_vertex_count += 6u * count;
+}
+
+// A glyph's two triangles over its four corners, after the text before it: a quad where it's one.
+static void add_glyph(const mesh_vertex corners[4])
+{
+    static const uint8_t four[6] = {0, 1, 2, 0, 2, 3};
+    draw_step *s = &steps[step_count - 1];
+    if (s->quads) {
+        if (make_quad(corners, 4u, four, quad_room(1))) {
+            quad_count++;
+            s->count++;
+            return;
+        }
+        triangles_instead(s);
+    }
+    mesh_vertex *out = mesh_room(6);
+    out[0] = corners[0], out[1] = corners[1], out[2] = corners[2];
+    out[3] = corners[0], out[4] = corners[2], out[5] = corners[3];
+    mesh_vertex_count += 6;
+    s->count += 6;
 }
 
 // Where the line of text at `line` starts, in the target's pixels, a whole
@@ -1042,7 +1661,7 @@ static void add_text(const char *text, const tide_float2 at, const float size, c
     float pen_x = line_start(font, text, pixels, stretch, x, side);
     float pen_y = floorf((at.y + tide_font_baseline(font) * size) * scale.y - above + 0.5f); // On the baseline
 
-    if (!run_goes_on(STEP_TEXT)) add_step(STEP_TEXT)->first = mesh_vertex_count;
+    if (!run_goes_on(STEP_TEXT)) start_quads(STEP_TEXT);
     for (uint32_t c; (c = tide_utf8_next(&text)) != 0;) {
         if (c == '\n') {
             pen_x = line_start(font, text, pixels, stretch, x, side);
@@ -1062,11 +1681,7 @@ static void add_text(const char *text, const tide_float2 at, const float size, c
                 {{x1, y1}, {u1, v1}, {color.r, color.g, color.b, color.a}},
                 {{x0, y1}, {u0, v1}, {color.r, color.g, color.b, color.a}},
             };
-            mesh_vertex *out = mesh_room(6); // After add_step: the steps before it keep their vertices' places
-            out[0] = corners[0], out[1] = corners[1], out[2] = corners[2];
-            out[3] = corners[0], out[4] = corners[2], out[5] = corners[3];
-            mesh_vertex_count += 6;
-            steps[step_count - 1].count += 6;
+            add_glyph(corners);
         }
         pen_x += (float)g.advance * stretch;
     }
@@ -1106,7 +1721,7 @@ static void add_text_turned(const char *text, const tide_float2 at, const float 
     float pen_x = line_start(font, text, pixels, stretch, 0.0f, side);
     float pen_y = floorf(tide_font_baseline(font) * drawn * scale.y - above + 0.5f);
 
-    if (!run_goes_on(STEP_TEXT)) add_step(STEP_TEXT)->first = mesh_vertex_count;
+    if (!run_goes_on(STEP_TEXT)) start_quads(STEP_TEXT);
     for (uint32_t c; (c = tide_utf8_next(&text)) != 0;) {
         if (c == '\n') {
             pen_x = line_start(font, text, pixels, stretch, 0.0f, side);
@@ -1131,11 +1746,7 @@ static void add_text_turned(const char *text, const tide_float2 at, const float 
                                            {us[i], vs[i]},
                                            {color.r, color.g, color.b, color.a}};
             }
-            mesh_vertex *out = mesh_room(6);
-            out[0] = corners[0], out[1] = corners[1], out[2] = corners[2];
-            out[3] = corners[0], out[4] = corners[2], out[5] = corners[3];
-            mesh_vertex_count += 6;
-            steps[step_count - 1].count += 6;
+            add_glyph(corners); // A quad still, where nothing turned it
         }
         pen_x += (float)g.advance * stretch;
     }
@@ -1145,7 +1756,8 @@ static void add_text_turned(const char *text, const tide_float2 at, const float 
 // (tide_blend) and, for the 3D meshes', each thing a mesh does with depth
 // (tide_depth) and each side of a triangle it leaves out (tide_gpu_cull),
 // made the first time a list draws with it.
-enum { PIPELINE_SHAPES, PIPELINE_SMOOTH_SHAPES, PIPELINE_MESHES, PIPELINE_TEXT, PIPELINE_MESHES_3D, PIPELINE_KINDS };
+enum { PIPELINE_SHAPES, PIPELINE_SMOOTH_SHAPES, PIPELINE_SOLID_SHAPES, PIPELINE_MESHES, PIPELINE_TEXT, PIPELINE_QUADS, PIPELINE_TEXT_QUADS,
+       PIPELINE_MESHES_3D, PIPELINE_KINDS };
 enum { BLENDS = TIDE_BLEND_REPLACE + 1, DEPTHS = TIDE_DEPTH_NONE + 1, CULLS = TIDE_GPU_CULL_FRONT + 1 };
 
 // Stencil's numbers are the draw list's all the way down.
@@ -1205,6 +1817,13 @@ static void begin_pass(const tide_gpu_id target, const bool clear)
     pass_stencil = 0;
 }
 
+// Whether a step's pipeline is made yet: one the backend makes in the background isn't drawn with till it is, and
+// the step is left out of the frames before (tide_platform_background_pipelines).
+static bool pipeline_made(const draw_step *s)
+{
+    return !gpu->pipeline_ready || !s->pipeline || gpu->pipeline_ready(s->pipeline);
+}
+
 // A step's pipeline, for the draws after it, with the step's stencil number where the pass has another.
 static void use_pipeline(const draw_step *s)
 {
@@ -1229,9 +1848,13 @@ static struct {
     tide_gpu_id shape_instances;
     uint32_t shape_capacity; // Shapes the instance buffer holds
     tide_gpu_id shape_extras;
+    tide_gpu_id shape_radii;
+    uint32_t shape_radius_capacity; // Radii theirs holds
     uint32_t shape_extra_capacity; // Extras theirs holds
     tide_gpu_id mesh_vertices;
     uint32_t mesh_capacity; // Vertices the buffer holds
+    tide_gpu_id quads;
+    uint32_t quad_capacity; // Quads theirs holds
     tide_gpu_id matrices;
     uint32_t matrix_capacity; // Transforms the 3D meshes' instance buffer holds
     tide_gpu_id instances;
@@ -1446,10 +2069,9 @@ static void free_buffer(const tide_gpu_id id)
 
 // Mesh buffers the frame's list has no use for: those of meshes it doesn't
 // draw, and those too small for what's in their place now, for the meshes it
-// draws that need some. Making a buffer costs OpenGL (and WebGL) a tenth of a
-// millisecond or more, and a game that fills a list in a view each frame has
-// its meshes made again each frame. What's left as the frame ends goes, so
-// none is counted after it.
+// draws that need some. Making a buffer is slow on OpenGL (and WebGL), and a
+// game that fills a list in a view each frame has its meshes made again each
+// frame. What's left as the frame ends goes, so none is counted after it.
 typedef struct spare_buffer {
     tide_gpu_id id;
     tide_gpu_buffer_kind kind;
@@ -1623,6 +2245,7 @@ static uint32_t *gpu_texture_index; // Texture places by space/id: 1 + a place, 
 static uint32_t gpu_texture_index_capacity; // A power of two, or 0: at most half taken
 static uint32_t gpu_frame;
 static tide_texture_idle *idle_textures;
+uint32_t tide_texture_idle_frames = TIDE_TEXTURE_IDLE_FRAMES;
 static uint32_t idle_texture_capacity;
 
 // Temporary integer-data storage detached from identities absent from this
@@ -1841,6 +2464,8 @@ typedef struct shader_pipeline {
     // What the targets it draws into hold, which a pipeline is made for. Into depth alone, its blend is the
     // first, as none is read
     tide_gpu_target_format into;
+    uint32_t warmed; // The table of shaders it was made for before they drew (warm_generation), or 0
+    bool used;       // A draw drew with it, which the keys drawn with have (use_key)
 } shader_pipeline;
 
 static shader_pipeline *shader_pipelines;
@@ -1848,6 +2473,175 @@ static uint32_t shader_pipeline_count, shader_pipeline_capacity;
 static uint32_t *shader_index;         // The pipelines by id: 1 + a place, or 0 for none
 static uint32_t shader_index_capacity; // A power of two, or 0: at most half of it is taken
 static uint32_t shader_epoch;          // The epoch of the last list that drew through them (see tide_draw_forget)
+
+// The shaders tide_platform_prewarm was last given, which it alone reads, and the
+// device their pipelines were made on. Each other table is another generation:
+// the pipelines made for the current one stay when a build's first frame lets
+// go of the last build's (forget_pipelines), though nothing drew with them yet.
+static const tide_shader *const *warm_shaders;
+static uint32_t warm_count;
+static uint32_t warm_epoch;
+static uint32_t warm_generation; // 0 before the first table
+static bool warming;             // pipeline_for is asked by tide_platform_prewarm, not by a draw
+static tide_gpu_id *warm_asked;  // What the last one asked for, the engine's own too, which may be made in the background
+static uint32_t warm_asked_count, warm_asked_capacity;
+static bool *warm_done;          // By the table's shader: how it draws is known, as it drew, this run or one before
+static uint64_t *warm_names;     // ...and its name (name_key)
+static uint32_t warm_guessed;    // used_changes as the others were last made the ways their kind drew (kind_keys)
+
+// How the game's shaders were drawn (a used_key: a shader's name and kind,
+// and the rest of its pipeline's key), this run and the runs before: what's
+// prewarmed for each of them as the game starts, so the frame that first
+// draws one draws with what was made. By the shader's name, not its id, so a
+// shader whose code changed since, which has another id, has its pipelines
+// made too. They're kept in the game's temporary cache folder, as
+// `pipelines.keys`, read as the folder is known and written as the window
+// closes, natively; a page keeps those of its own run. A shader that never
+// drew is made the ways its kind of shader drew (kind_keys).
+typedef struct used_key {
+    uint64_t name; // FNV-1a of the shader's name
+    tide_gpu_target_format into;
+    uint8_t dims, blit, outputs; // Its kind
+    uint8_t blend, depth, cull, state; // As shader_pipeline has them
+    uint8_t zero;
+    uint32_t zero2;
+} used_key;
+_Static_assert(sizeof(used_key) == 24, "a used key is its file's 24 bytes, with no padding the compiler adds");
+
+enum { USED_KEYS_MOST = 4096, USED_KEYS_HEADER = 24 }; // Keys a file holds at most; and its header: TIDEKEY1, count, 0, hash
+
+static used_key *used_keys;
+static uint32_t used_key_count, used_key_capacity;
+static uint32_t used_changes; // Bumped as a draw draws with a key that wasn't there
+#ifndef __wasm__
+static bool used_dirty; // ...and not written yet
+#endif
+
+static uint64_t name_key(const tide_shader *shader)
+{
+    uint64_t hash = UINT64_C(0xCBF29CE484222325);
+    const char *name = shader->name ? shader->name : "";
+    for (const char *c = name; *c; c++) hash = (hash ^ (uint8_t)*c) * UINT64_C(0x100000001B3);
+    return shader->name ? hash : hash ^ shader->id;
+}
+
+static used_key key_of(const tide_shader *shader, const bool blit, const uint32_t blend, const uint32_t depth,
+                       const uint32_t cull, const uint32_t state, const tide_gpu_target_format into)
+{
+    return (used_key){.name = name_key(shader), .into = into, .dims = (uint8_t)shader->dims, .blit = blit,
+                      .outputs = (uint8_t)tide_shader_outputs(shader), .blend = (uint8_t)blend, .depth = (uint8_t)depth,
+                      .cull = (uint8_t)cull, .state = (uint8_t)state};
+}
+
+// Whether two keys draw alike: the same shader's, or not (`name`), and the same kind of shader's.
+static bool keys_alike(const used_key *a, const used_key *b, const bool name)
+{
+    return (!name || a->name == b->name) && a->into == b->into && a->dims == b->dims && a->blit == b->blit
+           && a->outputs == b->outputs && a->blend == b->blend && a->depth == b->depth && a->cull == b->cull
+           && a->state == b->state;
+}
+
+static void use_key(const used_key key)
+{
+    for (uint32_t i = 0; i < used_key_count; i++) {
+        if (keys_alike(&used_keys[i], &key, true)) return;
+    }
+    if (used_key_count == USED_KEYS_MOST) return;
+    if (used_key_count == used_key_capacity) {
+        const uint32_t capacity = used_key_capacity ? used_key_capacity * 2u : 64u;
+        used_keys = tide_realloc(used_keys, used_key_capacity * sizeof(used_key), capacity * sizeof(used_key));
+        used_key_capacity = capacity;
+    }
+    used_keys[used_key_count++] = key;
+    used_changes++;
+#ifndef __wasm__
+    used_dirty = true;
+#endif
+}
+
+#ifndef __wasm__
+static uint64_t keys_hash(const uint8_t *bytes, const size_t size)
+{
+    uint64_t hash = UINT64_C(0xCBF29CE484222325);
+    for (size_t i = 0; i < size; i++) hash = (hash ^ bytes[i]) * UINT64_C(0x100000001B3);
+    return hash;
+}
+
+static char *keys_file(const char *folder)
+{
+    const size_t length = strlen(folder) + 32u;
+    char *file = tide_alloc(length);
+    snprintf(file, length, "%s/pipelines.keys", folder);
+    return file;
+}
+
+// The keys the folder's file has, among those there are: none of a file that's cut short, changed, or of keys no
+// pipeline has.
+static void read_keys(const char *folder)
+{
+    char *file = keys_file(folder);
+    size_t size = 0;
+    uint8_t *bytes = tide_file_read_whole(file, USED_KEYS_HEADER + (size_t)USED_KEYS_MOST * sizeof(used_key), &size);
+    free(file);
+    uint32_t count = 0;
+    uint64_t hash = 0;
+    if (bytes && size >= USED_KEYS_HEADER) {
+        memcpy(&count, bytes + 8, 4);
+        memcpy(&hash, bytes + 16, 8);
+    }
+    const bool whole = bytes && size >= USED_KEYS_HEADER && memcmp(bytes, "TIDEKEY1", 8) == 0 && count <= USED_KEYS_MOST
+                    && size == USED_KEYS_HEADER + (size_t)count * sizeof(used_key)
+                    && hash == keys_hash(bytes + USED_KEYS_HEADER, size - USED_KEYS_HEADER);
+    for (uint32_t i = 0; whole && i < count; i++) {
+        used_key key;
+        memcpy(&key, bytes + USED_KEYS_HEADER + (size_t)i * sizeof(used_key), sizeof key);
+        if ((key.dims != 2 && key.dims != 3) || key.blit > 1 || key.outputs < 1 || key.outputs > TIDE_TARGET_COLORS
+            || key.blend >= BLENDS || key.depth >= DEPTHS || key.cull >= CULLS || (key.state & 15u) > TIDE_GPU_STENCIL_GREATER_EQUAL
+            || (key.state >> 4) > TIDE_GPU_STENCIL_INVERT || key.zero || key.zero2) {
+            continue;
+        }
+        const bool dirty = used_dirty;
+        use_key(key);
+        used_dirty = dirty; // Read, not drawn: nothing to write
+    }
+    free(bytes);
+}
+
+// The keys into the folder's file, where a draw drew with one that wasn't there: of the shaders of the last table
+// prewarmed (a shader that's gone takes its keys with it), or all of them where none was.
+static void write_keys(const char *folder)
+{
+    if (!folder || !used_dirty) return;
+    if (warm_generation) {
+        uint32_t kept = 0;
+        for (uint32_t i = 0; i < used_key_count; i++) {
+            bool named = false;
+            for (uint32_t k = 0; k < warm_count && !named; k++) named = warm_names[k] == used_keys[i].name;
+            if (named) used_keys[kept++] = used_keys[i];
+        }
+        used_key_count = kept;
+    }
+    const size_t size = USED_KEYS_HEADER + (size_t)used_key_count * sizeof(used_key);
+    uint8_t *bytes = tide_alloc(size);
+    memcpy(bytes, "TIDEKEY1", 8);
+    memcpy(bytes + 8, &used_key_count, 4);
+    memset(bytes + 12, 0, 4);
+    if (used_key_count) memcpy(bytes + USED_KEYS_HEADER, used_keys, (size_t)used_key_count * sizeof(used_key));
+    const uint64_t hash = keys_hash(bytes + USED_KEYS_HEADER, size - USED_KEYS_HEADER);
+    memcpy(bytes + 16, &hash, 8);
+    char *file = keys_file(folder);
+    if (tide_file_write_whole(file, bytes, size)) used_dirty = false;
+    free(file);
+    free(bytes);
+}
+#endif
+
+static void write_used_keys(void)
+{
+#ifndef __wasm__
+    write_keys(gpu_cache_folder);
+#endif
+}
 
 static uint32_t gpu_epoch; // The device all of the above was made on (tide_gpu.epoch)
 
@@ -1858,26 +2652,45 @@ static uint32_t gpu_epoch; // The device all of the above was made on (tide_gpu.
 // The backend is told of the game's cache folder as it changes.
 static void follow_cache_folder(void)
 {
-    if (!gpu->pipeline_cache) return;
     const char *folder = tide_platform_cache_folder();
     if (folder == gpu_cache_folder || (folder && gpu_cache_folder && strcmp(folder, gpu_cache_folder) == 0)) return;
+#ifndef __wasm__
+    write_keys(gpu_cache_folder); // How the last game's shaders were drawn, into its folder
+    used_key_count = 0;
+    used_dirty = false;
+    used_changes++;
+    if (folder) read_keys(folder); // ...and how this one's were
+#endif
     free(gpu_cache_folder);
     gpu_cache_folder = NULL;
+    if (folder) {
+        const size_t length = strlen(folder) + 1u;
+        gpu_cache_folder = memcpy(tide_alloc(length), folder, length);
+    }
+    if (!gpu->pipeline_cache) return;
     if (!folder) {
         gpu->pipeline_cache(NULL);
         return;
     }
     const size_t length = strlen(folder) + 1u;
-    gpu_cache_folder = memcpy(tide_alloc(length), folder, length);
     char *file = tide_alloc(length + 32u);
     snprintf(file, length + 32u, "%s/pipelines.vulkan", folder);
     gpu->pipeline_cache(file);
     free(file);
 }
 
+// Whether pipelines are made in the background where the backend can (tide_platform_background_pipelines).
+static bool background_pipelines;
+
+void tide_platform_background_pipelines(const bool on)
+{
+    background_pipelines = on;
+}
+
 static bool gpu_ready(void)
 {
     follow_cache_folder();
+    if (gpu->background) gpu->background(background_pipelines);
     const uint32_t epoch = gpu->epoch();
     if (epoch == 0 || epoch == gpu_epoch) return epoch != 0;
     if (gpu->time_reset) gpu->time_reset();
@@ -1901,17 +2714,16 @@ static bool gpu_ready(void)
     return true;
 }
 
-// A shader that shaders.h has in two pieces, as one: made once, and kept. NULL
-// where it has none (WGSL is only the web's).
-static const char *joined(const char *first, const char *second)
+// A shader that shaders.h has in two pieces, as one: made once, into *whole,
+// and kept. NULL where it has none (WGSL is only the web's).
+static const char *joined(char **whole, const char *first, const char *second)
 {
-    static char *whole;
-    if (!first || !second || whole) return whole;
+    if (!first || !second || *whole) return *whole;
     const size_t length = strlen(first);
-    whole = tide_alloc(length + strlen(second) + 1u);
-    memcpy(whole, first, length);
-    strcpy(whole + length, second);
-    return whole;
+    *whole = tide_alloc(length + strlen(second) + 1u);
+    memcpy(*whole, first, length);
+    strcpy(*whole + length, second);
+    return *whole;
 }
 
 // Which of a 3D mesh's triangles a pipeline leaves out, for its command's cull
@@ -1967,6 +2779,7 @@ static tide_gpu_id engine_pipeline(const int kind, uint32_t blend, uint32_t dept
         made = &pipelines_into(into)->made[kind][blend][depth][cull];
     }
     if (*made) return *made;
+    static char *smooth_wgsl, *solid_wgsl; // Their WGSL, joined once (see joined)
     tide_gpu_pipeline_desc desc;
     switch (kind) {
     case PIPELINE_SHAPES:
@@ -1992,7 +2805,7 @@ static tide_gpu_id engine_pipeline(const int kind, uint32_t blend, uint32_t dept
             .name = "smooth shapes",
             .glsl_vertex = smooth_shape_glsl_vertex,
             .glsl_fragment = smooth_shape_glsl_fragment,
-            .wgsl = joined(smooth_shape_wgsl_vertex, smooth_shape_wgsl_fragment),
+            .wgsl = joined(&smooth_wgsl, smooth_shape_wgsl_vertex, smooth_shape_wgsl_fragment),
             .spirv = SPIRV_OF(smooth_shape),
             .spirv_words = SPIRV_WORDS(smooth_shape),
             // The quad's corners, an instance a shape, and an extra for each
@@ -2007,6 +2820,25 @@ static tide_gpu_id engine_pipeline(const int kind, uint32_t blend, uint32_t dept
                            {2, TIDE_GPU_BYTES4, offsetof(shape_extra, color2)},
                            {2, TIDE_GPU_BYTES4, offsetof(shape_extra, rim)}},
             .attribute_count = 8,
+            .uniform_size = sizeof(screen_uniforms),
+        };
+        break;
+    case PIPELINE_SOLID_SHAPES: // The smooth shapes' again, with a radius for each shape in place of its extra
+        desc = (tide_gpu_pipeline_desc){
+            .name = "solid shapes",
+            .glsl_vertex = solid_shape_glsl_vertex,
+            .glsl_fragment = smooth_shape_glsl_fragment,
+            .wgsl = joined(&solid_wgsl, solid_shape_wgsl_vertex, smooth_shape_wgsl_fragment),
+            .spirv = SPIRV_OF(solid_shape),
+            .spirv_words = SPIRV_WORDS(solid_shape),
+            .slots = {{2 * sizeof(float), false}, {sizeof(shape), true}, {sizeof(float), true}},
+            .slot_count = 3,
+            .attributes = {{0, TIDE_GPU_FLOAT2, 0},
+                           {1, TIDE_GPU_FLOAT4, offsetof(shape, a)},
+                           {1, TIDE_GPU_BYTES4, offsetof(shape, color)},
+                           {1, TIDE_GPU_FLOAT, offsetof(shape, kind)},
+                           {2, TIDE_GPU_FLOAT, 0}},
+            .attribute_count = 5,
             .uniform_size = sizeof(screen_uniforms),
         };
         break;
@@ -2025,6 +2857,26 @@ static tide_gpu_id engine_pipeline(const int kind, uint32_t blend, uint32_t dept
                            {0, TIDE_GPU_FLOAT2, offsetof(mesh_vertex, uv)},
                            {0, TIDE_GPU_BYTES4, offsetof(mesh_vertex, color)}},
             .attribute_count = 3,
+            .uniform_size = sizeof(screen_uniforms),
+            .texture_count = 1,
+        };
+        break;
+    case PIPELINE_QUADS:
+    case PIPELINE_TEXT_QUADS: // The meshes' and the text's again, each corner of a quad picked from its instance
+        desc = (tide_gpu_pipeline_desc){
+            .name = kind == PIPELINE_TEXT_QUADS ? "text quads" : "quads",
+            .glsl_vertex = quad_glsl_vertex,
+            .glsl_fragment = kind == PIPELINE_TEXT_QUADS ? text_glsl_fragment : mesh_glsl_fragment,
+            .wgsl = kind == PIPELINE_TEXT_QUADS ? text_quad_wgsl : quad_wgsl,
+            .spirv = kind == PIPELINE_TEXT_QUADS ? SPIRV_OF(text_quad) : SPIRV_OF(quad),
+            .spirv_words = kind == PIPELINE_TEXT_QUADS ? SPIRV_WORDS(text_quad) : SPIRV_WORDS(quad),
+            .slots = {{sizeof(quad), true}},
+            .slot_count = 1,
+            .attributes = {{0, TIDE_GPU_FLOAT4, offsetof(quad, box)},
+                           {0, TIDE_GPU_FLOAT4, offsetof(quad, span)},
+                           {0, TIDE_GPU_BYTES4, offsetof(quad, color)},
+                           {0, TIDE_GPU_INT, offsetof(quad, pattern)}},
+            .attribute_count = 4,
             .uniform_size = sizeof(screen_uniforms),
             .texture_count = 1,
         };
@@ -2154,10 +3006,15 @@ static void find_pipelines(const tide_draw_list *list)
         const uint32_t state = stencil_state(s->stencil);
         switch (s->kind) {
         case STEP_SHAPES:
-            s->pipeline = engine_pipeline(s->smooth ? PIPELINE_SMOOTH_SHAPES : PIPELINE_SHAPES, s->blend, 0, 0, into, state);
+            s->pipeline = engine_pipeline(s->smooth ? PIPELINE_SMOOTH_SHAPES : s->solid ? PIPELINE_SOLID_SHAPES : PIPELINE_SHAPES,
+                                          s->blend, 0, 0, into, state);
             break;
-        case STEP_MESH: s->pipeline = engine_pipeline(PIPELINE_MESHES, s->blend, 0, 0, into, state); break;
-        case STEP_TEXT: s->pipeline = engine_pipeline(PIPELINE_TEXT, s->blend, 0, 0, into, state); break;
+        case STEP_MESH:
+            s->pipeline = engine_pipeline(s->quads ? PIPELINE_QUADS : PIPELINE_MESHES, s->blend, 0, 0, into, state);
+            break;
+        case STEP_TEXT:
+            s->pipeline = engine_pipeline(s->quads ? PIPELINE_TEXT_QUADS : PIPELINE_TEXT, s->blend, 0, 0, into, state);
+            break;
         case STEP_MESH_3D:
             s->pipeline = engine_pipeline(PIPELINE_MESHES_3D, s->blend, s->depth, s->cull, into, state);
             break;
@@ -2380,7 +3237,13 @@ static tide_gpu_id pipeline_for(const tide_shader *shader, const bool blit, uint
     const uint32_t slot = shader_slot(shader->id, blit, (uint8_t)blend, (uint8_t)depth, (uint8_t)cull, (uint8_t)state, into);
     if (shader_index[slot]) {
         shader_pipeline *p = &shader_pipelines[shader_index[slot] - 1u];
-        p->frame = gpu_frame;
+        if (warming) {
+            p->warmed = warm_generation;
+        } else {
+            p->frame = gpu_frame;
+            if (!p->used) use_key(key_of(shader, blit, blend, depth, cull, state, into));
+            p->used = true;
+        }
         return p->pipeline;
     }
     static const tide_gpu_attribute_format formats[] = {
@@ -2430,8 +3293,10 @@ static tide_gpu_id pipeline_for(const tide_shader *shader, const bool blit, uint
     }
     const tide_gpu_id pipeline = gpu->pipeline(&desc);
     shader_pipelines[shader_pipeline_count] = (shader_pipeline){shader->id, pipeline, gpu_frame, (uint8_t)blend,
-                                                                (uint8_t)depth, (uint8_t)cull, (uint8_t)state, blit, into};
+                                                                (uint8_t)depth, (uint8_t)cull, (uint8_t)state, blit, into,
+                                                                warming ? warm_generation : 0u, !warming};
     shader_index[slot] = ++shader_pipeline_count;
+    if (!warming) use_key(key_of(shader, blit, blend, depth, cull, state, into));
     return pipeline;
 }
 
@@ -2442,7 +3307,8 @@ static void forget_pipelines(void)
 {
     uint32_t kept = 0;
     for (uint32_t i = 0; i < shader_pipeline_count; i++) {
-        if (shader_pipelines[i].frame != gpu_frame) {
+        const bool warm = warm_generation && shader_pipelines[i].warmed == warm_generation;
+        if (shader_pipelines[i].frame != gpu_frame && !warm) {
             gpu->pipeline_free(shader_pipelines[i].pipeline);
             continue;
         }
@@ -2451,6 +3317,21 @@ static void forget_pipelines(void)
     if (kept == shader_pipeline_count) return;
     shader_pipeline_count = kept;
     index_shaders();
+}
+
+// Whether a shader takes no more than a pipeline does.
+static bool shader_fits(const tide_shader *shader)
+{
+    const uint64_t instance_fields = (uint64_t)shader->instance_floats + shader->instance_ints;
+    const uint64_t uniform_fields = (uint64_t)shader->uniform_floats + shader->uniform_ints;
+    if (shader->attribute_count + instance_fields > TIDE_SHADER_ATTRIBUTES
+        || shader->texture_count > TIDE_SHADER_TEXTURES || uniform_fields * 16u > TIDE_SHADER_UNIFORM_BYTES) {
+        return false;
+    }
+    for (uint32_t i = 0; i < shader->attribute_count; i++) {
+        if (shader->attributes[i].format > TIDE_SHADER_INT4) return false;
+    }
+    return true;
 }
 
 // Whether the list's run `place` can draw: it wasn't forgotten (see
@@ -2464,17 +3345,150 @@ static bool run_draws(const tide_draw_list *list, const uint32_t place)
     if (!shader || run->mesh == 0 || run->mesh > list->mesh_count || run->count == 0) return false;
     const tide_draw_mesh_data *m = &list->meshes[run->mesh - 1u];
     if (m->space != TIDE_MESH_BYTES || m->index_count == 0 || m->vertex_size != shader->vertex_size) return false;
+    if (!shader_fits(shader)) return false;
     const uint64_t instance_fields = (uint64_t)shader->instance_floats + shader->instance_ints;
     const uint64_t uniform_fields = (uint64_t)shader->uniform_floats + shader->uniform_ints;
-    if (shader->attribute_count + instance_fields > TIDE_SHADER_ATTRIBUTES
-        || shader->texture_count > TIDE_SHADER_TEXTURES || uniform_fields * 16u > TIDE_SHADER_UNIFORM_BYTES) {
-        return false;
-    }
-    for (uint32_t i = 0; i < shader->attribute_count; i++) {
-        if (shader->attributes[i].format > TIDE_SHADER_INT4) return false;
-    }
     return run->first + instance_fields * 16u * run->count <= list->instance_used
            && run->uniforms + uniform_fields * 16u <= list->uniform_used;
+}
+
+// A pipeline tide_platform_prewarm asked for, which tide_platform_prewarm_waiting watches.
+static void warm_ask(const tide_gpu_id pipeline)
+{
+    if (!pipeline) return;
+    for (uint32_t i = 0; i < warm_asked_count; i++) {
+        if (warm_asked[i] == pipeline) return;
+    }
+    if (warm_asked_count == warm_asked_capacity) {
+        const uint32_t capacity = warm_asked_capacity ? warm_asked_capacity * 2u : 64u;
+        warm_asked = tide_realloc(warm_asked, warm_asked_capacity * sizeof(tide_gpu_id), capacity * sizeof(tide_gpu_id));
+        warm_asked_capacity = capacity;
+    }
+    warm_asked[warm_asked_count++] = pipeline;
+}
+
+// Whether a key is for the shader: by its name, and its kind.
+static bool key_for(const used_key *key, const tide_shader *shader, const uint64_t name)
+{
+    return key->name == name && key->dims == shader->dims && key->blit == shader->blit
+           && key->outputs == tide_shader_outputs(shader);
+}
+
+enum { KIND_KEYS_MOST = 8 }; // Kinds of target a kind of shader is guessed into, at most
+
+// For each kind of target the shaders of a kind (2D or 3D, a blit, their outputs) were drawn into, the way most of
+// them were drawn into it, in `keys`: how many, KIND_KEYS_MOST at most. A shader is compiled for what it draws into
+// (the measured drivers compile it again for another format, or for a target of depth alone), so a shader of the
+// kind that hasn't drawn yet is made for each: a shadow's frag drawn into a depth map, and a model's into the scene.
+static uint32_t kind_keys(const tide_shader *shader, used_key *keys)
+{
+    const used_key kind = key_of(shader, shader->blit, 0, 0, 0, 0, 0);
+    uint32_t count = 0, most[KIND_KEYS_MOST] = {0};
+    for (uint32_t i = 0; i < used_key_count; i++) {
+        const used_key *a = &used_keys[i];
+        if (a->dims != kind.dims || a->blit != kind.blit || a->outputs != kind.outputs) continue;
+        uint32_t shaders = 0; // The shaders drawn so: one key each, as a shader's are another's
+        for (uint32_t k = 0; k < used_key_count; k++) shaders += keys_alike(a, &used_keys[k], false);
+        uint32_t into = 0;
+        while (into < count && keys[into].into != a->into) into++;
+        if (into == count) {
+            if (count == KIND_KEYS_MOST) continue;
+            count++;
+        }
+        if (shaders > most[into]) {
+            most[into] = shaders;
+            keys[into] = *a;
+        }
+    }
+    return count;
+}
+
+// Whether a draw drew with the shader.
+static bool drawn(const tide_shader *shader)
+{
+    for (uint32_t i = 0; i < shader_pipeline_count; i++) {
+        const shader_pipeline *p = &shader_pipelines[i];
+        if (p->id == shader->id && p->blit == shader->blit && p->used) return true;
+    }
+    return false;
+}
+
+static tide_gpu_id warm_key(const tide_shader *shader, const used_key *key)
+{
+    return pipeline_for(shader, key->blit, key->blend, key->depth, key->cull, key->into, key->state);
+}
+
+void tide_platform_prewarm(const tide_shader *const *shaders, uint32_t count)
+{
+    if (!shaders) count = 0;
+    if (!gpu || gpu == &tide_gpu_record || (!headless && tide_window_unseen()) || !gpu_ready()) return;
+    const bool same = warm_generation && shaders == warm_shaders && count == warm_count;
+    if (same && warm_epoch == gpu_epoch && warm_guessed == used_changes) return;
+    if (!same) {
+        warm_generation++;
+        if (!warm_generation) warm_generation = 1; // 0 is no table's
+        warm_done = tide_realloc(warm_done, warm_count * sizeof(bool), (count + 1u) * sizeof(bool));
+        warm_names = tide_realloc(warm_names, warm_count * sizeof(uint64_t), (count + 1u) * sizeof(uint64_t));
+        for (uint32_t i = 0; i < count; i++) warm_names[i] = shaders[i] ? name_key(shaders[i]) : 0u;
+        warm_shaders = shaders;
+        warm_count = count;
+    }
+    warming = true;
+    if (!same || warm_epoch != gpu_epoch) { // All of it, for another table or on another device
+        warm_epoch = gpu_epoch;
+        warm_asked_count = 0;
+        if (count) memset(warm_done, 0, count * sizeof(bool));
+        // The renderer's own, as they're drawn by default into the window's kind of target: what a first frame of
+        // shapes, text and meshes would make, and what one that draws the first of a kind later would wait for
+        const tide_gpu_target_format into = TIDE_GPU_TARGET_COLOR;
+        for (int kind = 0; kind < PIPELINE_KINDS; kind++) {
+            warm_ask(engine_pipeline(kind, TIDE_BLEND_ALPHA, TIDE_DEPTH_READ_WRITE, TIDE_GPU_CULL_BACK, into, 0));
+        }
+        warm_ask(clear_pipeline(into));
+        warm_ask(depth_clear_pipeline(into));
+        // Each of the game's, every way it was drawn before
+        for (uint32_t i = 0; i < count; i++) {
+            const tide_shader *shader = shaders[i];
+            if (!shader || !shader_fits(shader)) continue;
+            for (uint32_t k = 0; k < used_key_count; k++) {
+                if (!key_for(&used_keys[k], shader, warm_names[i])) continue;
+                warm_ask(warm_key(shader, &used_keys[k]));
+                warm_done[i] = true;
+            }
+        }
+    }
+    // ...and those never drawn, the ways their kind were, once one of their kind was, and again as their kind is
+    // drawn into another kind of target
+    warm_guessed = used_changes;
+    used_key kinds[2][2][TIDE_TARGET_COLORS][KIND_KEYS_MOST]; // By 3D, blit and outputs less one, as kind_keys finds them
+    int8_t known[2][2][TIDE_TARGET_COLORS]; // 1 + how many, once looked for
+    memset(known, 0, sizeof known);
+    for (uint32_t i = 0; i < count; i++) {
+        const tide_shader *shader = shaders[i];
+        if (warm_done[i] || !shader || !shader_fits(shader)) continue;
+        if (drawn(shader)) {
+            warm_done[i] = true; // Its draws make what it draws with, and keep it (use_key)
+            continue;
+        }
+        const uint32_t deep = shader->dims == 3, blit = shader->blit, outputs = tide_shader_outputs(shader) - 1u;
+        used_key *keys = kinds[deep][blit][outputs];
+        if (!known[deep][blit][outputs]) known[deep][blit][outputs] = (int8_t)(1u + kind_keys(shader, keys));
+        for (int k = 0; k < known[deep][blit][outputs] - 1; k++) warm_ask(warm_key(shader, &keys[k]));
+    }
+    warming = false;
+}
+
+uint32_t tide_platform_shader_pipelines(void)
+{
+    return shader_pipeline_count;
+}
+
+uint32_t tide_platform_prewarm_waiting(void)
+{
+    if (!gpu || !gpu->pipeline_ready || warm_epoch != gpu_epoch) return 0;
+    uint32_t waiting = 0;
+    for (uint32_t i = 0; i < warm_asked_count; i++) waiting += !gpu->pipeline_ready(warm_asked[i]);
+    return waiting;
 }
 
 // What the list's shaded runs draw from goes to the GPU, before anything
@@ -2516,8 +3530,9 @@ static bool upload_shaded(const tide_draw_list *list)
     return any;
 }
 
-// This list's shapes into the instance buffer, and its triangles, text's too,
-// into theirs: both grow as they need.
+// This list's shapes into the instance buffer, with their extras and radii,
+// and its triangles, text's too, and its quads into theirs: all grow as they
+// need.
 static void upload_shapes_and_meshes(void)
 {
     if (shape_count) {
@@ -2529,9 +3544,17 @@ static void upload_shapes_and_meshes(void)
                     256u);
         gpu->buffer_write(gpu_state.shape_extras, 0, shape_extras, (size_t)shape_extra_count * sizeof(shape_extra));
     }
+    if (shape_radius_count) { // A multiple of 4 bytes, as buffers take them
+        buffer_room(&gpu_state.shape_radii, &gpu_state.shape_radius_capacity, shape_radius_count, sizeof(float), 1024u);
+        gpu->buffer_write(gpu_state.shape_radii, 0, shape_radii, (size_t)shape_radius_count * sizeof(float));
+    }
     if (mesh_vertex_count) {
         buffer_room(&gpu_state.mesh_vertices, &gpu_state.mesh_capacity, mesh_vertex_count, sizeof(mesh_vertex), 4096u);
         gpu->buffer_write(gpu_state.mesh_vertices, 0, mesh_vertices, (size_t)mesh_vertex_count * sizeof(mesh_vertex));
+    }
+    if (quad_count) {
+        buffer_room(&gpu_state.quads, &gpu_state.quad_capacity, quad_count, sizeof(quad), 1024u);
+        gpu->buffer_write(gpu_state.quads, 0, quads, (size_t)quad_count * sizeof(quad));
     }
 }
 
@@ -2609,7 +3632,7 @@ static uint32_t data_shape_hash(const int32_t width, const int32_t height)
 
 // Determine liveness before detaching anything: a later draw can still name a
 // previous frame's unchanged palette. Merely protecting it does not count it
-// as drawn; skipped destinations and invalid reads still prune as before.
+// as drawn; skipped destinations and invalid reads still prune.
 static void prepare_data_textures(const tide_draw_list *list)
 {
     for (uint32_t i = 0; i < gpu_texture_count; i++) gpu_textures[i].protected = false;
@@ -2773,7 +3796,7 @@ static void forget_textures(const uint32_t epoch)
             .age = gpu_frame - g->frame, .place = i,
         };
     }
-    tide_texture_idle_trim(idle_textures, idle_count, TIDE_TEXTURE_IDLE_BYTES, TIDE_TEXTURE_IDLE_COUNT);
+    tide_texture_idle_trim(idle_textures, idle_count, TIDE_TEXTURE_IDLE_BYTES, TIDE_TEXTURE_IDLE_COUNT, tide_texture_idle_frames);
     for (uint32_t i = 0; i < idle_count; i++) {
         if (idle_textures[i].keep) continue;
         gpu_texture *g = &gpu_textures[idle_textures[i].place];
@@ -2903,7 +3926,7 @@ static const char *samples_unavailable(const tide_draw_list *list, const draw_st
 // A source recorded after Resize first sees the replacement black image,
 // even when no command draws into it. An older source still aliases the
 // current attachment; it never rolls a target back to an earlier revision.
-// A source at the revision there is, whose image now comes to another number
+// A source at the current revision, whose image now comes to another number
 // of pixels (the display's scale changed, or the window's size under a target
 // that follows it), sees the image made again, black, as a destination would.
 static bool prepare_source_target(const tide_draw_list *list, const uint32_t texture, const bool check)
@@ -3041,8 +4064,23 @@ static void sample_step_texture(const tide_draw_list *list, const draw_step *s)
 
 // A step's 3D camera, from the world to clip space, fitted to the screen's
 // shape: x divided by its width over its height.
+// Inside another program, a second picture of the frame's 3D through a camera of its own, as its editor's scene
+// view has (tide_platform_embed_render_view): only the window's 3D steps draw, each through this, from the world to
+// clip space for the target as it's shaped.
+static bool view_only_3d;
+static tide_float4x4 view_world_to_clip;
+
+// Whether a step is one of the window's 3D, which such a picture draws.
+static bool window_3d_step(const tide_draw_list *list, const draw_step *s)
+{
+    if (draw_target) return false;
+    if (s->kind == STEP_MESH_3D) return true;
+    return s->kind == STEP_SHADED && list->runs[s->first].shader && list->runs[s->first].shader->dims == 3;
+}
+
 static tide_float4x4 camera_3d_to_clip(const tide_draw_list *list, const draw_step *s)
 {
+    if (view_only_3d) return view_world_to_clip;
     const tide_float4x4 world_to_clip = s->camera ? list->matrices[s->camera - 1u]
                                             : tide_draw_camera_3d_matrix(tide_f3(0.0f, 0.0f, 0.0f), tide_identity_q(), 60.0f);
     return !s->camera || s->fit ? tide_draw_camera_fit(world_to_clip, draw_width, draw_height) : world_to_clip;
@@ -3119,6 +4157,20 @@ static uint64_t draw_mesh_3d(const tide_draw_list *list, const draw_step *s)
     gpu->indices(g->indices, g->wide);
     gpu->draw_indexed(g->index_count, s->count);
     return (uint64_t)g->index_count * s->count;
+}
+
+// A run of a mesh's or of text's triangles, its pipeline used: as its quads, one instance each (see quad), or as
+// its vertices. Returns the vertices drawn, six a quad.
+static uint64_t draw_triangles(const draw_step *s)
+{
+    if (s->quads) {
+        gpu->vertices(0, gpu_state.quads, (size_t)s->first * sizeof(quad));
+        gpu->draw(0, 6, s->count);
+        return UINT64_C(6) * s->count;
+    }
+    gpu->vertices(0, gpu_state.mesh_vertices, 0);
+    gpu->draw(s->first, s->count, 1);
+    return s->count;
 }
 
 // The pixel nearest `v`, from 0 to `most`: a rect's corner is any float a
@@ -3309,15 +4361,25 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
     tide_font_frame();
     shape_count = 0;
     shape_extra_count = 0;
+    shape_radius_count = 0;
     mesh_vertex_count = 0;
+    quad_count = 0;
     step_count = 0;
     for (uint32_t i = 0; i < list->count; i++) {
         const tide_draw_command *c = &list->commands[i];
         frame_target *f = &frame_targets[draw_target];
         camera *cam = &f->through;
         if (c->kind != TIDE_DRAW_TARGET && !f->valid) continue;
-        const rgba color = to_rgba(c->color);
         draw_blend = c->blend;
+        if (c->kind == TIDE_DRAW_PLAIN) {
+            add_plain_run(list, c, cam);
+            continue;
+        }
+        if (c->kind == TIDE_DRAW_SHAPE) {
+            i = add_smooth_run(list, i, cam) - 1u; // ...or the smooth ones
+            continue;
+        }
+        const rgba color = to_rgba(c->color);
         switch ((tide_draw_kind)c->kind) {
         case TIDE_DRAW_TARGET:
             select_target(c->target < targets ? c->target : targets);
@@ -3339,6 +4401,9 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             break;
         case TIDE_DRAW_MESH:
             add_mesh(list, c, cam);
+            break;
+        case TIDE_DRAW_QUADS:
+            add_quads(list, c, cam);
             break;
         case TIDE_DRAW_CAMERA_3D:
             if (c->camera.matrix >= list->matrix_count) { // TIDE_DRAW_FIRST_CAMERA
@@ -3394,31 +4459,15 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             f->stencil = draw_stencil = tide_stencil_packed(tide_stencil_unpacked(c->stencil));
             add_step(STEP_STENCIL);
             break;
-        case TIDE_DRAW_CIRCLE:
-        case TIDE_DRAW_WIRE_CIRCLE: {
-            const tide_float2 p = to_screen(cam, c->a);
-            const float r = c->b.x * cam->scale;
-            add_circle(c->kind == TIDE_DRAW_WIRE_CIRCLE, p.x, p.y, r, color);
-            break;
-        }
         case TIDE_DRAW_SHAPE:
-            add_smooth_shape(list, c, cam);
-            break;
+        case TIDE_DRAW_PLAIN:
+            break; // add_plain_run's and add_smooth_run's, above
+        case TIDE_DRAW_CIRCLE:
+        case TIDE_DRAW_WIRE_CIRCLE:
         case TIDE_DRAW_RECT:
-        case TIDE_DRAW_WIRE_RECT: {
-            const tide_float2 top_left = rect_corner(cam, c);
-            const float hw = c->b.x * cam->scale * 0.5f;
-            const float hh = c->b.y * cam->scale * 0.5f;
-            add_shape(c->kind == TIDE_DRAW_RECT ? SHAPE_RECT : SHAPE_WIRE_RECT, top_left.x + hw, top_left.y + hh, hw,
-                      hh, color);
-            break;
-        }
-        case TIDE_DRAW_LINE: {
-            const tide_float2 from = to_screen(cam, c->a);
-            const tide_float2 to = to_screen(cam, c->b);
-            add_shape(SHAPE_LINE, from.x, from.y, to.x, to.y, color);
-            break;
-        }
+        case TIDE_DRAW_WIRE_RECT:
+        case TIDE_DRAW_LINE:
+            break; // Kinds of the list's plain shapes, never of its commands
         case TIDE_DRAW_TEXT: {
             // A command in bold without the bold's file (a list filled by hand) is in the regular weight
             const unsigned char *font = c->words.bold ? list->bold : TIDE_FONT_REGULAR;
@@ -3433,6 +4482,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         }
     }
     settle_extras();
+    settle_radii();
     if (!over) last_camera = frame_targets[0].world;
 
     // What the steps draw from goes to the GPU first
@@ -3470,7 +4520,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
                 fprintf(stderr, "draw skipped: render target %llu is invalid or disposed\n", (unsigned long long)f->id);
                 continue;
             }
-            if (draw_target) {
+            if (draw_target && !view_only_3d) {
                 gpu_target *g = target_for(f->id, f->size, f->version);
                 f->gpu = g ? g->target : 0;
                 if (g) g->drawn++; // What reads between its smaller images after this pass has them made again
@@ -3480,6 +4530,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             uniforms = target_uniforms();
         }
         if (!frame_targets[draw_target].valid) continue;
+        if (view_only_3d && !window_3d_step(list, s)) continue; // Its targets, 2D and clips are the frame's own
         if (leaves_nothing(list, s)) continue; // A color, into a target of depth alone
         const char *unavailable = samples_unavailable(list, s);
         if (unavailable) {
@@ -3512,11 +4563,15 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
         case STEP_STENCIL:
             break;
         case STEP_SHAPES:
+            if (!pipeline_made(s)) break;
             // A run with smooth shapes goes through the pipeline that draws every kind, with their extras
             use_pipeline(s);
             if (s->smooth) {
                 gpu->uniforms(step_uniforms(&uniforms, s), sizeof uniforms);
                 gpu->vertices(2, gpu_state.shape_extras, (size_t)(s->smooth - 1u) * sizeof(shape_extra));
+            } else if (s->solid) {
+                gpu->uniforms(step_uniforms(&uniforms, s), sizeof uniforms);
+                gpu->vertices(2, gpu_state.shape_radii, (size_t)(s->solid - 1u) * sizeof(float));
             } else {
                 gpu->uniforms(uniforms.screen, sizeof uniforms.screen);
             }
@@ -3528,6 +4583,7 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             break;
         case STEP_CLEAR: {
             // A triangle over the target, which the clip cuts, and which sets depth and stencil back too
+            if (!pipeline_made(s)) break;
             const float color[4] = {(float)s->color.r / 255.0f, (float)s->color.g / 255.0f, (float)s->color.b / 255.0f,
                                     (float)s->color.a / 255.0f};
             use_pipeline(s);
@@ -3538,24 +4594,25 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             break;
         }
         case STEP_MESH:
-            if (s->count == 0) break;
+            if (s->count == 0 || !pipeline_made(s)) break;
             use_pipeline(s);
             gpu->uniforms(step_uniforms(&uniforms, s), sizeof uniforms);
             sample_step_texture(list, s);
-            gpu->vertices(0, gpu_state.mesh_vertices, 0);
-            gpu->draw(s->first, s->count, 1);
-            vertices += s->count;
+            vertices += draw_triangles(s);
             calls++;
             break;
         case STEP_MESH_3D:
+            if (!pipeline_made(s)) break;
             vertices += draw_mesh_3d(list, s);
             calls++;
             break;
         case STEP_SHADED:
+            if (!pipeline_made(s)) break;
             vertices += draw_shaded(list, s);
             calls++;
             break;
         case STEP_BLIT:
+            if (!pipeline_made(s)) break;
             clip(&(draw_step){.kind = STEP_NO_CLIP});
             vertices += draw_shaded(list, s);
             calls++;
@@ -3567,14 +4624,12 @@ static void draw_list(const tide_draw_list *list, const draw_root to, const bool
             if (pass_active) clip(s);
             break;
         default: // Text
-            if (s->count == 0 || !gpu_state.atlas) break;
+            if (s->count == 0 || !gpu_state.atlas || !pipeline_made(s)) break;
             use_pipeline(s);
             gpu->uniforms(step_uniforms(&uniforms, s), sizeof uniforms);
             // Stretched glyphs blend; the others land on the target's pixels
             gpu->sample(0, gpu_state.atlas, TIDE_GPU_FILTER_LINEAR, TIDE_GPU_WRAP_CLAMP);
-            gpu->vertices(0, gpu_state.mesh_vertices, 0);
-            gpu->draw(s->first, s->count, 1);
-            vertices += s->count;
+            vertices += draw_triangles(s);
             calls++;
             break;
         }
@@ -3633,6 +4688,34 @@ void tide_platform_draw(const tide_draw_list *list)
     }
 }
 
+// Inside another program, whose GPU draws: the list through the backend that writes the calls down for it
+const uint8_t *tide_platform_embed_render(const tide_draw_list *list, uint32_t *size)
+{
+    gpu = &tide_gpu_record;
+    tide_gpu_record_begin();
+    draw_list(list, frame_destination(), false, false);
+    return tide_gpu_record_end(size);
+}
+
+const uint8_t *tide_platform_embed_render_view(const tide_draw_list *list, const tide_float4x4 world_to_clip, const int width,
+                                               const int height, uint32_t *size)
+{
+    gpu = &tide_gpu_record;
+    tide_gpu_record_begin();
+    view_only_3d = true;
+    view_world_to_clip = world_to_clip;
+    // Over the frame: what the frame's own drawing keeps from one to the next stays as it is
+    const draw_root to = {.width = (float)width, .height = (float)height, .pixel_width = width, .pixel_height = height};
+    draw_list(list, to, true, false);
+    view_only_3d = false;
+    return tide_gpu_record_end(size);
+}
+
+void tide_platform_embed_render_reset(void)
+{
+    tide_gpu_record_reset();
+}
+
 void tide_platform_gpu_timing(const bool enabled)
 {
     if (gpu_timing == enabled) return;
@@ -3654,6 +4737,11 @@ tide_float2 tide_platform_world_to_screen(const tide_float2 world)
 tide_float2 tide_platform_screen_size(void)
 {
     return tide_f2((float)screen_width, (float)screen_height);
+}
+
+tide_float2 tide_platform_screen_scale(void)
+{
+    return window_scale();
 }
 
 tide_int2 tide_platform_target_pixels(const tide_target_size size)
@@ -3814,12 +4902,27 @@ void tide_platform_read_pixels_as(const tide_draw_list *list, const int logical_
     }
     draw_list(list, (draw_root){.gpu = gpu_state.target, .width = (float)logical_width, .height = (float)logical_height,
                               .pixel_width = width, .pixel_height = height}, false, false);
-    gpu->target_read(gpu_state.target, gpu_state.target_pixels);
+    // Only the pixels from the points' top left to their bottom right come back, where the backend reads parts:
+    // reading a whole target for a few points is slow
+    int left = width, top = height, right = 0, bottom = 0;
+    for (int i = 0; i < count; i++) {
+        const int x = (int)points[i].x, y = (int)points[i].y;
+        if (x < 0 || x >= width || y < 0 || y >= height) continue;
+        if (x < left) left = x;
+        if (x >= right) right = x + 1;
+        if (y < top) top = y;
+        if (y >= bottom) bottom = y + 1;
+    }
+    if (right <= left) left = top = 0, right = bottom = 1; // None inside: one is read all the same, which waits for the GPU
+    if (!gpu->target_read_part) left = top = 0, right = width, bottom = height;
+    const int across = right - left;
+    if (across == width && bottom - top == height) gpu->target_read(gpu_state.target, gpu_state.target_pixels);
+    else gpu->target_read_part(gpu_state.target, left, top, across, bottom - top, gpu_state.target_pixels);
     for (int i = 0; i < count; i++) {
         const int x = (int)points[i].x, y = (int)points[i].y;
         uint32_t pixel = 0;
         if (x >= 0 && x < width && y >= 0 && y < height) {
-            const uint8_t *p = gpu_state.target_pixels + ((size_t)y * (size_t)width + (size_t)x) * 4u;
+            const uint8_t *p = gpu_state.target_pixels + ((size_t)(y - top) * (size_t)across + (size_t)(x - left)) * 4u;
             pixel = (uint32_t)p[0] << 24 | (uint32_t)p[1] << 16 | (uint32_t)p[2] << 8 | (uint32_t)p[3];
         }
         out[i] = pixel;

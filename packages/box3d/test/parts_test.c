@@ -94,11 +94,9 @@ TIDE_TEST(box3d_parts_are_the_whole_image)
         printf("    %s: %d images written whole and %d in parts; %d touches began and %d ended; the image is %d bytes\n",
                usual ? "as a match has them" : "in parts whenever", (int)whole, (int)in_parts, (int)a.Tally.touched, (int)a.Tally.parted,
                physics_bytes(&a));
-        // What the script is for happened: bodies came and went, and things touched
         TIDE_CHECK(a.Box3D_Physics.bodies == 40 && a.Box3D_Physics.shapes == 45 && a.Tally.touched > 30 && a.Tally.parted > 5);
         TIDE_CHECK(a.Box3D_Physics.parts.live == 0); // Every part that came went again
         TIDE_CHECK(in_parts > (usual ? 300 : 500) && whole > 0);
-        // ...and it all came to rest: the last ticks stepped nothing
         TIDE_CHECK(!a.Box3D_Physics.moved && went[TICKS - 1] != 0);
         tide_world_free(&a);
     }
@@ -135,8 +133,6 @@ TIDE_TEST(box3d_parts_leave_the_list_as_a_whole_image_does)
         printf("    %s: %d images written whole and %d in parts\n", wholly ? "written whole" : "made again before every tick", (int)whole,
                (int)in_parts);
         if (wholly) TIDE_CHECK(in_parts == 0 && whole > 600);
-        // A world that was just made from an image goes on from that image: only its first, of a world
-        // nothing was in yet, and the ones a section moved in are whole
         else TIDE_CHECK(in_parts > 500 && whole > 0);
         b3t_whole(false);
         tide_world_free(&b);
@@ -156,8 +152,6 @@ TIDE_TEST(box3d_parts_roll_back)
     tide_world_free(&a);
     tide_world_init(&a, DT);
     static uint64_t again[TICKS];
-    // Every 37 ticks the world is kept, goes on for 20 ticks, and goes back to
-    // go on once more, as a client that predicted does
     for (int from = 0; from < TICKS; from += 37) {
         const int to = from + 37 < TICKS ? from + 37 : TICKS;
         tide_world_copy(&kept, &a);
@@ -234,7 +228,6 @@ typedef struct lab {
     int whole_room;
     uint8_t *geometry;
     int geometry_size;
-    // The world as it was a while ago, to go back to: its image, its geometry and whose its bodies were
     uint8_t *old_image;
     int old_size;
     int old_room;
@@ -394,15 +387,12 @@ static int spare(const lab *l)
 static void add_shape(lab *l, const b3BodyId body, const bool may_sense)
 {
     b3ShapeDef def = b3DefaultShapeDef();
-    // A static body has no mass to work out again, so its shapes can leave that for later, which is another
-    // way through Box3D
     def.updateBodyMass = b3Body_GetType(body) != b3_staticBody || roll(l, 2) == 0;
     def.density = between(l, 200.0f, 2000.0f);
     def.baseMaterial.friction = between(l, 0.2f, 0.9f);
     def.enableContactEvents = roll(l, 2) == 0;
     def.enableSensorEvents = roll(l, 2) == 0;
     def.isSensor = may_sense && roll(l, 6) == 0;
-    // A material array of its own, which a shape of any kind can have, and which an image has after the shapes
     b3SurfaceMaterial two[2] = {def.baseMaterial, def.baseMaterial};
     two[1].friction = 0.1f;
     if (roll(l, 12) == 0) {
@@ -452,7 +442,6 @@ static void spawn(lab *l, const b3BodyType type, const bool awake)
     }
     l->bodies[at] = b3CreateBody(l->world, &def);
     l->terrain[at] = false;
-    // Some with no shape at all: nothing then says the body is new but its own making
     if (roll(l, 8) != 0) add_shape(l, l->bodies[at], type == b3_staticBody);
     did(l, awake ? "a body made" : "a body made asleep", at);
 }
@@ -520,7 +509,6 @@ static void act(lab *l)
         b3Body_SetTargetTransform(body, target, 0.5f, wake);
         did(l, "a body sent somewhere", at);
     } else if (what < 63) {
-        // Not a body with a height field: Box3D refuses, and leaves its world locked (b3Body_SetType)
         if (at < 1 || !enabled(l, at) || b3Body_GetJointCount(body) > 0 || l->terrain[at]) return;
         b3Body_SetType(body, (b3BodyType)roll(l, 3));
         did(l, "a body's type set", at);
@@ -539,8 +527,6 @@ static void act(lab *l)
         if (at < 1 || !enabled(l, at) || b3Body_GetShapeCount(body) < 2) return;
         b3ShapeId shapes[8];
         const int count = b3Body_GetShapes(body, shapes, 8);
-        // With its body weighed again or not: one that isn't says nothing of the body but what the
-        // shape's going says itself
         const b3ShapeId gone = shapes[roll(l, (uint32_t)count)];
         const bool weigh = roll(l, 2) == 0;
         b3DestroyShape(gone, weigh);
@@ -582,7 +568,6 @@ static void act(lab *l)
         b3World_SetGravity(l->world, (b3Vec3){0.0f, -10.0f + between(l, -2.0f, 2.0f), 0.0f});
         did(l, "gravity set", 0);
     } else if (what < 84) {
-        // A mesh or a height field, which have more in an image than other shapes
         const int slot = spare(l);
         if (slot < 0) return;
         b3BodyDef def = b3DefaultBodyDef();
@@ -595,7 +580,6 @@ static void act(lab *l)
         else b3CreateHeightFieldShape(l->bodies[slot], &shape, field);
         did(l, "a mesh or a height field made", slot);
     } else if (what < 86 && l->size > 0 && !l->recorded) {
-        // The world made again from its last image, in place: its next image is whole
         const int needed = b3World_GetSnapshotGeometry(l->world, NULL, 0);
         room_for(&l->geometry, &l->geometry_size, needed);
         b3World_GetSnapshotGeometry(l->world, l->geometry, needed);
@@ -606,7 +590,6 @@ static void act(lab *l)
         l->restored++;
         did(l, "the world restored", 0);
     } else if (what < 88 && l->old_size > 0 && !l->recorded) {
-        // ...or from an older one, as a rollback does: the image a match holds is then that one
         if (!b3World_Restore(l->world, l->old_image, l->old_size, l->old_geometry, l->old_geometry_size)) {
             printf("    the world's older image doesn't restore\n");
             abort();
@@ -621,7 +604,6 @@ static void act(lab *l)
         l->restored++;
         did(l, "the world rolled back", 0);
     } else if (what >= 91 && what < 96) {
-        // How a body is to be, which is in the body or in what its set has of it: asleep or static as it may be
         if (at < 1) return;
         switch (roll(l, 4)) {
         case 0: b3Body_SetGravityScale(body, between(l, -0.5f, 1.5f)); break;
@@ -631,7 +613,6 @@ static void act(lab *l)
         }
         did(l, "a body's setting set", at);
     } else if (what >= 96 && what < 99) {
-        // How the world steps: numbers of its own, which every image writes
         switch (roll(l, 3)) {
         case 0: b3World_SetContactTuning(l->world, between(l, 10.0f, 30.0f), between(l, 2.0f, 10.0f), between(l, 1.0f, 3.0f)); break;
         case 1: b3World_SetRestitutionThreshold(l->world, between(l, 0.5f, 2.0f)); break;
@@ -639,7 +620,6 @@ static void act(lab *l)
         }
         did(l, "the world's setting set", 0);
     } else if (what < 91) {
-        // A shape's geometry set: a call Box3D records by hand, or another shape altogether
         if (at < 1 || !enabled(l, at) || l->terrain[at] || b3Body_GetShapeCount(body) < 1) return;
         b3ShapeId shapes[8];
         const int count = b3Body_GetShapes(body, shapes, 8);
@@ -709,8 +689,6 @@ static void begin(lab *l, const uint32_t seed, const int share)
         const b3BoxHull crate = b3MakeBoxHull(0.5f, 0.5f, 0.5f);
         b3CreateHullShape(l->bodies[1 + i], &shape, &crate.base);
     }
-    // Shelves away from the rest: with a few static bodies, one that comes or goes doesn't move a section
-    // of the image, which would have it written whole
     for (int i = 0; i < SHELVES; i++) {
         b3BodyDef def = b3DefaultBodyDef();
         def.position = b3ToPos((b3Vec3){30.0f + 4.0f * (float)i, 1.0f, 0.0f});
@@ -728,12 +706,10 @@ static bool go_on(lab *l, const int steps)
 {
     bool right = true;
     for (; l->step < steps && right; l->step++) {
-        // 90 steps of every 240 are busy, and the rest nearly quiet
         const bool busy = l->step % 240 >= 150;
         const uint32_t acts = busy ? roll(l, 3) : roll(l, 40) == 0;
         for (uint32_t i = 0; i < acts; i++) {
             act(l);
-            // Sleeping stays on but for a few steps, or nothing would be asleep
             if (!l->sleeping && roll(l, 4) == 0) {
                 l->sleeping = true;
                 b3World_EnableSleeping(l->world, true);
@@ -741,7 +717,6 @@ static bool go_on(lab *l, const int steps)
         }
         b3World_Step(l->world, DT, 4);
         right = take_image(l);
-        // And once more with nothing done: no part of it is another
         if (right && l->step % 97 == 0) right = take_image(l);
         if (right && l->step % 131 == 60) keep(l);
     }
@@ -769,8 +744,6 @@ static bool run(lab *l, const uint32_t seed, const int steps, const int share)
 
 TIDE_TEST(box3d_parts_whatever_is_done_to_the_world)
 {
-    // The bridge's allocator is Box3D's for the whole program, where it has one
-    // (a web build): it's set before any world is made here
     b3t_forget();
     b3t_check(false, false);
     tide_world_init(&a, DT);
@@ -811,14 +784,11 @@ static void where_one_line_says_so(const bool with_mesh)
     static lab l;
     enum { RESTLESS = 10 };
     begin(&l, 7u, 1);
-    // A sensor on each of three shelves
     b3ShapeDef sensing = b3DefaultShapeDef();
     sensing.isSensor = true;
     sensing.enableSensorEvents = true;
     const b3Sphere ball = {{0.0f, 1.0f, 0.0f}, 0.5f};
     for (int i = 0; i < 3; i++) b3CreateSphereShape(l.bodies[SHELF + i], &sensing, &ball);
-    // Two more shapes on another shelf, with nothing on them: they go one at a time, while everything
-    // sleeps. A body's shapes are a list from the last one made, so the first to go is the one in the middle
     const b3ShapeDef plain = b3DefaultShapeDef();
     const b3ShapeId middle = b3CreateSphereShape(l.bodies[SHELF + 5], &plain, &ball);
     const b3ShapeId head = b3CreateSphereShape(l.bodies[SHELF + 5], &plain, &ball);
@@ -838,7 +808,6 @@ static void where_one_line_says_so(const bool with_mesh)
         b3CreateSphereShape(body, &shape, &(b3Sphere){{0.0f, 0.0f, 0.0f}, 0.5f});
         if (i == 0) restless = body;
     }
-    // ...and one more by itself that does sleep, to be woken and put to sleep again by a call
     {
         b3BodyDef def = b3DefaultBodyDef();
         def.type = b3_dynamicBody;
@@ -850,8 +819,6 @@ static void where_one_line_says_so(const bool with_mesh)
 
     bool right = true;
     for (l.step = 0; l.step < 300 && right; l.step++) {
-        // A body that's asleep is woken by a call, and put to sleep again by one before it would fall
-        // asleep: what wakes and what's put to sleep is said where it's written, as when the step does it
         if (l.step == 140) {
             TIDE_CHECK(!b3Body_IsAwake(loner));
             b3Body_SetAwake(loner, true);
@@ -872,14 +839,11 @@ static void where_one_line_says_so(const bool with_mesh)
             b3Body_SetAwake(restless, true);
             did(&l, "a body that never sleeps woken by a call", 0);
         }
-        // Crates and a shelf go, while everything is asleep: their places are there to take
         if (l.step == 120) {
             for (int i = 0; i < 4; i++) b3DestroyBody(l.bodies[4 + 8 * i]); // The tops of four stacks
             b3DestroyBody(l.bodies[SHELF + 7]);
             did(&l, "four crates and a shelf destroyed", 0);
         }
-        // The shelf with the first sensor goes: the last sensor takes its place in Box3D's list, and
-        // its shape, on a static body, is told where it is now
         if (l.step == 250) {
             b3DestroyBody(l.bodies[SHELF]);
             did(&l, "a sensor's shelf destroyed", 0);
@@ -895,7 +859,6 @@ static void where_one_line_says_so(const bool with_mesh)
             b3DestroyShape(head, false);
             did(&l, "the shape that heads its body's destroyed", 0);
         }
-        // A shape with a material array of its own, on a shelf that's there
         if (l.step == 270 && !with_mesh) {
             b3ShapeDef def = b3DefaultShapeDef();
             b3SurfaceMaterial two[2] = {def.baseMaterial, def.baseMaterial};
@@ -905,7 +868,6 @@ static void where_one_line_says_so(const bool with_mesh)
             lined = b3CreateSphereShape(l.bodies[SHELF + 4], &def, &ball);
             did(&l, "a shape with two materials made", 0);
         }
-        // ...which goes again: what it has more than other shapes goes from the image with it
         if (l.step == 285 && !with_mesh) {
             b3DestroyShape(lined, false);
             did(&l, "a shape with two materials destroyed", 0);
@@ -913,13 +875,8 @@ static void where_one_line_says_so(const bool with_mesh)
         b3World_Step(l.world, DT, 4);
         const int parts = l.images_in_parts;
         right = take_image(&l);
-        // The steps before each of those had their images in parts: the world was asleep and followed
         if (l.step == 119 || l.step == 249 || l.step == 269) TIDE_CHECK(l.images_in_parts > parts);
-        // ...and so did the steps that took a shape off a body: a shape that goes is followed
         if (l.step == 180 || l.step == 190) TIDE_CHECK(l.images_in_parts > parts);
-        // ...and the ones a body was woken in or put to sleep in, by a call: both are followed. (The step
-        // that put the lone body to sleep again is followed too, and its image is whole all the same: the
-        // sleeping sets no longer fit where the image had them, and a section that moves is all written.)
         if (l.step == 140 || l.step == 160 || l.step == 166) TIDE_CHECK(l.images_in_parts > parts);
     }
     TIDE_REQUIRE(right);
@@ -929,8 +886,6 @@ static void where_one_line_says_so(const bool with_mesh)
         return;
     }
 
-    // A mesh, in a world that had none, and a crate onto it: the contact between them has more in an
-    // image than the room every contact takes
     b3BodyDef ground = b3DefaultBodyDef();
     ground.position = b3ToPos((b3Vec3){12.0f, 0.3f, 0.0f});
     const b3BodyId slab = b3CreateBody(l.world, &ground);

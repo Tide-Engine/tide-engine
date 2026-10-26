@@ -1,0 +1,59 @@
+#pragma once
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "tide/session.h"
+#include "tide/shard.h"
+
+// A player's machine in a sharded match (tide/shards.h): a client of each
+// shard its route says it follows (tide_shard_game.route), all as the same
+// player, its input going to each. One of them is its home, the shard that
+// owns most of its player's entities: the world it plays in and views draw.
+// Following the shards near its player's entities, it moves its home to one
+// of them as its entities do, with nothing to download. It follows the shards
+// owning an area it's asked to watch too (Session.Watch), and views draw
+// what each shard it follows owns.
+
+typedef struct tide_shard_client tide_shard_client;
+
+typedef struct tide_shard_client_desc {
+    // How each of its clients is made. Its transport and server are the first
+    // shard's, the root's: the world's front door, which gives this machine
+    // its player and cookie.
+    tide_client_desc client;
+    // Where another shard's server is, to follow it: false while it can't be
+    // reached yet (asked again each update). `match` is what its host knows
+    // it by. NULL: only the first shard is ever followed.
+    bool (*reach)(void *user, uint32_t shard, uint64_t match, tide_transport *transport, tide_address *server);
+    void *user;
+} tide_shard_client_desc;
+
+tide_shard_client *tide_shard_client_create(const tide_shard_client_desc *desc, double now);
+void tide_shard_client_destroy(tide_shard_client *c);
+void tide_shard_client_update(tide_shard_client *c, double now);
+
+// The client of its home shard, and which shard that is.
+tide_client *tide_shard_client_home(const tide_shard_client *c);
+uint32_t tide_shard_client_home_shard(const tide_shard_client *c);
+// The game's build changed (a hot reload): the clients it makes from now on
+// are `game`'s. Those it has, the caller carries over (tide_session_migrate).
+void tide_shard_client_rebuilt(tide_shard_client *c, const tide_game *game);
+// Shards numbered below this can have a client (tide_shard_client_session).
+uint32_t tide_shard_client_room(const tide_shard_client *c);
+// The client of a shard it follows, or NULL.
+tide_client *tide_shard_client_session(const tide_shard_client *c, uint32_t shard);
+// How many times its home moved to another shard, and how many clients of
+// shards it made, the first's included.
+uint32_t tide_shard_client_moves(const tide_shard_client *c);
+uint32_t tide_shard_client_joins(const tide_shard_client *c);
+// An area to watch, wherever its player is: it follows every shard whose
+// region is within the game's reach of it, as well as those its route names.
+// NULL: only its route's.
+void tide_shard_client_watch(tide_shard_client *c, const tide_shard_box *area);
+// What views draw beside its home's world: each other shard it follows that
+// it plays in, as tide_client_view has it, and which shard that is. Up to
+// `capacity`, and how many there are.
+uint32_t tide_shard_client_views(const tide_shard_client *c, tide_view_worlds *out, uint32_t *shards, uint32_t capacity);
+// After drawing them, each one's tide_client_mark_presented.
+void tide_shard_client_mark_presented(tide_shard_client *c);

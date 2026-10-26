@@ -10,6 +10,8 @@ import { fileURLToPath } from 'node:url';
 
 const out = path.join(path.dirname(fileURLToPath(import.meta.url)), 'assets', 'meshes');
 fs.mkdirSync(path.join(out, 'bad'), { recursive: true });
+fs.writeFileSync(path.join(out, '..', 'tangent-seams.obj'),
+    'v 0 0 0\nv 1 0 0\nv 1 1 0\nv 0 1 0\nvt 0 0\nvt 1 0\nvt 1 1\nvt 2 1\nvn 0 0 1\nf 1/1/1 2/2/1 3/3/1\nf 1/1/1 3/3/1 4/4/1\n');
 
 const FLOAT = 5126, BYTE = 5120, UBYTE = 5121, USHORT = 5123, UINT = 5125;
 

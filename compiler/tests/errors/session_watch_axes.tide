@@ -1,0 +1,6 @@
+// expect: the area's size has 3 axes and its center 2: give both as many
+local scene Main { }
+view Look()
+{
+    Session.Watch(float2(0, 0), float3(10, 10, 10));
+}

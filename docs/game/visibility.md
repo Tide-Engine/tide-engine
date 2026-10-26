@@ -10,7 +10,7 @@ The API names below are provisional. Visibility applies to entities and whole co
 
 ## Share an audience
 
-An `Audience` is a set of players. `Audience.All` includes everyone and `Audience.None` includes nobody. `Audience.Only(player)` selects one player; `Audience.From(players)` takes a `List<PlayerID>`. An audience value has `Add(player)`, `Remove(player)` and `Contains(player)`.
+An `Audience` is a set of players. `Audience.All` includes everyone and `Audience.None` includes nobody. `Audience.Only(player)` selects one player; `Audience.From(players)` takes a `List<PlayerID>`. An audience value has `Add(player)`, `Remove(player)` and `Contains(player)`, and two audiences are equal (`==`) when they have the same players.
 
 A `VisibilityGroup` gives many entities one live audience:
 
@@ -90,6 +90,10 @@ Use `local event(Shown)` to initialize presentation when an entity or a handler'
 Each handler's component requirements determine its availability. A handler reading `Card` can remain active while a handler reading `CardFace` becomes hidden. A `Shown` handler should prepare resources; a true `Spawned` handler can play the effect for a new object.
 
 **Provisional delivery rule:** availability follows the endpoints delivered to local presentation. Changes inside one tick or between frames coalesce to their final availability, so adding, removing and adding a component before a frame cannot leave its presentation released. A correction that restores an entity or component runs `Shown` again; an unchanged replay does nothing. Predicted and verified handlers follow separate presentation endpoints, and their queries read the corresponding old or new endpoint. A local rebuild clears this history and prepares available objects again, so `Shown` initialization should reuse or replace existing resources safely.
+
+## In a sharded world
+
+In a [sharded world](../multiplayer/shards.md#visibility), a group means the same on every shard: an entity in it is shown to the same players on whichever shard has it, and each shard sends its own players only what they may see. The groups are kept with the first shard. Code on another shard that creates, changes or destroys a group waits on the border for them, and other shards see the change a tick or two later.
 
 ## Consequences across a visibility boundary
 

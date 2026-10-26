@@ -24,9 +24,10 @@ The editors' formatter lays code out this way (see [Editors](../tools/editors.md
 | `byte` | An unsigned 8-bit integer, from 0 to 255; binary file contents use `List<byte>` |
 | `int` | A 32-bit integer |
 | `long` | A 64-bit integer, for what outgrows an `int`: scores, money, tick counts over months |
-| `float` | A 32-bit float. There's no `double`. |
-| `float2`, `float3`, `float4`, `int2`, `int3`, `int4` | Vectors (see [Math](./math.md)) |
-| `quaternion`, `float2x2`, `float3x3`, `float4x4` | Rotations and matrices (see [Math](./math.md)) |
+| `float` | A 32-bit float |
+| `double` | A 64-bit float, for values needing more precision |
+| `double2`, `double3`, `double4`, `float2`, `float3`, `float4`, `int2`, `int3`, `int4` | Vectors (see [Math](./math.md)) |
+| `quaternion`, `float2x2`, `float3x3`, `float4x4`, `double2x2`, `double3x3`, `double4x4` | Rotations and matrices (see [Math](./math.md)) |
 | `Color` | A color, with `r`, `g`, `b` and `a` from 0 to 1 (see [Views](../game/views.md)) |
 | `Rect` | A rectangle on the screen: `x`, `y`, `width` and `height` (see [GUI](../game/gui.md)) |
 | `string` | Text (see [Text and lists](./text-and-lists.md)) |
@@ -46,10 +47,14 @@ Everything is a value: assigning copies it, and nothing is shared, text and list
 
 The type arguments in `List<T>`, `Map<K, V>` and the other containers pick what they hold. Containers can nest, such as `Map<string, List<int>>`. Declaring your own generic types or functions isn't supported yet; a struct or function names the concrete types it uses.
 
+Give a concrete type another name with a [type alias](./namespaces.md#type-aliases), declared at namespace scope: `using Points = List<float3>;`. `Points` is the same type as `List<float3>`, with the same behavior and restrictions. Aliases don't declare type parameters of their own.
+
 ### Numbers
 
 - `byte` stores one byte. It converts to `int`, `long` and `float` by itself, and arithmetic promotes it to `int`. Integer constants from 0 to 255 fit a byte: `byte value = 255; List<byte> bytes = [0, 128, 255];`. Other numbers need `byte(x)`, which keeps their low 8 bits; a float first converts with `int(x)`. Compound assignments and `++`/`--` wrap back into the byte range.
 - `1.5` is a `float`, and the `f` suffix is optional. The zero before the point can be left out: `.5f` is `0.5`. An `int` converts to `float` by itself, never the other way: `int(x)` truncates toward zero.
+- `1.25d`, `.5D` and `1e100d` are `double` literals. Unsuffixed decimals remain floats, even in `double value = 1.25;`: use `d` when the literal needs double precision. `byte`, `char`, `int`, `long` and `float` widen to `double` implicitly. Int and float vectors widen to the matching double vector. A long can round when converted to double, whose integer precision is 53 bits.
+- Double arithmetic and mixed float/double arithmetic give doubles. Narrowing is explicit: `float(value)`, `float3(position)`, `int(value)` or `long(value)`. Integer conversions truncate, saturate at the destination's range and map NaN to zero. Double to float rounds to the nearest float, overflowing to a signed infinity.
 - A decimal number ending in lowercase `deg` is a `float` in radians: `180deg`, `.5deg`, `1e2deg`, `1_8_0deg` and `-90deg`. The compiler converts the number from degrees once; use it anywhere a float is accepted, such as `quaternion.Euler(0, 180deg, 0)`.
 - An `int` converts to `long` by itself too, and the two mix: `total + 1` is a `long` when `total` is. A `long` and a `float` don't: write `float(x)` or `long(x)` to say which way the value goes, and `int(x)` to cut a `long` down to its low 32 bits. `5L` is a `long` literal, and so is any integer literal past the `int` range.
 - Integers can be written in decimal (`255`), hex (`0xFF`) or binary (`0b1010`), and `_` separates digits: `1_000_000`.
@@ -137,8 +142,9 @@ settings
 | Setting | What it is | Without it |
 |---|---|---|
 | `title` | The window's title | The game's folder's name |
+| `startScene` | The prefab or scene declaration the program starts in, such as `Levels.Start` | `Main` |
 | `tickRate` | How many times a second the match ticks, from 1 to 1000: `Time.dt` is 1 / `tickRate`, and code reads the rate as `Time.tickRate` | 60 |
-| `maxPlayers` | How many players a match takes, from 1 to 256. Builds with different values can't play together (see [Matches](../multiplayer/matches.md#how-many-players)) | 16 |
+| `maxPlayers` | How many players a match takes, from 1 to 65536. Builds with different values can't play together (see [Matches](../multiplayer/matches.md#how-many-players)) | 16 |
 | `hostMigration` | When the machine running a room's match goes, another player's takes it over (see [Host migration](../multiplayer/matches.md#host-migration)) | `false` |
 | `prediction` | How clients keep up with the match: `Prediction.Rollback` runs ahead with no input delay and runs ticks again when a guess was wrong; `Prediction.Delay` delays inputs instead and runs every tick once (see [Input delay](../multiplayer/matches.md#input-delay)) | `Prediction.Rollback` |
 | `appId` | The app's ID on phones, like `com.studio.game`: what Android and iOS, and their app stores, know it by (see [Android](../tools/cli.md#android)) | `dev.tide.<the game's name>`, to test with |
@@ -146,11 +152,12 @@ settings
 | `stats` | Shows the stats in the window's bottom right corner: the frame rate, and at a click on it or F8, the rest (see [The tide command](../tools/cli.md#stats)). It's in what `tide build` makes too, so take it out before players get the game, unless the frame rate is theirs to see | `false` |
 | `debugViews` | The engine's [debug views](../tools/debug-views.md) are on: F7 shows the profiler, which says where a frame's time and a tick's go. `--debug-views` turns them on too, whatever this says | `false` |
 
-- Settings are set without a type, to constant expressions, which can name constants. A game's own values go in constants, not settings.
+- Settings are set without a type. `startScene` names a prefab or scene declaration, without quotation marks; other settings take constant expressions, which can name constants. A game's own values go in constants, not settings.
 - A game can have several `settings` blocks, in any of its files, so a setting can be written beside the code it's about: each block sets what the others don't. A setting that's set twice, in one block or in two, is an error that says where the other one is.
 - The editors complete the names of the settings the game doesn't set yet, and show what each one does.
 - Settings are part of the build. The machine that runs a match decides its tick rate, and every player ticks at that rate. Under `tide run`, a new `tickRate` takes effect when a match starts.
 - `--title` goes over the `title` setting (see [The tide command](../tools/cli.md)).
+- Startup uses `--scene` first, then `startScene`, then `Main` (see [Matches](../multiplayer/matches.md#starting-a-match-from-tide-run)).
 
 ## Logging and asserting
 

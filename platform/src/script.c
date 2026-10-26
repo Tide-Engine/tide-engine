@@ -32,6 +32,9 @@
 //     130 key a down                 with none said, input is the first player's
 //     400 capture fight.png          ...and a picture is everyone's: fight-1.png, fight-2.png
 //     410 player 2 capture hers.png  ...or the one player's: hers-2.png
+//     420 player 2 leave             the player leaves its match, as Session.Leave does...
+//     430 player 3 drop              ...or goes silent both ways, as a phone that went away...
+//     480 player 3 rejoin            ...and joins what it joined again, as the same player
 //     500 quit                       the run's end is every player's, so it takes none
 
 #include "script.h"
@@ -169,6 +172,9 @@ typedef enum event_kind {
     EVENT_CAPTURE, // A script's own, from here on: not input
     EVENT_CAPTURE_AUDIO,
     EVENT_QUIT,
+    EVENT_LEAVE, // A player's match, in a run of several
+    EVENT_DROP,
+    EVENT_REJOIN,
 } event_kind;
 
 // What a key or button does: a tap is down for a frame, and up at the next.
@@ -262,6 +268,15 @@ static void apply(const event *e)
         made.pad.connected = true;
         if (e->which == 0) made.pad.left_trigger = e->x;
         else made.pad.right_trigger = e->x;
+        break;
+    case EVENT_LEAVE:
+        tide_platform_players_leave();
+        break;
+    case EVENT_DROP:
+        tide_platform_players_drop();
+        break;
+    case EVENT_REJOIN:
+        tide_platform_players_rejoin();
         break;
     case EVENT_CAPTURE:
     case EVENT_CAPTURE_AUDIO:
@@ -522,8 +537,12 @@ static bool parse(const char *text, event *e, char *error, const size_t size)
         e->kind = EVENT_QUIT;
         return ended(&at, error, size);
     }
+    if (strcmp(verb, "leave") == 0 || strcmp(verb, "drop") == 0 || strcmp(verb, "rejoin") == 0) {
+        e->kind = verb[0] == 'l' ? EVENT_LEAVE : verb[0] == 'd' ? EVENT_DROP : EVENT_REJOIN;
+        return ended(&at, error, size);
+    }
     return fail(error, size, "'%s' isn't something a line does: that's key, button, mouse, move, scroll, text, touch, pad, capture, "
-                             "capture-audio or quit",
+                             "capture-audio, leave, drop, rejoin or quit",
                 verb);
 }
 
@@ -531,7 +550,9 @@ bool tide_script_event(const char *text, char *error, const size_t error_size)
 {
     event e = {0};
     bool ok = parse(text, &e, error, error_size);
-    if (ok && e.kind >= EVENT_CAPTURE) ok = fail(error, error_size, "`capture`, `capture-audio` and `quit` are a script's lines, not input");
+    if (ok && e.kind >= EVENT_CAPTURE) {
+        ok = fail(error, error_size, "`capture`, `capture-audio`, `quit`, `leave`, `drop` and `rejoin` are a script's lines, not input");
+    }
     if (ok) apply(&e);
     free(e.text);
     return ok;
@@ -642,6 +663,15 @@ bool tide_script_load(const char *path)
         } else if (player_of(&p, &e.player, error, sizeof error) && parse(p, &e, error, sizeof error)) {
             if (e.kind == EVENT_QUIT && e.player) {
                 snprintf(error, sizeof error, "`quit` ends the run, which is every player's: it takes no player before it");
+            }
+            const char *const match_verbs[] = {"leave", "drop", "rejoin"};
+            const char *verb = e.kind >= EVENT_LEAVE ? match_verbs[e.kind - EVENT_LEAVE] : NULL;
+            if (verb && tide_platform_players() < 2u) {
+                snprintf(error, sizeof error, "`%s` is for a run of several players, whose matches it changes: --players 2 and more",
+                         verb);
+            } else if (verb && !e.player) {
+                snprintf(error, sizeof error, "`%s` says whose match it is, after the frame: `%u player 2 %s`", verb,
+                         (unsigned)e.frame, verb);
             }
         }
         if (error[0]) {

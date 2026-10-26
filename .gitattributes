@@ -8,6 +8,9 @@ compiler/tests/e2e/crlf.tide -text
 # give the tests other text than they expect.
 compiler/tests/e2e/assets/** -text
 
+# A Unity project's assets as Unity wrote them, for tide unity's converter.
+compiler/cli/tests/unity_project/** -text
+
 # The platform's font, and code vendored as it came.
 *.ttf binary
 
@@ -17,6 +20,9 @@ compiler/tests/e2e/assets/** -text
 *.pcm binary
 platform/third_party/* -text
 platform/third_party/fflate/** -text
+
+# Upstream license texts keep their exact bytes and original whitespace.
+tools/tide-jetbrains/cli-licenses/* -text -whitespace
 
 # Box2D, as it came (packages/box2d/box2d/TIDE.md lists what is changed).
 packages/box2d/box2d/** -text
@@ -35,6 +41,13 @@ packages/box3d/box3d/** -text
 compiler/third_party/ufbx/** -text
 compiler/third_party/stb_image/** -text
 compiler/third_party/dr_libs/** -text
+packages/voice/opus/** -text -whitespace
+packages/newton/vendor/** -text -whitespace
+packages/newton/kernels/** text eol=lf
+packages/newton/UPSTREAM.sha256 text eol=lf
+examples/robotics/microduck/upstream/** -text -whitespace
+examples/robotics/microduck/model.tide text eol=lf
+examples/robotics/microduck/test/model_expected.h text eol=lf
 compiler/tests/e2e/audio_import/** -text
 
 # Reproducible skinned fixture and saved measurements retain their hashed bytes.
@@ -52,3 +65,6 @@ bench/results/asset-sharing-prototype/** text eol=lf
 bench/results/asset-owned-reuse/** text eol=lf
 bench/results/asset-relative-delta/** text eol=lf
 bench/results/optimization-levels/** text eol=lf
+
+# Correction benchmark evidence keeps captured bytes/whitespace, including CRLF.
+bench/results/transform-corrections-*/** -text -whitespace

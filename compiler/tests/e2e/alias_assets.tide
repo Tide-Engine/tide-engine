@@ -1,0 +1,60 @@
+using Model = AliasKit.ChainedMesh;
+using Models = AliasKit.Meshes;
+using NamedModels = AliasKit.NamedMeshes;
+using ModelReference = Asset<Model>;
+
+asset Model single = "assets/meshes/quad.glb";
+asset Models many = "assets/meshes/*.glb";
+asset NamedModels named = "assets/meshes/*.gl*";
+asset AliasKit.ChainedMesh qualified = "assets/meshes/box.obj";
+asset List<Model> oneList = "assets/meshes/quad.glb";
+asset Map<string, Model> oneMap = "assets/meshes/box.obj";
+
+component Prop { ModelReference model = single; }
+singleton Probe
+{
+    Entity prop;
+    AliasKit.Reference held = single;
+    int vertices;
+    int listCount;
+    int mapCount;
+    int referenced;
+    int qualifiedIndices;
+    int listVertices;
+    int mapIndices;
+    int oneListCount;
+    int oneMapCount;
+    int forwarded;
+    int empty;
+}
+
+scene Main;
+event(Spawned) Setup(with Main, mut Probe probe) { probe.prop = Spawn(Prop); }
+
+int Count(Models values) { return values.count; }
+int Count(NamedModels values) { return values.count; }
+Model First(Models values) { return values[0]; }
+Model Pick(NamedModels values, string key) { return values[key]; }
+int Indices(ModelReference reference) { return reference.Value.indices.count; }
+int Indices(int value) { return value; }
+
+system Read(mut Probe probe, World world)
+{
+    ModelReference reference = single;
+    Model mesh = First(many);
+    probe.vertices = single.vertices.count;
+    probe.listCount = Count(many);
+    probe.mapCount = Count(named);
+    probe.referenced = reference.Value.vertices.count + probe.held.Value.vertices.count
+        + world.Get<Prop>(probe.prop).model.Value.vertices.count;
+    probe.qualifiedIndices = qualified.indices.count;
+    probe.listVertices = mesh.vertices.count;
+    probe.mapIndices = Pick(named, "assets/meshes/quad.glb").indices.count;
+    probe.oneListCount = oneList.count;
+    probe.oneMapCount = oneMap.count;
+    probe.forwarded = Indices(single);
+    ModelReference none = default;
+    probe.empty = Indices(none);
+    Debug.Assert(reference == probe.held && single == probe.held && probe.held != qualified);
+    Debug.Assert(none == default && default != reference);
+}

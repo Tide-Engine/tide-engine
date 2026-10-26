@@ -44,7 +44,9 @@ typedef struct tide_textref tide_textref;
 //
 // A view's own widgets are controls (GUI.Control): the view draws one however
 // it likes, and the GUI says what the player does with it, as it would for a
-// button of its own. The GUI draws nothing for it.
+// button of its own. The GUI draws nothing for it. GUILayout.Reserve supplies
+// a custom layout rect; GUI.Draw records its visuals among the GUI's widgets.
+// GUI.Key scopes repeated controls by application identity instead of loop order.
 //
 // A view with widgets that read the devices themselves, like a library's,
 // claims what they use (GUI.ClaimPointer, GUI.ClaimKeyboard), each frame it
@@ -73,8 +75,8 @@ typedef struct tide_textref tide_textref;
 //
 // Widgets have IDs, which generated code derives from where they're called
 // (see tide_gui_id). Keyboard and gamepad navigation are built in: Tab, the
-// arrows or the d-pad move the focus between widgets, in the order they're
-// called, Enter, Space or the south button press, Escape or the east button
+// arrows or the d-pad move by screen position; Tab moves in declaration
+// order. Enter, Space or the south button press, Escape or the east button
 // let go. Left and right step a slider's or a number field's value, and move
 // the focus from the other widgets.
 //
@@ -128,6 +130,10 @@ typedef struct tide_control {
     bool pressed; // The pointer holds it: from a press on it until it lets go, wherever it goes meanwhile
     bool focused; // The keyboard and the gamepad are on it
     bool clicked; // A press on it let go on it, or Enter, Space or the south button went down with the focus on it
+    bool down;    // This frame's pointer press belongs to this control
+    bool up;      // Its pointer was released this frame, on or off the rect
+    bool cancelled; // Its held gesture ended: disabled, under a modal, or taken by touch scrolling
+    tide_float2 position; // Pointer position in GUI pixels, including while held outside the rect
 } tide_control;
 
 typedef struct tide_gui_group {
@@ -143,7 +149,10 @@ typedef struct tide_gui_group {
     float stretch;            // In a vertical group: the width widgets stretch to, from last frame
     tide_float2 guess;        // An anchored area: its top left, from last frame's size
     int32_t anchor;           // An area: its tide_anchor, or -1 when it's at a rect
-    uint32_t panel;           // An area: its background's command
+    uint32_t panel;           // An area: its background's command, a smooth shape's, or UINT32_MAX
+    uint32_t panel_plain;     // ...or 1 + its plain shape in the list's (tide_draw_list.plains), or 0
+    uint32_t commands_from;   // ...and where the list's commands and plain shapes were as it began: what's
+    uint32_t plains_from;     // moved with it once it's placed
     tide_rect rect;           // An area at a rect: the rect
     uint32_t hot_before;      // An area: what was under the mouse before its content
     uint32_t rects_before;    // An area: how many places were remembered before its content
@@ -153,7 +162,29 @@ typedef struct tide_gui_group {
     bool scope;               // A Disabled or Theme block: the container around it, carried on, and handed back when it closes
     bool themed;              // A Theme block...
     tide_gui_theme before;    // ...and the theme it found, which is back when it closes
+    uint32_t key_before;
+    bool keyed;
+    bool drawing;
+    uint32_t clips_from;
+    uint32_t nav_from;
 } tide_gui_group;
+
+typedef struct tide_gui_scroll_state {
+    tide_float2 *offset; // Borrowed only until the synchronous block closes
+    tide_float2 before;
+    tide_rect viewport, clip_before;
+    uint32_t clip, clip_before_id, parent, mark;
+} tide_gui_scroll_state;
+
+typedef struct tide_gui_edit_state {
+    char text[256];
+    uint32_t length, caret, anchor;
+} tide_gui_edit_state;
+
+typedef struct tide_gui_draw_state {
+    tide_draw_place before;
+    uint32_t mark;
+} tide_gui_draw_state;
 
 // A container's size last frame, which lays out the next.
 typedef struct tide_gui_size {
@@ -195,6 +226,8 @@ typedef struct tide_gui_rect {
     // An area: how many places the frame had before its content's, which come
     // before its own. A widget: UINT32_MAX.
     uint32_t content;
+    uint32_t clip; // This frame's GUI scroll clip; resolved before retaining the rect
+    uint32_t scroll; // Innermost scroll container for wheel routing
 } tide_gui_rect;
 
 // A key or a gamepad's button that went down while the keyboard and the
@@ -208,12 +241,15 @@ typedef struct tide_gui_kept {
 #define TIDE_GUI_KEPT(name) tide_gui_kept name;
 
 typedef struct tide_gui {
+    const struct tide_jobs *jobs; // Optional host pool for local calculations
+    const struct tide_worker_limits *worker_limits; // Optional local-worker admission limits
     // The screen this frame (Screen in Tide).
     float width;
     float height;
 
     // Input this frame
     tide_measure_fn measure;
+    void (*copy)(const char *text); // Optional host clipboard, for selection copy/cut
     tide_float2 mouse;
     bool mouse_held, mouse_pressed, mouse_released;
     bool mouse_was_held;
@@ -280,6 +316,12 @@ typedef struct tide_gui {
     uint32_t edit_len;
     char edit[256];                   // What's typed so far
     bool edit_fresh;                  // Nothing typed yet: the first character replaces the value
+    uint32_t edit_caret, edit_anchor;
+    float edit_scroll;
+    tide_gui_edit_state edit_history[16]; // Bounded undo/redo for the active field
+    uint32_t edit_history_count, edit_history_at;
+    uint32_t edit_repeat;
+    uint64_t edit_repeat_at;
     uint8_t edit_kind;                // The kind of number that's typed, or that it's text
     // A number field whose typing another field ended this frame, before it
     // ran, and the number it had: the field's to keep as it runs
@@ -304,11 +346,26 @@ typedef struct tide_gui {
     uint32_t nav_last[TIDE_GUI_MAX_NAV]; // Last frame's
     bool nav_steps_last[TIDE_GUI_MAX_NAV];
     uint32_t nav_last_count;
+    tide_rect nav_rects[TIDE_GUI_MAX_NAV]; // Read at begin, then reused for this frame
+    tide_rect focus_rect;
+    bool focus_next;
+    bool reveal_focus;
+    tide_rect input_clip;
+    uint32_t scroll_clip, scroll_id, wheel_owner;
+    tide_float2 wheel;
+    uint32_t drag_scroll, drag_axes, gesture_cancel;
+    bool scroll_dragging;
+    tide_float2 drag_start, drag_last, drag_delta;
+    tide_gui_scroll_state scrolling[TIDE_GUI_MAX_DEPTH];
+    uint32_t scrolling_count;
 
     tide_gui_theme theme; // How widgets drawn now look (GUI.SetTheme, GUI.Theme)
 
     tide_gui_group groups[TIDE_GUI_MAX_DEPTH + 1]; // [0] is the screen's own
     int depth;
+    uint32_t key; // Explicit identity scopes, independent of layout and loop order
+    tide_gui_draw_state drawing[TIDE_GUI_MAX_DEPTH]; // Only GUI.Draw scopes copy drawing settings
+    uint32_t drawing_count;
     tide_gui_size sizes[TIDE_GUI_MAX_SIZES];
     tide_gui_seen seen[TIDE_GUI_MAX_IDS];
     tide_draw_list list; // This frame's commands, drawn over the world at the end
@@ -383,6 +440,9 @@ void tide_gui_show_keyboard(tide_gui *g);
 // the game. Called every frame the menu is up. Once a widget has the focus,
 // the keyboard and the gamepad are hidden from the game, as ever.
 void tide_gui_navigate(tide_gui *g);
+// Give the next enabled control focus. Call conditionally, before the control.
+void tide_gui_focus_next(tide_gui *g);
+void tide_gui_clear_focus(tide_gui *g);
 
 // Cursor.Lock: a view wants the mouse for itself, so the window holds the
 // cursor, hidden (see tide_gui_cursor_lock). Called every frame it does: the
@@ -408,13 +468,25 @@ void tide_gui_set_theme(tide_gui *g, tide_gui_theme theme);
 // nothing for it, and handles its input as a button's: the pointer on it is
 // the GUI's, so a press there never reaches the game or the views, from the
 // frame it lands in; the focus moves to it and from it with the other widgets,
-// in the order they're called; and a Disabled block or a modal over it stops
+// by Tab order or screen direction; and a Disabled block or a modal over it stops
 // it as it stops any widget: then nothing of it is true. While it has the
 // focus, the view that called it goes on reading the keyboard and the
 // gamepad, but for what moves the focus and clicks: the arrows, Tab, Enter,
 // Space and Escape, and the d-pad, the left stick and the south and east
 // buttons.
 tide_control tide_gui_control(tide_gui *g, uint32_t id, tide_rect rect);
+
+// Custom visuals use this list inside a GUI.Draw block. Its close restores
+// the window's drawing settings, including settings changed with Set calls.
+// At the container nesting ceiling returns -1; generated code skips the block.
+int tide_gui_begin_draw(tide_gui *g);
+int tide_gui_begin_key(tide_gui *g, uint32_t site, int32_t key);
+int tide_gui_begin_key_long(tide_gui *g, uint32_t site, int64_t key);
+int tide_gui_begin_key_text(tide_gui *g, uint32_t site, const char *key);
+
+// Reserve layout space without drawing or registering an interactive widget.
+tide_rect tide_gui_layout_reserve(tide_gui *g, tide_float2 size);
+tide_rect tide_gui_layout_reserve_flexible(tide_gui *g, tide_float2 size, float min_width, bool expand_width);
 
 // Widgets at a rect (GUI). The ones with a value change it, and return whether
 // they did; a button returns whether it was pressed.
@@ -468,6 +540,10 @@ void tide_gui_layout_space(tide_gui *g, float size);
 // tide_gui_close takes: it closes this one and any left open inside it.
 int tide_gui_begin_vertical(tide_gui *g, uint32_t id);
 int tide_gui_begin_horizontal(tide_gui *g, uint32_t id);
+// A clipped viewport; offset is in pixels from its content's top left.
+// Wheel input goes to the innermost hovered viewport, then bubbles at its edge.
+int tide_gui_begin_scroll(tide_gui *g, uint32_t id, tide_rect rect, tide_float2 *offset);
+int tide_gui_begin_layout_scroll(tide_gui *g, uint32_t id, tide_float2 size, tide_float2 *offset);
 int tide_gui_begin_area(tide_gui *g, uint32_t id, tide_rect rect);
 int tide_gui_begin_area_at(tide_gui *g, uint32_t id, int32_t anchor);
 // A modal: an area at an anchor over a dimmed screen, while `open` is true.

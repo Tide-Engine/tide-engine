@@ -209,7 +209,7 @@ typedef enum tide_gpu_filter {
     TIDE_GPU_FILTER_MIPMAPS, // ...and between the two of its images nearest the size it's drawn at
 } tide_gpu_filter;
 
-enum { TIDE_GPU_MAX_SLOTS = 3, TIDE_GPU_MAX_ATTRIBUTES = 16, TIDE_GPU_MAX_TEXTURES = 8 };
+enum { TIDE_GPU_MAX_SLOTS = 3, TIDE_GPU_MAX_ATTRIBUTES = 16, TIDE_GPU_MAX_TEXTURES = 12 };
 
 // The most a pipeline's uniform block takes, in bytes.
 #define TIDE_GPU_MAX_UNIFORMS 4096u
@@ -345,6 +345,15 @@ typedef struct tide_gpu {
 
     tide_gpu_id (*pipeline)(const tide_gpu_pipeline_desc *desc);
     void (*pipeline_free)(tide_gpu_id pipeline);
+    // Optional, for a backend that can make pipelines in the background
+    // (WebGPU's, and WebGL's where the browser compiles in parallel): while
+    // `background` is on, `pipeline` begins one and returns at once, and
+    // `pipeline_ready` says once it's made. Till then nothing is drawn with
+    // it: the renderer leaves its steps out (tide_platform_background_pipelines).
+    // Off, as a backend starts, `pipeline` makes one before it returns. NULL
+    // for a backend that only makes them so.
+    void (*background)(bool on);
+    bool (*pipeline_ready)(tide_gpu_id pipeline);
 
     // Pixels of its own to draw into, with depth and stencil: the color
     // images `format` says, in order, rows from the top. Each color image is
@@ -395,6 +404,12 @@ typedef struct tide_gpu {
     // synchronous canvas readback reports opaque alpha; the sampleable color
     // texture itself retains its original alpha.
     void (*target_read)(tide_gpu_id target, uint8_t *rgba);
+    // Optional: a part of it read back as target_read reads the whole, `width`
+    // by `height` pixels from (x, y), counted from its top left, inside it,
+    // into `width` * `height` * 4 bytes. What reading a few pixels costs is
+    // then theirs, not the whole target's. NULL where a backend reads only
+    // whole targets (WebGPU's).
+    void (*target_read_part)(tide_gpu_id target, int x, int y, int width, int height, uint8_t *rgba);
 
     // A pass on `target`, or the window for 0: cleared to black (every color
     // image it has, a float one too), depth too and stencil to 0, or over
@@ -435,9 +450,24 @@ typedef struct tide_gpu {
 extern uint32_t *(*tide_gpu_spirv_of)(const char *wgsl, size_t *count, char *error, size_t error_size);
 
 extern const tide_gpu tide_gpu_gl; // gpu_gl.c
+
+// Inside another program (tide/embed.h): each call written down as
+// tide_embed_render's commands, for that program to replay (gpu_record.c).
+// Begin starts a frame's, which end gives, valid until the next begin. Reset
+// starts over, as a device that was lost does: everything made is gone, so
+// the renderer makes it again (tide_embed_render_reset). Close frees what it
+// held.
+extern const tide_gpu tide_gpu_record;
+void tide_gpu_record_begin(void);
+const uint8_t *tide_gpu_record_end(uint32_t *size);
+void tide_gpu_record_reset(void);
+void tide_gpu_record_close(void);
 // A test's: has OpenGL make its targets as a device that can't draw into
 // floats does, while it's set. The targets there already stay as they are.
 extern bool tide_gpu_gl_no_floats;
+// A test's: how many pipelines of games' shaders the renderer has (platform.c),
+// so a test sees whether a draw made one.
+uint32_t tide_platform_shader_pipelines(void);
 #ifdef __wasm__
 extern const tide_gpu tide_gpu_webgpu; // web/gpu_web.c
 #endif

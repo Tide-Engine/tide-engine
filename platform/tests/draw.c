@@ -3,7 +3,7 @@
 //
 // It checks that each shape lands where it should, that commands draw in
 // the order they were recorded whatever the renderer batches together, that
-// a frame can draw far more than a list used to hold, that meshes draw
+// a frame can draw tens of thousands of commands, that meshes draw
 // their triangles with their corners' colors, their textures and the clip,
 // that 3D meshes draw through their cameras, nearest in front, or with depth
 // as a setting says, that meshes
@@ -28,8 +28,8 @@
 #include "tide/text.h"
 #include "tide/time.h"
 #include "../src/texture_residency.h"
+#include "../src/gpu.h" // tide_gpu_spirv_of, tide_platform_shader_pipelines
 #ifdef TIDE_SPIRV
-#include "../src/gpu.h" // tide_gpu_spirv_of
 #include "spirv.h"      // compiler/src's translator, which the test's build adds
 #endif
 
@@ -86,7 +86,7 @@ static const tide_color orange = {1.0f, 0.5f, 0.0f, 1.0f};
 static const tide_color magenta = {1.0f, 0.0f, 1.0f, 1.0f};
 static const tide_color purple = {0.5f, 0.0f, 1.0f, 1.0f};
 
-#define BAND 20000u // Far past the 16384 commands a list used to hold
+#define BAND 20000u
 #define BAND_TOP 272
 
 static tide_color band_color(const uint32_t i)
@@ -365,11 +365,11 @@ static void resident_pack_textures(void)
         {.bytes = 6, .age = 2, .place = 2}, {.bytes = 2, .age = 3, .place = 3},
         {.bytes = UINT64_MAX, .age = 1, .place = 4}, {.bytes = 1, .age = 61, .place = 5},
     };
-    tide_texture_idle_trim(policy, 6, 10, 3);
+    tide_texture_idle_trim(policy, 6, 10, 3, 60);
     uint32_t selected = 0;
     for (uint32_t i = 0; i < 6; i++) if (policy[i].keep) selected |= 1u << policy[i].place;
     expect(selected == ((1u << 1) | (1u << 2)), "idle texture pressure prefers recent images, bounds bytes and expires old ones");
-    tide_texture_idle_trim(policy, 6, UINT64_MAX, 1);
+    tide_texture_idle_trim(policy, 6, UINT64_MAX, 1, 60);
     selected = 0;
     for (uint32_t i = 0; i < 6; i++) if (policy[i].keep) selected |= 1u << policy[i].place;
     expect(selected == (1u << 1), "idle texture slot pressure has a stable tie order and safe byte arithmetic");
@@ -404,6 +404,9 @@ static void resident_pack_textures(void)
     tide_platform_read_pixels(&list, &point, 1, &got);
     const uint64_t base_memory = tide_platform_gpu_memory();
     uint64_t resident_memory = 0;
+    // The test lowers TIDE_TEXTURE_IDLE_FRAMES to 60 so an unused image expires
+    const uint32_t idle_frames = tide_texture_idle_frames;
+    tide_texture_idle_frames = 60;
     for (uint32_t frame = 0; frame < 66; frame++) {
         tide_draw_reset(&list);
         tide_draw_set_screen(&list);
@@ -420,6 +423,7 @@ static void resident_pack_textures(void)
             expect(tide_platform_gpu_memory() == resident_memory, "a hidden pack image keeps its base and mip allocation");
         if (frame == 63) expect(tide_platform_gpu_memory() == base_memory, "an expired pack image releases its entire allocation");
     }
+    tide_texture_idle_frames = idle_frames;
     tide_pack_unload(); // Cached GPU ids contain no pointer into the unloaded pack.
     tide_draw_forget(&list);
     tide_draw_reset(&list);
@@ -1722,6 +1726,200 @@ static void tiles_leave_no_gaps(void)
 }
 
 // ---------------------------------------------------------------------------
+// The renderer draws two of a mesh's or of text's triangles as one quad where
+// they are one, and a run of smooth shapes that are all solid ones with a
+// radius each where the others have an extra (see quad and solid_shape in
+// platform.c). Each scene below is drawn as that; again after something in
+// the same run, away from what's compared, that keeps the run from being one
+// (what was drawn before these); and again with that last, which turns the
+// run back as it goes. The three are the same pixels, and as many draw calls.
+
+enum { SAME_SIDE = 120 }; // The block compared, in the target's pixels from its top left
+static tide_float2 same_points[SAME_SIDE * SAME_SIDE];
+static uint32_t same_pixels[3][SAME_SIDE * SAME_SIDE];
+
+enum { SAME_ALONE, SAME_AFTER, SAME_BEFORE }; // Where the scene's run has what keeps it from being quads or solid
+
+static void same_scene(void (*scene)(int), const float scale, const char *what)
+{
+    static const char *const ways[3] = {"", "after what keeps them from being so", "before what turns them back"};
+    uint32_t calls[3];
+    for (int y = 0; y < SAME_SIDE; y++) {
+        for (int x = 0; x < SAME_SIDE; x++) same_points[y * SAME_SIDE + x] = tide_f2((float)x + 0.5f, (float)y + 0.5f);
+    }
+    for (int k = 0; k < 3; k++) {
+        tide_draw_reset(&list);
+        tide_draw_clear(&list, background);
+        tide_draw_set_screen(&list);
+        scene(k);
+        tide_platform_read_pixels_as(&list, (int)screen.x, (int)screen.y, scale, same_points, SAME_SIDE * SAME_SIDE,
+                                     same_pixels[k]);
+        calls[k] = tide_platform_draw_calls();
+    }
+    for (int k = 1; k < 3; k++) {
+        int differ = 0;
+        for (int i = 0; i < SAME_SIDE * SAME_SIDE; i++) differ += same_pixels[0][i] != same_pixels[k][i];
+        char message[200];
+        snprintf(message, sizeof message, "%s at a scale of %g are the same pixels as %s (%d differ)", what,
+                 (double)scale, ways[k], differ);
+        expect(differ == 0, message);
+        snprintf(message, sizeof message, "%s at a scale of %g are as many draw calls as %s (%u and %u)", what,
+                 (double)scale, ways[k], (unsigned)calls[0], (unsigned)calls[k]);
+        expect(calls[0] == calls[k], message);
+    }
+}
+
+// A triangle alone, with the same texture as the quads below, away from them.
+static void same_triangle(void)
+{
+    static const uint32_t three[3] = {0, 1, 2};
+    const tide_vertex v[3] = {{{200, 300}, {0, 0}, white}, {{220, 300}, {1, 0}, white}, {{200, 320}, {0, 1}, white}};
+    tide_draw_mesh(&list, v, 3, three, 3, &four_texture, TIDE_FILTER_BILINEAR);
+}
+
+// Quads of a texture, each of one color, at places and uvs that aren't whole,
+// some of them flipped, in the orders of corners and triangles a game might give.
+static void same_quads(const int way)
+{
+    static const uint32_t orders[][6] = {{0, 1, 2, 0, 2, 3}, {0, 1, 3, 1, 2, 3}, {2, 1, 0, 3, 2, 0}, {3, 0, 1, 3, 1, 2}};
+    if (way == SAME_AFTER) same_triangle();
+    for (uint32_t i = 0; i < 12; i++) {
+        const float x = 3.0f + (float)(i % 4) * 28.5f + 0.25f * (float)i, y = 2.5f + (float)(i / 4) * 37.75f;
+        const float w = 20.0f + (float)i * 0.6f, h = 30.0f - (float)i * 0.4f;
+        const float u0 = i & 1u ? 0.9f : 0.1f, u1 = i & 1u ? 0.1f : 0.9f;
+        const tide_color c = {(float)(i * 20u % 255u) / 255.0f, 0.8f, (float)(i * 50u % 255u) / 255.0f, i % 3u ? 1.0f : 0.6f};
+        const tide_vertex v[4] = {{{x, y}, {u0, 0.2f}, c}, {{x + w, y}, {u1, 0.2f}, c},
+                                  {{x + w, y + h}, {u1, 0.8f}, c}, {{x, y + h}, {u0, 0.8f}, c}};
+        tide_draw_mesh(&list, v, 4, orders[i % 4u], 6, &four_texture, TIDE_FILTER_BILINEAR);
+    }
+    if (way == SAME_BEFORE) same_triangle();
+}
+
+// Turned text, away from the text below, whose glyphs aren't quads of that kind.
+static void same_turned(void)
+{
+    tide_draw_set_transform(&list, tide_draw_transform_turned(tide_f2(200, 300), 0.5f));
+    tide_draw_text(&list, "turned", tide_f2(0, 0), 16, white);
+    tide_draw_unset_transform(&list);
+}
+
+// Text in both weights.
+static void same_text(const int way)
+{
+    if (way == SAME_AFTER) same_turned();
+    tide_draw_text(&list, "Quads 0123 gjy", tide_f2(4, 6), 18, white);
+    tide_draw_text_at(&list, "Bold, too", tide_f2(6, 40), 22, orange, TIDE_ANCHOR_UPPER_LEFT, TIDE_FONT_BOLD);
+    tide_draw_text(&list, "small", tide_f2(8, 80), 11, cyan);
+    if (way == SAME_BEFORE) same_turned();
+}
+
+// Round rects, ellipses, circles and rects among them, unturned and of one
+// color each; and part of a ring, away from them, which isn't a solid shape.
+static void same_shapes(const int way)
+{
+    if (way == SAME_AFTER) tide_draw_arc(&list, tide_f2(200, 300), 12, 0, 1.5f, 4, white);
+    for (uint32_t i = 0; i < 9; i++) {
+        const tide_float2 at = tide_f2(10.0f + (float)(i % 3u) * 18.25f, 10.0f + (float)(i / 3u) * 17.5f);
+        const tide_color c = {0.2f + (float)i * 0.08f, 0.9f - (float)i * 0.07f, 0.5f, i % 4u ? 1.0f : 0.5f};
+        tide_draw_round_rect(&list, at, tide_f2(14.5f, 11.0f), (float)i * 0.75f, c);
+        tide_draw_rect(&list, tide_f2(at.x, at.y + 60.0f), tide_f2(9, 7), c);
+        tide_draw_ellipse(&list, tide_f2(at.x + 60.0f, at.y), tide_f2(7.5f, 4.25f), c);
+        tide_draw_circle(&list, tide_f2(at.x + 60.0f, at.y + 60.0f), 6.3f, c);
+    }
+    if (way == SAME_BEFORE) tide_draw_arc(&list, tide_f2(200, 300), 12, 0, 1.5f, 4, white);
+}
+
+// Red, green, blue and white, two by two, as `four` starts (which the mesh checks change)
+static const uint8_t upright[2 * 2 * 4] = {255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255};
+static const tide_texture upright_texture = {upright, 2, 2, 1};
+
+// A sprite of `upright`, the texture read at the nearest pixel, or the mesh of its corners as tide_draw_sprite makes
+// them: from its top left round, the top up the world's y under a camera (`up`) and down the screen's on it.
+static void sprite_or_corners(const bool corners, const bool up, const tide_float2 center, const tide_float2 size,
+                              const tide_rect part, const float rotation, const tide_color color)
+{
+    const tide_texture_ref ref = tide_texture_filtered((tide_texture_ref){.image = upright_texture}, TIDE_FILTER_POINT);
+    if (!corners) {
+        if (rotation != 0.0f) tide_draw_sprite_part_rotated(&list, ref, center, size, part, rotation, color);
+        else tide_draw_sprite_part(&list, ref, center, size, part, color);
+        return;
+    }
+    static const uint32_t triangles[6] = {0, 1, 2, 0, 2, 3};
+    const float half = size.x * 0.5f, top = up ? size.y * 0.5f : size.y * -0.5f;
+    const tide_float2 turn = rotation == 0.0f ? tide_f2(1.0f, 0.0f) : tide_f2(tide_cos_f(rotation), tide_sin_f(rotation));
+    const tide_float2 offsets[4] = {{-half, top}, {half, top}, {half, -top}, {-half, -top}};
+    const float u0 = part.x, v0 = part.y, u1 = part.x + part.width, v1 = part.y + part.height;
+    const tide_float2 uvs[4] = {{u0, v0}, {u1, v0}, {u1, v1}, {u0, v1}};
+    tide_vertex v[4];
+    for (int i = 0; i < 4; i++) {
+        const tide_float2 o = offsets[i];
+        v[i] = (tide_vertex){{center.x + (o.x * turn.x - o.y * turn.y), center.y + (o.x * turn.y + o.y * turn.x)}, uvs[i], color};
+    }
+    tide_draw_mesh(&list, v, 4, triangles, 6, &upright_texture, TIDE_FILTER_POINT);
+}
+
+// Sprites at places that aren't whole: plain, mirrored each way, a part of the texture, turned, and tinted. Under a
+// camera they're placed so that they land where they do on the screen: its y the screen's, the other way round.
+static void sprites(const bool corners, const bool up)
+{
+    const tide_rect whole = {0.0f, 0.0f, 1.0f, 1.0f};
+    const float base = up ? screen.y : 0.0f, down = up ? -1.0f : 1.0f; // A pixel row's y
+    sprite_or_corners(corners, up, tide_f2(20.25f, base + down * 20.5f), tide_f2(30, 24), whole, 0.0f, white);
+    sprite_or_corners(corners, up, tide_f2(60.5f, base + down * 20.25f), tide_f2(-30, 24), whole, 0.0f, white);
+    sprite_or_corners(corners, up, tide_f2(100.0f, base + down * 20.0f), tide_f2(24, -30), whole, 0.0f, white);
+    sprite_or_corners(corners, up, tide_f2(20.5f, base + down * 70.75f), tide_f2(24, 30), (tide_rect){0.5f, 0.0f, 0.5f, 1.0f},
+                      0.0f, white);
+    sprite_or_corners(corners, up, tide_f2(60.25f, base + down * 70.5f), tide_f2(30, 20), whole, 0.6f, white);
+    sprite_or_corners(corners, up, tide_f2(100.5f, base + down * 70.0f), tide_f2(20, 20), whole, 0.0f,
+                      (tide_color){0.5f, 1.0f, 0.5f, 0.8f});
+}
+
+// Sprites are the pixels of the meshes of their corners, with the texture's first pixel at their top left, in the
+// screen's pixels and under a camera alike.
+static void sprites_drawn_as_their_corners(void)
+{
+    for (int y = 0; y < SAME_SIDE; y++) {
+        for (int x = 0; x < SAME_SIDE; x++) same_points[y * SAME_SIDE + x] = tide_f2((float)x + 0.5f, (float)y + 0.5f);
+    }
+    for (int up = 0; up < 2; up++) {
+        for (int k = 0; k < 2; k++) {
+            tide_draw_reset(&list);
+            tide_draw_clear(&list, background);
+            if (up) tide_draw_set_camera(&list, tide_f2(screen.x * 0.5f, screen.y * 0.5f), screen.y * 0.5f);
+            else tide_draw_set_screen(&list);
+            sprites(k == 1, up);
+            tide_platform_read_pixels_as(&list, (int)screen.x, (int)screen.y, 1.0f, same_points, SAME_SIDE * SAME_SIDE,
+                                         same_pixels[k]);
+        }
+        int differ = 0;
+        for (int i = 0; i < SAME_SIDE * SAME_SIDE; i++) differ += same_pixels[0][i] != same_pixels[1][i];
+        char message[160];
+        snprintf(message, sizeof message, "sprites %s are the pixels of the meshes of their corners (%d differ)",
+                 up ? "under a camera" : "in the screen's pixels", differ);
+        expect(differ == 0, message);
+        // The first, from (5.25, 8.5) to (35.25, 32.5) on the screen: red at its top left, green at its top right,
+        // blue at its bottom left; the second, mirrored, green at its top left
+        const uint32_t *got = same_pixels[0];
+        expect(near(got[12 * SAME_SIDE + 10], rgba(red), 8) && near(got[12 * SAME_SIDE + 30], rgba(green), 8)
+                   && near(got[28 * SAME_SIDE + 10], rgba(blue), 8),
+               up ? "a sprite under a camera has the texture's first pixel at its top left"
+                  : "a sprite in the screen's pixels has the texture's first pixel at its top left");
+        expect(near(got[12 * SAME_SIDE + 50], rgba(green), 8), "a sprite of a negative width is mirrored");
+    }
+}
+
+static void runs_drawn_alike(void)
+{
+    sprites_drawn_as_their_corners();
+    same_scene(same_quads, 1.0f, "quads");
+    same_scene(same_quads, 2.0f, "quads");
+    same_scene(same_text, 1.0f, "glyphs as quads");
+    same_scene(same_text, 2.0f, "glyphs as quads");
+    same_scene(same_shapes, 1.0f, "solid shapes");
+    same_scene(same_shapes, 2.0f, "solid shapes, plain circles among them,");
+}
+
+// ---------------------------------------------------------------------------
 // Shapes with smooth edges: round rects, turned ones, ellipses, thick lines
 // and outlines, parts of rings, and the general shape's fills, outlines and
 // fading edges
@@ -1886,6 +2084,27 @@ static void smooth_shapes(void)
     const uint32_t calls = tide_platform_draw_calls();
     printf("%u draw calls\n", (unsigned)calls);
     expect(calls == 2, "shapes of every kind, one after another, are one draw call");
+}
+
+static void corner_rects(void)
+{
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    tide_draw_set_screen(&list);
+    tide_draw_rect_area_corners(&list, (tide_rect){20, 20, 80, 60}, tide_f4(0, 8, 20, 30), red);
+    tide_draw_rect_area(&list, (tide_rect){120.25f, 20.25f, 40, 40}, blue);
+    const check checks[] = {
+        {20.5f, 20.5f, red, "independent top-left corner is square"},
+        {99.5f, 20.5f, background, "top-right corner has radius eight"},
+        {96.5f, 23.5f, red, "inside the top-right arc"},
+        {99.5f, 79.5f, background, "bottom-right corner has radius twenty"},
+        {20.5f, 79.5f, background, "bottom-left corner has radius thirty"},
+        {29.5f, 70.5f, red, "inside the bottom-left arc"},
+        {60.5f, 50.5f, red, "independent corners keep a solid middle"},
+        {130.5f, 30.5f, blue, "a Rect-based square has a solid middle"},
+    };
+    check_pixels(checks, sizeof checks / sizeof checks[0]);
+    expect(tide_platform_draw_calls() == 2, "independent corners and square AA rects share one shape draw");
 }
 
 // The GUI's own widgets with a theme: its colors, and its round corners,
@@ -3482,14 +3701,16 @@ static const char *bench_names[] = {"nothing", "65536 rects", "65536 circles", "
                                    "a list of 65536 lights a shader reads whole, 16 written a frame",
                                    "a list of 65536 lights a shader reads 7 of 25 numbers of, 16 written a frame",
                                    "a list of 1024 lights made again each frame",
-                                   "a 3D mesh of 16384 corners, every one moved each frame"};
+                                   "a 3D mesh of 16384 corners, every one moved each frame",
+                                   "65536 sprites"};
 enum { BENCH_KINDS = sizeof bench_names / sizeof bench_names[0] };
 
 // 0: nothing (what reading back costs), 1: rects, 2: circles, 3: rects with text between, 4: quads of one mesh,
 // 5: instances of a 3D cube, 6: smooth shapes, 7: rects in one run with a few smooth shapes, which all go
 // through the smooth shapes' pipeline then, 8 to 12: what a game keeps and the GPU reads, of which a frame
-// changes a little or all (bench_kept)
+// changes a little or all (bench_kept), 13: the quads of 4 drawn as sprites (tide_draw_sprite), the same frame
 static int bench_kind;
+static bool bench_one; // --only: that workload alone
 static int bench_frame;
 static const char *bench_label;
 static FILE *bench_output;
@@ -3896,7 +4117,7 @@ static void bench_kept(void)
 static void bench_scene(void)
 {
     tide_draw_reset(&list);
-    if (bench_kind >= 8) {
+    if (bench_kind >= 8 && bench_kind <= 12) {
         bench_kept();
         return;
     }
@@ -3908,9 +4129,14 @@ static void bench_scene(void)
         }
         return;
     }
+    const tide_texture_ref sprite = tide_texture_filtered((tide_texture_ref){.image = four_texture}, TIDE_FILTER_POINT);
     for (uint32_t i = 0; bench_kind > 0 && i < WIDTH * 256u; i++) {
         const tide_float2 p = at((float)(i % WIDTH) + 0.5f, (float)(i / WIDTH) + 0.5f);
         const tide_color c = {(float)(i % WIDTH) / WIDTH, (float)(i / WIDTH) / 256.0f, 0.5f, 1.0f};
+        if (bench_kind == 13) {
+            tide_draw_sprite(&list, sprite, p, tide_f2(1, 1), c);
+            continue;
+        }
         if (bench_kind == 4) {
             quad(tide_f2(p.x - 0.5f, p.y + 0.5f), tide_f2(p.x + 0.5f, p.y - 0.5f), c, c, &four_texture, TIDE_FILTER_POINT, true);
             continue;
@@ -3921,6 +4147,34 @@ static void bench_scene(void)
         } else tide_draw_rect(&list, p, tide_f2(1, 1), c);
         if (bench_kind == 3 && i % 1024u == 0) tide_draw_text(&list, "x", p, 10, white);
     }
+}
+
+// --dump-frames <prefix>: each workload's last frame, drawn again and read
+// whole into <prefix>-<workload>.ppm, after its timing, to compare with
+// another renderer's (bench/draw/versus_draw --compare <prefix>).
+static const char *bench_frames_prefix;
+
+static bool bench_dump_frame(void)
+{
+    enum { PIXELS = WIDTH * HEIGHT };
+    static tide_float2 points[PIXELS];
+    static uint32_t pixels[PIXELS];
+    for (int i = 0; i < PIXELS; i++) points[i] = tide_f2((float)(i % WIDTH), (float)(i / WIDTH));
+    tide_platform_read_pixels(&list, points, PIXELS, pixels);
+    char path[1024];
+    snprintf(path, sizeof path, "%s-%d.ppm", bench_frames_prefix, bench_kind);
+    FILE *f = fopen(path, "wb");
+    bool ok = f != NULL;
+    if (f) {
+        fprintf(f, "P6\n%d %d\n255\n", WIDTH, HEIGHT);
+        for (int i = 0; i < PIXELS; i++) {
+            const uint8_t rgb[3] = {(uint8_t)(pixels[i] >> 24), (uint8_t)(pixels[i] >> 16), (uint8_t)(pixels[i] >> 8)};
+            ok &= fwrite(rgb, 1, 3, f) == 3;
+        }
+        ok &= fclose(f) == 0;
+    }
+    if (!ok) fprintf(stderr, "draw: couldn't write %s\n", path);
+    return ok;
 }
 
 static int bench(void)
@@ -3946,8 +4200,9 @@ static int bench(void)
            bench_names[bench_kind], recording.median_ms, recording.p95_ms, rendering.median_ms, rendering.p95_ms,
            total.median_ms, total.p95_ms);
     if (bench_label) bench_write_record(recording, rendering, total);
+    if (bench_frames_prefix && !bench_dump_frame()) return 1;
     bench_frame = 0;
-    if (++bench_kind < BENCH_KINDS) return TIDE_KEEP_RUNNING;
+    if (!bench_one && ++bench_kind < BENCH_KINDS) return TIDE_KEEP_RUNNING;
     if (bench_output) {
         const bool failed = ferror(bench_output) != 0;
         const int closed = fclose(bench_output);
@@ -4015,6 +4270,158 @@ static uint32_t lost_epoch; // The device's before Vulkan's was lost on purpose
 #endif
 static const char *dump_path;
 
+// Pipelines made in the background (tide_platform_background_pipelines), across frames, as a game's are: the shaders'
+// pipelines let go of (the list forgot them, and a frame drew without them), then drawn again with background on.
+// On WebGPU the first frame can't have made them (that takes the page's turn), so it leaves the shaded draws out, and
+// the rest draw; on every backend they show, drawn right, within BACKGROUND_FRAMES. A backend that makes them as
+// they're asked for draws them in the first.
+enum { BACKGROUND_FRAMES = 600 };
+
+static int background_frame(void)
+{
+    static int frames;
+    const check orange_quad = {32, 32, orange, ""};
+    if (frames == 0) {
+        tide_draw_forget(&list);
+        tide_draw_reset(&list);
+        tide_draw_clear(&list, background);
+        tide_platform_draw(&list); // Without the shaders: their pipelines go
+        tide_platform_background_pipelines(true);
+    } else {
+        tide_float2 point = tide_f2(orange_quad.x, orange_quad.y);
+        uint32_t got = 0;
+        shaded_scene();
+        tide_platform_read_pixels(&list, &point, 1, &got);
+        const bool drawn = near(got, rgba(orange), 8);
+#ifdef __wasm__
+        if (frames == 1 && strcmp(tide_platform_renderer(), "WebGPU") == 0)
+            expect(!drawn && near(got, rgba(background), 8), "a shader's first frame with background pipelines leaves its draws out on WebGPU");
+#endif
+        if (drawn) {
+            printf("background pipelines: the shaded draws showed in frame %d\n", frames);
+            shaded_checks(); // Drawn right, every one
+            tide_platform_background_pipelines(false);
+            return 0;
+        }
+        if (frames >= BACKGROUND_FRAMES) {
+            expect(false, "background pipelines are made within the frames given them");
+            tide_platform_background_pipelines(false);
+            return 0;
+        }
+    }
+    frames++;
+    return TIDE_KEEP_RUNNING;
+}
+
+// Pipelines made before anything draws with them (tide_platform_prewarm), as a game's are as it starts. A frame
+// draws one shader of each kind, a 2D mesh's, a 3D mesh's and a blit's, after the list forgot the rest, whose
+// pipelines go. Then a table of shaders none of which has a pipeline is prewarmed, with background pipelines on, as
+// a game's host has them: the scenes' 2D ones the ways they drew before, a shader of the 3D one's name with another
+// id (its code changed) the way that one drew, and another blit, which never drew, the way its kind (a blit) drew.
+// Frames go on, through none of them, till they're made (PREWARM_FRAMES at most); then their first frames make no
+// pipeline, and draw every one: on WebGPU too, whose first frame through a shader that wasn't made leaves it out
+// (background_frame). A pipeline made for a table stays when another build's first frame lets go of the last one's
+// (forget_pipelines), till another table is given.
+enum { PREWARM_FRAMES = 600 };
+
+// A lit square through `shader`, green, where shaded_3d_scene has its middle instance.
+static void lit_square(const tide_shader *shader)
+{
+    static const lit_vertex corners[4] = {{{-0.5f, 0.5f, 0.0f}, {0, 0, -1}}, {{0.5f, 0.5f, 0.0f}, {0, 0, -1}},
+                                          {{0.5f, -0.5f, 0.0f}, {0, 0, -1}}, {{-0.5f, -0.5f, 0.0f}, {0, 0, -1}}};
+    tide_draw_set_camera_3d(&list, tide_f3(0, 0, -10), tide_identity_q(), field_of_view_3d());
+    const lit_instance instance = {tide_trs_f4x4(tide_f3(0, 2, 0), tide_identity_q(), tide_f3_splat(2.0f)), green};
+    tide_draw_shaded(&list, shader, quad_mesh(14, corners, sizeof corners[0]), &instance, NULL, NULL, 0);
+}
+
+static int prewarm_frame(void)
+{
+    static int frames;
+    static uint32_t warmed; // The pipelines the table's prewarming made
+    static tide_shader drawn_blit, warm_blit; // Blits through the flat shader: the instance's color over the window
+    static tide_shader lit_again; // The lit shader's name, with other code
+    static const tide_shader *table[8];
+    const tide_float2 orange_at = tide_f2(32, 32), lit_at = seen(0, 2, 0);
+    uint32_t got = 0;
+    if (frames == 0) {
+        drawn_blit = flat_shader;
+        drawn_blit.name = "drawn blit";
+        drawn_blit.id = 0x7E57B1A4;
+        drawn_blit.vertex_size = sizeof(tide_vertex);
+        drawn_blit.blit = true;
+        warm_blit = drawn_blit;
+        warm_blit.name = "warm blit";
+        warm_blit.id = 0x7E57B1A5;
+        lit_again = lit_shader;
+        lit_again.id = 0x7E57A6A1;
+        const tide_shader *const shaders[8] = {&picked_shader, &many_shader, &counted_shader, &halves_shader,
+                                               &sampled_shader, &placed_shader, &lit_again, &warm_blit};
+        memcpy(table, shaders, sizeof table);
+        tide_draw_forget(&list);
+        tide_draw_reset(&list);
+        tide_draw_blit(&list, &drawn_blit, TIDE_BLEND_REPLACE, &background, NULL, NULL, 0);
+        flat_quad(9, at(16, 192), at(48, 224), blue);
+        lit_square(&lit_shader);
+        tide_platform_draw(&list); // Through one shader of each kind: the others' pipelines go
+        const uint32_t before = tide_platform_shader_pipelines();
+        tide_platform_background_pipelines(true);
+        tide_platform_prewarm(table, 8);
+        warmed = tide_platform_shader_pipelines() - before;
+        expect(warmed >= 8u, "prewarming makes a pipeline for each shader it's given");
+#ifdef __wasm__
+        if (strcmp(tide_platform_renderer(), "WebGPU") == 0)
+            expect(tide_platform_prewarm_waiting() > 0, "WebGPU makes prewarmed pipelines in the background");
+#endif
+        tide_platform_prewarm(table, 8);
+        expect(tide_platform_shader_pipelines() == before + warmed, "prewarming the same table again makes nothing");
+        frames++;
+        return TIDE_KEEP_RUNNING;
+    }
+    if (tide_platform_prewarm_waiting() > 0) {
+        if (frames++ < PREWARM_FRAMES) { // Frames go on meanwhile, through none of them
+            tide_draw_reset(&list);
+            tide_draw_clear(&list, background);
+            tide_platform_draw(&list);
+            return TIDE_KEEP_RUNNING;
+        }
+        expect(false, "prewarmed pipelines are made within the frames given them");
+        tide_platform_background_pipelines(false);
+        return 0;
+    }
+    printf("prewarmed pipelines: made by frame %d\n", frames);
+    // Their first frames make no pipeline, and draw everything
+    const uint32_t made = tide_platform_shader_pipelines();
+    shaded_scene();
+    tide_platform_read_pixels(&list, &orange_at, 1, &got);
+    expect(near(got, rgba(orange), 8), "a prewarmed shader draws in the first frame through it");
+    tide_draw_reset(&list);
+    tide_draw_clear(&list, background);
+    lit_square(&lit_again);
+    tide_platform_read_pixels(&list, &lit_at, 1, &got);
+    expect(near(got, rgba(green), 8), "and a 3D shader whose code changed since its name was drawn");
+    tide_draw_reset(&list);
+    tide_draw_blit(&list, &warm_blit, TIDE_BLEND_REPLACE, &white, NULL, NULL, 0);
+    tide_platform_read_pixels(&list, &orange_at, 1, &got);
+    expect(near(got, rgba(white), 8), "and a blit");
+    expect(tide_platform_shader_pipelines() == made, "and none of them made a pipeline");
+    shaded_checks(); // Drawn right, every one
+    // Another build's first frame keeps them, the table's, and what it drew with: the flat shader's
+    tide_draw_forget(&list);
+    tide_draw_reset(&list);
+    flat_quad(9, at(16, 192), at(48, 224), blue);
+    tide_platform_draw(&list);
+    expect(tide_platform_shader_pipelines() == warmed + 1u, "a build's first frame keeps the pipelines prewarmed for it");
+    // ...till another table is given
+    tide_platform_prewarm(NULL, 0);
+    tide_draw_forget(&list);
+    tide_draw_reset(&list);
+    flat_quad(9, at(16, 192), at(48, 224), blue);
+    tide_platform_draw(&list);
+    expect(tide_platform_shader_pipelines() == 1u, "and lets them go once another table is prewarmed");
+    tide_platform_background_pipelines(false);
+    return 0;
+}
+
 static int frame(void *user, const float seconds)
 {
     (void)user, (void)seconds;
@@ -4025,6 +4432,20 @@ static int frame(void *user, const float seconds)
     if (benching) return bench();
     if (frames_benching) return frames_bench();
     if (dump_path) return dump(dump_path);
+    // Once everything has checked out, the pipelines in the background, over frames of their own (background_frame)
+    static int background_state; // 1: under way; 2: done
+    if (background_state == 1) {
+        if (background_frame() == TIDE_KEEP_RUNNING) return TIDE_KEEP_RUNNING;
+        background_state = 2;
+        if (failures) return 1;
+    }
+    // ...then the pipelines prewarmed before they're drawn (prewarm_frame)
+    static int prewarm_state; // 1: done
+    if (background_state == 2 && !prewarm_state) {
+        if (prewarm_frame() == TIDE_KEEP_RUNNING) return TIDE_KEEP_RUNNING;
+        prewarm_state = 1;
+        if (failures) return 1;
+    }
 #if defined(__wasm__) || defined(DRAW_VULKAN)
     // WebGPU's and Vulkan's devices can go away (a driver that starts over),
     // taking what the renderer made on them. Once everything checked out, the
@@ -4051,8 +4472,10 @@ static int frame(void *user, const float seconds)
         wraps();
         mipmaps();
         smooth_shapes();
+        corner_rects();
         themed_gui();
         tiles_leave_no_gaps();
+        runs_drawn_alike();
         text_checks();
         settings();
         depth_settings();
@@ -4068,28 +4491,38 @@ static int frame(void *user, const float seconds)
         return run_checks();
     }
 #endif
-    meshes();
-    many_cached_textures();
-    resident_pack_textures();
-    compressed_pack_textures();
-    changed_textures();
-    meshes_3d();
-    primitives();
-    shaded();
-    transient_data_textures();
-    wraps();
-    mipmaps();
-    smooth_shapes();
-    themed_gui();
-    tiles_leave_no_gaps();
-    text_checks();
-    settings();
-    depth_settings();
-    cull_settings();
-    frustum_culling();
-    levels_of_detail();
-    vertex_counts();
-    const int code = run_checks();
+    // Everything, once: then the pipelines in the background (above), then a lost device's
+    int code = 0;
+    if (background_state == 0) {
+        meshes();
+        many_cached_textures();
+        resident_pack_textures();
+        compressed_pack_textures();
+        changed_textures();
+        meshes_3d();
+        primitives();
+        shaded();
+        transient_data_textures();
+        wraps();
+        mipmaps();
+        smooth_shapes();
+        corner_rects();
+        themed_gui();
+        tiles_leave_no_gaps();
+        runs_drawn_alike();
+        text_checks();
+        settings();
+        depth_settings();
+        cull_settings();
+        frustum_culling();
+        levels_of_detail();
+        vertex_counts();
+        code = run_checks();
+        if (code == 0) {
+            background_state = 1;
+            return TIDE_KEEP_RUNNING;
+        }
+    }
 #ifdef __wasm__
     if (code == 0 && strcmp(tide_platform_renderer(), "WebGPU") == 0) {
         tide_web_eval("Tide.loseDevice()");
@@ -4115,12 +4548,25 @@ int main(const int argc, char **argv)
         else if (strcmp(argv[i], "--frames-bench") == 0) frames_benching = true;
         else if (strcmp(argv[i], "--save") == 0 && i + 1 < argc) bench_label = argv[++i];
         else if (strcmp(argv[i], "--dump") == 0 && i + 1 < argc) dump_path = argv[++i];
+        else if (strcmp(argv[i], "--dump-frames") == 0 && i + 1 < argc) bench_frames_prefix = argv[++i];
+        else if (strcmp(argv[i], "--only") == 0 && i + 1 < argc) {
+            char *end;
+            const long only = strtol(argv[++i], &end, 10);
+            if (*end || end == argv[i] || only < 0 || only >= BENCH_KINDS) {
+                fprintf(stderr, "draw: --only takes a workload's number, 0 to %d\n", BENCH_KINDS - 1);
+                return 2;
+            }
+            bench_kind = (int)only;
+            bench_one = true;
+        }
         else if (strncmp(argv[i], "--save=", 7) == 0 && argv[i][7]) bench_label = argv[i] + 7;
         else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
-            printf("usage: tide_platform_draw [--bench [--save <label>]] [--frames-bench] [--dump <file.ppm>]\n"
+            printf("usage: tide_platform_draw [--bench [--save <label>] [--dump-frames <prefix>] [--only <n>]] [--frames-bench] [--dump <file.ppm>]\n"
                    "  --bench          20 warmup frames, then 100 measured frames per workload\n"
                    "  --frames-bench   the same, drawn into the window and shown, as a game's frames are\n"
                    "  --save <label>   append JSONL to bench/results/draw.jsonl, or print it when unavailable\n"
+                   "  --dump-frames <prefix>  after each workload's timing, its last frame as <prefix>-<n>.ppm\n"
+                   "  --only <n>       the workload numbered n alone, from 0 in the order they're printed (for a profiler)\n"
                    "  --dump <file>    write the smooth shapes' scene as an image (a PPM), and check nothing\n"
                    "On the web: ?bench&save=<label> prints the records.\n"
                    "Set TIDE_BENCH_REVISION and TIDE_BENCH_MACHINE to identify the build and CPU/GPU.\n");
@@ -4130,8 +4576,8 @@ int main(const int argc, char **argv)
             return 2;
         }
     }
-    if (bench_label && !benching) {
-        fprintf(stderr, "draw: --save needs --bench\n");
+    if ((bench_label || bench_frames_prefix || bench_one) && !benching) {
+        fprintf(stderr, "draw: --save, --dump-frames and --only need --bench\n");
         return 2;
     }
     if (benching) {

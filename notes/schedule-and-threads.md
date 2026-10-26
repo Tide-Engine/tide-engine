@@ -1,5 +1,196 @@
 # The schedule and the tick on threads
 
+## Started operations and worker admission (2026-10-25)
+
+Task registry reads/writes participate in static scheduling and propagate
+through helpers. Writers serialize in the existing order. Task passes visit
+already-waiting operation dependencies before their continuations using an
+iterative walk over start-ordered due rows; every due row runs at most once
+per pass. Captured handles and direct await preserve serial logical results.
+Match registry/results are ordinary world state; local ones are machine-local.
+
+Worker tickets use a hash index and retired-only collection instead of scanning
+all live jobs for each lookup/release. Defaults limit private pending jobs to
+64, retained input captures to 64 MiB and frame capture/result transfers to
+4 MiB. Limits are soft: the crossing/oversized operation finishes so progress
+is possible. Direct starts suspend before arguments when admission is full;
+arguments containing waits precheck without reserving across the child wait,
+then retry with their frozen values. First-class calls capture at call time:
+their adapter-owned values are outside the private worker-capture budget.
+No hard process/job allocation cap or new allocation failure result is promised.
+
+Generated Tide safe points stop abandoned running calculations and synchronous
+helper chains; trusted C finishes its current call. Parallel helpers inherit
+the owner and stop taking iterations after cancellation. Cancelling one waiter
+preserves other consumers; dropping the last consumer abandons worker adapters,
+while ordinary async calls retain fire-and-forget. Disposal/rebind still drains
+provider completion before unloading code. Tests and timing: language.md,
+benchmarks.md.
+
+The first clean voxel batch showed extra pure-worker safe-point overhead.
+Pure workers now keep loop/body and helper-call checks without redundant checks
+before every ordinary statement. Async tasks and task_cpu helper chains retain
+statement checks, including immediate stopping after Cancel in a helper.
+Full merged native/web coverage retains queued/running cancellation, shared
+waiters, parallel helper stopping, self-cancel and teardown regressions.
+
+## Background local calculations (2026-10-24)
+
+Local workers share the platform's bounded pool with tick rounds. Their separate
+queue does not count an executing calculation as part of a synchronous round.
+Desktop workers check foreground invitations between jobs; browser workers
+distinguish foreground invitations from queue wakeups. Queue publication is
+synchronized, including Wasm memory growth. Match scheduling is unchanged.
+
+Worker parallel_for queues bounded helper callbacks, and its caller consumes
+iterations too. Helpers take priority; waiting workers only help loop work,
+never recursively entering another whole calculation. A full pool therefore
+needs no spare thread to finish its loops. Steps inherit private heap resolvers
+and use independent scratch; generated capture/output materialization prevents
+cross-thread scratch handles. Small loops or missing background/help callbacks
+run serially. Without a background provider, a worker runs on its first poll.
+
+Owner loss abandons publication without blocking that frame; disposal/rebind
+drains callbacks before capture release or code unload. platform/tests/jobs.c
+stresses twice the pool's thread count in background jobs with parallel loops,
+checking off-frame execution, exact once-only results and frame-thread release.
+Existing tick/pool regressions stay enabled. Language/lifetime tests: language.md.
+
+The worker audit skips abandoned queue items before entering game code. Group
+disposal atomically marks every item abandoned before helping the provider;
+already-running callbacks still finish under the original completion contract.
+test_worker pins skipping, full-group disposal and provider-owned item lifetime.
+
+Read-only grid worker snapshots also participate in the existing automatic
+foreach analysis. The planner receives a temporary slot for the already-private
+input handle; steps cannot write it. Ordered reductions retain the serial row
+walk. List-parallel helpers can read grid snapshots from the private input heap.
+worker_grids pins both paths, including actual shared-pool list work.
+
+## Schedule display grouped by stage (2026-10-22)
+
+`print_schedule` groups systems by increasing dependency depth, preserving
+their tick order within each stage, with a blank line between stages. A stable
+counting pass builds a separate display array in linear time; it does not
+reorder the program's systems, dependencies, queued effects or generated jobs.
+`tide schedule`, `tidec --schedule` and game schedule targets share this output.
+Stage numbers remain dependency depths, with no barrier between stages.
+
+The existing exact-output fixtures cover independent late-declared systems
+moving beside earlier systems of their stage, stable ordering within stages,
+named phases and unchanged views/event-handler sections. The schedule guide's
+demo now puts Steer and Expire together and explains when Fire can start.
+The Box3D package's order fixture also reads this display; its expected names
+now follow stage grouping for independent game/package systems.
+Validation: warning-free full native/web debug builds with Clang 23.1.2 and
+Node 24.21.0. The full native suite passed 2,553 of 2,554 tests; its sole failure
+was the Box3D display expectation above. After refreshing it, all 23 schedule
+and package-order checks pass. All 2,416 web tests pass, including WebGL,
+D3D11 and WebGPU. The production docs build passes, the entire demo schedule
+matches its guide example exactly, and all 20 compiler schedule goldens were
+checked to change only stable stage ordering and group spacing. Diff checks
+pass. Other operating systems, Android and sanitizers were not run locally;
+no CI workflow was dispatched.
+
+Merged origin/dev's documentation navigation changes, preserving both new
+docs-site note entries at their shared insertion point. The merged production
+docs build passes; there was no compiler or runtime overlap.
+
+Cache groups in the desktop pool (2026-10-20, platform/src/jobs.c): cores that
+share a last-level cache are a group, found on Windows from
+GetLogicalProcessorInformationEx (the largest unified cache level; only where
+there are several groups, each of two cores or more, between them every core,
+at most 8). A Ryzen 9 7900X has two of six. Data moves between groups slowly:
+a million particles tick in 0.086 ms on six threads pinned to one group, 0.38
+on three of each and 0.27 on all twelve, the C as much as Tide, while N-body,
+which is arithmetic, wants all twelve (0.43 against 0.62). So each worker is
+pinned to its group (SetThreadGroupAffinity), the pool's home group is the one
+it was made on, a thread that runs rounds is pinned to it from its first
+round (unpinned, the system moved it between groups and the world with it:
+0.13 ms where pinned was 0.086), and `run` takes either the home group's
+threads or every group's, per work function (`choice`): its first six rounds
+take each in turn, then the one whose last three rounds' middle time is
+lower, and every 64th round the other one, so a work that changes is found
+out. `run_some` and `more` stay in the home group first. Results never
+depend on which threads run. Paired against the pool before, gated, two
+rounds each on 12 threads: versus_particles 0.236 to about 0.09 ms, versus_life
+0.21 to 0.13, versus_wide 10-15% less, versus_sand as it was, versus_nbody
+within 5-10% (a few of its 32 rounds try the home group). macOS and the
+web keep one group.
+
+Linux and Android (2026-10-20, the owner's go-ahead with CI as the check):
+`platform/src/cpu_groups.h` reads sysfs (`/sys/devices/system/cpu`:
+`online`, each CPU's `cache/index*/{level,type,shared_cpu_list}`, the
+highest unified level's being the groups, and
+`topology/thread_siblings_list`, a core counted at its first CPU), with the
+same rules as Windows: several groups, each of two cores or more, disjoint,
+between them every online CPU, at most 8; otherwise one group and the old
+count (`smt/active`). Workers pin themselves with `sched_setaffinity`, the
+thread that runs rounds pins itself to the home group at its first round,
+and the home group is the one `sched_getcpu` finds the pool made on
+(`_GNU_SOURCE` in jobs.c on Linux and Android, for these and `CPU_SET`).
+Android often shows no cache directories, or one L3 for every core
+(DynamIQ), and keeps one group. `tide_platform_cpu_groups`
+(`platform/tests/cpu_groups.c`) reads made-up trees on every system: a
+7900X's two chiplets (two groups of six cores, SMT counted once), one
+shared L3, groups of one core, sixteen CPUs without SMT in four groups, an
+L2 last level, and none at all; and the list parser. It passes on Windows
+and, built by hand, on WSL2's Ubuntu; there `jobs.c` builds warning-free
+(strict C17) and a probe pointing the pool at the 7900X tree
+(`TIDE_CPU_SYSFS`, a compile-time default for that) ran 20 rounds with the
+caller and five workers on the home group's CPUs and six on the other's.
+WSL2 itself shows one L3 for all 24 CPUs, so no multi-cache Linux machine
+has run it: a Linux CI run, or a machine with chiplets, is its first real
+test.
+
+Grid parallel loops, performance pass (2026-10-20): `tide_par_window` works out a
+row's runs (where each chunk's cells go in the window, and where they start in
+their chunk's row) once for the window, as they're the same for every row that
+doesn't pass the last int, and copies runs up to 256 bytes inline rather than
+through memcpy, which a window called some 17,000 times a tick in versus_life.
+`tide_par_window_put` compares and copies those runs inline too, and a task
+whose own cells are exactly one whole chunk (one-cell blocks, the common case)
+compares its rows and, if any changed, fills a buffer it takes uninitialized
+(`buffer_for` with `whole`, grid.c) with every row of the window, rather than
+copying the chunk into the buffer first and then the rows that changed: rows
+that didn't change are the chunk's as it is, and no other task's own cells are
+in that chunk. With the compiler's `writes_own` (language.md), versus_life
+went from 0.583 to about 0.42 ms a tick on one thread; versus_sand, whose 2x2
+blocks are mostly not chunk-aligned, about 5%. The geometry stays 64-bit where
+it was (memory-safety.md).
+
+Picking tasks on threads (2026-10-20), in `engine/src/jobs.c` alone, the
+schedule and every result as they were:
+- A thread takes a system's tasks a few at a time where each is little work
+  (`BATCH_WORK`, 250,000 of tidec's units, as `PIECE_WORK`), as many as come to
+  that, never so many that the system has fewer takings than the tick has
+  threads (`system_state.batch`, `.batches`). Each task still runs with its own
+  queue, temporary handles and settling, one after another on that thread, so
+  what one thread would have recorded is unchanged; `finish_tasks` counts the
+  takings' tasks done at once. Threads asked for a system's work count
+  takings, not tasks.
+- Looking for work starts at `tick_run.front`, the first system that may have
+  something left to give out, which a thread moves past systems whose tasks
+  and settling are all given out, rather than at system 0 every time.
+- Each system's state is on a cache line of its own (`_Alignas(64)`, from an
+  aligned start in its memory), so threads counting one system's tasks don't
+  take the line from those looking at the next.
+`versus_systems` (64 systems, 16,384 entities of each kind, tasks of 2,048 rows
+of a cheap loop) went from 0.20 to 0.175 ms a tick on 2 threads and 0.14 to
+0.12 on 4 (alternating runs); past 6 threads this machine's runs vary too much
+to tell (threads on its second CCD). `jobs_cheap_tasks_are_taken_a_few_at_a_time`
+(`tests/test_jobs.c`) checks that 64 cheap tasks on eight threads each run
+once by their own number and ask for 7 threads, not 63; `platform/tests/jobs`
+and the e2e row, world-set and schedule fixtures check results against one
+thread. Measurements: notes/benchmarks.md.
+
+Query local fields (2026-10-19): attached local access and mutable-query effects
+propagate through synchronous helpers. Views/local handlers retain their
+existing serial order and named phases; match component data remains read-only
+and no World write is granted. Query mut helpers count as writers when lowering
+source evaluation order, as ordinary mut arguments already do. No match scheduler/thread behavior
+or runtime interface changes. Validation and alias contracts: language.md.
+
 World.Set beside read-only component parameters (2026-10-18) uses the existing
 global write effects and single-thread traversal, including writes propagated
 through helpers. A row reads the current component when entered, then keeps
@@ -40,7 +231,7 @@ Named `[Stage(Enum.Member, offset)]` phases and the reported schedule stage are 
 - Besides components and singletons, systems wait for each other over what's the whole match's: changing text or lists (its heap; reading it alongside is safe, as the heap's page table is read atomically and replaced ones are freed once systems are done, `tide_heap_settle`), and spawning by a system that runs on one thread (entity IDs are handed out in order, and it hands them out as it runs). C is trusted and counts for neither. A system only splits its entities across threads when it changes no text, list, grid or singleton (`system_splits`).
 - A parallel loop (`parallel (var at in cells by 2 offset o)` over a grid or `parallel (var i in items)` over a list, and a foreach over a grid whose steps only touch their own cell, `own_cell_only` in `compiler/src/check.c`) runs inside its system, a fork and join (`tide_parallel_for`): its steps go to a function of their own after the system's, with what they read of the code around them copied into a struct, and the pool's threads that have nothing else to do help (`help_loop` in `engine/src/jobs.c`) unless it's next to no work, as they're awake already and tidec can't tell how long the loops inside a step go on; outside a threaded tick, or for a small loop, the system's thread runs them alone. A loop's steps count as its tick's work where they can be told (a singleton's grid or list, above); a tick with a loop whose steps can't runs on threads. Its tasks are tiles, the blocks that start in one chunk's place (`tide_par_tile`): every place a sized grid's blocks start in, or for a grid with an open axis, the places of the chunks it has and of those before them whose blocks get into them, where a block that takes in none of its chunks is skipped (`tide_par_live`). A step writes into a copy of its chunk (`tide_par_buffer`, made with a compare-and-swap, the first one's for all, from a pool kept across loops), and reads the grid itself, which doesn't change while the steps run; the loop's end puts the copies into the grid in chunk order (`tide_par_end`). Where it can (`plan_window` in `compiler/src/check.c`), a task reads the cells its blocks reach at their place plus constants once, into a window (`tide_par_window`), and its steps read and write a copy of it as plain memory, which the C compiler can run with SIMD; the rows that changed go into their chunks' copies (`tide_par_window_put`). A task's blocks are numbered from its own first one, and a window is where it starts and how many cells it is across, so nothing in a step's setup goes past an int wherever the loop's offset and cells are (see Language: no Tide code can corrupt memory). A parallel loop over a list (`parallel (var i in items)`, `tide/list.h`) gives each task a copy of its blocks' elements, which its steps write while they read the list itself, and the loop's end puts the runs that changed into the list, chunk by chunk (`tide_par_list_end`). A foreach over a grid that goes in order goes row by row (`tide_grid_rows`), over a grid with an open axis through the chunks it has, sorted, in the scratch area (`tide_scratch_memory`, freed with the area's mark).
 - A system that splits and spawns gives temporary handles (`TIDE_ENTITY_TEMPORARY` in the generation, with its task's number; `tide_new_entity`). Once its tasks are done, it settles them (`tide_settled`): its entities get IDs in the order one thread would have given them, and its tasks' queues (`tide_settle_item`) and the entity fields of its `mut` components (`tide_settle_<system>`) get the real handles. Settling keeps the tick's order among spawning systems (each settles after the one before it that spawns is done) and comes before anything waiting for the system starts, so the IDs are the same as on one thread. Systems look entities up while one makes them, so the entity table's page table is read atomically like the heap's (`tide_entities_settle`). Text shows a temporary handle as `Entity(new)`, and C tells with `tide_entity_is_temporary`.
-- The language server shows each system's stage and waits above it and on hover, and `tidec --schedule` (or the `<game>_schedule` build target) prints it as text for CI and agents. `compiler/tests/schedule/` pins its output.
+- The language server shows each system's stage and waits above it and on hover, and `tidec --schedule` (or the `<game>_schedule` build target) prints it as text for CI and agents. `compiler/tests/schedule/` pins its output. `tidec --outline` (`compiler/src/outline.c`, 2026-10-21) gives the same per system as JSON beside every other declaration (each stage, wait with its `describe_wait` reason, and the first few alongside, with the counts of the rest), for tide unity's `outline.json`; `compiler/tests/outline/` pins it.
 - The analysis keeps who runs after whom as bits, a row a system, and whether two systems conflict as a yes or no; it only works out what a wait is over for the waits it lists. Those are every wait that's a system's own and the first 32 that go through another system, and it lists the first 32 systems each runs alongside, counting the rest (`decl.waits_unlisted`, `decl.alongside_count`): a game with thousands of systems has millions of pairs. Generated code names only a system's own waits (`tide_waits_<system>`), as one that goes through another system is done by the time that system is.
 
 ## Internal tick completion slots (2026-10-11)

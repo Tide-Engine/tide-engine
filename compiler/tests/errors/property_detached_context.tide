@@ -1,0 +1,5 @@
+// expect: needs an attached component: this value is a detached copy
+component Marker { Entity identity { get { return this; } } }
+Entity Identity(Marker marker) { return marker.identity; }
+scene Main;
+system Tick() { var copied = Marker {}; _ = Identity(copied); }

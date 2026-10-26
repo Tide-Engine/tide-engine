@@ -1,10 +1,87 @@
 # Web builds
 
+## Twelve texture bindings (2026-10-25)
+
+The existing gpu_pipeline_begin bridge carries two eight-slot banks of three-bit
+read kinds, as two uint32 arguments. JavaScript decodes each bank with shifts
+below thirty-two; no BigInt or retained WASM pointer crosses the call. WebGPU's
+bound arrays hold twelve slots while layouts/bind groups use the actual count.
+The runtime fixture exercises every read kind independently in slots 8..11;
+the texture-capacity pixel fixture compares high-slot sampling against low-slot
+references and repeats after device loss. The release runtime was regenerated
+with Node 24.22.1, and all five runtime tests passed, including the independent
+high-slot bridge/layout fixture. WebGL2, Direct3D11 ANGLE and WebGPU pixel/read-kind
+checks passed; WebGPU repeated them after forced device loss and recreation.
+The WASI capture test and all 82 draw-filter tests passed. The embed target
+compiled for WASM; its packet test ran natively, as no web embed runner exists.
+
+## Started tasks and worker controls (2026-10-25)
+
+Task registries, tracing and cached typed results use the same generated C
+and owned containers under WASI. Cancellation safe points and soft worker
+admission/transfer budgets need no JavaScript import or browser flag.
+The existing wasi-threads provider still publishes completion before release;
+unthreaded hosts retain synchronous polling. The sharded positive worker
+fixture keeps local handles valid while match handle ownership is deferred.
+Contracts and complete validation: language.md, schedule-and-threads.md.
+
+## Local background workers (2026-10-24)
+
+The existing wasi-threads pool also consumes the local-worker queue. Foreground
+round invitations have a separate counter from background wakeups, preventing
+a queue notification from joining a tick round twice. Helpers have queue
+priority, and waiting workers help them without needing another available
+thread. Queue/result acquisitions call memory_sync for pages another thread
+grew. Captures are detached before dispatch; workers use private heaps/scratch.
+Where the page has no threads/provider, polling runs a worker synchronously.
+No JavaScript import, browser flags or deployment requirements changed.
+Ownership, language limits and validation: language.md, schedule-and-threads.md.
+The served web_threads regression also runs a background job and its parallel
+loop between frames beside the existing deterministic tick comparison; the
+final browser run passes. Typed nested/optional/error results run through both
+the serial fallback and the actual platform pool under WASI.
+
+The approved grid-input extension uses the same publication/heap synchronization
+contract. Generated capture materializes source directory/chunks before queueing,
+including packed images. worker_grids exercises source/pack changes, restore,
+shared-pool readers and ordinary foreach order without changing JavaScript APIs.
+
+Invite readiness (2026-10-22): a built-in web host's `Session.invite` stays
+empty until the relay confirms registration, preventing a fast copied-link
+join from exhausting missing-room retries before its host is registered.
+The internal `room_invite` import returns bytes including the NUL so an empty
+replacement succeeds without falling back to the raw code. The release runtime
+and manifest were regenerated. Reproduction, contracts and validation are in
+`notes/webrtc-and-rooms.md`, Web invites wait for registration.
+
+Prewarmed pipelines (2026-10-22): a page prewarms the game's shaders as
+desktop does (`notes/rendering.md`, Pipelines made before they're drawn),
+in the background where background pipelines are on, so its first frame
+isn't held. It has no temporary cache folder, so it keeps no `pipelines.keys`
+between visits: a shader is made the ways its kind drew once one has. WebGL
+shares a program between pipelines of the same sources (`gpu_gl.c`). No
+`tide.js` change.
+
+Invite links (2026-10-21): `tide.js` gained the `room_invite` import, the link
+that joins a room: `location.href` cut at its query or fragment, `?join=` and
+the URI-encoded room, 0 on a page that isn't `http:`, `https:` or `file:` and
+for one that doesn't fit. It's `Session.invite` on the web
+(`notes/webrtc-and-rooms.md`); `?join=` itself is unchanged. `tide.release.js`
+was regenerated (69,935 bytes).
+
+A page's own program running the frames (2026-10-20): `Tide.pageFrames` makes
+frames while the page is shown come only from `Tide.frame()`, which the page's
+other program calls from its own frame (a Unity WebGL player, through
+com.tide.unity's Tide.jslib); hidden, the worker runs them as before, so a match
+never waits on it. `Tide.exports()` and `Tide.memory()` give that program the
+Tide program's exports and memory. `tide.release.js` was regenerated. Used by
+`tide unity --web` (notes/unity.md, Web as built); every other page is as it was.
+
 Managed deployment (2026-10-15): normal players retain wasm32-wasip1-threads;
 the new server artifact is a separate single-threaded wasm32-wasip1 reactor,
 without platform/render/audio libraries or Node WASI. Its bounded host ABI,
 guest imports, memory/CPU interruption and actual browser-to-server test are in
-managed-hosting.md and hosting/README.md. No web hot-update behavior changes.
+managed-hosting.md and hosting/README.md (both in tide-services). No web hot-update behavior changes.
 
 Browser playground (2026-10-14): `Tide.reload = 'manual'` opts the docs preview
 into supplied builds. After device setup, `Tide.ready()` is called with
@@ -19,6 +96,19 @@ are unchanged; all new lines are inside the excluded `tide run` markers.
 `tide.release.js` remains 68,931 bytes; its source fingerprint was regenerated.
 The docs compiler worker/bundle and integration checks are in notes/docs-site.md.
 
+Background pipelines (2026-10-20): `tide.js` adds the `gpu_background` and
+`gpu_pipeline_ready` imports. WebGPU uses `createRenderPipelineAsync` while
+background is on. WebGL enables `KHR_parallel_shader_compile`; `glCompileShader`
+and `glLinkProgram` no longer query status, whose warnings moved to
+`glGetShaderiv`/`glGetProgramiv`, and `COMPLETION_STATUS_KHR` answers true
+without the extension. `Tide.backgroundPipelines = false` (or
+`?background-pipelines=off`) keeps pipelines synchronous on both backends. The
+four prototype fixtures that step frames and compare screenshots (GRAVEWAKE,
+Inside Out, SUNDAY SUPPER, Underfoot) set it. Without it,
+`underfoot_play_webgpu` failed once under full-suite load: one player's frame
+was screenshotted before a new puzzle's pipeline was made. Release runtime
+regenerated: 69,585 bytes. Design and tests are in `notes/rendering.md`.
+
 Texture compression (2026-10-11): WebGL enables `WEBGL_compressed_texture_s3tc` before querying supported formats; WebGPU requests `texture-compression-bc` only when advertised, alongside optional timestamps. Timestamp failure retains BC support on a fresh adapter; an adapter without requested optional features still gets a plain device request. BC uploads include physical block extents for tail mips. Missing format support uses the existing RGBA upload path. Test pages can disable compression with `?texture-compression=off` (or `Tide.textureCompression = false`); renderer fallback checks run on both web backends and repeat after WebGPU device loss. The checked-in release runtime was regenerated with the pinned toolchain (66,519 bytes). Contracts and final validation are in `notes/textures.md`.
 
 Multisampled depth (2026-10-13): `gpu_resolve_depth` in `tide.js` and its import in `gpu_web.c` make a multisampled WebGPU target's depth a texture a shader reads (`notes/render-targets.md`). WebGL 2 goes through `gpu_gl.c`'s blit with functions the page already had. The checked-in release runtime was regenerated with `node cmake/web_runtime.mjs --write` (68,931 bytes).
@@ -31,6 +121,14 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 
 ### Web builds
 
+A page's own program running the frames (2026-10-20): `Tide.pageFrames` makes
+frames while the page is shown come only from `Tide.frame()`, which the page's
+other program calls from its own frame (a Unity WebGL player, through
+com.tide.unity's Tide.jslib); hidden, the worker runs them as before, so a match
+never waits on it. `Tide.exports()` and `Tide.memory()` give that program the
+Tide program's exports and memory. `tide.release.js` was regenerated. Used by
+`tide unity --web` (notes/unity.md, Web as built); every other page is as it was.
+
 - Standalone release pages use checked-in `platform/web/tide.release.js` and gzip program/pack payloads only when smaller (2026-10-10). The runtime detects gzip magic after base64 decoding and inflates synchronously before WASM instantiation or asset loading, checking the output length and CRC32; raw payloads still work. Debug and watched pages keep `tide.js` and raw bytes. CMake Release/MinSizeRel selects the generated runtime; CLI release builds select the installed copy, with embedded clang's existing zlib supplying compression. The gzip header fixes mtime to zero and OS to 255 for reproducible output. No engine ABI, WASM import, worker-message or public page property is renamed.
   - `cmake/web_runtime.mjs --write` is a maintainer step after `npm ci --prefix docs`, pinned to the existing Rolldown 1.2.12. It tree-shakes only synchronous gunzip from fflate 0.8.3 (upstream commit `a661bab4c135c368b6e68af3be1904f89ed070cf`), then removes comments/whitespace and mangles local identifiers with compression and property mangling disabled. Keeping scope boundaries matters because `threadMain` is serialized for workers. fflate's MIT notice is included in every generated page and installed under `licenses/fflate/`.
   - `tide.release.json` records normalized source/generator/vendor hashes and the generated output hash. `cmake/WebRuntime.cmake` validates them with CMake alone, including on fresh checkouts without npm dependencies; `--check` does the same with Node's built-ins. Only regeneration needs docs dependencies. Paths are canonical before entering `CMAKE_CONFIGURE_DEPENDS`, to avoid Ninja seeing the included verification file under two spellings. The checked-in runtime is 65,134 bytes with its decoder, checksum checks and full license notice, versus the previous shipped readable runtime's 148,672 bytes on this checkout.
@@ -39,7 +137,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 - The `web-debug` and `web-release` presets build everything as WebAssembly with clang's own wasm target and wasi-libc, not Emscripten: `cmake --workflow --preset web-debug` (see `cmake/wasi-toolchain.cmake`). They need clang with `wasm-ld` (LLVM's releases have it; on Linux, the distribution's `lld`) and Node. wasi-sdk's C library is downloaded once into `build/wasi-sdk-<version>`, pinned.
 - Tests run under Node's WASI through CTest (`cmake/run_wasi.mjs`), so the determinism hashes cover exactly what ships. Games generate their C with a native tidec, which web builds build first in `<build>/host` (`cmake/HostTidec.cmake`), with the same `TIDE_VERSION`, which `#if TIDE_0_3_OR_NEWER` reads (`compiler/src/version.c`).
 - In the browser, `platform/web/tide.js` runs the program: the canvas, input and frame loop (`platform/web/tide_web.h`), what the renderer draws with (WebGPU, or the OpenGL ES 3 functions of `platform/src/gl.h` on WebGL 2: see Rendering and platform), and the few WASI functions wasi-libc needs. The platform layer's window there is the page's canvas (`platform/web/canvas.c`). A web page is one self-contained `.html` with the program inside (`cmake/web_page.mjs`, or tide).
-- A page's address says a few of the things a command line does (`tide.js`, where it makes the program's arguments): `debug-views` is `--debug-views`, and `host` and `join=<code>` are `--host` and `--join <code>`, unless the page's own `Tide.arguments` say which match; so a link can be an invitation, and a page that shows games in frames can put them in one match (the docs' examples do: see Docs site). For such a page, `Tide.room` is the code of the room the program hosts or joined, `""` for none, read as it is at that moment. `Tide.lag`, or `lag=<ms>` in the address, is the round trip to its match's server the page's player is to have (2 seconds at most), which the page can change as the game runs: latency to look at with both players at one desk, since nothing else gives a page any. These three are Provisional: picks of the docs' examples' that the owner hasn't confirmed, but for what a lag means (below).
+- A page's address says a few of the things a command line does (`tide.js`, where it makes the program's arguments): `debug-views` is `--debug-views`, and `host` and `join=<code>` are `--host` and `--join <code>` (letters, digits and a slash, so `join=K7QF2M/0` asks for a server's match, as a sharded world's front is), unless the page's own `Tide.arguments` say which match; so a link can be an invitation, and a page that shows games in frames can put them in one match (the docs' examples do: see Docs site). For such a page, `Tide.room` is the code of the room the program hosts or joined, `""` for none, read as it is at that moment. `Tide.lag`, or `lag=<ms>` in the address, is the round trip to its match's server the page's player is to have (2 seconds at most), which the page can change as the game runs: latency to look at with both players at one desk, since nothing else gives a page any. These three are Provisional: picks of the docs' examples' that the owner hasn't confirmed, but for what a lag means (below).
   - A lag is a ping (agreed 2026-10-05): the session's, the network's whole round trip to the match's server (see Networking), with what the network takes already in it. A lag of 100 reads as a ping of 100: not 100 each way, and not 100 more than the player had.
   - So the page has to know the ping. The session measures it, and a host says it every frame: `tide_platform_room_ping(ping_ms, answer_ms)` (`platform/src/rooms.c`; nothing on desktop), which `tide/host.h` calls with its client's `ping_ms` and `answer_ms`, the ping -1 (none) for a machine that runs the server and for one not in the match yet: the round trips of joining aren't like a match's. A host that never says gets the lag on top of its ping.
   - The page adds what's missing (`added` in `tide.js`: the lag less `rest`, what the ping is with nothing added), half to what it sends and half to what it receives, so each way is late by as much. What it holds back arrives, to the program, when it's let go: the datagram's arrival, which the ping is measured to (`room_arrived`), is noted then.

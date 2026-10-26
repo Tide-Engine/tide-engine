@@ -205,30 +205,23 @@ TIDE_TEST(steam_lobbies_and_messages_take_players_into_a_match_that_follows_the_
     TIDE_REQUIRE(until(all_alone));
     TIDE_CHECK(FakeSteamStarts() == 0); // Steam isn't started until a player asks something of it
 
-    // Matchmaking: a ticket searches while Steam answers, and ends in a lobby the first to ask made
     order(ANN, Order_Quick, "duel");
     TIDE_REQUIRE(until(ann_searches));
     TIDE_REQUIRE(until(ann_made));
-    // Identity: the Steam user, by its ID and its name
     TIDE_CHECK(is(ANN, CLIENT(ANN).me.id, ANN_ID) && is(ANN, CLIENT(ANN).name, "Ann"));
     TIDE_CHECK(is(ANN, CLIENT(ANN).lobby.id, LOBBY_ID) && is(ANN, CLIENT(ANN).lobby.owner, ANN_ID));
     TIDE_CHECK(strcmp(FakeSteamData("mode"), "duel") == 0 && strcmp(FakeSteamData("name"), "Quick") == 0);
-    // ...which the next two find, where another mode's search would make its own
     order(BOB, Order_Quick, "duel");
     order(CAT, Order_Quick, "duel");
     TIDE_REQUIRE(until(three_in_lobby));
     TIDE_CHECK(is(BOB, CLIENT(BOB).lobby.id, LOBBY_ID) && is(CAT, CLIENT(CAT).lobby.id, LOBBY_ID));
     TIDE_CHECK(CLIENT(ANN).owned && !CLIENT(BOB).owned && !CLIENT(CAT).owned);
-    // A name that a JSON writer has to mind arrives whole
     TIDE_CHECK(is(ANN, REMOTE(ANN).names, "Ann,Bob,Cat \"C\\\" Ray"));
 
-    // Lobbies: a member's data and the owner's changes reach the others through Steam's callbacks
     order(BOB, Order_Ready, "");
     order(CAT, Order_Color, "teal");
     order(ANN, Order_Rename, "Friday");
     TIDE_REQUIRE(until(data_seen));
-    // What another program wrote into the lobby's data is another player's bytes: text that isn't UTF-8 is
-    // made text, and the package's own keys aren't the game's data
     FakeSteamUser(1);
     FakeSteamForge("name", "Fri\xFF" "day\"\\");
     FakeSteamForge("tide_match", "not a Steam ID");
@@ -237,31 +230,26 @@ TIDE_TEST(steam_lobbies_and_messages_take_players_into_a_match_that_follows_the_
     FakeSteamUser(1);
     FakeSteamForge("tide_match", "");
 
-    // Transport: the owner's match opens on Steam's messages, joined by its Steam ID, which the lobby names
     order(ANN, Order_Start, "");
     TIDE_REQUIRE(until(three_play));
     TIDE_CHECK(ANN->status.server && ANN->status.open && !BOB->status.server && !CAT->status.server);
     TIDE_CHECK(ANN->network.on && BOB->network.on && CAT->network.on);
     TIDE_CHECK(strcmp(FakeSteamData("tide_match"), ANN_ID) == 0);
 
-    // A fourth finds the lobby in a list of its mode, joins it, and is in its match
     order(DAN, Order_List, "duel");
     frame();
     TIDE_REQUIRE(until(dan_listed));
     order(DAN, Order_Join, "");
     TIDE_REQUIRE(until(four_play));
-    // A kick is the owner's list in the lobby's data, which the listed player's own program obeys...
     order(ANN, Order_Kick, DAN_ID);
     TIDE_REQUIRE(until(dan_out));
     TIDE_CHECK(CLIENT(DAN).failure == Lobbies_LobbyFailure_Kicked);
     TIDE_CHECK(strcmp(FakeSteamData("tide_kicked"), DAN_ID ",") == 0);
-    // ...and which keeps it out
     order(DAN, Order_Join, "");
     frame();
     TIDE_REQUIRE(until(dan_settled));
     TIDE_CHECK(CLIENT(DAN).failure == Lobbies_LobbyFailure_Kicked && is(DAN, CLIENT(DAN).lobby.id, ""));
 
-    // The match's packets go over Steam's messages: each runs their own way, and every machine's world is the same
     ANN->devices.keyboard.d.held = ANN->devices.keyboard.d.pressed = true;
     BOB->devices.keyboard.a.held = BOB->devices.keyboard.a.pressed = true;
     CAT->devices.keyboard.d.held = CAT->devices.keyboard.d.pressed = true;
@@ -272,8 +260,6 @@ TIDE_TEST(steam_lobbies_and_messages_take_players_into_a_match_that_follows_the_
     TIDE_CHECK(BOB->status.client.resyncs == 0 && CAT->status.client.resyncs == 0);
     TIDE_CHECK(BOB->status.sent_bytes > 0 && BOB->status.received_bytes > 0);
 
-    // Host migration: the host leaves the lobby, and Steam hands it to Bob. Bob's machine takes the match
-    // over, Cat's joins it at Bob's Steam ID, and the lobby names the match by its new host
     const int bob_events = BOB->connected + BOB->disconnected, cat_events = CAT->connected + CAT->disconnected;
     const float bob_was = REMOTE(BOB).mine;
     order(ANN, Order_Leave, "");
@@ -287,8 +273,6 @@ TIDE_TEST(steam_lobbies_and_messages_take_players_into_a_match_that_follows_the_
     TIDE_CHECK(players_agree(BOB, CAT, &same) > 0 && same);
     TIDE_CHECK(bob_hosts());
 
-    // A match its host ended isn't taken over. Cat hears nothing more (the goodbye is lost with the rest),
-    // goes to the lobby as for a host that went, and reads there that the match ended
     FakeSteamDeafen(3, true);
     cat_gone_before = CAT->disconnected;
     order(BOB, Order_End, "");

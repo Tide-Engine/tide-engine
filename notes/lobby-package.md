@@ -77,7 +77,7 @@ Each is `virtual` functions whose bodies are Tide's own service. The identity, l
 
 ## Not built
 
-- **The relay on Fly has the lobbies** (deployed 2026-10-11 at dev `f4fd43fe`, by the agent at the owner's word, from a clean export after its 37 tests): sign-in, making, listing and the sweep of an abandoned lobby were checked against `https://relay.tide-engine.dev`. A change to `relay/lobbies.mjs` reaches games only with another `fly deploy --ha=false` from `relay/`, which restarts the machine and ends the rooms and lobbies in its memory.
+- **The relay on Fly has the lobbies** (deployed 2026-10-11 at dev `11a0fb16`, by the agent at the owner's word, from a clean export after its 37 tests): sign-in, making, listing and the sweep of an abandoned lobby were checked against `https://relay.tide-engine.dev`. A change to `relay/lobbies.mjs` reaches games only with another `fly deploy --ha=false` from `relay/`, which restarts the machine and ends the rooms and lobbies in its memory.
 - An EOS package, and an identity the service verifies. (Steam: `packages/steam`, not yet run against Steam.)
 - Parties that outlast a lobby: `LobbyClient` has one lobby. `seats` goes through to the relay, and a party's members would each join what's found. The relay allows a player four lobbies, for a party and the match's.
 - A queue: tickets are found at once.

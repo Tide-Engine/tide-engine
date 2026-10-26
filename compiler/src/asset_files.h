@@ -63,6 +63,9 @@ typedef struct asset_value {
 asset_value *asset_resolve(const char *declaring, str path, asset_kind kind, bool many, bool is_map, loc at, const char *game_folder);
 asset_value *asset_resolve_paths(const char *declaring, str path, asset_kind kind, bool many, bool is_map, loc at,
                                  const char *game_folder);
+// Select a lazily cached generated-tangent copy for a static float4-tangent
+// consumer. Other declarations and editor metadata retain the canonical mesh.
+bool asset_mesh_tangents(asset_value *value, loc at);
 // Decode the language literal's escapes and normalize path separators (arena).
 const char *asset_written_path(str text);
 

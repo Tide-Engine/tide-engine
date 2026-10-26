@@ -98,3 +98,25 @@ TIDE_TEST(absolute_path_of_a_file_not_there_yet)
     free(here);
     sys_remove_tree(WORK);
 }
+
+// A run's folder is its own while it has the folder's lock (open_run in build.c)
+TIDE_TEST(a_locked_file_is_one_process_holders_at_a_time)
+{
+    sys_remove_tree(WORK);
+    TIDE_REQUIRE(sys_mkdirs(WORK));
+    sys_lock *held = sys_lock_file(WORK "/watch-1.lock");
+    TIDE_REQUIRE(held != NULL);
+    TIDE_CHECK(sys_exists(WORK "/watch-1.lock"));
+    // Another holder, even in this process, waits for it to be let go of
+    sys_lock *again = sys_lock_file(WORK "/watch-1.lock");
+    TIDE_CHECK(again == NULL);
+    // ...which leaves the others free
+    sys_lock *beside = sys_lock_file(WORK "/watch-2.lock");
+    TIDE_CHECK(beside != NULL);
+    sys_unlock(held);
+    again = sys_lock_file(WORK "/watch-1.lock");
+    TIDE_CHECK(again != NULL);
+    if (again) sys_unlock(again);
+    if (beside) sys_unlock(beside);
+    sys_remove_tree(WORK);
+}

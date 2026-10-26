@@ -32,7 +32,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "WASI")
     # Threads, which older clang doesn't take from the target's name. Only when
     # compiling: older clang warns that -pthread does nothing for a link. And
     # WebAssembly's SIMD, whose operations give the same results on every
-    # machine (relaxed SIMD's don't, and stays off: see AGENTS.md, Determinism).
+    # machine (relaxed SIMD's don't, and stays off for determinism).
     add_compile_options(-pthread -msimd128)
 else()
     set(TIDE_WEB OFF)
@@ -59,18 +59,43 @@ if(TIDE_SANITIZE)
 endif()
 include(cmake/WebTest.cmake)
 include(cmake/VulkanTests.cmake)
+include(cmake/HlslTests.cmake)
 find_program(TIDE_NODE NAMES node) # Tests that run Node: web builds need it anyway
 
 option(TIDE_PLATFORM "Build the platform layer and the demo. Desktop builds download GLFW." ON)
+option(TIDE_VISUALIZERS "Build every native game as tide's debug builds are, with its natvis and LLDB views (tide_add_game VISUALIZERS)" OFF)
 option(TIDE_TOOLS_ONLY "Build only tidec, as web builds do for their host (cmake/HostTidec.cmake)" OFF)
-option(TIDE_PRIVATE_PROTOTYPES "Build opt-in prototypes (shareable browser staging; no package install)" OFF)
+# Folders outside this repo built as part of it, after the engine's own games:
+# a list of paths, each with a CMakeLists.txt that uses tide_add_game and the
+# engine's targets as the games here do. Defaults to the environment's
+# TIDE_EXTERNAL_DIRS (a list separated as the system's PATH is).
+set(tide_external_default "")
+if(DEFINED ENV{TIDE_EXTERNAL_DIRS})
+    cmake_path(CONVERT "$ENV{TIDE_EXTERNAL_DIRS}" TO_CMAKE_PATH_LIST tide_external_default NORMALIZE)
+endif()
+set(TIDE_EXTERNAL_DIRS "${tide_external_default}" CACHE STRING "Folders outside this repo built with it (games and their tests)")
 
 # What the tide command says it is, and where it looks for updates. Release
 # builds get the version semantic-release picked (.github/workflows/build.yml);
 # anything else is a development build, which never looks for updates. tidec
 # has it too, for `#if TIDE_0_3_OR_NEWER`, so web and Android builds' host tidec
 # gets the same (cmake/HostTidec.cmake).
+# A development build is the newest version tagged in this checkout's history
+# (a nightly's or a stable's, without its pre-release part); VERSION is the floor
+# for a checkout with no tags, such as CI's shallow ones. Releases don't commit
+# VERSION back, so release and dev never wait on each other.
 file(STRINGS "${CMAKE_CURRENT_SOURCE_DIR}/VERSION" TIDE_BASE_VERSION LIMIT_COUNT 1)
+find_package(Git QUIET)
+if(GIT_FOUND AND NOT DEFINED CACHE{TIDE_VERSION})
+    execute_process(COMMAND "${GIT_EXECUTABLE}" describe --tags --abbrev=0 --match "v[0-9]*"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" OUTPUT_VARIABLE tide_tag
+        OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET RESULT_VARIABLE tide_tag_result)
+    if(tide_tag_result EQUAL 0 AND tide_tag MATCHES "^v([0-9]+\\.[0-9]+\\.[0-9]+)")
+        if(CMAKE_MATCH_1 VERSION_GREATER TIDE_BASE_VERSION)
+            set(TIDE_BASE_VERSION "${CMAKE_MATCH_1}")
+        endif()
+    endif()
+endif()
 set(TIDE_VERSION "${TIDE_BASE_VERSION}-dev" CACHE STRING "tide's version")
 
 # tide_add_game runs tidec: this build's, or in web and Android builds a native
@@ -98,6 +123,8 @@ set(TIDE_CHANNEL "nightly" CACHE STRING "The update channel tide starts on: stab
 # prebuilt platform layer.
 file(CONFIGURE OUTPUT "${CMAKE_BINARY_DIR}/package/VERSION" CONTENT "${TIDE_VERSION}\n")
 install(FILES "${CMAKE_BINARY_DIR}/package/VERSION" DESTINATION . COMPONENT tide)
+# Tide's own license, beside those of what it redistributes (licenses/<name>/).
+install(FILES LICENSE-MIT LICENSE-APACHE DESTINATION licenses/tide COMPONENT tide)
 # The packages that come with tide (packages/, a folder each) are sources too,
 # beside the engine's in the package: tide compiles one with the games that
 # list it by its name, and with no other. They install as they are, but for
@@ -121,11 +148,10 @@ add_subdirectory(compiler)
 if(TIDE_NODE)
     # Adapter tests use editor/process doubles and run without VS Code on any host.
     add_test(NAME tide_vscode_adapter COMMAND "${TIDE_NODE}" --test
-        "${CMAKE_CURRENT_SOURCE_DIR}/tools/tide-vscode/test/extension.test.mjs")
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/tide-vscode/test/extension.test.mjs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/tide-vscode/test/debug.test.mjs")
     add_test(NAME relay COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/relay/relay.test.mjs"
         "${CMAKE_CURRENT_SOURCE_DIR}/relay/lobbies.test.mjs")
-    # The build service (builds/), the same way, with a tide that stands in for one.
-    add_test(NAME builds COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/builds/builds.test.mjs")
     # The Android wrapper's file transfers, with adb mocked and no device.
     add_test(NAME tide_android_runner COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/cmake/run_android.test.mjs")
 endif()
@@ -146,6 +172,21 @@ if(TIDE_PLATFORM)
             add_test(NAME tide_server_room COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/platform/tests/server_pack.mjs"
                 "$<TARGET_FILE:tide_server_smoke>" "$<TARGET_FILE:tide_server_pack_client>" room)
             set_tests_properties(tide_server_room PROPERTIES TIMEOUT 20)
+            # A sharded world on a dedicated server, and a player walking across its border
+            tide_add_game(tide_server_shards SERVER NAME game SOURCES "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/shards_players.tide")
+            tide_add_game(tide_server_shards_client NAME game
+                SOURCES "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/shards_players.tide"
+                HOST "${PROJECT_SOURCE_DIR}/platform/tests/server_shards_client.c")
+            target_link_libraries(tide_server_shards_client PRIVATE tide_platform)
+            add_test(NAME tide_server_shards COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/platform/tests/server_pack.mjs"
+                "$<TARGET_FILE:tide_server_shards>" "$<TARGET_FILE:tide_server_shards_client>" shards)
+            add_test(NAME tide_server_shards_room COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/platform/tests/server_pack.mjs"
+                "$<TARGET_FILE:tide_server_shards>" "$<TARGET_FILE:tide_server_shards_client>" shards-room)
+            # ...and the same server killed outright, going on from its journal
+            add_test(NAME tide_server_shards_journal COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/platform/tests/server_journal.mjs"
+                "$<TARGET_FILE:tide_server_shards>")
+            set_tests_properties(tide_server_shards tide_server_shards_room PROPERTIES TIMEOUT 30)
+            set_tests_properties(tide_server_shards_journal PROPERTIES TIMEOUT 80) # Three processes, 25 seconds each
         endif()
         tide_add_game(tide_server_entry SERVER NAME game SOURCES
             "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/server_menu.tide"
@@ -161,8 +202,8 @@ if(TIDE_PLATFORM)
         add_subdirectory(tools/tide-editor)
     endif()
     add_subdirectory(demo)
-    add_subdirectory(sandbox) # Opens a window, so it needs the platform layer
     add_subdirectory(examples/duel)
+    add_subdirectory(examples/earth) # A sharded planet, on the docs site's home page
     add_subdirectory(bench)   # Ticks on the platform layer's threads
 endif()
 
@@ -173,7 +214,18 @@ add_subdirectory(examples/towers)
 add_subdirectory(examples/sumo)
 add_subdirectory(examples/samples)
 add_subdirectory(examples/network) # A game on a network of its own, and its test
-add_subdirectory(prototypes) # Private games; catalog staging is explicit
+add_subdirectory(examples/robotics/arm)
+add_subdirectory(examples/robotics/microduck)
+# Each external folder builds under external/<its folder's name> in this tree.
+foreach(dir IN LISTS TIDE_EXTERNAL_DIRS)
+    cmake_path(ABSOLUTE_PATH dir BASE_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}" NORMALIZE OUTPUT_VARIABLE external)
+    string(REGEX REPLACE "(.)/+$" "\\1" external "${external}")
+    if(NOT EXISTS "${external}/CMakeLists.txt")
+        message(FATAL_ERROR "TIDE_EXTERNAL_DIRS names ${external}, which has no CMakeLists.txt")
+    endif()
+    cmake_path(GET external FILENAME name)
+    add_subdirectory("${external}" "external/${name}")
+endforeach()
 
 # The docs' live examples open a window, so they need the platform layer, and
 # come after the packages: the physics examples are built with one each.

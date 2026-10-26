@@ -145,7 +145,7 @@ static qname parse_qname(parser *p, const char *what)
 // Generic types, which take a type in <>.
 static bool generic_name(const str name)
 {
-    return generic_form_named(name) != NULL;
+    return str_eq_c(name, "Func") || generic_form_named(name) != NULL;
 }
 
 // Where a type that starts at the token `i` ahead ends: the token after it,
@@ -166,7 +166,7 @@ static int skip_type(const parser *p, int i)
             if (k == T_LT) depth++;
             else if (k == T_GT) depth--;
             else if (k == T_SHR) depth -= 2;
-            else if (k != T_IDENT && k != T_DOT && k != T_COMMA && k != T_QUESTION) return -1;
+            else if (k != T_IDENT && k != T_MUT && k != T_DOT && k != T_COMMA && k != T_QUESTION) return -1;
             i++;
         }
         if (depth < 0) return -1;
@@ -211,14 +211,15 @@ static void put_size_text(sb *out, const expr *e)
 // `r`'s text from its parts: "Map<K, V>", with that comma and space, and '?' after.
 static void set_type_text(type_ref *r)
 {
-    if (r->args.count == 0 && r->sizes.count == 0 && !r->optional) {
+    if (r->args.count == 0 && r->sizes.count == 0 && !r->optional && !r->failure) {
         r->text = r->name;
         return;
     }
     sb text = {0};
     sb_printf(&text, STR_FMT, STR_ARG(r->name));
     for (int i = 0; i < r->args.count; i++) {
-        sb_printf(&text, "%s" STR_FMT, i == 0 ? "<" : ", ", STR_ARG(r->args.items[i]->text));
+        sb_printf(&text, "%s%s" STR_FMT, i == 0 ? "<" : ", ",
+                  i < r->arg_mut.count && r->arg_mut.items[i].line ? "mut " : "", STR_ARG(r->args.items[i]->text));
     }
     if (r->args.count > 0) sb_put(&text, ">");
     for (int i = 0; i < r->sizes.count; i++) {
@@ -227,6 +228,7 @@ static void set_type_text(type_ref *r)
         sb_put(&text, "]");
     }
     if (r->optional) sb_put(&text, "?");
+    if (r->failure) sb_printf(&text, " fails " STR_FMT, STR_ARG(r->failure->text));
     r->text = (str){text.data, (int)text.len};
 }
 
@@ -251,12 +253,33 @@ static type_ref *parse_type(parser *p, const char *what)
     r->name_at = q.name_at;
     r->end = (loc){q.name_at.line, q.name_at.col + last_name_len(q.text), q.name_at.file};
     const generic_form *form = at(p, T_LT) ? generic_form_named(q.text) : NULL;
-    if (form) {
+    if (at(p, T_LT) && str_eq_c(q.text, "Func")) {
+        advance(p);
+        do {
+            const loc mut_at = at(p, T_MUT) ? advance(p)->at : (loc){0};
+            vec_push(r->arg_mut, mut_at);
+            vec_push(r->args, parse_type(p, "a function argument or result type"));
+        } while (accept(p, T_COMMA));
+        const loc close = close_angle(p, "'>' after the function signature");
+        r->end = (loc){close.line, close.col + 1, close.file};
+    } else if (form) {
         advance(p);
         for (int i = 0; i < form->arity; i++) {
             if (i == 1 && str_eq_c(q.text, "SkinnedMesh") && !at(p, T_COMMA)) break;
             if (i) expect(p, T_COMMA, form->comma);
             vec_push(r->args, parse_type(p, form->hints[i]));
+            if (str_eq_c(q.text, "Task") || str_eq_c(q.text, "LocalTask")) {
+                type_ref *held = r->args.items[r->args.count - 1];
+                if (at(p, T_QUESTION)) {
+                    held->question_at = advance(p)->at;
+                    held->optional = true;
+                }
+                if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "fails")) {
+                    advance(p);
+                    held->failure = parse_type(p, "the task's declared failure type");
+                }
+                set_type_text(held);
+            }
             if (at(p, T_QUESTION) || at(p, T_COALESCE)) { // List<int?>: what a container holds is always there
                 const type_ref *held = r->args.items[r->args.count - 1];
                 diag_error(peek(p)->at, "what a " STR_FMT " holds is always there, so it can't be a T?", STR_ARG(q.text));
@@ -435,6 +458,19 @@ static expr *parse_primary(parser *p)
         advance(p);
         expr *e = new_expr(E_FLOAT, t->at);
         e->text = t->text;
+        e->is_double = t->text.len > 0 && (t->text.ptr[t->text.len - 1] == 'd' || t->text.ptr[t->text.len - 1] == 'D');
+        if (e->is_double) {
+            char *digits = arena_alloc((size_t)t->text.len);
+            int count = 0;
+            for (int i = 0; i < t->text.len - 1; i++) {
+                if (t->text.ptr[i] != '_') digits[count++] = t->text.ptr[i];
+            }
+            digits[count] = '\0';
+            if (!isfinite(strtod(digits, NULL))) {
+                diag_error(t->at, "double literal '" STR_FMT "' is too large for double", STR_ARG(t->text));
+                longjmp(p->fail, 1);
+            }
+        }
         if (t->text.len >= 3 && memcmp(t->text.ptr + t->text.len - 3, "deg", 3) == 0) {
             // Read directly as binary32, then use the same binary32 multiply
             // as Math.Radians. Keep the result, so C and shaders get one value
@@ -520,6 +556,44 @@ static expr *parse_primary(parser *p)
         return e;
     }
     case T_LPAREN: {
+        // A typed expression lambda: (float3 position, float scale) => ...
+        int look = 1;
+        bool lambda = peek_at(p, look)->kind == T_RPAREN;
+        while (!lambda) {
+            if (peek_at(p, look)->kind == T_MUT) look++;
+            const int end = skip_type(p, look);
+            if (end < 0 || peek_at(p, end)->kind != T_IDENT) break;
+            look = end + 1;
+            if (peek_at(p, look)->kind == T_RPAREN) { lambda = true; break; }
+            if (peek_at(p, look)->kind != T_COMMA) break;
+            look++;
+        }
+        if (lambda && peek_at(p, look + 1)->kind == T_ARROW) {
+            advance(p);
+            expr *e = new_expr(E_LITERAL, t->at);
+            e->lambda = true;
+            if (!at(p, T_RPAREN)) do {
+                param a = {0};
+                const token *mut = at(p, T_MUT) ? advance(p) : NULL;
+                a.type_ref = parse_type(p, "a lambda parameter type");
+                a.type_name = a.type_ref->text;
+                a.type_at = a.type_ref->name_at;
+                a.type_qual_at = a.type_ref->at;
+                const token *name = expect_ident(p, "a lambda parameter name");
+                a.name = name->text;
+                a.name_at = name->at;
+                a.at = mut ? mut->at : a.type_qual_at;
+                a.mode = mut ? PARAM_MUT : PARAM_READ;
+                a.function_param = true;
+                if (mut) a.mode_word = mut->text;
+                vec_push(e->lambda_params, a);
+            } while (accept(p, T_COMMA));
+            expect(p, T_RPAREN, "')' after the lambda parameters");
+            expect(p, T_ARROW, "'=>' before the lambda expression");
+            e->lambda_body = parse_expr(p);
+            e->end = peek(p)->at;
+            return e;
+        }
         advance(p);
         expr *e = parse_expr(p);
         expect(p, T_RPAREN, "')'");
@@ -954,7 +1028,7 @@ static bool is_decl_word(const str text)
     return str_eq_c(text, "input") || str_eq_c(text, "view") || str_eq_c(text, "struct") || str_eq_c(text, "event") || str_eq_c(text, "command")
         || str_eq_c(text, "enum") || str_eq_c(text, "scene") || str_eq_c(text, "local") || str_eq_c(text, "namespace")
         || str_eq_c(text, "using") || str_eq_c(text, "extern") || str_eq_c(text, "const") || str_eq_c(text, "frag")
-        || str_eq_c(text, "vert") || str_eq_c(text, "asset") || str_eq_c(text, "audio");
+        || str_eq_c(text, "vert") || str_eq_c(text, "asset") || str_eq_c(text, "audio") || str_eq_c(text, "worker");
 }
 
 // Keywords that only start declarations, and the contextual ones at the start
@@ -1486,7 +1560,6 @@ static decl *new_named_decl(parser *p, const decl_kind kind, const char *what)
 }
 
 // Sample() { ... } inside an input declaration, maybe taking local singletons.
-// The input's own name instead of Sample is the constructor it used to be.
 static void parse_sample(parser *p, decl *d, const token *name)
 {
     const bool spelled_sample = str_eq_c(name->text, "Sample") || str_eq_c(name->text, "sample");
@@ -1589,13 +1662,84 @@ static bool at_local_field(const parser *p)
     return after == T_IDENT || after == T_DOT || after == T_LT || after == T_QUESTION || after == T_LBRACKET;
 }
 
-// [local] Type name; [= default];
+// Accessors are ordinary methods, with independent syntax trees for each
+// component placement just like methods written with parentheses.
+static void parse_property(parser *p, decl *owner, const type_ref *type, const token *name)
+{
+    property *prop = NEW(property);
+    prop->name = name->text;
+    prop->at = name->at;
+    prop->type_ref = type;
+    prop->owner = owner;
+    vec_push(owner->properties, prop);
+    expect(p, T_LBRACE, "'{' before property accessors");
+    while (!at(p, T_RBRACE)) {
+        const token *word = expect_ident(p, "'get' or 'set'");
+        const bool set = str_eq_c(word->text, "set");
+        if (!set && !str_eq_c(word->text, "get")) fail_at(p, word, "'get' or 'set'");
+        if (set ? prop->set != NULL : prop->get != NULL) {
+            diag_error(word->at, "a property has only one '%s' accessor", set ? "set" : "get");
+            longjmp(p->fail, 1);
+        }
+        decl *m = new_decl(DECL_METHOD, name);
+        m->unit = p->unit;
+        m->owner = owner;
+        m->accessor = prop;
+        m->is_mut_method = set;
+        m->return_type_name = set ? str_from("void") : type->text;
+        m->return_type_at = type->name_at;
+        m->return_type_qual_at = type->at;
+        m->return_type_ref = set ? NULL : type;
+        if (set) {
+            param value = {0};
+            value.name = str_from("value");
+            value.name_at = value.at = word->at;
+            value.type_name = type->text;
+            value.type_ref = type;
+            value.type_at = type->name_at;
+            value.type_qual_at = type->at;
+            value.function_param = true;
+            vec_push(m->params, value);
+        }
+        const int body_start = p->pos;
+        m->body_at = word->at;
+        m->body = parse_block(p);
+        m->end = m->body->end;
+        if (owner->kind == DECL_COMPONENT) {
+            parser placement = *p;
+            placement.pos = body_start;
+            decl *local = NEW(decl);
+            *local = *m;
+            local->params.items = NULL;
+            local->params.count = local->params.cap = 0;
+            if (set) vec_push(local->params, m->params.items[0]);
+            local->body = parse_block(&placement);
+            m->placement_method = local;
+        }
+        if (set) prop->set = m;
+        else prop->get = m;
+        vec_push(owner->methods, m);
+    }
+    if (!prop->get && !prop->set) fail_at(p, peek(p), "'get' or 'set' in the property");
+    prop->end = peek(p)->at;
+    advance(p);
+}
+
+// [local] Type name; [= default]; or Type name { get { ... } set { ... } }
 static void parse_field(parser *p, decl *d)
 {
     // `local List<Vertex3> verts;`: this machine's, outside the match
     const token *local = at_local_field(p) ? advance(p) : NULL;
     const type_ref *type = parse_decl_type(p, "field type or '}'");
     const token *field_name = expect_ident(p, "field name");
+    if (at(p, T_LBRACE)) {
+        if (local || p->field_pending.count) {
+            diag_error(field_name->at, "a computed property has no stored field: put 'local' and field attributes on its backing fields");
+            longjmp(p->fail, 1);
+        }
+        parse_property(p, d, type, field_name);
+        return;
+    }
     field f = {0};
     if (local) {
         f.is_local = true;
@@ -1823,6 +1967,20 @@ static decl *parse_asset(parser *p)
     return d;
 }
 
+static decl *parse_alias(parser *p)
+{
+    const token *name = expect_ident(p, "a type alias name");
+    decl *d = new_decl(DECL_ALIAS, name);
+    if (at(p, T_LT)) {
+        diag_error(peek(p)->at, "a type alias names a closed type: write 'using Name = Type;' without alias type parameters");
+        longjmp(p->fail, 1);
+    }
+    expect(p, T_ASSIGN, "'=' and the aliased type, like 'using Point = float3;'");
+    d->alias_ref = parse_decl_type(p, "the aliased type");
+    d->end = expect(p, T_SEMI, "';' after the type alias")->at;
+    return d;
+}
+
 // name = value;: one of the settings in a settings block, which the checker
 // knows the types of.
 static void parse_setting(parser *p, decl *d)
@@ -1990,7 +2148,7 @@ static decl *parse_prefab(parser *p)
     return d;
 }
 
-static decl *parse_data_decl(parser *p, const decl_kind kind)
+static decl *parse_data_decl(parser *p, const decl_kind kind, const bool is_scene)
 {
     const char *what = kind == DECL_COMPONENT   ? "component or scene name"
                        : kind == DECL_SINGLETON ? "singleton name"
@@ -1999,6 +2157,11 @@ static decl *parse_data_decl(parser *p, const decl_kind kind)
                                                 : "input name";
     const token *name = expect_ident(p, what);
     decl *d = new_decl(kind, name);
+    d->is_scene = is_scene;
+    if (is_scene && at(p, T_SEMI)) {
+        d->end = advance(p)->at;
+        return d;
+    }
     expect(p, T_LBRACE, "'{'");
     while (!at(p, T_RBRACE)) {
         if (p->recover && (at(p, T_EOF) || at_decl_start_or_function(p, false))) {
@@ -2125,7 +2288,7 @@ static void parse_query_params(parser *p, decl *d)
                 vec_push(d->params, prm);
                 continue;
             }
-            // `chunk mut Field.cells cells` was a chunk system's grid
+            // `chunk mut Field.cells cells`: removed syntax, refused with its replacement
             const token *first = peek(p);
             if (first->kind == T_IDENT && str_eq_c(first->text, "chunk")
                 && (peek_at(p, 1)->kind == T_MUT || (peek_at(p, 1)->kind == T_IDENT && peek_at(p, 2)->kind != T_COMMA
@@ -2145,7 +2308,7 @@ static void parse_query_params(parser *p, decl *d)
                 const token *mut = at(p, T_MUT) ? advance(p) : NULL;
                 prm.mode = mut ? PARAM_MUT : PARAM_READ;
                 if (mut) prm.mode_word = mut->text;
-                // `lookup Health health` and `mut lookup` were any entity's component, by its handle
+                // `lookup Health health` and `mut lookup`: removed syntax, refused with its replacement
                 if (at(p, T_IDENT) && str_eq_c(peek(p)->text, "lookup") && peek_at(p, 1)->kind == T_IDENT
                     && (peek_at(p, 2)->kind == T_IDENT || peek_at(p, 2)->kind == T_DOT)) {
                     const token *keyword = advance(p);
@@ -2228,6 +2391,12 @@ static void parse_query_params(parser *p, decl *d)
                 vec_push(d->params, prm);
                 continue;
             }
+            // `with scene Arena`, `without scene Arena`: a word of its own right after them, before a name, and a
+            // name like any other everywhere else (a component named scene, `with scene`)
+            if (filter && at(p, T_IDENT) && str_eq_c(peek(p)->text, "scene") && peek_at(p, 1)->kind == T_IDENT) {
+                advance(p);
+                prm.scene = true;
+            }
             const type_ref *type = parse_decl_type(p, what);
             prm.type_name = type->text;
             prm.type_qual_at = type->at;
@@ -2261,9 +2430,10 @@ static decl *parse_enum(parser *p)
     const token *name = expect_ident(p, "enum name");
     decl *d = new_decl(DECL_ENUM, name);
     if (accept(p, T_COLON)) { // enum Voxel : byte, as in C#
-        const token *backing = expect_ident(p, "what the enum is stored as: 'byte', 'ushort' or 'int'");
+        const type_ref *backing = parse_type(p, "what the enum is stored as: 'byte', 'ushort' or 'int'");
+        d->backing_ref = backing;
         d->backing = backing->text;
-        d->backing_at = backing->at;
+        d->backing_at = backing->name_at;
     }
     expect(p, T_LBRACE, "'{'");
     while (!at(p, T_RBRACE)) {
@@ -2349,10 +2519,22 @@ static decl *parse_handler(parser *p, const bool command)
         trigger.verified = true;
         trigger.verified_at = advance(p)->at;
     }
-    const qname type = parse_qname(p, "the event it handles, like 'event(Hit hit)'");
-    trigger.type_name = type.text;
-    trigger.type_qual_at = type.at;
-    trigger.type_at = type.name_at;
+    // `event(Changed<Health.value> c)`: a field of the match that changed over a tick
+    if (!command && at(p, T_IDENT) && str_eq_c(peek(p)->text, "Changed") && peek_at(p, 1)->kind == T_LT) {
+        trigger.changed = true;
+        advance(p);
+        advance(p);
+        const qname field = parse_qname(p, "the field it watches, like 'Changed<Health.value>'");
+        trigger.type_name = field.text;
+        trigger.type_qual_at = field.at;
+        trigger.type_at = field.at;
+        expect(p, T_GT, "'>' after the field it watches");
+    } else {
+        const qname type = parse_qname(p, "the event it handles, like 'event(Hit hit)'");
+        trigger.type_name = type.text;
+        trigger.type_qual_at = type.at;
+        trigger.type_at = type.name_at;
+    }
     if (at(p, T_IDENT)) {
         trigger.name_at = peek(p)->at;
         trigger.name = advance(p)->text;
@@ -2627,7 +2809,10 @@ program *program_new(void)
 bool parse_file(program *prog, const source *src, token *toks, const bool recover)
 {
     const size_t path_len = strlen(src->path);
-    const bool prefab_file = path_len >= 8 && strcmp(src->path + path_len - 8, ".tprefab") == 0;
+    // A Unity prefab or scene is read as the prefab `tide unity` makes of it
+    const bool prefab_file = (path_len >= 8 && strcmp(src->path + path_len - 8, ".tprefab") == 0) ||
+                             (path_len >= 7 && strcmp(src->path + path_len - 7, ".prefab") == 0) ||
+                             (path_len >= 6 && strcmp(src->path + path_len - 6, ".unity") == 0);
     parser p = {.toks = toks, .recover = recover, .prog = prog};
     p.unit = NEW(unit);
     p.unit->src = src;
@@ -2661,6 +2846,7 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         // `override` before one: it replaces the virtual declaration it names.
         const token *local = NULL;
         const token *async = NULL;
+        const token *worker = NULL;
         const token *virtual = NULL;
         const token *override = NULL;
         p.overriding = false;
@@ -2671,6 +2857,8 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
                 local = advance(&p);
             } else if (!async && t->kind == T_IDENT && str_eq_c(t->text, "async") && (after == T_IDENT || after == T_MUT)) {
                 async = advance(&p);
+            } else if (!worker && t->kind == T_IDENT && str_eq_c(t->text, "worker") && after == T_IDENT) {
+                worker = advance(&p);
             } else if (!virtual && t->kind == T_IDENT && str_eq_c(t->text, "virtual") && at_replace_word(&p, false)) {
                 virtual = advance(&p);
             } else if (!override && t->kind == T_IDENT && str_eq_c(t->text, "override") && at_replace_word(&p, false)) {
@@ -2685,7 +2873,9 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         // Contextual keywords: only special at the start of a declaration or a
         // file, so they can still name parameters and locals.
         const bool followed_by_name = peek_at(&p, 1)->kind == T_IDENT;
-        if (t->kind == T_IDENT && followed_by_name && (str_eq_c(t->text, "namespace") || str_eq_c(t->text, "using"))) {
+        const bool alias = t->kind == T_IDENT && str_eq_c(t->text, "using") && followed_by_name
+                           && (peek_at(&p, 2)->kind == T_ASSIGN || peek_at(&p, 2)->kind == T_LT);
+        if (!alias && t->kind == T_IDENT && followed_by_name && (str_eq_c(t->text, "namespace") || str_eq_c(t->text, "using"))) {
             advance(&p);
             if (local) diag_error(local->at, "'local' goes before a declaration, like 'local singleton Fx { ... }'");
             if (replace_word) refuse_replace_word(replace_word, "a namespace is where names are, and has no code of its own");
@@ -2727,27 +2917,25 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
         decl *d;
         const bool function = at_method_from(&p, 0, p.overriding);
         if (!function) advance(&p);
-        if (function) d = parse_method(&p, NULL);
-        else if (t->kind == T_COMPONENT) d = parse_data_decl(&p, DECL_COMPONENT);
-        else if (t->kind == T_SINGLETON) d = parse_data_decl(&p, DECL_SINGLETON);
+        if (alias) d = parse_alias(&p);
+        else if (function) d = parse_method(&p, NULL);
+        else if (t->kind == T_COMPONENT) d = parse_data_decl(&p, DECL_COMPONENT, false);
+        else if (t->kind == T_SINGLETON) d = parse_data_decl(&p, DECL_SINGLETON, false);
         else if (t->kind == T_SYSTEM) d = parse_system(&p, false);
-        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "input")) d = parse_data_decl(&p, DECL_INPUT);
+        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "input")) d = parse_data_decl(&p, DECL_INPUT, false);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "view")) d = parse_system(&p, true);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "frag")) d = parse_shader(&p, true);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "vert")) d = parse_shader(&p, false);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "audio")) d = parse_audio(&p);
-        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "struct")) d = parse_data_decl(&p, DECL_STRUCT);
-        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "event")) d = parse_data_decl(&p, DECL_EVENT);
+        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "struct")) d = parse_data_decl(&p, DECL_STRUCT, false);
+        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "event")) d = parse_data_decl(&p, DECL_EVENT, false);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "command")) {
-            d = parse_data_decl(&p, DECL_EVENT);
+            d = parse_data_decl(&p, DECL_EVENT, false);
             d->is_command = true;
         }
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "enum")) d = parse_enum(&p);
         else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "prefab")) d = parse_prefab(&p);
-        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "scene")) {
-            d = parse_data_decl(&p, DECL_COMPONENT);
-            d->is_scene = true;
-        }
+        else if (t->kind == T_IDENT && followed_by_name && str_eq_c(t->text, "scene")) d = parse_data_decl(&p, DECL_COMPONENT, true);
         else if (t->kind == T_IDENT && at(&p, T_LPAREN) && str_eq_c(t->text, "event")) d = parse_handler(&p, false);
         else if (t->kind == T_IDENT && at(&p, T_LPAREN) && str_eq_c(t->text, "command")) d = parse_handler(&p, true);
         else if (t->kind == T_IDENT && at(&p, T_SYSTEM) && str_eq_c(t->text, "extern")) d = parse_extern_system(&p);
@@ -2771,6 +2959,16 @@ bool parse_file(program *prog, const source *src, token *toks, const bool recove
             }
         }
         if (virtual || override) mark_replace_words(d, virtual, override);
+        if (worker) {
+            if (d->kind != DECL_FUNCTION || d->is_extern) {
+                diag_error(worker->at, "'local worker' declares a calculation function: 'local worker Result Build(Input input) { ... }'");
+            } else {
+                d->is_worker = true;
+                d->worker_at = worker->at;
+                if (!local) diag_error(worker->at, "workers currently require 'local': write 'local worker'");
+                if (async) diag_error(async->at, "a worker runs to completion; drop 'async' and await it from a local async function");
+            }
+        }
         if (async && (d->kind == DECL_FUNCTION || (d->kind == DECL_SYSTEM && d->is_handler))) {
             d->is_async = true;
             d->async_at = async->at;

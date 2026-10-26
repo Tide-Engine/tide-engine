@@ -201,8 +201,7 @@ fi
 `;
 
 // A partial cmdlet warm-up misses the installer's version comparisons and
-// scratch setup (38768886333 still stalled after reading the release list).
-// Preflight the actual mocked fresh-install path, through its real checksum,
+// scratch setup. Preflight the actual mocked fresh-install path, through its real checksum,
 // before timing individual cases. It stops before unpacking, just as they do.
 // Cold assembly/file scanning has its own guard; cases retain 30 seconds.
 if (shells.includes('powershell')) before(() => {

@@ -7,12 +7,21 @@
 void b3t_check(bool enabled, bool whenever);
 void b3t_forget(void);
 
-_Static_assert(sizeof(Box3D_MeshCollider) == 40 && offsetof(Box3D_MeshCollider, vertices) == 0 &&
+_Static_assert(sizeof(Box3D_MeshCollider) == 44 && offsetof(Box3D_MeshCollider, vertices) == 0 &&
     offsetof(Box3D_MeshCollider, indices) == 4 && offsetof(Box3D_MeshCollider, scale) == 8 &&
     offsetof(Box3D_MeshCollider, offset) == 20 && offsetof(Box3D_MeshCollider, friction) == 32 &&
-    offsetof(Box3D_MeshCollider, bounce) == 36 && sizeof(Box3D_Part) == 40 && offsetof(Box3D_Part, mesh) == 32,
+    offsetof(Box3D_MeshCollider, bounce) == 36 && sizeof(Box3D_Part) == 64 && offsetof(Box3D_Part, mesh) == 32,
     "mesh bridge must match the generated component layout");
 
+static bool set_mesh(tide_world *w, tide_entity e, Box3D_MeshCollider mesh)
+{
+    Box3D_MeshCollider old=tide_get_Box3D_MeshCollider(w,e);
+    tide_list_own(&mesh.vertices,sizeof(tide_float3),TIDE_IN_MATCH);
+    tide_list_own(&mesh.indices,sizeof(int32_t),TIDE_IN_MATCH);
+    tide_list_release(&old.vertices,TIDE_IN_MATCH);
+    tide_list_release(&old.indices,TIDE_IN_MATCH);
+    return tide_set_Box3D_MeshCollider(w,e,mesh);
+}
 static bool near(const float a, const float b) { return fabsf(a - b) < 0.0001f; }
 static tide_entity tagged(tide_world *w, bool (*has)(const tide_world *, tide_entity))
 {
@@ -55,7 +64,6 @@ TIDE_TEST(box3d_mesh_queries_and_detached_history)
     body.position.y = 2;
     body.type = Box3D_BodyType_Kinematic;
     tide_set_Box3D_Body(&w, floor, body);
-    w.Request.edit = true;
     tide_world_tick(&w);
     TIDE_CHECK(tide_get_Box3D_Body(&w, floor).type == Box3D_BodyType_Static);
     queries(&w, &local);
@@ -120,7 +128,7 @@ TIDE_TEST(box3d_mesh_contacts_preserve_concavity_and_replay)
         TIDE_CHECK(tide_get_Falling(&w, e).gap ? b.position.y < -10 : b.position.y >= 0.24f && b.position.y <= 0.27f);
     }
     printf("  mesh simulation sequence: %016llx\n", (unsigned long long)sequence);
-    TIDE_CHECK(sequence == UINT64_C(0xafa0b803e82fedb1));
+    TIDE_CHECK(sequence == UINT64_C(0x7d99add0c304bfc6));
     tide_world_copy(&decoded, &saved);
     for (int i = 0; i < 110; i++) tide_world_tick(&decoded);
     TIDE_CHECK(tide_world_hash(&decoded) == tide_world_hash(&w));
@@ -146,7 +154,7 @@ TIDE_TEST(box3d_mesh_reads_chunked_source_lists)
     const uint32_t mark = tide_scratch_mark();
     const Box3D_MeshCollider mesh = {.vertices = tide_list_from(vertices, count, sizeof *vertices),
         .indices = tide_list_from(indices, count, sizeof *indices), .scale = {1, 1, 1}, .friction = 0.6f};
-    TIDE_CHECK(tide_set_Box3D_MeshCollider(&w, tagged(&w, tide_has_Floor), mesh));
+    TIDE_CHECK(set_mesh(&w, tagged(&w, tide_has_Floor), mesh));
     tide_scratch_reset(mark);
     free(vertices); free(indices);
     for (int i = 0; i < 4; i++) tide_world_tick(&w);
@@ -173,7 +181,7 @@ TIDE_TEST(box3d_mesh_rejects_nonfinite_geometry_and_materials)
         if (kind == 4) mesh.offset.z = INFINITY;
         if (kind == 5) mesh.friction = -1;
         if (kind == 6) mesh.bounce = NAN;
-        TIDE_CHECK(tide_set_Box3D_MeshCollider(&w, tagged(&w, tide_has_Floor), mesh));
+        TIDE_CHECK(set_mesh(&w, tagged(&w, tide_has_Floor), mesh));
         tide_scratch_reset(mark);
         tide_world_tick(&w);
         tide_world_tick(&w);

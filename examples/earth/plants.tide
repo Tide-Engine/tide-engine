@@ -1,0 +1,121 @@
+// Deterministic world cells choose plants. Only the nearby window is kept
+// locally; camera turns neither regenerate it nor move a plant's roots.
+struct Plant
+{
+    float3 position;
+    quaternion standing;
+    float tall;
+    int variation;
+    Biome biome;
+}
+
+local singleton Flora
+{
+    List<Plant> plants;
+    float3 anchor;
+    bool made;
+    int revision;
+}
+
+void GrowPlants(mut Flora flora, float3 eye)
+{
+    flora.plants.Clear();
+    flora.anchor = eye;
+    flora.made = true;
+    flora.revision = TERRAIN_REVISION;
+    var up = Math.Normalize(eye);
+    float lat = Math.Asin(Math.Clamp(up.y, -1, 1));
+    float lon = Math.Atan2(up.z, up.x);
+    float step = 16 / R;
+    int row0 = int(Math.Floor(lat / step));
+    for (var row = row0 - 32; row <= row0 + 32; row++)
+    {
+        float rowLat = (row + 0.5) * step;
+        if (Math.Abs(rowLat) >= Math.PI * 0.5) continue;
+        int columns = int(Math.Floor(Math.TAU * Math.Max(Math.Cos(rowLat), 0.2) / step));
+        float across = Math.TAU / columns;
+        int column0 = int(Math.Floor(lon / across));
+        float narrowest = Math.Max(Math.Cos(Math.Abs(rowLat) + step * 0.5), 0.0001);
+        int span = int(Math.Ceil(480 / (R * across * narrowest))) + 2;
+        int first = column0 - span;
+        int last = Math.Min(column0 + span, first + columns - 1);
+        for (var column = first; column <= last; column++)
+        {
+            int wrapped = (column % columns + columns) % columns;
+            int h = Math.Hash(int2(row, wrapped));
+            int chance = (h / 1000000) % 100;
+            if (chance > 70) continue;
+            float a = (row + (h % 1000) / 1000.0) * step;
+            float b = (wrapped + ((h / 1000) % 1000) / 1000.0) * across;
+            var n = float3(Math.Cos(a) * Math.Cos(b), Math.Sin(a), Math.Cos(a) * Math.Sin(b));
+            if (Math.Length(n * R - eye) > 480) continue;
+            var biome = BiomeAt(Climate(n));
+            int density = biome == Biome.Woods ? 70 : biome == Biome.Meadow ? 12 : biome == Biome.Dry ? 8 : 6;
+            if (chance > density) continue;
+            var place = Surface(n, 0);
+            if (Paved(place) || TownAt(place, 8) >= 0) continue;
+            mut bool roadside = false;
+            for (var road = 0; road < ROADS && !roadside; road++)
+                if (RoadDistance(n, Up(Road(road).x), Up(Road(road).y)) < ROAD + 3) roadside = true;
+            if (roadside) continue;
+            flora.plants.Add(Plant { position = place, standing = Standing(place, NorthOf(n)), tall = 4 + (h % 7) * 0.6,
+                                     variation = h, biome = biome });
+        }
+    }
+}
+
+void ShowPlants(mut Flora flora, mut Scenery scenery, Pilot pilot)
+{
+    float above = Math.Length(pilot.eye) - R - TerrainHeight(Math.Normalize(pilot.eye));
+    if (above >= 300) return;
+    if (!flora.made || flora.revision != TERRAIN_REVISION || Math.Length(pilot.eye - flora.anchor) > 48) GrowPlants(flora, pilot.eye);
+    foreach (var plant in flora.plants)
+    {
+        float coverage = (1 - Math.SmoothStep(320, 400, Math.Length(plant.position - pilot.eye))) * (1 - Math.SmoothStep(200, 300, above));
+        if (coverage <= 0) continue;
+        var at = plant.position - pilot.eye;
+        var up = Math.Normalize(plant.position);
+        var standing = plant.standing;
+        float tall = plant.tall;
+        int h = plant.variation;
+        if (plant.biome == Biome.Dry)
+        {
+            // Cactus with two staggered arms.
+            float stem = tall * 0.6;
+            var green = Color(0.30, 0.45 + (h % 3) * 0.025, 0.24, coverage);
+            scenery.boxes.Add(Placed { transform = float4x4.TRS(at + up * (stem * 0.5), standing, float3(0.45, stem, 0.45)), paint = green });
+            for (var arm = 0; arm < 2; arm++)
+            {
+                float side = arm == 0 ? -1 : 1;
+                var reach = Math.Rotate(standing, float3(side * 0.55, stem * (0.42 + arm * 0.16), 0));
+                scenery.boxes.Add(Placed { transform = float4x4.TRS(at + reach, standing, float3(1.1, 0.32, 0.32)), paint = green });
+                var tip = Math.Rotate(standing, float3(side, stem * (0.52 + arm * 0.16), 0));
+                scenery.boxes.Add(Placed { transform = float4x4.TRS(at + tip, standing, float3(0.32, stem * 0.3, 0.32)), paint = green });
+            }
+        }
+        else if (plant.biome == Biome.Frost)
+        {
+            // Low rocky scrub gives way to snow without leafy temperate trees.
+            var paint = Color(0.48, 0.52, 0.48, coverage);
+            scenery.rounds.Add(Placed { transform = float4x4.TRS(at + up * 0.3, standing, float3(0.8 + (h % 3) * 0.2, 0.5, 0.7)), paint = paint });
+            scenery.rounds.Add(Placed { transform = float4x4.TRS(at + up * 0.55, standing, float3(0.5, 0.45, 0.5)), paint = Color(0.43, 0.48, 0.36, coverage) });
+        }
+        else
+        {
+            scenery.boxes.Add(Placed { transform = float4x4.TRS(at + up * (tall * 0.35 - 0.05), standing, float3(0.35, tall * 0.7 + 0.1, 0.35)),
+                                       paint = Color(0.40, 0.30, 0.22, coverage) });
+            if (plant.biome == Biome.Woods)
+            {
+                // Layered evergreen crowns contrast with the meadow's broad canopy.
+                for (var tier = 0; tier < 3; tier++)
+                {
+                    float radius = 1.8 - tier * 0.45;
+                    scenery.rounds.Add(Placed { transform = float4x4.TRS(at + up * (tall * 0.55 + tier * 1.1), standing, float3(radius, 1.4, radius)),
+                                                paint = Color(0.13, 0.33 + tier * 0.025, 0.23, coverage) });
+                }
+            }
+            else scenery.rounds.Add(Placed { transform = float4x4.TRS(at + up * (tall * 0.85), standing, float3(1.9, 1.7, 1.9)),
+                                              paint = Color(0.20 + (h % 3) * 0.03, 0.44 + (h % 5) * 0.03, 0.24, coverage) });
+        }
+    }
+}

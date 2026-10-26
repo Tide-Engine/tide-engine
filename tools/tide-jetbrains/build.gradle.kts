@@ -1,4 +1,4 @@
-// The Tide plugin for JetBrains IDEs: the grammar from ../tide-syntax
+// The Tide plugin for JetBrains IDEs: the shared or bundled TextMate grammar
 // for highlighting, and tidels through LSP4IJ for everything else.
 //
 //   ./gradlew buildPlugin   the plugin, in build/distributions
@@ -17,6 +17,12 @@ plugins {
 
 version = providers.gradleProperty("pluginVersion").getOrElse("0.0.0-dev")
 
+// Engine builds use the live shared grammar; standalone public clones use the
+// snapshot refreshed before exporting tools/tide-jetbrains.
+val sharedTextmate = layout.projectDirectory.dir("../tide-syntax")
+val textmate = if (sharedTextmate.file("package.json").asFile.isFile) sharedTextmate
+    else layout.projectDirectory.dir("textmate")
+
 repositories {
     mavenCentral()
     intellijPlatform {
@@ -24,7 +30,14 @@ repositories {
     }
 }
 
+// CLion's native debugger's breakpoint extension point, to compile TideBreakpoints against: the IDE the
+// plugin builds on (IntelliJ Community) hasn't that debugger, and CLion supplies the real interface at run time
+// (tide-cidr.xml). Never packaged; verifyPlugin checks the plugin against CLion's.
+val cidrStubs: SourceSet = sourceSets.create("cidrStubs")
+
 dependencies {
+    compileOnly(cidrStubs.output)
+    testImplementation(cidrStubs.output) // For TideBreakpoints in the IDE the tests run, which has no CLion
     testImplementation("junit:junit:4.13.2")
     intellijPlatform {
         // The oldest platform LSP4IJ supports, so the plugin runs from there on.
@@ -70,6 +83,27 @@ intellijPlatform {
 }
 
 tasks {
+    // Marketplace's archive stays a single plugin. Tide's offline installer
+    // also carries the pinned LSP4IJ dependency, already in the sandbox.
+    register<Zip>("buildCliInstaller") {
+        dependsOn(buildPlugin)
+        archiveFileName = "tide-jetbrains-installer.zip"
+        destinationDirectory = layout.buildDirectory.dir("cli")
+        from(resources.text.fromString("${project.version}\n")) { rename { "VERSION" } }
+        from("cli-licenses") { into("lsp4ij/licenses") }
+        from(prepareSandbox.flatMap { it.pluginDirectory }) { into("tide") }
+        val sandboxDirectory = prepareSandbox.flatMap { it.defaultDestinationDirectory }
+        from(sandboxDirectory) {
+            include("lsp4ij/**")
+        }
+        doFirst {
+            val plugins = sandboxDirectory.get().asFile
+            check(plugins.resolve("lsp4ij/lib").isDirectory) { "Missing LSP4IJ in the CLI installer" }
+        }
+    }
+    processResources {
+        from("LICENSE") { into("META-INF") }
+    }
     compileTestJava {
         options.compilerArgs.add("-Xlint:deprecation")
     }
@@ -102,7 +136,7 @@ tasks {
     }
     // The grammar goes next to the plugin's jar, where the IDE reads it (see TideTextMateBundle).
     withType<org.jetbrains.intellij.platform.gradle.tasks.PrepareSandboxTask>().configureEach {
-        from(layout.projectDirectory.dir("../tide-syntax")) {
+        from(textmate) {
             into("tide/textmate")
             exclude("test/**")
         }

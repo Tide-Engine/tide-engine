@@ -1,0 +1,506 @@
+{
+  "label": "page-hash",
+  "revision": "4a59a73a27859a771bb75033fec978a2f7338b0b+local",
+  "machine": "AMD Ryzen 9 7900X 12C/24T; NVIDIA GeForce RTX 4080 SUPER; Windows; Clang 23.1.2",
+  "startedUtc": "2026-10-20T17:32:17.4256289Z",
+  "runs": [
+    {
+      "name": "versus_rollback",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 1.6132874,
+      "round": 1,
+      "label": "page-hash-before-r1",
+      "exitCode": 0,
+      "arguments": [
+        "--save",
+        "page-hash-before-r1"
+      ],
+      "side": "before"
+    },
+    {
+      "name": "versus_rollback",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 1.5339335,
+      "round": 1,
+      "label": "page-hash-after-r1",
+      "exitCode": 0,
+      "arguments": [
+        "--save",
+        "page-hash-after-r1"
+      ],
+      "side": "after"
+    },
+    {
+      "name": "versus_rollback_spread",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 2.0639137,
+      "round": 1,
+      "label": "page-hash-before-r1",
+      "exitCode": 0,
+      "arguments": [
+        "--spread",
+        "1",
+        "--save",
+        "page-hash-before-r1"
+      ],
+      "side": "before"
+    },
+    {
+      "name": "versus_rollback_spread",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 1.9843187,
+      "round": 1,
+      "label": "page-hash-after-r1",
+      "exitCode": 0,
+      "arguments": [
+        "--spread",
+        "1",
+        "--save",
+        "page-hash-after-r1"
+      ],
+      "side": "after"
+    },
+    {
+      "name": "versus_rollback_scaling",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 32.1902534,
+      "round": 1,
+      "label": "page-hash-before-r1",
+      "exitCode": 0,
+      "arguments": [
+        "--movers",
+        "1000000",
+        "--turrets",
+        "40000",
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "page-hash-before-r1"
+      ],
+      "side": "before"
+    },
+    {
+      "name": "versus_rollback_scaling",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 31.4127963,
+      "round": 1,
+      "label": "page-hash-after-r1",
+      "exitCode": 0,
+      "arguments": [
+        "--movers",
+        "1000000",
+        "--turrets",
+        "40000",
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "page-hash-after-r1"
+      ],
+      "side": "after"
+    },
+    {
+      "name": "bench_sand",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 1.6923916,
+      "round": 1,
+      "label": "page-hash-before-r1",
+      "exitCode": 0,
+      "arguments": [
+        "--save",
+        "page-hash-before-r1"
+      ],
+      "side": "before"
+    },
+    {
+      "name": "bench_sand",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 1.4623228,
+      "round": 1,
+      "label": "page-hash-after-r1",
+      "exitCode": 0,
+      "arguments": [
+        "--save",
+        "page-hash-after-r1"
+      ],
+      "side": "after"
+    },
+    {
+      "name": "bench_gallery",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 0.8512428,
+      "round": 1,
+      "label": "page-hash-before-r1",
+      "exitCode": 0,
+      "arguments": [
+        "--save",
+        "page-hash-before-r1"
+      ],
+      "side": "before"
+    },
+    {
+      "name": "bench_gallery",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 0.8362692,
+      "round": 1,
+      "label": "page-hash-after-r1",
+      "exitCode": 0,
+      "arguments": [
+        "--save",
+        "page-hash-after-r1"
+      ],
+      "side": "after"
+    },
+    {
+      "name": "versus_rollback",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 1.4590089,
+      "round": 2,
+      "label": "page-hash-after-r2",
+      "exitCode": 0,
+      "arguments": [
+        "--save",
+        "page-hash-after-r2"
+      ],
+      "side": "after"
+    },
+    {
+      "name": "versus_rollback",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 1.5512451,
+      "round": 2,
+      "label": "page-hash-before-r2",
+      "exitCode": 0,
+      "arguments": [
+        "--save",
+        "page-hash-before-r2"
+      ],
+      "side": "before"
+    },
+    {
+      "name": "versus_rollback_spread",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 1.969854,
+      "round": 2,
+      "label": "page-hash-after-r2",
+      "exitCode": 0,
+      "arguments": [
+        "--spread",
+        "1",
+        "--save",
+        "page-hash-after-r2"
+      ],
+      "side": "after"
+    },
+    {
+      "name": "versus_rollback_spread",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 2.1320765,
+      "round": 2,
+      "label": "page-hash-before-r2",
+      "exitCode": 0,
+      "arguments": [
+        "--spread",
+        "1",
+        "--save",
+        "page-hash-before-r2"
+      ],
+      "side": "before"
+    },
+    {
+      "name": "versus_rollback_scaling",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 31.2612349,
+      "round": 2,
+      "label": "page-hash-after-r2",
+      "exitCode": 0,
+      "arguments": [
+        "--movers",
+        "1000000",
+        "--turrets",
+        "40000",
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "page-hash-after-r2"
+      ],
+      "side": "after"
+    },
+    {
+      "name": "versus_rollback_scaling",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 32.1635508,
+      "round": 2,
+      "label": "page-hash-before-r2",
+      "exitCode": 0,
+      "arguments": [
+        "--movers",
+        "1000000",
+        "--turrets",
+        "40000",
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "page-hash-before-r2"
+      ],
+      "side": "before"
+    },
+    {
+      "name": "bench_sand",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 1.7024543,
+      "round": 2,
+      "label": "page-hash-after-r2",
+      "exitCode": 0,
+      "arguments": [
+        "--save",
+        "page-hash-after-r2"
+      ],
+      "side": "after"
+    },
+    {
+      "name": "bench_sand",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 1.8540297,
+      "round": 2,
+      "label": "page-hash-before-r2",
+      "exitCode": 0,
+      "arguments": [
+        "--save",
+        "page-hash-before-r2"
+      ],
+      "side": "before"
+    },
+    {
+      "name": "bench_gallery",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 0.8073158,
+      "round": 2,
+      "label": "page-hash-after-r2",
+      "exitCode": 0,
+      "arguments": [
+        "--save",
+        "page-hash-after-r2"
+      ],
+      "side": "after"
+    },
+    {
+      "name": "bench_gallery",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 0.8698628,
+      "round": 2,
+      "label": "page-hash-before-r2",
+      "exitCode": 0,
+      "arguments": [
+        "--save",
+        "page-hash-before-r2"
+      ],
+      "side": "before"
+    },
+    {
+      "name": "versus_rollback",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 1.6770002,
+      "round": 3,
+      "label": "page-hash-before-r3",
+      "exitCode": 0,
+      "arguments": [
+        "--save",
+        "page-hash-before-r3"
+      ],
+      "side": "before"
+    },
+    {
+      "name": "versus_rollback",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 1.5663531,
+      "round": 3,
+      "label": "page-hash-after-r3",
+      "exitCode": 0,
+      "arguments": [
+        "--save",
+        "page-hash-after-r3"
+      ],
+      "side": "after"
+    },
+    {
+      "name": "versus_rollback_spread",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 2.1967487,
+      "round": 3,
+      "label": "page-hash-before-r3",
+      "exitCode": 0,
+      "arguments": [
+        "--spread",
+        "1",
+        "--save",
+        "page-hash-before-r3"
+      ],
+      "side": "before"
+    },
+    {
+      "name": "versus_rollback_spread",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 1.861107,
+      "round": 3,
+      "label": "page-hash-after-r3",
+      "exitCode": 0,
+      "arguments": [
+        "--spread",
+        "1",
+        "--save",
+        "page-hash-after-r3"
+      ],
+      "side": "after"
+    },
+    {
+      "name": "versus_rollback_scaling",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 36.0279418,
+      "round": 3,
+      "label": "page-hash-before-r3",
+      "exitCode": 0,
+      "arguments": [
+        "--movers",
+        "1000000",
+        "--turrets",
+        "40000",
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "page-hash-before-r3"
+      ],
+      "side": "before"
+    },
+    {
+      "name": "versus_rollback_scaling",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 33.379375,
+      "round": 3,
+      "label": "page-hash-after-r3",
+      "exitCode": 0,
+      "arguments": [
+        "--movers",
+        "1000000",
+        "--turrets",
+        "40000",
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "page-hash-after-r3"
+      ],
+      "side": "after"
+    },
+    {
+      "name": "bench_sand",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 1.489857,
+      "round": 3,
+      "label": "page-hash-before-r3",
+      "exitCode": 0,
+      "arguments": [
+        "--save",
+        "page-hash-before-r3"
+      ],
+      "side": "before"
+    },
+    {
+      "name": "bench_sand",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 1.4465144,
+      "round": 3,
+      "label": "page-hash-after-r3",
+      "exitCode": 0,
+      "arguments": [
+        "--save",
+        "page-hash-after-r3"
+      ],
+      "side": "after"
+    },
+    {
+      "name": "bench_gallery",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 0.6381838,
+      "round": 3,
+      "label": "page-hash-before-r3",
+      "exitCode": 0,
+      "arguments": [
+        "--save",
+        "page-hash-before-r3"
+      ],
+      "side": "before"
+    },
+    {
+      "name": "bench_gallery",
+      "backend": null,
+      "competingWork": false,
+      "wallSeconds": 0.6633673,
+      "round": 3,
+      "label": "page-hash-after-r3",
+      "exitCode": 0,
+      "arguments": [
+        "--save",
+        "page-hash-after-r3"
+      ],
+      "side": "after"
+    }
+  ],
+  "binaries": [
+    {
+      "name": "bench_gallery.exe",
+      "sha256": "feb0005f7e7ee69b76b2cbb15a22a8853f705541ca2d66456a374e00ff7b8cc2"
+    },
+    {
+      "name": "bench_sand.exe",
+      "sha256": "2610445991ce0277723ac067b3c3bf676caa76bc9d3e907b66b7ada2a037c2e3"
+    },
+    {
+      "name": "versus_rollback.exe",
+      "sha256": "3930aab3859a8ea98095b8d4cd8bd1fabadd0e4a8db0546808fc962d3b235117"
+    }
+  ],
+  "beforeRevision": "4a59a73a",
+  "beforeBinaries": [
+    {
+      "name": "bench_gallery.exe",
+      "sha256": "754cf02488362933d8d1c0c204a45ac816a0d117fb279383e645307b9d2daaeb"
+    },
+    {
+      "name": "bench_sand.exe",
+      "sha256": "f644264d415f9c1ddd8d5501c5b9bd742c1efa5e493c278c7ec2f5b8bd3673ca"
+    },
+    {
+      "name": "versus_rollback.exe",
+      "sha256": "006b5a46d91f2a611934c18d925244bf1ddeaaa1a1a94d048d7f804b2e8f6203"
+    }
+  ],
+  "finishedUtc": "2026-10-20T17:38:51.0971357Z"
+}

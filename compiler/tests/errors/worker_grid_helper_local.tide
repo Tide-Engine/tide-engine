@@ -1,0 +1,4 @@
+// expect: local worker 'Build' can't keep grid locals
+int Cell(Grid2<int> cells) { var copy = cells; return copy[0, 0]; }
+local worker int Build(Grid2<int> cells) { return Cell(cells); }
+scene Main;

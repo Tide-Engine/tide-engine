@@ -32,6 +32,8 @@ frag Inspect(Corner corner, out Color color, Instance instance)
 }
 
 struct PlacedInfo { float posed; }
+struct SkinInstance { float4x4 transform; Pose pose; Color tint; }
+frag Tint(Vertex3 corner, SkinInstance item, out Color color) { color = corner.color * item.tint; }
 
 vert Explicit(mut Vertex3 corner, out PlacedInfo info, out float4 clip)
 {
@@ -57,4 +59,7 @@ view Models(mut Surface surface)
     surface.target.SkinnedMesh(lit, float4x4.identity, posed, Deform);
     Draw.Mesh(lit.vertices, lit.indices, float4x4.identity, Deform, Inspect);
     Draw.SkinnedMesh(model, float4x4.identity, posed, Explicit, Placed);
+    Draw.Instanced(model, [SkinInstance { transform = float4x4.identity, pose = rest, tint = Color.red },
+                          SkinInstance { transform = float4x4.identity, pose = posed, tint = Color.blue }], Explicit, Tint);
+    surface.target.Instanced(model, [float4x4.identity]);
 }

@@ -123,6 +123,27 @@ Each ball below is an entity with a `Ball` and a `Health`. Tap one to `Add` a `P
 
 `Transform` is built in, with `float3 localPosition` (zero), `quaternion localRotation` (identity), and `float3 localScale` (one). Each is relative to the entity's parent; a root's values are its world placement. Add it like any other component.
 
+Match `Transform` fields have [correction smoothing](./views.md#provisional-correction-smoothing) built in: `localPosition` behaves as `[Position]`, and `localRotation` as `[Rotation]`. Views preserve their displayed values across prediction corrections and let the error decay. Scale keeps ordinary tick interpolation; local entities use their current values. Use `entity.Snap()` for an intentional jump. This smooths view bindings; `World` queries and the ancestors read by `position` still use stored state.
+
+Its computed `float3 position` property reads world position. Setting it converts the requested position into parent space and changes `localPosition`; it needs a mutable Transform and leaves the parent unchanged:
+
+```csharp
+system Move(mut Transform transform)
+{
+    transform.position += float3(1, 0, 0);
+}
+
+view Mark(Transform transform)
+{
+    var screen = Draw.WorldToScreen(transform.position);
+    Draw.Screen() { Draw.Circle(screen.xy, 10, Color.red); }
+}
+```
+
+The getter uses the binding's current `localPosition` and stored ancestors, including after changing that local value in the same routine. Helpers retain the attached binding when it is passed directly. An explicit copy is detached, so use `localPosition` on copies. Singular parent transforms and nonfinite setter results leave the local position unchanged. Properties are also [user-definable](../language/functions.md#properties).
+
+`world.ParentToWorld(entity)` gives the matrix from parent space into world space. It includes retained placement when visibility hides a parent, and gives identity for an ordinary root or dead entity. Thus `Math.Transform(world.ParentToWorld(entity), localPosition)` is the same computation available to a component's own property. `world.LocalToWorld(entity)` includes the entity's own stored transform as well; its `c3.xyz` is the stored world position.
+
 ```csharp
 event(Spawned) Assemble(with Main)
 {

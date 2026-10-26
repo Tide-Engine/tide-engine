@@ -134,6 +134,14 @@ static bool has_header(const char *headers, const char *name)
     return false;
 }
 
+// A byte the request line can't carry as it is (a space, a control, or one
+// past ASCII), which would end the line or a header: a target sends it as
+// %XX, as a browser's fetch does, and a host can't have it.
+static bool unsendable(const unsigned char c)
+{
+    return c <= 0x20 || c >= 0x7F;
+}
+
 // http://host[:port][/path[?query]][#fragment]: false for anything else.
 static bool parse_url(const char *url, request *q)
 {
@@ -145,6 +153,9 @@ static bool parse_url(const char *url, request *q)
     const char *end = host + strcspn(host, "/?#");
     const size_t host_size = (size_t)(end - host);
     if (!host_size || host_size >= sizeof q->host || memchr(host, '@', host_size) || host[0] == '[') return false;
+    for (size_t i = 0; i < host_size; i++) {
+        if (unsendable((unsigned char)host[i])) return false;
+    }
     memcpy(q->host, host, host_size);
     q->host[host_size] = 0;
     q->port = q->secure ? 443 : 80;
@@ -159,15 +170,21 @@ static bool parse_url(const char *url, request *q)
     if (!q->host[0]) return false;
     const char *stop = end + strcspn(end, "#"); // The fragment stays here
     const size_t target_size = (size_t)(stop - end);
-    q->target = tide_alloc(target_size + 2);
-    if (!target_size || end[0] == '?') {
-        q->target[0] = '/';
-        memcpy(q->target + 1, end, target_size);
-        q->target[target_size + 1] = 0;
-    } else {
-        memcpy(q->target, end, target_size);
-        q->target[target_size] = 0;
+    q->target = tide_alloc(target_size * 3u + 2u);
+    size_t n = 0;
+    if (!target_size || end[0] == '?') q->target[n++] = '/';
+    for (size_t i = 0; i < target_size; i++) {
+        const unsigned char c = (unsigned char)end[i];
+        if (unsendable(c)) {
+            static const char digits[] = "0123456789ABCDEF";
+            q->target[n++] = '%';
+            q->target[n++] = digits[c >> 4];
+            q->target[n++] = digits[c & 15];
+        } else {
+            q->target[n++] = (char)c;
+        }
     }
+    q->target[n] = 0;
     return true;
 }
 
@@ -307,21 +324,24 @@ static int receive(request *q, bytes *b, const size_t at_most)
 }
 
 // A header's value in the answer's head (`head`, NUL-terminated after the
-// status line), by name, letters in any case: NULL if it isn't there. The
-// value is cut at its line's end, in place.
-static char *header(char *head, const char *name)
+// status line), by name, letters in any case: NULL if it isn't there, and
+// else its first byte, with `size` its length to its line's end, spaces
+// around it left out. The head stays as it is, so every header can be found.
+static const char *header(const char *head, const char *name, size_t *size)
 {
     const size_t n = strlen(name);
-    for (char *line = strstr(head, "\r\n"); line; line = strstr(line, "\r\n")) {
+    for (const char *line = strstr(head, "\r\n"); line; line = strstr(line, "\r\n")) {
         line += 2;
         if (!*line) break;
         size_t i = 0;
         for (; i < n && line[i] && (line[i] | 0x20) == (name[i] | 0x20); i++) {}
         if (i == n && line[n] == ':') {
-            char *value = line + n + 1;
+            const char *value = line + n + 1;
             while (*value == ' ' || *value == '\t') value++;
-            char *end = strstr(value, "\r\n");
-            if (end) *end = 0;
+            const char *end = strstr(value, "\r\n");
+            size_t length = end ? (size_t)(end - value) : strlen(value);
+            while (length && (value[length - 1] == ' ' || value[length - 1] == '\t')) length--;
+            *size = length;
             return value;
         }
     }
@@ -359,29 +379,31 @@ static tide_io_error exchange(request *q, answer *a, uint8_t **body, size_t *bod
     if (strncmp((const char *)in.data, "HTTP/1.", 7) != 0 || head_end < 15) goto done;
     a->status = atoi((const char *)in.data + 9);
     if (a->status < 100 || a->status > 999) goto done;
-    char *head = (char *)in.data;
-    const char *length = header(head, "Content-Length");
-    const char *encoding = header(head, "Transfer-Encoding");
-    const char *location = header(head, "Location");
+    const char *head = (const char *)in.data;
+    size_t length_size = 0, encoding_size = 0, location_size = 0;
+    const char *length = header(head, "Content-Length", &length_size);
+    const char *encoding = header(head, "Transfer-Encoding", &encoding_size);
+    const char *location = header(head, "Location", &location_size);
     if (encoding) {
-        // The last encoding has to be chunked, and none of them packs the body
-        const char *last = strrchr(encoding, ',');
-        last = last ? last + 1 : encoding;
-        while (*last == ' ') last++;
-        char kind[16];
-        snprintf(kind, sizeof kind, "%s", last);
-        for (char *c = kind; *c; c++) *c = (char)(*c | 0x20);
-        if (strncmp(kind, "chunked", 7) != 0 || strchr(encoding, ',')) goto done;
+        // The one encoding has to be chunked: none packs the body
+        static const char chunked[] = "chunked";
+        size_t i = 0;
+        while (i < encoding_size && chunked[i] && (encoding[i] | 0x20) == chunked[i]) i++;
+        if (encoding_size != sizeof chunked - 1 || i != encoding_size) goto done;
         a->chunked = true;
     } else if (length) {
-        char *rest = NULL;
-        a->length = strtoull(length, &rest, 10);
-        if (rest == length || (*rest && *rest != ' ')) goto done;
+        // Digits, and past the limit it's only known to be past it
+        if (!length_size) goto done;
+        for (size_t i = 0; i < length_size; i++) {
+            if (length[i] < '0' || length[i] > '9') goto done;
+            if (a->length <= TIDE_FETCH_LIMIT) a->length = a->length * 10u + (uint64_t)(length[i] - '0');
+        }
         a->has_length = true;
     }
     if (location) {
-        a->location = tide_alloc(strlen(location) + 1);
-        strcpy(a->location, location);
+        a->location = tide_alloc(location_size + 1);
+        memcpy(a->location, location, location_size);
+        a->location[location_size] = 0;
     }
     const bool redirect = a->status == 301 || a->status == 302 || a->status == 303 || a->status == 307 || a->status == 308;
     if (redirect && a->location) { result = TIDE_IO_NONE; goto done; } // The body, if any, isn't wanted

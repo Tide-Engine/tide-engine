@@ -8,6 +8,7 @@
 //
 //   tide_platform_players_net        a run of three, seven frames long
 //   tide_platform_players_net die    ...in which the second's program ends at frame 3
+//   tide_platform_players_net drop   ...in which the second drops and rejoins, as a script's lines do
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -155,12 +156,55 @@ static void third(void)
     }
 }
 
+// A script's drop: nothing the second sends goes and nothing comes, until it
+// rejoins, which asks the host to join again; a leave asks to leave.
+static void dropping(void)
+{
+    static tide_transport net;
+    static tide_address other;
+    if (me == 1) {
+        if (frame == 1) {
+            check(tide_platform_players_open(7777, &net), "its match opens");
+        } else if (frame == 2) {
+            check(strcmp(hear(&net, &other), "hello") == 0, "the second's hello arrives");
+            say(&net, other, "lost"); // The second drops in this frame: it never hears it
+        } else if (frame == 4) {
+            check(silent(&net), "nothing comes from a player that dropped");
+        } else if (frame == 6) {
+            check(heard(&net, "back", other), "what it says once it rejoined goes again");
+            say(&net, other, "welcome back");
+        }
+        check(tide_platform_players_action() == TIDE_PLAYERS_NONE, "the first's script asked nothing of its match");
+    } else if (me == 2) {
+        if (frame == 1) {
+            check(tide_platform_players_join("AAAAAA", &net, &other), "the first's code joins its room");
+            say(&net, other, "hello");
+        } else if (frame == 2) {
+            tide_platform_players_drop();
+            check(tide_platform_players_action() == TIDE_PLAYERS_NONE, "a drop is the platform's: the host has nothing to do");
+        } else if (frame == 3) {
+            check(silent(&net), "a dropped player hears nothing");
+            say(&net, other, "unheard");
+        } else if (frame == 5) {
+            tide_platform_players_rejoin();
+            tide_platform_players_leave();
+            check(tide_platform_players_action() == TIDE_PLAYERS_REJOIN, "a rejoin asks the host to join again");
+            check(tide_platform_players_action() == TIDE_PLAYERS_LEAVE, "then a leave, to leave, in the script's order");
+            check(tide_platform_players_action() == TIDE_PLAYERS_NONE, "and nothing more");
+            say(&net, other, "back");
+        } else if (frame == 7) {
+            check(heard(&net, "welcome back", other), "and it hears again");
+        }
+    }
+}
+
 int main(int argc, char **argv)
 {
     tide_headless_desc desc = {.players = 3, .argc = argc, .argv = argv};
-    bool die = false;
+    bool die = false, drop = false;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "die") == 0) die = true;
+        if (strcmp(argv[i], "drop") == 0) drop = true;
         if (strcmp(argv[i], "--player") == 0 && i + 2 < argc) {
             desc.player = (uint32_t)atoi(argv[i + 1]);
             desc.hub = (uint32_t)atoi(argv[i + 2]);
@@ -177,7 +221,8 @@ int main(int argc, char **argv)
 
     int code = TIDE_KEEP_RUNNING;
     for (frame = 1; frame <= 7 && code == TIDE_KEEP_RUNNING; frame++) {
-        if (me == 1) first();
+        if (drop) dropping();
+        else if (me == 1) first();
         else if (me == 2) second();
         else third();
         if (die && me == 2 && frame == 3) return 7; // As a game that stops: nothing says goodbye
@@ -193,6 +238,7 @@ int main(int argc, char **argv)
     }
     check(code == TIDE_KEEP_RUNNING, "the run goes to its end");
     code = tide_platform_players_finish(failures ? 1 : 0);
-    if (me == 1) printf("%s: three players' datagrams arrive a frame after they're sent, in order, to whom they're for\n", code == 0 ? "ok" : "FAIL");
+    if (me == 1 && drop) printf("%s: a dropped player's datagrams go neither way until it rejoins\n", code == 0 ? "ok" : "FAIL");
+    else if (me == 1) printf("%s: three players' datagrams arrive a frame after they're sent, in order, to whom they're for\n", code == 0 ? "ok" : "FAIL");
     return code;
 }

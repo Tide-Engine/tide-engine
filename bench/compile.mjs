@@ -154,7 +154,7 @@ async function metadata(opts) {
         machine: { os: platform(), release: release(), arch: arch(), cpu: cpu[0]?.model ?? "unknown", logical_cpus: cpu.length, memory_bytes: totalmem() },
         node: process.version,
         tide: { ...identity(opts.tide), version },
-        compiler: nativeCompiler, // Kept for older readers; target rows use compilers[target].
+        compiler: nativeCompiler,
         compilers: { native: nativeCompiler, web: webCompiler },
         tidec: opts.tidec ? identity(opts.tidec) : null,
         git: { commit: commit.code === 0 ? commit.stdout.trim() : null, dirty: status.code === 0 ? Boolean(status.stdout.trim()) : null },

@@ -1,11 +1,41 @@
 asset Mesh<Vertex3> box = "assets/meshes/box.obj";
 asset Mesh<Vertex3> quad = "assets/meshes/quad.glb";
+asset Mesh<Vertex3> boxAlias = "assets/meshes/box.obj";
+using MeshAlias = Mesh<Vertex3>;
+using ModelReference = Asset<MeshAlias>;
+const ModelReference EMPTY_REFERENCE = default;
+const bool EMPTY_REFERENCE_EQUAL = EMPTY_REFERENCE == default;
+const int EMPTY_REFERENCE_COUNT = EMPTY_REFERENCE_EQUAL ? 2 : 3;
 component Model { Asset<Mesh<Vertex3>> model = box; }
-singleton Probe { Entity root; int count; int empty; Asset<Mesh<Vertex3>> held = box; int heldCount; }
+singleton Probe
+{
+    Entity root; int count; int empty; Asset<Mesh<Vertex3>> held = box; int heldCount;
+    ModelReference left; ModelReference right; ModelReference ordered;
+    bool equal; bool different; bool defaults; bool sameGeometryDifferentNames; bool receivedEqual;
+    bool beforeEffect; bool afterEffect; bool orderedEqual; bool orderedDifferent;
+    int order; int calls; int folded; float firstX;
+    int[EMPTY_REFERENCE_COUNT] foldedArray;
+}
 local singleton LocalProbe { LocalEntity root; int count; }
 scene Main { }
 int Count(Asset<Mesh<Vertex3>> model) { return model.Value.indices.count; }
 int Count(int value) { return value; }
+bool Same(ModelReference a, Asset<Mesh<Vertex3>> b) { return a == b; }
+ModelReference Ordered(mut Probe probe, int digit, ModelReference value)
+{
+    probe.order = probe.order * 10 + digit;
+    probe.calls++;
+    return value;
+}
+ModelReference Replace(mut Probe probe, ModelReference next, ModelReference result)
+{
+    probe.ordered = next;
+    return result;
+}
+int FoldedReference()
+{
+    if (EMPTY_REFERENCE == default) return 7;
+}
 event(Spawned) Begin(with Main, mut Probe probe) { probe.root = Spawn(Art); }
 system Read(mut Probe probe, World world) {
     var model = world.Get<Model>(probe.root);
@@ -18,6 +48,22 @@ system Read(mut Probe probe, World world) {
     Debug.Assert(Count(choice) == box.indices.count);
     List<Asset<Mesh<Vertex3>>> refs = [box, quad, default];
     Debug.Assert(Count(refs[1]) == quad.indices.count);
+    ModelReference chosen = box;
+    probe.equal = Same(chosen, box) && chosen == box && box == chosen
+        && chosen == (true ? box : quad);
+    probe.different = chosen != quad && quad != chosen && !Same(chosen, quad);
+    probe.defaults = none == default && default == none && chosen != default && default != chosen;
+    probe.sameGeometryDifferentNames = chosen != boxAlias;
+    probe.receivedEqual = probe.left == probe.right;
+    probe.order = 0;
+    probe.calls = 0;
+    probe.orderedEqual = Ordered(probe, 1, box) == Ordered(probe, 2, box);
+    probe.orderedDifferent = Ordered(probe, 3, box) != Ordered(probe, 4, quad);
+    probe.ordered = box;
+    probe.beforeEffect = probe.ordered == Replace(probe, quad, box);
+    probe.afterEffect = Replace(probe, box, quad) != probe.ordered;
+    probe.folded = FoldedReference() + probe.foldedArray.count;
+    probe.firstX = box.vertices[0].position.x;
 }
 view Local(mut LocalProbe probe, World world) {
     if (probe.root == default) probe.root = local Spawn(Art);

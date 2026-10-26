@@ -240,13 +240,11 @@ static void check_back(rtc_ice *ice, rtc_pair *p, const double now)
     send_check(ice, p, now);
 }
 
-// Their checks can come before their description does (RFC 8445, 7.3): they
-// have ours first, and check as they send theirs. Such a check is answered,
-// which takes our own password, and the check back, which is signed with
-// theirs, is owed until now. It doesn't wait its pair's turn from here: the
-// address a check came from ranks below the ones their description says
-// they're at, which would each be checked first, 20 ms apart, while they may
-// already send on the pair their check found.
+// Their checks can come before their description does (RFC 8445, 7.3). Such a
+// check is answered with our own password, but the check back is signed with
+// theirs, so it's owed until now. It's sent out of turn: the address it came
+// from ranks below the ones their description lists, which would each be
+// checked first, 20 ms apart, while they may already send on that pair.
 void rtc_ice_set_remote(rtc_ice *ice, const char *ufrag, const char *pwd, const double now)
 {
     snprintf(ice->remote_ufrag, sizeof ice->remote_ufrag, "%s", ufrag);

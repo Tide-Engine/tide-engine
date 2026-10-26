@@ -6,6 +6,9 @@ the Tide language, which compiles to C and then to native code or WebAssembly.
 
 **Docs, and the demo running in your browser:** https://tide-engine.dev
 
+**Using an AI coding agent?** Start with the [Tide overview, starter prompt and
+optional skill](https://tide-engine.dev/guide/ai).
+
 ## Install
 
 Windows, in PowerShell:
@@ -108,6 +111,20 @@ folder next to your files, which you can delete any time; it's ignored by git.
 The [docs](https://tide-engine.dev) go through the language a topic at a time, and
 [docs/spec.md](docs/spec.md) is its full spec.
 
+## Packages
+
+Optional [packages](docs/packages/index.md) include `render3d`, `box2d`, `box3d`,
+`newton`, `rooms`, `lobby`, `steam` and `voice`. Add only the ones a game uses with
+`tide add <name>`. [Render3D](docs/packages/render3d.md) supplies static/skinned
+mesh materials, directional/point/spot lights, shadows, linear PBR, sorted
+transparency, vertex deformation, bloom and HDR effects, with package-owned passes. Baked lighting, area
+lights and probes remain future work.
+
+[Newton](docs/packages/newton.md) is an experimental NVIDIA
+Newton articulation/control integration for the same game and robotics-policy
+simulation. Native and web replay tests agree; collisions, robot importers and
+physical fidelity validation remain future work. Use a checkout or installation containing it.
+
 ## Stay up to date
 
 ```sh
@@ -117,6 +134,14 @@ tide upgrade --stable   # back to stable ones
 ```
 
 `tide` also tells you, at most once a day, when a new version is out.
+
+## Usage data
+
+`tide` sends a small anonymous event for each command it runs: the command,
+target, version, OS and CPU, whether CI runs it, how long it took and whether
+it worked. Never paths, names, code or error messages. Turn it off with
+`tide telemetry off`, `TIDE_TELEMETRY=0` or `DO_NOT_TRACK=1`; every field is
+listed at https://tide-engine.dev/tools/telemetry.
 
 ## Editors
 
@@ -133,8 +158,11 @@ more work across all of them.
   the ones it finds, and `tide upgrade` keeps it up to date. Installed one
   later? Run `tide editors`.
 - **JetBrains IDEs** (CLion, Rider, IntelliJ and the others, 2024.2 or later):
-  install the Tide plugin
-  from Settings > Plugins > Marketplace. It brings the LSP4IJ plugin it needs.
+  the installer adds the bundled plugin to existing IDE profiles, including
+  LSP4IJ when missing. `tide upgrade` keeps the plugin aligned with Tide.
+  Open a newly installed IDE once, then run `tide editors`. Restart the IDE
+  after installation or upgrades. The [plugin source](https://github.com/Tide-Engine/tide-jetbrains)
+  is public under MIT.
   Dark color schemes show type names as plain text; see
   [tools/tide-jetbrains/README.md](tools/tide-jetbrains/README.md#colors)
   to color them.
@@ -152,3 +180,19 @@ more work across all of them.
 
 See [AGENTS.md](AGENTS.md): how to build the engine and its tests with CMake,
 and how the project is organized.
+
+## License
+
+Tide is licensed under either of
+
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE))
+- MIT license ([LICENSE-MIT](LICENSE-MIT))
+
+at your option. Games made with Tide are yours; the engine code compiled into
+them is under these terms. Third-party code that comes with Tide keeps its own
+license, beside it in this repository and under `licenses/` in the installed
+package.
+
+Unless you explicitly state otherwise, any contribution intentionally submitted
+for inclusion in Tide by you, as defined in the Apache-2.0 license, shall be
+dual licensed as above, without any additional terms or conditions.

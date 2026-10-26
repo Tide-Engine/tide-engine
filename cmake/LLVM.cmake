@@ -127,8 +127,7 @@ endif()
 # tide is nearly all LLVM, so how it's linked decides how big it is. Windows'
 # linker (lld-link) leaves out what nothing reaches and keeps one of the
 # functions that are the same code by itself, and a program there has no table
-# of its functions' names. The others have to be told each: without it, tide
-# for Linux was 210 MB to Windows' 121, a sixth of it names. Not in a build to
+# of its functions' names. The others have to be told each. Not in a build to
 # debug.
 set(_tide_small "$<CONFIG:Release,MinSizeRel>")
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -176,6 +175,10 @@ function(tide_add_llvm_dependencies)
     target_compile_options(zlibstatic PRIVATE -w)
     target_compile_options(libzstd_static PRIVATE -w)
     target_link_libraries(tide_cc PUBLIC zlibstatic libzstd_static)
+    # They're in tide, so their licenses are in the package (zstd's BSD one,
+    # of its BSD-or-GPLv2 choice).
+    install(FILES "${tide_zlib_SOURCE_DIR}/LICENSE" DESTINATION licenses/zlib COMPONENT tide)
+    install(FILES "${tide_zstd_SOURCE_DIR}/LICENSE" DESTINATION licenses/zstd COMPONENT tide)
     if(WIN32)
         foreach(feature CATALOG DEBUG HTML ICONV MODULES PROGRAMS TESTS)
             set(LIBXML2_WITH_${feature} OFF)
@@ -183,9 +186,36 @@ function(tide_add_llvm_dependencies)
         FetchContent_MakeAvailable(tide_libxml2)
         target_compile_options(LibXml2 PRIVATE -w)
         target_link_libraries(tide_cc PUBLIC LibXml2 ntdll version)
+        install(FILES "${tide_libxml2_SOURCE_DIR}/Copyright" DESTINATION licenses/libxml2 COMPONENT tide)
     endif()
 endfunction()
 tide_add_llvm_dependencies()
+
+# The licenses of what tide links of LLVM, and of clang's headers below: the
+# release's archive has none, so they come from the source it was built from
+# (the llvmorg-<version> tag), pinned like the archive. LLVM, clang and lld
+# each have one, and LLVM's Support library has two others' code with their
+# own (BLAKE3, and the BSD regex). A new version needs new hashes here.
+set(_tide_llvm_licenses
+    llvm llvm/LICENSE.TXT 8d85c1057d742e597985c7d4e6320b015a9139385cff4cbae06ffc0ebe89afee
+    clang clang/LICENSE.TXT ebcd9bbf783a73d05c53ba4d586b8d5813dcdf3bbec50265860ccc885e606f47
+    lld lld/LICENSE.TXT f7891568956e34643eb6a0db1462db30820d40d7266e2a78063f2fe233ece5a0
+    llvm/BLAKE3 llvm/lib/Support/BLAKE3/LICENSE 6a94bedb8b707ed97f6e310d0d015ab14e0683ffa0a612b02958581b9cc9fc0e
+    llvm llvm/lib/Support/COPYRIGHT.regex 0424e57d4303164dc59a8509c20dae0518b853692e5c2b0e98b11816fdbc97c7)
+get_filename_component(_tide_llvm_license_dir "${PROJECT_SOURCE_DIR}/build/llvm-${TIDE_LLVM_VERSION}/licenses" ABSOLUTE)
+while(_tide_llvm_licenses)
+    list(POP_FRONT _tide_llvm_licenses _tide_name _tide_path _tide_hash)
+    get_filename_component(_tide_file "${_tide_path}" NAME)
+    set(_tide_local "${_tide_llvm_license_dir}/${_tide_name}/${_tide_file}")
+    # A file that's there with this hash isn't downloaded again.
+    file(DOWNLOAD "https://raw.githubusercontent.com/llvm/llvm-project/llvmorg-${TIDE_LLVM_VERSION}/${_tide_path}"
+        "${_tide_local}" EXPECTED_HASH SHA256=${_tide_hash} STATUS _tide_status)
+    list(GET _tide_status 0 _tide_code)
+    if(NOT _tide_code EQUAL 0)
+        message(FATAL_ERROR "Downloading LLVM's ${_tide_path} failed: ${_tide_status}")
+    endif()
+    install(FILES "${_tide_local}" DESTINATION "licenses/${_tide_name}" COMPONENT tide)
+endwhile()
 
 # clang's own headers, but not those for what tide never builds for: other
 # CPUs (it builds for x86-64 and arm64, the machine's and Android's, and the

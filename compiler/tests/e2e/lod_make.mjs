@@ -1,8 +1,6 @@
-// Writes the model files the levels-of-detail test's game is built with, into
-// assets/lod/ beside this script: `node lod_make.mjs`. They're checked in, as
-// a game reads an asset's bytes; this is how they were made. Each has enough
-// triangles for several levels: what the levels have to be is in
-// e2e/lod_test.c.
+// Writes the model files the levels-of-detail test's game is built with, into assets/lod/ beside this script:
+// `node lod_make.mjs`. They are checked in, as a game reads an asset's bytes. Each has enough triangles for
+// several levels; what the levels have to be is in e2e/lod_test.c.
 
 import fs from 'node:fs';
 import path from 'node:path';

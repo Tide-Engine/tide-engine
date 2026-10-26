@@ -101,6 +101,12 @@ bool tide_version_valid(const char *text)
     return parse(text, &v);
 }
 
+bool tide_version_dev(const char *version)
+{
+    const size_t n = strlen(version);
+    return n >= 4 && strcmp(version + n - 4, "-dev") == 0;
+}
+
 const char *tide_release_version(const json *release)
 {
     const char *tag = json_str(json_get(release, "tag_name"));

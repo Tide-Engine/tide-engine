@@ -53,8 +53,8 @@ TIDE_TEST(frustum_rejects_each_plane_and_keeps_intersections)
         }
     }
     TIDE_CHECK(instances(&d) == 0);
-    draw(&d, position(1.1f, 0, 0)); // Straddles the right plane
-    draw(&d, position(0, 0, 1)); // Exactly on a depth plane
+    draw(&d, position(1.1f, 0, 0));
+    draw(&d, position(0, 0, 1));
     draw(&d, position(0, 0, -1));
     draw(&d, position(0, 0, 0));
     TIDE_CHECK(instances(&d) == 4);
@@ -117,17 +117,17 @@ TIDE_TEST(frustum_settings_targets_reset_and_unknown_values)
     const tide_render_target target = tide_render_target_make(100, 100);
     tide_draw_render_target(&d, target);
     tide_draw_set_camera_matrices(&d, position(100, 0, 0), tide_identity_f4x4());
-    draw(&d, position(100, 0, 0)); // A shadow/other camera sees it
+    draw(&d, position(100, 0, 0));
     tide_draw_set_bounds(&d, tide_f3(0, 0, 0), tide_f3(0, 0, 0));
     tide_draw_render_target(&d, (tide_render_target){.id = TIDE_RENDER_WINDOW});
     draw(&d, position(100, 0, 0));
     TIDE_CHECK(instances(&d) == 3);
-    tide_draw_set_bounds(&d, tide_f3(0, 0, 0), tide_f3(-1, 1, 1)); // Invalid keeps it
+    tide_draw_set_bounds(&d, tide_f3(0, 0, 0), tide_f3(-1, 1, 1));
     draw(&d, position(100, 0, 0));
     TIDE_CHECK(instances(&d) == 4);
     tide_draw_reset(&d);
     TIDE_CHECK(d.place.bounds.set == 0 && d.place.no_frustum_culling == 0);
-    tide_draw_screen_size(&d, tide_f2(0, 0)); // A custom host has not supplied a size
+    tide_draw_screen_size(&d, tide_f2(0, 0));
     draw(&d, position(100, 0, 0));
     TIDE_CHECK(instances(&d) == 1);
     tide_draw_free(&d);
@@ -153,7 +153,6 @@ TIDE_TEST(frustum_shader_deformation_requires_bounds_and_compacts_instances)
     shader.bounds_position = 1 + offsetof(tide_vertex3, position);
     tide_draw_shaded_instances(&d, &shader, mesh, transforms, 3, NULL, NULL, 0);
     TIDE_CHECK(instances(&d) == 7);
-    // Automatic and explicit bounds produce the same kept transforms, packed without gaps.
     tide_float4x4 kept[2];
     memcpy(kept, d.instances + d.instance_used - sizeof kept, sizeof kept);
     TIDE_CHECK(kept[0].c3.x == 0 && kept[1].c3.x == 0.5f);
@@ -174,7 +173,7 @@ TIDE_TEST(frustum_updates_camera_aspect_geometry_and_lod_bounds)
     TIDE_CHECK(instances(&d) == 0);
     tide_draw_screen_size(&d, tide_f2(1600, 400));
     draw(&d, position(5, 0, 2));
-    TIDE_CHECK(instances(&d) == 1); // Cached camera follows aspect changes
+    TIDE_CHECK(instances(&d) == 1);
     const uint32_t mesh = d.commands[d.count - 1].mesh3.mesh;
     const tide_mesh_levels levels = {.center = {100, 0, 0}, .radius = 0.01f, .count = 1,
         .error = {1}, .indices = {3}, .index = indices, .index_count = 3};
@@ -185,7 +184,6 @@ TIDE_TEST(frustum_updates_camera_aspect_geometry_and_lod_bounds)
     TIDE_CHECK(instances(&d) == 3);
     tide_draw_prepare(&d, NULL);
     TIDE_CHECK(instances(&d) == 3);
-    // A changed version has a new owned geometry box, even at the same addresses.
     tide_vertex3 changed[3];
     memcpy(changed, vertices, sizeof changed);
     tide_mesh editable = {changed, 3, indices, 3, 1};

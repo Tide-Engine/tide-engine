@@ -65,7 +65,7 @@ TIDE_TEST(text_takes_an_anchor_and_a_weight)
     asks = 0;
     frame(&local, &draw);
 
-    // Without either, a text is at its top left corner in the regular weight, as it always was
+    // Without either, a text is at its top left corner in the regular weight
     TIDE_CHECK(drawn(&draw, "plain", 1, 2, 10, TIDE_ANCHOR_UPPER_LEFT, false));
     TIDE_CHECK(drawn(&draw, "anchored", 3, 4, 11, TIDE_ANCHOR_MIDDLE_CENTER, false));
     TIDE_CHECK(drawn(&draw, "bold", 5, 6, 12, TIDE_ANCHOR_UPPER_LEFT, true));
@@ -89,7 +89,7 @@ TIDE_TEST(text_takes_an_anchor_and_a_weight)
     TIDE_CHECK(drawn(&draw, "chosen again", 15, 16, 17, TIDE_ANCHOR_LOWER_CENTER, false));
     TIDE_CHECK(local.Probe.asked == 2);
 
-    // The list has the bold weight's file for its renderer, as bold text was drawn
+    // The list has the bold weight's file for its renderer
     TIDE_CHECK(draw.bold == tide_font_bold_ttf);
 
     tide_draw_free(&draw);

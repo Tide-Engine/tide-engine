@@ -1,0 +1,325 @@
+scene Main;
+asset Render3D.Mesh3D quad = "quad.obj";
+asset Render3D.Mesh3D slanted = "slanted.obj";
+asset Texture tint = "tint.png";
+
+component Patch { int index; local bool configured; }
+// Set before the first tick. Views must leave every scenario's match hash alone.
+singleton Fixture { int scenario; int face; int flags; bool built; }
+local singleton Probe
+{
+    bool disableShadows;
+    bool disableRenderer;
+    bool exactSeamProbe;
+    float4 exactSeamRect;
+    Color[7] expected;
+    int maxLights = 32;
+    int maxShadowMaps = 8;
+    int shadowResolution = 256;
+    bool localBuilt;
+    int lightCount;
+    int shadowCount;
+    Render3D.LightData[48] selected;
+    Render3D.ShadowView[16] shadowViews;
+    int[44] pointFaces;
+    int frames;
+}
+
+float3 FaceForward(int face)
+{
+    if (face == 0) return float3(1, 0, 0);
+    if (face == 1) return float3(-1, 0, 0);
+    if (face == 2) return float3(0, 1, 0);
+    if (face == 3) return float3(0, -1, 0);
+    if (face == 4) return float3(0, 0, 1);
+    return float3(0, 0, -1);
+}
+
+float3 FaceUp(int face)
+{
+    if (face == 2) return float3(0, 0, -1);
+    if (face == 3) return float3(0, 0, 1);
+    return float3(0, 1, 0);
+}
+
+system Setup(mut Fixture fixture)
+{
+    if (fixture.built) return;
+    fixture.built = true;
+    if (fixture.scenario == 2)
+    {
+        // Deliberately collect the highest-priority point last. The stable
+        // remainder is directional/match, directional/local, spot, then point.
+        for (var i = 0; i < 12; i++)
+        {
+            Spawn(Render3D.DirectionalLight { radiance = float3(101 + i, 0, 0), priority = i == 11 ? 80 : 0 });
+            Spawn(Render3D.SpotLight { intensity = float3(201 + i, 0, 0), castShadows = true, priority = i == 11 ? 90 : 0 });
+            Spawn(Render3D.PointLight { intensity = float3(301 + i, 0, 0), castShadows = true, priority = i == 11 ? 100 : 0 });
+        }
+        Spawn(Render3D.DirectionalLight { enabled = false, priority = 1000 });
+        Spawn(Render3D.PointLight { range = 0, priority = 1000 });
+        Spawn(Render3D.SpotLight { range = -1, priority = 1000 });
+        Spawn(Render3D.PointLight { enabled = false, priority = 1000 });
+        Spawn(Render3D.SpotLight { enabled = false, priority = 1000 });
+        return;
+    }
+    if (fixture.scenario == 5)
+    {
+        float3 origin = float3(3, 2, 1);
+        float3 forward = FaceForward(fixture.face);
+        var rotation = quaternion.LookRotation(forward, FaceUp(fixture.face));
+        float3 right = Math.Rotate(rotation, float3(1, 0, 0));
+        // The camera sits off the light axis, so both occluders and their
+        // shadows are independently visible. The second caster crosses a cube
+        // face boundary: samples on either side must use adjacent atlas cells.
+        Spawn(Render3D.MeshRenderer { mesh = quad, castShadows = false },
+              Render3D.Material { baseColor = Color(0.73535698, 0.73535698, 0.73535698), roughness = 1,
+                                  emission = float3(0.03, 0.02, 0.01) },
+              Transform { localPosition = origin + forward * 4, localRotation = rotation, localScale = float3(16, 8, 1) });
+        Spawn(Render3D.MeshRenderer { mesh = quad }, Render3D.Material {},
+              Transform { localPosition = origin + forward * 2, localRotation = rotation, localScale = float3(0.6, 1.5, 1) });
+        Spawn(Render3D.MeshRenderer { mesh = quad }, Render3D.Material {},
+              Transform { localPosition = origin + forward * 2 + right * 2, localRotation = rotation, localScale = float3(0.8, 1.5, 1) });
+        Spawn(Render3D.PointLight { intensity = float3(20, 0, 0), range = 12, castShadows = true },
+              Transform { localPosition = origin });
+        return;
+    }
+    if (fixture.scenario == 4)
+    {
+        Spawn(Render3D.MeshRenderer { mesh = quad, castShadows = false },
+              Render3D.Material { baseColor = Color(0.73535698, 0.73535698, 0.73535698), roughness = 1,
+                                  receiveShadows = (fixture.flags & 1) == 0, emission = float3(0.03, 0.02, 0.01) },
+              Transform { localScale = float3(12, 6, 1) });
+        Spawn(Render3D.MeshRenderer { mesh = quad, castShadows = (fixture.flags & 2) == 0 }, Render3D.Material {},
+              Transform { localPosition = float3(0, 0, -1), localScale = float3(0.6, 1.5, 1) });
+        Spawn(Render3D.DirectionalLight { direction = float3(1, 0, 1), radiance = float3(4, 0, 0),
+                                        castShadows = (fixture.flags & 4) == 0 });
+        return;
+    }
+    if (fixture.scenario == 1 || fixture.scenario == 3)
+    {
+        Spawn(Render3D.MeshRenderer { mesh = quad, castShadows = false },
+              Render3D.Material { baseColor = Color(0.73535698, 0.73535698, 0.73535698), roughness = 1,
+                                  emission = fixture.scenario == 1 ? float3(0.1, 0.2, 0.3) : float3(0) },
+              Transform { localScale = float3(16, 8, 1) });
+        if (fixture.scenario == 3)
+        {
+            Spawn(Render3D.SpotLight { intensity = float3(8, 4, 2), range = 4, innerAngle = 30deg, outerAngle = 70deg },
+                  Transform { localPosition = float3(0, 0, -2) });
+            return;
+        }
+        Spawn(Render3D.DirectionalLight { direction = float3(0, 0, 1), radiance = float3(2, 0, 0), castShadows = false });
+        var parent = Spawn(Transform { localPosition = float3(-2, 0, -2), localRotation = quaternion.Euler(float3(0, 90deg, 0)),
+                                      localScale = float3(2, 1, 1) });
+        var point = Spawn(Render3D.PointLight { intensity = float3(0, 0, 8), range = 4 },
+                          Transform { localPosition = float3(0, 0, 1) });
+        point.SetParent(parent, false); // World position (-1,0,-2), independent of scale on X.
+        return;
+    }
+    Spawn(Render3D.DirectionalLight { direction = float3(1, 0, 2), radiance = float3(4) });
+    Spawn(Patch { index = 0 }, Render3D.MeshRenderer { mesh = quad },
+          Render3D.Material { roughness = 1 },
+          Transform { localPosition = float3(-4.2, 0, 0), localScale = float3(1.5, 1.5, 1) });
+    Spawn(Patch { index = 1 }, Render3D.MeshRenderer { mesh = quad },
+          Render3D.Material { baseColor = Color(0.73535698, 0.73535698, 0.73535698), roughness = 1, metallic = 1 },
+          Transform { localPosition = float3(-1.5, 0, 0), localScale = float3(1.5, 1.5, 1) });
+    Spawn(Patch { index = 2 }, Render3D.MeshRenderer { mesh = slanted },
+          Render3D.Material { baseColor = Color(0.73535698, 0.73535698, 0.73535698), roughness = 0.5 },
+          Transform { localPosition = float3(1.5, 0, 0), localScale = float3(-1.5, 1.5, 0.5) });
+    Spawn(Patch { index = 3 }, Render3D.MeshRenderer { mesh = quad }, Render3D.Material {},
+          Transform { localPosition = float3(4.2, 0, 0), localScale = float3(1.5, 1.5, 1) });
+    Spawn(Patch { index = 4 }, Render3D.MeshRenderer { mesh = quad },
+          Render3D.Material { baseColor = Color(0.73535698, 0.73535698, 0.73535698), roughness = 1 },
+          Transform { localPosition = float3(0, -1.7, 0), localScale = float3(11, 1.2, 1) });
+    Spawn(Patch { index = 5 }, Render3D.MeshRenderer { mesh = quad }, Render3D.Material {},
+          Transform { localPosition = float3(-1.5, -1.7, -1), localScale = float3(0.8, 0.8, 1) });
+}
+
+void Emissive(Render3D.SurfaceInput input, mut Render3D.Surface surface, float strength)
+{
+    surface.albedo = float3(0);
+    surface.metallic = 1;
+    surface.emission = float3(strength);
+}
+
+[Before(Render3D.Stages.Prepare)]
+view Configure(mut Render3D.Renderer renderer, mut Probe probe, Fixture fixture)
+{
+    renderer.enabled = !probe.disableRenderer;
+    renderer.camera = Render3D.Camera { position = float3(0, 0, -6), rotation = quaternion.identity, verticalFov = 60deg };
+    if (fixture.scenario == 5)
+    {
+        float3 forward = FaceForward(fixture.face);
+        var rotation = quaternion.LookRotation(forward, FaceUp(fixture.face));
+        float3 right = Math.Rotate(rotation, float3(1, 0, 0));
+        renderer.camera = Render3D.Camera { position = float3(3, 2, 1) + right * 4 - forward * 2,
+                                          rotation = rotation, verticalFov = 60deg };
+    }
+    renderer.background = Color.black;
+    renderer.maxLights = probe.maxLights;
+    renderer.maxShadowMaps = probe.maxShadowMaps;
+    renderer.shadowResolution = probe.shadowResolution;
+    renderer.shadowExtent = 4;
+    renderer.shadowDistance = 20;
+    renderer.shadows = !probe.disableShadows;
+    renderer.shadowBias = 0.003;
+    renderer.shadowSlopeBias = 0;
+    probe.frames++;
+    if (probe.localBuilt) return;
+    probe.localBuilt = true;
+    if (fixture.scenario == 2)
+    {
+        local Spawn(Render3D.DirectionalLight { radiance = float3(199, 0, 0) });
+        local Spawn(Render3D.SpotLight { intensity = float3(299, 0, 0), castShadows = true });
+        local Spawn(Render3D.PointLight { intensity = float3(399, 0, 0), castShadows = true });
+    }
+    if (fixture.scenario == 1)
+    {
+        local Spawn(Render3D.DirectionalLight { direction = float3(1, 0, 0), radiance = float3(0, 1, 0), castShadows = false },
+                    Transform { localRotation = quaternion.Euler(float3(0, -90deg, 0)), localScale = float3(2, 3, 4) });
+        var parent = local Spawn(Transform { localPosition = float3(2, 0, -1), localRotation = quaternion.Euler(float3(0, 90deg, 0)) });
+        var point = local Spawn(Render3D.PointLight { intensity = float3(2, 0, 0), range = 3 }, Transform {});
+        point.SetParent(parent, false);
+        local Spawn(Render3D.SpotLight { direction = float3(-1, 0, 0), intensity = float3(0, 6, 0),
+                                                  range = 4, innerAngle = 30deg, outerAngle = 70deg },
+                               Transform { localPosition = float3(0, 0, -2), localRotation = quaternion.Euler(float3(0, 90deg, 0)),
+                                           localScale = float3(2, 3, 4) });
+    }
+    if (fixture.scenario == 4)
+        local Spawn(Render3D.DirectionalLight { direction = float3(-1, 0, 1), radiance = float3(0, 4, 0) });
+    if (fixture.scenario == 5)
+    {
+        var rotation = quaternion.LookRotation(FaceForward(fixture.face), FaceUp(fixture.face));
+        var parent = local Spawn(Transform { localPosition = float3(3, 2, 1), localRotation = rotation });
+        var point = local Spawn(Render3D.PointLight { intensity = float3(0, 100, 0), range = 20, castShadows = true },
+                                Transform { localPosition = float3(-8, 0, 0) });
+        point.SetParent(parent, false);
+    }
+}
+
+[Stage(Render3D.Stages.Lights, 4)]
+view Collected(Render3D.Renderer renderer, mut Probe probe)
+{
+    probe.lightCount = renderer.lights.count;
+    probe.shadowCount = renderer.shadowViews.count;
+    for (var i = 0; i < probe.lightCount && i < 48; i++) probe.selected[i] = renderer.lights[i];
+    for (var i = 0; i < probe.shadowCount && i < 16; i++) probe.shadowViews[i] = renderer.shadowViews[i];
+    mut int index = 0;
+    for (var axis = 0; axis < 3; axis++)
+    {
+        for (var s = -1; s <= 1; s += 2)
+        {
+            for (var t = -1; t <= 1; t += 2)
+            {
+                float3 first = axis == 0 ? float3(0, s, 0) : float3(s, 0, 0);
+                float3 second = axis == 2 ? float3(0, t, 0) : float3(0, 0, t);
+                probe.pointFaces[index++] = Render3D.PointFace(first + second);
+                probe.pointFaces[index++] = Render3D.PointFace(first * 1.0001 + second);
+                probe.pointFaces[index++] = Render3D.PointFace(first + second * 1.0001);
+            }
+        }
+    }
+    for (var x = -1; x <= 1; x += 2)
+        for (var y = -1; y <= 1; y += 2)
+            for (var z = -1; z <= 1; z += 2)
+                probe.pointFaces[index++] = Render3D.PointFace(float3(x, y, z));
+}
+
+[Before(Render3D.Stages.Prepare)]
+view Customize(mut Patch patch, mut Render3D.Material material)
+{
+    if (patch.index == 0) material.baseMap = tint;
+    if (patch.index != 3 || patch.configured) return;
+    mut float strength = 4;
+    material.shader = Render3D.Lit {
+        surface = (Render3D.SurfaceInput input, mut Render3D.Surface surface) => Emissive(input, surface, strength)
+    };
+    strength = 99;
+    patch.configured = true;
+}
+
+Color ReferenceSurface(Render3D.Renderer renderer, float2 pixel, float metallic, float roughness, float3 normal, float3 albedo)
+{
+    float depth = renderer.hdr.WorldToScreen(float3(0)).z;
+    float3 world = renderer.hdr.ScreenToWorld(float3(pixel + float2(0.5), depth));
+    var surface = Render3D.Surface { albedo = albedo, normal = normal, metallic = metallic, roughness = roughness };
+    // Independent fixed baseline direction; no removed Renderer.sun fields.
+    float3 lit = Render3D.EvaluatePbr(surface, renderer.eye - world, Math.Normalize(float3(-1, 0, -2)), float3(4), 1);
+    float3 display = Render3D.LinearToSrgb(Render3D.Tonemap(lit, 1));
+    return Color(display.x, display.y, display.z);
+}
+
+Color Reference(Render3D.Renderer renderer, float2 pixel, float metallic, float roughness)
+{
+    return ReferenceSurface(renderer, pixel, metallic, roughness, float3(0, 0, -1), float3(0.5));
+}
+
+[Stage(Render3D.Stages.Opaque, -1)]
+view ReferencePixels(Render3D.Renderer renderer, mut Probe probe, Fixture fixture)
+{
+    if (!renderer.enabled || !renderer.ready || fixture.scenario != 0) return;
+    probe.expected[0] = ReferenceSurface(renderer, float2(26, 32), 0, 1, float3(0, 0, -1),
+                                        Render3D.SrgbToLinear(float3(128.0 / 255, 192.0 / 255, 64.0 / 255)));
+    probe.expected[1] = Reference(renderer, float2(50, 32), 1, 1);
+    // OBJ reflects X; inverse-transpose of scale(-1.5,1.5,.5) gives (1,0,-3).
+    probe.expected[2] = ReferenceSurface(renderer, float2(78, 32), 0, 0.5, Math.Normalize(float3(1, 0, -3)), float3(0.5));
+    probe.expected[3] = Color(0.90633175, 0.90633175, 0.90633175);
+    probe.expected[4] = Reference(renderer, float2(88, 48), 0, 1);
+    probe.expected[5] = Reference(renderer, float2(112, 48), 0, 1);
+    probe.expected[6] = Reference(renderer, float2(56, 48), 0, 1);
+}
+
+struct ExactSeamData
+{
+    Render3D.ShadowView shadow;
+    float texel;
+}
+
+frag ExactSeamPixel(Vertex vertex, out Color color, Render3D.Renderer renderer, ExactSeamData data)
+{
+    float point = Render3D.ShadowVisibility(renderer.shadow, data.shadow, float3(0), 0, data.texel, true);
+    float ordinary = Render3D.ShadowVisibility(renderer.shadow, data.shadow, float3(0), 0, data.texel, false);
+    // Independent control: this subrect must really contain rendered occluder
+    // depth. A missing/cleared atlas must fail along with the seam sample.
+    float knownOcclusion = renderer.shadow.Compare(data.shadow.uvRect.xy + data.shadow.uvRect.zw * 0.5, 0.9);
+    color = Color(point, ordinary, knownOcclusion);
+}
+
+[Stage(Render3D.Stages.Present, 1)]
+view ExactSeamPixels(Render3D.Renderer renderer, mut Probe probe, Fixture fixture)
+{
+    if (!probe.exactSeamProbe || fixture.scenario != 0 || !renderer.enabled || !renderer.ready ||
+        !renderer.shadows || renderer.shadowViews.count == 0) return;
+    var original = renderer.shadowViews[0];
+    // The baseline caster at (-1.5,-1.7,-1), with photon direction (1,0,2),
+    // covers this receiver. Reuse its rendered atlas depth, not a fake texture.
+    float4 clip = Math.Mul(original.worldToClip, float4(-1, -1.7, 0, 1));
+    float2 center = original.uvRect.xy + float2(clip.x / clip.w * 0.5 + 0.5, 0.5 - clip.y / clip.w * 0.5) * original.uvRect.zw;
+    probe.exactSeamRect = float4(center - float2(renderer.shadowTexel * 2), float2(renderer.shadowTexel * 4));
+    Draw.Screen()
+    {
+        Draw.SetBlend(Blend.Replace);
+        Draw.SetDepth();
+        Draw.SetCull();
+        for (var i = 0; i < 6; i++)
+        {
+            mut Render3D.ShadowView shadow = default;
+            shadow.uvRect = probe.exactSeamRect;
+            // Two binary32 ULPs outside the cube-face edge, matching the
+            // projection roundoff at an exact dominant-axis tie. A constant
+            // matrix/world makes this independent of pixel interpolation.
+            float edge = 1.0000002384185791015625;
+            mut float4 projected = float4(edge, 0, 0.8, 1);
+            if (i == 1) projected = float4(-edge, 0, 0.8, 1);
+            if (i == 2) projected = float4(0, edge, 0.8, 1);
+            if (i == 3) projected = float4(0, -edge, 0.8, 1);
+            if (i == 4) projected = float4(0, 0, 1.1, 1); // Strict far-Z guard, even for point faces.
+            if (i == 5) projected = float4(0, 0, -0.8, -1); // Valid normalized Z isolates the W guard.
+            shadow.worldToClip.c3 = projected;
+            float x = float(i * 4 + 1);
+            Draw.Mesh([Vertex { position = float2(x, 1) }, Vertex { position = float2(x + 2, 1) },
+                       Vertex { position = float2(x + 2, 3) }, Vertex { position = float2(x, 3) }],
+                      [0, 1, 2, 0, 2, 3], ExactSeamPixel, ExactSeamData { shadow = shadow, texel = renderer.shadowTexel });
+        }
+    }
+}

@@ -41,6 +41,12 @@ event(Spawned) Setup(with Main, mut Control control)
     Debug.Assert(audience.Contains(PlayerID(69)));
     Debug.Assert(!Audience.All.Contains(PlayerID(70)));
     Debug.Assert(!Audience.None.Contains(PlayerID(0)));
+    // Equal when they have the same players, in any word of the 70 bits: 69 is in the third
+    mut var same = Audience.From([PlayerID(69), PlayerID(33), PlayerID(0)]);
+    Debug.Assert(same == audience && !(same != audience));
+    same.Remove(PlayerID(69));
+    Debug.Assert(same != audience && !(same == audience));
+    Debug.Assert(Audience.None == Audience.From([]) && Audience.All != Audience.None);
     control.region = MakeGroup(audience);
     control.privateCards = Visibility.CreateGroup(Audience.Only(PlayerID(0)));
     control.object = Spawn(PublicState { value = 1 }, Secret, Visibility { group = control.region });

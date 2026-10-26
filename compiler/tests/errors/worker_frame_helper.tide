@@ -1,0 +1,4 @@
+// expect: local worker 'Build' can't access frame services
+float FrameLength() { return Frame.dt; }
+local worker float Build() { return FrameLength(); }
+scene Main;

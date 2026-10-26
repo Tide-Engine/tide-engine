@@ -1,0 +1,7 @@
+// expect: GUILayout.Scroll takes a block: 'GUILayout.Scroll(...) { ... }'
+scene Main { }
+view Paint()
+{
+    var offset = float2(0);
+    GUILayout.Scroll(float2(100), offset);
+}

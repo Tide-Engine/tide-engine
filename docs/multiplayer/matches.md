@@ -8,26 +8,26 @@ Every match runs on a server, and this machine's player connects to it. When the
 
 ## Starting a match from `tide run`
 
-A game whose `Main` scene is the match's starts playing at once. `tide run` can open it to others, or join one instead:
+A game whose selected entry is a prefab or match scene starts playing at once. Startup uses `--scene` first, then `settings.startScene`, then `Main`. `tide run` can open it to others, or join one instead:
 
 ```sh
-tide run --host                 # others can join: in a room, and on UDP port 7777
-tide run --host 8000            # on another port
-tide run --connect 192.168.1.5  # join another machine's match, by its address
-tide run --join K7QF2M          # join the room with this code
-tide run --web --host           # on the web, in a room only
+tide run --host --stats                 # others can join: in a room, and on UDP port 7777
+tide run --host 8000 --stats            # on another port
+tide run --connect 192.168.1.5 --stats  # join another machine's match, by its address
+tide run --join K7QF2M --stats          # join the room with this code
+tide run --web --host --stats           # on the web, in a room only
 ```
 
-To check a match with several players without opening a window for each, `tide run --players 2 --script play.txt` plays them all at once with no window, and takes a picture from each machine (see [Several players](../tools/cli.md#several-players)).
+To check a match with several players without opening a window for each, `tide run --players 2 --script play.txt --stats` plays them all at once with no window, and takes a picture from each machine (see [Several players](../tools/cli.md#several-players)).
 
 ## Starting a match from code
 
-A game that starts in a menu has a local `Main`, and its local code decides which match this machine is in:
+A game that starts in a menu selects a local scene as its entry, such as a local `Main`, and its local code decides which match this machine is in:
 
 | Call | What it does |
 |---|---|
 | `Session.Start(scene)` | Starts a match on this machine, which runs its server |
-| `Session.Start()` | The same, in `Main`: for code that can't name the game's scenes, like a package's |
+| `Session.Start()` | The same, in the selected startup prefab or match scene: for code that can't name the game's scenes, like a package's |
 | `Session.Open()` | Lets others join the match this machine runs: in a [room](#rooms), and on port 7777 too (not on the web) |
 | `Session.Open(port)` | The same, on another port |
 | `Session.Close()` | Lets no one else join; the players in the match stay |
@@ -38,8 +38,10 @@ A game that starts in a menu has a local `Main`, and its local code decides whic
 | `Session.Connect(address, port)` | The same, on another port than 7777 |
 | `Session.Leave()` | Leaves the match. With [host migration](#host-migration), a match this machine runs goes on without it |
 | `Session.End()` | Ends the match this machine runs, for everyone |
+| `Session.Watch(center, size)` | In a [sharded world](./shards.md#watching-an-area), sees that area wherever this machine's player is |
+| `Session.Unwatch()` | Stops watching it |
 
-`Start` names the scene the match starts in, with its values as for `Scene.Load`: `Session.Start(Arena { size = 30 })`, or nothing for `Main` with its defaults, which has to be the match's. `Join` and `Connect` get whatever the server runs. Starting or joining a match leaves the one this machine is in first.
+`Start` names the scene the match starts in, with its values as for `Scene.Load`: `Session.Start(Arena { size = 30 })`. Without an argument, it uses the selected entry's authored prefab tree or scene defaults. If the entry is local, name a match scene explicitly. `Join` and `Connect` get whatever the server runs. Starting or joining a match leaves the one this machine is in first.
 
 There's one kind of match. It starts closed, so single-player is just a match nobody else was let into. `Open` and `Close` change that at any time: a game can start alone and open its match to friends later, then close it once the party's full. Closing turns away anyone who isn't in the match, and opening it again uses the same room and port.
 
@@ -89,7 +91,7 @@ Match code can't make them, as it runs the same on every machine: calling such a
 
 ## A menu that comes with tide
 
-The bundled [Rooms package](../packages/rooms.md) adds Play, Host and Join menus, room-code sharing and volume settings. List `rooms` in the game's `tide.packages` to use it. For pre-match groups, ready flags, lobby browsing and quick match, use the [Lobby package](../packages/lobby.md). Both menus are optional; sessions and room codes are built into the engine.
+The bundled [Rooms package](../packages/rooms.md) adds Play, Host and Join menus, invite links and room codes to share, and volume settings. List `rooms` in the game's `tide.packages` to use it. For pre-match groups, ready flags, lobby browsing and quick match, use the [Lobby package](../packages/lobby.md). Both menus are optional; sessions and room codes are built into the engine.
 
 ## Rooms
 
@@ -121,6 +123,23 @@ Here are two machines, side by side. Each frame below is the game on its own, st
 
 The relay, a server of ours, only introduces players to each other. Their packets then go straight between them, over WebRTC, which finds a way through their routers. When their networks can't connect directly, a TURN server carries the packets instead. The host's machine picks the code itself, so there's nothing to wait for. If another room had it first, the host picks another before anyone could read it out, and `Session.room` changes. It's `""` while the relay can't be reached, and the room opens again once it can: players already in keep playing, and only joining needs the relay.
 
+### Inviting with a link
+
+`Session.invite` is what a player sends a friend to join their room. On the web it's a link: the game's page, wherever it's served, with `?join=` and the room's code, like `https://example.com/game/?join=K7QF2M`. Opening it starts the game in that room, as `?join=` in a page's address always does. On desktop and Android there's no page to link to, so it's the room's code itself, which the friend types in. It's `""` whenever `Session.room` is, and on the web until the relay confirms the host's room is registered.
+
+```csharp
+view Invite(Session session)
+{
+    if (session.invite == "") return;
+    GUILayout.Area(Anchor.UpperCenter)
+    {
+        // A link on the web, the code elsewhere
+        var link = session.invite != session.room;
+        if (GUILayout.Button(link ? "Copy the invite link" : "Copy the code")) Clipboard.Copy(session.invite);
+    }
+}
+```
+
 ## Where this machine stands
 
 `Session` is a built-in local singleton, taken as a parameter like any other, and read-only:
@@ -133,6 +152,7 @@ The relay, a server of ours, only introduces players to each other. Their packet
 | `server` | Whether this machine runs the server |
 | `open` | Whether others can join it (only the server's machine knows) |
 | `room` | The code of the room the match is in, or `""` if it's in none, as when it's closed. On [a network of the game's own](./own-network.md), what that network says the match is joined by |
+| `invite` | What others open to join the match: on the web a link to the game's page with `?join=` and the room's code, elsewhere the code itself (see [Inviting with a link](#inviting-with-a-link)). `""` when `room` is, and while a web host waits for the relay to register its room |
 
 A single-player match is a match too, so `state` is `Connected` there as well: this machine runs the server, and its player connects to it without going through the network. That's `server` true and `open` false. `$"{session}"` shows all of it at once.
 
@@ -171,6 +191,7 @@ server's WebRTC room. Replace `0` with an existing match ID to join that match.
 The command line accepts the same address through `--connect` or `--join`.
 `Session.room` reports the endpoint with its assigned match ID once admitted.
 A match ID identifies a match; it grants no permission by itself.
+A [sharded game](./shards.md)'s server runs one world split across its matches instead, and match 0 joins it.
 
 Anonymous creation and joining are explicit testing policies. Without
 `--anonymous`, configure authentication and admission policy through the
@@ -186,9 +207,11 @@ require WebRTC/DTLS or a custom transport that provides equivalent protection;
 the hosting layer refuses credentials over its plain UDP path. Tide supplies
 the admission interface, not an account database or a particular identity provider.
 
-The server starts matches in match `Main` by default. For a local menu `Main`,
-provide a process entry point that selects the match scene and its typed startup
-parameters. See [server options](../tools/cli.md#dedicated-servers).
+The server starts matches in the selected entry when it is a prefab or match
+scene, using `--scene`, then `settings.startScene`, then `Main`. If the selected
+entry is a local menu, use `--scene` to select a match prefab or scene for the
+server, or provide a process entry point that selects the match scene and its
+typed startup parameters. See [server options](../tools/cli.md#dedicated-servers).
 
 Server builds can omit assets reached only from client code. Assets used by
 simulation, including helper calls, defaults and dynamic match asset references,
@@ -261,7 +284,7 @@ settings
 }
 ```
 
-`maxPlayers` goes from 1 to 256. One player more is refused, as from a full match (`DisconnectReason.Refused`). The world keeps an input for every player it can take, so the number is part of the game's data: builds with different `maxPlayers` can't share a match, and changing it under `tide run` starts the match over.
+`maxPlayers` goes from 1 to 65,536, the same supported ceiling as a dedicated server's total connections. The settings are separate: one limits a match, the other limits connections across all of the server's matches. One player more is refused, as from a full match (`DisconnectReason.Refused`). The world keeps an input for every player it can take, so the number is part of the game's data: builds with different `maxPlayers` can't share a match, and changing it under `tide run` starts the match over.
 
 Pick what the game is built for. In a full-world match every player receives every other's input and simulates the whole world, so traffic can grow with the square of its players. [Visibility](../game/visibility.md) restricts state, simulation and owner-input delivery, while the server still simulates the complete match.
 

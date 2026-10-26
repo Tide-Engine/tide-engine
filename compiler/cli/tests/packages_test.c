@@ -108,7 +108,6 @@ TIDE_TEST(cli_packages_write_folders_relative_to_the_game)
 #endif
 }
 
-// A folder for scratch files, ending in '/'.
 static const char *scratch(void)
 {
     static char dir[1024];
@@ -117,7 +116,6 @@ static const char *scratch(void)
     return dir;
 }
 
-// A folder of its own for each test, with a tide.packages saying `text`.
 static char *write_packages(const char *name, const char *text)
 {
     char *dir = malloc(strlen(scratch()) + strlen(name) + 2);
@@ -171,7 +169,6 @@ TIDE_TEST(cli_packages_files_say_what_they_are)
     packages_free_file(&f);
     free(dir);
 
-    // Each mistake on its line.
     dir = write_packages("mistakes", "package 3D\n"
                                      "tide three\n"
                                      "github.com/owner/repo 123\n"
@@ -194,9 +191,43 @@ TIDE_TEST(cli_packages_files_say_what_they_are)
     packages_free_file(&f);
 }
 
-// ---------------------------------------------------------------------------
-// The packages that come with tide, in an installation made up for the test:
-// they're in its src/packages, which tide says as it starts
+// `tide = 0.5.0-nightly.12` pins the one tide a game builds with: written with or without its `v`, a whole version,
+// once, and not beside `tide 0.3`. Only that tide keeps it, and a build of tide's own source (`-dev`) builds anyway.
+TIDE_TEST(cli_packages_pin_one_tide)
+{
+    char *dir = write_packages("pin", "# The game\ntide = v0.5.0-nightly.12  # everyone's\n../shared\n");
+    packages_file f;
+    reports r = {0};
+    TIDE_CHECK(packages_read(dir, &f, collect, &r));
+    TIDE_CHECK(r.count == 0);
+    TIDE_CHECK(f.pinned && strcmp(f.pinned, "0.5.0-nightly.12") == 0 && f.pinned_line == 2 && f.tide_line == 0);
+    TIDE_CHECK(f.count == 1);
+    packages_free_file(&f);
+    free(dir);
+
+    dir = write_packages("pin_mistakes", "tide = 0.5\n"            // Not whole
+                                         "tide = 0.5.0 0.6.0\n"     // A word too many
+                                         "tide = 0.5.0-\n"          // An empty pre-release
+                                         "tide = 0.5.0\n"
+                                         "tide 0.3\n"               // Given already, as a pin
+                                         "tide = 0.6.0\n");         // ...again
+    r = (reports){0};
+    TIDE_CHECK(!packages_read(dir, &f, collect, &r));
+    TIDE_CHECK(r.count == 5);
+    TIDE_CHECK(f.pinned && strcmp(f.pinned, "0.5.0") == 0 && f.pinned_line == 4);
+    TIDE_CHECK(r.last_line == 6 && strstr(r.last, "already given on line 4"));
+    packages_free_file(&f);
+    free(dir);
+
+    TIDE_CHECK(packages_exact_version("0.5.0") && packages_exact_version("12.0.3-nightly.7")
+               && packages_exact_version("1.0.0-rc.1"));
+    TIDE_CHECK(!packages_exact_version("0.5") && !packages_exact_version("v0.5.0") && !packages_exact_version("0.5.0-")
+               && !packages_exact_version("0.5.x") && !packages_exact_version(""));
+    TIDE_CHECK(packages_pin_kept("0.5.0-nightly.12", "0.5.0-nightly.12"));
+    TIDE_CHECK(!packages_pin_kept("0.5.0-nightly.12", "0.5.0-nightly.13"));
+    TIDE_CHECK(!packages_pin_kept("0.5.0", "0.5.0-nightly.12"));
+    TIDE_CHECK(packages_pin_kept("0.4.0", "0.5.0-dev")); // Someone working on tide
+}
 
 // Everything reported, a line each: "<line>: <message> (<note>)".
 typedef struct said {
@@ -214,9 +245,8 @@ static void say(void *user, const char *where, const int line, const char *messa
 
 static void put(const char *root, const char *file, const char *text);
 
-// An installation with packages, in its src/packages: dice, which needs
-// rolls; rolls; lonely, which needs a folder beside it; and what isn't one of
-// them. Gives the installation's folder.
+// An installation's src/packages: dice (needs rolls), rolls, lonely (needs a
+// folder beside it), and two folders that aren't packages.
 static char *installation(void)
 {
     char *root = path_join(scratch(), "installed");
@@ -224,8 +254,6 @@ static char *installation(void)
     put(root, "src/packages/dice/" PACKAGES_FILE, "package Dice\nrolls\n");
     put(root, "src/packages/rolls/" PACKAGES_FILE, "package Rolls\n");
     put(root, "src/packages/lonely/" PACKAGES_FILE, "package Lonely\n../rolls\n");
-    // Not packages that come with tide: a folder with no tide.packages, and
-    // one named as none is
     put(root, "src/packages/empty/dice.tide", "namespace Empty;\n");
     put(root, "src/packages/Loud/" PACKAGES_FILE, "package Loud\n");
     return root;
@@ -235,7 +263,6 @@ TIDE_TEST(cli_packages_that_come_with_tide_are_in_one_folder)
 {
     char *root = installation();
     char *builtin = path_join(root, "src/packages");
-    // Before anything says which folder they're in, none does.
     char **names = NULL;
     TIDE_CHECK(packages_builtin_names(&names) == 0 && !names);
     TIDE_CHECK(!packages_builtin_exists("dice"));
@@ -248,7 +275,6 @@ TIDE_TEST(cli_packages_that_come_with_tide_are_in_one_folder)
     TIDE_CHECK(!packages_builtin_exists("empty"));
     TIDE_CHECK(!packages_builtin_exists("nope"));
 
-    // A game that lists them: each is its folder there, after what it needs.
     char *game = write_packages("builtin_game", "dice\nrolls\n");
     game_packages g;
     said s = {0};
@@ -265,7 +291,6 @@ TIDE_TEST(cli_packages_that_come_with_tide_are_in_one_folder)
     packages_free(&g);
     free(game);
 
-    // What a package needs, the game lists, by its name.
     game = write_packages("builtin_needs", "dice\n");
     s = (said){0};
     TIDE_CHECK(!packages_resolve(game, &g, NULL, say, &s));
@@ -277,8 +302,6 @@ TIDE_TEST(cli_packages_that_come_with_tide_are_in_one_folder)
     packages_free_needs(needs, 1);
     free(game);
 
-    // A name no package has says which there are, the one that's close, and
-    // how the folder of that name beside the file is written.
     game = write_packages("builtin_unknown", "dise\nshared\n");
     char *shared = path_join(game, "shared");
     TIDE_CHECK(sys_mkdirs(shared));
@@ -292,7 +315,6 @@ TIDE_TEST(cli_packages_that_come_with_tide_are_in_one_folder)
     packages_free(&g);
     free(game);
 
-    // One that comes with tide names what it needs as a game does, never by a folder.
     game = write_packages("builtin_folder", "lonely\nrolls\n");
     s = (said){0};
     TIDE_CHECK(!packages_resolve(game, &g, NULL, say, &s));
@@ -300,7 +322,6 @@ TIDE_TEST(cli_packages_that_come_with_tide_are_in_one_folder)
     packages_free(&g);
     free(game);
 
-    // A package from a folder can need one that comes with tide, by its name.
     char *folder = write_packages("builtin_user", "package User\ndice\n");
     free(folder);
     game = write_packages("builtin_through", "../builtin_user\ndice\nrolls\n");
@@ -312,7 +333,6 @@ TIDE_TEST(cli_packages_that_come_with_tide_are_in_one_folder)
     packages_free(&g);
     free(game);
 
-    // A tide that comes with none says so: its folder of them isn't there.
     char *none = path_join(root, "src/none");
     packages_set_builtin_folder(none);
     char *note = packages_builtin_unknown("dice", NULL);
@@ -339,13 +359,11 @@ TIDE_TEST(cli_a_line_for_a_package_that_comes_with_tide_is_its_name_alone)
     TIDE_CHECK(strcmp(f.lines[0].source, "box2d") == 0);
     TIDE_CHECK(f.lines[1].local && !f.lines[1].builtin); // A folder of the same name is still a folder
     TIDE_CHECK(!f.lines[2].local && !f.lines[2].builtin);
-    // Its folder is in the one tide says they're in, and nothing said here.
     char *folder = packages_folder(&f.lines[0], f.folder);
     TIDE_CHECK(!folder);
     packages_free_file(&f);
     free(dir);
 
-    // It takes no commit and follows nothing, and `package` and `tide` are never names.
     dir = write_packages("builtin_mistakes", "box2d 0123456789abcdef0123456789abcdef01234567\n"
                                              "box2d@v1\n"
                                              "box2d\n"
@@ -392,12 +410,11 @@ TIDE_TEST(cli_packages_read_gits_list_of_branches_and_tags)
     TIDE_CHECK(refs.count == 9); // HEAD, 2 branches and 6 tags; the peeled line is the tag before it
 
     const char *name = NULL;
-    // The default branch
     TIDE_CHECK(strcmp(git_refs_resolve(&refs, NULL, &name), "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") == 0);
     TIDE_CHECK(strcmp(name, "refs/heads/main") == 0);
-    // A branch; a branch over a tag of the same name
+    // A branch wins over a tag of the same name
     TIDE_CHECK(strcmp(git_refs_resolve(&refs, "dev", &name), "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb") == 0);
-    // Versions: the newest tag of them, by number, leaving out pre-releases
+    // A version picks the newest matching tag by number, skipping pre-releases
     TIDE_CHECK(strcmp(git_refs_resolve(&refs, "v1", &name), "3333333333333333333333333333333333333333") == 0);
     TIDE_CHECK(strcmp(name, "refs/tags/v1.10.1") == 0);
     TIDE_CHECK(strcmp(git_refs_resolve(&refs, "v1.2", &name), "2222222222222222222222222222222222222222") == 0);
@@ -408,7 +425,6 @@ TIDE_TEST(cli_packages_read_gits_list_of_branches_and_tags)
     TIDE_CHECK(git_refs_resolve(&refs, "nope", &name) == NULL);
     git_refs_free(&refs);
 
-    // Without a symref, HEAD itself; and what isn't git's list at all.
     static const char BARE[] = "0032cccccccccccccccccccccccccccccccccccccccc HEAD\n0000";
     TIDE_REQUIRE(git_refs_parse(BARE, sizeof BARE - 1, &refs));
     TIDE_CHECK(strcmp(git_refs_resolve(&refs, NULL, &name), "cccccccccccccccccccccccccccccccccccccccc") == 0);
@@ -416,9 +432,6 @@ TIDE_TEST(cli_packages_read_gits_list_of_branches_and_tags)
     TIDE_CHECK(!git_refs_parse("<html>not found</html>", 22, &refs));
     TIDE_CHECK(!git_refs_parse("00ffshort", 9, &refs));
 }
-
-// ---------------------------------------------------------------------------
-// A commit's files, unpacked, put where packages are kept
 
 static void put(const char *root, const char *file, const char *text)
 {
@@ -440,9 +453,7 @@ static bool says(const char *root, const char *file, const char *text)
     return same;
 }
 
-// A folder of its own for a test of placing, made anew, which the test
-// removes once it's done: `files` gets where a commit is unpacked, and `dir`
-// where it goes, ending in '/' as packages_repo_dir's does.
+// `files` gets where a commit is unpacked, `dir` where it goes (ending in '/').
 static const char *place_folders(const char *name, char files[1200], char dir[1200])
 {
     static char work[1100];
@@ -453,7 +464,6 @@ static const char *place_folders(const char *name, char files[1200], char dir[12
     return work;
 }
 
-// A repository with a package in a folder of it, as tar unpacks its archive.
 static void unpack(const char *files)
 {
     put(files, "README.md", "Physics\n");
@@ -476,7 +486,7 @@ TIDE_TEST(cli_a_package_is_fetched_once_its_last_file_is_in)
     char files[1200], dir[1200], failed[1024];
     const char *work = place_folders("place", files, dir);
     unpack(files);
-    // The repository's own file of the marker's name isn't what says so.
+    // A repository file with the marker's name doesn't count as the marker.
     put(files, PACKAGES_FETCHED, "the repository's");
     TIDE_CHECK(!packages_fetched(dir));
     TIDE_CHECK(fetch_place(files, dir, failed, sizeof failed));
@@ -486,8 +496,6 @@ TIDE_TEST(cli_a_package_is_fetched_once_its_last_file_is_in)
     sys_remove_tree(work);
 }
 
-// What a download that stopped partway leaves: some of the files, and nothing
-// that says they're all there.
 TIDE_TEST(cli_a_fetch_goes_on_from_one_that_stopped)
 {
     char files[1200], dir[1200], failed[1024];
@@ -498,7 +506,6 @@ TIDE_TEST(cli_a_fetch_goes_on_from_one_that_stopped)
     unpack(files);
     TIDE_CHECK(fetch_place(files, dir, failed, sizeof failed));
     check_placed(dir);
-    // Again, over a commit that's all there, as a second tide's would be.
     unpack(files);
     TIDE_CHECK(fetch_place(files, dir, failed, sizeof failed));
     check_placed(dir);
@@ -509,7 +516,6 @@ TIDE_TEST(cli_a_fetch_goes_on_from_one_that_stopped)
 
 // Only Windows keeps a folder from moving while a program has a file in it
 // open, however the program shares the file.
-
 TIDE_TEST(cli_a_fetch_gets_past_a_file_antivirus_has_open)
 {
     char files[1200], dir[1200], failed[1024];
@@ -520,7 +526,6 @@ TIDE_TEST(cli_a_fetch_gets_past_a_file_antivirus_has_open)
     const DWORD everything = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
     const HANDLE antivirus = CreateFileA(scanned, GENERIC_READ, everything, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     TIDE_REQUIRE(antivirus != INVALID_HANDLE_VALUE);
-    // What fetching tripped on: the folder it's in, at any depth, doesn't move.
     char *moved = path_join(work, "moved");
     TIDE_CHECK(!sys_rename(files, moved));
     TIDE_CHECK(fetch_place(files, dir, failed, sizeof failed));
@@ -536,7 +541,6 @@ TIDE_TEST(cli_a_fetch_that_cant_move_a_file_says_which_and_isnt_fetched)
     char files[1200], dir[1200], failed[1024];
     const char *work = place_folders("held", files, dir);
     unpack(files);
-    // A file as a program that doesn't share it has it, which nothing moves.
     char *held = path_join(files, "packages/physics/body.tide");
     const HANDLE program = CreateFileA(held, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     TIDE_REQUIRE(program != INVALID_HANDLE_VALUE);
@@ -545,7 +549,6 @@ TIDE_TEST(cli_a_fetch_that_cant_move_a_file_says_which_and_isnt_fetched)
     TIDE_CHECK(!packages_fetched(dir));
     CloseHandle(program);
 
-    // The next download finishes it.
     unpack(files);
     TIDE_CHECK(fetch_place(files, dir, failed, sizeof failed));
     check_placed(dir);
@@ -567,4 +570,90 @@ TIDE_TEST(cli_packages_compare_tide_versions_by_their_numbers)
     TIDE_CHECK(tide_version_at_least(0, 0, 0));
     TIDE_CHECK(tide_version_at_least(0, 1, 0)); // This tide is 0.2 or newer
     TIDE_CHECK(!tide_version_at_least(999, 0, 0));
+}
+
+// Two folders' paths alike but for slashes (TEMP has Windows' own) and, on Windows, case
+// Compared resolved: macOS's temporary folder is reached through a link
+// (/var is /private/var), and what's found is the resolved path.
+static bool same_folder(const char *a, const char *b)
+{
+    char *const ra = path_absolute(a);
+    char *const rb = path_absolute(b);
+    size_t na = strlen(ra), nb = strlen(rb);
+    while (na > 1 && (ra[na - 1] == '/' || ra[na - 1] == (char)92)) na--;
+    while (nb > 1 && (rb[nb - 1] == '/' || rb[nb - 1] == (char)92)) nb--;
+    bool same = na == nb;
+    for (size_t i = 0; same && i < na; i++) {
+        char x = ra[i] == (char)92 ? '/' : ra[i];
+        char y = rb[i] == (char)92 ? '/' : rb[i];
+#ifdef _WIN32
+        if (x >= 'A' && x <= 'Z') x = (char)(x - 'A' + 'a');
+        if (y >= 'A' && y <= 'Z') y = (char)(y - 'A' + 'a');
+#endif
+        same = x == y;
+    }
+    free(ra);
+    free(rb);
+    return same;
+}
+
+TIDE_TEST(cli_a_unity_projects_assets_is_a_game_whose_packages_are_found)
+{
+    char *project = path_join(scratch(), "unity_project");
+    sys_remove_tree(project);
+    put(project, "ProjectSettings/ProjectVersion.txt", "m_EditorVersion: 6000.6.0f1\n");
+    put(project, "Assets/Game/game.tide", "scene Main { }\n");
+    put(project, "Assets/Physics/" PACKAGES_FILE, "package Physics\n");
+    put(project, "Assets/Physics/Inner/" PACKAGES_FILE, "package Inner\n"); // A package's own folders are its business
+    put(project, "Assets/Kit/Tools/" PACKAGES_FILE, "package Tools\n");
+    put(project, "Assets/Samples~/Extra/" PACKAGES_FILE, "package Extra\n"); // Folders Unity leaves out
+    put(project, "Assets/.hidden/" PACKAGES_FILE, "package Hidden\n");
+    char *assets = path_join(project, "Assets/");
+    char *game = path_join(project, "Assets/Game/");
+    char *physics = path_join(project, "Assets/Physics/");
+    TIDE_CHECK(packages_unity_assets(assets));
+    TIDE_CHECK(!packages_unity_assets(game));
+    TIDE_CHECK(!packages_unity_assets(project));
+
+    // A command run in a folder of it works on Assets, unless that's a package's own folder
+    char *found = packages_unity_game(game);
+    TIDE_CHECK(found && same_folder(found, assets));
+    free(found);
+    found = packages_unity_game(assets);
+    TIDE_CHECK(found && same_folder(found, assets));
+    free(found);
+    TIDE_CHECK(!packages_unity_game(physics));
+    TIDE_CHECK(!packages_unity_game(project));
+
+    TIDE_CHECK(packages_unity_left_out("Samples~/a.tide"));
+    TIDE_CHECK(packages_unity_left_out(".tide/web/a.tide"));
+    TIDE_CHECK(packages_unity_left_out("Game/Docs~/a.tide"));
+    TIDE_CHECK(!packages_unity_left_out("Game/a~.tide")); // A file's own name isn't a folder
+    TIDE_CHECK(!packages_unity_left_out("Game/a.tide"));
+
+    game_packages g;
+    said s = {0};
+    TIDE_CHECK(packages_resolve(assets, &g, NULL, say, &s));
+    TIDE_CHECK(s.len == 0);
+    TIDE_REQUIRE(g.count == 2);
+    TIDE_CHECK(strcmp(g.items[0].name, "Physics") == 0 && same_folder(g.items[0].folder, physics));
+    TIDE_CHECK(strcmp(g.items[1].name, "Tools") == 0);
+    TIDE_CHECK(!g.file.exists && !g.file.name);
+    packages_free(&g);
+
+    put(project, "Assets/" PACKAGES_FILE, "./Physics/\n");
+    TIDE_CHECK(packages_resolve(assets, &g, NULL, say, &s));
+    TIDE_CHECK(g.count == 2 && g.file.count == 2);
+    packages_free(&g);
+
+    put(project, "Assets/Game/" PACKAGES_FILE, "# Made in the wrong folder\n");
+    TIDE_CHECK(!packages_resolve(assets, &g, NULL, say, &s));
+    TIDE_CHECK(strstr(s.text, "the game is the whole of Assets") && strstr(s.text, "move it to the Assets folder"));
+    packages_free(&g);
+
+    free(physics);
+    free(game);
+    free(assets);
+    sys_remove_tree(project);
+    free(project);
 }

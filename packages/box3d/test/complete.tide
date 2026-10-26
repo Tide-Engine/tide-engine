@@ -1,0 +1,146 @@
+using Box3D;
+settings { maxRewind = 0.25; }
+scene Main { }
+singleton Objects
+{
+    Entity hull;
+    Entity terrain;
+    Entity box;
+    Entity controlled;
+    Entity prism;
+    Entity filtered;
+    Entity sphere;
+    Entity capsule;
+    Entity mesh;
+    Entity part;
+    Entity sensor;
+    Entity blocked;
+    Entity passed;
+    Entity grouped;
+    Entity ungrouped;
+}
+singleton Request
+{
+    Entity removeBody; Entity removeBox; Entity removeSphere; Entity removeCapsule;
+    Entity removeMesh; Entity removeHull; Entity removeHeight; Entity removePart;
+    Entity removeSettings; Entity removeFilter; Entity replaceBody;
+    bool capture; ViewTime time;
+}
+singleton Observed
+{
+    local bool controlled;
+    local bool historicalControlled;
+    local bool hull;
+    local bool hullGap;
+    local bool hullCast;
+    local bool hullOverlap;
+    local bool terrain;
+    local bool terrainGap;
+    local bool prism;
+    local bool masked;
+    local bool rejected;
+    local bool box;
+    local bool prepared;
+    local bool historicalHull;
+    local bool historicalTerrain;
+    local bool savedHull;
+    local bool all;
+    local bool inside;
+    local bool historicalInside;
+    local bool mesh;
+    local float meshFraction;
+    local float currentFraction;
+    local float historicalFraction;
+    local Query saved;
+}
+event(Spawned) Setup(with Main, mut Objects objects)
+{
+    objects.hull = Spawn(Body { type = BodyType.Static, rewind = true }, HullCollider {
+        vertices = [float3(-1,0,-1),float3(1,0,-1),float3(0,0,1),float3(0,2,0)] });
+    objects.terrain = Spawn(Body { type = BodyType.Static, position = float3(20,0,0), rewind = true }, HeightFieldCollider {
+        heights = [0,0,0,0,0,0,0,0,0], holes = [1,0,0,0], columns = 3, rows = 3, minimumHeight = -1, maximumHeight = 1 });
+    objects.box = Spawn(Body { type = BodyType.Static, position = float3(40,0,0), rewind = true }, Box);
+    objects.controlled = Spawn(Body { position = float3(30,3,0) }, Box { density = 1 }, BodySettings { lockPositionY = true, force = float3(60,0,0) });
+    objects.filtered = Spawn(Body { type = BodyType.Static, position = float3(50,0,0) }, Sphere,
+        CollisionFilter { category = 2, mask = 1 });
+    objects.sphere = Spawn(Body { type = BodyType.Static, position = float3(72,0,0) }, Sphere);
+    objects.capsule = Spawn(Body { type = BodyType.Static, position = float3(75,0,0) }, Capsule);
+    objects.mesh = Spawn(Body { type = BodyType.Static, position = float3(80,0,0), rewind = true }, MeshCollider {
+        vertices = [float3(-1,0,-1),float3(-1,0,1),float3(1,0,1),float3(1,0,-1)], indices = [0,1,2,0,2,3] });
+    objects.part = Spawn(Part { of = objects.box }, Box { offset = float3(4,0,0) });
+    objects.sensor = Spawn(Body { type = BodyType.Static, position = float3(90,0,0), rewind = true }, HullCollider {
+        vertices = [float3(-1,0,-1),float3(1,0,-1),float3(0,0,1),float3(0,2,0)], sensor = true });
+    Spawn(Body { position = float3(90,0.5,0), gravityScale = 0, rewind = true }, Sphere { radius = 0.1 });
+    Spawn(Body { type = BodyType.Static, position = float3(110,-0.5,0) }, Box { size = float3(4,1,4) }, CollisionFilter { category = 8, mask = 2 });
+    objects.blocked = Spawn(Body { position = float3(110,2,0) }, Sphere { radius = 0.25, density = 1 }, CollisionFilter { category = 2, mask = 8 });
+    Spawn(Body { type = BodyType.Static, position = float3(115,-0.5,0) }, Box { size = float3(4,1,4) }, CollisionFilter { category = 8, mask = 0 });
+    objects.passed = Spawn(Body { position = float3(115,2,0) }, Sphere { radius = 0.25, density = 1 }, CollisionFilter { category = 2, mask = 8 });
+    Spawn(Body { type = BodyType.Static, position = float3(120,-0.5,0) }, Box { size = float3(4,1,4) }, CollisionFilter { group = 7, mask = 0 });
+    objects.grouped = Spawn(Body { position = float3(120,2,0) }, Sphere { radius = 0.25, density = 1 }, CollisionFilter { group = 7, mask = 0 });
+    Spawn(Body { type = BodyType.Static, position = float3(125,-0.5,0) }, Box { size = float3(4,1,4) }, CollisionFilter { group = -7 });
+    objects.ungrouped = Spawn(Body { position = float3(125,2,0) }, Sphere { radius = 0.25, density = 1 }, CollisionFilter { group = -7 });
+    mut List<float3> vertices = [];
+    for (int i = 0; i < 8; i++)
+    {
+        float angle = float(i) * 0.7853981633974483;
+        vertices.Add(float3(Math.Cos(angle),0,Math.Sin(angle)));
+        vertices.Add(float3(Math.Cos(angle),1,Math.Sin(angle)));
+    }
+    objects.prism = Spawn(Body { type = BodyType.Static, position = float3(60,0,0), rewind = true }, HullCollider { vertices = vertices });
+    Spawn(Body { type = BodyType.Static, position = float3(10,-0.5,0) }, Box { size = float3(4,1,4) });
+    Spawn(Body { position = float3(10,3,0) }, HullCollider {
+        vertices = [float3(-0.5,0,-0.5),float3(0.5,0,-0.5),float3(0,0,0.5),float3(0,1,0)] });
+}
+[Before(PhysicsStages.Step)]
+system Remove(mut Request request)
+{
+    if (request.replaceBody != default)
+    {
+        request.replaceBody.Remove(Body);
+        request.replaceBody.Add(Body { type = BodyType.Dynamic, position = float3(30,3,0) });
+        request.replaceBody = default;
+    }
+    request.removeBody.Remove(Body);
+    request.removeBox.Remove(Box);
+    request.removeSphere.Remove(Sphere);
+    request.removeCapsule.Remove(Capsule);
+    request.removeMesh.Remove(MeshCollider);
+    request.removeHull.Remove(HullCollider);
+    request.removeHeight.Remove(HeightFieldCollider);
+    request.removePart.Remove(Part);
+    request.removeSettings.Remove(BodySettings);
+    request.removeFilter.Remove(CollisionFilter);
+    request.removeBody = default;
+    request.removeBox = default;
+    request.removeSphere = default; request.removeCapsule = default; request.removeMesh = default;
+    request.removeHull = default; request.removeHeight = default; request.removePart = default;
+    request.removeSettings = default; request.removeFilter = default;
+}
+view Probe(Physics physics, Request request, Objects objects, mut Observed observed)
+{
+    observed.hull = physics.Raycast(float3(0,3,0),float3(0,-1,0),out var hit) && hit.entity == objects.hull;
+    observed.currentFraction = hit.fraction;
+    observed.hullGap = physics.Raycast(float3(0.8,1,3),float3(0.8,1,-3),out _);
+    observed.hullCast = physics.Cast(Sphere { radius = 0.1 },float3(0,3,0),quaternion.identity,float3(0,-1,0),out _);
+    observed.hullOverlap = physics.Overlap(Box { size = float3(0.2) },float3(0,0.5,0),quaternion.identity,out _);
+    observed.terrain = physics.Raycast(float3(21.5,3,1.5),float3(21.5,-1,1.5),out var ground) && ground.entity == objects.terrain;
+    observed.terrainGap = physics.Raycast(float3(20.25,3,0.25),float3(20.25,-1,0.25),out _);
+    observed.prism = physics.Raycast(float3(60.9,0.5,3),float3(60.9,0.5,-3),out var polygon) && polygon.entity == objects.prism;
+    observed.masked = physics.Raycast(float3(50,3,0),float3(50,-1,0),out _, filter: QueryFilter { mask = 2 });
+    observed.rejected = physics.Raycast(float3(50,3,0),float3(50,-1,0),out _, filter: QueryFilter { category = 4, mask = 2 });
+    observed.box = physics.Raycast(float3(40.8,3,0),float3(40.8,-1,0),out _);
+    observed.prepared = physics.Rewind(request.time,out var query);
+    observed.controlled = physics.Raycast(float3(30.1,5,0),float3(30.1,1,0),out _);
+    observed.historicalControlled = query.Raycast(float3(30.1,5,0),float3(30.1,1,0),out _);
+    observed.historicalHull = query.Raycast(float3(0,3,0),float3(0,-1,0),out var historical);
+    observed.historicalFraction = historical.fraction;
+    observed.historicalTerrain = query.Raycast(float3(21.5,3,1.5),float3(21.5,-1,1.5),out _);
+    observed.all = physics.RaycastAll(float3(60.9,0.5,3),float3(60.9,0.5,-3),out var all) && all.count == 1 &&
+        query.RaycastAll(float3(60.9,0.5,3),float3(60.9,0.5,-3),out var oldAll) && oldAll.count == 1;
+    if (request.capture) observed.saved = query;
+    observed.savedHull = observed.saved.Raycast(float3(0,3,0),float3(0,-1,0),out _);
+    observed.inside = physics.Inside(objects.sensor,out var visitors) && visitors.count == 1;
+    observed.historicalInside = query.Inside(objects.sensor,out var oldVisitors) && oldVisitors.count == 1;
+    observed.mesh = physics.Raycast(float3(80,3,0),float3(80,-1,0),out var meshHit);
+    observed.meshFraction = meshHit.fraction;
+}

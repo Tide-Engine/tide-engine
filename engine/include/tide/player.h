@@ -15,7 +15,7 @@
 // (tide_game.max_players), TIDE_PLAYERS_DEFAULT without one, and at most
 // TIDE_PLAYERS_MOST.
 #define TIDE_PLAYERS_DEFAULT 16u
-#define TIDE_PLAYERS_MOST 256u
+#define TIDE_PLAYERS_MOST 65536u
 
 typedef struct tide_player_id {
     uint32_t id; // 0 = no player, otherwise player index + 1
@@ -46,29 +46,34 @@ static inline int32_t tide_player_index(const tide_player_id p)
 
 // A set of players, a bit each by index, with room for one slot past the last
 // player's: the server's input comes after the players' (see tide/session.h).
-#define TIDE_PLAYER_SET_BITS 320u
+#define TIDE_PLAYER_SET_BITS ((TIDE_PLAYERS_MOST + 64u) / 64u * 64u)
 typedef struct tide_player_set {
     uint64_t bits[TIDE_PLAYER_SET_BITS / 64u];
+    uint32_t words; // Nonzero prefix, maintained by add/remove; zero initialization is empty.
 } tide_player_set;
 
 static inline bool tide_players_has(const tide_player_set *s, const uint32_t i)
 {
-    return i < TIDE_PLAYER_SET_BITS && (s->bits[i >> 6] >> (i & 63u) & 1u) != 0;
+    return i < TIDE_PLAYER_SET_BITS && (i >> 6) < s->words && (s->bits[i >> 6] >> (i & 63u) & 1u) != 0;
 }
 
 static inline void tide_players_add(tide_player_set *s, const uint32_t i)
 {
-    if (i < TIDE_PLAYER_SET_BITS) s->bits[i >> 6] |= 1ull << (i & 63u);
+    if (i < TIDE_PLAYER_SET_BITS) {
+        s->bits[i >> 6] |= 1ull << (i & 63u);
+        if (s->words <= (i >> 6)) s->words = (i >> 6) + 1u;
+    }
 }
 
 static inline void tide_players_remove(tide_player_set *s, const uint32_t i)
 {
-    if (i < TIDE_PLAYER_SET_BITS) s->bits[i >> 6] &= ~(1ull << (i & 63u));
+    if (i < TIDE_PLAYER_SET_BITS) {
+        s->bits[i >> 6] &= ~(1ull << (i & 63u));
+        while (s->words && !s->bits[s->words - 1u]) s->words--;
+    }
 }
 
 static inline bool tide_players_any(const tide_player_set *s)
 {
-    uint64_t any = 0;
-    for (uint32_t w = 0; w < TIDE_PLAYER_SET_BITS / 64u; w++) any |= s->bits[w];
-    return any != 0;
+    return s->words != 0;
 }

@@ -1,4 +1,4 @@
-# The packages that come with tide (see AGENTS.md, Packaging and releases):
+# The packages that come with tide:
 # games get one by listing it in their tide.packages, and tide compiles it
 # with them. Here, each one's tests build it the way tide would.
 
@@ -8,6 +8,136 @@
 # <package>/test/order.txt lists, a name a line. The order alone is compared,
 # and not what tidec says of each wait.
 set(TIDE_PACKAGE_ORDER "${CMAKE_CURRENT_BINARY_DIR}/expect_order.cmake")
+
+# CPU visibility certificates. The package is ordinary Tide, with no engine
+# runtime, renderer, platform or physics dependency.
+tide_add_game(tide_cornerculling SOURCES cornerculling/test/game.tide cornerculling/test/example.tide NAME game
+    PACKAGES CornerCulling cornerculling/cornerculling.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" cornerculling/test/game_test.c)
+target_include_directories(tide_cornerculling PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tide_cornerculling COMMAND tide_cornerculling)
+
+# Rendering stays in Tide; a small C helper sorts owned transparent packets.
+add_library(tide_render3d STATIC render3d/transparent.c)
+target_link_libraries(tide_render3d PUBLIC tide)
+add_executable(tide_render3d_transparent "${PROJECT_SOURCE_DIR}/tests/test_main.c"
+    render3d/test/transparent_test.c)
+target_include_directories(tide_render3d_transparent PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_render3d_transparent PRIVATE tide_render3d)
+add_test(NAME tide_render3d_transparent COMMAND tide_render3d_transparent)
+set(render3d_sources render3d/pbr.tide render3d/materials.tide render3d/vertex.tide
+    render3d/post.tide render3d/render3d.tide)
+tide_add_game(tide_render3d_pbr SOURCES render3d/test/pbr.tide NAME game
+    PACKAGES Render3D render3d/pbr.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" render3d/test/pbr_test.c)
+target_include_directories(tide_render3d_pbr PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tide_render3d_pbr COMMAND tide_render3d_pbr)
+
+tide_add_game(tide_render3d_materials SOURCES render3d/test/materials.tide NAME game
+    PACKAGES Render3D ${render3d_sources}
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" render3d/test/materials_test.c)
+target_include_directories(tide_render3d_materials PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tide_render3d_materials COMMAND tide_render3d_materials)
+
+tide_add_game(tide_render3d_post SOURCES render3d/test/post.tide NAME game
+    PACKAGES Render3D ${render3d_sources}
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" render3d/test/post_test.c)
+target_include_directories(tide_render3d_post PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_render3d_post PRIVATE tide_render3d)
+add_test(NAME tide_render3d_post COMMAND tide_render3d_post)
+
+tide_add_game(tide_render3d_skinning SOURCES render3d/test/skinning.tide NAME game
+    PACKAGES Render3D ${render3d_sources}
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" render3d/test/skinning_test.c)
+target_include_directories(tide_render3d_skinning PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_render3d_skinning PRIVATE tide_render3d)
+add_test(NAME tide_render3d_skinning COMMAND tide_render3d_skinning)
+
+tide_add_game(tide_render3d_pipeline SOURCES render3d/test/pipeline.tide NAME game
+    PACKAGES Render3D ${render3d_sources}
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" render3d/test/pipeline_test.c)
+target_include_directories(tide_render3d_pipeline PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tide_render3d_pipeline COMMAND tide_render3d_pipeline)
+
+tide_add_game(tide_render3d_shadow_batches SOURCES render3d/test/shadow_batches.tide NAME game
+    PACKAGES Render3D ${render3d_sources}
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" render3d/test/shadow_batches_test.c)
+target_include_directories(tide_render3d_shadow_batches PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tide_render3d_shadow_batches COMMAND tide_render3d_shadow_batches)
+
+if(TARGET tide_platform AND NOT TIDE_ANDROID)
+    tide_add_game(tide_render3d_post_pixels SOURCES render3d/test/post_pixels.tide NAME game
+        PACKAGES Render3D ${render3d_sources} HOST render3d/test/post_pixels.c)
+    target_link_libraries(tide_render3d_post_pixels PRIVATE tide_platform tide_render3d)
+    if(TIDE_WEB)
+        tide_web_page(tide_render3d_post_pixels SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
+        tide_add_web_test(tide_render3d_post_pixels TARGET tide_render3d_post_pixels
+            WEBGPU EXPECT "ok: Render3D post pixels" D3D11)
+    else()
+        add_test(NAME tide_render3d_post_pixels COMMAND tide_render3d_post_pixels)
+        add_test(NAME tide_render3d_post_pixels_opengl COMMAND tide_render3d_post_pixels)
+        tide_gpu_test(tide_render3d_post_pixels)
+        tide_gpu_test(tide_render3d_post_pixels_opengl OPENGL)
+    endif()
+    tide_add_game(tide_render3d_skinning_pixels SOURCES render3d/test/skinning.tide NAME game
+        PACKAGES Render3D ${render3d_sources} HOST render3d/test/skinning_pixels.c)
+    target_link_libraries(tide_render3d_skinning_pixels PRIVATE tide_platform tide_render3d)
+    if(TIDE_WEB)
+        tide_web_page(tide_render3d_skinning_pixels SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
+        tide_add_web_test(tide_render3d_skinning_pixels TARGET tide_render3d_skinning_pixels
+            WEBGPU EXPECT "ok: Render3D posed UV silhouettes" D3D11)
+    else()
+        add_test(NAME tide_render3d_skinning_pixels COMMAND tide_render3d_skinning_pixels)
+        add_test(NAME tide_render3d_skinning_pixels_opengl COMMAND tide_render3d_skinning_pixels)
+        tide_gpu_test(tide_render3d_skinning_pixels)
+        tide_gpu_test(tide_render3d_skinning_pixels_opengl OPENGL)
+    endif()
+    tide_add_game(tide_render3d_material_pixels SOURCES render3d/test/material_pixels.tide NAME game
+        PACKAGES Render3D ${render3d_sources} HOST render3d/test/material_pixels.c)
+    target_link_libraries(tide_render3d_material_pixels PRIVATE tide_platform tide_render3d)
+    if(TIDE_WEB)
+        tide_web_page(tide_render3d_material_pixels SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
+        tide_add_web_test(tide_render3d_material_pixels TARGET tide_render3d_material_pixels
+            WEBGPU EXPECT "ok: Render3D material maps" D3D11)
+    else()
+        add_test(NAME tide_render3d_material_pixels COMMAND tide_render3d_material_pixels)
+        add_test(NAME tide_render3d_material_pixels_opengl COMMAND tide_render3d_material_pixels)
+        tide_gpu_test(tide_render3d_material_pixels)
+        tide_gpu_test(tide_render3d_material_pixels_opengl OPENGL)
+    endif()
+    tide_add_game(tide_render3d_shadow_batches_pixels SOURCES render3d/test/shadow_batches.tide NAME game
+        PACKAGES Render3D ${render3d_sources} HOST render3d/test/shadow_batches_test.c)
+    target_compile_definitions(tide_render3d_shadow_batches_pixels PRIVATE SHADOW_BATCHES_GPU)
+    target_link_libraries(tide_render3d_shadow_batches_pixels PRIVATE tide_platform)
+    if(TIDE_WEB)
+        tide_web_page(tide_render3d_shadow_batches_pixels SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
+        tide_add_web_test(tide_render3d_shadow_batches_pixels TARGET tide_render3d_shadow_batches_pixels
+            WEBGPU EXPECT "renderer: WebGPU" D3D11)
+    else()
+        add_test(NAME tide_render3d_shadow_batches_pixels COMMAND tide_render3d_shadow_batches_pixels)
+        add_test(NAME tide_render3d_shadow_batches_pixels_opengl COMMAND tide_render3d_shadow_batches_pixels)
+        tide_gpu_test(tide_render3d_shadow_batches_pixels)
+        tide_gpu_test(tide_render3d_shadow_batches_pixels_opengl OPENGL)
+    endif()
+    tide_add_game(tide_render3d_pixels SOURCES render3d/test/pipeline.tide NAME game
+        PACKAGES Render3D ${render3d_sources} HOST render3d/test/pixels.c)
+    target_link_libraries(tide_render3d_pixels PRIVATE tide_platform)
+    if(TIDE_WEB)
+        tide_web_page(tide_render3d_pixels SHELL "${PROJECT_SOURCE_DIR}/platform/web/test_shell.html")
+        tide_add_web_test(tide_render3d_pixels TARGET tide_render3d_pixels WEBGPU EXPECT "renderer: WebGPU" D3D11)
+    else()
+        add_test(NAME tide_render3d_pixels COMMAND tide_render3d_pixels)
+        add_test(NAME tide_render3d_pixels_opengl COMMAND tide_render3d_pixels)
+        tide_gpu_test(tide_render3d_pixels)
+        tide_gpu_test(tide_render3d_pixels_opengl OPENGL)
+    endif()
+endif()
+foreach(target IN ITEMS tide_render3d_materials tide_render3d_pipeline tide_render3d_shadow_batches
+        tide_render3d_shadow_batches_pixels tide_render3d_pixels)
+    if(TARGET ${target})
+        target_link_libraries(${target} PRIVATE tide_render3d)
+    endif()
+endforeach()
 file(WRITE "${TIDE_PACKAGE_ORDER}" [=[
 execute_process(
     COMMAND "${TIDEC}" "${GAME}" --package "${PACKAGE}" "${SOURCE}" --schedule
@@ -40,6 +170,30 @@ function(tide_package_order_test name namespace source folder)
     set_property(GLOBAL APPEND PROPERTY TIDE_GAME_LINES "${name}\t${folder}/order.tide" "${name}\t${source}\t${namespace}")
 endfunction()
 
+# NVIDIA Newton's selected CPU kernels, statically compiled for the same
+# simulation on native and WASM. Python/Warp are regeneration tools only.
+set_source_files_properties("${CMAKE_CURRENT_SOURCE_DIR}/newton/runtime.cpp"
+    PROPERTIES LANGUAGE C COMPILE_OPTIONS "${TIDE_CPP_FLAGS}")
+add_library(tide_newton STATIC newton/runtime.cpp newton/math.c)
+target_link_libraries(tide_newton PUBLIC tide)
+target_compile_options(tide_newton PRIVATE $<$<CONFIG:Debug>:-O2>)
+add_executable(tide_newton_runtime "${PROJECT_SOURCE_DIR}/tests/test_main.c"
+    newton/test/runtime_test.c newton/test/friction_test.c newton/test/coulomb_test.c
+    newton/test/stability_test.c)
+target_include_directories(tide_newton_runtime PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_newton_runtime PRIVATE tide_newton)
+add_test(NAME tide_newton_runtime COMMAND tide_newton_runtime)
+set_tests_properties(tide_newton_runtime PROPERTIES TIMEOUT 120)
+tide_package_order_test(tide_newton_order Newton "${CMAKE_CURRENT_SOURCE_DIR}/newton/newton.tide"
+    "${CMAKE_CURRENT_SOURCE_DIR}/newton/test")
+# A sharded world: each shard steps its own bodies, with its neighbours' near the border
+tide_add_game(tide_newton_shards SOURCES newton/bridge.c newton/test/shards.tide NAME game PACKAGES Newton newton/newton.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" newton/test/shards_test.c)
+target_include_directories(tide_newton_shards PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_newton_shards PRIVATE tide_newton)
+add_test(NAME tide_newton_shards COMMAND tide_newton_shards)
+set_tests_properties(tide_newton_shards PROPERTIES TIMEOUT 120)
+
 # Box2D's own sources, as they came: a library the tests share, with its
 # warnings off. The package's bridge is ours, and compiles with each test.
 file(GLOB box2d_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/box2d/box2d/src/*.c")
@@ -49,9 +203,8 @@ add_library(tide_box2d STATIC ${box2d_sources})
 # otherwise there
 target_link_libraries(tide_box2d PRIVATE tide_flags)
 target_compile_options(tide_box2d PRIVATE -w)
-# Optimized in debug builds too: they are the libraries as they came, which nobody here steps through, and
-# their steps are most of what the tests of physics take (a debug run of Sumo's tests went from 302 s to 108).
-# The results are the same either way, which the pins say: they agree in debug and release. Asserts stay on.
+# Optimized in debug builds too: their steps are most of what the physics tests take. Results are the
+# same either way (the pins agree in debug and release). Asserts stay on.
 target_compile_options(tide_box2d PRIVATE $<$<CONFIG:Debug>:-O2>)
 if(TIDE_SANITIZE)
     # As it came, it hands memset no array where it has none to clear (0
@@ -77,6 +230,13 @@ add_test(NAME tide_box2d_stack COMMAND tide_box2d_stack)
 set_tests_properties(tide_box2d_stack PROPERTIES TIMEOUT 120)
 
 tide_package_order_test(tide_box2d_order Box2D "${CMAKE_CURRENT_SOURCE_DIR}/box2d/box2d.tide" "${CMAKE_CURRENT_SOURCE_DIR}/box2d/test")
+
+tide_add_game(tide_box2d_complete SOURCES box2d/bridge.c box2d/test/complete.tide NAME complete PACKAGES Box2D box2d/box2d.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box2d/test/complete_test.c)
+target_include_directories(tide_box2d_complete PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_box2d_complete PRIVATE tide_box2d)
+add_test(NAME tide_box2d_complete COMMAND tide_box2d_complete)
+set_tests_properties(tide_box2d_complete PROPERTIES TIMEOUT 120)
 
 # What a game does with it: systems ordered against the step, views, impulses,
 # bodies at rest that code moves, and sensors. A game that's built with the
@@ -125,6 +285,15 @@ target_include_directories(tide_box2d_sleep PRIVATE "${PROJECT_SOURCE_DIR}/tests
 target_link_libraries(tide_box2d_sleep PRIVATE tide_box2d)
 add_test(NAME tide_box2d_sleep COMMAND tide_box2d_sleep)
 set_tests_properties(tide_box2d_sleep PROPERTIES TIMEOUT 120)
+
+# Box2D in a sharded world: each shard steps its own, a body that crosses a
+# border is made anew on the shard it goes to, and neighbours' bodies near the
+# border are copies.
+tide_add_game(tide_box2d_shards SOURCES box2d/bridge.c box2d/test/shards.tide NAME game PACKAGES Box2D box2d/box2d.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box2d/test/shards_test.c)
+target_include_directories(tide_box2d_shards PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_box2d_shards PRIVATE tide_box2d)
+add_test(NAME tide_box2d_shards COMMAND tide_box2d_shards)
 
 # Rooms: the menu a game opens on and the way back to it, in Tide alone. Its
 # test's game is built with the package as tide builds one that lists it.
@@ -263,6 +432,15 @@ target_link_libraries(tide_box3d_course PRIVATE tide_box3d)
 add_test(NAME tide_box3d_course COMMAND tide_box3d_course)
 set_tests_properties(tide_box3d_course PROPERTIES TIMEOUT 300)
 
+# Box3D in a sharded world: each shard steps its own, a body that crosses a
+# border is made anew on the shard it goes to, and neighbours' bodies near the
+# border are copies.
+tide_add_game(tide_box3d_shards SOURCES box3d/bridge.c box3d/test/shards.tide NAME game PACKAGES Box3D box3d/box3d.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box3d/test/shards_test.c)
+target_include_directories(tide_box3d_shards PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_box3d_shards PRIVATE tide_box3d)
+add_test(NAME tide_box3d_shards COMMAND tide_box3d_shards)
+
 # Bodies that code puts to sleep and wakes, as tide_box2d_sleep is for Box2D,
 # with every image in parts compared with the image written whole.
 tide_add_game(tide_box3d_sleep SOURCES box3d/bridge.c box3d/test/sleep.tide NAME sleeping PACKAGES Box3D box3d/box3d.tide
@@ -317,6 +495,39 @@ tide_add_game(tide_box3d_mesh SOURCES box3d/bridge.c box3d/test/mesh.tide NAME m
 target_include_directories(tide_box3d_mesh PRIVATE "${PROJECT_SOURCE_DIR}/tests")
 target_link_libraries(tide_box3d_mesh PRIVATE tide_box3d)
 add_test(NAME tide_box3d_mesh COMMAND tide_box3d_mesh)
+set_tests_properties(tide_box3d_mesh PROPERTIES TIMEOUT 120)
+
+tide_add_game(tide_box3d_joints SOURCES box3d/bridge.c box3d/test/joints.tide NAME joints PACKAGES Box3D box3d/box3d.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box3d/test/joints_test.c)
+target_include_directories(tide_box3d_joints PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_box3d_joints PRIVATE tide_box3d)
+add_test(NAME tide_box3d_joints COMMAND tide_box3d_joints)
+set_tests_properties(tide_box3d_joints PROPERTIES TIMEOUT 120)
+
+tide_add_game(tide_box3d_complete SOURCES box3d/bridge.c box3d/test/complete.tide NAME complete PACKAGES Box3D box3d/box3d.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" box3d/test/complete_test.c)
+target_include_directories(tide_box3d_complete PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tide_box3d_complete PRIVATE tide_box3d)
+add_test(NAME tide_box3d_complete COMMAND tide_box3d_complete)
+set_tests_properties(tide_box3d_complete PROPERTIES TIMEOUT 120)
+
+tide_add_game(tide_box3d_complete_join SOURCES box3d/bridge.c box3d/test/complete.tide NAME complete PACKAGES Box3D box3d/box3d.tide
+    HOST box3d/test/join_test.c)
+target_compile_definitions(tide_box3d_complete_join PRIVATE BOX3D_JOIN_HEADER="complete.h")
+target_link_libraries(tide_box3d_complete_join PRIVATE tide_box3d)
+add_test(NAME tide_box3d_complete_join
+    COMMAND "${CMAKE_COMMAND}" "-DPROGRAM=$<TARGET_FILE:tide_box3d_complete_join>"
+        "-DEMULATOR=${CMAKE_CROSSCOMPILING_EMULATOR}" "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/box3d_complete_join"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/box3d/test/join.cmake")
+
+tide_add_game(tide_box3d_joints_join SOURCES box3d/bridge.c box3d/test/joints.tide NAME joints PACKAGES Box3D box3d/box3d.tide
+    HOST box3d/test/join_test.c)
+target_compile_definitions(tide_box3d_joints_join PRIVATE BOX3D_JOIN_HEADER="joints.h")
+target_link_libraries(tide_box3d_joints_join PRIVATE tide_box3d)
+add_test(NAME tide_box3d_joints_join
+    COMMAND "${CMAKE_COMMAND}" "-DPROGRAM=$<TARGET_FILE:tide_box3d_joints_join>"
+        "-DEMULATOR=${CMAKE_CROSSCOMPILING_EMULATOR}" "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/box3d_joints_join"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/box3d/test/join.cmake")
 
 tide_add_game(tide_box3d_mesh_join SOURCES box3d/bridge.c box3d/test/mesh.tide NAME mesh PACKAGES Box3D box3d/box3d.tide
     HOST box3d/test/join_test.c)
@@ -340,3 +551,37 @@ foreach(dimension 2 3)
     add_test(NAME tide_box${dimension}d_rewind_network COMMAND tide_box${dimension}d_rewind_network)
     set_tests_properties(tide_box${dimension}d_rewind_network PROPERTIES TIMEOUT 120)
 endforeach()
+# Voice's codec belongs only to targets that explicitly link the package.
+# The engine/platform, compiler and games without voice never link it.
+file(GLOB voice_codec_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/voice/codec/*.c")
+add_library(tide_opus STATIC ${voice_codec_sources})
+target_link_libraries(tide_opus PRIVATE tide_flags)
+target_compile_options(tide_opus PRIVATE -w $<$<CONFIG:Debug>:-O2>)
+file(GLOB voice_denoise_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/voice/denoise/*.c")
+add_library(tide_rnnoise STATIC ${voice_denoise_sources})
+target_link_libraries(tide_rnnoise PRIVATE tide_flags)
+target_compile_options(tide_rnnoise PRIVATE -w $<$<CONFIG:Debug>:-O2>)
+tide_add_game(tide_voice SOURCES voice/bridge.c voice/test/game.tide NAME game
+    PACKAGES Voice voice/voice.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" voice/test/voice_test.c)
+set(voice_speech "${CMAKE_CURRENT_BINARY_DIR}/voice_speech.c")
+add_custom_command(OUTPUT "${voice_speech}"
+    COMMAND "${CMAKE_COMMAND}" "-DINPUT=${CMAKE_CURRENT_SOURCE_DIR}/voice/test/speech.wav"
+        "-DOUTPUT=${voice_speech}" -DNAME=tide_voice_test_speech -P "${PROJECT_SOURCE_DIR}/cmake/embed.cmake"
+    DEPENDS voice/test/speech.wav "${PROJECT_SOURCE_DIR}/cmake/embed.cmake" VERBATIM)
+target_sources(tide_voice PRIVATE "${voice_speech}" "${PROJECT_SOURCE_DIR}/platform/src/mixer.c")
+target_include_directories(tide_voice PRIVATE "${PROJECT_SOURCE_DIR}/tests" "${CMAKE_CURRENT_SOURCE_DIR}/voice"
+    "${PROJECT_SOURCE_DIR}/platform/src")
+target_link_libraries(tide_voice PRIVATE tide_opus tide_rnnoise)
+add_test(NAME tide_voice COMMAND tide_voice)
+set_tests_properties(tide_voice PROPERTIES TIMEOUT 120)
+if(TIDE_PLATFORM AND NOT TIDE_ANDROID AND NOT TIDE_WEB AND TIDE_NODE)
+    tide_add_game(tide_voice_host SOURCES voice/bridge.c voice/test/host.tide NAME game
+        PACKAGES Voice voice/voice.tide HOST voice/test/host.c WINDOW)
+    target_link_libraries(tide_voice_host PRIVATE tide_opus tide_rnnoise tide_platform)
+    add_test(NAME tide_voice_host
+        COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/voice/test/host.mjs"
+            "$<TARGET_FILE:tide_voice_host>" "${CMAKE_CURRENT_BINARY_DIR}/voice-host")
+    tide_gpu_test(tide_voice_host)
+    set_tests_properties(tide_voice_host PROPERTIES TIMEOUT 120)
+endif()

@@ -15,6 +15,7 @@
 #include "packages_cmd.h"
 #include "publish.h"
 #include "sys.h"
+#include "telemetry.h"
 #include "toolchain.h"
 #include "upgrade.h"
 
@@ -54,15 +55,20 @@ static int version(const char *root)
     return 0;
 }
 
-int main(const int argc, char **argv)
+// The folder a package command works on, from `folder` (absolute, malloc'd): it, or in a Unity project the Assets
+// folder it's in, which is the game there (packages.h).
+static char *command_folder(char *folder)
 {
-#ifdef TIDE_EMBEDDED_CLANG
-    // tide is its own C compiler: `tide cc` is clang, which runs itself again
-    // as `tide -cc1` when it compiles in another process.
-    if (argc > 1 && (strcmp(argv[1], "cc") == 0 || strcmp(argv[1], "-cc1") == 0)) {
-        return tide_cc(argc, (const char **)argv);
-    }
-#endif
+    char *unity = packages_unity_game(folder);
+    if (!unity) return folder;
+    free(folder);
+    const size_t n = strlen(unity);
+    if (n > 1 && unity[n - 1] == '/') unity[n - 1] = '\0'; // As path_absolute gives a folder
+    return unity;
+}
+
+static int command_main(const int argc, char **argv)
+{
     if (argc < 2) {
         tide_help(0, NULL, TIDE_VERSION);
         return 2;
@@ -76,6 +82,11 @@ int main(const int argc, char **argv)
     char *root = install_root();
     if (strcmp(command, "ide") == 0) {
         const int result = tide_ide(root, argc - 2, (const char *const *)argv + 2);
+        free(root);
+        return result;
+    }
+    if (strcmp(command, "telemetry") == 0) {
+        const int result = tide_telemetry(root, argc - 2, (const char *const *)argv + 2, TIDE_VERSION);
         free(root);
         return result;
     }
@@ -115,7 +126,7 @@ int main(const int argc, char **argv)
                             "comes with tide\n");
             return 2;
         }
-        char *folder = path_absolute(".");
+        char *folder = command_folder(path_absolute("."));
         return tide_add(folder, argv[2]);
     }
 
@@ -125,8 +136,17 @@ int main(const int argc, char **argv)
             fprintf(stderr, "tide: update doesn't take '%s'; it takes the names of packages, or none for all\n", argv[i]);
             return 2;
         }
-        char *folder = path_absolute(".");
+        char *folder = command_folder(path_absolute("."));
         return tide_update(folder, (const char *const *)argv + 2, argc - 2);
+    }
+
+    if (strcmp(command, "pin") == 0) {
+        if (argc > 3 || (argc == 3 && argv[2][0] == '-')) {
+            fprintf(stderr, "tide: pin takes the version to pin, or none for this tide's, like `tide pin 0.5.0`\n");
+            return 2;
+        }
+        char *folder = command_folder(path_absolute("."));
+        return tide_pin(folder, argc == 3 ? argv[2] : NULL);
     }
 
     if (strcmp(command, "eject") == 0) {
@@ -134,7 +154,7 @@ int main(const int argc, char **argv)
             fprintf(stderr, "tide: eject takes the name of one of the game's packages, like `tide eject rooms`\n");
             return 2;
         }
-        char *folder = path_absolute(".");
+        char *folder = command_folder(path_absolute("."));
         return tide_eject(folder, argv[2]);
     }
 
@@ -143,7 +163,7 @@ int main(const int argc, char **argv)
             fprintf(stderr, "tide: %s takes the game's folder, or none for this one\n", command);
             return 2;
         }
-        char *folder = path_absolute(argc == 3 ? argv[2] : ".");
+        char *folder = command_folder(path_absolute(argc == 3 ? argv[2] : "."));
         return command[0] == 'f' ? tide_fetch(folder) : tide_publish(folder);
     }
 
@@ -166,9 +186,11 @@ int main(const int argc, char **argv)
         return tide_hosting_command(root, argc, argv);
     const bool run = strcmp(command, "run") == 0;
     const bool build = strcmp(command, "build") == 0;
+    const bool unity = strcmp(command, "unity") == 0;
     const bool shaders = strcmp(command, "shaders") == 0;
     const bool schedule = strcmp(command, "schedule") == 0 || shaders;
-    if (!run && !build && !schedule) {
+    bool once = false; // unity --once
+    if (!run && !build && !unity && !schedule) {
         fprintf(stderr, "tide: unknown command '%s'\n", command);
         fprintf(stderr, "  = note: see `tide help` for commands\n");
         return 2;
@@ -180,9 +202,9 @@ int main(const int argc, char **argv)
     if (!defines) abort();
     build_options opts = {.folder = ".", .defines = defines};
     // What the game's own command line takes (tide/run.h), which run passes on: --host [port], --join <code> or
-    // --connect <address>, the window's size, its matches' seed, its data directory, and a run with no window. Each once is 27
-    // arguments
-    const char *game_args[32] = {NULL};
+    // --connect <address>, the window's size, its matches' seed, its data directory, a sharded game's regions, and a
+    // run with no window. Each once is 35 arguments
+    const char *game_args[40] = {NULL};
     int game_arg_count = 0;
     bool open_page = true; // run --web opens the page in a browser
     bool headless = false; // --capture, --capture-audio, --frames, --microphone or --script: the game runs with no window
@@ -193,7 +215,7 @@ int main(const int argc, char **argv)
     for (int i = 2; i < argc; i++) {
         const char *a = argv[i];
         const int left = argc - i - 1; // Arguments after this one
-        if (run && game_arg_count > 28) { // Room for the longest of them yet, --size's 3, and the NULL after them
+        if (run && game_arg_count > 36) { // Room for the longest of them yet, --size's 3, and the NULL after them
             fprintf(stderr, "tide: run takes each of its options once\n");
             free(defines);
             return 2;
@@ -210,6 +232,22 @@ int main(const int argc, char **argv)
             server_args = true;
             game_args[game_arg_count++] = a;
             game_args[game_arg_count++] = argv[++i];
+        } else if (run && (strcmp(a, "--shards") == 0 || strcmp(a, "--shard-width") == 0 || strcmp(a, "--shard-most") == 0)
+                   && left >= 1) {
+            // A sharded game's regions, for the game's own command line or its server; --shard-most splits a server's
+            server_args |= strcmp(a, "--shard-most") == 0;
+            game_args[game_arg_count++] = a;
+            game_args[game_arg_count++] = argv[++i];
+        } else if (run && strcmp(a, "--shard-journal") == 0) {
+            if (left < 1 || !argv[i + 1][0] || argv[i + 1][0] == '-') {
+                fprintf(stderr, "tide: --shard-journal takes the folder a sharded server keeps its world in, like "
+                                "`--shard-journal world`\n");
+                free(defines);
+                return 2;
+            }
+            server_args = true; // The server runs in its own folder: the folder is where the command says, from here
+            game_args[game_arg_count++] = a;
+            game_args[game_arg_count++] = path_absolute(argv[++i]);
         } else if (run && strcmp(a, "--host") == 0) {
             game_args[game_arg_count++] = a;
             if (left >= 1 && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') game_args[game_arg_count++] = argv[++i];
@@ -299,8 +337,34 @@ int main(const int argc, char **argv)
                 return 2;
             }
             defines[opts.define_count++] = name;
+        } else if ((build || run) && strcmp(a, "--scene") == 0) {
+            if (!left || !argv[i + 1][0] || argv[i + 1][0] == '-' || opts.scene) {
+                fputs("tide: --scene takes one qualified prefab or scene name, like --scene Levels.Start\n", stderr);
+                free(defines);
+                return 2;
+            }
+            opts.scene = argv[++i];
+        } else if ((build || run) && strcmp(a, "--source-overlay") == 0) {
+            if (left < 2 || !argv[i + 1][0] || !argv[i + 2][0] || argv[i + 1][0] == '-' || argv[i + 2][0] == '-' || opts.editor_source) {
+                fputs("tide: --source-overlay takes an original source path and a replacement file\n", stderr);
+                free(defines);
+                return 2;
+            }
+            opts.editor_source = path_absolute(argv[++i]);
+            opts.editor_draft = path_absolute(argv[++i]);
+        } else if ((build || run) && strcmp(a, "--editor-cache") == 0) {
+            if (!left || !argv[i + 1][0] || argv[i + 1][0] == '-' || opts.work) {
+                fputs("tide: --editor-cache takes one private build-cache folder\n", stderr);
+                free(defines);
+                return 2;
+            }
+            opts.work = argv[++i];
         } else if (strcmp(a, "--title") == 0 && i + 1 < argc) opts.title = argv[++i];
-        else if (strcmp(a, "-o") == 0 && i + 1 < argc && build) opts.output = argv[++i];
+        else if (strcmp(a, "-o") == 0 && i + 1 < argc && (build || unity)) opts.output = argv[++i];
+        else if (unity && strcmp(a, "--once") == 0) once = true;
+        else if (unity && strcmp(a, "--notified") == 0) opts.notified = true;
+        else if (unity && strcmp(a, "--declarations") == 0) opts.declarations = once = true;
+        else if ((unity || build || run || schedule) && strcmp(a, "--assets") == 0 && i + 1 < argc) opts.unity_assets = argv[++i];
         else if (a[0] != '-') opts.folder = a;
         else {
             fprintf(stderr, "tide: %s doesn't take '%s'; see `tide help %s`\n", command, a, command);
@@ -313,13 +377,20 @@ int main(const int argc, char **argv)
     // starts as one line.
     opts.stats_open = run && opts.stats;
     // Interactive runs reload as files change. Runs with no window end once.
-    opts.watch = run && !headless && !opts.server;
+    opts.watch = (run && !headless && !opts.server) || (unity && !once && !opts.web); // A web build is for a player: once
+    opts.unity = unity;
+    if (unity && (!opts.output || opts.android || opts.server)) {
+        fprintf(stderr, opts.output ? "tide: unity builds for the Unity editor on this machine, or a WebGL player with --web: not with --android or --server\n"
+                                    : "tide: unity takes where to build, like `tide unity -o Library/Tide`\n");
+        free(defines);
+        return 2;
+    }
     // DEBUG is every build's but --release's
     if (!opts.release) defines[opts.define_count++] = "DEBUG";
     // The game's tide.packages reads them too: its #if lines say which packages this build has
     packages_set_symbols(defines, opts.define_count);
     if (server_args && !opts.server) {
-        fputs("tide: --anonymous, --udp-only, --port and server capacity options require --server\n", stderr);
+        fputs("tide: --anonymous, --udp-only, --port, --shard-most, --shard-journal and server capacity options require --server\n", stderr);
         free(defines);
         return 2;
     }
@@ -329,7 +400,8 @@ int main(const int argc, char **argv)
             if (a[0] != '-') continue;
             if (strcmp(a, "--anonymous") == 0 || strcmp(a, "--udp-only") == 0) continue;
             if (strcmp(a, "--port") == 0 || strcmp(a, "--max-matches") == 0
-                || strcmp(a, "--max-connections") == 0 || strcmp(a, "--frames") == 0) { i++; continue; }
+                || strcmp(a, "--max-connections") == 0 || strcmp(a, "--frames") == 0 || strcmp(a, "--shards") == 0
+                || strcmp(a, "--shard-width") == 0 || strcmp(a, "--shard-most") == 0 || strcmp(a, "--shard-journal") == 0) { i++; continue; }
             fprintf(stderr, "tide: --server does not take %s\n", a);
             free(defines);
             return 2;
@@ -384,12 +456,38 @@ int main(const int argc, char **argv)
         code = opts.watch ? tide_run_reloading(root, &opts, game_args) : tide_run_native(root, &opts, game_args);
     } else if (run) {
         code = tide_run_web(root, &opts, open_page, game_args);
+    } else if (unity) {
+        code = tide_unity(root, &opts);
     } else {
         char *program = tide_build(root, &opts);
         if (!program) code = 1;
         else printf("Built %s\n", program);
     }
-    if (!run) tide_check_for_update(root);
+    if (!run && !unity) tide_check_for_update(root);
     free(defines);
+    return code;
+}
+
+int main(const int argc, char **argv)
+{
+#ifdef TIDE_EMBEDDED_CLANG
+    // tide is its own C compiler: `tide cc` is clang, which runs itself again
+    // as `tide -cc1` when it compiles in another process.
+    if (argc > 1 && (strcmp(argv[1], "cc") == 0 || strcmp(argv[1], "-cc1") == 0)) {
+        return tide_cc(argc, (const char **)argv);
+    }
+#endif
+    // Usage data waiting to be sent, by a tide started for it alone (telemetry.c)
+    if (argc == 2 && strcmp(argv[1], "_telemetry-send") == 0) {
+        char *root = install_root();
+        const int result = tide_telemetry_send(root, TIDE_VERSION);
+        free(root);
+        return result;
+    }
+    const int64_t start = sys_now_ms();
+    const int code = command_main(argc, argv);
+    char *root = install_root();
+    tide_telemetry_record(root, argc, (const char *const *)argv, code, sys_now_ms() - start, TIDE_VERSION);
+    free(root);
     return code;
 }

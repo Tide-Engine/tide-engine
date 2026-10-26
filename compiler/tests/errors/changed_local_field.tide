@@ -1,0 +1,7 @@
+// expect: 'flash' is a local field of 'Health', which this machine changes itself, and 'Changed' watches the match's
+component Health { int value; local float flash; }
+scene Main { }
+
+event(Spawned) Setup(with Main) { Spawn(Health); }
+
+local event(Changed<Health.flash>) Flash(Health health) { }

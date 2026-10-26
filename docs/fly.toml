@@ -22,6 +22,8 @@ primary_region = 'fra'
   BODY_SIZE_LIMIT = '16K'
   TIDE_ACCESS_FILE = '/data/access-requests.jsonl'
   TIDE_ANALYTICS_FILE = '/data/analytics.json'
+  # The tide CLI's anonymous usage data (telemetry.js), kept 13 months.
+  TIDE_TELEMETRY_FILE = '/data/telemetry.db'
   TIDE_RELAY_STATS_URL = 'http://purrengine-relay.internal:8080/admin/stats'
   # TIDE_ADMIN_PASSWORD protects /admin. TIDE_RELAY_STATS_TOKEN is shared
   # with purrengine-relay; both are Fly secrets, never public client settings.

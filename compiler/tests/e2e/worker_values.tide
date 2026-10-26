@@ -1,0 +1,83 @@
+struct Payload
+{
+    List<List<string>> nested;
+    Map<string, List<int>> groups;
+    int[2] names;
+    int? choice;
+}
+
+enum WorkerError { Empty }
+
+local singleton Results
+{
+    Payload source;
+    Payload result;
+    string message;
+    int[2] names;
+    string? optional;
+    bool good;
+    bool started;
+    bool done;
+    int calls;
+}
+
+int Next(mut Results results) { results.calls++; return results.calls; }
+local worker int Pair(int first, int second) { return first * 10 + second; }
+local worker Payload Echo(Payload input) { return input; }
+local worker string EchoText(string value) { return value + "!"; }
+local worker int[2] EchoArray(int[2] value) { return value; }
+local worker string? EchoOptional(string? value) { return value; }
+local worker string MayFail(string value) fails WorkerError
+{
+    if (value.length == 0) fail WorkerError.Empty;
+    return value + " okay";
+}
+local worker void NoResult(int count)
+{
+    for (var i = 0; i < count; i++) { }
+}
+
+async void Work(mut Results results)
+{
+    results.result = await Echo(results.source);
+    results.message = await EchoText(results.source.nested[0][0]);
+    results.names = await EchoArray(results.source.names);
+    results.optional = await EchoOptional(results.message);
+    var failure = await MayFail("") ?? "failed";
+    var success = await MayFail("value") ?? "bad";
+    await NoResult(2);
+    results.calls = 0;
+    var ordered = await Pair(Next(results), Next(results));
+    var orderedOnce = results.calls == 2;
+    results.calls = 0;
+    var named = await Pair(second: Next(results), first: Next(results));
+    var nested = await Pair(3, await Pair(4, 5));
+    results.source.nested[0][0] = "changed";
+    results.good = results.result.nested[0][0] == "a"
+        && results.result.nested[1][0] == "c"
+        && results.result.groups["first"][1] == 5
+        && results.result.names[1] == 9
+        && (results.result.choice ?? 0) == 7
+        && results.message == "a!"
+        && results.names[0] == 8
+        && (results.optional ?? "") == "a!"
+        && failure == "failed"
+        && success == "value okay"
+        && ordered == 12 && orderedOnce && named == 21 && results.calls == 2 && nested == 75;
+    results.done = true;
+}
+
+view Start(mut Results results)
+{
+    if (results.started) return;
+    results.started = true;
+    results.source = Payload {
+        nested = [["a", "b"], ["c"]],
+        names = [8, 9],
+        choice = 7
+    };
+    results.source.groups["first"] = [4, 5];
+    Work(results);
+}
+
+scene Main;

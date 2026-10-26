@@ -1,4 +1,4 @@
-// Opt-in real VS Code host test. Never uses the owner's profile or extensions.
+// Opt-in real VS Code host test. Uses a private profile and extensions.
 // node test/run-host.mjs <Code executable> <built tidels> <Node executable>
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
@@ -25,6 +25,7 @@ fs.writeFileSync(path.join(workspace, 'main.tide'), 'component Body { float radi
 // stay alive until the adapter kills the tree; the page proves embedded JS ran.
 fs.copyFileSync(path.join(source, 'test/host-process.cjs'), path.join(workspace, 'run'));
 const env = { ...process.env, TIDE_HIDDEN: '1', TIDE_HOST_WORKSPACE: workspace, TIDE_HOST_RUNNER_PID: String(process.pid),
+    TIDE_HOST_SERVER: server, TIDE_HOST_NODE: node, TIDE_VERSIONS: path.join(scratch, 'versions'),
     TIDE_HOST_TIDE: tide ?? '', TIDE_HOST_LOGS: path.join(scratch,'profile/logs') };
 delete env.ELECTRON_RUN_AS_NODE;
 const child = spawn(code, [workspace, '--new-window', '--mute-audio', '--disable-workspace-trust', '--disable-extensions', '--skip-welcome', '--skip-release-notes',

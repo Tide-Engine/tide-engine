@@ -124,11 +124,12 @@ md.renderer.rules.link_open = (tokens, idx, options, env, self) => {
         token.attrSet('target', '_blank');
         token.attrSet('rel', 'noreferrer');
     } else if (!href.startsWith('#')) {
-        const hash = href.indexOf('#');
-        const target = hash < 0 ? href : href.slice(0, hash);
-        let path = new URL(target, `https://site/${file}`).pathname.replace(/\.md$/, '').replace(/(^|\/)index$/, '$1');
+        const url = new URL(href, `https://site/${file}`);
+        let path = url.pathname.replace(/\.md$/, '').replace(/(^|\/)index$/, '$1');
         if (path !== '/' && path.endsWith('/') && isPage(path.slice(0, -1))) path = path.slice(0, -1);
-        token.attrSet('href', path + (hash < 0 ? '' : href.slice(hash)));
+        // Markdown downloads in static/ keep their extension; only known
+        // documentation sources become the corresponding HTML page route.
+        token.attrSet('href', (isPage(path) ? path : url.pathname) + url.search + url.hash);
     }
     return self.renderToken(tokens, idx, options);
 };
@@ -174,7 +175,7 @@ block('tide-example', (tokens, idx) => {
     const match = /^tide-example\s+([a-z][a-z0-9-]*)\s+(.+)$/.exec(token.info.trim());
     if (!match) throw new Error('Use ::: tide-example <file-name> <title>');
     const [, id, title] = match;
-    const src = `/examples/${id}/`;
+    const src = `/examples/${id}/?stats`;
     return `<section class="tide-example" data-example-src="${src}" aria-label="${escape(title)}">
 <div class="example-heading"><strong>${escape(title)}</strong><span>Live Tide example${touchHint}</span></div>
 <div class="example-columns"><div class="example-preview">
@@ -201,7 +202,7 @@ function players(name: string, match: boolean) {
         const parts = /^\S+\s+([a-z][a-z0-9-]*)\s+(?:lag=(\d+)\s+)?(.+)$/.exec(token.info.trim());
         if (!parts || (parts[2] && !match)) throw new Error(`Use ::: ${name} <file-name> ${match ? '[lag=<ms>] ' : ''}<title>`);
         const [, id, lag, title] = parts;
-        const src = `/examples/${id}/`;
+        const src = `/examples/${id}/?stats`;
         const ping = Math.min(Number(lag ?? 0), 500);
         const slider = match
             ? `<label class="example-lag">Ping <input type="range" min="0" max="500" step="25" value="${ping}" data-example-lag><output>${ping} ms</output><span class="example-lag-min" hidden></span></label>`

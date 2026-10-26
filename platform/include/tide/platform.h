@@ -46,7 +46,7 @@ typedef struct tide_window_desc {
 void tide_platform_open(const tide_window_desc *desc);
 
 // A headless window: none on screen, for pictures of what a game draws and
-// for runs nobody watches (an agent's, CI's). It's what tide/run.h opens for
+// for runs nobody watches (automated runs, CI). It's what tide/run.h opens for
 // a game started with --capture, --frames or --script. Nothing about it
 // depends on this machine, so a run repeats exactly, on any:
 //
@@ -259,6 +259,35 @@ const tide_io *tide_platform_io_init(const char *app_id, const char *directory);
 // across runs (Vulkan's pipelines), the game's temporary cache folder, which
 // is only made once something's kept there. tide_platform_io_init names it too.
 void tide_platform_name_game(const char *app_id);
+// Whether a GPU pipeline (a shader with how it blends, tests depth and culls)
+// is made in the background where the backend can: WebGPU, and WebGL where
+// the browser compiles shaders in parallel. Making one takes tens of
+// milliseconds; in the background, nothing that draws with it shows till it's
+// made, a frame or a few later, where otherwise the frame that first draws it
+// waits for it. Off at first, so a frame read back draws everything it's
+// given; the standard host turns it on for games.
+void tide_platform_background_pipelines(bool on);
+
+// Makes the pipelines of `shaders` before anything draws with them, so the
+// frame that first does doesn't wait for one: a game's shaders (the standard
+// host's are tidec's tide_game_shaders, given as the game starts and every
+// frame), and the renderer's own, for drawing into the window. A pipeline is
+// a shader with how it's drawn (blend, depth, cull, stencil) into a kind of
+// target (its colors' formats, depth alone, samples), and is compiled for
+// that: so each of a shader's is made the ways it drew, by its name, in this
+// run and the runs before, which the renderer keeps in the game's temporary
+// cache folder (pipelines.keys, beside Vulkan's pipelines.vulkan; a page
+// keeps its own run's). A shader that never drew is made the way its kind of
+// shader (2D or 3D, a blit, its colors) drew most into each kind of target,
+// once one of its kind drew: given again, it makes what's newly known. With
+// background pipelines on, they're made while frames go on
+// (tide_platform_prewarm_waiting); off, this waits for them. `shaders` is
+// read only in this call. Nothing without a device to draw with, or while the
+// window is minimized.
+void tide_platform_prewarm(const tide_shader *const *shaders, uint32_t count);
+// How many of the pipelines the last tide_platform_prewarm asked for are still
+// being made in the background: 0 once all of them are.
+uint32_t tide_platform_prewarm_waiting(void);
 
 // How many draw calls the last list drawn took (tide_platform_draw), aside
 // from what was drawn over it (tide_platform_draw_overlay,
@@ -309,6 +338,8 @@ uint64_t tide_platform_entropy(void);
 
 // The window's size in pixels, which tide_gui_begin takes.
 tide_float2 tide_platform_screen_size(void);
+// Physical pixels per logical pixel on each axis, as the renderer fits them.
+tide_float2 tide_platform_screen_scale(void);
 tide_int2 tide_platform_target_pixels(tide_target_size size);
 
 // How big `text` is drawn `size` tall with the platform's font, in the same
@@ -366,6 +397,17 @@ bool tide_platform_room_join(const char *code, tide_transport *out, tide_address
 // failed, or its host can't reach the relay (it opens again once it can).
 // It changes only if another room had it first, before anyone could join.
 void tide_platform_room_code(char *out, size_t size);
+// What others open to join the match at `room` (a room's code, or what a
+// game's own network says it's joined by), into `out`: Session.invite. On
+// the web, a link: the page's address without its query or fragment, then
+// `?join=` and `room`, which the page turns into --join (tide.js), so it works
+// wherever the page is served. That's for `room` of letters and digits, the
+// only text `?join=` passes on, and a link that fits in `size` and in
+// TIDE_INVITE_BYTES; anything else, and every other platform, has `room`
+// itself. "" for "", and on the web while this host waits for the relay to
+// confirm its room.
+#define TIDE_INVITE_BYTES 256u // Clipboard.Copy's 255 bytes and a NUL (TIDE_MESSAGE_BYTES)
+void tide_platform_room_invite(const char *room, char *out, size_t size);
 // The room joined turned out not to be one, or its host couldn't be reached.
 bool tide_platform_room_failed(void);
 // The ping the session measures to the room's host, in milliseconds, which a
@@ -432,6 +474,18 @@ void tide_platform_players_code(char *out, size_t size);
 void tide_platform_players_room(uint32_t player, char *out, size_t size);
 // The room joined has nobody's match open in it, in tide_platform_room_failed's place.
 bool tide_platform_players_failed(void);
+// What the run's script asks of this player's match at the frame just polled,
+// one at a time, in the script's order, for the host to do: TIDE_PLAYERS_LEAVE
+// leaves it as Session.Leave does, and TIDE_PLAYERS_REJOIN joins again what the
+// player last joined, as the same player. TIDE_PLAYERS_NONE once nothing more
+// is asked. A script's `drop` is the platform's own: until a rejoin, nothing
+// this player sends goes and nothing comes, as for a phone that went away.
+typedef enum tide_players_action {
+    TIDE_PLAYERS_NONE,
+    TIDE_PLAYERS_LEAVE,
+    TIDE_PLAYERS_REJOIN,
+} tide_players_action;
+tide_players_action tide_platform_players_action(void);
 
 // Threads to run ticks on (tide/jobs.h): a pool with one for each of the
 // CPU's cores, the caller's among them, made on first use. NULL with one core.

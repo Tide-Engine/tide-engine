@@ -6,6 +6,25 @@ description: "Import skinned glTF or FBX models, sample and blend deterministic 
 
 A `SkinnedMesh<V>` holds a model's geometry, skeleton and animation clips. A `Pose` holds one character's current bone transforms. Several characters can share the same model while playing different animations.
 
+Keep a named model selection in a component with `Asset<SkinnedMesh<V>>`:
+
+```csharp
+asset SkinnedMesh<Vertex3> hero = "art/hero.glb";
+component CharacterArt { Asset<SkinnedMesh<Vertex3>> model = hero; }
+
+view DrawCharacter(CharacterArt art)
+{
+    Draw.SkinnedMesh(art.model.Value, float4x4.identity);
+}
+```
+
+`.Value` resolves the current packed model, preserving imported LODs and shared
+skin palettes. It exposes the declared type's dynamic catalogs; use the original
+asset for its inferred clip and bone names. A borrowed or decoded model value
+cannot supply declaration identity. References compare by named asset identity
+with `==` and `!=`; empty or unknown references resolve to an empty model.
+Storing the resolved model itself uses ordinary owned value semantics.
+
 ## Import and draw
 
 Import a glTF 2.0 `.glb` or `.gltf`, or a binary or ASCII `.fbx`, with your [vertex struct](./assets.md#meshes). A model needs no animation clips to draw: leaving out the pose draws its authored rest pose.
@@ -43,6 +62,36 @@ view Characters(Character character)
 `Draw.SkinnedMesh(mesh, transform[, pose])` takes the same texture, vert, frag and values arguments as a [3D mesh](./3d.md), and also works on a render target. The optional pose goes immediately after the transform; textures and shaders can follow the transform directly when no pose is supplied. Deformation applies before your `vert`, which receives the posed mesh-local position, normal and tangent.
 
 Each draw captures the pose as it is at that call, so later edits or samples do not change characters already drawn. The renderer can batch consecutive compatible draws of an imported model even when their poses differ. Different shaders, textures, shared values or draw settings can separate those batches.
+
+For a list of characters, pass the skinned model to `Draw.Instanced`:
+
+```csharp
+struct CharacterInstance
+{
+    float4x4 transform = float4x4.identity;
+    Pose pose;
+    Color tint = Color.white;
+}
+
+frag CharacterColor(Vertex3 vertex, CharacterInstance item, out Color color)
+{
+    color = vertex.color * item.tint;
+}
+
+view Crowd()
+{
+    Draw.Instanced(hero, [
+        CharacterInstance { pose = hero.defaultPose },
+        CharacterInstance {
+            transform = float4x4.Translate(float3(3, 0, 0)),
+            pose = hero.defaultPose,
+            tint = Color.blue
+        }
+    ], CharacterColor);
+}
+```
+
+The optional `float4x4 transform` field follows the existing 3D instance convention; leaving the field out uses identity. The optional `Pose pose` field supplies that item's animation. Leaving the field out uses authored rest, including on a model with no clips; an explicitly invalid or incompatible pose skips its item. A `List<float4x4>` draws all items at rest. Pose data stays on the CPU, while shaders receive only the ordinary instance fields they read. Textures, custom vertex stages, shared values and render targets use the usual `Instanced` argument order. Each item captures its pose before the call returns.
 
 A crowd seen from afar needs fewer triangles a character: `[LOD] asset SkinnedMesh<Vertex3> hero = "art/hero.glb";` has simpler versions of the model made as the game builds, and each draw picks one by how big the character is on screen. The pose, the bones and every lookup are the full model's; only the triangles drawn change. The model's size for the pick is its size at rest. See [Levels of detail](./assets.md#levels-of-detail).
 
@@ -180,6 +229,26 @@ Imported model and animation content participates in the game's match compatibil
 ## Load while playing
 
 `SkinnedMesh<Vertex3>.Decode(bytes)` and its contracted form decode a self-contained GLB, returning a model `fails IOError`. Invalid data, external-resource references or missing contract requirements give `IOError.InvalidData`. Models and animation values can be stored after decoding.
+
+Bytes can come from anywhere, so a small file can't ask for much. A model past any of these is `InvalidData` before anything is made for it:
+
+| Limit | Most |
+|---|---|
+| Vertices (a part without normals has three a triangle) | 1,048,576 |
+| Triangle corners (three a triangle) | 6,291,456 |
+| Skeleton nodes, animations, buffers | 65,536 each |
+| Skins | 4,096 |
+| Inverse binds (skin joints, and one for each part no skin moves) | 262,144 |
+| Vertex influences (joint/weight sets count four a vertex each) | 8,388,608 |
+| Animation channels | 262,144 |
+| Animation key numbers (times and values) | 16,777,216 |
+| Numbers read from accessors, counted again for each part that names one | 67,108,864 |
+| JSON values in the description | 4,194,304 |
+| The file, and the decoded model | 512 MiB each |
+
+An accessor with no buffer view is zeros and takes no bytes, but counts as much as one with them. A model at every limit at once takes about 500 MiB to decode. These limits are the engine's, the same for every game, so every machine in a match refuses the same files; `SkinnedMesh` and `Animations` assets are held to them too. The numbers are provisional.
+
+A model refused for a limit says so on the log of each machine that decoded it, naming the limit, as `tide: SkinnedMesh.Decode refused a model: it has 2,000,000 vertices, more than the 1,048,576 a decoded model holds (TIDE_SKINNED_MAX_VERTICES)`. A build-time asset past one is an error that says the same.
 
 Get bytes with [files or Web.Fetch](./files.md), separately from decoding. Files fetched on one machine are local; content that affects match bones must enter through synchronized [commands](./commands.md) or other match data. Decoding itself is deterministic and can run in match code.
 

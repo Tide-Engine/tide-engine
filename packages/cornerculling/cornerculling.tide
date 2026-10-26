@@ -1,0 +1,359 @@
+namespace CornerCulling;
+
+// Bounds use half sizes. A zero extent is valid for an endpoint, including
+// a point observer. Blockers must have positive extents on every axis.
+struct Bounds
+{
+    float3 center;
+    float3 extents;
+}
+
+struct Box
+{
+    Bounds bounds;
+    int mask = -1;
+}
+
+struct CullingQuery
+{
+    Bounds observer;
+    Bounds target;
+    int mask = -1;
+    float surfaceMargin = 0.0001;
+}
+
+enum Status { Unknown, Visible, Occluded }
+
+struct CullingResult
+{
+    Status status;
+    // Index in the list supplied to Rebuild, or -1 without a certificate.
+    int occluder = -1;
+
+    bool IsVisible() { return status != Status.Occluded; }
+}
+
+// Only a candidate, never a remembered answer. Safe after rebuild, update,
+// rollback or reuse with a different world: the current box is always retested.
+struct CullingCache { int candidate; }
+
+struct Entry
+{
+    Box box;
+    int source;
+}
+
+struct Node
+{
+    double3 min;
+    double3 max;
+    int mask;
+    int first;
+    int count;
+    int escape;
+}
+
+struct PreparedQuery
+{
+    double3 min;
+    double3 max;
+    double3 observerMin;
+    double3 observerMax;
+    double3 targetMin;
+    double3 targetMax;
+    double3 observerCenter;
+    double3 targetCenter;
+    double3[8] observers;
+    double3[8] targets;
+    int observerCount;
+    int targetCount;
+    int mask;
+    double margin;
+}
+
+bool Finite(float v) { return v >= -3.402823e38 && v <= 3.402823e38; }
+bool Finite(float3 v) { return Finite(v.x) && Finite(v.y) && Finite(v.z); }
+
+bool Valid(Bounds bounds)
+{
+    return Finite(bounds.center) && Finite(bounds.extents) &&
+        bounds.extents.x >= 0 && bounds.extents.y >= 0 && bounds.extents.z >= 0;
+}
+
+bool Solid(Box box)
+{
+    return box.mask != 0 && Valid(box.bounds) &&
+        box.bounds.extents.x > 0 && box.bounds.extents.y > 0 && box.bounds.extents.z > 0;
+}
+
+bool Overlaps(double3 aMin, double3 aMax, double3 bMin, double3 bMax)
+{
+    return aMin.x <= bMax.x && aMax.x >= bMin.x &&
+        aMin.y <= bMax.y && aMax.y >= bMin.y && aMin.z <= bMax.z && aMax.z >= bMin.z;
+}
+
+double3 Corner(double3 min, double3 max, int i)
+{
+    return double3((i & 1) == 0 ? min.x : max.x,
+                   (i & 2) == 0 ? min.y : max.y,
+                   (i & 4) == 0 ? min.z : max.z);
+}
+
+// Binary32 inputs widen before any arithmetic. Outward endpoint padding and
+// inward blocker padding deliberately dominate binary64 rounding, including
+// cancellation at large coordinates. Tiny/uncertain geometry fails open.
+double3 Roundoff(Bounds bounds)
+{
+    return Math.Max(Math.Abs(double3(bounds.center)), double3(bounds.extents)) * 1e-12d;
+}
+
+PreparedQuery Prepare(CullingQuery query)
+{
+    mut PreparedQuery result = default;
+    result.observerCenter = double3(query.observer.center);
+    result.targetCenter = double3(query.target.center);
+    mut double3 a = double3(query.observer.extents) + Roundoff(query.observer);
+    mut double3 b = double3(query.target.extents) + Roundoff(query.target);
+    result.observerCount = Math.Cmax(query.observer.extents) == 0 ? 1 : 8;
+    result.targetCount = Math.Cmax(query.target.extents) == 0 ? 1 : 8;
+    if (result.observerCount == 1) a = double3(0d);
+    if (result.targetCount == 1) b = double3(0d);
+    result.observerMin = result.observerCenter - a;
+    result.observerMax = result.observerCenter + a;
+    result.targetMin = result.targetCenter - b;
+    result.targetMax = result.targetCenter + b;
+    result.min = Math.Min(result.observerMin, result.targetMin);
+    result.max = Math.Max(result.observerMax, result.targetMax);
+    result.mask = query.mask;
+    result.margin = query.surfaceMargin;
+    for (var i = 0; i < result.observerCount; i++)
+        result.observers[i] = Corner(result.observerMin, result.observerMax, i);
+    for (var i = 0; i < result.targetCount; i++)
+        result.targets[i] = Corner(result.targetMin, result.targetMax, i);
+    return result;
+}
+
+bool Slab(double start, double end, double min, double max, mut double enter, mut double exit)
+{
+    double direction = end - start;
+    if (direction == 0d) return start > min && start < max;
+    double first = (min - start) / direction;
+    double second = (max - start) / direction;
+    enter = Math.Max(enter, Math.Min(first, second));
+    exit = Math.Min(exit, Math.Max(first, second));
+    return exit - enter > 1e-12d;
+}
+
+bool Intersects(double3 start, double3 end, double3 min, double3 max)
+{
+    mut double enter = 1e-12d;
+    mut double exit = 1d - 1e-12d;
+    return Slab(start.x, end.x, min.x, max.x, enter, exit) &&
+        Slab(start.y, end.y, min.y, max.y, enter, exit) &&
+        Slab(start.z, end.z, min.z, max.z, enter, exit);
+}
+
+bool Blocks(Box box, PreparedQuery query)
+{
+    if ((box.mask & query.mask) == 0 || !Solid(box)) return false;
+    double3 center = double3(box.bounds.center);
+    double3 extents = double3(box.bounds.extents);
+    double3 rounding = Roundoff(box.bounds);
+    double3 outerMin = center - extents - rounding;
+    double3 outerMax = center + extents + rounding;
+    if (!Overlaps(outerMin, outerMax, query.min, query.max) ||
+        Overlaps(outerMin, outerMax, query.observerMin, query.observerMax) ||
+        Overlaps(outerMin, outerMax, query.targetMin, query.targetMax)) return false;
+    double3 inner = extents - rounding - query.margin;
+    if (Math.Cmin(inner) <= 0d) return false;
+    double3 min = center - inner;
+    double3 max = center + inner;
+    if (!Intersects(query.observerCenter, query.targetCenter, min, max)) return false;
+    for (var a = 0; a < query.observerCount; a++)
+        for (var b = 0; b < query.targetCount; b++)
+            if (!Intersects(query.observers[a], query.targets[b], min, max)) return false;
+    return true;
+}
+
+float Axis(float3 value, int axis)
+{
+    return axis == 0 ? value.x : (axis == 1 ? value.y : value.z);
+}
+
+void Swap(mut List<Entry> entries, int a, int b)
+{
+    Entry saved = entries[a];
+    entries[a] = entries[b];
+    entries[b] = saved;
+}
+
+// Three-way median selection avoids repeated-centroid degeneration. Invalid
+// boxes have a finite zero key and stay in the tree, so Update can enable them.
+float Key(Entry entry, int axis)
+{
+    return Valid(entry.box.bounds) ? Axis(entry.box.bounds.center, axis) : 0;
+}
+
+void Partition(mut List<Entry> entries, int first, int end, int middle, int axis)
+{
+    mut int lo = first;
+    mut int hi = end;
+    while (hi - lo > 1)
+    {
+        float a = Key(entries[lo], axis);
+        float b = Key(entries[lo + (hi - lo) / 2], axis);
+        float c = Key(entries[hi - 1], axis);
+        float pivot = Math.Max(Math.Min(a, b), Math.Min(Math.Max(a, b), c));
+        mut int less = lo;
+        mut int scan = lo;
+        mut int greater = hi;
+        while (scan < greater)
+        {
+            float value = Key(entries[scan], axis);
+            if (value < pivot) { Swap(entries, less, scan); less++; scan++; }
+            else if (value > pivot) { greater--; Swap(entries, scan, greater); }
+            else scan++;
+        }
+        if (middle < less) hi = less;
+        else if (middle >= greater) lo = greater;
+        else return;
+    }
+}
+
+struct CullingWorld
+{
+    // Implementation storage. Keep it intact; use Rebuild/Update/Clear.
+    List<Entry> entries;
+    List<Node> nodes;
+    bool ready;
+
+    Node Leaf(int first, int count, int escape)
+    {
+        mut Node node = Node { first = first, count = count, escape = escape };
+        mut bool found = false;
+        for (var i = first; i < first + count; i++)
+        {
+            Box box = entries[i].box;
+            if (!Solid(box)) continue;
+            double3 rounding = Roundoff(box.bounds);
+            double3 min = double3(box.bounds.center) - double3(box.bounds.extents) - rounding;
+            double3 max = double3(box.bounds.center) + double3(box.bounds.extents) + rounding;
+            node.min = found ? Math.Min(node.min, min) : min;
+            node.max = found ? Math.Max(node.max, max) : max;
+            node.mask |= box.mask;
+            found = true;
+        }
+        return node;
+    }
+
+    mut void BuildBranch(int first, int count)
+    {
+        int index = nodes.count;
+        Node bounds = Leaf(first, count, 0);
+        nodes.Add(bounds);
+        if (count > 4)
+        {
+            double3 span = bounds.max - bounds.min;
+            int axis = span.x >= span.y && span.x >= span.z ? 0 : (span.y >= span.z ? 1 : 2);
+            int left = count / 2;
+            Partition(entries, first, first + count, first + left, axis);
+            BuildBranch(first, left);
+            BuildBranch(first + left, count - left);
+            nodes[index].count = 0;
+        }
+        nodes[index].escape = nodes.count;
+    }
+
+    mut void Rebuild(List<Box> boxes)
+    {
+        entries.Clear();
+        nodes.Clear();
+        for (var i = 0; i < boxes.count; i++)
+            entries.Add(Entry { box = boxes[i], source = i });
+        if (entries.count > 0) BuildBranch(0, entries.count);
+        ready = true;
+    }
+
+    mut void Clear()
+    {
+        entries.Clear();
+        nodes.Clear();
+        ready = false;
+    }
+
+    // Source indices stay stable until the next Rebuild. Updating mask to zero
+    // disables a door immediately. Refit is synchronous; no stale tree window.
+    mut bool Update(int source, Box box)
+    {
+        if (!ready || source < 0 || source >= entries.count) return false;
+        for (var i = 0; i < entries.count; i++)
+        {
+            if (entries[i].source != source) continue;
+            entries[i].box = box;
+            for (var n = nodes.count - 1; n >= 0; n--)
+            {
+                Node old = nodes[n];
+                if (old.count > 0) nodes[n] = Leaf(old.first, old.count, old.escape);
+                else
+                {
+                    Node left = nodes[n + 1];
+                    Node right = nodes[left.escape];
+                    nodes[n].min = left.mask == 0 ? right.min : (right.mask == 0 ? left.min : Math.Min(left.min, right.min));
+                    nodes[n].max = left.mask == 0 ? right.max : (right.mask == 0 ? left.max : Math.Max(left.max, right.max));
+                    nodes[n].mask = left.mask | right.mask;
+                }
+            }
+            return true;
+        }
+        return false;
+    }
+
+    CullingResult Query(CullingQuery query, mut CullingCache cache)
+    {
+        if (!ready || !Valid(query.observer) || !Valid(query.target) ||
+            !Finite(query.surfaceMargin) || query.surfaceMargin < 0)
+        {
+            cache.candidate = 0;
+            return CullingResult { status = Status.Unknown };
+        }
+        PreparedQuery prepared = Prepare(query);
+        if (query.mask == 0 || Overlaps(prepared.observerMin, prepared.observerMax,
+                                       prepared.targetMin, prepared.targetMax))
+        {
+            cache.candidate = 0;
+            return CullingResult { status = Status.Visible };
+        }
+        int cached = cache.candidate - 1;
+        if (cached >= 0 && cached < entries.count && Blocks(entries[cached].box, prepared))
+            return CullingResult { status = Status.Occluded, occluder = entries[cached].source };
+        cache.candidate = 0;
+        mut int at = 0;
+        while (at < nodes.count)
+        {
+            Node node = nodes[at];
+            if ((node.mask & query.mask) == 0 || !Overlaps(node.min, node.max, prepared.min, prepared.max))
+            {
+                // Also bounds traversal if implementation fields were edited.
+                if (node.escape <= at || node.escape > nodes.count) return CullingResult { status = Status.Unknown };
+                at = node.escape;
+                continue;
+            }
+            for (var i = 0; i < node.count; i++)
+            {
+                int index = node.first + i;
+                if (index == cached || index < 0 || index >= entries.count) continue;
+                if (!Blocks(entries[index].box, prepared)) continue;
+                cache.candidate = index + 1;
+                return CullingResult { status = Status.Occluded, occluder = entries[index].source };
+            }
+            at++;
+        }
+        return CullingResult { status = Status.Visible };
+    }
+
+    CullingResult Query(CullingQuery query)
+    {
+        mut CullingCache cache = default;
+        return Query(query, cache);
+    }
+}

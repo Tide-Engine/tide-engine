@@ -43,6 +43,16 @@ sys_process *sys_start(const char *const *argv, const char *cwd);
 // The same, with what it prints and its errors in the file `log`, made anew,
 // rather than on the terminal.
 sys_process *sys_start_logged(const char *const *argv, const char *cwd, const char *log);
+// A logged program and all the children it starts, owned together. sys_kill
+// stops the complete tree; sys_wait also cleans up any children left when the
+// program ends. The tree is established before the program can start children.
+// Used for cancellable editor builds and play sessions.
+sys_process *sys_start_tree_logged(const char *const *argv, const char *cwd, const char *log);
+// Starts a program that outlives tide, with nothing of tide's: no terminal,
+// no window, its input and output nowhere, in a session or process group of
+// its own, so neither the terminal closing nor Ctrl+C ends it. False if it
+// couldn't start.
+bool sys_start_detached(const char *const *argv);
 // Waits up to `ms` milliseconds for it to end. True once it has, with its exit
 // code in `code`; the process is freed then.
 bool sys_wait(sys_process *p, int ms, int *code);
@@ -71,11 +81,27 @@ int sys_capture_all(const char *const *argv, char *out, size_t size);
 
 uint32_t sys_pid(void);                // This process's
 bool sys_process_alive(uint32_t pid); // Whether a process with that ID is running
+// Takes the file at `path` (made if it isn't there) for this process alone,
+// until sys_unlock or the process ends, however it ends: NULL while another
+// has it. The programs tide starts don't have it.
+typedef struct sys_lock sys_lock;
+sys_lock *sys_lock_file(const char *path);
+void sys_unlock(sys_lock *lock);
 
 // Reads lines typed into the terminal, in the background: sys_typed_line
 // returns the latest one (without its line break) once it's whole.
 void sys_read_lines(void);
 bool sys_typed_line(char *out, size_t size);
+// ...and whether the input ended (what started tide closed it, or went away), once read up to there.
+bool sys_input_ended(void);
+// Waits `ms` milliseconds.
+void sys_sleep_ms(int ms);
+
+// A shared library loaded into tide, a function of it by name, and letting it go. NULL where it won't load or
+// hasn't the function.
+void *sys_library_open(const char *path);
+void (*sys_library_find(void *library, const char *name))(void);
+void sys_library_close(void *library);
 
 // Opens a page, a file or a URL, in the default browser. False if it couldn't.
 bool sys_open_in_browser(const char *page);
@@ -90,7 +116,7 @@ const char *sys_tool(const char *name);
 
 const char *sys_env(const char *name); // NULL if unset or empty
 // Whether this is a run nobody watches: TIDE_HIDDEN is set, to anything but
-// nothing or 0 (an agent's shell, a build server). Nothing tide starts then
+// nothing or 0 (a build server, a script). Nothing tide starts then
 // shows a window, nor one of Windows' dialogs for a program that can't start
 // or crashed.
 bool sys_hidden(void);

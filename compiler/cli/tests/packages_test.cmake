@@ -58,7 +58,7 @@ endfunction()
 
 # ---------------------------------------------------------------------------
 # Symbols on the command line: every accepted repeat reaches the compiler,
-# including the last one past the old 63-symbol cap. DEBUG still follows mode.
+# including more than 63 of them. DEBUG still follows mode.
 
 file(WRITE "${WORK}/defines/main.tide" "
 #if FLAG0 && FLAG34 && FLAG69
@@ -124,8 +124,8 @@ tide("${games}/game" ARGS schedule . EXPECT "stage 1  Physics.Integrate" "stage 
 tide("${games}/physics/example" ARGS schedule . EXPECT "example: 1 system")
 tide("${games}/physics" ARGS schedule . FAILS EXPECT "is package Physics, not a game")
 
-# Accepted package paths are preserved in full, beyond the old 1024-byte
-# command formatter. Redundant parts keep this portable to short OS paths.
+# Accepted package paths are preserved in full, beyond 1024 bytes.
+# Redundant parts keep this portable to short OS paths.
 file(WRITE "${games}/long-source/main.tide" "scene Main { }\n")
 string(REPEAT "./" 600 repeated)
 set(long_source "../${repeated}maths")
@@ -556,3 +556,40 @@ tide("${game}" ARGS schedule . FAILS EXPECT "a prefab entry must name an ordinar
 file(WRITE "${game}/Enemy.tprefab" "prefab Enemy { Transform; entity Child { Transform; } }\n")
 tide("${game}" ARGS schedule .)
 file(REMOVE "${game}/Enemy.tprefab")
+
+# ---------------------------------------------------------------------------
+# tide pin: `tide = <version>` in the game's tide.packages, in place of its `tide` line or first; a whole version alone;
+# none for a build of tide's own source, which no release is, which builds a pinned game anyway (packages_pin_kept)
+set(pinned "${WORK}/pinned")
+file(MAKE_DIRECTORY "${pinned}")
+file(WRITE "${pinned}/main.tide" "scene Main { }\n")
+file(WRITE "${pinned}/tide.packages" "# Ours\ntide 0.1  # the oldest\n")
+# This tide's version: a build of its source (-dev, as here) or a release's (as CI builds)
+execute_process(COMMAND "${TIDE}" --version OUTPUT_VARIABLE about)
+string(REGEX MATCH "^tide ([^ ]+)" _ "${about}")
+set(version "${CMAKE_MATCH_1}")
+if(version MATCHES "-dev$")
+    tide("${pinned}" ARGS pin FAILS EXPECT "which no release is" "tide pin 0.5.0")
+else()
+    tide("${pinned}" ARGS pin EXPECT "tide: the game builds with tide ${version}")
+endif()
+tide("${pinned}" ARGS pin 0.5 FAILS EXPECT "'0.5' isn't a whole version")
+tide("${pinned}" ARGS pin 0.5.0-nightly.12 EXPECT "tide: the game builds with tide 0.5.0-nightly.12")
+expect_file("${pinned}/tide.packages" "# Ours\ntide = 0.5.0-nightly.12 # the oldest\n")
+tide("${pinned}" ARGS pin v0.6.0 EXPECT "tide: the game builds with tide 0.6.0")
+expect_file("${pinned}/tide.packages" "tide = 0.6.0 # the oldest\n")
+if(version MATCHES "-dev$")
+    tide("${pinned}" ARGS schedule . EXPECT "pinned: 0 systems")
+else() # A release's tide builds only a game pinned to it
+    tide("${pinned}" ARGS schedule . FAILS EXPECT "this game builds with tide 0.6.0, and this is ${version}")
+    tide("${pinned}" ARGS pin EXPECT "tide: the game builds with tide ${version}")
+    tide("${pinned}" ARGS schedule . EXPECT "pinned: 0 systems")
+endif()
+file(WRITE "${pinned}/tide.packages" "../shared\n")
+tide("${pinned}" ARGS pin 0.5.0 EXPECT "tide: the game builds with tide 0.5.0")
+expect_file("${pinned}/tide.packages" "tide = 0.5.0\n../shared\n")
+# Only a game pins: a package says the oldest it builds with
+file(MAKE_DIRECTORY "${WORK}/shared")
+file(WRITE "${WORK}/shared/tide.packages" "package Shared\ntide = 0.5.0\n")
+tide("${pinned}" ARGS schedule . FAILS EXPECT "only a game pins its tide")
+tide("${WORK}/shared" ARGS pin 0.5.0 FAILS EXPECT "only a game pins its tide")

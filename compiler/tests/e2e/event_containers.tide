@@ -1,0 +1,87 @@
+settings { maxPlayers = 2; }
+struct Nested
+{
+    List<int> keep = [3]; List<int> unused;
+    int Take() { return keep[0]; }
+    int Read() { return Take(); }
+}
+component Bag
+{
+    int id = 1;
+    string title = "first";
+    List<int> numbers = [1, 2];
+    Map<string, List<int>> groups;
+    Set<int> marks = [4, 5];
+    Grid2<int> cells;
+    Nested nested;
+    List<int> unused;
+}
+component Secret { List<int> values; }
+singleton Store { List<string> words = ["world"]; List<int> unused; }
+singleton Actions { int fire; bool kill; int grow; int secret; bool spawn; int readGrow; int payload = 7; }
+local singleton Seen
+{
+    int direct; int rows; int scalar; int sure; int payload; int deaths; int secret; int shown; int hidden; int hiddenRows;
+    string title; string word;
+    List<int> saved;
+    Map<string, List<int>> groups;
+}
+event Ping { List<int> values; }
+scene Main { }
+event(Spawned) Setup(with Main) { Spawn(Bag, Visibility); }
+event(Spawned) Fill(mut Bag bag)
+{
+    bag.groups["key"] = [6, 7];
+    bag.cells[int2(-1, 2)] = 9;
+}
+event(Spawned) HideSecret(mut Visibility visibility, with Secret)
+{
+    visibility.Set<Secret>(Audience.Only(PlayerID(0)));
+}
+system Produce(mut Bag bag, mut Store store, Actions actions)
+{
+    for (var i = 0; i < actions.grow; i++)
+    {
+        bag.unused.Add(i); bag.nested.unused.Add(i); store.unused.Add(i);
+    }
+    for (var i = 0; i < actions.readGrow; i++) bag.numbers.Add(i);
+    for (var i = 0; i < actions.fire; i++) this.Send(Ping { values = [actions.payload, 8] });
+    if (actions.kill) this.Destroy();
+}
+system SpawnSecret(Actions actions, with Main)
+{
+    if (actions.spawn) Spawn(Bag, Secret { values = [actions.secret] }, Visibility);
+}
+event(Ping ping) Change(mut Bag bag) { bag.numbers[0] += ping.values.count * 5; bag.title = "turn"; }
+int First(Bag bag) { return bag.numbers[0]; }
+int Forward(Bag bag) { return First(bag); }
+struct Reader
+{
+    int Sum(query (Bag bag) rows)
+    {
+        mut var total = 0;
+        foreach (var row in rows) total += Forward(row.bag);
+        return total;
+    }
+}
+local event(Ping ping) Read(Bag bag, Store store, mut Seen seen)
+{
+    seen.direct += Forward(bag) + bag.nested.Read() + bag.groups["key"][0] + bag.marks.count + bag.cells[int2(-1, 2)];
+    seen.payload += ping.values[0]; seen.saved = bag.numbers; seen.groups = bag.groups;
+    seen.title = bag.title; seen.word = store.words[0];
+}
+local event(Ping) Rows(mut Seen seen, query (Bag bag) rows) { seen.rows += Reader { }.Sum(rows); }
+local event(Ping) Scalars(mut Seen seen, query (Bag bag) rows) { foreach (var row in rows) seen.scalar += row.bag.id; }
+local event(verified Ping) Sure(Bag bag, mut Seen seen) { seen.sure += First(bag); }
+local event(Destroyed) Death(Bag bag, mut Seen seen) { seen.deaths += bag.numbers[0]; }
+local event(Shown) Shown(Bag bag, mut Seen seen) { seen.shown += First(bag); }
+local event(Hidden) Hidden(Bag bag, mut Seen seen, query (Bag other) rows)
+{
+    seen.hidden += First(bag);
+    foreach (var row in rows) seen.hiddenRows += First(row.other);
+}
+local event(Spawned) Private(Secret secret, mut Seen seen) { seen.secret += secret.values[0]; }
+local event(Spawned) PrivateRows(mut Seen seen, query (Secret secret) rows)
+{
+    foreach (var row in rows) seen.secret += row.secret.values[0];
+}

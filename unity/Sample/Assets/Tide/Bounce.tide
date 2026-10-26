@@ -1,0 +1,342 @@
+// The Tide package's sample: each player is a ball in a box, rolled with WASD or a stick, Space to jump.
+// Tide simulates, predicts and rolls back; Unity draws. Unity's prefabs and scenes holding TideEntity objects are
+// Tide's, under UnityEngine: the ball is UnityEngine.Prefabs.Roller (Assets/Sample/Roller.prefab), the pillars are the
+// scene UnityEngine.Scenes.Bounce's (Bounce.unity, Build Settings' first scene, which the match loads as Main starts).
+using UnityEngine.Prefabs;
+using UnityEngine.Scenes;
+
+settings { title = "Bounce"; tickRate = 30; maxPlayers = 8; }
+
+// Heard as a ball lands: Tide's audio plays through Unity's (TideAudio)
+asset Clip bonk = "bonk.wav";
+
+scene Main { }
+
+component Spinner
+{
+    float speed = 1;
+    char badge = 'S';
+}
+
+// Bonus.unity's entities, while a player has them: the match loads the scene, and Unity loads it with them. Twice:
+// the scene again beside it, which Unity loads another of
+command ShowBonus
+{
+    bool on;
+    bool twice;
+}
+
+singleton Extras
+{
+    Entity bonus;
+    Entity again; // Bonus, twice
+    Entity tossed;
+    string said;
+    Set<PlayerID> speakers; // Who's said something
+    Grid2<byte> board;      // A cell for each line said
+}
+
+// A line from Unity's UI, which the match keeps for everyone: TideRunner.Get<Extras>().said in C#
+command Say
+{
+    string text;
+}
+
+command(Say say, PlayerID sender) Saying(mut Extras extras)
+{
+    extras.said = say.text;
+    extras.speakers.Add(sender);
+    if (extras.board.size.x == 0) extras.board = Grid2(8, 8);
+    extras.board[3, 4] += 1;
+}
+
+// A ball nobody rolls, in and out of the box: a GameObject made and let go of as its entity comes and goes, which
+// TideRunner's pool keeps for the next
+command Toss
+{
+    bool on;
+}
+
+command(Toss toss, PlayerID sender) Tossing(mut Extras extras)
+{
+    if (toss.on && extras.tossed == default)
+    {
+        extras.tossed = Spawn(Roller, Ball { color = Color(1, 1, 1), seat = -1 }, Transform { localPosition = float3(0, 3, 0) });
+    }
+    if (!toss.on && extras.tossed != default)
+    {
+        extras.tossed.Destroy();
+        extras.tossed = default;
+    }
+}
+
+command(ShowBonus show, PlayerID sender) Toggle(mut Extras extras)
+{
+    if (show.on && extras.bonus == default) extras.bonus = Scene.Load(Bonus);
+    if (show.on && show.twice && extras.again == default) extras.again = Scene.Load(Bonus);
+    if (!show.on && extras.bonus != default)
+    {
+        Scene.Unload(extras.bonus);
+        extras.bonus = default;
+    }
+    if (!show.on && extras.again != default)
+    {
+        Scene.Unload(extras.again);
+        extras.again = default;
+    }
+}
+
+// Bonus's totem stands still: Unity's scenes are Tide's, and a system can leave one's entities out
+system Spinning(Spinner spinner, mut Transform transform, Time time, without scene Bonus)
+{
+    transform.localRotation = Math.Normalize(Math.Mul(quaternion.Euler(0, spinner.speed * time.dt, 0), transform.localRotation));
+}
+
+input Roll
+{
+    [Clamp(-1, 1)] float2 move;
+    bool jump;
+
+    Sample(Devices devices)
+    {
+        var keys = devices.keyboard;
+        if (keys.d.pressed || keys.rightArrow.pressed) move.x += 1;
+        if (keys.a.pressed || keys.leftArrow.pressed) move.x -= 1;
+        if (keys.w.pressed || keys.upArrow.pressed) move.y += 1;
+        if (keys.s.pressed || keys.downArrow.pressed) move.y -= 1;
+        move += devices.gamepad.leftStick;
+        jump = keys.space.pressed || devices.gamepad.buttonSouth.pressed;
+    }
+}
+
+// A ball's trail, which a prefab sets in Unity's inspector as any struct field
+struct Trail
+{
+    float length;
+    Color tint;
+}
+
+// Each player's ball, which Tide rolls and Unity shows (Roller.prefab)
+component Ball
+{
+    // Metres a second
+    float3 velocity;
+    Color color;
+    int seat;
+    int bounces;
+    Trail trail;
+    local int heard; // This machine's, as its local handler counts its bounces (Heard)
+}
+
+// A ball hitting the floor: C# hears it as local handlers do (TideRunner.On, OnVerified, the ball's TideEntityView.On)
+event Bounced
+{
+    float speed;
+}
+
+local event(Bounced bounced) Heard(mut Ball ball)
+{
+    ball.heard += 1;
+    Audio.Play(bonk, Math.Min(bounced.speed / 5, 1));
+}
+
+// Sent to a ball: TideRunner.Send(new Paint { ... }, ballGameObject) in C#
+command Paint
+{
+    Color color;
+}
+
+command(Paint paint, PlayerID sender) Painting(mut Ball ball)
+{
+    ball.color = paint.color;
+}
+
+singleton Room
+{
+    int arrivals;
+    Map<PlayerID, Entity> balls;
+}
+
+event(PlayerJoined joined) Arrive(mut Room room)
+{
+    var seat = room.arrivals;
+    room.arrivals += 1;
+    var hue = seat * 0.37 - int(seat * 0.37);
+    var color = Color(0.5 + 0.5 * Math.Cos(hue * 6.283), 0.5 + 0.5 * Math.Cos((hue - 0.333) * 6.283), 0.5 + 0.5 * Math.Cos((hue + 0.333) * 6.283));
+    room.balls[joined.player] = Spawn(Roller, Ball { color = color, seat = seat },
+        Transform { localPosition = float3(seat % 4 * 1.5 - 2.25, 2, seat / 4 * 1.5) }, Owner { player = joined.player });
+}
+
+// Tide's own drawing, which Unity draws over its frame (TideRunner's drawTide)
+// A ring around each ball, where Unity's camera sees it: views' 3D camera is Unity's, so Draw.WorldToScreen agrees
+// with Unity's picture
+view Ring(Ball ball, Transform transform)
+{
+    var at = Draw.WorldToScreen(transform.localPosition);
+    Draw.Screen()
+    {
+        Draw.WireCircle(at.xy, 24, ball.color);
+    }
+}
+
+// Tide's 3D, which Unity draws with its camera's depth: a cube over each ball, and two plates in a frag of the
+// game's own (tide unity writes its HLSL into com.tide.game): one just over Unity's floor, which shows, and one just
+// under it, which the floor hides
+view Marker(Ball ball, Transform transform)
+{
+    Draw.Cube(transform.localPosition + float3(0, 1.2, 0), float3(0.4, 0.4, 0.4), ball.color);
+}
+
+struct PlateCorner
+{
+    float3 position;
+    float2 uv;
+}
+
+local singleton Plates
+{
+    List<PlateCorner> corners;
+    List<int> faces;
+}
+
+frag Stripes(PlateCorner corner, out Color color)
+{
+    color = Math.Frac(corner.uv.x * 2) < 0.5 ? Color(1, 0.5, 0) : Color(0.1, 0.4, 1);
+}
+
+view Floor(mut Plates plates)
+{
+    if (plates.corners.count == 0)
+    {
+        for (var plate = 0; plate < 2; plate++)
+        {
+            var y = plate == 0 ? 0.02 : -0.05;
+            var z = plate == 0 ? -3 : 1;
+            var first = plates.corners.count;
+            plates.corners.Add(PlateCorner { position = float3(-1.5, y, z), uv = float2(0, 0) });
+            plates.corners.Add(PlateCorner { position = float3(-1.5, y, z + 1.5), uv = float2(0, 1) });
+            plates.corners.Add(PlateCorner { position = float3(1.5, y, z + 1.5), uv = float2(1, 1) });
+            plates.corners.Add(PlateCorner { position = float3(1.5, y, z), uv = float2(1, 0) });
+            plates.faces.Add(first);
+            plates.faces.Add(first + 1);
+            plates.faces.Add(first + 2);
+            plates.faces.Add(first);
+            plates.faces.Add(first + 2);
+            plates.faces.Add(first + 3);
+        }
+    }
+    Draw.Mesh(plates.corners, plates.faces, float4x4.identity, Stripes);
+}
+
+// A render target Tide draws into, shown at the top right (yellow over its top left, green elsewhere), and stencil:
+// a circle storing 1 where it is, and a cyan square drawn only there
+local singleton Badge
+{
+    RenderTarget image;
+    bool made;
+}
+
+view Badges(mut Badge badge)
+{
+    if (!badge.made)
+    {
+        badge.image = RenderTarget(64, 64);
+        badge.made = true;
+    }
+    badge.image.Clear(Color(0, 0.6, 0));
+    badge.image.SetScreen();
+    badge.image.Rect(float2(16, 8), float2(32, 16), Color(1, 1, 0));
+    Draw.Screen()
+    {
+        Draw.Sprite(badge.image.color, float2(Screen.width - 48, 48), float2(64, 64), Color(1, 1, 1));
+        Draw.Stencil(StencilTest.Always, 1, StencilOp.Replace)
+        {
+            Draw.Circle(float2(Screen.width - 80, Screen.height - 80), 30, Color.clear);
+        }
+        Draw.Stencil(StencilTest.Equal, 1)
+        {
+            Draw.Rect(float2(Screen.width - 80, Screen.height - 80), float2(80, 80), Color(0, 1, 1));
+        }
+    }
+}
+
+// A multisampled target's depth, which Unity resolves to one sample a pixel for a frag to read: a cube drawn into it,
+// its depth shown at the bottom left, darker where the cube is nearer than the far limit
+local singleton Depths
+{
+    RenderTarget image;
+    DepthTexture depth;
+    bool made;
+}
+
+frag ShowDepth(Vertex vertex, out Color color, Depths depths)
+{
+    float d = depths.depth.Sample(vertex.uv);
+    color = Color(d, d, d);
+}
+
+view DepthView(mut Depths depths)
+{
+    if (!depths.made)
+    {
+        depths.image = RenderTarget(64, 64, samples: 4);
+        depths.depth = depths.image.depth;
+        depths.made = true;
+    }
+    depths.image.Clear(Color(0, 0, 0));
+    depths.image.SetCamera(float3(0, 0, -3), quaternion.identity, 60);
+    depths.image.Cube(float3(0, 0, 0), float3(1, 1, 1), Color(1, 1, 1));
+    var bottom = Screen.height - 16;
+    List<Vertex> corners = [
+        Vertex { position = float2(16, bottom - 64), uv = float2(0, 0), color = Color.white },
+        Vertex { position = float2(80, bottom - 64), uv = float2(1, 0), color = Color.white },
+        Vertex { position = float2(80, bottom), uv = float2(1, 1), color = Color.white },
+        Vertex { position = float2(16, bottom), uv = float2(0, 1), color = Color.white },
+    ];
+    Draw.Screen()
+    {
+        Draw.Mesh(corners, [0, 1, 2, 0, 2, 3], ShowDepth);
+    }
+}
+
+view Hud(Room room)
+{
+    Draw.Screen()
+    {
+        Draw.Text($"Balls: {room.arrivals}", float2(16, 30), 18, Color(1, 1, 1));
+    }
+}
+
+event(PlayerLeft left) Depart(mut Room room)
+{
+    room.balls[left.player].Destroy();
+    room.balls.Remove(left.player);
+}
+
+system Rolling(Roll roll, mut Ball ball, mut Transform transform, Time time)
+{
+    mut var p = transform.localPosition;
+    ball.velocity.x += roll.move.x * 12 * time.dt;
+    ball.velocity.z += roll.move.y * 12 * time.dt;
+    ball.velocity.x *= 0.98;
+    ball.velocity.z *= 0.98;
+    ball.velocity.y -= 20 * time.dt;
+    if (roll.jump && p.y <= 0.501) ball.velocity.y = 8;
+    p += ball.velocity * time.dt;
+    if (p.y < 0.5)
+    {
+        p.y = 0.5;
+        if (ball.velocity.y < -2)
+        {
+            ball.bounces += 1;
+            this.Send(Bounced { speed = -ball.velocity.y });
+        }
+        ball.velocity.y = -ball.velocity.y * 0.4;
+    }
+    if (Math.Abs(p.x) > 5) { p.x = Math.Clamp(p.x, -5, 5); ball.velocity.x = -ball.velocity.x * 0.8; }
+    if (Math.Abs(p.z) > 5) { p.z = Math.Clamp(p.z, -5, 5); ball.velocity.z = -ball.velocity.z * 0.8; }
+    transform.localPosition = p;
+    // Rolling along the floor
+    var travel = float2(ball.velocity.x, ball.velocity.z) * time.dt * 2;
+    transform.localRotation = Math.Normalize(Math.Mul(quaternion.Euler(travel.y, 0, -travel.x), transform.localRotation));
+}

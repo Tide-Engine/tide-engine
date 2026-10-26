@@ -1,0 +1,3 @@
+// expect: float3 needs an explicit conversion from double
+singleton Data { float3 value = float3(1d, 2, 3); }
+scene Main { }

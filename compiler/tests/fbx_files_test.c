@@ -130,6 +130,32 @@ static bool rewrite(char *text, const char *from, const char *to)
     return true;
 }
 
+TIDE_TEST(fbx_index_past_its_array_is_clamped_to_the_last_element)
+{
+    size_t size;
+    uint8_t *bytes = fixture("static/triangle_ascii.fbx", &size);
+    TIDE_REQUIRE(bytes);
+    char *text = malloc(size + 64u);
+    TIDE_REQUIRE(text);
+    memcpy(text, bytes, size);
+    text[size] = '\0';
+    // The first corner's uv index is past the three uvs: it reads the last, (0, 1), which is (0, 0) as Tide has uvs
+    TIDE_REQUIRE(rewrite(text, "UVIndex: *3 {\n        a: 0,1,2", "UVIndex: *3 {\n        a: 7,1,2"));
+    mesh_file mesh;
+    TIDE_REQUIRE(read_mesh((const uint8_t *)text, strlen(text), "triangle.fbx", &mesh));
+    TIDE_REQUIRE(mesh.vertices == 3 && mesh.has_uvs);
+    bool found = false;
+    for (uint32_t i = 0; i < mesh.vertices; i++) {
+        if (!vector3(mesh.position + i * 3u, -3, 4, 0)) continue;
+        found = true;
+        TIDE_CHECK(near(mesh.uv[i * 2u], 0) && near(mesh.uv[i * 2u + 1u], 0));
+    }
+    TIDE_CHECK(found);
+    mesh_file_free(&mesh);
+    free(text);
+    free(bytes);
+}
+
 TIDE_TEST(fbx_centimeter_units_and_z_up_axes_convert_to_meters_y_up)
 {
     size_t size;
@@ -382,6 +408,80 @@ TIDE_TEST(fbx_malformed_file_and_runtime_source_decode_are_refused)
     TIDE_CHECK(!tide_skinned_data_decode(bytes, size, true, NULL, NULL, &out, &model_size, why, note));
     TIDE_CHECK(!out && !model_size);
     free(bytes);
+}
+
+int ufbx_isnan(double x); // ufbx_math.c, the portable math ufbx is built with
+
+TIDE_TEST(fbx_portable_isnan_reads_a_low_word_of_0x80000000_without_overflow)
+{
+    // Scene finalization asks this of constant curve values. Negating the
+    // low word as a signed int overflowed for 0x80000000; sanitized builds
+    // stop there (UBSan found it fuzzing fbx_file_to_glb).
+    static const uint64_t numbers[] = {UINT64_C(0x3ff0000080000000), UINT64_C(0xbff0000080000000), UINT64_C(0x0000000080000000)};
+    static const uint64_t nans[] = {UINT64_C(0x7ff0000080000000), UINT64_C(0xfff0000080000000)};
+    for (uint32_t i = 0; i < 3; i++) {
+        double x;
+        memcpy(&x, &numbers[i], sizeof x);
+        TIDE_CHECK(!ufbx_isnan(x));
+    }
+    for (uint32_t i = 0; i < 2; i++) {
+        double x;
+        memcpy(&x, &nans[i], sizeof x);
+        TIDE_CHECK(ufbx_isnan(x));
+    }
+}
+
+// One star-shaped polygon of `corners` corners, alternately at radius 1 and 1/2.
+static char *ngon_fbx(const uint32_t corners)
+{
+    const size_t room = 4096u + (size_t)corners * 48u;
+    char *text = malloc(room);
+    if (!text) return NULL;
+    size_t at = (size_t)snprintf(text, room, "; FBX 7.4.0 project file\nFBXHeaderExtension:  {\n  FBXHeaderVersion: 1003\n"
+        "  FBXVersion: 7400\n}\nObjects:  {\n  Geometry: 1000, \"Geometry::Star\", \"Mesh\" {\n    Vertices: *%u {\n      a: ",
+        corners * 3u);
+    for (uint32_t i = 0; i < corners; i++) {
+        const double radius = i % 2u ? 0.5 : 1.0, angle = 6.283185307179586 * i / corners;
+        at += (size_t)snprintf(text + at, room - at, "%s%.6f,%.6f,0", i ? "," : "", radius * cos(angle), radius * sin(angle));
+    }
+    at += (size_t)snprintf(text + at, room - at, "\n    }\n    PolygonVertexIndex: *%u {\n      a: ", corners);
+    for (uint32_t i = 0; i < corners; i++)
+        at += (size_t)snprintf(text + at, room - at, "%s%d", i ? "," : "", i + 1u < corners ? (int)i : -(int)i - 1);
+    snprintf(text + at, room - at, "\n    }\n  }\n  Model: 2000, \"Model::Star\", \"Mesh\" {\n    Version: 232\n  }\n}\n"
+        "Connections:  {\n  C: \"OO\", 1000, 2000\n  C: \"OO\", 2000, 0\n}\n");
+    return text;
+}
+
+TIDE_TEST(fbx_polygon_triangulation_work_is_bounded_before_cutting)
+{
+    // Cutting a polygon of n corners takes about n * n steps. A 4,000-corner
+    // polygon is well within TIDE_FBX_MAX_TRIANGULATION; one of 70,000 corners
+    // (4.9 billion) is refused before ufbx cuts it, which would take seconds.
+    static const uint32_t sizes[] = {4000u, 70000u};
+    for (uint32_t i = 0; i < 2; i++) {
+        char *text = ngon_fbx(sizes[i]);
+        TIDE_REQUIRE(text);
+        for (uint32_t skinned = 0; skinned < 2; skinned++) {
+            uint8_t *glb = NULL;
+            size_t glb_size = 0;
+            char why[256], note[256];
+            const bool ok = fbx_file_to_glb((const uint8_t *)text, strlen(text), skinned != 0, &glb, &glb_size, why, note);
+            if (i == 0) {
+                if (!ok) printf("    %u corners: %s\n", sizes[i], why);
+                TIDE_CHECK(ok && glb && glb_size);
+            } else {
+                TIDE_CHECK(!ok && !glb && !glb_size && strstr(why, "steps to cut its polygons into triangles (each polygon's corners squared), more than the 4,294,967,296 one model holds (TIDE_FBX_MAX_TRIANGULATION)") && strstr(note, "split"));
+            }
+            free(glb);
+        }
+        if (i == 0) {
+            mesh_file mesh;
+            TIDE_REQUIRE(read_mesh((const uint8_t *)text, strlen(text), "star.fbx", &mesh));
+            TIDE_CHECK(mesh.indices == (sizes[i] - 2u) * 3u);
+            mesh_file_free(&mesh);
+        }
+        free(text);
+    }
 }
 
 static bool write_fixture(const char *path, const uint8_t *bytes, const size_t size)

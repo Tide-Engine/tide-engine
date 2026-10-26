@@ -38,11 +38,59 @@ const char *path_stem(const char *path)
     return out;
 }
 
+// The game's types alone (codegen_options.declarations_only): what it wrote that runs, its systems, views, handlers,
+// functions, frags and verts, is left out, and the rest checked and generated as it would be. Tide's own and
+// package functions/shaders stay: a package's field types/defaults can need their signatures and real callbacks.
+static void keep_declarations(program *prog)
+{
+    int kept = 0;
+    for (int i = 0; i < prog->decls.count; i++) {
+        decl *const d = prog->decls.items[i];
+        const bool package = d->unit && d->unit->src && d->unit->src->package;
+        const bool runs = d->kind == DECL_SYSTEM
+            || (!package && (d->kind == DECL_FUNCTION || d->kind == DECL_SHADER));
+        if (runs && !d->builtin) continue;
+        prog->decls.items[kept++] = d;
+    }
+    prog->decls.count = kept;
+}
+
+// For another program (tidec --embed): a local handler of each of the match's own events, as it's heard and once it's
+// verified, so the program hears what the game's local handlers would, once each under rollback. Their bodies are
+// generated (gen_heard: tide_embed_heard_<Event>); nothing of them is in the match, as for any local handler.
+static bool add_embed_taps(program *prog)
+{
+    sb text = {0};
+    const int count = prog->decls.count;
+    for (int i = 0; i < count; i++) {
+        const decl *d = prog->decls.items[i];
+        if (d->kind != DECL_EVENT || d->builtin || !d->unit || d->is_local || d->is_command) continue;
+        // Its name from the global namespace, which the parser hasn't qualified yet
+        sb name = {0};
+        if (d->unit->ns.len) sb_printf(&name, STR_FMT ".", STR_ARG(d->unit->ns));
+        sb_printf(&name, STR_FMT, STR_ARG(d->name));
+        sb_printf(&text, "local event(%s heard) TideEmbedHeard%d() { }\n"
+                         "local event(verified %s heard) TideEmbedVerified%d() { }\n",
+                  name.data, i, name.data, i);
+    }
+    if (!text.len) return true;
+    source *src = NEW(source);
+    src->path = "<tide-embed-events>";
+    src->text = text.data;
+    src->len = text.len;
+    diag_add_source(src);
+    token *toks = lex(src);
+    if (!toks || !parse_file(prog, src, toks, false)) return false;
+    for (int i = count; i < prog->decls.count; i++) prog->decls.items[i]->embed_tap = true;
+    return true;
+}
+
 bool compile_inputs(const compile_input *inputs, const int count, const codegen_options *opts, sb *schedule)
 {
     diag_reset();
     diag_phase(NULL);
     program *prog = program_new();
+    prog->startup_name = opts->scene;
     // What every file's #if conditions read as defined: the build's own symbols, and its packages
     lex_symbols_reset();
     for (int i = 0; i < opts->define_count; i++) lex_define(opts->defines[i]);
@@ -61,11 +109,12 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
 #else
             strcmp(inputs[i].path, opts->editor_source) == 0;
 #endif
-        if (overlay) {
-            overlay_found = true;
-            src->len = strlen(opts->editor_text);
+        const char *given = overlay ? opts->editor_text : inputs[i].text;
+        overlay_found |= overlay;
+        if (given) {
+            src->len = strlen(given);
             text = arena_alloc(src->len + 1);
-            memcpy(text, opts->editor_text, src->len + 1);
+            memcpy(text, given, src->len + 1);
         } else text = read_file(inputs[i].path, &src->len);
         if (!text) {
             fprintf(stderr, "tidec: can't read %s\n", inputs[i].path);
@@ -80,7 +129,7 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
         if (!parse_file(prog, src, toks, false)) return false;
     }
     if (opts->editor_source && !overlay_found) {
-        fprintf(stderr, "tide: preview source is not in the selected project: %s\n", opts->editor_source);
+        fprintf(stderr, "tide: source overlay is not in the selected project: %s\n", opts->editor_source);
         return false;
     }
     if (web) {
@@ -105,14 +154,26 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
         if (!toks || !parse_file(prog, src, toks, false)) return false;
         prog->editor_create = prog->decls.items[before];
     }
+    if (opts->declarations_only) keep_declarations(prog);
+    if (opts->embed && !add_embed_taps(prog)) return false;
     prog->game_folder = opts->game_folder;
     if (!check(prog)) return false;
 
     codegen_options named = *opts;
     if (!named.name) named.name = path_stem(inputs[0].path);
     if (schedule && opts->spirv_dir) return write_spirv(prog, opts->spirv_dir, schedule);
+    if (schedule && opts->hlsl_dir) return write_hlsl(prog, opts->hlsl_dir, schedule);
+    if (opts->shader_out) {
+        for (int i = 0; i < prog->shaders.count; i++) {
+            opts->shader_out(opts->shader_user, prog->shaders.items[i]->name, prog->shaders.items[i]->wgsl);
+        }
+    }
     if (schedule && opts->shaders) {
         print_shaders(prog, schedule);
+        return true;
+    }
+    if (schedule && opts->outline) {
+        print_outline(prog, schedule);
         return true;
     }
     if (schedule) {
@@ -121,5 +182,6 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
     }
     const bool ok = codegen(prog, &named);
     diag_phase("generating C");
+    if (ok && opts->outline_to) print_outline(prog, opts->outline_to);
     return ok;
 }

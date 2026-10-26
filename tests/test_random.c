@@ -19,7 +19,7 @@ TIDE_TEST(random_zero_state_is_not_stuck)
     for (int i = 0; i < 64; i++) {
         seen[i] = tide_random_next(&r);
         TIDE_CHECK(r.state != 0);
-        for (int k = 0; k < i; k++) TIDE_CHECK(seen[k] != seen[i]); // 64 numbers of 32 bits: none twice
+        for (int k = 0; k < i; k++) TIDE_CHECK(seen[k] != seen[i]);
     }
 }
 
@@ -35,7 +35,6 @@ TIDE_TEST(random_ints_stay_in_range)
         const int32_t negative = tide_random_next_int_between(&r, -5, 5);
         TIDE_CHECK(negative >= -5 && negative < 5);
     }
-    // The whole range of an int, whose width doesn't fit one
     bool low = false, high = false;
     for (int i = 0; i < DRAWS; i++) {
         const int32_t any = tide_random_next_int_between(&r, INT32_MIN, INT32_MAX);
@@ -104,12 +103,9 @@ TIDE_TEST(random_directions_have_length_one)
         const float norm = tide_dot_q(turn, turn);
         TIDE_CHECK(norm > 0.9999f && norm < 1.0001f && turn.value.w >= 0.0f);
     }
-    // Every direction as likely: they cancel out
     TIDE_CHECK(tide_length_f3(sum) < (float)DRAWS * 0.01f);
 }
 
-// Each of a die's faces comes up about as often, each bit of an int is set
-// about half the time, and a coin lands each way about as often.
 TIDE_TEST(random_numbers_are_spread_evenly)
 {
     tide_random r = tide_random_seeded(5);
@@ -127,8 +123,6 @@ TIDE_TEST(random_numbers_are_spread_evenly)
     TIDE_CHECK(heads > DRAWS / 2 - DRAWS / 100 && heads < DRAWS / 2 + DRAWS / 100);
 }
 
-// Seeds 0, 1, 2... are what games write. Their generators' first numbers
-// have nothing in common: no two the same, and the dice they roll are even.
 TIDE_TEST(random_seeds_next_to_each_other_are_unrelated)
 {
     enum { SEEDS = 4096 };
@@ -144,15 +138,12 @@ TIDE_TEST(random_seeds_next_to_each_other_are_unrelated)
     for (int a = 0; a < SEEDS; a++) {
         for (int b = a + 1; b < SEEDS; b++) same += first[a] == first[b];
     }
-    TIDE_CHECK(same <= 2); // 8 million pairs of 32 bits: about 0.002 are alike by chance
+    TIDE_CHECK(same <= 2);
     for (int f = 0; f < 6; f++) TIDE_CHECK(faces[f] > SEEDS / 6 - SEEDS / 20 && faces[f] < SEEDS / 6 + SEEDS / 20);
     TIDE_CHECK(tide_random_seeded(7).state == tide_random_seeded(7).state);
     TIDE_CHECK(tide_random_seeded(7).state != tide_random_seeded(-7).state);
 }
 
-// What the engine seeds for a game: by the match's seed, the tick, the entity
-// and the field. Changing any one gives another generator, and never the
-// unseeded one.
 TIDE_TEST(random_places_are_their_own)
 {
     const tide_entity e = {12, 3};
@@ -164,14 +155,12 @@ TIDE_TEST(random_places_are_their_own)
     TIDE_CHECK(base.state != tide_random_place(99, 40, (tide_entity){13, 3}, 256).state);
     TIDE_CHECK(base.state != tide_random_place(99, 40, (tide_entity){12, 5}, 256).state);
     TIDE_CHECK(base.state != tide_random_place(99, 40, e, 257).state);
-    // The entities of one tick, as a spawner makes them: their first rolls are even
     uint32_t faces[6] = {0};
     for (uint32_t i = 0; i < 6000; i++) {
         tide_random r = tide_random_place(0, 7, (tide_entity){i, 1}, 256);
         faces[tide_random_next_int_below(&r, 6)]++;
     }
     for (int f = 0; f < 6; f++) TIDE_CHECK(faces[f] > 900 && faces[f] < 1100);
-    // A field that's seeded stays as it is; one that isn't gets its place's
     tide_random kept = tide_random_seeded(5);
     const int64_t before = kept.state;
     tide_random_seed_place(&kept, 99, 40, e, 256);
@@ -181,7 +170,6 @@ TIDE_TEST(random_places_are_their_own)
     TIDE_CHECK(fresh.state == base.state);
 }
 
-// A copy goes on as the one it was copied from: the state is all there is.
 TIDE_TEST(random_state_is_all_there_is)
 {
     tide_random r = tide_random_seeded(11);

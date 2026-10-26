@@ -1,0 +1,219 @@
+{
+  "label": "coverage-pair-before-p1",
+  "revision": "1c6befb1e85e9599006933b43f8f8c87cd2a1037",
+  "machine": "AMD Ryzen 9 7900X 12C/24T; NVIDIA GeForce RTX 4080 SUPER; Windows; Clang 23.1.2",
+  "startedUtc": "2026-10-20T12:42:24.8923153Z",
+  "runs": [
+    {
+      "backend": null,
+      "name": "versus_rollback",
+      "wallSeconds": 1.7989955,
+      "round": 1,
+      "competingWork": false,
+      "label": "coverage-pair-before-p1-r1",
+      "arguments": [
+        "--save",
+        "coverage-pair-before-p1-r1"
+      ],
+      "exitCode": 0
+    },
+    {
+      "backend": null,
+      "name": "versus_rollback_spread",
+      "wallSeconds": 2.9997017,
+      "round": 1,
+      "competingWork": true,
+      "label": "coverage-pair-before-p1-r1",
+      "arguments": [
+        "--spread",
+        "1",
+        "--save",
+        "coverage-pair-before-p1-r1"
+      ],
+      "exitCode": 0
+    },
+    {
+      "backend": null,
+      "name": "versus_systems",
+      "wallSeconds": 0.204816,
+      "round": 1,
+      "competingWork": false,
+      "label": "coverage-pair-before-p1-r1",
+      "arguments": [
+        "--save",
+        "coverage-pair-before-p1-r1"
+      ],
+      "exitCode": 0
+    },
+    {
+      "backend": null,
+      "name": "versus_systems_empty",
+      "wallSeconds": 0.048599,
+      "round": 1,
+      "competingWork": false,
+      "label": "coverage-pair-before-p1-r1",
+      "arguments": [
+        "--count",
+        "0",
+        "--save",
+        "coverage-pair-before-p1-r1"
+      ],
+      "exitCode": 0
+    },
+    {
+      "backend": null,
+      "name": "versus_systems_small",
+      "wallSeconds": 0.0434627,
+      "round": 1,
+      "competingWork": false,
+      "label": "coverage-pair-before-p1-r1",
+      "arguments": [
+        "--count",
+        "64",
+        "--save",
+        "coverage-pair-before-p1-r1"
+      ],
+      "exitCode": 0
+    },
+    {
+      "backend": null,
+      "name": "versus_systems_mid",
+      "wallSeconds": 2.4174315,
+      "round": 1,
+      "competingWork": false,
+      "label": "coverage-pair-before-p1-r1",
+      "arguments": [
+        "--count",
+        "16384",
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-pair-before-p1-r1"
+      ],
+      "exitCode": 0
+    },
+    {
+      "backend": null,
+      "name": "versus_systems_scaling",
+      "wallSeconds": 11.7206531,
+      "round": 1,
+      "competingWork": true,
+      "label": "coverage-pair-before-p1-r1",
+      "arguments": [
+        "--count",
+        "65536",
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-pair-before-p1-r1"
+      ],
+      "exitCode": 0
+    },
+    {
+      "backend": null,
+      "name": "versus_particles_scaling",
+      "wallSeconds": 1.7274421,
+      "round": 1,
+      "competingWork": false,
+      "label": "coverage-pair-before-p1-r1",
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-pair-before-p1-r1"
+      ],
+      "exitCode": 0
+    },
+    {
+      "backend": null,
+      "name": "versus_wide_scaling",
+      "wallSeconds": 2.9088568,
+      "round": 1,
+      "competingWork": true,
+      "label": "coverage-pair-before-p1-r1",
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-pair-before-p1-r1"
+      ],
+      "exitCode": 0
+    },
+    {
+      "backend": null,
+      "name": "versus_sand_scaling",
+      "wallSeconds": 1.2861641,
+      "round": 1,
+      "competingWork": false,
+      "label": "coverage-pair-before-p1-r1",
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-pair-before-p1-r1"
+      ],
+      "exitCode": 0
+    },
+    {
+      "backend": null,
+      "name": "versus_life_scaling",
+      "wallSeconds": 0.3424338,
+      "round": 1,
+      "competingWork": false,
+      "label": "coverage-pair-before-p1-r1",
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-pair-before-p1-r1"
+      ],
+      "exitCode": 0
+    },
+    {
+      "backend": null,
+      "name": "versus_nbody_scaling",
+      "wallSeconds": 0.8934528,
+      "round": 1,
+      "competingWork": false,
+      "label": "coverage-pair-before-p1-r1",
+      "arguments": [
+        "--threads-list",
+        "1,2,4,8,12",
+        "--save",
+        "coverage-pair-before-p1-r1"
+      ],
+      "exitCode": 0
+    }
+  ],
+  "binaries": [
+    {
+      "sha256": "f73662fe36f14f9672c139663b246052543dd456674f958421c60a93ae3e1e0f",
+      "name": "versus_life.exe"
+    },
+    {
+      "sha256": "9806bd16f472937bfd18f7f3141deb281382eea03de312585fa6788ec582a2dd",
+      "name": "versus_nbody.exe"
+    },
+    {
+      "sha256": "b69930990914b03578362cab139b7172f9da00c936da48c222e03ec2da3d2953",
+      "name": "versus_particles.exe"
+    },
+    {
+      "sha256": "ca9baf3b13a29db28a8335ab8c53880adbe924eb71878c66616c0f01fd45390d",
+      "name": "versus_rollback.exe"
+    },
+    {
+      "sha256": "79cb30c5ca32e5878fe9a68999984d78e244c3da1485d838ebf85822b3d32a61",
+      "name": "versus_sand.exe"
+    },
+    {
+      "sha256": "b97ef46f51c62932df369ed81a568225b036838825baedd90cab3804a4c2eaca",
+      "name": "versus_systems.exe"
+    },
+    {
+      "sha256": "46123d84a0fe7fb153f3a9ad0b2390490febb96f1c0f1cae5f3826b37d28e0f3",
+      "name": "versus_wide.exe"
+    }
+  ],
+  "finishedUtc": "2026-10-20T12:49:55.7942379Z"
+}

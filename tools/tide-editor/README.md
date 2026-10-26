@@ -1,8 +1,11 @@
 # Native scene editor
 
 Build `tide_editor` and `tide_cli` in a native platform-enabled build. The package
-installs `tide-editor` beside `tide`; `tide open file.tprefab --project folder`
-launches it. Fixed preview needs no game build; **Views**/`--preview` compiles
+installs `tide-editor` beside `tide`; `tide open .` starts a project workspace,
+and `tide open file.tprefab --project folder` opens a tree. Create scenes and
+prefabs, edit objects and instance values, then **Play** the applied draft through
+the normal game lifecycle. **Set startup** writes the separate project setting.
+Fixed preview needs no game build; **Views**/`--preview` compiles
 opted-in views using the installed native toolchain. Public controls and limits are
 in [Editors](../../docs/tools/editors.md#native-scene-editor).
 
@@ -15,6 +18,12 @@ limited set of constant TRS expressions and reports unsupported values.
 
 The app uses Tide's existing native window, draw-list and immediate GUI APIs;
 engine/platform code and public game callback signatures are unchanged.
+
+`play.c` builds an immutable source overlay in a private workspace and launches
+the ordinary game host. Stop owns and terminates compiler/game descendants;
+runtime changes never enter the authored document. `startup.c` patches the
+project's `startScene` setting with source conflict checks. Hierarchy edits keep
+local TRS and checked references; inherited descendants allow value edits only.
 
 `preview.c` builds the applied draft through the private CLI `_editor-preview`
 command and loads its module. The compiler selects `[RunInEditor]`/`[EditorOnly]`

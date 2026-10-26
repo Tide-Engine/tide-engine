@@ -1,0 +1,4 @@
+// expect: function 'Read' does not match this Func's argument and result types
+scene Main;
+void Read(float value) { _ = value; }
+view Test() { Func<mut float, void> fn = Read; mut float value = 0; fn(value); }

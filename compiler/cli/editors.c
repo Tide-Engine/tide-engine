@@ -4,6 +4,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "jetbrains.h"
 #include "sys.h"
 
 typedef struct editor {
@@ -137,22 +138,28 @@ bool tide_editors_have_tide(void)
         have = command && has_extension(&editors[i]);
         free(command);
     }
-    return have;
+    return have || tide_jetbrains_have_tide();
 }
 
 int tide_editors(const char *root, const bool only_updates)
 {
     char *vsix = path_join(root, "editors/tide.vsix");
-    if (!sys_exists(vsix)) {
-        if (!only_updates) fprintf(stderr, "tide: there's no editor extension in %s; reinstall tide\n", root);
+    char *jetbrains = path_join(root, "editors/tide-jetbrains-installer.zip");
+    const bool have_vsix = sys_exists(vsix);
+    const bool have_jetbrains = sys_exists(jetbrains);
+    free(jetbrains);
+    if (!have_vsix && !have_jetbrains) {
+        const bool needed = !only_updates || tide_editors_have_tide();
+        if (needed) fprintf(stderr, "tide: there's no editor extension in %s; reinstall tide\n", root);
         free(vsix);
-        return only_updates ? 0 : 1;
+        return needed ? 1 : 0;
     }
 
     int found = 0;
     int added = 0;
     int failed = 0;
     for (size_t i = 0; i < sizeof editors / sizeof editors[0]; i++) {
+        if (!have_vsix) break;
         const editor *e = &editors[i];
         char *command = find_editor(e);
         if (!command) continue;
@@ -176,9 +183,11 @@ int tide_editors(const char *root, const bool only_updates)
     if (added > 0 && !only_updates) {
         printf("Windows of these editors that are open get it once reloaded: Developer: Reload Window.\n");
     }
+    failed += tide_jetbrains(root, only_updates, &found);
     if (found == 0 && !only_updates) {
-        printf("tide found no editor to add Tide to (VS Code, Cursor, VSCodium or Windsurf).\n"
-               "For JetBrains IDEs and others, see https://tide-engine.dev/tools/editors\n");
+        printf("tide found no supported editor or JetBrains profile.\n"
+               "For a JetBrains IDE, open it once, then run `tide editors` again.\n"
+               "See https://tide-engine.dev/tools/editors\n");
     }
     free(vsix);
     return failed > 0 ? 1 : 0;

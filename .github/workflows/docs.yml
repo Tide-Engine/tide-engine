@@ -6,6 +6,11 @@
 # Every run of the Build workflow runs it (build.yml's Docs job), so one
 # request does both. It still runs alone when asked to, for a change to the
 # docs only: gh workflow run docs.yml --ref dev.
+#
+# The prototypes' private repository (Tide-Engine/tide-prototypes, at its dev)
+# is built with the examples when PROTOTYPES_DEPLOY_KEY, a read-only deploy
+# key of that repository, is set; it stages their pages and the admin catalog.
+# A deploy needs it, so the live site keeps its prototypes.
 name: Docs
 
 on:
@@ -13,6 +18,8 @@ on:
   workflow_call:
     secrets:
       FLY_API_TOKEN:
+        required: false
+      PROTOTYPES_DEPLOY_KEY:
         required: false
 
 permissions:
@@ -39,9 +46,25 @@ jobs:
       CCACHE_NODIRECT: 'true'
     steps:
       - uses: actions/checkout@v4
+      - name: Check for the prototypes
+        id: prototypes
+        env:
+          KEY: ${{ secrets.PROTOTYPES_DEPLOY_KEY }}
+        run: |
+          if [ -n "$KEY" ]; then echo "present=true" >> "$GITHUB_OUTPUT"
+          elif [ "$GITHUB_REF" = refs/heads/dev ]; then echo "::error::A deploy needs PROTOTYPES_DEPLOY_KEY"; exit 1
+          else echo "present=false" >> "$GITHUB_OUTPUT"; fi
+      - uses: actions/checkout@v4
+        if: steps.prototypes.outputs.present == 'true'
+        with:
+          repository: Tide-Engine/tide-prototypes
+          ref: dev
+          ssh-key: ${{ secrets.PROTOTYPES_DEPLOY_KEY }}
+          path: external/tide-prototypes
       - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: '^24.22.1'
+          check-latest: true
           cache: npm
           cache-dependency-path: docs/package-lock.json
       # tools/tide-syntax/test: the grammar's scopes, on its cases and the
@@ -86,18 +109,25 @@ jobs:
       # The Samples gallery opens full games; guide pages show smaller examples.
       - name: Build the examples
         run: |
-          cmake --preset web-release -DTIDE_DOC_EXAMPLES=ON -DTIDE_PRIVATE_PROTOTYPES=ON
-          cmake --build --preset web-release --target sand duel towers sumo docs_examples sample_games private_games
-          mkdir -p docs/static/sand docs/static/duel docs/static/towers docs/static/sumo
+          if [ -d external/tide-prototypes ]; then
+            cmake --preset web-release -DTIDE_DOC_EXAMPLES=ON "-DTIDE_EXTERNAL_DIRS=$GITHUB_WORKSPACE/external/tide-prototypes"
+            cmake --build --preset web-release --target sand duel towers sumo earth docs_examples sample_games private_games
+          else
+            cmake --preset web-release -DTIDE_DOC_EXAMPLES=ON
+            cmake --build --preset web-release --target sand duel towers sumo earth docs_examples sample_games
+          fi
+          mkdir -p docs/static/sand docs/static/duel docs/static/towers docs/static/sumo docs/static/earth
           cp build/web-release/bin/sand.html docs/static/sand/index.html
           cp build/web-release/bin/duel.html docs/static/duel/index.html
           cp build/web-release/bin/towers.html docs/static/towers/index.html
           cp build/web-release/bin/sumo.html docs/static/sumo/index.html
+          cp build/web-release/bin/earth.html docs/static/earth/index.html
       - name: Build the site
         working-directory: docs
         run: |
           npm run check
           npm run build
+          npm run test:exports
           npm run test:seo
           npm run test:access-http
           npm run test:admin-http

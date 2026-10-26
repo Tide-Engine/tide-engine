@@ -1,5 +1,5 @@
 // Writes rocket.glb, the model the docs' `model` example draws: `node make_rocket.mjs`.
-// The file is checked in, as a game reads an asset's bytes; this is how it was
+// The file is checked in, as a game reads an asset's bytes; this is how it is
 // made. It's a glTF as a modelling tool would export one, on purpose: several
 // meshes, a material's color each, nodes that place them (the three fins are
 // one mesh under three nodes), right-handed with y up, and no normals, so

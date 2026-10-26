@@ -1,0 +1,157 @@
+// platform/tests/embed.c runs this through tide/embed.h, as another program would.
+settings { tickRate = 30; }
+
+scene Main { }
+scene Arena { int rounds = 3; }
+
+// No entity has it yet: the schema lists it as a component still, as an editor can give it to one
+component Unplaced { float yes = 69; }
+
+component Counter
+{
+    int ticks;
+    int presses;
+    string label = "counted";
+    List<int> marks;
+    float rate = 2.5;
+}
+
+singleton Tally
+{
+    float level;
+    int bumps;
+    string name;
+    List<byte> marks;
+}
+
+command Bump { int by; }
+
+// Text and a list from the other program, after the command's value
+command Rename { string name; List<byte> marks; }
+
+// What the other program hears as this machine's local handlers would (the packet's EVENTS)
+event Ticked { int ticks; string label; List<string> words; }
+
+// Containers in the packet: each packed into its STRINGS, what they hold too
+struct Note { string text; int at; }
+
+singleton Shelf
+{
+    List<string> words;
+    List<Note> notes;
+    Map<string, int> counts;
+    Set<int> ids;
+    Grid2<byte> cells;
+    bool filled;
+}
+
+system Fill(mut Shelf shelf)
+{
+    if (shelf.filled) return;
+    shelf.filled = true;
+    shelf.words = ["tide", "unity"];
+    shelf.notes = [Note { text = "first", at = 3 }];
+    shelf.counts["apples"] = 2;
+    shelf.counts["pears"] = 5;
+    shelf.ids = [7, 9];
+    shelf.cells = Grid2(100, 50);
+    shelf.cells[70, 40] = 6;
+}
+
+input Keys
+{
+    bool space;
+
+    Sample(Devices devices)
+    {
+        space = devices.keyboard.space.pressed;
+    }
+}
+
+event(PlayerJoined joined) Arrive()
+{
+    Spawn(Counter { marks = [4, 5, 6] }, Owner { player = joined.player });
+}
+
+system Count(Keys keys, mut Counter counter)
+{
+    counter.ticks += 1;
+    if (keys.space) counter.presses += 1;
+    if (counter.ticks % 10 == 0) this.Send(Ticked { ticks = counter.ticks, label = counter.label, words = ["a", "b"] });
+}
+
+system Rise(mut Tally tally, Time time)
+{
+    tally.level += time.dt;
+}
+
+command(Bump bump, PlayerID sender) Apply(mut Tally tally)
+{
+    tally.bumps += bump.by;
+}
+
+command(Rename rename, PlayerID sender) Renaming(mut Tally tally)
+{
+    tally.name = rename.name;
+    tally.marks = rename.marks;
+}
+
+extern void Seen(int ticks, int presses, float width, float height);
+
+view Show(Counter counter)
+{
+    Seen(counter.ticks, counter.presses, Screen.width, Screen.height);
+    Draw.Rect(float2(10, 20), float2(30, 40), Color(1, 0, 0)); // What the other program can draw (tide_embed_draw)
+    Draw.Text("drawn", float2(5, 6), 12, Color(0, 1, 0));
+    // A quad of one color, which the list keeps as a quad and the packet shows as the mesh it is
+    var blue = Color(0, 0, 1);
+    List<Vertex> corners = [
+        Vertex { position = float2(50, 60), color = blue },
+        Vertex { position = float2(70, 60), uv = float2(1, 0), color = blue },
+        Vertex { position = float2(70, 80), uv = float2(1, 1), color = blue },
+        Vertex { position = float2(50, 80), uv = float2(0, 1), color = blue },
+    ];
+    Draw.Mesh(corners, [0, 1, 2, 0, 2, 3]);
+    // Some 3D, which a second picture through another camera has alone (tide_embed_render_view)
+    Draw.Cube(float3(0, 0, 5), float3(1, 1, 1), Color(1, 0, 1));
+    // A point in front of the camera: the screen's middle through Tide's first camera, elsewhere through the other
+    // program's (tide_embed_camera)
+    var seen = Draw.WorldToScreen(float3(0, 0, 5));
+    Draw.Screen()
+    {
+        Draw.Circle(seen.xy, 3, Color(1, 1, 0));
+    }
+}
+
+// What the other program plays (tide_embed_audio): a square wave a quarter loud while B is held, and the microphone
+// while M is (tide_embed_microphone)
+local singleton Speaker
+{
+    Sound tone;
+    Sound ear;
+}
+
+struct Wave { int at; }
+
+audio Buzz(mut Samples samples, mut Wave wave)
+{
+    for (var i = 0; i < samples.values.count; i++)
+    {
+        samples.values[i] = (wave.at / 2) % 96 < 48 ? 0.25 : -0.25;
+        wave.at += 1;
+    }
+}
+
+view Sounds(Devices devices, mut Speaker speaker)
+{
+    speaker.tone.effect = Buzz();
+    speaker.tone.playing = devices.keyboard.b.pressed;
+    speaker.ear.clip = Clip.Microphone;
+    speaker.ear.playing = devices.keyboard.m.pressed;
+}
+
+// What makes Arena a scene a match can start in, which the other program can then start by name
+void StartArena()
+{
+    Session.Start(Arena);
+}

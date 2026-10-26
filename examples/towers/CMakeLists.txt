@@ -1,15 +1,12 @@
 # Towers: four plinths and a race to build the tallest tower of bricks, on
-# Box2D. A game to play in a window or in the docs site (docs/guide/towers.md),
-# alone against three bots or up to four in a room.
+# Box2D, alone against three bots or up to four in a room.
 #
 # Its folder is what `tide run` builds: game.tide is the match, bots.tide how a
-# tower nobody steers is built, the other files what a machine shows of it and
-# which match it's in, and tide.packages lists box2d. tide_add_game reads no
-# tide.packages, so the packages are named here (box2d, and rooms, the menu
-# that comes with tide), and built with the game as tide builds a game that
-# lists them: their Tide files before the game's, Box2D's C with the game's,
-# and Box2D's own sources, which packages/ builds as tide_box2d. The files are
-# in the order of their names, as tide compiles a folder's.
+# tower nobody steers is built, the other files what a machine shows of it, and
+# tide.packages lists box2d. tide_add_game reads no tide.packages, so the
+# packages (box2d and rooms) are named here and built as tide builds a game
+# that lists them: their Tide files before the game's, Box2D's C with the
+# game's, Box2D's own sources as tide_box2d.
 set(TOWERS_SOURCES bots.tide effects.tide game.tide hud.tide play.tide)
 set(TOWERS_PACKAGE "${PROJECT_SOURCE_DIR}/packages/box2d")
 set(TOWERS_PACKAGES PACKAGES Box2D "${TOWERS_PACKAGE}/box2d.tide" Rooms "${PROJECT_SOURCE_DIR}/packages/rooms/rooms.tide")

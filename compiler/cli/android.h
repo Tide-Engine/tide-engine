@@ -1,6 +1,6 @@
 #pragma once
 
-// Android for tide (see AGENTS.md, Android builds): Google's NDK, which games
+// Android for tide: Google's NDK, which games
 // build against, and adb, which puts them on a phone. Each is found where
 // Android's own tools put it, or else fetched once from Google, after asking,
 // into <root>/android: only what tide needs of it.

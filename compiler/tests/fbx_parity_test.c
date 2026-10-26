@@ -116,7 +116,7 @@ TIDE_TEST(fbx_runtime_skin_matches_maya_export_with_animated_scale_and_offset_ta
         double worst = 0.0;
         for (uint32_t i = 0; i < 5u; i++) TIDE_CHECK(parity_sample(model, &view, scene, duration * (float)i / 4.0f, &worst));
         if (!(worst <= 1e-10)) printf("    maximum skin error: %.9g meters\n", sqrt(worst));
-        TIDE_CHECK(worst <= 1e-10); // Ten micrometers; the time-domain bug exceeded two millimeters.
+        TIDE_CHECK(worst <= 1e-10); // Ten micrometers.
         tide_scratch_reset(mark);
     }
     ufbx_free_scene(scene);

@@ -3,6 +3,7 @@
 
 #include "game.h"
 #include "tide_test.h"
+#include "draw_test.h"
 
 static tide_world world;
 static tide_local local;
@@ -41,6 +42,7 @@ TIDE_TEST(default_value_draw_arguments)
     tide_local_init(&local);
     tide_draw_reset(&draw);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
+    tide_test_flatten(&draw); // Its plain shapes a command each, as the checks read them
     TIDE_REQUIRE(draw.count == 2);
     const tide_draw_command *circle = &draw.commands[0];
     TIDE_CHECK(circle->kind == TIDE_DRAW_CIRCLE);

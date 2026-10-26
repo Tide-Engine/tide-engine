@@ -30,7 +30,9 @@ endif()
 # build of llvm-mingw is the smallest download; the files taken from it are the
 # same in every build.
 get_filename_component(_tide_mingw_dir "${CMAKE_CURRENT_LIST_DIR}/../build/llvm-mingw-${TIDE_MINGW_VERSION}" ABSOLUTE)
-if(NOT EXISTS "${_tide_mingw_dir}/done")
+# Its licenses too, which the package carries (platform/CMakeLists.txt):
+# MinGW-w64's, and LLVM's for the compiler runtime.
+if(NOT EXISTS "${_tide_mingw_dir}/done" OR NOT EXISTS "${_tide_mingw_dir}/licenses")
     set(_tide_mingw_name "llvm-mingw-${TIDE_MINGW_VERSION}-ucrt-ubuntu-22.04-x86_64")
     set(_tide_mingw_file "${_tide_mingw_dir}/${_tide_mingw_name}.tar.xz")
     message(STATUS "Downloading llvm-mingw ${TIDE_MINGW_VERSION}")
@@ -45,10 +47,18 @@ if(NOT EXISTS "${_tide_mingw_dir}/done")
     # can't extract; take the shared one.
     file(ARCHIVE_EXTRACT INPUT "${_tide_mingw_file}" DESTINATION "${_tide_mingw_dir}/extract"
         PATTERNS "${_tide_mingw_name}/generic-w64-mingw32/include/*" "${_tide_mingw_name}/x86_64-w64-mingw32/lib/*"
-                 "${_tide_mingw_name}/lib/clang/*/lib/windows/libclang_rt.builtins-x86_64.a")
+                 "${_tide_mingw_name}/lib/clang/*/lib/windows/libclang_rt.builtins-x86_64.a"
+                 "${_tide_mingw_name}/LICENSE.TXT" "${_tide_mingw_name}/x86_64-w64-mingw32/share/mingw32/COPYING*")
     set(_tide_mingw_from "${_tide_mingw_dir}/extract/${_tide_mingw_name}")
-    file(REMOVE_RECURSE "${_tide_mingw_dir}/sysroot")
+    file(REMOVE_RECURSE "${_tide_mingw_dir}/sysroot" "${_tide_mingw_dir}/licenses")
     file(MAKE_DIRECTORY "${_tide_mingw_dir}/sysroot")
+    # winpthreads' and winstorecompat's aren't: the package has neither.
+    file(MAKE_DIRECTORY "${_tide_mingw_dir}/licenses/mingw-w64" "${_tide_mingw_dir}/licenses/llvm-mingw")
+    foreach(_tide_name COPYING COPYING.MinGW-w64.txt COPYING.MinGW-w64-runtime.txt)
+        file(RENAME "${_tide_mingw_from}/x86_64-w64-mingw32/share/mingw32/${_tide_name}" "${_tide_mingw_dir}/licenses/mingw-w64/${_tide_name}")
+    endforeach()
+    file(RENAME "${_tide_mingw_from}/LICENSE.TXT" "${_tide_mingw_dir}/licenses/llvm-mingw/LICENSE.TXT")
+    file(REMOVE_RECURSE "${_tide_mingw_from}/x86_64-w64-mingw32/share")
     file(RENAME "${_tide_mingw_from}/x86_64-w64-mingw32" "${_tide_mingw_dir}/sysroot/x86_64-w64-mingw32")
     file(RENAME "${_tide_mingw_from}/generic-w64-mingw32/include" "${_tide_mingw_dir}/sysroot/x86_64-w64-mingw32/include")
     file(GLOB _tide_mingw_builtins "${_tide_mingw_from}/lib/clang/*/lib/windows/libclang_rt.builtins-x86_64.a")
@@ -60,6 +70,7 @@ endif()
 
 set(TIDE_MINGW_SYSROOT "${_tide_mingw_dir}/sysroot")
 set(TIDE_MINGW_BUILTINS "${_tide_mingw_dir}/libclang_rt.builtins-x86_64.a")
+set(TIDE_MINGW_LICENSES "${_tide_mingw_dir}/licenses")
 set(CMAKE_SYSROOT "${TIDE_MINGW_SYSROOT}")
 
 # The compiler runtime is passed by path, and the C runtime's libraries by name

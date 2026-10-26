@@ -4,9 +4,8 @@
 #include "game.h"
 #include "tide_test.h"
 
-// Random's rolls on the type (Random.NextInt and the like, Random.seed): the
-// match's are made from its seed, the tick, the entity and which code rolls,
-// with nothing of the world written, and local code's are this machine's.
+// Random.NextInt and the like: the match's rolls come from its seed, the tick, the entity and
+// which code rolls, writing nothing to the world; local code's are this machine's.
 
 static tide_world world;
 static tide_world other;
@@ -63,13 +62,12 @@ TIDE_TEST(rolls_come_from_the_seed)
     TIDE_CHECK(hash_after(&other, 30) == plain && plain != first);
 }
 
-// Each entity rolls for itself, twins too; each roll of a run is another
-// number; two systems roll differently for one entity; and a tick later it's
-// all other numbers.
+// Each entity rolls for itself, twins too; each roll of a run differs; two systems differ for one
+// entity; a tick later all differ.
 TIDE_TEST(rolls_are_an_entitys_a_systems_and_a_ticks)
 {
     tide_world_start_seeded(&world, DT, NULL, 99u);
-    tide_world_tick(&world); // The handlers' spawns apply
+    tide_world_tick(&world);
     tide_world_tick(&world);
     tide_entity all[16];
     const int count = walkers(&world, all, 16);
@@ -98,8 +96,7 @@ TIDE_TEST(rolls_are_an_entitys_a_systems_and_a_ticks)
     }
 }
 
-// Nothing of the world is stepped by a roll, so a tick run again from a
-// snapshot rolls what it rolled: what prediction and rollback rest on.
+// A roll steps nothing in the world, so a tick rerun from a snapshot rolls the same (prediction and rollback rely on it).
 TIDE_TEST(rolls_repeat_when_a_tick_runs_again)
 {
     tide_world_start_seeded(&world, DT, NULL, 7u);
@@ -114,8 +111,7 @@ TIDE_TEST(rolls_repeat_when_a_tick_runs_again)
     }
 }
 
-// One event sent twice to one entity in one tick: each run of its handler
-// rolls for itself.
+// One event sent twice to one entity in one tick: each handler run rolls for itself.
 TIDE_TEST(rolls_differ_between_a_handlers_runs)
 {
     tide_world_start_seeded(&world, DT, NULL, 31u);
@@ -132,8 +128,7 @@ TIDE_TEST(rolls_differ_between_a_handlers_runs)
     TIDE_CHECK(tide_get_Walker(&other, all[0]).poked == poked.poked);
 }
 
-// A parallel loop's steps, a foreach whose steps run at once, and a list's:
-// each place rolls for itself, and otherwise the tick after.
+// Parallel loop steps, a foreach run at once, and a list's: each place rolls for itself.
 TIDE_TEST(rolls_in_steps_are_each_places)
 {
     tide_world_start_seeded(&world, DT, NULL, 8u);
@@ -195,9 +190,8 @@ static int chests(const tide_world *w, Chest *out)
     return count;
 }
 
-// A task's rolls are a sequence of its own, across its waits and through what
-// it awaits; two tasks started alike in one tick roll differently, and so do
-// two of a handler's for one event sent twice.
+// A task's rolls are its own sequence across waits and awaits; tasks started alike in one tick
+// roll differently, as do a handler's two for one event sent twice.
 TIDE_TEST(rolls_in_tasks_go_on_across_their_waits)
 {
     tide_world_start_seeded(&world, DT, NULL, 21u);
@@ -228,8 +222,7 @@ TIDE_TEST(rolls_in_tasks_go_on_across_their_waits)
     tide_world_free(&scratch);
 }
 
-// Sample rolls with the generator of the machine that samples, and reads the
-// seed its last frame's match had; with no local state it still rolls.
+// Sample rolls with the sampling machine's generator and reads its last frame's match seed; with no local state it still rolls.
 TIDE_TEST(rolls_in_sample_are_the_machines_that_sends)
 {
     static tide_devices devices;
@@ -249,21 +242,19 @@ TIDE_TEST(rolls_in_sample_are_the_machines_that_sends)
     tide_local_free(&local);
 }
 
-// The bits, on every platform: native, WebAssembly and Android have to give
-// this hash. If the rolls change on purpose, update it from one platform and
-// check the others agree.
+// The bits on every platform (native, WebAssembly, Android) must give this hash; update it
+// only for an intentional change, after checking the others agree.
 TIDE_TEST(rolls_crossplatform_match)
 {
     tide_world_start_seeded(&world, DT, NULL, 20261008u);
     const uint64_t h = hash_after(&world, 120);
-    const uint64_t expected = 0x15ADC5FDDDF7D61Aull;
+    const uint64_t expected = 0xE4A682149C15233Aull;
     if (h != expected) printf("    rolls match: hash is 0x%016" PRIX64 ", expected 0x%016" PRIX64 "\n", h, expected);
     TIDE_CHECK(h == expected);
 }
 
-// Local code rolls with this machine's generator: nothing of the match, the
-// same again where frames are as long (a run with no window), and otherwise
-// where they aren't.
+// Local code rolls with this machine's generator: nothing of the match, the same again where
+// frames are as long (a run with no window), different where they aren't.
 TIDE_TEST(rolls_in_views_are_this_machines)
 {
     tide_world_start_seeded(&world, DT, NULL, 555u);

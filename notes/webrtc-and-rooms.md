@@ -1,5 +1,124 @@
 # Desktop WebRTC, rooms and their tests
 
+## Relay Node security update (2026-10-23)
+
+The relay image explicitly pins `node:24.22.1-alpine`, including the October
+21 Brotli, TLS/DNS and other Node security fixes. The live relay reported
+24.21.0 before this update. Relay source, protocol and Fly configuration are
+unchanged. Both relay/lobby files pass all 37 tests under Node 24.22.1, and
+the production image builds and reports v24.22.1. Full engine validation is
+recorded in `notes/testing.md`.
+
+Deployed to the existing relay as Fly release 10, image
+`deployment-01M5M03PFP7ZKV2M1YBKP2XR1N`. Machine smoke/health checks pass;
+SSH reports v24.22.1 and the public relay health endpoint returns HTTP 200.
+The first PowerShell HTTP probe timed out; curl verifies the public endpoint.
+
+## Web invites wait for registration (2026-10-22)
+
+A correct invite could be copied before the relay knew its host's room.
+Holding the host's registration for 6.5 seconds reproduced the failure:
+the other page opened the generated URL, exhausted its existing five-second
+missing-room retries, and failed with `no room has the code`. Ordinary
+local/public-relay joins also passed, with normal Chrome networking settings
+and with the host hidden before the join. This establishes a startup race,
+not the cause of every intermittent connection failure in the owner's report.
+
+`tide.js` now distinguishes a registration request sent (`announced`) from a
+room confirmed by the relay (`advertised`, set by `hosting`, cleared on socket
+close). A matching built-in web host's `room_invite` writes an empty string
+until confirmation. `Session.room` still has the early code; the standard
+host receives an empty `Session.invite`, so Rooms' existing disabled state
+prevents copying it. Other networks and native code invites retain their
+existing behavior. No connection timeout, relay protocol, match state or
+generated API changed.
+
+The internal `room_invite` import now returns bytes written **including the
+NUL**: one is a successful empty replacement, distinct from zero's existing
+fallback to the room code. Its only C caller still tests for a positive result
+and validates the terminated printable-ASCII output. `tide.release.js` and its
+source manifest were regenerated.
+
+`tide_platform_web_rooms` holds the actual host registration in its page
+until the C program has checked that an invite is unavailable, then releases
+it explicitly and opens the joiner from the eventual invite. It fails on the
+old runtime. Migration and early-end fixtures keep their existing behavior.
+The same 6.5-second registration delay passes with the fix: the host offers
+the link only after registration, and both players meet and keep playing
+through the hidden-host interval.
+
+Validation on Windows with Clang 23.1.2 and Node 24.21.0: full native debug
+build and suite (2,589 passed, 114.34 s, including 39 GPU tests), full web debug
+build and suite (2,451 passed, 279.53 s, including WebGL, D3D11 and WebGPU),
+the three release-runtime checks, the docs production build and diff checks.
+The generated release runtime also joins successfully through the public
+relay in Chrome with normal networking settings and plays through the
+hidden-host interval without skipped time or resyncs.
+Each suite retains the existing disabled MicroDuck right-turn limitation.
+Every run used `TIDE_HIDDEN`; browser runners retained `--mute-audio`.
+Other operating systems, Android and sanitizers were not run on this Windows
+machine. No CI was dispatched or manual deployment made.
+
+## Session.invite: host a room, copy a link, send it (2026-10-21)
+
+The owner asked for every web game's multiplayer to be "host a room, copy a
+link, send it", opening the link joining the room. The page already turned
+`?join=<code>` into `--join <code>` (`tide.js`); what was missing was the link.
+`Session.invite` is it, beside `Session.room`, with the same capability rules
+(the name and the native fallback are the agent's picks, which the owner
+accepted; Provisional in the spec's Sessions section). What code relies on:
+
+- **What it is.** On the web, the page's address without its query or fragment
+  (`location.href` cut at the first `?` or `#`, so origin and pathname, file
+  pages included), then `?join=` and the room, URI-encoded: it works wherever
+  the page is served (tide-engine.dev, localhost, a LAN address). Elsewhere,
+  and on the web for anything the link can't carry, the room's text itself:
+  natively there's no page to link to. `""` whenever the room is.
+- **Who makes it.** `tide_platform_room_invite(room, out, size)`
+  (`platform.h`, `rooms.c`) from whatever `Session.room` is (a room's code,
+  `--players`' code, a game's own network's text or a dedicated endpoint).
+  The web backend asks the page (`tide_web_room_invite`, `room_invite` in
+  `tide.js`), which returns 0 for a page that isn't `http:`, `https:` or
+  `file:` (no place to link to: `about:srcdoc`, `blob:`) and for a link that
+  doesn't fit. The C side only asks for a room of letters, digits and `/`
+  (all `?join=` passes on, as `tide.js` strips the rest: the slash since
+  2026-10-24, for a hosted world's `ROOMID/0`, which the docs' home page joins), checks the answer is
+  printable ASCII ending within `TIDE_INVITE_BYTES` (256: `Clipboard.Copy`'s
+  255 bytes and a NUL), and otherwise writes the room.
+- **How local code gets it.** Generated `tide_local` has `char
+  tide_invite[256]`; `tide_local_set_session` sets it to the room (so every
+  host and test harness that calls only that one gets the native behavior),
+  and the new generated `tide_local_set_invite(local, invite)` replaces it,
+  keeping only printable ASCII under 256 bytes (anything else is `""`).
+  `tide/host.h` calls it each frame after `set_session`, through the optional
+  `tide_host_game.set_invite` that `tide/run.h` fills; `demo/main.c` calls it
+  directly. `tide_embed_status` is unchanged (the other program has `room`).
+- Tests: `tidec_e2e_net` (`net_local_code_joins_rooms_and_connects_to_addresses`:
+  the room by default, a host's link, too long, not printable, NULL, none
+  offline), `compiler/tests/errors/singleton_param_session_invite.tide`,
+  `lsp_sessions` completion, `tide_platform_udp`'s
+  `rooms_invite_off_the_web_is_the_room`, `tide_rooms_lobby`'s
+  `rooms_copies_the_invite`, and `tide_platform_web_rooms`: the host prints
+  its invite, the page checks it is `game.html`'s address with `?join=` and
+  the code, and the joiner's frame is that link itself (with the test's own
+  parameters after it), whose program is started `--join <code>` by `tide.js`
+  and has to meet the host.
+- `tide.release.js` was regenerated (69,935 bytes).
+- Validation on Windows: 2,450/2,450 native and 2,394/2,394 web debug tests,
+  and the docs production build. In `tide_platform_web_rooms` the host said
+  `invite http://127.0.0.1:<port>/game.html?join=<code>` and the frame opened
+  from it met the host.
+
+## Shared connection ceiling (2026-10-20)
+
+Native rooms now use the shared TIDE_PLAYERS_MOST ceiling (65,536), matching
+match players and dedicated-host connections. Their peer array starts empty,
+grows geometrically as peers arrive and is freed with the room; a small room
+does not reserve a ceiling-sized peer array. Browser rooms already use Maps
+and had no 256-peer array restriction. Signaling, RTC handshakes, timeouts,
+relay operational limits and transport semantics are unchanged. Session
+protocol 16 and validation are recorded in netcode.md.
+
 ## Custom web runner shutdown (2026-10-18)
 
 `web_rooms.mjs` and `web_threads.mjs` now use Chrome's DevTools pipe to ask
@@ -17,7 +136,7 @@ An early-exit control fails both runners immediately with the browser's exit
 code. CTest CPU accounting and remaining hosted uncertainty are documented in
 `notes/testing.md`; full validation is in `notes/releases-and-ci.md`.
 
-Managed service (2026-10-15): hosting/rooms.mjs implements the existing relay
+Managed service (2026-10-15; in tide-services since 2026-10-21): hosting/rooms.mjs implements the existing relay
 signaling protocol with node-datachannel 0.33.4, project room/key persistence,
 bounded peers and TURN configuration. Outer protocol 2 checks Simulation ID
 before creating a guest and routes bound match envelopes to isolated Workers.

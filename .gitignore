@@ -8,10 +8,6 @@ cmake-build-*/
 .codex/
 CMakeUserPresets.json
 docs/node_modules/
-hosting/node_modules/
-hosting/data/
-hosting/build/
-hosting/.svelte-kit/
 .github/node_modules/
 docs/.svelte-kit/
 docs/build/
@@ -19,10 +15,12 @@ docs/static/sand/
 docs/static/duel/
 docs/static/towers/
 docs/static/sumo/
+docs/static/earth/
 docs/static/examples/
 docs/static/playground/generated/
 docs/static/samples/*/index.html
-docs/static/prototypes/*/index.html
-docs/static/prototypes/*/*/index.html
+# The prototypes' own repository stages its catalog and games here.
+docs/prototypes.json
+docs/static/prototypes/
 docs/static/install.sh
 docs/static/install.ps1

@@ -131,7 +131,7 @@ TIDE_TEST(random_net_clients_end_with_the_servers_generators)
     for (int i = 0; i < 3; i++) {
         const tide_client_status s = tide_client_status_of(clients[i]);
         TIDE_CHECK(s.state == TIDE_SESSION_CONNECTED);
-        TIDE_CHECK(s.resyncs == 0); // Every tick it ran again came out as the server's
+        TIDE_CHECK(s.resyncs == 0);
         TIDE_CHECK(s.verified_tick + 30u > tide_server_tick(server));
         again += s.again_ticks;
         // The seed came with the world: nobody sent it, and everybody has it

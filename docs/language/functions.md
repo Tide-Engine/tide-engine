@@ -65,6 +65,44 @@ Singleton methods use their explicit receiver and have no entity `this`, implici
 
 A method marked `virtual` can be replaced by another package, and so can a function: see [Virtual and override](overrides.md).
 
+## Properties
+
+Structs, components and singletons can define computed properties with C#-style accessors:
+
+```csharp
+struct Circle
+{
+    float radius;
+    float diameter
+    {
+        get { return radius * 2; }
+        set { radius = value * 0.5; }
+    }
+}
+```
+
+Read `circle.diameter`, or assign `circle.diameter = 10`. The getter reads the fields; the setter can change them and receives an implicit read-only `value` parameter. Setting a property needs a writable receiver, just like calling a `mut` method. A property can have only a getter or only a setter. `+=` and other compound assignments read once and then set; `++` and `--` work on numeric properties. The receiver is evaluated once, before the getter and the right-hand expression. A prefix increment returns the calculated value passed to the setter, even when the setter clamps it.
+
+Accessors use ordinary method capabilities and dependency tracking. They add no stored fields, allocation or runtime dispatch. Properties are values, so assign them whole: to change `circle.center.x`, when `center` is a property, copy `center` into a mutable local, change it, and assign it back. Properties cannot be `mut` or `out` arguments. Literals initialize stored fields; use a mutable value to call a setter.
+
+Inside a component's methods and accessors, `this` is its entity and `world` is its owning world:
+
+```csharp
+component Marker
+{
+    float3 origin
+    {
+        get { return world.LocalToWorld(this).c3.xyz; }
+    }
+}
+
+float3 Origin(Marker marker) { return marker.origin; }
+```
+
+Pass a system/view/handler component parameter or a query's component binding directly to a synchronous helper to retain that context. Forwarding through more helpers preserves it; assigning, storing or returning the component copies its data and detaches it. A context-using helper for local components declares `local Marker marker`. A verified binding retains its verified world. Recorded match-event values provide identity, but no historical World access. Caller permissions still apply: a view cannot write the match and match code cannot read local state.
+
+Ordinary explicit `World` parameters remain available. A component method uses either its contextual `world` or an explicit World parameter. Structs and singletons have no implicit world or entity. See [`Transform.position`](../game/entities.md#transform-and-parenting) for an engine-defined property using these same facilities.
+
 ## Functions
 
 A function is code that other code calls. It has no keyword, just a return type:
@@ -94,7 +132,7 @@ system Regenerate(mut Unit unit)
 
 Functions work from their parameters, constants and the functions they call; methods also see their own fields. To read or update another entity's component, take the caller's [`World`](../game/systems.md#other-entities-the-world) explicitly: reads use `World`, and `Set` needs `mut World`. What the helper reaches counts toward the caller's access, and a view can't call a helper that writes the match. A function can draw and use the GUI, and then only views, and other functions like it, can call it. A function can also send events, spawn and change entities, and start tasks, as the code that calls it could: see [Sending and spawning](#sending-and-spawning). [Async functions](../game/tasks.md#async-functions) run as tasks and have their world's entity operations.
 
-A helper can `Set<T>` when its caller takes a read-only `T` parameter. That parameter keeps the value the caller read on entering the entity's invocation; later world reads see the write immediately. Taking `mut T` still prevents `Set<T>` through the caller's World, because its write-back could overwrite a Set of the same entity.
+A helper can `Set<T>` beside either a read-only or mutable component parameter. A read-only parameter keeps its captured value; setting the current entity replaces its active `mut T` parameter immediately. This follows through synchronous helper chains, including when the mutable parameter is passed by reference to another helper. Ordinary value parameters and explicit copies keep their own values. Later world reads see the Set immediately, while subsequent edits to the mutable parameter retain normal write-back timing.
 
 Resource asset collections can be borrowed by synchronous CPU functions and methods with ordinary read-only parameters: `List<Clip>`, `List<Texture>`, `List<Mesh<V>>`, and their `Map<string, T>` equivalents.
 
@@ -110,6 +148,14 @@ view HitSound() { Audio.Play(Pick(hits, 0)); }
 ```
 
 Pass the asset directly, or forward a borrowed parameter through further helpers. Count, indexing, `foreach` and read-only collection methods work as usual; passing copies no collection. Elements keep their ordinary value rules, so a helper can return a selected clip, texture or mesh. The collection borrow itself cannot be stored, returned, optional, mutated or retained by an async declaration, and has no default. Externs, operators, audio declarations and GPU code take no such borrow. Texture and clip collections remain local code's; mesh geometry retains its existing match-read rules.
+
+Large read-only values can use borrowed storage in generated CPU helpers when the compiler proves it safe, avoiding repeated stack copies. They retain value semantics: overlapping mutable arguments, later argument effects and C calls still preserve the captured value. This needs no annotation or reference syntax.
+
+Read-only grid parameters can be read and forwarded through helpers called by
+[local workers](../game/tasks.md#local-workers) or shader code. Workers capture
+independent grid inputs before dispatch. Grid helpers do not grant ordinary
+views or match systems a way to pass grids as CPU values, and functions still
+cannot return grids. Sampling a grid as a texture remains GPU-only.
 
 Singleton arguments are explicit values, like component arguments. The function gets no singleton lookup or access to a world. A match system or handler can pass state it can write to a `mut` parameter; a view can pass local state it can write, while its match state stays read-only. The input's `Sample` can only read local state, including through helpers. These restrictions follow calls through other helpers, and their reads and writes count toward the caller's access and scheduling.
 
@@ -132,11 +178,11 @@ system AdvanceRound(mut Round round)
 
 Methods take explicit singleton parameters and receivers by the same value and `mut` rules.
 
-A match component or singleton can also have [local fields](../game/local-state.md). An ordinary function can read or write those when the caller passes its actual bound parameter, and can pass that parameter through another helper. A plain copy contains only match fields and has no local fields to pass on. Match code can't call a helper that uses local fields; local code can't call one that writes match fields. A helper can't do both through the same parameter. Methods don't receive local fields, and the existing restrictions on copying or passing grids and rendering resources still apply.
+A match component or singleton can also have [local fields](../game/local-state.md). An ordinary function can read or write those when the caller passes its actual bound parameter or a permitted query binding, and can pass that binding through another helper. A plain copy contains only match fields and has no local fields to pass on. Match code can't call a helper that uses local fields; local code can't call one that writes match fields. A helper can't do both through the same component parameter. Method receivers don't receive local fields; a method borrowing a query can reach that query's permitted local fields. The existing restrictions on copying or passing grids and rendering resources still apply.
 
 A drawing function can also [name a frag or vert](../game/shaders.md#drawing-from-a-helper). Each component or singleton the shader takes must match exactly one explicit input parameter of the function by type. The shader reads that passed value and, where needed, its forwarded local fields. The helper uses its caller's frame and follows ordinary drawing capabilities.
 
-Engine-owned singleton instances, such as `Time` and `Session`, stay read-only when passed to helpers. Passing `Session` grants no session operations: a function makes [session calls](../multiplayer/matches.md) as the code that calls it could, with a `Session` or without. Ordinary helpers also can't read `session.room` or format a whole `Session` as text: pass the room code as a separate `string`.
+Engine-owned singleton instances, such as `Time` and `Session`, stay read-only when passed to helpers. Passing `Session` grants no session operations: a function makes [session calls](../multiplayer/matches.md) as the code that calls it could, with a `Session` or without. Ordinary helpers also can't read `session.room` or `session.invite`, or format a whole `Session` as text: pass the room code or the invite as a separate `string`.
 
 A function can also be written in C, declared with `extern` and no body: see [Calling C](../c/functions.md).
 
@@ -172,9 +218,11 @@ system Weigh(mut Stats stats, query (Body candidate, with Enemy) enemies)
 
 `TotalMass` visits the enemies the caller selected. The helper declares the component data each row must provide; names can differ, and the caller can supply extra bindings and filters. Every requested component type needs one unambiguous data binding in the source query. A `with Body` filter alone does not provide Body data. Filters written in a helper's signature are requirements the caller's query must already guarantee, and do not select additional entities.
 
-The source keeps its order and timing. Match queries read the current match, a view passes its blended or verified rows, and local handlers pass their recorded rows. A helper can forward the query to another helper. Passing it allocates no collection and makes no snapshot. Recorded rows retain their existing omitted-data rules. To borrow local entities, use local bindings such as `query (local Spark spark) sparks`.
+The source keeps its order and timing. Match queries read the current match, a view passes its blended or verified rows, and local handlers pass their recorded rows. A helper can forward the query to another helper. Passing it allocates no collection and makes no snapshot. Container fields read through a borrowed recorded query are included in its journal capture; unrelated unread containers are omitted. To borrow local entities, use local bindings such as `query (local Spark spark) sparks`.
 
-The query is read-only and valid for the call. It has no `mut`, `out` or default; queries and whole rows cannot be stored or returned, and whole rows cannot be passed as values. Component values read from a row can be copied and passed normally. Keep query iteration and forwarding outside callback blocks and parallel steps. Async functions, externs, operators, audio declarations and shaders take no borrowed queries.
+The query is valid for the call. The query parameter itself has no `mut`, `out` or default. In local code, a nested binding such as `query (mut Fighter fighter) fighters` can write attached local fields while its match data stays read-only. A mutable helper binding requires a mutable source binding; a read-only helper can borrow either. Local fields always use current local state, including when the source has verified or recorded match values. Match code cannot call a helper that reaches local fields.
+
+Queries and whole rows cannot be stored or returned, and whole rows cannot be passed as values. A component binding passed directly to an ordinary helper retains its local-field access; an explicit component copy has match data only. Keep query iteration and forwarding outside callback blocks and parallel steps. Async functions, externs, operators, audio declarations and shaders take no borrowed queries.
 
 The helper gains the row access its parameter declares. Its other capabilities still come from its caller; explicit `World` access remains separate. Reads and writes preserve the existing scheduling and evaluation-order rules.
 
@@ -240,7 +288,7 @@ Some code never sends or spawns, whoever calls it: a `Sort`'s comparison and a `
 
 ### Starting a task
 
-A function or a method starts a [task](../game/tasks.md) the same way, by calling an async function as a statement, and the same rule holds: it starts it as the code that calls it could.
+A function or a method starts a [task](../game/tasks.md) by calling an async function, and the same rule holds: it starts it as the code that calls it could. It can return the started `Task<T>` or `LocalTask<T>` handle, including `Task<T fails E>` for a failable result. A discarded ordinary async call continues by itself.
 
 ```csharp
 singleton Round
@@ -406,6 +454,79 @@ system Count(mut Counter counter, mut Log log)
 - A read-only method's receiver follows the same copy rules as a read-only argument: if a `mut` or `out` argument changes its lists or maps during the call, the method still reads its original copy.
 - The right of `&&` and `||` and the sides of `?:` still only run when they would.
 - A list's, map's or set's change that gives a value (`items.Remove(x)`, `seen.Add(key)`) counts as a call that changes it.
+
+## Function values
+
+`Func<Arguments..., Result>` holds a function with those argument and result
+types. A function name takes its signature from where it is assigned; an
+overloaded name selects the matching overload:
+
+```csharp
+float Circle(float2 position) { return Math.Length(position) - 0.5; }
+
+float Evaluate(float2 position, Func<float2, float> distance)
+{
+    return distance(position);
+}
+
+view Example()
+{
+    Func<float2, float> distance = Circle;
+    float value = Evaluate(float2(1, 0), distance);
+    Debug.Log(value);
+}
+```
+
+The last type is the result; `Func<float>` takes no arguments, and
+`Func<float, void>` takes a float and returns nothing. Parameters are read-only
+unless their type is preceded by `mut`, as in `Func<mut float, void>`. Parameter
+types, `mut` modes and the result type must match the target function exactly;
+extern, async and failable functions aren't callable values. An unambiguous
+function name can also initialize `var`, retaining its parameter modes.
+
+```csharp
+void Increase(mut float value) { value += 1; }
+
+view ChangeValue()
+{
+    Func<mut float, void> increase = Increase;
+    mut float value = 2;
+    increase(value); // value is now 3
+}
+```
+
+Mutable arguments follow ordinary function rules: pass a writable variable of
+the exact type, and helpers forward that same storage. Typed lambdas declare
+the matching mode too, for example `(mut float value) => Increase(value)`.
+Captures stay read-only owned copies even when an explicit argument is mutable.
+The result type cannot be `mut`; `out` callable parameters aren't supported yet.
+
+A typed expression lambda binds additional data:
+
+```csharp
+Func<float2, float> SizedCircle(float radius)
+{
+    return (float2 position) => Math.Length(position) - radius;
+}
+```
+
+It captures a copy of `radius` when constructed. Returning it, assigning it to
+a local field, or keeping it in a list doesn't retain a reference to the
+original variable. Changing that variable later doesn't change the capture.
+The initial implementation captures plain values, including numeric structs
+and fixed arrays. Heap containers, textures, entity/component context and
+recursive captures of the same Func type aren't supported; pass data or
+callables explicitly to helpers. Nested lambdas aren't supported yet.
+
+Function values belong to local state. They can be fields of local components,
+local singletons, attached `local` fields, or structs and collections kept there.
+They cannot enter match state. A default callable returns its result type's
+default, or does nothing for `void`. Its mutable arguments remain unchanged.
+
+Frags, verts and their helpers accept function parameters too. The compiler
+collects the possible targets and generates typed dispatch; there are no GPU
+function pointers. Ordinary GPU restrictions apply to every reachable target.
+See [configured shaders and batching](../game/shaders.md#configured-shaders).
 
 ## Actions
 

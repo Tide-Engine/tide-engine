@@ -6,6 +6,7 @@
 typedef struct compile_input {
     const char *path;
     const char *package; // The package it's in, by name; NULL for the game's own files
+    const char *text;    // Its text, when it isn't read from `path` (a Unity prefab, as `tide unity` makes it)
 } compile_input;
 
 // The whole transpiler, as tidec and the tide command run it: reads the files,

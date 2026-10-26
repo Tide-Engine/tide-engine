@@ -42,8 +42,19 @@ const models = new Map([
     ["/triangle.fbx", readFileSync(new URL("../../tests/e2e/fbx/static/triangle_ascii.fbx", import.meta.url))],
 ]);
 const modelRequests = [];
+// An ETag is the server's to say: this one ends a quoted argument and runs a
+// command, were it put on cmd.exe's command line
+const marker = join(opts.work, "etag-ran").replace(/\\/g, "/");
+const hostileTag = `x" & echo ran> ${marker} & "`;
+const hostileRequests = [];
 const server = createServer((request, response) => {
     const pathname = new URL(request.url, "http://localhost").pathname;
+    if (pathname === "/hostile.txt") {
+        hostileRequests.push(request.headers["if-none-match"] || "");
+        response.writeHead(request.headers["if-none-match"] === hostileTag ? 304 : 200, { ETag: hostileTag });
+        response.end(request.headers["if-none-match"] === hostileTag ? undefined : "Hostile.\n");
+        return;
+    }
     const model = models.get(pathname);
     if (model) {
         const tag = `"${pathname}"`;
@@ -100,7 +111,7 @@ system Note(mut Seen seen)
 `);
 }
 
-// tidec on the game: asynchronous, so the server above answers meanwhile.
+// Asynchronous, so the server above answers meanwhile.
 async function build(extra = []) {
     const out = join(opts.work, "out");
     mkdirSync(out, { recursive: true });
@@ -132,17 +143,25 @@ try {
     const cached = readdirSync(cache);
     check(cached.some((name) => name.endsWith(".etag")) && cached.length >= 2, `the URL is cached with its ETag: ${cached}`);
 
-    // The next build asks whether it changed, and is told it hasn't
     r = await build();
     check(r.code === 0, `the second build failed:\n${r.said}`);
     check(requests.length === 2 && requests[1] === `"v${body.length}"`, `the second build asks with the ETag: ${JSON.stringify(requests)}`);
 
-    // A changed file comes with a new ETag, and the pack changes
     body = "Credits: everyone, and you.\n";
     r = await build();
     check(r.code === 0, `the third build failed:\n${r.said}`);
     check(requests.length === 3, "the third build asks again");
     check(readFileSync(join(r.out, "game.pack")).includes(Buffer.from("and you")), "the pack has the new text");
+
+    // A server's ETag goes back as it said it, and nothing of it is run
+    writeFileSync(join(opts.work, "game", "game.tide"), `asset string hostile = "http://127.0.0.1:${port}/hostile.txt";\nscene Main { }\n`);
+    r = await build();
+    check(r.code === 0, `the hostile ETag's first build failed:\n${r.said}`);
+    r = await build();
+    check(r.code === 0, `the hostile ETag's second build failed:\n${r.said}`);
+    check(hostileRequests.length === 2 && hostileRequests[1] === hostileTag, `the second build asks with the ETag as it was: ${JSON.stringify(hostileRequests)}`);
+    check(!existsSync(marker), "nothing of an ETag runs");
+    check(readFileSync(join(r.out, "game.pack")).includes(Buffer.from("Hostile.")), "...and the cache stands");
 
     // Textual model formats come from the URL's path before its query or
     // fragment. The complete URL still identifies a fetch, a cache file and

@@ -1,0 +1,5 @@
+renderer: Vulkan; fixed 1920x1080; isolated static frames; CPU/GPU overlap; readback is not FPS
+equivalent: 1000 meshes + receiver, unshadowed, 1 lights, 0 shadow views, 4 calls, digest 233f308721d1c7c6
+cached_direct, unshadowed, 1000 meshes: record 0.0157, submit 0.0515 ms, GPU 0.1037 ms (100/100 samples)
+equivalent: 1000 meshes + receiver, point, 1 lights, 6 shadow views, 10 calls, digest 7d2dda58c487c418
+cached_direct, point, 1000 meshes: record 0.0513, submit 0.0768 ms, GPU 0.1552 ms (100/100 samples)

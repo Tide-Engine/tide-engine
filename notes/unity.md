@@ -1,0 +1,2396 @@
+# Unity as a front end
+
+## Development overrides belong to the editor launch (2026-10-26)
+
+Owner decision, replacing the persistent override introduced below: normal use
+must follow the project pin; engine iteration opts in when launching Unity.
+`-tide-command <executable>` selects a development compiler for that editor
+process only. Missing/repeated values and missing executables fail explicitly.
+Every lookup reads the launch arguments, so domain reloads retain the selection.
+Project Settings > Tide displays it and warns, but edits no path. The
+TideUserSettings class, saved tidePath field, migration and path-picker UI are
+removed; old ProjectSettings/UserSettings paths are ignored, not migrated again.
+Without the flag, existing git-package version resolution/install behavior and
+local-package PATH/installed fallback are unchanged. ABI diagnostics now say to
+relaunch without the argument or rebuild the development compiler.
+
+The IDE cache is format 2. A development selection carries the editor PID and
+UTC process-start epoch seconds, as well as the existing lock hash/commit.
+Normal selections have sessionPid 0 and the resolved pinned version; IDEs check
+the installation's VERSION before reusing them, so a global upgrade cannot
+silently change a project pin. A normal quit deletes
+only this process's development selection; IDEs validate process identity too,
+so a crash or PID reuse cannot revive it. Old unscoped caches are ignored.
+An unavailable/unresolved pin is reported, never replaced by a stale override.
+The editor/frontend implementations and exit observation are in editors.md.
+
+Validation: Unity 6000.6.0f1 VersionTests 8/8 on a normal batch launch and 8/8
+on a second launch with the real -tide-command argument (path includes spaces).
+They cover actual argument selection, ignoring a saved legacy path, malformed
+arguments, session metadata/quit cleanup, missing executable, normal cache kept,
+and rejecting the checkout-built ABI-5 host with the appropriate fix. The
+development launch's cache was absent after its process exited. Builds were
+disabled in this test project; no stand-in compiler was executed. Existing
+version/download/checksum checks remain included. No runtime C/ABI changed;
+native/web game suites and other operating systems weren't needed/run.
+
+## IDE toolchain selection and an old host after a package update (2026-10-26)
+
+The owner reported Play loading embed ABI 5 after updating to an ABI-7 package.
+Read-only inspection of the Playground found its migrated UserSettings tidePath
+still naming TideDev/playground-tide/bin/tide.exe. That intentional-override path
+takes precedence over package pinning; neither the override nor the running
+owner's project was changed by this task.
+
+Project Settings > Tide now explicitly warns that Your tide command overrides
+package updates and offers Use package version (clear the local override and
+restart the build service). The runtime's existing ABI rejection appends an
+editor-supplied explanation naming that command and this fix. With no override,
+it names the selected compiler and explains that #dev can precede the next
+published compiler. Play's editor hook checks an existing host through the same
+loader before entering Play, keeping the error in Edit Mode. No embed ABI or C
+runtime interface changed; explicit custom compilers remain supported.
+
+TideToolchain.Find publishes the selected command to Library/Tide/toolchain.json,
+with its package commit and SHA-256 of Packages/packages-lock.json, for the IDEs
+(notes/editors.md). The lock digest also identifies local packages. Writes are
+atomic, only on content changes; a failed selection deletes the old cache.
+The machine path stays out of source control. Existing version.json and release
+resolution/download behavior remain unchanged.
+
+Validation: Unity 6000.6.0f1, batch/nographics/noAudio under TIDE_HIDDEN, six
+VersionTests pass, including a custom command publishing the IDE cache, a failed
+selection removing it, and a tiny checkout-built native host exporting ABI 5
+being refused by the pre-Play helper with the override path and its fix. The
+existing release-tag, commit-cache, side-by-side install, wrong-version and
+checksum tests pass too. Final atomic-write change is included in that run.
+IDE checks and docs build are recorded in editors.md. No rendering/runtime/game
+change requires native/web suites; interactive Play cancellation and the new
+settings button's pixels were not exercised in a window. User docs are updated.
+
+Integration with origin/dev 665bf9217 keeps the incoming retired-converter
+cleanup below and the README's current component workflow. Only this note's
+adjacent new sections conflicted; both are retained. The merged package compiles
+and passes VersionTests plus EntityEditorTests, 9/9, with the same batch flags
+and ABI-5 fixture. Unrelated IDE checks and docs builds need no repetition.
+
+## Retired list conversion tool (2026-10-26)
+
+Owner: no pre-1.0 compatibility tooling is needed for the old TideEntity lists.
+Removed the project-wide list-to-component converter, its Tools menu and batch
+entry point, its inspector prompt, and its migration-only tests and metas.
+The inspector's generated-component lookup now belongs to `TideEditorSchema`,
+with only the component names and script GUIDs it needs from `components.json`.
+Add Tide Component still adds the generated Unity component where available.
+The existing listed authoring format and CLI asset reader are unchanged by
+this menu/tool removal. The package README describes adding the game's own
+components through Unity's Add Component menu.
+
+Validation: Unity 6000.6.0f1 compiled the package in a scratch copy of the
+Sample and passed `EntityEditorTests` 3/3 (EditMode, batch, `-nographics`,
+`TIDE_HIDDEN=1`, automatic Tide builds disabled). No C# warnings or errors;
+no remaining conversion-tool references in `unity/`. Inspector drawing in a
+window was not exercised; no runtime or web code changed.
+
+## Debugging the game in the editor (2026-10-26)
+
+Each `game-<n>` library `tide unity` builds is a debug build whose `.pdb`
+carries the game's natvis, with `Library/Tide/game.natvis` and `game_lldb.py`
+beside it. A native debugger attached to the Unity editor (VS Code's Attach
+to Unity (Tide), CLion's Run > Attach to Unity (Tide), Visual Studio's Attach
+to Process) stops at `.tide` breakpoints in the `loaded-<n>` copy the embed
+host loads, and on each new library a test or a reload loads. Checked in
+Unity 6000.6.0f1 itself (batch PlayMode tests under Windows' dbgeng) and with a
+host loading `tide_embed.dll` as `TideRunner` does. `notes/debugging.md`;
+package README, Debug.
+
+## Time travel (2026-10-26)
+
+The owner asked for a time-travel debugger in Unity: pause a match in Play, step it a tick at a time, scrub back
+through recent ticks with Unity's GameObjects, inspectors and Tide's drawing showing the tick, and record and replay a
+session bit for bit (a tester's file too), with the first tick that differs when the build changed.
+
+**Owner's decisions** (asked during the work, 2026-10-26):
+
+- With other machines in the match, pausing never blocks them: "continue the main simulation in the background such
+  that everything plays as normal and when I unpause I jump to the present ... if we don't have other players
+  connected we can pause the simulation". Built: with nobody else in it (`tide_session_remote_players` 0) Pause is a
+  real pause (no tick runs, no time passes for the match); with others in it, or one joining during a pause, the match
+  runs behind the tick shown and Resume shows its latest. This machine's player sends input as if it let go of
+  everything meanwhile (a zeroed `tide_embed_input` to the unseen frame): **Provisional (mine)**.
+- "Continue from here" was asked for, then "should work for multiplayer with clients too". Built for both: the
+  match goes back to the tick shown, the ticks after it gone, other machines' clients included.
+
+**The boundary.** Real play has no engine-imposed pause and still hasn't: time travel is a debugger the embed offers
+when the other program asks (`tide_embed_travel_keep`), the runner's Time Travel setting deciding where
+(`TideTimeTravel.Editor` by default: Play in the editor; `EditorAndPlayers` lets a game save testers' recordings;
+`Off`). Only a match this machine runs is recorded (the server's journal is the source); a client of another
+machine's match, and a sharded match, say why not (`tide_embed_travel.why`).
+
+What's built:
+
+- **The session's recorder** (`engine/src/session.c`, `tide/session.h`; notes/netcode.md): `tide_session_record` takes
+  `begin(world, tick)` and `tick(tick, record, size, world)`, fed by the server's journal (`tide_server_desc.journal`,
+  the shards' recovery records), `begin` as the recorder is set on a running match, as a match starts, as this machine
+  takes one over, and as a layout reload migrates it. `tide_replay_check` is `tide_replay` saying same, different
+  (with both hashes) or unreadable. `tide_session_rewind(world)` and `tide_session_remote_players`.
+- **The timeline** (`platform/include/tide/timeline.h`, `platform/src/timeline.c`): every record since the start
+  (64 MiB of them at most, then it starts again from the first world kept), the start world, a ring of the latest
+  `keep` worlds (COW copies, so the cost is the pages that changed), a world made again from the start for a tick
+  before the ring (`seek`, kept for the next tick on), and replay checks (the first tick that differs, its hashes,
+  the first unreadable). Tick n is the world after n ticks. `tide_timeline_cut(tick, world)` is Continue From Here's:
+  records after the tick go, the next record is whichever server tick comes, and `world` (the rewound world with the
+  match's command state, below) is kept as that tick's, recorded as a **jump** when it isn't what replaying makes, so
+  a replay goes there too. Saved as bytes (`TIDETIME`, version 1, little-endian): layout hash and simulation ID, tick
+  rate, the recording machine's player, the first tick, worlds packed as `pack_delta` against nothing (portable
+  between native and wasm; raw packs only for a game without deltas), the records, the jumps. Loading refuses another
+  layout hash ("laid out otherwise ... replay it with a build of that layout"); another simulation ID loads and says
+  `other_build`.
+- **The embed** (`tide/embed.h`, embed ABI 7): `tide_embed_travel_of` (state, first/kept/last/shown, tick rate,
+  replay checks, `background`, the shown world's hash, `why` and `refused`), `_travel_keep(seconds)`, `_pause`,
+  `_step`, `_show`, `_continue`, `_recording`, `_replay`, `_replay_end`.
+  - Paused at the latest tick with nobody else in the match, frames are `tide_run_frame` with no time, through
+    `tide_host.h`'s `tide_run_unblended` (views and the packet show the latest tick as it is, not blended into the one
+    before). Local code runs; its commands and requests go to the session and wait for the next tick; devices latch, so
+    a key pressed while paused is in the step's tick. A step is one frame of `tide_session_until_tick` plus 1 µs, with
+    the commands local code (or C#) sent handed to the session first (`tide_run_send_commands`, the loop
+    `tide_run_frame` ends with, factored out of it), so a command sent while paused is in the step's tick rather than
+    the one after (the Sample's scrubbing test found it).
+  - Showing another tick (scrubbed back, background mode, or a recording) is `show_frame`: the views run on that world
+    with a local state of their own (`travel.local`), with no session; its devices are consumed and its commands and
+    requests dropped, so nothing of an older tick's picture reaches the match, and the match's local state is as it
+    was when it goes on. The packet's player is this machine's, or a recording's player.
+  - Background mode: each frame runs the match's own frame unseen (zeroed input), then `show_frame` of the tick shown.
+  - A recording shown pauses a match this machine runs (refused for one it can't pause) and plays at its tick rate
+    (`playing`, at most a quarter second of ticks a frame).
+  - Hot reload: `reload_library.inc`'s `reload_before(old, next)`, which only the embed sets, runs before a swap or
+    full reload while the old build's code is there: the separate local state goes; a build of the same layout keeps
+    the timelines (`tide_timeline_set_game`); another layout or a full reload drops them (the session's next `begin`
+    starts the recording again from the migrated world), keeping the pause. While paused the embed still checks for
+    builds with the frames' real time.
+  - Web: `tide unity --web`'s program exports `tide_unity_travel` and the rest, `Tide.jslib` has `TideWebTravel` and
+    the rest, `TideLibrary` calls them.
+- **Continue From Here** (`tide_embed_continue`): `tide_session_rewind` copies the kept world into the server's,
+  then the generated `tide_game.keep_commands` (codegen.c, new) copies the live world's `tide_command_state` over it,
+  so each player's command sequences and unordered windows stay where the match had them: a command applied after the
+  tick doesn't run again, and one on its way (a client's pending, numbered on from the live world) goes in as it would
+  have. This machine's player takes the server's world at once (`take_server_world`); other machines' clients find
+  their next tick's hash isn't theirs and repair or resync as on any divergence. The world the match goes on from is
+  therefore the kept tick plus the command state, which the timeline records as a jump. No wire protocol change; the
+  generated header's Session ABI marker gained `rewind (1)` for the new `tide_game` member.
+- **The package**: `TideTravel` and `TideTravelState` (TideNative.cs), TideLibrary's bindings (ABI 7), and
+  TideRunner's `timeTravel`, `keepSeconds`, `Travel`, `Pause`, `Resume`, `Step`, `ShowTick`, `ContinueFromHere`,
+  `Recording`, `SaveRecording`, `Replay`, `ReplayFile`, `EndReplay`. `Editor/TideTimeTravelWindow.cs` (Window >
+  Tide > Time Travel, IMGUI, repainting in Play): what's going on (`Describe`), Pause/Resume, Step, Continue From
+  Here, a Tick slider, Save Recording / Replay This Match / Open Recording (`.tiderec`), and in a replay Play/Stop,
+  Step and Back to the Match with the check's result.
+
+**Picks (mine, Provisional):** Resume from a scrubbed tick goes to the latest (Continue From Here is the other);
+the separate local state for other ticks' frames (local handlers don't hear replayed or scrubbed ticks' events, and
+views' accumulated local state starts fresh there); a replay needs the same data layout rather than migrating its
+worlds; 10 seconds kept by default; 64 MiB of records; the `.tiderec` extension; a step's 1 µs past the tick.
+
+**Tests:**
+
+- `tide_platform_travel` (`platform/tests/travel.c`, `travel.tide`; native): off until kept; pause and step one tick
+  (no tick in a second of paused frames, the latest tick unblended, input and a press while paused in the step's
+  tick, no burst after resuming); kept ticks shown again (hashes and what the views drew equal, ticks before the ring
+  made again from the start, a B pressed on an old tick's picture sending nothing, steps from a shown tick); record
+  and replay bit for bit with input, commands and a view's command (played at the tick rate, every tick checked, and
+  replayed again in another embed in no match); a flipped record hash reported at its tick with both hashes, another
+  layout and a cut-short file refused; continuing from a tick (a Bump after it gone for good, a later one once, the
+  recording with its jump replaying bit for bit); a match never stopping for another machine (the game's own network,
+  a loopback, opened to a second session: a real pause becomes the background mode as it joins, the guest stays
+  connected and current, Continue From Here takes the guest's verified world back too). Session-level, three machines
+  over a lossy loopback: three players' input and commands replayed bit for bit (and before a ring of 8, from the
+  start); a build whose tick changes at its 50th tick (same layout, another simulation ID) differing at tick 50 with
+  both hashes and `other_build`; a rewind with two clients in the match, a command on its way going in once, and the
+  recording replaying bit for bit.
+- The Sample's PlayMode `TravelTests`: pause holds the match and a step runs one tick; scrubbing shows a kept tick
+  with its GameObjects (the tossed ball gone before its toss, the player's ball where it was, the live `Ball`
+  component's values and the world hash as they were); a recording saved to a file replays bit for bit (every hash,
+  the ball where the match had it, the recording's `Say`), and another layout is refused; Continue From Here takes the
+  match back (the toss gone for good, a later one in); a hot reload while paused keeps the pause and its ticks, and
+  the new build steps. EditMode `TravelWindowTests`: what the window says, and its menu item.
+
+**Runs:** native debug 2801/2801 and web debug 2696/2696 (both without `private-prototype`; one disabled test
+each, MicroDuck's turn as before), `tide_platform_travel` 10/10; the Sample's EditMode 30/30 and PlayMode 22/22
+(D3D11, a GPU, batch), with a tide installed from this checkout's mingw-release and debug builds and the Sample's
+`com.tide.game` written again by it (the schema hash moved with the Session ABI marker). After merging the type boundary's work (`unity_code.c`, the Sample's package): the native unity, CLI, LSP, outline, tidec, embed, reload and travel tests 2573/2573, the Sample's package as tide writes it unchanged, EditMode 33/33 and PlayMode 22/22. Not run: Unity on the web
+(the jslib and exports are built and compiled, not played), the window's drawing in a window, Linux and macOS.
+
+**Not done / gaps:** local handlers and the packet's EVENTS for replayed or scrubbed ticks (the separate local state
+hears nothing); a client of another machine's match can't time travel (it has no journal; its verified worlds could be
+kept, not built); sharded matches; replays across a layout change (the old layout's description isn't in the
+recording); the window's drawing seen in a window (batch runs have none).
+
+## Twelve texture slots and embed ABI 6 (2026-10-25)
+
+The coordinated internal capacity completion raises TideRender's sampled arrays
+and texture property IDs to twelve. Slots 0..7 keep _TideSampling's original
+four-bit modes; slots 8..11 use _TideSamplingHigh, supplied separately per draw.
+HLSL reads that high word only for high slots. The recorded pipeline contains
+one read entry per actual texture, replacing eight fixed entries. Native and
+managed embed ABI constants are both 6; stale hosts are rejected and the whole
+host/library/generated-shader set must rebuild. The separate draw packet stays
+at its existing version. No new runtime function, device baseline or vertex
+buffer transport is introduced. Twelve game textures plus the three GLES/WebGL
+vertex-buffer textures fit the existing sixteen vertex-texture baseline.
+The native zero-through-twelve packet fixture and strict FXC compilation of the
+capacity fixture passed. Unity player execution remains unvalidated locally.
+
+Integration audit against b4655dfd (2026-10-25): the merged hot-reload fix below
+keeps only vertex layout arrays in each pipeline's MaterialPropertyBlock.
+Both procedural draw paths retain that block; each command separately captures
+both sampling words and sets both globals immediately before drawing. The
+twelve-slot arrays, actual-count pipeline parsing and both ABI 6 constants
+survived the merge. Disable/enable discards pipelines and recordings; Fresh
+requests a render reset, and every shaded draw supplies its actual sample slots.
+The Sample's twelve checked-in shaders still declare only the low sampling word
+and reference slot zero; they do not exercise high slots and need regeneration
+with the complete rebuilt toolchain. This was a source audit only: no Unity,
+compiler or build execution was performed for the merge.
+
+Proposed and built 2026-10-20, early: the owner asked for every phase "most of
+the way there" to test and then list tweaks. What's built is in the "as built"
+sections below; the proposal's text above them is the design they follow.
+Decisions the owner made in the discussion are marked **Owner**; everything
+else is a pick to confirm. One pick the owner hasn't seen and should:
+`Packages/com.tide.game`, a generated folder in the project (Authoring as
+built, "Generated types and Unity's build cache").
+
+Tide stays the simulation, networking and determinism: the match code, its
+session, prediction, rollback, hashing and transports run as they do today.
+Unity renders, plays audio, and is where scenes and prefabs are authored. The
+shape is Photon Quantum's, with Tide's language in place of Quantum's C# DSL.
+C# never runs match code, so determinism is unaffected by Mono or IL2CPP.
+Dedicated and managed servers stay Tide-only builds of the same match code;
+Unity clients join them unchanged.
+
+## What a user has
+
+**Owner:** as few generated files as possible. The project holds `.tide`
+sources, Unity scenes and prefabs, and ordinary C# MonoBehaviours for views.
+The schema, the native library, compiled authoring data and shaders live in
+Unity's `Library/` (an uncommitted, rebuildable cache) or as sub-assets of the
+`.tide` files' importer, never as files a user maintains or commits.
+
+## C# bindings
+
+**Owner:** generated by a Roslyn source generator, with no `.cs` files on disk.
+**Superseded (owner, 2026-10-22):** tide writes the C# as files in
+`Packages/com.tide.game`, so components are real Unity components (Components of
+their own, below); the generator is gone.
+tidec emits a schema beside the native build: components (fields, offsets,
+sizes, local parts), singletons, events, commands, settings and prefab/scene
+names. A Unity package ships the generator, which turns that schema into typed
+C# at compile time:
+
+- `entity.Get<Health>()` and its `Verified` counterpart, local fields and local
+  state, read as blittable structs. Generated types already have explicit
+  padding and size assertions, so they map to `[StructLayout]` structs.
+- `Tide.On<Hit>(...)` for what the game's local handlers hear (the event log).
+- `Tide.Send(new BuyItem { ... })` for commands.
+
+Readers work on a base pointer plus offsets: the world's own memory on desktop
+and mobile (no copy), a per-frame copy on the web (below), with one C# path.
+
+## Authoring
+
+**Owner:** Unity assets are the source of truth, and we own the authoring
+component and its serialization rather than relying on Unity's mechanisms.
+
+Source-generated MonoBehaviours have no script asset and can't be attached to
+GameObjects, so the package has one hand-written `TideEntity` MonoBehaviour per
+entity GameObject (superseded 2026-10-22: the game's components are Unity
+components of their own, Components of their own below; what follows is the
+listed form, which tide still reads):
+
+- Authored values are Tide syntax, one string per component, holding only the
+  fields the author set (`Health { value = 100 }`).
+- **Owner (pick accepted):** overrides merge field by field. A variant or
+  prefab instance stores a patch of the fields it changed; tidec layers it over
+  the base, so later edits to other base fields still flow through. Unity marks
+  the whole string overridden; our inspector shows the merged values and marks
+  overridden fields itself.
+- Entity references and asset references live in a separate list of real Unity
+  object references, which the text names by index (`muzzle = @0`), so Unity
+  keeps them correct through hierarchy moves and renames.
+- Nothing is dropped silently: an unknown component or field stays in the text,
+  shows red in the inspector and fails the bake with a diagnostic. **Owner
+  (2026-10-21):** not for a field taken out of a component: the bake leaves its
+  value out, saying nothing, and the inspector doesn't show it ("we should error
+  when we are using data from views for example that ain't there anymore.
+  inspector tweaking should just hide it and move on"): code still using the
+  field is what fails. An unknown component still fails the bake.
+- The inspector has "Add Tide Component", one foldout per component styled like
+  a Unity component, Tide defaults shown greyed out, and `[SceneRequired]`.
+- Plain Unity components (renderers, animators, VFX) sit on the same objects or
+  their children. GameObjects without `TideEntity` are visual-only.
+
+### Baking at tide time
+
+**Owner:** no intermediate files. tidec reads Unity's text YAML itself, as it
+reads `.tprefab`: a game's sources include `Assets/**/*.prefab` and `*.unity`,
+and objects with `TideEntity` become Tide prefabs (named after the file) and
+scenes. tidec resolves nested prefab instances and variants through `.meta`
+GUIDs and applies their modifications, turns Unity Transforms into Tide
+`Transform` and the hierarchy into parenting, and reports errors at their place
+(`Assets/Enemy.prefab: Enemy/Weapon: Aim.muzzle: no entity`). The package shows
+them in the Console; clicking one selects the GameObject.
+
+Assets must use Force Text serialization (Unity's default); binary assets get a
+clear error. Unity's YAML isn't formally documented, but has been stable for
+years; the parser needs only objects, components, references and modifications.
+
+Tide renames (tidels) rewrite the Tide text inside Unity assets, as they do
+`.tprefab` files and asset paths. Unity Transforms need no conversion: Tide is
+left-handed with +y up and +z forward, applies Euler angles Z, X, Y, puts a
+triangle's front on its clockwise side and stores quaternions x, y, z, w, as
+Unity does (spec; `engine/include/tide/math.h`). Authored floats are baked by
+their bits.
+
+This is a second authoring front end beside `.tprefab` and `tools/tide-editor`;
+neither is replaced.
+
+### Assets
+
+**Owner:** asset fields use Unity GUIDs and are set in the inspector like any
+Unity object field. At bake tidec maps each GUID to its file through `.meta`:
+
+- Asset types Tide has (Texture, Mesh, SkinnedMesh, Animations, Sound) are
+  imported by Tide's own importers (PNG, glTF, OBJ, FBX), only when Tide code
+  reads their contents, such as mesh colliders or Tide drawing.
+- Unity-only objects (materials, visual-only prefabs, VFX, animator
+  controllers) stay in Unity. **Owner:** Tide gets no handle type for them; a
+  reference only needs to exist in Tide if the simulation uses it. Views attach
+  them as ordinary Unity components. Revisit if a game's match state has to
+  choose among Unity-only assets.
+
+## Runtime binding
+
+- When Tide spawns `Enemy`, Unity instantiates `Enemy.prefab` and binds child
+  entities to child GameObjects by path. The editor finds prefabs through
+  AssetDatabase.
+- Players include everything Tide can reach because it is referenced, never by
+  name lookup: authored references are real Unity object references (scenes and
+  prefabs keep them), and a scene build processor (`IProcessSceneWithReport`)
+  adds a registry object to the built copy of the first scene referencing every
+  Tide prefab, scene and `.tide` shader sub-asset. Unity's stripping then keeps
+  their assets, shaders and engine modules, with no committed file and no
+  "always included" lists.
+- Loading a Tide scene loads its Unity scene; its `TideEntity` objects bind to
+  the entities Tide spawns for it.
+- Views see predicted state blended between ticks (the existing `previous` and
+  `alpha`), with confirmed state on request. Shown/Hidden and Spawned/Destroyed
+  drive GameObject lifetime, so a rolled-back predicted spawn is destroyed.
+- Unity's Input System fills `Devices` on every platform, the web included.
+  Unity UI marks what it consumed.
+- **Owner:** simulation stays threaded; views and everything touching Unity run
+  on Unity's main thread, during the frame step.
+- Tide's audio plays through Unity's (2026-10-22, asked for by the owner:
+  "Audio and the editor's workflow" below).
+
+## Native boundary
+
+It touches the runtime, so its contents are agreed with the owner before either
+side depends on them (`notes/runtime-ownership.md`). Draft below.
+
+**Owner:** in the editor the package loads and unloads the library itself
+through function pointers (`DllImport` would lock it until Unity restarts). A
+rebuild packs the world and local state, swaps the library and unpacks them, as
+Tide's hot reload already does (`notes/hot-reload.md`). Users never see this.
+
+### Phase 1 interface (owner approved the draft and all five picks, 2026-10-20)
+
+The standard host (`tide/host.h`) already runs everything a front end needs
+except the window: the session, rooms, dedicated-server admission, host
+migration, local requests, commands, local handlers, files and hot reloading of
+game libraries (`platform/src/reload.c`, `tide_host_game`). So the boundary is
+that host with the window, GPU and audio device taken out, called once per
+frame by another program. The name is engine-neutral, as nothing in it is
+Unity's: `platform/include/tide/embed.h`, agent-maintained like the rest of
+`platform/`.
+
+```c
+typedef struct tide_embed tide_embed;
+
+typedef struct tide_embed_desc {
+    const tide_host_game *game; // A game linked in (players, IL2CPP static builds), or NULL with:
+    const char *library_dir;    // ...the folder tide writes game-<n> libraries to: the editor, hot reloading
+    int tick_rate;              // 0 for the game's tickRate
+    int argc;                   // tide/run.h's --host, --join, --connect, --seed, and a sharded game's --shards and --shard-width
+    char **argv;
+    const char *files_dir;      // Where the game's files live (Application.persistentDataPath)
+    const char *relay;          // NULL for the default relay
+    void (*log)(void *user, int error, const char *text); // stdout/stderr lines, for Debug.Log
+    void *user;
+} tide_embed_desc;
+
+tide_embed *tide_embed_create(const tide_embed_desc *desc);
+void tide_embed_destroy(tide_embed *e);
+
+// One frame of tide/host.h's loop: the session's update, connection events, local handlers, local
+// requests, then the views, recorded with the frame's view packet (below). `devices` is this
+// machine's input as Unity read it. Returns seconds until the match next needs a frame.
+double tide_embed_frame(tide_embed *e, float seconds, const tide_devices *devices, tide_float2 screen_size,
+                        float screen_scale);
+
+// The view packet the last frame wrote: valid until the next frame. Bytes, never pointers.
+const uint8_t *tide_embed_view(const tide_embed *e, uint32_t *size);
+
+// The session as tide_session_status says it, with the room code: what Unity's own UI shows.
+void tide_embed_status(const tide_embed *e, tide_embed_status *out);
+
+// What local code's Session calls do (tide_session_request): start a scene, join a code, connect to
+// an address, leave, open, close, end, kick. False when it can't be asked now.
+bool tide_embed_request(tide_embed *e, tide_session_request_kind kind, const char *argument);
+
+// A typed command from Unity's UI, as local code's Send: `type` and `value` as the schema lays
+// them out; packed and sent as Tide's own commands are. False for an unknown type or bad size.
+bool tide_embed_command(tide_embed *e, uint32_t type, const void *value, uint32_t size);
+
+// The app went to the background (true) or came back. Phones leave the match there, with host
+// migration where enabled, as Tide's mobile hosts do; desktop changes nothing.
+void tide_embed_background(tide_embed *e, bool background);
+
+// The game's schema (JSON): what the Roslyn generator reads, and its hash, which every view packet
+// carries, so stale bindings refuse to read rather than misread.
+const char *tide_embed_schema(const tide_embed *e, uint32_t *size);
+```
+
+The view packet is the main new piece. Each frame, generated code writes what C#
+reads into one flat buffer, laid out by the schema:
+
+- a header: schema hash, frame, tick, verified tick, alpha;
+- the shown entities: ID and generation, prefab, parent, owner and whether it's
+  this machine's, Shown/Spawned flags;
+- for each component, its entities and their values, floats blended exactly as
+  views see them, and singletons;
+- text and lists copied into the packet's own area, named by offset and length;
+- the events this machine's local handlers heard this frame, for `Tide.On<T>`.
+
+Its benefits: C# never depends on ECS storage (archetypes, lanes, pages, heap),
+which stays free to change; C# memory safety is a bounds check against one size
+and a schema hash; the web copies one buffer a frame (option B), desktop reads
+it in place; C# does no blending. Its cost is writing it each frame, which is
+the same work views reading those values do now.
+
+Generated (tidec, per game), as new `tide_host_game` members: the view packet
+writer, the command packer and the schema. The web build is the same host
+compiled into the Tide program `tide.js` runs: `pageFrames` calls its frame,
+the `.jslib` copies devices in and the packet out.
+
+Decisions, all approved by the owner as picked:
+
+1. The engine-neutral name `tide/embed.h` (pick), or Unity-specific naming.
+2. The view packet (pick), or C# reading world storage directly.
+3. Which prefab an entity came from must be known to late joiners, so it has to
+   be match state: a compiler-generated prefab ID on entities spawned from
+   prefabs or scenes, snapshotted and hashed (pick). Nothing records it today.
+4. Packet contents for the first version: every match component of shown
+   entities and singletons, blended; local fields; heard events. Confirmed
+   (verified) values only for components C# asks for, as they double the size.
+5. Unity's UI writing local state directly (not just commands and requests):
+   left out of the first version.
+
+Left for later phases: Tide's draw list for Unity's renderer (phase 5), audio,
+Tide GUI input claims.
+
+### Phase 1 as built (2026-10-20)
+
+The owner asked for it "most of the way there", to test and then list tweaks,
+as a git URL package with no hard-coded paths. Built:
+
+- **`tide/embed.h`** (`platform/src/embed.c`): the standard host in another
+  program's frame, with a linked game or, on desktop, `library_dir`: the newest
+  `game-<n>` there, each newer one swapped in as `tide run`'s host does
+  (`platform/src/reload_library.inc`, shared with `reload.c`). Frames take raw
+  `tide_embed_input` (a change from the draft's `tide_devices`, so presses latch
+  in the platform's own poll); status is a flat, size-asserted struct;
+  `tide_embed_view`, `tide_embed_schema`, `tide_embed_command` (with a target
+  entity: a completion of the approved call), START by scene name, and
+  `tide_embed_abi`. Contracts and tests: `notes/standard-host.md`.
+- **The view packet** is laid out in `engine/include/tide/embed_game.h`:
+  header, entities (index, generation, owner flags, prefab, parent), then
+  8-aligned sections of components (rows, blended values), singletons, local
+  fields and STRINGS (text and plain-element lists, named by handle). Prefab is
+  always none: entity prefab identity (owner decision 3) waits for authoring.
+- **`tidec --embed`** (`compiler/src/embed_codegen.inc`, `tide_add_game(EMBED)`)
+  writes `tide_game_embed`, in the `.c` only: the header, and so the game's hash,
+  is byte-identical with and without it, so Unity builds play with every other
+  build of the same game. The packet writer reuses views' `tide_prev_<C>`/
+  `tide_blend_<C>`. Schema JSON comes from the game's own layout (C offsets)
+  through the engine's `tide_schema_json`. Each match component's type there
+  has `defaults`, its value with its declared defaults as hex bytes (text and
+  lists empty), from the generated `tide_embed_defaults` (the
+  `tide_embed_game.defaults` hook, 2026-10-20). A scene's tag (a `scene`
+  declaration, the game's own or a Unity scene's `UnityEngine.Scenes.<Name>`) is
+  a component there with `"scene":true` (`tide_embed_game.component_scenes`,
+  2026-10-21), distinct from `scenes`, which lists only the scenes C# can start.
+  Every match component the game declares is listed as one, with its defaults
+  (`embed_component_listed` in `embed_codegen.inc`, 2026-10-21): it was only
+  those an archetype stored (`embed_component_kept`), so a new component nothing
+  spawned yet was a "struct" and Add Tide Component didn't offer it, though giving
+  it to a prefab's TideEntity is what gives an entity it (owner: "should i not see
+  this as a component in unity?"). The view packet's sections are still the stored
+  ones'. Test: `embed_schema` (`Unplaced`, which no entity has, is a component with
+  its defaults).
+  Details: `notes/language.md`.
+- **`tide unity [folder] -o <path> [--once]`** (`compiler/cli/build.c`): the
+  embed host library (`tide_embed`, the installed platform library and engine,
+  exporting the ten `tide_embed_*` functions), then `game-<n>`/`pack-<n>`
+  numbered on from the folder, and `schema.json`, read from each new build
+  through its exported `tide_unity_schema`. Ends when its input closes; a
+  `restart` line starts the running game over. `notes/cli-and-packages.md`.
+- **The package** `unity/com.tide.unity` (Unity 6000.0+): `Tide.Runtime`
+  (`TideRunner`: loads a copy of `Library/Tide/tide_embed` through function
+  pointers, frames with Unity's input from the Input System or the Input
+  Manager, reads the packet, shows entities by view rules (Tide prefab name or
+  component), places them by Tide's `Transform` under their parents, sends
+  commands and requests; `TideEntityView.Get<T>`), `Tide.Editor` (Project
+  Settings > Tide; `TideToolchain` finds tide by setting, PATH or the
+  installer's folder; `TideBuildService` runs `tide unity` while the editor is
+  open; `TideSchemaWatcher` forces a clean script compile when the schema hash
+  changes, as Unity's build cache doesn't see the file), and `Tide.Game`,
+  which the source generator (`unity/generator`, built to
+  `Game/Tide.Generator.dll`, labelled RoslynAnalyzer in its meta) filled with a
+  struct for every schema type (until 2026-10-22: tide writes it now). The generator reads
+  `Library/Tide/schema.json` from the folder Unity compiles in: Unity forwards
+  `.additionalfile`s only from `Assets`. The game folder defaulted to
+  `Assets/Tide`, as tide compiles every `.c` in a game's folder; since
+  2026-10-21 the game is all of Assets (The game is Assets, below). Every
+  package file has its `.meta`, which a git package can't make.
+- **`unity/Sample`**: Bounce (balls in a box, WASD/stick, Space), its scene and
+  ball prefab (`Assets/Editor/SampleSetup.cs` makes them), `BallTint` reading
+  the generated `Tide.Game.Ball`, and a play mode test.
+
+Tests: `tide_platform_embed` (eight cases: frames, input, requests, flags, bad
+frames, packet bytes incl. text/list/owner flags and a blended singleton,
+schema, commands and named scenes); every one of the repo's 324 games built
+with `--embed` compiles under `-Wall -Wextra -Wpedantic -Werror`, and their
+headers match plain builds; the sample's play mode test, headless with a scratch
+install: `tide unity` builds it, Tide runs Main in Unity's frames, the ball is
+this machine's, shown, coloured through the generated type and dropped onto the
+floor by the match.
+
+Gaps known then: Tide drawing in Unity (phase 5), authoring and prefab identity
+(phase 3, built below), the web path's package side (option B is proven, not
+packaged), player builds (built below, desktop), commands holding text or
+lists, scenes C# can start being those the game's code starts,
+`Clipboard.Copy`/paste, and tide's own log lines from the embed host reaching
+Unity's Console (the build service's do).
+
+### Authoring as built (2026-10-20)
+
+**The component.** `TideEntity` (`Runtime/TideEntity.cs`, its meta's GUID
+fixed: `4f7d2c1e9a8b4b6c8d3e2f1a0b9c8d7e`, which tide finds it by) holds
+`components` (each a Tide type name and its values as a Tide literal's fields,
+`"speed = 1.5, color = Color(1, 0, 0)"`) and `references` (GameObjects; an
+entity field's value `@n` names `references[n]`'s entity, `this` its own). The
+entity handle struct the generator maps entity fields to was renamed
+`TideEntityId` for it. The inspector (`Editor/TideEntityEditor.cs`) lists the
+schema's components (Add Tide Component; not `Transform`, which is Unity's,
+`UnityEngine.*`, nor scenes' tags: membership is the Unity scene the object is in,
+and `Main` was offered until 2026-10-21), draws each field by its schema type (numbers, vectors, `Color`,
+`quaternion` as Euler angles, `bool`, `string`, enums, entities as object
+fields; anything else as its literal), shows an unset field with its declared
+default from the schema's `defaults` (a text field's default shows empty), editable
+like a set one (it used to be faded, which read as read-only, and showed zero),
+and a right click on a field has Reset to Default (and Revert to Prefab in an
+instance). Each component's header is a bold foldout with a ⋮ menu (or a right
+click): Reset (every field), Revert to Prefab (an instance's component the
+prefab has) and Remove Component. The toolbar bar, the Remove and `×` buttons,
+the raw "As tide reads it" lists and the Play-mode label went on 2026-10-21
+(owner: simpler; the graying is enough). In a prefab instance it writes only
+the fields the instance changes (`Inherited` merges the chain of sources, nested
+prefabs and variants included), as tide merges. Reset there leaves out a field
+nothing under it sets (or sets to the default) and writes the default over one
+the prefab sets to something else (a text field it can't, its default not being
+in the schema's bytes); Revert to Prefab leaves the field out, and an instance
+left setting nothing has its override reverted (`prefabOverride = false` in
+the one `ApplyModifiedProperties`, as a field's edit is: `RevertPropertyOverride`,
+first, saved a variant asset itself, and the owner's Console then showed Quick
+Search's indexer warning "Build asset version error ... modification time",
+its import racing a second save; Unity rescans and recovers, and batch mode
+can't show the interactive editor's saves, so whether the change silences it
+is unconfirmed). `Assets/Tests/Editor/EntityEditorTests.cs` (the Sample's
+EditMode tests, through `InternalsVisibleTo`) pins both on a prefab inside a
+prefab with overrides at each level, on a prefab asset itself, and on a
+variant asset reverted and saved. In
+Play it's grayed out: the match has its entities already, and an edit there
+would reach neither the match nor the scene (owner, 2026-10-20: what can't be
+changed at runtime is grayed out).
+Showing the match's live values there instead is a possible next step.
+
+**The converter** (`compiler/cli/unity_assets.c`, owner decision: Unity assets
+are the source of truth, baked at tide time with no files in the project):
+`.meta` files give GUID → asset; prefabs and scenes holding the TideEntity GUID,
+themselves or through prefabs they instance, are read (binary serialization is
+an error naming the setting). Expansion follows Unity: GameObjects, Transforms
+(TRS, `m_Children` order), TideEntity MonoBehaviours; each PrefabInstance
+expands its source (32 levels at most), applies `m_Modifications` (`m_Name`,
+`m_IsActive`, local TRS, `components.Array.size`/`data[i].type`/`.values`, the
+values merged field by field, `references.Array.size`/`data[i]`),
+`m_RemovedComponents` and `m_RemovedGameObjects`; objects inside an instance
+get Unity's IDs in the outer file, `(instance ^ id) & 0x7FFF...`, so outer
+files reach objects nested deeper; stripped documents, added GameObjects and
+components, and `m_TransformParent` attach what the file adds. Roots follow
+SceneRoots, else file order. Emission: a prefab per asset, named after its file
+(two of one name are an error); a scene's roots go under an entity of its own,
+which has no Transform. Inactive GameObjects are left out with what's under
+them; a GameObject without TideEntity passes its placement on (composed TRS).
+Entity names are the GameObject's, sanitized (letters, digits, `_`; keywords
+and leading digits get `_`), a second sibling of one name `_2`. Each entity
+gets `Transform` (Unity's, with a TideEntity `Transform` component's fields
+over it) and `UnityEngine.Source { asset, node }`. References resolve to entity
+paths, `this`, or an error (an object without TideEntity, an asset, the root
+from below).
+
+**Prefab identity** (owner decision 3): `UnityEngine.Source` is ordinary match state
+declared by the converter's own source, so snapshots, hashes, late joiners and
+other builds of the same sources have it with no compiler change; the packet's
+prefab column stays unused. The map `unity.json` gives each asset's GUID, path,
+whether it's a scene, and each node's GameObject path (names from the root,
+`Name#k` for the kth of a name among siblings).
+
+**Binding** (`TideRunner`): an entity with `UnityEngine.Source` shows through its
+own GameObject: a scene's (found by path in the open scene of that path), or for
+a prefab's root, an instance of the Unity prefab (by GUID: the runner's
+`prefabs` links in a player, `AssetDatabase` in the editor), whose descendants
+show the prefab's other entities (found up the packet's parents). Authored
+GameObjects stay where Unity's hierarchy has them: their placement is Tide's
+under the parent entity's GameObject, through what's between; gone, they're
+deactivated rather than destroyed. Others use the view rules as before. The
+map is reloaded with each schema and when the file changes.
+
+**Identity and pooling (2026-10-21, owner: "lets deal with that gap and lets
+allow pooling").** Views were keyed by handle alone, and a rollback can give a
+handle to another entity (a predicted spawn where the server had another:
+notes/ecs.md, born), which kept the first entity's GameObject, maybe of
+another prefab, for the second. Now a `--embed` build always keeps what each
+entity was born as (`entities_born` is true for it: a hash per spawn, beside
+the world, not in the hash or the header, so the game's hash is unchanged), the
+view packet's entity row carries it (`born`, 24-byte rows, packet version 2),
+and `TideEntityView` keeps the born and `UnityEngine.Source` it was made for:
+`TideRunner.Same` remakes the view when either changes (born only where both
+are known; 0 is a world another machine sent). A game with visibility state
+borns from tick and handle, which doesn't tell two spawns of one tick and
+handle apart; the Source check still tells their prefabs apart. Releasing goes
+through `Release`: a scene's or an instance's GameObject is deactivated; one
+made from a prefab (`MadeFrom`, a view rule's or a Unity prefab's root) goes to
+`TideRunner.Spawner` (`ITideSpawner.Make/Release`, a game's own pool) if set,
+else to the pool when `pool` is on (inactive under "Tide pool", the runner's
+child, by prefab; taken back out to the active scene, reset by the game in
+`OnDisable`/`OnEnable`), else Destroy. `OnDisable` hands shown views to the
+spawner and destroys the pool, and no longer destroys scenes' GameObjects.
+Tests: `tide_platform_embed` (the row's born is known and stays), the sample's
+`Toss` command (an unowned Roller in and out) with
+`ThePoolKeepsAGameObjectForTheNextEntity` and
+`ASpawnerMakesAndLetsGoOfGameObjects`. Not exercised end to end: a real
+rollback handing a handle over, which needs two machines in the sample's test.
+
+**Generated types and Unity's build cache** (the generator described here was
+replaced on 2026-10-22 by C# tide writes: Components of their own, below). Unity 6 caches compiles in a
+shared cache keyed by an assembly's inputs (`Csc ... [CacheHit ...]` in the
+log), and a file in `Library` isn't one: deleting `Library/Bee` still restored
+a stale `Tide.Game.dll`, and neither a package `csc.rsp` nor `.additionalfile`s
+in `Assets` reach a package assembly's compile. So `Tide.Game` moved out of
+the package into `Packages/com.tide.game`, an embedded package tide writes
+(asmdef, `schema.json`, a stub naming the hash); the generator DLL moved to
+`Generator/` (no asmdef: it runs for every assembly and emits into `Tide.Game`
+alone) and reads the schema there first. Checked: adding and removing a
+component each recompiled (`CacheMiss`). The watcher now only refreshes the
+asset database when that schema changes. **Provisional (my pick, for the
+owner):** one generated folder in the project, meant for source control so a
+fresh clone compiles before tide runs; without it, scripts using the game's
+types fail to compile on a fresh clone, and Unity's Safe Mode would keep the
+package from ever building the game.
+
+**Diagnostics.** The build service gives tide's messages the asset they name
+as their Console context (a `.tide` file, or a prefab or scene, whose line is
+of `Library/Tide/prefabs/<asset>.tprefab`).
+A diagnostic's lines (source line, caret, notes: indented) are one Console
+entry. The last build's errors persist as Unity's compiler errors do, until a
+build succeeds (`SessionState`, so a script reload keeps them): logged again
+when the Console's count drops (cleared, by hand or on Play or recompile;
+Unity's internal `LogEntries.GetCount`, through reflection, and nothing if it
+isn't there), and Play is refused while they last, with a Scene view
+notification (`TideBuildService.HasErrors`). Errors coming after a result line
+start the list anew, as tide's stdout and stderr can interleave. Checked by hand
+in batch mode (a broken file, the Console cleared, Play attempted).
+
+**Opening the file** (owner, 2026-10-21: a double click opened
+`TideBuildService.cs`, the C# that logged it). A diagnostic naming a file and
+line goes in through Unity's internal `Debug.LogCompilerMessage` (reflection;
+in 6000.6 `(message, file, line, column, forEditor, isError, identifier,
+EntityId)`), as the C# compiler's do: the entry has the file (the project's
+path: `Assets/Tide/X.tide`, or for a prefab or scene the `.tprefab` text tide
+read) and line, and a double click opens it there in the external editor, with
+no C# stack. Ours carry the identifier `0x74696465`; a build's first diagnostic
+(`said`) and a build with nothing to say take the last build's away
+(`Debug.RemoveLogEntriesByIdentifier`), so the "the game's errors are fixed"
+line is left only for errors that went in as ordinary logs (no location, or a
+Unity without those functions, which then logs as before). Re-logging on a
+cleared Console or refused Play removes ours first, so none is there twice.
+`Assets/Tests/Editor/ConsoleTests.cs` logs one and reads the entry back
+(`LogEntries.GetEntryInternal`): its file and line, and its removal. In the
+owner's open editor (through the Unity CLI's Pipeline package), two restarts of
+tide's build each logged the error again with the Console's count unchanged,
+and Clear left exactly one (the stacking the owner saw was the package before
+this, whose ordinary logs nothing removed). What the double click opens for a
+`.tide` is the external editor's choice; not seen.
+
+Correction (2026-10-21, owner: a two-prefabs-of-one-name error came with a C#
+stack). A message naming a file but no line (`Assets/X.prefab: error: ...`)
+didn't match `located`, so it went in as an ordinary log, which Unity gives the
+package's own stack. The pattern takes the line and column as optional now; one
+about a whole prefab or scene goes in located at the asset itself (line 0), so a
+double click opens it and the Console selects it. Ordinary logs, for a message
+naming nothing, are `Debug.LogFormat(..., LogOption.NoStacktrace, ...)`. Test:
+`ConsoleTests.AnErrorAboutAnAssetOpensItAndNoneHasACSharpStack`.
+
+Correction (2026-10-21, owner: opening a `.tide` file didn't use the default
+IDE). Unity gives a file to the external code editor's package
+(`CodeEditor.CurrentEditor.OpenProject`), and Rider's and Visual Studio's
+packages open only their own extensions and those of Editor Settings'
+"Additional extensions to include" (`EditorSettings.projectGenerationUserExtensions`,
+`m_ProjectGenerationIncludedExtensions`), returning false for the rest, so
+Unity fell back. `Editor/TideCodeEditor.cs` adds `tide` and `packages` there
+once, at the first editor update after a script load, and syncs the editor's
+project, so `.tide` files and `tide.packages` open there from the Project
+window, the inspector's Open and the Console, and are in Rider's solution. It
+changes a project setting (`ProjectSettings/EditorSettings.asset`), as a user
+would in Editor Settings. Test: `IconTests.TideFilesOpenInTheCodeEditor`
+(listed once each, the rest kept). The owner's editor is Rider (2025.1).
+
+**The Console is the user's** (owner, 2026-10-20): logging intrudes and needs a
+good reason. tide's errors and warnings go there; its progress ("building ...
+whenever its files change", "built game-N") doesn't, which Project Settings >
+Tide's status shows instead, nor a player build's output unless it warns. The
+one other line is "the game's errors are fixed", as the errors before it stay
+in the Console. Unity's internal sticky entries (`Debug.LogSticky`,
+`RemoveLogEntriesByEntityId`, keyed by `EntityId` in 6000.6) could take fixed
+errors away instead; not tried. (Since 2026-10-25 builds are a status-bar task,
+and errors naming no file go as compiler messages too, so the fixed line is
+gone: Closing the gaps, below.)
+
+Tests: the sample's ball is `Assets/Sample/Roller.prefab` (TideEntity with
+`Ball`; since 2026-10-22 a `Ball` component of its own), spawned by `Spawn(Roller, ...)`; `Bounce.unity` has two pillars named
+Pillar under a plain `Pillars` GameObject, each a `Spinner`, loaded by
+`Scene.Load(Bounce)`. The play mode test checks the ball as before, and that
+both pillars show their entities with the scene's speeds, at Unity's
+positions, turned by Tide.
+
+**Fields the component no longer has (2026-10-21).** Owner: removing a field
+from a component gave each prefab's and scene's error twice (said once now:
+`notes/language.md`, A diagnostic is said once). The owner's decision, after a
+red inspector row with Remove and then a warning were tried the same day: it's
+no error and no warning. `check_literal` (`compiler/src/check.c`) takes a Unity
+prefab's or scene's value of a field its component hasn't (`unity_authored`:
+its source is named `.prefab` or `.unity`) out of the literal and says nothing,
+as Unity leaves out a removed C# field's value; the inspector draws only the
+component's fields, so it isn't shown. The value stays in the asset, so adding
+the field back brings it back. Code that still uses the field fails as any
+unknown member does. `.tide` and `.tprefab` text keeps the error: written by
+hand, an unknown field is a mistake. Test: `tidec_prefab_error_once` (a
+`.prefab` builds saying nothing of it; the same text as a `.tprefab` fails with
+the error once).
+
+Gaps: unsaved scene and prefab edits (tide reads saved files), `Name#k` paths
+when names include `#`, and gizmos. (Asset fields aren't one: a match component
+can't hold a rendering resource, "rendering resources belong to this machine,
+so the match can't use them", and a `Mesh` can't be a field, so nothing of a
+component is a Unity asset; tidels renames reach Unity assets, Tooling below.)
+
+### Components of their own (2026-10-22)
+
+Owner: "could we get a unity component instead? how reliable would baking
+actual files be? we can keep them in the package you create", accepting that
+renames and deletions are handled by refactoring tools as in Unity itself; then
+"if the components are their own components now why can't I access them via a
+reference directly and use their values?" and "yep that's what I imagine is the
+best" to live values. Defaults: "Unity's way" (a component's serialized values
+are what's baked; a declared default changing later doesn't reach a component
+already added, as a C# initializer's doesn't).
+
+- **tide writes the C#** (`compiler/cli/unity_code.c`, called by
+  `write_unity_package` in `build.c` after `schema.json`; the Roslyn generator,
+  `unity/generator` and `Generator/Tide.Generator.dll`, is deleted, and the old
+  hash stub `TideGameSchema.cs` is removed from projects). Into
+  `Packages/com.tide.game`, each file only where its bytes change:
+  `Components/<namespaces>/<Name>.cs` per authored match component (not a
+  scene's tag, not `UnityEngine.*`, not `Transform`), a file each as Unity finds
+  a MonoBehaviour's script by its file name, with a `.meta` whose GUID is the
+  first 16 bytes of SHA-256 of `"tide component " + name` (`unity_code_guid`),
+  so prefabs keep it across machines and builds; `TideGame.cs` (`TideGameSchema`
+  with the hash, game, tick rate, scenes and prefabs;
+  `TideGameTypes.Register()` (`TideGameComponents` until the same day, below) at `SubsystemRegistration`; the game's enums;
+  a layout struct for every other type); and `components.json`, how each
+  component's fields are serialized, which the converter reads. Stale component
+  scripts go (`sweep_entry`). Generating in tide rather than in the editor
+  avoids a chicken-and-egg: a project whose scripts use the game's types
+  doesn't compile until they're there, and batch mode exits on compile errors.
+- **A component** is `[AddComponentMenu("Tide/<name>")]`,
+  `[DisallowMultipleComponent]`, `sealed partial class X :
+  Tide.TideComponent` (`Runtime/TideComponent.cs`: `[RequireComponent(typeof(TideEntity))]`,
+  `TideName`, `ReadLive`), its fields with their declared defaults (from the
+  schema's default bytes; a text field's from `print_outline`'s new `text`, as
+  written between its quotes), and a nested `Value` struct laid out as the C
+  is. Field forms (`plan_of`): numbers, `bool`, vectors as `Vector2/3/4`,
+  `Vector2Int/3Int`, `Quaternion`, `Color`, text as `string`, entities as
+  `GameObject`, enums (size 4) as the generated enum, lists of those plain
+  types as `List<T>`, and anything else a string holding a Tide literal
+  (`literal`, with a tooltip naming its type; empty is its default). Names that
+  clash with `Value`, `TideName`, `ReadLive` or the class get `_`; C# keywords
+  `@`, which Unity's YAML key leaves out.
+- **Live values** (`TideRunner.Live`, after `Show`): for each packet component
+  with a registered type, each shown entity's GameObject gets it (added where
+  it hasn't) and `ReadLive` writes its fields from the packet; components the
+  entity no longer has are destroyed. Only while `TideTypes.Hash` (`TideComponents` then) is the
+  packet's schema hash, so stale C# never misreads. Writes in a script stay
+  Unity's; commands reach the match. `TideComponentEditor` grays them in Play
+  and repaints. `TideRunner.GameObjectOf(entity)` gives entity fields.
+- **The converter** (`unity_assets.c`) loads `components.json` beside the
+  project's Assets (`read_components`; its stamp is the game's) and reads each
+  MonoBehaviour whose `m_Script` GUID is a component's (`read_component`):
+  fields flattened into property paths (`velocity.x`, `marks.Array.data[2]`,
+  Unity's hex for a list of numbers decoded by `elementType`'s size), entity
+  fields as references of the component's own, resolved with the TideEntity's.
+  A node's own components are kept apart from its TideEntity list (`owned`,
+  slots never move, so pending references keep their index). An instance's
+  `m_Modifications` set paths on them (`ident.what` 3), `m_RemovedComponents`
+  takes one away. Emission writes each field Unity serialized as Tide text
+  (`put_form`: numbers as written or `number`, `Color(r, g, b, a)`, enum
+  members by value, `this`/paths/`default` for entities, lists in `[]`); a field
+  with nothing serialized keeps its default. A script GUID the game hasn't, and
+  a key its component hasn't, are left out silently (owner's rule above).
+- **Converting (retired 2026-10-26):** the one-time editor tool converted the
+  original TideEntity lists to generated Unity components. It and its tests
+  were removed at the owner's request; see Retired list conversion tool above.
+  The entity inspector's Add Tide Component still adds the component itself
+  where tide made one (`TideEditorSchema.ComponentType`).
+- **Renames** (tidels, `unity_renames` in `compiler/lsp/analysis.c`): a
+  component's rename gives its objects the new name's GUID and
+  `m_EditorClassIdentifier`; a field's renames its key in those objects and an
+  instance change's `propertyPath`, the target found through the prefabs
+  instanced (`unity_ids`: each asset's component object IDs, instances' as
+  `(instance ^ id)`).
+
+Tests: `unity_components_as_tide_components` (`compiler/cli/tests/unity_components`,
+hand-written as Unity writes: every form, a hex list, a removed component and a
+removed field left out, a scene instance changing a list element, a color
+channel, an entity to the scene's own and removing a component);
+`unity_code_writes_the_samples_package` (tide writes the Sample's checked-in
+package byte for byte, line endings aside, and sweeps a stale script) and
+`unity_code_guid_is_the_names`; `lsp_rename_reaches_unity_assets` (the GUID,
+class identifier, a key, an instance's `propertyPath`, not another component's
+field of that name); the now-retired conversion tests covered a prefab and a
+prefab holding it, and PlayMode tests read Ball and Spinner through
+their components, live. The Sample was converted by the command (4 components).
+Gaps then, bridged the same day (Every type in C#, below): asset fields, `char` lists and structs as literals, a
+field whose C# name had `_` added for a clash not renamed by tidels, the owner's project not converted.
+
+### Events, commands and singletons in C# (2026-10-22)
+
+Owner, after components of their own: "this should make views trivial right? what about events and commands"; my
+recommendation (C# hears what local handlers hear, as predicted and as verified; singletons live; text commands;
+a GameObject as a command's target): "yeah I think that makes sense yes".
+
+- **Events.** tidec `--embed` taps every match event of the game's own with a predicted and a verified local
+  handler (`notes/language.md`, Events, text commands and command defaults), and the view packet's EVENTS section
+  carries what they heard. tide writes each event as `sealed partial class E : Tide.TideEvent` (fields read live:
+  text as `string`, entities as `GameObject`, plain lists as `List<T>`, a struct field as its value; maps and grids
+  left out) with `Tick`, `Verified`, `Target` (the GameObject the entity it was sent to shows, or null) and
+  `TargetEntity`. `TideRunner.On<E>(Action<E>)` hears each as soon as this machine has it (a correction can turn it
+  out not to have happened), `OnVerified<E>` once the server confirmed its tick, `Off`/`OffVerified` stop; a
+  `TideEntityView`'s `On`/`OnVerified` hear those sent to its entity. The runner tells them after the frame's
+  components are live (`Hear`, after `Live`), before scripts' Update; a handler's exception is logged and the rest
+  run.
+- **Singletons** are `sealed partial class S : Tide.TideSingleton`, live like components (`LiveSingletons`), their
+  local fields too: `TideRunner.Get<S>()` gives the runner's, null outside a match. `TryGetSingleton` reads the
+  nested `S.Value` as before. Internal ones (`tide_*`) stay structs.
+- **Local fields** of a component or singleton are its class's `[NonSerialized]` fields, read from the packet's
+  local sections; the inspector shows them in Play under "Local fields" (`TideComponentEditor`, by reflection).
+  The converter never sees them: `components.json` lists the match fields alone.
+- **Commands** are `sealed partial class C : Tide.TideCommand`, starting at their declared defaults (the schema's
+  `defaults` for commands now), `Pack` writing their `Value` through `TideCommandWriter` (`Text`, `List`, `Entity`
+  of a GameObject); `TideRunner.Send(C, GameObject target = null)` and `Send(C, Component target)` send them to the
+  match or the entity the target shows, as local code's `Send` and `entity.Send`. `Send<T>(T value)` of a raw
+  `Value` stays for plain commands. False outside a match, for text that isn't UTF-8, or a command too big.
+- **The registry** is `Tide.TideTypes` (was `TideComponents`): components, singletons and events by Tide name,
+  registered by `TideGameTypes` in `TideGame.cs`, which holds every non-component class; the packet reader takes
+  version 3 and lists EVENTS (`TidePacket.HeardCount`, `Heard`, `HeardValue`).
+- **The Sample**: `event Bounced { float speed; }` sent to a ball as it bounces, `local int heard` on `Ball` that a
+  local handler counts, `command Say { string text; }` kept in `Extras.said`, and `command Paint { Color color; }`
+  handled per ball. PlayMode tests: `EventsAreHeardAsLocalHandlersHearThem` (heard, verified and the ball's view's
+  counts equal, the target is the ball, the local field equals them) and `CommandsCarryTextAndGoToGameObjects`
+  (Room live, a non-ASCII `Say` comes back in `Extras`, `Paint` sent to the ball's GameObject colors that ball).
+
+Gaps then, bridged the same day (below): events' and singletons' map, grid and heap-holding list fields left out
+of the classes; a component's struct fields Tide literals in Play. (Commands hold lists of bytes alone: Tide's rule.)
+
+### Every type in C# (2026-10-22)
+
+Owner: "lets bridge any gaps".
+
+- **The packet carries every container** (`notes/language.md`, Containers in the view packet): lists of anything,
+  maps, sets and grids, each an entry of STRINGS with what it holds the packet's handles too (packet version 4, every
+  entry 8-aligned). A map's or set's field keeps the handle in its first word (`Tide.TideMap`, 24 bytes), a grid's
+  as `Tide.TideGrid`.
+- **C# has every type** (`unity_code.c`, a type tree parsed from the schema's type strings, `parse_ctype`): scalars
+  and vectors as before, text as `string`, an entity as its `GameObject` (as a key, its `TideEntityId`, as
+  GameObjects come and go), an enum as itself, a struct as its own `[Serializable]` C# struct (`write_struct`: its
+  fields, `From` of its laid-out `Value`, `Pack` for a command), `List<T>`, `Tide.TideSet<T>` (insertion order,
+  serializable), `Dictionary<K, V>`, `Tide.TideGrid2<T>`/`TideGrid3<T>` (the chunks the grid has, indexers, `Size`)
+  and arrays as `T[]`. `TideRead` (Runtime) turns a packet's entries into them; the generated conversions are
+  lambdas that take nothing from around them, so C# makes each once.
+- **Authored in Unity**: a component's struct fields, lists of anything but containers, sets of scalars, text or
+  enums, arrays and `char`s are serialized and baked; a map or a grid (no map literal but `[]` in Tide) and a
+  container of containers are `[NonSerialized]`, live in Play only. `components.json` describes each field's
+  shape (`"shapes"`, by Tide type: its form, a struct's fields, an element's shape, an array's length), which the
+  converter reads recursively (`flatten_shaped`, `put_form`): a struct as `Hold { mass = 12, owner = Pilot }`, a set
+  from its `items`, an array of exactly its length, a `char` as `'A'` (`put_char`: Tide's escapes, `char(n)` for a
+  control character), an entity anywhere in it a reference of the component's own, and an instance's change of any
+  of them by its property path (`shape_at_path`). A component's struct field's declared default is its C# initializer
+  (`new Trail { length = 0f, ... }`).
+- **Renames** (tidels): a struct's field is renamed wherever an authored component holds the struct, through
+  structs, lists and arrays, in YAML keys (followed by indent, `- ` items as "[]") and instance changes'
+  `propertyPath`s (`unity_struct_paths`, `unity_path`); keys are computed as unity_code.c names fields (`unity_key`:
+  `Value`, `TideName` and the other members, or the type's own name, get `_`).
+- **Assets**: none to bridge; see the Authoring gaps above.
+- **The owner's project** was converted by the command in batch mode (6 components in 4 prefabs and scenes, none
+  left listed, after a copy of its Assets, Packages and ProjectSettings), and tide bakes the same values from it.
+- **The Sample**: `Trail trail` on `Ball`, `char badge = 'S'` on `Spinner`, `Set<PlayerID> speakers` and
+  `Grid2<byte> board` in `Extras` (filled by `Say`). Tests: PlayMode checks the set's count, the grid's size and the
+  cell `Say` counted, a cell nothing set, the room's `Dictionary` of balls whose value is the ball's GameObject, the
+  pillars' `badge`; the retired conversion tests also covered struct literals and chars.
+  `unity_components_as_tide_components` covers every shape, nested entities and instance changes of them;
+  `lsp_rename_reaches_unity_assets` a struct's field in a struct, a list's element and an instance's change, and a
+  `Value` field's `Value_` key. Every one of the repo's 330 games built with `--embed` compiles under `-Werror`
+  (which found unused command helpers in four games with text or byte-list commands: `TIDE_HELPER` now).
+
+### Tide types and their C# twins (2026-10-26)
+
+The owner asked for the seams between Tide's types and their C# twins closed, Tide staying the source of truth (every
+twin still written into `Packages/com.tide.game` by `unity_code.c`): renames reaching C# scripts, a twin leading back
+to its Tide declaration, and C# errors that explain a Tide rename. **Owner** (2026-10-26, hub card `mvp14nl24360`):
+"File only, line looked up live (your pick)": the generated C# names the declaration's file, not its line, so a line
+moving above a declaration rewrites no C# (a recompile and domain reload, in Play too, on most saves); the line comes
+from `Library/Tide/outline.json` when Unity opens the declaration. Everything else here is my pick (Provisional).
+
+- **One naming, shared** (`compiler/lsp/unity_names.c`, compiled into tide and tidels as `json.c` is): the C# name of
+  every type (namespace parts after `Tide.Game`, an identifier C# takes, `Local` after a local part, `_` after a
+  second of one name in one namespace, in schema order), field (`_` after the type's own name and, for a class or a
+  struct of Unity code's, `Value`, `TideName`, `ReadLive`, `Pack`, `From`, `Tick`, `Verified`, `Target`,
+  `TargetEntity`; a class's local fields after its own, among them) and enum member (a second of one identifier left
+  out), from the schema's names. `unity_code.c` takes every name from it (its own `identifier`, `taken` and `reserve`
+  are gone); the Sample's package came out byte for byte the same.
+- **Renames reach C#** (`compiler/lsp/csharp.c`, from `unity_renames` in `analysis.c`, for a type, a field or an enum
+  member of a component, singleton, event, command, struct, input or enum, and a namespace): reads the project's
+  `Packages/com.tide.game/schema.json`, names everything as the C# has it and again with the rename (`unity_cs_assign`
+  over the changed Tide names), and edits what changed in every `.cs` of `Assets` (not in folders ending `~` or
+  hidden), of embedded packages (`Packages/*`, but the one whose package.json is com.tide.game) and of local ones (the
+  manifest's `file:` dependencies, `..` folded so the URIs are the editor's). The edits join the rename's
+  WorkspaceEdit, so the editor previews and undoes them with the rest. The C# is lexed (comments, strings, characters
+  and preprocessor lines skipped; an interpolated string's holes lexed as code, up to a format or an alignment) and
+  read conservatively, with no compiler, in three passes over the project's files (its types' names; their members;
+  the edits):
+  - a type where a dotted name resolves to `Tide.Game.<twin>` as written, through `global::`, an alias's target, or a
+    namespace the file opens (its usings, its namespaces and those above them); not where the first name is a type
+    the project declares, a variable in scope there, or assigned (`Mode = ...`); a single name the project also
+    declares as a variable or member anywhere only where only a type can be (after `new`, `is`, `as`, `<`, `typeof(`,
+    or before a declared name). Only a name written as the type's own is edited, not an alias's. A namespace (Tide's
+    `Combat` is C#'s `Tide.Game.Combat`) likewise, in a using, an alias's target, a qualified name or one under a
+    namespace the file opens (`Combat.Blade` after `using Tide.Game;`); not in a `namespace` declaration, which is the
+    project's own. A namespace's rename moves each component in it in the assets too (`unity_move`: the new name's
+    script GUID, `m_EditorClassIdentifier` from where the old and new class names part, a TideEntity list's
+    `- type:`), as a component's own rename always did; `unity_rename` now carries a list of moved components.
+  - a member where its value's type is known: a variable, field, property or parameter declared of a twin (in scope: a
+    type's body, the rest of a block, a method's or lambda's body, a foreach statement; two of one name in one scope
+    of different types are neither), `var` given `new`, a generic call or another known value, `out var` in a generic
+    call, a lambda's parameter in a generic call (`On<Hit>(hit => ...)`), a generic call's type argument
+    (`GetComponent<T>()`, `runner.Get<T>()`; an indexer or a foreach over it its element), `new T { a = ... }`'s
+    initializer, a cast (`((Health)x).hp`, `var h = (Health)x;`), `as` (`(x as Health).hp`), a pattern's variable
+    (`x is Health h && h.hp > 0`, in scope through the if's block), an enum's member after its enum, and on through the
+    twins' fields, lists and arrays (`h.trail.length`). A class's members are its fields and its local fields; its
+    `Value`'s, its fields.
+  - the project's own classes and structs (`user_class`: by their names, so partial ones across files are one, and
+    classes of one name in two namespaces too, a member two of them type differently left ambiguous): each field's,
+    property's and method's type, so a member reaches through `state.Current.hp`, `Find().hp`, `state.Pick().hp`,
+    `GameState.Instance.Current.hp` (static, by the class's name), and a bare or `this.` name in a class finds its
+    members declared in another file of a partial class.
+  - a doc comment's `cref` (`/// <see cref="Health.hp"/>`, `T:` and `global::` read): its namespace, type and member,
+    as code naming them; other comment text never.
+  - Test: `lsp_rename_reaches_unity_scripts` (scripts in Assets, an embedded and a local package, and com.tide.game's
+    own script, never edited): a field through a variable, `var` of `GetComponent`, an interpolated string's hole, a
+    foreach over `GetComponents`, a method's parameter, a qualified field; not Shield's or another class's `hp`, a
+    comment's, a string's, nor `Samples~`'s; the type in a using alias, a field, generic arguments, `Tide.Game.` and
+    `global::` names, not the alias's uses; a local field; `Value_` renamed to a plain name and a plain one to
+    `Value_`; a struct's field through a component's field, not the project's own `Trail`'s, and the struct itself only
+    where qualified, as the project has a `Trail`; a singleton's field after `runner.Get<Extras>()`, an event's in a
+    lambda, a command's in an initializer (not a variable named `text`); an enum and its member; a namespaced
+    component and its field by the namespace's using; a field through casts, `as`, a pattern's variable, a method's
+    result, a static field and a partial class's field from its other file, and in a cref; the type in a cast, `as`,
+    `is`, a method's result, a partial class's field and a cref; the namespace in a using, a qualified name and a
+    cref (not bare `Blade`), and in a prefab its component's script GUID, class identifier and TideEntity list.
+- **Docs and where** (`unity_code.c`, from the outline): `print_outline` (`compiler/src/outline.c`) gives a
+  declaration's `doc` (the `//` lines just above it, attributes allowed between, a blank line or code ending them;
+  slashes and one space dropped), each field's `line` and `doc` (above it, else a comment after it on its line), and
+  an enum's `memberDocs`. The C# has a `/// <summary>` (XML escaped) on each class, struct and enum of the game's,
+  its last paragraph "Tide's component Ball, declared in Assets/Tide/Bounce.tide." (`where_declared`: a game file
+  from Assets, a package's as "the Box3D package's body.tide", none for tide's own in Library/Tide, which get no docs),
+  and on each field and enum member with a doc. Tests: `unity_code_writes_tides_docs_and_where_each_type_is` (fixture
+  `compiler/cli/tests/unity_names`), `tidec_outline_game` (docs above and after, two lines, a member's).
+- **Opening the declaration** (`Editor/TideDeclarations.cs`): `[OnOpenAsset(0)]` (an `EntityId` from 6000.2, as
+  com.unity.timeline's), for a script opened with no line that's a `TideComponent` whose `Value` has `[TideType(name)]`:
+  the outline's component of that name, opened by `InternalEditorUtility.OpenFileAtLineExternal` at its line and column
+  (`Opener`, which tests replace). A double click on the Script field, Edit Script and the Project window all come
+  through `AssetDatabase.OpenAsset`. A script opened at a line (a C# error in it) opens as itself, as does one before
+  the game has built. `TideOutline` reads `doc` and fields' `line` and `doc`.
+- **Errors that explain a rename:** `unity_code_record` (tide, after each C# write, from `write_unity_package`) diffs
+  the names of the schema the C# had (the com.tide.game schema.json it replaces) with the new one's: a type by name,
+  else the one gone and the one come of its kind with the same fields, else the only ones of their kind; a field by
+  name, else in its place with its type, else the only one gone and come of its type; local fields through their
+  parts; an enum by name, else the only one; members by name, else in their place. Into `Library/Tide/renamed.json`
+  (`{"renamed": [{"was": "Combat.Health.hp", "now": "Combat.Health.health", "file": "Assets/Tide/combat.tide",
+  "line": 8}, {"was": "Shield", "removed": true}]}`, names after `Tide.Game.`): a new entry replaces one of its name,
+  one whose `now` is renamed again follows it, one whose name the C# has again goes, the newest 100 stay, and a build
+  of the declarations alone records no removals (it leaves some out). Written only when it changes; Library is never
+  in source control. `Editor/TideRenames.cs`: at `CompilationPipeline.assemblyCompilationFinished`, each error saying
+  a member (CS0117, CS1061), a type (CS0246, CS0103), a type in a namespace (CS0234) or in a type (CS0426) isn't there
+  is looked up (`Tide.Game.` and `global::` dropped, `.Value.` as the class's field, else an entry ending in it, for a
+  namespaced type written short), and a note goes in as a compiler message of its own identifier (`0x7469646e`), an
+  error one, so it shows beside the errors it explains when warnings are filtered out: "tide: `Ball.speed` is now
+  `Ball.velocity` (Assets/Tide/Bounce.tide:124)", located at the new declaration, or "tide: `Paddle` was removed from
+  the game's Tide code" at the script's line; each once, all gone at `compilationStarted`. As the package loads
+  (`delayCall`) it also explains the C# compile errors the Console has (`ConsoleErrors`, read from Unity's internal
+  entries by `file(line,col): error CS`), which the editor's first compile at startup leaves before it could hear
+  them. `TideBuildService.LogLocated`/`RemoveLocated` take the identifier. (A first probe in batch mode found no
+  warning of any kind added to the Console, which looked like tide's own located warnings going nowhere: it was this
+  machine's Console with its warning filter off (`consoleFlags` 1666, without `LogLevelWarning`), and
+  `LogEntries.GetCount` counting what the filter shows. With the filter on, `LogCompilerMessage`'s warnings and
+  `Debug.LogWarning` are counted. Nothing was wrong.) Test:
+  `unity_code_records_what_became_of_names` (a field renamed in place, a local field, a struct by its fields, an enum
+  member, a field whose type changed too removed; renamed again, back again, declarations alone).
+- **Sample tests** (EditMode `TypeBoundaryTests`): Ball's script opens `Assets/Tide/Bounce.tide` at `component Ball`
+  through `AssetDatabase.OpenAsset` (BallTint's isn't the game's); the regenerated `Ball.cs` has Ball's doc, its file,
+  and `velocity`'s and `heard`'s docs; `GeneratedDocsAreWellFormedXml` compiles all of com.tide.game with `/doc` (its
+  files' `#pragma warning disable` hides doc warnings, so the XML C# writes is read instead): no "Badly formed XML",
+  and the summaries of Ball, `Ball.velocity`, Trail and Extras where they belong, as Rider and Visual Studio read them;
+  a probe script of renamed and removed names compiled apart gets the three notes from Roslyn's own messages, each once
+  in the Console, and none after `Clear`; a compile error already in the Console gets its note from `ExplainConsole`.
+  Both compile with the Roslyn `csc.dll` Unity ships (`DotNetSdk`, a response file), synchronously: `AssemblyBuilder`
+  is obsolete (CS0618) and reported after the test's wait once. The Sample's Ball and its `velocity` have doc comments
+  to pin. `unity_code_writes_the_samples_package` passes the Sample's outline
+  (`compiler/cli/tests/unity_sample/outline.json`, cut to Bounce.tide's types, from the Sample's
+  `Library/Tide/outline.json`): copy it again with the Sample's package when Bounce.tide's docs change; the test
+  says so when the package differs.
+- **Gaps** (after a second round, 2026-10-26, the owner: "deal with what is left"): what C# itself can't tell without
+  a compiler stays out: overloads and extension methods (a method's result is its name's, across the class's
+  overloads, and none where they differ), inheritance (a member of a base class isn't followed to a derived one),
+  generic type parameters, `dynamic` and reflection. A project type of a twin's name keeps bare uses of the twin
+  unrenamed everywhere (qualified ones are), by design. Not seen in a window, as agent runs open none: Rider's and
+  Visual Studio's hover itself (the XML they read is tested), the external editor opening at the line (the call to
+  `OpenFileAtLineExternal` is), and the notes in an interactive Console (Unity's own entries are read back).
+- **Runs:** native debug 2805/2805 and web debug 2710/2710 (without `private-prototype`), then the CLI, language-server,
+  outline and Unity CTests again after the last `unity_code.c` change (21/21); docs build. The Sample with a scratch
+  tide (this checkout's mingw-release, then debug, installed): EditMode 31/31 (three runs, the first regenerating
+  com.tide.game with the docs), PlayMode 17/17 on D3D11. Second round (C#'s casts, patterns, own classes, crefs and
+  namespaces; Console errors at load; the XML test): native debug 2805/2805, tidels 261/261, tide_cli_tests 67/67, the
+  docs build, Sample EditMode 32/32. Web and PlayMode weren't run again (the owner: test what's necessary, CI catches
+  the rest): tidels is native only, and the package change is editor code.
+
+### Scenes as built (2026-10-20)
+
+**Owner:** the match decides which Unity scenes are loaded, as a dedicated
+server outside Unity must have them too; Build Settings' first scene mirrors
+Unity's start; after it, the match's code loads scenes; in the editor, the
+editor tells the match which scenes it has open, editor only.
+
+- **The converter** (`unity_declarations`) adds to `Unity.tide`, when the
+  project has scenes of Tide entities: `singleton UnityEngine.LoadedScenes { Map<int,
+  Entity> loaded; PlayerID opener; bool heard; bool opened; }`;
+  `event(Spawned) Begin(with Main, ...)` loading Build Settings' first enabled
+  scene (`ProjectSettings/EditorBuildSettings.asset`, whose stamp is the
+  game's too), unless the editor's command came first; `command OpenScene {
+  int asset; bool only; }`, taken only from the match's first player (set by its
+  `PlayerJoined`, or by the command when it comes first in the first tick):
+  `only` unloads the scenes it loaded but that one, then it loads the asset's
+  scene by a `switch` over the scenes. Order-independent: Begin then Open, or
+  Open then Begin, end with the editor's scenes alone. Test:
+  `unity_prefabs_and_scenes_as_tide_prefabs` (the fixture's Build Settings
+  names Level first, after a scene that's off).
+- **`tide build`/`tide run --assets`**: a server, or any build, of a game made
+  in Unity has the same prefabs and this code (the prefab texts are written
+  for `tide unity` alone, under its `-o`). Checked: `tide run --frames 60` and
+  `tide build --server` of the sample.
+- **The runner** follows the match: a scene asset's root entity in the packet
+  loads that scene additively unless it's open
+  (`EditorSceneManager.LoadSceneAsyncInPlayMode` in the editor, any scene;
+  `SceneManager.LoadSceneAsync` in a player, Build Settings' scenes), and its
+  going unloads it, waiting for a load the match let go of mid-way. Entities
+  of a scene still loading show once it has. The runner keeps itself across
+  loads (`DontDestroyOnLoad`, a root one), and a scene's own runner loaded
+  while one runs removes itself quietly. In the editor, as this machine runs
+  the match (`status.server`), it sends Open for each scene of Tide entities
+  open as it started, the first with `only`; and Play from a scene of Tide
+  entities with no runner makes one. The build processor warns of a scene of
+  Tide entities missing from Build Settings.
+- **The sample**: `Bonus.unity` (a Totem Spinner), loaded and unloaded by the
+  `ShowBonus` command; Bounce.tide no longer loads Bounce itself. Play mode
+  tests: the match loads and unloads Bonus with Unity; the editor's open
+  Bounce and Bonus are the match's; Bonus open alone is the match's and Bounce,
+  loaded as Main started, goes. Players checked as before.
+
+**Unity scenes are Tide scenes** (owner, 2026-10-20): a scene asset `N` is
+`scene N { }` in `Unity.tide`, its authored tree the prefab
+`UnityEngine.SceneContents.N` (`namespace UnityEngine.SceneContents;` at the
+top of its text), and `UnityEngine.Fill<N>` (`event(Spawned) ... (with
+UnityEngine.Scenes.N)`) spawns that prefab into each loaded N, so every entity
+of it is N's for `with scene N` (`notes/language.md`, Scene filters). The
+sample's `Spinning` is `without scene Bonus`, and the play mode test checks
+Bonus's totem stays still.
+
+**Everything from Unity is under `UnityEngine`** (owner, 2026-10-20, so the
+link is clear): scenes are `UnityEngine.Scenes.N`, prefabs
+`UnityEngine.Prefabs.N`, a scene's tree `UnityEngine.SceneContents.N`, and the
+converter's own declarations `UnityEngine.Source`, `UnityEngine.LoadedScenes`
+and `UnityEngine.OpenScene`. Game code writes `using UnityEngine.Scenes;` and
+`using UnityEngine.Prefabs;` for the short names. The entity editor's menu
+leaves out `UnityEngine.` names.
+
+**Named by their folders, short while unique (2026-10-21).** Owner: "i cant
+have 2 prefabs with the same name, we should likely do something about this"
+(the converter refused two of one file name). The owner picked folder names,
+with the short name while it's unique, over folder names alone and over
+references set in the inspector. The converter declares each prefab, scene
+tree and scene in its folders' namespace (`asset_folders` in
+`compiler/cli/unity_assets.c`: each folder under `Assets` a name as an
+entity's is, so `Assets/Enemies/Goblin.prefab` is
+`UnityEngine.Prefabs.Enemies.Goblin`, the Sample's `Assets/Sample/Bonus.unity`
+`UnityEngine.Scenes.Sample.Bonus`; one in `Assets` itself keeps the short
+name); a scene's Fill handler is named after the whole name, dots as `_`. The
+checker's `find_in_folders` (`check.c`, called when `find_in` misses) makes a
+name `UnityEngine.Prefabs`, `UnityEngine.Scenes` or `UnityEngine.SceneContents`
+hasn't the one declaration of that name in their sub-namespaces, and nothing
+for none or two: no copy is declared, so a prefab's errors are said once and a
+scene is one scene. With two, the unknown-name error's new note
+(`other_namespaces_note`, any unknown name) lists the declarations of that
+name in other namespaces: "there's 'UnityEngine.Prefabs.Bosses.Goblin' and
+'UnityEngine.Prefabs.Enemies.Goblin': write the one you mean". Only two of
+one folder whose names sanitize alike (`My Level`, `My_Level`) are still
+refused. Relative qualified names (`Enemies.Goblin` after `using
+UnityEngine.Prefabs;`) aren't in the language. Tests:
+`tidec_unity_folder_names` (`compiler/tests/unity_folder_names.cmake`: the one
+Goblin by its short name and by `UnityEngine.Prefabs.Goblin`, a full name
+beside another of its name, and the short name of two refused with both
+named), `unity_prefabs_and_scenes_as_tide_prefabs` (the fixture's
+`Assets/Fixture` names), and the Sample's play mode test, whose code uses the
+short names.
+
+**Scenes loaded by hand are local (owner, 2026-10-22):** "scenes that are
+matches should be loaded via Tide; unity scenes being loaded manually should be
+left alone and considered local/disconnected". A scene the match loads twice is
+two of Unity's (2026-10-22, "Audio and the editor's workflow").
+
+### Web as built (2026-10-20): option B, packaged
+
+`tide unity --web -o <dir>` (once; `compiler/cli/build.c`, `tide_unity_web`)
+builds the game, `--embed`, as a WASI program whose `main` is
+`unity_web_main`: `tide_embed_create` with the linked game and the page's pack,
+then `tide_platform_run`, its frame `tide_embed_frame` with the input the page
+last copied in (a frame with none, from tide.js's worker while the page is
+hidden, gets zeroed input), and `tide_unity_*` exports: `ready`, `input`,
+`frame_info` (the screen; frames are timed by the page's clock), `status`,
+`view`/`view_size`, `schema`/`schema_size`, `draw`/`draw_size`, `buffer` (where
+the page puts a request's text or a command's value), `request`, `command`,
+`background`. It writes `tide-game.js`: `Tide = {wait, pageFrames, embedded,
+canvas: a detached one}`, `TIDE_PROGRAM`/`TIDE_PACK` as base64 (gzip in
+release) and tide.js, and `unity.json`.
+
+`tide.js` (`platform/web/tide.js`, release runtime regenerated): with
+`pageFrames`, frames while the page is shown come only from `Tide.frame()`;
+hidden, from the worker as before. `Tide.exports()` and `Tide.memory()` give
+the page the program's exports and memory.
+
+The package: `Runtime/Plugins/WebGL/Tide.jslib` starts the program with the
+runner's arguments (`Tide.arguments`, `Tide.relay`, `Tide.start()`), and each
+Unity frame copies Unity's input into the program's memory, runs
+`Tide.frame()` and copies the packet, schema, status and draw packet into
+buffers of Unity's heap it keeps (`_malloc`), which `TideLibrary`'s methods
+return as the desktop calls do (TideRunner calls methods now, function pointers
+on desktop, `DllImport("__Internal")` on WebGL). A web player can't read
+`StreamingAssets` files, so players carry the map in the scene
+(`TideRunner.map`, set as the scene builds). The build processor runs `tide
+unity --web --once --release` for a WebGL target and puts `tide-game.js` in the
+build with a `<script>` before `</head>` of Unity's `index.html`: no template in
+`Assets`. Tide's threads need the page served cross-origin isolated (COOP
+same-origin, COEP require-corp), as any Tide page.
+
+Checked: `unity/Sample/web-smoke.mjs` serves a WebGL build of the sample
+(`SampleSetup.BuildWeb`, Brotli as Unity builds it, served with its encoding)
+isolated and opens `index.html?tide-smoke` in headless Chrome (muted, a window
+of its own): PlayerSmoke saw the match running, this machine's ball through
+the Unity prefab on the floor, and Tide turning the scene's pillars: PASS.
+
+### Tide drawing in Unity as built (2026-10-20): the 2D first slice
+
+`tide_embed_draw` (`notes/standard-host.md`) gives the frame's draw list;
+`Runtime/TideDraw.cs`, which TideRunner adds while `drawTide` (on by default),
+draws it over Unity's frame from `OnGUI` with GL (`Hidden/Internal-Colored`),
+so in any render pipeline: rects, circles, their wires, lines, smooth shapes
+(boxes and ellipses with their top-to-bottom fill and outline; arcs as part of
+a ring; round corners, soft edges and turns not yet), 2D meshes' triangles
+with their corners' colors times the tint, and text in Unity's font at the
+anchor; under Tide's 2D cameras (a size is half the height seen; 0 a pixel a
+unit, y up, the camera's center at the screen's) and in screen pixels after
+`Draw.Screen`; alpha and additive blending. Skipped: clears (Unity's frame is below), render targets,
+clips, stencil, textures, 3D meshes, shaded runs and blits. The sample's Hud
+view draws its text, which the play mode test finds in the packet. The HLSL
+target and ScriptedImporter for custom frags/verts, Tide's own font, and 3D
+meshes through Unity's renderer remain.
+
+**Unity's camera is the views' (2026-10-21).** Owner: a view drawing at
+`Draw.WorldToScreen(worldPos)` drew everything in the bottom left corner. Three
+causes: Tide's 3D camera was its own first one (at the origin facing +z), so
+points about z = 0 had no projection and `WorldToScreen` gave (0, 0); TideDraw
+put the 2D origin with no camera at the screen's bottom left, where Tide's first
+2D camera centers it; and the view drew the screen position as a world one
+(it's for `Draw.Screen() { ... }`). Now TideRunner sends its `viewCamera`, else
+`Camera.main`, each frame before the frame call (`ViewCamera`: position,
+rotation, vertical field of view; an orthographic one or none sends 0, Tide's
+own), through `tide_embed_camera` (`notes/standard-host.md`; ABI 3, the
+package's `TideLibrary.Abi` with it; on the web the `tide_unity_camera` export
+and `TideWebCamera` in the jslib). Unity and Tide share axes and handedness
+and both give the vertical field of view, so `WorldToScreen` lands where
+Unity's camera sees the point. TideDraw's default 2D origin is the screen's
+center. The sample's Hud used the old corner (`float2(16, Screen.height - 30)`
+in world units), so it moved into `Draw.Screen()` at (16, 30), and a `Ring`
+view draws a wire circle at each ball's `WorldToScreen`; the play mode test
+finds the ring within 1.5 pixels of `Camera.main.WorldToScreenPoint` of the
+ball (y flipped). Not done: an orthographic Unity camera (Tide's 3D cameras are
+perspective ones), and Unity's near and far planes for a projected depth.
+
+**Stats and the runner's Arguments (2026-10-21).** The owner put `--stats` in
+TideRunner's Arguments and saw nothing: the embed dropped every flag it didn't
+take, and drew no stats. `--stats` now shows Tide's stats drawer, open, over
+the game (`notes/standard-host.md`), as does the game's `stats` setting; TideDraw
+draws it as any of Tide's drawing (its panel, text and lines). A word the embedded
+game doesn't take gets a Console warning naming it and listing those it takes
+(`TideRunner.UnknownArguments`; Sample's `ArgumentsTests`). Unity's own Stats
+window has the rendering; Tide's drawer has the frame's work, ping, delay,
+network, entities, threads and the slowest systems.
+
+### Tide's renderer in Unity (2026-10-22): 3D, targets and shaders
+
+Owner: "let's do the 3d drawing and shaders", then "lets deal with the not done
+yet parts". Tide's own renderer (`platform.c`) draws the frame into Unity's
+camera through `platform/src/gpu_record.c` (`notes/rendering.md`, Recording),
+and the package replays its GPU calls. All of Tide's drawing comes through: 2D
+shapes, smooth shapes, text in Tide's font, sprites, meshes, 3D primitives and
+meshes, instancing, render targets with several colors, depth, cubes and
+samples, stencil, clips, blits, and the game's frags and verts. It is the same
+pixels the renderer draws for its own window. It works in the built-in render
+pipeline and URP; on Direct3D 11 and 12, Vulkan, OpenGL and WebGL 2; in Gamma
+and Linear projects; and the editor's scene views show the frame's 3D. The
+OnGUI path (`TideDraw.cs`) remains only for a GPU `TideRender.Supported` refuses
+(no constant buffers, or neither compute-class buffers nor OpenGL ES 3).
+
+- **Shaders:** `tide unity` (`compiler/cli/unity_shaders.c`, with `--assets`)
+  writes a Unity shader per pipeline WGSL: the renderer's 10 (`TIDE_RENDERER_WGSL`)
+  and each game shader (`codegen_options.shader_out` collects them as the game
+  generates). Each is its HLSL (`notes/shaders.md`, HLSL) in ShaderLab, at
+  `Packages/com.tide.game/Resources/TideShaders/<key>.shader` named
+  `Hidden/Tide/<key>`. The key is FNV-1a 64 of the shader's SPIR-V, which the
+  recording backend sends with each pipeline. A wasm program has no SPIR-V and
+  sends its WGSL's FNV-1a instead; `web-keys.txt` beside the shaders maps each
+  WGSL key to its file's, which TideRender reads. Files are written only when
+  they change, and those of shaders gone are removed with their metas.
+  Resources get them into player builds. Render state is material properties
+  (blend factors, ZTest/ZWrite, Cull, Stencil Ref/Comp/Pass). Each shader has two
+  SubShaders: target 4.5 without `gles3`, and target 3.5 for `gles3` alone, whose
+  HLSL reads vertices from textures. Each includes
+  `Packages/com.tide.unity/Runtime/Shaders/TideWarnings.hlsl`: Unity passes a
+  standard `#pragma warning` to fxc only from an included file (a probe showed
+  one inline in the shader ignored).
+- **TideRender.cs:** added by TideRunner with `drawTide` where `Supported`. After
+  each frame the runner calls `tide_embed_render`, and `Replay` reads the commands
+  (`Prepare`): objects are made and written at once, and the draws are kept as
+  `Command`s, each with the buffers, textures, material and uniform range it
+  reads, in a `Recording`. In the built-in pipeline the recording is written into
+  a CommandBuffer on the view camera at `CameraEvent.AfterForwardAlpha`, so Tide's
+  3D depth-tests against the scene and draws before image effects. A scriptable
+  pipeline's pass calls `Prepare(camera)` as the camera begins and
+  `Record(camera, commands, color, depth)` as it runs.
+  - Buffers are raw `GraphicsBuffer`s written at once (`SetData`). One written
+    after a kept draw of this frame read it is renamed: a new buffer, the old one's
+    bytes copied first (`Graphics.CopyBuffer`), so the earlier draws read what
+    they did and a second picture in the frame (a scene view's) can't change the
+    first. Textures written after use are renamed the same way. Everything freed
+    is destroyed three frames later.
+  - Index buffers keep their bytes. Unity draws through an index `GraphicsBuffer`
+    of 16 or 32 bits made from them (`DrawProcedural` with an index buffer, so the
+    GPU's vertex cache works), made again only when the bytes changed.
+  - Textures are `Texture2D`s (linear, a mip chain where the format allows, and a
+    CPU copy for part writes), `Cubemap`s, or cube `RenderTexture`s.
+  - Targets are linear color `RenderTexture`s with mips, plus a separate D24S8
+    depth `RenderTexture` sampled as `RenderTextureSubElement.Depth`. A
+    multisampled target's depth binds as a `Texture2DMS` (`bindTextureMS`), and
+    RESOLVE_DEPTH draws a sample of each pixel into a depth texture of one sample
+    a pixel with `Runtime/Resources/TideResolveDepth.shader` (SV_Depth), the
+    texture Tide reads from there.
+  - A pipeline is its shader, with a `Material` for each (flip, stencil value) it
+    draws with. A shader Unity hasn't imported yet (a new build's) is looked for
+    again each frame. It's one Console error, two seconds of frames on.
+  - Each draw sets the globals `hlsl.h` names and the recording's uniform
+    `GraphicsBuffer` at its aligned offset (`SetGlobalConstantBuffer`), then calls
+    `DrawProcedural`.
+  - Target 0 is the camera's own (`BuiltinRenderTextureType.CameraTarget`, or a
+    pass's color and depth), never cleared. `_TideFlip` 0 has
+    `_ProjectionParams.x` turn it as Unity's own draws are turned.
+  - Tide targets are cleared to black as gpu.h says, and flipped only where
+    Unity's texture rows go from the bottom (`!SystemInfo.graphicsUVStartsAtTop`).
+    Cull is swapped there.
+  - OpenGL and OpenGL ES (and WebGL): a texture's own sampler (`ownSamplers`), its
+    `filterMode`/`wrapMode` set as each draw asks. Unity's OpenGL has no samplers
+    apart from textures, so a texture sampled two ways in one frame is sampled the
+    last way by all.
+  - OpenGL ES 3 and WebGL 2 (`textureBuffers`): a buffer is an RGBA8 texture of
+    4,096 pixels a row, a word each pixel's bytes, written whole as it changes.
+  - Scissor rects go to Unity's bottom-left rows.
+  - A pipeline Tide doesn't draw in (HDRP, or one of a project's own) is one
+    Console warning.
+  - `Fresh` (nothing made yet) has the runner call `tide_embed_render_reset` first.
+    Disabling the runner disables it, and the next embed's numbers start over.
+- **Scene views:** the built-in pipeline's scene cameras get a CommandBuffer each.
+  As one is about to render (`Camera.onPreCull`, `CameraType.SceneView`),
+  TideRender asks for `tide_embed_render_view` (`notes/standard-host.md`) with its
+  matrices and size, reads it as a recording of its own and records it. In URP the
+  pass does the same through `Prepare`. Only the window's 3D is drawn, through the
+  scene camera; the frame's 2D, clips and targets stay out.
+- **URP:** `Runtime/URP/Tide.Runtime.URP.asmdef` compiles where the project has
+  `com.unity.render-pipelines.universal` (17.0+; `TIDE_URP` from its version
+  define). `TideUniversal` hooks `RenderPipelineManager.beginCameraRendering` and,
+  for each camera TideRender draws into, enqueues a `ScriptableRenderPass` at
+  `AfterRenderingTransparents`: no renderer feature has to be added to the
+  project. Its `RecordRenderGraph` adds an unsafe pass using the camera's active
+  color and depth (`UniversalResourceData`) and records into its native
+  CommandBuffer. URP 17.6 has RenderGraph alone (no compatibility mode).
+- **The camera:** `tide_embed_camera` takes Unity's matrices (ABI 4): the camera
+  transform unscaled, and `Camera.projectionMatrix`. Tide's 3D is in Unity's depth
+  with its near and far planes, and orthographic cameras work. The frame's screen
+  is the view camera's pixels while TideRender draws. On the web,
+  `tide_unity_camera(given)` reads 32 floats that the jslib copies to
+  `tide_unity_camera_matrices()`.
+- **The web:** the Tide program beside Unity's exports `tide_unity_render`,
+  `_render_size` and `_render_reset`. The jslib copies the commands into Unity's
+  heap (`TideWebRender`), and TideRender replays them as on desktop with
+  `textureBuffers` and own samplers. No resolve of multisampled depth on WebGL 2:
+  `TideResolveDepth` isn't supported there, so that depth reads as far.
+- **Tests:** in BounceTests (PlayMode; ignored with `-nographics`):
+  - `TideDrawsIntoUnitysFrame` and `...InURP`. The latter makes the Sample's URP
+    assets once (`Assets/Sample/URP`, plus URP's own global settings and volume
+    profile, committed) and sets the pipeline for the while. It puts URP Lit
+    materials in place of the Sample's built-in ones for the while, so the scene
+    is lit, not the error magenta.
+  - Each renders the main camera into a 640x480 texture and checks:
+    - the stripes' exact colors, and the plate under the floor hidden;
+    - the cube over the ball in its color, at Unity's projection of where it is;
+    - the ring and the Hud's text;
+    - the render target's orientation;
+    - stencil (a cyan square inside its circle alone);
+    - the multisampled target's resolved depth (view `DepthView`: a cube's depth
+      darker than the far limit at its corners).
+  - `SceneViewsShowTidesThreeD` renders a camera made a scene view's
+    (`cameraType = SceneView`) from elsewhere: the cube where it sees the ball,
+    and no Hud text.
+
+  Runs: D3D11 all 11; Vulkan, D3D12 and OpenGL Core (`-force-vulkan`,
+  `-force-d3d12`, `-force-glcore`) the three drawing tests; and a Linear copy of
+  the Sample (`m_ActiveColorSpace: 1`) both frame tests. EditMode 15/15 includes
+  `ShaderTests.TideShadersCompileWithNothingSaid` (every Tide shader through
+  `ShaderUtil.CompilePass`, no `GetShaderMessages`), which passes on all four
+  desktop APIs. On the web, `PlayerSmoke` now also reads the frame on the screen
+  (`ScreenCapture`): stripe and cube colors. `web-smoke.mjs` (headless Chrome,
+  SwiftShader WebGL 2, `TIDE_SMOKE_SHOT=<png>` saves the page) PASSes on a WebGL
+  build. That's the back buffer path on GL ES. Batch mode has no
+  `WaitForEndOfFrame`, so the editor tests call `camera.Render()`.
+  `TIDE_UNITY_DUMP`/`TIDE_UNITY_SCENE_DUMP=<png>` save their frames. (A first
+  version of the web check rendered the camera by script into a RenderTexture,
+  which on WebGL read back the clear color alone, Unity's scene missing as much as
+  Tide's: the screen it reads now is what a player sees.)
+- **Picks (Provisional, mine):**
+  - The built-in pipeline first, then URP.
+  - The renderer's HLSL is translated, not hand-written.
+  - Shaders are written by `tide unity` into com.tide.game, not by an importer
+    making sub-assets of `.tide` files.
+  - URP's pass is enqueued per camera, not a renderer feature the project adds.
+  - Scene views draw the frame's 3D alone.
+- **Not done:**
+  - HDRP, which the owner's design takes only on request.
+  - A Metal run: no Mac here. The shaders go through Unity's Metal compiler as
+    through its Vulkan one, which runs them.
+  - No Tide API reads pixels in an embedded game: `target_read` serves headless
+    captures and the platform tests, so it reads nothing in Unity, by design.
+
+### Audio and the editor's workflow (2026-10-22)
+
+The owner asked for "audio working and deal with those editor workflow issues":
+Tide's sound in Unity, and four gaps listed after the renderer: unsaved edits,
+scenes opened during Play, a scene loaded twice, and `#` in names. All the
+picks below are mine (Provisional).
+
+- **Audio.** An embedded frame hands its audio to the mixer as a window's does
+  (`tide/host.h` calls `tide_platform_audio` embedded too; `platform.c`'s
+  embedded branch submits and goes no further natively). Embed ABI 5:
+  - `tide_embed_audio(e, out, frames, rate, channels)` is `tide_audio_out_fill`,
+    the pull every device backend uses, called from the other program's audio
+    thread. It says `tide_mixer_rendered_elsewhere(true)`, so a reload's forget
+    waits for that thread. NULL with 0 frames says the thread stopped. Silence
+    with no embed, nothing for channels outside 1 to 8.
+  - `tide_embed_microphone(e, samples, frames, rate, channels)` is
+    `tide_audio_in_push`, from the frame's thread. `tide_embed_status.microphone`
+    (one of the old pad bytes, same size) says a frame names a microphone voice.
+  - `tide_embed_destroy` forgets the mixer first, as its clips go with the game.
+  - Both are in `embed_exports` (`compiler/cli/build.c`), which the embed DLL
+    exports. A function missing there links into nothing: `Bind` then fails.
+  - **C#:** `TideAudio` (`Runtime/TideAudio.cs`) is made by the runner on a child
+    GameObject, "Tide Audio": an AudioSource of its own (so a user's AudioSource
+    on the runner is never filtered), a silent looping clip so the filter runs,
+    `OnAudioFilterRead` writing the mixer. The runner's `audioOutput` mixer
+    group is the source's. The audio thread reads the embed under a lock;
+    `Detach` (before `library.Destroy`) clears it under the lock and then tells
+    Tide the thread stopped, so destroy's forget never waits on a thread that's
+    waiting on the lock. Under `TIDE_HIDDEN` the block is cleared after it's
+    read: silent, while `TakeLoudest`/`Reads` (public, a level meter) still see
+    the mix. `Listen` opens Unity's `Microphone` (48 kHz asked, its own rate
+    used) while the status says so, never under `TIDE_HIDDEN`, asking Android's
+    and iOS's permission first, tried once a second.
+  - **Web:** Unity's WebGL has no `OnAudioFilterRead` or `Microphone`, so no
+    `TideAudio` is made there. Tide's program on the page opens its own
+    AudioWorklet at its first audio frame (`embedded_heard` in `platform.c`)
+    and the page's microphone through the usual path. tide.js resumes the
+    context on the document's first press, which Unity's canvas gets.
+  - **Sample:** `Assets/Tide/bonk.wav` (made by a script: a falling sine, 0.18 s)
+    plays from the ball's local `Heard` handler, louder for a faster landing.
+- **Unsaved scenes.** At Play, `TideBuildService.Sync` saves a copy of each
+  loaded, dirty scene that has a path (`EditorSceneManager.SaveScene(scene,
+  "Library/Tide/unsaved/<path>", true)`), deletes copies of scenes that aren't
+  dirty, says `changed` when a copy was made, changed or deleted, then
+  `sync <n>`. Play is cancelled and entered again once tide says
+  `tide: synced <n>` for the last n asked (the `tide unity` loop prints it when
+  no build is waiting). A batch run skips all of this. Each Play with a change
+  pending waits for that build, and for the loop's 250 ms ticks.
+  - **Syncs are numbered** because tide takes one stdin line per tick
+    (`sys_typed_line` holds one line at a time): a second `sync` can arrive
+    after the build that answered the first, so tide answers it again. Without
+    numbers, the editor took that stale answer for the next question's and read
+    the build before it happened.
+  - **The copy is saved to `Temp/TideUnsaved.unity` and then copied** into
+    `Library/Tide/unsaved`, as the bytes are compared with the last copy anyway.
+  - **`TideBuildService` does nothing in an asset import worker**
+    (`AssetDatabase.IsAssetImportWorkerProcess`). A worker is a Unity process
+    of its own that runs `[InitializeOnLoad]` constructors with its own
+    `SessionState`: it emptied the unsaved folder as a "new session" in the
+    middle of a test, and its `delayCall` could start another `tide unity`.
+  - tide reads `<project>/Library/Tide/unsaved/<asset>` in an asset's place
+    where it exists (`read_asset` in `unity_assets.c`), and the copies are in
+    `unity_assets_stamp`. A file was picked over stdin commands because tide
+    restarts at every domain reload (entering Play among them): a restarted
+    tide has the copies with no telling.
+  - A copy goes when its scene is saved, closed or opened again (not while Play
+    comes or goes, when Unity reopens scenes), and the folder is emptied once
+    per editor session (`SessionState`), in case an editor quit with copies.
+  - A never-saved scene and Prefab Mode: "What was not covered" below.
+- **Scenes during Play.** First built as sent to the match (OpenScene, a
+  `CloseScene` command); the owner then decided a scene loaded by hand is local
+  ("What was not covered" below), and both went.
+- **A scene loaded twice.** Each scene root entity (node 0 of a scene asset)
+  gets its own Unity scene instance (`sceneOf`, by entity id): an open, loaded
+  instance of that path no root has, else a new additive load claimed when its
+  `sceneLoaded` comes (`sceneLoads`, in order). `MakeView` finds an entity's
+  scene through its parents to its root. The fallback is the first open
+  instance. A root whose instance someone else unloaded isn't loaded again
+  (`scenesClosed`) until it goes. Unloads the runner does are kept by `Scene`,
+  so their `sceneUnloaded` sends nothing. Unity 6.6's `Scene.handle` is a
+  `SceneHandle`, whose conversion to int is an error, so scenes are compared
+  as `Scene`s.
+- **Names with `#`, `/` or `\`.** A node path escapes them with `\`
+  (`game_object_path`); `TideUnityMap.Parts` splits at an unescaped `/`, and
+  `Split` takes the last unescaped `#` followed by digits as the sibling's
+  number, then unescapes the name.
+- **Tests:**
+  - `tide_platform_embed`'s `embed_audio`: silence, a square wave from an
+    `audio` declaration at 48 kHz stereo and 44.1 kHz mono, channels 0 refused,
+    the microphone flag, a constant pushed at 44.1 kHz stereo heard at about
+    0.5, and silence after destroy.
+  - `tide_cli_tests`: `unity_unsaved_scene_read_from_the_editor_copy` (a copy
+    of the fixture in the build folder; the stamp changes and goes back),
+    and the fixture's `M#1/k` GameObject (entity `M_1_k`,
+    node path `M\#1\/k`).
+  - EditMode `UnsavedTests`: a Spinner's speed changed through a
+    `SerializedObject` and not saved is in the built `.tprefab` after `Sync`,
+    and the scene opened again takes it back out.
+  - PlayMode: `TheGamesSoundPlaysThroughUnitys` (the bonk read on Unity's audio
+    thread in a batch run, silent under `TIDE_HIDDEN`), `ASceneLoadedTwiceIsTwo`
+    (`ShowBonus { twice }`: two Bonus scenes, each Totem its own entity), and
+    `ScenesLoadedByHandAreLocal` (below).
+  - Not run: Play's cancel and resume (batch runs skip it), Unity's
+    microphone, a phone, and audio in a WebGL player by ear.
+  - Runs: native debug 2512/2512, web debug 2413/2413; Unity EditMode 16/16
+    and PlayMode 14/14 on D3D11, PlayMode 11 with 3 GPU tests skipped under
+    `-nographics` (Unity's audio thread runs in batch mode); the Sample's WebGL
+    build with `web-smoke.mjs` PASS.
+
+### What was "not covered" (2026-10-22)
+
+The owner: "can we try to look into the 'Not covered'". All picks here are
+mine (Provisional).
+
+- **Voice runs embedded.** `tide/host.h` called a game's voice provider only
+  outside an embed, as its audio went nowhere there; it goes to Unity now, so
+  the guard is gone (`notes/voice-package.md`). `embed_voice_provider`
+  (`tide_platform_embed`) registers a fake provider: its frame runs each embedded
+  frame, its constant voice is in `tide_embed_audio`'s samples, its stop runs as
+  the embed ends.
+- **An embed's end starts the audio over.** `tide_embed_destroy` also flushes the
+  mixer's remainder and resets the pull (`tide_audio_out_reset`, new in
+  `audio_out.h`) and the microphone's resampler: the next runner played up to a
+  block of the last one's sound (found by `embed_voice_provider` after
+  `embed_audio`).
+- **The editor's untitled scene.** The first loaded scene with no path is copied
+  at Play to `Library/Tide/unsaved/Untitled.unity` (`UNITY_UNTITLED_SCENE`),
+  dirty or not. tide adds it as an asset of the all-zero GUID, named
+  `UnityEngine.Scenes.Untitled` (`SceneContents.Untitled`), its map path `""`,
+  Unity's for a scene with no file. A saved `Assets/Untitled.unity` clashes with
+  an error saying to save the untitled scene under another name. Its copy goes
+  as the last untitled scene closes or is saved under a name. The runner finds it
+  as the loaded scene with no path (`Unclaimed("")`, `SceneOf`'s fallback), and
+  `LoadScene` loads nothing for `""`. A second untitled scene isn't the game's.
+- **Prefab Mode with Auto Save off isn't a gap:** Unity's prefab instances,
+  Unity's own Play included, are the saved prefab until Prefab Mode saves it, so
+  tide reading the saved file matches Unity.
+- **Play refreshes assets before it resumes** (`AssetDatabase.Refresh`): a sync
+  can rewrite the game's C# (a scene coming or going changes the schema and its
+  hash, which the C# must match), which is then compiled before Play.
+- **TideAudio plays its source only while an AudioListener is active**, looked
+  for each frame, keeping its own playing flag (a source's `isPlaying` reads false
+  a while after `Play`, which restarted it every frame). With none Unity printed
+  "There are no audio listeners in the scene" each block. The Sample's camera had
+  no listener: it has one now (`SampleSetup` and `Bounce.unity`), and its sound
+  test passed before only because Unity runs filters with nothing listening.
+- **Unity, after a script changes in Play, calls the OnAudioFilterRead of no
+  component made later in that Play** (batch runs; its source plays, its time
+  advances, its filter never runs). The game's C# changes in Play when its schema
+  does: a runner started after that is silent until Play restarts; one already
+  running keeps its sound. The untitled PlayMode test changes the schema, so it's
+  its own fixture, `UntitledTests`, which runs after `BounceTests`.
+- **Scenes loaded by hand are local** (owner: "scenes that are matches should be
+  loaded via Tide; unity scenes being loaded manually should be left alone and
+  considered local/disconnected"). The runner sends nothing for a scene it didn't
+  load (no `CloseScene`; Open only for the editor's scenes as Play starts) and
+  claims for the match's roots only scenes open as it started (`scenesStarted`:
+  the editor's open scenes, a player's first scene) or ones it loaded; an
+  entity's scene falls back only to the match's instances (`SceneOf`). A match
+  scene something else unloads is dropped from `sceneOf` and loaded again. So a
+  client editor, which sends no Open, has the server's scenes, and whatever it
+  loads itself is its own. PlayMode `ScenesLoadedByHandAreLocal`: Bonus loaded by
+  a script shows no entity; the match's Bonus loads beside it with its Totem
+  showing; unloading the local one leaves the match's, and the match letting its
+  Bonus go leaves a local one.
+- **Tests:** `embed_voice_provider`; `unity_unsaved_scene_read_from_the_editor_copy`
+  (an untitled copy read as the scene `Untitled` with path `""`, and the clash's
+  error); EditMode `AnUntitledSceneIsTheGames` (a new scene with a Spinner built
+  as `Untitled`, gone as Bounce opens); PlayMode
+  `UntitledTests.TheEditorsUntitledSceneIsTheMatchs` (a copy of Bonus built as the
+  untitled scene, a runtime scene with no path holding Bonus's GameObjects, and
+  its Totem showing its entity with Bonus not loaded).
+- **Runs:** native debug 2515/2515, web debug 2416/2416, docs build; Unity
+  EditMode 17/17, PlayMode 15/15 on D3D11 and 12 with 3 GPU tests skipped under
+  `-nographics`. Not run: Play's cancel and resume with an untitled scene (batch
+  runs skip it), and the refresh before Play resumes.
+
+### A first game: Coin Rush (2026-10-22)
+
+The owner, away: "try making a small game and seeing what issues you hit. I
+imagine we might need to allow built-in components? for things like colliders
+and physics and what not?"
+
+Coin Rush is in a scratch project, `%LOCALAPPDATA%\TideDev\scratch\coin-rush`
+(not in the repository). It's a fresh Unity 6000.6 project with
+`com.tide.unity` from this checkout and `box3d` in `Assets/tide.packages`. Each
+player's ball (a `Box3D.Body` and `Box3D.Sphere` on a Unity sphere) rolls by
+impulses from a `Move` input, in an arena of static boxes. Five coins are sensor
+spheres on static bodies; `Touched` scores and moves the coin. A kinematic bar
+sweeps the middle. A `Scores` singleton feeds a Tide HUD, and the pickup has a
+`Clip` chime. `Assets/Editor/CoinSetup.cs` builds the prefabs and scene. It
+plays: PlayMode tests roll a ball into a coin (scored in 0.9 s, the chime heard)
+and into a wall (held at x = 5.505, the wall's face less the radius). The
+dedicated server (`tide build --server --assets .`) builds and runs, and the
+WebGL player passes `web-smoke.mjs` with its own smoke script (the ball scores
+in headless Chrome, Box3D in the page's wasm).
+
+What I hit, in order:
+
+1. **Every physics game needs two systems of boilerplate.** The converter gives
+   each entity Unity's placement as Tide's `Transform`, but `Box3D.Body` has its
+   own `position` and `rotation`, which start at zero. So every body sat at the
+   origin until a `Spawned` handler copied `Transform` into `Body`, and Unity
+   showed nothing move until an `[After(PhysicsStages.Step)]` system copied
+   `Body` back into `Transform`.
+2. **Sizes say the same thing twice.** A Unity cube scaled (12, 1, 12) needs
+   `Box3D.Box { size = (12, 1, 12) }` by hand, and the box goes wrong when the
+   scale changes. A sphere's radius likewise.
+3. **Unity's own colliders are silently nothing.** `CreatePrimitive` puts a
+   BoxCollider or SphereCollider on each, which a Unity user expects to be the
+   collider. Tide ignores them, and Unity's physics keeps them as static
+   colliders that move every frame (the ball's). They also draw Unity's collider
+   gizmos, which then don't match Box3D's shapes.
+4. **The package's own fields are authored.** `Box3D.Body`'s inspector shows `id`
+   and every `step*` field, the package's bookkeeping, and they're baked:
+   `stepType = Dynamic` on every static body. `BoxMade`, `SphereMade` and the
+   other markers are in Add Component > Tide.
+5. **A new project can't bootstrap without a detour.** The game's C# is written
+   only once it builds, and code that spawns a Unity prefab doesn't build until
+   the prefab exists, which needs the C# components. I commented the spawn out,
+   built, made the prefab, then restored it.
+6. **`using Tide.Game;` beside `using UnityEngine;` is ambiguous.** Tide's own
+   `Transform`, `Time` singleton and `Font` enum get C# types in `Tide.Game`, so
+   `Transform` and `Time.deltaTime` don't compile in such a script. I used an
+   alias.
+7. **C# had no way to give Tide input** but Unity's real devices, which a test
+   can't press (and which on-screen sticks, bots and replays need).
+   Fixed: `TideRunner.EditInput` (below).
+8. **Smaller ones:** `PlayerID` is opaque, so naming players needs a seat
+   counter, as the Sample keeps (by design). Box3D's water density makes a
+   0.5 m ball weigh 523 kg, so impulses tuned by feel are 40 times too small
+   (documented, but a surprise). The C# comments named a `TideKeys` class that
+   doesn't exist (fixed). The spec still said voice had no Unity audio (fixed).
+
+**Built (small, Provisional):** `TideRunner.EditInput`, an event of `ref
+TideEmbedInput`, raised each frame after Unity's devices are read, and
+`TideEmbedInput.Hold(key, held = true)` by the Input System's key names
+(`TideInputReader.Keys`; false for a name Tide's keyboard hasn't). Works on the
+web too, before the jslib copies the input over. Test: Sample PlayMode
+`TheGamesOwnInputRollsTheBall` (D held through it rolls the ball right; an
+unknown key refused).
+
+**Proposal, the owner's to decide: Unity's physics components as Box3D's.** (Built for what's one to one, then
+removed by the owner for packages' own components with a workflow of their own, which are the smaller fixes listed
+at the end: "Packages' components in Unity" below.)
+Items 1 to 4 go away if the converter reads Unity's own physics components on
+TideEntity GameObjects as Box3D's, where the game has the box3d package:
+
+| Unity | Box3D |
+|---|---|
+| `Rigidbody` | `Body`: `isKinematic` → Kinematic, else Dynamic; `useGravity` → `gravityScale` 1 or 0; drags → dampings; `interpolation` ignored; `mass` → each shape's density, as mass over the shapes' volume |
+| a collider with no `Rigidbody` up its parents | a static `Body` |
+| `BoxCollider` | `Box`: `size` × the lossy scale, `center` × scale → `offset`, `isTrigger` → `sensor` |
+| `SphereCollider` | `Sphere`: radius × the largest scale axis |
+| `CapsuleCollider` (Y) | `Capsule`; X or Z an error that says so (Box3D's capsules stand along y) |
+| `MeshCollider` | `MeshCollider` on a static body, once Unity writes the mesh's triangles where tide reads them (C can't read an FBX) |
+| `PhysicsMaterial` | `friction` (dynamic friction) and `bounce` (bounciness); combine modes are Box3D's |
+| colliders on children | `Part`s of the body |
+
+`Body.position` and `rotation` are baked from the GameObject's world placement.
+The runner (or the package) places a body's GameObject from `Body` rather than
+`Transform`, so neither system is needed. Unity then draws and edits the
+colliders with its own gizmos. Open questions:
+
+- Is the converter knowing box3d acceptable, or should a package say how it maps
+  Unity's components (a mapping file in the package)?
+- Does a body spawned from a prefab at a `Transform` take that position, so
+  `Spawn(Roller, Transform { ... })` keeps working?
+- What about Unity's joints, and 2D (Rigidbody2D and the 2D colliders as Box2D's)?
+
+Without that, smaller fixes for items 1, 2 and 4:
+
+- Box3D's `Body` takes the entity's `Transform` when it starts at zero.
+- A way for a package to keep fields out of authoring, an attribute (a language
+  change).
+- Editor gizmos for Box3D's shapes.
+
+For 6: the engine's own types in another namespace (`Tide.Game.Engine`), or no
+C# for the ones Unity has (`Transform`, `Time`, `Font`). For 5: tide could write
+the C# of the game's components from a build that fails only at Unity names it
+doesn't have yet.
+
+### Packages' components in Unity (2026-10-22)
+
+The translation of Unity's physics components (a `Rigidbody` as a Box3D `Body`, a `BoxCollider` as a `Box`) was
+built and merged, then removed: the owner, "well maybe we just make it our own components so we dont force a
+workflow, we design one". Asked which parts: sizes follow the scale, the package's own fields hidden, Scene-view
+gizmos. Flagging Unity's colliders on a TideEntity wasn't picked, so they're silently nothing, as before.
+
+- **`unity.json` in a package's folder** (`UNITY_MAPPING_FILE`, the format in `unity_mapping.h`, the docs in
+  docs/packages/using-and-writing.md, "Unity components"). Per component of the package, by its Tide name:
+  - `hidden`: `true` (a component the package adds itself: `[AddComponentMenu("")]`, never baked), or a list of
+    fields (`[HideInInspector]`, never baked, so stale serialized values such as a body's `id` don't reach the match);
+  - `scaled`: field to scale name, one of scale, absScale, largestScale, largestScaleXY, largestScaleXZ, scaleX/Y/Z
+    (`unity_scale`; all but `scale` without the sign). Baked times the GameObject's lossy scale through its parents,
+    per axis for float2/float3; in Play the generated `ReadLive` divides the entity's value again
+    (`TideScale.Unscale`, a zero axis left alone), so the Inspector shows what was authored;
+  - `shape`: `{box|sphere|capsule|rect|circle: sizeField, center, height}` (a capsule needs `height`), generated as
+    `[TideShape(kind, size, center, height)]`.
+
+  `source` is Tide lines a Unity project alone compiles, as a source of the package's own
+  (`Library/Tide/Unity.<package>.tide`, written beside `Unity.tide` for messages and editors): as the package's, its
+  systems don't warn when nothing matches them. `tide unity` (and `tide build`/`run --assets`, the web build too)
+  reads the unity.json of each package the game lists: `unity_assets_read` and `unity_code_write` take their folders
+  and names (`unity_package`), and a `unity_source` says the package it's of. A unity.json with rules tide doesn't
+  read is an error naming the component. A package the game drops leaves its last `Unity.<package>.tide` in
+  Library/Tide, compiled by nothing.
+- **Box3D's** (`packages/box3d/unity.json`, as of 2026-10-25 below): `Body` hides position, rotation and the step
+  fields; `Box` (size by absScale, offset by scale, a box shape), `Sphere` (radius by largestScale), `Capsule` (radius
+  by largestScaleXZ, height by scaleY), `MeshCollider` and `HullCollider` (scale and offset by scale, a mesh),
+  `HeightFieldCollider` (scale by absScale), `Part` (a part of a `Body`), `Joint` (force and torque read back). Its
+  `source`: `StartAtTransform` (stage offset 0: a body with id 0 takes the entity's `transform.position`
+  and `localRotation`) and `FollowTransform` (offset 19, after the history systems). In the package itself those
+  systems would have put an empty Transform table into every Box3D game's world: every pinned hash and `order.txt` of
+  the package tests changed, though nothing moved differently. **Box2D's** likewise (rect and circle shapes in XY,
+  placement by x, y and the turn about z: 2·atan2 of z and w, the short way, following it keeping z).
+- **Editor** (com.tide.unity): `TideShape` and `TideScale` (Runtime/TideShape.cs); Editor/TideShapes.cs draws a
+  selected shaped component's wireframe (`DrawGizmo` on `TideComponent`) in the GameObject's matrix the way Unity's
+  colliders are (a box with the scale, a round shape with its radius times the scale's factor), and `TideShapeTool`,
+  an `EditorTool` for `TideComponent` available when the component has a shape, edits size, radius, height and
+  centre with `BoxBoundsHandle`/`SphereBoundsHandle`/`CapsuleBoundsHandle`, with Undo and prefab overrides recorded.
+  The component's inspector has its Edit Shape button (`EditorToolbarForTarget`).
+- **Tests:** `unity_box3d_components_by_its_rules` (tests/unity_physics: Box3D's components on a floor scaled
+  (10, 1, 10) with a serialized `id` and `stepType`, a ball scaled (2, 3, 1), a pillar's capsule, a mirrored box and a
+  `BoxMade`; Box3D's real unity.json and its `source`; and without the package every field as serialized).
+  `unity_code_writes_a_packages_rules` (tests/unity_rules, rules for the Sample's own components: the shape, tooltip,
+  HideInInspector, Unscale and the empty menu; a capsule without its height refused). Coin Rush with Box3D's
+  components on scaled primitives (their Unity colliders removed): PlayMode 2/2 (the ball holds at 5.5 against walls
+  of size 1 scaled 0.5 wide) and the WebGL smoke.
+- **Not verified:** the gizmos and handles were compiled, not looked at (no editor window from agent runs).
+- **Frictions:** Box3D's `Collider` type makes `Collider` ambiguous in a script `using Tide.Game.Box3D` with
+  UnityEngine (Coin Rush's setup needed `UnityEngine.Collider`). A shape's size by the scale ignores a parent's
+  rotation, as Unity's lossy scale does.
+
+**The rest of the physics (2026-10-25).** The owner: "lets close the gaps". The gaps listed under the translation
+(Box2D's untested in Unity, physics materials, compound colliders, mesh colliders, joints) are re-read for packages'
+own components: materials are the shapes' own fields (friction, bounce, density), so nothing to do. The rest, all my
+picks (Provisional):
+
+- **Rules name the package's.** `unity_code_write` checks every component and field a unity.json names against the
+  game's schema (`rules_name_the_game`, `unity_rules_fields`): one the game hasn't is an error naming the file, the
+  component and the field. Box3D's unity.json had rules for `BoxMade` and the other `*Made` markers, gone from the
+  package since, which nothing said. Each rule keeps its file (`unity_component_rules.file`).
+- **`[Native]` fields are hidden by intent.** `print_outline` marks a field `"native": true` (`compiler/src/outline.c`,
+  the `field.native` the checker sets), and `unity_code.c` (`native_field`, from the outline it's given) writes no C#
+  field for one of a component or singleton: nothing in Unity shows, authors, bakes or reads it. `Value` keeps it, as
+  the layout. So the unity.json files don't list ids and handles: Box3D's `Body.id`, `settingsApplied`, each shape's
+  `cache`, `Part`'s handles, `Joint.id`; Box2D's `Body.id`, `Part`'s handles, `Joint.id` and `configuration`.
+- **Parts (`"part": {"of": field, "body": component}`).** A component that makes its entity a part of another's body
+  (Box3D's and Box2D's `Part`). The body is the GameObject the entity field names, else the nearest above with the
+  body's component. Tide prefab text can't name a prefab's root from a child (paths are from the root, `this` is the
+  block's own), so a part's empty `of` is filled at run time instead: each package's `source` has
+  `PartOfTheBodyAbove` (stage offset 0, before parts are prepared, `world.Parent` up to the first with a `Body`). The
+  converter (`body_of`) finds the same body and bakes each of the part's placed fields (`"placed"`, else the shape's
+  `center`: a shape's offset) in the body's frame (`put_placed`): Unity's value times the scale (the field's `scaled`
+  rule), turned and moved by the part's world placement, then into the body's frame by the body's inverse (`world_of`
+  composes through every parent, as `compose` does). A part turned against its body (relative turn's |w| below
+  0.9999999, about a twentieth of a degree) whose shape isn't a sphere or circle is a warning: "Fin is turned against
+  Cart, the body its Box3D.Box is a part of, which a shape can't be: it's baked as if it weren't turned. Turn the
+  GameObject as its body is, or make it a body of its own and join them". A part of nothing (no `of`, no body above) is
+  a warning too, as the package destroys it. In Play, the generated `ReadLive` shows a placed field through
+  `TideParts.Placed` (Runtime/TideShape.cs): the part's `[TidePart(of)]` component's live `of` GameObject gives the
+  body's frame, and the value goes back into the part's own space, divided by its scale; without a body it's
+  `TideScale.Unscale` as before. So the Scene-view wireframe, drawn in the part's GameObject from the field, is where
+  the match has the shape, outside and in Play. Box2D's capsules, polygons, segments and chains have points, not an
+  offset: placed since by `"points"` (Physics in Unity's last gaps, below).
+- **Meshes (`"mesh": {"vertices", "indices"}`).** `[TideMesh(vertices, indices)]` on the component (indices empty for
+  a hull). Editor/TideMeshes.cs: `ObjectFactory.componentWasAdded` fills an empty one from the GameObject's
+  MeshFilter (Add Component), and the inspector (`TideComponentEditor.MeshFields`) has a Mesh field (the filter's at
+  first), its counts and Copy, with Undo and prefab overrides. Unity's `vertices` and every triangle submesh's
+  indices go in unchanged: Box3D's "counterclockwise from the front" is in its right-handed terms, and the front it
+  means is the direction of cross(b - a, c - a), which for Unity's (and Tide's) clockwise-front triangles also points
+  out of the front (Unity's quad: its triangle 0, 3, 1 gives (0, 0, -1), its normal); Box3D's own mesh test feeds a
+  floor whose triangles' cross points up. Vertices are the mesh's own, unscaled: the component's `scale` field takes
+  the GameObject's (`scaled`). In the editor `Mesh.vertices` reads any mesh; it isn't read in players. Box3D's
+  `MeshCollider` and `HullCollider` have it. A `HeightFieldCollider` from a Terrain: built since, copied by the
+  inspector as meshes are (below).
+- **Joints** need nothing new: `a` and `b` are entity fields, GameObject references baked as paths. `"readBack"`
+  fields (Box3D's and Box2D's `Joint.force`, `torque`) are `[NonSerialized, TideReadBack]` live fields, never in
+  components.json, shown in Play under "From its package" (`TideComponentEditor.Section`, before "Local fields").
+  Anchors aren't by the scale; their Scene-view handles came since (below).
+- **Box2D's** unity.json: `Capsule` and `Segment` points by `scale`, a capsule's radius by `largestScaleXY`; parts;
+  joints read back; `BoxMade`/`CircleMade` still hidden (Box2D still has them).
+- **`tide schedule --assets`** reads a Unity project's prefabs, scenes and its packages' `source` as `tide unity`
+  does, so a game made in Unity is checked without building it (help and docs/tools/cli.md).
+- **Tests:** `unity_physics_components_by_their_rules` (was `unity_box3d_components_by_its_rules`; tests/unity_physics
+  with Box3D's and Box2D's real unity.json: the earlier objects, a cart turned half a turn about z with a scaled wheel
+  part naming no body and a turned fin naming the cart, a hinge joint naming the cart and the ball, a ramp's mesh on a
+  scaled GameObject, a 2D kite turned half a turn with a tail part, a part of nothing; the fixture's components.json
+  as tide writes it now, without `Body.id`). `unity_code_writes_a_physics_packages_rules` (tests/unity_rules_physics:
+  a schema and outline as tide writes them; a native field with no C# field and not in components.json, a part's
+  attribute, placed fields through `TideParts.Placed`, the mesh attribute, a read-back field; four stale or wrong
+  rules refused). `tide_cli_unity_physics` (`unity_physics_test.cmake`: the fixture as a Unity project listing the
+  real packages, `tide schedule --assets` compiles it with both packages' `source`, and says the two warnings).
+  `tidec_outline_game` (a `[Native]` field marked).
+- **Runs:** native debug 2760 of 2763 (one disabled; `tide_render3d_pixels_opengl` segfaulted while Unity held the
+  GPU and passed alone; the private prototype `cracked_tests` fails its pinned match hash, `TIDE_EXTERNAL_DIRS`'s
+  checkout against this dev, nothing this touches); web debug: every engine test passed, the run ending in the
+  private prototypes' play tests, which weren't run again. `tide unity --once` on a copy of Coin Rush (Box3D listed)
+  writes Box3D's components with the real rules and no error; its PlayMode 2/2. The Sample's EditMode 18/18 and
+  PlayMode 16/16 (D3D11), its com.tide.game written again by tide unity from this dev (schema hash, renderer shaders).
+- **Not verified:** the mesh inspector, the parts' wireframes in Play and joints in a running Unity game were compiled
+  and unit-tested, not looked at or played (no editor window from agent runs).
+
+**Physics in Unity's last gaps (2026-10-25).** The owner, on the list left: "lets tackle the todos" (apart from
+other platforms' tests). All picks mine (Provisional).
+
+- **Points (`"points": [fields]`).** Fields that are a shape's points in the GameObject's own space, a float2 or
+  float3 or a list of them (`unity_field_point`; another type is an error, as only those have C# to read them back).
+  The converter (`put_points`, `place_point`) bakes each times the lossy scale, each axis with its sign (a float2's z
+  scale is 1), and on a part turned and moved into its body's frame, which points can be: unlike an offset, a turned
+  part is no warning, but a flat shape's part tilted other than about z is (`tilted_against`: the part's z in the
+  body's frame), its points baked where they fall on the plane. A list is baked in the other order where the scale
+  mirrors it (x times y negative for float2s, all three for float3s), so a one-sided chain keeps its solid side. In
+  Play `TideParts.Points` (four overloads) reads them back: from the body's frame, divided by the scale, a mirrored
+  list put back in order. Box2D's `Capsule` (`a`, `b`), `Segment` (`a`, `b`), `Polygon` (`points`) and `Chain`
+  (`points`) have it (Box2D's `FixtureOwner` already put them on a part's body); a capsule's and polygon's radius by
+  `largestScaleXY`.
+- **Outlines (`"outline": {"points", "radius", "closed", "hull"}`).** `[TideOutline(points[], radius, closed, loops,
+  hull)]`. Editor/TideGeometry.cs (`Outline`, `Hull`: Andrew's monotone chain, counterclockwise) gives the points in
+  order and TideShapes.cs draws them through the GameObject's transform: a plain line, or with a radius (times the
+  largest scale, of x and y for a flat one) each side of an open one with a disc at each end, and the outside of a
+  closed one (each edge's side away from the points' middle) with arcs between edges. Edit Shape (`TideShapeTool`, now
+  available for outlines and joints too, `Editable`) has a `FreeMoveHandle` on each point, moved back into the
+  GameObject's space (`InverseTransformPoint`, so the scale is the field's own; a Vector2 drops z). Box2D's capsule
+  (`a`, `b` rounded), segment, polygon (closed, a hull, rounded) and chain (closed while `loop`).
+- **Joints (`"joint": {"a", "b", "anchorA", "anchorB", "rotationA", "rotationB"}`).** `[TideJoint(...)]`.
+  `TideGeometry.JointOf`: each anchor in the world from its body's GameObject's position and turn (not its scale, as a
+  body has none); a body not set stands in as the joint's own GameObject. Drawn as a line between the anchors, dotted
+  from each body to its anchor. Edit Shape: a `PositionHandle` on each anchor (in its frame's turn) put back into the
+  body's frame (`AnchorIn`), and a turn: `RotationHandle` for a quaternion, a `Disc` about the body's z for an angle
+  (`TurnIn`: radians, -pi to pi). Box3D's `Joint` (`rotationA`/`B`) and Box2D's (`angleA`/`B`).
+- **Meshes drawn.** `"mesh"` takes `"scale"`; `[TideMesh(vertices, indices, scale, offset)]` (offset: the placed
+  field). `TideGeometry.MeshOf`: each triangle's three edges, its vertices times the scale and moved by the offset in
+  the GameObject's matrix, at most 20,000 triangles (spread over the mesh beyond), or a hull's points as dots.
+- **Terrains (`"terrain": {"heights", "holes", "columns", "rows", "scale", "minimum", "maximum"}`).**
+  `[TideTerrain(...)]`; Editor/TideTerrains.cs fills one from a `TerrainData` (Add Component on a Terrain's
+  GameObject, or the inspector's Terrain field and Copy, with Undo and prefab overrides), as meshes are copied rather
+  than read by the converter (TerrainData is a binary asset). `TideGeometry.Sample`: Box3D takes 65,536 samples at
+  most, 4,096 a side (`live_height`), so every `step`th sample, a power of two, the fewest that fit (Unity's 513 is 129
+  by 129; its 257 too, as 257 by 257 is 66,049); heights 0 to 1 (`GetHeights`, [z, x], into x + z * columns), scale a
+  cell's size (`size / (count - 1)` in x and z) and `size.y`, bounds 0 and 1 (Box3D clamps to them and keeps 16 bits
+  between, as Unity's heightmap does). Holes: a coarse cell is a hole where every one of the terrain's in it is
+  (`GetHoles`, true for ground), none listed where there's none. Box3D's height field starts at its body's origin, as
+  a Terrain does at its GameObject's (`b3CreateHeightField`'s bounds from 0). Drawn as its grid, at most 64 lines each
+  way. The `scale` field stays by `absScale` (a Terrain's GameObject isn't scaled by Unity, so 1).
+- **The converter's flats are indexed.** A component's serialized paths were found one by one, so a list of n
+  numbers baked in n squared string compares (a 16,641-sample terrain, or a mesh of thousands of vertices: seconds).
+  `owned.index` (open addressing by FNV-1a, made at 32 paths, at most half full) serves `set_flat` and `get_flat`.
+- **Tests:** `unity_physics_components_by_their_rules` adds a Fan, a part 3 up the kite, scaled (2, 1) and turned half
+  a turn, with a polygon and a capsule (their points turned and moved into the kite's frame, radii doubled), and a
+  Ridge mirrored in x with a chain (points mirrored and reversed); its components.json has Box2D's `Capsule`,
+  `Polygon`, `Chain` and a `List<float2>` shape. `unity_code_writes_a_physics_packages_rules` now reads the real
+  `packages/box3d` and `packages/box2d` unity.json over tests/unity_rules_physics, its schema and outline the ones
+  `tide unity` writes for a game listing both, cut to the components the rules name (its own unity.json is gone):
+  the joint, terrain, mesh and outline attributes, `TideParts.Points` reads, and three more wrong rules refused. The
+  Sample's EditMode `GeometryTests` (components of the rules' attributes in Assets/Tests/Geometry, the runtime test
+  assembly, as Unity adds none from an Editor folder; the editor tests reference it, and allow unsafe code for
+  `ReadLive`): a hull without its inside point and a chain closed as it loops; a joint's anchors in a turned, scaled
+  body's frame and back; a mesh's edges by scale and offset, the triangles spread at a limit, a hull's points; a 33
+  terrain sampled whole and a 513 one every fourth with a coarse hole only where all sixteen are, filled into a
+  component, its grid's lines; the Fan's and Ridge's points shown back as authored. By hand: a scratch project listing
+  both packages compiles every generated component in Unity (batch, no errors).
+- **Runs:** native debug 2777/2777 and web debug 2680/2680 (both without the `private-prototype` label), the docs
+  build; the Sample's EditMode 24/24 and PlayMode 16/16.
+- **Not verified:** what's drawn and the handles, in a window (the geometry is tested, not its pixels); joints and
+  terrains in a running Unity game.
+
+### The game is Assets (2026-10-21)
+
+**Owner:** "anything inside `Assets` is valid", rather than a game folder;
+scoping is like assembly definitions; and in a Unity project C is allowed only
+in packages ("so we can avoid a lot of these issues": Unity's plugins keep C in
+`Assets`). Built on tide's own packages rather than a new file:
+
+- **A Unity project's Assets folder is the game** (`packages_unity_assets` in
+  `compiler/lsp/packages.c`: a folder named `Assets` beside
+  `ProjectSettings/ProjectVersion.txt`; shared by tide and tidels). Every
+  `.tide` in it is the game's, but those in folders Unity leaves out (hidden,
+  or a name ending in `~`; `packages_unity_left_out`, applied in `tide_files`).
+  Its `tide.packages` is `Assets/tide.packages`. Project Settings > Tide lost
+  its Game folder (`TideSettings.GameFolderPath` is `Application.dataPath`), so
+  `tide unity` runs in Assets and messages' paths are from it
+  (`Tide/Playground.tide:1:7`).
+- **Packages are found like assembly definitions:** `resolve` (packages.c)
+  adds a local line, `./Folder`, for each folder under Assets whose
+  `tide.packages` says `package Name` (not inside another package's folder,
+  which is that package's business; not in folders Unity leaves out; skipped
+  where the game's file lists it already). The lines exist only in the
+  resolved game (`line` 0), never in the file, so `tide add`/`update` don't
+  write them; what such a package needs, the game's file lists, as for any
+  package (`tide add` adds it). A folder under Assets with a game's
+  `tide.packages` (no `package` line) is an error at it: "the game is the whole
+  of Assets ... move it to the Assets folder, or start it with `package
+  Name`". `stamp_folder` also stamps every `tide.packages` under Assets, so a
+  new package folder rebuilds.
+- **C only in packages:** `own_files_of` gives nothing for the Assets folder
+  itself, so the game's own C, headers and libraries (Unity's managed DLLs
+  among them) are never built or linked; a package's folder's are, as in any
+  game. `warn_unity_c` warns at each `.c`/`.cpp` beside the game's `.tide`
+  files (`<path>:1:1: warning: tide doesn't build this: in a Unity project, a
+  game's C goes in a package`, located so Unity's Console opens it); other C in
+  Assets is plugins' and says nothing.
+- **Commands from any folder of Assets:** `tide add`, `update`, `eject`,
+  `fetch` and `publish` work on the Assets folder when run in a folder of it
+  that isn't a package's own (`packages_unity_game`, `command_folder` in
+  `compiler/cli/main.c`). `run`, `build` and `unity` take the folder they're
+  given, as before.
+- **The editor knows the generated names:** `tide unity` writes its own
+  declarations (`UnityEngine.Source`, `LoadedScenes`, `OpenScene`, scenes) to
+  `<-o>/Unity.tide`, where messages already said they were, beside the
+  prefabs' texts in `<-o>/prefabs`. tidels takes a Unity project's Assets as a
+  game (`game_folder`, walking up from a file, stops there as at a
+  `tide.packages`), drops files in left-out folders, and adds the project's
+  `Library/Tide/prefabs/**` and `Library/Tide/Unity.tide` after the game's own
+  files, as tide compiles them (`add_unity_game` in `compiler/lsp/server.c`).
+  Until the editor has built once, those names are unknown in the IDE. A folder
+  opened below Assets (Assets/Tide as the root) is still a game of its own
+  there, as before.
+
+Tests: `cli_a_unity_projects_assets_is_a_game_whose_packages_are_found`
+(packages: Assets found, a folder of it gives Assets but a package's own
+doesn't, left-out folders, Physics and Tools found with no lines and Inner
+inside Physics not, a listed one once, a misplaced game file's error) and
+`lsp_unity_game_is_its_assets_with_what_tide_unity_wrote` (a game across two
+folders of Assets using `UnityEngine.Prefabs.Roller` from Library/Tide has no
+diagnostics, a broken `Samples~` file is left out, and without the prefab text
+Roller is unknown). Gaps: the walks over all of Assets (`.tide`, `.tprefab`,
+`tide.packages`, and the converter's own) run each time tide checks for
+changes, which a very large project may feel (answered the same day by
+--notified, below); older com.tide.unity packages still run `tide unity` in
+`Assets/Tide`, which builds as a plain folder game.
+
+**Told of changes rather than looking (2026-10-21, owner: "unity handles assets
+and lets us know when they get changed").** `tide unity` polled every 250 ms by
+walking all of Assets several times (`stamp_folder`'s `.tide`, `.tprefab` and
+`tide.packages`, and `unity_assets_stamp`'s every `.prefab`, `.unity` and
+`.meta`). The package now runs it `--notified`: `game_stamp` then stats only
+the files the last generate compiled (`build.sources`) and `Assets/
+tide.packages`, plus local and built-in packages' folders as before (small), and
+a `changed` line on its input starts the settle-then-build any change does.
+`TideChanges` (an AssetPostprocessor in `TideBuildService.cs`) writes it when
+Unity imports, moves or deletes a `.tide`, `.packages`, `.prefab` or `.unity`
+under Assets, or C, headers or libraries in a package's folder; Build
+Settings' scene list changing (`EditorBuildSettings.sceneListChanged`) does
+too. Edits to known files still build while Unity is in the background, since
+Unity imports only on focus; a new file waits for Unity to import it. Declared
+asset files keep their own cheap stat (`asset_stamp`). A build itself still
+walks Assets once (finding the game's files and reading prefabs and scenes).
+Checked by a scratch driver (an edit untold rebuilt, a new file alone didn't,
+`changed` did and the new component was in the schema) and the Sample's
+`ChangesTests` (what counts: the game's files, a package's C, not a plugin's).
+
+### Icons (2026-10-21)
+
+Owner: "we should add icons for these, the packages, the .tide files etc".
+`Editor/TideIcons.cs`: a `.tide` file imports (`TideSourceImporter`, a
+ScriptedImporter for `tide`, in a file of its own name) as a TextAsset of its
+text, so the inspector shows the source, with `Editor/Icons/TideFile.png` as
+its icon; a `.packages` file (`TidePackagesImporter`, in its own file too) the
+same, with `TidePackages.png` when it's named
+`tide.packages` and none otherwise; and a folder whose `tide.packages` says
+`package Name` before any other line gets `TidePackageBadge.png` drawn over the
+bottom right of its folder icon (`projectWindowItemOnGUI`, in list and grid;
+answers cached until `projectChanged`). The PNGs are 64 px, drawn from the
+favicon's three amber waves (`#f59e0b`) by a throwaway coverage-sampling
+script (no image tool on this machine); their metas clamp, keep alpha as
+transparency and leave them uncompressed. Test: the Sample's
+`Assets/Tests/Editor/IconTests.cs` (the importers' type, text and an icon
+other than plain text's, and which folder is a package's). Not seen in a
+window: how the badge sits on the folder icon at each zoom.
+
+Script icons (2026-10-22, owner, of the Inspector's `#` on a Tide component:
+"these should have a custom icon"): `TideComponent.png` (dark waves cut into an
+amber rounded square, as Unity's component icons are solid) on every Tide
+component, `TideEntity.png` (amber waves on a dark square) on `TideEntity` and
+`TideEntityView`, and the plain waves on `TideRunner`, by Unity's `[Icon]`
+with the paths in `Tide.TideIcon` (Runtime/TideComponent.cs). tide writes
+`[Icon(global::Tide.TideIcon.Component)]` on each generated component, rather
+than an icon in its `.meta`, which stays two lines. Two waves, not the logo's
+three: at the Inspector's 16 px three ran together (checked by box-filtering
+the 64 px PNGs to 16 px on Unity's dark and light backgrounds). Test: the
+Sample's `IconTests.TideScriptsHaveTideIcons` (the icon Unity gives a Ball, a
+TideEntity and a TideRunner). Not seen in a window.
+
+Correction (2026-10-21): the importers were first in `TideIcons.cs`, but Unity
+finds a ScriptedImporter's script by its file's name, so the owner's inspector
+showed "Failed To Load Script Object" over the text and
+`AssetImporter.GetAtPath` gave nothing. A file imported before the importers
+existed also keeps a `.meta` of `DefaultImporter`, which Unity reads into the
+ScriptedImporter and warns of ("contains a <unknown> object at version 1, below
+the supported minimum (2)") at each import of the file, so at each save:
+`TideMetas` (an AssetPostprocessor beside `TideSourceImporter`) writes such a
+`.meta` once, as the importer's, at the next editor update (`SetDirty`, then
+`SaveAndReimport`), keeping its GUID. Both importers are version 2, so a
+project updating the package imports its files again and has its `.meta`s
+written. Each importer has an editor with no settings and no Apply/Revert,
+so the inspector is the text, as a C# script's is. Tests: `IconTests` checks
+each importer's `m_Script` is its class and that an old `.meta` is written
+again with its GUID.
+
+### File inspectors (2026-10-21)
+
+Owner, on the importers' plain inspectors: "they could likely use some custom
+inspector to depict what they do or visualize some debug or whatever". My
+picks, for the owner to tweak. tide unity writes `Library/Tide/outline.json`
+beside the schema (`notes/cli-and-packages.md`), from `tidec --outline`'s
+`print_outline` (`compiler/src/outline.c`): each declaration of the game's
+files, the converter's and the prefabs' texts (kind, qualified name with an
+overload's parameters, file, line and column, local/async/extern), a type's
+fields with their types (a match component's local fields marked), an enum's
+members, an event's or command's handlers and local handlers, and for systems,
+views and handlers what they read and write (parameters, then World and query
+uses marked `every`), their `with`/`without` filters (scenes and ownership
+included), and in the tick their stage, waits with the schedule's reason, and
+what runs alongside. `Editor/TideOutline.cs` reads it when it changes and names
+its files as the project does (`AssetOf`: absolute under the project, else from
+Assets; `Library/Tide/Unity.tide` as is).
+
+`Editor/TideFileInspectors.cs` replaced the importers' empty editors:
+
+- **A `.tide` file**, above its text: whose it is (the game's, or the package's
+  whose folder holds it); the last finished build's errors and warnings in it
+  (`TideBuildService.LastMessages`: a build's messages gather until tide says
+  how it went, `Locate` finds each one's file), each opening its line; then its
+  declarations grouped by kind, each with a foldout (open at first in a file of
+  six or fewer) and a `line N` link. A component's or singleton's fields show
+  their declared defaults (the schema's bytes through
+  `TideEntityEditor.Default`); in Play a component shows how many shown
+  entities have it (the packet's section count) and a singleton its values
+  (its packet bytes, text read from the packet's strings, an entity by index),
+  repainting constantly. A system says when it runs ("each tick, for each
+  entity it matches, at stage 1"), Reads, Writes, Reads any/Writes any (World
+  and queries), With, Without, Waits for (name and reason) and Alongside; a
+  view, handler and local handler say when they run.
+- **`Assets/tide.packages`**: each resolved package with where it comes from
+  (comes with tide; a git source, `@ref`, at its commit's first 8 digits;
+  a folder; or "this project's Assets/X", found by its `package` line), Show
+  for a folder in the project, Update for git (`tide update <name>`) and
+  Remove for a listed one (takes its line out of the file, keeping its line
+  endings); then Add a package, a text field with a menu of the packages that
+  come with tide (those listed greyed), running `tide add "<source>"` in
+  Assets. tide runs off the editor's thread (`TideToolchain.Run`, polled from
+  `EditorApplication.update`); a failure's output shows under the field, and
+  the file is imported again either way, so the build hears of it.
+- **A package's own `tide.packages`**: its name, whether the game builds it,
+  and how many `.tide` and C files its folder has; a `tide.packages` in a
+  folder of Assets without a `package` line gets the warning tide's error
+  gives.
+
+Tests: `compiler/tests/outline/game.tide` (every kind, a local field, filters,
+handlers, and a system waiting for two others with each reason; tidec run in
+its folder, `RELATIVE` in `expect_schedule.cmake`, so its paths are the file's
+name); the Sample's `OutlineTests` (the JSON's files and folders as the project
+names them, a system's access, waits and filters, and a message located in
+its file). The Sample's PlayMode run wrote a real `outline.json`. Not tested:
+the inspectors' drawing (IMGUI needs a window, which batch runs have none
+of), Add, Update and Remove against a real project.
+
+### Tooling as built (2026-10-20)
+
+- Console context for tide's messages (Authoring, above).
+- `tidels` renames reach a Unity project (`compiler/lsp/analysis.c`,
+  `unity_renames`): with the game's folder inside a project's `Assets` (found
+  up from it by `ProjectSettings/ProjectVersion.txt`), renaming a component
+  edits its `- type:` lines in every prefab and scene holding TideEntity
+  objects and a prefab instance's change of a `.type`, and renaming a field
+  edits its key in that component's `values` (plain or single-quoted).
+  Instances' changes of listed values aren't renamed: their YAML doesn't say
+  whose they are. The game's own components are renamed too (Components of
+  their own, above). Test: `lsp_rename_reaches_unity_assets`.
+- Gizmos (`Editor/TideGizmos.cs`): a selected TideEntity's components as a
+  Scene view label; in Play mode, each shown entity's index, generation and
+  whether it's this machine's (unselected ones within 40 units of the Scene
+  view's camera).
+
+### Player builds as built (2026-10-20)
+
+`Editor/TideBuildProcessor.cs`: before a player build, `tide unity --once
+--release` into `Temp/TideBuild`; each built scene's TideRunner gets
+`prefabs` links to every Unity prefab in the map (so Unity builds them in);
+after it, `tide_embed`, the newest `game-<n>` as `game`, `pack-<n>` as
+`pack`, `unity.json`, `schema.json` and other libraries tide put there go to
+the player's `StreamingAssets/Tide` (`<name>_Data`, or the app's
+`Contents/Resources/Data`). In a player `TideLibrary.BuildFolder` is that
+folder; it loads the embed in place, then the game's library itself, takes
+its `tide_host_library()` and the pack's bytes, and passes them as the
+description's `game` and `pack` (no `library_dir`, so nothing is written
+beside the player). Only the editor's own desktop platform builds for now.
+Checked on Windows: a 64-bit player of the sample, run with `-batchmode
+-nographics -tide-smoke` (`Assets/Scripts/PlayerSmoke.cs`), ran the match,
+showed its own ball on the floor and turned the pillars. Not checked: Linux
+(where the game's library may need the embed's symbols visible) and macOS.
+
+### Closing the gaps (2026-10-25)
+
+The owner, after a review of what was left: "yes do both" (a progress indicator outside Play, and icons on the
+generated components and TideEntity), "also lets close the gaps (apart from the tests in other platforms)", and on
+C# names Tide and Unity share: "for ambiguous names we should have to explicitly type their namespace such that we
+all agree what it is".
+
+- **The earlier session's last work reached dev with this round.** Packages' components in Unity (above) and the
+  script icons (Icons, above) were built on 2026-10-22 and left uncommitted in that session's worktree; they were
+  carried over as they were, then brought up to date with the physics packages (Packages' components in Unity).
+- **A build is a task in the status bar** (`TideBuildService.Working`/`Idle`, Unity's `Progress` API, indefinite,
+  named `Tide`), never a Console line: from tide starting to its first build's end (`tide: building the game for
+  Unity ...`), from each `tide: building game-<n>` (`notes/cli-and-packages.md`) to `built` or `keeps running its
+  last build`, and while Play waits for tide to build the scenes as they are, from the `sync` to its answer. It goes
+  as tide stops, and a task a script reload left is removed as the service loads. Project Settings > Tide says
+  "building the game" meanwhile. Unity's own task for compiling the C# tide wrote follows it. My pick: removed as it
+  ends, failed or not, rather than left finished (a failed build's errors are in the Console already).
+- **Errors that name no file go as the rest do.** They went in as ordinary logs, which stayed, with "the game's
+  errors are fixed" after them; now they're compiler messages too, with no file (`LogLocated` with `""`), which the
+  next build takes away (`RemoveLocated`), as is "the game has errors: fix them before Play". The fixed line is left
+  for a Unity without compiler messages alone.
+- **The game's C# comes while its code doesn't build** (Coin Rush's item 5): after a failed build tide builds the
+  game's declarations alone and writes `Packages/com.tide.game` from them (`notes/cli-and-packages.md`). So a new
+  component is in Unity before the code spawning the prefab that needs it builds: make the component, the prefab,
+  and the game builds. The editor's game keeps its last build; the new C#'s hash isn't its schema's, so live values
+  wait for a build that works. My pick: every type the game declares, rather than writing C# only for a build failing
+  at Unity names alone, so a component also comes while a system is half written.
+- **Names Tide and Unity share are written whole (owner).** Tide's `Transform`, `Time` and `Font`, and a package's
+  types such as Box3D's `Collider`, keep their names in `Tide.Game`; a script using both namespaces gets C#'s error
+  for an ambiguous name and writes `Tide.Game.Transform` or `UnityEngine.Transform`. Nothing is renamed, hidden or
+  moved to another namespace (the two proposals in Coin Rush's item 6 are withdrawn). The generated C# and the
+  package already write every name from `global::`. Tide's own names follow the same rule (Unity prefabs of one name
+  in two folders: "write the one you mean"). User docs: the package's README and `docs/tools/cli.md`, Unity.
+- **Already closed:** the walks over Assets were answered by `--notified` (The game is Assets).
+- **Tests:** `tidec_declarations_only`; the Sample's `ConsoleTests.ABuildIsATaskInTheStatusBarAndNoneOfTheConsoles`
+  (a `[UnityTest]`: the service's own tide stopped for the while, lines given through `TideBuildService.Hear`, the
+  task looked for in `Progress.EnumerateItems` a frame later, as Unity starts and takes away tasks at its next
+  update) and `AnErrorAboutAnAssetOpensItAndNoneHasACSharpStack` (an error naming no file is an entry with none, and
+  goes with `RemoveLocated`); `IconTests.TideScriptsHaveTideIcons`, run for the first time (the editor tests'
+  assembly references `Tide.Game` for it). By hand on a copy of the Sample: a `Crate` component and a handler
+  spawning `UnityEngine.Prefabs.CrateBox`, which isn't there: `tide unity --once` says that one error, and
+  `Crate.cs` is written with `Owner.cs` kept. Sample EditMode 19/19 and PlayMode 16/16 (D3D11, a GPU, batch).
+  Not seen in a window: the status-bar task itself.
+- **Runs** (this round with the physics work merged in): native debug 2761/2762 before the merge, the one failure
+  `cracked_tests` (tide-prototypes' pinned match hash, a private prototype the environment's `TIDE_EXTERNAL_DIRS`
+  adds; no simulation code changed here); web debug passed through test 2658, the same `cracked_tests` failing,
+  stopped before the private prototypes' browser play tests; after the merge `tidec_*` 2509/2509, the CLI and Unity
+  tests 19/19, Sample EditMode 19/19 and PlayMode 16/16, and the docs build (a link's anchor fixed:
+  `shards.md#a-c-library-s-state`).
+
+### Tide's drawing after a hot reload (2026-10-25)
+
+The owner: "last time i tried it (before this work) hot reloading broke screen space rendering?". Their playground's
+only Tide drawing is the rooms package's menu, in screen space.
+
+- **Cause:** each pipeline's material held its vertex layout as vector arrays (`_TideAttributes`, `_TideSlots`,
+  `Material.SetVectorArray`). A material keeps no array its shader doesn't declare as a property (ShaderLab can't
+  declare arrays), and Unity empties them when it reloads its materials: an asset import in Play does, as
+  `TideSchemaWatcher`'s refresh does when a build of another layout writes new C#, and so does entering Play with
+  Enter Play Mode Options skipping the domain and scene reload (the owner's project: `m_EnterPlayModeOptions: 3`).
+  With them empty every vertex reads nothing, so all of Tide's drawing went, while Tide's own command stream, the
+  draw packet, every material, shader, buffer and texture stayed as they were (traced: identical streams before and
+  after). A reload of the same layout writes no C#, refreshes nothing, and kept drawing.
+- **Fix:** the arrays are each pipeline's `MaterialPropertyBlock` (`Pipeline.properties`, made in `MakePipeline`),
+  which each draw takes (`Command.properties`, `CommandBuffer.DrawProcedural`'s last argument). A material keeps
+  only what its shader declares (blend, depth, cull and stencil), which survive.
+- **Test:** BounceTests `TideDrawsIntoUnitysFrameAfterAHotReload`: the frame's checks of `TideDrawsIntoUnitysFrame`
+  (now `Check`), then the newest `game-<n>` copied to the next number, the embed's newer `loaded-<n>` awaited (it
+  deletes the one it ran), a forced import of `Bounce.tide` and a refresh in Play, and the checks again. It fails
+  without the fix (the plates and everything else of Tide's gone) and passes with it. Sample PlayMode 17/17 and
+  EditMode 24/24 on D3D11; the drawing tests also on Vulkan, OpenGL Core and D3D12. Reproduced first on a scratch
+  copy of the owner's playground (its rooms menu: gone after a layout reload, and a frame after the first under its
+  Enter Play Mode Options; shown in both with the fix).
+- **Found on the way, not changed:** a host takes any `game-<n>` that loads, with no check that the same tide made
+  it. A copy of the playground whose ProjectSettings named another tide (`tidePath`) loaded an embed of one tide and a
+  build of the other, and Unity crashed in `tide_run_bind_io` (a pointer of the game's table, laid out otherwise).
+  The same could come of tide's installation changing under a running editor, as each build reads the installed
+  sources and libraries while the embed Unity loaded stays (not tried).
+
+### One tide for a project (2026-10-25)
+
+The owner: "what if my buddy has another tide version installed ... we need to be able to use a specific version tied
+to that branch", then "we should be able to have maybe parallel tide installations? that way a unity project can
+install it if it isnt and use it", "that should also handle CI? imagine GameCI", and on how: "for unity we can maybe
+use the commit hash" (Unity's packages-lock records the package's commit) "otherwise for tide itself pinning it in the
+tide.packages", with only Unity switching versions (the CLI's pin: `notes/cli-and-packages.md`, A game pins its tide).
+
+- **The package's version** (`Editor/TideVersions.cs`): `PackageInfo.FindForAssembly` gives the package's source; for
+  git its locked commit (`git.hash`) and what it follows (`git.revision`). A revision that's a release tag
+  (`OfTag`: `v0.5.0-nightly.12`) is that version; any other commit asks the site (`/releases/for/<commit>`,
+  `notes/releases-and-ci.md`), and the answer is kept in `Library/Tide/version.json` by commit; a lookup that failed is
+  asked again a minute on, not at each repaint. A package that isn't from git (file:, embedded: the Sample, the owner's
+  playground) has none, and builds as before (PATH, the installer's folder).
+- **Side by side:** `TIDE_VERSIONS`, else the `versions` folder of where the installer puts tide
+  (`%LOCALAPPDATA%\Tide\versions\<version>`, `~/.tide/versions/<version>`; `tide upgrade` replaces only the entries
+  its package has, so the folder stays). `Executable` takes `<version>/bin/tide` whose `VERSION` is the version, or
+  the installer's tide when it's that version. `Install`: `/releases/v<version>.json` from the site
+  (`TIDE_RELEASES_SITE`, default tide-engine.dev; `file://` for tests), this platform's package (`PackageName`, as the
+  installers name them) and `SHA256SUMS`, checked; unpacked (zip by `ZipFile`, tar.gz by `tar`, which keeps what runs
+  runnable) into `.<version>-<guid>`, whose `VERSION` must be the version, then moved into its place last; another
+  editor's install meanwhile is taken. Everything from the site comes through `UnityWebRequest` (the package depends on
+  `com.unity.modules.unitywebrequest`): .NET's `HttpClient` in the editor timed out on every address on this machine,
+  the site, api.github.com and google.com alike, where `UnityWebRequest` took 0.2-1.7 s, so the first version, built on
+  `HttpClient` and tested only with `file://`, never reached the site. `UnityWebRequest` belongs to the editor's
+  thread: a batch run or a player build waits on it there (`Install`); the editor's install (`Begin`) follows the
+  download (`DownloadHandlerFile`, into the work folder) each update, then checks and unpacks it off the thread
+  (`Settle`).
+- **When:** `TideToolchain.Find(out where, install, wait)`: your own command first (`TideUserSettings`, below), then
+  the package's version: in a batch run installed at once (a build server: GameCI needs nothing beforehand); in the
+  editor asked once a session (a dialog), then installed off the editor's thread with a `Progress` task, the build
+  service restarting as it's in place; a player build (`wait`) installs it with a progress bar. Project Settings >
+  Tide says which tide and has Install. With the package's version (`Pinned`), tide's runs get `TIDE_NO_UPDATE_CHECK`.
+  A game's `tide =` pin the package's tide isn't is that tide's error (packages.c), its note saying to pin that tide
+  or move the package.
+- **Your own tide command** (`TideUserSettings`, `UserSettings/TideSettings.asset`, which source control leaves out)
+  replaced the project's `tidePath`, which put one machine's path in source control (the owner's playground had
+  `%LOCALAPPDATA%\TideDev\playground-tide`). It's moved from the project's asset once (`Loaded`), and takes the place of
+  the package's version, as for a build of tide being worked on.
+- **Picks (mine, Provisional):** the site answers a commit with the highest release at or before it (so `#dev`
+  works); a package newer than every release then builds with the newest release, whose embed ABI the package checks
+  (`TideLibrary.Abi`): following a tag is the advice for teams and CI. Installing asks first in the editor.
+- **Tests:** the Sample's EditMode `VersionTests` (a site and versions folder in a scratch folder: a tag is its
+  version with nothing asked; a commit the site's answer, kept; an unknown commit's reason; a version installed beside
+  others, once, leaving no work folder; a damaged checksum and a package of another version installing nothing);
+  `docs/tests/releases.test.mjs`. Sample EditMode 28/28, PlayMode 17/17. Against the live site, in batch mode (a
+  scratch copy of the Sample, `TIDE_VERSIONS` an empty folder, the installer's tide 0.5.0-nightly.24): a git package
+  at commit 6f3c781e found it's 0.5.0-nightly.25 (the site, 0.4 s) and stopped there under `HttpClient`; with
+  `UnityWebRequest`, that commit's version installed in 11 s (`tide --version` saying it) and a second `Install` took
+  it as it was. Not run: macOS's and Linux's tar path, the dialog.
+
+## Web
+
+**Owner:** the web is very important and goes first. Option B is tried first:
+a Unity WebGL page template loads `tide.js` and the game's Tide wasm beside
+Unity's module. Tide keeps its toolchain (`wasm32-wasip1-threads`), worker pool,
+WebRTC and relay, so its cross-platform results stay the ones our tests pin.
+A `.jslib` bridge carries devices, commands and events, and copies the frame's
+view-visible state (and Tide's draw list) into Unity's heap once per frame.
+Threads need cross-origin isolation, which Tide pages already require.
+
+Option A, compiling Tide with Unity's pinned Emscripten for zero-copy reads, is
+the fallback if B fails on something fundamental. It brings another clang, flags
+Unity controls, Unity's thread setting, a port of Tide's web platform layer, and
+determinism to prove again.
+
+### Spike step 1 (2026-10-20): B works
+
+Local branch `unity-spike` (not on `dev`) holds a scratch game
+(`unity/Spike/game`: bodies bouncing, one per player), a Unity 6000.6.0f1
+project with a WebGL template, a `.jslib` and a driver (`drive.mjs`). Nothing in
+the engine changed: the template wraps `WebAssembly.Instance` before `tide.js`
+loads to keep the Tide program's instance (`tide-capture.js`), and the scratch
+game's views hand positions to its C, which Unity copies from Tide's memory each
+frame. An edit to `tide.js` itself trips the release runtime's freshness check
+at configure time, so later steps that need page hooks regenerate it.
+
+Measured in headless Chrome (SwiftShader, `--mute-audio`) with two Unity WebGL
+pages and a plain Tide page in one relay room, 30 s:
+
+- Every page cross-origin isolated, Tide's memory shared (its threads on) while
+  Unity's own threads stay off. Unity needs no thread setting for Tide's.
+- All three in one room through the real relay; clients' verified ticks kept up
+  and resyncs stayed 0. Unity pages interoperate with plain Tide pages.
+- Unity and Tide both ran about 62 frames a second in each page.
+- The per-frame copy (1 KB here) cost about 2 µs. A sumo-sized measurement is
+  still to do.
+- A hidden page is fine: Unity's frames throttle to one a second, while
+  `tide.js` keeps the match going on its tick-rate worker heartbeat (measured:
+  Tide at exactly 30 frames a second, the tick rate, in background tabs). Only
+  measuring view frame rates needs a window per player in headless runs.
+- The spike made its sphere and material in code, which Unity's build stripping
+  can't see (the Standard shader, a primitive's collider class). The design
+  avoids this by reference (Runtime binding), not by workarounds.
+
+Spike step 2 (2026-10-20), on the same branch:
+
+- Unity drives Tide's frame. `tide.js` gained `pageFrames` (spike branch only,
+  with the release runtime regenerated): while the page is shown, its loop
+  schedules nothing and the page calls `Tide.frame()`; hidden, the worker
+  heartbeat runs frames as for any page. Unity's `Update` calls it before
+  copying, so Unity and Tide frames matched exactly (2,930 each in 30 s) with no
+  trailing frame. Tide's whole frame there (session update and views) averaged
+  0.22 ms.
+- A hidden Unity page hosting the match: Unity fell to one frame a second while
+  Tide kept serving at exactly its 30 Hz tick rate on the heartbeat; the other
+  players stayed verified with 0 resyncs.
+- Copying from Tide's shared memory into Unity's heap (`HEAPU8.set`, the
+  `.jslib`'s operation) ran at about 19 GB/s: 16 KB 1.2-1.5 µs, 256 KB 13 µs,
+  1 MB 54-61 µs, 4 MB 205-231 µs a frame. A sumo-sized view state (transforms
+  of a few hundred bodies) is tens of KB, a few µs; even a whole 4 MB world would
+  be about 1% of a 60 Hz frame.
+
+Unity drives Tide's frame only while the page is visible; hidden, `tide.js`'s
+heartbeat keeps driving it, so a throttled Unity never slows the match.
+
+Spike step 3 (2026-10-20): a native player joined the room a Unity WebGL page
+hosted. `game/spike_native.c` is a windowless HOST program on the real clock: a
+session over the generated `tide_game_api`, joined with
+`tide_platform_room_join` (desktop WebRTC through the relay). Two Unity pages,
+a plain Tide page and the native player played 20 s in one match, all four
+bodies in every world, resyncs 0 everywhere, native included (verified 582,
+predicted 584 at its end).
+
+Still open for phase 0: mobile browsers (needs devices).
+
+### IL2CPP and Tide's C
+
+Proposed by the owner (2026-10-20): IL2CPP player builds could compile Tide's
+generated C and runtime with the player, rather than linking a library built
+by tide. Checked on WebGL (Unity 6000.6.0f1, its Emscripten clang):
+`PlayerSettings.SetAdditionalIl2CppArgs("--compiler-flags=...")` reaches C
+sources in `Assets/` (a probe with `#error` unless a define was given failed
+without the argument and built with it). Flags are global: they apply to all
+IL2CPP C++ too. Unity's own flags for a plugin's C include `-O3`,
+`-fno-strict-overflow`, `-msimd128` and no `-ffp-contract`, so Tide's
+`-ffp-contract=off -fno-fast-math` must be added; generated C can also carry
+`#pragma clang fp contract(off)` so a file doesn't depend on build flags.
+
+Open: Windows and Xbox IL2CPP compile with MSVC, which Tide's clang-only C may
+not build; results under each platform's compiler must match the pinned
+cross-platform hashes (the per-tick hash would show a mismatch as a desync);
+FP environment (denormals) on Unity's threads. Alternative: a static library
+tide builds with its own clang per platform, linked with `__Internal`, with
+sources only where tide can't build (console SDKs).
+
+## Tide drawing in Unity
+
+**Owner:** both C# views and Tide drawing are wanted. Tide's draw list goes to
+Unity on every platform and is drawn inside the render pipeline by a URP
+renderer feature, sharing depth and post-processing with the scene:
+
+- Built-in drawing (shapes, text, sprites, meshes, GUI) uses hand-written HLSL
+  shipped with the package. The rooms and lobby menus, Tide's GUI and debug
+  drawing then work in Unity games unchanged.
+- **Owner (liked):** custom `frag`/`vert` get an HLSL target in tidec beside
+  GLSL, WGSL and SPIR-V. A Unity importer for `.tide` files creates the shaders
+  as sub-assets of the source file, so Unity compiles them for every graphics
+  API and builds include them. The same importer triggers tidec.
+- URP first; HDRP and the Built-in pipeline only on request.
+
+Built 2026-10-22 (Tide's renderer in Unity, above) with Tide's renderer replayed rather than
+a renderer of Unity's, the renderer's HLSL translated rather than hand-written, `tide unity`
+writing the shaders into com.tide.game rather than an importer, and the built-in pipeline
+first, then URP: my picks, Provisional.
+
+## Phases
+
+0. Web spike (B): a Unity WebGL build and a native Tide build of one game in
+   the same room through the relay, hashes agreeing every tick, threads on,
+   desktop and mobile browsers, per-frame copy cost measured on a sumo-sized
+   game. Throwaway branch; nothing merged until it passes.
+1. Native ABI and runtime package: loading/unloading, frame loop, input,
+   entity binding, editor hot reload, with hand-written bindings for sumo.
+2. Schema and the Roslyn generator, replacing the hand-written bindings.
+3. Authoring: `TideEntity`, its inspector, tidec's Unity front end (prefabs,
+   then scenes, then variants and nesting).
+4. Tooling: renames across Unity assets, diagnostics that select GameObjects,
+   gizmos for Tide physics shapes.
+5. Tide drawing: built-in drawing and GUI, then custom shaders through HLSL.
+
+## Open
+
+- Where the Unity package and its sample project live in the repository, and
+  how the package is distributed (with `tide`, or a UPM Git URL).
+- Unity version floor. This machine has 6000.5 and 6000.6 with WebGL support.
+- Spike results decide whether B stays or A is needed.

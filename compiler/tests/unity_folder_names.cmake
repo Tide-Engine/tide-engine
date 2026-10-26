@@ -1,0 +1,32 @@
+# A Unity project's prefabs and scenes are named by their folders (UnityEngine.Prefabs.Enemies.Goblin), and by their
+# file's name alone while only one has it: Spawn(Goblin) under `using UnityEngine.Prefabs;` is the one Goblin, and with
+# two it's unknown, the error naming both. Run with TIDEC and OUT.
+file(REMOVE_RECURSE "${OUT}")
+file(MAKE_DIRECTORY "${OUT}/out")
+file(WRITE "${OUT}/enemies.tprefab" "namespace UnityEngine.Prefabs.Enemies;\nprefab Goblin { Spin { speed = 2 }; }\n")
+file(WRITE "${OUT}/bosses.tprefab" "namespace UnityEngine.Prefabs.Bosses;\nprefab Goblin { Spin { speed = 3 }; }\n")
+
+function(compile spawned files expect_built)
+    file(WRITE "${OUT}/game.tide" "using UnityEngine.Prefabs;\nscene Main { }\ncomponent Spin { float speed = 1; }\n"
+         "event(Spawned) Go(with Main) { Spawn(${spawned}); }\nsystem Turn(mut Spin spin) { spin.speed += 1; }\n")
+    set(paths "${OUT}/game.tide")
+    foreach(f IN LISTS files)
+        list(APPEND paths "${OUT}/${f}")
+    endforeach()
+    execute_process(COMMAND "${TIDEC}" ${paths} -o "${OUT}/out" RESULT_VARIABLE result ERROR_VARIABLE stderr OUTPUT_QUIET)
+    if(expect_built AND NOT result EQUAL 0)
+        message(FATAL_ERROR "Spawn(${spawned}) with ${files} didn't build:\n${stderr}")
+    elseif(NOT expect_built AND result EQUAL 0)
+        message(FATAL_ERROR "Spawn(${spawned}) with ${files} built")
+    endif()
+    set(stderr "${stderr}" PARENT_SCOPE)
+endfunction()
+
+compile(Goblin "enemies.tprefab" TRUE)
+compile(UnityEngine.Prefabs.Goblin "enemies.tprefab" TRUE)
+compile(UnityEngine.Prefabs.Bosses.Goblin "enemies.tprefab;bosses.tprefab" TRUE)
+compile(Goblin "enemies.tprefab;bosses.tprefab" FALSE)
+string(FIND "${stderr}" "there's 'UnityEngine.Prefabs.Bosses.Goblin' and 'UnityEngine.Prefabs.Enemies.Goblin': write the one you mean" found)
+if(found EQUAL -1)
+    message(FATAL_ERROR "the error doesn't name both Goblins:\n${stderr}")
+endif()

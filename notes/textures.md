@@ -1,5 +1,53 @@
 # Textures and how they are sampled
 
+## Twelve shader slots (2026-10-25)
+
+The internal draw capacity is twelve. Individual Texture references retain
+their existing four sampling bits, Raw role and ownership. A run's sampling
+value is uint64_t: slots 0..7 retain their original low bank and slots 8..11 use
+the same layout in the high bank. Existing filters, wraps, mip preparation and
+binding identity remain unchanged. The coordinated drawing/backend/Unity ABI
+and high-slot validation are recorded in drawing.md and rendering.md. Native
+Vulkan/OpenGL, WebGL2, Direct3D11 ANGLE and WebGPU comparisons passed for all
+filter/wrap combinations in slots 8..11, including WebGPU device recreation.
+
+## Raw Texture fields (2026-10-25)
+
+The owner approved extending [Raw] to Texture fields using the existing raw-grid
+pattern. Classification is static, with ordinary Texture references and sampling
+bits. Numeric pack bytes already stay raw; grid-backed references are captured
+through tide_texture_grid and tide_draw_grid_texture_raw, preserving channels
+even at alpha zero. There is no runtime role, new function or ABI. Metadata reads
+do not capture pixels and remain zero for absent resources. Static role checks
+prevent color/raw mismatches and unannotated escapes; read-only GPU helpers keep
+their source's role through specialization. Alias and attached-field placement,
+grid reference lifetimes and sampling remain ordinary behavior.
+
+raw_texture_fields records singular asset defaults/assignments, raw grid assets,
+Tide-owned numeric grids, field forwarding, aliases, attached fields, empty size,
+alpha-zero channels, filter/wrap/mip flags and pack unload/reload with retained
+references. Its golden and HLSL checks cover GLSL/WGSL numeric reads and helper
+forwarding. Existing Raw diagnostics remain, with new field-flow, whole-expression
+destination and overloaded CPU grid-escape fixtures. The former negative
+raw_on_texture_field case is replaced by the color-default mismatch fixture.
+Role-change migration is described and tested in hot-reload.md.
+
+Focused native validation passes 34 CTests (3.08 s), including all six capture/
+pack/migration cases, 28 Raw diagnostics, layout identity, GLSL/WGSL goldens and
+HLSL `/WX`; the focused Raw LSP protocol case passes too. The stock Render3D
+pipeline consumer regenerates and passes Clang strict C17 with warnings as errors.
+Full native/web and pixel validation belong to the combined integration.
+The final grid-source metadata capture correction also passes the six affected
+E2E/layout/golden/HLSL checks (1.55 s), including exact captured helper dimensions
+for local and asset grids and missing-pack metadata. Its standalone generated-C
+probe now compiles under the same strict C17 flags.
+The full scoped Raw review and a separate fresh review of the final metadata
+correction are clean. The latter inspected conversion, capture assertions,
+shader goldens and role-layout checks after the final source freeze.
+Combined native validation found the cubemap_asset_raw fixture's exact usage-note
+expectation still omitted Texture fields. It now pins the complete updated note
+while retaining the same Cubemap rejection; no compiler diagnostic changed.
+
 ## Texture dimensions (2026-10-18)
 
 The owner's request to clear conventional API gaps adds read-only
@@ -50,7 +98,7 @@ There is no sampler, runtime or GPU contract change; see `notes/language.md`.
 - `compiler/src/texture_compress.c` uses pinned stb_dxt 1.12 in high-quality mode at build time only. Existing RGBA byte conversion and display-space premultiplication happen first. All-255 alpha selects BC1; any other alpha selects BC3. Integer box filtering builds every mip down to 1x1, with clamped 4x4 tail blocks. Compression is lossy and visual only; numeric data must keep `[Raw]`. The smooth-gradient fixtures measured maximum channel error 7/255 and mean absolute error 1.15517 (BC1) / 0.959274 (BC3); those are fixture measurements, not arbitrary-art quality bounds.
 - Exact premultiplied RGBA remains in the pack for unsupported devices and existing C readers. An optional trailer carries magic, format, mip count, byte count and blocks; the texture block's `next` bounds its payload. `tide_pack_texture_blocks_find` validates dimensions, complete mip sizes, counts and file-region bounds before exposing a borrowed pointer. Missing/malformed metadata gives RGBA fallback. Compressed/uncompressed representations have distinct content versions. Pack bytes and CPU asset memory increase; download/CPU-memory compression is not claimed.
 - The draw list borrows both representations until the pack is replaced/unloaded; append propagates the block reference. The private backend factory uploads complete immutable BC mips when supported, otherwise creates the ordinary RGBA image. OpenGL/WebGL query S3TC formats; WebGPU requests optional `texture-compression-bc`. GPU accounting counts the actual full block chain. Point/Bilinear still sample the base level; Trilinear uses the prepared chain without runtime generation. Epoch changes recreate compressed GPU objects rather than writing RGBA into them.
-- Only immutable pack image/cube GPU identities survive inactive frames. The idle budget is 128 MiB, 4096 images, and at most 60 rendered lists since last use. Active images are outside this budget; it is not a total VRAM cap. Pressure prefers the most recent images that fit, with stable ties and overflow-safe subtraction. C pointers, grids, shader data and targets retain their existing lifetimes. The GPU cache retains ids/metadata only, never borrowed CPU pack pointers. Device epochs clear it; draw epochs retire stale inactive images.
+- Only immutable pack image/cube GPU identities survive inactive frames. The idle budget is 128 MiB, 4096 images, and at most `TIDE_TEXTURE_IDLE_FRAMES` rendered lists since last use: 36,000 (ten minutes at 60 Hz) since 2026-10-20, previously 60, which re-uploaded GRAVEWAKE's boss animation every time one rose and hitched on the web. The byte/count budget is what bounds memory. `tide_texture_idle_frames` (platform.c) holds the value; the residency test in `platform/tests/draw.c` sets it to 60 to see expiry and restores it. Active images are outside this budget; it is not a total VRAM cap. Pressure prefers the most recent images that fit, with stable ties and overflow-safe subtraction. C pointers, grids, shader data and targets retain their existing lifetimes. The GPU cache retains ids/metadata only, never borrowed CPU pack pointers. Device epochs clear it; draw epochs retire stale inactive images.
 - Renderer fixture measurements on this Windows RTX 4080 SUPER: 128x128 BC1 uploaded/accounted 10,936 bytes, BC3 21,872, both including all eight mips, versus 65,536 RGBA base bytes. Relative to a full RGBA mip chain (87,380 bytes), those are approximately 8x/4x smaller. Returning after a hidden frame uploads zero bytes; expiry after 61 unused lists releases the entire allocation. These are upload and engine GPU-accounting measurements, excluding driver allocation overhead, not FPS claims.
 - Coverage: compiler compression tests use an independent decoder and repeat-build comparison; `texture_compression` E2E checks automatic opaque/alpha imports, exact Raw/small channels and append. Pack tests reject corrupt metadata without changing RGBA. Renderer tests cover pixels, premultiplied alpha, point/trilinear reads, upload/memory accounting, residency expiry, byte/count pressure, unload/draw epochs, forced RGBA fallback and WebGPU device loss. Adapter mocks check BC with/without timestamps, timestamp fallback preserving BC and explicit disablement.
 - Validation: full native/web debug builds and suites exercised 2081/2053 tests. Initial failures came from new PNGs entering an existing recursive-glob fixture, an empty optional-feature request descriptor, and forwarding the page's fallback query as a C test argument. Those were corrected, fixtures/pages rebuilt, and all seven affected native checks and sixteen web asset/runtime/renderer/timing/shader/skinning/thread checks passed; every other full-suite case passed. The production docs build passed with existing allowed missing-example placeholders. All native runs used `TIDE_HIDDEN=1`; browsers were muted. No CI or deployment was requested.

@@ -166,10 +166,10 @@ static void recipient_state_schema(asset_usage *w)
 {
     const program *prog = w->prog;
     recipient_schema schema = {0};
-    ctext(w, "Tide recipient logical state schema 1");
+    ctext(w, "Tide recipient logical state schema 2");
     for (int i = 0; i < prog->singletons.count; i++) {
         decl *d = prog->singletons.items[i];
-        if (d->is_local || d == prog->visibility_state || d == prog->hierarchy[0]) continue;
+        if (d->is_local || d == prog->visibility_state || d == prog->hierarchy[0] || d == prog->task_slots[0]) continue;
         recipient_schema_type(w, &schema, (type){TY_SINGLETON, d});
     }
     number(w, UINT64_MAX);
@@ -265,15 +265,20 @@ static void listener_wire_parameters(asset_usage *w, const param *items, const i
     }
 }
 
+// tidec --embed's taps (add_embed_taps in compile.c) listen to the game's own events alone, which servers never journal
+// to recipients (they're each client's own simulation's), so they change nothing sent: a build for another program
+// plays with every other build of the game.
 static void listener_wire(asset_usage *w)
 {
     ctext(w, "Tide recipient listener journals 1");
     int count = 0;
-    for (int i = 0; i < w->prog->handlers.count; i++) if (w->prog->handlers.items[i]->listens) count++;
+    for (int i = 0; i < w->prog->handlers.count; i++) {
+        if (w->prog->handlers.items[i]->listens && !w->prog->handlers.items[i]->embed_tap) count++;
+    }
     number(w, count);
     for (int i = 0; i < w->prog->handlers.count; i++) {
         const decl *h = w->prog->handlers.items[i];
-        if (!h->listens) continue;
+        if (!h->listens || h->embed_tap) continue;
         text(w, h->qualified); // gen_hear includes names in TIDE_HEARD_BUILD.
         queue(w, USAGE_DECL, h->event);
         number(w, h->listens_verified);
@@ -358,7 +363,7 @@ static void declaration(asset_usage *w, const decl *d)
     if (w->server && d->asset_ref_of) {
         for (int i = 0; i < w->prog->assets.count; i++) {
             const decl *asset = w->prog->assets.items[i];
-            if (asset->return_type.kind == TY_MESH && asset->return_type.decl == d->asset_ref_of) use_asset(w, asset);
+            if (type_asset_reference_accepts(d, asset->return_type)) use_asset(w, asset);
         }
     }
     value_type(w, d->return_type);
@@ -395,6 +400,7 @@ static void declaration(asset_usage *w, const decl *d)
 
 static void expression(asset_usage *w, const expr *e)
 {
+    if (e->task_source) { queue(w, USAGE_EXPR, e->task_source); return; }
     number(w, e->kind);
     value_type(w, e->type);
     text(w, e->text);
@@ -521,6 +527,7 @@ static void strip_assets(program *prog, const bool server)
 {
     if (!prog->assets.count) return;
     asset_usage w = {.server = server, .prog = prog};
+    if (prog->startup_create) queue(&w, USAGE_DECL, prog->startup_create);
     for (int i = 0; i < prog->decls.count; i++) {
         const decl *d = prog->decls.items[i];
         if (server) {
@@ -584,6 +591,7 @@ bool program_simulation_id(const program *prog, uint8_t out[32], const bool cons
     if (prog->visibility_state) { recipient_state_schema(&w); listener_wire(&w); }
     number(&w, prog->start_scenes.count);
     for (int i = 0; i < prog->start_scenes.count; i++) queue(&w, USAGE_DECL, prog->start_scenes.items[i]);
+    if (prog->startup) queue(&w, USAGE_DECL, prog->startup_create ? prog->startup_create : prog->startup);
     for (int i = 0; i < DEVICE_WORDS; i++) number(&w, prog->device_uses[i]);
     for (int i = 0; i < prog->archetypes.count; i++) {
         if (prog->archetype_local.items[i]) continue;

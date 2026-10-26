@@ -1,6 +1,6 @@
 # Rooms
 
-The menu a game opens on, and the way back to it from a match, so a game is playable with friends before it has a menu of its own: a title page (Play, Host a room, Join a room), a page to type a friend's code into, the room's page (the code to copy, who's in it, Resume, Leave), volume settings and a Menu button in the match. It's a page of Tide, with nothing a game couldn't write itself.
+The menu a game opens on, and the way back to it from a match, so a game is playable with friends before it has a menu of its own: a title page (Play, Host a room, Join a room), a page to type a friend's code into, the room's page (its code, and the invite to copy: on the web a link that joins the room, elsewhere the code; who's in it, Resume, Leave), volume settings and a Menu button in the match. It's a page of Tide, with nothing a game couldn't write itself.
 
 The docs say how it's used: https://tide-engine.dev/packages/rooms
 
@@ -12,7 +12,7 @@ A game lists it in its `tide.packages`:
 rooms
 ```
 
-That's all a game needs. `Main` stays the match's scene: the match runs behind the title, **Play** closes the menu, **Host a room** opens the match to others and **Join a room** leaves it for someone else's. A game started with `--host` or `--join`, or a page opened with `?host` or `?join=`, has no menu in its way. The pages are the GUI's own widgets, in whatever theme the game sets, and the devices are theirs while a page is up.
+That's all a game needs. `Main` stays the match's scene: the match runs behind the title, **Play** closes the menu, **Host a room** opens the match to others and **Join a room** leaves it for someone else's. On the web, the room's page copies an invite link (**Copy the invite link**): the page's address with `?join=` and the room's code, which joins the room when a friend opens it. Elsewhere it copies the code (**Copy the code**), which a friend types into **Join a room**. A game started with `--host` or `--join`, or a page opened with `?host` or `?join=`, has no menu in its way. The pages are the GUI's own widgets, in whatever theme the game sets, and the devices are theirs while a page is up.
 
 **Settings** on the title or room's page opens a **Volume** slider for this machine's audio. It starts at full volume (`1`), goes down to mute (`0`) and applies as it changes. **Back** or Escape returns to the page it came from. The volume stays through starting, joining and leaving matches while the game is open; it resets to full volume when the game restarts.
 
@@ -51,7 +51,7 @@ Three functions are the game's to replace with an `override`: `Rooms.Title()` (t
 
 ## Pages of your own
 
-Each page is a function a game overrides to draw it its own way, keeping the others: `Rooms.TitlePage(session, lobby)`, `Rooms.JoinPage(session, lobby)`, `Rooms.RoomPage(session, room, lobby)` and `Rooms.SettingsPage(lobby)`. What a page's buttons do is a call each: `Play`, `Resume`, `Host`, `Invite`, `ShowJoin`, `Join`, `LeaveJoin`, `ShowSettings`, `LeaveSettings`, `CopyCode` and `Leave`.
+Each page is a function a game overrides to draw it its own way, keeping the others: `Rooms.TitlePage(session, lobby)`, `Rooms.JoinPage(session, lobby)`, `Rooms.RoomPage(session, room, invite, lobby)` (`session.room` and `session.invite`, which a function is handed) and `Rooms.SettingsPage(lobby)`. What a page's buttons do is a call each: `Play`, `Resume`, `Host`, `Invite`, `ShowJoin`, `Join`, `LeaveJoin`, `ShowSettings`, `LeaveSettings`, `CopyInvite`, `CopyCode` and `Leave`.
 
 ```csharp
 override void Rooms.TitlePage(Session session, mut Lobby lobby)

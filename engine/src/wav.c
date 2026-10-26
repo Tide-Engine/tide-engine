@@ -22,8 +22,6 @@ static void put_u32(uint8_t *at, const uint32_t v)
 
 enum { FORMAT_PCM = 1, FORMAT_FLOAT = 3, FORMAT_EXTENSIBLE = 0xFFFE };
 
-#define MOST_SAMPLES (1u << 30) // Past which no sound is meant: a file that says more is refused
-
 bool tide_wav_decode(const uint8_t *b, const size_t size, tide_sound *out)
 {
     *out = (tide_sound){0};
@@ -54,7 +52,7 @@ bool tide_wav_decode(const uint8_t *b, const size_t size, tide_sound *out)
             if (format == FORMAT_PCM ? !(bits == 8 || bits == 16 || bits == 24 || bits == 32)
                                      : format == FORMAT_FLOAT ? !(bits == 32 || bits == 64) : true) return false;
             const uint32_t frames = length / block;
-            if ((uint64_t)frames * channels > MOST_SAMPLES) return false;
+            if ((uint64_t)frames * channels >= TIDE_SOUND_MAX_SAMPLES) return false;
             const size_t count = (size_t)frames * channels;
             float *samples = tide_alloc(count ? count * sizeof *samples : sizeof *samples);
             const uint32_t width = bits / 8u;

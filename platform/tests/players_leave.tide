@@ -1,0 +1,86 @@
+// A game for a script's leave, drop and rejoin lines, in a run of several
+// players with no window (platform/tests/players.mjs): Main is the match's, so
+// the run's first player opens it and the others join. Each PlayerID gets a
+// seat the first time it arrives, a row drawn white while it's in the match
+// and black once it left: a player who comes back as the same PlayerID has its
+// row back, where another one would take a new row. A machine also draws a
+// block for where its session stands, and for why it was last disconnected.
+
+settings { maxPlayers = 4; }
+
+scene Main { }
+
+singleton Roster
+{
+    int arrivals;
+    PlayerID seat0;
+    PlayerID seat1;
+    PlayerID seat2;
+    PlayerID seat3;
+    int away; // A bit a seat
+}
+
+int SeatOf(Roster roster, PlayerID player)
+{
+    if (roster.arrivals > 0 && roster.seat0 == player) return 0;
+    if (roster.arrivals > 1 && roster.seat1 == player) return 1;
+    if (roster.arrivals > 2 && roster.seat2 == player) return 2;
+    if (roster.arrivals > 3 && roster.seat3 == player) return 3;
+    return -1;
+}
+
+event(PlayerJoined joined) Arrive(mut Roster roster)
+{
+    mut var seat = SeatOf(roster, joined.player);
+    if (seat < 0)
+    {
+        seat = roster.arrivals;
+        roster.arrivals += 1;
+        if (seat == 0) roster.seat0 = joined.player;
+        else if (seat == 1) roster.seat1 = joined.player;
+        else if (seat == 2) roster.seat2 = joined.player;
+        else roster.seat3 = joined.player;
+    }
+    roster.away = roster.away & ~(1 << seat);
+}
+
+event(PlayerLeft left) Depart(mut Roster roster)
+{
+    var seat = SeatOf(roster, left.player);
+    if (seat >= 0) roster.away = roster.away | (1 << seat);
+}
+
+local singleton Why
+{
+    bool timedOut;
+    bool serverLeft;
+}
+
+local event(Disconnected gone) Say(mut Why why)
+{
+    if (gone.reason == DisconnectReason.TimedOut) why.timedOut = true;
+    if (gone.reason == DisconnectReason.ServerLeft) why.serverLeft = true;
+}
+
+view Background()
+{
+    Draw.Clear(Color(0, 0, 1));
+}
+
+view Seats(Roster roster)
+{
+    Draw.SetScreen();
+    for (var seat = 0; seat < roster.arrivals; seat++)
+    {
+        var away = (roster.away & (1 << seat)) != 0;
+        Draw.Rect(float2(40, 30 + seat * 40), float2(20, 20), away ? Color(0, 0, 0) : Color(1, 1, 1));
+    }
+}
+
+view Stands(Session session, Why why)
+{
+    Draw.SetScreen();
+    if (session.state == SessionState.Connected) Draw.Rect(float2(300, 20), float2(20, 20), Color(0, 1, 0));
+    if (why.timedOut) Draw.Rect(float2(300, 60), float2(20, 20), Color(1, 1, 0));
+    if (why.serverLeft) Draw.Rect(float2(300, 100), float2(20, 20), Color(1, 1, 1));
+}

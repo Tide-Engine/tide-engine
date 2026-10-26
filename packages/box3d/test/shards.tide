@@ -1,0 +1,72 @@
+// Box3D in a sharded world (shards_test.c): each shard steps its own Box3D
+// world (Physics holds [Native] state), and a body that crosses into another
+// region's is made anew there from its Body, as it was when it left. Four
+// crates slide right across the border at x = 0 and keep their speed; two
+// others meet head on once they're both on the right, and push each other.
+// A wall on the left beside the border is a copy on the right, and a crate
+// sliding left on the right runs into it there, and is told it hit it.
+
+using Box3D;
+
+settings
+{
+    shards = true;
+    reach = 4;
+}
+
+scene Main { }
+
+component Crate
+{
+    int id;
+    int hits;
+}
+
+event(Hit hit) Count(mut Crate crate)
+{
+    crate.hits += 1;
+}
+
+// Set once, on the root: Physics' settings are the world's, so every shard has them
+event(Spawned) Make(with Main, mut Physics physics)
+{
+    physics.gravity = float3(0, 0, 0);
+    for (int i = 0; i < 4; i++)
+    {
+        Spawn(Crate { id = i }, Body { position = float3(-12, 0, i * 3), velocity = float3(6, 0, 0) }, Box);
+    }
+    Spawn(Crate { id = 10 }, Body { position = float3(-10, 0, 20), velocity = float3(6, 0, 0) }, Box);
+    Spawn(Crate { id = 11 }, Body { position = float3(14, 0, 20), velocity = float3(-2, 0, 0) }, Box);
+    Spawn(Crate { id = 12 }, Body { position = float3(4, 0, 30), velocity = float3(-3, 0, 0) }, Box);
+    Spawn(Crate { id = 13 }, Body { type = BodyType.Static, position = float3(-1.5, 0, 30) }, Box);
+    // A wall that's a hull, and a crate that runs into its copy
+    Spawn(Crate { id = 14 }, Body { position = float3(4, 0, 40), velocity = float3(-3, 0, 0) }, Box);
+    Spawn(Crate { id = 15 }, Body { type = BodyType.Static, position = float3(-1.5, -1, 40) }, HullCollider {
+        vertices = [float3(-0.5, 0, -2), float3(0.5, 0, -2), float3(-0.5, 0, 2), float3(0.5, 0, 2),
+                    float3(-0.5, 2, -2), float3(0.5, 2, -2), float3(-0.5, 2, 2), float3(0.5, 2, 2)] });
+    // A crate with a part, which goes where it goes
+    var carrier = Spawn(Crate { id = 6 }, Body { position = float3(-12, 0, 50), velocity = float3(6, 0, 0) }, Box);
+    Spawn(Crate { id = 7 }, Part { of = carrier }, Sphere { radius = 0.3, offset = float3(0, 1, 0) });
+    // Two crates a joint holds two meters apart, crossing together
+    var lead = Spawn(Crate { id = 8 }, Body { position = float3(-10, 0, 60), velocity = float3(6, 0, 0) }, Box);
+    var held = Spawn(Crate { id = 9 }, Body { position = float3(-12, 0, 60), velocity = float3(6, 0, 0) }, Box);
+    Spawn(Crate { id = 5 }, Joint { a = lead, b = held }, DistanceJoint { length = 2 });
+    // Three crates joined in a ring, each to the next: all of it crosses together
+    var first = Spawn(Crate { id = 16 }, Body { position = float3(-12, 0, 70), velocity = float3(6, 0, 0) }, Box);
+    var second = Spawn(Crate { id = 17 }, Body { position = float3(-10, 0, 70), velocity = float3(6, 0, 0) }, Box);
+    var third = Spawn(Crate { id = 18 }, Body { position = float3(-11, 0, 71.7320508), velocity = float3(6, 0, 0) }, Box);
+    Spawn(Crate { id = 19 }, Joint { a = first, b = second }, DistanceJoint { length = 2 });
+    Spawn(Crate { id = 20 }, Joint { a = second, b = third }, DistanceJoint { length = 2 });
+    Spawn(Crate { id = 21 }, Joint { a = third, b = first }, DistanceJoint { length = 2 });
+    // A crate from the left runs into one at rest just across the border: they share its speed, each its weight
+    // against the other, as they would on one shard
+    Spawn(Crate { id = 22 }, Body { position = float3(-6, 0, 80), velocity = float3(4, 0, 0) }, Box);
+    Spawn(Crate { id = 23 }, Body { position = float3(1.5, 0, 80) }, Box);
+    // A long floor whose place is far into the left region, reaching under the right one: a crate falling onto it on
+    // the right lands on it there
+    Spawn(Crate { id = 24 }, Body { type = BodyType.Static, position = float3(-25, -0.5, 90) }, Box { size = float3(70, 1, 4) });
+    Spawn(Crate { id = 25 }, Body { position = float3(6, 3, 90), velocity = float3(0, -3, 0) }, Box);
+    // A static body by the border with a part: the right has a copy of the part as well as of its body
+    var post = Spawn(Crate { id = 26 }, Body { type = BodyType.Static, position = float3(-2, 0, 100) }, Box);
+    Spawn(Crate { id = 27 }, Part { of = post }, Box { offset = float3(0, 1, 0) });
+}

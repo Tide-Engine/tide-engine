@@ -170,11 +170,11 @@ uint16_t tide_half_from_float(float value);
 // list of the shader's vertex, kept as a 3D mesh's lists are, and the rest is
 // tide_draw_shaded's.
 void tide_draw_mesh_shaded(tide_draw_list *d, const tide_shader *shader, tide_list vertices, tide_list indices,
-                           const void *instance, const void *uniforms, const uint32_t *textures, uint32_t sampling);
+                           const void *instance, const void *uniforms, const uint32_t *textures, uint64_t sampling);
 
 // Draw.Instanced and Draw.Instanced through a shader: generated code packs the list's values
 // into `count` instances, tide_shader_instance_size bytes each. The mesh
 // is found once, then all instance bytes copied into one run.
 void tide_draw_mesh_shaded_instances(tide_draw_list *d, const tide_shader *shader, tide_list vertices, tide_list indices,
                                      const void *instances, uint32_t count, const void *uniforms,
-                                     const uint32_t *textures, uint32_t sampling);
+                                     const uint32_t *textures, uint64_t sampling);

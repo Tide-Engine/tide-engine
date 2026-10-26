@@ -69,7 +69,7 @@ static void tick(void *state, const tide_jobs *jobs)
 {
     life *l = state;
     if (!l->now) setup(l); // Tide's first tick makes the grid, then steps it
-    // Threads pay from about 1500 rows (on a 12-core Ryzen 9 7900X)
+    // Threads pay from about 1500 rows
     step_job j = {l, versus_pieces(jobs, (uint32_t)l->size, 1536u)};
     versus_for(jobs, j.pieces, step, &j);
     uint8_t *const was = l->now;

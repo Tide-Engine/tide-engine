@@ -1,6 +1,9 @@
 // Cases the grammar once colored wrong, which grammar.test.mjs checks by
 // finding their lines. Not a game: some lines are wrong on purpose.
 
+scene Main;
+local scene Menu;
+
 command Rename { string name; }
 command(Rename rename, PlayerID sender) RenamePlayer(Owner owner, mut Name name)
 {
@@ -80,6 +83,9 @@ component Toast { float alpha; }
 async local event(Displayed) Fade(mut Toast toast) { }
 local async event(Displayed) Glow(mut local Toast toast) { }
 async void Countdown() { await Wait.Seconds(1); }
+local worker List<int> Build(List<int> values) { return values; }
+worker local int Count(int value) { return value; }
+var worker = 1;
 
 // fails after the parameters, or on a line of its own.
 int Parse(string text) fails ParseError
@@ -333,6 +339,9 @@ view ConfirmedAcrossLines(
 local event(verified Died died) ShowDeath(Body body, mut local Toast toast) { }
 local event(verified Combat.Died) CountDeath(mut local Toast toast) { }
 local event(verified) HearVerified(mut local Toast toast) { }
+// Changed<...>: a field of the match that changed over a tick
+local event(Changed<Health.value> change) Flash(mut Health health) { }
+local event(verified Changed<Combat.Unit.stats.level>) LevelUp(mut local Toast toast) { }
 view Trusted(verified trust, with verified) { }
 int Checked(Stats? verified) { if (verified is Stats checked) return Twice(verified, verified); }
 struct Proof
@@ -432,3 +441,6 @@ VisibilityGroup group = default;
 Visibility policy = default;
 local event(Shown) BecameVisible() { }
 local event(Hidden) BecameHidden() { }
+// Scene filters
+system InArena(mut Counter counter, with scene Arena) { }
+system OutOfArena(mut Counter counter, without scene Arena) { }

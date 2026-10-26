@@ -1,5 +1,782 @@
 # The language server and the editors
 
+## Following a Unity development session (2026-10-26)
+
+The owner replaces Unity's saved compiler override with a launch-only
+`-tide-command` (notes/unity.md). Both IDE resolvers accept toolchain.json
+format 2; old unscoped selections are ignored. A session selection must have
+a live PID whose start epoch seconds match; otherwise normal package/pin
+resolution runs. A reusable normal cache has sessionPid 0 and a pinned version
+matching the installation's current VERSION; a global upgrade invalidates it.
+Nothing changes
+the precedence of explicitly configured IDE executables or engine builds.
+
+VS Code resolves launch/session identity asynchronously (also for Debug's
+compiler lookup): PowerShell's Process.StartTime on Windows, ps lstart in
+UTC/C locale elsewhere. No command line or credentials are queried. While a
+development session is selected, a two-second check observes exit even when
+the cache file remains after a crash; ordinary pinned projects do no polling
+or process queries. The timer is disposed with the extension. JetBrains uses
+ProcessHandle.Info.startInstant and its onExit future to restart selection.
+Unity's normal quit also deletes the development cache, triggering the
+existing filesystem/VFS watches. Missing/unresolved pins remain explicit errors.
+
+Validation: Node 24.22.1, 40 adapter/debug tests, including live/dead/reused PID
+and old-cache rejection plus global-upgrade invalidation for Windows/Linux/macOS
+resolver branches; extension
+bundle build. Real VS Code 1.142.0 with this checkout's tidels passes the prior
+multi-project pin/hover/rename/process checks plus a development process killed
+without deleting its cache: the language server automatically returns to the
+pin and hover works, with no Tide client errors. JDK 21/Gradle 9.8.0 test and
+buildPlugin pass all 16 ordinary tests; Plugin Verifier reports Compatible on
+IC-242.26775.15 and CL-263.7307.35. Production docs build passes with existing
+unstaged-example placeholders. Both Unity launch modes are recorded in unity.md.
+Actual Linux/macOS process queries, Rider's UI and a graphical Unity settings
+window weren't exercised locally; no engine/web runtime code changed.
+
+## Project-selected Tide versions (2026-10-26)
+
+Owner, after Unity's side-by-side version selection: the IDE should follow it too.
+VS Code's `projectProgram` and JetBrains' `TideProjectTools` select `tide` and
+`tidels` from a game's `tide = <version>` pin or its Unity package. A release tag
+in packages-lock.json supplies a version directly; another git commit uses
+Unity's commit-keyed Library/Tide/version.json. VERSION must match before a
+side-by-side or normal installation is selected. Missing/invalid pins and
+unresolved commits explain the fix, without substituting a different compiler.
+Unity owns downloading its version; standalone projects install theirs first.
+
+Unity also publishes Library/Tide/toolchain.json (notes/unity.md), its selected
+command including an explicit developer override. The package-lock SHA-256 binds
+that cache to the project, including local packages; a cache from another branch
+is ignored. These files are local caches, never committed project configuration.
+Explicit IDE settings and trusted engine build/tools servers retain precedence.
+VS Code's tide.path selects a sibling tidels unless server.path is explicit;
+run/debug and both prefab actions use the project-selected compiler. JetBrains'
+run-configuration command and application-level server overrides remain explicit.
+
+VS Code runs one client per workspace folder with a protocol RelativePattern
+(baseUri, not the VS Code RelativePattern class) and workspaceFolder. Each folder
+is isolated even when its version differs. Settings/workspace/pin changes settle
+for 150 ms before restarting. Narrow watches also see Unity's Library/package
+lock above an open Assets folder. JetBrains uses one server per project and VFS
+changes restart it, preserving manually disabled servers. Emacs/Vim/Neovim retain
+their configured commands; nested independently pinned games within one workspace
+folder/JetBrains project aren't separate language clients: open their own roots.
+
+Validation: Node 24.22.1, all 39 adapter/debug checks; bundled extension build;
+real VS Code 1.142.0 host with this checkout's freshly built debug tidels, two
+pinned installations, automatic pin-file switching, hover/rename/diagnostics,
+rapid restart, terminal/process cleanup and the existing muted embedded page.
+An initial real-host run exposed the protocol-pattern mistake and event bursts,
+fixed before the passing run; its final Tide client log has no errors.
+JDK 21/Gradle 9.8.0 test/buildPlugin pass all 15 ordinary tests; Plugin Verifier
+reports Compatible on IC-242.26775.15 and CL-263.7307.35. Production docs build
+passes with existing unstaged-example placeholders. Unity's version/ABI tests
+are recorded in unity.md. No compiler/runtime C, engine suites or web game code
+changed; other OSs, Rider's UI and private prototype/service validation weren't run.
+
+## Debugging from the editors (2026-10-26)
+
+VS Code contributes breakpoints for `tide` and a `tide` debug type
+(`src/debug.js`): Attach to Unity (Tide), Debug Tide game and Attach to Tide
+game (tide run), resolved to `cppvsdbg` or `lldb-dap`/CodeLLDB with the game's
+natvis or LLDB views; `test/debug.test.mjs` is in the CTest adapter suite. The
+JetBrains plugin adds CLion's `.tide` line breakpoints (`TideBreakpoints`,
+optional `tide-cidr.xml`, compiled against `src/cidrStubs`) and Run > Attach
+to Unity (Tide) / Debug Tide Game (`TideAttach`). Details, what ran and gaps:
+`notes/debugging.md`.
+
+## Renames reaching a Unity project's C# (2026-10-26)
+
+A rename of a type, field, enum member or namespace whose C# twin tide unity writes (a component, singleton, event,
+command, struct, input or enum) also edits the Unity project's scripts: `csharp_renames` (`compiler/lsp/csharp.c`) joins its
+edits to the WorkspaceEdit after the prefabs' and scenes' (`unity_renames`), as UTF-16 columns. Names come from
+`compiler/lsp/unity_names.c`, which tide's `unity_code.c` names the C# with too. What it reads as a reference, the
+files it reads, its test `lsp_rename_reaches_unity_scripts` and its gaps: notes/unity.md, Tide types and their C#
+twins. A namespace's rename moves its components in the prefabs and scenes too (`unity_move`, a list of moved
+components in `unity_rename`). The outline's new `doc`, field `line` and `memberDocs` (`print_outline`) aren't used
+by tidels's hovers, which still show no comments.
+
+## Checked skinned asset references (2026-10-25)
+
+Asset<SkinnedMesh<V>> uses the approved typed-reference completion. The shared
+type-tree walker follows its model argument, including aliases. Reference members
+offer Value without exposing identity; the Value chain offers the declared
+skinned type's dynamic skeleton/catalog and geometry API, with no inferred-name
+forwarding. Asset completion help names both static and skinned model kinds.
+lsp_skinned_asset_reference_aliases_and_dynamic_value_members passes in the full
+native suite, including after the Changed-trigger merge. No adapter, native
+model preview or grammar change is introduced. Compiler contracts and combined
+validation are recorded in notes/language.md and notes/render3d.md.
+
+## `Changed<...>` triggers (2026-10-25)
+
+`local event(Changed<Health.value> change)`: the language server places the
+component as a type and each field as a member (hover, rename), prints the
+trigger in headers, describes the change in a handler's hover, and the
+formatter keeps `Changed<...>` tight (`generic_type`). The change's `old` and
+`value` have no source location, so renaming them is refused as a built-in
+type's field. The TextMate grammar's handler rules accept the trigger
+(`#changed-trigger`, both copies). Tests: `lsp_changed_triggers`, grammar
+cases in `tools/tide-syntax/test`. The feature itself is in
+notes/verified-and-local-handlers.md.
+
+## Merge integration (2026-10-25)
+
+The one-round merge of origin/dev at b4655dfd into feature commit 2b0edc69
+keeps both complete sections above. Only this note conflicted. This text
+resolution changes no source and makes no new validation claim; root owns
+merge completion and the full native/web suite repeats.
+
+## Editor CI cleanup and empty-edit fixes (2026-10-25)
+
+Run `40152905815` at `5d5f6172` failed Windows release's Play workspace-removal
+assertion and Linux ASan/UBSan's prefab extraction. `edited_slice` passed a
+null empty edit vector to qsort, whose base argument must be nonnull even for
+zero elements. document.c now sorts only vectors with more than one element,
+including the two source-discovery sorts with the same empty-vector risk.
+Existing extraction tests exercise the empty-edit path; source bytes, reference
+rebasing and undo contracts are unchanged.
+
+Play previously ignored a failed private-workspace deletion and forgot its path.
+It now retries removal for at most one second after terminating the process tree.
+A persistent failure reports the path and retains ownership for another Stop or
+Play attempt; another build cannot start until cleanup succeeds. Close reports
+any remaining failure on stderr before releasing its in-memory bookkeeping.
+Only the already-owned workspace is removed. Windows tests hold the generated
+executable open without delete sharing: a delayed release reproduces the old
+cleanup assertion; a persistent lock checks error/path retention, refused restart
+and successful fresh Play after release. The original hosted lock holder is not
+identified by its log; the controlled regression establishes the failure mode,
+not the identity of another process on that runner.
+
+An unchanged-code stress run also exposed the fixture compiler exiting after
+its child's PID file appeared but before the complete PID was written. The
+compiler now uses the existing newline-aware readiness helper as its parent
+already does, retaining the three-second guard. Production process-tree handling
+is unchanged.
+
+All seven final Windows debug editor CTests pass (26.14 s), including native
+Vulkan validation, inspector and embedded/scripted UI checks. Optimized Play
+passes ten consecutive runs (26.24 s); its final expanded restart regression
+passes again (3.70 s). Clang 23.1.2 and Node 24.22.1 are used. The production docs
+build passes with the existing unstaged-example 404 placeholders; dependency
+audit reports zero vulnerabilities. These are tools/docs-only changes: full
+engine native/web suites were not repeated for this scope.
+
+Focused Linux validation under WSL also passes both Play and the complete
+document/startup/geometry executable with Clang 23.1.2 ASan/UBSan (15.40 s),
+leak detection disabled as in the sanitize preset and nonrecovering sanitizer
+checks retained. This covers the hosted null-qsort failure without suppressing
+its diagnostic. Actual hosted runners, macOS and Android were not rerun locally;
+no workflow was manually dispatched or retried.
+
+## GUI rectangle, scroll and focus additions (2026-10-25)
+
+The common builtin catalog supplies Rect-based SDF overloads, GUI/GUILayout.Scroll
+block snippets and mut-offset signatures, and GUI.FocusNext/ClearFocus. lsp_gui
+pins completion for scroll/focus. GUIControl.cancelled hover also names touch
+scroll cancellation. There is no separate editor-only API table. Runtime and
+compiler contracts/validation: gui.md. The native scene editor removes its
+old Ctrl+A shim that manually reset the GUI buffer, and uses the common
+caret/selection state instead. It binds the optional clipboard callback; its
+existing document-undo shortcuts already exclude active text editing. The
+unchanged inspector/UI scripted regressions exercise that integration.
+
+## Task handle syntax and editor surface (2026-10-25)
+
+Task/LocalTask completion retains full optional/failable result type text.
+The type walker follows declared failure annotations, and Task members offer
+Cancel/isRunning/isCompleted/isCancelled without exposing hidden storage.
+Match Cancel is omitted in local contexts. Hovers and formatting preserve
+Task<T fails E>; engine-awaitable lowering retains authored source symbols
+for hover/navigation instead of generated wrapper names.
+
+The shared and JetBrains TextMate grammars handle nested task generic regions
+and contextual fails. Vim/Emacs include both builtin type names. The focused
+LSP regression checks members, inference, failure references, engine-call
+hover and idempotent formatting; shared grammar checks pass 290/290.
+The older Web Request test now accepts retained/discarded Send handles and
+checks handle completion rather than requiring immediate await. Full-suite
+validation: language.md.
+
+Integration retains alias/custom-GUI editor support and synchronizes the
+JetBrains grammar snapshot with the combined shared grammar. All 299 grammar
+cases, the complete native LSP suite and production docs build pass.
+The full native run exposed a PID-file readiness race in the editor Play
+fixture: file creation can be observed before its write. The fixture now uses
+a newline-terminated PID and waits for the complete line under its unchanged
+three-second bound. The rebuilt Play test passes; production process handling
+is unchanged.
+
+## Transparent type aliases (2026-10-24)
+
+The shared TextMate grammar distinguishes `using Name = Type;` declarations
+from namespace imports, including aliases inside namespace blocks. Alias
+names and target types receive type scopes; nested containers, Func modes,
+optional types and fixed arrays retain their existing scopes. The all-E2E
+grammar check also counts files containing only alias declarations.
+
+tidels indexes DECL_ALIAS, its target tree and the compiler's authored
+type_ref.alias/expr.type_alias identity separately from the canonical type.
+Hover shows the alias declaration; definitions, references and rename retain
+the alias spelling, including constructors, static receivers and qualified
+enum backing types. Ordinary enum backing types retain their storage help.
+Aliases appear in outline/workspace symbols, semantic type tokens, ordinary
+type/namespace completion and unfinished alias targets. Enum and instance
+member completion uses the underlying type. A declaration snippet supplies
+`using Name = Type;`. Formatting keeps nested generic closers tight.
+
+Validation: the grammar suite passes 290 checks on Node 24.22.1. The rebuilt
+native tidels_tests passes all 256 checks, including all five alias protocol
+cases, enum backing and attribute navigation, and qualified constructors/World
+type arguments. The complete suite passes after the final compiler rebuilding.
+Final full native/web and docs integration results follow below.
+No editor adapter or protocol change is needed.
+
+Final integration after the GUI/local-worker merge passes the full native/web
+debug suites (2716/2611 enabled tests), production docs build and live Render3D
+example.
+The combined 257 native LSP and 295 shared grammar checks pass. Toolchain/platform
+coverage is recorded in language.md and render3d.md.
+
+Review follow-up: qualified primitive/Grid/Random constructors and bare Random
+constructors retain their authored alias occurrences. Stage/Before/After/Channel
+and asset Filter/Wrap resolve aliases to canonical enums; attribute type
+occurrences recover the authored alias through namespace/import lookup while
+member occurrences retain the canonical enum. No AST layout change is needed.
+`lsp_type_alias_qualified_constructors_and_world` covers constructor references
+and World/Spawn component aliases; `lsp_type_alias_enum_attributes` covers
+ordering/channel navigation and rename. The existing asset sampling regression
+also covers imported and qualified enum aliases. These follow-up cases pass
+in the complete rebuilt native language-server suite above.
+
+## Custom GUI composition (2026-10-24)
+
+The common builtin catalog supplies GUI.Draw/Key block snippets, Reserve
+overloads and signature help. GUIControl completion/hover includes pointer down,
+up, cancellation and GUI-space position. `lsp_gui` checks these additions.
+No editor-specific protocol or grammar change. API/contracts/validation:
+`notes/gui.md`, Custom control composition.
+
+## Local worker declarations (2026-10-24)
+
+The shared compiler parses/checks local workers. Routine hovers, override
+completion headers and document symbols preserve local worker, while outline
+JSON records worker:true. lsp_local_workers checks hover, outline and formatting.
+Shared/JetBrains TextMate grammars and Vim highlight the contextual modifier;
+the probe checks both local/worker orders and worker as a variable. Existing
+navigation/diagnostics remain function-based. Public docs link the worker/task
+workflow. Semantics and validation: language.md.
+
+The grid input extension preserves CPU completion in worker/grid-helper bodies,
+even when those helpers are also GPU-callable. lsp_local_workers includes list
+Add completion after a grid-helper call. Existing grid syntax needs no grammar
+change. Contract and validation: language.md, Local worker audit.
+
+## Mutable callable signatures (2026-10-24)
+
+Callable type text and hover preserve `mut` argument modes and spell a void
+result as void. The formatter's generic-closing scan includes mut, keeping
+`Func<mut float, void>` tight and idempotent. The shared grammar gives Func its
+own recursive generic region, scopes mut as a modifier, and handles mixed and
+nested signatures. `lsp_mut_callable_types_preserve_qualifiers_and_formatting`
+and the mutable-signature grammar probe cover these contracts. Validation is
+recorded in language.md, Mutable callable arguments.
+
+## Callable functions and configured shaders (2026-10-24)
+
+The compiler retains authored function-reference and invocation metadata while
+lowering Func values. Analysis uses those source symbols instead of generated
+dispatcher names. Lambda bodies retain their typed parameters, source ranges and
+capture-source identities, so captured reads navigate to their original local or
+parameter. Named shader binding types and initializers navigate to the shader;
+binding slot names use the shader's parameter identity. Func type trees expose
+their argument/result types, completion offers Func, and the formatter keeps its
+generic brackets tight. The shared TextMate grammar recognizes Func signatures,
+serving the editors and docs without adapter changes.
+
+`lsp_callable_bindings_preserve_function_navigation_and_signature_types` covers
+diagnostics, function and shader definitions, capture definitions and completion.
+The grammar suite includes a Func signature case. Full validation is recorded
+with the compiler work in language.md. Material-specific authoring and visual
+shader tooling remain outside this foundation.
+
+## Native editor workspace layout (2026-10-24)
+
+main.c, hierarchy_ui.inc, workspace_ui.inc and inspector_ui.inc arrange the
+native app as a neutral dark workspace: compact Q/W/E/R toolbar with centered
+Play/Stop, searchable compact Hierarchy rows on the left, Scene/Source/Models
+tabs in the center, full-height Inspector on the right, and Project/Console
+below the hierarchy and scene area. File offers New Scene, New Prefab, Open,
+Save and Reload; Edit offers Undo and Redo. Toolbar New/Open/Save/Undo/Redo and
+Set startup remain available. Scene projection is labelled 2D / XY or Iso.
+
+Hierarchy + Create offers Empty Object and Prefab Instance. Actions offers
+Rename, Duplicate, Save as Prefab, Delete and Open Source Prefab, also exposed
+in GameObject. These menus replace the direct + Entity/+ Prefab buttons.
+The Inspector uses gray component foldouts, human-readable labels, colored
+vector axes and blue override indicators alongside the existing * and Reset.
+Add Component is the plain button label. Transform displays Position, Rotation
+and Scale with X/Y/Z fields; edits still identify localPosition/localRotation/
+localScale in source, and quaternion values use the existing degree Euler UI.
+
+Project browses the current checked program's prefab declarations and static
+Mesh assets, including resolved collection items. All Assets/Prefabs/Models
+and qualified-name search filter this existing metadata. A prefab click selects
+that exact declaration, including another root in the same source file; a mesh
+click selects its Models preview. Console displays compiler diagnostics and the
+existing empty-root guidance. This introduces no new asset discovery contract.
+Failed view-preview attempts open Console once and retain a red status message,
+including at minimum window size; long preview/Play messages scroll by line.
+Views belongs to the Scene tab so it cannot overlap Models lighting controls.
+Repeated top-menu clicks close the active menu without reopening on release.
+After appended view commands, the viewport restores the authoring content clip
+so its marker labels and wires cannot spill into the Inspector.
+
+Source-preserving authoring, inheritance and extraction rules, local-TRS
+reparenting, applied-unsaved Play snapshots and Stop cleanup, separate startup
+settings, empty-file root creation, undo and recovery retain the contracts below.
+Implementation gaps: panel layout is fixed, with no panel resizing or full
+docking; generalized filesystem browsing is not implemented.
+
+Validation: the warning-free Windows native tool build and all seven editor
+CTests pass, including 54 document/startup/geometry cases, all 12 Inspector
+focus regressions, native embedding/picking/gizmos and the creation/extraction/
+placement loop. Updated UI scripts exercise Create/Actions and Project mesh
+selection, assert rendered orbit/zoom changes and exact saved prefab bytes.
+The staged installed-CLI preview integration passes with real shaders, unsaved
+overrides, undo/redo, exact prefab switching and Views toggles. Native captures
+were inspected at 1440x900 and 1100x650; the production docs build passes.
+Review regressions also cover repeated File-menu toggling and minimum-size
+model lighting, asserting real shading changes without starting a Views build.
+A missing-extern preview regression checks automatic Console/error status and
+retained geometry while Project remains browsable. The compiled and retained
+preview Inspector matches the complete Views-off pixel region exactly, guarding
+the restored scene-content clip.
+Engine/web behavior is unchanged by this tools/docs-only presentation change;
+other operating-system UI coverage remains with CI.
+
+## Opening blank authored files (2026-10-24)
+
+A zero-byte or comment/directive-only .tprefab previously opened with no root,
+disabled hierarchy controls and a blocked Save. The native editor now presents
+a named Create root action instead. editor_initialize_prefab appends a normal
+root with Transform through the existing source-preserving draft transaction;
+it changes no disk bytes until Save and supports one-step undo, redo and recovery.
+Existing comments, BOM, line endings and namespace/using directives are retained.
+Existing empty-body prefab declarations remain ordinary editable roots, with no
+automatic component additions. Play/startup controls stay disabled until a
+root exists. Save is disabled for an unchanged blank file; undoing a saved root
+can still be saved back to the original blank contents. The blank-document UI
+explains root creation instead of suggesting
+a handwritten Main when the metadata check has only a missing-entry diagnostic.
+
+Initialization rejects existing authored declarations, own syntax errors,
+invalid/conflicting names, pending recovery and changed/out-of-project sources.
+Other project errors remain visible and can be corrected alongside authoring.
+No compiler, runtime or file format changed.
+
+Validation: the warning-free native editor/tool build and all seven editor
+CTests pass, including 54 document/startup/geometry cases. Seven new document
+test groups cover exact blank/comment/BOM/CRLF prefixes, namespace collision
+scope, recovery, existing empty-body roots, syntax/conflicts, project errors
+and own-package boundaries. The actual native UI test opens a zero-byte file,
+creates its root, undoes/redoes it, saves and reopens; a separate empty-body
+prefab remains editable and gains a child normally. The production docs build
+passes. Engine/web suites are unchanged and outside this tools/docs-only fix.
+
+## Scene authoring, extraction and direct Play (2026-10-24)
+
+The approved workflow keeps the rooted .tprefab format: New Scene/New Prefab,
+named objects and models, arrange, Save as Prefab, place instances and Play
+without handwritten Main. main.c and hierarchy_ui.inc/inspector_ui.inc/
+workspace_ui.inc provide file controls, folded hierarchy, rename/duplicate/drag
+parenting, source-prefab navigation, direct bool/int/float/vector/Euler fields,
+entity/enum choices, asset browsing and optional inline expressions.
+
+document.c creates files exclusively inside existing discoverable project source
+folders and preserves source spans/comments, recovery and 64 current-document
+undo entries. Rename/duplicate/reparent use checked same-file reference edits;
+required cross-file rewrites are refused. Reparent retains local TRS, not world
+placement. Inherited descendants support field overrides/reset only; nested
+instance roots retain authored additions. Structural path refactors require a
+clean project check. Semantic/project errors may save; own syntax errors and
+disk conflicts block Save. This supersedes older save/read-only/future-work
+claims below, which record earlier builds.
+
+Save as Prefab extracts an ordinary authored child subtree, preserving incoming
+paths and rebasing internal references, then replaces it with an instance. It
+rejects outgoing references, child-to-selected-root references the language cannot
+express, already-instance roots and consumer-sensitive cross-file changes. The
+source replacement is one undo; undo keeps the newly created asset.
+
+play.c builds an owned snapshot of applied unsaved text with the selected startup
+and launches the normal game host, including initialization, systems, game views,
+camera/input and services. Compiler errors/conflicts/unresolved recovery block
+Play. Stop terminates build/game descendants, discards runtime state and removes
+only owned play artifacts. Private source-overlay/cache switches are unlisted
+implementation transport, not a public authoring workflow. Views-only preview
+remains separate. startup.c writes settings.startScene with source conflict
+checks, preserving other settings/Main; New Scene chooses itself only when no
+Main or startup is present. Switching documents saves the previous draft first.
+
+Validation on Windows, Clang 23.1.2 and Node 24.22.1: the final seven
+editor CTests pass, including native embedding, all 12 inspector focus/undo
+regressions and the complete UI create/arrange/rename/extract/place/save loop.
+The document executable passes 47 cases (25 document, 18 startup and four
+geometry/interaction cases). A draft records its source, prefab, entity path,
+field and revision; valid blur edits commit to that original field before
+selection changes, while Escape and outside source changes cancel them. Source
+navigation retains the selected prefab declaration even within a shared file.
+Nested instances omit a Transform reset so authored TRS defaults survive.
+
+Startup checks cover BOM/CRLF/trailing comments, invalid string RHS replacement,
+settings namespaces and name shadowing, exact disk bytes including appended
+NULs, exclusive file creation, source ownership, pending recovery and active
+.tide source baselines. A bare global prefab shadowed by a prefab in the
+settings namespace is refused before writing; the user can move that setting
+to global scope. Repeated startup selection preserves the active declaration.
+The installed Play test builds/runs a no-Main unsaved scene twice with real
+Spawned/systems/unmarked views, input, camera pixels and fresh state after Stop.
+
+Full native/web debug builds pass. All engine/compiler/platform checks pass,
+including native Vulkan validation/OpenGL and WebGL/D3D11/WebGPU; the existing
+MicroDuck right-turn case stays disabled. The configured external prototype
+suite also runs automatically: Cracked's unchanged match-hash pin fails on
+native and web, identically with a separately built HEAD compiler
+(2a37a61034c7a00750a5948637c8489febcbab6f). Its generated simulation and asset
+pack match; actual 0xbf53c0610c47764e versus pin 0x0a216d532fa6445c. No expected
+hash changed. Optional long private-prototype browser playthroughs were stopped;
+they are outside this engine/editor task. Logs and the baseline comparison are
+under build/scene-startup-baseline. The production docs build passes.
+
+Integration: origin/dev merged cleanly, adding only session packet validation
+and its tests/notes. Rebuilt the affected runtime and startup/session targets;
+all six native and five web checks pass, including the complete runtime suite.
+The staged CLI with the merged engine passes the real unsaved Play/pixel test
+again; its native editor --check reports zero errors/warnings. The two remaining
+Foldline web rendering checks also pass. No engine test remains unvalidated;
+optional external browser playthroughs remain outside scope as recorded above.
+
+Limits: no cross-document refactor/undo transaction, inherited structural edits,
+world-preserving authored reparent, child-to-prefab-root path syntax, automatic
+runtime-to-authoring apply, or live defaults/override reconciliation. Conditional
+path edits/extraction and cross-file consumer rewrites are refused. Extraction
+requires a self-contained ordinary authored subtree; its new asset survives
+undo. Existing preview picking/geometry, CMake consumer selection and IDE frame
+transport limits remain. Other operating systems, Android and sanitizers were
+not run here; no CI was manually dispatched.
+
+## Offline installer configuration cache (2026-10-22)
+
+Build run 39790751086 passed plugin compatibility verification but failed while
+storing Gradle's configuration cache: buildCliInstaller's doFirst captured the
+tasks DSL scope through prepareSandbox. The installer now captures the sandbox
+Directory provider, shared with its copy input, and resolves only that value
+at execution. The missing-LSP4IJ check, archive contents, dependency ordering,
+configuration-cache setting and workflow gates remain in place.
+
+On Windows with JDK 21 and Gradle 9.8.0, the original script reproduces the exact
+TaskContainerScope serialization failure. The fixed buildPlugin/buildCliInstaller
+passes all nine ordinary Java/platform tests and stores its configuration cache;
+deleting just the installer ZIP and repeating rebuilds it successfully from the
+reused cache. The exact CI buildPlugin/buildCliInstaller/verifyPlugin command
+also passes with caching enabled: Plugin Verifier reports Compatible on
+IC-242.26775.15 and CL-263.7031.19. The installer ZIP has the matching VERSION,
+Tide plugin, 24 LSP4IJ library files and seven upstream notices, with no duplicate
+entries or corrupt members.
+Optional real-process/server/native-canvas/JCEF tests are outside this Gradle-only
+change. No compiler, runtime or IDE adapter implementation changed.
+
+## Computed properties (2026-10-21)
+
+Properties reuse accessor methods in analysis, with one canonical source symbol
+for both accessors. Completion offers one property without call parentheses;
+hover shows its type and get/set availability; declaration/workspace symbols
+use Property, and semantic tokens use property/readonly. Definitions, references
+and rename treat reads and writes as one member. Setter value and contextual
+world are implicit and cannot be renamed. Component methods complete contextual
+world, and World members include ParentToWorld. Shared grammar recognizes get
+and set contextually before accessor bodies. Explicit discard temporaries no
+longer create an invented identifier span that masks the expression's hover.
+
+lsp_user_properties covers diagnostics, hover, completion, symbols, cross-accessor
+rename, Transform.position and malformed-accessor recovery. An incomplete
+property has no accessor yet, which the checker treats as an error type rather
+than dereferencing a missing setter. Existing editor adapters need no protocol
+change. Full validation is recorded in notes/language.md with the compiler work.
+
+## Prefab hovers, removing unused parameters and Enter in JetBrains (2026-10-21)
+
+Owner, in Rider on a Unity project: a prefab's hover showed `prefab SpinningCube { }`
+though its file has content; "why cant i have quick actions here too?" on an
+unused `World world`; and Enter between `{}` left the brace beside the caret.
+
+- **Prefab hovers** (`format_prefab` in `compiler/lsp/analysis.c`): a prefab
+  went through `format_data_decl`, which writes a struct's fields, and a prefab
+  has none. It's now the prefab's own text, from its `prefab` line to its
+  closing brace (`decl.end`), dedented by the first line's indentation, CRs
+  dropped; past 24 lines, the first 22, a `// ...N more lines` comment and the
+  closing brace (`PREFAB_HOVER_LINES`). One tide made of a Unity prefab or scene
+  (a file under `.../Tide/prefabs/` ending `.tprefab`: `unity_prefab_asset`)
+  adds "From `Assets/X.prefab` in the Unity project, as tide read it."
+- **Remove an unused parameter** (`FIX_REMOVE_PARAM`): the checker's "never
+  used" warnings whose note says to remove it (a World, a query, a singleton,
+  a frag's or vert's input) now carry a fix (`remove_param_fix` in
+  `check.c`), as a component's already had `FIX_USE_WITH`. tidels's
+  `remove_param_action` removes it from its first token to its name with the
+  comma joining it to the next parameter, or to the one before when it's
+  last, as `use_this_action` does, preferred and tied to its diagnostic.
+  Shared (virtual or override) declarations still get no warning, so no fix.
+- **Enter between braces in JetBrains** (`TideEnterBetweenBraces`, an
+  `enterHandlerDelegate`, first): the plugin colors Tide with TextMate, whose
+  editing support indents on Enter but leaves `}` beside the caret. In a
+  `.tide` or `.tprefab` file, with one caret, no selection and only blanks
+  between the caret and a `{` before and a `}` after, it replaces the blanks
+  with a line indented one level past the opening line (the file's code
+  style: tabs or `INDENT_SIZE` spaces) and a line with the opening line's
+  indentation, the caret on the first, and stops the default handler. VS Code
+  does this itself for the grammar's brackets.
+
+Tests: `lsp_unity_game_is_its_assets_with_what_tide_unity_wrote` (a Unity
+prefab's hover with its components and asset; a 34-line one cut after its 19th
+entity with "...11 more lines"), `lsp_quick_fixes_remove_unused_parameters` (a
+first and a last parameter removed with their commas, the edit applied, and
+that warning gone), and JetBrains `TidePlatformTest.testEnterBetweenBracesOpensTheBlock`
+(nested in a system, a `.tprefab` on one line, and Enter elsewhere unchanged:
+it reproduced the brace beside the caret before the handler). The plugin
+reaches the owner's Rider through the Marketplace nightly the manual Build
+workflow publishes, or `build/distributions` from `buildPlugin` installed
+from disk. The prefab hover and the fix need a tidels with them: the owner's
+Rider runs their own installed tide's.
+
+## CLI-managed JetBrains profiles (2026-10-21)
+
+The engine package now carries the matching Tide plugin plus LSP4IJ in a
+separate offline installer archive; `tide editors` adds it to standard existing
+2024.2+ JetBrains profiles and upgrades update those already containing Tide.
+No IDE is launched. New IDEs need one launch before discovery; custom profile
+or plugin paths remain manual. Restart after installation/upgrades; locked
+Windows plugin files give close-IDE/rerun guidance without removing the old
+plugin. Existing LSP4IJ, settings, disabled state and other plugins are preserved.
+
+Gradle buildCliInstaller depends on the tested ordinary buildPlugin and takes
+its pluginDirectory plus pinned LSP4IJ from prepareSandbox. Marketplace's ZIP
+stays a single plugin; the CLI archive adds VERSION and upstream license/source
+notices from cli-licenses, also staged in the engine's licenses/jetbrains. No
+Java adapter API or language-server behavior changed. The README documents both
+distribution methods; the public standalone repository has not been re-exported.
+
+Windows JDK 21/Gradle 9.8.0 packaging and all eight enabled adapter/platform tests
+pass. The real archive's installed files match the build byte-for-byte in an
+isolated Rider profile. CLI safety/package fixtures, full native/web suites,
+docs validation and remaining platform coverage are recorded in
+notes/cli-and-packages.md, Bundled JetBrains installation.
+
+## Stable and nightly Tide Marketplace channels (2026-10-21)
+
+The owner has submitted the initial Tide Stable upload and approved a nightly
+channel under the same io.github.blenminer.tide ID. The engine's manually
+requested Build workflow now publishes dev to nightly and release to Stable
+after the matching engine release succeeds. It keeps the existing token and
+Gradle channel property; the public source repository has no second workflow.
+The README records submission rather than claiming Marketplace approval, and
+documents opting into https://plugins.jetbrains.com/plugins/nightly/list without
+changing the separately installed Tide/tidels channel. No plugin implementation,
+identity or Gradle code changed. Workflow validation and engine-suite results
+are recorded in notes/releases-and-ci.md, Tide Marketplace channels.
+The README update is public at main efc67411de0ce9c4508d45d629a1379b71d30f1f;
+its audited 24-commit history contains only the canonical plugin subdirectory,
+and the update fast-forwards the initial public export without engine tags.
+
+## Standalone JetBrains publication (2026-10-21)
+
+Published https://github.com/Tide-Engine/tide-jetbrains, public main at
+6862c56c1a37fe6ae80d77fef0f7f9a7bb4917c9, extracted from canonical engine
+commit 1bae9b20 after it was merged into dev. GitHub recognizes MIT. The remote
+has only main; no engine tags or release workflow were published. All 23
+reachable historical trees match their original tools/tide-jetbrains subtree
+exactly. The audit checked all 40 historical paths and 88 unique blobs, with
+no credential patterns found; there are no engine/compiler/runtime files.
+The isolated export was repacked without its engine object alternates and
+passes git fsck --full --strict before publication.
+
+An anonymous fresh Git clone of the public URL has the same tree and passes
+buildPlugin with all nine enabled tests, including real process-tree cleanup,
+using JDK 21, Gradle 9.8.0 and Node 24.19.0. Only upstream product/dependency
+metadata was reused to allow offline validation. Plugin Verifier 1.411 reports
+Compatible against both IC-242.26775.15 (IntelliJ 2024.2.6) and
+CL-262.10968.117 (installed CLion 2026.2.3); upstream IDE layout warnings remain
+unrelated to Tide API usage. The ready-for-manual-upload licensed ZIP is at
+build/jetbrains-publication/tide-jetbrains-0.4.0.zip in this checkout. Its JAR
+contains the MIT text. No GitHub release asset was replaced, Marketplace upload
+performed, CI dispatched or engine license changed.
+
+The owner approved a public MIT Tide-Engine/tide-jetbrains repository using the
+Emacs/Vim model: tools/tide-jetbrains remains canonical and the engine retains
+its manually requested build, verification and stable Marketplace publication.
+The plugin's LICENSE covers its own source, icons, tests and bundled grammar;
+there is no engine-wide license change. Gradle's wrapper retains Apache-2.0,
+with its upstream license/notice preserved separately. Its JAR matches Gradle
+v9.8.0 byte for byte (SHA-256
+238e777fcddd7e34f9708186085def2abd6e08e658505b38718d79d74c21abd5).
+
+Standalone builds use the checked-in textmate snapshot. Engine builds continue
+using the live sibling tools/tide-syntax. The real process-host test now loads
+its bundled resource instead of requiring a sibling VS Code checkout. Before
+each public export, refresh textmate/package.json, language-configuration.json
+and syntaxes/tide.tmLanguage.json from tools/tide-syntax, and
+src/test/resources/host-process.cjs from tools/tide-vscode/test; commit those
+snapshots with the source changes. The initial snapshots are byte-identical.
+Public issues/patches are ported to the canonical engine copy before exporting,
+as for Emacs/Vim. No second release workflow is added to the public repository.
+
+Use git-filter-repo in a disposable clone after merging source into dev. The
+first export used this tool, so keep using it for stable public commit IDs:
+
+```sh
+git clone --no-local --no-tags --single-branch --branch dev <engine-repository> <new-export>
+git -C <new-export> filter-repo --subdirectory-filter tools/tide-jetbrains
+git -C <new-export> branch -m main
+git -C <new-export> ls-tree -r --name-only main
+```
+
+Inspect every reachable historical tree before first publication, not just the
+tip. Verify the rewritten tip equals the canonical subdirectory tree and that
+later exports fast-forward public main. Push only main explicitly, with
+push.followTags=false. Never run filter-repo in the engine checkout, publish an
+engine branch/history, or replace existing public history. Public publication
+is recorded separately below.
+
+The MIT text is packaged in META-INF/LICENSE inside the plugin JAR. The README
+provides the public license URL for Marketplace's MIT selection and accurately
+records the first-manual-upload requirement. This does not create a Marketplace
+listing, change its plugin ID, or rerun the failed stable workflow.
+
+Local validation: JDK 21/Gradle 9.8.0 buildPlugin passes in the engine directory
+and a standalone source copy without either sibling project. All nine enabled
+adapter/platform tests pass in both, including real process-tree termination
+with Node 24.19.0. ZIP inspection confirms the MIT text, exact shared grammar
+and absence of tests from the installed payload. Plugin Verifier 1.411 reports
+Compatible on IntelliJ 2024.2.6 (IC-242.26775.15), with the existing restart
+restriction for TextMate enable/disable. The standalone offline build uses
+cached upstream dependency/product metadata, not engine binaries. CLion
+verification and public-clone validation are recorded with publication below.
+No compiler/runtime/build-system code changed; full native/web engine suites
+are outside this tools/README-only scope. Optional real-server, native prefab
+and JCEF cases, other host OSs, CI and deployment were not run for this export.
+
+## Empty scene shorthand (2026-10-20)
+
+The shared parser accepts semicolon-terminated scenes, including local and
+namespaced declarations. Existing LSP symbol/occurrence and formatter paths
+handle them without adapter changes. lsp_empty_scene_declarations exercises
+diagnostics, hover, references, rename, outline, completion and formatting.
+TextMate's existing declaration matcher already scopes both forms; new probes
+pin that behavior and the all-E2E grammar check skips their nonexistent bodies.
+Validation is recorded in notes/language.md.
+
+## Scene filters in the editor (2026-10-20)
+
+`with scene Arena` names the scene as a type does: its parameter's `scene_of` is
+placed as the scene's type (`type_place`), so hover and renames reach it, and
+signatures print `with scene Arena`. The grammar scopes `scene` right after
+with/without and before a name as `keyword.other.scene`. Tests:
+`lsp_scene_filter_names_its_scene`, and the grammar test's case.
+
+## Renames reaching Unity assets (2026-10-20)
+
+Renaming a component, or a component's field, of a game whose folder is inside a
+Unity project's `Assets` also edits the project's prefabs and scenes holding
+com.tide.unity's TideEntity: `analysis_rename` appends `unity_renames`' edits
+(`compiler/lsp/analysis.c`) to its changes, as UTF-16 columns. Details, limits
+and the test: notes/unity.md, Tooling as built.
+
+## A Unity project's game (2026-10-21)
+
+A file under a Unity project's `Assets` (beside `ProjectSettings/
+ProjectVersion.txt`) belongs to the game that folder is, as if it had a
+`tide.packages` (`game_folder`), with its packages found as tide finds them;
+files in folders Unity leaves out are dropped, and tide unity's
+`Library/Tide/prefabs/**` and `Library/Tide/Unity.tide` come after the game's
+own, so `using UnityEngine.Prefabs;` and the project's prefabs resolve
+(`add_unity_game` in `server.c`). Test:
+`lsp_unity_game_is_its_assets_with_what_tide_unity_wrote`; details in
+notes/unity.md, The game is Assets.
+
+## Double Position hover (2026-10-20)
+
+Position attribute hover now identifies float/double scalars and vectors and
+their own correction precision. The existing double LSP regression opens a
+tagged double3 component, checks no diagnostics and verifies attribute hover.
+Completion syntax remains [Position]. Validation: notes/language.md.
+
+## Double matrices and math tooling (2026-10-20)
+
+The LSP and Vim/Emacs/TextMate grammars recognize double2x2/double3x3/double4x4.
+Matrix column completion/hover retains the double vector type. Constructors,
+identity, double.PI/TAU/E, all component-wise Math functions and double matrix
+builtins use the ordinary signature/member paths. GPU completion omits the
+binary64 matrix types. Tests extend the prior double tooling regression and
+grammar probes; final validation: notes/language.md.
+
+## Double numeric tooling (2026-10-20)
+
+The LSP offers double/double2/double3/double4 in CPU value/type positions, gives
+binary64 hover and constructor signatures, returns double scalar/vector types
+for swizzles and exposes double.TryParse. GPU type completion omits doubles.
+Shared TextMate and bundled Vim/Emacs grammars recognize the new primitive
+names; number tokens retain d/D suffixes. Existing formatting remains unchanged.
+Lexer/LSP/grammar cases exercise these paths and explicit narrowing guidance.
+
+The grammar's all-E2E declaration check now locates the declaration capture,
+rather than the first same-named identifier on its line. This repairs the existing
+`local event(Shown) Shown(...)` false failure without changing grammar behavior.
+The production docs build and all 268 grammar cases pass. Final native/web and
+editor harness validation: notes/language.md.
+
+## Float bits and screen scale help (2026-10-20)
+
+Builtin completion/hover/signatures expose Math.AsInt/AsFloat, float Hash overloads
+and read-only float2 Screen.scale with its physical/logical-axis contract. The
+Screen module description now includes pixel scale. Existing scalar-only vector
+comparison rules are unchanged. Editor regressions check math overload help and
+Screen's property/hover. Final validation is in notes/language.md.
+
+
+## Skinned instancing signatures (2026-10-20)
+
+Signature help recognizes a `SkinnedMesh<V>` as the whole-model form of
+`Draw.Instanced`, selecting the instance list as argument two. Built-in help and
+instance parameter docs explain optional Pose fields, authored-rest omission and
+invalid-item skipping. `lsp_skinned_static_decode_and_draw_forms` checks valid
+source, model-form signature, active parameter and the new help text. See
+`notes/drawing.md` for validation of the compiler integration.
+
+
+Query local fields (2026-10-19): local view/listener and helper query headers
+offer mut, and binding/query hover explains current local fields alongside
+read-only match data. Match headers still omit mut. lsp_query_local_fields
+checks members, mutable header completion, clean writes and rejected match
+writes; existing helper/view query assertions reflect the extended contract.
+No editor protocol/package configuration changed. Validation: language.md.
+
+Recorded-owner event filters (2026-10-19): ownership is offered after with and
+without in local match-event handler headers, including verified triggers,
+and remains absent for match handlers and known local-world events. Hover
+explains captured event-turn ownership and availability endpoints. The existing
+lsp_ownership case checks completion, clean listener diagnostics and hover.
+No editor protocol or extension packaging changed. Full validation is in
+notes/verified-and-local-handlers.md.
+
+Mutable World.Set overlap (2026-10-19): the shared checker accepts direct and
+transitive helper replacement of active mut component bindings. Access warnings
+wait for World effects so a parameter read after self Set does not suggest
+removing mut. lsp_world_in_functions covers both direct and helper no-warning
+cases; ordinary read-only World/view restrictions remain pinned. No protocol,
+completion or public editor-package change is needed. See notes/language.md.
+
 Shaded drawing functions (2026-10-19): mesh/instanced shader and per-draw
 value completion is available in ordinary synchronous functions as in views.
 Shader component hover describes both view and function inputs.
@@ -28,7 +805,7 @@ The Emacs main is 31f1cb13d4d4d0a04ab1284a36d27b5760310147; its initial
 v0.1.0 is aba90c6ee3bcacc2149702558417cfbd7008b332. The later commit only
 corrects the test's compatibility call. Vim main/v0.1.0 is
 015c1b02dd889f52cde4aa341c77b5abe7f3c565. Canonical source changes are
-4c7a69ed, d931ef96 and dcf9e2be on top of the original two editor commits.
+57c19996, 86898a2f and b1612f46 on top of the original two editor commits.
 
 Anonymous fresh Git clones work. Emacs 30.2 package-vc-install fetches the
 documented GitHub URL into an isolated profile; a fresh process proves prefab
@@ -85,9 +862,9 @@ MELPA's public-maintenance/human-review requirements still apply.
 Prepared tools/tide-emacs and tools/tide-vim as standalone repository roots for
 Tide-Engine/tide-emacs and Tide-Engine/tide-vim. They remain canonical in the
 engine source tree; public issues/patches can be applied there before another
-export. The initial license/publication prerequisites are resolved above; the
-engine remains private and has no top-level license. Do not add a license to
-the engine or claim MELPA registration is complete.
+export. The initial license/publication prerequisites are resolved above. Do
+not claim MELPA registration is complete. (Superseded 2026-10-21: the engine is
+public under `MIT OR Apache-2.0`; see `notes/repository.md`.)
 
 Emacs has Version 0.1.0, maintainer metadata, AI-assistance attribution and a
 MELPA recipe at tools/tide-emacs/melpa/tide-lang-mode. Package lint's warning
@@ -435,7 +1212,7 @@ pass with the final transport. Production docs and all ten admin/HTTP checks
 pass. Isometric alignment is pinned with a single flat model so identical
 overlapping models cannot hide a mirrored camera. No CI was dispatched;
 other host operating systems, Rider itself and Android were not run here.
-Integration through origin/dev 7e490870 is clean. Incoming changes touch only
+Integration through origin/dev 10643bcf is clean. Incoming changes touch only
 prototype-removal notes and its docs HTTP check; no editor/compiler/runtime
 dependency changed. The merged production docs build and ten admin/HTTP checks
 pass, including the new removed-route assertions.
@@ -626,7 +1403,7 @@ The production docs build passes. A private native install includes tide-editor;
 its installed tide open --check and bounded PNG capture both succeed. Other
 operating systems, Android, sanitizers and CI were not run; no workflow was
 dispatched. The screenshot is a real hidden native capture, not a mockup.
-Integration through origin/dev 9ff7e83b is clean. Incoming prototype/workflow
+Integration through origin/dev 61be0f74 is clean. Incoming prototype/workflow
 changes do not touch editor/compiler/runtime dependencies; documentation overlap
 keeps the relocated package links. The merged production docs build passes.
 
@@ -985,7 +1762,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
     - **A rename in the editor rewrites the paths** (`workspace/willRenameFiles`, `will_rename_files` in `server.c`, `analysis_rename_files`): every `asset` path to the file or folder renamed, in every file of the game and its packages, each relative to its own declaring file, which may move too; a glob is never rewritten. The edit is answered before the rename, so it's at the files' old URIs. `workspace/didRenameFiles` looks at the game again. Which renames the editor asks about: an editor that takes registrations (VS Code's client declares `fileOperations.dynamicRegistration`) gets filters for every file an asset names and the folders above it up to the game's or package's folder, registered after each analysis when the set changed (`register_assets_of`, ids `tide-rename` and `tide-renamed`; globs as `[*]`, so a path means itself); one that takes none (LSP4IJ reads only the initialize result) gets `**/*` there and is asked about every rename. The assets' files are watched too (id `tide-assets`), so a moved file a glob stops matching gets its diagnostic.
     - **Asset notifications override metadata caches** (2026-10-08): watched changes, creations/deletions and completed renames call `analysis_file_changed` before refreshing diagnostics. It marks affected cached asset reads and candidate hashes, including files under a renamed folder and meshes read with an external buffer. The next analysis rereads them even if size and modification time match; other files keep their cached decodes. Invalidation leaves the previous analysis's borrowed values valid until it is replaced. `lsp_asset_notifications_override_unchanged_metadata` checks changed UTF-8 text, a glTF buffer, deletion/recreation and a rename over an already cached destination, with fixed file times.
     - **Registrations cover all open games** (2026-10-09): `register_assets_of` keeps heap-owned path snapshots keyed by the same folder or ordered manifest source/package identity as workspace symbols and asset refactoring. Watchers and rename filters are sorted, deduplicated unions, so analyzing another game no longer unregisters the first game's assets. Active contexts are rediscovered once per `server.changes` generation; a folder's own open source files share one source-tree scan, respecting a more specific open workspace root. Manifests are read once for that generation, and their first matching file/folder entry takes precedence even when an explicit `tide.packages` folder game also includes the document. Shared package documents keep ordinary first-consumer selection. Workspace/refactoring traversal consumes heap copies of these grouped contexts, rather than resolving and rescanning the same game for every open document. The retained analysis also has a copied context key: cached requests, deferred settlement and watch refresh reuse a document's analysis only when that selected context matches, so overlapping manifest/folder contexts keep their own `PACKAGE_` branches. Diagnostics for an open document are published only by that selected context; other files and close markers keep their existing publication rules. Closing documents, removing assets or changing the workspace prunes inactive snapshots, and the last close unregisters the union. Temporary workspace/refactoring analyses never add a closed game's registrations. `lsp_asset_registrations_cover_every_open_game` applies actual capability messages as a client does, checks both root/open orders, shared-package deduplication, retained hover/lens/workspace/rename requests, a watched diagnostic refresh, source/close/root removal and clients without relative glob support. `lsp_asset_registrations_keep_manifest_and_folder_contexts` checks explicit-file and folder manifest subsets beside an explicit folder game, both open orders and immediate/coalesced opens, branch-specific hover and workspace symbols, a valid manifest branch retaining empty diagnostics when the folder branch has an error, and retained subset watches after the nonconsumer closes. `lsp_open_contexts_keep_innermost_workspace_root` checks both nested-root/open orders, isolation from a parent-only name and pruning parent watches. On Windows with the native debug server over real pipes, seven warm workspace-symbol requests on 100 valid open constant files went from a median 1,032.37 ms before grouping to 19.72 ms on the final binary, including transport and JSON parsing. The complete 100-symbol results had the same SHA-256 across every repetition and before/after; the probe retained 100 opening diagnostic publications and two dynamic asset/rename capability registrations. The final mixed-context probes also keep all three asset watches, the manifest branch's Mode=22 hover and empty diagnostics in sequential and coalesced orders; closing the other context leaves just its own asset watch.
-    - **A moved file is found by its bytes.** `compiler/src/assets.c` (tidec's library) is the path arithmetic (`asset_path_join`, `asset_path_relative`, Windows ignoring case) and the store: `<game>/.tide/assets.sha256`, a line a file (its SHA-256 as hex, its size, its path from the game's folder), making `.tide/` as tide does; `compiler/src/sha256.c` moved there from `cli/`. The checker writes it once a game's assets are checked (`asset_files_save_hashes`, from `check()`), where its text changed, when it knows the game's folder (`program.game_folder`: tide's `--game`, and tidels's for a game that's a folder, since a manifest's has no `.tide/`), keeping what it knew of a file that's missing. The checker's error for a missing file (`say_missing` in `asset_files.c`) names a file of the game's folder with the same bytes, or lists the files of its name; the server computes the same candidates (`asset_missing`, hashing a file again only when its size or time changed: `file_hash`) and offers them as quick fixes on the checker's diagnostic (`asset_diagnostic` finds it at the path's token; `asset_fix_actions`), the by-bytes one preferred. Hidden folders and the root's `build/` are never looked in (`folder_find_files`).
+    - **A moved file is found by its bytes.** `compiler/src/assets.c` (tidec's library) is the path arithmetic (`asset_path_join`, `asset_path_relative`, Windows ignoring case) and the store: `<game>/.tide/assets.sha256`, a line a file (its SHA-256 as hex, its size, its path from the game's folder), making `.tide/` as tide does; `compiler/src/sha256.c` moved there from `cli/`. The checker writes it once a game's assets are checked (`asset_files_save_hashes`, from `check()`), where its text changed, when it knows the game's folder (`program.game_folder`: tide's `--game`, and tidels's for a game that's a folder, since a manifest's has no `.tide/`), keeping what it knew of a file that's missing. The checker's error for a missing file (`say_missing` in `asset_files.c`) names a file of the game's folder with the same bytes, or lists the files of its name; the server computes the same candidates (`asset_missing`, hashing a file again only when its size or time changed: `file_hash`) and offers them as quick fixes on the checker's diagnostic (`asset_diagnostic` finds it at the path's token; `asset_fix_actions`), the by-bytes one preferred. Hidden files and folders, `.tide/` and `.build/` among them, are never looked in (`folder_find_files`).
     - **Completion inside an asset's path** (`complete_asset_path`): the folders and files where the path so far leads, from the declaring file, as items with a `textEdit` over the part being typed; `../` where there's a folder above; the type's files only (`.png` and `.psd` for a `Grid2<Color>`, `Texture` or `Cubemap`, ignoring extension case; `string` and `List<byte>` take any, `.tide` files never); and `*` and `**/*` for each accepted format for a `List`, `Map` or `Cubemap`. PSD suggestions and globs for every accepted format were added 2026-10-08, with `lsp_asset_path_completion` checking both image extensions and a list, map, single texture and cube path; hovers remain about the decoded image rather than its source format. Invalid PSD diagnostics come from the same checker as builds. Runtime `grid.Decode` remains PNG-only.
     - **Mesh assets** (2026-10-08, FBX added 2026-10-10; see `notes/assets-and-files.md`): a `Mesh`'s path completes `.glb`, `.gltf`, `.fbx` and `.obj` files (`asset_site.format` through `format4`), and globs of each format. Its hover says what the file has (vertices, triangles, and whether it has normals, uvs, colors and tangents: `mesh_file`'s flags, from the value the checker resolved), `Mesh<...>`'s own hover is the type's, and the struct in its `<>` is a type reference as a list's element is (`type_tree`). After a Mesh's dot, completion offers `vertices` and `indices` (none in a frag or a vert), whose types `member_type` finds among the program's lists (`list_type`). A mesh draw given a Mesh has a form of its own in signature help (`MESH_WHOLE`: `Draw.Mesh(mesh, transform...)`, `Draw.Instanced(mesh, instances...)`), told by its first argument naming one, and `call_param_names` calls the argument `mesh` (the checker's `expr.mesh_part`). The grammar scopes `Mesh<` as it scopes `List<`, and never `Mesh` alone, which is a game's own name as often as not. `lsp_asset_meshes` checks them, and the checker's diagnostics for a file that's no mesh.
     - **Batch renames** (2026-10-08): `will_rename_files` allocates its paths from the request's file count, so every rename is passed to `analysis_rename_files`; the former fixed array silently left out files after the first 64. Each game is analyzed once, identified by its folder or its ordered source paths and package names for a manifest's game. Each asset edit is serialized and copied through `collect_rename_edit` before the next analysis resets the arena, as are the visited game identities. Edits are merged by document path and identical range/replacement pairs are kept once; a shared package's different active `#if` branches in different games contribute their edits too. Paths are computed against the whole batch. `lsp_asset_rename_large_batch` sends 70 renames together, applies the returned edits and checks every asset's new path. `lsp_asset_rename_multiple_games` checks two games and their shared package in both request orders, including a folder move, paths from the package into each game and assets behind `PACKAGE_EXTRA`'s two branches.

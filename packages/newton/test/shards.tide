@@ -1,0 +1,37 @@
+// Newton in a sharded world (shards_test.c): each shard steps the bodies it
+// owns, with the ones its neighbours own near the border as they are, a dynamic
+// one as heavy as it is. A ball crossing the border at x = 0 keeps its speed; a
+// light ball runs into a heavy one at rest across the border, and the two share
+// the light one's momentum; two balls a fixed joint holds cross together.
+
+using Newton;
+
+settings
+{
+    shards = true;
+    reach = 4;
+}
+
+scene Main { }
+
+component Ball
+{
+    int id;
+}
+
+// Set once, on the root: Physics' settings are the world's, so every shard has them
+event(Spawned) Make(with Main, mut Physics physics)
+{
+    physics.gravity = float3(0, 0, 0);
+    Spawn(Ball { id = 0 }, Body { position = float3(-12, 0, 0), velocity = float3(6, 0, 0) },
+          Collider { type = ColliderType.Sphere, radius = 0.5 });
+    Spawn(Ball { id = 1 }, Body { position = float3(-6, 0, 10), velocity = float3(4, 0, 0), mass = 1 },
+          Collider { type = ColliderType.Sphere, radius = 0.5 });
+    Spawn(Ball { id = 2 }, Body { position = float3(1.5, 0, 10), mass = 3, inertia = float3(3) },
+          Collider { type = ColliderType.Sphere, radius = 0.5 });
+    var lead = Spawn(Ball { id = 3 }, Body { position = float3(-12, 0, 20), velocity = float3(6, 0, 0) },
+                     Collider { type = ColliderType.Sphere, radius = 0.5 });
+    var held = Spawn(Ball { id = 4 }, Body { position = float3(-13.5, 0, 20), velocity = float3(6, 0, 0) },
+                     Collider { type = ColliderType.Sphere, radius = 0.5 });
+    Spawn(Ball { id = 5 }, Joint { parent = lead, child = held, type = JointType.Fixed, parentPosition = float3(-1.5, 0, 0) });
+}

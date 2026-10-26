@@ -52,6 +52,9 @@ typedef struct read_file {
     bool mesh_tried, mesh_ok;
     mesh_file mesh;
     char mesh_why[256], mesh_note[256];
+    bool tangent_tried, tangent_ok;
+    mesh_file tangent_mesh; // Typed static float4-tangent consumers only; canonical mesh stays unsplit
+    char tangent_why[256], tangent_note[256];
     struct mesh_side *sides;
     int side_count;
     bool skin_tried, skin_ok;
@@ -83,6 +86,8 @@ static char *copy_cstr(const char *s)
 
 static void forget_mesh(read_file *f)
 {
+    if (f->tangent_ok) mesh_file_free(&f->tangent_mesh);
+    f->tangent_tried = f->tangent_ok = false;
     if (f->mesh_ok) mesh_file_free(&f->mesh);
     for (int i = 0; i < f->side_count; i++) free(f->sides[i].path);
     free(f->sides);
@@ -311,34 +316,27 @@ static bool safe_for_shell(const char *s)
     return true;
 }
 
-// Whether an ETag can go in a header on the command line: its quotes are
-// escaped there, and nothing else of it is for the shell.
+// Whether an ETag can go in a header line: nothing in it ends the line or is
+// no text. It's the server's, so it never goes on the command line, where a
+// quote of it would end its argument (cmd.exe has no escape for one): curl
+// reads it from a file.
 static bool safe_etag(const char *s)
 {
     for (; *s; s++) {
-        if (*s == '\n' || *s == '\r' || *s == '%' || *s == '`' || *s == '$' || *s == '\\') return false;
+        if ((unsigned char)*s < 0x20 || *s == 0x7F) return false;
     }
     return true;
 }
 
 // Runs curl for `url`, into `out`, with the response's headers in `headers`:
-// what curl said (its exit code), -1 when it couldn't run. `etag` goes as
-// If-None-Match, its quotes escaped for the shell.
-static int run_curl(const char *url, const char *out, const char *headers, const char *etag)
+// what curl said (its exit code), -1 when it couldn't run. `request`, if
+// given, is a file of the request's own header lines (If-None-Match).
+static int run_curl(const char *url, const char *out, const char *headers, const char *request)
 {
-    char header[1024] = "";
-    if (etag) {
-        size_t n = 0;
-        for (const char *c = etag; *c && n + 3 < sizeof header; c++) {
-            if (*c == '"') header[n++] = '\\';
-            header[n++] = *c;
-        }
-        header[n] = '\0';
-    }
     char command[4096];
     const int n = snprintf(command, sizeof command,
                            "curl -fsSL --retry 1 -m 60 -D \"%s\" -o \"%s\"%s%s%s \"%s\" 2>&1", headers, out,
-                           etag ? " -H \"If-None-Match: " : "", etag ? header : "", etag ? "\"" : "", url);
+                           request ? " -H \"@" : "", request ? request : "", request ? "\"" : "", url);
     if (n <= 0 || (size_t)n >= sizeof command) return -1;
     FILE *p = popen(command, "r");
     if (!p) return -1;
@@ -387,11 +385,12 @@ static const fetched *fetch_url(const char *url, const char *game_folder)
         return f;
     }
     folder_make(dir);
-    char file[2200], etag_file[2200], headers_file[2200], fresh[2200];
+    char file[2200], etag_file[2200], headers_file[2200], fresh[2200], request_file[2200];
     snprintf(file, sizeof file, "%s/%s", dir, hex);
     snprintf(etag_file, sizeof etag_file, "%s/%s.etag", dir, hex);
     snprintf(headers_file, sizeof headers_file, "%s/%s.headers", dir, hex);
     snprintf(fresh, sizeof fresh, "%s/%s.new", dir, hex);
+    snprintf(request_file, sizeof request_file, "%s/%s.request", dir, hex);
     const bool cached = folder_file_info(file, NULL, NULL);
     char *etag = cached ? read_text(etag_file) : NULL;
     if (etag && !*etag) {
@@ -401,7 +400,17 @@ static const fetched *fetch_url(const char *url, const char *game_folder)
     if (etag && !safe_etag(etag)) etag[0] = '\0';
     remove(headers_file);
     remove(fresh);
-    const int code = run_curl(url, fresh, headers_file, etag && *etag ? etag : NULL);
+    remove(request_file);
+    bool asks = false; // Whether the request says the ETag
+    if (etag && *etag) {
+        FILE *r = fopen(request_file, "wb");
+        if (r) {
+            fprintf(r, "If-None-Match: %s\n", etag);
+            asks = fclose(r) == 0;
+        }
+    }
+    const int code = run_curl(url, fresh, headers_file, asks ? request_file : NULL);
+    remove(request_file);
     char *headers = read_text(headers_file);
     const int status = headers ? last_status(headers) : 0;
     remove(headers_file);
@@ -898,6 +907,35 @@ static bool read_item(asset_match *item, const char *key, const char *path, cons
             diag_note("a string asset is text; for the file's bytes as they are, read it as a List<byte>");
             return false;
         }
+    }
+    return true;
+}
+
+bool asset_mesh_tangents(asset_value *value, const loc at)
+{
+    if (!value || value->kind != ASSET_MESH || value->paths_only) return false;
+    for (int i = 0; i < value->count; i++) {
+        asset_match *item = &value->items[i];
+        read_file *f = NULL;
+        // Resolution already validated the file and its side buffers. Lookup
+        // only: generating a variant never reimports or moves the file table.
+        for (int k = 0; k < files.count && !f; k++) {
+            if (asset_path_same(files.items[k].path, item->abs)) f = &files.items[k];
+        }
+        if (!f || !f->mesh_ok) {
+            diag_error(at, "'%s' has no resolved static mesh for its tangents", item->key);
+            return false;
+        }
+        if (!f->tangent_tried) {
+            f->tangent_tried = true;
+            f->tangent_ok = mesh_file_with_tangents(&f->mesh, &f->tangent_mesh, f->tangent_why, f->tangent_note);
+        }
+        if (!f->tangent_ok) {
+            diag_error(at, "'%s' %s", item->key, f->tangent_why);
+            if (f->tangent_note[0]) diag_note("%s", f->tangent_note);
+            return false;
+        }
+        item->mesh = f->tangent_mesh;
     }
     return true;
 }

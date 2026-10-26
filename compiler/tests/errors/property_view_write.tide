@@ -1,0 +1,5 @@
+// expect: a view reads the match
+component Marker { mut void Change() { world.Set<Transform>(this, Transform {}); } }
+scene Main;
+event(Spawned) Setup(with Main) { Spawn(Marker, Transform); }
+view Show(Marker marker) { marker.Change(); }

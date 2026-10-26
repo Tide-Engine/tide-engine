@@ -90,6 +90,7 @@ bool world_reads_own_writes(const decl *sys)
 bool system_splits(const decl *sys)
 {
     if (sys->is_view || !sys->per_entity || sys->writes_text) return false;
+    if ((sys->task_access[0] | sys->task_access[1]) & 2u) return false;
     for (int i = 0; i < sys->params.count; i++) {
         const param *p = &sys->params.items[i];
         if (p->type.kind == TY_SINGLETON && p->mode == PARAM_MUT) return false;
@@ -135,7 +136,7 @@ typedef struct access_list {
 // is: its Owner, after its parameters, unless one of them is the Owner.
 static access_list accesses_of(const program *prog, const decl *sys)
 {
-    access_list list = {arena_alloc(sizeof(access) * (size_t)(sys->params.count + sys->world_uses.count + 2)), 0};
+    access_list list = {arena_alloc(sizeof(access) * (size_t)(sys->params.count + sys->world_uses.count + 4)), 0};
     bool any_entity = false;
     bool by_owner = false, takes_owner = false;
     for (int i = 0; i < sys->params.count; i++) {
@@ -151,6 +152,10 @@ static access_list accesses_of(const program *prog, const decl *sys)
         takes_owner |= data && data == prog->owner;
     }
     if (by_owner && sys->per_entity && !takes_owner && prog->owner) list.items[list.count++] = (access){prog->owner, false, false};
+    for (int side = 0; side < 2; side++) {
+        if (sys->task_access[side] && prog->task_slots[side])
+            list.items[list.count++] = (access){prog->task_slots[side], (sys->task_access[side] & 2u) != 0, true};
+    }
     return list;
 }
 
@@ -459,8 +464,25 @@ void print_schedule(const program *prog, const char *game, sb *out)
     }
     sb_put(out, ".\nA system starts once everything it runs after is done.\n\n");
 
+    // Group the display by dependency depth, preserving tick order within a
+    // stage. The program's system order still governs execution and effects.
+    int *next = arena_alloc(sizeof(int) * ((size_t)stages + 1u));
+    memset(next, 0, sizeof(int) * ((size_t)stages + 1u));
+    for (int i = 0; i < prog->systems.count; i++) next[prog->systems.items[i]->stage]++;
+    int start = 0;
+    for (int stage = 1; stage <= stages; stage++) {
+        const int count = next[stage];
+        next[stage] = start;
+        start += count;
+    }
+    const decl **systems = arena_alloc(sizeof(*systems) * (size_t)prog->systems.count);
     for (int i = 0; i < prog->systems.count; i++) {
         const decl *sys = prog->systems.items[i];
+        systems[next[sys->stage]++] = sys;
+    }
+    for (int i = 0; i < prog->systems.count; i++) {
+        const decl *sys = systems[i];
+        if (i > 0 && sys->stage != systems[i - 1]->stage) sb_put(out, "\n");
         sb_printf(out, "stage %-2d ", sys->stage);
         put_decl_name(out, sys, "", NULL);
         sb_put(out, sys->per_entity ? "  (per entity" : "  (once");

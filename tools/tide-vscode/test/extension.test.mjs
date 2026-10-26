@@ -6,12 +6,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import vm from 'node:vm';
+import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 const realRequire = createRequire(new URL('../src/extension.js',import.meta.url));
 
 const source = fs.readFileSync(new URL('../src/extension.js', import.meta.url), 'utf8');
 
-function editor({ platform = 'win32', trusted = true, folders = ['C:\\game'], env = {}, files = [], realPaths = {}, settings = {}, failStarts = 0, killGroupFails = false } = {}) {
+function editor({ platform = 'win32', trusted = true, folders = ['C:\\game'], env = {}, files = [], realPaths = {}, settings = {}, failStarts = 0, killGroupFails = false, processStarts = {} } = {}) {
     const paths = platform === 'win32' ? path.win32 : path.posix;
     const contents = new Map(files.map(f => Array.isArray(f) ? f : [f, '']));
     const children = [], terminals = [], notifications = [], picks = [], clients = [], lifecycle = [], signals = [], panels = [], servers=[];
@@ -28,6 +29,7 @@ function editor({ platform = 'win32', trusted = true, folders = ['C:\\game'], en
     const vscode = {
         EventEmitter: Emitter,
         ViewColumn: { Active: -1 },
+        RelativePattern: class { constructor(base, pattern) { this.base = base; this.pattern = pattern; } },
         ThemeIcon: class { constructor(id) { this.id = id; } },
         Position: class { constructor(line, character) { this.line = line; this.character = character; } },
         Range: class { constructor(startLine, startCharacter, endLine, endCharacter) { this.start = { line: startLine, character: startCharacter }; this.end = { line: endLine, character: endCharacter }; } },
@@ -89,15 +91,95 @@ function editor({ platform = 'win32', trusted = true, folders = ['C:\\game'], en
         async start() { lifecycle.push(`start ${this.id}`); if (this.id < failStarts) throw new Error('start failed'); }
         async dispose() { lifecycle.push(`stop ${this.id}`); await this.holdDispose; }
     }
-    const sandbox = { module: { exports: {} }, Buffer, setTimeout, clearTimeout, process: { platform, env, kill: (pid, signal) => { signals.push([pid, signal]); if (killGroupFails) throw new Error('group kill failed'); } }, require: name => ({
-        child_process: { spawn }, fs: fakeFs, os: { homedir: () => platform === 'win32' ? 'C:\\home' : '/home/user' },
+    const sandbox = { module: { exports: {} }, Buffer, setTimeout, clearTimeout, process: { platform, env, kill: (pid, signal) => { if (signal === 0) { if (!(pid in processStarts)) throw new Error('no process'); return; } signals.push([pid, signal]); if (killGroupFails) throw new Error('group kill failed'); } }, require: name => ({
+        child_process: { spawn, execFile(file,args,options,done) {
+            const pid = /GetProcessById\((\d+)\)/.exec(args.join(' '))?.[1] ?? args[1];
+            const started = processStarts[pid];
+            done(started ? null : new Error('no process'), !started ? '' : platform === 'win32' ? String(started) : new Date(started*1000).toUTCString().replace(' GMT',''));
+        } }, fs: fakeFs, os: { homedir: () => platform === 'win32' ? 'C:\\home' : '/home/user' },
         net: fakeNet,
         path: paths, vscode, 'vscode-languageclient/node': { LanguageClient },
     })[name] ?? realRequire(name) };
     vm.createContext(sandbox);
     vm.runInContext(source, sandbox);
-    return { api: vm.runInContext('({findServer, settingProgram, gameFolder, pickGame, Run, run, showPage, restart, deactivate, lensCommand, openPrefab, editPrefab, prefabAction})', sandbox), vscode, children, terminals, notifications, picks, clients, lifecycle, signals, panels, servers };
+    return { api: vm.runInContext('({findServer, findTide, projectProgram, settingProgram, gameFolder, pickGame, Run, run, showPage, restart, deactivate, lensCommand, openPrefab, editPrefab, prefabAction})', sandbox), contents, vscode, children, terminals, notifications, picks, clients, lifecycle, signals, panels, servers };
 }
+
+test('Project pins select matching compiler and server and refuse another globally installed version', async () => {
+    const root = 'C:\\versions\\0.5.0';
+    const e = editor({env:{TIDE_VERSIONS:'C:\\versions'}, files:[
+        ['C:\\game\\tide.packages','tide = 0.5.0 # pinned\n'], [root+'\\VERSION','0.5.0\n'],
+        root+'\\bin\\tide.exe', root+'\\bin\\tidels.exe',
+    ]});
+    assert.equal((await e.api.findServer()).file,root+'\\bin\\tidels.exe');
+    assert.equal((await e.api.findTide('C:\\game')).file,root+'\\bin\\tide.exe');
+    e.contents.set('C:\\game\\tide.packages','tide = 0.6.0\n');
+    assert.match((await e.api.findServer()).error,/0.6.0 is required/);
+    e.contents.set('C:\\game\\tide.packages','tide = ..\\outside\n');
+    assert.match((await e.api.findServer()).error,/Invalid Tide version pin/);
+});
+
+test('Unity tooling follows the locked commit, including an override, and rejects a stale branch cache', async () => {
+    const lock = hash => JSON.stringify({dependencies:{'com.tide.unity':{source:'git',hash,version:'url#dev'}}});
+    const e = editor({files:[['C:\\game\\Packages\\packages-lock.json',lock('one')],
+        ['C:\\game\\Library\\Tide\\toolchain.json',JSON.stringify({format:2,sessionPid:0,version:'0.5.0',commit:'one',tide:'C:\\dev\\bin\\tide.exe'})],
+        ['C:\\dev\\VERSION','0.5.0'],
+        ['C:\\game\\Assets\\tide.packages',''], 'C:\\dev\\bin\\tide.exe','C:\\dev\\bin\\tidels.exe']});
+    assert.equal((await e.api.findTide('C:\\game\\Assets')).file,'C:\\dev\\bin\\tide.exe');
+    assert.equal((await e.api.findServer()).file,'C:\\dev\\bin\\tidels.exe');
+    e.contents.set('C:\\game\\Packages\\packages-lock.json',lock('two'));
+    assert.match((await e.api.findServer()).error,/Open this project in Unity/);
+});
+
+test('Two workspace projects run separate language servers at their own versions', async () => {
+    const e = editor({folders:['C:\\one','C:\\two'],env:{TIDE_VERSIONS:'C:\\versions'},files:[
+        ['C:\\one\\tide.packages','tide = 0.5.0'],['C:\\two\\tide.packages','tide = 0.6.0'],
+        ...['0.5.0','0.6.0'].flatMap(v=>[['C:\\versions\\'+v+'\\VERSION',v],'C:\\versions\\'+v+'\\bin\\tidels.exe'])]});
+    await e.api.restart();
+    assert.equal(e.clients.length,2);
+    assert.notEqual(e.clients[0].server.command,e.clients[1].server.command);
+    assert.equal(e.clients[0].options.workspaceFolder.uri.fsPath,'C:\\one');
+    assert.equal(e.clients[1].options.documentSelector[0].pattern.baseUri,'C:\\two');
+    await e.api.deactivate();
+});
+
+test('A local Unity package uses its selected toolchain only while the package lock matches', async () => {
+    const lock = JSON.stringify({dependencies:{'com.tide.unity':{source:'local',version:'file:../engine'}}});
+    const e = editor({files:[['C:\\game\\Packages\\packages-lock.json',lock],
+        ['C:\\game\\Library\\Tide\\toolchain.json',JSON.stringify({format:2,sessionPid:0,version:'0.5.0',tide:'C:\\dev\\bin\\tide.exe',lockHash:createHash('sha256').update(lock).digest('hex')})],
+        ['C:\\dev\\VERSION','0.5.0'],
+        'C:\\dev\\bin\\tide.exe','C:\\dev\\bin\\tidels.exe']});
+    assert.equal((await e.api.findServer()).file,'C:\\dev\\bin\\tidels.exe');
+    e.contents.set('C:\\game\\Packages\\packages-lock.json',lock.replace('../engine','../another-engine'));
+    assert.equal((await e.api.findServer()).file,undefined);
+});
+
+test('A Unity development selection expires on exit, PID reuse and old unscoped cache files', async () => {
+    for (const platform of ['win32','linux','darwin']) {
+        const p = platform === 'win32' ? path.win32 : path.posix;
+        const root = platform === 'win32' ? 'C:\\game' : '/game';
+        const cache = p.join(root,'Library','Tide','toolchain.json');
+        const versions = p.join(root,'versions');
+        const tool = platform === 'win32' ? 'tidels.exe' : 'tidels';
+        const custom = p.join(root,'custom','bin',platform === 'win32' ? 'tide.exe' : 'tide');
+        const pinned = p.join(versions,'0.5.0','bin',tool);
+        const processStarts = {42:1234567890};
+        const e = editor({platform,folders:[root],processStarts,env:{TIDE_VERSIONS:versions},files:[
+            [p.join(root,'Packages','packages-lock.json'),JSON.stringify({dependencies:{'com.tide.unity':{source:'git',hash:'one',version:'url#v0.5.0'}}})],
+            [cache,JSON.stringify({format:2,commit:'one',tide:custom,sessionPid:42,sessionStarted:1234567890})],
+            p.join(p.dirname(custom),tool),pinned,[p.join(versions,'0.5.0','VERSION'),'0.5.0']]});
+        assert.equal((await e.api.findServer()).file,p.join(p.dirname(custom),tool));
+        delete processStarts[42];
+        assert.equal((await e.api.findServer()).file,pinned,'a closed/crashed editor no longer selects its override');
+        processStarts[42]=1234567891;
+        assert.equal((await e.api.findServer()).file,pinned,'reusing a PID does not revive an old session');
+        e.contents.set(cache,JSON.stringify({commit:'one',tide:custom}));
+        assert.equal((await e.api.findServer()).file,pinned,'old persistent selections cannot bypass the pin');
+        e.contents.set(cache,JSON.stringify({format:2,commit:'one',tide:custom,sessionPid:0,version:'0.5.0'}));
+        e.contents.set(p.join(p.dirname(p.dirname(custom)),'VERSION'),'0.6.0');
+        assert.equal((await e.api.findServer()).file,pinned,'a global upgrade cannot change a project pin through a normal cache');
+    }
+});
 
 test('Embedded prefab panel uses a native backend, frames binary chunks and reuses the file panel', async () => {
     const e=editor({settings:{path:{globalValue:'C:\\Tide tools\\tide.exe'}},files:['C:\\Tide tools\\tide.exe','C:\\Tide tools\\tide-editor.exe','C:\\game\\tide.packages']});
@@ -155,39 +237,39 @@ test('Native prefab launch refuses Restricted Mode and saves a dirty active pref
     await e.api.openPrefab(); assert.equal(e.children.length, 1);
 });
 
-test('Restricted Mode skips workspace servers on PATH and keeps searching', () => {
+test('Restricted Mode skips workspace servers on PATH and keeps searching', async () => {
     const e = editor({ trusted: false, env: { PATH: 'C:\\game\\bin;C:\\tide\\bin' }, files: ['C:\\game\\bin\\tidels.exe', 'C:\\tide\\bin\\tidels.exe'] });
-    assert.equal(e.api.findServer().file, 'C:\\tide\\bin\\tidels.exe');
+    assert.equal((await e.api.findServer()).file, 'C:\\tide\\bin\\tidels.exe');
 });
 
-test('Restricted Mode checks the resolved executable and workspace paths', () => {
+test('Restricted Mode checks the resolved executable and workspace paths', async () => {
     for (const [folders, file, realPaths] of [
         [['C:\\game'], 'C:\\outside\\tidels.exe', { 'C:\\outside\\tidels.exe': 'C:\\game\\tidels.exe' }],
         [['C:\\linked-game'], 'C:\\actual-game\\tidels.exe', { 'C:\\linked-game': 'C:\\actual-game' }],
     ]) {
         const e = editor({ trusted: false, folders, files: [file], realPaths, settings: { 'server.path': { globalValue: file } } });
         assert.equal(e.api.settingProgram('server.path', 'language server').untrusted, true);
-        assert.equal(e.api.findServer().file, undefined);
+        assert.equal((await e.api.findServer()).file, undefined);
     }
 });
 
-test('Trusted workspaces retain configured and built server precedence', () => {
+test('Trusted workspaces retain configured and built server precedence', async () => {
     const configured = 'C:\\game\\custom.exe';
     const e = editor({ files: [configured, 'C:\\game\\build\\tools\\tidels.exe'], settings: { 'server.path': { workspaceFolderValue: configured } } });
-    assert.equal(e.api.findServer().file, configured);
+    assert.equal((await e.api.findServer()).file, configured);
     const built = editor({ files: ['C:\\game\\build\\tools\\tidels.exe'] });
-    assert.equal(built.api.findServer().file, 'C:\\game\\build\\tools\\tidels.exe');
+    assert.equal((await built.api.findServer()).file, 'C:\\game\\build\\tools\\tidels.exe');
 });
 
-test('POSIX Restricted Mode excludes workspace PATH entries too', () => {
+test('POSIX Restricted Mode excludes workspace PATH entries too', async () => {
     const e = editor({ platform: 'linux', trusted: false, folders: ['/game'], env: { PATH: '/game/bin:/usr/local/bin' }, files: ['/game/bin/tidels', '/usr/local/bin/tidels'] });
-    assert.equal(e.api.findServer().file, '/usr/local/bin/tidels');
+    assert.equal((await e.api.findServer()).file, '/usr/local/bin/tidels');
 });
 
-test('A missing or relative installation root never selects a program in the current directory', () => {
+test('A missing or relative installation root never selects a program in the current directory', async () => {
     for (const local of [undefined, 'relative']) {
         const e = editor({ env: { LOCALAPPDATA: local }, files: [local ? 'relative\\Tide\\bin\\tidels.exe' : 'Tide\\bin\\tidels.exe'] });
-        assert.equal(e.api.findServer().file, undefined);
+        assert.equal((await e.api.findServer()).file, undefined);
     }
 });
 

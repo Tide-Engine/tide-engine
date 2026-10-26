@@ -14,7 +14,9 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tide/page.h"
 #include "tide/time.h"
+#include "embedded.h"
 
 // The room this program is in, whichever machine does the work: `number`
 // tells rooms apart, so a transport left over from the last one does nothing.
@@ -26,6 +28,8 @@ static void backend_key(char out[TIDE_ROOM_KEY_LENGTH + 1]);
 static void backend_end(uint32_t number); // The match in room `number`, which this program hosts, ended
 static void backend_close(uint32_t number);
 static void backend_code(char out[TIDE_ROOM_CODE_LENGTH + 1]);
+// The link that joins room `room` into `out` (`size` bytes, which hold it with its NUL): false for none
+static bool backend_invite(const char *room, char *out, size_t size);
 static bool backend_failed(void);
 static void backend_send(uint32_t number, uint32_t to, const void *data, uint32_t size);
 static uint32_t backend_receive(uint32_t number, uint32_t *from, void *data, uint32_t capacity);
@@ -78,6 +82,12 @@ static void backend_code(char out[TIDE_ROOM_CODE_LENGTH + 1])
     tide_web_room_code(out);
 }
 
+// The page writes the link, as only it knows its own address.
+static bool backend_invite(const char *room, char *out, const size_t size)
+{
+    return tide_web_room_invite(room, out, (uint32_t)size) > 0; // A page's size_t is 32 bits
+}
+
 static bool backend_failed(void)
 {
     return tide_web_room_failed();
@@ -114,12 +124,18 @@ static void backend_netcode(const double *values, const uint32_t count)
     tide_web_netcode(values, count);
 }
 
+// A page's relay is its own to say (tide.js: `Tide.relay`).
+void tide_platform_set_relay(const char *url)
+{
+    (void)url;
+}
+
 #else
 
 #include "rtc/rtc.h"
 
 #define RELAY "wss://relay.tide-engine.dev"
-#define PEERS 256 // The most players a game takes (TIDE_PLAYERS_MOST): a host has a peer for each
+#define PEERS TIDE_PLAYERS_MOST
 
 typedef struct room_peer {
     rtc_peer *peer;
@@ -144,8 +160,8 @@ typedef struct native_room {
     bool announced; // This connection asked the relay for the room already
     double reconnect_at;
     rtc_ice_config ice;
-    room_peer peers[PEERS];
-    int peer_count;
+    room_peer *peers;
+    int peer_count, peer_capacity;
     uint32_t next_number;
     int next_read;
     double arrived; // When the datagram backend_receive last gave arrived
@@ -154,10 +170,24 @@ typedef struct native_room {
 static native_room *room;
 static uint32_t rooms_opened;
 
-// TIDE_RELAY picks another relay, like one on this machine for tests, which
-// can be plain ws://.
+// Another relay, for a program Tide is inside of (tide/embed.h); else
+// TIDE_RELAY picks one, like one on this machine for tests, which can be plain
+// ws://.
+static char *relay_asked;
+
+void tide_platform_set_relay(const char *url)
+{
+    free(relay_asked);
+    relay_asked = NULL;
+    if (!url || !url[0]) return;
+    const size_t size = strlen(url) + 1;
+    relay_asked = tide_alloc(size);
+    memcpy(relay_asked, url, size);
+}
+
 static const char *relay_url(void)
 {
+    if (relay_asked) return relay_asked;
     const char *env = getenv("TIDE_RELAY");
     return env && env[0] ? env : RELAY;
 }
@@ -288,7 +318,14 @@ static void apply_signal(rtc_peer *p, const rtc_json signal)
 
 static room_peer *add_peer(native_room *r, const bool offerer, const uint32_t number, const int relay_id)
 {
-    if (r->peer_count == PEERS) return NULL;
+    if ((uint32_t)r->peer_count == PEERS) return NULL;
+    if (r->peer_count == r->peer_capacity) {
+        const int capacity = r->peer_capacity ? r->peer_capacity * 2 : 8;
+        room_peer *peers = realloc(r->peers, (size_t)capacity * sizeof *peers);
+        if (!peers) return NULL;
+        r->peers = peers;
+        r->peer_capacity = capacity;
+    }
     rtc_peer *p = rtc_peer_new(offerer, &r->ice);
     if (!p) return NULL;
     r->peers[r->peer_count] = (room_peer){p, number, relay_id};
@@ -471,6 +508,7 @@ static void backend_close(const uint32_t number)
     if (!room || room->number != number) return;
     while (room->peer_count) remove_peer(room, room->peer_count - 1);
     relay_close(room);
+    free(room->peers);
     free(room);
     room = NULL;
 }
@@ -570,6 +608,15 @@ static void backend_code(char out[TIDE_ROOM_CODE_LENGTH + 1])
     goodbyes_update();
     const bool shown = room && !room->failed && room->reachable;
     snprintf(out, TIDE_ROOM_CODE_LENGTH + 1, "%s", shown ? room->code : "");
+}
+
+// A desktop game has no page to link to: the code is the invite.
+static bool backend_invite(const char *room, char *out, const size_t size)
+{
+    (void)room;
+    (void)out;
+    (void)size;
+    return false;
 }
 
 static bool backend_failed(void)
@@ -742,6 +789,25 @@ void tide_platform_room_code(char *out, const size_t size)
     char code[TIDE_ROOM_CODE_LENGTH + 1] = {0};
     backend_code(code);
     if (size) snprintf(out, size, "%s", code);
+}
+
+void tide_platform_room_invite(const char *room, char *out, const size_t size)
+{
+    if (!size) return;
+    out[0] = '\0';
+    if (!room || !room[0]) return;
+    // Only letters, digits and a match's slash reach the program from `?join=` as they are
+    bool linkable = true;
+    for (const char *c = room; *c; c++) {
+        linkable &= (*c >= '0' && *c <= '9') || (*c >= 'A' && *c <= 'Z') || (*c >= 'a' && *c <= 'z') || *c == '/';
+    }
+    const size_t most = size < TIDE_INVITE_BYTES ? size : TIDE_INVITE_BYTES;
+    if (linkable && backend_invite(room, out, most) && memchr(out, '\0', most)) {
+        bool printable = true;
+        for (const char *c = out; *c; c++) printable &= *c >= 0x20 && *c <= 0x7E;
+        if (printable) return;
+    }
+    snprintf(out, size, "%s", room);
 }
 
 bool tide_platform_room_failed(void)

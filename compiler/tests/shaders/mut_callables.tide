@@ -1,0 +1,27 @@
+scene Main;
+
+void Move(mut Vertex vertex, float amount) { vertex.position.x += amount; }
+void Right(mut Vertex vertex) { Move(vertex, 0.25); }
+Func<mut Vertex, void> Shift(float amount) { return (mut Vertex vertex) => Move(vertex, amount); }
+void Forward(mut Vertex vertex, Func<mut Vertex, void> deform) { deform(vertex); }
+float Brighten(mut float value) { value += 0.25; return value; }
+
+struct Item { Func<mut Vertex, void> deform; }
+local singleton Geometry { List<Vertex> vertices; List<int> indices; List<Item> items; }
+
+vert Place(mut Vertex vertex, Item item) { Forward(vertex, item.deform); }
+vert Deform(mut Vertex vertex, Func<mut Vertex, void> deform) { Forward(vertex, deform); }
+frag Shade(Vertex vertex, out Color color)
+{
+    mut float value = vertex.uv.x;
+    Func<mut float, float> brighten = Brighten;
+    float result = brighten(value);
+    color = Color(value, result, value);
+}
+view DrawShapes(mut Geometry geometry)
+{
+    geometry.items.Add(Item { deform = Right });
+    geometry.items.Add(Item { deform = Shift(0.5) });
+    Draw.Instanced(geometry.vertices, geometry.indices, geometry.items, Place, Shade);
+    Draw.Mesh(geometry.vertices, geometry.indices, Deform { deform = Right }, Shade);
+}

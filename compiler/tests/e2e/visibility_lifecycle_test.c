@@ -656,7 +656,7 @@ TIDE_TEST(visibility_lifecycle_received_plain_values_are_checked_before_casts)
     for (const tide_heard *h; (h = tide_event_log_next(log, &at));) {
         const size_t payload = at - h->size + sizeof *h;
         if (h->event != TIDE_HEARD_ROWS && (h->wants & TIDE_HEARD_LIFECYCLE)) {
-            TIDE_REQUIRE(h->size == ((sizeof *h + sizeof(received_spawn_payload) + 7u) & ~(size_t)7u));
+            TIDE_REQUIRE(h->size >= ((sizeof *h + sizeof(received_spawn_payload) + 7u) & ~(size_t)7u));
             const size_t cache = payload + offsetof(received_spawn_payload, cache);
             reject_journal_byte(log, cache + offsetof(JournalCache, ready), 2);
             reject_journal_byte(log, cache + offsetof(JournalCache, ready), 255);

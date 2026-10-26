@@ -135,6 +135,11 @@ typedef struct suggestion {
     str wrong;
     str best;
     int distance;
+    // The first name with `wrong` as a whole word of it, for when none is
+    // close: `right` for rightArrow, `shift` for leftShift. One it starts
+    // (word_rank 0) wins over one where it's a later word (1).
+    str word;
+    int word_rank;
 } suggestion;
 
 suggestion suggest_start(str wrong);

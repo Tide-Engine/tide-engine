@@ -1,0 +1,5 @@
+// expect: in a sharded game a [Position] says where its entity is, and 'Deep.at' has 3 axes where 'Flat.at' has 2
+settings { shards = true; reach = 8; }
+scene Main { }
+component Flat { [Position] float2 at; }
+component Deep { [Position] float3 at; }

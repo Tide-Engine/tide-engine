@@ -1,0 +1,3 @@
+// expect: a Func's result is a value, not mut; put mut on an argument type instead
+scene Main;
+local singleton State { Func<float, mut float> fn; }

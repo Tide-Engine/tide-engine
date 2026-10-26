@@ -23,12 +23,8 @@
 
 (async () => {
     'use strict';
-    // `#download` after the page's address: the page is only being downloaded,
-    // by a page that will show the game in a frame later. It loads the game's
-    // page once in a frame nobody sees, so the frame it shows finds the page
-    // in the browser's cache, which keeps a frame's page apart from what a
-    // script fetches. Nothing runs. It's after the `#`, which is no part of
-    // the address a cache goes by.
+    // `#download` after the page's address: the page is loaded once, in a frame nobody sees, to
+    // fill the browser's cache for the frame that shows the game later. Nothing runs.
     if (location.hash === '#download') return;
     const config = typeof Tide !== 'undefined' ? Tide : {};
     const canvas = config.canvas || document.getElementById('canvas');
@@ -38,6 +34,8 @@
     let memory = null;
     let exports = null;
     let gl = null;        // The canvas's WebGL 2 context, when the program draws with it...
+    let parallelCompile = false; // ...and whether it compiles shaders in parallel (KHR_parallel_shader_compile)
+    const COMPLETION_STATUS_KHR = 0x91B1;
     let device = null;    // ...or the WebGPU device it draws with instead (see WebGPU, below)
     let gpuFormat = null; // ...and what the canvas's pixels are then
     const wantedBackend = config.backend || new URLSearchParams(location.search).get('backend') || '';
@@ -104,20 +102,27 @@
         for (const line of lines) (fd === 1 ? print : printErr)(line);
     }
 
-    // The program's arguments are the page's. `debug-views` in the page's
-    // address is --debug-views, as for a desktop game started with it, and
-    // `host` and `join=K7QF2M` are --host and --join K7QF2M: a page that shows
+    // The program's arguments are the page's. `stats` and `debug-views` in
+    // the page's address are --stats and --debug-views, as for a desktop game, and
+    // `host` and `join=K7QF2M` are --host and --join K7QF2M (`join=K7QF2M/0`
+    // a match of the room's server, as a sharded world's is): a page that shows
     // a game, or a link to one, says which match it's in. The page's own
     // arguments go first, and win.
     const words = [...(config.arguments || [])];
     const address = new URLSearchParams(location.search);
     if (address.get('texture-compression') === 'off') config.textureCompression = false;
+    // A page whose frames are stepped and compared, as a test's are, makes each pipeline before the frame that first
+    // draws with it (`Tide.backgroundPipelines = false`, or `background-pipelines=off` in the address)
+    if (address.get('background-pipelines') === 'off') config.backgroundPipelines = false;
     if (address.has('debug-views') && !words.includes('--debug-views')) {
         words.push('--debug-views');
     }
+    if (address.has('stats') && !words.includes('--stats')) {
+        words.push('--stats');
+    }
     if (!words.some(word => word === '--host' || word === '--join' || word === '--connect')) {
-        // A code is letters and digits: the program says what's wrong with one that isn't a room's
-        const code = (address.get('join') || '').replace(/[^0-9a-z]/gi, '');
+        // A code is letters and digits, and a match after a slash: the program says what's wrong with one that isn't a room's
+        const code = (address.get('join') || '').replace(/[^0-9a-z/]/gi, '');
         if (code) words.push('--join', code);
         else if (address.has('host')) words.push('--host');
     }
@@ -225,6 +230,8 @@
     const keepFromBrowser = new Set(['Space', 'Tab', 'Backspace', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
         'PageUp', 'PageDown', 'Home', 'End']);
     function onKey(event, held) {
+        // Enter confirms the IME candidate; it must not submit the GUI field.
+        if (held && (event.isComposing || event.keyCode === 229)) return;
         // A phone's keyboard says no position for its keys: Enter is the one
         // the GUI needs from it, as what it types comes through the field.
         const index = keyIndex.get(event.code || (event.key === 'Enter' ? 'Enter' : ''));
@@ -266,15 +273,38 @@
         Object.assign(field.style, { position: 'fixed', left: '0', bottom: '0', width: '1px', height: '1px',
             opacity: '0', border: '0', padding: '0', fontSize: '16px' });
         field.value = ' ';
-        field.addEventListener('input', event => {
-            if (event.inputType === 'deleteContentBackward') tapKey('Backspace');
-            else if (event.inputType === 'insertLineBreak') tapKey('Enter');
-            else if (event.data) {
-                for (const ch of event.data) {
-                    const c = ch.codePointAt(0);
-                    if (c >= 32 && c !== 127 && typed.length < 1024) typed.push(c);
-                }
+        let composing = false;
+        let committed = null;
+        const append = text => {
+            for (const ch of text || '') {
+                const c = ch.codePointAt(0);
+                if (c >= 32 && c !== 127 && typed.length < 1024) typed.push(c);
             }
+        };
+        field.addEventListener('compositionstart', () => { composing = true; committed = null; });
+        field.addEventListener('compositionend', event => {
+            composing = false;
+            const token = { text: event.data || '' };
+            committed = token;
+            append(token.text);
+            // Deduplicate the final input in this event burst, without
+            // swallowing an identical character typed in a later event.
+            queueMicrotask(() => { if (committed === token) committed = null; });
+            field.value = ' ';
+        });
+        field.addEventListener('input', event => {
+            if (composing || event.isComposing) return;
+            // Some browsers send a final input after compositionend as well.
+            if (committed !== null && event.data === committed.text) {
+                committed = null;
+                field.value = ' ';
+                return;
+            }
+            committed = null;
+            if (event.inputType === 'deleteContentBackward') tapKey('Backspace');
+            else if (event.inputType === 'deleteContentForward') tapKey('Delete');
+            else if (event.inputType === 'insertLineBreak') tapKey('Enter');
+            else if (event.data) append(event.data);
             field.value = ' ';
         });
         document.body.appendChild(field);
@@ -519,8 +549,18 @@
     let heartbeat = null;  // The worker, while the page is hidden
     let beating = false;   // ...which has a frame coming
     let nextFrame = 1000 / 60; // Milliseconds until the program needs a frame, as its last one said
+    // `pageFrames`: while the page is shown, a program of the page's own runs
+    // each frame, with `Tide.frame()` (Unity's player, from its own frame:
+    // com.tide.unity's Tide.jslib), and reads and writes the program's memory
+    // through `Tide.exports()` and `Tide.memory()`. Hidden, frames come from
+    // the worker, as for any page, so a match never waits on the other program.
+    const pageFrames = !!config.pageFrames;
+    config.frame = () => { if (looping && !heartbeat && !scheduled) frame(); };
+    config.exports = () => exports;
+    config.memory = () => memory;
     function scheduleFrame() {
         if (scheduled || heartbeat) return;
+        if (pageFrames && !document.hidden) return; // The page's own program runs it
         scheduled = true;
         if (timerFrames || document.hidden) setTimeout(scheduledFrame, 0);
         else requestAnimationFrame(scheduledFrame);
@@ -749,6 +789,10 @@
             // target's Format.Rgba16f), which it only does once it's asked for. It adds no function, and the
             // program finds out whether it's there by making one (gl_float_targets in gpu_gl.c)
             if (gl && !gl.getExtension('EXT_color_buffer_float')) gl.getExtension('EXT_color_buffer_half_float');
+            // And compiling shaders in parallel, where the browser can: a pipeline made in the background is asked
+            // whether it's done (GL_COMPLETION_STATUS_KHR) without waiting for it. Where it can't, it says done, and
+            // the pipeline's checked then
+            parallelCompile = !!(gl && gl.getExtension('KHR_parallel_shader_compile'));
             return gl ? 1 : 0;
         },
         canvas_width: () => size.width,
@@ -841,22 +885,13 @@
     // its host, and introduces the others to it.
 
     const relayUrl = config.relay || 'wss://relay.tide-engine.dev';
-    // `Tide.lag`, or `lag=` in the page's address: the ping this page's
-    // player is to have, in milliseconds, to see a match as on a slow
-    // connection with both players at one desk. A ping is the network's whole
-    // round trip to the match's server, there and back (the session's:
-    // tide_client_status.ping_ms), and what the trip takes already is part of
-    // it: the page adds what's missing (`added`), half to what it sends and
-    // half to what it receives, so a lag of 100 reads as a ping of 100, not as
-    // 100 more than it was. What it holds back arrives, to the program, when
-    // it's let go. A page that hosts adds nothing: its machine runs the
-    // server, and each player who joined says its own. The page can change it
-    // while the game runs, and reads `Tide.minLag`, the least a lag can make
-    // the ping: what it was while the page added nothing, undefined until the
-    // program measured 8 of them so (a page that wants it starts with no lag),
-    // and on a page that hosts. `Tide.room` is the code of the room the
-    // program hosts or joined ("" for none), for the page to show or to link
-    // to.
+    // `Tide.lag`, or `lag=` in the page's address: the ping this page's player is to have, in
+    // milliseconds, to see a match as on a slow connection. A ping is the whole network round trip
+    // (tide_client_status.ping_ms); the page adds only what's missing over what the trip takes
+    // already (`added`), half to what it sends and half to what it receives. A page that hosts adds
+    // nothing. The page can change it while the game runs, and reads `Tide.minLag`, the least a lag
+    // can make the ping (undefined until 8 pings were measured with nothing added, and on a page
+    // that hosts), and `Tide.room`, the code of the room the program hosts or joined ("" for none).
     if (config.lag === undefined) config.lag = Number(new URLSearchParams(location.search).get('lag')) || 0;
     Object.defineProperty(config, 'minLag', { configurable: true, enumerable: true,
         get: () => room && !room.hosting && room.leastOf >= 8 ? Math.round(room.least) : undefined });
@@ -875,7 +910,8 @@
         closeRoom();
         room = {
             number: ++rooms, hosting, code, failed: false, reachable: true, connected: false, opened: performance.now(),
-            ws: null, announced: false, ice: [], peers: new Map(), byRelay: new Map(), next: 1, inbox: [],
+            // Announced means requested; advertised means the relay confirmed it, so an invite can be copied.
+            ws: null, announced: false, advertised: false, ice: [], peers: new Map(), byRelay: new Map(), next: 1, inbox: [],
             key: key || (hosting ? newKey() : ''), moving: !!key, moved: 0,
             // When the datagram the program last took arrived (performance.now)
             arrived: 0,
@@ -978,6 +1014,7 @@
                 r.announced = true;
             } else if (m.hosting) {
                 r.reachable = true;
+                r.advertised = true;
                 if (r.moving) { // The room's host was gone: this program is now
                     r.moving = false;
                     r.hosting = true;
@@ -1036,6 +1073,7 @@
         ws.onclose = () => {
             if (room !== r || r.ws !== ws) return;
             r.ws = null;
+            r.advertised = false;
             if (!r.hosting) {
                 if (!r.connected && !r.failed && !r.peers.size && performance.now() - r.opened < 10000) {
                     // Not introduced yet: the relay may be waking up (it
@@ -1168,7 +1206,24 @@
             u8().set(encoder.encode(code), outPtr);
             u8()[outPtr + code.length] = 0;
         },
-        room_failed: () => room && room.failed ? 1 : 0,
+        // The link that joins room `room`, which `?join=` above turns into --join wherever the page is
+        // served: its address without the query or fragment. Bytes written including the NUL, or
+        // 0 for no replacement. A host's invite stays empty until the relay confirms its room.
+        room_invite(roomPtr, outPtr, size) {
+            const code = string(roomPtr);
+            if (room && room.hosting && room.code === code && !room.advertised) {
+                if (size < 1) return 0;
+                u8()[outPtr] = 0;
+                return 1;
+            }
+            if (!/^(https?|file):$/.test(location.protocol)) return 0;
+            const link = encoder.encode(location.href.split(/[?#]/)[0] + '?join=' + encodeURIComponent(code));
+            if (link.length + 1 > size) return 0;
+            u8().set(link, outPtr);
+            u8()[outPtr + link.length] = 0;
+            return link.length + 1;
+        },
+        room_failed:() => room && room.failed ? 1 : 0,
         room_send(number, to, ptr, size) {
             const peer = room && room.number === number ? room.peers.get(to) : null;
             const channel = peer && peer.open ? peer.channel : null;
@@ -1199,19 +1254,11 @@
             }
         },
         room_arrived: () => room ? room.arrived : 0,
-        // The ping the program measures to its room's host, in milliseconds
-        // (under 0 for none), which it says every frame: what `Tide.lag` is to
-        // make it. Less what the page adds, it's what the ping is by itself,
-        // if all of its trip went with what's added now: it set out after
-        // that last changed, which was `answer` ago, what the program says an
-        // answer took to be read. The program counts that by its frames, each
-        // up to a frame's work behind the page's clock, so a trip that set
-        // out within 50 ms of the change doesn't count. Nor does one said
-        // again with nothing heard since. The page's timers fire a little
-        // late, each its own little, so the page goes by what's left on the
-        // whole. `Tide.minLag` is from the pings with nothing added alone:
-        // their mean, of the last 32 or so once there are that many, as it's
-        // there to be read.
+        // The ping the program measures to its room's host in milliseconds (under 0 for none), said
+        // every frame: what `Tide.lag` is to make it. Pings sent within 50 ms of the last change of
+        // what the page adds, or repeated with nothing heard since, don't count (the program counts
+        // by frames, each up to a frame's work behind the page's clock). `Tide.minLag` is the mean
+        // of the last 32 or so pings with nothing added.
         room_ping(ping, answer) {
             const r = room;
             if (!r) return;
@@ -1332,13 +1379,9 @@
         glCheckFramebufferStatus: target => gl.checkFramebufferStatus(target),
         glClear: mask => gl.clear(mask),
         glClearColor: (r, g, b, a) => gl.clearColor(r, g, b, a),
-        glCompileShader(s) {
-            const shader = get('shader', s);
-            gl.compileShader(shader);
-            if (gl.getShaderParameter(shader, gl.COMPILE_STATUS)) { // The program asks about one that didn't
-                shaderWarning('a shader compiled with warnings', gl.getShaderInfoLog(shader), gl.getShaderSource(shader));
-            }
-        },
+        // (Nothing's asked of a shader or a program as it's compiled or linked, which would wait for the browser to
+        // finish: its warnings are looked for when the program asks how it went, in glGetShaderiv and glGetProgramiv)
+        glCompileShader: s => gl.compileShader(get('shader', s)),
         glCreateProgram: () => add('program', gl.createProgram()),
         glCreateShader: type => add('shader', gl.createShader(type)),
         glCullFace: side => gl.cullFace(side),
@@ -1405,18 +1448,24 @@
             for (let i = 0; i < count && i < values.length; i++) i32()[(ptr >> 2) + i] = values[i];
         },
         glGetProgramInfoLog: (p, max, lengthPtr, ptr) => writeLog(gl.getProgramInfoLog(get('program', p)), max, lengthPtr, ptr),
-        glGetProgramiv: (p, pname, ptr) => writeParameter(gl.getProgramParameter(get('program', p), pname), ptr),
+        glGetProgramiv(p, pname, ptr) {
+            if (pname === COMPLETION_STATUS_KHR && (!parallelCompile || config.backgroundPipelines === false))
+                return writeParameter(true, ptr);
+            const program = get('program', p), value = gl.getProgramParameter(program, pname);
+            if (pname === gl.LINK_STATUS && value) shaderWarning('shaders linked with warnings', gl.getProgramInfoLog(program));
+            writeParameter(value, ptr);
+        },
         glGetShaderInfoLog: (s, max, lengthPtr, ptr) => writeLog(gl.getShaderInfoLog(get('shader', s)), max, lengthPtr, ptr),
-        glGetShaderiv: (s, pname, ptr) => writeParameter(gl.getShaderParameter(get('shader', s), pname), ptr),
+        glGetShaderiv(s, pname, ptr) {
+            const shader = get('shader', s), value = gl.getShaderParameter(shader, pname);
+            if (pname === gl.COMPILE_STATUS && value) { // The program asks about one that didn't
+                shaderWarning('a shader compiled with warnings', gl.getShaderInfoLog(shader), gl.getShaderSource(shader));
+            }
+            writeParameter(value, ptr);
+        },
         glGetUniformBlockIndex: (p, name) => gl.getUniformBlockIndex(get('program', p), string(name)),
         glGetUniformLocation: (p, name) => uniformId(p, string(name)),
-        glLinkProgram(p) {
-            const program = get('program', p);
-            gl.linkProgram(program);
-            if (gl.getProgramParameter(program, gl.LINK_STATUS)) {
-                shaderWarning('shaders linked with warnings', gl.getProgramInfoLog(program));
-            }
-        },
+        glLinkProgram: p => gl.linkProgram(get('program', p)),
         glPixelStorei: (pname, param) => gl.pixelStorei(pname, param),
         glReadPixels(x, y, w, h, format, type, ptr) {
             const [array, offset] = pixels(type, ptr);
@@ -1492,6 +1541,8 @@
     // 'webgpu', which also takes the browser's software device.
 
     const gpuTables = { buffer: [null], texture: [null], pipeline: [null], target: [null] };
+    // Whether pipelines are made in the background (tide_gpu.background): one is drawn with once it's made
+    let backgroundPipelines = false;
     const gpuFree = { buffer: [], texture: [], pipeline: [], target: [] };
     function gpuAdd(kind, object) {
         const id = gpuFree[kind].length ? gpuFree[kind].pop() : gpuTables[kind].length;
@@ -1610,7 +1661,7 @@
     // the first time a pipeline reads its textures so.
     const UNIFORM_SLOT = 256;   // How far apart a pass's uniforms are in the uniform buffer: what WebGPU's offsets go by
     const UNIFORM_BYTES = 4096; // The most a pipeline's uniforms take (TIDE_GPU_MAX_UNIFORMS), which every pipeline is bound
-    const MAX_TEXTURES = 8;     // TIDE_GPU_MAX_TEXTURES
+    const MAX_TEXTURES = 12;     // TIDE_GPU_MAX_TEXTURES
     const READ_COMPARE = 2;     // TIDE_GPU_READ_COMPARE, after a color's 0 and a depth's 1
     const READ_CUBE = 3;        // TIDE_GPU_READ_CUBE: a cube's color, read by a direction
     const READ_DATA = 4;        // TIDE_GPU_READ_DATA: ints, each pixel by its place
@@ -2051,11 +2102,11 @@
             gpuRemove('texture', id);
             for (const key of t.groups) bindGroups.delete(key);
         },
-        gpu_pipeline_begin(namePtr, codePtr, uniformSize, textures, reads, blend, depth, cull, into, outputs, stencilTest,
+        gpu_pipeline_begin(namePtr, codePtr, uniformSize, textures, reads, readsHigh, blend, depth, cull, into, outputs, stencilTest,
             stencilOp) {
             building = { name: string(namePtr), code: string(codePtr), textures, blend, depth, cull, slots: [], attributes: [],
                 stencil: { compare: stencilTests[stencilTest] || 'always', passOp: stencilOps[stencilOp] || 'keep' },
-                reads: Array.from({ length: textures }, (unused, i) => reads >> 3 * i & 7), // 3 bits each: tide_gpu_read
+                reads: Array.from({ length: textures }, (unused, i) => (i < 8 ? reads >>> 3 * i : readsHigh >>> 3 * (i - 8)) & 7), // Two banks of 3-bit tide_gpu_read values
                 // What the targets it draws into hold (none: depth alone), and how many of those colors it writes
                 into: colorFormats(into), outputs, samples: samplesOf(into) };
         },
@@ -2074,7 +2125,7 @@
                     .map(({ shaderLocation, offset, format }) => ({ shaderLocation, offset, format })),
             }));
             const layout = layoutFor(b.reads);
-            const pipeline = device.createRenderPipeline({
+            const described = {
                 label: b.name,
                 layout: layout.pipeline,
                 vertex: { module, entryPoint: 'vertex', buffers },
@@ -2089,10 +2140,28 @@
                 // Either side of a triangle tests stencil the same way, against all 8 bits
                 depthStencil: { format: depthFormat, ...depths[b.depth], stencilFront: b.stencil, stencilBack: b.stencil,
                     stencilReadMask: 0xFF, stencilWriteMask: 0xFF },
+            };
+            if (!backgroundPipelines) {
+                return gpuAdd('pipeline', { pipeline: device.createRenderPipeline(described), textures: b.textures, reads: b.reads,
+                    layout });
+            }
+            // In the background: the draws that use it are left out till it's made (gpu_pipeline_ready), where the
+            // frame that first drew with it would otherwise wait for the browser to compile it
+            const entry = { pipeline: null, textures: b.textures, reads: b.reads, layout };
+            const id = gpuAdd('pipeline', entry), made = device;
+            device.createRenderPipelineAsync(described).then(pipeline => {
+                if (device === made && gpuTables.pipeline[id] === entry) entry.pipeline = pipeline;
+            }, error => { // A lost device makes it again on the next; anything else is a pipeline that can't be
+                if (device !== made) return;
+                const text = `WebGPU: the pipeline of ${b.name} wasn't made: ${error.message}`;
+                if (config.checkGL) fail(new Error(text));
+                else printErr('tide: ' + text);
             });
-            return gpuAdd('pipeline', { pipeline, textures: b.textures, reads: b.reads, layout });
+            return id;
         },
         gpu_pipeline_free: id => gpuRemove('pipeline', id),
+        gpu_background: on => { backgroundPipelines = !!on && config.backgroundPipelines !== false; },
+        gpu_pipeline_ready: id => gpuTables.pipeline[id]?.pipeline ? 1 : 0,
         gpu_target(format, width, height) {
             // Its color images, in order: none for a target of depth alone (TIDE_GPU_TARGET_DEPTH)
             const formats = colorFormats(format), samples = formats.length ? samplesOf(format) : 1;
@@ -2571,12 +2640,9 @@
         } catch (error) { filesError = storageError(error); }
     }
     let filesReady = null;
-    // Saves what's changed, after the saves asked for before it. What that is,
-    // it takes when its turn comes, not when it's asked: a change queues a
-    // save and a flush in the same turn is another, and the second, which
-    // comes once the first committed, then finds nothing left to write. What
-    // a save that failed left dirty, and what changed while one was on its
-    // way, the next one takes the same way.
+    // Saves what's changed, after the saves asked for before it. What is dirty is taken when the
+    // save's turn comes, not when it's asked, so a save queued behind another finds nothing left
+    // to write.
     function saveFiles(tree) {
         tree.chain = tree.chain.then(() => {
             if (!filesDB || filesError) return filesError || ioError.unavailable;
@@ -2849,12 +2915,10 @@
         env: lenient('env', glFunctions, (module, name) => { throw new Error(`tide.js has no ${name}`); }),
     };
 
-    // A program and its memory: shared where the page can share it, or else
-    // its own, with the program's import of it changed to match. Compiles on
-    // the spot where the browser allows it (Chrome: up to 8 MB on the main
-    // thread). The page has nothing else to do meanwhile, and headless tests
-    // run on virtual time, which keeps running while a compile happens in the
-    // background, so it can run out before main.
+    // A program and its memory: shared where the page can share it, or else its own, with the
+    // program's import of it changed to match. Compiles on the spot where the browser allows it
+    // (Chrome: up to 8 MB on the main thread): headless tests run on virtual time, which keeps
+    // running during a background compile, so it could run out before main.
     async function instantiate(bytes) {
         const wanted = memoryImport(bytes);
         let made = null, isShared = false;
@@ -3000,6 +3064,14 @@
     async function replace(bytes, fresh, nextPack) {
         const program = await instantiate(bytes);
         resumeWith = null;
+        // A sharded match changes build at a moment nothing the old build wrote
+        // is on its way between its shards: the running one goes on until one
+        // comes, three seconds at most
+        if (!fresh && exports && exports.tide_reload_ready && !stopped) {
+            const until = performance.now() + 3000;
+            while (!stopped && !exports.tide_reload_ready() && performance.now() < until)
+                await new Promise(resolve => setTimeout(resolve, 4));
+        }
         if (!fresh && exports && exports.tide_reload_save && !stopped) {
             try {
                 const at = exports.tide_reload_save();

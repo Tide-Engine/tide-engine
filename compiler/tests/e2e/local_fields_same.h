@@ -1,16 +1,12 @@
 #pragma once
 
-// The match of local_fields.tide and of local_fields_plain.tide, which is that
-// game without its local fields: local fields are outside the match, so both
-// games' worlds are the same. Each game's test plays this script and checks
-// its world against the numbers below: the world's hash, its bytes
-// (tide_world_pack), what a player who joins downloads (a whole delta) and a
-// delta from an earlier tick.
+// The match of local_fields.tide and local_fields_plain.tide (the same game without its local fields). Local fields
+// are outside the match, so both worlds are the same. Each game's test plays this script and checks the numbers
+// below.
 //
-// The bytes start with the world's struct, whose storage has pointers in it,
-// so they're one thing where pointers are 8 bytes and another where they're 4
-// (the web). When the engine changes how worlds are kept or sent on purpose,
-// the tests print what they got: both games have to print the same.
+// A world's bytes start with its struct, which holds pointers, so they differ where pointers are 4 bytes (the
+// web). When worlds' storage or transfer changes on purpose, the tests print what they got; both games must
+// print the same.
 
 #include <stdint.h>
 #include <stdio.h>
@@ -19,11 +15,11 @@
 #include "game.h"
 #include "tide_test.h"
 
-#define SAME_HASH UINT64_C(0x407612279D456672)
+#define SAME_HASH UINT64_C(0xAB58CD3A5BFEE54F)
 #define SAME_WHOLE_SIZE 219u
-#define SAME_WHOLE UINT64_C(0xD2441C6F1924A829)
+#define SAME_WHOLE UINT64_C(0xD49D9FE755B1C27F)
 #define SAME_DELTA_SIZE 122u
-#define SAME_DELTA UINT64_C(0x65C0FC21A73FCF44)
+#define SAME_DELTA UINT64_C(0xE1D6B6872BC8EB96)
 #if UINTPTR_MAX > 0xFFFFFFFFu
 #define SAME_PACKED_SIZE 391u
 #define SAME_PACKED UINT64_C(0x86C35F36016263E9)
@@ -72,7 +68,7 @@ static void same_match_check(tide_world *w, tide_world *base, void (*between)(co
                (unsigned long long)whole_hash, (unsigned)delta_size, (unsigned long long)delta_hash);
     }
     TIDE_CHECK(same);
-    TIDE_CHECK(tide_world_entity_count(w) == 4); // The scene, two of the first three boxes, and the one that came
+    TIDE_CHECK(tide_world_entity_count(w) == 4);
     free(packed);
     free(whole);
     free(delta);

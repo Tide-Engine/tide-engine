@@ -22,7 +22,6 @@ static void run(tide_world *w, const int op, const int count)
     tide_world_tick(w);
 }
 
-// A frame in which its view makes its list `count` long.
 static void show(const int count)
 {
     local.Displayed.count = count;
@@ -47,7 +46,6 @@ static uint32_t chunks(const tide_world *w, const tide_list l)
     return l.at && (b->b & TIDE_LIST_CHUNKED) ? b->b & ~TIDE_LIST_CHUNKED : 0u;
 }
 
-// How many of a heap's pages aren't the ones another has.
 static uint32_t pages_apart(const tide_heap *a, const tide_heap *b)
 {
     uint32_t apart = a->pages > b->pages ? a->pages - b->pages : b->pages - a->pages;
@@ -68,12 +66,11 @@ TIDE_TEST(lists_resize_all_checks_pass)
     tide_world_free(&world);
 }
 
-// A snapshot keeps what the list had, and shares the chunks a resize leaves alone; the chunks a list gives back
-// are the ones it grows into again.
+// A snapshot keeps what the list had and shares the chunks a resize leaves alone.
 TIDE_TEST(lists_resize_snapshots_and_chunks)
 {
     tide_world_init(&world, 1.0f);
-    run(&world, 0, 0); // The game's own checks, done with
+    run(&world, 0, 0);
     run(&world, 1, 0);
     run(&world, 1, BIG);
     TIDE_CHECK(bytes_are(&world, 0, BIG) && chunks(&world, world.Store.bytes) == 19);
@@ -84,31 +81,30 @@ TIDE_TEST(lists_resize_snapshots_and_chunks)
     const uint64_t before = tide_world_hash(&snapshot);
     const uint32_t used = world.heap.used;
 
-    run(&world, 1, BIG); // As long already: nothing is written
+    run(&world, 1, BIG);
     run(&twin, 0, BIG);
     TIDE_CHECK(pages_apart(&world.heap, &snapshot.heap) == 0);
     TIDE_CHECK(tide_world_hash(&world) == tide_world_hash(&twin));
 
-    run(&world, 1, BIG - 1000); // The end of the last chunk, and the list's own block
+    run(&world, 1, BIG - 1000);
     TIDE_CHECK(bytes_are(&world, BIG - 1000, BIG - 1000) && pages_apart(&world.heap, &snapshot.heap) == 2);
-    run(&world, 1, BIG); // Zeros where the rest were
+    run(&world, 1, BIG);
     TIDE_CHECK(bytes_are(&world, BIG - 1000, BIG) && pages_apart(&world.heap, &snapshot.heap) == 2);
 
-    run(&world, 1, 100000); // Fewer chunks
+    run(&world, 1, 100000);
     TIDE_CHECK(bytes_are(&world, 100000, 100000) && chunks(&world, world.Store.bytes) == 7);
-    run(&world, 1, BIG); // ...and the ones it gave back, zeroed
+    run(&world, 1, BIG);
     TIDE_CHECK(bytes_are(&world, 100000, BIG) && world.heap.used == used);
-    run(&world, 1, 5); // To a few, to none, and to chunks again
+    run(&world, 1, 5);
     TIDE_CHECK(bytes_are(&world, 5, 5));
     run(&world, 1, 0);
     TIDE_CHECK(bytes_are(&world, 0, 0));
     run(&world, 1, BIG);
     TIDE_CHECK(bytes_are(&world, 0, BIG) && world.heap.used == used);
 
-    TIDE_CHECK(bytes_are(&snapshot, BIG, BIG)); // The snapshot has what it had
+    TIDE_CHECK(bytes_are(&snapshot, BIG, BIG));
     TIDE_CHECK(tide_world_hash(&snapshot) == before);
 
-    // The world is as its bytes say: packed and unpacked, it's the same one, and goes on the same
     const uint32_t size = tide_world_pack(&world, NULL, 0);
     uint8_t *bytes = malloc(size);
     TIDE_REQUIRE(bytes != NULL);
@@ -131,7 +127,7 @@ TIDE_TEST(lists_resize_lets_go_of_text)
     tide_world_init(&world, 1.0f);
     run(&world, 0, 0);
     run(&world, 3, 0);
-    run(&world, 4, 6000); // Text in every element, in chunks
+    run(&world, 4, 6000);
     TIDE_CHECK(tide_list_read_count(&world.heap, world.Store.names) == 6000 && chunks(&world, world.Store.names) == 2);
     run(&world, 3, 10);
     TIDE_CHECK(tide_list_read_count(&world.heap, world.Store.names) == 10 && chunks(&world, world.Store.names) == 1);
@@ -142,7 +138,7 @@ TIDE_TEST(lists_resize_lets_go_of_text)
     run(&world, 3, 0);
     run(&world, 4, 6000);
     const uint32_t used = world.heap.used;
-    run(&world, 3, 10); // Again: in the blocks the text had that went with its elements
+    run(&world, 3, 10);
     run(&world, 3, 0);
     run(&world, 4, 6000);
     TIDE_CHECK(tide_list_read_count(&world.heap, world.Store.names) == 6000 && world.heap.used == used);
@@ -157,15 +153,15 @@ TIDE_TEST(lists_resize_in_the_local_world)
     show(10);
     TIDE_CHECK(tide_list_read_count(&local.heap, local.Displayed.numbers) == 10 && local.Displayed.sum == 1);
     TIDE_CHECK(local.Displayed.numbers.at >> 30 == TIDE_IN_LOCAL);
-    show(50000); // In chunks: the tenth is still 1, and so is the last
+    show(50000);
     TIDE_CHECK(tide_list_read_count(&local.heap, local.Displayed.numbers) == 50000 && local.Displayed.sum == 2);
-    show(20); // The last one went
+    show(20);
     TIDE_CHECK(tide_list_read_count(&local.heap, local.Displayed.numbers) == 20 && local.Displayed.sum == 2);
     show(0);
     TIDE_CHECK(tide_list_read_count(&local.heap, local.Displayed.numbers) == 0 && local.Displayed.sum == 0);
     show(50000);
     TIDE_CHECK(local.Displayed.sum == 1);
-    TIDE_CHECK(tide_world_hash(&world) == before); // Nothing of it is the match's
+    TIDE_CHECK(tide_world_hash(&world) == before);
     TIDE_CHECK(tide_scratch_mark() == 0);
     tide_local_free(&local);
     tide_world_free(&world);

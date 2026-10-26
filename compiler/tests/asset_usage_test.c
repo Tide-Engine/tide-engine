@@ -42,6 +42,20 @@ static void done(void)
     lex_symbols_reset();
 }
 
+TIDE_TEST(transform_correction_defaults_preserve_explicit_two_dimensional_shard_positions)
+{
+    program *p = checked("settings { shards = true; reach = 1; } "
+        "component Place { [Position] float2 position; } scene Main {} "
+        "event(Spawned) Start(with Main) { Spawn(Place, Transform); }");
+    TIDE_REQUIRE(p);
+    TIDE_CHECK(p->transform->fields.items[0].view_correction == 1);
+    TIDE_CHECK(p->transform->fields.items[1].view_correction == 2);
+    TIDE_CHECK(p->transform->fields.items[2].view_correction == 0);
+    TIDE_REQUIRE(p->positions.count == 1);
+    TIDE_CHECK(str_eq_c(p->positions.items[0].component->name, "Place"));
+    done();
+}
+
 TIDE_TEST(simulation_identity_tracks_match_helpers_but_not_view_helpers_or_local_defaults)
 {
     static const char *const sources[] = {
@@ -363,6 +377,27 @@ TIDE_TEST(asset_usage_server_retains_dynamic_match_asset_reference_targets)
     program_strip_server_assets(p);
     TIDE_CHECK(has_asset(p, "first") && has_asset(p, "second") && has_asset(p, "defaults"));
     TIDE_CHECK(!has_asset(p, "picture"));
+    done();
+}
+
+TIDE_TEST(asset_usage_server_retains_dynamic_skinned_asset_reference_targets)
+{
+    static const char text[] =
+        "asset string defaults = \"assets/rules.txt\";\n"
+        "struct V { float3 position; int extra = defaults.length; }\n"
+        "using Model = SkinnedMesh<V>;\nusing Reference = Asset<Model>;\n"
+        "asset Model first = \"skinned/models/a.gltf\";\n"
+        "asset Model second = \"skinned/rest.gltf\";\n"
+        "asset Mesh<V> staticModel = \"assets/meshes/quad.glb\";\n"
+        "asset Texture picture = \"assets/hero.png\";\n"
+        "input Controls { Reference choice; }\n"
+        "singleton State { int count; }\nscene Main;\n"
+        "system Use(Controls input, mut State state) { state.count = input.choice.Value.vertices.count; }\n";
+    program *p = checked(text);
+    TIDE_REQUIRE(p);
+    program_strip_server_assets(p);
+    TIDE_CHECK(has_asset(p, "first") && has_asset(p, "second") && has_asset(p, "defaults"));
+    TIDE_CHECK(!has_asset(p, "picture") && !has_asset(p, "staticModel"));
     done();
 }
 

@@ -11,6 +11,35 @@ them with no include path, which a game's C has none of.
 
 ## What's changed
 
+Hull limits (2026-10-25): `b3CreateHull` (`hull.c`) builds a hull again with a
+smaller vertex budget when the one it built has more faces or half edges than
+`B3_MAX_HULL_FACES` and `2 * B3_MAX_HULL_EDGES` allow, scaled down by how far
+over it was, until it fits or would have fewer than four vertices. Upstream
+logged and returned nothing: the vertex budget alone (128) doesn't keep a
+hull's edges within their 128, and a smooth hull reaches that at about 45
+vertices, so a pin turned on a lathe of 121 points made no shape. A hull that
+fits the first time is built exactly as before. The builder adds the furthest
+remaining point first, so a smaller budget keeps the best hull of that many.
+
+Package completion (2026-10-22):
+
+- `world_snapshot.c`/`box3d.h`: `b3World_InternHeightField` retains and
+  deduplicates cooked height-field bytes in the canonical geometry store,
+  with the same ownership and conservative resident marks as mesh interning.
+- `b3World_Digest` includes persistent joint warm-start impulses, visited in
+  native-id order, including sleeping joints. It excludes derived solver
+  frames, masses and indices rebuilt after canonical restore. The no-joint
+  digest is unchanged.
+- `body.c`: an unsupported type change on a compound or height-field body
+  clears `world->locked` before returning. The package keeps mesh/height
+  bodies static while those colliders remain attached.
+
+The package bridge also marks the arena whole before temporary canonical
+packing. Geometry interning can modify an existing geometry directory, not
+only new allocations; restoring the resident afterward must discard all
+those temporary writes. Repeated full/delta packing of worlds containing
+several hulls and terrain now preserves the live geometry directory.
+
 Static mesh package integration (2026-10-15): `b3World_InternMesh` in
 `world_snapshot.c`/`box3d.h` retains and deduplicates a cooked mesh in the
 world's canonical geometry store. The package frees its temporary cook after

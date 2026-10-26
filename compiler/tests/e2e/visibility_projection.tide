@@ -93,6 +93,12 @@ system MeasurePlacement(mut Placement placement, Control control, World world)
     if (placement.detachFirst) control.first.SetParent(null, false);
 }
 
+extern void CheckPropertyPosition(float3 expected, float3 actual);
+system MeasurePosition(Transform transform, PublicState state, World world)
+{
+    if (state.kind == 5) CheckPropertyPosition(world.LocalToWorld(this).c3.xyz, transform.position);
+}
+
 system Fill(mut PublicState state, Control control, Time time)
 {
     if (time.tick != 0) return;

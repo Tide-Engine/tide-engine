@@ -110,7 +110,6 @@ TIDE_TEST(math_exp_log_accuracy)
     TIDE_CHECK(worst <= MAX_ULP);
 }
 
-// A clamped value is always in range, even from NaN.
 TIDE_TEST(math_clamp_nan_gives_the_lower_bound)
 {
     TIDE_CHECK(tide_clamp_f(NAN, -1.0f, 1.0f) == -1.0f);
@@ -118,12 +117,10 @@ TIDE_TEST(math_clamp_nan_gives_the_lower_bound)
     const tide_float3 v = tide_clamp_f3((tide_float3){NAN, 5.0f, 0.5f}, (tide_float3){-1.0f, -1.0f, -1.0f},
                                         (tide_float3){1.0f, 1.0f, 1.0f});
     TIDE_CHECK(v.x == -1.0f && v.y == 1.0f && v.z == 0.5f);
-    // Everything else is unchanged, down to the sign of zero.
     TIDE_CHECK(signbit(tide_clamp_f(-0.0f, 0.0f, 1.0f)));
     TIDE_CHECK(tide_clamp_f(INFINITY, -1.0f, 1.0f) == 1.0f);
 }
 
-// With one NaN argument, Min and Max return the other, whichever side it's on.
 TIDE_TEST(math_min_max_ignore_one_nan)
 {
     TIDE_CHECK(tide_min_f(NAN, 1.0f) == 1.0f && tide_min_f(1.0f, NAN) == 1.0f);
@@ -234,7 +231,6 @@ static bool same_bits(const void *a, const void *b, const size_t size)
 
 TIDE_TEST(math_normalize_gives_zero_for_what_has_no_direction)
 {
-    // No key held: the move that every game normalizes
     const tide_float2 none2 = tide_normalize_f2(tide_f2(0.0f, 0.0f));
     const tide_float3 none3 = tide_normalize_f3(tide_f3(0.0f, 0.0f, 0.0f));
     const tide_float4 none4 = tide_normalize_f4(tide_f4(0.0f, 0.0f, 0.0f, 0.0f));
@@ -251,11 +247,9 @@ TIDE_TEST(math_normalize_gives_zero_for_what_has_no_direction)
     const tide_float3 small = tide_normalize_f3(tide_f3(0.0f, 0.0f, -2e-19f));
     TIDE_CHECK(small.x == 0.0f && small.y == 0.0f && near(small.z, -1.0f));
 
-    // NaN doesn't spread through it
     const tide_float3 nan = tide_normalize_f3(tide_f3(NAN, 1.0f, 0.0f));
     TIDE_CHECK(nan.x == 0.0f && nan.y == 0.0f && nan.z == 0.0f);
 
-    // A zeroed quaternion (a field nothing set) is the identity
     const tide_quaternion none = tide_normalize_q(tide_q(0.0f, 0.0f, 0.0f, 0.0f));
     const tide_quaternion identity = tide_identity_q();
     TIDE_CHECK(same_bits(&none, &identity, sizeof none));
@@ -263,14 +257,15 @@ TIDE_TEST(math_normalize_gives_zero_for_what_has_no_direction)
     TIDE_CHECK(same_bits(&blend, &identity, sizeof blend));
     TIDE_CHECK(tide_angle_q(tide_q(0.0f, 0.0f, 0.0f, 0.0f), tide_axisangle_q(tide_f3(0, 1, 0), 1.0f)) == 0.0f);
 
-    // Looking straight along up: no rotation to give, but no NaN either
+    // Forward along up has no side to turn around: a whole rotation still
+    // (math_lookrotation_without_a_side_turns_from_z_and_without_forward_is_identity)
     const tide_quaternion along = tide_lookrotation_q(tide_f3(0, 1, 0), tide_f3(0, 1, 0));
     TIDE_CHECK(!isnan(along.value.x) && !isnan(along.value.y) && !isnan(along.value.z) && !isnan(along.value.w));
+    TIDE_CHECK(near(tide_dot_q(along, along), 1.0f));
 }
 
 TIDE_TEST(math_normalize_is_the_reciprocal_square_root_times_the_vector)
 {
-    // What it gave before it was safe, bit for bit, for every vector with a length
     rng_state = 777;
     for (int i = 0; i < 100000; i++) {
         const float scale = i % 3 == 0 ? 1e-15f : i % 3 == 1 ? 1.0f : 1e15f;
@@ -324,7 +319,6 @@ TIDE_TEST(math_matrices)
     const tide_quaternion r = tide_euler_q(tide_f3(0.5f, 1.0f, -0.25f));
     const tide_float4x4 m = tide_trs_f4x4(tide_f3(1, 2, 3), r, tide_f3(2, 3, 4));
 
-    // Scale, then rotate, then translate.
     const tide_float3 p = tide_f3(0.5f, -1.0f, 2.0f);
     const tide_float3 expected = tide_add_f3(tide_rotate_q(r, tide_mul_f3(p, tide_f3(2, 3, 4))), tide_f3(1, 2, 3));
     TIDE_CHECK(near3(tide_transform_f4x4(m, p), expected));
@@ -367,7 +361,7 @@ TIDE_TEST(math_fromto_rotation_handles_direction_lengths_and_half_turns)
     const tide_quaternion almost = tide_fromto_q(tide_f3(1, 0, 0), tide_f3(-1, 1e-6f, 0));
     TIDE_CHECK(almost.value.w > 0.0f && fabsf(almost.value.w - 5e-7f) < 1e-12f);
     const tide_quaternion opposite = tide_fromto_q(tide_f3(1, 0, 0), tide_f3(-1, 0, 0));
-    TIDE_CHECK(opposite.value.z == 1.0f && opposite.value.w == 0.0f); // Y wins the least-aligned tie.
+    TIDE_CHECK(opposite.value.z == 1.0f && opposite.value.w == 0.0f);
     const tide_quaternion identity = tide_identity_q();
     const tide_float3 invalid[] = {{0, 0, 0}, {NAN, 1, 0}, {0, INFINITY, 0}, {0, 0, -INFINITY}};
     for (size_t i = 0; i < sizeof invalid / sizeof invalid[0]; i++) {
@@ -388,6 +382,97 @@ TIDE_TEST(math_fromto_rotation_handles_direction_lengths_and_half_turns)
         const tide_quaternion q = tide_fromto_q(a, b);
         TIDE_REQUIRE(near3(tide_rotate_q(q, a), b));
         TIDE_REQUIRE(near(tide_dot_q(q, q), 1.0f) && q.value.w >= 0.0f);
+    }
+}
+
+// A direction of any finite length as a unit float3, through doubles so it
+// doesn't share the implementation's rescaling.
+static tide_float3 unit_ref(const tide_float3 v)
+{
+    const double length = sqrt((double)v.x * v.x + (double)v.y * v.y + (double)v.z * v.z);
+    return tide_f3((float)(v.x / length), (float)(v.y / length), (float)(v.z / length));
+}
+
+// A look rotation's frame: +z is forward, +y is perpendicular to it on up's
+// side and in the plane of the two, and the rotation is unit length.
+static bool looks_along(const tide_quaternion q, const tide_float3 forward, const tide_float3 up, const float plane)
+{
+    if (!isfinite(q.value.x) || !isfinite(q.value.y) || !isfinite(q.value.z) || !isfinite(q.value.w)) return false;
+    const tide_float3 f = unit_ref(forward), u = unit_ref(up);
+    const tide_float3 z = tide_rotate_q(q, tide_f3(0, 0, 1)), y = tide_rotate_q(q, tide_f3(0, 1, 0));
+    const tide_float3 across = unit_ref(tide_cross_f3(f, u));
+    return near(tide_dot_q(q, q), 1.0f) && near3(z, f) && fabsf(tide_dot_f3(y, f)) <= 1e-5f
+        && tide_dot_f3(y, u) > 0.0f && fabsf(tide_dot_f3(y, across)) <= plane;
+}
+
+TIDE_TEST(math_lookrotation_takes_any_length_and_keeps_its_frame)
+{
+    // A bone's 0.29 m from shoulder to elbow, and lengths across the float range
+    const tide_float3 forward[] = {{0.12f, -0.21f, 0.16f}, {0, 0, 5}, {-3, 0, 0}, {1e-30f, 2e-30f, -3e-30f},
+        {0x1p-149f, 0, 0x1p-149f}, {0x1.fffffep127f, -0x1.fffffep127f, 0x1.fffffep127f}, {1, 2, 3}};
+    const tide_float3 up[] = {{0, 1, 0}, {0, 0.25f, 0}, {0, 40, 0}, {0, 1e-20f, 1e-20f},
+        {0, 0x1.fffffep127f, 0}, {0x1p-149f, 0x1p-149f, 0}, {0.3f, 0.2f, -0.1f}};
+    for (size_t i = 0; i < sizeof forward / sizeof forward[0]; i++) {
+        const tide_quaternion q = tide_lookrotation_q(forward[i], up[i]);
+        TIDE_CHECK(looks_along(q, forward[i], up[i], 1e-5f));
+        // The same rotation as from unit lengths
+        TIDE_CHECK(near_q(q, tide_lookrotation_q(unit_ref(forward[i]), unit_ref(up[i]))));
+    }
+    // The case that found it: a stretched forward kept the matrix from being a rotation
+    const tide_quaternion bone = tide_lookrotation_q(tide_f3(0.12f, -0.21f, 0.16f), tide_f3(0, 1, 0));
+    TIDE_CHECK(near(tide_length_f3(tide_rotate_q(bone, tide_f3(0, 0, 1))), 1.0f));
+
+    rng_state = 20261022u;
+    for (int i = 0; i < 10000; i++) {
+        const float scale = i % 4 == 0 ? 1e-25f : i % 4 == 1 ? 0.29f : i % 4 == 2 ? 7.0f : 1e25f;
+        const float x = rnd(-1, 1);
+        const float y = rnd(-1, 1);
+        const float z = rnd(-1, 1);
+        const float a = rnd(-1, 1);
+        const float b = rnd(-1, 1);
+        const float c = rnd(-1, 1);
+        const tide_float3 f = tide_f3(x * scale, y * scale, z * scale);
+        const tide_float3 u = tide_f3(a / scale, b / scale, c / scale);
+        const tide_float3 fn = unit_ref(f), un = unit_ref(u);
+        if (tide_length_f3(tide_cross_f3(fn, un)) < 1e-2f) continue; // Up's roll is ill-conditioned there
+        TIDE_REQUIRE(looks_along(tide_lookrotation_q(f, u), f, u, 1e-4f));
+    }
+
+    // Nearly along up, but outside the fallback: still a whole frame along forward
+    const tide_quaternion steep = tide_lookrotation_q(tide_f3(2e-5f, 1, 0), tide_f3(0, 1, 0));
+    TIDE_CHECK(near3(tide_rotate_q(steep, tide_f3(0, 0, 1)), unit_ref(tide_f3(2e-5f, 1, 0))));
+    TIDE_CHECK(fabsf(tide_dot_f3(tide_rotate_q(steep, tide_f3(0, 1, 0)), tide_f3(2e-5f, 1, 0))) <= 1e-5f);
+    TIDE_CHECK(near(tide_dot_q(steep, steep), 1.0f));
+}
+
+TIDE_TEST(math_lookrotation_without_a_side_turns_from_z_and_without_forward_is_identity)
+{
+    const tide_quaternion identity = tide_identity_q();
+    const tide_float3 invalid[] = {{0, 0, 0}, {NAN, 1, 0}, {0, INFINITY, 0}, {0, 0, -INFINITY}};
+    for (size_t i = 0; i < sizeof invalid / sizeof invalid[0]; i++) {
+        const tide_quaternion a = tide_lookrotation_q(invalid[i], tide_f3(0, 1, 0));
+        const tide_quaternion b = tide_lookrotation_q(invalid[i], invalid[i]);
+        TIDE_CHECK(same_bits(&a, &identity, sizeof a) && same_bits(&b, &identity, sizeof b));
+    }
+
+    // Straight up with up as up: Unity's (270, 0, 0), a quarter turn back about x
+    const tide_quaternion along = tide_lookrotation_q(tide_f3(0, 1, 0), tide_f3(0, 1, 0));
+    TIDE_CHECK(near_q(along, tide_axisangle_q(tide_f3(1, 0, 0), -TIDE_PI_F / 2.0f)));
+    TIDE_CHECK(near3(tide_rotate_q(along, tide_f3(0, 0, 1)), tide_f3(0, 1, 0)));
+    TIDE_CHECK(near3(tide_rotate_q(along, tide_f3(0, 1, 0)), tide_f3(0, 0, -1)));
+
+    // An up with no side to it: along forward either way, at any length, a
+    // hair off, zero or nonfinite. Each is FromToRotation from +z, bit for bit.
+    const tide_float3 forward[] = {{0, 1, 0}, {0, -2, 0}, {1, 2, 3}, {0.5f, -1, 0.25f}, {0, 0, -1}, {0, 0, 4},
+        {1, 2, 3}, {-1, 0, 0}, {1, 2, 3}, {0x1.fffffep127f, 0, 0}};
+    const tide_float3 up[] = {{0, 1, 0}, {0, 3, 0}, {-2, -4, -6}, {1e-30f, -2e-30f, 0.5e-30f}, {0, 0, 1},
+        {0, 1e-6f, 1}, {0, 0, 0}, {NAN, 1, 0}, {0, -INFINITY, 0}, {-1, 0, 0}};
+    for (size_t i = 0; i < sizeof forward / sizeof forward[0]; i++) {
+        const tide_quaternion q = tide_lookrotation_q(forward[i], up[i]);
+        const tide_quaternion want = tide_fromto_q(tide_f3(0, 0, 1), forward[i]);
+        TIDE_CHECK(same_bits(&q, &want, sizeof q));
+        TIDE_CHECK(near(tide_dot_q(q, q), 1.0f));
+        TIDE_CHECK(near3(tide_rotate_q(q, tide_f3(0, 0, 1)), unit_ref(forward[i])));
     }
 }
 
@@ -446,8 +531,6 @@ static int32_t hash_reference(const int32_t *words, const int count)
 
 TIDE_TEST(math_hash_is_xxhash32)
 {
-    // The reference against xxHash's own: the short path, the bytes at the
-    // end, and stripes, words and bytes together (39 bytes).
     TIDE_CHECK(xxh32("", 0, 0) == 0x02CC5D05u);
     TIDE_CHECK(xxh32("abc", 3, 0) == 0x32D153FFu);
     const char *nobody = "Nobody inspects the spammish repetition";
@@ -468,8 +551,6 @@ TIDE_TEST(math_hash_is_xxhash32)
     TIDE_CHECK(tide_hash_i(INT32_MIN) >= 0 && tide_hash_i(-1) >= 0);
 }
 
-// Cells next to each other give unrelated numbers: every one of the low bits
-// is set about half the time, as one bit of a neighbor changes.
 TIDE_TEST(math_hash_of_cells_has_no_stripes)
 {
     int ones[8] = {0};
@@ -492,10 +573,6 @@ TIDE_TEST(math_hash_of_cells_has_no_stripes)
     }
 }
 
-// Noise (noise.c): gradient noise is 0 at the whole numbers and within -1 to 1,
-// simplex noise within about that, cellular noise two distances in order,
-// each the same for the same point and other for another seed, and smooth:
-// a step of a thousandth moves none of them much.
 TIDE_TEST(math_noise_stays_in_its_range_and_is_smooth)
 {
     rng_state = 4242;
@@ -525,11 +602,9 @@ TIDE_TEST(math_noise_stays_in_its_range_and_is_smooth)
         if (fabsf(s3) > most_s3) most_s3 = fabsf(s3);
         if (c2.x > most_c2) most_c2 = c2.x;
         if (c3.x > most_c3) most_c3 = c3.x;
-        // The same again, and another seed is another field
         TIDE_CHECK(tide_perlin_f2(p2, seed) == n2 && tide_simplex_f3(p3, seed) == s3);
         TIDE_CHECK(tide_cellular_f2(p2, seed).x == c2.x && tide_cellular_f3(p3, seed).y == c3.y);
         TIDE_CHECK(tide_perlin_f2(p2, seed + 1) != n2 || tide_perlin_f3(p3, seed + 1) != n3);
-        // Smooth: a small step is a small change
         const tide_float2 q2 = tide_f2(x + 0.001f, y - 0.001f);
         const tide_float3 q3 = tide_f3(x + 0.001f, y - 0.001f, z + 0.001f);
         TIDE_CHECK(fabsf(tide_perlin_f2(q2, seed) - n2) < 0.02f);
@@ -539,10 +614,8 @@ TIDE_TEST(math_noise_stays_in_its_range_and_is_smooth)
         TIDE_CHECK(fabsf(tide_cellular_f2(q2, seed).x - c2.x) < 0.01f);
         TIDE_CHECK(fabsf(tide_cellular_f3(q3, seed).x - c3.x) < 0.01f);
     }
-    // Each reaches well into its range
     TIDE_CHECK(most2 > 0.7f && most3 > 0.7f && most_s2 > 0.7f && most_s3 > 0.6f);
     TIDE_CHECK(most_c2 > 0.5f && most_c3 > 0.5f);
-    // Gradient noise is 0 at every whole number, in every seed
     for (int i = -50; i <= 50; i += 7) {
         TIDE_CHECK(tide_perlin_f2(tide_f2((float)i, (float)(3 * i)), i) == 0.0f);
         TIDE_CHECK(tide_perlin_f3(tide_f3((float)i, (float)(-i), 2.0f), i) == 0.0f);

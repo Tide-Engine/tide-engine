@@ -1,0 +1,5 @@
+// expect: a property returns a value, not a writable field
+struct Gauge { int amount { get { return 1; } } }
+void Change(mut int amount) { amount = 2; }
+scene Main;
+system Tick() { var g = Gauge {}; Change(g.amount); }

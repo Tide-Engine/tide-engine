@@ -65,6 +65,9 @@ static tide_view_worlds update(void)
     if (status.open || !status.server) tide_platform_room_code(room, sizeof room);
     tide_local_set_session(&local, status.client.state, status.client.player, status.client.ping_ms, status.server,
                            status.open, room);
+    char invite[TIDE_INVITE_BYTES]; // A link to this page on the web, the room's code elsewhere
+    tide_platform_room_invite(room, invite, sizeof invite);
+    tide_local_set_invite(&local, invite);
     return tide_session_view(session);
 }
 
@@ -178,7 +181,6 @@ static int smoke_frame(const float seconds)
     const uint64_t hash = world_hash(server);
     printf("smoke: %d ticks, %u entities, hash 0x%016llX (expected 0x%016llX)\n", (int)server->Time.tick,
            (unsigned)tide_world_entity_count(server), (unsigned long long)hash, SMOKE_HASH);
-    // A frame loop that doesn't time its frames would say none passed.
     const bool frames = smoke_seconds > 0.0;
     printf("smoke: frames took %.3f s%s\n", smoke_seconds, frames ? "" : ", expected time to pass");
     const bool pixels = smoke_pixels(match);

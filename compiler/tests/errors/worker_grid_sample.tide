@@ -1,0 +1,3 @@
+// expect: local worker 'Build' can't access frame assets, GPU or audio code
+local worker Color Build(Grid2<Color> image) { return image.Sample(float2(0)); }
+scene Main;

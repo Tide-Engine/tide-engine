@@ -1,0 +1,89 @@
+using AliasImported;
+using ImportedStage = AliasForeign.Shade;
+
+namespace AliasTypes
+{
+    // Resolving the callable must also publish its later scalar alias's type.
+    using ForwardCallback = Func<ForwardReal, ForwardReal>;
+    using ForwardReal = float;
+
+    using Int = int;
+    using Real = float;
+    using Wide = double;
+    using Octet = byte;
+    using Flag = bool;
+    using Rune = char;
+    using Long = long;
+    using Text = string;
+    using Vector = float3;
+    using Rotation = quaternion;
+    using Matrix = float4x4;
+    using Tint = Color;
+    using Dice = Random;
+    using Cells = Grid2<int>;
+    using Corner = Vertex;
+
+    // Both the alias and ordinary declaration can follow their references.
+    using First = Second;
+    using Second = Pair;
+    using Forward = Later;
+    using Imported = Remote;
+    struct Holder { Forward value; }
+
+    using Mode = State;
+    enum State : Octet { Off, On = 3, Last }
+    const int MODE_FOLDED = int(Mode(260));
+
+    using FoldArray = int[int(FoldedEnum(258))];
+    using FoldByte = byte;
+    enum ForwardFold { Folded = int(FoldedEnum(258)) }
+    enum FoldedEnum : FoldByte { Zero }
+    enum CheckedFold { Folded = int(FoldedEnum(258)) }
+
+    using Ints = List<Int>;
+    using Table = Map<Int, Ints>;
+    using Unique = Set<Int>;
+    using Triplet = Int[3];
+    using Rows = Triplet[2];
+    using Maybe = Int?;
+    using Callback = Func<Real, Real>;
+    using MutCallback = Func<mut Real, Real>;
+    using Fragment = Shade;
+    using VertexStage = Deform;
+    using UnitName = Unit;
+    using Included = Selected;
+    using ExcludedName = Excluded;
+
+    struct Pair
+    {
+        Int left;
+        Int right = 4;
+        Int Sum() { return left + right; }
+        mut void Add(Int amount) { left += amount; }
+    }
+
+    component Unit { First pair; Rows rows; Maybe value; }
+    component Selected { }
+    component Excluded { }
+
+    frag Shade(Corner vertex, out Tint color, Callback convert)
+    {
+        Real red = convert(vertex.uv.x);
+        color = Tint(red, 0, 0);
+    }
+
+    vert Deform(mut Corner vertex, Callback convert)
+    {
+        vertex.position.x = convert(vertex.position.x);
+    }
+}
+
+namespace AliasForeign
+{
+    using Convert = Func<float, float>;
+    frag Shade(Vertex vertex, out Color color, Convert convert)
+    {
+        float red = convert(vertex.uv.x);
+        color = Color(red, 0, 0);
+    }
+}

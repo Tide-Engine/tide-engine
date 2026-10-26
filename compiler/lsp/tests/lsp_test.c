@@ -118,8 +118,7 @@ static void open_document(const char *marked)
     jb_free(&b);
 }
 
-// Sends a request at the cursor, with `extra` params (JSON members, or ""), and
-// returns the reply.
+// Sends a request at the cursor, with `extra` params (JSON members, or ""), and returns the reply.
 static const char *request_with(const char *method, const char *extra)
 {
     char message[1024];
@@ -192,7 +191,7 @@ static char applied[8192];
 static const char *apply_reply(const char *original, const char *path)
 {
     size_t n = 0;
-    for (const char *p = original; *p && n + 1 < sizeof applied; p++) { // As open_document reads it
+    for (const char *p = original; *p && n + 1 < sizeof applied; p++) {
         if (*p == '$' && p[1] != '$') continue;
         if (*p == '$') p++;
         applied[n++] = *p;
@@ -292,8 +291,8 @@ TIDE_TEST(lsp_diagnostics_keep_going_after_syntax_errors)
     open_document(GAME_TYPES "system Move(mut Body body)\n{\n    body.position = ;\n    var x = 1 +;\n    body.radius = true;\n}\n");
     const char *reply = last_sent();
     TIDE_CHECK(has(reply, "expected an expression, found ';'"));
-    TIDE_CHECK(has(reply, "\"line\":24")); // The second syntax error
-    TIDE_CHECK(has(reply, "can't assign bool to float")); // And the checker still ran
+    TIDE_CHECK(has(reply, "\"line\":24"));
+    TIDE_CHECK(has(reply, "can't assign bool to float"));
 }
 
 TIDE_TEST(lsp_complete_fields_after_dot)
@@ -312,7 +311,7 @@ TIDE_TEST(lsp_complete_chains_and_swizzles)
     TIDE_CHECK(offers(reply, "x"));
     TIDE_CHECK(offers(reply, "y"));
     TIDE_CHECK(!offers(reply, "z"));
-    TIDE_CHECK(offers(reply, "xy") == false); // A float2's only swizzle of all its components is itself
+    TIDE_CHECK(offers(reply, "xy") == false);
 }
 
 TIDE_TEST(lsp_complete_input_edges)
@@ -475,7 +474,7 @@ TIDE_TEST(lsp_complete_builtin_owners)
     TIDE_CHECK(offers(math, "Sin"));
     TIDE_CHECK(offers(math, "PI"));
     TIDE_CHECK(offers(math, "Normalize"));
-    TIDE_CHECK(!offers(math, "NormalizeSafe")); // Gone: Normalize is the safe one
+    TIDE_CHECK(!offers(math, "NormalizeSafe"));
 
     const char *draw = complete(GAME_TYPES "view V(Body body)\n{\n    Draw.$\n}\n");
     TIDE_CHECK(offers(draw, "Circle"));
@@ -483,7 +482,6 @@ TIDE_TEST(lsp_complete_builtin_owners)
     TIDE_CHECK(offers(draw, "WorldToScreen") && offers(draw, "ScreenToWorld") && offers(draw, "Instanced"));
     TIDE_CHECK(has(draw, "MeasureText(${1:text}, ${2:size})"));
 
-    // The 3D draws are Draw's too, beside the 2D ones, and so are the settings and its members
     TIDE_CHECK(offers(draw, "Cube") && offers(draw, "Sphere") && offers(draw, "Cylinder") && offers(draw, "Plane"));
     TIDE_CHECK(offers(draw, "ScreenRayOrigin") && offers(draw, "ScreenRayDirection") && offers(draw, "list") && offers(draw, "window"));
     TIDE_CHECK(offers(draw, "Rect") && offers(draw, "Screen") && offers(draw, "Camera") && offers(draw, "Blend") && offers(draw, "Depth"));
@@ -501,7 +499,7 @@ TIDE_TEST(lsp_complete_draw_only_in_views)
     TIDE_CHECK(offers(system, "Spawn"));
     const char *view = complete(GAME_TYPES "view V(Body body)\n{\n    $\n}\n");
     TIDE_CHECK(offers(view, "Draw") && !offers(view, "Draw2D") && !offers(view, "Draw3D"));
-    TIDE_CHECK(offers(view, "Body")); // Views spawn local entities, never the match's
+    TIDE_CHECK(offers(view, "Body"));
 }
 
 TIDE_TEST(lsp_complete_io_in_local_code)
@@ -528,7 +526,7 @@ TIDE_TEST(lsp_complete_names_in_scope)
     TIDE_CHECK(offers(reply, "speed"));
     TIDE_CHECK(offers(reply, "time"));
     TIDE_CHECK(offers(reply, "body"));
-    TIDE_CHECK(!offers(reply, "inner")); // Out of scope
+    TIDE_CHECK(!offers(reply, "inner"));
     TIDE_CHECK(offers(reply, "float3"));
     TIDE_CHECK(offers(reply, "Math"));
 }
@@ -546,7 +544,6 @@ TIDE_TEST(lsp_complete_in_constructor)
     TIDE_CHECK(offers(keys, "space"));
     TIDE_CHECK(offers(keys, "leftShift"));
 
-    // Sample takes the devices and local singletons as explicit parameters.
     const char *params = complete("local singleton Menu { bool open; }\ninput PlayerInput\n{\n    float2 move;\n\n"
                                   "    Sample($)\n    {\n    }\n}\nscene Main { }\n");
     TIDE_CHECK(offers(params, "Menu"));
@@ -555,10 +552,8 @@ TIDE_TEST(lsp_complete_in_constructor)
                                  "    }\n}\nscene Main { }\n");
     TIDE_CHECK(offers(names, "devices") && !offers(names, "Devices"));
 
-    // Views read them too, and systems take them.
     const char *view = complete("scene Main { }\nview Pause(Devices devices)\n{\n    if (devices.keyboard.$\n}\n");
     TIDE_CHECK(offers(view, "escape"));
-    // What's typed is a frame's: views and functions read it, not Sample or systems.
     TIDE_CHECK(offers(view, "text"));
     TIDE_CHECK(!offers(complete("scene Main { }\nview Pause()\n{\n    var keys = Devices.$\n}\n"), "keyboard"));
     TIDE_CHECK(offers(complete("scene Main { }\nint Typed(Keyboard keys)\n{\n    return keys.$\n}\n"), "text"));
@@ -598,7 +593,7 @@ TIDE_TEST(lsp_complete_declarations_and_headers)
 
     const char *filter = complete(GAME_TYPES "system S(with $)\n{\n}\n");
     TIDE_CHECK(offers(filter, "Body"));
-    TIDE_CHECK(!offers(filter, "Arena")); // Singletons aren't filters
+    TIDE_CHECK(!offers(filter, "Arena"));
 
     const char *name = complete(GAME_TYPES "system S(PlayerInput $)\n{\n}\n");
     TIDE_CHECK(offers(name, "playerInput"));
@@ -627,18 +622,16 @@ TIDE_TEST(lsp_complete_routine_params)
     TIDE_CHECK(offers(after_mut, "Stats") && offers(after_mut, "float2") && !offers(after_mut, "mut"));
     TIDE_CHECK(!offers(after_mut, "Action"));
     TIDE_CHECK(offers(after_mut, "Menu") && offers(after_mut, "Arena") && offers(after_mut, "Session"));
-    TIDE_CHECK(offers(complete(TYPES "async void Load(Stats s, $)\n{\n}\n"), "Arena")); // A task's singletons
+    TIDE_CHECK(offers(complete(TYPES "async void Load(Stats s, $)\n{\n}\n"), "Arena"));
     TIDE_CHECK(offers(complete(TYPES "void Heal(Stats $)\n{\n}\n"), "stats"));
 #undef TYPES
 
-    // A method's, in its type's body: no default values there.
     const char *method = complete("singleton Arena { int size; }\nlocal singleton Menu { bool open; }\n"
                                   "struct Stats\n{\n    float health;\n    bool Near($) { return true; }\n}\nscene Main { }\n");
     TIDE_CHECK(offers(method, "mut") && offers(method, "bool") && offers(method, "string") && offers(method, "Entity"));
     TIDE_CHECK(!offers(method, "Math") && !offers(method, "Action"));
     TIDE_CHECK(offers(method, "Arena") && offers(method, "Menu") && offers(method, "Session"));
     TIDE_CHECK(offers(complete("struct Stats\n{\n    float health;\n    mut void Set(mut $) { }\n}\nscene Main { }\n"), "float"));
-    // The input's Sample still takes local singletons, and Sanitize nothing.
     TIDE_CHECK(offers(complete("local singleton Menu { bool open; }\ninput I\n{\n    bool fire;\n    Sample($) { }\n}\n"
                                "scene Main { }\n"),
                       "Menu"));
@@ -655,7 +648,6 @@ TIDE_TEST(lsp_complete_locals_in_braceless_bodies)
                                "    else if (a > 0)\n    {\n        var inner = 2;\n        var x = $\n    }\n}\n"),
                       "inner"));
 #define PARTS "struct Part { float size; }\ncomponent Kit { List<Part> parts; }\nscene Main { }\nvoid Use(float size) { }\n"
-    // A whole statement, and one being typed, which doesn't parse yet
     TIDE_CHECK(offers(complete(PARTS "system S(Kit kit)\n{\n    foreach (var p in kit.parts) Use(p.$size);\n}\n"), "size"));
     TIDE_CHECK(offers(complete(PARTS "system S(Kit kit)\n{\n    foreach (var p in kit.parts) Use(p.$)\n}\n"), "size"));
     TIDE_CHECK(offers(complete(PARTS "system S(Kit kit)\n{\n    foreach (var p in kit.parts) Use($);\n}\n"), "p"));
@@ -663,7 +655,6 @@ TIDE_TEST(lsp_complete_locals_in_braceless_bodies)
     TIDE_CHECK(offers(complete("singleton F { Grid2<int> cells; }\nscene Main { }\nvoid Use(int2 p) { }\n"
                                "system S(mut F f)\n{\n    parallel (var at in f.cells) Use($);\n}\n"),
                       "at"));
-    // Not after the body ends
     TIDE_CHECK(!offers(complete(PARTS "system S(Kit kit)\n{\n    foreach (var p in kit.parts) Use(1);\n    var x = $\n}\n"), "p"));
 #undef PARTS
 }
@@ -676,10 +667,8 @@ TIDE_TEST(lsp_complete_statement_types)
     TIDE_CHECK(offers(system, "bool") && offers(system, "string") && offers(system, "Entity") && offers(system, "List"));
     TIDE_CHECK(!offers(system, "Grid2") && !offers(system, "LocalEntity"));
     TIDE_CHECK(offers(complete("scene Main { }\nview V()\n{\n    $\n}\n"), "LocalEntity"));
-    // In a value: what makes one
     const char *value = complete("scene Main { }\nsystem S()\n{\n    var x = $\n}\n");
     TIDE_CHECK(offers(value, "float3") && !offers(value, "bool") && !offers(value, "List"));
-    // After mut: var, or a type
     const char *after_mut = complete("scene Main { }\nsystem S()\n{\n    mut $\n}\n");
     TIDE_CHECK(offers(after_mut, "var") && offers(after_mut, "int") && offers(after_mut, "string"));
 }
@@ -695,13 +684,11 @@ TIDE_TEST(lsp_complete_more_places)
     TIDE_CHECK(offers(error, "ParseError"));
     TIDE_CHECK(offers(complete("enum E { A }\nstruct S\n{\n    int x;\n    int Get() fails $\n}\nscene Main { }\n"), "E"));
 
-    // An enum's body: names, and after '=', an int constant
     const char *members = complete("const int FIRST = 3;\nconst float HALF = 0.5;\nenum Page\n{\n    Title,\n    $\n}\nscene Main { }\n");
     TIDE_CHECK(!offers(members, "float3") && !offers(members, "Math") && !offers(members, "FIRST"));
     const char *value = complete("const int FIRST = 3;\nconst float HALF = 0.5;\nenum Page : byte\n{\n    Title = $\n}\nscene Main { }\n");
     TIDE_CHECK(offers(value, "FIRST") && !offers(value, "HALF") && !offers(value, "float3"));
 
-    // A loop's keywords
     TIDE_CHECK(offers(complete("scene Main { }\nsystem S()\n{\n    foreach (var x $\n}\n"), "in"));
     TIDE_CHECK(offers(complete("scene Main { }\nsystem S()\n{\n    foreach (var x i$\n}\n"), "in"));
 #define FIELD "singleton F { Grid2<int> cells; }\nscene Main { }\n"
@@ -712,10 +699,9 @@ TIDE_TEST(lsp_complete_more_places)
     TIDE_CHECK(!offers(complete(FIELD "system S(mut F f)\n{\n    parallel (var at in f.cells by $\n}\n"), "offset"));
 #undef FIELD
 
-    // A grid field's size
     TIDE_CHECK(offers(complete("singleton F { Grid2<int> cells = $ }\nscene Main { }\n"), "Grid2"));
     TIDE_CHECK(!offers(complete("singleton F { int cells = $ }\nscene Main { }\n"), "Grid2"));
-    TIDE_CHECK(!offers(complete("struct S\n{\n    $\n}\nscene Main { }\n"), "Grid2")); // Structs can't hold one
+    TIDE_CHECK(!offers(complete("struct S\n{\n    $\n}\nscene Main { }\n"), "Grid2"));
 }
 
 TIDE_TEST(lsp_hover)
@@ -746,9 +732,8 @@ TIDE_TEST(lsp_hover)
     const char *normalize = request("textDocument/hover");
     TIDE_CHECK(has(normalize, "Math.Normalize(float2 vector)"));
     TIDE_CHECK(has(normalize, "gives zero, never NaN"));
-    TIDE_CHECK(has(normalize, "gives the identity, never NaN")); // A quaternion's
+    TIDE_CHECK(has(normalize, "gives the identity, never NaN"));
 
-    // Time's fields say what they are, where they're read and where they're offered
     open_document(GAME_TYPES "system Move(mut Body body, Time time)\n{\n    body.radius = time.t$ * time.tickRate;\n}\n");
     const char *seconds = request("textDocument/hover");
     TIDE_CHECK(has(seconds, "float t") && has(seconds, "The seconds since the match started: `tick * dt`"));
@@ -796,8 +781,7 @@ static const char *c_definition(const char *marked)
     return definition_line();
 }
 
-// Meshes: Draw.Mesh, Draw.Clip and Draw.Screen, the built-in Vertex and
-// Filter, and the draw list a view passes to C.
+// Meshes: Draw.Mesh, Draw.Clip, Draw.Screen, the built-in Vertex and Filter, and the draw list a view passes to C.
 TIDE_TEST(lsp_meshes)
 {
     start();
@@ -826,7 +810,7 @@ TIDE_TEST(lsp_meshes)
     TIDE_CHECK(offers(corner3, "position") && offers(corner3, "uv") && offers(corner3, "color"));
     const char *param = complete(MESH_TYPES "extern void Paint($);\n");
     TIDE_CHECK(offers(param, "DrawList") && offers(param, "Vertex"));
-    const char *tide_param = complete(MESH_TYPES "void Paint($) { }\n"); // Only C takes one
+    const char *tide_param = complete(MESH_TYPES "void Paint($) { }\n");
     TIDE_CHECK(!offers(tide_param, "DrawList") && offers(tide_param, "Vertex"));
 
     open_document(MESH_TYPES "view V(Art art)\n{\n    Draw.Me$sh(art.corners, [0, 1, 2], art.pixels);\n}\n");
@@ -834,7 +818,6 @@ TIDE_TEST(lsp_meshes)
     TIDE_CHECK(has(mesh, "Draw.Mesh(List<Vertex> vertices, List<int> indices, Texture texture, Filter filter = the texture's, "
                          "Wrap wrap = the texture's)"));
     TIDE_CHECK(has(mesh, "triangles, three of `indices` each"));
-    // Every version, 2D and 3D, with each one's doc once: one Draw has both cameras
     open_document(MESH_TYPES "view V(Art art)\n{\n    Draw.SetCam$era(float3(0, 0, 0), quaternion.identity, 60);\n}\n");
     const char *camera = request("textDocument/hover");
     TIDE_CHECK(has(camera, "Draw.SetCamera(float3 position, quaternion rotation, float fieldOfView)"));
@@ -842,14 +825,13 @@ TIDE_TEST(lsp_meshes)
     TIDE_CHECK(has(camera, "The 3D camera the 3D meshes go through") && has(camera, "orthographic size"));
     open_document(MESH_TYPES "view V(Art art)\n{\n    DrawUI(Draw.li$st);\n}\n");
     TIDE_CHECK(has(request("textDocument/hover"), "Draw.list: DrawList"));
-    // Its two forms, a 2D mesh's first for a List<Vertex>, and each parameter by what's written before it
     open_document(MESH_TYPES "view V(Art art)\n{\n    Draw.Mesh(art.corners, $\n}\n");
     const char *indices = request("textDocument/signatureHelp");
     TIDE_CHECK(has(indices, "\"label\":\"Draw.Mesh(vertices, indices[, texture[, filter[, wrap]]][, vert][, frag][, values])\""));
     TIDE_CHECK(!has(indices, "\"label\":\"Draw.Mesh(vertices, indices, transform[, texture[, filter[, wrap]]][, vert][, frag])\""));
     TIDE_CHECK(has(indices, "\"activeSignature\":0,\"activeParameter\":1"));
     TIDE_CHECK(has(indices, "{\"label\":[20,27],\"documentation\":{\"kind\":\"markdown\",\"value\":\"A `List<int>`"));
-    open_document(MESH_TYPES "view V(Art art)\n{\n    Draw.Mesh(art.corners, [0, 1, 2], $\n}\n"); // A list's commas aren't the call's
+    open_document(MESH_TYPES "view V(Art art)\n{\n    Draw.Mesh(art.corners, [0, 1, 2], $\n}\n");
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeSignature\":0,\"activeParameter\":2"));
     open_document(MESH_TYPES "view V(Art art)\n{\n    Draw.Mesh(art.corners, [0, 1, 2], art.pixels, $\n}\n");
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeSignature\":0,\"activeParameter\":3"));
@@ -867,8 +849,7 @@ TIDE_TEST(lsp_meshes)
 #undef MESH_TYPES
 }
 
-// The draw settings: a form around a block and a Set form each, both in
-// completion, with what they are on hover, and each's mistake fixed by a rename.
+// The draw settings: a block form and a Set form each, in completion, hovers and rename fixes.
 TIDE_TEST(lsp_draw_settings)
 {
     start();
@@ -877,7 +858,6 @@ TIDE_TEST(lsp_draw_settings)
                   "    }\n    Draw.SetBlend(Blend.Multiply);\n    Draw.SetBlend();\n    Draw.SetTransform(float4x4.identity);\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
-    // Both forms, the block's with its braces
     const char *shared = complete("scene Main { }\nview V()\n{\n    Draw.$\n}\n");
     TIDE_CHECK(offers(shared, "Blend") && offers(shared, "SetBlend") && offers(shared, "Tint") && offers(shared, "SetTint"));
     TIDE_CHECK(offers(shared, "Blit") && offers(shared, "window"));
@@ -892,22 +872,18 @@ TIDE_TEST(lsp_draw_settings)
     const char *set = request("textDocument/hover");
     TIDE_CHECK(has(set, "Draw.SetTint(Color color)") && has(set, "Draw.SetTint()") && has(set, "For the draws after it"));
 
-    // The block's form with no block is its Set form, and the other way round: each a rename away
     open_document("scene Main { }\nview V()\n{\n    Draw.Camera(float2(0, 0), 5);\n}\n");
     TIDE_CHECK(has(last_sent(), "Draw.Camera sets it around a block") && has(last_sent(), "Draw.SetCamera(...);"));
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'SetCamera'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
     open_document("scene Main { }\nview V()\n{\n    Draw.SetBlend(Blend.Add)\n    {\n    }\n}\n");
     TIDE_CHECK(has(last_sent(), "Draw.SetBlend sets it for the draws that follow, and takes no block"));
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Blend'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
-    // What put the clip back before there were two forms
     open_document("scene Main { }\nview V()\n{\n    Draw.Clip();\n    Draw.NoClip();\n}\n");
     TIDE_CHECK(has(last_sent(), "Draw.Clip() is 'Draw.SetClip()' now") && has(last_sent(), "Draw.NoClip() is 'Draw.SetClip()' now"));
     TIDE_CHECK(has(actions_at(3), "Change to 'SetClip'") && has(actions_at(4), "Change to 'SetClip'"));
 }
 
-// What 3D meshes do with depth is a setting of the same family: both forms,
-// its modes, what each is on hover, each form's mistake a rename away, and the
-// old owners' spellings a rename away too.
+// Depth, the 3D mesh setting: both forms, its modes, hovers, and rename fixes for each form and the old spellings.
 TIDE_TEST(lsp_draw_depth)
 {
     start();
@@ -923,7 +899,7 @@ TIDE_TEST(lsp_draw_depth)
     const char *three = complete("scene Main { }\nview V()\n{\n    Draw.$\n}\n");
     TIDE_CHECK(offers(three, "Depth") && offers(three, "SetDepth") && offers(three, "Transform"));
     TIDE_CHECK(has(three, "Depth(${1:mode})\\n{\\n\\t$0\\n}") && has(three, "\"SetDepth(${1:mode})\""));
-    TIDE_CHECK(offers(three, "Blend") && offers(three, "Clip")); // Beside every other setting: one Draw
+    TIDE_CHECK(offers(three, "Blend") && offers(three, "Clip"));
     const char *modes = complete("scene Main { }\nview V()\n{\n    Draw.SetDepth(Depth.$);\n}\n");
     TIDE_CHECK(offers(modes, "ReadWrite") && offers(modes, "Read") && offers(modes, "None"));
 
@@ -935,14 +911,12 @@ TIDE_TEST(lsp_draw_depth)
     const char *set = request("textDocument/hover");
     TIDE_CHECK(has(set, "Draw.SetDepth(Depth mode)") && has(set, "Draw.SetDepth()") && has(set, "For the draws after it"));
 
-    // Each form written as the other is a rename away
     open_document("scene Main { }\nview V()\n{\n    Draw.Depth(Depth.Read);\n}\n");
     TIDE_CHECK(has(last_sent(), "Draw.Depth sets it around a block") && has(last_sent(), "Draw.SetDepth(...);"));
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'SetDepth'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
     open_document("scene Main { }\nview V()\n{\n    Draw.SetDepth(Depth.Read)\n    {\n    }\n}\n");
     TIDE_CHECK(has(last_sent(), "Draw.SetDepth sets it for the draws that follow, and takes no block"));
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Depth'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
-    // The owners from before there was one Draw are a rename away, in either form
     open_document("scene Main { }\nview V()\n{\n    Draw3D.SetDepth(Depth.Read);\n}\n");
     TIDE_CHECK(has(last_sent(), "Draw3D.SetDepth is 'Draw.SetDepth' now") && has(last_sent(), "Draw2D and Draw3D are gone"));
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Draw'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
@@ -951,14 +925,11 @@ TIDE_TEST(lsp_draw_depth)
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Draw'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
     open_document("scene Main { }\nview V()\n{\n    Draw3D.SetBlend(Blend.Add);\n}\n");
     TIDE_CHECK(has(last_sent(), "Draw3D.SetBlend is 'Draw.SetBlend' now"));
-    // A game can't rename one of its own to the enum's name
     open_document("scene Main { }\ncomponent Lay$er { int z; }\n");
     TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"Depth\""), "built into"));
 }
 
-// Levels of detail: the [LOD] attribute, completed and explained where an
-// asset's attributes go, and the two settings that name a level and a camera
-// to pick by, each with both forms, on Draw and on a target.
+// Levels of detail: [LOD], and the two settings naming a level and a camera, each with both forms, on Draw and on a target.
 TIDE_TEST(lsp_levels_of_detail)
 {
     start();
@@ -986,12 +957,10 @@ TIDE_TEST(lsp_levels_of_detail)
     TIDE_CHECK(has(camera, "Draw.SetLODCamera(float3 position, quaternion rotation, float fieldOfView)"));
     TIDE_CHECK(has(camera, "Draw.SetLODCamera(float4x4 transform, float4x4 projection)") && has(camera, "the pixels it counts are the window's"));
 
-    // Each form written as the other is a rename away
     open_document("scene Main { }\nview V()\n{\n    Draw.LOD(1);\n}\n");
     TIDE_CHECK(has(last_sent(), "Draw.LOD sets it around a block") && has(last_sent(), "Draw.SetLOD(...);"));
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'SetLOD'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
 
-    // The attribute: offered before an asset, explained on hover, and refused where it isn't a mesh's
     const char *offered = complete("[$] asset Texture masks = \"art/tile.png\";\nscene Main { }\n");
     TIDE_CHECK(offers(offered, "LOD") && offers(offered, "Filter"));
     open_document("[LO$D] component Rock { float3 position; }\nscene Main { }\n");
@@ -1002,9 +971,7 @@ TIDE_TEST(lsp_levels_of_detail)
     TIDE_CHECK(has(last_sent(), "unknown attribute 'Lod'") && has(last_sent(), "did you mean 'LOD'?"));
 }
 
-// Which side of a 3D mesh's triangles draws is one too, as its depth is: both
-// forms, its sides, what the front is on hover, each form's mistake a rename
-// away, and the old owners' spellings a rename away too.
+// Cull, which side of a 3D mesh's triangles draws: both forms, its sides, hovers, and rename fixes.
 TIDE_TEST(lsp_draw_cull)
 {
     start();
@@ -1020,10 +987,9 @@ TIDE_TEST(lsp_draw_cull)
     const char *three = complete("scene Main { }\nview V()\n{\n    Draw.$\n}\n");
     TIDE_CHECK(offers(three, "Cull") && offers(three, "SetCull") && offers(three, "Depth"));
     TIDE_CHECK(has(three, "Cull(${1:side})\\n{\\n\\t$0\\n}") && has(three, "\"SetCull(${1:side})\""));
-    TIDE_CHECK(offers(three, "Tint") && offers(three, "Clip")); // Beside every other setting: one Draw
+    TIDE_CHECK(offers(three, "Tint") && offers(three, "Clip"));
     const char *sides = complete("scene Main { }\nview V()\n{\n    Draw.SetCull(Cull.$);\n}\n");
     TIDE_CHECK(offers(sides, "Back") && offers(sides, "Front") && offers(sides, "None"));
-    // A target has both, as it has its depth's
     const char *target = complete("scene Main { }\nlocal singleton Look { RenderTarget target; }\nview V(Look look)\n{\n"
                                   "    look.target.$\n}\n");
     TIDE_CHECK(offers(target, "Cull") && offers(target, "SetCull"));
@@ -1036,31 +1002,24 @@ TIDE_TEST(lsp_draw_cull)
     const char *set = request("textDocument/hover");
     TIDE_CHECK(has(set, "Draw.SetCull(Cull side)") && has(set, "Draw.SetCull()") && has(set, "For the draws after it"));
 
-    // Each form written as the other is a rename away
     open_document("scene Main { }\nview V()\n{\n    Draw.Cull(Cull.None);\n}\n");
     TIDE_CHECK(has(last_sent(), "Draw.Cull sets it around a block") && has(last_sent(), "Draw.SetCull(...);"));
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'SetCull'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
     open_document("scene Main { }\nview V()\n{\n    Draw.SetCull(Cull.None)\n    {\n    }\n}\n");
     TIDE_CHECK(has(last_sent(), "Draw.SetCull sets it for the draws that follow, and takes no block"));
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Cull'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
-    // The owners from before there was one Draw are a rename away
     open_document("scene Main { }\nview V()\n{\n    Draw3D.SetCull(Cull.None);\n}\n");
     TIDE_CHECK(has(last_sent(), "Draw3D.SetCull is 'Draw.SetCull' now"));
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Draw'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
     open_document("scene Main { }\nview V()\n{\n    Draw2D.Cull(Cull.None)\n    {\n    }\n}\n");
     TIDE_CHECK(has(last_sent(), "Draw2D.Cull is 'Draw.Cull' now"));
-    // A side that isn't one says the three there are
     open_document("scene Main { }\nview V()\n{\n    Draw.SetCull(Cull.Both);\n}\n");
     TIDE_CHECK(has(last_sent(), "enum 'Cull' has no member 'Both'") && has(last_sent(), "'Cull.None'"));
-    // A game can't rename one of its own to the enum's name
     open_document("scene Main { }\ncomponent Fa$ce { int z; }\n");
     TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"Cull\""), "built into"));
 }
 
-// Stencil is a draw setting too, which 2D and 3D draws both take, with a render
-// target's own beside it: both forms, with what's stored or without, its two
-// enums, each form's mistake a rename away, and the old owners' spellings a
-// rename away too.
+// Stencil, a setting of 2D and 3D draws and render targets: both forms, its two enums, and rename fixes.
 TIDE_TEST(lsp_draw_stencil)
 {
     start();
@@ -1079,7 +1038,7 @@ TIDE_TEST(lsp_draw_stencil)
     const char *shared = complete("scene Main { }\nview V()\n{\n    Draw.$\n}\n");
     TIDE_CHECK(offers(shared, "Stencil") && offers(shared, "SetStencil") && offers(shared, "Blend"));
     TIDE_CHECK(has(shared, "Stencil(${1:test}, ${2:value})\\n{\\n\\t$0\\n}") && has(shared, "\"SetStencil(${1:test}, ${2:value})\""));
-    TIDE_CHECK(offers(shared, "Clip") && offers(shared, "Cull")); // Beside every other setting: one Draw
+    TIDE_CHECK(offers(shared, "Clip") && offers(shared, "Cull"));
     const char *tests = complete("scene Main { }\nview V()\n{\n    Draw.SetStencil(StencilTest.$, 1);\n}\n");
     TIDE_CHECK(offers(tests, "Always") && offers(tests, "Never") && offers(tests, "Less") && offers(tests, "Equal"));
     TIDE_CHECK(offers(tests, "LessEqual") && offers(tests, "Greater") && offers(tests, "NotEqual"));
@@ -1087,7 +1046,6 @@ TIDE_TEST(lsp_draw_stencil)
     const char *ops = complete("scene Main { }\nview V()\n{\n    Draw.SetStencil(StencilTest.Always, 1, StencilOp.$);\n}\n");
     TIDE_CHECK(offers(ops, "Keep") && offers(ops, "Replace") && offers(ops, "Increment") && offers(ops, "Decrement"));
     TIDE_CHECK(offers(ops, "Zero") && offers(ops, "Invert"));
-    // A target has its own, and its own blend and tint too: every setting is a destination's; a blit names its target
     const char *target = complete("scene Main { }\nlocal singleton Look { RenderTarget target; }\nview V(Look look)\n{\n"
                                   "    look.target.$\n}\n");
     TIDE_CHECK(offers(target, "Stencil") && offers(target, "SetStencil") && offers(target, "Cull"));
@@ -1103,7 +1061,6 @@ TIDE_TEST(lsp_draw_stencil)
     const char *set = request("textDocument/hover");
     TIDE_CHECK(has(set, "Draw.SetStencil(StencilTest test, int value)") && has(set, "Draw.SetStencil()"));
     TIDE_CHECK(has(set, "For the draws after it"));
-    // A target's is the same function, on hover and as its arguments are typed
     open_document("scene Main { }\nlocal singleton Look { RenderTarget target; }\nview V(Look look)\n{\n"
                   "    look.target.SetSten$cil(StencilTest.Equal, 1);\n}\n");
     TIDE_CHECK(has(request("textDocument/hover"), "Draw.SetStencil(StencilTest test, int value, StencilOp operation)"));
@@ -1111,34 +1068,28 @@ TIDE_TEST(lsp_draw_stencil)
                   "    look.target.SetStencil($);\n}\n");
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "StencilTest test, int value, StencilOp operation"));
 
-    // Each form written as the other is a rename away
     open_document("scene Main { }\nview V()\n{\n    Draw.Stencil(StencilTest.Equal, 1);\n}\n");
     TIDE_CHECK(has(last_sent(), "Draw.Stencil sets it around a block") && has(last_sent(), "Draw.SetStencil(...);"));
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'SetStencil'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
     open_document("scene Main { }\nview V()\n{\n    Draw.SetStencil(StencilTest.Equal, 1)\n    {\n    }\n}\n");
     TIDE_CHECK(has(last_sent(), "Draw.SetStencil sets it for the draws that follow, and takes no block"));
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Stencil'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
-    // The owners from before there was one Draw are a rename away, and so is their list member
     open_document("scene Main { }\nview V()\n{\n    Draw2D.SetStencil(StencilTest.Equal, 1);\n}\n");
     TIDE_CHECK(has(last_sent(), "Draw2D.SetStencil is 'Draw.SetStencil' now"));
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Draw'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
     open_document("extern void Over(DrawList list);\nscene Main { }\nview V()\n{\n    Over(Draw3D.list);\n}\n");
     TIDE_CHECK(has(last_sent(), "Draw3D.list is 'Draw.list' now"));
     TIDE_CHECK(has(actions_at(4), "\"title\":\"Change to 'Draw'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
-    // A test or an operation that isn't one says the ones there are
     open_document("scene Main { }\nview V()\n{\n    Draw.SetStencil(StencilTest.Same, 1);\n}\n");
     TIDE_CHECK(has(last_sent(), "enum 'StencilTest' has no member 'Same'") && has(last_sent(), "'GreaterEqual'"));
     open_document("scene Main { }\nview V()\n{\n    Draw.SetStencil(StencilTest.Always, 1, StencilOp.Add);\n}\n");
     TIDE_CHECK(has(last_sent(), "enum 'StencilOp' has no member 'Add'") && has(last_sent(), "'Increment'"));
-    // A game can't rename one of its own to either enum's name
     open_document("scene Main { }\ncomponent Ma$sk { int z; }\n");
     TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"StencilOp\""), "built into"));
     TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"StencilTest\""), "built into"));
 }
 
-// What a uv past a texture's edges reads: the built-in Wrap, after the filter in
-// a mesh draw and in a frag's Sample, in completion, hovers and signature help,
-// with what's wrong said where it's written the other way round.
+// Wrap, what a uv past a texture's edges reads: completion, hovers, signature help, and errors for the wrong order.
 TIDE_TEST(lsp_wrap)
 {
     start();
@@ -1159,11 +1110,9 @@ TIDE_TEST(lsp_wrap)
                              "    Draw.Mesh(art.corners, [0, 1, 2], art.tiles, Filter.Point, Wrap.Repeat);\n"
                              "    Draw.Mesh(art.corners, [0, 1, 2], Tile);\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
-    // What a frag samples, with how: on its hover
     const char *frag = request("textDocument/hover");
     TIDE_CHECK(has(frag, "`Art.tiles` (`Filter.Point`) (`Wrap.Repeat`)") && has(frag, ", `Art.tiles`"));
 
-    // Its members, where a draw or a Sample takes one, and the type where a field is declared
     const char *members = complete(IN_VIEW("Draw.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, Wrap.$);"));
     TIDE_CHECK(offers(members, "Clamp") && offers(members, "Repeat") && offers(members, "Mirror") && !offers(members, "Point"));
     const char *sampled = complete(IN_FRAG("color = art.tiles.Sample(vertex.uv, Filter.Point, Wrap.$);"));
@@ -1171,11 +1120,10 @@ TIDE_TEST(lsp_wrap)
     const char *types = complete(WRAP_TYPES "local singleton More\n{\n    $\n}\n");
     TIDE_CHECK(offers(types, "Wrap") && offers(types, "Filter"));
 
-    // A draw's two that a call can leave out, and what each is
     open_document(IN_VIEW("Draw.Me$sh(art.flat, [0, 1, 2], art.tiles, Filter.Point, Wrap.Repeat);"));
     const char *mesh = request("textDocument/hover");
     TIDE_CHECK(has(mesh, "Texture texture, Filter filter = the texture's, Wrap wrap = the texture's)"));
-    TIDE_CHECK(!has(mesh, "Grid2<Color> texture")); // One textured version: a grid is a Texture there
+    TIDE_CHECK(!has(mesh, "Grid2<Color> texture"));
     TIDE_CHECK(has(mesh, "the texture again (`Wrap.Repeat`)"));
     open_document(IN_VIEW("Draw.Me$sh(art.solid, [0, 1, 2], float4x4.identity, art.target.color, Filter.Point, Wrap.Repeat);"));
     TIDE_CHECK(has(request("textDocument/hover"), "float4x4 transform, Texture texture, Filter filter = the texture's, "
@@ -1186,15 +1134,13 @@ TIDE_TEST(lsp_wrap)
     TIDE_CHECK(has(after, "\"activeParameter\":4") && has(after, "What a `uv` past 0 or 1 reads, written after the filter"));
     open_document(IN_VIEW("Draw.Mesh(art.solid, [0, 1, 2], float4x4.identity, art.tiles, Filter.Point, Wrap.Re$peat);"));
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":5"));
-    open_document(IN_VIEW("Draw.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, art.ke$pt);")); // A value that's one
+    open_document(IN_VIEW("Draw.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, art.ke$pt);"));
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":4"));
-    // ...and a Sample's
     open_document(IN_FRAG("color = art.tiles.Sample(vertex.uv, Filter.Point, $"));
     const char *sample = request("textDocument/signatureHelp");
     TIDE_CHECK(has(sample, "Grid2<Color>.Sample(float2 uv, Filter filter = the grid's, Wrap wrap = the grid's) -> Color"));
     TIDE_CHECK(has(sample, "\"activeParameter\":2") && has(sample, "the grid again (`Wrap.Repeat`)"));
 
-    // Written before the filter, or where the GPU can't be told
     open_document(IN_VIEW("Draw.Mesh(art.flat, [0, 1, 2], art.tiles, Wrap.Repeat);"));
     TIDE_CHECK(has(last_sent(), "a mesh's wrap comes after its filter") && has(last_sent(), "one that only wraps another way says so"));
     open_document(IN_FRAG("color = art.tiles.Sample(vertex.uv, Wrap.Repeat);"));
@@ -1203,7 +1149,6 @@ TIDE_TEST(lsp_wrap)
     TIDE_CHECK(has(last_sent(), "the wrap is written here, 'Wrap.Clamp', 'Wrap.Repeat' or 'Wrap.Mirror'"));
     open_document(IN_VIEW("Draw.Mesh(art.flat, [0, 1, 2], art.tiles, Filter.Point, Wrap.Tile);"));
     TIDE_CHECK(has(last_sent(), "enum 'Wrap' has no member 'Tile'") && has(last_sent(), "the texture again, 'Wrap.Repeat'"));
-    // The name is the engine's: a game's own function or type takes another, and no rename gives it
     open_document("scene Main { }\nfloat Wrap(float value)\n{\n    return value;\n}\n");
     TIDE_CHECK(has(last_sent(), "'Wrap' is built into the engine"));
     open_document("scene Main { }\nfloat Aro$und(float value)\n{\n    return value;\n}\n");
@@ -1213,8 +1158,7 @@ TIDE_TEST(lsp_wrap)
 #undef WRAP_TYPES
 }
 
-// Filter.Trilinear: a member like the others, on a frag's hover where it samples so, and the error for a uv a
-// frag can't work out as it starts.
+// Filter.Trilinear: its hover on a frag that samples so, and the error for a uv a frag can't work out as it starts.
 TIDE_TEST(lsp_trilinear)
 {
     start();
@@ -1235,7 +1179,6 @@ TIDE_TEST(lsp_trilinear)
     TIDE_CHECK(offers(members, "Point") && offers(members, "Bilinear") && offers(members, "Trilinear"));
     open_document(IN_FRAG("color = art.plain.Sam$ple(vertex.uv, Filter.Trilinear);"));
     TIDE_CHECK(has(request("textDocument/hover"), "smaller images too"));
-    // A uv that changes can't be asked about as the frag starts
     open_document(IN_FRAG("mut var uv = vertex.uv;\n    uv.x += 1;\n    color = art.tiles.Sample(uv);"));
     TIDE_CHECK(has(last_sent(), "a Sample that's Filter.Trilinear reads where the frag can work out as it starts"));
     TIDE_CHECK(has(last_sent(), "or sample with Filter.Bilinear here"));
@@ -1262,7 +1205,6 @@ TIDE_TEST(lsp_format_stacked_calls)
     TIDE_CHECK(strcmp(formatted, expected) == 0);
     if (strcmp(formatted, expected) != 0) printf("--- got:\n%s---\n", formatted);
     TIDE_CHECK(has(format_reply(expected), "\"result\":[]"));
-    // Other commas stay where they are: a literal's fields, and arguments over several lines
     static const char others[] = "scene Main { }\ncomponent Body { float2 position; float radius; }\nevent(Spawned) Setup(with Main)\n{\n"
                                  "    Spawn(Body { position = float2(1, 2), radius = Math.Abs(1) });\n"
                                  "    var far = Math.Max(Math.Abs(1),\n        2);\n}\n";
@@ -1288,7 +1230,6 @@ TIDE_TEST(lsp_shapes)
     TIDE_CHECK(offers(fields, "outline") && offers(fields, "outlineColor") && offers(fields, "color2"));
     TIDE_CHECK(offers(complete(SHAPE_VIEW("    var c = Color.$")), "none"));
 
-    // Every version of a function, the thick one too
     open_document(SHAPE_VIEW("    Draw.Li$ne(float2(0, 0), float2(4, 2), 0.5, Color.red);"));
     const char *line = request("textDocument/hover");
     TIDE_CHECK(has(line, "Draw.Line(float2 from, float2 to, Color color)"));
@@ -1333,7 +1274,6 @@ TIDE_TEST(lsp_text_anchor_and_font)
     open_document(TEXT_VIEW("    Draw.Text(\"DUEL\", float2(0, 0), 88, Color.white, Anc$hor.MiddleCenter);"));
     TIDE_CHECK(has(request("textDocument/hover"), "which place of a text's box is at the position"));
 
-    // Its C, which takes both
     TIDE_CHECK(has(c_definition(TEXT_VIEW("    Draw.Te$xt(\"DUEL\", float2(0, 0), 88, Color.white, Font.Bold);")),
                    "void tide_draw_text_at("));
 #undef TEXT_VIEW
@@ -1373,9 +1313,7 @@ TIDE_TEST(lsp_instanced_drawing)
 #undef INSTANCE_TYPES
 }
 
-// A draw's values: the struct a mesh draw or a Blit gives after its vert and
-// frag, which they read through a parameter of its type. VALUE_TYPES is 8
-// lines: the vert is on line 5, the frags on lines 6 and 7.
+// A draw's values, given after a vert and frag. VALUE_TYPES is 8 lines: the vert is on line 5, the frags on lines 6 and 7.
 // The cameras as matrices: Draw's functions, and a target's.
 TIDE_TEST(lsp_camera_matrices)
 {
@@ -1401,7 +1339,6 @@ TIDE_TEST(lsp_camera_matrices)
     const char *target = complete(CAMERA_GAME "view V(mut Lamp lamp)\n{\n    lamp.map.$\n}\n");
     TIDE_CHECK(offers(target, "WorldToClip") && offers(target, "CameraProjection") && offers(target, "WorldToScreenMatrix"));
 
-    // The match has no camera
     open_document(CAMERA_GAME "singleton Rules { float4x4 seen; }\nsystem S(mut Rules rules)\n{\n    rules.seen = Draw.WorldToClip();\n}\n");
     TIDE_CHECK(!has(last_sent(), "\"diagnostics\":[]"));
 }
@@ -1422,21 +1359,17 @@ TIDE_TEST(lsp_draw_values)
                 "    Draw.Blit(art.bright.color, art.spread, Blur, BlurStep { along = float2(1, 0) });\n}\n"
     open_document(VALUE_DRAWS);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
-    // The parameter, in the vert and in a frag: the draw's, once, and the fields each reads
     const char *vert = hover_at(5, 36);
     TIDE_CHECK(has(vert, "The values of the draw") && has(vert, "sent to the GPU once for the draw"));
     TIDE_CHECK(has(vert, "height") && !has(vert, "tint") && !has(vert, "An element of the draw's instance list"));
     const char *frag = hover_at(6, 50);
     TIDE_CHECK(has(frag, "The values of the draw") && has(frag, "tint") && !has(frag, "unread"));
     TIDE_CHECK(has(hover_at(7, 68), "The values of the draw"));
-    // The frag itself lists them with what's sent for each draw, and is a Mesh's, not an Instanced draw's
     const char *shade = hover_at(6, 6);
     TIDE_CHECK(has(shade, "for each draw: ") && has(shade, "Draw.Mesh(..., Shade)") && !has(shade, "for each instance"));
-    // The draws
     TIDE_CHECK(has(hover_at(10, 10), "A struct's value after them is the draw's values"));
     TIDE_CHECK(has(hover_at(11, 10), "[, Blend blend], frag shader[, values])") && has(hover_at(11, 10), "this blit's values"));
 
-    // Signature help: after the frag, the values
     open_document(VALUE_TYPES "view Show(Art art)\n{\n    Draw.Mesh(art.space, art.faces, float4x4.identity, Wave, Shade, $\n}\n");
     const char *help = request("textDocument/signatureHelp");
     TIDE_CHECK(has(help, "[, vert][, frag][, values])") && has(help, "\"activeParameter\":8"));
@@ -1446,7 +1379,6 @@ TIDE_TEST(lsp_draw_values)
     open_document(VALUE_TYPES "view Show(Art art)\n{\n    Draw.Blit(art.bright.color, art.spread, Blur, $\n}\n");
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "frag shader[, values])"));
 
-    // Completion: after a vert or a frag, the structs it takes, as values to fill in
     const char *mesh = complete(VALUE_TYPES "view Show(Art art)\n{\n    Draw.Mesh(art.space, art.faces, float4x4.identity, Shade, $);\n}\n");
     TIDE_CHECK(offers(mesh, "Swell") && has(mesh, "Swell { $1 }") && has(mesh, "The values this draw gives frag `Shade`"));
     TIDE_CHECK(!has(mesh, "BlurStep { $1 }"));
@@ -1455,7 +1387,6 @@ TIDE_TEST(lsp_draw_values)
     const char *before = complete(VALUE_TYPES "view Show(Art art)\n{\n    Draw.Mesh(art.space, art.faces, float4x4.identity, $);\n}\n");
     TIDE_CHECK(offers(before, "Shade") && !has(before, "Swell { $1 }"));
 
-    // A value of the wrong type says what the frag reads, at the frag
     open_document(VALUE_TYPES "view Show(Art art)\n{\n"
                               "    Draw.Blit(art.bright.color, art.spread, Blur, Swell { height = 2 });\n}\n");
     TIDE_CHECK(has(last_sent(), "frag 'Blur' reads a 'BlurStep'") && has(last_sent(), "or the values the draw gives after its frag"));
@@ -1484,9 +1415,7 @@ TIDE_TEST(lsp_shaded_drawing_helpers)
 #undef HELPER_SHADERS
 }
 
-// Frags and verts: code the GPU runs for a mesh's pixels and vertices, which a
-// view names last at Draw.Mesh. SHADER_TYPES is 31 lines; in SHADERS the vert
-// is on line 31, the frag on line 35 and the view's Draw.Mesh on line 43.
+// Frags and verts. SHADER_TYPES is 31 lines; in SHADERS the vert is on line 31, the frag on line 35 and the view's Draw.Mesh on line 43.
 #define SHADER_TYPES                                                                                                  \
     "scene Main { }\n"                                                                                                \
     "struct BoxVertex\n{\n    float3 position;\n    float3 normal;\n    float2 uv;\n}\n"                              \
@@ -1518,9 +1447,7 @@ static const char *rename_at(const int line, const int character, const char *na
     return request_at("file:///test.tide", "textDocument/rename", line, character, extra);
 }
 
-// Completion: `frag` and `vert` where declarations start, what their
-// parameters can be, what the GPU has in their code, and their names where a
-// Draw.Mesh takes them.
+// Completion in frags and verts: their words, parameters, GPU code, and names at Draw.Mesh.
 TIDE_TEST(lsp_shaders_complete)
 {
     start();
@@ -1529,14 +1456,12 @@ TIDE_TEST(lsp_shaders_complete)
     TIDE_CHECK(has(top, "frag ${1:Name}(${2:Vertex} vertex, out Color color$3)"));
     TIDE_CHECK(has(top, "vert ${1:Name}(mut ${2:Vertex} vertex$3)"));
 
-    // The vertex first: a struct with a position, which a vert takes mut
     const char *vertex = complete(SHADER_TYPES "struct Stats { float health; }\nfrag Shade($)\n{\n}\n");
     TIDE_CHECK(offers(vertex, "BoxVertex") && offers(vertex, "Vertex3") && !offers(vertex, "Stats"));
     TIDE_CHECK(!offers(vertex, "mut") && !offers(vertex, "Box") && !offers(vertex, "Pixel"));
     const char *changed = complete(SHADER_TYPES "vert Wave($)\n{\n}\n");
     TIDE_CHECK(offers(changed, "mut") && offers(changed, "BoxVertex"));
     TIDE_CHECK(offers(complete(SHADER_TYPES "vert Wave(mut $)\n{\n}\n"), "BoxVertex"));
-    // Then a frag's pixel, `out`, and what the engine supplies: components, singletons and Instance
     const char *frag = complete(SHADER_TYPES "frag Shade(BoxVertex vertex, $)\n{\n}\n");
     TIDE_CHECK(offers(frag, "out") && !offers(frag, "mut"));
     TIDE_CHECK(offers(frag, "Box") && offers(frag, "Sun") && offers(frag, "Models") && offers(frag, "Time"));
@@ -1545,11 +1470,10 @@ TIDE_TEST(lsp_shaders_complete)
     TIDE_CHECK(!offers(frag, "BoxVertex") && !offers(frag, "float3"));
     const char *written = complete(SHADER_TYPES "frag Shade(BoxVertex vertex, out $)\n{\n}\n");
     TIDE_CHECK(offers(written, "Color") && !offers(written, "Box") && !offers(written, "Pixel") && !offers(written, "BoxVertex"));
-    TIDE_CHECK(!offers(complete(SHADER_TYPES "frag Shade(BoxVertex vertex, mut $)\n{\n}\n"), "Color")); // Nothing of a frag's is
+    TIDE_CHECK(!offers(complete(SHADER_TYPES "frag Shade(BoxVertex vertex, mut $)\n{\n}\n"), "Color"));
     const char *rest = complete(SHADER_TYPES "frag Shade(BoxVertex vertex, out Color color, $)\n{\n}\n");
     TIDE_CHECK(!offers(rest, "mut") && !offers(rest, "Pixel") && offers(rest, "Sun"));
-    TIDE_CHECK(offers(rest, "out") && has(rest, "one more color the frag writes")); // Another output, for a target of several
-    // A vert's `out` is a struct it writes for its frag
+    TIDE_CHECK(offers(rest, "out") && has(rest, "one more color the frag writes"));
     const char *vert = complete(SHADER_TYPES "vert Wave(mut BoxVertex vertex, $)\n{\n}\n");
     TIDE_CHECK(offers(vert, "Instance") && offers(vert, "Time") && !offers(vert, "Pixel") && !offers(vert, "mut"));
     TIDE_CHECK(offers(vert, "out"));
@@ -1557,11 +1481,9 @@ TIDE_TEST(lsp_shaders_complete)
     TIDE_CHECK(offers(hands, "FromLamp") && !offers(hands, "Color") && !offers(hands, "Box") && !offers(hands, "Time"));
     TIDE_CHECK(offers(complete(SHADER_TYPES "component Pixel { float x; }\n"
                                          "frag Shade(BoxVertex vertex, out Color color, Pixel $)\n{\n}\n"), "pixel"));
-    // A game's own Pixel is the game's
     const char *own = complete(SHADER_TYPES "component Pixel { float x; }\nfrag Shade(BoxVertex vertex, $)\n{\n}\n");
     TIDE_CHECK(has(own, "{\"label\":\"Pixel\",\"kind\":22,\"detail\":\"component\"}") && !has(own, "where its pixel is"));
 
-    // In its code: what it takes, its locals, the game's functions and Math; nothing of the world or the frame
 #define IN_FRAG(code)                                                                                                 \
     SHADER_TYPES "extern float Noise(float x);\n"                                                                     \
     "frag Shade(BoxVertex vertex, out Color color, Box box, Models models)\n{\n    " code "\n}\n"
@@ -1574,7 +1496,7 @@ TIDE_TEST(lsp_shaders_complete)
     TIDE_CHECK(!offers(code, "Devices") && !offers(code, "Scene") && !offers(code, "Debug") && !offers(code, "Cursor"));
     TIDE_CHECK(offers(code, "while") && offers(code, "foreach") && offers(code, "switch"));
     TIDE_CHECK(offers(code, "byte") && !offers(code, "long") && !offers(code, "Entity") && !offers(code, "string") && !offers(code, "List"));
-    TIDE_CHECK(!offers(code, "Noise") && !offers(code, "Box")); // C runs on the CPU, and nothing spawns here
+    TIDE_CHECK(!offers(code, "Noise") && !offers(code, "Box"));
     const char *value = complete(IN_FRAG("color = $"));
     TIDE_CHECK(offers(value, "box") && offers(value, "Math") && offers(value, "Lit") && !offers(value, "Draw") && !offers(value, "null"));
     TIDE_CHECK(!offers(complete(IN_FRAG("mut $")), "Entity") && offers(complete(IN_FRAG("mut $")), "float3"));
@@ -1591,22 +1513,20 @@ TIDE_TEST(lsp_shaders_complete)
     TIDE_CHECK(offers(grid, "Sample") && !offers(grid, "Clear") && offers(grid, "size"));
     TIDE_CHECK(has(grid, "Grid2<Color>.Sample(float2 uv, Filter filter = the grid's, Wrap wrap = the grid's) -> Color"));
     const char *list = complete(IN_FRAG("var n = models.crate.$"));
-    TIDE_CHECK(!offers(list, "Add") && offers(list, "count")); // The GPU reads a list, and changes none
+    TIDE_CHECK(!offers(list, "Add") && offers(list, "count"));
 #define IN_KEYED(code)                                                                                                \
     SHADER_TYPES "local singleton Keyed\n{\n    Map<int, Color> hues;\n    Set<int> lit;\n}\n"                          \
     "frag Shade(BoxVertex vertex, out Color color, Keyed keyed)\n{\n    " code "\n}\n"
     const char *map = complete(IN_KEYED("var n = keyed.hues.$"));
-    TIDE_CHECK(offers(map, "count") && offers(map, "Has") && offers(map, "TryGet")); // ...and a map, by its keys
+    TIDE_CHECK(offers(map, "count") && offers(map, "Has") && offers(map, "TryGet"));
     TIDE_CHECK(!offers(map, "Remove") && !offers(map, "Clear") && !offers(map, "Get"));
     const char *set = complete(IN_KEYED("var n = keyed.lit.$"));
     TIDE_CHECK(offers(set, "count") && offers(set, "Has") && !offers(set, "Add") && !offers(set, "TryGet"));
 #undef IN_KEYED
-    // A local that names a list or a grid is read the same way
     const char *named_list = complete(IN_FRAG("var crate = models.crate;\n    var n = crate.$"));
     TIDE_CHECK(!offers(named_list, "Add") && offers(named_list, "count"));
     const char *named_grid = complete(IN_FRAG("var wood = models.wood;\n    color = wood.$"));
     TIDE_CHECK(!offers(named_grid, "Clear") && offers(named_grid, "size"));
-    // ...and so is a grid a function takes, which is the GPU's code too
     const char *taken = complete(SHADER_TYPES "int Cell(Grid2<int> cells, int2 at)\n{\n    return cells.$\n}\n");
     TIDE_CHECK(offers(taken, "size") && !offers(taken, "Clear") && !offers(taken, "Decode"));
     TIDE_CHECK(offers(complete(IN_FRAG("color = box.$")), "tint"));
@@ -1616,21 +1536,17 @@ TIDE_TEST(lsp_shaders_complete)
 #undef IN_FRAG
     const char *instance = complete(SHADER_TYPES "vert Wave(mut BoxVertex vertex, Instance instance)\n{\n    var m = instance.$\n}\n");
     TIDE_CHECK(offers(instance, "transform") && !offers(instance, "Discard"));
-    // A vert's `this` is its vertex as it's placed: `clip`, and none of a pixel's
     TIDE_CHECK(offers(complete(SHADER_TYPES "vert Wave(mut BoxVertex vertex)\n{\n    $\n}\n"), "this"));
     const char *placed = complete(SHADER_TYPES "vert Wave(mut BoxVertex vertex)\n{\n    this.$\n}\n");
     TIDE_CHECK(offers(placed, "clip") && !offers(placed, "Discard") && !offers(placed, "position"));
     TIDE_CHECK(!offers(complete(SHADER_TYPES "void Helper()\n{\n    this.$\n}\n"), "Discard"));
-    // Outside a frag or vert, a grid has its own methods, and no Sample
     const char *cells = complete(SHADER_TYPES "view V(mut Models models)\n{\n    models.wood.$\n}\n");
     TIDE_CHECK(offers(cells, "Clear") && offers(cells, "size") && !offers(cells, "Sample"));
-    // A Grid3's cells are read by their place in a frag, with its size: nothing samples one
     const char *solid = complete("scene Main { }\nstruct Corner { float2 position; }\nlocal singleton Land { Grid3<int> solid; }\n"
                                  "frag Dig(Corner corner, out Color color, Land land)\n{\n    var s = land.solid.$\n}\n");
     TIDE_CHECK(offers(solid, "size") && !offers(solid, "Sample") && !offers(solid, "Clear"));
     TIDE_CHECK(has(solid, "int3"));
 
-    // After a mesh's lists, at Draw.Mesh: the verts and frags that run on its vertex, by name
 #define IN_VIEW(code)                                                                                                 \
     SHADER_CODE "struct FlatVertex { float2 position; }\n"                                                            \
     "frag Flat(FlatVertex vertex, out Color color)\n{\n    color = Color.red;\n}\n"                                   \
@@ -1638,16 +1554,13 @@ TIDE_TEST(lsp_shaders_complete)
     const char *named = complete(IN_VIEW("Draw.Mesh(models.crate, models.faces, float4x4.identity, $);"));
     TIDE_CHECK(offers(named, "Wave") && offers(named, "Shade") && !offers(named, "Flat") && offers(named, "models"));
     TIDE_CHECK(has(named, "{\"label\":\"Wave\",\"kind\":3,\"detail\":\"vert Wave(mut BoxVertex vertex, Time time, Instance instance)\""));
-    // ...while the call is still being typed too, but not before its lists, nor in another call
     TIDE_CHECK(offers(complete(IN_VIEW("Draw.Mesh(models.crate, models.faces, float4x4.identity, Wave, $")), "Shade"));
     TIDE_CHECK(!offers(complete(IN_VIEW("Draw.Mesh(models.crate, $")), "Shade"));
     TIDE_CHECK(!offers(complete(IN_VIEW("Draw.Circle(float2(0, 0), 1, $")), "Shade"));
 #undef IN_VIEW
-    // Functions can name them too, with their component/singleton inputs passed explicitly.
     TIDE_CHECK(offers(complete(SHADER_CODE "void Paint(Models models, Box box, Sun sun)\n{\n"
                                             "    Draw.Mesh(models.crate, models.faces, float4x4.identity, $\n}\n"),
                        "Shade"));
-    // ...and by its namespace
     const char *qualified = complete("namespace Effects;\nscene Main { }\nstruct V { float2 position; }\n"
                                      "local singleton Art { List<V> corners; List<int> faces; }\n"
                                      "frag Tint(V vertex, out Color color) { color = Color.red; }\n"
@@ -1655,8 +1568,7 @@ TIDE_TEST(lsp_shaders_complete)
     TIDE_CHECK(has(qualified, "{\"label\":\"Tint\",\"kind\":3,\"detail\":\"frag\"}"));
 }
 
-// Hovers: a frag or vert with what the engine sends for it, grouped as it's
-// sent; its pixel; what it takes; and Pixel, Instance, Discard and Sample.
+// Hovers: a frag or vert with what the engine sends for it, its pixel, parameters, Pixel, Instance, Discard and Sample.
 TIDE_TEST(lsp_shaders_hover)
 {
     start();
@@ -1668,33 +1580,28 @@ TIDE_TEST(lsp_shaders_hover)
     TIDE_CHECK(has(frag, "- for each instance: `Box.tint`\\n- for each draw: `Sun.direction`\\n- as textures: `Models.wood`\\n"
                          "- of its vertex, blended across the triangle: `normal`, `uv`"));
     TIDE_CHECK(!has(frag, "glow") && !has(frag, "strength") && !has(frag, "Runs once per tick"));
-    // ...and where a Draw.Mesh names it
     const char *vert = hover_at(43, 82);
     TIDE_CHECK(has(vert, "vert Wave(mut BoxVertex vertex, Time time, Instance instance)") && has(vert, "for each vertex"));
     TIDE_CHECK(has(vert, "- for each instance: `Instance.transform`\\n- for each draw: `Time.dt`, `Time.tick`"));
     TIDE_CHECK(has(hover_at(43, 88), "frag Shade(") && has(hover_at(31, 6), "vert Wave("));
 
-    // A frag's pixel, where it's declared and where it's written
     const char *color = hover_at(35, 40);
     TIDE_CHECK(has(color, "out Color color") && has(color, "The pixel's color, which the frag writes"));
     TIDE_CHECK(has(color, "starts with no value") && has(color, "isn't what's on the screen already"));
     TIDE_CHECK(has(color, "blended over what's behind it by its alpha"));
-    const char *word = hover_at(35, 30); // On `out`
+    const char *word = hover_at(35, 30);
     TIDE_CHECK(has(word, "out Color color") && has(word, "The pixel's color, which the frag writes"));
     TIDE_CHECK(has(hover_at(38, 5), "The pixel's color, which the frag writes"));
-    // What the engine supplies: how often it's sent, and the fields this code reads
     const char *box = hover_at(35, 51);
     TIDE_CHECK(has(box, "sent to the GPU for each instance drawn") && has(box, "the only ones sent: `tint`.") && !has(box, "glow"));
     const char *sun = hover_at(35, 60);
     TIDE_CHECK(has(sun, "A singleton, sent to the GPU once for each draw") && has(sun, "the only ones sent: `direction`."));
     TIDE_CHECK(has(hover_at(35, 72), "Grids it samples, sent as textures: `wood`."));
     TIDE_CHECK(has(hover_at(31, 38), "the only ones sent: `dt`, `tick`."));
-    // The vertex: a frag's blended, a vert's changed
     const char *blended = hover_at(35, 22);
     TIDE_CHECK(has(blended, "blended across the triangle from its three corners") && has(blended, "`normal`, `uv`"));
     TIDE_CHECK(has(hover_at(31, 25), "which it changes in place"));
 
-    // The frag's implicit Pixel and Instance, their fields, Discard and Sample
     const char *pixel = hover_at(39, 9);
     TIDE_CHECK(has(pixel, "Pixel this") && has(pixel, "The pixel `Shade` runs for."));
     TIDE_CHECK(has(pixel, "A frag's `this`") && has(pixel, "read-only fields are `position`, `depth` and `world`"));
@@ -1706,12 +1613,10 @@ TIDE_TEST(lsp_shaders_hover)
     const char *sample = hover_at(38, 25);
     TIDE_CHECK(has(sample, "Grid2<Color>.Sample(float2 uv, Filter filter = the grid's, Wrap wrap = the grid's) -> Color") && has(sample, "Reads the grid as the texture it is"));
     TIDE_CHECK(has(hover_at(43, 12), "A vert and a frag, named last, run on the GPU"));
-    // They're the GPU's: no C to go to
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/definition", 39, 9, ""), "\"result\":null"));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/typeDefinition", 39, 9, ""), "\"result\":null"));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/definition", 39, 15, ""), "\"result\":null"));
 
-    // A component a function takes whole is sent whole, and one never read not at all
     open_document(SHADER_TYPES "float Glow(Box box) { return box.glow; }\n"
                   "frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun)\n{\n"
                   "    color = Color.white * Glow(box) * this.depth * this.world.x;\n}\n");
@@ -1720,7 +1625,6 @@ TIDE_TEST(lsp_shaders_hover)
     TIDE_CHECK(has(hover_at(32, 60), "This code reads none of its fields, so nothing of it is sent."));
     TIDE_CHECK(has(hover_at(34, 44), "How deep the pixel is") && has(hover_at(34, 57), "Where the pixel is in the world."));
 
-    // The local fields of the match's components and singletons it reads go the same way
 #define LOCAL_FIELDS                                                                                                   \
     SHADER_TYPES "component Crate\n{\n    float worn;\n    local float fade = 1;\n}\n"                                \
     "singleton Fog\n{\n    float density;\n    local Color tone = Color.white;\n"                                      \
@@ -1739,7 +1643,6 @@ TIDE_TEST(lsp_shaders_hover)
     TIDE_CHECK(offers(fields, "worn") && offers(fields, "fade") && has(fields, "A frag or vert reads it like any other field"));
 #undef LOCAL_FIELDS
 
-    // While the game has an error, the checker plans no shaders, and the hovers say so
     open_document(SHADERS "system Broken(mut Box box)\n{\n    box.nope = 1;\n}\n");
     TIDE_CHECK(has(last_sent(), "\"severity\":1"));
     const char *unplanned = hover_at(35, 6);
@@ -1748,8 +1651,7 @@ TIDE_TEST(lsp_shaders_hover)
     TIDE_CHECK(has(hover_at(35, 51), "Which of its fields this code reads is worked out once the game has no errors."));
 }
 
-// A frag's or vert's name at Draw.Mesh is its declaration's: definitions,
-// usages, highlights, renames and the call hierarchy go both ways.
+// A frag's or vert's name at Draw.Mesh is its declaration's: navigation, renames and the call hierarchy go both ways.
 TIDE_TEST(lsp_shaders_names)
 {
     start();
@@ -1765,7 +1667,6 @@ TIDE_TEST(lsp_shaders_names)
     TIDE_CHECK(has(highlights, "{\"range\":{\"start\":{\"line\":31,\"character\":5},\"end\":{\"line\":31,\"character\":9}},\"kind\":3}"));
     TIDE_CHECK(has(highlights, "{\"range\":{\"start\":{\"line\":43,\"character\":79},\"end\":{\"line\":43,\"character\":83}},\"kind\":2}"));
 
-    // Renamed from the Draw.Mesh that names it, and from its declaration
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/prepareRename", 43, 88, ""), "\"result\":{\"start\""));
     rename_at(43, 88, "Tint");
     const char *renamed = apply_reply(SHADERS, "file:///test.tide");
@@ -1779,7 +1680,6 @@ TIDE_TEST(lsp_shaders_names)
     rename_at(31, 6, "Ripple");
     renamed = apply_reply(SHADERS, "file:///test.tide");
     TIDE_CHECK(has(renamed, "vert Ripple(mut BoxVertex vertex,") && has(renamed, ", Ripple, Shade);"));
-    // It shares its name with nothing, nor a view with it, and its word isn't a name, but for a parameter
     TIDE_CHECK(has(rename_at(31, 6, "Shade"), "'Shade' is already declared"));
     TIDE_CHECK(has(rename_at(31, 6, "DrawBox"), "'DrawBox' is already declared"));
     TIDE_CHECK(has(rename_at(31, 6, "Box"), "'Box' is already declared"));
@@ -1787,7 +1687,6 @@ TIDE_TEST(lsp_shaders_names)
     TIDE_CHECK(has(rename_at(31, 6, "frag"), "keyword") && has(rename_at(31, 6, "vert"), "keyword"));
     TIDE_CHECK(has(rename_at(35, 22, "vert"), "\"changes\""));
 
-    // A qualified name: its last part
     static const char effects[] = "namespace Effects;\nscene Main { }\nstruct V { float2 position; }\n"
                                   "local singleton Art { List<V> corners; List<int> faces; }\n"
                                   "frag Tint(V vertex, out Color color) { color = Color.red; }\n"
@@ -1800,7 +1699,6 @@ TIDE_TEST(lsp_shaders_names)
     renamed = apply_reply(effects, "file:///test.tide");
     TIDE_CHECK(has(renamed, "frag Paint(V vertex") && has(renamed, "art.faces, Effects.Paint);"));
 
-    // The call hierarchy: a view calls the vert and the frag it names, and they the game's functions
     open_document(SHADERS);
     const char *item = request_at("file:///test.tide", "textDocument/prepareCallHierarchy", 43, 88, "");
     TIDE_CHECK(has(item, "{\"name\":\"Shade\",\"kind\":12,\"detail\":\"frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun, "
@@ -1834,8 +1732,7 @@ TIDE_TEST(lsp_shaders_names)
     TIDE_CHECK(has(last_sent(), "{\"from\":{\"name\":\"Shade\",\"kind\":12,\"detail\":\"frag Shade("));
 }
 
-// The outline, symbols across the game and semantic tokens: frags and verts
-// are functions, their words and a frag's `this` keywords, and Instance an engine type.
+// The outline, workspace symbols and semantic tokens for frags and verts.
 TIDE_TEST(lsp_shaders_symbols_and_tokens)
 {
     start();
@@ -1854,39 +1751,35 @@ TIDE_TEST(lsp_shaders_symbols_and_tokens)
     // `vert` a keyword (11), Wave a function (9) declared, its vertex a parameter it writes (5, not readonly),
     // Time a class of the engine's (3, 8) and Instance a type of the engine's (1, 8)
     TIDE_CHECK(has(tokens, ",2,0,4,11,0,0,5,4,9,1,0,9,9,2,0,0,10,6,5,1,0,8,4,3,8,0,5,4,5,3,0,6,8,1,8,0,9,8,5,3,"));
-    // `frag`, Shade, its vertex, then its pixel: `out`, a keyword there, Color, and `color`, which it writes
     TIDE_CHECK(has(tokens, ",2,0,4,11,0,0,5,5,9,1,0,6,9,2,0,0,10,6,5,3,0,8,3,11,0,0,4,5,1,8,0,6,5,5,1,"));
     TIDE_CHECK(has(tokens, ",1,8,4,11,0,0,5,8,7,10,")); // this.position: keyword and read-only engine property
     TIDE_CHECK(has(tokens, ",4,9,0,0,6,5,9,0]"));     // Wave and Shade at Draw.Mesh: functions
 
-    // Anywhere else, the two words are names
     open_document("scene Main { }\nint Twice(int frag)\n{\n    var vert = frag * 2;\n    return vert;\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     TIDE_CHECK(has(hover_at(1, 15), "int frag") && has(hover_at(3, 9), "int vert"));
 }
 
-// Signature help at Draw.Mesh goes by what each argument is, as what follows
-// a mesh's lists can be left out; Sample has its own.
+// Signature help at Draw.Mesh goes by what each argument is; Sample has its own.
 TIDE_TEST(lsp_shaders_signature_help)
 {
     start();
 #define IN_VIEW(code) SHADER_CODE "view DrawBox(with Box, Models models)\n{\n    " code "\n}\n"
     open_document(IN_VIEW("Draw.Mesh(models.crate, $"));
-    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeSignature\":0,\"activeParameter\":1")); // 3D: its position is a float3
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeSignature\":0,\"activeParameter\":1"));
     open_document(IN_VIEW("Draw.Mesh(models.crate, models.faces, $"));
     const char *transform = request("textDocument/signatureHelp");
     TIDE_CHECK(has(transform, "\"activeSignature\":0,\"activeParameter\":2"));
     TIDE_CHECK(has(transform, "{\"label\":[29,38],\"documentation\":{\"kind\":\"markdown\",\"value\":\"A `float4x4`: where the mesh is "
                               "in the world.\"}}"));
     open_document(IN_VIEW("Draw.Mesh(models.crate, models.faces, float4x4.identity, $"));
-    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeSignature\":0,\"activeParameter\":3")); // A texture, at the earliest
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeSignature\":0,\"activeParameter\":3"));
     open_document(IN_VIEW("Draw.Mesh(models.crate, models.faces, float4x4.identity, Wave, $"));
     const char *frag = request("textDocument/signatureHelp");
-    TIDE_CHECK(has(frag, "\"activeSignature\":0,\"activeParameter\":7")); // After a vert, the frag
+    TIDE_CHECK(has(frag, "\"activeSignature\":0,\"activeParameter\":7"));
     TIDE_CHECK(has(frag, "{\"label\":[70,74],\"documentation\":{\"kind\":\"markdown\",\"value\":\"A vert, by name"));
     TIDE_CHECK(has(frag, "{\"label\":[78,82],\"documentation\":{\"kind\":\"markdown\",\"value\":\"A frag, by name"));
     TIDE_CHECK(has(frag, "A vert and a frag, named last, run on the GPU"));
-    // In a call that's whole, each name is what it is
     open_document(IN_VIEW("Draw.Mesh(models.crate, models.faces, float4x4.identity, Wa$ve, Shade);"));
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeParameter\":6"));
     open_document(IN_VIEW("Draw.Mesh(models.crate, models.faces, float4x4.identity, Sha$de);"));
@@ -1899,8 +1792,7 @@ TIDE_TEST(lsp_shaders_signature_help)
     TIDE_CHECK(has(sample, "\"label\":\"Grid2<Color>.Sample(float2 uv, Filter filter = the grid's, Wrap wrap = the grid's) -> Color\"") && has(sample, "\"activeParameter\":1"));
 }
 
-// Formatting, folding, selection, inlay hints and moving one to a file of its
-// own treat a frag or vert as they do a view or a function.
+// Formatting, folding, selection, inlay hints and moving to a file treat a frag or vert like a function.
 TIDE_TEST(lsp_shaders_format_fold_and_move)
 {
     start();
@@ -1923,13 +1815,11 @@ TIDE_TEST(lsp_shaders_format_fold_and_move)
     open_document(SHADERS);
     const char *folds = request("textDocument/foldingRange");
     TIDE_CHECK(has(folds, "{\"startLine\":31,\"endLine\":33}") && has(folds, "{\"startLine\":35,\"endLine\":39}"));
-    // From Sample out to its frag
     const char *ranges = request_at("file:///test.tide", "textDocument/selectionRange", 38, 26,
                                     "\"positions\":[{\"line\":38,\"character\":26}]");
     TIDE_CHECK(has(ranges, "\"result\":[{\"range\":{\"start\":{\"line\":38,\"character\":24},\"end\":{\"line\":38,\"character\":30}}"));
     TIDE_CHECK(has(ranges, "\"parent\":{\"range\":{\"start\":{\"line\":36,\"character\":0},\"end\":{\"line\":40,\"character\":1}},"
                            "\"parent\":{\"range\":{\"start\":{\"line\":35,\"character\":0},\"end\":{\"line\":40,\"character\":1}}}}"));
-    // Nothing orders frags and verts by their files, so they move, as functions do
     const char *move = actions_at(35);
     TIDE_CHECK(has(move, "\"title\":\"Move 'Shade' to Shade.tide\",\"kind\":\"refactor.move\""));
     TIDE_CHECK(has(move, "\"newText\":\"frag Shade(BoxVertex vertex, out Color color, Box box, Sun sun, Models models)\\n{\\n"));
@@ -1937,7 +1827,6 @@ TIDE_TEST(lsp_shaders_format_fold_and_move)
                          "\"newText\":\"\"}"));
     TIDE_CHECK(has(actions_at(32), "Move 'Wave' to Wave.tide") && !has(actions_at(42), "Move '"));
 
-    // A local's type, as in any code; and a name at Draw.Mesh isn't taken for its texture
     open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, out Color color, Models models)\n{\n"
                                "    var texel = models.wood.Sample(vertex.uv);\n"
                                "    color = texel * Lit(vertex.normal, float3(0, -1, 0));\n}\n"
@@ -1962,20 +1851,15 @@ static bool diagnosed(const int line, const int character, const int length, con
     return has(last_sent(), start);
 }
 
-// The checker's errors about frags and verts reach the editor where they are:
-// on the name, the word or the call they're about, with a note about another
-// place there, and what's never used faded.
+// The checker's errors about frags and verts reach the editor where they are.
 TIDE_TEST(lsp_shaders_diagnostics)
 {
     start_with("{\"capabilities\":{\"textDocument\":{\"publishDiagnostics\":{\"relatedInformation\":true}}}}");
-    // A parameter never used: on its name, marked unnecessary
     open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, out Color color, Sun sun)\n{\n    color = Color.red;\n}\n");
     TIDE_CHECK(diagnosed(31, 50, 3, 2, "'sun' is never used") && has(last_sent(), "\"tags\":[1]"));
-    // What only the CPU does: on the call
     open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, out Color color)\n{\n    Draw.Clear(Color.red);\n"
                                "    color = Color.red;\n}\n");
     TIDE_CHECK(diagnosed(33, 9, 5, 1, "a frag runs on the GPU, for each pixel, so it can't draw"));
-    // In a function a frag calls: where it is, with the frag that reaches it as a note there
     open_document(SHADER_TYPES "float Count(float to)\n{\n    mut float x = 0;\n    string label = \"far\";\n    return x + to;\n}\n"
                                "frag Shade(BoxVertex vertex, out Color color)\n{\n"
                                "    color = Color.white * Count(vertex.uv.x);\n}\n");
@@ -1984,25 +1868,21 @@ TIDE_TEST(lsp_shaders_diagnostics)
                                 "\"character\":5},\"end\":{\"line\":37,\"character\":10}}},\"message\":\"frag 'Shade' runs on the GPU, "
                                 "and 'Count' with it, as it calls it\"}]"));
     TIDE_CHECK(!has(last_sent(), "\\nnote: frag 'Shade' runs on the GPU"));
-    // A declaration that's wrong: on its name, and on the parameter
     open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, mut Box box)\n{\n}\n");
     TIDE_CHECK(diagnosed(31, 5, 5, 1, "frag 'Shade' has no pixel to write"));
     TIDE_CHECK(diagnosed(31, 29, 3, 1, "a frag reads 'Box', and can't change it: drop 'mut'"));
-    // At Draw.Mesh: on the name that's out of place, or whose frag the view can't supply
     open_document(SHADER_CODE "view DrawBox(with Box, Models models)\n{\n"
                               "    Draw.Mesh(models.crate, models.faces, float4x4.identity, Shade, Wave);\n}\n");
     TIDE_CHECK(diagnosed(43, 61, 5, 1, "the vert comes before the frag"));
     open_document(SHADER_CODE "view DrawBox(Models models)\n{\n"
                               "    Draw.Mesh(models.crate, models.faces, float4x4.identity, Wave, Shade);\n}\n");
     TIDE_CHECK(diagnosed(43, 67, 5, 1, "view 'DrawBox' doesn't guarantee its entity has a 'Box', which frag 'Shade' reads"));
-    // What the GPU can't hold, found once the rest of the game is right: on the index
     open_document(SHADER_TYPES "frag Shade(BoxVertex vertex, out Color color, Models models)\n{\n"
                                "    mut var all = models.faces;\n    color = Color.white;\n}\n");
     TIDE_CHECK(diagnosed(33, 12, 3, 1, "a list's local in code the GPU runs names one list, for good: 'all' can't be 'mut'"));
 }
 
-// instance.Normal(normal): an Instance's one method, in a frag and in a vert.
-// The frag is on line 31, after SHADER_TYPES, and its code on line 33.
+// instance.Normal(normal), in a frag and a vert. The frag is on line 31, after SHADER_TYPES, and its code on line 33.
 TIDE_TEST(lsp_instance_normal)
 {
     start();
@@ -2019,12 +1899,11 @@ TIDE_TEST(lsp_instance_normal)
     const char *hover = hover_at(33, 37);
     TIDE_CHECK(has(hover, "Instance.Normal(float3 normal) -> float3") && has(hover, "A normal of the mesh as it is in the world"));
     TIDE_CHECK(has(hover, "Nothing more is sent for it"));
-    TIDE_CHECK(has(hover_at(31, 46), "float3 Normal(float3 normal);")); // The record, with its method
+    TIDE_CHECK(has(hover_at(31, 46), "float3 Normal(float3 normal);"));
     open_document(LIT("color = Color.white * instance.Normal($"));
     const char *help = request("textDocument/signatureHelp");
     TIDE_CHECK(has(help, "\"label\":\"Instance.Normal(float3 normal) -> float3\"") && has(help, "\"activeParameter\":0"));
 
-    // What it isn't: another method, or a normal that's no float3
     open_document(LIT("color = Color.white * instance.Rotate(vertex.normal).y;"));
     TIDE_CHECK(diagnosed(33, 35, 6, 1, "an Instance has one method, 'Normal(normal)'"));
     open_document(LIT("color = Color.white * instance.Normal(vertex.uv).y;"));
@@ -2040,18 +1919,17 @@ TIDE_TEST(lsp_type_definition_and_implementation)
     TIDE_CHECK(has(request("textDocument/typeDefinition"), "\"range\":{\"start\":{\"line\":0,\"character\":10}"));
     open_document("struct Part { float size; }\ncomponent Kit { List<Part> parts; }\nscene Main { }\n"
                   "system S(Kit kit)\n{\n    var n = kit.pa$rts.count;\n}\n");
-    TIDE_CHECK(has(request("textDocument/typeDefinition"), "\"range\":{\"start\":{\"line\":0,\"character\":7}")); // Part
+    TIDE_CHECK(has(request("textDocument/typeDefinition"), "\"range\":{\"start\":{\"line\":0,\"character\":7}"));
     open_document(GAME_TYPES "system Move(mut Body body)\n{\n    body.rad$ius = 1;\n}\n");
-    TIDE_CHECK(has(request("textDocument/typeDefinition"), "\"result\":null")); // A float
+    TIDE_CHECK(has(request("textDocument/typeDefinition"), "\"result\":null"));
 
     open_document(GAME_TYPES "event Hit\n{\n    int damage = 1;\n}\n\nsystem Strike(with Body)\n{\n"
                   "    this.Send(Hit { damage = 2 });\n}\n\nevent(Hit hit) TakeHit(mut Body body)\n{\n"
                   "    body.radius -= hit.damage;\n}\n\nevent(Spawned) Grow(mut Body body)\n{\n    body.radius += 1;\n}\n");
-    const char *handlers = request_at("file:///test.tide", "textDocument/implementation", 22, 7, ""); // event Hit
-    TIDE_CHECK(has(handlers, "\"range\":{\"start\":{\"line\":32,\"character\":15}")); // TakeHit
-    const char *spawned = request_at("file:///test.tide", "textDocument/implementation", 37, 8, ""); // event(Spawned)
-    TIDE_CHECK(has(spawned, "{\"line\":18,\"character\":15}") && has(spawned, "{\"line\":37,\"character\":15}")); // Setup, Grow
-    // While the game has an error elsewhere too, as it does while typing.
+    const char *handlers = request_at("file:///test.tide", "textDocument/implementation", 22, 7, "");
+    TIDE_CHECK(has(handlers, "\"range\":{\"start\":{\"line\":32,\"character\":15}"));
+    const char *spawned = request_at("file:///test.tide", "textDocument/implementation", 37, 8, "");
+    TIDE_CHECK(has(spawned, "{\"line\":18,\"character\":15}") && has(spawned, "{\"line\":37,\"character\":15}"));
     open_document(GAME_TYPES "event Hit\n{\n    int damage = 1;\n}\n\nsystem Strike(with Body)\n{\n"
                   "    this.Send(Hit { damage = 2 });\n}\n\nevent(Hit hit) TakeHit(mut Body body)\n{\n"
                   "    body.radius -= hit.damge;\n}\n");
@@ -2077,8 +1955,8 @@ TIDE_TEST(lsp_call_hierarchy)
     start();
     open_document(CALLS);
     TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
-    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 0, 0, ""), "\"result\":null")); // Analysed
-    const char *item = request_at("file:///test.tide", "textDocument/prepareCallHierarchy", 15, 5, ""); // A call of Heal
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 0, 0, ""), "\"result\":null"));
+    const char *item = request_at("file:///test.tide", "textDocument/prepareCallHierarchy", 15, 5, "");
     TIDE_CHECK(has(item, "{\"name\":\"Heal\",\"kind\":12,\"detail\":\"float Heal(mut Stats stats, float amount)\""));
     TIDE_CHECK(has(item, "\"selectionRange\":{\"start\":{\"line\":6,\"character\":6},\"end\":{\"line\":6,\"character\":10}}"));
 
@@ -2106,7 +1984,6 @@ TIDE_TEST(lsp_call_hierarchy)
     TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 6, 6,
                                 "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 3);
 
-    // The input's Sample calls too
     open_document("float Twice(float x) { return x * 2; }\ninput Keys\n{\n    float aim;\n    Sample() { aim = Twice(1); }\n}\n"
                   "scene Main { }\n");
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/prepareCallHierarchy", 4, 5, ""), "{\"name\":\"Sample\",\"kind\":6"));
@@ -2136,7 +2013,7 @@ TIDE_TEST(lsp_definition_in_c)
     TIDE_CHECK(has(c_definition(IN_SYSTEM("flo$at3 v = float3(1);")), "typedef struct tide_float3"));
     TIDE_CHECK(has(c_definition(IN_SYSTEM("body.radius = body.position.x$;")), "typedef struct tide_float2 { float x"));
     TIDE_CHECK(has(c_definition(IN_SYSTEM("var c = Color.red.g$;")), "float r, g, b, a;"));
-    TIDE_CHECK(strcmp(c_definition(GAME_TYPES "system S(Ti$me time) { }\n"), "") == 0); // Generated: no C definition
+    TIDE_CHECK(strcmp(c_definition(GAME_TYPES "system S(Ti$me time) { }\n"), "") == 0);
 
     static const char constructor[] = "input PlayerInput\n{\n    bool fire;\n\n    Sample(Devices devices)\n    {\n"
                                       "        var keys = devices.key$board;\n        fire = keys.space.pressed;\n    }\n}\n"
@@ -2224,7 +2101,6 @@ TIDE_TEST(lsp_events)
     open_document(EVENTS);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
-    // The handler: its trigger, and when it runs.
     open_document(GAME_TYPES "event Hit { int damage; }\nsystem S(with Body) { this.Send(Hit); }\n"
                   "event(Hit hit) Take$Hit(mut Body body) { body.radius -= hit.damage; }\n");
     const char *handler = request("textDocument/hover");
@@ -2238,7 +2114,6 @@ TIDE_TEST(lsp_events)
                   "event(Hit hit) TakeHit(mut Body body) { body.radius -= h$it.damage; }\n");
     TIDE_CHECK(has(request("textDocument/hover"), "The event being handled"));
 
-    // Completion: declarations, the trigger, a handler's parameters, an event's fields, and Send.
     const char *top = complete(GAME_TYPES "\n$");
     TIDE_CHECK(offers(top, "event"));
     TIDE_CHECK(offers(top, "event handler"));
@@ -2280,7 +2155,6 @@ TIDE_TEST(lsp_local_state)
     TIDE_CHECK(has(hover, "component Spark"));
     TIDE_CHECK(has(hover, "component Spark"));
 
-    // In a view, Spawn makes local entities: the local components are offered, not the match's.
     const char *spawn = complete(GAME_TYPES "component Spark { int framesLeft = 2; }\nview Trail(Body body)\n{\n    $\n}\n");
     TIDE_CHECK(offers(spawn, "local Spawn"));
     TIDE_CHECK(offers(spawn, "Spark"));
@@ -2349,8 +2223,7 @@ TIDE_TEST(lsp_commands)
     TIDE_CHECK(offers(top, "command handler"));
 }
 
-// `local` before a field of a match component or singleton: this machine's,
-// outside the match. Views have it, the match doesn't.
+// `local` before a field of a match component or singleton: this machine's, outside the match.
 #define LOCAL_FIELDS                                                           \
     "component Box\n"                                                          \
     "{\n"                                                                      \
@@ -2393,7 +2266,6 @@ TIDE_TEST(lsp_local_fields)
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     if (!has(last_sent(), "\"diagnostics\":[]")) printf("%s\n", last_sent());
 
-    // Hovers say they're local: the field where it's declared and where it's used, and its type
     open_document(LOCAL_FIELDS "view Show(mut Box box) { box.ba$kes += 1; }\n");
     const char *use = request("textDocument/hover");
     TIDE_CHECK(has(use, "local int bakes = 0"));
@@ -2406,7 +2278,6 @@ TIDE_TEST(lsp_local_fields)
     open_document(LOCAL_FIELDS "local event(Forgo$tten) Free(Box box) { }\n");
     TIDE_CHECK(has(request("textDocument/hover"), "local fields go"));
 
-    // Completion: in views, local handlers and functions; never in the match
     const char *view = complete(LOCAL_FIELDS "view Show(mut Box box)\n{\n    box.$\n}\n");
     TIDE_CHECK(offers(view, "pos") && offers(view, "verts") && offers(view, "bakes"));
     TIDE_CHECK(has(view, "\"detail\":\"local List<int>\""));
@@ -2420,13 +2291,10 @@ TIDE_TEST(lsp_local_fields)
     TIDE_CHECK(offers(system, "pos") && !offers(system, "verts") && !offers(system, "bakes"));
     const char *chain = complete(LOCAL_FIELDS "view Show(Box box)\n{\n    var n = box.verts.$\n}\n");
     TIDE_CHECK(offers(chain, "count"));
-    // A value hasn't got them
     const char *literal = complete(LOCAL_FIELDS "system Reset(mut Box box)\n{\n    box = Box { $ };\n}\n");
     TIDE_CHECK(offers(literal, "pos") && !offers(literal, "verts"));
-    // The event that says they're going, where a handler's trigger goes
     TIDE_CHECK(offers(complete(LOCAL_FIELDS "local event($)\n"), "Forgotten"));
 
-    // Go to definition, and every use, through the component's parameter
     open_document(LOCAL_FIELDS "void Bake(mut Box box) { box.bakes += 1; }\nview Show(mut Box box) { box.ba$kes += 1; Bake(box); }\n");
     TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":4,\"character\":14}"));
     TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 3);
@@ -2444,32 +2312,27 @@ TIDE_TEST(lsp_local_fields)
     open_document(LOCAL_FIELDS "view Show(mut Box box) { box.bakes += 1; box.pos.x; }\n");
     TIDE_CHECK(has(request("textDocument/semanticTokens/full"), ",5,7,16,")); // Where it's used: local
 
-    // The errors, as diagnostics
     open_document(LOCAL_FIELDS "system Slide(mut Box box) { box.bakes += 1; }\n");
     TIDE_CHECK(has(last_sent(), "it's this machine's, and the match can't see it"));
     open_document(LOCAL_FIELDS "view Show(mut Box box) { box.bakes += 1; box.pos.x = 0; }\n");
     TIDE_CHECK(has(last_sent(), "a view can't change the match, and 'pos' is a match field of 'Box'"));
 
-    // A view that writes one without mut: declare the parameter mut
     static const char read_only[] = LOCAL_FIELDS "view Show(Box box) { box.bakes += 1; }\n";
     open_document(read_only);
     TIDE_CHECK(has(last_sent(), "'box' is read-only"));
     TIDE_CHECK(has(actions_at(13), "Declare 'box' as mut"));
     TIDE_CHECK(has(apply_first_action(read_only), "view Show(mut Box box) { box.bakes += 1; }"));
-    // ...and one that takes it mut and writes none: remove it
     static const char unused[] = LOCAL_FIELDS "view Show(mut Box box) { if (box.bakes > 0) Draw.Clear(Color.black); }\n";
     open_document(unused);
     TIDE_CHECK(has(last_sent(), "'box' is declared mut but never written"));
     TIDE_CHECK(has(actions_at(13), "Remove 'mut' from 'box'"));
     TIDE_CHECK(has(apply_first_action(unused), "view Show(Box box) { if"));
-    // `local` on a field of a declaration that's local already: remove the word
     static const char twice[] = "local singleton Spark\n{\n    float2 position;\n    local int frames;\n}\nscene Main { }\n";
     open_document(twice);
     TIDE_CHECK(has(last_sent(), "'Spark' is local already, and so is every field of it"));
     TIDE_CHECK(has(actions_at(3), "Remove 'local'"));
     TIDE_CHECK(has(apply_first_action(twice), "{\n    float2 position;\n    int frames;\n}"));
 
-    // Formatting keeps `local` with its field
     static const char messy[] = "component Box\n{\nfloat3 pos;\n  local   List<int>  verts ;\nlocal int bakes=0;\n}\nscene Main { }\n";
     static const char tidy[] = "component Box\n{\n    float3 pos;\n    local List<int> verts;\n    local int bakes = 0;\n}\nscene Main { }\n";
     format_reply(messy);
@@ -2508,8 +2371,7 @@ TIDE_TEST(lsp_enums_and_switch)
     TIDE_CHECK(has(symbols, "\"name\":\"Playing\",\"detail\":\"5\",\"kind\":22"));
 }
 
-// A switch on an enum completes by its members: after `case`, where the code
-// around doesn't parse yet, and whole cases where one can start.
+// A switch on an enum completes by its members, and whole cases where one can start.
 TIDE_TEST(lsp_enum_assignment_completion_and_shorthand)
 {
     start();
@@ -2549,10 +2411,8 @@ TIDE_TEST(lsp_enum_assignment_completion_and_shorthand)
     TIDE_CHECK(offers(reply, "Point") && offers(reply, "Trilinear") && count(reply, "\"label\"") == 3);
     open_document(ENUM_SOURCE "view V() { var size = Draw.MeasureText(\"text\", 12, .Bold); Debug.Log($$\"{size}\"); }\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
-    // Other assignment types retain ordinary completion.
     reply = complete(ENUM_SOURCE "view V() { int n = $; Debug.Log(n); }\n");
     TIDE_CHECK(!has(reply, "\"preselect\":true"));
-    // The implicit enum name isn't a source occurrence; the member still is.
     open_document(ENUM_SOURCE "system Animate(mut Zombie zombie) { zombie.state = .Id$le; }\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     reply = request("textDocument/hover");
@@ -2566,7 +2426,6 @@ TIDE_TEST(lsp_enum_assignment_completion_and_shorthand)
     const char *formatted = apply_reply(original, NULL);
     TIDE_CHECK(has(formatted, "zombie.state = .Idle;"));
     TIDE_CHECK(has(format_reply(formatted), "\"result\":[]"));
-    // Incomplete malformed files don't have an assignment target to inspect.
     reply = complete("=.$");
     TIDE_CHECK(has(reply, "\"items\":[]"));
     clear_sent();
@@ -2580,7 +2439,6 @@ TIDE_TEST(lsp_switch_cases_complete_enum_members)
 #define ZOMBIES "enum ZombieState { None, Idle, Run, Jump }\nsingleton Zombie { ZombieState state; int n; }\nscene Main { }\n"                \
                 "ZombieState Next(ZombieState state) { return state; }\n"
 #define ZOMBIE_SWITCH "system Animate(mut Zombie zombie)\n{\n    switch (zombie.state)\n    {\n"
-    // After `case`: the members and nothing else, those without a case first, in the enum's order
     const char *labels = complete(ZOMBIES ZOMBIE_SWITCH "        case $\n        case ZombieState.Jump: zombie.n = 2; break;\n"
                                   "        case ZombieState.Idle:\n        default:\n            break;\n    }\n}\n");
     TIDE_CHECK(has(labels, "{\"label\":\"ZombieState.None\",\"kind\":20,\"sortText\":\"00000\",\"preselect\":true,\"detail\":\"0\"}"));
@@ -2589,12 +2447,10 @@ TIDE_TEST(lsp_switch_cases_complete_enum_members)
     TIDE_CHECK(has(labels, "{\"label\":\"ZombieState.Idle\",\"kind\":20,\"sortText\":\"10001\""));
     TIDE_CHECK(count(labels, "\"label\"") == 4 && count(labels, "\"preselect\"") == 1);
     check_repeat_at("file:///test.tide", "textDocument/completion", cursor_line, cursor_character, "");
-    // ...as its first letters are typed, and with the enum written, its members as anywhere
     TIDE_CHECK(count(complete(ZOMBIES ZOMBIE_SWITCH "        case Ru$\n        case ZombieState.Jump: break;\n    }\n}\n"),
                      "\"label\"") == 4);
     const char *members = complete(ZOMBIES ZOMBIE_SWITCH "        case ZombieState.$\n        case ZombieState.Jump: break;\n    }\n}\n");
     TIDE_CHECK(offers(members, "Run") && offers(members, "Jump") && count(members, "\"label\"") == 4);
-    // A value that's more than names: a function's by what it returns, any other where the switch parses; a local's too
     const char *chosen = complete(ZOMBIES "system Animate(mut Zombie zombie)\n{\n"
                                   "    switch (zombie.n > 0 ? zombie.state : ZombieState.Idle)\n    {\n"
                                   "        case ZombieState.Idle:\n            break;\n        $\n    }\n}\n");
@@ -2603,37 +2459,31 @@ TIDE_TEST(lsp_switch_cases_complete_enum_members)
                                "        case $:\n            break;\n    }\n}\n"), "ZombieState.Run"));
     TIDE_CHECK(offers(complete(ZOMBIES "system Animate(mut Zombie zombie)\n{\n    var state = zombie.state;\n    switch (state)\n    {\n"
                                "        case $\n    }\n}\n"), "ZombieState.Run"));
-    // A namespace's enum is written as this file writes it
     TIDE_CHECK(offers(complete("namespace Game.Dead;\nenum Kind { Walker, Runner }\n" "component Body { Kind kind; }\n"
                                "scene Main { }\nsystem S(mut Body body)\n{\n    switch (body.kind)\n    {\n        case $\n    }\n}\n"),
                       "Kind.Walker"));
 
-    // Where a case can start: the keywords, and the cases the switch doesn't have, whole
     const char *starts = complete(ZOMBIES ZOMBIE_SWITCH "        case ZombieState.Jump: zombie.n = 2; break;\n        $\n"
                                   "        case ZombieState.Idle:\n        default:\n            break;\n    }\n}\n");
     TIDE_CHECK(offers(starts, "case") && offers(starts, "default") && offers(starts, "zombie"));
     TIDE_CHECK(has(starts, "{\"label\":\"case ZombieState.Run:\",\"kind\":20,\"sortText\":\"case 0002\",\"detail\":\"2\"}"));
     TIDE_CHECK(offers(starts, "case ZombieState.None:") && !offers(starts, "case ZombieState.Jump:")
                && !offers(starts, "case ZombieState.Idle:") && !has(starts, "\"preselect\""));
-    // After a label a statement starts, or another label: `case Idle:` then `case` on the next line
     const char *after = complete(ZOMBIES ZOMBIE_SWITCH "        case ZombieState.Idle:\n        $\n    }\n}\n");
     TIDE_CHECK(offers(after, "case") && offers(after, "break") && offers(after, "if") && offers(after, "case ZombieState.Run:"));
     TIDE_CHECK(offers(complete(ZOMBIES ZOMBIE_SWITCH "        default:\n            $\n    }\n}\n"), "break"));
-    // ...but not after the ':' of ?: or of a named argument, nor in a block inside a case
     const char *choice = complete(ZOMBIES ZOMBIE_SWITCH "        case ZombieState.Idle:\n            zombie.n = zombie.n > 0 ? 1 : $\n"
                                   "    }\n}\n");
     TIDE_CHECK(!offers(choice, "break") && !offers(choice, "case ZombieState.Run:") && offers(choice, "zombie"));
     const char *inner = complete(ZOMBIES ZOMBIE_SWITCH "        case ZombieState.Idle:\n        {\n            $\n        }\n    }\n}\n");
     TIDE_CHECK(offers(inner, "break") && !offers(inner, "case ZombieState.Run:"));
 
-    // A switch on a number has no members to give: `case` goes on as any value does
     const char *number = complete(ZOMBIES "system Animate(mut Zombie zombie)\n{\n    switch (zombie.n)\n    {\n        case $\n    }\n}\n");
     TIDE_CHECK(offers(number, "zombie") && !offers(number, "ZombieState.Run"));
     const char *number_start = complete(ZOMBIES "system Animate(mut Zombie zombie)\n{\n    switch (zombie.n)\n    {\n"
                                         "        case 1:\n            $\n    }\n}\n");
     TIDE_CHECK(offers(number_start, "break") && !has(number_start, "\"label\":\"case "));
 
-    // The whole switch, as written with them, has nothing to say
     open_document(ZOMBIES ZOMBIE_SWITCH "        case ZombieState.Run: zombie.n = 1; break;\n        case ZombieState.Jump: zombie.n = 2; break;\n"
                   "        case ZombieState.Idle:\n        case ZombieState.None:\n        default:\n            break;\n    }\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
@@ -2641,8 +2491,7 @@ TIDE_TEST(lsp_switch_cases_complete_enum_members)
 #undef ZOMBIES
 }
 
-// An enum's name converts an int, Phase(5), as int(phase) gives its number:
-// there the name is the enum, as anywhere else it's written.
+// An enum's name converts an int, Phase(5): there the name is the enum.
 TIDE_TEST(lsp_enum_conversion)
 {
     start();
@@ -2653,39 +2502,34 @@ TIDE_TEST(lsp_enum_conversion)
     const char *hover = request("textDocument/hover");
     TIDE_CHECK(has(hover, "enum Phase"));
     TIDE_CHECK(has(hover, "`Phase(number)` is the `Phase` with that number"));
-    TIDE_CHECK(!has(hover, "low 8 bits")); // Stored as an int
+    TIDE_CHECK(!has(hover, "low 8 bits"));
     TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":0,\"character\":5}"));
     TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 3);
     request_with("textDocument/rename", "\"newName\":\"Stage\"");
     const char *renamed = apply_reply(game, "file:///test.tide");
     TIDE_CHECK(has(renamed, "enum Stage") && has(renamed, "Stage phase;") && has(renamed, "match.phase = Stage(match.n);"));
 
-    // While it's written: what it takes, and what it gives
     open_document(PHASES "system S(mut Match match)\n{\n    match.phase = Phase($\n}\n");
     const char *signature = request("textDocument/signatureHelp");
     TIDE_CHECK(has(signature, "Phase(int number)"));
     TIDE_CHECK(has(signature, "A number none of its members has stays as it is"));
     TIDE_CHECK(offers(complete(PHASES "system S(mut Match match)\n{\n    match.phase = $\n}\n"), "Phase"));
 
-    // A literal argument says what it is
     open_document(PHASES "system S(mut Match match)\n{\n    match.phase = Phase(5);\n}\n");
     const char *hints = request_at("file:///test.tide", "textDocument/inlayHint", 0, 0,
                                    "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":30,\"character\":0}}");
     TIDE_CHECK(has(hints, "{\"position\":{\"line\":5,\"character\":24},\"label\":\"number:\",\"kind\":2"));
 
-    // An argument it refuses: the name is still the enum's
     open_document(PHASES "system S(mut Match match)\n{\n    match.phase = Pha$se(1.5);\n}\n");
     TIDE_CHECK(has(last_sent(), "Phase(...) converts an int, not float"));
     TIDE_CHECK(has(request("textDocument/hover"), "enum Phase"));
     TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":0,\"character\":5}"));
 
-    // One stored as a byte says what becomes of a number that doesn't fit it
     open_document("enum Voxel : byte { Air, Stone }\nsingleton Terrain { Voxel under; int n; }\nscene Main { }\n"
                   "system S(mut Terrain terrain)\n{\n    terrain.under = Vox$el(terrain.n);\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     TIDE_CHECK(has(request("textDocument/hover"), "its low 8 bits"));
 
-    // By its qualified name: the namespace, then the enum
     static const char qualified[] = "namespace Combat;\nenum Phase { Warmup, Playing }\nsingleton Match { Phase phase; int n; }\n"
                                  "scene Main { }\nsystem S(mut Match match)\n{\n    match.phase = Combat.Pha$se(match.n);\n}\n";
     open_document(qualified);
@@ -2699,7 +2543,6 @@ TIDE_TEST(lsp_enum_conversion)
                   "scene Main { }\nsystem S(mut Match match)\n{\n    match.phase = Combat.Phase($\n}\n");
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "Phase(int number)"));
 
-    // Another call that names an enum, which the checker refuses, isn't one: its name stays its own
     open_document(PHASES "system S(World world, mut Match match)\n{\n    match.n = int(world.Ge$t<Phase>(default));\n}\n");
     TIDE_CHECK(has(last_sent(), "'Phase' is an enum"));
     TIDE_CHECK(!has(request("textDocument/hover"), "`Phase(number)`"));
@@ -2712,7 +2555,7 @@ TIDE_TEST(lsp_enum_count_and_cast_diagnostic)
     start();
 #define COUNT_GAME "enum Direction { North, East = 10, Count = 10 }\nsingleton Match { int n; }\nscene Main { }\n"
     const char *completion = complete(COUNT_GAME "system S(mut Match match) { match.n = Direction.$; }\n");
-    TIDE_CHECK(offers(completion, "Count")); // The user's member still exists
+    TIDE_CHECK(offers(completion, "Count"));
     TIDE_CHECK(offers(completion, "Count()"));
     TIDE_CHECK(has(completion, "Count() -> int"));
     open_document(COUNT_GAME "system S(mut Match match) { match.n = Direction.Co$unt(); }\n");
@@ -2738,7 +2581,6 @@ TIDE_TEST(lsp_enum_count_and_cast_diagnostic)
     open_document(COUNT_GAME "int Number(Direction direction) { return (int)direct$ion; }\n");
     TIDE_CHECK(has(last_sent(), "Tide converts values with 'int(value)'"));
     TIDE_CHECK(has(last_sent(), "write 'int(direction)' instead"));
-    // Parentheses beside subtraction, a step and indexing remain expressions.
     open_document(COUNT_GAME "int Number(int value) { mut int n = (value) - 1; int[2] values = [n, value];"
                              " return ((values)[0]) + (n)++; }\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
@@ -2813,7 +2655,6 @@ TIDE_TEST(lsp_scheduling_phases)
     TIDE_CHECK(has(signature, "Stage(Stages.Phase, int offset = 0)"));
     TIDE_CHECK(has(signature, "\"activeParameter\":1"));
 
-    // A fully qualified phase indexes its namespace, enum type, and member separately.
     open_document("namespace Paint;\nenum Phases { Objects }\nscene Main { }\n"
                   "[Stage(Paint.Pha$ses.Objects)]\nview V() { }\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
@@ -2831,7 +2672,7 @@ TIDE_TEST(lsp_constants)
                                "scene Main { }\nsystem S(mut Match match)\n{\n    match.n += MAX;\n    match.x = ORIGIN.y;\n}\n";
     open_document(game);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
-    TIDE_CHECK(has(format_reply(game), "\"result\":[]")); // Laid out as the formatter would
+    TIDE_CHECK(has(format_reply(game), "\"result\":[]"));
 
     open_document("const int MAX = 100;\nsingleton Match { int n; }\nscene Main { }\n"
                   "system S(mut Match match) { match.n += M$AX; }\n");
@@ -2841,7 +2682,6 @@ TIDE_TEST(lsp_constants)
     TIDE_CHECK(has(request("textDocument/definition"), "\"range\":{\"start\":{\"line\":0,\"character\":10}"));
     TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 2);
 
-    // A value with braces in it shows whole.
     open_document("struct Stats { int armor; }\nconst Stats ST$ART = Stats { armor = 2 };\nscene Main { }\n");
     TIDE_CHECK(has(request("textDocument/hover"), "const Stats START = Stats { armor = 2 }"));
 
@@ -2858,7 +2698,6 @@ TIDE_TEST(lsp_constants)
     const char *symbols = request("textDocument/documentSymbol");
     TIDE_CHECK(has(symbols, "\"name\":\"MAX\",\"detail\":\"const\",\"kind\":14"));
 
-    // Renaming one renames every use.
     static const char program[] = "const int MAX = 100;\nsingleton Match { int n = MAX; }\nscene Main { }\n"
                                   "system S(mut Match match) { match.n += MAX; }\n";
     open_document("const int M$AX = 100;\nsingleton Match { int n = MAX; }\nscene Main { }\n"
@@ -2879,7 +2718,7 @@ TIDE_TEST(lsp_settings)
                                "scene Main { }\n";
     open_document(game);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
-    TIDE_CHECK(has(format_reply(game), "\"result\":[]")); // Laid out as the formatter would
+    TIDE_CHECK(has(format_reply(game), "\"result\":[]"));
 
     open_document("settings\n{\n    tick$Rate = 30;\n}\nscene Main { }\n");
     const char *hover = request("textDocument/hover");
@@ -2902,17 +2741,15 @@ TIDE_TEST(lsp_settings)
     TIDE_CHECK(offers(empty, "title"));
     TIDE_CHECK(offers(empty, "appId"));
     TIDE_CHECK(offers(empty, "version"));
-    TIDE_CHECK(!offers(empty, "float3")); // Names, not values
-    // A version phones won't take is an error the editor shows
+    TIDE_CHECK(!offers(empty, "float3"));
     open_document("settings { version = \"v2\"; }\nscene Main { }\n");
     TIDE_CHECK(has(last_sent(), "isn't a version that Android and iOS both take"));
     const char *rest = complete("settings\n{\n    tickRate = 30;\n    $\n}\nscene Main { }\n");
-    TIDE_CHECK(!offers(rest, "tickRate")); // Set already
+    TIDE_CHECK(!offers(rest, "tickRate"));
     TIDE_CHECK(offers(rest, "title"));
     TIDE_CHECK(offers(complete("const int RATE = 30;\nsettings\n{\n    tickRate = $\n}\nscene Main { }\n"), "RATE"));
     TIDE_CHECK(offers(complete("scene Main { }\n$\n"), "settings"));
 
-    // A game's blocks are one list: each sets what the others don't, and is offered what none does
     open_document("settings { tickRate = 30; }\nsettings { title = \"x\"; }\nscene Main { }\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     const char *other = complete("settings { tickRate = 30; }\nsettings\n{\n    stats = true;\n    $\n}\nscene Main { }\n");
@@ -2925,7 +2762,6 @@ TIDE_TEST(lsp_settings)
     TIDE_CHECK(has(symbols, "\"name\":\"settings\",\"detail\":\"the engine's\",\"kind\":19"));
     TIDE_CHECK(has(symbols, "\"name\":\"tickRate\",\"kind\":7"));
 
-    // A name that isn't a setting says which one was meant.
     open_document("settings { tickRat = 30; }\nscene Main { }\n");
     TIDE_CHECK(has(last_sent(), "did you mean 'tickRate'?"));
 }
@@ -2945,15 +2781,12 @@ TIDE_TEST(lsp_default_value)
 
     TIDE_CHECK(offers(complete("singleton S { int n; }\nscene Main { }\nsystem Reset(mut S s) { s.n = $ }\n"), "default"));
 
-    // `default` in ?: isn't a switch's label.
     static const char tidy[] = "singleton S { int n; bool on; }\nscene Main { }\n"
                                "system Pick(mut S s)\n{\n    s.n = s.on ? default : 2;\n    s.n = s.on ? 1 : default;\n}\n";
     TIDE_CHECK(has(format_reply(tidy), "\"result\":[]"));
 }
 
-// A type inside another's <> is placed where it's written, from the type's
-// tree: through the '>>' that closes two at once, and however the <> are
-// spaced.
+// A type inside another's <> is placed where it's written, through the '>>' closing two and any spacing.
 TIDE_TEST(lsp_nested_types_are_placed_from_the_tree)
 {
     start();
@@ -2961,15 +2794,14 @@ TIDE_TEST(lsp_nested_types_are_placed_from_the_tree)
                   "asset Map< string , List<byte> > files = \"*.bin\";\n"
                   "scene Main { }\n");
     TIDE_CHECK(has(hover_at(0, 17), "A color: r, g, b and a from 0 to 1"));
-    TIDE_CHECK(has(hover_at(0, 12), "Cells at positions")); // Grid2, inside the list's <>
+    TIDE_CHECK(has(hover_at(0, 12), "Cells at positions"));
     TIDE_CHECK(has(hover_at(0, 7), "A list of values"));
     TIDE_CHECK(has(hover_at(1, 27), "An unsigned 8-bit integer"));
     TIDE_CHECK(has(hover_at(1, 21), "A list of values"));
     TIDE_CHECK(has(hover_at(1, 7), "Values by key"));
 }
 
-// An array's type names its element before the [N]: the name is placed as
-// the element's, and the array's own members complete.
+// An array's type names its element before the [N].
 TIDE_TEST(lsp_arrays_hover_and_count)
 {
     start();
@@ -3004,6 +2836,28 @@ TIDE_TEST(lsp_asset_reference_members)
                              "system Read(Art art) { var model = art.model.Value.$; }\n"), "indices"));
 }
 
+TIDE_TEST(lsp_skinned_asset_reference_aliases_and_dynamic_value_members)
+{
+    start();
+    open_document("using Model = SkinnedMesh<Vertex3>;\nusing Reference = Asset<Model>;\n"
+                  "component Art { Reference model; }\nscene Main;\n"
+                  "system Read(Art art) { Debug.Assert(art.model.Va$lue.vertices.count == 0); }\n"
+                  "event(Spawned) Begin(with Main) { Spawn(Art); }\n");
+    TIDE_CHECK(has(sent[0], "\"diagnostics\":[]"));
+    const char *members = complete("using Model = SkinnedMesh<Vertex3>;\nusing Reference = Asset<Model>;\n"
+                                   "component Art { Reference model; }\nscene Main;\n"
+                                   "system Read(Art art) { var model = art.model.$; }\n");
+    TIDE_CHECK(offers(members, "Value") && has(members, "SkinnedMesh<Vertex3>"));
+    TIDE_CHECK(!offers(members, "id") && !offers(members, "animations"));
+    members = complete("component Art { Asset<SkinnedMesh<Vertex3>> model; }\nscene Main;\n"
+                       "system Read(Art art) { var model = art.model.Value.$; }\n");
+    TIDE_CHECK(offers(members, "vertices") && offers(members, "indices") && offers(members, "defaultPose"));
+    TIDE_CHECK(offers(members, "animations") && offers(members, "skeleton") && !offers(members, "data"));
+    members = complete("component Art { Asset<SkinnedMesh<Vertex3>> model; }\nscene Main;\n"
+                       "system Read(Art art) { var clips = art.model.Value.animations.$; }\n");
+    TIDE_CHECK(offers(members, "count") && offers(members, "TryGetByName") && offers(members, "TryGetAt"));
+}
+
 TIDE_TEST(lsp_byte_scalar_hover_and_completion)
 {
     start();
@@ -3016,9 +2870,7 @@ TIDE_TEST(lsp_byte_scalar_hover_and_completion)
     TIDE_CHECK(has(hover, "default: byte") && has(hover, "`0`"));
 }
 
-// char: the type's hover and completion, what a text's index and its foreach
-// give, its default, and a literal the formatter leaves as it's written, a
-// brace or a quote in it too.
+// char: hover, completion, what text's index and foreach give, its default, and literals the formatter leaves as written.
 TIDE_TEST(lsp_char_hover_completion_and_format)
 {
     start();
@@ -3027,8 +2879,8 @@ TIDE_TEST(lsp_char_hover_completion_and_format)
                   "    foreach (var each in data.plan) data.mark = each == first ? '{' : each;\n}\n");
     TIDE_CHECK(has(sent[0], "\"diagnostics\":[]"));
     TIDE_CHECK(has(request("textDocument/hover"), "One character: a Unicode code point"));
-    TIDE_CHECK(has(hover_at(4, 9), "char")); // first: what text[0] gives
-    TIDE_CHECK(has(hover_at(5, 18), "char")); // each: what a foreach over text gives
+    TIDE_CHECK(has(hover_at(4, 9), "char"));
+    TIDE_CHECK(has(hover_at(5, 18), "char"));
     TIDE_CHECK(offers(complete("singleton Data { $ }\nscene Main { }\n"), "char"));
     open_document("singleton Data { char mark; }\nscene Main { }\nsystem Reset(mut Data data) { data.mark = def$ault; }\n");
     const char *hover = request("textDocument/hover");
@@ -3080,25 +2932,28 @@ TIDE_TEST(lsp_gui)
         "        }\n    }\n}\n";
     open_document(game);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
-    TIDE_CHECK(has(format_reply(game), "\"result\":[]")); // Actions after calls keep their braces on lines of their own
+    TIDE_CHECK(has(format_reply(game), "\"result\":[]"));
 
     const char *widgets = complete("scene Main { }\nview V()\n{\n    GUILayout.$\n}\n");
     TIDE_CHECK(offers(widgets, "Button"));
     TIDE_CHECK(offers(widgets, "Horizontal"));
     TIDE_CHECK(offers(widgets, "Area"));
+    TIDE_CHECK(offers(widgets, "Reserve"));
+    TIDE_CHECK(offers(widgets, "Scroll"));
     TIDE_CHECK(offers(complete("scene Main { }\nview V()\n{\n    $\n}\n"), "GUILayout"));
     TIDE_CHECK(!offers(complete("scene Main { }\nsystem S()\n{\n    $\n}\n"), "GUILayout"));
     TIDE_CHECK(offers(complete("scene Main { }\nvoid F()\n{\n    $\n}\n"), "Screen"));
 
-    // Claims, for widgets that read the devices themselves
     const char *claims = complete("scene Main { }\nview V()\n{\n    GUI.$\n}\n");
     TIDE_CHECK(offers(claims, "ClaimPointer"));
     TIDE_CHECK(offers(claims, "ClaimKeyboard"));
     TIDE_CHECK(offers(claims, "ShowKeyboard"));
+    TIDE_CHECK(offers(claims, "Draw") && offers(claims, "Key"));
+    TIDE_CHECK(offers(claims, "Scroll") && offers(claims, "FocusNext") && offers(claims, "ClearFocus"));
+    TIDE_CHECK(has(claims, "Draw()\\n{\\n\\t$0\\n}"));
 
-    // A widget a view draws itself, and the look of the GUI's own
     TIDE_CHECK(offers(claims, "Control") && offers(claims, "Navigate") && offers(claims, "SetTheme") && offers(claims, "Theme"));
-    TIDE_CHECK(has(claims, "Theme(${1:theme})\\n{\\n\\t$0\\n}")); // The one that takes a block
+    TIDE_CHECK(has(claims, "Theme(${1:theme})\\n{\\n\\t$0\\n}"));
 #define CONTROL_VIEW(body) "scene Main { }\nview V()\n{\n" body "\n}\n"
     open_document(CONTROL_VIEW("    GUI.Navigate();\n    var card = GUI.Con$trol(Rect(0, 0, 200, 200));\n"
                                "    if (card.clicked || card.pressed && card.hovered) GUI.SetTheme(GUITheme { radius = 4 });\n"
@@ -3110,6 +2965,7 @@ TIDE_TEST(lsp_gui)
     TIDE_CHECK(has(control, "the GUI handles its input as a button's, and draws nothing"));
     const char *said = complete(CONTROL_VIEW("    var card = GUI.Control(Rect(0, 0, 200, 200));\n    var on = card.$"));
     TIDE_CHECK(offers(said, "hovered") && offers(said, "pressed") && offers(said, "focused") && offers(said, "clicked"));
+    TIDE_CHECK(offers(said, "down") && offers(said, "up") && offers(said, "cancelled") && offers(said, "position"));
     TIDE_CHECK(has(said, "a press on it let go on it"));
     const char *looks = complete(CONTROL_VIEW("    GUI.SetTheme(GUITheme { $ });"));
     TIDE_CHECK(offers(looks, "text") && offers(looks, "panel") && offers(looks, "control") && offers(looks, "hot"));
@@ -3121,7 +2977,6 @@ TIDE_TEST(lsp_gui)
     TIDE_CHECK(has(request("textDocument/hover"), "GUI.Theme(GUITheme theme, Block content)"));
     open_document(CONTROL_VIEW("    var look = GUIThe$me { radius = 4 };\n    GUI.SetTheme(look);"));
     TIDE_CHECK(has(request("textDocument/hover"), "a theme names what it changes"));
-    // One form says the other's name
     open_document(CONTROL_VIEW("    GUI.Theme(GUITheme { });"));
     TIDE_CHECK(has(last_sent(), "GUI.Theme takes a block") && has(last_sent(), "GUI.SetTheme(...)"));
 #undef CONTROL_VIEW
@@ -3130,7 +2985,6 @@ TIDE_TEST(lsp_gui)
     const char *claim = request("textDocument/hover");
     TIDE_CHECK(has(claim, "GUI.ClaimPointer()"));
     TIDE_CHECK(has(claim, "hidden from the input's `Sample` and from the other views"));
-    // At a rect: where a widget of the view's own is
     open_document("scene Main { }\nview V()\n{\n    GUI.Claim$Pointer(Rect(0, 0, 200, 200));\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     TIDE_CHECK(has(request("textDocument/hover"), "GUI.ClaimPointer(Rect rect)"));
@@ -3145,10 +2999,12 @@ TIDE_TEST(lsp_gui)
 
     open_document("scene Main { }\nview V() { var w = Screen.wid$th; }\n");
     TIDE_CHECK(has(request("textDocument/hover"), "Screen.width: float"));
+    open_document("scene Main { }\nview V() { var scale = Screen.sc$ale; }\n");
+    const char *scale = request("textDocument/hover");
+    TIDE_CHECK(has(scale, "Screen.scale: float2") && has(scale, "Physical pixels per logical window pixel"));
 
-    // Screen.Flip: a device's position, from the bottom left, as the screen's, from the top left
     const char *screen = complete("scene Main { }\nview V()\n{\n    Screen.$\n}\n");
-    TIDE_CHECK(offers(screen, "width") && offers(screen, "height") && offers(screen, "Flip"));
+    TIDE_CHECK(offers(screen, "width") && offers(screen, "height") && offers(screen, "scale") && offers(screen, "Flip"));
     TIDE_CHECK(!offers(complete("scene Main { }\nsystem S()\n{\n    Screen.$\n}\n"), "Flip"));
     open_document("scene Main { }\nview V(Devices devices)\n{\n    Draw.Circle(Screen.Fl$ip(devices.pointer.position), 4, Color.white);\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
@@ -3156,9 +3012,6 @@ TIDE_TEST(lsp_gui)
     TIDE_CHECK(has(flip, "Screen.Flip(float2 position) -> float2"));
     TIDE_CHECK(has(flip, "counted from the screen's other edge"));
 
-    // The cursor's lock: views ask for it and read whether it holds, and so
-    // do the functions they call; the input's Sample only reads; the match
-    // has neither.
     static const char look[] = "input In\n{\n    float2 look;\n    Sample(Devices devices)\n    {\n        $\n    }\n"
                                "    Sanitize()\n    {\n        look = float2(0, 0);\n    }\n}\nscene Main { }\n";
     TIDE_CHECK(offers(complete("scene Main { }\nview V()\n{\n    $\n}\n"), "Cursor"));
@@ -3186,15 +3039,11 @@ TIDE_TEST(lsp_gui)
     open_document("scene Main { }\nview Look()\n{\n    Cur$sor.Lock();\n}\n");
     TIDE_CHECK(has(request("textDocument/hover"), "The mouse's cursor"));
     TIDE_CHECK(has(request("textDocument/prepareRename"), "Built-in names can't be renamed"));
-    // In the match, the error says where it goes instead
     open_document("scene Main { }\nsystem S()\n{\n    Cursor.Lock();\n}\n");
     TIDE_CHECK(has(last_sent(), "so it can't call Cursor.Lock"));
-    // ...and a signature, as the GUI's calls have
     open_document("scene Main { }\nview Look()\n{\n    Cursor.Lock($\n}\n");
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "Cursor.Lock()"));
 
-    // A frame's length: local code reads it, and the functions it calls; the
-    // match has Time's instead.
     TIDE_CHECK(offers(complete("scene Main { }\nview V()\n{\n    $\n}\n"), "Frame"));
     TIDE_CHECK(offers(complete("scene Main { }\nvoid F()\n{\n    $\n}\n"), "Frame"));
     TIDE_CHECK(offers(complete("scene Main { }\nlocal event E { }\nlocal event(E) H()\n{\n    $\n}\n"), "Frame"));
@@ -3214,7 +3063,6 @@ TIDE_TEST(lsp_gui)
     open_document("singleton Clock { float age; }\nscene Main { }\nsystem S(mut Clock clock)\n{\n    clock.age += Frame.dt;\n}\n");
     TIDE_CHECK(has(last_sent(), "so it can't read Frame.dt"));
     TIDE_CHECK(has(last_sent(), "time.dt"));
-    // Asked for a clock, which it hasn't: the error says what to write, and 't' isn't taken for 'dt' misspelled
     open_document("local singleton Fx { float age; }\nscene Main { }\nview V(mut Fx fx)\n{\n    fx.age = Frame.t;\n}\n");
     TIDE_CHECK(has(last_sent(), "Frame has no member 't'") && has(last_sent(), "add 'Frame.dt' up in a field of local state"));
     TIDE_CHECK(has(last_sent(), "read 'time.t'") && !has(last_sent(), "did you mean"));
@@ -3222,7 +3070,6 @@ TIDE_TEST(lsp_gui)
     open_document("local singleton Fx { float age; }\nscene Main { }\nview V(mut Fx fx)\n{\n    fx.age = Frame.DT;\n}\n");
     TIDE_CHECK(has(last_sent(), "did you mean 'dt'?") && has(actions_at(4), "Change to 'dt'"));
 
-    // What an Action's caller writes is the caller's code: its names are the caller's.
     open_document("local singleton M { bool on; }\nscene Main { }\nvoid Twice(Action content) { content(); content(); }\n"
                   "view V(mut M m)\n{\n    Twice()\n    {\n        m.o$n = true;\n    }\n}\n");
     TIDE_CHECK(has(request("textDocument/hover"), "bool on"));
@@ -3251,9 +3098,8 @@ TIDE_TEST(lsp_loops)
                                "    mut var left = 3;\n    while (left > 0) { left--; }\n}\n";
     open_document(game);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
-    TIDE_CHECK(has(format_reply(game), "\"result\":[]")); // Already formatted
+    TIDE_CHECK(has(format_reply(game), "\"result\":[]"));
 
-    // The for's variable is in scope in its body.
     TIDE_CHECK(offers(complete("component Tally { int n; }\nscene Main { }\nsystem S(mut Tally t)\n{\n"
                                "    for (var index = 0; index < 3; index++)\n    {\n        t.n = $\n    }\n}\n"),
                       "index"));
@@ -3266,7 +3112,6 @@ TIDE_TEST(lsp_loops)
 TIDE_TEST(lsp_errors_as_values)
 {
     start();
-    // Formatted already, with no diagnostics but the warning for an ignored error.
     static const char game[] =
         "enum ParseError { Empty }\n\n"
         "int Parse(string text) fails ParseError\n{\n    if (text == \"\") fail ParseError.Empty;\n    return 1;\n}\n\n"
@@ -3280,20 +3125,17 @@ TIDE_TEST(lsp_errors_as_values)
     TIDE_CHECK(count(last_sent(), "\"severity\"") == 1);
     TIDE_CHECK(has(format_reply(game), "\"result\":[]"));
 
-    // The name after `is` is in scope where the test is true.
     TIDE_CHECK(offers(complete("enum E { A }\nint P() fails E { return 1; }\nscene Main { }\n"
                                "system S()\n{\n    if (P() is int score)\n    {\n        var x = $\n    }\n}\n"),
                       "score"));
     TIDE_CHECK(!offers(complete("enum E { A }\nint P() fails E { return 1; }\nscene Main { }\n"
                                 "system S()\n{\n    if (P() is int score) { }\n    var x = $\n}\n"),
                        "score"));
-    // try and fail in a function that can fail, and only there.
     const char *in_failing = complete("enum E { A }\nint P() fails E\n{\n    $\n}\nscene Main { }\n");
     TIDE_CHECK(offers(in_failing, "fail"));
     TIDE_CHECK(offers(in_failing, "try"));
     TIDE_CHECK(!offers(complete("scene Main { }\nsystem S()\n{\n    $\n}\n"), "fail"));
 
-    // Hovers: what a call can fail with, the name `is` gives, and null.
     open_document("enum E { A }\nint P() fails E { return 1; }\nscene Main { }\nsystem S()\n{\n    var x = P$() ?? 0;\n}\n");
     TIDE_CHECK(has(request("textDocument/hover"), "int P() fails E"));
     open_document("enum E { A }\nint P() fails E { return 1; }\nscene Main { }\n"
@@ -3322,7 +3164,6 @@ TIDE_TEST(lsp_format_errors_as_values)
 TIDE_TEST(lsp_async)
 {
     start();
-    // Formatted already, with no diagnostics
     static const char game[] =
         "singleton Log { int n; }\n\n"
         "async int Doubled(int x)\n{\n    await Wait.Ticks(1);\n    return x * 2;\n}\n\n"
@@ -3332,7 +3173,6 @@ TIDE_TEST(lsp_async)
     TIDE_CHECK(!has(last_sent(), "\"severity\""));
     if (has(last_sent(), "\"severity\"")) printf("%s\n", last_sent());
     TIDE_CHECK(has(format_reply(game), "\"result\":[]"));
-    // A messy one: `async` stays where it is
     static const char messy[] = "async void F( )\n{\nawait Wait.Frames( 2 );\n}\nscene Main { }\n";
     static const char expected[] = "async void F()\n{\n    await Wait.Frames(2);\n}\nscene Main { }\n";
     format_reply(messy);
@@ -3340,7 +3180,6 @@ TIDE_TEST(lsp_async)
     TIDE_CHECK(strcmp(formatted, expected) == 0);
     if (strcmp(formatted, expected) != 0) printf("--- got:\n%s---\n", formatted);
 
-    // await and Wait in async code, and only there
     const char *in_async = complete("async void F()\n{\n    $\n}\nscene Main { }\n");
     TIDE_CHECK(offers(in_async, "await"));
     TIDE_CHECK(offers(in_async, "Wait"));
@@ -3349,7 +3188,6 @@ TIDE_TEST(lsp_async)
     TIDE_CHECK(offers(waits, "Ticks") && offers(waits, "Frames") && offers(waits, "Seconds"));
     TIDE_CHECK(offers(complete("$"), "async function"));
 
-    // Hovers: an async function's signature, and what Wait waits for
     open_document("async int D() { await Wait.Ticks(1); return 1; }\nscene Main { }\nsystem S()\n{\n    D$();\n}\n");
     TIDE_CHECK(has(request("textDocument/hover"), "async int D()"));
     open_document("async void F()\n{\n    await Wait.Sec$onds(1);\n}\nscene Main { }\n");
@@ -3379,9 +3217,8 @@ TIDE_TEST(lsp_text)
                                "    GUILayout.Label($$\"{name}: {score.points:D3} in {score.time:F1}s\" + \"!\");\n}\n";
     open_document(game);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
-    TIDE_CHECK(has(format_reply(game), "\"result\":[]")); // Values sit against their braces
+    TIDE_CHECK(has(format_reply(game), "\"result\":[]"));
 
-    // Completion works in a value, not in the text around it.
     TIDE_CHECK(offers(complete("local singleton Score { int points; }\nscene Main { }\nview V(Score score)\n{\n"
                                "    GUILayout.Label($$\"points: {sco$}\");\n}\n"),
                       "score"));
@@ -3395,7 +3232,6 @@ TIDE_TEST(lsp_text)
     open_document("scene Main { }\nview V() { var n = \"cat\".Cont$ains(\"a\"); }\n");
     TIDE_CHECK(has(request("textDocument/hover"), "Whether `value` is in the text."));
 
-    // Text in fields
     TIDE_CHECK(offers(complete("component Name\n{\n    $\n}\nscene Main { }\n"), "string"));
     open_document("component Name { string va$lue = \"cat\"; }\nscene Main { }\n");
     TIDE_CHECK(has(request("textDocument/hover"), "string value"));
@@ -3425,7 +3261,7 @@ TIDE_TEST(lsp_lists)
                                "        if (score > 1) inv.scores.Add(score);\n    }\n}\n";
     open_document(game);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
-    TIDE_CHECK(has(format_reply(game), "\"result\":[]")); // List<int> keeps no spaces
+    TIDE_CHECK(has(format_reply(game), "\"result\":[]"));
 
     const char *members = complete("component Inventory { List<int> scores; }\nscene Main { }\nsystem S(Inventory inv)\n{\n"
                                    "    var n = inv.scores.$\n}\n");
@@ -3433,7 +3269,6 @@ TIDE_TEST(lsp_lists)
     TIDE_CHECK(offers(members, "Add"));
     TIDE_CHECK(offers(complete("component Inventory\n{\n    $\n}\nscene Main { }\n"), "List"));
 
-    // The loop's variable is in scope in its body.
     TIDE_CHECK(offers(complete("component Inventory { List<int> scores; }\nscene Main { }\nsystem S(mut Inventory inv)\n{\n"
                                "    foreach (var score in inv.scores)\n    {\n        var x = $\n    }\n}\n"),
                       "score"));
@@ -3449,7 +3284,7 @@ TIDE_TEST(lsp_grids)
                                "    for (var y = 0; y < field.cells.size.y; y++) field.cells[0, y] = 1;\n}\n";
     open_document(game);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
-    TIDE_CHECK(has(format_reply(game), "\"result\":[]")); // Grid2<int> keeps no spaces
+    TIDE_CHECK(has(format_reply(game), "\"result\":[]"));
 
     const char *members = complete("singleton Field { Grid2<int> cells; }\nscene Main { }\nsystem S(Field field)\n{\n"
                                    "    var n = field.cells.$\n}\n");
@@ -3459,7 +3294,6 @@ TIDE_TEST(lsp_grids)
     open_document("singleton Field { Grid2<int> ce$lls; }\nscene Main { }\n");
     TIDE_CHECK(has(request("textDocument/hover"), "Grid2<int> cells"));
 
-    // Byte-sized cells: the enum keeps its backing as written, and hovers show it
     static const char voxels[] = "enum Voxel : byte\n{\n    Air,\n    Stone,\n}\n\nsingleton Terrain { Grid3<Voxel> cells; }\nscene Main { }\n";
     open_document(voxels);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
@@ -3471,8 +3305,7 @@ TIDE_TEST(lsp_grids)
     TIDE_CHECK(offers(backings, "ushort"));
 }
 
-// Parallel loops: offered where they can go, formatted, and their cells' places
-// hovered.
+// Parallel loops: completion, formatting, and hovers of their cells' places.
 TIDE_TEST(lsp_parallel)
 {
     start();
@@ -3492,7 +3325,7 @@ TIDE_TEST(lsp_parallel)
 
     TIDE_CHECK(offers(complete("singleton Field { Grid2<int> cells; }\nscene Main { }\nsystem S(mut Field field)\n{\n    $\n}\n"),
                       "parallel"));
-    TIDE_CHECK(!offers(complete("scene Main { }\nvoid F()\n{\n    $\n}\n"), "parallel")); // Only systems, views and handlers
+    TIDE_CHECK(!offers(complete("scene Main { }\nvoid F()\n{\n    $\n}\n"), "parallel"));
     open_document("singleton Field { Grid2<int> cells; }\nscene Main { }\nsystem S(mut Field field)\n{\n"
                   "    parallel (var at in field.cells) field.cells[a$t] = 1;\n}\n");
     TIDE_CHECK(has(request("textDocument/hover"), "int2 at"));
@@ -3514,6 +3347,96 @@ TIDE_TEST(lsp_format_lists)
 }
 
 
+TIDE_TEST(lsp_local_workers)
+{
+    start();
+    open_document("local worker int Bu$ild(int value) { return value + 1; }\nscene Main;\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "local worker int Build(int value)"));
+    TIDE_CHECK(has(request("textDocument/documentSymbol"), "local worker"));
+    const char *source = "local  worker int Build( int value ) { return value+1; }\nscene Main;\n";
+    format_reply(source);
+    TIDE_CHECK(has(apply_reply(source, NULL), "local worker int Build(int value)"));
+    open_document("int Cell(Grid2<int> cells) { return cells[0, 0]; }\n"
+                  "local worker List<int> Build(Grid2<int> cells) { mut List<int> values = []; values.Add(Cell(cells)); values.$ return values; }\nscene Main;\n");
+    TIDE_CHECK(has(request("textDocument/completion"), "\"label\":\"Add\""));
+}
+
+TIDE_TEST(lsp_task_handles_preserve_results_members_and_source_types)
+{
+    start();
+    static const char head[] = "scene Main;\nenum MeshError { Bad }\nstruct Mesh { int faces; }\n"
+                              "async Mesh Build() fails MeshError { await Wait.Frames(1); return Mesh { faces = 6 }; }\n";
+    char source[1024];
+    snprintf(source, sizeof source, "%sview Show() { LocalTask<Mesh fails MeshError> build = Build(); build.$ }\n", head);
+    const char *members = complete(source);
+    TIDE_CHECK(offers(members, "Cancel") && offers(members, "isRunning"));
+    TIDE_CHECK(offers(members, "isCompleted") && offers(members, "isCancelled"));
+    TIDE_CHECK(!offers(members, "tide_id") && !offers(members, "tide_slot"));
+
+    snprintf(source, sizeof source, "%sview Show() { var bu$ild = Build(); build.Cancel(); }\n", head);
+    open_document(source);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "LocalTask<Mesh fails MeshError>"));
+
+    snprintf(source, sizeof source, "%sview Show() { LocalTask<Mesh fails Mesh$Error> build = Build(); build.Cancel(); }\n", head);
+    open_document(source);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 3);
+
+    open_document("scene Main;\nview Show() { var timer = Wait.Fra$mes(2); timer.Cancel(); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *wait = request("textDocument/hover");
+    TIDE_CHECK(has(wait, "Wait.Frames") && !has(wait, "tide_async_builtin"));
+
+    open_document("scene Main;\nview Show() { var timer = Wait.Frames(2); timer.Ca$ncel(); }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "cooperative cancellation"));
+    open_document("scene Main;\nview Show() { var timer = Wait.Frames(2); var running = timer.isRun$ning; Debug.Log(running); }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "Read-only operation status"));
+
+    const char *decls = complete("scene Main;\nlocal singleton State { $ }\n");
+    TIDE_CHECK(offers(decls, "Task") && offers(decls, "LocalTask"));
+    static const char messy[] = "scene Main;\nenum Error { Bad }\nlocal singleton State { LocalTask< int fails Error > task; }\n";
+    format_reply(messy);
+    const char *formatted = apply_reply(messy, NULL);
+    TIDE_CHECK(has(formatted, "LocalTask<int fails Error>"));
+    TIDE_CHECK(has(format_reply(formatted), "\"result\":[]"));
+}
+
+TIDE_TEST(lsp_empty_scene_declarations)
+{
+    start();
+    open_document("namespace Levels { scene Are$na; }\nscene Main;\n"
+                  "event(Spawned) Setup(with Main) { Scene.Load(Levels.Arena); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "scene Arena"));
+    TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 2);
+    TIDE_CHECK(count(request_with("textDocument/rename", "\"newName\":\"Room\""), "\"newText\":\"Room\"") == 2);
+
+    open_document("local scene Main;\nlocal scene Menu;\n"
+                  "local event(Spawned) Open(with Main) { Scene.Load(Menu); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *symbols = request("textDocument/documentSymbol");
+    TIDE_CHECK(has(symbols, "\"name\":\"Main\",\"detail\":\"local scene\""));
+    TIDE_CHECK(has(symbols, "\"name\":\"Menu\",\"detail\":\"local scene\""));
+    const char *scenes = complete("scene Arena;\nscene Main;\nevent(Spawned) Setup(with Main) { Scene.Load($); }\n");
+    TIDE_CHECK(offers(scenes, "Arena"));
+
+    static const char messy[] = "local  scene Main ; // Menu\nnamespace Levels\n{\nscene Arena ;\n}\n";
+    static const char expected[] = "local scene Main; // Menu\nnamespace Levels\n{\n    scene Arena;\n}\n";
+    format_reply(messy);
+    TIDE_CHECK(strcmp(apply_reply(messy, NULL), expected) == 0);
+    TIDE_CHECK(has(format_reply(expected), "\"result\":[]"));
+
+    open_document("scene Main;\ncomponent Body { int value; }\n"
+                  "event(Spawned) Setup(with Main) { Spawn(Body); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    open_document("scene Main;\ncomponent Body;\n");
+    TIDE_CHECK(has(last_sent(), "expected '{'"));
+    open_document("scene Main\n");
+    TIDE_CHECK(has(last_sent(), "expected '{'"));
+}
+
 TIDE_TEST(lsp_scenes)
 {
     start();
@@ -3527,7 +3450,7 @@ TIDE_TEST(lsp_scenes)
     const char *type = request("textDocument/hover");
     TIDE_CHECK(has(type, "scene Arena"));
     TIDE_CHECK(has(type, "int size = 20;"));
-    TIDE_CHECK(!has(type, "tide_players")); // The engine's own fields stay hidden
+    TIDE_CHECK(!has(type, "tide_players"));
 
     open_document("scene Arena { }\nscene Main { }\nevent(Spawned) Setup(with Main) { Scene.Lo$ad(Arena); }\n");
     TIDE_CHECK(has(request("textDocument/hover"), "Loads a scene and returns its entity"));
@@ -3590,7 +3513,7 @@ TIDE_TEST(lsp_this)
 {
     start();
     open_document(THIS_GAME);
-    TIDE_CHECK(!has(last_sent(), "\"severity\":1")); // No errors
+    TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
 
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 3, 41, ""), "The entity whose `Health` this is."));
     const char *system = request_at("file:///test.tide", "textDocument/hover", 7, 48, "");
@@ -3599,13 +3522,11 @@ TIDE_TEST(lsp_this)
     TIDE_CHECK(has(view, "LocalEntity this"));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/prepareRename", 7, 48, ""), "'this' is a keyword"));
 
-    // Offered where the code runs for an entity, and its methods after the dot.
     TIDE_CHECK(offers(complete("component Body { int x; }\nscene Main { }\nsystem S(Body body)\n{\n    $\n}\n"), "this"));
     TIDE_CHECK(!offers(complete("component Body { int x; }\nscene Main { }\nsystem S(Time time)\n{\n    $\n}\n"), "this"));
     TIDE_CHECK(offers(complete("component Body { int x; }\nscene Main { }\nsystem S(with Body)\n{\n    this.$\n}\n"),
                       "Destroy"));
 
-    // The entity isn't a parameter: the quick fix removes it and writes `this`.
     open_document("component Lifetime { int ticks; }\nscene Main { }\n"
                   "system Expire(Entity self, mut Lifetime life)\n{\n    life.ticks -= 1;\n    if (life.ticks <= 0) self.Destroy();\n}\n");
     TIDE_CHECK(has(last_sent(), "the entity a system runs for is 'this', not a parameter"));
@@ -3629,8 +3550,6 @@ TIDE_TEST(lsp_sessions)
     open_document(game);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
-    // The name itself, where a statement starts in local code, even inside a
-    // container's block and a branch.
     const char *name = complete("local scene Main { }\nview Menu()\n{\n    GUILayout.Area(Anchor.MiddleCenter)\n    {\n"
                                 "        if (GUILayout.Button(\"Host\"))\n        {\n            Sess$\n        }\n    }\n}\n");
     TIDE_CHECK(offers(name, "Session"));
@@ -3656,11 +3575,11 @@ TIDE_TEST(lsp_sessions)
     TIDE_CHECK(offers(fields, "ping"));
     TIDE_CHECK(offers(fields, "open"));
     TIDE_CHECK(offers(fields, "room"));
+    TIDE_CHECK(offers(fields, "invite"));
 
     open_document("local scene Main { }\nview Menu()\n{\n    Session.Le$ave();\n}\n");
     TIDE_CHECK(has(request("textDocument/hover"), "Leaves the match"));
 
-    // Clipboard, where Session is: its one call
     TIDE_CHECK(offers(complete("local scene Main { }\nview Menu()\n{\n    $\n}\n"), "Clipboard"));
     TIDE_CHECK(!offers(complete("scene Main { }\nsystem Move()\n{\n    $\n}\n"), "Clipboard"));
     TIDE_CHECK(offers(complete("local scene Main { }\nview Menu()\n{\n    Clipboard.$\n}\n"), "Copy"));
@@ -3710,7 +3629,6 @@ TIDE_TEST(lsp_structs)
     TIDE_CHECK(has(request("textDocument/semanticTokens/full"), "\"data\":[0,7,5,2,1,"));
     TIDE_CHECK(has(request("textDocument/documentSymbol"), "\"name\":\"Stats\""));
 
-    // As a field type, through members, and in values.
     TIDE_CHECK(offers(complete("struct Stats { float health; }\ncomponent Unit\n{\n    $\n}\n"), "Stats"));
     TIDE_CHECK(offers(complete(STRUCTS "system Hurt(mut Unit unit)\n{\n    unit.stats.$\n}\n"), "health"));
     TIDE_CHECK(offers(complete(STRUCTS "system Hurt(mut Unit unit)\n{\n    unit.stats = Stats { $ };\n}\n"), "health"));
@@ -3720,7 +3638,6 @@ TIDE_TEST(lsp_structs)
     TIDE_CHECK(has(hover, "struct Stats"));
     TIDE_CHECK(has(hover, "float health = 100;"));
 
-    // Laid out like the other declarations.
     static const char messy[] = "struct Stats {\nfloat health = 100;\n}\nscene Main { }\n";
     format_reply(messy);
     TIDE_CHECK(strcmp(apply_reply(messy, NULL), "struct Stats\n{\n    float health = 100;\n}\nscene Main { }\n") == 0);
@@ -3745,6 +3662,32 @@ TIDE_TEST(lsp_structs)
     "\n"                                                                       \
     "scene Main { }\nevent(Spawned) Setup(with Main) { Spawn(Unit); }\n"
 
+TIDE_TEST(lsp_user_properties)
+{
+    start();
+#define PROPERTY_GAME "struct Gauge { int stored; int amount { get { return stored; } set { stored = value; } } }\nscene Main;\n"
+    open_document(PROPERTY_GAME "system Tick() { mut var g = Gauge {}; g.amount = 3; _ = g.am$ount; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *property_hover = request("textDocument/hover");
+    TIDE_CHECK(has(property_hover, "int amount { get; set; }"));
+    const char *symbols = request("textDocument/documentSymbol");
+    TIDE_CHECK(has(symbols, "\"name\":\"amount\",\"detail\":\"int amount { get; set; }\",\"kind\":7"));
+    TIDE_CHECK(count(symbols, "\"name\":\"amount\"") == 1);
+    const char *renamed = request_with("textDocument/rename", "\"newName\":\"level\"");
+    TIDE_CHECK(count(renamed, "\"newText\":\"level\"") == 3);
+    const char *members = complete(PROPERTY_GAME "system Tick() { var g = Gauge {}; _ = g.$amount; }\n");
+    TIDE_CHECK(offers(members, "amount") && has(members, "\"label\":\"amount\",\"kind\":10"));
+    TIDE_CHECK(!has(members, "amount("));
+    open_document("scene Main;\nview Show(Transform t) { _ = t.po$sition; }\n");
+    TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
+    TIDE_CHECK(has(request("textDocument/hover"), "float3 position { get; set; }"));
+    open_document("struct Gauge { int amount { } }\nscene Main;\nsystem Tick() { mut var g = Gauge {}; g.amount = 1; }\n");
+    TIDE_CHECK(has(last_sent(), "\"severity\":1"));
+    open_document("struct Gauge { int amount { get } }\nscene Main;\nsystem Tick() { mut var g = Gauge {}; g.amount = 1; }\n");
+    TIDE_CHECK(has(last_sent(), "\"severity\":1"));
+#undef PROPERTY_GAME
+}
+
 TIDE_TEST(lsp_methods_and_functions)
 {
     start();
@@ -3754,7 +3697,6 @@ TIDE_TEST(lsp_methods_and_functions)
     TIDE_CHECK(has(symbols, "\"name\":\"IsDead\",\"detail\":\"bool IsDead()\",\"kind\":6"));
     TIDE_CHECK(has(symbols, "\"name\":\"Heal\",\"detail\":\"function\",\"kind\":12"));
 
-    // After a dot, methods with their signatures; in code, functions; in a method, its type's fields.
     const char *members = complete(METHODS "system Fight(mut Unit unit)\n{\n    unit.stats.$\n}\n");
     TIDE_CHECK(offers(members, "IsDead") && offers(members, "Hurt") && offers(members, "health"));
     TIDE_CHECK(has(members, "mut void Hurt(float amount)"));
@@ -3762,7 +3704,6 @@ TIDE_TEST(lsp_methods_and_functions)
     TIDE_CHECK(offers(complete("struct Stats\n{\n    float health;\n    bool IsDead() { return $ }\n}\nscene Main { }\n"),
                       "health"));
 
-    // Hover, definition and references go to the method itself.
     open_document(METHODS "system Fight(mut Unit unit)\n{\n    unit.stats.Hu$rt(1);\n}\n");
     const char *hover = request("textDocument/hover");
     TIDE_CHECK(has(hover, "mut void Hurt(float amount)"));
@@ -3776,15 +3717,13 @@ TIDE_TEST(lsp_methods_and_functions)
     TIDE_CHECK(has(signature, "float Heal(mut Stats stats, float amount)"));
     TIDE_CHECK(has(signature, "\"activeParameter\":1"));
 
-    // Inlay hints: what a var is, and parameter names at literal arguments.
     open_document(METHODS "system Fight(mut Unit unit)\n{\n    var left = Heal(unit.stats, 2);\n}\n");
     const char *hints = request_at("file:///test.tide", "textDocument/inlayHint", 0, 0,
                                    "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":30,\"character\":0}}");
     TIDE_CHECK(has(hints, "{\"position\":{\"line\":20,\"character\":12},\"label\":\": float\",\"kind\":1"));
     TIDE_CHECK(has(hints, "{\"position\":{\"line\":20,\"character\":32},\"label\":\"amount:\",\"kind\":2"));
-    TIDE_CHECK(!has(hints, "\"stats:\"")); // Not for arguments that already say what they are
+    TIDE_CHECK(!has(hints, "\"stats:\""));
 
-    // Workspace symbols: every declaration of the game, methods with their type, by fuzzy name.
     open_document(METHODS);
     clear_sent();
     handle("{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"workspace/symbol\",\"params\":{\"query\":\"hrt\"}}");
@@ -3794,7 +3733,6 @@ TIDE_TEST(lsp_methods_and_functions)
     handle("{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"workspace/symbol\",\"params\":{\"query\":\"\"}}");
     TIDE_CHECK(has(last_sent(), "\"name\":\"Heal\",\"kind\":12") && has(last_sent(), "\"name\":\"Unit\",\"kind\":23"));
 
-    // Laid out like other code: braces on their own lines, one-liners kept.
     static const char messy[] = "struct Stats {\nfloat health;\nbool IsDead() { return health <= 0; }\n"
                                 "mut void Hurt() {\nhealth -= 1; }\n}\nvoid Reset(mut Stats s) {\ns.health = 0; }\n"
                                 "scene Main { }\n";
@@ -3847,7 +3785,6 @@ TIDE_TEST(lsp_extern_functions)
     open_document(EXTERNS);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
-    // Hover says it's C's, and which C function.
     open_document(EXTERNS "system Shape(mut Ground ground)\n{\n    ground.height = No$ise(1, 2);\n}\n");
     const char *hover = request("textDocument/hover");
     TIDE_CHECK(has(hover, "extern float Noise(float x, float y)"));
@@ -3859,7 +3796,6 @@ TIDE_TEST(lsp_extern_functions)
     open_document(EXTERNS "system Shape(mut Ground ground)\n{\n    ground.height = We$igh(float3(1), [1], \"a\");\n}\n");
     TIDE_CHECK(has(request("textDocument/hover"), "extern float Weigh(in float3 v, List<float> weights, string name)"));
 
-    // A list C makes: `out` is in its signature and at its call, which writes the list, and its parameter says what C gets.
 #define FILLED "singleton Store { List<byte> image; int size; }\n"
     open_document(EXTERNS FILLED "system Make(mut Store store)\n{\n    store.size = Fi$ll(out store.image, 4);\n}\n");
     TIDE_CHECK(!has(last_sent(), "\"severity\""));
@@ -3874,19 +3810,15 @@ TIDE_TEST(lsp_extern_functions)
     const char *made = request("textDocument/hover");
     TIDE_CHECK(has(made, "List<byte> bytes") && has(made, "the caller's list, which C makes") && has(made, "tide_list_out"));
     TIDE_CHECK(has(made, "A call says `out` before its argument"));
-    // ...and anything else C makes through a pointer
     open_document("extern bool Half(int value, out int ha$lf);\nscene Main { }\n");
     const char *pointer = request("textDocument/hover");
     TIDE_CHECK(has(pointer, "out int half") && has(pointer, "which C makes: it gets a pointer") && !has(pointer, "tide_list_out"));
-    // The word is the call's to write, as for any `out` parameter
     open_document(EXTERNS FILLED "system Make(mut Store store)\n{\n    store.size = Fill(store.image, 4);\n}\n");
     TIDE_CHECK(has(last_sent(), "'Fill' makes its 'bytes', so the argument says 'out'"));
-    // A system that only makes a list through C still writes what holds it: no warning that `mut` is unused
     open_document(EXTERNS FILLED "system Make(mut Store store)\n{\n    Fill(out store.image, 4);\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 #undef FILLED
 
-    // Completion: the declaration, its return type and parameters, the attribute, and calls.
     TIDE_CHECK(offers(complete(EXTERNS "$"), "extern"));
     TIDE_CHECK(offers(complete(EXTERNS "extern $"), "float"));
     const char *params = complete(EXTERNS "extern float Sum($");
@@ -3895,16 +3827,14 @@ TIDE_TEST(lsp_extern_functions)
     TIDE_CHECK(offers(complete(EXTERNS "extern float Sum(in $"), "float3"));
     const char *after_out = complete(EXTERNS "extern int Make(int count, out $");
     TIDE_CHECK(offers(after_out, "List") && offers(after_out, "float3") && offers(after_out, "bool"));
-    TIDE_CHECK(!offers(after_out, "string") && !offers(after_out, "out") && !offers(after_out, "DrawList")); // C makes no text
-    TIDE_CHECK(!offers(complete(EXTERNS "extern int Make(int out $"), "List")); // A parameter named out is a name
+    TIDE_CHECK(!offers(after_out, "string") && !offers(after_out, "out") && !offers(after_out, "DrawList"));
+    TIDE_CHECK(!offers(complete(EXTERNS "extern int Make(int out $"), "List"));
     TIDE_CHECK(offers(complete(EXTERNS "[$"), "NativeName"));
     TIDE_CHECK(offers(complete(EXTERNS "system Shape(mut Ground ground)\n{\n    $\n}\n"), "Noise"));
 
-    // Errors come with the code around them.
     open_document("scene Main { }\nextern void Log(List<string> lines);\n");
     TIDE_CHECK(has(last_sent(), "C functions can't take lists of text yet"));
 
-    // The formatter leaves an extern on its line.
     static const char messy[] = "extern  float Noise( float x ,float y ) ;\nextern int Fill( out  List<byte> bytes ,in float3 v ) ;\n"
                                 "scene Main { }\n";
     static const char expected[] = "extern float Noise(float x, float y);\nextern int Fill(out List<byte> bytes, in float3 v);\n"
@@ -3936,9 +3866,8 @@ TIDE_TEST(lsp_extern_systems)
     start();
 #define MOVE "[NativeName(\"game_move\")]\nextern system Move(mut Place place, Speed speed, Time time, mut Tally tally, without Frozen);\n"
     open_document(EXTERN_SYSTEMS MOVE);
-    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]")); // Nothing about parameters its code doesn't use: its code is C's
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
-    // Hover says it's C's, which C function, how C is called, and where the tick has it
     open_document(EXTERN_SYSTEMS "[NativeName(\"game_move\")]\nextern system Mo$ve(mut Place place, Speed speed, Time time, mut Tally tally, "
                                  "without Frozen);\n");
     const char *hover = request("textDocument/hover");
@@ -3948,17 +3877,13 @@ TIDE_TEST(lsp_extern_systems)
     TIDE_CHECK(has(hover, "for each run of rows of the entities that match"));
     TIDE_CHECK(has(hover, "**Stage 2.** It waits for:\\n- `Blow`: it writes `Speed`, which this reads"));
     TIDE_CHECK(has(request("textDocument/definition"), "\"range\":{\"start\":{\"line\":15,\"character\":14}"));
-    // The line above it: its stage, that it's C, and why it waits
     const char *lenses = request("textDocument/codeLens");
     TIDE_CHECK(has(lenses, "\"title\":\"stage 2 ") && has(lenses, " in C") &&has(lenses, "\"after Blow: it writes Speed, which this reads\""));
-    // The outline, and nothing to fold: it has no body
     const char *symbols = request("textDocument/documentSymbol");
     TIDE_CHECK(has(symbols, "\"name\":\"Move\",\"detail\":\"extern system\",\"kind\":12"));
     TIDE_CHECK(count(request("textDocument/foldingRange"), "\"startLine\"") == 2);
-    // Its name is a function's, its parameters parameters, as a system's are
     TIDE_CHECK(has(request("textDocument/semanticTokens/full"), ",1,14,4,9,1,0,9,5,2,0,0,6,5,5,1,"));
 
-    // Its parameters: which of the rows' components each is, as C numbers them, and which pointer after the rows
     open_document(EXTERN_SYSTEMS "extern system Move(mut Place pl$ace, Speed speed, Time time, mut Tally tally, without Frozen);\n");
     const char *place = request("textDocument/hover");
     TIDE_CHECK(has(place, "mut Place place") && has(place, "Component 0 of the rows C is handed, which it can change"));
@@ -3970,19 +3895,15 @@ TIDE_TEST(lsp_extern_systems)
     TIDE_CHECK(has(request("textDocument/hover"), "Singleton, read-only: C gets a pointer to it, argument 1 after the rows."));
     open_document(EXTERN_SYSTEMS "extern system Move(mut Place place, Speed speed, Time time, mut Tally ta$lly, without Frozen);\n");
     TIDE_CHECK(has(request("textDocument/hover"), "Singleton, writable: C gets a pointer to it, argument 2 after the rows."));
-    // Without [NativeName], its C function is its own name
     open_document(EXTERN_SYSTEMS "extern system Mo$ve(mut Place place);\n");
     TIDE_CHECK(has(request("textDocument/hover"), "the C function `Move`"));
 
-    // Systems written in Tide are ordered against it by name
     open_document(EXTERN_SYSTEMS "[After(Mo$ve)]\nsystem Later(mut Tally tally)\n{\n    tally.moved = 0;\n}\n" MOVE);
     TIDE_CHECK(has(request("textDocument/hover"), "extern system Move(mut Place place"));
     TIDE_CHECK(has(request("textDocument/definition"), "\"range\":{\"start\":{\"line\":20,\"character\":14}"));
-    // One that runs once a tick has no rows
     open_document(EXTERN_SYSTEMS "extern system St$ep(mut Tally tally, Time time);\n");
     TIDE_CHECK(has(request("textDocument/hover"), "It's called once per tick, with no rows."));
 
-    // Completion: the declaration, and in its parameters what C can be handed
     TIDE_CHECK(offers(complete(EXTERN_SYSTEMS "$"), "extern system"));
     const char *after_extern = complete(EXTERN_SYSTEMS "extern $");
     TIDE_CHECK(offers(after_extern, "system") && offers(after_extern, "float"));
@@ -3990,26 +3911,23 @@ TIDE_TEST(lsp_extern_systems)
     TIDE_CHECK(offers(params, "mut") && offers(params, "with") && offers(params, "without"));
     TIDE_CHECK(offers(params, "Place") && offers(params, "Wind") && offers(params, "Time"));
     TIDE_CHECK(!offers(params, "World") && !offers(params, "Devices") && !offers(params, "query"));
-    TIDE_CHECK(!offers(params, "in") && !offers(params, "out") && !offers(params, "float3")); // An extern function's
+    TIDE_CHECK(!offers(params, "in") && !offers(params, "out") && !offers(params, "float3"));
     const char *writes = complete(EXTERN_SYSTEMS "extern system Move(mut $");
     TIDE_CHECK(offers(writes, "Place") && offers(writes, "Tally") && !offers(writes, "World"));
     const char *filters = complete(EXTERN_SYSTEMS "extern system Move(mut Place place, with $");
     TIDE_CHECK(offers(filters, "Frozen") && !offers(filters, "Wind"));
 
-    // What C can't be handed is an error that says what to write instead
     open_document(EXTERN_SYSTEMS "extern system Move(mut Place place, World world);\n");
     TIDE_CHECK(has(last_sent(), "a system written in C can't take the World yet"));
     open_document(EXTERN_SYSTEMS "extern system Move(mut Place place)\n{\n}\nsystem After(mut Tally tally)\n{\n    tally.moved = 1;\n}\n");
     TIDE_CHECK(has(last_sent(), "an extern system has no body: its code is in C"));
-    TIDE_CHECK(count(last_sent(), "\"severity\":1") == 1); // ...and the declaration after it is read
-    // A component with no fields as a parameter: the quick fix makes it the filter it can be
+    TIDE_CHECK(count(last_sent(), "\"severity\":1") == 1);
     open_document(EXTERN_SYSTEMS "extern system Move(Frozen frozen, mut Place place);\n");
     TIDE_CHECK(has(last_sent(), "'Frozen' has no fields, so C has nothing of it to read"));
     const char *fix = request_with("textDocument/codeAction", "\"range\":{\"start\":{\"line\":14,\"character\":20},\"end\":{\"line\":14,"
                                                                "\"character\":26}},\"context\":{\"diagnostics\":[]}");
     TIDE_CHECK(has(fix, "Only require it: 'with Frozen'") && has(fix, "\"newText\":\"with Frozen\""));
 
-    // The formatter leaves it on its line
     static const char messy[] = "component Place { float2 at; }\nscene Main { }\n[NativeName( \"game_move\" )]\n"
                                 "extern   system  Move( mut Place place ,with Main ) ;\n";
     static const char expected[] = "component Place { float2 at; }\nscene Main { }\n[NativeName(\"game_move\")]\n"
@@ -4043,26 +3961,21 @@ TIDE_TEST(lsp_operators)
     start();
     open_document(OPERATORS);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
-    // `+` in code goes to the operator.
     const char *hover = request_at("file:///test.tide", "textDocument/hover", 13, 32, "");
     TIDE_CHECK(has(hover, "Money operator +(Money a, Money b)") && has(hover, "Operator of struct `Money`."));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/definition", 13, 32, ""),
                    "\"range\":{\"start\":{\"line\":4,\"character\":10}"));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/prepareRename", 13, 32, ""),
                    "Operators are named by their symbol"));
-    // Methods are listed after a dot; operators aren't.
     const char *members = complete(OPERATORS "system S(Wallet wallet)\n{\n    var d = wallet.total.$\n}\n");
     TIDE_CHECK(offers(members, "Dollars") && !has(members, "operator"));
 
-    // Methods rename, at their declaration and every call.
     open_document(OPERATORS "system S(Wallet wallet)\n{\n    var d = wallet.total.Dol$lars();\n}\n");
     request_with("textDocument/rename", "\"newName\":\"Whole\"");
     const char *renamed = apply_reply(OPERATORS "system S(Wallet wallet)\n{\n    var d = wallet.total.Dollars();\n}\n",
                                       "file:///test.tide");
     TIDE_CHECK(has(renamed, "int Whole() {") && has(renamed, "wallet.total.Whole();"));
 
-    // Snippets for what goes where: functions at the top, methods in structs
-    // and components, operators in structs.
     TIDE_CHECK(offers(complete("$"), "function"));
     const char *in_struct = complete("struct Money\n{\n    int cents;\n    $\n}\nscene Main { }\n");
     TIDE_CHECK(offers(in_struct, "method") && offers(in_struct, "mut method") && offers(in_struct, "operator"));
@@ -4071,7 +3984,6 @@ TIDE_TEST(lsp_operators)
     TIDE_CHECK(offers(in_component, "method") && !offers(in_component, "operator"));
     TIDE_CHECK(offers(complete("struct Money\n{\n    int cents;\n    Money $\n}\nscene Main { }\n"), "operator"));
 
-    // Laid out like C#: `operator +(`, and unary minus stays unary.
     static const char messy[] = "struct Money\n{\nint cents;\nMoney operator+(Money a,Money b) { return a; }\n"
                                 "Money operator - (Money a) { return Money { cents = -a.cents }; }\n}\nscene Main { }\n";
     static const char expected[] = "struct Money\n{\n    int cents;\n    Money operator +(Money a, Money b) { return a; }\n"
@@ -4083,8 +3995,7 @@ TIDE_TEST(lsp_operators)
     if (strcmp(formatted, expected) != 0) printf("--- got:\n%s---\n", formatted);
 }
 
-// #if and the rest: the formatter leaves directives and what they leave out as
-// they are, which reads as comments, and each branch folds.
+// #if and the rest: the formatter leaves directives and what they leave out as they are, and each branch folds.
 // ++i and i++ where a value goes: no diagnostic, and the formatter leaves them against their variable.
 TIDE_TEST(lsp_delayed_locals_and_switch_expressions)
 {
@@ -4187,7 +4098,7 @@ TIDE_TEST(lsp_directives)
                                    "#endif\n"
                                    "}\n";
     open_document(messy);
-    TIDE_CHECK(has(sent[0], "\"diagnostics\":[]")); // What's left out isn't read
+    TIDE_CHECK(has(sent[0], "\"diagnostics\":[]"));
     format_reply(messy);
     const char *formatted = apply_reply(messy, NULL);
     TIDE_CHECK(strcmp(formatted, expected) == 0);
@@ -4199,13 +4110,11 @@ TIDE_TEST(lsp_directives)
     TIDE_CHECK(has(tokens, "1,0,3,11,0,0,4,17,15,0"));   // #if a keyword, its symbol a macro
     TIDE_CHECK(has(tokens, "1,3,22,14,0"));              // The line it leaves out a comment
     const char *folds = request("textDocument/foldingRange");
-    TIDE_CHECK(has(folds, "{\"startLine\":1,\"endLine\":2,\"kind\":\"region\"}")); // #if to #else
-    TIDE_CHECK(has(folds, "{\"startLine\":3,\"endLine\":4,\"kind\":\"region\"}")); // #else to #endif
+    TIDE_CHECK(has(folds, "{\"startLine\":1,\"endLine\":2,\"kind\":\"region\"}"));
+    TIDE_CHECK(has(folds, "{\"startLine\":3,\"endLine\":4,\"kind\":\"region\"}"));
     open_document("scene Main { }\n#if false\nthis is no$t code\n#endif\n");
     TIDE_CHECK(has(request("textDocument/completion"), "\"items\":[]"));
 
-    // A file's own symbols, and DEBUG, which an editor reads as `tide run` does. A symbol only a
-    // command line could define reads as not defined.
     static const char symbols[] = "#define MINE\n"
                                   "#if MINE && DEBUG && !FROM_A_COMMAND_LINE\n"
                                   "scene Main { }\n"
@@ -4216,7 +4125,7 @@ TIDE_TEST(lsp_directives)
     TIDE_CHECK(has(sent[0], "\"diagnostics\":[]"));
     TIDE_CHECK(has(format_reply(symbols), "\"result\":[]"));
     const char *branches = request("textDocument/foldingRange");
-    TIDE_CHECK(has(branches, "{\"startLine\":1,\"endLine\":2,\"kind\":\"region\"}")); // #define starts no branch
+    TIDE_CHECK(has(branches, "{\"startLine\":1,\"endLine\":2,\"kind\":\"region\"}"));
     TIDE_CHECK(!has(branches, "\"startLine\":0"));
     open_document("scene Main { }\n#define LATE\n");
     TIDE_CHECK(has(sent[0], "comes after code"));
@@ -4228,26 +4137,24 @@ TIDE_TEST(lsp_folding)
     open_document("// One\n// Two\n// Three\ncomponent Body\n{\n    float x;\n}\nsystem Main()\n{\n    Spawn(Body);\n}\n");
     const char *folds = request("textDocument/foldingRange");
     TIDE_CHECK(has(folds, "{\"startLine\":0,\"endLine\":2,\"kind\":\"comment\"}"));
-    TIDE_CHECK(has(folds, "{\"startLine\":3,\"endLine\":5}")); // From `component Body`, keeping `}` in sight
+    TIDE_CHECK(has(folds, "{\"startLine\":3,\"endLine\":5}"));
     TIDE_CHECK(has(folds, "{\"startLine\":7,\"endLine\":9}"));
     check_repeat_at("file:///test.tide", "textDocument/foldingRange", 0, 0, "");
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 3, 10, ""), "component Body"));
     TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 3, 10,
                                 "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 2);
 
-    // Comments in /* */, lists of arguments and elements, and using lines
     open_document("using A;\nusing B;\n/* One\n   two */\nnamespace C;\nvoid Draw(int x,\n          int y)\n{\n}\n"
                   "void Call()\n{\n    Draw(\n        1,\n        2\n    );\n    List<int> xs = [\n        1,\n        2];\n}\n");
     folds = request("textDocument/foldingRange");
     TIDE_CHECK(has(folds, "{\"startLine\":0,\"endLine\":1,\"kind\":\"imports\"}"));
     TIDE_CHECK(has(folds, "{\"startLine\":2,\"endLine\":3,\"kind\":\"comment\"}"));
-    TIDE_CHECK(has(folds, "{\"startLine\":5,\"endLine\":6}"));   // The parameters, with their `)`
-    TIDE_CHECK(has(folds, "{\"startLine\":11,\"endLine\":13}")); // The arguments, keeping `);` in sight
-    TIDE_CHECK(has(folds, "{\"startLine\":15,\"endLine\":17}")); // The list's elements
+    TIDE_CHECK(has(folds, "{\"startLine\":5,\"endLine\":6}"));
+    TIDE_CHECK(has(folds, "{\"startLine\":11,\"endLine\":13}"));
+    TIDE_CHECK(has(folds, "{\"startLine\":15,\"endLine\":17}"));
 }
 
-// Braceless bodies under loops keep their level, however deep; and an enum
-// with a backing type gets its brace moved like any other.
+// Braceless bodies under loops keep their level; an enum with a backing type gets its brace moved.
 TIDE_TEST(lsp_format_braceless_loops)
 {
     start();
@@ -4299,13 +4206,41 @@ TIDE_TEST(lsp_quick_fixes)
     const char *main = actions_at(7);
     TIDE_CHECK(has(main, "Declare 'x' as mut") && has(main, "\"start\":{\"line\":7,\"character\":34}"));
     TIDE_CHECK(has(main, "Create function 'Grow'") && has(main, "\"newText\":\"\\nvoid Grow(int x, float value)\\n{\\n}\\n\""));
-    TIDE_CHECK(has(main, "\"start\":{\"line\":10,\"character\":0}")); // At the end of the file
+    TIDE_CHECK(has(main, "\"start\":{\"line\":10,\"character\":0}"));
     TIDE_CHECK(has(actions_at(8), "Create component 'Velocity'"));
     check_repeat_at("file:///test.tide", "textDocument/codeAction", 7, 0,
                     "\"range\":{\"start\":{\"line\":7,\"character\":0},\"end\":{\"line\":7,\"character\":0}}");
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 0, 8, ""), "struct Stats"));
     TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 0, 8,
                                 "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 2);
+}
+
+// A parameter that's never used, and isn't a component (which `with` replaces), is removed with its comma.
+TIDE_TEST(lsp_quick_fixes_remove_unused_parameters)
+{
+    start();
+    static const char game[] = "component Spin { float speed; }\n"
+                               "singleton Score { int points; }\n"
+                               "scene Main { }\n"
+                               "event(Spawned) Setup(with Main) { Spawn(Spin); }\n"
+                               "system Turn(World world, mut Spin spin) { spin.speed += 1; }\n"
+                               "system Count(mut Spin spin, Score score) { spin.speed += 2; }\n";
+    for (int line = 4; line <= 5; line++) {
+        open_document(game);
+        const char *fix = actions_at(line);
+        TIDE_CHECK(has(fix, line == 4 ? "\"title\":\"Remove 'world'\",\"kind\":\"quickfix\",\"isPreferred\":true,\"diagnostics\":[{"
+                                      : "\"title\":\"Remove 'score'\",\"kind\":\"quickfix\",\"isPreferred\":true,\"diagnostics\":[{"));
+        const json *reply = json_parse(last_sent(), strlen(last_sent()));
+        const json *edits = json_path(json_get(reply, "result")->items[0], "edit", "changes", "file:///test.tide", NULL);
+        char text[1024];
+        snprintf(text, sizeof text, "%s", game);
+        apply_edits(text, sizeof text, edits);
+        json_release();
+        TIDE_CHECK(has(text, line == 4 ? "system Turn(mut Spin spin) {" : "system Count(mut Spin spin) {"));
+        open_document(text);
+        TIDE_CHECK(!has(last_sent(), line == 4 ? "'world' is never used" : "'score' is never used"));
+        TIDE_CHECK(has(last_sent(), line == 4 ? "'score' is never used" : "'world' is never used"));
+    }
 }
 
 // The checker's "did you mean" is a quick fix, from where the name is, not
@@ -4326,15 +4261,13 @@ TIDE_TEST(lsp_quick_fixes_from_suggestions)
     json_release();
     TIDE_CHECK(has(text, "    body.radius = 1;\n"));
 
-    // One of the engine's: a member of Math
     open_document(GAME_TYPES "system Move(mut Body body)\n{\n    body.radius = Math.Clmp(body.radius, 0, 1);\n}\n");
     const char *math = actions_at(24);
     TIDE_CHECK(has(math, "Change to 'Clamp'"));
     TIDE_CHECK(has(math, "{\"range\":{\"start\":{\"line\":24,\"character\":23},\"end\":{\"line\":24,\"character\":27}},"
                          "\"newText\":\"Clamp\"}"));
-    TIDE_CHECK(!has(actions_at(23), "Change to")); // Only on its line
+    TIDE_CHECK(!has(actions_at(23), "Change to"));
 
-    // A spelling that's gone: the error says what to write, and the fix writes it
     open_document(GAME_TYPES "system Move(mut Body body)\n{\n    body.position = Math.NormalizeSafe(body.position);\n}\n");
     TIDE_CHECK(has(last_sent(), "Math.NormalizeSafe is gone: write Math.Normalize"));
     TIDE_CHECK(has(last_sent(), "Math.Normalize no longer gives NaN"));
@@ -4344,12 +4277,10 @@ TIDE_TEST(lsp_quick_fixes_from_suggestions)
                          "\"newText\":\"Normalize\"}"));
 }
 
-// `with ownership` and `without ownership`: a view's filter by this machine's
-// player. `ownership` is a keyword right after them, and a name anywhere else.
+// `with ownership` and `without ownership`: `ownership` is a keyword right after them, and a name anywhere else.
 TIDE_TEST(lsp_ownership)
 {
     start();
-    // Offered after `with` and `without` in a view, beside the components
     const char *with = complete(GAME_TYPES "view Mine(Body body, with $)\n{\n}\n");
     TIDE_CHECK(offers(with, "ownership"));
     TIDE_CHECK(offers(with, "Body"));
@@ -4357,7 +4288,9 @@ TIDE_TEST(lsp_ownership)
     const char *without = complete(GAME_TYPES "view Rest(Body body, without $)\n{\n}\n");
     TIDE_CHECK(offers(without, "ownership"));
     TIDE_CHECK(has(without, "Entities this machine's player doesn't own"));
-    // ...and nowhere else: the match has no machine of its own
+    TIDE_CHECK(offers(complete(GAME_TYPES "local event(Spawned) Mine(Body body, with $)\n{\n}\n"), "ownership"));
+    TIDE_CHECK(offers(complete(GAME_TYPES "local event(verified Destroyed) Rest(Body body, without $)\n{\n}\n"), "ownership"));
+    TIDE_CHECK(!offers(complete(GAME_TYPES "local event Blink { }\nlocal event(Blink) Blinked(with $)\n{\n}\n"), "ownership"));
     TIDE_CHECK(!offers(complete(GAME_TYPES "system Move(mut Body body, with $)\n{\n}\n"), "ownership"));
     TIDE_CHECK(!offers(complete(GAME_TYPES "event(Spawned) Grow(mut Body body, without $)\n{\n}\n"), "ownership"));
     TIDE_CHECK(!offers(complete(GAME_TYPES "view Mine($)\n{\n}\n"), "ownership"));
@@ -4370,11 +4303,13 @@ TIDE_TEST(lsp_ownership)
     // A keyword (11), 11 columns after the parameter `body`
     TIDE_CHECK(has(request("textDocument/semanticTokens/full"), ",0,11,9,11,0,"));
     TIDE_CHECK(has(request("textDocument/prepareRename"), "'ownership' is a keyword after 'with' and 'without'"));
-    // The view's own hover shows its filter
+    open_document(GAME_TYPES "local event(Spawned) Mine(Body body, with owner$ship)\n{\n    Debug.Assert(body.radius > 0);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *listener = request("textDocument/hover");
+    TIDE_CHECK(has(listener, "local handler") && has(listener, "captured at the event's turn"));
     open_document(GAME_TYPES "view Re$st(Body body, with Owner, without ownership)\n{\n    Draw.Circle(body.position, 1, Color.red);\n}\n");
     TIDE_CHECK(has(request("textDocument/hover"), "view Rest(Body body, with Owner, without ownership)"));
 
-    // In the match it's an error that says what to write, which a quick fix does
     open_document(GAME_TYPES "system Move(mut Body body, with ownership)\n{\n    body.radius = 1;\n}\n");
     TIDE_CHECK(has(last_sent(), "the match runs the same on every machine, so a system can't filter by 'with ownership'"));
     TIDE_CHECK(has(last_sent(), "for entities that have any owner, write 'with Owner'"));
@@ -4383,7 +4318,6 @@ TIDE_TEST(lsp_ownership)
     TIDE_CHECK(has(fix, "{\"range\":{\"start\":{\"line\":22,\"character\":32},\"end\":{\"line\":22,\"character\":41}},"
                         "\"newText\":\"Owner\"}"));
 
-    // The formatter keeps the filter as it is
     static const char messy[] = "component Body { float x; }\nscene Main { }\n"
                                 "event(Spawned) Setup(with Main) { Spawn(Body, Owner); }\n"
                                 "view Mine( Body body,with   ownership ){ Draw.Circle(float2(body.x, 0), 1, Color.red); }\n"
@@ -4393,7 +4327,6 @@ TIDE_TEST(lsp_ownership)
     TIDE_CHECK(has(formatted, "view Mine(Body body, with ownership) { "));
     TIDE_CHECK(has(formatted, "view Rest(Body body, without ownership) { "));
 
-    // Anywhere else `ownership` is a name: a singleton's, a field's, a parameter's
     open_document("local singleton ownership { int ownership = 3; }\nscene Main { }\n"
                   "int Twice(int ownership) { return ownership * 2; }\n"
                   "view Share(owner$ship ownership)\n{\n    if (Twice(ownership.ownership) > 1) Draw.Clear(Color.black);\n}\n");
@@ -4409,12 +4342,10 @@ TIDE_TEST(lsp_ownership)
     "component Box { float3 pos; local int bakes; }\n"                         \
     "local singleton Seen { int count; }\n"
 
-// `verified` before a view's parameter, after its `with` and `without`: from
-// the world the server has confirmed. A keyword there, and a name anywhere else.
+// `verified` before a view's parameter, after `with` and `without`: a keyword there, and a name anywhere else.
 TIDE_TEST(lsp_verified)
 {
     start();
-    // Offered where a view's parameter starts, and after its `with` and `without`
     const char *first = complete(VERIFIED_TYPES "view Bar($)\n{\n}\n");
     TIDE_CHECK(offers(first, "verified") && offers(first, "mut") && offers(first, "Body"));
     TIDE_CHECK(has(first, "As the server confirmed it, not as this machine predicts it"));
@@ -4425,24 +4356,20 @@ TIDE_TEST(lsp_verified)
     const char *without = complete(VERIFIED_TYPES "view Fresh(Body body, without $)\n{\n}\n");
     TIDE_CHECK(offers(without, "verified"));
     TIDE_CHECK(has(without, "Entities that don't have it in the world the server has confirmed"));
-    // ...then what the confirmed world has: the match's components and singletons, never local state
     const char *type = complete(VERIFIED_TYPES "view Bar(Body body, verified $)\n{\n}\n");
     TIDE_CHECK(offers(type, "Body") && offers(type, "Dead") && offers(type, "Arena"));
     TIDE_CHECK(!offers(type, "Seen") && !offers(type, "PlayerInput") && !offers(type, "verified"));
     const char *filter = complete(VERIFIED_TYPES "view Corpses(Body body, with verified $)\n{\n}\n");
     TIDE_CHECK(offers(filter, "Dead") && offers(filter, "Body") && !offers(filter, "Arena") && !offers(filter, "Seen"));
-    // Nowhere else: the match has nothing confirmed to read, and a function takes what it's passed
     TIDE_CHECK(!offers(complete(VERIFIED_TYPES "system Move(mut Body body, $)\n{\n}\n"), "verified"));
     TIDE_CHECK(!offers(complete(VERIFIED_TYPES "system Move(mut Body body, with $)\n{\n}\n"), "verified"));
     TIDE_CHECK(!offers(complete(VERIFIED_TYPES "event(Spawned) Grow(mut Body body, $)\n{\n}\n"), "verified"));
     TIDE_CHECK(!offers(complete(VERIFIED_TYPES "local event(Spawned) Grow(Body body, $)\n{\n}\n"), "verified"));
     TIDE_CHECK(!offers(complete(VERIFIED_TYPES "frag Shade(Vertex vertex, out Color color, $)\n{\n}\n"), "verified"));
     TIDE_CHECK(!offers(complete(VERIFIED_TYPES "void Heal(Body body, $)\n{\n}\n"), "verified"));
-    // It's offered where a parameter starts, as `mut` is, and not after one, though its type is: `mut verified Box box`
     TIDE_CHECK(!offers(complete(VERIFIED_TYPES "view Bar(mut $)\n{\n}\n"), "verified"));
     TIDE_CHECK(offers(complete(VERIFIED_TYPES "view Bar(mut verified $)\n{\n}\n"), "Box"));
 
-    // The word: its hover says what it means there, and it's a keyword
     open_document(VERIFIED_TYPES "view Bar(Body mine, veri$fied Body sure, mut Seen seen)\n{\n"
                                  "    if (mine.radius < sure.radius) seen.count += 1;\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
@@ -4453,14 +4380,12 @@ TIDE_TEST(lsp_verified)
     // A keyword (11), 6 columns after the parameter `mine`, then the struct (2) it's of
     TIDE_CHECK(has(request("textDocument/semanticTokens/full"), ",0,5,4,5,3,0,6,8,11,0,0,9,4,2,0,"));
     TIDE_CHECK(has(request("textDocument/prepareRename"), "'verified' is a keyword before a parameter's type"));
-    // The view's hover and the parameter's show it
     open_document(VERIFIED_TYPES "view Ba$r(Body mine, verified Body sure, mut Seen seen)\n{\n"
                                  "    if (mine.radius < sure.radius) seen.count += 1;\n}\n");
     TIDE_CHECK(has(request("textDocument/hover"), "view Bar(Body mine, verified Body sure, mut Seen seen)"));
     open_document(VERIFIED_TYPES "view Bar(Body mine, verified Body su$re, mut Seen seen)\n{\n"
                                  "    if (mine.radius < sure.radius) seen.count += 1;\n}\n");
     TIDE_CHECK(has(request("textDocument/hover"), "verified Body sure"));
-    // A view of the confirmed world alone, a singleton, and the filters
     open_document(VERIFIED_TYPES "view Sure(veri$fied Body body, mut Seen seen)\n{\n    if (body.radius > 0) seen.count += 1;\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     TIDE_CHECK(has(request("textDocument/hover"), "All the view's components are `verified`, so it runs for the confirmed "
@@ -4483,13 +4408,11 @@ TIDE_TEST(lsp_verified)
     TIDE_CHECK(has(lacks_it, "are in the world the server has confirmed and don't have `Dead` there"));
     TIDE_CHECK(has(request("textDocument/semanticTokens/full"), ",0,14,8,11,0,0,9,4,2,0,")); // After `seen, without`, then Dead
 
-    // In the match it's an error, still a keyword, and its hover says where it goes
     open_document(VERIFIED_TYPES "system Move(veri$fied Body body, mut Arena arena)\n{\n    arena.halfSize.x = body.radius;\n}\n");
     TIDE_CHECK(has(last_sent(), "the match is the same on every machine, so a system has nothing 'verified' to read"));
     TIDE_CHECK(has(request("textDocument/hover"), "It goes before a component or singleton of the match in a view's parameters"));
     TIDE_CHECK(has(request("textDocument/semanticTokens/full"), ",0,5,8,11,0,0,9,4,2,0,")); // After `Move`
 
-    // The quick fixes keep the word where it goes: `mut` before it, and `with` before it
     static const char unused[] = VERIFIED_TYPES "view Ghosts(Body body, verified Dead dead, mut Seen seen)\n{\n"
                                                 "    if (body.radius > 0) seen.count += 1;\n}\n";
     open_document(unused);
@@ -4508,13 +4431,11 @@ TIDE_TEST(lsp_verified)
     TIDE_CHECK(has(actions_at(27), "Declare 'box' as mut"));
     TIDE_CHECK(has(apply_first_action(read_only), "view Show(mut verified Box box)\n"));
 
-    // The formatter keeps the word, a space from what's around it
     static const char messy[] = VERIFIED_TYPES
         "view Bar( Body mine,verified   Body sure ,mut Seen seen,without  verified Dead ){ if (mine.radius < sure.radius) seen.count += 1; }\n";
     format_reply(messy);
     TIDE_CHECK(has(apply_reply(messy, NULL), "view Bar(Body mine, verified Body sure, mut Seen seen, without verified Dead) { "));
 
-    // Anywhere else `verified` is a name: a singleton's, a field's, a parameter's
     open_document("local singleton verified { int verified = 3; }\nscene Main { }\n"
                   "int Twice(int verified) { return verified * 2; }\n"
                   "view Share(veri$fied trust)\n{\n    if (Twice(trust.verified) > 1) Draw.Clear(Color.black);\n}\n");
@@ -4536,31 +4457,59 @@ TIDE_TEST(lsp_verified)
     "local event(Rang rang) HearRang(mut Fx fx) { fx.flashes += rang.at; }\n"                                   \
     "local event(Spawned) Born(Body body, mut Fx fx) { if (body.radius > 0) fx.flashes += 1; }\n"
 
-// Local handlers of the match's events: `local event(Hit hit) ShowHit(...)`
-// hears what the ticks sent, and `local event(verified Hit hit)` what the
-// server confirmed. Hovers, lenses and an event's implementations say so.
+// `local event(Changed<Body.radius> change)`: the component and each field are named as a type and members are
+TIDE_TEST(lsp_changed_triggers)
+{
+    start();
+    open_document(GAME_TYPES
+                  "struct Stats { int level; }\n"
+                  "component Unit { Stats stats; }\n"
+                  "local singleton Fx { int flashes; }\n"
+                  "local event(Changed<Body.radius> change) Flash(mut Fx fx) { fx.flashes += 1; }\n"
+                  "local event(Changed<Unit.stats.level> change) Up(mut Fx fx) { fx.flashes += change.value - change.old; }\n");
+    TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 25, 21, ""), "component Body"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 26, 32, ""), "level"));
+    const char *flash = request_at("file:///test.tide", "textDocument/hover", 25, 44, "");
+    TIDE_CHECK(has(flash, "local event(Changed<Body.radius> change) Flash(mut Fx fx)"));
+    TIDE_CHECK(has(flash, "for each entity whose `radius` a tick changed, with what it was (`old`)"));
+    const char *body = rename_at(25, 21, "Ball");
+    TIDE_CHECK(has(body, "\"start\":{\"line\":25,\"character\":20}") && has(body, "\"start\":{\"line\":0,\"character\":10}"));
+    const char *radius = rename_at(25, 26, "size");
+    TIDE_CHECK(has(radius, "\"start\":{\"line\":25,\"character\":25}") && has(radius, "\"start\":{\"line\":3,\"character\":10}"));
+    const char *level = rename_at(26, 32, "rank");
+    TIDE_CHECK(has(level, "\"start\":{\"line\":26,\"character\":31}") && has(level, "\"start\":{\"line\":22,\"character\":19}"));
+    // The change's own fields are the engine's
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 26, 99, ""), "old"));
+    TIDE_CHECK(has(rename_at(26, 99, "before"), "Fields of built-in types can't be renamed."));
+    // The formatter writes it as a generic type is written
+    static const char formatted[] = "component Health\n{\n    int value;\n}\nlocal singleton Fx\n{\n    int flashes;\n}\n"
+                                    "local event(verified Changed<Health.value> change) Flash(mut Fx fx)\n{\n"
+                                    "    fx.flashes += change.old - change.value;\n}\n";
+    TIDE_CHECK(has(format_reply(formatted), "\"result\":[]"));
+}
+
+// Local handlers of the match's events, `local event(Hit hit)` and `local event(verified Hit hit)`: hovers, lenses, implementations.
 TIDE_TEST(lsp_local_handlers_of_match_events)
 {
     start();
     open_document(HEARD);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
-    // The handlers: what they hear, when, and where they run among their event's local handlers
-    const char *shows = request_at("file:///test.tide", "textDocument/hover", 27, 24, ""); // ShowHit
+    const char *shows = request_at("file:///test.tide", "textDocument/hover", 27, 24, "");
     TIDE_CHECK(has(shows, "local event(Hit hit) ShowHit(Body body, mut Fx fx)"));
     TIDE_CHECK(has(shows, "A local handler of the match's `Hit`: it runs on this machine at the start of a frame, before the views"));
     TIDE_CHECK(has(shows, "for each `Hit` the ticks since the last frame sent to an entity that matches its parameters"));
     TIDE_CHECK(has(shows, "It hears each once, whatever ticks are run again"));
     TIDE_CHECK(has(shows, "Runs 1st of 2 local handlers of `Hit`."));
-    const char *sure = request_at("file:///test.tide", "textDocument/hover", 28, 33, ""); // SureHit
+    const char *sure = request_at("file:///test.tide", "textDocument/hover", 28, 33, "");
     TIDE_CHECK(has(sure, "local event(verified Hit hit) SureHit(mut Fx fx)"));
     TIDE_CHECK(has(sure, "for each `Hit` sent in the ticks the server confirmed since the last frame"));
     TIDE_CHECK(has(sure, "It hears each once, when the server confirmed its tick"));
     TIDE_CHECK(has(sure, "Runs 2nd of 2 local handlers of `Hit`."));
-    const char *born = request_at("file:///test.tide", "textDocument/hover", 30, 23, ""); // Born
+    const char *born = request_at("file:///test.tide", "textDocument/hover", 30, 23, "");
     TIDE_CHECK(has(born, "A local handler of the match's `Spawned`"));
-    // The match's own handler of the event is alone among the tick's
-    const char *takes = request_at("file:///test.tide", "textDocument/hover", 26, 17, ""); // TakeHit
+    const char *takes = request_at("file:///test.tide", "textDocument/hover", 26, 17, "");
     TIDE_CHECK(has(takes, "Runs when a `Hit` is sent to an entity that matches its parameters, at the end of the tick."));
     TIDE_CHECK(!has(takes, "handlers of"));
 
@@ -4571,7 +4520,6 @@ TIDE_TEST(lsp_local_handlers_of_match_events)
     TIDE_CHECK(has(request("textDocument/semanticTokens/full"), ",1,12,8,11,0,0,9,3,2,0,0,4,3,5,3,0,5,7,9,1,"));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/prepareRename", 28, 14, ""), "'verified' is a keyword"));
 
-    // The events: who hears them, and one nothing in the match handles
     const char *hit = request_at("file:///test.tide", "textDocument/hover", 22, 7, "");
     TIDE_CHECK(has(hit, "Sent with `Send`, and handled by `event(...)` handlers at the end of the tick."));
     TIDE_CHECK(has(hit, "Local handlers hear it on each machine, at the start of a frame: `ShowHit`, `SureHit` (once the "
@@ -4579,9 +4527,8 @@ TIDE_TEST(lsp_local_handlers_of_match_events)
     const char *rang = request_at("file:///test.tide", "textDocument/hover", 23, 7, "");
     TIDE_CHECK(has(rang, "only for local code: no handler in the match takes it, so it costs the match nothing."));
     TIDE_CHECK(has(rang, "at the start of a frame: `HearRang`."));
-    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 30, 14, ""), "at the start of a frame: `Born`.")); // Spawned
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 30, 14, ""), "at the start of a frame: `Born`."));
 
-    // A lens above each, as above each system
     const char *lenses = request("textDocument/codeLens");
     TIDE_CHECK(has(lenses, "stage 1"));
     TIDE_CHECK(has(lenses, "{\"range\":{\"start\":{\"line\":27,\"character\":21},\"end\":{\"line\":27,\"character\":28}},"
@@ -4589,35 +4536,31 @@ TIDE_TEST(lsp_local_handlers_of_match_events)
     TIDE_CHECK(has(lenses, "\"title\":\"hears Hit once the server confirmed it\""));
     TIDE_CHECK(has(lenses, "\"title\":\"hears Rang at the start of a frame\""));
     TIDE_CHECK(has(lenses, "\"title\":\"hears Spawned at the start of a frame\""));
-    TIDE_CHECK(count(lenses, "\"title\":\"hears ") == 4); // None for the match's handlers
+    TIDE_CHECK(count(lenses, "\"title\":\"hears ") == 4);
     check_repeat_lenses("file:///test.tide");
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 27, 24, ""), "Runs 1st of 2 local handlers"));
 
-    // An event's implementations are all its handlers, and its uses their triggers too
     const char *handlers = request_at("file:///test.tide", "textDocument/implementation", 22, 7, "");
-    TIDE_CHECK(has(handlers, "{\"line\":26,\"character\":15}")); // TakeHit
-    TIDE_CHECK(has(handlers, "{\"line\":27,\"character\":21}")); // ShowHit
-    TIDE_CHECK(has(handlers, "{\"line\":28,\"character\":30}")); // SureHit
+    TIDE_CHECK(has(handlers, "{\"line\":26,\"character\":15}"));
+    TIDE_CHECK(has(handlers, "{\"line\":27,\"character\":21}"));
+    TIDE_CHECK(has(handlers, "{\"line\":28,\"character\":30}"));
     TIDE_CHECK(count(handlers, "\"uri\"") == 3);
     const char *uses = request_at("file:///test.tide", "textDocument/references", 22, 7, "\"context\":{\"includeDeclaration\":true}");
-    TIDE_CHECK(count(uses, "\"uri\"") == 5); // Declared, sent, and handled three times
-    TIDE_CHECK(has(uses, "{\"line\":28,\"character\":21}")); // After `verified`
+    TIDE_CHECK(count(uses, "\"uri\"") == 5);
+    TIDE_CHECK(has(uses, "{\"line\":28,\"character\":21}"));
     TIDE_CHECK(has(request("textDocument/documentSymbol"), "\"name\":\"ShowHit\",\"detail\":\"local event handler\""));
 
-    // While the game has an error elsewhere, as it does while typing
     open_document(HEARD "system Break(mut Body body)\n{\n    body.pos = 1;\n}\n");
     TIDE_CHECK(has(last_sent(), "\"severity\":1"));
     TIDE_CHECK(count(request("textDocument/codeLens"), "\"title\":\"hears ") == 4);
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 23, 7, ""), "only for local code"));
     TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/implementation", 22, 7, ""), "\"uri\"") == 3);
 
-    // Before the event of one of the match's own handlers it's an error, and its hover says where it goes
     open_document(GAME_TYPES "event Hit { int damage; }\nsystem Strike(with Body) { this.Send(Hit { damage = 2 }); }\n"
                              "event(veri$fied Hit hit) TakeHit(mut Body body) { body.radius -= hit.damage; }\n");
     TIDE_CHECK(has(last_sent(), "so a match handler has no 'verified' events"));
     TIDE_CHECK(has(request("textDocument/hover"), "and before a local handler's event."));
 
-    // Completion: `verified` where a local handler's event goes, then the match's events
     const char *trigger = complete(GAME_TYPES "event Hit { }\nlocal event Note { }\nlocal event($)\n");
     TIDE_CHECK(offers(trigger, "verified") && offers(trigger, "Hit") && offers(trigger, "Note") && offers(trigger, "Spawned"));
     TIDE_CHECK(offers(trigger, "Shown") && offers(trigger, "Hidden"));
@@ -4626,7 +4569,6 @@ TIDE_TEST(lsp_local_handlers_of_match_events)
     TIDE_CHECK(offers(confirmed, "Hit") && offers(confirmed, "Spawned") && offers(confirmed, "PlayerJoined"));
     TIDE_CHECK(offers(confirmed, "Shown") && offers(confirmed, "Hidden"));
     TIDE_CHECK(!offers(confirmed, "Note") && !offers(confirmed, "Forgotten") && !offers(confirmed, "verified"));
-    // The match hears nothing confirmed, and a command comes from one machine
     TIDE_CHECK(!offers(complete(GAME_TYPES "event Hit { }\nevent($)\n"), "verified"));
     TIDE_CHECK(!offers(complete(GAME_TYPES "event($)\n"), "Shown"));
     TIDE_CHECK(!offers(complete(GAME_TYPES "event($)\n"), "Hidden"));
@@ -4639,7 +4581,6 @@ TIDE_TEST(lsp_local_handlers_of_match_events)
                   "local event(Hid$den) Concealed(Body body, mut Seen seen) { seen.n += int(body.radius); }\n");
     TIDE_CHECK(has(request("textDocument/hover"), "last permitted state"));
 
-    // The formatter keeps the trigger's word
     static const char messy[] = GAME_TYPES "event Hit { int damage; }\nlocal singleton Fx { int flashes; }\n"
                                            "system Strike(with Body) { this.Send(Hit { damage = 2 }); }\n"
                                            "local event( verified   Hit hit )SureHit(mut Fx fx){ fx.flashes += hit.damage; }\n";
@@ -4709,13 +4650,11 @@ TIDE_TEST(lsp_quick_fixes_for_errors)
                               "\"newText\":\"try \"}"));
     const char *value = actions_at(5);
     TIDE_CHECK(has(value, "\"newText\":\"!\"") && has(value, "{\"line\":5,\"character\":20}"));
-    // A system has no caller to pass it to
     const char *system = actions_at(11);
     TIDE_CHECK(has(system, "add '!'") && !has(system, "add 'try'"));
 }
 
-// The document after the quick fix titled `title` among the last reply's code
-// actions, or NULL when it isn't offered.
+// The document after the quick fix titled `title`, or NULL when it isn't offered.
 static const char *apply_fix(const char *original, const char *title)
 {
     snprintf(applied, sizeof applied, "%s", original);
@@ -4734,8 +4673,7 @@ static const char *apply_fix(const char *original, const char *title)
     return fixed;
 }
 
-// A frag's pixel is implicit `this`. Migrate the old parameter and its bound
-// uses, while keeping a game's own Pixel type and entity `this` independent.
+// A frag's pixel is implicit `this`: the old parameter migrates, and a game's own Pixel type and entity `this` stay independent.
 TIDE_TEST(lsp_shader_this)
 {
     start();
@@ -4767,7 +4705,6 @@ TIDE_TEST(lsp_shader_this)
     open_document(migrated);
     TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
 
-    // User types retain their names, even though the frag's `this` is still its pixel.
     open_document("scene Main { }\ncomponent Pixel { float strength = 1; }\n"
                   "frag Mask(Vertex3 vertex, out Color color, Pixel pixel)\n{\n"
                   "    color = Color.white * pixel.strength * this.depth;\n}\n");
@@ -4786,10 +4723,7 @@ TIDE_TEST(lsp_shader_this)
     TIDE_CHECK(has(last_sent(), "functions don't run for an entity, so they have no 'this'"));
 }
 
-// What a frag and a vert write, `out`: the spelling there was before as a
-// change, a color nothing wrote or that's read first as an assignment (white,
-// which is what it started as), what a vert writes for its frag in hovers, and
-// a frag's struct that its draw's vert doesn't write.
+// What a frag and a vert write, `out`: the old spelling as a change, unwritten and read-first colors, hovers, and unwritten structs.
 TIDE_TEST(lsp_shader_outputs)
 {
     start();
@@ -4800,7 +4734,6 @@ TIDE_TEST(lsp_shader_outputs)
     "struct Crate { Color paint; }\n"                                                                                 \
     "singleton Sun { float3 at; }\n"                                                                                  \
     "local singleton Models { List<Corner> crate; List<int> faces; List<Crate> crates; }\n"
-    // `mut Color color` was the pixel: the word changes
     static const char old[] = OUTPUT_TYPES "frag Shade(Corner corner, mut Color color)\n{\n    color = Color.red;\n}\n";
     open_document(old);
     TIDE_CHECK(has(last_sent(), "a frag's color is an 'out' parameter: 'out Color color'"));
@@ -4811,7 +4744,6 @@ TIDE_TEST(lsp_shader_outputs)
     TIDE_CHECK(has(respelled, "frag Shade(Corner corner, out Color color)\n"));
     open_document(respelled);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
-    // ...and a vert's struct for its frag, written as what it changes
     static const char changed[] = OUTPUT_TYPES "vert Place(mut Corner corner, mut FromLamp lamp)\n{\n"
                                                "    lamp.place = corner.position;\n    lamp.glow = 1;\n}\n";
     open_document(changed);
@@ -4822,7 +4754,6 @@ TIDE_TEST(lsp_shader_outputs)
     TIDE_CHECK(has(handed, "vert Place(mut Corner corner, out FromLamp lamp)\n"));
     open_document(handed);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
-    // `out` on a vert's vertex is `mut`
     static const char vertex[] = OUTPUT_TYPES "vert Place(out Corner corner)\n{\n    corner.position = float3(0);\n}\n";
     open_document(vertex);
     TIDE_CHECK(has(last_sent(), "a vert is handed its vertex and changes it, so it takes it 'mut', not 'out'"));
@@ -4831,7 +4762,6 @@ TIDE_TEST(lsp_shader_outputs)
     TIDE_REQUIRE(taken != NULL);
     TIDE_CHECK(has(taken, "vert Place(mut Corner corner)\n"));
 
-    // A path that writes no color: white there, which is what the pixel was. No `mut` to take it as
     static const char unwritten[] = OUTPUT_TYPES "frag Shade(Corner corner, out Color color)\n{\n"
                                                  "    if (corner.uv.x > 0.5) color = Color.red;\n}\n";
     open_document(unwritten);
@@ -4842,7 +4772,6 @@ TIDE_TEST(lsp_shader_outputs)
     const char *whitened = apply_fix(unwritten, "Write 'color = Color.white;'");
     TIDE_REQUIRE(whitened != NULL);
     TIDE_CHECK(has(whitened, "    if (corner.uv.x > 0.5) color = Color.red;\n    color = Color.white;\n}\n"));
-    // Read before it's written: white first
     static const char early[] = OUTPUT_TYPES "frag Shade(Corner corner, out Color color)\n{\n    color.a = corner.uv.x;\n}\n";
     open_document(early);
     TIDE_CHECK(has(last_sent(), "'color' is read before it's written"));
@@ -4853,7 +4782,6 @@ TIDE_TEST(lsp_shader_outputs)
     TIDE_CHECK(has(started, "{\n    color = Color.white;\n    color.a = corner.uv.x;\n}\n"));
     open_document(started);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
-    // What a vert writes for its frag, a field left on a path: the struct's default
     static const char partly[] = OUTPUT_TYPES "vert Place(mut Corner corner, out FromLamp lamp, Sun sun)\n{\n"
                                               "    lamp.place = corner.position - sun.at;\n"
                                               "    if (corner.uv.x > 0) lamp.glow = 1;\n}\n";
@@ -4864,7 +4792,6 @@ TIDE_TEST(lsp_shader_outputs)
     TIDE_REQUIRE(filled != NULL);
     TIDE_CHECK(has(filled, "    if (corner.uv.x > 0) lamp.glow = 1;\n    lamp = default;\n}\n"));
 
-    // Hovers: what a vert writes, and the frag's struct of that type against one its instances are
 #define OUTPUTS                                                                                                       \
     OUTPUT_TYPES                                                                                                      \
     "vert Place(mut Corner corner, out FromLamp lamp, Sun sun)\n{\n"                                                  \
@@ -4881,7 +4808,7 @@ TIDE_TEST(lsp_shader_outputs)
     TIDE_CHECK(has(vert, "- for each draw: `Sun.at`") && !has(vert, "FromLamp."));
     const char *writes = hover_at(6, 45);
     TIDE_CHECK(has(writes, "out FromLamp lamp") && has(writes, "What the vert writes for the frag it's drawn with"));
-    TIDE_CHECK(has(hover_at(6, 32), "What the vert writes for the frag it's drawn with")); // On `out`
+    TIDE_CHECK(has(hover_at(6, 32), "What the vert writes for the frag it's drawn with"));
     const char *frag = hover_at(11, 6);
     TIDE_CHECK(has(frag, "Draw.Instanced(..., Look)") && has(frag, "What it writes to its `out Color` is the pixel"));
     TIDE_CHECK(has(frag, "- for each instance: `Crate.paint`"));
@@ -4889,10 +4816,8 @@ TIDE_TEST(lsp_shader_outputs)
     const char *lamp = hover_at(11, 35);
     TIDE_CHECK(has(lamp, "What the vert this frag is drawn with wrote for it") && has(lamp, "which the corners pass on: `glow`."));
     TIDE_CHECK(has(hover_at(11, 47), "An element of the draw's instance list"));
-    // Its tokens: `out` is a keyword in both
     const char *tokens = request("textDocument/semanticTokens/full");
     TIDE_CHECK(has(tokens, ",0,8,3,11,0,0,4,8,2,0,0,9,4,5,1,")); // , out FromLamp lamp: what it writes
-    // The draw pairs them: a frag's struct that its vert doesn't write, or with no vert
     static const char lone[] = OUTPUTS "view Show(Models models)\n{\n"
                                        "    Draw.Instanced(models.crate, models.faces, models.crates, Look);\n}\n";
     open_document(lone);
@@ -4903,7 +4828,6 @@ TIDE_TEST(lsp_shader_outputs)
                                         "    Draw.Instanced(models.crate, models.faces, models.crates, Lift, Look);\n}\n";
     open_document(other);
     TIDE_CHECK(has(last_sent(), "frag 'Look' reads a 'FromLamp', which vert 'Lift' doesn't write"));
-    // Where the draw's vert goes, both are offered, and where its frag goes, the frag
     const char *named = complete(OUTPUTS "view Show(Models models)\n{\n"
                                          "    Draw.Instanced(models.crate, models.faces, models.crates, $);\n}\n");
     TIDE_CHECK(offers(named, "Place") && offers(named, "Look"));
@@ -4911,10 +4835,7 @@ TIDE_TEST(lsp_shader_outputs)
 #undef OUTPUT_TYPES
 }
 
-// A vert that puts its vertex itself: `out float4`, and `this.clip`, where
-// the engine would put it. The spelling as a change, a path that writes
-// nothing and a read before the write as `clip = this.clip;`, the hovers, and
-// what's offered after `this.` and after `out`.
+// A vert that puts its vertex itself, `out float4` and `this.clip`: the old spelling, unwritten and read-first paths, hovers, completion.
 TIDE_TEST(lsp_vert_place)
 {
     start();
@@ -4923,7 +4844,6 @@ TIDE_TEST(lsp_vert_place)
     "struct Corner { float3 position; float2 uv; }\n"                                                                 \
     "local singleton Lens { float2 size = float2(480, 270); }\n"                                                      \
     "local singleton Models { List<Corner> crate; List<int> faces; }\n"
-    // `mut float4 clip`: the word changes
     static const char old[] = PLACE_TYPES "vert Snap(mut Corner corner, mut float4 clip)\n{\n    clip = this.clip;\n}\n";
     open_document(old);
     TIDE_CHECK(has(last_sent(), "where a vert puts its vertex is an 'out' parameter: 'out float4 clip'"));
@@ -4934,7 +4854,6 @@ TIDE_TEST(lsp_vert_place)
     open_document(respelled);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
-    // A path that writes no place: where the engine would have put it
     static const char unwritten[] = PLACE_TYPES "vert Snap(mut Corner corner, out float4 clip)\n{\n"
                                                 "    if (corner.uv.x > 0.5) clip = float4(0, 0, 0, 1);\n}\n";
     open_document(unwritten);
@@ -4945,7 +4864,6 @@ TIDE_TEST(lsp_vert_place)
     TIDE_CHECK(has(left, "    if (corner.uv.x > 0.5) clip = float4(0, 0, 0, 1);\n    clip = this.clip;\n}\n"));
     open_document(left);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
-    // Read before it's written: the engine's place first, and no `mut` to take it as
     static const char early[] = PLACE_TYPES "vert Snap(mut Corner corner, out float4 clip)\n{\n    clip.z = clip.w;\n}\n";
     open_document(early);
     TIDE_CHECK(has(last_sent(), "'clip' is read before it's written"));
@@ -4957,7 +4875,6 @@ TIDE_TEST(lsp_vert_place)
     open_document(started);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
-    // Hovers: the place, `this` and its field
     static const char whole[] = PLACE_TYPES "vert Snap(mut Corner corner, out float4 clip, Lens lens)\n{\n"
                                             "    float2 half = lens.size * 0.5;\n"
                                             "    clip = this.clip;\n"
@@ -4974,12 +4891,10 @@ TIDE_TEST(lsp_vert_place)
     TIDE_CHECK(has(self, "The vertex `Snap` runs for") && has(self, "Its one read-only field is `clip`"));
     const char *field = hover_at(7, 17);
     TIDE_CHECK(has(field, "Where the engine would put the vertex, in clip space"));
-    // After `this.`, its one field, and nothing of a frag's pixel
     const char *fields = complete(PLACE_TYPES "vert Snap(mut Corner corner, out float4 clip)\n{\n    clip = this.$\n}\n");
     TIDE_CHECK(offers(fields, "clip") && !offers(fields, "Discard") && !offers(fields, "depth") && !offers(fields, "world"));
     const char *names = complete(PLACE_TYPES "vert Snap(mut Corner corner, out float4 clip)\n{\n    clip = $\n}\n");
     TIDE_CHECK(offers(names, "this"));
-    // After a vert's `out`: where it goes, once, and the structs it can hand its frag
     const char *written = complete(PLACE_TYPES "vert Snap(mut Corner corner, out $)\n{\n}\n");
     TIDE_CHECK(offers(written, "float4") && offers(written, "Corner"));
     const char *again = complete(PLACE_TYPES "vert Snap(mut Corner corner, out float4 clip, out $)\n{\n}\n");
@@ -4987,7 +4902,6 @@ TIDE_TEST(lsp_vert_place)
     const char *colors = complete(PLACE_TYPES "frag Shade(Corner corner, out $)\n{\n}\n");
     TIDE_CHECK(offers(colors, "Color") && !offers(colors, "float4"));
 
-    // What a vert's `this` hasn't got says what it has
     open_document(PLACE_TYPES "vert Snap(mut Corner corner)\n{\n    corner.position.x = this.world.x;\n}\n");
     TIDE_CHECK(has(last_sent(), "a vert's 'this' has no 'world': it has 'clip', where the engine would put its vertex"));
     open_document(PLACE_TYPES "vert Snap(mut Corner corner)\n{\n    this.clip.z = 1;\n}\n");
@@ -4995,8 +4909,7 @@ TIDE_TEST(lsp_vert_place)
 #undef PLACE_TYPES
 }
 
-// A local nothing reads: a warning that editors fade, with a fix that removes
-// it, or keeps its call when the call does something.
+// A local nothing reads: a faded warning, with a fix that removes it or keeps its call.
 TIDE_TEST(lsp_unused_locals)
 {
     start();
@@ -5009,15 +4922,14 @@ TIDE_TEST(lsp_unused_locals)
     TIDE_CHECK(has(last_sent(), "\"message\":\"local 'fwd' is never used\\nnote: nothing reads its value: remove it, or use it "
                                 "where it was meant\",\"tags\":[1]"));
     TIDE_CHECK(has(last_sent(), "\"range\":{\"start\":{\"line\":25,\"character\":8},\"end\":{\"line\":25,\"character\":11}}"));
-    TIDE_CHECK(count(last_sent(), "\"severity\":2") == 1); // Only fwd: move is read
+    TIDE_CHECK(count(last_sent(), "\"severity\":2") == 1);
     const char *remove = actions_at(25);
     TIDE_CHECK(has(remove, "\"title\":\"Remove 'fwd'\",\"kind\":\"quickfix\",\"isPreferred\":true,\"diagnostics\":[{"));
     const char *removed = apply_fix(unused, "Remove 'fwd'");
     TIDE_REQUIRE(removed != NULL);
     TIDE_CHECK(has(removed, "    var move = Math.Normalize(body.position);\n    body.position += move * time.dt;\n}\n"));
-    TIDE_CHECK(!has(actions_at(24), "Remove '")); // Only on its line
+    TIDE_CHECK(!has(actions_at(24), "Remove '"));
 
-    // A value that does something stays, as a statement of its own
     static const char spawns[] = GAME_TYPES "system Split(mut Body body)\n{\n"
                                             "    var half = Spawn(Body { radius = body.radius / 2 });\n"
                                             "    body.radius /= 2;\n}\n";
@@ -5030,7 +4942,6 @@ TIDE_TEST(lsp_unused_locals)
     TIDE_REQUIRE(kept != NULL);
     TIDE_CHECK(has(kept, "{\n    Spawn(Body { radius = body.radius / 2 });\n    body.radius /= 2;\n}\n"));
 
-    // ...and with its type and `mut` written, they go with the name
     static const char typed[] = GAME_TYPES "int Bump(mut float radius) { radius += 1; return 1; }\n"
                                            "system Grow(mut Body body)\n{\n    mut int grown = Bump(body.radius);\n}\n";
     open_document(typed);
@@ -5039,7 +4950,6 @@ TIDE_TEST(lsp_unused_locals)
     TIDE_REQUIRE(bumped != NULL);
     TIDE_CHECK(has(bumped, "{\n    Bump(body.radius);\n}\n"));
 
-    // Beside other statements on its line, only it goes
     static const char shared[] = GAME_TYPES "system Move(mut Body body)\n{\n"
                                             "    var a = 1; var b = 2; // Two\n    body.radius = b;\n}\n";
     open_document(shared);
@@ -5048,7 +4958,6 @@ TIDE_TEST(lsp_unused_locals)
     TIDE_REQUIRE(alone != NULL);
     TIDE_CHECK(has(alone, "{\n    var b = 2; // Two\n    body.radius = b;\n}\n"));
 
-    // Assigned later, or declared by a for: faded, with what to do in the note and nothing to apply
     open_document(GAME_TYPES "system Move(mut Body body)\n{\n    mut var total = 0;\n    total += 1;\n"
                              "    for (var i = 0; body.radius < 3; body.radius += 1) { }\n}\n");
     TIDE_CHECK(has(last_sent(), "local 'total' is never used\\nnote: it's assigned, but nothing reads its value"));
@@ -5057,7 +4966,6 @@ TIDE_TEST(lsp_unused_locals)
     TIDE_CHECK(!has(actions_at(24), "Remove '") && !has(actions_at(24), "Keep the call"));
     TIDE_CHECK(!has(actions_at(26), "Remove '"));
 
-    // The names a loop, an `is` and a Sort need aren't locals to remove
     open_document("component Bag { List<int> items; int count; }\nscene Main { }\n"
                   "event(Spawned) Setup(with Main) { Spawn(Bag); }\n"
                   "int? First(int count) { if (count == 0) return null; return count; }\n"
@@ -5066,8 +4974,6 @@ TIDE_TEST(lsp_unused_locals)
                   "    bag.items.Sort(a, b) { return false; }\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
-    // Errors hide uses: code that didn't check says nothing of what it reads, so
-    // a local whose scope has one waits for it to be fixed
     open_document(GAME_TYPES "system Move(mut Body body)\n{\n    var speed = 2;\n    body.radus = 1;\n}\n");
     TIDE_CHECK(has(last_sent(), "Body has no field 'radus'"));
     TIDE_CHECK(!has(last_sent(), "is never used"));
@@ -5075,8 +4981,7 @@ TIDE_TEST(lsp_unused_locals)
     TIDE_CHECK(has(last_sent(), "local 'speed' is never used"));
 }
 
-// Notes about another place go there, and access a system doesn't use is
-// marked as unnecessary.
+// Notes about another place go there, and unused access is marked unnecessary.
 TIDE_TEST(lsp_diagnostic_notes_and_tags)
 {
     static const char twice[] = "settings { tickRate = 30; }\nsettings { tickRate = 20; }\nscene Main { }\n";
@@ -5086,20 +4991,17 @@ TIDE_TEST(lsp_diagnostic_notes_and_tags)
                                 "{\"uri\":\"file:///test.tide\",\"range\":{\"start\":{\"line\":0,\"character\":11}"));
     TIDE_CHECK(has(last_sent(), "\"message\":\"the other one is on line 1\"}]"));
     TIDE_CHECK(!has(last_sent(), "\\nnote: the other one"));
-    start(); // An editor that doesn't show them keeps them in the message
+    start();
     open_document(twice);
     TIDE_CHECK(has(last_sent(), "'tickRate' is set twice\\nnote: the other one is on"));
 
     open_document("component Body { float2 position; }\nsingleton Score { int total; }\n"
                   "event(Spawned) Setup(with Main) { Spawn(Body); }\n"
                   "system Look(mut Body body, Score s) { if (body.position.x > 0) return; }\nscene Main { }\n");
-    TIDE_CHECK(count(last_sent(), "\"tags\":[1]") == 2); // mut never written, and never used
+    TIDE_CHECK(count(last_sent(), "\"tags\":[1]") == 2);
 }
 
-// An audio declaration's state and knobs that are more than there's room for
-// are errors as they're typed, each at its parameter: the checker knows a
-// struct's size as generated C will have it. A state's delay line is an array
-// far longer than any other, which nothing copies.
+// An audio declaration's state and knobs over the size limit are errors at their parameter; a state's delay line is exempt.
 TIDE_TEST(lsp_audio_state_and_knobs_sizes)
 {
     start();
@@ -5109,12 +5011,10 @@ TIDE_TEST(lsp_audio_state_and_knobs_sizes)
     TIDE_CHECK(diagnosed(2, 32, 3, 1, "an audio declaration's state is 1048576 bytes at the most, and 'Tail' is 1048580"));
     TIDE_CHECK(diagnosed(2, 47, 5, 1, "an audio declaration's knobs are 256 bytes at the most, and 'Curve' is 260"));
     TIDE_CHECK(has(last_sent(), "make 'Tail' smaller, with a shorter array or fewer fields"));
-    // All the bytes there are of each, and nothing is said
     open_document("struct Tail { int at; float[262143] line; }\nstruct Curve { float[64] bands; }\n"
                   "audio Echo(mut Samples samples, mut Tail tail, Curve curve)\n{\n    tail.at += 1;\n"
                   "    samples.values[0] = curve.bands[0] + tail.line[tail.at];\n}\nscene Main { }\n");
     TIDE_CHECK(!has(last_sent(), "bytes at the most") && !has(last_sent(), "\"severity\":1"));
-    // A copy of the state, where it's made; and such a struct anywhere but a state
     open_document("struct Tail { int at; float[96000] line; }\n"
                   "audio Echo(mut Samples samples, mut Tail tail)\n{\n    var copy = tail;\n"
                   "    samples.values[0] = copy.line[0];\n}\ncomponent Body { Tail tail; }\nscene Main { }\n");
@@ -5131,19 +5031,15 @@ TIDE_TEST(lsp_move_to_file)
                                   "\"range\":{\"start\":{\"line\":4,\"character\":0},\"end\":{\"line\":4,\"character\":0}}");
     TIDE_CHECK(has(move, "\"title\":\"Move 'Health' to Health.tide\",\"kind\":\"refactor.move\""));
     TIDE_CHECK(has(move, "{\"kind\":\"create\",\"uri\":\"file:///Health.tide\""));
-    // The new file: the namespace, then the declaration with its comment.
     TIDE_CHECK(has(move, "\"newText\":\"namespace Combat;\\n\\n// How much damage it takes.\\ncomponent Health\\n{\\n"
                          "    int value;\\n}\\n\""));
-    // Removed here, with the blank line after it.
     TIDE_CHECK(has(move, "{\"range\":{\"start\":{\"line\":2,\"character\":0},\"end\":{\"line\":8,\"character\":0}},"
                          "\"newText\":\"\"}"));
 
-    // Systems and handlers stay: files decide the order they run in.
     const char *system = request_at("file:///test.tide", "textDocument/codeAction", 9, 0,
                                     "\"range\":{\"start\":{\"line\":9,\"character\":0},\"end\":{\"line\":9,\"character\":0}}");
     TIDE_CHECK(!has(system, "Move '"));
 
-    // An editor that can't create files isn't offered it.
     start_with("{}");
     open_document("component Health\n{\n    int value;\n}\nscene Main { }\nevent(Spawned) Setup(with Main) { Spawn(Health); }\n");
     const char *unable = request_at("file:///test.tide", "textDocument/codeAction", 1, 0,
@@ -5160,16 +5056,14 @@ TIDE_TEST(lsp_references)
 {
     start();
     open_document(USES_RADIUS "view V(Body body)\n{\n    Draw.Circle(body.position, body.rad$ius, Color.red);\n}\n");
-    // The declaration, `body.radius += 1`, the literal and the view.
     TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 4);
     TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":false}"), "\"uri\"") == 3);
 
     open_document(GAME_TYPES "system Move(mut Body bo$dy)\n{\n    body.radius = body.radius * 2;\n}\n");
     const char *highlights = request("textDocument/documentHighlight");
     TIDE_CHECK(count(highlights, "\"range\"") == 3);
-    TIDE_CHECK(count(highlights, "\"kind\":3") == 1); // The declaration
+    TIDE_CHECK(count(highlights, "\"kind\":3") == 1);
 
-    // Uses in what a method returns.
     open_document("struct Range\n{\n    float l$o;\n    float hi;\n    float Width() { return hi - lo; }\n}\n");
     TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":false}"), "\"uri\"") == 1);
 }
@@ -5190,15 +5084,13 @@ TIDE_TEST(lsp_rename)
     TIDE_CHECK(!has(renamed, "radius"));
     TIDE_CHECK(has(request("textDocument/hover"), "float radius = 10"));
     TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 4);
-    // The result still compiles cleanly.
     char copy[8192];
     snprintf(copy, sizeof copy, "%s", renamed);
     open_document(copy);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 }
 
-// Main renames like anything else the game declares, though the program then
-// has no entry point.
+// Main renames like anything else the game declares, though the program then has no entry point.
 TIDE_TEST(lsp_rename_main)
 {
     start();
@@ -5234,7 +5126,6 @@ TIDE_TEST(lsp_rename_namespace)
     open_document(copy);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
-    // The outer part, from code.
     open_document("namespace Game.Combat;\n"
                   "component Health { int value; }\n"
                   "scene Main { }\n"
@@ -5262,41 +5153,33 @@ TIDE_TEST(lsp_rename_namespace)
 TIDE_TEST(lsp_namespace_blocks)
 {
     start();
-    // No diagnostics, and a block's name is its namespace: inside the one it's written in
     open_document(BLOCKS "system Hurt(mut Combat.Health health) { health.value = Combat.Rules.Cap(health.value); }\n"
                          "event(Spawned) Setup(with Main) { Spawn(Combat.Health); }\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     TIDE_CHECK(has(hover_at(0, 12), "namespace Combat") && has(hover_at(0, 12), "`Health`"));
     TIDE_CHECK(has(hover_at(4, 16), "namespace Combat.Rules") && has(hover_at(4, 16), "`Cap`"));
 
-    // Where a declaration goes inside a block, the declarations' words are offered, as at a file's top...
     const char *reply = complete("namespace Combat\n{\n    component Health { int value; }\n\n    $\n}\nscene Main { }\n");
     TIDE_CHECK(offers(reply, "component") && offers(reply, "system") && offers(reply, "namespace block"));
-    // ...in an empty one too, and after a block that closed
     reply = complete("namespace Combat\n{\n    $\n}\nscene Main { }\n");
     TIDE_CHECK(offers(reply, "component") && offers(reply, "system"));
     reply = complete(BLOCKS "$\n");
     TIDE_CHECK(offers(reply, "component") && offers(reply, "system"));
 
-    // A parameter's type: the block's own names plainly, another namespace's with it
     reply = complete("namespace Combat\n{\n    component Health { int value; }\n\n    system Hurt(mut $) { }\n}\n"
                      "namespace Items\n{\n    component Bag { int coins; }\n}\nscene Main { }\n");
     TIDE_CHECK(offers(reply, "Health") && offers(reply, "Items.Bag") && !offers(reply, "Combat.Health"));
-    // Outside the blocks, both with their namespaces
     reply = complete("namespace Combat\n{\n    component Health { int value; }\n}\n"
                      "namespace Items\n{\n    component Bag { int coins; }\n}\nscene Main { }\nsystem Hurt(mut $) { }\n");
     TIDE_CHECK(offers(reply, "Combat.Health") && offers(reply, "Items.Bag") && !offers(reply, "Health"));
-    // A block inside the file's namespace is inside it: what the file's namespace has is plain there
     reply = complete("namespace Game;\ncomponent Body { int mass; }\nnamespace Combat\n{\n    system Hurt(mut $) { }\n}\nscene Main { }\n");
     TIDE_CHECK(offers(reply, "Body") && !offers(reply, "Game.Body"));
 
-    // An unknown name that a block declares: written with its namespace
     open_document("namespace Combat\n{\n    component Health { int value; }\n}\nscene Main { }\n"
                   "system Hurt(mut Hea$lth health) { health.value -= 1; }\n");
     const char *fixes = actions_at(5);
     TIDE_CHECK(has(fixes, "\"title\":\"Write 'Combat.Health'\"") && has(fixes, "\"title\":\"Add 'using Combat;'\""));
 
-    // Renaming a block's namespace renames every block of it, and what names it
     static const char twice[] = "namespace Combat\n{\n    component Health { int value; }\n}\n"
                                 "scene Main { }\n"
                                 "namespace Combat\n{\n    system Hurt(mut Health health) { health.value -= 1; }\n}\n"
@@ -5311,7 +5194,6 @@ TIDE_TEST(lsp_namespace_blocks)
     request_with("textDocument/rename", "\"newName\":\"Fight\"");
     const char *renamed = apply_reply(twice, "file:///test.tide");
     TIDE_CHECK(count(renamed, "Fight") == 4 && !has(renamed, "Combat"));
-    // The inner part of a block in the file's namespace, from code that names it whole
     static const char inner[] = "namespace Game;\nnamespace Combat\n{\n    component Health { int value; }\n}\n"
                                 "scene Main { }\nsystem Heal(mut Game.Combat.Health health) { health.value += 1; }\n";
     open_document("namespace Game;\nnamespace Combat\n{\n    component Health { int value; }\n}\n"
@@ -5320,7 +5202,6 @@ TIDE_TEST(lsp_namespace_blocks)
     renamed = apply_reply(inner, "file:///test.tide");
     TIDE_CHECK(has(renamed, "namespace Fight\n{") && has(renamed, "Game.Fight.Health") && !has(renamed, "Combat"));
 
-    // The formatter: a block's braces on lines of their own, and what's inside one step in
     static const char messy[] = "namespace Combat {\ncomponent Health { int value; }\n\n"
                                 "  namespace Rules\n{\nint Cap(int value)\n{\nreturn value;\n}\n}\n"
                                 "system Hurt(mut Health health)\n{\nhealth.value -= 1;\n}\n}\nscene Main { }\n";
@@ -5330,17 +5211,14 @@ TIDE_TEST(lsp_namespace_blocks)
     format_reply(messy);
     TIDE_CHECK(strcmp(apply_reply(messy, NULL), tidy) == 0);
     TIDE_CHECK(has(format_reply(tidy), "\"result\":[]"));
-    // An attribute's line in a block is no line that goes on: the declaration after it starts where it does
     static const char ordered[] = "namespace Combat\n{\n    system First() { }\n\n    [After(First)]\n    system Second() { }\n}\nscene Main { }\n";
     TIDE_CHECK(has(format_reply(ordered), "\"result\":[]"));
 
-    // Half typed: a declaration that's broken in a block leaves the ones after it, and the block's end, as they are
     open_document("namespace Combat\n{\n    component Health { int value; }\n\n    system Hurt(mut Health health\n\n"
                   "    system Heal(mut Health health) { health.value += 1; }\n}\n\nscene Main { }\nsystem Look(Combat.Hea$lth health) { }\n");
     TIDE_CHECK(count(last_sent(), "\"severity\":1") == 1);
     TIDE_CHECK(has(request("textDocument/hover"), "component Health"));
 
-    // A declaration in a block moves to a file of its own with the block's namespace as that file's, at the file's top
     open_document("namespace Game;\nnamespace Combat\n{\n    component Health\n    {\n        int value;\n    }\n}\n\n"
                   "scene Main { }\nevent(Spawned) Setup(with Main) { Spawn(Combat.Health); }\n");
     const char *move = request_at("file:///test.tide", "textDocument/codeAction", 3, 0,
@@ -5348,11 +5226,163 @@ TIDE_TEST(lsp_namespace_blocks)
     TIDE_CHECK(has(move, "\"title\":\"Move 'Health' to Health.tide\""));
     TIDE_CHECK(has(move, "\"newText\":\"namespace Game.Combat;\\n\\ncomponent Health\\n{\\n    int value;\\n}\\n\""));
 
-    // What a block can't be
     open_document("scene Main { }\nnamespace Combat\n{\n    component Health { int value; }\n");
     TIDE_CHECK(has(last_sent(), "to end the namespace 'Combat'"));
     open_document("scene Main { }\nnamespace Combat\n{\n    using Physics;\n}\n");
     TIDE_CHECK(has(last_sent(), "'using' goes at the top of the file"));
+}
+
+#define TYPE_ALIASES                                             \
+    "using Types;\n"                                            \
+    "namespace Types\n{\n"                                     \
+    "    struct Score { int value; }\n"                         \
+    "    using Points = Score;\n"                               \
+    "    using Count = int;\n"                                  \
+    "    using Scores = List<Points>;\n"                        \
+    "    enum Mode { Ready, Done }\n"                           \
+    "    using Phase = Mode;\n"                                 \
+    "    component Health { int value; }\n"                     \
+    "    using Life = Health;\n"                                \
+    "}\nscene Main;\n"
+
+TIDE_TEST(lsp_type_aliases)
+{
+    start();
+    static const char code[] = TYPE_ALIASES
+        "Count Twice(Count count) { return count * 2; }\n"
+        "Points Make() { return Points { value = 1 }; }\n"
+        "Scores Collect(Points point) { return [point]; }\n"
+        "system Heal(mut Life health) { health.value += 1; }\n"
+        "event(Spawned) Setup(with Main) { Spawn(Life); }\n"
+        "Types.Points Qualified() { return Make(); }\n";
+    open_document(code);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(hover_at(4, 13), "using Points = Score;"));
+    TIDE_CHECK(has(hover_at(13, 2), "using Count = int;") && has(hover_at(13, 2), "Transparent type alias"));
+    const char *definition = request_at("file:///test.tide", "textDocument/definition", 14, 2, "");
+    TIDE_CHECK(has(definition, "\"line\":4,\"character\":10"));
+    const char *refs = request_at("file:///test.tide", "textDocument/references", 4, 13,
+                                 "\"context\":{\"includeDeclaration\":true}");
+    TIDE_CHECK(count(refs, "\"uri\"") == 6);
+    request_at("file:///test.tide", "textDocument/rename", 4, 13, "\"newName\":\"Tally\"");
+    const char *renamed = apply_reply(code, "file:///test.tide");
+    TIDE_CHECK(count(renamed, "Tally") == 6 && !has(renamed, "Points"));
+    TIDE_CHECK(has(renamed, "struct Score") && has(renamed, "using Tally = Score;") && has(renamed, "using Scores = List<Tally>;"));
+    request_at("file:///test.tide", "textDocument/rename", 3, 13, "\"newName\":\"Result\"");
+    renamed = apply_reply(code, "file:///test.tide");
+    TIDE_CHECK(has(renamed, "struct Result") && has(renamed, "using Points = Result;") && has(renamed, "Points Make()"));
+    const char *symbols = request("textDocument/documentSymbol");
+    TIDE_CHECK(has(symbols, "\"name\":\"Points\",\"detail\":\"type alias\""));
+    TIDE_CHECK(has(request_with("workspace/symbol", "\"query\":\"Points\""), "\"name\":\"Points\""));
+
+    const char *reply = complete(TYPE_ALIASES "Count Echo($) { return 1; }\n");
+    TIDE_CHECK(offers(reply, "Count") && offers(reply, "Points") && offers(reply, "Scores") && offers(reply, "Life"));
+    reply = complete(TYPE_ALIASES "using More = $\n");
+    TIDE_CHECK(offers(reply, "int") && offers(reply, "List") && offers(reply, "Points") && offers(reply, "Life"));
+    reply = complete(TYPE_ALIASES "using More = List<$\n");
+    TIDE_CHECK(offers(reply, "Count") && offers(reply, "Score"));
+    reply = complete(TYPE_ALIASES "void Inspect(Scores scores) { var value = scores.$ }\n");
+    TIDE_CHECK(offers(reply, "count") && offers(reply, "Add"));
+    reply = complete(TYPE_ALIASES "Phase Read() { return Phase.$ }\n");
+    TIDE_CHECK(offers(reply, "Ready") && offers(reply, "Done") && offers(reply, "Count()"));
+    reply = complete(TYPE_ALIASES "void Inspect() { Types.$ }\n");
+    TIDE_CHECK(offers(reply, "Points") && offers(reply, "Count") && offers(reply, "Scores"));
+    reply = complete("scene Main;\n$\n");
+    TIDE_CHECK(offers(reply, "using alias") && has(reply, "using ${1:Name} = ${2:Type};"));
+
+    static const char messy[] = "namespace Types {\nusing Scores=Map<int,List<float>>;\n}\nscene Main;\n";
+    static const char tidy[] = "namespace Types\n{\n    using Scores = Map<int, List<float>>;\n}\nscene Main;\n";
+    format_reply(messy);
+    TIDE_CHECK(strcmp(apply_reply(messy, NULL), tidy) == 0);
+    TIDE_CHECK(has(format_reply(tidy), "\"result\":[]"));
+    open_document("using Broken = ;\nusing Count = int;\nscene Main;\nCount Echo(Count value) { return value; }\n");
+    TIDE_CHECK(has(hover_at(1, 8), "using Count = int;"));
+}
+
+TIDE_TEST(lsp_type_alias_source_spelling)
+{
+    start();
+    static const char code[] = "using Real = double;\nusing Count = int;\nusing Other = Real;\nscene Main;\n"
+        "Real Make(Count input) { return Real(input) + Real.PI; }\n";
+    open_document(code);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 0, 8,
+                               "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 5);
+    request_at("file:///test.tide", "textDocument/rename", 0, 8, "\"newName\":\"Scalar\"");
+    const char *renamed = apply_reply(code, "file:///test.tide");
+    TIDE_CHECK(count(renamed, "Scalar") == 5 && !has(renamed, "Real"));
+    TIDE_CHECK(has(renamed, "using Scalar = double;") && has(renamed, "Scalar(input) + Scalar.PI"));
+    TIDE_CHECK(has(hover_at(4, 47), "using Real = double;"));
+}
+
+TIDE_TEST(lsp_type_alias_enum_backing)
+{
+    start();
+    static const char code[] = "namespace Types { using ByteKind = byte; }\n"
+        "enum Flags : Types.ByteKind { None, Ready }\nscene Main;\n";
+    open_document("namespace Types { using ByteKind = byte; }\n"
+                  "enum Flags : Types.Byte$Kind { None, Ready }\nscene Main;\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "using ByteKind = byte;"));
+    TIDE_CHECK(has(request("textDocument/definition"), "\"line\":0,\"character\":24"));
+    TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 2);
+    request_with("textDocument/rename", "\"newName\":\"Bits\"");
+    const char *renamed = apply_reply(code, "file:///test.tide");
+    TIDE_CHECK(has(renamed, "using Bits = byte;") && has(renamed, "enum Flags : Types.Bits"));
+    open_document("enum Plain : by$te { None, Ready }\nscene Main;\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "one byte"));
+}
+
+TIDE_TEST(lsp_type_alias_qualified_constructors_and_world)
+{
+    start();
+    static const char code[] = "using Names;\nnamespace Names\n{\n"
+        "    using Number = float;\n    using Cells = Grid2<int>;\n    using Dice = Random;\n"
+        "    component Body { int value; }\n    using Part = Body;\n}\nscene Main;\n"
+        "Names.Number MakeNumber() { return Names.Number(1); }\n"
+        "Dice MakeDice() { return Dice(7); }\n"
+        "Names.Dice MakeQualifiedDice() { return Names.Dice(7); }\n"
+        "local singleton Data { Names.Cells cells = Names.Cells(2, 2); }\n"
+        "event(Spawned) Setup(mut World world, with Main) { var entity = Spawn(Names.Part); "
+        "var part = world.Get<Names.Part>(entity); world.Set<Names.Part>(entity, part); }\n";
+    open_document(code);
+    TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 3, 12,
+                               "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 3);
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 4, 12,
+                               "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 3);
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 5, 12,
+                               "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 5);
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 7, 12,
+                               "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 4);
+    request_at("file:///test.tide", "textDocument/rename", 7, 12, "\"newName\":\"Bit\"");
+    const char *renamed = apply_reply(code, "file:///test.tide");
+    TIDE_CHECK(count(renamed, "Bit") == 4 && !has(renamed, "Part"));
+    TIDE_CHECK(has(renamed, "Spawn(Names.Bit)") && has(renamed, "world.Get<Names.Bit>") && has(renamed, "world.Set<Names.Bit>"));
+    TIDE_CHECK(has(renamed, "component Body") && has(renamed, "using Bit = Body;"));
+}
+
+TIDE_TEST(lsp_type_alias_enum_attributes)
+{
+    start();
+    static const char code[] = "using Scheduling;\nnamespace Scheduling\n{\n"
+        "    enum Stages { Early, Late }\n    using Phase = Stages;\n}\nscene Main;\n"
+        "[Stage(Phase.Early)]\nview First() { }\n"
+        "[Before(Scheduling.Phase.Late), After(Phase.Early)]\nview Middle() { }\n"
+        "[Stage(Phase.Late)]\nview Last() { }\n"
+        "[Channel(Phase.Early)]\ncommand Change { int value; }\n";
+    open_document(code);
+    TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
+    TIDE_CHECK(has(hover_at(7, 9), "using Phase = Stages;"));
+    TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 4, 12,
+                               "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 6);
+    request_at("file:///test.tide", "textDocument/rename", 4, 12, "\"newName\":\"Step\"");
+    const char *renamed = apply_reply(code, "file:///test.tide");
+    TIDE_CHECK(count(renamed, "Step") == 6 && !has(renamed, "Phase"));
+    TIDE_CHECK(has(renamed, "Before(Scheduling.Step.Late)") && has(renamed, "Channel(Step.Early)"));
+    request_at("file:///test.tide", "textDocument/rename", 3, 21, "\"newName\":\"Initial\"");
+    renamed = apply_reply(code, "file:///test.tide");
+    TIDE_CHECK(count(renamed, "Initial") == 4 && has(renamed, "using Phase = Stages;"));
 }
 
 TIDE_TEST(lsp_rename_refusals)
@@ -5381,8 +5411,7 @@ TIDE_TEST(lsp_rename_refusals)
     "singleton Field { Grid2<int> cells = Grid2(8, 8); List<int> items; string name; }\n"                   \
     "singleton Camera { float2 center; }\ncomponent Body { float x; }\nscene Main { }\n"
 
-// Built-in methods are what they're called on's: a list's Clear isn't an
-// entity's Destroy. Hovers, signatures and references say so.
+// Built-in methods are what they're called on's: a list's Clear isn't an entity's Destroy.
 TIDE_TEST(lsp_built_in_methods)
 {
     start();
@@ -5402,17 +5431,14 @@ TIDE_TEST(lsp_built_in_methods)
     TIDE_CHECK(has(request("textDocument/hover"), "entity.Destroy()"));
     open_document(BUILT_IN_METHODS "system S(Field field)\n{\n    var n = field.name.len$gth;\n}\n");
     TIDE_CHECK(has(request("textDocument/hover"), "How many characters the text has."));
-    // A grid made in a default: a type, as constructors are
     open_document("singleton Field { Grid2<int> cells = Gr$id2(8, 8); }\nscene Main { }\n");
     TIDE_CHECK(has(request("textDocument/hover"), "Grid2<int>"));
 
-    // Signatures, by what the call is on
     open_document(BUILT_IN_METHODS "system S(mut Field field)\n{\n    field.items.Insert($\n}\n");
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "List<int>.Insert(int index, int item)"));
     open_document(BUILT_IN_METHODS "system S(mut Field field)\n{\n    field.items.Add($\n}\n");
     const char *add = request("textDocument/signatureHelp");
     TIDE_CHECK(has(add, "List<int>.Add(int item)") && !has(add, "components"));
-    // Resize: a list's, in what's offered after it, its hover and its signature
     TIDE_CHECK(offers(complete(BUILT_IN_METHODS "system S(mut Field field)\n{\n    field.items.$\n}\n"), "Resize"));
     open_document(BUILT_IN_METHODS "system S(mut Field field)\n{\n    field.items.Res$ize(4);\n}\n");
     TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
@@ -5420,7 +5446,7 @@ TIDE_TEST(lsp_built_in_methods)
     TIDE_CHECK(has(resize, "List<int>.Resize(int count)") && has(resize, "new ones are the element type's zero"));
     open_document(BUILT_IN_METHODS "system S(mut Field field)\n{\n    field.items.Resize($\n}\n");
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "List<int>.Resize(int count)"));
-    open_document(BUILT_IN_METHODS "system S(Field field)\n{\n    field.items.Resize(4);\n}\n"); // It changes the list
+    open_document(BUILT_IN_METHODS "system S(Field field)\n{\n    field.items.Resize(4);\n}\n");
     TIDE_CHECK(has(last_sent(), "'field' is read-only") && has(last_sent(), "'List.Resize' is a mut method"));
     open_document(BUILT_IN_METHODS "system S(mut Body body)\n{\n    this.Add($\n}\n");
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "entity.Add(components...)"));
@@ -5437,7 +5463,6 @@ TIDE_TEST(lsp_built_in_methods)
     open_document("scene Main { }\nview V()\n{\n    Draw.Text(\"a\", $\n}\n");
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "Draw.Text(string text, float2 position, float size, Color color)"));
 
-    // References: a grid's Clear, not a list's; and Snap and Grid2 are found at all
     static const char program[] = BUILT_IN_METHODS "system S(mut Field field, with Body)\n{\n    field.cells.Clear();\n"
                                   "    field.items.Clear();\n    field.cells.Clear();\n    this.Snap();\n}\n";
     open_document(program);
@@ -5450,8 +5475,7 @@ TIDE_TEST(lsp_built_in_methods)
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 9, 10, ""), "entity.Snap()"));
 }
 
-// Inlay hints name the parameters literal arguments go to, the built-ins' too,
-// but for one-letter names, which only say where the argument is.
+// Inlay hints name the parameters literal arguments go to, except one-letter names.
 TIDE_TEST(lsp_inlay_hints_for_built_ins)
 {
     start();
@@ -5464,10 +5488,9 @@ TIDE_TEST(lsp_inlay_hints_for_built_ins)
     const char *hints = request_at("file:///test.tide", "textDocument/inlayHint", 0, 0,
                                    "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":20,\"character\":0}}");
     TIDE_CHECK(has(hints, "{\"position\":{\"line\":4,\"character\":30},\"label\":\"radius:\",\"kind\":2"));
-    TIDE_CHECK(!has(hints, "\"label\":\"center:\"") && !has(hints, "\"label\":\"color:\"")); // Not literals
+    TIDE_CHECK(!has(hints, "\"label\":\"center:\"") && !has(hints, "\"label\":\"color:\""));
     TIDE_CHECK(has(hints, "\"label\":\"label:\"") && has(hints, "\"label\":\"min:\"") && has(hints, "\"label\":\"max:\""));
     TIDE_CHECK(has(hints, "\"label\":\"port:\""));
-    // float2(1, 2), Math.Clamp(x, a, b) and Color(r, g, b)
     TIDE_CHECK(!has(hints, "\"label\":\"x:\"") && !has(hints, "\"label\":\"a:\"") && !has(hints, "\"label\":\"r:\""));
 }
 
@@ -5489,7 +5512,7 @@ TIDE_TEST(lsp_skinned_sample_hints_only_written_arguments)
     const char *hints = request_at("file:///test.tide", "textDocument/inlayHint", 0, 0,
                                    "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":20,\"character\":0}}");
     TIDE_CHECK(count(hints, "\"label\":\"seconds:\"") == 4);
-    TIDE_CHECK(count(hints, "\"label\":\"playback:\"") == 2); // Only the two explicit defaults
+    TIDE_CHECK(count(hints, "\"label\":\"playback:\"") == 2);
     TIDE_CHECK(has(hints, "{\"position\":{\"line\":1,\"character\":55},\"label\":\"seconds:\",\"kind\":2"));
     TIDE_CHECK(has(hints, "{\"position\":{\"line\":4,\"character\":61},\"label\":\"playback:\",\"kind\":2"));
     TIDE_CHECK(has(hints, "{\"position\":{\"line\":10,\"character\":28},\"label\":\"playback:\",\"kind\":2"));
@@ -5523,16 +5546,14 @@ TIDE_TEST(lsp_enum_members_and_hovers)
     open_document("enum Page { Title, Options }\nsingleton Menu { Page page; }\nscene Main { }\n"
                   "system S(mut Menu menu) { menu.page = Page.Opt$ions; }\n");
     TIDE_CHECK(has(request("textDocument/definition"), "\"range\":{\"start\":{\"line\":0,\"character\":19}"));
-    // The engine's enums have no source to go to, and keep their names.
     open_document("scene Arena { Prediction prediction; }\nscene Main { }\n"
                   "event(Spawned) Setup(with Main) { Scene.Load(Arena { prediction = Prediction.Roll$back }); }\n");
     TIDE_CHECK(has(request("textDocument/definition"), "\"result\":null"));
     TIDE_CHECK(has(request("textDocument/prepareRename"), "Members of the engine's enums can't be renamed."));
 
-    // Session's calls, as the checker has them
     open_document("local scene Main { }\nview Menu()\n{\n    Sess$ion.Leave();\n}\n");
     const char *session = request("textDocument/hover");
-    TIDE_CHECK(has(session, "Start, Open, Close, Kick, KickAll, Join, Connect, Leave and End") && !has(session, "Play"));
+    TIDE_CHECK(has(session, "Start, Open, Close, Kick, KickAll, Join, Connect, Leave, End, Watch and Unwatch") && !has(session, "Play"));
     open_document("[Native$Name(\"c_noise\")]\nextern float Noise(float x);\nscene Main { }\n");
     TIDE_CHECK(has(request("textDocument/hover"), "The C function the extern function after it calls"));
     open_document("enum Voxel : by$te { Air, Stone }\nscene Main { }\n");
@@ -5554,7 +5575,6 @@ TIDE_TEST(lsp_rename_keywords)
         TIDE_CHECK(has(request_with("textDocument/rename", extra), "keyword"));
     }
     TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"string\""), "built into the language"));
-    // A local can take a word that only starts declarations, as the parser allows.
     open_document(GAME_TYPES "system Move(mut Body body)\n{\n    var spe$ed = 1;\n    body.radius = speed;\n}\n");
     TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"scene\""), "\"changes\""));
     TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"while\""), "keyword"));
@@ -5579,11 +5599,11 @@ TIDE_TEST(lsp_highlights_writes)
     open_document(GAME_TYPES "system Move(mut Body body)\n{\n    mut var n$ = 1;\n    n = 2;\n    n += body.radius;\n"
                   "    n++;\n    body.radius = n;\n}\n");
     const char *local = request("textDocument/documentHighlight");
-    TIDE_CHECK(count(local, "\"kind\":3") == 4); // Declared, set, added to, incremented
-    TIDE_CHECK(count(local, "\"kind\":2") == 1); // Read into body.radius
+    TIDE_CHECK(count(local, "\"kind\":3") == 4);
+    TIDE_CHECK(count(local, "\"kind\":2") == 1);
     open_document(GAME_TYPES "system Move(mut Body body)\n{\n    body.rad$ius = 1;\n    var r = body.radius;\n}\n");
     const char *field = request("textDocument/documentHighlight");
-    TIDE_CHECK(count(field, "\"kind\":3") == 2 && count(field, "\"kind\":2") == 1); // Its declaration is in the file too
+    TIDE_CHECK(count(field, "\"kind\":3") == 2 && count(field, "\"kind\":2") == 1);
 }
 
 TIDE_TEST(lsp_signature_help)
@@ -5593,7 +5613,6 @@ TIDE_TEST(lsp_signature_help)
     const char *circle = request("textDocument/signatureHelp");
     TIDE_CHECK(has(circle, "\"label\":\"Draw.Circle(float2 center, float radius, Color color)\""));
     TIDE_CHECK(has(circle, "\"activeParameter\":1"));
-    // "Draw.Circle(" is 14 characters: `float2 center` is 14 to 27.
     TIDE_CHECK(has(circle, "\"parameters\":[{\"label\":[12,25]}"));
 
     open_document(GAME_TYPES "system S()\n{\n    var v = float3(float2(1, 2), $\n}\n");
@@ -5601,7 +5620,6 @@ TIDE_TEST(lsp_signature_help)
     TIDE_CHECK(has(vector, "float3(float2 xy, float z)"));
     TIDE_CHECK(has(vector, "\"activeSignature\":0,\"activeParameter\":1"));
 
-    // Commas inside a component literal don't count.
     open_document(GAME_TYPES "system S()\n{\n    Spawn(Body { position = float2(1, 2), radius = 3 }, $\n}\n");
     const char *spawn = request("textDocument/signatureHelp");
     TIDE_CHECK(has(spawn, "Spawn(components...)"));
@@ -5652,7 +5670,6 @@ TIDE_TEST(lsp_singleton_function_parameters)
                   "void Add(mut Count count) { count.value += 1; }\n"
                   "scene Main { }\nsystem Tick(mut Count count) { Add($count); }\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
-    // Signature help as the singleton argument is being typed.
     open_document("singleton Count { int value; }\n"
                   "void Add(mut Count count) { count.value += 1; }\n"
                   "scene Main { }\nsystem Tick(mut Count count)\n{\n    Add($\n}\n");
@@ -5667,8 +5684,7 @@ TIDE_TEST(lsp_singleton_function_parameters)
     TIDE_CHECK(!has(last_sent(), "can't take singletons"));
 }
 
-// A valid long signature keeps every parameter, including when the last
-// one is passed first by name. The short overload mustn't become active.
+// A long signature keeps every parameter, even when the last is passed first by name; the short overload mustn't become active.
 TIDE_TEST(lsp_many_function_parameters)
 {
     for (int named = 0; named < 2; named++) {
@@ -5713,7 +5729,7 @@ TIDE_TEST(lsp_many_function_parameters)
         const char *hints = request_with("textDocument/inlayHint",
                                          "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":10,\"character\":0}}");
         if (named) {
-            TIDE_CHECK(has(hints, "\"result\":[]")); // The arguments already say their names
+            TIDE_CHECK(has(hints, "\"result\":[]"));
         } else {
             TIDE_CHECK(count(hints, "\"kind\":2") == 40 && has(hints, "\"label\":\"value39:\""));
         }
@@ -5786,10 +5802,8 @@ TIDE_TEST(lsp_format)
     TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 2, 11,
                                 "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 3);
 
-    // Formatting what's formatted changes nothing.
     TIDE_CHECK(has(format_reply(expected), "\"result\":[]"));
 
-    // Continuation lines go one level deeper, or keep deeper alignment.
     static const char continued[] =
         "system Main()\n{\n    var x = 1\n    + 2;\n    Spawn(Owner,\n          Owner);\n}\n";
     format_reply(continued);
@@ -5797,8 +5811,7 @@ TIDE_TEST(lsp_format)
                       "system Main()\n{\n    var x = 1\n        + 2;\n    Spawn(Owner,\n          Owner);\n}\n") == 0);
 }
 
-// Selection grows from the word at the cursor through what holds it, out to
-// its declaration.
+// Selection grows from the word at the cursor out to its declaration.
 TIDE_TEST(lsp_selection_ranges)
 {
     start();
@@ -5815,9 +5828,8 @@ TIDE_TEST(lsp_selection_ranges)
                            "\"parent\":{\"range\":{\"start\":{\"line\":23,\"character\":0},\"end\":{\"line\":28,\"character\":1}},"
                            "\"parent\":{\"range\":{\"start\":{\"line\":22,\"character\":0},\"end\":{\"line\":28,\"character\":1}}}}}}}}}}}]"));
     if (!has(ranges, "\"parent\":{\"range\":{\"start\":{\"line\":22,")) printf("%s\n", ranges);
-    // Every position gets one, even outside the code
     const char *two = request_with("textDocument/selectionRange", "\"positions\":[{\"line\":0,\"character\":0},{\"line\":30,\"character\":0}]");
-    TIDE_CHECK(count(two, "{\"range\":") == 3); // `component` in its declaration, and the empty end
+    TIDE_CHECK(count(two, "{\"range\":") == 3);
     check_repeat_at("file:///test.tide", "textDocument/selectionRange", cursor_line, cursor_character,
                     "\"positions\":[{\"line\":26,\"character\":38}]");
     TIDE_CHECK(has(request("textDocument/hover"), "float radius"));
@@ -5834,15 +5846,13 @@ TIDE_TEST(lsp_range_formatting)
     request_with("textDocument/rangeFormatting", "\"range\":{\"start\":{\"line\":5,\"character\":0},\"end\":"
                                                  "{\"line\":6,\"character\":0}},\"options\":{\"tabSize\":4,\"insertSpaces\":true}");
     const char *formatted = apply_reply(messy, NULL);
-    // Its indentation as the lines before it make it, though they stay as they are
     TIDE_CHECK(strcmp(formatted, "scene Main { }\nsystem S()\n{\nmut var n = 0;\nif (n > 0)\n        n += 1;\nn+=2;\n}\n") == 0);
     if (strcmp(formatted, "scene Main { }\nsystem S()\n{\nmut var n = 0;\nif (n > 0)\n        n += 1;\nn+=2;\n}\n") != 0) {
         printf("--- got:\n%s---\n", formatted);
     }
 }
 
-// C#-style braces: a block that spans lines has its braces on lines of their
-// own. Actions on one line and literals stay as they are.
+// C#-style braces: a block that spans lines has its braces on lines of their own; one-line actions and literals stay.
 TIDE_TEST(lsp_format_braces)
 {
     start();
@@ -5865,7 +5875,7 @@ TIDE_TEST(lsp_format_braces)
         "    if (body.position.y > 1) { return; }\n    else\n    {\n        body.position.y = 0;\n    }\n"
         "    if (body.position.y < 0) { return; }\n"
         "    var b = Spawn(Body { position = float2(1) });\n"
-        "    Spawn(Body {\n        position = float2(2)\n    });\n" // A literal's fields: one level in, even in a call
+        "    Spawn(Body {\n        position = float2(2)\n    });\n"
         "}\n"
         "system Main() { }\n";
     format_reply(js);
@@ -5873,12 +5883,10 @@ TIDE_TEST(lsp_format_braces)
     TIDE_CHECK(strcmp(formatted, expected) == 0);
     if (strcmp(formatted, expected) != 0) printf("--- got:\n%s---\n", formatted);
 
-    // Formatting what's formatted changes nothing.
     char again[8192];
     snprintf(again, sizeof again, "%s", formatted);
     TIDE_CHECK(has(format_reply(again), "\"result\":[]"));
 
-    // New lines match the file's.
     static const char crlf[] = "system Main() {\r\n    return;\r\n}\r\n";
     format_reply(crlf);
     TIDE_CHECK(strcmp(apply_reply(crlf, NULL), "system Main()\r\n{\r\n    return;\r\n}\r\n") == 0);
@@ -5902,7 +5910,6 @@ TIDE_TEST(lsp_format_keeps_tokens)
     snprintf(formatted, sizeof formatted, "%s", apply_reply(program, NULL));
     TIDE_CHECK(strcmp(formatted, program) != 0);
 
-    // Same text with all whitespace removed.
     char a[8192];
     char b[8192];
     size_t na = 0;
@@ -5911,16 +5918,14 @@ TIDE_TEST(lsp_format_keeps_tokens)
     for (const char *p = formatted; *p; p++) if (*p != ' ' && *p != '\n') b[nb++] = *p;
     a[na] = b[nb] = '\0';
     TIDE_CHECK(strcmp(a, b) == 0);
-    TIDE_CHECK(has(formatted, "\"a  b   \\\"c\\\"\"")); // Text keeps its spaces
+    TIDE_CHECK(has(formatted, "\"a  b   \\\"c\\\"\""));
 
-    // It still compiles as before, and formatting again changes nothing.
     open_document(formatted);
     TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
     TIDE_CHECK(has(format_reply(formatted), "\"result\":[]"));
 }
 
-// Types `program` out, from its first `from` characters on: every prefix is
-// analysed and queried, as an editor does on each keystroke.
+// Types `program` out from its first `from` characters on, analysing and querying every prefix as an editor does.
 static void type_out(const char *program, const size_t from)
 {
     char text[8192];
@@ -6009,8 +6014,7 @@ TIDE_TEST(lsp_every_prefix_is_safe)
     TIDE_CHECK(has(last_sent(), "\"result\""));
 }
 
-// The same for frags, verts and the view that draws through them, after the
-// types they use; and once they're whole, asking at every place in them.
+// The same for frags, verts and the view that draws through them, and at every place once they're whole.
 TIDE_TEST(lsp_shaders_every_prefix_is_safe)
 {
     start();
@@ -6068,7 +6072,6 @@ TIDE_TEST(lsp_render_targets_texture_members_and_blit)
     open_document(program);
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "RenderTarget(float width, float height)"));
     TIDE_CHECK(has(last_sent(), "RenderTarget(float width, float height, float pixelsPerUnit)"));
-    // RenderTarget.Window: the one that follows the window, after the type's name
     snprintf(program, sizeof program, "%sview V()\n{\n    var scene = RenderTarget.$\n}\n", types);
     TIDE_CHECK(offers(complete(program), "Window"));
     snprintf(program, sizeof program, "%sview V()\n{\n    var scene = RenderTarget.Window($\n}\n", types);
@@ -6082,10 +6085,7 @@ TIDE_TEST(lsp_render_targets_texture_members_and_blit)
     TIDE_CHECK(has(request("textDocument/hover"), "All target and color aliases"));
 }
 
-// What a target holds is said where it's made, a Format last, and a target's
-// depth is a DepthTexture a frag reads: the enum's members, each form of the
-// constructor and of Screen, `depth` beside `color`, and Sample and Compare
-// where a frag has one.
+// Render targets: formats, depth as a DepthTexture a frag reads, constructors, Screen, Sample and Compare.
 TIDE_TEST(lsp_render_target_formats_and_depth)
 {
     start();
@@ -6116,17 +6116,14 @@ TIDE_TEST(lsp_render_target_formats_and_depth)
     open_document(program);
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "Format format") && has(last_sent(), "float factor, Format format"));
 
-    // A target's depth, beside its color
     snprintf(program, sizeof program, "%sview V(mut Lamp lamp)\n{\n    lamp.shadow = lamp.map.$\n}\n", types);
     const char *members = complete(program);
     TIDE_CHECK(offers(members, "depth") && offers(members, "color") && has(members, "DepthTexture"));
     snprintf(program, sizeof program, "%sview V(mut Lamp lamp)\n{\n    var shadow = lamp.map.depth;\n    lamp.shadow = sha$dow;\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/hover"), "DepthTexture"));
-    // The type, where local state is declared
     TIDE_CHECK(offers(complete("scene Main { }\nlocal singleton Lamp { $ }\n"), "DepthTexture"));
 
-    // In a frag, a DepthTexture field has its two ways of being read
     snprintf(program, sizeof program, "%sfrag Lit(Vertex3 vertex, out Color color, Lamp lamp)\n{\n    float lit = lamp.shadow.$\n}\n", types);
     const char *reads = complete(program);
     TIDE_CHECK(offers(reads, "Sample") && offers(reads, "Compare"));
@@ -6145,14 +6142,12 @@ TIDE_TEST(lsp_render_target_formats_and_depth)
     open_document(program);
     TIDE_CHECK(has(request("textDocument/hover"), "the nearest thing drawn"));
 
-    // A frag takes it through a component or a singleton, never as a parameter of its own
     snprintf(program, sizeof program, "%sfrag Lit(Vertex3 vertex, out Color color, DepthTexture shadow)\n{\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(last_sent(), "a field of a component or singleton it takes"));
 }
 
-// A function a frag calls samples the textures it takes as parameters: a
-// depth, a Texture and a cube, and an asset by its name.
+// A function a frag calls samples the textures it takes as parameters.
 TIDE_TEST(lsp_textures_in_functions)
 {
     start();
@@ -6172,7 +6167,6 @@ TIDE_TEST(lsp_textures_in_functions)
     open_document(program);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
-    // What each has to read it with, in a function that reads nothing yet
     snprintf(program, sizeof program, "%sfloat Sunlit(DepthTexture depth, float3 at)\n{\n    return depth.$\n}\n", types);
     const char *reads = complete(program);
     TIDE_CHECK(offers(reads, "Sample") && offers(reads, "Compare"));
@@ -6190,15 +6184,12 @@ TIDE_TEST(lsp_textures_in_functions)
     TIDE_CHECK(offers(complete(program), "size"));
     snprintf(program, sizeof program, "%sColor Above(Cubemap sky, float3 way)\n{\n    return sky.$\n}\n", types);
     TIDE_CHECK(offers(complete(program), "Sample"));
-    // ...and in one that does, which is the GPU's alone
     snprintf(program, sizeof program, "%sfloat Sunlit(DepthTexture depth, float3 at)\n{\n    float near = depth.Sample(at.xy);\n"
                                       "    return near * depth.$\n}\n", types);
     TIDE_CHECK(offers(complete(program), "Compare"));
-    // In a view, a depth has nothing to read it with
     snprintf(program, sizeof program, "%sview V(mut Lamp lamp)\n{\n    lamp.shadow.$\n}\n", types);
     TIDE_CHECK(!offers(complete(program), "Compare"));
 
-    // The hovers say a function takes one
     snprintf(program, sizeof program, "%sfloat Sunlit(Depth$Texture depth, float3 at) { return depth.Compare(at.xy, at.z); }\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/hover"), "reads the depth its call names"));
@@ -6206,7 +6197,6 @@ TIDE_TEST(lsp_textures_in_functions)
     open_document(program);
     TIDE_CHECK(has(request("textDocument/hover"), "A function they call compares the depth it takes"));
 
-    // A function that reads one is the GPU's: a view's call says so, and so does a Sample of what's no parameter
     snprintf(program, sizeof program, "%sfloat Sunlit(DepthTexture depth, float3 at) { return depth.Compare(at.xy, at.z); }\n"
                                       "view V(mut Lamp lamp)\n{\n    lamp.shadow = lamp.map.depth;\n"
                                       "    Debug.Log(Sunlit(lamp.shadow, float3(0)));\n}\n", types);
@@ -6217,8 +6207,7 @@ TIDE_TEST(lsp_textures_in_functions)
     TIDE_CHECK(has(last_sent(), "a function samples a DepthTexture it takes as a parameter of its own"));
 }
 
-// A target of several color images, a format each; its `colors`, read one at
-// a time; and a frag's outputs after the pixel's color.
+// A target of several color images: a format each, `colors`, and a frag's outputs after the pixel's color.
 TIDE_TEST(lsp_render_target_samples)
 {
     start();
@@ -6233,7 +6222,6 @@ TIDE_TEST(lsp_render_target_samples)
     open_document(program);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
-    // What the constructor's help says of them, and the type's
     snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget(64, 64, $\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "samples: 4") && has(last_sent(), "smooths the edges"));
@@ -6244,7 +6232,6 @@ TIDE_TEST(lsp_render_target_samples)
     open_document(program);
     TIDE_CHECK(has(request("textDocument/hover"), "samples: 4"));
 
-    // A call that says them names its other arguments as they are: its samples aren't taken for one of them
     snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget(64, 48, 2, Format.Rgba16f, samples: 4);\n"
                                       "    maps.scene = RenderTarget.Window(0.5, samples: 4);\n}\n", types);
     open_document(program);
@@ -6252,9 +6239,8 @@ TIDE_TEST(lsp_render_target_samples)
     const char *hints = request_at("file:///test.tide", "textDocument/inlayHint", 0, 0,
                                    "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":20,\"character\":0}}");
     TIDE_CHECK(has(hints, "\"label\":\"width:\"") && has(hints, "\"label\":\"pixelsPerUnit:\"") && has(hints, "\"label\":\"factor:\""));
-    TIDE_CHECK(!has(hints, "\"label\":\"samples:\"")); // Written with its name already
+    TIDE_CHECK(!has(hints, "\"label\":\"samples:\""));
 
-    // What's refused, where it's written
     snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget(64, 64, samples: 3);\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(last_sent(), "samples are 1, 2, 4 or 8, and this says 3"));
@@ -6282,7 +6268,6 @@ TIDE_TEST(lsp_render_target_colors_and_frag_outputs)
     open_document(program);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
-    // A format for each color image, after the size
     snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.scene = RenderTarget(64, 64, Format.Rgba8, Format.$);\n}\n", types);
     const char *formats = complete(program);
     TIDE_CHECK(offers(formats, "Rgba16f") && offers(formats, "Rgba8") && offers(formats, "Depth"));
@@ -6294,7 +6279,6 @@ TIDE_TEST(lsp_render_target_colors_and_frag_outputs)
     open_document(program);
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "RenderTarget.Window(Format.Rgba8, Format.Rgba16f)"));
 
-    // Its color images, beside its first and its depth
     snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    maps.normals = maps.scene.$\n}\n", types);
     const char *members = complete(program);
     TIDE_CHECK(offers(members, "colors") && offers(members, "color") && offers(members, "depth"));
@@ -6302,10 +6286,8 @@ TIDE_TEST(lsp_render_target_colors_and_frag_outputs)
     snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    var second = maps.scene.colors[1];\n    maps.normals = sec$ond;\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/hover"), "Texture"));
-    // A frag doesn't read a target: its images aren't offered there
     snprintf(program, sizeof program, "%sfrag Lit(Vertex3 vertex, out Color color, Maps maps)\n{\n    color = maps.scene.$\n}\n", types);
     TIDE_CHECK(!offers(complete(program), "colors"));
-    // Read one at a time, and never assigned
     snprintf(program, sizeof program, "%sview V(mut Maps maps)\n{\n    var all = maps.scene.colors;\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(last_sent(), "read one at a time"));
@@ -6316,7 +6298,6 @@ TIDE_TEST(lsp_render_target_colors_and_frag_outputs)
     open_document(program);
     TIDE_CHECK(has(last_sent(), "it's a target's only format"));
 
-    // A frag's outputs: the pixel's color, then one for each color image after its target's first
     static const char fill[] = "frag Fill(Vertex3 vertex, out Color albedo, out Color nor$mal)\n{\n"
                                "    albedo = vertex.color;\n    normal = Color(0, 0, 1);\n}\n";
     snprintf(program, sizeof program, "%s%s", types, fill);
@@ -6330,13 +6311,11 @@ TIDE_TEST(lsp_render_target_colors_and_frag_outputs)
                                       "    albedo = vertex.color;\n    normal = albedo;\n    far = albedo;\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/hover"), "third output") && has(last_sent(), "target.colors[2]"));
-    // Another `out` is offered after the first, and Color after it
     snprintf(program, sizeof program, "%sfrag Fill(Vertex3 vertex, out Color albedo, $)\n{\n}\n", types);
     const char *more = complete(program);
     TIDE_CHECK(offers(more, "out") && has(more, "one more color the frag writes"));
     snprintf(program, sizeof program, "%sfrag Fill(Vertex3 vertex, out Color albedo, out $)\n{\n}\n", types);
     TIDE_CHECK(offers(complete(program), "Color"));
-    // Each is owed on every path, and five is one too many
     static char unwritten[1024];
     snprintf(unwritten, sizeof unwritten, "%sfrag Fill(Vertex3 vertex, out Color albedo, out Color normal)\n{\n"
                                           "    albedo = vertex.color;\n}\n", types);
@@ -6353,8 +6332,7 @@ TIDE_TEST(lsp_render_target_colors_and_frag_outputs)
     TIDE_CHECK(has(last_sent(), "a frag writes 4 colors at the most"));
 }
 
-// The window's one word, and formats named by what they store: the spellings
-// from before are each a rename away.
+// The window's one word, and formats named by what they store; the old spellings are a rename away.
 TIDE_TEST(lsp_window_pixels_and_format_names)
 {
     start();
@@ -6376,7 +6354,6 @@ TIDE_TEST(lsp_window_pixels_and_format_names)
     open_document("scene Main { }\nview V()\n{\n    var plain = RenderTarget(64, 64, Format.Color);\n    plain.Dispose();\n}\n");
     TIDE_CHECK(has(last_sent(), "Format.Color is 'Format.Rgba8' now"));
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'Rgba8'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
-    // As they're written now, nothing is said, and a target's own has both forms
     open_document("scene Main { }\nview V()\n{\n    var scene = RenderTarget.Window(0.5, Format.Rgba8, Format.Rgba16f);\n"
                   "    scene.SetScreen();\n    scene.Screen()\n    {\n    }\n    Draw.SetScreen();\n    scene.Dispose();\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
@@ -6481,44 +6458,36 @@ TIDE_TEST(lsp_game_of_several_files)
     start();
     server.manifest = manifest;
     open_uri(uri_b, main_file);
-    // Diagnostics for both files, in path order, none of them errors: Body and
-    // Gravity come from the other file.
     TIDE_CHECK(sent_count == 2);
     TIDE_CHECK(count(sent[0], uri_b) == 1 && count(sent[1], uri_a) == 1);
     TIDE_CHECK(has(sent[0], "\"diagnostics\":[]") && has(sent[1], "\"diagnostics\":[]"));
 
-    // `Body` leads to the other file.
     TIDE_CHECK(has(request_at(uri_b, "textDocument/definition", 1, 40, ""), uri_a));
     TIDE_CHECK(count(request_at(uri_b, "textDocument/references", 1, 40, "\"context\":{\"includeDeclaration\":true}"),
-                     uri_a) >= 2); // The declaration and Gravity's parameter
+                     uri_a) >= 2);
     TIDE_CHECK(has(last_sent(), uri_b));
 
-    // The hover shows where Move runs.
     TIDE_CHECK(has(request_at(uri_b, "textDocument/hover", 3, 8, ""), "Runs 2nd of 2 systems each tick, after `Physics.Gravity`"));
 
-    // Renaming Gravity from the attribute edits both files.
     const char *rename = request_at(uri_b, "textDocument/rename", 2, 17, "\"newName\":\"Fall\"");
     TIDE_CHECK(has(rename, uri_a) && has(rename, uri_b));
     TIDE_CHECK(count(rename, "\"newText\":\"Fall\"") == 2);
 
-    // So does renaming Physics: its `namespace` line, the `using` and the attribute.
     rename = request_at(uri_b, "textDocument/rename", 0, 8, "\"newName\":\"World\"");
     TIDE_CHECK(has(rename, uri_a) && has(rename, uri_b));
     TIDE_CHECK(count(rename, "\"newText\":\"World\"") == 3);
     TIDE_CHECK(has(request_at(uri_b, "textDocument/rename", 0, 8, "\"newName\":\"Main\""), "'Main' is already declared"));
 
-    // Completion after `Physics.` lists what's inside it.
     open_uri(uri_b, "using Physics;\nevent(Spawned) Setup(with Main) { Spawn(Physics.); }\nscene Main { }\n");
     const char *completion = request_at(uri_b, "textDocument/completion", 1, 48, "");
     TIDE_CHECK(offers(completion, "Body"));
-    TIDE_CHECK(!offers(completion, "Gravity")); // Systems only in Before and After
+    TIDE_CHECK(!offers(completion, "Gravity"));
 
-    // An error in one file shows in the other: Main now spawns a Body nobody declares.
     open_uri(uri_b, main_file);
     open_uri(uri_a, "namespace Physics;\ncomponent Shape { float2 position; }\n");
     TIDE_CHECK(sent_count == 2);
-    TIDE_CHECK(has(sent[1], uri_a) && has(sent[1], "\"diagnostics\":[]")); // The file that changed is fine...
-    TIDE_CHECK(has(sent[0], uri_b) && has(sent[0], "unknown component or singleton 'Body'")); // ...its user isn't
+    TIDE_CHECK(has(sent[1], uri_a) && has(sent[1], "\"diagnostics\":[]"));
+    TIDE_CHECK(has(sent[0], uri_b) && has(sent[0], "unknown component or singleton 'Body'"));
 
     remove(a);
     remove(b);
@@ -6556,8 +6525,7 @@ static void remove_game_file(const char *name)
     remove(path);
 }
 
-// A game listed as a folder, as tide_add_game lists one without SOURCES: every
-// .tide file in it and its subfolders, even one the editor hasn't saved yet.
+// A game listed as a folder: every .tide file in it and its subfolders, even one the editor hasn't saved yet.
 TIDE_TEST(lsp_game_folder)
 {
     if (!find_game_dir()) return;
@@ -6586,14 +6554,11 @@ TIDE_TEST(lsp_game_folder)
     start();
     server.manifest = manifest;
     open_uri(uri_main, main_file);
-    // Body comes from the file in the subfolder.
     TIDE_CHECK(sent_count == 2);
     TIDE_CHECK(has(sent[0], uri_main) && has(sent[0], "\"diagnostics\":[]"));
     TIDE_CHECK(has(sent[1], uri_physics) && has(sent[1], "\"diagnostics\":[]"));
-    // In path order, main.tide comes before sub/physics.tide.
     TIDE_CHECK(has(request_at(uri_main, "textDocument/hover", 2, 8, ""), "Runs 1st of 2 systems each tick."));
 
-    // A new file joins the game before it's saved.
     open_uri(uri_new, "using Physics;\nsystem Fall(mut Body body) { body.position.y -= 2; }\n");
     TIDE_CHECK(sent_count == 3);
     for (int i = 0; i < sent_count; i++) TIDE_CHECK(has(sent[i], "\"diagnostics\":[]"));
@@ -6623,8 +6588,524 @@ static void start_in(const char *folder)
     handle(message);
 }
 
-// A folder open in the editor is a game, as `tide run` builds it: every .tide
-// file in it and its subfolders, with no manifest.
+// `with scene Arena` names the scene as a type does: renaming it renames it there, and it has the scene's hover.
+TIDE_TEST(lsp_scene_filter_names_its_scene)
+{
+    start();
+    open_document("scene Main { }\nscene $Arena { int round; }\ncomponent Spin { float speed; }\n"
+                  "system Spinning(mut Spin spin, with scene Arena) { spin.speed += 1; }\n");
+    TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
+    const char *renamed = request_with("textDocument/rename", "\"newName\":\"Level\"");
+    TIDE_CHECK(has(renamed, "{\"range\":{\"start\":{\"line\":1,\"character\":6},\"end\":{\"line\":1,\"character\":11}},\"newText\":\"Level\"}"));
+    TIDE_CHECK(has(renamed, "{\"range\":{\"start\":{\"line\":3,\"character\":42},\"end\":{\"line\":3,\"character\":47}},\"newText\":\"Level\"}"));
+    open_document("scene Main { }\nscene Arena { int round; }\ncomponent Spin { float speed; }\n"
+                  "system Spinning(mut Spin spin, with scene $Arena) { spin.speed += 1; }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "Arena"));
+    lsp_free(&server);
+}
+
+// A game in a Unity project's Assets (tide unity --assets): renames reach TideEntity lists and prefab instance type changes; a field's only in that component's values.
+// The game's own components (com.tide.game's): a rename gives their objects the new name's script GUID, and a field's their key and a prefab instance's change of it, not another component's.
+TIDE_TEST(lsp_rename_reaches_unity_assets)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_unity");
+    make_folder("lsp_unity/ProjectSettings");
+    make_folder("lsp_unity/Assets");
+    make_folder("lsp_unity/Assets/Tide");
+    write_file("lsp_unity/ProjectSettings/ProjectVersion.txt", "m_EditorVersion: 6000.0.0f1\n");
+    static const char game[] = "component Health { int hp; int armor; Hold hold; List<Hold> holds; int Value; }\n"
+                               "component Part { int hp; }\n"
+                               "scene Main { }\n"
+                               "struct Hold { int mass; }\n";
+    write_file("lsp_unity/Assets/Tide/game.tide", game);
+    write_file("lsp_unity/Assets/Thing.prefab",
+               "%YAML 1.1\n"
+               "--- !u!114 &1\n"
+               "MonoBehaviour:\n"
+               "  m_Script: {fileID: 11500000, guid: 4f7d2c1e9a8b4b6c8d3e2f1a0b9c8d7e, type: 3}\n"
+               "  components:\n"
+               "  - type: Health\n"            // line 5
+               "    values: hp = 10, armor = 1\n" // line 6
+               "  - type: Part\n"
+               "    values: hp = 3\n"
+               "--- !u!1001 &2\n"
+               "PrefabInstance:\n"
+               "  m_Modification:\n"
+               "    m_Modifications:\n"
+               "    - target: {fileID: 1, guid: 0123456789abcdef0123456789abcdef, type: 3}\n"
+               "      propertyPath: components.Array.data[0].type\n"
+               "      value: Health\n"); // line 15
+    write_file("lsp_unity/Assets/Other.prefab", "--- !u!1 &1\nGameObject:\n  m_Name: Health\n  type: Health\n");
+    write_file("lsp_unity/Assets/Own.prefab",
+               "--- !u!114 &50\n"
+               "MonoBehaviour:\n"
+               "  m_Script: {fileID: 11500000, guid: 3c0696cc9d36fc389947e23ca18dad65, type: 3}\n" // line 2: Health's
+               "  m_EditorClassIdentifier: Tide.Game::Tide.Game.Health\n"
+               "  hp: 10\n" // line 4
+               "  armor: 1\n"
+               "  hold:\n"
+               "    mass: 4\n" // line 7: a struct's field
+               "  holds:\n"
+               "  - mass: 1\n" // line 9: ...in a list's element
+               "  - mass: 2\n"
+               "  Value_: 3\n" // line 11: Value, a member's name, has _ after
+               "--- !u!114 &51\n"
+               "MonoBehaviour:\n"
+               "  m_Script: {fileID: 11500000, guid: e20821468e5bb86e036f171ea41778ed, type: 3}\n" // Part's
+               "  hp: 3\n");
+    write_file("lsp_unity/Assets/Own.prefab.meta", "fileFormatVersion: 2\nguid: 11112222333344445555666677778888\n");
+    write_file("lsp_unity/Assets/Holder.prefab",
+               "--- !u!1001 &7\n"
+               "PrefabInstance:\n"
+               "  m_Modification:\n"
+               "    m_Modifications:\n"
+               "    - target: {fileID: 50, guid: 11112222333344445555666677778888, type: 3}\n"
+               "      propertyPath: hp\n" // line 5: its Health's
+               "      value: 4\n"
+               "    - target: {fileID: 51, guid: 11112222333344445555666677778888, type: 3}\n"
+               "      propertyPath: hp\n" // its Part's
+               "      value: 5\n"
+               "    - target: {fileID: 50, guid: 11112222333344445555666677778888, type: 3}\n"
+               "      propertyPath: holds.Array.data[1].mass\n" // line 11: a struct's field, in a list's element
+               "      value: 7\n"
+               "  m_SourcePrefab: {fileID: 100100000, guid: 11112222333344445555666677778888, type: 3}\n");
+    write_file("lsp_unity/Assets/Holder.prefab.meta", "fileFormatVersion: 2\nguid: 99992222333344445555666677778888\n");
+    char root[700], uri[700];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_unity/Assets/Tide", dir);
+    snprintf(uri, sizeof uri, "file:///%s/lsp_unity/Assets/Tide/game.tide", dir);
+    start_in(root);
+    open_uri(uri, game);
+    const char *renamed = request_at(uri, "textDocument/rename", 0, 12, "\"newName\":\"Vitality\"");
+    TIDE_CHECK(has(renamed, "Thing.prefab"));
+    TIDE_CHECK(has(renamed, "{\"range\":{\"start\":{\"line\":5,\"character\":10},\"end\":{\"line\":5,\"character\":16}},\"newText\":\"Vitality\"}"));
+    TIDE_CHECK(has(renamed, "{\"range\":{\"start\":{\"line\":15,\"character\":13},\"end\":{\"line\":15,\"character\":19}},\"newText\":\"Vitality\"}"));
+    TIDE_CHECK(!has(renamed, "Other.prefab"));
+    TIDE_CHECK(has(renamed, "{\"range\":{\"start\":{\"line\":2,\"character\":37},\"end\":{\"line\":2,\"character\":69}},\"newText\":\"d51eee06e4b36a1bd29798379cb8e68f\"}"));
+    TIDE_CHECK(has(renamed, "{\"range\":{\"start\":{\"line\":3,\"character\":48},\"end\":{\"line\":3,\"character\":54}},\"newText\":\"Vitality\"}"));
+    TIDE_CHECK(!has(renamed, "\"line\":8,"));
+    const char *field = request_at(uri, "textDocument/rename", 0, 23, "\"newName\":\"health\"");
+    TIDE_CHECK(has(field, "{\"range\":{\"start\":{\"line\":6,\"character\":12},\"end\":{\"line\":6,\"character\":14}},\"newText\":\"health\"}"));
+    TIDE_CHECK(has(field, "{\"range\":{\"start\":{\"line\":4,\"character\":2},\"end\":{\"line\":4,\"character\":4}},\"newText\":\"health\"}"));
+    TIDE_CHECK(has(field, "{\"range\":{\"start\":{\"line\":5,\"character\":20},\"end\":{\"line\":5,\"character\":22}},\"newText\":\"health\"}"));
+    TIDE_CHECK(has(field, "Holder.prefab"));
+    TIDE_CHECK(!has(field, "\"line\":8,") && !has(field, "\"line\":9,"));
+    // A struct's field, wherever a component holds the struct: its keys, and an instance's change of one
+    const char *mass = request_at(uri, "textDocument/rename", 3, 18, "\"newName\":\"weight\"");
+    TIDE_CHECK(has(mass, "{\"range\":{\"start\":{\"line\":7,\"character\":4},\"end\":{\"line\":7,\"character\":8}},\"newText\":\"weight\"}"));
+    TIDE_CHECK(has(mass, "{\"range\":{\"start\":{\"line\":9,\"character\":4},\"end\":{\"line\":9,\"character\":8}},\"newText\":\"weight\"}"));
+    TIDE_CHECK(has(mass, "{\"range\":{\"start\":{\"line\":10,\"character\":4},\"end\":{\"line\":10,\"character\":8}},\"newText\":\"weight\"}"));
+    TIDE_CHECK(has(mass, "{\"range\":{\"start\":{\"line\":11,\"character\":40},\"end\":{\"line\":11,\"character\":44}},\"newText\":\"weight\"}"));
+    // A field named as the class's members are: its key with _ after, renamed to one without
+    const int value_at = (int)(strstr(game, "int Value") + 4 - game);
+    const char *count = request_at(uri, "textDocument/rename", 0, value_at, "\"newName\":\"count\"");
+    TIDE_CHECK(has(count, "{\"range\":{\"start\":{\"line\":11,\"character\":2},\"end\":{\"line\":11,\"character\":8}},\"newText\":\"count\"}"));
+    remove_game_file("lsp_unity/Assets/Tide/game.tide");
+    remove_game_file("lsp_unity/Assets/Thing.prefab");
+    remove_game_file("lsp_unity/Assets/Other.prefab");
+    remove_game_file("lsp_unity/Assets/Own.prefab");
+    remove_game_file("lsp_unity/Assets/Own.prefab.meta");
+    remove_game_file("lsp_unity/Assets/Holder.prefab");
+    remove_game_file("lsp_unity/Assets/Holder.prefab.meta");
+    remove_game_file("lsp_unity/ProjectSettings/ProjectVersion.txt");
+    remove_folder("lsp_unity/Assets/Tide");
+    remove_folder("lsp_unity/Assets");
+    remove_folder("lsp_unity/ProjectSettings");
+    remove_folder("lsp_unity");
+    clear_sent();
+    lsp_free(&server);
+}
+
+// The edit a rename makes of the `nth` (from 0) `needle` in `text`, at `offset` into it for `length` bytes, to `to`,
+// as the WorkspaceEdit writes it
+static const char *cs_edit(const char *text, const char *needle, const int nth, const int offset, const int length, const char *to)
+{
+    static char written[8][256];
+    static int next;
+    const char *at = text;
+    for (int i = 0; at && i <= nth; i++) at = strstr(i ? at + 1 : at, needle);
+    if (!at) return "(not in the text)";
+    at += offset;
+    int line = 0, column = 0;
+    for (const char *p = text; p < at; p++) {
+        if (*p == '\n') line++, column = 0;
+        else column++;
+    }
+    char *out = written[next++ % 8];
+    snprintf(out, 256, "{\"range\":{\"start\":{\"line\":%d,\"character\":%d},\"end\":{\"line\":%d,\"character\":%d}},\"newText\":\"%s\"}",
+             line, column, line, column + length, to);
+    return out;
+}
+
+// Whether `renamed` has `edit`, saying so where it hasn't
+static bool has_edit(const char *renamed, const char *edit)
+{
+    if (has(renamed, edit)) return true;
+    printf("    no %s in %s\n", edit, renamed);
+    return false;
+}
+
+// A game in a Unity project's Assets: a rename of a type, a field, an enum's member reaches the project's C#, which
+// uses the C# tide unity wrote of them (Packages/com.tide.game, its schema.json naming them): scripts in Assets, an
+// embedded package and a local one, never com.tide.game itself. References are found conservatively: a member of
+// the game's type where what it's a member of is the type (a field, a variable, a parameter, a lambda's, a generic
+// call's, `new` and its initializer, foreach), a type where the usings make it the game's; not another type's member
+// of that name, nor text in strings and comments, nor a type of the project's own of that name.
+TIDE_TEST(lsp_rename_reaches_unity_scripts)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_unity_cs");
+    make_folder("lsp_unity_cs/ProjectSettings");
+    make_folder("lsp_unity_cs/Assets");
+    make_folder("lsp_unity_cs/Assets/Tide");
+    make_folder("lsp_unity_cs/Assets/Scripts");
+    make_folder("lsp_unity_cs/Assets/Samples~");
+    make_folder("lsp_unity_cs/Packages");
+    make_folder("lsp_unity_cs/Packages/com.tide.game");
+    make_folder("lsp_unity_cs/Packages/com.tide.game/Components");
+    make_folder("lsp_unity_cs/Packages/com.studio.tools");
+    make_folder("lsp_unity_cs/LocalPackage");
+    write_file("lsp_unity_cs/ProjectSettings/ProjectVersion.txt", "m_EditorVersion: 6000.6.0f1\n");
+    static const char game[] = "component Health { int hp; int armor; Trail trail; int Value; local int heard; }\n"
+                               "component Shield { int hp; }\n"
+                               "struct Trail { float length; }\n"
+                               "singleton Extras { int score; }\n"
+                               "event Hit { int damage; }\n"
+                               "command Say { string text; }\n"
+                               "enum Mode { Calm, Angry }\n"
+                               "namespace Combat { component Blade { float sharpness; } }\n";
+    write_file("lsp_unity_cs/Assets/Tide/game.tide", game);
+    // As tide unity writes it: the types' names and fields, which is all the C# names come from
+    write_file("lsp_unity_cs/Packages/com.tide.game/schema.json",
+               "{\"hash\": \"1\", \"types\": [\n"
+               "{\"name\": \"Trail\", \"kind\": \"struct\", \"local\": -1, \"fields\": [{\"name\": \"length\", \"type\": \"float\"}]},\n"
+               "{\"name\": \"Health\", \"kind\": \"component\", \"local\": 6, \"fields\": [{\"name\": \"hp\", \"type\": \"int\"}, "
+               "{\"name\": \"armor\", \"type\": \"int\"}, {\"name\": \"trail\", \"type\": \"Trail\"}, {\"name\": \"Value\", \"type\": \"int\"}]},\n"
+               "{\"name\": \"Shield\", \"kind\": \"component\", \"local\": -1, \"fields\": [{\"name\": \"hp\", \"type\": \"int\"}]},\n"
+               "{\"name\": \"Combat.Blade\", \"kind\": \"component\", \"local\": -1, \"fields\": [{\"name\": \"sharpness\", \"type\": \"float\"}]},\n"
+               "{\"name\": \"Extras\", \"kind\": \"singleton\", \"local\": -1, \"fields\": [{\"name\": \"score\", \"type\": \"int\"}]},\n"
+               "{\"name\": \"Hit\", \"kind\": \"event\", \"local\": -1, \"fields\": [{\"name\": \"damage\", \"type\": \"int\"}]},\n"
+               "{\"name\": \"Health local\", \"kind\": \"local\", \"local\": -1, \"fields\": [{\"name\": \"heard\", \"type\": \"int\"}]},\n"
+               "{\"name\": \"Say\", \"kind\": \"command\", \"local\": -1, \"fields\": [{\"name\": \"text\", \"type\": \"string\"}]}\n"
+               "], \"enums\": [{\"name\": \"Mode\", \"members\": [\"Calm\", \"Angry\"], \"values\": [0, 1]}]}\n");
+    write_file("lsp_unity_cs/Packages/com.tide.game/package.json", "{\"name\": \"com.tide.game\"}\n");
+    static const char generated[] = "namespace Tide.Game\n{\n    public sealed partial class Health : global::Tide.TideComponent\n"
+                                    "    {\n        public int hp;\n    }\n}\n";
+    write_file("lsp_unity_cs/Packages/com.tide.game/Components/Health.cs", generated);
+    write_file("lsp_unity_cs/Packages/com.studio.tools/package.json", "{\"name\": \"com.studio.tools\"}\n");
+    static const char tool[] = "using Tide.Game;\n\npublic static class Tool\n{\n    public static void Heal(Health health) { health.hp = 10; }\n}\n";
+    write_file("lsp_unity_cs/Packages/com.studio.tools/Tool.cs", tool);
+    write_file("lsp_unity_cs/Packages/manifest.json", "{\"dependencies\": {\"com.local.thing\": \"file:../LocalPackage\", "
+                                                       "\"com.unity.modules.ui\": \"1.0.0\"}}\n");
+    write_file("lsp_unity_cs/LocalPackage/package.json", "{\"name\": \"com.local.thing\"}\n");
+    static const char local[] = "public class Thing\n{\n    Tide.Game.Health held;\n    void Hurt() { held.hp -= 1; }\n}\n";
+    write_file("lsp_unity_cs/LocalPackage/Thing.cs", local);
+    static const char player[] =
+        "using UnityEngine;\n"
+        "using Tide;\n"
+        "using Tide.Game;\n"
+        "using Tide.Game.Combat;\n"
+        "using H = Tide.Game.Health;\n"
+        "\n"
+        "// Health.hp in a comment stays, as does /* hp */ and \"hp\" in a string\n"
+        "/// <summary>Heals <see cref=\"Health.hp\"/>, and has a <see cref=\"Tide.Game.Combat.Blade\"/></summary>\n"
+        "public class Player : MonoBehaviour\n"
+        "{\n"
+        "    public Health health;\n"
+        "    public Shield shield;\n"
+        "    public TideRunner runner;\n"
+        "    Mode mode = Mode.Calm;\n"
+        "    GameState state;\n"
+        "\n"
+        "    Health Find() => health;\n"
+        "\n"
+        "    void Update()\n"
+        "    {\n"
+        "        health.hp += 1;\n"
+        "        shield.hp += 1;\n"
+        "        var h = GetComponent<Health>();\n"
+        "        h.hp = 2;\n"
+        "        h.trail.length = 3;\n"
+        "        h.heard++;\n"
+        "        var text = \"health.hp\";\n"
+        "        Debug.Log($\"{health.hp} hp and {h.armor:F2} {text}\");\n"
+        "        Tide.Game.Health full = health;\n"
+        "        global::Tide.Game.Health g = full;\n"
+        "        g.Value_ = 4;\n"
+        "        Tide.Game.Trail streak = h.trail;\n"
+        "        runner.Get<Extras>().score++;\n"
+        "        runner.On<Hit>(hit => Debug.Log(hit.damage));\n"
+        "        runner.Send(new Say { text = \"hi\" });\n"
+        "        Blade blade = GetComponent<Blade>();\n"
+        "        blade.sharpness = 1;\n"
+        "        var other = new Other();\n"
+        "        other.hp = 3;\n"
+        "        H alias = health;\n"
+        "        foreach (var each in GetComponents<Health>()) each.hp = 0;\n"
+        "        switch (mode) { case Mode.Angry: break; }\n"
+        "        object thing = health;\n"
+        "        ((Health)thing).armor = 1;\n"
+        "        (thing as Health).armor = 2;\n"
+        "        var cast = (Health)thing;\n"
+        "        cast.hp = 5;\n"
+        "        if (thing is Health found && found.hp > 0) found.hp = 6;\n"
+        "        Find().hp = 7;\n"
+        "        GameState.Instance.Current.hp = 8;\n"
+        "        state.Pick().hp = 9;\n"
+        "        Tide.Game.Combat.Blade qualified = blade;\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "public class Other { public int hp; public float length; }\n";
+    write_file("lsp_unity_cs/Assets/Scripts/Player.cs", player);
+    // The project's own Trail: a bare Trail could be it, so only Tide.Game.Trail is the game's
+    static const char own[] = "namespace Mine\n{\n    public class Trail { public float length; }\n"
+                              "    public class Use { Trail trail; void F() { trail.length = 1; } }\n}\n";
+    write_file("lsp_unity_cs/Assets/Scripts/Own.cs", own);
+    // A partial class of the project's in two files: one's fields, the other's methods
+    static const char state[] = "using Tide.Game;\n\npublic partial class GameState\n{\n    public static GameState Instance;\n"
+                                "    public Health Current;\n}\n";
+    static const char state_more[] = "using Tide.Game;\n\npublic partial class GameState\n{\n    public Health Pick() => Current;\n"
+                                     "    void Hit() { Current.hp -= 1; }\n}\n";
+    write_file("lsp_unity_cs/Assets/Scripts/State.cs", state);
+    write_file("lsp_unity_cs/Assets/Scripts/StateMore.cs", state_more);
+    // A prefab of the namespaced component, as a component of its own and listed on a TideEntity
+    char blade_guid[65], fight_guid[65];
+    sha256_hex("tide component Combat.Blade", strlen("tide component Combat.Blade"), blade_guid);
+    sha256_hex("tide component Fight.Blade", strlen("tide component Fight.Blade"), fight_guid);
+    blade_guid[32] = fight_guid[32] = '\0';
+    char prefab[1024];
+    snprintf(prefab, sizeof prefab,
+             "%%YAML 1.1\n"
+             "--- !u!114 &50\n"
+             "MonoBehaviour:\n"
+             "  m_Script: {fileID: 11500000, guid: %s, type: 3}\n" // line 3
+             "  m_EditorClassIdentifier: Tide.Game::Tide.Game.Combat.Blade\n"
+             "  sharpness: 2\n"
+             "--- !u!114 &51\n"
+             "MonoBehaviour:\n"
+             "  m_Script: {fileID: 11500000, guid: 4f7d2c1e9a8b4b6c8d3e2f1a0b9c8d7e, type: 3}\n"
+             "  components:\n"
+             "  - type: Combat.Blade\n" // line 10
+             "    values: sharpness = 1\n",
+             blade_guid);
+    write_file("lsp_unity_cs/Assets/Blade.prefab", prefab);
+    write_file("lsp_unity_cs/Assets/Samples~/Left.cs", "using Tide.Game;\nclass Left { Health h; void F() { h.hp = 1; } }\n");
+
+    char root[700], uri[700];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_unity_cs", dir);
+    snprintf(uri, sizeof uri, "file:///%s/lsp_unity_cs/Assets/Tide/game.tide", dir);
+    start_in(root);
+    open_uri(uri, game);
+    // Health.hp: its members wherever what it's of is a Health, not Shield's, Other's, a comment's or a string's
+    const char *hp = request_at(uri, "textDocument/rename", 0, 23, "\"newName\":\"health\"");
+    TIDE_CHECK(has(hp, "Player.cs") && has(hp, "Tool.cs") && has(hp, "Thing.cs"));
+    TIDE_CHECK(has_edit(hp, cs_edit(player, "health.hp += 1", 0, 7, 2, "health")));
+    TIDE_CHECK(has_edit(hp, cs_edit(player, "h.hp = 2", 0, 2, 2, "health")));
+    TIDE_CHECK(has_edit(hp, cs_edit(player, "{health.hp}", 0, 8, 2, "health")));
+    TIDE_CHECK(has_edit(hp, cs_edit(player, "each.hp", 0, 5, 2, "health")));
+    TIDE_CHECK(has_edit(hp, cs_edit(tool, "health.hp", 0, 7, 2, "health")));
+    TIDE_CHECK(has_edit(hp, cs_edit(local, "held.hp", 0, 5, 2, "health")));
+    TIDE_CHECK(!has(hp, cs_edit(player, "shield.hp", 0, 7, 2, "health")));
+    TIDE_CHECK(!has(hp, cs_edit(player, "other.hp", 0, 6, 2, "health")));
+    TIDE_CHECK(!has(hp, cs_edit(player, "Health.hp in", 0, 7, 2, "health")));
+    TIDE_CHECK(!has(hp, cs_edit(player, "\"health.hp\"", 0, 8, 2, "health")));
+    TIDE_CHECK(!has(hp, "com.tide.game") && !has(hp, "Left.cs"));
+    // ...through a cast, a pattern's variable, a method's result, a static field and a field of a partial class's other
+    // file, and a doc comment's cref
+    TIDE_CHECK(has_edit(hp, cs_edit(player, "cast.hp", 0, 5, 2, "health")));
+    TIDE_CHECK(has_edit(hp, cs_edit(player, "found.hp > 0", 0, 6, 2, "health")));
+    TIDE_CHECK(has_edit(hp, cs_edit(player, "found.hp = 6", 0, 6, 2, "health")));
+    TIDE_CHECK(has_edit(hp, cs_edit(player, "Find().hp", 0, 7, 2, "health")));
+    TIDE_CHECK(has_edit(hp, cs_edit(player, "Current.hp = 8", 0, 8, 2, "health")));
+    TIDE_CHECK(has_edit(hp, cs_edit(player, "Pick().hp", 0, 7, 2, "health")));
+    TIDE_CHECK(has_edit(hp, cs_edit(state_more, "Current.hp", 0, 8, 2, "health")));
+    TIDE_CHECK(has_edit(hp, cs_edit(player, "cref=\"Health.hp", 0, 13, 2, "health")));
+    const char *armor = request_at(uri, "textDocument/rename", 0, 31, "\"newName\":\"plating\"");
+    TIDE_CHECK(has_edit(armor, cs_edit(player, "((Health)thing).armor", 0, 16, 5, "plating")));
+    TIDE_CHECK(has_edit(armor, cs_edit(player, "(thing as Health).armor", 0, 18, 5, "plating")));
+    TIDE_CHECK(has_edit(armor, cs_edit(player, "h.armor:F2", 0, 2, 5, "plating")));
+    // The type: wherever the usings make the name Health's, and qualified; the alias's uses are the alias's
+    const char *type = request_at(uri, "textDocument/rename", 0, 12, "\"newName\":\"Vitality\"");
+    TIDE_CHECK(has_edit(type, cs_edit(player, "using H = Tide.Game.Health", 0, 20, 6, "Vitality")));
+    TIDE_CHECK(has_edit(type, cs_edit(player, "public Health health", 0, 7, 6, "Vitality")));
+    TIDE_CHECK(has_edit(type, cs_edit(player, "GetComponent<Health>", 0, 13, 6, "Vitality")));
+    TIDE_CHECK(has_edit(type, cs_edit(player, "Tide.Game.Health full", 0, 10, 6, "Vitality")));
+    TIDE_CHECK(has_edit(type, cs_edit(player, "global::Tide.Game.Health", 0, 18, 6, "Vitality")));
+    TIDE_CHECK(has_edit(type, cs_edit(player, "GetComponents<Health>", 0, 14, 6, "Vitality")));
+    TIDE_CHECK(has_edit(type, cs_edit(tool, "Heal(Health", 0, 5, 6, "Vitality")));
+    TIDE_CHECK(!has(type, cs_edit(player, "health;", 0, 0, 6, "Vitality")));
+    TIDE_CHECK(!has(type, cs_edit(player, "H alias", 0, 0, 1, "Vitality")));
+    TIDE_CHECK(!has(type, "com.tide.game"));
+    TIDE_CHECK(has_edit(type, cs_edit(player, "(Health)thing", 0, 1, 6, "Vitality")));
+    TIDE_CHECK(has_edit(type, cs_edit(player, "as Health", 0, 3, 6, "Vitality")));
+    TIDE_CHECK(has_edit(type, cs_edit(player, "is Health", 0, 3, 6, "Vitality")));
+    TIDE_CHECK(has_edit(type, cs_edit(player, "Health Find", 0, 0, 6, "Vitality")));
+    TIDE_CHECK(has_edit(type, cs_edit(player, "cref=\"Health", 0, 6, 6, "Vitality")));
+    TIDE_CHECK(has_edit(type, cs_edit(state, "Health Current", 0, 0, 6, "Vitality")));
+    TIDE_CHECK(has_edit(type, cs_edit(state_more, "Health Pick", 0, 0, 6, "Vitality")));
+    // A local field, and a field whose C# name has _ after (Value, a member of the class): renamed to a plain one
+    const char *heard = request_at(uri, "textDocument/rename", 0, (int)(strstr(game, "heard") - game), "\"newName\":\"times\"");
+    TIDE_CHECK(has_edit(heard, cs_edit(player, "h.heard", 0, 2, 5, "times")));
+    const char *value = request_at(uri, "textDocument/rename", 0, (int)(strstr(game, "Value") - game), "\"newName\":\"count\"");
+    TIDE_CHECK(has_edit(value, cs_edit(player, "g.Value_", 0, 2, 6, "count")));
+    // ...and a plain one renamed to a name that clashes: its C# name has _ after
+    const char *shield = request_at(uri, "textDocument/rename", 1, 23, "\"newName\":\"Value\"");
+    TIDE_CHECK(has_edit(shield, cs_edit(player, "shield.hp", 0, 7, 2, "Value_")));
+    TIDE_CHECK(!has(shield, cs_edit(player, "health.hp += 1", 0, 7, 2, "Value_")));
+    // A struct's field through a component's field; not the project's own Trail's, nor Other's
+    const char *length = request_at(uri, "textDocument/rename", 2, 21, "\"newName\":\"size\"");
+    TIDE_CHECK(has_edit(length, cs_edit(player, "h.trail.length", 0, 8, 6, "size")));
+    TIDE_CHECK(!has(length, "Own.cs"));
+    // The struct: qualified only, as the project has a Trail of its own
+    const char *trail = request_at(uri, "textDocument/rename", 2, 7, "\"newName\":\"Streak\"");
+    TIDE_CHECK(has_edit(trail, cs_edit(player, "Tide.Game.Trail", 0, 10, 5, "Streak")));
+    TIDE_CHECK(!has(trail, "Own.cs"));
+    // A singleton's field through a generic call, an event's in a lambda, a command's in an initializer
+    const char *score = request_at(uri, "textDocument/rename", 3, 23, "\"newName\":\"points\"");
+    TIDE_CHECK(has_edit(score, cs_edit(player, ".score", 0, 1, 5, "points")));
+    const char *damage = request_at(uri, "textDocument/rename", 4, 17, "\"newName\":\"amount\"");
+    TIDE_CHECK(has_edit(damage, cs_edit(player, "hit.damage", 0, 4, 6, "amount")));
+    const char *text = request_at(uri, "textDocument/rename", 5, 22, "\"newName\":\"line\"");
+    TIDE_CHECK(has_edit(text, cs_edit(player, "text = \"hi\"", 0, 0, 4, "line")));
+    TIDE_CHECK(!has(text, cs_edit(player, "var text", 0, 4, 4, "line")) && !has(text, cs_edit(player, "{text}", 0, 1, 4, "line")));
+    // An enum and its member
+    const char *calm = request_at(uri, "textDocument/rename", 6, 12, "\"newName\":\"Still\"");
+    TIDE_CHECK(has_edit(calm, cs_edit(player, "Mode.Calm", 0, 5, 4, "Still")));
+    const char *mode = request_at(uri, "textDocument/rename", 6, 6, "\"newName\":\"Mood\"");
+    TIDE_CHECK(has_edit(mode, cs_edit(player, "Mode mode", 0, 0, 4, "Mood")));
+    TIDE_CHECK(has_edit(mode, cs_edit(player, "Mode.Calm", 0, 0, 4, "Mood")));
+    TIDE_CHECK(has_edit(mode, cs_edit(player, "Mode.Angry", 0, 0, 4, "Mood")));
+    // A namespaced component, and its field, by the namespace's using
+    const char *blade = request_at(uri, "textDocument/rename", 7, 29, "\"newName\":\"Sword\"");
+    TIDE_CHECK(has_edit(blade, cs_edit(player, "Blade blade", 0, 0, 5, "Sword")));
+    TIDE_CHECK(has_edit(blade, cs_edit(player, "<Blade>", 0, 1, 5, "Sword")));
+    const char *sharpness = request_at(uri, "textDocument/rename", 7, 44, "\"newName\":\"edge\"");
+    TIDE_CHECK(has_edit(sharpness, cs_edit(player, "blade.sharpness", 0, 6, 9, "edge")));
+    // The namespace: where a using, a qualified name or a cref names it; in the prefab, the component's new script GUID,
+    // its class's name and its TideEntity list's type
+    const char *combat = request_at(uri, "textDocument/rename", 7, 12, "\"newName\":\"Fight\"");
+    TIDE_CHECK(has_edit(combat, cs_edit(player, "using Tide.Game.Combat", 0, 16, 6, "Fight")));
+    TIDE_CHECK(has_edit(combat, cs_edit(player, "Tide.Game.Combat.Blade qualified", 0, 10, 6, "Fight")));
+    TIDE_CHECK(has_edit(combat, cs_edit(player, "cref=\"Tide.Game.Combat", 0, 16, 6, "Fight")));
+    TIDE_CHECK(!has(combat, cs_edit(player, "Blade blade", 0, 0, 5, "Fight")));
+    char guid_edit[256];
+    snprintf(guid_edit, sizeof guid_edit, "{\"range\":{\"start\":{\"line\":3,\"character\":37},\"end\":{\"line\":3,\"character\":69}},\"newText\":\"%s\"}", fight_guid);
+    TIDE_CHECK(has_edit(combat, guid_edit));
+    TIDE_CHECK(has_edit(combat, "{\"range\":{\"start\":{\"line\":4,\"character\":48},\"end\":{\"line\":4,\"character\":60}},\"newText\":\"Fight.Blade\"}"));
+    TIDE_CHECK(has_edit(combat, "{\"range\":{\"start\":{\"line\":10,\"character\":10},\"end\":{\"line\":10,\"character\":22}},\"newText\":\"Fight.Blade\"}"));
+
+    static const char *const files[] = {"Assets/Tide/game.tide", "Assets/Scripts/Player.cs", "Assets/Scripts/Own.cs", "Assets/Samples~/Left.cs",
+                                        "Assets/Scripts/State.cs", "Assets/Scripts/StateMore.cs", "Assets/Blade.prefab",
+                                        "Packages/com.tide.game/schema.json", "Packages/com.tide.game/package.json",
+                                        "Packages/com.tide.game/Components/Health.cs", "Packages/com.studio.tools/package.json",
+                                        "Packages/com.studio.tools/Tool.cs", "Packages/manifest.json", "LocalPackage/package.json",
+                                        "LocalPackage/Thing.cs", "ProjectSettings/ProjectVersion.txt"};
+    for (size_t i = 0; i < sizeof files / sizeof files[0]; i++) {
+        char name[256];
+        snprintf(name, sizeof name, "lsp_unity_cs/%s", files[i]);
+        remove_game_file(name);
+    }
+    static const char *const folders[] = {"Assets/Tide", "Assets/Scripts", "Assets/Samples~", "Assets", "Packages/com.tide.game/Components",
+                                          "Packages/com.tide.game", "Packages/com.studio.tools", "Packages", "LocalPackage", "ProjectSettings", ""};
+    for (size_t i = 0; i < sizeof folders / sizeof folders[0]; i++) {
+        char name[256];
+        snprintf(name, sizeof name, "lsp_unity_cs/%s", folders[i]);
+        remove_folder(name);
+    }
+    clear_sent();
+    lsp_free(&server);
+}
+
+// A Unity project open in the editor: its game is every .tide file in Assets (not in a folder Unity leaves out), with what tide unity wrote in Library/Tide.
+TIDE_TEST(lsp_unity_game_is_its_assets_with_what_tide_unity_wrote)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_unity_game");
+    make_folder("lsp_unity_game/ProjectSettings");
+    make_folder("lsp_unity_game/Assets");
+    make_folder("lsp_unity_game/Assets/Tide");
+    make_folder("lsp_unity_game/Assets/Rules");
+    make_folder("lsp_unity_game/Assets/Samples~");
+    make_folder("lsp_unity_game/Library");
+    make_folder("lsp_unity_game/Library/Tide");
+    make_folder("lsp_unity_game/Library/Tide/prefabs");
+    make_folder("lsp_unity_game/Library/Tide/prefabs/Assets");
+    write_file("lsp_unity_game/ProjectSettings/ProjectVersion.txt", "m_EditorVersion: 6000.6.0f1\n");
+    static const char game[] = "using UnityEngine.Prefabs;\n"
+                               "scene Main { }\n"
+                               "event(Spawned) Begin(with Main) { Spawn(Roller); Spawn(Big); }\n"
+                               "system Go(mut Speed speed) { speed.value += 1; }\n";
+    // A prefab of 31 entities, a line each: its hover shows the first lines and its closing brace
+    char big[4096];
+    int written = snprintf(big, sizeof big, "namespace UnityEngine.Prefabs;\n\nprefab Big\n{\n    Speed { value = 0 };\n");
+    for (int i = 1; i <= 30; i++) written += snprintf(big + written, sizeof big - (size_t)written, "    entity C%d { Speed { value = %d }; }\n", i, i);
+    snprintf(big + written, sizeof big - (size_t)written, "}\n");
+    write_file("lsp_unity_game/Assets/Tide/game.tide", game);
+    write_file("lsp_unity_game/Assets/Rules/rules.tide", "component Speed { float value; }\n");
+    write_file("lsp_unity_game/Assets/Samples~/broken.tide", "this isn't Tide\n");
+    write_file("lsp_unity_game/Library/Tide/Unity.tide", "namespace UnityEngine;\ncomponent Source { int asset; int node; }\n");
+    write_file("lsp_unity_game/Library/Tide/prefabs/Assets/Roller.prefab.tprefab",
+               "namespace UnityEngine.Prefabs;\n\nprefab Roller\n{\n    UnityEngine.Source { asset = 0, node = 0 };\n"
+               "    Speed { value = 1 };\n}\n");
+    write_file("lsp_unity_game/Library/Tide/prefabs/Assets/Big.prefab.tprefab", big);
+    char root[700], uri[700];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_unity_game", dir);
+    snprintf(uri, sizeof uri, "file:///%s/lsp_unity_game/Assets/Tide/game.tide", dir);
+    start_in(root);
+    open_uri(uri, game);
+    bool seen = false;
+    for (int i = 0; i < sent_count; i++) {
+        TIDE_CHECK(has(sent[i], "\"diagnostics\":[]"));
+        TIDE_CHECK(!has(sent[i], "broken.tide"));
+        seen = seen || has(sent[i], uri);
+    }
+    TIDE_CHECK(seen);
+    // A prefab's hover is the prefab as tide read it, and the asset it's of
+    const char *hover = request_at(uri, "textDocument/hover", 2, 41, "");
+    TIDE_CHECK(has(hover, "prefab Roller"));
+    TIDE_CHECK(has(hover, "UnityEngine.Source { asset = 0, node = 0 };"));
+    TIDE_CHECK(has(hover, "Speed { value = 1 };"));
+    TIDE_CHECK(has(hover, "From `Assets/Roller.prefab` in the Unity project"));
+    hover = request_at(uri, "textDocument/hover", 2, 56, "");
+    TIDE_CHECK(has(hover, "prefab Big"));
+    TIDE_CHECK(has(hover, "entity C19 { Speed { value = 19 }; }"));
+    TIDE_CHECK(!has(hover, "entity C20 "));
+    TIDE_CHECK(!has(hover, "entity C30 "));
+    TIDE_CHECK(has(hover, "// ...11 more lines"));
+    TIDE_CHECK(has(hover, "From `Assets/Big.prefab`"));
+
+    remove_game_file("lsp_unity_game/Library/Tide/prefabs/Assets/Big.prefab.tprefab");
+    remove_game_file("lsp_unity_game/Library/Tide/prefabs/Assets/Roller.prefab.tprefab");
+    start_in(root);
+    open_uri(uri, game);
+    bool unknown = false;
+    for (int i = 0; i < sent_count; i++) unknown = unknown || (has(sent[i], uri) && has(sent[i], "Roller"));
+    TIDE_CHECK(unknown);
+
+    remove_game_file("lsp_unity_game/Library/Tide/Unity.tide");
+    remove_game_file("lsp_unity_game/Assets/Samples~/broken.tide");
+    remove_game_file("lsp_unity_game/Assets/Rules/rules.tide");
+    remove_game_file("lsp_unity_game/Assets/Tide/game.tide");
+    remove_game_file("lsp_unity_game/ProjectSettings/ProjectVersion.txt");
+    remove_folder("lsp_unity_game/Library/Tide/prefabs/Assets");
+    remove_folder("lsp_unity_game/Library/Tide/prefabs");
+    remove_folder("lsp_unity_game/Library/Tide");
+    remove_folder("lsp_unity_game/Library");
+    remove_folder("lsp_unity_game/Assets/Samples~");
+    remove_folder("lsp_unity_game/Assets/Rules");
+    remove_folder("lsp_unity_game/Assets/Tide");
+    remove_folder("lsp_unity_game/Assets");
+    remove_folder("lsp_unity_game/ProjectSettings");
+    remove_folder("lsp_unity_game");
+    clear_sent();
+    lsp_free(&server);
+}
+
+// A folder open in the editor is a game, as `tide run` builds it: every .tide file in it and its subfolders, with no manifest.
 TIDE_TEST(lsp_open_folder_is_a_game)
 {
     if (!find_game_dir()) return;
@@ -6649,7 +7130,6 @@ TIDE_TEST(lsp_open_folder_is_a_game)
     TIDE_CHECK(has(sent[0], uri_main) && has(sent[0], "\"diagnostics\":[]"));
     TIDE_CHECK(has(sent[1], uri_physics) && has(sent[1], "\"diagnostics\":[]"));
 
-    // Without the folder open, the file stands alone.
     start();
     open_uri(uri_main, main_file);
     TIDE_CHECK(sent_count == 1 && !has(sent[0], "\"diagnostics\":[]"));
@@ -6705,10 +7185,96 @@ TIDE_TEST(lsp_prefab_project_and_refactors)
     lsp_free(&server);
 }
 
-// A game whose tide.packages lists a package in a folder: its files are
-// analyzed with the game's, in its namespace. A package's file is analyzed
-// with the game that uses it, or else alone, with no Main; and a folder of
-// the game with a tide.packages of its own isn't the game's.
+TIDE_TEST(lsp_prefab_inherited_descendant_overrides)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_prefab_overrides");
+    static const char main_file[] = "namespace Game;\n"
+                                    "component Data\n"
+                                    "{\n"
+                                    "    int value = 1;\n"
+                                    "    int kept = 2;\n"
+                                    "}\n"
+                                    "component Extra { int value; }\n"
+                                    "const int GRANDCHILD_VALUE = 10;\n"
+                                    "scene Main { }\n"
+                                    "event(Spawned) Setup(with Main) { Spawn(Level); }\n";
+    static const char prefab_file[] = "namespace Game;\n"
+                                      "prefab Base\n"
+                                      "{\n"
+                                      "    entity Child\n"
+                                      "    {\n"
+                                      "        Data { value = 3 };\n"
+                                      "        entity Grandchild\n"
+                                      "        {\n"
+                                      "            Data { value = 4 };\n"
+                                      "        }\n"
+                                      "    }\n"
+                                      "}\n"
+                                      "prefab Level\n"
+                                      "{\n"
+                                      "    entity Item : Base\n"
+                                      "    {\n"
+                                      "        Extra { value = 5 };\n"
+                                      "        entity Added { Data; }\n"
+                                      "        entity Child\n"
+                                      "        {\n"
+                                      "            Game.Data { value = 9 };\n"
+                                      "            entity Grandchild\n"
+                                      "            {\n"
+                                      "                Game.Data { value = GRANDCHILD_VALUE };\n"
+                                      "            }\n"
+                                      "        }\n"
+                                      "    }\n"
+                                      "}\n";
+    write_file("lsp_prefab_overrides/main.tide", main_file);
+    write_file("lsp_prefab_overrides/Level.tprefab", prefab_file);
+    char root[700], uri_main[700], uri_prefab[700];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_prefab_overrides", dir);
+    snprintf(uri_main, sizeof uri_main, "file:///%s/lsp_prefab_overrides/main.tide", dir);
+    snprintf(uri_prefab, sizeof uri_prefab, "file:///%s/lsp_prefab_overrides/Level.tprefab", dir);
+    start_in(root);
+    open_uri(uri_main, main_file);
+    TIDE_CHECK(sent_count == 2);
+    for (int i = 0; i < sent_count; i++) TIDE_CHECK(has(sent[i], "\"diagnostics\":[]"));
+    open_uri(uri_prefab, prefab_file);
+    TIDE_CHECK(sent_count == 2);
+    for (int i = 0; i < sent_count; i++) TIDE_CHECK(has(sent[i], "\"diagnostics\":[]"));
+
+    // Matching child and grandchild blocks retain ordinary component/field
+    // tooling, including qualified component names and omitted default fields.
+    static const int override_lines[] = {20, 23};
+    for (int i = 0; i < 2; i++) {
+        const int line = override_lines[i];
+        const int indent = 12 + 4 * i;
+        TIDE_CHECK(offers(request_at(uri_prefab, "textDocument/completion", line, indent, ""), "Data"));
+        const char *fields = request_at(uri_prefab, "textDocument/completion", line, indent + 12, "");
+        TIDE_CHECK(offers(fields, "value") && offers(fields, "kept"));
+        TIDE_CHECK(has(request_at(uri_prefab, "textDocument/hover", line, indent + 6, ""), "component Data"));
+        const char *component = request_at(uri_prefab, "textDocument/definition", line, indent + 6, "");
+        TIDE_CHECK(has(component, uri_main) && has(component, "\"range\":{\"start\":{\"line\":1,\"character\":10},\"end\":{\"line\":1,\"character\":14}}"));
+        const char *hover = request_at(uri_prefab, "textDocument/hover", line, indent + 13, "");
+        TIDE_CHECK(has(hover, "int value") && has(hover, "Field of component `Data`"));
+        const char *field = request_at(uri_prefab, "textDocument/definition", line, indent + 13, "");
+        TIDE_CHECK(has(field, uri_main) && has(field, "\"range\":{\"start\":{\"line\":3,\"character\":8},\"end\":{\"line\":3,\"character\":13}}"));
+    }
+    TIDE_CHECK(has(request_at(uri_prefab, "textDocument/hover", 23, 37, ""), "const int GRANDCHILD_VALUE"));
+    const char *value = request_at(uri_prefab, "textDocument/definition", 23, 37, "");
+    TIDE_CHECK(has(value, uri_main) && has(value, "\"range\":{\"start\":{\"line\":7,\"character\":10},\"end\":{\"line\":7,\"character\":26}}"));
+    // Authored names and checked copies contribute one occurrence per source
+    // position, even when Base is expanded again as Item.
+    TIDE_CHECK(count(request_at(uri_main, "textDocument/references", 1, 11,
+                                "\"context\":{\"includeDeclaration\":true}"), "\"uri\":") == 6);
+
+    remove_game_file("lsp_prefab_overrides/main.tide");
+    remove_game_file("lsp_prefab_overrides/Level.tprefab");
+    remove_folder("lsp_prefab_overrides");
+    clear_sent();
+    lsp_free(&server);
+}
+
+// A package in a folder: analyzed with the game's files in its namespace, or alone with no Main; a folder with its own tide.packages isn't the game's.
 TIDE_TEST(lsp_open_folder_with_packages)
 {
     if (!find_game_dir()) return;
@@ -6724,7 +7290,7 @@ TIDE_TEST(lsp_open_folder_with_packages)
     write_file("lsp_pk/game/tide.packages", "../physics\n");
     write_file("lsp_pk/game/main.tide", main_file);
     write_file("lsp_pk/game/other/tide.packages", "package Other\n");
-    write_file("lsp_pk/game/other/loose.tide", "struct Pair { float a; }\n"); // Outside its namespace, but not the game's
+    write_file("lsp_pk/game/other/loose.tide", "struct Pair { float a; }\n");
     write_file("lsp_pk/physics/tide.packages", "package Physics\n");
     write_file("lsp_pk/physics/body.tide", body);
     char root[700], uri_main[700], uri_body[700], uri_loose[700];
@@ -6737,18 +7303,15 @@ TIDE_TEST(lsp_open_folder_with_packages)
     start_in(root);
     open_uri(uri_main, main_file);
     TIDE_CHECK(sent_count == 2);
-    TIDE_CHECK(has(sent[0], uri_body) && has(sent[0], "\"diagnostics\":[]")); // The package's files come first
+    TIDE_CHECK(has(sent[0], uri_body) && has(sent[0], "\"diagnostics\":[]"));
     TIDE_CHECK(has(sent[1], uri_main) && has(sent[1], "\"diagnostics\":[]"));
-    // Opened from the game, the package's file is the game's.
     open_uri(uri_body, body);
     TIDE_CHECK(sent_count == 2 && has(sent[1], uri_main));
 
-    // A file of the package outside its namespace says so.
     open_uri(uri_loose, "struct Pair { float a; }\n");
     TIDE_CHECK(has(sent[1], uri_loose) && has(sent[1], "what package Physics declares goes in its namespace"));
     close_uri(uri_loose);
 
-    // Without the game open, the package stands alone: no Main is missing.
     start();
     open_uri(uri_body, body);
     TIDE_CHECK(sent_count == 1 && has(sent[0], "\"diagnostics\":[]"));
@@ -6767,8 +7330,7 @@ TIDE_TEST(lsp_open_folder_with_packages)
     lsp_free(&server);
 }
 
-// A game whose tide.packages names a package that comes with tide: its files,
-// in tide's installation, are analyzed with the game's, as a folder's are.
+// A package that comes with tide: its files, in tide's installation, are analyzed with the game's.
 TIDE_TEST(lsp_open_folder_with_a_package_that_comes_with_tide)
 {
     if (!find_game_dir()) return;
@@ -6794,7 +7356,6 @@ TIDE_TEST(lsp_open_folder_with_a_package_that_comes_with_tide)
     snprintf(uri_main, sizeof uri_main, "file:///%s/lsp_bi/game/main.tide", dir);
     snprintf(uri_die, sizeof uri_die, "file:///%s/lsp_bi/install/src/packages/dice/die.tide", dir);
 
-    // Until the server knows which folder they're in, the name is no package's.
     start_in(root);
     open_uri(uri_main, main_file);
     TIDE_CHECK(sent_count == 1 && has(sent[0], uri_main) && !has(sent[0], "\"diagnostics\":[]"));
@@ -6803,11 +7364,9 @@ TIDE_TEST(lsp_open_folder_with_a_package_that_comes_with_tide)
     start_in(root);
     open_uri(uri_main, main_file);
     TIDE_CHECK(sent_count == 2);
-    TIDE_CHECK(has(sent[0], uri_die) && has(sent[0], "\"diagnostics\":[]")); // The package's files come first
+    TIDE_CHECK(has(sent[0], uri_die) && has(sent[0], "\"diagnostics\":[]"));
     TIDE_CHECK(has(sent[1], uri_main) && has(sent[1], "\"diagnostics\":[]"));
-    // `Die` leads into the installation.
     TIDE_CHECK(has(request_at(uri_main, "textDocument/definition", 2, 41, ""), uri_die));
-    // Opened from the game, the package's file is the game's.
     open_uri(uri_die, die);
     TIDE_CHECK(sent_count == 2 && has(sent[1], uri_main));
 
@@ -6826,9 +7385,7 @@ TIDE_TEST(lsp_open_folder_with_a_package_that_comes_with_tide)
     lsp_free(&server);
 }
 
-// An open folder that builds its games with CMake has the manifest
-// tide_add_game writes, in build/tools. Its games come from there, and its
-// other files stand alone instead of making one game of the whole folder.
+// An open folder built with CMake uses the manifest tide_add_game writes in build/tools; its other files stand alone.
 TIDE_TEST(lsp_open_folder_with_manifest)
 {
     if (!find_game_dir()) return;
@@ -6855,7 +7412,6 @@ TIDE_TEST(lsp_open_folder_with_manifest)
     open_uri(uri_main, main_file);
     TIDE_CHECK(sent_count == 2);
     for (int i = 0; i < sent_count; i++) TIDE_CHECK(has(sent[i], "\"diagnostics\":[]"));
-    // Its own Body doesn't clash with the game's.
     open_uri(uri_alone, alone);
     TIDE_CHECK(sent_count == 1 && has(sent[0], uri_alone) && has(sent[0], "\"diagnostics\":[]"));
 
@@ -6881,9 +7437,7 @@ static int sent_for(const char *uri)
     return -1;
 }
 
-// Files that change on disk, as the editor reports them through the watchers
-// the server registers, and when it saves: the open documents' games are
-// analysed again.
+// Files changed on disk, as the watchers report them or on save: the open documents' games are analysed again.
 TIDE_TEST(lsp_files_change_on_disk)
 {
     if (!find_game_dir()) return;
@@ -6900,7 +7454,6 @@ TIDE_TEST(lsp_files_change_on_disk)
     snprintf(uri_new, sizeof uri_new, "file:///%s/lsp_watch/new.tide", dir);
     snprintf(manifest, sizeof manifest, "%s/elsewhere/build/tools/games.txt", game_dir);
 
-    // Watchers, registered once the editor says it's ready, when it can take them
     clear_sent();
     lsp_free(&server);
     lsp_init(&server, capture, NULL);
@@ -6917,15 +7470,14 @@ TIDE_TEST(lsp_files_change_on_disk)
     TIDE_CHECK(sent_count == 1 && has(sent[0], "\"method\":\"client/registerCapability\""));
     TIDE_CHECK(has(sent[0], "\"method\":\"workspace/didChangeWatchedFiles\""));
     TIDE_CHECK(has(sent[0], "{\"globPattern\":\"**/*.tide\"}") && has(sent[0], "{\"globPattern\":\"**/build/tools/games.txt\"}"));
-    TIDE_CHECK(has(sent[0], "/elsewhere/build/tools\",\"pattern\":\"games.txt\"}")); // The server's own, outside the folder
+    TIDE_CHECK(has(sent[0], "/elsewhere/build/tools\",\"pattern\":\"games.txt\"}"));
     clear_sent();
-    handle("{\"jsonrpc\":\"2.0\",\"id\":\"tidels-watch\",\"result\":null}"); // The editor's answer needs none
+    handle("{\"jsonrpc\":\"2.0\",\"id\":\"tidels-watch\",\"result\":null}");
     TIDE_CHECK(sent_count == 0);
 
     open_uri(uri_main, main_file);
     TIDE_CHECK(sent_count == 2 && has(sent[sent_for(uri_main)], "\"diagnostics\":[]"));
 
-    // Another file changes on disk: Body is gone
     write_file("lsp_watch/physics.tide", "component Hull { float2 position; }\n");
     clear_sent();
     snprintf(message, sizeof message,
@@ -6935,7 +7487,6 @@ TIDE_TEST(lsp_files_change_on_disk)
     handle(message);
     TIDE_CHECK(sent_for(uri_main) >= 0 && has(sent[sent_for(uri_main)], "unknown name 'Body'"));
 
-    // A new one brings it back
     write_file("lsp_watch/new.tide", physics);
     clear_sent();
     snprintf(message, sizeof message,
@@ -6945,11 +7496,10 @@ TIDE_TEST(lsp_files_change_on_disk)
     handle(message);
     TIDE_CHECK(sent_count == 3 && has(sent[sent_for(uri_main)], "\"diagnostics\":[]"));
 
-    // A deleted one takes its diagnostics with it
-    write_file("lsp_watch/physics.tide", "component Body { float2 position; }\n"); // Declared twice now
+    write_file("lsp_watch/physics.tide", "component Body { float2 position; }\n");
     clear_sent();
     handle("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didSave\",\"params\":{\"textDocument\":{\"uri\":\"file:///none\"}}}");
-    TIDE_CHECK(has(sent[sent_for(uri_physics)], "\"severity\":1")); // Saving looks at the disk again too
+    TIDE_CHECK(has(sent[sent_for(uri_physics)], "\"severity\":1"));
     remove_game_file("lsp_watch/physics.tide");
     clear_sent();
     snprintf(message, sizeof message,
@@ -6960,7 +7510,6 @@ TIDE_TEST(lsp_files_change_on_disk)
     TIDE_CHECK(sent_for(uri_physics) >= 0 && has(sent[sent_for(uri_physics)], "\"diagnostics\":[]"));
     TIDE_CHECK(has(sent[sent_for(uri_main)], "\"diagnostics\":[]"));
 
-    // An editor that can't watch gets no request
     start_with("{\"capabilities\":{}}");
     clear_sent();
     handle("{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}");
@@ -6989,7 +7538,7 @@ TIDE_TEST(lsp_workspace_folders_change)
     start();
     TIDE_CHECK(has(last_sent(), "\"workspaceFolders\":{\"supported\":true,\"changeNotifications\":true}"));
     open_uri(uri_main, main_file);
-    TIDE_CHECK(sent_count == 1 && !has(sent[0], "\"diagnostics\":[]")); // Alone: no Body
+    TIDE_CHECK(sent_count == 1 && !has(sent[0], "\"diagnostics\":[]"));
     clear_sent();
     snprintf(message, sizeof message,
              "{\"jsonrpc\":\"2.0\",\"method\":\"workspace/didChangeWorkspaceFolders\",\"params\":{\"event\":"
@@ -7034,7 +7583,7 @@ TIDE_TEST(lsp_workspace_symbols_of_every_game)
     handle("{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"workspace/symbol\",\"params\":{\"query\":\"ro\"}}");
     TIDE_CHECK(has(last_sent(), "\"name\":\"Rocket\"") && has(last_sent(), "\"name\":\"Rover\""));
     TIDE_CHECK(has(last_sent(), "lsp_symbols/a/main.tide") && has(last_sent(), "lsp_symbols/b/main.tide"));
-    TIDE_CHECK(count(last_sent(), "\"name\":\"Main\"") == 0); // Not what the query asks for
+    TIDE_CHECK(count(last_sent(), "\"name\":\"Main\"") == 0);
 
     remove_game_file("lsp_symbols/a/main.tide");
     remove_game_file("lsp_symbols/b/main.tide");
@@ -7070,7 +7619,7 @@ TIDE_TEST(lsp_quick_fixes_for_namespaces)
     TIDE_CHECK(has(fixes, "\"newText\":\"Physics.Body\""));
     TIDE_CHECK(has(fixes, "\"title\":\"Add 'using Physics;'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
     TIDE_CHECK(has(fixes, "{\"range\":{\"start\":{\"line\":2,\"character\":0},\"end\":{\"line\":2,\"character\":0}},"
-                          "\"newText\":\"using Physics;\\n\"}")); // After the usings
+                          "\"newText\":\"using Physics;\\n\"}"));
 
     remove_game_file("lsp_using/physics.tide");
     remove_game_file("lsp_using/main.tide");
@@ -7185,8 +7734,8 @@ TIDE_TEST(lsp_entry_points_follow_helpers_and_stop_at_handlers)
     TIDE_CHECK(!has(last_sent(), "\"severity\":1"));
     static const int lines[] = {8, 9, 10, 11, 13}, columns[] = {7, 5, 12, 36, 15}, lengths[] = {4, 4, 6, 6, 5};
     check_entry_lens("file:///test.tide", 1, "file:///test.tide", lines, columns, lengths, 5);
-    check_entry_lens("file:///test.tide", 0, "file:///test.tide", lines, columns, lengths, 5); // extern boundary
-    check_entry_lens("file:///test.tide", 4, NULL, NULL, NULL, NULL, 0); // No caller does not make a root
+    check_entry_lens("file:///test.tide", 0, "file:///test.tide", lines, columns, lengths, 5);
+    check_entry_lens("file:///test.tide", 4, NULL, NULL, NULL, NULL, 0);
     check_repeat_lenses("file:///test.tide");
     check_reference_lenses("file:///test.tide");
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 1, 6, ""), "void Leaf()"));
@@ -7264,8 +7813,7 @@ TIDE_TEST(lsp_entry_points_follow_shader_calls_and_refresh_unsaved_edits)
     check_repeat_lenses("file:///test.tide");
 }
 
-// Above each system: its stage and why it waits. Access a system doesn't use
-// gets a warning and a quick fix.
+// Above each system: its stage and why it waits; access it doesn't use gets a warning and a quick fix.
 TIDE_TEST(lsp_schedule_lenses_and_fixes)
 {
     start();
@@ -7285,17 +7833,15 @@ TIDE_TEST(lsp_schedule_lenses_and_fixes)
     TIDE_CHECK(has(lenses, "stage 2") && has(lenses, "after Move: both write Body"));
     TIDE_CHECK(has(lenses, "stage 3") && has(lenses, "after Look: both write Score; it writes Body, which this reads"));
     TIDE_CHECK(has(lenses, "nothing runs alongside"));
-    // Each system it waits for is a lens of its own, which goes to that system
     TIDE_CHECK(has(lenses, "\"title\":\"after Move: both write Body\",\"command\":\"editor.action.goToLocations\","
                            "\"arguments\":[\"file:///test.tide\",{\"line\":4,\"character\":7},[{\"uri\":\"file:///test.tide\","
                            "\"range\":{\"start\":{\"line\":3,\"character\":7},\"end\":{\"line\":3,\"character\":11}}}],\"goto\"]"));
-    // How many places name a declaration, which lists them: not for what only the engine runs
     TIDE_CHECK(has(lenses, "{\"range\":{\"start\":{\"line\":0,\"character\":10},\"end\":{\"line\":0,\"character\":14}},"
                            "\"command\":{\"title\":\"4 references\",\"command\":\"editor.action.showReferences\","
                            "\"arguments\":[\"file:///test.tide\",{\"line\":0,\"character\":10},[{\"uri\":\"file:///test.tide\","
                            "\"range\":{\"start\":{\"line\":2,\"character\":40},\"end\":{\"line\":2,\"character\":44}}},"));
     TIDE_CHECK(has(lenses, "\"title\":\"2 references\"") && has(lenses, "\"title\":\"1 reference\""));
-    TIDE_CHECK(count(lenses, " reference") == 3); // Body, Score and Main: no system or handler is named
+    TIDE_CHECK(count(lenses, " reference") == 3);
     check_repeat_lenses("file:///test.tide");
     TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 0, 11,
                                 "\"context\":{\"includeDeclaration\":false}"), "\"uri\"") == 4);
@@ -7320,8 +7866,7 @@ TIDE_TEST(lsp_schedule_lenses_and_fixes)
     TIDE_CHECK(has(add_mut, "\"start\":{\"line\":2,\"character\":12}"));
 }
 
-// Every reference lens must list exactly what find-usages returns, in the
-// same order. Copy its expectations before requests release the JSON tree.
+// Every reference lens must list exactly what find-usages returns, in the same order. Copy expectations before requests release the JSON tree.
 static void check_reference_lenses(const char *uri)
 {
     typedef struct lens_check {
@@ -7382,8 +7927,6 @@ TIDE_TEST(lsp_completion_keeps_complete_member_chains)
     jb_free(&ns);
     jb_free(&source);
 
-    // A deeply nested value still resolves from its first identifier, through
-    // every field, to the final struct's own members.
     jb_put(&source, "struct Link39 { int leaf; }\n");
     for (int i = 38; i >= 0; i--) jb_printf(&source, "struct Link%d { Link%d child; }\n", i, i + 1);
     jb_put(&source, "singleton Root { Link0 tree; }\nscene Main { }\n");
@@ -7450,7 +7993,6 @@ TIDE_TEST(lsp_asset_type_completion)
         TIDE_CHECK(offers(reply, "Corner") && offers(reply, "Rig") && offers(reply, "Vertex3"));
         TIDE_CHECK(!offers(reply, "Choice") && !offers(reply, "Texture") && !offers(reply, "Map"));
     }
-    // A complete type/name, initializer and the next declaration keep their own contexts.
     open_document("asset Texture logo $;");
     TIDE_CHECK(!offers(request("textDocument/completion"), "Texture"));
     open_document("asset Texture logo = $;");
@@ -7496,8 +8038,6 @@ TIDE_TEST(lsp_reference_lenses_keep_symbol_groups_and_order)
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     check_reference_lenses("file:///test.tide");
 
-    // Thousands of declarations with only a few uses also exercise absent
-    // symbol groups and the first/middle/last groups of the sorted index.
     jbuf source = {0};
     for (int i = 0; i < 1200; i++) jb_printf(&source, "const int Value%d = %d;\n", i, i);
     jb_put(&source, "singleton Total { int value; }\nscene Main { }\n"
@@ -7507,7 +8047,7 @@ TIDE_TEST(lsp_reference_lenses_keep_symbol_groups_and_order)
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     const char *lenses = request_at("file:///test.tide", "textDocument/codeLens", 0, 0, "");
     TIDE_CHECK(count(lenses, "\"title\":\"0 references\"") == 1197);
-    TIDE_CHECK(count(lenses, "\"title\":\"1 reference\"") == 3); // Two constants and Total
+    TIDE_CHECK(count(lenses, "\"title\":\"1 reference\"") == 3);
     TIDE_CHECK(count(lenses, "\"title\":\"2 references\"") == 1);
     check_reference_lenses("file:///test.tide");
 }
@@ -7519,8 +8059,7 @@ TIDE_TEST(lsp_reference_lenses_keep_symbol_groups_and_order)
     "scene Main { }\n"                                                                                  \
     "event(Spawned) Setup(with Main) { var a = Spawn(Health); Spawn(Healer { patient = a }); }\n"
 
-// The World: any entity's component through world.Get<Health>(e), Has and
-// Set. Its signature doesn't name the components, so hovers and lenses do.
+// The World: any entity's component through world.Get<Health>(e), Has and Set; hovers and lenses name the components.
 TIDE_TEST(lsp_world)
 {
     start();
@@ -7534,7 +8073,6 @@ TIDE_TEST(lsp_world)
     open_document(game);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
-    // The lens and the hovers say what goes through the World
     const char *lenses = request("textDocument/codeLens");
     TIDE_CHECK(has(lenses, "stage 1") && has(lenses, "World: writes Health"));
     TIDE_CHECK(has(lenses, "World: reads Health") && has(lenses, "after Heal: it writes Health, which this reads"));
@@ -7549,14 +8087,12 @@ TIDE_TEST(lsp_world)
     const char *get = request_at("file:///test.tide", "textDocument/hover", 8, 23, "");
     TIDE_CHECK(has(get, "World.Get<Health>(Entity entity) -> Health") && has(get, "zero value when the entity has none"));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 10, 11, ""), "World.Set<Health>(Entity entity, Health value)"));
-    // The component in <> is the component: its hover, its declaration, and a type for `var`
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 8, 28, ""), "component Health"));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/definition", 8, 28, ""), "\"start\":{\"line\":0,\"character\":10}"));
     const char *hints = request_at("file:///test.tide", "textDocument/inlayHint", 0, 0,
                                    "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":20,\"character\":0}}");
     TIDE_CHECK(has(hints, "{\"position\":{\"line\":8,\"character\":13},\"label\":\": Health\""));
 
-    // Formatting keeps a method's type tight, and comparisons apart
     TIDE_CHECK(has(format_reply(game), "\"result\":[]"));
     static const char messy[] = WORLD_GAME "system Heal(Healer healer,mut World world)\n{\n"
                                            "var h=world.Get <Health> (healer.patient);\n"
@@ -7575,7 +8111,6 @@ TIDE_TEST(lsp_world)
     TIDE_CHECK(has(tokens, "0,2,5,1,8,0,6,5,5,3,0,12,6,2,0,"));
     TIDE_CHECK(has(tokens, "0,4,5,5,2,0,6,3,10,8,0,4,6,2,0,0,8,4,11,0"));
 
-    // Completion: the World's methods, the components in <>, and World where a parameter's type goes
     const char *methods = complete(WORLD_GAME "system Heal(Healer healer, mut World world)\n{\n    world.$\n}\n");
     TIDE_CHECK(offers(methods, "Get") && offers(methods, "Has") && offers(methods, "Set"));
     TIDE_CHECK(has(methods, "World.Get<T>(Entity entity) -> T") && has(methods, "Get<$1>($2)"));
@@ -7587,7 +8122,6 @@ TIDE_TEST(lsp_world)
     TIDE_CHECK(offers(types, "World") && !offers(types, "lookup"));
     TIDE_CHECK(offers(complete(WORLD_GAME "system Heal(Healer healer, mut $)\n{\n}\n"), "World"));
     TIDE_CHECK(offers(complete(WORLD_GAME "system Heal(Healer healer, World $)\n{\n}\n"), "world"));
-    // A local handler's World reads the local world's, a view's both
     static const char local[] = "component Health { int value; }\ncomponent Spark { int life; }\nlocal event Tap { }\n"
                                 "scene Main { }\n";
     char text[1024];
@@ -7598,14 +8132,12 @@ TIDE_TEST(lsp_world)
     const char *both = complete(text);
     TIDE_CHECK(offers(both, "Spark") && offers(both, "Health"));
 
-    // Signature help, with the component it's of
     open_document(WORLD_GAME "system Heal(Healer healer, mut World world)\n{\n    world.Set<Health>(healer.patient, $\n}\n");
     const char *set = request("textDocument/signatureHelp");
     TIDE_CHECK(has(set, "World.Set<Health>(Entity entity, Health value)") && has(set, "\"activeParameter\":1"));
     open_document(WORLD_GAME "system Heal(Healer healer, World world)\n{\n    var h = world.Get<Health>($);\n}\n");
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "World.Get<Health>(Entity entity) -> Health"));
 
-    // Renaming the component renames it in <> too, and the uses there are found
     open_document(WORLD_GAME "system Heal(Healer healer, mut World world)\n{\n"
                              "    if (!world.Has<Health>(healer.patient)) return;\n"
                              "    mut var h = world.Get<Hea$lth>(healer.patient);\n"
@@ -7613,7 +8145,6 @@ TIDE_TEST(lsp_world)
                              "    world.Set<Health>(healer.patient, h);\n}\n"
                              "system Watch(Healer healer, World world)\n{\n"
                              "    if (world.Has<Health>(healer.patient)) return;\n}\n");
-    // Its declaration, Setup's Spawn, and the four calls
     TIDE_CHECK(count(request_with("textDocument/references", "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 6);
     request_with("textDocument/rename", "\"newName\":\"Hp\"");
     const char *renamed = apply_reply(game, "file:///test.tide");
@@ -7623,18 +8154,15 @@ TIDE_TEST(lsp_world)
     snprintf(copy, sizeof copy, "%s", renamed);
     open_document(copy);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
-    // A type outside a namespace can't take the World's name
     open_document(WORLD_GAME "system Count(mut Sco$re score) { score.total = 1; }\n");
     TIDE_CHECK(has(request_with("textDocument/rename", "\"newName\":\"World\""), "'World' is built into the engine"));
 
-    // Set through a World that isn't mut: the fix declares it mut
     open_document(WORLD_GAME "system Heal(Healer healer, World world)\n{\n"
                              "    world.Set<Health>(healer.patient, Health { value = 1 });\n}\n");
     TIDE_CHECK(has(last_sent(), "'world' is read-only") && has(last_sent(), "declare the parameter as 'mut World world'"));
     const char *add_mut = actions_at(7);
     TIDE_CHECK(has(add_mut, "Declare 'world' as mut") && has(add_mut, "\"newText\":\"mut \""));
     TIDE_CHECK(has(add_mut, "\"start\":{\"line\":5,\"character\":27}"));
-    // A mut World that never calls Set, and one that's never used: warnings, faded, and the first has a fix
     open_document(WORLD_GAME "system Heal(Healer healer, mut World world)\n{\n"
                              "    if (world.Has<Health>(healer.patient)) return;\n}\n"
                              "system Idle(Healer healer, World world)\n{\n    if (healer.patient == this) return;\n}\n");
@@ -7644,10 +8172,8 @@ TIDE_TEST(lsp_world)
     TIDE_CHECK(has(remove_mut, "Remove 'mut' from 'world'") && has(remove_mut, "\"newText\":\"\""));
     TIDE_CHECK(has(remove_mut, "\"start\":{\"line\":5,\"character\":27}"));
 
-    // `lookup` is gone: the error says what to write
     open_document(WORLD_GAME "system Heal(Healer healer, lookup Health health)\n{\n}\n");
     TIDE_CHECK(has(last_sent(), "'lookup' parameters are gone") && has(last_sent(), "world.Get<Health>(entity)"));
-    // An unknown component in <>: a suggestion, as a fix
     open_document(WORLD_GAME "system Heal(Healer healer, World world)\n{\n    var h = world.Get<Helth>(healer.patient);\n}\n");
     TIDE_CHECK(has(last_sent(), "unknown component 'Helth'") && has(actions_at(7), "Change to 'Health'"));
 }
@@ -7671,23 +8197,19 @@ TIDE_TEST(lsp_changes_wait_to_be_analysed_together)
 {
     start();
     server.defer = true;
-    // Nothing goes out for a change, or for the ones after it
     open_document(GAME_TYPES "system Move(mut Body body)\n{\n    body.pos = 1;\n}\n");
     TIDE_CHECK(sent_count == 0);
     change_document(GAME_TYPES "system Move(mut Body body)\n{\n    body.spin = 1;\n}\n");
     TIDE_CHECK(sent_count == 0);
-    // Once input goes quiet, the text as the last change left it is analysed, once
     lsp_settle(&server);
     TIDE_CHECK(sent_count == 1);
     TIDE_CHECK(has(last_sent(), "\"method\":\"textDocument/publishDiagnostics\""));
     TIDE_CHECK(has(last_sent(), "Body has no field 'spin'"));
     TIDE_CHECK(!has(last_sent(), "Body has no field 'pos'"));
     clear_sent();
-    lsp_settle(&server); // Nothing waits any more
+    lsp_settle(&server);
     TIDE_CHECK(sent_count == 0);
 
-    // A request doesn't wait for quiet: the change is analysed for it, and
-    // its diagnostics go out before the reply, as they would without waiting
     change_document(GAME_TYPES "system Move(mut Body body)\n{\n    body.position.x = 1;\n}\n");
     TIDE_CHECK(sent_count == 0);
     cursor_line = 24;
@@ -7700,8 +8222,6 @@ TIDE_TEST(lsp_changes_wait_to_be_analysed_together)
     lsp_settle(&server);
     TIDE_CHECK(sent_count == 0);
 
-    // Closing isn't a change: what waited is analysed first, then the
-    // document's diagnostics go with it
     change_document(GAME_TYPES "system Move(mut Body body)\n{\n    body.pos = 1;\n}\n");
     TIDE_CHECK(sent_count == 0 && server.unsettled_count == 1);
     handle("{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didClose\",\"params\":{\"textDocument\":"
@@ -7725,7 +8245,6 @@ TIDE_TEST(lsp_cancelled_requests_are_skipped)
     static const char cancel_named[] = "{\"jsonrpc\":\"2.0\",\"method\":\"$/cancelRequest\",\"params\":{\"id\":\"h-7\"}}";
     static const char unrelated[] = "{\"jsonrpc\":\"2.0\",\"method\":\"$/setTrace\",\"params\":{\"value\":\"off\"}}";
 
-    // With nothing after it, or nothing that cancels it, a request is answered
     clear_sent();
     lsp_handle_ahead(&server, hover, strlen(hover), NULL, 0);
     TIDE_CHECK(sent_count == 1 && has(last_sent(), "\"id\":7") && has(last_sent(), "\"result\""));
@@ -7734,14 +8253,12 @@ TIDE_TEST(lsp_cancelled_requests_are_skipped)
     lsp_handle_ahead(&server, hover, strlen(hover), others, 3);
     TIDE_CHECK(sent_count == 1 && has(last_sent(), "\"id\":7") && has(last_sent(), "\"result\""));
 
-    // One that a later message cancels is answered as cancelled
     const lsp_message later[] = {{unrelated, strlen(unrelated)}, {cancel_7, strlen(cancel_7)}};
     clear_sent();
     lsp_handle_ahead(&server, hover, strlen(hover), later, 2);
     TIDE_CHECK(sent_count == 1 && has(last_sent(), "\"id\":7") && has(last_sent(), "\"code\":-32800"));
     TIDE_CHECK(!has(last_sent(), "\"result\""));
 
-    // Ids can be text
     clear_sent();
     lsp_handle_ahead(&server, named, strlen(named), others, 3);
     TIDE_CHECK(sent_count == 1 && has(last_sent(), "\"id\":\"h-7\"") && has(last_sent(), "\"code\":-32800"));
@@ -7749,7 +8266,6 @@ TIDE_TEST(lsp_cancelled_requests_are_skipped)
     lsp_handle_ahead(&server, named, strlen(named), later, 2);
     TIDE_CHECK(sent_count == 1 && has(last_sent(), "\"id\":\"h-7\"") && has(last_sent(), "\"result\""));
 
-    // A notification has no id to cancel: a change is taken in all the same
     clear_sent();
     lsp_handle_ahead(&server, cancel_7, strlen(cancel_7), later, 2);
     TIDE_CHECK(sent_count == 0);
@@ -7764,13 +8280,32 @@ TIDE_TEST(lsp_cancelled_requests_are_skipped)
     "scene Main { }\n" \
     "event(Spawned) Setup(with Main) { Spawn(Body, Fighter); Spawn(Body, Bullet); }\n"
 
+TIDE_TEST(lsp_query_local_fields)
+{
+    start();
+#define LOCAL_QUERY "component Body { int health; local int flash; }\nscene Main { }\nevent(Spawned) Setup(with Main) { Spawn(Body); }\n"
+    TIDE_CHECK(offers(complete(LOCAL_QUERY "view Show(query ($) bodies) { }\n"), "mut"));
+    TIDE_CHECK(!offers(complete(LOCAL_QUERY "system Update(query ($) bodies) { }\n"), "mut"));
+    TIDE_CHECK(offers(complete(LOCAL_QUERY "void Read(query ($) bodies) { }\n"), "mut"));
+    TIDE_CHECK(offers(complete(LOCAL_QUERY "local event(Shown) Show(query ($) bodies) { }\n"), "mut"));
+    TIDE_CHECK(offers(complete(LOCAL_QUERY "view Show(query (mut $) bodies) { }\n"), "Body"));
+    const char *members = complete(LOCAL_QUERY "view Show(query (Body body) bodies) { foreach (var row in bodies) Debug.Assert(row.body.$ >= 0); }\n");
+    TIDE_CHECK(offers(members, "flash") && offers(members, "health"));
+    TIDE_CHECK(offers(complete(LOCAL_QUERY "struct Tool { int Read(query (Body body) rows) { mut var n = 0; foreach (var row in rows) n += row.body.$; return n; } }\n"), "flash"));
+    open_document(LOCAL_QUERY "view Show(query (mut Body bo$dy) bodies) { foreach (var row in bodies) row.body.flash += 1; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "can write those local fields"));
+    open_document(LOCAL_QUERY "view Show(query (mut Body body) bodies) { foreach (var row in bodies) row.body.health = 0; }\n");
+    TIDE_CHECK(has(last_sent(), "query row 'row' is read-only"));
+#undef LOCAL_QUERY
+}
+
 TIDE_TEST(lsp_entity_query_members_and_headers)
 {
     start();
     const char *header = complete(QUERY_TYPES "system Hits(Body shot, $) { }\n");
     TIDE_CHECK(offers(header, "query"));
     TIDE_CHECK(has(header, "query (${1:Component} ${2:value}) ${3:entities}"));
-    // Views and synchronous handlers take them too.
     TIDE_CHECK(offers(complete(QUERY_TYPES "view Show($) { }\n"), "query"));
     TIDE_CHECK(offers(complete(QUERY_TYPES "event Hit { int damage; }\nlocal event(Hit hit) Show($) { }\n"), "query"));
     TIDE_CHECK(offers(complete(QUERY_TYPES "event(Spawned) OnSpawn($) { }\n"), "query"));
@@ -7806,7 +8341,7 @@ TIDE_TEST(lsp_entity_query_in_helpers)
     TIDE_CHECK(!offers(complete(QUERY_TYPES "extern float Total($);\n"), "query"));
     const char *bindings = complete(QUERY_TYPES "float Total(query ($) bodies) { return 0; }\n");
     TIDE_CHECK(offers(bindings, "Body") && offers(bindings, "with") && offers(bindings, "without"));
-    TIDE_CHECK(!offers(bindings, "mut") && !offers(bindings, "verified") && !offers(bindings, "Score"));
+    TIDE_CHECK(offers(bindings, "mut") && !offers(bindings, "verified") && !offers(bindings, "Score"));
     const char *rows = complete(QUERY_TYPES "float Total(query (Body body) bodies)\n{\n"
         "    foreach (var row in bodies) { var x = row.$; }\n    return 0;\n}\n");
     TIDE_CHECK(offers(rows, "entity") && offers(rows, "body"));
@@ -7852,15 +8387,14 @@ TIDE_TEST(lsp_entity_query_in_match_handlers)
     TIDE_CHECK(count(request("textDocument/codeLens"), "Query: reads Body") == 2);
 }
 
-// A view's and a local handler's query: what's offered in it, and what the
-// editor says of it, as of a system's.
+// A view's and a local handler's query: completion and editor information, as for a system's.
 TIDE_TEST(lsp_entity_query_in_views_and_local_handlers)
 {
     start();
     const char *bindings = complete(QUERY_TYPES "view Show(query ($) fighters) { }\n");
     TIDE_CHECK(offers(bindings, "Body") && offers(bindings, "with") && offers(bindings, "verified"));
-    TIDE_CHECK(!offers(bindings, "mut") && !offers(bindings, "Score") && !offers(bindings, "World"));
-    TIDE_CHECK(!offers(complete(QUERY_TYPES "system Hits(query ($) fighters) { }\n"), "verified")); // Only a view's
+    TIDE_CHECK(offers(bindings, "mut") && !offers(bindings, "Score") && !offers(bindings, "World"));
+    TIDE_CHECK(!offers(complete(QUERY_TYPES "system Hits(query ($) fighters) { }\n"), "verified"));
     TIDE_CHECK(offers(complete(QUERY_TYPES "view Show(query (Body body, with $) fighters) { }\n"), "verified"));
     const char *confirmed = complete(QUERY_TYPES "component Spark { int value; }\n"
                                                  "view Show(query (verified $) fighters) { }\n");
@@ -7882,25 +8416,21 @@ TIDE_TEST(lsp_entity_query_in_views_and_local_handlers)
         "    foreach (var fighter in fighters) seen.x = fighter.body.position.x + hit.damage;\n}\n";
     open_document(game);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
-    // The view's query, its `verified` binding and the word itself
     const char *query = request_at("file:///test.tide", "textDocument/hover", 10, 79, "");
-    TIDE_CHECK(has(query, "read-only second entity set, independent of the entity this view runs for"));
+    TIDE_CHECK(has(query, "second entity set, independent of the entity this view runs for"));
     TIDE_CHECK(has(query, "the same entity in the world the server has confirmed"));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 10, 72, ""), "As the last tick the server confirmed has it"));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 10, 56, ""),
                    "The query goes through the entities the view draws that are the same entity in the confirmed world too"));
-    // What it reads of every entity's, on the view and above it
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 10, 6, ""),
                    "Through its queries, it reads any entity's `Body` and `Fighter`"));
     const char *lenses = request("textDocument/codeLens");
     TIDE_CHECK(has(lenses, "Query: reads Body and Fighter"));
     TIDE_CHECK(has(lenses, "hears Hit at the start of a frame") && count(lenses, "Query: reads Body") == 2);
-    // The handler's: the match as its event's tick left it
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 18, 76, ""),
                    "Its rows are the match as the tick that sent the event left it"));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 18, 23, ""), "Through its queries, it reads any entity's `Body`"));
 
-    // A view's query of the drawn world, and one of this machine's entities
     open_document(QUERY_TYPES "component Spark { int value; }\nlocal singleton Seen { float x; }\n"
                   "view Show(mut Seen seen, query (Body body) bodies, query (local Spark spark) sparks)\n{\n"
                   "    foreach (var row in bodies) seen.x += row.body.position.x;\n"
@@ -7908,10 +8438,9 @@ TIDE_TEST(lsp_entity_query_in_views_and_local_handlers)
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 9, 45, ""), "blended between the last two ticks"));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 9, 78, ""), "this machine's own entities, as they are"));
-    // What's refused says so in the editor
     open_document(QUERY_TYPES "view Show(query (mut Body body) bodies)\n{\n"
                   "    foreach (var row in bodies) Debug.Log($\"{row.body.position.x}\");\n}\n");
-    TIDE_CHECK(has(last_sent(), "query component bindings are read-only"));
+    TIDE_CHECK(has(last_sent(), "a mutable query binding writes attached local fields"));
 }
 
 TIDE_TEST(lsp_entity_query_symbols)
@@ -7928,8 +8457,8 @@ TIDE_TEST(lsp_entity_query_symbols)
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 7, 8, ""),
                    "query (Body body, Fighter stats, without Ghost) fighters"));
-    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 9, 32, ""), "read-only second entity set"));
-    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 11, 29, ""), "Read-only component data from this query row"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 9, 32, ""), "second entity set"));
+    TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 11, 29, ""), "Read-only match data from this query row"));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/hover", 12, 30, ""), "entity matched by this query row, read-only"));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/definition", 11, 29, ""),
                    "\"start\":{\"line\":7,\"character\":48}"));
@@ -7948,7 +8477,6 @@ TIDE_TEST(lsp_entity_query_symbols)
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/prepareRename", 12, 30, ""),
                    "Built-in names can't be renamed"));
 
-    // Query types and filters resolve to ordinary components for navigation and rename.
     request_at("file:///test.tide", "textDocument/rename", 7, 43, "\"newName\":\"Hull\"");
     renamed = apply_reply(game, "file:///test.tide");
     TIDE_CHECK(has(renamed, "component Hull") && has(renamed, "query (Hull body"));
@@ -7988,7 +8516,6 @@ TIDE_TEST(lsp_entity_query_format_tokens_and_schedule)
     TIDE_CHECK(has(hover, "Through its queries, it reads any entity's `Body`"));
     TIDE_CHECK(has(hover, "`Move`: it writes `Body`, which this reads"));
 
-    // A World write to the same component retains the query's read in metadata.
     open_document(QUERY_TYPES "system Rewrite(query (Body body, with Fighter) fighters, mut World world)\n{\n"
                   "    foreach (var fighter in fighters)\n    {\n"
                   "        mut var next = fighter.body;\n"
@@ -8040,8 +8567,7 @@ TIDE_TEST(lsp_entity_query_unused_bindings)
     TIDE_CHECK(found);
 }
 
-// Random: a generator's methods where one is, what they and the type say,
-// Random(seed), and its rolls and the match's seed on the type.
+// Random: a generator's methods, Random(seed), and its rolls and the match's seed on the type.
 TIDE_TEST(lsp_random)
 {
     start();
@@ -8060,7 +8586,6 @@ TIDE_TEST(lsp_random)
     const char *help = request("textDocument/signatureHelp");
     TIDE_CHECK(has(help, "Random.NextInt(int max) -> int") && has(help, "Random.NextInt(int min, int max) -> int"));
 
-    // The type: where it's a field's, and where Random(seed) makes one
     open_document("component Dice\n{\n    Ran$dom random;\n}\nscene Main { }\n");
     const char *type = request("textDocument/hover");
     TIDE_CHECK(has(type, "struct Random") && has(type, "long state") && has(type, "A random number generator's state"));
@@ -8073,12 +8598,10 @@ TIDE_TEST(lsp_random)
     open_document(DICE "system Roll(mut Dice dice)\n{\n    dice.random.sta$te = 5;\n}\n");
     TIDE_CHECK(has(request("textDocument/hover"), "All there is to the generator"));
 
-    // Random on the type: its rolls and the match's seed, which Time no longer has
 #define DECK "singleton Deck { int top; }\nscene Main { }\n"
     const char *rolls = complete(DECK "system Roll(mut Deck deck)\n{\n    deck.top = Random.$\n}\n");
     TIDE_CHECK(offers(rolls, "NextInt") && offers(rolls, "NextFloat2Direction") && offers(rolls, "seed"));
     TIDE_CHECK(has(rolls, "The match's seed") && !offers(rolls, "state"));
-    // ...in a task and in Sample too, and not in Sanitize
     const char *task = complete(DECK "async void Deal(mut Deck deck)\n{\n    await Wait.Ticks(1);\n    deck.top = Random.$\n}\n");
     TIDE_CHECK(offers(task, "NextInt") && offers(task, "seed"));
     const char *sample = complete("input Keys\n{\n    int luck;\n    Sample(Devices devices)\n    {\n        luck = Random.$\n    }\n}\nscene Main { }\n");
@@ -8094,11 +8617,9 @@ TIDE_TEST(lsp_random)
     open_document(DECK "system Roll(Time time, mut Deck deck)\n{\n    deck.top = time.seed;\n}\n");
     TIDE_CHECK(has(last_sent(), "the match's seed is 'Random.seed' now"));
 
-    // Rolling through a read-only parameter says why it can't
     open_document(DICE "system Roll(Dice dice)\n{\n    dice.random.NextInt(6);\n}\n");
     TIDE_CHECK(has(last_sent(), "'dice' is read-only") && has(last_sent(), "'NextInt' is a mut method"));
 
-    // In a frag and a vert too: each pixel and each vertex rolls with a generator of its own, and reads the seed
 #define GRAIN "scene Main { }\nlocal singleton Art { List<Vertex> corners; List<int> faces; }\n"
 #define GRAIN_DRAWN "view Show(Art art)\n{\n    Draw.Mesh(art.corners, art.faces, Grain);\n}\n"
     const char *pixel = complete(GRAIN "frag Grain(Vertex vertex, out Color color)\n{\n    color = Color(Random.$\n}\n");
@@ -8114,7 +8635,6 @@ TIDE_TEST(lsp_random)
     TIDE_CHECK(has(request("textDocument/hover"), "Random.NextFloat(float max) -> float"));
     open_document(GRAIN "frag Grain(Vertex vertex, out Color color)\n{\n    color = Color(Random.NextInt($\n}\n" GRAIN_DRAWN);
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "Random.NextInt(int min, int max) -> int"));
-    // A Random the game keeps stays the CPU's: its state is 64 bits
     open_document(GRAIN "frag Grain(Vertex vertex, out Color color)\n{\n    mut var mine = Random(7);\n"
                         "    color = Color(mine.NextFloat(), 0, 0);\n}\n" GRAIN_DRAWN);
     TIDE_CHECK(has(last_sent(), "so it can't make a Random") && has(last_sent(), "roll on the type, 'Random.NextInt(6)'"));
@@ -8132,22 +8652,17 @@ TIDE_TEST(lsp_overloads)
     open_document(OVERLOADS "system Run(mut Log log)\n{\n    log.total = Damage(10, crit: true) + Damage(1.0, Weapon { });\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
-    // Signature help: every one that shares the name, with its defaults as written
     open_document(OVERLOADS "system Run(mut Log log)\n{\n    log.total = Damage(10, $\n}\n");
     const char *help = request("textDocument/signatureHelp");
     TIDE_CHECK(has(help, "\"label\":\"float Damage(float base, float multiplier = 1, bool crit = false)\""));
     TIDE_CHECK(has(help, "\"label\":\"float Damage(float base, Weapon weapon)\""));
     TIDE_CHECK(has(help, "\"activeSignature\":0,\"activeParameter\":1"));
-    // "float Damage(" is 13 characters: `float multiplier = 1` is 25 to 45, its default with it
     TIDE_CHECK(has(help, "{\"label\":[13,23]},{\"label\":[25,45]},{\"label\":[47,64]}"));
-    // An argument written with a name is its parameter's, wherever it is
     open_document(OVERLOADS "system Run(mut Log log)\n{\n    log.total = Damage(10, crit: $\n}\n");
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeSignature\":0,\"activeParameter\":2"));
-    // ...and only the one that has the name takes it
     open_document(OVERLOADS "system Run(mut Log log)\n{\n    log.total = Damage(10, weapon: $\n}\n");
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "\"activeSignature\":1,\"activeParameter\":1"));
 
-    // Hover and go to definition: the one the call's arguments pick
     open_document(OVERLOADS "system Run(mut Log log)\n{\n    log.total = Dam$age(1.0, Weapon { });\n}\n");
     const char *picked = request("textDocument/hover");
     TIDE_CHECK(has(picked, "float Damage(float base, Weapon weapon)") && !has(picked, "multiplier"));
@@ -8156,7 +8671,6 @@ TIDE_TEST(lsp_overloads)
     TIDE_CHECK(has(request("textDocument/hover"), "float Damage(float base, float multiplier = 1, bool crit = false)"));
     TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":3,\"character\":6}"));
 
-    // A name on an argument is a use of its parameter: it shows what it is, and renames with it
     static const char program[] = OVERLOADS "system Run(mut Log log)\n{\n    log.total = Damage(10, crit: true);\n}\n";
     open_document(OVERLOADS "system Run(mut Log log)\n{\n    log.total = Damage(10, cr$it: true);\n}\n");
     TIDE_CHECK(has(request("textDocument/hover"), "bool crit"));
@@ -8165,29 +8679,24 @@ TIDE_TEST(lsp_overloads)
     TIDE_CHECK(has(renamed, "bool critical = false) { return critical ? base"));
     TIDE_CHECK(has(renamed, "Damage(10, critical: true)"));
 
-    // Inlay hints name the arguments that don't say theirs
     open_document(OVERLOADS "system Run(mut Log log)\n{\n    log.total = Damage(10, 2, crit: true);\n}\n");
     const char *hints = request_at("file:///test.tide", "textDocument/inlayHint", 0, 0,
                                    "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":20,\"character\":0}}");
     TIDE_CHECK(has(hints, "\"label\":\"base:\"") && has(hints, "\"label\":\"multiplier:\"") && !has(hints, "\"label\":\"crit:\""));
-    // ...and none where a call leaves a parameter out: its default isn't written there
     open_document(OVERLOADS "system Run(mut Log log)\n{\n    log.total = Damage(10);\n}\n");
     const char *left_out = request_at("file:///test.tide", "textDocument/inlayHint", 0, 0,
                                       "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":20,\"character\":0}}");
     TIDE_CHECK(has(left_out, "\"label\":\"base:\"") && !has(left_out, "\"label\":\"multiplier:\""));
 
-    // What's wrong with a call says what to write
     open_document(OVERLOADS "system Run(mut Log log)\n{\n    log.total = Damage(10, crti: true);\n}\n");
     TIDE_CHECK(has(last_sent(), "'Damage' has no parameter 'crti'") || has(last_sent(), "no 'Damage' takes"));
 
-    // Completion where an argument starts: the names the parameters not given yet go by
     const char *names = complete(OVERLOADS "system Run(mut Log log)\n{\n    log.total = Damage(10, $);\n}\n");
     TIDE_CHECK(offers(names, "multiplier:") && offers(names, "crit:") && offers(names, "weapon:") && !offers(names, "base:"));
-    TIDE_CHECK(has(names, "\"detail\":\"bool crit = false\"") && offers(names, "log")); // Values, as anywhere
+    TIDE_CHECK(has(names, "\"detail\":\"bool crit = false\"") && offers(names, "log"));
     const char *rest = complete(OVERLOADS "system Run(mut Log log)\n{\n    log.total = Damage(10, crit: true, $);\n}\n");
     TIDE_CHECK(offers(rest, "multiplier:") && !offers(rest, "crit:"));
 
-    // The formatter: a name sits against its colon, a default has spaces around its '=', and `?:` keeps its own
     static const char messy[] = "scene Main { }\nsingleton Log { float total; }\n"
                                 "float Scale(float value,float by=2,bool on=true)\n{\nreturn on?value*by:value;\n}\n"
                                 "system Run(mut Log log)\n{\nlog.total = Scale(1,on :false,by:log.total>1?2:3);\n}\n";
@@ -8215,13 +8724,11 @@ TIDE_TEST(lsp_built_in_defaults)
     open_document("scene Main { }\nlocal singleton Menu { bool open; }\nview Show(Menu menu)\n{\n"
                   "    Debug.Ass$ert(menu.open);\n}\n");
     TIDE_CHECK(has(request("textDocument/hover"), "Debug.Assert(bool condition, string message = \\\"\\\")"));
-    // Names on the engine's functions, in any order
     open_document("scene Main { }\nview Show()\n{\n    Draw.Circle(radius: 2, center: float2(3, 4), color: Color.red);\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 }
 
-// Systems that share a name: [After] writes the one it means with its
-// parameters' types, each of which is a use of the type.
+// Systems that share a name: [After] writes the one it means with its parameters' types.
 #define MOVES                                                                                                         \
     "scene Main { }\ncomponent Body { float x; }\ncomponent Player { }\ncomponent Enemy { }\n"                        \
     "system Move(mut Body body, with Player) { body.x += 1; }\n"                                                       \
@@ -8237,7 +8744,6 @@ TIDE_TEST(lsp_shared_names)
     TIDE_CHECK(has(request("textDocument/hover"), "system Move(mut Body body, with Enemy)"));
     TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":5,\"character\":7}"));
 
-    // Renaming the component renames it where the attribute writes it
     open_document(MOVES "[After(Move(Body, with Ene$my))]\nsystem Settle(mut Body body) { body.x *= 0.5; }\n");
     TIDE_CHECK(has(request("textDocument/hover"), "component Enemy"));
     request_with("textDocument/rename", "\"newName\":\"Foe\"");
@@ -8245,7 +8751,6 @@ TIDE_TEST(lsp_shared_names)
     TIDE_CHECK(has(renamed, "component Foe { }") && has(renamed, "with Foe) { body.x -= 1; }"));
     TIDE_CHECK(has(renamed, "[After(Move(Body, with Foe))]"));
 
-    // A name alone, where two share it, says what to write
     open_document(MOVES "[After(Move)]\nsystem Settle(mut Body body) { body.x *= 0.5; }\n");
     TIDE_CHECK(has(last_sent(), "2 declarations share the name 'Move'") && has(last_sent(), "'Move(Body, with Player)'"));
 }
@@ -8276,8 +8781,7 @@ TIDE_TEST(lsp_shared_names)
 // A system whose first statement is on line 22
 #define OUT_RUN OUT_PARAMS "system Run(mut Tally tally)\n{\n"
 
-// Every way an argument says `out`: a local it declares there (with `var`, a
-// type or `mut`), a field the code has, nothing, and by its parameter's name
+// Every way an argument says `out`: a local it declares (with `var`, a type or `mut`), a field the code has, nothing, or its parameter's name.
 #define OUT_EVERY                                                              \
     OUT_RUN                                                                    \
     "    if (TryHalf(8, out var half)) tally.total = half;\n"                  \
@@ -8304,22 +8808,19 @@ TIDE_TEST(lsp_out_parameters)
     open_document(OUT_EVERY);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
-    // Its hover, on its name and on its word, says what a call writes for it
     const char *param = hover_at(11, 33);
     TIDE_CHECK(has(param, "out int half") && has(param, "the caller's variable, which the call makes: it starts unassigned here"));
     TIDE_CHECK(has(param, "A call says `out` before its argument: `out var half` declares the variable there"));
     const char *word = hover_at(11, 25);
     TIDE_CHECK(has(word, "out int half") && has(word, "which the call makes"));
     TIDE_CHECK(has(word, "\"range\":{\"start\":{\"line\":11,\"character\":24},\"end\":{\"line\":11,\"character\":27}}"));
-    const char *method = hover_at(4, 38); // A method's
+    const char *method = hover_at(4, 38);
     TIDE_CHECK(has(method, "out int found") && has(method, "`out var found` declares the variable there"));
-    TIDE_CHECK(has(hover_at(13, 5), "out int half")); // ...and where its code assigns it
-    // The function's and the method's signatures have the word
+    TIDE_CHECK(has(hover_at(13, 5), "out int half"));
     TIDE_CHECK(has(hover_at(22, 10), "bool TryHalf(int value, out int half)"));
     TIDE_CHECK(has(hover_at(30, 18), "bool TryPower(int least, out int found)"));
     TIDE_CHECK(has(request("textDocument/documentSymbol"), "\"name\":\"TryPower\",\"detail\":\"bool TryPower(int least, out int found)\""));
 
-    // Signature help: the parameter the argument is for, by its place or its name
     open_document(OUT_RUN "    TryHalf(8, out var $\n}\n");
     const char *help = request("textDocument/signatureHelp");
     TIDE_CHECK(has(help, "\"label\":\"bool TryHalf(int value, out int half)\"") && has(help, "\"activeParameter\":1"));
@@ -8330,7 +8831,6 @@ TIDE_TEST(lsp_out_parameters)
     const char *power = request("textDocument/signatureHelp");
     TIDE_CHECK(has(power, "bool TryPower(int least, out int found)") && has(power, "\"activeParameter\":1"));
 
-    // What's wrong with a parameter or a call comes with its note
     open_document(OUT_RUN "    TryHalf(8, tally.total);\n}\n");
     TIDE_CHECK(has(last_sent(), "'TryHalf' makes its 'half', so the argument says 'out'"));
     TIDE_CHECK(has(last_sent(), "'out var half' declares one there, and 'out _' leaves it out"));
@@ -8339,13 +8839,11 @@ TIDE_TEST(lsp_out_parameters)
     TIDE_CHECK(has(last_sent(), "this takes what it changes as 'mut': 'mut Tally tally'"));
 }
 
-// The argument: its word, the local it declares and the variable it writes,
-// in hovers, definitions, references, highlights and renames.
+// The `out` argument: its word, the local it declares and the variable it writes, in editor features.
 TIDE_TEST(lsp_out_arguments)
 {
     start();
     open_document(OUT_EVERY);
-    // The word says what the call makes there, and for which parameter
     const char *declares = hover_at(22, 20);
     TIDE_CHECK(has(declares, "out int half") && has(declares, "Declares `half` here, a local the call makes: read-only afterwards"));
     TIDE_CHECK(has(declares, "For `TryHalf`'s `out int half`."));
@@ -8354,51 +8852,43 @@ TIDE_TEST(lsp_out_arguments)
     TIDE_CHECK(has(assigns, "The call makes the variable after it: it's written, as by an assignment"));
     const char *leaves = hover_at(28, 16);
     TIDE_CHECK(has(leaves, "out _") && has(leaves, "Leaves out what the call makes there: no variable takes it."));
-    TIDE_CHECK(has(hover_at(28, 19), "\"result\":null")); // `_` is no name
+    TIDE_CHECK(has(hover_at(28, 19), "\"result\":null"));
     TIDE_CHECK(has(hover_at(30, 40), "\"result\":null"));
-    TIDE_CHECK(has(hover_at(30, 37), "A 32-bit integer")); // ...though `out int _` writes a type
-    TIDE_CHECK(has(hover_at(29, 23), "out int half")); // The name it's passed by is its parameter
+    TIDE_CHECK(has(hover_at(30, 37), "A 32-bit integer"));
+    TIDE_CHECK(has(hover_at(29, 23), "out int half"));
 
-    // The local an argument declares says so, with its type and whether the code can change it
     const char *half = hover_at(22, 28);
     TIDE_CHECK(has(half, "int half") && has(half, "Local variable, read-only. An `out` argument declares it, and the call it's in makes it"));
     TIDE_CHECK(has(half, "`out mut var half` declares one the code can change afterwards."));
     TIDE_CHECK(has(hover_at(24, 24), "`out mut int typed` declares one") && has(hover_at(24, 20), "A 32-bit integer"));
     const char *changed = hover_at(25, 33);
     TIDE_CHECK(has(changed, "mut int changed") && has(changed, "Local variable. An `out` argument declares it") && !has(changed, "read-only"));
-    TIDE_CHECK(has(hover_at(23, 20), "Local variable, read-only. An `out` argument declares it")); // A use, after the if
+    TIDE_CHECK(has(hover_at(23, 20), "Local variable, read-only. An `out` argument declares it"));
 
-    // Its definition is the argument, from a use after the `if` that declared it
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/definition", 23, 20, ""),
                    "\"range\":{\"start\":{\"line\":22,\"character\":27},\"end\":{\"line\":22,\"character\":31}}"));
-    // ...and every use refers to it: in the if, and after it
     TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 22, 28, "\"context\":{\"includeDeclaration\":true}"),
                      "\"uri\"") == 3);
     TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 23, 20, "\"context\":{\"includeDeclaration\":false}"),
                      "\"uri\"") == 2);
-    // Highlights: declared and added to (writes), and passed on (a read)
     const char *marks = request_at("file:///test.tide", "textDocument/documentHighlight", 25, 33, "");
     TIDE_CHECK(count(marks, "\"kind\":3") == 2 && count(marks, "\"kind\":2") == 1);
 
-    // Its type's definition: the struct a map's TryGet gives
     open_document(OUT_RUN "    if (tally.all.TryGet(1, out var sta$ts)) tally.total = stats.power;\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     TIDE_CHECK(has(request("textDocument/typeDefinition"), "\"range\":{\"start\":{\"line\":0,\"character\":7}"));
     TIDE_CHECK(has(request("textDocument/hover"), "Stats stats"));
 
-    // A variable the code has is written by the call that makes it, as by an assignment
     open_document(OUT_RUN "    mut var ke$pt = 0;\n    TryHalf(8, out kept);\n    tally.total = kept;\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     const char *kept = request("textDocument/documentHighlight");
     TIDE_CHECK(count(kept, "\"kind\":3") == 2 && count(kept, "\"kind\":2") == 1);
     TIDE_CHECK(has(kept, "{\"range\":{\"start\":{\"line\":23,\"character\":19},\"end\":{\"line\":23,\"character\":23}},\"kind\":3}"));
-    // ...and so is a field
     open_document(OUT_RUN "    TryHalf(8, out tally.to$tal);\n    tally.stats.power = tally.total;\n}\n");
     const char *field = request("textDocument/documentHighlight");
     TIDE_CHECK(has(field, "{\"range\":{\"start\":{\"line\":22,\"character\":25},\"end\":{\"line\":22,\"character\":30}},\"kind\":3}"));
     TIDE_CHECK(has(field, "{\"range\":{\"start\":{\"line\":23,\"character\":30},\"end\":{\"line\":23,\"character\":35}},\"kind\":2}"));
 
-    // Rename: where it's declared and every use, after the `if` too, and nothing of the parameter
     static const char program[] = OUT_RUN "    if (TryHalf(8, out var half)) tally.total = half;\n    tally.total += half;\n}\n";
     open_document(OUT_RUN "    if (TryHalf(8, out var half)) tally.total = half;\n    tally.total += ha$lf;\n}\n");
     TIDE_CHECK(has(request("textDocument/prepareRename"), "\"result\":{\"start\":{\"line\":23,\"character\":19}"));
@@ -8411,29 +8901,25 @@ TIDE_TEST(lsp_out_arguments)
     snprintf(copy, sizeof copy, "%s", renamed);
     open_document(copy);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
-    // The parameter renames with the name an argument is passed by
     static const char by_name[] = OUT_RUN "    TryHalf(value: 8, half: out var named);\n    tally.total = named;\n}\n";
     open_document(by_name);
     rename_at(22, 23, "part");
     const char *parts = apply_reply(by_name, "file:///test.tide");
     TIDE_CHECK(has(parts, "bool TryHalf(int value, out int part)\n{\n    part = value / 2;") && has(parts, "part: out var named"));
 
-    // Neither `_` nor the word is a name to rename, and a new name can't be one an argument declares
     open_document(OUT_EVERY);
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/prepareRename", 28, 19, ""), "Nothing to rename here."));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/prepareRename", 28, 16, ""),
                    "'out' is a keyword before a parameter's type or an argument, so it can't be renamed."));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/prepareRename", 11, 25, ""), "'out' is a keyword"));
     TIDE_CHECK(has(rename_at(22, 28, "named"), "'named' is already declared"));
-    TIDE_CHECK(has(rename_at(22, 28, "out"), "\"changes\"")); // The word is a name anywhere else
+    TIDE_CHECK(has(rename_at(22, 28, "out"), "\"changes\""));
 }
 
-// A local an argument declares is in scope after it: the enclosing block's,
-// or the loop's own when a loop's header declares it.
+// A local an argument declares is in scope after it: the enclosing block's, or the loop's own when its header declares it.
 TIDE_TEST(lsp_out_local_scopes)
 {
     start();
-    // An if's condition's: in both branches and after it, and in the rest of the condition
     TIDE_CHECK(offers(complete(OUT_RUN "    if (TryHalf(8, out var half))\n    {\n        tally.total = $\n    }\n}\n"), "half"));
     TIDE_CHECK(offers(complete(OUT_RUN "    if (TryHalf(8, out var half)) { }\n    else\n    {\n        tally.total = $\n    }\n}\n"), "half"));
     TIDE_CHECK(offers(complete(OUT_RUN "    if (TryHalf(8, out var half)) { }\n    tally.total = $\n}\n"), "half"));
@@ -8442,16 +8928,13 @@ TIDE_TEST(lsp_out_local_scopes)
     const char *chained = complete(OUT_RUN "    if (TryHalf(8, out var half) && TryHalf(half, out var quarter) && Use($)) { }\n}\n");
     TIDE_CHECK(offers(chained, "half") && offers(chained, "quarter"));
     TIDE_CHECK(has(chained, "{\"label\":\"quarter\",\"kind\":6,\"detail\":\"int\"}"));
-    // ...but not before it, nor outside the block the if is in
     TIDE_CHECK(!offers(complete(OUT_RUN "    Use($);\n    if (TryHalf(8, out var half)) { }\n}\n"), "half"));
     TIDE_CHECK(!offers(complete(OUT_RUN "    if (TryHalf(Use($) ? 1 : 2, out var half)) { }\n}\n"), "half"));
     TIDE_CHECK(!offers(complete(OUT_RUN "    {\n        if (TryHalf(8, out var half)) { }\n    }\n    Use($);\n}\n"), "half"));
-    // An else if is a statement of the else: its own there, and gone after the chain
     TIDE_CHECK(offers(complete(OUT_RUN "    if (tally.total > 1) { }\n    else if (TryHalf(8, out var half))\n    {\n"
                                        "        tally.total = $\n    }\n}\n"),
                       "half"));
     TIDE_CHECK(!offers(complete(OUT_RUN "    if (tally.total > 1) { }\n    else if (TryHalf(8, out var half)) { }\n    Use($);\n}\n"), "half"));
-    // A statement's, a local's value's, an assignment's and a switch's value's: from there on
     TIDE_CHECK(offers(complete(OUT_RUN "    TryHalf(8, out var half);\n    tally.total = $\n}\n"), "half"));
     TIDE_CHECK(offers(complete(OUT_RUN "    var even = TryHalf(8, out var half);\n    tally.total = $\n}\n"), "half"));
     TIDE_CHECK(offers(complete(OUT_RUN "    mut var even = false;\n    even = TryHalf(8, out var half);\n    tally.total = $\n}\n"), "half"));
@@ -8461,7 +8944,6 @@ TIDE_TEST(lsp_out_local_scopes)
     TIDE_CHECK(offers(complete(OUT_RUN "    switch (TryHalf(8, out var half) ? 1 : 0)\n    {\n        case 1:\n            break;\n    }\n"
                                        "    tally.total = $\n}\n"),
                       "half"));
-    // A loop's header's is the loop's own: in its condition, its step and its body, and gone after it
     TIDE_CHECK(offers(complete(OUT_RUN "    while (TryHalf(tally.total, out var half))\n    {\n        tally.total = $\n    }\n}\n"), "half"));
     TIDE_CHECK(offers(complete(OUT_RUN "    while (TryHalf(tally.total, out var half)) Use($);\n}\n"), "half"));
     TIDE_CHECK(offers(complete(OUT_RUN "    while (TryHalf(tally.total, out var half) && Use($)) { }\n}\n"), "half"));
@@ -8469,7 +8951,6 @@ TIDE_TEST(lsp_out_local_scopes)
     TIDE_CHECK(offers(complete(OUT_RUN "    for (var i = 0; TryHalf(i, out var half); Use($)) { }\n}\n"), "half"));
     TIDE_CHECK(offers(complete(OUT_RUN "    for (var i = 0; TryHalf(i, out var half); i++)\n    {\n        tally.total = $\n    }\n}\n"), "half"));
     TIDE_CHECK(!offers(complete(OUT_RUN "    for (var i = 0; TryHalf(i, out var half); i++) { }\n    Use($);\n}\n"), "half"));
-    // A call's block is a block: what's declared in it stays in it, and what its arguments declare is around it
     TIDE_CHECK(offers(complete(OUT_PARAMS "void Twice(out int ran, Action content) { ran = 2; content(); content(); }\n"
                                           "system Run(mut Tally tally)\n{\n    Twice(out var ran)\n    {\n        Use($);\n    }\n}\n"),
                       "ran"));
@@ -8477,78 +8958,66 @@ TIDE_TEST(lsp_out_local_scopes)
                                            "system Run(mut Tally tally)\n{\n    Twice(out var ran)\n    {\n        TryHalf(8, out var half);\n"
                                            "    }\n    Use($);\n}\n"),
                        "half"));
-    // `out _` declares nothing
     const char *nothing = complete(OUT_RUN "    TryHalf(8, out _);\n    Use($);\n}\n");
     TIDE_CHECK(offers(nothing, "tally") && !offers(nothing, "_") && !has(nothing, "tide_out_"));
 
-    // Its members, from the argument: once the statement parses, and while it's being typed
     const char *members = complete(OUT_RUN "    if (tally.all.TryGet(3, out var stats)) tally.total += stats.$power;\n}\n");
     TIDE_CHECK(offers(members, "power") && offers(members, "TryPower"));
     const char *typing = complete(OUT_RUN "    if (tally.all.TryGet(3, out var stats)) tally.total += stats.$\n}\n");
     TIDE_CHECK(offers(typing, "power") && offers(typing, "TryPower"));
     TIDE_CHECK(offers(complete(OUT_RUN "    if (tally.all.TryGet(3, out Stats stats)) tally.total += stats.$\n}\n"), "power"));
     TIDE_CHECK(offers(complete(OUT_RUN "    if (tally.all.TryGet(key: 3, value: out mut var stats)) tally.total += stats.$\n}\n"), "power"));
-    TIDE_CHECK(!offers(complete(OUT_RUN "    if (TryHalf(3, out var stats)) tally.total += stats.$\n}\n"), "power")); // An int has none
+    TIDE_CHECK(!offers(complete(OUT_RUN "    if (TryHalf(3, out var stats)) tally.total += stats.$\n}\n"), "power"));
 }
 
-// Completion where `out` goes: a function's and a method's parameters, and
-// the argument for an `out` parameter.
+// Completion where `out` goes: parameters and the argument for an `out` parameter.
 TIDE_TEST(lsp_out_completion)
 {
     start();
-    // Where a parameter starts, beside `mut`: functions, methods and extern functions have them
     const char *function = complete(OUT_PARAMS "bool Find(int key, $");
     TIDE_CHECK(offers(function, "mut") && offers(function, "out") && offers(function, "int"));
     TIDE_CHECK(has(function, "The caller's variable, which the call makes: assigned here on every path that returns"));
     TIDE_CHECK(offers(complete("struct S\n{\n    int a;\n    bool Find($\n"), "out"));
     TIDE_CHECK(offers(complete(OUT_PARAMS "extern bool Find(int key, $"), "out"));
-    // ...and nothing the engine calls itself, nor an async function, nor an operator
     TIDE_CHECK(!offers(complete(OUT_PARAMS "system Find($"), "out") && !offers(complete(OUT_PARAMS "view Find($"), "out"));
     TIDE_CHECK(!offers(complete(OUT_PARAMS "event(Spawned) Find($"), "out") && !offers(complete(OUT_PARAMS "frag Find($"), "out"));
     TIDE_CHECK(!offers(complete(OUT_PARAMS "async void Find($"), "out"));
     TIDE_CHECK(!offers(complete("struct S\n{\n    int a;\n    S operator +($\n"), "out"));
-    // After the word, what a call can make: no Action, no devices, and no second modifier
     const char *after = complete(OUT_PARAMS "bool Find(int key, out $");
     TIDE_CHECK(offers(after, "int") && offers(after, "List") && offers(after, "Stats") && offers(after, "Tally"));
     TIDE_CHECK(!offers(after, "Action") && !offers(after, "Devices") && !offers(after, "mut") && !offers(after, "out"));
     TIDE_CHECK(offers(complete(OUT_PARAMS "bool Find(int key, out Stats $"), "stats"));
-    TIDE_CHECK(!offers(complete(OUT_PARAMS "bool Find(int out $"), "Stats")); // A parameter named out is a name
+    TIDE_CHECK(!offers(complete(OUT_PARAMS "bool Find(int out $"), "Stats"));
 
-    // The argument for an `out` parameter says `out`: nothing else fits there
     const char *argument = complete(OUT_RUN "    TryHalf(8, $);\n}\n");
     TIDE_CHECK(offers(argument, "out var half") && offers(argument, "out") && offers(argument, "out _") && offers(argument, "half:"));
     TIDE_CHECK(has(argument, "{\"label\":\"out var half\",\"kind\":15,\"detail\":\"Declares the variable the call makes\""));
     TIDE_CHECK(has(argument, "\"insertText\":\"out var ${1:half}\",\"insertTextFormat\":2"));
     TIDE_CHECK(!offers(argument, "tally") && !offers(argument, "true"));
-    TIDE_CHECK(offers(complete(OUT_RUN "    TryHalf(8, $\n}\n"), "out var half")); // Still open
-    TIDE_CHECK(offers(complete(OUT_RUN "    TryHalf(8, o$\n}\n"), "out var half")); // The word being typed
+    TIDE_CHECK(offers(complete(OUT_RUN "    TryHalf(8, $\n}\n"), "out var half"));
+    TIDE_CHECK(offers(complete(OUT_RUN "    TryHalf(8, o$\n}\n"), "out var half"));
     const char *named = complete(OUT_RUN "    TryHalf(value: 8, half: $);\n}\n");
     TIDE_CHECK(offers(named, "out var half") && offers(named, "out _") && !offers(named, "tally"));
-    TIDE_CHECK(offers(complete(OUT_RUN "    tally.stats.TryPower(2, $);\n}\n"), "out var found")); // A method's
-    // ...and an argument for any other parameter is a value
+    TIDE_CHECK(offers(complete(OUT_RUN "    tally.stats.TryPower(2, $);\n}\n"), "out var found"));
     const char *value = complete(OUT_RUN "    TryHalf($);\n}\n");
     TIDE_CHECK(!offers(value, "out") && !offers(value, "out _") && offers(value, "tally") && offers(value, "half:"));
     TIDE_CHECK(!offers(complete(OUT_RUN "    Use($);\n}\n"), "out"));
-    // Where functions share a name and only one makes its variable there, both fit
     const char *shared = complete(OUT_PARAMS "bool Pick(int key, out int value) { value = key; return true; }\n"
                                              "bool Pick(int key, int least) { return key > least; }\n"
                                              "system Run(mut Tally tally)\n{\n    Pick(1, $);\n}\n");
     TIDE_CHECK(offers(shared, "out var value") && offers(shared, "tally"));
 
-    // After the word: a local to declare, with `var`, `mut` or the parameter's type; `_`; and what the code can change
     const char *made = complete(OUT_RUN "    mut var spare = 0;\n    var fixed = 1;\n    mut var other = 0.5;\n    TryHalf(8, out $);\n}\n");
     TIDE_CHECK(offers(made, "var") && offers(made, "mut") && offers(made, "_") && offers(made, "int"));
     TIDE_CHECK(has(made, "\"insertText\":\"var ${1:half}\"") && has(made, "\"insertText\":\"int ${1:half}\""));
-    TIDE_CHECK(offers(made, "spare") && offers(made, "tally")); // A mut local of its type, and a mut parameter, whose fields it can make
+    TIDE_CHECK(offers(made, "spare") && offers(made, "tally"));
     TIDE_CHECK(!offers(made, "fixed") && !offers(made, "other") && !offers(made, "TryHalf") && !offers(made, "true"));
     const char *changes = complete(OUT_RUN "    TryHalf(8, out mut $);\n}\n");
     TIDE_CHECK(offers(changes, "var") && offers(changes, "int") && !offers(changes, "_") && !offers(changes, "tally"));
-    TIDE_CHECK(has(complete(OUT_RUN "    TryHalf(8, out var $);\n}\n"), "\"items\":[]")); // Naming it
+    TIDE_CHECK(has(complete(OUT_RUN "    TryHalf(8, out var $);\n}\n"), "\"items\":[]"));
     TIDE_CHECK(offers(complete(OUT_RUN "    TryHalf(value: 8, half: out $);\n}\n"), "var"));
-    // A variable named out, where a value goes, is a name
     const char *name = complete(OUT_RUN "    mut var out = 2;\n    Use(out $);\n}\n");
     TIDE_CHECK(!offers(name, "var") && !offers(name, "_"));
-    // In a mut method, its type's fields are what a call can make
     TIDE_CHECK(offers(complete(OUT_PARAMS "struct Pile\n{\n    int size;\n    mut void Halve() { TryHalf(size, out $); }\n}\n"), "size"));
 }
 
@@ -8594,11 +9063,9 @@ TIDE_TEST(lsp_map_try_get)
     TIDE_CHECK(has(hover_at(22, 32), "out float score") && has(hover_at(22, 32), "Declares `score` here"));
     TIDE_CHECK(has(all_hints(), "{\"position\":{\"line\":22,\"character\":44},\"label\":\": float\",\"kind\":1"));
     TIDE_CHECK(has(request_at("file:///test.tide", "textDocument/prepareRename", 22, 22, ""), "Built-in names can't be renamed"));
-    // A map's other methods have their hovers too
     open_document(OUT_RUN "    if (tally.scores.Ha$s(3)) tally.scores.Remove(3);\n}\n");
     TIDE_CHECK(has(request("textDocument/hover"), "Map<int, float>.Has(int key) -> bool"));
 
-    // After a dot, with its arguments laid out; none on a set, which has no values
     const char *members = complete(OUT_RUN "    tally.scores.$\n}\n");
     TIDE_CHECK(offers(members, "TryGet") && offers(members, "Get") && offers(members, "Has"));
     TIDE_CHECK(has(members, "\"detail\":\"Map<int, float>.TryGet(int key, out float value) -> bool\""));
@@ -8606,7 +9073,6 @@ TIDE_TEST(lsp_map_try_get)
     TIDE_CHECK(has(members, "\"insertText\":\"Has($1)\""));
     TIDE_CHECK(!offers(complete("singleton Seen { Set<int> keys; }\nscene Main { }\nsystem Run(mut Seen seen)\n{\n    seen.keys.$\n}\n"), "TryGet"));
 
-    // Signature help, and what its second argument can be
     open_document(OUT_RUN "    tally.scores.TryGet(3, $\n}\n");
     const char *help = request("textDocument/signatureHelp");
     TIDE_CHECK(has(help, "\"label\":\"Map<int, float>.TryGet(int key, out float value) -> bool\"") && has(help, "\"activeParameter\":1"));
@@ -8617,25 +9083,22 @@ TIDE_TEST(lsp_map_try_get)
     TIDE_CHECK(offers(argument, "out var value") && offers(argument, "out") && offers(argument, "out _") && !offers(argument, "tally"));
     const char *after = complete(OUT_RUN "    mut var best = 0.5;\n    mut var count = 0;\n    tally.scores.TryGet(3, out $);\n}\n");
     TIDE_CHECK(offers(after, "var") && offers(after, "float") && offers(after, "_") && offers(after, "best") && !offers(after, "count"));
-    TIDE_CHECK(offers(complete(OUT_RUN "    tally.all.TryGet(3, out $);\n}\n"), "Stats")); // The value's type
-    TIDE_CHECK(!offers(complete(OUT_RUN "    tally.scores.TryGet($);\n}\n"), "out var value")); // Its key is a value
+    TIDE_CHECK(offers(complete(OUT_RUN "    tally.all.TryGet(3, out $);\n}\n"), "Stats"));
+    TIDE_CHECK(!offers(complete(OUT_RUN "    tally.scores.TryGet($);\n}\n"), "out var value"));
 
-    // What's wrong with a call of it
     open_document(OUT_RUN "    tally.scores.TryGet(3, tally.total);\n}\n");
     TIDE_CHECK(has(last_sent(), "'TryGet' makes its 'value', so the argument says 'out'"));
     open_document(OUT_RUN "    tally.scores.TryGet(3, out tally.total);\n}\n");
     TIDE_CHECK(has(last_sent(), "'TryGet' makes its 'value' float, not int"));
 }
 
-// The GUI's fields that say whether the player entered what they typed: an
-// engine function with an `out` parameter, in a version beside the one without.
+// The GUI's fields that say whether the player entered what they typed: an `out` version beside the one without.
 #define ENTERED_LOBBY "local singleton Lobby { string code; int count; float ratio; bool entered; int joins; }\nscene Main { }\n"
 #define ENTERED_VIEW ENTERED_LOBBY "view Join(mut Lobby lobby)\n{\n"
 
 TIDE_TEST(lsp_gui_entered)
 {
     start();
-    // Every way to write the argument, laid out and at a rect, beside the version that doesn't say
     static const char game[] = ENTERED_VIEW "    GUILayout.TextField(\"Code\", lobby.code, out var entered);\n"
                                             "    if (GUILayout.Button(\"Join\") || entered) lobby.joins += 1;\n"
                                             "    GUI.IntField(Rect(0, 0, 200, 30), \"Count\", lobby.count, out lobby.entered);\n"
@@ -8647,7 +9110,6 @@ TIDE_TEST(lsp_gui_entered)
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     TIDE_CHECK(has(format_reply(game), "\"result\":[]"));
 
-    // The field's hover has both versions, and what each says
     open_document(game);
     const char *field = hover_at(4, 16);
     TIDE_CHECK(has(field, "GUILayout.TextField(string label, mut string value) -> bool\\n"
@@ -8658,7 +9120,6 @@ TIDE_TEST(lsp_gui_entered)
     TIDE_CHECK(has(number, "GUI.IntField(Rect rect, string label, mut int value) -> bool\\n"
                            "GUI.IntField(Rect rect, string label, mut int value, out bool entered) -> bool"));
     TIDE_CHECK(has(number, "or a gamepad's south button, ends the typing in this field"));
-    // The word, the local it declares and its uses are an `out` argument's, as a function's
     const char *word = hover_at(4, 46);
     TIDE_CHECK(has(word, "out bool entered") && has(word, "Declares `entered` here, a local the call makes: read-only afterwards"));
     const char *local = hover_at(4, 54);
@@ -8666,20 +9127,16 @@ TIDE_TEST(lsp_gui_entered)
     TIDE_CHECK(has(hover_at(5, 40), "An `out` argument declares it"));
     TIDE_CHECK(has(hover_at(6, 62), "The call makes the variable after it: it's written, as by an assignment"));
     TIDE_CHECK(has(hover_at(7, 48), "Leaves out what the call makes there"));
-    // `out var`'s type is a hint after its name; a type that's written has none
     const char *hints = all_hints();
     TIDE_CHECK(has(hints, "{\"position\":{\"line\":4,\"character\":59},\"label\":\": bool\",\"kind\":1,\"paddingLeft\":true}"));
     TIDE_CHECK(count(hints, "\"label\":\": bool\"") == 1);
-    // The field of local state is written by the call, as by an assignment
     const char *marks = request_at("file:///test.tide", "textDocument/documentHighlight", 6, 74, "");
     TIDE_CHECK(has(marks, "{\"range\":{\"start\":{\"line\":6,\"character\":70},\"end\":{\"line\":6,\"character\":77}},\"kind\":3}"));
     TIDE_CHECK(count(marks, "\"kind\":2") == 0);
-    // Renaming the local renames its uses
     rename_at(5, 40, "joined");
     const char *renamed = apply_reply(game, "file:///test.tide");
     TIDE_CHECK(has(renamed, "lobby.code, out var joined);\n    if (GUILayout.Button(\"Join\") || joined) lobby.joins += 1;\n"));
 
-    // Signature help: both versions, with the one the arguments so far can be as the active one
     open_document(ENTERED_VIEW "    GUILayout.TextField(\"Code\", $\n}\n");
     const char *second = request("textDocument/signatureHelp");
     TIDE_CHECK(has(second, "\"label\":\"GUILayout.TextField(string label, mut string value) -> bool\""));
@@ -8694,7 +9151,6 @@ TIDE_TEST(lsp_gui_entered)
     TIDE_CHECK(has(rect, "\"label\":\"GUI.FloatField(Rect rect, string label, mut float value, out bool entered) -> bool\""));
     TIDE_CHECK(has(rect, "\"activeSignature\":1,\"activeParameter\":3"));
 
-    // Completion: the field once, with how many versions it has and each of them under its doc
     const char *members = complete(ENTERED_VIEW "    GUILayout.$\n}\n");
     TIDE_CHECK(count(members, "\"label\":\"TextField\"") == 1);
     TIDE_CHECK(has(members, "\"detail\":\"GUILayout.TextField(string label, mut string value) -> bool (+1 version)\""));
@@ -8702,9 +9158,8 @@ TIDE_TEST(lsp_gui_entered)
                             "\\n```\\nWith `out entered`, it also says whether the player entered the text"));
     TIDE_CHECK(has(members, "\"detail\":\"GUILayout.IntField(string label, mut int value) -> bool (+1 version)\""));
     TIDE_CHECK(has(members, "\"detail\":\"GUILayout.FloatField(string label, mut float value) -> bool (+1 version)\""));
-    TIDE_CHECK(has(members, "\"detail\":\"GUILayout.Float2Field(string label, mut float2 value) -> bool\"")); // One version
+    TIDE_CHECK(has(members, "\"detail\":\"GUILayout.Float2Field(string label, mut float2 value) -> bool\""));
     TIDE_CHECK(has(members, "\"insertText\":\"TextField(${1:label}, ${2:value})\""));
-    // ...and where its `out` argument goes, what one can be, as for a function of the game's
     const char *argument = complete(ENTERED_VIEW "    GUILayout.TextField(\"Code\", lobby.code, $);\n}\n");
     TIDE_CHECK(offers(argument, "out var entered") && offers(argument, "out") && offers(argument, "out _"));
     TIDE_CHECK(has(argument, "\"insertText\":\"out var ${1:entered}\",\"insertTextFormat\":2"));
@@ -8715,12 +9170,10 @@ TIDE_TEST(lsp_gui_entered)
     TIDE_CHECK(offers(after, "var") && offers(after, "bool") && offers(after, "mut") && offers(after, "_"));
     TIDE_CHECK(offers(after, "done") && offers(after, "lobby") && !offers(after, "tries"));
     TIDE_CHECK(offers(complete(ENTERED_VIEW "    GUILayout.FloatField(\"Ratio\", lobby.ratio, entered: $);\n}\n"), "out var entered"));
-    // Its other arguments are values, and so are those of a field with no such version
     const char *value = complete(ENTERED_VIEW "    GUILayout.TextField(\"Code\", $);\n}\n");
     TIDE_CHECK(!offers(value, "out var entered") && !offers(value, "out _") && offers(value, "lobby"));
     TIDE_CHECK(!offers(complete(ENTERED_VIEW "    GUILayout.Slider(\"Ratio\", lobby.ratio, $);\n}\n"), "out var entered"));
 
-    // What's wrong with a call, with its note, and the change that puts it right
     static const char missing[] = ENTERED_VIEW "    GUILayout.TextField(\"Code\", lobby.code, lobby.entered);\n}\n";
     open_document(missing);
     TIDE_CHECK(has(last_sent(), "'GUILayout.TextField' makes its 'entered', so the argument says 'out'"));
@@ -8743,7 +9196,6 @@ TIDE_TEST(lsp_gui_entered)
     const char *takes = apply_fix(typed, "Change to 'var'");
     TIDE_REQUIRE(takes != NULL);
     TIDE_CHECK(has(takes, "    GUILayout.TextField(\"Code\", lobby.code, out var entered);\n"));
-    // One nothing reads: the field that doesn't say, or `out _`
     static const char unread[] = ENTERED_VIEW "    GUILayout.TextField(\"Code\", lobby.code, out var entered);\n}\n";
     open_document(unread);
     TIDE_CHECK(has(last_sent(), "local 'entered' is never used") && has(last_sent(), "write 'out _' to leave it out"));
@@ -8751,12 +9203,10 @@ TIDE_TEST(lsp_gui_entered)
     const char *left = apply_fix(unread, "Leave 'entered' out: 'out _'");
     TIDE_REQUIRE(left != NULL);
     TIDE_CHECK(has(left, "    GUILayout.TextField(\"Code\", lobby.code, out _);\n"));
-    // A view makes its own variables and local state, never the match's
     open_document("singleton Rules { bool entered; }\n" ENTERED_LOBBY
                   "view Join(mut Lobby lobby, Rules rules) { GUILayout.TextField(\"Code\", lobby.code, out rules.entered); }\n");
     TIDE_CHECK(has(last_sent(), "'rules' is read-only") && has(last_sent(), "'GUILayout.TextField' makes its 'entered'"));
     TIDE_CHECK(has(last_sent(), "a view can't change the match"));
-    // `mut` is the parameter's word, and no argument's
     open_document(ENTERED_VIEW "    GUILayout.TextField(\"Code\", mut lobby.code);\n}\n");
     TIDE_CHECK(has(last_sent(), "an argument takes no 'mut': a 'mut' parameter changes the variable it's given as it is"));
     TIDE_CHECK(has(last_sent(), "remove 'mut'; only 'out' is written at a call"));
@@ -8768,12 +9218,10 @@ TIDE_TEST(lsp_out_hints_and_tokens)
     start();
     open_document(OUT_EVERY);
     const char *hints = all_hints();
-    // `out var`'s type, after its name, as a `var` statement's; none where a type is written, nor for `_`
     TIDE_CHECK(has(hints, "{\"position\":{\"line\":22,\"character\":31},\"label\":\": int\",\"kind\":1,\"paddingLeft\":true}"));
     TIDE_CHECK(has(hints, "{\"position\":{\"line\":25,\"character\":38},\"label\":\": int\",\"kind\":1"));
     TIDE_CHECK(has(hints, "{\"position\":{\"line\":29,\"character\":41},\"label\":\": int\",\"kind\":1"));
     TIDE_CHECK(count(hints, "\"kind\":1") == 3);
-    // A literal argument has its parameter's name, and one that says `out` none: what it is says which it's for
     TIDE_CHECK(has(hints, "{\"position\":{\"line\":22,\"character\":16},\"label\":\"value:\",\"kind\":2,\"paddingRight\":true}"));
     TIDE_CHECK(count(hints, "\"label\":\"value:\"") == 3 && count(hints, "\"kind\":2") == 3);
     TIDE_CHECK(!has(hints, "\"label\":\"half:\"") && !has(hints, "\"label\":\"found:\""));
@@ -8787,14 +9235,12 @@ TIDE_TEST(lsp_out_hints_and_tokens)
     TIDE_CHECK(has(tokens, "\"data\":[0,0,4,11,0,0,5,1,9,1,0,2,3,11,0,0,4,3,11,0,0,4,1,5,1,0,5,1,5,0,"));
     // Line 2, from S: F, out, x; F, out, y; F, out
     TIDE_CHECK(has(tokens, "1,7,1,9,1,0,6,1,9,0,0,2,3,11,0,0,8,1,6,3,0,4,1,9,0,0,2,3,11,0,0,12,1,6,1,0,4,1,9,0,0,2,3,11,0]"));
-    // A variable or a parameter named out is a name
     open_document("scene Main { }\nint Twice(int out) { return out * 2; }\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     TIDE_CHECK(has(request("textDocument/semanticTokens/full"), "1,0,3,11,0,0,4,5,9,1,0,6,3,11,0,0,4,3,5,3,0,14,3,5,2]"));
 }
 
-// The formatter keeps an argument's `out` and what follows it a space apart,
-// and a map's types tight.
+// The formatter keeps an argument's `out` a space from what follows, and a map's types tight.
 TIDE_TEST(lsp_format_out)
 {
     start();
@@ -8824,11 +9270,10 @@ TIDE_TEST(lsp_format_out)
     const char *formatted = apply_reply(messy, NULL);
     TIDE_CHECK(strcmp(formatted, expected) == 0);
     if (strcmp(formatted, expected) != 0) printf("--- got:\n%s---\n", formatted);
-    TIDE_CHECK(has(format_reply(expected), "\"result\":[]")); // Formatting what's formatted changes nothing
+    TIDE_CHECK(has(format_reply(expected), "\"result\":[]"));
     TIDE_CHECK(has(format_reply(OUT_EVERY), "\"result\":[]"));
     TIDE_CHECK(has(last_sent(), "\"result\":[]"));
 
-    // A range's lines only
     static const char lines[] = "bool TryHalf(int value, out int half) { half = value / 2; return true; }\nscene Main { }\n"
                                 "system S()\n{\nTryHalf(8,out  var a);\nTryHalf(a ,out   _);\n}\n";
     open_document(lines);
@@ -8838,12 +9283,10 @@ TIDE_TEST(lsp_format_out)
     TIDE_CHECK(has(ranged, "{\nTryHalf(8,out  var a);\n    TryHalf(a, out _);\n}\n"));
 }
 
-// Quick fixes for what's wrong around `out`: the word missing or misplaced, a
-// local nothing reads, and one the code changes.
+// Quick fixes around `out`: the word missing or misplaced, a local nothing reads, and one the code changes.
 TIDE_TEST(lsp_out_quick_fixes)
 {
     start();
-    // An argument for an `out` parameter without the word: the word goes before it
     static const char missing[] = OUT_RUN "    TryHalf(8, tally.total);\n    tally.scores.TryGet(1, tally.stats.power);\n}\n";
     open_document(missing);
     const char *add = actions_at(22);
@@ -8852,12 +9295,11 @@ TIDE_TEST(lsp_out_quick_fixes)
     const char *added = apply_fix(missing, "Add 'out'");
     TIDE_REQUIRE(added != NULL);
     TIDE_CHECK(has(added, "    TryHalf(8, out tally.total);\n"));
-    actions_at(23); // A map's TryGet too, before the whole of what it's given
+    actions_at(23);
     const char *got = apply_fix(missing, "Add 'out'");
     TIDE_REQUIRE(got != NULL);
     TIDE_CHECK(has(got, "    tally.scores.TryGet(1, out tally.stats.power);\n"));
 
-    // The word before an argument no `out` parameter takes: it goes, with the space after it
     static const char extra[] = OUT_RUN "    Use(out tally.total);\n    tally.total = Math.Max(out  tally.total, 1);\n}\n";
     open_document(extra);
     TIDE_CHECK(has(last_sent(), "'Use' takes a value for 'value', which isn't an 'out' parameter"));
@@ -8866,13 +9308,12 @@ TIDE_TEST(lsp_out_quick_fixes)
     const char *removed = apply_fix(extra, "Remove 'out'");
     TIDE_REQUIRE(removed != NULL);
     TIDE_CHECK(has(removed, "    Use(tally.total);\n"));
-    actions_at(23); // One of the engine's functions
+    actions_at(23);
     const char *plain = apply_fix(extra, "Remove 'out'");
     TIDE_REQUIRE(plain != NULL);
     TIDE_CHECK(has(plain, "    tally.total = Math.Max(tally.total, 1);\n"));
-    TIDE_CHECK(!has(actions_at(21), "Remove 'out'")); // Only on its line
+    TIDE_CHECK(!has(actions_at(21), "Remove 'out'"));
 
-    // A function that isn't there: what's wrong is its name, not the word, and the one created makes what the call gives it
     static const char unknown[] = OUT_RUN "    Shrink(8, out tally.total);\n    Other(out _);\n}\n";
     open_document(unknown);
     TIDE_CHECK(has(last_sent(), "unknown function 'Shrink'") && has(last_sent(), "unknown function 'Other'"));
@@ -8882,7 +9323,6 @@ TIDE_TEST(lsp_out_quick_fixes)
     TIDE_CHECK(has(create, "Create function 'Shrink'"));
     TIDE_CHECK(has(create, "void Shrink(int value, out int total)\\n{\\n    total = default;\\n}\\n"));
 
-    // What the notes say to write, as changes: `mut out` is `out`, and what the engine calls takes `mut`
     static const char both[] = "bool TryHalf(int value, mut out int half)\n{\n    half = value / 2;\n    return true;\n}\nscene Main { }\n";
     open_document(both);
     actions_at(0);
@@ -8896,7 +9336,6 @@ TIDE_TEST(lsp_out_quick_fixes)
     TIDE_REQUIRE(taken != NULL);
     TIDE_CHECK(has(taken, "system Run(mut Store store) { store.size = 1; }\n"));
 
-    // A name there is already: the argument assigns it. A type that isn't the parameter's: `var` takes it
     static const char again[] = OUT_RUN "    mut var half = 0;\n    TryHalf(8, out var half);\n    tally.total = half;\n}\n";
     open_document(again);
     actions_at(23);
@@ -8910,8 +9349,6 @@ TIDE_TEST(lsp_out_quick_fixes)
     TIDE_REQUIRE(takes != NULL);
     TIDE_CHECK(has(takes, "    TryHalf(8, out mut var half);\n"));
 
-    // A return, or a function's end, that leaves an `out` parameter unassigned: the default, before it. A
-    // return that's an if's body with no braces has to stay one statement: it goes in braces with it
     static const char unassigned[] = "bool TryHalf(int value, out int half)\n{\n    if (value % 2 != 0) return false;\n"
                                      "    if (value < 0)\n    {\n        return false;\n    }\n    half = value / 2;\n"
                                      "    return true;\n}\nvoid Fill(int n, out int count)\n{\n    if (n > 0) count = n;\n}\n"
@@ -8926,13 +9363,11 @@ TIDE_TEST(lsp_out_quick_fixes)
     const char *filled = apply_fix(unassigned, "Assign 'half = default;'");
     TIDE_REQUIRE(filled != NULL);
     TIDE_CHECK(has(filled, "    {\n        half = default;\n        return false;\n    }\n"));
-    actions_at(10); // At its name, for its end
+    actions_at(10);
     const char *ended = apply_fix(unassigned, "Assign 'count = default;'");
     TIDE_REQUIRE(ended != NULL);
     TIDE_CHECK(has(ended, "    if (n > 0) count = n;\n    count = default;\n}\n"));
 
-    // An `out` parameter read before it's assigned: its default as the function starts, or `mut`, to read what
-    // the caller has, with the word gone from every call. Not `mut` where a call declares the variable there
     static const char early[] = "singleton Store { List<int> values; int left; }\n"
                                 "void Fill(int n, out List<int> values)\n{\n    values.Add(n);\n}\n"
                                 "bool Left(int size, out int left) { left += size; return left > 0; }\n"
@@ -8951,16 +9386,15 @@ TIDE_TEST(lsp_out_quick_fixes)
     TIDE_REQUIRE(changes != NULL);
     TIDE_CHECK(has(changes, "void Fill(int n, mut List<int> values)\n"));
     TIDE_CHECK(has(changes, "    Fill(3, store.values);\n    Fill(n: 4, values: store.values);\n"));
-    open_document(changes); // What it leaves compiles
+    open_document(changes);
     TIDE_CHECK(!has(last_sent(), "'values'") && !has(last_sent(), "'Fill'"));
     open_document(early);
     const char *one_line = actions_at(5);
-    TIDE_CHECK(!has(one_line, "Take 'left' as 'mut'")); // A call declares it: `out var left`
+    TIDE_CHECK(!has(one_line, "Take 'left' as 'mut'"));
     const char *inline_first = apply_fix(early, "Assign 'left = default;' first");
     TIDE_REQUIRE(inline_first != NULL);
     TIDE_CHECK(has(inline_first, "bool Left(int size, out int left) { left = default; left += size; return left > 0; }\n"));
 
-    // A local an argument declares that nothing reads: a warning that editors fade, fixed by `out _`
     static const char unread[] = OUT_RUN "    TryHalf(8, out var rest);\n    TryHalf(8, out mut int spare);\n"
                                          "    tally.all.TryGet(1, out Stats found);\n    tally.total = 1;\n}\n";
     open_document(unread);
@@ -8974,7 +9408,7 @@ TIDE_TEST(lsp_out_quick_fixes)
     const char *left = apply_fix(unread, "Leave 'rest' out: 'out _'");
     TIDE_REQUIRE(left != NULL);
     TIDE_CHECK(has(left, "{\n    TryHalf(8, out _);\n    TryHalf(8, out mut int spare);\n"));
-    actions_at(23); // Its `mut` and its type go with its name
+    actions_at(23);
     const char *spared = apply_fix(unread, "Leave 'spare' out: 'out _'");
     TIDE_REQUIRE(spared != NULL);
     TIDE_CHECK(has(spared, "    TryHalf(8, out _);\n    tally.all.TryGet(1, out Stats found);\n"));
@@ -8982,11 +9416,9 @@ TIDE_TEST(lsp_out_quick_fixes)
     const char *lost = apply_fix(unread, "Leave 'found' out: 'out _'");
     TIDE_REQUIRE(lost != NULL);
     TIDE_CHECK(has(lost, "    tally.all.TryGet(1, out _);\n    tally.total = 1;\n}\n"));
-    // What's fixed compiles cleanly
     open_document(OUT_RUN "    TryHalf(8, out _);\n    TryHalf(8, out _);\n    tally.all.TryGet(1, out _);\n    tally.total = 1;\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
-    // A local an argument declares that the code changes: `mut` after the word, before `var` or its type
     static const char changed[] = OUT_RUN "    TryHalf(8, out var half);\n    half += 1;\n    TryHalf(8, out int typed);\n"
                                           "    TryHalf(half, out typed);\n    tally.total = half + typed;\n}\n";
     open_document(changed);
@@ -9008,24 +9440,20 @@ TIDE_TEST(lsp_out_selection_and_calls)
 {
     start();
     open_document(OUT_EVERY);
-    // From the local an argument declares: its name, the argument from its word, the call, the condition's statement
     const char *ranges = request_at("file:///test.tide", "textDocument/selectionRange", 0, 0,
                                     "\"positions\":[{\"line\":22,\"character\":28}]");
     TIDE_CHECK(has(ranges, "\"result\":[{\"range\":{\"start\":{\"line\":22,\"character\":27},\"end\":{\"line\":22,\"character\":31}},"
                            "\"parent\":{\"range\":{\"start\":{\"line\":22,\"character\":19},\"end\":{\"line\":22,\"character\":31}},"
                            "\"parent\":{\"range\":{\"start\":{\"line\":22,\"character\":8},\"end\":{\"line\":22,\"character\":32}},"));
-    // `out _` is its word and its `_`, not the name generated C gives it
     const char *blank = request_at("file:///test.tide", "textDocument/selectionRange", 0, 0,
                                    "\"positions\":[{\"line\":28,\"character\":19}]");
     TIDE_CHECK(has(blank, "\"result\":[{\"range\":{\"start\":{\"line\":28,\"character\":19},\"end\":{\"line\":28,\"character\":20}},"
                           "\"parent\":{\"range\":{\"start\":{\"line\":28,\"character\":15},\"end\":{\"line\":28,\"character\":20}},"
                           "\"parent\":{\"range\":{\"start\":{\"line\":28,\"character\":4},\"end\":{\"line\":28,\"character\":21}},"));
-    // A field the call makes: the argument is the word and the whole of it
     const char *field = request_at("file:///test.tide", "textDocument/selectionRange", 0, 0,
                                    "\"positions\":[{\"line\":27,\"character\":32}]");
     TIDE_CHECK(has(field, "\"parent\":{\"range\":{\"start\":{\"line\":27,\"character\":21},\"end\":{\"line\":27,\"character\":36}},"));
 
-    // The call hierarchy: a function with an `out` parameter, by its signature, and who calls it
     const char *item = request_at("file:///test.tide", "textDocument/prepareCallHierarchy", 22, 10, "");
     TIDE_CHECK(has(item, "{\"name\":\"TryHalf\",\"kind\":12,\"detail\":\"bool TryHalf(int value, out int half)\""));
     clear_sent();
@@ -9034,7 +9462,6 @@ TIDE_TEST(lsp_out_selection_and_calls)
            "{\"line\":15,\"character\":1}},\"selectionRange\":{\"start\":{\"line\":11,\"character\":5},\"end\":"
            "{\"line\":11,\"character\":12}}}}}");
     TIDE_CHECK(has(last_sent(), "{\"from\":{\"name\":\"Run\",\"kind\":12") && count(last_sent(), "\"from\":") == 1);
-    // ...from the if's condition, and five statements
     TIDE_CHECK(has(last_sent(), "\"fromRanges\":[{\"start\":{\"line\":22,\"character\":8},\"end\":{\"line\":22,\"character\":15}}"));
     TIDE_CHECK(count(last_sent(), "\"character\":4},\"end\":{\"line\":2") == 5);
     clear_sent();
@@ -9045,7 +9472,6 @@ TIDE_TEST(lsp_out_selection_and_calls)
     TIDE_CHECK(has(last_sent(), "{\"to\":{\"name\":\"TryHalf\"") && has(last_sent(), "{\"to\":{\"name\":\"TryPower\",\"kind\":6"));
     TIDE_CHECK(count(last_sent(), "\"to\":") == 2);
 
-    // A function with an `out` parameter folds like any other, and moves to a file of its own as it's written
     TIDE_CHECK(has(request("textDocument/foldingRange"), "{\"startLine\":11,\"endLine\":14}"));
     const char *move = request_at("file:///test.tide", "textDocument/codeAction", 12, 0,
                                   "\"range\":{\"start\":{\"line\":12,\"character\":0},\"end\":{\"line\":12,\"character\":0}}");
@@ -9053,7 +9479,6 @@ TIDE_TEST(lsp_out_selection_and_calls)
     TIDE_CHECK(has(move, "\"newText\":\"bool TryHalf(int value, out int half)\\n{\\n    half = value / 2;\\n"
                          "    return value % 2 == 0;\\n}\\n\""));
 
-    // A call that makes a singleton's field writes the singleton, as the schedule's lenses say: no `mut` goes unused
     open_document(OUT_PARAMS "singleton Seen { int total; }\n"
                              "system Halve(mut Tally tally) { TryHalf(8, out tally.total); }\n"
                              "system Read(Tally tally, mut Seen seen) { seen.total = tally.total; }\n");
@@ -9061,8 +9486,7 @@ TIDE_TEST(lsp_out_selection_and_calls)
     TIDE_CHECK(has(request("textDocument/codeLens"), "after Halve: it writes Tally, which this reads"));
 }
 
-// The World in a function: its caller's, passed on. What the function reaches
-// through it shows as the system's own, and world.TryGet makes its variable.
+// The World in a function: its caller's, passed on; what it reaches shows as the system's own, and world.TryGet makes its variable.
 #define WORLD_FUNCTION                                                         \
     "component Health { int value = 10; }\n"                                   \
     "component Healer { Entity patient; int seen; }\n"                         \
@@ -9073,8 +9497,7 @@ TIDE_TEST(lsp_out_selection_and_calls)
     "scene Main { }\n"                                                         \
     "event(Spawned) Setup(with Main) { Spawn(Health { }); Spawn(Healer { }); }\n"
 
-// A function sends, spawns and changes entities as the code that calls it could: the editor offers
-// them in one, and the error is at a call from code that can't.
+// A function sends, spawns and changes entities as its caller could: the editor offers them, and the error is at a call from code that can't.
 // Web.Request's types are Tide's own code, a file of the game's while the game names them
 TIDE_TEST(lsp_web_requests)
 {
@@ -9084,10 +9507,8 @@ TIDE_TEST(lsp_web_requests)
     TIDE_CHECK(offers(web, "Request") && offers(web, "Fetch"));
     const char *built = complete(TASK "    var request = Web.Request(\"http://example.com\");\n    request.$\n}\n");
     TIDE_CHECK(offers(built, "SetMethod") && offers(built, "SetHeader") && offers(built, "SetBody") && offers(built, "url"));
-    // Its time limit, as a call and as the field it sets, and the error a request past it fails with
     TIDE_CHECK(offers(built, "SetTimeout") && offers(built, "timeout"));
     TIDE_CHECK(has(built, "WebRequest SetTimeout(float seconds)"));
-    // ...which is a member in a program that has a request, and in no other: every game's header declares IOError
     TIDE_CHECK(offers(complete(TASK "    var request = Web.Request(\"http://example.com\");\n    var late = IOError.$\n}\n"), "TimedOut"));
     const char *plain = complete(TASK "    var late = IOError.$\n}\n");
     TIDE_CHECK(offers(plain, "Failed") && !offers(plain, "TimedOut"));
@@ -9099,15 +9520,15 @@ TIDE_TEST(lsp_web_requests)
                                        "    answer.$\n}\n");
     TIDE_CHECK(offers(answer, "status") && offers(answer, "body"));
     open_document(TASK "    Web.Request(\"http://example.com\").Send();\n}\nview Start() { Go(); }\n");
-    TIDE_CHECK(has(last_sent(), "Send is awaited"));
-    // A game with no request in it has no such file, and says nothing
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *send = complete(TASK "    var request = Web.Request(\"http://example.com\").Send();\n    request.$\n}\n");
+    TIDE_CHECK(offers(send, "Cancel") && offers(send, "isRunning") && !offers(send, "body"));
     open_document("local scene Main { }\nview Start() { }\n");
     TIDE_CHECK(!has(last_sent(), "web.tide"));
 #undef TASK
 }
 
-// Json's calls, string's own and the numbers out of text: what the editor offers after each dot, says
-// of each call, and counts as a use of the type a read names
+// Json's calls, string's own and the numbers out of text: completion, hovers, and use of the type a read names.
 TIDE_TEST(lsp_json_and_text_primitives)
 {
     start();
@@ -9125,7 +9546,6 @@ TIDE_TEST(lsp_json_and_text_primitives)
     TIDE_CHECK(offers(complete(JSON_TYPES "system Run(mut Seen seen)\n{\n    var ok = float.$\n}\n"), "TryParse"));
     TIDE_CHECK(offers(complete("struct Score\n{\n    [$] int most;\n}\nscene Main { }\n"), "Json"));
 
-    // Every call checks, and each says what it is
     open_document(JSON_TYPES "system Run(mut Seen seen)\n{\n"
                              "    var score = Json.Read<Score>(seen.text) ?? Score { };\n"
                              "    var scores = Json.Read<List<Score>>(seen.text.ToBytes()) ?? [];\n"
@@ -9137,9 +9557,9 @@ TIDE_TEST(lsp_json_and_text_primitives)
     TIDE_CHECK(has(read, "Json.Read<T>(string json) -> T?") && has(read, "Json.Read<T>(List<byte> json) -> T?"));
     TIDE_CHECK(has(read, "A key the JSON leaves out keeps its field's default"));
     TIDE_CHECK(has(hover_at(5, 17), "JSON to and from the game's own structs"));
-    TIDE_CHECK(has(hover_at(5, 28), "struct Score")); // The type a read names is a use of it
-    TIDE_CHECK(has(hover_at(6, 34), "struct Score")); // ...inside a list's too
-    TIDE_CHECK(has(hover_at(5, 9), "Score score")); // What `??` unwrapped
+    TIDE_CHECK(has(hover_at(5, 28), "struct Score"));
+    TIDE_CHECK(has(hover_at(6, 34), "struct Score"));
+    TIDE_CHECK(has(hover_at(5, 9), "Score score"));
     TIDE_CHECK(has(hover_at(7, 23), "Json.Write(T value) -> string"));
     const char *from = hover_at(7, 45);
     TIDE_CHECK(has(from, "string.FromBytes(List<byte> bytes) -> string?") && has(from, "or nothing when they aren't"));
@@ -9147,15 +9567,13 @@ TIDE_TEST(lsp_json_and_text_primitives)
     const char *parse = hover_at(8, 14);
     TIDE_CHECK(has(parse, "int.TryParse(string text, out int value) -> bool") && has(parse, "Whether the whole text is an int"));
     TIDE_CHECK(has(hover_at(8, 54), "float.TryParse(string text, out float value) -> bool"));
-    TIDE_CHECK(has(hover_at(8, 40), "int n")); // The local the call makes
+    TIDE_CHECK(has(hover_at(8, 40), "int n"));
     const char *split = hover_at(9, 24);
     TIDE_CHECK(has(split, "string.Split(string separator) -> List<string>") && has(split, "string.Split(char separator) -> List<string>"));
     TIDE_CHECK(has(hover_at(0, 30), "[Json(\\\"key\\\")]") && has(hover_at(0, 30), "This field's key in JSON"));
-    // The struct's uses: its declaration, both reads, the fallback
     TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 0, 8, "\"context\":{\"includeDeclaration\":true}"),
                      "\"uri\"") == 4);
 
-    // Signature help, through the type in <>, a type inside it, and an out argument
     open_document(JSON_TYPES "system Run(mut Seen seen)\n{\n    var score = Json.Read<Score>($\n}\n");
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "Json.Read<T>(string json) -> T?"));
     open_document(JSON_TYPES "system Run(mut Seen seen)\n{\n    var scores = Json.Read<List<Score>>($\n}\n");
@@ -9168,7 +9586,6 @@ TIDE_TEST(lsp_json_and_text_primitives)
     const char *help = request("textDocument/signatureHelp");
     TIDE_CHECK(has(help, "long.TryParse(string text, out long value) -> bool") && has(help, "\"activeParameter\":1"));
 
-    // What's wrong is said where it's written
     open_document(JSON_TYPES "struct Held { Entity owner; }\nsystem Run(mut Seen seen)\n{\n    seen.text = Json.Write(Held { });\n}\n");
     TIDE_CHECK(has(last_sent(), "JSON has nothing for Entity, which 'Held.owner' holds"));
 #undef JSON_TYPES
@@ -9190,42 +9607,35 @@ TIDE_TEST(lsp_optional_fields)
                                  "    bag.slot = Slot { item = kept ?? 1 };\n"
                                  "    bag.picks = [item];\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
-    TIDE_CHECK(has(hover_at(5, 19), "int? best"));    // Where it's read
-    TIDE_CHECK(has(hover_at(7, 9), "int? best"));     // ...and written
-    TIDE_CHECK(has(hover_at(1, 33), "int? best"));    // ...and declared
+    TIDE_CHECK(has(hover_at(5, 19), "int? best"));
+    TIDE_CHECK(has(hover_at(7, 9), "int? best"));
+    TIDE_CHECK(has(hover_at(1, 33), "int? best"));
     TIDE_CHECK(has(hover_at(8, 14), "string? label"));
     TIDE_CHECK(has(hover_at(0, 19), "int? item"));
-    TIDE_CHECK(has(hover_at(5, 9), "int? kept"));     // A local holds it as it is
-    TIDE_CHECK(has(hover_at(6, 9), "int item"));      // What `??` unwrapped
+    TIDE_CHECK(has(hover_at(5, 9), "int? kept"));
+    TIDE_CHECK(has(hover_at(6, 9), "int item"));
     TIDE_CHECK(has(hover_at(9, 26), "int found"));
-    TIDE_CHECK(has(hover_at(10, 22), "int? item"));   // In a struct's value
+    TIDE_CHECK(has(hover_at(10, 22), "int? item"));
     TIDE_CHECK(has(hover_at(11, 9), "List<int>? picks"));
     const char *hints = all_hints();
     TIDE_CHECK(has(hints, "\": int?\"") && has(hints, "\": int\""));
-    // The field's uses: where it's declared, read, tested and written twice
     TIDE_CHECK(count(request_at("file:///test.tide", "textDocument/references", 1, 33, "\"context\":{\"includeDeclaration\":true}"),
                      "\"uri\"") == 5);
-    // Renaming it changes them all
     const char *renamed = rename_at(1, 33, "top");
     TIDE_CHECK(count(renamed, "\"newText\":\"top\"") == 5);
 
-    // After a dot: the fields, each with its type
     const char *fields = complete(OPTIONAL_TYPES "system Run(mut Bag bag)\n{\n    bag.$\n}\n");
     TIDE_CHECK(offers(fields, "best") && offers(fields, "slot") && offers(fields, "picks") && has(fields, "int?") && has(fields, "List<int>?"));
     const char *inner = complete(OPTIONAL_TYPES "system Run(mut Bag bag)\n{\n    bag.slot.$\n}\n");
     TIDE_CHECK(offers(inner, "item") && offers(inner, "label") && has(inner, "string?"));
-    // In a struct's value
     const char *literal = complete(OPTIONAL_TYPES "system Run(mut Bag bag)\n{\n    bag.slot = Slot { item = 1, $ };\n}\n");
     TIDE_CHECK(offers(literal, "label") && has(literal, "string?"));
-    // A T? has nothing after its dot until it's unwrapped: not its value's, and not how it's kept
     const char *wrapped = complete(OPTIONAL_TYPES "system Run(mut Bag bag)\n{\n    var n = bag.slot.label.$\n}\n");
     TIDE_CHECK(!offers(wrapped, "length") && !offers(wrapped, "value") && !offers(wrapped, "ok"));
     const char *unwrapped = complete(OPTIONAL_TYPES "system Run(mut Bag bag)\n{\n    var label = bag.slot.label ?? \"\";\n    var n = label.$\n}\n");
     TIDE_CHECK(offers(unwrapped, "length"));
-    // A type that takes a '?' where a field's goes
     TIDE_CHECK(offers(complete("struct Slot { int? item; }\nstruct Bag\n{\n    Sl$? slot;\n}\nscene Main { }\n"), "Slot"));
 
-    // What's wrong is said where it's written, with how to unwrap it
     const char *used = OPTIONAL_TYPES "system Run(mut Bag bag)\n{\n    var next = bag.best + 1;\n}\n";
     open_document(used);
     TIDE_CHECK(has(last_sent(), "'best' is int?, a value or nothing, so it needs unwrapping first"));
@@ -9239,7 +9649,6 @@ TIDE_TEST(lsp_optional_fields)
     TIDE_CHECK(has(last_sent(), "what a List holds is always there, so it can't be a T?"));
     open_document("component Board { Grid2<int>? cells; }\nscene Main { }\n");
     TIDE_CHECK(has(last_sent(), "a field can't be a grid or nothing"));
-    // Formatting keeps the '?' against its type
     TIDE_CHECK(has(format_reply("struct Slot{int ?item;string? label=null;}\nscene Main { }\n"), "int? item;") );
 #undef OPTIONAL_TYPES
 }
@@ -9250,29 +9659,24 @@ TIDE_TEST(lsp_functions_send_and_spawn)
 #define ACTS GAME_TYPES "event Hit { int damage; }\nlocal event Blink { int n; }\n"
     const char *code = complete(ACTS "void Wave()\n{\n    $\n}\n");
     TIDE_CHECK(offers(code, "Spawn") && offers(code, "Send") && offers(code, "Hit") && offers(code, "Blink"));
-    TIDE_CHECK(!offers(code, "Scene")); // Loading a scene is still a system's, a view's or a handler's own to write
-    // An entity's own after its dot, in a function and in a method: not Snap, which a system says
+    TIDE_CHECK(!offers(code, "Scene"));
     const char *dot = complete(ACTS "void Kill(Entity target)\n{\n    target.$\n}\n");
     TIDE_CHECK(offers(dot, "Destroy") && offers(dot, "Add") && offers(dot, "Remove") && offers(dot, "Send") && !offers(dot, "Snap"));
     const char *method = complete(ACTS "struct Bell\n{\n    int tone;\n    void Ring(LocalEntity target)\n    {\n        target.$\n    }\n}\n");
     TIDE_CHECK(offers(method, "Destroy") && offers(method, "Send"));
-    // An operator is handed its operands and nothing else
     const char *op = complete(ACTS "struct Money\n{\n    int cents;\n    Money operator +(Money a, Money b)\n    {\n        $\n"
                                    "        return a;\n    }\n}\n");
     TIDE_CHECK(!offers(op, "Spawn") && !offers(op, "Send"));
 
-    // Nothing is wrong with the function, or with a system that calls it
     open_document(ACTS "void Poke(Entity target) { target.Send(Hit { damage = 1 }); }\n"
                        "event(Hit hit) Take(mut Body body) { body.radius -= hit.damage; }\n"
                        "system Fight(Body body) { if (body.radius > 20) Poke(this); }\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
-    // ...and a view that calls it is told at its call
     open_document(ACTS "void Poke(Entity target) { target.Send(Hit { damage = 1 }); }\n"
                        "event(Hit hit) Take(mut Body body) { body.radius -= hit.damage; }\n"
                        "system Fight(Body body) { if (body.radius > 20) Poke(this); }\n"
                        "view Show(Body body) { if (body.radius > 20) Poke(this); }\n");
     TIDE_CHECK(has(last_sent(), "a view can't change the match, and 'Poke' sends 'Hit'"));
-    // The session's calls and the clipboard's, as the view that calls the function could: not in an operator
     const char *session = complete(ACTS "void Host()\n{\n    Session.$\n}\n");
     TIDE_CHECK(offers(session, "Open") && offers(session, "Join") && offers(session, "Start"));
     const char *clipboard = complete(ACTS "void Share()\n{\n    Clipboard.$\n}\n");
@@ -9282,8 +9686,6 @@ TIDE_TEST(lsp_functions_send_and_spawn)
     TIDE_CHECK(!offers(op_session, "Open"));
     open_document(ACTS "void Host() { Session.Open(); }\nsystem Fight(Body body) { if (body.radius > 20) Host(); }\n");
     TIDE_CHECK(has(last_sent(), "'Host' calls Session.Open, and the match runs the same on every machine"));
-    // A task, started as the code that calls the function could: an async function is offered there, nothing is
-    // wrong with the function or the system that calls it, and a view is told at its call
 #define LATER "async void Later(int n)\n{\n    await Wait.Ticks(n);\n}\n"
     TIDE_CHECK(offers(complete(ACTS LATER "void Soon()\n{\n    $\n}\n"), "Later"));
     open_document(ACTS LATER "void Soon() { Later(2); }\nsystem Fight(Body body) { if (body.radius > 20) Soon(); }\n");
@@ -9301,23 +9703,19 @@ TIDE_TEST(lsp_world_in_functions)
     open_document(WORLD_FUNCTION "system Look(mut Healer healer, World world)\n{\n"
                                  "    if (TryFind(healer.patient, world, out var health)) healer.seen = health.value;\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
-    // The system's World: what the function it's passed to reads counts as its own
     TIDE_CHECK(has(hover_at(8, 38), "Through its `World`, it reads any entity's `Health`."));
-    // The function's own
     const char *own = hover_at(2, 36);
     TIDE_CHECK(has(own, "The World: any entity's components by its handle") && has(own, "`TryGet<T>(entity, out value)`"));
     TIDE_CHECK(has(own, "Through its `World`, it reads any entity's `Health`."));
     TIDE_CHECK(has(hover_at(4, 19), "World.TryGet<Health>(Entity entity, out Health value) -> bool"));
     TIDE_CHECK(has(hover_at(10, 49), "Health health") && has(hover_at(10, 49), "An `out` argument declares it"));
 
-    // Where a function's parameter starts, and after the World's dot
     TIDE_CHECK(offers(complete(WORLD_FUNCTION "bool Alive(Entity target, $) { return true; }\n"), "World"));
     TIDE_CHECK(!offers(complete(WORLD_FUNCTION "async void Watch(Entity target, $) { await Wait.Ticks(1); }\n"), "World"));
     const char *members = complete(WORLD_FUNCTION "bool Alive(Entity target, World world) { return world.$; }\n");
     TIDE_CHECK(offers(members, "TryGet") && offers(members, "Get") && offers(members, "Has") && offers(members, "Set"));
     TIDE_CHECK(has(members, "\"insertText\":\"TryGet<${1:Component}>(${2:entity}, out var ${3:value})\",\"insertTextFormat\":2"));
 
-    // What TryGet's second argument can be, and its signature
     const char *argument = complete(WORLD_FUNCTION "system Look(mut Healer healer, World world)\n{\n"
                                                    "    world.TryGet<Health>(healer.patient, $);\n}\n");
     TIDE_CHECK(offers(argument, "out var value") && offers(argument, "out") && offers(argument, "out _"));
@@ -9327,11 +9725,9 @@ TIDE_TEST(lsp_world_in_functions)
     open_document(WORLD_FUNCTION "system Look(mut Healer healer, World world)\n{\n    world.TryGet<Health>(healer.patient, $\n}\n");
     TIDE_CHECK(has(request("textDocument/signatureHelp"), "TryGet<Health>(Entity entity, out Health value) -> bool"));
 
-    // The rules that depend on who calls are said at the call
     open_document(WORLD_FUNCTION "void Heal(Entity target, mut World world) { world.Set<Health>(target, Health { value = 1 }); }\n"
                                  "view Show(Healer healer, mut World world) { Heal(healer.patient, world); }\n");
     TIDE_CHECK(has(last_sent(), "a view reads the match, and 'Heal' changes 'Health' through its World"));
-    // ...and a read-only World passed where a function sets through it is fixed where it's declared
     static const char read_only[] = WORLD_FUNCTION
         "void Heal(Entity target, mut World world) { world.Set<Health>(target, Health { value = 1 }); }\n"
         "system Mend(Healer healer, World world) { Heal(healer.patient, world); }\n";
@@ -9341,10 +9737,24 @@ TIDE_TEST(lsp_world_in_functions)
     const char *fixed = apply_fix(read_only, "Declare 'world' as mut");
     TIDE_REQUIRE(fixed != NULL);
     TIDE_CHECK(has(fixed, "system Mend(Healer healer, mut World world) { Heal(healer.patient, world); }\n"));
+    // Its following read must not suggest removing mut, which would keep an entry copy.
+    open_document(WORLD_FUNCTION
+        "void Heal(Entity target, mut World world) { world.Set<Health>(target, Health { value = 20 }); }\n"
+        "void Forward(Entity target, mut World world) { Heal(target, world); }\n"
+        "event(Spawned) Both(with Main) { Spawn(Health, Healer); }\n"
+        "system Mend(mut Health health, mut Healer healer, mut World world)\n{\n"
+        "    Forward(this, world);\n    healer.seen = health.value;\n}\n");
+    if (!has(last_sent(), "\"diagnostics\":[]")) printf("%s\n", last_sent());
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    open_document(WORLD_FUNCTION
+        "event(Spawned) Both(with Main) { Spawn(Health, Healer); }\n"
+        "system Mend(mut Health health, mut Healer healer, mut World world)\n{\n"
+        "    world.Set<Health>(this, Health { value = 20 });\n    healer.seen = health.value;\n}\n");
+    if (!has(last_sent(), "\"diagnostics\":[]")) printf("%s\n", last_sent());
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 }
 
-// Typing code with `out` parameters and arguments from scratch, and once it's
-// whole, asking at every place in it: nothing may crash.
+// Typing code with `out` from scratch, and once whole, asking at every place: nothing may crash.
 TIDE_TEST(lsp_out_every_prefix_is_safe)
 {
     static const char program[] = OUT_EVERY
@@ -9378,10 +9788,7 @@ TIDE_TEST(lsp_out_every_prefix_is_safe)
     }
 }
 
-// `virtual` and `override`: a game whose package replaces a system, a function
-// and a method of its, and what the editor says of each in both files. What
-// was replaced isn't built, and is still read: hovers, usages and renames go
-// through it and its override as one name.
+// `virtual` and `override`: a package replaces a system, function and method; hovers, usages and renames treat a replaced declaration and its override as one name.
 TIDE_TEST(lsp_virtual_and_override)
 {
     if (!find_game_dir()) return;
@@ -9429,11 +9836,10 @@ TIDE_TEST(lsp_virtual_and_override)
     TIDE_CHECK(has(sent[1], uri_main) && has(sent[1], "\"diagnostics\":[]"));
     open_uri(uri_fast, fast_file);
 
-    // Hovers: the override says what it replaces, and what was replaced says it isn't built
     const char *over = request_at(uri_fast, "textDocument/hover", 2, 23, "");
     TIDE_CHECK(has(over, "override system Move(mut Position position)"));
     TIDE_CHECK(has(over, "Overrides `Combat.Move` of the game"));
-    TIDE_CHECK(has(over, "Stage 1")); // It's the one in the schedule
+    TIDE_CHECK(has(over, "Stage 1"));
     const char *replaced = request_at(uri_main, "textDocument/hover", 9, 15, "");
     TIDE_CHECK(has(replaced, "virtual system Move(mut Position position)"));
     TIDE_CHECK(has(replaced, "**Replaced** by package Fast's override: this code isn't in the build"));
@@ -9443,49 +9849,38 @@ TIDE_TEST(lsp_virtual_and_override)
     TIDE_CHECK(has(word, "Another package can replace this declaration") && has(word, "**Replaced** by package Fast"));
     const char *override_word = request_at(uri_fast, "textDocument/hover", 6, 3, "");
     TIDE_CHECK(has(override_word, "Replaces the `virtual` declaration of this name") && has(override_word, "Overrides `Combat.Damage`"));
-    // A method's override, and its type before its name
     const char *method = request_at(uri_fast, "textDocument/hover", 7, 21, "");
     TIDE_CHECK(has(method, "override bool IsDead()") && has(method, "Overrides `Combat.Stats.IsDead` of the game"));
     TIDE_CHECK(has(request_at(uri_fast, "textDocument/hover", 7, 15, ""), "struct Stats"));
-    // The namespace an override's name is written with
     TIDE_CHECK(has(request_at(uri_fast, "textDocument/hover", 2, 17, ""), "namespace Combat"));
-    // A call names what's built: the override
     TIDE_CHECK(has(request_at(uri_main, "textDocument/hover", 11, 22, ""), "override float Damage(float base)"));
 
-    // Definition: from an override's name, and from the word, to what it replaces
     const char *to_virtual = request_at(uri_fast, "textDocument/definition", 2, 23, "");
     TIDE_CHECK(has(to_virtual, uri_main) && has(to_virtual, "\"start\":{\"line\":9,\"character\":15}"));
     const char *from_word = request_at(uri_fast, "textDocument/definition", 6, 3, "");
     TIDE_CHECK(has(from_word, uri_main) && has(from_word, "\"start\":{\"line\":8,\"character\":14}"));
-    // ...and from a use of the name, to what's built under it
     const char *to_built = request_at(uri_main, "textDocument/definition", 17, 8, "");
     TIDE_CHECK(has(to_built, uri_fast) && has(to_built, "\"start\":{\"line\":2,\"character\":23}"));
-    // Implementation: from a virtual declaration to its override; none where nothing replaces it
     const char *implemented = request_at(uri_main, "textDocument/implementation", 9, 15, "");
     TIDE_CHECK(has(implemented, uri_fast) && has(implemented, "\"start\":{\"line\":2,\"character\":23}"));
     const char *method_implemented = request_at(uri_main, "textDocument/implementation", 5, 18, "");
     TIDE_CHECK(has(method_implemented, uri_fast) && has(method_implemented, "\"start\":{\"line\":7,\"character\":20}"));
     TIDE_CHECK(has(request_at(uri_main, "textDocument/implementation", 19, 15, ""), "\"result\":[]"));
 
-    // Usages go through both: the declaration, its override, and the calls in each file
     const char *usages = request_at(uri_main, "textDocument/references", 8, 15, "\"context\":{\"includeDeclaration\":true}");
     TIDE_CHECK(count(usages, "\"uri\":") == 4 && count(usages, uri_fast) == 2);
     const char *method_usages = request_at(uri_fast, "textDocument/references", 7, 21, "\"context\":{\"includeDeclaration\":true}");
     TIDE_CHECK(count(method_usages, "\"uri\":") == 3 && count(method_usages, uri_main) == 2);
-    // ...and so does a rename, from either
     const char *renamed = request_at(uri_fast, "textDocument/rename", 4, 22, "\"newName\":\"Harm\"");
     TIDE_CHECK(count(renamed, "\"newText\":\"Harm\"") == 4 && has(renamed, uri_main) && has(renamed, uri_fast));
     const char *system_renamed = request_at(uri_main, "textDocument/rename", 9, 15, "\"newName\":\"Step\"");
-    TIDE_CHECK(count(system_renamed, "\"newText\":\"Step\"") == 3); // Its declaration, the [After], and the override's name
+    TIDE_CHECK(count(system_renamed, "\"newText\":\"Step\"") == 3);
 
-    // Lenses: above what was replaced, and above each override, with its place in the schedule
     const char *lenses = request_at(uri_main, "textDocument/codeLens", 0, 0, "");
     TIDE_CHECK(count(lenses, "replaced by package Fast: not in the build") == 3);
     const char *fast_lenses = request_at(uri_fast, "textDocument/codeLens", 0, 0, "");
     TIDE_CHECK(has(fast_lenses, "replaces Combat.Move of the game") && has(fast_lenses, "replaces Combat.Stats.IsDead of the game"));
     TIDE_CHECK(has(fast_lenses, "stage 1"));
-    // Both spellings lead to the active override's callers, across files.
-    // The replaced Move body does not create a second entry point.
     check_entry_lens(uri_main, 8, uri_fast, (int[]){2}, (int[]){23}, (int[]){4}, 1);
     check_entry_lens(uri_fast, 6, uri_fast, (int[]){2}, (int[]){23}, (int[]){4}, 1);
     check_entry_lens(uri_main, 5, uri_main, (int[]){13}, (int[]){7}, (int[]){5}, 1);
@@ -9496,7 +9891,6 @@ TIDE_TEST(lsp_virtual_and_override)
     check_reference_lenses(uri_main);
     check_reference_lenses(uri_fast);
 
-    // The outline: each file's own, the replaced method in its type and its override where it's written
     const char *outline = request_at(uri_main, "textDocument/documentSymbol", 0, 0, "");
     TIDE_CHECK(has(outline, "\"name\":\"Move\"") && has(outline, "\"name\":\"IsDead\",\"detail\":\"virtual bool IsDead()\""));
     const char *fast_outline = request_at(uri_fast, "textDocument/documentSymbol", 0, 0, "");
@@ -9505,7 +9899,6 @@ TIDE_TEST(lsp_virtual_and_override)
     TIDE_CHECK(has(request_at(uri_fast, "textDocument/semanticTokens/full", 0, 0, ""), ",1,0,8,11,0,"));
     TIDE_CHECK(has(request_at(uri_main, "textDocument/semanticTokens/full", 0, 0, ""), ",1,0,7,11,0,"));
 
-    // After `override`, what's left to replace, written out as this file names it
     static char typing[1200];
     snprintf(typing, sizeof typing, "%soverride ", fast_file);
     open_uri(uri_fast, typing);
@@ -9513,9 +9906,8 @@ TIDE_TEST(lsp_virtual_and_override)
     TIDE_CHECK(has(offered, "\"label\":\"system Idle(mut Position position)\""));
     TIDE_CHECK(has(offered, "\"detail\":\"replaces the game's\""));
     TIDE_CHECK(has(offered, "system Idle(mut Position position)\\n{\\n    $0\\n}"));
-    TIDE_CHECK(!has(offered, "\"label\":\"system Combat.Move") && !has(offered, "\"label\":\"system Move")); // Replaced already
-    TIDE_CHECK(!has(offered, "\"label\":\"system Fall")); // Not virtual
-    // ...and with its namespace, in a file that doesn't import it
+    TIDE_CHECK(!has(offered, "\"label\":\"system Combat.Move") && !has(offered, "\"label\":\"system Move"));
+    TIDE_CHECK(!has(offered, "\"label\":\"system Fall"));
     static const char apart[] = "namespace Fast;\noverride ";
     open_uri(uri_fast, apart);
     const char *qualified = request_at(uri_fast, "textDocument/completion", 1, 9, "");
@@ -9523,7 +9915,6 @@ TIDE_TEST(lsp_virtual_and_override)
     TIDE_CHECK(has(qualified, "\"label\":\"bool Combat.Stats.IsDead()\""));
     TIDE_CHECK(has(qualified, "\"label\":\"float Combat.Damage(float base)\""));
 
-    // An override of what isn't marked: the fix marks it, in the game's file
     snprintf(typing, sizeof typing, "%soverride system Fall(mut Position position) { position.value -= 3; }\n", fast_file);
     open_uri(uri_fast, typing);
     char range[160];
@@ -9543,8 +9934,7 @@ TIDE_TEST(lsp_virtual_and_override)
     lsp_free(&server);
 }
 
-// The two words in one file: what they're offered before, how they're laid
-// out, and the fix where one means nothing.
+// `virtual` and `override` in one file: what they're offered before, how they're laid out, and the fix where one means nothing.
 TIDE_TEST(lsp_virtual_and_override_words)
 {
     start();
@@ -9556,7 +9946,6 @@ TIDE_TEST(lsp_virtual_and_override_words)
     TIDE_CHECK(offers(member, "virtual"));
     const char *member_type = complete("struct Stats\n{\n    float health;\n    virtual $\n}\nscene Main { }\n");
     TIDE_CHECK(offers(member_type, "void") && offers(member_type, "bool") && offers(member_type, "mut"));
-    // An override's parameters are a system's, though its name is qualified
     const char *params = complete("namespace Fast;\ncomponent Body { float x; }\noverride system Combat.Move($)\n{\n}\n");
     TIDE_CHECK(offers(params, "Body") && offers(params, "with") && offers(params, "mut"));
 
@@ -9574,7 +9963,6 @@ TIDE_TEST(lsp_virtual_and_override_words)
     TIDE_CHECK(has(tidy, "override float Combat.Damage(float base) { return base; }\n"));
     TIDE_CHECK(has(tidy, "override mut void Combat.Stats.Hurt(float amount)\n{\n    health -= amount;\n}\n"));
 
-    // Where the word means nothing, it's removed
     static const char data[] = "virtual component Body { float x; }\nscene Main { }\n";
     open_document(data);
     TIDE_CHECK(has(last_sent(), "'virtual' goes before a declaration with code"));
@@ -9584,9 +9972,7 @@ TIDE_TEST(lsp_virtual_and_override_words)
     TIDE_CHECK(has(fixed, "component Body { float x; }\nscene Main { }\n") && !has(fixed, "virtual"));
 }
 
-// A manifest's game with a package: tide_add_game lists a package's file with
-// the package's name after it, so it's analyzed as that package's, before the
-// game's own. As the game's own, its override would be in the game's package.
+// A manifest's game with a package: the package's file is analyzed as the package's, before the game's own.
 TIDE_TEST(lsp_game_manifest_with_a_package)
 {
     if (!find_game_dir()) return;
@@ -9610,11 +9996,10 @@ TIDE_TEST(lsp_game_manifest_with_a_package)
     server.manifest = manifest;
     open_uri(uri_a, game_file);
     TIDE_CHECK(sent_count == 2);
-    TIDE_CHECK(has(sent[0], uri_b) && has(sent[0], "\"diagnostics\":[]")); // The package's file comes first
+    TIDE_CHECK(has(sent[0], uri_b) && has(sent[0], "\"diagnostics\":[]"));
     TIDE_CHECK(has(sent[1], uri_a) && has(sent[1], "\"diagnostics\":[]"));
     TIDE_CHECK(has(request_at(uri_a, "textDocument/hover", 2, 16, ""), "**Replaced** by package Mod's override"));
 
-    // Without the package's name, the file is the game's own, and says so
     snprintf(manifest_text, sizeof manifest_text, "game\t%s\ngame\t%s\n", a, b);
     write_file("lsp_pkg_manifest.txt", manifest_text);
     start();
@@ -9623,7 +10008,6 @@ TIDE_TEST(lsp_game_manifest_with_a_package)
     TIDE_CHECK(sent_count == 2);
     TIDE_CHECK(has(sent[1], uri_b) && has(sent[1], "an override is in another package than what it replaces"));
 
-    // The package's virtual declaration again, in the game: `override` is what was meant, and the fix writes it
     static const char open_mod[] = "namespace Mod;\ncomponent Thing { float x; }\n"
                                    "virtual system Tick(mut Thing thing) { thing.x += 1; }\n";
     static const char again[] = "namespace Mod;\nsystem Tick(mut Thing thing) { thing.x += 2; }\n"
@@ -9715,22 +10099,21 @@ TIDE_TEST(lsp_workspace_symbols_of_shared_package_contexts)
     snprintf(root_b, sizeof root_b, "file:///%s/lsp_symbol_contexts/b", dir);
     snprintf(uri, sizeof uri, "file:///%s/lsp_symbol_contexts/pk/main.tide", dir);
     for (int reverse = 0; reverse < 2; reverse++) {
-        // Each consumer is valid on its own.
         start_in_with(reverse ? root_b : root_a, "{}");
         open_uri(uri, package);
         TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
         start_in_pair_with(reverse ? root_b : root_a, reverse ? root_a : root_b, "{}");
         for (int opened = 0; opened < 2; opened++) {
-            if (opened) open_uri(uri, package); // Its context was also discovered from the roots
+            if (opened) open_uri(uri, package);
             clear_sent();
             handle("{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"workspace/symbol\",\"params\":{\"query\":\"\"}}");
             const char *symbols = last_sent();
             TIDE_CHECK(count(symbols, "\"name\":\"WithExtra\"") == 1);
             TIDE_CHECK(count(symbols, "\"name\":\"WithoutExtra\"") == 1);
-            TIDE_CHECK(count(symbols, "\"name\":\"Marker\"") == 2); // Same name in two namespaces stays distinct
+            TIDE_CHECK(count(symbols, "\"name\":\"Marker\"") == 2);
             TIDE_CHECK(count(symbols, "\"name\":\"Shared\"") == 1);
             TIDE_CHECK(count(symbols, "\"name\":\"Read\"") == 1);
-            TIDE_CHECK(count(symbols, "\"location\"") == 6); // Exact duplicates stay once
+            TIDE_CHECK(count(symbols, "\"location\"") == 6);
         }
     }
     remove_game_file("lsp_symbol_contexts/a/tide.packages");
@@ -9872,7 +10255,7 @@ TIDE_TEST(lsp_asset_registrations_cover_every_open_game)
             TIDE_REQUIRE(editor.watchers && editor.filters);
             TIDE_CHECK(count(editor.watchers, "\"globPattern\"") == 3);
             TIDE_CHECK(count(editor.watchers, roots[0]) == 1 && count(editor.watchers, roots[1]) == 1);
-            TIDE_CHECK(count(editor.watchers, shared) == 1); // The shared package is watched once.
+            TIDE_CHECK(count(editor.watchers, shared) == 1);
             TIDE_CHECK(count(editor.filters, "/pk/shared.txt") == 1);
             TIDE_CHECK(has(editor.filters, "/a/rules.txt") && has(editor.filters, "/b/rules.txt"));
             if (!canonical_watchers) {
@@ -9901,7 +10284,6 @@ TIDE_TEST(lsp_asset_registrations_cover_every_open_game)
             receive_asset_registrations(&editor);
             TIDE_CHECK(has(last_sent(), "moved.txt"));
             TIDE_CHECK(strcmp(editor.watchers, canonical_watchers) == 0 && strcmp(editor.filters, canonical_filters) == 0);
-            // A still has a watch after B's requests. Its notification updates diagnostics.
             write_bytes("lsp_watch_games/a/rules.txt", "\xff", 1);
             snprintf(operation, sizeof operation, "{\"jsonrpc\":\"2.0\",\"method\":\"workspace/didChangeWatchedFiles\","
                      "\"params\":{\"changes\":[{\"uri\":\"%s\",\"type\":2}]}}", asset);
@@ -9918,7 +10300,6 @@ TIDE_TEST(lsp_asset_registrations_cover_every_open_game)
             TIDE_REQUIRE(editor.watchers && editor.filters);
             TIDE_CHECK(!has(editor.watchers, roots[0]) && has(editor.watchers, roots[1]) && count(editor.watchers, shared) == 1);
             TIDE_CHECK(!has(editor.filters, "/a/rules.txt") && has(editor.filters, "/b/rules.txt"));
-            // Workspace searches of the closed consumer don't restore its filters.
             clear_sent();
             handle("{\"jsonrpc\":\"2.0\",\"id\":9,\"method\":\"workspace/symbol\",\"params\":{\"query\":\"\"}}");
             receive_asset_registrations(&editor);
@@ -9926,7 +10307,7 @@ TIDE_TEST(lsp_asset_registrations_cover_every_open_game)
             open_uri(uris[0], game);
             receive_asset_registrations(&editor);
             TIDE_CHECK(strcmp(editor.watchers, canonical_watchers) == 0 && strcmp(editor.filters, canonical_filters) == 0);
-            open_uri(uris[1], "scene Main { }\n"); // Removing an asset also removes its watch.
+            open_uri(uris[1], "scene Main { }\n");
             receive_asset_registrations(&editor);
             TIDE_CHECK(!has(editor.watchers, roots[1]) && has(editor.watchers, roots[0]) && count(editor.watchers, shared) == 1);
             close_uri(uris[1]);
@@ -9948,7 +10329,6 @@ TIDE_TEST(lsp_asset_registrations_cover_every_open_game)
     }
     free(canonical_watchers);
     free(canonical_filters);
-    // Clients without relative patterns receive each broader glob just once.
     editor_asset_registrations broad = {0};
     start_in_pair_with(roots[0], roots[1], "{\"workspace\":{\"fileOperations\":{\"dynamicRegistration\":true},"
                                          "\"didChangeWatchedFiles\":{\"dynamicRegistration\":true}}}");
@@ -10034,13 +10414,12 @@ TIDE_TEST(lsp_asset_registrations_keep_manifest_and_folder_contexts)
             receive_asset_registrations(&editor);
             receive_document_diagnostics(&b_diagnostics, uris[1]);
             TIDE_REQUIRE(b_diagnostics != NULL);
-            TIDE_CHECK(strcmp(b_diagnostics, "[]") == 0); // Never replace B's valid branch with A's error.
+            TIDE_CHECK(strcmp(b_diagnostics, "[]") == 0);
             TIDE_REQUIRE(editor.watchers && editor.filters);
             TIDE_CHECK(count(editor.watchers, "\"globPattern\"") == 3);
             TIDE_CHECK(count(editor.watchers, "a.txt") == 1 && count(editor.watchers, "b.txt") == 1);
             TIDE_CHECK(count(editor.watchers, "with.txt") == 1);
             if (!deferred) {
-                // Switching to the folder analysis includes b.tide too, but
                 // b's own requests must still use its manifest's #if branch.
                 TIDE_CHECK(has(request_at(uris[0], "textDocument/hover", 0, 14, ""), "alpha"));
                 TIDE_CHECK(has(request_at(uris[1], "textDocument/hover", 5, 11, ""), "Mode = 22"));
@@ -10053,7 +10432,7 @@ TIDE_TEST(lsp_asset_registrations_keep_manifest_and_folder_contexts)
                 TIDE_CHECK(count(last_sent(), "\"name\":\"Mode\"") == 2);
                 receive_asset_registrations(&editor);
             }
-            close_uri(uris[0]); // The manifest subset doesn't consume a.tide; no dependent refresh follows.
+            close_uri(uris[0]);
             receive_asset_registrations(&editor);
             TIDE_REQUIRE(editor.watchers && editor.filters);
             TIDE_CHECK(count(editor.watchers, "\"globPattern\"") == 1);
@@ -10217,7 +10596,6 @@ TIDE_TEST(lsp_asset_notifications_override_unchanged_metadata)
     notify_file(uri_buffer, 2);
     TIDE_CHECK(has(sent_with(uri_main), "\"diagnostics\":[]"));
 
-    // A deletion can't leave a valid old read for a later replacement with identical metadata.
     remove_game_file("lsp_asset_watch/words.txt");
     notify_file(uri_words, 3);
     TIDE_CHECK(has(sent_with(uri_main), "there's no file at 'words.txt'"));
@@ -10226,7 +10604,6 @@ TIDE_TEST(lsp_asset_notifications_override_unchanged_metadata)
     notify_file(uri_words, 1);
     TIDE_CHECK(has(sent_with(uri_main), "'words.txt' isn't UTF-8 text"));
 
-    // Renaming over a path that was already cached invalidates the destination's old bytes.
     write_file("lsp_asset_watch/spare.txt", "two\n");
     pin_file_time("lsp_asset_watch/spare.txt");
     open_uri(uri_main, "asset string spare = \"spare.txt\";\nscene Main { }\n");
@@ -10282,14 +10659,14 @@ TIDE_TEST(lsp_close_refreshes_dependent_diagnostics)
         TIDE_CHECK(has(sent_with(uri_main), "\"diagnostics\":[]"));
         open_uri(uri_other, "scene Main { }\n");
         open_uri(closed, body);
-        open_uri(closed, changed); // A second open updates the same buffer
+        open_uri(closed, changed);
         TIDE_CHECK(server.doc_count == 3);
         TIDE_CHECK(has(sent_with(uri_main), "unknown component or singleton 'Body'"));
         server.defer = deferred != 0;
         close_uri(closed);
         if (deferred) {
             TIDE_CHECK(sent_count == 1 && has(sent[0], closed) && has(sent[0], "\"diagnostics\":[]"));
-            TIDE_CHECK(server.unsettled_count == 2); // Consumer plus closed-file marker
+            TIDE_CHECK(server.unsettled_count == 2);
             lsp_settle(&server);
         }
         TIDE_CHECK(server.doc_count == 2 && server.unsettled_count == 0 && sent_count == 2);
@@ -10299,7 +10676,7 @@ TIDE_TEST(lsp_close_refreshes_dependent_diagnostics)
         TIDE_CHECK(has(sent[0], closed) && has(sent[0], "\"diagnostics\":[]"));
         TIDE_CHECK(has(request_at(uri_main, "textDocument/hover", 1, 16, ""), "singleton Body"));
         const unsigned changes = server.changes;
-        close_uri(closed); // Duplicate closes don't reanalyse other files
+        close_uri(closed);
         TIDE_CHECK(server.changes == changes && sent_count == 1 && has(sent[0], "\"diagnostics\":[]"));
         lsp_settle(&server);
         TIDE_CHECK(sent_count == 1);
@@ -10308,13 +10685,12 @@ TIDE_TEST(lsp_close_refreshes_dependent_diagnostics)
     write_file("lsp_close/a/body.tide", "singleton Body { int value = missing; }\n");
     start_in_pair_with(root_a, root_b, "{}");
     open_uri(uri_main, main);
-    open_uri(uri_body, body); // The unsaved buffer fixes the disk error
+    open_uri(uri_body, body);
     close_uri(uri_body);
     TIDE_CHECK(sent_count == 2 && has(sent[0], uri_body) && has(sent[0], "\"diagnostics\":[]"));
     TIDE_REQUIRE(sent_with(uri_main) != NULL);
     TIDE_CHECK(has(sent_with(uri_main), "\"diagnostics\":[]"));
     TIDE_CHECK(!has(sent[1], "missing") && !has(sent[1], uri_body));
-    // Another spelling of the file's URI can still have an open buffer.
     write_file("lsp_close/a/body.tide", body);
     open_uri(uri_body, body);
     open_uri(uri_encoded, changed);
@@ -10351,10 +10727,7 @@ static const char *will_rename(const char *old, const char *now)
     return last_sent();
 }
 
-// A rename of a file or a folder rewrites every asset path to it, in every
-// file of the game and its packages, each relative to its own file; a glob
-// isn't rewritten. The editor asks only about the files assets name and the
-// folders above them, by the filters the server registers.
+// Renaming a file or folder rewrites every asset path to it, each relative to its own file; globs aren't rewritten.
 TIDE_TEST(lsp_asset_rename_rewrites_paths)
 {
     if (!find_game_dir()) return;
@@ -10386,13 +10759,12 @@ TIDE_TEST(lsp_asset_rename_rewrites_paths)
     snprintf(uri_p, sizeof uri_p, "file:///%s/lsp_as/pk/p.tide", dir);
 
     start_in_with(root, ASSET_EDITOR_CAPABILITIES);
-    TIDE_CHECK(!has(last_sent(), "fileOperations")); // Registered once the game is known, not in the result
+    TIDE_CHECK(!has(last_sent(), "fileOperations"));
     clear_sent();
     handle("{\"jsonrpc\":\"2.0\",\"method\":\"initialized\",\"params\":{}}");
     TIDE_CHECK(sent_count == 1 && has(sent[0], "{\"globPattern\":\"**/*.tide\"}"));
 
     open_uri(uri_x, x_file);
-    // The renames to ask about: each named file, and the folders above it in its game or package
     const char *registered = sent_with("\"method\":\"workspace/willRenameFiles\"");
     TIDE_REQUIRE(registered != NULL);
     TIDE_CHECK(has(registered, "\"id\":\"tide-rename\"") && has(registered, "\"id\":\"tide-renamed\""));
@@ -10403,16 +10775,15 @@ TIDE_TEST(lsp_asset_rename_rewrites_paths)
     TIDE_CHECK(has(registered, "lsp_as/game\",\"matches\":\"folder\""));
     TIDE_CHECK(has(registered, "lsp_as/pk/notes.txt\",\"matches\":\"file\""));
     TIDE_CHECK(has(registered, "lsp_as/pk\",\"matches\":\"folder\""));
-    TIDE_CHECK(!has(registered, "lsp_as\",\"matches\":\"folder\"")); // Above both: nothing to rewrite
-    TIDE_CHECK(!has(registered, "*.png")); // A glob isn't rewritten, so its matches aren't asked about
-    TIDE_CHECK(count(registered, "lsp_as/game/a/art/hero.png\",\"matches\":\"file\"") == 2); // Named twice: one filter
-    // The assets' files are watched, relative to where their path leads
+    TIDE_CHECK(!has(registered, "lsp_as\",\"matches\":\"folder\""));
+    TIDE_CHECK(!has(registered, "*.png"));
+    TIDE_CHECK(count(registered, "lsp_as/game/a/art/hero.png\",\"matches\":\"file\"") == 2);
     const char *watched = sent_with("\"id\":\"tide-assets\"");
     TIDE_REQUIRE(watched != NULL);
     TIDE_CHECK(has(watched, "lsp_as/game/a/art\",\"pattern\":\"hero.png\"}"));
     TIDE_CHECK(has(watched, "lsp_as/game/a/art\",\"pattern\":\"*.png\"}"));
     TIDE_CHECK(has(watched, "lsp_as/pk\",\"pattern\":\"notes.txt\"}"));
-    TIDE_CHECK(!has(sent_with(uri_x), "there's no file")); // Every file is there
+    TIDE_CHECK(!has(sent_with(uri_x), "there's no file"));
     TIDE_CHECK(!has(sent_with(uri_y), "there's no file"));
     TIDE_CHECK(!has(sent_with(uri_p), "there's no file"));
 
@@ -10420,32 +10791,26 @@ TIDE_TEST(lsp_asset_rename_rewrites_paths)
     open_uri(uri_y, y_file);
     TIDE_CHECK(sent_with("client/registerCapability") == NULL);
 
-    // The file moved: both references follow it, each from its own file
     const char *reply = will_rename("lsp_as/game/a/art/hero.png", "lsp_as/game/a/img/hero.png");
     TIDE_CHECK(has(reply, uri_x) && has(reply, uri_y) && !has(reply, uri_p));
     TIDE_CHECK(has(reply, "\"newText\":\"img/hero.png\"") && has(reply, "\"newText\":\"../a/img/hero.png\""));
-    TIDE_CHECK(count(reply, "\"newText\"") == 2); // Not the glob
+    TIDE_CHECK(count(reply, "\"newText\"") == 2);
     TIDE_CHECK(has(reply, "\"range\":{\"start\":{\"line\":0,\"character\":27},\"end\":{\"line\":0,\"character\":39}}"));
 
-    // Its folder moved: the same
     reply = will_rename("lsp_as/game/a/art", "lsp_as/game/a/img");
     TIDE_CHECK(has(reply, "\"newText\":\"img/hero.png\"") && has(reply, "\"newText\":\"../a/img/hero.png\""));
     TIDE_CHECK(count(reply, "\"newText\"") == 2);
 
-    // The folder of the file that names it moved, with it: that path stays, the other follows
     reply = will_rename("lsp_as/game/a", "lsp_as/game/c");
     TIDE_CHECK(!has(reply, uri_x) && has(reply, uri_y));
     TIDE_CHECK(has(reply, "\"newText\":\"../c/art/hero.png\"") && count(reply, "\"newText\"") == 1);
 
-    // A package's file, from the game's folder
     reply = will_rename("lsp_as/pk/notes.txt", "lsp_as/pk/docs/notes.txt");
     TIDE_CHECK(has(reply, uri_p) && has(reply, "\"newText\":\"docs/notes.txt\"") && count(reply, "\"newText\"") == 1);
 
-    // A file nothing names: nothing to do
     reply = will_rename("lsp_as/game/b/other.txt", "lsp_as/game/b/else.txt");
     TIDE_CHECK(has(reply, "\"result\":{\"changes\":{}}"));
 
-    // Once it's renamed, the game is looked at again
     clear_sent();
     handle("{\"jsonrpc\":\"2.0\",\"method\":\"workspace/didRenameFiles\",\"params\":{\"files\":[]}}");
     TIDE_CHECK(sent_with(uri_x) != NULL && sent_with(uri_y) != NULL);
@@ -10472,8 +10837,7 @@ TIDE_TEST(lsp_asset_rename_rewrites_paths)
     lsp_free(&server);
 }
 
-// A batch rename keeps every named file's path, including the ones past the
-// server's old limit of 64 files in one request.
+// A batch rename keeps every named file's path, even past 64 files in one request.
 TIDE_TEST(lsp_asset_rename_large_batch)
 {
     if (!find_game_dir()) return;
@@ -10618,8 +10982,6 @@ TIDE_TEST(lsp_asset_rename_multiple_games)
         jb_free(&request);
     }
 
-    // The request can name only the shared package's asset. All consuming
-    // games still need their paths changed, in either workspace-root order.
     for (int reverse = 0; reverse < 2; reverse++) {
         start_in_pair_with(reverse ? root_b : root_a, reverse ? root_a : root_b, ASSET_EDITOR_CAPABILITIES);
         open_uri(uri_a, game);
@@ -10711,7 +11073,6 @@ TIDE_TEST(lsp_asset_rename_manifest_games)
         TIDE_CHECK(count(reply, uri_a) == 1 && !has(reply, uri_b) && count(reply, "\"newText\"") == 1);
         TIDE_CHECK(has(apply_reply(game, uri_a), "bytes = \"art/new.bin\";"));
 
-        // Moving a listed source file rewrites its own relative asset path.
         reply = will_rename("lsp_batch_manifest/a/main.tide", "lsp_batch_manifest/a/src/main.tide");
         TIDE_CHECK(count(reply, uri_a) == 1 && !has(reply, uri_b) && count(reply, "\"newText\"") == 1);
         TIDE_CHECK(has(apply_reply(game, uri_a), "bytes = \"../art/old.bin\";"));
@@ -10733,10 +11094,7 @@ TIDE_TEST(lsp_asset_rename_manifest_games)
     lsp_free(&server);
 }
 
-// The hashes of the named files go in the game's .tide/ when it's checked. A
-// file that's gone from its path is found again by its bytes, with a fix that
-// writes where it is; one nothing has the bytes of lists the files of its
-// name, a fix each. A glob that matches nothing says so.
+// The named files' hashes go in the game's .tide/ when it's checked; a missing file is found again by its bytes, or by name.
 TIDE_TEST(lsp_asset_moved_file_is_found_by_its_bytes)
 {
     if (!find_game_dir()) return;
@@ -10758,7 +11116,6 @@ TIDE_TEST(lsp_asset_moved_file_is_found_by_its_bytes)
     start_in_with(root, ASSET_EDITOR_CAPABILITIES);
     open_uri(uri_main, main_file);
     TIDE_CHECK(!has(sent_with(uri_main), "there's no file"));
-    // The store: the file's hash, size and path from the game's folder
     char hex[65];
     asset_hash_of(bytes, sizeof bytes, hex);
     size_t len = 0;
@@ -10778,20 +11135,18 @@ TIDE_TEST(lsp_asset_moved_file_is_found_by_its_bytes)
     }
     TIDE_CHECK(game_file_exists("lsp_mv/.tide/.gitignore"));
 
-    // Moved under another name: found by its bytes
     move_game_file("lsp_mv/data/table.bin", "lsp_mv/blobs/numbers.bin");
     open_uri(uri_main, main_file);
     const char *diagnostics = sent_with(uri_main);
     TIDE_REQUIRE(diagnostics != NULL);
     TIDE_CHECK(has(diagnostics, "there's no file at 'data/table.bin' ("));
     TIDE_CHECK(has(diagnostics, "note: a file with the same bytes is at 'blobs/numbers.bin'"));
-    TIDE_CHECK(has(diagnostics, "\"range\":{\"start\":{\"line\":0,\"character\":25}")); // At the path
+    TIDE_CHECK(has(diagnostics, "\"range\":{\"start\":{\"line\":0,\"character\":25}"));
     const char *actions = request_at(uri_main, "textDocument/codeAction", 0, 0,
                                      "\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":0}},\"context\":{\"diagnostics\":[]}");
     TIDE_CHECK(has(actions, "\"title\":\"Change to 'blobs/numbers.bin'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
     TIDE_CHECK(has(actions, "\"range\":{\"start\":{\"line\":0,\"character\":26},\"end\":{\"line\":0,\"character\":40}},\"newText\":\"blobs/numbers.bin\""));
-    TIDE_CHECK(has(actions, "there's no file at")); // Fixes that diagnostic
-    // The store still knows the missing file's bytes, for the next look
+    TIDE_CHECK(has(actions, "there's no file at"));
     {
         FILE *f = fopen(store, "rb");
         TIDE_REQUIRE(f != NULL);
@@ -10802,7 +11157,6 @@ TIDE_TEST(lsp_asset_moved_file_is_found_by_its_bytes)
         TIDE_CHECK(has(buffer, " 9 data/table.bin\n"));
     }
 
-    // Gone for good, and two files of its name elsewhere: a fix for each, neither preferred
     remove_game_file("lsp_mv/blobs/numbers.bin");
     write_file("lsp_mv/old/table.bin", "other");
     write_file("lsp_mv/older/table.bin", "another");
@@ -10815,7 +11169,6 @@ TIDE_TEST(lsp_asset_moved_file_is_found_by_its_bytes)
     TIDE_CHECK(has(actions, "\"title\":\"Change to 'old/table.bin'\",\"kind\":\"quickfix\",\"isPreferred\":false"));
     TIDE_CHECK(has(actions, "\"title\":\"Change to 'older/table.bin'\",\"kind\":\"quickfix\",\"isPreferred\":false"));
 
-    // A glob with nothing to match
     static const char glob_file[] = "asset List<Grid2<Color>> frames = \"data/*.png\";\nscene Main { }\n";
     open_uri(uri_main, glob_file);
     TIDE_CHECK(has(sent_with(uri_main), "'data/*.png' matches no file"));
@@ -10839,9 +11192,7 @@ TIDE_TEST(lsp_asset_moved_file_is_found_by_its_bytes)
     lsp_free(&server);
 }
 
-// One file where an asset's type holds many is a list or a map of that one,
-// so it's a single file's path to the editor: nothing is said of it, a rename
-// rewrites it, and a file that's gone is found by its bytes.
+// One file where an asset's type holds many (a list or map): a single file's path to the editor.
 TIDE_TEST(lsp_asset_one_file_for_a_list_or_a_map)
 {
     if (!find_game_dir()) return;
@@ -10870,14 +11221,12 @@ TIDE_TEST(lsp_asset_one_file_for_a_list_or_a_map)
     TIDE_REQUIRE(diagnostics != NULL);
     TIDE_CHECK(has(diagnostics, "\"diagnostics\":[]"));
 
-    // The file renamed, and its folder: the paths follow, as any single file's do
     const char *reply = will_rename("lsp_one/data/a.txt", "lsp_one/moved/a.txt");
     TIDE_CHECK(has(reply, "\"newText\":\"moved/a.txt\"") && count(reply, "\"newText\"") == 1);
     reply = will_rename("lsp_one/data", "lsp_one/moved");
     TIDE_CHECK(has(reply, "\"newText\":\"moved/a.txt\"") && has(reply, "\"newText\":\"moved/t.bin\""));
     TIDE_CHECK(count(reply, "\"newText\"") == 2);
 
-    // Moved outside the editor: found by its bytes, with the fix
     move_game_file("lsp_one/data/t.bin", "lsp_one/moved/t.bin");
     open_uri(uri_main, main_file);
     diagnostics = sent_with(uri_main);
@@ -10901,9 +11250,7 @@ TIDE_TEST(lsp_asset_one_file_for_a_list_or_a_map)
     lsp_free(&server);
 }
 
-// Inside an asset's path, completion offers the folders and files where the
-// path so far leads, from the declaring file: the type's image/audio files,
-// an image), and globs for a list or a map.
+// Completion inside an asset's path: folders and files where the path leads, the type's formats, and globs for a list or map.
 TIDE_TEST(lsp_asset_path_completion)
 {
     if (!find_game_dir()) return;
@@ -10943,15 +11290,13 @@ TIDE_TEST(lsp_asset_path_completion)
     start_in_with(root, ASSET_EDITOR_CAPABILITIES);
     open_uri(uri_main, main_file);
 
-    // In the empty path: the game's folders, and its images, which there are none of
     const char *completion = request_at(uri_main, "textDocument/completion", 0, 27, "");
     TIDE_CHECK(offers(completion, "art/") && offers(completion, "../"));
     TIDE_CHECK(!offers(completion, "readme.txt") && !offers(completion, "main.tide"));
-    TIDE_CHECK(!offers(completion, "*.png") && !offers(completion, "*.psd")); // One file
-    TIDE_CHECK(has(completion, "\"kind\":19")); // A folder
+    TIDE_CHECK(!offers(completion, "*.png") && !offers(completion, "*.psd"));
+    TIDE_CHECK(has(completion, "\"kind\":19"));
     TIDE_CHECK(has(completion, "\"textEdit\":{\"range\":{\"start\":{\"line\":0,\"character\":27},\"end\":{\"line\":0,\"character\":27}},\"newText\":\"art/\"}"));
 
-    // After "art/": what's in it, and the globs a list takes
     completion = request_at(uri_main, "textDocument/completion", 1, 36, "");
     TIDE_CHECK(offers(completion, "hero.png") && offers(completion, "hero.psd") && offers(completion, "tile.PSD") && offers(completion, "sub/"));
     TIDE_CHECK(!offers(completion, "other.txt"));
@@ -10961,18 +11306,15 @@ TIDE_TEST(lsp_asset_path_completion)
     TIDE_CHECK(offers(completion, "*.jpg") && offers(completion, "**/*.jpeg") && offers(completion, "*.tga") && offers(completion, "**/*.bmp"));
     TIDE_CHECK(has(completion, "\"textEdit\":{\"range\":{\"start\":{\"line\":1,\"character\":36},\"end\":{\"line\":1,\"character\":36}},\"newText\":\"hero.png\"}"));
 
-    // Text takes any file
     completion = request_at(uri_main, "textDocument/completion", 2, 26, "");
     TIDE_CHECK(offers(completion, "hero.png") && offers(completion, "hero.psd") && offers(completion, "other.txt"));
     TIDE_CHECK(!offers(completion, "*") && !offers(completion, "**/*"));
 
-    // A clip accepts WAV, Ogg Vorbis, MP3 and FLAC.
     completion = request_at(uri_main, "textDocument/completion", 3, 23, "");
     TIDE_CHECK(offers(completion, "shot.wav") && offers(completion, "music.ogg"));
     TIDE_CHECK(offers(completion, "music.MP3") && offers(completion, "music.flac"));
     TIDE_CHECK(!offers(completion, "hero.png") && !offers(completion, "hero.psd") && !offers(completion, "other.txt"));
 
-    // Textures and cube faces take the same image formats; only many files offer globs.
     completion = request_at(uri_main, "textDocument/completion", 4, 26, "");
     TIDE_CHECK(offers(completion, "hero.png") && offers(completion, "hero.psd") && offers(completion, "tile.PSD"));
     for (size_t i = 0; i < sizeof image_names / sizeof image_names[0]; i++) TIDE_CHECK(offers(completion, image_names[i]));
@@ -10989,7 +11331,6 @@ TIDE_TEST(lsp_asset_path_completion)
     TIDE_CHECK(offers(completion, "*.wav") && offers(completion, "**/*.ogg")
                && offers(completion, "*.mp3") && offers(completion, "**/*.flac"));
 
-    // Part of a name typed: the item replaces it
     open_uri(uri_main, "asset Grid2<Color> hero = \"art/he\";\nscene Main { }\n");
     completion = request_at(uri_main, "textDocument/completion", 0, 33, "");
     TIDE_CHECK(offers(completion, "hero.png"));
@@ -11023,15 +11364,12 @@ TIDE_TEST(lsp_asset_path_completion)
     lsp_free(&server);
 }
 
-// Texture assets, and [Filter] and [Wrap] before a texture's declaration:
-// hovers, what's offered in the brackets, PNGs in a Texture's path, and the
-// checker's diagnostics.
+// Texture assets, and [Filter] and [Wrap] before them: hovers, brackets, PNGs in a Texture's path, and diagnostics.
 TIDE_TEST(lsp_asset_textures_and_declared_sampling)
 {
     if (!find_game_dir()) return;
     make_folder("lsp_tx");
     make_folder("lsp_tx/art");
-    // A PNG of 2 by 2 pixels
     static const unsigned char png[] = {
         0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00,
         0x02, 0x00, 0x00, 0x00, 0x02, 0x08, 0x06, 0x00, 0x00, 0x00, 0x72, 0xb6, 0x0d, 0x24, 0x00, 0x00, 0x00, 0x12, 0x49,
@@ -11069,7 +11407,6 @@ TIDE_TEST(lsp_asset_textures_and_declared_sampling)
     open_uri(uri_main, main_file);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
-    // The attributes, and the enum member each names
     const char *hover = request_at(uri_main, "textDocument/hover", 0, 3, "");
     TIDE_CHECK(has(hover, "[Filter(Filter.Point)]") && has(hover, "How this texture is read between its cells"));
     hover = request_at(uri_main, "textDocument/hover", 0, 17, "");
@@ -11081,7 +11418,6 @@ TIDE_TEST(lsp_asset_textures_and_declared_sampling)
     hover = request_at(uri_main, "textDocument/hover", 9, 7, "");
     TIDE_CHECK(has(hover, "[Filter(Filter.Point)]"));
 
-    // An asset says what it is, and how it's sampled where a draw doesn't say
     hover = request_at(uri_main, "textDocument/hover", 1, 16, "");
     TIDE_CHECK(has(hover, "asset Texture tiles") && has(hover, "an image to draw with"));
     TIDE_CHECK(has(hover, "it's sampled with `Filter.Point` and `Wrap.Repeat`."));
@@ -11089,11 +11425,9 @@ TIDE_TEST(lsp_asset_textures_and_declared_sampling)
     TIDE_CHECK(has(hover, "asset Grid2<Color> glass") && has(hover, "it's sampled with `Wrap.Mirror`.") && !has(hover, "an image to draw with"));
     hover = request_at(uri_main, "textDocument/hover", 4, 16, "");
     TIDE_CHECK(has(hover, "asset Texture plain") && !has(hover, "it's sampled with"));
-    hover = request_at(uri_main, "textDocument/hover", 15, 39, ""); // ...where a draw names it too
+    hover = request_at(uri_main, "textDocument/hover", 15, 39, "");
     TIDE_CHECK(has(hover, "asset Texture tiles") && has(hover, "`Filter.Point` and `Wrap.Repeat`"));
 
-    // Assets are ordinary read-only values in completion and highlighting,
-    // including while the receiver or its Sample call is half written.
     static const char shader_assets[] = "asset Texture logo = \"art/tile.png\";\n"
                                         "asset List<Texture> frames = \"art/*.png\";\n"
                                         "asset Map<string, Texture> images = \"art/*.png\";\n"
@@ -11112,10 +11446,10 @@ TIDE_TEST(lsp_asset_textures_and_declared_sampling)
     hover = request_at(uri_main, "textDocument/hover", 8, 30, "");
     TIDE_CHECK(has(hover, "Texture.Sample(float2 uv") && !has(hover, "entity.Sample"));
     const char *tokens = request_at(uri_main, "textDocument/semanticTokens/full", 0, 0, "");
-    TIDE_CHECK(token_is(tokens, 0, 14, 6, 3)); // Asset declaration: variable, declared and read-only
-    TIDE_CHECK(token_is(tokens, 8, 22, 6, 2)); // Asset use: variable, read-only
-    TIDE_CHECK(token_is(tokens, 8, 27, 10, 8)); // Texture.Sample: method from the built-in library
-    TIDE_CHECK(token_is(tokens, 4, 12, 8, 7)); // A true constant keeps enumMember, declared/static/read-only
+    TIDE_CHECK(token_is(tokens, 0, 14, 6, 3));
+    TIDE_CHECK(token_is(tokens, 8, 22, 6, 2));
+    TIDE_CHECK(token_is(tokens, 8, 27, 10, 8));
+    TIDE_CHECK(token_is(tokens, 4, 12, 8, 7));
 
     snprintf(asset_code, sizeof asset_code, "%sfrag Frag(Vertex3 vertex, out Color color)\n{\n"
                                            "    Color logoColor = Color.white;\n    lo\n}\n", shader_assets);
@@ -11144,7 +11478,6 @@ TIDE_TEST(lsp_asset_textures_and_declared_sampling)
     TIDE_CHECK(offers(asset_completion, "Has") && offers(asset_completion, "TryGet"));
     TIDE_CHECK(!offers(asset_completion, "Sample"));
 
-    // Qualified names resolve the same image when its declaration is in a namespace.
     static const char namespaced_asset[] = "namespace Art { asset Texture logo = \"art/tile.png\"; }\nscene Main { }\n";
     snprintf(asset_code, sizeof asset_code, "%sfrag Frag(Vertex3 vertex, out Color color)\n{\n    color = Art.logo.\n}\n", namespaced_asset);
     open_uri(uri_main, asset_code);
@@ -11153,7 +11486,6 @@ TIDE_TEST(lsp_asset_textures_and_declared_sampling)
     open_uri(uri_main, asset_code);
     TIDE_CHECK(has(request_at(uri_main, "textDocument/signatureHelp", 4, 28, ""), "Texture.Sample(float2 uv"));
 
-    // The same fallback works across source files and through a using.
     char uri_icons[700];
     snprintf(uri_icons, sizeof uri_icons, "file:///%s/lsp_tx/icons.tide", dir);
     static const char icons_file[] = "namespace Icons;\nasset Texture badge = \"art/tile.png\";\n";
@@ -11164,13 +11496,11 @@ TIDE_TEST(lsp_asset_textures_and_declared_sampling)
     open_uri(uri_main, "using Icons;\nscene Main { }\nfrag Frag(Vertex3 vertex, out Color color)\n{\n    color = badge.Sample(\n}\n");
     TIDE_CHECK(has(request_at(uri_main, "textDocument/signatureHelp", 4, 25, ""), "Texture.Sample(float2 uv"));
 
-    // A missing file has its own diagnostic; it doesn't erase the asset's type.
     open_uri(uri_main, "asset Texture missing = \"art/missing.png\";\nscene Main { }\n"
                        "frag Frag(Vertex3 vertex, out Color color)\n{\n    color = missing.\n}\n");
     TIDE_CHECK(has(sent_with(uri_main), "there's no file at 'art/missing.png'"));
     TIDE_CHECK(offers(request_at(uri_main, "textDocument/completion", 4, 20, ""), "Sample"));
 
-    // A Texture's path takes PNGs, and a list of them the globs
     static const char paths[] = "asset Texture one = \"art/\";\n"
                                 "asset List<Texture> many = \"art/\";\n"
                                 "scene Main { }\n";
@@ -11181,11 +11511,9 @@ TIDE_TEST(lsp_asset_textures_and_declared_sampling)
     TIDE_CHECK(offers(completion, "tile.png") && !offers(completion, "other.txt"));
     TIDE_CHECK(offers(completion, "*.png") && offers(completion, "**/*.png"));
 
-    // Where one can't go, the checker says where it does
     open_uri(uri_main, "scene Main { }\nlocal singleton Art\n{\n    [Filter(Filter.Point)] Texture kept;\n}\n");
     TIDE_CHECK(has(last_sent(), "a Texture says how it's sampled itself, and a field holds whichever it's given"));
     TIDE_CHECK(has(last_sent(), "say it where the texture is made"));
-    // ...and a RenderTarget's field says it for its color, a grid of floats' for the texture it is
     open_uri(uri_main, "scene Main { }\nlocal singleton Art\n{\n    [Filter(Filter.Point)] RenderTarget small;\n"
                        "    [Wrap(Wrap.Repeat)] Grid2<float> heights = Grid2(2, 2);\n}\n");
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
@@ -11195,40 +11523,73 @@ TIDE_TEST(lsp_asset_textures_and_declared_sampling)
     TIDE_CHECK(has(last_sent(), "a list or a map can't hold rendering resources"));
     TIDE_CHECK(has(last_sent(), "asset List<Texture> frames"));
 
-    // [Raw]: a texture of numbers, which a frag reads by its name and nothing draws
+    static const char sampling_aliases[] = "using Sampling;\n"
+        "namespace Sampling { using Sampler = Filter; using Address = Wrap; }\n"
+        "[Filter(Sampler.Trilinear), Wrap(Sampling.Address.Repeat)]\n"
+        "asset Texture tiles = \"art/tile.png\";\nscene Main;\n";
+    open_uri(uri_main, sampling_aliases);
+    TIDE_CHECK(!has(sent_with(uri_main), "\"severity\":1"));
+    TIDE_CHECK(has(request_at(uri_main, "textDocument/hover", 2, 10, ""), "using Sampler = Filter;"));
+    TIDE_CHECK(has(request_at(uri_main, "textDocument/hover", 2, 44, ""), "using Address = Wrap;"));
+    TIDE_CHECK(count(request_at(uri_main, "textDocument/references", 2, 10,
+                               "\"context\":{\"includeDeclaration\":true}"), "\"uri\"") == 2);
+    request_at(uri_main, "textDocument/rename", 2, 10, "\"newName\":\"Pick\"");
+    const char *sampling_renamed = apply_reply(sampling_aliases, uri_main);
+    TIDE_CHECK(has(sampling_renamed, "using Pick = Filter;") && has(sampling_renamed, "Filter(Pick.Trilinear)"));
+
     static const char raw_file[] = "[Raw] asset Texture masks = \"art/tile.png\";\n"
                                    "scene Main { }\n"
                                    "local singleton Art\n"
                                    "{\n"
                                    "    [Raw] Grid2<Color> kept = Grid2(2, 2);\n"
+                                   "    [Raw] Texture image = masks;\n"
+                                   "    int2 imageSize;\n"
                                    "}\n"
+                                   "Color SampleRaw(Texture image, float2 uv) { return image.Sample(uv); }\n"
+                                   "Color ForwardRaw(Texture image, float2 uv) { return SampleRaw(image, uv); }\n"
+                                   "int2 RawSize(Texture image) { return image.size; }\n"
                                    "frag Read(Vertex vertex, out Color color, Art art)\n"
                                    "{\n"
-                                   "    color = masks.Sample(vertex.uv) + art.kept.Sample(vertex.uv);\n"
+                                   "    color = masks.Sample(vertex.uv) + art.kept.Sample(vertex.uv)\n"
+                                   "          + ForwardRaw(art.image, vertex.uv)\n"
+                                   "          + Color(float(art.image.size.x + RawSize(art.image).x), 0, 0);\n"
                                    "}\n"
-                                   "view V()\n"
+                                   "view V(mut Art art)\n"
                                    "{\n"
+                                   "    art.image = art.kept;\n"
+                                   "    art.imageSize = art.image.size;\n"
                                    "    Draw.Mesh([Vertex { }], [0, 0, 0], Read);\n"
                                    "}\n";
     open_uri(uri_main, raw_file);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
     hover = request_at(uri_main, "textDocument/hover", 0, 2, "");
     TIDE_CHECK(has(hover, "[Raw]") && has(hover, "pixels are numbers, not colors to draw"));
+    TIDE_CHECK(has(hover, "`[Raw] Texture` fields") && has(hover, "GPU sampling and metadata helpers"));
     hover = request_at(uri_main, "textDocument/hover", 0, 21, "");
     TIDE_CHECK(has(hover, "asset Texture masks") && has(hover, "It's `[Raw]`"));
+    TIDE_CHECK(has(hover, "`[Raw] Texture` fields") && has(hover, "GPU sampling and metadata helpers"));
+    TIDE_CHECK(!has(hover, "an image to draw with") && !has(hover, "or hand on"));
     hover = request_at(uri_main, "textDocument/hover", 4, 6, "");
     TIDE_CHECK(has(hover, "[Raw]") && has(hover, "no alpha worked into them"));
-    open_uri(uri_main, "[] asset Texture masks = \"art/tile.png\";\nscene Main { }\nlocal singleton Art\n{\n    [] Grid2<Color> kept = Grid2(2, 2);\n}\n");
+    hover = request_at(uri_main, "textDocument/hover", 5, 6, "");
+    TIDE_CHECK(has(hover, "`[Raw] Texture` fields") && has(hover, "`.size` is readable on the CPU and GPU"));
+    hover = request_at(uri_main, "textDocument/hover", 5, 19, "");
+    TIDE_CHECK(has(hover, "Texture image = masks") && !has(hover, "RawTexture"));
+    snprintf(asset_code, sizeof asset_code, "%sview Escape(Art art) { var lost = art.image; _ = lost.size; }\n", raw_file);
+    open_uri(uri_main, asset_code);
+    TIDE_CHECK(has(last_sent(), "'image' is [Raw], its pixels numbers and not colors to draw"));
+    open_uri(uri_main, "[] asset Texture masks = \"art/tile.png\";\nscene Main { }\nlocal singleton Art\n{\n    [] Texture image;\n}\n");
     completion = request_at(uri_main, "textDocument/completion", 0, 1, "");
     TIDE_CHECK(offers(completion, "Raw") && offers(completion, "Filter"));
+    TIDE_CHECK(has(completion, "[Raw] Texture fields") && has(completion, "GPU sampling and metadata helpers"));
     completion = request_at(uri_main, "textDocument/completion", 4, 5, "");
     TIDE_CHECK(offers(completion, "Raw") && offers(completion, "Wrap"));
+    TIDE_CHECK(has(completion, "[Raw] Texture fields") && has(completion, "GPU sampling and metadata helpers"));
     open_uri(uri_main, "[Raw] asset Texture masks = \"art/tile.png\";\nscene Main { }\nview V()\n{\n"
                        "    Draw.Mesh([Vertex { }], [0, 0, 0], masks);\n}\n");
     TIDE_CHECK(has(last_sent(), "'masks' is [Raw], its pixels numbers and not colors to draw"));
     TIDE_CHECK(has(last_sent(), "read it in a frag or a vert, by its name"));
 
-    // A field's default names an asset as it names a constant: the asset where it's named, and assets offered there
     static const char default_assets[] = "asset Texture logo = \"art/tile.png\";\n"
                                          "asset string notes = \"art/other.txt\";\n"
                                          "scene Main { }\n"
@@ -11247,7 +11608,6 @@ TIDE_TEST(lsp_asset_textures_and_declared_sampling)
     completion = request_at(uri_main, "textDocument/completion", 7, 25, "");
     TIDE_CHECK(offers(completion, "logo") && offers(completion, "notes") && offers(completion, "Math"));
     TIDE_CHECK(has(completion, "\"label\":\"logo\",\"kind\":6,\"detail\":\"asset Texture\""));
-    // ...and nowhere else that takes a constant
     open_uri(uri_main, "asset string notes = \"art/other.txt\";\nconst int SIZE = notes.length;\nscene Main { }\n");
     TIDE_CHECK(has(last_sent(), "'notes' is an asset, not a constant: its value is the pack's, read as the game runs"));
     TIDE_CHECK(has(last_sent(), "a field's default can name an asset, like 'string value = notes;'"));
@@ -11264,22 +11624,20 @@ TIDE_TEST(lsp_asset_textures_and_declared_sampling)
     clear_sent();
     lsp_free(&server);
 
-    // In the brackets: before a declaration and before a field
     start();
     const char *before = complete("[$]\nsingleton Rules\n{\n    int rounds;\n}\nscene Main { }\n");
     TIDE_CHECK(offers(before, "Filter") && offers(before, "Wrap") && offers(before, "Stage"));
+    TIDE_CHECK(offers(before, "Raw") && has(before, "[Raw] Texture fields") && has(before, "GPU sampling and metadata helpers"));
     const char *field = complete("scene Main { }\nlocal singleton Art\n{\n    [$] Grid2<Color> paint = Grid2(2, 2);\n}\n");
     TIDE_CHECK(offers(field, "Filter") && offers(field, "Wrap") && offers(field, "Snap"));
 }
 
-// Cubemaps: the type, an asset's six files, a cube a view draws into and its
-// faces, what a frag reads, and the checker's diagnostics.
+// Cubemaps: the type, an asset's six files, a cube a view draws into, what a frag reads, and diagnostics.
 TIDE_TEST(lsp_cubemaps)
 {
     if (!find_game_dir()) return;
     make_folder("lsp_cm");
     make_folder("lsp_cm/sky");
-    // A PNG of 2 by 2 pixels, under each face's name
     static const unsigned char png[] = {
         0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00,
         0x02, 0x00, 0x00, 0x00, 0x02, 0x08, 0x06, 0x00, 0x00, 0x00, 0x72, 0xb6, 0x0d, 0x24, 0x00, 0x00, 0x00, 0x12, 0x49,
@@ -11320,12 +11678,10 @@ TIDE_TEST(lsp_cubemaps)
     open_uri(uri_main, main_file);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
-    // The asset says what it is, and the type what it's for
     const char *hover = request_at(uri_main, "textDocument/hover", 0, 15, "");
     TIDE_CHECK(has(hover, "asset Cubemap sky") && has(hover, "six images") && has(hover, "`px`, `nx`, `py`, `ny`, `pz`, `nz`"));
     hover = request_at(uri_main, "textDocument/hover", 4, 6, "");
     TIDE_CHECK(has(hover, "a cube of six images") && has(hover, "Cubemap(size)"));
-    // What a frag reads, and what a view does with one
     hover = request_at(uri_main, "textDocument/hover", 9, 30, "");
     TIDE_CHECK(has(hover, "Sample(float3 direction, Filter filter = Filter.Bilinear) -> Color") && has(hover, "no edge and no wrap"));
     hover = request_at(uri_main, "textDocument/hover", 16, 22, "");
@@ -11333,13 +11689,11 @@ TIDE_TEST(lsp_cubemaps)
     const char *help = request_at(uri_main, "textDocument/signatureHelp", 13, 40, "");
     TIDE_CHECK(has(help, "Cubemap(float size, Format format)") && has(help, "cube.faces[0]"));
 
-    // A cube's path is a glob over PNGs
     static const char paths[] = "asset Cubemap sky = \"sky/\";\nscene Main { }\n";
     open_uri(uri_main, paths);
     const char *completion = request_at(uri_main, "textDocument/completion", 0, 25, "");
     TIDE_CHECK(offers(completion, "day_px.png") && !offers(completion, "notes.txt") && offers(completion, "*.png"));
 
-    // What's wrong with the files is said at the path
     open_uri(uri_main, "asset Cubemap sky = \"sky/day_px.png\";\nscene Main { }\n");
     TIDE_CHECK(has(last_sent(), "a Cubemap is six files, its faces") && has(last_sent(), "write a glob that matches the six"));
     open_uri(uri_main, "asset Cubemap sky = \"sky/day_p?.png\";\nscene Main { }\n");
@@ -11363,7 +11717,6 @@ TIDE_TEST(lsp_cubemaps)
     clear_sent();
     lsp_free(&server);
 
-    // With no files: members, methods and where each goes
     start();
     static const char types[] = "scene Main { }\nlocal singleton Room { Cubemap reflection; RenderTarget side; }\n";
     char program[2048];
@@ -11375,16 +11728,13 @@ TIDE_TEST(lsp_cubemaps)
     members = complete(program);
     TIDE_CHECK(offers(members, "Sample") && !offers(members, "faces") && !offers(members, "Dispose"));
     snprintf(program, sizeof program, "%sview V(mut Room room)\n{\n    room.side = RenderTarget.$\n}\n", types);
-    TIDE_CHECK(offers(complete(program), "Window") && !offers(complete(program), "Cube")); // A cube is Cubemap(size)
-    // A face is a RenderTarget
+    TIDE_CHECK(offers(complete(program), "Window") && !offers(complete(program), "Cube"));
     snprintf(program, sizeof program, "%sview V(mut Room room)\n{\n    var up = room.reflection.faces[2];\n    room.side = u$p;\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(request("textDocument/hover"), "RenderTarget"));
-    // A local of the type is offered where a view declares one, and a frag takes none as a parameter
     snprintf(program, sizeof program, "%sview V(mut Room room)\n{\n    Cubem$\n}\n", types);
     TIDE_CHECK(offers(complete(program), "Cubemap"));
 
-    // The checker says where each belongs
     snprintf(program, sizeof program, "%sview V(mut Room room)\n{\n    var all = room.reflection.faces;\n}\n", types);
     open_document(program);
     TIDE_CHECK(has(last_sent(), "a cube's faces are drawn into one at a time"));
@@ -11403,8 +11753,7 @@ TIDE_TEST(lsp_cubemaps)
     TIDE_CHECK(has(last_sent(), "use local placement and access for this component"));
 }
 
-// A game with no asset: nothing is registered and no .tide/ is made. An
-// editor that takes no registration is asked about every rename.
+// A game with no asset registers nothing and makes no .tide/; an editor that takes no registration is asked about every rename.
 TIDE_TEST(lsp_game_without_assets_changes_nothing)
 {
     if (!find_game_dir()) return;
@@ -11423,11 +11772,10 @@ TIDE_TEST(lsp_game_without_assets_changes_nothing)
     TIDE_CHECK(!game_file_exists("lsp_na/.tide/assets.sha256"));
     TIDE_CHECK(has(will_rename("lsp_na/x.png", "lsp_na/y.png"), "\"result\":{\"changes\":{}}"));
 
-    // An editor that takes no registration (LSP4IJ): every file, in the result, whether it says it asks or not
     start_in_with(root, "{\"workspace\":{\"fileOperations\":{\"willRename\":true,\"didRename\":true}}}");
     TIDE_CHECK(has(last_sent(), "\"fileOperations\":{\"willRename\":{\"filters\":[{\"scheme\":\"file\",\"pattern\":{\"glob\":\"**/*\"}}]}"));
     open_uri(uri_main, main_file);
-    TIDE_CHECK(sent_count == 1); // Nothing registered
+    TIDE_CHECK(sent_count == 1);
     start_in(root);
     TIDE_CHECK(has(last_sent(), "\"didRename\":{\"filters\":[{\"scheme\":\"file\",\"pattern\":{\"glob\":\"**/*\"}}]}"));
 
@@ -11446,10 +11794,10 @@ TIDE_TEST(lsp_asset_paths)
     joined = asset_path_join("D:/g/a/", "../b\\x.png", 10);
     TIDE_CHECK(strcmp(joined, "D:/g/b/x.png") == 0);
     free(joined);
-    joined = asset_path_join("D:/g/", "../../../x.png", 14); // Not above the root
+    joined = asset_path_join("D:/g/", "../../../x.png", 14);
     TIDE_CHECK(strcmp(joined, "D:/x.png") == 0);
     free(joined);
-    joined = asset_path_join("/g/a/", "./art/", 6); // A folder stays one
+    joined = asset_path_join("/g/a/", "./art/", 6);
     TIDE_CHECK(strcmp(joined, "/g/a/art/") == 0);
     free(joined);
     joined = asset_path_join("/g/a", "", 0);
@@ -11465,7 +11813,7 @@ TIDE_TEST(lsp_asset_paths)
     relative = asset_path_relative("D:/g/a/b/", "D:/x.png");
     TIDE_CHECK(strcmp(relative, "../../../x.png") == 0);
     free(relative);
-    relative = asset_path_relative("D:/g/", "E:/x.png"); // Another drive: as it is
+    relative = asset_path_relative("D:/g/", "E:/x.png");
     TIDE_CHECK(strcmp(relative, "E:/x.png") == 0);
     free(relative);
 
@@ -11481,9 +11829,7 @@ TIDE_TEST(lsp_asset_paths)
     TIDE_CHECK(asset_path_is_url("https://example.com/x", 21) && !asset_path_is_url("http/x", 6));
 }
 
-// Mesh assets: what the checker says of a file, the hover that says what a
-// file has, mesh files in a Mesh's path, its two lists after a dot, and the
-// form of a mesh draw that takes one where its vertices and indices go.
+// Mesh assets: the checker's messages, hovers, mesh files in a Mesh's path, its two lists, and the mesh draw form.
 TIDE_TEST(lsp_asset_meshes)
 {
     if (!find_game_dir()) return;
@@ -11522,34 +11868,29 @@ TIDE_TEST(lsp_asset_meshes)
     open_uri(uri_main, main_file);
     TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
-    // The asset says what it is, and what its file has
     const char *hover = request_at(uri_main, "textDocument/hover", 5, 20, "");
     TIDE_CHECK(has(hover, "asset Mesh<Corner> tree") && has(hover, "as one mesh of its vertex struct"));
     TIDE_CHECK(has(hover, "The file has 3 vertices and 1 triangles, with normals, no uvs, no colors (white) and no tangents."));
-    hover = request_at(uri_main, "textDocument/hover", 14, 15, ""); // ...where a draw names it too
+    hover = request_at(uri_main, "textDocument/hover", 14, 15, "");
     TIDE_CHECK(has(hover, "asset Mesh<Corner> tree"));
-    // The struct in its <> is the game's, as a list's element is
     hover = request_at(uri_main, "textDocument/hover", 5, 13, "");
     TIDE_CHECK(has(hover, "struct Corner"));
     hover = request_at(uri_main, "textDocument/hover", 5, 7, "");
     TIDE_CHECK(has(hover, "An asset's mesh"));
 
-    // Its path: mesh files, and nothing else
     const char *completion = request_at(uri_main, "textDocument/completion", 5, 31, "");
     TIDE_CHECK(offers(completion, "tree.obj") && offers(completion, "rock.glb") && offers(completion, "hill.gltf") && offers(completion, "hero.FBX"));
     TIDE_CHECK(!offers(completion, "other.txt") && !offers(completion, "*.glb"));
-    completion = request_at(uri_main, "textDocument/completion", 6, 38, ""); // A list's: globs too
+    completion = request_at(uri_main, "textDocument/completion", 6, 38, "");
     TIDE_CHECK(offers(completion, "tree.obj") && offers(completion, "*.glb") && offers(completion, "**/*.glb"));
     TIDE_CHECK(offers(completion, "*.fbx") && offers(completion, "**/*.fbx") && offers(completion, "*.obj") && offers(completion, "**/*.obj"));
 
-    // After its dot: its two lists
     static char dotted[sizeof main_file + 32];
     snprintf(dotted, sizeof dotted, "%.*s    tree.\n}\n", (int)(strstr(main_file, "    var count") - main_file), main_file);
     open_uri(uri_main, dotted);
     completion = request_at(uri_main, "textDocument/completion", 15, 9, "");
     TIDE_CHECK(offers(completion, "vertices") && offers(completion, "indices") && !offers(completion, "count"));
 
-    // A draw that's given one: the Mesh, then its transform
     static char drawing[sizeof main_file + 64];
     snprintf(drawing, sizeof drawing, "%.*s    Draw.Mesh(tree, \n}\n", (int)(strstr(main_file, "    Draw.Mesh") - main_file), main_file);
     open_uri(uri_main, drawing);
@@ -11561,7 +11902,6 @@ TIDE_TEST(lsp_asset_meshes)
     help = request_at(uri_main, "textDocument/signatureHelp", 14, 25, "");
     TIDE_CHECK(has(help, "Draw.Instanced(mesh, instances[, texture") && has(help, "\"activeParameter\":1"));
 
-    // A file that's no mesh, and one a field tries to keep: the checker's words, at the path and the type
     static const char wrong[] = "struct Corner\n{\n    float3 position;\n}\n"
                                 "asset Mesh<Corner> rock = \"art/rock.glb\";\n"
                                 "asset Mesh<Corner> hill = \"art/hill.gltf\";\n"
@@ -11673,7 +12013,6 @@ TIDE_TEST(lsp_skinned_catalogs_use_cached_json_and_preserve_inference)
     TIDE_CHECK(offers(completion, "hand"));
     TIDE_CHECK(model_metadata_statistics().parses == warm.parses + 1);
 
-    // File path completion excludes static-only formats for skinned assets.
     completion = request_at(uri_main, "textDocument/completion", 1, 42, "");
     TIDE_CHECK(offers(completion, "hero.gltf") && !offers(completion, "other.obj"));
     remove_game_file("lsp_skin/main.tide");
@@ -11806,7 +12145,6 @@ TIDE_TEST(lsp_skinned_unavailable_catalogs_are_not_missing_members)
     TIDE_CHECK(has(last_sent(), "animation catalog metadata is unavailable") && !has(last_sent(), "has no checked member 'walk'"));
     TIDE_CHECK(diagnosed(0, (int)(strchr(main_file, '"') - main_file), 11, 3, "model catalog metadata is unavailable:"));
 
-    // Dynamic access remains usable when the editor has no cached model.
     static const char dynamic[] = "asset SkinnedMesh<Vertex3> hero = \"https://must-never-be-contacted.invalid/model.glb\";\n"
                                  "scene Main { }\nview V() { if (hero.animations.TryGetByName(\"Idle\", out var clip)) Debug.Log(clip.name); }\n";
     open_uri(uri_main, dynamic);
@@ -11860,7 +12198,7 @@ TIDE_TEST(lsp_skinned_obj_diagnostics_explain_the_supported_format)
                && !has(last_sent(), "model catalog metadata is invalid"));
     write_file("lsp_skin_format/character.obj", "{\"asset\":{\"version\":\"2.0\"}}");
     open_uri(uri_main, local);
-    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]")); // Accepted glTF content keeps working regardless of its suffix.
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
 
     write_file("lsp_skin_format/character.DAE", "<COLLADA/>");
     static const char dae[] = "asset SkinnedMesh<Vertex3> hero = \"character.DAE\";\nscene Main { }\n";
@@ -11868,8 +12206,6 @@ TIDE_TEST(lsp_skinned_obj_diagnostics_explain_the_supported_format)
     TIDE_CHECK(diagnosed(0, (int)(strchr(dae, '"') - dae), 15, 1, "'character.DAE' isn't a supported SkinnedMesh format"));
     TIDE_CHECK(has(last_sent(), "export the rigged model as glTF 2.0") && !has(last_sent(), "invalid JSON"));
 
-    // An uncached URL remains unavailable without a fetch; an existing OBJ
-    // cache uses the source URL's extension, not its extensionless hash path.
     model_metadata_forget();
     static const char url[] = "https://must-never-be-contacted.invalid/character.OBJ?revision=1#preview";
     char remote[512];
@@ -11906,6 +12242,20 @@ TIDE_TEST(lsp_skinned_obj_diagnostics_explain_the_supported_format)
     model_metadata_forget();
 }
 
+TIDE_TEST(lsp_float_bitcasts_and_float_hash_help)
+{
+    start();
+    const char *math = complete("scene Main { }\nview V() { Math.$ }\n");
+    TIDE_CHECK(offers(math, "AsInt") && offers(math, "AsFloat") && offers(math, "Hash"));
+    open_document("scene Main { }\nview V() { var bits = Math.AsI$nt(float3(1, 2, 3)); Debug.Log(\"\" + bits); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *bits = request("textDocument/hover");
+    TIDE_CHECK(has(bits, "Math.AsInt(float3 value) -> int3") && has(bits, "without a numeric conversion"));
+    open_document("scene Main { }\nview V() { var hash = Math.Ha$sh(float4(1, 2, 3, 4)); Debug.Log(\"\" + hash); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "float's exact bits"));
+}
+
 TIDE_TEST(lsp_skinned_static_decode_and_draw_forms)
 {
     start();
@@ -11939,6 +12289,12 @@ TIDE_TEST(lsp_skinned_static_decode_and_draw_forms)
     help = request("textDocument/signatureHelp");
     TIDE_CHECK(has(help, "Draw.SkinnedMesh(mesh, transform[, pose]") && has(help, "\"activeParameter\":2"));
     TIDE_CHECK(has(help, "skinning applies its transforms before the user vertex stage"));
+    open_document("scene Main { }\nstruct Item { Pose pose; }\nview V()\n{\n    SkinnedMesh<Vertex3> model = default;\n"
+                  "    Draw.Instanced(model, $[Item { pose = model.defaultPose }]);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    help = request("textDocument/signatureHelp");
+    TIDE_CHECK(has(help, "Draw.Instanced(mesh, instances[") && has(help, "\"activeParameter\":1"));
+    TIDE_CHECK(has(help, "optional Pose pose field") && has(help, "Invalid poses skip their item"));
     open_document("scene Main { }\nfrag Shade(Vertex3 vertex, out Color color) { color = vertex.color; }\n"
                   "view V()\n{\n    SkinnedMesh<Vertex3> model = default;\n"
                   "    Draw.SkinnedMesh(model, float4x4.identity, $Shade);\n}\n");
@@ -12148,4 +12504,71 @@ TIDE_TEST(lsp_animation_assets_use_cached_catalogs_and_refresh_names)
     clear_sent();
     lsp_free(&server);
     model_metadata_forget();
+}
+
+TIDE_TEST(lsp_callable_bindings_preserve_function_navigation_and_signature_types)
+{
+    start();
+    open_document("scene Main;\nfloat Distance(float2 p) { return p.x; }\n"
+                  "view Test() { Func<float2, float> fn = Dista$nce; _ = fn(float2(0)); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "Distance"));
+    TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":1,\"character\":6}"));
+    TIDE_CHECK(offers(complete("scene Main;\nlocal singleton State { $ }\n"), "Func"));
+    open_document("scene Main;\nfloat Distance(float2 p) { return p.x; }\n"
+                  "frag Shade(Vertex v, out Color color, Func<float2, float> distance) { float d = distance(v.uv); color = Color(d, d, d); }\n"
+                  "local singleton State { Shade fragment; }\n"
+                  "view Test(mut State state) { state.fragment = Sh$ade { distance = Distance }; }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":2,\"character\":5}"));
+    open_document("scene Main;\n"
+                  "view Test() { float radius = 0.25; Func<float2, float> fn = (float2 p) => Math.Length(p) - radi$us; _ = fn(float2(0)); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/definition"), "\"start\":{\"line\":1,\"character\":20}"));
+}
+
+TIDE_TEST(lsp_mut_callable_types_preserve_qualifiers_and_formatting)
+{
+    start();
+    open_document("scene Main;\nvoid Change(mut float value) { value += 1; }\n"
+                  "view Test() { Func<mut float, void> fn = Change; mut float value = 0; f$n(value); }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "Func<mut float, void>"));
+    const char *source = "scene Main;\nvoid Change(mut float value) { value += 1; }\n"
+                         "view Test() { Func< mut float,void > fn=Change; mut float value=0; fn(value); }\n";
+    open_document(source);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    format_reply(source);
+    const char *formatted = apply_reply(source, NULL);
+    TIDE_CHECK(has(formatted, "Func<mut float, void>"));
+    TIDE_CHECK(has(format_reply(formatted), "\"result\":[]"));
+}
+
+TIDE_TEST(lsp_double_types_swizzles_parsing_and_signatures)
+{
+    start();
+    open_document("component Body { [Pos$ition] double3 position; }\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "float or double scalar/vector"));
+    open_document("singleton Data { dou$ble value = 1.25d; double3 position; }\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    TIDE_CHECK(has(request("textDocument/hover"), "64-bit IEEE float"));
+    const char *types = complete("singleton Data { $ }\nscene Main { }\n");
+    TIDE_CHECK(offers(types, "double") && offers(types, "double2") && offers(types, "double3") && offers(types, "double4"));
+    TIDE_CHECK(offers(types, "double2x2") && offers(types, "double3x3") && offers(types, "double4x4"));
+    const char *members = complete("singleton Data { double3 position; }\nscene Main { }\nsystem S(Data data) { var x = data.position.$ }\n");
+    TIDE_CHECK(offers(members, "x") && offers(members, "xz") && has(members, "double2"));
+    const char *parsing = complete("scene Main { }\nsystem S() { var ok = double.$ }\n");
+    TIDE_CHECK(offers(parsing, "TryParse") && has(parsing, "out double value"));
+    TIDE_CHECK(offers(parsing, "PI") && offers(parsing, "TAU") && offers(parsing, "E"));
+    const char *columns = complete("singleton Data { double3x3 basis; }\nscene Main { }\nsystem S(Data data) { var x = data.basis.$ }\n");
+    TIDE_CHECK(offers(columns, "c0") && offers(columns, "c2") && has(columns, "double3"));
+    open_document("singleton Data { double3x3 basis; }\nscene Main { }\nsystem S(Data data) { var x = data.basis.c0.$x; Debug.Log(x); }\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "double"));
+    open_document("scene Main { }\nsystem S() { var v = double3($); Debug.Log(v); }\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "double3(double x, double y, double z)"));
+    const char *gpu = complete("frag Shade(Vertex3 vertex, out Color color) { $ }\n");
+    TIDE_CHECK(!offers(gpu, "double") && !offers(gpu, "double3") && !offers(gpu, "double4x4"));
+    open_document("singleton Data { float value = 1d; }\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "field 'value' is float, not double") && has(last_sent(), "float(x) converts explicitly"));
 }

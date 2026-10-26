@@ -14,7 +14,7 @@
 //
 // The operation stamp and the library's deterministic digest are hashed.
 // Arena bytes contain pointers and allocator order and are never hashed or
-// sent. The marks that served images in parts now guide resident commits.
+// sent.
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -31,6 +31,7 @@
 #include "tide/page.h"
 #include "tide/resident.h"
 #include "tide/rows.h"
+#include "tide/shard.h"
 #include "tide/time.h"
 
 // Box3D's headers are its own, as its sources are: what they'd be warned for
@@ -38,6 +39,7 @@
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Weverything"
 #include "box3d/src/box3d/box3d.h"
+#include "box3d/src/shape.h"
 #pragma clang diagnostic pop
 
 // box3d.tide's types, field for field
@@ -66,7 +68,8 @@ typedef struct body {
     float step_linear_damping;
     float step_angular_damping;
     bool rewind;
-    uint8_t unused_too[3];
+    bool settings_applied;
+    uint8_t unused_too[2];
 } body;
 
 typedef struct box {
@@ -76,6 +79,8 @@ typedef struct box {
     float friction;
     float bounce;
     bool sensor;
+    uint8_t cache_padding[3];
+    int32_t cache;
 } box;
 
 typedef struct sphere {
@@ -85,6 +90,8 @@ typedef struct sphere {
     float friction;
     float bounce;
     bool sensor;
+    uint8_t cache_padding[3];
+    int32_t cache;
 } sphere;
 
 typedef struct capsule {
@@ -95,6 +102,8 @@ typedef struct capsule {
     float friction;
     float bounce;
     bool sensor;
+    uint8_t cache_padding[3];
+    int32_t cache;
 } capsule;
 
 typedef struct touch {
@@ -146,6 +155,7 @@ typedef struct physics {
     uint8_t unused_maps[4];
     tide_map parts;
     tide_map sensors;
+    tide_map joints;
     float history_dt;
     float history_limit;
     int32_t history_tick;
@@ -153,10 +163,23 @@ typedef struct physics {
     tide_map selected;
     tide_list pending;
     tide_list history;
+    tide_list colliders;
+    uint8_t collider_padding[4];
+    tide_map collider_index;
+    tide_list free_colliders;
+    tide_list pending_hulls;
+    tide_list topology;
+    bool topology_changed;
+    uint8_t topology_padding[3];
+    int64_t shard_moves; // Shards.moves as the last tick had it
+    tide_map copies;     // Other shards' bodies near this one's border, by entity...
+    tide_map copy_of;    // ...and whose each copy is
+    tide_map copied_parts; // ...and the parts whose shapes are on one
 } physics;
 
-_Static_assert(sizeof(body) == 176 && sizeof(box) == 40 && sizeof(sphere) == 32 && sizeof(capsule) == 36 && sizeof(touch) == 40
-                   && sizeof(strike) == 48 && sizeof(found) == 48 && sizeof(physics) == 224 && offsetof(physics, moved) == 88,
+_Static_assert(sizeof(body) == 176 && sizeof(box) == 44 && sizeof(sphere) == 36 && sizeof(capsule) == 40 && sizeof(touch) == 40
+                   && sizeof(strike) == 48 && sizeof(found) == 48 && sizeof(physics) == 376 && offsetof(physics, moved) == 88
+                   && offsetof(physics, shard_moves) == 296 && offsetof(physics, copies) == 304,
                "box3d.tide's types changed: these are theirs");
 
 _Static_assert(offsetof(physics, gravity) == 0 && offsetof(physics, substeps) == 12
@@ -670,6 +693,80 @@ void b3t_gone(const int64_t *bodies, const int32_t count)
     }
 }
 
+// A copy of a body another shard owns near this one's border (a ghost's, in
+// a sharded world), of the body's type, where the body's owner last had it and
+// as fast: a dynamic one as heavy as the body, so what runs into it here moves
+// as it would into the body. What it does in a step is no one's: it's put
+// back each tick, and the body's own shard works out what's done to it, with
+// a copy of what did it. Made when `id` is 0, and moved when it isn't; its
+// id, or 0 when it's gone. A copy at rest is left as it is, so what rests
+// against it can sleep.
+int64_t b3t_copy(const int64_t id, const body *b)
+{
+    world *w = active;
+    const b3BodyType type = b->type == b3_staticBody ? b3_staticBody : b->type == b3_kinematicBody ? b3_kinematicBody : b3_dynamicBody;
+    if (id == 0) {
+        b3BodyDef def = b3DefaultBodyDef();
+        def.type = type;
+        def.position = b3ToPos(vec(b->position));
+        def.rotation = quat(b->rotation);
+        if (type != b3_staticBody) {
+            def.linearVelocity = vec(b->velocity);
+            def.angularVelocity = vec(b->angular_velocity);
+        }
+        if (type == b3_dynamicBody) {
+            def.gravityScale = b->gravity_scale;
+            def.linearDamping = b->linear_damping;
+            def.angularDamping = b->angular_damping;
+        }
+        const b3BodyId made = b3CreateBody(w->id, &def);
+        const int64_t copy = handle(made.index1, made.generation);
+        note('c', &copy, sizeof copy);
+        note('c', b, sizeof *b);
+        return copy;
+    }
+    const b3BodyId at = body_of(w, id);
+    if (!b3Body_IsValid(at)) return 0;
+    const b3Pos was = b3Body_GetPosition(at);
+    const b3Pos now = b3ToPos(vec(b->position));
+    const b3Quat turned = b3Body_GetRotation(at), turn = quat(b->rotation);
+    if (memcmp(&was, &now, sizeof now) != 0 || memcmp(&turned, &turn, sizeof turn) != 0) b3Body_SetTransform(at, now, turn);
+    if (type != b3_staticBody) {
+        const b3Vec3 v = b3Body_GetLinearVelocity(at), want = vec(b->velocity);
+        if (memcmp(&v, &want, sizeof v) != 0) b3Body_SetLinearVelocity(at, want);
+        const b3Vec3 spin = b3Body_GetAngularVelocity(at), spun = vec(b->angular_velocity);
+        if (memcmp(&spin, &spun, sizeof spin) != 0) b3Body_SetAngularVelocity(at, spun);
+    }
+    note('m', &id, sizeof id);
+    note('m', b, sizeof *b);
+    return id;
+}
+
+// The box a body's shapes cover, in the world (Span): zeros for one that's gone
+typedef struct span {
+    tide_float3 lo;
+    tide_float3 hi;
+} span;
+
+span b3t_span(const int64_t id)
+{
+    span out = {{0}, {0}};
+    const b3BodyId at = body_of(active, id);
+    if (!b3Body_IsValid(at)) return out;
+    const b3AABB box = b3Body_ComputeAABB(at);
+    out.lo = (tide_float3){box.lowerBound.x, box.lowerBound.y, box.lowerBound.z};
+    out.hi = (tide_float3){box.upperBound.x, box.upperBound.y, box.upperBound.z};
+    return out;
+}
+
+void b3t_drop_copy(const int64_t id)
+{
+    const b3BodyId at = body_of(active, id);
+    if (!b3Body_IsValid(at)) return;
+    b3DestroyBody(at);
+    note('d', &id, sizeof id);
+}
+
 // For a host, and for tests: C's worlds go, as when a program starts. Matches
 // lose nothing, as their state is their own.
 void b3t_forget(void)
@@ -724,8 +821,7 @@ void b3t_share_from(const int32_t bodies)
 }
 
 // How many resident commits marked the whole arena, and how many used sparse
-// marks, since the program started: tests read it to see they test both. The
-// function's image name is kept for existing tests and benchmarks.
+// marks, since the program started: tests read it to see they test both.
 void b3t_images(int32_t *whole, int32_t *in_parts)
 {
     *whole = images_whole;
@@ -775,7 +871,7 @@ void b3t_measure(uint64_t *step, uint64_t *image)
 // Arena pages touched by commits since the last call, and the pages in use
 // at those commits. A touched page is copied even if its bytes stayed the
 // same. `took` is the optional full-arena check's nanoseconds, to take off a
-// measured tick; no match pays it. The API keeps its old block names.
+// measured tick; no match pays it.
 void b3t_measure_blocks(uint64_t *changed, uint64_t *in_all, uint64_t *took)
 {
     *took = counting_ns;
@@ -862,7 +958,7 @@ static bool sync_body(body *b)
             if (b->type != b3_staticBody && b->step_type == b3_staticBody) {
                 const int count = b3t_body_shapes(b->id);
                 for (int i = 0; i < count; i++) {
-                    if (b3Shape_GetType(listed[i]) == b3_meshShape) { b->type = b3_staticBody; break; }
+                    if ((b3Shape_GetType(listed[i]) == b3_meshShape || b3Shape_GetType(listed[i]) == b3_heightShape)) { b->type = b3_staticBody; break; }
                 }
             }
         }
@@ -1223,9 +1319,10 @@ typedef struct mesh_collider {
     tide_list vertices, indices;
     tide_float3 scale, offset;
     float friction, bounce;
+    int32_t cache;
 } mesh_collider;
-typedef struct part { tide_entity of; int64_t box, sphere, capsule, mesh; } part;
-_Static_assert(sizeof(mesh_collider) == 40 && sizeof(part) == 40, "mesh component ABI changed");
+typedef struct part { tide_entity of; int64_t box, sphere, capsule, mesh, hull, height_field, body; } part;
+_Static_assert(sizeof(mesh_collider) == 44 && sizeof(part) == 64, "mesh component ABI changed");
 
 static int64_t attach_mesh_component(const int64_t on, const mesh_collider *m)
 {
@@ -1240,29 +1337,6 @@ static int64_t attach_mesh_component(const int64_t on, const mesh_collider *m)
     return shape;
 }
 
-void b3t_attach_meshes(tide_rows *rows, physics *p)
-{
-    for (uint32_t i = 0; i < tide_rows_count(rows); i++) {
-        body b;
-        mesh_collider m;
-        tide_rows_get(rows, 0, i, &b);
-        tide_rows_get(rows, 1, i, &m);
-        if (attach_mesh_component(b.id, &m)) p->shapes = tide_add_i(p->shapes, 1);
-    }
-}
-
-void b3t_attach_mesh_parts(tide_rows *rows, physics *p)
-{
-    for (uint32_t i = 0; i < tide_rows_count(rows); i++) {
-        mesh_collider m;
-        part part;
-        tide_rows_get(rows, 0, i, &m);
-        tide_rows_get(rows, 1, i, &part);
-        part.mesh = attach_mesh_component(part.mesh, &m);
-        if (part.mesh) p->shapes = tide_add_i(p->shapes, 1);
-        tide_rows_set(rows, 1, i, &part);
-    }
-}
 
 // A body's place and speeds as its component keeps them, from Box3D's own.
 static void place_of(float *place, const b3Pos at, const b3Quat rotation, const b3Vec3 velocity, const b3Vec3 angular)
@@ -1835,7 +1909,7 @@ static found answer(const world *w, const asked *a)
 // shape, where, the shape's surface there, and how far along. Nothing, for a
 // ray that meets nothing, and of what it starts inside.
 found b3t_ray(const int64_t stamp, const tide_float3 from, const tide_float3 to, const int64_t *gone, const int32_t gone_count,
-              const int64_t *gone_shapes, const int32_t gone_shape_count, const int64_t ignore)
+              const int64_t *gone_shapes, const int32_t gone_shape_count, const int64_t ignore, const int64_t query_category, const int64_t query_mask)
 {
     asked a = {.ignore = ignore, .gone = gone, .gone_count = gone_count, .gone_shapes = gone_shapes,
                .gone_shape_count = gone_shape_count, .ray = true};
@@ -1843,7 +1917,7 @@ found b3t_ray(const int64_t stamp, const tide_float3 from, const tide_float3 to,
     if (!w || !finite3(from) || !finite3(to)) return answer(w, &a);
     const b3Vec3 along = b3Sub(vec(to), vec(from));
     if (!finite3(float3(along))) return answer(w, &a);
-    b3World_CastRay(w->id, b3ToPos(vec(from)), along, b3DefaultQueryFilter(), nearest, &a);
+    b3World_CastRay(w->id, b3ToPos(vec(from)), along, (b3QueryFilter){.categoryBits=(uint64_t)query_category, .maskBits=(uint64_t)query_mask}, nearest, &a);
     return answer(w, &a);
 }
 
@@ -1910,7 +1984,7 @@ static bool sound(const tide_quaternion q)
 // the point where the two touch. What the shape is in where it starts is met
 // there, at no way along, and that has no surface to say.
 static found cast(const int64_t stamp, probe p, const tide_float3 from, const tide_float3 to, const int64_t *gone,
-                  const int32_t gone_count, const int64_t *gone_shapes, const int32_t gone_shape_count, const int64_t ignore)
+                  const int32_t gone_count, const int64_t *gone_shapes, const int32_t gone_shape_count, const int64_t ignore, const int64_t query_category, const int64_t query_mask)
 {
     asked a = {.ignore = ignore, .gone = gone, .gone_count = gone_count, .gone_shapes = gone_shapes, .gone_shape_count = gone_shape_count};
     const world *w = at(stamp);
@@ -1918,35 +1992,35 @@ static found cast(const int64_t stamp, probe p, const tide_float3 from, const ti
     const b3Vec3 along = b3Sub(vec(to), vec(from));
     if (!finite3(float3(along))) return answer(w, &a);
     p.proxy.points = p.points; // Where they are now: the probe came by value
-    b3World_CastShape(w->id, b3ToPos(vec(from)), &p.proxy, along, b3DefaultQueryFilter(), nearest, &a);
+    b3World_CastShape(w->id, b3ToPos(vec(from)), &p.proxy, along, (b3QueryFilter){.categoryBits=(uint64_t)query_category, .maskBits=(uint64_t)query_mask}, nearest, &a);
     return answer(w, &a);
 }
 
 found b3t_cast_box(const int64_t stamp, const box *s, const tide_float3 from, const tide_quaternion rotation, const tide_float3 to,
                    const int64_t *gone, const int32_t gone_count, const int64_t *gone_shapes, const int32_t gone_shape_count,
-                   const int64_t ignore)
+                   const int64_t ignore, const int64_t query_category, const int64_t query_mask)
 {
     probe p = box_probe(s, rotation);
     p.good = p.good && sound(rotation);
-    return cast(stamp, p, from, to, gone, gone_count, gone_shapes, gone_shape_count, ignore);
+    return cast(stamp, p, from, to, gone, gone_count, gone_shapes, gone_shape_count, ignore, query_category, query_mask);
 }
 
 found b3t_cast_sphere(const int64_t stamp, const sphere *s, const tide_float3 from, const tide_quaternion rotation,
                       const tide_float3 to, const int64_t *gone, const int32_t gone_count, const int64_t *gone_shapes,
-                      const int32_t gone_shape_count, const int64_t ignore)
+                      const int32_t gone_shape_count, const int64_t ignore, const int64_t query_category, const int64_t query_mask)
 {
     probe p = sphere_probe(s, rotation);
     p.good = p.good && sound(rotation);
-    return cast(stamp, p, from, to, gone, gone_count, gone_shapes, gone_shape_count, ignore);
+    return cast(stamp, p, from, to, gone, gone_count, gone_shapes, gone_shape_count, ignore, query_category, query_mask);
 }
 
 found b3t_cast_capsule(const int64_t stamp, const capsule *s, const tide_float3 from, const tide_quaternion rotation,
                        const tide_float3 to, const int64_t *gone, const int32_t gone_count, const int64_t *gone_shapes,
-                       const int32_t gone_shape_count, const int64_t ignore)
+                       const int32_t gone_shape_count, const int64_t ignore, const int64_t query_category, const int64_t query_mask)
 {
     probe p = capsule_probe(s, rotation);
     p.good = p.good && sound(rotation);
-    return cast(stamp, p, from, to, gone, gone_count, gone_shapes, gone_shape_count, ignore);
+    return cast(stamp, p, from, to, gone, gone_count, gone_shapes, gone_shape_count, ignore, query_category, query_mask);
 }
 
 // All-hit queries keep a small result on the stack and grow only for actual
@@ -2010,7 +2084,7 @@ static void give_cast_hits(cast_hits *hits, tide_list_out *out)
 
 void b3t_ray_all(tide_list_out *out, const int64_t stamp, const tide_float3 from, const tide_float3 to,
                   const int64_t *gone, const int32_t gone_count, const int64_t *gone_shapes, const int32_t gone_shape_count,
-                  const int64_t ignore, const bool include_sensors)
+                  const int64_t ignore, const bool include_sensors, const int64_t query_category, const int64_t query_mask)
 {
     tide_list_out_count(out, 0);
     const world *w = at(stamp);
@@ -2023,13 +2097,13 @@ void b3t_ray_all(tide_list_out *out, const int64_t stamp, const tide_float3 from
     hits.count = 0;
     hits.room = 32;
     hits.items = hits.few;
-    b3World_CastRay(w->id, b3ToPos(vec(from)), along, b3DefaultQueryFilter(), collect_cast_hit, &hits);
+    b3World_CastRay(w->id, b3ToPos(vec(from)), along, (b3QueryFilter){.categoryBits=(uint64_t)query_category, .maskBits=(uint64_t)query_mask}, collect_cast_hit, &hits);
     give_cast_hits(&hits, out);
 }
 
 static void cast_all(tide_list_out *out, const int64_t stamp, probe p, const tide_float3 from, const tide_float3 to,
                      const int64_t *gone, const int32_t gone_count, const int64_t *gone_shapes, const int32_t gone_shape_count,
-                     const int64_t ignore, const bool include_sensors)
+                     const int64_t ignore, const bool include_sensors, const int64_t query_category, const int64_t query_mask)
 {
     tide_list_out_count(out, 0);
     const world *w = at(stamp);
@@ -2043,35 +2117,35 @@ static void cast_all(tide_list_out *out, const int64_t stamp, probe p, const tid
     hits.room = 32;
     hits.items = hits.few;
     p.proxy.points = p.points;
-    b3World_CastShape(w->id, b3ToPos(vec(from)), &p.proxy, along, b3DefaultQueryFilter(), collect_cast_hit, &hits);
+    b3World_CastShape(w->id, b3ToPos(vec(from)), &p.proxy, along, (b3QueryFilter){.categoryBits=(uint64_t)query_category, .maskBits=(uint64_t)query_mask}, collect_cast_hit, &hits);
     give_cast_hits(&hits, out);
 }
 
 void b3t_cast_box_all(tide_list_out *out, const int64_t stamp, const box *shape, const tide_float3 from,
                          const tide_quaternion rotation, const tide_float3 to, const int64_t *gone, const int32_t gone_count,
-                         const int64_t *gone_shapes, const int32_t gone_shape_count, const int64_t ignore, const bool include_sensors)
+                         const int64_t *gone_shapes, const int32_t gone_shape_count, const int64_t ignore, const bool include_sensors, const int64_t query_category, const int64_t query_mask)
 {
     probe p = box_probe(shape, rotation);
     p.good = p.good && sound(rotation);
-    cast_all(out, stamp, p, from, to, gone, gone_count, gone_shapes, gone_shape_count, ignore, include_sensors);
+    cast_all(out, stamp, p, from, to, gone, gone_count, gone_shapes, gone_shape_count, ignore, include_sensors, query_category, query_mask);
 }
 
 void b3t_cast_sphere_all(tide_list_out *out, const int64_t stamp, const sphere *shape, const tide_float3 from,
                          const tide_quaternion rotation, const tide_float3 to, const int64_t *gone, const int32_t gone_count,
-                         const int64_t *gone_shapes, const int32_t gone_shape_count, const int64_t ignore, const bool include_sensors)
+                         const int64_t *gone_shapes, const int32_t gone_shape_count, const int64_t ignore, const bool include_sensors, const int64_t query_category, const int64_t query_mask)
 {
     probe p = sphere_probe(shape, rotation);
     p.good = p.good && sound(rotation);
-    cast_all(out, stamp, p, from, to, gone, gone_count, gone_shapes, gone_shape_count, ignore, include_sensors);
+    cast_all(out, stamp, p, from, to, gone, gone_count, gone_shapes, gone_shape_count, ignore, include_sensors, query_category, query_mask);
 }
 
 void b3t_cast_capsule_all(tide_list_out *out, const int64_t stamp, const capsule *shape, const tide_float3 from,
                          const tide_quaternion rotation, const tide_float3 to, const int64_t *gone, const int32_t gone_count,
-                         const int64_t *gone_shapes, const int32_t gone_shape_count, const int64_t ignore, const bool include_sensors)
+                         const int64_t *gone_shapes, const int32_t gone_shape_count, const int64_t ignore, const bool include_sensors, const int64_t query_category, const int64_t query_mask)
 {
     probe p = capsule_probe(shape, rotation);
     p.good = p.good && sound(rotation);
-    cast_all(out, stamp, p, from, to, gone, gone_count, gone_shapes, gone_shape_count, ignore, include_sensors);
+    cast_all(out, stamp, p, from, to, gone, gone_count, gone_shapes, gone_shape_count, ignore, include_sensors, query_category, query_mask);
 }
 
 // The bodies a question found, to give back each once, in the order of their
@@ -2127,7 +2201,7 @@ static void give(gathered *g, tide_list_out *out)
 
 // The bodies with a shape that a shape at a place overlaps, or touches.
 static void overlap(tide_list_out *out, const int64_t stamp, probe p, const tide_float3 at_place, const int64_t *gone,
-                    const int32_t gone_count, const int64_t *gone_shapes, const int32_t gone_shape_count)
+                    const int32_t gone_count, const int64_t *gone_shapes, const int32_t gone_shape_count, const int64_t query_category, const int64_t query_mask)
 {
     gathered g;
     g.a = (asked){.gone = gone, .gone_count = gone_count, .gone_shapes = gone_shapes, .gone_shape_count = gone_shape_count};
@@ -2137,41 +2211,41 @@ static void overlap(tide_list_out *out, const int64_t stamp, probe p, const tide
     const world *w = at(stamp);
     if (w && p.good && finite3(at_place)) {
         p.proxy.points = p.points;
-        b3World_OverlapShape(w->id, b3ToPos(vec(at_place)), &p.proxy, b3DefaultQueryFilter(), overlapped, &g);
+        b3World_OverlapShape(w->id, b3ToPos(vec(at_place)), &p.proxy, (b3QueryFilter){.categoryBits=(uint64_t)query_category, .maskBits=(uint64_t)query_mask}, overlapped, &g);
     }
     give(&g, out);
 }
 
 void b3t_overlap_box(tide_list_out *out, const int64_t stamp, const box *s, const tide_float3 at_place, const tide_quaternion rotation,
-                     const int64_t *gone, const int32_t gone_count, const int64_t *gone_shapes, const int32_t gone_shape_count)
+                     const int64_t *gone, const int32_t gone_count, const int64_t *gone_shapes, const int32_t gone_shape_count, const int64_t query_category, const int64_t query_mask)
 {
     probe p = box_probe(s, rotation);
     p.good = p.good && sound(rotation);
-    overlap(out, stamp, p, at_place, gone, gone_count, gone_shapes, gone_shape_count);
+    overlap(out, stamp, p, at_place, gone, gone_count, gone_shapes, gone_shape_count, query_category, query_mask);
 }
 
 void b3t_overlap_sphere(tide_list_out *out, const int64_t stamp, const sphere *s, const tide_float3 at_place,
                         const tide_quaternion rotation, const int64_t *gone, const int32_t gone_count, const int64_t *gone_shapes,
-                        const int32_t gone_shape_count)
+                        const int32_t gone_shape_count, const int64_t query_category, const int64_t query_mask)
 {
     probe p = sphere_probe(s, rotation);
     p.good = p.good && sound(rotation);
-    overlap(out, stamp, p, at_place, gone, gone_count, gone_shapes, gone_shape_count);
+    overlap(out, stamp, p, at_place, gone, gone_count, gone_shapes, gone_shape_count, query_category, query_mask);
 }
 
 void b3t_overlap_capsule(tide_list_out *out, const int64_t stamp, const capsule *s, const tide_float3 at_place,
                          const tide_quaternion rotation, const int64_t *gone, const int32_t gone_count, const int64_t *gone_shapes,
-                         const int32_t gone_shape_count)
+                         const int32_t gone_shape_count, const int64_t query_category, const int64_t query_mask)
 {
     probe p = capsule_probe(s, rotation);
     p.good = p.good && sound(rotation);
-    overlap(out, stamp, p, at_place, gone, gone_count, gone_shapes, gone_shape_count);
+    overlap(out, stamp, p, at_place, gone, gone_count, gone_shapes, gone_shape_count, query_category, query_mask);
 }
 
 // The bodies with a shape in a sensor, as the last step found them: Box3D
 // keeps each sensor's, and they're in the world's resident state, so a world
 // restored from it says the same. Of up to three sensors, an entity's.
-void b3t_inside(tide_list_out *out, const int64_t stamp, const int64_t first, const int64_t second, const int64_t third,
+void b3t_inside(tide_list_out *out, const int64_t stamp, const int64_t first, const int64_t second, const int64_t third, const int64_t fourth,
                 const int64_t *gone, const int32_t gone_count, const int64_t *gone_shapes, const int32_t gone_shape_count)
 {
     gathered g;
@@ -2180,8 +2254,8 @@ void b3t_inside(tide_list_out *out, const int64_t stamp, const int64_t first, co
     g.count = 0;
     g.room = (int32_t)(sizeof g.few / sizeof g.few[0]);
     const world *w = at(stamp);
-    const int64_t sensors[3] = {first, second, third};
-    for (int k = 0; w && k < 3; k++) {
+    const int64_t sensors[4] = {first, second, third, fourth};
+    for (int k = 0; w && k < 4; k++) {
         const b3ShapeId sensor = shape_of(w, sensors[k]);
         if (sensors[k] == 0 || !b3Shape_IsValid(sensor)) continue;
         const int most = b3Shape_GetSensorCapacity(sensor);
@@ -2207,6 +2281,9 @@ static void pack_state(void *context, const tide_resident *r, tide_writer *w)
 {
     (void)context;
     restore_state(r);
+    // Canonical interning also mutates existing geometry directories. All
+    // temporary writes must be discarded when packing restores this resident.
+    tide_arena_touch_all(arena);
     int sizes[B3_SNAPSHOT_SECTIONS] = {0};
     int bases[B3_SNAPSHOT_SECTIONS] = {0};
     int size = b3World_GetSnapshotAt(live.id, NULL, 0, bases, sizes);
@@ -2294,9 +2371,12 @@ typedef struct collider {
     int32_t count;
     float radius;
     bool sensor;
-    uint8_t padding[7];
+    uint8_t padding[3];
+    int32_t geometry;
+    int64_t category, mask;
 } collider;
-_Static_assert(sizeof(collider) == 176 && offsetof(physics, pending) == 216, "historical scene ABI changed");
+typedef struct hull_geometry { tide_float3 points[128]; tide_float4 planes[128]; int32_t count, faces; } hull_geometry;
+_Static_assert(sizeof(collider) == 192 && offsetof(physics, pending) == 240, "historical scene ABI changed");
 
 static b3Vec3 scene_vec(const tide_float3 p) { return vec(p); }
 static tide_float3 scene_float(const b3Vec3 p) { return float3(p); }
@@ -2309,12 +2389,12 @@ static bool scene_real(const collider *c)
 }
 
 // The caller supplies a validated native body; geometry remains in its local frame.
-static int scene_read(const world *w, const int64_t native_id, collider **out)
+static int scene_read(const world *w, const int64_t native_id, collider **out, hull_geometry **hulls, int *hull_count)
 {
-    *out = NULL;
+    *out = NULL; *hulls = NULL; *hull_count = 0;
     if (!w) return 0;
     const b3BodyId on = body_of(w, native_id);
-    if (!b3Body_IsValid(on)) return 0;
+    if (!b3Body_IsValid(on) || !b3Body_IsEnabled(on)) return 0;
     const int count = b3Body_GetShapeCount(on);
     if (count <= 0 || (size_t)count > SIZE_MAX / sizeof(b3ShapeId) || (size_t)count > SIZE_MAX / sizeof(collider)) return 0;
     b3ShapeId *shapes = malloc((size_t)count * sizeof *shapes);
@@ -2322,6 +2402,13 @@ static int scene_read(const world *w, const int64_t native_id, collider **out)
     const int got = b3Body_GetShapes(on, shapes, count);
     size_t room = (size_t)got;
     for (int i = 0; i < got; i++) {
+        if (b3Shape_GetType(shapes[i]) == b3_heightShape) {
+            const b3HeightFieldData *height = b3Shape_GetHeightField(shapes[i]);
+            const size_t extra = (size_t)2 * (size_t)(height->columnCount-1) * (size_t)(height->rowCount-1) - 1;
+            if (extra > SIZE_MAX - room) { free(shapes); return 0; }
+            room += extra;
+            continue;
+        }
         if (b3Shape_GetType(shapes[i]) != b3_meshShape) continue;
         const b3Mesh mesh = b3Shape_GetMesh(shapes[i]);
         if (!mesh.data || mesh.data->triangleCount < 1) { free(shapes); return 0; }
@@ -2342,6 +2429,8 @@ static int scene_read(const world *w, const int64_t native_id, collider **out)
         c.position = (tide_float3){(float)pose.p.x, (float)pose.p.y, (float)pose.p.z};
         c.rotation = turn(pose.q);
         c.sensor = b3Shape_IsSensor(id);
+        const b3Filter filter = b3Shape_GetFilter(id);
+        c.category = (int64_t)filter.categoryBits; c.mask = (int64_t)filter.maskBits;
         switch (b3Shape_GetType(id)) {
         case b3_sphereShape: {
             const b3Sphere shape = b3Shape_GetSphere(id);
@@ -2356,12 +2445,50 @@ static int scene_read(const world *w, const int64_t native_id, collider **out)
         }
         case b3_hullShape: {
             const b3HullData *shape = b3Shape_GetHull(id);
-            if (!shape || shape->vertexCount < 1 || shape->vertexCount > 8) continue;
+            if (!shape || shape->vertexCount < 1 || shape->vertexCount > 128 || shape->faceCount > 128) continue;
+            const b3Plane *planes = b3GetHullPlanes(shape);
+            bool is_box = shape->vertexCount == 8 && shape->faceCount == 6;
+            for (int k = 0; is_box && k < 6; k++) {
+                const b3Vec3 n = planes[k].normal;
+                is_box = ((n.x == 1 || n.x == -1) && n.y == 0 && n.z == 0) ||
+                    ((n.y == 1 || n.y == -1) && n.x == 0 && n.z == 0) ||
+                    ((n.z == 1 || n.z == -1) && n.x == 0 && n.y == 0);
+            }
+            if (!is_box) {
+                const size_t size = (size_t)(*hull_count + 1) * sizeof(hull_geometry);
+                *hulls = tide_realloc(*hulls, (size_t)*hull_count * sizeof(hull_geometry), size);
+                hull_geometry *g = *hulls + *hull_count;
+                memset(g, 0, sizeof *g);
+                g->count = shape->vertexCount; g->faces = shape->faceCount;
+                const b3Vec3 *points = b3GetHullPoints(shape);
+                for (int k=0;k<g->count;k++) g->points[k] = scene_float(points[k]);
+                for (int k=0;k<g->faces;k++) g->planes[k] = (tide_float4){planes[k].normal.x,planes[k].normal.y,planes[k].normal.z,planes[k].offset};
+                c.geometry = ++*hull_count;
+                c.count = 8;
+                for (int k=0;k<8;k++) c.points[k] = scene_float((b3Vec3){
+                    k&1 ? shape->aabb.upperBound.x : shape->aabb.lowerBound.x,
+                    k&2 ? shape->aabb.upperBound.y : shape->aabb.lowerBound.y,
+                    k&4 ? shape->aabb.upperBound.z : shape->aabb.lowerBound.z});
+                break;
+            }
             c.count = shape->vertexCount; c.radius = 0;
             const b3Vec3 *points = b3GetHullPoints(shape);
             if (!points) continue;
             for (int k = 0; k < c.count; k++) c.points[k] = scene_float(points[k]);
             break;
+        }
+        case b3_heightShape: {
+            const b3HeightFieldData *height = b3Shape_GetHeightField(id);
+            const uint8_t *materials = b3GetHeightFieldMaterialIndices(height);
+            const int cells = (height->columnCount-1)*(height->rowCount-1);
+            c.count = 3;
+            for (int k=0;k<2*cells;k++) {
+                if (materials[k/2] == B3_HEIGHT_FIELD_HOLE) continue;
+                const b3Triangle triangle = b3GetHeightFieldTriangle(height,k);
+                for (int j=0;j<3;j++) c.points[j] = scene_float(triangle.vertices[j]);
+                if (scene_real(&c)) records[used++] = c;
+            }
+            continue;
         }
         case b3_meshShape: {
             // Detached scenes retain triangle values, never arena pointers.
@@ -2390,15 +2517,27 @@ static int scene_read(const world *w, const int64_t native_id, collider **out)
     return used;
 }
 
-void b3t_read_colliders(const int64_t handle, tide_list_out *out)
+void b3t_read_colliders(const int64_t handle, tide_list_out *out, tide_list_out *hull_out)
 {
-    collider *records;
-    const int count = scene_read(active, handle, &records);
+    collider *records; hull_geometry *hulls; int hull_count;
+    const int count = scene_read(active, handle, &records, &hulls, &hull_count);
+    void *hull_room = hull_count ? tide_list_out_room(hull_out, (uint32_t)hull_count) : NULL;
+    if (hull_room) memcpy(hull_room,hulls,(size_t)hull_count*sizeof *hulls);
+    tide_list_out_count(hull_out,hull_room ? (uint32_t)hull_count : 0);
+    free(hulls);
     void *room = count ? tide_list_out_room(out, (uint32_t)count) : NULL;
     if (room) memcpy(room, records, (size_t)count * sizeof *records);
     tide_list_out_count(out, room ? (uint32_t)count : 0);
     free(records);
 }
+
+// Opt-in belongs to the body, even when it is disabled or has no shapes.
+// Otherwise removing its final collider would also hide its older history.
+typedef struct selected_entry { int64_t order, key; bool value; uint8_t padding[7]; } selected_entry;
+_Static_assert(sizeof(selected_entry)==24,"history selection map ABI changed");
+static uint32_t selected_hash(const void *key) { return tide_map_hash_bytes(key,sizeof(int64_t)); }
+static bool selected_equal(const void *a,const void *b) { return memcmp(a,b,sizeof(int64_t))==0; }
+static const tide_map_kind selected_kind={sizeof(selected_entry),offsetof(selected_entry,key),selected_hash,selected_hash,selected_equal};
 
 void b3t_capture_history(tide_rows *rows, physics *p)
 {
@@ -2409,9 +2548,22 @@ void b3t_capture_history(tide_rows *rows, physics *p)
         body b;
         tide_rows_get(rows, 0, i, &b);
         if (!b.rewind) continue;
-        collider *records;
-        const int count = scene_read(w, b.id, &records);
+        bool added;
+        selected_entry *selection=tide_map_insert(&p->selected,&selected_kind,&b.id,TIDE_IN_MATCH,&added);
+        if (!selection) tide_out_of_memory();
+        if (added) selection->key=b.id;
+        selection->value=true;
+        collider *records; hull_geometry *hulls; int hull_count;
+        const int count = scene_read(w, b.id, &records, &hulls, &hull_count);
+        const int32_t hull_base = tide_list_count(p->pending_hulls);
+        for (int k=0;k<hull_count;k++) {
+            void *to = tide_list_add(&p->pending_hulls,sizeof(hull_geometry),TIDE_IN_MATCH);
+            if (!to) tide_out_of_memory();
+            memcpy(to,hulls+k,sizeof(hull_geometry));
+        }
+        free(hulls);
         for (int k = 0; k < count; k++) {
+            if (records[k].geometry > 0) records[k].geometry += hull_base;
             records[k].entity = entities[i];
             records[k].snaps = rows->entities ? (int32_t)tide_entity_snaps(rows->entities, entities[i]) : 0;
             void *record = tide_list_add(&p->pending, sizeof(collider), TIDE_IN_MATCH);
@@ -2424,8 +2576,8 @@ void b3t_capture_history(tide_rows *rows, physics *p)
 
 // Geometry was captured by the physics step; identity/Snap metadata is final
 // only after the tick's queued changes have applied.
-typedef struct history_frame { int32_t tick; tide_list colliders; } history_frame;
-_Static_assert(sizeof(history_frame) == 8, "history frame ABI changed");
+typedef struct history_frame { int32_t tick; tide_list colliders, hulls; } history_frame;
+_Static_assert(sizeof(history_frame) == 12, "history frame ABI changed");
 static void seal_history(void *context, const tide_entities *entities)
 {
     physics *p = context;
@@ -2713,4 +2865,50 @@ scene_bounds b3t_capsule_bounds(const capsule *shape, const tide_quaternion rota
     const probe p = capsule_probe(shape, rotation);
     if (!p.good || !sound(rotation)) return (scene_bounds){0};
     return proxy_bounds(p.points, p.proxy.count, p.proxy.radius, from, to);
+}
+
+#include "joints.inc"
+
+#include "controls.inc"
+
+#include "shapes.inc"
+
+#include "hull_queries.inc"
+
+// Shapes on a copy of another shard's body (CopyBodies, CopyParts in a
+// sharded world): what the entity it copies has, made as the systems that
+// keep a body's shapes make them
+int64_t b3t_copy_mesh(const int64_t on, const tide_float3 *vertices, const int32_t vertex_count, const int32_t *indices,
+                      const int32_t index_count, const tide_float3 scale, const tide_float3 offset, const float friction,
+                      const float bounce)
+{
+    note('M', &on, sizeof on);
+    if (vertex_count < 3 || vertex_count > 65536 || index_count < 3 || index_count > 3 * 65536) return 0;
+    return attach_mesh(on, vertices, vertex_count, indices, index_count, scale, offset, friction, bounce);
+}
+
+int64_t b3t_copy_hull(const int64_t on, const tide_float3 *vertices, const int32_t count, const tide_float3 scale,
+                      const tide_float3 offset, const float density, const float friction, const float bounce, const bool sensor)
+{
+    note('U', &on, sizeof on);
+    const uint32_t mark = tide_scratch_mark();
+    const hull_collider s = {.vertices = tide_list_from(vertices, count, sizeof *vertices), .scale = scale, .offset = offset,
+                             .density = density, .friction = friction, .bounce = bounce, .sensor = sensor};
+    const int64_t made = live_hull(on, 0, &s);
+    tide_scratch_reset(mark);
+    return made;
+}
+
+int64_t b3t_copy_height(const int64_t on, const float *heights, const int32_t height_count, const uint8_t *holes,
+                        const int32_t hole_count, const int32_t columns, const int32_t rows, const tide_float3 scale,
+                        const float minimum, const float maximum, const float friction, const float bounce)
+{
+    note('E', &on, sizeof on);
+    const uint32_t mark = tide_scratch_mark();
+    const height_collider s = {.heights = tide_list_from(heights, height_count, sizeof *heights),
+                               .holes = tide_list_from(holes, hole_count, sizeof *holes), .columns = columns, .rows = rows,
+                               .scale = scale, .minimum = minimum, .maximum = maximum, .friction = friction, .bounce = bounce};
+    const int64_t made = live_height(on, 0, &s);
+    tide_scratch_reset(mark);
+    return made;
 }

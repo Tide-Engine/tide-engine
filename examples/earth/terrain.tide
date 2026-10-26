@@ -1,0 +1,326 @@
+// One terrain surface for the match and the picture. Towns keep their flat
+// foundations; the country rolls gently between them, with roads on top.
+// Bump this when changing cached height, climate, plant or mesh formulas so
+// a native code reload regenerates retained local geometry too.
+const int TERRAIN_REVISION = 2;
+
+float TerrainHeight(float3 n)
+{
+    mut float country = 1;
+    for (var town = 0; town < TOWNS; town++)
+    {
+        var apart = (n - Up(town)) * R;
+        country = Math.Min(country, Math.SmoothStep((TOWN + 18) * (TOWN + 18), (TOWN + 100) * (TOWN + 100), Math.Dot(apart, apart)));
+    }
+    return (Math.Simplex(n * 12) * 14 + Math.Simplex(n * 31) * 5) * country;
+}
+
+float3 Surface(float3 n, float above)
+{
+    return n * (R + TerrainHeight(n) + above);
+}
+
+// Picking is occasional CPU work, not a per-pixel ray march. The expanded
+// sphere brackets the whole terrain; conservative steps approach its surface.
+bool PickTerrain(float3 eye, float3 ray, out float3 hit)
+{
+    hit = float3(0);
+    float radius = Math.Length(eye);
+    float b = -Math.Dot(eye, ray);
+    float near = (radius - R - 24) * (radius + R + 24);
+    float disc = b * b - near;
+    if (disc <= 0 || b + Math.Sqrt(Math.Max(disc, 0)) <= 0) return false;
+    float end = b + Math.Sqrt(disc);
+    mut float distance = radius > R + 24 ? Math.Max(near / end, 0) : 0;
+    for (var step = 0; step < 256 && distance <= end; step++)
+    {
+        var at = eye + ray * distance;
+        var n = Math.Normalize(at);
+        float clear = Math.Length(at) - R - TerrainHeight(n);
+        if (clear < 0.03)
+        {
+            hit = Surface(n, 0);
+            return true;
+        }
+        distance += Math.Max(clear * 0.6, 0.02);
+    }
+    return false;
+}
+
+float3 TerrainNormal(float3 n)
+{
+    var east = EastOf(n);
+    var north = NorthOf(n);
+    float here = TerrainHeight(n);
+    float e = TerrainHeight(Math.Normalize(n + east * (4 / R)));
+    float s = TerrainHeight(Math.Normalize(n + north * (4 / R)));
+    return Math.Normalize(n - east * ((e - here) / 4) - north * ((s - here) / 4));
+}
+
+// Broad fields are evaluated at cached mesh corners, rather than millions
+// of times per frame. Fine grass remains sharp through a small noise texture.
+float3 Climate(float3 n)
+{
+    float forest = Math.Simplex(n * 7) * 0.6 + Math.Simplex(n * 19) * 0.3 + Math.Simplex(n * 61) * 0.1;
+    float dry = Math.Simplex(n * 3 + float3(5, 0, 0)) * 0.7 + Math.Simplex(n * 11) * 0.3;
+    return float3(forest, dry, Math.Abs(n.y));
+}
+
+// The globe reuses its fixed broad fields instead of running five simplex
+// octaves at every pixel, every frame. tools/climate.py bakes the four broad
+// octaves with Tide math; the small forest octave stays procedural and crisp.
+asset Cubemap climateMap = "art/climate_??.png";
+
+enum Biome { Meadow, Woods, Dry, Frost }
+
+Biome BiomeAt(float3 climate)
+{
+    if (climate.z > 0.8) return Biome.Frost;
+    if (climate.y > 0.25 && climate.x < 0.15) return Biome.Dry;
+    return climate.x > 0.1 ? Biome.Woods : Biome.Meadow;
+}
+
+struct LandCorner
+{
+    float3 position;
+    float3 normal;
+    float3 climate;
+    float town;  // -2: check all, -1: none, otherwise the only possible town
+    float roads; // Exact 11-bit mask, kept as a float for fragment interpolation
+}
+
+struct LandTile { int face; int level; int x; int y; }
+struct LandChunk
+{
+    LandTile tile;
+    int used;
+    List<LandCorner> corners;
+}
+
+local singleton Land
+{
+    List<LandTile> pending;
+    List<LandChunk> chunks;
+    Map<int, int> index;
+    List<int> faces;
+    List<LandCorner> shown;
+    List<int> shownFaces;
+    Grid2<Color> detail = Grid2(256, 256);
+    Texture noise;
+    int frame;
+    float3 anchor;
+    int revision;
+}
+
+float3 CubePoint(int face, float x, float y)
+{
+    var up = face == 0 ? float3(1, 0, 0) : face == 1 ? float3(-1, 0, 0) : face == 2 ? float3(0, 1, 0)
+           : face == 3 ? float3(0, -1, 0) : face == 4 ? float3(0, 0, 1) : float3(0, 0, -1);
+    return Math.Normalize(up + EastOf(up) * x + NorthOf(up) * y);
+}
+
+void LandFaces(mut Land land)
+{
+    for (var y = 0; y < 4; y++)
+    {
+        for (var x = 0; x < 4; x++)
+        {
+            int a = y * 5 + x;
+            land.faces.Add(a); land.faces.Add(a + 5); land.faces.Add(a + 1);
+            land.faces.Add(a + 1); land.faces.Add(a + 5); land.faces.Add(a + 6);
+        }
+    }
+    // Shared skirt topology covers the small gaps between neighboring LODs.
+    for (var side = 0; side < 4; side++)
+    {
+        for (var i = 0; i < 4; i++)
+        {
+            int a = 25 + side * 10 + i * 2;
+            land.faces.Add(a); land.faces.Add(a + 2); land.faces.Add(a + 1);
+            land.faces.Add(a + 2); land.faces.Add(a + 3); land.faces.Add(a + 1);
+        }
+    }
+    for (var y = 0; y < 256; y++)
+    {
+        for (var x = 0; x < 256; x++)
+        {
+            float a = (Math.Hash(int2(x, y)) & 65535) / 65535.0;
+            float b = (Math.Hash(int2((x + 37) & 255, (y + 17) & 255)) & 65535) / 65535.0;
+            land.detail[x, y] = Color(a, b, 0, 1);
+        }
+    }
+}
+
+int LandChunkAt(mut Land land, LandTile tile, Atlas atlas)
+{
+    int key = tile.face + tile.level * 8 + tile.x * 128 + tile.y * 32768;
+    if (land.index.TryGet(key, out var held))
+    {
+        land.chunks[held].used = land.frame;
+        return held;
+    }
+    mut int slot = -1;
+    mut int oldest = 0;
+    for (var i = 0; i < land.chunks.count; i++)
+    {
+        if (land.chunks[i].used < land.chunks[oldest].used) oldest = i;
+    }
+    if (land.chunks.count < 2048)
+    {
+        slot = land.chunks.count;
+        land.chunks.Add(LandChunk { });
+    }
+    else
+    {
+        slot = oldest;
+        var old = land.chunks[slot].tile;
+        land.index.Remove(old.face + old.level * 8 + old.x * 128 + old.y * 32768);
+    }
+    mut var chunk = land.chunks[slot];
+    chunk.corners.Clear();
+    chunk.tile = tile;
+    chunk.used = land.frame;
+    float width = 2.0 / (1 << tile.level);
+    // A whole-tile bound, including every footprint up to 64 metres wide.
+    // The fragment falls back to all candidates above that size.
+    var middle = CubePoint(tile.face, -1 + (tile.x + 0.5) * width, -1 + (tile.y + 0.5) * width);
+    float reach = R * width * 0.9 + 64;
+    mut int townHint = -1;
+    mut int roads = 0;
+    for (var town = 0; town < TOWNS; town++)
+    {
+        if (Math.Length((middle - atlas.towns[town]) * R) <= TOWN + 20 + reach)
+            townHint = townHint == -1 ? town : -2;
+    }
+    for (var road = 0; road < ROADS; road++)
+        if (Math.Abs(Math.Dot(middle, atlas.normals[road])) * R <= ROAD + reach) roads |= 1 << road;
+    for (var y = 0; y <= 4; y++)
+    {
+        for (var x = 0; x <= 4; x++)
+        {
+            var n = CubePoint(tile.face, -1 + (tile.x + x / 4.0) * width, -1 + (tile.y + y / 4.0) * width);
+            chunk.corners.Add(LandCorner { position = Surface(n, 0), normal = TerrainNormal(n), climate = Climate(n), town = townHint, roads = roads });
+        }
+    }
+    for (var side = 0; side < 4; side++)
+    {
+        for (var i = 0; i <= 4; i++)
+        {
+            int at = side == 0 ? i : side == 1 ? i * 5 + 4 : side == 2 ? 24 - i : 20 - i * 5;
+            mut var edge = chunk.corners[at];
+            chunk.corners.Add(edge);
+            edge.position -= Math.Normalize(edge.position) * 6;
+            chunk.corners.Add(edge);
+        }
+    }
+    land.chunks[slot] = chunk;
+    land.index[key] = slot;
+    return slot;
+}
+
+void DrawLand(mut Land land, Pilot pilot, Atlas atlas)
+{
+    if (land.revision != TERRAIN_REVISION)
+    {
+        land.pending.Clear();
+        land.chunks.Clear();
+        land.index.Clear();
+        land.faces.Clear();
+        land.shown.Clear();
+        land.shownFaces.Clear();
+        land.detail.Clear();
+        land.revision = TERRAIN_REVISION;
+    }
+    if (land.faces.count == 0) LandFaces(land);
+    land.noise = land.detail;
+    // Camera turns only change the transform. Keep a complete patch around
+    // the eye, rebuilding its single draw after travelling thirty-two metres.
+    if (land.shown.count == 0 || Math.Length(pilot.eye - land.anchor) > 32)
+    {
+        land.anchor = pilot.eye;
+        land.frame++;
+        land.shown.Clear();
+        land.shownFaces.Clear();
+        land.pending.Clear();
+        for (var face = 0; face < 6; face++) land.pending.Add(LandTile { face = face });
+        var eyeUp = Math.Normalize(pilot.eye);
+        // The inner sphere hides all terrain beyond these tangent angles, even
+        // allowing the full hill range at both the eye and the distant surface.
+        float visible = Math.Acos(Math.Clamp((R - 40) / Math.Max(Math.Length(pilot.eye), 1), -1, 1)) + Math.Acos((R - 40) / (R + 32));
+        for (var i = 0; i < land.pending.count; i++)
+        {
+            var tile = land.pending[i];
+            float width = 2.0 / (1 << tile.level);
+            var n = CubePoint(tile.face, -1 + (tile.x + 0.5) * width, -1 + (tile.y + 0.5) * width);
+            if (Math.Dot(n, eyeUp) < Math.Cos(Math.Min(visible + width * 1.5, Math.PI))) continue;
+            var delta = n * R - pilot.eye;
+            float distance = Math.Max(Math.Length(delta) - R * width * 0.75, 1);
+            // A few more distant tiles tighten each road/town bound, so globe
+            // pixels don't scan the entire road network. The near LOD stays
+            // driven by distance, and both views reuse the same chunk cache.
+            if (tile.level < 3 || (tile.level < 8 && R * width > Math.Max(distance * 0.5, 30)))
+            {
+                for (var child = 0; child < 4; child++)
+                    land.pending.Add(LandTile { face = tile.face, level = tile.level + 1, x = tile.x * 2 + child % 2, y = tile.y * 2 + child / 2 });
+            }
+            else
+            {
+                int slot = LandChunkAt(land, tile, atlas);
+                int first = land.shown.count;
+                for (var c = 0; c < land.chunks[slot].corners.count; c++) land.shown.Add(land.chunks[slot].corners[c]);
+                for (var f = 0; f < land.faces.count; f++) land.shownFaces.Add(first + land.faces[f]);
+            }
+        }
+    }
+    if (pilot.sky.height > 300) Draw.Mesh(land.shown, land.shownFaces, float4x4.TRS(-pilot.eye, quaternion.identity, float3(1)), GlobeLandPixel, pilot.sky);
+    else Draw.Mesh(land.shown, land.shownFaces, float4x4.TRS(-pilot.eye, quaternion.identity, float3(1)), LandPixel, pilot.sky);
+
+}
+
+// One bilinear read supplies the eight corners of smooth 3D value noise:
+// green is the red field shifted by one z slice. World coordinates keep
+// detail still while walking, and Repeat joins every texture boundary.
+float DetailNoise(float3 p, Texture noise)
+{
+    var cell = Math.Floor(p);
+    mut var f = p - cell;
+    f = f * f * (float3(3) - f * 2);
+    mut var offset = cell.xy + float2(37, 17) * cell.z;
+    offset -= Math.Floor(offset / 256) * 256;
+    var uv = (offset + f.xy + float2(0.5)) / 256;
+    var pair = noise.Sample(uv, Filter.Bilinear, Wrap.Repeat);
+    return (Math.Lerp(pair.r, pair.g, f.z) * 2 - 1) * 1.3;
+}
+
+Color FinishLand(Color surface, float3 point, float3 normal, Sky sky)
+{
+    float distance = Math.Length(point);
+    float shade = 0.45 + 0.55 * Math.Saturate(Math.Dot(Math.Normalize(normal), sky.sun));
+    var ground = Color(surface.r * shade, surface.g * shade, surface.b * shade, 1);
+    float haze = Math.Saturate(1 - Math.Exp(-distance / 2500)) * 0.55 * Math.Saturate(1 - sky.height / 1500);
+    return Mix(ground, Color(0.42, 0.66, 1), haze);
+}
+
+float GroundFootprint(float3 point, float3 n, Sky sky)
+{
+    return Math.Length(point) * sky.pixel / Math.Max(Math.Dot(n, -Math.Normalize(point)), 0.12);
+}
+
+// The walking root keeps procedural biome work out of its pixel shader.
+frag LandPixel(LandCorner corner, out Color color, Sky sky, Atlas atlas, Land land)
+{
+    var n = Math.Normalize(this.world - sky.center);
+    float wide = GroundFootprint(this.world, n, sky);
+    var surface = Ground(n, wide, atlas, land.noise, corner.climate, wide > 64 ? -2 : int(Math.Round(corner.town)), wide > 64 ? 2047 : int(Math.Round(corner.roads)));
+    color = FinishLand(surface, this.world, corner.normal, sky);
+}
+
+frag GlobeLandPixel(LandCorner corner, out Color color, Sky sky, Atlas atlas, Land land)
+{
+    var n = Math.Normalize(this.world - sky.center);
+    float wide = GroundFootprint(this.world, n, sky);
+    var cached = climateMap.Sample(n, Filter.Trilinear);
+    var climate = float3(cached.r * 2 - 1 + Math.Simplex(n * 61) * 0.1, cached.g * 2 - 1, Math.Abs(n.y));
+    var surface = Ground(n, wide, atlas, land.noise, climate, wide > 64 ? -2 : int(Math.Round(corner.town)), wide > 64 ? 2047 : int(Math.Round(corner.roads)));
+    color = FinishLand(surface, this.world, corner.normal, sky);
+}

@@ -21,6 +21,7 @@
 #include "tide/session.h"
 #include "tide/stats.h"
 #include "tide/time.h"
+#include "tide/voice.h"
 
 typedef struct tide_run_desc {
     const char *title;      // The window's title, over the game's title setting; NULL for that
@@ -38,7 +39,7 @@ typedef struct tide_run_desc {
     // The debug views are on, as with the game's debugViews setting or
     // --debug-views on the command line: F7 shows the profiler (tide/profiler.h)
     bool debug_views;
-    // The command line: --host, --join and --connect, --debug-views, --size,
+    // The command line: --host, --join and --connect, --stats, --debug-views, --size,
     // and --capture, --frames, --script, --scale and --players for a run with
     // no window (see tide/run.h)
     int argc;
@@ -66,6 +67,10 @@ typedef struct tide_host_game {
     // local fields of the match's entities are kept by, with `world`
     void (*frame)(const void *world, const void *previous, float alpha, const void *verified, const void *verified_previous, float verified_alpha, void *local,
                   tide_draw_list *draw, tide_gui *gui);
+    // tide_frame_shards, before `frame`: in a sharded match, the other shards'
+    // worlds this machine follows, which the frame draws beside its own
+    // (tide_session_views). NULL for a game that isn't sharded.
+    void (*frame_shards)(const tide_view_worlds *more, uint32_t count);
     // tide_local_events, before `frame`: what the match sent since the last one
     // (tide_session_events), which the game's local handlers hear as the frame
     // starts. It leaves `events` empty. Optional for C hosts.
@@ -86,6 +91,10 @@ typedef struct tide_host_game {
     // network says it's joined by (up to TIDE_NETWORK_ADDRESS_BYTES with its NUL), "" if none
     void (*set_session)(void *local, uint32_t state, tide_player_id player, uint32_t ping, bool server, bool open,
                         const char *room);
+    // tide_local_set_invite, after set_session: Session.invite, what others
+    // open to join the match (tide_platform_room_invite). Optional for C hosts:
+    // without it, set_session's room is the invite.
+    void (*set_invite)(void *local, const char *invite);
     void (*connected)(void *local);
     void (*disconnected)(void *local, uint32_t reason, const char *message); // `message`: a kick's, or ""
     int32_t (*tick)(const void *world); // Time.tick
@@ -110,6 +119,14 @@ typedef struct tide_host_game {
     // (tide/network.h), which a library keeps in its own copy of the engine.
     // NULL for a table that never has one: its matches are in Tide's rooms.
     const tide_network *(*network)(void);
+    // What another program needs to run the game (tide/embed.h): its view
+    // packet, commands and scenes by name; NULL for a game built without it.
+    const struct tide_embed_game *embed;
+    // Optional voice package, registered in the game's own engine copy.
+    const tide_voice_provider *(*voice)(void);
+    // Every shader the game's draws can go through, and NULL after them (tidec's tide_game_shaders), whose pipelines
+    // the host has the renderer make before anything draws with them (tide_platform_prewarm). Optional for C hosts.
+    const tide_shader *const *shaders;
 } tide_host_game;
 
 // A game's library exports this function, which returns its table.
@@ -197,6 +214,11 @@ static tide_headless_desc tide_run_headless_desc;
 // (Time.seed), in place of one from the system
 static bool tide_run_seeded;
 static uint32_t tide_run_seed;
+// --shards <n> and --shard-width <units>: a sharded game's matches on this
+// machine split into n regions along x from the start, each that wide (0: 16
+// times the game's reach), for trying borders out (tide/shards.h)
+static uint32_t tide_run_shards;
+static double tide_run_shard_width;
 static tide_session *tide_run_session;
 static double tide_run_now; // Seconds since the program started
 // The server went away or turned this machine away: not because it left,
@@ -204,8 +226,25 @@ static double tide_run_now; // Seconds since the program started
 static bool tide_run_dropped;
 // Host migration: when this machine went to its match's room again, or 0
 static double tide_run_migrating_since;
+// The last Join or Connect asked for, which a script's `rejoin` asks for again
+// (tide_platform_players_action): no kind before one
+static tide_session_request tide_run_joined;
 // The game's own network, while the session's match is on one (tide/network.h)
 static tide_network_match tide_run_network;
+// The camera another program draws its scene with (tide_embed_camera): the
+// frame's views start with it rather than Tide's own first camera.
+static bool tide_run_view_camera;
+static tide_float4x4 tide_run_view_camera_transform, tide_run_view_camera_projection;
+
+// Inside another program's frame (tide/embed.h), which reads the devices,
+// draws and plays itself: the frame leaves the GPU, the audio device and the
+// stats' drawer alone, and the platform takes the devices from that program
+static bool tide_run_embedded;
+// The frame's views draw the match's latest tick as it is, not blended into
+// the one before: a debugger's paused match (tide/embed.h's time travel)
+static bool tide_run_unblended;
+// The room the last frame told local code the match is in (Session.room)
+static char tide_run_room[TIDE_NETWORK_ADDRESS_BYTES];
 
 // The network the game registered, or NULL: its matches are in Tide's rooms.
 static inline const tide_network *tide_run_registered(void)
@@ -416,6 +455,7 @@ static inline void tide_run_request(const tide_session_request *request, const v
     const tide_network *own = tide_run_registered();
     if (request->kind == TIDE_REQUEST_START || request->kind == TIDE_REQUEST_JOIN
         || request->kind == TIDE_REQUEST_CONNECT || request->kind == TIDE_REQUEST_LEAVE) tide_run_hosting_leave();
+    if (request->kind == TIDE_REQUEST_JOIN || request->kind == TIDE_REQUEST_CONNECT) tide_run_joined = *request;
     if ((!own || request->kind == TIDE_REQUEST_CONNECT) && !tide_platform_players()
         && (request->kind == TIDE_REQUEST_JOIN || request->kind == TIDE_REQUEST_CONNECT)
         && tide_run_hosted_request(request)) {
@@ -497,6 +537,12 @@ static inline void tide_run_request(const tide_session_request *request, const v
     case TIDE_REQUEST_COPY:
         tide_platform_copy(request->text);
         break;
+    case TIDE_REQUEST_WATCH:
+        tide_session_watch(s, &request->area);
+        break;
+    case TIDE_REQUEST_UNWATCH:
+        tide_session_watch(s, NULL);
+        break;
     default:
         break;
     }
@@ -558,7 +604,7 @@ static inline uint32_t tide_run_whole(int *i, const char *flag, const uint32_t m
 }
 
 // How tide_run_game runs: what `desc` says, with the defaults for what it and
-// the game's settings leave out, and what its command line says: --debug-views,
+// the game's settings leave out, and what its command line says: --stats, --debug-views,
 // the window's size, its matches' seed, and a run with no window.
 static inline void tide_run_configure(const tide_run_desc *desc)
 {
@@ -575,11 +621,15 @@ static inline void tide_run_configure(const tide_run_desc *desc)
     tide_run_headless_desc = (tide_headless_desc){0};
     tide_run_seeded = false;
     tide_run_seed = 0;
+    tide_run_shards = 0;
+    tide_run_shard_width = 0.0;
     tide_run_data_directory = NULL;
     bool scaled = false;
     for (int i = 1; i < tide_run_settings.argc; i++) {
         const char *arg = tide_run_settings.argv[i];
-        if (strcmp(arg, "--debug-views") == 0) {
+        if (strcmp(arg, "--stats") == 0) {
+            tide_run_settings.stats = true; // Keep the host's chosen initial drawer state.
+        } else if (strcmp(arg, "--debug-views") == 0) {
             tide_run_settings.debug_views = true;
         } else if (strcmp(arg, "--data-dir") == 0) {
             tide_run_data_directory = tide_run_value(&i, arg, "a save directory, like --data-dir test-saves");
@@ -595,6 +645,16 @@ static inline void tide_run_configure(const tide_run_desc *desc)
             const char *takes = "the seed of the matches this machine starts, a whole number from 0 to 2147483647, like --seed 7";
             tide_run_seed = tide_run_whole(&i, arg, 2147483647u, takes);
             tide_run_seeded = true;
+        } else if (strcmp(arg, "--shards") == 0) {
+            const char *takes = "how many regions a sharded game's match starts split into along x, from 1 to 256, like --shards 2";
+            tide_run_shards = tide_run_whole(&i, arg, 256u, takes);
+            if (!tide_run_game->game->shards) {
+                fprintf(stderr, "tide: --shards is for a sharded game: one with 'settings { shards = true; }'\n");
+                exit(2);
+            }
+        } else if (strcmp(arg, "--shard-width") == 0) {
+            const char *takes = "how wide each region --shards makes is, in world units, like --shard-width 100";
+            tide_run_shard_width = tide_run_number(&i, arg, 1e-3, 1e12, takes);
         } else if (strcmp(arg, "--scale") == 0) {
             const char *takes = "a display's scale from 0.25 to 8, like --scale 2";
             tide_run_headless_desc.scale = (float)tide_run_number(&i, arg, 0.25, 8.0, takes);
@@ -731,7 +791,14 @@ static inline void tide_run_debug_views(void)
 // rate unless the host said otherwise.
 static inline tide_session *tide_run_new_session(void)
 {
+    // A sharded game's regions, as --shards and --shard-width say: centered on 0 along x
+    const tide_shard_game *sharded = tide_run_game->game->shards;
+    const uint32_t regions = tide_run_shards ? tide_run_shards : 1u;
+    const double width = tide_run_shard_width > 0.0 ? tide_run_shard_width : sharded ? 16.0 * sharded->range : 1.0;
+    const double half = 0.5 * width * (double)regions;
     return tide_session_create(&(tide_session_desc){
+        .shard_world = {{-half, -half, -half}, {half, half, half}},
+        .shard_split = {regions, 1u, 1u},
         .game = tide_run_game->game,
         .tick_rate = (uint32_t)tide_run_settings.tick_rate,
         .sample = tide_run_sample,
@@ -762,6 +829,9 @@ static inline void tide_run_bind_io(const tide_host_game *game, void *local)
         id = fallback;
     }
     tide_platform_name_game(id); // Its folders: the renderer's cache too, whether the game uses files or not
+    // A game's frames don't wait for a GPU pipeline to be made: what's drawn with one shows once it's made. Not in
+    // a run with no window, whose frames are read back and go the same every time
+    tide_platform_background_pipelines(!tide_run_headless);
     if (!game->set_io) return;
     const char *directory = tide_run_data_directory;
     char *player_directory = NULL;
@@ -775,6 +845,22 @@ static inline void tide_run_bind_io(const tide_host_game *game, void *local)
     free(player_directory);
 }
 
+// The pipelines of the game's shaders made before anything draws with them
+// (tide_platform_prewarm), so a shader's first draw doesn't wait for one: as
+// the game starts, once its folders are named (how its shaders drew in the
+// last runs is read from there, and Vulkan's cache of what it compiled), and
+// again every frame, which costs nothing till the table or the device is
+// another (a reloaded build, a lost device) or a shader drew another way.
+// Not in a run with no window, whose frames nobody waits for, nor inside
+// another program, which draws.
+static inline void tide_run_prewarm(void)
+{
+    if (tide_run_headless || tide_run_embedded || !tide_run_game->shaders) return;
+    uint32_t count = 0;
+    while (tide_run_game->shaders[count]) count++;
+    tide_platform_prewarm(tide_run_game->shaders, count);
+}
+
 // Starts tide_run_game: its local state and a session, then the match the
 // command line asks for, or Main's if it's the match's.
 static inline void tide_run_begin(void)
@@ -784,6 +870,7 @@ static inline void tide_run_begin(void)
     tide_run_start = calloc(1, game->game->start_size);
     if (!tide_run_local || !tide_run_start) abort();
     tide_run_bind_io(game, tide_run_local);
+    tide_run_prewarm();
     game->local_init(tide_run_local);
     tide_run_session = tide_run_new_session();
     tide_session_request request = {0};
@@ -812,6 +899,13 @@ static inline void tide_run_begin(void)
 // Ends what tide_run_begin started: the match, if any, and the local state.
 static inline void tide_run_end(void)
 {
+    if (tide_run_game->voice) {
+        const tide_voice_provider *voice = tide_run_game->voice();
+        if (voice && voice->stop) {
+            tide_platform_audio_forget();
+            voice->stop(voice->self, tide_run_session);
+        }
+    }
     tide_run_hosting_leave();
     const bool open = tide_run_drawer.open;
     tide_stats_free(&tide_run_drawer);
@@ -877,11 +971,29 @@ static inline void tide_run_migrate(void)
     }
 }
 
+// Each channel's commands local code sent into the session, in order, until a
+// channel is full there: the others go on, as a channel waits for nothing else
+static inline void tide_run_send_commands(void)
+{
+    const tide_host_game *game = tide_run_game;
+    if (!game->command || !game->command_sent) return;
+    for (uint32_t i = 0; i <= tide_game_command_channels(game->game); i++) {
+        const uint32_t channel = tide_run_command_channel(i);
+        const uint8_t *bytes;
+        uint32_t size;
+        while ((bytes = game->command(tide_run_local, channel, &size)) != NULL) {
+            if (!tide_session_send_command(tide_run_session, bytes, size)) break;
+            game->command_sent(tide_run_local, channel);
+        }
+    }
+}
+
 static inline int tide_run_frame(void *user, const float seconds)
 {
     (void)user;
     const tide_host_game *game = tide_run_game;
-    // Asked every frame: a reload can bring the setting, or take it away
+    // Asked every frame: a reload can bring the setting, or take it away. Inside another program's frame they're
+    // drawn with the frame, as the views' drawing is, and say only what's Tide's
     const bool stats = tide_run_stats();
     // What a frame's work takes is in the stats' list: timed while their drawer is open
     const uint64_t began = stats && tide_run_drawer.open ? tide_time_now_ns() : 0;
@@ -900,7 +1012,7 @@ static inline int tide_run_frame(void *user, const float seconds)
         tide_run_reset_timing(timing);
         tide_run_timing = timing;
     }
-    tide_platform_gpu_timing(timing);
+    if (!tide_run_embedded) tide_platform_gpu_timing(timing);
     // F8 may have changed the drawer after debug_views selected a profile.
     // Bind it before ticks, so a closing press stops measuring at once.
     tide_profile *measured = timing || tide_run_profiling ? &tide_run_profiler.profile : NULL;
@@ -908,6 +1020,13 @@ static inline int tide_run_frame(void *user, const float seconds)
     tide_run_alone.profile = measured;
     tide_run_now += seconds;
     tide_profiler_mark(profiler, TIDE_FRAME_INPUT);
+    // A script's leave and rejoin, in a run of several players, as the frame's poll had them
+    for (tide_players_action action; (action = tide_platform_players_action()) != TIDE_PLAYERS_NONE;) {
+        const tide_session_request again = tide_run_joined;
+        if (action == TIDE_PLAYERS_LEAVE) tide_run_request(&(tide_session_request){.kind = TIDE_REQUEST_LEAVE}, NULL);
+        else if (again.kind) tide_run_request(&again, NULL);
+        else fprintf(stderr, "tide: player %u has nothing to rejoin: it never joined a match\n", (unsigned)tide_platform_player());
+    }
 
     tide_session *s = tide_run_session;
     // Existing visual errors age before this update adds fresh corrections.
@@ -974,14 +1093,28 @@ static inline int tide_run_frame(void *user, const float seconds)
     const uint32_t session_state = tide_run_hosting && !tide_run_hosting_joined ? TIDE_SESSION_CONNECTING : status.client.state;
     game->set_session(tide_run_local, session_state, status.client.player, status.client.ping_ms, status.server,
                       status.open, room);
+    if (game->set_invite) { // A link to this page on the web, the room's code elsewhere
+        char invite[TIDE_INVITE_BYTES];
+        tide_platform_room_invite(room, invite, sizeof invite);
+        game->set_invite(tide_run_local, invite);
+    }
+    memcpy(tide_run_room, room, sizeof tide_run_room);
     tide_profiler_mark(profiler, TIDE_FRAME_MATCH);
 
     // Views draw at the frame rate, the match blended between its last two ticks
-    const tide_view_worlds view = tide_session_view(s);
+    tide_view_worlds view = tide_session_view(s);
+    if (tide_run_unblended) {
+        view.previous = view.verified_previous = NULL;
+        view.alpha = view.verified_alpha = 1.0f;
+    }
     const void *match = view.current;
     tide_draw_reset(&tide_run_draw);
     tide_draw_screen_size(&tide_run_draw, tide_platform_screen_size()); // What a mesh's levels of detail are picked by
     tide_run_draw.target_pixels = tide_platform_target_pixels;
+    tide_run_draw.screen_scale = tide_platform_screen_scale();
+    if (tide_run_view_camera) {
+        tide_draw_set_camera_matrices(&tide_run_draw, tide_run_view_camera_transform, tide_run_view_camera_projection);
+    }
     tide_audio_reset(&tide_run_audio);
     // The GUI and the views read the devices, less a press that's on the stats
     const tide_devices *seen = &tide_run_devices;
@@ -992,10 +1125,22 @@ static inline int tide_run_frame(void *user, const float seconds)
         seen = &kept;
     }
     tide_gui_begin(&tide_run_gui, seen, tide_platform_screen_size(), tide_platform_measure_text);
+    tide_run_gui.copy = tide_platform_copy;
+    tide_run_gui.jobs = tide_platform_jobs();
     // What the match sent since the last frame: its local handlers run first
     if (heard) game->events(tide_run_local, heard);
     if (game->audio) game->audio(tide_run_local, &tide_run_audio);
+    if (game->frame_shards) { // A sharded match's other shards this machine follows, drawn beside its home's
+        tide_view_worlds more[TIDE_SESSION_VIEWS];
+        uint32_t shards[TIDE_SESSION_VIEWS];
+        const uint32_t n = tide_session_views(s, more, shards, TIDE_SESSION_VIEWS);
+        game->frame_shards(more, n < TIDE_SESSION_VIEWS ? n : TIDE_SESSION_VIEWS);
+    }
     game->frame(match, view.previous, view.alpha, view.verified, view.verified_previous, view.verified_alpha, tide_run_local, &tide_run_draw, &tide_run_gui);
+    if (game->voice) {
+        const tide_voice_provider *voice = game->voice();
+        if (voice) voice->frame(voice->self, s, &tide_run_audio, tide_run_now);
+    }
     tide_session_mark_presented(s);
     tide_gui_end(&tide_run_gui, &tide_run_draw);
     tide_profiler_mark(profiler, TIDE_FRAME_VIEWS);
@@ -1008,8 +1153,9 @@ static inline int tide_run_frame(void *user, const float seconds)
         tide_platform_gpu_timing(true);
     }
     const uint64_t render_began = timing ? tide_time_now_ns() : 0;
-    tide_platform_draw(&tide_run_draw);
-    tide_platform_audio(&tide_run_audio);
+    tide_run_prewarm();
+    if (!tide_run_embedded) tide_platform_draw(&tide_run_draw);
+    tide_platform_audio(&tide_run_audio); // Embedded, for the other program to play (tide_embed_audio)
     const uint64_t rendered = timing ? tide_time_now_ns() : 0;
     tide_profiler_mark(profiler, TIDE_FRAME_RENDER);
     if (measured_netcode) tide_run_netcode(&status, update_ns, tide_time_now_ns() - frame_began);
@@ -1071,7 +1217,8 @@ static inline int tide_run_frame(void *user, const float seconds)
             .render_known = tide_run_render_ms >= 0.0,
             .gpu_known = tide_run_gpu_ms >= 0.0,
             .threads = jobs ? jobs->threads : 1u,
-            .memory = tide_run_memory,
+            .elsewhere = tide_run_embedded,
+            .memory = tide_run_embedded ? 0u : tide_run_memory, // Embedded, the process is the other program's
             .gpu_memory = tide_platform_gpu_memory(),
             .renderer = tide_platform_renderer(),
             .draw_calls = tide_platform_draw_calls(),
@@ -1085,9 +1232,14 @@ static inline int tide_run_frame(void *user, const float seconds)
             .entities = open && match ? game->entity_count(match) : 0u,
             .profile = &tide_run_profiler.profile,
         };
-        tide_draw_reset(&tide_run_over);
-        tide_stats_draw(&tide_run_drawer, &values, &tide_run_over, tide_platform_screen_size(), tide_platform_measure_text);
-        tide_platform_draw_over(&tide_run_over);
+        if (tide_run_embedded) {
+            // Over the views' drawing, in the list the other program draws (tide_embed_draw)
+            tide_stats_draw(&tide_run_drawer, &values, &tide_run_draw, tide_platform_screen_size(), tide_platform_measure_text);
+        } else {
+            tide_draw_reset(&tide_run_over);
+            tide_stats_draw(&tide_run_drawer, &values, &tide_run_over, tide_platform_screen_size(), tide_platform_measure_text);
+            tide_platform_draw_over(&tide_run_over);
+        }
     }
 
     // The devices keep what happened for the next tick's sample: a key that
@@ -1098,19 +1250,7 @@ static inline int tide_run_frame(void *user, const float seconds)
     // held as it starts, never what was pressed before it.
     if (!game->sample_input || status.client.state != TIDE_SESSION_CONNECTED) tide_devices_consume(&tide_run_devices);
 
-    // Each channel's commands into the session, in order, until a channel is
-    // full there: the others go on, as a channel waits for nothing else
-    if (game->command && game->command_sent) {
-        for (uint32_t i = 0; i <= tide_game_command_channels(game->game); i++) {
-            const uint32_t channel = tide_run_command_channel(i);
-            const uint8_t *bytes;
-            uint32_t size;
-            while ((bytes = game->command(tide_run_local, channel, &size)) != NULL) {
-                if (!tide_session_send_command(s, bytes, size)) break;
-                game->command_sent(tide_run_local, channel);
-            }
-        }
-    }
+    tide_run_send_commands();
     tide_session_request request;
     while (game->take_request(tide_run_local, &request, tide_run_start)) tide_run_request(&request, tide_run_start);
     // While nobody sees the window, the next frame is the match's next tick

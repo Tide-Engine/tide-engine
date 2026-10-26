@@ -13,12 +13,88 @@ const release = await readFile(resolve(root, 'platform/web/tide.release.js'), 'u
 const context = vm.createContext({ location: { hash: '#download' } });
 await vm.runInContext(release, context);
 
+test('page stats query reaches WASI argv once and preserves other launch options', async () => {
+    const source = await readFile(resolve(root, 'platform/web/tide.js'), 'utf8');
+    const begin = source.indexOf('    const words = [...(config.arguments || [])];');
+    const end = source.indexOf('\n    // `Tide.wait`', begin);
+    assert.ok(begin >= 0 && end > begin, 'the production argument assembly is present');
+    const block = source.slice(begin, end);
+    const args = (search, configured = []) => {
+        const config = { arguments: [...configured] };
+        const encoded = vm.runInNewContext(`(() => { ${block}\nreturn args; })()`, {
+            config, location: { search }, URLSearchParams, encoder: new TextEncoder(),
+        });
+        assert.deepEqual(config.arguments, configured, 'page-owned arguments remain unchanged');
+        return Array.from(encoded, bytes => {
+            assert.equal(bytes[bytes.length - 1], 0, 'each WASI argument is NUL terminated');
+            return Buffer.from(bytes).subarray(0, bytes.length - 1).toString('utf8');
+        });
+    };
+    assert.deepEqual(args(''), ['program']);
+    assert.deepEqual(args('?statistics'), ['program'], 'an unrelated query does not enable stats');
+    assert.deepEqual(args('?stats'), ['program', '--stats']);
+    assert.deepEqual(args('?stats&stats'), ['program', '--stats'], 'repeated query keys add one flag');
+    assert.deepEqual(args('?stats', ['--stats']), ['program', '--stats'], 'an explicit page argument is not duplicated');
+    assert.deepEqual(args('?stats&debug-views&join=K7QF2M%2F0'),
+        ['program', '--debug-views', '--stats', '--join', 'K7QF2M/0']);
+    assert.deepEqual(args('?stats&host', ['--join', 'CUSTOM/0']),
+        ['program', '--join', 'CUSTOM/0', '--stats'], 'stats coexist with the page-owned match selection');
+});
+
 test('checked-in runtime matches sources without loading minifier dependencies', () => {
     const result = run('cmake/web_runtime.mjs', ['--check']);
     assert.equal(result.status, 0, result.stderr);
     assert.match(release, /MIT License/);
     assert.match(release, /Copyright \(c\) 2026 Arjun Barrett/);
     assert.doesNotMatch(release, /<tide run>|EventSource|\/__tide\/build/);
+});
+
+test('WebGPU preserves every read kind in high texture slots and builds matching layouts', async () => {
+    const source = await readFile(resolve(root, 'platform/web/tide.js'), 'utf8');
+    const begin = source.indexOf('        gpu_pipeline_begin(');
+    const end = source.indexOf('\n        gpu_pipeline_slot:', begin);
+    const layoutBegin = source.indexOf('    function layoutFor(reads) {');
+    const layoutEnd = source.indexOf('\n    // A pass', layoutBegin);
+    assert.ok(begin >= 0 && end > begin && layoutBegin >= 0 && layoutEnd > layoutBegin);
+    const method = source.slice(begin, end);
+    for (let highSlot = 8; highSlot < 12; highSlot++) {
+        for (let kind = 0; kind < 5; kind++) {
+            const wanted = Array.from({ length: 12 }, (_, i) => i % 5);
+            wanted[highSlot] = kind;
+            let low = 0, high = 0;
+            wanted.forEach((read, i) => {
+                if (i < 8) low |= read << (3 * i);
+                else high |= read << (3 * (i - 8));
+            });
+            let entries;
+            const sandbox = {
+                low, high, string: () => '', stencilTests: ['always'], stencilOps: ['keep'],
+                colorFormats: () => [], samplesOf: () => 1, layouts: new Map(),
+                READ_CUBE: 3, READ_COMPARE: 2, READ_DATA: 4, readsDepth: read => read === 1 || read === 2,
+                GPUShaderStage: { VERTEX: 1, FRAGMENT: 2 },
+                device: {
+                    createBindGroupLayout: desc => { entries = desc.entries; return {}; },
+                    createPipelineLayout: () => ({}),
+                },
+            };
+            const reads = vm.runInNewContext(`(() => {
+                let building;
+                const backend = { ${method} };
+                backend.gpu_pipeline_begin(0, 0, 0, 12, low, high, 0, 0, 0, 0, 1, 0, 0);
+                ${source.slice(layoutBegin, layoutEnd)}
+                layoutFor(building.reads);
+                return building.reads;
+            })()`, sandbox);
+            assert.deepEqual(Array.from(reads), wanted);
+            assert.equal(entries.length, 25);
+            const texture = entries[1 + 2 * highSlot];
+            const sampler = entries[2 + 2 * highSlot];
+            assert.equal(texture.binding, 1 + 2 * highSlot);
+            assert.equal(texture.texture.sampleType, ['float', 'depth', 'depth', 'float', 'sint'][kind]);
+            assert.equal(texture.texture.viewDimension, kind === 3 ? 'cube' : undefined);
+            assert.equal(sampler.sampler.type, kind === 2 ? 'comparison' : kind === 1 || kind === 4 ? 'non-filtering' : 'filtering');
+        }
+    }
 });
 
 test('synchronous release decoder preserves bytes and checks gzip corruption', () => {

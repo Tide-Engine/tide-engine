@@ -1,5 +1,200 @@
 # ECS and simulation state
 
+## Map views across a function (2026-10-20)
+
+Owner-approved: generated code keeps a view of each map it reads or sets by
+key for the whole function (`tide_map_view`, `tide/map.h`), so lookup after
+lookup doesn't find the map's two lists again (heap, page table, block) at
+every one, and a big map's chunks are found once each. Same probe order,
+same entries, same results and hashes; no layout changes.
+
+- `tide_list_view` (`tide/list.h`) is now filled in place
+  (`tide_list_view_find`) and can be held: `tide_list_view_hold` finds the list
+  again only when what it found may have changed, which `tide_list_view_holds`
+  tells from the list's handle (`tide_list.at`), its heap's `moves` (a block
+  grown, moved or released, a page copied to be a world's own, a page's hash
+  asked for) and its count against its block's (elements added or removed in
+  place). Writing an element where it is changes neither, and is read through
+  the view, as it's the same memory. A list in the scratch area is a view of
+  its place, which any list with that handle has.
+- In chunks, the first 32 chunks' element places are found the first time
+  one of theirs is read (`known`, a bit each), so a probe is the chunk's
+  place, from the view, and the element: what was the directory, the page
+  table, the page and the element. Past 32 chunks (1,023 16-byte entries a
+  chunk, so past about 32,000 entries) the rest go the old way.
+- `tide_map_find_in(view, map, kind, probe)` holds both lists' views and
+  probes; `tide_map_find` makes a view of its own for the one lookup, as
+  before. `tide_map_view_entry` reads the entry found.
+- A set through a view (`tide_map%d_cset`) writes the value of a key that's
+  there in place (`tide_list_at_mut`, so a page shared with a snapshot is
+  copied first, as always) when neither list is an asset's or the pack's
+  (`borrowed`), which `tide_map_insert` would make the world's own first;
+  anything else, and every new key, goes through `tide_map%d_set` as before.
+- `tide_list_cache_fill_mut` finds a side-by-side list's block once, where it
+  found it twice (in `tide_list_at_mut`, then again for the cache).
+
+The views are C locals of the function (and of each parallel loop's task),
+not state: nothing is kept between calls, snapshots, threads or reloads.
+Results: notes/benchmarks.md, Map views and Linux cache groups.
+
+Per-row scratch reset and heap flush inline (2026-10-20): generated code
+resets the scratch area to its mark and flushes the world's heap after every
+row of a system that makes text or lists (`tide_scratch_reset(tide_mark);
+tide_heap_flush(&tide_w->heap);`), and most rows make and release nothing.
+`tide_scratch_mark`, `tide_scratch_reset` (`tide/text.h`) and
+`tide_heap_flush` (`tide/heap.h`) are now inline, same names, signatures and
+effects: the mark is `tide_scratch_top` (text.c's `scratch_used`, now an
+extern thread-local, as `tide_scratch_slots` is), a reset to a mark at or
+past it does nothing, and a flush with nothing pending does nothing; only
+otherwise do they call `tide_scratch_reset_to` and `tide_heap_flush_pending`,
+the functions as they were. The rollback agent measured the two calls at
+about 5% of versus_rollback's ticks (Rollback, the schedule and thread
+scaling, in notes/benchmarks.md).
+
+## A page's hash by stripes (2026-10-20)
+
+The owner's call on a faster page hash: "Measure first", and switch only if a
+candidate beats the hash there was natively and as WebAssembly. One did; the
+measurements, the candidates that didn't and the quality checks are in
+notes/benchmarks.md, Page hash, measured. This supersedes the four chains of
+2026-10-07 below ("A page's hash is `tide_hash_wide`"), whose other contracts
+(only pages use it, `tide_hash` and the rest unchanged) stand.
+
+- **What it is** (`tide_hash_wide`, `engine/src/net.c`): XXH3's accumulation
+  with keys and an end of our own. The run, zeros after it to a whole number
+  of 64-byte stripes, goes a stripe at a time into eight 64-bit accumulators,
+  one a word: for word j, d, and its key word k, accumulator j adds
+  `lo32(d ^ k) * hi32(d ^ k)` and accumulator `j ^ 1` adds d (so a product of
+  zero loses nothing, and a word's sum is never where its product is). Stripe
+  n of each block of 16 takes key words n to n + 7; after each block every
+  accumulator becomes `((a ^ a >> 47) ^ key[16 + j]) * 0x9E3779B1`. Then the
+  size and the eight accumulators are `tide_hash`'s chain's words and its end
+  is `tide_hash`'s. Keys and starting values are splitmix64's numbers from
+  "tidehash" (`0x7469646568617368`).
+- **The same bits everywhere, by construction and by test**: integer arithmetic
+  only. Three ways compute it: clang's two-word vectors (`pmuludq` on SSE2,
+  `umlal` on NEON, plain words where a build has no SIMD), WebAssembly's SIMD
+  (two vectors' halves gathered by two shuffles, then `extmul_low`/`_high`,
+  where `i64x2.mul` is three multiplies under V8), and on x86-64 AVX2's
+  four-word vectors where `cpuid` finds AVX2 and the system saves its
+  registers (looked at once, a relaxed atomic; inline `cpuid`/`xgetbv` as Box3D's
+  dispatch does). Native ways ask for the next block while hashing one
+  (`__builtin_prefetch`, a hint). `tide_hash_wide_baseline` (new, `tide/net.h`)
+  is the way without AVX2, so a machine with AVX2 tests both; generated code
+  calls nothing new. NEON's way is compiled from the same C as SSE2's (clang
+  makes `xtn`/`shrn`/`umlal` of it, checked in its assembly) and is tested only
+  where CI runs ARM64.
+- `PROTOCOL` is 17 (notes/netcode.md): two builds that hash pages differently
+  would connect and then disagree about every tick.
+- Every pinned world hash moved and nothing else did: the list is in
+  notes/benchmarks.md, Page hash, measured.
+- Tests (`tests/test_hash.c`, natively and under Node): both ways against the
+  definition written plainly (bytes read one at a time) at every length to 300
+  from three starts and around blocks and pages, of bytes and of zeros; one bit
+  anywhere in 16 KiB; the same bit (0, 31, 32, 33, 62, 63 of each word) in
+  every pair of 32 stripes of zeros, in a block and across a scramble; zeros of
+  every length to 2,100; four pinned numbers. `bench_hash --quick` also checks
+  each of its SIMD ways against its plain definition on both builds.
+
+## Events in runs (2026-10-20)
+
+Internal, with no layout, hash, order or interface change (pinned hashes are
+unchanged; measurements in notes/benchmarks.md, Events, second round):
+
+- The queue (`tide_queue`) has a second shape of event, which only generated
+  code makes and reads: a run, one item of kind `TIDE_CMD_EVENTS` holding many
+  events of one kind, each its target and value, in the order they were sent
+  (notes/language.md, Events in runs). A system whose whole body is one Send
+  records them, 12 bytes an event for an `int` event where a `tide_command`
+  of its own took 24, and the end of the tick takes them in a loop of their
+  own. A run is never in the queue between ticks, so a world's bytes, hash,
+  snapshots and deltas never hold one, and `tide_command_fits` refuses one.
+- Ordinary event items in a row (the same size, kind, event and depth, back
+  to back in a page) are taken together the same way: generated code counts
+  them from the page's `used`, which relies on a page's items being back to
+  back (tide/table.h says so), and moves the queue's place past them.
+- A run's dispatcher, or a row of items', finds its targets in the one table
+  its handlers take (`index - first`, checked against the row's handle, else
+  `tide_entity_location`) with that table's count, page array and first
+  handle read once for them all. That rests on handlers never moving an
+  archetype's rows: structural changes wait in the queue, and what a handler
+  writes changes lane pages only, never the entity column or the page array.
+  Anything that changes that rule changes this.
+- `tide_table_column_mut` (inline, tide/table.h) no longer writes the page
+  pointer back when the page is the table's alone (the case for every write
+  but a snapshot's shared page's first): the same function and results, one
+  store less for each lane a handler writes.
+
+## Performance pass: lists, maps and grid windows (2026-10-20)
+
+Internal, with no layout, hash, order or interface change (pinned hashes are
+unchanged; measurements in notes/benchmarks.md, Performance pass):
+
+- Cached list writes no longer prepare a list the cache already holds
+  writable (see language.md for why that's sound). In bench/versus/buckets a
+  flat list's write went from 0.050 to 0.028 ms a tick (7x C to 4x).
+- `tide_map_find` finds both of a map's lists once (`tide_list_view_of`,
+  `tide_list_view_at` in `tide/list.h`: the heap, page table and block that
+  `tide_list_at` finds again at every element), not at every slot and entry a
+  probe reads; `empty_slot` in map.c does the same. The view holds while the
+  code that made it runs on: the page table it read stays until the heap
+  settles, and a page copied meanwhile has the same elements. Same probe
+  order, same results; asset lists of another element size read as empty, as
+  `tide_list_asset_at` has them.
+- `tide_map_hash_bytes` writes `tide_hash`'s steps out inline for keys of up
+  to 16 bytes, so a lookup with a key of known size makes no call; longer keys
+  call `tide_hash`. They must stay the same function: `map_key_hash_is_tide_hash_at_every_size`
+  (`tests/test_map.c`) compares them at every size up to 40 bytes.
+- `tide_list_prepare` is inline, its signature and what it does the same: a
+  list that's a world's own or the scratch area's (not the pack's) returns
+  after one look at its block, and only an asset's or the pack's calls
+  `tide_list_prepare_borrowed` (the function as it was). A cached write that
+  misses (each bucket of a list of lists) and every map insert, which
+  prepares both lists, called it: the list of lists in bench/versus/buckets
+  went from 0.069 to 0.061 ms a tick.
+- Together, 16,384 keys' steady lookups went from 1.92 to 1.41 ms a tick.
+  What's left is the chain of dependent loads a probe makes through a chunked
+  list (directory, page, element, twice) on a random pattern: about 8x C.
+
+Lane bookkeeping inline (2026-10-20): `tide_table_lanes_shared`,
+`tide_table_lanes_begin` and `tide_table_lanes_end` are `static inline` in
+`tide/table.h`, with the same names, arguments and behavior, so a chunk whose
+lanes the table alone has (no snapshot shares them) costs no call. What a
+shared lane costs (taking a page, copying rows, comparing and swapping pages)
+stays out of line, in `tide_table_lane_apart` and `tide_table_lane_end_apart`,
+`static inline` `noinline` helpers each file that uses them has a copy of, not
+more code at every call. No exported function was added and generated code
+calls what it called. `versus_systems` with 64 entities of each kind went from
+4.8 to 3.9 µs a tick (median of alternating runs) and with 4,096 from 65.2 to
+63.8 µs; its executable grew 34 KB (6%). Measurements: notes/benchmarks.md.
+
+Recorded containers (2026-10-19): local event queries capture their statically
+read container fields at tick end, including reads through borrowed helpers.
+Equal query shapes retain one shared record/tail. Direct parameters still use
+the event turn; availability reads the delivered endpoint. Serialized values
+are decoded once per delivery batch into a separate temporary heap, never a
+match snapshot or live offset. Match bytes/hash/storage are unchanged. Older
+omitted-heap statements below are superseded; contracts/tests: language.md.
+
+Attached local fields through query rows (2026-10-19) supersede the historical
+read-only/local-field prohibition below. Local code resolves current attached
+state; mut bindings write those fields while match rows keep their existing
+live, blended, verified or recorded timing. Private row birth metadata prevents
+using another entity's fields on a reused handle. Read defaults allocate no row;
+mut bindings borrow owned storage at row entry. Outer mutable aliases share storage, and a
+birth reset reinitializes its cell in place to retain active pointer validity.
+No match state or runtime API changed. Details and validation: language.md.
+
+Mutable parameters beside World.Set (2026-10-19) follow the owner-approved
+replacement rule: a self Set updates the stored component and active mutable
+copy; later parameter edits use ordinary write-back timing. A private C-stack
+context follows synchronous helper calls and is rebuilt at each handler/task
+resume. No context pointer is stored in ECS/world/task state. Replacement uses
+the active copy's current owned container handles, and final overlapping row
+writes reacquire the table's current pages. Read-only entry values retain their
+existing copy rule. No runtime API, public C ABI, world layout, hash, packing
+or scheduling rule changed. world_set_mut and notes/language.md record coverage.
+
 Read-only parameters beside World.Set (2026-10-18) reload affected component
 lanes from stable chunk page slots before each row. Earlier Set writes are
 visible regardless of snapshot sharing, across chunks and archetypes. The
@@ -136,7 +331,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - Five alternating end-to-end build rounds of 100 helper functions and 100 entity systems, using one or four archetypes and the least saved median, show the fixture tradeoff: with four archetypes, a Tide-body edit in native release is 33.07 -> 3.16 s, and in web release 16.22 -> 2.69 s; native debug is 0.62 -> 0.73 s and web debug 0.90 -> 0.95 s. Cold builds and unchanged/C/header edits are in the report. These Windows measurements include build completion and were taken with recorded CPU contention; their ranges and the separate direct Clang phases qualify the comparison.
   - A task's components are copies too, loaded each time it goes on and put back when it waits or ends, and around what it awaits or starts, which may change them (`gen_entity_copies` in `compiler/src/codegen.c`).
 - Each page keeps the hash of what's in use in it until it changes, so a world's hash (`tide_world_hash`) only reads what changed since the last one. It covers contents, never addresses or capacity, so it's the same on every machine for the same state. The command queue, empty between ticks, isn't shared.
-- **A page's hash is `tide_hash_wide`** (2026-10-07; the owner, of a faster hash that would move every pinned world hash: "if its faster at no cost other than out tests then its not even a question, update it"). What's built, and what code relies on:
+- **A page's hash is `tide_hash_wide`** (2026-10-07; the owner, of a faster hash that would move every pinned world hash: "if its faster at no cost other than out tests then its not even a question, update it"). Its four chains are superseded by stripes (2026-10-20, A page's hash by stripes, above); the rest of this entry stands. What's built, and what code relies on:
   - It's four of `tide_hash`'s chains side by side (`engine/src/net.c`): chain k takes the words at 8k, 32 + 8k and on, with `tide_hash`'s own step (`add_word`); what's left after the last round of 32 bytes goes a word a chain, the last short and zeros past its bytes; then the size and the four chains are one chain's words, and the end is `tide_hash`'s. One chain has the CPU wait for each word's multiplies before the next word; four don't. Three more were measured and not taken: eight chains were no quicker here, and one multiply a word, with four chains or eight, was a tenth quicker, but a word that differs in one bit near its middle then leaves its chain differing in the top bit alone, which the chain's next word undoes if it differs in its own top bit.
   - **Only pages use it** (`tide_page_hash`). `tide_hash`, `tide_hash_more` and `tide_hash_end` are what they were, for everything that isn't a page: how a world's hash puts its pages' hashes together, the physics packages' stamps, what entities are born as, shaders' ids. `Math.Hash` and the seeding of `Random` are functions of their own. So no simulation changed, which the pins say: the physics packages' pins of their bodies and of their own images' bytes, and what was answered, stayed, and every pinned hash of a world moved (40 values in 17 files, two of them decimal in `compiler/tests/CMakeLists.txt`, four the web's own in `local_fields_same.h` and `local_events_same.h`, whose deltas carry the hash).
   - `PROTOCOL` went to 13: two builds of one game that hash pages differently would connect, and then disagree about every tick. `tests/test_commands.c` writes that number by hand.

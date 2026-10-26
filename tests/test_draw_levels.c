@@ -1,7 +1,7 @@
 // A mesh's levels of detail in the draw list (tide_draw_mesh_levels): which
 // one an instance draws at, by how big the mesh is to the camera or as a
 // setting says, that a level is a mesh with the full one's vertices, and that
-// the instances of a level end up one run, in the order they were drawn.
+// the instances of a level end up one run unless blending needs their order.
 
 #include <math.h>
 #include <string.h>
@@ -218,7 +218,7 @@ TIDE_TEST(draw_levels_group_the_instances_of_a_draw)
     TIDE_REQUIRE(runs_of(&d, runs, 8) == 1);
     TIDE_CHECK(mesh_of(&d, runs[0])->level == 2 && runs[0]->mesh3.count == 3);
     TIDE_CHECK(d.matrices[runs[0]->mesh3.first].c3.x == 0.5f && d.matrices[runs[0]->mesh3.first + 2u].c3.x == 2.5f);
-    // A mesh with no levels is one run, as ever
+    // A mesh with no levels is one run
     frame(&d);
     tide_draw_instances(&d, plain_mesh(&d), given, 6, 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
     TIDE_REQUIRE(runs_of(&d, runs, 8) == 1);
@@ -470,4 +470,246 @@ TIDE_TEST(draw_levels_follow_their_list_into_another)
     TIDE_CHECK(to.matrices[runs[1]->mesh3.first].c3.x == 0.5f && to.matrices[runs[1]->mesh3.first + 1u].c3.x == 2.5f);
     tide_draw_free(&from);
     tide_draw_free(&to);
+}
+
+typedef struct level_instance {
+    tide_float4x4 transform;
+    float tag[4];
+} level_instance;
+
+static const tide_shader level_shader = {
+    .id = 79, .dims = 3, .vertex_size = sizeof(tide_vertex3), .instance_floats = 5,
+    .uniform_floats = 1, .bounds_position = 1,
+};
+static const float level_uniforms[4] = {0.25f, -2.0f, 3.5f, 4.0f};
+static const uint32_t alternating_levels[5] = {2, 0, 1, 2, 0};
+
+static void alternating_instances(level_instance given[5], const float tag)
+{
+    static const float depth[5] = {100.0f, 2.0f, 10.0f, 100.0f, 2.0f};
+    for (uint32_t i = 0; i < 5; i++) {
+        given[i] = (level_instance){.transform = at(0.1f * (float)(i + 1u), depth[i]),
+                                    .tag = {tag + (float)i, -(float)(i + 1u), 0.25f * (float)i, -0.0f}};
+        given[i].transform.c1.x = 0.03125f * (float)i;
+    }
+}
+
+static void record_level_instances(tide_draw_list *d, const bool shaded, const bool individual,
+                                    const level_instance *given, const uint32_t count)
+{
+    uint32_t mesh;
+    if (shaded) {
+        bool fill;
+        mesh = tide_draw_mesh_slot(d, TIDE_MESH_BYTES, 71, 72, 1, &fill);
+        if (fill) {
+            tide_draw_mesh_fill_bytes(d, mesh, corners, sizeof(tide_vertex3), 4, whole, 12);
+            tide_draw_mesh_levels(d, mesh, &two_levels);
+        }
+        if (individual) {
+            for (uint32_t i = 0; i < count; i++) tide_draw_shaded(d, &level_shader, mesh, given + i, level_uniforms, NULL, 0);
+        } else tide_draw_shaded_instances(d, &level_shader, mesh, given, count, level_uniforms, NULL, 0);
+    } else {
+        mesh = leveled_mesh(d);
+        tide_float4x4 transforms[10];
+        TIDE_REQUIRE(count <= 10);
+        for (uint32_t i = 0; i < count; i++) transforms[i] = given[i].transform;
+        if (individual) {
+            for (uint32_t i = 0; i < count; i++) tide_draw_instance(d, mesh, transforms[i], 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
+        } else tide_draw_instances(d, mesh, transforms, count, 0, TIDE_FILTER_BILINEAR, TIDE_WRAP_CLAMP);
+    }
+}
+
+// Read live commands, including their recorded state and complete owned payload,
+// rather than the backing runs that gathering can leave empty.
+static void check_level_instances(const tide_draw_list *d, const bool shaded, const level_instance *expected,
+                                   const uint32_t *levels, const uint32_t count, const uint32_t run_count,
+                                   const tide_depth depth, const tide_blend blend)
+{
+    uint32_t next = 0, live = 0;
+    for (uint32_t i = 0; i < d->count; i++) {
+        const tide_draw_command *c = &d->commands[i];
+        const tide_draw_run *run = NULL;
+        uint32_t mesh, first, n;
+        if (shaded) {
+            if (c->kind != TIDE_DRAW_SHADED) continue;
+            TIDE_REQUIRE(c->shaded.run < d->run_count);
+            run = &d->runs[c->shaded.run];
+            if (!run->shader || !run->count) continue;
+            TIDE_CHECK(run->shader == &level_shader);
+            TIDE_REQUIRE((uint64_t)run->uniforms + sizeof level_uniforms <= d->uniform_used);
+            TIDE_CHECK(memcmp(d->uniforms + run->uniforms, level_uniforms, sizeof level_uniforms) == 0);
+            mesh = run->mesh, first = run->first, n = run->count;
+        } else {
+            if (c->kind != TIDE_DRAW_MESH_3D || !c->mesh3.mesh || !c->mesh3.count) continue;
+            mesh = c->mesh3.mesh, first = c->mesh3.first, n = c->mesh3.count;
+        }
+        TIDE_REQUIRE(mesh && mesh <= d->mesh_count);
+        const tide_draw_mesh_data *m = &d->meshes[mesh - 1u];
+        TIDE_REQUIRE(m->base <= d->mesh_count);
+        const tide_draw_mesh_data *base = m->base ? &d->meshes[m->base - 1u] : m;
+        TIDE_REQUIRE(base->bytes && base->indices && base->vertex_count == 4 && base->vertex_size == sizeof(tide_vertex3)
+                     && base->index_count == 12);
+        TIDE_CHECK(memcmp(base->bytes, corners, sizeof corners) == 0 && memcmp(base->indices, whole, sizeof whole) == 0);
+        TIDE_CHECK(c->depth == depth && c->blend == blend);
+        for (uint32_t k = 0; k < n; k++) {
+            TIDE_REQUIRE(next < count);
+            const uint32_t level = levels[next];
+            TIDE_REQUIRE(level <= 2);
+            TIDE_CHECK(m->level == level);
+            const uint32_t indices = level ? two_levels.indices[level - 1u] : 12;
+            const uint32_t *triangles = level ? simpler + two_levels.first[level - 1u] : whole;
+            TIDE_REQUIRE(m->indices && m->index_count == indices);
+            TIDE_CHECK(memcmp(m->indices, triangles, indices * sizeof(uint32_t)) == 0);
+            const uint32_t cull = TIDE_CULL_BACK | (expected[next].transform.c0.x < 0.0f ? TIDE_DRAW_MIRRORED : 0u);
+            TIDE_CHECK(c->cull == cull);
+            if (shaded) {
+                const uint64_t at_byte = (uint64_t)first + (uint64_t)k * sizeof(level_instance);
+                TIDE_REQUIRE(at_byte + sizeof(level_instance) <= d->instance_used);
+                TIDE_CHECK(memcmp(d->instances + at_byte, expected + next, sizeof(level_instance)) == 0);
+            } else {
+                TIDE_REQUIRE((uint64_t)first + k < d->matrix_count);
+                TIDE_CHECK(memcmp(d->matrices + first + k, &expected[next].transform, sizeof(tide_float4x4)) == 0);
+            }
+            next++;
+        }
+        live++;
+    }
+    TIDE_CHECK(next == count && live == run_count);
+}
+
+TIDE_TEST(draw_levels_transparent_instances_keep_recorded_order)
+{
+    for (uint32_t shaded = 0; shaded < 2; shaded++) {
+        for (uint32_t individual = 0; individual < 2; individual++) {
+            for (uint32_t blend = TIDE_BLEND_ALPHA; blend <= TIDE_BLEND_MULTIPLY; blend++) {
+                tide_draw_list d = {0};
+                frame(&d);
+                tide_draw_set_depth(&d, TIDE_DEPTH_READ);
+                tide_draw_set_blend(&d, (tide_blend)blend);
+                level_instance given[5], expected[5];
+                alternating_instances(given, 10.0f);
+                memcpy(expected, given, sizeof expected);
+                record_level_instances(&d, shaded != 0, individual != 0, given, 5);
+                memset(given, 0, sizeof given);
+                // Preparation sees restored settings, while commands still read depth and blend.
+                tide_draw_unset_depth(&d);
+                tide_draw_unset_blend(&d);
+                for (uint32_t pass = 0; pass < 3; pass++) {
+                    if (pass) tide_draw_prepare(&d, NULL);
+                    check_level_instances(&d, shaded != 0, expected, alternating_levels, 5, 5,
+                                           TIDE_DEPTH_READ, (tide_blend)blend);
+                }
+                tide_draw_free(&d);
+            }
+        }
+    }
+}
+
+TIDE_TEST(draw_levels_transparent_append_keeps_owned_order)
+{
+    for (uint32_t shaded = 0; shaded < 2; shaded++) {
+        for (uint32_t individual = 0; individual < 2; individual++) {
+            tide_draw_list from = {0}, to = {0};
+            level_instance expected[10];
+            uint32_t levels[10];
+            // A different aspect must not recull the source's recorded instances.
+            tide_draw_screen_size(&to, tide_f2(1.0f, 1000.0f));
+            for (uint32_t copy = 0; copy < 2; copy++) {
+                frame(&from);
+                tide_draw_set_depth(&from, TIDE_DEPTH_READ);
+                tide_draw_set_blend(&from, TIDE_BLEND_MULTIPLY);
+                level_instance given[5];
+                alternating_instances(given, 20.0f + 10.0f * (float)copy);
+                for (uint32_t i = 0; i < 5; i++) given[i].transform.c3.y += 0.125f * (float)copy;
+                memcpy(expected + 5u * copy, given, sizeof given);
+                memcpy(levels + 5u * copy, alternating_levels, sizeof alternating_levels);
+                record_level_instances(&from, shaded != 0, individual != 0, given, 5);
+                memset(given, 0, sizeof given);
+                tide_draw_unset_depth(&from);
+                tide_draw_unset_blend(&from);
+                // Append itself prepares the source, then owns the result across source reuse.
+                tide_draw_append(&to, &from);
+            }
+            if (from.instance_used) memset(from.instances, 0, from.instance_used);
+            if (from.matrix_count) memset(from.matrices, 0, (size_t)from.matrix_count * sizeof(tide_float4x4));
+            for (uint32_t i = 0; i < from.mesh_count; i++) {
+                tide_draw_mesh_data *m = &from.meshes[i];
+                if (m->bytes) memset(m->bytes, 0, (size_t)m->vertex_count * m->vertex_size);
+                if (m->indices) memset(m->indices, 0, (size_t)m->index_count * sizeof(uint32_t));
+            }
+            tide_draw_free(&from);
+            for (uint32_t pass = 0; pass < 3; pass++) {
+                if (pass) tide_draw_prepare(&to, NULL);
+                check_level_instances(&to, shaded != 0, expected, levels, 10, 10, TIDE_DEPTH_READ, TIDE_BLEND_MULTIPLY);
+            }
+            tide_draw_free(&to);
+        }
+    }
+}
+
+TIDE_TEST(draw_levels_transparent_culling_keeps_mirrored_survivors_in_order)
+{
+    for (uint32_t shaded = 0; shaded < 2; shaded++) {
+        for (uint32_t individual = 0; individual < 2; individual++) {
+            tide_draw_list d = {0};
+            frame(&d);
+            tide_draw_set_frustum_culling(&d, true);
+            tide_draw_set_depth(&d, TIDE_DEPTH_READ);
+            const tide_float4x4 through = tide_scaling_f4x4(tide_f3(-1.0f, 1.0f, 1.0f));
+            tide_draw_set_transform_3d(&d, through);
+            level_instance visible[5], given[9], expected[5];
+            alternating_instances(visible, 30.0f);
+            for (uint32_t i = 0; i < 5; i++) {
+                if (i == 0 || i == 1 || i == 4) visible[i].transform.c0.x = -1.0f;
+                given[2u * i] = visible[i];
+                expected[i] = visible[i];
+                expected[i].transform = tide_mul_f4x4(through, visible[i].transform);
+                if (i < 4) {
+                    given[2u * i + 1u] = visible[i];
+                    given[2u * i + 1u].transform.c3.x = 10000.0f;
+                }
+            }
+            record_level_instances(&d, shaded != 0, individual != 0, given, 9);
+            memset(given, 0, sizeof given);
+            tide_draw_unset_transform_3d(&d);
+            tide_draw_unset_depth(&d);
+            tide_draw_unset_blend(&d);
+            for (uint32_t pass = 0; pass < 3; pass++) {
+                if (pass) tide_draw_prepare(&d, NULL);
+                check_level_instances(&d, shaded != 0, expected, alternating_levels, 5, 5, TIDE_DEPTH_READ, TIDE_BLEND_ALPHA);
+            }
+            tide_draw_free(&d);
+        }
+    }
+}
+
+TIDE_TEST(draw_levels_read_write_and_read_replace_still_gather_finest_first)
+{
+    static const tide_depth depths[2] = {TIDE_DEPTH_READ_WRITE, TIDE_DEPTH_READ};
+    static const tide_blend blends[2] = {TIDE_BLEND_ALPHA, TIDE_BLEND_REPLACE};
+    static const uint32_t order[5] = {1, 4, 2, 0, 3}, levels[5] = {0, 0, 1, 2, 2};
+    for (uint32_t shaded = 0; shaded < 2; shaded++) {
+        for (uint32_t individual = 0; individual < 2; individual++) {
+            for (uint32_t mode = 0; mode < 2; mode++) {
+                tide_draw_list d = {0};
+                frame(&d);
+                tide_draw_set_depth(&d, depths[mode]);
+                tide_draw_set_blend(&d, blends[mode]);
+                level_instance given[5], expected[5];
+                alternating_instances(given, 40.0f);
+                for (uint32_t i = 0; i < 5; i++) expected[i] = given[order[i]];
+                record_level_instances(&d, shaded != 0, individual != 0, given, 5);
+                check_level_instances(&d, shaded != 0, individual ? given : expected,
+                                       individual ? alternating_levels : levels, 5, individual ? 5 : 3, depths[mode], blends[mode]);
+                memset(given, 0, sizeof given);
+                tide_draw_unset_depth(&d);
+                tide_draw_unset_blend(&d);
+                for (uint32_t pass = 0; pass < 2; pass++) {
+                    tide_draw_prepare(&d, NULL);
+                    check_level_instances(&d, shaded != 0, expected, levels, 5, 3, depths[mode], blends[mode]);
+                }
+                tide_draw_free(&d);
+            }
+        }
+    }
 }

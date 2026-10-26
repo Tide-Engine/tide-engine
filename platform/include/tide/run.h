@@ -71,6 +71,12 @@
 #include "tide/host.h"
 #include "tide/pack.h"
 
+#ifdef TIDE_HAS_EMBED // The game was built for another program to run (tidec --embed): what it generated for that, and its layout
+#include "tide/embed_game.h"
+extern const tide_embed_game tide_game_embed;
+extern const tide_layout tide_game_layout;
+#endif
+
 static inline void tide_run_local_init(void *local)
 {
     tide_local_init(local);
@@ -142,6 +148,11 @@ static inline void tide_run_set_session(void *local, const uint32_t state, const
     tide_local_set_session(local, state, player, ping, server, open, room);
 }
 
+static inline void tide_run_set_invite(void *local, const char *invite)
+{
+    tide_local_set_invite(local, invite);
+}
+
 static inline void tide_run_connected(void *local)
 {
     tide_local_connected(local);
@@ -202,6 +213,10 @@ static inline void tide_run_rebind_resources(void *local, const bool same_memory
     tide_local_rebind_resources(local, same_memory);
 }
 
+// The game's shaders, every one its draws can go through, and NULL after
+// them, which tidec writes in the game's C.
+extern const tide_shader *const tide_game_shaders[];
+
 // The game as hosts run it.
 static const tide_host_game tide_host_game_api = {
     .game = &tide_game_api,
@@ -220,6 +235,9 @@ static const tide_host_game tide_host_game_api = {
     .sample_input = tide_run_sample_input,
 #endif
     .frame = tide_run_views,
+#ifdef TIDE_GAME_SHARDED
+    .frame_shards = tide_frame_shards,
+#endif
     .events = tide_run_events,
 #ifdef TIDE_HAS_AUDIO
     .audio = tide_run_audio_set,
@@ -231,6 +249,7 @@ static const tide_host_game tide_host_game_api = {
     .command_sent = tide_run_command_sent,
 #endif
     .set_session = tide_run_set_session,
+    .set_invite = tide_run_set_invite,
     .connected = tide_run_connected,
     .disconnected = tide_run_disconnected,
     .tick = tide_run_tick,
@@ -244,6 +263,12 @@ static const tide_host_game tide_host_game_api = {
     .correct_views = tide_run_local_correct,
 #endif
     .network = tide_network_get,
+    .voice = tide_voice_get,
+    .shaders = tide_game_shaders,
+#ifdef TIDE_HAS_EMBED
+    .layout = &tide_game_layout,
+    .embed = &tide_game_embed,
+#endif
 };
 
 _Noreturn static inline void tide_run(const tide_run_desc *desc)

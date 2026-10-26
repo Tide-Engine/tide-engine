@@ -269,7 +269,6 @@ static void leave(lobby *l, const int number)
         *l = (lobby){0};
         return;
     }
-    // Steam hands the lobby on when its owner goes: here, to the member there longest
     if (l->owner == number) l->owner = l->members[0].user;
     tell_members(l, number);
     tell_data(l);
@@ -309,7 +308,6 @@ void SteamAPI_ManualDispatch_RunFrame(const HSteamPipe hSteamPipe)
         if (!c->handle || c->frames == 0 || --c->frames > 0) continue;
         const SteamAPICallCompleted_t completed = {.m_hAsyncCall = c->handle, .m_iCallback = c->kind,
                                                    .m_cubParam = (uint32_t)c->size};
-        // Its own answers reach a user that nothing else does
         const bool was = deaf[hSteamPipe];
         deaf[hSteamPipe] = false;
         post(hSteamPipe, k_iSteamAPICallCompleted, &completed, (int)sizeof completed);
@@ -690,7 +688,6 @@ int SteamAPI_ISteamNetworkingMessages_ReceiveMessagesOnChannel(ISteamNetworkingM
     (void)self;
     (void)nLocalChannel;
     user *u = &users[me];
-    // The oldest message of a user whose session was accepted: the others wait in line behind none
     for (uint32_t k = 0; k < u->inbox_count && nMaxMessages > 0; k++) {
         const uint32_t at = (u->inbox_first + k) % INBOX;
         datagram *d = &u->inbox[at];
@@ -709,7 +706,6 @@ int SteamAPI_ISteamNetworkingMessages_ReceiveMessagesOnChannel(ISteamNetworkingM
         message->m_identityPeer.m_cbSize = 8;
         message->m_identityPeer.m_id.m_steamID64 = id_of(d->from);
         message->m_pfnRelease = release;
-        // Out of the line, which closes up behind it
         for (uint32_t j = k; j + 1 < u->inbox_count; j++) {
             u->inbox[(u->inbox_first + j) % INBOX] = u->inbox[(u->inbox_first + j + 1) % INBOX];
         }
@@ -738,7 +734,6 @@ bool SteamAPI_ISteamNetworkingMessages_CloseSessionWithUser(ISteamNetworkingMess
     if (!with) return false;
     users[me].accepted[with] = false;
     users[me].asked[with] = false;
-    // What was on its way from them is gone with the session
     user *u = &users[me];
     uint32_t kept = 0;
     for (uint32_t k = 0; k < u->inbox_count; k++) {

@@ -1,0 +1,6 @@
+<!-- With CLion's native debugger (and other IDEs that have it): breakpoints in .tide files. -->
+<idea-plugin>
+    <extensions defaultExtensionNs="cidr.debugger">
+        <lineBreakpointFileTypesProvider implementation="io.github.blenminer.tide.TideBreakpoints"/>
+    </extensions>
+</idea-plugin>

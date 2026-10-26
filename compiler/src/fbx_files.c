@@ -2,6 +2,7 @@
 // the existing canonical mesh/pose representation and the runtime boundary.
 #include "fbx_files.h"
 
+#include "tide/internal/count_text.h"
 #include "ufbx.h"
 
 #include <float.h>
@@ -12,11 +13,6 @@
 #include <string.h>
 
 #pragma STDC FP_CONTRACT OFF
-
-#define FBX_BYTES_MOST (512u << 20)
-#define FBX_NODES_MOST 65536u
-#define FBX_VERTICES_MOST (1u << 24)
-#define FBX_INDICES_MOST (3u << 25)
 
 typedef struct fbx_builder fbx_builder;
 typedef struct fbx_buffer {
@@ -33,6 +29,10 @@ struct fbx_builder {
     uint32_t num_views, num_accessors, num_meshes, num_skins;
     uint32_t vertices, indices;
     uint32_t *node_mesh, *node_skin;
+    // Work a file can ask for without output to show for it, counted over
+    // every node instancing a mesh: corners read, skin vertices checked,
+    // triangulation steps (fbx_files.h) and keys baked from every take.
+    uint64_t corners, skin_vertices, triangulation, baked_keys;
 };
 
 static bool fbx_fail(fbx_builder *b, const char *note, const char *fmt, ...)
@@ -48,14 +48,27 @@ static bool fbx_fail(fbx_builder *b, const char *note, const char *fmt, ...)
     return false;
 }
 
+// A limit of fbx_files.h refused the file. The message says what it has
+// against the limit and ends with the limit's name, so a report says which:
+// "has 20,000,000 vertices, more than the 16,777,216 one model holds
+// (TIDE_FBX_MAX_VERTICES)". `have` is UINT64_MAX where the count stopped at
+// the limit.
+#define FBX_PAST_LIMIT(b, note, LIMIT, what, have) fbx_past_limit(b, note, #LIMIT, (uint64_t)(LIMIT), what, (uint64_t)(have))
+static bool fbx_past_limit(fbx_builder *b, const char *note, const char *name, const uint64_t most, const char *what, const uint64_t have)
+{
+    char counted[32], limit[32];
+    if (have == UINT64_MAX) return fbx_fail(b, note, "has more %s than the %s one model holds (%s)", what, tide_count_text(most, limit), name);
+    return fbx_fail(b, note, "has %s %s, more than the %s one model holds (%s)", tide_count_text(have, counted), what, tide_count_text(most, limit), name);
+}
+
 static bool fbx_reserve(fbx_buffer *s, size_t more)
 {
     if (s->owner->failed) return false;
-    if (more > FBX_BYTES_MOST - s->size) return fbx_fail(s->owner, "split the model into smaller files", "needs more than 512 MiB of FBX conversion data");
+    if (more > TIDE_FBX_MAX_BYTES - s->size) return FBX_PAST_LIMIT(s->owner, "split the model into smaller files", TIDE_FBX_MAX_BYTES, "bytes of FBX conversion data", (uint64_t)s->size + more);
     size_t need = s->size + more;
     if (need <= s->room) return true;
     size_t room = s->room ? s->room : 256u;
-    while (room < need) room = room > FBX_BYTES_MOST / 2u ? FBX_BYTES_MOST : room * 2u;
+    while (room < need) room = room > TIDE_FBX_MAX_BYTES / 2u ? TIDE_FBX_MAX_BYTES : room * 2u;
     void *p = realloc(s->data, room);
     if (!p) return fbx_fail(s->owner, NULL, "can't allocate memory while importing FBX");
     s->data = p;
@@ -228,7 +241,7 @@ static bool fbx_weights(fbx_builder *b, fbx_buffer *attrs, const ufbx_mesh *mesh
         if (v->num_weights && skin->weights.data[v->weight_begin].weight > 0.0 && v->num_weights > most) most = v->num_weights;
     }
     uint32_t sets = (most + 3u) / 4u;
-    if ((uint64_t)count * sets * 24u > FBX_BYTES_MOST) return fbx_fail(b, NULL, "needs more than 512 MiB of FBX vertex influences");
+    if ((uint64_t)count * sets * 24u > TIDE_FBX_MAX_BYTES) return FBX_PAST_LIMIT(b, "split the model into smaller files", TIDE_FBX_MAX_BYTES, "bytes of vertex influences", (uint64_t)count * sets * 24u);
     for (uint32_t set = 0; set < sets; set++) {
         size_t start_joints = b->bin.size;
         for (uint32_t i = 0; i < count; i++) {
@@ -314,6 +327,10 @@ static bool fbx_mesh(fbx_builder *b, const ufbx_node *node)
         if (mesh->cache_deformers.count) return fbx_fail(b, "export bone animation instead of a vertex cache", "has FBX vertex-cache deformation, which Tide doesn't read");
         if (mesh->skin_deformers.count > 1u) return fbx_fail(b, "merge the skin deformers before exporting", "has several FBX skin deformers on one mesh");
         if (mesh->skin_deformers.count) {
+            if (mesh->num_vertices > TIDE_FBX_MAX_VERTICES - b->skin_vertices)
+                return FBX_PAST_LIMIT(b, "split the model into smaller files", TIDE_FBX_MAX_VERTICES, "skinned vertices (one each node that uses a mesh)",
+                                      (uint64_t)b->skin_vertices + mesh->num_vertices);
+            b->skin_vertices += mesh->num_vertices;
             skin = mesh->skin_deformers.data[0];
             if (skin->skinning_method != UFBX_SKINNING_METHOD_LINEAR && skin->skinning_method != UFBX_SKINNING_METHOD_RIGID) return fbx_fail(b, "export using linear blend skinning", "uses FBX dual-quaternion or other unsupported skinning");
             for (size_t i = 0; i < mesh->num_vertices; i++) {
@@ -324,9 +341,15 @@ static bool fbx_mesh(fbx_builder *b, const ufbx_node *node)
             if (!fbx_skin(b, node, skin, fallback)) return false;
         }
     }
-    if (mesh->num_indices > FBX_VERTICES_MOST || mesh->num_triangles > FBX_INDICES_MOST / 3u
-        || mesh->max_face_triangles > FBX_INDICES_MOST / 3u) return fbx_fail(b, "split the model into smaller files", "has too many FBX corners or triangles");
+    if (mesh->num_indices > TIDE_FBX_MAX_VERTICES || mesh->num_indices > TIDE_FBX_MAX_VERTICES - b->corners)
+        return FBX_PAST_LIMIT(b, "split the model into smaller files", TIDE_FBX_MAX_VERTICES, "polygon corners (one each node that uses a mesh)",
+                              (uint64_t)b->corners + mesh->num_indices);
+    if (mesh->num_triangles > TIDE_FBX_MAX_INDICES / 3u || mesh->max_face_triangles > TIDE_FBX_MAX_INDICES / 3u)
+        return fbx_past_limit(b, "split the model into smaller files", "TIDE_FBX_MAX_INDICES", TIDE_FBX_MAX_INDICES / 3u, "triangles in a mesh",
+                              mesh->num_triangles > mesh->max_face_triangles ? mesh->num_triangles : mesh->max_face_triangles);
+    b->corners += mesh->num_indices;
     uint32_t *map = malloc(mesh->num_indices * sizeof *map);
+    if (map) memset(map, 0xff, mesh->num_indices * sizeof *map);
     uint32_t *corners = malloc(mesh->num_indices * sizeof *corners);
     size_t tri_room = mesh->max_face_triangles * 3u;
     uint32_t *triangles = malloc((tri_room ? tri_room : 1u) * sizeof *triangles);
@@ -338,12 +361,18 @@ static bool fbx_mesh(fbx_builder *b, const ufbx_node *node)
     for (size_t p = 0; ok && p < mesh->material_parts.count; p++) {
         const ufbx_mesh_part *part = mesh->material_parts.data + p;
         if (!part->num_triangles) continue;
-        memset(map, 0xff, mesh->num_indices * sizeof *map);
         fbx_buffer indices = {.owner=b}, attrs = {.owner=b};
         uint32_t count = 0u, num_indices = 0u;
         for (size_t fi = 0; ok && fi < part->face_indices.count; fi++) {
             ufbx_face face = mesh->faces.data[part->face_indices.data[fi]];
             if (face.num_indices < 3u) continue;
+            const uint64_t steps = (uint64_t)face.num_indices * face.num_indices;
+            if (steps > TIDE_FBX_MAX_TRIANGULATION - b->triangulation) {
+                ok = FBX_PAST_LIMIT(b, "split its largest polygons, or the model into smaller files", TIDE_FBX_MAX_TRIANGULATION,
+                                    "steps to cut its polygons into triangles (each polygon's corners squared)", b->triangulation + steps);
+                break;
+            }
+            b->triangulation += steps;
             uint32_t n = ufbx_triangulate_face(triangles, tri_room, mesh, face);
             if (!n || (size_t)n * 3u > tri_room) { ok = fbx_fail(b, NULL, "has an FBX polygon that can't be triangulated"); break; }
             for (uint32_t k = 0; ok && k < n * 3u; k++) {
@@ -354,7 +383,8 @@ static bool fbx_mesh(fbx_builder *b, const ufbx_node *node)
                 num_indices++;
             }
         }
-        if (ok && ((uint64_t)b->vertices + count > FBX_VERTICES_MOST || (uint64_t)b->indices + num_indices > FBX_INDICES_MOST)) ok = fbx_fail(b, "split the model into smaller files", "has more vertices or indices than a mesh holds");
+        if (ok && (uint64_t)b->vertices + count > TIDE_FBX_MAX_VERTICES) ok = FBX_PAST_LIMIT(b, "split the model into smaller files", TIDE_FBX_MAX_VERTICES, "vertices", (uint64_t)b->vertices + count);
+        if (ok && (uint64_t)b->indices + num_indices > TIDE_FBX_MAX_INDICES) ok = FBX_PAST_LIMIT(b, "split the model into smaller files", TIDE_FBX_MAX_INDICES, "triangle corners", (uint64_t)b->indices + num_indices);
         if (ok) {
             b->vertices += count;
             b->indices += num_indices;
@@ -378,6 +408,8 @@ static bool fbx_mesh(fbx_builder *b, const ufbx_node *node)
         }
         free(indices.data);
         free(attrs.data);
+        // The next part starts with no corner numbered; this part's alone are.
+        for (uint32_t i = 0; i < count; i++) map[corners[i]] = UINT32_MAX;
     }
     if (ok) ok = fbx_text(&b->meshes, "]}");
     free(map);
@@ -411,7 +443,7 @@ static bool fbx_channel(fbx_builder *b, fbx_buffer *samplers, fbx_buffer *channe
                         double begin_time, double duration)
 {
     if (!count) return true;
-    if (count > FBX_BYTES_MOST / 20u) return fbx_fail(b, NULL, "has too many FBX animation keys");
+    if (count > TIDE_FBX_MAX_BYTES / 20u) return fbx_past_limit(b, "shorten its takes' curves, or split the animation into several files", "TIDE_FBX_MAX_BYTES", TIDE_FBX_MAX_BYTES / 20u, "keys in one animation curve", count);
     fbx_buffer times = {.owner=b}, values = {.owner=b};
     bool ok = true;
     float previous = -1.0f;
@@ -477,13 +509,31 @@ static bool fbx_animations(fbx_builder *b)
         // so every helper is sampled in the original take's time domain.
         opts.resample_rate = 60.0;
         opts.minimum_sample_rate = 60.0;
-        opts.max_keyframe_segments = FBX_BYTES_MOST / sizeof(ufbx_baked_quat);
+        opts.max_keyframe_segments = TIDE_FBX_MAX_BYTES / sizeof(ufbx_baked_quat);
         opts.step_handling = UFBX_BAKE_STEP_HANDLING_IDENTICAL_TIME;
-        opts.temp_allocator.memory_limit = FBX_BYTES_MOST;
-        opts.result_allocator.memory_limit = FBX_BYTES_MOST;
+        // Baking stops at its memory, so a take can't bake much past the keys
+        // left (TIDE_FBX_MAX_BAKED_KEYS): room for each as ufbx's largest
+        // key, and 16 MiB for node tables. The first take has all of
+        // TIDE_FBX_MAX_BYTES.
+        const uint64_t left = TIDE_FBX_MAX_BAKED_KEYS - b->baked_keys;
+        const uint64_t memory = left * sizeof(ufbx_baked_quat) + (16u << 20);
+        opts.temp_allocator.memory_limit = opts.result_allocator.memory_limit
+            = memory < TIDE_FBX_MAX_BYTES ? (size_t)memory : TIDE_FBX_MAX_BYTES;
         ufbx_error error;
         ufbx_baked_anim *anim = ufbx_bake_anim(b->scene, stack->anim, &opts, &error);
+        if (!anim && error.type == UFBX_ERROR_MEMORY_LIMIT && memory < TIDE_FBX_MAX_BYTES)
+            return FBX_PAST_LIMIT(b, "shorten its takes' curves, or split the animation into several files", TIDE_FBX_MAX_BAKED_KEYS, "baked animation keys across its takes", UINT64_MAX);
         if (!anim) return fbx_fail(b, NULL, "has FBX animation that can't be baked (%.160s)", error.description.data);
+        uint64_t keys = 0;
+        for (size_t n = 0; n < anim->nodes.count; n++) {
+            const ufbx_baked_node *node = anim->nodes.data + n;
+            keys += (uint64_t)node->translation_keys.count + node->rotation_keys.count + node->scale_keys.count;
+        }
+        if (keys > left) {
+            ufbx_free_baked_anim(anim);
+            return FBX_PAST_LIMIT(b, "shorten its takes' curves, or split the animation into several files", TIDE_FBX_MAX_BAKED_KEYS, "baked animation keys across its takes", b->baked_keys + keys);
+        }
+        b->baked_keys += keys;
         fbx_buffer samplers = {.owner=b}, channels = {.owner=b};
         bool ok = true;
         uint32_t count = 0u;
@@ -608,7 +658,8 @@ bool fbx_file_to_glb(const uint8_t *data, size_t size, bool skinned, uint8_t **o
     why[0] = note[0] = '\0';
     fbx_builder b = {.why=why, .note=note, .skinned=skinned};
     b.bin.owner = b.views.owner = b.accessors.owner = b.meshes.owner = b.skins.owner = b.animations.owner = &b;
-    if (!data || !size || size > FBX_BYTES_MOST) return fbx_fail(&b, NULL, "has no FBX bytes, or more than 512 MiB");
+    if (!data || !size) return fbx_fail(&b, NULL, "has no FBX bytes");
+    if (size > TIDE_FBX_MAX_BYTES) return FBX_PAST_LIMIT(&b, "split the model into smaller files", TIDE_FBX_MAX_BYTES, "bytes", size);
     ufbx_load_opts opts = {0};
     opts.file_format = UFBX_FILE_FORMAT_FBX;
     opts.target_axes = ufbx_axes_right_handed_y_up;
@@ -621,15 +672,19 @@ bool fbx_file_to_glb(const uint8_t *data, size_t size, bool skinned, uint8_t **o
     opts.ignore_animation = !skinned;
     opts.skip_skin_vertices = !skinned;
     opts.use_blender_pbr_material = true;
-    opts.index_error_handling = UFBX_INDEX_ERROR_HANDLING_ABORT_LOADING;
+    // An index past its array (exporters write them: Synty's POLYGON packs have some) is clamped to the
+    // array's last element, as Blender and Unity read such files, and every index stays in range.
+    opts.index_error_handling = UFBX_INDEX_ERROR_HANDLING_CLAMP;
     opts.force_single_thread_ascii_parsing = true;
-    opts.temp_allocator.memory_limit = FBX_BYTES_MOST;
-    opts.result_allocator.memory_limit = FBX_BYTES_MOST;
+    opts.temp_allocator.memory_limit = TIDE_FBX_MAX_BYTES;
+    opts.result_allocator.memory_limit = TIDE_FBX_MAX_BYTES;
     ufbx_error error;
     b.scene = ufbx_load_memory(data, size, &opts, &error);
     if (!b.scene) return fbx_fail(&b, NULL, "isn't an FBX that decodes (%.160s)", error.description.data);
-    bool ok = b.scene->nodes.count && b.scene->nodes.count <= FBX_NODES_MOST && b.scene->anim_stacks.count <= FBX_NODES_MOST;
-    if (!ok) fbx_fail(&b, NULL, "has no FBX nodes, or more than 65536 nodes or animations");
+    bool ok = b.scene->nodes.count != 0;
+    if (!ok) fbx_fail(&b, NULL, "has no FBX nodes");
+    if (ok && b.scene->nodes.count > TIDE_FBX_MAX_NODES) ok = FBX_PAST_LIMIT(&b, "split the model into smaller files", TIDE_FBX_MAX_NODES, "nodes", b.scene->nodes.count);
+    if (ok && b.scene->anim_stacks.count > TIDE_FBX_MAX_NODES) ok = FBX_PAST_LIMIT(&b, "split the animation into several files", TIDE_FBX_MAX_NODES, "animation takes", b.scene->anim_stacks.count);
     if (ok) {
         b.node_mesh = malloc(b.scene->nodes.count * sizeof *b.node_mesh);
         b.node_skin = malloc(b.scene->nodes.count * sizeof *b.node_skin);
@@ -648,7 +703,7 @@ bool fbx_file_to_glb(const uint8_t *data, size_t size, bool skinned, uint8_t **o
     while (ok && json.size % 4u) ok = fbx_text(&json, " ");
     if (ok) {
         size_t total = 28u + json.size + b.bin.size;
-        if (total > FBX_BYTES_MOST) ok = fbx_fail(&b, "split the model into smaller files", "needs more than 512 MiB of converted FBX data");
+        if (total > TIDE_FBX_MAX_BYTES) ok = FBX_PAST_LIMIT(&b, "split the model into smaller files", TIDE_FBX_MAX_BYTES, "bytes of converted model data", total);
         else ok = fbx_word(&glb, 0x46546c67u) && fbx_word(&glb, 2u) && fbx_word(&glb, (uint32_t)total)
                && fbx_word(&glb, (uint32_t)json.size) && fbx_word(&glb, 0x4e4f534au) && fbx_bytes(&glb, json.data, json.size)
                && fbx_word(&glb, (uint32_t)b.bin.size) && fbx_word(&glb, 0x004e4942u) && fbx_bytes(&glb, b.bin.data, b.bin.size);

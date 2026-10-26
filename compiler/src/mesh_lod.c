@@ -600,6 +600,18 @@ void mesh_lod_make(const mesh_lod_source *s, mesh_lod *out)
     } else {
         memcpy(m.chart, m.place, (size_t)m.vertices * sizeof(uint32_t));
     }
+    if (s->tangent) {
+        // A normal-map seam may have identical position/UV/normal/color on
+        // both sides. Keep its bitangent sign in the chart identity alone:
+        // tangent direction and sign contribute nothing to the error metric.
+        uint8_t *side = room(m.vertices, sizeof *side);
+        uint32_t *chart = room(m.vertices, sizeof *chart);
+        for (uint32_t v = 0; v < m.vertices; v++) side[v] = s->tangent[(size_t)v * 4u + 3u] < 0.0f;
+        number_alike(chart, m.vertices, side, sizeof *side, sizeof *side, m.chart);
+        free(side);
+        free(m.chart);
+        m.chart = chart;
+    }
     m.point = room((size_t)m.positions * 3u, sizeof(double));
     for (uint32_t v = 0; v < m.vertices; v++) {
         for (uint32_t k = 0; k < 3u; k++) m.point[(size_t)m.place[v] * 3u + k] = (s->position[(size_t)v * 3u + k] - low[k]) / extent;

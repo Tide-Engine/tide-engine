@@ -1,5 +1,16 @@
 # Input devices and pixels in the platform layer
 
+## GUI editing and browser IME commits (2026-10-25)
+
+The hidden browser typing field preserves active composition instead of clearing
+its value on every intermediate input. Preedit stays out of the committed text
+queue. compositionend commits once; a duplicate final input is suppressed, and
+isComposing/keyCode 229 keys do not submit the GUI. deleteContentForward maps
+to Delete. Synthetic web_keys cases cover preedit, candidate Enter, duplicate
+commit and forward deletion. No real phone/IME session was exercised. Device
+layouts and match input sampling are unchanged. GUI-local caret/editing-key
+repeat and the standard host's optional clipboard callback are in gui.md.
+
 ## Input borrowing through helpers (2026-10-18)
 
 Ordinary synchronous functions/methods now take the caller's input parameter
@@ -17,7 +28,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 
 ### Runtime written by Claude for now
 
-- `platform/` (the platform layer), `demo/`, `bench/`, `relay/`, `builds/` and `packages/` are Claude's too, on the same terms.
+- `platform/` (the platform layer), `demo/`, `bench/`, `relay/` and `packages/` are Claude's too, on the same terms.
   - The platform layer reads keys by physical position everywhere. On the web, the page reads the DOM's `code`, never the typed character, which follows the keyboard layout. `platform/tests/web_keys.c` guards this with AZERTY-style events. Hosts and views should read input from `Devices` too, never the window's own (GLFW's key functions).
   - The characters typed, which do follow the layout, are a separate channel (`tide_devices.keyboard.text`, since the last poll) that the GUI and views read (`devices.keyboard.text`), and samples never. A poll takes up to `TIDE_TEXT_MAX` (32) of them, and the platform keeps the rest for the next polls, so a long paste comes over a few frames.
   - A key or mouse button pressed and released between two frames reads as held for one, on every platform, so taps aren't lost when frames are slow: each window keeps what's held and what was pressed since it was last asked (not GLFW's sticky keys, which also hold every key a frame past its release). A finger that touches and lifts between two polls does too (`engine/src/devices.c`).

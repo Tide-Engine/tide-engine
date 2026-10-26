@@ -1,5 +1,6 @@
 #include "game.h"
 #include "tide_test.h"
+#include "draw_test.h"
 
 #include <stdlib.h>
 
@@ -24,6 +25,7 @@ TIDE_TEST(render_targets_phase_order_and_explicit_sources)
     tide_devices devices = {0};
     tide_gui_begin(&gui, &devices, tide_f2(200, 100), NULL);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
+    tide_test_flatten(&draw);
     TIDE_CHECK(local.Buffers.targetThenWindow.x == 200 && local.Buffers.targetThenWindow.y == -25);
     TIDE_CHECK(local.Buffers.windowThenTarget.x == 158 && local.Buffers.windowThenTarget.y == -69);
     TIDE_CHECK(local.Buffers.projected3.x == 8 && local.Buffers.projected3.y == 6);
@@ -84,6 +86,7 @@ TIDE_TEST(render_targets_native_rebind_keeps_shared_targets_and_clears_cpu_refer
     local.Buffers.borrowed = (tide_render_target){.id = 99, .size = {.width = 1, .height = 1}};
     local.Buffers.beginTask = 1;
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
+    tide_test_flatten(&draw);
     TIDE_REQUIRE(local.arch0_tide_local_component_Graphic.count == 1 && local.tide_tasks_function_Keep.count == 1);
     const tide_entity graphic = *(const tide_entity *)tide_table_get(&local.arch0_tide_local_component_Graphic, &tide_columns_arch0_tide_local_component_Graphic, 0, 0);
     tide_entity object = {0};
@@ -116,7 +119,9 @@ TIDE_TEST(render_targets_native_rebind_keeps_shared_targets_and_clears_cpu_refer
     // The retained async frame also loses CPU pointers while keeping its target.
     local.Buffers.image = cpu;
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
+    tide_test_flatten(&draw);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
+    tide_test_flatten(&draw);
     TIDE_CHECK(local.Buffers.resumed.target.id == target.id);
     TIDE_CHECK(local.Buffers.resumed.image.image.pixels == NULL && local.Buffers.resumed.retained == 77);
 

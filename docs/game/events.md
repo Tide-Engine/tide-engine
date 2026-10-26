@@ -89,7 +89,7 @@ This runs once per `RoundOver`. The query selects the players to visit; it does 
 
 Each `foreach` reads the current match at the handler's turn in the tick-end queue. Earlier handlers' completed writes and structural changes already applied are visible. Sends, spawns, adds, removes and destroys recorded by the handler remain deferred, including changes recorded inside a query loop. `Spawned` queries include the new entity; `Destroyed` queries include the entity before it goes.
 
-Rows are read-only. To act on an entity, send it an event or use an explicit `mut World` with the existing `Set` rules. A `Set` is visible to later query reads. The handler's own `mut` component parameter retains its usual copy/write-back behavior: a query reads its stored value until that handler finishes, and following handlers see the written-back value.
+Rows are read-only. To act on an entity, send it an event or use an explicit `mut World` with the existing `Set` rules. A `Set` is visible to later query reads. Setting the handler's current entity also replaces its active mutable component parameter immediately. Subsequent parameter edits retain usual write-back timing: queries see the value published by Set until the handler finishes, and following handlers see the written-back value.
 
 Async handlers and tasks cannot take queries yet. Local handlers' [recorded query rows](#other-entities) retain their own timing rules.
 
@@ -220,6 +220,10 @@ local event(Destroyed) ShotEnded(Body body, mut Fx fx, with Bullet)
 
 An event sent to an entity that's gone by its turn isn't heard, as it isn't handled. Local fields are the entity's whether or not it's still there: what a handler writes for an entity that's gone goes with the rest of its local fields, at that frame.
 
+Text, lists, maps, sets and grids follow the same recorded timing. The journal retains the values a handler may read, including through synchronous helpers, so later edits or destruction can't invalidate them. Unread container fields add no capture cost. A conditional read still counts as a possible read; copying a whole value reads its fields.
+
+Match values stay read-only. You can copy a list, map, set or text into local state using ordinary assignment; grids keep their existing read-only borrowing and copying restrictions. Attached local fields continue to read and write current local state.
+
 ### Other entities
 
 A local handler takes `query` parameters, as a [view](./views-and-the-match.md#other-entities) does, to go through entities other than the one its event was sent to:
@@ -244,7 +248,7 @@ local event(Blast blast) ShowBlast(mut Fx fx, query (Body body, with Fighter) fi
 
 - **Rows are from the tick that sent the event**, like what the handler takes of the entity the event was sent to: the match as that tick left it, whatever it is by the frame the handler runs in. They aren't blended. A handler of a [`verified`](#verified-handlers) event gets the confirmed tick's.
 - **They're the tick's once it's done**, after all its events and changes. An entity the tick destroyed is in no row, the one the event was sent to included, and an entity it spawned is in them. The handler's own components are still as the event's turn left them.
-- **Nothing in it says `verified`**: the handler's event says which tick. A binding can't be `mut`, and rows have the match's fields, without its text, lists, maps, sets and grids, which aren't heard yet.
+- **Nothing in it says `verified`**: the handler's event says which tick. Match fields, including captured text, lists, maps, sets and grids, stay read-only. Attached local fields use the entity's current local state when the handler runs. A binding such as `query (mut Fighter fighter) fighters` can write those local fields, including local containers. Local fields are never recorded in the event journal.
 - **A query of this machine's entities**, `query (Spark spark) sparks`, is the local world as it is when the handler runs. It's the only kind a handler of a local event takes.
 - **The entities are recorded once for a tick**, however many of its events have a handler that goes through them, and only for ticks that sent one.
 
@@ -365,21 +369,57 @@ local event(Spawned) CrateLanded(Body body, with Crate)
 - **Ticks that were skipped say nothing**: when a client's world went wrong and the server sent it again, the ticks in between were never run there. Existing entities that are newly available receive `Shown` as that world arrives; nothing a machine already had is shown again.
 - **A match that changes hands** goes on from the new host's last confirmed tick (see [Host migration](../multiplayer/matches.md#host-migration)), so the ticks after it are heard again on a machine that had heard them. The entities it had before aren't new to it, and aren't heard again.
 
+### When a field changes
+
+`Changed<Health.value>` hears a field of the match that changed over a tick, with what it was, `old`, and what it is, `value`. Nothing has to send it, and a view needn't keep the last value to compare:
+
+```csharp
+component Health
+{
+    int value = 100;
+    local float flash; // This machine's
+}
+
+local event(Changed<Health.value> change) Hurt(Body body, mut Health health, mut Fx fx)
+{
+    if (change.value < change.old) health.flash = 1; // It went down
+    fx.numbers.Add(DamageNumber { at = body.position, amount = change.old - change.value });
+}
+
+// A singleton's field: the handler runs once, and takes no components
+local event(Changed<Score.points> change) Cheer(mut Fx fx)
+{
+    fx.confetti = change.value - change.old;
+}
+```
+
+- **A change is the tick's.** As a tick ends, after its events and changes are done, the field is compared with what it was as the tick began. Several writes in a tick are one change, from the first value to the last, and a field written back to what it was didn't change. It's compared bit for bit, as the match's hash compares it.
+- **It's sent to the entity whose field changed**, which its handler takes components of, as the tick left it. A singleton's change is sent to the world.
+- **Only fields that were there before and after change.** Spawning, destroying, adding or removing the component, and an entity this machine comes to have, change nothing: `Spawned`, `Destroyed`, `Shown` and `Hidden` say those.
+- **The path goes through structs**: `Changed<Unit.stats.level>` watches one field of a struct in a component. A field of text, a list, a map, a set or a grid can't be watched; watch a count or a version kept beside it.
+- **It's like any match event a local handler hears.** It's heard once under rollback, `verified` hears it once the server has confirmed the tick, and ownership filters work. Only the field is compared, and only on machines with a handler of it, so the match's bytes, hash and traffic are what they'd be without it.
+- **Its handlers are local.** Match code reacts where it changes the field, or sends an event from there.
+
+### Ownership filters
+
+Use `with ownership` or `without ownership` as in a view:
+
+```csharp
+// Only this machine's own fighter shakes the screen.
+local event(Hit) Shake(mut Fx fx, with ownership)
+{
+    fx.shake = 0.2;
+}
+```
+
+The filter uses the owner recorded at the event's turn, after its match handlers ran. Transferring ownership later, removing `Owner` or destroying the entity before the next frame doesn't redirect the event. No `Owner` or `Session` parameter is needed. `without ownership` includes other players' entities and entities with no permitted `Owner`; `with Owner, without ownership` additionally requires that component.
+
+The same filters work on `verified` handlers, using their confirmed recording. Ordinary predicted events retain their once-under-replay rule, including when a correction changes only the captured ownership. `Shown` and `Hidden` use their respective delivered endpoints: gaining or losing ownership changes availability for an ownership-filtered handler. A filter alone targets an entity and makes a `Spawned` or `Destroyed` handler hear the match's events. Local-world events, `Forgotten` and query row filters don't accept ownership.
+
 ### What isn't there yet
 
-- **Text, lists, maps, sets and grids of the match** aren't heard. Naming one, in the event or in a component or singleton the handler takes, is an error that says so, and a copy of a component that has one has it empty. Local state has them as ever.
+- **Container capture follows possible reads**, including through helpers and borrowed queries. Unread container fields are omitted; explicit whole-value copies read their fields. Captured event-payload containers contribute their contents to replay occurrence identity. Local fields use current local state.
 - **The `World`**, which is the match as it is now and not as the event left it. Nor `Devices` or the input.
-- **`with ownership`.** A handler takes `Owner owner` and `Session session`, and compares:
-
-  ```csharp
-  // Only this machine's own fighter shakes the screen
-  local event(Hit) Shake(Owner owner, Session session, mut Fx fx)
-  {
-      if (owner.player != session.player) return;
-      fx.shake = 0.2;
-  }
-  ```
-
 - **`async`.** A local handler of one of the match's events starts a [task](./tasks.md) instead, by calling an async function with what the task needs.
 - **`verified` components beside a predicted event.** A handler that hears a tick as it's predicted takes the match as that tick left it.
 

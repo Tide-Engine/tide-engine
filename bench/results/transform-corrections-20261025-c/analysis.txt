@@ -1,0 +1,27 @@
+Validated 24 processes, 288 rows; excluded contended processes: ['release-position-r1', 'web-release-position-r2', 'release-both-r2']
+Milliseconds, medians of process medians. Combined includes correction + decay + minimal view.
+preset count scenario | Transform plain position both | both-plain
+release       100 steady    | 0.001528 0.001544 0.002270 0.001975 | +0.000431
+release       100 unchanged | 0.001534 0.001566 0.005477 0.007819 | +0.006253
+release       100 sparse    | 0.001553 0.001606 0.005464 0.008044 | +0.006437
+release       100 dense     | 0.001528 0.001547 0.007161 0.016317 | +0.014770
+release      1000 steady    | 0.014637 0.015325 0.022034 0.018681 | +0.003356
+release      1000 unchanged | 0.014584 0.015362 0.054083 0.077488 | +0.062125
+release      1000 sparse    | 0.014666 0.015369 0.054756 0.079375 | +0.064006
+release      1000 dense     | 0.014728 0.015434 0.071875 0.162380 | +0.146945
+release     10000 steady    | 0.147344 0.147403 0.222025 0.189292 | +0.041889
+release     10000 unchanged | 0.148266 0.154059 0.547913 0.790175 | +0.636116
+release     10000 sparse    | 0.148541 0.153725 0.555458 0.804203 | +0.650478
+release     10000 dense     | 0.148797 0.155697 0.739027 1.760011 | +1.604314
+web-release   100 steady    | 0.004416 0.004609 0.005131 0.004888 | +0.000278
+web-release   100 unchanged | 0.004384 0.004472 0.010553 0.011347 | +0.006875
+web-release   100 sparse    | 0.003903 0.002403 0.011730 0.011453 | +0.009050
+web-release   100 dense     | 0.003478 0.002397 0.012575 0.021172 | +0.018775
+web-release  1000 steady    | 0.022259 0.021706 0.026148 0.026484 | +0.004778
+web-release  1000 unchanged | 0.022159 0.022072 0.084955 0.112488 | +0.090416
+web-release  1000 sparse    | 0.021869 0.021800 0.085625 0.112678 | +0.090878
+web-release  1000 dense     | 0.021844 0.021944 0.110759 0.208831 | +0.186887
+web-release 10000 steady    | 0.221091 0.222747 0.254794 0.261409 | +0.038662
+web-release 10000 unchanged | 0.219019 0.219900 0.846700 1.126181 | +0.906281
+web-release 10000 sparse    | 0.218609 0.220253 0.859975 1.155244 | +0.934991
+web-release 10000 dense     | 0.219200 0.220778 1.280230 2.614650 | +2.393872

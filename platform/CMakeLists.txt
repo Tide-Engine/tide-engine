@@ -1,7 +1,7 @@
 # The platform layer: a window, the frame loop, input devices and the renderer,
 # written against src/gpu.h, with Vulkan (src/gpu_vk.c, on desktop and Android), OpenGL
 # (src/gpu_gl.c) and WebGPU (web/gpu_web.c) under it. Hosts and views link it;
-# the simulation never does (see AGENTS.md).
+# the simulation never does.
 file(GLOB TIDE_PLATFORM_SOURCES CONFIGURE_DEPENDS src/*.c)
 if(TIDE_WEB)
     list(REMOVE_ITEM TIDE_PLATFORM_SOURCES "${CMAKE_CURRENT_SOURCE_DIR}/src/gpu_vk.c") # The web has WebGPU
@@ -19,6 +19,12 @@ else()
         add_test(NAME tide_spirv_shaders_valid
             COMMAND "${CMAKE_COMMAND}" "-DTOOL=${TIDE_SPIRV_SHADERS_PATH}" "-DSPIRV_VAL=${TIDE_SPIRV_VAL}"
                 "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/spirv_shaders" -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/spirv_shaders.cmake")
+    endif()
+    # ...and their HLSL, Unity's, compiles with fxc, where there's one (cmake/HlslTests.cmake)
+    if(TIDE_FXC)
+        add_test(NAME tide_hlsl_shaders_valid
+            COMMAND "${CMAKE_COMMAND}" "-DTOOL=${TIDE_SPIRV_SHADERS_PATH}" "-DFXC=${TIDE_FXC}"
+                "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/hlsl_shaders" -P "${PROJECT_SOURCE_DIR}/compiler/tests/expect_hlsl.cmake")
     endif()
     # The prebuilt library is compiled with Khronos's headers (third_party/vulkan), under Apache 2.0
     install(FILES third_party/vulkan/LICENSE.md third_party/vulkan/Apache-2.0.txt DESTINATION licenses/vulkan-headers
@@ -159,6 +165,7 @@ if(TIDE_WEB)
         "${TIDE_WASI_SYSROOT}/lib/${TIDE_WASI_TARGET}/libc.a" "${TIDE_WASI_SYSROOT}/lib/${TIDE_WASI_TARGET}/libm.a"
         DESTINATION wasi/sysroot/lib/${TIDE_WASI_TARGET} COMPONENT tide)
     install(FILES "${TIDE_WASI_BUILTINS}" DESTINATION wasi RENAME libclang_rt.builtins.a COMPONENT tide)
+    install(DIRECTORY "${TIDE_WASI_LICENSES}/" DESTINATION licenses COMPONENT tide)
     # Managed matches are reactors with isolated, non-shared memory, rather
     # than browser programs using wasi-threads.
     install(DIRECTORY "${TIDE_WASI_SYSROOT}/include/wasm32-wasip1" DESTINATION wasi/sysroot/include COMPONENT tide
@@ -184,6 +191,7 @@ elseif(MINGW)
     list(TRANSFORM mingw_libs PREPEND "${mingw_target}/lib/")
     install(FILES ${mingw_libs} DESTINATION mingw/sysroot/x86_64-w64-mingw32/lib COMPONENT tide)
     install(FILES "${TIDE_MINGW_BUILTINS}" DESTINATION mingw COMPONENT tide)
+    install(DIRECTORY "${TIDE_MINGW_LICENSES}/" DESTINATION licenses COMPONENT tide)
 elseif(TIDE_ANDROID)
     # tide builds Android games against the NDK the user has (see
     # compiler/cli/android.c), so only the platform layer for each CPU, and
@@ -196,6 +204,29 @@ endif()
 # On Windows, only the MinGW build's platform layer goes in the package.
 if(TIDE_PACKAGE_LIBS)
     install(FILES $<TARGET_FILE:tide_platform> DESTINATION ${TIDE_PACKAGE_LIBS} COMPONENT tide)
+    # The library has the font in it (public domain), and stb_truetype, whose
+    # license is the end of its header: that part, as the file's own text.
+    install(FILES font/LICENSE.txt DESTINATION licenses/tuffy COMPONENT tide)
+    set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS third_party/stb_truetype.h)
+    file(READ third_party/stb_truetype.h stbtt_text)
+    string(FIND "${stbtt_text}" "This software is available under 2 licenses" stbtt_start)
+    string(FIND "${stbtt_text}" "*/" stbtt_end REVERSE)
+    if(stbtt_start EQUAL -1 OR stbtt_end LESS stbtt_start)
+        message(FATAL_ERROR "No license at the end of platform/third_party/stb_truetype.h")
+    endif()
+    math(EXPR stbtt_length "${stbtt_end} - ${stbtt_start}")
+    string(SUBSTRING "${stbtt_text}" ${stbtt_start} ${stbtt_length} stbtt_text)
+    set(stbtt_license "${CMAKE_CURRENT_BINARY_DIR}/licenses/stb_truetype/LICENSE")
+    set(stbtt_old "")
+    if(EXISTS "${stbtt_license}")
+        file(READ "${stbtt_license}" stbtt_old)
+    endif()
+    if(NOT stbtt_old STREQUAL stbtt_text)
+        file(WRITE "${stbtt_license}" "${stbtt_text}")
+    endif()
+    install(FILES "${stbtt_license}" DESTINATION licenses/stb_truetype COMPONENT tide)
+    unset(stbtt_text)
+    unset(stbtt_old)
 endif()
 
 # Carrying a world over to a build whose data layout changed, for hot
@@ -242,6 +273,38 @@ target_link_libraries(tide_platform_jobs PRIVATE tide_platform)
 add_test(NAME tide_platform_jobs COMMAND tide_platform_jobs)
 set_tests_properties(tide_platform_jobs PROPERTIES TIMEOUT 120)
 
+# Tide inside another program's frame (tide/embed.h): no window, GPU or audio device.
+tide_add_game(tide_platform_embed SOURCES tests/embed.tide NAME game EMBED
+    HOST tests/embed.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+target_include_directories(tide_platform_embed PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
+target_link_libraries(tide_platform_embed PRIVATE tide_platform)
+# Built on the web too, where it needs a page's imports (tide.js), which Node's WASI runner hasn't
+if(NOT TIDE_WEB)
+    add_test(NAME tide_platform_embed COMMAND tide_platform_embed)
+    set_tests_properties(tide_platform_embed PROPERTIES TIMEOUT 60)
+endif()
+
+# Time travel inside another program (tide/embed.h) and the timeline under it (tide/timeline.h): pausing,
+# stepping, showing kept ticks again, recording and replaying bit for bit, and going on from a tick shown
+tide_add_game(tide_platform_travel SOURCES tests/travel.tide NAME game EMBED
+    HOST tests/travel.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+target_include_directories(tide_platform_travel PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
+target_link_libraries(tide_platform_travel PRIVATE tide_platform)
+if(NOT TIDE_WEB)
+    add_test(NAME tide_platform_travel COMMAND tide_platform_travel)
+    set_tests_properties(tide_platform_travel PROPERTIES TIMEOUT 120)
+endif()
+
+# A sharded game inside another program: its view packet has every shard it watches
+tide_add_game(tide_platform_embed_shards SOURCES tests/embed_shards.tide NAME game EMBED
+    HOST tests/embed_shards.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+target_include_directories(tide_platform_embed_shards PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
+target_link_libraries(tide_platform_embed_shards PRIVATE tide_platform)
+if(NOT TIDE_WEB)
+    add_test(NAME tide_platform_embed_shards COMMAND tide_platform_embed_shards)
+    set_tests_properties(tide_platform_embed_shards PROPERTIES TIMEOUT 60)
+endif()
+
 # The font's glyphs, fitted to the pixels they're drawn on: no window or GPU.
 add_executable(tide_platform_font tests/font.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
 target_include_directories(tide_platform_font PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
@@ -259,6 +322,13 @@ add_executable(tide_platform_audio_forget tests/audio_forget.c "${PROJECT_SOURCE
 target_include_directories(tide_platform_audio_forget PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
 target_link_libraries(tide_platform_audio_forget PRIVATE tide)
 add_test(NAME tide_platform_audio_forget COMMAND tide_platform_audio_forget)
+
+# The desktop pool's cache groups on Linux and Android, from made-up sysfs trees.
+add_executable(tide_platform_cpu_groups tests/cpu_groups.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+target_include_directories(tide_platform_cpu_groups PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
+target_compile_definitions(tide_platform_cpu_groups PRIVATE _CRT_SECURE_NO_WARNINGS)
+target_link_libraries(tide_platform_cpu_groups PRIVATE tide)
+add_test(NAME tide_platform_cpu_groups COMMAND tide_platform_cpu_groups)
 
 # The page's microphone lifecycle and worklet bridge, with a fake device:
 # no browser permissions or physical microphone are needed.
@@ -453,12 +523,34 @@ if(NOT TIDE_ANDROID)
     target_link_libraries(tide_platform_shaders PRIVATE tide_platform)
     if(TIDE_WEB)
         tide_web_page(tide_platform_shaders SHELL web/test_shell.html)
-        tide_add_web_test(tide_platform_shaders TARGET tide_platform_shaders WEBGPU EXPECT "renderer: WebGPU" D3D11)
+        # Its WebGPU passes take CI's macOS runner 65-90 seconds, and longer beside other tests
+        tide_add_web_test(tide_platform_shaders TARGET tide_platform_shaders WEBGPU EXPECT "renderer: WebGPU" D3D11
+            SECONDS 240)
     else()
         add_test(NAME tide_platform_shaders COMMAND tide_platform_shaders)
         add_test(NAME tide_platform_shaders_opengl COMMAND tide_platform_shaders)
         tide_gpu_test(tide_platform_shaders)
         tide_gpu_test(tide_platform_shaders_opengl OPENGL)
+    endif()
+    # The standard host has the pipelines of a game's shaders made before they
+    # draw (tide_platform_prewarm): as the game starts, the ways the last run
+    # drew them, kept in its temporary cache folder, and once a shader of a
+    # kind drew, the others of that kind that way. Run twice, in a hidden
+    # window with each backend, in a folder of the test's; in a page, once.
+    tide_add_game(tide_platform_prewarm SOURCES tests/prewarm.tide NAME game HOST tests/prewarm.c)
+    target_include_directories(tide_platform_prewarm PRIVATE src)
+    target_link_libraries(tide_platform_prewarm PRIVATE tide_platform)
+    if(TIDE_WEB)
+        tide_web_page(tide_platform_prewarm SHELL web/test_shell.html)
+        tide_add_web_test(tide_platform_prewarm TARGET tide_platform_prewarm WEBGPU EXPECT "renderer: WebGPU")
+    else()
+        foreach(backend "" _opengl)
+            add_test(NAME tide_platform_prewarm${backend}
+                COMMAND "${CMAKE_COMMAND}" -DPROGRAM=$<TARGET_FILE:tide_platform_prewarm>
+                    "-DDIR=${CMAKE_CURRENT_BINARY_DIR}/tide_platform_prewarm${backend}" -P "${CMAKE_CURRENT_SOURCE_DIR}/tests/prewarm.cmake")
+        endforeach()
+        tide_gpu_test(tide_platform_prewarm)
+        tide_gpu_test(tide_platform_prewarm_opengl OPENGL)
     endif()
 else()
     # An app there too, to install and start by hand: OpenGL ES 3 has to
@@ -469,6 +561,41 @@ else()
 endif()
 
 if(NOT TIDE_ANDROID)
+    tide_add_game(tide_platform_texture_capacity SOURCES ../compiler/tests/shaders/texture_capacity.tide NAME game HOST tests/texture_capacity.c)
+    target_link_libraries(tide_platform_texture_capacity PRIVATE tide_platform)
+    if(TIDE_WEB)
+        tide_web_page(tide_platform_texture_capacity SHELL web/test_shell.html)
+        tide_add_web_test(tide_platform_texture_capacity TARGET tide_platform_texture_capacity WEBGPU EXPECT "renderer: WebGPU" D3D11)
+    else()
+        add_test(NAME tide_platform_texture_capacity COMMAND tide_platform_texture_capacity)
+        add_test(NAME tide_platform_texture_capacity_opengl COMMAND tide_platform_texture_capacity)
+        tide_gpu_test(tide_platform_texture_capacity)
+        tide_gpu_test(tide_platform_texture_capacity_opengl OPENGL)
+    endif()
+
+    tide_add_game(tide_platform_gpu_functions SOURCES ../compiler/tests/e2e/gpu_functions.tide NAME game HOST tests/gpu_functions.c)
+    target_link_libraries(tide_platform_gpu_functions PRIVATE tide_platform)
+    if(TIDE_WEB)
+        tide_web_page(tide_platform_gpu_functions SHELL web/test_shell.html)
+        tide_add_web_test(tide_platform_gpu_functions TARGET tide_platform_gpu_functions WEBGPU EXPECT "renderer: WebGPU" D3D11)
+    else()
+        add_test(NAME tide_platform_gpu_functions COMMAND tide_platform_gpu_functions)
+        add_test(NAME tide_platform_gpu_functions_opengl COMMAND tide_platform_gpu_functions)
+        tide_gpu_test(tide_platform_gpu_functions)
+        tide_gpu_test(tide_platform_gpu_functions_opengl OPENGL)
+    endif()
+
+    tide_add_game(tide_platform_float_bits SOURCES ../compiler/tests/shaders/float_bits.tide NAME game HOST tests/float_bits.c)
+    target_link_libraries(tide_platform_float_bits PRIVATE tide_platform)
+    if(TIDE_WEB)
+        tide_web_page(tide_platform_float_bits SHELL web/test_shell.html)
+        tide_add_web_test(tide_platform_float_bits TARGET tide_platform_float_bits WEBGPU EXPECT "renderer: WebGPU")
+    else()
+        add_test(NAME tide_platform_float_bits COMMAND tide_platform_float_bits)
+        add_test(NAME tide_platform_float_bits_opengl COMMAND tide_platform_float_bits)
+        tide_gpu_test(tide_platform_float_bits)
+        tide_gpu_test(tide_platform_float_bits_opengl OPENGL)
+    endif()
     # Variable influence streams, deterministic pose samples, generated skin stage and matching shadow draws.
     tide_add_game(tide_platform_skinned SOURCES tests/skinned.tide NAME game HOST tests/skinned.c)
     target_link_libraries(tide_platform_skinned PRIVATE tide_platform)
@@ -558,34 +685,40 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     # its own, a frame at a time together on a made-up network. A game whose
     # Main is the match's, where the first player opens it and the others join,
     # and one that starts in a menu, where the script has them open and join by
-    # the rooms' codes: every player's pictures are read, and a run repeats byte
-    # for byte. What such a run refuses before it opens anything needs no GPU.
+    # the rooms' codes, and one whose script has players leave, drop and rejoin:
+    # every player's pictures are read, and a run repeats byte for byte. What
+    # such a run refuses before it opens anything needs no GPU.
     # Its network alone, with no window at all (tests/players_net.c): three
     # processes that send text through it and check what arrives, frame by
-    # frame, and one that ends before the run does. It starts processes and
-    # listens on this machine, with no GPU, so every desktop's tests run it.
+    # frame, one that ends before the run does, and one that drops and rejoins.
+    # It starts processes and listens on this machine, with no GPU, so every
+    # desktop's tests run it.
     add_executable(tide_platform_players_net tests/players_net.c)
     target_include_directories(tide_platform_players_net PRIVATE src)
     target_link_libraries(tide_platform_players_net PRIVATE tide_platform)
     add_test(NAME tide_platform_players_net COMMAND tide_platform_players_net)
     add_test(NAME tide_platform_players_net_ended COMMAND tide_platform_players_net die)
-    set_tests_properties(tide_platform_players_net tide_platform_players_net_ended PROPERTIES TIMEOUT 60)
+    add_test(NAME tide_platform_players_net_drop COMMAND tide_platform_players_net drop)
+    set_tests_properties(tide_platform_players_net tide_platform_players_net_ended tide_platform_players_net_drop PROPERTIES TIMEOUT 60)
 
     tide_add_game(tide_platform_players SOURCES tests/players.tide)
     tide_add_game(tide_platform_players_menu SOURCES tests/players_menu.tide)
+    tide_add_game(tide_platform_players_leave SOURCES tests/players_leave.tide)
     if(TIDE_NODE)
         add_test(NAME tide_platform_players
             COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/players.mjs" $<TARGET_FILE:tide_platform_players>
-                $<TARGET_FILE:tide_platform_players_menu> "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_players-run")
+                $<TARGET_FILE:tide_platform_players_menu> $<TARGET_FILE:tide_platform_players_leave>
+                "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_players-run")
         set_tests_properties(tide_platform_players PROPERTIES TIMEOUT 180)
         tide_gpu_test(tide_platform_players)
         add_test(NAME tide_platform_players_refused
             COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/players.mjs" $<TARGET_FILE:tide_platform_players>
-                $<TARGET_FILE:tide_platform_players_menu> "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_players-refused" refused)
+                $<TARGET_FILE:tide_platform_players_menu> $<TARGET_FILE:tide_platform_players_leave>
+                "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_players-refused" refused)
     endif()
 
-    # A run nobody watches (TIDE_HIDDEN in the environment, as an agent's
-    # shell and a build server have it): no window shows, a game or a host
+    # A run nobody watches (TIDE_HIDDEN in the environment, as a build
+    # server has it): no window shows, a game or a host
     # that only its window's closing would end doesn't start, and a stop shows
     # no dialog. None of that needs a window. That a run with no window and a
     # test's hidden window go as they do without the variable, but that the

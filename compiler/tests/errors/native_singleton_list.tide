@@ -1,0 +1,4 @@
+// expect: 'Tuning' holds [Native] state, so its other fields are the root's on every shard, sent as they are: 'pulls' is List<int>
+settings { shards = true; reach = 8; }
+scene Main { }
+singleton Tuning { [Native] long handle; List<int> pulls; }

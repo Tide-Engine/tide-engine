@@ -1,0 +1,10 @@
+// expect: 'Changed<Score.points>' is a singleton's, which no entity has, so 'Scored' can't take components
+component Health { int value; }
+singleton Score { int points; }
+scene Main { }
+
+event(Spawned) Setup(with Main) { Spawn(Health); }
+
+system Count(mut Score score) { score.points += 1; }
+
+local event(Changed<Score.points>) Scored(Health health) { }

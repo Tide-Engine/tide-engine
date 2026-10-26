@@ -1,18 +1,12 @@
 #pragma once
 
-// The match of local_events_same.tide and of local_events_plain.tide, which is
-// that game without its events for local code and their local handlers. Such
-// events cost the match nothing, so both games' worlds are the same, and so is
-// what their machines send each other. Each game's test plays these scripts
-// and checks what comes out against the numbers below: the world's size, its
-// hash, its bytes (tide_world_pack), what a player who joins downloads (a
-// whole delta), a delta from an earlier tick, and the bytes a server and two
-// players send in a match of three seconds.
+// The match of local_events_same.tide and local_events_plain.tide (the same game without its local events and
+// handlers). Such events cost the match nothing, so both worlds, and what their machines send each other, are
+// the same. Each game's test plays these scripts and checks the numbers below.
 //
-// A world's bytes start with its struct, whose storage has pointers in it, so
-// they're one thing where pointers are 8 bytes and another where they're 4
-// (the web). When the engine changes how worlds are kept or sent on purpose,
-// the tests print what they got: both games have to print the same.
+// A world's bytes start with its struct, which holds pointers, so they differ where pointers are 4 bytes (the
+// web). When worlds' storage or transfer changes on purpose, the tests print what they got; both games must
+// print the same.
 
 #include <stdint.h>
 #include <stdio.h>
@@ -22,14 +16,13 @@
 #include "game.h"
 #include "tide_test.h"
 
-#define SAME_HASH UINT64_C(0x1E3BB9A8EA300D08)
-#define SAME_SERVER_SENT 29124u
-// Protocol 15 adds a 32-byte simulation ID to each of the two HELLOs.
-#define SAME_CLIENTS_SENT 11108u
+#define SAME_HASH UINT64_C(0x1A916BF89B28F567)
+#define SAME_SERVER_SENT 33156u
+#define SAME_CLIENTS_SENT 15332u
 #define SAME_WHOLE_SIZE 198u
-#define SAME_WHOLE UINT64_C(0x5A74BA01E604100F)
+#define SAME_WHOLE UINT64_C(0x45032E7DD3D03B67)
 #define SAME_DELTA_SIZE 91u
-#define SAME_DELTA UINT64_C(0x3AEB04F3781380A6)
+#define SAME_DELTA UINT64_C(0x6474D7B165C2EC4A)
 #if UINTPTR_MAX > 0xFFFFFFFFu
 #define SAME_WORLD_SIZE 296u
 #define SAME_PACKED_SIZE 531u
@@ -47,7 +40,6 @@ static uint64_t same_bytes_hash(const uint8_t *bytes, const uint32_t size)
     return h;
 }
 
-// The second player pushes now and then.
 static float same_push(const uint32_t tick)
 {
     return tick % 40u < 6u ? 1.0f : tick % 70u == 3u ? -2.0f : 0.0f;
@@ -85,13 +77,12 @@ static void same_match_check(tide_world *w, tide_world *base, void (*tick)(tide_
                (unsigned)whole_size, (unsigned long long)whole_hash, (unsigned)delta_size, (unsigned long long)delta_hash);
     }
     TIDE_CHECK(same);
-    TIDE_CHECK(w->Field.bounces > 4); // Balls did bounce, so the game with events did send them
+    TIDE_CHECK(w->Field.bounces > 4);
     free(packed);
     free(whole);
     free(delta);
 }
 
-// A transport that counts what goes out through it.
 typedef struct same_counted {
     tide_transport inner;
     uint64_t sent;
@@ -129,11 +120,8 @@ static void same_sample(void *user, const uint32_t tick, void *input)
     *(Controls *)input = (Controls){.push = *(const int *)user == 1 ? same_push(tick) : 0.0f};
 }
 
-// A server and two players on a loopback network with latency, for three
-// seconds of made-up time: the first player's machine hears the match's
-// events into `events`, if it's given a log, and `frame` runs after each of
-// its updates. What the machines sent is what the same match sends without
-// them.
+// A server and two players on a loopback network with latency, for three seconds of made-up time. If given a log,
+// the first player's machine hears the match's events into `events`, and `frame` runs after each of its updates.
 static void same_traffic_check(tide_event_log *events, void (*frame)(const tide_client *first))
 {
     static same_counted counted[3];
@@ -168,7 +156,7 @@ static void same_traffic_check(tide_event_log *events, void (*frame)(const tide_
     const uint64_t clients_sent = counted[1].sent + counted[2].sent;
     const tide_world *match = tide_server_world(server);
     TIDE_CHECK(match->Time.tick > 150 && match->Field.bounces > 6);
-    TIDE_CHECK(tide_client_status_of(clients[0]).again_ticks > 0); // It did predict the pushes wrong, and ran ticks again
+    TIDE_CHECK(tide_client_status_of(clients[0]).again_ticks > 0);
     for (int i = 0; i < 2; i++) TIDE_CHECK(tide_client_status_of(clients[i]).resyncs == 0);
     const bool same = server_sent == SAME_SERVER_SENT && clients_sent == SAME_CLIENTS_SENT;
     if (!same) printf("    server sent %lluu\n    clients sent %lluu\n", (unsigned long long)server_sent, (unsigned long long)clients_sent);

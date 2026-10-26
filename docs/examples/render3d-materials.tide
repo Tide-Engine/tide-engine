@@ -1,0 +1,316 @@
+settings { title = "Render3D: maps, cutout shadows and transparency"; }
+scene Main;
+
+asset Render3D.Mesh3D cube = "assets/render3d/cube.obj";
+asset Render3D.Mesh3D sphere = "assets/render3d/sphere.obj";
+asset Render3D.Mesh3D card = "assets/render3d/quad.obj";
+asset Texture tiles = "assets/render3d/tiles-base.png";
+asset Texture glow = "assets/render3d/tiles-emission.png";
+asset Texture leaves = "assets/render3d/leaves.png";
+[Raw] asset Texture normals = "assets/render3d/tiles-normal.png";
+[Raw] asset Texture orm = "assets/render3d/tiles-orm.png";
+[Raw] asset Texture heights = "assets/render3d/tiles-height.png";
+
+component Mapped { }
+component Foliage { }
+component Glass { }
+command SetHeight { float scale; }
+
+command(SetHeight change, PlayerID sender) ApplyHeight(mut Render3D.Material material, with Mapped)
+{
+    material.heightScale = Math.Clamp(change.scale, 0, 0.08);
+}
+
+local singleton Controls
+{
+    bool lightsCreated;
+    int exhibit;
+    bool open = true;
+    bool useOrm = true;
+    float normal = 1;
+    float ao = 1;
+    float emission = 1;
+    float roughness = 0.65;
+    float metallic = 1;
+    float height = 1;
+    float sentHeight = 1;
+    float cutoff = 0.5;
+    float opacity = 0.45;
+    float ambient = 0.8;
+    bool shadows = true;
+    float yaw = 0.35;
+    float pitch = 0.30;
+    float distance = 1; // Zoom multiplier over the distance fitting the active exhibit.
+    bool dragging;
+    float pinch;
+    int firstFinger;
+    int secondFinger;
+}
+
+event(Spawned) BuildScene(with Main)
+{
+    Spawn(Render3D.MeshRenderer { mesh = cube },
+        Render3D.Material { baseColor = Color(0.34, 0.36, 0.39), roughness = 0.9 },
+        Transform { localPosition = float3(0, -0.12, 0), localScale = float3(18, 0.24, 7) });
+    // Three exhibits spaced apart: the buttons move the camera between them.
+    Spawn(Mapped {}, Render3D.MeshRenderer { mesh = cube },
+        Render3D.Material { roughness = 1, metallic = 1, emission = float3(5), heightScale = 0.08 },
+        Transform { localPosition = float3(0, 1.05, 0), localScale = float3(1.8),
+                    localRotation = quaternion.Euler(0, -20deg, 0) });
+    Spawn(Foliage {}, Render3D.MeshRenderer { mesh = card },
+        Render3D.Material { mode = Render3D.SurfaceMode.Cutout, doubleSided = true, roughness = 0.8 },
+        Transform { localPosition = float3(-5, 1.4, 0), localScale = float3(2.4, 2.8, 1) });
+    Spawn(Render3D.MeshRenderer { mesh = sphere },
+        Render3D.Material { baseColor = Color(0.95, 0.7, 0.15), roughness = 0.28 },
+        Transform { localPosition = float3(5, 0.8, 0.8), localScale = float3(0.8) });
+    // Separate, nonintersecting cards make object sorting easy to inspect.
+    Spawn(Glass {}, Render3D.MeshRenderer { mesh = card },
+        Render3D.Material { mode = Render3D.SurfaceMode.Transparent, doubleSided = true,
+                           baseColor = Color(0.12, 0.85, 0.75), roughness = 0.25 },
+        Transform { localPosition = float3(4.65, 1.1, -0.55), localScale = float3(1.8, 2.2, 1) });
+    Spawn(Glass {}, Render3D.MeshRenderer { mesh = card },
+        Render3D.Material { mode = Render3D.SurfaceMode.Transparent, doubleSided = true,
+                           baseColor = Color(0.95, 0.26, 0.4), roughness = 0.25 },
+        Transform { localPosition = float3(5.35, 1.1, 0.15), localScale = float3(1.8, 2.2, 1) });
+}
+
+[Before(Render3D.Stages.Prepare)]
+view Lights(mut Controls controls)
+{
+    if (controls.lightsCreated) return;
+    controls.lightsCreated = true;
+    local Spawn(Render3D.DirectionalLight {
+        direction = float3(0.7, -1.3, 0.8), radiance = float3(4)
+    });
+    local Spawn(Render3D.DirectionalLight {
+        direction = float3(-1, -0.3, -1), radiance = float3(0.3, 0.4, 0.6), castShadows = false
+    });
+}
+
+// Captures are ordinary values. Texture resources stay on Material.
+void AdjustMaps(Render3D.SurfaceInput input, mut Render3D.Surface surface,
+    float normal, float ao, float emission, float roughness, float metallic, bool useOrm)
+{
+    surface.normal = Math.Normalize(Math.Lerp(input.normal, surface.normal, normal));
+    surface.occlusion = useOrm ? Math.Lerp(1, surface.occlusion, ao) : 1;
+    surface.emission *= emission;
+    surface.roughness = useOrm ? surface.roughness * roughness : roughness;
+    surface.metallic = useOrm ? surface.metallic * metallic : metallic;
+}
+
+void AdjustCutoff(Render3D.SurfaceInput input, mut Render3D.Coverage coverage, float cutoff)
+{
+    coverage.cutoff = cutoff;
+}
+
+void AdjustOpacity(Render3D.SurfaceInput input, mut Render3D.Coverage coverage, float opacity)
+{
+    coverage.alpha *= opacity;
+}
+
+[Before(Render3D.Stages.Prepare)]
+view MapMaterial(mut Render3D.Material material, with Mapped, Controls controls)
+{
+    material.baseMap = tiles;
+    material.normalMap = normals;
+    material.maskMap = orm;
+    material.emissionMap = glow;
+    material.heightMap = heights;
+    float normal = controls.normal;
+    float ao = controls.ao;
+    float emission = controls.emission;
+    float roughness = controls.roughness;
+    float metallic = controls.metallic;
+    bool useOrm = controls.useOrm;
+    material.shader = Render3D.Lit {
+        surface = (Render3D.SurfaceInput input, mut Render3D.Surface surface) =>
+            AdjustMaps(input, surface, normal, ao, emission, roughness, metallic, useOrm)
+    };
+}
+
+[Before(Render3D.Stages.Prepare)]
+view LeafMaterial(mut Render3D.Material material, with Foliage, Controls controls)
+{
+    material.baseMap = leaves;
+    float cutoff = controls.cutoff;
+    material.coverage = (Render3D.SurfaceInput input, mut Render3D.Coverage coverage) =>
+        AdjustCutoff(input, coverage, cutoff);
+}
+
+[Before(Render3D.Stages.Prepare)]
+view GlassMaterial(mut Render3D.Material material, with Glass, Controls controls)
+{
+    float opacity = controls.opacity;
+    material.coverage = (Render3D.SurfaceInput input, mut Render3D.Coverage coverage) =>
+        AdjustOpacity(input, coverage, opacity);
+}
+
+[Before(Render3D.Stages.Prepare)]
+view Camera(mut Render3D.Renderer renderer, mut Controls controls, Devices devices)
+{
+    float panelHeight = controls.open ? (controls.exhibit == 0 ? 256 : 200) : 96;
+    float panelTop = Screen.height - panelHeight;
+    var pointer = devices.pointer;
+    if (pointer.press.down) controls.dragging = Screen.Flip(pointer.position).y < panelTop;
+    if (!pointer.press.pressed) controls.dragging = false;
+    mut int fingers = 0;
+    mut float2 firstPosition = float2(0);
+    mut float2 secondPosition = float2(0);
+    mut int firstId = 0;
+    mut int secondId = 0;
+    foreach (var touch in devices.touchscreen.touches)
+    {
+        if (!touch.press.pressed || Screen.Flip(touch.startPosition).y >= panelTop) continue;
+        if (fingers == 0)
+        {
+            firstPosition = touch.position;
+            firstId = touch.id;
+        }
+        if (fingers == 1)
+        {
+            secondPosition = touch.position;
+            secondId = touch.id;
+        }
+        fingers += 1;
+    }
+    if (fingers >= 2)
+    {
+        float span = Math.Distance(firstPosition, secondPosition);
+        if (controls.pinch > 0 && firstId == controls.firstFinger && secondId == controls.secondFinger)
+            controls.distance *= controls.pinch / Math.Max(span, 1);
+        controls.pinch = span;
+        controls.firstFinger = firstId;
+        controls.secondFinger = secondId;
+        controls.dragging = false;
+    }
+    else
+    {
+        controls.pinch = 0;
+        if (controls.dragging)
+        {
+            controls.yaw -= pointer.delta.x * 0.008;
+            controls.pitch -= pointer.delta.y * 0.008;
+        }
+    }
+    if (Screen.Flip(devices.mouse.position).y < panelTop)
+        controls.distance *= Math.Pow(0.85, devices.mouse.scroll.y);
+    controls.pitch = Math.Clamp(controls.pitch, 0.05, 1.3);
+    controls.distance = Math.Clamp(controls.distance, 0.55, 2.5);
+    float x = controls.exhibit == 1 ? -5 : (controls.exhibit == 2 ? 5 : 0);
+    // Bounds cover the rotated unit cube (scaled 1.8), leaf card, or both glass
+    // cards and their sphere. The floor is a receiver, not part of the exhibit.
+    float3 center = float3(x, controls.exhibit == 1 ? 1.4 : (controls.exhibit == 2 ? 1.1 : 1.05),
+        controls.exhibit == 2 ? 0.525 : 0);
+    float3 half = controls.exhibit == 1 ? float3(1.2, 1.4, 0)
+        : (controls.exhibit == 2 ? float3(1.25, 1.1, 1.075) : float3(1.16, 0.9, 1.16));
+    float cosPitch = Math.Cos(controls.pitch);
+    float sinPitch = Math.Sin(controls.pitch);
+    float3 outward = float3(Math.Sin(controls.yaw) * cosPitch, sinPitch, -Math.Cos(controls.yaw) * cosPitch);
+    float3 right = float3(Math.Cos(controls.yaw), 0, Math.Sin(controls.yaw));
+    float3 up = Math.Cross(-outward, right);
+    float height = Math.Max(Screen.height, 1);
+    float tanHalf = Math.Tan(45deg * 0.5);
+    // Center the exhibit in the space above the panel, with a 15% inset.
+    float ndcY = Math.Clamp(panelHeight / height, 0, 0.9);
+    float halfVisible = (1 - ndcY) * 0.85;
+    float top = ndcY + halfVisible;
+    float bottom = ndcY - halfVisible;
+    float horizontal = Math.Max(Screen.width / height, 0.1) * tanHalf * 0.85;
+    mut float centerDepth = 1;
+    for (var i = 0; i < 8; i++)
+    {
+        float3 corner = half * float3((i & 1) == 0 ? -1 : 1,
+            (i & 2) == 0 ? -1 : 1, (i & 4) == 0 ? -1 : 1);
+        float y = Math.Dot(corner, up);
+        float z = Math.Dot(corner, -outward);
+        centerDepth = Math.Max(centerDepth, Math.Abs(Math.Dot(corner, right)) / horizontal - z);
+        centerDepth = Math.Max(centerDepth, (y - top * tanHalf * z) / (halfVisible * tanHalf));
+        centerDepth = Math.Max(centerDepth, (bottom * tanHalf * z - y) / (halfVisible * tanHalf));
+        centerDepth = Math.Max(centerDepth, 0.2 - z);
+    }
+    // Zoom scales the fitted distance; it is never clamped back to that fit.
+    float distance = centerDepth * (cosPitch + ndcY * tanHalf * sinPitch) / cosPitch * controls.distance;
+    float dy = ndcY * distance * tanHalf / (cosPitch + ndcY * tanHalf * sinPitch);
+    float3 target = center - float3(0, dy, 0);
+    float3 eye = target + outward * distance;
+    renderer.camera = Render3D.Camera {
+        position = eye, rotation = quaternion.LookRotation(target - eye, float3(0, 1, 0)), verticalFov = 45deg
+    };
+    renderer.background = Color(0.086, 0.086, 0.094);
+    renderer.ambientIrradiance = float3(controls.ambient);
+    renderer.shadows = controls.shadows;
+    renderer.shadowCenter = float3(0, 0.5, 0);
+    renderer.shadowExtent = 10;
+}
+
+[After(Render3D.Stages.Present)]
+view Overlay(mut Controls controls, with Mapped)
+{
+    GUI.SetTheme(GUITheme { radius = 6 });
+    float panelHeight = controls.open ? (controls.exhibit == 0 ? 256 : 200) : 96;
+    // A collapsed toolbar sits above the stats corner instead of covering it.
+    GUILayout.Area(Rect(12, Screen.height - panelHeight, Screen.width - 24, controls.open ? panelHeight - 12 : 44))
+    {
+        GUILayout.Horizontal()
+        {
+            if (GUILayout.Button(controls.open ? "Hide" : "Controls")) controls.open = !controls.open;
+            if (GUILayout.Button("Reset"))
+            {
+                controls.yaw = 0.35;
+                controls.pitch = 0.30;
+                controls.distance = 1;
+            }
+            if (GUILayout.Button("Zoom +")) controls.distance = Math.Max(0.55, controls.distance * 0.85);
+            if (GUILayout.Button("Zoom -")) controls.distance = Math.Min(2.5, controls.distance / 0.85);
+        }
+        if (controls.open)
+        {
+            GUILayout.Horizontal()
+            {
+                if (GUILayout.Button("PBR maps")) controls.exhibit = 0;
+                if (GUILayout.Button("Cutout")) controls.exhibit = 1;
+                if (GUILayout.Button("Blend")) controls.exhibit = 2;
+            }
+            if (controls.exhibit == 0)
+            {
+                GUILayout.Horizontal()
+                {
+                    GUILayout.Slider("Normal", controls.normal, 0, 2);
+                    GUILayout.Slider("Height", controls.height, 0, 1);
+                }
+                GUILayout.Horizontal()
+                {
+                    GUILayout.Slider("AO", controls.ao, 0, 1);
+                    GUILayout.Slider("Emission", controls.emission, 0, 3);
+                }
+                GUILayout.Horizontal()
+                {
+                    GUILayout.Slider("Roughness", controls.roughness, 0.05, 1);
+                    GUILayout.Slider("Metallic", controls.metallic, 0, 1);
+                }
+                GUILayout.Toggle("ORM texture", controls.useOrm);
+            }
+            if (controls.exhibit == 1)
+            {
+                GUILayout.Label("Alpha test also cuts the shadow");
+                GUILayout.Slider("Cutoff", controls.cutoff, 0.05, 0.95);
+                GUILayout.Toggle("Shadows", controls.shadows);
+                GUILayout.Label("Orbit behind the double-sided leaves");
+            }
+            if (controls.exhibit == 2)
+            {
+                GUILayout.Label("Orbit around overlapping colored cards");
+                GUILayout.Slider("Opacity", controls.opacity, 0, 1);
+                GUILayout.Label("Opaque sphere draws before sorted cards");
+                GUILayout.Label("No refraction or transparent shadows");
+            }
+            GUILayout.Label("Drag / swipe to orbit; pinch to zoom");
+        }
+    }
+    // Height is match material data. Use the ordinary command path to edit it.
+    if (controls.height != controls.sentHeight)
+    {
+        this.Send(SetHeight { scale = controls.height * 0.08 });
+        controls.sentHeight = controls.height;
+    }
+}

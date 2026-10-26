@@ -53,7 +53,42 @@ void tide_platform_players_room(const uint32_t player, char *out, const size_t s
     if (size) snprintf(out, size, "%s", code);
 }
 
+// What a script asked of this player's match, not taken by the host yet: more
+// than a frame's few are dropped
+#define ASKED_MOST 16u
+static tide_players_action asked[ASKED_MOST];
+static uint32_t asked_start, asked_count;
+
+static void ask(const tide_players_action action)
+{
+    if (asked_count < ASKED_MOST) asked[(asked_start + asked_count++) % ASKED_MOST] = action;
+}
+
+tide_players_action tide_platform_players_action(void)
+{
+    if (!asked_count) return TIDE_PLAYERS_NONE;
+    const tide_players_action action = asked[asked_start];
+    asked_start = (asked_start + 1u) % ASKED_MOST;
+    asked_count--;
+    return action;
+}
+
+void tide_platform_players_leave(void)
+{
+    ask(TIDE_PLAYERS_LEAVE);
+}
+
 #if defined(__wasm__) || defined(__ANDROID__)
+
+// No made-up network to fall silent on
+void tide_platform_players_drop(void)
+{
+}
+
+void tide_platform_players_rejoin(void)
+{
+    ask(TIDE_PLAYERS_REJOIN);
+}
 
 // Runs with no window are a desktop's (tide_platform_open_headless).
 void tide_platform_players_configure(const tide_headless_desc *desc)
@@ -184,11 +219,23 @@ static uint32_t read_at[2];
 static uint32_t joined; // The player whose room the client's end joined: 0 for a port's, or none
 static bool refused;    // The room it joined isn't open...
 static bool heard;      // ...but a room that answered it once was
+static bool silent;     // Dropped: nothing this player sends goes, and nothing comes, until a rejoin
+
+void tide_platform_players_drop(void)
+{
+    silent = true;
+}
+
+void tide_platform_players_rejoin(void)
+{
+    silent = false;
+    ask(TIDE_PLAYERS_REJOIN);
+}
 
 static void end_send(void *self, const tide_address to, const void *data, const uint32_t size)
 {
     const end *e = self;
-    if (e->number != live[e->role] || !size || size > UINT16_MAX) return;
+    if (silent || e->number != live[e->role] || !size || size > UINT16_MAX) return;
     if (e->role == SERVER && to.kind != TIDE_ADDRESS_ROOM) return;
     tide_write_u8(&outbox, 'S');
     tide_write_u8(&outbox, (uint8_t)(e->role == CLIENT ? e->way : TO_CLIENT));
@@ -340,7 +387,7 @@ static void deliver(const uint8_t *data, const uint32_t size)
         read_at[role] = 0;
     }
     tide_reader r = {.data = data, .size = size};
-    while (r.at < r.size && !r.failed) {
+    while (r.at < r.size && !r.failed && !silent) { // A dropped player hears nothing
         const uint8_t kind = tide_read_u8(&r);
         if (kind == 'R') {
             if (tide_read_u32(&r) == live[CLIENT]) refused = true;

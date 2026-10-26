@@ -1,0 +1,6 @@
+// expect: match Task handles aren't supported in sharded games yet
+settings { shards = true; reach = 8; }
+scene Main;
+singleton State { Task<int> build; }
+async int Build() { await Wait.Ticks(1); return 7; }
+system Start(mut State state) { state.build = Build(); }

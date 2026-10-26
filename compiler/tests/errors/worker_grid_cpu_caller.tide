@@ -1,0 +1,6 @@
+// expect: 'Cell' reads a grid it's passed, which shader code and local workers can call
+int Cell(Grid2<int> cells) { return cells[0, 0]; }
+local worker int Build(Grid2<int> cells) { return Cell(cells); }
+local singleton State { Grid2<int> cells; int result; }
+view Read(mut State state) { state.result = Cell(state.cells); }
+scene Main;

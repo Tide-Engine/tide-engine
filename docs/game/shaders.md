@@ -230,6 +230,107 @@ If `Shade` takes `Box` and `Sun`, the function must take exactly one input param
 
 This also works for a target's draws, `Draw.Instanced`, `Draw.SkinnedMesh` and `Draw.Blit`. Textures, per-draw values and instance lists keep their usual syntax. The function draws in its caller's frame and follows the existing drawing restrictions.
 
+## Configured shaders
+
+A frag or vert can take typed [function parameters](../language/functions.md#function-values).
+Bind them by name using an initializer:
+
+```csharp
+float Circle(float2 position) { return Math.Length(position) - 0.5; }
+
+frag ShapeLook(Vertex vertex, out Color color, Func<float2, float> distance)
+{
+    float d = distance(vertex.uv * 2 - float2(1));
+    color = Color(1, 1, 1, Math.Saturate(0.5 - d));
+}
+
+view DrawShape(Geometry geometry)
+{
+    var fragment = ShapeLook { distance = Circle };
+    Draw.Mesh(geometry.vertices, geometry.indices, fragment);
+}
+```
+
+`Geometry` above is the game's local geometry storage. The initializer configures
+the shader; it doesn't execute it. Every required function slot must be named
+once with a matching function signature. Vertex data, outputs and ordinary
+draw inputs continue to come from the draw. Positional function binding such as
+`ShapeLook(Circle)` isn't supported.
+
+The declaration's name is also the type of its configured values:
+
+```csharp
+component Appearance
+{
+    local ShapeLook fragment;
+}
+```
+
+Views can assign and draw `appearance.fragment`, and helpers can take or return
+`ShapeLook`. Different bindings of the same declaration share this type.
+A default binding with missing function targets draws nothing. These values
+belong to local state, like textures. Captured values are owned copies; GPU
+programs and pipelines remain the renderer's resources.
+
+A callback can change an explicit GPU-local argument using `mut`:
+
+```csharp
+void Bend(mut Vertex vertex)
+{
+    vertex.position.y += Math.Sin(vertex.position.x);
+}
+
+vert Deform(mut Vertex vertex, Func<mut Vertex, void> deform)
+{
+    deform(vertex);
+}
+
+// In a view:
+var vertexShader = Deform { deform = Bend };
+Draw.Mesh(geometry.vertices, geometry.indices, vertexShader, fragment);
+```
+
+The callback changes this vertex, and helper calls forward the same mutable
+value. The ordinary GPU rules apply: changing local shader data grants no access
+to CPU state or writable instance inputs. Captured values remain read-only.
+
+### Functions in instance data
+
+A function can also be a field of an instance struct:
+
+```csharp
+struct ShapeItem
+{
+    float2 center;
+    Func<float2, float> distance;
+}
+
+vert PlaceShape(mut Vertex vertex, ShapeItem shape)
+{
+    vertex.position = shape.center + vertex.position * 8;
+}
+
+frag FillShape(Vertex vertex, out Color color, ShapeItem shape)
+{
+    float d = shape.distance(vertex.uv * 2 - float2(1));
+    if (d > 0) this.Discard();
+    color = Color.white;
+}
+```
+
+`Draw.Instanced(vertices, indices, shapes, PlaceShape, FillShape)` draws one
+quad per `ShapeItem`. Its shaders take the current item, not the whole list.
+Items can select different distance functions and carry different captures
+inside one instance run. The compiler stores a target tag with the captures
+and generates a switch in the shader. A new target is compiled with the game;
+changing a captured numeric value doesn't compile another shader.
+
+Normal batching boundaries still apply: targets, settings, shared uniforms and
+texture bindings must be compatible, and drawing order is preserved. The usual
+GPU attribute and uniform limits also apply to callable capture data. The
+initial capture layout reserves fields for the targets of each Func signature;
+many large capture variants can exceed those limits.
+
 ## What they read
 
 After the vertex, and what each writes (a frag's color, the structs a vert hands its frag, where a vert puts its vertex), a frag or vert takes the game's state, as a view does:
@@ -299,7 +400,7 @@ view PaintLight(Lens lens)
 }
 ```
 
-That's [Duel](../guide/duel.md)'s blur. Without it, the direction would be a field of a singleton that the view writes between the two Blits.
+That's [Duel](https://github.com/Tide-Engine/tide-engine/tree/dev/examples/duel)'s blur. Without it, the direction would be a field of a singleton that the view writes between the two Blits.
 
 - It goes last, after the vert and the frag, in `Draw.Mesh`, `Draw.Instanced`, [`Draw.Blit`](./render-targets.md#post-processing) and a target's `Mesh` and `Instanced`: `Draw.Mesh(vertices, indices, transform, Wave, Shade, Swell { height = 2 })`. Any expression of the struct's type will do: a literal, a local, a field, a function's result.
 - It's found by its type, as a component is, whatever the parameter is called. A draw gives one struct. Group what the vert and the frag each need in it: each reads the fields it wants.
@@ -344,7 +445,7 @@ frag Lit(BoxVertex vertex, out Color color, Lights lights)
 - Elements are what the GPU has values of: numbers, bytes, vectors, colors, matrices, enums, bools, structs of those, and [arrays](#arrays) in them. Not text, longs, entities or other lists.
 - The GPU reads a list, and changes none: there's no `Add` there. A view or a system fills it.
 - A local can name it, and a function can take it, as anywhere: see [Naming a list and passing it on](#naming-a-list-and-passing-it-on).
-- Each list a draw's code reads is one of its 8 textures, as that's how its numbers travel: an image of numbers, read by an element's place.
+- Each list a draw's code reads is one of its 12 textures, as that's how its numbers travel: an image of numbers, read by an element's place.
 - **Only what's read is sent.** Of an element, the GPU gets the fields that some frag or vert of the game reads, and no others: a `Light` with a dozen fields of which the frags read `position` and `color` costs those two. It's the same whether the code writes `lights.items[i].color`, reads it off a `foreach`'s variable, or off a local that holds an element (`var light = lights.items[i];`). A struct inside an element counts field by field. Handing a whole element to a function, or returning one, reads all of it.
 - **Only what changed is sent again.** A list that didn't change since the last frame costs nothing. In one that did, the elements that changed go to the GPU and the rest stay as they are there, so a few lights moving in a list of thousands cost those few. A list that's only counted (`items.count`) sends nothing at all.
 - A component's list is its entity's own, so entities with lists are drawn one by one, not all in one draw call. What many entities share belongs in a singleton, with each entity saying where its part starts.
@@ -367,7 +468,7 @@ frag Tiles(BoxVertex vertex, out Color color, Board board)
 }
 ```
 
-- A cell outside the grid is zeros. The grid is a field of what the frag or vert takes, or an [asset](./assets.md) by its name, and counts as one of the draw's 8 textures, once more if it's also sampled.
+- A cell outside the grid is zeros. The grid is a field of what the frag or vert takes, or an [asset](./assets.md) by its name, and counts as one of the draw's 12 textures, once more if it's also sampled.
 - As with a list, only the fields of a cell that the code reads are sent, and when cells change, only those cells go to the GPU again.
 - An asset's grid, and an asset's list, are read by name in the functions a frag or vert calls too.
 - A grid with no size on an axis is read like any other: its cells are wherever they were set, before 0 too, `size` is 0 on that axis as it is on the CPU, and a cell nothing set is zeros.
@@ -405,7 +506,7 @@ frag Tiles(BoxVertex vertex, out Color color, Land land)
 - Read-only, as lists are: a view or a system fills the map. There's no `Get` there either, as it gives a value that may be missing: `TryGet` asks the same.
 - `TryGet`'s `out` argument is a local, `out var value` or a variable declared before.
 - A lookup reads a pixel or two of an index the engine sends beside the entries, however many keys the map has, so it costs about what reading two list elements does.
-- A map or a set is one of the draw's 8 textures, and isn't sent again while it doesn't change. Of its values, only the fields the code reads are sent, as a list's elements'. The other rules are a list's: a local can name one and a function can take one ([below](#naming-a-list-and-passing-it-on)), a component's is its entity's own, and none in an instance's struct.
+- A map or a set is one of the draw's 12 textures, and isn't sent again while it doesn't change. Of its values, only the fields the code reads are sent, as a list's elements'. The other rules are a list's: a local can name one and a function can take one ([below](#naming-a-list-and-passing-it-on)), a component's is its entity's own, and none in an instance's struct.
 
 ### Naming a list and passing it on
 
@@ -505,7 +606,7 @@ Past 0 and 1, `uv` reads what the [wrap](./meshes-and-textures.md#past-the-edges
 - A draw can say it for that draw, after the texture: `Draw.Mesh(corners, faces, tiles, Filter.Bilinear, Wrap.Clamp, Shade)` gives `source` blended and clamped, whatever `tiles` says.
 - A filter and a wrap written at a `Sample` are written out, `Filter.Point` and `Wrap.Repeat`, never read from a variable: the GPU is told how a texture is read before any pixel runs. Where they come with the texture, the engine tells it for each draw.
 - A wrap comes after a filter, so a `Sample` that says how it wraps says both. The names work too: `Sample(uv: corner.uv, filter: Filter.Bilinear, wrap: Wrap.Repeat)`.
-- One texture can be read several ways in one frag, clamped here and repeated there. Each way counts as one of the 8 textures a draw samples, and the same way twice counts once. A `Sample` that says nothing and one that says the default are two ways for a `Texture` parameter or field, since the texture may say otherwise.
+- One texture can be read several ways in one frag, clamped here and repeated there. Each way counts as one of the 12 textures a draw samples, and the same way twice counts once. A `Sample` that says nothing and one that says the default are two ways for a `Texture` parameter or field, since the texture may say otherwise.
 - A draw gives a texture to a frag that takes one, and none to a frag that doesn't: `Draw.Mesh(corners, faces, models.wood, Shade)` is an error where `Shade` has no `Texture` parameter.
 
 `Filter.Trilinear` reads between the texture's smaller copies too, so it's smooth where the texture ends up [smaller than it is](./meshes-and-textures.md#drawn-smaller):
@@ -552,10 +653,10 @@ frag Shade(Corner corner, out Color color, Models models, Texture source)
 - **The parameter is a `Texture`**, which a `Grid2<Color>` and a `Grid2<float>` are too, a [`DepthTexture`](#a-target-s-depth) or a [`Cubemap`](#skybox-and-reflections), and the function reads it as a frag would: `Sample`, with a filter and a wrap or without, a depth's `Compare`, a cube's `Sample(direction)`.
 - **The call names the texture**: a field of a component or a singleton the frag or vert takes, its own `Texture`, an asset, or in a function, a parameter of its own, passed on. Not one picked as the code runs, like `flag ? models.wood : models.stone`: sample each under its own name, and pick between the colors.
 - **It isn't handed over as the code runs.** No GPU passes a texture to a function, so which texture a name stands for is settled as the shader is written, and the function is written once for each texture it's called with, as it is for [a list](#naming-a-list-and-passing-it-on). It costs nothing while it runs. A function reads the texture it takes: no `mut` or `out`, and none is returned, kept in a local or in a struct.
-- **What a `Sample` there leaves out is still the texture's**: `Soft(tiles, ...)` reads `tiles` as its declaration says, and `Soft(source, ...)` as the texture the draw gave says. Each way each texture is read counts among the draw's 8.
+- **What a `Sample` there leaves out is still the texture's**: `Soft(tiles, ...)` reads `tiles` as its declaration says, and `Soft(source, ...)` as the texture the draw gave says. Each way each texture is read counts among the draw's 12.
 - **A function that samples is the GPU's alone**: frags, verts and the functions they call call it. A view or a system that calls one is an error that says so, as nothing on the CPU reads a texture's pixels. A function that only takes a texture and passes it to C, say, is still everyone's.
 - **A function's `Sample` reads the texture's own pixels, never between its smaller copies.** `Filter.Trilinear` is for a frag's own `Sample`, of a `uv` the frag can work out as it starts, and a function's `uv` is its call's. In a function a frag reaches, it's an error where the `Sample` says `Filter.Trilinear` or leaves its filter to a texture that says it, and a warning where it leaves it to a `Texture` that may (a field, the frag's own): write `Filter.Bilinear` there, or sample in the frag.
-- **A [`[Raw]`](#textures-that-are-numbers) texture is read by its name** in a function as in a frag, and isn't passed to one as a `Texture`.
+- **A [`[Raw]`](#textures-that-are-numbers) source keeps numeric sampling through GPU helpers.** Pass the original Raw asset, Raw texture field or Raw grid field expression to the helper's `Texture` parameter. The compiler specializes the helper for that source; this does not allow a Raw texture to escape through an ordinary CPU `Texture` value.
 
 ### Textures that are numbers
 
@@ -567,20 +668,34 @@ A texture is colors, each with how much of it there is: where a pixel's alpha is
 local singleton Terrain
 {
     [Raw] Grid2<Color> blend = Grid2(64, 64);    // ...or as code wrote its cells
+    [Raw] Texture mask;                        // A retained numeric texture
+}
+
+view BindTerrain(mut Terrain terrain)
+{
+    terrain.mask = masks;                      // Raw asset into a Raw field
+}
+
+Color ReadMask(Texture image, float2 uv)
+{
+    return image.Sample(uv, Filter.Bilinear);  // Keeps its source's Raw sampling
 }
 
 frag Ground(Vertex vertex, out Color color, Terrain terrain)
 {
-    Color mask = masks.Sample(vertex.uv);                 // Four numbers, as they are
+    Color mask = ReadMask(terrain.mask, vertex.uv);        // Four numbers, as they are
     Color weights = terrain.blend.Sample(vertex.uv);      // Blended between cells as numbers
     color = Color(mask.r * weights.r, mask.g, mask.b * weights.a);
 }
 ```
 
-- It goes before an asset that's one `Texture` or one `Grid2<Color>`, and on a field that's a `Grid2<Color>`. A `Grid2<float>` needs none: it has no alpha.
-- A frag or a vert reads it **by its name**, as above, and so does a function they call. It isn't a texture to draw with, to give a draw for its frag's `Texture` parameter, to pass to a function as a `Texture`, or to keep in a `Texture` field: each is an error that says so, as everything that draws a texture takes it for colors, and a `Texture` handed on doesn't say which kind it is.
+- It goes before an asset that's one `Texture` or one `Grid2<Color>`, and on a `Texture` or `Grid2<Color>` field. A match component uses an attached local field, such as `[Raw] local Texture mask;`, because textures belong to this machine. A `Grid2<float>` needs none: it has no alpha.
+- A `[Raw] Texture` field accepts `default`, a singular `[Raw] Texture` asset, another `[Raw] Texture` field, or a `[Raw] Grid2<Color>` field or asset. A grid-backed texture still names the grid's cells, with the [same lifetime rules](./meshes-and-textures.md#a-texture-is-a-value). Assigning an ordinary color texture to a Raw field is an error.
+- A frag or a vert samples the Raw asset or field by name, directly or through a [GPU texture helper](#in-a-function). Samples preserve the channel numbers, including where alpha is zero. The Raw field declaration determines numeric sampling; there is no separate Raw texture type or runtime Raw marker carried by arbitrary `Texture` values.
+- Raw sources cannot become ordinary `Texture` fields or CPU locals, be returned as `Texture`, or be supplied directly to a draw or blit. These uses are errors. Keep the original Raw source expression when forwarding it through GPU helpers.
+- `rawField.size` is available as ordinary texture metadata, including `int2(0)` for a default or unavailable image; pack reload follows the currently bound asset. Reading its size does not read or convert its pixels.
 - The same file can be declared twice, once `[Raw]` and once not: they're two textures.
-- `[Filter]` and `[Wrap]` go beside it as on any texture, and code reads a `[Raw]` grid's cells as it reads any grid's.
+- `[Filter]` and `[Wrap]` go beside Raw assets and grid fields as on other textures. A `Texture` field retains the bound texture's filter/wrap settings; those attributes do not go on the field itself. Code reads a `[Raw]` grid's cells as it reads any grid's.
 
 ## A target's depth
 
@@ -606,7 +721,7 @@ float lit = lamp.shadow.Compare(uv, depth);   // How much of what's stored there
 - **`Sample(uv)`** gives the depth as a number: 0 at the camera's near plane, 1 at its far limit, as [`this.depth`](#where-the-pixel-is) is, and 1 where nothing was drawn since the target was cleared. It's the nearest pixel's, with no filter to pick: a depth blended between two pixels would be neither's.
 - **`Compare(uv, value)`** compares what's stored with a number of yours, and gives a number from 0 to 1: 1 where what's stored isn't nearer than `value`, 0 where it is, and in between along an edge, as the GPU compares the pixels around `uv` and blends what that gives. `value` is kept between 0 and 1, so what's past the far limit counts as at it.
 
-`uv` is a color's: (0, 0) is the target's top left corner. Past the target's edges, both read the pixels at the edge: a depth takes no `Wrap`. Verts read a depth too. Each way a frag reads one is one of its draw's [8 textures](#what-the-gpu-runs).
+`uv` is a color's: (0, 0) is the target's top left corner. Past the target's edges, both read the pixels at the edge: a depth takes no `Wrap`. Verts read a depth too. Each way a frag reads one is one of its draw's [12 textures](#what-the-gpu-runs).
 
 A function reads a depth it takes as a parameter the same two ways, so every frag that's lit shares one lookup. The frag names the depth where it calls:
 
@@ -676,7 +791,7 @@ frag Sky(Corner corner, out Color color)
 
 - **`Sample(direction)`** takes a `float3` of any length, in the world's axes. One face goes on in the next, so there's no edge, and nothing to [wrap](./meshes-and-textures.md#past-the-edges).
 - **`Sample(direction, filter)`** says how it's read between its pixels, written there like a texture's: `Filter.Bilinear` when left out, `Filter.Point` for the nearest pixel, and `Filter.Trilinear` between its [smaller images](#textures) too, in a frag, of a direction the frag can work out as it starts.
-- **The cube is an asset by its name,** or a field of a component or a singleton the frag takes, where a view put one. Verts read one too, and so does a function that takes a `Cubemap`, which reads the one its call names (see [In a function](#in-a-function)). Each way a frag reads one is one of its draw's [8 textures](#what-the-gpu-runs).
+- **The cube is an asset by its name,** or a field of a component or a singleton the frag takes, where a view put one. Verts read one too, and so does a function that takes a `Cubemap`, which reads the one its call names (see [In a function](#in-a-function)). Each way a frag reads one is one of its draw's [12 textures](#what-the-gpu-runs).
 - A cube that was never set reads as black.
 
 There are two kinds, and a frag reads both the same way.
@@ -772,7 +887,7 @@ The camera isn't given: keep where yours is in a singleton, where the view that 
 
 Code for the GPU is ordinary Tide, less what a GPU doesn't have:
 
-- **It has** bools, bytes, ints, chars (ints there, their code points), floats, vectors, quaternions, matrices, colors, enums, structs of those and [arrays](#arrays) of them; locals, `if`, `?:`, `switch` on an int, a char or an enum, `for`, `while` and `foreach`, with `break` and `continue`; [lists and grids](#lists-and-arrays) that are fields of what it takes, read by an element, a count or `foreach`; your functions, methods and operators; all of [`Math`](#math), and what builds its types; [`Random`'s rolls](#random-numbers); and sampling a grid, a texture or a target's depth, 8 of them to a draw, anywhere in the code: in a branch, in a loop, in a vert.
+- **It has** bools, bytes, ints, chars (ints there, their code points), floats, vectors, quaternions, matrices, colors, enums, structs of those and [arrays](#arrays) of them; locals, `if`, `?:`, `switch` on an int, a char or an enum, `for`, `while` and `foreach`, with `break` and `continue`; [lists and grids](#lists-and-arrays) that are fields of what it takes, read by an element, a count or `foreach`; your functions, methods and operators; all of [`Math`](#math), and what builds its types; [`Random`'s rolls](#random-numbers); and sampling a grid, a texture or a target's depth, 12 of them to a draw, anywhere in the code: in a branch, in a loop, in a vert.
 - **It doesn't have** text, entities, spawning and sending, `Draw`, the GUI, `Devices`, `Debug`, C, tasks, errors, or recursion. It makes and changes no list, map or set. A frag's `this` is its pixel; verts and ordinary functions have no `this`. A `long` has no place there, as a GPU's ints are 32 bits.
 
 Each of those is an error where it's written, which says what to do instead. A function a frag calls has to fit too, and the error says which frag reaches it; the same function still runs on the CPU for the code that calls it there.

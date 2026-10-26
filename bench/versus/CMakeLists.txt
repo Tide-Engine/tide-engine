@@ -1,7 +1,6 @@
 # C against Tide: each concept written both ways, as fast as each language
 # allows, and timed on the same work, on one thread and on every core (see
-# versus.h and AGENTS.md, Benchmarks). `versus_<concept> --help` lists a run's
-# options. Tests run each one --quick, and fail when the ways end differently.
+# versus.h). `versus_<concept> --help` lists a run's options. Tests run each one --quick, and fail when the ways end differently.
 add_library(tide_versus STATIC versus.c)
 target_include_directories(tide_versus PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(tide_versus PUBLIC tide tide_platform) # tide_platform_jobs
@@ -29,6 +28,13 @@ versus_add(events events/events.tide)
 versus_add(nbody nbody/nbody.tide)
 versus_add(buckets buckets/buckets.tide) # A list of lists against one flat list, and C
 versus_add(lookup lookup/lookup.tide) # Map and set lookup, replacement and insertion order
+# A client's frames: worlds kept in a ring, hashed, restored and run again
+versus_add(rollback rollback/rollback.tide)
+add_test(NAME versus_rollback_spread COMMAND versus_rollback --quick --spread 1 --moving 10)
+add_test(NAME versus_rollback_deep COMMAND versus_rollback --quick --kept 3 --back 5 --every 1)
+# The schedule's own cost: 64 systems, from a tick with nothing to do to one for threads
+versus_add(systems systems/systems.tide)
+add_test(NAME versus_systems_empty COMMAND versus_systems --quick --count 0)
 
 # Keep the old world alive while the next tick changes it, as prediction
 # does. Both languages keep and validate the same previous state.

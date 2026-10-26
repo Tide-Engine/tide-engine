@@ -193,6 +193,20 @@ void tide_grid_clear(tide_grid *g, const tide_grid_shape *s, const uint32_t wher
     d->records = 0;
 }
 
+tide_grid tide_grid_copy_from(const tide_heap *heap, const tide_grid g, const tide_grid_shape *s, const uint32_t where)
+{
+    tide_heap *to = tide_heap_of(where);
+    if (!to || !heap || to == heap || !g.at || g.at >> 30 == TIDE_IN_SCRATCH) return (tide_grid){0};
+    // The source's directory stays put: what's made goes in the other heap
+    const tide_grid_dir *d = (const tide_grid_dir *)(const void *)(tide_heap_block(heap, OFFSET(g.at)) + 1);
+    tide_grid out = {where << 30 | new_dir(to, d->size, s)};
+    for (uint32_t i = 0; i < d->records; i++) {
+        const tide_grid_record r = tide_grid_records(d)[i];
+        (void)add_chunk(&out, to, r.chunk[0], r.chunk[1], r.chunk[2], tide_grid_chunk_at(heap, r.block), s);
+    }
+    return out;
+}
+
 const void *tide_grid_read(const tide_heap *heap, const tide_grid g, const int32_t x, const int32_t y, const int32_t z,
                            const tide_grid_shape *s)
 {
@@ -491,7 +505,10 @@ static void pool_give(uint8_t *buffer, const uint32_t bytes)
     if (!kept) free(buffer);
 }
 
-uint8_t *tide_par_buffer(tide_par_loop *l, const int32_t cx, const int32_t cy, const int32_t cz)
+// The buffer of a chunk, as tide_par_buffer, or with `whole` uninitialized,
+// for a task that writes every byte of it before it's read: one whose own
+// cells are the whole chunk, which no other task's are then.
+static uint8_t *buffer_for(tide_par_loop *l, const int32_t cx, const int32_t cy, const int32_t cz, const bool whole)
 {
     // Where it is among the chunks the loop's blocks can write in, which is
     // every chunk its steps write in
@@ -509,15 +526,20 @@ uint8_t *tide_par_buffer(tide_par_loop *l, const int32_t cx, const int32_t cy, c
     }
     const uint32_t bytes = tide_grid_chunk_bytes(l->shape);
     uint8_t *buffer = pool_take(bytes);
-    const uint8_t *now = chunk_now(l, cx, cy, cz);
+    const uint8_t *now = whole ? NULL : chunk_now(l, cx, cy, cz);
     if (now) memcpy(buffer, now, bytes);
-    else memset(buffer, 0, bytes);
+    else if (!whole) memset(buffer, 0, bytes);
     if (__atomic_compare_exchange_n(&l->buffers[low], &made, buffer, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) {
         return buffer;
     }
     pool_give(buffer, bytes); // Another task's got there first: `made` is that one
     tide_memory_sync();
     return made;
+}
+
+uint8_t *tide_par_buffer(tide_par_loop *l, const int32_t cx, const int32_t cy, const int32_t cz)
+{
+    return buffer_for(l, cx, cy, cz, false);
 }
 
 // The chunks a window takes in, each looked up once: a few around a tile, or
@@ -559,12 +581,20 @@ static const uint8_t *window_chunk(const tide_par_loop *l, const window_chunks *
     return w->cells[((cz - w->first[2]) * w->count[1] + (cy - w->first[1])) * w->count[0] + (cx - w->first[0])];
 }
 
-// memcpy and memset for the few cells along a window's edges, which a call to
-// them costs more than: two moves of a fixed size that overlap as they need.
+// memcpy and memset for the runs of a window's rows, a chunk's row or less,
+// which a call to them costs more than: moves of a fixed size, the last of
+// which overlaps the one before as it needs. A window takes a call or two a
+// row, many thousands a tick.
+#define INLINE_RUN 256u
+
 static void copy_cells(uint8_t *to, const uint8_t *from, const size_t bytes)
 {
-    if (bytes > 16u) {
+    if (bytes > INLINE_RUN) {
         memcpy(to, from, bytes);
+    } else if (bytes >= 16u) {
+        size_t i = 0;
+        for (; i + 16u <= bytes; i += 16u) memcpy(to + i, from + i, 16u);
+        if (i < bytes) memcpy(to + bytes - 16u, from + bytes - 16u, 16u);
     } else if (bytes >= 8u) {
         memcpy(to, from, 8u);
         memcpy(to + bytes - 8u, from + bytes - 8u, 8u);
@@ -582,9 +612,40 @@ static void copy_cells(uint8_t *to, const uint8_t *from, const size_t bytes)
 static void zero_cells(uint8_t *to, const size_t bytes)
 {
     static const uint8_t zeros[16];
-    if (bytes > 16u) memset(to, 0, bytes);
-    else copy_cells(to, zeros, bytes);
+    if (bytes > INLINE_RUN) {
+        memset(to, 0, bytes);
+    } else if (bytes > 16u) {
+        size_t i = 0;
+        for (; i + 16u <= bytes; i += 16u) memcpy(to + i, zeros, 16u);
+        if (i < bytes) memcpy(to + bytes - 16u, zeros, 16u);
+    } else {
+        copy_cells(to, zeros, bytes);
+    }
 }
+
+// Whether two runs of a window's rows are the same, as tide_same_bytes says,
+// 16 bytes at a time for the short ones, as for copy_cells.
+static bool same_cells(const uint8_t *a, const uint8_t *b, const size_t bytes)
+{
+    if (bytes > INLINE_RUN || bytes < 16u) return tide_same_bytes(a, b, bytes);
+    size_t i = 0;
+    for (; i + 16u <= bytes; i += 16u) {
+        if (memcmp(a + i, b + i, 16u) != 0) return false;
+    }
+    return i == bytes || memcmp(a + bytes - 16u, b + bytes - 16u, 16u) == 0;
+}
+
+// A window row's runs within the grid, which are the same for every row of a
+// window that doesn't go past the last int: a run a chunk's cells along x (or
+// fewer), where it goes in the window's row, and where it starts in its
+// chunk's row, so a row is a few lookups and copies.
+#define ROW_RUNS 16
+
+typedef struct row_run {
+    size_t to, bytes; // In the window's row
+    uint32_t from;    // Where it starts in a row of its chunk (tide_grid_place's x part)
+    int32_t cx;       // Its chunk's x
+} row_run;
 
 // The place `steps` past `from`, in 32 bits: past the last int it's the first
 // again, as a step's own `at + 1` is.
@@ -604,6 +665,28 @@ void tide_par_window(const tide_par_loop *l, const int32_t lo[3], const uint32_t
     uint8_t *out = cells;
     window_chunks cache;
     window_chunks_find(l, &cache, lo, extent);
+    // The cells of a row within the grid's size, from x0 to x1 (nothing for
+    // x0 > x1), zero around them, and the runs they take, chunk by chunk
+    int64_t x0 = lo[0], x1 = x_last;
+    if (d->size[0]) {
+        if (x0 < 0) x0 = 0;
+        if (x1 > (int64_t)d->size[0] - 1) x1 = (int64_t)d->size[0] - 1;
+    }
+    row_run runs[ROW_RUNS];
+    uint32_t run_count = 0;
+    bool planned = !wraps && x0 <= x1;
+    for (int64_t x = x0; planned && x <= x1;) {
+        if (run_count == ROW_RUNS) {
+            planned = false;
+            break;
+        }
+        const int32_t cx = (int32_t)(x >> s->shift[0]);
+        const int64_t last = ((int64_t)cx + 1) * ((int64_t)1 << s->shift[0]) - 1;
+        const int64_t end = last < x1 ? last : x1;
+        runs[run_count++] = (row_run){(size_t)(x - lo[0]) * cell, (size_t)(end - x + 1) * cell,
+                                      tide_grid_place(s, (int32_t)x, 0, 0), cx};
+        x = end + 1;
+    }
     for (uint32_t k = 0; k < extent[2]; k++) {
         const int32_t z = place_past(lo[2], k);
         for (uint32_t j = 0; j < extent[1]; j++, out += row) {
@@ -614,18 +697,22 @@ void tide_par_window(const tide_par_loop *l, const int32_t lo[3], const uint32_t
                 continue;
             }
             if (!wraps) {
-                // The row's cells within the grid's size, from x0 to x1: zero around them
-                int64_t x0 = lo[0], x1 = x_last;
-                if (d->size[0]) {
-                    if (x0 < 0) x0 = 0;
-                    if (x1 > (int64_t)d->size[0] - 1) x1 = (int64_t)d->size[0] - 1;
-                }
                 if (x0 > x1) {
                     zero_cells(out, row);
                     continue;
                 }
                 if (x0 > lo[0]) zero_cells(out, (size_t)(x0 - lo[0]) * cell);
                 if (x1 < x_last) zero_cells(out + (size_t)(x1 + 1 - lo[0]) * cell, (size_t)(x_last - x1) * cell);
+                if (planned) { // Where the row is in its chunks, then each run from its chunk
+                    const uint32_t across = tide_grid_place(s, 0, y, z);
+                    const int32_t cy = y >> s->shift[1], cz = z >> s->shift[2];
+                    for (uint32_t r = 0; r < run_count; r++) {
+                        const uint8_t *chunk = window_chunk(l, &cache, runs[r].cx, cy, cz);
+                        if (chunk) copy_cells(out + runs[r].to, chunk + runs[r].from + across, runs[r].bytes);
+                        else zero_cells(out + runs[r].to, runs[r].bytes);
+                    }
+                    continue;
+                }
                 for (int64_t x = x0; x <= x1;) { // Chunk by chunk
                     const int32_t cx = (int32_t)(x >> s->shift[0]);
                     const int64_t last = ((int64_t)cx + 1) * ((int64_t)1 << s->shift[0]) - 1;
@@ -676,6 +763,35 @@ void tide_par_window_put(tide_par_loop *l, const int32_t lo[3], const uint32_t e
     const size_t width = extent[0], height = extent[1];
     const uint8_t *now = cells, *before = was;
     tide_par_cache cache = {{0, 0, 0}, NULL};
+    // A task whose own cells are a whole chunk, as with blocks of a cell: if
+    // any row changed, its buffer is made from the window alone, every row of
+    // it, as those that didn't change are the chunk's as it is
+    bool whole = true;
+    for (uint32_t a = 0; a < 3; a++) {
+        const int64_t side = (int64_t)1 << s->shift[a];
+        whole &= ((uint32_t)from[a] & (uint32_t)(side - 1)) == 0 && (int64_t)to[a] - from[a] == side - 1;
+    }
+    if (whole) {
+        const size_t bytes = ((size_t)1 << s->shift[0]) * cell;
+        bool changed = false;
+        for (int64_t z = from[2]; z <= to[2] && !changed; z++) {
+            for (int64_t y = from[1]; y <= to[1] && !changed; y++) {
+                const size_t row = ((size_t)((uint32_t)z - (uint32_t)lo[2]) * height + (size_t)((uint32_t)y - (uint32_t)lo[1])) * width;
+                const size_t at = (row + (size_t)((uint32_t)from[0] - (uint32_t)lo[0])) * cell;
+                changed = !same_cells(now + at, before + at, bytes);
+            }
+        }
+        if (!changed) return;
+        uint8_t *buffer = buffer_for(l, from[0] >> s->shift[0], from[1] >> s->shift[1], from[2] >> s->shift[2], true);
+        for (int64_t z = from[2]; z <= to[2]; z++) {
+            for (int64_t y = from[1]; y <= to[1]; y++) {
+                const size_t row = ((size_t)((uint32_t)z - (uint32_t)lo[2]) * height + (size_t)((uint32_t)y - (uint32_t)lo[1])) * width;
+                const size_t at = (row + (size_t)((uint32_t)from[0] - (uint32_t)lo[0])) * cell;
+                copy_cells(buffer + tide_grid_place(s, from[0], (int32_t)y, (int32_t)z), now + at, bytes);
+            }
+        }
+        return;
+    }
     // The task's own cells are cells: none of their places is past an int.
     // Where each is in the window is how far it is from `lo`, which may be
     // from the ints' other end, so in 32 bits that wrap.
@@ -686,8 +802,8 @@ void tide_par_window_put(tide_par_loop *l, const int32_t lo[3], const uint32_t e
                 const int64_t last = ((x >> s->shift[0]) + 1) * ((int64_t)1 << s->shift[0]) - 1;
                 const int64_t end = last < to[0] ? last : to[0];
                 const size_t at = (row + (size_t)((uint32_t)x - (uint32_t)lo[0])) * cell, bytes = (size_t)(end - x + 1) * cell;
-                if (!tide_same_bytes(now + at, before + at, bytes)) {
-                    memcpy(tide_par_cell(l, &cache, (int32_t)x, (int32_t)y, (int32_t)z), now + at, bytes);
+                if (!same_cells(now + at, before + at, bytes)) {
+                    copy_cells(tide_par_cell(l, &cache, (int32_t)x, (int32_t)y, (int32_t)z), now + at, bytes);
                 }
                 x = end + 1;
             }

@@ -1,5 +1,370 @@
 # Code the GPU runs: frags and verts
 
+Generated-golden whitespace: texture_capacity.txt intentionally ends with two
+LFs, like all 43 shader goldens. The shader expectation runner normalizes CRLF
+but compares the complete text without trimming. Git's new-file diff check
+therefore reports its final blank line; keep that exact generated output rather
+than weakening the comparison or changing the repository's whitespace policy.
+
+## Twelve texture bindings (2026-10-25)
+
+The approved Render3D skinning extension needs eight material/scene bindings
+plus the existing palette and influence textures. The provisional compiler
+capacity is now twelve, without changing vertex/varying/uniform limits or
+resource specialization. Sampling emission keeps slots 0..7's original 32-bit
+bank and puts slots 8..11 in a second bank of a uint64_t. Generated texture
+arrays contain the shader's actual count. HLSL accepts twelve texture/sampler
+pairs and reads the high slots from _TideSamplingHigh; low-slot expressions
+remain unchanged. No new language form or runtime function is introduced.
+
+texture_capacity adds twelve-binding and ten-binding skinned consumers, exact
+high-slot capture checks, a GLSL/WGSL golden and HLSL/SPIR-V coverage. The limit
+diagnostic now rejects thirteen. Backend pixel and bridge fixtures cover high
+sampling/read kinds. Native validation passed: exact golden, thirteen-binding
+diagnostic, generated-C capture tests, strict FXC HLSL and Vulkan/OpenGL pixels.
+The same golden, diagnostic and capture tests passed in the web configuration,
+with WebGL2, Direct3D11 ANGLE and WebGPU pixels. SPIR-V validation was unavailable
+in this configuration.
+
+## Raw Texture field specialization (2026-10-25)
+
+The owner's Raw Texture field completion keeps the role on the resolved field,
+including attached local fields and aliases. declared_raw reads that marker for
+Texture fields as for grids. Existing texture_of/given.sampled specialization
+preserves the original source through helper chains; numeric samples omit
+tide_straight while ordinary colors keep it. The new raw_texture_fields golden
+pins both languages, helper forwarding, several sources and direct trilinear
+gradients. Codegen detects grid-backed Raw field references with existing
+tide_texture_grid, then calls tide_draw_grid_texture_raw; already-raw pack images
+use tide_draw_texture_source. No binding count, runtime API or backend changes
+are introduced. Grid sources forwarded to a Texture size helper convert through
+existing tide_texture_of_grid before tide_texture_size; this fixes a reproduced
+strict-C17 grid/reference type mismatch, with captured metadata checks for a local
+grid and an asset grid. Carried filter/wrap/mip bits retain their existing paths.
+Byte/capture and reload checks are recorded in textures.md.
+
+## Normal-derived material UV gradients (2026-10-25)
+
+`liftable` now accepts the existing pure `CALL_NORMAL`, preserving its ordinary
+receiver/argument checks. Immutable UVs derived from `Instance.Normal` therefore
+retain trilinear gradients, including through numeric MaterialInput construction
+and UV helper calls. The new normal_uvs golden pins GLSL `dFdx`/`dFdy` and
+`textureGrad`, plus WGSL `dpdx`/`dpdy` and `textureSampleGrad`, with derivatives
+before the branch and local declarations. It covers direct normal-derived UVs
+and helper forwarding, with explicit and texture-carried sampling filters.
+Sampling remains in the frag; helper sampling and changing/loop UV restrictions
+retain their existing diagnostics. No language, runtime, shader binding or API
+change is introduced. Warning-free native builds and all 15 focused checks pass
+(6.31 s): the query E2E/safety checks, normal_uvs/normals/mipmaps goldens and HLSL
+`/WX` checks, and five trilinear errors plus two carried-filter warnings. Golden
+generation also has empty stderr. Independent scoped review is clean.
+Full native/web validation remains for the
+combined integration; standalone spirv-val coverage is unavailable here.
+
+## GPU simplex work reuse (2026-10-25)
+
+The owner requested engine improvements before changes to Earth's game code.
+Only the compiler's 3D simplex GPU helper changes: seven rotated xxHash lanes
+(two lattice coordinates per axis, one seed) replace sixteen lane calculations.
+Four unsigned sums and avalanche operations still produce exactly Math.Hash's
+old corner hashes. Six independent rank tests replace the nested simplex-order
+branches, preserving x/y/z priority on ties. Floating-point expressions, their
+order, gradients, noise scale and 32-bit precision are unchanged. CPU noise and
+simulation code are unchanged; this is an intentional GPU scheduling exception
+to the older line-for-line wording below, with the same mathematical formulas.
+No runtime interface, uniform layout, draw behavior or game source changes.
+
+Fixed-camera terrain probes use the checkout's Earth generated code and renderer
+at 412 x 915 CSS pixels, DPR 3 (1236 x 2745 physical pixels), on the Ryzen 7900X
+Radeon RDNA 2 iGPU through muted headless Chrome/ANGLE D3D11 and WebGPU. They
+render the planet and GUI with a null match, excluding other world scenery and
+networking. Each case runs 180 frames, with WebGL queries excluding the first
+30; WebGPU uses the renderer's asynchronous timestamps after 60 warm-up frames.
+These are terrain-work comparisons, not whole-game FPS or a Pixel emulation.
+Screenshots match byte-for-byte before/after within each backend. Adapter
+selection is process-local; no Windows preference or driver was changed.
+
+The hash-only implementation repeatedly reduces country-view WebGL GPU time
+from about 47.5 to 42.0 ms; independent ranking brings it to about 41.4 ms.
+WebGPU's initial country comparison is 46.79 to 37.36 ms. A road-midpoint view
+with hash reuse is 23.75 to 22.65 ms. See earth-engine-measurements.json for retained
+exploratory runs, sample counts, renderer identity, captures and caveats. Other applications
+remain running and clocks are uncontrolled; some exploratory runs overlap CPU
+builds. An additional strict-gated confirmation was prepared and requested, then deferred without starting it
+after publication; no clean or isolated timing claim is made. No run substitutes a
+reduced resolution, flat material or alternate noise pattern for this change.
+
+Other local probes are rejected: conditional corner hashing alone saved about
+3%, but delaying the avalanche after lane reuse made no additional difference;
+branchless gradient selection and direct uniform-array access changed timing by
+less than 1%. The latter retained existing uniform bytes and bypassed Atlas
+copies; it did not establish spills or a uniform-copy bottleneck. Its first
+version used dynamic vector indexing and correctly failed ANGLE's fatal warning
+check; static-lane selection removed that warning. No such uniform rewrite is
+committed. Browser antialiasing is already disabled, canvas sizes are assigned
+only when changed, and ordinary draws already receive frustum culling. Those
+paths do not explain the measured material cost.
+
+The math shader golden pins both languages. Platform RestOf comparisons add
+negative coordinates/seeds, coordinate permutations, equal-coordinate and
+pairwise ties, origin and both int seed extremes, in CPU/frag/vert paths and
+after device recreation. Validation initially caught a GLSL/WGSL shift-operand
+type mismatch in the new rotate helper; both the shift count and its literal
+arguments now use uint explicitly.
+
+Merged dev's independent type-alias/Render3D changes without conflicts and
+rebuilt both complete configurations. All required engine checks pass: 2,757
+native and 2,611 web, including 46 native GPU checks, unchanged Earth checks and
+benchmark pins, WebGL, D3D11/WARP, WebGPU, SPIR-V and HLSL. The native configured
+run is 2,768/2,769 enabled cases passing (280.85 s), with its existing disabled
+MicroDuck right-turn case retained. Its sole failure is the optional private
+CRACKED pin, also failing identically on WASI: expected 0a216d532fa6445c,
+actual bf53c0610c47764e. CRACKED uses no simplex helper. A tidec built here with
+only shader.c restored to 9d1907e4 produces byte-identical game.h/game_pack.c
+and identical game.c after normalizing only generated #line output directories.
+This failure is independent of the optimization; no prototype pin is changed.
+The web run's optional private campaign tail was stopped after all required
+engine checks passed, per the engine-only scope; complete private browser
+coverage is not claimed. Other OSes, Android and sanitizers remain CI coverage.
+No workflow was dispatched or awaited. The staged release CLI builds Earth's
+client/server deployment bundle successfully. The unrelated Render3D benchmark
+commits merge cleanly afterward, with no shader/runtime dependency changes and
+no repeat validation required. Pushed 005d6944 to dev and published the unchanged
+Earth sources using this checkout's staged CLI/platform as release
+c58a995f7d9b7d68aea35a476eb469b570a9ab6e3403efbc28b7f730f76ad4c6.
+The public play page's embedded TIDE_PROGRAM exactly matches the client from
+the uploaded deployment bundle; the managed room remains 966ANR/0. Muted
+Radeon WebGL/WebGPU production clients join that live room, land, walk and drive
+without renderer/game errors. Inspected 412 x 915 DPR 1 captures show cars,
+scenery and online shard status; this is a correctness check, not a new timing
+measurement. The driver first moves the synthetic mouse before pressing it,
+so an initial whole-viewport delta is not mistaken for a camera drag. The additional
+Radeon quiet confirmation was deferred without starting a timing run; all measurements
+above remain exploratory.
+
+
+## Mutable callable arguments (2026-10-24)
+
+`Func<mut Vertex, void>` and mixed read/mut signatures lower to ordinary checked
+functions. Dispatch forwards the mutable argument, including through a captured
+lambda, as GLSL inout/WGSL function pointers. No special shader dispatch ABI is
+needed. Mutable lambda parameters must have function_param, like parsed ordinary
+function parameters, so WGSL forwards their pointer rather than making a value
+copy from it. `shaders/mut_callables` pins the emitted forms; `gpu_functions`
+verifies per-instance named/captured vertex mutations and a nonvoid mutable frag
+callback against pixels and the existing one-batch draw count. Language contracts
+and final validation are in language.md, Mutable callable arguments.
+
+## Named stage bindings and callable instances (2026-10-24)
+
+Owner-approved function-valued GPU inputs use ordinary generated dispatcher
+functions and typed value structs; contracts and limitations are recorded in
+language.md, Callable values and configured GPU stages. A configured frag/vert
+is supplied explicitly to its draw wrapper and uploaded as shared uniforms.
+Callable fields of explicit instance structs instead upload their tags and
+captures per instance, with normal flat transport to the frag. Different targets
+therefore share one shader and draw; ordinary state, uniform, texture and ordering
+boundaries remain. `plan_reads` recognizes configured-stage structs as explicit
+shared inputs; views infer no ambient binding state. No backend or runtime API
+changed. Constant-target specialization and compact capture packing are not built.
+
+`platform/tests/gpu_functions.c` draws four colored SDF quads with two named
+distance functions and two captured radii. It checks centers, silhouettes, three
+frames, unchanged match hashes, one instance run and two total GPU draws (Tide's
+background clear triangle plus the single shape batch). The ordinary runtime
+fixture also covers stored/inline/helper/returned stage bindings, a configured
+vert beside a configured frag, and a Blit with a captured color transform.
+`compiler/tests/shaders/callables` pins both shader languages. Generated dispatch
+initializes its result and returns once because ANGLE D3D11 warned X4000 on
+early returns in its switch; the revised form passes that backend. Final complete
+suite results are recorded in language.md.
+
+## The game's shaders as a table (2026-10-22)
+
+`gen_shader_table` (codegen.c) writes `tide_game_shaders`, `&tide_shader_<n>`
+for each of `program.shaders` in order and `NULL` after them (just `NULL` in
+a game with none), after the shaders, and `gen_shaders` sets `.blit = true`
+for a blit's. The standard host prewarms their pipelines (rendering.md,
+Pipelines made before they're drawn). Shader text, ids and the header are
+unchanged, so no golden moved. `tide_platform_shaders` and
+`tide_platform_prewarm` read the table.
+
+## LookRotation normalizes, as math.h (2026-10-22)
+
+`H_LOOKROTATION_Q` is math.h's new `tide_lookrotation_q` line for line
+(`notes/language.md`, LookRotation of any length): FromTo's unit helper for
+forward and up, the 1e-10 squared-length test that falls back to
+`tide_fromto_q(vec3(0, 0, 1), f)`, the re-orthogonalized frame and
+`tide_normalize_q`, with one return: the first version returned FromTo's
+value early, and ANGLE's D3D11 compiler warned X4000 (potentially
+uninitialized return) in `tide_platform_shaders_d3d11`. It now needs
+`H_FROMTO_Q` (with FromTo's unit and quaternion helpers), so it moved after `H_FROMTO_Q` in the helper enum, which
+is the order helpers are written in. WGSL comes from the same text through
+`put_helper`, SPIR-V and HLSL from the WGSL. The `math` golden changes only
+this helper's text and place. `platform/tests/shaders.tide`'s Turns probe adds
+`lookLong` (forward scaled by 0.29 and up by 40, which must also equal the
+unit-length `look`), `lookAlong` (forward and up opposite: FromTo from +z),
+`lookNone` (zero forward: w is 1) and `lookNoUp` (a NaN up), compared CPU
+against frag and vert.
+
+## HLSL, for Unity (2026-10-22)
+
+The owner's design (`notes/unity.md`, Tide drawing in Unity) gave custom frags
+and verts an HLSL target in tidec. It translates the WGSL tidec already writes,
+as SPIR-V does, so the renderer's hand-written WGSL gets HLSL from the same code
+and no third emitter over the tree exists. `compiler/src/hlsl.c` (`hlsl.h`:
+`tide_wgsl_to_hlsl`, `tide_hlsl_unity_shader`) shares spirv.c's reader: the
+arena, tokens, tree, type table and parser moved unchanged into
+`wgsl_tree.inc` and `wgsl_read.inc`, which both include around a `struct
+translation` of their own whose first fields the reader uses.
+
+- **What it writes:** one HLSL program per shader. The WGSL entry points stay
+  ordinary functions and are wrapped by `tidehl_vertex` and `tidehl_fragment`.
+  The vertex wrapper reads each `@location` from `ByteAddressBuffer`s
+  (`_TideVertices0..2`) by the pipeline's layout (`_TideAttributes[16]`:
+  slot, offset, tide_gpu_attribute_format; `_TideSlots[3]`: stride, per instance)
+  and the draw's offsets and first vertex. Unity draws are `DrawProcedural` with no
+  vertex buffers, an indexed one through Unity's index buffer (SV_VertexID is the
+  index). Under `TIDEHL_TEXTURE_BUFFERS` (OpenGL ES 3 and WebGL 2, which have no
+  buffers a vertex shader reads), each is an RGBA8 `Texture2D<float4>` of 4,096
+  pixels a row, a word each pixel's bytes (`round(texel * 255)`).
+- **Uniforms:** the block is `cbuffer TideUniforms`, flattened into
+  `tidehl_u_<member>`. Float pads go where HLSL would pack a member sooner than
+  WGSL's layout does, and matrices are `row_major`. A struct, or a matrix of
+  vec2 columns, in the block is refused, and so is a member that HLSL could pack
+  into an array's or matrix's last row. tidec and the renderer write neither.
+- **Textures:** texture i is `_TideTexture<i>`, from its binding. A WGSL sampler
+  is not an HLSL object. It is the 4 bits of `_TideSampling` at 4i (filter, then
+  wrap), which pick one of nine Unity inline sampler states
+  (`tidehl_<point|linear|trilinear>_<clamp|repeat|mirror>_sampler`). Under
+  `TIDEHL_OWN_SAMPLERS` (OpenGL, GL ES, WebGL: Unity there has no samplers apart
+  from textures) each texture samples with its own, `sampler_TideTexture<i>`, which
+  TideRender sets. Every helper takes the texture's own sampler (`own`); the D3D
+  path ignores it. Nearest and linear read level 0 (`SampleLevel`), as Vulkan's
+  samplers with maxLod 0 do.
+  Mipmaps use `SampleGrad` with derivatives taken before the branch, so fxc keeps
+  the branch. Bias scales those derivatives. Depth textures read the nearest
+  texel. A comparison is a 2x2 `GatherRed` blended bilinearly (four `Load`s on GL ES 3,
+  which gathers nothing). Both turn depth
+  back to 0 near, 1 far where Unity reverses it (`TIDEHL_REVERSED_Z`, from the
+  platform defines Unity's HLSLSupport uses).
+- **Matrices are WGSL's transposed:** an HLSL row is a WGSL column, so `m[i]` and
+  constructors read the same. `a * b` is `mul(b, a)`, `m * v` is `mul(v, m)` and
+  `v * m` is `mul(m, v)`.
+- **Arrays are structs of one** (`tidehl_a<type>`, `.v[n]`), so functions return
+  and take them. Array and struct constructors are helpers made on first use
+  (`tidehl_make_*`). fxc can't write an array element by an index worked out as it
+  runs ("not natively addressable"). Such an assignment becomes an unrolled loop
+  over the elements that writes the one it is, with the index and value worked
+  out once.
+- **Safety as SPIR-V has it:** integer `/` and `%` go through `tidehl_div` and
+  `tidehl_rem` (by zero, or the least int by -1, as by 1). Shifts are masked to 5
+  bits. Floats to ints saturate (`tidehl_f2i`, `tidehl_f2u`). Runtime indices are
+  `min`ed to the last element.
+- **Clip space and depth:** the vertex wrapper's `tidehl_clip` multiplies y by
+  `_TideFlip`'s sign, or by `_ProjectionParams.x` for 0 (Unity's camera, which is
+  upside down while it renders into a texture on D3D-like APIs). Depth goes to
+  `w - z` where Unity reverses it, and to OpenGL's -w..w elsewhere. A fragment's
+  position is turned back into target pixels from the top (`_TideHeight`), depth
+  0 near and `w` as 1/w. `frag_depth` and `front_facing` are turned the same way.
+- **Linear projects:** the first color output into Unity's own target goes through
+  `tidehl_output`, which converts sRGB to linear (unpremultiplied, then
+  premultiplied again) while `_TideLinear` is set. TideRender sets it for the
+  camera's passes in a linear-color-space project.
+- **Names:** WGSL names HLSL has (keywords, intrinsics, `float3`-like type names,
+  `in`, `out`, `sample`, `point`...), and names starting `tidehl_` or `_Tide` or
+  ending `_w`, get `_w` appended. Loops with a `continuing` part put their body in
+  `do { } while (false)`: the body's `continue` breaks out of it, and its `break`
+  sets `tidehl_broken<n>`. A `continue` inside a `switch` in such a loop is
+  refused. A `for` runs in a block of its own, so fxc's for-scope doesn't clash.
+- **Warnings, which Unity shows in the Console:** a `#pragma warning` inline in a
+  Unity shader is ignored (a probe through `ShaderUtil.GetShaderMessages`), so they're
+  avoided where they come from:
+  - Signed `/` and `%` divide unsigned magnitudes (X3556).
+  - `pow` is `tidehl_pow`, `exp2(log2(x) * y)`, as fxc expands pow itself (X3571).
+  - An `if` that returns, with no else, has the statements after it as its else.
+  - A function with a return inside a loop or a switch keeps its value in
+    `tidehl_value` and `tidehl_returned`, leaves the loop or switch by `break` (a
+    `continuing` loop's flag too), skips what's after by `if (!tidehl_returned)` and
+    returns at its end alone (X4000, where fxc and DXC guess at returns inside them).
+  - A loop of no derivatives is a `[loop]`, which fxc doesn't unroll.
+  What's left (X3557, a loop fxc works out runs once, as one of a constant count
+  may; X4000) is disabled by `com.tide.unity/Runtime/Shaders/TideWarnings.hlsl`,
+  which the shaders include: Unity passes standard pragmas on from an included
+  file. The tests compile each program through that include with `/WX`.
+- **`tidec --hlsl <dir>`** writes `<n>.hlsl` in `--shaders`' order. `tide_spirv_shaders --hlsl <dir>`
+  does the same for the renderer's shaders, through `TIDE_RENDERER_WGSL` (`platform/src/shaders.h`:
+  each pipeline's WGSL pieces by name), which the SPIR-V tool and `tide unity` use too.
+- **Tests:** `tidec_hlsl_<name>` (`compiler/tests/expect_hlsl.cmake`) compile every golden
+  shader's vertex and fragment stage with fxc (`vs_5_0`/`ps_5_0`, `/WX`) for
+  `SHADER_API_D3D11`, `SHADER_API_GLCORE` and `SHADER_API_GLES3`, as Unity compiles each
+  with fxc first. `tide_hlsl_shaders_valid` compiles the renderer's 10. The Sample's
+  `ShaderTests` compiles the written shaders in Unity on each desktop API with nothing said.
+  They exist where CMake finds fxc (`cmake/HlslTests.cmake`, newest Windows Kits
+  10 SDK). All 87 golden programs and the 10 built-ins pass. The Sample's PlayMode
+  test draws through the built-ins and a game frag in Unity on D3D11
+  (`notes/unity.md`).
+- **Not done:** DXC-specific checks; Unity's other compilers, used for Vulkan, Metal and GL,
+  are only exercised as Unity imports the shaders. WGSL `alias` and `override` are not taken,
+  matching spirv.c. Loops with a `continuing` part don't share body variables with it.
+
+## Computed properties (2026-10-21)
+
+Ordinary numeric properties lower to existing method calls. Property increment
+expressions keep the getter's old value and calculated next value, call the
+setter once, then select old/next for postfix/prefix. Reading the getter again
+would be wrong when a setter clamps. Existing GPU restrictions on conditional
+increments, mutable receivers and entity/world access still apply. The new
+properties golden pins GLSL/WGSL. PropertyProbe in platform/tests/shaders.tide
+checks a clamping setter through the existing CPU/frag/vert comparison without
+changing its expected sum. Native/web coverage is recorded in language.md.
+
+## Double matrix rejection (2026-10-20)
+
+Double matrices remain CPU values. type_words rejects every binary64 type
+before generic matrix packing; the diagnostic now names explicit conversion to
+a float scalar/vector/matrix in local code. The new GPU matrix fixture pins
+that boundary. Float shader lowering and GPU arithmetic remain unchanged.
+Validation: notes/language.md.
+
+## Double values stay on the CPU (2026-10-20)
+
+The scalar/vector double foundation keeps shader ABI and rendering types at
+binary32. type_words rejects double/double2/double3/double4 before the generic
+numeric dimension path; double literals are rejected too, including those
+inside an explicit shader conversion. Diagnostics say to convert to float or a
+float vector in local code before drawing. CPU holders can still contain unread
+double fields beside ordinary GPU-visible fields through existing read masks.
+Two compiler diagnostics cover scalar/vector GPU use. No GLSL/WGSL/SPIR-V
+semantics or rendering backend changes. Full validation: notes/language.md.
+
+## Float bit casts and hashes (2026-10-20)
+
+Math.AsInt/AsFloat emit floatBitsToInt/intBitsToFloat in GLSL and dimensioned
+bitcast<int/float vector> expressions in WGSL. Float Math.Hash reinterprets the
+same input bits before the existing integer xxHash helpers; integer paths retain
+their prior text and results. `float_bits` goldens/SPIR-V and the dedicated
+platform pixel fixture cover every scalar/vector arity against CPU-generated
+expected bits and hashes, with distinct inputs across frames. Screen.scale stays
+CPU/frame-only; private aggregate pointer lowering does not change shader helper
+signatures. Final validation is in notes/language.md.
+
+
+## Skinned instance bindings (2026-10-20)
+
+`Draw.Instanced` now accepts a skinned model. The shader plan retains an optional
+CPU `Pose pose` field beside the existing optional transform binding, while
+ordinary read analysis uploads only the fields read by GPU code. Generated
+adapters share single-pose capture/binding emission with `Draw.SkinnedMesh`,
+loop over the explicit items, skip invalid poses and record compatible palette
+bases through existing batching. Shared uniforms/textures are prepared once. Safe instance-list arguments borrow
+without an intermediate nested-pose copy; later ordered effects preserve
+ordinary snapshots, including through extern calls.
+The existing attribute-limit fallback remains intact. Updated `skinned` and
+`skinned_attribute_limit` goldens, E2E capture checks and platform pixel checks
+cover these paths; contracts and final validation are in `notes/drawing.md`.
+
+
 ## ANGLE D3D11 comparisons and shader warnings (2026-10-19)
 
 Inside Out's newer prototype note exposed a backend defect missed by the

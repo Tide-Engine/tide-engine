@@ -1,0 +1,3 @@
+# The game's test, which this repo's build runs (../CMakeLists.txt). A folder
+# with this file is no part of the game around it, so `tide run` and `tide
+# deploy` in the game's folder leave the test's C out of the game.

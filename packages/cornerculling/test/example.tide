@@ -1,0 +1,24 @@
+using CornerCulling;
+
+singleton OcclusionExample
+{
+    CullingWorld walls;
+    CullingCache pair;
+    bool visible;
+}
+
+event(Spawned) BuildOcclusionExample(with Main, mut OcclusionExample example)
+{
+    List<Box> blockers = [Box {
+        bounds = Bounds { center = float3(0), extents = float3(0.5, 4, 4) }
+    }];
+    example.walls.Rebuild(blockers);
+
+    // In a game, rebuild only when map membership changes, then run queries
+    // after movement and door updates. Retain one cache per directed pair.
+    var query = CullingQuery {
+        observer = Bounds { center = float3(-5, 0, 0), extents = float3(0.5) },
+        target = Bounds { center = float3(5, 0, 0), extents = float3(0.5, 1, 0.5) }
+    };
+    example.visible = example.walls.Query(query, example.pair).IsVisible();
+}

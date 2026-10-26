@@ -151,8 +151,7 @@ static void tick(void *state, const tide_jobs *jobs)
     }
     const int32_t offset = (int32_t)(s->tick % 2u);
     const uint32_t rows = s->size >= 2 ? (uint32_t)(s->size - offset) / 2u : 0u;
-    // Threads pay from about 200 rows of blocks, or 400 by lookup (on a
-    // 12-core Ryzen 9 7900X)
+    // Threads pay from about 200 rows of blocks, or 400 by lookup
     step_job j = {s, offset, rows, versus_pieces(jobs, rows, s->table ? 384u : 192u)};
     versus_for(jobs, j.pieces, step, &j);
     s->tick++;

@@ -16,7 +16,7 @@ TIDE_TEST(reach_toggles_come_and_go_as_their_systems_say)
 {
     tide_world_init(&world, 1.0f);
     TIDE_CHECK(tide_world_entity_count(&world) == 4);
-    TIDE_CHECK(tide_has_Leafy(&world, TREE) && !tide_has_Fruiting(&world, TREE)); // The Add on the spawn's local
+    TIDE_CHECK(tide_has_Leafy(&world, TREE) && !tide_has_Fruiting(&world, TREE));
 
     // Rocks: on at the end of a tick, off at the end of the next
     tide_world_tick(&world);
@@ -26,7 +26,7 @@ TIDE_TEST(reach_toggles_come_and_go_as_their_systems_say)
     TIDE_CHECK(tide_get_Body(&world, ROCK).toggles == 2);
 
     // Ships: armed, shielded, cloaked, bare, in turn
-    TIDE_CHECK(!tide_has_Armed(&world, SHIP) && tide_has_Shielded(&world, SHIP)); // After two ticks
+    TIDE_CHECK(!tide_has_Armed(&world, SHIP) && tide_has_Shielded(&world, SHIP));
     tide_world_tick(&world);
     TIDE_CHECK(!tide_has_Shielded(&world, SHIP) && tide_has_Cloaked(&world, SHIP));
     tide_world_tick(&world);

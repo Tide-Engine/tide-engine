@@ -1,0 +1,4 @@
+interface:
+  display_name: "Tide"
+  short_description: "Build and debug Tide games with verified references"
+  default_prompt: "Use $tide to implement this game feature and validate it with the installed compiler."

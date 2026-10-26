@@ -1,5 +1,267 @@
 # No Tide code can corrupt memory
 
+## Remote assets: decoders, limits and the fetch paths (2026-10-26)
+
+Games load bytes from URLs: at build time (`asset X x = "https://..."`, fetched by tidec's curl) and at runtime (`await Web.Fetch`, then `grid.Decode` or `SkinnedMesh.Decode` in match code on every machine). Every decoder those bytes reach was audited and fuzzed with libFuzzer + ASan + UBSan on Windows clang 23 (harnesses kept outside the repo, compiling each decoder directly with a malloc-backed `tide_alloc` so ASan sees every allocation; old-vs-new outputs compared over the corpora, all identical for valid files). What was found and fixed:
+
+- **tidec's URL cache ran a server's commands on Windows.** The cached ETag went back on `popen`'s command line, quotes escaped as `\"`; `cmd.exe` has no backslash escape, so `x" & <command> & "` ran the command on the next build. The ETag now goes to curl in a file (`-H @<hash>.request`), so nothing a server says reaches a shell; `safe_etag` only refuses control characters. `tide_cli_assets` serves such an ETag and checks it comes back intact and runs nothing.
+- **PNG** (`png_read.c`; about 13M executions, 99.8% of lines): no memory faults. Fixed a stored deflate block after codes losing the bytes the bit buffer had taken ahead (valid sync-flushed streams were refused), a lazily filled static CRC table racing between threads (now per decode), and IDAT growth that could wrap a 32-bit `size_t`.
+- **Vorbis/WAV** (runtime clips from the pack, whose bytes can be a build-time URL's): `decode_clip` sized a whole decode by the file's granule after a `uint32_t` cast, at any 32-bit rate, so a 2.9 KB file tidec accepted asked for 8 GiB: wrapped on wasm32, where the reader then wrote past the buffer; ended the program natively. Whole decodes are now sized by the frames the packets actually give (counted at open with the reader's own framing helper) and capped by samples, streaming past that. Also fixed: `tide_vorbis_decode`'s sizing wrap, Ogg page/packet arithmetic on multi-GB input, exactly 2^30 WAV samples, codebooks asking gigabytes at open, lying window flags multiplying decode work, and a data race on the floor's inverse-dB table (now a constant). tidec now decodes Vorbis once at build and refuses damaged packets and non-finite samples. Details: `notes/audio.md`.
+- **glTF/GLB/OBJ** (runtime `SkinnedMesh.Decode`, build-time meshes; about 25M executions): no memory faults. Denial of service fixed: accessors with no buffer view read as zeros, so 276 bytes asked for 1.76 GB; JSON key lookups were linear and repeated per node (a 3 MB file took over 100 s). Objects of more than 8 keys keep a sorted key index (an own merge sort: MSVC's `qsort` goes quadratic on chosen keys); first occurrence of a repeated key still wins. Two theoretical OBJ overflows (line counter, float list doubling) fixed.
+- **Build-time images and FBX** (`image_file_read` over JPEG/TGA/BMP/PSD, `psd_file_read`, `fbx_file_to_glb` static and skinned, FBX `model_metadata_read`, and stb_image unwrapped; about 30M executions): no memory faults in Tide's code, stb_image or ufbx. ufbx's portable `ufbx_isnan` negated a low word of 0x80000000 as a signed int: patched unsigned, as `ufbx_atan2` already was, recorded in `compiler/third_party/ufbx/README.md`, with a direct regression in `tidec_fbx_files`. The vendored stb is upstream `2c980bb` plus its README's four patches; its open CVEs are GIF/PIC/HDR (compiled out) and TGA's unchecked read (CVE-2023-45663), which the wrapper's preflight covers by checking every pixel is present, as it refuses the zero-height BMPs stb itself accepts. Work limits: progressive JPEG scans, PSD pixels, FBX triangulation and baked keys (`notes/assets-and-files.md`, Import limits).
+- **HTTP client** (`platform/src/fetch.c`): buffer arithmetic was sound. `header()` cut each value in place, hiding every later header (a `Location` after `Content-Length`, as many servers send, failed the redirect); it now leaves the head whole and returns lengths. A URL's or redirect's spaces and line breaks went into the request line, adding headers: a host can't have them, and a target sends them as `%XX`, as a browser does. TLS wrappers (SChannel, Secure Transport, OpenSSL, Android) and the web glue were read and are bounded.
+
+**Limits.** The owner asked for limits that are "clear, easy to change": each is one commented `#define` in a Limits block at the top of its header, and a file past one is refused before what it asks for is made or done. `tide/png.h` (`TIDE_GRID_DECODE_MAX_PIXELS` 4096², `TIDE_PNG_MAX_EXTRA_BYTES` 1 MiB), `tide/skinned_data.h` (vertices, indices, nodes, skins, clips, buffers, palettes, influences, channels, key numbers, JSON values and a total read budget), `compiler/src/mesh_files.h` (build-time meshes), `tide/vorbis.h` (codebook entries and values, work per frame), `tide/wav.h` (`TIDE_SOUND_MAX_SAMPLES`), `TIDE_CLIP_WHOLE_MAX_*` in `engine/src/audio.c`, and `compiler/src/image_files.h`, `psd_files.h` and `fbx_files.h` for build-time imports. The numbers are Claude's picks, Provisional in `docs/spec.md`. **Every refusal by a limit names it** (the owner, 2026-10-26: fine to fail, but "a clear error so we know why and users reporting issues is clear"): "has <count> <what>, more than the <limit> <who> takes (<DEFINE>)", counts with their thousands apart (`tide/internal/count_text.h`), the define's name last so a pasted report says which. tidec says it in the asset's diagnostic; at runtime `grid.Decode` and `SkinnedMesh.Decode` still give only `InvalidData` but print the line on stderr (`tide: grid.Decode refused a PNG: ...`, `tide: SkinnedMesh.Decode refused a model: ...`), only for a limit, as a game may try bytes it isn't sure of. The PNG reader's `tide_png_decode` and `tide_png_decode_rows` take an optional `why` (`TIDE_PNG_WHY` bytes) for it; the skinned decoder's helpers are `past_limit`/`PAST_LIMIT`, mesh_files.c's `past_limit` and fbx_files.c's `FBX_PAST_LIMIT`, and `gltf_read.h`'s includers name `INDICES_MOST_NAME`/`READS_MOST_NAME`. The `decode` safety fixture pins the runtime line; each importer's tests pin their messages whole.
+
+Tests: `tests/test_png.c`, `test_skinned_decode.c`, `test_vorbis.c`, `test_audio.c`, `compiler/tests/mesh_files_test.c`, `audio_files_test.c`, `image_files_test.c`, `fbx_files_test.c`, the `decode` safety fixture (a picture one pixel past the limit refused, the grid unchanged), `tidec_e2e_fetch(_web)` and `tide_cli_assets`. Other sanitizer platforms remain CI's.
+
+## Twelve-slot sampling and capture (2026-10-25)
+
+Run sampling uses two uint32-layout banks in a uint64_t. Existing helpers check
+the twelve-slot bound before shifts; invalid indices return nearest/clamp/zero
+as appropriate. Texture references still carry four bits independently of the
+run encoding. Capture and append bound the active texture prefix, zero unused
+run storage and retain owned pixels as before. WebGPU transfers read kinds in
+two uint32 banks with bounded C/JS shifts. No new game pointer or simulation
+state is introduced. Independent-slot, owned append and zero-through-twelve
+packet regressions passed natively. Draw and capture regressions also passed
+under WASI. The Node bridge/layout fixture and WebGL2/Direct3D11/WebGPU pixel
+checks passed, including device recreation.
+
+## Scroll offsets and bounded field editing (2026-10-25)
+
+A generated Scroll never keeps a list/grid/array element address across its
+body. Indices are evaluated once, the offset lives in a generated C local, and
+normal checked assignment reacquires current storage on every exit. gui_custom
+covers list growth, removal and early return. GUI's pointer is borrowed only to
+that stack local; trusted C must keep its own pointer valid through close.
+Offsets/dimensions are sanitized and bounded, and first-frame placement measures
+at zero before clamping huge requests. Caret/anchor/history use bounded indices
+into the active 256-byte buffer; insertion checks replacement capacity, UTF-8
+movement stays on code-point boundaries, and undo has 16 fixed states. Tests
+cover multibyte replacement, undo/redo, deletion, repeat and FLT_MAX offsets.
+No simulation memory or unchecked game pointer is added.
+
+## Started task identities and retained results (2026-10-25)
+
+Handles contain only a serial, slot and zero padding. Lookup checks slot bounds,
+serial, operation code, typed table bounds and row identity. Stale/default
+handles cannot cancel a reused slot. Serial/start-order exhaustion uses the
+existing allocation-failure policy instead of wrapping into an old identity.
+Due-row allocation and tracing growth check widened size arithmetic.
+
+Result ownership uses ordinary typed table/heap acquire/release. Iterative value
+and operation worklists trace recursive containers and cached-result cycles
+without recursive C stack growth; completion sweeping validates row ownership
+before updating a registry entry. Source Task types remain invariant even
+though C aliases share the same opaque 16-byte representation.
+Expired hidden handle slots and captured grid slots release their ownership.
+Provider callbacks/pointers/TLS cancellation context are never serialized.
+Tests, reload/privacy boundaries and validation: language.md and hot-reload.md.
+
+## Owned local worker boundaries (2026-10-24)
+
+Capture/result walkers materialize text and nested containers before changing
+heap resolvers or releasing their source. Packed provenance never escapes a
+capture. Private input/output heaps live until provider-published completion;
+cancellation abandons publication and frame-thread collection releases memory.
+Parallel callbacks inherit private heap resolvers and detached captures, with
+independent scratch. Wasm acquisitions synchronize grown memory before reading
+queued jobs, outputs or pages. Only integer tickets enter task frames; unpack/
+rebind resets them and never restores group/provider pointers from saved bytes.
+Teardown drains callbacks before unloading code. Regressions/support: language.md.
+
+Worker audit: Asset<Mesh<V>> handles cannot enter owned boundaries; Value reads,
+loop offset/by operands and increment targets participate in the live-asset
+walk. Queued cancellation uses an atomic abandoned flag without releasing the
+provider's item early. Disposal abandons the whole group before helping it.
+test_worker checks release after provider completion, including abandoned items.
+
+Approved grid inputs are copied into the private input heap before dispatch.
+The generated capture widens directory-size arithmetic, copies existing chunks
+including their cell/header bytes, and reacquires the destination directory
+after allocations. No source grid handle or packed chunk reference survives.
+worker_grids covers int-edge positions, sparse/empty grids, source/pack changes,
+restore and shared-pool readers. Locals/results and writable grid inputs remain
+refused; helper chains borrow only the private snapshot.
+
+Effectful/waiting worker arguments preserve earlier grid captures in private
+owned frame slots. Their grid directory/chunks use the local heap and its normal
+release/serialization machinery; no source borrow or scratch handle crosses the
+wait. Frame disposal also releases a capture if a later argument ends the task.
+After dispatch clones the input, the slot is released/zeroed. Source addresses
+are refreshed when capture allocates in the same heap as the source.
+
+## Session cookie proof (2026-10-24)
+
+Protocol 19 checks a cookie and connection attempt before decoding connected
+packets or refreshing liveness in either direction. HELLO cannot replace a
+live/pending connection by its address alone; malformed disconnect payloads
+are ignored. Cookie-generation keys/counters remain private host metadata,
+outside simulation memory and serialization. Failed advertised entropy cannot
+produce an all-zero known key. Eleven session packet cases pass under targeted
+Windows ASan, including forgery, stale attempts, timeout and valid recovery.
+Wire/entropy contracts and the raw UDP security boundary: `notes/netcode.md`,
+Session cookie proof. No generated-C API or simulation layout changes.
+
+## Shard membership and recovery reservations (2026-10-24)
+
+Lifecycle messages validate their 0/1 flag and PlayerID against the game's
+configured count before indexing a membership word. The bitset grows through
+existing bounded list operations and writes through `tide_list_at_mut`, so
+snapshots retain COW ownership; at the player ceiling it contains 1,024 words.
+The invalid-slot regression covers zero, one past this game's count and
+UINT32_MAX, with unchanged world hashes. Admission release validates the
+player before touching arrays and cannot clear an active/migration identity.
+Checkpoint version 5 bounds pending notification counts against remaining
+bytes and the game's player count, and validates each flag/ID/desired state.
+No raw pointer or authentication cookie enters match state. Recovery and
+native/web validation are recorded in `notes/sharding.md`.
+
+## Untrusted session packets (2026-10-24)
+
+Upload chunks must match their retained transfer's size and sequence before
+indexing its chunk map or copying bytes. Validating the index against a new
+packet's size alone allowed a connected peer to access outside
+the original upload allocation. Windows AddressSanitizer reproduces the old
+heap-buffer-overflow; the fixed packet tests pass with session.c instrumented.
+
+Client input packets stage all canonical inputs in a reused private buffer;
+only a fully decoded, exactly consumed packet can change connection state.
+Acknowledgements and tick arithmetic are bounded before commit. Regression
+coverage and the remaining source-address authentication boundary are recorded
+in `notes/netcode.md`, Hostile client packet validation. No generated/runtime
+API, simulation layout or valid wire representation changes.
+
+## Optional voice and local packets (2026-10-22)
+
+Session local data checks packet bounds, greeted source/cookie, recipient
+identity and payload size before callback/relay; sender work has a fixed
+token bucket. The package validates Opus packet duration/channels and uses
+bounded speaker/jitter/sample queues, generation-tagged capture, copied
+playback cutoffs and SPSC ownership. Codec work never runs in the audio
+callback. Host stop follows mixer forget before any queue/code is freed.
+Malformed control/oversize/wrong-cookie packets, rate bounds, mute/reconnect
+and finite lossy-decoder output are covered on native/WASI. Detailed contracts
+and validation: `notes/voice-package.md`.
+
+## Computed property receivers (2026-10-21)
+
+Array property setters use checked slot helpers and compiler-known offsetof
+paths. A missing slot remains NULL through nested fields, and the setter returns
+without writing a shared zero sentinel. Receiver indexes are captured once for
+compound operations; RHS evaluation retains ordinary ordering. properties checks
+negative/maximum indexes and nested array fields. Component ownership sidecars
+stay on synchronous call stacks and add no stored world/entity pointers. The
+existing generation checks, hierarchy traversal bounds and scratch lifetimes
+also cover ParentToWorld; projected roots consult anchors only while alive.
+Replay/packing, verified reads and full validation are recorded in language.md.
+
+## Events in runs (2026-10-20)
+
+A run of events (notes/language.md, Events in runs) is read only by the
+generated code of the build that pushed it, during the tick that pushed it:
+its count is the one its pusher wrote, and `tide_command_fits` refuses the
+kind in a queue unpacked from bytes, so no game value or received byte sizes
+a read. Finding a target reads the table's entity column only below the
+table's count (`index - first` is unsigned), and its rows can't move during
+the run (structural changes wait in the queue); anything else goes through
+`tide_entity_location`, as before. Counting ordinary items in a row reads
+heads only below the page's `used`, in steps of the first item's own size,
+which `tide_command_fits` has checked for items from bytes. `events_runs`
+covers gone, reused and moved handles and the null target.
+
+## Double transcendental and matrix values (2026-10-20)
+
+The private binary64 adapter uses memcpy-based word access, requires binary64
+without excess precision and namespaces all public/internal kernels. Large trig
+argument reduction uses the bounded upstream tables and arrays for finite
+binary64 inputs; public entry points handle nonfinite values before reduction.
+The pow scale adjustment forms negative exponent-shift bits unsigned, avoiding
+the upstream negative signed left shift. A sign comparison is made explicitly
+unsigned. Source notices and provenance are retained. Matrix narrowing reuses
+the checked scalar double-to-float conversion; packing/repair/interpolation walk
+typed columns. No new allocation or data-dependent matrix index is introduced.
+Conformance, special-value, raw-bit and generated-code coverage is recorded in
+notes/language.md.
+
+## Double values and exact decimal conversion (2026-10-20)
+
+Double-to-int/long checks NaN and exclusive upper/inclusive lower limits before
+any C integer cast. Double-to-float handles NaN and values outside binary32's
+finite conversion range explicitly, including the nearest/even overflow midpoint;
+vector narrowing calls the same scalar helpers. Input/command repair follows
+every double component and existing explicit padding/optional clearing.
+
+Exact number reading retains at most 800 digits plus a nonzero-tail flag. Its
+128-word integers cover the complete accepted binary64 rounding range; extreme
+exponents return overflow/zero before constructing powers. Printing uses 40-word
+integers and a 384-byte double output buffer for the compiler's F0..F17 formats.
+No decimal conversion calls libc at runtime. The old float paths retain their
+bits. Runtime cases cover every finite exponent of both signs, integer and float
+cast boundaries, negative zero, NaNs, largest/smallest finite values, exact
+midpoints and long nonzero tails. Full contracts and validation: language.md.
+
+## Shared player ceiling (2026-10-20)
+
+The approved 65,536 ceiling uses uint32/varint player and fragment indices,
+including player index 65,535 and the distinct server input slot 65,536. Frame
+bounds widen input/event arithmetic before accepting allocation sizes, and
+handwritten game tables above the ceiling or supported frame size are refused.
+Kick checks the game's own count before indexing. Wire sets maintain a bounded
+active-word prefix; their wire decoder cannot add bits beyond fixed storage.
+
+Client handover digests and recovery output arrays are sized for their game.
+Managed checkpoints contain game-sized value arrays rather than pointers and
+are staged on the heap; restore bounds its bitset prefixes. Generated raw and
+network serialization headers also move off the stack, preventing two large
+input headers from overflowing the 1 MiB stack. The exact-ceiling fixture checks
+last-slot inputs, Audience membership, delta round-trip and reconnect/leave
+behavior; the 270-session fixture covers actual migration and projection.
+Contracts and final validation: netcode.md and language.md.
+
+Recorded containers (2026-10-19) keep fixed journal heap handles zero and store
+only bounded serialized values in optional tails. Size arithmetic widens before
+the uint32 record limit; tail length and zero padding are checked before reads.
+Recipient fixed-value checks still precede typed decoding, which validates
+counts, UTF-8, map order/keys, grid shapes/records and the existing nesting
+guard in an isolated temporary heap. Failed validation frees that heap without
+touching match/local state. Successful delivery frees its separate heap only
+after handlers have acquired ordinary local ownership of explicit copies.
+Context restoration includes both heap resolvers and scratch state. Source
+world/availability endpoints are resolved explicitly while recording. The
+event_containers and retained visibility_lifecycle forgery cases cover this;
+implementation and final validation are in language.md.
+
+Query local fields (2026-10-19) keep all local-field pointers out of recorded
+rows; only entity/birth values are added when needed. Lookup validates attached
+identity before reading, returning defaults on a birth mismatch. Mutable reset
+releases old ownership and initializes defaults in the same cell, preserving an
+outer alias rather than removing/moving its row. All new helpers are generated
+over existing bounded table/attached APIs. Local heap fields retain actual local
+ownership. Mutable references are acquired at row entry, so resets never occur
+in unspecified C operand order. Read-only borrows sharing query writes acquire
+the same cell, avoiding stale default borrows. The eleven
+query_local_fields cases include differing predicted /
+verified births under an active outer alias, containers, COW snapshots and
+5,002 rows; the scalar safety fixture covers repeated host snapshots/frames.
+
+Recorded-owner event filters (2026-10-19) capture only a player value and an
+integer presence flag, never a world pointer or component borrow. Recipient
+lifecycle payload validation checks that flag is 0/1 and absent-owner bytes
+are zero after validating the complete generated span. Ownership is checked
+before attached local fields are created/accessed. ownership_events covers
+forged metadata, destroyed targets and delivery without a current world.
+
+Mutable World.Set overlap (2026-10-19) uses compiler-private synchronous
+stack bindings, keyed by world, component and full entity generation. Target
+validation still precedes replacement. Container replacement releases/assigns
+the active mutable copy's current ownership rather than stale stored handles;
+source values and read-only helper arguments retain ordinary deep value copies.
+Final row write-back uses current COW pages. Bindings never escape into a
+world/task frame or survive a wait. world_set_mut checks nested containers,
+stale/missing targets, snapshots, replay and packed state without runtime changes.
+
 Texture metadata (2026-10-18) reads no pixel payload. Grid references reuse
 mesh.c's bounded see_grid directory/record validation, including arbitrary
 stale handles and dimensions; packed names resolve against the current pack;

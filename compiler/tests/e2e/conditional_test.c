@@ -14,21 +14,21 @@ TIDE_TEST(conditional_picks_a_side)
 {
     tide_world_init(&world, 1.0f);
 
-    tide_world_tick(&world); // ticks = 1
+    tide_world_tick(&world);
     TIDE_CHECK(world.Results.sign == -1);
     TIDE_CHECK(world.Results.half == 1.0f);
     TIDE_CHECK(world.Results.flag);
     TIDE_CHECK(world.Results.precedence == 1);
     TIDE_CHECK(world.Results.position.x == 0.0f && world.Results.position.z == 0.0f);
 
-    tide_world_tick(&world); // ticks = 2
+    tide_world_tick(&world);
     TIDE_CHECK(world.Results.sign == 0);
     TIDE_CHECK(world.Results.half == 0.5f);
     TIDE_CHECK(!world.Results.flag);
     TIDE_CHECK(world.Results.position.x == 1.0f && world.Results.position.y == 2.0f);
     TIDE_CHECK(world.Results.position.z == 3.0f);
 
-    tide_world_tick(&world); // ticks = 3
+    tide_world_tick(&world);
     TIDE_CHECK(world.Results.sign == 1);
 }
 

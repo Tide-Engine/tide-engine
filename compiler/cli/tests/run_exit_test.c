@@ -12,9 +12,11 @@ static char calls[16];
 int tide_hosting_command(const char *root, int argc, char **argv) { (void)root; (void)argc; (void)argv; abort(); }
 int tide_open(int argc, char **argv) { (void)argc; (void)argv; return 0; }
 char *tide_build_editor(const char *root, const build_options *opts) { (void)root; (void)opts; return NULL; }
+int tide_unity(const char *root, const build_options *opts) { (void)root; (void)opts; return 0; }
 static size_t call_count;
 static const char *passed[40]; // What the last run was given for its game
 static int passed_count;
+static const char *passed_scene, *passed_source, *passed_draft, *passed_work;
 
 static void called(const char call)
 {
@@ -48,6 +50,10 @@ void tide_check_for_update(const char *root)
 int tide_run_native(const char *root, const build_options *opts, const char *const *args)
 {
     (void)root;
+    passed_scene = opts->scene;
+    passed_source = opts->editor_source;
+    passed_draft = opts->editor_draft;
+    passed_work = opts->work;
     pass(args);
     called(opts->watch ? 'X' : 'N');
     return 13;
@@ -82,6 +88,7 @@ int tide_run_android(const char *root, const build_options *opts, const char *co
 // dispatch reaches an unrelated command, so an unexpected path cannot pass.
 void packages_set_builtin_folder(const char *folder) { (void)folder; }
 void packages_set_symbols(const char *const *names, const int count) { (void)names; (void)count; }
+char *packages_unity_game(const char *folder) { (void)folder; abort(); }
 void tide_cleanup(const char *root) { (void)root; }
 const char *tide_channel(const char *root) { (void)root; abort(); }
 bool tide_installation_whole(const char *root, const char *version) { (void)root; (void)version; abort(); }
@@ -92,6 +99,7 @@ int tide_editors(const char *root, const bool only_updates) { (void)root; (void)
 int tide_ide(const char *root, int count, const char *const *args) { (void)root; (void)count; (void)args; abort(); }
 int tide_add(const char *folder, const char *what) { (void)folder; (void)what; abort(); }
 int tide_eject(const char *folder, const char *name) { (void)folder; (void)name; abort(); }
+int tide_pin(const char *folder, const char *version) { (void)folder; (void)version; abort(); }
 int tide_update(const char *folder, const char *const *names, const int count)
 {
     (void)folder;
@@ -109,6 +117,18 @@ int tide_upgrade(const char *root, const char *channel, const char *version)
     abort();
 }
 bool tide_schedule(const build_options *opts, const bool shaders) { (void)opts; (void)shaders; abort(); }
+// Usage data is telemetry_test.mjs's: these runs record nothing.
+void tide_telemetry_record(const char *root, const int argc, const char *const *argv, const int code, const int64_t ms,
+                           const char *version)
+{
+    (void)root; (void)argc; (void)argv; (void)code; (void)ms; (void)version;
+}
+int tide_telemetry_send(const char *root, const char *version) { (void)root; (void)version; abort(); }
+int tide_telemetry(const char *root, const int count, const char *const *args, const char *version)
+{
+    (void)root; (void)count; (void)args; (void)version;
+    abort();
+}
 char *tide_build(const char *root, const build_options *opts) { (void)root; (void)opts; abort(); }
 
 int main(void)
@@ -172,6 +192,31 @@ int main(void)
         }
     }
     puts("ok: a run passes on every option of the game's command line, its files as paths from here");
+
+    char *startup[] = {"tide", "run", "game", "--scene", "Levels.First", "--source-overlay", "new.tprefab", "draft.txt",
+                       "--editor-cache", "private-cache", "--frames", "1"};
+    call_count = 0;
+    calls[0] = '\0';
+    if (tide_command_main((int)(sizeof startup / sizeof startup[0]), startup) != 13
+        || strcmp(calls, "UN") || passed_count != 2 || strcmp(passed[0], "--frames") || strcmp(passed[1], "1")
+        || !passed_scene || strcmp(passed_scene, "Levels.First")
+        || !passed_source || strcmp(passed_source, path_absolute("new.tprefab"))
+        || !passed_draft || strcmp(passed_draft, path_absolute("draft.txt"))
+        || !passed_work || strcmp(passed_work, "private-cache")) {
+        fputs("startup options must reach the compiler without entering the host command line\n", stderr);
+        return 1;
+    }
+    const char *invalid_options[] = {"--scene", "--source-overlay", "--editor-cache"};
+    for (size_t i = 0; i < sizeof invalid_options / sizeof invalid_options[0]; i++) {
+        char *invalid[] = {"tide", "run", (char *)invalid_options[i]};
+        call_count = 0;
+        calls[0] = '\0';
+        if (tide_command_main(3, invalid) != 2 || calls[0]) {
+            fputs("an incomplete startup option must fail before running or checking updates\n", stderr);
+            return 1;
+        }
+    }
+    puts("ok: startup selection, original-path source overlay and isolated cache stay compiler options");
 
     // More of them than that is said, never written past the room there is
     char *many[2 + 3 * 16] = {"tide", "run"};
