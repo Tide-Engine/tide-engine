@@ -1,5 +1,82 @@
 # Netcode: sessions, prediction, commands
 
+## Projected repair delivery on unordered traffic (2026-10-26)
+
+The follow-up to the view-time fix below measures and fixes actual repair lag,
+without changing maxRewind, timestamps, visibility policy, hashes or the wire.
+The unchanged BREACH repro's first 480 ticks at 20 ms one-way latency, 5 ms
+jitter and 3% loss had 101 repair adoptions: compressed size median 711 bytes,
+maximum 98,249; transfer time median 133 ms, maximum 283 ms; adoption age median
+150 ms, maximum 417 ms. Eleven requests already named endpoints over 100 ms
+old when packed. Across all 1,800 ticks, 350 of 407 repairs were under 1 KB,
+yet 192 of those small transfers took over 100 ms. A 64-chunk update budget
+was not the bottleneck, nor was the confirmed presentation clock.
+
+WELCOME and its chunks travel unordered. Jitter regularly delivered chunks
+before WELCOME, and the client discarded them until timeout retransmission
+(1.5 answer round trips, about 100 ms here). Projected clients now retain one
+upcoming transfer's authenticated chunks, capped at one 64-chunk send burst
+(64,512 bytes of lazy retained storage). Matching, accepted WELCOME metadata
+feeds them through the ordinary exact-size/index/duplicate chunk validator.
+Queued bytes are not acknowledged before that metadata validates their chunks;
+world publication and verification still require the complete baseline,
+canonical hash and repair checks. Overflow falls back to retransmission. Old transfers are ignored; pending
+bytes clear on disconnect, reload or authoritative replacement and are freed
+at client destruction. Address/cookie/attempt checks still precede buffering.
+
+For projected transfers, an acknowledgement of later chunks permits one early
+retry of each missing chunk; ordinary timeout retransmission remains available.
+The existing 64-chunk update budget is unchanged. A byte per sent chunk bounds
+the extra retry; packet reordering can cause at most one such extra copy per
+chunk. Equal-prefix acknowledgement masks accumulate instead of forgetting
+already received bits. Non-projected world transfers keep their original
+early-chunk/timeout behavior.
+
+Valid stream requests also refresh the recent-repair time. Periodic prediction
+probes still run, but a failed probe resumes fresh coalesced repair immediately
+instead of restarting with old exact endpoints. Accepted repair work is packed
+after the update's authoritative ticks and all incoming acknowledgements:
+stream requests choose the actual latest endpoint; exact requests preserve
+their requested tick. Existing in-flight bytes/baselines remain stable, and
+permitted lifecycle journals retain their original ordering and validation.
+Pending work clears on reconnect and build migration. No verified clock moves
+past an actual decoded endpoint; all admission/future/fraction/age guards stay.
+
+A scratch 480-tick real-game trace of the bounded delivery/probe changes
+retained 315 early chunks, adopted 179 repairs, and measured median 33 ms
+transfer / 50 ms adoption age. Only the two initial catch-up repairs started
+over 100 ms old; sampled receive-to-presentation lag was zero. The final
+end-of-update scheduling additionally removes one tick of stream endpoint age.
+Scratch instrumentation remains only under ignored build/debug; it is not
+production telemetry or a changed game harness.
+
+The CPU regression in `tests/test_session_view_time.c` now includes about 70 KB
+of random public history rotating through 17 frames, changing every tick from
+hidden authoritative consequences. Its transport holds WELCOME across an
+update while chunks pass, over the same 20 ms/5 ms/3% profile. Every observed
+confirmed world is checked against its authoritative canonical hash. Final
+native/WASI agree: 128 confirmations, 292/320 supplied stamps inside the
+unchanged bound, maximum confirmation lag 18 ticks, zero resyncs/lost actual
+stamps. Linking the same fixture against e16a820 fails: 90 confirmations,
+3/320 bounded stamps and a 46-tick worst lag. The existing render-pause case
+still checks every rejected/accepted stamp; its expired-count floor now
+measures the deliberate pause rather than relying on the removed network lag.
+
+Final native/WASI validation passes the 15 session cases, seven existing
+visibility cases (the visibility filter also selects the consecutive-repair
+regression), generated `view_time`, and both complete Box2D/Box3D actual-frame
+rewind-network fixtures. The unchanged 1,800-tick real BREACH repro passes on
+both platforms with identical results: 378/386 canonical confirmed worlds,
+177/194 hidden updates, 167/187 hidden movement updates, 52/57 availability
+transitions and zero resyncs. All 3,503 supplied valid claims have zero
+rejections at ages <=250 ms; only 117 older claims expire, versus 1,966 before
+this follow-up. This is not a guarantee for arbitrary loss or a wider rewind
+window: expired claims still fail, and each correction still advances only
+when its actual permitted state arrives. No prototype source/assertion changed.
+All commands retain TIDE_HIDDEN; no GPU, native window, browser or CI run.
+Independent read-only review approved both the bounded transfer changes and
+the final post-tick scheduling/reconnect/migration diff without blockers.
+
 ## Presented view times survive visibility repair (2026-10-26)
 
 BREACH's real lossy culling test exposed two session bugs. Each new repair

@@ -14,6 +14,7 @@ typedef struct repair_input {
 typedef struct repair_world {
     uint32_t tick, secret, changes, shown;
     repair_input input[2];
+    uint32_t history[17][1024]; // About 70 KB of rotating, public recipient history.
 } repair_world;
 
 typedef struct repair_probe {
@@ -23,12 +24,21 @@ typedef struct repair_probe {
 } repair_probe;
 
 static repair_probe probe;
+static bool large_history;
 
 static void repair_start(void *world, float dt, const void *start, uint32_t seed)
 {
     (void)dt; (void)start; (void)seed;
     memset(world, 0, sizeof(repair_world));
     ((repair_world *)world)->secret = 1;
+    if (large_history) {
+        repair_world *w = world;
+        uint32_t word = 0x719AF28Du;
+        for (uint32_t row = 0; row < 17; row++) for (uint32_t i = 0; i < 1024; i++) {
+            word ^= word << 13; word ^= word >> 17; word ^= word << 5;
+            w->history[row][i] = word;
+        }
+    }
 }
 
 static void repair_tick(void *world, const tide_jobs *jobs)
@@ -40,6 +50,13 @@ static void repair_tick(void *world, const tide_jobs *jobs)
     if (w->secret && w->tick >= 60 && w->tick < 420) {
         w->changes++;
         w->shown = (w->tick / 30u) % 2u;
+        if (large_history) {
+            uint32_t word = w->tick * 0x712795A3u;
+            for (uint32_t i = 0; i < 1024; i++) {
+                word ^= word << 13; word ^= word >> 17; word ^= word << 5;
+                w->history[w->tick % 17u][i] = word;
+            }
+        }
     }
 }
 
@@ -219,12 +236,112 @@ TIDE_TEST(session_view_time_survives_consecutive_visibility_repairs)
     TIDE_CHECK(probe.loads > 20 && probe.skips > 20);
     TIDE_CHECK(probe.lost_stamps == 0 && probe.adopted_stamps > 50);
     TIDE_CHECK(accepted > 300 && corrected > 180);
-    TIDE_CHECK(expired > 40);
+    TIDE_CHECK(expired > 20); // The render pause alone must expire actual held frames.
     TIDE_CHECK(shown >= 4 && hidden >= 4);
     TIDE_CHECK(status.resyncs == 0 && status.predicted_tick > 470 && status.verified_tick > 460);
     tide_client_destroy(client);
     tide_server_destroy(server);
     tide_loopback_destroy(net);
+}
+
+typedef struct delayed_welcome {
+    tide_transport inner;
+    tide_address from;
+    uint8_t bytes[TIDE_NET_MTU];
+    uint32_t size, delayed;
+    double until;
+} delayed_welcome;
+
+static void delayed_send(void *self, tide_address to, const void *bytes, uint32_t size)
+{
+    delayed_welcome *t = self;
+    t->inner.send(t->inner.self, to, bytes, size);
+}
+
+static uint32_t delayed_receive(void *self, tide_address *from, void *bytes, uint32_t capacity)
+{
+    delayed_welcome *t = self;
+    const double now = t->inner.clock(t->inner.self);
+    if (t->size && now >= t->until) {
+        const uint32_t size = t->size;
+        t->size = 0;
+        if (capacity < size) return 0;
+        *from = t->from;
+        memcpy(bytes, t->bytes, size);
+        return size;
+    }
+    uint32_t size;
+    while ((size = t->inner.receive(t->inner.self, from, bytes, capacity)) != 0) {
+        if (size < 4 || ((const uint8_t *)bytes)[3] != 2) return size;
+        // Hold metadata across an update while its authenticated chunks pass.
+        if (!t->size) {
+            t->size = size;
+            t->from = *from;
+            memcpy(t->bytes, bytes, size);
+            t->until = now + 1.0 / 120.0;
+            t->delayed++;
+        }
+    }
+    return 0;
+}
+
+TIDE_TEST(session_view_time_large_changing_repairs_keep_chunks_before_welcome)
+{
+    memset(&probe, 0, sizeof probe);
+    large_history = true;
+    tide_loopback *net = tide_loopback_create(2198);
+    tide_loopback_set_conditions(net, (tide_net_conditions){.latency = 0.02, .jitter = 0.005, .loss = 0.03});
+    tide_server *server = tide_server_create(&(tide_server_desc){.game = &repair_game, .tick_rate = 60,
+        .transports = {tide_loopback_endpoint(net, 1)}}, 0);
+    delayed_welcome transport = {.inner = tide_loopback_endpoint(net, 2)};
+    tide_game client_game = repair_game;
+    client_game.write_input = repair_sample_write;
+    tide_client *client = tide_client_create(&(tide_client_desc){.game = &client_game,
+        .transport = {.self = &transport, .send = delayed_send, .receive = delayed_receive}, .server = tide_loopback_address(1),
+        .sample = repair_sample, .lead = 2}, 0);
+    TIDE_REQUIRE(net && server && client);
+    uint32_t ticks[512] = {0}, checked = 0, confirmations = 0, received = 0, accepted = 0, previous = 0, worst = 0;
+    uint64_t hashes[512] = {0};
+    for (uint32_t step = 1; step <= 960; step++) {
+        const double now = step / 120.0;
+        tide_loopback_set_time(net, now);
+        tide_client_update(client, now);
+        tide_server_update(server, now);
+        const repair_world *world = tide_server_world(server);
+        ticks[world->tick % 512] = world->tick;
+        hashes[world->tick % 512] = repair_client_hash(world, (tide_player_id){1});
+        const tide_client_status status = tide_client_status_of(client);
+        if (status.verified_tick && checked != status.verified_tick) {
+            checked = status.verified_tick;
+            TIDE_CHECK(ticks[checked % 512] == checked);
+            TIDE_CHECK(repair_client_hash(tide_client_verified_world(client), (tide_player_id){1}) == hashes[checked % 512]);
+            confirmations++;
+        }
+        if (world->input[0].sequence && world->input[0].sequence != previous) {
+            previous = world->input[0].sequence;
+            if (world->tick >= 100 && world->tick < 420) {
+                received++;
+                if (world->input[0].view.valid) accepted++;
+            }
+        }
+        const uint32_t lag = world->tick - status.verified_tick;
+        if (world->tick >= 100 && world->tick < 420 && lag > worst) worst = lag;
+        const tide_view_worlds view = tide_client_view(client);
+        if (view.verified) {
+            probe.presented = (tide_view_time){(int32_t)view.verified_tick, view.verified_alpha, true};
+            tide_client_mark_presented(client);
+        }
+    }
+    printf("    large repairs: %u confirmations, %u/%u bounded stamps, worst lag %u ticks, %u delayed welcomes\n",
+        confirmations, accepted, received, worst, transport.delayed);
+    TIDE_CHECK(confirmations > 100 && transport.delayed > 100);
+    TIDE_CHECK(accepted * 100u > received * 85u);
+    TIDE_CHECK(worst < 24 && probe.lost_stamps == 0);
+    TIDE_CHECK(tide_client_status_of(client).resyncs == 0);
+    tide_client_destroy(client);
+    tide_server_destroy(server);
+    tide_loopback_destroy(net);
+    large_history = false;
 }
 
 typedef struct repair_peer {
