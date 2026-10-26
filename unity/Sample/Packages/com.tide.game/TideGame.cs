@@ -413,6 +413,10 @@ namespace Tide.Game
 namespace Tide.Game
 {
     // Tide's struct Trail, as Unity code has it
+    /// <summary>
+    /// A ball's trail, which a prefab sets in Unity's inspector as any struct field
+    /// <para>Tide's struct Trail, declared in Assets/Tide/Bounce.tide.</para>
+    /// </summary>
     [global::System.Serializable]
     public unsafe partial struct Trail
     {
@@ -448,6 +452,9 @@ namespace Tide.Game
 namespace Tide.Game
 {
     // Tide's struct PlateCorner, as Unity code has it
+    /// <summary>
+    /// <para>Tide's struct PlateCorner, declared in Assets/Tide/Bounce.tide.</para>
+    /// </summary>
     [global::System.Serializable]
     public unsafe partial struct PlateCorner
     {
@@ -626,13 +633,19 @@ namespace Tide.Game
 namespace Tide.Game
 {
     // Tide's singleton Extras, as Tide's views see it this frame: TideRunner.Get (TideSingleton)
+    /// <summary>
+    /// <para>Tide's singleton Extras, declared in Assets/Tide/Bounce.tide.</para>
+    /// </summary>
     public sealed partial class Extras : global::Tide.TideSingleton
     {
         public global::UnityEngine.GameObject bonus;
+        /// <summary>Bonus, twice</summary>
         public global::UnityEngine.GameObject again;
         public global::UnityEngine.GameObject tossed;
         public string said;
+        /// <summary>Who's said something</summary>
         public global::Tide.TideSet<uint> speakers;
+        /// <summary>A cell for each line said</summary>
         public global::Tide.TideGrid2<byte> board;
 
         public override string TideName => "Extras";
@@ -665,6 +678,9 @@ namespace Tide.Game
 namespace Tide.Game
 {
     // Tide's singleton Room, as Tide's views see it this frame: TideRunner.Get (TideSingleton)
+    /// <summary>
+    /// <para>Tide's singleton Room, declared in Assets/Tide/Bounce.tide.</para>
+    /// </summary>
     public sealed partial class Room : global::Tide.TideSingleton
     {
         public int arrivals;
@@ -692,6 +708,9 @@ namespace Tide.Game
 namespace Tide.Game
 {
     // Tide's struct Plates, as Unity code has it
+    /// <summary>
+    /// <para>Tide's struct Plates, declared in Assets/Tide/Bounce.tide.</para>
+    /// </summary>
     [global::System.Serializable]
     public unsafe partial struct Plates
     {
@@ -726,6 +745,11 @@ namespace Tide.Game
 namespace Tide.Game
 {
     // Tide's struct Badge, as Unity code has it
+    /// <summary>
+    /// A render target Tide draws into, shown at the top right (yellow over its top left, green elsewhere), and stencil:
+    /// a circle storing 1 where it is, and a cyan square drawn only there
+    /// <para>Tide's struct Badge, declared in Assets/Tide/Bounce.tide.</para>
+    /// </summary>
     [global::System.Serializable]
     public unsafe partial struct Badge
     {
@@ -758,6 +782,11 @@ namespace Tide.Game
 namespace Tide.Game
 {
     // Tide's struct Depths, as Unity code has it
+    /// <summary>
+    /// A multisampled target's depth, which Unity resolves to one sample a pixel for a frag to read: a cube drawn into it,
+    /// its depth shown at the bottom left, darker where the cube is nearer than the far limit
+    /// <para>Tide's struct Depths, declared in Assets/Tide/Bounce.tide.</para>
+    /// </summary>
     [global::System.Serializable]
     public unsafe partial struct Depths
     {
@@ -861,6 +890,9 @@ namespace Tide.Game
 namespace Tide.Game
 {
     // Tide's struct Roll, as Unity code has it
+    /// <summary>
+    /// <para>Tide's struct Roll, declared in Assets/Tide/Bounce.tide.</para>
+    /// </summary>
     [global::System.Serializable]
     public unsafe partial struct Roll
     {
@@ -896,6 +928,11 @@ namespace Tide.Game
 namespace Tide.Game
 {
     // Tide's command ShowBonus: TideRunner.Send sends it, as local code's Send does (TideCommand)
+    /// <summary>
+    /// Bonus.unity's entities, while a player has them: the match loads the scene, and Unity loads it with them. Twice:
+    /// the scene again beside it, which Unity loads another of
+    /// <para>Tide's command ShowBonus, declared in Assets/Tide/Bounce.tide.</para>
+    /// </summary>
     public sealed partial class ShowBonus : global::Tide.TideCommand
     {
         public bool on = false;
@@ -924,6 +961,10 @@ namespace Tide.Game
 namespace Tide.Game
 {
     // Tide's command Say: TideRunner.Send sends it, as local code's Send does (TideCommand)
+    /// <summary>
+    /// A line from Unity's UI, which the match keeps for everyone: TideRunner.Get&lt;Extras&gt;().said in C#
+    /// <para>Tide's command Say, declared in Assets/Tide/Bounce.tide.</para>
+    /// </summary>
     public sealed partial class Say : global::Tide.TideCommand
     {
         public string text = "";
@@ -949,6 +990,11 @@ namespace Tide.Game
 namespace Tide.Game
 {
     // Tide's command Toss: TideRunner.Send sends it, as local code's Send does (TideCommand)
+    /// <summary>
+    /// A ball nobody rolls, in and out of the box: a GameObject made and let go of as its entity comes and goes, which
+    /// TideRunner's pool keeps for the next
+    /// <para>Tide's command Toss, declared in Assets/Tide/Bounce.tide.</para>
+    /// </summary>
     public sealed partial class Toss : global::Tide.TideCommand
     {
         public bool on = false;
@@ -974,6 +1020,10 @@ namespace Tide.Game
 namespace Tide.Game
 {
     // Tide's command Paint: TideRunner.Send sends it, as local code's Send does (TideCommand)
+    /// <summary>
+    /// Sent to a ball: TideRunner.Send(new Paint { ... }, ballGameObject) in C#
+    /// <para>Tide's command Paint, declared in Assets/Tide/Bounce.tide.</para>
+    /// </summary>
     public sealed partial class Paint : global::Tide.TideCommand
     {
         public global::UnityEngine.Color color = new global::UnityEngine.Color(0f, 0f, 0f, 0f);
@@ -1027,6 +1077,10 @@ namespace Tide.Game.UnityEngine
 namespace Tide.Game
 {
     // Tide's event Bounced, as this machine's local handlers hear it: TideRunner.On, OnVerified (TideEvent)
+    /// <summary>
+    /// A ball hitting the floor: C# hears it as local handlers do (TideRunner.On, OnVerified, the ball's TideEntityView.On)
+    /// <para>Tide's event Bounced, declared in Assets/Tide/Bounce.tide.</para>
+    /// </summary>
     public sealed partial class Bounced : global::Tide.TideEvent
     {
         public float speed;

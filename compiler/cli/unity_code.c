@@ -844,8 +844,9 @@ static char *where_declared(const game *g, const char *file)
         if (!in || starts(in, "Library/") || starts(in, "Library\\")) return NULL;
         puts_(&o, in);
     } else if (!in) {
-        if (starts(file, "../") || starts(file, "..\\")) return NULL;
-        putf(&o, "Assets/%s", file);
+        // From the project (prefabs' and scenes' texts, tide's own Library/Tide's), else from Assets
+        if (starts(file, "../") || starts(file, "..\\") || starts(file, "Library/") || starts(file, "Library\\")) return NULL;
+        putf(&o, "%s%s", starts(file, "Assets/") || starts(file, "Assets\\") ? "" : "Assets/", file);
     }
     for (char *c = o.s; *c; c++) {
         if (*c == '\\') *c = '/';
@@ -1749,7 +1750,7 @@ static char *open_path(const game *g, const char *file)
     const bool absolute = file[0] == '/' || file[0] == '\\' || (file[0] && file[1] == ':');
     const char *in = absolute && g->project ? under(file, g->project) : NULL;
     if (in) puts_(&o, in);
-    else if (absolute) puts_(&o, file);
+    else if (absolute || starts(file, "Assets/") || starts(file, "Library/")) puts_(&o, file);
     else putf(&o, "Assets/%s", file);
     for (char *c = o.s; *c; c++) {
         if (*c == '\\') *c = '/';

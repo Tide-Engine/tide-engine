@@ -114,8 +114,55 @@ public class TypeBoundaryTests
         StringAssert.DoesNotContain("line", ball.Split(new[] { "<para>" }, StringSplitOptions.None)[1].Split('\n')[0]);
     }
 
-    [UnityTest]
-    public IEnumerator AScriptsErrorOnARenamedNameSaysWhatBecameOfIt()
+    // A script compiled apart from the project's, by the Roslyn compiler Unity has: its errors as Unity's compile gives
+    // them
+    static CompilerMessage[] CompileApart(string source, string folder)
+    {
+        var contents = EditorApplication.applicationContentsPath;
+        var sdk = Path.Combine(contents, "DotNetSdk");
+        var dotnet = Path.Combine(sdk, Application.platform == RuntimePlatform.WindowsEditor ? "dotnet.exe" : "dotnet");
+        var csc = Directory.GetFiles(Path.Combine(sdk, "sdk"), "csc.dll", SearchOption.AllDirectories)
+            .First(p => p.Replace('\\', '/').Contains("/Roslyn/bincore/"));
+        var references = new[]
+        {
+            Path.Combine(contents, "NetStandard", "ref", "2.1.0", "netstandard.dll"), typeof(MonoBehaviour).Assembly.Location,
+            typeof(Tide.TideComponent).Assembly.Location, typeof(Tide.Game.Ball).Assembly.Location,
+        };
+        var arguments = $"exec \"{csc}\" /nologo /noconfig /nostdlib /target:library /out:\"{folder}/Probe.dll\" " +
+                        string.Join(" ", references.Select(r => $"/reference:\"{r}\"")) + $" \"{source}\"";
+        var start = new System.Diagnostics.ProcessStartInfo(dotnet, arguments)
+        {
+            UseShellExecute = false,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            CreateNoWindow = true,
+        };
+        string output;
+        using (var process = System.Diagnostics.Process.Start(start))
+        {
+            output = process.StandardOutput.ReadToEnd() + process.StandardError.ReadToEnd();
+            process.WaitForExit();
+        }
+        var located = new System.Text.RegularExpressions.Regex(@"^(?<file>.+?)\((?<line>\d+),(?<column>\d+)\): (?<kind>error|warning) ");
+        var messages = new List<CompilerMessage>();
+        foreach (var text in output.Split('\n'))
+        {
+            var match = located.Match(text.Trim());
+            if (!match.Success) continue;
+            messages.Add(new CompilerMessage
+            {
+                message = text.Trim(),
+                file = match.Groups["file"].Value,
+                line = int.Parse(match.Groups["line"].Value),
+                column = int.Parse(match.Groups["column"].Value),
+                type = match.Groups["kind"].Value == "error" ? CompilerMessageType.Error : CompilerMessageType.Warning,
+            });
+        }
+        return messages.ToArray();
+    }
+
+    [Test]
+    public void AScriptsErrorOnARenamedNameSaysWhatBecameOfIt()
     {
         Assume.That(entries != null && entryType != null, "this Unity has the Console's entries");
         LogAssert.ignoreFailingMessages = true;
@@ -127,29 +174,16 @@ public class TypeBoundaryTests
                                   "  {\"was\": \"Ball.speed\", \"now\": \"Ball.velocity\", \"file\": \"Assets/Tide/Bounce.tide\", \"line\": 124},\n" +
                                   "  {\"was\": \"Spinner.rate\", \"now\": \"Spinner.speed\", \"file\": \"Assets/Tide/Bounce.tide\", \"line\": 17},\n" +
                                   "  {\"was\": \"Paddle\", \"removed\": true}\n]}\n");
-        // A script of the old names, compiled apart from the project's
+        // A script of the old names
         const string folder = "Temp/TideRenameProbe";
         Directory.CreateDirectory(folder);
         const string probe = folder + "/Probe.cs";
         File.WriteAllText(probe, "using Tide.Game;\n\npublic static class Probe\n{\n    public static void Use(Ball ball, Tide.Game.Spinner spinner)\n    {\n" +
                                  "        ball.speed = default;\n        spinner.rate = 1;\n        Paddle paddle = null;\n    }\n}\n");
-        var references = CompilationPipeline.GetAssemblies(AssembliesType.Editor)
-            .Where(a => a.name == "Tide.Game" || a.name == "Tide.Runtime")
-            .Select(a => a.outputPath).ToArray();
-        Assert.AreEqual(2, references.Length);
-        var builder = new AssemblyBuilder(folder + "/Probe.dll", probe)
-        {
-            additionalReferences = references,
-            referencesOptions = ReferencesOptions.UseEngineModules,
-        };
-        CompilerMessage[] messages = null;
-        builder.buildFinished += (_, m) => messages = m;
         try
         {
-            Assert.IsTrue(builder.Build());
-            var deadline = EditorApplication.timeSinceStartup + 120;
-            while (messages == null && EditorApplication.timeSinceStartup < deadline) yield return null;
-            Assert.IsNotNull(messages, "the probe compiled");
+            var messages = CompileApart(probe, folder);
+            Assert.AreEqual(3, messages.Count(m => m.type == CompilerMessageType.Error), string.Join("\n", messages.Select(m => m.message)));
 
             var notes = TideRenames.NotesFor(messages, TideRenames.Read());
             var texts = notes.Select(n => n.Message).ToArray();

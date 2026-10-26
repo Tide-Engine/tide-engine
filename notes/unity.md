@@ -830,8 +830,10 @@ from `Library/Tide/outline.json` when Unity opens the declaration. Everything el
   in source control. `Editor/TideRenames.cs`: at `CompilationPipeline.assemblyCompilationFinished`, each error saying
   a member (CS0117, CS1061), a type (CS0246, CS0103), a type in a namespace (CS0234) or in a type (CS0426) isn't there
   is looked up (`Tide.Game.` and `global::` dropped, `.Value.` as the class's field, else an entry ending in it, for a
-  namespaced type written short), and a note goes in as a compiler message (a warning) of its own identifier
-  (`0x7469646e`): "tide: `Ball.speed` is now `Ball.velocity` (Assets/Tide/Bounce.tide:124)", located at the new
+  namespaced type written short), and a note goes in as a compiler message of its own identifier (`0x7469646e`), an
+  error one: a probe in batch mode found neither `LogCompilerMessage`'s warnings nor `LogCompilerWarning` added any
+  Console entry (so tide's own located warnings, which `TideBuildService.Log` sends that way, may not reach it either:
+  not looked into): "tide: `Ball.speed` is now `Ball.velocity` (Assets/Tide/Bounce.tide:124)", located at the new
   declaration, or "tide: `Paddle` was removed from the game's Tide code" at the script's line; each once, all gone at
   `compilationStarted`. `TideBuildService.LogLocated`/`RemoveLocated` take the identifier. Test:
   `unity_code_records_what_became_of_names` (a field renamed in place, a local field, a struct by its fields, an enum

@@ -150,9 +150,10 @@ namespace Tide.Editor
             foreach (var note in NotesFor(messages, Read()))
             {
                 if (!said.Add(note.Message + "\n" + note.File + ":" + note.Line)) continue;
-                if (!TideBuildService.LogLocated(note.Message, note.File ?? "", note.Line, note.Column, false, ConsoleIdentifier))
+                // As an error of the compile's: Unity's Console takes no compiler warning of a package's
+                if (!TideBuildService.LogLocated(note.Message, note.File ?? "", note.Line, note.Column, true, ConsoleIdentifier))
                 {
-                    Debug.LogFormat(LogType.Warning, LogOption.NoStacktrace, null, "{0}", note.Message);
+                    Debug.LogFormat(LogType.Error, LogOption.NoStacktrace, null, "{0}", note.Message);
                 }
             }
         }

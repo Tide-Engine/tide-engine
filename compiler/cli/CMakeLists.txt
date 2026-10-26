@@ -38,7 +38,8 @@ target_compile_definitions(tide_cli_tests PRIVATE "TIDE_UNITY_FIXTURE=\"${CMAKE_
     "TIDE_BOX2D_PACKAGE=\"${PROJECT_SOURCE_DIR}/packages/box2d\""
     "TIDE_UNITY_RULES_PACKAGE=\"${CMAKE_CURRENT_SOURCE_DIR}/tests/unity_rules\""
     "TIDE_UNITY_RULES_PHYSICS=\"${CMAKE_CURRENT_SOURCE_DIR}/tests/unity_rules_physics\""
-    "TIDE_UNITY_NAMES=\"${CMAKE_CURRENT_SOURCE_DIR}/tests/unity_names\"")
+    "TIDE_UNITY_NAMES=\"${CMAKE_CURRENT_SOURCE_DIR}/tests/unity_names\""
+    "TIDE_UNITY_SAMPLE_OUTLINE=\"${CMAKE_CURRENT_SOURCE_DIR}/tests/unity_sample/outline.json\"")
 target_link_libraries(tide_cli_tests PRIVATE tide tidec_core)
 if(NOT WIN32)
     target_link_libraries(tide_cli_tests PRIVATE Threads::Threads ${CMAKE_DL_LIBS})

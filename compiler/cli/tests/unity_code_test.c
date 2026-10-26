@@ -1,5 +1,7 @@
 // The game's C# for Unity (unity_code.h): the Sample's Packages/com.tide.game, which tide unity wrote from its
-// schema.json there, is what it writes again, and a component's script GUID is its name's.
+// schema.json there and the outline of its declarations (tests/unity_sample/outline.json: the Sample's
+// Library/Tide/outline.json cut to Bounce.tide's types, copied again when their docs change), is what it writes
+// again, and a component's script GUID is its name's.
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -39,7 +41,10 @@ TIDE_TEST(unity_code_writes_the_samples_package)
     size_t size = 0;
     char *schema = sys_read_file(from, &size);
     TIDE_REQUIRE(schema != NULL);
-    TIDE_REQUIRE(unity_code_write(dir, schema, NULL, NULL, 0));
+    size_t outline_size = 0;
+    char *outline = sys_read_file(TIDE_UNITY_SAMPLE_OUTLINE, &outline_size);
+    TIDE_REQUIRE(outline != NULL);
+    TIDE_REQUIRE(unity_code_write(dir, schema, outline, NULL, 0));
     free(schema);
     static const char *const files[] = {
         "TideGame.cs", "TideGame.cs.meta", "components.json", "Components/Ball.cs", "Components/Ball.cs.meta",
@@ -56,8 +61,9 @@ TIDE_TEST(unity_code_writes_the_samples_package)
     snprintf(from, sizeof from, "%s/schema.json", TIDE_UNITY_SAMPLE_PACKAGE);
     schema = sys_read_file(from, &size);
     TIDE_REQUIRE(schema != NULL);
-    TIDE_REQUIRE(unity_code_write(dir, schema, NULL, NULL, 0));
+    TIDE_REQUIRE(unity_code_write(dir, schema, outline, NULL, 0));
     free(schema);
+    free(outline);
     TIDE_CHECK(!sys_exists(to));
     sys_remove_tree(dir);
 }
@@ -235,7 +241,7 @@ TIDE_TEST(unity_code_writes_tides_docs_and_where_each_type_is)
     snprintf(project, sizeof project, "%s/tide_unity_docs_test", base);
     snprintf(dir, sizeof dir, "%s/Packages/com.tide.game", project);
     snprintf(package, sizeof package, "%s/packages/box3d", base);
-    snprintf(library, sizeof library, "%s/Library/Tide/Unity.tide", project);
+    snprintf(library, sizeof library, "Library/Tide/Unity.tide"); // As tide unity names its own
     sys_remove_tree(project);
     TIDE_REQUIRE(sys_mkdirs(dir));
     char *schema = read_written(TIDE_UNITY_NAMES, "schema.json");
