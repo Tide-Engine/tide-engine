@@ -116,8 +116,10 @@ struct Trail
     Color tint;
 }
 
+// Each player's ball, which Tide rolls and Unity shows (Roller.prefab)
 component Ball
 {
+    // Metres a second
     float3 velocity;
     Color color;
     int seat;

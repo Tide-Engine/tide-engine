@@ -1,5 +1,15 @@
 # The language server and the editors
 
+## Renames reaching a Unity project's C# (2026-10-26)
+
+A rename of a type, field or enum member whose C# twin tide unity writes (a component, singleton, event, command,
+struct, input or enum) also edits the Unity project's scripts: `csharp_renames` (`compiler/lsp/csharp.c`) joins its
+edits to the WorkspaceEdit after the prefabs' and scenes' (`unity_renames`), as UTF-16 columns. Names come from
+`compiler/lsp/unity_names.c`, which tide's `unity_code.c` names the C# with too. What it reads as a reference, the
+files it reads, its test `lsp_rename_reaches_unity_scripts` and its gaps: notes/unity.md, Tide types and their C#
+twins. The outline's new `doc`, field `line` and `memberDocs` (`print_outline`) aren't used by tidels's hovers, which
+still show no comments.
+
 ## Checked skinned asset references (2026-10-25)
 
 Asset<SkinnedMesh<V>> uses the approved typed-reference completion. The shared

@@ -6717,6 +6717,232 @@ TIDE_TEST(lsp_rename_reaches_unity_assets)
     lsp_free(&server);
 }
 
+// The edit a rename makes of the `nth` (from 0) `needle` in `text`, at `offset` into it for `length` bytes, to `to`,
+// as the WorkspaceEdit writes it
+static const char *cs_edit(const char *text, const char *needle, const int nth, const int offset, const int length, const char *to)
+{
+    static char written[8][256];
+    static int next;
+    const char *at = text;
+    for (int i = 0; at && i <= nth; i++) at = strstr(i ? at + 1 : at, needle);
+    if (!at) return "(not in the text)";
+    at += offset;
+    int line = 0, column = 0;
+    for (const char *p = text; p < at; p++) {
+        if (*p == '\n') line++, column = 0;
+        else column++;
+    }
+    char *out = written[next++ % 8];
+    snprintf(out, 256, "{\"range\":{\"start\":{\"line\":%d,\"character\":%d},\"end\":{\"line\":%d,\"character\":%d}},\"newText\":\"%s\"}",
+             line, column, line, column + length, to);
+    return out;
+}
+
+// Whether `renamed` has `edit`, saying so where it hasn't
+static bool has_edit(const char *renamed, const char *edit)
+{
+    if (has(renamed, edit)) return true;
+    printf("    no %s in %s\n", edit, renamed);
+    return false;
+}
+
+// A game in a Unity project's Assets: a rename of a type, a field, an enum's member reaches the project's C#, which
+// uses the C# tide unity wrote of them (Packages/com.tide.game, its schema.json naming them): scripts in Assets, an
+// embedded package and a local one, never com.tide.game itself. References are found conservatively: a member of
+// the game's type where what it's a member of is the type (a field, a variable, a parameter, a lambda's, a generic
+// call's, `new` and its initializer, foreach), a type where the usings make it the game's; not another type's member
+// of that name, nor text in strings and comments, nor a type of the project's own of that name.
+TIDE_TEST(lsp_rename_reaches_unity_scripts)
+{
+    if (!find_game_dir()) return;
+    make_folder("lsp_unity_cs");
+    make_folder("lsp_unity_cs/ProjectSettings");
+    make_folder("lsp_unity_cs/Assets");
+    make_folder("lsp_unity_cs/Assets/Tide");
+    make_folder("lsp_unity_cs/Assets/Scripts");
+    make_folder("lsp_unity_cs/Assets/Samples~");
+    make_folder("lsp_unity_cs/Packages");
+    make_folder("lsp_unity_cs/Packages/com.tide.game");
+    make_folder("lsp_unity_cs/Packages/com.tide.game/Components");
+    make_folder("lsp_unity_cs/Packages/com.studio.tools");
+    make_folder("lsp_unity_cs/LocalPackage");
+    write_file("lsp_unity_cs/ProjectSettings/ProjectVersion.txt", "m_EditorVersion: 6000.6.0f1\n");
+    static const char game[] = "component Health { int hp; int armor; Trail trail; int Value; local int heard; }\n"
+                               "component Shield { int hp; }\n"
+                               "struct Trail { float length; }\n"
+                               "singleton Extras { int score; }\n"
+                               "event Hit { int damage; }\n"
+                               "command Say { string text; }\n"
+                               "enum Mode { Calm, Angry }\n"
+                               "namespace Combat { component Blade { float sharpness; } }\n";
+    write_file("lsp_unity_cs/Assets/Tide/game.tide", game);
+    // As tide unity writes it: the types' names and fields, which is all the C# names come from
+    write_file("lsp_unity_cs/Packages/com.tide.game/schema.json",
+               "{\"hash\": \"1\", \"types\": [\n"
+               "{\"name\": \"Trail\", \"kind\": \"struct\", \"local\": -1, \"fields\": [{\"name\": \"length\", \"type\": \"float\"}]},\n"
+               "{\"name\": \"Health\", \"kind\": \"component\", \"local\": 6, \"fields\": [{\"name\": \"hp\", \"type\": \"int\"}, "
+               "{\"name\": \"armor\", \"type\": \"int\"}, {\"name\": \"trail\", \"type\": \"Trail\"}, {\"name\": \"Value\", \"type\": \"int\"}]},\n"
+               "{\"name\": \"Shield\", \"kind\": \"component\", \"local\": -1, \"fields\": [{\"name\": \"hp\", \"type\": \"int\"}]},\n"
+               "{\"name\": \"Combat.Blade\", \"kind\": \"component\", \"local\": -1, \"fields\": [{\"name\": \"sharpness\", \"type\": \"float\"}]},\n"
+               "{\"name\": \"Extras\", \"kind\": \"singleton\", \"local\": -1, \"fields\": [{\"name\": \"score\", \"type\": \"int\"}]},\n"
+               "{\"name\": \"Hit\", \"kind\": \"event\", \"local\": -1, \"fields\": [{\"name\": \"damage\", \"type\": \"int\"}]},\n"
+               "{\"name\": \"Health local\", \"kind\": \"local\", \"local\": -1, \"fields\": [{\"name\": \"heard\", \"type\": \"int\"}]},\n"
+               "{\"name\": \"Say\", \"kind\": \"command\", \"local\": -1, \"fields\": [{\"name\": \"text\", \"type\": \"string\"}]}\n"
+               "], \"enums\": [{\"name\": \"Mode\", \"members\": [\"Calm\", \"Angry\"], \"values\": [0, 1]}]}\n");
+    write_file("lsp_unity_cs/Packages/com.tide.game/package.json", "{\"name\": \"com.tide.game\"}\n");
+    static const char generated[] = "namespace Tide.Game\n{\n    public sealed partial class Health : global::Tide.TideComponent\n"
+                                    "    {\n        public int hp;\n    }\n}\n";
+    write_file("lsp_unity_cs/Packages/com.tide.game/Components/Health.cs", generated);
+    write_file("lsp_unity_cs/Packages/com.studio.tools/package.json", "{\"name\": \"com.studio.tools\"}\n");
+    static const char tool[] = "using Tide.Game;\n\npublic static class Tool\n{\n    public static void Heal(Health health) { health.hp = 10; }\n}\n";
+    write_file("lsp_unity_cs/Packages/com.studio.tools/Tool.cs", tool);
+    write_file("lsp_unity_cs/Packages/manifest.json", "{\"dependencies\": {\"com.local.thing\": \"file:../LocalPackage\", "
+                                                       "\"com.unity.modules.ui\": \"1.0.0\"}}\n");
+    write_file("lsp_unity_cs/LocalPackage/package.json", "{\"name\": \"com.local.thing\"}\n");
+    static const char local[] = "public class Thing\n{\n    Tide.Game.Health held;\n    void Hurt() { held.hp -= 1; }\n}\n";
+    write_file("lsp_unity_cs/LocalPackage/Thing.cs", local);
+    static const char player[] =
+        "using UnityEngine;\n"
+        "using Tide;\n"
+        "using Tide.Game;\n"
+        "using Tide.Game.Combat;\n"
+        "using H = Tide.Game.Health;\n"
+        "\n"
+        "// Health.hp in a comment stays, as does /* hp */ and \"hp\" in a string\n"
+        "public class Player : MonoBehaviour\n"
+        "{\n"
+        "    public Health health;\n"
+        "    public Shield shield;\n"
+        "    public TideRunner runner;\n"
+        "    Mode mode = Mode.Calm;\n"
+        "\n"
+        "    void Update()\n"
+        "    {\n"
+        "        health.hp += 1;\n"
+        "        shield.hp += 1;\n"
+        "        var h = GetComponent<Health>();\n"
+        "        h.hp = 2;\n"
+        "        h.trail.length = 3;\n"
+        "        h.heard++;\n"
+        "        var text = \"health.hp\";\n"
+        "        Debug.Log($\"{health.hp} hp and {h.armor:F2} {text}\");\n"
+        "        Tide.Game.Health full = health;\n"
+        "        global::Tide.Game.Health g = full;\n"
+        "        g.Value_ = 4;\n"
+        "        Tide.Game.Trail streak = h.trail;\n"
+        "        runner.Get<Extras>().score++;\n"
+        "        runner.On<Hit>(hit => Debug.Log(hit.damage));\n"
+        "        runner.Send(new Say { text = \"hi\" });\n"
+        "        Blade blade = GetComponent<Blade>();\n"
+        "        blade.sharpness = 1;\n"
+        "        var other = new Other();\n"
+        "        other.hp = 3;\n"
+        "        H alias = health;\n"
+        "        foreach (var each in GetComponents<Health>()) each.hp = 0;\n"
+        "        switch (mode) { case Mode.Angry: break; }\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "public class Other { public int hp; public float length; }\n";
+    write_file("lsp_unity_cs/Assets/Scripts/Player.cs", player);
+    // The project's own Trail: a bare Trail could be it, so only Tide.Game.Trail is the game's
+    static const char own[] = "namespace Mine\n{\n    public class Trail { public float length; }\n"
+                              "    public class Use { Trail trail; void F() { trail.length = 1; } }\n}\n";
+    write_file("lsp_unity_cs/Assets/Scripts/Own.cs", own);
+    write_file("lsp_unity_cs/Assets/Samples~/Left.cs", "using Tide.Game;\nclass Left { Health h; void F() { h.hp = 1; } }\n");
+
+    char root[700], uri[700];
+    const char *dir = game_dir[0] == '/' ? game_dir + 1 : game_dir;
+    snprintf(root, sizeof root, "file:///%s/lsp_unity_cs", dir);
+    snprintf(uri, sizeof uri, "file:///%s/lsp_unity_cs/Assets/Tide/game.tide", dir);
+    start_in(root);
+    open_uri(uri, game);
+    // Health.hp: its members wherever what it's of is a Health, not Shield's, Other's, a comment's or a string's
+    const char *hp = request_at(uri, "textDocument/rename", 0, 23, "\"newName\":\"health\"");
+    TIDE_CHECK(has(hp, "Player.cs") && has(hp, "Tool.cs") && has(hp, "Thing.cs"));
+    TIDE_CHECK(has_edit(hp, cs_edit(player, "health.hp += 1", 0, 7, 2, "health")));
+    TIDE_CHECK(has_edit(hp, cs_edit(player, "h.hp = 2", 0, 2, 2, "health")));
+    TIDE_CHECK(has_edit(hp, cs_edit(player, "{health.hp}", 0, 8, 2, "health")));
+    TIDE_CHECK(has_edit(hp, cs_edit(player, "each.hp", 0, 5, 2, "health")));
+    TIDE_CHECK(has_edit(hp, cs_edit(tool, "health.hp", 0, 7, 2, "health")));
+    TIDE_CHECK(has_edit(hp, cs_edit(local, "held.hp", 0, 5, 2, "health")));
+    TIDE_CHECK(!has(hp, cs_edit(player, "shield.hp", 0, 7, 2, "health")));
+    TIDE_CHECK(!has(hp, cs_edit(player, "other.hp", 0, 6, 2, "health")));
+    TIDE_CHECK(!has(hp, cs_edit(player, "Health.hp in", 0, 7, 2, "health")));
+    TIDE_CHECK(!has(hp, cs_edit(player, "\"health.hp\"", 0, 8, 2, "health")));
+    TIDE_CHECK(!has(hp, "com.tide.game") && !has(hp, "Left.cs"));
+    // The type: wherever the usings make the name Health's, and qualified; the alias's uses are the alias's
+    const char *type = request_at(uri, "textDocument/rename", 0, 12, "\"newName\":\"Vitality\"");
+    TIDE_CHECK(has_edit(type, cs_edit(player, "using H = Tide.Game.Health", 0, 20, 6, "Vitality")));
+    TIDE_CHECK(has_edit(type, cs_edit(player, "public Health health", 0, 7, 6, "Vitality")));
+    TIDE_CHECK(has_edit(type, cs_edit(player, "GetComponent<Health>", 0, 13, 6, "Vitality")));
+    TIDE_CHECK(has_edit(type, cs_edit(player, "Tide.Game.Health full", 0, 10, 6, "Vitality")));
+    TIDE_CHECK(has_edit(type, cs_edit(player, "global::Tide.Game.Health", 0, 18, 6, "Vitality")));
+    TIDE_CHECK(has_edit(type, cs_edit(player, "GetComponents<Health>", 0, 14, 6, "Vitality")));
+    TIDE_CHECK(has_edit(type, cs_edit(tool, "Heal(Health", 0, 5, 6, "Vitality")));
+    TIDE_CHECK(!has(type, cs_edit(player, "health;", 0, 0, 6, "Vitality")));
+    TIDE_CHECK(!has(type, cs_edit(player, "H alias", 0, 0, 1, "Vitality")));
+    TIDE_CHECK(!has(type, "com.tide.game"));
+    // A local field, and a field whose C# name has _ after (Value, a member of the class): renamed to a plain one
+    const char *heard = request_at(uri, "textDocument/rename", 0, (int)(strstr(game, "heard") - game), "\"newName\":\"times\"");
+    TIDE_CHECK(has_edit(heard, cs_edit(player, "h.heard", 0, 2, 5, "times")));
+    const char *value = request_at(uri, "textDocument/rename", 0, (int)(strstr(game, "Value") - game), "\"newName\":\"count\"");
+    TIDE_CHECK(has_edit(value, cs_edit(player, "g.Value_", 0, 2, 6, "count")));
+    // ...and a plain one renamed to a name that clashes: its C# name has _ after
+    const char *shield = request_at(uri, "textDocument/rename", 1, 23, "\"newName\":\"Value\"");
+    TIDE_CHECK(has_edit(shield, cs_edit(player, "shield.hp", 0, 7, 2, "Value_")));
+    TIDE_CHECK(!has(shield, cs_edit(player, "health.hp += 1", 0, 7, 2, "Value_")));
+    // A struct's field through a component's field; not the project's own Trail's, nor Other's
+    const char *length = request_at(uri, "textDocument/rename", 2, 21, "\"newName\":\"size\"");
+    TIDE_CHECK(has_edit(length, cs_edit(player, "h.trail.length", 0, 8, 6, "size")));
+    TIDE_CHECK(!has(length, "Own.cs"));
+    // The struct: qualified only, as the project has a Trail of its own
+    const char *trail = request_at(uri, "textDocument/rename", 2, 7, "\"newName\":\"Streak\"");
+    TIDE_CHECK(has_edit(trail, cs_edit(player, "Tide.Game.Trail", 0, 10, 5, "Streak")));
+    TIDE_CHECK(!has(trail, "Own.cs"));
+    // A singleton's field through a generic call, an event's in a lambda, a command's in an initializer
+    const char *score = request_at(uri, "textDocument/rename", 3, 23, "\"newName\":\"points\"");
+    TIDE_CHECK(has_edit(score, cs_edit(player, ".score", 0, 1, 5, "points")));
+    const char *damage = request_at(uri, "textDocument/rename", 4, 17, "\"newName\":\"amount\"");
+    TIDE_CHECK(has_edit(damage, cs_edit(player, "hit.damage", 0, 4, 6, "amount")));
+    const char *text = request_at(uri, "textDocument/rename", 5, 22, "\"newName\":\"line\"");
+    TIDE_CHECK(has_edit(text, cs_edit(player, "text = \"hi\"", 0, 0, 4, "line")));
+    TIDE_CHECK(!has(text, cs_edit(player, "var text", 0, 4, 4, "line")) && !has(text, cs_edit(player, "{text}", 0, 1, 4, "line")));
+    // An enum and its member
+    const char *calm = request_at(uri, "textDocument/rename", 6, 12, "\"newName\":\"Still\"");
+    TIDE_CHECK(has_edit(calm, cs_edit(player, "Mode.Calm", 0, 5, 4, "Still")));
+    const char *mode = request_at(uri, "textDocument/rename", 6, 6, "\"newName\":\"Mood\"");
+    TIDE_CHECK(has_edit(mode, cs_edit(player, "Mode mode", 0, 0, 4, "Mood")));
+    TIDE_CHECK(has_edit(mode, cs_edit(player, "Mode.Calm", 0, 0, 4, "Mood")));
+    TIDE_CHECK(has_edit(mode, cs_edit(player, "Mode.Angry", 0, 0, 4, "Mood")));
+    // A namespaced component, and its field, by the namespace's using
+    const char *blade = request_at(uri, "textDocument/rename", 7, 29, "\"newName\":\"Sword\"");
+    TIDE_CHECK(has_edit(blade, cs_edit(player, "Blade blade", 0, 0, 5, "Sword")));
+    TIDE_CHECK(has_edit(blade, cs_edit(player, "<Blade>", 0, 1, 5, "Sword")));
+    const char *sharpness = request_at(uri, "textDocument/rename", 7, 44, "\"newName\":\"edge\"");
+    TIDE_CHECK(has_edit(sharpness, cs_edit(player, "blade.sharpness", 0, 6, 9, "edge")));
+
+    static const char *const files[] = {"Assets/Tide/game.tide", "Assets/Scripts/Player.cs", "Assets/Scripts/Own.cs", "Assets/Samples~/Left.cs",
+                                        "Packages/com.tide.game/schema.json", "Packages/com.tide.game/package.json",
+                                        "Packages/com.tide.game/Components/Health.cs", "Packages/com.studio.tools/package.json",
+                                        "Packages/com.studio.tools/Tool.cs", "Packages/manifest.json", "LocalPackage/package.json",
+                                        "LocalPackage/Thing.cs", "ProjectSettings/ProjectVersion.txt"};
+    for (size_t i = 0; i < sizeof files / sizeof files[0]; i++) {
+        char name[256];
+        snprintf(name, sizeof name, "lsp_unity_cs/%s", files[i]);
+        remove_game_file(name);
+    }
+    static const char *const folders[] = {"Assets/Tide", "Assets/Scripts", "Assets/Samples~", "Assets", "Packages/com.tide.game/Components",
+                                          "Packages/com.tide.game", "Packages/com.studio.tools", "Packages", "LocalPackage", "ProjectSettings", ""};
+    for (size_t i = 0; i < sizeof folders / sizeof folders[0]; i++) {
+        char name[256];
+        snprintf(name, sizeof name, "lsp_unity_cs/%s", folders[i]);
+        remove_folder(name);
+    }
+    clear_sent();
+    lsp_free(&server);
+}
+
 // A Unity project open in the editor: its game is every .tide file in Assets (not in a folder Unity leaves out), with what tide unity wrote in Library/Tide.
 TIDE_TEST(lsp_unity_game_is_its_assets_with_what_tide_unity_wrote)
 {

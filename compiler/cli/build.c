@@ -2718,6 +2718,11 @@ static bool write_unity_package(const run *r, const char *schema, const uint32_t
     char *project = path_dir(assets);
     char *dir = path_join(project, "Packages/com.tide.game");
     bool ok = sys_mkdirs(dir);
+    // The schema the C# there was written from, for the record of what became of its names
+    char *was_path = path_join(dir, "schema.json");
+    size_t was_size = 0;
+    char *was = sys_read_file(was_path, &was_size);
+    free(was_path);
     static const char package[] = "{\n  \"name\": \"com.tide.game\",\n  \"displayName\": \"Tide game types\",\n  \"version\": \"0.0.0\",\n"
                                   "  \"description\": \"Written by tide unity: the game's schema and the C# made of it, its "
                                   "components and types. Keep it in source control.\"\n}\n";
@@ -2745,6 +2750,13 @@ static bool write_unity_package(const run *r, const char *schema, const uint32_t
     for (int i = 0; i < r->b.packages.count; i++) packages[i] = (unity_package){r->b.packages.items[i].folder, r->b.packages.items[i].name};
     // ...and from the declarations alone, taking none away: components only the game's code gives entities aren't in them
     ok = ok && (r->b.opts->declarations ? unity_code_add : unity_code_write)(dir, schema, r->b.outline, packages, r->b.packages.count);
+    // ...and what became of the names the C# had, in Library/Tide, for com.tide.unity to explain a script's error on one
+    if (ok) {
+        char *record = path_join(r->dir, "renamed.json");
+        ok = unity_code_record(record, was, schema, r->b.outline, dir, packages, r->b.packages.count, !r->b.opts->declarations);
+        free(record);
+    }
+    free(was);
     free(packages);
     // A build of the declarations alone has no shaders of the game's: the last build's stay until the next one's
     if (!r->b.opts->declarations) ok = ok && unity_shaders_write(dir, r->b.shaders, r->b.shaders_size);

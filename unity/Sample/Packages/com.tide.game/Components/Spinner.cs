@@ -3,6 +3,9 @@
 namespace Tide.Game
 {
     // Tide's component Spinner: its fields as authored outside Play, its entity's values in Play (TideComponent)
+    /// <summary>
+    /// <para>Tide's component Spinner, declared in Assets/Tide/Bounce.tide.</para>
+    /// </summary>
     [global::UnityEngine.AddComponentMenu("Tide/Spinner")]
     [global::UnityEngine.DisallowMultipleComponent]
     [global::UnityEngine.Icon(global::Tide.TideIcon.Component)]

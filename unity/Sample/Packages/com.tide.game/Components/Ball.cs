@@ -3,16 +3,22 @@
 namespace Tide.Game
 {
     // Tide's component Ball: its fields as authored outside Play, its entity's values in Play (TideComponent)
+    /// <summary>
+    /// Each player's ball, which Tide rolls and Unity shows (Roller.prefab)
+    /// <para>Tide's component Ball, declared in Assets/Tide/Bounce.tide.</para>
+    /// </summary>
     [global::UnityEngine.AddComponentMenu("Tide/Ball")]
     [global::UnityEngine.DisallowMultipleComponent]
     [global::UnityEngine.Icon(global::Tide.TideIcon.Component)]
     public sealed partial class Ball : global::Tide.TideComponent
     {
+        /// <summary>Metres a second</summary>
         public global::UnityEngine.Vector3 velocity = new global::UnityEngine.Vector3(0f, 0f, 0f);
         public global::UnityEngine.Color color = new global::UnityEngine.Color(0f, 0f, 0f, 0f);
         public int seat = 0;
         public int bounces = 0;
         public global::Tide.Game.Trail trail = new global::Tide.Game.Trail { length = 0f, tint = new global::UnityEngine.Color(0f, 0f, 0f, 0f) };
+        /// <summary>This machine's, as its local handler counts its bounces (Heard)</summary>
         [global::System.NonSerialized] public int heard;
 
         public override string TideName => "Ball";

@@ -486,7 +486,7 @@ namespace Tide.Editor
         static readonly System.Reflection.MethodInfo compilerMessage = typeof(Debug).GetMethod("LogCompilerMessage", Internal);
         static readonly System.Reflection.MethodInfo removeByIdentifier = typeof(Debug).GetMethod("RemoveLogEntriesByIdentifier", Internal);
 
-        static bool LogLocated(string message, string file, int line, int column, bool isError)
+        internal static bool LogLocated(string message, string file, int line, int column, bool isError, int identifier = ConsoleIdentifier)
         {
             if (compilerMessage == null || removeByIdentifier == null) return false;
             // (message, file, line, column, forEditor, isError, identifier, the object's id: none)
@@ -495,7 +495,7 @@ namespace Tide.Editor
             var none = parameters[7].ParameterType.IsValueType ? Activator.CreateInstance(parameters[7].ParameterType) : null;
             try
             {
-                compilerMessage.Invoke(null, new[] { message, file, line, column, true, isError, ConsoleIdentifier, none });
+                compilerMessage.Invoke(null, new[] { message, file, line, column, true, isError, identifier, none });
                 return true;
             }
             catch (Exception)
@@ -504,12 +504,12 @@ namespace Tide.Editor
             }
         }
 
-        internal static void RemoveLocated()
+        internal static void RemoveLocated(int identifier = ConsoleIdentifier)
         {
             if (removeByIdentifier == null) return;
             try
             {
-                removeByIdentifier.Invoke(null, new object[] { ConsoleIdentifier });
+                removeByIdentifier.Invoke(null, new object[] { identifier });
             }
             catch (Exception)
             {

@@ -53,6 +53,33 @@ namespace of the one it means, `UnityEngine.Transform` or
 `Tide.Game.Transform`, as C# asks when a name is ambiguous, so everyone reading
 it knows which it is. Tide code does the same for its own names.
 
+Tide is where the game's types are declared; their C# follows them:
+
+- **Renames reach your scripts.** Renaming a component, a field, a singleton, an
+  event, a command, a struct, an enum or an enum's member in the code editor
+  (tidels's rename, F2 in VS Code or Shift+F6 in Rider) also renames it in the
+  project's C#: the scripts in `Assets` and in its embedded and local packages,
+  never `Packages/com.tide.game`, which tide writes again. It's one edit you can
+  preview and undo, with the prefabs' and scenes' changes. References are found
+  carefully, with no C# compiler: a member where what it's a member of is known
+  to be the game's type (a field, variable, parameter or lambda parameter of it,
+  `GetComponent<Health>()`, `new` and its initializer, `foreach`), a type where
+  the file's usings make the name the game's. Another type's member of the same
+  name, text in strings and comments, and a name a type of your own also has are
+  left alone.
+- **From a type back to its declaration.** Each generated type carries its Tide
+  declaration's doc, the comment lines just above it (a field's, above it or
+  after it on its line), and the file it's in, so a hover in Rider or Visual
+  Studio shows them. Opening a component's script (a double click on its Script
+  field, Edit Script, or the script in the Project window) opens its `.tide`
+  file at the declaration in the external code editor.
+- **Errors that explain a rename.** When a script no longer compiles because
+  Tide renamed or removed a name it uses, the Console says so next to Unity's
+  error: ``tide: `Health.hp` is now `Health.health` (Assets/Tide/game.tide:12)``,
+  which opens the new declaration, or that it was removed. tide keeps what
+  became of the C#'s names in `Library/Tide/renamed.json`, on this machine
+  alone.
+
 ## Author
 
 Add `TideEntity` (Add Component > Tide > Tide Entity) to a GameObject of a

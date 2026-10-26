@@ -10,6 +10,7 @@
 #include <string.h>
 
 #include "json.h"
+#include "unity_names.h"
 #include "sys.h"
 #include "tide/sha256.h"
 
@@ -84,63 +85,7 @@ static void put_escaped(out *o, const char *s)
 }
 
 // ---------------------------------------------------------------------------
-// Names
-
-static const char *const csharp_keywords[] = {
-    "abstract", "as", "base", "bool", "break", "byte", "case", "catch", "char", "checked", "class", "const", "continue",
-    "decimal", "default", "delegate", "do", "double", "else", "enum", "event", "explicit", "extern", "false", "finally",
-    "fixed", "float", "for", "foreach", "goto", "if", "implicit", "in", "int", "interface", "internal", "is", "lock", "long",
-    "namespace", "new", "null", "object", "operator", "out", "override", "params", "private", "protected", "public",
-    "readonly", "ref", "return", "sbyte", "sealed", "short", "sizeof", "stackalloc", "static", "string", "struct",
-    "switch", "this", "throw", "true", "try", "typeof", "uint", "ulong", "unchecked", "unsafe", "ushort", "using",
-    "virtual", "void", "volatile", "while", "var", NULL};
-
-// A name C# takes: what an identifier can't hold as _, `?` as Optional, a keyword with @. malloc'd.
-static char *identifier(const char *name, const size_t n)
-{
-    out o = {0};
-    puts_(&o, "");
-    for (size_t i = 0; i < n; i++) {
-        const char c = name[i];
-        if (c == '?') puts_(&o, "Optional");
-        else putn(&o, (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || (unsigned char)c >= 0x80 ? &c : "_", 1);
-    }
-    if (!o.n || (o.s[0] >= '0' && o.s[0] <= '9')) {
-        out p = {0};
-        puts_(&p, "_");
-        puts_(&p, o.s ? o.s : "");
-        free(o.s);
-        o = p;
-    }
-    for (int i = 0; csharp_keywords[i]; i++) {
-        if (strcmp(o.s, csharp_keywords[i]) == 0) {
-            out p = {0};
-            puts_(&p, "@");
-            puts_(&p, o.s);
-            free(o.s);
-            return p.s;
-        }
-    }
-    return o.s;
-}
-
-// A dotted Tide namespace ("Combat.Melee") as C#'s, each part an identifier; NULL for none. malloc'd.
-static char *namespace_of(const char *name, const size_t n)
-{
-    if (!n) return NULL;
-    out o = {0};
-    puts_(&o, "");
-    for (size_t at = 0; at < n;) {
-        size_t end = at;
-        while (end < n && name[end] != '.') end++;
-        char *part = identifier(name + at, end - at);
-        if (o.n) puts_(&o, ".");
-        puts_(&o, part);
-        free(part);
-        at = end + 1;
-    }
-    return o.s;
-}
+// Names: unity_names.h's
 
 void unity_code_guid(const char *name, char guid[33])
 {
@@ -169,7 +114,9 @@ typedef struct type {
     uint8_t *defaults; // Its declared defaults' bytes, `size` of them; NULL without
     field *fields;
     int field_count;
-    char *bare, *ns, *cs; // Its name without " local", its C# namespace (NULL for none) and its C# name
+    const char *bare, *ns, *cs; // Its name without " local", its C# namespace (NULL for none) and its C# name
+    char *const *ids;           // Its fields' C# names (unity_names.h)
+    char *const *local_ids;     // ...and its local part's fields' in its class, or NULL
     int local;            // A match component's or singleton's local fields: their type, or -1
     bool live;            // A struct Unity code has as a C# struct of its own (write_struct), its layout its Value
     // What class of the package it is, its value the class's nested Value: a TideComponent (an authored match
@@ -181,7 +128,10 @@ typedef struct type {
 typedef struct enumeration {
     const char *name;
     const json *members, *values;
-    char *full; // global::Tide.Game...
+    char *full;           // global::Tide.Game...
+    const char *ns, *cs;  // Its C# namespace (NULL for none) and name
+    char *const *ids;     // Its members' C# names, NULL for one left out
+    int names_count;      // ...how many
 } enumeration;
 
 struct ctype;
@@ -189,11 +139,15 @@ struct shape;
 
 typedef struct game {
     const unity_mappings *mappings; // What the game's packages say of their components in Unity
+    unity_cs_names names;           // The C# names of its types, fields and members (unity_names.h)
     type *types;
     int type_count;
     enumeration *enums;
     int enum_count;
     const json *outline; // print_outline's declarations, or NULL
+    const char *project;  // The Unity project's folder, or NULL
+    const unity_package *packages; // The game's packages, whose folders hold their files
+    int package_count;
     struct ctype **trees; // Every type tree made, freed with the game
     int tree_count;
     struct shape *shapes; // components.json's
@@ -213,27 +167,20 @@ static uint32_t number(const json *object, const char *key, const double otherwi
     return d >= 0 && d <= 4294967295.0 ? (uint32_t)d : 0;
 }
 
-static int hex(const char c)
-{
-    return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
-}
-
 static bool starts(const char *s, const char *prefix)
 {
     return strncmp(s, prefix, strlen(prefix)) == 0;
 }
 
-// Whether a type is one the package makes a TideComponent of: a match component an entity can be given in Unity, not
-// a scene's tag, tide's own (UnityEngine.*) nor Transform, which is Unity's.
-static bool authored(const type *t)
+static int hex(const char c)
 {
-    return strcmp(t->kind, "component") == 0 && !t->scene && !starts(t->name, "UnityEngine.") && strcmp(t->name, "Transform") != 0;
+    return c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
 }
 
 static bool read_game(const json *schema, game *g)
 {
     const json *types = json_get(schema, "types"), *enums = json_get(schema, "enums");
-    if (!types || types->kind != JSON_ARRAY) return false;
+    if (!types || types->kind != JSON_ARRAY || !unity_cs_read(schema, &g->names)) return false;
     g->types = calloc((size_t)types->count + 1, sizeof *g->types);
     if (!g->types) abort();
     g->type_count = types->count;
@@ -276,49 +223,18 @@ static bool read_game(const json *schema, game *g)
             fd->size = number(f, "size", 0);
             fd->element = number(f, "element", 0);
         }
-        // Its names: a local part's ("Health local") is its component's, with Local after
-        const bool local = strcmp(t->kind, "local") == 0;
-        size_t length = strlen(t->name);
-        if (local && length > 6 && strcmp(t->name + length - 6, " local") == 0) length -= 6;
-        t->bare = malloc(length + 1);
-        if (!t->bare) abort();
-        memcpy(t->bare, t->name, length);
-        t->bare[length] = '\0';
-        const char *dot = strrchr(t->bare, '.');
-        t->ns = dot ? namespace_of(t->bare, (size_t)(dot - t->bare)) : NULL;
-        char *cs = identifier(dot ? dot + 1 : t->bare, strlen(dot ? dot + 1 : t->bare));
-        if (local) {
-            out o = {0};
-            puts_(&o, cs);
-            puts_(&o, "Local");
-            free(cs);
-            cs = o.s;
-        }
-        // Two of one C# name in one namespace: the second gets a _
-        for (bool clash = true; clash;) {
-            clash = false;
-            for (int k = 0; k < i && !clash; k++) {
-                const type *other = &g->types[k];
-                clash = strcmp(other->cs, cs) == 0 && ((!other->ns && !t->ns) || (other->ns && t->ns && strcmp(other->ns, t->ns) == 0));
-            }
-            if (clash) {
-                out o = {0};
-                puts_(&o, cs);
-                puts_(&o, "_");
-                free(cs);
-                cs = o.s;
-            }
-        }
-        t->cs = cs;
         const json *local_of = json_get(j, "local");
         t->local = local_of && local_of->kind == JSON_NUMBER && local_of->number >= 0 ? (int)local_of->number : -1;
-        t->component = authored(t);
-        t->base = t->component ? "TideComponent"
-                : strcmp(t->kind, "singleton") == 0 && !starts(t->name, "tide_") ? "TideSingleton"
-                : strcmp(t->kind, "event") == 0 ? "TideEvent"
-                : strcmp(t->kind, "command") == 0 ? "TideCommand"
-                : NULL;
-        t->live = strcmp(t->kind, "struct") == 0 && !starts(t->name, "tide_");
+        // Its names, and which class of the package it is
+        const unity_cs_type *n = &g->names.types[i];
+        t->bare = n->bare;
+        t->ns = n->ns;
+        t->cs = n->cs;
+        t->ids = n->ids;
+        t->local_ids = n->local_ids;
+        t->component = n->component;
+        t->base = n->base;
+        t->live = n->live;
     }
     for (int i = 0; i < g->type_count; i++) {
         type *t = &g->types[i];
@@ -332,14 +248,14 @@ static bool read_game(const json *schema, game *g)
         e->name = str(enums->items[i], "name");
         e->members = json_get(enums->items[i], "members");
         e->values = json_get(enums->items[i], "values");
-        const char *dot = strrchr(e->name, '.');
-        char *ns = dot ? namespace_of(e->name, (size_t)(dot - e->name)) : NULL;
-        char *cs = identifier(dot ? dot + 1 : e->name, strlen(dot ? dot + 1 : e->name));
+        const unity_cs_enum *n = &g->names.enums[i];
+        e->ns = n->ns;
+        e->cs = n->cs;
+        e->ids = n->ids;
+        e->names_count = n->member_count;
         out o = {0};
-        putf(&o, "global::Tide.Game.%s%s%s", ns ? ns : "", ns ? "." : "", cs);
+        putf(&o, "global::Tide.Game.%s%s%s", e->ns ? e->ns : "", e->ns ? "." : "", e->cs);
         e->full = o.s;
-        free(ns);
-        free(cs);
     }
     return true;
 }
@@ -349,13 +265,11 @@ static void free_game(game *g)
     for (int i = 0; i < g->type_count; i++) {
         free(g->types[i].defaults);
         free(g->types[i].fields);
-        free(g->types[i].bare);
-        free(g->types[i].ns);
-        free(g->types[i].cs);
     }
     free(g->types);
     for (int i = 0; i < g->enum_count; i++) free(g->enums[i].full);
     free(g->enums);
+    unity_cs_free(&g->names);
 }
 
 // A type's C# name where a field holds it: a class's value is its Value. malloc'd.
@@ -736,55 +650,6 @@ static void open_namespace(out *o, const char *ns)
     else puts_(o, "namespace Tide.Game\n{\n");
 }
 
-// Names taken in a type: each field's identifier is the first of its name, with _ after, that isn't.
-typedef struct taken {
-    char **names;
-    int count;
-} taken;
-
-static bool take(taken *t, const char *name)
-{
-    for (int i = 0; i < t->count; i++) {
-        if (strcmp(t->names[i], name) == 0) return false;
-    }
-    t->names = realloc(t->names, sizeof *t->names * (size_t)(t->count + 1));
-    if (!t->names) abort();
-    t->names[t->count++] = copy(name);
-    return true;
-}
-
-static void free_taken(taken *t)
-{
-    for (int i = 0; i < t->count; i++) free(t->names[i]);
-    free(t->names);
-    t->names = NULL;
-    t->count = 0;
-}
-
-// A class's or struct's members, which its fields' names keep clear of, as its Value's do, whose ReadLive, From and
-// Pack read and write it by them
-static void reserve(taken *t, const type *ty, const bool nested)
-{
-    take(t, ty->cs);
-    if (!nested || (!ty->base && !ty->live)) return;
-    static const char *const members[] = {"Value", "TideName", "ReadLive", "Pack", "From", "Tick", "Verified", "Target", "TargetEntity"};
-    for (size_t i = 0; i < sizeof members / sizeof members[0]; i++) take(t, members[i]);
-}
-
-// The identifier of a field among `t`'s: malloc'd.
-static char *field_name(taken *t, const char *name)
-{
-    char *id = identifier(name, strlen(name));
-    while (!take(t, id)) {
-        out o = {0};
-        puts_(&o, id);
-        puts_(&o, "_");
-        free(id);
-        id = o.s;
-    }
-    return id;
-}
-
 // A struct of the type, laid out as the game's C does: `nested` as a class's or struct's Value.
 static void write_value(out *o, game *g, const type *t, const char *indent, const bool nested)
 {
@@ -796,11 +661,9 @@ static void write_value(out *o, game *g, const type *t, const char *indent, cons
     putf(o, "%s[global::System.Runtime.InteropServices.StructLayout(global::System.Runtime.InteropServices.LayoutKind.Explicit, Size = %u)]\n",
          indent, t->size ? t->size : 1u);
     putf(o, "%spublic unsafe partial struct %s\n%s{\n", indent, nested ? "Value" : t->cs, indent);
-    taken names = {0};
-    reserve(&names, t, nested);
     for (int i = 0; i < t->field_count; i++) {
         const field *f = &t->fields[i];
-        char *name = field_name(&names, f->name);
+        char *name = copy(t->ids[i]);
         char *cs = layout_cs(g, field_ctype(g, f));
         if (!cs) {
             if (f->size) {
@@ -814,7 +677,6 @@ static void write_value(out *o, game *g, const type *t, const char *indent, cons
         free(cs);
         free(name);
     }
-    free_taken(&names);
     putf(o, "%s}\n", indent);
 }
 
@@ -852,18 +714,15 @@ static bool put_default(out *o, game *g, const ctype *t, const uint8_t *d, const
         char *live = live_cs(g, t, false);
         out fields = {0};
         puts_(&fields, "");
-        taken names = {0};
-        reserve(&names, s, true);
         for (int i = 0; i < s->field_count; i++) {
             const field *f = &s->fields[i];
-            char *id = field_name(&names, f->name);
+            char *id = copy(s->ids[i]);
             out value = {0};
             puts_(&value, "");
             if (put_default(&value, g, field_ctype(g, f), d, at + f->offset)) putf(&fields, "%s%s = %s", fields.n ? ", " : "", id, value.s);
             free(value.s);
             free(id);
         }
-        free_taken(&names);
         putf(o, "new %s { %s }", live, fields.s);
         free(fields.s);
         free(live);
@@ -937,6 +796,130 @@ static bool native_field(const game *g, const type *t, const field *f)
 {
     const json *native = json_get(declared_field(g, t, f), "native");
     return native && native->kind == JSON_TRUE;
+}
+
+// A declaration of the game's, as print_outline says it, by its name and kind ("enum"), or any type's (NULL), or NULL.
+static const json *declaration(const game *g, const char *name, const char *kind)
+{
+    const json *declarations = json_get(g->outline, "declarations");
+    for (int i = 0; declarations && declarations->kind == JSON_ARRAY && i < declarations->count; i++) {
+        const json *d = declarations->items[i];
+        const char *of = str(d, "kind");
+        const bool type = strcmp(of, "component") == 0 || strcmp(of, "singleton") == 0 || strcmp(of, "struct") == 0
+                       || strcmp(of, "event") == 0 || strcmp(of, "command") == 0 || strcmp(of, "input") == 0;
+        if (strcmp(str(d, "name"), name) == 0 && (kind ? strcmp(of, kind) == 0 : type)) return d;
+    }
+    return NULL;
+}
+
+// The part of `path` under `folder`, from it, or NULL: '/' and '\' alike, letters' case aside (Windows' paths).
+static const char *under(const char *path, const char *folder)
+{
+    size_t n = strlen(folder);
+    while (n && (folder[n - 1] == '/' || folder[n - 1] == '\\')) n--;
+    if (!n || strlen(path) <= n) return NULL;
+    for (size_t i = 0; i < n; i++) {
+        const char a = path[i] == '\\' ? '/' : path[i], b = folder[i] == '\\' ? '/' : folder[i];
+        const char la = a >= 'A' && a <= 'Z' ? (char)(a - 'A' + 'a') : a, lb = b >= 'A' && b <= 'Z' ? (char)(b - 'A' + 'a') : b;
+        if (la != lb) return NULL;
+    }
+    return path[n] == '/' || path[n] == '\\' ? path + n + 1 : NULL;
+}
+
+// Where a file of the game's is, as a user of the project names it: from the project (tide unity names the game's
+// files from Assets), or a package's file from its folder ("box3d package: box3d.tide"); NULL for tide's own
+// declarations (Library/Tide's), and for nothing. malloc'd.
+static char *where_declared(const game *g, const char *file)
+{
+    if (!file || !*file) return NULL;
+    out o = {0};
+    const char *in = NULL;
+    for (int i = 0; !in && i < g->package_count; i++) {
+        in = under(file, g->packages[i].folder);
+        if (in) putf(&o, "the %s package's %s", g->packages[i].name, in);
+    }
+    const bool absolute = file[0] == '/' || file[0] == '\\' || (file[0] && file[1] == ':');
+    if (!in && absolute) {
+        in = g->project ? under(file, g->project) : NULL;
+        if (!in || starts(in, "Library/") || starts(in, "Library\\")) return NULL;
+        puts_(&o, in);
+    } else if (!in) {
+        // From the project (prefabs' and scenes' texts, tide's own Library/Tide's), else from Assets
+        if (starts(file, "../") || starts(file, "..\\") || starts(file, "Library/") || starts(file, "Library\\")) return NULL;
+        putf(&o, "%s%s", starts(file, "Assets/") || starts(file, "Assets\\") ? "" : "Assets/", file);
+    }
+    for (char *c = o.s; *c; c++) {
+        if (*c == '\\') *c = '/';
+    }
+    return o.s;
+}
+
+// Text in XML: &, < and > as entities
+static void put_xml(out *o, const char *s, const size_t n)
+{
+    for (size_t i = 0; i < n; i++) {
+        if (s[i] == '&') puts_(o, "&amp;");
+        else if (s[i] == '<') puts_(o, "&lt;");
+        else if (s[i] == '>') puts_(o, "&gt;");
+        else putn(o, s + i, 1);
+    }
+}
+
+// A doc comment for Rider's and Visual Studio's hovers: a Tide declaration's doc (its comment lines), then `where`,
+// a paragraph naming it and its file; nothing for neither.
+static void put_summary(out *o, const char *indent, const char *doc, const char *where)
+{
+    if ((!doc || !*doc) && !where) return;
+    if (!where && !strchr(doc, '\n')) {
+        putf(o, "%s/// <summary>", indent);
+        put_xml(o, doc, strlen(doc));
+        puts_(o, "</summary>\n");
+        return;
+    }
+    putf(o, "%s/// <summary>\n", indent);
+    for (const char *line = doc; line && *line;) {
+        const char *end = strchr(line, '\n');
+        const size_t n = end ? (size_t)(end - line) : strlen(line);
+        putf(o, "%s///%s", indent, n ? " " : "");
+        put_xml(o, line, n);
+        puts_(o, "\n");
+        line = end ? end + 1 : NULL;
+    }
+    if (where) {
+        putf(o, "%s/// <para>", indent);
+        put_xml(o, where, strlen(where));
+        puts_(o, "</para>\n");
+    }
+    putf(o, "%s/// </summary>\n", indent);
+}
+
+// A type's or an enum's doc comment: its doc, and where it's declared (none for tide's own)
+static void put_type_summary(out *o, const game *g, const char *indent, const char *kind, const char *name, const char *lookup)
+{
+    const json *d = declaration(g, name, lookup);
+    if (!d) return;
+    char *file = where_declared(g, str(d, "file"));
+    if (!file) return;
+    out where = {0};
+    putf(&where, "Tide's %s %s, declared in %s.", kind, name, file);
+    put_summary(o, indent, json_str(json_get(d, "doc")), where.s);
+    free(where.s);
+    free(file);
+}
+
+// Whether a declaration is one of the game's or its packages', which have docs, not tide's own (where_declared)
+static bool where_ok(const game *g, const json *d)
+{
+    char *file = where_declared(g, str(d, "file"));
+    free(file);
+    return file != NULL;
+}
+
+// A field's doc comment, where its declaration has a doc and is one of the game's (where_declared)
+static void put_field_summary(out *o, const game *g, const type *t, const field *f, const char *indent)
+{
+    const json *d = declaration(g, t->bare, NULL);
+    if (d && where_ok(g, d)) put_summary(o, indent, json_str(json_get(declared_field(g, t, f), "doc")), NULL);
 }
 
 // An authorable field's initial value: its declared default, else an empty container where it's one. False for none.
@@ -1014,11 +997,9 @@ static int shape_of(game *g, const ctype *t)
     case CK_STRUCT: {
         s->form = "struct";
         const type *st = &g->types[t->ref];
-        taken names = {0};
-        reserve(&names, st, true);
         for (int i = 0; i < st->field_count; i++) {
             const field *f = &st->fields[i];
-            char *id = field_name(&names, f->name);
+            char *id = copy(st->ids[i]);
             const ctype *ft = field_ctype(g, f);
             if (authorable(g, ft)) {
                 const int fs = shape_of(g, ft);
@@ -1033,7 +1014,6 @@ static int shape_of(game *g, const ctype *t)
             }
             free(id);
         }
-        free_taken(&names);
         break;
     }
     default: s->form = "literal"; break;
@@ -1104,11 +1084,12 @@ static void put_shapes(out *map, const game *g)
 
 // A field read live (a singleton's, an event's, a component's local or unauthored one): its declaration with
 // `attribute`, and its line of ReadLive or From from `from` (`v.x`, `l.x`) into `self`.
-static void put_live_field(out *o, out *live, game *g, const ctype *ct, const char *id, const char *from, const char *self,
-                           const char *attribute, const char *indent)
+static void put_live_field(out *o, out *live, game *g, const type *t, const field *f, const ctype *ct, const char *id,
+                           const char *from, const char *self, const char *attribute, const char *indent)
 {
     char *cs = live_cs(g, ct, false);
     if (!cs) return;
+    put_field_summary(o, g, t, f, indent);
     putf(o, "%s%spublic %s %s;\n", indent, attribute, cs, id);
     putf(live, "%s    %s%s = ", indent, self, id);
     put_conv(live, g, ct, from, "packet", "runner", false, 0);
@@ -1118,26 +1099,23 @@ static void put_live_field(out *o, out *live, game *g, const ctype *ct, const ch
 
 // The fields of a type's local part, after its own, and their lines of ReadLive: Unity doesn't keep them (they're
 // this machine's, never authored), and the inspector shows them in Play.
-static void put_local_fields(out *o, out *live, game *g, const type *t, taken *names)
+static void put_local_fields(out *o, out *live, game *g, const type *t)
 {
-    if (t->local < 0) return;
+    if (t->local < 0 || !t->local_ids) return;
     const type *part = &g->types[t->local];
-    taken own = {0};
-    reserve(&own, part, false); // As write_value names its struct's
     out lines = {0};
     puts_(&lines, "");
     for (int i = 0; i < part->field_count; i++) {
         const field *f = &part->fields[i];
-        char *id = field_name(names, f->name);
-        char *value = field_name(&own, f->name);
+        char *id = copy(t->local_ids[i]);
+        char *value = copy(part->ids[i]); // As write_value names its struct's
         out from = {0};
         putf(&from, "l.%s", value);
-        put_live_field(o, &lines, g, field_ctype(g, f), id, from.s, "", "[global::System.NonSerialized] ", "        ");
+        put_live_field(o, &lines, g, part, f, field_ctype(g, f), id, from.s, "", "[global::System.NonSerialized] ", "        ");
         free(from.s);
         free(value);
         free(id);
     }
-    free_taken(&own);
     if (lines.n) {
         char *name = full_name(part);
         putf(live, "            if (locals != null)\n            {\n                var l = *(%s*)locals;\n", name);
@@ -1159,19 +1137,19 @@ static void put_local_fields(out *o, out *live, game *g, const type *t, taken *n
 // with From (its laid-out Value made Unity code's) and Pack (the other way, for a command), and its Value.
 static void write_struct(out *o, game *g, const type *t)
 {
-    putf(o, "    // Tide's struct %s, as Unity code has it\n    [global::System.Serializable]\n    public unsafe partial struct %s\n    {\n",
-         t->bare, t->cs);
+    putf(o, "    // Tide's struct %s, as Unity code has it\n", t->bare);
+    put_type_summary(o, g, "    ", "struct", t->bare, NULL);
+    putf(o, "    [global::System.Serializable]\n    public unsafe partial struct %s\n    {\n", t->cs);
     out from = {0}, pack = {0};
     puts_(&from, "");
     puts_(&pack, "");
-    taken names = {0};
-    reserve(&names, t, true);
     for (int i = 0; i < t->field_count; i++) {
         const field *f = &t->fields[i];
-        char *id = field_name(&names, f->name);
+        char *id = copy(t->ids[i]);
         const ctype *ct = field_ctype(g, f);
         char *cs = live_cs(g, ct, false);
         if (cs) {
+            put_field_summary(o, g, t, f, "        ");
             putf(o, "        %spublic %s %s;\n", authorable(g, ct) ? "" : "[global::System.NonSerialized] ", cs, id);
             putf(&from, "            s.%s = ", id);
             out field_expr = {0};
@@ -1191,7 +1169,6 @@ static void write_struct(out *o, game *g, const type *t)
         free(cs);
         free(id);
     }
-    free_taken(&names);
     putf(o, "\n        public static %s From(Value v, global::Tide.TidePacket packet, global::Tide.TideRunner runner)\n        {\n"
             "            var s = new %s();\n%s            return s;\n        }\n\n", t->cs, t->cs, from.s);
     putf(o, "        public Value Pack(global::Tide.TideCommandWriter writer)\n        {\n            var v = new Value();\n%s"
@@ -1211,6 +1188,7 @@ static void write_class(out *o, game *g, const type *t, out *map)
     const unity_component_rules *rules = component ? unity_rules_of(g->mappings, t->bare) : NULL;
     if (component) {
         putf(o, "    // Tide's component %s: its fields as authored outside Play, its entity's values in Play (TideComponent)\n", t->bare);
+        put_type_summary(o, g, "    ", "component", t->bare, NULL);
         if (rules && rules->hidden) {
             puts_(o, "    // Its package's own (its unity.json): no GameObject is given it in Unity\n"
                      "    [global::UnityEngine.AddComponentMenu(\"\")]\n");
@@ -1263,10 +1241,13 @@ static void write_class(out *o, game *g, const type *t, out *map)
         }
     } else if (command) {
         putf(o, "    // Tide's command %s: TideRunner.Send sends it, as local code's Send does (TideCommand)\n", t->bare);
+        put_type_summary(o, g, "    ", "command", t->bare, NULL);
     } else if (event) {
         putf(o, "    // Tide's event %s, as this machine's local handlers hear it: TideRunner.On, OnVerified (TideEvent)\n", t->bare);
+        put_type_summary(o, g, "    ", "event", t->bare, NULL);
     } else {
         putf(o, "    // Tide's singleton %s, as Tide's views see it this frame: TideRunner.Get (TideSingleton)\n", t->bare);
+        put_type_summary(o, g, "    ", "singleton", t->bare, NULL);
     }
     putf(o, "    public sealed partial class %s : global::Tide.%s\n    {\n", t->cs, t->base);
     if (component) {
@@ -1278,12 +1259,10 @@ static void write_class(out *o, game *g, const type *t, out *map)
     }
     out live = {0};
     puts_(&live, "");
-    taken names = {0};
-    reserve(&names, t, true);
     int mapped = 0;
     for (int i = 0; i < t->field_count; i++) {
         const field *f = &t->fields[i];
-        char *id = field_name(&names, f->name);
+        char *id = copy(t->ids[i]);
         const char *key = id[0] == '@' ? id + 1 : id; // What Unity's YAML calls it
         const ctype *ct = field_ctype(g, f);
         out from = {0};
@@ -1294,6 +1273,7 @@ static void write_class(out *o, game *g, const type *t, out *map)
             // Its declared default, and its part of Pack
             char *cs = packs(g, ct) ? live_cs(g, ct, false) : NULL;
             if (cs) {
+                put_field_summary(o, g, t, f, "        ");
                 putf(o, "        public %s %s", cs, id);
                 out initial = {0};
                 puts_(&initial, "");
@@ -1306,14 +1286,15 @@ static void write_class(out *o, game *g, const type *t, out *map)
             }
             free(cs);
         } else if (!component) {
-            put_live_field(o, &live, g, ct, id, from.s, "", "", "        ");
+            put_live_field(o, &live, g, t, f, ct, id, from.s, "", "", "        ");
         } else if (unity_field_read_back(rules, f->name)) {
             // The package's answer, as the match has it: shown in Play, never authored
-            put_live_field(o, &live, g, ct, id, from.s, "", "[global::System.NonSerialized, global::Tide.TideReadBack] ", "        ");
+            put_live_field(o, &live, g, t, f, ct, id, from.s, "", "[global::System.NonSerialized, global::Tide.TideReadBack] ", "        ");
         } else if (authorable(g, ct)) {
             char *cs = live_cs(g, ct, false);
             const unity_scale by = unity_field_scale(rules, f->name);
             const bool point = unity_field_point(rules, f->name);
+            put_field_summary(o, g, t, f, "        ");
             if (unity_field_hidden(rules, f->name)) puts_(o, "        [global::UnityEngine.HideInInspector] // Its package's own\n");
             if (by != UNITY_SCALE_NONE) puts_(o, "        [global::UnityEngine.Tooltip(\"By the GameObject's scale, as a collider's size is\")]\n");
             if (point) puts_(o, "        [global::UnityEngine.Tooltip(\"In the GameObject's own space, with its scale\")]\n");
@@ -1352,9 +1333,10 @@ static void write_class(out *o, game *g, const type *t, out *map)
             putf(map, ", \"shape\": %d}", shape_of(g, ct));
         } else if (readable(g, ct)) {
             // Read in Play, never authored: a map, a grid, a container of containers
-            put_live_field(o, &live, g, ct, id, from.s, "", "[global::System.NonSerialized] ", "        ");
+            put_live_field(o, &live, g, t, f, ct, id, from.s, "", "[global::System.NonSerialized] ", "        ");
         } else {
             // A Tide value as text: what Unity can't hold as itself
+            put_field_summary(o, g, t, f, "        ");
             puts_(o, "        [global::UnityEngine.Tooltip(\"");
             put_escaped(o, f->type);
             puts_(o, ", as Tide code writes a value of it: empty for its default\")]\n");
@@ -1371,8 +1353,7 @@ static void write_class(out *o, game *g, const type *t, out *map)
     }
     out locals = {0};
     puts_(&locals, "");
-    if (!command && !event) put_local_fields(o, &locals, g, t, &names);
-    free_taken(&names);
+    if (!command && !event) put_local_fields(o, &locals, g, t);
     if (component) puts_(map, "]}");
     puts_(o, "\n        public override string TideName => \"");
     put_escaped(o, t->bare);
@@ -1444,23 +1425,18 @@ static char *write_types(game *g, const json *schema)
     puts_(&o, "        }\n    }\n}\n");
     for (int i = 0; i < g->enum_count; i++) {
         const enumeration *e = &g->enums[i];
-        const char *dot = strrchr(e->name, '.');
-        char *ns = dot ? namespace_of(e->name, (size_t)(dot - e->name)) : NULL;
-        char *cs = identifier(dot ? dot + 1 : e->name, strlen(dot ? dot + 1 : e->name));
-        open_namespace(&o, ns);
-        putf(&o, "    public enum %s : int\n    {\n", cs);
-        taken used = {0};
+        open_namespace(&o, e->ns);
+        put_type_summary(&o, g, "    ", "enum", e->name, "enum");
+        putf(&o, "    public enum %s : int\n    {\n", e->cs);
+        const json *declared = declaration(g, e->name, "enum");
+        const json *docs = declared && where_ok(g, declared) ? json_get(declared, "memberDocs") : NULL;
         for (int k = 0; e->members && e->members->kind == JSON_ARRAY && k < e->members->count; k++) {
-            const char *member = json_str(e->members->items[k]);
-            char *id = identifier(member ? member : "_", member ? strlen(member) : 1);
             const int value = e->values && e->values->kind == JSON_ARRAY && k < e->values->count ? json_int(e->values->items[k], k) : k;
-            if (take(&used, id)) putf(&o, "        %s = %d,\n", id, value);
-            free(id);
+            if (k >= e->names_count || !e->ids[k]) continue;
+            if (docs && docs->kind == JSON_ARRAY && k < docs->count) put_summary(&o, "        ", json_str(docs->items[k]), NULL);
+            putf(&o, "        %s = %d,\n", e->ids[k], value);
         }
-        free_taken(&used);
         puts_(&o, "    }\n}\n");
-        free(ns);
-        free(cs);
     }
     for (int i = 0; i < g->type_count; i++) {
         const type *t = &g->types[i];
@@ -1608,8 +1584,15 @@ static bool write_code(const char *dir, const char *schema_text, const char *out
     json *outline = outline_text ? json_parse(outline_text, strlen(outline_text)) : NULL;
     game g = {0};
     g.outline = outline;
+    char *above = path_dir(dir);
+    char *project = above ? path_dir(above) : NULL;
+    g.project = project;
+    g.packages = packages;
+    g.package_count = package_count;
     g.mappings = &mappings;
     if (!read_game(schema, &g)) {
+        free(above);
+        free(project);
         json_release();
         unity_mappings_free(&mappings);
         fprintf(stderr, "tide: the game's schema has no types\n");
@@ -1705,6 +1688,8 @@ static bool write_code(const char *dir, const char *schema_text, const char *out
     free(components);
     free_trees(&g);
     free_game(&g);
+    free(above);
+    free(project);
     json_release();
     unity_mappings_free(&mappings);
     return !failed;
@@ -1720,4 +1705,429 @@ bool unity_code_add(const char *dir, const char *schema, const char *outline, co
                     const int package_count)
 {
     return write_code(dir, schema, outline, packages, package_count, false);
+}
+
+// ---------------------------------------------------------------------------
+// The record of renamed and removed names (unity_code_record)
+
+typedef struct entry {
+    char *was, *now, *file; // now NULL: removed; file: where `now` is declared, as the project opens it, or NULL
+    int line;
+} entry;
+
+typedef struct entries {
+    entry *items;
+    int count, capacity;
+} entries;
+
+static char *copy_or_null(const char *s)
+{
+    return s ? copy(s) : NULL;
+}
+
+static void entry_add(entries *e, const char *was, const char *now, const char *file, const int line)
+{
+    if (e->count == e->capacity) {
+        e->capacity = e->capacity ? e->capacity * 2 : 16;
+        e->items = realloc(e->items, sizeof *e->items * (size_t)e->capacity);
+        if (!e->items) abort();
+    }
+    e->items[e->count++] = (entry){copy(was), copy_or_null(now), copy_or_null(file), line};
+}
+
+static void entry_free(entry *e)
+{
+    free(e->was);
+    free(e->now);
+    free(e->file);
+}
+
+// Where a declaration's file is, as the project opens it: from the project's folder, else as tide named it
+static char *open_path(const game *g, const char *file)
+{
+    if (!file || !*file) return NULL;
+    out o = {0};
+    const bool absolute = file[0] == '/' || file[0] == '\\' || (file[0] && file[1] == ':');
+    const char *in = absolute && g->project ? under(file, g->project) : NULL;
+    if (in) puts_(&o, in);
+    else if (absolute || starts(file, "Assets/") || starts(file, "Library/")) puts_(&o, file);
+    else putf(&o, "Assets/%s", file);
+    for (char *c = o.s; *c; c++) {
+        if (*c == '\\') *c = '/';
+    }
+    return o.s;
+}
+
+// A field of a declaration as print_outline says it, by its Tide name
+static const json *outline_field(const json *declared, const char *name)
+{
+    const json *fields = json_get(declared, "fields");
+    for (int k = 0; fields && fields->kind == JSON_ARRAY && k < fields->count; k++) {
+        if (strcmp(str(fields->items[k], "name"), name) == 0) return fields->items[k];
+    }
+    return NULL;
+}
+
+// Whether a type's C# name is one of the record's: the game's own types, not tide's
+static bool recorded(const unity_cs_type *t)
+{
+    return !t->scene && strcmp(t->kind, "local") != 0 && strncmp(t->name, "tide_", 5) != 0
+        && strncmp(t->name, "UnityEngine.", 12) != 0;
+}
+
+static bool same_fields(const unity_cs_type *a, const unity_cs_type *b)
+{
+    if (a->field_count != b->field_count) return false;
+    for (int k = 0; k < a->field_count; k++) {
+        if (strcmp(a->fields[k], b->fields[k]) != 0) return false;
+    }
+    return true;
+}
+
+static const char *field_type(const json *schema, const int type, const int field)
+{
+    const json *t = json_get(schema, "types");
+    const json *fields = t && type < t->count ? json_get(t->items[type], "fields") : NULL;
+    return fields && field < fields->count ? str(fields->items[field], "type") : "";
+}
+
+static const char *member_name(const char *id)
+{
+    return id[0] == '@' ? id + 1 : id;
+}
+
+typedef struct differ {
+    const game *g;
+    const json *was_schema, *schema;
+    const unity_cs_names *was, *now;
+    entries found;
+    bool removals;
+} differ;
+
+static void found_one(differ *d, const char *was, const char *now, const char *file, const int line)
+{
+    if (now && strcmp(was, now) == 0) return;
+    if (!now && !d->removals) return;
+    entry_add(&d->found, was, now, file, line);
+}
+
+// What became of a type's fields (`a_ids`, its own or its class's local ones), from the old type `a` (the schema's
+// type `fa`) to the new `b` (`fb`): kept by name, renamed in place with its type, or the one left of its type; else
+// removed
+static void diff_fields(differ *d, const char *was_owner, const char *now_owner, const unity_cs_type *a, char *const *a_ids,
+                        const int fa, const unity_cs_type *b, char *const *b_ids, const int fb, const json *declared)
+{
+    if (!a || !a_ids) return;
+    const bool have = b && b_ids;
+    bool *taken = calloc((size_t)(have ? b->field_count : 0) + 1, sizeof *taken);
+    int *pair = malloc(sizeof *pair * ((size_t)a->field_count + 1));
+    if (!taken || !pair) abort();
+    for (int k = 0; k < a->field_count; k++) {
+        pair[k] = -1;
+        for (int m = 0; have && m < b->field_count && pair[k] < 0; m++) {
+            if (!taken[m] && strcmp(a->fields[k], b->fields[m]) == 0) pair[k] = m;
+        }
+        if (pair[k] >= 0) taken[pair[k]] = true;
+    }
+    for (int k = 0; have && k < a->field_count; k++) {
+        if (pair[k] >= 0 || k >= b->field_count || taken[k]) continue;
+        if (strcmp(field_type(d->was_schema, fa, k), field_type(d->schema, fb, k)) == 0) {
+            pair[k] = k; // In its place, of its type
+            taken[k] = true;
+        }
+    }
+    for (int k = 0; have && k < a->field_count; k++) {
+        if (pair[k] >= 0) continue;
+        const char *of = field_type(d->was_schema, fa, k);
+        int alone = -1, gone = 0, come = 0;
+        for (int x = 0; x < a->field_count; x++) gone += pair[x] < 0 && strcmp(field_type(d->was_schema, fa, x), of) == 0;
+        for (int m = 0; m < b->field_count; m++) {
+            if (taken[m] || strcmp(field_type(d->schema, fb, m), of) != 0) continue;
+            come++;
+            alone = m;
+        }
+        if (gone == 1 && come == 1) {
+            pair[k] = alone;
+            taken[alone] = true;
+        }
+    }
+    for (int k = 0; k < a->field_count; k++) {
+        out was = {0}, now = {0};
+        putf(&was, "%s.%s", was_owner, member_name(a_ids[k]));
+        if (pair[k] >= 0) {
+            putf(&now, "%s.%s", now_owner, member_name(b_ids[pair[k]]));
+            const json *line = json_get(outline_field(declared, b->fields[pair[k]]), "line");
+            char *file = open_path(d->g, str(declared, "file"));
+            found_one(d, was.s, now.s, file, line && line->kind == JSON_NUMBER ? (int)line->number : json_int(json_get(declared, "line"), 0));
+            free(file);
+        } else {
+            found_one(d, was.s, NULL, NULL, 0);
+        }
+        free(was.s);
+        free(now.s);
+    }
+    free(taken);
+    free(pair);
+}
+
+static void diff_types(differ *d)
+{
+    const unity_cs_names *a = d->was, *b = d->now;
+    int *pair = malloc(sizeof *pair * ((size_t)a->type_count + 1));
+    bool *taken = calloc((size_t)b->type_count + 1, sizeof *taken);
+    if (!pair || !taken) abort();
+    for (int i = 0; i < a->type_count; i++) {
+        pair[i] = -1;
+        for (int j = 0; j < b->type_count && pair[i] < 0; j++) {
+            if (strcmp(a->types[i].name, b->types[j].name) == 0) pair[i] = j;
+        }
+        if (pair[i] >= 0) taken[pair[i]] = true;
+    }
+    // Renamed: the one gone and the one come of its kind with its fields; else the only ones of their kind
+    for (int pass = 0; pass < 2; pass++) {
+        for (int i = 0; i < a->type_count; i++) {
+            if (pair[i] >= 0 || !recorded(&a->types[i])) continue;
+            int alone = -1, come = 0, gone = 0;
+            for (int j = 0; j < b->type_count; j++) {
+                if (taken[j] || !recorded(&b->types[j]) || strcmp(b->types[j].kind, a->types[i].kind) != 0) continue;
+                if (pass == 0 && !same_fields(&a->types[i], &b->types[j])) continue;
+                come++;
+                alone = j;
+            }
+            for (int x = 0; x < a->type_count; x++) {
+                gone += pair[x] < 0 && recorded(&a->types[x]) && strcmp(a->types[x].kind, a->types[i].kind) == 0
+                     && (pass == 1 || (alone >= 0 && same_fields(&a->types[x], &b->types[alone])));
+            }
+            if (come == 1 && gone == 1) {
+                pair[i] = alone;
+                taken[alone] = true;
+            }
+        }
+    }
+    for (int i = 0; i < a->type_count; i++) {
+        const unity_cs_type *t = &a->types[i];
+        if (!recorded(t)) continue;
+        char *was = unity_cs_full(t->ns, t->cs);
+        if (pair[i] < 0) {
+            found_one(d, was, NULL, NULL, 0);
+            free(was);
+            continue;
+        }
+        const unity_cs_type *u = &b->types[pair[i]];
+        char *now = unity_cs_full(u->ns, u->cs);
+        const json *declared = declaration(d->g, u->bare, NULL);
+        char *file = open_path(d->g, str(declared, "file"));
+        found_one(d, was, now, file, json_int(json_get(declared, "line"), 0));
+        free(file);
+        diff_fields(d, was, now, t, t->ids, i, u, u->ids, pair[i], declared);
+        // Its class's local fields, its local part's
+        if (t->local >= 0 && u->local >= 0) {
+            diff_fields(d, was, now, &a->types[t->local], t->local_ids, t->local, &b->types[u->local], u->local_ids, u->local, declared);
+        }
+        free(was);
+        free(now);
+    }
+    free(pair);
+    free(taken);
+}
+
+static int enum_named(const unity_cs_names *n, const char *name)
+{
+    for (int k = 0; k < n->enum_count; k++) {
+        if (strcmp(n->enums[k].name, name) == 0) return k;
+    }
+    return -1;
+}
+
+static void diff_enums(differ *d)
+{
+    const unity_cs_names *a = d->was, *b = d->now;
+    for (int i = 0; i < a->enum_count; i++) {
+        const unity_cs_enum *e = &a->enums[i];
+        int j = enum_named(b, e->name);
+        if (j < 0) {
+            // Renamed: the one enum gone and the one come
+            int gone = 0, come = 0, alone = -1;
+            for (int k = 0; k < a->enum_count; k++) gone += enum_named(b, a->enums[k].name) < 0;
+            for (int m = 0; m < b->enum_count; m++) {
+                if (enum_named(a, b->enums[m].name) >= 0) continue;
+                come++;
+                alone = m;
+            }
+            if (gone == 1 && come == 1) j = alone;
+        }
+        char *was = unity_cs_full(e->ns, e->cs);
+        if (j < 0) {
+            found_one(d, was, NULL, NULL, 0);
+            free(was);
+            continue;
+        }
+        const unity_cs_enum *f = &b->enums[j];
+        char *now = unity_cs_full(f->ns, f->cs);
+        const json *declared = declaration(d->g, f->name, "enum");
+        char *file = open_path(d->g, str(declared, "file"));
+        const int line = json_int(json_get(declared, "line"), 0);
+        found_one(d, was, now, file, line);
+        // Its members: by name, else in their place where the name there is new
+        for (int k = 0; k < e->member_count; k++) {
+            if (!e->ids[k]) continue;
+            int m = -1;
+            for (int x = 0; x < f->member_count && m < 0; x++) {
+                if (f->ids[x] && e->members[k] && f->members[x] && strcmp(e->members[k], f->members[x]) == 0) m = x;
+            }
+            if (m < 0 && k < f->member_count && f->ids[k]) {
+                bool named = false;
+                for (int x = 0; x < e->member_count; x++) named = named || (e->members[x] && f->members[k] && strcmp(e->members[x], f->members[k]) == 0);
+                if (!named) m = k;
+            }
+            out a_name = {0}, b_name = {0};
+            putf(&a_name, "%s.%s", was, member_name(e->ids[k]));
+            if (m >= 0) {
+                putf(&b_name, "%s.%s", now, member_name(f->ids[m]));
+                found_one(d, a_name.s, b_name.s, file, line);
+            } else {
+                found_one(d, a_name.s, NULL, NULL, 0);
+            }
+            free(a_name.s);
+            free(b_name.s);
+        }
+        free(file);
+        free(was);
+        free(now);
+    }
+}
+
+// Whether a C# name (after Tide.Game.) is one of the game's types', a field's or a member's
+static bool has_name(const unity_cs_names *n, const char *name)
+{
+    bool found = false;
+    for (int i = 0; i < n->type_count && !found; i++) {
+        const unity_cs_type *t = &n->types[i];
+        char *full = unity_cs_full(t->ns, t->cs);
+        const size_t len = strlen(full);
+        if (strcmp(full, name) == 0) {
+            found = true;
+        } else if (strncmp(full, name, len) == 0 && name[len] == '.') {
+            const char *member = name + len + 1;
+            for (int k = 0; k < t->field_count && !found; k++) found = strcmp(member_name(t->ids[k]), member) == 0;
+            const int locals = t->local_ids ? n->types[t->local].field_count : 0;
+            for (int k = 0; k < locals && !found; k++) found = strcmp(member_name(t->local_ids[k]), member) == 0;
+        }
+        free(full);
+    }
+    for (int i = 0; i < n->enum_count && !found; i++) {
+        const unity_cs_enum *e = &n->enums[i];
+        char *full = unity_cs_full(e->ns, e->cs);
+        const size_t len = strlen(full);
+        if (strcmp(full, name) == 0) {
+            found = true;
+        } else if (strncmp(full, name, len) == 0 && name[len] == '.') {
+            for (int k = 0; k < e->member_count && !found; k++) found = e->ids[k] && strcmp(member_name(e->ids[k]), name + len + 1) == 0;
+        }
+        free(full);
+    }
+    return found;
+}
+
+bool unity_code_record(const char *record, const char *was, const char *schema, const char *outline, const char *dir,
+                       const unity_package *packages, const int package_count, const bool removals)
+{
+    const json *a = was ? json_parse(was, strlen(was)) : NULL;
+    const json *b = schema ? json_parse(schema, strlen(schema)) : NULL;
+    const json *o = outline ? json_parse(outline, strlen(outline)) : NULL;
+    unity_cs_names was_names = {0}, names = {0};
+    if (!b || !unity_cs_read(b, &names)) {
+        json_release();
+        return true; // Nothing to say of
+    }
+    char *above = path_dir(dir);
+    char *project = above ? path_dir(above) : NULL;
+    game g = {0};
+    g.outline = o;
+    g.project = project;
+    g.packages = packages;
+    g.package_count = package_count;
+    differ d = {&g, a, b, NULL, &names, {0}, removals};
+    if (a && unity_cs_read(a, &was_names)) {
+        d.was = &was_names;
+        diff_types(&d);
+        diff_enums(&d);
+    }
+    // The record so far, then what this build found
+    entries all = {0};
+    size_t size = 0;
+    char *old = sys_read_file(record, &size);
+    const json *kept = old ? json_get(json_parse(old, size), "renamed") : NULL;
+    for (int i = 0; kept && kept->kind == JSON_ARRAY && i < kept->count; i++) {
+        const json *e = kept->items[i];
+        if (!json_str(json_get(e, "was"))) continue;
+        entry_add(&all, str(e, "was"), json_str(json_get(e, "now")), json_str(json_get(e, "file")), json_int(json_get(e, "line"), 0));
+    }
+    for (int i = 0; i < d.found.count; i++) {
+        const entry *f = &d.found.items[i];
+        for (int k = 0; k < all.count; k++) {
+            entry *x = &all.items[k];
+            if (x->now && strcmp(x->now, f->was) == 0) { // A rename of a renamed name: this one's new name is its
+                free(x->now);
+                free(x->file);
+                x->now = copy_or_null(f->now);
+                x->file = copy_or_null(f->file);
+                x->line = f->line;
+            }
+        }
+        for (int k = 0; k < all.count; k++) {
+            if (strcmp(all.items[k].was, f->was) != 0) continue;
+            entry_free(&all.items[k]);
+            memmove(&all.items[k], &all.items[k + 1], sizeof *all.items * (size_t)(all.count - k - 1));
+            all.count--;
+            k--;
+        }
+        entry_add(&all, f->was, f->now, f->file, f->line);
+    }
+    // Names the C# has again, and renames back to what they were, are nothing to explain; the newest 100 kept
+    int kept_count = 0;
+    for (int i = 0; i < all.count; i++) {
+        entry *x = &all.items[i];
+        const bool drop = has_name(&names, x->was) || (x->now && strcmp(x->was, x->now) == 0) || all.count - i > 100;
+        if (drop) entry_free(x);
+        else all.items[kept_count++] = *x;
+    }
+    all.count = kept_count;
+    out text = {0};
+    puts_(&text, "{\"renamed\": [");
+    for (int i = 0; i < all.count; i++) {
+        const entry *x = &all.items[i];
+        puts_(&text, i ? ",\n  {\"was\": " : "\n  {\"was\": ");
+        put_json_text(&text, x->was);
+        if (x->now) {
+            puts_(&text, ", \"now\": ");
+            put_json_text(&text, x->now);
+            if (x->file) {
+                puts_(&text, ", \"file\": ");
+                put_json_text(&text, x->file);
+                putf(&text, ", \"line\": %d", x->line);
+            }
+        } else {
+            puts_(&text, ", \"removed\": true");
+        }
+        puts_(&text, "}");
+    }
+    puts_(&text, all.count ? "\n]}\n" : "]}\n");
+    bool ok = true;
+    if (!old || size != text.n || memcmp(old, text.s, size) != 0) {
+        ok = sys_write_file(record, text.s, text.n);
+        if (!ok) fprintf(stderr, "tide: can't write %s\n", record);
+    }
+    for (int i = 0; i < all.count; i++) entry_free(&all.items[i]);
+    free(all.items);
+    for (int i = 0; i < d.found.count; i++) entry_free(&d.found.items[i]);
+    free(d.found.items);
+    free(text.s);
+    free(old);
+    free(above);
+    free(project);
+    unity_cs_free(&was_names);
+    unity_cs_free(&names);
+    json_release();
+    return ok;
 }

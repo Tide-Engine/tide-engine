@@ -102,6 +102,7 @@ namespace Tide.Editor
         public bool local;
         public bool async;
         public bool @extern;
+        public string doc; // Its comment lines, as written above it
         public TideOutlineField[] fields = Array.Empty<TideOutlineField>();
         public string[] members = Array.Empty<string>();
         public string[] handlers = Array.Empty<string>();
@@ -128,6 +129,8 @@ namespace Tide.Editor
         public string type;
         public bool local;
         public string text; // A text field's default, as written between its quotes
+        public int line;
+        public string doc;
     }
 
     [Serializable]
