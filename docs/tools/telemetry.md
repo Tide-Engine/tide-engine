@@ -69,7 +69,7 @@ Not sent: what you build or run, the arguments you give, paths, names of project
 
 Events are sent with `curl` over HTTPS to `https://tide-engine.dev/telemetry`, the engine's own website, and kept in a database on its server. There's no analytics company or other third party in between. The time an event arrived is kept to the hour, and events are deleted after 13 months.
 
-We look at them as totals: installations active each day and week, commands a day, the versions in use, operating systems, how often each command fails and of which kind, and how long builds take. The site's [privacy page](/privacy) covers the rest of what the website and the multiplayer relay see.
+We look at them as totals: installations active each day and week, commands a day, the versions in use, operating systems, how often each command fails and of which kind, and how long builds take. Events marked as CI are excluded from all usage totals and build times; the dashboard shows their excluded command count separately. The engine's own CI also sets `TIDE_TELEMETRY=0`. The site's [privacy page](/privacy) covers the rest of what the website and the multiplayer relay see.
 
 ## Where its settings are
 

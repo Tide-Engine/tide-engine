@@ -1,5 +1,22 @@
 # Releases, installing and CI
 
+## CI telemetry opt-out (2026-10-26)
+
+Build and Docs set `TIDE_TELEMETRY: '0'` at workflow scope alongside
+`TIDE_HIDDEN`. The hidden-run CLI fixture deliberately unsets TIDE_HIDDEN or
+sets it to 0 for several expected failures. With a release/nightly CLI those
+cases could otherwise send real telemetry from a new scratch installation.
+The independent opt-out survives those cases. The telemetry test already
+removes inherited opt-outs and directs sending cases to its local collectors,
+so its on/off/CI checks retain their coverage. No CLI behavior is changed.
+
+Parsed YAML comparisons against HEAD verify that each workflow changes only
+this environment setting, preserving jobs, triggers and publication gates.
+The docs-side historical filtering and passing regression/build/admin checks
+are recorded in `notes/docs-site.md`, Exclude CI from CLI usage totals. Hosted
+workflow execution remains the normal push-to-dev coverage; no extra run was
+dispatched.
+
 ## Journal deadline in run 40338328972 (2026-10-26)
 
 At `195c8f1d`, the completed MinGW suite passes 2,744 tests and fails only

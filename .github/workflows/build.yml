@@ -35,6 +35,7 @@ permissions:
 
 env:
   TIDE_HIDDEN: '1'
+  TIDE_TELEMETRY: '0'
 
 concurrency:
   group: build-${{ github.ref }}

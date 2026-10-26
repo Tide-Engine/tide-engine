@@ -169,30 +169,31 @@ export function createTelemetry({ file, now = Date.now }) {
         return true;
     }
 
-    /** What the admin page shows, for the last `days` UTC days.
+    /** Non-CI usage for the last `days` UTC days, plus the excluded CI count.
      * @param {number} days */
     function summary(days = 30) {
         if (!Number.isInteger(days) || days < 1 || days > 400) throw new RangeError('Choose between 1 and 400 days.');
         const today = Math.floor(now() / DAY);
         const firstDay = today - days + 1;
         const from = firstDay * 24;
+        const usage = 'FROM events WHERE ci = 0 AND hour >= ?';
         /** @param {string} sql @param {...(number|string)} params */
         const all = (sql, ...params) => /** @type {any[]} */ (db.prepare(sql).all(from, ...params));
         const byDay = new Map(all(`SELECT hour / 24 AS day, COUNT(*) AS events, COUNT(DISTINCT install) AS installs,
-            SUM(outcome = 'failed') AS failed FROM events WHERE hour >= ? GROUP BY day`).map((row) => [Number(row.day), row]));
+            SUM(outcome = 'failed') AS failed ${usage} GROUP BY day`).map((row) => [Number(row.day), row]));
         const daily = [];
         for (let day = firstDay; day <= today; day++) {
             const row = byDay.get(day);
             daily.push({ date: dateOf(day), events: Number(row?.events ?? 0), installs: Number(row?.installs ?? 0), failed: Number(row?.failed ?? 0) });
         }
         // Weeks back from today, each seven days: the installs active in each.
-        const weekly = all(`SELECT (${today} - hour / 24) / 7 AS ago, COUNT(DISTINCT install) AS installs FROM events
-            WHERE hour >= ? GROUP BY ago ORDER BY ago`).map((row) => {
+        const weekly = all(`SELECT (${today} - hour / 24) / 7 AS ago, COUNT(DISTINCT install) AS installs ${usage}
+            GROUP BY ago ORDER BY ago`).map((row) => {
             const end = today - Number(row.ago) * 7;
             return { from: dateOf(Math.max(firstDay, end - 6)), to: dateOf(end), installs: Number(row.installs) };
         });
         const one = (/** @type {string} */ sql, /** @type {number} */ since) => Number((/** @type {any} */ (db.prepare(sql).get(since)))?.n ?? 0);
-        const distinct = 'SELECT COUNT(DISTINCT install) AS n FROM events WHERE hour >= ?';
+        const distinct = `SELECT COUNT(DISTINCT install) AS n ${usage}`;
         const totals = {
             events: daily.reduce((sum, day) => sum + day.events, 0),
             failed: daily.reduce((sum, day) => sum + day.failed, 0),
@@ -202,19 +203,19 @@ export function createTelemetry({ file, now = Date.now }) {
             ci: one('SELECT COUNT(*) AS n FROM events WHERE ci = 1 AND hour >= ?', from),
         };
         const commands = all(`SELECT command, COUNT(*) AS events, SUM(outcome = 'failed') AS failed, COUNT(DISTINCT install) AS installs
-            FROM events WHERE hour >= ? GROUP BY command ORDER BY events DESC, command`).map((row) => ({
+            ${usage} GROUP BY command ORDER BY events DESC, command`).map((row) => ({
             command: row.command, events: Number(row.events), failed: Number(row.failed), installs: Number(row.installs),
         }));
-        const failures = all(`SELECT command, error, COUNT(*) AS events FROM events WHERE hour >= ? AND outcome = 'failed'
+        const failures = all(`SELECT command, error, COUNT(*) AS events ${usage} AND outcome = 'failed'
             GROUP BY command, error ORDER BY events DESC, command, error`).map((row) => ({ command: row.command, error: row.error, events: Number(row.events) }));
-        const versions = all(`SELECT version, COUNT(DISTINCT install) AS installs, COUNT(*) AS events FROM events WHERE hour >= ?
+        const versions = all(`SELECT version, COUNT(DISTINCT install) AS installs, COUNT(*) AS events ${usage}
             GROUP BY version ORDER BY installs DESC, version DESC LIMIT 50`).map((row) => ({ version: row.version, installs: Number(row.installs), events: Number(row.events) }));
-        const platforms = all(`SELECT os, arch, COUNT(DISTINCT install) AS installs, COUNT(*) AS events FROM events WHERE hour >= ?
+        const platforms = all(`SELECT os, arch, COUNT(DISTINCT install) AS installs, COUNT(*) AS events ${usage}
             GROUP BY os, arch ORDER BY installs DESC, os, arch`).map((row) => ({ os: row.os, arch: row.arch, installs: Number(row.installs), events: Number(row.events) }));
         // Successful builds' times, by target: the median, 90th and 99th percentiles (nearest rank).
         const builds = [];
         for (const target of ['native', 'web', 'android']) {
-            const where = `FROM events WHERE hour >= ? AND command = 'build' AND outcome = 'ok' AND target = '${target}'`;
+            const where = `${usage} AND command = 'build' AND outcome = 'ok' AND target = '${target}'`;
             const count = one(`SELECT COUNT(*) AS n ${where}`, from);
             if (!count) continue;
             const at = (/** @type {number} */ p) => Number((/** @type {any} */ (db.prepare(`SELECT ms ${where} ORDER BY ms LIMIT 1 OFFSET ?`)

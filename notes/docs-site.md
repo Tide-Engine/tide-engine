@@ -1,5 +1,32 @@
 # The docs site
 
+## Exclude CI from CLI usage totals (2026-10-26)
+
+The owner requested that CI not count as CLI usage after the dashboard showed
+large failed-run and scratch-install counts. `docs/telemetry.js` now applies
+`ci = 0` to every usage aggregate: daily/weekly activity, active installs
+(including today and the last week), commands, failures, versions, platforms
+and successful-build percentiles. This also excludes previously stored CI
+events without deleting data or changing ingestion, retention or event fields.
+`totals.ci` remains the separate count of excluded commands in the chosen
+period. The admin page labels that count as excluded instead of calculating a
+share of usage, and the Usage data page documents the distinction.
+
+Build and Docs also disable telemetry explicitly; see
+`notes/releases-and-ci.md`, CI telemetry opt-out. Existing events can only be
+distinguished by their recorded `ci` flag; unmarked automation cannot be
+identified retrospectively. The corrected historical totals take effect with
+the normal docs deployment.
+
+Validation with Node 24.22.1: all seven telemetry tests pass, including exact
+comparison of every aggregate before/after mixed CI events across 1/7/30-day
+ranges, shared/distinct install IDs, historical events, CI-only days and the
+authenticated API. All eleven admin unit/production HTTP tests pass. Svelte
+check has zero errors/warnings and the production docs build passes with the
+existing allowed unstaged-example/game 404s. No browser or native/web engine
+suite was needed for this server-query and wording change; no extra workflow
+was dispatched.
+
 ## Corner Culling package guide (2026-10-26)
 
 The package overview and sidebar now include Corner Culling. Its guide documents

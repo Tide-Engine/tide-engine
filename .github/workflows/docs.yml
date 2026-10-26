@@ -27,6 +27,7 @@ permissions:
 
 env:
   TIDE_HIDDEN: '1'
+  TIDE_TELEMETRY: '0'
 
 # One at a time for a ref, whichever workflow asked: a request made while the
 # site deploys waits for it, and never stops a job of a release's run.
