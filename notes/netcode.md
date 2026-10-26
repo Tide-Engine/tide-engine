@@ -1,5 +1,31 @@
 # Netcode: sessions, prediction, commands
 
+## A session's recorder and rewind (2026-10-26)
+
+For Unity's time travel (notes/unity.md, Time travel), host-side session calls; generated code calls nothing new.
+
+- `tide_session_record(s, recorder)`: `begin(world, tick)` then `tick(tick, record, size, world)` for the match this
+  machine runs, from the server's journal (`tide_server_desc.journal`, set on the session's server by
+  `record_server`). `begin` comes as it's set on a running match, at `start_server` (start, start_from), at
+  `take_over`, and after `tide_session_migrate` (another layout's world). Sharded matches aren't recorded. NULL
+  stops it (the server's journal is cleared).
+- `tide_replay_check(game, world, record, size, jobs, &expected, &got)`: `tide_replay`'s run of a record, saying
+  `TIDE_REPLAY_SAME`, `_DIFFERENT` (both hashes) or `_UNREADABLE`; `tide_replay` is a wrapper of it, as it was.
+- `tide_session_remote_players(s)`: connections on the server here that aren't this machine's (used, connected or
+  joining).
+- `tide_session_rewind(s, world)`: the server's world becomes `world`, then the new optional
+  `tide_game.keep_commands(to, from)` (generated for every game with commands: a copy of `tide_command_state`)
+  puts the live world's command bookkeeping back over it, so no command is lost or applied twice whatever the clients
+  have pending; `ended` is read again, presentation corrections reset, and this machine's player takes the world
+  (`take_server_world`). The server's tick count goes on. Clients of other machines aren't told: their next frame's
+  hash isn't their world's, and they repair (projection games) or resync as on any divergence, from the server's
+  history of frames before the rewind, which still describe the ticks their verified worlds are at. No wire change,
+  so `PROTOCOL` stays 19. The generated header's Session ABI marker says `rewind (1)` for the `tide_game` member, so
+  hosts and games rebuild together, and every game's layout hash moved once.
+
+Tests: `tide_platform_travel`'s timeline cases (three sessions over a lossy loopback: recording, replay bit for bit,
+a changed build's first differing tick, a rewind with two clients connected and a command in flight).
+
 ## Task handles follow authoritative visibility (2026-10-25)
 
 The generated match task registry is excluded from recipient singleton codecs

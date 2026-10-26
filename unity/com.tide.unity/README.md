@@ -231,6 +231,51 @@ Unity's volume and mute apply, through the runner's Audio Output mixer group.
 first time the game listens. In a WebGL player Tide's program plays through the
 page itself, and hears the page's microphone.
 
+## Time travel
+
+A match is deterministic, so the editor can keep it: Window > Tide > Time
+Travel, in Play. The runner records a match this machine runs from its start
+(what went into each tick: players' input, joins and leaves, commands) and
+keeps the worlds of its latest ticks (the runner's Keep Seconds, 10 by
+default).
+
+- **Pause** stops the match at its latest tick. **Step** runs one tick, with
+  what's held and pressed then (a key pressed while paused goes into that tick,
+  as do commands sent while paused). **Resume** goes on from there.
+- The **Tick** slider shows any tick since the match started: its entities and
+  their GameObjects, the Tide components' live values in the inspector,
+  `TideEntityView`, singletons and Tide's drawing are that tick's. Ticks
+  before those kept are made again from the start as they're shown. What's
+  clicked or sent on an older tick's picture never reaches the match, and the
+  match's own local state is left as it was.
+- **Continue From Here** takes the match back to the tick shown and on from
+  there: the ticks after it are gone. Which commands are in the match stays as
+  it was, so one already applied after that tick doesn't come again.
+- With players of other machines in the match, it never stops for them: Pause
+  shows the tick paused at while the match goes on behind it (this machine's
+  player as if it let go of everything), and Resume shows its latest tick
+  again. Continue From Here takes them back too: they're sent the match's world
+  again, as when a client goes wrong.
+- **Save Recording** writes the match's recording (a `.tiderec`) and **Open
+  Recording** replays one, a tester's from a bug report say, on any machine with
+  a build of the same data layout (the game's components, input and commands as
+  they were): each tick is made again with this build and its world checked
+  against the recording's hash. The window says how far every tick matched, or
+  the first tick whose world went otherwise, which after a change to the game's
+  code is where that change first matters. **Replay This Match** replays the
+  current one.
+
+In C#: `runner.Pause()`, `Step()`, `Resume()`, `ShowTick(n)`,
+`ContinueFromHere()`, `Recording()` and `SaveRecording(path)`,
+`Replay(bytes)` and `ReplayFile(path)`, `EndReplay()`, with `runner.Travel`
+saying where it is. The runner's Time Travel setting keeps matches in the
+editor (the default), nowhere, or in player builds too, so a game can save a
+tester's recording for a bug report. A hot reload while paused comes in as
+any: the match stays paused, its kept ticks with it if the data layout is the
+same (another starts the recording over), and the next step runs the new code.
+Only a match this machine runs is kept; one joined on another machine, and a
+sharded one, aren't.
+
 ## Build
 
 A player build (File > Build Profiles) builds the game with it, optimized, for

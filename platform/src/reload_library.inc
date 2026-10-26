@@ -145,6 +145,12 @@ static struct {
     uint64_t waiting_since; // tide_time_now_ns
 } reload;
 
+// What a host keeps of the running build's own (tide/embed.h's time travel:
+// its worlds, its local state), told before `next` takes over from `old`, or a
+// full reload (`next` NULL) starts over: while `old`'s code is still there to
+// let go of them. NULL: nothing.
+static void (*reload_before)(const tide_host_game *old, const tide_host_game *next);
+
 static void library_path(const uint32_t build, char *out, const size_t size)
 {
     snprintf(out, size, "%s/game-%u" LIBRARY_SUFFIX, reload.dir, (unsigned)build);
@@ -331,6 +337,7 @@ static bool carry_over(const tide_host_game *next)
 static void swap(const tide_host_game *next, void *library, const bool unsettled)
 {
     const tide_host_game *old = tide_run_game;
+    if (reload_before) reload_before(old, next);
     // Release private caches with the code that made their layout, before
     // the new table can reinterpret an equally sized local structure.
     if (old->correct_views) old->correct_views(tide_run_local, &(tide_view_correction){.reset = true});
@@ -394,6 +401,7 @@ static void swap(const tide_host_game *next, void *library, const bool unsettled
 static void restart(void)
 {
     const tide_host_game *old = tide_run_game;
+    if (reload_before) reload_before(old, NULL);
     tide_run_end();
     tide_platform_audio_forget();
     old->unload();

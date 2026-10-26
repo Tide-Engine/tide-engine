@@ -34,6 +34,14 @@ namespace Tide
         void Release(GameObject prefab, GameObject made);
     }
 
+    // Where the runner keeps a match's ticks to pause, step, show again and replay (TideRunner.timeTravel)
+    public enum TideTimeTravel
+    {
+        Off,              // Nowhere
+        Editor,           // In the editor's Play
+        EditorAndPlayers, // ...and in player builds, so a tester's recording (TideRunner.Recording) comes with a bug report
+    }
+
     // Runs the game: one Tide frame in each of Unity's, with Unity's input,
     // then shows the entities the frame's view packet has. An entity of a
     // Unity prefab or scene (made with TideEntity) shows through its own
@@ -62,6 +70,13 @@ namespace Tide
 
         [Tooltip("The mixer group the game's Tide sound plays through: none for Unity's master")]
         public UnityEngine.Audio.AudioMixerGroup audioOutput;
+
+        [Tooltip("Keep a match this machine runs to pause, step, scrub back and replay (Window > Tide > Time Travel): what went into every tick is recorded, and the worlds of the latest ticks are kept")]
+        public TideTimeTravel timeTravel = TideTimeTravel.Editor;
+
+        [Tooltip("Seconds of the latest ticks whose worlds are kept to show at once; ticks before them are made again from the recording's start")]
+        [Min(0.1f)]
+        public float keepSeconds = 10f;
 
         // Makes and lets go of the GameObjects of the prefabs entities show through, in place of Instantiate and
         // Destroy, or the pool: null for those
@@ -181,6 +196,7 @@ namespace Tide
                 return;
             }
             LoadSchema();
+            KeepTicks();
 #if !UNITY_WEBGL || UNITY_EDITOR
             if (audio == null)
             {
@@ -427,6 +443,7 @@ namespace Tide
                 render.Replay(commands, drawn, seen);
             }
             fixed (TideEmbedStatus* p = &status) library.Status(embed, p);
+            fixed (TideTravel* p = &travel) library.Travel(embed, p);
             if (audio != null) audio.Listen(status.microphone != 0);
             FollowCursor();
             uint size = 0;
@@ -1134,6 +1151,115 @@ namespace Tide
             if (bytes == null || stride != (uint)sizeof(T)) return false;
             value = *(T*)bytes;
             return true;
+        }
+
+        // ---------------------------------------------------------------------------------------------------------------
+        // Time travel (tide/embed.h): a match this machine runs, recorded from its start, the worlds of its latest
+        // ticks kept. Paused, it runs no tick, and the frames show the tick paused at or one shown again: its
+        // entities, components and singletons in the packet, the GameObjects showing them and Tide's drawing. With
+        // players of other machines in it, it never stops for them: it goes on behind the tick shown, and Resume shows
+        // its latest again. Tick n is the world after n ticks.
+
+        TideTravel travel;
+
+        // Where time travel is, as of the last frame
+        public TideTravel Travel => travel;
+
+        public bool TimeTravelOn => timeTravel == TideTimeTravel.EditorAndPlayers || (timeTravel == TideTimeTravel.Editor && Application.isEditor);
+
+        // Keeps what timeTravel and keepSeconds say from now on
+        public void KeepTicks()
+        {
+            if (embed != IntPtr.Zero) library.TravelKeep(embed, TimeTravelOn ? Mathf.Max(0.1f, keepSeconds) : 0f);
+        }
+
+        // The match pauses at its latest tick: false when it can't (Travel.Why says why). Showing a recording, it
+        // stops playing.
+        public bool Pause() => TravelCall(() => library.Pause(embed, 1) != 0);
+
+        // The match goes on from its latest tick (whatever's shown), or a recording plays from the tick shown.
+        public bool Resume() => TravelCall(() => library.Pause(embed, 0) != 0);
+
+        // Paused: one tick on, at the next frame at the latest tick; a recording's next tick.
+        public bool Step() => TravelCall(() => library.Step(embed) != 0);
+
+        // Paused or replaying: shows the world after `tick` ticks, from Travel.first to Travel.last.
+        public bool ShowTick(uint tick) => TravelCall(() => library.Show(embed, tick) != 0);
+
+        // Paused: the match goes back to the tick shown and on from there, the ticks after it gone, for the players of
+        // other machines too. Which commands are in it stays as it was, so none comes twice.
+        public bool ContinueFromHere() => TravelCall(() => library.Continue(embed) != 0);
+
+        // The match's recording from its start, as bytes another machine's editor replays (Replay); null with none.
+        public byte[] Recording()
+        {
+            if (embed == IntPtr.Zero) return null;
+            uint size = 0;
+            var bytes = library.Recording(embed, &size);
+            if (bytes == null || size == 0) return null;
+            var copy = new byte[size];
+            Marshal.Copy((IntPtr)bytes, copy, 0, (int)size);
+            return copy;
+        }
+
+        // ...written to a file (a .tiderec by Tide's editor window): false with nothing recorded, or the file unwritten.
+        public bool SaveRecording(string path)
+        {
+            var bytes = Recording();
+            if (bytes == null) return false;
+            try
+            {
+                System.IO.File.WriteAllBytes(path, bytes);
+                return true;
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"Tide: can't write the recording to {path}: {e.Message}", this);
+                return false;
+            }
+        }
+
+        // Shows a recording, from its first tick, paused: this build makes each tick again as it's shown, and checks its
+        // world against the recording's (Travel.differs). The match, if any, pauses meanwhile. False, saying why in
+        // Travel.Refused, for bytes that aren't a recording, one of another data layout, or a match that can't pause.
+        public bool Replay(byte[] recording)
+        {
+            if (embed == IntPtr.Zero || recording == null || recording.Length == 0) return false;
+            bool done;
+            fixed (byte* p = recording) done = library.Replay(embed, p, (uint)recording.Length) != 0;
+            fixed (TideTravel* t = &travel) library.Travel(embed, t);
+            return done;
+        }
+
+        public bool ReplayFile(string path)
+        {
+            byte[] bytes;
+            try
+            {
+                bytes = System.IO.File.ReadAllBytes(path);
+            }
+            catch (Exception e)
+            {
+                Debug.LogError($"Tide: can't read the recording {path}: {e.Message}", this);
+                return false;
+            }
+            return Replay(bytes);
+        }
+
+        // Back to the match from a recording, paused where it was.
+        public void EndReplay() => TravelCall(() =>
+        {
+            library.ReplayEnd(embed);
+            return true;
+        });
+
+        // A time travel call, and its state read again at once
+        bool TravelCall(Func<bool> call)
+        {
+            if (embed == IntPtr.Zero) return false;
+            var done = call();
+            fixed (TideTravel* p = &travel) library.Travel(embed, p);
+            return done;
         }
 
         // Session calls, as local code's: false when one can't be asked now.

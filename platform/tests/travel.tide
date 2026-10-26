@@ -1,0 +1,73 @@
+// platform/tests/travel.c pauses, steps, shows again, records and replays this, through tide/embed.h and
+// tide/timeline.h: a walker for each player, moved by their input, and a score that commands bump.
+settings { tickRate = 30; maxPlayers = 4; }
+
+scene Main { }
+
+component Walker
+{
+    float x;
+    int steps;
+    int jumps;
+}
+
+singleton Score
+{
+    int total;
+    float drift;
+}
+
+input Move
+{
+    float right;
+    bool jump;
+
+    Sample(Devices devices)
+    {
+        right = devices.keyboard.d.pressed ? 1.0 : 0.0;
+        jump = devices.keyboard.space.pressed;
+    }
+}
+
+command Bump { int by; }
+
+event(PlayerJoined joined) Arrive()
+{
+    Spawn(Walker { }, Owner { player = joined.player });
+}
+
+system Walk(Move move, mut Walker walker, Time time)
+{
+    walker.x += move.right * time.dt;
+    walker.steps += 1;
+    if (move.jump) walker.jumps += 1;
+}
+
+system Drift(mut Score score, Time time)
+{
+    score.drift += time.dt * 0.5;
+}
+
+command(Bump bump, PlayerID sender) Apply(mut Score score)
+{
+    score.total += bump.by;
+}
+
+extern void Saw(int steps, float x, int jumps);
+extern void Totalled(int total);
+
+view Show(Walker walker)
+{
+    Saw(walker.steps, walker.x, walker.jumps);
+}
+
+view Count(Score score)
+{
+    Totalled(score.total);
+}
+
+// B sends a Bump of 5 from the views, as a game's UI would
+view Press(Devices devices)
+{
+    if (devices.keyboard.b.down) Send(Bump { by = 5 });
+}

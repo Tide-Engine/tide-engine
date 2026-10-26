@@ -2560,7 +2560,10 @@ static const char *const embed_exports[] = {"tide_embed_abi", "tide_embed_create
                                             "tide_embed_view", "tide_embed_status_of", "tide_embed_request", "tide_embed_command",
                                             "tide_embed_background", "tide_embed_schema", "tide_embed_draw",
                                             "tide_embed_camera", "tide_embed_render", "tide_embed_render_view",
-                                            "tide_embed_render_reset", "tide_embed_audio", "tide_embed_microphone", NULL};
+                                            "tide_embed_render_reset", "tide_embed_audio", "tide_embed_microphone",
+                                            "tide_embed_travel_of", "tide_embed_travel_keep", "tide_embed_pause",
+                                            "tide_embed_step", "tide_embed_show", "tide_embed_continue", "tide_embed_recording", "tide_embed_replay",
+                                            "tide_embed_replay_end", NULL};
 
 typedef struct numbered {
     const char *prefix, *suffix;
@@ -2985,6 +2988,33 @@ static const char unity_web_exports[] =
     "    tide_embed_camera(unity_embed, given ? unity_camera_matrices : NULL, given ? unity_camera_matrices + 16 : NULL);\n"
     "}\n";
 
+// ...and time travel's (tide/embed.h): its status, and what the jslib asks of it
+static const char unity_web_travel_exports[] =
+    "\n"
+    "// Time travel (tide/embed.h): its status, and what the jslib asks of it\n"
+    "static tide_embed_travel unity_travel;\n"
+    "static uint32_t unity_recording_size;\n"
+    "TIDE_UNITY_EXPORT(tide_unity_travel) const tide_embed_travel *tide_unity_travel(void)\n"
+    "{\n"
+    "    tide_embed_travel_of(unity_embed, &unity_travel);\n"
+    "    return &unity_travel;\n"
+    "}\n"
+    "TIDE_UNITY_EXPORT(tide_unity_travel_keep) void tide_unity_travel_keep(float seconds) { tide_embed_travel_keep(unity_embed, seconds); }\n"
+    "TIDE_UNITY_EXPORT(tide_unity_pause) int tide_unity_pause(int paused) { return tide_embed_pause(unity_embed, paused != 0); }\n"
+    "TIDE_UNITY_EXPORT(tide_unity_step) int tide_unity_step(void) { return tide_embed_step(unity_embed); }\n"
+    "TIDE_UNITY_EXPORT(tide_unity_show) int tide_unity_show(uint32_t tick) { return tide_embed_show(unity_embed, tick); }\n"
+    "TIDE_UNITY_EXPORT(tide_unity_continue) int tide_unity_continue(void) { return tide_embed_continue(unity_embed); }\n"
+    "TIDE_UNITY_EXPORT(tide_unity_recording) const uint8_t *tide_unity_recording(void)\n"
+    "{\n"
+    "    return tide_embed_recording(unity_embed, &unity_recording_size);\n"
+    "}\n"
+    "TIDE_UNITY_EXPORT(tide_unity_recording_size) uint32_t tide_unity_recording_size(void) { return unity_recording_size; }\n"
+    "TIDE_UNITY_EXPORT(tide_unity_replay) int tide_unity_replay(const uint8_t *data, uint32_t size)\n"
+    "{\n"
+    "    return tide_embed_replay(unity_embed, data, size);\n"
+    "}\n"
+    "TIDE_UNITY_EXPORT(tide_unity_replay_end) void tide_unity_replay_end(void) { tide_embed_replay_end(unity_embed); }\n";
+
 // tide-game.js, for the page: the Tide config tide.js reads (the program waits for Unity's TideRunner to start
 // it, its frames are Unity's, and it draws in a canvas of its own that no one sees), the program and its pack as
 // base64, and tide.js. False after saying what's wrong.
@@ -3054,10 +3084,11 @@ static int tide_unity_web(const char *root, const build_options *opts)
     if (!generate(&b, gen, false)) goto done;
     char escaped[512];
     c_string(escaped, sizeof escaped, b.name);
-    char *text = malloc(sizeof unity_web_main + strlen(escaped) + sizeof unity_web_exports);
+    char *text = malloc(sizeof unity_web_main + strlen(escaped) + sizeof unity_web_exports + sizeof unity_web_travel_exports);
     if (!text) abort();
     sprintf(text, unity_web_main, escaped);
     strcat(text, unity_web_exports);
+    strcat(text, unity_web_travel_exports);
     const bool wrote = sys_write_text(main_c, text);
     free(text);
     if (!wrote) goto done;
