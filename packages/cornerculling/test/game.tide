@@ -1,0 +1,72 @@
+using CornerCulling;
+
+scene Main;
+
+// A game-owned visibility policy: keep the owner informed, and reveal to
+// player 1 unless the package supplies a complete occlusion certificate.
+component Enemy { string secret = "CORNER-CULLING-HIDDEN-POSITION"; }
+singleton Integration
+{
+    Entity enemy;
+    bool enabled;
+}
+
+event(Spawned) Start(with Main, mut Integration integration)
+{
+    integration.enemy = Spawn(Enemy, Visibility);
+}
+
+singleton Fixture
+{
+    CullingWorld culling;
+    CullingCache cache;
+    CullingResult answer;
+    CullingQuery query;
+    List<Box> boxes;
+    List<CullingQuery> queries;
+    List<CullingCache> caches;
+    List<CullingResult> results;
+    int action;
+    int source;
+    Box replacement;
+    bool updated;
+    bool brute;
+    CullingResult cold;
+}
+
+system Run(mut Fixture f)
+{
+    if (f.action == 1) f.culling.Rebuild(f.boxes);
+    if (f.action == 2) f.updated = f.culling.Update(f.source, f.replacement);
+    if (f.action == 3) f.culling.Clear();
+    if (f.action == 4 || f.action == 7)
+    {
+        f.caches.Resize(f.queries.count);
+        f.results.Resize(f.queries.count);
+        for (var i = 0; i < f.queries.count; i++)
+        {
+            mut CullingCache cache = f.caches[i];
+            f.results[i] = f.action == 7 ? f.culling.Query(f.queries[i]) : f.culling.Query(f.queries[i], cache);
+            f.caches[i] = cache;
+        }
+    }
+    f.answer = f.culling.Query(f.query, f.cache);
+    if (f.action == 5)
+    {
+        f.cold = f.culling.Query(f.query);
+        f.brute = false;
+        var prepared = Prepare(f.query);
+        foreach (var box in f.boxes)
+            if (Blocks(box, prepared)) f.brute = true;
+    }
+    f.action = 0;
+}
+
+[After(Run)]
+system Relevance(mut Visibility visibility, with Enemy, Fixture f, Integration integration)
+{
+    if (!integration.enabled) return;
+    mut Audience audience = Audience.Only(PlayerID(0));
+    if (f.answer.IsVisible()) audience.Add(PlayerID(1));
+    visibility.Set<Enemy>(audience);
+}

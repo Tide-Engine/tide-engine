@@ -9,6 +9,14 @@
 # and not what tidec says of each wait.
 set(TIDE_PACKAGE_ORDER "${CMAKE_CURRENT_BINARY_DIR}/expect_order.cmake")
 
+# CPU visibility certificates. The package is ordinary Tide, with no engine
+# runtime, renderer, platform or physics dependency.
+tide_add_game(tide_cornerculling SOURCES cornerculling/test/game.tide cornerculling/test/example.tide NAME game
+    PACKAGES CornerCulling cornerculling/cornerculling.tide
+    HOST "${PROJECT_SOURCE_DIR}/tests/test_main.c" cornerculling/test/game_test.c)
+target_include_directories(tide_cornerculling PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+add_test(NAME tide_cornerculling COMMAND tide_cornerculling)
+
 # Rendering stays in Tide; a small C helper sorts owned transparent packets.
 add_library(tide_render3d STATIC render3d/transparent.c)
 target_link_libraries(tide_render3d PUBLIC tide)

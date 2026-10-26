@@ -1,5 +1,15 @@
 # The docs site
 
+## Corner Culling package guide (2026-10-26)
+
+The package overview and sidebar now include Corner Culling. Its guide documents
+the optional pure Tide box-query API, half-extents, masks, cached certificates,
+immediate update/refit, motion/network horizons, game-owned audiences, performance
+and existing physics/projection limitations. The source include is the actual
+usage fixture compiled by tide_cornerculling. No example game/browser, website
+infrastructure, language spec or renderer behavior changes. Package contracts,
+measurements and validation: `notes/corner-culling.md`.
+
 ## Render3D skinning, shared deformation and effects (2026-10-25)
 
 The owner requested extending Render3D with skinned models, a shared vertex
