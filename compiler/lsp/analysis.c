@@ -10,6 +10,7 @@
 #include "ast.h"
 #include "builtins.h"
 #include "cdefs.h"
+#include "csharp.h"
 #include "folders.h"
 #include "lexer.h"
 #include "model_metadata.h"
@@ -10892,7 +10893,7 @@ static void unity_renames(const occurrence *target, const char *new_name, jbuf *
         structure = target->decl;
         renamed = target->field;
     }
-    if ((!component && !structure) || !asset_roots.game_folder) return;
+    if (!asset_roots.game_folder) return;
     // The Unity project the game's folder is in: the folder above it with ProjectSettings and Assets
     char project[1024];
     snprintf(project, sizeof project, "%s", asset_roots.game_folder);
@@ -10904,6 +10905,19 @@ static void unity_renames(const occurrence *target, const char *new_name, jbuf *
         while (len > 0 && project[len - 1] != '/' && project[len - 1] != '\\') project[--len] = '\0';
         if (len == 0) return;
     }
+    // The project's C#, which uses the game's types' C# twins (csharp.h)
+    const decl *d = target->decl;
+    const bool typed = d && (d->kind == DECL_COMPONENT || d->kind == DECL_SINGLETON || d->kind == DECL_STRUCT
+                             || d->kind == DECL_EVENT || d->kind == DECL_INPUT || d->kind == DECL_ENUM);
+    if (typed && (target->kind == OCC_TYPE || (target->kind == OCC_FIELD && target->field) || target->kind == OCC_ENUM_MEMBER)) {
+        char qualified[512], old_name[256];
+        snprintf(qualified, sizeof qualified, STR_FMT, STR_ARG(d->qualified));
+        const str named = target->kind == OCC_FIELD ? target->field->name : target->name;
+        snprintf(old_name, sizeof old_name, STR_FMT, STR_ARG(named));
+        const csharp_what what = target->kind == OCC_TYPE ? CSHARP_TYPE : target->kind == OCC_FIELD ? CSHARP_FIELD : CSHARP_MEMBER;
+        csharp_renames(project, what, qualified, what == CSHARP_TYPE ? NULL : old_name, new_name, out, files_written);
+    }
+    if (!component && !structure) return;
     unity_rename u = {0};
     u.out = out;
     u.files_written = files_written;

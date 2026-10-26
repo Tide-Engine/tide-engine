@@ -205,6 +205,102 @@ TIDE_TEST(unity_code_writes_a_physics_packages_rules)
     sys_remove_tree(dir);
 }
 
+// A JSON string's inside: backslashes and quotes escaped
+static void json_inside(char *out, const size_t size, const char *s)
+{
+    size_t n = 0;
+    for (; *s && n + 2 < size; s++) {
+        if (*s == '\\' || *s == '"') out[n++] = '\\';
+        out[n++] = *s;
+    }
+    out[n] = '\0';
+}
+
+// Has `text` all of `wanted`, printing what it has where it hasn't
+static bool holds(const char *text, const char *wanted)
+{
+    if (text && strstr(text, wanted)) return true;
+    printf("    wanted:\n%s\n    in:\n%s\n", wanted, text ? text : "(nothing)");
+    return false;
+}
+
+// The Tide doc comments and where each type is declared, from the outline, in the C#'s XML docs (Rider's and Visual
+// Studio's hovers): a component's, its fields' (its local ones' too), a struct's, an event's, an enum's and its
+// members', with XML's characters escaped; a package's type named by its package's folder; tide's own (Library/Tide)
+// with none.
+TIDE_TEST(unity_code_writes_tides_docs_and_where_each_type_is)
+{
+    const char *base = sys_env("TEMP") ? sys_env("TEMP") : sys_env("TMPDIR") ? sys_env("TMPDIR") : "/tmp";
+    char project[1024], dir[1024], package[1024], library[1024], escaped_package[1200], escaped_library[1200];
+    snprintf(project, sizeof project, "%s/tide_unity_docs_test", base);
+    snprintf(dir, sizeof dir, "%s/Packages/com.tide.game", project);
+    snprintf(package, sizeof package, "%s/packages/box3d", base);
+    snprintf(library, sizeof library, "%s/Library/Tide/Unity.tide", project);
+    sys_remove_tree(project);
+    TIDE_REQUIRE(sys_mkdirs(dir));
+    char *schema = read_written(TIDE_UNITY_NAMES, "schema.json");
+    TIDE_REQUIRE(schema != NULL);
+    char body[1200];
+    snprintf(body, sizeof body, "%s/body.tide", package);
+    json_inside(escaped_package, sizeof escaped_package, body);
+    json_inside(escaped_library, sizeof escaped_library, library);
+    char outline[8192];
+    snprintf(outline, sizeof outline,
+             "{\"declarations\": [\n"
+             "  {\"kind\": \"struct\", \"name\": \"Trail\", \"file\": \"Tide/combat.tide\", \"line\": 2, \"column\": 8, \"fields\": "
+             "[{\"name\": \"length\", \"type\": \"float\", \"line\": 2, \"doc\": \"In metres\"}]},\n"
+             "  {\"kind\": \"component\", \"name\": \"Combat.Health\", \"file\": \"Tide/combat.tide\", \"line\": 6, \"column\": 11, "
+             "\"doc\": \"Health & armor, <b>not</b> shields\\nTwo lines\", \"fields\": [{\"name\": \"hp\", \"type\": \"int\", \"line\": 8, "
+             "\"doc\": \"Hit points\"}, {\"name\": \"armor\", \"type\": \"float\", \"line\": 9}, {\"name\": \"trail\", \"type\": \"Trail\", \"line\": 10}, "
+             "{\"name\": \"heard\", \"type\": \"int\", \"line\": 11, \"local\": true, \"doc\": \"Times this machine heard it\"}]},\n"
+             "  {\"kind\": \"event\", \"name\": \"Hit\", \"file\": \"Tide/combat.tide\", \"line\": 14, \"column\": 7, \"fields\": "
+             "[{\"name\": \"damage\", \"type\": \"int\", \"line\": 14}]},\n"
+             "  {\"kind\": \"component\", \"name\": \"Box3D.Body\", \"file\": \"%s\", \"line\": 3, \"column\": 11, \"doc\": \"A body\"},\n"
+             "  {\"kind\": \"singleton\", \"name\": \"UnityEngine.LoadedScenes\", \"file\": \"%s\", \"line\": 3, \"column\": 11, "
+             "\"doc\": \"tide's own\", \"fields\": [{\"name\": \"opener\", \"type\": \"int\", \"line\": 3, \"doc\": \"tide's own\"}]},\n"
+             "  {\"kind\": \"enum\", \"name\": \"Mode\", \"file\": \"Tide/combat.tide\", \"line\": 16, \"column\": 6, \"doc\": \"How it feels\", "
+             "\"members\": [\"Calm\", \"Angry\"], \"memberDocs\": [\"\", \"Shouting\"]}\n"
+             "]}\n",
+             escaped_package, escaped_library);
+    const unity_package packages[] = {{package, "Box3D"}};
+    TIDE_REQUIRE(unity_code_write(dir, schema, outline, packages, 1));
+    char *health = read_written(dir, "Components/Combat/Health.cs");
+    TIDE_CHECK(holds(health, "    // Tide's component Combat.Health: its fields as authored outside Play, its entity's values in Play (TideComponent)\n"
+                             "    /// <summary>\n"
+                             "    /// Health &amp; armor, &lt;b&gt;not&lt;/b&gt; shields\n"
+                             "    /// Two lines\n"
+                             "    /// <para>Tide's component Combat.Health, declared in Assets/Tide/combat.tide.</para>\n"
+                             "    /// </summary>\n"
+                             "    [global::UnityEngine.AddComponentMenu(\"Tide/Combat/Health\")]\n"));
+    TIDE_CHECK(holds(health, "        /// <summary>Hit points</summary>\n        public int hp;\n        public float armor;\n"));
+    TIDE_CHECK(holds(health, "        /// <summary>Times this machine heard it</summary>\n        [global::System.NonSerialized] public int heard;\n"));
+    free(health);
+    char *body_cs = read_written(dir, "Components/Box3D/Body.cs");
+    TIDE_CHECK(holds(body_cs, "    /// <summary>\n    /// A body\n    /// <para>Tide's component Box3D.Body, declared in the Box3D package's body.tide.</para>\n"
+                              "    /// </summary>\n"));
+    free(body_cs);
+    char *types = read_written(dir, "TideGame.cs");
+    TIDE_CHECK(holds(types, "    // Tide's struct Trail, as Unity code has it\n"
+                            "    /// <summary>\n    /// <para>Tide's struct Trail, declared in Assets/Tide/combat.tide.</para>\n    /// </summary>\n"
+                            "    [global::System.Serializable]\n"));
+    TIDE_CHECK(holds(types, "        /// <summary>In metres</summary>\n        public float length;\n"));
+    TIDE_CHECK(holds(types, "    /// <para>Tide's event Hit, declared in Assets/Tide/combat.tide.</para>\n"));
+    TIDE_CHECK(holds(types, "    /// <summary>\n    /// How it feels\n    /// <para>Tide's enum Mode, declared in Assets/Tide/combat.tide.</para>\n"
+                            "    /// </summary>\n    public enum Mode : int\n    {\n        Calm = 0,\n"
+                            "        /// <summary>Shouting</summary>\n        Angry = 1,\n"));
+    TIDE_CHECK(types && !strstr(types, "tide's own")); // Library/Tide's declarations are tide's, with none
+    // Written again from the same, nothing changes
+    char *before = read_written(dir, "Components/Combat/Health.cs");
+    TIDE_REQUIRE(unity_code_write(dir, schema, outline, packages, 1));
+    char *after = read_written(dir, "Components/Combat/Health.cs");
+    TIDE_CHECK(before && after && strcmp(before, after) == 0);
+    free(before);
+    free(after);
+    free(types);
+    free(schema);
+    sys_remove_tree(project);
+}
+
 TIDE_TEST(unity_code_guid_is_the_names)
 {
     char a[33], b[33];
