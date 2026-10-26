@@ -1,5 +1,21 @@
 # Releases, installing and CI
 
+## Journal deadline in run 40338328972 (2026-10-26)
+
+At `195c8f1d`, the completed MinGW suite passes 2,744 tests and fails only
+`tide_server_shards_journal`, whose third server process receives the last
+six seconds of a shared 25-second budget. All three packages, native suites,
+Linux sanitizers, Linux/Windows web, Docs deployment and JetBrains verification
+pass. macOS web is still running when inspected; the overall run has not
+completed and no successful publication is claimed.
+
+The scoped harness correction gives each process its own deadline and reaps
+the server on failure. Its reproduction, failure controls and local native
+validation are in notes/sharding.md, Journal integration-test deadlines.
+No workflow, assertion, simulation hash or publication gate changed. The fix
+uses the ordinary push-to-dev Build trigger; no old-commit retry or additional
+workflow dispatch is needed.
+
 ## LLDB on Linux runners (2026-10-26)
 
 `build.yml`'s Linux tool step installs `lldb-$major` beside clang, for
