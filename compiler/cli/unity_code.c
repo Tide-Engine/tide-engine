@@ -1705,3 +1705,428 @@ bool unity_code_add(const char *dir, const char *schema, const char *outline, co
 {
     return write_code(dir, schema, outline, packages, package_count, false);
 }
+
+// ---------------------------------------------------------------------------
+// The record of renamed and removed names (unity_code_record)
+
+typedef struct entry {
+    char *was, *now, *file; // now NULL: removed; file: where `now` is declared, as the project opens it, or NULL
+    int line;
+} entry;
+
+typedef struct entries {
+    entry *items;
+    int count, capacity;
+} entries;
+
+static char *copy_or_null(const char *s)
+{
+    return s ? copy(s) : NULL;
+}
+
+static void entry_add(entries *e, const char *was, const char *now, const char *file, const int line)
+{
+    if (e->count == e->capacity) {
+        e->capacity = e->capacity ? e->capacity * 2 : 16;
+        e->items = realloc(e->items, sizeof *e->items * (size_t)e->capacity);
+        if (!e->items) abort();
+    }
+    e->items[e->count++] = (entry){copy(was), copy_or_null(now), copy_or_null(file), line};
+}
+
+static void entry_free(entry *e)
+{
+    free(e->was);
+    free(e->now);
+    free(e->file);
+}
+
+// Where a declaration's file is, as the project opens it: from the project's folder, else as tide named it
+static char *open_path(const game *g, const char *file)
+{
+    if (!file || !*file) return NULL;
+    out o = {0};
+    const bool absolute = file[0] == '/' || file[0] == '\\' || (file[0] && file[1] == ':');
+    const char *in = absolute && g->project ? under(file, g->project) : NULL;
+    if (in) puts_(&o, in);
+    else if (absolute) puts_(&o, file);
+    else putf(&o, "Assets/%s", file);
+    for (char *c = o.s; *c; c++) {
+        if (*c == '\\') *c = '/';
+    }
+    return o.s;
+}
+
+// A field of a declaration as print_outline says it, by its Tide name
+static const json *outline_field(const json *declared, const char *name)
+{
+    const json *fields = json_get(declared, "fields");
+    for (int k = 0; fields && fields->kind == JSON_ARRAY && k < fields->count; k++) {
+        if (strcmp(str(fields->items[k], "name"), name) == 0) return fields->items[k];
+    }
+    return NULL;
+}
+
+// Whether a type's C# name is one of the record's: the game's own types, not tide's
+static bool recorded(const unity_cs_type *t)
+{
+    return !t->scene && strcmp(t->kind, "local") != 0 && strncmp(t->name, "tide_", 5) != 0
+        && strncmp(t->name, "UnityEngine.", 12) != 0;
+}
+
+static bool same_fields(const unity_cs_type *a, const unity_cs_type *b)
+{
+    if (a->field_count != b->field_count) return false;
+    for (int k = 0; k < a->field_count; k++) {
+        if (strcmp(a->fields[k], b->fields[k]) != 0) return false;
+    }
+    return true;
+}
+
+static const char *field_type(const json *schema, const int type, const int field)
+{
+    const json *t = json_get(schema, "types");
+    const json *fields = t && type < t->count ? json_get(t->items[type], "fields") : NULL;
+    return fields && field < fields->count ? str(fields->items[field], "type") : "";
+}
+
+static const char *member_name(const char *id)
+{
+    return id[0] == '@' ? id + 1 : id;
+}
+
+typedef struct differ {
+    const game *g;
+    const json *was_schema, *schema;
+    const unity_cs_names *was, *now;
+    entries found;
+    bool removals;
+} differ;
+
+static void found_one(differ *d, const char *was, const char *now, const char *file, const int line)
+{
+    if (now && strcmp(was, now) == 0) return;
+    if (!now && !d->removals) return;
+    entry_add(&d->found, was, now, file, line);
+}
+
+// What became of a type's fields (`a_ids`, its own or its class's local ones), from the old type `a` (the schema's
+// type `fa`) to the new `b` (`fb`): kept by name, renamed in place with its type, or the one left of its type; else
+// removed
+static void diff_fields(differ *d, const char *was_owner, const char *now_owner, const unity_cs_type *a, char *const *a_ids,
+                        const int fa, const unity_cs_type *b, char *const *b_ids, const int fb, const json *declared)
+{
+    if (!a || !a_ids) return;
+    const bool have = b && b_ids;
+    bool *taken = calloc((size_t)(have ? b->field_count : 0) + 1, sizeof *taken);
+    int *pair = malloc(sizeof *pair * ((size_t)a->field_count + 1));
+    if (!taken || !pair) abort();
+    for (int k = 0; k < a->field_count; k++) {
+        pair[k] = -1;
+        for (int m = 0; have && m < b->field_count && pair[k] < 0; m++) {
+            if (!taken[m] && strcmp(a->fields[k], b->fields[m]) == 0) pair[k] = m;
+        }
+        if (pair[k] >= 0) taken[pair[k]] = true;
+    }
+    for (int k = 0; have && k < a->field_count; k++) {
+        if (pair[k] >= 0 || k >= b->field_count || taken[k]) continue;
+        if (strcmp(field_type(d->was_schema, fa, k), field_type(d->schema, fb, k)) == 0) {
+            pair[k] = k; // In its place, of its type
+            taken[k] = true;
+        }
+    }
+    for (int k = 0; have && k < a->field_count; k++) {
+        if (pair[k] >= 0) continue;
+        const char *of = field_type(d->was_schema, fa, k);
+        int alone = -1, gone = 0, come = 0;
+        for (int x = 0; x < a->field_count; x++) gone += pair[x] < 0 && strcmp(field_type(d->was_schema, fa, x), of) == 0;
+        for (int m = 0; m < b->field_count; m++) {
+            if (taken[m] || strcmp(field_type(d->schema, fb, m), of) != 0) continue;
+            come++;
+            alone = m;
+        }
+        if (gone == 1 && come == 1) {
+            pair[k] = alone;
+            taken[alone] = true;
+        }
+    }
+    for (int k = 0; k < a->field_count; k++) {
+        out was = {0}, now = {0};
+        putf(&was, "%s.%s", was_owner, member_name(a_ids[k]));
+        if (pair[k] >= 0) {
+            putf(&now, "%s.%s", now_owner, member_name(b_ids[pair[k]]));
+            const json *line = json_get(outline_field(declared, b->fields[pair[k]]), "line");
+            char *file = open_path(d->g, str(declared, "file"));
+            found_one(d, was.s, now.s, file, line && line->kind == JSON_NUMBER ? (int)line->number : json_int(json_get(declared, "line"), 0));
+            free(file);
+        } else {
+            found_one(d, was.s, NULL, NULL, 0);
+        }
+        free(was.s);
+        free(now.s);
+    }
+    free(taken);
+    free(pair);
+}
+
+static void diff_types(differ *d)
+{
+    const unity_cs_names *a = d->was, *b = d->now;
+    int *pair = malloc(sizeof *pair * ((size_t)a->type_count + 1));
+    bool *taken = calloc((size_t)b->type_count + 1, sizeof *taken);
+    if (!pair || !taken) abort();
+    for (int i = 0; i < a->type_count; i++) {
+        pair[i] = -1;
+        for (int j = 0; j < b->type_count && pair[i] < 0; j++) {
+            if (strcmp(a->types[i].name, b->types[j].name) == 0) pair[i] = j;
+        }
+        if (pair[i] >= 0) taken[pair[i]] = true;
+    }
+    // Renamed: the one gone and the one come of its kind with its fields; else the only ones of their kind
+    for (int pass = 0; pass < 2; pass++) {
+        for (int i = 0; i < a->type_count; i++) {
+            if (pair[i] >= 0 || !recorded(&a->types[i])) continue;
+            int alone = -1, come = 0, gone = 0;
+            for (int j = 0; j < b->type_count; j++) {
+                if (taken[j] || !recorded(&b->types[j]) || strcmp(b->types[j].kind, a->types[i].kind) != 0) continue;
+                if (pass == 0 && !same_fields(&a->types[i], &b->types[j])) continue;
+                come++;
+                alone = j;
+            }
+            for (int x = 0; x < a->type_count; x++) {
+                gone += pair[x] < 0 && recorded(&a->types[x]) && strcmp(a->types[x].kind, a->types[i].kind) == 0
+                     && (pass == 1 || (alone >= 0 && same_fields(&a->types[x], &b->types[alone])));
+            }
+            if (come == 1 && gone == 1) {
+                pair[i] = alone;
+                taken[alone] = true;
+            }
+        }
+    }
+    for (int i = 0; i < a->type_count; i++) {
+        const unity_cs_type *t = &a->types[i];
+        if (!recorded(t)) continue;
+        char *was = unity_cs_full(t->ns, t->cs);
+        if (pair[i] < 0) {
+            found_one(d, was, NULL, NULL, 0);
+            free(was);
+            continue;
+        }
+        const unity_cs_type *u = &b->types[pair[i]];
+        char *now = unity_cs_full(u->ns, u->cs);
+        const json *declared = declaration(d->g, u->bare, NULL);
+        char *file = open_path(d->g, str(declared, "file"));
+        found_one(d, was, now, file, json_int(json_get(declared, "line"), 0));
+        free(file);
+        diff_fields(d, was, now, t, t->ids, i, u, u->ids, pair[i], declared);
+        // Its class's local fields, its local part's
+        if (t->local >= 0 && u->local >= 0) {
+            diff_fields(d, was, now, &a->types[t->local], t->local_ids, t->local, &b->types[u->local], u->local_ids, u->local, declared);
+        }
+        free(was);
+        free(now);
+    }
+    free(pair);
+    free(taken);
+}
+
+static int enum_named(const unity_cs_names *n, const char *name)
+{
+    for (int k = 0; k < n->enum_count; k++) {
+        if (strcmp(n->enums[k].name, name) == 0) return k;
+    }
+    return -1;
+}
+
+static void diff_enums(differ *d)
+{
+    const unity_cs_names *a = d->was, *b = d->now;
+    for (int i = 0; i < a->enum_count; i++) {
+        const unity_cs_enum *e = &a->enums[i];
+        int j = enum_named(b, e->name);
+        if (j < 0) {
+            // Renamed: the one enum gone and the one come
+            int gone = 0, come = 0, alone = -1;
+            for (int k = 0; k < a->enum_count; k++) gone += enum_named(b, a->enums[k].name) < 0;
+            for (int m = 0; m < b->enum_count; m++) {
+                if (enum_named(a, b->enums[m].name) >= 0) continue;
+                come++;
+                alone = m;
+            }
+            if (gone == 1 && come == 1) j = alone;
+        }
+        char *was = unity_cs_full(e->ns, e->cs);
+        if (j < 0) {
+            found_one(d, was, NULL, NULL, 0);
+            free(was);
+            continue;
+        }
+        const unity_cs_enum *f = &b->enums[j];
+        char *now = unity_cs_full(f->ns, f->cs);
+        const json *declared = declaration(d->g, f->name, "enum");
+        char *file = open_path(d->g, str(declared, "file"));
+        const int line = json_int(json_get(declared, "line"), 0);
+        found_one(d, was, now, file, line);
+        // Its members: by name, else in their place where the name there is new
+        for (int k = 0; k < e->member_count; k++) {
+            if (!e->ids[k]) continue;
+            int m = -1;
+            for (int x = 0; x < f->member_count && m < 0; x++) {
+                if (f->ids[x] && e->members[k] && f->members[x] && strcmp(e->members[k], f->members[x]) == 0) m = x;
+            }
+            if (m < 0 && k < f->member_count && f->ids[k]) {
+                bool named = false;
+                for (int x = 0; x < e->member_count; x++) named = named || (e->members[x] && f->members[k] && strcmp(e->members[x], f->members[k]) == 0);
+                if (!named) m = k;
+            }
+            out a_name = {0}, b_name = {0};
+            putf(&a_name, "%s.%s", was, member_name(e->ids[k]));
+            if (m >= 0) {
+                putf(&b_name, "%s.%s", now, member_name(f->ids[m]));
+                found_one(d, a_name.s, b_name.s, file, line);
+            } else {
+                found_one(d, a_name.s, NULL, NULL, 0);
+            }
+            free(a_name.s);
+            free(b_name.s);
+        }
+        free(file);
+        free(was);
+        free(now);
+    }
+}
+
+// Whether a C# name (after Tide.Game.) is one of the game's types', a field's or a member's
+static bool has_name(const unity_cs_names *n, const char *name)
+{
+    bool found = false;
+    for (int i = 0; i < n->type_count && !found; i++) {
+        const unity_cs_type *t = &n->types[i];
+        char *full = unity_cs_full(t->ns, t->cs);
+        const size_t len = strlen(full);
+        if (strcmp(full, name) == 0) {
+            found = true;
+        } else if (strncmp(full, name, len) == 0 && name[len] == '.') {
+            const char *member = name + len + 1;
+            for (int k = 0; k < t->field_count && !found; k++) found = strcmp(member_name(t->ids[k]), member) == 0;
+            const int locals = t->local_ids ? n->types[t->local].field_count : 0;
+            for (int k = 0; k < locals && !found; k++) found = strcmp(member_name(t->local_ids[k]), member) == 0;
+        }
+        free(full);
+    }
+    for (int i = 0; i < n->enum_count && !found; i++) {
+        const unity_cs_enum *e = &n->enums[i];
+        char *full = unity_cs_full(e->ns, e->cs);
+        const size_t len = strlen(full);
+        if (strcmp(full, name) == 0) {
+            found = true;
+        } else if (strncmp(full, name, len) == 0 && name[len] == '.') {
+            for (int k = 0; k < e->member_count && !found; k++) found = e->ids[k] && strcmp(member_name(e->ids[k]), name + len + 1) == 0;
+        }
+        free(full);
+    }
+    return found;
+}
+
+bool unity_code_record(const char *record, const char *was, const char *schema, const char *outline, const char *dir,
+                       const unity_package *packages, const int package_count, const bool removals)
+{
+    const json *a = was ? json_parse(was, strlen(was)) : NULL;
+    const json *b = schema ? json_parse(schema, strlen(schema)) : NULL;
+    const json *o = outline ? json_parse(outline, strlen(outline)) : NULL;
+    unity_cs_names was_names = {0}, names = {0};
+    if (!b || !unity_cs_read(b, &names)) {
+        json_release();
+        return true; // Nothing to say of
+    }
+    char *above = path_dir(dir);
+    char *project = above ? path_dir(above) : NULL;
+    game g = {0};
+    g.outline = o;
+    g.project = project;
+    g.packages = packages;
+    g.package_count = package_count;
+    differ d = {&g, a, b, NULL, &names, {0}, removals};
+    if (a && unity_cs_read(a, &was_names)) {
+        d.was = &was_names;
+        diff_types(&d);
+        diff_enums(&d);
+    }
+    // The record so far, then what this build found
+    entries all = {0};
+    size_t size = 0;
+    char *old = sys_read_file(record, &size);
+    const json *kept = old ? json_get(json_parse(old, size), "renamed") : NULL;
+    for (int i = 0; kept && kept->kind == JSON_ARRAY && i < kept->count; i++) {
+        const json *e = kept->items[i];
+        if (!json_str(json_get(e, "was"))) continue;
+        entry_add(&all, str(e, "was"), json_str(json_get(e, "now")), json_str(json_get(e, "file")), json_int(json_get(e, "line"), 0));
+    }
+    for (int i = 0; i < d.found.count; i++) {
+        const entry *f = &d.found.items[i];
+        for (int k = 0; k < all.count; k++) {
+            entry *x = &all.items[k];
+            if (x->now && strcmp(x->now, f->was) == 0) { // A rename of a renamed name: this one's new name is its
+                free(x->now);
+                free(x->file);
+                x->now = copy_or_null(f->now);
+                x->file = copy_or_null(f->file);
+                x->line = f->line;
+            }
+        }
+        for (int k = 0; k < all.count; k++) {
+            if (strcmp(all.items[k].was, f->was) != 0) continue;
+            entry_free(&all.items[k]);
+            memmove(&all.items[k], &all.items[k + 1], sizeof *all.items * (size_t)(all.count - k - 1));
+            all.count--;
+            k--;
+        }
+        entry_add(&all, f->was, f->now, f->file, f->line);
+    }
+    // Names the C# has again, and renames back to what they were, are nothing to explain; the newest 100 kept
+    int kept_count = 0;
+    for (int i = 0; i < all.count; i++) {
+        entry *x = &all.items[i];
+        const bool drop = has_name(&names, x->was) || (x->now && strcmp(x->was, x->now) == 0) || all.count - i > 100;
+        if (drop) entry_free(x);
+        else all.items[kept_count++] = *x;
+    }
+    all.count = kept_count;
+    out text = {0};
+    puts_(&text, "{\"renamed\": [");
+    for (int i = 0; i < all.count; i++) {
+        const entry *x = &all.items[i];
+        puts_(&text, i ? ",\n  {\"was\": " : "\n  {\"was\": ");
+        put_json_text(&text, x->was);
+        if (x->now) {
+            puts_(&text, ", \"now\": ");
+            put_json_text(&text, x->now);
+            if (x->file) {
+                puts_(&text, ", \"file\": ");
+                put_json_text(&text, x->file);
+                putf(&text, ", \"line\": %d", x->line);
+            }
+        } else {
+            puts_(&text, ", \"removed\": true");
+        }
+        puts_(&text, "}");
+    }
+    puts_(&text, all.count ? "\n]}\n" : "]}\n");
+    bool ok = true;
+    if (!old || size != text.n || memcmp(old, text.s, size) != 0) {
+        ok = sys_write_file(record, text.s, text.n);
+        if (!ok) fprintf(stderr, "tide: can't write %s\n", record);
+    }
+    for (int i = 0; i < all.count; i++) entry_free(&all.items[i]);
+    free(all.items);
+    for (int i = 0; i < d.found.count; i++) entry_free(&d.found.items[i]);
+    free(d.found.items);
+    free(text.s);
+    free(old);
+    free(above);
+    free(project);
+    unity_cs_free(&was_names);
+    unity_cs_free(&names);
+    json_release();
+    return ok;
+}

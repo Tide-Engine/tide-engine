@@ -301,6 +301,95 @@ TIDE_TEST(unity_code_writes_tides_docs_and_where_each_type_is)
     sys_remove_tree(project);
 }
 
+// `text` with each `from` replaced by `to`. malloc'd.
+static char *replaced(const char *text, const char *from, const char *to)
+{
+    const size_t a = strlen(from), b = strlen(to);
+    size_t count = 0;
+    for (const char *p = strstr(text, from); p; p = strstr(p + a, from)) count++;
+    char *out = malloc(strlen(text) + count * (b + 1) + 1);
+    if (!out) abort();
+    char *o = out;
+    for (const char *p = text;;) {
+        const char *at = strstr(p, from);
+        if (!at) {
+            strcpy(o, p);
+            break;
+        }
+        memcpy(o, p, (size_t)(at - p));
+        o += at - p;
+        memcpy(o, to, b);
+        o += b;
+        p = at + a;
+    }
+    return out;
+}
+
+// What became of the C# names the last C# had (Library/Tide/renamed.json): a field renamed in its place, a local
+// field, a struct renamed (its fields the same), an enum's member, with where each new one is declared; a field
+// whose type changed too is removed. Renamed again, the record follows it on; a name back again goes from it. A build
+// of the declarations alone records no removals.
+TIDE_TEST(unity_code_records_what_became_of_names)
+{
+    const char *base = sys_env("TEMP") ? sys_env("TEMP") : sys_env("TMPDIR") ? sys_env("TMPDIR") : "/tmp";
+    char project[1024], dir[1024], record[1024];
+    snprintf(project, sizeof project, "%s/tide_unity_record_test", base);
+    snprintf(dir, sizeof dir, "%s/Packages/com.tide.game", project);
+    snprintf(record, sizeof record, "%s/renamed.json", project);
+    sys_remove_tree(project);
+    TIDE_REQUIRE(sys_mkdirs(dir));
+    char *v0 = read_written(TIDE_UNITY_NAMES, "schema.json");
+    TIDE_REQUIRE(v0 != NULL);
+    char *a = replaced(v0, "{\"name\": \"hp\"", "{\"name\": \"health\"");
+    char *b = replaced(a, "\"Trail\"", "\"Streak\"");
+    char *c = replaced(b, "\"Angry\"", "\"Shouting\"");
+    char *d = replaced(c, "{\"name\": \"heard\"", "{\"name\": \"times\"");
+    char *v1 = replaced(d, "{\"name\": \"score\", \"type\": \"int\"", "{\"name\": \"total\", \"type\": \"float\"");
+    static const char outline[] =
+        "{\"declarations\": [\n"
+        "  {\"kind\": \"struct\", \"name\": \"Streak\", \"file\": \"Tide/combat.tide\", \"line\": 2, \"column\": 8},\n"
+        "  {\"kind\": \"component\", \"name\": \"Combat.Health\", \"file\": \"Tide/combat.tide\", \"line\": 6, \"column\": 11, \"fields\": "
+        "[{\"name\": \"health\", \"type\": \"int\", \"line\": 8}, {\"name\": \"vitality\", \"type\": \"int\", \"line\": 8}, "
+        "{\"name\": \"times\", \"type\": \"int\", \"line\": 11, \"local\": true}]},\n"
+        "  {\"kind\": \"enum\", \"name\": \"Mode\", \"file\": \"Tide/combat.tide\", \"line\": 16, \"column\": 6}\n"
+        "]}\n";
+    TIDE_REQUIRE(unity_code_record(record, v0, v1, outline, dir, NULL, 0, true));
+    char *text = read_written(project, "renamed.json");
+    TIDE_CHECK(holds(text, "{\"was\": \"Combat.Health.hp\", \"now\": \"Combat.Health.health\", \"file\": \"Assets/Tide/combat.tide\", \"line\": 8}"));
+    TIDE_CHECK(holds(text, "{\"was\": \"Combat.Health.heard\", \"now\": \"Combat.Health.times\", \"file\": \"Assets/Tide/combat.tide\", \"line\": 11}"));
+    TIDE_CHECK(holds(text, "{\"was\": \"Trail\", \"now\": \"Streak\", \"file\": \"Assets/Tide/combat.tide\", \"line\": 2}"));
+    TIDE_CHECK(holds(text, "{\"was\": \"Mode.Angry\", \"now\": \"Mode.Shouting\", \"file\": \"Assets/Tide/combat.tide\", \"line\": 16}"));
+    TIDE_CHECK(holds(text, "{\"was\": \"Extras.score\", \"removed\": true}"));
+    TIDE_CHECK(text && !strstr(text, "\"was\": \"Combat.Health\"") && !strstr(text, "armor"));
+    free(text);
+    // Renamed again: the first rename's new name is the newest
+    char *v2 = replaced(v1, "{\"name\": \"health\"", "{\"name\": \"vitality\"");
+    TIDE_REQUIRE(unity_code_record(record, v1, v2, outline, dir, NULL, 0, true));
+    text = read_written(project, "renamed.json");
+    TIDE_CHECK(holds(text, "{\"was\": \"Combat.Health.hp\", \"now\": \"Combat.Health.vitality\""));
+    TIDE_CHECK(holds(text, "{\"was\": \"Combat.Health.health\", \"now\": \"Combat.Health.vitality\""));
+    free(text);
+    // Back to its first name: nothing to explain of it
+    TIDE_REQUIRE(unity_code_record(record, v2, v0, outline, dir, NULL, 0, true));
+    text = read_written(project, "renamed.json");
+    TIDE_CHECK(text && !strstr(text, "\"was\": \"Combat.Health.hp\"") && !strstr(text, "\"was\": \"Extras.score\""));
+    free(text);
+    // A build of the declarations alone: no removals
+    sys_remove(record);
+    TIDE_REQUIRE(unity_code_record(record, v0, v1, outline, dir, NULL, 0, false));
+    text = read_written(project, "renamed.json");
+    TIDE_CHECK(text && strstr(text, "Combat.Health.hp") && !strstr(text, "removed"));
+    free(text);
+    free(a);
+    free(b);
+    free(c);
+    free(d);
+    free(v0);
+    free(v1);
+    free(v2);
+    sys_remove_tree(project);
+}
+
 TIDE_TEST(unity_code_guid_is_the_names)
 {
     char a[33], b[33];
