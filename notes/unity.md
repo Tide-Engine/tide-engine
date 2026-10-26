@@ -850,7 +850,12 @@ from `Library/Tide/outline.json` when Unity opens the declaration. Everything el
   pattern variable outside its if, a field of a partial class declared in another file, `dynamic` and reflection are
   left alone; doc comments' `<see cref>` aren't edited; a project type of a twin's name keeps bare uses of the twin
   unrenamed everywhere (qualified ones are); notes come from compiles after the package loaded (the editor's first
-  compile at startup isn't explained until the next).
+  compile at startup isn't explained until the next). Not seen in a window: a hover in Rider or Visual Studio, the
+  external editor opening at the line, the notes in an interactive Console.
+- **Runs:** native debug 2805/2805 and web debug 2710/2710 (without `private-prototype`), then the CLI, language-server,
+  outline and Unity CTests again after the last `unity_code.c` change (21/21); docs build. The Sample with a scratch
+  tide (this checkout's mingw-release, then debug, installed): EditMode 31/31 (three runs, the first regenerating
+  com.tide.game with the docs), PlayMode 17/17 on D3D11.
 
 ### Scenes as built (2026-10-20)
 
