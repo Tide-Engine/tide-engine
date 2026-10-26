@@ -907,26 +907,41 @@ from `Library/Tide/outline.json` when Unity opens the declaration. Everything el
   out), from the schema's names. `unity_code.c` takes every name from it (its own `identifier`, `taken` and `reserve`
   are gone); the Sample's package came out byte for byte the same.
 - **Renames reach C#** (`compiler/lsp/csharp.c`, from `unity_renames` in `analysis.c`, for a type, a field or an enum
-  member of a component, singleton, event, command, struct, input or enum): reads the project's
+  member of a component, singleton, event, command, struct, input or enum, and a namespace): reads the project's
   `Packages/com.tide.game/schema.json`, names everything as the C# has it and again with the rename (`unity_cs_assign`
   over the changed Tide names), and edits what changed in every `.cs` of `Assets` (not in folders ending `~` or
   hidden), of embedded packages (`Packages/*`, but the one whose package.json is com.tide.game) and of local ones (the
   manifest's `file:` dependencies, `..` folded so the URIs are the editor's). The edits join the rename's
   WorkspaceEdit, so the editor previews and undoes them with the rest. The C# is lexed (comments, strings, characters
   and preprocessor lines skipped; an interpolated string's holes lexed as code, up to a format or an alignment) and
-  read conservatively, with no compiler:
+  read conservatively, with no compiler, in three passes over the project's files (its types' names; their members;
+  the edits):
   - a type where a dotted name resolves to `Tide.Game.<twin>` as written, through `global::`, an alias's target, or a
     namespace the file opens (its usings, its namespaces and those above them); not where the first name is a type
     the project declares, a variable in scope there, or assigned (`Mode = ...`); a single name the project also
     declares as a variable or member anywhere only where only a type can be (after `new`, `is`, `as`, `<`, `typeof(`,
-    or before a declared name). Only a name written as the type's own is edited, not an alias's.
+    or before a declared name). Only a name written as the type's own is edited, not an alias's. A namespace (Tide's
+    `Combat` is C#'s `Tide.Game.Combat`) likewise, in a using, an alias's target, a qualified name or one under a
+    namespace the file opens (`Combat.Blade` after `using Tide.Game;`); not in a `namespace` declaration, which is the
+    project's own. A namespace's rename moves each component in it in the assets too (`unity_move`: the new name's
+    script GUID, `m_EditorClassIdentifier` from where the old and new class names part, a TideEntity list's
+    `- type:`), as a component's own rename always did; `unity_rename` now carries a list of moved components.
   - a member where its value's type is known: a variable, field, property or parameter declared of a twin (in scope: a
     type's body, the rest of a block, a method's or lambda's body, a foreach statement; two of one name in one scope
     of different types are neither), `var` given `new`, a generic call or another known value, `out var` in a generic
     call, a lambda's parameter in a generic call (`On<Hit>(hit => ...)`), a generic call's type argument
     (`GetComponent<T>()`, `runner.Get<T>()`; an indexer or a foreach over it its element), `new T { a = ... }`'s
-    initializer, an enum's member after its enum, and on through the twins' fields, lists and arrays
-    (`h.trail.length`). A class's members are its fields and its local fields; its `Value`'s, its fields.
+    initializer, a cast (`((Health)x).hp`, `var h = (Health)x;`), `as` (`(x as Health).hp`), a pattern's variable
+    (`x is Health h && h.hp > 0`, in scope through the if's block), an enum's member after its enum, and on through the
+    twins' fields, lists and arrays (`h.trail.length`). A class's members are its fields and its local fields; its
+    `Value`'s, its fields.
+  - the project's own classes and structs (`user_class`: by their names, so partial ones across files are one, and
+    classes of one name in two namespaces too, a member two of them type differently left ambiguous): each field's,
+    property's and method's type, so a member reaches through `state.Current.hp`, `Find().hp`, `state.Pick().hp`,
+    `GameState.Instance.Current.hp` (static, by the class's name), and a bare or `this.` name in a class finds its
+    members declared in another file of a partial class.
+  - a doc comment's `cref` (`/// <see cref="Health.hp"/>`, `T:` and `global::` read): its namespace, type and member,
+    as code naming them; other comment text never.
   - Test: `lsp_rename_reaches_unity_scripts` (scripts in Assets, an embedded and a local package, and com.tide.game's
     own script, never edited): a field through a variable, `var` of `GetComponent`, an interpolated string's hole, a
     foreach over `GetComponents`, a method's parameter, a qualified field; not Shield's or another class's `hp`, a
@@ -935,7 +950,10 @@ from `Library/Tide/outline.json` when Unity opens the declaration. Everything el
     `Value_`; a struct's field through a component's field, not the project's own `Trail`'s, and the struct itself only
     where qualified, as the project has a `Trail`; a singleton's field after `runner.Get<Extras>()`, an event's in a
     lambda, a command's in an initializer (not a variable named `text`); an enum and its member; a namespaced
-    component and its field by the namespace's using.
+    component and its field by the namespace's using; a field through casts, `as`, a pattern's variable, a method's
+    result, a static field and a partial class's field from its other file, and in a cref; the type in a cast, `as`,
+    `is`, a method's result, a partial class's field and a cref; the namespace in a using, a qualified name and a
+    cref (not bare `Blade`), and in a prefab its component's script GUID, class identifier and TideEntity list.
 - **Docs and where** (`unity_code.c`, from the outline): `print_outline` (`compiler/src/outline.c`) gives a
   declaration's `doc` (the `//` lines just above it, attributes allowed between, a blank line or code ending them;
   slashes and one space dropped), each field's `line` and `doc` (above it, else a comment after it on its line), and
@@ -963,31 +981,45 @@ from `Library/Tide/outline.json` when Unity opens the declaration. Everything el
   a member (CS0117, CS1061), a type (CS0246, CS0103), a type in a namespace (CS0234) or in a type (CS0426) isn't there
   is looked up (`Tide.Game.` and `global::` dropped, `.Value.` as the class's field, else an entry ending in it, for a
   namespaced type written short), and a note goes in as a compiler message of its own identifier (`0x7469646e`), an
-  error one: a probe in batch mode found neither `LogCompilerMessage`'s warnings nor `LogCompilerWarning` added any
-  Console entry (so tide's own located warnings, which `TideBuildService.Log` sends that way, may not reach it either:
-  not looked into): "tide: `Ball.speed` is now `Ball.velocity` (Assets/Tide/Bounce.tide:124)", located at the new
-  declaration, or "tide: `Paddle` was removed from the game's Tide code" at the script's line; each once, all gone at
-  `compilationStarted`. `TideBuildService.LogLocated`/`RemoveLocated` take the identifier. Test:
+  error one, so it shows beside the errors it explains when warnings are filtered out: "tide: `Ball.speed` is now
+  `Ball.velocity` (Assets/Tide/Bounce.tide:124)", located at the new declaration, or "tide: `Paddle` was removed from
+  the game's Tide code" at the script's line; each once, all gone at `compilationStarted`. As the package loads
+  (`delayCall`) it also explains the C# compile errors the Console has (`ConsoleErrors`, read from Unity's internal
+  entries by `file(line,col): error CS`), which the editor's first compile at startup leaves before it could hear
+  them. `TideBuildService.LogLocated`/`RemoveLocated` take the identifier. (A first probe in batch mode found no
+  warning of any kind added to the Console, which looked like tide's own located warnings going nowhere: it was this
+  machine's Console with its warning filter off (`consoleFlags` 1666, without `LogLevelWarning`), and
+  `LogEntries.GetCount` counting what the filter shows. With the filter on, `LogCompilerMessage`'s warnings and
+  `Debug.LogWarning` are counted. Nothing was wrong.) Test:
   `unity_code_records_what_became_of_names` (a field renamed in place, a local field, a struct by its fields, an enum
   member, a field whose type changed too removed; renamed again, back again, declarations alone).
 - **Sample tests** (EditMode `TypeBoundaryTests`): Ball's script opens `Assets/Tide/Bounce.tide` at `component Ball`
   through `AssetDatabase.OpenAsset` (BallTint's isn't the game's); the regenerated `Ball.cs` has Ball's doc, its file,
-  and `velocity`'s and `heard`'s docs; a probe script of renamed and removed names compiled apart (`AssemblyBuilder`,
-  against Tide.Game and Tide.Runtime) gets the three notes from Roslyn's own messages, each once in the Console, and
-  none after `Clear`. The Sample's Ball and its `velocity` have doc comments to pin.
-  `unity_code_writes_the_samples_package` passes the Sample's outline (`compiler/cli/tests/unity_sample/outline.json`,
-  cut to Bounce.tide's declarations, from the Sample's `Library/Tide/outline.json`): copy it again with the Sample's
-  package when Bounce.tide's docs change.
-- **Gaps:** renaming a namespace doesn't reach C#; a member through a method's or property's result, a cast, `as`, a
-  pattern variable outside its if, a field of a partial class declared in another file, `dynamic` and reflection are
-  left alone; doc comments' `<see cref>` aren't edited; a project type of a twin's name keeps bare uses of the twin
-  unrenamed everywhere (qualified ones are); notes come from compiles after the package loaded (the editor's first
-  compile at startup isn't explained until the next). Not seen in a window: a hover in Rider or Visual Studio, the
-  external editor opening at the line, the notes in an interactive Console.
+  and `velocity`'s and `heard`'s docs; `GeneratedDocsAreWellFormedXml` compiles all of com.tide.game with `/doc` (its
+  files' `#pragma warning disable` hides doc warnings, so the XML C# writes is read instead): no "Badly formed XML",
+  and the summaries of Ball, `Ball.velocity`, Trail and Extras where they belong, as Rider and Visual Studio read them;
+  a probe script of renamed and removed names compiled apart gets the three notes from Roslyn's own messages, each once
+  in the Console, and none after `Clear`; a compile error already in the Console gets its note from `ExplainConsole`.
+  Both compile with the Roslyn `csc.dll` Unity ships (`DotNetSdk`, a response file), synchronously: `AssemblyBuilder`
+  is obsolete (CS0618) and reported after the test's wait once. The Sample's Ball and its `velocity` have doc comments
+  to pin. `unity_code_writes_the_samples_package` passes the Sample's outline
+  (`compiler/cli/tests/unity_sample/outline.json`, cut to Bounce.tide's types, from the Sample's
+  `Library/Tide/outline.json`): copy it again with the Sample's package when Bounce.tide's docs change; the test
+  says so when the package differs.
+- **Gaps** (after a second round, 2026-10-26, the owner: "deal with what is left"): what C# itself can't tell without
+  a compiler stays out: overloads and extension methods (a method's result is its name's, across the class's
+  overloads, and none where they differ), inheritance (a member of a base class isn't followed to a derived one),
+  generic type parameters, `dynamic` and reflection. A project type of a twin's name keeps bare uses of the twin
+  unrenamed everywhere (qualified ones are), by design. Not seen in a window, as agent runs open none: Rider's and
+  Visual Studio's hover itself (the XML they read is tested), the external editor opening at the line (the call to
+  `OpenFileAtLineExternal` is), and the notes in an interactive Console (Unity's own entries are read back).
 - **Runs:** native debug 2805/2805 and web debug 2710/2710 (without `private-prototype`), then the CLI, language-server,
   outline and Unity CTests again after the last `unity_code.c` change (21/21); docs build. The Sample with a scratch
   tide (this checkout's mingw-release, then debug, installed): EditMode 31/31 (three runs, the first regenerating
-  com.tide.game with the docs), PlayMode 17/17 on D3D11.
+  com.tide.game with the docs), PlayMode 17/17 on D3D11. Second round (C#'s casts, patterns, own classes, crefs and
+  namespaces; Console errors at load; the XML test): native debug 2805/2805, tidels 261/261, tide_cli_tests 67/67, the
+  docs build, Sample EditMode 32/32. Web and PlayMode weren't run again (the owner: test what's necessary, CI catches
+  the rest): tidels is native only, and the package change is editor code.
 
 ### Scenes as built (2026-10-20)
 

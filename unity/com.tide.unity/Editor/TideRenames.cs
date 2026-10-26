@@ -57,7 +57,61 @@ namespace Tide.Editor
             if (AssetDatabase.IsAssetImportWorkerProcess()) return;
             CompilationPipeline.compilationStarted += _ => Clear();
             CompilationPipeline.assemblyCompilationFinished += (_, messages) => Explain(messages);
+            // The errors of a compile before this loaded: the editor's first, as it opens the project
+            EditorApplication.delayCall += ExplainConsole;
         }
+
+        const System.Reflection.BindingFlags Internal =
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public
+            | System.Reflection.BindingFlags.NonPublic;
+        static readonly Type logEntries = Type.GetType("UnityEditor.LogEntries, UnityEditor");
+        static readonly Type logEntry = Type.GetType("UnityEditor.LogEntry, UnityEditor");
+        static readonly Regex compilerError = new Regex(@"^(?<file>.+?)\((?<line>\d+),(?<column>\d+)\): error CS\d+:");
+
+        // The C# compile errors the Console has (through Unity's internal entries; none where this Unity hasn't them),
+        // as their compile gave them
+        internal static CompilerMessage[] ConsoleErrors()
+        {
+            var found = new List<CompilerMessage>();
+            if (logEntries == null || logEntry == null) return found.ToArray();
+            try
+            {
+                var count = (int)logEntries.GetMethod("GetCount", Internal).Invoke(null, null);
+                var entry = Activator.CreateInstance(logEntry);
+                var message = logEntry.GetField("message", Internal);
+                logEntries.GetMethod("StartGettingEntries", Internal).Invoke(null, null);
+                try
+                {
+                    for (var i = 0; i < count; i++)
+                    {
+                        logEntries.GetMethod("GetEntryInternal", Internal).Invoke(null, new[] { i, entry });
+                        var text = ((string)message.GetValue(entry) ?? "").Split('\n')[0];
+                        var match = compilerError.Match(text);
+                        if (!match.Success) continue;
+                        found.Add(new CompilerMessage
+                        {
+                            message = text,
+                            file = match.Groups["file"].Value,
+                            line = int.Parse(match.Groups["line"].Value),
+                            column = int.Parse(match.Groups["column"].Value),
+                            type = CompilerMessageType.Error,
+                        });
+                    }
+                }
+                finally
+                {
+                    logEntries.GetMethod("EndGettingEntries", Internal).Invoke(null, null);
+                }
+            }
+            catch (Exception)
+            {
+                // This Unity's differ: nothing to explain
+            }
+            return found.ToArray();
+        }
+
+        // Explains the compile errors the Console has now
+        public static void ExplainConsole() => Explain(ConsoleErrors());
 
         public static string RecordPath => Path.Combine(TideLibrary.BuildFolder, "renamed.json");
 

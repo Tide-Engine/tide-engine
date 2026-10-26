@@ -40,6 +40,17 @@ static char *read_all(const char *path)
     return text.data;
 }
 
+static bool same(const char *a, const int an, const char *b)
+{
+    return strlen(b) == (size_t)an && strncmp(a, b, (size_t)an) == 0;
+}
+
+// An identifier as C# reads it: a verbatim one's without its @
+static const char *bare(const char *id)
+{
+    return id[0] == '@' ? id + 1 : id;
+}
+
 // ---------------------------------------------------------------------------
 // The game's C# types, from the schema: what a value C# holds is
 
@@ -47,14 +58,22 @@ typedef enum vkind {
     V_NONE,
     V_TYPE, // One of the schema's types: a class (a component, singleton, event, command), a struct, a layout struct
     V_ENUM,
+    V_USER, // A class or struct of the project's own C#, by its name: its fields', properties' and methods' types
 } vkind;
 
 typedef struct value_type {
     vkind kind;
-    int index;  // In the names' types or enums
+    int index;  // In the names' types or enums, or the project's classes
     bool value; // A class's or struct's nested Value, which has its fields but not a class's local ones
     bool many;  // A list or an array of it, whose element an indexer or a foreach gives
 } value_type;
+
+static const value_type none = {V_NONE, -1, false, false};
+
+static bool same_type(const value_type a, const value_type b)
+{
+    return a.kind == b.kind && a.index == b.index && a.value == b.value && a.many == b.many;
+}
 
 typedef struct game_types {
     unity_cs_names names;  // As the C# has them now
@@ -64,6 +83,9 @@ typedef struct game_types {
     // The rename: each type's and enum's new C# name, each field's, local field's and member's, or NULL for unchanged
     char **type_new, **enum_new;
     char ***field_new, ***local_new, ***member_new;
+    // A namespace's rename: its C# name ("Tide.Game.Combat.Melee"), how many names it is, its last one and its new one
+    char *space, *space_last, *space_new;
+    int space_names;
 } game_types;
 
 // A type string of the schema's ("List<Trail>", "Trail[4]", "Set<int>#map-order-2") as what C# holds of it
@@ -93,12 +115,27 @@ static value_type value_of(const game_types *g, const char *s)
             return (value_type){V_ENUM, i, false, many};
         }
     }
-    return (value_type){V_NONE, -1, false, false};
+    return none;
 }
 
 static const char *tide_name(const char *s)
 {
     return s ? s : "";
+}
+
+// Whether a schema's name ("Combat.Melee.Health", "Combat.Melee.Health local") is the dotted `space` or in it
+static bool in_space(const char *name, const char *space)
+{
+    const size_t n = strlen(space);
+    return strncmp(name, space, n) == 0 && (!name[n] || name[n] == '.' || name[n] == ' ');
+}
+
+// `name` with the dotted `from` it's in as `to` instead, into `out`; false where it isn't in it
+static bool moved(const char *name, const char *from, const char *to, jbuf *out)
+{
+    if (!in_space(name, from)) return false;
+    jb_printf(out, "%s%s", to, name + strlen(from));
+    return true;
 }
 
 // Reads the schema and works out what the rename makes of each name: false where it changes none.
@@ -126,25 +163,50 @@ static bool read_types(const json *schema, game_types *g, const csharp_what what
     }
     for (int i = 0; i < n->enum_count; i++) g->enum_full[i] = unity_cs_full(n->enums[i].ns, n->enums[i].cs);
 
+    const char *dot = strrchr(type, '.');
+    jbuf new_type = {0};
+    jb_printf(&new_type, "%.*s%s", dot ? (int)(dot - type + 1) : 0, type, new_name);
+    bool changed = false;
+    if (what == CSHARP_NAMESPACE) {
+        // Every type's and enum's names under it are as C# has them: only the namespace's last name changes in C#
+        bool used = false;
+        for (int i = 0; i < n->type_count; i++) used = used || in_space(n->types[i].name, type);
+        for (int i = 0; i < n->enum_count; i++) used = used || in_space(n->enums[i].name, type);
+        char *space = unity_cs_namespace(type, strlen(type));
+        jbuf full = {0};
+        jb_printf(&full, "Tide.Game.%s", space);
+        free(space);
+        g->space = full.data;
+        g->space_names = 1;
+        for (const char *c = g->space; *c; c++) g->space_names += *c == '.';
+        const char *last = strrchr(g->space, '.');
+        g->space_last = copy_n(last + 1, strlen(last + 1));
+        g->space_new = unity_cs_identifier(new_name, strlen(new_name));
+        changed = used && strcmp(g->space_last, g->space_new) != 0;
+    }
+
     // The names again, with the rename
     unity_cs_names renamed;
     if (!unity_cs_read(schema, &renamed)) return false;
-    const char *dot = strrchr(type, '.');
-    jbuf new_type = {0}, local = {0}, new_local = {0};
-    jb_printf(&new_type, "%.*s%s", dot ? (int)(dot - type + 1) : 0, type, new_name);
+    jbuf local = {0}, new_local = {0};
     jb_printf(&local, "%s local", type);
     jb_printf(&new_local, "%s local", new_type.data);
+    jbuf *names_moved = calloc((size_t)renamed.type_count + (size_t)renamed.enum_count + 1, sizeof *names_moved);
+    if (!names_moved) abort();
     for (int i = 0; i < renamed.type_count; i++) {
         unity_cs_type *t = &renamed.types[i];
         const bool own = strcmp(t->name, type) == 0, part = strcmp(t->name, local.data) == 0;
         if (what == CSHARP_TYPE && own) t->name = new_type.data;
         if (what == CSHARP_TYPE && part) t->name = new_local.data;
+        if (what == CSHARP_NAMESPACE && moved(t->name, type, new_type.data, &names_moved[i])) t->name = names_moved[i].data;
         for (int k = 0; what == CSHARP_FIELD && (own || part) && k < t->field_count; k++) {
             if (strcmp(t->fields[k], name) == 0) t->fields[k] = new_name;
         }
     }
     for (int i = 0; i < renamed.enum_count; i++) {
         unity_cs_enum *e = &renamed.enums[i];
+        jbuf *m = &names_moved[renamed.type_count + i];
+        if (what == CSHARP_NAMESPACE && moved(e->name, type, new_type.data, m)) e->name = m->data;
         if (strcmp(e->name, type) != 0) continue;
         if (what == CSHARP_TYPE) e->name = new_type.data;
         for (int k = 0; what == CSHARP_MEMBER && k < e->member_count; k++) {
@@ -152,7 +214,6 @@ static bool read_types(const json *schema, game_types *g, const csharp_what what
         }
     }
     unity_cs_assign(&renamed);
-    bool changed = false;
     g->type_new = calloc((size_t)n->type_count + 1, sizeof *g->type_new);
     g->field_new = calloc((size_t)n->type_count + 1, sizeof *g->field_new);
     g->local_new = calloc((size_t)n->type_count + 1, sizeof *g->local_new);
@@ -161,7 +222,7 @@ static bool read_types(const json *schema, game_types *g, const csharp_what what
     if (!g->type_new || !g->field_new || !g->local_new || !g->enum_new || !g->member_new) abort();
     for (int i = 0; i < n->type_count; i++) {
         const unity_cs_type *was = &n->types[i], *now = &renamed.types[i];
-        // Only its own name changes: its namespace is the same
+        // Only its own name changes: a namespace's rename is the namespace's
         if (strcmp(was->cs, now->cs) != 0) {
             g->type_new[i] = copy_n(now->cs, strlen(now->cs));
             changed = true;
@@ -199,6 +260,8 @@ static bool read_types(const json *schema, game_types *g, const csharp_what what
         }
     }
     unity_cs_free(&renamed);
+    for (int i = 0; i < n->type_count + n->enum_count; i++) jb_free(&names_moved[i]);
+    free(names_moved);
     jb_free(&new_type);
     jb_free(&local);
     jb_free(&new_local);
@@ -232,12 +295,16 @@ static void free_types(game_types *g)
     free(g->local_new);
     free(g->enum_new);
     free(g->member_new);
+    free(g->space);
+    free(g->space_last);
+    free(g->space_new);
     unity_cs_free(&g->names);
 }
 
 // ---------------------------------------------------------------------------
 // C#'s tokens: names (a verbatim one's without its @), punctuation, and the rest. Comments, strings, characters and
-// preprocessor lines are none, but an interpolated string's holes are code.
+// preprocessor lines are none, but an interpolated string's holes are code, and a doc comment's `cref="..."` values
+// are kept apart.
 
 typedef enum tkind {
     TK_NAME,
@@ -251,11 +318,17 @@ typedef struct token {
     int name_at, name_len; // A name's, without its @
 } token;
 
+typedef struct span {
+    int at, len;
+} span;
+
 typedef struct lexer {
     const char *s;
     int n, i;
     token *items;
     int count, capacity;
+    span *crefs; // Doc comments' cref values
+    int cref_count, cref_capacity;
 } lexer;
 
 static void add(lexer *l, const tkind kind, const int at, const int len, const int name_at, const int name_len)
@@ -311,6 +384,27 @@ static void lex_string(lexer *l, const bool interpolated, const bool verbatim)
     }
 }
 
+// A doc comment's line (`/// <see cref="Health.hp"/>`): its cref values, which name code
+static void doc_crefs(lexer *l, const int from, const int to)
+{
+    for (int i = from; i + 6 < to; i++) {
+        if (strncmp(l->s + i, "cref", 4) != 0) continue;
+        int k = i + 4;
+        while (k < to && l->s[k] == ' ') k++;
+        if (k >= to || l->s[k] != '=') continue;
+        k++;
+        while (k < to && l->s[k] == ' ') k++;
+        if (k >= to || (l->s[k] != '"' && l->s[k] != '\'')) continue;
+        const char quote = l->s[k++];
+        int end = k;
+        while (end < to && l->s[end] != quote) end++;
+        if (end >= to) continue;
+        l->crefs = grown(l->crefs, &l->cref_capacity, l->cref_count, sizeof *l->crefs);
+        l->crefs[l->cref_count++] = (span){k, end - k};
+        i = end;
+    }
+}
+
 // Tokens up to the end, or in a hole (`hole`) to its '}' at its depth, past a format or alignment at that depth
 static void lex_code(lexer *l, const int hole)
 {
@@ -331,7 +425,9 @@ static void lex_code(lexer *l, const int hole)
         const bool was_line_start = line_start;
         line_start = false;
         if (c == '/' && next == '/') {
+            const int from = l->i;
             while (l->i < l->n && l->s[l->i] != '\n') l->i++;
+            if (from + 2 < l->n && l->s[from + 2] == '/' && !(from + 3 < l->n && l->s[from + 3] == '/')) doc_crefs(l, from, l->i);
             continue;
         }
         if (c == '/' && next == '*') {
@@ -397,7 +493,7 @@ static void lex_code(lexer *l, const int hole)
 }
 
 // ---------------------------------------------------------------------------
-// A file of C#
+// A file of C#, and the project's own types
 
 static const char *const keywords[] = {
     "abstract", "as", "base", "bool", "break", "byte", "case", "catch", "char", "checked", "class", "const", "continue",
@@ -429,13 +525,28 @@ typedef struct names_set {
     int count, capacity;
 } names_set;
 
+// A member of a class or struct of the project's, by its name: a field, a property or a method (its result)
+typedef struct user_member {
+    char *name;
+    value_type type;
+    bool method, ambiguous; // Ambiguous: two of the name, of different types (in classes of one name, or overloads)
+} user_member;
+
+typedef struct user_class {
+    char *name; // Its own name alone: the project's classes of one name are one here
+    user_member *members;
+    int count, capacity;
+} user_class;
+
 typedef struct cs_file {
     const char *text;
     token *t;
     int n;
+    span *crefs;
+    int cref_count;
     int *match;     // Each bracket's other one, or -1
     int *within;    // The innermost bracket each token is in, or -1
-    bool *body;     // A '{' opening a type's body
+    int *body;      // A '{' opening a type's body: the token naming the type, else -1
     char **open;    // Namespaces whose names the file sees: its usings', its namespace's and theirs above it
     int open_count, open_capacity;
     alias *aliases;
@@ -447,6 +558,8 @@ typedef struct cs_file {
 typedef struct project_names {
     names_set types;    // Types the project's C# declares
     names_set declared; // Variables, parameters, fields and properties it declares
+    user_class *classes;
+    int class_count, class_capacity;
 } project_names;
 
 typedef struct edit {
@@ -459,8 +572,8 @@ typedef struct scan {
     project_names *names;
     jbuf *out;
     int *files_written;
-    bool collecting; // The first pass: the project's names alone
-    bool quiet;      // Working out declarations' types: no edits
+    int pass;   // 0: the project's types' names; 1: their members; 2: the edits
+    bool quiet; // Working out declarations' types: no edits
     cs_file *f;
     edit *edits;
     int edit_count, edit_capacity;
@@ -485,6 +598,58 @@ static void set_free(names_set *s)
 {
     for (int i = 0; i < s->count; i++) free(s->items[i]);
     free(s->items);
+}
+
+static int class_named(const project_names *p, const char *name, const int n)
+{
+    for (int i = 0; i < p->class_count; i++) {
+        if (same(name, n, p->classes[i].name)) return i;
+    }
+    return -1;
+}
+
+static int class_add(project_names *p, const char *name, const int n)
+{
+    const int found = class_named(p, name, n);
+    if (found >= 0) return found;
+    p->classes = grown(p->classes, &p->class_capacity, p->class_count, sizeof *p->classes);
+    p->classes[p->class_count] = (user_class){copy_n(name, (size_t)n), NULL, 0, 0};
+    return p->class_count++;
+}
+
+static void member_add(project_names *p, const int c, const char *name, const int n, const value_type type, const bool method)
+{
+    user_class *k = &p->classes[c];
+    for (int i = 0; i < k->count; i++) {
+        user_member *m = &k->members[i];
+        if (!same(name, n, m->name) || m->method != method) continue;
+        if (!same_type(m->type, type)) m->ambiguous = true;
+        return;
+    }
+    k->members = grown(k->members, &k->capacity, k->count, sizeof *k->members);
+    k->members[k->count++] = (user_member){copy_n(name, (size_t)n), type, method, false};
+}
+
+// A member of the project's class `c`: its type, or none for none or an ambiguous one
+static value_type user_member_type(const project_names *p, const int c, const char *name, const int n, const bool method)
+{
+    if (c < 0 || c >= p->class_count) return none;
+    const user_class *k = &p->classes[c];
+    for (int i = 0; i < k->count; i++) {
+        const user_member *m = &k->members[i];
+        if (same(name, n, m->name) && m->method == method) return m->ambiguous ? none : m->type;
+    }
+    return none;
+}
+
+static bool user_has_member(const project_names *p, const int c, const char *name, const int n)
+{
+    if (c < 0) return false;
+    const user_class *k = &p->classes[c];
+    for (int i = 0; i < k->count; i++) {
+        if (same(name, n, k->members[i].name)) return true;
+    }
+    return false;
 }
 
 static bool is(const cs_file *f, const int i, const char *text)
@@ -527,10 +692,25 @@ static bool chain_start(const cs_file *f, const int i)
 }
 
 // The innermost '{' a token is in, or -1
-static int block_of(const cs_file *f, int i)
+static int block_of(const cs_file *f, const int i)
 {
     for (int b = f->within[i]; b >= 0; b = f->within[b]) {
         if (is(f, b, "{")) return b;
+    }
+    return -1;
+}
+
+static const scan *current; // The scan the file is part of: its game's types and the project's names
+
+// The project's class a token is inside, the innermost, or -1
+static int class_of(const cs_file *f, const int i)
+{
+    for (int b = f->within[i]; b >= 0; b = f->within[b]) {
+        if (!is(f, b, "{") || f->body[b] < 0) continue;
+        const char *name;
+        int n;
+        name_of(f, f->body[b], &name, &n);
+        return class_named(current->names, name, n);
     }
     return -1;
 }
@@ -539,19 +719,22 @@ static void match_brackets(cs_file *f)
 {
     f->match = malloc(sizeof *f->match * (size_t)(f->n + 1));
     f->within = malloc(sizeof *f->within * (size_t)(f->n + 1));
-    f->body = calloc((size_t)f->n + 1, sizeof *f->body);
+    f->body = malloc(sizeof *f->body * (size_t)(f->n + 1));
     int *stack = malloc(sizeof *stack * (size_t)(f->n + 1));
     if (!f->match || !f->within || !f->body || !stack) abort();
     int depth = 0;
     for (int i = 0; i < f->n; i++) {
         f->match[i] = -1;
+        f->body[i] = -1;
         f->within[i] = depth ? stack[depth - 1] : -1;
         if (is(f, i, "(") || is(f, i, "[") || is(f, i, "{")) {
             stack[depth++] = i;
             if (is(f, i, "{")) {
-                // A type's body: `class`, `struct`, `interface` or `record` since the statement before
+                // A type's body: `class`, `struct`, `interface` or `record` since the statement before, and its name
                 for (int k = i - 1; k >= 0 && !is(f, k, ";") && !is(f, k, "}") && !is(f, k, "{"); k--) {
-                    if (is(f, k, "class") || is(f, k, "struct") || is(f, k, "interface") || is(f, k, "record")) f->body[i] = true;
+                    if ((is(f, k, "class") || is(f, k, "struct") || is(f, k, "interface") || is(f, k, "record")) && plain_name(f, k + 1)) {
+                        f->body[i] = k + 1;
+                    }
                 }
             }
         } else if (is(f, i, ")") || is(f, i, "]") || is(f, i, "}")) {
@@ -596,15 +779,10 @@ static bool open_namespace(const cs_file *f, const char *ns, const size_t n)
     return false;
 }
 
-static const scan *current; // The scan the file is part of: its game's types and the project's names
-
-// Where a variable named by token `i` is declared, in scope at token `at`: the innermost, or NULL (and *ambiguous
-// where two of different types are equally inner)
-static const declared *variable_at(const cs_file *f, const int i, const int at, bool *ambiguous)
+// Where a variable named `s` is declared, in scope at token `at`: the innermost, or NULL (and *ambiguous where two of
+// different types are equally inner)
+static const declared *variable_named(const cs_file *f, const char *s, const int n, const int at, bool *ambiguous)
 {
-    const char *s;
-    int n;
-    name_of(f, i, &s, &n);
     const declared *found = NULL;
     *ambiguous = false;
     for (int k = 0; k < f->decl_count; k++) {
@@ -614,59 +792,105 @@ static const declared *variable_at(const cs_file *f, const int i, const int at, 
         if (!found || d->to - d->from < found->to - found->from) {
             found = d;
             *ambiguous = false;
-        } else if (d->to - d->from == found->to - found->from
-                   && (d->type.kind != found->type.kind || d->type.index != found->type.index || d->type.value != found->type.value)) {
+        } else if (d->to - d->from == found->to - found->from && !same_type(d->type, found->type)) {
             *ambiguous = true;
         }
     }
     return found;
 }
 
-// The game's type a dotted name at `i` names: how many of its names (`*used`) make the type, a class's or struct's
-// Value counted; V_NONE where it names none, or might name something else (a type or variable of the project's).
-// `strong`: the place is one only a type can be.
-static value_type resolve(const cs_file *f, const int i, int *used, const bool strong)
+static const declared *variable_at(const cs_file *f, const int i, const int at, bool *ambiguous)
 {
-    *used = 0;
-    const game_types *g = current->g;
-    bool global = false;
+    const char *s;
+    int n;
+    name_of(f, i, &s, &n);
+    return variable_named(f, s, n, at, ambiguous);
+}
+
+// ---------------------------------------------------------------------------
+// Dotted names: as tokens of the file, or as the text of a doc comment's cref
+
+typedef struct segment {
+    int at, len; // The name's own characters
+    int token;   // Its token, or -1 for a cref's
+} segment;
+
+// A dotted name from token `i`: its names (`global::` aside); false for none
+static int token_segments(const cs_file *f, const int i, segment *segs, const int most, bool *global)
+{
     int first = i;
+    *global = false;
     if (name_is(f, i, "global") && is(f, i + 1, "::")) {
-        global = true;
+        *global = true;
         first = i + 2;
     }
-    if (!plain_name(f, first)) return (value_type){V_NONE, -1, false, false};
-    int segs[32];
     int count = 0;
-    for (int k = first; count < 32 && plain_name(f, k); k += 2) {
-        segs[count++] = k;
+    for (int k = first; count < most && plain_name(f, k); k += 2) {
+        segs[count++] = (segment){f->t[k].name_at, f->t[k].name_len, k};
         if (!is(f, k + 1, ".")) break;
     }
-    const char *s0;
-    int n0;
-    name_of(f, segs[0], &s0, &n0);
-    if (!global && !(n0 == 4 && strncmp(s0, "Tide", 4) == 0)) {
-        // The first name might be the project's own: a type of its own, or a variable here
-        if (set_has(&current->names->types, s0, n0)) return (value_type){V_NONE, -1, false, false};
-        bool ambiguous;
-        if (variable_at(f, segs[0], segs[0], &ambiguous)) return (value_type){V_NONE, -1, false, false};
-        if (is(f, segs[count - 1] + 1, "=") && count == 1) return (value_type){V_NONE, -1, false, false}; // Assigned: no type
+    return count;
+}
+
+// A cref's names ("T:Tide.Game.Health.hp", "global::Mode.Fast", "Health.Heal(int)")
+static int cref_segments(const char *text, const span c, segment *segs, const int most, bool *global)
+{
+    int at = c.at, end = c.at + c.len;
+    if (end - at > 2 && text[at + 1] == ':' && text[at] >= 'A' && text[at] <= 'Z') at += 2; // A documentation ID's kind
+    *global = false;
+    if (end - at > 8 && strncmp(text + at, "global::", 8) == 0) {
+        *global = true;
+        at += 8;
     }
+    int count = 0;
+    while (at < end && count < most) {
+        int k = at;
+        if (text[k] == '@') at = ++k;
+        while (k < end && name_char(text[k])) k++;
+        if (k == at) break;
+        segs[count++] = (segment){at, k - at, -1};
+        if (k >= end || text[k] != '.') break;
+        at = k + 1;
+    }
+    return count;
+}
+
+// The names joined with dots, the first `k` of them
+static void joined(const cs_file *f, const segment *segs, const int k, jbuf *out)
+{
+    for (int s = 0; s < k; s++) jb_printf(out, "%s%.*s", s ? "." : "", segs[s].len, f->text + segs[s].at);
+}
+
+// Whether the first of a dotted name might be the project's own, at token `at` (-1 for a cref's): a type of its own, or
+// a variable there; only then is it no name of the game's
+static bool project_own(const cs_file *f, const segment *segs, const bool global, const int at)
+{
+    if (global || same(f->text + segs[0].at, segs[0].len, "Tide")) return false;
+    if (set_has(&current->names->types, f->text + segs[0].at, segs[0].len)) return true;
+    bool ambiguous;
+    return at >= 0 && variable_named(f, f->text + segs[0].at, segs[0].len, at, &ambiguous);
+}
+
+// The game's type the first names of a dotted name make: how many (`*used`, a class's or struct's Value counted); none
+// where they make none or might be the project's own (project_own). `strong`: the place is one only a type can be.
+static value_type resolve_names(const cs_file *f, const segment *segs, const int count, const bool global, const int at,
+                                int *used, const bool strong)
+{
+    *used = 0;
+    if (!count || project_own(f, segs, global, at)) return none;
+    const game_types *g = current->g;
+    const char *s0 = f->text + segs[0].at;
+    const int n0 = segs[0].len;
     for (int k = count; k >= 1; k--) {
         jbuf name = {0};
-        for (int s = 0; s < k; s++) {
-            const char *p;
-            int n;
-            name_of(f, segs[s], &p, &n);
-            jb_printf(&name, "%s%.*s", s ? "." : "", n, p);
-        }
+        joined(f, segs, k, &name);
         // Its full name: as written; by an alias; under a namespace the file sees
         const char *candidates[64];
         int candidate_count = 0;
         candidates[candidate_count++] = name.data;
         jbuf expanded[66] = {{0}};
         int expanded_count = 0;
-        for (int a = 0; !global && a < f->alias_count; a++) {
+        for (int a = 0; !global && a < f->alias_count && expanded_count < 32; a++) {
             const char *an;
             int al;
             name_of(f, f->aliases[a].name, &an, &al);
@@ -678,7 +902,7 @@ static value_type resolve(const cs_file *f, const int i, int *used, const bool s
             jb_printf(&expanded[expanded_count], "%s.%s", f->open[o], name.data);
             candidates[candidate_count++] = expanded[expanded_count++].data;
         }
-        value_type found = {V_NONE, -1, false, false};
+        value_type found = none;
         for (int c = 0; c < candidate_count && found.kind == V_NONE; c++) {
             if (strncmp(candidates[c], "Tide.Game.", 10) != 0) continue;
             const char *rest = candidates[c] + 10;
@@ -692,28 +916,44 @@ static value_type resolve(const cs_file *f, const int i, int *used, const bool s
         jb_free(&name);
         for (int x = 0; x < expanded_count; x++) jb_free(&expanded[x]);
         if (found.kind == V_NONE) continue;
-        // A single name the project also declares as a variable or member somewhere: only where only a type can be,
-        // or before a member only the type has
-        if (k == 1 && !global && !(n0 == 4 && strncmp(s0, "Tide", 4) == 0) && set_has(&current->names->declared, s0, n0)
-            && !strong && !(count > 1)) {
-            return (value_type){V_NONE, -1, false, false};
-        }
+        // A single name the project also declares as a variable or member somewhere: only where only a type can be
+        if (k == 1 && count == 1 && !global && !same(s0, n0, "Tide") && set_has(&current->names->declared, s0, n0) && !strong) return none;
         *used = k;
-        if (found.kind == V_TYPE && k < count && name_is(f, segs[k], "Value")
+        if (found.kind == V_TYPE && k < count && same(f->text + segs[k].at, segs[k].len, "Value")
             && (g->names.types[found.index].base || g->names.types[found.index].live)) {
             found.value = true;
             (*used)++;
         }
         return found;
     }
-    return (value_type){V_NONE, -1, false, false};
+    return none;
 }
 
-// A type as written from `i` (`Health`, `Tide.Game.Health.Value`, `List<Health>`, `Health[]`, `int?`): the token
-// after it, or -1 where it's none; `type` what it is of the game's
+static value_type resolve(const cs_file *f, const int i, int *used, const bool strong)
+{
+    segment segs[32];
+    bool global;
+    const int count = token_segments(f, i, segs, 32, &global);
+    if (!count) return none;
+    // Assigned (`Mode = ...`): no type
+    if (count == 1 && !global && is(f, segs[0].token + 1, "=")) return none;
+    return resolve_names(f, segs, count, global, segs[0].token, used, strong);
+}
+
+// The project's class a type's last name names, or -1
+static int user_class_at(const cs_file *f, const int last)
+{
+    const char *name;
+    int n;
+    name_of(f, last, &name, &n);
+    return class_named(current->names, name, n);
+}
+
+// A type as written from `i` (`Health`, `Tide.Game.Health.Value`, `List<Health>`, `Health[]`, `int?`, a class of the
+// project's): the token after it, or -1 where it's none; `type` what it is
 static int skip_type(const cs_file *f, int i, value_type *type)
 {
-    *type = (value_type){V_NONE, -1, false, false};
+    *type = none;
     if (in_list(f, i, keyword_types)) {
         i++;
     } else {
@@ -739,7 +979,12 @@ static int skip_type(const cs_file *f, int i, value_type *type)
             // All of its names are the type's
             int names = 0;
             for (int k = start; k <= last; k++) names += f->t[k].kind == TK_NAME && !name_is(f, k, "global");
-            if (found.kind != V_NONE && used == names) *type = found;
+            if (found.kind != V_NONE && used == names) {
+                *type = found;
+            } else if (found.kind == V_NONE) {
+                const int c = user_class_at(f, last);
+                if (c >= 0) *type = (value_type){V_USER, c, false, false};
+            }
         }
     }
     while (is(f, i, "?") || is(f, i, "*") || (is(f, i, "[") && (is(f, i + 1, "]") || is(f, i + 1, ",")))) {
@@ -757,62 +1002,119 @@ static int skip_type(const cs_file *f, int i, value_type *type)
 
 static int args_end(const cs_file *f, const int open)
 {
-    return f->match[open] >= 0 ? f->match[open] + 1 : -1;
+    return open >= 0 && open < f->n && f->match[open] >= 0 ? f->match[open] + 1 : -1;
 }
 
-static void add_edit(scan *s, const int place, const char *text)
+static void add_edit_at(scan *s, const int at, const int len, const char *text)
 {
-    if (s->quiet || s->collecting) return;
-    const token *t = &s->f->t[place];
+    if (s->quiet || s->pass != 2) return;
     for (int i = 0; i < s->edit_count; i++) {
-        if (s->edits[i].at == t->at) return;
+        if (s->edits[i].at == at) return;
     }
     s->edits = grown(s->edits, &s->edit_capacity, s->edit_count, sizeof *s->edits);
-    s->edits[s->edit_count++] = (edit){t->at, t->len, text};
+    s->edits[s->edit_count++] = (edit){at, len, text};
 }
 
-// Member `token` of a value of `v`: its field's type, or none; the edit where the rename changes its name
-static value_type member(scan *s, const value_type v, const int place)
+// An edit of a name: its whole token (a verbatim name's @ too), or a cref's characters
+static void add_edit(scan *s, const segment name, const char *text)
 {
-    const value_type none = {V_NONE, -1, false, false};
-    if (v.kind != V_TYPE || v.many) return none;
+    if (name.token >= 0) add_edit_at(s, s->f->t[name.token].at, s->f->t[name.token].len, text);
+    else add_edit_at(s, name.at, name.len, text);
+}
+
+static segment segment_of(const cs_file *f, const int i)
+{
+    return (segment){f->t[i].name_at, f->t[i].name_len, i};
+}
+
+// Member `name` of a value of `v` (not a call): its type, or none; the edit where the rename changes its name
+static value_type member(scan *s, const value_type v, const segment name)
+{
+    if (v.many) return none;
+    const char *text = s->f->text + name.at;
+    const int n = name.len;
+    if (v.kind == V_USER) return user_member_type(s->names, v.index, text, n, false);
+    if (v.kind != V_TYPE) return none;
     const game_types *g = s->g;
     const unity_cs_type *t = &g->names.types[v.index];
-    const char *name;
-    int n;
-    name_of(s->f, place, &name, &n);
     for (int k = 0; k < t->field_count; k++) {
-        const char *id = t->ids[k][0] == '@' ? t->ids[k] + 1 : t->ids[k];
-        if (strlen(id) != (size_t)n || strncmp(id, name, (size_t)n) != 0) continue;
-        if (g->field_new[v.index][k]) add_edit(s, place, g->field_new[v.index][k]);
+        if (!same(text, n, bare(t->ids[k]))) continue;
+        if (g->field_new[v.index][k]) add_edit(s, name, g->field_new[v.index][k]);
         return g->field_types[v.index][k];
     }
     if (!v.value && t->local_ids) {
         const unity_cs_type *part = &g->names.types[t->local];
         for (int k = 0; k < part->field_count; k++) {
-            const char *id = t->local_ids[k][0] == '@' ? t->local_ids[k] + 1 : t->local_ids[k];
-            if (strlen(id) != (size_t)n || strncmp(id, name, (size_t)n) != 0) continue;
-            if (g->local_new[v.index] && g->local_new[v.index][k]) add_edit(s, place, g->local_new[v.index][k]);
+            if (!same(text, n, bare(t->local_ids[k]))) continue;
+            if (g->local_new[v.index] && g->local_new[v.index][k]) add_edit(s, name, g->local_new[v.index][k]);
             return g->field_types[t->local][k];
         }
     }
     return none;
 }
 
-// An enum's member `token`, after the enum's name: the edit where the rename changes it
-static void enum_member(scan *s, const int e, const int place)
+// An enum's member `name`, after the enum's name: the edit where the rename changes it
+static void enum_member(scan *s, const int e, const segment name)
 {
     const unity_cs_enum *en = &s->g->names.enums[e];
-    const char *name;
-    int n;
-    name_of(s->f, place, &name, &n);
     for (int k = 0; k < en->member_count; k++) {
-        if (!en->ids[k]) continue;
-        const char *id = en->ids[k][0] == '@' ? en->ids[k] + 1 : en->ids[k];
-        if (strlen(id) == (size_t)n && strncmp(id, name, (size_t)n) == 0 && s->g->member_new[e][k]) {
-            add_edit(s, place, s->g->member_new[e][k]);
+        if (en->ids[k] && same(s->f->text + name.at, name.len, bare(en->ids[k])) && s->g->member_new[e][k]) {
+            add_edit(s, name, s->g->member_new[e][k]);
         }
     }
+}
+
+// A type's name written in a dotted name: the edit where the rename changes it, where it's the type's own name (not
+// an alias's)
+static void type_name(scan *s, const value_type type, const segment name)
+{
+    const char *renamed = type.kind == V_TYPE ? s->g->type_new[type.index] : s->g->enum_new[type.index];
+    const char *old = bare(type.kind == V_TYPE ? s->g->names.types[type.index].cs : s->g->names.enums[type.index].cs);
+    if (renamed && same(s->f->text + name.at, name.len, old)) add_edit(s, name, renamed);
+}
+
+// A namespace's rename in a dotted name: where it, as written, as an alias expands it or under a namespace the file
+// sees, is the renamed namespace or in it, the namespace's last name where it's written there
+static void namespace_name(scan *s, const segment *segs, const int count, const bool global, const int at)
+{
+    const game_types *g = s->g;
+    const cs_file *f = s->f;
+    if (!g->space || !count || project_own(f, segs, global, at)) return;
+    jbuf name = {0};
+    joined(f, segs, count, &name);
+    // The namespace's last name is the space_names-th of the full name: the written names come after `before` of it
+    // (an alias's name standing for its target's)
+    for (int c = -1; c < (global ? 0 : f->alias_count + f->open_count); c++) {
+        jbuf full = {0};
+        int written = g->space_names - 1, lowest = 0;
+        if (c >= 0 && c < f->alias_count) {
+            const char *an;
+            int al;
+            name_of(f, f->aliases[c].name, &an, &al);
+            if (al != segs[0].len || strncmp(an, f->text + segs[0].at, (size_t)al) != 0) continue;
+            jb_printf(&full, "%s%s", f->aliases[c].target, name.data + al);
+            int target = 1;
+            for (const char *p = f->aliases[c].target; *p; p++) target += *p == '.';
+            written -= target - 1;
+            lowest = 1; // Not the alias's own name, which its using renames
+        } else if (c >= f->alias_count) {
+            const char *open = f->open[c - f->alias_count];
+            jb_printf(&full, "%s.%s", open, name.data);
+            int names = 1;
+            for (const char *p = open; *p; p++) names += *p == '.';
+            written -= names;
+        } else {
+            jb_put(&full, name.data);
+        }
+        const bool in = in_space(full.data, g->space);
+        jb_free(&full);
+        if (!in) continue;
+        if (written >= lowest && written < count && same(f->text + segs[written].at, segs[written].len, g->space_last)) {
+            add_edit(s, segs[written], g->space_new);
+        }
+        break;
+    }
+    jb_free(&name);
 }
 
 // The members of an object initializer `{ a = 1, b = 2 }` at `open`, of a value of `v`
@@ -822,16 +1124,16 @@ static void initializer(scan *s, const value_type v, const int open)
     const int close = f->match[open];
     for (int i = open + 1; i < close; i++) {
         if (f->within[i] != open) continue;
-        if ((is(f, i - 1, "{") || is(f, i - 1, ",")) && plain_name(f, i) && is(f, i + 1, "=")) member(s, v, i);
+        if ((is(f, i - 1, "{") || is(f, i - 1, ",")) && plain_name(f, i) && is(f, i + 1, "=")) member(s, v, segment_of(f, i));
     }
 }
 
 // Postfix steps from `i` on a value of `v`: members, generic calls (whose type argument is what they give: Get<T>(),
-// GetComponent<T>()), calls and indexers, null-forgiving `!`. Where the chain ends, and what it gives.
+// GetComponent<T>()), calls of the project's methods, indexers, null-forgiving `!`, then `as T`. Where the chain ends,
+// and what it gives.
 static int postfix(scan *s, int i, value_type v, value_type *gives)
 {
     const cs_file *f = s->f;
-    const value_type none = {V_NONE, -1, false, false};
     for (;;) {
         if ((is(f, i, ".") || is(f, i, "?.")) && plain_name(f, i + 1)) {
             const int name = i + 1;
@@ -847,12 +1149,15 @@ static int postfix(scan *s, int i, value_type v, value_type *gives)
                 continue;
             }
             if (is(f, name + 1, "(")) {
-                v = none;
+                const char *method;
+                int n;
+                name_of(f, name, &method, &n);
+                v = v.kind == V_USER && !v.many ? user_member_type(s->names, v.index, method, n, true) : none;
                 i = args_end(f, name + 1);
                 if (i < 0) break;
                 continue;
             }
-            v = member(s, v, name);
+            v = member(s, v, segment_of(f, name));
             i = name + 1;
             continue;
         }
@@ -867,15 +1172,33 @@ static int postfix(scan *s, int i, value_type v, value_type *gives)
         }
         break;
     }
+    if (is(f, i, "as")) {
+        // `x as Health`: what it's taken as
+        value_type as;
+        const int end = skip_type(f, i + 1, &as);
+        if (end >= 0) {
+            v = as;
+            i = end;
+        }
+    }
     if (gives) *gives = v;
     return i;
 }
 
-// The expression at `i` (a name, a generic call, `new`, `this.`): what it gives, and the token after it
+static int expression(scan *s, int i, value_type *gives);
+
+// Whether a token can start what a cast casts
+static bool operand_start(const cs_file *f, const int i)
+{
+    return plain_name(f, i) || is(f, i, "(") || is(f, i, "this") || is(f, i, "new") || is(f, i, "base")
+        || (name_is(f, i, "global") && is(f, i + 1, "::"));
+}
+
+// The expression at `i` (a name, a generic call, a call of the project's method, `new`, `this.`, a cast, a
+// parenthesized expression): what it gives, and the token after it
 static int expression(scan *s, int i, value_type *gives)
 {
     const cs_file *f = s->f;
-    const value_type none = {V_NONE, -1, false, false};
     *gives = none;
     if (is(f, i, "new")) {
         value_type v;
@@ -890,10 +1213,35 @@ static int expression(scan *s, int i, value_type *gives)
         if (after < 0) return i + 1;
         return postfix(s, after, v, gives);
     }
+    if (is(f, i, "(") && f->match[i] >= 0) {
+        const int close = f->match[i];
+        // A cast, `(Health)x`: what it gives is the type, its operand an expression of its own
+        value_type cast;
+        const int end = skip_type(f, i + 1, &cast);
+        if (end == close && cast.kind != V_NONE && operand_start(f, close + 1)) {
+            value_type operand;
+            const int stop = expression(s, close + 1, &operand);
+            *gives = cast;
+            return stop;
+        }
+        // Parenthesized: `((Health)x).hp`, `(x as Health).hp`
+        value_type inner;
+        const int stop = expression(s, i + 1, &inner);
+        if (stop == close) return postfix(s, close + 1, inner, gives);
+        return i + 1;
+    }
+    const int class_at = class_of(f, i);
     if (is(f, i, "this") && is(f, i + 1, ".") && plain_name(f, i + 2)) {
+        // A member of its class: one this file declares, else one any file of the class declares (a partial class)
+        const char *name;
+        int n;
+        name_of(f, i + 2, &name, &n);
+        if (is(f, i + 3, "(")) {
+            return postfix(s, args_end(f, i + 3), user_member_type(s->names, class_at, name, n, true), gives);
+        }
         bool ambiguous;
         const declared *d = variable_at(f, i + 2, i + 2, &ambiguous);
-        const value_type v = d && d->known && !ambiguous ? d->type : none;
+        const value_type v = d ? (d->known && !ambiguous ? d->type : none) : user_member_type(s->names, class_at, name, n, false);
         return postfix(s, i + 3, v, gives);
     }
     if (!plain_name(f, i) && !(name_is(f, i, "global") && is(f, i + 1, "::"))) return i + 1;
@@ -907,37 +1255,57 @@ static int expression(scan *s, int i, value_type *gives)
         if (v.kind != V_NONE && is(f, args_end(f, after), "[")) v.many = true;
         return postfix(s, args_end(f, after), v, gives);
     }
-    // A variable
+    // A variable, then a member of the class it's in (declared in this file, or another of a partial class's)
     bool ambiguous;
     const declared *d = name_is(f, i, "global") ? NULL : variable_at(f, i, i, &ambiguous);
     if (d) return postfix(s, i + 1, d->known && !ambiguous ? d->type : none, gives);
+    const char *own;
+    int own_len;
+    name_of(f, i, &own, &own_len);
+    if (!name_is(f, i, "global") && user_has_member(s->names, class_at, own, own_len)) {
+        if (is(f, i + 1, "(")) return postfix(s, args_end(f, i + 1), user_member_type(s->names, class_at, own, own_len, true), gives);
+        return postfix(s, i + 1, user_member_type(s->names, class_at, own, own_len, false), gives);
+    }
     // A type of the game's, and what follows it: its Value, an enum's member
     const bool strong = is(f, i - 1, "new") || is(f, i - 1, "is") || is(f, i - 1, "as") || is(f, i - 1, "<")
                      || (is(f, i - 1, "(") && name_is(f, i - 2, "typeof")) || (is(f, i - 1, ",") && f->within[i] >= 0 && is(f, f->within[i], "<"))
                      || plain_name(f, i + 1);
+    segment segs[33];
+    bool global;
+    const int names = token_segments(f, i, segs, 33, &global);
+    namespace_name(s, segs, names, global, i);
     int used;
     const value_type type = resolve(f, i, &used, strong);
-    if (type.kind == V_NONE) return i + 1;
-    int names[33];
-    int count_names = 0;
-    for (int k = name_is(f, i, "global") ? i + 2 : i; plain_name(f, k) && count_names < 33; k += 2) {
-        names[count_names++] = k;
-        if (!is(f, k + 1, ".")) break;
+    if (type.kind == V_NONE) {
+        // A class of the project's: its static members
+        const int c = !global && is(f, i + 1, ".") ? user_class_at(f, i) : -1;
+        if (c >= 0) return postfix(s, i + 1, (value_type){V_USER, c, false, false}, gives);
+        return i + 1;
     }
-    const int type_name = names[used - 1 - (type.value ? 1 : 0)];
-    const char *renamed = type.kind == V_TYPE ? s->g->type_new[type.index] : s->g->enum_new[type.index];
-    // Named by its own name, not an alias's
-    const char *old = type.kind == V_TYPE ? s->g->names.types[type.index].cs : s->g->names.enums[type.index].cs;
-    if (old[0] == '@') old++;
-    const char *written;
-    int written_len;
-    name_of(f, type_name, &written, &written_len);
-    if (renamed && strlen(old) == (size_t)written_len && strncmp(old, written, (size_t)written_len) == 0) add_edit(s, type_name, renamed);
-    if (type.kind == V_ENUM && used < count_names) {
-        enum_member(s, type.index, names[used]);
-        return names[used] + 1;
+    type_name(s, type, segs[used - 1 - (type.value ? 1 : 0)]);
+    if (type.kind == V_ENUM && used < names) {
+        enum_member(s, type.index, segs[used]);
+        return segs[used].token + 1;
     }
-    return names[used - 1] + 1;
+    return segs[used - 1].token + 1;
+}
+
+// A doc comment's cref: the type, its member and the namespace it names, as code naming them would be
+static void cref(scan *s, const span c)
+{
+    const cs_file *f = s->f;
+    segment segs[32];
+    bool global;
+    const int count = cref_segments(f->text, c, segs, 32, &global);
+    if (!count) return;
+    namespace_name(s, segs, count, global, -1);
+    int used;
+    const value_type type = resolve_names(f, segs, count, global, -1, &used, true);
+    if (type.kind == V_NONE) return;
+    type_name(s, type, segs[used - 1 - (type.value ? 1 : 0)]);
+    if (used >= count) return;
+    if (type.kind == V_ENUM) enum_member(s, type.index, segs[used]);
+    else member(s, type, segs[used]);
 }
 
 // ---------------------------------------------------------------------------
@@ -976,6 +1344,13 @@ static void scope_of(const cs_file *f, const int name, int *from, int *to)
             *to = close >= 0 ? statement_end(f, close + 1) : f->n - 1;
             return;
         }
+        // A pattern's variable in an if's or a while's condition: the rest of the block it's in, as C# has it
+        if (name_is(f, in - 1, "if") || name_is(f, in - 1, "while")) {
+            const int block = block_of(f, name);
+            *from = in;
+            *to = block >= 0 && f->match[block] >= 0 ? f->match[block] : f->n - 1;
+            return;
+        }
         // A method's or lambda's parameters: through its body
         int k = close >= 0 ? close + 1 : -1;
         while (k >= 0 && k < f->n && !is(f, k, "{") && !is(f, k, "=>") && !is(f, k, ";") && !is(f, k, ")") && !is(f, k, ",")) k++;
@@ -994,14 +1369,13 @@ static void scope_of(const cs_file *f, const int name, int *from, int *to)
     // A field's or property's: its type's body; a local's: the rest of its block
     const int block = block_of(f, name);
     if (block < 0) return;
-    if (f->body[block]) *from = block;
+    if (f->body[block] >= 0) *from = block;
     *to = f->match[block] >= 0 ? f->match[block] : f->n - 1;
 }
 
 // The generic call whose argument list `open` is: its one type argument, or none
 static value_type call_type(const cs_file *f, const int open)
 {
-    const value_type none = {V_NONE, -1, false, false};
     if (!is(f, open - 1, ">")) return none;
     int depth = 0, k = open - 1;
     for (; k >= 0; k--) {
@@ -1014,10 +1388,16 @@ static value_type call_type(const cs_file *f, const int open)
     return args[0];
 }
 
+// What may follow a declared name: `Health h;`, `= ...`, `(Health h)`, `foreach (Health h in`, `is Health h &&`
+static bool after_declared(const cs_file *f, const int i)
+{
+    return is(f, i, "=") || is(f, i, ";") || is(f, i, ",") || is(f, i, ")") || is(f, i, "=>") || is(f, i, "{") || is(f, i, ":")
+        || is(f, i, "&&") || is(f, i, "||") || name_is(f, i, "in") || name_is(f, i, "when");
+}
+
 static void declarations(scan *s)
 {
     cs_file *f = s->f;
-    const value_type none = {V_NONE, -1, false, false};
     for (int i = 0; i < f->n; i++) {
         // Types the project declares
         if ((is(f, i, "class") || is(f, i, "struct") || is(f, i, "interface") || is(f, i, "enum") || is(f, i, "record"))
@@ -1026,6 +1406,7 @@ static void declarations(scan *s)
             int n;
             name_of(f, i + 1, &name, &n);
             set_add(&s->names->types, name, n);
+            if (!is(f, i, "enum")) class_add(s->names, name, n);
         }
         if (is(f, i, "delegate") && !is(f, i + 1, "(")) {
             int k = i + 1;
@@ -1037,6 +1418,7 @@ static void declarations(scan *s)
                 set_add(&s->names->types, name, n);
             }
         }
+        if (s->pass == 0) continue;
         // A lambda's parameter in a generic call: On<Hit>(hit => ...), On<Hit>((hit) => ...)
         if (plain_name(f, i) && (is(f, i + 1, "=>") || (is(f, i + 1, ")") && is(f, i + 2, "=>") && is(f, i - 1, "(")))) {
             int open = is(f, i - 1, "(") ? i - 1 : -1;
@@ -1052,17 +1434,24 @@ static void declarations(scan *s)
         }
         // `Type name` followed by what follows a declared name
         if (!(in_list(f, i, keyword_types) || (plain_name(f, i) && chain_start(f, i)) || (name_is(f, i, "global") && is(f, i + 1, "::")))) continue;
-        if (is(f, i - 1, "new") || is(f, i - 1, "class") || is(f, i - 1, "struct") || is(f, i - 1, "enum") || is(f, i - 1, "interface")) continue;
+        if (is(f, i - 1, "new") || is(f, i - 1, "class") || is(f, i - 1, "struct") || is(f, i - 1, "enum") || is(f, i - 1, "interface")
+            || is(f, i - 1, "record")) {
+            continue;
+        }
         value_type type;
         const int end = skip_type(f, i, &type);
         if (end < 0 || !plain_name(f, end) || name_is(f, end, "in") || name_is(f, end, "is") || name_is(f, end, "as")) continue;
-        if (!(is(f, end + 1, "=") || is(f, end + 1, ";") || is(f, end + 1, ",") || is(f, end + 1, ")") || is(f, end + 1, "=>")
-              || is(f, end + 1, "{") || is(f, end + 1, ":") || name_is(f, end + 1, "in"))) {
-            continue;
-        }
         const char *name;
         int n;
         name_of(f, end, &name, &n);
+        // A method of a class of the project's: what it gives (`Health Find() { ... }`)
+        const int block = block_of(f, end);
+        const int owner = block >= 0 && f->body[block] >= 0 ? user_class_at(f, f->body[block]) : -1;
+        if (is(f, end + 1, "(")) {
+            if (owner >= 0 && s->pass == 1 && !is(f, i, "var")) member_add(s->names, owner, name, n, type, true);
+            continue;
+        }
+        if (!after_declared(f, end + 1)) continue;
         set_add(&s->names->declared, name, n);
         bool known = true;
         if (is(f, i, "var")) {
@@ -1089,16 +1478,19 @@ static void declarations(scan *s)
         int from, to;
         scope_of(f, end, &from, &to);
         if (name_is(f, i - 1, "out")) {
-            const int block = block_of(f, end);
+            const int out_block = block_of(f, end);
             from = end;
-            to = block >= 0 && f->match[block] >= 0 ? f->match[block] : f->n - 1;
+            to = out_block >= 0 && f->match[out_block] >= 0 ? f->match[out_block] : f->n - 1;
         }
         add_decl(f, end, type, known, from, to);
+        // A field or property of a class of the project's
+        if (owner >= 0 && from == block && s->pass == 1 && known) member_add(s->names, owner, name, n, type, false);
         // A list of declarators: `Health a, b;`
         for (int k = end + 1; is(f, k, ",") && plain_name(f, k + 1) && (is(f, k + 2, ",") || is(f, k + 2, ";") || is(f, k + 2, "="));) {
             name_of(f, k + 1, &name, &n);
             set_add(&s->names->declared, name, n);
             add_decl(f, k + 1, type, true, from, to);
+            if (owner >= 0 && from == block && s->pass == 1) member_add(s->names, owner, name, n, type, false);
             k += 2;
             if (is(f, k, "=")) break;
         }
@@ -1150,6 +1542,7 @@ static void usings(cs_file *f)
 static void free_file(cs_file *f)
 {
     free(f->t);
+    free(f->crefs);
     free(f->match);
     free(f->within);
     free(f->body);
@@ -1190,12 +1583,14 @@ static void scan_file(void *user, const char *path)
     if (strstr(path, "~/")) return; // A folder Unity leaves out
     char *text = read_all(path);
     if (!text) return;
-    lexer l = {text, (int)strlen(text), 0, NULL, 0, 0};
+    lexer l = {text, (int)strlen(text), 0, NULL, 0, 0, NULL, 0, 0};
     lex_code(&l, 0);
     cs_file f = {0};
     f.text = text;
     f.t = l.items;
     f.n = l.count;
+    f.crefs = l.crefs;
+    f.cref_count = l.cref_count;
     match_brackets(&f);
     usings(&f);
     s->f = &f;
@@ -1203,14 +1598,16 @@ static void scan_file(void *user, const char *path)
     s->quiet = true;
     declarations(s);
     s->quiet = false;
-    if (!s->collecting) {
+    if (s->pass == 2) {
         for (int i = 0; i < f.n; i++) {
-            const bool start = (plain_name(&f, i) && chain_start(&f, i)) || is(&f, i, "new") || (is(&f, i, "this") && is(&f, i + 1, "."))
-                            || (name_is(&f, i, "global") && is(&f, i + 1, "::"));
+            if (is(&f, i - 1, "namespace")) continue; // The project's own namespaces, which the game's rename isn't
+            const bool start = (plain_name(&f, i) && chain_start(&f, i)) || is(&f, i, "new") || is(&f, i, "(")
+                            || (is(&f, i, "this") && is(&f, i + 1, ".")) || (name_is(&f, i, "global") && is(&f, i + 1, "::"));
             if (!start) continue;
             value_type gives;
             expression(s, i, &gives);
         }
+        for (int i = 0; i < f.cref_count; i++) cref(s, f.crefs[i]);
     }
     if (s->edit_count) {
         qsort(s->edits, (size_t)s->edit_count, sizeof *s->edits, by_place);
@@ -1339,12 +1736,11 @@ void csharp_renames(const char *project, const csharp_what what, const char *typ
     }
     jb_free(&packages);
     free(manifest_text);
-    // The project's own names first, then the edits
+    // The project's types' names, then their members, then the edits
     project_names names = {0};
-    scan s = {.g = &g, .names = &names, .out = out, .files_written = files_written, .collecting = true};
+    scan s = {.g = &g, .names = &names, .out = out, .files_written = files_written};
     current = &s;
-    for (int pass = 0; pass < 2; pass++) {
-        s.collecting = pass == 0;
+    for (s.pass = 0; s.pass < 3; s.pass++) {
         for (int i = 0; i < list.count; i++) folder_find(list.items[i], ".cs", scan_file, &s);
     }
     current = NULL;
@@ -1353,6 +1749,12 @@ void csharp_renames(const char *project, const csharp_what what, const char *typ
     free(list.items);
     set_free(&names.types);
     set_free(&names.declared);
+    for (int i = 0; i < names.class_count; i++) {
+        for (int k = 0; k < names.classes[i].count; k++) free(names.classes[i].members[k].name);
+        free(names.classes[i].members);
+        free(names.classes[i].name);
+    }
+    free(names.classes);
     free_types(&g);
     free(text);
 }

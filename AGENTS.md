@@ -51,11 +51,11 @@ Warnings are errors. Fix warnings encountered during validation, including ones 
 
 ### Testing and merging
 
-Test the change once locally before merging, according to scope:
+Test only what the change needs, once, before merging: the Build workflow runs every suite on every platform for each push to `dev` and catches the rest, and full local suites are slow (owner, 2026-10-26). Run the tests of what changed and of what depends on it (`ctest -R`, a test binary's name filter), on native and web only where the changed code runs on both; a full suite only for a change that reaches broadly (codegen every game goes through, the shared runtime, the build system). Don't repeat a run for wording, notes or a fix outside what it tested. A failure in CI after the push is fixed then, first.
 
 | Scope | Required validation |
 |---|---|
-| Compiler, engine, platform or build | Full native and web debug suites |
+| Compiler, engine, platform or build | The affected targets' tests, native and web where the code runs on both; full suites only for broad changes (above) |
 | Repository game, including a benchmark or prototype | Its targets and tests, native and web |
 | `docs/` only | `npm run build` in `docs/` |
 | `relay/` only | `node --test relay/relay.test.mjs relay/lobbies.test.mjs` |

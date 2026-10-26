@@ -50,10 +50,18 @@ TIDE_TEST(unity_code_writes_the_samples_package)
         "TideGame.cs", "TideGame.cs.meta", "components.json", "Components/Ball.cs", "Components/Ball.cs.meta",
         "Components/Owner.cs", "Components/Spinner.cs",
     };
+    bool all_same = true;
     for (size_t i = 0; i < sizeof files / sizeof files[0]; i++) {
         snprintf(from, sizeof from, "%s/%s", TIDE_UNITY_SAMPLE_PACKAGE, files[i]);
         snprintf(to, sizeof to, "%s/%s", dir, files[i]);
-        TIDE_CHECK(same_text(from, to));
+        const bool one = same_text(from, to);
+        TIDE_CHECK(one);
+        all_same = all_same && one;
+    }
+    if (!all_same) {
+        printf("    If the Sample's Bounce.tide changed, tide unity (the Sample's Unity tests) writes its package again; copy\n"
+               "    its Library/Tide/outline.json, cut to Bounce.tide's types with their file as Tide/Bounce.tide, to\n"
+               "    %s\n", TIDE_UNITY_SAMPLE_OUTLINE);
     }
     // A stale component's script goes
     snprintf(to, sizeof to, "%s/Components/Gone.cs", dir);
