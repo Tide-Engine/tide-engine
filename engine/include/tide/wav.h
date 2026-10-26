@@ -7,6 +7,19 @@
 // WAV files, read and written by the engine's own code (from the RIFF and
 // WAVE formats as Microsoft published them), so games carry no license terms.
 
+// ---------------------------------------------------------------------------
+// Limits: what a file's bytes can ask of a decode. A clip's file can come from
+// anywhere (a fetched URL), and every player's machine decodes it. The limit
+// is only its number here: change it and nothing else changes. A file past it
+// is refused before its samples are made.
+
+// The samples (frames times channels) a decoded sound holds, less one at the
+// most: a WAV that says this many is refused, as is a whole Vorbis decode that
+// gives as many (tide/vorbis.h), and tidec refuses such a WAV too. A WAV's
+// samples come from its own bytes, at most four floats a byte (8-bit PCM);
+// 2^30 floats would be 4 GiB, which the web's size_t doesn't count.
+#define TIDE_SOUND_MAX_SAMPLES (1u << 30)
+
 // A decoded sound: interleaved samples of `channels` at `rate` frames a second.
 typedef struct tide_sound {
     float *samples; // malloc'd: frames * channels floats, -1 to 1

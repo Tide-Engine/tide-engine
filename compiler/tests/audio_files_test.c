@@ -13,6 +13,7 @@
 #include "asset_files.h"
 #include "audio_files.h"
 #include "folders.h"
+#include "tide/vorbis.h"
 #include "tide/wav.h"
 #include "tide_test.h"
 
@@ -191,6 +192,94 @@ TIDE_TEST(audio_unsupported_containers_identify_opus_aiff_and_big_endian_wave)
     TIDE_CHECK(!audio_file_read(aiff, sizeof aiff, NULL, NULL, why) && strstr(why, "AIFF"));
     const uint8_t rifx[] = {'R','I','F','X',0,0,0,4,'W','A','V','E'};
     TIDE_CHECK(!audio_file_read(rifx, sizeof rifx, NULL, NULL, why) && strstr(why, "RIFX"));
+}
+
+static uint32_t ogg_crc(const uint8_t *p, size_t size)
+{
+    uint32_t crc = 0;
+    for (size_t i = 0; i < size; i++) {
+        crc ^= (uint32_t)p[i] << 24;
+        for (int k = 0; k < 8; k++) crc = (crc & 0x80000000u) ? (crc << 1) ^ 0x04c11db7u : crc << 1;
+    }
+    return crc;
+}
+
+// An Ogg page of one stream, its packets each under 255 bytes, appended at `*size`.
+static void ogg_page(uint8_t *out, size_t *size, uint8_t type, const uint8_t *const *packets, const uint32_t *sizes, uint32_t count)
+{
+    uint8_t *h = out + *size;
+    memset(h, 0, 27); memcpy(h, "OggS", 4); h[5] = type; h[14] = 1; h[18] = (uint8_t)(type == 0x02 ? 0 : 1); h[26] = (uint8_t)count;
+    size_t at = 27u + count;
+    for (uint32_t i = 0; i < count; i++) { h[27 + i] = (uint8_t)sizes[i]; memcpy(h + at, packets[i], sizes[i]); at += sizes[i]; }
+    put32(h + 22, ogg_crc(h, at));
+    *size += at;
+}
+
+TIDE_TEST(audio_ogg_vorbis_codebooks_past_the_limit_are_refused_at_build)
+{
+    // Mono 8 kHz Vorbis headers whose one codebook says a million entries more than any file's may have:
+    // a few bytes asking for a tree of millions of nodes on every player's machine
+    uint8_t id[30] = {1, 'v', 'o', 'r', 'b', 'i', 's', 0, 0, 0, 0, 1};
+    put32(id + 12, 8000); id[28] = 0x88; id[29] = 1;
+    const uint8_t comment[16] = {3, 'v', 'o', 'r', 'b', 'i', 's', 0, 0, 0, 0, 0, 0, 0, 0, 1};
+    uint8_t setup[16] = {5, 'v', 'o', 'r', 'b', 'i', 's', 0, 0x42, 0x43, 0x56, 1, 0}; // One codebook: sync, 1 dimension,
+    const uint32_t entries = TIDE_VORBIS_MAX_ENTRIES + 1u;
+    setup[13] = (uint8_t)entries; setup[14] = (uint8_t)(entries >> 8); setup[15] = (uint8_t)(entries >> 16); // and its entries
+    uint8_t file[160];
+    size_t size = 0;
+    const uint8_t *first[1] = {id}, *second[2] = {comment, setup};
+    const uint32_t first_size[1] = {30}, second_size[2] = {16, 16};
+    ogg_page(file, &size, 0x02, first, first_size, 1);
+    ogg_page(file, &size, 0x04, second, second_size, 2);
+    char why[256];
+    TIDE_CHECK(!audio_file_read(file, size, NULL, NULL, why));
+    TIDE_CHECK(strcmp(why, "Ogg Vorbis: the file's codebooks have more entries in all than a file's may (TIDE_VORBIS_MAX_ENTRIES)") == 0);
+}
+
+// Each page's checksum again, after a test changed a file's bytes; gives where the last page starts.
+static size_t ogg_recheck(uint8_t *b, size_t size)
+{
+    size_t last = 0;
+    for (size_t at = 0; at + 27u <= size;) {
+        size_t body = 0;
+        for (uint32_t i = 0; i < b[at + 26]; i++) body += b[at + 27 + i];
+        const size_t page = 27u + b[at + 26] + body;
+        memset(b + at + 22, 0, 4);
+        put32(b + at + 22, ogg_crc(b + at, page));
+        last = at;
+        at += page;
+    }
+    return last;
+}
+
+TIDE_TEST(audio_ogg_vorbis_is_decoded_once_at_build)
+{
+    size_t size;
+    uint8_t *raw = fixture("../assets/blip.ogg", &size); // Mono, 8 kHz, 2400 frames
+    TIDE_REQUIRE(raw != NULL);
+    char why[256];
+    uint8_t *wav = NULL;
+    size_t wav_size = 0;
+    TIDE_CHECK(audio_file_read(raw, size, &wav, &wav_size, why) && wav == NULL); // Kept as it is
+    // Its last page's granule saying 2^31 frames, which its packets don't give:
+    // encoders write granules past their packets, and such a file plays as its
+    // packets give, which is what the runtime sizes a clip by
+    uint8_t *lying = malloc(size);
+    TIDE_REQUIRE(lying != NULL);
+    memcpy(lying, raw, size);
+    size_t last = ogg_recheck(lying, size);
+    put32(lying + last + 6, 0x80000000u);
+    ogg_recheck(lying, size);
+    TIDE_CHECK(audio_file_read(lying, size, NULL, NULL, why));
+    // An audio packet that says it isn't one: a player would skip it, a gap of silence
+    memcpy(lying, raw, size);
+    TIDE_REQUIRE(!(lying[last + 5] & 0x01u) && lying[last + 26] > 0); // The last page starts a packet
+    lying[last + 27u + lying[last + 26]] |= 1u;
+    ogg_recheck(lying, size);
+    TIDE_CHECK(!audio_file_read(lying, size, NULL, NULL, why));
+    TIDE_CHECK(strcmp(why, "Ogg Vorbis audio packet is cut short or corrupt") == 0);
+    free(lying);
+    free(raw);
 }
 
 static bool write_pinned(const char *path, const uint8_t *bytes, size_t size)

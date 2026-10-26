@@ -147,7 +147,7 @@ TIDE_TEST(png_reads_what_the_writer_wrote)
     uint8_t *png = tide_png_encode(rgba, W, H, &size);
     TIDE_REQUIRE(png != NULL);
     tide_png_image image;
-    TIDE_REQUIRE(tide_png_decode(png, size, &image));
+    TIDE_REQUIRE(tide_png_decode(png, size, &image, NULL));
     TIDE_CHECK(image.width == (uint32_t)W && image.height == (uint32_t)H);
     for (int i = 0; i < W * H; i++) {
         const tide_color want = {(float)rgba[4 * i] / 255.0f, (float)rgba[4 * i + 1] / 255.0f, (float)rgba[4 * i + 2] / 255.0f, 1.0f};
@@ -206,6 +206,97 @@ TIDE_TEST(png_inflates_dynamic_codes)
     free(deflated);
 }
 
+// A stored block after a block of codes whose end came early in the bytes
+// the bit buffer had taken: zlib's flush (Z_SYNC_FLUSH) after 22 'H's, which
+// is a block of codes, an empty stored block and a last empty fixed block. The
+// stored block's lengths are in a byte the code's lookup had already taken.
+TIDE_TEST(png_inflates_a_stored_block_after_codes)
+{
+    static const uint8_t stream[22] = {0x04, 0xC1, 0x81, 0x00, 0x00, 0x00, 0x00, 0x00, 0x90, 0x3D, 0xFF,
+                                       0x45, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0xFF, 0xFF, 0x03, 0x00};
+    sink out = {0};
+    size_t consumed = 0;
+    TIDE_CHECK(tide_inflate(stream, sizeof stream, take_inflated, &out, &consumed));
+    bool all_h = out.size == 22;
+    for (size_t i = 0; i < out.size; i++) all_h = all_h && out.data[i] == 'H';
+    TIDE_CHECK(all_h && consumed == sizeof stream);
+    free(out.data);
+
+    // A picture written that way: 5 by 3 of 8-bit gray, its rows flushed
+    static const uint8_t z[31] = {0x78, 0x01, 0x04, 0xC1, 0x31, 0x01, 0x00, 0x00, 0x00, 0xC2, 0xA0, 0x7D, 0xF4, 0x6F, 0x65, 0x2C,
+                                  0x21, 0x46, 0xD8, 0x02, 0x07, 0x00, 0x00, 0xFF, 0xFF, 0x03, 0x00, 0x1A, 0x61, 0x02, 0xAD};
+    static const uint8_t gray[15] = {7, 7, 200, 7, 7, 7, 7, 7, 200, 200, 7, 7, 7, 7, 7};
+    bytes png = {0};
+    put(&png, (const uint8_t[8]){0x89, 'P', 'N', 'G', '\r', '\n', 0x1A, '\n'}, 8);
+    chunk(&png, "IHDR", (const uint8_t[13]){0, 0, 0, 5, 0, 0, 0, 3, 8, 0, 0, 0, 0}, 13);
+    chunk(&png, "IDAT", z, sizeof z);
+    chunk(&png, "IEND", NULL, 0);
+    tide_png_image image;
+    TIDE_REQUIRE(tide_png_decode(png.data, png.size, &image, NULL));
+    bool same = image.width == 5 && image.height == 3;
+    for (int i = 0; i < 15 && same; i++) {
+        const float g = (float)gray[i] / 255.0f;
+        same = same_color(image.pixels[i], (tide_color){g, g, g, 1.0f});
+    }
+    TIDE_CHECK(same);
+    free(image.pixels);
+    free(png.data);
+}
+
+// Bits into bytes, lowest first, as deflate has them.
+typedef struct bits {
+    uint8_t data[64];
+    uint32_t count;
+} bits;
+
+static void put_bits(bits *b, const uint32_t v, const uint32_t n)
+{
+    for (uint32_t i = 0; i < n; i++, b->count++) b->data[b->count / 8u] |= (uint8_t)(((v >> i) & 1u) << (b->count % 8u));
+}
+
+TIDE_TEST(png_refuses_hostile_streams)
+{
+    sink out = {0};
+    size_t consumed;
+    // A stored block whose length's complement is wrong, and one longer than the input
+    TIDE_CHECK(!tide_inflate((const uint8_t[6]){0x01, 0x01, 0x00, 0x00, 0x00, 'x'}, 6, take_inflated, &out, &consumed));
+    TIDE_CHECK(!tide_inflate((const uint8_t[6]){0x01, 0x05, 0x00, 0xFA, 0xFF, 'x'}, 6, take_inflated, &out, &consumed));
+    // A fixed block's first symbol a match, reaching before the stream's start
+    TIDE_CHECK(!tide_inflate((const uint8_t[3]){0x03, 0x02, 0x00}, 3, take_inflated, &out, &consumed));
+    // Code lengths' codes that are over-subscribed: 19 codes of 1 bit
+    bits over = {0};
+    put_bits(&over, 1, 1);
+    put_bits(&over, 2, 2);
+    put_bits(&over, 0, 10);
+    put_bits(&over, 15, 4);
+    for (int i = 0; i < 19; i++) put_bits(&over, 1, 3);
+    TIDE_CHECK(!tide_inflate(over.data, (over.count + 7u) / 8u + 8u, take_inflated, &out, &consumed));
+    // And incomplete: one code of 2 bits
+    bits under = {0};
+    put_bits(&under, 1, 1);
+    put_bits(&under, 2, 2);
+    put_bits(&under, 0, 10);
+    put_bits(&under, 0, 4);
+    put_bits(&under, 2, 3);
+    TIDE_CHECK(!tide_inflate(under.data, (under.count + 7u) / 8u + 8u, take_inflated, &out, &consumed));
+    TIDE_CHECK(out.size == 0);
+    free(out.data);
+
+    // A palette's index past its entries, and a tRNS longer than the palette
+    static const uint8_t palette[2 * 3] = {255, 0, 0, 0, 255, 0};
+    const uint8_t raw[2 * (3 + 1)] = {0, 0, 1, 0, 0, 1, 5, 1};
+    const made past = {3, 2, 8, 3, 0, palette, 2, NULL, 0};
+    bytes p = make_png(&past, raw, sizeof raw, 1000);
+    tide_png_image image;
+    TIDE_CHECK(!tide_png_decode(p.data, p.size, &image, NULL));
+    free(p.data);
+    const uint8_t fine[2 * (3 + 1)] = {0, 0, 1, 0, 0, 1, 1, 1};
+    const made longer = {3, 2, 8, 3, 0, palette, 2, (const uint8_t[3]){0, 128, 255}, 3};
+    p = make_png(&longer, fine, sizeof fine, 1000);
+    TIDE_CHECK(!tide_png_decode(p.data, p.size, &image, NULL));
+    free(p.data);
+}
+
 TIDE_TEST(png_reads_every_color_type_and_depth)
 {
     static const uint8_t palette[16 * 3] = {255, 0,   0,   0,   255, 0,   0,  0,  255, 10,  20, 30, 40, 50, 60, 70,
@@ -261,7 +352,7 @@ TIDE_TEST(png_reads_every_color_type_and_depth)
                         entries < 3 ? entries : 3};
         bytes png = make_png(&m, raw, sizeof raw, 7);
         tide_png_image image;
-        const bool ok = tide_png_decode(png.data, png.size, &image);
+        const bool ok = tide_png_decode(png.data, png.size, &image, NULL);
         if (!ok) printf("    color type %d at %d bits didn't decode\n", color, depth);
         TIDE_CHECK(ok);
         if (!ok) {
@@ -284,7 +375,7 @@ TIDE_TEST(png_reads_a_transparent_color)
     const made m = {3, 2, 8, 0, 0, NULL, 0, key, 2};
     bytes png = make_png(&m, gray, sizeof gray, 1000);
     tide_png_image image;
-    TIDE_REQUIRE(tide_png_decode(png.data, png.size, &image));
+    TIDE_REQUIRE(tide_png_decode(png.data, png.size, &image, NULL));
     TIDE_CHECK(near(image.pixels[0].a, 1.0f) && near(image.pixels[1].a, 0.0f) && near(image.pixels[3].a, 0.0f) && near(image.pixels[4].a, 0.0f));
     TIDE_CHECK(near(image.pixels[5].a, 1.0f) && near(image.pixels[5].r, 5.0f / 255.0f));
     free(image.pixels);
@@ -294,7 +385,7 @@ TIDE_TEST(png_reads_a_transparent_color)
     const uint8_t key16[6] = {0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC};
     const made m16 = {2, 1, 16, 2, 0, NULL, 0, key16, 6};
     png = make_png(&m16, rgb16, sizeof rgb16, 1000);
-    TIDE_REQUIRE(tide_png_decode(png.data, png.size, &image));
+    TIDE_REQUIRE(tide_png_decode(png.data, png.size, &image, NULL));
     TIDE_CHECK(near(image.pixels[0].a, 0.0f) && near(image.pixels[1].a, 1.0f) && near(image.pixels[1].r, (float)0x1234 / 65535.0f));
     free(image.pixels);
     free(png.data);
@@ -337,7 +428,7 @@ TIDE_TEST(png_undoes_every_filter)
     const made m = {W, H, 8, 6, 0, NULL, 0, NULL, 0};
     bytes png = make_png(&m, raw, sizeof raw, 1000);
     tide_png_image image;
-    TIDE_REQUIRE(tide_png_decode(png.data, png.size, &image));
+    TIDE_REQUIRE(tide_png_decode(png.data, png.size, &image, NULL));
     bool same = true;
     for (int y = 0; y < H; y++) {
         for (int i = 0; i < W; i++) {
@@ -384,7 +475,7 @@ TIDE_TEST(png_reads_interlaced_pictures)
         const made m = {(uint32_t)W, (uint32_t)H, 8, 2, 1, NULL, 0, NULL, 0};
         bytes png = make_png(&m, raw.data, raw.size, 5);
         tide_png_image image;
-        const bool ok = tide_png_decode(png.data, png.size, &image);
+        const bool ok = tide_png_decode(png.data, png.size, &image, NULL);
         TIDE_CHECK(ok);
         if (ok) {
             bool same = true;
@@ -407,46 +498,70 @@ TIDE_TEST(png_refuses_what_is_wrong)
     const made m = {3, 2, 8, 0, 0, NULL, 0, NULL, 0};
     bytes png = make_png(&m, raw, sizeof raw, 1000);
     tide_png_image image;
-    TIDE_REQUIRE(tide_png_decode(png.data, png.size, &image));
+    TIDE_REQUIRE(tide_png_decode(png.data, png.size, &image, NULL));
     free(image.pixels);
 
-    TIDE_CHECK(!tide_png_decode(png.data, 0, &image));
-    TIDE_CHECK(!tide_png_decode((const uint8_t *)"not a png at all, not a png at all, not", 40, &image));
-    for (size_t cut = 1; cut < png.size; cut += 3) TIDE_CHECK(!tide_png_decode(png.data, cut, &image));
+    TIDE_CHECK(!tide_png_decode(png.data, 0, &image, NULL));
+    TIDE_CHECK(!tide_png_decode((const uint8_t *)"not a png at all, not a png at all, not", 40, &image, NULL));
+    for (size_t cut = 1; cut < png.size; cut += 3) TIDE_CHECK(!tide_png_decode(png.data, cut, &image, NULL));
 
     bytes bad = {0};
     put(&bad, png.data, png.size);
     bad.data[8 + 8 + 13] ^= 1; // A bit of the header's CRC
-    TIDE_CHECK(!tide_png_decode(bad.data, bad.size, &image));
+    TIDE_CHECK(!tide_png_decode(bad.data, bad.size, &image, NULL));
     memcpy(bad.data, png.data, png.size);
     bad.data[bad.size - 1 - 4 - 4 - 4 - 1] ^= 1; // The zlib checksum's last byte, in the IDAT before IEND... its CRC then fails first
-    TIDE_CHECK(!tide_png_decode(bad.data, bad.size, &image));
+    TIDE_CHECK(!tide_png_decode(bad.data, bad.size, &image, NULL));
     free(bad.data);
 
     uint8_t filtered[sizeof raw];
     memcpy(filtered, raw, sizeof raw);
     filtered[0] = 7;
     bytes f = make_png(&m, filtered, sizeof filtered, 1000);
-    TIDE_CHECK(!tide_png_decode(f.data, f.size, &image));
+    TIDE_CHECK(!tide_png_decode(f.data, f.size, &image, NULL));
     free(f.data);
 
     bytes s = make_png(&m, raw, sizeof raw - 2, 1000);
-    TIDE_CHECK(!tide_png_decode(s.data, s.size, &image));
+    TIDE_CHECK(!tide_png_decode(s.data, s.size, &image, NULL));
     free(s.data);
 
     const made p = {3, 2, 8, 3, 0, NULL, 0, NULL, 0};
     bytes np = make_png(&p, raw, sizeof raw, 1000);
-    TIDE_CHECK(!tide_png_decode(np.data, np.size, &image));
+    TIDE_CHECK(!tide_png_decode(np.data, np.size, &image, NULL));
     free(np.data);
 
     const made d = {3, 2, 4, 2, 0, NULL, 0, NULL, 0};
     bytes bd = make_png(&d, raw, sizeof raw, 1000);
-    TIDE_CHECK(!tide_png_decode(bd.data, bd.size, &image));
+    TIDE_CHECK(!tide_png_decode(bd.data, bd.size, &image, NULL));
     free(bd.data);
 
     const made z = {0, 2, 8, 0, 0, NULL, 0, NULL, 0};
     bytes bz = make_png(&z, raw, sizeof raw, 1000);
-    TIDE_CHECK(!tide_png_decode(bz.data, bz.size, &image));
+    TIDE_CHECK(!tide_png_decode(bz.data, bz.size, &image, NULL));
     free(bz.data);
     free(png.data);
+}
+
+// Inflated bytes past the last scanline are read for zlib's checksum up to
+// TIDE_PNG_MAX_EXTRA_BYTES, and a stream with more is refused: a decode's
+// work is its picture's, never what a few bytes of deflate say
+TIDE_TEST(png_reads_extra_inflated_bytes_up_to_the_limit)
+{
+    const made m = {1, 1, 8, 0, 0, NULL, 0, NULL, 0}; // One gray pixel
+    const size_t most = TIDE_PNG_MAX_EXTRA_BYTES;
+    uint8_t *raw = calloc(2u + most + 1u, 1);
+    raw[1] = 0x80; // The scanline: no filter, then the pixel
+    tide_png_image image;
+    bytes within = make_png(&m, raw, 2u + most, 65535);
+    TIDE_CHECK(tide_png_decode(within.data, within.size, &image, NULL));
+    TIDE_CHECK(image.width == 1 && image.height == 1 && image.pixels[0].r == 128.0f / 255.0f);
+    free(image.pixels);
+    bytes past = make_png(&m, raw, 2u + most + 1u, 65535);
+    char why[TIDE_PNG_WHY];
+    TIDE_CHECK(!tide_png_decode(past.data, past.size, &image, why));
+    TIDE_CHECK(strcmp(why, "its compressed data goes on for more than 1 MiB past its last row (TIDE_PNG_MAX_EXTRA_BYTES)") == 0);
+    TIDE_CHECK(!tide_png_decode(past.data, 9, &image, why) && why[0] == 0); // Wrong in another way: no limit to name
+    free(within.data);
+    free(past.data);
+    free(raw);
 }

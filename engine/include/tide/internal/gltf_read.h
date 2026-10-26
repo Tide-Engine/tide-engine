@@ -1,7 +1,11 @@
 #pragma once
 
 // Shared glTF buffers/accessors. Included by an importer after it declares
-// reader and gltf, and supplies fail() and zeroed().
+// reader and gltf (with a `uint64_t reads`), and supplies fail(), zeroed(),
+// past_limit() (a refusal by a limit, named), INDICES_MOST (the most elements
+// an accessor has) and READS_MOST (the most accessor numbers a whole decode
+// reads), each with its limit's name beside it (INDICES_MOST_NAME,
+// READS_MOST_NAME).
 
 #include "tide/page.h"
 
@@ -130,6 +134,20 @@ static const uint8_t *view_at(gltf *g, const int64_t view, const uint64_t offset
     return data + from + offset;
 }
 
+// Counts `numbers` an accessor read is about to take against the decode's
+// READS_MOST, before what it reads them into is made: an accessor several
+// parts of a file name is read again for each, so the work isn't bounded by
+// the counts a file says once.
+static bool spend_reads(gltf *g, const uint64_t numbers)
+{
+    if (numbers > (uint64_t)READS_MOST - g->reads) {
+        return past_limit(g->r, READS_MOST_NAME, READS_MOST, "numbers to read from its accessors (one each part names counts again)",
+                          g->reads + numbers);
+    }
+    g->reads += numbers;
+    return true;
+}
+
 static uint32_t component_bytes(const int64_t type)
 {
     return type == 5120 || type == 5121 ? 1u : type == 5122 || type == 5123 ? 2u : type == 5125 || type == 5126 ? 4u : 0u;
@@ -207,7 +225,7 @@ static bool accessor_of(gltf *g, const jnode *index, accessor *a, const char *wh
 #endif
              : 0u;
     if (!a->width || !component_bytes(a->type)) return fail(g->r, NULL, "has %s of a type no mesh's are ('%.40s')", what, name);
-    if ((uint64_t)count > INDICES_MOST) return fail(g->r, NULL, "has more %s than one Mesh holds", what);
+    if ((uint64_t)count > INDICES_MOST) return past_limit(g->r, INDICES_MOST_NAME, INDICES_MOST, "elements in an accessor", (uint64_t)count);
     a->json = json;
     a->count = (uint64_t)count;
     a->view = jwhole_or(json, "bufferView", -1);
@@ -262,6 +280,7 @@ static uint32_t *read_indices(gltf *g, const jnode *index, uint64_t *count)
         fail(g->r, NULL, "has indices that aren't whole numbers");
         return NULL;
     }
+    if (!spend_reads(g, a.count)) return NULL;
     uint32_t *out = zeroed((size_t)a.count, sizeof *out);
     if (a.view >= 0 && a.count) {
         const uint32_t each = component_bytes(a.type);

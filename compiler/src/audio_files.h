@@ -5,7 +5,9 @@
 #include <stdint.h>
 
 // Checks a Clip's bytes by their contents. WAV and Ogg Vorbis stay as they
-// are; MP3 and native FLAC are fully decoded to a mono/stereo float32 WAV.
+// are (an Ogg Vorbis file decoded once to check its packets and samples, as
+// MP3 and FLAC are); MP3 and native FLAC are fully decoded to a mono/stereo
+// float32 WAV.
 // Success leaves *converted NULL and *converted_size 0 for unchanged bytes,
 // or a malloc-owned WAV for an import. The input is never changed. Both
 // output pointers may be NULL when only validation is wanted. On failure,

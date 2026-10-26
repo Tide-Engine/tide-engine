@@ -29,3 +29,6 @@ operands use bounded multiplication; sign-bit and low-word operations use
 unsigned shifts/subtraction. These preserve the fdlibm bit operations without
 undefined signed shifts or negation of the minimum integer. Linux UBSan caught
 the negative exponent shift in software square root while loading a Maya rig.
+`ufbx_isnan` negates its low word unsigned, as `ufbx_atan2` already did: a
+double whose low word is 0x80000000 negated the minimum `int`. Fuzzing
+`fbx_file_to_glb` with UBSan found it through scene finalization.

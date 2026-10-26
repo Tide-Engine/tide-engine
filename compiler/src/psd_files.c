@@ -5,6 +5,7 @@
 // merged transparency. ZIP uses the engine's existing deflate reader.
 
 #include "psd_files.h"
+#include "tide/internal/count_text.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -206,8 +207,15 @@ bool psd_file_read(const uint8_t *bytes, const size_t size, tide_png_image *out,
     if (depth != 8 && depth != 16) return fail(why, "isn't 8 or 16 bits per channel; convert the document before saving");
     if (channels < 3 || channels > 56) return fail(why, "has an invalid RGB channel count");
     if (!width || !height || width > TIDE_PNG_MAX_SIDE || height > TIDE_PNG_MAX_SIDE)
-        return fail(why, "has invalid dimensions; images can be at most 16384 pixels each way");
+        return fail(why, "has invalid dimensions: zero, or more than the 16384 pixels each way an image import takes (TIDE_PNG_MAX_SIDE)");
     const uint64_t pixel_count = (uint64_t)width * height;
+    if (pixel_count > TIDE_PSD_MAX_PIXELS) {
+        char all[32], most[32];
+        snprintf(why, 256, "is %u by %u pixels, %s in all, more than the %s a PSD import takes (TIDE_PSD_MAX_PIXELS); "
+                           "save it smaller, or export it as a PNG, which can be 16384 pixels each way",
+                 (unsigned)width, (unsigned)height, tide_count_text(pixel_count, all), tide_count_text(TIDE_PSD_MAX_PIXELS, most));
+        return false;
+    }
     if (pixel_count > SIZE_MAX / sizeof(tide_color)) return fail(why, "is too large to decode on this machine");
     section(&r); // Color mode data
     psd_reader image_resources = section(&r);

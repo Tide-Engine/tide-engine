@@ -63,6 +63,8 @@ static int check_fetches(tide_local *local)
         "a limit of 0 or less is none",
         "the limit stays through the calls after it, and a field sets it",
         "a request after one that timed out is answered",
+        "a redirect's Location after its Content-Length is followed",
+        "a URL's spaces and line breaks stay in its request line",
     };
     for (size_t i = 0; i < sizeof requests / sizeof requests[0]; i++) {
         fetch_check((local->Fetches.requests >> i & 1) == 1, requests[i]);

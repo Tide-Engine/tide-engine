@@ -4,6 +4,7 @@
 // test's (e2e/asset_meshes).
 
 #include <math.h>
+#include <stdarg.h>
 #include <float.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -985,4 +986,112 @@ TIDE_TEST(mesh_gltf_reports_invalid_attributes_instead_of_changing_geometry)
         TIDE_CHECK(strstr(why, "non-finite positions") != NULL);
         free(bytes);
     }
+}
+
+// A .gltf's text built in pieces, for files at the limits (mesh_files.h).
+typedef struct limit_text {
+    char *at;
+    size_t length, room;
+} limit_text;
+
+static void limit_add(limit_text *t, const char *fmt, ...)
+{
+    for (;;) {
+        va_list args;
+        va_start(args, fmt);
+        const int n = vsnprintf(t->at ? t->at + t->length : NULL, t->at ? t->room - t->length : 0u, fmt, args);
+        va_end(args);
+        if (n < 0) abort();
+        if (t->at && t->length + (size_t)n < t->room) {
+            t->length += (size_t)n;
+            return;
+        }
+        t->room = (t->room ? t->room * 2u : 4096u) + (size_t)n;
+        t->at = realloc(t->at, t->room);
+        if (!t->at) abort();
+    }
+}
+
+// Whether reading the text as a .gltf refuses it, saying `with`.
+static bool limit_refused(limit_text *t, const char *with)
+{
+    mesh_file mesh;
+    char why[256];
+    const bool ok = read_exactly((const uint8_t *)t->at, t->length, "limit.gltf", &mesh, why);
+    free(t->at);
+    *t = (limit_text){0};
+    if (ok) {
+        mesh_file_free(&mesh);
+        printf("    read, where '%s' was expected\n", with);
+        return false;
+    }
+    if (!strstr(why, with)) printf("    refused with '%s', not '%s'\n", why, with);
+    return strstr(why, with) != NULL;
+}
+
+// One past each limit is refused from the counts the file says, before what
+// they ask for is made: accessors without a buffer view are zeros that take
+// no bytes, so most of these files are small.
+TIDE_TEST(mesh_gltf_refuses_files_past_its_limits)
+{
+    limit_text t = {0};
+    // A 256-byte file once made 6 million zero vertices and 100 million indices.
+    limit_add(&t, "{\"asset\":{\"version\":\"2.0\"},\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0,\"NORMAL\":0},"
+                  "\"indices\":1}]}],\"accessors\":[{\"componentType\":5126,\"count\":6000000,\"type\":\"VEC3\"},"
+                  "{\"componentType\":5125,\"count\":100663296,\"type\":\"SCALAR\"}]}");
+    TIDE_CHECK(limit_refused(&t, "elements in an accessor, more than the 25,165,824 one Mesh holds (TIDE_MESH_MAX_INDICES)"));
+    limit_add(&t, "{\"asset\":{\"version\":\"2.0\"},\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0}}]}],"
+                  "\"accessors\":[{\"componentType\":5126,\"count\":%u,\"type\":\"VEC3\"}]}", TIDE_MESH_MAX_VERTICES + 1u);
+    TIDE_CHECK(limit_refused(&t, "more than the 16,777,216 one Mesh holds (TIDE_MESH_MAX_VERTICES)"));
+    limit_add(&t, "{\"asset\":{\"version\":\"2.0\"},\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0},\"indices\":1}]}],"
+                  "\"accessors\":[{\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+                  "{\"componentType\":5125,\"count\":%u,\"type\":\"SCALAR\"}]}", TIDE_MESH_MAX_INDICES + 1u);
+    TIDE_CHECK(limit_refused(&t, "elements in an accessor, more than the 25,165,824 one Mesh holds (TIDE_MESH_MAX_INDICES)"));
+    // Without normals, each triangle's corners are vertices of their own: indices within their
+    // limit can still ask for more vertices than a mesh holds.
+    limit_add(&t, "{\"asset\":{\"version\":\"2.0\"},\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0},\"indices\":1}]}],"
+                  "\"accessors\":[{\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+                  "{\"componentType\":5125,\"count\":%u,\"type\":\"SCALAR\"}]}", (TIDE_MESH_MAX_VERTICES / 3u + 1u) * 3u);
+    TIDE_CHECK(limit_refused(&t, "more than the 16,777,216 one Mesh holds (TIDE_MESH_MAX_VERTICES)"));
+    // A part with no triangles over the most vertices, placed by many nodes, is walked again for each.
+    limit_add(&t, "{\"asset\":{\"version\":\"2.0\"},\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0},\"indices\":1}]}],"
+                  "\"accessors\":[{\"componentType\":5126,\"count\":%u,\"type\":\"VEC3\"},{\"componentType\":5125,\"count\":0,"
+                  "\"type\":\"SCALAR\"}],\"nodes\":[", TIDE_MESH_MAX_VERTICES);
+    const uint32_t placements = TIDE_MESH_MAX_READS / TIDE_MESH_MAX_VERTICES + 1u;
+    for (uint32_t i = 0; i < placements; i++) limit_add(&t, "%s{\"mesh\":0}", i ? "," : "");
+    limit_add(&t, "]}");
+    TIDE_CHECK(limit_refused(&t, "more than the 536,870,912 one Mesh holds (TIDE_MESH_MAX_READS)"));
+    // A description of one more value than the most
+    limit_add(&t, "{\"asset\":{\"version\":\"2.0\"},\"extras\":[0");
+    for (uint32_t i = 4u; i < TIDE_MESH_MAX_JSON_VALUES; i++) limit_add(&t, ",0");
+    limit_add(&t, "]}");
+    TIDE_CHECK(limit_refused(&t, "JSON values"));
+}
+
+// Objects with many keys are looked up by halves rather than by a walk, and a
+// key written twice still means its first: a triangle whose objects carry
+// many other keys, repeated ones among them, reads as the same mesh.
+TIDE_TEST(mesh_gltf_objects_with_many_keys_read_as_before)
+{
+    mesh_file plain, keyed;
+    char why[256];
+    size_t size;
+    uint8_t *glb = make_glb(triangle_json, &triangle, sizeof triangle, &size);
+    TIDE_REQUIRE(read_exactly(glb, size, "plain.glb", &plain, why));
+    free(glb);
+    char extra[512], json[4096];
+    size_t at = 0;
+    for (uint32_t i = 0; i < 24u; i++) at += (size_t)snprintf(extra + at, sizeof extra - at, "\"zz%02u\":%u,", i, i);
+    snprintf(json, sizeof json, "{%s\"asset\":{\"version\":\"2.0\"},\"scene\":0,\"scenes\":[{\"nodes\":[0]}],\"nodes\":[{\"mesh\":0}],"
+             TRIANGLE_MESH "\"accessors\":[{%s\"bufferView\":0,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\",\"count\":2},"
+             "{\"bufferView\":1,\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+             "{%s\"bufferView\":2,\"componentType\":5123,\"count\":3,\"type\":\"SCALAR\",\"bufferView\":0}],"
+             TRIANGLE_VIEWS ",\"scene\":4}", extra, extra, extra);
+    glb = make_glb(json, &triangle, sizeof triangle, &size);
+    TIDE_REQUIRE(read_exactly(glb, size, "keyed.glb", &keyed, why));
+    free(glb);
+    TIDE_CHECK(plain.vertices == keyed.vertices && plain.indices == keyed.indices);
+    TIDE_CHECK(memcmp(plain.hash, keyed.hash, sizeof plain.hash) == 0);
+    mesh_file_free(&plain);
+    mesh_file_free(&keyed);
 }

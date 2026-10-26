@@ -1,5 +1,6 @@
 #include "tide/skinned_data.h"
 
+#include "tide/internal/count_text.h"
 #include "tide/math.h"
 #include "tide/page.h"
 #include "tide/sha256.h"
@@ -13,14 +14,16 @@
 
 #pragma STDC FP_CONTRACT OFF
 
-#define VERTICES_MOST (1u << 24)
-#define INDICES_MOST (3u << 25)
-#define DECODE_BYTES_MOST (512u << 20)
-#define NODES_MOST 65536u
+// The limits (tide/skinned_data.h) as the shared glTF readers name them.
+#define INDICES_MOST TIDE_SKINNED_MAX_INDICES
+#define INDICES_MOST_NAME "TIDE_SKINNED_MAX_INDICES"
+#define READS_MOST TIDE_SKINNED_MAX_READS
+#define READS_MOST_NAME "TIDE_SKINNED_MAX_READS"
 
 typedef struct reader {
     char *why, *note;
     bool failed, runtime;
+    bool *limited; // Set where what failed it was a limit (past_limit), which the runtime decode says on the log
     tide_skinned_side_fn side;
     void *user;
 } reader;
@@ -36,6 +39,24 @@ static bool fail(reader *r, const char *note, const char *fmt, ...)
         snprintf(r->note, 256u, "%s", note ? note : "");
     }
     return false;
+}
+
+// A limit of tide/skinned_data.h refused the model. The message says what it
+// has against the limit and ends with the limit's name, so a report says
+// which: "has 2,000,000 vertices, more than the 1,048,576 a decoded model
+// holds (TIDE_SKINNED_MAX_VERTICES)". `have` is UINT64_MAX where the count
+// stopped at the limit.
+#define PAST_LIMIT(r, LIMIT, what, have) past_limit(r, #LIMIT, (uint64_t)(LIMIT), what, (uint64_t)(have))
+static bool past_limit(reader *r, const char *name, const uint64_t most, const char *what, const uint64_t have)
+{
+    char counted[32], limit[32];
+    if (!r->failed && r->limited) *r->limited = true;
+    if (have == UINT64_MAX) {
+        return fail(r, "a model that big is better split into several files", "has more %s than the %s a decoded model holds (%s)", what,
+                    tide_count_text(most, limit), name);
+    }
+    return fail(r, "a model that big is better split into several files", "has %s %s, more than the %s a decoded model holds (%s)",
+                tide_count_text(have, counted), what, tide_count_text(most, limit), name);
 }
 
 static void *zeroed(size_t count, size_t size)
@@ -60,6 +81,7 @@ typedef struct gltf {
     uint64_t bin_size;
     gltf_buffer *buffers;
     uint32_t buffer_count;
+    uint64_t reads; // Numbers read from accessors so far, against TIDE_SKINNED_MAX_READS
 } gltf;
 
 #define GLTF_ALLOW_MATRICES
@@ -97,13 +119,18 @@ typedef struct decoded {
     uint32_t flags;
 } decoded;
 
-static bool grow(reader *r, void **data, uint32_t *room, uint64_t count, size_t each)
+// Room for `count` of a table that holds `most` at the most (one of the
+// limits), never made bigger than that.
+// A limit and its name, as grow takes them
+#define LIMIT_OF(LIMIT) (LIMIT), #LIMIT
+
+static bool grow(reader *r, void **data, uint32_t *room, uint64_t count, size_t each, uint32_t most, const char *name, const char *what)
 {
-    if (count > UINT32_MAX || count > DECODE_BYTES_MOST / each) return fail(r, NULL, "needs more than 512 MiB of decoded model data");
+    if (count > most) return past_limit(r, name, most, what, count);
     if (count <= *room) return true;
     uint64_t next = *room ? (uint64_t)*room * 2u : 16u;
     if (next < count) next = count;
-    if (next > DECODE_BYTES_MOST / each) next = count;
+    if (next > most) next = most;
     void *p = tide_realloc(*data, (size_t)*room * each, (size_t)next * each);
     *data = p;
     *room = (uint32_t)next;
@@ -135,6 +162,7 @@ static bool floats(gltf *g, const jnode *index, uint32_t want, uint64_t count, f
         return fail(g->r, NULL, "has %s of the wrong count or width", what);
     }
     if (a.width == 16u && a.type != 5126) return fail(g->r, NULL, "has inverse bind matrices that aren't floats");
+    if (!spend_reads(g, count * a.width)) return false;
     for (uint64_t i = 0; i < count * want; i++) out[i] = color && i % want == 3u ? 1.0f : 0.0f;
     const uint32_t each = component_bytes(a.type), element = each * a.width;
     if (a.view >= 0 && count) {
@@ -305,7 +333,7 @@ static bool read_nodes(decoded *d)
 {
     const jnode *nodes = jget(d->g->root, "nodes");
     d->source_nodes = jcount(nodes);
-    if (d->source_nodes > NODES_MOST) return fail(d->g->r, NULL, "has more than 65536 skeleton nodes");
+    if (d->source_nodes > TIDE_SKINNED_MAX_NODES) return PAST_LIMIT(d->g->r, TIDE_SKINNED_MAX_NODES, "skeleton nodes", d->source_nodes);
     d->nodes = zeroed((size_t)d->source_nodes + 1u, sizeof *d->nodes);
     d->parents = zeroed(d->source_nodes, sizeof *d->parents);
     d->remap = zeroed(d->source_nodes, sizeof *d->remap);
@@ -331,7 +359,8 @@ static bool read_nodes(decoded *d)
 
 static bool palette(decoded *d, uint32_t node, const float matrix[16], uint32_t *index)
 {
-    if (!grow(d->g->r, (void **)&d->palettes, &d->palette_room, (uint64_t)d->palette_count + 1u, sizeof *d->palettes)) return false;
+    if (!grow(d->g->r, (void **)&d->palettes, &d->palette_room, (uint64_t)d->palette_count + 1u, sizeof *d->palettes,
+              LIMIT_OF(TIDE_SKINNED_MAX_PALETTES), "inverse binds (skin joints and parts no skin moves)")) return false;
     *index = d->palette_count++;
     d->palettes[*index].node = node;
     memcpy(d->palettes[*index].inverse_bind, matrix, 16u * sizeof(float));
@@ -342,20 +371,25 @@ static bool read_skins(decoded *d)
 {
     const jnode *skins = jget(d->g->root, "skins");
     d->skin_count = jcount(skins);
-    if (d->skin_count > NODES_MOST) return fail(d->g->r, NULL, "has more than 65536 skins");
+    if (d->skin_count > TIDE_SKINNED_MAX_SKINS) return PAST_LIMIT(d->g->r, TIDE_SKINNED_MAX_SKINS, "skins", d->skin_count);
     d->skins = zeroed(d->skin_count, sizeof *d->skins);
-    for (uint32_t i = 0; i < d->skin_count; i++) {
+    uint8_t *used = zeroed(d->source_nodes, 1u); // A skin's joints so far: cleared again after each skin
+    bool ok = true;
+    for (uint32_t i = 0; ok && i < d->skin_count; i++) {
         const jnode *json = skins->items[i], *joints = jget(json, "joints");
         skin *s = d->skins + i;
         s->first = d->palette_count, s->count = jcount(joints);
-        if (!s->count || s->count > d->source_nodes) return fail(d->g->r, NULL, "has a skin with no joints or more joints than nodes");
+        if (!s->count || s->count > d->source_nodes) {
+            ok = fail(d->g->r, NULL, "has a skin with no joints or more joints than nodes");
+            break;
+        }
         float *matrices = zeroed(s->count, 16u * sizeof(float));
         const jnode *inverse = jget(json, "inverseBindMatrices");
-        bool ok = true;
         if (inverse) {
             accessor a;
             ok = accessor_of(d->g, inverse, &a, "inverse bind matrices");
-            if (ok && (a.count < s->count || a.count > NODES_MOST)) ok = fail(d->g->r, NULL, "has too few or too many inverse bind matrices");
+            if (ok && a.count > TIDE_SKINNED_MAX_NODES) ok = PAST_LIMIT(d->g->r, TIDE_SKINNED_MAX_NODES, "inverse bind matrices in a skin", a.count);
+            if (ok && a.count < s->count) ok = fail(d->g->r, NULL, "has fewer inverse bind matrices than its skin has joints");
             if (ok && a.count != s->count) {
                 free(matrices);
                 matrices = zeroed((size_t)a.count, 16u * sizeof(float));
@@ -364,7 +398,6 @@ static bool read_skins(decoded *d)
         } else {
             for (uint32_t k = 0; k < s->count; k++) memcpy(matrices + (size_t)k * 16u, identity, sizeof identity);
         }
-        uint8_t *used = zeroed(d->source_nodes, 1u);
         for (uint32_t k = 0; ok && k < s->count; k++) {
             int64_t node;
             if (!jwhole(joints->items[k], &node) || node >= d->source_nodes || used[node]) {
@@ -383,11 +416,14 @@ static bool read_skins(decoded *d)
             uint32_t unused;
             ok = palette(d, d->remap[node], m, &unused);
         }
-        free(used);
+        for (uint32_t k = 0; k < s->count; k++) {
+            int64_t node;
+            if (jwhole(joints->items[k], &node) && node < d->source_nodes) used[node] = 0u;
+        }
         free(matrices);
-        if (!ok) return false;
     }
-    return true;
+    free(used);
+    return ok;
 }
 
 static float display(float linear)
@@ -399,7 +435,8 @@ static float display(float linear)
 
 static bool influence(decoded *d, uint32_t id, float weight)
 {
-    if (!grow(d->g->r, (void **)&d->influences, &d->influence_room, (uint64_t)d->influence_count + 1u, sizeof *d->influences)) return false;
+    if (!grow(d->g->r, (void **)&d->influences, &d->influence_room, (uint64_t)d->influence_count + 1u, sizeof *d->influences,
+              LIMIT_OF(TIDE_SKINNED_MAX_INFLUENCES), "vertex influences")) return false;
     d->influences[d->influence_count++] = (tide_skinned_influence_data){id, weight};
     return true;
 }
@@ -413,11 +450,9 @@ static bool skin_weights(decoded *d, const jnode *attributes, const skin *s, uin
             if (strncmp(attributes->keys[i], "WEIGHTS_", 8u) == 0) weight_sets++;
         }
     }
-    if (!sets || sets != weight_sets || sets > DECODE_BYTES_MOST / (sizeof(float) * 8u)) {
-        return fail(d->g->r, NULL, "has a skinned primitive without matching joint and weight sets");
-    }
-    if ((uint64_t)count * sets > DECODE_BYTES_MOST / (8u * sizeof(float))) {
-        return fail(d->g->r, NULL, "needs more than 512 MiB of vertex influence data");
+    if (!sets || sets != weight_sets) return fail(d->g->r, NULL, "has a skinned primitive without matching joint and weight sets");
+    if ((uint64_t)count * sets * 4u > TIDE_SKINNED_MAX_INFLUENCES) { // Each set has four for a vertex, which can all be influences
+        return PAST_LIMIT(d->g->r, TIDE_SKINNED_MAX_INFLUENCES, "joint weights (vertex influences)", (uint64_t)count * sets * 4u);
     }
     float *joints = zeroed((size_t)count * sets, 4u * sizeof(float));
     float *weights = zeroed((size_t)count * sets, 4u * sizeof(float));
@@ -474,9 +509,8 @@ static bool primitive(decoded *d, const jnode *json, uint32_t node, int64_t skin
     const jnode *attributes = jget(json, "attributes"), *position = jget(attributes, "POSITION");
     accessor counted;
     if (!accessor_of(g, position, &counted, "positions")) return false;
-    if (!counted.count || counted.count > VERTICES_MOST || counted.count > DECODE_BYTES_MOST / sizeof(tide_skinned_vertex_data)) {
-        return fail(g->r, NULL, "has no positions, or more positions than a decoded model holds");
-    }
+    if (!counted.count) return fail(g->r, NULL, "has no positions");
+    if (counted.count > TIDE_SKINNED_MAX_VERTICES) return PAST_LIMIT(g->r, TIDE_SKINNED_MAX_VERTICES, "positions in a part", counted.count);
     const uint32_t count = (uint32_t)counted.count;
     tide_skinned_vertex_data *vertices = zeroed(count, sizeof *vertices);
     float *stream = zeroed(count, 4u * sizeof *stream);
@@ -547,11 +581,10 @@ static bool primitive(decoded *d, const jnode *json, uint32_t node, int64_t skin
     const uint64_t triangles = mode == 4 ? listed_count / 3u : listed_count < 3u ? 0u : listed_count - 2u;
     const uint64_t new_indices = triangles * 3u;
     const uint64_t new_vertices = has_normal ? count : new_indices;
-    if (ok && ((uint64_t)d->index_count + new_indices > INDICES_MOST || (uint64_t)d->vertex_count + new_vertices > VERTICES_MOST)) {
-        ok = fail(g->r, NULL, "has more vertices or triangles than a decoded model holds");
-    }
-    if (ok) ok = grow(g->r, (void **)&d->vertices, &d->vertex_room, (uint64_t)d->vertex_count + new_vertices, sizeof *d->vertices)
-              && grow(g->r, (void **)&d->indices, &d->index_room, (uint64_t)d->index_count + new_indices, sizeof *d->indices);
+    if (ok) ok = grow(g->r, (void **)&d->vertices, &d->vertex_room, (uint64_t)d->vertex_count + new_vertices, sizeof *d->vertices,
+                      LIMIT_OF(TIDE_SKINNED_MAX_VERTICES), "vertices")
+              && grow(g->r, (void **)&d->indices, &d->index_room, (uint64_t)d->index_count + new_indices, sizeof *d->indices,
+                      LIMIT_OF(TIDE_SKINNED_MAX_INDICES), "triangle corners");
     bool mirrors = false;
     if (skin_index < 0) {
         const float *m = d->world + (size_t)node * 16u;
@@ -643,7 +676,8 @@ static bool read_geometry(decoded *d)
 
 static bool append_keys(decoded *d, const float *values, uint64_t count, uint32_t *at)
 {
-    if (!grow(d->g->r, (void **)&d->keys, &d->key_room, (uint64_t)d->key_count + count, sizeof *d->keys)) return false;
+    if (!grow(d->g->r, (void **)&d->keys, &d->key_room, (uint64_t)d->key_count + count, sizeof *d->keys,
+              LIMIT_OF(TIDE_SKINNED_MAX_KEY_NUMBERS), "animation key numbers")) return false;
     *at = d->key_count;
     memcpy(d->keys + d->key_count, values, (size_t)count * sizeof *values);
     d->key_count += (uint32_t)count;
@@ -654,12 +688,11 @@ static bool read_animations(decoded *d)
 {
     const jnode *animations = jget(d->g->root, "animations");
     d->clip_count = jcount(animations);
-    if (d->clip_count > NODES_MOST) return fail(d->g->r, NULL, "has more than 65536 animations");
+    if (d->clip_count > TIDE_SKINNED_MAX_CLIPS) return PAST_LIMIT(d->g->r, TIDE_SKINNED_MAX_CLIPS, "animations", d->clip_count);
     d->clips = zeroed(d->clip_count, sizeof *d->clips);
     uint8_t *seen = zeroed(d->node_count, 3u);
     bool ok = true;
     for (uint32_t i = 0; ok && i < d->clip_count; i++) {
-        memset(seen, 0, (size_t)d->node_count * 3u);
         const jnode *json = animations->items[i], *named = jget(json, "name"), *channels = jget(json, "channels");
         const jnode *samplers = jget(json, "samplers");
         tide_skinned_clip_data *clip = d->clips + i;
@@ -711,8 +744,9 @@ static bool read_animations(decoded *d)
                 ok = fail(d->g->r, NULL, "has animation times or values of an invalid type, width or count");
                 break;
             }
-            if (input.count > DECODE_BYTES_MOST / sizeof(float) || output.count * width > DECODE_BYTES_MOST / sizeof(float)) {
-                ok = fail(d->g->r, NULL, "needs more than 512 MiB of animation key data");
+            if ((uint64_t)d->key_count + input.count + output.count * width > TIDE_SKINNED_MAX_KEY_NUMBERS) {
+                ok = PAST_LIMIT(d->g->r, TIDE_SKINNED_MAX_KEY_NUMBERS, "animation key numbers",
+                                (uint64_t)d->key_count + input.count + output.count * width);
                 break;
             }
             float *times = zeroed((size_t)input.count, sizeof(float));
@@ -737,7 +771,8 @@ static bool read_animations(decoded *d)
             tide_skinned_channel_data channel = {.node = node, .path = path, .interpolation = method, .keys = (uint32_t)input.count};
             if (ok) ok = append_keys(d, times, input.count, &channel.times_at)
                       && append_keys(d, values, output.count * width, &channel.values_at)
-                      && grow(d->g->r, (void **)&d->channels, &d->channel_room, (uint64_t)d->channel_count + 1u, sizeof *d->channels);
+                      && grow(d->g->r, (void **)&d->channels, &d->channel_room, (uint64_t)d->channel_count + 1u, sizeof *d->channels,
+                              LIMIT_OF(TIDE_SKINNED_MAX_CHANNELS), "animation channels");
             if (ok) {
                 d->channels[d->channel_count++] = channel;
                 if (times[input.count - 1u] > clip->length) clip->length = times[input.count - 1u];
@@ -746,6 +781,8 @@ static bool read_animations(decoded *d)
             free(values);
         }
         clip->channels = d->channel_count - clip->first_channel;
+        // What this clip animated, cleared for the next: its channels, never every node again
+        for (uint32_t k = clip->first_channel; k < d->channel_count; k++) seen[(size_t)d->channels[k].node * 3u + d->channels[k].path] = 0u;
     }
     free(seen);
     return ok;
@@ -792,7 +829,7 @@ static bool encode(decoded *d, uint8_t **out, uint32_t *out_size)
     for (uint32_t i = 0; i < d->clip_count; i++) string_size += (uint64_t)d->clips[i].name_length + 1u;
     const uint64_t key_at = (string_at + string_size + 3u) & ~(uint64_t)3u;
     const uint64_t size = key_at + (uint64_t)d->key_count * 4u;
-    if (size > DECODE_BYTES_MOST) return fail(d->g->r, NULL, "needs more than 512 MiB of decoded model data");
+    if (size > TIDE_SKINNED_MAX_BYTES) return PAST_LIMIT(d->g->r, TIDE_SKINNED_MAX_BYTES, "bytes of decoded model data", size);
     uint8_t *bytes = zeroed((size_t)size, 1u);
     const uint32_t header[] = {TIDE_SKINNED_DATA_MAGIC, TIDE_SKINNED_DATA_VERSION, (uint32_t)size, d->flags,
         d->node_count, (uint32_t)node_at, d->palette_count, (uint32_t)palette_at, d->vertex_count, (uint32_t)vertex_at,
@@ -859,13 +896,14 @@ static void decoded_free(decoded *d)
     free(d->palettes), free(d->vertices), free(d->indices), free(d->influences), free(d->clips), free(d->channels), free(d->keys);
 }
 
-bool tide_skinned_data_decode(const void *input, size_t size, bool runtime, tide_skinned_side_fn side, void *user,
-                              uint8_t **out, uint32_t *out_size, char why[256], char note[256])
+static bool decode_model(const void *input, size_t size, bool runtime, tide_skinned_side_fn side, void *user,
+                         uint8_t **out, uint32_t *out_size, char why[256], char note[256], bool *limited)
 {
     if (!out || !out_size || !why || !note) return false;
     *out = NULL, *out_size = 0u, why[0] = 0, note[0] = 0;
-    reader r = {.why = why, .note = note, .runtime = runtime, .side = runtime ? NULL : side, .user = user};
-    if (!input || !size || size > DECODE_BYTES_MOST) return fail(&r, NULL, "has no bytes, or more than 512 MiB of model bytes");
+    reader r = {.why = why, .note = note, .runtime = runtime, .side = runtime ? NULL : side, .user = user, .limited = limited};
+    if (!input || !size) return fail(&r, NULL, "has no bytes");
+    if (size > TIDE_SKINNED_MAX_BYTES) return PAST_LIMIT(&r, TIDE_SKINNED_MAX_BYTES, "bytes", size);
     const uint8_t *bytes = input;
     const char *json = input;
     size_t json_size = size;
@@ -895,10 +933,11 @@ bool tide_skinned_data_decode(const void *input, size_t size, bool runtime, tide
         }
         if (!json) return fail(&r, NULL, "has no GLB JSON chunk");
     }
-    jparser parser = {.p = json, .end = json + json_size};
+    jparser parser = {.p = json, .end = json + json_size, .values_left = TIDE_SKINNED_MAX_JSON_VALUES};
     const jnode *root = jvalue(&parser, 0);
     jspace(&parser);
     bool ok = root && !parser.bad && parser.p == parser.end && root->kind == J_OBJECT;
+    if (parser.too_many) PAST_LIMIT(&r, TIDE_SKINNED_MAX_JSON_VALUES, "JSON values in its description", UINT64_MAX);
     if (!ok) fail(&r, NULL, "isn't a glTF JSON object that reads");
     const jnode *version = jget(jget(root, "asset"), "version");
     if (ok && (!version || version->kind != J_STRING || strcmp(version->text, "2.0") != 0)) {
@@ -914,7 +953,7 @@ bool tide_skinned_data_decode(const void *input, size_t size, bool runtime, tide
     }
     gltf g = {.r = &r, .root = root, .bin = bin, .bin_size = bin_size};
     g.buffer_count = jcount(jget(root, "buffers"));
-    if (g.buffer_count > NODES_MOST) ok = fail(&r, NULL, "has more than 65536 buffers");
+    if (g.buffer_count > TIDE_SKINNED_MAX_BUFFERS) ok = PAST_LIMIT(&r, TIDE_SKINNED_MAX_BUFFERS, "buffers", g.buffer_count);
     const uint32_t allocated_buffers = ok ? g.buffer_count : 0u;
     g.buffers = zeroed(allocated_buffers, sizeof *g.buffers);
     for (uint32_t i = 0; ok && i < g.buffer_count; i++) {
@@ -941,6 +980,20 @@ bool tide_skinned_data_decode(const void *input, size_t size, bool runtime, tide
     free(g.buffers);
     jfree(&parser);
     return ok && !r.failed;
+}
+
+bool tide_skinned_data_decode(const void *input, const size_t size, const bool runtime, const tide_skinned_side_fn side, void *user,
+                              uint8_t **out, uint32_t *out_size, char why[256], char note[256])
+{
+    bool limited = false;
+    const bool ok = decode_model(input, size, runtime, side, user, out, out_size, why, note, &limited);
+    // SkinnedMesh.Decode's IOError says no more than InvalidData: a limit's
+    // refusal goes on this machine's log too, naming the limit, so a model
+    // refused for its size is known for what it is. Other refusals stay
+    // quiet, as a game may try bytes it isn't sure of; tidec says every
+    // refusal in its diagnostic.
+    if (!ok && runtime && limited) fprintf(stderr, "tide: SkinnedMesh.Decode refused a model: it %s\n", why);
+    return ok;
 }
 
 void tide_skinned_data_free(uint8_t *bytes)

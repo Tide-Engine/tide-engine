@@ -66,7 +66,7 @@ TIDE_TEST(decode_reads_back_what_the_writer_wrote)
         uint8_t *png = tide_png_encode(rgba, w, h, &size);
         TIDE_REQUIRE(png && size > 0);
         tide_png_image image;
-        TIDE_REQUIRE(tide_png_decode(png, size, &image));
+        TIDE_REQUIRE(tide_png_decode(png, size, &image, NULL));
         TIDE_CHECK(image.width == (uint32_t)w && image.height == (uint32_t)h);
         bool same = true;
         for (int i = 0; same && i < w * h; i++) {
@@ -77,17 +77,17 @@ TIDE_TEST(decode_reads_back_what_the_writer_wrote)
         // Cut anywhere, it's no PNG; and neither is a byte changed in the pixels' data
         for (size_t cut = 0; cut < size; cut += size / 7 + 1) {
             tide_png_image partial;
-            TIDE_CHECK(!tide_png_decode(png, cut, &partial));
+            TIDE_CHECK(!tide_png_decode(png, cut, &partial, NULL));
             TIDE_CHECK(partial.pixels == NULL);
         }
         png[size - 20] ^= 0x55;
-        TIDE_CHECK(!tide_png_decode(png, size, &image));
+        TIDE_CHECK(!tide_png_decode(png, size, &image, NULL));
         free(image.pixels);
         free(png);
         free(rgba);
     }
-    TIDE_CHECK(!tide_png_decode(NULL, 0, &(tide_png_image){0}));
-    TIDE_CHECK(!tide_png_decode((const uint8_t *)"not a png at all, not even close", 32, &(tide_png_image){0}));
+    TIDE_CHECK(!tide_png_decode(NULL, 0, &(tide_png_image){0}, NULL));
+    TIDE_CHECK(!tide_png_decode((const uint8_t *)"not a png at all, not even close", 32, &(tide_png_image){0}, NULL));
 }
 
 // Puts `size` bytes where the game's view sends them from, and has it send them

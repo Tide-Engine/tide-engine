@@ -35,7 +35,7 @@ int main(const int argc, char **argv)
         bytes[i] = (uint8_t)(hi << 4 | lo);
     }
     tide_png_image image;
-    if (!tide_png_decode(bytes, size, &image)) {
+    if (!tide_png_decode(bytes, size, &image, NULL)) {
         printf("invalid\n");
         return 0;
     }

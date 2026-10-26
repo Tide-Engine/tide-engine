@@ -146,7 +146,7 @@ JPEG, TGA and BMP are decoded during the build, through the same `Texture`, `Gri
 | TGA | Non-interleaved raw/RLE RGB, grayscale or indexed images, with either vertical/horizontal origin; use 32-bit RGBA for pixel alpha |
 | BMP | 1/4/8/16/24/32-bit uncompressed pixels or RGB bitfields; no RLE or embedded JPEG/PNG |
 
-JPEG/TGA/BMP source data and combined decoder/output allocations are bounded to 512 MiB. Larger images get an error asking for smaller dimensions.
+JPEG/TGA/BMP source data and combined decoder/output allocations are bounded to 512 MiB. Larger images get an error asking for smaller dimensions. A progressive JPEG has at most 256 scans: each one decodes the whole picture again, so a small file of thousands of scans would take minutes to build. These limits, and the Photoshop and FBX ones below, are provisional.
 
 ### Photoshop images
 
@@ -161,6 +161,8 @@ asset List<Texture> portraits = "art/portraits/*.psd";
 Tide reads the composite image saved in the PSD: the visible layers combined into one picture. Save with Photoshop's **Maximize Compatibility** enabled so the file includes it. Tide doesn't read individual layers or render their effects, text or smart objects itself; their saved appearance is in that composite.
 
 The file must be an ordinary PSD (version 1) in RGB mode, with 8 or 16 bits per channel and at most 16,384 pixels per side. Uncompressed, RLE, ZIP and ZIP with prediction are supported. PSB files, other color modes such as CMYK, and 32-bit channels are errors at the asset's path, as is a missing or damaged composite. A `Texture` keeps a byte per channel, while a `Grid2<Color>` keeps each decoded channel as a float. Color profiles aren't applied; save RGB art as sRGB for matching display colors.
+
+A PSD is at most 16384 pixels a side and 8192 × 8192 in all.
 
 Only the decoded pixels are packed, as with a PNG. The game needs no Photoshop files or decoder when it runs. [`grid.Decode(bytes)`](#decoding-a-png) still reads PNG only.
 
@@ -272,9 +274,9 @@ Layouts without a tangent field, layouts with `float3 tangent`, and skinned mesh
 
 - From a glTF: its meshes' positions, normals, tangents, two sets of uvs and vertex colors, its nodes' places, and each material's base color. Not its textures, nor the rest of a material; not skins, animation, morph targets, cameras or lights: a skinned model is the mesh as it stands. Required Draco/meshopt compression and other unsupported required extensions give an error with export guidance. Optional compression can use the file's valid uncompressed fallback.
 - From an OBJ: positions, uvs, normals and faces of any number of corners, with a color after a position where a tool wrote one. Not its materials file.
-- From an FBX: polygon meshes, node transforms, normals, tangents, two sets of uvs, vertex colors and material base colors. Polygons are triangulated, and the file's axes and units are converted to Y-up meters before Tide's coordinate conversion. An attribute index past its array, which some exporters write, reads the array's last element, as Blender and Unity read the file. Embedded textures and the rest of a material are not imported. A static `Mesh<V>` takes the rest geometry; use [`SkinnedMesh<V>`](./animation.md) for bones and animation.
+- From an FBX: polygon meshes, node transforms, normals, tangents, two sets of uvs, vertex colors and material base colors. Polygons are triangulated, and the file's axes and units are converted to Y-up meters before Tide's coordinate conversion. An attribute index past its array, which some exporters write, reads the array's last element, as Blender and Unity read the file. Embedded textures and the rest of a material are not imported. A static `Mesh<V>` takes the rest geometry; use [`SkinnedMesh<V>`](./animation.md) for bones and animation. A file's polygons can't take more than 2^32 steps to triangulate in all (a polygon's corners squared, summed: one polygon of 65,536 corners), and its animation takes bake to 16,777,216 keys at the most.
 - **A texture a model has is a file of its own**, using a supported image format, declared like any: `asset Texture bark = "art/bark.png";`, and given to the draw.
-- A mesh holds 16,777,216 vertices at the most.
+- A mesh holds 16,777,216 vertices and 8,388,608 triangles at the most. A glTF's description can have 4,194,304 JSON values, and 536,870,912 numbers are read from its accessors in all, an accessor counting again for each part that names it. A file past one of these is refused before anything is made for it. The numbers are provisional.
 
 **It comes in as Tide has the world.** Tide's world is left-handed with fronts [clockwise](./3d.md#which-side-draws), like Unity's. glTF is right-handed with fronts counterclockwise: a file's `x` is turned around and its triangles are wound the other way, so `+y` stays up and a model that faces `+z` still faces `+z`. OBJ uses the same conversion. FBX first converts its declared axes and units to right-handed Y-up meters, then uses that conversion too. A glTF's colors are light, and a `Color` is what the screen shows, so they're converted; an OBJ's are taken as written.
 
@@ -430,6 +432,8 @@ Bytes that every player should see go into the match through a [command](./comma
 
 `grid.Decode(bytes)` reads a PNG into a `Grid2<Color>` field of a component, singleton or scene, sizing the grid as the image is and writing every pixel. It fails with `IOError.InvalidData` for bytes that aren't a PNG, or are wrong anywhere, and then the grid is as it was.
 
+Bytes can come from anywhere, so a small file can't ask for much. A picture of more than 4096 × 4096 pixels (16,777,216) is `InvalidData` before anything is made for it, whatever its shape; at that size its cells are 256 MiB of the match. So is a file whose compressed data goes on for more than 1 MiB past its last row. These limits are the engine's, the same for every game, so every machine in a match refuses the same files. A picture refused for one says so on each machine's log, naming the limit: `tide: grid.Decode refused a PNG: it's 5000 by 5000 pixels, 25,000,000 in all, more than the 16,777,216 grid.Decode takes (TIDE_GRID_DECODE_MAX_PIXELS)`. Build-time imports past a limit are errors that name it the same way.
+
 It's pure, so it runs in match code as well as local code: a handler that decodes gives every machine the same pixels, bit for bit, because the engine's own reader does the decoding, with no system library in the way. The grid then draws as a texture like any `Grid2<Color>` (see [Meshes and textures](./meshes-and-textures.md#textures)).
 
 A player's own picture, decoded for this machine alone:
@@ -473,7 +477,7 @@ command(SetBackground value, PlayerID sender) Apply(mut Arena arena)
 
 A command's `List<byte>` goes to the server and on to every player, one that doesn't fit a datagram in chunks, so a few megabytes is fine; see [Commands](./commands.md).
 
-Every kind of PNG decodes: gray, color, with a palette, with or without alpha, 1 to 16 bits a sample, interlaced or not. A clear black pixel is a cell that's zero, which takes no memory. A picture past 16384 pixels a side is `InvalidData`. Decoding runs where it's called, on the frame's or the tick's thread: a 4K picture takes a frame, so decode once, when the picture arrives, not every frame.
+Every kind of PNG decodes: gray, color, with a palette, with or without alpha, 1 to 16 bits a sample, interlaced or not. A clear black pixel is a cell that's zero, which takes no memory. A picture past 16384 pixels a side, or past 4096 × 4096 in all, is `InvalidData`. Decoding runs where it's called, on the frame's or the tick's thread: a 4K picture takes a frame, so decode once, when the picture arrives, not every frame.
 
 ## Fetching a URL
 

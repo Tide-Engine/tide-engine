@@ -316,34 +316,27 @@ static bool safe_for_shell(const char *s)
     return true;
 }
 
-// Whether an ETag can go in a header on the command line: its quotes are
-// escaped there, and nothing else of it is for the shell.
+// Whether an ETag can go in a header line: nothing in it ends the line or is
+// no text. It's the server's, so it never goes on the command line, where a
+// quote of it would end its argument (cmd.exe has no escape for one): curl
+// reads it from a file.
 static bool safe_etag(const char *s)
 {
     for (; *s; s++) {
-        if (*s == '\n' || *s == '\r' || *s == '%' || *s == '`' || *s == '$' || *s == '\\') return false;
+        if ((unsigned char)*s < 0x20 || *s == 0x7F) return false;
     }
     return true;
 }
 
 // Runs curl for `url`, into `out`, with the response's headers in `headers`:
-// what curl said (its exit code), -1 when it couldn't run. `etag` goes as
-// If-None-Match, its quotes escaped for the shell.
-static int run_curl(const char *url, const char *out, const char *headers, const char *etag)
+// what curl said (its exit code), -1 when it couldn't run. `request`, if
+// given, is a file of the request's own header lines (If-None-Match).
+static int run_curl(const char *url, const char *out, const char *headers, const char *request)
 {
-    char header[1024] = "";
-    if (etag) {
-        size_t n = 0;
-        for (const char *c = etag; *c && n + 3 < sizeof header; c++) {
-            if (*c == '"') header[n++] = '\\';
-            header[n++] = *c;
-        }
-        header[n] = '\0';
-    }
     char command[4096];
     const int n = snprintf(command, sizeof command,
                            "curl -fsSL --retry 1 -m 60 -D \"%s\" -o \"%s\"%s%s%s \"%s\" 2>&1", headers, out,
-                           etag ? " -H \"If-None-Match: " : "", etag ? header : "", etag ? "\"" : "", url);
+                           request ? " -H \"@" : "", request ? request : "", request ? "\"" : "", url);
     if (n <= 0 || (size_t)n >= sizeof command) return -1;
     FILE *p = popen(command, "r");
     if (!p) return -1;
@@ -392,11 +385,12 @@ static const fetched *fetch_url(const char *url, const char *game_folder)
         return f;
     }
     folder_make(dir);
-    char file[2200], etag_file[2200], headers_file[2200], fresh[2200];
+    char file[2200], etag_file[2200], headers_file[2200], fresh[2200], request_file[2200];
     snprintf(file, sizeof file, "%s/%s", dir, hex);
     snprintf(etag_file, sizeof etag_file, "%s/%s.etag", dir, hex);
     snprintf(headers_file, sizeof headers_file, "%s/%s.headers", dir, hex);
     snprintf(fresh, sizeof fresh, "%s/%s.new", dir, hex);
+    snprintf(request_file, sizeof request_file, "%s/%s.request", dir, hex);
     const bool cached = folder_file_info(file, NULL, NULL);
     char *etag = cached ? read_text(etag_file) : NULL;
     if (etag && !*etag) {
@@ -406,7 +400,17 @@ static const fetched *fetch_url(const char *url, const char *game_folder)
     if (etag && !safe_etag(etag)) etag[0] = '\0';
     remove(headers_file);
     remove(fresh);
-    const int code = run_curl(url, fresh, headers_file, etag && *etag ? etag : NULL);
+    remove(request_file);
+    bool asks = false; // Whether the request says the ETag
+    if (etag && *etag) {
+        FILE *r = fopen(request_file, "wb");
+        if (r) {
+            fprintf(r, "If-None-Match: %s\n", etag);
+            asks = fclose(r) == 0;
+        }
+    }
+    const int code = run_curl(url, fresh, headers_file, asks ? request_file : NULL);
+    remove(request_file);
     char *headers = read_text(headers_file);
     const int status = headers ? last_status(headers) : 0;
     remove(headers_file);

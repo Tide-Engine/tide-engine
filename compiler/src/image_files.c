@@ -1,5 +1,6 @@
 #include "image_files.h"
 #include "psd_files.h"
+#include "tide/internal/count_text.h"
 
 #include <limits.h>
 #include <stdarg.h>
@@ -7,10 +8,11 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define IMAGE_MEMORY_LIMIT ((size_t)512u * 1024u * 1024u)
+#define IMAGE_MIB (TIDE_IMAGE_MAX_BYTES >> 20) // For messages
 
-// stb's temporary allocations are accounted per importing thread. The final
-// float pixels are also checked against this budget, but use ordinary malloc
+// stb's temporary allocations are accounted per importing thread against
+// TIDE_IMAGE_MAX_BYTES (image_files.h). The final float pixels are also
+// checked against this budget, but use ordinary malloc
 // because the existing asset cache releases them with free().
 typedef union image_allocation {
     max_align_t alignment;
@@ -21,7 +23,7 @@ static _Thread_local bool image_limited;
 
 static void *image_alloc(const size_t size)
 {
-    if (size > IMAGE_MEMORY_LIMIT - image_memory || size > SIZE_MAX - sizeof(image_allocation)) {
+    if (size > TIDE_IMAGE_MAX_BYTES - image_memory || size > SIZE_MAX - sizeof(image_allocation)) {
         image_limited = true;
         return NULL;
     }
@@ -45,7 +47,7 @@ static __attribute__((unused)) void *image_realloc(void *ptr, const size_t size)
     if (!ptr) return image_alloc(size);
     image_allocation *p = (image_allocation *)ptr - 1;
     const size_t old = p->size;
-    if (size > IMAGE_MEMORY_LIMIT - (image_memory - old) || size > SIZE_MAX - sizeof *p) {
+    if (size > TIDE_IMAGE_MAX_BYTES - (image_memory - old) || size > SIZE_MAX - sizeof *p) {
         image_limited = true;
         return NULL;
     }
@@ -110,7 +112,8 @@ static bool dimensions(const uint32_t width, const uint32_t height, const char *
 {
     if (!width || !height) return fail(why, "%s image has invalid zero dimensions", format);
     if (width > TIDE_PNG_MAX_SIDE || height > TIDE_PNG_MAX_SIDE)
-        return fail(why, "%s image is %u by %u pixels; images can be at most 16384 pixels each way", format, width, height);
+        return fail(why, "%s image is %u by %u pixels, more than the %u each way an image import takes (TIDE_PNG_MAX_SIDE)", format, width, height,
+                    TIDE_PNG_MAX_SIDE);
     return true;
 }
 
@@ -123,7 +126,7 @@ static bool jpeg_header(const uint8_t *data, const size_t size, uint32_t *width,
     size_t at = 2;
     bool frame = false, scan = false;
     uint8_t component_ids[4] = {0};
-    unsigned int components = 0, dc_components = 0;
+    unsigned int components = 0, dc_components = 0, scans = 0;
     int adobe_transform = -1;
     while (at < size) {
         if (data[at++] != 0xff) return fail(why, "JPEG image has invalid marker data");
@@ -164,6 +167,9 @@ static bool jpeg_header(const uint8_t *data, const size_t size, uint32_t *width,
         if (marker == 0xcc) return fail(why, "arithmetic-coded JPEG isn't supported; use a baseline or progressive JPEG, or export PNG");
         if (marker == 0xda) {
             if (!frame) return fail(why, "JPEG image has a scan before its frame header");
+            if (++scans > TIDE_IMAGE_MAX_JPEG_SCANS)
+                return fail(why, "JPEG image has more than the %u progressive scans an image import takes (TIDE_IMAGE_MAX_JPEG_SCANS); save it again as a baseline or ordinary progressive JPEG",
+                            TIDE_IMAGE_MAX_JPEG_SCANS);
             if (n < 6) return fail(why, "JPEG image has an invalid scan header");
             const unsigned int count = data[at + 2];
             if (!count || count > components || n != 6u + count * 2u) return fail(why, "JPEG image has an invalid scan header");
@@ -347,7 +353,9 @@ bool image_file_read(const uint8_t *data, const size_t size, const char *name, t
     if (format == IMAGE_PNG) {
         if (size >= 24 && !memcmp(data, "\x89PNG\r\n\x1a\n", 8) && !memcmp(data + 12, "IHDR", 4)
             && !dimensions(be32(data + 16), be32(data + 20), "PNG", why)) return false;
-        if (tide_png_decode(data, size, out)) return true;
+        char limit[TIDE_PNG_WHY];
+        if (tide_png_decode(data, size, out, limit)) return true;
+        if (limit[0]) return fail(why, "PNG image is refused: %s", limit);
         return fail(why, "PNG image has invalid or truncated data; save a valid PNG with at most 16384 pixels each way");
     }
     if (format == IMAGE_PSD) {
@@ -356,7 +364,10 @@ bool image_file_read(const uint8_t *data, const size_t size, const char *name, t
         return fail(why, "PSD image %s", psd);
     }
     if (format == IMAGE_UNKNOWN) return fail(why, "unrecognized image format; supported image formats are PNG, PSD, JPEG, TGA and BMP");
-    if (size > IMAGE_MEMORY_LIMIT || size > INT_MAX) return fail(why, "image source exceeds the 512 MiB import limit");
+    if (size > TIDE_IMAGE_MAX_BYTES || size > INT_MAX) {
+        char have[32];
+        return fail(why, "image source is %s bytes, more than the %u MiB an image import takes (TIDE_IMAGE_MAX_BYTES)", tide_count_text(size, have), IMAGE_MIB);
+    }
     uint32_t width = 0, height = 0;
     const char *label = format == IMAGE_JPEG ? "JPEG" : format == IMAGE_BMP ? "BMP" : "TGA";
     const bool valid = format == IMAGE_JPEG ? jpeg_header(data, size, &width, &height, why)
@@ -364,19 +375,19 @@ bool image_file_read(const uint8_t *data, const size_t size, const char *name, t
                                           : tga_header(data, size, &width, &height, why);
     if (!valid) return false;
     const size_t count = (size_t)width * height;
-    if (count > IMAGE_MEMORY_LIMIT / (sizeof(tide_color) + 4u))
-        return fail(why, "%s image exceeds the 512 MiB decoded-image import limit; reduce its dimensions", label);
+    if (count > TIDE_IMAGE_MAX_BYTES / (sizeof(tide_color) + 4u))
+        return fail(why, "%s image decodes to more than the %u MiB an image import takes (TIDE_IMAGE_MAX_BYTES); reduce its dimensions", label, IMAGE_MIB);
     image_memory = 0;
     image_limited = false;
     int x = 0, y = 0, channels = 0;
     stbi_uc *pixels = stbi_load_from_memory(data, (int)size, &x, &y, &channels, 4);
     if (!pixels) {
-        if (image_limited) return fail(why, "%s image exceeds the 512 MiB decoder memory limit; reduce its dimensions", label);
+        if (image_limited) return fail(why, "%s image needs more than the %u MiB of decoder memory an image import takes (TIDE_IMAGE_MAX_BYTES); reduce its dimensions", label, IMAGE_MIB);
         return fail(why, "%s image has invalid or truncated pixels (%s)", label, stbi_failure_reason());
     }
-    if (x != (int)width || y != (int)height || count * sizeof(tide_color) > IMAGE_MEMORY_LIMIT - image_memory) {
+    if (x != (int)width || y != (int)height || count * sizeof(tide_color) > TIDE_IMAGE_MAX_BYTES - image_memory) {
         image_free(pixels);
-        return fail(why, "%s image exceeds the 512 MiB decoder memory limit; reduce its dimensions", label);
+        return fail(why, "%s image needs more than the %u MiB of decoder memory an image import takes (TIDE_IMAGE_MAX_BYTES); reduce its dimensions", label, IMAGE_MIB);
     }
     tide_color *colors = malloc(count * sizeof *colors);
     if (!colors) { image_free(pixels); return fail(why, "%s image couldn't allocate its decoded pixels", label); }
