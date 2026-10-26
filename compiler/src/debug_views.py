@@ -379,7 +379,7 @@ def tide_register(debugger, module):
                         ("tide_int3", "(${var.x}, ${var.y}, ${var.z})"), ("tide_int4", "(${var.x}, ${var.y}, ${var.z}, ${var.w})"),
                         ("tide_double2", "(${var.x}, ${var.y})"), ("tide_double3", "(${var.x}, ${var.y}, ${var.z})"),
                         ("tide_double4", "(${var.x}, ${var.y}, ${var.z}, ${var.w})"),
-                        ("tide_quaternion", "(${var.x}, ${var.y}, ${var.z}, ${var.w})"),
+                        ("tide_quaternion", "(${var.value.x}, ${var.value.y}, ${var.value.z}, ${var.value.w})"),
                         ("tide_color", "Color(${var.r}, ${var.g}, ${var.b}, ${var.a})")):
         run("type summary add -w tide -s \"%s\" %s" % (shown, name))
     # What generated code keeps a function's list and map lookups in: the engine's, nothing of the game's

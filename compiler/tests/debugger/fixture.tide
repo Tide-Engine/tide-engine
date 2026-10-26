@@ -19,6 +19,7 @@ component Player
     Entity buddy;
     Map<string, int> scores;
     Set<int> seen;
+    quaternion facing = quaternion.identity;
 }
 
 singleton Totals

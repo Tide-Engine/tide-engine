@@ -7,8 +7,10 @@ carries the game's natvis, with `Library/Tide/game.natvis` and `game_lldb.py`
 beside it. A native debugger attached to the Unity editor (VS Code's Attach
 to Unity (Tide), CLion's Run > Attach to Unity (Tide), Visual Studio's Attach
 to Process) stops at `.tide` breakpoints in the `loaded-<n>` copy the embed
-host loads. Checked with a host loading `tide_embed.dll` as `TideRunner` does,
-not with the editor itself. `notes/debugging.md`; package README, Debug.
+host loads, and on each new library a test or a reload loads. Checked in
+Unity 6000.6.0f1 itself (batch PlayMode tests under Windows' dbgeng) and with a
+host loading `tide_embed.dll` as `TideRunner` does. `notes/debugging.md`;
+package README, Debug.
 
 ## Time travel (2026-10-26)
 

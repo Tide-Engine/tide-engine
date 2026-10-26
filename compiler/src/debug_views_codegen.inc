@@ -295,7 +295,7 @@ static void write_natvis(const gen *g, sb *o)
         {"tide_float4", "({x}, {y}, {z}, {w})"}, {"tide_int2", "({x}, {y})"},
         {"tide_int3", "({x}, {y}, {z})"},       {"tide_int4", "({x}, {y}, {z}, {w})"},
         {"tide_double2", "({x}, {y})"},        {"tide_double3", "({x}, {y}, {z})"},
-        {"tide_double4", "({x}, {y}, {z}, {w})"}, {"tide_quaternion", "({x}, {y}, {z}, {w})"},
+        {"tide_double4", "({x}, {y}, {z}, {w})"}, {"tide_quaternion", "({value.x}, {value.y}, {value.z}, {value.w})"},
         {"tide_color", "Color({r}, {g}, {b}, {a})"},
     };
     for (size_t i = 0; i < sizeof vectors / sizeof vectors[0]; i++) {

@@ -168,8 +168,17 @@ deletes `game-<n-2>.pdb` with its library; a debugger holding it open keeps it.
   from a scratch installation of this checkout: natvis stream in each
   `.pdb`, `game.natvis`/`game_lldb.py` beside; a host loading `tide_embed.dll`
   as Unity's `TideRunner` does, with the game as `loaded-1.dll`, stopping at a
-  `.tide` breakpoint with Tide's frames and natvis values. The Unity editor
-  itself wasn't attached to.
+  `.tide` breakpoint with Tide's frames and natvis values.
+- The Unity editor itself (6000.6.0f1, batch mode, the Sample's PlayMode
+  tests, on a scratch copy with this checkout's tide on `PATH`), started under
+  dbgeng: on `loaded-<n>.dll`'s load its `.pdb` and embedded natvis loaded, a
+  breakpoint at `Bounce.tide:92` bound in `tide_system_Spinning`, and when a
+  later test loaded the next `loaded-<n>` the breakpoint (`bu`) bound there
+  and hit: the frame at `Bounce.tide @ 92`, `spinner`, `transform` and `time`
+  by name, `tide_this` as `Entity(3:1)`, vectors as `(x, y, z)`. This found
+  the quaternion view reading fields the struct hasn't (`value` holds them),
+  now fixed and in the fixture. An editor attach from VS Code, CLion or Visual
+  Studio wasn't tried; they use the same `.pdb` and natvis.
 - Every game's generated C (408 `.sources` lists of this build, base tidec
   vs this one): `--no-line` output identical but for the simulation identity,
   which hashes the compiler's sources; and in line mode, compiling each

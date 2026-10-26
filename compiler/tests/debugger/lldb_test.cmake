@@ -91,6 +91,7 @@ expect("frame variable *player" 1 "mode = Running" "an enum field is its member'
 expect("frame variable *player" 1 "buddy = (none|Entity\\([0-9]+:[0-9]+\\))" "an entity field is an entity")
 expect("frame variable *player" 1 "scores = count = 1 {\n *\\[\"ann\"\\] = [0-9]+" "a map's entries are its values by key")
 expect("frame variable *player" 1 "seen = count = [1-9]" "a set says its count")
+expect("frame variable *player" 1 "facing = \\(0, 0, 0, 1\\)" "a quaternion is its x, y, z and w")
 expect("frame variable *totals" 1 "pairs = count = [1-9][0-9]* {\n *\\[0\\] = [({][^)}]*a = 2[^)}]*b = 0\\.5" "a list of structs shows their fields")
 expect("bt 1" 1 "frame #0: [^\n]*tide_system_Score[^\n]* at fixture\\.tide:${at_recent}"
     "a step from a statement lands on the next Tide line, not on generated C")

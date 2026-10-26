@@ -98,6 +98,7 @@ expect("dx -r2 *player" 1 "\n +buddy +: (none|Entity\\(0x[0-9a-f]+:0x[0-9a-f]+\\
 expect("dx -r2 *player" 1 "\n +scores +: { count = 0x1 }" "a map field says its count")
 expect("dx -r2 *player" 1 "\n +\\[[^\n]*ann[^\n]*\\] +: [0-9]+ \\[Type: int\\]" "a map's entries are its values by key")
 expect("dx -r2 *player" 1 "\n +seen +: { count = 0x[1-9]" "a set field says its count")
+expect("dx -r2 *player" 1 "\n +facing +: \\(0\\.0+, 0\\.0+, 0\\.0+, 1\\.0+\\)" "a quaternion is its x, y, z and w")
 expect("dx -r3 *totals" 1 "\n +pairs +: { count = 0x[1-9]" "a singleton's list of structs says its count")
 expect("dx -r3 *totals" 1 "\n +\\[0x0\\] +\\[Type: Pair\\]\n[^\n]* a +: 2 \\[Type: int\\]" "a list's struct elements show their fields")
 expect("dx -r3 *totals" 1 "\n[^\n]* b +: 0\\.5" "a list's struct elements show their fields")
