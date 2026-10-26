@@ -1,5 +1,77 @@
 # Netcode: sessions, prediction, commands
 
+## Presented view times survive visibility repair (2026-10-26)
+
+BREACH's real lossy culling test exposed two session bugs. Each new repair
+moved `snapshot_tick`, which the server also used as its view-time floor;
+legitimate frames already displayed or in flight then became pre-snapshot
+claims. Coalesced repair adoption also cleared the client's `presented_view`
+before the same update sampled input, although no replacement frame had drawn.
+
+The connection now has a private `view_start`: the authoritative tick when
+its first fully decoded, cookie/attempt-authenticated CLIENT is accepted while
+`welcoming`. This is the admission floor for that connection attempt, including
+tick zero. A cookie reconnect starts a new attempt and resets it at that
+attempt's first authenticated CLIENT. Repairs, replacement transfers and repair
+fallbacks leave this floor unchanged; `snapshot_tick` remains transfer state.
+The last scalar tick/fraction actually marked presented survives a coalesced
+repair until another frame is marked. Missing intermediate snapshots still
+reset the confirmed interpolation endpoints. Initial/full-world adoption,
+reload and authoritative timeline replacement retain their presentation reset.
+
+For a supplied stamp, `at = tick - 1 + alpha` must still have a nonnegative
+tick and a finite fraction in [0,1], be at least `view_start`, at most the
+connection's server-advertised `view_limit` and execution tick, and have an
+execution age no greater than the unchanged game's positive `maxRewind`.
+Only server WELCOME/SERVER sending advances `view_limit`; a client claim or
+acknowledgement cannot raise it. Authentication proves the connection, not what
+a modified client displayed or whether every advertised datagram arrived.
+Rejected stamps become invalid zero without losing ordinary input. Missing
+inputs can still repeat a held stamp, so Physics.Rewind retains its independent
+age/history checks. No API, generated-C contract or wire format changes.
+
+`tests/test_session_view_time.c` exercises consecutive visibility repairs over
+20 ms one-way latency, 5 ms jitter and 3% loss, with 120 Hz updates, 20 Hz
+presentation and a two-thirds-second render pause. It checks each newly
+received input against the actual preceding frame, correction adoption before
+redraw, reveal/conceal, expired frames and continued prediction. Native/WASI
+agree: 74 projections, 69 skipped transfer intervals, 374 accepted timestamps
+(241 during continuous repairs), 91 expired stamps, zero lost actual stamps
+and zero resyncs. Separately linking the original `866f7be77` session against
+this regression fails (147 lost stamps and valid bounded claims rejected).
+The raw-peer case covers tick-zero/nonzero admission, live-cookie reconnect,
+pre-admission, future, negative, malformed/nonfinite fractions, expired claims
+and an unadvertised stamp before its execution tick; ordinary input survives
+every rejected timestamp.
+
+Validation: warnings-as-errors native/WASI builds; both pass the session group
+(14 cases), existing visibility group (seven cases), generated `view_time`,
+and Box2D/Box3D actual-frame rewind-network fixtures. The visibility name filter
+also runs the new consecutive-repair case. Node is 24.22.1. All commands use
+TIDE_HIDDEN; no window, GPU, browser or CI run was started.
+
+Independent read-only lifecycle/security reviews approved the minimal fix and
+the final regression diff without blockers. Their scope is source review, not
+a second test run. The spec's older Confirmed view time paragraph still calls
+the lower bound the "connection snapshot"; this note records the corrected
+connection-attempt admission contract. The owner-limited implementation task
+changes only session internals, focused CPU tests and this note.
+
+The unchanged strict prototype repro
+`breach_culling_real_lossy_clients_receive_conceal_reveal_and_keep_predicting`
+still fails identically on native/WASI after 1,800 ticks at 20 ms/way, 5 ms
+jitter and 3% loss. All 3,501 supplied valid claims have zero rejections at
+ages <=250 ms; 1,966 older claims are still rejected as required. The clients
+match 212/196 canonical worlds with zero resyncs, but have only 12/11 hidden
+updates and 10/10 hidden movement updates, below the unchanged test's bounds.
+This fix closes the false-rejection/stamp-reset bugs; it does not establish
+that real projection corrections keep every human presentation within the
+rewind window. Correction delivery/confirmation lag remains an integration
+gap (the earlier projection lag measurements below remain relevant). No game
+test, culling policy, timestamp or maxRewind bound was weakened here. The repro
+was built only in this checkout's CPU-only debug/web-debug slots, with BREACH
+as their sole external directory; the prototype agent owns its final tests.
+
 ## A session's recorder and rewind (2026-10-26)
 
 For Unity's time travel (notes/unity.md, Time travel), host-side session calls; generated code calls nothing new.
@@ -676,7 +748,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
 
 `tide_view_worlds` supplies confirmed `verified`, `verified_previous`, `verified_alpha` and upper `verified_tick` separately from prediction. Its clock advances by elapsed real time, clamps to the latest confirmation and never extrapolates. Join catch-up skips its presentation backlog so a large download cannot fill the bounded snapshot ring and stall verification. The ring retains the displayed confirmed interval alongside prediction (maximum twice the prediction window plus four). Latest verified-world access remains latest confirmed state; view endpoints may lag it. Reload, resync and migration reset presentation onto their new timeline.
 
-A presented frame stamps the next sampled input with `tick - 1 + alpha`, through optional generated tide_game callbacks, after Sample. The server treats this as untrusted: finite fraction/range, nonnegative tick, connection snapshot start, advertised server tick, execution tick and configured maximum age must pass. Rejection replaces only the timestamp with invalid zero; ordinary input is retained. Missing input can repeat an old stamp, so Physics.Rewind independently rejects stale/unavailable history. A timestamp cannot establish what a modified client displayed. Games validate shooter, origin, aim, ammo, cadence and damage against authoritative state.
+A presented frame stamps the next sampled input with `tick - 1 + alpha`, through optional generated tide_game callbacks, after Sample. The server treats this as untrusted: finite fraction/range, nonnegative tick, connection-attempt admission start, advertised server tick, execution tick and configured maximum age must pass. Repairs do not advance the admission start (the 2026-10-26 correction above). Rejection replaces only the timestamp with invalid zero; ordinary input is retained. Missing input can repeat an old stamp, so Physics.Rewind independently rejects stale/unavailable history. A timestamp cannot establish what a modified client displayed. Games validate shooter, origin, aim, ammo, cadence and damage against authoritative state.
 
 `view_time` exercises engine stamping, fractional/held confirmed clocks and future, negative, out-of-range, NaN, pre-join and stale wire claims, with no resync and usable ordinary input. `net_join_big` covers bounded catch-up. Full networking/migration suites retain their existing behavior.
 

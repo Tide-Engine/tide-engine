@@ -741,6 +741,7 @@ typedef struct connection {
     bool has_world; // It has a world to build it from: it's sent the hashes first
     bool can_start; // ...or can start the match itself to have one
     uint32_t snapshot_tick;
+    uint32_t view_start; // First authenticated tick of this connection attempt; repairs do not move it.
     uint32_t view_limit; // Latest authoritative tick advertised to this connection.
     uint32_t snapshot_number; // Each thing sent has the next number, from 1
     uint8_t snapshot_kind;    // SEND_WORLD or SEND_HASHES
@@ -1581,6 +1582,7 @@ static void on_client(tide_server *s, connection *c, tide_reader *r)
         c->their_arrived = s->arrived;
     }
     if (echo) c->rtt_ms = millis_since(s->now, echo);
+    if (c->welcoming) c->view_start = s->tick;
     c->welcoming = false;
     if (!c->greeted) greet(s, c);
 
@@ -2481,7 +2483,7 @@ static void server_tick(tide_server *s)
             const double at = (double)view.tick - 1.0 + (double)view.alpha;
             const double age = ((double)tick - at) / (double)s->desc.tick_rate;
             if (!view.valid || view.tick < 0 || !(view.alpha >= 0.0f && view.alpha <= 1.0f)
-                || at < (double)c->snapshot_tick || at > (double)c->view_limit || at > (double)tick
+                || at < (double)c->view_start || at > (double)c->view_limit || at > (double)tick
                 || !(g->max_rewind > 0.0f) || age > (double)g->max_rewind) {
                 g->set_view_time(input, (tide_view_time){0});
                 size = g->write_input(input, s->packed, max);
@@ -5046,7 +5048,8 @@ static void load_snapshot(tide_client *c)
             tide_hearing_skip_to(&c->hearing, tick);
             c->first_tick = tick;
             c->verified_view = (double)tick;
-            c->presented_view = (tide_view_time){0};
+            // Sampling still refers to the last frame actually presented,
+            // until the host presents a frame from this corrected endpoint.
         }
         for (uint32_t i = 0; i < c->w.history; i++) {
             if (c->frames[i].data && c->frames[i].tick < tick) drop_frame(&c->frames[i]);
