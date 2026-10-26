@@ -1040,6 +1040,8 @@ static type check_expr_any(checker *c, expr *e);
 static bool same_place(const expr *a, const expr *b);
 static bool gpu_refuses(const checker *c, loc at, const char *what, const char *instead);
 static type check_snap(checker *c, expr *e, decl *singleton);
+static bool names_snapped_field(const checker *c, const expr *e, type obj);
+static type check_field_snap(checker *c, expr *e);
 static void c_name_of(const decl *d, sb *out);
 
 // The code whose device reads are being recorded: a function or method, or a
@@ -1364,7 +1366,7 @@ static type list_of(program *prog, const type element)
     sb name = {0};
     sb_printf(&name, "List<%s>", type_name(element));
     d->name = (str){name.data, (int)name.len};
-    const field item = {str_from("item"), str_from(""), {0, 0, 0}, element, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field item = {str_from("item"), str_from(""), {0, 0, 0}, element, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(d->fields, item);
     d->index = prog->lists.count;
     vec_push(prog->lists, d);
@@ -1393,7 +1395,7 @@ static type mesh_of(program *prog, const type vertex)
     sb name = {0};
     sb_printf(&name, "Mesh<%s>", type_name(vertex));
     d->name = (str){name.data, (int)name.len};
-    const field item = {str_from("vertex"), str_from(""), {0, 0, 0}, vertex, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field item = {str_from("vertex"), str_from(""), {0, 0, 0}, vertex, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(d->fields, item);
     d->index = prog->meshes.count;
     vec_push(prog->meshes, d);
@@ -1472,10 +1474,10 @@ static type map_of(program *prog, const type key, const type value, const bool s
     if (set) sb_printf(&name, "Set<%s>", type_name(key));
     else sb_printf(&name, "Map<%s, %s>", type_name(key), type_name(value));
     d->name = (str){name.data, (int)name.len};
-    const field k = {str_from("key"), str_from(""), {0, 0, 0}, key, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field k = {str_from("key"), str_from(""), {0, 0, 0}, key, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(d->fields, k);
     if (!set) {
-        const field v = {str_from("value"), str_from(""), {0, 0, 0}, value, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+        const field v = {str_from("value"), str_from(""), {0, 0, 0}, value, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
         vec_push(d->fields, v);
         decl *entry = NEW(decl);
         entry->kind = DECL_STRUCT;
@@ -1767,7 +1769,7 @@ static type grid_of(program *prog, const type cell, const int dims)
     sb name = {0};
     sb_printf(&name, "Grid%d<%s>", dims, type_name(cell));
     d->name = (str){name.data, (int)name.len};
-    const field item = {str_from("cell"), str_from(""), {0, 0, 0}, cell, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field item = {str_from("cell"), str_from(""), {0, 0, 0}, cell, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(d->fields, item);
     d->index = prog->grids.count;
     vec_push(prog->grids, d);
@@ -2305,7 +2307,7 @@ static type array_of(program *prog, const type element, const int n, const loc a
     sb name = {0};
     sb_printf(&name, "%s[%d]", type_name(element), n);
     d->name = (str){name.data, (int)name.len};
-    const field item = {str_from("item"), str_from(""), {0, 0, 0}, element, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field item = {str_from("item"), str_from(""), {0, 0, 0}, element, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(d->fields, item);
     d->index = prog->arrays.count;
     vec_push(prog->arrays, d);
@@ -7964,6 +7966,7 @@ static type check_method(checker *c, expr *e)
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         return T_ERR;
     }
+    if (names_snapped_field(c, e, obj)) return check_field_snap(c, e);
     if (obj.kind == TY_RECORD && obj.decl == c->prog->pixel) { // this.Discard(): the frag's pixel isn't drawn
         for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
         if (!str_eq_c(e->name, "Discard") || e->args.count) {
@@ -8324,6 +8327,94 @@ static type check_snap(checker *c, expr *e, decl *singleton)
     }
     e->call = CALL_SNAP;
     e->type_decl = singleton;
+    return T_VOID_;
+}
+
+// `f.since.Snap()`, or `since.Snap()` in a method: a field, not a whole
+// entity or singleton. A field of an entity's type snaps that entity, and a
+// struct's own Snap method is called as any method.
+static bool names_snapped_field(const checker *c, const expr *e, const type obj)
+{
+    if (!str_eq_c(e->name, "Snap")) return false;
+    if (obj.kind == TY_ENTITY || obj.kind == TY_LOCAL_ENTITY || obj.kind == TY_SINGLETON || obj.kind == TY_COMPONENT) return false;
+    if (obj.kind == TY_STRUCT && find_method(obj.decl, e->name)) return false;
+    const expr *place = e->object;
+    if (place->kind == E_MEMBER) return place->field != NULL;
+    return place->kind == E_NAME && place->bind == BIND_FIELD && c->method && c->method->owner;
+}
+
+// Whether views' correction smoothing moves a field: a [Position] or a
+// [Rotation], or a struct holding one.
+static bool field_smoothed(const field *f)
+{
+    for (int i = 0; i < f->attributes.count; i++) if (str_eq_c(f->attributes.items[i].name, "Snap")) return false;
+    if (f->view_correction) return true;
+    if (f->type.kind != TY_STRUCT || f->type.decl->interpolate) return false;
+    for (int i = 0; i < f->type.decl->fields.count; i++) if (field_smoothed(&f->type.decl->fields.items[i])) return true;
+    return false;
+}
+
+// field.Snap(): this field jumped this tick (a timer started over, a stance
+// that changed), so views draw it as it is at the newer tick for that
+// interval, while the rest of its component or singleton blends. Each field
+// that snaps counts its snaps in a hidden field of its own (check_program).
+static type check_field_snap(checker *c, expr *e)
+{
+    for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
+    if (e->args.count != 0) diag_error(e->at, "Snap takes no arguments");
+    expr *place = e->object;
+    field *f = place->field;
+    const decl *owner = place->kind == E_MEMBER ? place->object->type.decl : c->method->owner;
+    const type_kind kind = place->kind == E_MEMBER ? place->object->type.kind : decl_type((decl *)owner).kind;
+    const str name = f->name;
+    if (c->in_input || !owner || (kind != TY_COMPONENT && kind != TY_SINGLETON && kind != TY_STRUCT)) {
+        diag_error(e->at, "only a component's or a singleton's field can snap: views blend the match, and nothing else");
+        return T_ERR;
+    }
+    if (owner->is_local || owner->placement_of || f->is_local || place->local_field) {
+        diag_error(e->at, "local state is never blended: views see it as it is");
+        return T_ERR;
+    }
+    if (kind == TY_STRUCT) {
+        diag_error(e->at, "a struct's field can't snap alone: snap the component's or the singleton's field that holds it");
+        diag_note("that field is drawn as it is for the tick it jumped, all of the struct");
+        return T_ERR;
+    }
+    if (owner->interpolate) {
+        diag_error(e->at, "'" STR_FMT "' blends its own way, with its Interpolate, so a field of it can't snap alone",
+                   STR_ARG(owner->name));
+        diag_note("snap the entity, 'this.Snap()', or have Interpolate take the newer value when it jumped");
+        return T_ERR;
+    }
+    for (int i = 0; i < f->attributes.count; i++) {
+        if (!str_eq_c(f->attributes.items[i].name, "Snap")) continue;
+        diag_error(e->at, "'" STR_FMT "' is [Snap], so views always draw it as it is", STR_ARG(name));
+        diag_note("without [Snap] it blends, but for the ticks it snaps");
+        return T_ERR;
+    }
+    if (!type_blends(f->type)) {
+        diag_error(e->at, "views never blend %s, so '" STR_FMT "' is drawn as it is already", type_name(f->type), STR_ARG(name));
+        return T_ERR;
+    }
+    if (field_smoothed(f)) {
+        diag_error(e->at, "views smooth '" STR_FMT "' through corrections, as a [Position] or a [Rotation], so it can't snap alone",
+                   STR_ARG(name));
+        diag_note(kind == TY_COMPONENT ? "snap the entity, 'this.Snap()', which starts its smoothing over too"
+                                       : "snap the singleton, which starts its smoothing over too");
+        return T_ERR;
+    }
+    if (in_async_function(c)) {
+        if (!note_task_side(c, TASK_MATCH, e->at)) return T_ERR;
+    } else if (local_code(c)) {
+        diag_error(e->at, "%s can't change the match, and snapping is part of it", local_code_what(c->system));
+        diag_note("snap it in the system that changes it, so every machine draws the jump the same");
+        return T_ERR;
+    }
+    if (!check_writable(c, place, NULL, NULL)) return T_ERR;
+    if (builds(c->prog)) f->snap_counted = true;
+    e->call = CALL_SNAP;
+    e->type_decl = (decl *)owner;
+    e->snapped_field = f;
     return T_VOID_;
 }
 
@@ -17272,12 +17363,12 @@ static void add_builtins(program *prog)
     time->kind = DECL_SINGLETON;
     time->name = str_from("Time");
     time->builtin = true;
-    const field dt = {str_from("dt"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
-    const field tick = {str_from("tick"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
-    const field t = {str_from("t"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field dt = {str_from("dt"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
+    const field tick = {str_from("tick"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
+    const field t = {str_from("t"), str_from("float"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(time->fields, dt);
     vec_push(time->fields, tick);
-    const field rate = {str_from("tickRate"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field rate = {str_from("tickRate"), str_from("int"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(time->fields, t);
     vec_push(time->fields, rate);
     field rewind_field = {0};
@@ -17365,7 +17456,7 @@ static void add_builtins(program *prog)
     owner->kind = DECL_COMPONENT;
     owner->name = str_from("Owner");
     owner->builtin = true;
-    const field player = {str_from("player"), str_from("PlayerID"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field player = {str_from("player"), str_from("PlayerID"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(owner->fields, player);
     prog->owner = owner;
 
@@ -17570,7 +17661,7 @@ static void add_builtins(program *prog)
     static const char *const vertex_fields[][2] = {{"position", "float2"}, {"uv", "float2"}, {"color", "Color"}};
     for (int i = 0; i < (int)(sizeof vertex_fields / sizeof vertex_fields[0]); i++) {
         const field f = {str_from(vertex_fields[i][0]), str_from(vertex_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
         vec_push(vertex->fields, f);
     }
     expr *white = NEW(expr);
@@ -17590,7 +17681,7 @@ static void add_builtins(program *prog)
     static const char *const vertex3_fields[][2] = {{"position", "float3"}, {"uv", "float2"}, {"color", "Color"}};
     for (int i = 0; i < (int)(sizeof vertex3_fields / sizeof vertex3_fields[0]); i++) {
         const field f = {str_from(vertex3_fields[i][0]), str_from(vertex3_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
         vec_push(vertex3->fields, f);
     }
     vertex3->fields.items[2].default_value = white;
@@ -17608,7 +17699,7 @@ static void add_builtins(program *prog)
         {"color", "Color"}, {"color2", "Color"}, {"outline", "float"}, {"outlineColor", "Color"}, {"soft", "float"}};
     for (int i = 0; i < (int)(sizeof shape_fields / sizeof shape_fields[0]); i++) {
         const field f = {str_from(shape_fields[i][0]), str_from(shape_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
         vec_push(shape->fields, f);
     }
     expr *none = NEW(expr);
@@ -17878,7 +17969,7 @@ static void add_builtins(program *prog)
         {"state", "SessionState"}, {"player", "PlayerID"}, {"ping", "int"}, {"server", "bool"}, {"open", "bool"}};
     for (int i = 0; i < (int)(sizeof session_fields / sizeof session_fields[0]); i++) {
         const field f = {str_from(session_fields[i][0]), str_from(session_fields[i][1]), {0, 0, 0}, {0}, NULL, {0, 0, 0},
-                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+                         {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
         vec_push(session->fields, f);
     }
     prog->session = session;
@@ -17887,7 +17978,7 @@ static void add_builtins(program *prog)
     prog->connected->is_local = true;
     prog->disconnected->is_local = true;
     const field reason_field = {str_from("reason"), str_from("DisconnectReason"), {0, 0, 0}, {0}, NULL, {0, 0, 0}, {0}, 0,
-                                {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+                                {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(prog->disconnected->fields, reason_field);
     // Forgotten: sent to a match entity (or the match) whose local fields are
     // going, for local handlers to let go of what they hold (see check_forgotten).
@@ -17954,7 +18045,7 @@ static decl *new_record(program *prog, const char *name, const char *c_name)
 
 static void record_field(decl *d, const char *name, const type t)
 {
-    const field f = {str_from(name), str_from(""), {0, 0, 0}, t, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field f = {str_from(name), str_from(""), {0, 0, 0}, t, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(d->fields, f);
 }
 
@@ -21535,8 +21626,21 @@ bool check(program *prog)
     collect_device_uses(&c);
     check_workers(&c);
     // A singleton something snaps counts its snaps: views blend it between ticks with the same count.
+    // So does a field something snaps alone, after the rest.
     for (int i = 0; i < prog->decls.count; i++) {
         decl *d = prog->decls.items[i];
+        if (d->kind != DECL_SINGLETON && d->kind != DECL_COMPONENT) continue;
+        const int fields = d->fields.count;
+        for (int k = 0; k < fields; k++) {
+            if (!d->fields.items[k].snap_counted) continue;
+            sb counter = {0};
+            sb_printf(&counter, "tide_snaps_" STR_FMT, STR_ARG(d->fields.items[k].name));
+            field snaps = {0};
+            snaps.name = str_from(counter.data);
+            snaps.type = (type){TY_INT, NULL};
+            snaps.hidden = true;
+            vec_push(d->fields, snaps);
+        }
         if (d->kind != DECL_SINGLETON || !d->snapped) continue;
         field snaps = {0};
         snaps.name = str_from("tide_snaps");

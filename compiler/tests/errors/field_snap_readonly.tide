@@ -1,0 +1,7 @@
+// expect: 'f' is read-only
+component Fighter { float since; }
+scene Main { }
+system Enter(Fighter f)
+{
+    f.since.Snap();
+}

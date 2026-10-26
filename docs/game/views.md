@@ -374,6 +374,32 @@ event(Died dead) Respawn(mut Body body, Arena arena)
 
 `entity.Snap()` is applied at the end of the tick, like `Destroy`, so it never makes systems wait. `singleton.Snap()` needs the singleton as a `mut` parameter.
 
+A single field can jump too: `field.Snap()` is the per-field counterpart of `entity.Snap()`. For the tick it happens in, views draw that field as it is at the newer tick, and from the next tick it blends again. The rest of its component or singleton keeps blending, so a position doesn't stutter.
+
+Use it whenever a float starts over together with something that doesn't blend. Here a stance is an enum, so views see the new stance at once, and `since` counts the seconds in it:
+
+```csharp
+component Fighter
+{
+    Stance stance;
+    float since;    // Seconds in this stance
+    float3 hand;
+
+    mut void Enter(Stance next)
+    {
+        stance = next;
+        since = 0;
+        since.Snap(); // Drawn from 0 with the new stance
+    }
+}
+```
+
+::: warning A timer that starts over
+Without `since.Snap()`, every frame between the two ticks shows the new stance with `since` blended between its old value and 0: a timer running backwards, which pops whatever the view works out from it. `[Snap]` on the field would avoid it, but then `since` never blends, and `this.Snap()` stops the whole entity blending, position included.
+:::
+
+`field.Snap()` goes on a field of a match component or singleton that views blend, wherever code may write that field: systems, match event handlers, and the functions and methods they pass it to. A field that holds a struct snaps all of it, as in `arm.pose.Snap()`; a struct's own field can't snap alone. Each field that snaps keeps a count of its snaps beside it in the match, so snapshots, rollback and host migration carry it, and it is part of the match hash.
+
 ### Provisional correction smoothing
 
 ::: warning Provisional
@@ -410,7 +436,7 @@ The built-in `Transform` already uses this behavior for its match fields: `local
 
 This state belongs to this machine's presentation. Simulation values and collisions correct immediately, and snapshots, hashes and network state are unaffected. `entity.Snap()` and `singleton.Snap()` also clear any accumulated error, keeping intentional jumps immediate. A new match, a hot reload or a replacement world with no comparable presentation history clears the error too. While a host migration reconnects, the frozen presentation retains its error; adopting the new network timeline clears it.
 
-The tags take no arguments. Use them on match fields; local state, inputs and events cannot carry them. A field cannot combine `[Position]`, `[Rotation]` and `[Snap]`.
+The tags take no arguments. Use them on match fields; local state, inputs and events cannot carry them. A field cannot combine `[Position]`, `[Rotation]` and `[Snap]`, and such a field can't snap alone with `field.Snap()`: snap its entity or singleton, which clears its error too.
 
 Ordinary structs can contain annotated built-in fields, including through nested structs. Correction smoothing for a type with its own `Interpolate` is deferred; its existing tick interpolation remains available. No new custom-type method or correction-rate setting is agreed. The [specification](../spec.md#provisional-correction-smoothing) records the provisional contract.
 

@@ -357,6 +357,7 @@ tide_e2e_test(predict_method) # Method-only input: no attribute defaults
 tide_e2e_test(seen) # How late other players see what one does: from a key read to another's view
 tide_e2e_test(random_net) # Generators through prediction and rollback, and the seed a server picks for its match
 tide_e2e_test(blend)
+tide_e2e_test(field_snap) # One field that jumped, `since.Snap()`, drawn as it is while the rest blends
 tide_e2e_test(view_corrections) # Tagged presentation fields: correction accumulation, rotation and private lifetime
 tide_e2e_test(big_world)
 tide_e2e_test(crlf) # Windows line endings, kept by .gitattributes

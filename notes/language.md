@@ -1280,6 +1280,55 @@ diff check pass. No determinism pin changed. Debug uses clang 23.1.2 with Node
 Linux, macOS, Android, MinGW and sanitizer coverage were not run on this Windows
 machine; CI was not dispatched.
 
+## Per-field Snap (2026-10-27)
+
+The owner approved `field.Snap()`, spelled `f.since.Snap()`, on 2026-10-27: the
+per-field counterpart of `entity.Snap()`, for a float reset along with an enum
+(Banked and Parry: the new stance drawn with `since` blended backwards to 0, a
+1.4 m pop in Parry's sword hand). Only the field skips blending, for the one
+interval ending at the tick it snapped; the rest of the type blends. The edge
+rules below are my picks, Provisional in `docs/spec.md` (Views and drawing).
+
+Built compiler-only, no runtime change:
+
+- `check_method` hands `Snap` on a field place to `check_field_snap`
+  (`names_snapped_field`): an `E_MEMBER` with a `field`, or a `BIND_FIELD`
+  name in a method. Entity-typed fields still snap their entity, singletons and
+  components keep `check_snap`, and a struct's own `Snap` method wins.
+- Refused, each with its own diagnostic (`errors/field_snap_*`): a struct's
+  field (snap the component field holding it; a struct-typed field snaps the
+  whole struct), types that don't blend, `[Snap]` fields, fields correction
+  smoothing moves (`[Position]`/`[Rotation]`, or a struct holding one: snap the
+  entity, which clears the error), types with a custom `Interpolate`, local
+  state, views and local handlers, and the input's methods. Otherwise it is a
+  write of the field: `check_writable` decides, so systems, match handlers,
+  match tasks, and functions and mut methods passed it may call it (unlike
+  `entity.Snap()`, which routines can't).
+- The field gets `snap_counted`; after checking, `check_program` appends a
+  hidden `int tide_snaps_<field>` per such field to its component or singleton
+  (before a singleton's `tide_snaps`). Codegen increments it through the
+  field's own address and `offsetof`, wrapping through uint32, and
+  `gen_blend_fields` wraps that field's blend in
+  `if (before->tide_snaps_<f> == v->tide_snaps_<f>)`. Every path calling
+  `tide_blend_<C>` (view parameters, verified joins, query rows, singleton
+  copies, correction smoothing's endpoint blends) inherits it. Fields never
+  snapped generate exactly what they did.
+- The counter is ordinary match data, so snapshots, rollback, packing and
+  deltas, hashing, host migration, shard handoff and hot reload carry it. It
+  changes the layout (and match compatibility) only of games that snap that
+  field. Like the singleton's, embed descriptors list it as a field.
+- Editors: completion offers `Snap` after a blending, non-`[Snap]`, uncorrected
+  match field in systems, handlers and routines (`snaps_alone`,
+  `changes_match`); hover has its own text (`FIELD_SNAP_DOC`).
+
+Tests: `e2e/field_snap` (a timer reset in a mut method with its sibling
+float2 blending, a struct-typed field, a singleton field, verified views and
+view query rows at the jump and the next interval, the counter in snapshots and
+the hash), eight error fixtures, and `lsp_snap`. Native debug: the new e2e,
+blend, view_corrections, view_queries, every snap error fixture and tidels.
+Web debug: field_snap and blend. The change is guarded to games that use it, so
+full suites weren't run.
+
 ## Double math and matrix completion (2026-10-20)
 
 The owner corrected the foundation's narrow scope: double trig and matrices

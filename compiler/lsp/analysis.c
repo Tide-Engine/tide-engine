@@ -2455,6 +2455,11 @@ static const char *builtin_field_doc(const decl *d, const str name)
     return NULL;
 }
 
+// A field's own, `f.since.Snap()`, in match code.
+#define FIELD_SNAP_FORM "Snap()"
+#define FIELD_SNAP_DOC "This field jumped, like a timer that started over: views draw it as it is this tick, not blended from " \
+    "where it was. The rest of its component or singleton still blends; `entity.Snap()` is the whole entity's."
+
 // An entity's methods, in match code for an Entity and in local code for a LocalEntity.
 static const method_form entity_calls[] = {
     {"SetParent", "SetParent(Entity parent, bool worldPositionStays = true)",
@@ -3692,6 +3697,10 @@ static void describe(const occurrence *o, sb *out)
             code_block(out, "Sanitize()");
             sb_put(out, "\n\nRuns on every input before the simulation reads it, including input from other "
                         "players, so systems can rely on what it guarantees.");
+        } else if (o->call == CALL_SNAP && o->object_type.kind != TY_ENTITY && o->object_type.kind != TY_LOCAL_ENTITY
+                   && o->object_type.kind != TY_SINGLETON) { // f.since.Snap(): a field's
+            code_block(out, FIELD_SNAP_FORM);
+            sb_printf(out, "\n\n%s", FIELD_SNAP_DOC);
         } else {
             // What it's called on decides: items.Clear() is a list's, e.Destroy() an entity's.
             size_t count;
@@ -7136,6 +7145,29 @@ static bool complete_in_namespace(completion *c, str ns, order_completion order)
 static const char *name_for(const decl *d);
 static type out_variable_type(int use, loc at);
 
+// Whether the field `name` of `d` can snap alone: it blends, and isn't [Snap], a [Position] or a [Rotation].
+static bool snaps_alone(const decl *d, const str name)
+{
+    for (int i = 0; i < d->fields.count; i++) {
+        const field *f = &d->fields.items[i];
+        if (f->hidden || f->is_local || !str_eq(f->name, name)) continue;
+        for (int k = 0; k < f->attributes.count; k++) {
+            if (str_eq_c(f->attributes.items[k].name, "Snap")) return false;
+        }
+        return !f->view_correction && type_blends(f->type);
+    }
+    return false;
+}
+
+// Whether code here changes the match: a system or a match handler, or a function or method one calls.
+static bool changes_match(const scope *sc)
+{
+    if (!sc->decl || sc->in_input) return false;
+    if (sc->decl->kind == DECL_SYSTEM) return !sc->decl->is_view && !sc->decl->is_local;
+    return (sc->decl->kind == DECL_FUNCTION || sc->decl->kind == DECL_METHOD) && !sc->decl->is_operator
+        && !sc->decl->is_interpolate && !sc->decl->is_audio;
+}
+
 static void complete_members(completion *c, const int dot, const loc at, const order_completion order)
 {
     if (dot >= 3 && DOC->toks[dot - 1].kind == T_GT) {
@@ -7348,10 +7380,19 @@ static void complete_members(completion *c, const int dot, const loc at, const o
         complete_in_namespace(c, (str){ns.data, (int)ns.len}, ORDER_NONE);
         return;
     }
-    for (int k = n - 2; k >= 0 && t.kind != TY_ERROR; k--) t = member_type(t, DOC->toks[ids[k]].text);
+    type owner = {TY_ERROR, NULL};
+    for (int k = n - 2; k >= 0 && t.kind != TY_ERROR; k--) {
+        owner = t;
+        t = member_type(t, DOC->toks[ids[k]].text);
+    }
     // input.jump.down or input.aim.fire.down, including borrowed helper input.
     const bool edges = n >= 2 && p && p->type.kind == TY_INPUT;
     list_members(c, t, edges, &sc);
+    // f.since.: a match field that blends snaps alone, where match code changes it
+    if (n >= 2 && (owner.kind == TY_COMPONENT || owner.kind == TY_SINGLETON) && owner.decl && !owner.decl->is_local
+        && !owner.decl->interpolate && snaps_alone(owner.decl, DOC->toks[ids[0]].text) && changes_match(&sc)) {
+        item(c, "Snap", CK_METHOD, FIELD_SNAP_FORM, FIELD_SNAP_DOC, "Snap()");
+    }
 }
 
 // The current document's file: its namespace and `using`s. Its namespace

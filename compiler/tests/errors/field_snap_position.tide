@@ -1,0 +1,8 @@
+// expect: views smooth 'position' through corrections, as a [Position] or a [Rotation], so it can't snap alone
+component Body { [Position] float2 position; }
+scene Main { }
+system Teleport(mut Body body)
+{
+    body.position = float2(0, 0);
+    body.position.Snap();
+}

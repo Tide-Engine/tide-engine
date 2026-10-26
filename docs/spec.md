@@ -2446,6 +2446,23 @@ component Body
 ```
 
 - Something that jumps, like a respawn, a portal or a camera cut, says so from match code: `entity.Snap()` or `singleton.Snap()`. For the tick it happens in, views draw it as it is instead of sliding from where it was.
+- One field that jumps says so the same way, `f.since.Snap()` (decided 2026-10-27): the per-field counterpart of `entity.Snap()`. Between the tick it happens in and the one before, views draw that field as it is at the newer tick; from the next interval it blends again. The rest of the component or singleton keeps blending. A timer reset along with an enum is the case it is for: without it, views see the new enum with the timer blended from its old value down to 0.
+
+```csharp
+mut void Enter(Stance next)
+{
+    stance = next;
+    since = 0;
+    since.Snap(); // Drawn from 0 with the new stance, not running backwards
+}
+```
+
+- **Provisional** rules of `field.Snap()`:
+  - It goes on a field of a match component or singleton, by name in its methods. A struct-typed field snaps the whole struct; a field of a struct (`f.pose.angle.Snap()`) is an error that says to snap the component's field that holds it.
+  - It is an error on a field views never blend (ints, enums, bools, entities, text, arrays), on a `[Snap]` field, on a `[Position]` or `[Rotation]` field or a struct holding one (snap the entity or singleton, which clears the correction error), on a field of a type with its own `Interpolate`, and on local state.
+  - It is a write of the field: allowed wherever the field may be written, which is systems, match event handlers, match tasks, and the functions and methods they pass it to `mut`. Views, local handlers and the input's methods can't.
+  - Each field that something snaps gets a hidden int counting its snaps, after the type's fields, which `Snap()` increments (wrapping). Views blend the field only between two ticks with the same count. The counter is ordinary match data: snapshots, rollback, packing, the match hash, host migration and hot reload carry it, and it changes the type's layout, and so the match's compatibility, only in a game that snaps that field. It costs nothing for fields never snapped and next to nothing in network bytes, as it rarely changes.
+  - `verified` views and view queries follow the same rule over their own endpoints.
 
 #### Provisional correction smoothing
 
@@ -3207,7 +3224,7 @@ Agreed 2026-10-07. The aim is a complete set of raw pieces, so a game can build 
 - Text is written in double quotes, with the escapes `\"`, `\\` and `\n`. Its type is `string` (see Text).
 - Blending: a view's match components and singletons are copies, their fields that blend set between last tick's value and this tick's, as far as this moment is between the two ticks. Their local fields aren't part of the copy: a view reads and writes those where they are (see Local state). Vectors, matrices, colors and rects blend component by component, quaternions the short way round (normalized), and structs field by field. An entity that wasn't there last tick is drawn as it is. Local state isn't blended: it's this machine's, as it is.
 - `[Snap]` goes on floats, vectors, quaternions, colors and rects of components, singletons and structs; on anything else it's an error that says why.
-- `entity.Snap()` is recorded and applied at the end of the tick, like `Destroy`, so it never makes systems wait. Each entity counts its snaps, and views only blend it between two ticks with the same count. `singleton.Snap()` needs the singleton as a `mut` parameter. Local state is never blended, so snapping it is an error, and so is `component.Snap()`, which says to snap the entity.
+- `entity.Snap()` is recorded and applied at the end of the tick, like `Destroy`, so it never makes systems wait. Each entity counts its snaps, and views only blend it between two ticks with the same count. `singleton.Snap()` needs the singleton as a `mut` parameter. Local state is never blended, so snapping it is an error, and so is `component.Snap()`, which says to snap the entity. `component.field.Snap()` snaps that field alone (see Views and drawing).
 - `Interpolate` isn't for code to call. Custom `Interpolate` belongs to structs and components. A singleton uses it through a struct field, while its ordinary methods follow the same read-only/`mut` receiver rules as other types. A `[Snap]` field of such a type is still drawn as it is.
 - Hosts pass the two ticks and how far between them this moment is to `tide_frame`, with the last world the server confirmed; sessions work those out (`tide_session_view`).
 - The cursor's lock:

@@ -1,0 +1,8 @@
+// expect: 'began' is [Snap], so views always draw it as it is
+component Fighter { [Snap] float began; }
+scene Main { }
+system Enter(mut Fighter f)
+{
+    f.began = 0;
+    f.began.Snap();
+}

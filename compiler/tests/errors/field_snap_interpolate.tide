@@ -1,0 +1,16 @@
+// expect: 'Dial' blends its own way, with its Interpolate, so a field of it can't snap alone
+component Dial
+{
+    float degrees;
+
+    Dial Interpolate(Dial from, Dial to, float t)
+    {
+        return Dial { degrees = from.degrees + (to.degrees - from.degrees) * t };
+    }
+}
+scene Main { }
+system Turn(mut Dial dial)
+{
+    dial.degrees = 0;
+    dial.degrees.Snap();
+}

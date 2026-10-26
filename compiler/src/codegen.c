@@ -4509,6 +4509,15 @@ static void gen_method(gen *g, const expr *e)
     const char *world = e->local_world ? "tide_l" : "tide_w";
     const char *prefix = e->local_world ? "tide_local_" : "tide_";
     indent(g, o);
+    if (e->call == CALL_SNAP && e->snapped_field) { // f.since.Snap(): the field counts its snaps, beside it
+        const char *owner = type_cname(e->type_decl);
+        const field *f = e->snapped_field;
+        sb_put(o, "{ int32_t *tide_n = (int32_t *)(void *)((char *)&(");
+        gen_expr(g, o, e->object);
+        sb_printf(o, ") - offsetof(%s, %s) + offsetof(%s, tide_snaps_" STR_FMT ")); *tide_n = (int32_t)((uint32_t)*tide_n + 1u); }\n",
+                  owner, field_cname(f), owner, STR_ARG(f->name));
+        return;
+    }
     if (e->call == CALL_SNAP && e->type_decl) { // camera.Snap(): it counts its snaps itself
         gen_expr(g, o, e->object);
         sb_put(o, ".tide_snaps++;\n");
@@ -8900,7 +8909,7 @@ static decl map_entry_decl(const decl *map)
     sb_printf(&name, "tide_map%d_entry", map->index);
     d.gen_name = name.data;
     d.name = str_from(name.data);
-    const field order = {str_from("tide_order"), str_from(""), {0, 0, 0}, {TY_LONG, NULL}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false};
+    const field order = {str_from("tide_order"), str_from(""), {0, 0, 0}, {TY_LONG, NULL}, NULL, {0, 0, 0}, {0}, 0, {0, 0, 0}, false, 0, false, false, false, {0, 0, 0}, NULL, NULL, false, false};
     vec_push(d.fields, order);
     for (int i = 0; i < map->fields.count; i++) vec_push(d.fields, map->fields.items[i]);
     return d;
@@ -9939,10 +9948,18 @@ static void gen_blend_fields(gen *g, const decl *d)
         char before[256];
         snprintf(v, sizeof v, "v->%s", field_cname(f));
         snprintf(before, sizeof before, "before->%s", field_cname(f));
+        if (f->snap_counted) { // It jumped alone, `since.Snap()`: as it is, between ticks that count its snaps differently
+            line(g, &g->c, "if (before->tide_snaps_" STR_FMT " == v->tide_snaps_" STR_FMT ") {", STR_ARG(f->name), STR_ARG(f->name));
+            g->indent++;
+        }
         if (f->view_correction == 2 && f->type.kind == TY_FLOAT) {
             line(g, &g->c, "%s = tide_correction_wrap(%s) + tide_correction_wrap(tide_correction_wrap(%s) - tide_correction_wrap(%s)) * t;", v, before, v, before);
         } else {
             gen_blend_value(g, v, before, f->type);
+        }
+        if (f->snap_counted) {
+            g->indent--;
+            line(g, &g->c, "}");
         }
     }
 }

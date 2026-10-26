@@ -1,0 +1,108 @@
+// A field that jumped alone, `since.Snap()`: views draw it as it is at the
+// newer tick for that interval, and blend it again from the next, while the
+// rest of its component or singleton blends throughout.
+
+enum Stance { Idle, Guard }
+
+component Fighter
+{
+    Stance stance;
+    float since; // Seconds in this stance: starts over with each
+    float2 hand; // Moves on through the change
+
+    mut void Enter(Stance next)
+    {
+        stance = next;
+        since = 0;
+        since.Snap();
+    }
+}
+
+// A field that holds a struct snaps all of it.
+struct Pose
+{
+    float angle;
+    float reach;
+}
+
+component Arm
+{
+    Pose pose;
+    float sway;
+}
+
+singleton Lens
+{
+    float zoom;
+    float drift;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Fighter { since = 0.5 }, Arm { });
+}
+
+system Step(Time time, mut Fighter f)
+{
+    f.hand += float2(4, 0);
+    f.since += 0.25;
+    if (time.tick == 1) f.Enter(Stance.Guard);
+}
+
+system Swing(Time time, mut Arm arm)
+{
+    arm.sway += 2;
+    arm.pose.angle += 10;
+    if (time.tick != 1) return;
+    arm.pose = Pose { angle = 100, reach = 3 };
+    arm.pose.Snap();
+}
+
+system Zoom(Time time, mut Lens lens)
+{
+    lens.drift += 1;
+    lens.zoom += 1;
+    if (time.tick != 1) return;
+    lens.zoom = 50;
+    lens.zoom.Snap();
+}
+
+local singleton Seen
+{
+    float since;
+    float2 hand;
+    int stance;
+    float angle;
+    float reach;
+    float sway;
+    float zoom;
+    float drift;
+    float verifiedSince;
+    float verifiedZoom;
+    float rowSince;
+}
+
+view Look(Fighter f, Arm arm, Lens lens, mut Seen seen)
+{
+    seen.since = f.since;
+    seen.hand = f.hand;
+    seen.stance = int(f.stance);
+    seen.angle = arm.pose.angle;
+    seen.reach = arm.pose.reach;
+    seen.sway = arm.sway;
+    seen.zoom = lens.zoom;
+    seen.drift = lens.drift;
+}
+
+view Confirmed(verified Fighter f, verified Lens lens, mut Seen seen)
+{
+    seen.verifiedSince = f.since;
+    seen.verifiedZoom = lens.zoom;
+}
+
+view Rows(mut Seen seen, query (Fighter f) fighters)
+{
+    foreach (var row in fighters) seen.rowSince = row.f.since;
+}

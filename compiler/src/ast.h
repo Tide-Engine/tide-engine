@@ -285,6 +285,9 @@ typedef struct field {
     // [Native]: a C library's state, which means nothing on another shard. A component's is 0 wherever its
     // entity is copied or arrives; a singleton's is each shard's own (shard_codegen.inc)
     bool native;
+    // `since.Snap()` somewhere: it counts its own snaps in a hidden int after the fields, tide_snaps_<name>,
+    // and views draw it as it is between two ticks whose counts differ
+    bool snap_counted;
 } field;
 
 typedef enum param_mode {
@@ -944,7 +947,7 @@ typedef enum builtin_call {
     CALL_UNLOAD,    // Scene.Unload(scene)
     CALL_SESSION,   // Session.Start, Open, Close, Join, Connect and Leave: `name` says which; type_decl is Start's scene
     CALL_CLIPBOARD, // Clipboard.Copy(text)
-    CALL_SNAP,      // entity.Snap() or singleton.Snap(): views draw it as it is this tick; type_decl is a singleton's
+    CALL_SNAP,      // entity.Snap(), singleton.Snap() or field.Snap(): views draw it as it is this tick; type_decl is a singleton's
     CALL_GUI,       // GUI.Button(...), GUILayout.Horizontal() { ... }: calls c_callee with the GUI first
     CALL_ACTION,    // content(): runs the Action its function was given
     CALL_TEXT,      // name.Contains(...), text's methods: calls c_callee with the text first
@@ -1096,6 +1099,7 @@ struct expr {
     expr *object;
     str member;
     field *field;          // Field of a component, singleton, input or record; BIND_FIELD's field.
+    field *snapped_field;  // CALL_SNAP of one field, `f.since.Snap()`: that field (type_decl is its component or singleton)
     property *property;    // Source member, including after lowering its read to a getter call.
     input_edge edge;       // .down / .up on an input field.
     int swizzle_len;       // Vector swizzle: number of components (0 if not a swizzle).

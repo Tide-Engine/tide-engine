@@ -3495,6 +3495,19 @@ TIDE_TEST(lsp_snap)
                                    "system S(Body body)\n{\n    var r = body.heading.$\n}\n");
     TIDE_CHECK(offers(methods, "Radians"));
     TIDE_CHECK(!offers(methods, "Interpolate"));
+    // A field that blends snaps alone, in match code; one that doesn't blend, or a view's, has no Snap
+#define FIGHTER "component Fighter { float since; int stance; [Snap] float began; }\nscene Main { }\n"
+    TIDE_CHECK(offers(complete(FIGHTER "system Enter(mut Fighter f)\n{\n    f.since.$\n}\n"), "Snap"));
+    TIDE_CHECK(!offers(complete(FIGHTER "system Enter(mut Fighter f)\n{\n    var s = f.stance.$\n}\n"), "Snap"));
+    TIDE_CHECK(!offers(complete(FIGHTER "system Enter(mut Fighter f)\n{\n    f.began.$\n}\n"), "Snap"));
+    TIDE_CHECK(!offers(complete(FIGHTER "view Show(Fighter f)\n{\n    var s = f.since.$\n}\n"), "Snap"));
+    open_document("component Fighter { float since; }\nscene Main { }\nevent(Spawned) Setup(with Main) { Spawn(Fighter { }); }\n"
+                  "system Enter(mut Fighter f)\n{\n    f.since = 0;\n    f.since.Sn$ap();\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *snap = request("textDocument/hover");
+    TIDE_CHECK(has(snap, "This field jumped"));
+    TIDE_CHECK(has(snap, "`entity.Snap()` is the whole entity's"));
+#undef FIGHTER
 }
 
 #define THIS_GAME                                                              \
