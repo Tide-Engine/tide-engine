@@ -758,6 +758,22 @@ Owner: "lets bridge any gaps".
   `Value` field's `Value_` key. Every one of the repo's 330 games built with `--embed` compiles under `-Werror`
   (which found unused command helpers in four games with text or byte-list commands: `TIDE_HELPER` now).
 
+### Tide types and their C# twins: declaration locations (2026-10-26)
+
+**Owner:** "File only, line looked up live (your pick)" (hub answer
+`mvp14nl24360`). The generated C# twins in `Packages/com.tide.game` carry the
+Tide doc comment and the declaration's file, for example "Declared in Tide in
+Assets/Tide/Bounce.tide", without a line number. Edit Script and a double-click
+on the Script field are to resolve the declaration's current line from
+`Library/Tide/outline.json` when opening the `.tide` file. Shifting lines above
+a declaration alone must not rewrite its C# documentation and trigger Unity's
+script compilation and domain reload, including during Tide hot reload in Play.
+
+This records the decision only; no generator or generated package change is
+needed for this answer. Validation: checked the diff and the outline's file and
+line fields in `Editor/TideOutline.cs`; no build or test suite for this notes-only
+change. The rest of the type boundary implementation is separate work.
+
 ### Scenes as built (2026-10-20)
 
 **Owner:** the match decides which Unity scenes are loaded, as a dedicated
