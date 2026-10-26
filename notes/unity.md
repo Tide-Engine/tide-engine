@@ -112,7 +112,7 @@ worlds; 10 seconds kept by default; 64 MiB of records; the `.tiderec` extension;
 **Runs:** native debug 2801/2801 and web debug 2696/2696 (both without `private-prototype`; one disabled test
 each, MicroDuck's turn as before), `tide_platform_travel` 10/10; the Sample's EditMode 30/30 and PlayMode 22/22
 (D3D11, a GPU, batch), with a tide installed from this checkout's mingw-release and debug builds and the Sample's
-`com.tide.game` written again by it (the schema hash moved with the Session ABI marker). Not run: Unity on the web
+`com.tide.game` written again by it (the schema hash moved with the Session ABI marker). After merging the type boundary's work (`unity_code.c`, the Sample's package): the native unity, CLI, LSP, outline, tidec, embed, reload and travel tests 2573/2573, the Sample's package as tide writes it unchanged, EditMode 33/33 and PlayMode 22/22. Not run: Unity on the web
 (the jslib and exports are built and compiled, not played), the window's drawing in a window, Linux and macOS.
 
 **Not done / gaps:** local handlers and the packet's EVENTS for replayed or scrubbed ticks (the separate local state
