@@ -1,5 +1,39 @@
 # The language server and the editors
 
+## Following a Unity development session (2026-10-26)
+
+The owner replaces Unity's saved compiler override with a launch-only
+`-tide-command` (notes/unity.md). Both IDE resolvers accept toolchain.json
+format 2; old unscoped selections are ignored. A session selection must have
+a live PID whose start epoch seconds match; otherwise normal package/pin
+resolution runs. A reusable normal cache has sessionPid 0 and a pinned version
+matching the installation's current VERSION; a global upgrade invalidates it.
+Nothing changes
+the precedence of explicitly configured IDE executables or engine builds.
+
+VS Code resolves launch/session identity asynchronously (also for Debug's
+compiler lookup): PowerShell's Process.StartTime on Windows, ps lstart in
+UTC/C locale elsewhere. No command line or credentials are queried. While a
+development session is selected, a two-second check observes exit even when
+the cache file remains after a crash; ordinary pinned projects do no polling
+or process queries. The timer is disposed with the extension. JetBrains uses
+ProcessHandle.Info.startInstant and its onExit future to restart selection.
+Unity's normal quit also deletes the development cache, triggering the
+existing filesystem/VFS watches. Missing/unresolved pins remain explicit errors.
+
+Validation: Node 24.22.1, 40 adapter/debug tests, including live/dead/reused PID
+and old-cache rejection plus global-upgrade invalidation for Windows/Linux/macOS
+resolver branches; extension
+bundle build. Real VS Code 1.142.0 with this checkout's tidels passes the prior
+multi-project pin/hover/rename/process checks plus a development process killed
+without deleting its cache: the language server automatically returns to the
+pin and hover works, with no Tide client errors. JDK 21/Gradle 9.8.0 test and
+buildPlugin pass all 16 ordinary tests; Plugin Verifier reports Compatible on
+IC-242.26775.15 and CL-263.7307.35. Production docs build passes with existing
+unstaged-example placeholders. Both Unity launch modes are recorded in unity.md.
+Actual Linux/macOS process queries, Rider's UI and a graphical Unity settings
+window weren't exercised locally; no engine/web runtime code changed.
+
 ## Project-selected Tide versions (2026-10-26)
 
 Owner, after Unity's side-by-side version selection: the IDE should follow it too.

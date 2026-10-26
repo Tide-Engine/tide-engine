@@ -30,6 +30,8 @@ VS Code and JetBrains select a trusted project's pinned Tide version for both
 the compiler and language server. Standalone games use `tide = <version>` in
 `tide.packages`; Unity projects use their locked Tide package and the installation
 Unity selected. Open Unity once to resolve and install that version. Installations
+selected with Unity's `-tide-command <path>` are used only while that editor
+process is alive; closing it or a crash returns the IDE to the pin. Installations
 are shared in `TIDE_VERSIONS` (by default `%LOCALAPPDATA%/Tide/versions` or
 `~/.tide/versions`). A missing pinned version is reported rather than silently
 using another. Package/lock changes restart the language server; separate VS Code

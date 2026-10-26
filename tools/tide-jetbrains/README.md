@@ -26,7 +26,9 @@ links to install tide, choose `tidels`, or try again, which starts it.
 Before trying the global installation, a trusted project selects the version
 pinned in its `tide.packages`. Unity projects follow their locked Tide package:
 open Unity once to resolve/install it, and the IDE uses Unity's selected
-installation, including a custom command. `tide` for runs/debugging and prefab
+installation. A `-tide-command <path>` development launch is followed only while
+that Unity process is alive; closing it or a crash restores the project pin.
+`tide` for runs/debugging and prefab
 editing comes from that installation too. Missing pinned versions give an error;
 the plugin never silently substitutes another version. Package/lock changes
 restart the server. Different open projects can use different versions, sharing

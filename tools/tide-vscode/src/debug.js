@@ -207,7 +207,7 @@ function register(vscode, helpers) {
             vscode.window.showErrorMessage('Tide: open a .tide file of the game to debug, or set "game" in the configuration.');
             return undefined;
         }
-        const tide = findTide(game);
+        const tide = await findTide(game);
         if (!tide) {
             vscode.window.showErrorMessage("Tide: couldn't find tide. Install it, or set tide.path.");
             return undefined;
