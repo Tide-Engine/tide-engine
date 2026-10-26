@@ -114,22 +114,61 @@ public class TypeBoundaryTests
         StringAssert.DoesNotContain("line", ball.Split(new[] { "<para>" }, StringSplitOptions.None)[1].Split('\n')[0]);
     }
 
+    // The generated C#'s doc comments are documentation C# reads: compiled with /doc (its files disable warnings, so
+    // the XML is what tells), each summary where it belongs, none ill-formed
+    [UnityTest]
+    public IEnumerator GeneratedDocsAreWellFormedXml()
+    {
+        yield return Built();
+        var package = Path.Combine(TideSettings.ProjectFolder, "Packages", "com.tide.game");
+        var sources = Directory.GetFiles(package, "*.cs", SearchOption.AllDirectories);
+        const string folder = "Temp/TideDocsProbe";
+        Directory.CreateDirectory(folder);
+        try
+        {
+            var modules = Directory.GetFiles(Path.Combine(EditorApplication.applicationContentsPath, "Managed", "UnityEngine"), "UnityEngine*.dll");
+            var references = modules.Append(typeof(Tide.TideComponent).Assembly.Location).ToArray();
+            var messages = Compile(sources, folder + "/Game.dll", $"/unsafe /doc:\"{folder}/Game.xml\"", references);
+            Assert.IsFalse(messages.Any(m => m.type == CompilerMessageType.Error), string.Join("\n", messages.Select(m => m.message).Take(10)));
+            var xml = File.ReadAllText(folder + "/Game.xml");
+            StringAssert.DoesNotContain("Badly formed XML", xml);
+            var doc = new System.Xml.XmlDocument();
+            doc.LoadXml(xml);
+            string Summary(string member) => doc.SelectSingleNode($"//member[@name='{member}']/summary")?.InnerText ?? "";
+            StringAssert.Contains("Each player's ball, which Tide rolls and Unity shows (Roller.prefab)", Summary("T:Tide.Game.Ball"));
+            StringAssert.Contains("Tide's component Ball, declared in Assets/Tide/Bounce.tide.", Summary("T:Tide.Game.Ball"));
+            StringAssert.Contains("Metres a second", Summary("F:Tide.Game.Ball.velocity"));
+            StringAssert.Contains("A ball's trail", Summary("T:Tide.Game.Trail"));
+            StringAssert.Contains("Tide's singleton Extras", Summary("T:Tide.Game.Extras"));
+        }
+        finally
+        {
+            Directory.Delete(folder, true);
+        }
+    }
+
     // A script compiled apart from the project's, by the Roslyn compiler Unity has: its errors as Unity's compile gives
     // them
     static CompilerMessage[] CompileApart(string source, string folder)
+    {
+        return Compile(new[] { source }, folder + "/Probe.dll", "",
+                       typeof(MonoBehaviour).Assembly.Location, typeof(Tide.TideComponent).Assembly.Location, typeof(Tide.Game.Ball).Assembly.Location);
+    }
+
+    static CompilerMessage[] Compile(string[] sources, string assembly, string options, params string[] references)
     {
         var contents = EditorApplication.applicationContentsPath;
         var sdk = Path.Combine(contents, "DotNetSdk");
         var dotnet = Path.Combine(sdk, Application.platform == RuntimePlatform.WindowsEditor ? "dotnet.exe" : "dotnet");
         var csc = Directory.GetFiles(Path.Combine(sdk, "sdk"), "csc.dll", SearchOption.AllDirectories)
             .First(p => p.Replace('\\', '/').Contains("/Roslyn/bincore/"));
-        var references = new[]
-        {
-            Path.Combine(contents, "NetStandard", "ref", "2.1.0", "netstandard.dll"), typeof(MonoBehaviour).Assembly.Location,
-            typeof(Tide.TideComponent).Assembly.Location, typeof(Tide.Game.Ball).Assembly.Location,
-        };
-        var arguments = $"exec \"{csc}\" /nologo /noconfig /nostdlib /target:library /out:\"{folder}/Probe.dll\" " +
-                        string.Join(" ", references.Select(r => $"/reference:\"{r}\"")) + $" \"{source}\"";
+        references = references.Prepend(Path.Combine(contents, "NetStandard", "ref", "2.1.0", "netstandard.dll")).ToArray();
+        // In a response file: the game's sources are many
+        var response = assembly + ".rsp";
+        File.WriteAllLines(response, new[] { $"/nologo /noconfig /nostdlib /target:library /out:\"{assembly}\" {options}" }
+            .Concat(references.Select(r => $"/reference:\"{r}\""))
+            .Concat(sources.Select(source => $"\"{source}\"")));
+        var arguments = $"exec \"{csc}\" \"@{response}\"";
         var start = new System.Diagnostics.ProcessStartInfo(dotnet, arguments)
         {
             UseShellExecute = false,
@@ -208,6 +247,24 @@ public class TypeBoundaryTests
             Assert.IsTrue(logged.Any(e => e.message.StartsWith("tide: `Ball.speed` is now `Ball.velocity`") && e.file == "Assets/Tide/Bounce.tide" && e.line == 124));
             TideRenames.Clear();
             Assert.AreEqual(before, Count());
+
+            // Errors the Console has already, as the editor's first compile leaves them before the package loads
+            const int compile = 0x74696478;
+            TideBuildService.LogLocated("Assets/Scripts/Probe.cs(7,14): error CS1061: 'Ball' does not contain a definition for 'speed'",
+                                        "Assets/Scripts/Probe.cs", 7, 14, true, compile);
+            try
+            {
+                Assert.IsTrue(TideRenames.ConsoleErrors().Any(m => m.message.Contains("'speed'")));
+                before = Count();
+                TideRenames.ExplainConsole();
+                var explained = From(before);
+                Assert.AreEqual(1, explained.Count);
+                StringAssert.StartsWith("tide: `Ball.speed` is now `Ball.velocity` (Assets/Tide/Bounce.tide:124)", explained[0].message);
+            }
+            finally
+            {
+                TideBuildService.RemoveLocated(compile);
+            }
         }
         finally
         {
