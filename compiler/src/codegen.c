@@ -21550,11 +21550,17 @@ static sb pin_lines(const sb *c, const char *c_path)
     sprintf(self, "\"%s\"", c_path);
     const char *tide = NULL; // The #line in force that names a .tide file, or NULL
     size_t tide_len = 0;
-    bool first = false; // The next code line is the first after it
+    bool first = false;     // The next code line is the first after it
+    bool continued = false; // The line before ends in a backslash: this one is part of it
     for (const char *at = c->data ? c->data : ""; *at;) {
         const char *end = strchr(at, '\n');
         const size_t len = end ? (size_t)(end - at) : strlen(at);
-        if (len > 6 && strncmp(at, "#line ", 6) == 0) {
+        const bool part = continued;
+        continued = len > 0 && at[len - 1] == '\\';
+        if (part) {
+            sb_putn(&out, at, len);
+            if (end) sb_put(&out, "\n");
+        } else if (len > 6 && strncmp(at, "#line ", 6) == 0) {
             const char *quote = memchr(at, '"', len);
             if (quote && (size_t)(at + len - quote) == strlen(self) && strncmp(quote, self, strlen(self)) == 0) {
                 sb_printf(&out, "#line %d %s\n", out.line + 1, self);

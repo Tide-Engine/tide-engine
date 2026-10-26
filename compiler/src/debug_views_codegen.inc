@@ -35,10 +35,15 @@ static void xml_printf(sb *o, const char *fmt, ...)
 {
     va_list ap;
     va_start(ap, fmt);
-    char buf[8192];
-    vsnprintf(buf, sizeof buf, fmt, ap);
+    va_list again;
+    va_copy(again, ap);
+    const int n = vsnprintf(NULL, 0, fmt, ap);
     va_end(ap);
-    xml_put(o, buf);
+    const size_t size = (size_t)(n > 0 ? n : 0) + 1;
+    char *text = arena_alloc(size);
+    vsnprintf(text, size, fmt, again);
+    va_end(again);
+    xml_put(o, text);
 }
 
 // A value's C type as a debugger's expressions name it: C's own names for the
@@ -81,20 +86,18 @@ static char *view_block(const char *at)
 // Element `index` of the list `at` (an expression), of C type `ctype` and
 // `size` bytes, side by side or in chunks (tide_list_at). Asset lists aren't
 // read: their elements are in the pack's pools.
-static void view_list_items(sb *o, const char *at, const char *ctype, const int size, const char *index, const bool natvis)
+static void view_list_items(sb *o, const char *at, const char *ctype, const int size, const char *index)
 {
     const char *blk = view_block(at);
     const unsigned per = TIDE_LIST_CHUNK / (unsigned)(size > 0 ? size : 1);
-    if (natvis) {
-        sb_put(o, "          <ValueNode Condition=\"");
-        xml_printf(o, "(%s->b & 0x%Xu) == 0", blk, TIDE_LIST_CHUNKED);
-        sb_put(o, "\">");
-        xml_printf(o, "((%s*)(%s + 1))[%s]", ctype, blk, index);
-        sb_put(o, "</ValueNode>\n          <ValueNode>");
-        xml_printf(o, "*(%s*)((char*)(tide_world_heaps[(%s) >> 30]->page[((unsigned int*)(%s + 1))[%s / %u] >> %u] + 1) + %u + (%s %% %u) * %d)",
-                   ctype, at, blk, index, per, TIDE_HEAP_PAGE_SHIFT, (unsigned)sizeof(tide_block), index, per, size);
-        sb_put(o, "</ValueNode>\n");
-    }
+    sb_put(o, "          <ValueNode Condition=\"");
+    xml_printf(o, "(%s->b & 0x%Xu) == 0", blk, TIDE_LIST_CHUNKED);
+    sb_put(o, "\">");
+    xml_printf(o, "((%s*)(%s + 1))[%s]", ctype, blk, index);
+    sb_put(o, "</ValueNode>\n          <ValueNode>");
+    xml_printf(o, "*(%s*)((char*)(tide_world_heaps[(%s) >> 30]->page[((unsigned int*)(%s + 1))[%s / %u] >> %u] + 1) + %u + (%s %% %u) * %d)",
+               ctype, at, blk, index, per, TIDE_HEAP_PAGE_SHIFT, (unsigned)sizeof(tide_block), index, per, size);
+    sb_put(o, "</ValueNode>\n");
 }
 
 static bool view_container(const type t)
@@ -112,7 +115,7 @@ static bool view_needs_type(const decl *d)
 }
 
 // The natvis of one field of a struct, as `path` (the field's C member) reads it.
-static void natvis_field(sb *o, const gen *g, const field *f, const char *path)
+static void natvis_field(sb *o, const field *f, const char *path)
 {
     const type t = f->type;
     sb name = {0};
@@ -137,7 +140,7 @@ static void natvis_field(sb *o, const gen *g, const field *f, const char *path)
         sb_put(o, "\">\n          <Size>");
         xml_printf(o, "%s->a", blk);
         sb_put(o, "</Size>\n");
-        view_list_items(o, at.data, view_ctype(e), view_size(e), "$i", true);
+        view_list_items(o, at.data, view_ctype(e), view_size(e), "$i");
         sb_put(o, "          </IndexListItems>\n        </Expand>\n      </Synthetic>\n");
         return;
     }
@@ -191,7 +194,6 @@ static void natvis_field(sb *o, const gen *g, const field *f, const char *path)
         sb_put(o, "}</DisplayString>\n      </Synthetic>\n");
         return;
     }
-    (void)g;
     sb_put(o, "      <Item Name=\"");
     xml_put(o, name.data);
     sb_put(o, "\">");
@@ -199,12 +201,12 @@ static void natvis_field(sb *o, const gen *g, const field *f, const char *path)
     sb_put(o, "</Item>\n");
 }
 
-static void natvis_struct(sb *o, const gen *g, const decl *d, const char *cname)
+static void natvis_struct(sb *o, const decl *d, const char *cname)
 {
     sb_put(o, "  <Type Name=\"");
     xml_put(o, cname);
     sb_put(o, "\">\n    <Expand>\n");
-    for (int i = 0; i < d->fields.count; i++) natvis_field(o, g, &d->fields.items[i], field_cname(&d->fields.items[i]));
+    for (int i = 0; i < d->fields.count; i++) natvis_field(o, &d->fields.items[i], field_cname(&d->fields.items[i]));
     sb_put(o, "    </Expand>\n  </Type>\n");
 }
 
@@ -325,7 +327,7 @@ static void write_natvis(const gen *g, sb *o)
     }
     // The game's own types
     const view_types types = view_collect(g);
-    for (int i = 0; i < types.count; i++) natvis_struct(o, g, types.items[i].d, types.items[i].cname);
+    for (int i = 0; i < types.count; i++) natvis_struct(o, types.items[i].d, types.items[i].cname);
     sb_put(o, "</AutoVisualizer>\n");
 }
 
