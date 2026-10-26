@@ -66,8 +66,9 @@ public final class TidelsFactory implements LanguageServerFactory, LanguageServe
         if (base != null && Tide.isFile(base, "build", "tools", exe) && isTrusted(project)) {
             return new Found(Path.of(base, "build", "tools", exe), null);
         }
-        final Path installed = Tide.installed("tidels");
-        if (installed != null) return new Found(installed, null);
+        final var tools = TideProjectTools.find(base != null && isTrusted(project) ? Path.of(base) : null, "tidels");
+        if (tools.error() != null) return new Found(null, tools.error());
+        if (tools.file() != null) return new Found(tools.file(), null);
         return new Found(null, "Couldn't find tidels, the language server that comes with tide.");
     }
 
@@ -112,6 +113,7 @@ public final class TidelsFactory implements LanguageServerFactory, LanguageServe
     static void restart(@NotNull Project project) {
         if (project.isDisposed()) return;
         EditorNotifications.getInstance(project).updateAllNotifications();
+        if (Boolean.TRUE.equals(project.getUserData(DISABLED))) return;
         final LanguageServerManager servers = LanguageServerManager.getInstance(project);
         if (find(project).server() == null) servers.stop(SERVER);
         else servers.start(SERVER, new LanguageServerManager.StartOptions().setForceRestart(true));

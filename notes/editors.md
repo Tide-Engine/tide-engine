@@ -1,5 +1,46 @@
 # The language server and the editors
 
+## Project-selected Tide versions (2026-10-26)
+
+Owner, after Unity's side-by-side version selection: the IDE should follow it too.
+VS Code's `projectProgram` and JetBrains' `TideProjectTools` select `tide` and
+`tidels` from a game's `tide = <version>` pin or its Unity package. A release tag
+in packages-lock.json supplies a version directly; another git commit uses
+Unity's commit-keyed Library/Tide/version.json. VERSION must match before a
+side-by-side or normal installation is selected. Missing/invalid pins and
+unresolved commits explain the fix, without substituting a different compiler.
+Unity owns downloading its version; standalone projects install theirs first.
+
+Unity also publishes Library/Tide/toolchain.json (notes/unity.md), its selected
+command including an explicit developer override. The package-lock SHA-256 binds
+that cache to the project, including local packages; a cache from another branch
+is ignored. These files are local caches, never committed project configuration.
+Explicit IDE settings and trusted engine build/tools servers retain precedence.
+VS Code's tide.path selects a sibling tidels unless server.path is explicit;
+run/debug and both prefab actions use the project-selected compiler. JetBrains'
+run-configuration command and application-level server overrides remain explicit.
+
+VS Code runs one client per workspace folder with a protocol RelativePattern
+(baseUri, not the VS Code RelativePattern class) and workspaceFolder. Each folder
+is isolated even when its version differs. Settings/workspace/pin changes settle
+for 150 ms before restarting. Narrow watches also see Unity's Library/package
+lock above an open Assets folder. JetBrains uses one server per project and VFS
+changes restart it, preserving manually disabled servers. Emacs/Vim/Neovim retain
+their configured commands; nested independently pinned games within one workspace
+folder/JetBrains project aren't separate language clients: open their own roots.
+
+Validation: Node 24.22.1, all 39 adapter/debug checks; bundled extension build;
+real VS Code 1.142.0 host with this checkout's freshly built debug tidels, two
+pinned installations, automatic pin-file switching, hover/rename/diagnostics,
+rapid restart, terminal/process cleanup and the existing muted embedded page.
+An initial real-host run exposed the protocol-pattern mistake and event bursts,
+fixed before the passing run; its final Tide client log has no errors.
+JDK 21/Gradle 9.8.0 test/buildPlugin pass all 15 ordinary tests; Plugin Verifier
+reports Compatible on IC-242.26775.15 and CL-263.7307.35. Production docs build
+passes with existing unstaged-example placeholders. Unity's version/ABI tests
+are recorded in unity.md. No compiler/runtime C, engine suites or web game code
+changed; other OSs, Rider's UI and private prototype/service validation weren't run.
+
 ## Debugging from the editors (2026-10-26)
 
 VS Code contributes breakpoints for `tide` and a `tide` debug type

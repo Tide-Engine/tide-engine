@@ -29,6 +29,18 @@ repository's `notes/unity.md`.
    can name your own `tide` instead, kept for you alone, as for a build of tide
    you're working on.
 
+   That custom command overrides the package even after updating it. If Play
+   reports different embed ABI versions, Project Settings > Tide shows the
+   command being used: **Use package version** clears the override, then
+   **Build now** rebuilds. A development package newer than the published
+   compiler needs a matching development build or a matching release tag.
+   Tide checks the existing host before entering Play.
+
+   Updated VS Code and JetBrains Tide plugins use the same selected installation
+   for their language server, runs and prefab editor. Unity writes its selection
+   to `Library/Tide/toolchain.json`, tied to the package lock; keep it out of
+   source control. Changing the package lock makes the IDE select again.
+
 3. Put the game's `.tide` files anywhere in `Assets`: every one is the game's,
    as every C# script is, but those in folders Unity leaves out (hidden ones,
    and those ending in `~`).

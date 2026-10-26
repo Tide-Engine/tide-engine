@@ -26,6 +26,7 @@ namespace Tide.Editor
         {
             // An asset import worker is a Unity process of its own, which loads this too: the editor builds, not it
             if (AssetDatabase.IsAssetImportWorkerProcess()) return;
+            TideLibrary.AbiMismatchHint = TideToolchain.MismatchHint;
             // A task the editor kept through a script reload, which no one ends now
             foreach (var item in Progress.EnumerateItems())
             {
@@ -554,7 +555,15 @@ namespace Tide.Editor
                 return;
             }
             resuming = false;
-            if (!HasErrors) return;
+            if (!HasErrors)
+            {
+                // Check the existing host before entering Play, so a package update with an old custom compiler
+                // explains how to fix the override while the editor can still change its settings.
+                if (!File.Exists(Path.Combine(TideLibrary.BuildFolder, TideLibrary.LibraryName))) return;
+                if (HostReady(TideLibrary.BuildFolder)) return;
+                EditorApplication.isPlaying = false;
+                return;
+            }
             EditorApplication.isPlaying = false;
             RemoveLocated();
             foreach (var error in SessionState.GetString(ErrorsKey, "").Split(Separator)) Log(error, true, true);
@@ -563,6 +572,11 @@ namespace Tide.Editor
             Log("tide: the game has errors: fix them before Play (they're above)", true, true); // The next build takes it away
             // Nobody can fix them in a batch run (tests), which would wait for Play forever: it fails
             if (Application.isBatchMode) EditorApplication.Exit(1);
+        }
+
+        internal static bool HostReady(string folder)
+        {
+            using (var library = TideLibrary.Open(folder)) return library != null;
         }
 
         static readonly System.Text.RegularExpressions.Regex located =

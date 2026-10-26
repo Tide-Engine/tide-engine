@@ -82,6 +82,15 @@ namespace Tide.Editor
             var settings = TideSettings.instance;
             var user = TideUserSettings.Loaded;
             EditorGUI.BeginChangeCheck();
+            if (!string.IsNullOrEmpty(user.tidePath))
+            {
+                EditorGUILayout.HelpBox("Your tide command overrides this project's package version, including after a package update.", MessageType.Warning);
+                if (GUILayout.Button("Use package version"))
+                {
+                    user.tidePath = "";
+                    GUI.changed = true;
+                }
+            }
             using (new EditorGUILayout.HorizontalScope())
             {
                 user.tidePath = EditorGUILayout.TextField(new GUIContent("Your tide command",

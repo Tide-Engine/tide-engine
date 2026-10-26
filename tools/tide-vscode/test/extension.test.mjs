@@ -6,6 +6,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { test } from 'node:test';
 import vm from 'node:vm';
+import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 const realRequire = createRequire(new URL('../src/extension.js',import.meta.url));
 
@@ -28,6 +29,7 @@ function editor({ platform = 'win32', trusted = true, folders = ['C:\\game'], en
     const vscode = {
         EventEmitter: Emitter,
         ViewColumn: { Active: -1 },
+        RelativePattern: class { constructor(base, pattern) { this.base = base; this.pattern = pattern; } },
         ThemeIcon: class { constructor(id) { this.id = id; } },
         Position: class { constructor(line, character) { this.line = line; this.character = character; } },
         Range: class { constructor(startLine, startCharacter, endLine, endCharacter) { this.start = { line: startLine, character: startCharacter }; this.end = { line: endLine, character: endCharacter }; } },
@@ -96,8 +98,55 @@ function editor({ platform = 'win32', trusted = true, folders = ['C:\\game'], en
     })[name] ?? realRequire(name) };
     vm.createContext(sandbox);
     vm.runInContext(source, sandbox);
-    return { api: vm.runInContext('({findServer, settingProgram, gameFolder, pickGame, Run, run, showPage, restart, deactivate, lensCommand, openPrefab, editPrefab, prefabAction})', sandbox), vscode, children, terminals, notifications, picks, clients, lifecycle, signals, panels, servers };
+    return { api: vm.runInContext('({findServer, findTide, projectProgram, settingProgram, gameFolder, pickGame, Run, run, showPage, restart, deactivate, lensCommand, openPrefab, editPrefab, prefabAction})', sandbox), contents, vscode, children, terminals, notifications, picks, clients, lifecycle, signals, panels, servers };
 }
+
+test('Project pins select matching compiler and server and refuse another globally installed version', () => {
+    const root = 'C:\\versions\\0.5.0';
+    const e = editor({env:{TIDE_VERSIONS:'C:\\versions'}, files:[
+        ['C:\\game\\tide.packages','tide = 0.5.0 # pinned\n'], [root+'\\VERSION','0.5.0\n'],
+        root+'\\bin\\tide.exe', root+'\\bin\\tidels.exe',
+    ]});
+    assert.equal(e.api.findServer().file,root+'\\bin\\tidels.exe');
+    assert.equal(e.api.findTide('C:\\game').file,root+'\\bin\\tide.exe');
+    e.contents.set('C:\\game\\tide.packages','tide = 0.6.0\n');
+    assert.match(e.api.findServer().error,/0.6.0 is required/);
+    e.contents.set('C:\\game\\tide.packages','tide = ..\\outside\n');
+    assert.match(e.api.findServer().error,/Invalid Tide version pin/);
+});
+
+test('Unity tooling follows the locked commit, including an override, and rejects a stale branch cache', () => {
+    const lock = hash => JSON.stringify({dependencies:{'com.tide.unity':{source:'git',hash,version:'url#dev'}}});
+    const e = editor({files:[['C:\\game\\Packages\\packages-lock.json',lock('one')],
+        ['C:\\game\\Library\\Tide\\toolchain.json',JSON.stringify({commit:'one',tide:'C:\\dev\\bin\\tide.exe'})],
+        ['C:\\game\\Assets\\tide.packages',''], 'C:\\dev\\bin\\tide.exe','C:\\dev\\bin\\tidels.exe']});
+    assert.equal(e.api.findTide('C:\\game\\Assets').file,'C:\\dev\\bin\\tide.exe');
+    assert.equal(e.api.findServer().file,'C:\\dev\\bin\\tidels.exe');
+    e.contents.set('C:\\game\\Packages\\packages-lock.json',lock('two'));
+    assert.match(e.api.findServer().error,/Open this project in Unity/);
+});
+
+test('Two workspace projects run separate language servers at their own versions', async () => {
+    const e = editor({folders:['C:\\one','C:\\two'],env:{TIDE_VERSIONS:'C:\\versions'},files:[
+        ['C:\\one\\tide.packages','tide = 0.5.0'],['C:\\two\\tide.packages','tide = 0.6.0'],
+        ...['0.5.0','0.6.0'].flatMap(v=>[['C:\\versions\\'+v+'\\VERSION',v],'C:\\versions\\'+v+'\\bin\\tidels.exe'])]});
+    await e.api.restart();
+    assert.equal(e.clients.length,2);
+    assert.notEqual(e.clients[0].server.command,e.clients[1].server.command);
+    assert.equal(e.clients[0].options.workspaceFolder.uri.fsPath,'C:\\one');
+    assert.equal(e.clients[1].options.documentSelector[0].pattern.baseUri,'C:\\two');
+    await e.api.deactivate();
+});
+
+test('A local Unity package uses its selected toolchain only while the package lock matches', () => {
+    const lock = JSON.stringify({dependencies:{'com.tide.unity':{source:'local',version:'file:../engine'}}});
+    const e = editor({files:[['C:\\game\\Packages\\packages-lock.json',lock],
+        ['C:\\game\\Library\\Tide\\toolchain.json',JSON.stringify({tide:'C:\\dev\\bin\\tide.exe',lockHash:createHash('sha256').update(lock).digest('hex')})],
+        'C:\\dev\\bin\\tide.exe','C:\\dev\\bin\\tidels.exe']});
+    assert.equal(e.api.findServer().file,'C:\\dev\\bin\\tidels.exe');
+    e.contents.set('C:\\game\\Packages\\packages-lock.json',lock.replace('../engine','../another-engine'));
+    assert.equal(e.api.findServer().file,undefined);
+});
 
 test('Embedded prefab panel uses a native backend, frames binary chunks and reuses the file panel', async () => {
     const e=editor({settings:{path:{globalValue:'C:\\Tide tools\\tide.exe'}},files:['C:\\Tide tools\\tide.exe','C:\\Tide tools\\tide-editor.exe','C:\\game\\tide.packages']});

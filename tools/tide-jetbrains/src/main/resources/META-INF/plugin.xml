@@ -47,6 +47,9 @@
         <toolWindow id="Tide Game" anchor="right" icon="AllIcons.General.Web" doNotActivateOnStart="true"
                     factoryClass="io.github.blenminer.tide.TideGamePage$Window"/>
     </extensions>
+    <applicationListeners>
+        <listener class="io.github.blenminer.tide.TideVersionsChanged" topic="com.intellij.openapi.vfs.newvfs.BulkFileListener"/>
+    </applicationListeners>
     <actions>
         <action id="Tide.AttachUnity" class="io.github.blenminer.tide.TideAttach$Unity" text="Attach to Unity (Tide)"
                 description="Debug the Tide game the Unity editor runs, stopping at breakpoints in .tide files">

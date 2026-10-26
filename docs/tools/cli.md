@@ -348,6 +348,14 @@ command in Project Settings > Tide, kept in `UserSettings` out of source
 control, takes the place of all of these, as for a build of `tide` you're
 working on.
 
+That custom command stays in force after a package update. If Play reports an
+embed ABI mismatch, use **Project Settings > Tide > Use package version**, then
+**Build now**, or rebuild the custom compiler to match the package. Tide checks
+the existing host before entering Play. Updated VS Code and JetBrains Tide
+plugins follow Unity's selected installation too; their language server switches
+when the project's package lock changes. A development package newer than the
+latest published compiler needs a matching development build or release tag.
+
 In a Unity project the game is the whole of `Assets`: every `.tide` file in it,
 as every C# script is, but those in folders Unity leaves out (hidden ones, and
 those whose names end in `~`). Its `tide.packages` is `Assets/tide.packages`,

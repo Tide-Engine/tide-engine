@@ -14,6 +14,11 @@ namespace Tide
     {
         IntPtr handle;
 
+#if UNITY_EDITOR
+        // The editor explains which compiler was selected, including a developer override.
+        public static Func<string> AbiMismatchHint;
+#endif
+
         delegate* unmanaged[Cdecl]<TideEmbedDesc*, IntPtr> createFn;
         delegate* unmanaged[Cdecl]<IntPtr, void> destroyFn;
         delegate* unmanaged[Cdecl]<IntPtr, float, TideEmbedInput*, float, float, float, double> frameFn;
@@ -148,7 +153,11 @@ namespace Tide
             abiFn = (delegate* unmanaged[Cdecl]<uint>)Find("tide_embed_abi");
             if (abiFn == null || abiFn() != Abi)
             {
-                Debug.LogError($"Tide: {LibraryName} was built by a tide this package doesn't match (its ABI is {(abiFn == null ? 0 : abiFn())}, the package's {Abi}): update the package or tide so they agree.");
+                var hint = "";
+#if UNITY_EDITOR
+                hint = AbiMismatchHint?.Invoke() ?? "";
+#endif
+                Debug.LogError($"Tide: {LibraryName} was built by a tide this package doesn't match (its ABI is {(abiFn == null ? 0 : abiFn())}, the package's {Abi}): update the package or tide so they agree.{hint}");
                 return false;
             }
             createFn = (delegate* unmanaged[Cdecl]<TideEmbedDesc*, IntPtr>)Find("tide_embed_create");

@@ -23,6 +23,48 @@ namespace Tide.Editor
         // `wait`: now in the editor too, as a player build waits for it.
         public static string Find(out string where, bool install = true, bool wait = false)
         {
+            var tide = FindCommand(out where, install, wait);
+            // Local, rebuildable information for IDEs. The commit prevents a branch switch from using the old
+            // package's command; explicit developer overrides belong to the same project as Unity's builds.
+            var file = Path.Combine(TideLibrary.BuildFolder, "toolchain.json");
+            if (tide != null)
+            {
+                TideVersions.PackageCommit(out var commit, out _);
+                var locked = Path.Combine(TideSettings.ProjectFolder, "Packages", "packages-lock.json");
+                string lockHash = null;
+                if (File.Exists(locked))
+                {
+                    using (var sha = System.Security.Cryptography.SHA256.Create())
+                        lockHash = BitConverter.ToString(sha.ComputeHash(File.ReadAllBytes(locked))).Replace("-", "").ToLowerInvariant();
+                }
+                var text = JsonUtility.ToJson(new Toolchain { commit = commit, lockHash = lockHash, tide = Path.GetFullPath(tide) });
+                Directory.CreateDirectory(TideLibrary.BuildFolder);
+                if (!File.Exists(file) || File.ReadAllText(file) != text)
+                {
+                    var temporary = file + ".tmp";
+                    File.WriteAllText(temporary, text);
+                    if (File.Exists(file)) File.Replace(temporary, file, null);
+                    else File.Move(temporary, file);
+                }
+            }
+            else if (File.Exists(file)) File.Delete(file);
+            return tide;
+        }
+
+        [Serializable]
+        sealed class Toolchain { public string commit, lockHash, tide; }
+
+        internal static string MismatchHint()
+        {
+            var set = TideUserSettings.Loaded.tidePath;
+            if (!string.IsNullOrEmpty(set))
+                return $" Your tide command overrides the package's version: {set}. In Project Settings > Tide, clear Your tide command (Use package version), or rebuild that custom Tide installation to match the package. Then Build now.";
+            var tide = Find(out var where, false);
+            return $" Selected tide: {tide ?? where}. In Project Settings > Tide, install the package's version and Build now. A package following dev may be newer than the latest published compiler; use a matching release tag or a matching development build.";
+        }
+
+        static string FindCommand(out string where, bool install, bool wait)
+        {
             Pinned = false;
             var set = TideUserSettings.Loaded.tidePath;
             if (!string.IsNullOrEmpty(set))

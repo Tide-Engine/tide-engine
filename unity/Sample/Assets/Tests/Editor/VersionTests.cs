@@ -76,6 +76,53 @@ public class VersionTests
         $"{{\"name\": \"SHA256SUMS\", \"browser_download_url\": \"{new Uri(Path.Combine(site, "SHA256SUMS")).AbsoluteUri}\"}}]}}";
 
     [Test]
+    public void AnOverrideExplainsTheFixAndPublishesTheSameCommandForTheIde()
+    {
+        var user = TideUserSettings.Loaded;
+        var previous = user.tidePath;
+        var cache = Path.Combine(TideLibrary.BuildFolder, "toolchain.json");
+        var saved = File.Exists(cache) ? File.ReadAllText(cache) : null;
+        try
+        {
+            var command = Path.Combine(scratch, "bin", TideVersions.ExecutableName);
+            Directory.CreateDirectory(Path.GetDirectoryName(command));
+            File.WriteAllText(command, "discovery only, never run");
+            user.tidePath = command;
+            Assert.AreEqual(command, TideToolchain.Find(out _, false));
+            StringAssert.Contains(command.Replace("\\", "\\\\"), File.ReadAllText(cache));
+            StringAssert.Contains("lockHash", File.ReadAllText(cache));
+            StringAssert.Contains(command, TideToolchain.MismatchHint());
+            StringAssert.Contains("Use package version", TideToolchain.MismatchHint());
+            user.tidePath = command + ".missing";
+            Assert.IsNull(TideToolchain.Find(out _, false));
+            Assert.IsFalse(File.Exists(cache), "a failed selection must not leave an IDE using its old command");
+        }
+        finally
+        {
+            user.tidePath = previous;
+            if (saved != null) File.WriteAllText(cache, saved);
+            else if (File.Exists(cache)) File.Delete(cache);
+        }
+    }
+
+    [Test]
+    public void AnOldHostIsRefusedBeforePlayWithTheOverrideAndItsFix()
+    {
+        var host = Environment.GetEnvironmentVariable("TIDE_TEST_ABI5");
+        if (string.IsNullOrEmpty(host)) Assert.Ignore("Set TIDE_TEST_ABI5 to the folder of a test host exporting ABI 5.");
+        var user = TideUserSettings.Loaded;
+        var previous = user.tidePath;
+        try
+        {
+            user.tidePath = Path.Combine(scratch, "old-tide.exe");
+            UnityEngine.TestTools.LogAssert.Expect(UnityEngine.LogType.Error,
+                new System.Text.RegularExpressions.Regex(@"its ABI is 5.*Your tide command overrides.*old-tide.exe.*Use package version"));
+            Assert.IsFalse(TideBuildService.HostReady(host));
+        }
+        finally { user.tidePath = previous; }
+    }
+
+    [Test]
     public void AReleaseTagIsItsVersion()
     {
         Assert.AreEqual("0.5.0-nightly.12", TideVersions.OfTag("v0.5.0-nightly.12"));

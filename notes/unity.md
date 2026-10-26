@@ -1,5 +1,39 @@
 # Unity as a front end
 
+## IDE toolchain selection and an old host after a package update (2026-10-26)
+
+The owner reported Play loading embed ABI 5 after updating to an ABI-7 package.
+Read-only inspection of the Playground found its migrated UserSettings tidePath
+still naming TideDev/playground-tide/bin/tide.exe. That intentional-override path
+takes precedence over package pinning; neither the override nor the running
+owner's project was changed by this task.
+
+Project Settings > Tide now explicitly warns that Your tide command overrides
+package updates and offers Use package version (clear the local override and
+restart the build service). The runtime's existing ABI rejection appends an
+editor-supplied explanation naming that command and this fix. With no override,
+it names the selected compiler and explains that #dev can precede the next
+published compiler. Play's editor hook checks an existing host through the same
+loader before entering Play, keeping the error in Edit Mode. No embed ABI or C
+runtime interface changed; explicit custom compilers remain supported.
+
+TideToolchain.Find publishes the selected command to Library/Tide/toolchain.json,
+with its package commit and SHA-256 of Packages/packages-lock.json, for the IDEs
+(notes/editors.md). The lock digest also identifies local packages. Writes are
+atomic, only on content changes; a failed selection deletes the old cache.
+The machine path stays out of source control. Existing version.json and release
+resolution/download behavior remain unchanged.
+
+Validation: Unity 6000.6.0f1, batch/nographics/noAudio under TIDE_HIDDEN, six
+VersionTests pass, including a custom command publishing the IDE cache, a failed
+selection removing it, and a tiny checkout-built native host exporting ABI 5
+being refused by the pre-Play helper with the override path and its fix. The
+existing release-tag, commit-cache, side-by-side install, wrong-version and
+checksum tests pass too. Final atomic-write change is included in that run.
+IDE checks and docs build are recorded in editors.md. No rendering/runtime/game
+change requires native/web suites; interactive Play cancellation and the new
+settings button's pixels were not exercised in a window. User docs are updated.
+
 ## Debugging the game in the editor (2026-10-26)
 
 Each `game-<n>` library `tide unity` builds is a debug build whose `.pdb`

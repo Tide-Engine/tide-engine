@@ -27,6 +27,16 @@ language server is `tidels`, which comes with tide. The extension runs it from
 `build/tools/tidels`, like Tide's own repo once it's built, it runs that one,
 once you trust the folder.
 
+In a trusted project, the extension selects both `tide` and `tidels` from the
+version pinned in `tide.packages`. Unity projects follow their locked Tide
+package: open Unity once to resolve/install it, and the IDE uses Unity's selected
+installation, including a custom command. Versions share the `TIDE_VERSIONS`
+cache; a missing pinned version gives an error instead of using another version.
+Package/lock changes restart the server. Each open workspace folder has its own
+server, so different projects can use different versions. Explicit path settings
+and a trusted engine checkout's built server take precedence. A `tide.path`
+override also selects its sibling `tidels`, unless `tide.server.path` overrides it.
+
 Open the folder of your game, the one you'd run `tide run` in: every `.tide`
 file in it and its subfolders is one game.
 

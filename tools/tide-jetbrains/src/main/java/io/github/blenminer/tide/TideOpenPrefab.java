@@ -40,7 +40,9 @@ public final class TideOpenPrefab extends AnAction {
         final String base = project.getBasePath();
         final TideGames.Game game = TideGames.of(file.toNioPath(), base != null ? Path.of(base) : null);
         if (game.error() != null) { Messages.showErrorDialog(project, game.error(), "Tide"); return; }
-        final Path tide = Tide.installed("tide");
+        final var tools = TideProjectTools.find(game.folder(), "tide");
+        if (tools.error() != null) { Messages.showErrorDialog(project, tools.error(), "Tide"); return; }
+        final Path tide = tools.file();
         if (tide == null) { Messages.showErrorDialog(project, "Couldn't find tide. Install it: " + Tide.INSTALL, "Tide"); return; }
         final var document = FileDocumentManager.getInstance().getCachedDocument(file);
         if (document != null) FileDocumentManager.getInstance().saveDocument(document);
