@@ -284,6 +284,17 @@ if(NOT TIDE_WEB)
     set_tests_properties(tide_platform_embed PROPERTIES TIMEOUT 60)
 endif()
 
+# Time travel inside another program (tide/embed.h) and the timeline under it (tide/timeline.h): pausing,
+# stepping, showing kept ticks again, recording and replaying bit for bit, and going on from a tick shown
+tide_add_game(tide_platform_travel SOURCES tests/travel.tide NAME game EMBED
+    HOST tests/travel.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+target_include_directories(tide_platform_travel PRIVATE "${PROJECT_SOURCE_DIR}/tests" src)
+target_link_libraries(tide_platform_travel PRIVATE tide_platform)
+if(NOT TIDE_WEB)
+    add_test(NAME tide_platform_travel COMMAND tide_platform_travel)
+    set_tests_properties(tide_platform_travel PROPERTIES TIMEOUT 120)
+endif()
+
 # A sharded game inside another program: its view packet has every shard it watches
 tide_add_game(tide_platform_embed_shards SOURCES tests/embed_shards.tide NAME game EMBED
     HOST tests/embed_shards.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")

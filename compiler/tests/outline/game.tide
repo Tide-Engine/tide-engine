@@ -1,10 +1,14 @@
 // What `tidec --outline` says of a game: every kind of declaration, a component's local field, filters,
-// handlers, and a system that waits for another and why.
+// handlers, a system that waits for another and why, and the docs: comment lines above a declaration or a field,
+// or after a field or a member on its line.
 
 scene Main { }
 
+// A thing that spins:
+// turns about y
 component Spin
 {
+    // Turns a second
     float speed = 1;
     local float shown;
     [Native] long handle; // A C library's, which the outline says
@@ -16,7 +20,12 @@ event Hit { int damage; }
 
 command Push { float2 force; }
 
-enum Mode { Calm, Angry }
+// How it feels
+enum Mode
+{
+    Calm,
+    Angry, // Shouting "no"
+}
 
 system Spinning(Spin spin, mut Transform transform, Time time)
 {

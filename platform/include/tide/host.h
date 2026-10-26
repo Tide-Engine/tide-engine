@@ -240,6 +240,9 @@ static tide_float4x4 tide_run_view_camera_transform, tide_run_view_camera_projec
 // draws and plays itself: the frame leaves the GPU, the audio device and the
 // stats' drawer alone, and the platform takes the devices from that program
 static bool tide_run_embedded;
+// The frame's views draw the match's latest tick as it is, not blended into
+// the one before: a debugger's paused match (tide/embed.h's time travel)
+static bool tide_run_unblended;
 // The room the last frame told local code the match is in (Session.room)
 static char tide_run_room[TIDE_NETWORK_ADDRESS_BYTES];
 
@@ -968,6 +971,23 @@ static inline void tide_run_migrate(void)
     }
 }
 
+// Each channel's commands local code sent into the session, in order, until a
+// channel is full there: the others go on, as a channel waits for nothing else
+static inline void tide_run_send_commands(void)
+{
+    const tide_host_game *game = tide_run_game;
+    if (!game->command || !game->command_sent) return;
+    for (uint32_t i = 0; i <= tide_game_command_channels(game->game); i++) {
+        const uint32_t channel = tide_run_command_channel(i);
+        const uint8_t *bytes;
+        uint32_t size;
+        while ((bytes = game->command(tide_run_local, channel, &size)) != NULL) {
+            if (!tide_session_send_command(tide_run_session, bytes, size)) break;
+            game->command_sent(tide_run_local, channel);
+        }
+    }
+}
+
 static inline int tide_run_frame(void *user, const float seconds)
 {
     (void)user;
@@ -1082,7 +1102,11 @@ static inline int tide_run_frame(void *user, const float seconds)
     tide_profiler_mark(profiler, TIDE_FRAME_MATCH);
 
     // Views draw at the frame rate, the match blended between its last two ticks
-    const tide_view_worlds view = tide_session_view(s);
+    tide_view_worlds view = tide_session_view(s);
+    if (tide_run_unblended) {
+        view.previous = view.verified_previous = NULL;
+        view.alpha = view.verified_alpha = 1.0f;
+    }
     const void *match = view.current;
     tide_draw_reset(&tide_run_draw);
     tide_draw_screen_size(&tide_run_draw, tide_platform_screen_size()); // What a mesh's levels of detail are picked by
@@ -1226,19 +1250,7 @@ static inline int tide_run_frame(void *user, const float seconds)
     // held as it starts, never what was pressed before it.
     if (!game->sample_input || status.client.state != TIDE_SESSION_CONNECTED) tide_devices_consume(&tide_run_devices);
 
-    // Each channel's commands into the session, in order, until a channel is
-    // full there: the others go on, as a channel waits for nothing else
-    if (game->command && game->command_sent) {
-        for (uint32_t i = 0; i <= tide_game_command_channels(game->game); i++) {
-            const uint32_t channel = tide_run_command_channel(i);
-            const uint8_t *bytes;
-            uint32_t size;
-            while ((bytes = game->command(tide_run_local, channel, &size)) != NULL) {
-                if (!tide_session_send_command(s, bytes, size)) break;
-                game->command_sent(tide_run_local, channel);
-            }
-        }
-    }
+    tide_run_send_commands();
     tide_session_request request;
     while (game->take_request(tide_run_local, &request, tide_run_start)) tide_run_request(&request, tide_run_start);
     // While nobody sees the window, the next frame is the match's next tick

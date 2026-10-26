@@ -1,0 +1,12 @@
+{"abi": 1, "hash": "00000000000000AB", "game": "Names", "tickRate": 30, "types": [
+  {"name": "Trail", "kind": "struct", "size": 4, "local": -1, "fields": [{"name": "length", "type": "float", "kind": "float", "dim": 1, "ref": -1, "offset": 0, "size": 4, "element": 0}]},
+  {"name": "Combat.Health", "kind": "component", "size": 12, "local": 2, "fields": [{"name": "hp", "type": "int", "kind": "int", "dim": 1, "ref": -1, "offset": 0, "size": 4, "element": 0}, {"name": "armor", "type": "float", "kind": "float", "dim": 1, "ref": -1, "offset": 4, "size": 4, "element": 0}, {"name": "trail", "type": "Trail", "kind": "struct", "dim": 0, "ref": 0, "offset": 8, "size": 4, "element": 0}]},
+  {"name": "Combat.Health local", "kind": "local", "size": 4, "local": -1, "fields": [{"name": "heard", "type": "int", "kind": "int", "dim": 1, "ref": -1, "offset": 0, "size": 4, "element": 0}]},
+  {"name": "Hit", "kind": "event", "size": 4, "local": -1, "fields": [{"name": "damage", "type": "int", "kind": "int", "dim": 1, "ref": -1, "offset": 0, "size": 4, "element": 0}]},
+  {"name": "Box3D.Body", "kind": "component", "size": 4, "local": -1, "fields": [{"name": "gravityScale", "type": "float", "kind": "float", "dim": 1, "ref": -1, "offset": 0, "size": 4, "element": 0}]},
+  {"name": "UnityEngine.LoadedScenes", "kind": "singleton", "size": 4, "local": -1, "fields": [{"name": "opener", "type": "int", "kind": "int", "dim": 1, "ref": -1, "offset": 0, "size": 4, "element": 0}]},
+  {"name": "Say", "kind": "command", "size": 4, "local": -1, "fields": [{"name": "text", "type": "string", "kind": "text", "dim": 0, "ref": -1, "offset": 0, "size": 4, "element": 0}]},
+  {"name": "Extras", "kind": "singleton", "size": 8, "local": -1, "fields": [{"name": "Value", "type": "int", "kind": "int", "dim": 1, "ref": -1, "offset": 0, "size": 4, "element": 0}, {"name": "score", "type": "int", "kind": "int", "dim": 1, "ref": -1, "offset": 4, "size": 4, "element": 0}]}
+], "enums": [
+  {"name": "Mode", "members": ["Calm", "Angry"], "values": [0, 1]}
+], "components": [1, 4], "singletons": [5, 7], "commands": [{"name": "Say", "type": 6}], "events": [{"name": "Hit", "type": 3}], "prefabs": [], "scenes": []}

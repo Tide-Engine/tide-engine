@@ -9,6 +9,17 @@ library build also writes `game.natvis` and `game_lldb.py` beside it (the
 newest build's; LLDB imports them again after a layout change). macOS watched
 builds skip dsymutil. `notes/debugging.md`.
 
+## A reload while a debugger pauses the match (2026-10-26)
+
+Unity's time travel (notes/unity.md) keeps worlds and a local state of the running build's. The embed's
+`reload_before` (`reload_library.inc`) lets go of that local state before every swap or full reload; a build of the
+same layout keeps the kept worlds and recording (`tide_timeline_set_game`: the new build frees and replays them),
+another layout or a full reload drops them while the old code is loaded, and the recording starts again from the
+migrated world (the session's recorder `begin`). The match stays paused at its tick through it, and the next step runs
+the new build. A paused embed still checks for builds by the frames' real time. Ticks recorded before a reload and
+replayed after it run the new code: a change that matters shows as the first tick that differs. The Sample's
+`TravelTests.AHotReloadWhilePausedKeepsThePause` covers a same-layout reload.
+
 ## Raw Texture field roles (2026-10-25)
 
 Owner-approved Raw Texture fields retain their ordinary C reference layout.

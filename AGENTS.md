@@ -205,4 +205,4 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | RTC, rooms, UDP/relay transport and peer tests | `notes/webrtc-and-rooms.md` |
 | Modding requirements, implementation status and withdrawn decisions | `notes/modding.md` |
 | `tide publish`, inactive build service | `notes/build-service.md` in `Tide-Engine/tide-services` |
-| `unity/`, `tide unity`, `tide/embed.h`: Unity as an authoring/rendering front end | `notes/unity.md` |
+| `unity/`, `tide unity`, `tide/embed.h`, `tide/timeline.h`: Unity as an authoring/rendering front end, its time travel | `notes/unity.md` |

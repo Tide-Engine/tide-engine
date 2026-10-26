@@ -2716,8 +2716,12 @@ static const uint8_t *record_download(const uint8_t *record, const uint32_t size
     return NULL;
 }
 
-bool tide_replay(const tide_game *g, void *world, const uint8_t *record, const uint32_t size, const tide_jobs *jobs)
+// Reads a record and runs its tick on `world`: false for bytes that aren't
+// one this build can run. `hash` is the server's world's after it.
+static bool replay_record(const tide_game *g, void *world, const uint8_t *record, const uint32_t size, const tide_jobs *jobs,
+                          uint64_t *server_hash)
 {
+    *server_hash = 0;
     if (!g || !world || !record) return false;
     tide_reader head = {record, size, 0, false};
     tide_read_u32(&head);
@@ -2727,7 +2731,7 @@ bool tide_replay(const tide_game *g, void *world, const uint8_t *record, const u
     const uint32_t names_at = head.at;
     const uint32_t players = tide_game_players(g);
     tide_reader r = {frame, frame_size, 0, false};
-    const uint64_t hash = tide_read_u64(&r);
+    *server_hash = tide_read_u64(&r);
     const uint8_t parts = tide_read_u8(&r);
     const uint32_t events = parts & FRAME_EVENTS ? tide_read_varint(&r) : 0u;
     if (events > EVENTS_PER_PLAYER * players) return false;
@@ -2797,7 +2801,25 @@ bool tide_replay(const tide_game *g, void *world, const uint8_t *record, const u
     if (parts & FRAME_LOCAL_EVENTS) tide_read_bytes(&r, tide_read_varint(&r));
     if (r.failed || r.at != r.size) return false;
     g->tick(world, jobs);
-    return hash_of(g, world, jobs) == hash;
+    return true;
+}
+
+bool tide_replay(const tide_game *g, void *world, const uint8_t *record, const uint32_t size, const tide_jobs *jobs)
+{
+    uint64_t expected = 0, got = 0;
+    return tide_replay_check(g, world, record, size, jobs, &expected, &got) == TIDE_REPLAY_SAME;
+}
+
+tide_replay_result tide_replay_check(const tide_game *g, void *world, const uint8_t *record, const uint32_t size,
+                                     const tide_jobs *jobs, uint64_t *expected, uint64_t *got)
+{
+    uint64_t server_hash = 0;
+    *got = 0;
+    const bool ran = replay_record(g, world, record, size, jobs, &server_hash);
+    *expected = server_hash;
+    if (!ran) return TIDE_REPLAY_UNREADABLE;
+    *got = hash_of(g, world, jobs);
+    return *got == server_hash ? TIDE_REPLAY_SAME : TIDE_REPLAY_DIFFERENT;
 }
 
 // How long the server has held the time it echoes to a player: from when the
@@ -6010,7 +6032,26 @@ struct tide_session {
     bool *shard_handed; // ...and whether its client was made with it
     uint32_t shard_admission_room;
     uint64_t shard_nonce;
+
+    tide_session_recorder recorder; // What records the match this machine runs (tide_session_record)
 };
+
+// Each tick of the match this machine runs, to its recorder
+static void recorded_tick(void *user, const uint32_t tick, const uint8_t *record, const uint32_t size)
+{
+    const tide_session *s = user;
+    if (s->recorder.tick && s->server) s->recorder.tick(s->recorder.user, tick, record, size, s->server->world);
+}
+
+// The match this machine runs, recorded from now on, if anything records it
+static void record_server(tide_session *s)
+{
+    if (!s->server) return;
+    const bool recorded = s->recorder.tick || s->recorder.begin;
+    s->server->desc.journal = recorded ? recorded_tick : NULL;
+    s->server->desc.journal_user = recorded ? s : NULL;
+    if (s->recorder.begin) s->recorder.begin(s->recorder.user, s->server->world, s->server->tick);
+}
 
 // The session's own time starts over with each match.
 static void start_clock(tide_session *s, const double now)
@@ -6244,6 +6285,7 @@ static void start_server(tide_session *s, const void *start, const void *world, 
         return;
     }
     s->last_state = TIDE_SESSION_CONNECTING;
+    record_server(s);
 }
 
 void tide_session_start(tide_session *s, const void *start, const double now)
@@ -6706,6 +6748,7 @@ void tide_session_take_over(tide_session *s, const tide_transport network, const
     s->client->commands_rebase = true;
     s->open = h->open;
     s->last_state = TIDE_SESSION_CONNECTING;
+    record_server(s);
 }
 
 // A client's build changed with the same layout: it goes on as it is
@@ -7089,5 +7132,48 @@ bool tide_session_migrate(tide_session *s, const tide_game *game, const tide_mig
     if (own && s->client->loaded) take_server_world(s->client, s->server);
     if (s->stale && s->desc.game->hash != game->hash) clear_commands(&s->stale->commands);
     s->desc.game = game;
+    record_server(s); // Its world is another layout's from here on
     return true;
+}
+
+uint32_t tide_session_remote_players(const tide_session *s)
+{
+    const tide_server *server = s ? s->server : NULL;
+    uint32_t count = 0;
+    for (uint32_t p = 0; server && p < server->players; p++) {
+        if (server->connections[p].used && !server->connections[p].local) count++;
+    }
+    return count;
+}
+
+bool tide_session_rewind(tide_session *s, const void *world)
+{
+    tide_server *server = s ? s->server : NULL;
+    if (!server || !s->client || !s->client->loaded || s->shards || s->shard_client || !world) return false;
+    const tide_game *g = server->game;
+    // Which commands are in it stays the match's as it is: those of the ticks let go are gone with them, and those
+    // on their way, numbered on from them, go in as they would have
+    void *kept = NULL;
+    if (g->command && g->keep_commands) {
+        kept = calloc(1, g->world_size);
+        if (!kept) return false;
+        g->copy_world(kept, server->world);
+    }
+    g->copy_world(server->world, world);
+    if (kept) {
+        g->keep_commands(server->world, kept);
+        free_world(g, kept);
+        free(kept);
+    }
+    server->ended = g->ended && g->ended(server->world);
+    if (s->desc.correct_views) s->desc.correct_views(s->desc.user, &(tide_view_correction){.reset = true});
+    discard_view_correction(s->client);
+    take_server_world(s->client, server);
+    return true;
+}
+
+void tide_session_record(tide_session *s, const tide_session_recorder *recorder)
+{
+    s->recorder = recorder ? *recorder : (tide_session_recorder){0};
+    record_server(s);
 }

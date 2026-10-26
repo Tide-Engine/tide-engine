@@ -10,6 +10,126 @@ to Process) stops at `.tide` breakpoints in the `loaded-<n>` copy the embed
 host loads. Checked with a host loading `tide_embed.dll` as `TideRunner` does,
 not with the editor itself. `notes/debugging.md`; package README, Debug.
 
+## Time travel (2026-10-26)
+
+The owner asked for a time-travel debugger in Unity: pause a match in Play, step it a tick at a time, scrub back
+through recent ticks with Unity's GameObjects, inspectors and Tide's drawing showing the tick, and record and replay a
+session bit for bit (a tester's file too), with the first tick that differs when the build changed.
+
+**Owner's decisions** (asked during the work, 2026-10-26):
+
+- With other machines in the match, pausing never blocks them: "continue the main simulation in the background such
+  that everything plays as normal and when I unpause I jump to the present ... if we don't have other players
+  connected we can pause the simulation". Built: with nobody else in it (`tide_session_remote_players` 0) Pause is a
+  real pause (no tick runs, no time passes for the match); with others in it, or one joining during a pause, the match
+  runs behind the tick shown and Resume shows its latest. This machine's player sends input as if it let go of
+  everything meanwhile (a zeroed `tide_embed_input` to the unseen frame): **Provisional (mine)**.
+- "Continue from here" was asked for, then "should work for multiplayer with clients too". Built for both: the
+  match goes back to the tick shown, the ticks after it gone, other machines' clients included.
+
+**The boundary.** Real play has no engine-imposed pause and still hasn't: time travel is a debugger the embed offers
+when the other program asks (`tide_embed_travel_keep`), the runner's Time Travel setting deciding where
+(`TideTimeTravel.Editor` by default: Play in the editor; `EditorAndPlayers` lets a game save testers' recordings;
+`Off`). Only a match this machine runs is recorded (the server's journal is the source); a client of another
+machine's match, and a sharded match, say why not (`tide_embed_travel.why`).
+
+What's built:
+
+- **The session's recorder** (`engine/src/session.c`, `tide/session.h`; notes/netcode.md): `tide_session_record` takes
+  `begin(world, tick)` and `tick(tick, record, size, world)`, fed by the server's journal (`tide_server_desc.journal`,
+  the shards' recovery records), `begin` as the recorder is set on a running match, as a match starts, as this machine
+  takes one over, and as a layout reload migrates it. `tide_replay_check` is `tide_replay` saying same, different
+  (with both hashes) or unreadable. `tide_session_rewind(world)` and `tide_session_remote_players`.
+- **The timeline** (`platform/include/tide/timeline.h`, `platform/src/timeline.c`): every record since the start
+  (64 MiB of them at most, then it starts again from the first world kept), the start world, a ring of the latest
+  `keep` worlds (COW copies, so the cost is the pages that changed), a world made again from the start for a tick
+  before the ring (`seek`, kept for the next tick on), and replay checks (the first tick that differs, its hashes,
+  the first unreadable). Tick n is the world after n ticks. `tide_timeline_cut(tick, world)` is Continue From Here's:
+  records after the tick go, the next record is whichever server tick comes, and `world` (the rewound world with the
+  match's command state, below) is kept as that tick's, recorded as a **jump** when it isn't what replaying makes, so
+  a replay goes there too. Saved as bytes (`TIDETIME`, version 1, little-endian): layout hash and simulation ID, tick
+  rate, the recording machine's player, the first tick, worlds packed as `pack_delta` against nothing (portable
+  between native and wasm; raw packs only for a game without deltas), the records, the jumps. Loading refuses another
+  layout hash ("laid out otherwise ... replay it with a build of that layout"); another simulation ID loads and says
+  `other_build`.
+- **The embed** (`tide/embed.h`, embed ABI 7): `tide_embed_travel_of` (state, first/kept/last/shown, tick rate,
+  replay checks, `background`, the shown world's hash, `why` and `refused`), `_travel_keep(seconds)`, `_pause`,
+  `_step`, `_show`, `_continue`, `_recording`, `_replay`, `_replay_end`.
+  - Paused at the latest tick with nobody else in the match, frames are `tide_run_frame` with no time, through
+    `tide_host.h`'s `tide_run_unblended` (views and the packet show the latest tick as it is, not blended into the one
+    before). Local code runs; its commands and requests go to the session and wait for the next tick; devices latch, so
+    a key pressed while paused is in the step's tick. A step is one frame of `tide_session_until_tick` plus 1 µs, with
+    the commands local code (or C#) sent handed to the session first (`tide_run_send_commands`, the loop
+    `tide_run_frame` ends with, factored out of it), so a command sent while paused is in the step's tick rather than
+    the one after (the Sample's scrubbing test found it).
+  - Showing another tick (scrubbed back, background mode, or a recording) is `show_frame`: the views run on that world
+    with a local state of their own (`travel.local`), with no session; its devices are consumed and its commands and
+    requests dropped, so nothing of an older tick's picture reaches the match, and the match's local state is as it
+    was when it goes on. The packet's player is this machine's, or a recording's player.
+  - Background mode: each frame runs the match's own frame unseen (zeroed input), then `show_frame` of the tick shown.
+  - A recording shown pauses a match this machine runs (refused for one it can't pause) and plays at its tick rate
+    (`playing`, at most a quarter second of ticks a frame).
+  - Hot reload: `reload_library.inc`'s `reload_before(old, next)`, which only the embed sets, runs before a swap or
+    full reload while the old build's code is there: the separate local state goes; a build of the same layout keeps
+    the timelines (`tide_timeline_set_game`); another layout or a full reload drops them (the session's next `begin`
+    starts the recording again from the migrated world), keeping the pause. While paused the embed still checks for
+    builds with the frames' real time.
+  - Web: `tide unity --web`'s program exports `tide_unity_travel` and the rest, `Tide.jslib` has `TideWebTravel` and
+    the rest, `TideLibrary` calls them.
+- **Continue From Here** (`tide_embed_continue`): `tide_session_rewind` copies the kept world into the server's,
+  then the generated `tide_game.keep_commands` (codegen.c, new) copies the live world's `tide_command_state` over it,
+  so each player's command sequences and unordered windows stay where the match had them: a command applied after the
+  tick doesn't run again, and one on its way (a client's pending, numbered on from the live world) goes in as it would
+  have. This machine's player takes the server's world at once (`take_server_world`); other machines' clients find
+  their next tick's hash isn't theirs and repair or resync as on any divergence. The world the match goes on from is
+  therefore the kept tick plus the command state, which the timeline records as a jump. No wire protocol change; the
+  generated header's Session ABI marker gained `rewind (1)` for the new `tide_game` member.
+- **The package**: `TideTravel` and `TideTravelState` (TideNative.cs), TideLibrary's bindings (ABI 7), and
+  TideRunner's `timeTravel`, `keepSeconds`, `Travel`, `Pause`, `Resume`, `Step`, `ShowTick`, `ContinueFromHere`,
+  `Recording`, `SaveRecording`, `Replay`, `ReplayFile`, `EndReplay`. `Editor/TideTimeTravelWindow.cs` (Window >
+  Tide > Time Travel, IMGUI, repainting in Play): what's going on (`Describe`), Pause/Resume, Step, Continue From
+  Here, a Tick slider, Save Recording / Replay This Match / Open Recording (`.tiderec`), and in a replay Play/Stop,
+  Step and Back to the Match with the check's result.
+
+**Picks (mine, Provisional):** Resume from a scrubbed tick goes to the latest (Continue From Here is the other);
+the separate local state for other ticks' frames (local handlers don't hear replayed or scrubbed ticks' events, and
+views' accumulated local state starts fresh there); a replay needs the same data layout rather than migrating its
+worlds; 10 seconds kept by default; 64 MiB of records; the `.tiderec` extension; a step's 1 µs past the tick.
+
+**Tests:**
+
+- `tide_platform_travel` (`platform/tests/travel.c`, `travel.tide`; native): off until kept; pause and step one tick
+  (no tick in a second of paused frames, the latest tick unblended, input and a press while paused in the step's
+  tick, no burst after resuming); kept ticks shown again (hashes and what the views drew equal, ticks before the ring
+  made again from the start, a B pressed on an old tick's picture sending nothing, steps from a shown tick); record
+  and replay bit for bit with input, commands and a view's command (played at the tick rate, every tick checked, and
+  replayed again in another embed in no match); a flipped record hash reported at its tick with both hashes, another
+  layout and a cut-short file refused; continuing from a tick (a Bump after it gone for good, a later one once, the
+  recording with its jump replaying bit for bit); a match never stopping for another machine (the game's own network,
+  a loopback, opened to a second session: a real pause becomes the background mode as it joins, the guest stays
+  connected and current, Continue From Here takes the guest's verified world back too). Session-level, three machines
+  over a lossy loopback: three players' input and commands replayed bit for bit (and before a ring of 8, from the
+  start); a build whose tick changes at its 50th tick (same layout, another simulation ID) differing at tick 50 with
+  both hashes and `other_build`; a rewind with two clients in the match, a command on its way going in once, and the
+  recording replaying bit for bit.
+- The Sample's PlayMode `TravelTests`: pause holds the match and a step runs one tick; scrubbing shows a kept tick
+  with its GameObjects (the tossed ball gone before its toss, the player's ball where it was, the live `Ball`
+  component's values and the world hash as they were); a recording saved to a file replays bit for bit (every hash,
+  the ball where the match had it, the recording's `Say`), and another layout is refused; Continue From Here takes the
+  match back (the toss gone for good, a later one in); a hot reload while paused keeps the pause and its ticks, and
+  the new build steps. EditMode `TravelWindowTests`: what the window says, and its menu item.
+
+**Runs:** native debug 2801/2801 and web debug 2696/2696 (both without `private-prototype`; one disabled test
+each, MicroDuck's turn as before), `tide_platform_travel` 10/10; the Sample's EditMode 30/30 and PlayMode 22/22
+(D3D11, a GPU, batch), with a tide installed from this checkout's mingw-release and debug builds and the Sample's
+`com.tide.game` written again by it (the schema hash moved with the Session ABI marker). After merging the type boundary's work (`unity_code.c`, the Sample's package): the native unity, CLI, LSP, outline, tidec, embed, reload and travel tests 2573/2573, the Sample's package as tide writes it unchanged, EditMode 33/33 and PlayMode 22/22. Not run: Unity on the web
+(the jslib and exports are built and compiled, not played), the window's drawing in a window, Linux and macOS.
+
+**Not done / gaps:** local handlers and the packet's EVENTS for replayed or scrubbed ticks (the separate local state
+hears nothing); a client of another machine's match can't time travel (it has no journal; its verified worlds could be
+kept, not built); sharded matches; replays across a layout change (the old layout's description isn't in the
+recording); the window's drawing seen in a window (batch runs have none).
+
 ## Twelve texture slots and embed ABI 6 (2026-10-25)
 
 The coordinated internal capacity completion raises TideRender's sampled arrays
@@ -767,6 +887,105 @@ Owner: "lets bridge any gaps".
   `lsp_rename_reaches_unity_assets` a struct's field in a struct, a list's element and an instance's change, and a
   `Value` field's `Value_` key. Every one of the repo's 330 games built with `--embed` compiles under `-Werror`
   (which found unused command helpers in four games with text or byte-list commands: `TIDE_HELPER` now).
+
+### Tide types and their C# twins (2026-10-26)
+
+The owner asked for the seams between Tide's types and their C# twins closed, Tide staying the source of truth (every
+twin still written into `Packages/com.tide.game` by `unity_code.c`): renames reaching C# scripts, a twin leading back
+to its Tide declaration, and C# errors that explain a Tide rename. **Owner** (2026-10-26, hub card `mvp14nl24360`):
+"File only, line looked up live (your pick)": the generated C# names the declaration's file, not its line, so a line
+moving above a declaration rewrites no C# (a recompile and domain reload, in Play too, on most saves); the line comes
+from `Library/Tide/outline.json` when Unity opens the declaration. Everything else here is my pick (Provisional).
+
+- **One naming, shared** (`compiler/lsp/unity_names.c`, compiled into tide and tidels as `json.c` is): the C# name of
+  every type (namespace parts after `Tide.Game`, an identifier C# takes, `Local` after a local part, `_` after a
+  second of one name in one namespace, in schema order), field (`_` after the type's own name and, for a class or a
+  struct of Unity code's, `Value`, `TideName`, `ReadLive`, `Pack`, `From`, `Tick`, `Verified`, `Target`,
+  `TargetEntity`; a class's local fields after its own, among them) and enum member (a second of one identifier left
+  out), from the schema's names. `unity_code.c` takes every name from it (its own `identifier`, `taken` and `reserve`
+  are gone); the Sample's package came out byte for byte the same.
+- **Renames reach C#** (`compiler/lsp/csharp.c`, from `unity_renames` in `analysis.c`, for a type, a field or an enum
+  member of a component, singleton, event, command, struct, input or enum): reads the project's
+  `Packages/com.tide.game/schema.json`, names everything as the C# has it and again with the rename (`unity_cs_assign`
+  over the changed Tide names), and edits what changed in every `.cs` of `Assets` (not in folders ending `~` or
+  hidden), of embedded packages (`Packages/*`, but the one whose package.json is com.tide.game) and of local ones (the
+  manifest's `file:` dependencies, `..` folded so the URIs are the editor's). The edits join the rename's
+  WorkspaceEdit, so the editor previews and undoes them with the rest. The C# is lexed (comments, strings, characters
+  and preprocessor lines skipped; an interpolated string's holes lexed as code, up to a format or an alignment) and
+  read conservatively, with no compiler:
+  - a type where a dotted name resolves to `Tide.Game.<twin>` as written, through `global::`, an alias's target, or a
+    namespace the file opens (its usings, its namespaces and those above them); not where the first name is a type
+    the project declares, a variable in scope there, or assigned (`Mode = ...`); a single name the project also
+    declares as a variable or member anywhere only where only a type can be (after `new`, `is`, `as`, `<`, `typeof(`,
+    or before a declared name). Only a name written as the type's own is edited, not an alias's.
+  - a member where its value's type is known: a variable, field, property or parameter declared of a twin (in scope: a
+    type's body, the rest of a block, a method's or lambda's body, a foreach statement; two of one name in one scope
+    of different types are neither), `var` given `new`, a generic call or another known value, `out var` in a generic
+    call, a lambda's parameter in a generic call (`On<Hit>(hit => ...)`), a generic call's type argument
+    (`GetComponent<T>()`, `runner.Get<T>()`; an indexer or a foreach over it its element), `new T { a = ... }`'s
+    initializer, an enum's member after its enum, and on through the twins' fields, lists and arrays
+    (`h.trail.length`). A class's members are its fields and its local fields; its `Value`'s, its fields.
+  - Test: `lsp_rename_reaches_unity_scripts` (scripts in Assets, an embedded and a local package, and com.tide.game's
+    own script, never edited): a field through a variable, `var` of `GetComponent`, an interpolated string's hole, a
+    foreach over `GetComponents`, a method's parameter, a qualified field; not Shield's or another class's `hp`, a
+    comment's, a string's, nor `Samples~`'s; the type in a using alias, a field, generic arguments, `Tide.Game.` and
+    `global::` names, not the alias's uses; a local field; `Value_` renamed to a plain name and a plain one to
+    `Value_`; a struct's field through a component's field, not the project's own `Trail`'s, and the struct itself only
+    where qualified, as the project has a `Trail`; a singleton's field after `runner.Get<Extras>()`, an event's in a
+    lambda, a command's in an initializer (not a variable named `text`); an enum and its member; a namespaced
+    component and its field by the namespace's using.
+- **Docs and where** (`unity_code.c`, from the outline): `print_outline` (`compiler/src/outline.c`) gives a
+  declaration's `doc` (the `//` lines just above it, attributes allowed between, a blank line or code ending them;
+  slashes and one space dropped), each field's `line` and `doc` (above it, else a comment after it on its line), and
+  an enum's `memberDocs`. The C# has a `/// <summary>` (XML escaped) on each class, struct and enum of the game's,
+  its last paragraph "Tide's component Ball, declared in Assets/Tide/Bounce.tide." (`where_declared`: a game file
+  from Assets, a package's as "the Box3D package's body.tide", none for tide's own in Library/Tide, which get no docs),
+  and on each field and enum member with a doc. Tests: `unity_code_writes_tides_docs_and_where_each_type_is` (fixture
+  `compiler/cli/tests/unity_names`), `tidec_outline_game` (docs above and after, two lines, a member's).
+- **Opening the declaration** (`Editor/TideDeclarations.cs`): `[OnOpenAsset(0)]` (an `EntityId` from 6000.2, as
+  com.unity.timeline's), for a script opened with no line that's a `TideComponent` whose `Value` has `[TideType(name)]`:
+  the outline's component of that name, opened by `InternalEditorUtility.OpenFileAtLineExternal` at its line and column
+  (`Opener`, which tests replace). A double click on the Script field, Edit Script and the Project window all come
+  through `AssetDatabase.OpenAsset`. A script opened at a line (a C# error in it) opens as itself, as does one before
+  the game has built. `TideOutline` reads `doc` and fields' `line` and `doc`.
+- **Errors that explain a rename:** `unity_code_record` (tide, after each C# write, from `write_unity_package`) diffs
+  the names of the schema the C# had (the com.tide.game schema.json it replaces) with the new one's: a type by name,
+  else the one gone and the one come of its kind with the same fields, else the only ones of their kind; a field by
+  name, else in its place with its type, else the only one gone and come of its type; local fields through their
+  parts; an enum by name, else the only one; members by name, else in their place. Into `Library/Tide/renamed.json`
+  (`{"renamed": [{"was": "Combat.Health.hp", "now": "Combat.Health.health", "file": "Assets/Tide/combat.tide",
+  "line": 8}, {"was": "Shield", "removed": true}]}`, names after `Tide.Game.`): a new entry replaces one of its name,
+  one whose `now` is renamed again follows it, one whose name the C# has again goes, the newest 100 stay, and a build
+  of the declarations alone records no removals (it leaves some out). Written only when it changes; Library is never
+  in source control. `Editor/TideRenames.cs`: at `CompilationPipeline.assemblyCompilationFinished`, each error saying
+  a member (CS0117, CS1061), a type (CS0246, CS0103), a type in a namespace (CS0234) or in a type (CS0426) isn't there
+  is looked up (`Tide.Game.` and `global::` dropped, `.Value.` as the class's field, else an entry ending in it, for a
+  namespaced type written short), and a note goes in as a compiler message of its own identifier (`0x7469646e`), an
+  error one: a probe in batch mode found neither `LogCompilerMessage`'s warnings nor `LogCompilerWarning` added any
+  Console entry (so tide's own located warnings, which `TideBuildService.Log` sends that way, may not reach it either:
+  not looked into): "tide: `Ball.speed` is now `Ball.velocity` (Assets/Tide/Bounce.tide:124)", located at the new
+  declaration, or "tide: `Paddle` was removed from the game's Tide code" at the script's line; each once, all gone at
+  `compilationStarted`. `TideBuildService.LogLocated`/`RemoveLocated` take the identifier. Test:
+  `unity_code_records_what_became_of_names` (a field renamed in place, a local field, a struct by its fields, an enum
+  member, a field whose type changed too removed; renamed again, back again, declarations alone).
+- **Sample tests** (EditMode `TypeBoundaryTests`): Ball's script opens `Assets/Tide/Bounce.tide` at `component Ball`
+  through `AssetDatabase.OpenAsset` (BallTint's isn't the game's); the regenerated `Ball.cs` has Ball's doc, its file,
+  and `velocity`'s and `heard`'s docs; a probe script of renamed and removed names compiled apart (`AssemblyBuilder`,
+  against Tide.Game and Tide.Runtime) gets the three notes from Roslyn's own messages, each once in the Console, and
+  none after `Clear`. The Sample's Ball and its `velocity` have doc comments to pin.
+  `unity_code_writes_the_samples_package` passes the Sample's outline (`compiler/cli/tests/unity_sample/outline.json`,
+  cut to Bounce.tide's declarations, from the Sample's `Library/Tide/outline.json`): copy it again with the Sample's
+  package when Bounce.tide's docs change.
+- **Gaps:** renaming a namespace doesn't reach C#; a member through a method's or property's result, a cast, `as`, a
+  pattern variable outside its if, a field of a partial class declared in another file, `dynamic` and reflection are
+  left alone; doc comments' `<see cref>` aren't edited; a project type of a twin's name keeps bare uses of the twin
+  unrenamed everywhere (qualified ones are); notes come from compiles after the package loaded (the editor's first
+  compile at startup isn't explained until the next). Not seen in a window: a hover in Rider or Visual Studio, the
+  external editor opening at the line, the notes in an interactive Console.
+- **Runs:** native debug 2805/2805 and web debug 2710/2710 (without `private-prototype`), then the CLI, language-server,
+  outline and Unity CTests again after the last `unity_code.c` change (21/21); docs build. The Sample with a scratch
+  tide (this checkout's mingw-release, then debug, installed): EditMode 31/31 (three runs, the first regenerating
+  com.tide.game with the docs), PlayMode 17/17 on D3D11.
 
 ### Scenes as built (2026-10-20)
 

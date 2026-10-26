@@ -3,6 +3,7 @@
 // fields, and for the systems, views and handlers what they read and write, and in the tick what they wait for and
 // why, as the schedule says it.
 
+#include <stdlib.h>
 #include <string.h>
 
 #include "ast.h"
@@ -33,6 +34,107 @@ static void put_json_c(sb *out, const char *s)
 static void put_json_str(sb *out, const str s)
 {
     put_json_text(out, s.ptr, (size_t)s.len);
+}
+
+// A declaration's or a field's doc: the `//` lines just above it (attributes may come between, a blank line or code
+// ends them), each without its slashes and the space after them; else, for a field or an enum's member (`trailing`),
+// a `//` comment after it on its own line. Lines of a source, found once each time the outline moves to another file.
+typedef struct lines_of {
+    const source *src;
+    int *starts; // Where each line starts, from line 1
+    int count;
+} lines_of;
+
+static void find_lines(lines_of *l, const source *src)
+{
+    if (l->src == src) return;
+    free(l->starts);
+    l->src = src;
+    l->count = 0;
+    int capacity = 64;
+    l->starts = malloc(sizeof *l->starts * (size_t)capacity);
+    if (!l->starts) abort();
+    l->starts[l->count++] = 0;
+    for (size_t i = 0; i < src->len; i++) {
+        if (src->text[i] != '\n') continue;
+        if (l->count == capacity) {
+            capacity *= 2;
+            l->starts = realloc(l->starts, sizeof *l->starts * (size_t)capacity);
+            if (!l->starts) abort();
+        }
+        l->starts[l->count++] = (int)i + 1;
+    }
+}
+
+// Line `n`'s text (1-based) without its indentation or line ending; empty past the end
+static str line_text(const lines_of *l, const int n)
+{
+    if (n < 1 || n > l->count) return (str){"", 0};
+    int at = l->starts[n - 1];
+    int end = n < l->count ? l->starts[n] : (int)l->src->len;
+    while (at < end && (l->src->text[at] == ' ' || l->src->text[at] == '\t')) at++;
+    while (end > at && (l->src->text[end - 1] == '\n' || l->src->text[end - 1] == '\r' || l->src->text[end - 1] == ' '
+                        || l->src->text[end - 1] == '\t')) {
+        end--;
+    }
+    return (str){l->src->text + at, end - at};
+}
+
+static bool is_comment(const str s)
+{
+    return s.len >= 2 && s.ptr[0] == '/' && s.ptr[1] == '/';
+}
+
+// A comment's text: after its slashes, and a space after them
+static void put_comment(sb *doc, const char *text, int n)
+{
+    while (n > 0 && *text == '/') text++, n--;
+    if (n > 0 && *text == ' ') text++, n--;
+    if (doc->len) sb_put(doc, "\n");
+    sb_putn(doc, text, (size_t)n);
+}
+
+static void put_doc(sb *out, lines_of *l, const source *src, const loc at, const bool trailing)
+{
+    if (!src || !src->text || at.line < 1) return;
+    find_lines(l, src);
+    if (at.line > l->count) return;
+    int first = at.line;
+    bool attributes = true; // Attributes may come between it and its doc
+    for (int n = at.line - 1; n >= 1; n--) {
+        const str s = line_text(l, n);
+        if (is_comment(s)) {
+            first = n;
+            attributes = false;
+        } else if (attributes && s.len && s.ptr[0] == '[') {
+            continue;
+        } else {
+            break;
+        }
+    }
+    sb doc = {0};
+    for (int n = first; n < at.line; n++) {
+        const str s = line_text(l, n);
+        if (is_comment(s)) put_comment(&doc, s.ptr, s.len);
+    }
+    if (!doc.len && trailing) {
+        // After it on its line, outside text: `float speed; // m/s`
+        const char *line = src->text + l->starts[at.line - 1];
+        const str s = line_text(l, at.line);
+        int i = (int)(line + (at.col > 0 ? at.col - 1 : 0) - s.ptr);
+        bool quoted = false;
+        for (i = i > 0 ? i : 0; i + 1 < s.len; i++) {
+            if (s.ptr[i] == '"' && (i == 0 || s.ptr[i - 1] != '\\')) quoted = !quoted;
+            if (!quoted && s.ptr[i] == '/' && s.ptr[i + 1] == '/') {
+                put_comment(&doc, s.ptr + i, s.len - i);
+                break;
+            }
+        }
+    }
+    if (doc.len) {
+        sb_put(out, ", \"doc\": ");
+        put_json_text(out, doc.data, doc.len);
+    }
 }
 
 // A declaration's name as code outside its namespace writes it, with an overload's parameters
@@ -81,7 +183,7 @@ static void put_names(sb *out, const char *key, const decl *const *items, const 
 }
 
 // Its fields, then a match component's or singleton's local ones, which are its local part's
-static void put_fields(sb *out, const decl *d)
+static void put_fields(sb *out, lines_of *l, const decl *d)
 {
     int count = 0;
     for (int part = 0; part < 2; part++) {
@@ -94,6 +196,7 @@ static void put_fields(sb *out, const decl *d)
             put_json_str(out, f->name);
             sb_put(out, ", \"type\": ");
             put_json_c(out, type_name(f->type));
+            sb_printf(out, ", \"line\": %d", f->at.line);
             if (part || f->is_local) sb_put(out, ", \"local\": true");
             if (f->native) sb_put(out, ", \"native\": true"); // A C library's state: nothing a game writes
             // A text field's default, as written between its quotes, which the schema's default bytes don't hold
@@ -101,6 +204,7 @@ static void put_fields(sb *out, const decl *d)
                 sb_put(out, ", \"text\": ");
                 put_json_str(out, f->default_value->text);
             }
+            if (of->unit) put_doc(out, l, of->unit->src, f->at, true);
             sb_put(out, "}");
         }
     }
@@ -186,6 +290,7 @@ void print_outline(const program *prog, sb *out)
 {
     sb_put(out, "{\"declarations\": [");
     int count = 0;
+    lines_of lines = {0};
     for (int i = 0; i < prog->decls.count; i++) {
         const decl *d = prog->decls.items[i];
         const char *kind = kind_of(d);
@@ -200,6 +305,7 @@ void print_outline(const program *prog, sb *out)
         if (d->is_worker) sb_put(out, ", \"worker\": true");
         if (d->is_async) sb_put(out, ", \"async\": true");
         if (d->is_extern || d->extern_system) sb_put(out, ", \"extern\": true");
+        put_doc(out, &lines, d->unit->src, d->at, false);
         switch (d->kind) {
         case DECL_ALIAS:
             sb_put(out, ", \"type\": ");
@@ -209,10 +315,10 @@ void print_outline(const program *prog, sb *out)
         case DECL_SINGLETON:
         case DECL_STRUCT:
         case DECL_INPUT:
-            put_fields(out, d);
+            put_fields(out, &lines, d);
             break;
         case DECL_EVENT:
-            put_fields(out, d);
+            put_fields(out, &lines, d);
             put_names(out, "handlers", (const decl *const *)d->handlers.items, d->handlers.count);
             put_names(out, "localHandlers", (const decl *const *)d->listeners.items, d->listeners.count);
             break;
@@ -224,6 +330,18 @@ void print_outline(const program *prog, sb *out)
                     put_json_str(out, d->members.items[k].name);
                 }
                 sb_put(out, "]");
+                // Their docs, where one has any: "" for none
+                sb docs = {0};
+                bool any = false;
+                for (int k = 0; k < d->members.count; k++) {
+                    sb one = {0};
+                    put_doc(&one, &lines, d->unit->src, d->members.items[k].at, true);
+                    any = any || one.len;
+                    sb_put(&docs, k ? ", " : "");
+                    // put_doc wrote `, "doc": "..."`: its text alone
+                    sb_put(&docs, one.len ? one.data + 9 : "\"\"");
+                }
+                if (any) sb_printf(out, ", \"memberDocs\": [%s]", docs.data);
             }
             break;
         case DECL_SYSTEM:
@@ -242,4 +360,5 @@ void print_outline(const program *prog, sb *out)
         sb_put(out, "}");
     }
     sb_put(out, count ? "\n]}\n" : "]}\n");
+    free(lines.starts);
 }

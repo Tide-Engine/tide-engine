@@ -53,6 +53,33 @@ namespace of the one it means, `UnityEngine.Transform` or
 `Tide.Game.Transform`, as C# asks when a name is ambiguous, so everyone reading
 it knows which it is. Tide code does the same for its own names.
 
+Tide is where the game's types are declared; their C# follows them:
+
+- **Renames reach your scripts.** Renaming a component, a field, a singleton, an
+  event, a command, a struct, an enum or an enum's member in the code editor
+  (tidels's rename, F2 in VS Code or Shift+F6 in Rider) also renames it in the
+  project's C#: the scripts in `Assets` and in its embedded and local packages,
+  never `Packages/com.tide.game`, which tide writes again. It's one edit you can
+  preview and undo, with the prefabs' and scenes' changes. References are found
+  carefully, with no C# compiler: a member where what it's a member of is known
+  to be the game's type (a field, variable, parameter or lambda parameter of it,
+  `GetComponent<Health>()`, `new` and its initializer, `foreach`), a type where
+  the file's usings make the name the game's. Another type's member of the same
+  name, text in strings and comments, and a name a type of your own also has are
+  left alone.
+- **From a type back to its declaration.** Each generated type carries its Tide
+  declaration's doc, the comment lines just above it (a field's, above it or
+  after it on its line), and the file it's in, so a hover in Rider or Visual
+  Studio shows them. Opening a component's script (a double click on its Script
+  field, Edit Script, or the script in the Project window) opens its `.tide`
+  file at the declaration in the external code editor.
+- **Errors that explain a rename.** When a script no longer compiles because
+  Tide renamed or removed a name it uses, the Console says so next to Unity's
+  error: ``tide: `Health.hp` is now `Health.health` (Assets/Tide/game.tide:12)``,
+  which opens the new declaration, or that it was removed. tide keeps what
+  became of the C#'s names in `Library/Tide/renamed.json`, on this machine
+  alone.
+
 ## Author
 
 Add `TideEntity` (Add Component > Tide > Tide Entity) to a GameObject of a
@@ -218,6 +245,51 @@ the call stack is the game's systems and functions, and lists, maps, text,
 enums and entities show as Tide's. A new build swapped into the running match
 keeps the breakpoints. More:
 [Debugging](https://tide-engine.dev/tools/debugging).
+
+## Time travel
+
+A match is deterministic, so the editor can keep it: Window > Tide > Time
+Travel, in Play. The runner records a match this machine runs from its start
+(what went into each tick: players' input, joins and leaves, commands) and
+keeps the worlds of its latest ticks (the runner's Keep Seconds, 10 by
+default).
+
+- **Pause** stops the match at its latest tick. **Step** runs one tick, with
+  what's held and pressed then (a key pressed while paused goes into that tick,
+  as do commands sent while paused). **Resume** goes on from there.
+- The **Tick** slider shows any tick since the match started: its entities and
+  their GameObjects, the Tide components' live values in the inspector,
+  `TideEntityView`, singletons and Tide's drawing are that tick's. Ticks
+  before those kept are made again from the start as they're shown. What's
+  clicked or sent on an older tick's picture never reaches the match, and the
+  match's own local state is left as it was.
+- **Continue From Here** takes the match back to the tick shown and on from
+  there: the ticks after it are gone. Which commands are in the match stays as
+  it was, so one already applied after that tick doesn't come again.
+- With players of other machines in the match, it never stops for them: Pause
+  shows the tick paused at while the match goes on behind it (this machine's
+  player as if it let go of everything), and Resume shows its latest tick
+  again. Continue From Here takes them back too: they're sent the match's world
+  again, as when a client goes wrong.
+- **Save Recording** writes the match's recording (a `.tiderec`) and **Open
+  Recording** replays one, a tester's from a bug report say, on any machine with
+  a build of the same data layout (the game's components, input and commands as
+  they were): each tick is made again with this build and its world checked
+  against the recording's hash. The window says how far every tick matched, or
+  the first tick whose world went otherwise, which after a change to the game's
+  code is where that change first matters. **Replay This Match** replays the
+  current one.
+
+In C#: `runner.Pause()`, `Step()`, `Resume()`, `ShowTick(n)`,
+`ContinueFromHere()`, `Recording()` and `SaveRecording(path)`,
+`Replay(bytes)` and `ReplayFile(path)`, `EndReplay()`, with `runner.Travel`
+saying where it is. The runner's Time Travel setting keeps matches in the
+editor (the default), nowhere, or in player builds too, so a game can save a
+tester's recording for a bug report. A hot reload while paused comes in as
+any: the match stays paused, its kept ticks with it if the data layout is the
+same (another starts the recording over), and the next step runs the new code.
+Only a match this machine runs is kept; one joined on another machine, and a
+sharded one, aren't.
 
 ## Build
 
