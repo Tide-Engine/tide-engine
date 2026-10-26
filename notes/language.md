@@ -9,8 +9,10 @@ attribute them to the next Tide lines; `code_start` gives a Tide-code
 function's signature and prologue its declaration's line; `TIDE_HELPER` is
 `nodebug` (unless `TIDE_DEBUG_PLUMBING`) and Tide-code functions and their
 prototypes use `TIDE_CODE` (`code_helper`). `--visualizers` writes
-`<name>.natvis` and `<name>_lldb.py` (`debug_views_codegen.inc`). Contracts,
-tests and gaps: `notes/debugging.md`.
+`<name>.natvis` and `<name>_lldb.py` (`debug_views_codegen.inc`), and gives
+list locals and by-value list parameters a struct of their own per element
+type, read as `<name>.list` (`typed_list_local`, `typed_list_param`).
+Contracts, tests and gaps: `notes/debugging.md`, Typed list locals.
 
 ## Declaration-only package dependencies (2026-10-25)
 

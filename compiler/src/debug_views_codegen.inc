@@ -115,33 +115,42 @@ static bool view_needs_type(const decl *d)
 }
 
 // The natvis of one field of a struct, as `path` (the field's C member) reads it.
+// A list's count and its elements, of the list type `list`, whose handle `at`
+// (an expression) is: what a list field's Synthetic and a typed local's Type have.
+static void natvis_list(sb *o, const decl *list, const char *at)
+{
+    const type e = list_elem(list);
+    const char *blk = view_block(at);
+    sb_put(o, "        <DisplayString Condition=\"");
+    xml_printf(o, "%s == 0", at);
+    sb_put(o, "\">{{ count = 0 }}</DisplayString>\n        <DisplayString Condition=\"");
+    xml_printf(o, "%s->b == 0x%Xu", blk, TIDE_LIST_ASSET);
+    sb_put(o, "\">{{ count = {");
+    xml_printf(o, "%s->a", blk);
+    sb_put(o, "}, an asset's }}</DisplayString>\n        <DisplayString>{{ count = {");
+    xml_printf(o, "%s->a", blk);
+    sb_put(o, "} }}</DisplayString>\n        <Expand>\n          <IndexListItems Condition=\"");
+    xml_printf(o, "%s != 0 && %s->b != 0x%Xu", at, blk, TIDE_LIST_ASSET);
+    sb_put(o, "\">\n          <Size>");
+    xml_printf(o, "%s->a", blk);
+    sb_put(o, "</Size>\n");
+    view_list_items(o, at, view_ctype(e), view_size(e), "$i");
+    sb_put(o, "          </IndexListItems>\n        </Expand>\n");
+}
+
 static void natvis_field(sb *o, const field *f, const char *path)
 {
     const type t = f->type;
     sb name = {0};
     sb_printf(&name, STR_FMT, STR_ARG(f->name));
     if (t.kind == TY_LIST) {
-        const type e = list_elem(t.decl);
         sb at = {0};
         sb_printf(&at, "%s.at", path);
-        const char *blk = view_block(at.data);
         sb_put(o, "      <Synthetic Name=\"");
         xml_put(o, name.data);
-        sb_put(o, "\">\n        <DisplayString Condition=\"");
-        xml_printf(o, "%s == 0", at.data);
-        sb_put(o, "\">{{ count = 0 }}</DisplayString>\n        <DisplayString Condition=\"");
-        xml_printf(o, "%s->b == 0x%Xu", blk, TIDE_LIST_ASSET);
-        sb_put(o, "\">{{ count = {");
-        xml_printf(o, "%s->a", blk);
-        sb_put(o, "}, an asset's }}</DisplayString>\n        <DisplayString>{{ count = {");
-        xml_printf(o, "%s->a", blk);
-        sb_put(o, "} }}</DisplayString>\n        <Expand>\n          <IndexListItems Condition=\"");
-        xml_printf(o, "%s != 0 && %s->b != 0x%Xu", at.data, blk, TIDE_LIST_ASSET);
-        sb_put(o, "\">\n          <Size>");
-        xml_printf(o, "%s->a", blk);
-        sb_put(o, "</Size>\n");
-        view_list_items(o, at.data, view_ctype(e), view_size(e), "$i");
-        sb_put(o, "          </IndexListItems>\n        </Expand>\n      </Synthetic>\n");
+        sb_put(o, "\">\n");
+        natvis_list(o, t.decl, at.data);
+        sb_put(o, "      </Synthetic>\n");
         return;
     }
     if (t.kind == TY_MAP || t.kind == TY_SET) {
@@ -325,6 +334,14 @@ static void write_natvis(const gen *g, sb *o)
                      "      <ExpandedItem>at</ExpandedItem>\n    </Expand>\n  </Type>\n",
                   array_cname(prog->arrays.items[i]));
     }
+    // List locals and parameters, each List<T>'s a type of its own (typed_list_local in codegen.c)
+    for (int i = 0; i < prog->lists.count; i++) {
+        sb_put(o, "  <Type Name=\"");
+        xml_put(o, typed_list_cname((type){TY_LIST, prog->lists.items[i]}));
+        sb_put(o, "\">\n");
+        natvis_list(o, prog->lists.items[i], "list.at");
+        sb_put(o, "  </Type>\n");
+    }
     // The game's own types
     const view_types types = view_collect(g);
     for (int i = 0; i < types.count; i++) natvis_struct(o, types.items[i].d, types.items[i].cname);
@@ -461,7 +478,18 @@ static void write_lldb(const gen *g, sb *o)
         }
         sb_put(o, "},\n");
     }
-    sb_put(o, "}\n\n# Locals and parameters, by their function's C name and their own\nTIDE_LOCALS = {\n");
+    sb_put(o, "}\n\n# List locals and parameters: each List<T>'s type of its own, and its elements (typed_list_local in codegen.c)\n"
+              "TIDE_LOCAL_LISTS = {\n");
+    for (int i = 0; i < prog->lists.count; i++) {
+        const type t = {TY_LIST, prog->lists.items[i]};
+        sb_put(o, "    ");
+        py_str(o, typed_list_cname(t));
+        sb_put(o, ": ");
+        py_kind(o, t);
+        sb_put(o, ",\n");
+    }
+    sb_put(o, "}\n\n# Other locals and parameters (async code's, an Action's function's), by their function's C name and their own\n"
+              "TIDE_LOCALS = {\n");
     for (int i = 0; i < prog->systems.count; i++) {
         const decl *d = prog->systems.items[i];
         if (d->extern_system || !d->body) continue;

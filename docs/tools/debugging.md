@@ -25,7 +25,7 @@ This is the debugger you'd use for C and C++. It's for your game's own logic; [d
 - **Locals and parameters** have their Tide names. A system's components are its parameters (`player`, a pointer to the `Player` it runs for), and `tide_this` is `this`. A name C reserves gets `_` after it (`int_`). Where a function taking an `Action` runs inside its caller, that function's locals start with `tide_in<n>_`. Other names starting with `tide_` are the engine's.
 - **Values** show as Tide's:
   - text: `"ana"`, from wherever the world keeps it.
-  - lists: their count, and in a component's, singleton's, struct's or event's field, their elements, each as its type, structs with their fields. LLDB also shows the elements of local and parameter lists; natvis debuggers show their count.
+  - lists: their count and their elements, each as its type, structs with their fields: in locals, parameters and fields alike. A list local's type says which list it is, `tide_local_list3`, the list inside it as `list`. Visual Studio, VS Code and CLion show only the count of a list in async code, in a `mut` parameter, or in a function that takes an `Action`; LLDB shows those too.
   - maps and sets: their count and entries, `["ann"] = 3`.
   - enums: the member's name, in a field (LLDB: everywhere).
   - entities: `Entity(3:1)`, or `none`.

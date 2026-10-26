@@ -159,6 +159,7 @@ typedef struct gen {
     bool has_scene;      // The body being generated has tide_scene: the scene of the entity it runs for
     bool scene_local;    // ...an entity of the local world
     gen_frame *frame;    // Inlined code being generated, or NULL for the routine's own
+    bool typing_params;  // A function's definition: its typed list parameters (typed_list_param) arrive as tide_arg_<name>
     VEC(gen_open) containers; // The GUI containers and draw settings whose blocks are open
     VEC(gen_target) targets;
     int labels;          // Names made up so far (inlined calls, containers, switches), numbered per program
@@ -1695,6 +1696,36 @@ static const char *code_helper(const gen *g)
 static void code_start(gen *g, const loc at)
 {
     if (at.line > 0) line_directive(g, at);
+}
+
+// Debug builds (codegen_options.visualizers) give a list local, and a
+// function's list parameter, a struct of its own for its element type,
+// tide_local_list<n> { tide_list list; }: Windows' debug info keeps no
+// typedefs, so only a type of its own tells a debugger's natvis what its
+// elements are. Code reads `<name>.list`, the list at the struct's start.
+// These say which, from the declaration alone, so declarations, references
+// and the captures of comparisons and parallel steps agree. Async code and
+// code copied into a call (an Action's function) keep plain lists: async
+// locals live in task frames, and copied code names its locals otherwise.
+static bool typed_list_local(const gen *g, const stmt *s)
+{
+    return g->opts->visualizers && !g->task && !g->frame && s && s->kind == S_VAR && s->type.kind == TY_LIST
+        && s->type.decl && !s->out_decl && !s->discard;
+}
+
+static bool typed_list_param(const gen *g, const decl *m, const param *p)
+{
+    return g->opts->visualizers && !g->task && !g->frame && m && (m->kind == DECL_FUNCTION || m->kind == DECL_METHOD)
+        && !m->is_async && !m->is_extern && !m->is_worker && p && p->type.kind == TY_LIST && p->type.decl
+        && p->mode == PARAM_READ && p->function_param && !p->is_out && !p->c_indirect && !p->task_ref;
+}
+
+// Its C type: tide_local_list<n>, for the program's List<T> number n.
+static const char *typed_list_cname(const type t)
+{
+    sb b = {0};
+    sb_printf(&b, "tide_local_list%d", t.decl->index);
+    return b.data;
 }
 
 // ---------------------------------------------------------------------------
@@ -3828,14 +3859,15 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             const bool by_address = g->routine && (g->routine->is_mut_method || g->routine->c_self_indirect);
             sb_printf(o, "tide_self%s%s", by_address ? "->" : ".", field_cname(e->field));
         } else if (e->bind == BIND_LOCAL) {
-            sb_put(o, local_cname(g, e->name));
+            sb_printf(o, "%s%s", local_cname(g, e->name), typed_list_local(g, e->local) ? ".list" : "");
         } else if (e->bind == BIND_DEVICES) {
             // This machine's devices: Sample's, or this frame's in views and the functions they call.
             sb_put(o, g->in_input ? "(*tide_dev)" : "tide_ui->devices");
         } else if (e->bind == BIND_PARAM && is_pointer_param(e->param)) {
             sb_printf(o, "(*%s)", local_cname(g, e->name));
         } else {
-            sb_put(o, local_cname(g, e->name));
+            const bool typed = e->bind == BIND_PARAM && typed_list_param(g, g->routine, e->param);
+            sb_printf(o, "%s%s", local_cname(g, e->name), typed ? ".list" : "");
         }
         break;
     case E_MEMBER: {
@@ -7289,12 +7321,19 @@ static void gen_stmt(gen *g, const stmt *s)
 
     case S_VAR: {
         const char *name = local_cname(g, s->name);
+        const bool typed = typed_list_local(g, s); // A struct of its own, for debuggers: its list is .list
         indent(g, o);
-        if (s->is_mut || s->loop_var || s->delayed) sb_printf(o, "%s %s = ", c_type(s->type), name); // Delayed initialization writes it
-        else sb_printf(o, "%s = ", const_decl(s->type, name));
+        if (typed) {
+            sb_printf(o, "%s%s %s = {", s->is_mut || s->loop_var || s->delayed || mutable_locals ? "" : "const ",
+                      typed_list_cname(s->type), name);
+        } else if (s->is_mut || s->loop_var || s->delayed) {
+            sb_printf(o, "%s %s = ", c_type(s->type), name); // Delayed initialization writes it
+        } else {
+            sb_printf(o, "%s = ", const_decl(s->type, name));
+        }
         if (s->delayed) gen_default(g, o, s->type); // Defined padding and safe storage; source reads still require assignment
         else gen_value_of(g, o, s->value, s->type);
-        sb_printf(o, ";\n");
+        sb_printf(o, "%s;\n", typed ? "}" : "");
         line(g, o, "(void)%s;", name);
         task_declare(g, name, s->type);
         break;
@@ -10392,6 +10431,16 @@ static void gen_prelude(gen *g)
     } else {
         sb_put(o, "#define TIDE_HELPER static inline __attribute__((unused))\n\n");
     }
+    if (g->opts->visualizers && g->prog->lists.count) {
+        // List locals and parameters, each type its own for debuggers (typed_list_local), the list at its start
+        sb_put(o, "// Each List<T>'s locals, as debuggers tell them apart: the list itself is .list\n");
+        for (int i = 0; i < g->prog->lists.count; i++) {
+            const char *name = typed_list_cname((type){TY_LIST, g->prog->lists.items[i]});
+            sb_printf(o, "typedef struct %s { tide_list list; } %s; // " STR_FMT "\n", name, name,
+                      STR_ARG(g->prog->lists.items[i]->name));
+        }
+        sb_put(o, "\n");
+    }
     sb_put(o, "// Active mutable component copies, borrowed only for this synchronous invocation.\n"
               "typedef struct tide_component_binding {\n"
               "    const struct tide_component_binding *previous;\n"
@@ -12640,7 +12689,7 @@ static capture_list par_captures(gen *g, const decl *sys, const stmt *loop)
     for (int i = 0; i < locals.count; i++) {
         const stmt *l = locals.items[i];
         const bool element = l->kind == S_FOREACH && (l->value->type.kind == TY_LIST || l->value->type.kind == TY_SET);
-        capture(&out, element ? elem_vtype(l->type) : c_type(l->type), local_cname(g, l->name));
+        capture(&out, element ? elem_vtype(l->type) : typed_list_local(g, l) ? typed_list_cname(l->type) : c_type(l->type), local_cname(g, l->name));
     }
     // Steps that roll: the loop's generator, which each step makes its own from (gen_par_nest)
     if (stmt_rolls(loop->then_stmt)) capture(&out, "tide_random", "tide_par_dice");
@@ -12862,7 +12911,7 @@ static capture_list sort_captures(gen *g, const expr *sort)
             if (p->mode == PARAM_MUT && p->type.kind == TY_STRING) capture(&out, "tide_textref", local_cname(g, p->name));
             else if (p->mode == PARAM_MUT) capture(&out, ptr_type("", c_type(p->type)), local_cname(g, p->name));
             else if (p->type.kind == TY_RECORD || p->type.kind == TY_INPUT) capture(&out, ptr_type("const ", c_type(p->type)), local_cname(g, p->name));
-            else capture(&out, c_type(p->type), local_cname(g, p->name));
+            else capture(&out, typed_list_param(g, fn, p) ? typed_list_cname(p->type) : c_type(p->type), local_cname(g, p->name));
             if (p->type.kind == TY_INPUT) capture(&out, ptr_type("const ", c_type(p->type)), prev_input_name(g, p->name));
             if (takes_where(p)) capture(&out, "uint32_t", where_name(g, p->name));
             if (has_fields_ptr(p)) {
@@ -12878,7 +12927,7 @@ static capture_list sort_captures(gen *g, const expr *sort)
         const stmt *l = locals.items[i];
         if (l == sort->compare[0] || l == sort->compare[1]) continue;
         const bool element = l->kind == S_FOREACH && (l->value->type.kind == TY_LIST || l->value->type.kind == TY_SET);
-        capture(&out, element ? elem_vtype(l->type) : c_type(l->type), local_cname(g, l->name));
+        capture(&out, element ? elem_vtype(l->type) : typed_list_local(g, l) ? typed_list_cname(l->type) : c_type(l->type), local_cname(g, l->name));
     }
     return out;
 }
@@ -15236,6 +15285,7 @@ static void gen_routine_signature(gen *g, sb *o, const decl *m)
         else if (p->c_indirect) sb_printf(o, "%sconst %s *%s", n++ ? ", " : "", c_type(p->type), local_cname(g, p->name));
         else if (p->mode == PARAM_MUT) sb_printf(o, "%s%s *%s", n++ ? ", " : "", c_type(p->type), local_cname(g, p->name));
         else if (p->type.kind == TY_RECORD) sb_printf(o, "%sconst %s *restrict %s", n++ ? ", " : "", c_type(p->type), local_cname(g, p->name));
+        else if (g->typing_params && typed_list_param(g, m, p)) sb_printf(o, "%sconst tide_list tide_arg_%s", n++ ? ", " : "", local_cname(g, p->name));
         else sb_printf(o, "%s%s", n++ ? ", " : "", const_decl(p->type, local_cname(g, p->name)));
         if (takes_where(p)) sb_printf(o, ", const uint32_t %s", where_name(g, p->name));
         // A component whose local fields it uses comes with them, where they're kept
@@ -15261,10 +15311,19 @@ static void gen_routine(gen *g, const decl *m)
     if (m->owner) sb_printf(o, "// " STR_FMT "." STR_FMT "\n", STR_ARG(m->owner->qualified), STR_ARG(m->name));
     else sb_printf(o, "// " STR_FMT "\n", STR_ARG(m->qualified));
     code_start(g, m->at);
+    g->typing_params = true;
     gen_routine_signature(g, o, m);
+    g->typing_params = false;
     sb_put(o, "\n{\n");
     g->indent = 1;
     g->routine = m;
+    // Its list parameters, each in a struct of its own for debuggers (typed_list_param)
+    for (int i = 0; i < m->params.count; i++) {
+        const param *p = &m->params.items[i];
+        if (!typed_list_param(g, m, p)) continue;
+        const char *name = local_cname(g, p->name);
+        line(g, o, "const %s %s = {tide_arg_%s};", typed_list_cname(p->type), name, name);
+    }
     g->spawn_temps = 0;
     g->call_temps = 0;
     g->has_scene = takes_scene(g->prog, m);

@@ -63,6 +63,7 @@ include(cmake/HlslTests.cmake)
 find_program(TIDE_NODE NAMES node) # Tests that run Node: web builds need it anyway
 
 option(TIDE_PLATFORM "Build the platform layer and the demo. Desktop builds download GLFW." ON)
+option(TIDE_VISUALIZERS "Build every native game as tide's debug builds are, with its natvis and LLDB views (tide_add_game VISUALIZERS)" OFF)
 option(TIDE_TOOLS_ONLY "Build only tidec, as web builds do for their host (cmake/HostTidec.cmake)" OFF)
 # Folders outside this repo built as part of it, after the engine's own games:
 # a list of paths, each with a CMakeLists.txt that uses tide_add_game and the

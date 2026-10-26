@@ -36,6 +36,7 @@ k 3
 dv
 dx -r2 *player
 dx -r3 *totals
+dx -r1 recent
 bc *
 bp `fixture.tide:${at_gained}`
 g
@@ -46,6 +47,7 @@ bp `fixture.tide:${at_sum}`
 g
 k 2
 dv
+dx -r1 values
 ")
 execute_process(COMMAND "${DRIVE}" "${WORK}/commands.txt" "${PROGRAM}"
     RESULT_VARIABLE code OUTPUT_VARIABLE out ERROR_VARIABLE err TIMEOUT 300)
@@ -107,6 +109,10 @@ expect("k 1" 1 "tide_system_Score\\+0x[0-9a-f]+ \\[[^]\n]*fixture\\.tide @ ${at_
 expect("k 2" 1 "tide_function_Sum\\+0x[0-9a-f]+ \\[[^]\n]*fixture\\.tide @ ${at_sum}\\][^\n]*\n[^\n]*tide_system_Score\\+0x[0-9a-f]+ \\[[^]\n]*fixture\\.tide @ ${at_call}\\]"
     "the stack is the Tide function at its line, then its caller at the call")
 expect("dv" 2 "\n +values = { count = 0x3 }" "a list parameter says its count")
+expect("dx -r1 recent" 1 "\\[Type: tide_local_list[0-9]+\\]\n +\\[0x0\\] +: 1 \\[Type: int\\]\n +\\[0x1\\] +: 2 \\[Type: int\\]\n +\\[0x2\\] +: [0-9]+ \\[Type: int\\]"
+    "a local list's elements are its element type, through its own type")
+expect("dx -r1 values" 1 "\\[Type: tide_local_list[0-9]+\\]\n +\\[0x0\\] +: 1 \\[Type: int\\]\n +\\[0x1\\] +: 2 \\[Type: int\\]"
+    "a list parameter's elements are its element type, through its own type")
 expect("dv" 2 "\n +total = " "a mut local has its Tide name")
 if(failures)
     message(FATAL_ERROR "The debugger didn't show the game as Tide:${failures}\n\nAll it said is in ${WORK}/said.txt")

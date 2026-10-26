@@ -44,6 +44,7 @@
 # VISUALIZERS writes how debuggers show the game's values beside its generated
 # files, as tide's debug builds do: <name>.natvis, which a Windows program's
 # .pdb carries, and <name>_lldb.py for LLDB (`command script import` it).
+# The TIDE_VISUALIZERS option gives every native game it.
 #
 # The generated files land in the build tree and are regenerated whenever a
 # .tide file or tidec changes. Every game is also listed in
@@ -314,7 +315,7 @@ function(tide_add_game target)
     # <name>_lldb.py, as tide's debug builds have them (compiler/src/debug_views_codegen.inc)
     set(visualizers "")
     set(visualizer_outputs "")
-    if(ARG_VISUALIZERS AND NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    if((ARG_VISUALIZERS OR TIDE_VISUALIZERS) AND NOT TIDE_WEB AND NOT TIDE_ANDROID)
         set(visualizers --visualizers)
         set(visualizer_outputs "${out_dir}/${name}.natvis" "${out_dir}/${name}_lldb.py")
     endif()

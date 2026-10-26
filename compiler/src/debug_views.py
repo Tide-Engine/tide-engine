@@ -1,6 +1,6 @@
 # How LLDB shows a Tide game's values: the part every game shares. tidec embeds
 # this file in <name>_lldb.py and writes the game's tables after it
-# (TIDE_TYPES, TIDE_ENUMS, TIDE_LOCALS, and the runtime's constants), so this
+# (TIDE_TYPES, TIDE_ENUMS, TIDE_LOCAL_LISTS, TIDE_LOCALS, and the runtime's constants), so this
 # reads them at call time. See compiler/src/debug_views_codegen.inc.
 #
 # Text, lists and maps are handles (tide/text.h): an offset, and in its top
@@ -177,10 +177,17 @@ class TideList:
         self.valobj = valobj
         self.update()
 
+    def _list(self):
+        return self.valobj
+
+    def _kind(self):
+        return _kind_of(self.valobj)
+
     def update(self):
         self.count = 0
-        self.kind = _kind_of(self.valobj)
-        self.at = _handle(self.valobj)
+        self.asset = False
+        self.kind = self._kind()
+        self.at = _handle(self._list())
         self.block = _block(self.valobj, self.at)
         if self.block is not None:
             count, b, _ = _block_counts(self.valobj, self.block)
@@ -208,6 +215,20 @@ class TideList:
         if address is None:
             return None
         return self.valobj.CreateValueFromAddress("[%d]" % index, address, self.type)
+
+
+class TideLocalList(TideList):
+    """A list local or parameter of a debug build: its List<T>'s struct of its own, the list in `list`."""
+
+    def _list(self):
+        return self.valobj.GetNonSyntheticValue().GetChildMemberWithName("list")
+
+    def _kind(self):
+        return TIDE_LOCAL_LISTS.get(self.valobj.GetType().GetUnqualifiedType().GetName())
+
+
+def local_list_summary(valobj, internal_dict):
+    return list_summary(valobj.GetNonSyntheticValue().GetChildMemberWithName("list"), internal_dict)
 
 
 def list_summary(valobj, internal_dict):
@@ -386,6 +407,9 @@ def tide_register(debugger, module):
     hidden = "'^tide_(list_cache|map_view)(\\[[0-9]+\\])?$'"
     run("type synthetic add -w tide -x -l %s.TideHidden %s" % (module, hidden))
     run("type summary add -w tide -x -e -s \"the engine's\" %s" % hidden)
+    for name in TIDE_LOCAL_LISTS:
+        run("type synthetic add -w tide -l %s.TideLocalList %s" % (module, name))
+        run("type summary add -w tide -e -F %s.local_list_summary %s" % (module, name))
     for name in TIDE_TYPES:
         run("type synthetic add -w tide -l %s.TideStruct %s" % (module, name))
     for name in TIDE_ENUMS:

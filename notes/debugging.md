@@ -71,16 +71,18 @@ those stay, documented. Function names are C's (`tide_system_Move`,
 - Natvis matches C types, and Windows' debug info keeps no typedefs, so every
   `List<T>` is a `tide_list`: a list field's elements show through its
   struct's natvis, which knows the field's element type (a `Synthetic` with
-  `IndexListItems`), and a local or parameter list shows its count only.
-  Distinct C types per element type would change every use in generated code;
-  not done (a gap, below). Enum fields likewise (C's enums are `int32_t`
+  `IndexListItems`). Locals and parameters have no such struct, so in debug
+  builds they have a type of their own (asked for by the owner, 2026-10-26,
+  over showing their count only): see Typed list locals, below. Enum fields likewise (C's enums are `int32_t`
   typedefs): a `Synthetic` per member. Maps and sets: `CustomListItems` over
   the live entries (`tide_order > 0`), `[key] = value`. Also: entities
   (`Entity(3:1)`, `none`), `tide_str`, `T?`/`T fails E`, arrays, vectors,
   `tide_color`, and the engine's per-function caches (`tide_list_cache`,
   `tide_map_view`) shown as "the engine's" with no children.
-- LLDB's Python sees the variable and its frame, so it also types local and
-  parameter lists (`TIDE_LOCALS`, by function C name and local name), and a
+- LLDB's Python matches the typed locals' structs too (`TIDE_LOCAL_LISTS`,
+  `TideLocalList`), and the other list locals and parameters (async code's,
+  an Action's function's, `mut` ones) by their frame (`TIDE_LOCALS`, by
+  function C name and local name), and a
   struct field's list through a registry by load address (`TideStruct` fills
   it as it makes children). DWARF keeps typedefs, so enum summaries go by the
   enum's typedef name everywhere. The runtime part is
@@ -153,7 +155,7 @@ deletes `game-<n-2>.pdb` with its library; a debugger holding it open keeps it.
   natvis embedded in the PDB, a breakpoint on a `.tide` line with the system's
   frame at it, a source step landing on the next Tide line, a breakpoint in a
   function with its caller at the call, locals by Tide name, a local list's
-  count, list field elements, a list of structs, text from the heap, an enum
+  and a list parameter's elements through their own types, list field elements, a list of structs, text from the heap, an enum
   name, an entity, a map's entries and a set. Passes locally (Windows 11, clang
   23.1.2, dbgeng 10.0.26100).
 - `tidec_debugger_lldb` (where `TIDE_LLDB` is found: Linux by default, any
@@ -196,11 +198,48 @@ deletes `game-<n-2>.pdb` with its library; a debugger holding it open keeps it.
   (CL-262.10968.117). Breakpoints in CLion's gutter and an attach in CLion,
   Visual Studio or VS Code weren't tried by hand.
 
+## Typed list locals (2026-10-26)
+
+The owner asked for local lists' elements in natvis debuggers too. With
+`codegen_options.visualizers` (tide's debug builds, `tide_add_game
+VISUALIZERS`, the new `TIDE_VISUALIZERS` CMake option for every native game),
+generated C declares a `typedef struct tide_local_list<n> { tide_list list; }`
+for each List<T> (number n, as the list helpers are) and gives it to:
+
+- a list local (`S_VAR`, not `out`/discarded): `const tide_local_list<n> name =
+  {<value>};`, mutable where the local is;
+- a function's or method's by-value list parameter: the definition takes it
+  as `const tide_list tide_arg_<name>` (`g->typing_params` around
+  `gen_routine_signature`; prototypes keep the plain name) and copies it into
+  `const tide_local_list<n> <name> = {tide_arg_<name>};` before its code;
+- their captures by comparisons and parallel steps, which copy the struct.
+
+References read `<name>.list` (`gen_expr`'s `E_NAME`). `typed_list_local` and
+`typed_list_param` decide from the declaration alone (and no async code, no
+code copied into an Action's call, no extern/worker/async functions, no
+`mut`, `out`, `c_indirect` or task parameters), so a declaration, its
+references and its captures agree whenever each is generated, and a site that
+missed `.list` is a compile error rather than a different meaning: the struct
+is the list's 4 bytes at offset 0, so even a pointer taken to it is the
+list's. Without visualizers nothing changes (all 408 source lists' generated
+C identical with and without line directives, as before).
+
+Validation: every game of this build (415 source lists with the external
+prototypes) generates and compiles with `-Wall -Wextra -Wpedantic -Werror`
+with visualizers as without: 1360 typed locals, typed parameters in 84
+games, 41 typed captures. The whole native debug suite with `TIDE_VISUALIZERS`
+on (every native game typed, its own build tree) passes 2807/2807 (the natvis
+test once its fixture was rebuilt after its expectations changed mid-build). The natvis test expands a local list and a list parameter
+(`[0x0] : 1 [Type: int]`, through `tide_local_list0`), and the LLDB test
+reads them as `(const tide_local_list0) recent = count = 3 { [0] = 1 ... }`.
+Web builds have no visualizers, so their generated C is unchanged.
+
 ## Gaps
 
-- Local and parameter lists in natvis debuggers show their count only; LLDB
-  types them. Typed locals there need per-element C types for locals in
-  generated code.
+- In natvis debuggers, list locals and parameters that aren't typed (async
+  code's, an Action's function's, `mut` parameters, `foreach` variables over
+  lists of lists, `out` locals) show their count only; LLDB types them by
+  their frame.
 - Grids show their handle. Nested containers (a list of lists) show the inner
   ones' counts in natvis.
 - The engine's inline helpers can be stepped into outside LLDB (and Visual
