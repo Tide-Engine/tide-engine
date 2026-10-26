@@ -884,7 +884,10 @@ from `Library/Tide/outline.json` when Unity opens the declaration. Everything el
 - **Runs:** native debug 2805/2805 and web debug 2710/2710 (without `private-prototype`), then the CLI, language-server,
   outline and Unity CTests again after the last `unity_code.c` change (21/21); docs build. The Sample with a scratch
   tide (this checkout's mingw-release, then debug, installed): EditMode 31/31 (three runs, the first regenerating
-  com.tide.game with the docs), PlayMode 17/17 on D3D11.
+  com.tide.game with the docs), PlayMode 17/17 on D3D11. Second round (C#'s casts, patterns, own classes, crefs and
+  namespaces; Console errors at load; the XML test): native debug 2805/2805, tidels 261/261, tide_cli_tests 67/67, the
+  docs build, Sample EditMode 32/32. Web and PlayMode weren't run again (the owner: test what's necessary, CI catches
+  the rest): tidels is native only, and the package change is editor code.
 
 ### Scenes as built (2026-10-20)
 
