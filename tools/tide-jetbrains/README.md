@@ -23,6 +23,18 @@ Tide's repo, the server your build made), once you trust the project;
 none, the server stays off and `.tide` files say why, above the code, with
 links to install tide, choose `tidels`, or try again, which starts it.
 
+Before trying the global installation, a trusted project selects the version
+pinned in its `tide.packages`. Unity projects follow their locked Tide package:
+open Unity once to resolve/install it, and the IDE uses Unity's selected
+installation. A `-tide-command <path>` development launch is followed only while
+that Unity process is alive; closing it or a crash restores the project pin.
+`tide` for runs/debugging and prefab
+editing comes from that installation too. Missing pinned versions give an error;
+the plugin never silently substitutes another version. Package/lock changes
+restart the server. Different open projects can use different versions, sharing
+the `TIDE_VERSIONS` cache. An explicitly selected server or run command still
+takes precedence.
+
 ## Running the game
 
 Tide run configurations run `tide run` on a game's folder, in the Run tool
@@ -47,6 +59,28 @@ tool window. Its Swing canvas scales the fixed 1440×900 native image; no JCEF o
 browser server is needed. Mesh picking, Move/Rotate/Scale, validation, save/undo
 and recovery stay in the native backend. Closing a content tab/project closes
 its process. The standalone app remains available for a resizable window.
+
+## Debugging
+
+In CLion (and IDEs with CLion's native debugger), breakpoints go in `.tide`
+files: a game's C maps each line back to its `.tide` line, so the debugger
+stops there, steps from one Tide line to the next and shows the stack as the
+game's systems and functions. Values show as Tide's from the game's natvis
+(Windows) or LLDB views.
+
+- **Run > Debug Tide Game**, also in a `.tide` file's context menu, plays the
+  game as its Tide run configuration does (when it isn't running already) and
+  attaches the debugger. Saving a file reloads it, still under the debugger.
+- **Run > Attach to Unity (Tide)** attaches to the Unity editor running the
+  project; with several open, it asks which.
+
+Both attach through the platform's attach API, as **Run > Attach to Process**
+does, preferring a native debugger. On Windows, put the **Visual Studio**
+toolchain first: its debugger reads the game's `.pdb` and the natvis in it.
+The breakpoint support (`TideBreakpoints`, in `tide-cidr.xml`) loads only in an
+IDE with that debugger; it compiles against a stub of its extension point
+(`src/cidrStubs`), which isn't packaged, and `verifyPlugin` checks it against
+CLion. More: [Debugging](https://tide-engine.dev/tools/debugging).
 
 ## Colors
 

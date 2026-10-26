@@ -63,6 +63,7 @@ include(cmake/HlslTests.cmake)
 find_program(TIDE_NODE NAMES node) # Tests that run Node: web builds need it anyway
 
 option(TIDE_PLATFORM "Build the platform layer and the demo. Desktop builds download GLFW." ON)
+option(TIDE_VISUALIZERS "Build every native game as tide's debug builds are, with its natvis and LLDB views (tide_add_game VISUALIZERS)" OFF)
 option(TIDE_TOOLS_ONLY "Build only tidec, as web builds do for their host (cmake/HostTidec.cmake)" OFF)
 # Folders outside this repo built as part of it, after the engine's own games:
 # a list of paths, each with a CMakeLists.txt that uses tide_add_game and the
@@ -147,7 +148,8 @@ add_subdirectory(compiler)
 if(TIDE_NODE)
     # Adapter tests use editor/process doubles and run without VS Code on any host.
     add_test(NAME tide_vscode_adapter COMMAND "${TIDE_NODE}" --test
-        "${CMAKE_CURRENT_SOURCE_DIR}/tools/tide-vscode/test/extension.test.mjs")
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/tide-vscode/test/extension.test.mjs"
+        "${CMAKE_CURRENT_SOURCE_DIR}/tools/tide-vscode/test/debug.test.mjs")
     add_test(NAME relay COMMAND "${TIDE_NODE}" --test "${CMAKE_CURRENT_SOURCE_DIR}/relay/relay.test.mjs"
         "${CMAKE_CURRENT_SOURCE_DIR}/relay/lobbies.test.mjs")
     # The Android wrapper's file transfers, with adb mocked and no device.
@@ -183,7 +185,8 @@ if(TIDE_PLATFORM)
             # ...and the same server killed outright, going on from its journal
             add_test(NAME tide_server_shards_journal COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/platform/tests/server_journal.mjs"
                 "$<TARGET_FILE:tide_server_shards>")
-            set_tests_properties(tide_server_shards tide_server_shards_room tide_server_shards_journal PROPERTIES TIMEOUT 30)
+            set_tests_properties(tide_server_shards tide_server_shards_room PROPERTIES TIMEOUT 30)
+            set_tests_properties(tide_server_shards_journal PROPERTIES TIMEOUT 80) # Three processes, 25 seconds each
         endif()
         tide_add_game(tide_server_entry SERVER NAME game SOURCES
             "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/server_menu.tide"

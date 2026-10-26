@@ -205,7 +205,9 @@ public final class TidePrefabEditor extends JPanel implements Disposable {
             if (!TidelsFactory.isTrusted(project)) { Messages.showErrorDialog(project,"Trust this project before opening the prefab editor.","Tide"); return; }
             final var game=TideGames.of(file.toNioPath(),project.getBasePath()!=null ? Path.of(project.getBasePath()) : null);
             if (game.error()!=null) { Messages.showErrorDialog(project,game.error(),"Tide"); return; }
-            final Path tide=Tide.installed("tide");
+            final var tools=TideProjectTools.find(game.folder(),"tide");
+            if (tools.error()!=null) { Messages.showErrorDialog(project,tools.error(),"Tide"); return; }
+            final Path tide=tools.file();
             if (tide==null) { Messages.showErrorDialog(project,"Couldn't find Tide. Install it: "+Tide.INSTALL,"Tide"); return; }
             final var doc=FileDocumentManager.getInstance().getCachedDocument(file);
             if (doc!=null) FileDocumentManager.getInstance().saveDocument(doc);

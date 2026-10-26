@@ -1,5 +1,21 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Time travel inside another program (2026-10-26)
+
+`tide/embed.h` gained the debugger's calls (embed ABI 7; notes/unity.md, Time travel, has the design, decisions and
+tests): `tide_embed_travel_of`, `_travel_keep`, `_pause`, `_step`, `_show`, `_continue`, `_recording`, `_replay`,
+`_replay_end`, on `tide/timeline.h` (platform). The embed library and `tide unity --web`'s program export them
+(`embed_exports`, `unity_web_exports` in `compiler/cli/build.c`).
+
+The host's part: `tide_run_unblended` (`tide/host.h`), set by the embed for a paused match's frames, makes
+`tide_run_frame`'s views draw the session's latest tick with no previous world and alpha 1; nothing else of the frame
+changes, and no other host sets it. The loop handing local code's commands to the session at the end of
+`tide_run_frame` is `tide_run_send_commands` now, which the embed also calls before a paused match's step. `reload_library.inc` has `reload_before(old, next)`, called first in `swap` and
+`restart` while the old build's code is still loaded; only the embed sets it (time travel's worlds and local state
+are the old build's), so `tide run`'s host is unchanged. Frames that show another tick than the latest don't go
+through `tide_run_frame`: the embed's `show_frame` runs the views over that world with a local state of its own and
+the host's draw list, GUI and devices (consumed after it), and writes the view packet from it.
+
 ## Runtime stats argument and documentation pages (2026-10-25)
 
 The standard host now recognizes `--stats` in its runtime command line and

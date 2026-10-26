@@ -1,5 +1,16 @@
 # Runtime written by Claude for now
 
+## Time travel's session calls (2026-10-26)
+
+Unity's time travel (notes/unity.md) extends the agent-maintained session and platform areas. Generated code calls
+no new runtime function. It provides one new optional `tide_game` callback, `keep_commands(to, from)` (a copy of the
+hidden `tide_command_state` singleton, generated for games with commands), which the session calls; the generated
+header's Session ABI marker says `rewind (1)`, so hosts and games rebuild together. New host-side session calls in
+`session.c`: `tide_session_record` (with `tide_session_recorder`), `tide_session_remote_players`,
+`tide_session_rewind` and `tide_replay_check`. New platform surface: `tide/timeline.h` (`platform/src/timeline.c`),
+the embed's travel calls (embed ABI 7), `tide_run_unblended` in `tide/host.h` and `reload_before` in
+`reload_library.inc`. Contracts and tests: netcode.md and unity.md.
+
 ## Twelve texture drawing boundary (2026-10-25)
 
 The owner-authorized Render3D extension completes the existing drawing/platform

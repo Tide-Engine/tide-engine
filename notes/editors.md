@@ -1,14 +1,101 @@
 # The language server and the editors
 
+## Following a Unity development session (2026-10-26)
+
+The owner replaces Unity's saved compiler override with a launch-only
+`-tide-command` (notes/unity.md). Both IDE resolvers accept toolchain.json
+format 2; old unscoped selections are ignored. A session selection must have
+a live PID whose start epoch seconds match; otherwise normal package/pin
+resolution runs. A reusable normal cache has sessionPid 0 and a pinned version
+matching the installation's current VERSION; a global upgrade invalidates it.
+Nothing changes
+the precedence of explicitly configured IDE executables or engine builds.
+
+VS Code resolves launch/session identity asynchronously (also for Debug's
+compiler lookup): PowerShell's Process.StartTime on Windows, ps lstart in
+UTC/C locale elsewhere. No command line or credentials are queried. While a
+development session is selected, a two-second check observes exit even when
+the cache file remains after a crash; ordinary pinned projects do no polling
+or process queries. The timer is disposed with the extension. JetBrains uses
+ProcessHandle.Info.startInstant and its onExit future to restart selection.
+Unity's normal quit also deletes the development cache, triggering the
+existing filesystem/VFS watches. Missing/unresolved pins remain explicit errors.
+
+Validation: Node 24.22.1, 40 adapter/debug tests, including live/dead/reused PID
+and old-cache rejection plus global-upgrade invalidation for Windows/Linux/macOS
+resolver branches; extension
+bundle build. Real VS Code 1.142.0 with this checkout's tidels passes the prior
+multi-project pin/hover/rename/process checks plus a development process killed
+without deleting its cache: the language server automatically returns to the
+pin and hover works, with no Tide client errors. JDK 21/Gradle 9.8.0 test and
+buildPlugin pass all 16 ordinary tests; Plugin Verifier reports Compatible on
+IC-242.26775.15 and CL-263.7307.35. Production docs build passes with existing
+unstaged-example placeholders. Both Unity launch modes are recorded in unity.md.
+Actual Linux/macOS process queries, Rider's UI and a graphical Unity settings
+window weren't exercised locally; no engine/web runtime code changed.
+
+## Project-selected Tide versions (2026-10-26)
+
+Owner, after Unity's side-by-side version selection: the IDE should follow it too.
+VS Code's `projectProgram` and JetBrains' `TideProjectTools` select `tide` and
+`tidels` from a game's `tide = <version>` pin or its Unity package. A release tag
+in packages-lock.json supplies a version directly; another git commit uses
+Unity's commit-keyed Library/Tide/version.json. VERSION must match before a
+side-by-side or normal installation is selected. Missing/invalid pins and
+unresolved commits explain the fix, without substituting a different compiler.
+Unity owns downloading its version; standalone projects install theirs first.
+
+Unity also publishes Library/Tide/toolchain.json (notes/unity.md), its selected
+command including an explicit developer override. The package-lock SHA-256 binds
+that cache to the project, including local packages; a cache from another branch
+is ignored. These files are local caches, never committed project configuration.
+Explicit IDE settings and trusted engine build/tools servers retain precedence.
+VS Code's tide.path selects a sibling tidels unless server.path is explicit;
+run/debug and both prefab actions use the project-selected compiler. JetBrains'
+run-configuration command and application-level server overrides remain explicit.
+
+VS Code runs one client per workspace folder with a protocol RelativePattern
+(baseUri, not the VS Code RelativePattern class) and workspaceFolder. Each folder
+is isolated even when its version differs. Settings/workspace/pin changes settle
+for 150 ms before restarting. Narrow watches also see Unity's Library/package
+lock above an open Assets folder. JetBrains uses one server per project and VFS
+changes restart it, preserving manually disabled servers. Emacs/Vim/Neovim retain
+their configured commands; nested independently pinned games within one workspace
+folder/JetBrains project aren't separate language clients: open their own roots.
+
+Validation: Node 24.22.1, all 39 adapter/debug checks; bundled extension build;
+real VS Code 1.142.0 host with this checkout's freshly built debug tidels, two
+pinned installations, automatic pin-file switching, hover/rename/diagnostics,
+rapid restart, terminal/process cleanup and the existing muted embedded page.
+An initial real-host run exposed the protocol-pattern mistake and event bursts,
+fixed before the passing run; its final Tide client log has no errors.
+JDK 21/Gradle 9.8.0 test/buildPlugin pass all 15 ordinary tests; Plugin Verifier
+reports Compatible on IC-242.26775.15 and CL-263.7307.35. Production docs build
+passes with existing unstaged-example placeholders. Unity's version/ABI tests
+are recorded in unity.md. No compiler/runtime C, engine suites or web game code
+changed; other OSs, Rider's UI and private prototype/service validation weren't run.
+
+## Debugging from the editors (2026-10-26)
+
+VS Code contributes breakpoints for `tide` and a `tide` debug type
+(`src/debug.js`): Attach to Unity (Tide), Debug Tide game and Attach to Tide
+game (tide run), resolved to `cppvsdbg` or `lldb-dap`/CodeLLDB with the game's
+natvis or LLDB views; `test/debug.test.mjs` is in the CTest adapter suite. The
+JetBrains plugin adds CLion's `.tide` line breakpoints (`TideBreakpoints`,
+optional `tide-cidr.xml`, compiled against `src/cidrStubs`) and Run > Attach
+to Unity (Tide) / Debug Tide Game (`TideAttach`). Details, what ran and gaps:
+`notes/debugging.md`.
+
 ## Renames reaching a Unity project's C# (2026-10-26)
 
-A rename of a type, field or enum member whose C# twin tide unity writes (a component, singleton, event, command,
-struct, input or enum) also edits the Unity project's scripts: `csharp_renames` (`compiler/lsp/csharp.c`) joins its
+A rename of a type, field, enum member or namespace whose C# twin tide unity writes (a component, singleton, event,
+command, struct, input or enum) also edits the Unity project's scripts: `csharp_renames` (`compiler/lsp/csharp.c`) joins its
 edits to the WorkspaceEdit after the prefabs' and scenes' (`unity_renames`), as UTF-16 columns. Names come from
 `compiler/lsp/unity_names.c`, which tide's `unity_code.c` names the C# with too. What it reads as a reference, the
 files it reads, its test `lsp_rename_reaches_unity_scripts` and its gaps: notes/unity.md, Tide types and their C#
-twins. The outline's new `doc`, field `line` and `memberDocs` (`print_outline`) aren't used by tidels's hovers, which
-still show no comments.
+twins. A namespace's rename moves its components in the prefabs and scenes too (`unity_move`, a list of moved
+components in `unity_rename`). The outline's new `doc`, field `line` and `memberDocs` (`print_outline`) aren't used
+by tidels's hovers, which still show no comments.
 
 ## Checked skinned asset references (2026-10-25)
 

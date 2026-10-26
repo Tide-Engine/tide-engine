@@ -21,7 +21,7 @@ namespace Tide.Editor
     // whole, in TIDE_VERSIONS or the versions folder of where tide's installer puts tide
     // (%LOCALAPPDATA%\Tide\versions\<version>, ~/.tide/versions/<version>), downloaded from the site once, and
     // checked against the release's SHA256SUMS. A package in a folder (file:, embedded) has no commit: the tide set
-    // for you, on PATH or installed is its.
+    // by the session's -tide-command argument, on PATH or installed is its.
     public static class TideVersions
     {
         static readonly Regex Tag = new Regex(@"^v?(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)$");

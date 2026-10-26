@@ -53,6 +53,81 @@ exports.run = async function () {
     await until('hover after rapid real server restarts', async () => (await hover())?.length);
     log('HOST: diagnostics, edits, rename, navigation, clickable lens, restart passed');
 
+    // Two real language clients, each using its project's installed version, and an actual pin-file change.
+    const other = path.join(path.dirname(folder), 'other-game');
+    fs.mkdirSync(other);
+    fs.writeFileSync(path.join(other, 'other.tide'), 'component OtherBody { int value; }\nscene Main { }\n');
+    fs.writeFileSync(path.join(other, 'tide.packages'), 'tide = 0.6.0\n');
+    for (const version of ['0.5.0', '0.6.0']) {
+        const root = path.join(process.env.TIDE_VERSIONS, version);
+        fs.mkdirSync(path.join(root, 'bin'), { recursive: true });
+        fs.writeFileSync(path.join(root, 'VERSION'), version);
+        fs.copyFileSync(process.env.TIDE_HOST_SERVER, path.join(root, 'bin', path.basename(process.env.TIDE_HOST_SERVER)));
+    }
+    fs.writeFileSync(path.join(folder, 'tide.packages'), 'tide = 0.5.0\n');
+    await vscode.workspace.getConfiguration('tide').update('server.path', undefined, vscode.ConfigurationTarget.Workspace);
+    await vscode.workspace.getConfiguration('tide').update('path', undefined, vscode.ConfigurationTarget.Workspace);
+    assert.ok(vscode.workspace.updateWorkspaceFolders(1, 0, { uri: vscode.Uri.file(other) }));
+    const otherDocument = await vscode.workspace.openTextDocument(path.join(other, 'other.tide'));
+    await until('second project uses its own real server', async () =>
+        (await vscode.commands.executeCommand('vscode.executeHoverProvider', otherDocument.uri, new vscode.Position(0, 13)))?.length);
+    await until('first project retains its real server', async () => (await hover())?.length);
+    fs.writeFileSync(path.join(folder, 'tide.packages'), 'tide = 0.6.0\n');
+    // Observe the actual selected command in the language-client output, rather than accepting an old hover.
+    const switched = () => {
+        const root = process.env.TIDE_HOST_LOGS;
+        for (const date of fs.readdirSync(root)) {
+            const file = path.join(root, date, 'window1/exthost/tide-engine.tide/Tide.log');
+            if (fs.existsSync(file) && fs.readFileSync(file, 'utf8').toLowerCase().includes(`0.6.0${path.sep}bin${path.sep}tidels${process.platform === 'win32' ? '.exe' : ''} (${folder})`.toLowerCase())) return true;
+        }
+        return false;
+    };
+    await until('pin-file watcher switches the first project to 0.6.0', switched);
+    await until('hover after pin-file restart', async () => (await hover())?.length);
+    log('HOST: two pinned project servers and automatic pin switch passed');
+    // Simulate a development editor crashing without removing its selection file. The IDE must notice the
+    // process exit itself and select the normal pin, rather than wait for another Unity launch to repair it.
+    const { spawn, execFile } = require('node:child_process');
+    const session = spawn(process.env.TIDE_HOST_NODE, ['-e',
+        `setInterval(()=>{try{process.kill(${process.env.TIDE_HOST_RUNNER_PID},0)}catch{process.exit(0)}},100)`],
+        { windowsHide:true, stdio:'ignore' });
+    await new Promise((resolve,reject)=>{session.once('spawn',resolve);session.once('error',reject);});
+    const lockFile = path.join(folder,'Packages','packages-lock.json'), cacheFile = path.join(folder,'Library','Tide','toolchain.json');
+    const readLogs = () => fs.readdirSync(process.env.TIDE_HOST_LOGS).map(date=>{
+        const file=path.join(process.env.TIDE_HOST_LOGS,date,'window1/exthost/tide-engine.tide/Tide.log');
+        return fs.existsSync(file)?fs.readFileSync(file,'utf8').toLowerCase():'';
+    }).join('\n');
+    try {
+        const windows=process.platform==='win32';
+        const args=windows?['-NoProfile','-NonInteractive','-Command',`([DateTimeOffset][Diagnostics.Process]::GetProcessById(${session.pid}).StartTime).ToUnixTimeSeconds()`]
+            :['-p',String(session.pid),'-o','lstart='];
+        const text=await new Promise((resolve,reject)=>execFile(windows?'powershell.exe':'ps',args,
+            {windowsHide:true,env:{...process.env,LC_ALL:'C',TZ:'UTC'}},(error,stdout)=>error?reject(error):resolve(stdout.trim())));
+        const started=windows?Number(text):Math.floor(Date.parse(text+' UTC')/1000);
+        fs.mkdirSync(path.dirname(lockFile),{recursive:true});fs.mkdirSync(path.dirname(cacheFile),{recursive:true});
+        fs.writeFileSync(lockFile,JSON.stringify({dependencies:{'com.tide.unity':{source:'git',hash:'session-test',version:'url#v0.6.0'}}}));
+        const command=path.join(process.env.TIDE_VERSIONS,'0.5.0','bin','tide'+(windows?'.exe':''));
+        fs.writeFileSync(cacheFile,JSON.stringify({format:2,commit:'session-test',tide:command,sessionPid:session.pid,sessionStarted:started}));
+        let after=readLogs().length;
+        await vscode.commands.executeCommand('tide.restartServer');
+        await until('development session selects its own real language server',()=>readLogs().slice(after).includes(`0.5.0${path.sep}bin${path.sep}tidels`));
+        after=readLogs().length;
+        session.kill();
+        await until('session exit automatically restores the pin with an unchanged cache file',()=>
+            readLogs().slice(after).includes(`0.6.0${path.sep}bin${path.sep}tidels`));
+        await until('hover after development session exit',async()=>(await hover())?.length);
+        assert.ok(fs.existsSync(cacheFile),'the test must exercise a stale cache, not file deletion');
+        log('HOST: development session exit restores the project pin without restarting the IDE');
+    } finally {
+        if(session.exitCode===null)session.kill();
+        if(fs.existsSync(lockFile))fs.unlinkSync(lockFile);
+        if(fs.existsSync(cacheFile))fs.unlinkSync(cacheFile);
+    }
+    // Restore the CLI fixture used by the process-lifetime checks below.
+    fs.writeFileSync(path.join(folder, 'tide.packages'), '');
+    await vscode.workspace.getConfiguration('tide').update('server.path', process.env.TIDE_HOST_SERVER, vscode.ConfigurationTarget.Workspace);
+    await vscode.workspace.getConfiguration('tide').update('path', process.env.TIDE_HOST_NODE, vscode.ConfigurationTarget.Workspace);
+
     const recorded = () => fs.readdirSync(folder).filter(f => /^pids-\d+\.json$/.test(f));
     await vscode.commands.executeCommand('tide.run');
     const firstFile = await until('first real terminal process tree', () => recorded()[0]);

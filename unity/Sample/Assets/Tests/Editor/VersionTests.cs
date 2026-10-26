@@ -76,6 +76,95 @@ public class VersionTests
         $"{{\"name\": \"SHA256SUMS\", \"browser_download_url\": \"{new Uri(Path.Combine(site, "SHA256SUMS")).AbsoluteUri}\"}}]}}";
 
     [Test]
+    public void ADevelopmentLaunchPublishesOnlyThisSessionsCommand()
+    {
+        var cache = Path.Combine(TideLibrary.BuildFolder, "toolchain.json");
+        var saved = File.Exists(cache) ? File.ReadAllText(cache) : null;
+        try
+        {
+            var command = Path.Combine(scratch, "dev build", TideVersions.ExecutableName);
+            Directory.CreateDirectory(Path.GetDirectoryName(command));
+            File.WriteAllText(command, "discovery only, never run");
+            var arguments = new[] { "Unity", "-projectPath", "a project", "-tide-command", command };
+            Assert.AreEqual(command, TideToolchain.Find(arguments, out var where));
+            StringAssert.Contains("this editor session only", where);
+            StringAssert.Contains(command.Replace("\\", "\\\\"), File.ReadAllText(cache));
+            StringAssert.Contains("lockHash", File.ReadAllText(cache));
+            StringAssert.Contains("\"format\":2", File.ReadAllText(cache));
+            using (var process = System.Diagnostics.Process.GetCurrentProcess())
+                StringAssert.Contains("\"sessionPid\":" + process.Id, File.ReadAllText(cache));
+            StringAssert.Contains("\"sessionStarted\":" + TideToolchain.SessionStarted, File.ReadAllText(cache));
+            StringAssert.Contains(command, TideToolchain.MismatchHint(arguments));
+            StringAssert.Contains("Restart Unity without -tide-command", TideToolchain.MismatchHint(arguments));
+            TideToolchain.EndSession(arguments);
+            Assert.IsFalse(File.Exists(cache), "quitting removes the development selection");
+            arguments[4] = command + ".missing";
+            Assert.IsNull(TideToolchain.Find(arguments, out _));
+            Assert.IsFalse(File.Exists(cache), "a failed selection must not leave an IDE using its old command");
+        }
+        finally
+        {
+            if (saved != null) File.WriteAllText(cache, saved);
+            else if (File.Exists(cache)) File.Delete(cache);
+        }
+    }
+
+    [Test]
+    public void NormalLaunchIgnoresTheOldSavedOverride()
+    {
+        var user = Path.Combine(TideSettings.ProjectFolder, "UserSettings", "TideSettings.asset");
+        var saved = File.Exists(user) ? File.ReadAllText(user) : null;
+        var command = Path.Combine(scratch, "old-tide.exe");
+        File.WriteAllText(command, "discovery only");
+        Directory.CreateDirectory(Path.GetDirectoryName(user));
+        try
+        {
+            File.WriteAllText(user, "tidePath: " + command + "\nmoved: 1\n");
+            var normal = TideToolchain.Find(Array.Empty<string>(), out _);
+            Assert.AreNotEqual(command, normal);
+            if (normal != null)
+            {
+                var cache = Path.Combine(TideLibrary.BuildFolder, "toolchain.json");
+                StringAssert.Contains("\"sessionPid\":0", File.ReadAllText(cache));
+                TideToolchain.EndSession(new[] { "-tide-command", command });
+                Assert.IsTrue(File.Exists(cache), "a session ending must not delete a normal selection");
+            }
+        }
+        finally
+        {
+            if (saved != null) File.WriteAllText(user, saved); else File.Delete(user);
+        }
+    }
+
+    [Test]
+    public void TheActualLaunchArgumentSelectsTheDevelopmentCompilerOnlyWhenPresent()
+    {
+        var expected = Environment.GetEnvironmentVariable("TIDE_TEST_COMMAND");
+        var actual = TideToolchain.LaunchCommand(Environment.GetCommandLineArgs(), out var error);
+        Assert.IsNull(error);
+        Assert.AreEqual(string.IsNullOrEmpty(expected) ? null : expected, actual);
+        if (actual != null) Assert.AreEqual(actual, TideToolchain.Find(out _, false));
+        Assert.IsNull(TideToolchain.LaunchCommand(new[] { "-tide-command" }, out error));
+        Assert.IsNotNull(error);
+        Assert.IsNull(TideToolchain.LaunchCommand(new[] { "-tide-command", "-batchmode" }, out error));
+        Assert.IsNotNull(error);
+        Assert.IsNull(TideToolchain.LaunchCommand(new[] { "-tide-command", "one", "-tide-command", "two" }, out error));
+        Assert.IsNotNull(error);
+    }
+
+    [Test]
+    public void AnOldHostIsRefusedBeforePlayWithTheSelectedCompilersFix()
+    {
+        var host = Environment.GetEnvironmentVariable("TIDE_TEST_ABI5");
+        if (string.IsNullOrEmpty(host)) Assert.Ignore("Set TIDE_TEST_ABI5 to the folder of a test host exporting ABI 5.");
+        var development = TideToolchain.LaunchCommand(Environment.GetCommandLineArgs(), out _) != null;
+        UnityEngine.TestTools.LogAssert.Expect(UnityEngine.LogType.Error,
+            new System.Text.RegularExpressions.Regex(development ? @"its ABI is 5.*-tide-command.*Restart Unity without -tide-command"
+                : @"its ABI is 5.*Selected tide:.*install the package's version"));
+        Assert.IsFalse(TideBuildService.HostReady(host));
+    }
+
+    [Test]
     public void AReleaseTagIsItsVersion()
     {
         Assert.AreEqual("0.5.0-nightly.12", TideVersions.OfTag("v0.5.0-nightly.12"));

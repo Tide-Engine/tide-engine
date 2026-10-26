@@ -1,5 +1,13 @@
 # Test infrastructure
 
+## Debugger tests (2026-10-26)
+
+`tidec_debugger_natvis` drives Windows' own `dbgeng.dll` (no install) on
+Windows' own target; `tidec_debugger_lldb` runs LLDB where `TIDE_LLDB` is found
+(Linux by default; CI installs `lldb-$major`). Both use
+`compiler/tests/debugger/fixture.tide`. What they check and where they ran:
+`notes/debugging.md`.
+
 ## Node 24.22.1 security validation (2026-10-23)
 
 The checkout's portable Node 24.22.1 executable matches the official release's

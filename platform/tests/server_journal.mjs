@@ -27,23 +27,28 @@ function serve(frames) {
   const at = what => { log += `  ${((Date.now() - begun) / 1000).toFixed(2)} s: ${what}\n`; };
   server.stderr.on('data', chunk => { output += chunk; at(String(chunk).trimEnd()); });
   server.on('exit', (code, signal) => at(`exited (${code ?? signal})`));
-  return { server, output: () => output, log: () => log, ended: once(server, 'close') };
+  // Each recovery does 200 real-time updates, including durable disk flushes.
+  // Give each process its own budget: earlier runs must not spend its time.
+  clearTimeout(deadline);
+  deadline = setTimeout(() => {
+    let kept = '';
+    try {
+      kept = readdirSync(folder).map(name => `${name} ${statSync(join(folder, name)).size}`).join(', ');
+    } catch (error) {
+      kept = String(error);
+    }
+    timedOut = new Error(`timed out in ${phase}, ${((Date.now() - started) / 1000).toFixed(1)} s in; ` +
+      `the folder has ${kept}; since the run began:\n${log}`);
+    server.kill('SIGKILL');
+  }, 25000);
+  return { server, output: () => output, ended: once(server, 'close') };
 }
 
 const started = Date.now();
 let phase = 'the first run';
 let current = null;
-const deadline = setTimeout(() => {
-  let kept = '';
-  try {
-    kept = readdirSync(folder).map(name => `${name} ${statSync(join(folder, name)).size}`).join(', ');
-  } catch (error) {
-    kept = String(error);
-  }
-  console.error(`timed out in ${phase}, ${((Date.now() - started) / 1000).toFixed(1)} s in; the folder has ${kept}; ` +
-    `since the run began:\n${current?.log() ?? ''}`);
-  process.exit(1);
-}, 25000);
+let deadline = null;
+let timedOut = null;
 try {
   // Running, then killed with no warning once it's kept a while of the world
   const first = current = serve(1000000);
@@ -58,11 +63,14 @@ try {
     phase = `run ${run + 1} (begun ${((Date.now() - started) / 1000).toFixed(1)} s in)`;
     const again = current = serve(200);
     const [code] = await again.ended;
+    if (timedOut) throw timedOut;
     if (code !== 0 || !again.output().includes('goes on from its journal'))
       throw new Error(`run ${run + 1} (${code}): ${again.output()}`);
   }
   process.stdout.write('a killed sharded server went on from its journal\n');
 } finally {
   clearTimeout(deadline);
+  current?.server.kill('SIGKILL');
+  if (current) await Promise.allSettled([current.ended]);
   rmSync(folder, { recursive: true, force: true });
 }

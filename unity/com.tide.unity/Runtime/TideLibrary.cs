@@ -14,6 +14,11 @@ namespace Tide
     {
         IntPtr handle;
 
+#if UNITY_EDITOR
+        // The editor explains which compiler was selected, including a developer override.
+        public static Func<string> AbiMismatchHint;
+#endif
+
         delegate* unmanaged[Cdecl]<TideEmbedDesc*, IntPtr> createFn;
         delegate* unmanaged[Cdecl]<IntPtr, void> destroyFn;
         delegate* unmanaged[Cdecl]<IntPtr, float, TideEmbedInput*, float, float, float, double> frameFn;
@@ -30,10 +35,19 @@ namespace Tide
         delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*> drawFn;
         delegate* unmanaged[Cdecl]<IntPtr, float*, uint, uint, uint, void> audioFn;
         delegate* unmanaged[Cdecl]<IntPtr, float*, uint, uint, uint, void> microphoneFn;
+        delegate* unmanaged[Cdecl]<IntPtr, TideTravel*, void> travelFn;
+        delegate* unmanaged[Cdecl]<IntPtr, float, void> travelKeepFn;
+        delegate* unmanaged[Cdecl]<IntPtr, byte, byte> pauseFn;
+        delegate* unmanaged[Cdecl]<IntPtr, byte> stepFn;
+        delegate* unmanaged[Cdecl]<IntPtr, uint, byte> showFn;
+        delegate* unmanaged[Cdecl]<IntPtr, byte> continueFn;
+        delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*> recordingFn;
+        delegate* unmanaged[Cdecl]<IntPtr, byte*, uint, byte> replayFn;
+        delegate* unmanaged[Cdecl]<IntPtr, void> replayEndFn;
         delegate* unmanaged[Cdecl]<uint> abiFn;
 
         // What tide/embed.h's TIDE_EMBED_ABI says: a library that says otherwise was built by another tide.
-        public const uint Abi = 6;
+        public const uint Abi = 7;
 
         public static string LibraryName =>
             Application.platform == RuntimePlatform.WindowsEditor || Application.platform == RuntimePlatform.WindowsPlayer
@@ -139,7 +153,11 @@ namespace Tide
             abiFn = (delegate* unmanaged[Cdecl]<uint>)Find("tide_embed_abi");
             if (abiFn == null || abiFn() != Abi)
             {
-                Debug.LogError($"Tide: {LibraryName} was built by a tide this package doesn't match (its ABI is {(abiFn == null ? 0 : abiFn())}, the package's {Abi}): update the package or tide so they agree.");
+                var hint = "";
+#if UNITY_EDITOR
+                hint = AbiMismatchHint?.Invoke() ?? "";
+#endif
+                Debug.LogError($"Tide: {LibraryName} was built by a tide this package doesn't match (its ABI is {(abiFn == null ? 0 : abiFn())}, the package's {Abi}): update the package or tide so they agree.{hint}");
                 return false;
             }
             createFn = (delegate* unmanaged[Cdecl]<TideEmbedDesc*, IntPtr>)Find("tide_embed_create");
@@ -158,9 +176,20 @@ namespace Tide
             drawFn = (delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*>)Find("tide_embed_draw");
             audioFn = (delegate* unmanaged[Cdecl]<IntPtr, float*, uint, uint, uint, void>)Find("tide_embed_audio");
             microphoneFn = (delegate* unmanaged[Cdecl]<IntPtr, float*, uint, uint, uint, void>)Find("tide_embed_microphone");
+            travelFn = (delegate* unmanaged[Cdecl]<IntPtr, TideTravel*, void>)Find("tide_embed_travel_of");
+            travelKeepFn = (delegate* unmanaged[Cdecl]<IntPtr, float, void>)Find("tide_embed_travel_keep");
+            pauseFn = (delegate* unmanaged[Cdecl]<IntPtr, byte, byte>)Find("tide_embed_pause");
+            stepFn = (delegate* unmanaged[Cdecl]<IntPtr, byte>)Find("tide_embed_step");
+            showFn = (delegate* unmanaged[Cdecl]<IntPtr, uint, byte>)Find("tide_embed_show");
+            continueFn = (delegate* unmanaged[Cdecl]<IntPtr, byte>)Find("tide_embed_continue");
+            recordingFn = (delegate* unmanaged[Cdecl]<IntPtr, uint*, byte*>)Find("tide_embed_recording");
+            replayFn = (delegate* unmanaged[Cdecl]<IntPtr, byte*, uint, byte>)Find("tide_embed_replay");
+            replayEndFn = (delegate* unmanaged[Cdecl]<IntPtr, void>)Find("tide_embed_replay_end");
             if (createFn == null || destroyFn == null || frameFn == null || statusFn == null || requestFn == null || backgroundFn == null
                 || cameraFn == null || renderFn == null || renderResetFn == null || renderViewFn == null
-                || viewFn == null || schemaFn == null || commandFn == null || drawFn == null || audioFn == null || microphoneFn == null)
+                || viewFn == null || schemaFn == null || commandFn == null || drawFn == null || audioFn == null || microphoneFn == null
+                || travelFn == null || travelKeepFn == null || pauseFn == null || stepFn == null || showFn == null
+                || continueFn == null || recordingFn == null || replayFn == null || replayEndFn == null)
             {
                 Debug.LogError($"Tide: {LibraryName} lacks some of tide/embed.h's functions: rebuild it with this tide.");
                 return false;
@@ -212,6 +241,15 @@ namespace Tide
         public void Microphone(IntPtr embed, float* samples, uint frames, uint rate, uint channels)
         {
         }
+        public void Travel(IntPtr embed, TideTravel* travel) => TideWebTravel(travel, sizeof(TideTravel));
+        public void TravelKeep(IntPtr embed, float seconds) => TideWebTravelKeep(seconds);
+        public byte Pause(IntPtr embed, byte paused) => (byte)TideWebPause(paused);
+        public byte Step(IntPtr embed) => (byte)TideWebStep();
+        public byte Show(IntPtr embed, uint tick) => (byte)TideWebShow(tick);
+        public byte Continue(IntPtr embed) => (byte)TideWebContinue();
+        public byte* Recording(IntPtr embed, uint* size) => TideWebRecording(size);
+        public byte Replay(IntPtr embed, byte* data, uint size) => (byte)TideWebReplay(data, size);
+        public void ReplayEnd(IntPtr embed) => TideWebReplayEnd();
 
         [DllImport("__Internal")] static extern IntPtr TideWebCreate(TideEmbedDesc* desc);
         [DllImport("__Internal")] static extern void TideWebDestroy();
@@ -226,6 +264,15 @@ namespace Tide
         [DllImport("__Internal")] static extern byte* TideWebRender(uint* size);
         [DllImport("__Internal")] static extern void TideWebRenderReset();
         [DllImport("__Internal")] static extern int TideWebCommand(uint type, uint index, uint generation, void* value, uint size);
+        [DllImport("__Internal")] static extern void TideWebTravel(TideTravel* travel, int size);
+        [DllImport("__Internal")] static extern void TideWebTravelKeep(float seconds);
+        [DllImport("__Internal")] static extern int TideWebPause(byte paused);
+        [DllImport("__Internal")] static extern int TideWebStep();
+        [DllImport("__Internal")] static extern int TideWebShow(uint tick);
+        [DllImport("__Internal")] static extern int TideWebContinue();
+        [DllImport("__Internal")] static extern byte* TideWebRecording(uint* size);
+        [DllImport("__Internal")] static extern int TideWebReplay(byte* data, uint size);
+        [DllImport("__Internal")] static extern void TideWebReplayEnd();
 
         // Tide's program on the page: it loads beside Unity's (TideWebBuild put it in the page), and starts when
         // TideRunner does.
@@ -253,6 +300,15 @@ namespace Tide
             audioFn(embed, samples, frames, rate, channels);
         public void Microphone(IntPtr embed, float* samples, uint frames, uint rate, uint channels) =>
             microphoneFn(embed, samples, frames, rate, channels);
+        public void Travel(IntPtr embed, TideTravel* travel) => travelFn(embed, travel);
+        public void TravelKeep(IntPtr embed, float seconds) => travelKeepFn(embed, seconds);
+        public byte Pause(IntPtr embed, byte paused) => pauseFn(embed, paused);
+        public byte Step(IntPtr embed) => stepFn(embed);
+        public byte Show(IntPtr embed, uint tick) => showFn(embed, tick);
+        public byte Continue(IntPtr embed) => continueFn(embed);
+        public byte* Recording(IntPtr embed, uint* size) => recordingFn(embed, size);
+        public byte Replay(IntPtr embed, byte* data, uint size) => replayFn(embed, data, size);
+        public void ReplayEnd(IntPtr embed) => replayEndFn(embed);
 #endif
 
         // The library stays loaded for the editor's life: a game running in it may hold memory and threads of it.

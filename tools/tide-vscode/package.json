@@ -15,12 +15,15 @@
   ],
   "main": "./out/extension.js",
   "activationEvents": [
-    "onLanguage:tide"
+    "onLanguage:tide",
+    "onDebugResolve:tide",
+    "onDebugInitialConfigurations",
+    "onDebugDynamicConfigurations:tide"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
       "supported": "limited",
-      "description": "In Restricted Mode, nothing from the workspace runs: the language server is the tidels that comes with tide (or one your user settings name outside the workspace), never the workspace's build/tools/tidels or one its settings name, and games don't run, as running one runs its code.",
+      "description": "In Restricted Mode, nothing from the workspace runs: the language server is the tidels that comes with tide (or one your user settings name outside the workspace), never the workspace's build/tools/tidels or one its settings name, and games don't run or debug, as running one runs its code.",
       "restrictedConfigurations": [
         "tide.server.path",
         "tide.path"
@@ -51,6 +54,124 @@
         "language": "tide",
         "scopeName": "source.tide",
         "path": "./syntaxes/tide.tmLanguage.json"
+      }
+    ],
+    "breakpoints": [
+      {
+        "language": "tide"
+      }
+    ],
+    "debuggers": [
+      {
+        "type": "tide",
+        "label": "Tide",
+        "languages": [
+          "tide"
+        ],
+        "configurationAttributes": {
+          "launch": {
+            "properties": {
+              "game": {
+                "type": "string",
+                "description": "The game's folder, as tide run takes it. Default: the active .tide file's game.",
+                "default": "${workspaceFolder}"
+              },
+              "args": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                },
+                "description": "The game's arguments, as tide run passes them (--host, --join <code>, --seed <n>).",
+                "default": []
+              }
+            }
+          },
+          "attach": {
+            "properties": {
+              "project": {
+                "type": "string",
+                "description": "The Unity project whose editor to attach to. Default: the one the active file or the open folder is in."
+              },
+              "processId": {
+                "type": [
+                  "string",
+                  "number"
+                ],
+                "description": "The Unity editor's process ID. Default: the project's editor, or one picked from those running."
+              },
+              "target": {
+                "type": "string",
+                "enum": [
+                  "unity",
+                  "game"
+                ],
+                "enumDescriptions": [
+                  "The Unity editor running the project",
+                  "The game Tide: Run (tide run) plays"
+                ],
+                "default": "unity",
+                "description": "What to attach to."
+              },
+              "game": {
+                "type": "string",
+                "description": "With \"target\": \"game\", the game's folder. Default: the active .tide file's game.",
+                "default": "${workspaceFolder}"
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "tide",
+            "request": "attach",
+            "name": "Attach to Unity (Tide)"
+          },
+          {
+            "type": "tide",
+            "request": "launch",
+            "name": "Debug Tide game",
+            "game": "${workspaceFolder}"
+          },
+          {
+            "type": "tide",
+            "request": "attach",
+            "name": "Attach to Tide game (tide run)",
+            "target": "game",
+            "game": "${workspaceFolder}"
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "Tide: Attach to Unity",
+            "description": "Debug the Tide game the Unity editor runs, stopping at breakpoints in .tide files",
+            "body": {
+              "type": "tide",
+              "request": "attach",
+              "name": "Attach to Unity (Tide)"
+            }
+          },
+          {
+            "label": "Tide: Debug Tide game",
+            "description": "Build the game to debug (tide build) and run it under the debugger",
+            "body": {
+              "type": "tide",
+              "request": "launch",
+              "name": "Debug Tide game",
+              "game": "^\"\\${workspaceFolder}\""
+            }
+          },
+          {
+            "label": "Tide: Attach to Tide game (tide run)",
+            "description": "Debug the game Tide: Run plays, which goes on reloading as files are saved",
+            "body": {
+              "type": "tide",
+              "request": "attach",
+              "name": "Attach to Tide game (tide run)",
+              "target": "game",
+              "game": "^\"\\${workspaceFolder}\""
+            }
+          }
+        ]
       }
     ],
     "configuration": {

@@ -183,7 +183,7 @@ jobs:
           version=$(sed -nE 's/^set\(TIDE_LLVM_VERSION ([0-9.]+)\).*/\1/p' cmake/LLVM.cmake)
           test -n "$version"
           echo "LLVM_VERSION=$version" >> "$GITHUB_ENV"
-      # LLVM's own packages, of the same major version.
+      # LLVM's own packages, of the same major version. LLDB is for tidec_debugger_lldb: a game's LLDB views.
       - name: Install tools (Linux)
         if: runner.os == 'Linux'
         run: |
@@ -192,7 +192,7 @@ jobs:
           wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
           echo "deb http://apt.llvm.org/$codename/ llvm-toolchain-$codename-$major main" | sudo tee /etc/apt/sources.list.d/llvm.list
           sudo apt-get update
-          sudo apt-get install -y clang-$major lld-$major llvm-$major ninja-build zstd ccache libx11-dev libxrandr-dev \
+          sudo apt-get install -y clang-$major lld-$major llvm-$major lldb-$major ninja-build zstd ccache libx11-dev libxrandr-dev \
             libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev
           echo "LLVM_ROOT=/usr/lib/llvm-$major" >> "$GITHUB_ENV"
       - name: Cache LLVM tools (Windows)

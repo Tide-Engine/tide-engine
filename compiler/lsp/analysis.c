@@ -11,6 +11,7 @@
 #include "builtins.h"
 #include "cdefs.h"
 #include "csharp.h"
+#include "unity_names.h"
 #include "folders.h"
 #include "lexer.h"
 #include "model_metadata.h"
@@ -10398,15 +10399,23 @@ typedef struct unity_path {
     int count;
 } unity_path;
 
+// A component a rename moves (its own, or its namespace's): its qualified Tide names, its script's GUIDs and its C#
+// class's whole name (`Tide.Game.Combat.Health`), which Unity's m_EditorClassIdentifier ends with
+typedef struct unity_moved {
+    char type[256], new_type[256];
+    char guid[33], new_guid[33];
+    char cs[300], new_cs[300];
+    int which; // In unity_rename.guids, or -1 for a component that's none of the game's own in Unity
+} unity_moved;
+
 typedef struct unity_rename {
     jbuf *out;
     int *files_written;
-    const char *type;     // The component's name in the files, as qualified, for its TideEntity lists
-    const char *new_type; // ...and what it's renamed to, or NULL for a field's rename
-    const char *field, *new_field; // A component's field's, in TideEntity lists' values
-    char guid[33], new_guid[33]; // A renamed component's script GUID, and the new name's
-    const char *cls, *new_cls;   // Its C# class's name, as Unity's m_EditorClassIdentifier ends with it
-    char (*guids)[33];           // The components whose objects the rename reaches
+    unity_moved *moved; // A type's or a namespace's rename: the components it moves
+    int moved_count;
+    const char *type;              // A field's rename: its component's name in the files, for TideEntity lists' values
+    const char *field, *new_field; // ...and the field's
+    char (*guids)[33];             // The components whose objects the rename reaches
     int guid_count;
     unity_path *paths; // A field's rename: where it is in them
     int path_count;
@@ -10662,14 +10671,23 @@ static void unity_rename_file(void *user, const char *path)
             depth = 0;
         } else if (cls == 114 && strncmp(line, "  m_Script: ", 12) == 0) {
             ours = unity_which(u, line);
-            const char *g = u->new_type ? strstr(line, u->guid) : NULL;
-            if (g) unity_edit(u, number, line, (int)(g - line), (int)(g - line) + 32, u->new_guid);
-        } else if (ours >= 0 && u->new_type && strncmp(line, "  m_EditorClassIdentifier: ", 27) == 0) {
-            const size_t len = strlen(line) - (line[strlen(line) - 1] == '\r' ? 1 : 0), m = strlen(u->cls);
-            if (len > m && line[len - m - 1] == '.' && strncmp(line + len - m, u->cls, m) == 0) {
-                unity_edit(u, number, line, (int)(len - m), (int)len, u->new_cls);
+            for (int k = 0; k < u->moved_count; k++) {
+                const char *g = u->moved[k].which >= 0 ? strstr(line, u->moved[k].guid) : NULL;
+                if (g) unity_edit(u, number, line, (int)(g - line), (int)(g - line) + 32, u->moved[k].new_guid);
             }
-        } else if (ours >= 0 && !u->new_type && line[0] == ' ' && line[1] == ' ') {
+        } else if (ours >= 0 && u->moved_count && strncmp(line, "  m_EditorClassIdentifier: ", 27) == 0) {
+            // `Tide.Game::Tide.Game.Combat.Health`: from where the old and new class names part
+            const size_t len = strlen(line) - (line[strlen(line) - 1] == '\r' ? 1 : 0);
+            for (int k = 0; k < u->moved_count; k++) {
+                const unity_moved *m = &u->moved[k];
+                const size_t n = strlen(m->cs);
+                if (m->which != ours || len <= n || line[len - n - 1] != ':' || strncmp(line + len - n, m->cs, n) != 0) continue;
+                size_t common = 0;
+                while (m->cs[common] && m->cs[common] == m->new_cs[common]) common++;
+                while (common > 0 && m->cs[common - 1] != '.') common--;
+                unity_edit(u, number, line, (int)(len - n + common), (int)len, m->new_cs + common);
+            }
+        } else if (ours >= 0 && !u->moved_count && line[0] == ' ' && line[1] == ' ') {
             // One of its serialized fields, or a field of one: the keys it's in, by their indents
             const int indent = (int)(p - line);
             const bool item = p[0] == '-' && p[1] == ' ';
@@ -10706,7 +10724,7 @@ static void unity_rename_file(void *user, const char *path)
             unity_line_guid(p, target_guid);
             const char *id = strstr(p, "fileID: ");
             target = id ? strtoll(id + 8, NULL, 10) : -1;
-        } else if (!u->new_type && strncmp(p, "propertyPath: ", 14) == 0 && target >= 0 && u->path_count) {
+        } else if (!u->moved_count && strncmp(p, "propertyPath: ", 14) == 0 && target >= 0 && u->path_count) {
             // A prefab instance's change of the field, or of what's in it (speed, speed.x, marks.Array.data[2],
             // holds.Array.data[0].mass): its segments, "Array.data[i]" one ("[]"), against each path
             const char *seg_at[UNITY_PATH_MOST * 2];
@@ -10744,13 +10762,19 @@ static void unity_rename_file(void *user, const char *path)
             snprintf(current, sizeof current, "%s", p + 8);
             const size_t len = strlen(current);
             if (len && current[len - 1] == '\r') current[len - 1] = '\0';
-            if (u->new_type && u->type && (at = unity_names(line, "- type: ", u->type)) >= 0) {
-                unity_edit(u, number, line, at, at + (int)strlen(u->type), u->new_type);
+            for (int k = 0; k < u->moved_count; k++) {
+                if ((at = unity_names(line, "- type: ", u->moved[k].type)) >= 0) {
+                    unity_edit(u, number, line, at, at + (int)strlen(u->moved[k].type), u->moved[k].new_type);
+                }
             }
-        } else if (!u->new_type && u->type && strncmp(p, "values: ", 8) == 0 && strcmp(current, u->type) == 0) {
+        } else if (!u->moved_count && u->type && strncmp(p, "values: ", 8) == 0 && strcmp(current, u->type) == 0) {
             unity_rename_keys(u, number, line, p + 8);
-        } else if (u->new_type && type_change && (at = unity_names(line, "value: ", u->type)) >= 0) {
-            unity_edit(u, number, line, at, at + (int)strlen(u->type), u->new_type);
+        } else if (u->moved_count && type_change) {
+            for (int k = 0; k < u->moved_count; k++) {
+                if ((at = unity_names(line, "value: ", u->moved[k].type)) >= 0) {
+                    unity_edit(u, number, line, at, at + (int)strlen(u->moved[k].type), u->moved[k].new_type);
+                }
+            }
         }
         // A component's entry is its type's line and its values' after it
         if (strncmp(p, "- type: ", 8) != 0 && strncmp(p, "values: ", 8) != 0) current[0] = '\0';
@@ -10880,6 +10904,34 @@ static void unity_struct_paths(unity_rename *u, const int which, const decl *d, 
     }
 }
 
+// A C# class's whole name, as unity_code.c names it (unity_names.h): `Tide.Game.Combat.Health` of `Combat.Health`
+static void unity_class_name(const char *qualified, char *out, const size_t size)
+{
+    const char *dot = strrchr(qualified, '.');
+    char *space = dot ? unity_cs_namespace(qualified, (size_t)(dot - qualified)) : NULL;
+    const char *last = dot ? dot + 1 : qualified;
+    char *name = unity_cs_identifier(last, strlen(last));
+    snprintf(out, size, "Tide.Game.%s%s%s", space ? space : "", space ? "." : "", name[0] == '@' ? name + 1 : name);
+    free(space);
+    free(name);
+}
+
+// A component the rename moves from `type` to `new_type`
+static void unity_move(unity_rename *u, const decl *component, const char *type, const char *new_type)
+{
+    u->moved = realloc(u->moved, sizeof *u->moved * (size_t)(u->moved_count + 1));
+    if (!u->moved) abort();
+    unity_moved *m = &u->moved[u->moved_count++];
+    memset(m, 0, sizeof *m);
+    snprintf(m->type, sizeof m->type, "%s", type);
+    snprintf(m->new_type, sizeof m->new_type, "%s", new_type);
+    unity_component_guid(type, m->guid);
+    unity_component_guid(new_type, m->new_guid);
+    unity_class_name(type, m->cs, sizeof m->cs);
+    unity_class_name(new_type, m->new_cs, sizeof m->new_cs);
+    m->which = unity_authored(component) ? unity_guid_index(u, component) : -1;
+}
+
 static void unity_renames(const occurrence *target, const char *new_name, jbuf *out, int *files_written)
 {
     const decl *component = NULL, *structure = NULL;
@@ -10917,24 +10969,46 @@ static void unity_renames(const occurrence *target, const char *new_name, jbuf *
         const csharp_what what = target->kind == OCC_TYPE ? CSHARP_TYPE : target->kind == OCC_FIELD ? CSHARP_FIELD : CSHARP_MEMBER;
         csharp_renames(project, what, qualified, what == CSHARP_TYPE ? NULL : old_name, new_name, out, files_written);
     }
-    if (!component && !structure) return;
+    // A namespace's: every component in it moves, in the project's assets as in its C#
+    char space[512] = "";
+    if (target->kind == OCC_NAMESPACE && target->name.len) {
+        snprintf(space, sizeof space, STR_FMT, STR_ARG(target->name));
+        csharp_renames(project, CSHARP_NAMESPACE, space, NULL, new_name, out, files_written);
+    }
+    if (!component && !structure && !space[0]) return;
     unity_rename u = {0};
     u.out = out;
     u.files_written = files_written;
     u.new_field = new_name;
-    char type[256] = "", new_type[256] = "", field_name[256] = "";
-    if (component) {
-        snprintf(type, sizeof type, STR_FMT, STR_ARG(component->qualified));
+    char type[256] = "", field_name[256] = "";
+    if (component && !renamed) {
         // A namespaced component keeps its namespace: only its own name changes
-        const char *dot = strrchr(type, '.');
-        snprintf(new_type, sizeof new_type, "%.*s%s", dot ? (int)(dot - type + 1) : 0, type, new_name);
+        char qualified[256], moved_to[256];
+        snprintf(qualified, sizeof qualified, STR_FMT, STR_ARG(component->qualified));
+        const char *dot = strrchr(qualified, '.');
+        snprintf(moved_to, sizeof moved_to, "%.*s%s", dot ? (int)(dot - qualified + 1) : 0, qualified, new_name);
+        unity_move(&u, component, qualified, moved_to);
+    } else if (component) {
+        snprintf(type, sizeof type, STR_FMT, STR_ARG(component->qualified));
         u.type = type;
-        u.new_type = renamed ? NULL : new_type;
-        unity_component_guid(type, u.guid);
-        unity_component_guid(new_type, u.new_guid);
-        u.cls = dot ? dot + 1 : type;
-        u.new_cls = new_name;
         unity_guid_index(&u, component);
+    }
+    if (space[0]) {
+        // Its parent's path and the new name
+        const char *last = strrchr(space, '.');
+        char to[512];
+        snprintf(to, sizeof to, "%.*s%s", last ? (int)(last - space + 1) : 0, space, new_name);
+        const size_t n = strlen(space);
+        for (int i = 0; i < A.prog->decls.count; i++) {
+            const decl *c = A.prog->decls.items[i];
+            if (c->kind != DECL_COMPONENT || c->builtin || c->is_scene || !c->unit) continue;
+            char qualified[256], moved_to[256];
+            snprintf(qualified, sizeof qualified, STR_FMT, STR_ARG(c->qualified));
+            if (strncmp(qualified, space, n) != 0 || qualified[n] != '.') continue;
+            snprintf(moved_to, sizeof moved_to, "%s%s", to, qualified + n);
+            unity_move(&u, c, qualified, moved_to);
+        }
+        if (!u.moved_count) return;
     }
     if (renamed) snprintf(field_name, sizeof field_name, STR_FMT, STR_ARG(renamed->name));
     u.field = field_name;
@@ -10977,6 +11051,7 @@ static void unity_renames(const occurrence *target, const char *new_name, jbuf *
     }
     free(u.paths);
     free(u.guids);
+    free(u.moved);
 }
 
 // ---------------------------------------------------------------------------

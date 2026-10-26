@@ -25,9 +25,24 @@ repository's `notes/unity.md`.
    `%LOCALAPPDATA%\Tide\versions` or `~/.tide/versions` (or the folder
    `TIDE_VERSIONS` names). A build server (Unity in batch mode, as GameCI runs
    it) installs it with no question and nothing installed beforehand: keep
-   `TIDE_VERSIONS` in its cache to download it once. Project Settings > Tide
-   can name your own `tide` instead, kept for you alone, as for a build of tide
-   you're working on.
+   `TIDE_VERSIONS` in its cache to download it once.
+
+   To test a local Tide compiler/runtime, launch Unity with
+   `-tide-command "<local Tide>/bin/tide"` (`tide.exe` on Windows). This overrides
+   the package pin for that editor process only, including its script reloads.
+   Project Settings > Tide shows the active command and the override warning;
+   it stores no compiler path. Restart Unity without the argument to follow the
+   pin again. Old saved compiler overrides are ignored. A missing executable or
+   malformed argument reports an error instead of substituting another compiler.
+   Tide checks the existing host's ABI before entering Play; a development build
+   must match the package, or Play explains how to return to the pin.
+
+   Updated VS Code and JetBrains Tide plugins use the same selected installation
+   for their language server, runs and prefab editor. Unity writes its selection
+   to `Library/Tide/toolchain.json`, tied to the package lock; keep it out of
+   source control. A development selection identifies the running editor process:
+   closing it (or a crash) returns the IDE to the pin. Changing the package lock
+   makes the IDE select again.
 
 3. Put the game's `.tide` files anywhere in `Assets`: every one is the game's,
    as every C# script is, but those in folders Unity leaves out (hidden ones,
@@ -56,17 +71,20 @@ it knows which it is. Tide code does the same for its own names.
 Tide is where the game's types are declared; their C# follows them:
 
 - **Renames reach your scripts.** Renaming a component, a field, a singleton, an
-  event, a command, a struct, an enum or an enum's member in the code editor
+  event, a command, a struct, an enum, an enum's member or a namespace in the code editor
   (tidels's rename, F2 in VS Code or Shift+F6 in Rider) also renames it in the
   project's C#: the scripts in `Assets` and in its embedded and local packages,
   never `Packages/com.tide.game`, which tide writes again. It's one edit you can
   preview and undo, with the prefabs' and scenes' changes. References are found
   carefully, with no C# compiler: a member where what it's a member of is known
   to be the game's type (a field, variable, parameter or lambda parameter of it,
-  `GetComponent<Health>()`, `new` and its initializer, `foreach`), a type where
-  the file's usings make the name the game's. Another type's member of the same
-  name, text in strings and comments, and a name a type of your own also has are
-  left alone.
+  `GetComponent<Health>()`, `new` and its initializer, `foreach`, a cast, `as`,
+  `is Health h`, or a field, property or method of your own classes that gives
+  it, partial ones across files too), a type or a namespace where the file's
+  usings make the name the game's, and a doc comment's `<see cref="..."/>`.
+  Another type's member of the same name, other text in strings and comments,
+  and a name a type of your own also has are left alone. A namespace's rename
+  also gives its components' prefabs and scenes their new script GUIDs.
 - **From a type back to its declaration.** Each generated type carries its Tide
   declaration's doc, the comment lines just above it (a field's, above it or
   after it on its line), and the file it's in, so a hover in Rider or Visual
@@ -76,15 +94,16 @@ Tide is where the game's types are declared; their C# follows them:
 - **Errors that explain a rename.** When a script no longer compiles because
   Tide renamed or removed a name it uses, the Console says so next to Unity's
   error: ``tide: `Health.hp` is now `Health.health` (Assets/Tide/game.tide:12)``,
-  which opens the new declaration, or that it was removed. tide keeps what
+  which opens the new declaration, or that it was removed, from the first
+  compile as the editor opens on. tide keeps what
   became of the C#'s names in `Library/Tide/renamed.json`, on this machine
   alone.
 
 ## Author
 
-Add `TideEntity` (Add Component > Tide > Tide Entity) to a GameObject of a
-prefab or a scene, and its Tide components with Add Tide Component: each field
-is drawn by its Tide type, and one you don't set keeps its default. An entity
+Add the game's components with Add Component > Tide; Unity also adds the
+`TideEntity` that makes the GameObject an entity. Each field starts at its
+declared Tide default and is authored in its component's inspector. An entity
 field names another TideEntity's GameObject. The GameObject's Transform is the
 entity's, and its parent the entity's parent (through GameObjects that aren't
 entities).
@@ -226,6 +245,70 @@ Unity's volume and mute apply, through the runner's Audio Output mixer group.
 `Clip.Microphone` is Unity's microphone, which a phone asks the player for the
 first time the game listens. In a WebGL player Tide's program plays through the
 page itself, and hears the page's microphone.
+
+## Debug
+
+The game's Tide code can be debugged in the editor as Tide: each library tide
+builds for the editor has debug information that maps its C back to the
+`.tide` lines, with how its values look beside it (`Library/Tide/game.natvis`,
+also inside its `.pdb` on Windows, and `game_lldb.py`). Attach a native
+debugger to the Unity editor, not Unity's C# debugger:
+
+- VS Code: the **Attach to Unity (Tide)** debug configuration of Tide's
+  extension.
+- CLion: **Run > Attach to Unity (Tide)**, with Tide's plugin.
+- Visual Studio: **Debug > Attach to Process**, native code, `Unity.exe`.
+
+Breakpoints in `.tide` files stop there, stepping goes Tide line by Tide line,
+the call stack is the game's systems and functions, and lists, maps, text,
+enums and entities show as Tide's. A new build swapped into the running match
+keeps the breakpoints. More:
+[Debugging](https://tide-engine.dev/tools/debugging).
+
+## Time travel
+
+A match is deterministic, so the editor can keep it: Window > Tide > Time
+Travel, in Play. The runner records a match this machine runs from its start
+(what went into each tick: players' input, joins and leaves, commands) and
+keeps the worlds of its latest ticks (the runner's Keep Seconds, 10 by
+default).
+
+- **Pause** stops the match at its latest tick. **Step** runs one tick, with
+  what's held and pressed then (a key pressed while paused goes into that tick,
+  as do commands sent while paused). **Resume** goes on from there.
+- The **Tick** slider shows any tick since the match started: its entities and
+  their GameObjects, the Tide components' live values in the inspector,
+  `TideEntityView`, singletons and Tide's drawing are that tick's. Ticks
+  before those kept are made again from the start as they're shown. What's
+  clicked or sent on an older tick's picture never reaches the match, and the
+  match's own local state is left as it was.
+- **Continue From Here** takes the match back to the tick shown and on from
+  there: the ticks after it are gone. Which commands are in the match stays as
+  it was, so one already applied after that tick doesn't come again.
+- With players of other machines in the match, it never stops for them: Pause
+  shows the tick paused at while the match goes on behind it (this machine's
+  player as if it let go of everything), and Resume shows its latest tick
+  again. Continue From Here takes them back too: they're sent the match's world
+  again, as when a client goes wrong.
+- **Save Recording** writes the match's recording (a `.tiderec`) and **Open
+  Recording** replays one, a tester's from a bug report say, on any machine with
+  a build of the same data layout (the game's components, input and commands as
+  they were): each tick is made again with this build and its world checked
+  against the recording's hash. The window says how far every tick matched, or
+  the first tick whose world went otherwise, which after a change to the game's
+  code is where that change first matters. **Replay This Match** replays the
+  current one.
+
+In C#: `runner.Pause()`, `Step()`, `Resume()`, `ShowTick(n)`,
+`ContinueFromHere()`, `Recording()` and `SaveRecording(path)`,
+`Replay(bytes)` and `ReplayFile(path)`, `EndReplay()`, with `runner.Travel`
+saying where it is. The runner's Time Travel setting keeps matches in the
+editor (the default), nowhere, or in player builds too, so a game can save a
+tester's recording for a bug report. A hot reload while paused comes in as
+any: the match stays paused, its kept ticks with it if the data layout is the
+same (another starts the recording over), and the next step runs the new code.
+Only a match this machine runs is kept; one joined on another machine, and a
+sharded one, aren't.
 
 ## Build
 

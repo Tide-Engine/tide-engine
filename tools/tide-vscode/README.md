@@ -27,6 +27,18 @@ language server is `tidels`, which comes with tide. The extension runs it from
 `build/tools/tidels`, like Tide's own repo once it's built, it runs that one,
 once you trust the folder.
 
+In a trusted project, the extension selects both `tide` and `tidels` from the
+version pinned in `tide.packages`. Unity projects follow their locked Tide
+package: open Unity once to resolve/install it, and the IDE uses Unity's selected
+installation. A `-tide-command <path>` development launch is followed only while
+that Unity process is alive; closing it or a crash restores the project pin.
+Versions share the `TIDE_VERSIONS`
+cache; a missing pinned version gives an error instead of using another version.
+Package/lock changes restart the server. Each open workspace folder has its own
+server, so different projects can use different versions. Explicit path settings
+and a trusted engine checkout's built server take precedence. A `tide.path`
+override also selects its sibling `tidels`, unless `tide.server.path` overrides it.
+
 Open the folder of your game, the one you'd run `tide run` in: every `.tide`
 file in it and its subfolders is one game.
 
@@ -54,6 +66,28 @@ Developer Tools** shows it: the integrated browser's developer tools for the
 game's tab, or in the Simple Browser (where it's also a button above the
 page), the window's.
 
+## Debugging
+
+Breakpoints go in `.tide` files. The **Tide** debug configurations (in
+**Run and Debug**, add a configuration) stop at them in a native debugger,
+with locals under their Tide names and lists, maps, text, enums and entities
+shown as Tide's:
+
+- **Attach to Unity (Tide)** attaches to the Unity editor running the project,
+  whose game is `Library/Tide`'s library; with several editors open, it asks
+  which.
+- **Debug Tide game** builds the game to debug (`tide build`, into its
+  `.tide/debugger` folder) and starts it under the debugger. `args` passes it
+  arguments (`--host`, `--join <code>`).
+- **Attach to Tide game (tide run)** attaches to the game **Tide: Run** plays,
+  which goes on reloading as files are saved.
+
+They become a native debugger's configurations: Microsoft's C/C++ extension's
+(`cppvsdbg`) on Windows, with the game's natvis; LLVM's LLDB DAP (`lldb-dap`)
+or CodeLLDB (`lldb`) on macOS and Linux, importing the game's `game_lldb.py`.
+In Restricted Mode they don't start, since debugging runs the game's code.
+More: [Debugging](https://tide-engine.dev/tools/debugging).
+
 ## Settings
 
 - `tide.server.path`: another language server to run.
@@ -74,7 +108,7 @@ In a workspace you haven't trusted, nothing from it runs: the language server
 is the `tidels` that comes with tide (or one your user settings name outside
 the workspace), never the workspace's `build/tools/tidels` or one its settings
 name. Servers on `PATH` inside the workspace are skipped too, including paths
-through symlinks or junctions. Games don't run, since running one runs its code.
+through symlinks or junctions. Games don't run or debug, since running one runs its code.
 Trusting the workspace restarts the server.
 
 ## Testing
@@ -95,4 +129,5 @@ The optional fourth argument also checks actual native prefab frame display in
 the webview, panel reuse and backend shutdown.
 It leaves logs in the printed temporary folder and changes no installed
 extensions or personal settings. This opt-in test needs a desktop editor;
-CTest runs the dependency-free adapter suite.
+CTest runs the dependency-free adapter suite, `test/extension.test.mjs` and
+`test/debug.test.mjs` (the debug configurations).

@@ -159,6 +159,7 @@ typedef struct gen {
     bool has_scene;      // The body being generated has tide_scene: the scene of the entity it runs for
     bool scene_local;    // ...an entity of the local world
     gen_frame *frame;    // Inlined code being generated, or NULL for the routine's own
+    bool typing_params;  // A function's definition: its typed list parameters (typed_list_param) arrive as tide_arg_<name>
     VEC(gen_open) containers; // The GUI containers and draw settings whose blocks are open
     VEC(gen_target) targets;
     int labels;          // Names made up so far (inlined calls, containers, switches), numbered per program
@@ -1678,6 +1679,53 @@ static void line_directive(gen *g, const loc at)
 static void line_reset(gen *g)
 {
     if (g->opts->line_directives) sb_printf(&g->c, "#line %d \"%s\"\n", g->c.line + 1, g->c_path);
+}
+
+// The macro a function of the game's own code is declared with. Where its
+// lines map back to .tide files, that's TIDE_CODE, which keeps the debug info
+// TIDE_HELPER's generated plumbing leaves out, so a debugger steps through
+// Tide code and over the helpers it calls (see gen_prelude).
+static const char *code_helper(const gen *g)
+{
+    return g->opts->line_directives ? "TIDE_CODE" : "TIDE_HELPER";
+}
+
+// Starts a function of the game's own code: its opening line and what comes
+// before its first statement are its declaration's line, so a debugger stepping
+// into it stops there rather than in generated C.
+static void code_start(gen *g, const loc at)
+{
+    if (at.line > 0) line_directive(g, at);
+}
+
+// Debug builds (codegen_options.visualizers) give a list local, and a
+// function's list parameter, a struct of its own for its element type,
+// tide_local_list<n> { tide_list list; }: Windows' debug info keeps no
+// typedefs, so only a type of its own tells a debugger's natvis what its
+// elements are. Code reads `<name>.list`, the list at the struct's start.
+// These say which, from the declaration alone, so declarations, references
+// and the captures of comparisons and parallel steps agree. Async code and
+// code copied into a call (an Action's function) keep plain lists: async
+// locals live in task frames, and copied code names its locals otherwise.
+static bool typed_list_local(const gen *g, const stmt *s)
+{
+    return g->opts->visualizers && !g->task && !g->frame && s && s->kind == S_VAR && s->type.kind == TY_LIST
+        && s->type.decl && !s->out_decl && !s->discard;
+}
+
+static bool typed_list_param(const gen *g, const decl *m, const param *p)
+{
+    return g->opts->visualizers && !g->task && !g->frame && m && (m->kind == DECL_FUNCTION || m->kind == DECL_METHOD)
+        && !m->is_async && !m->is_extern && !m->is_worker && p && p->type.kind == TY_LIST && p->type.decl
+        && p->mode == PARAM_READ && p->function_param && !p->is_out && !p->c_indirect && !p->task_ref;
+}
+
+// Its C type: tide_local_list<n>, for the program's List<T> number n.
+static const char *typed_list_cname(const type t)
+{
+    sb b = {0};
+    sb_printf(&b, "tide_local_list%d", t.decl->index);
+    return b.data;
 }
 
 // ---------------------------------------------------------------------------
@@ -3811,14 +3859,15 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             const bool by_address = g->routine && (g->routine->is_mut_method || g->routine->c_self_indirect);
             sb_printf(o, "tide_self%s%s", by_address ? "->" : ".", field_cname(e->field));
         } else if (e->bind == BIND_LOCAL) {
-            sb_put(o, local_cname(g, e->name));
+            sb_printf(o, "%s%s", local_cname(g, e->name), typed_list_local(g, e->local) ? ".list" : "");
         } else if (e->bind == BIND_DEVICES) {
             // This machine's devices: Sample's, or this frame's in views and the functions they call.
             sb_put(o, g->in_input ? "(*tide_dev)" : "tide_ui->devices");
         } else if (e->bind == BIND_PARAM && is_pointer_param(e->param)) {
             sb_printf(o, "(*%s)", local_cname(g, e->name));
         } else {
-            sb_put(o, local_cname(g, e->name));
+            const bool typed = e->bind == BIND_PARAM && typed_list_param(g, g->routine, e->param);
+            sb_printf(o, "%s%s", local_cname(g, e->name), typed ? ".list" : "");
         }
         break;
     case E_MEMBER: {
@@ -7272,12 +7321,19 @@ static void gen_stmt(gen *g, const stmt *s)
 
     case S_VAR: {
         const char *name = local_cname(g, s->name);
+        const bool typed = typed_list_local(g, s); // A struct of its own, for debuggers: its list is .list
         indent(g, o);
-        if (s->is_mut || s->loop_var || s->delayed) sb_printf(o, "%s %s = ", c_type(s->type), name); // Delayed initialization writes it
-        else sb_printf(o, "%s = ", const_decl(s->type, name));
+        if (typed) {
+            sb_printf(o, "%s%s %s = {", s->is_mut || s->loop_var || s->delayed || mutable_locals ? "" : "const ",
+                      typed_list_cname(s->type), name);
+        } else if (s->is_mut || s->loop_var || s->delayed) {
+            sb_printf(o, "%s %s = ", c_type(s->type), name); // Delayed initialization writes it
+        } else {
+            sb_printf(o, "%s = ", const_decl(s->type, name));
+        }
         if (s->delayed) gen_default(g, o, s->type); // Defined padding and safe storage; source reads still require assignment
         else gen_value_of(g, o, s->value, s->type);
-        sb_printf(o, ";\n");
+        sb_printf(o, "%s;\n", typed ? "}" : "");
         line(g, o, "(void)%s;", name);
         task_declare(g, name, s->type);
         break;
@@ -8036,7 +8092,7 @@ static void gen_header(gen *g)
     const program *prog = g->prog;
     sb *o = &g->h;
     sb_printf(o, "// Generated by tidec from %s. Do not edit.\n", g->from);
-    sb_put(o, "#pragma once\n\n// Session ABI: simulation identity (15), input prediction (1), visibility (1), players (16), client hashes (2).\n\n");
+    sb_put(o, "#pragma once\n\n// Session ABI: simulation identity (15), input prediction (1), visibility (1), players (16), client hashes (2), rewind (1).\n\n");
     // Maps' entry representation is opaque in public structs, but must still distinguish builds.
     if (prog->maps.count) sb_put(o, "// Map ABI: signed 64-bit insertion order (2).\n\n");
     if (prog->uses_heap) sb_put(o, "// Heap ABI: retained immutable asset lists (1).\n\n");
@@ -10366,7 +10422,25 @@ static void gen_prelude(gen *g)
     sb_put(o, "// Determinism: never fuse a*b + c, whatever flags this file is built with.\n");
     sb_put(o, "#pragma STDC FP_CONTRACT OFF\n\n");
     sb_put(o, "// Helpers are emitted whether or not this program uses them.\n");
-    sb_put(o, "#define TIDE_HELPER static inline __attribute__((unused))\n\n");
+    if (g->opts->line_directives) {
+        // Debuggers step over the generated plumbing, which has no debug info, and through the game's
+        // own code (TIDE_CODE), whose lines are its .tide files'. TIDE_DEBUG_PLUMBING keeps both.
+        sb_put(o, "#ifdef TIDE_DEBUG_PLUMBING\n#define TIDE_HELPER static inline __attribute__((unused))\n#else\n"
+                  "#define TIDE_HELPER static inline __attribute__((unused, nodebug))\n#endif\n"
+                  "#define TIDE_CODE static inline __attribute__((unused))\n\n");
+    } else {
+        sb_put(o, "#define TIDE_HELPER static inline __attribute__((unused))\n\n");
+    }
+    if (g->opts->visualizers && g->prog->lists.count) {
+        // List locals and parameters, each type its own for debuggers (typed_list_local), the list at its start
+        sb_put(o, "// Each List<T>'s locals, as debuggers tell them apart: the list itself is .list\n");
+        for (int i = 0; i < g->prog->lists.count; i++) {
+            const char *name = typed_list_cname((type){TY_LIST, g->prog->lists.items[i]});
+            sb_printf(o, "typedef struct %s { tide_list list; } %s; // " STR_FMT "\n", name, name,
+                      STR_ARG(g->prog->lists.items[i]->name));
+        }
+        sb_put(o, "\n");
+    }
     sb_put(o, "// Active mutable component copies, borrowed only for this synchronous invocation.\n"
               "typedef struct tide_component_binding {\n"
               "    const struct tide_component_binding *previous;\n"
@@ -12615,7 +12689,7 @@ static capture_list par_captures(gen *g, const decl *sys, const stmt *loop)
     for (int i = 0; i < locals.count; i++) {
         const stmt *l = locals.items[i];
         const bool element = l->kind == S_FOREACH && (l->value->type.kind == TY_LIST || l->value->type.kind == TY_SET);
-        capture(&out, element ? elem_vtype(l->type) : c_type(l->type), local_cname(g, l->name));
+        capture(&out, element ? elem_vtype(l->type) : typed_list_local(g, l) ? typed_list_cname(l->type) : c_type(l->type), local_cname(g, l->name));
     }
     // Steps that roll: the loop's generator, which each step makes its own from (gen_par_nest)
     if (stmt_rolls(loop->then_stmt)) capture(&out, "tide_random", "tide_par_dice");
@@ -12837,7 +12911,7 @@ static capture_list sort_captures(gen *g, const expr *sort)
             if (p->mode == PARAM_MUT && p->type.kind == TY_STRING) capture(&out, "tide_textref", local_cname(g, p->name));
             else if (p->mode == PARAM_MUT) capture(&out, ptr_type("", c_type(p->type)), local_cname(g, p->name));
             else if (p->type.kind == TY_RECORD || p->type.kind == TY_INPUT) capture(&out, ptr_type("const ", c_type(p->type)), local_cname(g, p->name));
-            else capture(&out, c_type(p->type), local_cname(g, p->name));
+            else capture(&out, typed_list_param(g, fn, p) ? typed_list_cname(p->type) : c_type(p->type), local_cname(g, p->name));
             if (p->type.kind == TY_INPUT) capture(&out, ptr_type("const ", c_type(p->type)), prev_input_name(g, p->name));
             if (takes_where(p)) capture(&out, "uint32_t", where_name(g, p->name));
             if (has_fields_ptr(p)) {
@@ -12853,7 +12927,7 @@ static capture_list sort_captures(gen *g, const expr *sort)
         const stmt *l = locals.items[i];
         if (l == sort->compare[0] || l == sort->compare[1]) continue;
         const bool element = l->kind == S_FOREACH && (l->value->type.kind == TY_LIST || l->value->type.kind == TY_SET);
-        capture(&out, element ? elem_vtype(l->type) : c_type(l->type), local_cname(g, l->name));
+        capture(&out, element ? elem_vtype(l->type) : typed_list_local(g, l) ? typed_list_cname(l->type) : c_type(l->type), local_cname(g, l->name));
     }
     return out;
 }
@@ -12907,6 +12981,7 @@ static void gen_sort_functions(gen *g, const decl *code, const decl *routine)
         const char *name = g->sort_names.items[i];
         const type element = list_elem(sort->type_decl);
         const capture_list caps = sort_captures(g, sort);
+        code_start(g, sort->at);
         sb_printf(o, "static bool %s(const void *tide_ctx, const void *tide_pa, const void *tide_pb)\n{\n", name);
         sb_printf(o, "    const %s_ctx *tide_cx = tide_ctx;\n    (void)tide_cx;\n", name);
         for (int k = 0; k < caps.count; k++) {
@@ -13716,15 +13791,16 @@ static void gen_system_body(gen *g, const decl *sys)
     gen_sort_heads(g, sys, NULL, sys->body);
     sb_printf(o, "// %s " STR_FMT "\n", sys->is_view ? "view" : sys->is_handler ? "event handler" : "system",
               STR_ARG(sys->qualified));
-    // TIDE_HELPER: a system that no entity matches is never called.
+    // TIDE_HELPER (or TIDE_CODE): a system that no entity matches is never called.
+    code_start(g, sys->at);
     if (sys->is_view) {
-        sb_printf(o, "TIDE_HELPER void tide_view_%s(const tide_world *tide_w, tide_local *tide_l, tide_draw_list *tide_draw, "
-                     "tide_gui *tide_ui, uint32_t tide_seed", name);
+        sb_printf(o, "%s void tide_view_%s(const tide_world *tide_w, tide_local *tide_l, tide_draw_list *tide_draw, "
+                     "tide_gui *tide_ui, uint32_t tide_seed", code_helper(g), name);
     } else if (sys->is_handler) {
-        sb_printf(o, "TIDE_HELPER void tide_handler_%s(%s *%s, const %s *restrict %s", name, world_type(sys->is_local),
+        sb_printf(o, "%s void tide_handler_%s(%s *%s, const %s *restrict %s", code_helper(g), name, world_type(sys->is_local),
                   sys->is_local ? "tide_l" : "tide_w", type_cname(sys->event), trigger_cname(g, sys));
     } else {
-        sb_printf(o, "TIDE_HELPER void tide_system_%s(tide_world *tide_w", name);
+        sb_printf(o, "%s void tide_system_%s(tide_world *tide_w", code_helper(g), name);
     }
     if (sys->per_entity) sb_put(o, ", tide_entity tide_this");
     if (sys->is_view && sys->takes_verified && sys->borrows_owner_world) sb_put(o, ", const tide_world *tide_verified");
@@ -15165,7 +15241,7 @@ static void gen_routine_signature(gen *g, sb *o, const decl *m)
         sb_put(o, m->params.count == 0 ? "void)" : ")");
         return;
     }
-    sb_printf(o, "TIDE_HELPER %s %s(", m->result.kind == TY_VOID ? "void" : c_type(m->result),
+    sb_printf(o, "%s %s %s(", code_helper(g), m->result.kind == TY_VOID ? "void" : c_type(m->result),
               m->borrows_queries ? borrow_cname(g->borrow) : routine_cname(m));
     int n = 0;
     if (m->draws) {
@@ -15209,6 +15285,7 @@ static void gen_routine_signature(gen *g, sb *o, const decl *m)
         else if (p->c_indirect) sb_printf(o, "%sconst %s *%s", n++ ? ", " : "", c_type(p->type), local_cname(g, p->name));
         else if (p->mode == PARAM_MUT) sb_printf(o, "%s%s *%s", n++ ? ", " : "", c_type(p->type), local_cname(g, p->name));
         else if (p->type.kind == TY_RECORD) sb_printf(o, "%sconst %s *restrict %s", n++ ? ", " : "", c_type(p->type), local_cname(g, p->name));
+        else if (g->typing_params && typed_list_param(g, m, p)) sb_printf(o, "%sconst tide_list tide_arg_%s", n++ ? ", " : "", local_cname(g, p->name));
         else sb_printf(o, "%s%s", n++ ? ", " : "", const_decl(p->type, local_cname(g, p->name)));
         if (takes_where(p)) sb_printf(o, ", const uint32_t %s", where_name(g, p->name));
         // A component whose local fields it uses comes with them, where they're kept
@@ -15233,10 +15310,20 @@ static void gen_routine(gen *g, const decl *m)
     if (m->is_worker) gen_par_heads(g, m);
     if (m->owner) sb_printf(o, "// " STR_FMT "." STR_FMT "\n", STR_ARG(m->owner->qualified), STR_ARG(m->name));
     else sb_printf(o, "// " STR_FMT "\n", STR_ARG(m->qualified));
+    code_start(g, m->at);
+    g->typing_params = true;
     gen_routine_signature(g, o, m);
+    g->typing_params = false;
     sb_put(o, "\n{\n");
     g->indent = 1;
     g->routine = m;
+    // Its list parameters, each in a struct of its own for debuggers (typed_list_param)
+    for (int i = 0; i < m->params.count; i++) {
+        const param *p = &m->params.items[i];
+        if (!typed_list_param(g, m, p)) continue;
+        const char *name = local_cname(g, p->name);
+        line(g, o, "const %s %s = {tide_arg_%s};", typed_list_cname(p->type), name, name);
+    }
     g->spawn_temps = 0;
     g->call_temps = 0;
     g->has_scene = takes_scene(g->prog, m);
@@ -15322,6 +15409,7 @@ static void gen_task_resume(gen *g, task_info *ti, const bool local)
     // The task's code, with copies of its entity's components, which the
     // function below (the resume function itself) takes and puts back
     const char *worlds_decl = local ? "const tide_world *tide_w, tide_local *tide_l" : "tide_world *tide_w";
+    code_start(g, fn->at);
     sb_printf(o, "static int32_t %s_body(%s, %s *tide_f, const tide_entity tide_this, const bool tide_this_local, "
                  "const tide_entity tide_scene",
               task_resume_name(fn, local), worlds_decl, type_cname(ti->frame));
@@ -16039,6 +16127,7 @@ static void gen_sample(gen *g)
                      "    const %s input = tide_input_sample_body(tide_dev, tide_l);\n"
                      "    tide_scratch_reset(tide_mark);\n    return input;\n}\n\n", name, params, name);
     }
+    code_start(g, input->at);
     sb_printf(o, "%s%s tide_input_sample%s(%s)\n{\n", g->prog->uses_text ? "static " : "", name,
               g->prog->uses_text ? "_body" : "", params);
     g->indent = 1;
@@ -20272,7 +20361,10 @@ static void gen_commands_api(gen *g)
         for (uint32_t i = 0; i < players; i++) sb_printf(o, "        case %u: return (uint32_t)w->tide_command_state.top%u;\n", i, i);
         sb_put(o, "        default: return 0;\n        }\n");
     }
-    sb_put(o, "    default: return 0;\n    }\n}\n\n");
+    sb_put(o, "    default: return 0;\n    }\n}\n\n"
+              "static void tide_game_keep_commands(void *to, const void *from)\n{\n"
+              "    memcpy(&((tide_world *)to)->tide_command_state, &((const tide_world *)from)->tide_command_state,\n"
+              "           sizeof ((tide_world *)to)->tide_command_state);\n}\n\n");
     if (unordered) {
         // The window: the highest id applied, and a bit for each of the
         // TIDE_COMMAND_WINDOW ids down from it (bit 0 the highest's own)
@@ -21146,7 +21238,8 @@ static void gen_game_api(gen *g)
     if (sharded(g)) sb_put(o, "    .shards = &tide_shard_api,\n");
     if (prog->command_types.count) sb_put(o, "    .check_command = tide_game_check_command,\n"
                                            "    .command_sequence = tide_game_command_sequence,\n"
-                                           "    .command = tide_game_command,\n");
+                                           "    .command = tide_game_command,\n"
+                                           "    .keep_commands = tide_game_keep_commands,\n");
     if (commands_unordered(prog)) sb_put(o, "    .command_applied = tide_game_command_applied,\n");
     if (prog->channels.count) sb_printf(o, "    .command_channels = %uu,\n", (unsigned)prog->channels.count + 1u);
     // Its settings: here rather than in the header, so they don't change the game's hash
@@ -21504,6 +21597,59 @@ static void gen_layout(gen *g)
 }
 
 #include "embed_codegen.inc"
+#include "debug_views_codegen.inc"
+
+// The C, with each line of a statement's code at that statement's .tide line.
+// A statement's C can take several lines (a foreach's loop and its element),
+// and after `#line N` C counts on, N + 1, N + 2, which are other statements'
+// lines: a debugger would step through those, and a breakpoint on them would
+// find this statement's code. So a code line after the first that a #line
+// names gets its own #line, and the directives naming the generated file
+// itself (line_reset) are counted again, as these lines move them.
+static sb pin_lines(const sb *c, const char *c_path)
+{
+    sb out = {0};
+    char *self = arena_alloc(strlen(c_path) + 16);
+    sprintf(self, "\"%s\"", c_path);
+    const char *tide = NULL; // The #line in force that names a .tide file, or NULL
+    size_t tide_len = 0;
+    bool first = false;     // The next code line is the first after it
+    bool continued = false; // The line before ends in a backslash: this one is part of it
+    for (const char *at = c->data ? c->data : ""; *at;) {
+        const char *end = strchr(at, '\n');
+        const size_t len = end ? (size_t)(end - at) : strlen(at);
+        const bool part = continued;
+        continued = len > 0 && at[len - 1] == '\\';
+        if (part) {
+            sb_putn(&out, at, len);
+            if (end) sb_put(&out, "\n");
+        } else if (len > 6 && strncmp(at, "#line ", 6) == 0) {
+            const char *quote = memchr(at, '"', len);
+            if (quote && (size_t)(at + len - quote) == strlen(self) && strncmp(quote, self, strlen(self)) == 0) {
+                sb_printf(&out, "#line %d %s\n", out.line + 1, self);
+                tide = NULL;
+            } else {
+                sb_putn(&out, at, len);
+                sb_put(&out, "\n");
+                tide = at;
+                tide_len = len;
+                first = true;
+            }
+        } else {
+            bool blank = true;
+            for (size_t i = 0; i < len && blank; i++) blank = at[i] == ' ' || at[i] == '\t' || at[i] == '\r';
+            if (tide && !blank && !first) {
+                sb_putn(&out, tide, tide_len);
+                sb_put(&out, "\n");
+            }
+            if (!blank) first = false;
+            sb_putn(&out, at, len);
+            if (end) sb_put(&out, "\n");
+        }
+        at = end ? end + 1 : at + len;
+    }
+    return out;
+}
 
 // A setting's text for tide, cut to fit.
 static void setting_text(char *out, const size_t size, const expr *setting)
@@ -22389,7 +22535,9 @@ bool codegen(program *prog, const codegen_options *opts)
     sb h_path = {0};
     sb_printf(&h_path, "%s/%s.h", opts->out_dir, opts->name);
     if (!opts->server && !g.asset_dependencies.count && !g.skinned_fingerprints.count) build_pack(&g);
-    const bool ok = write_file(h_path.data, &g.h) && write_file(path.data, &g.c) && write_pack(&g);
+    const sb c = opts->line_directives ? pin_lines(&g.c, g.c_path) : g.c;
+    const bool ok = write_file(h_path.data, &g.h) && write_file(path.data, &c) && write_pack(&g)
+                    && (!opts->visualizers || write_debug_views(&g));
     free(g.pack_bytes);
     return ok;
 }

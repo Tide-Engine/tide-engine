@@ -1,5 +1,12 @@
 # `tide_add_game` and the generated header
 
+`VISUALIZERS` (2026-10-26): `tide_add_game(... VISUALIZERS)` passes
+`--visualizers` on native targets, lists `<name>.natvis` and `<name>_lldb.py`
+as outputs, compiles with `-fno-eliminate-unused-debug-types -gno-column-info`
+and links the natvis into the PDB on Windows. The debugger tests' fixture uses
+it. The `TIDE_VISUALIZERS` option gives every native game it (as when
+debugging the repository's games). `notes/debugging.md`.
+
 `EMBED` (2026-10-20): `tide_add_game(... EMBED)` passes `--embed` (which
 implies the layout) and defines `TIDE_HAS_EMBED` for the target, so
 `tide/run.h`'s table has `tide_game_embed` and `tide_game_layout` for

@@ -171,7 +171,7 @@ existing live instances. Restart the run to play from fresh initial state.
 `--scene` leaves the output filename unchanged; use `-o` for a separate build
 artifact.
 
-The engine is optimized in every build. Without `--release`, generated game code and the game's and packages' C/C++ stay unoptimized for debugging; engine and game code retain debug symbols and assertions, and `DEBUG` is defined. Engine objects are cached, so ordinary game edits reuse them. This applies to native, web and Android builds, including hot reload.
+The engine is optimized in every build. Without `--release`, generated game code and the game's and packages' C/C++ stay unoptimized for debugging; engine and game code retain debug symbols and assertions, and `DEBUG` is defined. A native debugger stops at breakpoints in `.tide` files and shows the game's values as Tide's, with `<name>.natvis` (also in the `.pdb` on Windows) and `<name>_lldb.py` beside the program (see [Debugging](debugging.md)). Engine objects are cached, so ordinary game edits reuse them. This applies to native, web and Android builds, including hot reload.
 
 `tide build --release --web` makes one self-contained `.html` file with the game inside. It opens straight from disk, and can be put online as it is.
 
@@ -305,6 +305,8 @@ When the game gets into a state you don't want, press **Ctrl+R** in the game, or
 
 Hot reload is for `tide run`. `tide build` makes a plain program, or a page with nothing of it. Runs [without a window](#without-a-window) play once, with no hot reload.
 
+A debugger attached to the game stays attached across reloads: each build is a library with its own debug information, and breakpoints in `.tide` files carry over to it (see [Debugging](debugging.md)).
+
 ## Unity
 
 ```sh
@@ -322,6 +324,9 @@ and an outline of what each file declares and which packages the
 game has, which the package's inspectors show. It ends when its input closes, as the editor's package closes it.
 `--once` builds once and ends. Unity and other Tide builds of the same game
 play in the same matches. This is early, and its details may change.
+Each library is a debug build: a native debugger attached to the Unity editor
+stops at breakpoints in `.tide` files, with the game's natvis in its `.pdb` and
+`game.natvis` and `game_lldb.py` beside it (see [Debugging](debugging.md)).
 
 The package builds with the version of `tide` its own commit is, which Unity
 locks in `Packages/packages-lock.json`, so a branch of the project and everyone
@@ -338,10 +343,19 @@ Tide's Install), while the editor goes on, and in a batch run, as on a build
 server like GameCI, at once, with nothing installed beforehand. Point
 `TIDE_VERSIONS` at a folder the server keeps between builds to download each
 version once. A package in a folder on this machine has no commit: it builds
-with the `tide` on `PATH` or where the installer puts it. Your own `tide`
-command in Project Settings > Tide, kept in `UserSettings` out of source
-control, takes the place of all of these, as for a build of `tide` you're
-working on.
+with the `tide` on `PATH` or where the installer puts it.
+
+For engine development, launch Unity with `-tide-command "<local Tide>/bin/tide"`
+(`tide.exe` on Windows). That editor process uses the local compiler/runtime,
+including across script reloads; Project Settings > Tide shows the override.
+Restart without the argument to follow the project pin. No override path is
+saved, and old saved paths are ignored. A missing executable or malformed argument
+fails explicitly. If Play reports an embed ABI mismatch, rebuild the development
+compiler to match the package or relaunch normally. Tide checks the existing host
+before entering Play. Updated VS Code and JetBrains plugins follow the active
+selection and return to the pin when that editor exits, including after a crash.
+A development package newer than the latest published compiler needs a matching
+development build or release tag.
 
 In a Unity project the game is the whole of `Assets`: every `.tide` file in it,
 as every C# script is, but those in folders Unity leaves out (hidden ones, and
@@ -439,6 +453,15 @@ each written only when it changes. Keep that folder in source control, so a
 fresh clone compiles before tide has built anything. Renaming a component or a
 field in your editor (tidels) renames it in the project's prefabs and scenes
 too, so they keep their values.
+
+In Play, Window > Tide > Time Travel pauses a match the editor runs, steps it
+a tick at a time, shows any tick since it started again (the GameObjects,
+inspectors and Tide's drawing following it), goes on from a tick shown, and
+saves and replays recordings of matches, each tick checked against the
+recording, so a tester's bug report replays bit for bit and a changed build
+shows the first tick it changes. With other machines in the match, it never
+stops for them: the match goes on behind the tick shown. The package's README
+has the details.
 
 Tide's views draw in Unity's frame with Tide's own renderer: 2D, text, 3D
 drawn with the camera's depth (so Tide's meshes and Unity's scene hide each

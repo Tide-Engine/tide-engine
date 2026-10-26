@@ -166,7 +166,9 @@ public final class TideRunConfiguration extends LocatableConfigurationBase<TideR
         final String problem = options.getProblem();
         if (problem != null && !problem.isEmpty()) throw new ExecutionException(problem);
         final String setting = options.getTide();
-        final Path tide = setting != null && !setting.isEmpty() ? Path.of(setting) : Tide.installed("tide");
+        final var tools = TideProjectTools.find(Path.of(options.getFolder()), "tide");
+        if ((setting == null || setting.isEmpty()) && tools.error() != null) throw new ExecutionException(tools.error());
+        final Path tide = setting != null && !setting.isEmpty() ? Path.of(setting) : tools.file();
         if (tide == null) {
             throw new ExecutionException("Couldn't find tide. Install it (" + Tide.INSTALL + "), or choose it in the run configuration.");
         }

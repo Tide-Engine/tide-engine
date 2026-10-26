@@ -51,11 +51,11 @@ Warnings are errors. Fix warnings encountered during validation, including ones 
 
 ### Testing and merging
 
-Test the change once locally before merging, according to scope:
+Test only what the change needs, once, before merging: the Build workflow runs every suite on every platform for each push to `dev` and catches the rest, and full local suites are slow (owner, 2026-10-26). Run the tests of what changed and of what depends on it (`ctest -R`, a test binary's name filter), on native and web only where the changed code runs on both; a full suite only for a change that reaches broadly (codegen every game goes through, the shared runtime, the build system). Don't repeat a run for wording, notes or a fix outside what it tested. A failure in CI after the push is fixed then, first.
 
 | Scope | Required validation |
 |---|---|
-| Compiler, engine, platform or build | Full native and web debug suites |
+| Compiler, engine, platform or build | The affected targets' tests, native and web where the code runs on both; full suites only for broad changes (above) |
 | Repository game, including a benchmark or prototype | Its targets and tests, native and web |
 | `docs/` only | `npm run build` in `docs/` |
 | `relay/` only | `node --test relay/relay.test.mjs relay/lobbies.test.mjs` |
@@ -188,6 +188,7 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | `packages/voice/`, Opus voice chat, local session data and host integration | `notes/voice-package.md` |
 | Reload/migration runtime, CLI serving and generated layouts | `notes/hot-reload.md` |
 | `compiler/lsp/`, `tools/` | `notes/editors.md` |
+| Native debuggers: `.tide` line mapping, natvis and LLDB views, editors' debug configurations, debugger tests | `notes/debugging.md` |
 | Temporary runtime maintenance, generated-C boundary, CPU skinning/pose contracts | `notes/runtime-ownership.md` |
 | Input devices, desktop/mobile/web input | `notes/input-devices.md` |
 | `extern`, `out List<T>`, C systems and rows/jobs ABI | `notes/c-interop.md` |
@@ -204,4 +205,4 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | RTC, rooms, UDP/relay transport and peer tests | `notes/webrtc-and-rooms.md` |
 | Modding requirements, implementation status and withdrawn decisions | `notes/modding.md` |
 | `tide publish`, inactive build service | `notes/build-service.md` in `Tide-Engine/tide-services` |
-| `unity/`, `tide unity`, `tide/embed.h`: Unity as an authoring/rendering front end | `notes/unity.md` |
+| `unity/`, `tide unity`, `tide/embed.h`, `tide/timeline.h`: Unity as an authoring/rendering front end, its time travel | `notes/unity.md` |

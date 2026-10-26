@@ -26,6 +26,20 @@ Tide. If you prefer your existing package manager, follow the install examples
 in [Emacs](#emacs) or [Vim and Neovim](#vim-and-neovim) below instead.
 Choose one installation method per editor.
 
+VS Code and JetBrains select a trusted project's pinned Tide version for both
+the compiler and language server. Standalone games use `tide = <version>` in
+`tide.packages`; Unity projects use their locked Tide package and the installation
+Unity selected. Open Unity once to resolve and install that version. Installations
+selected with Unity's `-tide-command <path>` are used only while that editor
+process is alive; closing it or a crash returns the IDE to the pin. Installations
+are shared in `TIDE_VERSIONS` (by default `%LOCALAPPDATA%/Tide/versions` or
+`~/.tide/versions`). A missing pinned version is reported rather than silently
+using another. Package/lock changes restart the language server; separate VS Code
+workspace folders and separate JetBrains projects can use different versions.
+Explicit executable settings and a trusted engine checkout's built server take
+precedence. In VS Code, `tide.path` also selects its sibling language server unless
+`tide.server.path` is set. Emacs/Vim/Neovim retain their configured server command.
+
 The standalone Emacs and Vim/Neovim plugins are MIT-licensed. **Emacs users:
 the mode is available directly from GitHub now, but is not listed on MELPA yet.**
 The plugins need Tide installed separately for its `tidels` language server.
@@ -43,7 +57,7 @@ Tide's language server, `tidels`, comes with `tide`. Open your game's folder, th
 - After `asset`, completion offers the supported asset types as you start typing, with forms such as `Mesh<Vertex3>`, `Grid2<Color>` and `Map<string, Texture>`. Inside a list or map, it offers the supported element types; mesh vertex and contract arguments offer structs. Assets also complete by name, with their type's methods and parameter hints, including `Texture.Sample` in a frag or vert. They highlight as ordinary read-only variables; fields use the editor's property styling. The editor's theme chooses their colors.
 - A known [skinned model or animation asset](../game/animation.md) exposes its clip names in completion: `hero.animations.idle` or `movement.run`. Hover shows each clip's original source name, and a model exposes its bone names and `defaultPose` too. The editor reads the glTF JSON or FBX catalog without importing geometry or animation samples; invalid or unavailable metadata is diagnosed separately from an absent clip. Their asset paths complete `.glb`, `.gltf` and `.fbx` files.
 - Moving a declaration to a file of its own.
-- In a [Unity project](cli.md#unity), a rename also edits the prefabs and scenes that use the name and the project's C#: a component, field, singleton, event, command, struct, enum or enum member renamed in Tide is renamed in the scripts of `Assets` and of the project's embedded and local packages, as the C# twins in `Packages/com.tide.game` name it (`_` added where C# needs it). Only references known to be the game's are edited: a member of a value known to be of the game's type, a type the file's usings make the game's. Strings, comments, other types' members of the same name and names a type of the project's own also has are left alone.
+- In a [Unity project](cli.md#unity), a rename also edits the prefabs and scenes that use the name and the project's C#: a component, field, singleton, event, command, struct, enum, enum member or namespace renamed in Tide is renamed in the scripts of `Assets` and of the project's embedded and local packages, as the C# twins in `Packages/com.tide.game` name it (`_` added where C# needs it). Only references known to be the game's are edited: a member of a value known to be of the game's type (declared as it, a cast, `as`, a pattern, a generic call, or a field, property or method of the project's own classes, partial ones too), a type or namespace the file's usings make the game's, and doc comments' `cref`s. Other comment text, strings, other types' members of the same name and names a type of the project's own also has are left alone.
 - Enum completion includes `EnumType.Count()`; hover and signature help explain its compile-time member count. A cast written as `(int)value` reports the Tide spelling, `int(value)`.
 - [Assets](../game/assets.md) kept in step with their files: renaming a file an `asset` names, or a folder above it, in the editor rewrites every path to it, in every file of the game and its packages, each relative to its own file (a glob isn't rewritten: a file it stops matching gets an error instead). Changes to watched asset files refresh their diagnostics, including external glTF buffers and replacement files that keep the same size and timestamp. A file moved outside the editor is found again by its bytes, which `tidels` and `tide` keep the SHA-256 of in the game's `.tide/`: the error says where it is now, with a quick fix that writes the path, or else lists the files of that name, a fix each. Inside an `asset`'s path, completion offers the folders and files it can lead to, the type's own files (`.png`, `.psd`, `.jpg`, `.jpeg`, `.tga` and `.bmp` for a `Grid2<Color>`, `Texture` or `Cubemap`; `.wav`, `.ogg`, `.mp3` and `.flac` for a `Clip`; `.glb`, `.gltf`, `.fbx` and `.obj` for a `Mesh`; `.glb`, `.gltf` and `.fbx` for a `SkinnedMesh`, `Animation` or `AnimationCatalog`), and `*` and `**/*` with each accepted format for a list, map, cubemap or combined `AnimationCatalog` catalog. Each literal in an animation file list supports the same path completion and rename edits; checked clip completion cleans exporter names and shows original names and source filenames on hover. Hovering a [`Mesh`](../game/assets.md#meshes) asset says what its file has: how many vertices and triangles, and whether it has normals, uvs, colors and tangents for the vertex struct to take.
 - Each system's place in [the schedule](../game/schedule.md) above it: its stage, what it reaches through its `World`, each system it waits for and why, and what runs alongside it. A part that names a system goes to it when clicked.
@@ -329,6 +343,10 @@ Starting a replacement waits for the preceding run's processes to stop. Closing 
 
 On the web, each reload says what it did in the page's console: **Tide: Game Developer Tools** shows it.
 
+### Debugging
+
+Breakpoints go in `.tide` files, and the **Tide** debug configurations (**Run and Debug**, then add a configuration) stop at them, with your values shown as Tide's: **Attach to Unity (Tide)**, **Debug Tide game**, which builds the game to debug and starts it, and **Attach to Tide game (tide run)**, for the game **Tide: Run** plays. They use Microsoft's C/C++ extension on Windows, and LLVM's LLDB DAP or CodeLLDB on macOS and Linux. In Restricted Mode they don't start. See [Debugging](debugging.md).
+
 ## JetBrains IDEs
 
 CLion, Rider, IntelliJ and the others, 2024.2 or later: Tide's installer adds
@@ -384,6 +402,10 @@ Right-click a `.tide` file and pick **Run**, or press Ctrl+Shift+F10 in it (Ctrl
 - **mygame (Android)** plays it on the Android phone or emulator that's connected, as `tide run --android` does (see [Android](cli.md#android)).
 
 They're Tide run configurations, which you can also make and edit under **Run > Edit Configurations**, where **Play it** picks among the three. They use `tide run`. `tide`'s output is in the Run tool window, where an error's place links to the file: saving a file reloads the game (on Android, builds it again and starts it over), and typing `r` and Enter there starts it over. The first run on Android may ask to download Android's tools from Google: type `y` and Enter there to accept. A run configuration can run another `tide`.
+
+### Debugging
+
+In CLion, breakpoints go in `.tide` files. **Run > Debug Tide Game** (also in a `.tide` file's context menu) plays the game as its run configuration does and attaches the debugger; **Run > Attach to Unity (Tide)** attaches to the Unity editor running the project. Both stop at your breakpoints and show your values as Tide's. On Windows, put the **Visual Studio** toolchain first, whose debugger reads the game's `.pdb`. See [Debugging](debugging.md).
 
 ## Emacs
 

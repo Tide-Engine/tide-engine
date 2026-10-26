@@ -21,6 +21,7 @@ typedef struct codegen_options {
     const char *name;        // Base name of the generated files.
     const char *out_dir;
     bool line_directives;    // Map generated code back to .tide lines for debuggers.
+    bool visualizers;        // Also write <name>.natvis and <name>_lldb.py: how debuggers show the game's values.
     bool layout;             // Describe the data layout as tide_game_layout (tide/layout.h), for hot reloading.
     bool embed;              // ...and tide_game_embed (tide/embed_game.h), for another program to run it (tide/embed.h): implies layout.
     bool strip_unused_assets; // Closed release games only: exclude assets never referenced by checked Tide code/defaults/shaders.

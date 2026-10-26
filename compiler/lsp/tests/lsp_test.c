@@ -6809,12 +6809,16 @@ TIDE_TEST(lsp_rename_reaches_unity_scripts)
         "using H = Tide.Game.Health;\n"
         "\n"
         "// Health.hp in a comment stays, as does /* hp */ and \"hp\" in a string\n"
+        "/// <summary>Heals <see cref=\"Health.hp\"/>, and has a <see cref=\"Tide.Game.Combat.Blade\"/></summary>\n"
         "public class Player : MonoBehaviour\n"
         "{\n"
         "    public Health health;\n"
         "    public Shield shield;\n"
         "    public TideRunner runner;\n"
         "    Mode mode = Mode.Calm;\n"
+        "    GameState state;\n"
+        "\n"
+        "    Health Find() => health;\n"
         "\n"
         "    void Update()\n"
         "    {\n"
@@ -6840,6 +6844,16 @@ TIDE_TEST(lsp_rename_reaches_unity_scripts)
         "        H alias = health;\n"
         "        foreach (var each in GetComponents<Health>()) each.hp = 0;\n"
         "        switch (mode) { case Mode.Angry: break; }\n"
+        "        object thing = health;\n"
+        "        ((Health)thing).armor = 1;\n"
+        "        (thing as Health).armor = 2;\n"
+        "        var cast = (Health)thing;\n"
+        "        cast.hp = 5;\n"
+        "        if (thing is Health found && found.hp > 0) found.hp = 6;\n"
+        "        Find().hp = 7;\n"
+        "        GameState.Instance.Current.hp = 8;\n"
+        "        state.Pick().hp = 9;\n"
+        "        Tide.Game.Combat.Blade qualified = blade;\n"
         "    }\n"
         "}\n"
         "\n"
@@ -6849,6 +6863,34 @@ TIDE_TEST(lsp_rename_reaches_unity_scripts)
     static const char own[] = "namespace Mine\n{\n    public class Trail { public float length; }\n"
                               "    public class Use { Trail trail; void F() { trail.length = 1; } }\n}\n";
     write_file("lsp_unity_cs/Assets/Scripts/Own.cs", own);
+    // A partial class of the project's in two files: one's fields, the other's methods
+    static const char state[] = "using Tide.Game;\n\npublic partial class GameState\n{\n    public static GameState Instance;\n"
+                                "    public Health Current;\n}\n";
+    static const char state_more[] = "using Tide.Game;\n\npublic partial class GameState\n{\n    public Health Pick() => Current;\n"
+                                     "    void Hit() { Current.hp -= 1; }\n}\n";
+    write_file("lsp_unity_cs/Assets/Scripts/State.cs", state);
+    write_file("lsp_unity_cs/Assets/Scripts/StateMore.cs", state_more);
+    // A prefab of the namespaced component, as a component of its own and listed on a TideEntity
+    char blade_guid[65], fight_guid[65];
+    sha256_hex("tide component Combat.Blade", strlen("tide component Combat.Blade"), blade_guid);
+    sha256_hex("tide component Fight.Blade", strlen("tide component Fight.Blade"), fight_guid);
+    blade_guid[32] = fight_guid[32] = '\0';
+    char prefab[1024];
+    snprintf(prefab, sizeof prefab,
+             "%%YAML 1.1\n"
+             "--- !u!114 &50\n"
+             "MonoBehaviour:\n"
+             "  m_Script: {fileID: 11500000, guid: %s, type: 3}\n" // line 3
+             "  m_EditorClassIdentifier: Tide.Game::Tide.Game.Combat.Blade\n"
+             "  sharpness: 2\n"
+             "--- !u!114 &51\n"
+             "MonoBehaviour:\n"
+             "  m_Script: {fileID: 11500000, guid: 4f7d2c1e9a8b4b6c8d3e2f1a0b9c8d7e, type: 3}\n"
+             "  components:\n"
+             "  - type: Combat.Blade\n" // line 10
+             "    values: sharpness = 1\n",
+             blade_guid);
+    write_file("lsp_unity_cs/Assets/Blade.prefab", prefab);
     write_file("lsp_unity_cs/Assets/Samples~/Left.cs", "using Tide.Game;\nclass Left { Health h; void F() { h.hp = 1; } }\n");
 
     char root[700], uri[700];
@@ -6871,6 +6913,20 @@ TIDE_TEST(lsp_rename_reaches_unity_scripts)
     TIDE_CHECK(!has(hp, cs_edit(player, "Health.hp in", 0, 7, 2, "health")));
     TIDE_CHECK(!has(hp, cs_edit(player, "\"health.hp\"", 0, 8, 2, "health")));
     TIDE_CHECK(!has(hp, "com.tide.game") && !has(hp, "Left.cs"));
+    // ...through a cast, a pattern's variable, a method's result, a static field and a field of a partial class's other
+    // file, and a doc comment's cref
+    TIDE_CHECK(has_edit(hp, cs_edit(player, "cast.hp", 0, 5, 2, "health")));
+    TIDE_CHECK(has_edit(hp, cs_edit(player, "found.hp > 0", 0, 6, 2, "health")));
+    TIDE_CHECK(has_edit(hp, cs_edit(player, "found.hp = 6", 0, 6, 2, "health")));
+    TIDE_CHECK(has_edit(hp, cs_edit(player, "Find().hp", 0, 7, 2, "health")));
+    TIDE_CHECK(has_edit(hp, cs_edit(player, "Current.hp = 8", 0, 8, 2, "health")));
+    TIDE_CHECK(has_edit(hp, cs_edit(player, "Pick().hp", 0, 7, 2, "health")));
+    TIDE_CHECK(has_edit(hp, cs_edit(state_more, "Current.hp", 0, 8, 2, "health")));
+    TIDE_CHECK(has_edit(hp, cs_edit(player, "cref=\"Health.hp", 0, 13, 2, "health")));
+    const char *armor = request_at(uri, "textDocument/rename", 0, 31, "\"newName\":\"plating\"");
+    TIDE_CHECK(has_edit(armor, cs_edit(player, "((Health)thing).armor", 0, 16, 5, "plating")));
+    TIDE_CHECK(has_edit(armor, cs_edit(player, "(thing as Health).armor", 0, 18, 5, "plating")));
+    TIDE_CHECK(has_edit(armor, cs_edit(player, "h.armor:F2", 0, 2, 5, "plating")));
     // The type: wherever the usings make the name Health's, and qualified; the alias's uses are the alias's
     const char *type = request_at(uri, "textDocument/rename", 0, 12, "\"newName\":\"Vitality\"");
     TIDE_CHECK(has_edit(type, cs_edit(player, "using H = Tide.Game.Health", 0, 20, 6, "Vitality")));
@@ -6883,6 +6939,13 @@ TIDE_TEST(lsp_rename_reaches_unity_scripts)
     TIDE_CHECK(!has(type, cs_edit(player, "health;", 0, 0, 6, "Vitality")));
     TIDE_CHECK(!has(type, cs_edit(player, "H alias", 0, 0, 1, "Vitality")));
     TIDE_CHECK(!has(type, "com.tide.game"));
+    TIDE_CHECK(has_edit(type, cs_edit(player, "(Health)thing", 0, 1, 6, "Vitality")));
+    TIDE_CHECK(has_edit(type, cs_edit(player, "as Health", 0, 3, 6, "Vitality")));
+    TIDE_CHECK(has_edit(type, cs_edit(player, "is Health", 0, 3, 6, "Vitality")));
+    TIDE_CHECK(has_edit(type, cs_edit(player, "Health Find", 0, 0, 6, "Vitality")));
+    TIDE_CHECK(has_edit(type, cs_edit(player, "cref=\"Health", 0, 6, 6, "Vitality")));
+    TIDE_CHECK(has_edit(type, cs_edit(state, "Health Current", 0, 0, 6, "Vitality")));
+    TIDE_CHECK(has_edit(type, cs_edit(state_more, "Health Pick", 0, 0, 6, "Vitality")));
     // A local field, and a field whose C# name has _ after (Value, a member of the class): renamed to a plain one
     const char *heard = request_at(uri, "textDocument/rename", 0, (int)(strstr(game, "heard") - game), "\"newName\":\"times\"");
     TIDE_CHECK(has_edit(heard, cs_edit(player, "h.heard", 0, 2, 5, "times")));
@@ -6921,8 +6984,21 @@ TIDE_TEST(lsp_rename_reaches_unity_scripts)
     TIDE_CHECK(has_edit(blade, cs_edit(player, "<Blade>", 0, 1, 5, "Sword")));
     const char *sharpness = request_at(uri, "textDocument/rename", 7, 44, "\"newName\":\"edge\"");
     TIDE_CHECK(has_edit(sharpness, cs_edit(player, "blade.sharpness", 0, 6, 9, "edge")));
+    // The namespace: where a using, a qualified name or a cref names it; in the prefab, the component's new script GUID,
+    // its class's name and its TideEntity list's type
+    const char *combat = request_at(uri, "textDocument/rename", 7, 12, "\"newName\":\"Fight\"");
+    TIDE_CHECK(has_edit(combat, cs_edit(player, "using Tide.Game.Combat", 0, 16, 6, "Fight")));
+    TIDE_CHECK(has_edit(combat, cs_edit(player, "Tide.Game.Combat.Blade qualified", 0, 10, 6, "Fight")));
+    TIDE_CHECK(has_edit(combat, cs_edit(player, "cref=\"Tide.Game.Combat", 0, 16, 6, "Fight")));
+    TIDE_CHECK(!has(combat, cs_edit(player, "Blade blade", 0, 0, 5, "Fight")));
+    char guid_edit[256];
+    snprintf(guid_edit, sizeof guid_edit, "{\"range\":{\"start\":{\"line\":3,\"character\":37},\"end\":{\"line\":3,\"character\":69}},\"newText\":\"%s\"}", fight_guid);
+    TIDE_CHECK(has_edit(combat, guid_edit));
+    TIDE_CHECK(has_edit(combat, "{\"range\":{\"start\":{\"line\":4,\"character\":48},\"end\":{\"line\":4,\"character\":60}},\"newText\":\"Fight.Blade\"}"));
+    TIDE_CHECK(has_edit(combat, "{\"range\":{\"start\":{\"line\":10,\"character\":10},\"end\":{\"line\":10,\"character\":22}},\"newText\":\"Fight.Blade\"}"));
 
     static const char *const files[] = {"Assets/Tide/game.tide", "Assets/Scripts/Player.cs", "Assets/Scripts/Own.cs", "Assets/Samples~/Left.cs",
+                                        "Assets/Scripts/State.cs", "Assets/Scripts/StateMore.cs", "Assets/Blade.prefab",
                                         "Packages/com.tide.game/schema.json", "Packages/com.tide.game/package.json",
                                         "Packages/com.tide.game/Components/Health.cs", "Packages/com.studio.tools/package.json",
                                         "Packages/com.studio.tools/Tool.cs", "Packages/manifest.json", "LocalPackage/package.json",

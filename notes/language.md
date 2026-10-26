@@ -1,5 +1,19 @@
 # Language features, as tidec builds them
 
+## Native debugging: pinned lines, Tide-code entry lines, plumbing without debug info (2026-10-26)
+
+Line mode only (`codegen_options.line_directives`; `--no-line` output is
+unchanged, checked over every game's source list): `pin_lines` repeats a
+statement's `#line` before each of its code lines, so C's line counting can't
+attribute them to the next Tide lines; `code_start` gives a Tide-code
+function's signature and prologue its declaration's line; `TIDE_HELPER` is
+`nodebug` (unless `TIDE_DEBUG_PLUMBING`) and Tide-code functions and their
+prototypes use `TIDE_CODE` (`code_helper`). `--visualizers` writes
+`<name>.natvis` and `<name>_lldb.py` (`debug_views_codegen.inc`), and gives
+list locals and by-value list parameters a struct of their own per element
+type, read as `<name>.list` (`typed_list_local`, `typed_list_param`).
+Contracts, tests and gaps: `notes/debugging.md`, Typed list locals.
+
 ## Declaration-only package dependencies (2026-10-25)
 
 The inherited --declarations filter removed package functions/shaders before

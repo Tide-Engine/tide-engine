@@ -30,7 +30,14 @@ repositories {
     }
 }
 
+// CLion's native debugger's breakpoint extension point, to compile TideBreakpoints against: the IDE the
+// plugin builds on (IntelliJ Community) hasn't that debugger, and CLion supplies the real interface at run time
+// (tide-cidr.xml). Never packaged; verifyPlugin checks the plugin against CLion's.
+val cidrStubs: SourceSet = sourceSets.create("cidrStubs")
+
 dependencies {
+    compileOnly(cidrStubs.output)
+    testImplementation(cidrStubs.output) // For TideBreakpoints in the IDE the tests run, which has no CLion
     testImplementation("junit:junit:4.13.2")
     intellijPlatform {
         // The oldest platform LSP4IJ supports, so the plugin runs from there on.

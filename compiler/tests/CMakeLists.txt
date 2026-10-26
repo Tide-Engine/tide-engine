@@ -696,3 +696,33 @@ if(TARGET tidec_core)
     target_link_libraries(tidec_audio_files_tests PRIVATE tide tidec_core)
     add_test(NAME tidec_audio_files COMMAND tidec_audio_files_tests)
 endif()
+
+# Debuggers stopping in Tide code (debugger/): a game built as tide's debug builds are, with its natvis in its
+# .pdb, under Windows' own debugger engine on Windows, and LLDB with the game's LLDB views where there's an LLDB.
+# Unoptimized whatever the build type, as tide builds a game to debug it.
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
+    tide_add_game(tidec_debugger_fixture VISUALIZERS SOURCES debugger/fixture.tide NAME game
+        HOST "${CMAKE_CURRENT_SOURCE_DIR}/debugger/fixture_main.c")
+    target_compile_options(tidec_debugger_fixture PRIVATE -O0 -g)
+    if(WIN32 AND NOT MINGW)
+        add_executable(tide_dbgeng_drive debugger/dbgeng_drive.c)
+        target_link_libraries(tide_dbgeng_drive PRIVATE tide_flags)
+        add_test(NAME tidec_debugger_natvis
+            COMMAND "${CMAKE_COMMAND}" "-DDRIVE=$<TARGET_FILE:tide_dbgeng_drive>"
+                "-DPROGRAM=$<TARGET_FILE:tidec_debugger_fixture>" "-DFIXTURE=${CMAKE_CURRENT_SOURCE_DIR}/debugger/fixture.tide"
+                "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/debugger_natvis" -P "${CMAKE_CURRENT_SOURCE_DIR}/debugger/natvis_test.cmake")
+    endif()
+    # LLDB on Linux, where CI installs it beside clang; elsewhere with -DTIDE_LLDB=<lldb>. Windows' LLDB can't
+    # read the heaps' thread-locals, which the natvis test covers there.
+    if(NOT WIN32 AND NOT APPLE AND NOT DEFINED TIDE_LLDB)
+        string(REGEX MATCH "^[0-9]+" clang_major "${CMAKE_C_COMPILER_VERSION}")
+        find_program(TIDE_LLDB NAMES lldb lldb-${clang_major} HINTS "$ENV{LLVM_ROOT}/bin")
+    endif()
+    if(TIDE_LLDB)
+        add_test(NAME tidec_debugger_lldb
+            COMMAND "${CMAKE_COMMAND}" "-DLLDB=${TIDE_LLDB}" "-DPROGRAM=$<TARGET_FILE:tidec_debugger_fixture>"
+                "-DVIEWS=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_debugger_fixture/game_lldb.py"
+                "-DFIXTURE=${CMAKE_CURRENT_SOURCE_DIR}/debugger/fixture.tide"
+                "-DWORK=${CMAKE_CURRENT_BINARY_DIR}/debugger_lldb" -P "${CMAKE_CURRENT_SOURCE_DIR}/debugger/lldb_test.cmake")
+    endif()
+endif()
