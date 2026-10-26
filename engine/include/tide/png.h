@@ -21,10 +21,29 @@
 #include "tide/io.h"
 #include "tide/list.h"
 
-// The biggest picture it reads, each way: the platform's writer writes no
-// bigger, and a header that claims more is refused before anything is made
-// for it.
+// ---------------------------------------------------------------------------
+// Limits: what a file's bytes can ask of a decode. Bytes can come from
+// anywhere (a fetched URL, a player's file), and grid.Decode runs in match
+// code on every machine, so a small hostile file mustn't end the program or
+// take minutes. Each limit is only its number here: change it and nothing
+// else changes. A file past one is refused (InvalidData) before what it
+// asks for is made or done.
+
+// The biggest picture any decode reads, each way, tidec's imports too: the
+// platform's writer writes no bigger.
 #define TIDE_PNG_MAX_SIDE 16384
+
+// The most pixels grid.Decode takes. A grid's cell is 16 bytes, so 4096 by
+// 4096 is 256 MiB of a world's heap, which holds 1 GiB. A file a few
+// kilobytes long can say a picture this big: deflate packs a run of one
+// color about a thousand to one. tidec's imports aren't held to it.
+#define TIDE_GRID_DECODE_MAX_PIXELS (4096u * 4096u)
+
+// The most inflated bytes past a picture's last scanline that a decode still
+// reads, for zlib's checksum over them, so a decode's work is the picture's
+// size and never what a few bytes of deflate inflate to. Encoders write
+// none; a stream with more is refused.
+#define TIDE_PNG_MAX_EXTRA_BYTES (1u << 20)
 
 // A picture: `width` by `height` pixels, rows from the top, each a tide_color
 // (0 to 1 a channel; alpha 1 where the file has none), allocated with
@@ -34,9 +53,14 @@ typedef struct tide_png_image {
     tide_color *pixels;
 } tide_png_image;
 
+// Why a decode was refused, where a limit above refused it: a line naming
+// the limit, for a diagnostic or a log. `why`, if given, holds
+// TIDE_PNG_WHY bytes, and is empty when the file was wrong in another way.
+#define TIDE_PNG_WHY 256
+
 // Reads a whole file's bytes: false for one that isn't a PNG, or is wrong
-// anywhere, and then nothing is allocated.
-bool tide_png_decode(const uint8_t *bytes, size_t size, tide_png_image *out);
+// anywhere, and then nothing is allocated. `why` may be NULL.
+bool tide_png_decode(const uint8_t *bytes, size_t size, tide_png_image *out, char *why);
 
 // Reading a picture row by row, as it's decoded, so what's made for it is a
 // row, never the picture: `began` has the size before any row, and `row` each
@@ -50,7 +74,7 @@ typedef struct tide_png_row {
 } tide_png_row;
 typedef bool (*tide_png_began_fn)(void *user, uint32_t width, uint32_t height);
 typedef bool (*tide_png_row_fn)(void *user, const tide_png_row *row);
-bool tide_png_decode_rows(const uint8_t *bytes, size_t size, tide_png_began_fn began, tide_png_row_fn row, void *user);
+bool tide_png_decode_rows(const uint8_t *bytes, size_t size, tide_png_began_fn began, tide_png_row_fn row, void *user, char *why);
 
 // A raw deflate stream (RFC 1951) inflated into `out`, called with each run
 // of bytes as they're made, in order. False for a stream that's wrong or ends
@@ -62,8 +86,9 @@ bool tide_inflate(const uint8_t *in, size_t size, tide_inflate_fn out, void *use
 // grid.Decode(bytes): a Grid2<Color> field of a world at `where` becomes the
 // picture, sized as it is, every pixel written (a clear black pixel is a cell
 // that's zero, which takes no chunk). TIDE_IO_INVALID_DATA for bytes that
-// aren't a PNG or are wrong anywhere, and then the grid is as it was. A
-// picture too big for the world's heap ends the program as running out of
-// memory does (tide_out_of_memory). Rows are written straight into the grid,
+// aren't a PNG or are wrong anywhere, or past a limit above
+// (TIDE_GRID_DECODE_MAX_PIXELS), and then the grid is as it was. Pictures
+// within it that together fill the world's heap end the program as running
+// out of memory does (tide_out_of_memory). Rows are written straight into the grid,
 // so nothing the picture's size is made beside it.
 tide_io_error tide_grid_decode(tide_grid *g, const tide_grid_shape *s, uint32_t where, tide_list bytes);

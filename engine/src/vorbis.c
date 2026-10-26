@@ -14,7 +14,6 @@
 #define FLOOR_VALUES_MOST 65u  // A floor's X list: 2 + 31 partitions of up to 8 each, by the format
 #define BLOCK_MOST 8192u
 #define BLOCK_LEAST 64u
-#define CODEBOOK_FLOATS_MOST (1u << 24) // The vectors of one codebook, which a corrupt file could ask gigabytes of
 #define CLASSWORDS_MOST 64u
 
 // ---------------------------------------------------------------------------
@@ -162,6 +161,7 @@ struct tide_vorbis {
     uint32_t channels, rate;
     uint32_t bs0, bs1;
     uint64_t frames; // The last page's granule position
+    uint64_t given;  // What a reader gives at the most: frames, or fewer where the packets give fewer
     codebook *books;
     uint32_t book_count;
     floor1 *floors;
@@ -239,12 +239,16 @@ static uint32_t lookup1_values(const uint32_t entries, const uint32_t dimensions
     }
 }
 
-static bool read_codebook(bits *b, codebook *c, const char **why)
+// `entries` and `values` count what the file's codebooks before this one
+// have, against TIDE_VORBIS_MAX_ENTRIES and TIDE_VORBIS_MAX_VALUES
+static bool read_codebook(bits *b, codebook *c, uint32_t *entries, uint32_t *values, const char **why)
 {
     if (read_bits(b, 24) != 0x564342u) return fail(why, "a codebook's sync pattern is wrong");
     c->dimensions = read_bits(b, 16);
     c->entries = read_bits(b, 24);
     if (c->entries == 0) return fail(why, "a codebook has no entries");
+    if (c->entries > TIDE_VORBIS_MAX_ENTRIES - *entries) return fail(why, "the file's codebooks have more entries in all than a file's may (TIDE_VORBIS_MAX_ENTRIES)");
+    *entries += c->entries;
     uint8_t *lengths = tide_alloc_zeroed(c->entries, 1);
     bool ok = true;
     if (read_bits(b, 1) == 0) {
@@ -309,7 +313,9 @@ static bool read_codebook(bits *b, codebook *c, const char **why)
     const uint32_t value_bits = read_bits(b, 4) + 1u;
     const bool sequence = read_bits(b, 1) != 0;
     const uint64_t floats = (uint64_t)c->entries * c->dimensions;
-    if (c->dimensions == 0 || floats > CODEBOOK_FLOATS_MOST) return fail(why, "a codebook's vectors are too big");
+    if (c->dimensions == 0) return fail(why, "a codebook's vectors have no dimensions");
+    if (floats > TIDE_VORBIS_MAX_VALUES - *values) return fail(why, "the file's codebooks' vectors have more numbers in all than a file's may (TIDE_VORBIS_MAX_VALUES)");
+    *values += (uint32_t)floats;
     const uint32_t lookup_values = c->lookup_type == 1 ? lookup1_values(c->entries, c->dimensions) : (uint32_t)floats;
     uint16_t *multiplicands = tide_alloc(lookup_values * sizeof *multiplicands + 1u);
     for (uint32_t i = 0; i < lookup_values; i++) multiplicands[i] = (uint16_t)read_bits(b, value_bits);
@@ -641,22 +647,29 @@ typedef struct packets {
     uint32_t partial; // Bytes of a packet that goes on into the next page
 } packets;
 
-static void packets_append(packets *ps, const uint8_t *bytes, const uint32_t size)
+// The two below say false where the packets would pass what their counts
+// (and, on the web, a size_t) hold: a file of gigabytes
+static bool packets_append(packets *ps, const uint8_t *bytes, const uint32_t size)
 {
-    if (ps->size + size > ps->capacity) {
+    if (size > ps->capacity - ps->size) {
         uint32_t grown = ps->capacity ? ps->capacity : 4096u;
-        while (ps->size + size > grown) grown *= 2u;
+        while (size > grown - ps->size) {
+            if (grown > UINT32_MAX / 2u) return false;
+            grown *= 2u;
+        }
         ps->data = tide_realloc(ps->data, ps->capacity, grown);
         ps->capacity = grown;
     }
     memcpy(ps->data + ps->size, bytes, size);
     ps->size += size;
     ps->partial += size;
+    return true;
 }
 
-static void packets_end(packets *ps)
+static bool packets_end(packets *ps)
 {
     if (ps->count + 2u > ps->offsets_capacity) {
+        if (ps->offsets_capacity > UINT32_MAX / 2u || (size_t)ps->offsets_capacity > SIZE_MAX / 2u / sizeof *ps->offsets) return false;
         const uint32_t grown = ps->offsets_capacity ? ps->offsets_capacity * 2u : 64u;
         ps->offsets = tide_realloc(ps->offsets, ps->offsets_capacity * sizeof *ps->offsets, grown * sizeof *ps->offsets);
         ps->offsets_capacity = grown;
@@ -664,28 +677,30 @@ static void packets_end(packets *ps)
     if (ps->count == 0) ps->offsets[0] = 0;
     ps->offsets[++ps->count] = ps->size;
     ps->partial = 0;
+    return true;
 }
 
 // Reads every page, keeping the packets of the first stream that begins with a
 // Vorbis identification header, and the last granule position of its pages.
 static bool read_pages(const uint8_t *bytes, const size_t size, packets *ps, uint64_t *granule, const char **why)
 {
-    if (size > UINT32_MAX) return fail(why, "the file is too big");
+    if (size > UINT32_MAX) return fail(why, "the file is more than 4 GiB");
     uint32_t at = 0;
     bool found = false;
     uint32_t serial = 0;
     bool ended = false;
     *granule = 0;
-    while (at + 27u <= size && !ended) {
+    // What's left is size - at, never at + n, which a file of nearly 4 GB wraps
+    while (size - at >= 27u && !ended) {
         const uint8_t *h = bytes + at;
         if (memcmp(h, "OggS", 4) != 0) return fail(why, "a page doesn't start with OggS");
         if (h[4] != 0) return fail(why, "a page's version isn't 0");
         const uint32_t segments = h[26];
-        if (at + 27u + segments > size) return fail(why, "a page is cut short");
+        if (size - at - 27u < segments) return fail(why, "a page is cut short");
         uint32_t body = 0;
         for (uint32_t i = 0; i < segments; i++) body += h[27u + i];
         const uint32_t page_size = 27u + segments + body;
-        if (at + page_size > size) return fail(why, "a page is cut short");
+        if (size - at < page_size) return fail(why, "a page is cut short");
         uint8_t header[27 + 255];
         memcpy(header, h, 27u + segments);
         memset(header + 22, 0, 4);
@@ -714,9 +729,9 @@ static bool read_pages(const uint8_t *bytes, const size_t size, packets *ps, uin
             if (skipping) {
                 if (lacing < 255u) skipping = false;
             } else {
-                packets_append(ps, p + off, lacing);
+                if (!packets_append(ps, p + off, lacing)) return fail(why, "the file is more than 4 GiB");
                 if (lacing < 255u) {
-                    packets_end(ps);
+                    if (!packets_end(ps)) return fail(why, "the file is more than 4 GiB");
                     completed = true;
                 }
             }
@@ -758,8 +773,9 @@ static bool read_setup(tide_vorbis *f, const uint8_t *p, const uint32_t size, co
     bits b = bits_over(p + 7, size - 7u);
     f->book_count = read_bits(&b, 8) + 1u;
     f->books = tide_alloc_zeroed(f->book_count, sizeof *f->books);
+    uint32_t entries = 0, values = 0;
     for (uint32_t i = 0; i < f->book_count; i++) {
-        if (!read_codebook(&b, &f->books[i], why)) return false;
+        if (!read_codebook(&b, &f->books[i], &entries, &values, why)) return false;
         if (f->books[i].dimensions > f->classwords_most) f->classwords_most = f->books[i].dimensions;
     }
     const uint32_t times = read_bits(&b, 6) + 1u;
@@ -793,6 +809,8 @@ static bool read_setup(tide_vorbis *f, const uint8_t *p, const uint32_t size, co
     if (f->classwords_most > CLASSWORDS_MOST) f->classwords_most = CLASSWORDS_MOST;
     return true;
 }
+
+static bool count_frames(tide_vorbis *f, const char **why);
 
 tide_vorbis *tide_vorbis_open(const uint8_t *bytes, const size_t size, const char **why)
 {
@@ -829,6 +847,10 @@ tide_vorbis *tide_vorbis_open(const uint8_t *bytes, const size_t size, const cha
     memcpy(f->packets, ps.data + audio_from, ps.size - audio_from);
     free(ps.data);
     free(ps.offsets);
+    if (!count_frames(f, why)) {
+        tide_vorbis_close(f);
+        return NULL;
+    }
     make_transform(&f->transforms[0], f->bs0);
     if (f->bs1 != f->bs0) make_transform(&f->transforms[1], f->bs1);
     return f;
@@ -853,6 +875,7 @@ void tide_vorbis_close(tide_vorbis *f)
 uint32_t tide_vorbis_channels(const tide_vorbis *f) { return f ? f->channels : 0; }
 uint32_t tide_vorbis_rate(const tide_vorbis *f) { return f ? f->rate : 0; }
 uint64_t tide_vorbis_frames(const tide_vorbis *f) { return f ? f->frames : 0; }
+uint64_t tide_vorbis_frames_given(const tide_vorbis *f) { return f ? f->given : 0; }
 
 // ---------------------------------------------------------------------------
 // Reading: a block at a time
@@ -876,6 +899,7 @@ struct tide_vorbis_reader {
     int32_t Y[2][FLOOR_VALUES_MOST];
     bool has_floor[2];
     bool no_residue[2];
+    bool damaged; // A packet skipped, or ended in its floors or residue
 };
 
 size_t tide_vorbis_reader_size(const tide_vorbis *f)
@@ -923,11 +947,14 @@ void tide_vorbis_reader_close(tide_vorbis_reader *r)
     free(r);
 }
 
+bool tide_vorbis_reader_damaged(const tide_vorbis_reader *r) { return r && r->damaged; }
+
 void tide_vorbis_rewind(tide_vorbis_reader *r)
 {
     if (!r) return;
     r->packet = 0;
     r->primed = false;
+    r->damaged = false;
     r->produced = 0;
     r->out_at = r->out_count = 0;
 }
@@ -1003,15 +1030,54 @@ static void render_line(const int32_t x0, const int32_t y0, const int32_t x1, co
 // The floor's curve from its values, as `n2` (n/2) amplitudes
 static void floor_curve(const floor1 *f, const int32_t *Y, const uint32_t n2, int32_t *fy, float *out)
 {
-    static float inverse_db[256];
-    if (inverse_db[255] == 0.0f) {
-        // The specification's table: 1 at 255, each step down a 1.0649863th
-        double v = 1.0;
-        for (int i = 255; i >= 0; i--) {
-            inverse_db[i] = (float)v;
-            v /= 1.0649863;
-        }
-    }
+    // The specification's table: 1 at 255, each step down a 1.0649863th (in
+    // double, from 1.0, rounded to float). Immutable: clips decode on the
+    // preparation pool and stream on the audio thread at once.
+    static const float inverse_db[256] = {
+        1.06481615e-07f, 1.13401462e-07f, 1.20771006e-07f, 1.28619462e-07f, 1.36977974e-07f, 1.45879653e-07f,
+        1.55359842e-07f, 1.65456100e-07f, 1.76208474e-07f, 1.87659623e-07f, 1.99854924e-07f, 2.12842750e-07f,
+        2.26674615e-07f, 2.41405360e-07f, 2.57093404e-07f, 2.73800936e-07f, 2.91594262e-07f, 3.10543896e-07f,
+        3.30724987e-07f, 3.52217597e-07f, 3.75106907e-07f, 3.99483724e-07f, 4.25444682e-07f, 4.53092753e-07f,
+        4.82537587e-07f, 5.13895884e-07f, 5.47292132e-07f, 5.82858604e-07f, 6.20736444e-07f, 6.61075774e-07f,
+        7.04036665e-07f, 7.49789365e-07f, 7.98515430e-07f, 8.50407957e-07f, 9.05672835e-07f, 9.64529136e-07f,
+        1.02721037e-06f, 1.09396501e-06f, 1.16505771e-06f, 1.24077053e-06f, 1.32140360e-06f, 1.40727673e-06f,
+        1.49873040e-06f, 1.59612739e-06f, 1.69985378e-06f, 1.81032101e-06f, 1.92796711e-06f, 2.05325841e-06f,
+        2.18669220e-06f, 2.32879711e-06f, 2.48013703e-06f, 2.64131199e-06f, 2.81296116e-06f, 2.99576504e-06f,
+        3.19044875e-06f, 3.39778421e-06f, 3.61859361e-06f, 3.85375279e-06f, 4.10419398e-06f, 4.37091012e-06f,
+        4.65495941e-06f, 4.95746781e-06f, 5.27963539e-06f, 5.62273954e-06f, 5.98814040e-06f, 6.37728772e-06f,
+        6.79172399e-06f, 7.23309313e-06f, 7.70314455e-06f, 8.20374407e-06f, 8.73687441e-06f, 9.30465194e-06f,
+        9.90932676e-06f, 1.05532972e-05f, 1.12391172e-05f, 1.19695060e-05f, 1.27473595e-05f, 1.35757637e-05f,
+        1.44580017e-05f, 1.53975743e-05f, 1.63982058e-05f, 1.74638644e-05f, 1.85987756e-05f, 1.98074413e-05f,
+        2.10946546e-05f, 2.24655178e-05f, 2.39254678e-05f, 2.54802962e-05f, 2.71361660e-05f, 2.88996453e-05f,
+        3.07777264e-05f, 3.27778580e-05f, 3.49079673e-05f, 3.71765091e-05f, 3.95924726e-05f, 4.21654404e-05f,
+        4.49056170e-05f, 4.78238653e-05f, 5.09317615e-05f, 5.42416274e-05f, 5.77665924e-05f, 6.15206300e-05f,
+        6.55186232e-05f, 6.97764408e-05f, 7.43109485e-05f, 7.91401471e-05f, 8.42831723e-05f, 8.97604186e-05f,
+        9.55936193e-05f, 1.01805897e-04f, 1.08421882e-04f, 1.15467818e-04f, 1.22971644e-04f, 1.30963119e-04f,
+        1.39473923e-04f, 1.48537816e-04f, 1.58190742e-04f, 1.68470971e-04f, 1.79419279e-04f, 1.91079074e-04f,
+        2.03496602e-04f, 2.16721091e-04f, 2.30804988e-04f, 2.45804171e-04f, 2.61778070e-04f, 2.78790045e-04f,
+        2.96907587e-04f, 3.16202495e-04f, 3.36751342e-04f, 3.58635560e-04f, 3.81941965e-04f, 4.06762963e-04f,
+        4.33196983e-04f, 4.61348827e-04f, 4.91330167e-04f, 5.23259921e-04f, 5.57264662e-04f, 5.93479199e-04f,
+        6.32047246e-04f, 6.73121656e-04f, 7.16865354e-04f, 7.63451739e-04f, 8.13065679e-04f, 8.65903799e-04f,
+        9.22175706e-04f, 9.82104451e-04f, 1.04592775e-03f, 1.11389882e-03f, 1.18628691e-03f, 1.26337935e-03f,
+        1.34548172e-03f, 1.43291953e-03f, 1.52603968e-03f, 1.62521133e-03f, 1.73082785e-03f, 1.84330798e-03f,
+        1.96309760e-03f, 2.09067226e-03f, 2.22653733e-03f, 2.37123156e-03f, 2.52532912e-03f, 2.68944097e-03f,
+        2.86421785e-03f, 3.05035268e-03f, 3.24858399e-03f, 3.45969736e-03f, 3.68453027e-03f, 3.92397447e-03f,
+        4.17897897e-03f, 4.45055496e-03f, 4.73978044e-03f, 5.04780095e-03f, 5.37583884e-03f, 5.72519470e-03f,
+        6.09725434e-03f, 6.49349205e-03f, 6.91547990e-03f, 7.36489147e-03f, 7.84350839e-03f, 8.35322961e-03f,
+        8.89607426e-03f, 9.47419740e-03f, 1.00898910e-02f, 1.07455952e-02f, 1.14439121e-02f, 1.21876094e-02f,
+        1.29796369e-02f, 1.38231358e-02f, 1.47214504e-02f, 1.56781431e-02f, 1.66970063e-02f, 1.77820846e-02f,
+        1.89376753e-02f, 2.01683659e-02f, 2.14790329e-02f, 2.28748750e-02f, 2.43614297e-02f, 2.59445887e-02f,
+        2.76306309e-02f, 2.94262432e-02f, 3.13385464e-02f, 3.33751217e-02f, 3.55440490e-02f, 3.78539227e-02f,
+        4.03139107e-02f, 4.29337621e-02f, 4.57238704e-02f, 4.86952923e-02f, 5.18598221e-02f, 5.52299991e-02f,
+        5.88191934e-02f, 6.26416355e-02f, 6.67124838e-02f, 7.10478798e-02f, 7.56650195e-02f, 8.05822089e-02f,
+        8.58189464e-02f, 9.13960040e-02f, 9.73354876e-02f, 1.03660963e-01f, 1.10397503e-01f, 1.17571831e-01f,
+        1.25212386e-01f, 1.33349478e-01f, 1.42015368e-01f, 1.51244417e-01f, 1.61073238e-01f, 1.71540797e-01f,
+        1.82688594e-01f, 1.94560856e-01f, 2.07204640e-01f, 2.20670104e-01f, 2.35010639e-01f, 2.50283092e-01f,
+        2.66548067e-01f, 2.83870041e-01f, 3.02317709e-01f, 3.21964234e-01f, 3.42887491e-01f, 3.65170479e-01f,
+        3.88901561e-01f, 4.14174825e-01f, 4.41090524e-01f, 4.69755352e-01f, 5.00283003e-01f, 5.32794595e-01f,
+        5.67418933e-01f, 6.04293346e-01f, 6.43564165e-01f, 6.85387015e-01f, 7.29927778e-01f, 7.77363062e-01f,
+        8.27881038e-01f, 8.81681979e-01f, 9.38979208e-01f, 1.00000000e+00f,
+    };
     static const int32_t ranges[4] = {256, 128, 86, 64};
     const int32_t range = ranges[f->multiplier - 1u];
     bool step2[FLOOR_VALUES_MOST];
@@ -1125,6 +1191,74 @@ static const transform *transform_for(const tide_vorbis *f, const uint32_t n)
     return n == f->bs0 ? &f->transforms[0] : &f->transforms[1];
 }
 
+// A packet's block, from its first bits: its size, and the parts of it its
+// window overlaps with the blocks either side
+typedef struct framing {
+    const mode *md;
+    uint32_t n, left_start, left_n, right_start, right_n;
+} framing;
+
+// False for a packet a reader skips: one that isn't an audio packet, or names
+// a mode the file hasn't got
+static bool read_framing(bits *b, const tide_vorbis *f, framing *w)
+{
+    if (read_bits(b, 1) != 0) return false;
+    const uint32_t mode_index = read_bits(b, ilog(f->mode_count - 1u));
+    if (mode_index >= f->mode_count || b->eop) return false;
+    const mode *md = &f->modes[mode_index];
+    const uint32_t n = md->blockflag ? f->bs1 : f->bs0;
+    bool prev_long = true, next_long = true;
+    if (md->blockflag) {
+        prev_long = read_bits(b, 1) != 0;
+        next_long = read_bits(b, 1) != 0;
+    }
+    *w = (framing){.md = md, .n = n, .left_start = 0, .left_n = n / 2, .right_start = n / 2, .right_n = n / 2};
+    if (md->blockflag) {
+        if (!prev_long) {
+            w->left_start = n / 4 - f->bs0 / 4;
+            w->left_n = f->bs0 / 2;
+        }
+        if (!next_long) {
+            w->right_start = n * 3 / 4 - f->bs0 / 4;
+            w->right_n = f->bs0 / 2;
+        }
+    }
+    return true;
+}
+
+// The frames a block finishes, overlapped with the one before it as a reader
+// does: the last block's right side up to its overlap, the overlap, and this
+// block's left side after it, up to its center
+static uint32_t framing_frames(const framing *prev, const framing *w)
+{
+    const uint32_t overlap = prev->right_n < w->left_n ? prev->right_n : w->left_n;
+    return (prev->right_start - prev->n / 2) + overlap + (w->n / 2 - (w->left_start + w->left_n));
+}
+
+// What the packets give, read as a reader reads them up to what the file
+// says it holds, and the blocks' samples that takes: refused past
+// TIDE_VORBIS_MAX_WORK_PER_FRAME, before any is decoded
+static bool count_frames(tide_vorbis *f, const char **why)
+{
+    framing prev = {0};
+    bool primed = false;
+    uint64_t given = 0, work = 0;
+    for (uint32_t i = 0; i < f->packet_count && given < f->frames; i++) {
+        bits b = bits_over(f->packets + f->offsets[i], f->offsets[i + 1u] - f->offsets[i]);
+        framing w;
+        if (!read_framing(&b, f, &w)) continue;
+        work += w.n;
+        if (primed) given += framing_frames(&prev, &w);
+        prev = w;
+        primed = true;
+    }
+    f->given = given < f->frames ? given : f->frames;
+    if (work > (uint64_t)TIDE_VORBIS_MAX_WORK_PER_FRAME * f->given + 2u * BLOCK_MOST) {
+        return fail(why, "the file's packets take more decoding than the frames they give need (TIDE_VORBIS_MAX_WORK_PER_FRAME)");
+    }
+    return true;
+}
+
 // Decodes the next audio packet into `out`: false when there are no more
 static bool decode_block(tide_vorbis_reader *r)
 {
@@ -1135,28 +1269,15 @@ static bool decode_block(tide_vorbis_reader *r)
         const uint32_t from = f->offsets[r->packet], size = f->offsets[r->packet + 1u] - from;
         r->packet++;
         bits b = bits_over(f->packets + from, size);
-        if (read_bits(&b, 1) != 0) continue; // Not an audio packet: ignored
-        const uint32_t mode_index = read_bits(&b, ilog(f->mode_count - 1u));
-        if (mode_index >= f->mode_count || b.eop) continue;
-        const mode *md = &f->modes[mode_index];
-        const uint32_t n = md->blockflag ? f->bs1 : f->bs0;
+        framing w;
+        if (!read_framing(&b, f, &w)) {
+            r->damaged = true; // Not an audio packet, or a mode the file hasn't got: ignored
+            continue;
+        }
+        const mode *md = w.md;
+        const uint32_t n = w.n;
         const uint32_t n2 = n / 2;
-        bool prev_long = true, next_long = true;
-        if (md->blockflag) {
-            prev_long = read_bits(&b, 1) != 0;
-            next_long = read_bits(&b, 1) != 0;
-        }
-        uint32_t left_start = 0, left_n = n2, right_start = n2, right_n = n2;
-        if (md->blockflag) {
-            if (!prev_long) {
-                left_start = n / 4 - f->bs0 / 4;
-                left_n = f->bs0 / 2;
-            }
-            if (!next_long) {
-                right_start = n * 3 / 4 - f->bs0 / 4;
-                right_n = f->bs0 / 2;
-            }
-        }
+        const uint32_t left_start = w.left_start, left_n = w.left_n, right_start = w.right_start, right_n = w.right_n;
         const uint32_t left_end = left_start + left_n;
         const mapping *mp = &f->mappings[md->mapping];
         // Floors
@@ -1166,6 +1287,7 @@ static bool decode_block(tide_vorbis_reader *r)
             r->has_floor[c] = floor_decode(&b, f, fl, r->Y[c]);
             if (b.eop) {
                 silent = true; // The specification: a packet that ends in its floors is all zeros
+                r->damaged = true;
                 break;
             }
         }
@@ -1201,9 +1323,15 @@ static bool decode_block(tide_vorbis_reader *r)
                     for (uint32_t i = 0; i < n2; i++) {
                         for (uint32_t j = 0; j < in_submap; j++) v[j][i] = r->inter[i * in_submap + j];
                     }
-                    if (!more) break; // What's decoded stands, the rest zeros
+                    if (!more) {
+                        r->damaged = true;
+                        break; // What's decoded stands, the rest zeros
+                    }
                 } else {
-                    if (!residue_decode(&b, f, rs, in_submap, dnd, v, n2, r->classes, class_stride)) break;
+                    if (!residue_decode(&b, f, rs, in_submap, dnd, v, n2, r->classes, class_stride)) {
+                        r->damaged = true;
+                        break;
+                    }
                 }
             }
             // Inverse coupling
@@ -1322,17 +1450,34 @@ bool tide_vorbis_decode(const uint8_t *bytes, const size_t size, tide_sound *out
     if (!f) return false;
     tide_vorbis_reader *r = tide_vorbis_reader_open(f);
     const uint32_t ch = f->channels;
-    uint32_t capacity = f->frames < UINT32_MAX / 4u ? (uint32_t)f->frames + 1u : 1u;
+    // Room for the frames the packets give (tide_vorbis_frames_given), never
+    // what the file says, which can be any number, nor more than a sound may
+    // hold. It grows should a reader give more.
+    const uint32_t most = (TIDE_SOUND_MAX_SAMPLES - 1u) / ch;
+    uint32_t capacity = f->given < most ? (uint32_t)f->given + 1u : most;
     float *samples = tide_alloc((size_t)capacity * ch * sizeof(float));
     uint32_t frames = 0;
+    bool ok = true;
     for (;;) {
         if (frames == capacity) {
-            samples = tide_realloc(samples, (size_t)capacity * ch * sizeof(float), (size_t)capacity * 2u * ch * sizeof(float));
-            capacity *= 2u;
+            if (capacity == most) {
+                float more[2];
+                ok = tide_vorbis_read(r, more, 1) == 0; // TIDE_SOUND_MAX_SAMPLES or more: refused, as a WAV's are
+                break;
+            }
+            const uint32_t grown = capacity < most / 2u ? capacity * 2u : most;
+            samples = tide_realloc(samples, (size_t)capacity * ch * sizeof(float), (size_t)grown * ch * sizeof(float));
+            capacity = grown;
         }
         const uint32_t got = tide_vorbis_read(r, samples + (size_t)frames * ch, capacity - frames);
         if (!got) break;
         frames += got;
+    }
+    if (!ok) {
+        free(samples);
+        tide_vorbis_reader_close(r);
+        tide_vorbis_close(f);
+        return false;
     }
     *out = (tide_sound){.samples = samples, .frames = frames, .channels = ch, .rate = f->rate};
     tide_vorbis_reader_close(r);

@@ -201,7 +201,7 @@ TIDE_TEST(image_failures_distinguish_unsupported_variants_corruption_and_limits)
     TIDE_CHECK(!image_file_read(NULL, 0, "empty.jpg", &image, why) && !image.pixels && strstr(why, "empty"));
     const uint8_t fake[12] = {0xff, 0xd8, 0xff}; // Enough bytes for format sniffing; rejected before reading the payload.
     TIDE_CHECK(!image_file_read(fake, (size_t)INT32_MAX + 1u, "huge.jpg", &image, why));
-    TIDE_CHECK(strstr(why, "512 MiB import limit") != NULL);
+    TIDE_CHECK(strstr(why, "more than the 512 MiB an image import takes (TIDE_IMAGE_MAX_BYTES)") != NULL);
 
     size_t size;
     uint8_t *jpeg = fixture("baseline.jpg", &size);
@@ -212,7 +212,7 @@ TIDE_TEST(image_failures_distinguish_unsupported_variants_corruption_and_limits)
     jpeg[frame + 5u] = jpeg[frame + 7u] = 0x40;
     jpeg[frame + 6u] = jpeg[frame + 8u] = 0;
     TIDE_CHECK(!image_file_read(jpeg, size, "large.jpg", &image, why) && !image.pixels);
-    TIDE_CHECK(strstr(why, "512 MiB decoded-image import limit") != NULL);
+    TIDE_CHECK(strstr(why, "decodes to more than the 512 MiB an image import takes (TIDE_IMAGE_MAX_BYTES)") != NULL);
     jpeg[frame + 8u] = 1;
     TIDE_CHECK(!image_file_read(jpeg, size, "large.jpg", &image, why) && strstr(why, "16385"));
     free(jpeg);
@@ -283,4 +283,50 @@ TIDE_TEST(image_exact_sized_cuts_and_corruption_never_read_past_supplied_bytes)
         }
         free(data);
     }
+}
+
+TIDE_TEST(image_jpeg_scans_and_psd_pixels_are_refused_past_their_limits)
+{
+    // Each progressive scan decodes the whole picture again, and its header is
+    // a few bytes, so a scan count is the work a small file can ask for. The
+    // last scan, repeated up to the limit, still decodes; one more is refused
+    // from the markers alone.
+    size_t size;
+    uint8_t *jpeg = fixture("progressive.jpg", &size);
+    TIDE_REQUIRE(jpeg != NULL && size > 4 && jpeg[size - 2u] == 0xff && jpeg[size - 1u] == 0xd9);
+    size_t last = 0;
+    unsigned int scans = 0;
+    for (size_t i = 0; i + 1u < size; i++) {
+        if (jpeg[i] == 0xff && jpeg[i + 1u] == 0xda) { last = i; scans++; }
+    }
+    TIDE_REQUIRE(scans > 1 && scans < TIDE_IMAGE_MAX_JPEG_SCANS);
+    const size_t scan = size - 2u - last;
+    uint8_t *many = malloc(size + (size_t)(TIDE_IMAGE_MAX_JPEG_SCANS + 1u - scans) * scan);
+    TIDE_REQUIRE(many != NULL);
+    memcpy(many, jpeg, size - 2u);
+    size_t at = size - 2u;
+    for (; scans < TIDE_IMAGE_MAX_JPEG_SCANS; scans++, at += scan) memcpy(many + at, jpeg + last, scan);
+    many[at] = 0xff, many[at + 1u] = 0xd9;
+    tide_png_image image;
+    char why[256];
+    const bool ok = image_file_read(many, at + 2u, "many.jpg", &image, why);
+    if (!ok) printf("    %u scans: %s\n", scans, why);
+    TIDE_CHECK(ok && image.width == 8 && image.height == 6);
+    free(image.pixels);
+    memcpy(many + at, jpeg + last, scan);
+    at += scan;
+    many[at] = 0xff, many[at + 1u] = 0xd9;
+    TIDE_CHECK(!image_file_read(many, at + 2u, "many.jpg", &image, why) && !image.pixels);
+    TIDE_CHECK(strstr(why, "more than the 256 progressive scans an image import takes (TIDE_IMAGE_MAX_JPEG_SCANS)") != NULL);
+    free(many);
+    free(jpeg);
+
+    // A PSD's header says its size; past TIDE_PSD_MAX_PIXELS nothing is made
+    // for it, whatever its pixels would inflate from.
+    uint8_t psd[40] = {'8', 'B', 'P', 'S', 0, 1, 0, 0, 0, 0, 0, 0, 0, 3, 0, 0, 0x20, 0, 0, 0, 0x20, 0x01, 0, 8, 0, 3};
+    TIDE_CHECK(!image_file_read(psd, sizeof psd, "big.psd", &image, why) && !image.pixels);
+    TIDE_CHECK(strstr(why, "is 8193 by 8192 pixels, 67,117,056 in all, more than the 67,108,864 a PSD import takes (TIDE_PSD_MAX_PIXELS); save it smaller, or export it as a PNG") != NULL);
+    psd[21] = 0; // 8192 by 8192 is within the limit, and then its missing pixels are what's wrong
+    TIDE_CHECK(!image_file_read(psd, sizeof psd, "big.psd", &image, why) && !image.pixels);
+    TIDE_CHECK(!strstr(why, "at most") && strstr(why, "composite"));
 }

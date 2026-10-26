@@ -132,6 +132,12 @@ async int Requests(string origin)
     // What timed out left nothing behind: the next request is answered
     var after = await Web.Request(echo).SetTimeout(30).Send();
     if (after is WebResponse v && Echoed(v, 200, 3, 0, 0)) right |= 1048576;
+    // A redirect says where after how long its body is: every header is found, in any order
+    var late = await Web.Request(origin + "/moved-late").Send();
+    if (late is WebResponse w && w.status == 200 && w.body.count == 11) right |= 2097152;
+    // A URL with a space and a line break in it is one request line, with no header of its own
+    var spaced = await Web.Request(echo + "?a b\nX-Evil: 1").Send();
+    if (spaced is WebResponse x && Echoed(x, 200, 3, 0, 0)) right |= 4194304;
     return right;
 }
 

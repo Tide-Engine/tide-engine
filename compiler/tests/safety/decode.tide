@@ -1,11 +1,14 @@
-// stops: tide: out of memory
+// expect: decoded 4097 by 16
+// expect: refused as InvalidData
+// expect: tide: grid.Decode refused a PNG: it's 4097 by 4096 pixels, 16,781,312 in all, more than the 16,777,216 grid.Decode takes (TIDE_GRID_DECODE_MAX_PIXELS)
+// expect: still 4097 by 16
 // ticks: 1
 
-// A PNG that decodes to more than a world's heap holds: 8192 by 8192 white
-// pixels, a bit each in the file (8 MB, stored as they are) and 16 bytes each
-// as cells, a gigabyte. Decoding it ends the program as running out of memory
-// does, and corrupts nothing: rows go into the grid as they're decoded, so
-// nothing the picture's size is made beside it.
+// A PNG of more pixels than grid.Decode takes (TIDE_GRID_DECODE_MAX_PIXELS,
+// 4096 by 4096): 4097 by 4096 white pixels, a bit each in the file (2 MB,
+// stored as they are), which would be 256 MiB of cells. It's refused as
+// InvalidData before any cell is made, rather than filling the world's heap,
+// and the grid is as it was.
 
 singleton Canvas
 {
@@ -48,29 +51,21 @@ void Chunk(mut List<byte> png, List<byte> type, List<byte> data, List<long> tabl
     Put32(png, crc ^ ones);
 }
 
-event(Spawned) Setup(with Main, mut Canvas canvas)
+// A white picture, a bit a pixel, its rows in stored deflate blocks
+List<byte> White(int width, int height, List<long> table)
 {
-    if (canvas.done) return;
-    canvas.done = true;
-    for (var i = 0; i < 256; i++)
-    {
-        mut long c = i;
-        for (var k = 0; k < 8; k++) c = (c & 1) != 0 ? 3988292384 ^ (c >> 1) : c >> 1;
-        canvas.crcTable.Add(c);
-    }
-    var side = 8192;
-    var rowBytes = side / 8;
-    // zlib: deflate with a 32 KiB window, then stored blocks of whole rows (63
-    // of 1025 bytes is 64575, within a block's 65535), then the checksum
+    var rowBytes = (width + 7) / 8;
+    // zlib: deflate with a 32 KiB window, then stored blocks of whole rows
+    // (as many as a block's 65535 bytes hold), then the checksum
     mut List<byte> data = [120, 1];
-    var rowsPerBlock = 63;
+    var rowsPerBlock = 65535 / (rowBytes + 1);
     mut var a = 1;
     mut var b = 0;
-    for (var y = 0; y < side; y += rowsPerBlock)
+    for (var y = 0; y < height; y += rowsPerBlock)
     {
-        var rows = Math.Min(rowsPerBlock, side - y);
+        var rows = Math.Min(rowsPerBlock, height - y);
         var n = rows * (rowBytes + 1);
-        data.Add(byte(y + rows >= side ? 1 : 0));
+        data.Add(byte(y + rows >= height ? 1 : 0));
         data.Add(byte(n & 255));
         data.Add(byte((n >> 8) & 255));
         data.Add(byte(~n & 255));
@@ -90,17 +85,35 @@ event(Spawned) Setup(with Main, mut Canvas canvas)
     Put32(data, (long(b) << 16) | a);
     mut List<byte> png = [137, 80, 78, 71, 13, 10, 26, 10];
     mut List<byte> header = [];
-    Put32(header, side);
-    Put32(header, side);
+    Put32(header, width);
+    Put32(header, height);
     header.Add(1); // A bit a pixel
     header.Add(0); // Gray
     header.Add(0); // Deflate
     header.Add(0); // PNG's filters
     header.Add(0); // Not interlaced
-    Chunk(png, [73, 72, 68, 82], header, canvas.crcTable);
-    Chunk(png, [73, 68, 65, 84], data, canvas.crcTable);
-    Chunk(png, [73, 69, 78, 68], [], canvas.crcTable);
+    Chunk(png, [73, 72, 68, 82], header, table);
+    Chunk(png, [73, 68, 65, 84], data, table);
+    Chunk(png, [73, 69, 78, 68], [], table);
+    return png;
+}
+
+event(Spawned) Setup(with Main, mut Canvas canvas)
+{
+    if (canvas.done) return;
+    canvas.done = true;
+    for (var i = 0; i < 256; i++)
+    {
+        mut long c = i;
+        for (var k = 0; k < 8; k++) c = (c & 1) != 0 ? 3988292384 ^ (c >> 1) : c >> 1;
+        canvas.crcTable.Add(c);
+    }
+    // The same picture but short, within the limit: it decodes, so what's refused is only the size
+    if (canvas.pixels.Decode(White(4097, 16, canvas.crcTable)) is IOError) Debug.Log("the small picture was refused");
+    else Debug.Log("decoded " + canvas.pixels.size.x + " by " + canvas.pixels.size.y);
+    var png = White(4097, 4096, canvas.crcTable);
     Debug.Log("decoding " + png.count + " bytes");
-    if (canvas.pixels.Decode(png) is IOError error) Debug.Log("refused: " + error);
+    if (canvas.pixels.Decode(png) is IOError error) Debug.Log(error == IOError.InvalidData ? "refused as InvalidData" : "refused otherwise");
     else Debug.Log("decoded");
+    Debug.Log("still " + canvas.pixels.size.x + " by " + canvas.pixels.size.y);
 }

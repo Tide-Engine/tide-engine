@@ -17,14 +17,18 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "tide/internal/count_text.h"
 #include "tide/math.h"
 #include "tide/sha256.h"
 
 #pragma STDC FP_CONTRACT OFF
 
-// What one mesh holds at the most: its indices are ints, and its vertices go to the GPU side by side.
-#define VERTICES_MOST (1u << 24)
-#define INDICES_MOST (3u << 25)
+// What one mesh holds at the most (the limits, mesh_files.h), as the shared glTF readers name them.
+#define VERTICES_MOST TIDE_MESH_MAX_VERTICES
+#define INDICES_MOST TIDE_MESH_MAX_INDICES
+#define INDICES_MOST_NAME "TIDE_MESH_MAX_INDICES"
+#define READS_MOST TIDE_MESH_MAX_READS
+#define READS_MOST_NAME "TIDE_MESH_MAX_READS"
 
 // What's wrong with the file being read: said once, the first thing found.
 typedef struct reader {
@@ -45,6 +49,22 @@ static bool fail(reader *r, const char *note, const char *fmt, ...)
     va_end(args);
     snprintf(r->note, 256, "%s", note ? note : "");
     return false;
+}
+
+// A limit of mesh_files.h refused the file. The message says what it has
+// against the limit and ends with the limit's name, so a report says which:
+// "has 20,000,000 vertices, more than the 16,777,216 one Mesh holds
+// (TIDE_MESH_MAX_VERTICES)". `have` is UINT64_MAX where the count stopped at
+// the limit.
+static bool past_limit(reader *r, const char *name, const uint64_t most, const char *what, const uint64_t have)
+{
+    char counted[32], limit[32];
+    const char *note = "a mesh that big is better split into several files, each a Mesh of its own";
+    if (have == UINT64_MAX) {
+        return fail(r, note, "has more %s than the %s one Mesh holds (%s)", what, tide_count_text(most, limit), name);
+    }
+    return fail(r, note, "has %s %s, more than the %s one Mesh holds (%s)", tide_count_text(have, counted), what,
+                tide_count_text(most, limit), name);
 }
 
 static void *zeroed(const size_t count, const size_t size)
@@ -74,10 +94,7 @@ typedef struct builder {
 static bool more_vertices(builder *b, const uint64_t more)
 {
     const uint64_t need = (uint64_t)b->m.vertices + more;
-    if (need > VERTICES_MOST) {
-        return fail(b->r, "a mesh that big is better split into several files, each a Mesh of its own",
-                    "has more than %u vertices, the most one Mesh holds", (unsigned)VERTICES_MOST);
-    }
+    if (need > VERTICES_MOST) return past_limit(b->r, "TIDE_MESH_MAX_VERTICES", VERTICES_MOST, "vertices", need);
     if (need <= b->vertex_room) return true;
     uint32_t room = b->vertex_room ? b->vertex_room : 256u;
     while (room < need) room *= 2u;
@@ -96,10 +113,7 @@ static bool more_vertices(builder *b, const uint64_t more)
 static bool more_indices(builder *b, const uint64_t more)
 {
     const uint64_t need = (uint64_t)b->m.indices + more;
-    if (need > INDICES_MOST) {
-        return fail(b->r, "a mesh that big is better split into several files, each a Mesh of its own",
-                    "has more than %u triangles, the most one Mesh holds", (unsigned)(INDICES_MOST / 3u));
-    }
+    if (need > INDICES_MOST) return past_limit(b->r, "TIDE_MESH_MAX_INDICES", INDICES_MOST / 3u, "triangles", need / 3u);
     if (need <= b->index_room) return true;
     uint32_t room = b->index_room ? b->index_room : 512u;
     while (room < need) room *= 2u;
@@ -443,6 +457,7 @@ typedef struct gltf {
     uint32_t buffer_count;
     bool *placed; // A node the scene has placed: a node is in it once
     uint32_t node_count;
+    uint64_t reads; // Numbers read from accessors so far, against READS_MOST
 } gltf;
 
 #include "tide/internal/gltf_read.h"
@@ -479,6 +494,7 @@ static bool read_floats(gltf *g, const jnode *index, const uint32_t want, const 
     if (a.width != want && !(want == 4u && fill == 1.0f && a.width == 3u && strcmp(what, "colors") == 0)) {
         return fail(g->r, NULL, "has %s with the wrong number of components", what);
     }
+    if (!spend_reads(g, (uint64_t)pick->count * want)) return false;
     const uint32_t each = component_bytes(a.type);
     const uint32_t element = each * a.width;
     const uint32_t take = a.width < want ? a.width : want;
@@ -562,10 +578,7 @@ static bool add_primitive(gltf *g, const jnode *primitive, const float world[16]
     accessor counted;
     if (!accessor_of(g, positions, &counted, "positions")) return false;
     const uint64_t count = counted.count;
-    if (count > VERTICES_MOST) {
-        return fail(r, "a mesh that big is better split into several files, each a Mesh of its own",
-                    "has more than %u vertices, the most one Mesh holds", (unsigned)VERTICES_MOST);
-    }
+    if (count > VERTICES_MOST) return past_limit(r, "TIDE_MESH_MAX_VERTICES", VERTICES_MOST, "vertices in a part", count);
     part p = {0};
     vertex_pick pick = {0};
     uint32_t *listed = NULL;
@@ -574,6 +587,8 @@ static bool add_primitive(gltf *g, const jnode *primitive, const float world[16]
     // Pick only the vertices complete triangles use. A shared accessor can cover
     // all of a model's materials, while this primitive uses a small part of it.
     uint64_t listed_count = count;
+    // What's made and walked for the accessor's every vertex below, whichever the triangles use
+    if (!spend_reads(g, count)) return false;
     if (jget(primitive, "indices")) {
         listed = read_indices(g, jget(primitive, "indices"), &listed_count);
         ok = listed != NULL;
@@ -586,8 +601,7 @@ static bool add_primitive(gltf *g, const jnode *primitive, const float world[16]
     }
     const uint64_t triangles = !ok ? 0u : mode == 4 ? listed_count / 3u : listed_count >= 3u ? listed_count - 2u : 0u;
     if (ok && triangles * 3u > INDICES_MOST) {
-        ok = fail(r, "a mesh that big is better split into several files, each a Mesh of its own",
-                  "has more than %u triangles, the most one Mesh holds", (unsigned)(INDICES_MOST / 3u));
+        ok = past_limit(r, "TIDE_MESH_MAX_INDICES", INDICES_MOST / 3u, "triangles in a part", triangles);
     }
     if (ok) {
         const uint64_t used = mode == 4 ? triangles * 3u : triangles ? listed_count : 0u;
@@ -736,12 +750,15 @@ static bool place_node(gltf *g, const int64_t index, const float parent[16], con
 
 static bool read_gltf(reader *r, builder *b, const char *text, const size_t length, const uint8_t *bin, const uint64_t bin_size)
 {
-    jparser j = {.p = text, .end = text + length};
+    jparser j = {.p = text, .end = text + length, .values_left = TIDE_MESH_MAX_JSON_VALUES};
     const jnode *root = jvalue(&j, 0);
     jspace(&j);
     gltf g = {.r = r, .b = b, .root = root, .bin = bin, .bin_size = bin_size};
     bool ok = true;
-    if (!root || j.bad || j.p != j.end || root->kind != J_OBJECT) {
+    if (j.too_many) {
+        ok = past_limit(r, "TIDE_MESH_MAX_JSON_VALUES", TIDE_MESH_MAX_JSON_VALUES, "JSON values in its description", UINT64_MAX);
+    }
+    if (ok && (!root || j.bad || j.p != j.end || root->kind != J_OBJECT)) {
         ok = fail(r, NULL, "isn't a glTF that reads: its description isn't JSON");
     }
     if (ok) {
@@ -847,8 +864,13 @@ typedef struct floats {
     uint32_t count, room;
 } floats;
 
-static void push_floats(floats *list, const float *values, const uint32_t count)
+// Most numbers a list keeps: the room doubles up to it and no further. Each takes a line of a file.
+#define FLOATS_MOST (1u << 30)
+
+// False for a list that would have more than FLOATS_MOST.
+static bool push_floats(floats *list, const float *values, const uint32_t count)
 {
+    if ((uint64_t)list->count + count > FLOATS_MOST) return false;
     if (list->count + count > list->room) {
         list->room = list->room ? list->room * 2u : 1024u;
         while (list->room < list->count + count) list->room *= 2u;
@@ -857,6 +879,7 @@ static void push_floats(floats *list, const float *values, const uint32_t count)
     }
     memcpy(list->items + list->count, values, (size_t)count * sizeof(float));
     list->count += count;
+    return true;
 }
 
 // A corner as a face names it: a position, a uv and a normal by their places, from 0, or -1 for none.
@@ -1019,7 +1042,7 @@ static bool read_obj(reader *r, builder *b, const char *text, const size_t lengt
 {
     obj o = {.r = r, .b = b};
     const char *end = text + length;
-    int line_number = 0;
+    unsigned long long line_number = 0;
     bool ok = true;
     corner *face = NULL;
     uint32_t face_room = 0;
@@ -1039,25 +1062,29 @@ static bool read_obj(reader *r, builder *b, const char *text, const size_t lengt
             uint32_t count = 0;
             while (ok && count < 7u && next_word(&p, line_end, &from, &to) && *from != '#') {
                 if (!mesh_number(from, to, &numbers[count++])) {
-                    ok = fail(r, NULL, "isn't an OBJ that reads: line %d has '%.*s' where a number goes", line_number,
+                    ok = fail(r, NULL, "isn't an OBJ that reads: line %llu has '%.*s' where a number goes", line_number,
                               (int)(to - from > 40 ? 40 : to - from), from);
                 }
             }
             if (ok && count < (uv ? 1u : 3u)) {
-                ok = fail(r, NULL, "isn't an OBJ that reads: line %d has %u numbers, and a %s has %s", line_number, (unsigned)count,
+                ok = fail(r, NULL, "isn't an OBJ that reads: line %llu has %u numbers, and a %s has %s", line_number, (unsigned)count,
                           uv ? "uv" : position ? "vertex" : "normal", uv ? "one or two" : "three");
             }
             if (!ok) break;
             if (position) {
                 // A color after the position, which some tools write: x y z r g b, or with a weight before it
                 static const float white[3] = {1.0f, 1.0f, 1.0f};
-                push_floats(&o.positions, numbers, 3u);
-                push_floats(&o.colors, count >= 6u ? numbers + (count == 7u ? 4 : 3) : white, 3u);
+                ok = push_floats(&o.positions, numbers, 3u)
+                  && push_floats(&o.colors, count >= 6u ? numbers + (count == 7u ? 4 : 3) : white, 3u);
                 o.colored |= count >= 6u;
             } else if (normal) {
-                push_floats(&o.normals, numbers, 3u);
+                ok = push_floats(&o.normals, numbers, 3u);
             } else {
-                push_floats(&o.uvs, numbers, 2u);
+                ok = push_floats(&o.uvs, numbers, 2u);
+            }
+            if (!ok) {
+                ok = fail(r, "a mesh that big is better split into several files",
+                          "isn't an OBJ Tide reads: line %llu has more vertex, normal or uv lines before it than a mesh file holds", line_number);
             }
             continue;
         }
@@ -1071,7 +1098,7 @@ static bool read_obj(reader *r, builder *b, const char *text, const size_t lengt
                               place_named(first ? first + 1 : to, second ? second : to, o.uvs.count / 2u),
                               place_named(second ? second + 1 : to, to, o.normals.count / 3u)};
             if (c.position < 0 || c.uv == -2 || c.normal == -2) {
-                ok = fail(r, NULL, "isn't an OBJ that reads: the face on line %d names '%.*s', and there's no such vertex, uv or "
+                ok = fail(r, NULL, "isn't an OBJ that reads: the face on line %llu names '%.*s', and there's no such vertex, uv or "
                           "normal before it", line_number, (int)(to - from > 40 ? 40 : to - from), from);
                 break;
             }

@@ -156,21 +156,40 @@ static struct {
 
 uint32_t tide_clips_whole_seconds = 10;
 
+// Limits: what a Vorbis clip's file can ask of its decode at load. A clip
+// decoded whole is sized by the frames its packets give
+// (tide_vorbis_frames_given), never what the file says it holds, which can
+// be any 64 bits; and the rate its seconds are counted at can be any 32. So
+// it's whole only up to tide_clips_whole_seconds at this rate at the most,
+// and this many samples in all. Each is only its number: past either the
+// clip streams instead, which gives the same samples a block at a time.
+
+// The rate a whole clip's seconds are counted at, at the most: 10 seconds of
+// stereo floats at it is 30 MiB.
+#define TIDE_CLIP_WHOLE_MAX_RATE 384000u
+
+// The most samples (frames times channels) a clip decoded whole holds, 512
+// MiB of floats, for a tide_clips_whole_seconds set high.
+#define TIDE_CLIP_WHOLE_MAX_SAMPLES (1u << 27)
+
 // Decodes the file's bytes into the entry, whichever kind they are
 static void decode_clip(decoded_clip *d, const uint8_t *bytes, const uint32_t size)
 {
     if (tide_wav_decode(bytes, size, &d->sound)) return;
     tide_vorbis *v = tide_vorbis_open(bytes, size, NULL);
     if (!v) return; // Checked as the game was built: a pack by hand
-    if (tide_vorbis_frames(v) <= (uint64_t)tide_clips_whole_seconds * tide_vorbis_rate(v)) {
+    const uint64_t given = tide_vorbis_frames_given(v);
+    const uint32_t ch = tide_vorbis_channels(v);
+    const uint32_t rate = tide_vorbis_rate(v) < TIDE_CLIP_WHOLE_MAX_RATE ? tide_vorbis_rate(v) : TIDE_CLIP_WHOLE_MAX_RATE;
+    if (given <= (uint64_t)tide_clips_whole_seconds * rate && given * ch <= TIDE_CLIP_WHOLE_MAX_SAMPLES) {
         tide_vorbis_reader *r = tide_vorbis_reader_open(v);
-        const uint32_t ch = tide_vorbis_channels(v);
-        const uint32_t most = (uint32_t)tide_vorbis_frames(v);
+        const uint32_t most = (uint32_t)given;
         float *samples = tide_alloc(((size_t)most + 1u) * ch * sizeof *samples);
         uint32_t frames = 0;
         for (;;) {
+            // A read writes no more frames than it's asked for, and this asks for no more than are left
             const uint32_t got = tide_vorbis_read(r, samples + (size_t)frames * ch, most - frames);
-            if (!got) break;
+            if (!got || got > most - frames) break;
             frames += got;
         }
         d->sound = (tide_sound){.samples = samples, .frames = frames, .channels = ch, .rate = tide_vorbis_rate(v)};
@@ -204,7 +223,7 @@ static decoded_clip *add_clip_entry(const uint64_t version)
 static tide_clip clip_from(const decoded_clip *d, const uint64_t name)
 {
     if (d->stream) {
-        const uint64_t frames = tide_vorbis_frames(d->stream);
+        const uint64_t frames = tide_vorbis_frames_given(d->stream); // What its reader gives, not what the file says
         return (tide_clip){.stream = d->stream, .frames = frames > UINT32_MAX ? UINT32_MAX : (uint32_t)frames,
                            .channels = tide_vorbis_channels(d->stream), .rate = tide_vorbis_rate(d->stream), .id = d->version,
                            .name = name};

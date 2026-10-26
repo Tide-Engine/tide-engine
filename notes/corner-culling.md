@@ -174,3 +174,11 @@ initial baseline and expose the candidate-overlap cost, not production budgets
 or superiority to Unity/Burst. The deterministic counts and storage assertions
 are correctness checks independent of timing. Raw local test output remains in
 `build/{debug,release,web-debug}/Testing/Temporary/LastTest.log`.
+
+Integration merges origin/dev through `1ffe261e8`, including the independent
+shard-journal deadlines and remote-asset-loader safety work. No package/source
+conflict occurred. Because the latter rebuilds the compiler/runtime dependency,
+the merged native and WASI debug package targets were rebuilt and all nine
+checks passed again, retaining the answer pin and projection/storage assertions.
+The merged production docs build passes. Optimized timings above remain the
+earlier reference run; no new performance claim is made for integration.

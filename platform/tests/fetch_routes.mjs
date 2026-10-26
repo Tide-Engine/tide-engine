@@ -73,6 +73,11 @@ export default function routes(request, response) {
         response.writeHead(307, { location: `http://${request.headers.host}/hello` });
         response.end();
         return true;
+    case '/moved-late': // Location after Content-Length, in that order, as many servers send them
+        request.resume();
+        response.writeHead(302, { 'content-length': 0, location: '/hello' });
+        response.end();
+        return true;
     case '/loop':
         response.writeHead(302, { location: '/loop' });
         response.end();

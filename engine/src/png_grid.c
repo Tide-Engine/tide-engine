@@ -4,7 +4,9 @@
 // needs nothing of the worlds.
 
 #include "tide/png.h"
+#include "tide/internal/count_text.h"
 
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -13,11 +15,18 @@ typedef struct grid_rows {
     tide_grid grid; // The new grid, in the world's heap, until it's done
     const tide_grid_shape *shape;
     uint32_t where;
+    char why[TIDE_PNG_WHY]; // Which limit refused it, if one did
 } grid_rows;
 
 static bool grid_began(void *user, const uint32_t width, const uint32_t height)
 {
     grid_rows *g = user;
+    if ((uint64_t)width * height > TIDE_GRID_DECODE_MAX_PIXELS) { // Before any cell is made
+        char all[32], most[32];
+        snprintf(g->why, sizeof g->why, "it's %u by %u pixels, %s in all, more than the %s grid.Decode takes (TIDE_GRID_DECODE_MAX_PIXELS)",
+                 width, height, tide_count_text((uint64_t)width * height, all), tide_count_text(TIDE_GRID_DECODE_MAX_PIXELS, most));
+        return false;
+    }
     g->grid = tide_grid_new(2, (int32_t)width, (int32_t)height, 0);
     tide_grid_own(&g->grid, g->shape, g->where);
     return g->grid.at != 0;
@@ -69,9 +78,13 @@ tide_io_error tide_grid_decode(tide_grid *g, const tide_grid_shape *s, const uin
     bool copied = false;
     const uint8_t *data = count ? tide_list_flatten(bytes, 1, false, &copied) : NULL;
     grid_rows rows = {.shape = s, .where = where};
-    const bool ok = tide_png_decode_rows(data, (size_t)(count > 0 ? count : 0), grid_began, grid_row, &rows);
+    char limit[TIDE_PNG_WHY];
+    const bool ok = tide_png_decode_rows(data, (size_t)(count > 0 ? count : 0), grid_began, grid_row, &rows, limit);
     if (count) tide_list_unflatten(bytes, (void *)data, 1, false, copied);
     if (!ok) {
+        // A limit says why on this machine's log, so a refused picture is known for what it is
+        const char *why = rows.why[0] ? rows.why : limit;
+        if (why[0]) fprintf(stderr, "tide: grid.Decode refused a PNG: %s\n", why);
         tide_grid_release(&rows.grid, s, where);
         return TIDE_IO_INVALID_DATA;
     }

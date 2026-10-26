@@ -230,6 +230,26 @@ Imported model and animation content participates in the game's match compatibil
 
 `SkinnedMesh<Vertex3>.Decode(bytes)` and its contracted form decode a self-contained GLB, returning a model `fails IOError`. Invalid data, external-resource references or missing contract requirements give `IOError.InvalidData`. Models and animation values can be stored after decoding.
 
+Bytes can come from anywhere, so a small file can't ask for much. A model past any of these is `InvalidData` before anything is made for it:
+
+| Limit | Most |
+|---|---|
+| Vertices (a part without normals has three a triangle) | 1,048,576 |
+| Triangle corners (three a triangle) | 6,291,456 |
+| Skeleton nodes, animations, buffers | 65,536 each |
+| Skins | 4,096 |
+| Inverse binds (skin joints, and one for each part no skin moves) | 262,144 |
+| Vertex influences (joint/weight sets count four a vertex each) | 8,388,608 |
+| Animation channels | 262,144 |
+| Animation key numbers (times and values) | 16,777,216 |
+| Numbers read from accessors, counted again for each part that names one | 67,108,864 |
+| JSON values in the description | 4,194,304 |
+| The file, and the decoded model | 512 MiB each |
+
+An accessor with no buffer view is zeros and takes no bytes, but counts as much as one with them. A model at every limit at once takes about 500 MiB to decode. These limits are the engine's, the same for every game, so every machine in a match refuses the same files; `SkinnedMesh` and `Animations` assets are held to them too. The numbers are provisional.
+
+A model refused for a limit says so on the log of each machine that decoded it, naming the limit, as `tide: SkinnedMesh.Decode refused a model: it has 2,000,000 vertices, more than the 1,048,576 a decoded model holds (TIDE_SKINNED_MAX_VERTICES)`. A build-time asset past one is an error that says the same.
+
 Get bytes with [files or Web.Fetch](./files.md), separately from decoding. Files fetched on one machine are local; content that affects match bones must enter through synchronized [commands](./commands.md) or other match data. Decoding itself is deterministic and can run in match code.
 
 Decoded vertices use your vertex struct's defaults too. Assets those defaults read have the same compatibility requirement even when the game declares no imported skinned model.

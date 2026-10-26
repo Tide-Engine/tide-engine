@@ -479,8 +479,6 @@ foreach(source IN LISTS TIDE_SAFETY_TESTS)
         set_tests_properties(${target}_gpu PROPERTIES TIMEOUT 300 LABELS "safety;gpu")
     endif()
 endforeach()
-# decode.tide fills a world's heap with a gigabyte of cells before it stops: about a minute under wasm with no optimization
-set_tests_properties(tidec_safety_decode PROPERTIES TIMEOUT 900)
 
 # Error tests: each errors/<name>.tide must fail to compile, and tidec's output
 # must contain the text on the file's first line, written as `// expect: <text>`.

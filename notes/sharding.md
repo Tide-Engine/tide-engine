@@ -1,5 +1,31 @@
 # Shards: one world across servers
 
+## Journal integration-test deadlines (2026-10-26)
+
+Build `40338328972` at `195c8f1d` failed only
+`tide_server_shards_journal` in the completed MinGW suite: the third process
+began 19 seconds into the shared 25-second deadline and was stopped six
+seconds later, after reporting successful recovery and listening. The log
+does not identify the disk/scheduling cost of the preceding recovery.
+
+`platform/tests/server_journal.mjs` now gives each server process 25 seconds.
+The kill-after-2.5-seconds case and both 200-update recoveries retain their
+work and assertions. CTest allows 80 seconds for the three bounded processes;
+the adjacent UDP/room tests retain 30 seconds. On failure the harness kills
+and reaps its current server before removing the journal directory, including
+when its deadline fires, instead of exiting with the child still running.
+Runtime persistence, flush ordering and recovery behavior are unchanged.
+
+Validation: the freshly built native optimized server passes the real CTest
+in 3.39 seconds (Clang 23.1.2, Node 24.22.1). Scratch process doubles delaying
+each recovery 13 seconds make the old harness fail in its third run at 25.09
+seconds and the new harness pass at 28.65 seconds. A stalled recovery still
+fails at its own deadline (27.62 seconds including the first run); exit 7 and
+missing recovery output also fail. Every new-harness probe leaves no child
+or journal folder. Regenerated CTest metadata confirms only this test's
+deadline changed; Node syntax and whitespace checks pass. MinGW and other
+hosted platforms remain CI confirmation; no workflow was manually dispatched.
+
 ## Border and recovery audit (2026-10-24)
 
 The owner reported further disconnects, a zero online count and a car being

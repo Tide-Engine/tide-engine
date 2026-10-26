@@ -1,6 +1,7 @@
 #include "tide_test.h"
 #include "tide/skinned_data.h"
 
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -369,4 +370,195 @@ TIDE_TEST(skinned_blob_cut_and_spoiled_data_is_checked)
     }
     free(copy);
     tide_skinned_data_free(bytes);
+}
+
+// A description built in pieces, for files at the limits (tide/skinned_data.h).
+typedef struct limit_text {
+    char *at;
+    size_t length, room;
+} limit_text;
+
+static void limit_add(limit_text *t, const char *fmt, ...)
+{
+    for (;;) {
+        va_list args;
+        va_start(args, fmt);
+        const int n = vsnprintf(t->at ? t->at + t->length : NULL, t->at ? t->room - t->length : 0u, fmt, args);
+        va_end(args);
+        if (n < 0) abort();
+        if (t->at && t->length + (size_t)n < t->room) {
+            t->length += (size_t)n;
+            return;
+        }
+        t->room = (t->room ? t->room * 2u : 4096u) + (size_t)n;
+        t->at = realloc(t->at, t->room);
+        if (!t->at) abort();
+    }
+}
+
+// The description as a GLB of its own, with no binary chunk.
+static uint8_t *limit_glb(const limit_text *t, size_t *size)
+{
+    const uint32_t json_size = ((uint32_t)t->length + 3u) & ~3u;
+    *size = 20u + json_size;
+    uint8_t *bytes = malloc(*size);
+    if (!bytes) abort();
+    memcpy(bytes, "glTF", 4u);
+    fixture_word(bytes + 4, 2u), fixture_word(bytes + 8, (uint32_t)*size);
+    fixture_word(bytes + 12, json_size), fixture_word(bytes + 16, 0x4e4f534au);
+    memset(bytes + 20, ' ', json_size);
+    memcpy(bytes + 20, t->at, t->length);
+    return bytes;
+}
+
+// Whether a runtime decode refuses the description, saying `with`.
+static bool limit_refused(limit_text *t, const char *with)
+{
+    size_t size;
+    uint8_t *input = limit_glb(t, &size), *out = (uint8_t *)1;
+    uint32_t out_size = 1u;
+    char why[256], note[256];
+    const bool ok = tide_skinned_data_decode(input, size, true, NULL, NULL, &out, &out_size, why, note);
+    free(input);
+    free(t->at);
+    *t = (limit_text){0};
+    if (ok) {
+        tide_skinned_data_free(out);
+        printf("    decoded, where '%s' was expected\n", with);
+        return false;
+    }
+    if (!strstr(why, with)) printf("    refused with '%s', not '%s'\n", why, with);
+    return !out && !out_size && strstr(why, with) != NULL;
+}
+
+// One past each limit is refused from the counts the file says, before what
+// they ask for is made: accessors without a buffer view are zeros that take
+// no bytes, so most of these files are small.
+TIDE_TEST(skinned_decode_refuses_files_past_its_limits)
+{
+    limit_text t = {0};
+    // A 276-byte file once asked for 6 million zero vertices and 100 million indices.
+    limit_add(&t, "{\"asset\":{\"version\":\"2.0\"},\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0,\"NORMAL\":0},"
+                  "\"indices\":1}]}],\"accessors\":[{\"componentType\":5126,\"count\":6000000,\"type\":\"VEC3\"},"
+                  "{\"componentType\":5125,\"count\":100663296,\"type\":\"SCALAR\"}]}");
+    TIDE_CHECK(limit_refused(&t, "positions in a part, more than the 1,048,576 a decoded model holds (TIDE_SKINNED_MAX_VERTICES)"));
+    limit_add(&t, "{\"asset\":{\"version\":\"2.0\"},\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0}}]}],"
+                  "\"accessors\":[{\"componentType\":5126,\"count\":%u,\"type\":\"VEC3\"}]}", TIDE_SKINNED_MAX_VERTICES + 1u);
+    TIDE_CHECK(limit_refused(&t, "positions in a part, more than the 1,048,576 a decoded model holds (TIDE_SKINNED_MAX_VERTICES)"));
+    limit_add(&t, "{\"asset\":{\"version\":\"2.0\"},\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0},\"indices\":1}]}],"
+                  "\"accessors\":[{\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+                  "{\"componentType\":5125,\"count\":%u,\"type\":\"SCALAR\"}]}", TIDE_SKINNED_MAX_INDICES + 1u);
+    TIDE_CHECK(limit_refused(&t, "elements in an accessor, more than the 6,291,456 a decoded model holds (TIDE_SKINNED_MAX_INDICES)"));
+    // Without normals, each triangle's corners are vertices of their own: indices within their
+    // limit can still ask for more vertices than the model holds.
+    limit_add(&t, "{\"asset\":{\"version\":\"2.0\"},\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0},\"indices\":1}]}],"
+                  "\"accessors\":[{\"componentType\":5126,\"count\":3,\"type\":\"VEC3\"},"
+                  "{\"componentType\":5125,\"count\":%u,\"type\":\"SCALAR\"}]}", (TIDE_SKINNED_MAX_VERTICES / 3u + 1u) * 3u);
+    TIDE_CHECK(limit_refused(&t, "vertices, more than the 1,048,576 a decoded model holds (TIDE_SKINNED_MAX_VERTICES)"));
+    // Three joint sets of four for each of a million vertices are more weights than influences can be.
+    limit_add(&t, "{\"asset\":{\"version\":\"2.0\"},\"nodes\":[{\"mesh\":0,\"skin\":0},{}],\"skins\":[{\"joints\":[1]}],"
+                  "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0,\"JOINTS_0\":1,\"WEIGHTS_0\":2,\"JOINTS_1\":1,"
+                  "\"WEIGHTS_1\":2,\"JOINTS_2\":1,\"WEIGHTS_2\":2}}]}],\"accessors\":["
+                  "{\"componentType\":5126,\"count\":%u,\"type\":\"VEC3\"},{\"componentType\":5121,\"count\":%u,\"type\":\"VEC4\"},"
+                  "{\"componentType\":5126,\"count\":%u,\"type\":\"VEC4\"}]}",
+                  TIDE_SKINNED_MAX_VERTICES, TIDE_SKINNED_MAX_VERTICES, TIDE_SKINNED_MAX_VERTICES);
+    TIDE_CHECK(limit_refused(&t, "joint weights (vertex influences), more than the 8,388,608 a decoded model holds (TIDE_SKINNED_MAX_INFLUENCES)"));
+    // Four million rotation keys are 20 million key numbers with their times.
+    limit_add(&t, "{\"asset\":{\"version\":\"2.0\"},\"nodes\":[{}],\"animations\":[{\"samplers\":[{\"input\":0,\"output\":1}],"
+                  "\"channels\":[{\"sampler\":0,\"target\":{\"node\":0,\"path\":\"rotation\"}}]}],\"accessors\":["
+                  "{\"componentType\":5126,\"count\":%u,\"type\":\"SCALAR\"},{\"componentType\":5126,\"count\":%u,\"type\":\"VEC4\"}]}",
+                  4u << 20, 4u << 20);
+    TIDE_CHECK(limit_refused(&t, "animation key numbers, more than the 16,777,216 a decoded model holds (TIDE_SKINNED_MAX_KEY_NUMBERS)"));
+    // A part with no triangles that reads a million zero positions, placed by many nodes, reads them again for each.
+    limit_add(&t, "{\"asset\":{\"version\":\"2.0\"},\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":0},\"indices\":1}]}],"
+                  "\"accessors\":[{\"componentType\":5126,\"count\":%u,\"type\":\"VEC3\"},{\"componentType\":5125,\"count\":0,"
+                  "\"type\":\"SCALAR\"}],\"nodes\":[", TIDE_SKINNED_MAX_VERTICES);
+    const uint32_t placements = TIDE_SKINNED_MAX_READS / (TIDE_SKINNED_MAX_VERTICES * 3u) + 1u;
+    for (uint32_t i = 0; i < placements; i++) limit_add(&t, "%s{\"mesh\":0}", i ? "," : "");
+    limit_add(&t, "]}");
+    TIDE_CHECK(limit_refused(&t, "more than the 67,108,864 a decoded model holds (TIDE_SKINNED_MAX_READS)"));
+    // Tables a file names one more of than the most
+    limit_add(&t, "{\"asset\":{\"version\":\"2.0\"},\"nodes\":[");
+    for (uint32_t i = 0; i <= TIDE_SKINNED_MAX_NODES; i++) limit_add(&t, "%s{}", i ? "," : "");
+    limit_add(&t, "]}");
+    TIDE_CHECK(limit_refused(&t, "skeleton nodes, more than the 65,536 a decoded model holds (TIDE_SKINNED_MAX_NODES)"));
+    limit_add(&t, "{\"asset\":{\"version\":\"2.0\"},\"nodes\":[{}],\"skins\":[");
+    for (uint32_t i = 0; i <= TIDE_SKINNED_MAX_SKINS; i++) limit_add(&t, "%s{\"joints\":[0]}", i ? "," : "");
+    limit_add(&t, "]}");
+    TIDE_CHECK(limit_refused(&t, "skins, more than the 4,096 a decoded model holds (TIDE_SKINNED_MAX_SKINS)"));
+    limit_add(&t, "{\"asset\":{\"version\":\"2.0\"},\"animations\":[");
+    for (uint32_t i = 0; i <= TIDE_SKINNED_MAX_CLIPS; i++) limit_add(&t, "%s{\"channels\":[{}]}", i ? "," : "");
+    limit_add(&t, "]}");
+    TIDE_CHECK(limit_refused(&t, "animations, more than the 65,536 a decoded model holds (TIDE_SKINNED_MAX_CLIPS)"));
+    limit_add(&t, "{\"asset\":{\"version\":\"2.0\"},\"buffers\":[");
+    for (uint32_t i = 0; i <= TIDE_SKINNED_MAX_BUFFERS; i++) limit_add(&t, "%s{\"byteLength\":0}", i ? "," : "");
+    limit_add(&t, "]}");
+    TIDE_CHECK(limit_refused(&t, "buffers, more than the 65,536 a decoded model holds (TIDE_SKINNED_MAX_BUFFERS)"));
+    // Skins whose joints are one more inverse bind than the most: 65 joints in each of as many skins as it takes
+    const uint32_t joints = 65u, skins = TIDE_SKINNED_MAX_PALETTES / joints + 1u;
+    TIDE_CHECK(skins <= TIDE_SKINNED_MAX_SKINS && (uint64_t)skins * joints > TIDE_SKINNED_MAX_PALETTES);
+    limit_add(&t, "{\"asset\":{\"version\":\"2.0\"},\"nodes\":[");
+    for (uint32_t i = 0; i < joints; i++) limit_add(&t, "%s{}", i ? "," : "");
+    limit_add(&t, "],\"skins\":[");
+    for (uint32_t i = 0; i < skins; i++) {
+        limit_add(&t, "%s{\"joints\":[", i ? "," : "");
+        for (uint32_t k = 0; k < joints; k++) limit_add(&t, "%s%u", k ? "," : "", k);
+        limit_add(&t, "]}");
+    }
+    limit_add(&t, "]}");
+    TIDE_CHECK(limit_refused(&t, "more than the 262,144 a decoded model holds (TIDE_SKINNED_MAX_PALETTES)"));
+    // One channel more than the most, each a single key at time zero: every node and two paths in each of two
+    // clips, then one more in a third (a node animated in one clip can be in the next)
+    const uint32_t nodes = TIDE_SKINNED_MAX_NODES;
+    limit_add(&t, "{\"asset\":{\"version\":\"2.0\"},\"accessors\":[{\"componentType\":5126,\"count\":1,\"type\":\"SCALAR\"},"
+                  "{\"componentType\":5126,\"count\":1,\"type\":\"VEC3\"}],\"nodes\":[");
+    for (uint32_t i = 0; i < nodes; i++) limit_add(&t, "%s{}", i ? "," : "");
+    limit_add(&t, "],\"animations\":[");
+    static const char *const paths[] = {"translation", "scale"};
+    uint32_t channels = 0;
+    for (uint32_t clip = 0; clip < 3u; clip++) {
+        limit_add(&t, "%s{\"samplers\":[{\"input\":0,\"output\":1}],\"channels\":[", clip ? "," : "");
+        for (uint32_t i = 0; i < nodes * 2u && channels <= TIDE_SKINNED_MAX_CHANNELS; i++, channels++) {
+            limit_add(&t, "%s{\"sampler\":0,\"target\":{\"node\":%u,\"path\":\"%s\"}}", i ? "," : "", i % nodes, paths[i / nodes]);
+        }
+        limit_add(&t, "]}");
+    }
+    limit_add(&t, "]}");
+    TIDE_CHECK(channels == TIDE_SKINNED_MAX_CHANNELS + 1u);
+    TIDE_CHECK(limit_refused(&t, "animation channels, more than the 262,144 a decoded model holds (TIDE_SKINNED_MAX_CHANNELS)"));
+    // A description of one more value than the most
+    limit_add(&t, "{\"asset\":{\"version\":\"2.0\"},\"extras\":[0");
+    for (uint32_t i = 4u; i < TIDE_SKINNED_MAX_JSON_VALUES; i++) limit_add(&t, ",0");
+    limit_add(&t, "]}");
+    TIDE_CHECK(limit_refused(&t, "has more JSON values in its description than the 4,194,304 a decoded model holds (TIDE_SKINNED_MAX_JSON_VALUES)"));
+}
+
+// Objects with many keys are looked up by halves rather than by a walk, and a
+// key written twice still means its first: a model whose objects carry many
+// other keys, repeated ones among them, decodes to the same bytes.
+TIDE_TEST(skinned_decode_objects_with_many_keys_read_as_before)
+{
+    model_fixture f;
+    make_fixture(&f, false);
+    size_t input_size;
+    uint8_t *input = fixture_glb(&f, &input_size), *expected, *actual;
+    uint32_t expected_size, actual_size;
+    TIDE_REQUIRE(fixture_decode(input, input_size, true, NULL, &expected, &expected_size));
+    free(input);
+    char extra[512];
+    size_t at = 0;
+    for (uint32_t i = 0; i < 24u; i++) at += (size_t)snprintf(extra + at, sizeof extra - at, "\"zz%02u\":%u,", i, i);
+    char replacement[768];
+    snprintf(replacement, sizeof replacement, "{%s\"asset\":", extra);
+    TIDE_REQUIRE(fixture_replace(&f, "{\"asset\":", replacement));
+    snprintf(replacement, sizeof replacement, "{%s\"name\":\"Hand.R\",\"translation\":[0,1,0],\"name\":\"Other\",", extra);
+    TIDE_REQUIRE(fixture_replace(&f, "{\"name\":\"Hand.R\",\"translation\":[0,1,0],", replacement));
+    snprintf(replacement, sizeof replacement, "{%s\"bufferView\":5,\"componentType\":5126,\"count\":5,\"type\":\"MAT4\",\"count\":9}", extra);
+    TIDE_REQUIRE(fixture_replace(&f, "{\"bufferView\":5,\"componentType\":5126,\"count\":5,\"type\":\"MAT4\"}", replacement));
+    input = fixture_glb(&f, &input_size);
+    TIDE_REQUIRE(fixture_decode(input, input_size, true, NULL, &actual, &actual_size));
+    TIDE_CHECK(actual_size == expected_size && memcmp(actual, expected, expected_size) == 0);
+    free(input);
+    tide_skinned_data_free(actual);
+    tide_skinned_data_free(expected);
 }
