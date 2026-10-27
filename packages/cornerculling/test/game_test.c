@@ -159,6 +159,18 @@ TIDE_TEST(cornerculling_fps_visual_scenarios)
     TIDE_CHECK(w.Fixture.answer.status == CornerCulling_Status_Occluded);
     TIDE_CHECK(w.Fixture.answer.occluder == 2);
 
+    // A doorway remains open; an offset corridor has an intact central wall.
+    const box doorway[] = {wall(0, 0, -2.5f, 0.5f, 4, 1.5f, -1),
+                           wall(0, 0, 2.5f, 0.5f, 4, 1.5f, -1)};
+    rebuild(&w, doorway, 2);
+    TIDE_CHECK(w.Fixture.answer.status == CornerCulling_Status_Visible);
+    const box corridor[] = {wall(-2, 0, -3, 0.5f, 4, 1.5f, -1),
+                            wall(2, 0, 3, 0.5f, 4, 1.5f, -1),
+                            wall(0, 0, 0, 0.5f, 4, 1.5f, -1)};
+    rebuild(&w, corridor, 3);
+    TIDE_CHECK(w.Fixture.answer.status == CornerCulling_Status_Occluded);
+    TIDE_CHECK(w.Fixture.answer.occluder == 2);
+
     box narrow = wall(0, 0, 0, 0.5f, 4, 1, -1);
     q.target.center.z = 3;
     w.Fixture.query = q;

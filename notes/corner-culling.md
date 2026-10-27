@@ -185,11 +185,11 @@ earlier reference run; no new performance claim is made for integration.
 
 ## FPS visual fixtures (2026-10-27)
 
-`test/visual.html` depicts four fixed perspective scenarios with server and
+`test/visual.html` depicts six fixed perspective scenarios with server and
 client diagnostic overlays. `cornerculling_fps_visual_scenarios` checks the
 same coordinates against the actual package: one solid wall occludes; two
 adjacent wall pieces remain visible because neither independently certifies the
-whole target; adding a full wall box to those pieces occludes; a target peeking past a narrower wall remains visible. The client
+whole target; adding a full wall box to those pieces occludes; a target peeking past a narrower wall remains visible; a doorway is visible and an offset corridor with one complete blocker is occluded. The client
 overlay depicts a hypothetical entity-level policy, not a live network client or
 a game capture. The existing integration test restricts the Enemy component,
 not the complete entity.
