@@ -312,6 +312,18 @@ static const argument_help arguments[] = {
      "Script input can name a player: 120 player 2 key d down.\n"
      "Captures gain player numbers, like fight-2.png. With --players 1, filenames\n"
      "have no number. Cannot combine with --host, --join or --connect.", RUN},
+    {"--latency", "--latency <ms>", "Delay this player's datagrams each way",
+     "Plays a match this machine joins as if it were that far from its server,\n"
+     "to tune how online play feels: with --players, each player who joins;\n"
+     "with --join or --connect, this machine. A machine that runs the match's\n"
+     "server adds none. <player>:<ms>, like 2:120, sets one player of\n"
+     "--players. Also as latency=80 in a web page's address.", RUN},
+    {"--jitter", "--jitter <ms>", "Delay each datagram up to this much more",
+     "At random, both ways, so datagrams also come out of order. Takes\n"
+     "<player>:<ms> like --latency, and jitter=10 in a web page's address.", RUN},
+    {"--loss", "--loss <percent>", "Lose this share of datagrams each way",
+     "From 0 to 100. Takes <player>:<percent> like --latency, and loss=5 in a\n"
+     "web page's address. Runs with --players lose the same ones every time.", RUN},
     {"--project", "--project <name-or-id>", "Select or relink the deployment project",
      "Overrides tide.deploy.json and saves the selected project after deploy.\n"
      "An explicit missing name creates a Small/one-match project; an invalid\n"

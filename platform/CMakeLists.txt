@@ -828,10 +828,11 @@ if(TIDE_WEB)
 
     # The standard host's debug views (tide/host.h): F7 shows the profiler where
     # they're on, by the command line or the game's setting, and nowhere else.
+    # The page's address also has --latency, --jitter and --loss in it.
     tide_add_game(tide_platform_web_debug_views SOURCES tests/debug_views.tide NAME game HOST tests/web_debug_views.c)
     target_link_libraries(tide_platform_web_debug_views PRIVATE tide_platform)
     tide_web_page(tide_platform_web_debug_views SHELL web/test_shell.html)
-    tide_add_web_test(tide_platform_web_debug_views TARGET tide_platform_web_debug_views QUERY debug-views)
+    tide_add_web_test(tide_platform_web_debug_views TARGET tide_platform_web_debug_views QUERY "debug-views&latency=80&jitter=10&loss=5")
 
     # ...and its stats (tide/stats.h): a drawer that a game's setting shows
     # closed, which F8, a click and a tap open and close, whose presses the

@@ -69,4 +69,6 @@ view Where(Session session)
     if (session.server) Draw.Rect(float2(300, 20), float2(20, 20), Color(1, 1, 1));
     if (session.room == "AAAAAA") Draw.Rect(float2(300, 60), float2(20, 20), Color(0, 1, 1));
     if (!session.server && session.ping > 0 && session.ping < 100) Draw.Rect(float2(300, 100), float2(20, 20), Color(1, 0, 1));
+    // ...or a slow one's, as --latency makes it
+    if (!session.server && session.ping >= 150) Draw.Rect(float2(300, 140), float2(20, 20), Color(1, 1, 0));
 }

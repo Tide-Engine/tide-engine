@@ -123,6 +123,11 @@
     if (address.has('stats') && !words.includes('--stats')) {
         words.push('--stats');
     }
+    // `latency=80`, `jitter=10` and `loss=5` are --latency, --jitter and --loss: the way to a match the page
+    // joins, made worse by as much, which the program checks
+    for (const name of ['latency', 'jitter', 'loss']) {
+        if (address.has(name) && !words.includes(`--${name}`)) words.push(`--${name}`, address.get(name));
+    }
     if (!words.some(word => word === '--host' || word === '--join' || word === '--connect')) {
         // A code is letters and digits, and a match after a slash: the program says what's wrong with one that isn't a room's
         const code = (address.get('join') || '').replace(/[^0-9a-z/]/gi, '');

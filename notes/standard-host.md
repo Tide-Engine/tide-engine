@@ -1,5 +1,52 @@
 # The standard host: runs with no window, the stats, debug views
 
+## A slow network to play on (2026-10-27)
+
+The owner's ask: tune how a match feels online (Parry's blocks, struck through a guard that looked up in time) without
+two machines on the internet, from `tide run`, scripts and `--capture` included.
+
+- **Options** (`tide_run_configure`, `tide_run_condition` in `tide/host.h`): `--latency <ms>` each way (0 to 10,000),
+  `--jitter <ms>` (up to that much more each way, at random, so datagrams also reorder), `--loss <percent>` (0 to 100,
+  each way). `<player>:<value>` (`--latency 3:150`) is one player's of a `--players` run and wins over everyone's,
+  whatever the order; a player the run doesn't have, a player's value without `--players`, and player 0 are refused with
+  exit code 2 before anything opens. `tide run` passes them on (repeatable: `game_args` grew to 128 in
+  `compiler/cli/main.c`), `--server` refuses them, and `tide run --web` puts them in the page's arguments. On the web the
+  address's `latency=`, `jitter=` and `loss=` are the same words (`tide.js`, beside `stats`; the page's own
+  `Tide.arguments` win), so a page takes them as a desktop command line does.
+- **One implementation, the loopback's** (`tide_net_conditioned`, `tide/net.h`): a transport wrapping another, both ways,
+  whose queue, seeded randomness and conditions are a `tide_loopback`'s (`queue_put`/`queue_take` in `engine/src/net.c`,
+  which the loopback's own send and receive now call: the same draws in the same order, so seeded fixtures are
+  unchanged). What's sent waits on the queue as endpoint 1 (the address it's for kept as `from`), and what the inner
+  transport brings waits as endpoint 2, from when it arrived (`inner.arrived`, else now). Its time is the inner
+  transport's clock, or the clock it's given where there's none (`--players` ends: the host gives `tide_run_now`, the
+  run's made-up time). Datagrams move only when it's used, so on a real network they go and arrive at frame granularity.
+  Its `clock`/`arrived` are the inner clock and the delayed arrival, so the session's ping counts what's added. Closing it
+  sends what was on its way out at once (a goodbye isn't lost), then closes the inner one.
+- **Where it applies** (`tide_run_conditioned`, Claude's pick, Provisional in `docs/tools/cli.md`): a match this machine
+  joins, every way it joins one: `--join`/`--connect` and `Session.Join`/`Connect` (rooms, UDP, the made-up network, a
+  game's own network), a dedicated server's match (`tide_run_hosted_request`) and a migrated match joined again. A machine
+  that runs the server adds nothing, as the web's `Tide.lag` already did (notes/web.md): its player has no way to go, and
+  each joiner's way is that joiner's. So in `--players 2 --latency 80` player 2 is 80 ms from player 1's server each way,
+  and in three, players 2 and 3 are 160 ms from each other through it. One machine's setting delays both ways, so it's
+  meant for one side: two machines both set to 80 would be 160 apart.
+- **Repeats.** Each process seeds its own (`0x6E6574636F6E6400 ^ tide_platform_player()`), and a `--players` run's time
+  is made up, so the same datagrams are lost and late every run: a run with jitter and loss repeats byte for byte.
+  Real-network runs use the same seed but real clocks, so they don't repeat.
+- **Not the web's `lag`.** `Tide.lag`/`lag=` (agreed 2026-10-05) is a target ping that the page reaches by measuring
+  what the trip takes and holding back the rest in `tide.js`; `latency` adds a fixed amount each way in the program. Both
+  can be on; they add up.
+- Tests: `tests/test_net_conditioned.c` (engine, native and WASI): both ways' delays and arrival time by the inner
+  clock, jitter reordering and repeating by seed, loss each way, a close sending what was on its way, and a clockless
+  inner transport taking the given clock. `tide_platform_players` (`players.mjs`, label `gpu`): two players at
+  `--latency 80 --jitter 10 --loss 5` both see both blocks end where they do, the second's ping is 150 ms or more
+  (`players.tide`'s yellow block at 300,140), the first's has none, and the run repeats byte for byte; three at
+  `--latency 3:80` give the third a slow ping and the second the made-up network's own. `tide_platform_players_refused`
+  has the six refusals. `tide_cli_run_exit` passes the options on (and an option given 48 times is still refused).
+  `tide_platform_web_debug_views` has `latency=80&jitter=10&loss=5` in its address and checks the host's conditions.
+- Measured: not timed; the added cost is one queue scan a datagram, only where an option is set.
+- Not built: changing them while a run goes (a script line such as `player 2 latency 150`, or a key), bandwidth limits,
+  and conditions for a machine that runs the server.
+
 ## Time travel inside another program (2026-10-26)
 
 `tide/embed.h` gained the debugger's calls (embed ABI 7; notes/unity.md, Time travel, has the design, decisions and
@@ -394,7 +441,8 @@ submitted-geometry counter's scope.
   - **Ending.** `--frames` and `quit` are every process's, so all end at the same frame, and the last frame has no exchange. The first then hangs up and waits for the others (`tide_platform_players_finish`, from `finish`), and the run's exit code is the first that isn't 0. A run of one frame heard from nobody yet, so the first lets the others connect before it hangs up, or they'd find no run. When a player's process ends before the run does (it stopped, or couldn't write a picture), the first finds its connection closed at that frame's end, says whose game ended and at which frame, hangs up, and ends with that process's exit code, or 1 for one the system stopped; each of the others finds nobody at its own frame's end and ends with 1, saying nothing. So no process is left running, and none waits on a time.
   - **Measured** (2026-10-08, Windows, debug): Tag, two players, 1,200 frames at 640 by 360, in 3.4 seconds, where one player's run took 1.6.
   - Tests: `tide_platform_players_net` and `tide_platform_players_net_ended` (`platform/tests/players_net.c`, no GPU, every desktop's tests) are three processes with no window that send text through the network and check, frame by frame, when it arrives, in what order and from whom, what a room nobody opened says, that an end let go of is nobody's, and that a process that ends at frame 3 ends the run there with its exit code. `tide_platform_players` (`players.mjs`, label `gpu`) runs `players.tide`, whose Main is the match's, with two and three players and one, and `players_menu.tide`, which starts in a menu, where the script has the players open and join by the rooms' codes, an address and one nobody is at: it reads every player's pictures, runs each again for the same bytes, and has a game stop and a picture fail. `tide_platform_players_refused` is what such a run refuses, with no GPU, and `tide_cli_hidden` that `tide run` passes `--players` on and refuses it with a window. CI leaves the `gpu` label out, so `tide_platform_players_net` is what runs the processes and the sockets on Linux and macOS.
-  - Not built: several players with windows (two at one desk, in real time); a player whose game ends on purpose while the run goes on (`player 2 quit`; `leave`, `drop` and `rejoin`, above, cover its match); a network that's worse than a frame each way (a made-up lag or loss, which the first player's process could add, as every datagram goes through it); host migration on the made-up network; and players who start apart where `Main` is the match's.
+  - A network worse than a frame each way: `--latency`, `--jitter` and `--loss` (A slow network to play on, 2026-10-27, above).
+  - Not built: several players with windows (two at one desk, in real time); a player whose game ends on purpose while the run goes on (`player 2 quit`; `leave`, `drop` and `rejoin`, above, cover its match); host migration on the made-up network; and players who start apart where `Main` is the match's.
 - That nothing an agent runs shows on the owner's screen doesn't rest on the agent remembering: `TIDE_HIDDEN` in the environment, set to anything but nothing or 0, says nobody watches a run (`tide_hidden`, `tide/page.h`), and then no Tide program shows a window or a dialog, or opens an audio device. Desktop only. Inside Unity, whose audio plays an embedded game's, the package's `TideAudio` clears each block it fills and opens no microphone under it (2026-10-22).
   - Where agents' shells get it, and the rules that stand beside it, are in `AGENTS.md`, Rendering and platform.
   - A window that isn't `hidden` has only its closing to end its run, which nobody could do, so the program is refused: it ends with exit code 2 before it opens anything, having said what to give it instead (decided over running hidden for a counted number of frames, which would end with 0 as if something had been checked, and as a run with no window that nothing ends is refused already). `tide_platform_open` refuses any such window (`platform/src/platform.c`), the standard host names its flags first (`tide_run_open` in `tide/host.h`), and `tide run` refuses before it builds (`compiler/cli/main.c`); `tide run --web` serves its page and opens no browser. A window that's `hidden`, as every test's is, and a run with no window go as they do without the variable, but for the window's sound (Nobody listens either, below). Under the refusal, `tide_window_open` shows no window whatever asked (`platform/desktop/glfw.c`).

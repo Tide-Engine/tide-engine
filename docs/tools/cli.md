@@ -139,6 +139,7 @@ still performs only front-end validation, even with a preview flag.
 | `--debug-views` | Turns the [debug views](debug-views.md) on, as the game's `debugViews` setting does: F7 shows the profiler, which says where a frame's time and a tick's go |
 | `--size <width> <height>` | `run` only: the window's size in pixels, 960 by 540 without it (not on the web or Android) |
 | `--capture`, `--capture-audio`, `--microphone`, `--frames`, `--script`, `--scale`, `--players` | `run` only: plays the game [without a window](#without-a-window), to see what it draws and hear what it plays, with [several players](#several-players) if you like |
+| `--latency <ms>`, `--jitter <ms>`, `--loss <percent>` | `run` only: plays a match this machine joins as if it were further from its server (see [A slow network](#a-slow-network)) |
 | `--seed <n>` | `run` only: the seed of the matches the game starts, [`Random.seed`](../language/math.md#the-match-s-seed), from 0 to 2147483647. Without it, every match gets another one |
 | `--data-dir <folder>` | `run` only, native desktop: use this save directory, relative to where the command was invoked. Useful for disposable test saves |
 | `--shards <n>`, `--shard-width <units>` | `run` only: a [sharded game](../multiplayer/shards.md)'s match as `n` regions along x, each this wide (16 times its `reach` without it), all on this machine |
@@ -573,6 +574,31 @@ server executable; browser players still connect through WebRTC.
 
 To check a match with no window on screen, `--players` plays [several players](#several-players) at once and takes a picture from each.
 
+### A slow network
+
+On one machine, or on a fast network, a match feels better than it will online: what another player does shows up at once. To feel and tune it as players far apart will, make the way to the match's server worse:
+
+| Option | What it does |
+|---|---|
+| `--latency <ms>` | Each datagram takes this many milliseconds more, each way, so the ping is twice that more |
+| `--jitter <ms>` | ...and up to this many more, at random, each way, so datagrams also come out of order |
+| `--loss <percent>` | This share of datagrams is lost, each way, from 0 to 100 |
+
+```
+tide run --connect 192.168.1.5 --latency 80 --jitter 10 --stats   # join a match on the network as if from far away
+tide run --players 2 --latency 80 --script duel.txt               # two players with no window, the second 80 ms from the first
+```
+
+They're the way from this machine to a match it joins, with `--join`, `--connect`, a game's own `Session.Join` and `Session.Connect`, or a dedicated server's match. A machine that runs the match's server adds nothing: its own player has no way to go, and the way to every other player is that player's. So set them on the machine that joins; the one that runs `--host` needs none. The [stats](#stats) show the ping that makes.
+
+With [several players](#several-players), each player who joins is that far from the match's server. Player 1, who opens it, isn't. `<player>:<value>` says one player's own, which wins over everyone's: `--latency 80 --latency 3:150` puts players 2 and 4 80 ms away and player 3 150 ms. A run like this still repeats exactly: the same datagrams are late and lost every time, so a script and its pictures show the same moment from each player's side, like the joining player's under 80 ms. Each way also has the frame that a packet takes there anyway.
+
+On the web, `?latency=80`, `?jitter=10` and `?loss=5` in the page's address do the same, as does `tide run --web --latency 80`.
+
+::: info Provisional
+These options are new: their names, `<player>:<value>`, and that a machine running the server adds nothing may still change.
+:::
+
 ### In a web page's address
 
 A game's web page takes the same from its address, so a link can say which match it's for:
@@ -581,6 +607,7 @@ A game's web page takes the same from its address, so a link can say which match
 |---|---|
 | `?host` | As `--host`: the game opens its match, in a room |
 | `?join=K7QF2M` | As `--join K7QF2M`: the game joins the match in that room. A game's `Session.invite` is that link to its own page, for a player to send |
+| `?latency=80`, `?jitter=10`, `?loss=5` | As `--latency 80`, `--jitter 10` and `--loss 5`: the way to a match the page joins is that much worse (see [A slow network](#a-slow-network)) |
 | `?lag=100` | The page's player has a ping of 100 milliseconds, the round trip to the match's server, to see a match as on a slow connection with both players at one desk. What the trip takes already counts: the page holds back what it sends and what it receives by half of what's missing each. A page that hosts the match adds nothing |
 | `?embedded` | The game is part of a page that scrolls, in a frame of it, and leaves that page its scrolling: the wheel, and a finger that swipes up or down, until the player taps the game |
 | `?wait` | The game loads, and starts when the page around it says so |
@@ -679,7 +706,7 @@ Each player is a copy of the game, a program of its own, as on a machine of its 
 310 quit
 ```
 
-A packet takes a frame each way, in every run, so a player's [ping](../multiplayer/matches.md#where-this-machine-stands) is a few frames long, and the same each time. A run has 32 players at most, and no more than the game's `maxPlayers`. It takes no `--host`, `--join` or `--connect`: who's in the match is the run's to say, or the game's. A match whose host leaves ends for the others: it can't [change hands](../multiplayer/matches.md#host-migration), which goes through the relay.
+A packet takes a frame each way, in every run, so a player's [ping](../multiplayer/matches.md#where-this-machine-stands) is a few frames long, and the same each time. `--latency`, `--jitter` and `--loss` put the players who join further away, or one of them (see [A slow network](#a-slow-network)). A run has 32 players at most, and no more than the game's `maxPlayers`. It takes no `--host`, `--join` or `--connect`: who's in the match is the run's to say, or the game's. A match whose host leaves ends for the others: it can't [change hands](../multiplayer/matches.md#host-migration), which goes through the relay.
 
 `--players 1` is a run of one whose network is made up too: its match opens in room `AAAAAA` with nobody to join it, and its pictures have no number.
 
