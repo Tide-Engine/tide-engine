@@ -1,11 +1,19 @@
 # `tide_add_game` and the generated header
 
+Shipping follow-up (2026-10-27): STRIP_NAMES explicitly requests the metadata
+and shader identifier policy, including for HOST/debug targets; the existing
+gpu_functions pixel fixture uses it. Standard-host shipping defaults are as
+below. Apple Release/MinSizeRel executables additionally omit public exports;
+Android Release/MinSizeRel apps use platform/android/game.exports, retaining
+only their NativeActivity entry. Shared Unity/hot-reload APIs are unchanged.
+Contracts and validation: shaders.md and cli-and-packages.md.
+
 Shipping metadata (2026-10-27): standard-host Release/MinSizeRel
 games without LAYOUT/EMBED pass --strip-names via run_tidec.cmake. Custom HOST
 targets retain their diagnostic contracts; direct tidec callers can explicitly
 request stripping. RelWithDebInfo (the repository's release preset) and explicit
 visualizer builds keep names for profiling/debugging. It writes a private <name>.names beside generated C, never
-as a game output. No tide_add_game argument or generated header/host ABI changes.
+as a game output. The later STRIP_NAMES opt-in above adds no generated header/host ABI change.
 Tests and limitations: language.md and cli-and-packages.md.
 
 `VISUALIZERS` (2026-10-26): `tide_add_game(... VISUALIZERS)` passes

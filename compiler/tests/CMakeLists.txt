@@ -599,6 +599,26 @@ endforeach()
 # shaders/<name>.txt exactly: the GLSL and WGSL of each shader its mesh draw
 # calls draw through.
 file(GLOB TIDE_SHADER_TESTS CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/shaders/*.tide")
+if(TIDE_NODE)
+    add_test(NAME tidec_shader_names_all
+        COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/shader_names.mjs" "${TIDEC_PATH}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/shaders" "${CMAKE_CURRENT_BINARY_DIR}/shader_names")
+    set_tests_properties(tidec_shader_names_all PROPERTIES TIMEOUT 180)
+    get_filename_component(compiler_bin "${TIDE_CLANG}" DIRECTORY)
+    find_program(TIDE_LLVM_READOBJ NAMES llvm-readobj llvm-readobj-23 llvm-readobj-22 llvm-readobj-21
+        llvm-readobj-20 llvm-readobj-19 llvm-readobj-18 HINTS "${compiler_bin}")
+    find_program(TIDE_LD64 NAMES ld64.lld HINTS "${compiler_bin}")
+    if(TIDE_LLVM_READOBJ)
+        set(macho_test)
+        if(TIDE_LD64)
+            set(macho_test macho)
+        endif()
+        add_test(NAME tide_cli_shipping_exports
+            COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/compiler/cli/tests/exports_test.mjs"
+                "${TIDE_CLANG}" "${TIDE_LLVM_READOBJ}" "${PROJECT_SOURCE_DIR}/platform/android/game.exports"
+                "${CMAKE_CURRENT_BINARY_DIR}/shipping_exports" ${macho_test})
+    endif()
+endif()
 foreach(source IN LISTS TIDE_SHADER_TESTS)
     get_filename_component(name "${source}" NAME_WE)
     get_filename_component(dir "${source}" DIRECTORY)
@@ -645,6 +665,10 @@ endif()
 # what it refuses, and that a file cut or wrong anywhere is never read past
 # its bytes. The language server reads a game's files at every keystroke.
 if(TARGET tidec_core)
+    add_executable(tidec_shader_names_tests shader_names_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+    target_include_directories(tidec_shader_names_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
+    target_link_libraries(tidec_shader_names_tests PRIVATE tide tidec_core)
+    add_test(NAME tidec_shader_names COMMAND tidec_shader_names_tests)
     add_executable(tidec_asset_usage_tests asset_usage_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
     target_include_directories(tidec_asset_usage_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")
     target_compile_definitions(tidec_asset_usage_tests PRIVATE ASSET_USAGE_ROOT="${PROJECT_SOURCE_DIR}"

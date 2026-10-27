@@ -1,4 +1,5 @@
 #include "compile.h"
+#include "shader_names.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -161,6 +162,14 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
 
     codegen_options named = *opts;
     if (!named.name) named.name = path_stem(inputs[0].path);
+    if (schedule && opts->strip_names && (opts->shaders || opts->spirv_dir || opts->hlsl_dir)) {
+        for (int i = 0; i < prog->shaders.count; i++) {
+            shader *sh = prog->shaders.items[i];
+            sh->glsl_vertex = shader_minify_names(sh->glsl_vertex, NULL);
+            sh->glsl_fragment = shader_minify_names(sh->glsl_fragment, NULL);
+            sh->wgsl = shader_minify_names(sh->wgsl, NULL);
+        }
+    }
     if (schedule && opts->spirv_dir) return write_spirv(prog, opts->spirv_dir, schedule);
     if (schedule && opts->hlsl_dir) return write_hlsl(prog, opts->hlsl_dir, schedule);
     if (opts->shader_out) {

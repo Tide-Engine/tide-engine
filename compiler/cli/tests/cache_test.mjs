@@ -177,6 +177,9 @@ function checkReleaseMetadata(program, game, cache, output, target, release) {
         check(program.includes(Buffer.from(name)) === !release,
             `${target}: ${name} ${release ? "leaked into release metadata" : "missing from debug metadata"}`);
     }
+    const shaderNames = ["ShaderSecretHelper924", "ShaderSecretParam012", "ShaderSecretLocal123", "ShaderSecretFrag597", "ShaderSecretField539"];
+    for (const name of shaderNames)
+        check(program.includes(Buffer.from(name)) === !release, `${target}: shader identifier ${name} was not stripped correctly`);
     for (const path of [join(game, "game.tide"), join(game, "game.tide").replaceAll("\\", "/")]) {
         if (release) check(!program.includes(Buffer.from(path)), `${target}: release leaked its Tide source path`);
     }
@@ -191,6 +194,7 @@ function checkReleaseMetadata(program, game, cache, output, target, release) {
     if (release) {
         const mapping = readFileSync(map, "utf8");
         for (const name of names) check(mapping.includes(`\t${name}\n`), `${target}: private map lost ${name}`);
+        for (const name of shaderNames) check(mapping.includes(name), `${target}: private shader map lost ${name}`);
         for (const suffix of [".names", ".pdb", ".natvis", "_lldb.py", ".c", ".h", ".wasm.map"])
             check(!existsSync(stem + suffix), `${target}: development file shipped beside the release: ${suffix}`);
         check(!existsSync(`${output}.dSYM`), `${target}: release retained its previous debug bundle`);
@@ -205,6 +209,18 @@ function checkReleaseMetadata(program, game, cache, output, target, release) {
             const optional = pe + 24;
             const directories = optional + (program.readUInt16LE(optional) === 0x20b ? 112 : 96);
             check(program.readUInt32LE(directories + 6 * 8 + 4) === 0, "release PE retained a debug directory");
+        } else if (process.platform === "darwin") {
+            check(program.readUInt32LE(0) === 0xfeedfacf, "release is not a 64-bit Mach-O executable");
+            const commands = program.readUInt32LE(16);
+            let at = 32, found = false;
+            for (let i = 0; i < commands; i++) {
+                if (program.readUInt32LE(at) === 0xb) { // LC_DYSYMTAB: defined external symbols
+                    check(program.readUInt32LE(at + 20) === 0, "release Mach-O retained defined external symbols");
+                    found = true;
+                }
+                at += program.readUInt32LE(at + 4);
+            }
+            check(found, "release Mach-O has no dynamic symbol-table command");
         }
     }
 }
@@ -250,10 +266,13 @@ int Native(int value)
     put(join(game, "game.tide"), "scene Main { }\nsingleton State { int value; SkinnedMesh<PackedCorner> model; }\nextern int Native(int value);\n"
         + 'asset string fromC = "from-c.txt";\n'
         + 'asset string PrivateAsset_95fe23 = "from-c.txt";\n'
-        + 'struct PackedCorner { float3 position; int extra = PrivateAsset_95fe23.length; }\n'
+        + 'struct PackedCorner { float3 position; float ShaderSecretField539 = float(PrivateAsset_95fe23.length); }\n'
         + 'asset SkinnedMesh<PackedCorner> PrivateModel_2acb40 = "model.gltf";\n'
+        + 'float ShaderSecretHelper924(float ShaderSecretParam012) { var ShaderSecretLocal123 = ShaderSecretParam012 * 0.25; return ShaderSecretLocal123; }\n'
+        + 'frag ShaderSecretFrag597(PackedCorner vertex, out Color color) { color = Color.white * ShaderSecretHelper924(float(vertex.ShaderSecretField539)); }\n'
         + "system PrivateTick_c17b42(mut State state) { state.value = Native(state.value) + PrivateAsset_95fe23.length; state.model = PrivateModel_2acb40; }\n"
-        + 'view PrivateView_e5a6d9(State state) {\nDebug.Assert(state.value >= 0, "TIDE_KEEP_AUTHORED_MESSAGE_56c8");\n}\n');
+        + 'view PrivateView_e5a6d9(State state) {\nDebug.Assert(state.value >= 0, "TIDE_KEEP_AUTHORED_MESSAGE_56c8");\n'
+        + 'Draw.SkinnedMesh(PrivateModel_2acb40, float4x4.identity, ShaderSecretFrag597);\n}\n');
     const packedMarker = "TIDE_C_ASSET_WITHOUT_TIDE_REFERENCE_2c961b87";
     put(join(game, "from-c.txt"), packedMarker);
     const sharedOutput = join(root, `strip-${target}-shared${target === "web" ? ".html" : process.platform === "win32" ? ".exe" : ""}`);
