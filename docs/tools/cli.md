@@ -143,6 +143,7 @@ still performs only front-end validation, even with a preview flag.
 | `--data-dir <folder>` | `run` only, native desktop: use this save directory, relative to where the command was invoked. Useful for disposable test saves |
 | `--shards <n>`, `--shard-width <units>` | `run` only: a [sharded game](../multiplayer/shards.md)'s match as `n` regions along x, each this wide (16 times its `reach` without it), all on this machine |
 | `-o <path>` | `build` only: where the program goes |
+| `--single-file` | `build --web` only: one self-contained `.html` with the game inside, which opens from disk, instead of a folder whose page downloads the game (see [The page while it loads](#the-page-while-it-loads)) |
 | `--no-open` | `run --web` only: serves the page without opening a browser |
 
 Choose a startup without writing a `Main` scene:
@@ -173,9 +174,16 @@ artifact.
 
 The engine is optimized in every build. Without `--release`, generated game code and the game's and packages' C/C++ stay unoptimized for debugging; engine and game code retain debug symbols and assertions, and `DEBUG` is defined. A native debugger stops at breakpoints in `.tide` files and shows the game's values as Tide's, with `<name>.natvis` (also in the `.pdb` on Windows) and `<name>_lldb.py` beside the program (see [Debugging](debugging.md)). Engine objects are cached, so ordinary game edits reuse them. This applies to native, web and Android builds, including hot reload.
 
-`tide build --release --web` makes one self-contained `.html` file with the game inside. It opens straight from disk, and can be put online as it is.
+`tide build --release --web` makes a folder to put online as it is, `.build/web/`: `index.html`, and the game's program and assets beside it, `index.wasm` and `index.pack` (none for a game without assets). The page downloads them showing how much has come, and the browser keeps them in its cache between visits until a new build changes them: the page asks for each by its hash. Such a page needs a server, even on your own machine: a page opened from disk can't download its files, and says so. With `-o <path>.html`, the files go beside that page, named after it.
 
-Web releases compress the program and assets inside that file and use a smaller page runtime. Decoding is included, so playing or building a packaged Tide game needs no extra tools or downloads. Debug and hot-reload pages keep their readable runtime and original payloads.
+`--single-file` makes one self-contained `.html` file instead, `.build/<name>.html`, with the game inside, which opens straight from disk. Web releases compress the program and assets inside that file, and decoding is included, so playing it needs no extra tools or downloads. Release pages of either kind use a smaller page runtime. Debug and hot-reload pages keep the readable runtime and original payloads.
+
+### The page while it loads
+
+Until the game first draws, the page shows what it's doing: how much of the game has downloaded, then that it's starting. A game's `icon.png` (in its folder, as for [Android](#android)) shows above that, and is the page's icon in the browser's tab. For a page of your own, put a `shell.html` in the game's folder: it replaces the page around the game, its loader included, under `tide build --web` and `tide run --web`. It's a whole HTML page with `{{{ SCRIPT }}}` at the end of its `<body>`, where the game's script goes. Start from [Tide's own](https://github.com/Tide-Engine/tide-engine/blob/dev/platform/web/shell.html):
+
+- An element with the ID `tide-loading` is the loader: the game takes it away once it has drawn, and fills in the elements in it with the IDs `tide-loading-bar` (a bar, whose first child's width is how much has downloaded), `tide-loading-text` (what's happening, in words) and `tide-loading-logo` (an `<img>` for the icon). Leave it out for no loader.
+- `Tide.onProgress`, set in the `var Tide = { ... }` before the game's script, is told each step for a loader of your own: `{ stage, loaded, total, error }`, where `stage` is `download` (`loaded` of `total` bytes), `compile`, `waiting` (for `Tide.start()`, on a page that set `Tide.wait`), `start` (the game is running, until it first draws), `done` (it drew) or `error` (it couldn't start, and `error` says why).
 
 Standalone release builds remove unreachable native code and data, and strip debug symbols; runtime references and required C or shared-library exports are preserved. Tide-only games also omit [unreferenced assets](../game/assets.md#release-builds). Debug and hot-reload builds keep their usual code and asset loading behavior.
 
@@ -258,7 +266,7 @@ Building for Android needs two things of Google's: the NDK, Android's C library 
 
 - The app's ID is the game's `appId` setting (see [Settings](../language/basics.md#settings)). Without one, it's `dev.tide.<the game's name>`, which is fine for testing, but `--release` needs one.
 - Its name under its icon is the game's `title` setting, or `--title`, or else the game's name.
-- Its icon is `icon.png` in the game's folder: a square PNG, 512 by 512 pixels is plenty. Without one, it's Tide's.
+- Its icon is `icon.png` in the game's folder: a square PNG, 512 by 512 pixels is plenty. Without one, it's Tide's. It's a web page's icon too, shown while the page loads (see [The page while it loads](#the-page-while-it-loads)).
 - The Android libraries in the game's folder (`.so` files) go in the app with the game (see [Calling C](../c/functions.md#android)).
 - `tide` signs apps with a key it makes on your computer the first time, `~/.android/tide.pem`. A phone only takes an update to an app signed with the same key, so keep a copy of it somewhere safe, and don't share it: whoever has it can sign apps as you. `tide run --android` replaces an app another computer installed.
 - To sign with another key (a build server's, or one you already have), set `TIDE_ANDROID_KEY` to its file: PEM, the private key (RSA, 2048 bits or more) and then its certificate. `openssl pkcs12 -in upload.p12 -nodes -out key.pem` makes one from a keystore; a `.jks` keystore becomes a `.p12` first with `keytool -importkeystore -srckeystore upload.jks -destkeystore upload.p12 -deststoretype PKCS12`.

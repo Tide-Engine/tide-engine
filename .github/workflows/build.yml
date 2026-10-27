@@ -467,6 +467,7 @@ jobs:
           build/dist/tide/bin/tide version
           build/dist/tide/bin/tide build build/try
           build/dist/tide/bin/tide build build/try --release --web
+          build/dist/tide/bin/tide build build/try --release --web --single-file
           build/dist/tide/bin/tide build build/try --android
           cmake -DTIDE="$PWD/build/dist/tide/bin/tide${{ runner.os == 'Windows' && '.exe' || '' }}" \
             -DBUNDLE="$PWD/build/dist/tide/editors/tide-jetbrains-installer.zip" \

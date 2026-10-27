@@ -5,7 +5,8 @@
 typedef struct build_options {
     const char *folder; // The game: every .tide file in it and its subfolders
     bool release;       // Optimized, no console window on Windows
-    bool web;           // One self-contained .html, with clang's WebAssembly target
+    bool web;           // A web page, with clang's WebAssembly target: index.html, and the program and pack it downloads
+    bool single_file;   // ...or one self-contained .html with them inside, which opens straight from disk
     bool android;       // An Android app (.apk), for arm64 phones and the x86-64 emulator
     bool server;        // Headless native process hosting independent matches.
     bool managed;       // Internal deploy target: single-match sandboxed WASM reactor.

@@ -1874,50 +1874,170 @@ static void page_arguments(char *text, const size_t size, const char *const *arg
     strcat(text, "];\n");
 }
 
-static bool make_page(const char *root, const char *program, const char *page, const char *pack, const char *const *args,
-                      const bool release)
+// The page around the game: the game's own shell.html, which replaces the
+// package's (its loader, its look, or none), or the package's. NULL, said,
+// for one that can't be read or has no {{{ SCRIPT }}} for the program.
+static char *page_shell(const char *root, const char *folder)
 {
-    char *shell_path = path_join(root, "web/shell.html");
+    char *own = path_join(folder, "shell.html");
+    const bool custom = sys_exists(own);
+    char *path = custom ? own : path_join(root, "web/shell.html");
+    if (!custom) free(own);
+    char *shell = sys_read_file(path, NULL);
+    if (!shell) {
+        if (custom) fprintf(stderr, "tide: can't read %s\n", path);
+        else fprintf(stderr, "tide: the web page's files are missing from %s/web; reinstall tide\n", root);
+    } else if (!strstr(shell, "{{{ SCRIPT }}}")) {
+        fprintf(stderr, "tide: %s has no {{{ SCRIPT }}} where the game's script goes: put it at the end of its <body>\n",
+                path);
+        free(shell);
+        shell = NULL;
+    }
+    free(path);
+    return shell;
+}
+
+// The game's icon.png, as the page's icon and in the shell's loader
+// (#tide-loading-logo): a <script> to put before the game's, "" for a game
+// with none, NULL, said, for an icon that isn't a PNG.
+static char *page_logo(const char *folder)
+{
+    char *path = path_join(folder, "icon.png");
+    size_t size = 0;
+    const bool has = sys_exists(path);
+    char *png = has ? sys_read_file(path, &size) : NULL;
+    char *out = NULL;
+    if (!has) {
+        out = format("%s", "", NULL);
+    } else if (!png) {
+        fprintf(stderr, "tide: can't read %s\n", path);
+    } else if (size < 8 || memcmp(png, "\x89PNG\r\n\x1a\n", 8) != 0) {
+        fprintf(stderr, "tide: %s isn't a PNG image\n", path);
+    } else {
+        char *encoded = base64((const unsigned char *)png, size);
+        out = format("<script>\n{\n"
+                     "    const src = 'data:image/png;base64,%s';\n"
+                     "    const logo = document.getElementById('tide-loading-logo');\n"
+                     "    if (logo) { logo.src = src; logo.hidden = false; }\n"
+                     "    const icon = document.createElement('link');\n"
+                     "    icon.rel = 'icon';\n"
+                     "    icon.href = src;\n"
+                     "    document.head.appendChild(icon);\n"
+                     "}\n</script>\n",
+                     encoded, NULL);
+        free(encoded);
+    }
+    free(png);
+    free(path);
+    return out;
+}
+
+// A file of the page's beside it: the page's path with `extension` for its
+// .html, or after it for a page named otherwise.
+static char *page_sibling(const char *page, const char *extension)
+{
+    char *stem = format("%s", page, NULL);
+    const size_t n = strlen(stem);
+    if (n > 5 && strcmp(stem + n - 5, ".html") == 0) stem[n - 5] = '\0';
+    char *file = format("%s.%s", stem, extension);
+    free(stem);
+    return file;
+}
+
+// Writes one of the page's files beside it, and gives the address the page
+// downloads it at, which has the file's hash in its query, so a browser
+// keeps it in its cache until another build changes it.
+static bool page_file(const char *page, const char *extension, const char *data, const size_t size, char *url,
+                      const size_t url_size)
+{
+    char *file = page_sibling(page, extension);
+    const bool ok = sys_write_file(file, data, size);
+    if (!ok) fprintf(stderr, "tide: can't write %s\n", file);
+    uint8_t hash[32];
+    tide_sha256_of(data, size, hash);
+    // The name as an address: anything but letters, digits and -._~ escaped
+    size_t at = 0;
+    for (const char *c = path_base(file); *c && at + 4 < url_size; c++) {
+        const unsigned char u = (unsigned char)*c;
+        if (isalnum(u) || strchr("-._~", u)) url[at++] = (char)u;
+        else at += (size_t)snprintf(url + at, url_size - at, "%%%02X", u);
+    }
+    url[at] = '\0';
+    snprintf(url + at, url_size - at, "?v=%02x%02x%02x%02x%02x%02x%02x%02x", hash[0], hash[1], hash[2], hash[3],
+             hash[4], hash[5], hash[6], hash[7]);
+    free(file);
+    return ok;
+}
+
+// The page. Split (tide build --web): the program and its pack beside it, as
+// <page>.wasm and <page>.pack, which it downloads, showing how much has come,
+// and a browser caches between visits. Single (--single-file): both inside
+// it as base64, gzipped in a release, so it opens straight from disk.
+static bool make_page(const char *root, const char *folder, const char *program, const char *page, const char *pack,
+                      const char *const *args, const bool release, const bool single_file)
+{
     char *script_path = path_join(root, release ? "web/tide.release.js" : "web/tide.js");
-    char *shell = sys_read_file(shell_path, NULL);
+    char *shell = page_shell(root, folder);
+    char *logo = shell ? page_logo(folder) : NULL;
     char *script = sys_read_file(script_path, NULL);
-    free(shell_path);
     free(script_path);
     size_t wasm_len = 0;
     char *wasm = sys_read_file(program, &wasm_len);
     size_t pack_len = 0;
-    char *packed = pack ? sys_read_file(pack, &pack_len) : NULL; // The game's assets, inside the page too (TIDE_PACK)
+    char *packed = pack ? sys_read_file(pack, &pack_len) : NULL; // The game's assets
     const char *slot = shell ? strstr(shell, "{{{ SCRIPT }}}") : NULL;
     bool ok = false;
-    if (!script || !wasm || !slot) {
+    FILE *f = NULL;
+    if (!shell || !logo) goto done;
+    if (!script || !wasm) {
         fprintf(stderr, "tide: the web page's files are missing from %s/web; reinstall tide\n", root);
         goto done;
     }
     strip_reloading(script);
-    FILE *f = fopen(page, "wb");
+    char program_url[600] = "", pack_url[600] = "";
+    if (!single_file) {
+        if (!page_file(page, "wasm", wasm, wasm_len, program_url, sizeof program_url)) goto done;
+        if (packed && !page_file(page, "pack", packed, pack_len, pack_url, sizeof pack_url)) goto done;
+        if (!packed) { // An older build's, which no page names now
+            char *old = page_sibling(page, "pack");
+            if (sys_exists(old)) sys_remove(old);
+            free(old);
+        }
+    }
+    f = fopen(page, "wb");
     if (!f) {
         fprintf(stderr, "tide: can't write %s\n", page);
         goto done;
     }
-    char *encoded = page_payload(wasm, wasm_len, release);
     fwrite(shell, 1, (size_t)(slot - shell), f);
-    fprintf(f, "<script>\nconst TIDE_PROGRAM = \"%s\";\n", encoded);
+    fputs(logo, f);
+    if (single_file) {
+        char *encoded = page_payload(wasm, wasm_len, release);
+        fprintf(f, "<script>\nconst TIDE_PROGRAM = \"%s\";\n", encoded);
+        free(encoded);
+        if (packed) {
+            char *pack_encoded = page_payload(packed, pack_len, release);
+            fprintf(f, "const TIDE_PACK = \"%s\";\n", pack_encoded);
+            free(pack_encoded);
+        }
+    } else {
+        fprintf(f, "<script>\nconst TIDE_FILES = {\n    program: { url: \"%s\", size: %zu },\n", program_url, wasm_len);
+        if (packed) fprintf(f, "    pack: { url: \"%s\", size: %zu },\n", pack_url, pack_len);
+        fputs("};\n", f);
+    }
     if (args && args[0]) {
         char arguments[512];
         page_arguments(arguments, sizeof arguments, args);
         fputs(arguments, f);
     }
-    if (packed) {
-        char *pack_encoded = page_payload(packed, pack_len, release);
-        fprintf(f, "const TIDE_PACK = \"%s\";\n", pack_encoded);
-        free(pack_encoded);
-    }
     fprintf(f, "%s</script>", script);
     fputs(slot + strlen("{{{ SCRIPT }}}"), f);
     ok = fclose(f) == 0;
-    free(encoded);
+    f = NULL;
 done:
+    if (f) fclose(f);
     free(shell);
+    free(logo);
     free(script);
     free(wasm);
     free(packed);
@@ -2231,11 +2351,12 @@ static char *build_game(const char *root, const build_options *opts, const char 
     } else {
         char file[512];
         snprintf(file, sizeof file, "%s%s%s", b.name, opts->server ? "-server" : "", suffix);
-        output = default_output(b.folder, file);
+        // A page split into files has a folder of its own, ready to put online as it is
+        output = default_output(b.folder, opts->web && !opts->managed && !opts->single_file ? "web/index.html" : file);
     }
     char *output_dir = path_dir(output);
     sys_mkdirs(output_dir);
-    // Web builds link a .wasm, which then goes inside the page.
+    // Web builds link a .wasm, which then goes inside the page or beside it.
     char *program = output;
     if (opts->web && !opts->managed) {
         char file[512];
@@ -2252,7 +2373,10 @@ static char *build_game(const char *root, const build_options *opts, const char 
         if (!placed) return NULL;
     }
     char *pack = pack_of(gen);
-    if (opts->web && !opts->managed && !make_page(root, program, output, pack, args, opts->release && !opts->watch)) return NULL;
+    if (opts->web && !opts->managed
+        && !make_page(root, b.folder, program, output, pack, args, opts->release && !opts->watch, opts->single_file)) {
+        return NULL;
+    }
     if (!opts->web || opts->managed) { // Beside the program, as <name>.pack, which tide/run.h loads
         char file[512];
         snprintf(file, sizeof file, "%s.pack", opts->managed ? "server" : b.name);
@@ -3474,6 +3598,10 @@ typedef struct web_run {
     char *pack;    // The newest pack of assets, likewise
     size_t pack_size;
     uint32_t pack_number;
+    // Without watching, the built page's program and pack beside it, and their paths
+    char *files[2];
+    size_t file_sizes[2];
+    char *file_paths[2];
 } web_run;
 
 // The game's program for the page: tide/host.h's loop, going on from where
@@ -3510,17 +3638,19 @@ static bool write_web_main(const run *r)
 // The page: the package's shell, and tide.js as it is, hot reloading and all,
 // which loads the program from tide. `args` (--host, --join, --connect, ending with NULL)
 // go to the game.
-static char *web_page(const char *root, const char *const *args)
+static char *web_page(const char *root, const char *folder, const char *const *args)
 {
-    char *shell_path = path_join(root, "web/shell.html");
     char *script_path = path_join(root, "web/tide.js");
-    char *shell = sys_read_file(shell_path, NULL);
+    char *shell = page_shell(root, folder);
+    char *logo = shell ? page_logo(folder) : NULL;
     char *script = sys_read_file(script_path, NULL);
-    free(shell_path);
     free(script_path);
     const char *slot = shell ? strstr(shell, "{{{ SCRIPT }}}") : NULL;
-    if (!script || !slot) {
-        fprintf(stderr, "tide: the web page's files are missing from %s/web; reinstall tide\n", root);
+    if (!slot || !logo || !script) {
+        if (slot && logo) fprintf(stderr, "tide: the web page's files are missing from %s/web; reinstall tide\n", root);
+        free(shell);
+        free(logo);
+        free(script);
         return NULL;
     }
     char arguments[512];
@@ -3528,12 +3658,14 @@ static char *web_page(const char *root, const char *const *args)
     char before[600];
     snprintf(before, sizeof before, "<script>\nTide.reload = true;\n%s", arguments);
     const char *after = "</script>";
-    const size_t n = (size_t)(slot - shell) + strlen(before) + strlen(script) + strlen(after)
+    const size_t n = (size_t)(slot - shell) + strlen(logo) + strlen(before) + strlen(script) + strlen(after)
                    + strlen(slot + strlen("{{{ SCRIPT }}}")) + 1;
     char *page = malloc(n);
     if (!page) abort();
-    snprintf(page, n, "%.*s%s%s%s%s", (int)(slot - shell), shell, before, script, after, slot + strlen("{{{ SCRIPT }}}"));
+    snprintf(page, n, "%.*s%s%s%s%s%s", (int)(slot - shell), shell, logo, before, script, after,
+             slot + strlen("{{{ SCRIPT }}}"));
     free(shell);
+    free(logo);
     free(script);
     return page;
 }
@@ -3546,7 +3678,15 @@ static void answer_web(void *user, const char *path, serve_reply *reply)
     snprintf(pack, sizeof pack, "/pack-%u", (unsigned)w->r.packs);
     if (strcmp(path, "/") == 0) {
         *reply = (serve_reply){200, "text/html; charset=utf-8", w->page, strlen(w->page)};
-    } else if (w->r.b.opts->watch && strcmp(path, "/build") == 0) {
+        return;
+    }
+    for (int i = 0; i < 2; i++) { // A built page's program and pack
+        if (w->files[i] && path[0] == '/' && strcmp(path + 1, path_base(w->file_paths[i])) == 0) {
+            *reply = (serve_reply){200, i ? "application/octet-stream" : "application/wasm", w->files[i], w->file_sizes[i]};
+            return;
+        }
+    }
+    if (w->r.b.opts->watch && strcmp(path, "/build") == 0) {
         // The newest build, how often to start over, and the newest pack of assets (0 for none)
         snprintf(w->status, sizeof w->status, "%u %u %u", (unsigned)w->r.builds, (unsigned)w->restarts, (unsigned)w->r.packs);
         *reply = (serve_reply){200, "text/plain; charset=utf-8", w->status, strlen(w->status)};
@@ -3579,12 +3719,17 @@ int tide_run_web(const char *root, const build_options *opts, const bool open_pa
     if (opts->watch) {
         if (!build_setup(&r->b, root, opts, false)) return 1;
         open_run(r, true);
-        w.page = web_page(root, args);
+        w.page = web_page(root, r->b.folder, args);
         if (!w.page || !write_web_main(r) || !build_library(r)) return 1;
     } else {
         char *page = build_game(root, opts, args);
         if (!page) return 1;
         w.page = sys_read_file(page, NULL);
+        if (!opts->single_file) { // ...and what it downloads
+            w.file_paths[0] = page_sibling(page, "wasm");
+            w.file_paths[1] = page_sibling(page, "pack");
+            for (int i = 0; i < 2; i++) w.files[i] = sys_read_file(w.file_paths[i], &w.file_sizes[i]);
+        }
         free(page);
         if (!w.page) return 1;
         r->b.opts = opts;

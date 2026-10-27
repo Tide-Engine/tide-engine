@@ -323,6 +323,7 @@ static int command_main(const int argc, char **argv)
         } else if (run && strcmp(a, "--no-open") == 0) open_page = false;
         else if (strcmp(a, "--release") == 0) opts.release = true;
         else if (strcmp(a, "--web") == 0) opts.web = true;
+        else if (build && strcmp(a, "--single-file") == 0) opts.single_file = true;
         else if (strcmp(a, "--android") == 0) opts.android = true;
         else if (strcmp(a, "--stats") == 0) opts.stats = true;
         else if (strcmp(a, "--debug-views") == 0) opts.debug_views = true;
@@ -409,6 +410,11 @@ static int command_main(const int argc, char **argv)
     }
     if (opts.server && (opts.web || opts.android || opts.stats || opts.debug_views || sized || players)) {
         fputs("tide: --server is a native headless build; omit --web, --android, --stats, --debug-views, --size and --players\n", stderr);
+        free(defines);
+        return 2;
+    }
+    if (opts.single_file && !opts.web) {
+        fputs("tide: --single-file is for a web page: add --web\n", stderr);
         free(defines);
         return 2;
     }

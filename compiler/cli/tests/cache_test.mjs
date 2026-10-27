@@ -2,6 +2,7 @@
 // node compiler/cli/tests/cache_test.mjs --tide <installation>/bin/tide [--web] [--watch-only | --strip-only | --server-only] [--gpu] [--keep]
 // Copies the installation before changing headers or compiler timestamps.
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -229,13 +230,29 @@ int Native(int value)
             check(pack.includes(Buffer.from(packedMarker)), "C interop lost an asset without a Tide reference");
             let program = readFileSync(output);
             if (target === "web") {
+                // Split by default: the program and pack beside the page, named with their hashes
                 const page = program.toString("utf8");
-                const payload = embeddedPayload(page, "TIDE_PROGRAM");
+                const stem = output.slice(0, -".html".length);
+                program = readFileSync(`${stem}.wasm`);
+                check(program.subarray(0, 4).equals(Buffer.from([0, 0x61, 0x73, 0x6d])), "the page's program is not WebAssembly");
+                check(readFileSync(`${stem}.pack`).equals(pack), "the page's pack differs from generated pack");
+                for (const [name, bytes] of [["program", program], ["pack", pack]]) {
+                    const hash = createHash("sha256").update(bytes).digest("hex").slice(0, 16);
+                    const file = `${basename(stem)}.${name === "program" ? "wasm" : "pack"}`;
+                    check(page.includes(`${name}: { url: "${file}?v=${hash}", size: ${bytes.length} }`),
+                        `the page doesn't name its ${name} by its hash and size`);
+                }
+                check(!page.includes("const TIDE_PROGRAM = \""), "a split page has its program inside");
+                // ...and one self-contained page
+                const single = join(root, `strip-single-${release ? "release" : "debug"}.html`);
+                const result = await run(tide, ["build", game, "-o", single, "--web", "--single-file", ...(release ? ["--release"] : [])], game);
+                check(result.code === 0, `single-file build failed:\n${result.said}`);
+                const singlePage = readFileSync(single, "utf8");
+                const payload = embeddedPayload(singlePage, "TIDE_PROGRAM");
                 const expectGzip = release && embedded && existsSync(join(installation, "web", "tide.release.js"));
                 check(payload.gzip === expectGzip, `web ${release ? "release" : "debug"}: unexpected program compression`);
-                program = payload.bytes;
-                check(program.subarray(0, 4).equals(Buffer.from([0, 0x61, 0x73, 0x6d])), "embedded program is not WebAssembly");
-                check(embeddedPayload(page, "TIDE_PACK").bytes.equals(pack), "embedded pack differs from generated pack");
+                check(payload.bytes.equals(program), "the single page's program differs from the split page's");
+                check(embeddedPayload(singlePage, "TIDE_PACK").bytes.equals(pack), "embedded pack differs from generated pack");
             }
             for (const [name, marker] of Object.entries(markers)) {
                 // WebAssembly already collects unused code in debug. Native

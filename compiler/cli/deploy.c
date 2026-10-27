@@ -223,7 +223,8 @@ static char *bundle(const char *root, const char *folder, const bool server_only
     sprintf(identity_path, "%s.simulation", server);
     char *identity = sys_read_file(identity_path, NULL); free(identity_path);
     if (!server_only) {
-        opts.server = opts.managed = false; opts.output = client;
+        // The hosting service serves the client as one page with the game inside
+        opts.server = opts.managed = false; opts.single_file = true; opts.output = client;
         built = tide_build(root, &opts);
         if (!built) { free(identity); free(directory); free(server); free(client); return NULL; }
         free(built);

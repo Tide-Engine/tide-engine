@@ -1,5 +1,61 @@
 # Web builds
 
+## Split pages and the loader (2026-10-27)
+
+The owner asked for feedback while a web game loads, and decided that pages
+are split into files by default, for caching and real progress, keeping a
+self-contained page as an option.
+
+- **Two page forms.** `tide build --web` writes `.build/web/index.html`
+  with `index.wasm` and `index.pack` beside it (`make_page` in
+  `compiler/cli/build.c`; with `-o x.html`, `x.wasm`/`x.pack`). The page
+  declares `const TIDE_FILES = { program: { url, size }, pack: { url, size } }`
+  in place of `TIDE_PROGRAM`/`TIDE_PACK`; `pack` is absent for a game without
+  assets, and a stale sibling pack is removed. Each url carries the first 8
+  bytes of the file's SHA-256 as `?v=`, so a browser caches the files until a
+  build changes them; only the small HTML is fetched again. The files are raw,
+  never gzipped by tide: hosts compress them over HTTP (and brotli beats our
+  gzip). `--single-file` (build only) keeps the old self-contained page at
+  `.build/<name>.html`, with release gzip as before. CMake's `tide_web_page`
+  and `cmake/web_page.mjs` are unchanged: tests, docs examples and prototype
+  pages stay single files, as many open from `file://` and the docs' frames
+  rely on `#download` filling the cache with the whole game. `tide deploy`
+  keeps `client.html` single (`opts.single_file` in `bundle`), as the hosting
+  service's bundle has one client file; splitting it there is tide-services
+  work.
+- **Downloading** (`download` in `tide.js`): both files are fetched at once
+  and read as streams, counting bytes against the sizes the page names
+  (not Content-Length, which is the compressed size where a host
+  compresses). A `fetch` that throws on a `file:` page fails with a message
+  saying to serve the folder or use `--single-file`. The program still
+  compiles from its whole bytes after downloading, not with
+  `compileStreaming`: `instantiate` may clear the memory import's shared flag
+  in the bytes (a page without cross-origin isolation, or a phone refusing
+  shared memory), which a streamed compile can't do. That remains possible
+  when the flag is known in time.
+- **Progress** (`progress` in `tide.js`): stages `download` (loaded/total),
+  `compile`, `waiting` (loaded, for `Tide.start()`), `start` (running until
+  it draws), `done` (the first frame that drew, the existing `firstFrame`)
+  and `error` (from `fail`). `Tide.onProgress({ stage, loaded, total, error })`
+  hears each (a throw in it is printed, not fatal), and the shell's
+  `#tide-loading` shows them: `#tide-loading-bar` (first child's width while
+  downloading, an indeterminate animation otherwise), `#tide-loading-text`
+  and `#tide-loading-logo`. `done` fades the loader and removes it. A
+  program that ends before drawing without a mistake also removes it; a
+  failure keeps it, with the error's message. Hot-reload pages start at
+  `start`. Shells without `#tide-loading` (the test shells, `demo/`, docs
+  frames) show nothing and behave as before.
+- **Customizing** (my picks, Provisional): a game's `icon.png`, the
+  Android icon's convention, is put in a small `<script>` before the game's
+  as a data URL: the loader's logo and the tab's icon (`page_logo`; a file
+  that isn't a PNG fails the build, as on Android). A game's `shell.html`
+  replaces the package's shell for `tide build --web` and `tide run --web`
+  (`page_shell`; one without `{{{ SCRIPT }}}` fails the build with where to
+  put it): that's the way to restyle, replace or drop the loader.
+- Not done: the `title` setting still doesn't reach the page's `<title>`
+  (spec Settings, Open); no loader on desktop, where starting is fast.
+- The release runtime was regenerated (72,595 bytes).
+
 ## Twelve texture bindings (2026-10-25)
 
 The existing gpu_pipeline_begin bridge carries two eight-slot banks of three-bit
@@ -136,7 +192,7 @@ Tide program's exports and memory. `tide.release.js` was regenerated. Used by
   - `tide_web_runtime` passed its three checks of generated-source freshness without loading minifier dependencies, inline license/hot-reload exclusion, exact bytes across gzip levels, empty/tiny payloads, corruption/CRC/ISIZE errors and debug/raw versus release/compressed page generation. The generated runtime passed 240 identical thread-test ticks and 24 skinning pixel checks on both file-page WebGL and served WebGPU. A staged CLI release page passed on served WebGL and WebGPU with separately compressed WASM (672,172 -> 271,538 bytes) and BMP pack (16,560 -> 205 bytes), asserting decoded dimensions and exact RGBA values. All browsers were muted. CMake tracks the page writer itself in `LINK_DEPENDS`, so compression/paging changes regenerate existing pages.
 - The `web-debug` and `web-release` presets build everything as WebAssembly with clang's own wasm target and wasi-libc, not Emscripten: `cmake --workflow --preset web-debug` (see `cmake/wasi-toolchain.cmake`). They need clang with `wasm-ld` (LLVM's releases have it; on Linux, the distribution's `lld`) and Node. wasi-sdk's C library is downloaded once into `build/wasi-sdk-<version>`, pinned.
 - Tests run under Node's WASI through CTest (`cmake/run_wasi.mjs`), so the determinism hashes cover exactly what ships. Games generate their C with a native tidec, which web builds build first in `<build>/host` (`cmake/HostTidec.cmake`), with the same `TIDE_VERSION`, which `#if TIDE_0_3_OR_NEWER` reads (`compiler/src/version.c`).
-- In the browser, `platform/web/tide.js` runs the program: the canvas, input and frame loop (`platform/web/tide_web.h`), what the renderer draws with (WebGPU, or the OpenGL ES 3 functions of `platform/src/gl.h` on WebGL 2: see Rendering and platform), and the few WASI functions wasi-libc needs. The platform layer's window there is the page's canvas (`platform/web/canvas.c`). A web page is one self-contained `.html` with the program inside (`cmake/web_page.mjs`, or tide).
+- In the browser, `platform/web/tide.js` runs the program: the canvas, input and frame loop (`platform/web/tide_web.h`), what the renderer draws with (WebGPU, or the OpenGL ES 3 functions of `platform/src/gl.h` on WebGL 2: see Rendering and platform), and the few WASI functions wasi-libc needs. The platform layer's window there is the page's canvas (`platform/web/canvas.c`). A web page is one self-contained `.html` with the program inside (`cmake/web_page.mjs`, or `tide build --web --single-file`), or since 2026-10-27, by default under `tide build --web`, a page that downloads the program and pack beside it (Split pages and the loader, above).
 - A page's address says a few of the things a command line does (`tide.js`, where it makes the program's arguments): `debug-views` is `--debug-views`, and `host` and `join=<code>` are `--host` and `--join <code>` (letters, digits and a slash, so `join=K7QF2M/0` asks for a server's match, as a sharded world's front is), unless the page's own `Tide.arguments` say which match; so a link can be an invitation, and a page that shows games in frames can put them in one match (the docs' examples do: see Docs site). For such a page, `Tide.room` is the code of the room the program hosts or joined, `""` for none, read as it is at that moment. `Tide.lag`, or `lag=<ms>` in the address, is the round trip to its match's server the page's player is to have (2 seconds at most), which the page can change as the game runs: latency to look at with both players at one desk, since nothing else gives a page any. These three are Provisional: picks of the docs' examples' that the owner hasn't confirmed, but for what a lag means (below).
   - A lag is a ping (agreed 2026-10-05): the session's, the network's whole round trip to the match's server (see Networking), with what the network takes already in it. A lag of 100 reads as a ping of 100: not 100 each way, and not 100 more than the player had.
   - So the page has to know the ping. The session measures it, and a host says it every frame: `tide_platform_room_ping(ping_ms, answer_ms)` (`platform/src/rooms.c`; nothing on desktop), which `tide/host.h` calls with its client's `ping_ms` and `answer_ms`, the ping -1 (none) for a machine that runs the server and for one not in the match yet: the round trips of joining aren't like a match's. A host that never says gets the lag on top of its ping.

@@ -1,5 +1,20 @@
 # `tide`, packages and the package
 
+## Web builds are a folder; `--single-file` (2026-10-27)
+
+`tide build --web` writes `.build/web/index.html` plus `index.wasm` and
+`index.pack`, which the page downloads with progress and caches by hash;
+`--single-file` (build only, refused without `--web`) is the former
+self-contained `.build/<name>.html`. A game's `shell.html` replaces the
+package's shell and its `icon.png` becomes the loader's logo and the tab's
+icon, in built and `tide run --web` pages. `tide deploy` builds its client
+single. The non-watching branch of `tide_run_web` serves a split page's two
+files, though `tide run --web` always watches today. `cache_test.mjs`'s
+stripping test checks the split files (raw, named by hash and size in the
+page) and a `--single-file` page with the same program; CI's "Try the
+package" also builds `--single-file`. Runtime, stages and the shell contract:
+`notes/web.md`, Split pages and the loader.
+
 ## Debug builds carry their debugger views (2026-10-26)
 
 Native non-release builds (`debug_views` in `build.c`) generate with

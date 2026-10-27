@@ -8,9 +8,12 @@
 // - the few WASI functions wasi-libc needs: output, the clock, arguments, exit.
 //
 // The page defines `var Tide = { canvas, print, printErr, arguments, onExit,
-// onAbort, checkGL, backend }` (all optional) before this script, and
-// TIDE_PROGRAM holds the program as base64 (cmake/web_page.mjs, or the tide
-// command). `backend` is 'webgpu' or 'webgl', to draw with that one only; so
+// onAbort, onProgress, checkGL, backend }` (all optional) before this script.
+// TIDE_PROGRAM holds the program as base64, in a page that has it inside
+// (cmake/web_page.mjs, or tide build --single-file), or TIDE_FILES says where
+// the program and its pack are beside the page, and how big, for a page that
+// downloads them (tide build --web). `onProgress` hears what the page is
+// doing until the game first draws (below). `backend` is 'webgpu' or 'webgl', to draw with that one only; so
 // is `backend=` in the page's address. For a page with rooms (below), `relay`
 // is another relay's address and `lag` the round trip its player is to have,
 // and the page reads `Tide.room`, the code of the room the program is in. For
@@ -142,6 +145,42 @@
     const firstFrame = new Promise((done, refuse) => { shown = done; broken = refuse; });
     firstFrame.catch(() => {}); // Nobody has to ask
     if (!config.wait && !address.has('wait')) release();
+
+    // What the page is doing until the game first draws, for whoever's waiting: `Tide.onProgress` hears
+    // { stage, loaded, total } with each change, and the shell's #tide-loading, where there is one, shows
+    // it. Stages: 'download' (bytes of the program and its pack, of total), 'compile' (the program made
+    // ready to run), 'waiting' (ready, for Tide.start()), 'start' (the game running until it draws),
+    // 'done' (it drew: the shell's loader goes) and 'error' (with `error`, what went wrong).
+    const loader = document.getElementById('tide-loading');
+    const loaderBar = loader && loader.querySelector('#tide-loading-bar');
+    const loaderText = loader && loader.querySelector('#tide-loading-text');
+    let stage = '';
+    function progress(next, loaded = 0, total = 0, error = undefined) {
+        if (stage === 'done' || stage === 'error') return;
+        stage = next;
+        if (config.onProgress) {
+            try { config.onProgress({ stage, loaded, total, error }); }
+            catch (thrown) { printErr('tide: onProgress: ' + (thrown && thrown.stack || thrown)); }
+        }
+        if (!loader) return;
+        const megabytes = n => (n / 1048576).toFixed(n < 10485760 ? 1 : 0);
+        if (loaderText) {
+            loaderText.textContent = stage === 'download' ? `Loading ${megabytes(loaded)} / ${megabytes(total)} MB`
+                : stage === 'compile' ? 'Preparing' : stage === 'waiting' ? 'Ready'
+                : stage === 'error' ? 'The game couldn\'t start: ' + (error && error.message || error) : 'Starting';
+        }
+        if (loaderBar) {
+            loaderBar.classList.toggle('known', stage === 'download');
+            if (loaderBar.firstElementChild) loaderBar.firstElementChild.style.width = stage === 'download' ? `${total ? 100 * loaded / total : 0}%` : '';
+        }
+        if (stage === 'error') loader.classList.add('failed');
+        if (stage === 'done') {
+            loader.classList.add('done');
+            setTimeout(() => loader.remove(), 400);
+        }
+    }
+    // A program that ended before it drew, without a mistake, leaves nothing to wait for
+    firstFrame.then(() => progress('done'), () => { if (!failed) progress('done'); });
     config.start = () => {
         release();
         return firstFrame;
@@ -2371,6 +2410,7 @@
         endCursorLock();
         endThreads();
         printErr('tide: ' + (error && error.stack || error));
+        progress('error', 0, 0, error);
         broken(error);
         if (config.onAbort) config.onAbort(error);
     }
@@ -3001,22 +3041,68 @@
     }
 
     // The game's pack of assets (tide/pack.h): the page's own, which a page
-    // that ships holds as base64 beside the program, or under tide run the one
-    // tide serves, which the program asks for as it starts and when it changes.
+    // that ships holds as base64 beside the program or downloads beside it, or
+    // under tide run the one tide serves, which the program asks for as it
+    // starts and when it changes.
     let packBytes = null;
     platform.pack_size = () => packBytes ? packBytes.length : 0;
     platform.pack_copy = ptr => { if (packBytes) u8().set(packBytes, ptr); };
+
+    // The files TIDE_FILES names ({ url, size } each, the url with the file's hash in its query, so a
+    // browser's cache keeps a build's files until another build's page names others), all at once, counting
+    // what's come of them all together.
+    async function download(files) {
+        const total = files.reduce((n, file) => n + file.size, 0);
+        let loaded = 0;
+        progress('download', 0, total);
+        return Promise.all(files.map(async file => {
+            let response;
+            try {
+                response = await fetch(file.url);
+            } catch (error) {
+                throw new Error(location.protocol === 'file:'
+                    ? `the page downloads ${file.url}, which a page opened from disk can't: put its folder online, or `
+                      + 'serve it (npx serve, python -m http.server), or build one page with the game inside (tide build --web --single-file)'
+                    : `couldn't download ${file.url}: ${error && error.message || error}`);
+            }
+            if (!response.ok) throw new Error(`couldn't download ${file.url}: ${response.status} ${response.statusText}`);
+            const parts = [];
+            let size = 0;
+            for (const reader = response.body.getReader(); ;) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                parts.push(value);
+                size += value.length;
+                loaded += value.length;
+                progress('download', Math.min(loaded, total), total);
+            }
+            const bytes = new Uint8Array(size);
+            for (let at = 0, i = 0; i < parts.length; at += parts[i].length, i++) bytes.set(parts[i], at);
+            return bytes;
+        }));
+    }
 
     // The program loads while the page waits to hear about its GPU, and starts
     // once it knows; instantiate loads its saved files too when the program
     // uses them.
     const load = async () => {
-        // Decode errors use the same fail/onAbort path as invalid WASM.
-        packBytes = typeof TIDE_PACK === 'string' ? programBytes(TIDE_PACK) : null;
-        return instantiate(programBytes(TIDE_PROGRAM));
+        // Decode and download errors use the same fail/onAbort path as invalid WASM.
+        let program;
+        if (typeof TIDE_FILES === 'object') {
+            const [wasm, pack] = await download([TIDE_FILES.program, ...(TIDE_FILES.pack ? [TIDE_FILES.pack] : [])]);
+            program = wasm;
+            packBytes = pack || null;
+            progress('compile');
+        } else {
+            progress('compile');
+            packBytes = typeof TIDE_PACK === 'string' ? programBytes(TIDE_PACK) : null;
+            program = programBytes(TIDE_PROGRAM);
+        }
+        return instantiate(program);
     };
-    const loaded = typeof TIDE_PROGRAM === 'string' && !config.reload
+    const loaded = (typeof TIDE_PROGRAM === 'string' || typeof TIDE_FILES === 'object') && !config.reload
         ? load().then(program => ({ program }), error => ({ error })) : null;
+    if (!loaded) progress('start');
     await deviceAsked;
 
     // <tide run>
@@ -3185,11 +3271,13 @@
     }
     // </tide run>
 
-    const { program, error } = await loaded || { error: new Error('the page has no program (TIDE_PROGRAM)') };
+    const { program, error } = await loaded || { error: new Error('the page has no program (TIDE_PROGRAM or TIDE_FILES)') };
     if (error) {
         fail(error);
         return;
     }
+    progress('waiting');
     await released; // At once, unless the page said to wait for it
+    progress('start');
     begin(program);
 })();

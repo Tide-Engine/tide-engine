@@ -172,10 +172,19 @@ static const argument_help arguments[] = {
      "unreferenced assets. schedule/shaders use this to leave DEBUG undefined.", COMPILE},
     {"--web", "--web", "Build a web page",
      "Uses Clang's WebAssembly target. Pages use WebGPU with WebGL 2 fallback.\n"
-     "build --release produces one self-contained HTML file. run serves the\n"
-     "page and opens a browser unless --no-open or TIDE_HIDDEN is set.\n"
+     "build makes a folder to put online, .build/web: index.html, which shows\n"
+     "its download and caches the index.wasm and index.pack it loads.\n"
+     "--single-file makes one HTML file instead. run serves the page and opens\n"
+     "a browser unless --no-open or TIDE_HIDDEN is set. A game's shell.html\n"
+     "replaces the page around the game, and its icon.png shows as it loads.\n"
      "unity --web builds tide-game.js, for a Unity WebGL player's page, once.\n"
      "Choose one target: native (default), --web or --android.", RUN | BUILD | UNITY},
+    {"--single-file", "--single-file", "Build one self-contained web page",
+     "With build --web: the program and its assets go inside one .html, which\n"
+     "opens straight from disk, at .build/<name>.html. Pages split into files\n"
+     "(the default) load faster, show how much has downloaded and cache the\n"
+     "game between visits, but need a server: a page opened from disk can't\n"
+     "download its files.", BUILD},
     {"--android", "--android", "Build an Android APK",
      "run installs and starts it on the connected phone or emulator, using adb.\n"
      "Saving rebuilds and restarts the app. Release builds also make an app\n"
