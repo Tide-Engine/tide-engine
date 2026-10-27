@@ -539,6 +539,20 @@ add_test(NAME tidec_scale
         -P "${CMAKE_CURRENT_SOURCE_DIR}/scale/scale.cmake")
 set_tests_properties(tidec_scale PROPERTIES TIMEOUT 600)
 
+# tide_add_game packs again when a file an asset glob matched is deleted or
+# added (asset_deletion.cmake): a project of its own, built with Ninja.
+if(NOT TIDE_WEB AND NOT TIDE_ANDROID AND CMAKE_GENERATOR MATCHES "Ninja")
+    add_test(NAME tide_add_game_asset_deletion
+        COMMAND "${CMAKE_COMMAND}"
+            "-DTIDEC=${TIDEC_PATH}"
+            "-DENGINE=${PROJECT_SOURCE_DIR}"
+            "-DOUT=${CMAKE_CURRENT_BINARY_DIR}/asset_deletion"
+            "-DTOOLCHAIN=${CMAKE_TOOLCHAIN_FILE}"
+            "-DMAKE_PROGRAM=${CMAKE_MAKE_PROGRAM}"
+            -P "${CMAKE_CURRENT_SOURCE_DIR}/asset_deletion.cmake")
+    set_tests_properties(tide_add_game_asset_deletion PROPERTIES TIMEOUT 600)
+endif()
+
 # Restrict lane parameters and sparse presence/fallback columns together must
 # fit WebAssembly's declaration limit, even for a game at the component limit.
 if(TIDE_NODE)

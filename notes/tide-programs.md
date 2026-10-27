@@ -1,5 +1,17 @@
 # `tide_add_game` and the generated header
 
+Deleted asset files (2026-10-27, owner-approved fix): the asset files a game's
+declarations name were only in tidec's DEPENDS, and Ninja never reruns a
+command because a dependency disappeared, so a file deleted from a glob's
+folder stayed packed until a `.tide` file changed. `tide_add_game` now also
+writes the resolved list to `tide/<target>.assets` (only when it changes, as
+`<target>.sources` is) and depends on it: the CONFIGURE_DEPENDS globs
+reconfigure on a deletion or addition, the list changes, and tidec runs again.
+`tide_add_game_asset_deletion` (`compiler/tests/asset_deletion.cmake`, native
+Ninja builds) configures a separate one-glob project against this checkout's
+`cmake/Tide.cmake`, packs it, deletes a file, then adds one, checking the pack
+each time; it fails without the fix.
+
 Shipping follow-up (2026-10-27): STRIP_NAMES explicitly requests the metadata
 and shader identifier policy, including for HOST/debug targets; the existing
 gpu_functions pixel fixture uses it. Standard-host shipping defaults are as

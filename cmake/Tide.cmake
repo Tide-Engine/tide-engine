@@ -270,6 +270,21 @@ function(tide_add_game target)
             endif()
         endforeach()
     endforeach()
+    # The files themselves are in DEPENDS, but Ninja never runs a command
+    # again because a dependency went away: a file deleted from a glob's
+    # folder would stay packed. Their list, written only when it changes, is a
+    # dependency too, so a file gone (CONFIGURE_DEPENDS globs configure again)
+    # or added changes it and the pack is made again, as for the sources.
+    set(asset_list "${CMAKE_CURRENT_BINARY_DIR}/tide/${target}.assets")
+    list(REMOVE_DUPLICATES asset_files)
+    list(JOIN asset_files "\n" asset_lines)
+    set(written "-")
+    if(EXISTS "${asset_list}")
+        file(READ "${asset_list}" written)
+    endif()
+    if(NOT written STREQUAL asset_lines)
+        file(WRITE "${asset_list}" "${asset_lines}")
+    endif()
     # The warnings it means to have, written only when they change, so tidec
     # runs again when they do.
     set(expected "${CMAKE_CURRENT_BINARY_DIR}/tide/${target}.warnings")
@@ -332,7 +347,7 @@ function(tide_add_game target)
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${out_dir}"
         COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DEXPECTED=${expected}" "-DSTRIP_UNUSED_ASSETS=${strip_assets}" "-DSTRIP_NAMES=${strip_names}" -P "${TIDE_RUN_TIDEC}"
             -- "@${listed}" -o "${out_dir}" --name "${name}" ${layout} ${pack_c} ${defines} ${server_flags} ${visualizers}
-        DEPENDS ${TIDEC_DEPENDS} ${sources} ${package_sources} ${asset_files} "${expected}" "${listed}" "${TIDE_RUN_TIDEC}"
+        DEPENDS ${TIDEC_DEPENDS} ${sources} ${package_sources} ${asset_files} "${asset_list}" "${expected}" "${listed}" "${TIDE_RUN_TIDEC}"
         COMMENT "tidec ${target}"
         VERBATIM)
 
