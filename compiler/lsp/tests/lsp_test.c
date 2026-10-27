@@ -962,13 +962,20 @@ TIDE_TEST(lsp_levels_of_detail)
     TIDE_CHECK(has(actions_at(3), "\"title\":\"Change to 'SetLOD'\",\"kind\":\"quickfix\",\"isPreferred\":true"));
 
     const char *offered = complete("[$] asset Texture masks = \"art/tile.png\";\nscene Main { }\n");
-    TIDE_CHECK(offers(offered, "LOD") && offers(offered, "Filter"));
+    TIDE_CHECK(offers(offered, "LOD") && offers(offered, "Filter") && offers(offered, "BlendShapes"));
     open_document("[LO$D] component Rock { float3 position; }\nscene Main { }\n");
     TIDE_CHECK(has(last_sent(), "LOD has simpler versions of a mesh made") && has(last_sent(), "'Rock' isn't a mesh"));
     const char *hover = request("textDocument/hover");
     TIDE_CHECK(has(hover, "[LOD]") && has(hover, "levels of detail made as the game is built") && has(hover, "Draw.LODCamera"));
     open_document("[Lod] component Rock { float3 position; }\nscene Main { }\n");
     TIDE_CHECK(has(last_sent(), "unknown attribute 'Lod'") && has(last_sent(), "did you mean 'LOD'?"));
+    // [BlendShapes], beside them: offered, explained, refused off an asset, suggested for a misspelling.
+    open_document("[BlendSha$pes(\"jaw*\")] component Face { float x; }\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "BlendShapes chooses which blend shapes a SkinnedMesh asset keeps"));
+    hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "[BlendShapes(") && has(hover, "any run of characters") && has(hover, "keeps none"));
+    open_document("[BlendShape(\"jaw*\")] component Face { float x; }\nscene Main { }\n");
+    TIDE_CHECK(has(last_sent(), "did you mean 'BlendShapes'?"));
 }
 
 // Cull, which side of a 3D mesh's triangles draws: both forms, its sides, hovers, and rename fixes.

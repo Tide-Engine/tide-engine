@@ -724,6 +724,10 @@ typedef struct decl {
     bool sample_raw;
     // [LOD] before it: a mesh's levels of detail are made as the game is built, and its draws pick among them
     bool lod;
+    // [BlendShapes("jawOpen", "default*")] before a SkinnedMesh asset: the only shapes its import keeps, by name
+    // patterns where * is any run of characters (blend_shapes_kept); none when the attribute names none
+    bool blend_shapes_chosen;
+    VEC(str) blend_shape_patterns;
     bool asset_many; // A List or Map: a glob's matches, or the one file its path names
 
     // Systems, views, methods, functions, and an input's Sample

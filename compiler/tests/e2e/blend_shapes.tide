@@ -10,6 +10,12 @@ struct Corner
 
 asset SkinnedMesh<Corner> part = "fbx/shapes/shapes_ascii.fbx";
 asset List<byte> faceBytes = "blend_shapes/face.glb";
+// [BlendShapes]: only the shapes these names or * patterns match are imported.
+[BlendShapes("jaw*")] asset SkinnedMesh<Corner> jawOnly = "fbx/shapes/shapes_ascii.fbx";
+[BlendShapes()] asset SkinnedMesh<Corner> noShapes = "fbx/shapes/shapes_binary.fbx";
+[BlendShapes("smile", "nothing*")] asset List<SkinnedMesh<Corner>> smiles = "fbx/shapes/shapes_*.fbx";
+[BlendShapes("*Open")] asset Map<string, SkinnedMesh<Corner>> opens = "fbx/shapes/shapes_*.fbx";
+[BlendShapes("blink")] asset SkinnedMesh<Corner> faceModel = "blend_shapes/face.glb";
 
 singleton ShapeProbe
 {
@@ -75,6 +81,16 @@ system Check(mut ShapeProbe p)
         Expect(p, Same(face.vertices[2].position, float3(0, 0, 0)));
         var awake = face.Shaped([0, 0]);
         Expect(p, Same(awake.vertices[2].position, float3(0, 1, 0)) && Same(awake.vertices[1].position, float3(-1, 0, 0)));
+        // Chosen shapes: the rest are gone, the vertices still have every default.
+        Expect(p, jawOnly.blendShapes.count == 1 && jawOnly.blendShapes.TryGetAt(0, out var only) && only.name == "jawOpen"
+            && !jawOnly.blendShapes.TryGetByName("smile", out _) && Same(jawOnly.vertices[0].position, float3(0, 0.125, 0))
+            && Same(jawOnly.Shaped([2]).vertices[1].position, float3(-2, -2, 0)));
+        Expect(p, noShapes.blendShapes.count == 0 && Same(noShapes.Shaped([1, 1]).vertices[0].position, float3(0, 0.125, 0)));
+        Expect(p, smiles.count == 2 && smiles[0].blendShapes.count == 1 && smiles[1].blendShapes.TryGetByName("smile", out _));
+        Expect(p, opens["fbx/shapes/shapes_ascii.fbx"].blendShapes.count == 1
+            && opens["fbx/shapes/shapes_binary.fbx"].blendShapes.TryGetAt(0, out var open0) && open0.name == "jawOpen");
+        Expect(p, faceModel.blendShapes.count == 1 && faceModel.blendShapes.TryGetByName("blink", out var shut)
+            && shut.weight == 1 && Same(faceModel.vertices[2].position, float3(0, 0, 0)));
         var talking = face.Shaped([1]);
         Expect(p, Same(talking.vertices[1].position, float3(-1, 0, 1)) && Same(talking.vertices[2].position, float3(0, 0, 0)));
     }

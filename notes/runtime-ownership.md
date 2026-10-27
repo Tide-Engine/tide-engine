@@ -1,5 +1,12 @@
 # Runtime written by Claude for now
 
+## Blend shapes kept by name (2026-10-27)
+
+`tide_skinned_data_keep_shapes` (`tide/skinned_data.h`, `skinned_decode.c`)
+is build-time support tidec calls for `[BlendShapes]`; generated code calls
+nothing new. Contracts and tests: assets-and-files.md.
+
+
 ## Lenient separate-rig binding (2026-10-27)
 
 Owner-decided (docs/spec.md, Separate-file binding): `tide_skinned_sample_into`

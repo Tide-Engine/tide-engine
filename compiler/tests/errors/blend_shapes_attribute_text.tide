@@ -1,0 +1,3 @@
+// expect: BlendShapes chooses which of a skinned model's blend shapes its import keeps, and 'notes' is string
+[BlendShapes("jaw*")] asset string notes = "blend_shapes_attribute_text.tide";
+scene Main { }

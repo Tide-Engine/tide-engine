@@ -1218,3 +1218,57 @@ void tide_skinned_data_free(uint8_t *bytes)
 {
     free(bytes);
 }
+
+bool tide_skinned_data_keep_shapes(const void *bytes, const uint32_t size, const tide_skinned_keep_shape_fn keep, void *user,
+                                   uint8_t **out, uint32_t *out_size)
+{
+    if (!out || !out_size) return false;
+    *out = NULL, *out_size = 0u;
+    tide_skinned_data_view v;
+    if (!keep || !tide_skinned_data_validate(bytes, size) || !tide_skinned_data_open(bytes, size, &v)) return false;
+    // The model as the decoder had it before encoding, from its own tables.
+    char why[256], note[256];
+    reader r = {.why = why, .note = note};
+    gltf g = {.r = &r};
+    decoded d = {.g = &g, .flags = v.flags};
+    d.node_count = v.nodes, d.palette_count = v.palettes, d.vertex_count = v.vertices, d.index_count = v.indices;
+    d.clip_count = v.clips, d.channel_count = v.channels, d.influence_count = v.influences, d.key_count = v.key_size / 4u;
+    d.nodes = zeroed(v.nodes, sizeof *d.nodes);
+    d.palettes = zeroed(v.palettes, sizeof *d.palettes);
+    d.vertices = zeroed(v.vertices, sizeof *d.vertices);
+    d.indices = zeroed(v.indices, sizeof *d.indices);
+    d.clips = zeroed(v.clips, sizeof *d.clips);
+    d.channels = zeroed(v.channels, sizeof *d.channels);
+    d.influences = zeroed(v.influences, sizeof *d.influences);
+    d.keys = zeroed(d.key_count, sizeof *d.keys);
+    bool ok = true;
+    for (uint32_t i = 0; ok && i < v.nodes; i++) ok = tide_skinned_data_node(&v, i, d.nodes + i);
+    for (uint32_t i = 0; ok && i < v.palettes; i++) ok = tide_skinned_data_palette(&v, i, d.palettes + i);
+    for (uint32_t i = 0; ok && i < v.vertices; i++) ok = tide_skinned_data_vertex(&v, i, d.vertices + i);
+    for (uint32_t i = 0; ok && i < v.indices; i++) ok = tide_skinned_data_index(&v, i, d.indices + i);
+    for (uint32_t i = 0; ok && i < v.clips; i++) ok = tide_skinned_data_clip(&v, i, d.clips + i);
+    for (uint32_t i = 0; ok && i < v.influences; i++) ok = tide_skinned_data_influence(&v, i, d.influences + i);
+    for (uint32_t i = 0; ok && i < v.channels; i++) {
+        tide_skinned_channel_data *c = d.channels + i;
+        ok = tide_skinned_data_channel(&v, i, c);
+        c->times_at = (c->times_at - v.key_at) / 4u, c->values_at = (c->values_at - v.key_at) / 4u; // In key numbers, as encode takes them
+    }
+    for (uint32_t i = 0; ok && i < d.key_count; i++) {
+        const uint32_t bits = read_word((const uint8_t *)bytes + v.key_at + (size_t)i * 4u);
+        memcpy(d.keys + i, &bits, sizeof bits);
+    }
+    for (uint32_t i = 0; ok && i < v.shapes; i++) {
+        tide_skinned_shape_data shape;
+        ok = tide_skinned_data_shape(&v, i, &shape);
+        if (!ok || !keep(user, shape.name, shape.name_length)) continue;
+        if (!d.shapes) d.shapes = zeroed(v.shapes, sizeof *d.shapes);
+        shape_build *s = d.shapes + d.shape_count++;
+        *s = (shape_build){.name = shape.name, .name_length = shape.name_length, .weight = shape.weight,
+                           .deltas = zeroed(shape.deltas, sizeof *s->deltas), .delta_count = shape.deltas};
+        for (uint32_t k = 0; ok && k < shape.deltas; k++) ok = tide_skinned_data_shape_delta(&v, shape.first_delta + k, s->deltas + k);
+        d.delta_total += shape.deltas;
+    }
+    if (ok) ok = encode(&d, out, out_size);
+    decoded_free(&d);
+    return ok;
+}

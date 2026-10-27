@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "game.h"
 #include "tide/pack.h"
@@ -12,11 +13,19 @@ TIDE_TEST(blend_shapes_bake_in_the_match_survive_snapshots_and_draw)
 {
     tide_world world = {0}, snapshot = {0};
     TIDE_REQUIRE(tide_assets_load(tide_game_pack, tide_game_pack_size));
+    // [BlendShapes()] kept nothing: that model is in the pack as version 1, the others as version 2.
+    int shapeless = 0, shaped = 0;
+    for (size_t at = 0; at + 8 <= tide_game_pack_size; at += 4) {
+        if (memcmp(tide_game_pack + at, "TSKN", 4) != 0) continue;
+        shapeless += tide_game_pack[at + 4] == 1;
+        shaped += tide_game_pack[at + 4] == 2;
+    }
+    TIDE_CHECK(shapeless == 1 && shaped >= 2);
     tide_world_init(&world, 0.25f);
     tide_world_tick(&world);
     const ShapeProbe *p = &world.ShapeProbe;
     if (p->firstFailure) printf("    check %d failed\n", p->firstFailure);
-    TIDE_REQUIRE(p->checks == 22 && p->passed == p->checks);
+    TIDE_REQUIRE(p->checks == 27 && p->passed == p->checks);
     // The stored model's vertices are its own; its model bytes and indices the asset's.
     TIDE_CHECK(tide_list_read_count(&world.heap, p->shaped.vertices) == 3);
     const Corner *moved = tide_list_read(&world.heap, p->shaped.vertices, 1, sizeof *moved);
@@ -25,7 +34,7 @@ TIDE_TEST(blend_shapes_bake_in_the_match_survive_snapshots_and_draw)
     tide_world_copy(&snapshot, &world);
     const uint64_t hash = tide_world_hash(&snapshot);
     for (int i = 0; i < 3; i++) tide_world_tick(&world);
-    TIDE_CHECK(p->passed == p->checks && p->checks == 25);
+    TIDE_CHECK(p->passed == p->checks && p->checks == 30);
     moved = tide_list_read(&world.heap, p->shaped.vertices, 1, sizeof *moved);
     TIDE_REQUIRE(moved);
     TIDE_CHECK(moved->position.y == -2.0f);

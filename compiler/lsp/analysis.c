@@ -3830,6 +3830,12 @@ static void describe(const occurrence *o, sb *out)
              "`Mesh<V>` or a `SkinnedMesh<V>` (alone, or a list or a map of them). Code still reads the full mesh: "
              "`vertices` and `indices` are what they are without it. `Draw.LOD` names a level, and `Draw.LODCamera` the "
              "camera to pick through."},
+            {"BlendShapes", "[BlendShapes(\"name\", \"prefix*\")]",
+             "Keeps only the blend shapes of this skinned model whose source names match one of these: a name, or a "
+             "pattern where `*` is any run of characters. The others are left out of the import, so the pack doesn't carry "
+             "them; the vertices keep every shape at the file's default. `[BlendShapes()]` keeps none, and a pattern no "
+             "shape of a file matches is fine. It goes before an asset that's a `SkinnedMesh<V>` (alone, or a list or a "
+             "map of them); without it every shape is kept."},
             {"Json", "[Json(\"key\")]",
              "This field's key in JSON, where it isn't the field's name: `[Json(\"max_players\")] int maxPlayers;`. "
              "`Json.Read` fills the field from that key and `Json.Write` writes it under it. It goes before a struct's "
@@ -9563,6 +9569,8 @@ void analysis_completion(const int line, const int character, jbuf *out)
                  "GPU sampling and metadata helpers borrow the original source. .size works on the CPU and GPU. "
                  "Raw textures cannot be drawn or escape as ordinary Texture values.",
                  "Raw");
+            item(&c, "BlendShapes", CK_FUNCTION, "[BlendShapes(\"name\", \"prefix*\")]",
+                 "A SkinnedMesh<V> asset keeps only the blend shapes these names or * patterns match.", "BlendShapes(\"$1\")");
             item(&c, "LOD", CK_FUNCTION, "[LOD]",
                  "An asset that's a Mesh<V> or a SkinnedMesh<V> has simpler versions made, which its draws pick among by its size on screen.",
                  "LOD");

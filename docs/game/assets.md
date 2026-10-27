@@ -353,6 +353,17 @@ It takes what `Draw.Camera` takes for a 3D camera: a position, a rotation and a 
 That a mesh opts in with `[LOD]`, that everything after it is automatic, that each instance picks its own, that skinned meshes have it, and that a game can name a level or a camera to pick by, are decided. How the levels are made, the pixel a level may be off by, the two settings' names and each rule above are how it works today, and may still change. A way to say how many pixels a level may be off by, for a weak machine, isn't in the language yet.
 :::
 
+### Blend shapes to keep
+
+A skinned model's [blend shapes](./animation.md#blend-shapes) are all imported, which can be most of a pack: a head with fifty facial shapes carries fifty sets of vertex deltas. `[BlendShapes(...)]` before a `SkinnedMesh<V>` asset keeps only the shapes whose source names match one of its arguments, a name or a pattern where `*` is any run of characters:
+
+```csharp
+[BlendShapes("masculineFeminine", "default*")]
+asset List<SkinnedMesh<Corner>> parts = "sidekick/parts/*.fbx";
+```
+
+The other shapes are left out of the import, deltas and all, and the vertices keep every shape at the file's default weight as before. A pattern that matches nothing in a file is fine, as in a glob of parts where only some have a shape; `[BlendShapes()]` keeps none, and a model left with no shapes packs as it would with none in its file. It applies to every file of a list or a map. Without it, every shape is kept.
+
 ## Paths
 
 A path is relative to the `.tide` file that names it, whatever that file's namespace: there's no assets folder and no root. A package's files name files beside its own code the same way. Forward slashes, on every platform.

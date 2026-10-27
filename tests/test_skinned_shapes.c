@@ -486,3 +486,63 @@ TIDE_TEST(skinned_shapes_bake_weights_on_the_cpu)
     tide_skinned_data_free(bytes);
     tide_scratch_reset(mark);
 }
+
+static uint8_t *two_shapes_model(size_t *size, bool targets)
+{
+    gltf_maker m = {0};
+    const float positions[] = {0, 0, 0, 1, 0, 0, 0, 1, 0}, a[] = {0, 0, 0, 0, 1, 0, 0, 0, 0}, b[] = {0, 0, 0, 0, 0, 0, 0, 0, 2};
+    const uint32_t p = maker_floats(&m, positions, 3u, 3u), n = maker_floats(&m, flat_normals, 3u, 3u);
+    const uint32_t ta = maker_floats(&m, a, 3u, 3u), tb = maker_floats(&m, b, 3u, 3u);
+    char rest[512];
+    if (targets) {
+        snprintf(rest, sizeof rest, "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":%u,\"NORMAL\":%u},"
+                 "\"targets\":[{\"POSITION\":%u},{\"POSITION\":%u}]}],\"extras\":{\"targetNames\":[\"jawOpen\",\"browUp\"]}}]",
+                 p, n, ta, tb);
+    } else {
+        snprintf(rest, sizeof rest, "\"meshes\":[{\"primitives\":[{\"attributes\":{\"POSITION\":%u,\"NORMAL\":%u}}]}]", p, n);
+    }
+    return maker_glb(&m, rest, size);
+}
+
+static bool keep_all(void *user, const char *name, uint32_t length) { (void)user, (void)name, (void)length; return true; }
+static bool keep_none(void *user, const char *name, uint32_t length) { (void)user, (void)name, (void)length; return false; }
+static bool keep_named(void *user, const char *name, uint32_t length)
+{
+    return strlen(user) == length && !memcmp(user, name, length);
+}
+
+TIDE_TEST(skinned_shapes_kept_by_name_rewrite_the_model_as_the_decoder_would)
+{
+    size_t size, plain_size;
+    uint8_t *glb = two_shapes_model(&size, true), *plain_glb = two_shapes_model(&plain_size, false);
+    uint8_t *data = NULL, *plain = NULL, *out = NULL;
+    uint32_t data_size = 0, plain_bytes = 0, out_size = 0;
+    char why[256];
+    TIDE_REQUIRE(decode_glb(glb, size, &data, &data_size, why) && decode_glb(plain_glb, plain_size, &plain, &plain_bytes, why));
+    // Everything kept: the same bytes.
+    TIDE_REQUIRE(tide_skinned_data_keep_shapes(data, data_size, keep_all, NULL, &out, &out_size));
+    TIDE_CHECK(out_size == data_size && !memcmp(out, data, data_size));
+    tide_skinned_data_free(out);
+    // Nothing kept: version 1, the model without targets byte for byte.
+    TIDE_REQUIRE(tide_skinned_data_keep_shapes(data, data_size, keep_none, NULL, &out, &out_size));
+    TIDE_CHECK(out[4] == TIDE_SKINNED_DATA_VERSION && out_size == plain_bytes && !memcmp(out, plain, plain_bytes));
+    tide_skinned_data_free(out);
+    // One kept: that shape's name, weight and deltas, nothing else.
+    TIDE_REQUIRE(tide_skinned_data_keep_shapes(data, data_size, keep_named, "browUp", &out, &out_size));
+    TIDE_REQUIRE(tide_skinned_data_validate(out, out_size));
+    tide_skinned_data_view v;
+    TIDE_REQUIRE(tide_skinned_data_open(out, out_size, &v));
+    tide_skinned_shape_data shape;
+    tide_skinned_shape_delta_data delta;
+    TIDE_CHECK(v.shapes == 1u && v.shape_deltas == 1u && tide_skinned_data_shape(&v, 0, &shape)
+               && shape.name_length == 6u && !memcmp(shape.name, "browUp", 6u));
+    TIDE_CHECK(tide_skinned_data_shape_delta(&v, 0, &delta) && delta.vertex == 2u && vector_is(delta.position, 0, 0, 2));
+    tide_skinned_data_free(out);
+    // Bytes that aren't a model are refused, with nothing made.
+    data[0] ^= 1u;
+    TIDE_CHECK(!tide_skinned_data_keep_shapes(data, data_size, keep_all, NULL, &out, &out_size) && !out && !out_size);
+    tide_skinned_data_free(data);
+    tide_skinned_data_free(plain);
+    free(glb);
+    free(plain_glb);
+}

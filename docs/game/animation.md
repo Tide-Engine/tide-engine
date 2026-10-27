@@ -138,6 +138,8 @@ Weight `i` of `Shaped` is shape `i`'s weight. 0 to 1 is the authored range, and 
 
 Bake a character's shapes once, when its body changes, and keep the shaped model in a field: `Shaped` copies the vertices, and drawing a shaped model sends its vertices to the GPU like other models made while playing. Shapes are not animated on the GPU, and imported shape-weight animation is not read.
 
+To keep only some of a file's shapes, and so a smaller pack, write `[BlendShapes("masculineFeminine", "default*")]` before the asset: names, or patterns where `*` is any run of characters. The others aren't imported; `[BlendShapes()]` keeps none. See [Blend shapes to keep](./assets.md#blend-shapes-to-keep).
+
 In a glTF file, targets with the same name in `extras.targetNames` are one shape across all of the file's meshes, and must have the same default weight in `weights`; an unnamed target is a shape of its own, found with `TryGetAt`. POSITION, NORMAL and TANGENT targets are read, including sparse accessors. In an FBX file, each blend shape channel is a shape named after its target shape (`smile` in a channel `Blends.smile`), with the channel's default percentage as its weight. Export each channel as one target at full weight: a channel with in-between shapes is refused. The importer's own flat normals, made for a part exported without normals, don't follow shapes.
 
 ## Checked names and dynamic lookup

@@ -11,6 +11,7 @@
 #include "tide/audio.h" // How many bytes an audio declaration's state and knobs have
 #include "tide/devices.h"
 #include "tide/player.h" // How many players a game can take
+#include "tide/skinned_data.h" // [BlendShapes] keeps some of an imported model's shapes
 #include "types.h"
 
 // Semantic analysis: resolves names and types, enforces access and mutability
@@ -14051,6 +14052,94 @@ static decl *asset_mesh_vertex(const type t)
 
 #include "skinned_catalogs.inc"
 
+// A blend shape name against a [BlendShapes] pattern: * is any run of
+// characters (none too), everything else itself.
+static bool blend_shape_matches(const str pattern, const char *name, const uint32_t length)
+{
+    int p = 0, star = -1;
+    uint32_t n = 0, resume = 0;
+    while (n < length) {
+        if (p < pattern.len && pattern.ptr[p] == '*') {
+            star = p++;
+            resume = n;
+        } else if (p < pattern.len && pattern.ptr[p] == name[n]) {
+            p++, n++;
+        } else if (star >= 0) {
+            p = star + 1;
+            n = ++resume;
+        } else return false;
+    }
+    while (p < pattern.len && pattern.ptr[p] == '*') p++;
+    return p == pattern.len;
+}
+
+static bool blend_shape_kept(void *user, const char *name, const uint32_t length)
+{
+    const decl *k = user;
+    for (int i = 0; i < k->blend_shape_patterns.count; i++)
+        if (blend_shape_matches(k->blend_shape_patterns.items[i], name, length)) return true;
+    return false;
+}
+
+// [BlendShapes("masculineFeminine", "default*")]: names or * patterns, each a constant text.
+static void check_blend_shapes_attribute(decl *k, const attribute *attr, const bool typed, const asset_kind kind)
+{
+    if (k->blend_shapes_chosen) {
+        diag_error(attr->at, "'" STR_FMT "' already has a BlendShapes", STR_ARG(k->name));
+        return;
+    }
+    if (typed && kind != ASSET_SKINNED) {
+        diag_error(attr->at, "BlendShapes chooses which of a skinned model's blend shapes its import keeps, and '" STR_FMT "' is %s",
+                   STR_ARG(k->name), type_name(k->return_type));
+        diag_note("it goes before a SkinnedMesh<V> asset, like '[BlendShapes(\"jawOpen\", \"eye*\")] asset SkinnedMesh<Vertex3> head = \"head.fbx\";'");
+        return;
+    }
+    if (attr->args.count) {
+        diag_error(attr->at, "BlendShapes takes shape names and * patterns, not named arguments: '[BlendShapes(\"jawOpen\", \"eye*\")]'");
+        return;
+    }
+    k->blend_shapes_chosen = true;
+    for (int i = 0; i < attr->values.count; i++) {
+        const expr *literal = text_literal(attr->values.items[i]);
+        if (!literal) {
+            diag_error(attr->values.items[i]->at, "a BlendShapes pattern is a text literal or a 'const string': a shape's name, "
+                       "where * stands for any run of characters");
+            continue;
+        }
+        sb decoded = {0};
+        for (int c = 0; c < literal->text.len; c++) {
+            char ch = literal->text.ptr[c];
+            if (ch == '\\' && c + 1 < literal->text.len) {
+                ch = literal->text.ptr[++c];
+                ch = ch == 'n' ? '\n' : ch == 'r' ? '\r' : ch == 't' ? '\t' : ch;
+            }
+            sb_putn(&decoded, &ch, 1);
+        }
+        vec_push(k->blend_shape_patterns, ((str){decoded.data ? decoded.data : "", (int)decoded.len}));
+    }
+}
+
+// The declaration's own models, with only the shapes [BlendShapes] keeps.
+static void keep_blend_shapes(decl *k, const loc at)
+{
+    if (!k->blend_shapes_chosen || !k->asset) return;
+    for (int i = 0; i < k->asset->count; i++) {
+        asset_match *item = &k->asset->items[i];
+        if (!item->skinned) continue;
+        uint8_t *kept = NULL;
+        uint32_t size = 0;
+        if (!tide_skinned_data_keep_shapes(item->skinned, item->skinned_size, blend_shape_kept, k, &kept, &size)) {
+            diag_error(at, "'%s' can't have its blend shapes chosen: its imported model doesn't read back", item->key);
+            continue;
+        }
+        uint8_t *owned = arena_alloc(size ? size : 1u);
+        memcpy(owned, kept, size);
+        tide_skinned_data_free(kept);
+        item->skinned = owned;
+        item->skinned_size = size;
+    }
+}
+
 // Checks an asset declaration: its type, its path (a constant text) and the
 // files the path resolves to, read and decoded (asset_files.h), which codegen
 // packs. Errors at the path say what to write.
@@ -14074,6 +14163,8 @@ static void check_asset_decl(checker *c, decl *k)
         attribute *attr = &k->attributes.items[a];
         if (str_eq_c(attr->name, "Filter") || str_eq_c(attr->name, "Wrap") || str_eq_c(attr->name, "Raw")) {
             check_sampling_attribute(c, k, attr);
+        } else if (str_eq_c(attr->name, "BlendShapes")) {
+            check_blend_shapes_attribute(k, attr, typed, kind);
         } else if (str_eq_c(attr->name, "LOD")) {
             // Levels of detail (docs/spec.md): a mesh's, made as the game is built
             if (attr->args.count || attr->values.count) {
@@ -14146,6 +14237,7 @@ static void check_asset_decl(checker *c, decl *k)
                 }
                 if (tangents && !asset_mesh_tangents(k->asset, path->at)) k->asset = NULL;
             }
+            if (kind == ASSET_SKINNED && !c->prog->asset_metadata_only) keep_blend_shapes(k, path->at);
         }
         if (kind == ASSET_SKINNED || kind == ASSET_ANIMATIONS)
             skinned_asset_catalogs(c, k, k->asset_paths.items[0]);
@@ -19229,6 +19321,12 @@ static void check_attributes(checker *c)
                 if (d->kind != DECL_ASSET) check_sampling_attribute(c, d, attr); // An asset's were read with it
                 continue;
             }
+            if (str_eq_c(attr->name, "BlendShapes")) {
+                if (d->kind != DECL_ASSET) // An asset's was read with it
+                    diag_error(attr->at, "BlendShapes chooses which blend shapes a SkinnedMesh asset keeps, and '" STR_FMT
+                               "' isn't an asset", STR_ARG(d->name));
+                continue;
+            }
             if (str_eq_c(attr->name, "LOD")) {
                 if (d->kind != DECL_ASSET) { // An asset's was read with it
                     diag_error(attr->at, "LOD has simpler versions of a mesh made, for where it's drawn small, and '" STR_FMT
@@ -19281,6 +19379,7 @@ static void check_attributes(checker *c)
                 suggest_consider_c(&s, "Wrap");
             suggest_consider_c(&s, "Raw");
                 suggest_consider_c(&s, "LOD");
+                suggest_consider_c(&s, "BlendShapes");
                 suggest_note(&s);
                 diag_note("the attributes are Before and After, which order systems: [After(Physics.Integrate)], "
                           "Stage, which assigns an enum phase: [Stage(RenderStages.Objects)], "

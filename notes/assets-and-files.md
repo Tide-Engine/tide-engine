@@ -1,5 +1,41 @@
 # Assets and local files
 
+## Choosing which blend shapes an asset imports (2026-10-27)
+
+The owner chose an asset attribute (verbatim in docs/spec.md): Sidekick heads
+carry ~50 facial shapes, which doubled the character tool's pack to 235 MB.
+`[BlendShapes("masculineFeminine", "default*")]` before a `SkinnedMesh<V>`
+asset (single, list, map, glob) keeps only matching shapes.
+
+Built: `check_blend_shapes_attribute` (`check.c`, the asset attribute loop
+beside `[LOD]`) records constant-text patterns (escapes decoded as `[Name]`'s)
+on the declaration; misuse on another asset kind, a non-text pattern, named
+arguments, a repeat, or the attribute on a non-asset are diagnosed, with
+BlendShapes among the unknown-attribute suggestions. After resolving,
+`keep_blend_shapes` replaces each of the declaration's items' canonical bytes
+(per-declaration `asset_match` copies; the shared file cache, the typed
+geometry and its hash are untouched, since dropped shapes' defaults are
+already in the vertices) with `tide_skinned_data_keep_shapes`
+(`skinned_data.h`, `skinned_decode.c`, build-time only): it reads the
+validated model back into the decoder's tables and runs the decoder's own
+`encode`, so keeping everything is byte-identical and keeping nothing is the
+version 1 model a file without targets decodes to. Packing, identity, LOD keys
+and fingerprints all see the filtered bytes. Matching is `*` = any run
+(including none), else exact; `[BlendShapes()]` keeps none; a pattern matching
+nothing is fine; an unnamed shape is only kept by a pattern matching the empty
+name. The editor's catalog metadata is unaffected (shapes have no dot members).
+
+Tests: `skinned_shapes_kept_by_name_rewrite_the_model_as_the_decoder_would`
+(keep all = same bytes, keep none = the no-target decode byte for byte, keep
+one, invalid input refused); `tidec_e2e_blend_shapes` gains five declarations
+(FBX `jaw*`, empty, a list and a map over `fbx/shapes/shapes_*.fbx` with a
+pattern matching nothing, a glTF) checked through counts, names, baked
+defaults and Shaped, plus a pack scan finding exactly one version 1 model
+(the empty one); three `tidec_error_blend_shapes_attribute_*` fixtures;
+`lsp_levels_of_detail` checks completion, hover, misuse and the misspelling
+suggestion.
+
+
 ## Clips skip nodes the model lacks (2026-10-27)
 
 The owner chose lenient separate-rig binding for modular characters (verbatim
