@@ -182,3 +182,13 @@ the merged native and WASI debug package targets were rebuilt and all nine
 checks passed again, retaining the answer pin and projection/storage assertions.
 The merged production docs build passes. Optimized timings above remain the
 earlier reference run; no new performance claim is made for integration.
+
+## FPS visual fixtures (2026-10-27)
+
+`test/visual.html` depicts three fixed perspective scenarios with server and
+client diagnostic overlays. `cornerculling_fps_visual_scenarios` checks the
+same coordinates against the actual package: one solid wall occludes; two
+adjacent wall pieces remain visible because neither independently certifies the
+whole target; a target peeking past a narrower wall remains visible. The client
+overlay depicts an example policy, not a live network client or a game capture.
+These synthetic scenes do not establish real-map visibility rates.
