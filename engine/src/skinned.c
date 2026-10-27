@@ -649,7 +649,7 @@ static bool require_clip(const tide_skinned_data_view *v, const uint32_t index, 
 enum { BIND_WRAPPER = -2, BIND_FOLDED = -3, BIND_SKIPPED = -4 };
 
 typedef struct node_binding {
-    int32_t *map;   // Source node to target node, BIND_WRAPPER or BIND_FOLDED.
+    int32_t *map;   // Source node to target node, BIND_WRAPPER, BIND_FOLDED or BIND_SKIPPED.
     int32_t *outer; // A bound source node's folded source parent, or -1.
     int32_t *inner; // A bound source node's folded target parent, or -1.
     bool folds;
