@@ -137,6 +137,31 @@ TIDE_TEST(cornerculling_never_combines_unrelated_blockers)
     tide_world_free(&w);
 }
 
+// These are the fixed geometries shown in visual.html. A split wall can
+// cover the whole player while neither individual box certifies occlusion.
+TIDE_TEST(cornerculling_fps_visual_scenarios)
+{
+    static tide_world w;
+    init(&w);
+    query q = sight();
+    box solid = wall(0, 0, 0, 0.5f, 4, 4, -1);
+    w.Fixture.query = q;
+    rebuild(&w, &solid, 1);
+    TIDE_CHECK(w.Fixture.answer.status == CornerCulling_Status_Occluded);
+
+    const box split[] = {wall(0, 0, -2, 0.5f, 4, 2, -1),
+                         wall(0, 0, 2, 0.5f, 4, 2, -1)};
+    rebuild(&w, split, 2);
+    TIDE_CHECK(w.Fixture.answer.status == CornerCulling_Status_Visible);
+
+    box narrow = wall(0, 0, 0, 0.5f, 4, 1, -1);
+    q.target.center.z = 3;
+    w.Fixture.query = q;
+    rebuild(&w, &narrow, 1);
+    TIDE_CHECK(w.Fixture.answer.status == CornerCulling_Status_Visible);
+    tide_world_free(&w);
+}
+
 TIDE_TEST(cornerculling_cached_candidates_follow_updates_rebuilds_and_other_worlds)
 {
     static tide_world w, other;
