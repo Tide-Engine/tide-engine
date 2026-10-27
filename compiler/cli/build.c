@@ -1681,7 +1681,7 @@ static bool link_objects(const build *b, const file_list *objects, const c_side 
     if ((opts->release || opts->server) && !opts->watch && !shared) {
         if (opts->web) arg(&a, "-Wl,-s"); // wasm-ld already collects unused sections.
 #ifdef __APPLE__
-        else arg(&a, opts->release ? "-Wl,-dead_strip,-S,-x" : "-Wl,-dead_strip");
+        else arg(&a, opts->release ? "-Wl,-dead_strip,-S,-x,-no_exported_symbols" : "-Wl,-dead_strip");
 #else
         else arg(&a, opts->release ? "-Wl,--gc-sections,-s" : "-Wl,--gc-sections"); // ELF and Windows' MinGW lld.
 #endif
@@ -3886,9 +3886,22 @@ static bool link_android(const build *b, const file_list *objects, const c_side 
     arg(&a, "-o");
     arg(&a, output);
     arg_list(&a, b->opts->release ? release_flags : debug_flags);
-    // The activity and every public shared-library export remain roots. Only
-    // unused private sections are collected; stripping never changes exports.
-    if (b->opts->release && !b->opts->watch) arg(&a, "-Wl,--gc-sections,-s");
+    char *exports = NULL;
+    if (b->opts->release && !b->opts->watch) {
+        exports = path_join(b->root, "lib/android/game.exports");
+        if (!sys_exists(exports)) {
+            fprintf(stderr, "tide: this installation is missing %s; reinstall tide before building an Android release\n", exports);
+            free(exports);
+            free(abi_dir);
+            free(platform_lib);
+            return false;
+        }
+        arg(&a, "-Wl,--gc-sections,-s");
+        arg(&a, "-Xlinker");
+        arg(&a, "--version-script");
+        arg(&a, "-Xlinker");
+        arg(&a, exports);
+    }
     // The activity's way in, which nothing in the game calls; a C function
     // nothing defines fails here, not when the app starts; pages of 16 KiB,
     // as Android 15's devices can have.
@@ -3900,6 +3913,7 @@ static bool link_android(const build *b, const file_list *objects, const c_side 
     const int code = sys_run(a.items, NULL, false);
     free(abi_dir);
     free(platform_lib);
+    free(exports);
     if (code == -1) fprintf(stderr, "tide: couldn't start %s\n", b->compiler);
     // What the link may have lacked: a library that doesn't say it's Android's
     for (int i = 0; code > 0 && i < c->unsure.count; i++) {

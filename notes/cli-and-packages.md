@@ -1,5 +1,58 @@
 # `tide`, packages and the package
 
+## Shipping shaders and exports (2026-10-27)
+
+The owner requested shader identifier minification and tighter public export
+lists. Existing strip_names now also shortens the source-derived identifiers
+in emitted GLSL/WGSL, with private per-stage aliases in game.names. Contracts
+and compiler/backend regressions are in shaders.md. Readable debug/watched/
+Unity output remains the default. No generated/runtime API, pack format or
+simulation result changes.
+
+Standalone release macOS links add -no_exported_symbols beside -dead_strip,-S,-x,
+so defined global names cannot remain public. Shared/hot-reload/embed links keep
+their APIs. Android standalone release links use platform/android/game.exports:
+only ANativeActivity_onCreate is global; all other game/runtime definitions are
+local. Its entry point already has the required explicit visibility/root.
+The platform install ships that file as lib/android/game.exports, shared by
+the two ABI folders. A missing file fails the release build with reinstall
+guidance. Separately supplied game libraries are not relinked or restricted.
+The APK, generated headers and host ABI do not change. Custom code relying on
+dynamic lookup of libgame.so's former incidental exports must expose its API in
+a separate library. CMake shipping apps use the same export policy; debug and
+profiling configs retain names.
+
+exports_test.mjs cross-links real ARM64/x86_64 Android and macOS probes and
+inspects their symbol tables with LLVM: Android's one defined dynamic symbol is
+the activity; macOS has no defined public symbols. cpp_test.cmake's Android
+package case checks both actual release libraries when llvm-readobj is present.
+cache_test.mjs checks source-derived shader names in native/web debug versus
+shipping output and the private map, and checks macOS defined external symbols.
+Validation (Windows, Clang 23.1.2, Node 24.22.1, WASI SDK 24, Android NDK
+30.0.16248370): warning-free native/web builds; full native debug passes all
+2,816 enabled CTests (390.81 s), full web debug all 2,709 (722.93 s), retaining
+the existing disabled MicroDuck right-turn case. Minified callable shader pixels
+and batching pass Vulkan/OpenGL/WebGL/D3D11/WebGPU. The all-fixture check pins
+99 byte-identical SPIR-V modules plus unchanged non-name GLSL/WGSL tokens.
+Native/web installed --strip-only checks pass with actual shader sentinels and
+private maps, including split/single-file pages and debug-to-release cleanup.
+
+Both Android platform ABI libraries build and install the allowlist. The staged
+CLI passes cpp_test.cmake with WEB and ANDROID enabled: real debug/release APKs,
+C++ constructors/virtual dispatch/custom allocation, expected failure cases,
+and only the NativeActivity export in both release libgame.so files. CMake's
+x86_64 Android Duel app and ordinary console cpp test also build; the app's
+exports pass the same check. Console targets intentionally receive no activity
+allowlist. Cross-link probes pass both ARM64/x86_64 Android and macOS policies.
+
+The tide_add_game opt-in's prototype compatibility check builds BANKED and its
+tests in native/web Release against this engine, with banked_test passing on
+both. No prototype sources or deployment changed. Docs production build, Node
+syntax and diff checks pass. No deterministic expectation was changed. No Vulkan
+validation layer is installed; Android device/emulator execution, actual macOS
+game linking/runtime, other OSes and the embedded-LLVM package remain CI coverage.
+No extra workflow was dispatched and existing public demos were not redeployed.
+
 ## Standalone release metadata (2026-10-27)
 
 The owner requested removing readable metadata as a first deterrent to game

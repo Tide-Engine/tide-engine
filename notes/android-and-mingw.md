@@ -1,5 +1,13 @@
 # Android and MinGW builds
 
+Shipping export policy (2026-10-27): Release/MinSizeRel CMake apps and standalone
+CLI --release builds use platform/android/game.exports, exposing only
+ANativeActivity_onCreate from libgame.so. That file installs as
+lib/android/game.exports for both ABI builds. Other game-supplied .so files keep
+their own exports. Debug/profiling and host/embed APIs are unchanged. No activity
+code, JNI callback, package signature format or runtime function changed.
+Cross-link and actual packaged-library validation: cli-and-packages.md.
+
 Build notes, moved here from `AGENTS.md` as they were: what's built, what code relies on, the tests and the measurements. `AGENTS.md` has the rules every session needs and the index of these files. The headings below are that file's sections as they were, and "see <Section>" names one of them: the index says which files each is in. What a note calls "below" or "above" may be in another of these files now: search `notes/` for its name.
 
 ## Building

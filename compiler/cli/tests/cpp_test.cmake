@@ -75,6 +75,21 @@ endforeach()
 if(ANDROID)
     tide("${game}" ARGS build . --android EXPECT "Built ")
     tide("${game}" ARGS build . --android --release EXPECT "Built ")
+    find_program(readobj NAMES llvm-readobj llvm-readobj-23 llvm-readobj-22 llvm-readobj-21
+        llvm-readobj-20 llvm-readobj-19 llvm-readobj-18 HINTS "$ENV{LLVM_ROOT}/bin" "$ENV{ProgramFiles}/LLVM/bin")
+    find_program(node NAMES node)
+    if(readobj AND node)
+        file(GLOB modules "${game}/.tide/android-release/*/libgame.so")
+        list(LENGTH modules count)
+        if(NOT count EQUAL 2)
+            message(FATAL_ERROR "Expected both Android ABI libraries for export inspection")
+        endif()
+        execute_process(COMMAND "${node}" "${CMAKE_CURRENT_LIST_DIR}/exports_test.mjs" --android "${readobj}" ${modules}
+            RESULT_VARIABLE code OUTPUT_VARIABLE out ERROR_VARIABLE err)
+        if(NOT code EQUAL 0)
+            message(FATAL_ERROR "Android release exports failed: ${out}${err}")
+        endif()
+    endif()
 endif()
 
 # ---------------------------------------------------------------------------

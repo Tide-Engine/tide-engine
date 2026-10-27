@@ -15,9 +15,11 @@ Generated asset loads and private fingerprint preflight select existing
 SHA-256 name IDs directly. The owner approved the new runtime lookup before
 generated code used it; see runtime-ownership.md and assets-and-files.md.
 Header/layout and simulation identities, pack bytes, authored strings and data
-keys are unchanged. Names required by layout/embed, actual shader source,
-model catalogs and explicit debug/text/JSON output are not obfuscated. This
-is metadata removal, not encryption, copy prevention or control-flow obfuscation.
+keys are unchanged. Names required by layout/embed, model catalogs and explicit
+debug/text/JSON output are not obfuscated. The later shader-names follow-up
+(shaders.md, Shipping shader identifiers) shortens source-derived identifiers in
+shipping GLSL/WGSL while preserving its operations and bindings. This is metadata
+removal, not encryption, copy prevention or control-flow obfuscation.
 
 Coverage: release_diagnostic_names_preserve_identity_and_keep_the_map_private
 pins byte-identical headers/packs, stripped versus debug labels/source text,

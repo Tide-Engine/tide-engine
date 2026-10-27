@@ -5,6 +5,7 @@
 #include "mesh_lod.h"
 #include "pack_fingerprint.h"
 #include "spirv.h"
+#include "shader_names.h"
 #include "texture_compress.h"
 #include "tide/pack.h"
 #include "tide/sha256.h"
@@ -179,6 +180,7 @@ typedef struct gen {
     VEC(heard_read) heard_reads;
     client_codec value_codec;
     uint32_t value_schema;
+    sb shader_names; // Private per-stage identifier maps, never emitted into game code.
     bool heard_heap;
     bool list_caches;      // The function being generated has tide_lc, a run cache for each list it indexes (declare_list_caches)
     VEC(const char *) lc_keys; // ...the lists, by what names them (cache_key): each has a slot of its own
@@ -19621,6 +19623,7 @@ static bool write_name_map(const gen *g)
         sb_printf(&names, "dependencies fingerprint %d\t" STR_FMT "\n", i, STR_ARG(g->asset_dependencies.items[i].asset->qualified));
     for (int i = 0; i < g->skinned_fingerprints.count; i++)
         sb_printf(&names, "models fingerprint %d\t" STR_FMT "\n", i, STR_ARG(g->skinned_fingerprints.items[i].asset->qualified));
+    if (g->shader_names.len) sb_putn(&names, g->shader_names.data, g->shader_names.len);
     return write_file(path.data, &names);
 }
 
@@ -21936,7 +21939,16 @@ static void gen_shaders(gen *g)
                   "static TIDE_THREAD_LOCAL int32_t tide_gpu_seed;\n\n");
     }
     for (int s = 0; s < prog->shaders.count; s++) {
-        const shader *sh = prog->shaders.items[s];
+        shader compact = *prog->shaders.items[s];
+        if (g->opts->strip_names) {
+            sb_printf(&g->shader_names, "# shader %d GLSL vertex\n", s);
+            compact.glsl_vertex = shader_minify_names(compact.glsl_vertex, &g->shader_names);
+            sb_printf(&g->shader_names, "# shader %d GLSL fragment\n", s);
+            compact.glsl_fragment = shader_minify_names(compact.glsl_fragment, &g->shader_names);
+            sb_printf(&g->shader_names, "# shader %d WGSL\n", s);
+            compact.wgsl = shader_minify_names(compact.wgsl, &g->shader_names);
+        }
+        const shader *sh = &compact;
         const char *vertex = type_cname(sh->vertex);
         char name[64];
         snprintf(name, sizeof name, "tide_shader_%d_vertex", s);

@@ -1057,3 +1057,5 @@ A struct parameter that's meant as an instance's is supplied by `Draw.Instanced`
 ## Looking at what's generated
 
 `tide shaders` prints each shader Tide writes for the game, as GLSL and as WGSL: one for each combination of vertex struct, instance data, vert and frag a mesh draw uses.
+
+[Shipping builds](../tools/cli.md#run-and-build) shorten identifiers derived from your function, type, field, parameter and local names. Shader entry points and renderer bindings retain their names; expressions and layouts are unchanged. The private `game.names` build map records the shortened identifiers by stage. With a custom compiler pipeline, `tidec --shaders --strip-names` shows the shortened form; `--spirv` and `--hlsl` also accept `--strip-names`.
