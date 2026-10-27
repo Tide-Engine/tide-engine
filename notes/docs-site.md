@@ -1,5 +1,14 @@
 # The docs site
 
+## Corner Culling rotated/combined geometry (2026-10-27)
+
+The package guide now documents Occluder, quaternion rotation, boxes/ellipsoids,
+joined walls, bounded subdivision and the combined-result source-index contract.
+The included Tide example compiles with the package fixture on native/WASI.
+Production npm build passes with the existing unstaged playable-page 404s.
+No site infrastructure or language spec changes; implementation/visual validation
+is recorded in notes/corner-culling.md.
+
 ## Exclude CI from CLI usage totals (2026-10-26)
 
 The owner requested that CI not count as CLI usage after the dashboard showed

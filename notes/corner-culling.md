@@ -1,5 +1,105 @@
 # Corner Culling package
 
+## Rotated primitives and combined proofs (2026-10-27)
+
+The owner requested rotations, additional shapes and coverage by multiple wall
+pieces, with https://github.com/87andrewh/CornerCulling as inspiration. Its README
+uses a single convex blocker and lists partial-blocker combination as future
+work. This extension retains that fast proof and adds bounded conservative
+combination; it does not import third-party implementation code.
+
+### Current API and geometry
+
+`Occluder` replaces `Box`, without an alias. It contains `bounds`, `rotation`
+(default quaternion.identity), `shape` (OccluderShape.Box or Ellipsoid), and
+`mask`. Center is world-space; extents are local half-sizes or ellipsoid radii.
+Equal ellipsoid radii represent spheres. Endpoint Bounds remain world-aligned.
+Finite nonzero quaternion inputs normalize in binary64 during Rebuild/Update;
+invalid shapes, zero/nonfinite quaternions and nonpositive radii do not block.
+Prepared axes, geometry and broadphase bounds live in each Entry, with ordinary
+snapshot/pack semantics and no runtime/compiler interface change. The original
+identity-box path retains its slab arithmetic. Rotated rays transform into local
+space. Ellipsoids use closest-segment distance after scaling to a unit sphere.
+Rotation padding is 1e-11 times the maximum center/extent scale; ellipsoid tests
+also reject ill-conditioned/tangent distance results. Tests are extensive but
+are not an exhaustive formal floating-point proof.
+
+A cached single blocker is still tested first; one BVH traversal finds a full
+blocker and gathers up to 16 eligible candidates for combination. Axis-aligned
+box pairs can yield an inscribed rectangular prism: intersect two coordinate
+ranges and unite the third only when they meet. This never substitutes an
+enclosing AABB for a nonconvex union. Exact contacts require error-free boundary
+sums, checked with TwoSum; uncertain contacts need actual overlap. No tolerance
+fills a slit. Internal seams are removed before surfaceMargin contracts the
+joined outside boundary. Full rectangular unions can join again, using a
+32-element fixed workspace, so a four-tile wall can certify the whole target.
+Equivalent nonidentity axis-aligned rotations are not canonicalized for joining;
+rotated touching seams remain a fail-open limitation.
+
+Other combined coverage uses recursive splitting of the wider endpoint extent.
+Every complete child envelope must be certified by one blocker or a joined
+volume, rather than voting over rays hit by unrelated objects. `maxSubdivisions`
+defaults to 32 and clamps to 0..128; depth is at most eight. Zero disables this
+subdivision but leaves joining enabled. A missed center ray can reject further
+subdivision. Work/candidate limits and near contacts can keep physically hidden
+targets Visible; no complete arbitrary-union solver is claimed. The workspace
+for joining returns before recursion, so its 32 Geometry values do not multiply
+by recursion depth. Queries allocate no lists; the repeated combined workload
+also checks unchanged heap/scratch usage. Update recomputes the changed prepared
+shape and retains the existing O(N) lookup/refit cost.
+
+`occluder` is a source index only for a single-blocker certificate. It is -1 for
+both combined Occluded answers and unproven answers; `status` distinguishes them.
+Combined answers are not cached across queries. Masks are checked separately on
+each contributing blocker, so different matching mask bits can participate.
+
+### Tests, visual replay and remaining scope
+
+The earlier FPS visual section below records the superseded fixed illustration.
+`test/visual.html` now replays 372 actual Tide query results across four small
+levels, 31 observer positions and three enemies. It draws perspective server
+and client views and a top-down map, with Walk, Look and wallhack-overlay controls.
+`test/make_visual.py <native-test-executable>` regenerates its embedded records
+from `cornerculling_visual_walkthrough`; JavaScript only renders those records.
+The integration fixture now restricts the enemy's whole entity group and checks
+entity absence, component absence, marker-byte absence and projection hashes,
+while the owner/server retain it. Debug Fixture/Integration singletons still
+contain synthetic query and identity data: this is not a secure game protocol.
+
+Regression coverage includes touching and four-tile walls, genuine gaps, masks,
+disabling a contributor, staggered box/rotated/ellipsoid proofs, budget exhaustion,
+rotated-door updates, enclosing-AABB false occlusion, invalid rotations/shapes,
+denormal quaternions, tiny/large scales and tangencies. Independent face-plane
+and inverse-quaternion/quadratic oracles sample 27x27 rays across randomized
+endpoint interiors. The union oracle includes closed physical faces at a tiled
+wall's internal seam; separate tests retain fail-open external tangency checks.
+
+All 15 package checks pass in Windows debug, RelWithDebInfo and WASI debug.
+Clang 23.1.2, Node 24.22.1; other OS/Android/sanitizer coverage remains CI's.
+Native/web fingerprints match: axis-aligned `e443e90c08f91ab4` (655 Occluded,
+three more than the initial contract), mixed rotated/rounded `e72bc1ab7a0356fc`
+(353 of 512), visual replay `b4239b9ef0285d5c` (237 hidden, 135 received).
+Docs production build passes with the usual unstaged-example 404s. HTML preview
+passes at 728 and 390 pixels; all four scene choices and Walk/Look/overlay paths
+render with correct client counts and no console errors. No live network game
+or representative production FPS map was tested.
+
+Optimized shared-desktop reference: 50 players/2,450 links/one blocker costs
+227.900 us cached for points and 1159.656 us for expanded bounds; the equivalent
+one-box C reference is 112.325/570.594 us. At 4,096 blockers the package costs
+244.062/1174.763 us. The 90-query/512-near-miss workload costs 1486.319 us, with
+20.419 us per update/refit. These retain the original benchmark's scope and
+limitations, not a new dense-map budget claim. The added prepared geometry and
+combination search cost more than the original package; the common one-box path
+remains about 2x its handwritten C query-loop reference including tick/output
+work. Final optimized runs followed the correctness runs; no broad speedup or
+cross-platform timing claim is made.
+
+Capsules, general convex hulls, mesh import, rotated seam welding, automatic
+scene collection, arbitrary-union completeness and production-map profiling
+remain unimplemented. Game-owned audience/motion/physics privacy policies remain
+as documented. No engine, renderer, compiler or language semantics changed.
+
 ## Initial box implementation (2026-10-26)
 
 The owner requested a separate Tide package based on the local Unity

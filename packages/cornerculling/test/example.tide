@@ -9,9 +9,18 @@ singleton OcclusionExample
 
 event(Spawned) BuildOcclusionExample(with Main, mut OcclusionExample example)
 {
-    List<Box> blockers = [Box {
+    mut List<Occluder> blockers = [Occluder {
         bounds = Bounds { center = float3(0), extents = float3(0.5, 4, 4) }
     }];
+    // Rotation and ellipsoids use the same world/query interface.
+    blockers.Add(Occluder {
+        bounds = Bounds { center = float3(20, 0, 0), extents = float3(0.25, 2, 4) },
+        rotation = quaternion(0, 0.38268343, 0, 0.92387953)
+    });
+    blockers.Add(Occluder {
+        shape = OccluderShape.Ellipsoid,
+        bounds = Bounds { center = float3(24, 0, 0), extents = float3(1, 2, 1) }
+    });
     example.walls.Rebuild(blockers);
 
     // In a game, rebuild only when map membership changes, then run queries

@@ -8,9 +8,13 @@ struct Bounds
     float3 extents;
 }
 
-struct Box
+enum OccluderShape { Box, Ellipsoid }
+
+struct Occluder
 {
     Bounds bounds;
+    quaternion rotation = quaternion.identity;
+    OccluderShape shape;
     int mask = -1;
 }
 
@@ -20,6 +24,8 @@ struct CullingQuery
     Bounds target;
     int mask = -1;
     float surfaceMargin = 0.0001;
+    // Extra complete-envelope tests; exhaustion keeps the target visible.
+    int maxSubdivisions = 32;
 }
 
 enum Status { Unknown, Visible, Occluded }
@@ -27,7 +33,7 @@ enum Status { Unknown, Visible, Occluded }
 struct CullingResult
 {
     Status status;
-    // Index in the list supplied to Rebuild, or -1 without a certificate.
+    // Input-list index for a single blocker; -1 for combined/no certificate.
     int occluder = -1;
 
     bool IsVisible() { return status != Status.Occluded; }
@@ -39,8 +45,18 @@ struct CullingCache { int candidate; }
 
 struct Entry
 {
-    Box box;
+    Occluder box;
+    Geometry geometry;
     int source;
+}
+
+struct SearchResult
+{
+    int blocker = -1;
+    int[16] candidates;
+    int count;
+    bool centerHit;
+    bool unknown;
 }
 
 struct Node
@@ -80,9 +96,12 @@ bool Valid(Bounds bounds)
         bounds.extents.x >= 0 && bounds.extents.y >= 0 && bounds.extents.z >= 0;
 }
 
-bool Solid(Box box)
+bool Solid(Occluder box)
 {
-    return box.mask != 0 && Valid(box.bounds) &&
+    float4 q = box.rotation.value;
+    return (box.shape == OccluderShape.Box || box.shape == OccluderShape.Ellipsoid) &&
+        Finite(q.x) && Finite(q.y) && Finite(q.z) && Finite(q.w) &&
+        (q.x != 0 || q.y != 0 || q.z != 0 || q.w != 0) && box.mask != 0 && Valid(box.bounds) &&
         box.bounds.extents.x > 0 && box.bounds.extents.y > 0 && box.bounds.extents.z > 0;
 }
 
@@ -153,26 +172,191 @@ bool Intersects(double3 start, double3 end, double3 min, double3 max)
         Slab(start.z, end.z, min.z, max.z, enter, exit);
 }
 
-bool Blocks(Box box, PreparedQuery query)
+// Prepared once on rebuild/update. Rotation is normalized in binary64;
+// axes are columns of its matrix. Identity retains the original fast path.
+struct Geometry
 {
-    if ((box.mask & query.mask) == 0 || !Solid(box)) return false;
-    double3 center = double3(box.bounds.center);
-    double3 extents = double3(box.bounds.extents);
-    double3 rounding = Roundoff(box.bounds);
-    double3 outerMin = center - extents - rounding;
-    double3 outerMax = center + extents + rounding;
-    if (!Overlaps(outerMin, outerMax, query.min, query.max) ||
-        Overlaps(outerMin, outerMax, query.observerMin, query.observerMax) ||
-        Overlaps(outerMin, outerMax, query.targetMin, query.targetMax)) return false;
-    double3 inner = extents - rounding - query.margin;
+    double3 center;
+    double3 extents;
+    double3 rounding;
+    double3 x;
+    double3 y;
+    double3 z;
+    double3 min;
+    double3 max;
+    OccluderShape shape;
+    int mask;
+    bool aligned;
+    bool exact;
+}
+
+bool ExactAdd(double a, double b)
+{
+    double sum = a + b;
+    double v = sum - a;
+    return (a - (sum - v)) + (b - v) == 0d;
+}
+
+Geometry GeometryFor(Occluder box)
+{
+    mut Geometry g = default;
+    if (!Solid(box)) return g;
+    g.center = double3(box.bounds.center);
+    g.extents = double3(box.bounds.extents);
+    g.mask = box.mask;
+    g.shape = box.shape;
+    double4 q = double4(box.rotation.value);
+    g.aligned = q.x == 0d && q.y == 0d && q.z == 0d;
+    g.x = double3(1d, 0d, 0d);
+    g.y = double3(0d, 1d, 0d);
+    g.z = double3(0d, 0d, 1d);
+    g.rounding = Roundoff(box.bounds);
+    if (!g.aligned)
+    {
+        double scale = 2d / Math.Dot(q, q);
+        g.x = double3(1d - scale * (q.y*q.y + q.z*q.z), scale * (q.x*q.y + q.z*q.w), scale * (q.x*q.z - q.y*q.w));
+        g.y = double3(scale * (q.x*q.y - q.z*q.w), 1d - scale * (q.x*q.x + q.z*q.z), scale * (q.y*q.z + q.x*q.w));
+        g.z = double3(scale * (q.x*q.z + q.y*q.w), scale * (q.y*q.z - q.x*q.w), 1d - scale * (q.x*q.x + q.y*q.y));
+        g.rounding = double3(Math.Cmax(Math.Max(Math.Abs(g.center), g.extents)) * 1e-11d);
+    }
+    double3 radius = Math.Abs(g.x) * g.extents.x + Math.Abs(g.y) * g.extents.y + Math.Abs(g.z) * g.extents.z;
+    g.min = g.center - radius - g.rounding;
+    g.max = g.center + radius + g.rounding;
+    g.exact = g.aligned && ExactAdd(g.center.x, g.extents.x) && ExactAdd(g.center.x, -g.extents.x) &&
+        ExactAdd(g.center.y, g.extents.y) && ExactAdd(g.center.y, -g.extents.y) &&
+        ExactAdd(g.center.z, g.extents.z) && ExactAdd(g.center.z, -g.extents.z);
+    return g;
+}
+
+double3 Local(Geometry g, double3 p)
+{
+    double3 d = p - g.center;
+    return g.aligned ? d : double3(Math.Dot(d, g.x), Math.Dot(d, g.y), Math.Dot(d, g.z));
+}
+
+bool Hits(Geometry g, double3 from, double3 to, double margin)
+{
+    double3 inner = g.extents - g.rounding - margin;
     if (Math.Cmin(inner) <= 0d) return false;
-    double3 min = center - inner;
-    double3 max = center + inner;
-    if (!Intersects(query.observerCenter, query.targetCenter, min, max)) return false;
+    if (g.shape == OccluderShape.Box)
+    {
+        if (g.aligned) return Intersects(from, to, g.center - inner, g.center + inner);
+        return Intersects(Local(g, from), Local(g, to), -inner, inner);
+    }
+    double3 a = Local(g, from) / inner;
+    double3 b = Local(g, to) / inner;
+    double3 direction = b - a;
+    double length = Math.Dot(direction, direction);
+    if (length <= 0d) return false;
+    double t = Math.Clamp(-Math.Dot(a, direction) / length, 1e-12d, 1d - 1e-12d);
+    double3 closest = a + direction * t;
+    // Reject near-tangencies; the larger geometry padding also bounds the
+    // transform error. Very ill-conditioned segments deliberately fail open.
+    double uncertainty = 1e-12d * Math.Max(1d, Math.Max(Math.Dot(a, a), Math.Dot(b, b)));
+    return Math.Dot(closest, closest) < 1d - uncertainty;
+}
+
+bool Eligible(Geometry g, PreparedQuery query)
+{
+    return (g.mask & query.mask) != 0 && Overlaps(g.min, g.max, query.min, query.max) &&
+        !Overlaps(g.min, g.max, query.observerMin, query.observerMax) &&
+        !Overlaps(g.min, g.max, query.targetMin, query.targetMax);
+}
+
+bool Blocks(Geometry g, PreparedQuery query)
+{
+    if (!Eligible(g, query) || !Hits(g, query.observerCenter, query.targetCenter, query.margin)) return false;
     for (var a = 0; a < query.observerCount; a++)
         for (var b = 0; b < query.targetCount; b++)
-            if (!Intersects(query.observers[a], query.targets[b], min, max)) return false;
+            if (!Hits(g, query.observers[a], query.targets[b], query.margin)) return false;
     return true;
+}
+
+bool Blocks(Occluder box, PreparedQuery query) { return Blocks(GeometryFor(box), query); }
+
+// An inscribed rectangular prism in the union of two axis-aligned boxes.
+// Intersect the other two axes: NEVER use their enclosing AABB. Only exact
+// binary64 bounds may join at equality; uncertain contacts need real overlap.
+Geometry Join(Geometry a, Geometry b, int axis)
+{
+    mut Geometry g = default;
+    if (!a.aligned || !b.aligned || a.shape != OccluderShape.Box || b.shape != OccluderShape.Box) return g;
+    double3 aMin = a.center - a.extents;
+    double3 aMax = a.center + a.extents;
+    double3 bMin = b.center - b.extents;
+    double3 bMax = b.center + b.extents;
+    double3 lo = Math.Max(aMin, bMin);
+    double3 hi = Math.Min(aMax, bMax);
+    double overlap = Axis(hi, axis) - Axis(lo, axis);
+    if (overlap < 0d || (!(a.exact && b.exact) && overlap <= Axis(a.rounding, axis) + Axis(b.rounding, axis))) return g;
+    mut double3 min = lo;
+    mut double3 max = hi;
+    SetAxis(min, axis, Math.Min(Axis(aMin, axis), Axis(bMin, axis)));
+    SetAxis(max, axis, Math.Max(Axis(aMax, axis), Axis(bMax, axis)));
+    if (Math.Cmin(max - min) <= 0d) return g;
+    g.center = (min + max) * 0.5d;
+    g.extents = (max - min) * 0.5d;
+    g.rounding = Math.Max(Math.Abs(g.center), g.extents) * 4e-12d + a.rounding + b.rounding;
+    g.min = min - g.rounding;
+    g.max = max + g.rounding;
+    g.aligned = true;
+    g.mask = -1;
+    g.exact = a.exact && b.exact &&
+        g.center.x - g.extents.x == min.x && g.center.x + g.extents.x == max.x &&
+        g.center.y - g.extents.y == min.y && g.center.y + g.extents.y == max.y &&
+        g.center.z - g.extents.z == min.z && g.center.z + g.extents.z == max.z &&
+        ExactAdd(g.center.x, g.extents.x) && ExactAdd(g.center.x, -g.extents.x) &&
+        ExactAdd(g.center.y, g.extents.y) && ExactAdd(g.center.y, -g.extents.y) &&
+        ExactAdd(g.center.z, g.extents.z) && ExactAdd(g.center.z, -g.extents.z);
+    return g;
+}
+
+bool Contains(Geometry outer, Geometry inner)
+{
+    double3 lo = outer.center - outer.extents;
+    double3 hi = outer.center + outer.extents;
+    double3 a = inner.center - inner.extents;
+    double3 b = inner.center + inner.extents;
+    return lo.x <= a.x && lo.y <= a.y && lo.z <= a.z && hi.x >= b.x && hi.y >= b.y && hi.z >= b.z;
+}
+
+PreparedQuery Slice(PreparedQuery query, bool observer, int axis, bool upper)
+{
+    mut PreparedQuery result = query;
+    mut double3 min = observer ? query.observerMin : query.targetMin;
+    mut double3 max = observer ? query.observerMax : query.targetMax;
+    double middle = (Axis(min, axis) + Axis(max, axis)) * 0.5d;
+    if (upper) SetAxis(min, axis, middle);
+    else SetAxis(max, axis, middle);
+    if (observer)
+    {
+        result.observerMin = min;
+        result.observerMax = max;
+        result.observerCenter = (min + max) * 0.5d;
+        for (var i = 0; i < result.observerCount; i++) result.observers[i] = Corner(min, max, i);
+    }
+    else
+    {
+        result.targetMin = min;
+        result.targetMax = max;
+        result.targetCenter = (min + max) * 0.5d;
+        for (var i = 0; i < result.targetCount; i++) result.targets[i] = Corner(min, max, i);
+    }
+    result.min = Math.Min(result.observerMin, result.targetMin);
+    result.max = Math.Max(result.observerMax, result.targetMax);
+    return result;
+}
+
+double Axis(double3 value, int axis)
+{
+    return axis == 0 ? value.x : (axis == 1 ? value.y : value.z);
+}
+
+void SetAxis(mut double3 value, int axis, double scalar)
+{
+    if (axis == 0) value.x = scalar;
+    else if (axis == 1) value.y = scalar;
+    else value.z = scalar;
 }
 
 float Axis(float3 value, int axis)
@@ -233,14 +417,13 @@ struct CullingWorld
         mut bool found = false;
         for (var i = first; i < first + count; i++)
         {
-            Box box = entries[i].box;
-            if (!Solid(box)) continue;
-            double3 rounding = Roundoff(box.bounds);
-            double3 min = double3(box.bounds.center) - double3(box.bounds.extents) - rounding;
-            double3 max = double3(box.bounds.center) + double3(box.bounds.extents) + rounding;
+            Geometry g = entries[i].geometry;
+            if (g.mask == 0) continue;
+            double3 min = g.min;
+            double3 max = g.max;
             node.min = found ? Math.Min(node.min, min) : min;
             node.max = found ? Math.Max(node.max, max) : max;
-            node.mask |= box.mask;
+            node.mask |= g.mask;
             found = true;
         }
         return node;
@@ -264,12 +447,12 @@ struct CullingWorld
         nodes[index].escape = nodes.count;
     }
 
-    mut void Rebuild(List<Box> boxes)
+    mut void Rebuild(List<Occluder> boxes)
     {
         entries.Clear();
         nodes.Clear();
         for (var i = 0; i < boxes.count; i++)
-            entries.Add(Entry { box = boxes[i], source = i });
+            entries.Add(Entry { box = boxes[i], geometry = GeometryFor(boxes[i]), source = i });
         if (entries.count > 0) BuildBranch(0, entries.count);
         ready = true;
     }
@@ -283,13 +466,14 @@ struct CullingWorld
 
     // Source indices stay stable until the next Rebuild. Updating mask to zero
     // disables a door immediately. Refit is synchronous; no stale tree window.
-    mut bool Update(int source, Box box)
+    mut bool Update(int source, Occluder box)
     {
         if (!ready || source < 0 || source >= entries.count) return false;
         for (var i = 0; i < entries.count; i++)
         {
             if (entries[i].source != source) continue;
             entries[i].box = box;
+            entries[i].geometry = GeometryFor(box);
             for (var n = nodes.count - 1; n >= 0; n--)
             {
                 Node old = nodes[n];
@@ -324,31 +508,102 @@ struct CullingWorld
             return CullingResult { status = Status.Visible };
         }
         int cached = cache.candidate - 1;
-        if (cached >= 0 && cached < entries.count && Blocks(entries[cached].box, prepared))
+        if (cached >= 0 && cached < entries.count && Blocks(entries[cached].geometry, prepared))
             return CullingResult { status = Status.Occluded, occluder = entries[cached].source };
         cache.candidate = 0;
+        SearchResult search = Search(prepared);
+        if (search.unknown) return CullingResult { status = Status.Unknown };
+        if (search.blocker >= 0)
+        {
+            cache.candidate = search.blocker + 1;
+            return CullingResult { status = Status.Occluded, occluder = entries[search.blocker].source };
+        }
+        mut int budget = Math.Clamp(query.maxSubdivisions, 0, 128);
+        if (FinishCoverage(prepared, search, budget, 0)) return CullingResult { status = Status.Occluded };
+        return CullingResult { status = Status.Visible };
+    }
+
+    // Fixed candidate storage and bounded recursion: incomplete proof is visible.
+    // Every child must be certified, never merely its sampled rays collectively.
+    SearchResult Search(PreparedQuery query)
+    {
+        mut SearchResult result = SearchResult { blocker = -1 };
         mut int at = 0;
         while (at < nodes.count)
         {
             Node node = nodes[at];
-            if ((node.mask & query.mask) == 0 || !Overlaps(node.min, node.max, prepared.min, prepared.max))
+            if ((node.mask & query.mask) == 0 || !Overlaps(node.min, node.max, query.min, query.max))
             {
-                // Also bounds traversal if implementation fields were edited.
-                if (node.escape <= at || node.escape > nodes.count) return CullingResult { status = Status.Unknown };
+                if (node.escape <= at || node.escape > nodes.count) { result.unknown = true; return result; }
                 at = node.escape;
                 continue;
             }
             for (var i = 0; i < node.count; i++)
             {
                 int index = node.first + i;
-                if (index == cached || index < 0 || index >= entries.count) continue;
-                if (!Blocks(entries[index].box, prepared)) continue;
-                cache.candidate = index + 1;
-                return CullingResult { status = Status.Occluded, occluder = entries[index].source };
+                if (index < 0 || index >= entries.count) continue;
+                Geometry g = entries[index].geometry;
+                if (!Eligible(g, query)) continue;
+                if (Blocks(g, query)) { result.blocker = index; return result; }
+                if (result.count < 16) { result.candidates[result.count] = index; result.count++; }
+                if (Hits(g, query.observerCenter, query.targetCenter, query.margin)) result.centerHit = true;
             }
             at++;
         }
-        return CullingResult { status = Status.Visible };
+        return result;
+    }
+
+    bool Covered(PreparedQuery query, mut int budget, int depth)
+    {
+        SearchResult search = Search(query);
+        if (search.unknown) return false;
+        return search.blocker >= 0 || FinishCoverage(query, search, budget, depth);
+    }
+
+    bool FinishCoverage(PreparedQuery query, SearchResult search, mut int budget, int depth)
+    {
+        if (JoinedCoverage(query, search.candidates, search.count)) return true;
+        if (!search.centerHit || budget <= 0 || depth >= 8) return false;
+        double3 aSpan = query.observerMax - query.observerMin;
+        double3 bSpan = query.targetMax - query.targetMin;
+        bool observer = Math.Cmax(aSpan) > Math.Cmax(bSpan);
+        double3 span = observer ? aSpan : bSpan;
+        int axis = span.x >= span.y && span.x >= span.z ? 0 : (span.y >= span.z ? 1 : 2);
+        if (Axis(span, axis) <= 0d) return false;
+        budget--;
+        return Covered(Slice(query, observer, axis, false), budget, depth + 1) &&
+            Covered(Slice(query, observer, axis, true), budget, depth + 1);
+    }
+
+    // Keep this workspace in a separate call so recursive envelopes do not
+    // retain it on the stack. Closure is bounded; only full rectangular unions
+    // are retained for another join (inscribed pair prisms may still certify).
+    bool JoinedCoverage(PreparedQuery query, int[16] candidates, int candidateCount)
+    {
+        if (candidateCount < 2) return false;
+        mut Geometry[32] pool = default;
+        mut int count = 0;
+        for (var i = 0; i < candidateCount; i++)
+        {
+            Geometry g = entries[candidates[i]].geometry;
+            if (!g.aligned || g.shape != OccluderShape.Box) continue;
+            pool[count] = g;
+            count++;
+        }
+        for (var a = 0; a < count; a++)
+            for (var b = 0; b < a; b++)
+                for (var axis = 0; axis < 3; axis++)
+                {
+                    Geometry joined = Join(pool[a], pool[b], axis);
+                    if (joined.mask == 0) continue;
+                    if (Blocks(joined, query)) return true;
+                    if (count >= 32 || !Contains(joined, pool[a]) || !Contains(joined, pool[b])) continue;
+                    mut bool redundant = false;
+                    for (var i = 0; i < count; i++)
+                        if (Contains(pool[i], joined)) { redundant = true; break; }
+                    if (!redundant) { pool[count] = joined; count++; }
+                }
+        return false;
     }
 
     CullingResult Query(CullingQuery query)
