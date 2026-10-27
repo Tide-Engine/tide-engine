@@ -1,5 +1,18 @@
 # The docs site
 
+## Tide Motion mapped humanoid retargeting (2026-10-27)
+
+The Motion guide now documents offline SOMA-to-character retargeting and the
+reverse path for existing clips, reusable mapping files, skeleton inspection,
+required/optional bones, reference-pose calibration, root scaling and batch
+integration. The target hierarchy binds through ordinary Tide animation APIs;
+runtime/engine code is unchanged. Limits include fixed target bone lengths,
+reported omission of non-root translations, no automatic bone assignment or
+contact IK, and supported static uniform versus unsupported animated/nonuniform
+scale. Implementation and validation are recorded in tide-motion's notes.
+Production npm build passes with Node 24.22.1 and the existing allowed unstaged
+playable-page 404s. No manual docs workflow was dispatched.
+
 ## Tide Motion public tool (2026-10-27)
 
 The Tools sidebar includes tools/motion, linked from Animation files. It covers
