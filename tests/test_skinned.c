@@ -966,7 +966,8 @@ TIDE_TEST(skinned_separate_poses_bind_procedural_edits_aliases_and_capture_draws
     tide_bone_transform *extra = tide_list_at_mut(source_pose, 1, sizeof *extra);
     TIDE_REQUIRE(extra);
     extra->position.x = 1.0f;
-    TIDE_CHECK(!tide_skinned_pose_into(target, source, source_pose, &pose, TIDE_IN_SCRATCH));
+    // A node the model hasn't got is skipped (2026-10-27): editing it moves nothing.
+    TIDE_CHECK(tide_skinned_pose_into(target, source, source_pose, &pose, TIDE_IN_SCRATCH));
     TIDE_CHECK(pose_hash(pose) == before);
     extra->position.x = -9.0f;
 
@@ -1374,5 +1375,94 @@ TIDE_TEST(skinned_crossplatform_pose_bits)
     hash = tide_hash_end(hash);
     if (hash != UINT64_C(0xe5d23f82e5d18f26)) printf("skinned pose hash: %016llx\n", (unsigned long long)hash);
     TIDE_CHECK(hash == UINT64_C(0xe5d23f82e5d18f26));
+    tide_scratch_reset(mark);
+}
+
+// An export of its own nodes and one clip "go" of the given channels: sampler 0
+// moves a node from x -2 to -4 over two seconds, sampler 1 holds y at 3.
+static tide_list channels_model(const char *nodes, const char *channels)
+{
+    char json[4096];
+    const int length = snprintf(json, sizeof json,
+        "{\"asset\":{\"version\":\"2.0\"},\"nodes\":[%s],"
+        "\"buffers\":[{\"byteLength\":56,\"uri\":\"data:application/octet-stream;base64,"
+        "AAAAAAAAAEAAAADAAAAAAAAAAAAAAIDAAAAAAAAAAAAAAAAAAABAQAAAAAAAAAAAAABAQAAAAAA=\"}],"
+        "\"bufferViews\":[{\"buffer\":0,\"byteLength\":8},{\"buffer\":0,\"byteOffset\":8,\"byteLength\":24},"
+        "{\"buffer\":0,\"byteOffset\":32,\"byteLength\":24}],"
+        "\"accessors\":[{\"bufferView\":0,\"componentType\":5126,\"count\":2,\"type\":\"SCALAR\"},"
+        "{\"bufferView\":1,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"},"
+        "{\"bufferView\":2,\"componentType\":5126,\"count\":2,\"type\":\"VEC3\"}],"
+        "\"animations\":[{\"name\":\"go\",\"samplers\":[{\"input\":0,\"output\":1},{\"input\":0,\"output\":2}],"
+        "\"channels\":[%s]}]}", nodes, channels);
+    if (length < 0 || (size_t)length >= sizeof json) return (tide_list){0};
+    uint8_t *bytes = NULL;
+    uint32_t size = 0;
+    char why[256], note[256];
+    const bool decoded = tide_skinned_data_decode(json, (size_t)length, false, NULL, NULL, &bytes, &size, why, note);
+    if (!decoded) printf("channels fixture: %s (%s)\n", why, note);
+    const tide_list out = decoded ? tide_list_from(bytes, (int32_t)size, 1u) : (tide_list){0};
+    tide_skinned_data_free(bytes);
+    return out;
+}
+
+#define CHANNEL(sampler, node) "{\"sampler\":" #sampler ",\"target\":{\"node\":" #node ",\"path\":\"translation\"}}"
+
+// 2026-10-27: a clip may animate nodes the model lacks (IK helpers, another
+// part's bones); those are skipped. Nodes both have keep their parent chains.
+TIDE_TEST(skinned_separate_bindings_skip_nodes_the_model_lacks)
+{
+    const uint32_t mark = tide_scratch_mark();
+    const tide_list target = model(), plain = separate_model(separate_nodes);
+    // The plain export's arm, with a top-level ik_settings, an ik_foot_root > ik_foot_l chain and a twist below the arm,
+    // all animated, none of them the model's.
+    const tide_list extra = channels_model(
+        "{\"name\":\"ik_settings\"},{\"name\":\"hand\",\"translation\":[0,3,0]},"
+        "{\"name\":\"arm\",\"translation\":[-2,0,0],\"children\":[1,4]},{\"name\":\"ik_foot_root\",\"children\":[5]},"
+        "{\"name\":\"twist\"},{\"name\":\"ik_foot_l\"}",
+        CHANNEL(0, 2) "," CHANNEL(0, 0) "," CHANNEL(1, 5) "," CHANNEL(1, 4));
+    TIDE_REQUIRE(tide_skinned_valid(extra));
+    tide_list expected = {0}, pose = {0};
+    TIDE_REQUIRE(tide_skinned_sample_into(target, plain, 0, 1, &expected, TIDE_IN_SCRATCH));
+    TIDE_REQUIRE(tide_skinned_sample_into(target, extra, 0, 1, &pose, TIDE_IN_SCRATCH));
+    TIDE_CHECK(pose_hash(pose) == pose_hash(expected) && bone(pose, 1).position.x == 3.0f);
+    // A pose of the export binds the same way, and draws.
+    tide_list plain_pose = {0}, extra_pose = {0}, from_plain = {0}, from_extra = {0};
+    TIDE_REQUIRE(tide_skinned_sample(plain, 0, 1, &plain_pose, TIDE_IN_SCRATCH));
+    TIDE_REQUIRE(tide_skinned_sample(extra, 0, 1, &extra_pose, TIDE_IN_SCRATCH));
+    TIDE_REQUIRE(tide_skinned_pose_into(target, plain, plain_pose, &from_plain, TIDE_IN_SCRATCH));
+    TIDE_REQUIRE(tide_skinned_pose_into(target, extra, extra_pose, &from_extra, TIDE_IN_SCRATCH));
+    TIDE_CHECK(pose_hash(from_extra) == pose_hash(from_plain));
+    tide_draw_list draw = {0};
+    uint32_t textures[2];
+    int32_t info[3];
+    TIDE_CHECK(tide_draw_skinned_data(&draw, target, from_extra, textures, info) && info[0] == 2 && info[1] == 3);
+    tide_draw_free(&draw);
+
+    // A model with only part of the chain: the arm is moved, the hand the clip holds is skipped.
+    const tide_list arm_only = channels_model("{\"name\":\"arm\",\"translation\":[-2,0,0]}", CHANNEL(0, 0));
+    TIDE_REQUIRE(tide_skinned_sample_into(arm_only, extra, 0, 1, &pose, TIDE_IN_SCRATCH));
+    TIDE_CHECK(tide_list_count(pose) == 2 && bone(pose, 1).position.x == 3.0f);
+    TIDE_REQUIRE(tide_skinned_sample_into(arm_only, plain, 1, 1, &pose, TIDE_IN_SCRATCH));
+    TIDE_CHECK(tide_list_count(pose) == 2 && bone(pose, 1).position.x == 2.0f);
+    TIDE_REQUIRE(tide_skinned_pose_into(arm_only, extra, extra_pose, &pose, TIDE_IN_SCRATCH));
+    TIDE_CHECK(bone(pose, 1).position.x == 3.0f);
+
+    // A node both have, below one the model lacks, is a different chain: refused, the pose left as it was.
+    const tide_list elbow = channels_model(
+        "{\"name\":\"mesh\"},{\"name\":\"hand\",\"translation\":[0,3,0]},{\"name\":\"arm\",\"children\":[3]},"
+        "{\"name\":\"elbow\",\"children\":[1]}", CHANNEL(1, 1));
+    const uint64_t before = pose_hash(expected);
+    TIDE_CHECK(!tide_skinned_sample_into(target, elbow, 0, 1, &expected, TIDE_IN_SCRATCH));
+    tide_list elbow_pose = {0};
+    TIDE_REQUIRE(tide_skinned_sample(elbow, 0, 1, &elbow_pose, TIDE_IN_SCRATCH));
+    TIDE_CHECK(!tide_skinned_pose_into(target, elbow, elbow_pose, &expected, TIDE_IN_SCRATCH));
+    TIDE_CHECK(pose_hash(expected) == before);
+    // A clip of none of the model's nodes is another rig: refused.
+    const tide_list other = channels_model("{\"name\":\"tail\"},{\"name\":\"fin\"}", CHANNEL(0, 0) "," CHANNEL(1, 1));
+    TIDE_CHECK(!tide_skinned_sample_into(target, other, 0, 1, &expected, TIDE_IN_SCRATCH));
+    TIDE_CHECK(pose_hash(expected) == before);
+    // A duplicate name the clip needs still refuses.
+    const tide_list twice = channels_model("{\"name\":\"arm\"},{\"name\":\"arm\"}", CHANNEL(0, 0));
+    TIDE_CHECK(!tide_skinned_sample_into(target, twice, 0, 1, &expected, TIDE_IN_SCRATCH));
     tide_scratch_reset(mark);
 }

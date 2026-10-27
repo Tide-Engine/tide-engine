@@ -1,5 +1,14 @@
 # Runtime written by Claude for now
 
+## Lenient separate-rig binding (2026-10-27)
+
+Owner-decided (docs/spec.md, Separate-file binding): `tide_skinned_sample_into`
+and `tide_skinned_pose_into` skip required source nodes the target lacks;
+present nodes keep the strict parent rule. No signature, generated call,
+canonical byte or world byte changes. Contracts and tests:
+assets-and-files.md, Clips skip nodes the model lacks.
+
+
 ## Blend shapes (2026-10-27)
 
 Owner-decided import and CPU bake (docs/spec.md, Skinned meshes). Within the

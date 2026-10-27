@@ -643,7 +643,10 @@ static bool require_clip(const tide_skinned_data_view *v, const uint32_t index, 
 // 0.01 scale, say). A named top-level node with no node of its name on the
 // other side is folded: its transform moves into its bound children's
 // parent-local transforms, so their model-space results stay as authored.
-enum { BIND_WRAPPER = -2, BIND_FOLDED = -3 };
+// A source node the model has no node of its name for is skipped: a clip may
+// animate nodes a model lacks (IK helpers, another part's bones), and their
+// channels are left out, as Unity does.
+enum { BIND_WRAPPER = -2, BIND_FOLDED = -3, BIND_SKIPPED = -4 };
 
 typedef struct node_binding {
     int32_t *map;   // Source node to target node, BIND_WRAPPER or BIND_FOLDED.
@@ -754,9 +757,13 @@ static bool bind_nodes(const tide_skinned_data_view *target, const tide_skinned_
                 out->folds = true;
                 continue;
             }
-            if (!found || found->ambiguous) {
-                snprintf(why, why_size, found ? "the model has more than one node named \"%.*s\"" : "the model has no node named \"%.*s\"", NODE_NAME(n));
+            if (found && found->ambiguous) {
+                snprintf(why, why_size, "the model has more than one node named \"%.*s\"", NODE_NAME(n));
                 return false;
+            }
+            if (!found) {
+                map[i] = BIND_SKIPPED;
+                continue;
             }
             map[i] = found->index;
         }
@@ -773,6 +780,14 @@ static bool bind_nodes(const tide_skinned_data_view *target, const tide_skinned_
             out->folds = true;
             target_parent = 0;
         }
+        if (source_parent > 0 && map[source_parent] == BIND_SKIPPED) {
+            // A node both have keeps its parent chain: one below a node the
+            // model lacks would be moved relative to another parent.
+            char in_source[100];
+            parent_name(source, n.parent, in_source, sizeof in_source);
+            snprintf(why, why_size, "\"%.*s\" is below %s in it, which the model hasn't got", NODE_NAME(n), in_source);
+            return false;
+        }
         if (target_parent != (source_parent < 0 ? -1 : map[source_parent])) {
             char in_source[100], in_target[100];
             parent_name(source, n.parent, in_source, sizeof in_source);
@@ -781,15 +796,23 @@ static bool bind_nodes(const tide_skinned_data_view *target, const tide_skinned_
             return false;
         }
     }
-    // A folded node is above bound bones; one moving nothing bound is missing.
+    // A folded node is above bound bones; one moving nothing bound is a node
+    // the model lacks, skipped.
     for (uint32_t i = 0; i < source->nodes; i++) {
         if (out->outer[i] >= 0) required[out->outer[i]] = 2u;
     }
-    for (uint32_t i = 0; i < source->nodes; i++) {
-        if (map[i] != BIND_FOLDED || required[i] == 2u) continue;
+    uint32_t bound = 0, skipped = 0, first_skipped = 0;
+    for (uint32_t i = 1; i < source->nodes; i++) {
+        if (!required[i]) continue;
+        if (map[i] == BIND_FOLDED && required[i] != 2u) map[i] = BIND_SKIPPED;
+        if (map[i] == BIND_SKIPPED && !skipped++) first_skipped = i;
+        if (map[i] >= 0) bound++;
+    }
+    // Nothing it moves is in the model: another rig altogether, not a part of one.
+    if (skipped && !bound) {
         tide_skinned_node_data n;
-        validated_node(source, i, &n);
-        snprintf(why, why_size, "the model has no node named \"%.*s\"", NODE_NAME(n));
+        validated_node(source, first_skipped, &n);
+        snprintf(why, why_size, "the model has none of the nodes it moves (no node named \"%.*s\", for one)", NODE_NAME(n));
         return false;
     }
     return true;

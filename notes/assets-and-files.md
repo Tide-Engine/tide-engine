@@ -1,5 +1,37 @@
 # Assets and local files
 
+## Clips skip nodes the model lacks (2026-10-27)
+
+The owner chose lenient separate-rig binding for modular characters (verbatim
+in docs/spec.md, Separate-file binding): Synty Sidekick clips animate
+`ik_settings`, `ik_foot_root` and the whole body, while a part file has some
+of the chain (a hair part root..head) or extra chains (a cape's `abac_dyn_*`).
+`bind_nodes` (`engine/src/skinned.c`) now maps a required source node with no
+same-named target node to `BIND_SKIPPED`: its channels are left out of
+`tide_skinned_sample_into`, its locals out of `tide_skinned_pose_into` (and so
+out of the generated draw path, which binds through `pose_into`). A top-level
+source node with no target name and no bound child, formerly "missing" after
+the fold pass, is skipped too; one above bound bones still folds. Chosen rule
+for a present node below an absent one: its source parent must be bound and
+map to its target parent, as before, so a node below a skipped node is refused
+("is below X in it, which the model hasn't got") rather than re-parented; a
+whole absent subtree is skipped. Still refused, with the console reason:
+ambiguous required names on either side, unnamed required nodes, different
+parents, uneven fold scale, and a clip or pose whose named required nodes are
+all absent ("the model has none of the nodes it moves"), which keeps a wholly
+different rig a reported failure. Exact-skeleton sampling, canonical bytes,
+generated C and the pose-bit pin are unchanged.
+
+Tests: `skinned_separate_bindings_skip_nodes_the_model_lacks` (extra animated
+top-level, chained and leaf nodes give bit-identical sample_into and
+pose_into results to the plain export, and the pose draws; a target with only
+the arm, for the moving clip and the hand-only clip; a node below an absent
+elbow refused by both routes with the pose unchanged; another rig and a
+duplicate name refused). `skinned_separate_poses_bind_procedural_edits_...`
+now expects an edited node the model lacks to bind and move nothing (it
+formerly expected refusal). All 60 skinned runtime tests pass.
+
+
 ## Blend shapes: imported and baked on the CPU (2026-10-27)
 
 The owner chose "Import + bake" (verbatim in `docs/spec.md`, Skinned meshes,

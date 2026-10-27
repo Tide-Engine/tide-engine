@@ -233,7 +233,9 @@ Missing or ambiguous selections are build errors. An `Animation` asset takes one
 
 `pose.Sample` binds the clip to the pose's skeleton. Use a pose from the character when you also need its bone references for edits or sockets. You can also sample the source clip with `movement.run.Sample(seconds)` and pass that pose directly to `Draw.SkinnedMesh`; the draw binds it to the character.
 
-Binding matches nodes by unique exact source names and matching parent chains; source node order and default poses can differ. This supports animation-only FBX exports whose defaults are the starting pose of a take. Required source local transforms are copied directly, including the defaults of unanimated ancestors. Sampling into a target pose requires the selected clip's animated nodes and their ancestors. Drawing a source pose requires all animated nodes declared by its source asset, any edited nodes and their ancestors, because a pose does not retain which clip was sampled. Unrelated target nodes keep their own rest transforms.
+Binding matches nodes by unique exact source names and matching parent chains; source node order and default poses can differ. This supports animation-only FBX exports whose defaults are the starting pose of a take. Required source local transforms are copied directly, including the defaults of unanimated ancestors. Sampling into a target pose binds the selected clip's animated nodes and their ancestors. Drawing a source pose binds all animated nodes declared by its source asset, any edited nodes and their ancestors, because a pose does not retain which clip was sampled. Unrelated target nodes keep their own rest transforms.
+
+A clip may animate nodes the model lacks: those are skipped, as in Unity. So one body clip drives every part of a modular character, a hair part with only the root-to-head chain as well as a torso, and a clip's IK helpers (`ik_settings`, `ik_foot_root`) need no node in any part; a part's extra chains (a cape's bones) keep their rest. A node the model has must still have the same parent: a model's `head` below `neck_01` binds a clip's `head` only where the clip's `head` is below its `neck_01` too, so a clip node below one the model lacks is refused rather than moved relative to another parent. A clip none of whose animated nodes are in the model is another rig and is refused too.
 
 An extra unnamed identity scene root, as added by FBX importing, is ignored while its pose and relevant animation channels stay at rest. Animated wrappers or deeper unnamed ancestors cannot be bound this way.
 
@@ -241,7 +243,7 @@ A named node at the top of either hierarchy is folded into the bones below it wh
 
 When a clip doesn't bind, the first failed sample or draw for each model and clip prints the reason on the console and names the node that differs, such as `"Hips" is below "Armature" in it but below "Root" in the model`.
 
-This supports separate files exported from the same named hierarchy. It does not retarget animation: source translations, rotations and scales are used as authored, without adapting proportions or correcting coordinate spaces. Missing or ambiguous required names and different parent chains reject binding. An incompatible sample leaves the destination unchanged, and an incompatible draw produces no draw. Bone identity and pose blending still require identical skeleton data.
+This supports separate files exported from the same named hierarchy. It does not retarget animation: source translations, rotations and scales are used as authored, without adapting proportions or correcting coordinate spaces. Ambiguous required names and different parent chains reject binding. An incompatible sample leaves the destination unchanged, and an incompatible draw produces no draw. Bone identity and pose blending still require identical skeleton data.
 
 ## Sample, blend and edit
 

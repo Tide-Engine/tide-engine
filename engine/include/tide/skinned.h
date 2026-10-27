@@ -61,10 +61,13 @@ bool tide_skinned_sample(tide_list data, int32_t animation, float seconds,
 // nodes match unique exact names and parents, independently of source node
 // order or authored default poses. Required source local transforms are copied
 // directly; unrelated target nodes start at target rest. No retargeting is done.
-// Sampling requires the selected clip's targets and ancestors. A pose requires
-// all its model's clip targets, changed transforms and ancestors. These are
-// bindings, not retargeting: missing, ambiguous or different required nodes
-// fail and leave the destination untouched. Source and destination may alias.
+// Sampling binds the selected clip's targets and ancestors; a pose, all its
+// model's clip targets, changed transforms and ancestors. A required node with
+// no node of its name in the target is skipped, with its channels. A node both
+// have must have its parent bound to the target node's parent: one below a
+// skipped node is refused. Ambiguous names, unnamed required nodes, different
+// parents, or nothing bound at all fail and leave the destination untouched.
+// These are bindings, not retargeting. Source and destination may alias.
 // An unnamed identity wrapper directly under node zero is transparent only
 // while its source clip channels and pose remain at rest; node zero is kept.
 // A named top-level node with no node of its name on the other side (Blender's
