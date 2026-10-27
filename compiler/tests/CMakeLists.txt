@@ -173,6 +173,22 @@ tide_e2e_test(asset_defaults) # A field's default that names an asset: the match
 tide_e2e_test(asset_meshes) # Mesh assets: glTF and OBJ files as a vertex struct of the game's, drawn and read by the match
 tide_e2e_test(lod) # Levels of detail: [LOD] mesh assets, what each draw picks, Draw.LOD and Draw.LODCamera
 tide_e2e_test(skinned) # Checked catalogs, contracts, CPU pose edits, GLB decoding and match snapshots
+# Run the same asset/snapshot checks through the shipping loader, including
+# prehashed raw-pack fingerprint requests. This host needs no window or GPU.
+set(private_names_dir "${CMAKE_CURRENT_BINARY_DIR}/release_names")
+file(GLOB_RECURSE private_names_assets CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/e2e/skinned/*")
+add_custom_command(
+    OUTPUT "${private_names_dir}/game.c" "${private_names_dir}/game.h" "${private_names_dir}/game_pack.c"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${private_names_dir}"
+    COMMAND "${TIDEC_PATH}" "${CMAKE_CURRENT_SOURCE_DIR}/e2e/skinned.tide"
+        -o "${private_names_dir}" --name game --pack-c --strip-names
+    DEPENDS ${TIDEC_DEPENDS} e2e/skinned.tide ${private_names_assets} VERBATIM)
+add_executable(tidec_release_names_tests e2e/skinned_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c"
+    "${private_names_dir}/game.c" "${private_names_dir}/game_pack.c")
+target_include_directories(tidec_release_names_tests PRIVATE "${private_names_dir}" "${PROJECT_SOURCE_DIR}/tests")
+target_compile_definitions(tidec_release_names_tests PRIVATE "$<TARGET_PROPERTY:tidec_e2e_skinned,COMPILE_DEFINITIONS>")
+target_link_libraries(tidec_release_names_tests PRIVATE tide)
+add_test(NAME tidec_release_names COMMAND tidec_release_names_tests)
 tide_e2e_test(animation_imports) # Cleaned exporter names, selected clips and combined source catalogs
 tide_e2e_test(animation_lookup) # Bool/out catalogs, failure defaults, evaluation order and owned outputs
 tide_e2e_test(skinned_rest) # Zero-clip models, default-pose values and omitted-pose draw forms

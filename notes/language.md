@@ -1,5 +1,31 @@
 # Language features, as tidec builds them
 
+## Shipping diagnostic metadata (2026-10-27)
+
+Owner-requested first reverse-engineering deterrent: codegen_options.strip_names
+(`tidec --strip-names`) replaces system/view profiling and extern-row labels,
+shader descriptor labels, event-chain and command diagnostics with numbered
+labels. Debug.Assert retains its condition, authored message and line number,
+but omits its copied source line and replaces its source path with a source ID.
+The private <name>.names file beside generated C maps those labels, asset IDs
+and fingerprint request ordinals back to declarations/paths. A subsequent
+unstripped generation removes an old map. Nothing copies it into game outputs.
+
+Generated asset loads and private fingerprint preflight select existing
+SHA-256 name IDs directly. The owner approved the new runtime lookup before
+generated code used it; see runtime-ownership.md and assets-and-files.md.
+Header/layout and simulation identities, pack bytes, authored strings and data
+keys are unchanged. Names required by layout/embed, actual shader source,
+model catalogs and explicit debug/text/JSON output are not obfuscated. This
+is metadata removal, not encryption, copy prevention or control-flow obfuscation.
+
+Coverage: release_diagnostic_names_preserve_identity_and_keep_the_map_private
+pins byte-identical headers/packs, stripped versus debug labels/source text,
+preserved authored messages and map creation/removal. tidec_release_names
+runs skinned_test.c against explicitly stripped generated code on native/WASI,
+retaining the existing SKINNED_HASH and all asset/snapshot checks. CLI artifact
+checks and combined validation are recorded in cli-and-packages.md.
+
 ## Native debugging: pinned lines, Tide-code entry lines, plumbing without debug info (2026-10-26)
 
 Line mode only (`codegen_options.line_directives`; `--no-line` output is

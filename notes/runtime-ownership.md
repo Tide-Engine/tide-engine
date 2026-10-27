@@ -1,5 +1,17 @@
 # Runtime written by Claude for now
 
+## Prehashed asset lookup (2026-10-27)
+
+The owner explicitly approved lookup by the pack's existing SHA-256 name ID
+and equivalent fingerprint support before generated code depended on it.
+The existing pack maintenance exception covers tide_pack_find_id and
+tide_pack_find_mesh_id (tide/pack.h, pack_load.c). Their string counterparts
+remain ordinary C convenience APIs. Pack format, model geometry/provenance,
+simulation storage and deterministic identities are unchanged. The fingerprint
+request's optional id is private compiler/emitted-loader support, not a new
+exported runtime structure. Contracts/tests: assets-and-files.md; CLI shipping
+policy and validation: cli-and-packages.md.
+
 ## Time travel's session calls (2026-10-26)
 
 Unity's time travel (notes/unity.md) extends the agent-maintained session and platform areas. Generated code calls

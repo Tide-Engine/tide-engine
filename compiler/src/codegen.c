@@ -285,6 +285,21 @@ static str tool_name(const decl *d)
     return (str){b.data, (int)b.len};
 }
 
+// Runtime labels are diagnostics, never match or resource identities. Their
+// numbered forms can be resolved through the private map beside generated C.
+static str diagnostic_name(const gen *g, const str name, const char *kind, const int index)
+{
+    if (!g->opts->strip_names) return name;
+    sb b = {0};
+    sb_printf(&b, "%s %d", kind, index);
+    return (str){b.data, (int)b.len};
+}
+
+static str diagnostic_decl(const gen *g, const decl *d, const char *kind)
+{
+    return diagnostic_name(g, d->qualified, kind, d->index);
+}
+
 // Generated code writes each name thousands of times, so every declaration
 // gets its name once (name_program); one made along the way is named here.
 static const char *decl_cname(const decl *d)
@@ -4336,10 +4351,10 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_put(o, "tide_debug_assert(");
             gen_as(g, o, e->args.items[0], (type){TY_BOOL, NULL});
             sb_put(o, ", ");
-            gen_c_raw_literal(o, source_line(e->at));
+            gen_c_raw_literal(o, g->opts->strip_names ? str_from("") : source_line(e->at));
             sb_put(o, ", ");
             const source *src = diag_source(e->at.file);
-            gen_c_raw_literal(o, str_from(src ? src->path : "?"));
+            gen_c_raw_literal(o, diagnostic_name(g, str_from(src ? src->path : "?"), "source", e->at.file));
             sb_printf(o, ", %d, ", e->at.line);
             if (e->args.count > 1) gen_c_text(g, o, e->args.items[1]);
             else sb_put(o, "\"\"");
@@ -11053,7 +11068,7 @@ static void gen_command_recorders(gen *g)
                   program_batches(prog) ? " || c->kind == TIDE_CMD_EVENTS" : "");
         for (int i = 0; i < prog->events.count; i++) {
             const decl *d = prog->events.items[i];
-            if (is_queued(prog, d)) sb_printf(o, "        case %d: what = \"" STR_FMT "\"; break;\n", d->index, STR_ARG(d->qualified));
+            if (is_queued(prog, d)) sb_printf(o, "        case %d: what = \"" STR_FMT "\"; break;\n", d->index, STR_ARG(diagnostic_decl(g, d, "event")));
         }
         sb_put(o, "        default: break;\n        }\n    }\n");
     }
@@ -17732,7 +17747,7 @@ static void gen_extern_rows_call(gen *g, const decl *sys, const int a, const cha
         else sb_put(o, "NULL, 0u, ");
         sb_put(o, held ? "tide_held, " : "NULL, ");
     }
-    gen_c_literal(o, tool_name(sys), false);
+    gen_c_literal(o, diagnostic_name(g, tool_name(sys), "system", sys->index), false);
     sb_printf(o, ");\n%stide_r.entities = &tide_w->entities;\n", pad);
     if (a < 0) {
         int slot = 0;
@@ -18530,7 +18545,7 @@ static bool fingerprint_assets(gen *g, asset_dependency *assets, const int count
     uint8_t (*hashes)[32] = arena_alloc((size_t)count * sizeof *hashes);
     for (int i = 0; i < count; i++) {
         const asset_dependency *dep = &assets[i];
-        requests[i] = (tide_asset_fingerprint_request){str_to_cstr(dep->asset->qualified), dep->shape};
+        requests[i] = (tide_asset_fingerprint_request){.qualified = str_to_cstr(dep->asset->qualified), .desc = dep->shape};
     }
     uint32_t failed;
     if (!pack_fingerprints(g->pack_bytes, g->pack_size, requests, (uint32_t)count, hashes, NULL, &failed)) {
@@ -18550,15 +18565,42 @@ static void dependency_descriptor(sb *o, const tide_asset_fingerprint_desc *d)
               d->grid_shape.shift[0], d->grid_shape.shift[1], d->grid_shape.shift[2]);
 }
 
-static void gen_asset_fingerprint_check(sb *o, const asset_dependency *assets, const int count, const bool defaults)
+static str asset_diagnostic_name(const gen *g, const decl *d)
+{
+    if (!g->opts->strip_names) return d->qualified;
+    uint8_t id[32];
+    tide_sha256_of(d->qualified.ptr, (size_t)d->qualified.len, id);
+    sb name = {0};
+    sb_put(&name, "asset ");
+    for (int i = 0; i < 32; i++) sb_printf(&name, "%02x", (unsigned)id[i]);
+    return (str){name.data, (int)name.len};
+}
+
+static void gen_asset_lookup(gen *g, const decl *d, const decl *vertex)
+{
+    sb *o = &g->c;
+    sb_printf(o, "    e = tide_pack_find%s%s(", vertex ? "_mesh" : "", g->opts->strip_names ? "_id" : "");
+    if (g->opts->strip_names) sb_printf(o, "tide_id_%s", asset_cname(d));
+    else gen_c_raw_literal(o, d->qualified);
+    sb_printf(o, ", %uu", (unsigned)asset_pack_kind(d->return_type));
+    if (vertex) sb_printf(o, ", 0x%08xu", (unsigned)mesh_layout_number(g, vertex));
+    sb_put(o, ");\n");
+}
+
+static void gen_asset_fingerprint_check(gen *g, const asset_dependency *assets, const int count, const bool defaults)
 {
     if (!count) return;
+    sb *o = &g->c;
     const char *name = defaults ? "dependencies" : "models";
     sb_printf(o, "    { static const tide_asset_fingerprint_request %s[] = {\n", name);
     for (int i = 0; i < count; i++) {
         const asset_dependency *dep = &assets[i];
-        sb_printf(o, "        {\"" STR_FMT "\", ", STR_ARG(dep->asset->qualified));
+        sb_put(o, "        {.qualified = ");
+        if (g->opts->strip_names) sb_put(o, "NULL");
+        else gen_c_raw_literal(o, dep->asset->qualified);
+        sb_put(o, ", .desc = ");
         dependency_descriptor(o, &dep->shape);
+        if (g->opts->strip_names) sb_printf(o, ", .id = tide_id_%s", asset_cname(dep->asset));
         sb_put(o, "},\n");
     }
     sb_put(o, "      };\n      static const uint8_t expected[][32] = {\n");
@@ -18569,6 +18611,12 @@ static void gen_asset_fingerprint_check(sb *o, const asset_dependency *assets, c
         sb_put(o, "},\n");
     }
     sb_put(o, "      };\n      uint32_t failed;\n");
+    if (g->opts->strip_names) {
+        sb_printf(o, "      if (!tide_asset_fingerprints(pack, size, %s, %uu, NULL, expected, &failed)) {\n"
+                     "          fprintf(stderr, \"tide: %s fingerprint %%u requires a valid pack for its matching game build\\n\", failed);\n"
+                     "          return false;\n      } }\n", name, (unsigned)count, name);
+        return;
+    }
     sb_printf(o, "      if (!tide_asset_fingerprints(pack, size, %s, %uu, NULL, expected, &failed)) {\n"
                  "          if (failed < %uu)\n"
                  "              fprintf(stderr, \"tide: %s '%%s'%s requires its matching game build\\n\", %s[failed].qualified);\n"
@@ -18592,6 +18640,13 @@ static void gen_assets(gen *g)
     for (int i = 0; i < prog->assets.count; i++) {
         const decl *d = prog->assets.items[i];
         sb_printf(o, "static %s %s __attribute__((unused)); // " STR_FMT "\n", asset_ctype(d->return_type), asset_cname(d), STR_ARG(d->qualified));
+        if (g->opts->strip_names) {
+            uint8_t id[32];
+            tide_sha256_of(d->qualified.ptr, (size_t)d->qualified.len, id);
+            sb_printf(o, "static const uint8_t tide_id_%s[32] = {", asset_cname(d));
+            for (int k = 0; k < 32; k++) sb_printf(o, "%s0x%02x", k ? "," : "", (unsigned)id[k]);
+            sb_put(o, "};\n");
+        }
     }
     for (int i = 0; i < prog->asset_refs.count; i++) {
         const decl *ref = prog->asset_refs.items[i];
@@ -18625,19 +18680,18 @@ static void gen_assets(gen *g)
     // Check actual dependency payloads before loading changes any pack state,
     // asset global or vertex default. A stale layout label alone proves none
     // of the values that a default will read from this candidate pack.
-    gen_asset_fingerprint_check(o, g->asset_dependencies.items, g->asset_dependencies.count, true);
+    gen_asset_fingerprint_check(g, g->asset_dependencies.items, g->asset_dependencies.count, true);
     // Match code can sample typed source geometry as well as canonical model
     // bytes. Both must match before defaults or ownership see this candidate.
-    gen_asset_fingerprint_check(o, g->skinned_fingerprints.items, g->skinned_fingerprints.count, false);
+    gen_asset_fingerprint_check(g, g->skinned_fingerprints.items, g->skinned_fingerprints.count, false);
     sb_put(o, "    if (!tide_pack_load(pack, size)) return false;\n    const tide_pack_entry *e;\n");
     for (int i = 0; i < prog->assets.count; i++) {
         const decl *d = prog->assets.items[i];
-        const uint32_t kind = asset_pack_kind(d->return_type);
         const decl *vertex = asset_vertex(d->return_type);
         const bool skinned = d->asset_kind == ASSET_SKINNED;
         if (vertex) { // A Mesh, or a glob's: under its name and its vertices' layout, read where the pack has it
-            sb_printf(o, "    e = tide_pack_find_mesh(\"" STR_FMT "\", %uu, 0x%08xu);\n    if (!e) tide_asset_missing(\"" STR_FMT "\");\n",
-                      STR_ARG(d->qualified), (unsigned)kind, (unsigned)mesh_layout_number(g, vertex), STR_ARG(d->qualified));
+            gen_asset_lookup(g, d, vertex);
+            sb_printf(o, "    if (!e) tide_asset_missing(\"" STR_FMT "\");\n", STR_ARG(asset_diagnostic_name(g, d)));
             if (skinned && d->return_type.kind == TY_STRUCT) {
                 sb_printf(o, "    { const tide_skinned_lists v = tide_pack_skinned_of(e, (uint32_t)sizeof(%s));\n"
                              "      %s = (%s){.data = v.data, .vertices = v.vertices, .indices = v.indices}; }\n",
@@ -18651,8 +18705,8 @@ static void gen_assets(gen *g)
             }
             continue;
         }
-        sb_printf(o, "    e = tide_pack_find(\"" STR_FMT "\", %uu);\n    if (!e) tide_asset_missing(\"" STR_FMT "\");\n",
-                  STR_ARG(d->qualified), (unsigned)kind, STR_ARG(d->qualified));
+        gen_asset_lookup(g, d, NULL);
+        sb_printf(o, "    if (!e) tide_asset_missing(\"" STR_FMT "\");\n", STR_ARG(asset_diagnostic_name(g, d)));
         if (d->return_type.kind == TY_STRING) sb_printf(o, "    %s = tide_pack_text(e);\n", asset_cname(d));
         else if (d->return_type.kind == TY_TEXTURE) sb_printf(o, "    %s = tide_pack_texture_of(e);\n", asset_cname(d));
         else if (d->return_type.kind == TY_CUBEMAP) sb_printf(o, "    %s = tide_pack_cubemap_of(e);\n", asset_cname(d));
@@ -18683,9 +18737,8 @@ static void gen_assets(gen *g)
             defaults |= mesh_fills(f) == FILL_NONE && declared_default(f);
         }
         if (!defaults) continue;
-        sb_printf(o, "    e = tide_pack_find_mesh(\"" STR_FMT "\", %uu, 0x%08xu);\n    {\n        const %s tide_d = ",
-                  STR_ARG(d->qualified), (unsigned)asset_pack_kind(d->return_type), (unsigned)mesh_layout_number(g, vertex),
-                  type_cname(vertex));
+        gen_asset_lookup(g, d, vertex);
+        sb_printf(o, "    {\n        const %s tide_d = ", type_cname(vertex));
         gen_value(g, o, vertex, NULL, 0);
         sb_printf(o, ";\n        for (uint32_t tide_k = 0;; tide_k++) {\n            uint32_t tide_n;\n"
                      "            %s *tide_v = tide_pack_%s_open(e, tide_k, (uint32_t)sizeof(%s), &tide_n);\n"
@@ -19218,7 +19271,7 @@ static void gen_api(gen *g)
             sb_printf(o, ", %s, %s, ", sys->spawns ? "true" : "false", settles ? "true" : "false");
             if (settles && settles_fields(sys)) sb_printf(o, "tide_settle_%s, ", name);
             else sb_put(o, "NULL, ");
-            gen_c_literal(o, tool_name(sys), false); // Its name, for the profile
+            gen_c_literal(o, diagnostic_name(g, tool_name(sys), "system", sys->index), false); // Its label, for the profile
             sb_put(o, "},\n");
         }
         sb_put(o, "};\n\n");
@@ -19404,7 +19457,7 @@ static void gen_api(gen *g)
             sb_put(o, "    if (tide_view_more_count) tide_view_switch(-1, local);\n");
         }
         sb_printf(o, "    if (tide_p) tide_at = tide_profile_view(tide_p, %du, %du, ", i, prog->views.count);
-        gen_c_literal(o, tool_name(view), false);
+        gen_c_literal(o, diagnostic_name(g, tool_name(view), "view", view->index), false);
         sb_put(o, ", tide_at);\n");
     }
     if (prog->views.count == 0) sb_put(o, "    (void)w;\n    (void)draw;\n    (void)gui;\n");
@@ -19528,6 +19581,47 @@ static bool write_file(const char *path, const sb *b)
         return false;
     }
     return true;
+}
+
+static bool write_name_map(const gen *g)
+{
+    sb path = {0};
+    sb_printf(&path, "%s/%s.names", g->opts->out_dir, g->opts->name);
+    if (!g->opts->strip_names) {
+        remove(path.data); // A later debug generation must not leave a stale release map.
+        return true;
+    }
+    sb names = {0};
+    sb_put(&names, "# Private diagnostic map for this build. Do not distribute.\n");
+    for (int i = 0; i < diag_source_count(); i++)
+        sb_printf(&names, "source %d\t%s\n", i, diag_source(i)->path);
+    for (int i = 0; i < g->prog->systems.count; i++) {
+        const decl *d = g->prog->systems.items[i];
+        sb_printf(&names, "system %d\t" STR_FMT "\n", d->index, STR_ARG(tool_name(d)));
+    }
+    for (int i = 0; i < g->prog->views.count; i++) {
+        const decl *d = g->prog->views.items[i];
+        sb_printf(&names, "view %d\t" STR_FMT "\n", d->index, STR_ARG(tool_name(d)));
+    }
+    for (int i = 0; i < g->prog->events.count; i++) {
+        const decl *d = g->prog->events.items[i];
+        sb_printf(&names, "event %d\t" STR_FMT "\n", d->index, STR_ARG(d->qualified));
+    }
+    for (int i = 0; i < g->prog->command_types.count; i++) {
+        const decl *d = g->prog->command_types.items[i];
+        sb_printf(&names, "command %d\t" STR_FMT "\n", d->index, STR_ARG(d->qualified));
+    }
+    for (int i = 0; i < g->prog->shaders.count; i++)
+        sb_printf(&names, "shader %d\t%s\n", i, g->prog->shaders.items[i]->name);
+    for (int i = 0; i < g->prog->assets.count; i++) {
+        const decl *d = g->prog->assets.items[i];
+        sb_printf(&names, STR_FMT "\t" STR_FMT "\n", STR_ARG(asset_diagnostic_name(g, d)), STR_ARG(d->qualified));
+    }
+    for (int i = 0; i < g->asset_dependencies.count; i++)
+        sb_printf(&names, "dependencies fingerprint %d\t" STR_FMT "\n", i, STR_ARG(g->asset_dependencies.items[i].asset->qualified));
+    for (int i = 0; i < g->skinned_fingerprints.count; i++)
+        sb_printf(&names, "models fingerprint %d\t" STR_FMT "\n", i, STR_ARG(g->skinned_fingerprints.items[i].asset->qualified));
+    return write_file(path.data, &names);
 }
 
 // ---------------------------------------------------------------------------
@@ -20313,7 +20407,7 @@ static void gen_commands_api(gen *g)
         put_channel(o, d);
         sb_put(o, ";\n    uint32_t waiting = 0;\n"
                   "    for (uint32_t i = 0; i < local->tide_outgoing_count; i++) waiting += local->tide_outgoing[i].channel == channel ? 1u : 0u;\n");
-        sb_printf(o, "    if (waiting >= TIDE_COMMAND_PENDING) { fputs(\"tide: too many unsent commands (" STR_FMT "); wait for the session to send them\\n\", stderr); abort(); }\n", STR_ARG(d->qualified));
+        sb_printf(o, "    if (waiting >= TIDE_COMMAND_PENDING) { fputs(\"tide: too many unsent commands (" STR_FMT "); wait for the session to send them\\n\", stderr); abort(); }\n", STR_ARG(diagnostic_decl(g, d, "command")));
         // Room for it: a datagram's worth, and the bytes of its lists
         sb_put(o, "    uint32_t room = TIDE_COMMAND_BYTES;\n");
         path_list paths = {0};
@@ -20326,7 +20420,7 @@ static void gen_commands_api(gen *g)
         }
         sb_put(o, "    uint8_t *bytes = malloc(room);\n    if (!bytes) tide_out_of_memory();\n");
         sb_printf(o, "    const uint32_t size = tide_write_command_%s(target, value, bytes, room);\n", name);
-        sb_printf(o, "    if (!size || !tide_game_check_command(bytes, size, NULL)) { fputs(\"tide: command " STR_FMT " exceeds %s or contains invalid text\\n\", stderr); abort(); }\n", STR_ARG(d->qualified), command_limit(d));
+        sb_printf(o, "    if (!size || !tide_game_check_command(bytes, size, NULL)) { fputs(\"tide: %s" STR_FMT " exceeds %s or contains invalid text\\n\", stderr); abort(); }\n", g->opts->strip_names ? "" : "command ", STR_ARG(diagnostic_decl(g, d, "command")), command_limit(d));
         sb_put(o, "    local->tide_outgoing[local->tide_outgoing_count++] = (tide_outgoing_item){bytes, size, channel};\n}\n\n");
     }
     g->indent = 0;
@@ -21865,7 +21959,7 @@ static void gen_shaders(gen *g)
         id = hash_more(id, numbers, sizeof numbers);
 
         sb_printf(o, "static const tide_shader tide_shader_%d = {\n    .name = ", s);
-        gen_c_raw_literal(o, str_from(sh->name));
+        gen_c_raw_literal(o, diagnostic_name(g, str_from(sh->name), "shader", s));
         // A fragment shader cannot move vertices. Skinning and a user vert can,
         // so only an undeformed 3D mesh advertises automatic geometry bounds.
         if (sh->dims == 3 && !sh->vert && !sh->skinned) {
@@ -22554,7 +22648,7 @@ bool codegen(program *prog, const codegen_options *opts)
     if (!opts->server && !g.asset_dependencies.count && !g.skinned_fingerprints.count) build_pack(&g);
     const sb c = opts->line_directives ? pin_lines(&g.c, g.c_path) : g.c;
     const bool ok = write_file(h_path.data, &g.h) && write_file(path.data, &c) && write_pack(&g)
-                    && (!opts->visualizers || write_debug_views(&g));
+                    && (!opts->visualizers || write_debug_views(&g)) && write_name_map(&g);
     free(g.pack_bytes);
     return ok;
 }

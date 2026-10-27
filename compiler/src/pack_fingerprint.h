@@ -19,6 +19,7 @@ typedef struct tide_asset_fingerprint_desc {
 typedef struct tide_asset_fingerprint_request {
     const char *qualified;
     tide_asset_fingerprint_desc desc;
+    const uint8_t *id; // Optional SHA-256 name ID instead of qualified; exactly one must be supplied.
 } tide_asset_fingerprint_request;
 #endif
 

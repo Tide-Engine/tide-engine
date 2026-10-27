@@ -311,6 +311,11 @@ function(tide_add_game target)
     if(NOT ARG_HOST AND NOT c_sources AND NOT ARG_LAYOUT AND NOT ARG_EMBED)
         set(strip_assets "$<CONFIG:Release,RelWithDebInfo,MinSizeRel>")
     endif()
+    set(strip_names OFF)
+    # RelWithDebInfo and explicit visualizers are developer/profiling builds.
+    if(NOT ARG_HOST AND NOT ARG_LAYOUT AND NOT ARG_EMBED AND NOT ARG_VISUALIZERS AND NOT TIDE_VISUALIZERS)
+        set(strip_names "$<CONFIG:Release,MinSizeRel>")
+    endif()
     # VISUALIZERS: how debuggers show the game's values, <name>.natvis (in a Windows program's .pdb) and
     # <name>_lldb.py, as tide's debug builds have them (compiler/src/debug_views_codegen.inc)
     set(visualizers "")
@@ -322,7 +327,7 @@ function(tide_add_game target)
     add_custom_command(
         OUTPUT "${out_c}" "${out_h}" ${pack_outputs} ${visualizer_outputs}
         COMMAND "${CMAKE_COMMAND}" -E make_directory "${out_dir}"
-        COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DEXPECTED=${expected}" "-DSTRIP_UNUSED_ASSETS=${strip_assets}" -P "${TIDE_RUN_TIDEC}"
+        COMMAND "${CMAKE_COMMAND}" "-DTIDEC=${TIDEC_PATH}" "-DEXPECTED=${expected}" "-DSTRIP_UNUSED_ASSETS=${strip_assets}" "-DSTRIP_NAMES=${strip_names}" -P "${TIDE_RUN_TIDEC}"
             -- "@${listed}" -o "${out_dir}" --name "${name}" ${layout} ${pack_c} ${defines} ${server_flags} ${visualizers}
         DEPENDS ${TIDEC_DEPENDS} ${sources} ${package_sources} ${asset_files} "${expected}" "${listed}" "${TIDE_RUN_TIDEC}"
         COMMENT "tidec ${target}"

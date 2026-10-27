@@ -578,6 +578,57 @@ TIDE_TEST(asset_usage_all_unused_removes_an_old_pack_and_asset_api)
     }
 }
 
+TIDE_TEST(release_diagnostic_names_preserve_identity_and_keep_the_map_private)
+{
+    static const char text[] =
+        "asset string SecretAsset_319a = \"assets/rules.txt\";\n"
+        "singleton State { int value; } scene Main {}\n"
+        "system SecretSimulation_47db(mut State s) { s.value += SecretAsset_319a.length;\nDebug.Assert(s.value >= 0);\n}\n"
+        "view SecretPresentation_8fa2(State s) { Debug.Assert(s.value >= 0, \"keep authored messages\"); }\n";
+    TIDE_REQUIRE(folder_make(ASSET_USAGE_WORK));
+    char *first_header = NULL;
+    void *first_pack = NULL;
+    size_t first_pack_size = 0;
+    for (int stripped = 0; stripped < 3; stripped++) {
+        program *p = checked(text);
+        TIDE_REQUIRE(p);
+        const codegen_options options = {.name = "private_names", .out_dir = ASSET_USAGE_WORK,
+            .pack = ASSET_USAGE_WORK "/private_names.pack", .strip_names = stripped == 1};
+        TIDE_REQUIRE(codegen(p, &options));
+        size_t size;
+        char *header = read_bytes(ASSET_USAGE_WORK "/private_names.h", &size);
+        char *c = read_bytes(ASSET_USAGE_WORK "/private_names.c", &size);
+        TIDE_REQUIRE(header && c);
+        if (!stripped) first_header = header;
+        else { TIDE_CHECK(strcmp(header, first_header) == 0); free(header); }
+        TIDE_CHECK((strstr(c, "\"SecretSimulation_47db\"") != NULL) == (stripped != 1));
+        TIDE_CHECK((strstr(c, "\"SecretPresentation_8fa2\"") != NULL) == (stripped != 1));
+        TIDE_CHECK((strstr(c, "\"Debug.Assert(s.value >= 0);\"") != NULL) == (stripped != 1));
+        TIDE_CHECK(strstr(c, "\"keep authored messages\"") != NULL);
+        TIDE_CHECK((strstr(c, "\"SecretAsset_319a\"") != NULL) == (stripped != 1));
+        void *pack = read_bytes(options.pack, &size);
+        TIDE_REQUIRE(pack);
+        if (!stripped) { first_pack = pack; first_pack_size = size; }
+        else {
+            TIDE_CHECK(size == first_pack_size && memcmp(pack, first_pack, size) == 0);
+            free(pack);
+        }
+        char *names = read_bytes(ASSET_USAGE_WORK "/private_names.names", &size);
+        if (stripped == 1) {
+            TIDE_REQUIRE(names);
+            TIDE_CHECK(strstr(names, "system 0\tSecretSimulation_47db\n") != NULL);
+            TIDE_CHECK(strstr(names, "view 0\tSecretPresentation_8fa2\n") != NULL);
+            TIDE_CHECK(strstr(names, "asset_usage.tide") != NULL);
+            TIDE_CHECK(strstr(names, "\tSecretAsset_319a\n") != NULL);
+        } else TIDE_CHECK(names == NULL);
+        free(names);
+        free(c);
+        done();
+    }
+    free(first_header);
+    free(first_pack);
+}
+
 TIDE_TEST(clip_value_headers_do_not_depend_on_assets_or_playback)
 {
     static const char *const sources[] = {

@@ -1,5 +1,13 @@
 # `tide_add_game` and the generated header
 
+Shipping metadata (2026-10-27): standard-host Release/MinSizeRel
+games without LAYOUT/EMBED pass --strip-names via run_tidec.cmake. Custom HOST
+targets retain their diagnostic contracts; direct tidec callers can explicitly
+request stripping. RelWithDebInfo (the repository's release preset) and explicit
+visualizer builds keep names for profiling/debugging. It writes a private <name>.names beside generated C, never
+as a game output. No tide_add_game argument or generated header/host ABI changes.
+Tests and limitations: language.md and cli-and-packages.md.
+
 `VISUALIZERS` (2026-10-26): `tide_add_game(... VISUALIZERS)` passes
 `--visualizers` on native targets, lists `<name>.natvis` and `<name>_lldb.py`
 as outputs, compiles with `-fno-eliminate-unused-debug-types -gno-column-info`

@@ -214,7 +214,7 @@ static bool fingerprint_canonical_matches_oracle(const fingerprint_pack *p, cons
 {
     const bool oracle = tide_pack_skinned_content(p->bytes, p->size, request->qualified, request->kind,
                                                   request->layout, request->hashes, request->count);
-    const tide_asset_fingerprint_request selected = {request->qualified, p->desc};
+    const tide_asset_fingerprint_request selected = {.qualified = request->qualified, .desc = p->desc};
     uint32_t failed = 0;
     const bool actual = pack_fingerprints(p->bytes, p->size, &selected, 1u, NULL,
                                           (const uint8_t (*)[32])request->logical, &failed);
@@ -379,7 +379,7 @@ TIDE_TEST(pack_skinned_fingerprint_checks_source_vertices_before_loaded_defaults
         TIDE_REQUIRE(p.bytes != NULL);
         uint8_t hashes[2][32];
         const fingerprint_canonical_control control = fingerprint_canonical_request(&p, hashes);
-        const tide_asset_fingerprint_request request = {"chosen", p.desc};
+        const tide_asset_fingerprint_request request = {.qualified = "chosen", .desc = p.desc};
         TIDE_REQUIRE(pack_fingerprints(p.bytes, p.size, &request, 1u, NULL,
                                         (const uint8_t (*)[32])control.logical, NULL));
         tide_pack_entry *e = fingerprint_entry(&p);
@@ -447,7 +447,7 @@ TIDE_TEST(pack_fingerprint_all_asset_kinds_ignore_relocation_and_cover_content)
             TIDE_CHECK(memcmp(a, c, sizeof a) != 0);
             // Mixed descriptors use the same payload walker in batch mode.
             const tide_asset_fingerprint_request requests[2] = {
-                {"cosmetic", {.kind = TIDE_PACK_BYTES}}, {"chosen", moved.desc},
+                {.qualified = "cosmetic", .desc = {.kind = TIDE_PACK_BYTES}}, {.qualified = "chosen", .desc = moved.desc},
             };
             uint8_t expected[2][32], actual[2][32];
             TIDE_REQUIRE(pack_fingerprint(moved.bytes, moved.size, "cosmetic", &requests[0].desc, expected[0]));
@@ -455,6 +455,23 @@ TIDE_TEST(pack_fingerprint_all_asset_kinds_ignore_relocation_and_cover_content)
             uint32_t failed = 0;
             TIDE_CHECK(pack_fingerprints(moved.bytes, moved.size, requests, 2u, actual, NULL, &failed));
             TIDE_CHECK(failed == UINT32_MAX && !memcmp(actual, expected, sizeof actual));
+            uint8_t ids[2][32];
+            tide_asset_fingerprint_request hashed[2];
+            for (int k = 0; k < 2; k++) {
+                tide_sha256_of(requests[k].qualified, strlen(requests[k].qualified), ids[k]);
+                hashed[k] = (tide_asset_fingerprint_request){.desc = requests[k].desc, .id = ids[k]};
+            }
+            TIDE_CHECK(pack_fingerprints(moved.bytes, moved.size, hashed, 2u, actual, NULL, &failed));
+            TIDE_CHECK(!memcmp(actual, expected, sizeof actual));
+            TIDE_CHECK(pack_fingerprints(moved.bytes, moved.size, hashed, 2u, NULL, (const uint8_t (*)[32])expected, &failed));
+            hashed[1].id = ids[0];
+            TIDE_CHECK(!pack_fingerprints(moved.bytes, moved.size, hashed, 2u, actual, NULL, &failed) && failed == 1u);
+            hashed[1].id = ids[1];
+            hashed[1].qualified = requests[1].qualified;
+            TIDE_CHECK(!pack_fingerprints(moved.bytes, moved.size, hashed, 2u, actual, NULL, &failed) && failed == 1u);
+            hashed[1].qualified = NULL;
+            ids[1][0] ^= 1u;
+            TIDE_CHECK(!pack_fingerprints(moved.bytes, moved.size, hashed, 2u, actual, NULL, &failed) && failed == 1u);
             TIDE_CHECK(pack_fingerprints(moved.bytes, moved.size, requests, 2u, NULL,
                                           (const uint8_t (*)[32])expected, &failed));
         }
@@ -502,7 +519,7 @@ TIDE_TEST(pack_fingerprint_batch_handles_growth_collisions_and_request_order)
     for (uint32_t remaining = entries; remaining; remaining--) {
         const uint32_t i = remaining - 1u;
         if (i % 5u == 0u) continue;
-        requests[count] = (tide_asset_fingerprint_request){names[i], {.kind = (i & 1u) ? TIDE_PACK_BYTES : TIDE_PACK_TEXT}};
+        requests[count] = (tide_asset_fingerprint_request){.qualified = names[i], .desc = {.kind = (i & 1u) ? TIDE_PACK_BYTES : TIDE_PACK_TEXT}};
         memcpy(expected[count++], controls[i % 4u], sizeof controls[0]);
     }
     uint32_t failed = 0;
@@ -532,7 +549,8 @@ TIDE_TEST(pack_fingerprint_batch_rejects_selected_directory_errors_and_invalid_r
     size_t size;
     uint8_t *bytes = tide_pack_end(&builder, &size);
     TIDE_REQUIRE(bytes != NULL);
-    tide_asset_fingerprint_request requests[2] = {{"second", {.kind = TIDE_PACK_TEXT}}, {"first", {.kind = TIDE_PACK_TEXT}}};
+    tide_asset_fingerprint_request requests[2] = {
+        {.qualified = "second", .desc = {.kind = TIDE_PACK_TEXT}}, {.qualified = "first", .desc = {.kind = TIDE_PACK_TEXT}}};
     uint8_t out[2][32];
     uint32_t failed = 0;
     TIDE_REQUIRE(pack_fingerprints(bytes, size, requests, 2u, out, NULL, &failed));

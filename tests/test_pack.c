@@ -1576,6 +1576,30 @@ static uint8_t *build_levels(size_t *size, const bool lead)
     return tide_pack_end(&b, size);
 }
 
+TIDE_TEST(pack_prehashed_lookup_preserves_names_kinds_layouts_and_reload)
+{
+    uint8_t name[32], missing[32];
+    hash_of("Game.tree", name);
+    hash_of("Game.no_such_asset", missing);
+    for (int load = 0; load < 2; load++) {
+        size_t size;
+        uint8_t *bytes = build_meshes(&size, load != 0, (float)load);
+        TIDE_REQUIRE(bytes && tide_pack_load(bytes, size));
+        const tide_pack_entry *e = tide_pack_find("Game.tree", TIDE_PACK_MESH);
+        TIDE_REQUIRE(e);
+        TIDE_CHECK(tide_pack_find_id(name, TIDE_PACK_MESH) == e);
+        TIDE_CHECK(tide_pack_find_mesh_id(name, TIDE_PACK_MESH, CORNER_LAYOUT) == e);
+        TIDE_CHECK(tide_pack_find_id(name, TIDE_PACK_TEXT) == NULL);
+        TIDE_CHECK(tide_pack_find_id(missing, TIDE_PACK_MESH) == NULL);
+        TIDE_CHECK(tide_pack_find_id(NULL, TIDE_PACK_MESH) == NULL);
+        TIDE_CHECK(tide_pack_find_mesh_id(name, TIDE_PACK_MESH, CORNER_LAYOUT + 1u) == NULL);
+        TIDE_CHECK(tide_pack_find_mesh_id(NULL, TIDE_PACK_MESH, CORNER_LAYOUT) == NULL);
+        free(bytes);
+    }
+    tide_pack_unload();
+    TIDE_CHECK(tide_pack_find_id(name, TIDE_PACK_MESH) == NULL);
+}
+
 TIDE_TEST(pack_meshes_have_levels_of_detail_beside_their_lists)
 {
     for (int lead = 0; lead < 2; lead++) {

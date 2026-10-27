@@ -753,6 +753,12 @@ const tide_pack_entry *tide_pack_find(const char *qualified, const uint32_t kind
 {
     uint8_t name[32];
     tide_sha256_of(qualified, strlen(qualified), name);
+    return tide_pack_find_id(name, kind);
+}
+
+const tide_pack_entry *tide_pack_find_id(const uint8_t name[32], const uint32_t kind)
+{
+    if (!name) return NULL;
     for (uint32_t i = 0; i < pack.entry_count; i++) {
         const tide_pack_entry *e = &pack.entries[i];
         if (e->kind == kind && memcmp(e->name, name, 32) == 0) return e;
@@ -768,6 +774,12 @@ uint32_t tide_pack_handle(const tide_pack_entry *e)
 const tide_pack_entry *tide_pack_find_mesh(const char *qualified, const uint32_t kind, const uint32_t layout)
 {
     const tide_pack_entry *e = tide_pack_find(qualified, kind);
+    return e && e->extra == layout ? e : NULL;
+}
+
+const tide_pack_entry *tide_pack_find_mesh_id(const uint8_t name[32], const uint32_t kind, const uint32_t layout)
+{
+    const tide_pack_entry *e = tide_pack_find_id(name, kind);
     return e && e->extra == layout ? e : NULL;
 }
 

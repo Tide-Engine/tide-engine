@@ -1,5 +1,49 @@
 # `tide`, packages and the package
 
+## Standalone release metadata (2026-10-27)
+
+The owner requested removing readable metadata as a first deterrent to game
+reverse engineering. generate passes strip_names for a release that is not
+watching, a library or a layout build. Native, web, Android and managed
+standalone code generation share that policy. Debug/watched/Unity generation
+keeps its existing metadata. codegen's private game.names stays in
+.tide/<configuration>/gen/; it is never copied beside the program or into a web
+page/pack. Keep it privately with the corresponding build for diagnosing IDs.
+The user-facing contract and limits are in docs/tools/cli.md. Replacing a native
+debug output removes its old PDB, natvis, LLDB script and (on macOS) dSYM; a
+cleanup failure fails the build with a message naming the remaining file.
+
+cache_test.mjs's existing stripping fixture now includes named systems/views,
+an assertion, a text asset and a skinned asset whose vertex default reads that
+text. It inspects actual native binaries and split/embedded web payloads:
+private names/source paths absent only in release, authored assertion messages
+present, the private map present only in the generation cache, and no generated
+C/headers/maps/PDB/natvis/LLDB sidecars beside the release output. The native
+fixture first builds debug at the same output path and requires its real debug
+sidecars to exist, then checks that the release removed them. Web checks
+also require no name, DWARF, source-map or external-debug custom sections; the
+Windows native check rejects COFF symbols and PE debug directories. Existing
+code/data pruning and custom-C asset preservation assertions remain. Arbitrary
+user C strings, shader text and model contents may still disclose information;
+this does not stop repackaging or behavioral cloning.
+
+Validation (Windows, Clang 23.1.2, Node 24.22.1, pinned WASI SDK 24): full native
+debug passes 2,812 enabled CTests (241.27 s), plus the new stripped-loader target.
+The full web debug run passes the other 2,706 enabled checks (591.63 s), including
+WebGL/D3D11/WebGPU. Its new target initially ran before its missing hash-pin
+compile definition was corrected and its executable built; that was an ENOENT
+setup failure, and the corrected native/WASI target passes with the existing
+SKINNED_HASH. Both suites retain the existing disabled MicroDuck right-turn case.
+Final CLI tests pass 16/16 after the sidecar fix; the staged installed CLI passes
+native/web --strip-only artifact checks, including split and single-file pages
+and actual debug-to-release output reuse. A CMake Release Duel build emits its
+private map only in its generation directory and passes a hidden --frames 2
+smoke run. Docs production build, Node syntax and diff checks pass. No hash pin,
+runtime model representation, server protocol or simulation behavior changed.
+No Vulkan validation layer is installed. Android, Linux/macOS (including dSYM
+cleanup), sanitizers and the embedded-LLVM package remain CI coverage; no extra
+CI was dispatched. This does not rebuild or redeploy existing public demos.
+
 ## Web builds are a folder; `--single-file` (2026-10-27)
 
 `tide build --web` writes `.build/web/index.html` plus `index.wasm` and

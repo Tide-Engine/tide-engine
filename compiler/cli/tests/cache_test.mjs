@@ -171,6 +171,44 @@ function embeddedPayload(page, name) {
     return { bytes: gzip ? gunzipSync(bytes) : bytes, gzip };
 }
 
+function checkReleaseMetadata(program, game, cache, output, target, release) {
+    const names = ["PrivateTick_c17b42", "PrivateView_e5a6d9", "PrivateAsset_95fe23", "PrivateModel_2acb40"];
+    for (const name of names) {
+        check(program.includes(Buffer.from(name)) === !release,
+            `${target}: ${name} ${release ? "leaked into release metadata" : "missing from debug metadata"}`);
+    }
+    for (const path of [join(game, "game.tide"), join(game, "game.tide").replaceAll("\\", "/")]) {
+        if (release) check(!program.includes(Buffer.from(path)), `${target}: release leaked its Tide source path`);
+    }
+    check(program.includes(Buffer.from("TIDE_KEEP_AUTHORED_MESSAGE_56c8")), `${target}: authored assertion message was removed`);
+    const map = join(cache, "gen", "game.names");
+    check(existsSync(map) === release, `${target}: unexpected private name map policy`);
+    const stem = output.replace(/\.(html|exe)$/, "");
+    if (!release && target === "native") {
+        for (const suffix of [".natvis", "_lldb.py", ...(process.platform === "win32" ? [".pdb"] : [])])
+            check(existsSync(stem + suffix), `debug fixture didn't produce ${suffix} before the release replaced it`);
+    }
+    if (release) {
+        const mapping = readFileSync(map, "utf8");
+        for (const name of names) check(mapping.includes(`\t${name}\n`), `${target}: private map lost ${name}`);
+        for (const suffix of [".names", ".pdb", ".natvis", "_lldb.py", ".c", ".h", ".wasm.map"])
+            check(!existsSync(stem + suffix), `${target}: development file shipped beside the release: ${suffix}`);
+        check(!existsSync(`${output}.dSYM`), `${target}: release retained its previous debug bundle`);
+        if (target === "web") {
+            const module = new WebAssembly.Module(program);
+            for (const section of ["name", ".debug_info", ".debug_line", "sourceMappingURL", "external_debug_info"])
+                check(WebAssembly.Module.customSections(module, section).length === 0, `release WebAssembly retained ${section}`);
+        } else if (process.platform === "win32") {
+            const pe = program.readUInt32LE(0x3c);
+            check(program.readUInt32LE(pe + 12) === 0 && program.readUInt32LE(pe + 16) === 0,
+                "release PE retained its COFF symbol table");
+            const optional = pe + 24;
+            const directories = optional + (program.readUInt16LE(optional) === 0x20b ? 112 : 96);
+            check(program.readUInt32LE(directories + 6 * 8 + 4) === 0, "release PE retained a debug directory");
+        }
+    }
+}
+
 async function strippingTests(tide, installation, root, target, embedded) {
     console.log(`Release code stripping: ${target}`);
     const game = join(root, `strip-${target}`);
@@ -196,6 +234,7 @@ __attribute__((noinline)) const char *${prefix}Unused(void) { return ${prefix}_u
     put(join(game, "caller.c"), `
 #include <stdlib.h>
 #include <string.h>
+#include "tide/pack.h"
 const char *EngineProbeCalled(void);
 const char *UserProbeCalled(void);
 int Native(int value)
@@ -203,14 +242,21 @@ int Native(int value)
     const char *engine = EngineProbeCalled();
     const char *user = UserProbeCalled();
     if (strcmp(engine, "${markers.engineCalled}") || strcmp(user, "${markers.userCalled}")) abort();
+    if (!tide_pack_find("fromC", TIDE_PACK_TEXT)) abort();
     return value + (unsigned char)engine[0] + (unsigned char)user[0];
 }
 `);
-    put(join(game, "game.tide"), "scene Main { }\nsingleton State { int value; }\nextern int Native(int value);\n"
+    cpSync(new URL("../../tests/e2e/skinned/models/a.gltf", import.meta.url), join(game, "model.gltf"));
+    put(join(game, "game.tide"), "scene Main { }\nsingleton State { int value; SkinnedMesh<PackedCorner> model; }\nextern int Native(int value);\n"
         + 'asset string fromC = "from-c.txt";\n'
-        + "system Update(mut State state) { state.value = Native(state.value); }\n");
+        + 'asset string PrivateAsset_95fe23 = "from-c.txt";\n'
+        + 'struct PackedCorner { float3 position; int extra = PrivateAsset_95fe23.length; }\n'
+        + 'asset SkinnedMesh<PackedCorner> PrivateModel_2acb40 = "model.gltf";\n'
+        + "system PrivateTick_c17b42(mut State state) { state.value = Native(state.value) + PrivateAsset_95fe23.length; state.model = PrivateModel_2acb40; }\n"
+        + 'view PrivateView_e5a6d9(State state) {\nDebug.Assert(state.value >= 0, "TIDE_KEEP_AUTHORED_MESSAGE_56c8");\n}\n');
     const packedMarker = "TIDE_C_ASSET_WITHOUT_TIDE_REFERENCE_2c961b87";
     put(join(game, "from-c.txt"), packedMarker);
+    const sharedOutput = join(root, `strip-${target}-shared${target === "web" ? ".html" : process.platform === "win32" ? ".exe" : ""}`);
     try {
         for (const release of [false, true]) {
             // Check real compiler behavior for each side of the build: engine
@@ -222,7 +268,7 @@ int Native(int value)
             put(join(game, "probe.c"), `#if defined(__OPTIMIZE__) != ${assertionMode} || defined(NDEBUG) != ${assertionMode}\n`
                 + `#error game_build_mode_changed\n#endif\n`
                 + functions("UserProbe", markers.userCalled, markers.userUnused));
-            const output = join(root, `strip-${target}-${release ? "release" : "debug"}${target === "web" ? ".html" : process.platform === "win32" ? ".exe" : ""}`);
+            const output = sharedOutput; // Release must clean the previous debug build's own sidecars.
             const args = ["build", game, "-o", output, ...(target === "web" ? ["--web"] : []), ...(release ? ["--release"] : [])];
             const result = await run(tide, args, game);
             check(result.code === 0, `stripping fixture build failed:\n${result.said}`);
@@ -261,6 +307,7 @@ int Native(int value)
                 check(program.includes(Buffer.from(marker)) === expected,
                     `${target} ${release ? "release" : "debug"}: ${name} ${expected ? "was removed" : "was retained"}`);
             }
+            checkReleaseMetadata(program, game, join(game, ".tide", `${target}-${release ? "release" : "debug"}`), output, target, release);
             if (target === "native" && process.platform === "win32") {
                 // GLFW's gamma setter shares an archive member (monitor.c)
                 // with the monitor queries the window makes, and no host

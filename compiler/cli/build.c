@@ -2221,6 +2221,7 @@ static bool generate(build *b, const char *gen, const bool layout)
                                      .server = b->opts->server,
                                      .strip_server_assets = strip_server_assets(b),
                                      .strip_unused_assets = strip_game_assets(b, layout),
+                                     .strip_names = b->opts->release && !b->opts->watch && !b->library && !layout,
                                      .defines = b->opts->defines, .define_count = b->opts->define_count,
                                      .external_identity = has_external ? external_identity : NULL,
                                      .scene = b->opts->scene,
@@ -2271,7 +2272,34 @@ static bool place_pack(const char *from, const char *to);
 // LLDB reads its debug info from its objects, which stay in the game's cache.
 static bool place_debug_views(const build *b, const char *output, const char *stem, const bool dsym)
 {
-    if (!b->views) return true;
+    if (!b->views) {
+        if (!b->opts->release || b->library) return true;
+        // A release can replace a debug build at the same output path. Those
+        // old sidecars describe the game's source even after its code is stripped.
+        char *dir = path_dir(output);
+        const char *const suffixes[] = {".pdb", ".natvis", "_lldb.py"};
+        bool ok = true;
+        for (size_t i = 0; i < sizeof suffixes / sizeof suffixes[0]; i++) {
+            char *file = format("%s%s", stem, suffixes[i]);
+            char *sidecar = path_join(dir, file);
+            if (sys_exists(sidecar) && !sys_remove(sidecar)) {
+                fprintf(stderr, "tide: can't remove old debug file %s; close its debugger or remove it before distributing the release\n", sidecar);
+                ok = false;
+            }
+            free(sidecar);
+            free(file);
+        }
+#ifdef __APPLE__
+        char *bundle = format("%s.dSYM", output, NULL);
+        if (!sys_remove_tree(bundle)) {
+            fprintf(stderr, "tide: can't remove old debug bundle %s; remove it before distributing the release\n", bundle);
+            ok = false;
+        }
+        free(bundle);
+#endif
+        free(dir);
+        return ok;
+    }
     char *dir = path_dir(output);
     char *natvis = path_join(b->views, "game.natvis");
     char *lldb = path_join(b->views, "game_lldb.py");

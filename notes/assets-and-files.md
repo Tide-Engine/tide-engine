@@ -1,5 +1,29 @@
 # Assets and local files
 
+## Prehashed release asset loading (2026-10-27)
+
+Owner-approved tide_pack_find_id(name[32], kind) and
+tide_pack_find_mesh_id(name[32], kind, layout) select the existing SHA-256
+qualified-name keys. The ordinary string lookup delegates to the ID lookup;
+its C API and pack version/bytes are unchanged. NULL/unknown IDs, wrong kinds
+and wrong mesh layouts return NULL, including after unload. Lookup remains a
+read-only directory scan with the same selected entry and lifetime as before.
+
+Codegen's strip_names emits static name-ID arrays for asset loads/default fills
+and for the private raw-pack fingerprint requests. Requests take exactly one
+of qualified or id; duplicate selected IDs, malformed packs and mismatched
+content retain the existing rejection paths before any loaded state changes.
+Diagnostics use IDs/ordinals, mapped privately beside the generated C. Map keys,
+catalog/bone/clip names and actual asset contents retain their game semantics.
+
+pack_prehashed_lookup_preserves_names_kinds_layouts_and_reload covers ordinary
+and typed lookup, missing/NULL/wrong-kind/wrong-layout IDs, replacement and
+unload. The fingerprint all-kinds fixture compares named and hashed requests
+with identical expected hashes and checks duplicate/missing/ambiguous requests.
+tidec_release_names runs the existing skinned lifecycle/snapshot tests through
+the stripped loader with its unchanged deterministic pin. Full validation and
+artifact inspection results are in cli-and-packages.md.
+
 ## Blender's armature node folds into separate-export binding (2026-10-27)
 
 Found from the Parry prototype: a Synty clip round-tripped through Blender 4.4
