@@ -727,6 +727,9 @@ static inline void tide_run_configure(const tide_run_desc *desc)
         } else if (strcmp(arg, "--capture") == 0) {
             tide_run_headless_desc.capture = tide_run_value(&i, arg, "the file the run's last frame goes to, like --capture menu.png");
             tide_run_headless = true;
+        } else if (strcmp(arg, "--record") == 0) {
+            tide_run_headless_desc.record = tide_run_value(&i, arg, "the file the whole run goes to, as a GIF, like --record run.gif");
+            tide_run_headless = true;
         } else if (strcmp(arg, "--capture-audio") == 0) {
             tide_run_headless_desc.capture_audio =
                 tide_run_value(&i, arg, "the file everything the run plays goes to, like --capture-audio run.wav");

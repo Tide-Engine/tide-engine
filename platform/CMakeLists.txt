@@ -371,6 +371,18 @@ if(TIDE_NODE)
             $<TARGET_FILE:tide_platform_png>)
 endif()
 
+# The GIF writer (src/gif.c), which recordings are written with: recordings
+# made up from numbers, decoded by the test's own reader. No window or GPU,
+# so every platform's tests run it.
+add_executable(tide_platform_gif tests/gif.c)
+target_include_directories(tide_platform_gif PRIVATE src)
+target_link_libraries(tide_platform_gif PRIVATE tide_platform)
+if(TIDE_NODE)
+    add_test(NAME tide_platform_gif
+        COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/gif.mjs" ${CMAKE_CROSSCOMPILING_EMULATOR}
+            $<TARGET_FILE:tide_platform_gif>)
+endif()
+
 # The engine's PNG reader (engine/src/png_read.c, grid.Decode) against pictures
 # Node's zlib writes: every kind of PNG, and files wrong in each way. No GPU.
 add_executable(tide_platform_png_decode tests/png_decode.c)

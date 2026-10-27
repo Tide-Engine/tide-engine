@@ -280,6 +280,11 @@ static const argument_help arguments[] = {
      "Writes 16-bit stereo WAV at 48 kHz. Without sound the file is silent.\n"
      "Native only; add --frames or a script's quit. Paths are relative to\n"
      "where tide was invoked.", RUN},
+    {"--record", "--record <file.gif>", "Save a headless run as a looping GIF",
+     "Every second frame, so 30 a second, at the run's size. Native only; add\n"
+     "--frames or a script's quit. Script lines `record clip.gif` and\n"
+     "`record stop` record part of a run instead. Paths are relative to where\n"
+     "tide was invoked.", RUN},
     {"--microphone", "--microphone <file>", "Loop WAV or Ogg Vorbis into the microphone",
      "Native headless runs otherwise hear silence. Paths are relative to\n"
      "where tide was invoked. Add --frames or a script's quit.", RUN},

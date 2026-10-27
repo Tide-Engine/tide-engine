@@ -70,13 +70,15 @@ typedef struct tide_headless_desc {
     float scale;       // Pixels to a logical one, each way, as a display scaled to 150% has 1.5; default 1
     uint32_t frames;   // The run ends once this many drew; 0 for when its script quits
     const char *capture; // The file the run's last frame goes to, as a PNG; NULL for none
+    const char *record;  // The file the whole run goes to, as a GIF (tide_platform_record); NULL for none
     // The file everything the run played goes to, as a WAV (tide_platform_capture_audio); NULL for none
     const char *capture_audio;
     // A WAV or Ogg Vorbis file the microphone plays in the run, looped, where
     // a real one's device would be heard (Clip.Microphone); NULL for a silent one
     const char *microphone;
     // A file of input by frame, of pictures to take and of when the run ends:
-    // lines like `120 key d down`, `400 capture fight.png` and `500 quit`
+    // lines like `120 key d down`, `400 capture fight.png`, `410 record
+    // fight.gif`, `470 record stop` and `500 quit`
     // (docs/tools/cli.md, Scripts, has every kind); NULL for none. A file it
     // names is beside it.
     const char *script;
@@ -114,6 +116,20 @@ const uint8_t *tide_platform_frame_pixels(int *width, int *height);
 // says so on stdout. False, having said why, when there's no frame or the
 // file can't be written; folders aren't made for it.
 bool tide_platform_capture(const char *path);
+
+// Records a headless window's frames to the file at `path` as a GIF that
+// loops, from the frame that last drew on: every second frame, so 30 a
+// second, shown for as long as they were. It goes on until
+// tide_platform_record_stop, another tide_platform_record or the run's end,
+// which write the file out and say so on stdout. One recording at a time,
+// beside the whole run's (tide_headless_desc.record), which is its own.
+// False, having said why, when there's no frame or the file can't be
+// written; folders aren't made for it.
+bool tide_platform_record(const char *path);
+
+// Ends the recording, writing the file out. True when there's none; false,
+// having said why, when the file can't be written.
+bool tide_platform_record_stop(void);
 
 // What a frame says should be sounding (tide/audio.h): a host hands it over
 // once a frame, after the frame drew, and the mixer plays it on the system's
