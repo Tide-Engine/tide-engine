@@ -610,10 +610,21 @@ static bool fbx_channel(fbx_builder *b, fbx_buffer *samplers, fbx_buffer *channe
 
 // FBX rotation curves are Euler angles, and exporters write them wrapped:
 // one key at -182.72 degrees and the next at 178.20 is a turn of one degree,
-// but evaluating the curve between them (the 60 Hz bake does) sweeps the other
-// way round, a full turn in a frame. Each key is moved by whole turns to within
-// half a turn of the key before it, as Maya's Euler filter does: the rotation
-// at every key is the same, and what's between them takes the short way.
+// and (179.99, 180.30, -183.12) then (0.00, 0.10, -2.96) is the same rotation
+// written as its other triple (x + 180, 180 - y, z + 180, true of every
+// Tait-Bryan order). Evaluating the curves between such keys (the 60 Hz bake
+// does) sweeps the long way, up to a full turn in a frame. So, as Maya's and
+// Blender's Euler filters do, each key is moved by whole turns to within half
+// a turn of the key before it, and where all three curves have keys at the
+// same times, takes whichever of its two triples is nearer the key before.
+// The rotation at every key is the same; what's between them takes the short way.
+static ufbx_real fbx_near_turn(const ufbx_real value, const ufbx_real previous)
+{
+    const ufbx_real step = value - previous;
+    if (!isfinite(step) || (step <= 180.0 && step >= -180.0)) return value;
+    return value - floor((step + 180.0) / 360.0) * 360.0;
+}
+
 static void fbx_unwrap_rotations(const ufbx_scene *scene)
 {
     for (size_t l = 0; l < scene->anim_layers.count; l++) {
@@ -621,16 +632,39 @@ static void fbx_unwrap_rotations(const ufbx_scene *scene)
         for (size_t p = 0; p < layer->anim_props.count; p++) {
             const ufbx_anim_prop *prop = layer->anim_props.data + p;
             if (strcmp(prop->prop_name.data, UFBX_Lcl_Rotation) != 0 || !prop->anim_value) continue;
+            ufbx_anim_curve *const *curves = prop->anim_value->curves;
+            // The three axes keyed together: a key's triple can be swapped for its twin.
+            bool together = curves[0] && curves[1] && curves[2] && curves[0]->keyframes.count == curves[1]->keyframes.count
+                         && curves[0]->keyframes.count == curves[2]->keyframes.count;
+            for (size_t k = 0; together && k < curves[0]->keyframes.count; k++) {
+                together = curves[0]->keyframes.data[k].time == curves[1]->keyframes.data[k].time
+                        && curves[0]->keyframes.data[k].time == curves[2]->keyframes.data[k].time;
+            }
+            if (together) {
+                ufbx_keyframe *x = curves[0]->keyframes.data, *y = curves[1]->keyframes.data, *z = curves[2]->keyframes.data;
+                for (size_t k = 1; k < curves[0]->keyframes.count; k++) {
+                    const ufbx_real same[3] = {fbx_near_turn(x[k].value, x[k - 1u].value), fbx_near_turn(y[k].value, y[k - 1u].value),
+                                               fbx_near_turn(z[k].value, z[k - 1u].value)};
+                    const ufbx_real twin[3] = {fbx_near_turn(x[k].value + 180.0, x[k - 1u].value),
+                                               fbx_near_turn(180.0 - y[k].value, y[k - 1u].value),
+                                               fbx_near_turn(z[k].value + 180.0, z[k - 1u].value)};
+                    const ufbx_real away_same = fabs(same[0] - x[k - 1u].value) + fabs(same[1] - y[k - 1u].value) + fabs(same[2] - z[k - 1u].value);
+                    const ufbx_real away_twin = fabs(twin[0] - x[k - 1u].value) + fabs(twin[1] - y[k - 1u].value) + fabs(twin[2] - z[k - 1u].value);
+                    const bool flip = away_twin < away_same;
+                    const ufbx_real *chosen = flip ? twin : same;
+                    x[k].value = chosen[0], y[k].value = chosen[1], z[k].value = chosen[2];
+                    if (flip) { // 180 - y runs the other way: its slopes turn round
+                        y[k].left.dy = -y[k].left.dy;
+                        y[k].right.dy = -y[k].right.dy;
+                    }
+                }
+                continue;
+            }
             for (int axis = 0; axis < 3; axis++) {
-                const ufbx_anim_curve *curve = prop->anim_value->curves[axis];
+                const ufbx_anim_curve *curve = curves[axis];
                 if (!curve) continue;
                 ufbx_keyframe *keys = curve->keyframes.data;
-                for (size_t k = 1; k < curve->keyframes.count; k++) {
-                    const ufbx_real step = keys[k].value - keys[k - 1u].value;
-                    if (!(step > 180.0 || step < -180.0) || !isfinite(step)) continue;
-                    const ufbx_real turns = floor((step + 180.0) / 360.0);
-                    keys[k].value = keys[k].value - turns * 360.0;
-                }
+                for (size_t k = 1; k < curve->keyframes.count; k++) keys[k].value = fbx_near_turn(keys[k].value, keys[k - 1u].value);
             }
         }
     }

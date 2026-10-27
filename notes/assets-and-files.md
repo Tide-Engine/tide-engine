@@ -2,6 +2,27 @@
 
 ## FBX Euler keys unwrapped before baking (2026-10-27, bug)
 
+Follow-up the same day: HeavyStab01 still swung `spine_01` about 45 degrees
+per 1/240 s near 0.34 s. Its exporter switched to the rotation's other Euler
+triple between source keys, (179.99, 180.30, -183.12) then (0.00, 0.10,
+-2.96), which is (x + 180, 180 - y, z + 180) and the same rotation for every
+Tait-Bryan order; per-axis unwrapping can't see it, and the bake's in-between
+key landed half a turn away. Hemisphere continuity or shortest-path sampling
+can't help either: both neighbouring keys agree; the inserted key itself is a
+different rotation. `fbx_unwrap_rotations` is now the full Euler filter: where
+a rotation's three curves have keys at the same times, each key takes whichever
+of its two triples (each unwrapped by whole turns) is nearer the previous key
+by summed angle, negating the middle axis's tangent slopes when the twin is
+taken; curves keyed apart keep per-axis unwrapping. On the real clips the
+largest adjacent-key change is then 28 degrees (LightCombo01A, an IK hand) and
+50 degrees (HeavyStab01's `elbowAttach_l` at 0.88 s, where Y passes through
+the gimbal from 79.5 to 139.9 degrees between source keys: authored motion,
+neither triple is near). Test:
+`fbx_euler_keys_in_their_other_triple_bake_as_the_same_rotation`
+(`animation/twin_*.fbx`, (0, 10, 0) then (180, 170, 180) over one 30 fps frame;
+every baked key is 10 degrees about y; fails before this change). No existing
+expectation or pinned hash changed (99 affected native tests).
+
 Reported by the owner: Synty's `A_MOD_SWD_Attack_LightCombo01A_Neut.fbx`
 spun `spine_01` a full turn in 33 ms (keys at 0.0333/0.05/0.0667 s of
 (-0.9945, 0.10, ..), (0.0986, 0.9948, ..), (0.9949, -0.09, ..)), also

@@ -185,5 +185,26 @@ for (const c of wrappedConnections) {
 }
 writePair("animation", "wrapped", wrapped);
 
+// Bone0 keyed (0, 10, 0) then (180, 170, 180) degrees over one 30 fps frame: the same rotation in its other
+// Euler triple, as exporters switch to. Between the keys it must stay where it is, not swing round.
+const twin = document(true);
+const twinObjects = twin.find(n => n.name === "Objects").children;
+for (const p of twinObjects.find(n => n.name === "AnimationStack").children[0].children)
+    if (p.props[0].endsWith("Stop")) p.props[4] = tick / 30n;
+const twinNode = twinObjects.find(n => n.name === "AnimationCurveNode");
+twinNode.props = [6200n, "AnimCurveNode::R", ""];
+twinNode.children = [node("Properties70", [], [prop("d|X", "Number", [0]), prop("d|Y", "Number", [10]), prop("d|Z", "Number", [0])])];
+const twinCurve = twinObjects.findIndex(n => n.name === "AnimationCurve");
+const axisCurve = (id, axis, values) => node("AnimationCurve", [id, `AnimCurve::${axis}`, ""], [node("Default", [values[0]]),
+    node("KeyVer", [4008]), node("KeyTime", [array("l", [0n, tick / 30n])]), node("KeyValueFloat", [array("f", values)]),
+    node("KeyAttrFlags", [array("i", [4, 4])]), node("KeyAttrDataFloat", [array("f", [0, 0, 0, 0, 0, 0, 0, 0])]),
+    node("KeyAttrRefCount", [array("i", [1, 1])])]);
+twinObjects.splice(twinCurve, 1, axisCurve(6300n, "X", [0, 180]), axisCurve(6301n, "Y", [10, 170]), axisCurve(6302n, "Z", [0, 180]));
+const twinConnections = twin.find(n => n.name === "Connections").children;
+for (const c of twinConnections) if (c.props[1] === 6200n && c.props[3] === "Lcl Translation") c.props[3] = "Lcl Rotation";
+twinConnections.splice(twinConnections.findIndex(c => c.props[1] === 6300n), 1,
+    connect(6300n, 6200n, "d|X"), connect(6301n, 6200n, "d|Y"), connect(6302n, 6200n, "d|Z"));
+writePair("animation", "twin", twin);
+
 mkdirSync(join(root, "bad"), { recursive: true });
 writeFileSync(join(root, "bad", "malformed.fbx"), "; FBX 7.4.0 project file\nObjects: { Geometry: 1, \"Geometry::Broken\", \"Mesh\" { Vertices: *9 { a: 0,0\n");

@@ -352,6 +352,42 @@ TIDE_TEST(fbx_wrapped_euler_rotation_keys_bake_the_short_way)
     tide_skinned_data_free(canonical[1]);
 }
 
+// A rotation keyed in its other Euler triple, (0, 10, 0) then (180, 170, 180),
+// is one rotation: every baked key, the bake's in-between ones too, is it.
+TIDE_TEST(fbx_euler_keys_in_their_other_triple_bake_as_the_same_rotation)
+{
+    static const char *const names[] = {"animation/twin_ascii.fbx", "animation/twin_binary.fbx"};
+    uint8_t *canonical[2] = {NULL, NULL};
+    uint32_t sizes[2] = {0, 0};
+    for (uint32_t f = 0; f < 2; f++) {
+        size_t size;
+        uint8_t *bytes = fixture(names[f], &size);
+        TIDE_REQUIRE(bytes);
+        TIDE_REQUIRE(decode(bytes, size, &canonical[f], &sizes[f]));
+        free(bytes);
+    }
+    TIDE_CHECK(sizes[0] == sizes[1] && !memcmp(canonical[0], canonical[1], sizes[0]));
+    tide_skinned_data_view view;
+    TIDE_REQUIRE(tide_skinned_data_open(canonical[0], sizes[0], &view));
+    const uint32_t bone = named_node(&view, "Bone0");
+    uint32_t keys = 0;
+    for (uint32_t c = 0; c < view.channels; c++) {
+        tide_skinned_channel_data channel;
+        TIDE_REQUIRE(tide_skinned_data_channel(&view, c, &channel));
+        if (channel.node != bone || channel.path != TIDE_SKINNED_ROTATION) continue;
+        for (uint32_t k = 0; k < channel.keys; k++, keys++) {
+            float time, q[4], in[4], out[4];
+            TIDE_REQUIRE(tide_skinned_data_key(&view, &channel, k, &time, q, in, out));
+            // Ten degrees about y: (0, sin 5, 0, cos 5), up to sign.
+            TIDE_CHECK(fabsf(q[0]) < 1e-4f && fabsf(q[2]) < 1e-4f && fabsf(fabsf(q[1]) - 0.0871557f) < 1e-4f
+                       && fabsf(fabsf(q[3]) - 0.9961947f) < 1e-4f);
+        }
+    }
+    TIDE_CHECK(keys >= 3u);
+    tide_skinned_data_free(canonical[0]);
+    tide_skinned_data_free(canonical[1]);
+}
+
 TIDE_TEST(fbx_animation_only_ascii_and_binary_keep_clips_without_geometry)
 {
     static const char *const names[] = {"clips/move_ascii.fbx", "clips/move_binary.fbx"};
