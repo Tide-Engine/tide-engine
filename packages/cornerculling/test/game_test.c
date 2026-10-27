@@ -154,6 +154,11 @@ TIDE_TEST(cornerculling_fps_visual_scenarios)
     rebuild(&w, split, 2);
     TIDE_CHECK(w.Fixture.answer.status == CornerCulling_Status_Visible);
 
+    const box combined[] = {split[0], split[1], solid};
+    rebuild(&w, combined, 3);
+    TIDE_CHECK(w.Fixture.answer.status == CornerCulling_Status_Occluded);
+    TIDE_CHECK(w.Fixture.answer.occluder == 2);
+
     box narrow = wall(0, 0, 0, 0.5f, 4, 1, -1);
     q.target.center.z = 3;
     w.Fixture.query = q;
