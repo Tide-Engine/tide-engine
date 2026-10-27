@@ -163,5 +163,27 @@ function shaped(inBetween) {
 writePair("shapes", "shapes", shaped(false));
 writePair("shapes", "inbetween", shaped(true));
 
+// Bone0 turns about z from 179 to -179 degrees over one 30 fps frame: two degrees, written wrapped, as
+// exporters do. Between the keys the bone must take the short way, not a full turn back through zero.
+const wrapped = document(true);
+const wrappedObjects = wrapped.find(n => n.name === "Objects").children;
+for (const p of wrappedObjects.find(n => n.name === "AnimationStack").children[0].children)
+    if (p.props[0].endsWith("Stop")) p.props[4] = tick / 30n;
+const rotationNode = wrappedObjects.find(n => n.name === "AnimationCurveNode");
+rotationNode.props = [6200n, "AnimCurveNode::R", ""];
+rotationNode.children = [node("Properties70", [], [prop("d|X", "Number", [0]), prop("d|Y", "Number", [0]), prop("d|Z", "Number", [179])])];
+const wrappedCurve = wrappedObjects.find(n => n.name === "AnimationCurve");
+for (const child of wrappedCurve.children) {
+    if (child.name === "Default") child.props = [179];
+    if (child.name === "KeyTime") child.props = [array("l", [0n, tick / 30n])];
+    if (child.name === "KeyValueFloat") child.props = [array("f", [179, -179])];
+}
+const wrappedConnections = wrapped.find(n => n.name === "Connections").children;
+for (const c of wrappedConnections) {
+    if (c.props[1] === 6200n && c.props[3] === "Lcl Translation") c.props[3] = "Lcl Rotation";
+    if (c.props[1] === 6300n) c.props[3] = "d|Z";
+}
+writePair("animation", "wrapped", wrapped);
+
 mkdirSync(join(root, "bad"), { recursive: true });
 writeFileSync(join(root, "bad", "malformed.fbx"), "; FBX 7.4.0 project file\nObjects: { Geometry: 1, \"Geometry::Broken\", \"Mesh\" { Vertices: *9 { a: 0,0\n");

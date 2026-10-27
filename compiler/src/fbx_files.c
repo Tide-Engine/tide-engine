@@ -608,9 +608,38 @@ static bool fbx_channel(fbx_builder *b, fbx_buffer *samplers, fbx_buffer *channe
     return ok && !b->failed;
 }
 
+// FBX rotation curves are Euler angles, and exporters write them wrapped:
+// one key at -182.72 degrees and the next at 178.20 is a turn of one degree,
+// but evaluating the curve between them (the 60 Hz bake does) sweeps the other
+// way round, a full turn in a frame. Each key is moved by whole turns to within
+// half a turn of the key before it, as Maya's Euler filter does: the rotation
+// at every key is the same, and what's between them takes the short way.
+static void fbx_unwrap_rotations(const ufbx_scene *scene)
+{
+    for (size_t l = 0; l < scene->anim_layers.count; l++) {
+        const ufbx_anim_layer *layer = scene->anim_layers.data[l];
+        for (size_t p = 0; p < layer->anim_props.count; p++) {
+            const ufbx_anim_prop *prop = layer->anim_props.data + p;
+            if (strcmp(prop->prop_name.data, UFBX_Lcl_Rotation) != 0 || !prop->anim_value) continue;
+            for (int axis = 0; axis < 3; axis++) {
+                const ufbx_anim_curve *curve = prop->anim_value->curves[axis];
+                if (!curve) continue;
+                ufbx_keyframe *keys = curve->keyframes.data;
+                for (size_t k = 1; k < curve->keyframes.count; k++) {
+                    const ufbx_real step = keys[k].value - keys[k - 1u].value;
+                    if (!(step > 180.0 || step < -180.0) || !isfinite(step)) continue;
+                    const ufbx_real turns = floor((step + 180.0) / 360.0);
+                    keys[k].value = keys[k].value - turns * 360.0;
+                }
+            }
+        }
+    }
+}
+
 static bool fbx_animations(fbx_builder *b)
 {
     if (!b->skinned) return true;
+    fbx_unwrap_rotations(b->scene);
     for (size_t a = 0; a < b->scene->anim_stacks.count; a++) {
         const ufbx_anim_stack *stack = b->scene->anim_stacks.data[a];
         ufbx_bake_opts opts = {0};

@@ -1,5 +1,34 @@
 # Assets and local files
 
+## FBX Euler keys unwrapped before baking (2026-10-27, bug)
+
+Reported by the owner: Synty's `A_MOD_SWD_Attack_LightCombo01A_Neut.fbx`
+spun `spine_01` a full turn in 33 ms (keys at 0.0333/0.05/0.0667 s of
+(-0.9945, 0.10, ..), (0.0986, 0.9948, ..), (0.9949, -0.09, ..)), also
+`spine_02` at 0.20-0.37 s and HeavyStab01 at 0.34 s. The brief suspected a
+q to -q sign flip interpolated the long way; that wasn't it. `tide_slerp_q`
+already takes the shorter path for LINEAR keys, and the converter already
+makes consecutive baked quaternions hemisphere-continuous. The middle key
+was a 60 Hz bake key half a rotation from both neighbours: the clip's Euler
+curves are keyed at 30 fps, wrapped (Z -182.72 then 178.20, one degree
+apart), and `minimum_sample_rate` 60 has ufbx evaluate the curve between
+them, sweeping through 0. `fbx_unwrap_rotations` (`fbx_files.c`) now moves
+each `Lcl Rotation` curve key by whole turns to within 180 degrees of the one
+before, before baking (Maya's Euler filter); the rotation at every key is
+unchanged. After it, the clip's largest change between adjacent keys is about
+28 degrees per 1/60 s (an IK hand mid-swing). A genuine full turn keyed
+between two adjacent keys is now read as the short way; authored spins keep
+their intermediate keys. No glTF decoder change: its LINEAR keys already
+sample the short way, and rewriting their signs would only change bytes.
+
+Tests: `fbx_wrapped_euler_rotation_keys_bake_the_short_way` (ASCII/binary
+`animation/wrapped_*.fbx` from `fbx_make.mjs`: Bone0 179 to -179 degrees over
+one 30 fps frame; every baked key within a degree of the half turn; fails
+without the fix) and `skinned_linear_rotation_between_opposite_signs_takes_the_short_way`
+(a glTF clip q to -q samples q throughout). No existing expectation or pinned
+hash changed.
+
+
 ## Choosing which blend shapes an asset imports (2026-10-27)
 
 The owner chose an asset attribute (verbatim in docs/spec.md): Sidekick heads

@@ -1466,3 +1466,37 @@ TIDE_TEST(skinned_separate_bindings_skip_nodes_the_model_lacks)
     TIDE_CHECK(!tide_skinned_sample_into(target, twice, 0, 1, &expected, TIDE_IN_SCRATCH));
     tide_scratch_reset(mark);
 }
+
+// A LINEAR rotation clip from q to -q, the same orientation, holds q: the
+// sampler takes the shorter way between keys, whatever their signs.
+TIDE_TEST(skinned_linear_rotation_between_opposite_signs_takes_the_short_way)
+{
+    const uint32_t mark = tide_scratch_mark();
+    // Keys (0.6, 0, 0, 0.8) and (-0.6, 0, 0, -0.8) at 0 and 2 seconds.
+    char json[2048];
+    snprintf(json, sizeof json,
+        "{\"asset\":{\"version\":\"2.0\"},\"nodes\":[{\"name\":\"spine\"}],"
+        "\"buffers\":[{\"byteLength\":40,\"uri\":\"data:application/octet-stream;base64,"
+        "AAAAAAAAAECamRk/AAAAAAAAAADNzEw/mpkZvwAAAAAAAAAAzcxMvw==\"}],"
+        "\"bufferViews\":[{\"buffer\":0,\"byteLength\":8},{\"buffer\":0,\"byteOffset\":8,\"byteLength\":32}],"
+        "\"accessors\":[{\"bufferView\":0,\"componentType\":5126,\"count\":2,\"type\":\"SCALAR\"},"
+        "{\"bufferView\":1,\"componentType\":5126,\"count\":2,\"type\":\"VEC4\"}],"
+        "\"animations\":[{\"name\":\"turn\",\"samplers\":[{\"input\":0,\"output\":1}],"
+        "\"channels\":[{\"sampler\":0,\"target\":{\"node\":0,\"path\":\"rotation\"}}]}]}");
+    uint8_t *bytes = NULL;
+    uint32_t size = 0;
+    char why[256], note[256];
+    TIDE_REQUIRE(tide_skinned_data_decode(json, strlen(json), false, NULL, NULL, &bytes, &size, why, note));
+    const tide_list data = tide_list_from(bytes, (int32_t)size, 1u);
+    tide_skinned_data_free(bytes);
+    for (int i = 0; i <= 4; i++) {
+        tide_list pose = {0};
+        TIDE_REQUIRE(tide_skinned_sample(data, 0, 0.5f * (float)i, &pose, TIDE_IN_SCRATCH));
+        const tide_quaternion q = bone(pose, 1).rotation;
+        // x is reflected on import: (0.6, 0, 0, 0.8) is (0.6, -0, -0, 0.8) in Tide, up to sign
+        const float sign = q.value.w < 0.0f ? -1.0f : 1.0f;
+        TIDE_CHECK(tide_abs_f(q.value.x * sign - 0.6f) < 1e-6f && tide_abs_f(q.value.w * sign - 0.8f) < 1e-6f
+                   && tide_abs_f(q.value.y) < 1e-6f && tide_abs_f(q.value.z) < 1e-6f);
+    }
+    tide_scratch_reset(mark);
+}
