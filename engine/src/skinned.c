@@ -1,9 +1,11 @@
 #include "tide/skinned.h"
 
+#include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdatomic.h>
 
+#include "tide/debug.h"
 #include "tide/jobs.h"
 #include "tide/mesh.h"
 #include "tide/net.h"
@@ -489,20 +491,19 @@ static node_names index_names(const tide_skinned_data_view *v)
     return names;
 }
 
-static int32_t named_index(const tide_skinned_data_view *v, const node_names names, const tide_skinned_node_data *n)
+// The node named like n, flagged ambiguous when several are; NULL for none.
+static const named_node *named_slot(const tide_skinned_data_view *v, const node_names names, const tide_skinned_node_data *n)
 {
-    if (!n->name_length) return -1;
+    if (!n->name_length) return NULL;
     const uint64_t hash = tide_hash(n->name, n->name_length);
     uint32_t at = (uint32_t)hash & names.mask;
     while (names.slots[at].index >= 0) {
         tide_skinned_node_data found;
         validated_node(v, (uint32_t)names.slots[at].index, &found);
-        if (names.slots[at].hash == hash && same_name(n, &found)) {
-            return names.slots[at].ambiguous ? -1 : names.slots[at].index;
-        }
+        if (names.slots[at].hash == hash && same_name(n, &found)) return &names.slots[at];
         at = (at + 1u) & names.mask;
     }
-    return -1;
+    return NULL;
 }
 
 static bool same_transform(const tide_bone_transform a, const tide_bone_transform b)
@@ -560,11 +561,92 @@ static bool require_clip(const tide_skinned_data_view *v, const uint32_t index, 
     return true;
 }
 
-static int32_t *bind_nodes(const tide_skinned_data_view *target, const tide_skinned_data_view *source, uint8_t *required)
+// Exporters such as Blender write the armature object as a named node above
+// the skeleton's top bone, carrying the object's transform (a centimetre rig's
+// 0.01 scale, say). A named top-level node with no node of its name on the
+// other side is folded: its transform moves into its bound children's
+// parent-local transforms, so their model-space results stay as authored.
+enum { BIND_WRAPPER = -2, BIND_FOLDED = -3 };
+
+typedef struct node_binding {
+    int32_t *map;   // Source node to target node, BIND_WRAPPER or BIND_FOLDED.
+    int32_t *outer; // A bound source node's folded source parent, or -1.
+    int32_t *inner; // A bound source node's folded target parent, or -1.
+    bool folds;
+} node_binding;
+
+static bool top_level(const tide_skinned_data_view *v, const tide_skinned_node_data *n)
+{
+    return n->parent == 0 || (n->parent > 0 && root_wrapper(v, (uint32_t)n->parent));
+}
+
+// Folding a uniform scale keeps every composed transform an exact TRS.
+static bool uniform_scale(const tide_float3 s)
+{
+    const float size = s.x < 0.0f ? -s.x : s.x, y = s.y - s.x, z = s.z - s.x;
+    const float tolerance = 1e-5f * size;
+    return (y < 0.0f ? -y : y) <= tolerance && (z < 0.0f ? -z : z) <= tolerance;
+}
+
+static bool target_fold(const tide_skinned_data_view *target, const uint32_t index,
+                        const tide_skinned_data_view *source, const node_names source_names)
+{
+    tide_skinned_node_data n;
+    validated_node(target, index, &n);
+    return !root_wrapper(target, index) && top_level(target, &n) && n.name_length && !named_slot(source, source_names, &n)
+        && n.scale[0] != 0.0f && uniform_scale(local_of(&n).scale);
+}
+
+// outer * inner, as one parent-local transform.
+static tide_bone_transform fold_into(const tide_bone_transform outer, const tide_bone_transform inner)
+{
+    return (tide_bone_transform){
+        tide_add_f3(outer.position, tide_rotate_q(outer.rotation, tide_mul_f3(outer.scale, inner.position))),
+        tide_normalize_q(tide_mul_q(outer.rotation, inner.rotation)),
+        tide_mul_f3(outer.scale, inner.scale)};
+}
+
+// inverse(outer) * inner, for a target node below a folded target parent.
+static tide_bone_transform fold_out(const tide_bone_transform outer, const tide_bone_transform inner)
+{
+    const tide_quaternion back = tide_conjugate_q(tide_normalize_q(outer.rotation));
+    return (tide_bone_transform){
+        tide_div_f3(tide_rotate_q(back, tide_sub_f3(inner.position, outer.position)), outer.scale),
+        tide_normalize_q(tide_mul_q(back, inner.rotation)),
+        tide_div_f3(inner.scale, outer.scale)};
+}
+
+static tide_bone_transform bound_local(const node_binding *b, const tide_skinned_data_view *target, const uint32_t node,
+                                       const tide_bone_transform *source_locals, tide_bone_transform local)
+{
+    if (b->outer[node] >= 0) local = fold_into(source_locals[b->outer[node]], local);
+    if (b->inner[node] >= 0) {
+        tide_skinned_node_data n;
+        validated_node(target, (uint32_t)b->inner[node], &n);
+        local = fold_out(local_of(&n), local);
+    }
+    return local;
+}
+
+#define NODE_NAME(n) (int)((n).name_length > 80u ? 80u : (n).name_length), (n).name
+
+static void parent_name(const tide_skinned_data_view *v, const int32_t parent, char *out, const size_t size)
+{
+    tide_skinned_node_data p;
+    if (parent > 0) validated_node(v, (uint32_t)parent, &p);
+    if (parent > 0 && p.name_length) snprintf(out, size, "\"%.*s\"", NODE_NAME(p));
+    else snprintf(out, size, "%s", parent > 0 ? "an unnamed node" : "nothing");
+}
+
+// Map required source nodes to target nodes. On failure, why says which
+// node differs, unless data was invalid.
+static bool bind_nodes(const tide_skinned_data_view *target, const tide_skinned_data_view *source, uint8_t *required,
+                       node_binding *out, char *why, const size_t why_size)
 {
     const node_names target_names = index_names(target), source_names = index_names(source);
-    int32_t *map = tide_scratch_memory((size_t)source->nodes * sizeof *map);
-    for (uint32_t i = 0; i < source->nodes; i++) map[i] = -1;
+    int32_t *map = tide_scratch_memory((size_t)source->nodes * 3u * sizeof *map);
+    for (size_t i = 0; i < (size_t)source->nodes * 3u; i++) map[i] = -1;
+    *out = (node_binding){map, map + source->nodes, map + (size_t)source->nodes * 2u, false};
     map[0] = 0;
     for (uint32_t i = source->nodes; i-- > 1u;) {
         if (!required[i]) continue;
@@ -577,20 +659,132 @@ static int32_t *bind_nodes(const tide_skinned_data_view *target, const tide_skin
         tide_skinned_node_data n, to;
         validated_node(source, i, &n);
         if (root_wrapper(source, i)) {
-            map[i] = -2; // Transparent, never copied onto the canonical root.
+            map[i] = BIND_WRAPPER; // Transparent, never copied onto the canonical root.
             continue;
         }
         if (i != 0u) {
-            if (named_index(source, source_names, &n) != (int32_t)i) return NULL;
-            map[i] = named_index(target, target_names, &n);
+            const named_node *own = named_slot(source, source_names, &n), *found = named_slot(target, target_names, &n);
+            if (!own) {
+                snprintf(why, why_size, "it moves an unnamed node, or one below it, which can't be matched by name");
+                return false;
+            }
+            if (own->ambiguous) {
+                snprintf(why, why_size, "it has more than one node named \"%.*s\"", NODE_NAME(n));
+                return false;
+            }
+            if (!found && top_level(source, &n)) {
+                map[i] = BIND_FOLDED;
+                out->folds = true;
+                continue;
+            }
+            if (!found || found->ambiguous) {
+                snprintf(why, why_size, found ? "the model has more than one node named \"%.*s\"" : "the model has no node named \"%.*s\"", NODE_NAME(n));
+                return false;
+            }
+            map[i] = found->index;
         }
-        if (map[i] < 0) return NULL;
         validated_node(target, (uint32_t)map[i], &to);
-        const int32_t source_parent = n.parent > 0 && root_wrapper(source, (uint32_t)n.parent) ? 0 : n.parent;
-        const int32_t target_parent = to.parent > 0 && root_wrapper(target, (uint32_t)to.parent) ? 0 : to.parent;
-        if (target_parent != (source_parent < 0 ? -1 : map[source_parent])) return NULL;
+        int32_t source_parent = n.parent > 0 && root_wrapper(source, (uint32_t)n.parent) ? 0 : n.parent;
+        int32_t target_parent = to.parent > 0 && root_wrapper(target, (uint32_t)to.parent) ? 0 : to.parent;
+        if (source_parent > 0 && map[source_parent] == BIND_FOLDED) {
+            out->outer[i] = source_parent;
+            out->folds = true;
+            source_parent = 0;
+        }
+        if (source_parent == 0 && target_parent > 0 && target_fold(target, (uint32_t)target_parent, source, source_names)) {
+            out->inner[i] = target_parent;
+            out->folds = true;
+            target_parent = 0;
+        }
+        if (target_parent != (source_parent < 0 ? -1 : map[source_parent])) {
+            char in_source[100], in_target[100];
+            parent_name(source, n.parent, in_source, sizeof in_source);
+            parent_name(target, to.parent, in_target, sizeof in_target);
+            snprintf(why, why_size, "\"%.*s\" is below %s in it but below %s in the model", NODE_NAME(n), in_source, in_target);
+            return false;
+        }
     }
-    return map;
+    // A folded node is above bound bones; one moving nothing bound is missing.
+    for (uint32_t i = 0; i < source->nodes; i++) {
+        if (out->outer[i] >= 0) required[out->outer[i]] = 2u;
+    }
+    for (uint32_t i = 0; i < source->nodes; i++) {
+        if (map[i] != BIND_FOLDED || required[i] == 2u) continue;
+        tide_skinned_node_data n;
+        validated_node(source, i, &n);
+        snprintf(why, why_size, "the model has no node named \"%.*s\"", NODE_NAME(n));
+        return false;
+    }
+    return true;
+}
+
+// A folded node's default and every key of its scale channels stay uniform.
+static bool clip_folds_uniform(const tide_skinned_data_view *v, const uint32_t index, const node_binding *b,
+                               const uint8_t *required, char *why, const size_t why_size)
+{
+    tide_skinned_clip_data clip;
+    if (!tide_skinned_data_clip(v, index, &clip)) return false;
+    for (uint32_t i = 0; i < v->nodes; i++) {
+        tide_skinned_node_data n;
+        if (!required[i] || b->map[i] != BIND_FOLDED) continue;
+        validated_node(v, i, &n);
+        bool uniform = uniform_scale(local_of(&n).scale);
+        for (uint32_t c = 0; uniform && c < clip.channels; c++) {
+            tide_skinned_channel_data channel;
+            if (!tide_skinned_data_channel(v, clip.first_channel + c, &channel)) return false;
+            if (channel.node != i || channel.path != TIDE_SKINNED_SCALE) continue;
+            for (uint32_t k = 0; uniform && k < channel.keys; k++) {
+                float time, value[4], in[4], out[4];
+                if (!tide_skinned_data_key(v, &channel, k, &time, value, in, out)) return false;
+                uniform = uniform_scale(tide_f3(value[0], value[1], value[2]))
+                    && (channel.interpolation != TIDE_SKINNED_CUBICSPLINE
+                        || (in[0] == in[1] && in[0] == in[2] && out[0] == out[1] && out[0] == out[2]));
+            }
+        }
+        if (!uniform) {
+            snprintf(why, why_size, "\"%.*s\" above its bones scales unevenly, so it can't be folded into them", NODE_NAME(n));
+            return false;
+        }
+    }
+    return true;
+}
+
+// Say once, for each pair of models and clip, why a binding failed: the
+// result is otherwise a pose left as it was, or a draw that doesn't happen.
+static void report_binding(const tide_skinned_data_view *target, const tide_skinned_data_view *source,
+                           const int32_t clip, const char *why)
+{
+    static _Atomic uint64_t reported[64];
+    if (!why[0]) return;
+    uint8_t identity[68];
+    memcpy(identity, target->skeleton_hash, 32u);
+    memcpy(identity + 32, source->skeleton_hash, 32u);
+    memcpy(identity + 64, &clip, 4u);
+    const uint64_t key = tide_hash(identity, sizeof identity) | 1u;
+    for (uint32_t k = 0;; k++) {
+        if (k == 64u) return;
+        uint64_t seen = 0u;
+        if (atomic_compare_exchange_strong(&reported[(key + k) & 63u], &seen, key)) break;
+        if (seen == key) return;
+    }
+    char text[640];
+    tide_skinned_clip_data c;
+    if (clip >= 0 && tide_skinned_data_clip(source, (uint32_t)clip, &c)) {
+        snprintf(text, sizeof text, "tide: animation \"%.*s\" doesn't bind to this SkinnedMesh, so sampling it leaves the pose"
+                 " unchanged: %s. Export the clip with the model's bone names and hierarchy.",
+                 (int)(c.name_length > 80u ? 80u : c.name_length), c.name, why);
+    } else {
+        snprintf(text, sizeof text, "tide: a pose of another model doesn't bind to this SkinnedMesh, so it isn't drawn: %s."
+                 " Export the animation with the model's bone names and hierarchy.", why);
+    }
+    tide_debug_log(text);
+}
+
+static void apply_channel(tide_bone_transform *to, const uint32_t path, const tide_float4 value)
+{
+    if (path == TIDE_SKINNED_TRANSLATION) to->position = tide_f3(value.x, value.y, value.z);
+    else if (path == TIDE_SKINNED_SCALE) to->scale = tide_f3(value.x, value.y, value.z);
+    else to->rotation = tide_normalize_q((tide_quaternion){value});
 }
 
 bool tide_skinned_sample_into(const tide_list target_data, const tide_list animation_data, const int32_t animation,
@@ -608,22 +802,26 @@ bool tide_skinned_sample_into(const tide_list target_data, const tide_list anima
         return tide_skinned_sample(animation_data, animation, seconds, transforms, where);
     }
     const uint32_t mark = tide_scratch_mark();
+    char why[400] = "";
     uint8_t *required = valid ? tide_scratch_memory(source.view.nodes) : NULL;
     if (valid) memset(required, 0, source.view.nodes);
     valid = valid && require_clip(&source.view, (uint32_t)animation, required, true);
-    const int32_t *map = valid ? bind_nodes(&target.view, &source.view, required) : NULL;
-    valid = valid && map != NULL;
+    node_binding binding = {0};
+    valid = valid && bind_nodes(&target.view, &source.view, required, &binding, why, sizeof why)
+        && (!binding.folds || clip_folds_uniform(&source.view, (uint32_t)animation, &binding, required, why, sizeof why));
     if (valid) {
         fill_rest(&target.view, transforms, where);
+        tide_bone_transform *folded = binding.folds ? tide_scratch_memory((size_t)source.view.nodes * sizeof *folded) : NULL;
         // Separate exports can store a take's starting pose as their defaults.
         // Required ancestors must follow those source locals too, just as when
         // binding an already sampled pose. Unrelated target nodes stay at rest.
         tide_list_cache rest = {0};
         for (uint32_t i = 0; i < source.view.nodes; i++) {
-            if (!required[i] || map[i] < 0) continue;
+            if (!required[i] || (binding.map[i] < 0 && binding.map[i] != BIND_FOLDED)) continue;
             tide_skinned_node_data node;
             validated_node(&source.view, i, &node);
-            tide_bone_transform *to = tide_list_cached_at_mut(&rest, *transforms, map[i], sizeof *to);
+            if (binding.map[i] == BIND_FOLDED) { folded[i] = local_of(&node); continue; }
+            tide_bone_transform *to = tide_list_cached_at_mut(&rest, *transforms, binding.map[i], sizeof *to);
             if (to) *to = local_of(&node);
         }
         tide_skinned_clip_data clip;
@@ -633,15 +831,20 @@ bool tide_skinned_sample_into(const tide_list target_data, const tide_list anima
         for (uint32_t i = 0; i < clip.channels; i++) {
             tide_skinned_channel_data channel;
             (void)tide_skinned_data_channel(&source.view, clip.first_channel + i, &channel);
-            if (map[channel.node] < 0) continue;
+            const int32_t to_node = binding.map[channel.node];
+            if (to_node < 0 && to_node != BIND_FOLDED) continue;
             const tide_float4 value = sampled_value(&source.view, &channel, clock, NULL);
-            tide_bone_transform *to = tide_list_cached_at_mut(&cache, *transforms, map[channel.node], sizeof *to);
-            if (!to) continue;
-            if (channel.path == TIDE_SKINNED_TRANSLATION) to->position = tide_f3(value.x, value.y, value.z);
-            else if (channel.path == TIDE_SKINNED_SCALE) to->scale = tide_f3(value.x, value.y, value.z);
-            else to->rotation = tide_normalize_q((tide_quaternion){value});
+            tide_bone_transform *to = to_node == BIND_FOLDED ? &folded[channel.node]
+                                                             : tide_list_cached_at_mut(&cache, *transforms, to_node, sizeof *to);
+            if (to) apply_channel(to, channel.path, value);
+        }
+        for (uint32_t i = 0; binding.folds && i < source.view.nodes; i++) {
+            if (!required[i] || binding.map[i] < 0 || (binding.outer[i] < 0 && binding.inner[i] < 0)) continue;
+            tide_bone_transform *to = tide_list_cached_at_mut(&cache, *transforms, binding.map[i], sizeof *to);
+            if (to) *to = bound_local(&binding, &target.view, i, folded, *to);
         }
     }
+    else report_binding(&target.view, &source.view, animation, why);
     if (!valid || where != TIDE_IN_SCRATCH) tide_scratch_reset(mark);
     close_model(&source);
     close_model(&target);
@@ -656,6 +859,7 @@ bool tide_skinned_pose_into(const tide_list target_data, const tide_list source_
     if (!open_model(target_data, &target)) return false;
     if (!open_model(source_data, &source)) { close_model(&target); return false; }
     const uint32_t mark = tide_scratch_mark();
+    char why[400] = "";
     bool valid = nodes_valid(&target.view) && nodes_valid(&source.view) && tide_list_count(source_transforms) == (int32_t)source.view.nodes;
     const bool exact = valid && target.view.nodes == source.view.nodes
         && memcmp(target.view.skeleton_hash, source.view.skeleton_hash, sizeof target.view.skeleton_hash) == 0;
@@ -675,8 +879,18 @@ bool tide_skinned_pose_into(const tide_list target_data, const tide_list source_
             }
         }
     }
-    const int32_t *map = valid && !exact ? bind_nodes(&target.view, &source.view, required) : NULL;
-    valid = valid && (exact || map != NULL);
+    node_binding binding = {0};
+    valid = valid && (exact || bind_nodes(&target.view, &source.view, required, &binding, why, sizeof why));
+    tide_bone_transform *locals = valid && binding.folds ? tide_scratch_memory((size_t)source.view.nodes * sizeof *locals) : NULL;
+    for (uint32_t i = 0; locals && valid && i < source.view.nodes; i++) {
+        locals[i] = *(const tide_bone_transform *)tide_list_cached_at(&cache, source_transforms, (int32_t)i, sizeof *locals);
+        if (required[i] && binding.map[i] == BIND_FOLDED && !uniform_scale(locals[i].scale)) {
+            tide_skinned_node_data n;
+            validated_node(&source.view, i, &n);
+            snprintf(why, sizeof why, "\"%.*s\" above its bones scales unevenly, so it can't be folded into them", NODE_NAME(n));
+            valid = false;
+        }
+    }
     if (valid) {
         // Stage the complete target before resizing: the output may alias source.
         tide_bone_transform *made = tide_scratch_memory((size_t)target.view.nodes * sizeof *made);
@@ -686,9 +900,9 @@ bool tide_skinned_pose_into(const tide_list target_data, const tide_list source_
             made[i] = local_of(&n);
         }
         for (uint32_t i = 0; i < source.view.nodes; i++) {
-            if (!exact && (!required[i] || map[i] < 0)) continue;
+            if (!exact && (!required[i] || binding.map[i] < 0)) continue;
             const tide_bone_transform *local = tide_list_cached_at(&cache, source_transforms, (int32_t)i, sizeof *local);
-            made[exact ? i : (uint32_t)map[i]] = *local;
+            made[exact ? i : (uint32_t)binding.map[i]] = binding.folds ? bound_local(&binding, &target.view, i, locals, *local) : *local;
         }
         tide_list_resize(transforms, (int32_t)target.view.nodes, sizeof *made, where);
         tide_list_cache output = {0};
@@ -697,6 +911,7 @@ bool tide_skinned_pose_into(const tide_list target_data, const tide_list source_
             if (to) *to = made[i];
         }
     }
+    else report_binding(&target.view, &source.view, -1, why);
     if (!valid || where != TIDE_IN_SCRATCH) tide_scratch_reset(mark);
     close_model(&source);
     close_model(&target);

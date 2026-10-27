@@ -191,6 +191,10 @@ Binding matches nodes by unique exact source names and matching parent chains; s
 
 An extra unnamed identity scene root, as added by FBX importing, is ignored while its pose and relevant animation channels stay at rest. Animated wrappers or deeper unnamed ancestors cannot be bound this way.
 
+A named node at the top of either hierarchy is folded into the bones below it when the other side has no node with its name. Blender writes the armature object as such a node above the skeleton's top bone, carrying the object's transform: a rig in centimetres gets a scale of 0.01. That transform, animated or not, is combined with its children's. A clip edited in Blender and exported again therefore drives a character exported elsewhere with its bones where they were authored, and a character exported from Blender plays clips exported elsewhere. The folded node's scale must be uniform, and it must be above a bone that binds.
+
+When a clip doesn't bind, the first failed sample or draw for each model and clip prints the reason on the console and names the node that differs, such as `"Hips" is below "Armature" in it but below "Root" in the model`.
+
 This supports separate files exported from the same named hierarchy. It does not retarget animation: source translations, rotations and scales are used as authored, without adapting proportions or correcting coordinate spaces. Missing or ambiguous required names and different parent chains reject binding. An incompatible sample leaves the destination unchanged, and an incompatible draw produces no draw. Bone identity and pose blending still require identical skeleton data.
 
 ## Sample, blend and edit

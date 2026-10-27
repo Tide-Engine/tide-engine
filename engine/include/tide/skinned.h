@@ -47,6 +47,9 @@ bool tide_skinned_sample(tide_list data, int32_t animation, float seconds,
 // fail and leave the destination untouched. Source and destination may alias.
 // An unnamed identity wrapper directly under node zero is transparent only
 // while its source clip channels and pose remain at rest; node zero is kept.
+// A named top-level node with no node of its name on the other side (Blender's
+// armature object) is folded into its bound children's local transforms; its
+// scale must be uniform. A failed binding prints its reason once per pair.
 bool tide_skinned_sample_into(tide_list target_data, tide_list animation_data, int32_t animation,
                               float seconds, tide_list *transforms, uint32_t where);
 bool tide_skinned_pose_into(tide_list target_data, tide_list source_data, tide_list source_transforms,
