@@ -1,5 +1,20 @@
 # Runtime written by Claude for now
 
+## Blend shapes (2026-10-27)
+
+Owner-decided import and CPU bake (docs/spec.md, Skinned meshes). Within the
+existing skinned maintenance exception: `tide/skinned_data.h` version 2 with
+shape tables and getters `tide_skinned_data_shape`/`_shape_delta`, and the new
+generated-C calls `tide_skinned_shape_count`, `tide_skinned_find_shape`,
+`tide_skinned_shape_name`, `tide_skinned_shape_weight` and
+`tide_skinned_shaped(data, weights, vertices, vertex_size, position_at,
+normal_at, tangent_at)` (`tide/skinned.h`, `skinned.c`). Generated code calls
+them only in programs that name `blendShapes`, `Shaped` or `BlendShape`; no
+existing function, struct, draw entry point or shader changes, and models
+without shapes keep their version 1 bytes. Contracts and tests:
+assets-and-files.md, Blend shapes.
+
+
 ## Prehashed asset lookup (2026-10-27)
 
 The owner explicitly approved lookup by the pack's existing SHA-256 name ID

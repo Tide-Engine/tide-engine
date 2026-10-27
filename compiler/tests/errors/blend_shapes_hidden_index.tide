@@ -1,0 +1,2 @@
+// expect: BlendShape has no member 'index'
+int Read(BlendShape shape) { return shape.index; }

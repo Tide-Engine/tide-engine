@@ -1,0 +1,352 @@
+; FBX 7.4.0 project file
+FBXHeaderExtension:  {
+  FBXHeaderVersion: 1003
+  FBXVersion: 7400
+  Creator: "Tide FBX test fixture"
+}
+GlobalSettings:  {
+  Version: 1000
+  Properties70:  {
+    P: "UpAxis", "int", "", "A", 1
+    P: "UpAxisSign", "int", "", "A", 1
+    P: "FrontAxis", "int", "", "A", 2
+    P: "FrontAxisSign", "int", "", "A", 1
+    P: "CoordAxis", "int", "", "A", 0
+    P: "CoordAxisSign", "int", "", "A", 1
+    P: "UnitScaleFactor", "double", "", "A", 100
+    P: "OriginalUnitScaleFactor", "double", "", "A", 100
+    P: "TimeMode", "enum", "", "A", 3
+  }
+}
+Objects:  {
+  Geometry: 1000, "Geometry::Triangle", "Mesh" {
+    GeometryVersion: 124
+    Vertices: *9 {
+      a: 0,0,0,2,0,0,0,2,0
+    }
+    PolygonVertexIndex: *3 {
+      a: 0,1,-3
+    }
+    LayerElementNormal: 0 {
+      Version: 101
+      Name: ""
+      MappingInformationType: "ByPolygonVertex"
+      ReferenceInformationType: "Direct"
+      Normals: *9 {
+        a: 0,0,1,0,0,1,0,0,1
+      }
+    }
+    LayerElementUV: 0 {
+      Version: 101
+      Name: "UVMap"
+      MappingInformationType: "ByPolygonVertex"
+      ReferenceInformationType: "IndexToDirect"
+      UV: *6 {
+        a: 0,0,1,0,0,1
+      }
+      UVIndex: *3 {
+        a: 0,1,2
+      }
+    }
+    LayerElementMaterial: 0 {
+      Version: 101
+      Name: ""
+      MappingInformationType: "AllSame"
+      ReferenceInformationType: "IndexToDirect"
+      Materials: *1 {
+        a: 0
+      }
+    }
+    Layer: 0 {
+      Version: 100
+      LayerElement:  {
+        Type: "LayerElementNormal"
+        TypedIndex: 0
+      }
+      LayerElement:  {
+        Type: "LayerElementUV"
+        TypedIndex: 0
+      }
+      LayerElement:  {
+        Type: "LayerElementMaterial"
+        TypedIndex: 0
+      }
+    }
+  }
+  Model: 2000, "Model::Triangle", "Mesh" {
+    Version: 232
+    Properties70:  {
+      P: "Lcl Translation", "Lcl Translation", "", "A", 0, 0, 0
+      P: "Lcl Rotation", "Lcl Rotation", "", "A", 0, 0, 0
+      P: "Lcl Scaling", "Lcl Scaling", "", "A", 1, 1, 1
+    }
+    Shading: T
+    Culling: "CullingOff"
+  }
+  Material: 3000, "Material::Blue", "" {
+    Version: 102
+    ShadingModel: "phong"
+    MultiLayer: 0
+    Properties70:  {
+      P: "DiffuseColor", "Color", "", "A", 0.25, 0.5, 1
+      P: "DiffuseFactor", "Number", "", "A", 1
+    }
+  }
+  Model: 4000, "Model::Root", "Null" {
+    Version: 232
+    Properties70:  {
+      P: "Lcl Translation", "Lcl Translation", "", "A", 2, 0, 0
+      P: "Lcl Rotation", "Lcl Rotation", "", "A", 0, 0, 0
+      P: "Lcl Scaling", "Lcl Scaling", "", "A", 1, 1, 1
+    }
+    Shading: T
+    Culling: "CullingOff"
+  }
+  Deformer: 5000, "Deformer::Skin", "Skin" {
+    Version: 101
+    Link_DeformAcuracy: 50
+    SkinningType: "Linear"
+  }
+  Model: 4100, "Model::Bone0", "LimbNode" {
+    Version: 232
+    Properties70:  {
+      P: "Lcl Translation", "Lcl Translation", "", "A", 1, 0, 0
+      P: "Lcl Rotation", "Lcl Rotation", "", "A", 0, 0, 0
+      P: "Lcl Scaling", "Lcl Scaling", "", "A", 1, 1, 1
+    }
+    Shading: T
+    Culling: "CullingOff"
+  }
+  Deformer: 5100, "SubDeformer::Bone0", "Cluster" {
+    Version: 100
+    Indexes: *3 {
+      a: 0,1,2
+    }
+    Weights: *3 {
+      a: 1,1,1
+    }
+    Transform: *16 {
+      a: 1,0,0,0,0,1,0,0,0,0,1,0,-3,0,0,1
+    }
+    TransformLink: *16 {
+      a: 1,0,0,0,0,1,0,0,0,0,1,0,3,0,0,1
+    }
+  }
+  Model: 4101, "Model::Bone1", "LimbNode" {
+    Version: 232
+    Properties70:  {
+      P: "Lcl Translation", "Lcl Translation", "", "A", 2, 0, 0
+      P: "Lcl Rotation", "Lcl Rotation", "", "A", 0, 0, 0
+      P: "Lcl Scaling", "Lcl Scaling", "", "A", 1, 1, 1
+    }
+    Shading: T
+    Culling: "CullingOff"
+  }
+  Deformer: 5101, "SubDeformer::Bone1", "Cluster" {
+    Version: 100
+    Indexes: *3 {
+      a: 0,1,2
+    }
+    Weights: *3 {
+      a: 2,2,2
+    }
+    Transform: *16 {
+      a: 1,0,0,0,0,1,0,0,0,0,1,0,-4,0,0,1
+    }
+    TransformLink: *16 {
+      a: 1,0,0,0,0,1,0,0,0,0,1,0,4,0,0,1
+    }
+  }
+  Model: 4102, "Model::Bone2", "LimbNode" {
+    Version: 232
+    Properties70:  {
+      P: "Lcl Translation", "Lcl Translation", "", "A", 3, 0, 0
+      P: "Lcl Rotation", "Lcl Rotation", "", "A", 0, 0, 0
+      P: "Lcl Scaling", "Lcl Scaling", "", "A", 1, 1, 1
+    }
+    Shading: T
+    Culling: "CullingOff"
+  }
+  Deformer: 5102, "SubDeformer::Bone2", "Cluster" {
+    Version: 100
+    Indexes: *3 {
+      a: 0,1,2
+    }
+    Weights: *3 {
+      a: 3,3,3
+    }
+    Transform: *16 {
+      a: 1,0,0,0,0,1,0,0,0,0,1,0,-5,0,0,1
+    }
+    TransformLink: *16 {
+      a: 1,0,0,0,0,1,0,0,0,0,1,0,5,0,0,1
+    }
+  }
+  Model: 4103, "Model::Bone3", "LimbNode" {
+    Version: 232
+    Properties70:  {
+      P: "Lcl Translation", "Lcl Translation", "", "A", 4, 0, 0
+      P: "Lcl Rotation", "Lcl Rotation", "", "A", 0, 0, 0
+      P: "Lcl Scaling", "Lcl Scaling", "", "A", 1, 1, 1
+    }
+    Shading: T
+    Culling: "CullingOff"
+  }
+  Deformer: 5103, "SubDeformer::Bone3", "Cluster" {
+    Version: 100
+    Indexes: *3 {
+      a: 0,1,2
+    }
+    Weights: *3 {
+      a: 4,4,4
+    }
+    Transform: *16 {
+      a: 1,0,0,0,0,1,0,0,0,0,1,0,-6,0,0,1
+    }
+    TransformLink: *16 {
+      a: 1,0,0,0,0,1,0,0,0,0,1,0,6,0,0,1
+    }
+  }
+  Model: 4104, "Model::Bone4", "LimbNode" {
+    Version: 232
+    Properties70:  {
+      P: "Lcl Translation", "Lcl Translation", "", "A", 5, 0, 0
+      P: "Lcl Rotation", "Lcl Rotation", "", "A", 0, 0, 0
+      P: "Lcl Scaling", "Lcl Scaling", "", "A", 1, 1, 1
+    }
+    Shading: T
+    Culling: "CullingOff"
+  }
+  Deformer: 5104, "SubDeformer::Bone4", "Cluster" {
+    Version: 100
+    Indexes: *3 {
+      a: 0,1,2
+    }
+    Weights: *3 {
+      a: 5,5,5
+    }
+    Transform: *16 {
+      a: 1,0,0,0,0,1,0,0,0,0,1,0,-7,0,0,1
+    }
+    TransformLink: *16 {
+      a: 1,0,0,0,0,1,0,0,0,0,1,0,7,0,0,1
+    }
+  }
+  AnimationStack: 6000, "AnimStack::Move", "" {
+    Properties70:  {
+      P: "LocalStart", "KTime", "", "A", 0
+      P: "LocalStop", "KTime", "", "A", 46186158000
+      P: "ReferenceStart", "KTime", "", "A", 0
+      P: "ReferenceStop", "KTime", "", "A", 46186158000
+    }
+  }
+  AnimationLayer: 6100, "AnimLayer::BaseLayer", ""
+  AnimationCurveNode: 6200, "AnimCurveNode::T", "" {
+    Properties70:  {
+      P: "d|X", "Number", "", "A", 1
+      P: "d|Y", "Number", "", "A", 0
+      P: "d|Z", "Number", "", "A", 0
+    }
+  }
+  AnimationCurve: 6300, "AnimCurve::X", "" {
+    Default: 1
+    KeyVer: 4008
+    KeyTime: *2 {
+      a: 0,46186158000
+    }
+    KeyValueFloat: *2 {
+      a: 1,5
+    }
+    KeyAttrFlags: *2 {
+      a: 4,4
+    }
+    KeyAttrDataFloat: *8 {
+      a: 0,0,0,0,0,0,0,0
+    }
+    KeyAttrRefCount: *2 {
+      a: 1,1
+    }
+  }
+  Deformer: 7000, "Deformer::Blends", "BlendShape" {
+    Version: 100
+  }
+  Deformer: 7100, "SubDeformer::Blends.smile", "BlendShapeChannel" {
+    Version: 100
+    DeformPercent: 25
+    FullWeights: *2 {
+      a: 50,100
+    }
+  }
+  Geometry: 7200, "Geometry::smile", "Shape" {
+    Version: 100
+    Indexes: *2 {
+      a: 0,2
+    }
+    Vertices: *6 {
+      a: 0,0.5,0,0,0,0.25
+    }
+    Normals: *6 {
+      a: 0,0,0,1,0,0
+    }
+  }
+  Deformer: 7300, "SubDeformer::Blends.jawOpen", "BlendShapeChannel" {
+    Version: 100
+    DeformPercent: 0
+    FullWeights: *1 {
+      a: 100
+    }
+  }
+  Geometry: 7400, "Geometry::jawOpen", "Shape" {
+    Version: 100
+    Indexes: *1 {
+      a: 1
+    }
+    Vertices: *3 {
+      a: 0,-1,0
+    }
+  }
+  Geometry: 7500, "Geometry::smileHalf", "Shape" {
+    Version: 100
+    Indexes: *1 {
+      a: 0
+    }
+    Vertices: *3 {
+      a: 0,0.25,0
+    }
+  }
+}
+Connections:  {
+  C: "OO", 1000, 2000
+  C: "OO", 2000, 0
+  C: "OO", 3000, 2000
+  C: "OO", 4000, 0
+  C: "OO", 5000, 1000
+  C: "OO", 4100, 4000
+  C: "OO", 5100, 5000
+  C: "OO", 4100, 5100
+  C: "OO", 4101, 4000
+  C: "OO", 5101, 5000
+  C: "OO", 4101, 5101
+  C: "OO", 4102, 4000
+  C: "OO", 5102, 5000
+  C: "OO", 4102, 5102
+  C: "OO", 4103, 4000
+  C: "OO", 5103, 5000
+  C: "OO", 4103, 5103
+  C: "OO", 4104, 4000
+  C: "OO", 5104, 5000
+  C: "OO", 4104, 5104
+  C: "OO", 6100, 6000
+  C: "OO", 6200, 6100
+  C: "OP", 6200, 4100, "Lcl Translation"
+  C: "OP", 6300, 6200, "d|X"
+  C: "OO", 7000, 1000
+  C: "OO", 7100, 7000
+  C: "OO", 7200, 7100
+  C: "OO", 7300, 7000
+  C: "OO", 7400, 7300
+  C: "OO", 7500, 7100
+}
+Takes:  {
+  Current: "Move"
+}

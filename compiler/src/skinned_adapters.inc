@@ -19,6 +19,23 @@ static void gen_skinned_adapters(gen *g)
         const char *n = type_cname(d);
         sb_printf(o, "TIDE_HELPER tide_skin_model_lists tide_skin_%s_to(%s v) { return (tide_skin_model_lists){v.data, v.vertices, v.indices}; }\n"
                      "TIDE_HELPER %s tide_skin_%s_from(tide_skin_model_lists v) { return (%s){v.data, v.vertices, v.indices}; }\n", n, n, n, n, n);
+        if (!p->blend_shape) continue;
+        // model.Shaped(weights): the same model with its vertices' position,
+        // normal and tangent (the fields a file fills by those names) moved.
+        const decl *vertex = d->skin_vertex.decl;
+        const char *places[3] = {"-1", "-1", "-1"};
+        for (int f = 0; f < vertex->fields.count; f++) {
+            const field *field = &vertex->fields.items[f];
+            const int fill = mesh_fills(field);
+            const int slot = fill == FILL_POSITION ? 0 : fill == FILL_NORMAL ? 1 : fill == FILL_TANGENT ? 2 : -1;
+            if (slot < 0) continue;
+            sb place = {0};
+            sb_printf(&place, "(int32_t)offsetof(%s, %s)", type_cname(vertex), field_cname(field));
+            places[slot] = place.data;
+        }
+        sb_printf(o, "TIDE_HELPER %s tide_skin_%s_shaped(%s v, tide_list weights)\n{\n"
+                     "    v.vertices = tide_skinned_shaped(v.data, weights, v.vertices, (uint32_t)sizeof(%s), %s, %s, %s);\n"
+                     "    return v;\n}\n", n, n, n, type_cname(vertex), places[0], places[1], places[2]);
     }
     sb_put(o, "\nTIDE_HELPER int32_t tide_skin_member_index(tide_list data, tide_str name, bool exact, bool bones)\n{\n"
               "    if (exact) return bones ? tide_skinned_find_bone(data, name) : tide_skinned_find_animation(data, name);\n"
@@ -103,6 +120,21 @@ static void gen_skinned_adapters(gen *g)
                  "    return tide_skin_bone_try_at(data, tide_skinned_find_bone(data, name), result, where);\n}\n\n",
               animation, animation, animation, animation, animation, animation, animation, animation, animation, animation,
               bone, bone, bone, bone);
+    if (p->blend_shape) {
+        const char *shape = type_cname(p->blend_shape);
+        sb_printf(o, "TIDE_HELPER %s tide_skin_blend_shape_at(tide_list data, int32_t i)\n{\n"
+                     "    return (%s){.data = data, .index = i >= 0 && i < tide_skinned_shape_count(data) ? i : -1};\n}\n"
+                     "TIDE_HELPER tide_str tide_skin_blend_shape_name(%s v) { return tide_skinned_shape_name(v.data, v.index); }\n"
+                     "TIDE_HELPER float tide_skin_blend_shape_weight(%s v) { return tide_skinned_shape_weight(v.data, v.index); }\n"
+                     "TIDE_HELPER bool tide_skin_blend_shape_try_at(tide_list data, int32_t index, %s *result, uint32_t where)\n{\n"
+                     "    const %s value = tide_skin_blend_shape_at(data, index);\n"
+                     "    const bool ok = value.index >= 0;\n"
+                     "    tide_assign_%s(result, ok ? tide_copy_%s(value) : (%s){0}, where);\n"
+                     "    return ok;\n}\n"
+                     "TIDE_HELPER bool tide_skin_blend_shape_try_find(tide_list data, tide_str name, %s *result, uint32_t where)\n{\n"
+                     "    return tide_skin_blend_shape_try_at(data, tide_skinned_find_shape(data, name), result, where);\n}\n\n",
+                  shape, shape, shape, shape, shape, shape, shape, shape, shape, shape);
+    }
     sb_put(o, "TIDE_HELPER float tide_skin_seconds(float seconds, float duration, int32_t playback)\n{\n"
               "    if (playback != 1 || !(duration > 0.0f)) return seconds;\n"
               "    if (!tide_is_finite_f(seconds)) return 0.0f;\n"

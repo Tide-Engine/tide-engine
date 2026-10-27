@@ -12269,6 +12269,35 @@ TIDE_TEST(lsp_float_bitcasts_and_float_hash_help)
     TIDE_CHECK(has(request("textDocument/hover"), "float's exact bits"));
 }
 
+TIDE_TEST(lsp_skinned_blend_shapes_complete_hover_and_help)
+{
+    start();
+    const char *completion = complete("scene Main { }\nview V()\n{\n    SkinnedMesh<Vertex3> model = default;\n    model.$\n}\n");
+    TIDE_CHECK(offers(completion, "blendShapes") && offers(completion, "Shaped") && has(completion, "Shaped(List<float> weights)"));
+    completion = complete("scene Main { }\nview V()\n{\n    SkinnedMesh<Vertex3> model = default;\n    var n = model.blendShapes.count;\n"
+                          "    model.blendShapes.$\n}\n");
+    TIDE_CHECK(offers(completion, "count") && offers(completion, "TryGetByName") && offers(completion, "TryGetAt")
+               && !offers(completion, "data"));
+    completion = complete("scene Main { }\nview V()\n{\n    SkinnedMesh<Vertex3> model = default;\n"
+                          "    if (model.blendShapes.TryGetByName(\"jawOpen\", out var jaw)) {\n        Debug.Log(jaw.$);\n    }\n}\n");
+    TIDE_CHECK(offers(completion, "name") && offers(completion, "weight") && !offers(completion, "index"));
+    // `out BlendShape` names the type; the static form still offers Decode only.
+    open_document("scene Main { }\nview V()\n{\n    SkinnedMesh<Vertex3> model = default;\n"
+                  "    model.blendShapes.TryGetAt(0, out BlendShape first);\n"
+                  "    var open = model.Sha$ped([first.weight, 1]);\n    Draw.SkinnedMesh(open, float4x4.identity);\n}\n");
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    const char *hover = request("textDocument/hover");
+    TIDE_CHECK(has(hover, "Shaped(List<float> weights)") && has(hover, "SkinnedMesh<Vertex3>") && has(hover, "extrapolating"));
+    open_document("scene Main { }\nview V()\n{\n    SkinnedMesh<Vertex3> model = default;\n"
+                  "    var open = model.Shaped($[0.5]);\n    Draw.SkinnedMesh(open, float4x4.identity);\n}\n");
+    TIDE_CHECK(has(request("textDocument/signatureHelp"), "Shaped(List<float> weights)"));
+    open_document("scene Main { }\nview V()\n{\n    SkinnedMesh<Vertex3> model = default;\n    var n = model.blend$Shapes.count;\n"
+                  "    Debug.Log(\"\" + n);\n}\n");
+    TIDE_CHECK(has(request("textDocument/hover"), "TryGetByName"));
+    completion = complete("scene Main { }\nview V()\n{\n    var model = SkinnedMesh<Vertex3>.$\n}\n");
+    TIDE_CHECK(offers(completion, "Decode") && !offers(completion, "Shaped"));
+}
+
 TIDE_TEST(lsp_skinned_static_decode_and_draw_forms)
 {
     start();

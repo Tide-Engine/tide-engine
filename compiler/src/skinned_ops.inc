@@ -35,6 +35,30 @@ static type check_skinned_member(checker *c, expr *e, const type obj, bool *hand
             e->skin_operation = SKIN_OP_REST_POSE;
             return decl_type(c->prog->pose);
         }
+        if (str_eq_c(e->member, "blendShapes")) {
+            skinned_blend_shapes(c->prog);
+            e->skin_operation = SKIN_OP_BLEND_SHAPES;
+            return decl_type(c->prog->blend_shapes);
+        }
+    }
+    if (d->skin_kind == SKIN_BLEND_SHAPES) {
+        if (str_eq_c(e->member, "count")) {
+            e->skin_operation = SKIN_OP_BLEND_SHAPE_COUNT;
+            return T_INT_;
+        }
+        diag_error(e->at, "BlendShapes has no member '" STR_FMT "'", STR_ARG(e->member));
+        diag_note("blend shapes are found by name with TryGetByName(name, out result), or by index with TryGetAt(index, out result)");
+        return T_ERR;
+    }
+    if (d->skin_kind == SKIN_BLEND_SHAPE) {
+        if (str_eq_c(e->member, "name")) {
+            e->skin_operation = SKIN_OP_BLEND_SHAPE_NAME;
+            return (type){TY_STRING, NULL};
+        }
+        if (str_eq_c(e->member, "weight")) {
+            e->skin_operation = SKIN_OP_BLEND_SHAPE_WEIGHT;
+            return T_FLOAT_;
+        }
     }
     if (d->skin_kind == SKIN_SKELETON && str_eq_c(e->member, "bones")) {
         e->skin_operation = SKIN_OP_BONES;
@@ -168,7 +192,23 @@ static type check_skinned_method(checker *c, expr *e, const type obj, bool *hand
     const char *names = "";
     int count = 0, optional = 0, out_index = -1;
     bool changes = false;
-    if ((animations || bones) && str_eq_c(e->name, "TryGetByName")) {
+    if (kind == SKIN_BLEND_SHAPES && (str_eq_c(e->name, "TryGetByName") || str_eq_c(e->name, "TryGetAt"))) {
+        const bool by_name = str_eq_c(e->name, "TryGetByName");
+        e->skin_operation = by_name ? SKIN_OP_TRY_GET_BLEND_SHAPE_BY_NAME : SKIN_OP_TRY_GET_BLEND_SHAPE_AT;
+        args[0] = by_name ? (type){TY_STRING, NULL} : T_INT_;
+        args[1] = decl_type(c->prog->blend_shape);
+        names = by_name ? "name, result" : "index, result";
+        count = 2;
+        out_index = 1;
+        result = T_BOOL_;
+    } else if (kind == SKIN_MESH && str_eq_c(e->name, "Shaped")) {
+        skinned_blend_shapes(c->prog);
+        e->skin_operation = SKIN_OP_SHAPED;
+        args[0] = list_of(c->prog, T_FLOAT_);
+        names = "weights";
+        count = 1;
+        result = obj;
+    } else if ((animations || bones) && str_eq_c(e->name, "TryGetByName")) {
         e->skin_operation = animations ? SKIN_OP_TRY_GET_ANIMATION_BY_NAME : SKIN_OP_TRY_GET_BONE_BY_NAME;
         args[0] = (type){TY_STRING, NULL};
         args[1] = decl_type(animations ? c->prog->animation : c->prog->bone);

@@ -23,9 +23,10 @@ static bool numbers(const uint8_t *p, uint32_t count, float *out)
     return true;
 }
 
-static bool span(uint32_t size, uint32_t at, uint64_t count, uint32_t stride)
+// Tables start after the header, which is longer in version 2.
+static bool span(uint32_t header, uint32_t size, uint32_t at, uint64_t count, uint32_t stride)
 {
-    return at >= TIDE_SKINNED_HEADER_SIZE && !(at & 3u) && at <= size && count * stride <= (uint64_t)size - at;
+    return at >= header && !(at & 3u) && at <= size && count * stride <= (uint64_t)size - at;
 }
 
 static bool key_span(const tide_skinned_data_view *v, uint32_t at, uint64_t count)
@@ -47,7 +48,11 @@ bool tide_skinned_data_open(const void *bytes, size_t size, tide_skinned_data_vi
     *out = (tide_skinned_data_view){0};
     if (!bytes || size < TIDE_SKINNED_HEADER_SIZE || size > UINT32_MAX) return false;
     const uint8_t *p = bytes;
-    if (word(p) != TIDE_SKINNED_DATA_MAGIC || word(p + 4) != TIDE_SKINNED_DATA_VERSION || word(p + 8) != size) return false;
+    const uint32_t version = word(p + 4);
+    if (word(p) != TIDE_SKINNED_DATA_MAGIC || (version != TIDE_SKINNED_DATA_VERSION && version != TIDE_SKINNED_SHAPED_VERSION)
+        || word(p + 8) != size) return false;
+    const uint32_t h = version == TIDE_SKINNED_SHAPED_VERSION ? TIDE_SKINNED_SHAPED_HEADER_SIZE : TIDE_SKINNED_HEADER_SIZE;
+    if (size < h) return false;
     tide_skinned_data_view v = {.data = p, .size = (uint32_t)size, .flags = word(p + 12)};
     v.nodes = word(p + 16), v.node_at = word(p + 20);
     v.palettes = word(p + 24), v.palette_at = word(p + 28);
@@ -58,14 +63,21 @@ bool tide_skinned_data_open(const void *bytes, size_t size, tide_skinned_data_vi
     v.influences = word(p + 64), v.influence_at = word(p + 68);
     v.string_at = word(p + 72), v.string_size = word(p + 76);
     v.key_at = word(p + 80), v.key_size = word(p + 84);
-    if (!v.nodes || !span(v.size, v.node_at, v.nodes, TIDE_SKINNED_NODE_SIZE)
-        || !span(v.size, v.palette_at, v.palettes, TIDE_SKINNED_PALETTE_SIZE)
-        || !span(v.size, v.vertex_at, v.vertices, TIDE_SKINNED_VERTEX_SIZE)
-        || !span(v.size, v.index_at, v.indices, 4u)
-        || !span(v.size, v.clip_at, v.clips, TIDE_SKINNED_CLIP_SIZE)
-        || !span(v.size, v.channel_at, v.channels, TIDE_SKINNED_CHANNEL_SIZE)
-        || !span(v.size, v.influence_at, v.influences, TIDE_SKINNED_INFLUENCE_SIZE)
-        || !span(v.size, v.string_at, v.string_size, 1u) || !span(v.size, v.key_at, v.key_size, 1u)) return false;
+    if (h == TIDE_SKINNED_SHAPED_HEADER_SIZE) {
+        v.shapes = word(p + 120), v.shape_at = word(p + 124);
+        v.shape_deltas = word(p + 128), v.shape_delta_at = word(p + 132);
+        // Version 2 is only for a model with shapes, so each model has one form.
+        if (!v.shapes || !span(h, v.size, v.shape_at, v.shapes, TIDE_SKINNED_SHAPE_SIZE)
+            || !span(h, v.size, v.shape_delta_at, v.shape_deltas, TIDE_SKINNED_SHAPE_DELTA_SIZE)) return false;
+    }
+    if (!v.nodes || !span(h, v.size, v.node_at, v.nodes, TIDE_SKINNED_NODE_SIZE)
+        || !span(h, v.size, v.palette_at, v.palettes, TIDE_SKINNED_PALETTE_SIZE)
+        || !span(h, v.size, v.vertex_at, v.vertices, TIDE_SKINNED_VERTEX_SIZE)
+        || !span(h, v.size, v.index_at, v.indices, 4u)
+        || !span(h, v.size, v.clip_at, v.clips, TIDE_SKINNED_CLIP_SIZE)
+        || !span(h, v.size, v.channel_at, v.channels, TIDE_SKINNED_CHANNEL_SIZE)
+        || !span(h, v.size, v.influence_at, v.influences, TIDE_SKINNED_INFLUENCE_SIZE)
+        || !span(h, v.size, v.string_at, v.string_size, 1u) || !span(h, v.size, v.key_at, v.key_size, 1u)) return false;
     memcpy(v.skeleton_hash, p + 88, sizeof v.skeleton_hash);
     *out = v;
     return true;
@@ -161,6 +173,27 @@ bool tide_skinned_data_key(const tide_skinned_data_view *v, const tide_skinned_c
         : numbers(p, width, in) && numbers(p + width * 4u, width, value) && numbers(p + width * 8u, width, out);
 }
 
+bool tide_skinned_data_shape(const tide_skinned_data_view *v, uint32_t index, tide_skinned_shape_data *out)
+{
+    if (!v || !out || index >= v->shapes) return false;
+    const uint8_t *p = v->data + v->shape_at + (size_t)index * TIDE_SKINNED_SHAPE_SIZE;
+    out->name_length = word(p + 4);
+    out->name = name(v, word(p), out->name_length);
+    out->first_delta = word(p + 8);
+    out->deltas = word(p + 12);
+    return out->name && out->first_delta <= v->shape_deltas && out->deltas <= v->shape_deltas - out->first_delta
+        && number(p + 16, &out->weight);
+}
+
+bool tide_skinned_data_shape_delta(const tide_skinned_data_view *v, uint32_t index, tide_skinned_shape_delta_data *out)
+{
+    if (!v || !out || index >= v->shape_deltas) return false;
+    const uint8_t *p = v->data + v->shape_delta_at + (size_t)index * TIDE_SKINNED_SHAPE_DELTA_SIZE;
+    out->vertex = word(p);
+    return out->vertex < v->vertices && numbers(p + 4, 3u, out->position) && numbers(p + 16, 3u, out->normal)
+        && numbers(p + 28, 3u, out->tangent);
+}
+
 bool tide_skinned_data_validate(const void *bytes, size_t size)
 {
     tide_skinned_data_view v;
@@ -210,5 +243,17 @@ bool tide_skinned_data_validate(const void *bytes, size_t size)
             previous = time;
         }
     }
-    return true;
+    uint32_t next = 0;
+    for (uint32_t i = 0; i < v.shapes; i++) {
+        tide_skinned_shape_data shape;
+        if (!tide_skinned_data_shape(&v, i, &shape) || shape.first_delta != next) return false;
+        next += shape.deltas;
+        uint32_t after = 0; // Every delta's vertex is past the shape's one before
+        for (uint32_t k = 0; k < shape.deltas; k++) {
+            tide_skinned_shape_delta_data delta;
+            if (!tide_skinned_data_shape_delta(&v, shape.first_delta + k, &delta) || (k && delta.vertex < after)) return false;
+            after = delta.vertex + 1u;
+        }
+    }
+    return next == v.shape_deltas;
 }

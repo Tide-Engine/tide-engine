@@ -9,14 +9,21 @@
 #include <stdint.h>
 
 #define TIDE_SKINNED_DATA_MAGIC 0x4e4b5354u // "TSKN"
+// Version 1 is a model without blend shapes; version 2 adds their two tables
+// after the version 1 header (TIDE_SKINNED_SHAPED_HEADER_SIZE). A model
+// without shapes is written as version 1, so its bytes are what they were.
 #define TIDE_SKINNED_DATA_VERSION 1u
+#define TIDE_SKINNED_SHAPED_VERSION 2u
 #define TIDE_SKINNED_HEADER_SIZE 120u
+#define TIDE_SKINNED_SHAPED_HEADER_SIZE 136u
 #define TIDE_SKINNED_NODE_SIZE 56u
 #define TIDE_SKINNED_PALETTE_SIZE 68u
 #define TIDE_SKINNED_VERTEX_SIZE 80u
 #define TIDE_SKINNED_INFLUENCE_SIZE 8u
 #define TIDE_SKINNED_CLIP_SIZE 20u
 #define TIDE_SKINNED_CHANNEL_SIZE 24u
+#define TIDE_SKINNED_SHAPE_SIZE 20u
+#define TIDE_SKINNED_SHAPE_DELTA_SIZE 40u
 
 // ---------------------------------------------------------------------------
 // Limits: what a file's bytes can ask of a decode (tide_skinned_data_decode,
@@ -29,8 +36,8 @@
 // counts as one with bytes. tidec's SkinnedMesh and Animations imports are
 // held to the same limits, so what builds also decodes.
 //
-// At these numbers a decode's peak memory is about 500 MiB for a model at
-// every limit at once, plus about 100 bytes for each JSON value and twice the
+// At these numbers a decode's peak memory is about 600 MiB for a model at
+// every limit at once (about 500 MiB without blend shapes), plus about 100 bytes for each JSON value and twice the
 // file's own size; its work is about TIDE_SKINNED_MAX_READS numbers read, plus the file's size.
 
 // A file's bytes, and the decoded model's: the most either is.
@@ -66,6 +73,12 @@
 #define TIDE_SKINNED_MAX_CHANNELS (1u << 18)
 #define TIDE_SKINNED_MAX_KEY_NUMBERS (1u << 24)
 
+// Blend shapes (morph targets: same-named targets of several meshes are one
+// shape) and their deltas, a vertex each that a shape moves (40 bytes each:
+// 80 MiB). A delta is kept only where a target moves its vertex.
+#define TIDE_SKINNED_MAX_SHAPES 4096u
+#define TIDE_SKINNED_MAX_SHAPE_DELTAS (1u << 21)
+
 // Numbers read from accessors over the whole decode: an accessor several
 // parts name is read again for each, so this bounds the work, not the counts
 // a file says once. A model at the vertex, index, influence and key limits
@@ -77,6 +90,7 @@
 // Words 18/19 give the strings' offset/byte size, 20/21 the key data's offset/byte
 // size. Bytes 88..119 are the skeleton's SHA-256 (names, parents and rest
 // transforms only). All table and key offsets are aligned to four bytes.
+// Version 2 adds words 30..33: count/offset pairs for shapes and shape deltas.
 enum {
     TIDE_SKINNED_HAS_NORMALS = 1u,
     TIDE_SKINNED_HAS_UVS = 2u,
@@ -105,6 +119,7 @@ typedef struct tide_skinned_data_view {
     uint32_t clips, clip_at, channels, channel_at;
     uint32_t influences, influence_at;
     uint32_t string_at, string_size, key_at, key_size;
+    uint32_t shapes, shape_at, shape_deltas, shape_delta_at; // None in version 1
     uint8_t skeleton_hash[32];
 } tide_skinned_data_view;
 
@@ -147,6 +162,23 @@ typedef struct tide_skinned_channel_data {
     uint32_t times_at, values_at;
 } tide_skinned_channel_data;
 
+// A blend shape: its exact source name (possibly empty), the file's default
+// weight and its deltas' range. Shapes' ranges follow each other in order and
+// cover the delta table. The model's vertices already have every shape at its
+// default weight; a shape at weight w moves them by (w - weight) * delta.
+typedef struct tide_skinned_shape_data {
+    const char *name;
+    uint32_t name_length, first_delta, deltas;
+    float weight;
+} tide_skinned_shape_data;
+
+// A vertex a shape moves, in model space like the vertex. A shape's deltas
+// name strictly increasing vertices.
+typedef struct tide_skinned_shape_delta_data {
+    uint32_t vertex;
+    float position[3], normal[3], tangent[3];
+} tide_skinned_shape_delta_data;
+
 // Checks the header and all table spans without traversing model data.
 // The getters check their records and referenced spans before reading them.
 bool tide_skinned_data_open(const void *bytes, size_t size, tide_skinned_data_view *out);
@@ -159,8 +191,11 @@ bool tide_skinned_data_clip(const tide_skinned_data_view *view, uint32_t index, 
 bool tide_skinned_data_channel(const tide_skinned_data_view *view, uint32_t index, tide_skinned_channel_data *out);
 bool tide_skinned_data_key(const tide_skinned_data_view *view, const tide_skinned_channel_data *channel,
                            uint32_t index, float *time, float value[4], float in_tangent[4], float out_tangent[4]);
+bool tide_skinned_data_shape(const tide_skinned_data_view *view, uint32_t index, tide_skinned_shape_data *out);
+bool tide_skinned_data_shape_delta(const tide_skinned_data_view *view, uint32_t index, tide_skinned_shape_delta_data *out);
 // Full structural/content validation, including parent and influence bounds,
-// names, channel/key counts, finite numbers and increasing key times.
+// names, channel/key counts, finite numbers and increasing key times, and
+// blend shapes' ranges and increasing vertices.
 bool tide_skinned_data_validate(const void *bytes, size_t size);
 
 // A compile-time .gltf can resolve its external buffers with this callback.

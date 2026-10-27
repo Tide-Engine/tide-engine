@@ -92,6 +92,18 @@ typedef struct skin {
     uint32_t first, count;
 } skin;
 
+// A blend shape as it's read: one model-level shape for every target of one
+// name, and one for each unnamed target of each mesh. Deltas are in model
+// vertex order, as parts are read in that order.
+typedef struct shape_build {
+    const char *name;
+    uint32_t name_length;
+    float weight;
+    int64_t last_mesh; // The mesh whose targets last named it, to refuse a name twice in one mesh
+    tide_skinned_shape_delta_data *deltas;
+    uint32_t delta_count, delta_room;
+} shape_build;
+
 typedef struct decoded {
     gltf *g;
     tide_skinned_node_data *nodes;
@@ -117,6 +129,12 @@ typedef struct decoded {
     float *keys;
     uint32_t key_count, key_room;
     uint32_t flags;
+    shape_build *shapes;
+    uint32_t shape_count, shape_room, delta_total;
+    uint32_t *named; // Named shapes' indices, sorted by name, for one lookup each
+    uint32_t named_count, named_room;
+    uint32_t **mesh_shapes; // For each mesh, its targets' shapes: made the first time the mesh is read
+    uint32_t *mesh_targets, mesh_count;
 } decoded;
 
 // Room for `count` of a table that holds `most` at the most (one of the
@@ -498,14 +516,175 @@ static bool skin_weights(decoded *d, const jnode *attributes, const skin *s, uin
     return ok;
 }
 
-static bool primitive(decoded *d, const jnode *json, uint32_t node, int64_t skin_index)
+static int shape_order(const shape_build *s, const char *name, uint32_t length)
+{
+    const uint32_t common = s->name_length < length ? s->name_length : length;
+    const int order = common ? memcmp(s->name, name, common) : 0;
+    return order ? order : s->name_length < length ? -1 : s->name_length > length ? 1 : 0;
+}
+
+static bool new_shape(decoded *d, const char *name, uint32_t length, float weight, int64_t mesh, uint32_t *index)
+{
+    if (!grow(d->g->r, (void **)&d->shapes, &d->shape_room, (uint64_t)d->shape_count + 1u, sizeof *d->shapes,
+              LIMIT_OF(TIDE_SKINNED_MAX_SHAPES), "blend shapes (morph targets of different names)")) return false;
+    *index = d->shape_count++;
+    d->shapes[*index] = (shape_build){.name = name, .name_length = length, .weight = weight, .last_mesh = mesh};
+    return true;
+}
+
+// The model-level shapes of a mesh's targets, by target: same-named targets
+// of every mesh are one shape, whose default weight they must agree on. An
+// unnamed target is a shape of its own, the same one for every part and every
+// node of its mesh.
+static bool mesh_shapes(decoded *d, const jnode *mesh, int64_t mesh_index, uint32_t targets, const uint32_t **out)
+{
+    gltf *g = d->g;
+    if (!d->mesh_shapes) {
+        d->mesh_count = jcount(jget(g->root, "meshes"));
+        d->mesh_shapes = zeroed(d->mesh_count, sizeof *d->mesh_shapes);
+        d->mesh_targets = zeroed(d->mesh_count, sizeof *d->mesh_targets);
+    }
+    if (mesh_index < 0 || mesh_index >= d->mesh_count) return fail(g->r, NULL, "has morph targets on a mesh it hasn't got");
+    if (d->mesh_shapes[mesh_index]) {
+        *out = d->mesh_shapes[mesh_index];
+        return d->mesh_targets[mesh_index] == targets
+            || fail(g->r, NULL, "has primitives of one mesh with different numbers of morph targets");
+    }
+    if (targets > TIDE_SKINNED_MAX_SHAPES) return PAST_LIMIT(g->r, TIDE_SKINNED_MAX_SHAPES, "morph targets in a mesh", targets);
+    const jnode *defaults = jget(mesh, "weights");
+    if (defaults && jcount(defaults) != targets) return fail(g->r, NULL, "has a mesh with morph target weights of another count than its targets");
+    float *weights = zeroed(targets, sizeof *weights);
+    bool ok = !defaults || json_floats(g->r, defaults, targets, weights, "morph target weight");
+    const jnode *names = jget(jget(mesh, "extras"), "targetNames");
+    uint32_t *shapes = zeroed(targets, sizeof *shapes);
+    for (uint32_t k = 0; ok && k < targets; k++) {
+        const jnode *named = jitem(names, k);
+        const char *name = named && named->kind == J_STRING ? named->text : "";
+        const uint32_t length = named && named->kind == J_STRING ? named->length : 0u;
+        if (!length) {
+            ok = new_shape(d, "", 0u, weights[k], mesh_index, shapes + k);
+            continue;
+        }
+        uint32_t low = 0, high = d->named_count;
+        while (low < high) {
+            const uint32_t mid = low + (high - low) / 2u;
+            if (shape_order(d->shapes + d->named[mid], name, length) < 0) low = mid + 1u;
+            else high = mid;
+        }
+        if (low < d->named_count && !shape_order(d->shapes + d->named[low], name, length)) {
+            shape_build *found = d->shapes + d->named[low];
+            if (found->last_mesh == mesh_index) {
+                ok = fail(g->r, "give each of a mesh's morph targets its own name", "has two morph targets named '%.60s' in one mesh", name);
+            } else if (found->weight != weights[k]) {
+                ok = fail(g->r, "give the shape the same default weight on every mesh", "has morph targets named '%.60s' with different default weights", name);
+            }
+            found->last_mesh = mesh_index;
+            shapes[k] = d->named[low];
+            continue;
+        }
+        ok = new_shape(d, name, length, weights[k], mesh_index, shapes + k)
+          && grow(g->r, (void **)&d->named, &d->named_room, (uint64_t)d->named_count + 1u, sizeof *d->named,
+                  LIMIT_OF(TIDE_SKINNED_MAX_SHAPES), "blend shapes (morph targets of different names)");
+        if (!ok) break;
+        memmove(d->named + low + 1u, d->named + low, (size_t)(d->named_count - low) * sizeof *d->named);
+        d->named[low] = shapes[k];
+        d->named_count++;
+    }
+    free(weights);
+    if (!ok) {
+        free(shapes);
+        return false;
+    }
+    d->mesh_shapes[mesh_index] = shapes;
+    d->mesh_targets[mesh_index] = targets;
+    *out = shapes;
+    return true;
+}
+
+static bool nonzero3(const float *v)
+{
+    return v && (v[0] != 0.0f || v[1] != 0.0f || v[2] != 0.0f);
+}
+
+// One morph target of a part. Its POSITION, NORMAL and TANGENT deltas are
+// reflected in x as the part's own values are; the file's default weight is
+// added into the part's vertices (in target order), and each vertex it moves
+// becomes a delta of its shape. A flat part, whose normals the importer makes,
+// has a vertex per triangle corner (`sources` says which of the part's each
+// copies), and only its positions follow the shape.
+static bool morph_target(decoded *d, const jnode *target, uint32_t shape, tide_skinned_vertex_data *vertices, uint32_t count,
+                         const uint32_t *sources, uint32_t made, bool has_normal, bool has_tangent)
+{
+    gltf *g = d->g;
+    shape_build *s = d->shapes + shape;
+    static const char *const names[] = {"POSITION", "NORMAL", "TANGENT"};
+    static const char *const what[] = {"morph target positions", "morph target normals", "morph target tangents"};
+    float *streams[3] = {NULL, NULL, NULL};
+    bool ok = true;
+    for (uint32_t a = 0; ok && a < 3u; a++) {
+        const jnode *attribute = jget(target, names[a]);
+        if (!attribute || (a == 1u && !has_normal) || (a == 2u && !has_tangent)) continue;
+        streams[a] = zeroed(count, 3u * sizeof(float));
+        ok = floats(g, attribute, 3u, count, streams[a], false, what[a]);
+        for (uint32_t i = 0; ok && i < count; i++) streams[a][(size_t)i * 3u] = 0.0f - streams[a][(size_t)i * 3u];
+    }
+    if (ok && s->weight != 0.0f) {
+        for (uint32_t i = 0; i < count; i++) {
+            float *to[3] = {vertices[i].position, vertices[i].normal, vertices[i].tangent};
+            for (uint32_t a = 0; a < 3u; a++) {
+                if (!streams[a]) continue;
+                for (uint32_t c = 0; c < 3u; c++) to[a][c] = to[a][c] + s->weight * streams[a][(size_t)i * 3u + c];
+            }
+        }
+    }
+    for (uint32_t j = 0; ok && j < made; j++) {
+        const size_t at = (size_t)(sources ? sources[j] : j) * 3u;
+        const float *position = streams[0] ? streams[0] + at : NULL, *normal = streams[1] ? streams[1] + at : NULL;
+        const float *tangent = streams[2] ? streams[2] + at : NULL;
+        if (!nonzero3(position) && !nonzero3(normal) && !nonzero3(tangent)) continue;
+        if (d->delta_total >= TIDE_SKINNED_MAX_SHAPE_DELTAS) {
+            ok = PAST_LIMIT(g->r, TIDE_SKINNED_MAX_SHAPE_DELTAS, "vertices moved by blend shapes (each shape's counted)", UINT64_MAX);
+            break;
+        }
+        ok = grow(g->r, (void **)&s->deltas, &s->delta_room, (uint64_t)s->delta_count + 1u, sizeof *s->deltas,
+                  LIMIT_OF(TIDE_SKINNED_MAX_SHAPE_DELTAS), "vertices moved by blend shapes (each shape's counted)");
+        if (!ok) break;
+        tide_skinned_shape_delta_data *delta = s->deltas + s->delta_count++;
+        *delta = (tide_skinned_shape_delta_data){.vertex = d->vertex_count + j};
+        if (position) memcpy(delta->position, position, sizeof delta->position);
+        if (normal) memcpy(delta->normal, normal, sizeof delta->normal);
+        if (tangent) memcpy(delta->tangent, tangent, sizeof delta->tangent);
+        d->delta_total++;
+    }
+    for (uint32_t a = 0; a < 3u; a++) free(streams[a]);
+    return ok;
+}
+
+// A triangle's corners in a part's own vertices, wound for Tide.
+static void triangle_corners(int64_t mode, const uint32_t *listed, uint64_t t, bool mirrors, uint32_t corners[3])
+{
+    if (mode == 4) corners[0] = listed[t * 3u], corners[1] = listed[t * 3u + 1u], corners[2] = listed[t * 3u + 2u];
+    else if (mode == 5) corners[0] = listed[t], corners[1] = listed[t + 1u + (t & 1u)], corners[2] = listed[t + 2u - (t & 1u)];
+    else corners[0] = listed[0], corners[1] = listed[t + 1u], corners[2] = listed[t + 2u];
+    if (!mirrors) {
+        const uint32_t swap = corners[1];
+        corners[1] = corners[2];
+        corners[2] = swap;
+    }
+}
+
+static bool primitive(decoded *d, const jnode *json, uint32_t node, int64_t skin_index, const jnode *mesh, int64_t mesh_index)
 {
     gltf *g = d->g;
     const int64_t mode = jwhole_or(json, "mode", 4);
     if (mode >= 0 && mode < 4) return true;
     if (mode > 6 || mode < 0) return fail(g->r, NULL, "has a primitive mode glTF doesn't define");
     // Optional Draco data is ignored in favor of its core glTF accessors.
-    if (jcount(jget(json, "targets"))) return fail(g->r, "export the model without morph targets", "has morph targets, which skinned models don't read yet");
+    const jnode *targets = jget(json, "targets");
+    if (targets && targets->kind != J_ARRAY) return fail(g->r, NULL, "has morph targets that aren't an array");
+    const uint32_t target_count = jcount(targets);
+    const uint32_t *shapes = NULL;
+    if (target_count && !mesh_shapes(d, mesh, mesh_index, target_count, &shapes)) return false;
     const jnode *attributes = jget(json, "attributes"), *position = jget(attributes, "POSITION");
     accessor counted;
     if (!accessor_of(g, position, &counted, "positions")) return false;
@@ -592,13 +771,23 @@ static bool primitive(decoded *d, const jnode *json, uint32_t node, int64_t skin
                                 + m[8] * (m[1] * m[6] - m[2] * m[5]);
         mirrors = determinant < 0.0f;
     }
+    if (ok && target_count) {
+        uint32_t *sources = NULL;
+        if (!has_normal) {
+            sources = zeroed((size_t)new_vertices, sizeof *sources);
+            for (uint64_t t = 0; t < triangles; t++) triangle_corners(mode, listed, t, mirrors, sources + t * 3u);
+        }
+        const bool has_tangent = jget(attributes, "TANGENT") != NULL;
+        for (uint32_t k = 0; ok && k < target_count; k++) {
+            if (targets->items[k]->kind != J_OBJECT) ok = fail(g->r, NULL, "has a morph target that isn't an object");
+            else ok = morph_target(d, targets->items[k], shapes[k], vertices, count, sources, (uint32_t)new_vertices, has_normal, has_tangent);
+        }
+        free(sources);
+    }
     if (ok && has_normal) memcpy(d->vertices + d->vertex_count, vertices, (size_t)count * sizeof *vertices);
     for (uint64_t t = 0; ok && t < triangles; t++) {
         uint32_t corners[3];
-        if (mode == 4) corners[0] = listed[t * 3u], corners[1] = listed[t * 3u + 1u], corners[2] = listed[t * 3u + 2u];
-        else if (mode == 5) corners[0] = listed[t], corners[1] = listed[t + 1u + (t & 1u)], corners[2] = listed[t + 2u - (t & 1u)];
-        else corners[0] = listed[0], corners[1] = listed[t + 1u], corners[2] = listed[t + 2u];
-        if (!mirrors) { const uint32_t swap = corners[1]; corners[1] = corners[2]; corners[2] = swap; }
+        triangle_corners(mode, listed, t, mirrors, corners);
         float normal[3] = {0};
         if (!has_normal) {
             const float *a = vertices[corners[0]].position, *b = vertices[corners[1]].position, *c = vertices[corners[2]].position;
@@ -635,7 +824,7 @@ static bool place_geometry(decoded *d, uint32_t source, uint8_t *placed, uint32_
         if (!jcount(primitives)) return fail(d->g->r, NULL, "names a mesh with no primitives");
         const int64_t skin_index = jwhole_or(json, "skin", -1);
         for (uint32_t k = 0; k < jcount(primitives); k++) {
-            if (!primitive(d, primitives->items[k], d->remap[source], skin_index)) return false;
+            if (!primitive(d, primitives->items[k], d->remap[source], skin_index, model, index)) return false;
         }
     }
     const jnode *children = jget(json, "children");
@@ -667,7 +856,7 @@ static bool read_geometry(decoded *d)
         const jnode *meshes = jget(d->g->root, "meshes");
         for (uint32_t i = 0; ok && i < jcount(meshes); i++) {
             const jnode *primitives = jget(meshes->items[i], "primitives");
-            for (uint32_t k = 0; ok && k < jcount(primitives); k++) ok = primitive(d, primitives->items[k], 0u, -1);
+            for (uint32_t k = 0; ok && k < jcount(primitives); k++) ok = primitive(d, primitives->items[k], 0u, -1, meshes->items[i], i);
         }
     }
     free(placed);
@@ -708,11 +897,13 @@ static bool read_animations(decoded *d)
             if (!jwhole(json_node, &source) || source >= d->source_nodes) { ok = fail(d->g->r, NULL, "has an animation targeting a node it hasn't got"); break; }
             const jnode *json_path = jget(target, "path");
             const char *path_name = json_path && json_path->kind == J_STRING ? json_path->text : "";
+            // Animated blend shape weights aren't read: a game sets them with Shaped.
+            if (strcmp(path_name, "weights") == 0) continue;
             const uint32_t path = strcmp(path_name, "translation") == 0 ? TIDE_SKINNED_TRANSLATION
                                 : strcmp(path_name, "rotation") == 0 ? TIDE_SKINNED_ROTATION
                                 : strcmp(path_name, "scale") == 0 ? TIDE_SKINNED_SCALE : UINT32_MAX;
             if (path == UINT32_MAX) {
-                ok = fail(d->g->r, "export the animation without morph-weight channels", "has an unsupported animation target path ('%.40s')", path_name);
+                ok = fail(d->g->r, NULL, "has an unsupported animation target path ('%.40s')", path_name);
                 break;
             }
             const uint32_t node = d->remap[source];
@@ -816,27 +1007,37 @@ static uint32_t put_name(uint8_t *bytes, uint32_t *at, const char *text, uint32_
 
 static bool encode(decoded *d, uint8_t **out, uint32_t *out_size)
 {
-    const uint64_t node_at = TIDE_SKINNED_HEADER_SIZE;
+    // A model with blend shapes is version 2, with their tables; one without
+    // is version 1, the bytes it always was.
+    const bool shaped = d->shape_count != 0u;
+    const uint64_t node_at = shaped ? TIDE_SKINNED_SHAPED_HEADER_SIZE : TIDE_SKINNED_HEADER_SIZE;
     const uint64_t palette_at = node_at + (uint64_t)d->node_count * TIDE_SKINNED_NODE_SIZE;
     const uint64_t vertex_at = palette_at + (uint64_t)d->palette_count * TIDE_SKINNED_PALETTE_SIZE;
     const uint64_t index_at = vertex_at + (uint64_t)d->vertex_count * TIDE_SKINNED_VERTEX_SIZE;
     const uint64_t clip_at = index_at + (uint64_t)d->index_count * 4u;
     const uint64_t channel_at = clip_at + (uint64_t)d->clip_count * TIDE_SKINNED_CLIP_SIZE;
     const uint64_t influence_at = channel_at + (uint64_t)d->channel_count * TIDE_SKINNED_CHANNEL_SIZE;
-    const uint64_t string_at = influence_at + (uint64_t)d->influence_count * TIDE_SKINNED_INFLUENCE_SIZE;
+    const uint64_t shape_at = influence_at + (uint64_t)d->influence_count * TIDE_SKINNED_INFLUENCE_SIZE;
+    const uint64_t delta_at = shape_at + (uint64_t)d->shape_count * TIDE_SKINNED_SHAPE_SIZE;
+    const uint64_t string_at = delta_at + (uint64_t)d->delta_total * TIDE_SKINNED_SHAPE_DELTA_SIZE;
     uint64_t string_size = 0u;
     for (uint32_t i = 0; i < d->node_count; i++) string_size += (uint64_t)d->nodes[i].name_length + 1u;
     for (uint32_t i = 0; i < d->clip_count; i++) string_size += (uint64_t)d->clips[i].name_length + 1u;
+    for (uint32_t i = 0; i < d->shape_count; i++) string_size += (uint64_t)d->shapes[i].name_length + 1u;
     const uint64_t key_at = (string_at + string_size + 3u) & ~(uint64_t)3u;
     const uint64_t size = key_at + (uint64_t)d->key_count * 4u;
     if (size > TIDE_SKINNED_MAX_BYTES) return PAST_LIMIT(d->g->r, TIDE_SKINNED_MAX_BYTES, "bytes of decoded model data", size);
     uint8_t *bytes = zeroed((size_t)size, 1u);
-    const uint32_t header[] = {TIDE_SKINNED_DATA_MAGIC, TIDE_SKINNED_DATA_VERSION, (uint32_t)size, d->flags,
+    const uint32_t header[] = {TIDE_SKINNED_DATA_MAGIC, shaped ? TIDE_SKINNED_SHAPED_VERSION : TIDE_SKINNED_DATA_VERSION, (uint32_t)size, d->flags,
         d->node_count, (uint32_t)node_at, d->palette_count, (uint32_t)palette_at, d->vertex_count, (uint32_t)vertex_at,
         d->index_count, (uint32_t)index_at, d->clip_count, (uint32_t)clip_at, d->channel_count, (uint32_t)channel_at,
         d->influence_count, (uint32_t)influence_at, (uint32_t)string_at, (uint32_t)string_size,
         (uint32_t)key_at, d->key_count * 4u};
     for (uint32_t i = 0; i < sizeof header / sizeof header[0]; i++) put_word(bytes + (size_t)i * 4u, header[i]);
+    if (shaped) {
+        put_word(bytes + 120, d->shape_count), put_word(bytes + 124, (uint32_t)shape_at);
+        put_word(bytes + 128, d->delta_total), put_word(bytes + 132, (uint32_t)delta_at);
+    }
     uint32_t text = (uint32_t)string_at;
     tide_sha256 hash;
     tide_sha256_init(&hash);
@@ -880,6 +1081,20 @@ static bool encode(decoded *d, uint8_t **out, uint32_t *out_size)
         uint8_t *p = bytes + influence_at + (size_t)i * TIDE_SKINNED_INFLUENCE_SIZE;
         put_word(p, d->influences[i].palette), put_number(p + 4, d->influences[i].weight);
     }
+    uint32_t first = 0;
+    for (uint32_t i = 0; i < d->shape_count; i++) {
+        const shape_build *s = d->shapes + i;
+        uint8_t *p = bytes + shape_at + (size_t)i * TIDE_SKINNED_SHAPE_SIZE;
+        put_word(p, put_name(bytes, &text, s->name, s->name_length)), put_word(p + 4, s->name_length);
+        put_word(p + 8, first), put_word(p + 12, s->delta_count), put_number(p + 16, s->weight);
+        for (uint32_t k = 0; k < s->delta_count; k++) {
+            const tide_skinned_shape_delta_data *delta = s->deltas + k;
+            uint8_t *q = bytes + delta_at + (size_t)(first + k) * TIDE_SKINNED_SHAPE_DELTA_SIZE;
+            put_word(q, delta->vertex), put_numbers(q + 4, delta->position, 3u);
+            put_numbers(q + 16, delta->normal, 3u), put_numbers(q + 28, delta->tangent, 3u);
+        }
+        first += s->delta_count;
+    }
     put_numbers(bytes + key_at, d->keys, d->key_count);
     if (!tide_skinned_data_validate(bytes, (size_t)size)) {
         free(bytes);
@@ -894,6 +1109,9 @@ static void decoded_free(decoded *d)
 {
     free(d->nodes), free(d->parents), free(d->remap), free(d->visiting), free(d->world), free(d->skins);
     free(d->palettes), free(d->vertices), free(d->indices), free(d->influences), free(d->clips), free(d->channels), free(d->keys);
+    for (uint32_t i = 0; i < d->shape_count; i++) free(d->shapes[i].deltas);
+    for (uint32_t i = 0; i < d->mesh_count; i++) free(d->mesh_shapes[i]);
+    free(d->shapes), free(d->named), free(d->mesh_shapes), free(d->mesh_targets);
 }
 
 static bool decode_model(const void *input, size_t size, bool runtime, tide_skinned_side_fn side, void *user,

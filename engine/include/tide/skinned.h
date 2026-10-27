@@ -29,6 +29,26 @@ tide_str tide_skinned_bone_name(tide_list data, int32_t bone);
 tide_str tide_skinned_animation_name(tide_list data, int32_t animation);
 float tide_skinned_animation_duration(tide_list data, int32_t animation);
 
+// Blend shapes, in the model's order: exact source names (empty for an
+// unnamed one, which no lookup finds) and the file's default weights, which
+// the model's vertices already have. Invalid data has none.
+int32_t tide_skinned_shape_count(tide_list data);
+int32_t tide_skinned_find_shape(tide_list data, tide_str name);
+tide_str tide_skinned_shape_name(tide_list data, int32_t shape);
+float tide_skinned_shape_weight(tide_list data, int32_t shape);
+
+// The model's typed vertices with blend shape weights applied: `weights[i]` is
+// shape i's weight; a missing or non-finite one is the shape's default. Each
+// shape whose weight differs from its default adds (weight - default) * delta
+// to the float3 at position_at, normal_at and tangent_at (-1: the vertex has
+// none) of each vertex it moves, in shape order with plain float operations;
+// an addition that would leave float range leaves that number as it was.
+// Other bytes are copied. The result is a copy in the scratch area, or
+// `vertices` itself when nothing moves, the data is invalid, or the counts or
+// field places don't fit the model.
+tide_list tide_skinned_shaped(tide_list data, tide_list weights, tide_list vertices, uint32_t vertex_size,
+                              int32_t position_at, int32_t normal_at, int32_t tangent_at);
+
 // Fill an owned pose list, reusing its storage. Each sample begins with the
 // authored rest transforms, so absent channels never carry an earlier clip.
 // Seconds are clamped to the clip's endpoints; callers choose looping before

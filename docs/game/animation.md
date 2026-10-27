@@ -97,7 +97,48 @@ A crowd seen from afar needs fewer triangles a character: `[LOD] asset SkinnedMe
 
 An FBX declaration works the same way: `asset SkinnedMesh<Vertex3> hero = "art/hero.fbx";`. Import happens when the game builds, without Autodesk software. FBX axes and units become Y-up meters in Tide's coordinate system. Its animation stacks become clips beginning at zero, with their authored duration. Nonlinear transform curves are resampled at 60 samples per second into LINEAR channels, retaining source keys within the clip and stepped changes. Geometry and inheritance transforms may add unnamed helper bones. The packed model uses the same format and sampling APIs as a glTF import.
 
-Export polygon meshes with linear or rigid skinning. Skinned FBX imports reject dual-quaternion skinning, several skin deformers on one mesh, morph targets and external vertex caches. Static `Mesh<V>` imports ignore those deformations and use the rest geometry.
+Export polygon meshes with linear or rigid skinning. Skinned FBX imports reject dual-quaternion skinning, several skin deformers on one mesh and external vertex caches. Blend shapes (morph targets) are kept: see [Blend shapes](#blend-shapes). Static `Mesh<V>` imports ignore those deformations and use the rest geometry.
+
+## Blend shapes
+
+A skinned model keeps its file's blend shapes (glTF morph targets, FBX blend shapes): body shapes such as `defaultHeavy`, or facial ones such as `jawOpen`. `model.Shaped(weights)` returns the model with those weights applied, computed on the CPU, and draws, samples and stores like the model itself:
+
+```csharp
+asset SkinnedMesh<Vertex3> torso = "art/torso.fbx";
+
+component Character
+{
+    float heavy;
+    float bakedHeavy = -1;
+    SkinnedMesh<Vertex3> body;
+}
+
+system Shape(mut Character character)
+{
+    if (character.heavy == character.bakedHeavy) return;
+    mut List<float> weights = [];
+    for (int i = 0; i < torso.blendShapes.count; i++)
+    {
+        torso.blendShapes.TryGetAt(i, out var shape);
+        weights.Add(shape.name == "defaultHeavy" ? character.heavy : shape.weight);
+    }
+    character.body = torso.Shaped(weights);
+    character.bakedHeavy = character.heavy;
+}
+
+view DrawCharacter(Character character)
+{
+    Draw.SkinnedMesh(character.body, float4x4.identity);
+}
+```
+
+`model.blendShapes` lists the model's shapes in order. `count`, `TryGetAt(index, out BlendShape result)` and `TryGetByName(name, out BlendShape result)` work as the animation catalog's do; a missing, empty or unnamed name returns `false` and assigns `default`. A `BlendShape` has its original `name` and `weight`, the file's default weight, which the model's vertices already have.
+
+Weight `i` of `Shaped` is shape `i`'s weight. 0 to 1 is the authored range, and other values extrapolate. A missing weight, or one that isn't a finite number, keeps the shape's default, so `model.Shaped([])` is the model as imported. Each shape whose weight differs from its default moves the vertex fields the file fills by name, `position`, `normal` and `tangent`, by its delta times the difference; other fields, such as `uv`, `color` and fields with game defaults, are copied unchanged, as are the skeleton, animations, indices and levels of detail. Shapes apply in catalog order with plain float arithmetic, so the result is the same on every machine and can be used in match code. Normals and tangents are not renormalized.
+
+Bake a character's shapes once, when its body changes, and keep the shaped model in a field: `Shaped` copies the vertices, and drawing a shaped model sends its vertices to the GPU like other models made while playing. Shapes are not animated on the GPU, and imported shape-weight animation is not read.
+
+In a glTF file, targets with the same name in `extras.targetNames` are one shape across all of the file's meshes, and must have the same default weight in `weights`; an unnamed target is a shape of its own, found with `TryGetAt`. POSITION, NORMAL and TANGENT targets are read, including sparse accessors. In an FBX file, each blend shape channel is a shape named after its target shape (`smile` in a channel `Blends.smile`), with the channel's default percentage as its weight. Export each channel as one target at full weight: a channel with in-between shapes is refused. The importer's own flat normals, made for a part exported without normals, don't follow shapes.
 
 ## Checked names and dynamic lookup
 
@@ -251,11 +292,13 @@ Bytes can come from anywhere, so a small file can't ask for much. A model past a
 | Vertex influences (joint/weight sets count four a vertex each) | 8,388,608 |
 | Animation channels | 262,144 |
 | Animation key numbers (times and values) | 16,777,216 |
+| Blend shapes (morph targets of different names) | 4,096 |
+| Vertices moved by blend shapes, each shape's counted | 2,097,152 |
 | Numbers read from accessors, counted again for each part that names one | 67,108,864 |
 | JSON values in the description | 4,194,304 |
 | The file, and the decoded model | 512 MiB each |
 
-An accessor with no buffer view is zeros and takes no bytes, but counts as much as one with them. A model at every limit at once takes about 500 MiB to decode. These limits are the engine's, the same for every game, so every machine in a match refuses the same files; `SkinnedMesh` and `Animations` assets are held to them too. The numbers are provisional.
+An accessor with no buffer view is zeros and takes no bytes, but counts as much as one with them. A model at every limit at once takes about 600 MiB to decode. These limits are the engine's, the same for every game, so every machine in a match refuses the same files; `SkinnedMesh` and `Animations` assets are held to them too. The numbers are provisional.
 
 A model refused for a limit says so on the log of each machine that decoded it, naming the limit, as `tide: SkinnedMesh.Decode refused a model: it has 2,000,000 vertices, more than the 1,048,576 a decoded model holds (TIDE_SKINNED_MAX_VERTICES)`. A build-time asset past one is an error that says the same.
 
@@ -263,4 +306,4 @@ Get bytes with [files or Web.Fetch](./files.md), separately from decoding. Files
 
 Decoded vertices use your vertex struct's defaults too. Assets those defaults read have the same compatibility requirement even when the game declares no imported skinned model.
 
-glTF assets support multiple skins, all supplied consecutive joint/weight sets, animated non-joint parents, and STEP, LINEAR and CUBICSPLINE channels. FBX imports polygon meshes, linear skin weights and baked node transforms; textures remain separate assets. Morph targets, retargeting, IK, animation events and an automatic playback controller are not implemented.
+glTF assets support multiple skins, all supplied consecutive joint/weight sets, animated non-joint parents, and STEP, LINEAR and CUBICSPLINE channels. FBX imports polygon meshes, linear skin weights, blend shapes and baked node transforms; textures remain separate assets. Animated or GPU blend shapes, retargeting, IK, animation events and an automatic playback controller are not implemented.

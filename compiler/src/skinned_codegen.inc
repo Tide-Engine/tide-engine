@@ -24,6 +24,43 @@ static void gen_skin_catalog(gen *g, sb *o, expr *object)
 static void gen_skin_expr(gen *g, sb *o, const expr *e)
 {
     const skinned_operation op = (skinned_operation)e->skin_operation;
+    if (op == SKIN_OP_BLEND_SHAPES) {
+        sb_printf(o, "((%s){.data = ", c_type(e->type));
+        gen_skin_data(g, o, e->object);
+        sb_put(o, "})");
+        return;
+    }
+    if (op == SKIN_OP_BLEND_SHAPE_COUNT) {
+        sb_put(o, "tide_skinned_shape_count(");
+        gen_skin_data(g, o, e->object);
+        sb_put(o, ")");
+        return;
+    }
+    if (op == SKIN_OP_BLEND_SHAPE_NAME || op == SKIN_OP_BLEND_SHAPE_WEIGHT) {
+        sb_printf(o, "tide_skin_blend_shape_%s(", op == SKIN_OP_BLEND_SHAPE_NAME ? "name" : "weight");
+        gen_expr(g, o, e->object);
+        sb_put(o, ")");
+        return;
+    }
+    if (op == SKIN_OP_TRY_GET_BLEND_SHAPE_BY_NAME || op == SKIN_OP_TRY_GET_BLEND_SHAPE_AT) {
+        sb_printf(o, "tide_skin_blend_shape_try_%s(", op == SKIN_OP_TRY_GET_BLEND_SHAPE_BY_NAME ? "find" : "at");
+        gen_skin_data(g, o, e->object);
+        sb_put(o, ", ");
+        if (op == SKIN_OP_TRY_GET_BLEND_SHAPE_BY_NAME) gen_expr(g, o, e->args.items[0]);
+        else gen_as(g, o, e->args.items[0], (type){TY_INT, NULL});
+        sb_put(o, ", &(");
+        gen_expr(g, o, e->args.items[1]);
+        sb_printf(o, "), %s)", place_where(g, e->args.items[1]));
+        return;
+    }
+    if (op == SKIN_OP_SHAPED) {
+        sb_printf(o, "tide_skin_%s_shaped(", type_cname(e->object->type.decl));
+        gen_expr(g, o, e->object);
+        sb_put(o, ", ");
+        gen_expr(g, o, e->args.items[0]);
+        sb_put(o, ")");
+        return;
+    }
     if (op == SKIN_OP_ANIMATIONS || op == SKIN_OP_SKELETON || op == SKIN_OP_BONES) {
         sb_printf(o, "((%s){.data = ", c_type(e->type));
         if (op == SKIN_OP_ANIMATIONS) sb_put(o, "tide_skin_catalog_list(");

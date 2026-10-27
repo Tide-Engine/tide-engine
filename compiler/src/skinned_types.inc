@@ -92,8 +92,26 @@ static void skinned_builtins(program *prog)
     vec_push(prog->decls, prog->playback);
 }
 
+// BlendShape and the catalog of them, made the first time a program uses
+// blend shapes: a skinned program that doesn't keeps its header and its C.
+static void skinned_blend_shapes(program *prog)
+{
+    skinned_builtins(prog);
+    if (prog->blend_shape) return;
+    prog->blend_shape = skinned_struct(prog, "BlendShape", SKIN_BLEND_SHAPE);
+    skinned_data_field(prog, prog->blend_shape);
+    vec_push(prog->blend_shape->fields, skinned_field("index", T_INT_, true));
+    prog->blend_shapes = skinned_struct(prog, "BlendShapes", SKIN_BLEND_SHAPES);
+    skinned_data_field(prog, prog->blend_shapes);
+}
+
 static bool skinned_type_named(program *prog, const str name, type *out)
 {
+    if (str_eq_c(name, "BlendShape")) {
+        skinned_blend_shapes(prog);
+        *out = decl_type(prog->blend_shape);
+        return true;
+    }
     static const char *const names[] = {"Animation", "Bone", "Pose", "Skeleton", "BoneTransform", "Playback", "AnimationCatalog"};
     for (size_t i = 0; i < sizeof names / sizeof names[0]; i++) {
         if (!str_eq_c(name, names[i])) continue;

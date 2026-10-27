@@ -14,7 +14,7 @@
 #include "skinned_cache.h"
 
 _Static_assert(sizeof(tide_bone_transform) == 40u, "bone transforms have ten float words");
-_Static_assert(TIDE_LIST_CHUNK >= TIDE_SKINNED_HEADER_SIZE, "a byte list's first chunk holds the model header");
+_Static_assert(TIDE_LIST_CHUNK >= TIDE_SKINNED_SHAPED_HEADER_SIZE, "a byte list's first chunk holds the model header");
 
 typedef struct model_seen {
     tide_skinned_data_view view;
@@ -204,21 +204,28 @@ int32_t tide_skinned_animation_count(const tide_list data)
     return count;
 }
 
-static int32_t find_name(const tide_list data, const tide_str name, const bool animation)
+enum { NAMED_BONE, NAMED_ANIMATION, NAMED_SHAPE };
+
+static int32_t find_name(const tide_list data, const tide_str name, const int kind)
 {
     if (!name.ptr || name.bytes <= 0) return -1;
     model_seen m;
     if (!open_model(data, &m)) return -1;
     int32_t found = -1;
-    const uint32_t count = animation ? m.view.clips : m.view.nodes;
+    const uint32_t count = kind == NAMED_ANIMATION ? m.view.clips : kind == NAMED_SHAPE ? m.view.shapes : m.view.nodes;
     for (uint32_t i = 0; i < count; i++) {
         const char *text;
         uint32_t length;
-        if (animation) {
+        if (kind == NAMED_ANIMATION) {
             tide_skinned_clip_data c;
             if (!tide_skinned_data_clip(&m.view, i, &c)) continue;
             text = c.name;
             length = c.name_length;
+        } else if (kind == NAMED_SHAPE) {
+            tide_skinned_shape_data s;
+            if (!tide_skinned_data_shape(&m.view, i, &s)) continue;
+            text = s.name;
+            length = s.name_length;
         } else {
             tide_skinned_node_data n;
             if (!tide_skinned_data_node(&m.view, i, &n)) continue;
@@ -233,19 +240,23 @@ static int32_t find_name(const tide_list data, const tide_str name, const bool a
     return found;
 }
 
-int32_t tide_skinned_find_bone(const tide_list data, const tide_str name) { return find_name(data, name, false); }
-int32_t tide_skinned_find_animation(const tide_list data, const tide_str name) { return find_name(data, name, true); }
+int32_t tide_skinned_find_bone(const tide_list data, const tide_str name) { return find_name(data, name, NAMED_BONE); }
+int32_t tide_skinned_find_animation(const tide_list data, const tide_str name) { return find_name(data, name, NAMED_ANIMATION); }
+int32_t tide_skinned_find_shape(const tide_list data, const tide_str name) { return find_name(data, name, NAMED_SHAPE); }
 
-static tide_str read_name(const tide_list data, const int32_t index, const bool animation)
+static tide_str read_name(const tide_list data, const int32_t index, const int kind)
 {
     if (index < 0) return TIDE_STR_EMPTY;
     model_seen m;
     if (!open_model(data, &m)) return TIDE_STR_EMPTY;
     const char *text = NULL;
     uint32_t length = 0;
-    if (animation) {
+    if (kind == NAMED_ANIMATION) {
         tide_skinned_clip_data c;
         if (tide_skinned_data_clip(&m.view, (uint32_t)index, &c)) { text = c.name; length = c.name_length; }
+    } else if (kind == NAMED_SHAPE) {
+        tide_skinned_shape_data s;
+        if (tide_skinned_data_shape(&m.view, (uint32_t)index, &s)) { text = s.name; length = s.name_length; }
     } else {
         tide_skinned_node_data n;
         if (tide_skinned_data_node(&m.view, (uint32_t)index, &n)) { text = n.name; length = n.name_length; }
@@ -261,8 +272,74 @@ static tide_str read_name(const tide_list data, const int32_t index, const bool 
     return out;
 }
 
-tide_str tide_skinned_bone_name(const tide_list data, const int32_t bone) { return read_name(data, bone, false); }
-tide_str tide_skinned_animation_name(const tide_list data, const int32_t animation) { return read_name(data, animation, true); }
+tide_str tide_skinned_bone_name(const tide_list data, const int32_t bone) { return read_name(data, bone, NAMED_BONE); }
+tide_str tide_skinned_animation_name(const tide_list data, const int32_t animation) { return read_name(data, animation, NAMED_ANIMATION); }
+tide_str tide_skinned_shape_name(const tide_list data, const int32_t shape) { return read_name(data, shape, NAMED_SHAPE); }
+
+int32_t tide_skinned_shape_count(const tide_list data)
+{
+    model_seen m;
+    if (!open_model(data, &m)) return 0;
+    const int32_t count = m.view.shapes > INT32_MAX ? INT32_MAX : (int32_t)m.view.shapes;
+    close_model(&m);
+    return count;
+}
+
+float tide_skinned_shape_weight(const tide_list data, const int32_t shape)
+{
+    if (shape < 0) return 0.0f;
+    model_seen m;
+    if (!open_model(data, &m)) return 0.0f;
+    tide_skinned_shape_data s;
+    const float weight = tide_skinned_data_shape(&m.view, (uint32_t)shape, &s) ? s.weight : 0.0f;
+    close_model(&m);
+    return weight;
+}
+
+tide_list tide_skinned_shaped(const tide_list data, const tide_list weights, const tide_list vertices, const uint32_t vertex_size,
+                              const int32_t position_at, const int32_t normal_at, const int32_t tangent_at)
+{
+    model_seen m;
+    if (!open_model(data, &m)) return vertices;
+    const int32_t places[3] = {position_at, normal_at, tangent_at};
+    bool fits = vertex_size != 0u && tide_list_count(vertices) == (int32_t)m.view.vertices && m.view.vertices <= INT32_MAX;
+    for (uint32_t a = 0; a < 3u; a++) fits = fits && (places[a] < 0 || (uint64_t)places[a] + 12u <= vertex_size);
+    const int32_t given = tide_list_count(weights);
+    tide_list out = vertices;
+    bool copied = false;
+    for (uint32_t i = 0; fits && i < m.view.shapes; i++) {
+        tide_skinned_shape_data shape;
+        if (!tide_skinned_data_shape(&m.view, i, &shape)) break;
+        const float *weight = (int64_t)i < given ? tide_list_at(weights, (int32_t)i, sizeof(float)) : NULL;
+        const float by = weight && tide_is_finite_f(*weight) ? *weight - shape.weight : 0.0f;
+        if (by == 0.0f || !tide_is_finite_f(by)) continue;
+        for (uint32_t k = 0; k < shape.deltas; k++) {
+            tide_skinned_shape_delta_data delta;
+            if (!tide_skinned_data_shape_delta(&m.view, shape.first_delta + k, &delta)) continue;
+            if (!copied) {
+                // A copy of an asset's or the pack's vertices shares them until it's prepared
+                out = tide_list_copy(vertices, vertex_size);
+                tide_list_prepare(&out, vertex_size, TIDE_IN_SCRATCH);
+                copied = true;
+            }
+            uint8_t *vertex = tide_list_at_mut(out, (int32_t)delta.vertex, vertex_size);
+            if (!vertex) continue;
+            const float *moves[3] = {delta.position, delta.normal, delta.tangent};
+            for (uint32_t a = 0; a < 3u; a++) {
+                if (places[a] < 0) continue;
+                float value[3];
+                memcpy(value, vertex + places[a], sizeof value);
+                for (uint32_t c = 0; c < 3u; c++) {
+                    const float moved = value[c] + by * moves[a][c];
+                    if (tide_is_finite_f(moved)) value[c] = moved;
+                }
+                memcpy(vertex + places[a], value, sizeof value);
+            }
+        }
+    }
+    close_model(&m);
+    return out;
+}
 
 float tide_skinned_animation_duration(const tide_list data, const int32_t animation)
 {

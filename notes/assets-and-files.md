@@ -1,5 +1,124 @@
 # Assets and local files
 
+## Blend shapes: imported and baked on the CPU (2026-10-27)
+
+The owner chose "Import + bake" (verbatim in `docs/spec.md`, Skinned meshes,
+Decided) for an internal character tool built from Synty's Sidekick packs,
+whose parts are skinned FBX with body shapes (`masculineFeminine`,
+`defaultHeavy`...) and ~50 ARKit facial shapes. GPU per-draw weights were not
+chosen. This supersedes the "morph targets are refused" statements in the
+skinned entries below; static `Mesh<V>` imports still take rest geometry.
+
+**Canonical format.** `tide/skinned_data.h` version 2 adds two tables after a
+136-byte header (words 30..33): shapes (20 bytes: name offset/length in the
+string section, first delta, delta count, default weight) and deltas (40
+bytes: vertex, position, normal and tangent xyz). A model without shapes is
+still written as version 1 with its 120-byte header, byte for byte what it
+was: no existing pack, Simulation ID, pinned hash or hand-built test blob
+changed. Version 2 requires at least one shape, so each model has one form.
+`tide_skinned_data_shape`/`_shape_delta` check their records;
+`tide_skinned_data_validate` also requires shapes' ranges to follow each
+other in order and cover the delta table, and each shape's vertices to
+increase strictly. The vertices are the authored geometry with every shape at
+its file default (so a nonzero glTF `weights` or FBX DeformPercent is the
+model's rest); the skeleton SHA-256 is unchanged. The chunk-capacity
+assertion in `skinned.c` now covers the 136-byte header, so owned byte lists
+still hold the whole header in their first run.
+
+**Decoder** (`skinned_decode.c`, shared by build-time imports and runtime
+`Decode`). A primitive's `targets` (POSITION, NORMAL, TANGENT; dense or
+sparse accessors through the existing `floats`, counted against
+`TIDE_SKINNED_MAX_READS`) are read one target at a time, x-reflected like the
+part's own values, added into the part's vertices at the default weight in
+target order, and kept as deltas only where a vertex moves. A mesh's targets
+map to model-level shapes once per mesh (`mesh_shapes`): a name from
+`extras.targetNames` is one shape across every mesh (a sorted name index, one
+binary search each); same-named targets must share their `weights` default;
+an unnamed target is one shape for its mesh, the same for every part and every
+node placing it. Refused: a name twice in one mesh, differing defaults, a
+`weights` count unlike the targets', parts of one mesh with different target
+counts, a target that isn't an object, wrong accessor counts. NORMAL targets
+are ignored on a part without normals (the importer's own flat normals don't
+follow shapes; such a part's deltas are copied to each triangle-corner vertex
+of their source) and TANGENT targets on a part without tangents. Animation
+channels targeting `weights` are now skipped instead of refusing the file.
+New limits, one `#define` each: `TIDE_SKINNED_MAX_SHAPES` (4,096) and
+`TIDE_SKINNED_MAX_SHAPE_DELTAS` (2,097,152, 80 MiB); the "every limit" peak is
+now about 600 MiB by arithmetic, not remeasured.
+
+**FBX** (`fbx_files.c`). Skinned conversion no longer refuses blend
+deformers. Each channel of every blend deformer is a glTF target of every
+material part: POSITION from the shape's offsets at each part vertex's FBX
+vertex (`ufbx_get_blend_shape_offset_index`), NORMAL when the mesh has normals
+and the shape normal offsets, both as sparse accessors over zeros (no view and
+no sparse block where a shape moves nothing in that part). The mesh says
+`weights` (the channel's DeformPercent / 100) and `extras.targetNames`: the
+keyframe shape's name, else the channel's. That is `masculineFeminine` for a
+Maya-style channel `TORSBlends.masculineFeminine`, so one name drives every
+part. A channel with more than one keyframe, or one whose target weight isn't
+100%, is refused before any output with export guidance (Tide's shapes are
+linear). Blender's FullWeights-less shapes and offset weights are not applied
+specially. Static conversion emits no targets, so static FBX packs are
+byte-identical.
+
+**Language** (`skinned_types.inc`, `skinned_ops.inc`, `skinned_codegen.inc`,
+`skinned_adapters.inc`, `skinned_language.h`). `model.blendShapes` (catalog
+type `BlendShapes`, `count`/`TryGetAt`/`TryGetByName`, no checked dot members:
+enumeration and exact-name lookup only, which keeps editor metadata reading
+unchanged), `BlendShape` (hidden data and index; `name`, `weight`), and
+`model.Shaped(List<float>)` returning the receiver's own type, so inferred
+and contracted catalogs survive. The names: `blendShapes`/`BlendShape` follow
+Unity's term and avoid claiming a bare `Shape`, a common game type name;
+`Shaped` is the owner's example. Both types are made the first time a program
+names `blendShapes`, `Shaped` or `BlendShape`, so other skinned programs keep
+their generated C and header. The generated `tide_skin_<model>_shaped` passes
+`offsetof` of the vertex struct's `position`, `normal` and `tangent` fields
+(the static importer's fill rules) to `tide_skinned_shaped`; Decode results
+and stored models work alike. A shaped model keeps the asset's `data` and
+`indices` handles, so pack proofs, palette memoization, atlas batching and LOD
+levels (found by the index list) still apply; only `vertices` is a new list,
+which the draw list content-hashes per draw like any vertex list made while
+playing (an upload when it changes, a hash per draw of a stored model).
+
+**Runtime** (`skinned.c`): `tide_skinned_shape_count`, `_find_shape`,
+`_shape_name`, `_shape_weight` and `tide_skinned_shaped`. Shaped returns
+`vertices` itself when no weight differs from its default (missing and
+non-finite weights are defaults), when the data is invalid, or when the counts
+or field places don't fit; otherwise a scratch copy, prepared with
+`tide_list_prepare` so a copy of pack vertices is its own before writing
+(found by the e2e: an unprepared copy of pack data refuses `_at_mut`). Each
+shape in order adds `(w - default) * delta` per component with basic IEEE
+operations under the build's no-contraction flags; an addition that would
+leave float range leaves that component, so huge weights can't make
+infinities or NaN in match state. Normals aren't renormalized.
+
+**Tests.** `tests/test_skinned_shapes.c` (6): two meshes sharing a named
+shape plus unnamed and sparse targets, exact deltas, defaults baked into
+vertices, repeatable bytes; a shapeless model staying version 1; a flat part's
+corner deltas and a skipped weights channel; nine refusals including the
+4,097-target limit; every cut length and nine spoiled fields of the shape
+tables; baking (defaults/empty/NaN return the same list, mismatched counts and
+places, exact results against a reference, base unchanged, repeat bits,
+positions only, overflow kept). `tidec_fbx_files`:
+`fbx_blend_shapes_become_shapes_and_in_betweens_are_refused` (ASCII and
+binary fixtures from `fbx_make.mjs` in `e2e/fbx/shapes/`, byte-identical
+canonical data, shape names, defaults, deltas, static rest geometry, the
+in-between refusal). `tidec_e2e_blend_shapes` (FBX asset and a GLB from
+`blend_shapes_make.mjs` decoded at runtime: lookup, Shaped values checked
+exactly, extrapolation, defaults, a helper, a stored shaped model across
+ticks, snapshots and world packing, and both views' recorded vertices).
+Three `tidec_error_blend_shapes_*` diagnostics and
+`lsp_skinned_blend_shapes_complete_hover_and_help`. A Blender 4.4 export of a
+skinned cube with shape keys (not committed) decodes from FBX and GLB to the
+same shape names, defaults and delta counts.
+
+**Gaps.** No GPU morphing or shape-weight animation; no checked dot members
+for shapes; FBX in-between shapes and Blender's per-vertex offset weights
+aren't read; flat-shaded parts' generated normals don't follow shapes;
+normals aren't renormalized after baking; Synty's own files were not
+imported here (licensed; the owner's tool will be the first real use).
+
+
 ## Prehashed release asset loading (2026-10-27)
 
 Owner-approved tide_pack_find_id(name[32], kind) and

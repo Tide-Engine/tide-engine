@@ -1,0 +1,3 @@
+// expect: BlendShapes has no member 'smile'
+// expect: blend shapes are found by name with TryGetByName(name, out result), or by index with TryGetAt(index, out result)
+float Read(SkinnedMesh<Vertex3> model) { return model.blendShapes.smile.weight; }

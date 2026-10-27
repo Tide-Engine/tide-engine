@@ -254,6 +254,64 @@ TIDE_TEST(fbx_skin_preserves_five_influences_inverse_binds_rest_and_clip)
     free(b);
 }
 
+// Blend channels become the model's shapes, named after their target shape,
+// with the channel's DeformPercent as the default the vertices already have.
+TIDE_TEST(fbx_blend_shapes_become_shapes_and_in_betweens_are_refused)
+{
+    size_t a_size, b_size;
+    uint8_t *a = fixture("shapes/shapes_ascii.fbx", &a_size), *b = fixture("shapes/shapes_binary.fbx", &b_size);
+    TIDE_REQUIRE(a && b);
+    uint8_t *ascii = NULL, *binary = NULL;
+    uint32_t ascii_size = 0, binary_size = 0;
+    TIDE_REQUIRE(decode(a, a_size, &ascii, &ascii_size));
+    TIDE_REQUIRE(decode(b, b_size, &binary, &binary_size));
+    TIDE_CHECK(ascii_size == binary_size && memcmp(ascii, binary, ascii_size) == 0);
+    TIDE_CHECK(tide_skinned_data_validate(ascii, ascii_size));
+    tide_skinned_data_view view;
+    TIDE_REQUIRE(tide_skinned_data_open(ascii, ascii_size, &view));
+    TIDE_REQUIRE(view.vertices == 3 && view.shapes == 2 && view.shape_deltas == 3);
+    tide_skinned_shape_data smile, jaw;
+    TIDE_REQUIRE(tide_skinned_data_shape(&view, 0, &smile) && tide_skinned_data_shape(&view, 1, &jaw));
+    TIDE_CHECK(smile.name_length == 5 && memcmp(smile.name, "smile", 5) == 0 && smile.weight == 0.25f && smile.deltas == 2);
+    TIDE_CHECK(jaw.name_length == 7 && memcmp(jaw.name, "jawOpen", 7) == 0 && jaw.weight == 0.0f && jaw.deltas == 1);
+    tide_skinned_shape_delta_data delta[3];
+    for (uint32_t i = 0; i < 3; i++) TIDE_REQUIRE(tide_skinned_data_shape_delta(&view, i, delta + i));
+    // The triangle's corners are its vertices; x is reflected as everywhere.
+    TIDE_CHECK(delta[0].vertex == 0 && vector3(delta[0].position, 0, 0.5f, 0) && vector3(delta[0].normal, 0, 0, 0));
+    TIDE_CHECK(delta[1].vertex == 2 && vector3(delta[1].position, 0, 0, 0.25f) && vector3(delta[1].normal, -1, 0, 0));
+    TIDE_CHECK(delta[2].vertex == 1 && vector3(delta[2].position, 0, -1, 0));
+    tide_skinned_vertex_data vertex;
+    TIDE_REQUIRE(tide_skinned_data_vertex(&view, 0, &vertex));
+    TIDE_CHECK(vector3(vertex.position, 0, 0.125f, 0) && vertex.influences == 5);
+    TIDE_REQUIRE(tide_skinned_data_vertex(&view, 2, &vertex));
+    TIDE_CHECK(vector3(vertex.position, 0, 2, 0.0625f) && vector3(vertex.normal, -0.25f, 0, 1));
+    TIDE_REQUIRE(tide_skinned_data_vertex(&view, 1, &vertex));
+    TIDE_CHECK(vector3(vertex.position, -2, 0, 0));
+    // Static meshes keep the rest geometry, shapes ignored.
+    mesh_file mesh = {0};
+    TIDE_REQUIRE(read_mesh(a, a_size, "shapes_ascii.fbx", &mesh));
+    TIDE_CHECK(mesh.vertices == 3 && vector3(mesh.position, 0, 0, 0));
+    mesh_file_free(&mesh);
+    tide_skinned_data_free(ascii);
+    tide_skinned_data_free(binary);
+    free(a);
+    free(b);
+    static const char *const between[] = {"shapes/inbetween_ascii.fbx", "shapes/inbetween_binary.fbx"};
+    for (uint32_t i = 0; i < 2; i++) {
+        size_t size;
+        uint8_t *bytes = fixture(between[i], &size), *glb = NULL;
+        TIDE_REQUIRE(bytes);
+        size_t glb_size = 0;
+        char why[256], note[256];
+        TIDE_CHECK(!fbx_file_to_glb(bytes, size, true, &glb, &glb_size, why, note) && !glb);
+        TIDE_CHECK(strstr(why, "blend shape 'Blends.smile' with in-between shapes") && strstr(note, "without in-between shapes"));
+        // A static mesh reads its rest geometry whatever its shapes are.
+        TIDE_CHECK(read_mesh(bytes, size, between[i], &mesh));
+        mesh_file_free(&mesh);
+        free(bytes);
+    }
+}
+
 TIDE_TEST(fbx_animation_only_ascii_and_binary_keep_clips_without_geometry)
 {
     static const char *const names[] = {"clips/move_ascii.fbx", "clips/move_binary.fbx"};

@@ -140,5 +140,28 @@ for (const p of stackProps) p.props[4] = p.props[0].endsWith("Start") ? -tick : 
 negativeObjects.find(n => n.name === "AnimationCurve").children.find(n => n.name === "KeyTime").props = [array("l", [-tick, 0n])];
 writePair("animation", "negative", negative);
 
+// Blend shapes on the rig's triangle: "smile" moves two vertices and a normal at a default of 25%,
+// "jawOpen" one vertex. Maya-style names: the channel is "Blends.smile", its shape "smile".
+function shaped(inBetween) {
+    const tree = document(true);
+    const objects = tree.find(n => n.name === "Objects").children, connections = tree.find(n => n.name === "Connections").children;
+    const shape = (id, name, indexes, vertices, normals) => node("Geometry", [id, `Geometry::${name}`, "Shape"], [node("Version", [100]),
+        node("Indexes", [array("i", indexes)]), node("Vertices", [array("d", vertices)]),
+        ...(normals ? [node("Normals", [array("d", normals)])] : [])]);
+    const channel = (id, name, percent, full) => node("Deformer", [id, `SubDeformer::Blends.${name}`, "BlendShapeChannel"], [
+        node("Version", [100]), node("DeformPercent", [percent]), node("FullWeights", [array("d", full)])]);
+    objects.push(node("Deformer", [7000n, "Deformer::Blends", "BlendShape"], [node("Version", [100])]),
+        channel(7100n, "smile", 25, inBetween ? [50, 100] : [100]), shape(7200n, "smile", [0, 2], [0, 0.5, 0, 0, 0, 0.25], [0, 0, 0, 1, 0, 0]),
+        channel(7300n, "jawOpen", 0, [100]), shape(7400n, "jawOpen", [1], [0, -1, 0]));
+    connections.push(connect(7000n, 1000n), connect(7100n, 7000n), connect(7200n, 7100n), connect(7300n, 7000n), connect(7400n, 7300n));
+    if (inBetween) {
+        objects.push(shape(7500n, "smileHalf", [0], [0, 0.25, 0]));
+        connections.push(connect(7500n, 7100n));
+    }
+    return tree;
+}
+writePair("shapes", "shapes", shaped(false));
+writePair("shapes", "inbetween", shaped(true));
+
 mkdirSync(join(root, "bad"), { recursive: true });
 writeFileSync(join(root, "bad", "malformed.fbx"), "; FBX 7.4.0 project file\nObjects: { Geometry: 1, \"Geometry::Broken\", \"Mesh\" { Vertices: *9 { a: 0,0\n");
