@@ -221,6 +221,9 @@ static uint32_t tide_run_shards;
 static double tide_run_shard_width;
 static tide_session *tide_run_session;
 static double tide_run_now; // Seconds since the program started
+// --latency, --jitter and --loss: this machine's way to a match it joins, as
+// the command line says for everyone or for this player of several
+static tide_net_conditions tide_run_conditions;
 // The server went away or turned this machine away: not because it left,
 // couldn't start, was kicked, or the match ran out of scenes
 static bool tide_run_dropped;
@@ -396,6 +399,25 @@ static inline void tide_run_discard_commands(void)
     }
 }
 
+static inline double tide_run_clock(void *context)
+{
+    (void)context;
+    return tide_run_now;
+}
+
+// `network`, to a match this machine joins, as far away as --latency, --jitter
+// and --loss make it. A machine that runs the match's server adds nothing: the
+// way to it is each player's who joined.
+static inline tide_transport tide_run_conditioned(const tide_transport network)
+{
+    const tide_net_conditions c = tide_run_conditions;
+    tide_transport out;
+    if (!network.send || (c.latency <= 0.0 && c.jitter <= 0.0 && c.loss <= 0.0)) return network;
+    // The same lost and late datagrams every run, and another player's others
+    const uint64_t seed = 0x6E6574636F6E6400ull ^ tide_platform_player();
+    return tide_net_conditioned(network, c, seed, tide_run_clock, NULL, &out) ? out : network;
+}
+
 // Starts, joins or leaves a match, as local code or the command line asked,
 // and copies what it asked to.
 // `start` is a tide_start, or NULL for Main.
@@ -432,6 +454,7 @@ static inline bool tide_run_hosted_request(const tide_session_request *request)
     const bool opened = room ? tide_platform_room_join(tide_run_hosting_endpoint, &transport, &server)
                             : tide_platform_resolve(tide_run_hosting_endpoint, (uint16_t)request->port, &server)
                               && tide_platform_udp_open(0, &transport);
+    if (opened) transport = tide_run_conditioned(transport);
     tide_session_leave(tide_run_session);
     const uint64_t nonce = tide_platform_entropy();
     tide_hosting_client_desc d = {.transport = transport, .server = opened ? server : (tide_address){0},
@@ -507,7 +530,7 @@ static inline void tide_run_request(const tide_session_request *request, const v
             tide_session_fail(s, TIDE_DISCONNECT_FAILED);
             break;
         }
-        tide_session_join(s, network, server, tide_run_now);
+        tide_session_join(s, tide_run_conditioned(network), server, tide_run_now);
         break;
     case TIDE_REQUEST_CONNECT:
         tide_run_discard_commands();
@@ -520,7 +543,7 @@ static inline void tide_run_request(const tide_session_request *request, const v
             tide_session_fail(s, TIDE_DISCONNECT_FAILED);
             break;
         }
-        tide_session_join(s, network, server, tide_run_now);
+        tide_session_join(s, tide_run_conditioned(network), server, tide_run_now);
         break;
     case TIDE_REQUEST_LEAVE:
         tide_run_discard_commands();
@@ -603,6 +626,39 @@ static inline uint32_t tide_run_whole(int *i, const char *flag, const uint32_t m
     exit(2);
 }
 
+// --latency <ms>, --jitter <ms> or --loss <percent>, at `*i`: for everyone,
+// or with a player's number and a colon (2:120) for that player of a run of
+// several, into `said`, by kind and then player (0 for everyone), in seconds
+// and shares. Anything else ends the program, saying what the flag takes.
+static inline void tide_run_condition(int *i, const char *flag, double said[3][33])
+{
+    const uint32_t kind = strcmp(flag, "--latency") == 0 ? 0u : strcmp(flag, "--jitter") == 0 ? 1u : 2u;
+    const char *takes = kind == 0u ? "how many milliseconds a datagram takes each way, from 0 to 10000, like --latency 80, "
+                                     "or one player's, like --latency 2:120"
+                      : kind == 1u ? "up to how many milliseconds more a datagram takes, at random, from 0 to 10000, like "
+                                     "--jitter 20, or one player's, like --jitter 2:20"
+                                   : "the share of datagrams lost, in percent from 0 to 100, like --loss 5, or one player's, "
+                                     "like --loss 2:5";
+    const char *text = tide_run_value(i, flag, takes);
+    const char *number = text;
+    uint32_t player = 0;
+    const char *colon = strchr(text, ':');
+    if (colon) {
+        for (const char *c = text; c < colon && player <= 32u; c++) {
+            player = *c >= '0' && *c <= '9' ? player * 10u + (uint32_t)(*c - '0') : 33u;
+        }
+        number = colon + 1;
+    }
+    char *end = NULL;
+    const double value = strtod(number, &end);
+    const double most = kind == 2u ? 100.0 : 10000.0;
+    if ((colon && (colon == text || player < 1u || player > 32u)) || end == number || *end || !(value >= 0.0 && value <= most)) {
+        fprintf(stderr, "tide: %s takes %s, not '%s'\n", flag, takes, text);
+        exit(2);
+    }
+    said[kind][player] = value / (kind == 2u ? 100.0 : 1000.0);
+}
+
 // How tide_run_game runs: what `desc` says, with the defaults for what it and
 // the game's settings leave out, and what its command line says: --stats, --debug-views,
 // the window's size, its matches' seed, and a run with no window.
@@ -624,6 +680,11 @@ static inline void tide_run_configure(const tide_run_desc *desc)
     tide_run_shards = 0;
     tide_run_shard_width = 0.0;
     tide_run_data_directory = NULL;
+    tide_run_conditions = (tide_net_conditions){0};
+    double conditions[3][33]; // --latency, --jitter and --loss, as tide_run_condition has them: -1 unsaid
+    for (uint32_t kind = 0; kind < 3u; kind++) {
+        for (uint32_t player = 0; player <= 32u; player++) conditions[kind][player] = -1.0;
+    }
     bool scaled = false;
     for (int i = 1; i < tide_run_settings.argc; i++) {
         const char *arg = tide_run_settings.argv[i];
@@ -666,6 +727,9 @@ static inline void tide_run_configure(const tide_run_desc *desc)
         } else if (strcmp(arg, "--capture") == 0) {
             tide_run_headless_desc.capture = tide_run_value(&i, arg, "the file the run's last frame goes to, like --capture menu.png");
             tide_run_headless = true;
+        } else if (strcmp(arg, "--record") == 0) {
+            tide_run_headless_desc.record = tide_run_value(&i, arg, "the file the whole run goes to, as a GIF, like --record run.gif");
+            tide_run_headless = true;
         } else if (strcmp(arg, "--capture-audio") == 0) {
             tide_run_headless_desc.capture_audio =
                 tide_run_value(&i, arg, "the file everything the run plays goes to, like --capture-audio run.wav");
@@ -684,12 +748,35 @@ static inline void tide_run_configure(const tide_run_desc *desc)
                 fprintf(stderr, "tide: --players takes %s, not '0'\n", takes);
                 exit(2);
             }
+        } else if (strcmp(arg, "--latency") == 0 || strcmp(arg, "--jitter") == 0 || strcmp(arg, "--loss") == 0) {
+            tide_run_condition(&i, arg, conditions);
         } else if (strcmp(arg, "--player") == 0) {
             // What the first player of such a run starts the others with, after its own command line
             const char *takes = "which player of a run this is and where its first listens: it's what --players starts the others with";
             tide_run_headless_desc.player = tide_run_whole(&i, arg, 32u, takes);
             tide_run_headless_desc.hub = tide_run_whole(&i, arg, 65535u, takes);
         }
+    }
+    // This machine's: a player's own where the command line says one, and everyone's otherwise
+    const uint32_t players = tide_run_headless_desc.players;
+    const uint32_t own = !players ? 0u : tide_run_headless_desc.player >= 2u && tide_run_headless_desc.player <= players
+                                           ? tide_run_headless_desc.player : 1u;
+    double *const kinds[3] = {&tide_run_conditions.latency, &tide_run_conditions.jitter, &tide_run_conditions.loss};
+    for (uint32_t kind = 0; kind < 3u; kind++) {
+        const char *flag = kind == 0u ? "--latency" : kind == 1u ? "--jitter" : "--loss";
+        for (uint32_t player = 1; player <= 32u; player++) {
+            if (conditions[kind][player] < 0.0 || player <= players) continue;
+            if (players) {
+                fprintf(stderr, "tide: %s %u:... is for player %u, and this run has %u players\n", flag, (unsigned)player,
+                        (unsigned)player, (unsigned)players);
+            } else {
+                fprintf(stderr, "tide: %s %u:... is for one player of a run of several, which --players makes, like "
+                                "--players 2: on its own, give it no player, like %s 80\n", flag, (unsigned)player, flag);
+            }
+            exit(2);
+        }
+        const double said = conditions[kind][own] >= 0.0 ? conditions[kind][own] : conditions[kind][0];
+        *kinds[kind] = said > 0.0 ? said : 0.0;
     }
     if (scaled && !tide_run_headless) {
         fprintf(stderr, "tide: --scale is for a run with no window: with --capture, --frames or --script\n");
@@ -963,7 +1050,7 @@ static inline void tide_run_migrate(void)
         fprintf(stderr, "tide: this machine hosts the match now, in room %s\n", code);
         tide_session_take_over(s, network, tide_run_now);
     } else if (moved == 2) {
-        tide_session_join(s, network, server, tide_run_now);
+        tide_session_join(s, tide_run_conditioned(network), server, tide_run_now);
     } else if (moved == -2) {
         tide_session_fail(s, TIDE_DISCONNECT_ENDED); // Its host ended it: the goodbye was lost
     } else if (moved < 0 || tide_run_now - tide_run_migrating_since > 30.0) {

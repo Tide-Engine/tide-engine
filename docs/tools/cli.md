@@ -138,7 +138,8 @@ still performs only front-end validation, even with a preview flag.
 | `--stats` | Shows the [stats](#stats) in the window's corner, as the game's `stats` setting does. `run` starts them open |
 | `--debug-views` | Turns the [debug views](debug-views.md) on, as the game's `debugViews` setting does: F7 shows the profiler, which says where a frame's time and a tick's go |
 | `--size <width> <height>` | `run` only: the window's size in pixels, 960 by 540 without it (not on the web or Android) |
-| `--capture`, `--capture-audio`, `--microphone`, `--frames`, `--script`, `--scale`, `--players` | `run` only: plays the game [without a window](#without-a-window), to see what it draws and hear what it plays, with [several players](#several-players) if you like |
+| `--capture`, `--record`, `--capture-audio`, `--microphone`, `--frames`, `--script`, `--scale`, `--players` | `run` only: plays the game [without a window](#without-a-window), to see what it draws and hear what it plays, with [several players](#several-players) if you like |
+| `--latency <ms>`, `--jitter <ms>`, `--loss <percent>` | `run` only: plays a match this machine joins as if it were further from its server (see [A slow network](#a-slow-network)) |
 | `--seed <n>` | `run` only: the seed of the matches the game starts, [`Random.seed`](../language/math.md#the-match-s-seed), from 0 to 2147483647. Without it, every match gets another one |
 | `--data-dir <folder>` | `run` only, native desktop: use this save directory, relative to where the command was invoked. Useful for disposable test saves |
 | `--shards <n>`, `--shard-width <units>` | `run` only: a [sharded game](../multiplayer/shards.md)'s match as `n` regions along x, each this wide (16 times its `reach` without it), all on this machine |
@@ -573,6 +574,31 @@ server executable; browser players still connect through WebRTC.
 
 To check a match with no window on screen, `--players` plays [several players](#several-players) at once and takes a picture from each.
 
+### A slow network
+
+On one machine, or on a fast network, a match feels better than it will online: what another player does shows up at once. To feel and tune it as players far apart will, make the way to the match's server worse:
+
+| Option | What it does |
+|---|---|
+| `--latency <ms>` | Each datagram takes this many milliseconds more, each way, so the ping is twice that more |
+| `--jitter <ms>` | ...and up to this many more, at random, each way, so datagrams also come out of order |
+| `--loss <percent>` | This share of datagrams is lost, each way, from 0 to 100 |
+
+```
+tide run --connect 192.168.1.5 --latency 80 --jitter 10 --stats   # join a match on the network as if from far away
+tide run --players 2 --latency 80 --script duel.txt               # two players with no window, the second 80 ms from the first
+```
+
+They're the way from this machine to a match it joins, with `--join`, `--connect`, a game's own `Session.Join` and `Session.Connect`, or a dedicated server's match. A machine that runs the match's server adds nothing: its own player has no way to go, and the way to every other player is that player's. So set them on the machine that joins; the one that runs `--host` needs none. The [stats](#stats) show the ping that makes.
+
+With [several players](#several-players), each player who joins is that far from the match's server. Player 1, who opens it, isn't. `<player>:<value>` says one player's own, which wins over everyone's: `--latency 80 --latency 3:150` puts players 2 and 4 80 ms away and player 3 150 ms. A run like this still repeats exactly: the same datagrams are late and lost every time, so a script and its pictures show the same moment from each player's side, like the joining player's under 80 ms. Each way also has the frame that a packet takes there anyway.
+
+On the web, `?latency=80`, `?jitter=10` and `?loss=5` in the page's address do the same, as does `tide run --web --latency 80`.
+
+::: info Provisional
+These options are new: their names, `<player>:<value>`, and that a machine running the server adds nothing may still change.
+:::
+
 ### In a web page's address
 
 A game's web page takes the same from its address, so a link can say which match it's for:
@@ -581,6 +607,7 @@ A game's web page takes the same from its address, so a link can say which match
 |---|---|
 | `?host` | As `--host`: the game opens its match, in a room |
 | `?join=K7QF2M` | As `--join K7QF2M`: the game joins the match in that room. A game's `Session.invite` is that link to its own page, for a player to send |
+| `?latency=80`, `?jitter=10`, `?loss=5` | As `--latency 80`, `--jitter 10` and `--loss 5`: the way to a match the page joins is that much worse (see [A slow network](#a-slow-network)) |
 | `?lag=100` | The page's player has a ping of 100 milliseconds, the round trip to the match's server, to see a match as on a slow connection with both players at one desk. What the trip takes already counts: the page holds back what it sends and what it receives by half of what's missing each. A page that hosts the match adds nothing |
 | `?embedded` | The game is part of a page that scrolls, in a frame of it, and leaves that page its scrolling: the wheel, and a finger that swipes up or down, until the player taps the game |
 | `?wait` | The game loads, and starts when the page around it says so |
@@ -619,6 +646,7 @@ tide run --frames 300 --capture menu.png --stats
 | Option | What it does |
 |---|---|
 | `--capture <file.png>` | Writes the run's last frame as a PNG |
+| `--record <file.gif>` | Writes the whole run as a GIF that loops: every second frame, so 30 a second, each shown as long as it was. `record` lines in a [script](#scripts) record part of a run |
 | `--capture-audio <file.wav>` | Writes everything the run played as a WAV (16-bit stereo at 48 kHz). A game with no sound gives silence, a 60th of a second a frame |
 | `--microphone <file>` | A WAV or Ogg Vorbis file the microphone plays in the run, looped, where a window's run would hear the capture device (`Clip.Microphone`). Without it a run's microphone is silent |
 | `--frames <n>` | Ends the run after `n` frames |
@@ -634,6 +662,8 @@ These options' names and the script's format are new, and may still change.
 
 The picture is what the window would show: the views, the GUI over them, and the stats and the profiler when they're on. It's `--size` times `--scale` pixels: `--size 1280 720 --scale 2` is 2560 by 1440. The [stats](#stats) are as a player would have them: one line unless the run asked with `--stats`, and a script's click on that line, or its `key f8`, opens them.
 
+A recording is those pictures, every second one, as a GIF: 30 a second, since players show a GIF's frames no faster than 50 a second, and it lasts as long as the run would have in a window. A frame has 256 colors at most: one with more gets the 255 nearest its own, which smooth gradients show as bands. It's written as the run goes, so a long one needs no memory for it; a second of a game's usual flat colors is a few PNGs' worth.
+
 Nothing of the run depends on the machine it's on, or on what's happening there:
 
 - **Time is made up.** Every frame is a 60th of a second long, however long it took, and frames come as fast as the machine runs them: 300 frames take about a second.
@@ -647,8 +677,8 @@ Something has to end a run nobody can close: `--frames`, or the script's `quit`.
 
 | Exit code | What happened |
 |---|---|
-| 0 | The run ended at `--frames` or `quit`, and its pictures were written |
-| 1 | A picture couldn't be written. Folders aren't made for it |
+| 0 | The run ended at `--frames` or `quit`, and its pictures and recordings were written |
+| 1 | A picture or a recording couldn't be written. Folders aren't made for it |
 | 2 | An option or a line of the script is wrong, or the run would need a window [where nobody watches](#where-nobody-watches): nothing ran, and the message names what to fix |
 
 A game `tide build` made takes the same options itself, so a build server needs no `tide`: `.build/mygame --frames 300 --capture menu.png`. These runs are for computers: on the web, drive the page with a headless browser instead, and take its screenshots.
@@ -668,7 +698,7 @@ Each player is a copy of the game, a program of its own, as on a machine of its 
 - **Addresses.** `Session.Connect` reaches the first player whose match is open on the address's port, 7777 unless `Session.Open(port)` picked another. The rest of the address says nothing here, and no name is looked up. A port nobody opened never answers, and the game times out, as on a network.
 - **One script for everyone.** A line says whose it is after its frame: `120 player 2 key d down`. Input that names no player is player 1's, so a script for one player plays as it did. `quit` and `--frames` end the run for everyone.
 - **Leaving and coming back.** `300 player 2 leave`, `drop` and `rejoin` say whose match changes, which tests what a game does when a player goes and returns: `PlayerLeft`, seats that free up, a player who comes back as the same `PlayerID`. A host that leaves or drops ends its match for the others, as on a network.
-- **Pictures from each.** A file gets its player's number before the extension: `capture fight.png` writes `fight-1.png` and `fight-2.png`, and `--capture`, `--capture-audio` and `capture-audio` go the same way. `400 player 2 capture hers.png` takes player 2's alone, as `hers-2.png`.
+- **Pictures from each.** A file gets its player's number before the extension: `capture fight.png` writes `fight-1.png` and `fight-2.png`, and `--capture`, `--record`, `record`, `--capture-audio` and `capture-audio` go the same way. `400 player 2 capture hers.png` takes player 2's alone, as `hers-2.png`.
 - **A game that stops ends the run.** When one player's game ends before the run does (it stopped, or couldn't write a picture), the run says which player's and at which frame, the others end with it, and the exit code is that game's (1, when the system stopped it).
 
 ```
@@ -679,7 +709,7 @@ Each player is a copy of the game, a program of its own, as on a machine of its 
 310 quit
 ```
 
-A packet takes a frame each way, in every run, so a player's [ping](../multiplayer/matches.md#where-this-machine-stands) is a few frames long, and the same each time. A run has 32 players at most, and no more than the game's `maxPlayers`. It takes no `--host`, `--join` or `--connect`: who's in the match is the run's to say, or the game's. A match whose host leaves ends for the others: it can't [change hands](../multiplayer/matches.md#host-migration), which goes through the relay.
+A packet takes a frame each way, in every run, so a player's [ping](../multiplayer/matches.md#where-this-machine-stands) is a few frames long, and the same each time. `--latency`, `--jitter` and `--loss` put the players who join further away, or one of them (see [A slow network](#a-slow-network)). A run has 32 players at most, and no more than the game's `maxPlayers`. It takes no `--host`, `--join` or `--connect`: who's in the match is the run's to say, or the game's. A match whose host leaves ends for the others: it can't [change hands](../multiplayer/matches.md#host-migration), which goes through the relay.
 
 `--players 1` is a run of one whose network is made up too: its match opens in room `AAAAAA` with nobody to join it, and its pictures have no number.
 
@@ -734,6 +764,8 @@ tide run --script play.txt --size 1280 720 --stats
 | `pad leftTrigger <value>`, `pad rightTrigger <value>` | A trigger, from 0 to 1 |
 | `capture <file.png>` | Writes the frame, once it drew, as a PNG. A file a script names is beside the script |
 | `capture-audio <file.wav>` | Writes what played since the last such line, or since the run began, as a WAV beside the script |
+| `record <file.gif>` | Records from this frame on, every second frame, as a GIF that loops, beside the script. It goes on to `record stop`, another `record` or the run's end. `--record`'s recording is its own, and goes on beside it |
+| `record stop` | Ends the recording, with this frame in it if it's one of its frames, and writes it out |
 | `quit` | Ends the run once this frame drew |
 | `player <n> leave` | In a run of [several players](#several-players), player `n` leaves its match, as `Session.Leave` does: the match hears `PlayerLeft` at once |
 | `player <n> drop` | ...or goes silent both ways, as a phone that went away or a lost connection: nobody hears of it until a side times out, after 5 seconds |

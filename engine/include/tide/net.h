@@ -98,6 +98,18 @@ void tide_loopback_set_conditions(tide_loopback *net, tide_net_conditions condit
 tide_transport tide_loopback_endpoint(tide_loopback *net, uint32_t number);
 tide_address tide_loopback_address(uint32_t number);
 
+// A transport that carries `inner`'s datagrams as `conditions` say, both ways,
+// as a loopback network would: the machine that uses it plays as if it were
+// that much further from every other (tide run's --latency, --jitter and
+// --loss). What it sends goes on to `inner` once its delay passed, and what
+// `inner` brings is read once its delay did. The time is `inner`'s clock, or
+// `clock`'s where it has none, in seconds, and datagrams move on only when the
+// transport is used, as a session does every frame. `seed` decides which are
+// lost and late. Closing it closes `inner`, and lets what was on its way out
+// go at once. False, with nothing made, where there's no memory.
+bool tide_net_conditioned(tide_transport inner, tide_net_conditions conditions, uint64_t seed,
+                          double (*clock)(void *context), void *context, tide_transport *out);
+
 // ---------------------------------------------------------------------------
 // Bytes, little-endian. A writer that runs out of room sets `overflow` and
 // writes nothing more, unless it `grows`: then it makes more room as it needs

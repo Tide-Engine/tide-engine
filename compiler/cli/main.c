@@ -202,12 +202,13 @@ static int command_main(const int argc, char **argv)
     if (!defines) abort();
     build_options opts = {.folder = ".", .defines = defines};
     // What the game's own command line takes (tide/run.h), which run passes on: --host [port], --join <code> or
-    // --connect <address>, the window's size, its matches' seed, its data directory, a sharded game's regions, and a
-    // run with no window. Each once is 35 arguments
-    const char *game_args[40] = {NULL};
+    // --connect <address>, the window's size, its matches' seed, its data directory, a sharded game's regions, a
+    // network made worse, and a run with no window. Each once is 43 arguments, and --latency, --jitter and --loss
+    // can say several players' too
+    const char *game_args[128] = {NULL};
     int game_arg_count = 0;
     bool open_page = true; // run --web opens the page in a browser
-    bool headless = false; // --capture, --capture-audio, --frames, --microphone or --script: the game runs with no window
+    bool headless = false; // --capture, --capture-audio, --record, --frames, --microphone or --script: the game runs with no window
     bool players = false;  // --players: several players, which only such a run has
     bool sized = false;
     bool data_directory = false;
@@ -215,7 +216,7 @@ static int command_main(const int argc, char **argv)
     for (int i = 2; i < argc; i++) {
         const char *a = argv[i];
         const int left = argc - i - 1; // Arguments after this one
-        if (run && game_arg_count > 36) { // Room for the longest of them yet, --size's 3, and the NULL after them
+        if (run && game_arg_count > 124) { // Room for the longest of them yet, --size's 3, and the NULL after them
             fprintf(stderr, "tide: run takes each of its options once\n");
             free(defines);
             return 2;
@@ -263,11 +264,12 @@ static int command_main(const int argc, char **argv)
             game_args[game_arg_count++] = a;
             game_args[game_arg_count++] = path_absolute(argv[++i]);
             data_directory = true;
-        } else if (run && (strcmp(a, "--capture") == 0 || strcmp(a, "--capture-audio") == 0 || strcmp(a, "--script") == 0 ||
-                           strcmp(a, "--microphone") == 0)) {
+        } else if (run && (strcmp(a, "--capture") == 0 || strcmp(a, "--capture-audio") == 0 || strcmp(a, "--record") == 0 ||
+                           strcmp(a, "--script") == 0 || strcmp(a, "--microphone") == 0)) {
             if (left < 1) {
                 const char *like = "--capture menu.png";
-                if (a[2] == 's') like = "--script play.txt";
+                if (a[2] == 'r') like = "--record run.gif";
+                else if (a[2] == 's') like = "--script play.txt";
                 else if (a[2] == 'm') like = "--microphone voice.wav";
                 else if (a[9]) like = "--capture-audio run.wav"; // What's after --capture
                 fprintf(stderr, "tide: %s takes a file, like `%s`\n", a, like);
@@ -287,6 +289,18 @@ static int command_main(const int argc, char **argv)
             game_args[game_arg_count++] = a;
             game_args[game_arg_count++] = argv[++i];
             if (a[2] == 'f') headless = true;
+        } else if (run && (strcmp(a, "--latency") == 0 || strcmp(a, "--jitter") == 0 || strcmp(a, "--loss") == 0)) {
+            // The game says what's wrong with a value: a player's (2:120) needs its --players
+            if (left < 1) {
+                fprintf(stderr, "tide: %s takes %s\n", a,
+                        a[3] == 'a' ? "how many milliseconds a datagram takes each way, like `--latency 80`"
+                        : a[2] == 'j' ? "up to how many milliseconds more a datagram takes, like `--jitter 20`"
+                                      : "the share of datagrams lost, in percent, like `--loss 5`");
+                free(defines);
+                return 2;
+            }
+            game_args[game_arg_count++] = a;
+            game_args[game_arg_count++] = argv[++i];
         } else if (run && strcmp(a, "--players") == 0) {
             if (left < 1) {
                 fprintf(stderr, "tide: --players takes how many players the run has, like `--players 2`\n");

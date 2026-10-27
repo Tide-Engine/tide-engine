@@ -20,6 +20,18 @@ tide run --web --host --stats           # on the web, in a room only
 
 To check a match with several players without opening a window for each, `tide run --players 2 --script play.txt --stats` plays them all at once with no window, and takes a picture from each machine (see [Several players](../tools/cli.md#several-players)).
 
+## Testing a game online
+
+A match on one machine, or between two at one desk, has next to no lag, so it can feel better than it will between players far apart: there, each machine sees what another player does later, and the [prediction](./networking.md#prediction-and-rollback) it showed meanwhile is corrected. To feel it, and tune the game for it, without a second machine on the internet, make the way to the match's server worse:
+
+```sh
+tide run --connect 192.168.1.5 --latency 80 --jitter 10 --loss 2 --stats  # as if this machine were 80 ms away
+tide run --players 2 --latency 80 --script duel.txt                        # player 2 is 80 ms from player 1's server
+tide run --players 3 --latency 3:150 --script duel.txt                     # only player 3 is far away
+```
+
+`--latency` is milliseconds each way, `--jitter` up to that many more at random, and `--loss` the percent of datagrams lost. They apply to a match this machine joins; a machine that runs the server adds nothing. With `--players`, the run still repeats exactly, so a script can capture the joining player's view at the moment that matters, like a block that comes too late, and the same run shows it again after a change. On the web, a page's address takes `?latency=80`, `?jitter=10` and `?loss=5`. See [A slow network](../tools/cli.md#a-slow-network).
+
 ## Starting a match from code
 
 A game that starts in a menu selects a local scene as its entry, such as a local `Main`, and its local code decides which match this machine is in:

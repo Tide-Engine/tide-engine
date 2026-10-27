@@ -20,6 +20,8 @@
 //     332 pad rightTrigger 1         ...and its triggers, from 0 to 1
 //     400 capture fight.png          the frame, once it drew, as a PNG beside the script
 //     401 capture-audio fight.wav    what played since the last such line (or the start), as a WAV beside it
+//     410 record fight.gif           every second frame from this one, as a GIF beside the script...
+//     470 record stop                ...to this one; or to another `record`, or the run's end
 //     500 quit                       the run ends once this frame drew, with exit code 0
 //
 // What a line does at a frame is in the devices at that frame's poll, as a
@@ -171,6 +173,8 @@ typedef enum event_kind {
     EVENT_PAD_TRIGGER,
     EVENT_CAPTURE, // A script's own, from here on: not input
     EVENT_CAPTURE_AUDIO,
+    EVENT_RECORD,
+    EVENT_RECORD_STOP,
     EVENT_QUIT,
     EVENT_LEAVE, // A player's match, in a run of several
     EVENT_DROP,
@@ -188,7 +192,7 @@ typedef struct event {
     uint32_t press; // PRESS_*, or a touch's tide_touch_phase
     bool placed;    // A touch that says where
     float x, y;
-    char *text; // What's typed, or a capture's file
+    char *text; // What's typed, or a capture's or a recording's file
 } event;
 
 static void mouse_by(const float dx, const float dy)
@@ -280,6 +284,8 @@ static void apply(const event *e)
         break;
     case EVENT_CAPTURE:
     case EVENT_CAPTURE_AUDIO:
+    case EVENT_RECORD:
+    case EVENT_RECORD_STOP:
     case EVENT_QUIT:
         break;
     }
@@ -533,6 +539,15 @@ static bool parse(const char *text, event *e, char *error, const size_t size)
         if (!e->text[0]) return fail(error, size, "`capture-audio` takes the file what played goes to: `capture-audio shot.wav`");
         return true;
     }
+    if (strcmp(verb, "record") == 0) {
+        e->text = rest(at);
+        e->kind = strcmp(e->text, "stop") == 0 ? EVENT_RECORD_STOP : EVENT_RECORD;
+        if (!e->text[0]) {
+            return fail(error, size, "`record` takes the file the frames go to, `record fight.gif`, or ends the recording, "
+                                     "`record stop`");
+        }
+        return true;
+    }
     if (strcmp(verb, "quit") == 0) {
         e->kind = EVENT_QUIT;
         return ended(&at, error, size);
@@ -542,7 +557,7 @@ static bool parse(const char *text, event *e, char *error, const size_t size)
         return ended(&at, error, size);
     }
     return fail(error, size, "'%s' isn't something a line does: that's key, button, mouse, move, scroll, text, touch, pad, capture, "
-                             "capture-audio, leave, drop, rejoin or quit",
+                             "capture-audio, record, leave, drop, rejoin or quit",
                 verb);
 }
 
@@ -551,7 +566,8 @@ bool tide_script_event(const char *text, char *error, const size_t error_size)
     event e = {0};
     bool ok = parse(text, &e, error, error_size);
     if (ok && e.kind >= EVENT_CAPTURE) {
-        ok = fail(error, error_size, "`capture`, `capture-audio`, `quit`, `leave`, `drop` and `rejoin` are a script's lines, not input");
+        ok = fail(error, error_size,
+                  "`capture`, `capture-audio`, `record`, `quit`, `leave`, `drop` and `rejoin` are a script's lines, not input");
     }
     if (ok) apply(&e);
     free(e.text);
@@ -724,11 +740,14 @@ int tide_script_drawn(const uint32_t frame)
     for (; script.next_drawn < script.count && script.events[script.next_drawn].frame <= frame; script.next_drawn++) {
         const event *e = &script.events[script.next_drawn];
         if (e->kind == EVENT_QUIT) quit = true;
-        if (e->kind != EVENT_CAPTURE && e->kind != EVENT_CAPTURE_AUDIO) continue;
+        if (e->kind == EVENT_RECORD_STOP && !tide_platform_record_stop()) return 1;
+        if (e->kind != EVENT_CAPTURE && e->kind != EVENT_CAPTURE_AUDIO && e->kind != EVENT_RECORD) continue;
         char *beside = beside_script(e->text);
         char *path = tide_platform_players_file(beside); // With the player's number, in a run of several
         free(beside);
-        const bool written = e->kind == EVENT_CAPTURE ? tide_platform_capture(path) : tide_platform_capture_audio(path);
+        const bool written = e->kind == EVENT_CAPTURE         ? tide_platform_capture(path)
+                             : e->kind == EVENT_CAPTURE_AUDIO ? tide_platform_capture_audio(path)
+                                                              : tide_platform_record(path);
         free(path);
         if (!written) return 1;
     }

@@ -1,7 +1,9 @@
 // Web only: the standard host's debug views (tide/host.h), in its own loop.
 // F7 shows the profiler where they're on, by the command line (the page's
 // address has `debug-views`) or by the game's debugViews setting, and hides it
-// again; where they're off, it does nothing. The page draws with Tide.checkGL,
+// again; where they're off, it does nothing. Its address also says how slow a
+// network to play on (`latency`, `jitter`, `loss`), which the host takes as
+// the command line's. The page draws with Tide.checkGL,
 // so the panel also has to draw without a mistake.
 //
 // Frames are a 60th of a second each, whatever the page's clock says, so the
@@ -129,6 +131,10 @@ int main(const int argc, char **argv)
     tide_run_game = &tide_host_game_api;
     tide_run_configure(&(tide_run_desc){.title = "debug views", .argc = argc, .argv = argv});
     from_arguments = tide_run_settings.debug_views;
+    // The address's latency=80, jitter=10 and loss=5 are the command line's --latency, --jitter and --loss too
+    const tide_net_conditions c = tide_run_conditions;
+    check(c.latency > 0.0799 && c.latency < 0.0801 && c.jitter > 0.0099 && c.jitter < 0.0101 && c.loss > 0.0499 && c.loss < 0.0501,
+          "latency, jitter and loss in the address make the way to a match the page joins worse");
     tide_platform_open(&(tide_window_desc){.title = tide_run_settings.title,
                                            .width = tide_run_settings.width,
                                            .height = tide_run_settings.height,

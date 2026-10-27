@@ -371,6 +371,18 @@ if(TIDE_NODE)
             $<TARGET_FILE:tide_platform_png>)
 endif()
 
+# The GIF writer (src/gif.c), which recordings are written with: recordings
+# made up from numbers, decoded by the test's own reader. No window or GPU,
+# so every platform's tests run it.
+add_executable(tide_platform_gif tests/gif.c)
+target_include_directories(tide_platform_gif PRIVATE src)
+target_link_libraries(tide_platform_gif PRIVATE tide_platform)
+if(TIDE_NODE)
+    add_test(NAME tide_platform_gif
+        COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/gif.mjs" ${CMAKE_CROSSCOMPILING_EMULATOR}
+            $<TARGET_FILE:tide_platform_gif>)
+endif()
+
 # The engine's PNG reader (engine/src/png_read.c, grid.Decode) against pictures
 # Node's zlib writes: every kind of PNG, and files wrong in each way. No GPU.
 add_executable(tide_platform_png_decode tests/png_decode.c)
@@ -828,10 +840,11 @@ if(TIDE_WEB)
 
     # The standard host's debug views (tide/host.h): F7 shows the profiler where
     # they're on, by the command line or the game's setting, and nowhere else.
+    # The page's address also has --latency, --jitter and --loss in it.
     tide_add_game(tide_platform_web_debug_views SOURCES tests/debug_views.tide NAME game HOST tests/web_debug_views.c)
     target_link_libraries(tide_platform_web_debug_views PRIVATE tide_platform)
     tide_web_page(tide_platform_web_debug_views SHELL web/test_shell.html)
-    tide_add_web_test(tide_platform_web_debug_views TARGET tide_platform_web_debug_views QUERY debug-views)
+    tide_add_web_test(tide_platform_web_debug_views TARGET tide_platform_web_debug_views QUERY "debug-views&latency=80&jitter=10&loss=5")
 
     # ...and its stats (tide/stats.h): a drawer that a game's setting shows
     # closed, which F8, a click and a tap open and close, whose presses the

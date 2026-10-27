@@ -19,6 +19,7 @@
 #include "tide/vorbis.h"
 #include "gpu.h"
 #include "mixer.h"
+#include "gif.h"
 #include "players.h"
 #include "png.h"
 #include "script.h"
@@ -136,6 +137,19 @@ static uint32_t headless_frame; // The frame running, or the last one, counted f
 static float *headless_audio;
 static uint64_t played, captured, kept, audio_capacity;
 
+// A headless window's recordings: its file, written as the frames come, its
+// size, and the frame it started at and how many it has; NULL `gif` for none.
+// The run's own (tide_headless_desc.record) and its script's
+// (tide_platform_record) go on side by side.
+typedef struct recording {
+    tide_gif *gif;
+    FILE *file;
+    char *path;
+    int width, height;
+    uint32_t from, frames;
+} recording;
+static recording run_recording, script_recording;
+
 static double now(void)
 {
     return (double)(tide_time_now_ns() - opened) * 1e-9;
@@ -226,6 +240,7 @@ void tide_platform_open_headless(const tide_headless_desc *desc)
     tide_platform_players_configure(&headless_run);
     if (headless_run.capture) headless_run.capture = tide_platform_players_file(headless_run.capture);
     if (headless_run.capture_audio) headless_run.capture_audio = tide_platform_players_file(headless_run.capture_audio);
+    if (headless_run.record) headless_run.record = tide_platform_players_file(headless_run.record);
     // The script first: a line that's wrong needs no window to say so
     if (headless_run.script && !tide_script_load(headless_run.script)) exit(2);
     if (!headless_run.frames && !tide_script_quits()) {
@@ -361,15 +376,29 @@ void tide_platform_audio_forget(void)
     tide_mixer_forget();
 }
 
+static bool record_frame(recording *r);
+static bool record_start(recording *r, const char *path);
+static bool record_end(recording *r);
+
 // A headless run's frame, once it drew: the pictures its script and its desc
 // ask of it. TIDE_KEEP_RUNNING, or the run's exit code.
 static int headless_drawn(void)
 {
+    // A recording's frame before its script's lines: one that starts a recording has the frame, one that stops it too
+    recording *const both[] = {&run_recording, &script_recording};
+    for (int i = 0; i < 2; i++) {
+        if (both[i]->gif && (headless_frame - both[i]->from) % 2u == 0 && !record_frame(both[i])) return 1;
+    }
+    if (headless_frame == 1 && headless_run.record && !record_start(&run_recording, headless_run.record)) return 1;
     const int code = tide_script_drawn(headless_frame);
     if (code != 0 && code != TIDE_KEEP_RUNNING) return code;
     const bool last = code == 0 || (headless_run.frames && headless_frame >= headless_run.frames);
     if (last && headless_run.capture && !tide_platform_capture(headless_run.capture)) return 1;
     if (last && headless_run.capture_audio && !capture_audio(headless_run.capture_audio, 0)) return 1;
+    if (last) {
+        const bool run_written = record_end(&run_recording), script_written = tide_platform_record_stop();
+        if (!run_written || !script_written) return 1;
+    }
     return last ? 0 : TIDE_KEEP_RUNNING;
 }
 
@@ -377,6 +406,9 @@ static void write_used_keys(void);
 
 _Noreturn static void finish(int code)
 {
+    // A recording the run ended in the middle of is written out
+    const bool run_written = record_end(&run_recording), script_written = tide_platform_record_stop();
+    if ((!run_written || !script_written) && code == 0) code = 1;
     code = tide_platform_players_finish(code); // A run of several players ends as one
     tide_platform_gpu_timing(false);
     write_used_keys(); // How the game's shaders were drawn, for its next run to make them as it starts
@@ -4874,6 +4906,89 @@ bool tide_platform_capture(const char *path)
     printf("tide: captured %s, %d by %d pixels\n", path, width, height);
     fflush(stdout);
     return true;
+}
+
+// What's recorded so far goes to the file. False, having said why, and with
+// the recording given up, when it can't be written.
+static bool record_written(recording *r)
+{
+    size_t size = 0;
+    const uint8_t *bytes = tide_gif_take(r->gif, &size);
+    errno = 0;
+    if (fwrite(bytes, 1, size, r->file) == size) return true;
+    const int error = errno;
+    fprintf(stderr, "tide: can't write %s: %s\n", r->path, error ? strerror(error) : "the file isn't whole");
+    fclose(r->file);
+    tide_gif_free(r->gif);
+    free(r->path);
+    *r = (recording){0};
+    return false;
+}
+
+// The frame that last drew, to a recording: every second frame, so 30 a
+// second, each shown for its share of the hundredths of a second GIF counts
+// in (3, 4, 3, ...), so that the recording takes as long as the run did.
+static bool record_frame(recording *r)
+{
+    int width, height;
+    const uint8_t *pixels = tide_platform_frame_pixels(&width, &height);
+    const uint32_t k = r->frames++;
+    tide_gif_frame(r->gif, pixels, ((k + 1u) * 10u + 1u) / 3u - (k * 10u + 1u) / 3u);
+    return record_written(r);
+}
+
+static bool record_start(recording *r, const char *path)
+{
+    if (!record_end(r)) return false;
+    int width, height;
+    if (!tide_platform_frame_pixels(&width, &height)) {
+        fprintf(stderr, "tide: no frame to record: a headless window's are, once one drew (tide_platform_open_headless)\n");
+        return false;
+    }
+    errno = 0;
+    FILE *file = fopen(path, "wb");
+    if (!file) {
+        fprintf(stderr, "tide: can't write %s: %s\n", path, strerror(errno));
+        return false;
+    }
+    const size_t n = strlen(path) + 1u;
+    r->path = tide_alloc(n);
+    memcpy(r->path, path, n);
+    r->file = file;
+    r->gif = tide_gif_begin(width, height);
+    r->width = width, r->height = height;
+    r->from = headless_frame;
+    r->frames = 0;
+    return record_frame(r);
+}
+
+static bool record_end(recording *r)
+{
+    if (!r->gif) return true;
+    tide_gif_end(r->gif);
+    if (!record_written(r)) return false;
+    const bool closed = fclose(r->file) == 0;
+    if (closed) {
+        printf("tide: recorded %s, %u frames (%.3f seconds), %d by %d pixels\n", r->path, (unsigned)r->frames,
+               (double)r->frames / 30.0, r->width, r->height);
+        fflush(stdout);
+    } else {
+        fprintf(stderr, "tide: can't write %s: the file isn't whole\n", r->path);
+    }
+    tide_gif_free(r->gif);
+    free(r->path);
+    *r = (recording){0};
+    return closed;
+}
+
+bool tide_platform_record(const char *path)
+{
+    return record_start(&script_recording, path);
+}
+
+bool tide_platform_record_stop(void)
+{
+    return record_end(&script_recording);
 }
 
 void tide_platform_read_pixels(const tide_draw_list *list, const tide_float2 *points, const int count, uint32_t *out)
