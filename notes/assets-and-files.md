@@ -1,5 +1,60 @@
 # Assets and local files
 
+## Blender's armature node folds into separate-export binding (2026-10-27)
+
+Found from the Parry prototype: a Synty clip round-tripped through Blender 4.4
+(FBX export, `bake_anim`, unit scale applied) sampled as the rest pose on its
+character. Blender always writes the armature object as a named node above the
+skeleton's top bone (`Armature`, scale 0.01 for a centimetre rig, constant
+T/R/S channels baked with the take), so `Root`'s parent chain differed from the
+character's (`Root` top-level, its 0.01 put there by ufbx's
+`ADJUST_TRANSFORMS` unit conversion) and `bind_nodes` rejected it silently.
+
+`engine/src/skinned.c` now folds a named top-level node (parent is node zero or
+the unnamed FBX wrapper) whose name is absent from the other hierarchy. Source
+side: such a node maps to `BIND_FOLDED`, its sampled local (defaults plus this
+clip's channels) or its source Pose local is composed into each bound child's
+local (`fold_into`: position `A.p + A.r*(A.s*C.p)`, rotation `A.r*C.r`
+normalized, scale `A.s*C.s`). Target side: a bound node whose target parent is
+such a node gets that parent's rest divided out (`fold_out`), so a character
+exported from Blender also plays clips exported elsewhere; the target node
+itself keeps its rest. Both are exact TRS only for uniform scale: folded
+scales (default, every key, cubic tangents; the actual Pose value on the draw
+path) must agree within relative 1e-5, otherwise binding fails before output
+is touched. A source fold needs a bound child, so an unmatched top-level node
+moving nothing bound is still "missing" (the existing rejection fixtures
+depend on that). Matched names are never folded. Exact-skeleton sampling, the
+generated-C boundary, canonical bytes and the importer are unchanged; sample
+and pose routes give bit-identical results.
+
+Failed bindings now say why: `bind_nodes` writes the differing node (missing,
+ambiguous, unnamed, different parent, uneven fold scale) and
+`report_binding` prints it once per (target skeleton, source skeleton, clip)
+through `tide_debug_log`, with a 64-slot atomic table (worker-safe, never in
+match state; past 64 pairs it stops reporting). Invalid data prints nothing.
+A build-time diagnostic was not built: the compiler doesn't track which model
+a Pose belongs to at a `Sample` call.
+
+Evidence: `A_Attack_HeavyStab01_Sword.fbx` through the owner's round-trip
+script, sampled into `PolygonSyntyCharacter.fbx` against the original clip at
+every fifth frame: worst bone model-space difference 0.0099 mm by both
+`sample_into` and `pose_into`. Between frames it reaches 23 mm at the weapon
+hand, because Blender bakes at the scene's 30 fps while the importer resamples
+the original curves at 60 Hz; a smaller `bake_anim_step` in the export should
+reduce that (not measured). Blender's glTF export of the same scene binds too (its `Armature` node
+has the axis rotation) and matches within 0.01 mm once shifted by two frames:
+the exporter's clip starts two frames early and is two frames longer, an export
+timing matter rather than binding. The Synty files are not committed.
+
+Test: `skinned_separate_bindings_fold_unmatched_top_level_nodes`
+(`tests/test_skinned.c`) builds a Blender-shaped glTF rig (translated, rotated
+`Armature` at 0.01 with an animated uniform scale) and checks arm/hand
+model-space matrices against the source's own sampling at five times in both
+directions, sample/pose bit parity, the target's armature kept at rest,
+uneven-scale rejection on both routes and a same-named armature beside the arm
+rejected. Validation: 53 native skinned runtime tests, `tide_tests` on web,
+`tidec_fbx_files`, animation/skinned/FBX E2E and both platform skinned tests.
+
 ## Missing static tangents for normal maps (2026-10-25)
 
 The owner approved normal maps in Render3D and the corresponding static-import
