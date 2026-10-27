@@ -141,6 +141,11 @@ The contract requires that subset; extra clips and bones remain discoverable thr
 
 ## Animation files
 
+For offline text-to-motion generation and learned clip transitions, see
+[Tide Motion](../tools/motion.md). Its standalone native CLI exports SOMA-30 GLB
+animations and supports batches that reuse loaded models. Other character rigs
+need retargeting before those clips can drive them.
+
 A separate glTF or FBX file can supply animation clips without importing typed render geometry. For the character above:
 
 ```csharp

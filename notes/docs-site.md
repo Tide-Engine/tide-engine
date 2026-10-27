@@ -1,5 +1,21 @@
 # The docs site
 
+## Tide Motion public tool (2026-10-27)
+
+The Tools sidebar includes tools/motion, linked from Animation files. It covers
+the independent native CLI/installer, Kimodo generation, MotionBricks transitions,
+ordered batches that reuse loaded models, bounded Tide skeleton previews and
+ordinary Animation GLB imports. SOMA-30-only output, absent meshes/retargeting,
+memory/download requirements and separate source/model licenses are explicit.
+Links point to the now-public Tide-Engine/tide-motion repository and releases.
+Its release workflow targets Windows x64, Linux x64/ARM64 and macOS Apple Silicon;
+platform validation and publishing contracts belong in that repository's notes.
+
+Validation: npm run build passes with Node 24.22.1, including sidebar, page,
+anchor and internal-link checks. Existing allowed 404s are unstaged playable
+example pages. No engine/package/CLI code changed, and no manual docs workflow
+was dispatched; normal dev publishing handles deployment.
+
 ## Corner Culling performance contract (2026-10-27)
 
 The guide now describes indexed source lookup, ancestor-only refits and recovery
