@@ -41,6 +41,12 @@ system Run(mut Fixture f)
     if (f.action == 1) f.culling.Rebuild(f.boxes);
     if (f.action == 2) f.updated = f.culling.Update(f.source, f.replacement);
     if (f.action == 3) f.culling.Clear();
+    if (f.action == 8)
+    {
+        // Simulate newly introduced lookup lists after layout migration.
+        f.culling.locations.Clear();
+        f.culling.parents.Clear();
+    }
     if (f.action == 4 || f.action == 7)
     {
         f.caches.Resize(f.queries.count);

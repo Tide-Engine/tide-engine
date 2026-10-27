@@ -138,8 +138,10 @@ must not overlap mutation.
 A cached blocker is tested first. Otherwise a balanced BVH rejects distant
 subtrees and masked geometry before corner testing. Leaves hold at most four
 boxes; three-way partitioning handles repeated centroids. Build outside the
-query loop. `Update` currently performs an O(N) search/refit, suitable for a few
-doors rather than thousands of moving occluders.
+query loop. `Update` uses O(1) source lookup and an O(log N) ancestor refit
+with unshared storage; shared snapshots can incur COW copying.
+Moving blockers can still degrade spatial quality; rebuild when necessary.
+Missing source/parent indices after layout migration are recovered once in O(N).
 
 For a batch, loop over preallocated storage and call `world.Query` directly.
 Take each cache element into a mutable local and write it back afterward.

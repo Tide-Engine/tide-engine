@@ -647,6 +647,42 @@ TIDE_TEST(cornerculling_snapshots_replay_packing_and_scalar_query_storage)
     tide_world_free(&loaded); tide_world_free(&snapshot); tide_world_free(&w);
 }
 
+TIDE_TEST(cornerculling_indexed_updates_survive_snapshot_pack_and_rebuild)
+{
+    static tide_world w, snapshot, loaded;
+    init(&w);
+    box boxes[129];
+    for (int i = 0; i < 129; i++) boxes[i] = wall((i%13)*3.0f, 20+(i/13)*3.0f, 0, 0.5f, 1, 1, -1);
+    rebuild(&w, boxes, 129);
+    tide_world_copy(&snapshot, &w);
+    const uint64_t hash = tide_world_hash(&snapshot);
+    const uint32_t size = tide_world_pack(&w, NULL, 0);
+    void *bytes = malloc(size); TIDE_REQUIRE(bytes != NULL);
+    TIDE_REQUIRE(tide_world_pack(&w, bytes, size) == size);
+    TIDE_REQUIRE(tide_world_unpack(&loaded, bytes, size)); free(bytes);
+    const box blocker = wall(0, 0, 0, 0.5f, 4, 4, -1);
+    const int sources[] = {0, 128, 31, 99, 64};
+    for (int i = 0; i < 5; i++) {
+        const int source = sources[i];
+        update(&w, source, blocker); update(&loaded, source, blocker);
+        TIDE_CHECK(w.Fixture.answer.status == CornerCulling_Status_Occluded);
+        TIDE_CHECK(w.Fixture.answer.occluder == source);
+        TIDE_CHECK(tide_world_hash(&w) == tide_world_hash(&loaded));
+        update(&w, source, boxes[source]); update(&loaded, source, boxes[source]);
+        TIDE_CHECK(w.Fixture.answer.status == CornerCulling_Status_Visible);
+        TIDE_CHECK(tide_world_hash(&snapshot) == hash);
+    }
+    // A new partition must replace every source-to-leaf mapping.
+    for (int i = 0; i < 129; i++) boxes[i].bounds.center.x = 300-boxes[i].bounds.center.x;
+    rebuild(&w, boxes, 129);
+    w.Fixture.action = 8; tide_world_tick(&w);
+    update(&w, 31, blocker);
+    TIDE_CHECK(w.Fixture.answer.status == CornerCulling_Status_Occluded && w.Fixture.answer.occluder == 31);
+    update(&w, 31, boxes[31]);
+    TIDE_CHECK(w.Fixture.answer.status == CornerCulling_Status_Visible);
+    tide_world_free(&loaded); tide_world_free(&snapshot); tide_world_free(&w);
+}
+
 TIDE_TEST(cornerculling_drives_authoritative_entity_visibility)
 {
     static tide_world server, client;
@@ -856,6 +892,8 @@ TIDE_TEST(cornerculling_performance_near_misses_and_door_refit)
     rebuild(&w, boxes, 512);
     batch(&w);
     TIDE_CHECK(occluded_results(&w) == 0);
+    // Isolate update/refit cost from the fixture's extra scalar query.
+    w.Fixture.query.mask = 0;
     double samples[9], refits[9];
     for (int sample = 0; sample < 9; sample++) {
         const uint64_t start = tide_time_now_ns();
@@ -868,7 +906,60 @@ TIDE_TEST(cornerculling_performance_near_misses_and_door_refit)
     qsort(samples, 9, sizeof *samples, compare_double);
     qsort(refits, 9, sizeof *refits, compare_double);
     TIDE_CHECK(occluded_results(&w) == 0);
-    printf("    90 visible near-miss queries / 512 boxes: %.3f us/batch; one-box update/full refit %.3f us\n",
+    printf("    90 visible near-miss queries / 512 boxes: %.3f us/batch; one-box update+tick %.3f us\n",
            samples[4], refits[4]);
+    tide_world_free(&w);
+}
+
+
+TIDE_TEST(cornerculling_performance_shapes_and_combined_proofs)
+{
+    static tide_world w;
+    init(&w);
+    const char *names[] = {"rotated-box", "ellipsoid", "joined-wall", "tiled-wall", "subdivision"};
+    for (int kind = 0; kind < 5; kind++) {
+        box boxes[4]; int count = 1;
+        boxes[0] = wall(0, 0, 0, 0.5f, 4, 4, -1);
+        if (kind == 0) boxes[0].rotation = tide_q(0, 0.38268343f, 0, 0.92387953f);
+        if (kind == 1) boxes[0].shape = CornerCulling_OccluderShape_Ellipsoid;
+        if (kind == 2) {
+            count = 2;
+            boxes[0] = wall(0, 0, -2, 0.5f, 4, 2, -1);
+            boxes[1] = wall(0, 0, 2, 0.5f, 4, 2, -1);
+        }
+        if (kind == 3) {
+            count = 0;
+            for (int y = -1; y <= 1; y += 2) for (int z = -1; z <= 1; z += 2)
+                boxes[count++] = wall(0, 2.0f*y, 2.0f*z, 0.5f, 2, 2, -1);
+        }
+        if (kind == 4) {
+            count = 2;
+            boxes[0] = wall(-1, 0, -0.6f, 0.2f, 4, 0.8f, -1);
+            boxes[1] = wall(1, 0, 0.6f, 0.2f, 4, 0.8f, -1);
+        }
+        tide_text_use(&w.heap, NULL);
+        tide_list_resize(&w.Fixture.queries, 90, sizeof(query), TIDE_IN_MATCH);
+        for (int i = 0; i < 90; i++) {
+            query q = sight();
+            q.observer.extents = tide_f3(0.25f, 0.25f, 0.25f);
+            q.target.extents = tide_f3(0.1f, 0.5f, 2);
+            q.observer.center.y = q.target.center.y = (i%5)*0.01f;
+            *(query *)tide_list_at_mut(w.Fixture.queries, i, sizeof q) = q;
+        }
+        rebuild(&w, boxes, count);
+        for (int i = 0; i < 4; i++) batch(&w);
+        TIDE_REQUIRE(occluded_results(&w) == 90);
+        const uint32_t used = w.heap.used;
+        double samples[9];
+        for (int sample = 0; sample < 9; sample++) {
+            const uint64_t start = tide_time_now_ns();
+            for (int repeat = 0; repeat < 16; repeat++) batch(&w);
+            samples[sample] = (double)(tide_time_now_ns()-start)/16000.0;
+            TIDE_CHECK(occluded_results(&w) == 90);
+        }
+        qsort(samples, 9, sizeof *samples, compare_double);
+        TIDE_CHECK(w.heap.used == used && tide_scratch_mark() == 0);
+        printf("    90-query %s: %.3f us/batch\n", names[kind], samples[4]);
+    }
     tide_world_free(&w);
 }

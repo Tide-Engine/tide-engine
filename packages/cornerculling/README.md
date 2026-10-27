@@ -151,8 +151,11 @@ package-owned scheduler or batch allocation.
 The BVH has leaves of at most four boxes, balanced median splits, three-way
 partitioning for tied centroids and subtree masks. Cached blockers bypass tree
 traversal when still valid. `Rebuild` belongs outside the relevance loop;
-`Update` currently searches and refits the whole tree in O(N). Update a few doors
-at a time; frequent movement of many blockers needs further profiling.
+`Update` uses a source-index lookup and refits only the changed leaf and its
+ancestors in O(log N) with unshared storage. Shared snapshots can incur COW
+copying. Moving many blockers can still degrade spatial quality;
+rebuild when necessary. Source/parent indices are rebuilt once if missing after
+layout migration; that recovery costs O(N).
 
 Boxes and ellipsoids are implemented; equal ellipsoid radii give a sphere.
 There is no capsule, arbitrary convex hull, mesh/terrain import, baked PVS,

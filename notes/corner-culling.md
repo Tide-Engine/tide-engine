@@ -1,5 +1,66 @@
 # Corner Culling package
 
+## Performance pass (2026-10-27)
+
+The owner requested a performance pass after rotated/combined coverage. The
+visibility contracts, candidate order, corner order, subdivision limits and
+three answer fingerprints remain unchanged. The optimized kernel computes
+contracted bounds once per candidate, transforms/scales each endpoint once
+instead of once per ray pair, and keeps aligned-box, rotated-box and ellipsoid
+loops separate. A three-state coverage result reuses the center-ray answer in
+Search instead of repeating eligibility/center tests. Division remains division;
+no reciprocal approximation, float reassociation, margin reduction or less
+conservative proof was introduced. Disjoint broadphase boxes skip impossible
+three-axis joining attempts without changing the retained candidate closure.
+
+Update now looks up the entry and leaf by source index and refits that leaf and
+its ancestors. Parent links live outside Node, preserving the 64-byte hot BVH
+node layout. The extra logical index storage is 8 bytes per entry and 4 bytes
+per node, plus ordinary list overhead. Rebuild constructs these indices in one
+preorder pass. Unique-storage update work is O(log N) rather than O(N); shared
+list storage can still incur COW costs. Missing indices after migration of an
+older CullingWorld layout are rebuilt on the first Update in O(N). The regression
+covers deep-tree updates, snapshots/COW, packed restoration, repartitioning and
+simulated missing-index recovery; no compiler/runtime change was needed.
+
+### Paired measurement
+
+`corner-culling-performance.json` retains six final process results, per-row
+medians/ranges, baseline commit and binary hashes. Both variants were built in
+this checkout with the same Clang 23.1.2 RelWithDebInfo configuration and matching
+performance loops. Baseline/final order was BAABBA, three processes each; every
+reported process row is a median of nine samples of 16 ticks. Warmups follow
+the existing fixtures. The final measurement sequence ran without concurrent
+agent builds; this was still a shared desktop without affinity/clock control.
+Earlier exploratory runs were noisy and are not included in the final summary.
+
+| Workload | Before us | After us | Time reduction |
+| --- | ---: | ---: | ---: |
+| 50 players / 2,450 links / 4,096 boxes, cached expanded bounds | 1204.369 | 922.812 | 23.4% |
+| 90 expanded rotated-box queries | 102.744 | 65.719 | 36.0% |
+| 90 expanded ellipsoid queries | 65.100 | 32.619 | 49.9% |
+| 90 joined-wall queries | 95.794 | 76.550 | 20.1% |
+| 90 four-tile wall queries | 268.087 | 232.900 | 13.1% |
+| 90 subdivision proofs | 191.794 | 148.781 | 22.4% |
+| 90 visible queries / 512 near-miss boxes | 1656.450 | 1109.481 | 33.0% |
+| One replacement/refit + tick, 512 boxes | 4.594 | 0.331 | 92.8% |
+
+The new shape/combination workloads keep 90 complete expanded-envelope queries,
+check every answer, and assert stable heap/scratch use. Update timing now masks
+out the fixture's extra scalar query on BOTH variants, so it isolates refit work
+plus tick overhead; it must not be compared to the earlier combined update/query
+numbers below. The 4,096-box matrix remains a divider plus irrelevant geometry,
+not a dense real map. These measurements are workload-specific, not tail latency,
+network bandwidth or a universal speedup. Raw local output is in
+build/corner-perf/final-*-{before,after}.txt.
+
+All 17 package checks pass in native debug, native RelWithDebInfo and WASI debug.
+All three retain e443e90c08f91ab4, e72bc1ab7a0356fc and b4239b9ef0285d5c.
+The existing independent interior-ray oracles, projection privacy checks and
+snapshot/pack checks remain enabled. Production docs build passes, including
+its usual unstaged playable-page 404s. No visual replay regeneration is needed:
+its query records are unchanged. Other OS/Android/sanitizer coverage remains CI's.
+
 ## Rotated primitives and combined proofs (2026-10-27)
 
 The owner requested rotations, additional shapes and coverage by multiple wall

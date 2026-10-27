@@ -1,5 +1,12 @@
 # The docs site
 
+## Corner Culling performance contract (2026-10-27)
+
+The guide now describes indexed source lookup, ancestor-only refits and recovery
+of missing indices after layout migration, with COW cost qualified separately.
+Production npm build passes with the existing unstaged playable-page 404s.
+Measurements and native/WASI validation are in notes/corner-culling.md.
+
 ## Corner Culling rotated/combined geometry (2026-10-27)
 
 The package guide now documents Occluder, quaternion rotation, boxes/ellipsoids,

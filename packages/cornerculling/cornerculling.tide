@@ -59,6 +59,12 @@ struct SearchResult
     bool unknown;
 }
 
+struct Location
+{
+    int entry;
+    int leaf;
+}
+
 struct Node
 {
     double3 min;
@@ -234,24 +240,13 @@ double3 Local(Geometry g, double3 p)
     return g.aligned ? d : double3(Math.Dot(d, g.x), Math.Dot(d, g.y), Math.Dot(d, g.z));
 }
 
-bool Hits(Geometry g, double3 from, double3 to, double margin)
+bool UnitSphereHits(double3 a, double3 b)
 {
-    double3 inner = g.extents - g.rounding - margin;
-    if (Math.Cmin(inner) <= 0d) return false;
-    if (g.shape == OccluderShape.Box)
-    {
-        if (g.aligned) return Intersects(from, to, g.center - inner, g.center + inner);
-        return Intersects(Local(g, from), Local(g, to), -inner, inner);
-    }
-    double3 a = Local(g, from) / inner;
-    double3 b = Local(g, to) / inner;
     double3 direction = b - a;
     double length = Math.Dot(direction, direction);
     if (length <= 0d) return false;
     double t = Math.Clamp(-Math.Dot(a, direction) / length, 1e-12d, 1d - 1e-12d);
     double3 closest = a + direction * t;
-    // Reject near-tangencies; the larger geometry padding also bounds the
-    // transform error. Very ill-conditioned segments deliberately fail open.
     double uncertainty = 1e-12d * Math.Max(1d, Math.Max(Math.Dot(a, a), Math.Dot(b, b)));
     return Math.Dot(closest, closest) < 1d - uncertainty;
 }
@@ -263,13 +258,61 @@ bool Eligible(Geometry g, PreparedQuery query)
         !Overlaps(g.min, g.max, query.targetMin, query.targetMax);
 }
 
+// 0: center misses; 1: center hits but full coverage fails; 2: full coverage.
+// Search needs both outcomes; compute the center ray only once. Arithmetic and
+// corner order match the scalar kernel, including division (not reciprocals).
+int Coverage(Geometry g, PreparedQuery query)
+{
+    double3 inner = g.extents - g.rounding - query.margin;
+    if (Math.Cmin(inner) <= 0d) return 0;
+    if (g.aligned && g.shape == OccluderShape.Box)
+    {
+        double3 min = g.center - inner;
+        double3 max = g.center + inner;
+        if (!Intersects(query.observerCenter, query.targetCenter, min, max)) return 0;
+        for (var a = 0; a < query.observerCount; a++)
+            for (var b = 0; b < query.targetCount; b++)
+                if (!Intersects(query.observers[a], query.targets[b], min, max)) return 1;
+        return 2;
+    }
+    bool rounded = g.shape == OccluderShape.Ellipsoid;
+    double3 centerA = Local(g, query.observerCenter);
+    double3 centerB = Local(g, query.targetCenter);
+    if (rounded)
+    {
+        if (!UnitSphereHits(centerA / inner, centerB / inner)) return 0;
+    }
+    else if (!Intersects(centerA, centerB, -inner, inner)) return 0;
+    mut double3[8] observers = default;
+    mut double3[8] targets = default;
+    for (var a = 0; a < query.observerCount; a++)
+    {
+        double3 local = Local(g, query.observers[a]);
+        observers[a] = rounded ? local / inner : local;
+    }
+    for (var b = 0; b < query.targetCount; b++)
+    {
+        double3 local = Local(g, query.targets[b]);
+        targets[b] = rounded ? local / inner : local;
+    }
+    if (rounded)
+    {
+        for (var a = 0; a < query.observerCount; a++)
+            for (var b = 0; b < query.targetCount; b++)
+                if (!UnitSphereHits(observers[a], targets[b])) return 1;
+    }
+    else
+    {
+        for (var a = 0; a < query.observerCount; a++)
+            for (var b = 0; b < query.targetCount; b++)
+                if (!Intersects(observers[a], targets[b], -inner, inner)) return 1;
+    }
+    return 2;
+}
+
 bool Blocks(Geometry g, PreparedQuery query)
 {
-    if (!Eligible(g, query) || !Hits(g, query.observerCenter, query.targetCenter, query.margin)) return false;
-    for (var a = 0; a < query.observerCount; a++)
-        for (var b = 0; b < query.targetCount; b++)
-            if (!Hits(g, query.observers[a], query.targets[b], query.margin)) return false;
-    return true;
+    return Eligible(g, query) && Coverage(g, query) == 2;
 }
 
 bool Blocks(Occluder box, PreparedQuery query) { return Blocks(GeometryFor(box), query); }
@@ -409,6 +452,8 @@ struct CullingWorld
     // Implementation storage. Keep it intact; use Rebuild/Update/Clear.
     List<Entry> entries;
     List<Node> nodes;
+    List<Location> locations;
+    List<int> parents;
     bool ready;
 
     Node Leaf(int first, int count, int escape)
@@ -451,16 +496,38 @@ struct CullingWorld
     {
         entries.Clear();
         nodes.Clear();
+        parents.Clear();
         for (var i = 0; i < boxes.count; i++)
             entries.Add(Entry { box = boxes[i], geometry = GeometryFor(boxes[i]), source = i });
         if (entries.count > 0) BuildBranch(0, entries.count);
+        IndexLocations();
         ready = true;
+    }
+
+    // Also recovers the new lookup lists after hot reload of an older layout.
+    // Preorder escape indices let us recover parents without a separate stack.
+    mut void IndexLocations()
+    {
+        locations.Resize(entries.count);
+        parents.Resize(nodes.count);
+        mut int parent = -1;
+        for (var n = 0; n < nodes.count; n++)
+        {
+            while (parent >= 0 && n >= nodes[parent].escape) parent = parents[parent];
+            parents[n] = parent;
+            Node node = nodes[n];
+            for (var i = node.first; i < node.first + node.count; i++)
+                locations[entries[i].source] = Location { entry = i, leaf = n };
+            if (node.count == 0) parent = n;
+        }
     }
 
     mut void Clear()
     {
         entries.Clear();
         nodes.Clear();
+        parents.Clear();
+        locations.Clear();
         ready = false;
     }
 
@@ -469,27 +536,31 @@ struct CullingWorld
     mut bool Update(int source, Occluder box)
     {
         if (!ready || source < 0 || source >= entries.count) return false;
-        for (var i = 0; i < entries.count; i++)
+        if (locations.count != entries.count || parents.count != nodes.count) IndexLocations();
+        Location location = locations[source];
+        int index = location.entry;
+        if (index < 0 || index >= entries.count || entries[index].source != source) return false;
+        entries[index].box = box;
+        entries[index].geometry = GeometryFor(box);
+        mut int n = location.leaf;
+        while (n >= 0)
         {
-            if (entries[i].source != source) continue;
-            entries[i].box = box;
-            entries[i].geometry = GeometryFor(box);
-            for (var n = nodes.count - 1; n >= 0; n--)
+            if (n >= nodes.count) return false;
+            Node old = nodes[n];
+            if (old.count > 0) nodes[n] = Leaf(old.first, old.count, old.escape);
+            else
             {
-                Node old = nodes[n];
-                if (old.count > 0) nodes[n] = Leaf(old.first, old.count, old.escape);
-                else
-                {
-                    Node left = nodes[n + 1];
-                    Node right = nodes[left.escape];
-                    nodes[n].min = left.mask == 0 ? right.min : (right.mask == 0 ? left.min : Math.Min(left.min, right.min));
-                    nodes[n].max = left.mask == 0 ? right.max : (right.mask == 0 ? left.max : Math.Max(left.max, right.max));
-                    nodes[n].mask = left.mask | right.mask;
-                }
+                Node left = nodes[n + 1];
+                Node right = nodes[left.escape];
+                nodes[n].min = left.mask == 0 ? right.min : (right.mask == 0 ? left.min : Math.Min(left.min, right.min));
+                nodes[n].max = left.mask == 0 ? right.max : (right.mask == 0 ? left.max : Math.Max(left.max, right.max));
+                nodes[n].mask = left.mask | right.mask;
             }
-            return true;
+            int parent = parents[n];
+            if (parent >= n) return false;
+            n = parent;
         }
-        return false;
+        return true;
     }
 
     CullingResult Query(CullingQuery query, mut CullingCache cache)
@@ -544,9 +615,10 @@ struct CullingWorld
                 if (index < 0 || index >= entries.count) continue;
                 Geometry g = entries[index].geometry;
                 if (!Eligible(g, query)) continue;
-                if (Blocks(g, query)) { result.blocker = index; return result; }
+                int coverage = Coverage(g, query);
+                if (coverage == 2) { result.blocker = index; return result; }
                 if (result.count < 16) { result.candidates[result.count] = index; result.count++; }
-                if (Hits(g, query.observerCenter, query.targetCenter, query.margin)) result.centerHit = true;
+                if (coverage == 1) result.centerHit = true;
             }
             at++;
         }
@@ -592,6 +664,9 @@ struct CullingWorld
         }
         for (var a = 0; a < count; a++)
             for (var b = 0; b < a; b++)
+            {
+                // Disjoint broadphase bounds cannot yield any joined prism.
+                if (!Overlaps(pool[a].min, pool[a].max, pool[b].min, pool[b].max)) continue;
                 for (var axis = 0; axis < 3; axis++)
                 {
                     Geometry joined = Join(pool[a], pool[b], axis);
@@ -603,6 +678,7 @@ struct CullingWorld
                         if (Contains(pool[i], joined)) { redundant = true; break; }
                     if (!redundant) { pool[count] = joined; count++; }
                 }
+            }
         return false;
     }
 
