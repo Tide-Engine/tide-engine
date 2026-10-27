@@ -1,5 +1,36 @@
 # Benchmarks
 
+## Earth pins after projected repair delivery (2026-10-27)
+
+Run `40419145201` at `eaf260488` fails only the three Earth benchmark pins
+in all nine underlying failed jobs. Native Windows/Linux/macOS, MinGW,
+all three WASI builds, Linux sanitizers and Android agree on
+`8d679303b6836f22` (ordinary/diverge) and `1019cc68d13cf499` (split).
+The previous `e16a82074` run passed; the change starts with `d0ead429a`'s
+intentional projected repair delivery correction (notes/netcode.md).
+
+A controlled native debug link uses the current generated game, benchmark,
+compiler and other runtime objects, replacing only session.c with
+`e16a82074`'s implementation in an ignored scratch executable. It reproduces
+the old ordinary pin `2d4f30cae27728fa` at tick 273 and split pin
+`77140ad82e885ede` at tick 287. The current implementation completes joins
+sooner (maximum 0.28/0.30 s versus 0.48/0.52 s) and ends both cases at tick
+273, with no late inputs or resyncs. These are different deterministic network
+timelines, not a cross-platform math discrepancy. Historical performance
+measurements remain tied to their original implementations.
+
+Only the three expected hashes in bench/CMakeLists.txt change. The workloads,
+inputs, join/lag/resync checks, thread settings and divergence diagnostics
+retain their existing behavior. The workflow and publication gates are unchanged.
+
+Validation: warning-free native and WASI debug builds of bench_earth and
+earth_tests; all four selected CTests pass on each (63.67/67.14 seconds),
+using Clang 23.1.2 and Node 24.22.1. Native ordinary/split runs also agree
+with one thread versus the default twelve. The original run establishes
+optimized cross-platform hash agreement; the next dev run must confirm all
+corrected checks and publication. No browser or GPU coverage is needed for
+these CPU-only expected-value changes.
+
 ## Earth relief changes the simulation pins (2026-10-25)
 
 The owner requested gentle hills alongside the game-side performance pass.

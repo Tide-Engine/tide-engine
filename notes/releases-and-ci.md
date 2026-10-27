@@ -1,5 +1,17 @@
 # Releases, installing and CI
 
+## Earth benchmark pins in run 40419145201 (2026-10-27)
+
+The completed run at `eaf260488` fails only bench_earth, bench_earth_split
+and bench_earth_diverge in all nine failed platform/package jobs. Docs,
+JetBrains verification and Windows/macOS packaging pass; aggregate gates
+fail/cancel, and Release/Marketplace are skipped. No nightly is published.
+Every platform agrees on the new hashes after `d0ead429a`'s projected repair
+delivery change. The controlled old-session reproduction and scoped pin
+correction are in notes/benchmarks.md, Earth pins after projected repair
+delivery. The ordinary push-to-dev trigger will validate the correction;
+retrying the old commit cannot include it.
+
 ## CI telemetry opt-out (2026-10-26)
 
 Build and Docs set `TIDE_TELEMETRY: '0'` at workflow scope alongside
