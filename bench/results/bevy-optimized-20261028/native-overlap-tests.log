@@ -1,0 +1,480 @@
+Start testing: Oct 28 22:01 Romance Standard Time
+----------------------------------------------------------
+48/2884 Testing: tidec_e2e_sparse
+48/2884 Test: tidec_e2e_sparse
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_sparse.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_sparse" start time: Oct 28 22:01 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   sparse_components_come_and_go_in_place (0.082 ms)
+ok   sparse_set_and_get_follow_presence (0.014 ms)
+
+2/2 passed
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_sparse" end time: Oct 28 22:01 Romance Standard Time
+"tidec_e2e_sparse" time elapsed: 00:00:00
+----------------------------------------------------------
+
+51/2884 Testing: tidec_e2e_destroy_rows
+51/2884 Test: tidec_e2e_destroy_rows
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_destroy_rows.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_destroy_rows" start time: Oct 28 22:01 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   destroy_rows_keep_math_order_reuse_and_snapshots (10.645 ms)
+ok   destroy_rows_keep_user_operator_events_before_each_destroy (0.034 ms)
+ok   destroy_rows_leave_c_observers_in_the_original_order (0.019 ms)
+ok   destroy_rows_preserve_filtered_fallback_and_skipped_rows (0.044 ms)
+
+4/4 passed
+<end of output>
+Test time =   0.17 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_destroy_rows" end time: Oct 28 22:01 Romance Standard Time
+"tidec_e2e_destroy_rows" time elapsed: 00:00:00
+----------------------------------------------------------
+
+52/2884 Testing: tidec_destroy_rows_codegen
+52/2884 Test: tidec_destroy_rows_codegen
+Command: "C:/Program Files/CMake/bin/cmake.exe" "-DGAME_C=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests/tide/tidec_e2e_destroy_rows/game.c" "-P" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/compiler/tests/destroy_rows_codegen.cmake"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_destroy_rows_codegen" start time: Oct 28 22:01 Romance Standard Time
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_destroy_rows_codegen" end time: Oct 28 22:01 Romance Standard Time
+"tidec_destroy_rows_codegen" time elapsed: 00:00:00
+----------------------------------------------------------
+
+56/2884 Testing: tidec_e2e_world_set_own
+56/2884 Test: tidec_e2e_world_set_own
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_world_set_own.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_world_set_own" start time: Oct 28 22:01 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   world_set_own_is_the_same_under_a_snapshot (1.306 ms)
+ok   world_sets_this_entitys_own_beside_a_read_parameter (0.605 ms)
+
+2/2 passed
+<end of output>
+Test time =   0.05 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_world_set_own" end time: Oct 28 22:01 Romance Standard Time
+"tidec_e2e_world_set_own" time elapsed: 00:00:00
+----------------------------------------------------------
+
+57/2884 Testing: tidec_e2e_world_set_read
+57/2884 Test: tidec_e2e_world_set_read
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_world_set_read.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_world_set_read" start time: Oct 28 22:01 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   world_set_read_parameters_in_local_views (0.710 ms)
+ok   world_set_read_parameters_keep_their_values_in_handlers (0.986 ms)
+ok   world_set_read_parameters_on_the_threaded_scheduler (1.301 ms)
+ok   world_set_read_parameters_refresh_when_tasks_resume (1.284 ms)
+ok   world_set_reads_follow_other_rows_and_replaced_pages (5.849 ms)
+
+5/5 passed
+<end of output>
+Test time =   0.06 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_world_set_read" end time: Oct 28 22:01 Romance Standard Time
+"tidec_e2e_world_set_read" time elapsed: 00:00:00
+----------------------------------------------------------
+
+58/2884 Testing: tidec_e2e_world_set_mut
+58/2884 Test: tidec_e2e_world_set_mut
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_world_set_mut.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_world_set_mut" start time: Oct 28 22:01 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   world_set_mut_context_is_local_to_threaded_invocations (4.744 ms)
+ok   world_set_mut_in_authenticated_command_dispatch (0.749 ms)
+ok   world_set_mut_in_awaited_component_tasks (1.000 ms)
+ok   world_set_mut_in_local_views (0.596 ms)
+ok   world_set_mut_rebuilds_bindings_at_event_and_task_turns (0.888 ms)
+ok   world_set_mut_replaces_the_active_container_ownership (1.148 ms)
+ok   world_set_mut_updates_self_and_helpers_without_overwriting_other_rows (6.146 ms)
+
+7/7 passed
+<end of output>
+Test time =   0.04 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_world_set_mut" end time: Oct 28 22:01 Romance Standard Time
+"tidec_e2e_world_set_mut" time elapsed: 00:00:00
+----------------------------------------------------------
+
+61/2884 Testing: tidec_e2e_transforms
+61/2884 Test: tidec_e2e_transforms
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_transforms.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_transforms" start time: Oct 28 22:01 Romance Standard Time
+Output:
+----------------------------------------------------------
+tide: SetParent rejected: the parent is the child or one of its descendants
+tide: SetParent rejected: the parent is the child or one of its descendants
+tide: SetParent rejected: the parent is the child or one of its descendants
+tide: SetParent rejected: child or parent no longer exists
+tide: SetParent rejected: the new parent has a singular or nonfinite world transform
+ok   transform_corrections_snap_reparent_reset_and_leave_local_placement_current (0.194 ms)
+ok   transform_cycle_rejection_and_reparenting (0.029 ms)
+ok   transform_default_corrections_preserve_position_rotation_and_hashes (0.043 ms)
+ok   transform_deferred_parenting_and_dead_handles (0.019 ms)
+ok   transform_hierarchy_snapshots_and_packed_worlds (0.033 ms)
+ok   transform_parenting_and_local_component_placement (0.033 ms)
+ok   transform_rotation_scale_and_singular_reparent (0.021 ms)
+ok   transform_tick_interpolation_and_zero_error_keep_scale_and_short_rotation (0.029 ms)
+
+8/8 passed
+<end of output>
+Test time =   0.04 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_transforms" end time: Oct 28 22:01 Romance Standard Time
+"tidec_e2e_transforms" time elapsed: 00:00:00
+----------------------------------------------------------
+
+64/2884 Testing: tidec_e2e_shards
+64/2884 Test: tidec_e2e_shards
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_shards.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_shards" start time: Oct 28 22:01 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   shards_a_world_of_one_shard_splits_on_demand_and_comes_back_together (48.127 ms)
+ok   shards_merge_quiet_regions (19.040 ms)
+ok   shards_move_entities_and_wait_on_borders_without_losing_anything (58.907 ms)
+ok   shards_recover_from_a_crash_after_splits (163.122 ms)
+ok   shards_recover_from_a_crash_where_they_were (82.740 ms)
+ok   shards_restart_one_shard_where_it_was (65.055 ms)
+ok   shards_restore_a_checkpoint_and_go_on (66.057 ms)
+ok   shards_split_a_busy_region_and_merge_quiet_ones (42.578 ms)
+ok   shards_split_a_crowded_region (121.884 ms)
+
+9/9 passed
+<end of output>
+Test time =   0.72 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_shards" end time: Oct 28 22:01 Romance Standard Time
+"tidec_e2e_shards" time elapsed: 00:00:00
+----------------------------------------------------------
+
+67/2884 Testing: tidec_e2e_prefabs
+67/2884 Test: tidec_e2e_prefabs
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_prefabs.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_prefabs" start time: Oct 28 22:01 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   prefab_complete_tree_and_root_overrides (0.117 ms)
+ok   prefab_descendant_overrides_merge_values_and_preserve_instances (0.123 ms)
+ok   prefab_descendant_overrides_support_local_spawn_and_scene_load (0.144 ms)
+ok   prefab_destroy_subtree_and_unload_scene (0.026 ms)
+ok   prefab_inherited_values_keep_source_namespace (0.019 ms)
+ok   prefab_local_placement_keeps_match_unchanged (0.043 ms)
+ok   prefab_references_snapshot_and_pack (0.049 ms)
+ok   prefab_temporary_handles_and_serial_order (7.728 ms)
+
+8/8 passed
+<end of output>
+Test time =   0.04 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_prefabs" end time: Oct 28 22:01 Romance Standard Time
+"tidec_e2e_prefabs" time elapsed: 00:00:00
+----------------------------------------------------------
+
+68/2884 Testing: tidec_e2e_scene_startup
+68/2884 Test: tidec_e2e_scene_startup
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_scene_startup.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_scene_startup" start time: Oct 28 22:01 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   scene_startup_authored_root_and_normal_lifecycle (0.069 ms)
+ok   scene_startup_empty_scene_fallback_reloads_authored_tree (0.015 ms)
+ok   scene_startup_unmarked_views_and_session_default (0.125 ms)
+
+3/3 passed
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_scene_startup" end time: Oct 28 22:01 Romance Standard Time
+"tidec_e2e_scene_startup" time elapsed: 00:00:00
+----------------------------------------------------------
+
+79/2884 Testing: tidec_e2e_handler_queries
+79/2884 Test: tidec_e2e_handler_queries
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_handler_queries.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_handler_queries" start time: Oct 28 22:01 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   handler_queries_in_global_and_targeted_commands (0.147 ms)
+ok   handler_queries_keep_structural_changes_deferred_and_parameter_copy_rules (0.013 ms)
+ok   handler_queries_observe_their_queue_turn_and_lifecycle (0.013 ms)
+ok   handler_queries_read_helper_writes_after_cow_and_replay_identically (0.018 ms)
+
+4/4 passed
+<end of output>
+Test time =   0.04 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_handler_queries" end time: Oct 28 22:01 Romance Standard Time
+"tidec_e2e_handler_queries" time elapsed: 00:00:00
+----------------------------------------------------------
+
+107/2884 Testing: tidec_e2e_crossplatform
+107/2884 Test: tidec_e2e_crossplatform
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_crossplatform.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_crossplatform" start time: Oct 28 22:01 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   crossplatform_simulation (13.770 ms)
+
+1/1 passed
+<end of output>
+Test time =   0.04 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_crossplatform" end time: Oct 28 22:01 Romance Standard Time
+"tidec_e2e_crossplatform" time elapsed: 00:00:00
+----------------------------------------------------------
+
+111/2884 Testing: tidec_e2e_random
+111/2884 Test: tidec_e2e_random
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_random.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_random" start time: Oct 28 22:01 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   random_a_plain_start_repeats (0.165 ms)
+ok   random_a_snapshot_rolls_the_same_again (0.085 ms)
+ok   random_crossplatform_match (0.057 ms)
+ok   random_local_state_rolls_too (0.044 ms)
+ok   random_rolls_follow_the_code (0.012 ms)
+ok   random_spawns_and_adds_are_seeded_as_they_apply (0.024 ms)
+ok   random_the_engine_seeds_what_the_game_did_not (0.032 ms)
+ok   random_the_game_says_it_has_a_seed (0.000 ms)
+ok   random_the_seed_makes_the_match (0.149 ms)
+
+9/9 passed
+<end of output>
+Test time =   0.04 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_random" end time: Oct 28 22:01 Romance Standard Time
+"tidec_e2e_random" time elapsed: 00:00:00
+----------------------------------------------------------
+
+172/2884 Testing: tidec_e2e_ownership
+172/2884 Test: tidec_e2e_ownership
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_ownership.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_ownership" start time: Oct 28 22:01 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   ownership_alone_runs_once_for_each_entity (0.076 ms)
+ok   ownership_beside_other_filters (0.011 ms)
+ok   ownership_beside_the_owner_as_a_parameter (0.009 ms)
+ok   ownership_follows_the_owner (0.009 ms)
+ok   ownership_is_a_name_everywhere_else (0.009 ms)
+ok   ownership_views_blend_like_any_other (0.014 ms)
+ok   ownership_views_wait_for_a_match (0.008 ms)
+ok   ownership_with_runs_for_this_players_entities (0.009 ms)
+ok   ownership_without_runs_for_every_other_entity (0.011 ms)
+
+9/9 passed
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_ownership" end time: Oct 28 22:01 Romance Standard Time
+"tidec_e2e_ownership" time elapsed: 00:00:00
+----------------------------------------------------------
+
+184/2884 Testing: tidec_e2e_events
+184/2884 Test: tidec_e2e_events
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_events.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_events" start time: Oct 28 22:01 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   events_are_queued_with_their_own_bytes (0.087 ms)
+ok   events_follow_the_order_they_were_recorded_in (0.009 ms)
+ok   events_handlers_run_in_order (0.007 ms)
+ok   events_player_joined_waits_for_the_next_tick (0.007 ms)
+ok   events_sent_in_main_are_handled_as_it_applies (0.009 ms)
+ok   events_sent_to_the_world (0.007 ms)
+ok   events_spawned_and_destroyed_run_as_changes_apply (0.006 ms)
+
+7/7 passed
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_events" end time: Oct 28 22:01 Romance Standard Time
+"tidec_e2e_events" time elapsed: 00:00:00
+----------------------------------------------------------
+
+185/2884 Testing: tidec_e2e_events_lookup
+185/2884 Test: tidec_e2e_events_lookup
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_events_lookup.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_events_lookup" start time: Oct 28 22:01 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   events_lookup_checks_reused_generations_and_pending_spawns (0.037 ms)
+ok   events_lookup_falls_back_after_swapping_the_first_row (0.008 ms)
+ok   events_lookup_handles_archetype_moves_and_an_empty_candidate_table (0.009 ms)
+ok   events_lookup_keeps_snapshots_and_unpacked_worlds_consistent (0.028 ms)
+ok   events_lookup_validates_handles_and_other_archetypes (0.005 ms)
+
+5/5 passed
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_events_lookup" end time: Oct 28 22:01 Romance Standard Time
+"tidec_e2e_events_lookup" time elapsed: 00:00:00
+----------------------------------------------------------
+
+208/2884 Testing: tidec_e2e_scenes
+208/2884 Test: tidec_e2e_scenes
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_scenes.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_scenes" start time: Oct 28 22:01 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   scenes_load_and_set_up (0.075 ms)
+ok   scenes_remember_who_sees_them (0.019 ms)
+ok   scenes_unload_everything_in_them (0.021 ms)
+
+3/3 passed
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_scenes" end time: Oct 28 22:01 Romance Standard Time
+"tidec_e2e_scenes" time elapsed: 00:00:00
+----------------------------------------------------------
+
+209/2884 Testing: tidec_e2e_scenes_local
+209/2884 Test: tidec_e2e_scenes_local
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_scenes_local.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_scenes_local" start time: Oct 28 22:01 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   scenes_local_main_opens_a_menu (0.070 ms)
+
+1/1 passed
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_scenes_local" end time: Oct 28 22:01 Romance Standard Time
+"tidec_e2e_scenes_local" time elapsed: 00:00:00
+----------------------------------------------------------
+
+210/2884 Testing: tidec_e2e_scenes_fallback
+210/2884 Test: tidec_e2e_scenes_fallback
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_scenes_fallback.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_scenes_fallback" start time: Oct 28 22:01 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   scenes_fallback_main_loads_once_a_tick (0.032 ms)
+ok   scenes_fallback_main_loads_when_the_last_scene_unloads (0.006 ms)
+
+2/2 passed
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_scenes_fallback" end time: Oct 28 22:01 Romance Standard Time
+"tidec_e2e_scenes_fallback" time elapsed: 00:00:00
+----------------------------------------------------------
+
+211/2884 Testing: tidec_e2e_scene_filters
+211/2884 Test: tidec_e2e_scene_filters
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_scene_filters.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_scene_filters" start time: Oct 28 22:01 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   scene_filters_systems_and_handlers (0.053 ms)
+ok   scene_filters_views (0.066 ms)
+
+2/2 passed
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_scene_filters" end time: Oct 28 22:01 Romance Standard Time
+"tidec_e2e_scene_filters" time elapsed: 00:00:00
+----------------------------------------------------------
+
+216/2884 Testing: tidec_e2e_tasks
+216/2884 Test: tidec_e2e_tasks
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_tasks.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_tasks" start time: Oct 28 22:01 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   tasks_a_handler_waits_a_tick_at_a_time (0.060 ms)
+ok   tasks_await_values_and_errors (0.034 ms)
+ok   tasks_end_with_their_owner (0.016 ms)
+ok   tasks_get_their_component_again_after_waiting (0.011 ms)
+ok   tasks_wait_in_a_packed_world (0.038 ms)
+ok   tasks_wait_in_snapshots_and_go_on_the_same (0.020 ms)
+
+6/6 passed
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_tasks" end time: Oct 28 22:01 Romance Standard Time
+"tidec_e2e_tasks" time elapsed: 00:00:00
+----------------------------------------------------------
+
+217/2884 Testing: tidec_e2e_tasks_local
+217/2884 Test: tidec_e2e_tasks_local
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_tasks_local.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_tasks_local" start time: Oct 28 22:01 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   tasks_local_fail_with_what_awaits_them (0.040 ms)
+ok   tasks_local_read_the_match_and_end_with_its_entities (0.026 ms)
+ok   tasks_local_wait_for_seconds_frame_by_frame (0.024 ms)
+
+3/3 passed
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_tasks_local" end time: Oct 28 22:01 Romance Standard Time
+"tidec_e2e_tasks_local" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Oct 28 22:01 Romance Standard Time

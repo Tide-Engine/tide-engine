@@ -1,5 +1,51 @@
 # Benchmarks
 
+## Sparse filtering and churn optimization (2026-10-28)
+
+Following the owner's request to optimize the Bevy comparison's weak areas,
+profiles attribute most wide work to mixed sparse-row traversal and over half
+of Tide churn work to its scalar update/destroy loop. The compiler now selects
+matching indices in bounded 128-row blocks for eligible in-place filtered rows,
+only when the existing pass count says at least a quarter pass and a quarter
+skip. Other densities retain their ordinary loop. Strictly proven numeric
+update/final-self-destroy bodies use SIMD-friendly updates/predicates followed
+by ordered destroy recording from 128 stack flags. Plain destroy reuses its
+already-checked location. No runtime entry point, world layout, math, entity ID,
+deferred order or scheduling rule changes. Contracts: language.md, Mixed sparse
+row selection; ecs.md, Pure row updates before conditional destruction.
+
+Windows/Ryzen 9 7900X, Clang 23.1.2, Rust 1.95.0/Bevy ECS 0.20.0, unchanged O2
+flags/game sources/Bevy executable: five adjacent alternating before/current/Bevy
+triples, frozen baseline aac950038, 200 warmup/400 measured ticks, 210 successful
+processes. Half-frozen 1M rows take before/current/Bevy 4.01150/2.29915/2.66665 ms
+serial and 1.17425/0.77645/1.43990 with four offered execution threads. Median
+paired Tide tick-time reductions are 42.37%/33.14%. Churn at 2,000 bullets/tick
+takes 0.57090/0.40030/0.53390 and 0.54610/0.42030/0.62120 ms, reductions
+27.22%/21.51%. All logical digests agree across implementations, rounds and
+thread budgets. CPU-only tick scope still excludes hashing, retained snapshots,
+rollback, networking and rendering.
+
+An always-compact intermediate improves half-frozen traversal but regresses
+biased masks; its 150-process batch, preliminary pairs and density diagnostics
+remain intact. The final 1/10/90/99%-frozen serial sweep retains ordinary loops
+and has paired time changes -0.07%/+0.85%/-3.67%/+10.76%. The last remains adverse
+with overlapping ranges, and Bevy is about ten times faster there. Ordinary
+filtered-loop instruction text matches the frozen baseline after debug/label
+normalization; whole-program placement/runtime costs remain uncontrolled.
+Unchanged controls also vary (serial 1M particles +7.30% paired). This is no
+universal no-regression or whole-engine speed claim.
+
+Thirty scoped native/WASI optimized CTests pass during implementation, including
+two new independent row/order/math/slot-generation/COW/pack fixtures; all 18
+affected checks per platform pass again after the density guard. Sixty-six
+cross-engine checks pass; the final analyzer verifies raw hashes, exact options,
+binary identities, Bevy samples and complete triples. The shared mutex,
+15-second quiet guard and 250 ms polling detect no competing work or quiet
+reset. Desktop activity, placement, clocks and temperature remain uncontrolled.
+Raw evidence, ranges, adverse attempts and reproduction:
+`bench/results/bevy-optimized-20261028-final/README.md`. No full suites,
+browser/GPU, other OS/mobile/sanitizers or extra CI dispatch were run.
+
 ## Bevy ECS comparison (2026-10-28)
 
 The owner's request to compare Tide with Bevy adds the opt-in `bench/bevy`

@@ -27,6 +27,11 @@ tide_e2e_test(structural)
 tide_e2e_test(reach)
 tide_e2e_test(sparse)
 tide_e2e_test(rows) # A system's loop over a chunk's rows: pages shared with a snapshot or not, rows left out, chunks in pieces
+tide_e2e_test(sparse_rows) # Mixed sparse/scene filters preserve row order, block bounds and snapshot writes
+tide_e2e_test(destroy_rows) # Pure updates and deferred self-destroys preserve math, order, handles and snapshots
+add_test(NAME tidec_destroy_rows_codegen
+    COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_destroy_rows/game.c"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/destroy_rows_codegen.cmake")
 if(TIDE_PLATFORM)
     target_link_libraries(tidec_e2e_rows PRIVATE tide_platform)
     target_compile_definitions(tidec_e2e_rows PRIVATE TIDE_ROWS_THREADS=1)

@@ -1,0 +1,1106 @@
+[
+  {
+    "result": {
+      "benchmark": "versus_wide",
+      "label": "stdout",
+      "date": "2026-10-28T21:07:07Z",
+      "os": "windows",
+      "arch": "x86_64",
+      "optimized": true,
+      "compiler": "23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+      "machine": "unknown",
+      "revision": "unknown",
+      "options": {
+        "warmup": 200,
+        "ticks": 400,
+        "split": false,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 1
+      },
+      "ok": true,
+      "digest": "0x138b1f8042a6d033",
+      "runs": [
+        {
+          "threads": 1,
+          "ways": {
+            "Tide": {
+              "median_ms": 3.0047,
+              "mean_ms": 3.1159
+            },
+            "C": {
+              "median_ms": 1.11255,
+              "mean_ms": 1.13528
+            }
+          }
+        }
+      ]
+    },
+    "round": 1,
+    "competing_after": [],
+    "engine": "Before",
+    "stdout_sha256": "6ddfc2845cbe7c27484039d6be5921b1dad5eada8324532f27cfcc03e0f4e884",
+    "frozen": 1,
+    "stdout": "frozen1-r1-Before.txt",
+    "exit_code": 0
+  },
+  {
+    "result": {
+      "benchmark": "versus_wide",
+      "label": "stdout",
+      "date": "2026-10-28T21:07:10Z",
+      "os": "windows",
+      "arch": "x86_64",
+      "optimized": true,
+      "compiler": "23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+      "machine": "unknown",
+      "revision": "unknown",
+      "options": {
+        "warmup": 200,
+        "ticks": 400,
+        "split": false,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 1
+      },
+      "ok": true,
+      "digest": "0x138b1f8042a6d033",
+      "runs": [
+        {
+          "threads": 1,
+          "ways": {
+            "Tide": {
+              "median_ms": 3.36925,
+              "mean_ms": 3.54694
+            },
+            "C": {
+              "median_ms": 1.14485,
+              "mean_ms": 1.15506
+            }
+          }
+        }
+      ]
+    },
+    "round": 1,
+    "competing_after": [],
+    "engine": "Tide",
+    "stdout_sha256": "dac3e917b4e2682bfa35be2b7ae9e44acc65e238eb12d42494927094b8ff6f8b",
+    "frozen": 1,
+    "stdout": "frozen1-r1-Tide.txt",
+    "exit_code": 0
+  },
+  {
+    "result": {
+      "benchmark": "versus_wide",
+      "label": "stdout",
+      "date": "2026-10-28T21:07:13Z",
+      "os": "windows",
+      "arch": "x86_64",
+      "optimized": true,
+      "compiler": "23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+      "machine": "unknown",
+      "revision": "unknown",
+      "options": {
+        "warmup": 200,
+        "ticks": 400,
+        "split": false,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 10
+      },
+      "ok": true,
+      "digest": "0x8157b5a2c02776b0",
+      "runs": [
+        {
+          "threads": 1,
+          "ways": {
+            "Tide": {
+              "median_ms": 3.24995,
+              "mean_ms": 3.32341
+            },
+            "C": {
+              "median_ms": 1.08605,
+              "mean_ms": 1.09681
+            }
+          }
+        }
+      ]
+    },
+    "round": 1,
+    "competing_after": [],
+    "engine": "Before",
+    "stdout_sha256": "4c9df3e67618eff898d0f6de5b73028a78ec850750a5612ac6bee9856d16beb8",
+    "frozen": 10,
+    "stdout": "frozen10-r1-Before.txt",
+    "exit_code": 0
+  },
+  {
+    "result": {
+      "benchmark": "versus_wide",
+      "label": "stdout",
+      "date": "2026-10-28T21:07:16Z",
+      "os": "windows",
+      "arch": "x86_64",
+      "optimized": true,
+      "compiler": "23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+      "machine": "unknown",
+      "revision": "unknown",
+      "options": {
+        "warmup": 200,
+        "ticks": 400,
+        "split": false,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 10
+      },
+      "ok": true,
+      "digest": "0x8157b5a2c02776b0",
+      "runs": [
+        {
+          "threads": 1,
+          "ways": {
+            "Tide": {
+              "median_ms": 3.2558,
+              "mean_ms": 3.27621
+            },
+            "C": {
+              "median_ms": 1.0975,
+              "mean_ms": 1.10766
+            }
+          }
+        }
+      ]
+    },
+    "round": 1,
+    "competing_after": [],
+    "engine": "Tide",
+    "stdout_sha256": "36e5dae68f278cb06de71db193de234c3f1143abf4ed12a4920ff5f82cc37014",
+    "frozen": 10,
+    "stdout": "frozen10-r1-Tide.txt",
+    "exit_code": 0
+  },
+  {
+    "result": {
+      "benchmark": "versus_wide",
+      "label": "stdout",
+      "date": "2026-10-28T21:07:18Z",
+      "os": "windows",
+      "arch": "x86_64",
+      "optimized": true,
+      "compiler": "23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+      "machine": "unknown",
+      "revision": "unknown",
+      "options": {
+        "warmup": 200,
+        "ticks": 400,
+        "split": false,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 90
+      },
+      "ok": true,
+      "digest": "0x07c33fc7d6a94b2d",
+      "runs": [
+        {
+          "threads": 1,
+          "ways": {
+            "Tide": {
+              "median_ms": 1.3884,
+              "mean_ms": 1.40217
+            },
+            "C": {
+              "median_ms": 1.11115,
+              "mean_ms": 1.13477
+            }
+          }
+        }
+      ]
+    },
+    "round": 1,
+    "competing_after": [],
+    "engine": "Before",
+    "stdout_sha256": "bc87aa76f9ac17a0d9bff70342c277b86b37bb63eeb60562d6caf6a966f342ec",
+    "frozen": 90,
+    "stdout": "frozen90-r1-Before.txt",
+    "exit_code": 0
+  },
+  {
+    "result": {
+      "benchmark": "versus_wide",
+      "label": "stdout",
+      "date": "2026-10-28T21:07:20Z",
+      "os": "windows",
+      "arch": "x86_64",
+      "optimized": true,
+      "compiler": "23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+      "machine": "unknown",
+      "revision": "unknown",
+      "options": {
+        "warmup": 200,
+        "ticks": 400,
+        "split": false,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 90
+      },
+      "ok": true,
+      "digest": "0x07c33fc7d6a94b2d",
+      "runs": [
+        {
+          "threads": 1,
+          "ways": {
+            "Tide": {
+              "median_ms": 1.7153,
+              "mean_ms": 1.72503
+            },
+            "C": {
+              "median_ms": 1.0919,
+              "mean_ms": 1.10747
+            }
+          }
+        }
+      ]
+    },
+    "round": 1,
+    "competing_after": [],
+    "engine": "Tide",
+    "stdout_sha256": "b02f23f773a3bacceaaf689fbc5d7cf390d74ce5cafdbc3be442513e397da0ad",
+    "frozen": 90,
+    "stdout": "frozen90-r1-Tide.txt",
+    "exit_code": 0
+  },
+  {
+    "result": {
+      "benchmark": "versus_wide",
+      "label": "stdout",
+      "date": "2026-10-28T21:07:21Z",
+      "os": "windows",
+      "arch": "x86_64",
+      "optimized": true,
+      "compiler": "23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+      "machine": "unknown",
+      "revision": "unknown",
+      "options": {
+        "warmup": 200,
+        "ticks": 400,
+        "split": false,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 99
+      },
+      "ok": true,
+      "digest": "0xa683eb7fe00d6622",
+      "runs": [
+        {
+          "threads": 1,
+          "ways": {
+            "Tide": {
+              "median_ms": 0.48875,
+              "mean_ms": 0.50578
+            },
+            "C": {
+              "median_ms": 1.0911,
+              "mean_ms": 1.10372
+            }
+          }
+        }
+      ]
+    },
+    "round": 1,
+    "competing_after": [],
+    "engine": "Before",
+    "stdout_sha256": "c0cd09f874429c19adcca93bf26333fe505f02dc24c55636c612e761cb1536d9",
+    "frozen": 99,
+    "stdout": "frozen99-r1-Before.txt",
+    "exit_code": 0
+  },
+  {
+    "result": {
+      "benchmark": "versus_wide",
+      "label": "stdout",
+      "date": "2026-10-28T21:07:22Z",
+      "os": "windows",
+      "arch": "x86_64",
+      "optimized": true,
+      "compiler": "23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+      "machine": "unknown",
+      "revision": "unknown",
+      "options": {
+        "warmup": 200,
+        "ticks": 400,
+        "split": false,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 99
+      },
+      "ok": true,
+      "digest": "0xa683eb7fe00d6622",
+      "runs": [
+        {
+          "threads": 1,
+          "ways": {
+            "Tide": {
+              "median_ms": 0.54185,
+              "mean_ms": 0.566677
+            },
+            "C": {
+              "median_ms": 1.1346,
+              "mean_ms": 1.15757
+            }
+          }
+        }
+      ]
+    },
+    "round": 1,
+    "competing_after": [],
+    "engine": "Tide",
+    "stdout_sha256": "6422e758143af56c3ed8fe8b2f63cbc7d076cedc3e5ab87645ef6bcc3a8cfcc1",
+    "frozen": 99,
+    "stdout": "frozen99-r1-Tide.txt",
+    "exit_code": 0
+  },
+  {
+    "result": {
+      "benchmark": "versus_wide",
+      "label": "stdout",
+      "date": "2026-10-28T21:07:25Z",
+      "os": "windows",
+      "arch": "x86_64",
+      "optimized": true,
+      "compiler": "23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+      "machine": "unknown",
+      "revision": "unknown",
+      "options": {
+        "warmup": 200,
+        "ticks": 400,
+        "split": false,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 1
+      },
+      "ok": true,
+      "digest": "0x138b1f8042a6d033",
+      "runs": [
+        {
+          "threads": 1,
+          "ways": {
+            "Tide": {
+              "median_ms": 3.4021,
+              "mean_ms": 3.48225
+            },
+            "C": {
+              "median_ms": 1.2124,
+              "mean_ms": 1.22247
+            }
+          }
+        }
+      ]
+    },
+    "round": 2,
+    "competing_after": [],
+    "engine": "Tide",
+    "stdout_sha256": "efed1e146e8eb65d10f5024c7376b1ccf02d4cd9f13b54ad794fefff2d4e5184",
+    "frozen": 1,
+    "stdout": "frozen1-r2-Tide.txt",
+    "exit_code": 0
+  },
+  {
+    "result": {
+      "benchmark": "versus_wide",
+      "label": "stdout",
+      "date": "2026-10-28T21:07:28Z",
+      "os": "windows",
+      "arch": "x86_64",
+      "optimized": true,
+      "compiler": "23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+      "machine": "unknown",
+      "revision": "unknown",
+      "options": {
+        "warmup": 200,
+        "ticks": 400,
+        "split": false,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 1
+      },
+      "ok": true,
+      "digest": "0x138b1f8042a6d033",
+      "runs": [
+        {
+          "threads": 1,
+          "ways": {
+            "Tide": {
+              "median_ms": 3.6674,
+              "mean_ms": 3.65416
+            },
+            "C": {
+              "median_ms": 1.39385,
+              "mean_ms": 1.43045
+            }
+          }
+        }
+      ]
+    },
+    "round": 2,
+    "competing_after": [],
+    "engine": "Before",
+    "stdout_sha256": "cae39893d95eddb9d839e7870b5c404c9d16b7d52927727a3be901c2c849c498",
+    "frozen": 1,
+    "stdout": "frozen1-r2-Before.txt",
+    "exit_code": 0
+  },
+  {
+    "result": {
+      "benchmark": "versus_wide",
+      "label": "stdout",
+      "date": "2026-10-28T21:07:31Z",
+      "os": "windows",
+      "arch": "x86_64",
+      "optimized": true,
+      "compiler": "23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+      "machine": "unknown",
+      "revision": "unknown",
+      "options": {
+        "warmup": 200,
+        "ticks": 400,
+        "split": false,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 10
+      },
+      "ok": true,
+      "digest": "0x8157b5a2c02776b0",
+      "runs": [
+        {
+          "threads": 1,
+          "ways": {
+            "Tide": {
+              "median_ms": 3.24965,
+              "mean_ms": 3.31812
+            },
+            "C": {
+              "median_ms": 1.181,
+              "mean_ms": 1.20523
+            }
+          }
+        }
+      ]
+    },
+    "round": 2,
+    "competing_after": [],
+    "engine": "Tide",
+    "stdout_sha256": "23209a4e6b74d5c86a6273aa596439be1741e078bcef6a152750def3cb4c032c",
+    "frozen": 10,
+    "stdout": "frozen10-r2-Tide.txt",
+    "exit_code": 0
+  },
+  {
+    "result": {
+      "benchmark": "versus_wide",
+      "label": "stdout",
+      "date": "2026-10-28T21:07:34Z",
+      "os": "windows",
+      "arch": "x86_64",
+      "optimized": true,
+      "compiler": "23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+      "machine": "unknown",
+      "revision": "unknown",
+      "options": {
+        "warmup": 200,
+        "ticks": 400,
+        "split": false,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 10
+      },
+      "ok": true,
+      "digest": "0x8157b5a2c02776b0",
+      "runs": [
+        {
+          "threads": 1,
+          "ways": {
+            "Tide": {
+              "median_ms": 3.22035,
+              "mean_ms": 3.32085
+            },
+            "C": {
+              "median_ms": 1.24995,
+              "mean_ms": 1.29549
+            }
+          }
+        }
+      ]
+    },
+    "round": 2,
+    "competing_after": [],
+    "engine": "Before",
+    "stdout_sha256": "e7d4d110a518622de47c100d26f48dd6fec4b686efd2409ce480ed74b2b6c347",
+    "frozen": 10,
+    "stdout": "frozen10-r2-Before.txt",
+    "exit_code": 0
+  },
+  {
+    "result": {
+      "benchmark": "versus_wide",
+      "label": "stdout",
+      "date": "2026-10-28T21:07:36Z",
+      "os": "windows",
+      "arch": "x86_64",
+      "optimized": true,
+      "compiler": "23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+      "machine": "unknown",
+      "revision": "unknown",
+      "options": {
+        "warmup": 200,
+        "ticks": 400,
+        "split": false,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 90
+      },
+      "ok": true,
+      "digest": "0x07c33fc7d6a94b2d",
+      "runs": [
+        {
+          "threads": 1,
+          "ways": {
+            "Tide": {
+              "median_ms": 1.7228,
+              "mean_ms": 1.75574
+            },
+            "C": {
+              "median_ms": 1.0865,
+              "mean_ms": 1.09838
+            }
+          }
+        }
+      ]
+    },
+    "round": 2,
+    "competing_after": [],
+    "engine": "Tide",
+    "stdout_sha256": "85448e5932200008c8c8375096b4934adb67533c498b3ff2bacffa73f28b607a",
+    "frozen": 90,
+    "stdout": "frozen90-r2-Tide.txt",
+    "exit_code": 0
+  },
+  {
+    "result": {
+      "benchmark": "versus_wide",
+      "label": "stdout",
+      "date": "2026-10-28T21:07:38Z",
+      "os": "windows",
+      "arch": "x86_64",
+      "optimized": true,
+      "compiler": "23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+      "machine": "unknown",
+      "revision": "unknown",
+      "options": {
+        "warmup": 200,
+        "ticks": 400,
+        "split": false,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 90
+      },
+      "ok": true,
+      "digest": "0x07c33fc7d6a94b2d",
+      "runs": [
+        {
+          "threads": 1,
+          "ways": {
+            "Tide": {
+              "median_ms": 1.38465,
+              "mean_ms": 1.3954
+            },
+            "C": {
+              "median_ms": 1.08185,
+              "mean_ms": 1.10047
+            }
+          }
+        }
+      ]
+    },
+    "round": 2,
+    "competing_after": [],
+    "engine": "Before",
+    "stdout_sha256": "c5a07703915cea39caf84c8afc382e134b653bb1cddba72b4519bc9a3675248e",
+    "frozen": 90,
+    "stdout": "frozen90-r2-Before.txt",
+    "exit_code": 0
+  },
+  {
+    "result": {
+      "benchmark": "versus_wide",
+      "label": "stdout",
+      "date": "2026-10-28T21:07:39Z",
+      "os": "windows",
+      "arch": "x86_64",
+      "optimized": true,
+      "compiler": "23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+      "machine": "unknown",
+      "revision": "unknown",
+      "options": {
+        "warmup": 200,
+        "ticks": 400,
+        "split": false,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 99
+      },
+      "ok": true,
+      "digest": "0xa683eb7fe00d6622",
+      "runs": [
+        {
+          "threads": 1,
+          "ways": {
+            "Tide": {
+              "median_ms": 0.54265,
+              "mean_ms": 0.570127
+            },
+            "C": {
+              "median_ms": 1.1858,
+              "mean_ms": 1.21485
+            }
+          }
+        }
+      ]
+    },
+    "round": 2,
+    "competing_after": [],
+    "engine": "Tide",
+    "stdout_sha256": "cfea86bd159867b89edafbd8fde8311655140234dbc5e902b5bf59880928b709",
+    "frozen": 99,
+    "stdout": "frozen99-r2-Tide.txt",
+    "exit_code": 0
+  },
+  {
+    "result": {
+      "benchmark": "versus_wide",
+      "label": "stdout",
+      "date": "2026-10-28T21:07:40Z",
+      "os": "windows",
+      "arch": "x86_64",
+      "optimized": true,
+      "compiler": "23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+      "machine": "unknown",
+      "revision": "unknown",
+      "options": {
+        "warmup": 200,
+        "ticks": 400,
+        "split": false,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 99
+      },
+      "ok": true,
+      "digest": "0xa683eb7fe00d6622",
+      "runs": [
+        {
+          "threads": 1,
+          "ways": {
+            "Tide": {
+              "median_ms": 0.4297,
+              "mean_ms": 0.440483
+            },
+            "C": {
+              "median_ms": 1.1997,
+              "mean_ms": 1.24282
+            }
+          }
+        }
+      ]
+    },
+    "round": 2,
+    "competing_after": [],
+    "engine": "Before",
+    "stdout_sha256": "d0c4dc66c16318e9142e545e3bab73432e2e41b3f9806eab63164295a3525f93",
+    "frozen": 99,
+    "stdout": "frozen99-r2-Before.txt",
+    "exit_code": 0
+  },
+  {
+    "result": {
+      "benchmark": "versus_wide",
+      "label": "stdout",
+      "date": "2026-10-28T21:07:43Z",
+      "os": "windows",
+      "arch": "x86_64",
+      "optimized": true,
+      "compiler": "23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+      "machine": "unknown",
+      "revision": "unknown",
+      "options": {
+        "warmup": 200,
+        "ticks": 400,
+        "split": false,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 1
+      },
+      "ok": true,
+      "digest": "0x138b1f8042a6d033",
+      "runs": [
+        {
+          "threads": 1,
+          "ways": {
+            "Tide": {
+              "median_ms": 3.00315,
+              "mean_ms": 3.10017
+            },
+            "C": {
+              "median_ms": 1.10985,
+              "mean_ms": 1.12622
+            }
+          }
+        }
+      ]
+    },
+    "round": 3,
+    "competing_after": [],
+    "engine": "Before",
+    "stdout_sha256": "54d5d64c6a156a5548fcda1e2c266b17db53d5d36baccce5d41f2094dc19332b",
+    "frozen": 1,
+    "stdout": "frozen1-r3-Before.txt",
+    "exit_code": 0
+  },
+  {
+    "result": {
+      "benchmark": "versus_wide",
+      "label": "stdout",
+      "date": "2026-10-28T21:07:46Z",
+      "os": "windows",
+      "arch": "x86_64",
+      "optimized": true,
+      "compiler": "23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+      "machine": "unknown",
+      "revision": "unknown",
+      "options": {
+        "warmup": 200,
+        "ticks": 400,
+        "split": false,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 1
+      },
+      "ok": true,
+      "digest": "0x138b1f8042a6d033",
+      "runs": [
+        {
+          "threads": 1,
+          "ways": {
+            "Tide": {
+              "median_ms": 3.39305,
+              "mean_ms": 3.56293
+            },
+            "C": {
+              "median_ms": 1.24255,
+              "mean_ms": 1.31062
+            }
+          }
+        }
+      ]
+    },
+    "round": 3,
+    "competing_after": [],
+    "engine": "Tide",
+    "stdout_sha256": "e7afd063c3b8de62d92267a4c441b659f552624c53dc714935fb2d657a0d6a55",
+    "frozen": 1,
+    "stdout": "frozen1-r3-Tide.txt",
+    "exit_code": 0
+  },
+  {
+    "result": {
+      "benchmark": "versus_wide",
+      "label": "stdout",
+      "date": "2026-10-28T21:07:49Z",
+      "os": "windows",
+      "arch": "x86_64",
+      "optimized": true,
+      "compiler": "23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+      "machine": "unknown",
+      "revision": "unknown",
+      "options": {
+        "warmup": 200,
+        "ticks": 400,
+        "split": false,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 10
+      },
+      "ok": true,
+      "digest": "0x8157b5a2c02776b0",
+      "runs": [
+        {
+          "threads": 1,
+          "ways": {
+            "Tide": {
+              "median_ms": 3.24285,
+              "mean_ms": 3.31807
+            },
+            "C": {
+              "median_ms": 1.1804,
+              "mean_ms": 1.21829
+            }
+          }
+        }
+      ]
+    },
+    "round": 3,
+    "competing_after": [],
+    "engine": "Before",
+    "stdout_sha256": "e8b294891223b7e1609776de606cc95ff07767ee14c93c6b11e6e989ef860977",
+    "frozen": 10,
+    "stdout": "frozen10-r3-Before.txt",
+    "exit_code": 0
+  },
+  {
+    "result": {
+      "benchmark": "versus_wide",
+      "label": "stdout",
+      "date": "2026-10-28T21:07:52Z",
+      "os": "windows",
+      "arch": "x86_64",
+      "optimized": true,
+      "compiler": "23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+      "machine": "unknown",
+      "revision": "unknown",
+      "options": {
+        "warmup": 200,
+        "ticks": 400,
+        "split": false,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 10
+      },
+      "ok": true,
+      "digest": "0x8157b5a2c02776b0",
+      "runs": [
+        {
+          "threads": 1,
+          "ways": {
+            "Tide": {
+              "median_ms": 3.2475,
+              "mean_ms": 3.31176
+            },
+            "C": {
+              "median_ms": 1.1842,
+              "mean_ms": 1.20684
+            }
+          }
+        }
+      ]
+    },
+    "round": 3,
+    "competing_after": [],
+    "engine": "Tide",
+    "stdout_sha256": "6d1d832c729abb8aa6c4a7634c033016af536cce26ef21115f1c4ee2137fa0b9",
+    "frozen": 10,
+    "stdout": "frozen10-r3-Tide.txt",
+    "exit_code": 0
+  },
+  {
+    "result": {
+      "benchmark": "versus_wide",
+      "label": "stdout",
+      "date": "2026-10-28T21:07:54Z",
+      "os": "windows",
+      "arch": "x86_64",
+      "optimized": true,
+      "compiler": "23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+      "machine": "unknown",
+      "revision": "unknown",
+      "options": {
+        "warmup": 200,
+        "ticks": 400,
+        "split": false,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 90
+      },
+      "ok": true,
+      "digest": "0x07c33fc7d6a94b2d",
+      "runs": [
+        {
+          "threads": 1,
+          "ways": {
+            "Tide": {
+              "median_ms": 1.4712,
+              "mean_ms": 1.4938
+            },
+            "C": {
+              "median_ms": 1.2536,
+              "mean_ms": 1.2756
+            }
+          }
+        }
+      ]
+    },
+    "round": 3,
+    "competing_after": [],
+    "engine": "Before",
+    "stdout_sha256": "9d35be573ab1369ef8b6cbba0195f73d6738da2c91f8ce480d965c2ef09fe113",
+    "frozen": 90,
+    "stdout": "frozen90-r3-Before.txt",
+    "exit_code": 0
+  },
+  {
+    "result": {
+      "benchmark": "versus_wide",
+      "label": "stdout",
+      "date": "2026-10-28T21:07:56Z",
+      "os": "windows",
+      "arch": "x86_64",
+      "optimized": true,
+      "compiler": "23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+      "machine": "unknown",
+      "revision": "unknown",
+      "options": {
+        "warmup": 200,
+        "ticks": 400,
+        "split": false,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 90
+      },
+      "ok": true,
+      "digest": "0x07c33fc7d6a94b2d",
+      "runs": [
+        {
+          "threads": 1,
+          "ways": {
+            "Tide": {
+              "median_ms": 1.9916,
+              "mean_ms": 2.05281
+            },
+            "C": {
+              "median_ms": 1.2217,
+              "mean_ms": 1.23967
+            }
+          }
+        }
+      ]
+    },
+    "round": 3,
+    "competing_after": [],
+    "engine": "Tide",
+    "stdout_sha256": "071a6c986c3e57e9fd20fd8e7cc7e4389a0ec2c057491f04eee2014073667b55",
+    "frozen": 90,
+    "stdout": "frozen90-r3-Tide.txt",
+    "exit_code": 0
+  },
+  {
+    "result": {
+      "benchmark": "versus_wide",
+      "label": "stdout",
+      "date": "2026-10-28T21:07:57Z",
+      "os": "windows",
+      "arch": "x86_64",
+      "optimized": true,
+      "compiler": "23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+      "machine": "unknown",
+      "revision": "unknown",
+      "options": {
+        "warmup": 200,
+        "ticks": 400,
+        "split": false,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 99
+      },
+      "ok": true,
+      "digest": "0xa683eb7fe00d6622",
+      "runs": [
+        {
+          "threads": 1,
+          "ways": {
+            "Tide": {
+              "median_ms": 0.55155,
+              "mean_ms": 0.574725
+            },
+            "C": {
+              "median_ms": 1.1505,
+              "mean_ms": 1.16175
+            }
+          }
+        }
+      ]
+    },
+    "round": 3,
+    "competing_after": [],
+    "engine": "Before",
+    "stdout_sha256": "d4869e197b6ebc02b273b2d894809096a3f1ff246215f838b610bd995ece417e",
+    "frozen": 99,
+    "stdout": "frozen99-r3-Before.txt",
+    "exit_code": 0
+  },
+  {
+    "result": {
+      "benchmark": "versus_wide",
+      "label": "stdout",
+      "date": "2026-10-28T21:07:59Z",
+      "os": "windows",
+      "arch": "x86_64",
+      "optimized": true,
+      "compiler": "23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)",
+      "machine": "unknown",
+      "revision": "unknown",
+      "options": {
+        "warmup": 200,
+        "ticks": 400,
+        "split": false,
+        "count": 1000000,
+        "kept": 0,
+        "tagged": 1,
+        "frozen": 99
+      },
+      "ok": true,
+      "digest": "0xa683eb7fe00d6622",
+      "runs": [
+        {
+          "threads": 1,
+          "ways": {
+            "Tide": {
+              "median_ms": 0.5739,
+              "mean_ms": 0.614094
+            },
+            "C": {
+              "median_ms": 1.17145,
+              "mean_ms": 1.18073
+            }
+          }
+        }
+      ]
+    },
+    "round": 3,
+    "competing_after": [],
+    "engine": "Tide",
+    "stdout_sha256": "d5e818cfec97e26c06496056b4503ee24bd298f271c74dcbee598a7e4b3dc5d1",
+    "frozen": 99,
+    "stdout": "frozen99-r3-Tide.txt",
+    "exit_code": 0
+  }
+]

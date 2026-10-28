@@ -1,0 +1,159 @@
+// Pure row updates followed by a final conditional self-destroy can compute
+// their predicates before recording the destroys. The C model checks exact
+// values, deferred order, swapped rows, reused entity slots and snapshots.
+scene Main { }
+
+singleton Births
+{
+    int mode;
+    List<Entity> items;
+}
+
+singleton Knobs
+{
+    int zero;
+    int shift = 35;
+    int minimum = -2147483647 - 1;
+    int negative = -1;
+}
+
+singleton Trace
+{
+    List<int> gone;
+    List<int> values;
+    List<float2> positions;
+    List<int> events;
+}
+
+component Bullet
+{
+    int ordinal;
+    float2 position;
+    float2 velocity;
+    int life;
+    int wrapped;
+    int divided;
+    int minimumDivided;
+    int shifted;
+}
+
+component Observed { int ordinal; int value; }
+component Filtered { int ordinal; int value; }
+[Sparse]
+component Skipped { }
+
+event Notice { int ordinal; }
+
+struct Counter
+{
+    int value;
+
+    Counter operator +(Counter left, int right)
+    {
+        return Counter { value = left.value + right };
+    }
+}
+
+component Custom { Counter counter; }
+
+extern void CheckQueue(int ordinal);
+
+system Birth(mut Births births, Time time)
+{
+    if (births.mode == 0)
+    {
+        if (time.tick == 0 || time.tick == 4)
+        {
+            var start = time.tick == 0 ? 0 : 4099;
+            var count = time.tick == 0 ? 4099 : 17;
+            for (var i = start; i < start + count; i++)
+            {
+                births.items.Add(Spawn(Bullet
+                {
+                    ordinal = i,
+                    position = float2(float(i % 3) * 0.125, -0.0),
+                    velocity = float2(float(i % 17 - 8) * 0.25, float(i % 5 - 2) * 0.125),
+                    life = 1 + i % 7,
+                    wrapped = i
+                }));
+            }
+        }
+        return;
+    }
+    if (time.tick != 0) return;
+    for (var i = 0; i < 259; i++)
+    {
+        if (births.mode == 1) Spawn(Observed { ordinal = i });
+        else if (births.mode == 2) Spawn(Custom { counter = Counter { value = i } });
+        else
+        {
+            var e = Spawn(Filtered { ordinal = i });
+            if (i % 3 == 0) e.Add(Skipped);
+        }
+    }
+}
+
+system Move(mut Bullet bullet, Time time, Knobs knobs)
+{
+    var motion = bullet.velocity * time.dt;
+    bullet.position += motion;
+    bullet.life--;
+    bullet.wrapped += 2147483647;
+    bullet.divided = bullet.wrapped / knobs.zero;
+    bullet.minimumDivided = knobs.minimum / knobs.negative;
+    bullet.shifted = bullet.wrapped << knobs.shift;
+    if (bullet.life <= 0) this.Destroy();
+}
+
+// A C observer can see commands already recorded by earlier rows. It must
+// retain the ordinary per-row call/record order.
+system Observe(mut Observed observed)
+{
+    observed.value++;
+    CheckQueue(observed.ordinal);
+    if (observed.ordinal % 2 == 0) this.Destroy();
+}
+
+void Notify(int ordinal)
+{
+    Send(Notice { ordinal = ordinal });
+}
+
+// An ordinary helper sends before the overloaded compound update and destroy.
+system CustomStep(mut Custom custom)
+{
+    Notify(custom.counter.value);
+    custom.counter += 1;
+    if (custom.counter.value > 0) this.Destroy();
+}
+
+system Filter(mut Filtered filtered, without Skipped)
+{
+    filtered.value++;
+    if (filtered.value > 0) this.Destroy();
+}
+
+event(Destroyed) Died(Bullet bullet, mut Trace trace)
+{
+    trace.gone.Add(bullet.ordinal);
+    trace.positions.Add(bullet.position);
+    trace.values.Add(bullet.wrapped);
+    trace.values.Add(bullet.divided);
+    trace.values.Add(bullet.minimumDivided);
+    trace.values.Add(bullet.shifted);
+}
+
+event(Notice notice) Noticed(mut Trace trace)
+{
+    trace.events.Add(notice.ordinal);
+}
+
+event(Destroyed) CustomDied(Custom custom, mut Trace trace)
+{
+    trace.events.Add(-custom.counter.value);
+}
+
+event(Destroyed) FilteredDied(Filtered filtered, mut Trace trace)
+{
+    trace.gone.Add(filtered.ordinal);
+}

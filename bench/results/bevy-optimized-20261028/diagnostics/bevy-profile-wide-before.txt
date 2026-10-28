@@ -1,0 +1,85 @@
+versus_wide: bodies of a dozen floats each fall and bounce, a tick changing half of them
+  count 1000000; kept 0; tagged 1; frozen 50; 2000 ticks timed after 200; optimized native build
+
+  ms a tick       1 thread            
+  Tide                6.515           
+  C                   1.450 4.49x     
+
+  medians; beside C, how many times as long Tide takes
+  every way ended the same: 0xd1970b559907dbe1
+
+541440 samples over 36097 rounds (exit 0); 35931 in C:\Users\blenm\.t3\worktrees\PurrEngine\t3-2f0c48c7\build\bevy-before-20261028\bin\versus_wide.exe
+  elsewhere     505443 samples, 1406.70% of the program's  ntdll.dll
+  elsewhere         65 samples,    0.18% of the program's  VCRUNTIME140.dll
+  elsewhere          1 samples,    0.00% of the program's  KERNEL32.DLL
+
+  innermost function (inlined code counts where it was written), % of the program's samples:
+   31.79%  tide_rows_Shift_0
+   14.31%  tide_function_Step
+   12.92%  tide_system_Shift
+   12.68%  shift_rows
+   10.57%  tide_add_f
+    6.29%  tide_mul_f
+    5.51%  pick
+    2.62%  tide_task_Shift
+    1.55%  tide_table_lanes_shared
+    0.67%  versus_item
+    0.24%  tide_page_data
+    0.24%  tide_table_column_mut
+    0.13%  tide_table_scatter
+    0.07%  tide_table_gather
+    0.05%  tide_table_lanes_begin
+    0.04%  setup
+    0.04%  tide_apply_from
+    0.04%  tide_table_cell
+    0.04%  tide_table_column
+    0.02%  tide_table_add
+
+  outermost function (what it was inlined into):
+   75.88%  tide_rows_Shift_0
+   18.19%  move
+    4.49%  tide_task_Shift
+    0.67%  versus_item
+    0.24%  tide_table_add
+    0.14%  tide_table_scatter
+    0.09%  tide_table_gather
+    0.07%  tick
+    0.06%  tide_table_cell
+    0.05%  tide_apply_from
+    0.03%  tide_run_systems
+    0.01%  digest
+    0.01%  versus_for
+    0.01%  world_digest
+    0.01%  tide_entities_settle
+    0.00%  tide_entity_set_location
+    0.00%  tide_page_release
+    0.00%  tide_task_Setup
+    0.00%  tide_tasks_Shift
+    0.00%  tide_time_now_ns
+
+  lines:
+   18.26%  tide_rows_Shift_0                        versus_wide\wide.c:1356:0
+   13.63%  tide_function_Step                       wide\wide.tide:71:0
+   12.92%  tide_system_Shift                        wide\wide.tide:85:0
+   10.57%  tide_add_f                               tide\math.h:77:0
+    9.64%  tide_rows_Shift_0                        versus_wide\wide.c:1351:0
+    6.29%  tide_mul_f                               tide\math.h:79:0
+    5.51%  pick                                     wide\wide.c:114:0
+    3.23%  tide_rows_Shift_0                        versus_wide\wide.c:1352:0
+    2.55%  shift_rows                               wide\wide.c:149:0
+    2.49%  tide_task_Shift                          versus_wide\wide.c:1445:0
+    1.55%  tide_table_lanes_shared                  tide\table.h:110:0
+    1.49%  shift_rows                               wide\wide.c:150:0
+    1.26%  shift_rows                               wide\wide.c:136:0
+    1.20%  shift_rows                               wide\wide.c:138:0
+    0.97%  shift_rows                               wide\wide.c:137:0
+    0.91%  shift_rows                               wide\wide.c:139:0
+    0.90%  shift_rows                               wide\wide.c:141:0
+    0.83%  shift_rows                               wide\wide.c:140:0
+    0.68%  tide_function_Step                       wide\wide.tide:69:0
+    0.59%  shift_rows                               wide\wide.c:147:0
+    0.59%  versus_item                              versus\versus.c:144:0
+    0.57%  tide_rows_Shift_0                        versus_wide\wide.c:1354:0
+    0.56%  shift_rows                               wide\wide.c:144:0
+    0.48%  shift_rows                               wide\wide.c:142:0
+    0.37%  shift_rows                               wide\wide.c:146:0

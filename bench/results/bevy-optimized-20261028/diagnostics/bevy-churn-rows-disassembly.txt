@@ -1,0 +1,200 @@
+
+build/release/bench/versus/CMakeFiles/versus_churn.dir/tide/versus_churn/churn.c.obj:	file format coff-x86-64
+
+Disassembly of section .text:
+
+0000000000000000 <tide_rows_Fly_0>:
+       0: 41 57                        	pushq	%r15
+       2: 41 56                        	pushq	%r14
+       4: 41 55                        	pushq	%r13
+       6: 41 54                        	pushq	%r12
+       8: 56                           	pushq	%rsi
+       9: 57                           	pushq	%rdi
+       a: 55                           	pushq	%rbp
+       b: 53                           	pushq	%rbx
+       c: 48 81 ec 18 01 00 00         	subq	$0x118, %rsp            # imm = 0x118
+      13: 66 44 0f 7f 94 24 00 01 00 00	movdqa	%xmm10, 0x100(%rsp)
+      1d: 44 0f 29 8c 24 f0 00 00 00   	movaps	%xmm9, 0xf0(%rsp)
+      26: 66 44 0f 7f 84 24 e0 00 00 00	movdqa	%xmm8, 0xe0(%rsp)
+      30: 66 0f 7f bc 24 d0 00 00 00   	movdqa	%xmm7, 0xd0(%rsp)
+      39: 66 0f 7f b4 24 c0 00 00 00   	movdqa	%xmm6, 0xc0(%rsp)
+      42: 4c 89 4c 24 38               	movq	%r9, 0x38(%rsp)
+      47: 44 39 c2                     	cmpl	%r8d, %edx
+      4a: 0f 83 d2 02 00 00            	jae	0x322 <tide_rows_Fly_0+0x322>
+      50: 45 89 c6                     	movl	%r8d, %r14d
+      53: 48 89 cb                     	movq	%rcx, %rbx
+      56: 8b 05 00 00 00 00            	movl	(%rip), %eax            # 0x5c <tide_rows_Fly_0+0x5c>
+      5c: 65 48 8b 0c 25 58 00 00 00   	movq	%gs:0x58, %rcx
+      65: 48 8b 04 c1                  	movq	(%rcx,%rax,8), %rax
+      69: 4c 8d b8 00 00 00 00         	leaq	(%rax), %r15
+      70: 66 0f ef f6                  	pxor	%xmm6, %xmm6
+      74: 66 0f 76 ff                  	pcmpeqd	%xmm7, %xmm7
+      78: 66 44 0f 6f 05 00 00 00 00   	movdqa	(%rip), %xmm8           # 0x81 <tide_rows_Fly_0+0x81>
+      81: 44 89 44 24 34               	movl	%r8d, 0x34(%rsp)
+      86: eb 14                        	jmp	0x9c <tide_rows_Fly_0+0x9c>
+      88: 0f 1f 84 00 00 00 00 00      	nopl	(%rax,%rax)
+      90: 44 89 e2                     	movl	%r12d, %edx
+      93: 45 39 f4                     	cmpl	%r14d, %r12d
+      96: 0f 83 86 02 00 00            	jae	0x322 <tide_rows_Fly_0+0x322>
+      9c: 44 89 f0                     	movl	%r14d, %eax
+      9f: 29 d0                        	subl	%edx, %eax
+      a1: 44 8d a2 80 00 00 00         	leal	0x80(%rdx), %r12d
+      a8: 3d 80 00 00 00               	cmpl	$0x80, %eax
+      ad: 45 0f 42 e6                  	cmovbl	%r14d, %r12d
+      b1: 44 39 e2                     	cmpl	%r12d, %edx
+      b4: 73 da                        	jae	0x90 <tide_rows_Fly_0+0x90>
+      b6: f3 0f 10 03                  	movss	(%rbx), %xmm0
+      ba: 41 89 d0                     	movl	%edx, %r8d
+      bd: 44 89 e2                     	movl	%r12d, %edx
+      c0: 49 89 d1                     	movq	%rdx, %r9
+      c3: 4d 29 c1                     	subq	%r8, %r9
+      c6: 4c 89 44 24 28               	movq	%r8, 0x28(%rsp)
+      cb: 49 83 f9 04                  	cmpq	$0x4, %r9
+      cf: 0f 82 dd 00 00 00            	jb	0x1b2 <tide_rows_Fly_0+0x1b2>
+      d5: 4d 89 ca                     	movq	%r9, %r10
+      d8: 49 83 e2 fc                  	andq	$-0x4, %r10
+      dc: 4c 8b 74 24 28               	movq	0x28(%rsp), %r14
+      e1: 4f 8d 04 32                  	leaq	(%r10,%r14), %r8
+      e5: 0f 28 c8                     	movaps	%xmm0, %xmm1
+      e8: 0f c6 c8 00                  	shufps	$0x0, %xmm0, %xmm1      # xmm1 = xmm1[0,0],xmm0[0,0]
+      ec: 48 8b 8c 24 a0 01 00 00      	movq	0x1a0(%rsp), %rcx
+      f4: 4e 8d 1c b1                  	leaq	(%rcx,%r14,4), %r11
+      f8: 48 8b 8c 24 98 01 00 00      	movq	0x198(%rsp), %rcx
+     100: 4a 8d 34 b1                  	leaq	(%rcx,%r14,4), %rsi
+     104: 48 8b 8c 24 90 01 00 00      	movq	0x190(%rsp), %rcx
+     10c: 4a 8d 3c b1                  	leaq	(%rcx,%r14,4), %rdi
+     110: 48 8b 8c 24 88 01 00 00      	movq	0x188(%rsp), %rcx
+     118: 4e 8d 2c b1                  	leaq	(%rcx,%r14,4), %r13
+     11c: 48 8b 8c 24 80 01 00 00      	movq	0x180(%rsp), %rcx
+     124: 4a 8d 2c b1                  	leaq	(%rcx,%r14,4), %rbp
+     128: 45 31 f6                     	xorl	%r14d, %r14d
+     12b: 0f 1f 44 00 00               	nopl	(%rax,%rax)
+     130: 42 0f 10 6c b5 00            	movups	(%rbp,%r14,4), %xmm5
+     136: 47 0f 10 4c b5 00            	movups	(%r13,%r14,4), %xmm9
+     13c: 42 0f 10 14 b7               	movups	(%rdi,%r14,4), %xmm2
+     141: 42 0f 10 1c b6               	movups	(%rsi,%r14,4), %xmm3
+     146: f3 47 0f 6f 14 b3            	movdqu	(%r11,%r14,4), %xmm10
+     14c: 0f 28 e1                     	movaps	%xmm1, %xmm4
+     14f: 0f 59 e2                     	mulps	%xmm2, %xmm4
+     152: 0f 58 e5                     	addps	%xmm5, %xmm4
+     155: 0f 28 e9                     	movaps	%xmm1, %xmm5
+     158: 0f 59 eb                     	mulps	%xmm3, %xmm5
+     15b: 41 0f 58 e9                  	addps	%xmm9, %xmm5
+     15f: 66 44 0f fe d7               	paddd	%xmm7, %xmm10
+     164: f3 47 0f 7f 14 b3            	movdqu	%xmm10, (%r11,%r14,4)
+     16a: 66 44 0f 66 d6               	pcmpgtd	%xmm6, %xmm10
+     16f: 66 45 0f 6b d2               	packssdw	%xmm10, %xmm10
+     174: 66 44 0f ef d7               	pxor	%xmm7, %xmm10
+     179: 66 45 0f 63 d2               	packsswb	%xmm10, %xmm10
+     17e: 66 45 0f db d0               	pand	%xmm8, %xmm10
+     183: 66 46 0f 7e 54 34 40         	movd	%xmm10, 0x40(%rsp,%r14)
+     18a: 42 0f 11 64 b5 00            	movups	%xmm4, (%rbp,%r14,4)
+     190: 43 0f 11 6c b5 00            	movups	%xmm5, (%r13,%r14,4)
+     196: 42 0f 11 14 b7               	movups	%xmm2, (%rdi,%r14,4)
+     19b: 42 0f 11 1c b6               	movups	%xmm3, (%rsi,%r14,4)
+     1a0: 49 83 c6 04                  	addq	$0x4, %r14
+     1a4: 4d 39 f2                     	cmpq	%r14, %r10
+     1a7: 75 87                        	jne	0x130 <tide_rows_Fly_0+0x130>
+     1a9: 4d 39 d1                     	cmpq	%r10, %r9
+     1ac: 0f 84 b0 00 00 00            	je	0x262 <tide_rows_Fly_0+0x262>
+     1b2: 4d 89 c1                     	movq	%r8, %r9
+     1b5: 4c 2b 4c 24 28               	subq	0x28(%rsp), %r9
+     1ba: 49 01 e1                     	addq	%rsp, %r9
+     1bd: 49 83 c1 40                  	addq	$0x40, %r9
+     1c1: 48 8b 8c 24 a0 01 00 00      	movq	0x1a0(%rsp), %rcx
+     1c9: 4e 8d 14 81                  	leaq	(%rcx,%r8,4), %r10
+     1cd: 48 8b 8c 24 98 01 00 00      	movq	0x198(%rsp), %rcx
+     1d5: 4e 8d 1c 81                  	leaq	(%rcx,%r8,4), %r11
+     1d9: 48 8b 8c 24 90 01 00 00      	movq	0x190(%rsp), %rcx
+     1e1: 4a 8d 34 81                  	leaq	(%rcx,%r8,4), %rsi
+     1e5: 48 8b 8c 24 88 01 00 00      	movq	0x188(%rsp), %rcx
+     1ed: 4a 8d 3c 81                  	leaq	(%rcx,%r8,4), %rdi
+     1f1: 48 8b 8c 24 80 01 00 00      	movq	0x180(%rsp), %rcx
+     1f9: 4e 8d 34 81                  	leaq	(%rcx,%r8,4), %r14
+     1fd: 4c 29 c2                     	subq	%r8, %rdx
+     200: 45 31 c0                     	xorl	%r8d, %r8d
+     203: 66 66 66 66 2e 0f 1f 84 00 00 00 00 00       	nopw	%cs:(%rax,%rax)
+     210: 42 8b 2c 86                  	movl	(%rsi,%r8,4), %ebp
+     214: 47 8b 2c 83                  	movl	(%r11,%r8,4), %r13d
+     218: 43 8b 0c 82                  	movl	(%r10,%r8,4), %ecx
+     21c: 66 0f 6e cd                  	movd	%ebp, %xmm1
+     220: 66 41 0f 6e d5               	movd	%r13d, %xmm2
+     225: f3 0f 59 c8                  	mulss	%xmm0, %xmm1
+     229: f3 43 0f 58 0c 86            	addss	(%r14,%r8,4), %xmm1
+     22f: f3 0f 59 d0                  	mulss	%xmm0, %xmm2
+     233: f3 42 0f 58 14 87            	addss	(%rdi,%r8,4), %xmm2
+     239: ff c9                        	decl	%ecx
+     23b: 85 c9                        	testl	%ecx, %ecx
+     23d: 43 0f 9e 04 01               	setle	(%r9,%r8)
+     242: f3 43 0f 11 0c 86            	movss	%xmm1, (%r14,%r8,4)
+     248: f3 42 0f 11 14 87            	movss	%xmm2, (%rdi,%r8,4)
+     24e: 42 89 2c 86                  	movl	%ebp, (%rsi,%r8,4)
+     252: 47 89 2c 83                  	movl	%r13d, (%r11,%r8,4)
+     256: 43 89 0c 82                  	movl	%ecx, (%r10,%r8,4)
+     25a: 49 ff c0                     	incq	%r8
+     25d: 4c 39 c2                     	cmpq	%r8, %rdx
+     260: 75 ae                        	jne	0x210 <tide_rows_Fly_0+0x210>
+     262: 48 8b 4c 24 38               	movq	0x38(%rsp), %rcx
+     267: 48 8b 54 24 28               	movq	0x28(%rsp), %rdx
+     26c: 4c 8d 2c d1                  	leaq	(%rcx,%rdx,8), %r13
+     270: 89 c5                        	movl	%eax, %ebp
+     272: 48 81 fd 80 00 00 00         	cmpq	$0x80, %rbp
+     279: b8 80 00 00 00               	movl	$0x80, %eax
+     27e: 48 0f 43 e8                  	cmovaeq	%rax, %rbp
+     282: 31 f6                        	xorl	%esi, %esi
+     284: 44 8b 74 24 34               	movl	0x34(%rsp), %r14d
+     289: eb 2b                        	jmp	0x2b6 <tide_rows_Fly_0+0x2b6>
+     28b: 0f 1f 44 00 00               	nopl	(%rax,%rax)
+     290: ba 18 00 00 00               	movl	$0x18, %edx
+     295: e8 00 00 00 00               	callq	0x29a <tide_rows_Fly_0+0x29a>
+     29a: c7 40 04 03 00 00 00         	movl	$0x3, 0x4(%rax)
+     2a1: 8b 4b 78                     	movl	0x78(%rbx), %ecx
+     2a4: 89 48 08                     	movl	%ecx, 0x8(%rax)
+     2a7: 48 89 78 0c                  	movq	%rdi, 0xc(%rax)
+     2ab: 48 ff c6                     	incq	%rsi
+     2ae: 39 f5                        	cmpl	%esi, %ebp
+     2b0: 0f 84 da fd ff ff            	je	0x90 <tide_rows_Fly_0+0x90>
+     2b6: 80 7c 34 40 01               	cmpb	$0x1, 0x40(%rsp,%rsi)
+     2bb: 75 ee                        	jne	0x2ab <tide_rows_Fly_0+0x2ab>
+     2bd: 49 8b 7c f5 00               	movq	(%r13,%rsi,8), %rdi
+     2c2: 49 8b 0f                     	movq	(%r15), %rcx
+     2c5: 48 85 c9                     	testq	%rcx, %rcx
+     2c8: 48 8d 43 60                  	leaq	0x60(%rbx), %rax
+     2cc: 48 0f 44 c8                  	cmoveq	%rax, %rcx
+     2d0: 8b 41 04                     	movl	0x4(%rcx), %eax
+     2d3: 85 c0                        	testl	%eax, %eax
+     2d5: 74 b9                        	je	0x290 <tide_rows_Fly_0+0x290>
+     2d7: 48 8b 51 10                  	movq	0x10(%rcx), %rdx
+     2db: ff c8                        	decl	%eax
+     2dd: 48 8b 14 c2                  	movq	(%rdx,%rax,8), %rdx
+     2e1: 48 85 d2                     	testq	%rdx, %rdx
+     2e4: 74 aa                        	je	0x290 <tide_rows_Fly_0+0x290>
+     2e6: 44 8b 02                     	movl	(%rdx), %r8d
+     2e9: 8b 42 04                     	movl	0x4(%rdx), %eax
+     2ec: 44 29 c0                     	subl	%r8d, %eax
+     2ef: 83 f8 17                     	cmpl	$0x17, %eax
+     2f2: 76 9c                        	jbe	0x290 <tide_rows_Fly_0+0x290>
+     2f4: 41 8d 40 18                  	leal	0x18(%r8), %eax
+     2f8: 89 02                        	movl	%eax, (%rdx)
+     2fa: ff 01                        	incl	(%rcx)
+     2fc: 4a 8d 04 02                  	leaq	(%rdx,%r8), %rax
+     300: 48 83 c0 08                  	addq	$0x8, %rax
+     304: f3 42 0f 7f 74 02 0c         	movdqu	%xmm6, 0xc(%rdx,%r8)
+     30b: 42 c7 44 02 1c 00 00 00 00   	movl	$0x0, 0x1c(%rdx,%r8)
+     314: 42 c7 44 02 08 18 00 00 00   	movl	$0x18, 0x8(%rdx,%r8)
+     31d: e9 78 ff ff ff               	jmp	0x29a <tide_rows_Fly_0+0x29a>
+     322: 0f 28 b4 24 c0 00 00 00      	movaps	0xc0(%rsp), %xmm6
+     32a: 0f 28 bc 24 d0 00 00 00      	movaps	0xd0(%rsp), %xmm7
+     332: 44 0f 28 84 24 e0 00 00 00   	movaps	0xe0(%rsp), %xmm8
+     33b: 44 0f 28 8c 24 f0 00 00 00   	movaps	0xf0(%rsp), %xmm9
+     344: 44 0f 28 94 24 00 01 00 00   	movaps	0x100(%rsp), %xmm10
+     34d: 48 81 c4 18 01 00 00         	addq	$0x118, %rsp            # imm = 0x118
+     354: 5b                           	popq	%rbx
+     355: 5d                           	popq	%rbp
+     356: 5f                           	popq	%rdi
+     357: 5e                           	popq	%rsi
+     358: 41 5c                        	popq	%r12
+     35a: 41 5d                        	popq	%r13
+     35c: 41 5e                        	popq	%r14
+     35e: 41 5f                        	popq	%r15
+     360: c3                           	retq

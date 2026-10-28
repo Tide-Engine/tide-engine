@@ -5,18 +5,28 @@ param(
     [int]$Ticks = 400,
     [int]$QuietSeconds = 15,
     [string]$BuildDir = 'build/release',
-    [string]$BevyExe = 'build/bevy/release/tide-bevy-bench.exe'
+    [string]$BevyExe = 'build/bevy/release/tide-bevy-bench.exe',
+    # Optional adjacent before/current/Bevy triples; the frozen directory contains bin/versus_*.exe.
+    [string]$BeforeBuildDir = '',
+    [string]$BeforeRevision = '',
+    [switch]$FilterSweep
 )
 $env:TIDE_HIDDEN = '1'
 $ErrorActionPreference = 'Stop'
 $root = (Resolve-Path "$PSScriptRoot/../..").Path
 Set-Location $root
 if ($Rounds -lt 1 -or $Warmup -lt 1 -or $Ticks -lt 1 -or $QuietSeconds -lt 1) { throw 'Counts must be positive' }
+if ([string]::IsNullOrWhiteSpace($BeforeBuildDir) -ne [string]::IsNullOrWhiteSpace($BeforeRevision)) {
+    throw 'Supply both BeforeBuildDir and BeforeRevision, or neither'
+}
+$hasBefore = ![string]::IsNullOrWhiteSpace($BeforeBuildDir)
 if (Test-Path -LiteralPath $OutputDir) { throw "Evidence directory already exists: $OutputDir" }
 $bevy = (Resolve-Path -LiteralPath $BevyExe).Path
 $tideBins = @{}
+$beforeBins = @{}
 foreach ($workload in @('particles','wide','churn')) {
     $tideBins[$workload] = (Resolve-Path -LiteralPath "$BuildDir/bin/versus_$workload.exe").Path
+    if ($hasBefore) { $beforeBins[$workload] = (Resolve-Path -LiteralPath "$BeforeBuildDir/bin/versus_$workload.exe").Path }
 }
 $cases = @(
     @{id='particles-10k-1'; workload='particles'; count=10000; threads=1},
@@ -30,6 +40,11 @@ $cases = @(
     @{id='churn-2k-1'; workload='churn'; rate=2000; threads=1},
     @{id='churn-2k-4'; workload='churn'; rate=2000; threads=4}
 )
+if ($FilterSweep) {
+    foreach ($frozen in @(1,10,90,99)) {
+        $cases += @{id="filtered-frozen$frozen-1m-1"; workload='wide'; count=1000000; threads=1; tagged=1; frozen=$frozen}
+    }
+}
 foreach ($case in $cases) {
     foreach ($name in @('count','rate','tagged','frozen')) { if (!$case.ContainsKey($name)) { $case[$name] = 0 } }
 }
@@ -71,8 +86,8 @@ function RunOne($engine, $case, $round, $order) {
     if ($case.workload -eq 'churn') { $arguments += @('--rate', "$($case.rate)") }
     else { $arguments += @('--count', "$($case.count)") }
     if ($case.workload -eq 'wide') { $arguments += @('--tagged', "$($case.tagged)", '--frozen', "$($case.frozen)") }
-    if ($engine -eq 'Tide') {
-        $program = $tideBins[$case.workload]
+    if ($engine -in @('Before','Tide')) {
+        $program = if ($engine -eq 'Before') { $beforeBins[$case.workload] } else { $tideBins[$case.workload] }
         $arguments += '--json'
     } else {
         $program = $bevy
@@ -88,6 +103,7 @@ function RunOne($engine, $case, $round, $order) {
     $info.CreateNoWindow = $true
     $info.RedirectStandardOutput = $true
     $info.RedirectStandardError = $true
+    $info.EnvironmentVariables['TIDE_BENCH_REVISION'] = if ($engine -eq 'Before') { $BeforeRevision } else { "$($metadata.revision)+local" }
     $started = [DateTime]::UtcNow
     $process = [Diagnostics.Process]::Start($info)
     $stdout = $process.StandardOutput.ReadToEndAsync()
@@ -110,7 +126,7 @@ function RunOne($engine, $case, $round, $order) {
         $parsed = if ($json.Count -eq 1) { $json[0] | ConvertFrom-Json } else { $null }
         $record = @{case=$case.id; round=$round; engine=$engine; order=$order; stdout=$relative;
             stdout_sha256=(Hash "$output/$relative"); result=$parsed; contended=($contention.Count -gt 0);
-            contention=$contention; executable=$program; arguments=$arguments; exit_code=$process.ExitCode;
+            contention=$contention; executable=$program; executable_sha256=(Hash $program); arguments=$arguments; exit_code=$process.ExitCode;
             started=$started.ToString('o'); finished=[DateTime]::UtcNow.ToString('o')}
         [IO.File]::AppendAllText("$output/records.jsonl", (($record | ConvertTo-Json -Depth 20 -Compress) + "`n"), $utf8)
         Write-Output "$($case.id) round $round $engine exit $($process.ExitCode) contended $($record.contended)"
@@ -130,16 +146,29 @@ $metadata = @{schema=1; rounds=$Rounds; warmup=$Warmup; ticks=$Ticks; cases=$cas
     rustc=@(& rustc +1.95.0 -vV); cargo=(& cargo +1.95.0 --version);
     rustflags='-C target-cpu=x86-64 -C target-feature=-fma';
     methodology='Median per scheduled ECS tick; setup/digest/snapshots/network/render excluded; alternating process pairs; default affinity/clocks.';
-    files=@{}}
+    files=@{}; binaries=@{Tide=@{}; Bevy=(Hash $bevy)}}
+foreach ($workload in @('particles','wide','churn')) { $metadata.binaries.Tide[$workload] = Hash $tideBins[$workload] }
+if ($hasBefore) {
+    $metadata.schema = 2
+    $metadata.before = @{revision=$BeforeRevision; build_dir=(Resolve-Path -LiteralPath $BeforeBuildDir).Path; binaries=@{}}
+    foreach ($workload in @('particles','wide','churn')) { $metadata.before.binaries[$workload] = Hash $beforeBins[$workload] }
+    $metadata.methodology = $metadata.methodology.Replace('alternating process pairs', 'alternating adjacent before/current/Bevy process triples')
+}
 $env:TIDE_BENCH_REVISION = "$($metadata.revision)+local"
 $env:TIDE_BENCH_MACHINE = ($metadata.cpu | ForEach-Object { $_.Name }) -join ', '
 $inputs = @('bench/bevy/Cargo.toml','bench/bevy/Cargo.lock','bench/bevy/src/main.rs','bench/bevy/run.ps1',
-    'bench/versus/versus.c','bench/versus/versus.h','cmake/TideFlags.cmake',"$BuildDir/compile_commands.json",
+    'bench/versus/versus.c','bench/versus/versus.h','compiler/src/codegen.c','compiler/src/check.c','compiler/src/ast.h',
+    'engine/src/table.c','engine/include/tide/table.h','engine/src/entity.c','engine/include/tide/entity.h',
+    'engine/src/jobs.c','engine/include/tide/jobs.h','cmake/TideFlags.cmake',"$BuildDir/compile_commands.json",
     "$BuildDir/CMakeCache.txt",$BevyExe)
 foreach ($workload in @('particles','wide','churn')) {
     $inputs += @("bench/versus/$workload/$workload.tide","bench/versus/$workload/$workload.c",
         "bench/versus/$workload/main.c","$BuildDir/bench/versus/tide/versus_$workload/$workload.c",
         "$BuildDir/bench/versus/tide/versus_$workload/$workload.h", "$BuildDir/bin/versus_$workload.exe")
+}
+if ($hasBefore) {
+    # Preserve identities for all baseline evidence supplied alongside its executables.
+    $inputs += @(Get-ChildItem -LiteralPath $BeforeBuildDir -File -Recurse | ForEach-Object { $_.FullName })
 }
 foreach ($path in $inputs) { $metadata.files[$path] = Hash $path }
 SaveJson "$output/metadata.json" $metadata
@@ -151,14 +180,18 @@ try {
     Quiet
     for ($round=1; $round -le $Rounds; $round++) {
         foreach ($case in $cases) {
-            $engines = if ($round % 2) { @('Tide','Bevy') } else { @('Bevy','Tide') }
+            $engines = if ($hasBefore) {
+                if ($round % 2) { @('Before','Tide','Bevy') } else { @('Bevy','Tide','Before') }
+            } else {
+                if ($round % 2) { @('Tide','Bevy') } else { @('Bevy','Tide') }
+            }
             $pair = @()
-            for ($order=0; $order -lt 2; $order++) {
+            for ($order=0; $order -lt $engines.Count; $order++) {
                 # Progress goes to the host; only the record enters the pair.
                 $items = @(RunOne $engines[$order] $case $round $order)
                 foreach ($item in $items) { if ($item -is [string]) { Write-Host $item } else { $pair += $item } }
             }
-            if ($pair.Count -ne 2 -or $pair[0].result.digest -ne $pair[1].result.digest) {
+            if ($pair.Count -ne $engines.Count -or @($pair | Where-Object { $_.result.digest -ne $pair[0].result.digest }).Count) {
                 throw "Digest mismatch retained: $($case.id), round $round"
             }
         }

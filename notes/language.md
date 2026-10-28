@@ -1,5 +1,37 @@
 # Language features, as tidec builds them
 
+## Mixed sparse row selection (2026-10-28)
+
+The Bevy comparison identified random sparse presence branches as a serial
+iteration cost. Eligible in-place mixed sparse/scene filtered system loops
+compact matching row indices in fixed blocks of 128, then execute those rows
+in their original order. The task or piece uses its existing pass count to
+choose this separate loop variant only when at least a quarter of its rows
+pass and at least a quarter are skipped; biased filters retain the ordinary
+filtered loop. There is no additional density scan or runtime signature.
+The compaction stores an index before adding its
+zero-or-one pass bit; at scan k its output index is at most k, so an all-pass
+block still writes only slots 0 through 127. The last block is bounded by the
+task's existing row range. There is no game-sized stack allocation, persistent
+index cache, speculative execution of skipped bodies or runtime entry point.
+
+Only chunk-stable sparse presence and scene membership are pre-scanned.
+Structural changes remain deferred. Ownership-filtered rows, C-calling systems,
+World alias/write paths and task starters retain their original loop. Apart
+loops still copy excluded rows unchanged, and all-pass/empty chunk handling is
+unchanged. Component layout, arithmetic, ordering, snapshots and hashes retain
+their existing contracts. This adds no language feature or user-visible API.
+
+The focused sparse_rows E2E checks all/none/mixed blocks, low/high passing
+densities that retain ordinary filtering, and chunk/tail
+boundaries, multiple required/excluded masks, scene inclusion/exclusion, ordered
+list writes, byte-lane updates and deferred presence removal, comparing in-place,
+shared-snapshot and pooled execution. Existing rows and sparse fixtures retain
+broader ownership, World/Owner and snapshot page checks. Validation and actual
+performance measurements are recorded in benchmarks.md after coordinator runs.
+The independent pure-update/conditional-Destroy lowering is described in
+ecs.md, Pure row updates before conditional destruction.
+
 ## Shipping diagnostic metadata (2026-10-27)
 
 Owner-requested first reverse-engineering deterrent: codegen_options.strip_names

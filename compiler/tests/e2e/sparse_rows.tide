@@ -1,0 +1,86 @@
+// Mixed sparse/scene selection spans 128-row blocks, chunks and the final
+// partial block. Ordered list writes expose skipped/duplicated/reordered rows.
+scene Main { }
+scene Arena { }
+scene Lobby { }
+
+component Item
+{
+    int ordinal;
+    int visits;
+    byte small = 7;
+}
+
+[Sparse]
+component Needed { }
+
+[Sparse]
+component Skipped { }
+
+singleton Probe
+{
+    List<int> rows;
+    List<int> arena;
+    List<int> outside;
+}
+
+bool Needs(int i)
+{
+    // Each full chunk exercises a different density: mixed, mostly absent,
+    // mostly present. The first still has all/none/mixed 128-row blocks.
+    if (i >= 4096) return i % 100 != 0;
+    if (i >= 2048) return i % 100 < 10;
+    return i % 512 < 128 || (i % 512 >= 256 && i % 3 != 0);
+}
+
+void Populate(int offset)
+{
+    for (var i = 0; i < 6147; i++)
+    {
+        var made = Spawn(Item { ordinal = offset + i });
+        if (Needs(i)) made.Add(Needed);
+        if (i % 512 >= 384 && i % 2 == 0) made.Add(Skipped);
+    }
+}
+
+event(Spawned) Setup(with Main)
+{
+    Scene.Load(Arena);
+    Scene.Load(Lobby);
+}
+
+event(Spawned) SetupArena(with Arena)
+{
+    Populate(0);
+}
+
+event(Spawned) SetupLobby(with Lobby)
+{
+    Populate(10000);
+}
+
+system Clear(mut Probe probe)
+{
+    probe.rows.Clear();
+    probe.arena.Clear();
+    probe.outside.Clear();
+}
+
+system Visit(mut Item item, mut Probe probe, with Needed, without Skipped)
+{
+    item.visits += 1;
+    item.small += 1;
+    probe.rows.Add(item.ordinal);
+    // Presence changes at queue application, after all three traversals.
+    if (item.ordinal % 17 == 5) this.Remove(Needed);
+}
+
+system ArenaVisit(Item item, mut Probe probe, with Needed, without Skipped, with scene Arena)
+{
+    probe.arena.Add(item.ordinal);
+}
+
+system OutsideVisit(Item item, mut Probe probe, with Needed, without Skipped, without scene Arena)
+{
+    probe.outside.Add(item.ordinal);
+}

@@ -1,0 +1,289 @@
+diff --git a/compiler/src/codegen.c b/compiler/src/codegen.c
+index d21b9a631..bd140251c 100644
+--- a/compiler/src/codegen.c
++++ b/compiler/src/codegen.c
+@@ -4626,6 +4626,77 @@ static const expr *batch_event(const decl *sys)
+     return send;
+ }
+ 
++// A deliberately small whitelist for row arithmetic moved before its final
++// self-destroy recording. In particular, user calls/operators/properties,
++// indexing, input edges, heap values and random draws stay on the ordinary path.
++static bool destroy_row_value(const expr *e)
++{
++    if (!e) return true;
++    if (e->bind == BIND_CONST) return destroy_row_value(e->constant->value);
++    if (e->method || e->property || e->local_field || e->edge != EDGE_NONE || e->block
++        || e->resource_operation || e->io_operation || e->path_operation || e->skin_operation
++        || type_has_text(e->type)) return false;
++    if (e->call != CALL_NONE && e->call != CALL_CONSTRUCT) return false;
++    if (e->call == CALL_CONSTRUCT && !type_is_numeric(e->type)) return false;
++    switch (e->kind) {
++    case E_INT: case E_FLOAT: case E_BOOL: break;
++    case E_NAME:
++        if (e->bind != BIND_PARAM && e->bind != BIND_LOCAL && e->bind != BIND_TYPE) return false;
++        break;
++    case E_MEMBER: case E_CALL: case E_BINARY: case E_UNARY: case E_CONDITIONAL: break;
++    default: return false;
++    }
++    if (!destroy_row_value(e->object) || !destroy_row_value(e->lhs) || !destroy_row_value(e->rhs)
++        || !destroy_row_value(e->cond)) return false;
++    for (int i = 0; i < e->args.count; i++) if (!destroy_row_value(e->args.items[i])) return false;
++    return true;
++}
++
++static bool destroy_row_number(const type t)
++{
++    return type_is_numeric(t) || t.kind == TY_BOOL || t.kind == TY_CHAR || t.kind == TY_ENUM;
++}
++
++static bool destroy_row_target(const expr *e)
++{
++    if (!e || !destroy_row_number(e->type) || !destroy_row_value(e)) return false;
++    while (e->kind == E_MEMBER) e = e->object;
++    if (e->kind != E_NAME) return false;
++    return e->bind == BIND_LOCAL || (e->bind == BIND_PARAM && e->param->mode == PARAM_MUT
++                                     && e->param->type.kind == TY_COMPONENT);
++}
++
++// Eligible systems consist only of plain row-local updates followed by one
++// conditional this.Destroy(). Its predicate can be returned separately so the
++// arithmetic loop vectorizes, then the destroys are recorded in the same order.
++static const stmt *batch_destroy(const decl *sys)
++{
++    if (generating_shards || sys->is_view || sys->is_handler || sys->is_local || sys->entity_local
++        || !sys->per_entity || !sys->body || !sys->body->stmts.count || sys->calls_c || sys->rolls
++        || sys->starts_tasks || sys->world_uses.count || touches_text(sys)) return NULL;
++    for (int i = 0; i < sys->params.count; i++) {
++        const param *p = &sys->params.items[i];
++        if ((p->type.kind != TY_COMPONENT && p->type.kind != TY_SINGLETON) || p->local_use
++            || decl_has_text(p->type.decl) || (p->mode == PARAM_MUT && p->type.kind != TY_COMPONENT)) return NULL;
++    }
++    const int last = sys->body->stmts.count - 1;
++    const stmt *tail = sys->body->stmts.items[last];
++    if (tail->kind != S_IF || tail->else_stmt || !destroy_row_value(tail->cond)) return NULL;
++    const stmt *action = tail->then_stmt;
++    if (action->kind == S_BLOCK && action->stmts.count == 1) action = action->stmts.items[0];
++    if (action->kind != S_EXPR || !action->value || action->value->call != CALL_DESTROY
++        || !action->value->object || action->value->object->kind != E_THIS) return NULL;
++    for (int i = 0; i < last; i++) {
++        const stmt *s = sys->body->stmts.items[i];
++        if (s->kind == S_VAR) {
++            if (!s->value || !destroy_row_number(s->type) || !destroy_row_value(s->value)) return NULL;
++        } else if (s->kind == S_ASSIGN) {
++            if (s->operator_decl || !destroy_row_target(s->target) || !destroy_row_value(s->value)) return NULL;
++        } else return NULL;
++    }
++    return tail;
++}
++
+ // Whether some system's one Send records `event` in runs (batch_event): the
+ // events of a chunk's rows go into items of the queue that hold many, each its
+ // target and value (TIDE_CMD_EVENTS, tide_sent_<Event>), which the end of the
+@@ -11560,9 +11631,10 @@ static void gen_apply(gen *g, const bool local)
+     // A shard's destroy may wait for its Destroyed handlers (tide_shard_destroy_waits), so it goes through
+     // destroy_now as a hierarchy's does
+     const bool shard_destroys = !local && sharded(g);
+-    sb_printf(o, "TIDE_HELPER void %s%s(%s *w, tide_entity e)\n{\n", p,
+-              prog->hierarchy[local] || shard_destroys ? "destroy_leaf" : "destroy_now", world);
+-    sb_put(o, "    tide_location loc = tide_entity_location(&w->entities, e);\n");
++    const bool destroy_at = !prog->hierarchy[local] && !shard_destroys;
++    sb_printf(o, "TIDE_HELPER void %s%s(%s *w, tide_entity e%s)\n{\n", p,
++              destroy_at ? "destroy_at" : "destroy_leaf", world, destroy_at ? ", const tide_location loc" : "");
++    if (!destroy_at) sb_put(o, "    tide_location loc = tide_entity_location(&w->entities, e);\n");
+     sb_put(o, "    switch (loc.archetype) {\n");
+     for (int a = 0; a < prog->archetypes.count; a++) {
+         if (arch_local(g, a) != local) continue;
+@@ -11587,7 +11659,12 @@ static void gen_apply(gen *g, const bool local)
+     sb_put(o, "    default: return; // Already destroyed.\n    }\n");
+     // A shard lists free only indices it gives (tide_shard_free_slot)
+     sb_put(o, !local && sharded(g) ? "    tide_shard_free_slot(w, e);\n}\n\n" : "    tide_entity_destroy(&w->entities, e);\n}\n\n");
+-    if (shard_destroys) {
++    if (destroy_at) {
++        // apply_destroy already looked up ordinary entities to distinguish a
++        // scene. Reuse that location until any lifecycle handler runs.
++        sb_printf(o, "TIDE_HELPER void %sdestroy_now(%s *w, tide_entity e)\n{\n"
++                     "    %sdestroy_at(w, e, tide_entity_location(&w->entities, e));\n}\n\n", p, world, p);
++    } else if (shard_destroys) {
+         // Destroyed's handlers run as the entity this destroy is of, by whose identity they wait
+         sb_printf(o, "TIDE_HELPER void %sdestroy_now(%s *w, tide_entity e)\n{\n"
+                      "    if (tide_shard_destroy_waits(w, e)) return;\n"
+@@ -11621,13 +11698,15 @@ static void gen_apply(gen *g, const bool local)
+     // Destroy: a scene's entity unloads the scene.
+     sb_printf(o, "TIDE_HELPER void %sapply_destroy(%s *w, tide_command *c)\n{\n", p, world);
+     if (scenes) {
+-        sb_put(o, "    switch (tide_entity_location(&w->entities, c->entity).archetype) {\n");
++        sb_put(o, "    const tide_location loc = tide_entity_location(&w->entities, c->entity);\n"
++                  "    switch (loc.archetype) {\n");
+         for (int a = 0; a < prog->archetypes.count; a++) {
+             if (arch_local(g, a) == local && arch_scene(g, a)) sb_printf(o, "    case %d:\n", a);
+         }
+         sb_printf(o, "        %sunload(w, c->entity);\n        return;\n    default:\n        break;\n    }\n", p);
+     }
+-    sb_printf(o, "    %sdestroy_now(w, c->entity);\n}\n\n", p);
++    if (scenes && destroy_at) sb_printf(o, "    %sdestroy_at(w, c->entity, loc);\n}\n\n", p);
++    else sb_printf(o, "    %sdestroy_now(w, c->entity);\n}\n\n", p);
+ 
+     // Unload: nothing happens to an entity that isn't a scene.
+     sb_printf(o, "TIDE_HELPER void %sapply_unload(%s *w, tide_command *c)\n{\n    (void)w;\n    (void)c;\n", p, world);
+@@ -13817,7 +13896,7 @@ static void gen_query_foreach(gen *g, const stmt *s)
+     g->indent--; line(g, o, "}");
+ }
+ 
+-static void gen_system_body(gen *g, const decl *sys)
++static void gen_system_body_variant(gen *g, const decl *sys, const bool destroying)
+ {
+     sb *o = &g->c;
+     const char *name = decl_cname(sys);
+@@ -13834,7 +13913,8 @@ static void gen_system_body(gen *g, const decl *sys)
+         sb_printf(o, "%s void tide_handler_%s(%s *%s, const %s *restrict %s", code_helper(g), name, world_type(sys->is_local),
+                   sys->is_local ? "tide_l" : "tide_w", type_cname(sys->event), trigger_cname(g, sys));
+     } else {
+-        sb_printf(o, "%s void tide_system_%s(tide_world *tide_w", code_helper(g), name);
++        sb_printf(o, "%s %s tide_%s_%s(tide_world *tide_w", code_helper(g), destroying ? "bool" : "void",
++                  destroying ? "update" : "system", name);
+     }
+     if (sys->per_entity) sb_put(o, ", tide_entity tide_this");
+     if (sys->is_view && sys->takes_verified && sys->borrows_owner_world) sb_put(o, ", const tide_world *tide_verified");
+@@ -13900,7 +13980,13 @@ static void gen_system_body(gen *g, const decl *sys)
+     }
+     gen_shard_system_entry(g, sys); // A sharded game's: what its shard owns, and what waits on the border
+     gen_grid_caches(g);
+-    for (int i = 0; i < sys->body->stmts.count; i++) gen_stmt(g, sys->body->stmts.items[i]);
++    const int statements = sys->body->stmts.count - (destroying ? 1 : 0);
++    for (int i = 0; i < statements; i++) gen_stmt(g, sys->body->stmts.items[i]);
++    if (destroying) {
++        const stmt *tail = sys->body->stmts.items[statements];
++        line_directive(g, tail->at);
++        line(g, o, "return %s;", condition_text(g, tail->cond));
++    }
+     g->reserved_send = false;
+     close_list_caches(g);
+     g->indent = 0;
+@@ -13913,6 +13999,12 @@ static void gen_system_body(gen *g, const decl *sys)
+     sb_put(o, "\n");
+ }
+ 
++static void gen_system_body(gen *g, const decl *sys)
++{
++    gen_system_body_variant(g, sys, false);
++    if (batch_destroy(sys)) gen_system_body_variant(g, sys, true);
++}
++
+ // Whether field `f` is left out of blending.
+ static bool field_snaps(const field *f)
+ {
+@@ -17035,6 +17127,29 @@ static void gen_rows_columns(gen *g, const decl *sys, const int a, const bool ap
+     }
+ }
+ 
++// Whether row `index` passes the chunk-stable sparse and scene filters. Owner
++// filtering stays at row entry: a World write can change an Owner in the loop.
++static void gen_rows_pass(gen *g, const decl *sys, const int a, const char *index, const char *scenes)
++{
++    sb *o = &g->c;
++    const program *prog = g->prog;
++    bool first = true;
++    for (int c = 0; c < prog->components.count; c++) {
++        if (!comp_sparse(g, c) || !arch_stores(g, a, c)) continue;
++        if (!mask_has(sys->need_mask, c) && !mask_has(sys->without_mask, c)) continue;
++        sb_printf(o, "%s(tide_pres_%s[%s] %s 0)", first ? "" : " & ", type_cname(prog->components.items[c]), index,
++                  mask_has(sys->need_mask, c) ? "!=" : "==");
++        first = false;
++    }
++    if (scene_filtered(g, sys, a)) {
++        sb_printf(o, "%s(", first ? "" : " & ");
++        sb scene = {0};
++        sb_printf(&scene, "%s[%s]", scenes, index);
++        scene_pass(g, sys, a, scene.data, o);
++        sb_put(o, ")");
++    }
++}
++
+ // A rows function from its parameters on: `apart` for the one that reads each
+ // lane the system changes in one place and writes it in another, `every` for
+ // the one called with rows that are all the system's to run for, whatever
+@@ -17062,8 +17177,32 @@ static void gen_rows_function(gen *g, const decl *sys, const int a, const char *
+     // row's copies of what it changes are made and put back, and what's
+     // between only runs for the rows it's for
+     const bool through = apart && !every && rows_filtered(g, sys, a);
+-    sb_put(o, "    for (uint32_t tide_i = tide_from; tide_i < tide_to; tide_i++) {\n");
+-    const char *pad = "        ";
++    // Branchless compaction of a bounded block removes the unpredictable
++    // presence branch from mixed in-place loops. Matching rows still run in
++    // order and skipped bodies never run. Structural changes are deferred, so
++    // these presence/scene reads stay valid; exclude aliasing, C and ownership
++    // paths conservatively. Apart loops still copy skipped rows unchanged.
++    const bool selected = !apart && !every && rows_filtered(g, sys, a) && rows_alone(sys) && !sys->calls_c
++                       && !filters_owner(g, sys, a);
++    const bool destroying = batch_destroy(sys) && !rows_filtered(g, sys, a) && rows_alone(sys);
++    if (selected) {
++        sb_put(o, "    for (uint32_t tide_base = tide_from; tide_base < tide_to;) {\n"
++                  "        const uint32_t tide_end = tide_to - tide_base < 128u ? tide_to : tide_base + 128u;\n"
++                  "        uint32_t tide_selected[128], tide_selected_count = 0u;\n"
++                  "        for (uint32_t tide_scan = tide_base; tide_scan < tide_end; tide_scan++) {\n"
++                  "            tide_selected[tide_selected_count] = tide_scan;\n"
++                  "            tide_selected_count += ");
++        gen_rows_pass(g, sys, a, "tide_scan", "tide_scn");
++        sb_put(o, ";\n        }\n"
++                  "        for (uint32_t tide_pick = 0u; tide_pick < tide_selected_count; tide_pick++) {\n"
++                  "            const uint32_t tide_i = tide_selected[tide_pick];\n");
++    } else if (destroying) {
++        sb_put(o, "    for (uint32_t tide_base = tide_from; tide_base < tide_to;) {\n"
++                  "        const uint32_t tide_end = tide_to - tide_base < 128u ? tide_to : tide_base + 128u;\n"
++                  "        bool tide_destroy[128];\n"
++                  "        for (uint32_t tide_i = tide_base; tide_i < tide_end; tide_i++) {\n");
++    } else sb_put(o, "    for (uint32_t tide_i = tide_from; tide_i < tide_to; tide_i++) {\n");
++    const char *pad = selected || destroying ? "            " : "        ";
+     gen_row_columns(g, sys, a, pad);
+     if (through) {
+         gen_row_copies(g, sys, a, pad, COPIES_CHANGED);
+@@ -17072,14 +17211,22 @@ static void gen_rows_function(gen *g, const decl *sys, const int a, const char *
+         gen_row_filter(g, sys, a, pad, "break");
+         gen_row_copies(g, sys, a, pad, COPIES_READ);
+     } else {
+-        if (!every) gen_row_filter(g, sys, a, pad, "continue");
++        if (!every && !selected) gen_row_filter(g, sys, a, pad, "continue");
+         gen_row_copies(g, sys, a, pad, COPIES_ALL);
+     }
+-    sb_printf(o, "%s%s", pad, call);
++    if (destroying) sb_printf(o, "%stide_destroy[tide_i - tide_base] = tide_update_%s(tide_w", pad, decl_cname(sys));
++    else sb_printf(o, "%s%s", pad, call);
+     gen_system_args(g, sys, a);
+     sb_printf(o, ");%s\n", clear);
+     if (through) sb_put(o, "        } while (0);\n");
+-    gen_row_puts(g, sys, "        ", false);
++    gen_row_puts(g, sys, selected || destroying ? "            " : "        ", false);
++    if (selected) sb_put(o, "        }\n        tide_base = tide_end;\n");
++    else if (destroying) {
++        sb_put(o, "        }\n"
++                  "        for (uint32_t tide_i = tide_base; tide_i < tide_end; tide_i++) {\n"
++                  "            if (tide_destroy[tide_i - tide_base]) tide_cmd_destroy(tide_w, tide_ent[tide_i]);\n"
++                  "        }\n        tide_base = tide_end;\n");
++    }
+     sb_put(o, "    }\n}\n\n");
+     g->lanes_in = false;
+ }
+@@ -17122,21 +17269,8 @@ static int gen_rows(gen *g, const decl *sys, const int a, const char *call, cons
+ static void gen_rows_count(gen *g, const decl *sys, const int a, const char *pad)
+ {
+     sb *o = &g->c;
+-    const program *prog = g->prog;
+     sb_printf(o, "%suint32_t tide_pass = 0u;\n%sfor (uint32_t tide_i = tide_from; tide_i < tide_to; tide_i++) tide_pass += ", pad, pad);
+-    bool first = true;
+-    for (int c = 0; c < prog->components.count; c++) {
+-        if (!comp_sparse(g, c) || !arch_stores(g, a, c)) continue;
+-        if (!mask_has(sys->need_mask, c) && !mask_has(sys->without_mask, c)) continue;
+-        sb_printf(o, "%s(tide_pres_%s[tide_i] %s 0)", first ? "" : " & ", type_cname(prog->components.items[c]),
+-                  mask_has(sys->need_mask, c) ? "!=" : "==");
+-        first = false;
+-    }
+-    if (scene_filtered(g, sys, a)) { // Its scene, through tide_scenes (gen_rows_presence)
+-        sb_printf(o, "%s(", first ? "" : " & ");
+-        scene_pass(g, sys, a, "tide_scenes[tide_i]", o);
+-        sb_put(o, ")");
+-    }
++    gen_rows_pass(g, sys, a, "tide_i", "tide_scenes");
+     sb_put(o, ";\n");
+ }
+ 

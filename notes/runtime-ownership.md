@@ -1,5 +1,15 @@
 # Runtime written by Claude for now
 
+## Conditional destruction row optimization (2026-10-28)
+
+The owner's sparse-filter/churn performance task changes only private generated
+compiler helpers: bool-returning row-update variants and validated-location
+`destroy_at`, with bounded C-stack predicates before ordinary destroy recording.
+Generated code calls the same queue/entity/table runtime functions with their
+existing contracts. No runtime entry point, persistent layout, ownership policy,
+deterministic order or hash changes. Eligibility, fallback and regression
+contracts: ecs.md, Pure row updates before conditional destruction.
+
 ## Blend shapes kept by name (2026-10-27)
 
 `tide_skinned_data_keep_shapes` (`tide/skinned_data.h`, `skinned_decode.c`)

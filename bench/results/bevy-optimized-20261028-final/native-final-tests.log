@@ -1,0 +1,388 @@
+Start testing: Oct 28 22:12 Romance Standard Time
+----------------------------------------------------------
+48/2884 Testing: tidec_e2e_sparse
+48/2884 Test: tidec_e2e_sparse
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_sparse.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_sparse" start time: Oct 28 22:12 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   sparse_components_come_and_go_in_place (0.088 ms)
+ok   sparse_set_and_get_follow_presence (0.029 ms)
+
+2/2 passed
+<end of output>
+Test time =   0.04 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_sparse" end time: Oct 28 22:12 Romance Standard Time
+"tidec_e2e_sparse" time elapsed: 00:00:00
+----------------------------------------------------------
+
+49/2884 Testing: tidec_e2e_rows
+49/2884 Test: tidec_e2e_rows
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_rows.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_rows" start time: Oct 28 22:12 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   rows_are_the_same_on_every_platform (66.464 ms)
+ok   rows_in_pieces_come_out_as_whole (34.913 ms)
+ok   rows_in_pieces_leave_the_pages_they_change_nothing_of (23.717 ms)
+ok   rows_in_pieces_written_apart_come_out_as_in_place (38.075 ms)
+ok   rows_leave_the_pages_they_change_nothing_of (22.359 ms)
+    12 threads
+ok   rows_on_threads_come_out_as_on_one (61.057 ms)
+ok   rows_written_apart_come_out_as_in_place (35.526 ms)
+
+7/7 passed
+<end of output>
+Test time =   0.45 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_rows" end time: Oct 28 22:12 Romance Standard Time
+"tidec_e2e_rows" time elapsed: 00:00:00
+----------------------------------------------------------
+
+50/2884 Testing: tidec_e2e_sparse_rows
+50/2884 Test: tidec_e2e_sparse_rows
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_sparse_rows.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_sparse_rows" start time: Oct 28 22:12 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   sparse_row_selection_preserves_order_and_deferred_presence (9.480 ms)
+
+1/1 passed
+<end of output>
+Test time =   0.08 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_sparse_rows" end time: Oct 28 22:12 Romance Standard Time
+"tidec_e2e_sparse_rows" time elapsed: 00:00:00
+----------------------------------------------------------
+
+51/2884 Testing: tidec_e2e_destroy_rows
+51/2884 Test: tidec_e2e_destroy_rows
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_destroy_rows.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_destroy_rows" start time: Oct 28 22:12 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   destroy_rows_keep_helper_events_before_each_destroy (0.102 ms)
+ok   destroy_rows_keep_math_order_reuse_and_snapshots (12.341 ms)
+ok   destroy_rows_leave_c_observers_in_the_original_order (0.028 ms)
+ok   destroy_rows_preserve_filtered_fallback_and_skipped_rows (0.047 ms)
+
+4/4 passed
+<end of output>
+Test time =   0.06 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_destroy_rows" end time: Oct 28 22:12 Romance Standard Time
+"tidec_e2e_destroy_rows" time elapsed: 00:00:00
+----------------------------------------------------------
+
+52/2884 Testing: tidec_destroy_rows_codegen
+52/2884 Test: tidec_destroy_rows_codegen
+Command: "C:/Program Files/CMake/bin/cmake.exe" "-DGAME_C=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests/tide/tidec_e2e_destroy_rows/game.c" "-P" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/compiler/tests/destroy_rows_codegen.cmake"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_destroy_rows_codegen" start time: Oct 28 22:12 Romance Standard Time
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.04 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_destroy_rows_codegen" end time: Oct 28 22:12 Romance Standard Time
+"tidec_destroy_rows_codegen" time elapsed: 00:00:00
+----------------------------------------------------------
+
+56/2884 Testing: tidec_e2e_world_set_own
+56/2884 Test: tidec_e2e_world_set_own
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_world_set_own.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_world_set_own" start time: Oct 28 22:12 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   world_set_own_is_the_same_under_a_snapshot (1.267 ms)
+ok   world_sets_this_entitys_own_beside_a_read_parameter (0.663 ms)
+
+2/2 passed
+<end of output>
+Test time =   0.06 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_world_set_own" end time: Oct 28 22:12 Romance Standard Time
+"tidec_e2e_world_set_own" time elapsed: 00:00:00
+----------------------------------------------------------
+
+57/2884 Testing: tidec_e2e_world_set_read
+57/2884 Test: tidec_e2e_world_set_read
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_world_set_read.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_world_set_read" start time: Oct 28 22:12 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   world_set_read_parameters_in_local_views (0.775 ms)
+ok   world_set_read_parameters_keep_their_values_in_handlers (1.179 ms)
+ok   world_set_read_parameters_on_the_threaded_scheduler (1.494 ms)
+ok   world_set_read_parameters_refresh_when_tasks_resume (1.393 ms)
+ok   world_set_reads_follow_other_rows_and_replaced_pages (6.804 ms)
+
+5/5 passed
+<end of output>
+Test time =   0.06 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_world_set_read" end time: Oct 28 22:12 Romance Standard Time
+"tidec_e2e_world_set_read" time elapsed: 00:00:00
+----------------------------------------------------------
+
+58/2884 Testing: tidec_e2e_world_set_mut
+58/2884 Test: tidec_e2e_world_set_mut
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_world_set_mut.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_world_set_mut" start time: Oct 28 22:12 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   world_set_mut_context_is_local_to_threaded_invocations (4.865 ms)
+ok   world_set_mut_in_authenticated_command_dispatch (0.773 ms)
+ok   world_set_mut_in_awaited_component_tasks (1.041 ms)
+ok   world_set_mut_in_local_views (0.662 ms)
+ok   world_set_mut_rebuilds_bindings_at_event_and_task_turns (1.106 ms)
+ok   world_set_mut_replaces_the_active_container_ownership (1.225 ms)
+ok   world_set_mut_updates_self_and_helpers_without_overwriting_other_rows (6.424 ms)
+
+7/7 passed
+<end of output>
+Test time =   0.05 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_world_set_mut" end time: Oct 28 22:12 Romance Standard Time
+"tidec_e2e_world_set_mut" time elapsed: 00:00:00
+----------------------------------------------------------
+
+172/2884 Testing: tidec_e2e_ownership
+172/2884 Test: tidec_e2e_ownership
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_ownership.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_ownership" start time: Oct 28 22:12 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   ownership_alone_runs_once_for_each_entity (0.050 ms)
+ok   ownership_beside_other_filters (0.012 ms)
+ok   ownership_beside_the_owner_as_a_parameter (0.010 ms)
+ok   ownership_follows_the_owner (0.021 ms)
+ok   ownership_is_a_name_everywhere_else (0.008 ms)
+ok   ownership_views_blend_like_any_other (0.012 ms)
+ok   ownership_views_wait_for_a_match (0.006 ms)
+ok   ownership_with_runs_for_this_players_entities (0.009 ms)
+ok   ownership_without_runs_for_every_other_entity (0.010 ms)
+
+9/9 passed
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_ownership" end time: Oct 28 22:12 Romance Standard Time
+"tidec_e2e_ownership" time elapsed: 00:00:00
+----------------------------------------------------------
+
+208/2884 Testing: tidec_e2e_scenes
+208/2884 Test: tidec_e2e_scenes
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_scenes.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_scenes" start time: Oct 28 22:12 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   scenes_load_and_set_up (0.057 ms)
+ok   scenes_remember_who_sees_them (0.019 ms)
+ok   scenes_unload_everything_in_them (0.022 ms)
+
+3/3 passed
+<end of output>
+Test time =   0.13 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_scenes" end time: Oct 28 22:12 Romance Standard Time
+"tidec_e2e_scenes" time elapsed: 00:00:00
+----------------------------------------------------------
+
+209/2884 Testing: tidec_e2e_scenes_local
+209/2884 Test: tidec_e2e_scenes_local
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_scenes_local.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_scenes_local" start time: Oct 28 22:12 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   scenes_local_main_opens_a_menu (0.059 ms)
+
+1/1 passed
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_scenes_local" end time: Oct 28 22:12 Romance Standard Time
+"tidec_e2e_scenes_local" time elapsed: 00:00:00
+----------------------------------------------------------
+
+210/2884 Testing: tidec_e2e_scenes_fallback
+210/2884 Test: tidec_e2e_scenes_fallback
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_scenes_fallback.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_scenes_fallback" start time: Oct 28 22:12 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   scenes_fallback_main_loads_once_a_tick (0.023 ms)
+ok   scenes_fallback_main_loads_when_the_last_scene_unloads (0.009 ms)
+
+2/2 passed
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_scenes_fallback" end time: Oct 28 22:12 Romance Standard Time
+"tidec_e2e_scenes_fallback" time elapsed: 00:00:00
+----------------------------------------------------------
+
+211/2884 Testing: tidec_e2e_scene_filters
+211/2884 Test: tidec_e2e_scene_filters
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/tidec_e2e_scene_filters.exe"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/compiler/tests
+"tidec_e2e_scene_filters" start time: Oct 28 22:12 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   scene_filters_systems_and_handlers (0.042 ms)
+ok   scene_filters_views (0.076 ms)
+
+2/2 passed
+<end of output>
+Test time =   0.04 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_scene_filters" end time: Oct 28 22:12 Romance Standard Time
+"tidec_e2e_scene_filters" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2752/2884 Testing: versus_particles
+2752/2884 Test: versus_particles
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/versus_particles.exe" "--quick"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bench/versus
+"versus_particles" start time: Oct 28 22:12 Romance Standard Time
+Output:
+----------------------------------------------------------
+versus_particles: particles fall and bounce off the floor and the walls
+  count 10000; kept 0; 20 ticks timed after 2; optimized native build
+
+  ms a tick       1 thread              12 threads          
+  Tide              0.00770               0.00800           
+  C                 0.00725 1.06x         0.00810 0.99x     
+
+  medians; beside C, how many times as long Tide takes
+  every way ended the same: 0x6d7786fc2e779a2d
+<end of output>
+Test time =   0.01 sec
+----------------------------------------------------------
+Test Passed.
+"versus_particles" end time: Oct 28 22:12 Romance Standard Time
+"versus_particles" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2753/2884 Testing: versus_wide
+2753/2884 Test: versus_wide
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/versus_wide.exe" "--quick"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bench/versus
+"versus_wide" start time: Oct 28 22:12 Romance Standard Time
+Output:
+----------------------------------------------------------
+versus_wide: bodies of a dozen floats each fall and bounce, a tick changing half of them
+  count 10000; kept 0; tagged 0; frozen 0; 20 ticks timed after 2; optimized native build
+
+  ms a tick       1 thread              12 threads          
+  Tide              0.00590               0.00580           
+  C                 0.00560 1.05x         0.01205 0.48x     
+
+  medians; beside C, how many times as long Tide takes
+  every way ended the same: 0x53ae462ce1709f8e
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"versus_wide" end time: Oct 28 22:12 Romance Standard Time
+"versus_wide" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2754/2884 Testing: versus_wide_kept
+2754/2884 Test: versus_wide_kept
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/versus_wide.exe" "--quick" "--kept" "1" "--tagged" "1" "--frozen" "50"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bench/versus
+"versus_wide_kept" start time: Oct 28 22:12 Romance Standard Time
+Output:
+----------------------------------------------------------
+versus_wide: bodies of a dozen floats each fall and bounce, a tick changing half of them
+  count 10000; kept 1; tagged 1; frozen 50; 20 ticks timed after 2; optimized native build
+
+  ms a tick       1 thread              12 threads          
+  Tide              0.02270               0.02575           
+  C                 0.01140 1.99x         0.02040 1.26x     
+
+  medians; beside C, how many times as long Tide takes
+  every way ended the same: 0xfd4c53d73d0a2142
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"versus_wide_kept" end time: Oct 28 22:12 Romance Standard Time
+"versus_wide_kept" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2757/2884 Testing: versus_churn
+2757/2884 Test: versus_churn
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/versus_churn.exe" "--quick"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bench/versus
+"versus_churn" start time: Oct 28 22:12 Romance Standard Time
+Output:
+----------------------------------------------------------
+versus_churn: bullets are fired, fly and are destroyed, each at its own time
+  rate 100; kept 0; 60 ticks timed after 2; optimized native build
+
+  ms a tick       1 thread              12 threads          
+  Tide              0.00650               0.00645           
+  C                 0.00395 1.65x         0.01475 0.44x     
+
+  medians; beside C, how many times as long Tide takes
+  every way ended the same: 0x7dc28b990fa72e0f
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"versus_churn" end time: Oct 28 22:12 Romance Standard Time
+"versus_churn" time elapsed: 00:00:00
+----------------------------------------------------------
+
+2767/2884 Testing: versus_particles_kept
+2767/2884 Test: versus_particles_kept
+Command: "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bin/versus_particles.exe" "--quick" "--kept" "1"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release/bench/versus
+"versus_particles_kept" start time: Oct 28 22:12 Romance Standard Time
+Output:
+----------------------------------------------------------
+versus_particles: particles fall and bounce off the floor and the walls
+  count 10000; kept 1; 20 ticks timed after 2; optimized native build
+
+  ms a tick       1 thread              12 threads          
+  Tide              0.00490               0.00490           
+  C                 0.00630 0.78x         0.01685 0.29x     
+
+  medians; beside C, how many times as long Tide takes
+  every way ended the same: 0x5beea314bf7f6827
+<end of output>
+Test time =   0.02 sec
+----------------------------------------------------------
+Test Passed.
+"versus_particles_kept" end time: Oct 28 22:12 Romance Standard Time
+"versus_particles_kept" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Oct 28 22:12 Romance Standard Time

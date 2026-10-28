@@ -80,6 +80,24 @@ with about half frozen, and 2,000 bullets spawned per tick, with one/four-thread
 budgets for the larger cases. The C reference is timed after Tide within the
 same process and is contextual, not a separate alternating competitor.
 
+For optimization work, preserve the baseline's three executables under a
+separate `<before>/bin` directory before rebuilding. Optional before/current/Bevy
+mode runs adjacent triples, reversing their order on alternating rounds:
+
+```powershell
+& ./bench/bevy/run.ps1 -OutputDir bench/results/bevy-optimization-new `
+    -BeforeBuildDir build/bevy-before -BeforeRevision <baseline-commit> -FilterSweep
+python bench/bevy/analyze.py bench/results/bevy-optimization-new
+```
+
+`-FilterSweep` adds serial 1/10/90/99%-frozen cases to catch density-specific
+regressions. With five rounds this is 210 processes. The analyzer checks all
+three final digests, frozen executable identities and cross-thread results, and
+adds before/current paired changes to its report. All files supplied beside
+the baseline executables are also hash-pinned. The final density-aware
+[optimization results](../results/bevy-optimized-20261028-final/README.md) retain
+the rejected intermediate candidate as well as the final comparison.
+
 Existing evidence directories are refused. Raw output, command lines, UTC
 launch times, contention events, CPU/toolchain identity, source/generated-C/
 configuration/executable hashes and every result are retained. The analyzer

@@ -1,5 +1,46 @@
 # ECS and simulation state
 
+## Pure row updates before conditional destruction (2026-10-28)
+
+Internal compiler optimization, preserving component bytes, entity IDs, deferred
+order, snapshots and hashes: a narrowly eligible per-entity system whose plain
+row-local arithmetic ends in `if (predicate) this.Destroy()` can compute its
+updated row and predicate without touching the command queue. Its ordinary
+generated body remains for fallback paths; a private bool-returning update
+variant supplies the eligible rows loop. Each bounded block of at most 128 rows
+keeps its predicates in a C-stack bool array, writes components back through the
+existing in-place/apart machinery, then records the flagged destroys in original
+ascending row order before the next block. No allocation, runtime API, stored
+pointer, world layout or scheduling rule changes. This separates ordinary SIMD
+row arithmetic from the conditional queue writes that previously kept it scalar.
+
+The eligibility proof accepts only numeric/plain local declarations and
+assignments to own mutable component fields or locals, followed by that one
+conditional self-destroy with no else. Expressions allow primitive arithmetic,
+plain field/local/constant reads and numeric constructors. User functions,
+overloaded operators, properties, indexing, heap/resource values, C calls, random,
+tasks, World/query/input/local-field access and mutable singletons fall back.
+Sharded, local and filtered archetype paths also retain ordinary recording.
+No earlier row can reach a later row's state through an eligible body; the only
+queue effect is its final self-destroy, whose relative order is unchanged.
+
+For non-hierarchy/non-sharded destruction, private generated `destroy_at` takes
+the generation-checked location already found by `apply_destroy` while deciding
+whether the target unloads a scene. The existing `destroy_now` helper still looks
+up a fresh location for other callers. Reuse happens before any lifecycle handler;
+the destruction body retains its original lookup/handler/removal lifetime and
+scene/hierarchy/shard behavior.
+
+`destroy_rows` checks an independent C model over 4,099 initial and 17 later
+births: block/chunk tails, exact arithmetic/float bits, divide-by-zero, signed
+overflow, masked shifts, destruction-handler values and order, row swaps and
+LIFO slot/generation reuse. Serial/pieced execution, private/shared pages and
+packed restore must agree. C observers and event-sending helpers beside user
+operators pin fallback recording order; sparse filters pin untouched rows. The accompanying
+generated-C check requires the optimized helper/flag loop for the numeric case
+and refuses it for the C/helper/operator fallbacks. Validation and measurements are
+recorded by the coordinator in benchmarks.md.
+
 ## Map views across a function (2026-10-20)
 
 Owner-approved: generated code keeps a view of each map it reads or sets by
