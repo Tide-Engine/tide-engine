@@ -68,3 +68,6 @@ bench/results/optimization-levels/** text eol=lf
 
 # Correction benchmark evidence keeps captured bytes/whitespace, including CRLF.
 bench/results/transform-corrections-*/** -text -whitespace
+
+# Cross-engine benchmark raw stdout retains its SHA-256 across checkouts.
+bench/results/bevy-*/** -text -whitespace

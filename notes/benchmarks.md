@@ -1,5 +1,40 @@
 # Benchmarks
 
+## Bevy ECS comparison (2026-10-28)
+
+The owner's request to compare Tide with Bevy adds the opt-in `bench/bevy`
+Rust comparator, pinned to Bevy ECS 0.20.0 and Cargo.lock. It ports the existing
+particles, wide-component, sparse Frozen filtering and bullet-churn workloads
+without changing game/compiler/runtime behavior. The versus harness gains
+`--json` to print its existing result format without appending to the ledger.
+Setup, final digest, snapshots, per-tick hashes, networking and rendering are
+outside the scheduled tick timing. Normal Bevy change detection remains enabled;
+its contiguous-query/bypass alternatives and whole-engine equivalence are not
+claimed. The README pins APIs, arithmetic, deferred changes and thread budgets.
+
+Windows 11 / Ryzen 9 7900X, Clang 23.1.2 and Rust 1.95.0 (LLVM 22.1.2), both O2,
+baseline x86-64 and no FMA/fast math: five alternating process rounds with 200
+warmup/400 measured ticks preserve 100 successful processes. At 1M particles,
+Tide/Bevy median-of-process-medians is 0.47430/1.16390 ms on one thread and
+0.12935/0.43320 with a four-thread execution budget; median paired Bevy/Tide
+ratios are 2.448/3.349. At 1M twelve-float components the corresponding costs
+are 1.35745/2.48685 and 0.63360/1.20025 ms. With 499,674 sparse Frozen tags,
+serial Tide is slower (4.00665/2.46325 ms), while four-thread costs are
+1.08240/1.26125. Spawning 2,000 bullets/tick, with about 199k live, favors Bevy:
+0.46690/0.35955 ms serial and 0.45600/0.39410 with four offered execution
+threads. No optimization or causal profile follows from this scoped comparison.
+
+Every timed pair and all thread budgets agree on logical-state digests. Five
+native and five WASI release CTests pass; 66 independent Bevy checks also match
+native Tide/C and WASI Tide/C across early/steady ticks and empty/full filters.
+The offline analyzer checks complete alternating pairs, options, successful exits,
+raw stdout hashes, invariant digests and contention. The shared mutex, explicit
+15-second initial quiet guard and 250 ms inventory polling detect no reset or
+competing work; desktop activity, placement, clocks and temperature are uncontrolled.
+Raw rows, ranges, paired ratios, identities, limitations and reproduction are in
+`bench/results/bevy-20261028/README.md`. No browser/GPU, Bevy web, other OS/mobile,
+sanitizer or whole-engine performance result is claimed; no CI dispatch was made.
+
 ## Earth pins after projected repair delivery (2026-10-27)
 
 Run `40419145201` at `eaf260488` fails only the three Earth benchmark pins

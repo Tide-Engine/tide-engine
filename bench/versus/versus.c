@@ -126,6 +126,7 @@ void versus_for(const tide_jobs *jobs, const uint32_t count, void (*work)(void *
 
 // Split work however little there is (--split, --quick).
 static bool always_split;
+static bool output_json;
 
 uint32_t versus_pieces(const tide_jobs *jobs, const uint32_t count, const uint32_t enough)
 {
@@ -315,6 +316,7 @@ static void usage(const versus_desc *d)
     printf("  --threads <n>       only this many threads, 0 for every core (one, then every core)\n");
     printf("  --threads-list <l>  each count of threads in a list like 1,2,4,8,12 in turn (0: every core)\n");
     printf("  --split             C splits its work across threads however little there is\n");
+    printf("  --json              also prints a JSON record to stdout, without saving\n");
     printf("  --save <label>      adds the results to bench/results/versus.jsonl\n");
     for (uint32_t i = 0; i < d->flag_count; i++) {
         printf("  --%-17s %s (%u)\n", d->flags[i].name, d->flags[i].help, d->flags[i].full);
@@ -363,6 +365,10 @@ static bool parse(const versus_desc *d, const int argc, char **argv, options *o,
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
         if (strcmp(arg, "--quick") == 0) continue;
+        if (strcmp(arg, "--json") == 0) {
+            output_json = true;
+            continue;
+        }
         if (strcmp(arg, "--split") == 0) {
             always_split = true;
             continue;
@@ -552,5 +558,6 @@ int versus_main(const versus_desc *d, const int argc, char **argv)
         }
     }
     if (save) save_results(d, &o, save, runs, threads, (const timing(*)[MAX_WAYS])t, ok);
+    if (output_json) write_record(stdout, d, &o, "stdout", runs, threads, (const timing(*)[MAX_WAYS])t, ok);
     return ok ? 0 : 1;
 }

@@ -6,6 +6,11 @@ The opt-in [GPU clip experiment](results/gpu-clip/README.md) uses `bench_skinned
 
 Simulation benchmarks compare the same deterministic work in Tide and hand-written C. Build and run them with `cmake --build --preset release --target versus`; individual `build/release/bin/versus_<concept>` programs list their options with `--help`. Save repeated measurements with `--save <label>` in `bench/results/versus.jsonl`.
 
+The opt-in [Bevy ECS comparison](bevy/README.md) ports particles, wide components,
+sparse filtering and entity churn to pinned Bevy ECS 0.20.0. It checks matching
+final-state digests before reporting repeated CPU tick measurements. The versus
+programs accept `--json` to also print their record without appending to a ledger.
+
 The [October 20 performance pass](../notes/benchmarks.md) added tools for measuring on a machine other agents build and benchmark on, all in `results/perf-pass/` but the profiler. Every timing they make holds the shared `Local\TideClaudeContinuationBenchmark` mutex and waits for a quiet spell with no builds, tests or benchmarks:
 
 - `run.ps1 -Label <label> [-Rounds 3] [-Only a,b]` copies the benchmarks' binaries aside and runs every versus program, the sand and gallery sessions and drawing on OpenGL and Vulkan, saving each run as `<label>-r<round>`. Pass `-Only`'s list through `pwsh -Command "& ./bench/results/perf-pass/run.ps1 ..."`: `-File` would take it as one string. With `-Before <folder> -BeforeBuiltFrom <revision>`, a folder of earlier binaries, each program runs from both in turn (before, after, then after, before), saved as `<label>-before-r<round>` and `<label>-after-r<round>`: the way to compare a change on a busy machine.
