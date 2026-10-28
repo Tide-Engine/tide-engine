@@ -1,5 +1,32 @@
 # Language features, as tidec builds them
 
+## Rare sparse row masks (2026-10-28)
+
+For the same conservative in-place eligibility as the mixed row selection
+below, a sparse-only system whose existing pass count is below one match per
+sixteen rows uses a separate private loop. Each full block of 16 rows loads exactly 16
+presence bytes per filter, compares each required column with nonzero and
+each excluded column with zero, and combines those comparison masks. SSE2 and
+ordinary WebAssembly SIMD extract one bit per row; other targets extract the
+comparison lanes with integer operations. Matching bits run in ascending order
+through a nonzero-guarded count-trailing-zeros loop. A short final block uses
+bounded scalar presence reads and shifts only by row offsets below 16.
+
+The vector load is reached only when 16 actual rows remain in the task's range;
+the first table allocation may hold just four rows. No mask persists across a
+block, call or tick. The existing count scan, rows function parameter budgets,
+apart/COW copying, scene filtering and Owner/C/World/task fallbacks are unchanged.
+There is no runtime function, layout, scheduling or observable semantic change.
+
+`sparse_masks` compares four intersecting presence columns against an independent
+C model at empty/short allocations and around 16/128/2048-row boundaries. It
+checks bit-zero/bit-fifteen matches, empty blocks, ascending list writes,
+deferred removal, byte-lane updates, serial/pieced execution, snapshot
+immutability and packed restoration. The generated-C check requires bounded
+loads, guarded bit enumeration and portable extraction, and retains the apart
+and scene-filtered paths. All 18 affected native/WASI checks and 66 cross-engine
+comparisons pass; benchmarks.md records performance and retained diagnostics.
+
 ## Mixed sparse row selection (2026-10-28)
 
 The Bevy comparison identified random sparse presence branches as a serial
@@ -7,8 +34,9 @@ iteration cost. Eligible in-place mixed sparse/scene filtered system loops
 compact matching row indices in fixed blocks of 128, then execute those rows
 in their original order. The task or piece uses its existing pass count to
 choose this separate loop variant only when at least a quarter of its rows
-pass and at least a quarter are skipped; biased filters retain the ordinary
-filtered loop. There is no additional density scan or runtime signature.
+pass and at least a quarter are skipped; other densities retain the ordinary
+filtered loop, except sparse-only matches below one per sixteen rows, which
+use the bit loop above. There is no additional density scan or runtime signature.
 The compaction stores an index before adding its
 zero-or-one pass bit; at scan k its output index is at most k, so an all-pass
 block still writes only slots 0 through 127. The last block is bounded by the
@@ -23,7 +51,7 @@ unchanged. Component layout, arithmetic, ordering, snapshots and hashes retain
 their existing contracts. This adds no language feature or user-visible API.
 
 The focused sparse_rows E2E checks all/none/mixed blocks, low/high passing
-densities that retain ordinary filtering, and chunk/tail
+densities, and chunk/tail
 boundaries, multiple required/excluded masks, scene inclusion/exclusion, ordered
 list writes, byte-lane updates and deferred presence removal, comparing in-place,
 shared-snapshot and pooled execution. Existing rows and sparse fixtures retain

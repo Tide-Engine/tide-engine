@@ -1,5 +1,55 @@
 # Benchmarks
 
+## Rare sparse traversal (2026-10-28)
+
+The selective-query follow-up adds an in-place sparse-only loop when the
+existing pass count is below one match per sixteen rows. Bounded 16-byte
+presence comparisons form matching bits, consumed in ascending row order;
+short tails read only actual rows. SSE2 and ordinary WASM SIMD extract the
+bits directly, with scalar lane extraction elsewhere. The count scan remains;
+COW/apart, scene, Owner, C and World-alias fallbacks retain their existing
+paths. No runtime API, world layout, math, deferred order or scheduling changes.
+Contracts and independent fixture: language.md, Rare sparse row masks.
+
+Windows/Ryzen 9 7900X, Clang 23.1.2, Rust 1.95.0/Bevy ECS 0.20.0, unchanged
+O2 flags/game sources/Bevy executable: frozen baseline `a2564c773` against
+compiler source SHA-256
+`fcfc03c95da80f321c3e872d983b450b32889d60a8210a22c07040fdb81e4a03`.
+Five alternating adjacent before/current/Bevy rounds cover 16 cases and 240
+successful processes, each with 200 warmup/400 measured ticks: 96,000 measured
+ECS ticks, 48,000 ECS warmup ticks and 64,000 additional measured C-reference
+ticks. All logical digests agree across implementations, rounds and thread
+budgets. Timings still exclude setup, final digest, per-tick hashing, retained
+snapshots, rollback, networking and rendering.
+
+For 1M rows with 99% frozen, before/current/Bevy median-of-process-medians is
+0.46430/0.27090/0.04880 ms serial and 0.12660/0.08510/0.03450 ms with four
+offered execution threads. Median paired Tide time reductions are 39.50% and
+33.16%; current process medians span 0.26440-0.29630 and 0.08220-0.08690 ms.
+At 95% frozen, serial times are 1.46480/1.41225/0.22585 ms, a 4.80% paired
+reduction. Bevy remains faster in these selective cases. The 90%-frozen
+ordinary-loop control is adverse at +2.77% paired, with overlapping ranges;
+this does not establish improvement at every density.
+
+The retained 18-process probe used a broader quarter-density mask guard and
+regressed at 90% frozen by 4.22% paired, motivating the narrower threshold.
+Sampling includes C-reference work and perturbs timing; it identifies remaining
+row arithmetic and task preparation/counting without establishing cache-miss,
+bandwidth or storage-layout causes. The shared mutex, 15-second quiet guard and
+250 ms polling detect no competing work or quiet reset in the final batch.
+Desktop activity, placement, clocks and temperature remain uncontrolled.
+
+All 18 affected optimized CTests per platform pass on native and WASI. Initially
+17 passed on each; the stale four-variant parameter assertion was updated to
+check all six variants, then only that check reran. Sixty-six cross-engine
+checks pass. The new independent sparse-mask fixture covers intersecting
+presence columns, short allocations/tails, row order, deferred changes,
+serial/pieced execution, snapshots and packed restore. A standalone native
+kernel checks all 65,536 presence patterns; ARM coverage is assembly-only,
+not execution. Raw evidence, probe, ranges, diagnostics and reproduction:
+`bench/results/bevy-selective-20261028/README.md`. No full suites, browser/GPU,
+other OS/mobile/sanitizers or extra CI dispatch were run.
+
 ## Sparse filtering and churn optimization (2026-10-28)
 
 Following the owner's request to optimize the Bevy comparison's weak areas,

@@ -28,6 +28,11 @@ tide_e2e_test(reach)
 tide_e2e_test(sparse)
 tide_e2e_test(rows) # A system's loop over a chunk's rows: pages shared with a snapshot or not, rows left out, chunks in pieces
 tide_e2e_test(sparse_rows) # Mixed sparse/scene filters preserve row order, block bounds and snapshot writes
+tide_e2e_test(sparse_masks) # Rare sparse intersections preserve short allocations, mask/chunk/piece tails and snapshots
+add_test(NAME tidec_sparse_masks_codegen
+    COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_sparse_masks/game.c"
+        "-DSCENE_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_sparse_rows/game.c"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/sparse_masks_codegen.cmake")
 tide_e2e_test(destroy_rows) # Pure updates and deferred self-destroys preserve math, order, handles and snapshots
 add_test(NAME tidec_destroy_rows_codegen
     COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_destroy_rows/game.c"

@@ -9,7 +9,8 @@ param(
     # Optional adjacent before/current/Bevy triples; the frozen directory contains bin/versus_*.exe.
     [string]$BeforeBuildDir = '',
     [string]$BeforeRevision = '',
-    [switch]$FilterSweep
+    [switch]$FilterSweep,
+    [string[]]$OnlyCases = @()
 )
 $env:TIDE_HIDDEN = '1'
 $ErrorActionPreference = 'Stop'
@@ -41,9 +42,16 @@ $cases = @(
     @{id='churn-2k-4'; workload='churn'; rate=2000; threads=4}
 )
 if ($FilterSweep) {
-    foreach ($frozen in @(1,10,90,99)) {
+    foreach ($frozen in @(1,10,90,95,99)) {
         $cases += @{id="filtered-frozen$frozen-1m-1"; workload='wide'; count=1000000; threads=1; tagged=1; frozen=$frozen}
     }
+    $cases += @{id='filtered-frozen99-1m-4'; workload='wide'; count=1000000; threads=4; tagged=1; frozen=99}
+}
+if ($OnlyCases.Count) {
+    foreach ($requested in $OnlyCases) {
+        if ($requested -notin @($cases | ForEach-Object { $_.id })) { throw "Unknown benchmark case: $requested" }
+    }
+    $cases = @($cases | Where-Object { $_.id -in $OnlyCases })
 }
 foreach ($case in $cases) {
     foreach ($name in @('count','rate','tagged','frozen')) { if (!$case.ContainsKey($name)) { $case[$name] = 0 } }

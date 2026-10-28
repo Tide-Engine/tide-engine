@@ -90,13 +90,30 @@ mode runs adjacent triples, reversing their order on alternating rounds:
 python bench/bevy/analyze.py bench/results/bevy-optimization-new
 ```
 
-`-FilterSweep` adds serial 1/10/90/99%-frozen cases to catch density-specific
-regressions. With five rounds this is 210 processes. The analyzer checks all
-three final digests, frozen executable identities and cross-thread results, and
-adds before/current paired changes to its report. All files supplied beside
-the baseline executables are also hash-pinned. The final density-aware
+`-FilterSweep` adds serial 1/10/90/95/99%-frozen cases and a four-thread
+99%-frozen case to catch density-specific regressions. These six additions make
+16 cases: a full five-round before/current/Bevy run uses 240 processes. The
+analyzer checks all three final digests, frozen executable identities and
+cross-thread results, and adds before/current paired changes to its report.
+All files supplied beside the baseline executables are also hash-pinned.
+
+`-OnlyCases` selects named case IDs while preserving suite order. Combine it
+with `-FilterSweep` to select the extra density cases. Invoke the script in the
+current PowerShell session so the names arrive as an array:
+
+```powershell
+& ./bench/bevy/run.ps1 -OutputDir bench/results/bevy-selective-new -FilterSweep `
+    -OnlyCases 'filtered-frozen95-1m-1','filtered-frozen99-1m-4'
+```
+
+This also works with `-BeforeBuildDir` and `-BeforeRevision`. Metadata records
+the selected cases; the analyzer requires their complete rounds.
+
+The historical density-aware
 [optimization results](../results/bevy-optimized-20261028-final/README.md) retain
-the rejected intermediate candidate as well as the final comparison.
+the rejected intermediate candidate as well as the final comparison. The
+[selective sparse follow-up](../results/bevy-selective-20261028/README.md) records
+the separate rare-match traversal pass.
 
 Existing evidence directories are refused. Raw output, command lines, UTC
 launch times, contention events, CPU/toolchain identity, source/generated-C/

@@ -34,7 +34,7 @@ execFileSync(tidec, [source, '-o', out, '--name', 'game', '--no-line'], { stdio:
 const generated = path.join(out, 'game.c');
 const c = readFileSync(generated, 'utf8');
 const rows = [...c.matchAll(/^TIDE_ROWS void (tide_rows_Change_\d+)\(([^\n]*)\)/gm)];
-assert.equal(rows.length, 4, 'in-place/apart loops, filtered and for every row');
+assert.equal(rows.length, 6, 'in-place/apart filtered and every-row loops, selected indices and sparse masks');
 for (const [, name, signature] of rows) {
     const parameters = signature.split(',').length;
     assert(parameters <= 1000, `${name} has ${parameters} parameters; WebAssembly accepts at most 1000`);
