@@ -1,0 +1,545 @@
+{
+  "schema": 2,
+  "started": "2026-10-28T22:37:54.4703223Z",
+  "os": "Microsoft Windows NT 10.0.26200.0",
+  "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)",
+  "files": {
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-66b8ddb8f\\bench\\versus\\tide\\versus_particles\\particles.h": "87f19f4957674ca72fa84adefeffe4e0acf3062ee06714c43578925947ebd811",
+    "compiler/src/ast.h": "1c0f231090a36e479d023d88799f1faae42b4e1190ee572c77ac87ee020dcd8e",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-66b8ddb8f\\bench\\versus\\tide\\versus_wide\\wide_pack.c": "5f2827e7dd68970a7270ddcd1a876c30a18255f0c017938bb18cb50ed16d5661",
+    "bench/versus/particles/particles.c": "dbc7801986a3d5c91d47ef657696e3e7fdc9fdc832763661d829bf1bba420c32",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-66b8ddb8f\\bin\\tidec.exe": "8827de7e71862cbdb900680e48dde153a05ddeba5f6db1cb812f91fe508a5293",
+    "bench/versus/wide/wide.c": "bea8d6ab07da3adbb59fea3948105b8e6d3e874730dfb14f914a6fe48b474d77",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-66b8ddb8f\\bench\\versus\\tide\\versus_particles\\particles.c": "2458701bc75dca629e2a088d960cc153b4c363b02e680d0330c461838d1a2827",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-66b8ddb8f\\bench\\versus\\tide\\versus_particles\\particles_pack.c": "27be78f52e3a942f2e1db7798555181314cd69f33e9adf108e628a1753eb0cf2",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-66b8ddb8f\\CMakeCache.txt": "810efe78d0cef0eb00a88d51950fd36f8693da428e51253632503a46e3e0cdfc",
+    "build/release/CMakeCache.txt": "810efe78d0cef0eb00a88d51950fd36f8693da428e51253632503a46e3e0cdfc",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-66b8ddb8f\\bin\\tidec.pdb": "0b402d75319813e7f8edee8b36ffcb61bcf85b007b486ad284dac33a177cbb83",
+    "bench/versus/versus.h": "991338a31bd5a9c9535245aca70655e6e6c95376fa18aa7a0c9bb552f1eee900",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-66b8ddb8f\\bin\\versus_wide.pdb": "a7d0939945c88ee71a6e75d4cea8475498d5672f6aec6e7a93bcebb70000a738",
+    "engine/include/tide/jobs.h": "7ddea5044171648bdde2fae4a20a19480872283e6868552afbe7520ee40ca961",
+    "compiler/src/codegen.c": "0aeb724752e08a3f31129ffb78b291f01b9228a38086532f8bd0bad9ed4ca66a",
+    "engine/include/tide/table.h": "2343f64fd60ec21174d74f0f01e52acaf8e9762c84094a2d506b88f012c41eb3",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-66b8ddb8f\\platform\\tide_platform.lib": "1bd462f94fbc5dbe7611b088be82845031c5f70b13a3a21b4e2ac632d1bcc71f",
+    "bench/bevy/Cargo.lock": "52c7bea687ad50e982bc29bcdf702ecdff2b3c4cd2ca46ce7cc66001b4281a45",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-66b8ddb8f\\bench\\versus\\tide\\versus_wide\\wide.c": "8ff6f84e26e6afcc54e12ca2f47cbcc7d537eb81b45cb2047eb2de8ce5eb2acb",
+    "bench/versus/churn/main.c": "4c02381f3d4f77b427912820acb0288bb6d8a1d98bc6de5694ccf4513af8c3b0",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-66b8ddb8f\\bin\\versus_churn.pdb": "0e27c5da2497ba077ae8a1781c048f03ce370e94f7d012737def296e4b730515",
+    "build/release/bench/versus/tide/versus_wide/wide.c": "48e638fd2623217e7711a763658bbfa3d58e420873bc99225312d7144bfcbc15",
+    "cmake/TideFlags.cmake": "c90000af80412c6690a27c40fdd1bc00178b46247f3d9b7133fbc2dfb9f6e4c3",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-66b8ddb8f\\bench\\versus\\tide_versus.lib": "49ee9880c47e417e293e9934928b6ac5de6c0bee5846846326a189e958680523",
+    "build/release/bench/versus/tide/versus_wide/wide.h": "d4a6406eaebece40ff90b4cab6719cce97274634b21fb1452ebddaad1cb5a067",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-66b8ddb8f\\bin\\versus_wide.exe": "b7d7792afda75809d7e667b98c1ee37ddc4df8ae91a0156d39e0dba94a08816f",
+    "build/release/bin/versus_wide.exe": "0446136ad2ab014af456a2a962484d71fd54bbcd72449de55608a99bb7dbcba7",
+    "build/release/bench/versus/tide/versus_particles/particles.h": "87f19f4957674ca72fa84adefeffe4e0acf3062ee06714c43578925947ebd811",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-66b8ddb8f\\bench\\versus\\tide\\versus_churn\\churn.h": "b6d91ca074a94b5f0e910a761e8e7f99559611a833a7f364bf6114c3931291fd",
+    "engine/include/tide/entity.h": "381702b175ca2ad70851270959c18ee6ecd6fdae6ba4aa927ca785b297084f72",
+    "bench/versus/wide/wide.tide": "8ed14d5871bc215208b5084c81567be33076b2839dca1921bdc3d780e20986f5",
+    "engine/src/entity.c": "c7b26c8b166b0494555c210c2de78a3f04ff1e9f154cabf1769b771c06dd3b05",
+    "compiler/src/rows_cache_codegen.inc": "dd686e6df6de0fb3b898561039da6ed7a55fc6eef2ce0ce4fc2e215cb90f974d",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-66b8ddb8f\\compile_commands.json": "4547eff906c595742f41a735bf47227c6ba22a49d57ccefc44a31a64063ee093",
+    "bench/versus/particles/main.c": "85966fbd2e7388d3d5ab4b5126de4a3220591db7a7fa520b55321202f79bd0e5",
+    "bench/versus/wide/main.c": "3a1c37caf7b33479aa1d00f5ea712e091c024e7f4d17e7f5fcb54e070c47f428",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-66b8ddb8f\\bin\\versus_particles.pdb": "a7e0a027335bb479d7704c662d86ad7e3d2c434384630416d2ad05acbc71df83",
+    "bench/versus/particles/particles.tide": "f5db7f030b8182cd1b180c962073dc6f19e4c38f671436b77781b920438b60f2",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-66b8ddb8f\\bin\\versus_particles.exe": "03116050961f1cb495fca186e30bde48d2997ec6a66f5ac4eee2d87e136e44a0",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-66b8ddb8f\\original-measurement-metadata.json": "bf6e541449e5fc2ec2c46603db0a264105e59dc9dba6398f2eec20b25bbdc8bc",
+    "bench/versus/churn/churn.tide": "1ef1aab97f3ec8bd4b4a309c898e8b7cf2ca923228dbfe1bc28b2852bfec017c",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-66b8ddb8f\\bench\\versus\\tide\\versus_wide\\wide.h": "177c62836f7c0e857fa2498b82508edf2ead05fd6263afac34d1e1b16a1ef4cb",
+    "bench/versus/churn/churn.c": "8a52d2b9bf0b9140e3a2899fd99550fd1e80d1a82b252ea64001aa73ba6fb827",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-66b8ddb8f\\engine\\tide.lib": "1d192e5a8c3829157b463435a1e9166e0c46c468f6304b66e62047fe7ccc07a8",
+    "bench/bevy/run.ps1": "a751acf65ddf4a7187f9b2a590e5c1098523272352c2814237923412a85b9eef",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-66b8ddb8f\\codegen.c": "fcfc03c95da80f321c3e872d983b450b32889d60a8210a22c07040fdb81e4a03",
+    "build/release/bin/versus_churn.exe": "0c8721bf77eda916e0640ea7c0bd957e772134d42d69faeb1bfab0c878c0ca07",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-66b8ddb8f\\bin\\versus_churn.exe": "0c8721bf77eda916e0640ea7c0bd957e772134d42d69faeb1bfab0c878c0ca07",
+    "bench/bevy/src/main.rs": "a2580e28bbe2afbb0daf6a773eb3dbd503065243dec3c96fdb488cb2ef6b0ab0",
+    "build/release/bench/versus/tide/versus_churn/churn.h": "b6d91ca074a94b5f0e910a761e8e7f99559611a833a7f364bf6114c3931291fd",
+    "bench/bevy/Cargo.toml": "f7fb6cb91fd08c7c55a46ee0b85d8e8529347397d5532034e860d1822ec5324f",
+    "build/release/compile_commands.json": "79dc47bc64f1c2ad6c1a539031984e8b3680e4e620fb5d62cab859c0cfa9f6d8",
+    "build/bevy/release/tide-bevy-bench.exe": "d83769333a56edceb3aed09ab38878774f8491e9c8b0ba3444db3bcfbeaed081",
+    "build/release/bin/versus_particles.exe": "03116050961f1cb495fca186e30bde48d2997ec6a66f5ac4eee2d87e136e44a0",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-66b8ddb8f\\bench\\versus\\tide\\versus_churn\\churn_pack.c": "278582b0599a7ca209d92abc666fe9d1428adc10ba8bcdecc9a59030ebfc902d",
+    "compiler/src/check.c": "945f177eac3297466c86c9851861bb618551bd1055b1224c17e81f6c7ef1ecfe",
+    "engine/src/jobs.c": "513141e929a710f45d6a84fe9af3663d0ea61d8823d010b75fd5ac37e0f308a3",
+    "engine/src/table.c": "0e814efd451928a3183a016f613b2d8b6980719586c2b3a107f3c7c39f55d534",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-66b8ddb8f\\bench\\versus\\tide\\versus_churn\\churn.c": "c1cbace66022cebd70923c5e9981e5c73d135f839e5364f0f6647186fdd2dc8d",
+    "build/release/bench/versus/tide/versus_particles/particles.c": "2458701bc75dca629e2a088d960cc153b4c363b02e680d0330c461838d1a2827",
+    "bench/versus/versus.c": "3ab538150b5fde6da539916aada418c6040510464b6b59a3ee25da4bb2ae3389",
+    "build/release/bench/versus/tide/versus_churn/churn.c": "c1cbace66022cebd70923c5e9981e5c73d135f839e5364f0f6647186fdd2dc8d"
+  },
+  "rounds": 3,
+  "binaries": {
+    "Bevy": "d83769333a56edceb3aed09ab38878774f8491e9c8b0ba3444db3bcfbeaed081",
+    "Tide": {
+      "particles": "03116050961f1cb495fca186e30bde48d2997ec6a66f5ac4eee2d87e136e44a0",
+      "wide": "0446136ad2ab014af456a2a962484d71fd54bbcd72449de55608a99bb7dbcba7",
+      "churn": "0c8721bf77eda916e0640ea7c0bd957e772134d42d69faeb1bfab0c878c0ca07"
+    }
+  },
+  "cases": [
+    {
+      "rate": 0,
+      "id": "filtered-frozen95-1m-1",
+      "frozen": 95,
+      "count": 1000000,
+      "tagged": 1,
+      "workload": "wide",
+      "threads": 1
+    },
+    {
+      "rate": 0,
+      "id": "filtered-frozen99-1m-1",
+      "frozen": 99,
+      "count": 1000000,
+      "tagged": 1,
+      "workload": "wide",
+      "threads": 1
+    },
+    {
+      "rate": 0,
+      "id": "filtered-frozen99-1m-4",
+      "frozen": 99,
+      "count": 1000000,
+      "tagged": 1,
+      "workload": "wide",
+      "threads": 4
+    }
+  ],
+  "finished": "2026-10-28T22:39:42.0049846Z",
+  "cpu": [
+    {
+      "Name": "AMD Ryzen 9 7900X 12-Core Processor            ",
+      "NumberOfCores": 12,
+      "NumberOfLogicalProcessors": 24
+    }
+  ],
+  "quiet_resets": [
+    {
+      "at": "2026-10-28T22:38:22.2723599Z",
+      "processes": [
+        "cmake:4004",
+        "cmake:28004"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:22.7205474Z",
+      "processes": [
+        "cmake:28004",
+        "cmake:61608",
+        "cmake:70004"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:23.1850758Z",
+      "processes": [
+        "cmake:28004",
+        "cmake:61608",
+        "cmake:66480"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:23.6661744Z",
+      "processes": [
+        "cmake:28004",
+        "cmake:61608"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:24.1306071Z",
+      "processes": [
+        "cmake:28004"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:24.5511327Z",
+      "processes": [
+        "cmake:28004"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:25.0236590Z",
+      "processes": [
+        "cmake:28004"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:25.4576922Z",
+      "processes": [
+        "cmake:23060",
+        "cmake:28004"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:25.8991181Z",
+      "processes": [
+        "cmake:28004",
+        "cmake:73648"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:26.3531803Z",
+      "processes": [
+        "cmake:28004",
+        "cmake:61088"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:26.7770450Z",
+      "processes": [
+        "cmake:28004",
+        "cmake:61088",
+        "cmake:68940"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:27.2002467Z",
+      "processes": [
+        "cmake:28004",
+        "cmake:61088",
+        "cmake:61100"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:27.6912614Z",
+      "processes": [
+        "cmake:21768",
+        "cmake:28004"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:28.1158530Z",
+      "processes": [
+        "cmake:28004",
+        "cmake:62640"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:28.5769763Z",
+      "processes": [
+        "cmake:20868",
+        "cmake:28004",
+        "cmake:62640"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:29.0868492Z",
+      "processes": [
+        "cmake:28004",
+        "cmake:62640"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:29.5616739Z",
+      "processes": [
+        "cmake:28004",
+        "cmake:62640"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:30.0125766Z",
+      "processes": [
+        "cmake:28004",
+        "cmake:76600"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:30.4725086Z",
+      "processes": [
+        "cmake:12944",
+        "cmake:28004",
+        "cmake:76600"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:30.9093424Z",
+      "processes": [
+        "cmake:28004",
+        "cmake:76600"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:31.3761058Z",
+      "processes": [
+        "cmake:28004",
+        "cmake:76600"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:31.7955362Z",
+      "processes": [
+        "cmake:28004",
+        "cmake:76600"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:32.2704493Z",
+      "processes": [
+        "cmake:28004",
+        "cmake:62840",
+        "cmake:76600"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:32.7491428Z",
+      "processes": [
+        "cmake:28004",
+        "cmake:76600"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:33.2321566Z",
+      "processes": [
+        "cmake:28004"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:33.6766672Z",
+      "processes": [
+        "cmake:1244",
+        "cmake:28004"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:34.1590988Z",
+      "processes": [
+        "cmake:1244",
+        "cmake:28004"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:34.6305854Z",
+      "processes": [
+        "cmake:28004"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:35.0967618Z",
+      "processes": [
+        "cmake:28004"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:35.5510627Z",
+      "processes": [
+        "cmake:69284"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:36.0187822Z",
+      "processes": [
+        "cmake:69284"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:36.5120509Z",
+      "processes": [
+        "clang-cl:79468",
+        "cmake:69284"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:37.0048496Z",
+      "processes": [
+        "clang-cl:79468",
+        "cmake:69284"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:37.4807623Z",
+      "processes": [
+        "clang-cl:79468",
+        "cmake:69284"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:37.9323311Z",
+      "processes": [
+        "clang-cl:79468",
+        "cmake:69284"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:38.3581767Z",
+      "processes": [
+        "clang-cl:79468",
+        "cmake:69284"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:38.8087981Z",
+      "processes": [
+        "clang-cl:79468",
+        "cmake:69284"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:39.2690866Z",
+      "processes": [
+        "clang-cl:79468",
+        "cmake:69284"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:46.9982039Z",
+      "processes": [
+        "cmake:59020"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:47.4778063Z",
+      "processes": [
+        "cmake:59020"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:47.9841476Z",
+      "processes": [
+        "clang-cl:9256",
+        "cmake:59020"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:48.4652334Z",
+      "processes": [
+        "clang-cl:9256",
+        "cmake:59020"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:48.9486430Z",
+      "processes": [
+        "clang-cl:9256",
+        "cmake:59020"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:49.3804206Z",
+      "processes": [
+        "clang-cl:9256",
+        "cmake:59020"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:49.8274501Z",
+      "processes": [
+        "clang-cl:9256",
+        "cmake:59020"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:50.3217908Z",
+      "processes": [
+        "clang-cl:9256",
+        "cmake:59020"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:38:50.7931072Z",
+      "processes": [
+        "cmake:59020",
+        "lld-link:28076"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:39:01.9147465Z",
+      "processes": [
+        "cmake:75468"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:39:02.3745178Z",
+      "processes": [
+        "cmake:75468"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:39:02.8345833Z",
+      "processes": [
+        "clang-cl:14640",
+        "cmake:75468"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:39:03.2707848Z",
+      "processes": [
+        "clang-cl:14640",
+        "cmake:75468"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:39:03.6760845Z",
+      "processes": [
+        "clang-cl:14640",
+        "cmake:75468"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:39:04.1661182Z",
+      "processes": [
+        "clang-cl:14640",
+        "cmake:75468"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:39:04.5951512Z",
+      "processes": [
+        "clang-cl:14640",
+        "cmake:75468"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:39:05.0617783Z",
+      "processes": [
+        "clang-cl:14640",
+        "cmake:75468"
+      ]
+    },
+    {
+      "at": "2026-10-28T22:39:05.5806946Z",
+      "processes": [
+        "clang-cl:14640",
+        "cmake:75468"
+      ]
+    }
+  ],
+  "quiet_seconds": 15,
+  "methodology": "Median per scheduled ECS tick; setup/digest/snapshots/network/render excluded; alternating adjacent before/current/Bevy process triples; default affinity/clocks.",
+  "contention_poll_ms": 250,
+  "git_status": [
+    " M bench/bevy/run.ps1",
+    " M compiler/src/codegen.c",
+    " M compiler/tests/CMakeLists.txt",
+    " M compiler/tests/rows/parameters.mjs",
+    " M notes/language.md",
+    " M notes/runtime-ownership.md",
+    "?? bench/results/bevy-locality-20261028-probes/",
+    "?? compiler/src/rows_cache_codegen.inc",
+    "?? compiler/tests/e2e/sparse_cache.tide",
+    "?? compiler/tests/e2e/sparse_cache_private.c",
+    "?? compiler/tests/e2e/sparse_cache_test.c",
+    "?? compiler/tests/sparse_cache_codegen.cmake"
+  ],
+  "rustc": [
+    "rustc 1.95.0 (59807616e 2026-04-14)",
+    "binary: rustc",
+    "commit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860",
+    "commit-date: 2026-04-14",
+    "host: x86_64-pc-windows-msvc",
+    "release: 1.95.0",
+    "LLVM version: 22.1.2"
+  ],
+  "warmup": 200,
+  "ticks": 400,
+  "before": {
+    "binaries": {
+      "particles": "03116050961f1cb495fca186e30bde48d2997ec6a66f5ac4eee2d87e136e44a0",
+      "wide": "b7d7792afda75809d7e667b98c1ee37ddc4df8ae91a0156d39e0dba94a08816f",
+      "churn": "0c8721bf77eda916e0640ea7c0bd957e772134d42d69faeb1bfab0c878c0ca07"
+    },
+    "revision": "66b8ddb8f",
+    "build_dir": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-66b8ddb8f"
+  },
+  "revision": "66b8ddb8fb49e0b25a861909945891b8b9326f65",
+  "complete": true,
+  "rustflags": "-C target-cpu=x86-64 -C target-feature=-fma"
+}

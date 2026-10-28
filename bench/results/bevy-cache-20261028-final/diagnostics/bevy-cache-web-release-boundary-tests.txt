@@ -1,0 +1,51 @@
+Test project C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/web-release
+      Start   17: tidec_e2e_structural
+ 1/23 Test   #17: tidec_e2e_structural ..............   Passed    0.22 sec
+      Start   25: tidec_sparse_cache_private
+ 2/23 Test   #25: tidec_sparse_cache_private ........   Passed    0.18 sec
+      Start   27: tidec_e2e_destroy_rows
+ 3/23 Test   #27: tidec_e2e_destroy_rows ............   Passed    0.23 sec
+      Start   28: tidec_destroy_rows_codegen
+ 4/23 Test   #28: tidec_destroy_rows_codegen ........   Passed    0.18 sec
+      Start   29: tidec_e2e_world
+ 5/23 Test   #29: tidec_e2e_world ...................   Passed    0.20 sec
+      Start   33: tidec_e2e_world_set_read
+ 6/23 Test   #33: tidec_e2e_world_set_read ..........   Passed    0.23 sec
+      Start   34: tidec_e2e_world_set_mut
+ 7/23 Test   #34: tidec_e2e_world_set_mut ...........   Passed    0.23 sec
+      Start   37: tidec_e2e_transforms
+ 8/23 Test   #37: tidec_e2e_transforms ..............   Passed    0.21 sec
+      Start   38: tidec_e2e_visibility_groups
+ 9/23 Test   #38: tidec_e2e_visibility_groups .......   Passed    0.26 sec
+      Start   39: tidec_e2e_visibility_projection
+10/23 Test   #39: tidec_e2e_visibility_projection ...   Passed    0.43 sec
+      Start   40: tidec_e2e_shards
+11/23 Test   #40: tidec_e2e_shards ..................   Passed    1.25 sec
+      Start   43: tidec_e2e_prefabs
+12/23 Test   #43: tidec_e2e_prefabs .................   Passed    0.24 sec
+      Start   53: tidec_e2e_function_tasks
+13/23 Test   #53: tidec_e2e_function_tasks ..........   Passed    0.23 sec
+      Start   83: tidec_e2e_crossplatform
+14/23 Test   #83: tidec_e2e_crossplatform ...........   Passed    0.21 sec
+      Start   87: tidec_e2e_random
+15/23 Test   #87: tidec_e2e_random ..................   Passed    0.19 sec
+      Start  148: tidec_e2e_ownership
+16/23 Test  #148: tidec_e2e_ownership ...............   Passed    0.18 sec
+      Start  160: tidec_e2e_events
+17/23 Test  #160: tidec_e2e_events ..................   Passed    0.23 sec
+      Start  164: tidec_e2e_commands
+18/23 Test  #164: tidec_e2e_commands ................   Passed    0.11 sec
+      Start  275: tidec_e2e_delta
+19/23 Test  #275: tidec_e2e_delta ...................   Passed    0.87 sec
+      Start 2569: tide_platform_migrate
+20/23 Test #2569: tide_platform_migrate .............   Passed    0.24 sec
+      Start 2647: versus_particles
+21/23 Test #2647: versus_particles ..................   Passed    0.18 sec
+      Start 2652: versus_churn
+22/23 Test #2652: versus_churn ......................   Passed    0.16 sec
+      Start 2662: versus_particles_kept
+23/23 Test #2662: versus_particles_kept .............   Passed    0.31 sec
+
+100% tests passed, 0 tests failed out of 23
+
+Total Test time (real) =   6.88 sec

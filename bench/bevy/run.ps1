@@ -165,7 +165,7 @@ if ($hasBefore) {
 $env:TIDE_BENCH_REVISION = "$($metadata.revision)+local"
 $env:TIDE_BENCH_MACHINE = ($metadata.cpu | ForEach-Object { $_.Name }) -join ', '
 $inputs = @('bench/bevy/Cargo.toml','bench/bevy/Cargo.lock','bench/bevy/src/main.rs','bench/bevy/run.ps1',
-    'bench/versus/versus.c','bench/versus/versus.h','compiler/src/codegen.c','compiler/src/check.c','compiler/src/ast.h',
+    'bench/versus/versus.c','bench/versus/versus.h','compiler/src/codegen.c','compiler/src/rows_cache_codegen.inc','compiler/src/check.c','compiler/src/ast.h',
     'engine/src/table.c','engine/include/tide/table.h','engine/src/entity.c','engine/include/tide/entity.h',
     'engine/src/jobs.c','engine/include/tide/jobs.h','cmake/TideFlags.cmake',"$BuildDir/compile_commands.json",
     "$BuildDir/CMakeCache.txt",$BevyExe)

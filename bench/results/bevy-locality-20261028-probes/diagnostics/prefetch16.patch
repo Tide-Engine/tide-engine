@@ -1,0 +1,48 @@
+--- a/wide.c
++++ b/wide.c
+@@ -1458,6 +1458,7 @@
+     const uint8_t *const tide_in_Crate[12] = {tide_w3_0, tide_w3_1, tide_w3_2, tide_w3_3, tide_w3_4, tide_w3_5, tide_w3_6, tide_w3_7, tide_w3_8, tide_w3_9, tide_w3_10, tide_w3_11};
+     (void)tide_in_Crate;
+     uint8_t *const tide_col_Crate[12] = {tide_w3_0, tide_w3_1, tide_w3_2, tide_w3_3, tide_w3_4, tide_w3_5, tide_w3_6, tide_w3_7, tide_w3_8, tide_w3_9, tide_w3_10, tide_w3_11};
++    uint32_t tide_selected[128], tide_selected_count = 0u;
+     for (uint32_t tide_base = tide_from; tide_base < tide_to;) {
+         const uint32_t tide_end = tide_to - tide_base < 16u ? tide_to : tide_base + 16u;
+         uint32_t tide_bits = 0u;
+@@ -1481,14 +1482,32 @@
+                 tide_bits |= (uint32_t)((tide_pres_Frozen[tide_scan] == 0)) << (tide_scan - tide_base);
+         }
+         while (tide_bits) {
+-            const uint32_t tide_i = tide_base + (uint32_t)__builtin_ctz(tide_bits);
++            tide_selected[tide_selected_count++] = tide_base + (uint32_t)__builtin_ctz(tide_bits);
+             tide_bits &= tide_bits - 1u;
+-            Crate tide_v0;
+-            tide_gather_Crate(&tide_v0, (const uint8_t *const *)tide_in_Crate, tide_i);
+-            tide_system_Shift(tide_w, tide_ent[tide_i], &tide_v0, &tide_w->Time, tide_scn[tide_i]);
+-            tide_scatter_Crate(tide_col_Crate, tide_i, &tide_v0);
+         }
+         tide_base = tide_end;
++    }
++    for (uint32_t tide_pick = 0u; tide_pick < tide_selected_count; tide_pick++) {
++        const uint32_t tide_i = tide_selected[tide_pick];
++        if (tide_pick + 16u < tide_selected_count) {
++            const uint32_t tide_ahead = tide_selected[tide_pick + 16u];
++            __builtin_prefetch(tide_w3_0 + (size_t)tide_ahead * 4u, 1, 3);
++            __builtin_prefetch(tide_w3_1 + (size_t)tide_ahead * 4u, 1, 3);
++            __builtin_prefetch(tide_w3_2 + (size_t)tide_ahead * 4u, 1, 3);
++            __builtin_prefetch(tide_w3_3 + (size_t)tide_ahead * 4u, 1, 3);
++            __builtin_prefetch(tide_w3_4 + (size_t)tide_ahead * 4u, 1, 3);
++            __builtin_prefetch(tide_w3_5 + (size_t)tide_ahead * 4u, 1, 3);
++            __builtin_prefetch(tide_w3_6 + (size_t)tide_ahead * 4u, 0, 3);
++            __builtin_prefetch(tide_w3_7 + (size_t)tide_ahead * 4u, 0, 3);
++            __builtin_prefetch(tide_w3_8 + (size_t)tide_ahead * 4u, 0, 3);
++            __builtin_prefetch(tide_w3_9 + (size_t)tide_ahead * 4u, 0, 3);
++            __builtin_prefetch(tide_w3_10 + (size_t)tide_ahead * 4u, 0, 3);
++            __builtin_prefetch(tide_w3_11 + (size_t)tide_ahead * 4u, 0, 3);
++        }
++        Crate tide_v0;
++        tide_gather_Crate(&tide_v0, (const uint8_t *const *)tide_in_Crate, tide_i);
++        tide_system_Shift(tide_w, tide_ent[tide_i], &tide_v0, &tide_w->Time, tide_scn[tide_i]);
++        tide_scatter_Crate(tide_col_Crate, tide_i, &tide_v0);
+     }
+ }
+ 

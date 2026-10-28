@@ -1,0 +1,27 @@
+Test project C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/web-release
+      Start   22: tidec_e2e_sparse_masks
+ 1/11 Test   #22: tidec_e2e_sparse_masks ...........   Passed    0.10 sec
+      Start   23: tidec_sparse_masks_codegen
+ 2/11 Test   #23: tidec_sparse_masks_codegen .......   Passed    0.06 sec
+      Start   24: tidec_e2e_sparse_cache
+ 3/11 Test   #24: tidec_e2e_sparse_cache ...........   Passed    0.11 sec
+      Start   25: tidec_sparse_cache_private
+ 4/11 Test   #25: tidec_sparse_cache_private .......   Passed    0.12 sec
+      Start   26: tidec_sparse_cache_codegen
+ 5/11 Test   #26: tidec_sparse_cache_codegen .......   Passed    0.12 sec
+      Start 2454: tidec_rows_parameters
+ 6/11 Test #2454: tidec_rows_parameters ............   Passed    4.91 sec
+      Start 2647: versus_particles
+ 7/11 Test #2647: versus_particles .................   Passed    0.26 sec
+      Start 2648: versus_wide
+ 8/11 Test #2648: versus_wide ......................   Passed    0.29 sec
+      Start 2649: versus_wide_kept
+ 9/11 Test #2649: versus_wide_kept .................   Passed    0.32 sec
+      Start 2652: versus_churn
+10/11 Test #2652: versus_churn .....................   Passed    0.31 sec
+      Start 2662: versus_particles_kept
+11/11 Test #2662: versus_particles_kept ............   Passed    0.21 sec
+
+100% tests passed, 0 tests failed out of 11
+
+Total Test time (real) =   6.91 sec

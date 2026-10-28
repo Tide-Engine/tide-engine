@@ -1,5 +1,19 @@
 # Runtime written by Claude for now
 
+## Derived sparse-selection cache (2026-10-28)
+
+The selective-query performance task adds compiler-private retained selection
+plans through existing `tide_page_retain`/`release` and allocation functions.
+No runtime file, exported engine function or generated-C/runtime signature
+changes. Eligible generated worlds append an opaque derived-cache pointer;
+hashes/components keep their bytes, copies keep independent cache ownership,
+and raw save headers clear that pointer (with a small zero header-size growth).
+The generated header's cache ABI marker forces migration whenever private
+payload or cleanup layout changes; same-layout payloads own all descriptor
+metadata and contain no code addresses. Detailed contracts: language.md,
+Retained sparse row selection. Validation, measured gains and remaining Bevy
+leads are recorded in benchmarks.md and the linked raw evidence.
+
 ## Conditional destruction row optimization (2026-10-28)
 
 The owner's sparse-filter/churn performance task changes only private generated

@@ -1,0 +1,150 @@
+{
+  "os": "Microsoft Windows NT 10.0.26200.0",
+  "warmup": 200,
+  "quiet_resets": [],
+  "git_status": [
+    " M bench/bevy/run.ps1",
+    " M compiler/src/codegen.c",
+    " M compiler/tests/CMakeLists.txt",
+    " M compiler/tests/rows/parameters.mjs",
+    " M notes/language.md",
+    " M notes/runtime-ownership.md",
+    "?? bench/results/bevy-cache-20261028-probe/",
+    "?? bench/results/bevy-cache-locality-20261028-probes/",
+    "?? bench/results/bevy-locality-20261028-probes/",
+    "?? compiler/src/rows_cache_codegen.inc",
+    "?? compiler/tests/e2e/sparse_cache.tide",
+    "?? compiler/tests/e2e/sparse_cache_private.c",
+    "?? compiler/tests/e2e/sparse_cache_test.c",
+    "?? compiler/tests/sparse_cache_codegen.cmake"
+  ],
+  "methodology": "Median per scheduled ECS tick; setup/digest/snapshots/network/render excluded; alternating adjacent before/current/Bevy process triples; default affinity/clocks.",
+  "cases": [
+    {
+      "rate": 0,
+      "threads": 1,
+      "count": 1000000,
+      "id": "filtered-frozen95-1m-1",
+      "tagged": 1,
+      "workload": "wide",
+      "frozen": 95
+    },
+    {
+      "rate": 0,
+      "threads": 1,
+      "count": 1000000,
+      "id": "filtered-frozen99-1m-1",
+      "tagged": 1,
+      "workload": "wide",
+      "frozen": 99
+    },
+    {
+      "rate": 0,
+      "threads": 4,
+      "count": 1000000,
+      "id": "filtered-frozen99-1m-4",
+      "tagged": 1,
+      "workload": "wide",
+      "frozen": 99
+    }
+  ],
+  "binaries": {
+    "Tide": {
+      "wide": "7fb253f225c36e9a653b4d28cd468d9c239443390ebe8cd77f2719eeb0c1ff7a",
+      "churn": "33ed0d249b6950f6d7ed21b9d4d6130e9cd0613d8a501e6312b60c4842bdbc20",
+      "particles": "11b28944307755b0aaa70544e3e6682c0791db949b4d02e7680063a9e6ed796b"
+    },
+    "Bevy": "d83769333a56edceb3aed09ab38878774f8491e9c8b0ba3444db3bcfbeaed081"
+  },
+  "complete": true,
+  "started": "2026-10-28T23:00:18.4502697Z",
+  "files": {
+    "engine/include/tide/jobs.h": "7ddea5044171648bdde2fae4a20a19480872283e6868552afbe7520ee40ca961",
+    "build/release/bench/versus/tide/versus_wide/wide.h": "8e0dfd873ba70ae52b9d721445263af07bed722660611fc89c962c1d5aa0f11a",
+    "bench/bevy/src/main.rs": "a2580e28bbe2afbb0daf6a773eb3dbd503065243dec3c96fdb488cb2ef6b0ab0",
+    "engine/include/tide/table.h": "2343f64fd60ec21174d74f0f01e52acaf8e9762c84094a2d506b88f012c41eb3",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-cache-only-20261028\\bench\\versus\\tide\\versus_wide\\wide_pack.c": "5f2827e7dd68970a7270ddcd1a876c30a18255f0c017938bb18cb50ed16d5661",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-cache-only-20261028\\bench\\versus\\tide\\versus_particles\\particles.c": "48b8497652e0397743c65ea6da0dcc2c97c89df7bbb301f94ef0ad013055cf01",
+    "engine/src/jobs.c": "513141e929a710f45d6a84fe9af3663d0ea61d8823d010b75fd5ac37e0f308a3",
+    "engine/include/tide/entity.h": "381702b175ca2ad70851270959c18ee6ecd6fdae6ba4aa927ca785b297084f72",
+    "bench/versus/versus.c": "3ab538150b5fde6da539916aada418c6040510464b6b59a3ee25da4bb2ae3389",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-cache-only-20261028\\bench\\versus\\tide\\versus_wide\\wide.c": "48e638fd2623217e7711a763658bbfa3d58e420873bc99225312d7144bfcbc15",
+    "build/release/bench/versus/tide/versus_churn/churn.h": "1c30649aa27a6ad3f3a87b64d699593b232b1f1f1f7c30846f66694dba62a8d3",
+    "compiler/src/ast.h": "1c0f231090a36e479d023d88799f1faae42b4e1190ee572c77ac87ee020dcd8e",
+    "compiler/src/check.c": "945f177eac3297466c86c9851861bb618551bd1055b1224c17e81f6c7ef1ecfe",
+    "build/bevy/release/tide-bevy-bench.exe": "d83769333a56edceb3aed09ab38878774f8491e9c8b0ba3444db3bcfbeaed081",
+    "build/release/bin/versus_particles.exe": "11b28944307755b0aaa70544e3e6682c0791db949b4d02e7680063a9e6ed796b",
+    "compiler/src/codegen.c": "1b1e19d3fe8b1b5e6b0c6746458f0b8cd40e8d317b30d0f18e49590d27abbc46",
+    "bench/versus/churn/main.c": "4c02381f3d4f77b427912820acb0288bb6d8a1d98bc6de5694ccf4513af8c3b0",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-cache-only-20261028\\bench\\versus\\tide\\versus_churn\\churn.c": "14c3b5d9d3a1a5b480cee596982022c3c845e39ee5f78c4ffcb477dbd6ca1e20",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-cache-only-20261028\\codegen.c": "0aeb724752e08a3f31129ffb78b291f01b9228a38086532f8bd0bad9ed4ca66a",
+    "build/release/bench/versus/tide/versus_particles/particles.h": "7f6d9d4c53361d1dbaa3a669a8fd1c528decc3b70b989b0b2d2250c117796790",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-cache-only-20261028\\bench\\versus\\tide\\versus_particles\\particles.h": "7f6d9d4c53361d1dbaa3a669a8fd1c528decc3b70b989b0b2d2250c117796790",
+    "bench/versus/versus.h": "991338a31bd5a9c9535245aca70655e6e6c95376fa18aa7a0c9bb552f1eee900",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-cache-only-20261028\\bin\\versus_wide.exe": "0446136ad2ab014af456a2a962484d71fd54bbcd72449de55608a99bb7dbcba7",
+    "build/release/bench/versus/tide/versus_particles/particles.c": "48b8497652e0397743c65ea6da0dcc2c97c89df7bbb301f94ef0ad013055cf01",
+    "cmake/TideFlags.cmake": "c90000af80412c6690a27c40fdd1bc00178b46247f3d9b7133fbc2dfb9f6e4c3",
+    "build/release/bench/versus/tide/versus_wide/wide.c": "7acc2b737580229f266664a2c8b7003b65361484525e5bf2f5f28917738db44d",
+    "bench/versus/particles/particles.c": "dbc7801986a3d5c91d47ef657696e3e7fdc9fdc832763661d829bf1bba420c32",
+    "build/release/bin/versus_churn.exe": "33ed0d249b6950f6d7ed21b9d4d6130e9cd0613d8a501e6312b60c4842bdbc20",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-cache-only-20261028\\bench\\versus\\tide\\versus_churn\\churn_pack.c": "278582b0599a7ca209d92abc666fe9d1428adc10ba8bcdecc9a59030ebfc902d",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-cache-only-20261028\\bin\\versus_particles.exe": "11b28944307755b0aaa70544e3e6682c0791db949b4d02e7680063a9e6ed796b",
+    "compiler/src/rows_cache_codegen.inc": "043c00143f0c4c62ce1bb2bd285afe36a7dd3234d24adc09e12684c331239033",
+    "bench/versus/wide/main.c": "3a1c37caf7b33479aa1d00f5ea712e091c024e7f4d17e7f5fcb54e070c47f428",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-cache-only-20261028\\bench\\versus\\tide\\versus_wide\\wide.h": "d4a6406eaebece40ff90b4cab6719cce97274634b21fb1452ebddaad1cb5a067",
+    "bench/versus/particles/particles.tide": "f5db7f030b8182cd1b180c962073dc6f19e4c38f671436b77781b920438b60f2",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-cache-only-20261028\\rows_cache_codegen.inc": "dd686e6df6de0fb3b898561039da6ed7a55fc6eef2ce0ce4fc2e215cb90f974d",
+    "bench/versus/particles/main.c": "85966fbd2e7388d3d5ab4b5126de4a3220591db7a7fa520b55321202f79bd0e5",
+    "bench/bevy/Cargo.toml": "f7fb6cb91fd08c7c55a46ee0b85d8e8529347397d5532034e860d1822ec5324f",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-cache-only-20261028\\bin\\versus_churn.exe": "33ed0d249b6950f6d7ed21b9d4d6130e9cd0613d8a501e6312b60c4842bdbc20",
+    "bench/versus/wide/wide.tide": "8ed14d5871bc215208b5084c81567be33076b2839dca1921bdc3d780e20986f5",
+    "engine/src/entity.c": "c7b26c8b166b0494555c210c2de78a3f04ff1e9f154cabf1769b771c06dd3b05",
+    "bench/bevy/run.ps1": "a751acf65ddf4a7187f9b2a590e5c1098523272352c2814237923412a85b9eef",
+    "build/release/CMakeCache.txt": "810efe78d0cef0eb00a88d51950fd36f8693da428e51253632503a46e3e0cdfc",
+    "bench/bevy/Cargo.lock": "52c7bea687ad50e982bc29bcdf702ecdff2b3c4cd2ca46ce7cc66001b4281a45",
+    "build/release/compile_commands.json": "4d6583215c2a695ad3c0ba73b8feeed13fb034f83cc686c5846ce9ad4a1d5f2b",
+    "bench/versus/wide/wide.c": "bea8d6ab07da3adbb59fea3948105b8e6d3e874730dfb14f914a6fe48b474d77",
+    "engine/src/table.c": "0e814efd451928a3183a016f613b2d8b6980719586c2b3a107f3c7c39f55d534",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-cache-only-20261028\\bench\\versus\\tide\\versus_particles\\particles_pack.c": "27be78f52e3a942f2e1db7798555181314cd69f33e9adf108e628a1753eb0cf2",
+    "bench/versus/churn/churn.c": "8a52d2b9bf0b9140e3a2899fd99550fd1e80d1a82b252ea64001aa73ba6fb827",
+    "bench/versus/churn/churn.tide": "1ef1aab97f3ec8bd4b4a309c898e8b7cf2ca923228dbfe1bc28b2852bfec017c",
+    "build/release/bench/versus/tide/versus_churn/churn.c": "14c3b5d9d3a1a5b480cee596982022c3c845e39ee5f78c4ffcb477dbd6ca1e20",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-cache-only-20261028\\bench\\versus\\tide\\versus_churn\\churn.h": "1c30649aa27a6ad3f3a87b64d699593b232b1f1f1f7c30846f66694dba62a8d3",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-cache-only-20261028\\original-measurement-metadata.json": "dc1001c8144e38e9b7b26d2a6cca53eb82e41e4cba941d272867dc0c2edfdae4",
+    "build/release/bin/versus_wide.exe": "7fb253f225c36e9a653b4d28cd468d9c239443390ebe8cd77f2719eeb0c1ff7a"
+  },
+  "finished": "2026-10-28T23:01:09.2587423Z",
+  "cargo": "cargo 1.95.0 (f2d3ce0bd 2026-03-21)",
+  "rustflags": "-C target-cpu=x86-64 -C target-feature=-fma",
+  "rounds": 3,
+  "cpu": [
+    {
+      "Name": "AMD Ryzen 9 7900X 12-Core Processor            ",
+      "NumberOfCores": 12,
+      "NumberOfLogicalProcessors": 24
+    }
+  ],
+  "ticks": 400,
+  "contention_poll_ms": 250,
+  "schema": 2,
+  "before": {
+    "build_dir": "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-cache-only-20261028",
+    "binaries": {
+      "wide": "0446136ad2ab014af456a2a962484d71fd54bbcd72449de55608a99bb7dbcba7",
+      "churn": "33ed0d249b6950f6d7ed21b9d4d6130e9cd0613d8a501e6312b60c4842bdbc20",
+      "particles": "11b28944307755b0aaa70544e3e6682c0791db949b4d02e7680063a9e6ed796b"
+    },
+    "revision": "66b8ddb8f+cache-only"
+  },
+  "rustc": [
+    "rustc 1.95.0 (59807616e 2026-04-14)",
+    "binary: rustc",
+    "commit-hash: 59807616e1fa2540724bfbac14d7976d7e4a3860",
+    "commit-date: 2026-04-14",
+    "host: x86_64-pc-windows-msvc",
+    "release: 1.95.0",
+    "LLVM version: 22.1.2"
+  ],
+  "quiet_seconds": 15,
+  "revision": "66b8ddb8fb49e0b25a861909945891b8b9326f65"
+}

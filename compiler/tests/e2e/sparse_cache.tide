@@ -1,0 +1,95 @@
+scene Main;
+
+component Item
+{
+    int ordinal;
+    int visits;
+    float value;
+    float other;
+    byte small = 9;
+    float3 spare = float3(1, -2, 3);
+}
+
+[Sparse]
+component Needed { }
+[Sparse]
+component Blocked { }
+
+singleton Rules
+{
+    int count = 2051;
+    int next;
+    int bias;
+    int mode;
+    bool ready;
+    bool heavy;
+    List<int> seen;
+}
+
+system Setup(mut Rules rules)
+{
+    if (rules.ready) return;
+    rules.ready = true;
+    rules.next = rules.count;
+    for (var i = 0; i < rules.count; i++)
+    {
+        var made = Spawn(Item { ordinal = i, value = float(i) * 0.03125 + 1, other = -0.5 });
+        if ((i + rules.bias) % 97 == 0 || i == rules.count - 1) made.Add(Needed);
+        if ((i + rules.bias) % 191 == 0) made.Add(Blocked);
+    }
+}
+
+system Clear(mut Rules rules)
+{
+    rules.seen.Clear();
+}
+
+system Update(mut Item item, Rules rules, with Needed, without Blocked)
+{
+    // This flag stays false, while the scheduler's ordinary cost estimate
+    // makes the pooled run split chunks into pieces.
+    if (rules.heavy)
+    {
+        for (var i = 0; i < 1000000; i++) item.visits += i;
+    }
+    item.value = (item.value + 0.125) * 0.5;
+    item.other -= item.value * 0.25;
+    item.visits += 1;
+    item.small += 19;
+}
+
+system Record(Item item, mut Rules rules, with Needed, without Blocked)
+{
+    rules.seen.Add(item.ordinal);
+}
+
+// All structural work is deferred until after Update and Record. Later ticks
+// must rebuild a selection whose retained presence pages/count no longer fit.
+system Change(Item item, mut Rules rules)
+{
+    if (rules.mode == 1 || rules.mode == 6)
+    {
+        var offset = rules.mode == 6 ? 41 : 0;
+        if ((item.ordinal + rules.bias + offset) % 97 == 0) this.Add(Needed);
+        else this.Remove(Needed);
+        if ((item.ordinal + rules.bias + offset) % 191 == 0) this.Add(Blocked);
+        else this.Remove(Blocked);
+    }
+    if (rules.mode == 2)
+    {
+        this.Add(Needed);
+        this.Remove(Blocked);
+    }
+    if (rules.mode == 3) this.Remove(Needed);
+    if (rules.mode == 4 && (item.ordinal == 1 || item.ordinal == 1023 || item.ordinal == 2048)) this.Destroy();
+    if (rules.mode == 5 && item.ordinal == 0)
+    {
+        for (var i = 0; i < 17; i++)
+        {
+            var ordinal = rules.next++;
+            var made = Spawn(Item { ordinal = ordinal, value = float(ordinal) * 0.03125 + 1, other = -0.5 });
+            if ((ordinal + rules.bias) % 97 == 0 || i == 16) made.Add(Needed);
+            if ((ordinal + rules.bias) % 191 == 0) made.Add(Blocked);
+        }
+    }
+}

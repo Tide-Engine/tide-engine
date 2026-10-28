@@ -1,5 +1,74 @@
 # Benchmarks
 
+## Retained sparse selection (2026-10-28)
+
+The follow-up retains derived selection plans per world, keyed by exact
+archetype/chunk/filter shape, row count and retained presence-page identities.
+Holding the pages makes membership writes detach through COW; stale plans
+cannot validate by pointer reuse or a system ordinal alone. Plans are prepared
+serially before worker dispatch and read immutably during execution. Matching
+indices are reused when `pass < ceil(rows / 16)`; cached whole-chunk counts
+also avoid repeated scans at other densities. Existing alias/scene/ownership
+fallbacks remain. Native hints warm four selected rows and look four ahead
+only below `ceil(rows / 64)` matches, for 32-128 bytes of accessed component
+lanes with a changed component; WASM omits hints. No new runtime API is required;
+math, component layouts, entity IDs, deferred order and scheduling contracts
+remain unchanged.
+
+The private cache pointer adds eight zeroed bytes to the native wide world's
+raw packed header (160 to 168), so raw packs are not unchanged byte for byte.
+Cache ownership is separate across worlds and excluded from logical state,
+hashes and delta values. Unpack discards received cache pointers before failure
+cleanup. Seventy-five final baseline/current native comparisons match world
+hashes and normalized raw packs after removing that added zero header slot.
+Snapshot, membership and reload-key correctness does not establish cold cache
+construction, changing-membership or snapshot/reload performance.
+
+Windows/Ryzen 9 7900X, Clang 23.1.2, Rust 1.95.0/Bevy ECS 0.20.0, unchanged O2
+flags, game sources and Bevy executable: five adjacent alternating
+before/current/Bevy rounds, frozen baseline `66b8ddb8f`, 16 cases and 240
+successful processes with 200 warmup/400 measured ticks. This is 96,000 measured
+ECS ticks, 48,000 ECS warmup ticks and 64,000 additional measured C-reference
+ticks. Measured source SHA-256s are codegen.c
+`0342cfe8fafde011bf038d492c4705e91f934b8548f2dedefd5dd4f52f295e30`
+and rows_cache_codegen.inc
+`485acd89238f99fd406e1fe0bcc9674b4903ab3dc00825a4f45e5fb5a8db8a7d`.
+All final logical digests agree across implementations, rounds and thread budgets.
+
+At 99% frozen, before/current/Bevy median-of-process-medians is
+0.27005/0.11000/0.04865 ms serial and 0.08660/0.04525/0.03760 with four offered
+execution threads. Median paired Tide time reductions are 58.33%/45.35%.
+At 95% frozen, serial costs are 1.47770/1.14145/0.24145 ms, a 21.74% paired
+reduction; at 90% they are 1.52940/1.39450/0.91955, a 10.09% reduction.
+The 1%/10%-frozen serial observations improve by 5.62%/7.38% paired. Bevy still
+leads the selective cases. Four-thread particle and churn controls are adverse
+at +2.20%/+3.12%, with overlapping ranges. These mixed results establish no
+universal speedup or improvement at every density.
+
+Sixteen scratch variants (seven initial, nine with cached selection; 144
+processes) retain their generated sources, patches and adverse observations;
+none beats Bevy, and staging was rejected. The separate 27-process cache-only,
+27-process broad-prefetch and 27-process guarded-prefetch probes remain intact.
+Broad hints regressed 95%-frozen work, motivating the narrower hint guard.
+Their individual READMEs retain quiet resets and measurement limits; batches
+are not pooled. The final 23:11:56-23:18:01 UTC batch records no quiet reset or
+contention under the shared mutex, 15-second quiet guard and 250 ms polling.
+Desktop activity, placement, clocks and temperature remain uncontrolled.
+
+Thirty-three unique scoped optimized CTests pass per platform on native and
+WASI; all 18 affected checks pass again after the hint guard. Sixty-six final
+cross-engine checks pass. Independent fixtures cover row/math order, dynamic
+membership, copies/COW, packed restore, hostile raw headers, retained-page
+ownership and exact private cache keys. A same-layout filter reversal is tested
+through private helpers; an actual DLL filter-changing reload was not run.
+The standard migration test passes. The analyzer verifies complete triples,
+options, executable identities, Bevy samples/statistics and raw stdout hashes.
+Raw evidence, normalized-pack proof, retained probes, ranges and reproduction:
+`bench/results/bevy-cache-20261028-final/README.md`. Timings exclude setup,
+final digest, per-tick hashing, retained snapshots, rollback, networking and
+rendering. No full suites, browser/GPU, Bevy web, other OS/mobile/sanitizers or
+extra CI dispatch were run.
+
 ## Rare sparse traversal (2026-10-28)
 
 The selective-query follow-up adds an in-place sparse-only loop when the

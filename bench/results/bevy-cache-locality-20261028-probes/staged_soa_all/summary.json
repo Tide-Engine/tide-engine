@@ -1,0 +1,92 @@
+{
+  "valid": true,
+  "rounds": 3,
+  "warmup": 200,
+  "ticks": 400,
+  "has_before": true,
+  "processes": 9,
+  "estimator": "median of process tick medians; ratios are median of paired ratios",
+  "scope": "ECS ticks only; excludes setup, snapshots, per-tick hashing, networking and rendering",
+  "cases": [
+    {
+      "frozen": 99,
+      "count": 1000000,
+      "threads": 1,
+      "id": "filtered-frozen99-1m-1",
+      "rate": 0,
+      "workload": "wide",
+      "tagged": 1,
+      "digest": "0xa683eb7fe00d6622",
+      "tide_ms": 0.1614,
+      "bevy_ms": 0.0522,
+      "c_ms": 1.20395,
+      "tide_range_ms": [
+        0.1585,
+        0.17465
+      ],
+      "bevy_range_ms": [
+        0.0479,
+        0.05335
+      ],
+      "c_range_ms": [
+        1.17115,
+        1.66085
+      ],
+      "ratio_bevy_over_tide": 0.3054680790151732,
+      "paired_ratios": [
+        0.3293375394321767,
+        0.29677819083023543,
+        0.3054680790151732
+      ],
+      "process_medians_ms": {
+        "Tide": [
+          0.1585,
+          0.1614,
+          0.17465
+        ],
+        "Bevy": [
+          0.0522,
+          0.0479,
+          0.05335
+        ],
+        "C": [
+          1.20395,
+          1.17115,
+          1.66085
+        ],
+        "Before": [
+          0.2878,
+          0.3017,
+          0.43425
+        ],
+        "Before_C": [
+          1.25095,
+          1.4049,
+          1.76295
+        ]
+      },
+      "before_ms": 0.3017,
+      "before_range_ms": [
+        0.2878,
+        0.43425
+      ],
+      "before_c_ms": 1.4049,
+      "before_c_range_ms": [
+        1.25095,
+        1.76295
+      ],
+      "ratio_before_over_tide": 1.8692688971499383,
+      "paired_before_ratios": [
+        1.8157728706624605,
+        1.8692688971499383,
+        2.4864013741769253
+      ],
+      "paired_change_percent": [
+        -44.92703266157053,
+        -46.50314882333445,
+        -59.78123200921128
+      ],
+      "change_percent": -46.50314882333445
+    }
+  ]
+}

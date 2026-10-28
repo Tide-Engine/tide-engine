@@ -1,5 +1,60 @@
 # Language features, as tidec builds them
 
+## Retained sparse row selection (2026-10-28)
+
+Compiler-private follow-up to the rare-mask path: eligible match systems retain
+each chunk's sparse selection between ticks. `rows_cache_codegen.inc` emits a
+world-owned derived cache, built only by the tick's caller before
+`tide_run_systems`, never by its per-worker prepare callback or count callbacks.
+Each plan owns its exact archetype, shift and ordered presence-column/required
+flags; each chunk owns its actual row count, passing count, retained presence
+pages and the first 128 ascending uint16 row indices. Chunks have at most 2,048
+rows; only passing counts below ceil(rows/16) consume those indices, so at most
+127 are read. Task pieces find their bounded index span by binary search.
+
+Retained pages force ordinary presence writes through existing copy-on-write.
+Unchanged page identities and row counts therefore prove membership exactly,
+without a content-hash assumption. A changed filter shape, chunk count or page
+rebuilds the affected entry; a saturated page reference count leaves it invalid
+and falls back. Tasks validate the full key again and never mutate caches: a
+post-prepare replacement falls back to the existing count/filter paths. Cached
+rare rows use a separate loop whose one selection pointer replaces the existing
+presence parameters, retaining the original lane/1,000-parameter budgets.
+Apart/COW, scene, Owner, C, World-alias and task-start restrictions remain.
+
+Eligible games append one opaque cache pointer to `tide_world`. World hashes
+and component layouts are unchanged. Copy keeps the destination's owned cache,
+never the source pointer; free releases its retained pages and allocations.
+Raw packing clears the pointer and unpacking clears it immediately after
+copying the raw header, before any rejection/free path. The zero raw header
+grows by the pointer and ABI padding; layout metadata and allocation sizes keep
+using the full world size. Deltas already use their separate value header.
+
+Payloads contain no function or static-descriptor pointers. Same-layout reload
+can keep them: new code checks exact owned filter keys rather than trusting a
+system ordinal. `TIDE_ROWS_CACHE_ABI` in the generated header must change if any
+private payload structure or cleanup contract changes, forcing ordinary layout
+migration while the old build can still free its cache. Existing runtime calls
+are sufficient; there is no new runtime API, Tide syntax, arithmetic order,
+entity order, deferred timing or snapshot value. Thirty-three scoped checks per
+platform pass on native/WASI, with the 18 affected checks rebuilt after the final
+guard; 66 cross-engine comparisons and 75 native baseline hash/normalized-pack
+checks also pass. benchmarks.md records the measurements and retained probes.
+
+The native cached loop may hint the next four selected rows' component lanes
+when its needed components total 32 through 128 bytes and it changes at least
+one, only when the chunk passes fewer than ceil(rows/64) rows. Membership caching
+still uses the separate ceil(rows/16) threshold. The loop receives the existing
+selection object through its one private selection parameter, and aliases its
+indices locally. It warms only the first min(4, selected count) indices, then looks ahead
+only while that next index is inside the selected span. Each hint uses its
+lane's existing pointer and width, read/write intent from component access,
+and locality 3. `__wasm__` excludes the hint-density bool, both hint blocks and
+their loop overhead.
+This changes no body calls, arithmetic order, cache payload ABI or runtime API.
+The cache-only, broad-hint and guarded direct comparisons are linked from the
+final 240-process report, `bench/results/bevy-cache-20261028-final/README.md`.
+
 ## Rare sparse row masks (2026-10-28)
 
 For the same conservative in-place eligibility as the mixed row selection
@@ -12,6 +67,7 @@ comparison lanes with integer operations. Matching bits run in ascending order
 through a nonzero-guarded count-trailing-zeros loop. A short final block uses
 bounded scalar presence reads and shifts only by row offsets below 16.
 
+This transient loop remains the fallback when no retained selection is usable.
 The vector load is reached only when 16 actual rows remain in the task's range;
 the first table allocation may hold just four rows. No mask persists across a
 block, call or tick. The existing count scan, rows function parameter budgets,

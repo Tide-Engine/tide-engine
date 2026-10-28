@@ -33,6 +33,19 @@ add_test(NAME tidec_sparse_masks_codegen
     COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_sparse_masks/game.c"
         "-DSCENE_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_sparse_rows/game.c"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/sparse_masks_codegen.cmake")
+tide_e2e_test(sparse_cache) # Cached sparse selections invalidate after deferred structural changes and world restores
+set(TIDE_SPARSE_CACHE_DIR "${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_sparse_cache")
+# The private tests include generated game.c in their one test translation
+# unit so they can inspect cache keys without adding a generated/public API.
+add_executable(tidec_sparse_cache_private e2e/sparse_cache_private.c
+    "${TIDE_SPARSE_CACHE_DIR}/game_pack.c" "${PROJECT_SOURCE_DIR}/tests/test_main.c")
+add_dependencies(tidec_sparse_cache_private tidec_e2e_sparse_cache)
+target_include_directories(tidec_sparse_cache_private PRIVATE "${TIDE_SPARSE_CACHE_DIR}" "${PROJECT_SOURCE_DIR}/tests")
+target_link_libraries(tidec_sparse_cache_private PRIVATE tide tide_font_bold)
+add_test(NAME tidec_sparse_cache_private COMMAND tidec_sparse_cache_private)
+add_test(NAME tidec_sparse_cache_codegen
+    COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${TIDE_SPARSE_CACHE_DIR}/game.c" "-DGAME_H=${TIDE_SPARSE_CACHE_DIR}/game.h"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/sparse_cache_codegen.cmake")
 tide_e2e_test(destroy_rows) # Pure updates and deferred self-destroys preserve math, order, handles and snapshots
 add_test(NAME tidec_destroy_rows_codegen
     COMMAND "${CMAKE_COMMAND}" "-DGAME_C=${CMAKE_CURRENT_BINARY_DIR}/tide/tidec_e2e_destroy_rows/game.c"

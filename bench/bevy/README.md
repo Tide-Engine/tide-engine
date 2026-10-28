@@ -114,6 +114,9 @@ The historical density-aware
 the rejected intermediate candidate as well as the final comparison. The
 [selective sparse follow-up](../results/bevy-selective-20261028/README.md) records
 the separate rare-match traversal pass.
+The [membership-cache follow-up](../results/bevy-cache-20261028-final/README.md)
+retains query selection between ticks, including its rejected locality probes
+and the direct comparison that narrows native prefetching to rarer matches.
 
 Existing evidence directories are refused. Raw output, command lines, UTC
 launch times, contention events, CPU/toolchain identity, source/generated-C/

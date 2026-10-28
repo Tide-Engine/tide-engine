@@ -1,0 +1,41 @@
+diff --git "a/C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-cache-locality-probe/common/wide.c" "b/C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-cache-locality-probe/staged_soa_lanes/wide.c"
+index 089ec2ce2..e55acbe6b 100644
+--- "a/C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-cache-locality-probe/common/wide.c"
++++ "b/C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-cache-locality-probe/staged_soa_lanes/wide.c"
+@@ -1641,18 +1641,24 @@ TIDE_ROWS void tide_rows_Shift_5(tide_world *tide_w, const uint32_t tide_from, c
+ // Shift's rows, selecting cached sparse indices in order, each lane it changes read and written in one place
+ TIDE_ROWS void tide_rows_Shift_6(tide_world *tide_w, const uint32_t tide_from, const uint32_t tide_to, const tide_entity *restrict tide_ent, const tide_entity *restrict tide_scn, const uint16_t *tide_selected, uint8_t *restrict tide_w3_0, uint8_t *restrict tide_w3_1, uint8_t *restrict tide_w3_2, uint8_t *restrict tide_w3_3, uint8_t *restrict tide_w3_4, uint8_t *restrict tide_w3_5, uint8_t *restrict tide_w3_6, uint8_t *restrict tide_w3_7, uint8_t *restrict tide_w3_8, uint8_t *restrict tide_w3_9, uint8_t *restrict tide_w3_10, uint8_t *restrict tide_w3_11)
+ {
+-    (void)tide_w;
+-    (void)tide_ent;
+-    (void)tide_scn;
+-    const uint8_t *const tide_in_Crate[12] = {tide_w3_0, tide_w3_1, tide_w3_2, tide_w3_3, tide_w3_4, tide_w3_5, tide_w3_6, tide_w3_7, tide_w3_8, tide_w3_9, tide_w3_10, tide_w3_11};
+-    (void)tide_in_Crate;
+-    uint8_t *const tide_col_Crate[12] = {tide_w3_0, tide_w3_1, tide_w3_2, tide_w3_3, tide_w3_4, tide_w3_5, tide_w3_6, tide_w3_7, tide_w3_8, tide_w3_9, tide_w3_10, tide_w3_11};
+-    for (uint32_t tide_pick = tide_from; tide_pick < tide_to; tide_pick++) {
+-            const uint32_t tide_i = tide_selected[tide_pick];
+-            Crate tide_v0;
+-            tide_gather_Crate(&tide_v0, (const uint8_t *const *)tide_in_Crate, tide_i);
+-            tide_system_Shift(tide_w, tide_ent[tide_i], &tide_v0, &tide_w->Time, tide_scn[tide_i]);
+-            tide_scatter_Crate(tide_col_Crate, tide_i, &tide_v0);
++    const uint32_t tide_n = tide_to - tide_from;
++    uint8_t *const tide_orig[12] = {tide_w3_0, tide_w3_1, tide_w3_2, tide_w3_3, tide_w3_4, tide_w3_5, tide_w3_6, tide_w3_7, tide_w3_8, tide_w3_9, tide_w3_10, tide_w3_11};
++    tide_entity tide_entities[128], tide_scenes[128];
++    float tide_dense[12][128];
++    for (uint32_t tide_pick = 0u; tide_pick < tide_n; tide_pick++) {
++        const uint32_t tide_i = tide_selected[tide_from + tide_pick];
++        tide_entities[tide_pick] = tide_ent[tide_i];
++        tide_scenes[tide_pick] = tide_scn[tide_i];
++    }
++    for (uint32_t tide_lane = 0u; tide_lane < 12u; tide_lane++)
++        for (uint32_t tide_pick = 0u; tide_pick < tide_n; tide_pick++)
++            memcpy(&tide_dense[tide_lane][tide_pick], tide_orig[tide_lane] + (size_t)tide_selected[tide_from + tide_pick] * 4u, 4u);
++    tide_rows_Shift_2(tide_w, 0u, tide_n, tide_entities, tide_scenes, NULL,
++        (uint8_t *)tide_dense[0], (uint8_t *)tide_dense[1], (uint8_t *)tide_dense[2], (uint8_t *)tide_dense[3], (uint8_t *)tide_dense[4], (uint8_t *)tide_dense[5], (uint8_t *)tide_dense[6], (uint8_t *)tide_dense[7], (uint8_t *)tide_dense[8], (uint8_t *)tide_dense[9], (uint8_t *)tide_dense[10], (uint8_t *)tide_dense[11]);
++    for (uint32_t tide_pick = 0u; tide_pick < tide_n; tide_pick++) {
++        const uint32_t tide_i = tide_selected[tide_from + tide_pick];
++        for (uint32_t tide_lane = 0u; tide_lane < 6u; tide_lane++)
++            memcpy(tide_orig[tide_lane] + (size_t)tide_i * 4u, &tide_dense[tide_lane][tide_pick], 4u);
+     }
+ }
+ 
