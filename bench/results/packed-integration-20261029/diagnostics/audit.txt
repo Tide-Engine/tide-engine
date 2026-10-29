@@ -1,0 +1,15 @@
+AUDIT PASS: 168 processes, 33,600 measured ticks, 16,800 warmup ticks; all paired digests match.
+{'count': 1000000, 'frozen': 0, 'hash': 1, 'snapshot': 0, 'identity_ms': 7.0929, 'packed_ms': 6.79545, 'paired_change_percent': -4.193630249968283}
+{'count': 1000000, 'frozen': 0, 'hash': 1, 'snapshot': 1, 'identity_ms': 8.11545, 'packed_ms': 8.1967, 'paired_change_percent': 1.0011767677701178}
+{'count': 1000000, 'frozen': 50, 'hash': 1, 'snapshot': 0, 'identity_ms': 7.28975, 'packed_ms': 14.81905, 'paired_change_percent': 104.24774512157482}
+{'count': 1000000, 'frozen': 50, 'hash': 1, 'snapshot': 1, 'identity_ms': 11.842300000000002, 'packed_ms': 14.1763, 'paired_change_percent': 21.484669390345502}
+{'count': 1000000, 'frozen': 95, 'hash': 1, 'snapshot': 0, 'identity_ms': 6.422000000000001, 'packed_ms': 5.283950000000001, 'paired_change_percent': -9.874805983387047}
+{'count': 1000000, 'frozen': 95, 'hash': 1, 'snapshot': 1, 'identity_ms': 8.8536, 'packed_ms': 5.6521, 'paired_change_percent': -33.30461974157767}
+{'count': 1000000, 'frozen': 99, 'hash': 1, 'snapshot': 0, 'identity_ms': 4.58325, 'packed_ms': 3.3274, 'paired_change_percent': -31.64007146817819}
+{'count': 1000000, 'frozen': 99, 'hash': 1, 'snapshot': 1, 'identity_ms': 8.53765, 'packed_ms': 3.0380000000000003, 'paired_change_percent': -65.23967802651075}
+{'count': 1000000, 'frozen': 100, 'hash': 1, 'snapshot': 0, 'identity_ms': 0.0531, 'packed_ms': 0.0526, 'paired_change_percent': -0.6591337099811745}
+{'count': 1000000, 'frozen': 100, 'hash': 1, 'snapshot': 1, 'identity_ms': 0.0878, 'packed_ms': 0.08845, 'paired_change_percent': 0.3420752565564289}
+{'count': 17, 'frozen': 95, 'hash': 1, 'snapshot': 0, 'identity_ms': 0.0001, 'packed_ms': 0.0001, 'paired_change_percent': 0.0}
+{'count': 17, 'frozen': 95, 'hash': 1, 'snapshot': 1, 'identity_ms': 0.0002, 'packed_ms': 0.0002, 'paired_change_percent': 0.0}
+{'count': 4099, 'frozen': 95, 'hash': 1, 'snapshot': 0, 'identity_ms': 0.0036, 'packed_ms': 0.0256, 'paired_change_percent': 602.7777777777777}
+{'count': 4099, 'frozen': 95, 'hash': 1, 'snapshot': 1, 'identity_ms': 0.0096, 'packed_ms': 0.03055, 'paired_change_percent': 218.22916666666669}

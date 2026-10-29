@@ -71,3 +71,4 @@ bench/results/transform-corrections-*/** -text -whitespace
 
 # Cross-engine benchmark raw stdout retains its SHA-256 across checkouts.
 bench/results/bevy-*/** -text -whitespace
+bench/results/packed-integration-*/** -text -whitespace

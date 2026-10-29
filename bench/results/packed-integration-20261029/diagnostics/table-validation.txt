@@ -1,0 +1,18 @@
+ok   table_grows_in_chunks (0.026 ms)
+ok   table_lanes_are_written_apart (0.015 ms)
+ok   table_lanes_are_written_in_pieces (0.009 ms)
+ok   table_lanes_stay_shared_unless_a_row_changed (0.007 ms)
+ok   table_move_keeps_shared_columns (0.006 ms)
+ok   table_packs_and_unpacks (0.011 ms)
+ok   table_queue_appends_in_order (0.392 ms)
+ok   table_queue_hands_pages_over_and_gets_empty_ones_back (0.099 ms)
+ok   table_queue_holds_an_item_bigger_than_a_page (0.005 ms)
+ok   table_queue_keeps_items_in_place (0.090 ms)
+ok   table_queue_packs_whatever_its_pages (0.074 ms)
+ok   table_queue_runs_append_and_resume_reading (0.157 ms)
+ok   table_queue_runs_keep_the_ordinary_format (0.548 ms)
+ok   table_remove_moves_the_last_row_in (0.009 ms)
+ok   table_scatter_writes_what_differs (0.010 ms)
+ok   table_snapshots_share_until_changed (0.009 ms)
+
+16/16 passed

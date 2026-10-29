@@ -1,5 +1,33 @@
 # Benchmarks
 
+## Packed tables through the world lifecycle (2026-10-29)
+
+After approval of the row-mapping boundary, an isolated table-runtime overlay
+exercises the unchanged generated wide game with real pages, COW, logical
+entity locations, growth/removal/moves, hashes, raw saves and deltas. A retained
+logical-page cache updates from exact retained source-page identities. Shipping
+engine/compiler files and hash pins remain unchanged; automatic eligibility and
+general order-sensitive traversal are not implemented.
+
+On this Windows/Ryzen 9 7900X/Clang 23.1.2 O2 build, three alternating pairs
+give 1M/95%-frozen identity/packed tick+hash medians 6.42200/5.28395 ms, and with
+a retained snapshot 8.85360/5.65210. Median paired time reductions are 9.87% and
+33.30%; at 99% frozen, 31.64% and 65.24%. At 50% frozen tick+hash regresses
+104.25%, and the 4,099-row/95% case regresses 602.78%. Both sides use the
+experimental runtime; no new shipping-Tide or Bevy comparison is claimed.
+The extra logical mirror/map memory and adverse controls rule out blanket use.
+
+Native and WASI each pass 44,728,800 exact column comparisons, including raw/
+delta restore and structural churn, with the same aggregate logical digest.
+A native four-thread check passes 192,000,576 comparisons with 36 actual helper
+entries; sixteen existing table/queue tests pass on both platforms. The complete
+168-process timing batch has matching paired digests, 100 warmup/200 measured
+ticks each, and no detected native build/benchmark contention. Setup/partition,
+membership churn, networking and rendering are outside timing; hash modes hash
+every tick. Full scope, limitations, all samples and source identities:
+`bench/results/packed-integration-20261029/README.md`. Remaining production work:
+`notes/packed-storage-integration.md`.
+
 ## Aggressive wide storage experiments (2026-10-29)
 
 The owner's request to push beyond loop changes adds isolated, handwritten
