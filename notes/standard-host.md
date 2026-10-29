@@ -58,6 +58,23 @@ help and hidden/unsupported modes. No sanitizer finding or hash change.
 Other desktop OS execution and Android remain untested locally; the interactive
 command itself is desktop-only.
 
+## Agent-tool play verification (2026-10-29)
+
+After the owner clarified that the goal is agents seeing and controlling a
+running game, the existing interface was exercised through the agent's actual
+persistent terminal and image-viewing tools, rather than only a subprocess test.
+The hidden capture fixture reached ready 1; terminal input stepped to frame 3
+and captured it; image inspection located the Go button at (80,40). The agent
+then queued mouse/click and held/released D input, advanced to frame 12, and
+inspected another capture: the button's green witness appeared and the red
+mover moved. Quit ended the same process cleanly. Artifacts are
+build/debug/agent-before.png, agent-after.png and agent-live-proof.txt.
+No game input was prewritten to the replay file, and no file transport was
+needed. The proposed append-file detour was discarded before commit. The AI
+guide now explicitly describes keeping a terminal session handle, writing
+controls to it, and using an image tool between decisions.
+The docs production build and diff checks pass; no runtime code changed.
+
 ## A slow network to play on (2026-10-27)
 
 The owner's ask: tune how a match feels online (Parry's blocks, struck through a guard that looked up in time) without
