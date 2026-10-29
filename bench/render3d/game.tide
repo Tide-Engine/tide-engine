@@ -72,6 +72,7 @@ view Configure(Workload work, mut Render3D.Renderer renderer)
     renderer.shadows = work.shadows;
     renderer.maxShadowMaps = work.shadowMaps;
     renderer.shadowResolution = work.shadowResolution;
+    renderer.shadowCascades = 0; // Fixed volume matches the benchmark's orthographic camera and view counts.
     renderer.shadowCenter = float3(0, 0, 1);
     renderer.shadowExtent = 22;
     renderer.shadowDistance = 80;

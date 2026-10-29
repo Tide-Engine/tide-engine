@@ -159,6 +159,7 @@ view Configure(mut Render3D.Renderer renderer, mut Probe probe, Fixture fixture)
     renderer.maxLights = probe.maxLights;
     renderer.maxShadowMaps = probe.maxShadowMaps;
     renderer.shadowResolution = probe.shadowResolution;
+    renderer.shadowCascades = 0; // This fixture pins explicit fixed-volume projections.
     renderer.shadowExtent = 4;
     renderer.shadowDistance = 20;
     renderer.shadows = !probe.disableShadows;

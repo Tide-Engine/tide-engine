@@ -141,20 +141,38 @@ point, with match before local within each kind. `droppedLights` counts lights
 excluded by the limit. Configure directional components instead of the removed
 `Renderer.sun`.
 
-Shadows default on. `maxShadowMaps = 8` clamps to 0–16 shadow views, assigned in
-retained light order. Directional/spot lights cost one; point lights require six
-contiguous views together or none. A rejected shadow request still illuminates;
-later requests can use remaining capacity. `shadowNear = 0.05` (at least 0.001)
-is the point/spot near plane; a range no larger than this cannot cast shadows.
+Shadows default on. Directional lights use `shadowCascades = 4`, clamped to
+0–4. Values 1–4 fit shadow maps to slices of the camera frustum, concentrating
+detail near the camera. `shadowRange = 40` sets the farthest camera-forward
+distance receiving these shadows, limited by `camera.far`. Keep it near the
+distance your scene needs. Cascade projections use stable sphere bounds and
+texel-snapped placement, blend over the last 10% of each slice, and fade to lit
+at the final range. `shadowDistance = 40` extends their casting volumes toward
+the light so off-camera objects can still cast onto visible receivers.
+
+Set `shadowCascades = 0` for a single fixed directional volume. This mode uses
+`shadowCenter = float3(0)`, `shadowExtent = 10` (half-width/half-height) and
+`shadowDistance = 40` (total depth), in world units. Only this mode uses
+`shadowCenter` and `shadowExtent`. Spot shadows follow the cone; point shadows
+use six faces. Outside-volume receivers are unshadowed.
+
+`maxShadowMaps = 8` clamps to 0–16 shadow views, assigned in retained light
+order. A directional light needs one cell per cascade, or one in fixed mode;
+a spot needs one and a point needs six. All of a light's cells are allocated
+together or none. A rejected shadow request still illuminates; later requests
+can use remaining capacity. `shadowNear = 0.05` (at least 0.001) is the
+point/spot near plane; a range no larger than this cannot cast shadows.
 `unshadowedLights` counts retained lights requesting shadows but receiving none,
 including when `shadows = false`.
 
-Directional volumes share `shadowCenter = float3(0)`, `shadowExtent = 10`
-(half-width/half-height) and `shadowDistance = 40` (depth), in world units.
-They do not automatically follow the camera. Spot shadows follow the cone;
-point shadows use six faces. Outside-volume receivers are unshadowed.
+Edges use normalized tent filtering, with four bilinear depth comparisons and
+weights adjusted to the fractional texel position. There is no random jitter.
+Vulkan devices whose depth format cannot filter comparisons linearly retain
+the backend's nearest-comparison fallback, with reduced edge quality.
 `shadowBias = 0.0005` and `shadowSlopeBias = 0.002` are normalized comparison-depth
-offsets shared by all lights.
+offsets. Cascades scale these offsets for their world-space texel size and depth
+span; fixed, point and spot views use the offsets directly. Too little bias
+causes self-shadowing; too much separates the shadow from its caster.
 
 `shadowResolution = 1024` requests each atlas cell's pixel size, including a
 two-pixel gutter on every edge. The smallest square grid fitting the views clamps
@@ -257,7 +275,7 @@ additional game resources through ordinary shader parameters: between
 ## Current scope
 
 One camera; static and skinned mesh assets with material maps and scalar values.
-No `LightMode`, baked or area lights, cascades, environment specular,
+No `LightMode`, baked or area lights, environment specular,
 GI, probes or light baker in this slice.
 Model texture and metallic/roughness import is not automatic.
 

@@ -144,8 +144,8 @@ view CameraAndLight(mut Render3D.Renderer renderer, mut Controls controls, Devic
     };
     renderer.exposure = controls.exposure;
     renderer.shadows = controls.shadows;
-    renderer.shadowCenter = float3(0, 0.5, 0);
-    renderer.shadowExtent = 7;
+    // Cover the exhibits and their ground shadows at every zoom distance.
+    renderer.shadowRange = controls.distance + 8;
     renderer.shadowDistance = 30;
 }
 

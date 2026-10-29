@@ -147,6 +147,7 @@ view ConfigureShadowBatches(mut Render3D.Renderer renderer, ShadowProbe probe)
     renderer.shadowResolution = probe.resolution;
     renderer.maxShadowMaps = probe.budget;
     renderer.shadowExtent = 5;
+    renderer.shadowCascades = 0;
     renderer.shadowDistance = 30;
 }
 
