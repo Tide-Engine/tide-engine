@@ -1,5 +1,41 @@
 # The docs site
 
+## Compact desktop minimize example (2026-10-29)
+
+The owner requested improving or removing gui-desktop because it overflowed
+its embed and felt janky. Kept it as a compact 340 x 244 note, centered and
+scaled only below the normal 376 x 400 viewport. Removed the sidebar, inert
+menu/app/delete actions and dock magnification. The fixed Notes icon and
+thumbnail slot sit above the host stats corner. Drag placement is clamped to
+the available desktop, including after a viewport resize.
+
+The 0.42-second reversible tween feeds a mesh whose rows retain their vertical
+order and settle directly onto the thumbnail rectangle. This replaces the
+moving dock destination and collapsed-line/thumbnail handoff. The same target
+image is frozen during motion and while minimized; widgets are not declared
+then, and minimizing clears keyboard focus. Notes restores/reverses at any
+point; the settled thumbnail also restores. User docs describe these controls.
+No engine/runtime/compiler API or default styling changes.
+
+Native and web-debug example targets compile without warnings. Scripted native
+captures cover open/bending/minimized/restored states, title editing and Share,
+and dragging far outside the desktop; 320 x 400, 376 x 400 and 960 x 540 layouts
+were inspected. The docs runner now exercises actual target widgets and exact
+pixel restoration of the edited note through thumbnail restore and in-flight
+reversal, excluding the independent FPS counter from comparisons. Both WebGL
+and WebGPU pass, including typing while minimized without altering the note.
+The browser interaction helper waits for elapsed animation time and rendered
+work, and for pointer releases to be processed before moving away; draw-call
+counts alone did not reliably settle transitions or clicks on WebGPU.
+Production docs build passes with Node 24.22.1 and the existing allowed
+unstaged-example 404s. Native and WebGPU captures were visually inspected.
+Other operating systems and real-phone testing remain unavailable locally.
+
+Integration retains incoming benchmark and Render3D notes through 16fcf26ea;
+the only conflict was concurrent notes prepends. The merged docs production
+build and selected desktop interaction checks pass again on WebGL and WebGPU.
+Incoming package changes do not affect this example's compiled runtime.
+
 ## Public ECS benchmark page (2026-10-29)
 
 `/benchmarks` is an ordinary prerendered docs page, linked from the home page
