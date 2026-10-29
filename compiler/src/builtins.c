@@ -1105,6 +1105,17 @@ static void build_signatures(void)
     describe(add("string", "Substring", T_STR, "tide_str_substring", 2, t_int, t_int, T_NONE),
              "start, length", "`length` characters of the text, from character `start`.");
     // Methods of a Color and a Rect, called as text's are, with the value first
+    // Easing curves: a progress from 0 to 1 shaped, as an animation's is
+    describe(add("Math", "EaseIn", T_F, "tide_ease_in_f", 1, T_F, T_NONE, T_NONE), "t",
+             "`t` from 0 to 1, starting slowly and speeding up (cubic). Past the ends it's at them, and NaN is 0.");
+    describe(add("Math", "EaseOut", T_F, "tide_ease_out_f", 1, T_F, T_NONE, T_NONE), "t",
+             "`t` from 0 to 1, starting fast and settling (cubic): what most UI that arrives uses.");
+    describe(add("Math", "EaseInOut", T_F, "tide_ease_in_out_f", 1, T_F, T_NONE, T_NONE), "t",
+             "`t` from 0 to 1, slow at both ends and fast in the middle (cubic): for something that moves from one place to another.");
+    describe(add("Math", "EaseInBack", T_F, "tide_ease_in_back_f", 1, T_F, T_NONE, T_NONE), "t",
+             "`t` from 0 to 1, pulling back a little below 0 before going: an anticipation.");
+    describe(add("Math", "EaseOutBack", T_F, "tide_ease_out_back_f", 1, T_F, T_NONE, T_NONE), "t",
+             "`t` from 0 to 1, overshooting 1 by about 10% and settling back: a pop.");
     describe(add("Color", "WithAlpha", T_COLOR, "tide_color_with_alpha", 1, T_F, T_NONE, T_NONE),
              "alpha", "The color with this alpha, its red, green and blue as they are: `glow.WithAlpha(0.5 * fade)`.");
     describe(add("Rect", "MoveInside", T_RECT, "tide_rect_move_inside", 1, T_RECT, T_NONE, T_NONE),
@@ -1196,6 +1207,13 @@ static void build_signatures(void)
             "Reserves a fixed-size layout slot for custom content. Returns its rect in GUI pixels; draws nothing.");
     add_gui("GUILayout", "Reserve", T_RECT, "tide_gui_layout_reserve_flexible", "float2 size, float minWidth, bool expandWidth", 0,
             "Reserves layout space that can shrink to minWidth and optionally expand to the column's width.");
+    add_gui("GUI", "Target", T_NONE, "tide_gui_begin_target", "RenderTarget target, Rect shown", GUI_CONTAINER | GUI_SKIPS,
+            "The widgets in this block draw into `target`, laid out in its logical pixels, its size the screen's for them. "
+            "`shown` is where the game shows the target on the screen: the pointer reaches the widgets through it. "
+            "Draw what shows the target after the block, inside `GUI.Draw`, to show this frame's widgets.");
+    add_gui("GUI", "Target", T_NONE, "tide_gui_begin_target_unshown", "RenderTarget target", GUI_CONTAINER | GUI_SKIPS,
+            "The widgets in this block draw into `target`, with no pointer: the keyboard and the gamepad reach them, "
+            "for a target shown in a way the pointer can't follow, like a mesh in the world.");
     add_gui("GUI", "Draw", T_NONE, "tide_gui_begin_draw", "", GUI_CONTAINER | GUI_DRAW | GUI_SKIPS,
             "Draw calls in this block join the GUI in declaration order, above its panel. Starts in screen pixels "
             "and restores the GUI's drawing settings when the block ends. Helpers draw into the same list.");
@@ -1251,6 +1269,13 @@ static void build_signatures(void)
         "`from` the first frame it's called, and after a frame it isn't: `GUI.Animate(1, 0.3, 0)` fades in as it "
         "first appears.";
     add_gui("GUI", "Animate", T_F, "tide_gui_animate", "float target, float seconds", GUI_ID, animate_doc);
+    add_gui("GUI", "Tween", T_F, "tide_gui_tween", "float target, float seconds", GUI_ID,
+            "`target`, reached at a constant speed: each change takes exactly `seconds`, from wherever the value is, "
+            "and turning back midway takes as long as it went. Shape it with an ease: "
+            "`Math.EaseInOut(GUI.Tween(open ? 1 : 0, 0.4))`. It starts at its target.");
+    add_gui("GUI", "Tween", T_F, "tide_gui_tween_from", "float target, float seconds, float from", GUI_ID,
+            "`target`, reached at a constant speed in `seconds`, starting at `from` the first frame it's called: "
+            "`GUI.Tween(1, 0.3, 0)` runs 0 to 1 once as something appears.");
     add_gui("GUI", "Animate", T_F2, "tide_gui_animate_float2", "float2 target, float seconds", GUI_ID, animate_doc);
     add_gui("GUI", "Animate", T_COLOR, "tide_gui_animate_color", "Color target, float seconds", GUI_ID, animate_doc);
     add_gui("GUI", "Animate", T_F, "tide_gui_animate_from", "float target, float seconds, float from", GUI_ID,
@@ -2465,6 +2490,66 @@ static const char *const draw_prelude_lines[] = {
     "    TideFillDraw(item);",
     "}",
     "",
+    "// The same into a render target, whose size its pixels go by",
+    "void TideFillDraw(RenderTarget target, TideFillItem item)",
+    "{",
+    "    if (!(item.size.x > 0) || !(item.size.y > 0)) return;",
+    "    List<Vertex> quad = [Vertex { position = float2(-1, -1) }, Vertex { position = float2(1, -1) },",
+    "                         Vertex { position = float2(1, 1) }, Vertex { position = float2(-1, 1) }];",
+    "    List<int> corners = [0, 1, 2, 0, 2, 3];",
+    "    List<TideFillItem> items = [item];",
+    "    target.Instanced(quad, corners, items, TideFillPlace, TideFillPaint);",
+    "}",
+    "",
+    "float3 TideFillScreen(RenderTarget target)",
+    "{",
+    "    return float3(target.size.x, target.size.y, (Screen.scale.x + Screen.scale.y) * 0.5);",
+    "}",
+    "",
+    "void TideFillRect(RenderTarget target, Rect rect, float radius, Func<float2, Color> fill)",
+    "{",
+    "    TideFillRect(target, rect, float4(radius), fill);",
+    "}",
+    "",
+    "void TideFillRect(RenderTarget target, Rect rect, float4 radii, Func<float2, Color> fill)",
+    "{",
+    "    mut var item = TideFillRectItem(rect, radii);",
+    "    item.screen = TideFillScreen(target);",
+    "    item.fill = fill;",
+    "    TideFillDraw(target, item);",
+    "}",
+    "",
+    "void TideFillShape(RenderTarget target, Shape shape, Func<float2, Color> fill)",
+    "{",
+    "    mut var item = TideFillShapeItem(shape);",
+    "    item.screen = TideFillScreen(target);",
+    "    item.fill = fill;",
+    "    TideFillDraw(target, item);",
+    "}",
+    "",
+    "void TideFillRectSized(RenderTarget target, Rect rect, float radius, Func<float2, float2, Color> fill)",
+    "{",
+    "    TideFillRectSized(target, rect, float4(radius), fill);",
+    "}",
+    "",
+    "void TideFillRectSized(RenderTarget target, Rect rect, float4 radii, Func<float2, float2, Color> fill)",
+    "{",
+    "    mut var item = TideFillRectItem(rect, radii);",
+    "    item.screen = TideFillScreen(target);",
+    "    item.sized = fill;",
+    "    item.bySize = 1;",
+    "    TideFillDraw(target, item);",
+    "}",
+    "",
+    "void TideFillShapeSized(RenderTarget target, Shape shape, Func<float2, float2, Color> fill)",
+    "{",
+    "    mut var item = TideFillShapeItem(shape);",
+    "    item.screen = TideFillScreen(target);",
+    "    item.sized = fill;",
+    "    item.bySize = 1;",
+    "    TideFillDraw(target, item);",
+    "}",
+    "",
     "// Between `count` colors spread evenly from 0 to 1, at `t`: blended with",
     "// their alpha in them, so a gradient to clear fades without darkening.",
     "Color TideGradientAt(float t, int count, Color a, Color b, Color c, Color d)",
@@ -2625,7 +2710,7 @@ bool draw_prelude_wanted(const char *const *texts, const size_t *lens, const int
             || has_text(texts[f], lens[f], "Func<float2,Color>") || has_text(texts[f], lens[f], "Func<float2, float2, Color>")
             || has_text(texts[f], lens[f], "Func<float2,float2,Color>")) return true;
     }
-    static const char *const calls[] = {"Draw.Rect(", "Draw.Shape("};
+    static const char *const calls[] = {".Rect(", ".Shape("}; // Draw's, and a render target's
     for (int f = 0; f < count; f++) {
         const char *text = texts[f];
         const size_t len = lens[f];

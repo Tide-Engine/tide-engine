@@ -29,8 +29,11 @@ TIDE_TEST(fills_draw_as_one_run_of_instances)
         tide_draw_reset(&draw);
         tide_frame(&world, NULL, 1, NULL, NULL, 1, &local, &draw, &gui);
         TIDE_CHECK(local.Probe.frames == frame + 1);
-        TIDE_REQUIRE(draw.run_count == 1);
+        TIDE_REQUIRE(draw.run_count == 2); // The window's fills, and the target's
         TIDE_CHECK(draw.runs[0].count == 5);
+        TIDE_CHECK(draw.runs[1].count == 2 && draw.runs[1].shader == draw.runs[0].shader);
+        TIDE_CHECK(!local.Probe.validBefore && local.Probe.validAfter && local.Probe.windowValid);
+        TIDE_CHECK(local.Probe.artSize.x == 64 && local.Probe.artSize.y == 32);
         bool shadow = false; // Draw.Shadow: a soft shape a quarter of its size lower
         for (uint32_t i = 0; i < draw.count; i++) {
             const tide_draw_command *c = &draw.commands[i];
@@ -71,6 +74,10 @@ TIDE_TEST(fills_gradients_give_their_colors)
     TIDE_CHECK(color_is(seen[10], 1, 0, 0, 1));        // A uv that isn't a number: the start
     TIDE_CHECK(color_is(seen[11], 0, 0, 0, 1));        // A function of the game's
     TIDE_CHECK(color_is(seen[12], 1, 0, 0, 0.25f));    // WithAlpha
+    const float *e = local.Probe.eases.at;
+    TIDE_CHECK(near(e[0], 0.125f) && near(e[1], 0.875f) && near(e[2], 0.0625f));
+    TIDE_CHECK(e[3] > 1.0f && e[4] < 0.0f);          // Overshoots and pulls back
+    TIDE_CHECK(e[5] == 1.0f);                         // NaN is 0, past the end is the end
     const tide_rect moved = local.Probe.moved;           // MoveInside: moved, not resized
     TIDE_CHECK(moved.x == 80 && moved.y == 0 && moved.width == 20 && moved.height == 20);
     tide_draw_free(&draw);

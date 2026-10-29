@@ -21,6 +21,12 @@ A target's size is in logical pixels, like the window's, and its image is made a
 - `RenderTarget(width, height)` is a target of a size of its own. `Resize(width, height)` changes it for every alias and discards its contents, even at the same size.
 - A third argument is the target's pixels per unit, where the display's isn't wanted: `RenderTarget(320, 180, 1)` is exactly 320 by 180 pixels on every display, for pixel art and anything else that must not depend on the display.
 
+`target.size` is its size in logical pixels: the window's share for one that follows it, and the size it was made or resized to otherwise. `target.valid` says whether drawing into it draws: false for a target never made (a field's default) and for one disposed, true for `Draw.window`. So a view makes one the first frame it needs it:
+
+```csharp
+if (!ui.card.valid) ui.card = RenderTarget(320, 200);
+```
+
 When the display's scale changes (the window moves to another monitor, a browser zooms), the targets at the display's scale are made again, empty. One with pixels per unit of its own is left alone. There's no way to read the display's scale, and nothing here needs it.
 
 Otherwise a target's color, depth and stencil persist across frames until cleared. Copies share the image, including copies of `.color`. Call `Dispose()` when finished; every alias becomes invalid, and disposing again is harmless. A default target is invalid. Creation and lifetime methods run in views or local handlers and their helpers; field defaults cannot allocate targets.

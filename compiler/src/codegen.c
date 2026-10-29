@@ -3950,6 +3950,18 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_put(o, ")");
             break;
         }
+        if (e->object->type.kind == TY_RENDER_TARGET && e->type.kind == TY_FLOAT2) { // target.size
+            sb_put(o, "tide_render_target_logical(");
+            gen_expr(g, o, e->object);
+            sb_put(o, ", tide_f2(tide_ui->width, tide_ui->height))");
+            break;
+        }
+        if (e->object->type.kind == TY_RENDER_TARGET && e->type.kind == TY_BOOL) { // target.valid
+            sb_put(o, "tide_render_target_valid_id((");
+            gen_expr(g, o, e->object);
+            sb_put(o, ").id)");
+            break;
+        }
         if (e->object->type.kind == TY_RENDER_TARGET) { // target.color, target.depth
             const unsigned born = e->type.kind == TY_TEXTURE ? declared_sampling_bits(e) : 0u;
             if (born) sb_put(o, "tide_texture_sampled(");

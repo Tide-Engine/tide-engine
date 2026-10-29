@@ -101,3 +101,41 @@ TIDE_TEST(gui_animate_eases_a_controls_hover_and_press)
     for (int i = 0; i < 40; i++) frame(0.1f, away);
     TIDE_CHECK(local.Seen.hover == 0 && local.Seen.press == 0);
 }
+
+TIDE_TEST(gui_tween_moves_at_a_constant_speed_and_turns_back)
+{
+    start();
+    frame(0.1f, away);
+    TIDE_CHECK(local.Seen.tweened == 0);
+    local.Seen.open = true;
+    frame(0.1f, away);
+    TIDE_CHECK(near(local.Seen.tweened, 0.2f));                         // A tenth of the half second
+    TIDE_CHECK(near(local.Seen.eased, 4 * 0.2f * 0.2f * 0.2f));         // Eased: slow at first
+    frame(0.1f, away);
+    frame(0.1f, away);
+    TIDE_CHECK(near(local.Seen.tweened, 0.6f));
+    local.Seen.open = false;                                           // Back from 0.6: as long as it went, 0.3 seconds
+    frame(0.1f, away);
+    TIDE_CHECK(near(local.Seen.tweened, 0.4f));
+    frame(0.1f, away);
+    TIDE_CHECK(near(local.Seen.tweened, 0.2f));
+    frame(0.1f, away);
+    TIDE_CHECK(local.Seen.tweened == 0);                               // There exactly, at 0.3 seconds
+    frame(0, away);
+    local.Seen.open = true;
+    frame(0, away);                                                    // No frame time: at once
+    TIDE_CHECK(local.Seen.tweened == 1);
+}
+
+TIDE_TEST(gui_animate_target_widgets_take_the_pointer_where_shown)
+{
+    start();
+    frame(0.1f, tide_f2(400, 350));
+    TIDE_CHECK(local.Seen.panelSize.x == 100 && local.Seen.panelSize.y == 50);
+    frame(0.1f, tide_f2(400, 350));
+    tide_button_set(&devices.mouse.left, true);
+    frame(0.1f, tide_f2(400, 350));
+    tide_button_set(&devices.mouse.left, false);
+    frame(0.1f, tide_f2(400, 350));
+    TIDE_CHECK(local.Seen.pressed == 1);
+}

@@ -3905,7 +3905,7 @@ static type builtin_task_start(checker *c, expr *e, type result, int side);
 // (draw_prelude), which a program has where its text shows a fill. True, with
 // the call's type in *result, where it is one; the arguments it checked to see
 // are checked, for the built-in versions the call is otherwise.
-static bool check_fill_draw(checker *c, expr *e, type *result)
+static bool check_fill_draw(checker *c, expr *e, type *result, const bool on_target)
 {
     const bool rect = str_eq_c(e->name, "Rect");
     if (e->args.count != (rect ? 3 : 2)) return false;
@@ -3928,6 +3928,14 @@ static bool check_fill_draw(checker *c, expr *e, type *result)
                              "`(float2 uv) => ...`, or declare it as `Color Name(float2 uv)` (or `(float2 uv, float2 size)`)");
         *result = T_ERR;
         return true;
+    }
+    if (on_target) { // target.Rect(...): the target goes first, to the overloads that draw into one
+        expr *target = e->object;
+        target->prechecked = true;
+        vec_push(e->args, target);
+        for (int i = e->args.count - 1; i > 0; i--) e->args.items[i] = e->args.items[i - 1];
+        e->args.items[0] = target;
+        e->targeted = false;
     }
     *result = check_function_call(c, e, fn);
     return true;
@@ -7873,7 +7881,7 @@ static type check_method(checker *c, expr *e)
         if (str_eq_c(owner, "Draw") && str_eq_c(e->name, "Blit")) return check_blit(c, e);
         if (str_eq_c(owner, "Draw") && (str_eq_c(e->name, "Rect") || str_eq_c(e->name, "Shape"))) {
             type filled;
-            if (check_fill_draw(c, e, &filled)) return filled;
+            if (check_fill_draw(c, e, &filled, false)) return filled;
         }
         // Draw is the window's drawing: what a render target has as its methods
         const bool draws = builtin_draw_owner(owner);
@@ -8138,6 +8146,10 @@ static type check_method(checker *c, expr *e)
         }
         // A target's methods are Draw's, told apart by the receiver alone: the window is a target too
         e->targeted = true;
+        if (str_eq_c(e->name, "Rect") || str_eq_c(e->name, "Shape")) { // ...with a fill too
+            type filled;
+            if (check_fill_draw(c, e, &filled, true)) return filled;
+        }
         if (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Instanced") || str_eq_c(e->name, "SkinnedMesh")) return check_mesh_draw(c, e);
         if (str_eq_c(e->name, "Blit")) {
             for (int i = 0; i < e->args.count; i++) check_expr(c, e->args.items[i]);
@@ -9303,7 +9315,9 @@ static type check_member(checker *c, expr *e)
             e->target_colors = true;
             return obj; // What check_index makes a Texture of
         }
-        diag_error(e->at, "a RenderTarget has 'color', 'colors' and 'depth', not '" STR_FMT "'", STR_ARG(e->member));
+        if (str_eq_c(e->member, "valid")) return T_BOOL_; // Made and not disposed, or the window
+        if (str_eq_c(e->member, "size")) return (type){TY_FLOAT2, NULL}; // In logical pixels
+        diag_error(e->at, "a RenderTarget has 'color', 'colors', 'depth', 'size' and 'valid', not '" STR_FMT "'", STR_ARG(e->member));
         return T_ERR;
     }
 

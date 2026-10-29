@@ -274,7 +274,7 @@ Each takes two, three or four colors, spread evenly: `Gradient.Vertical(a, b, c)
 - **A fill can take the shape's size too:** a `Func<float2, float2, Color>`, given the place and the shape's size in the units it's drawn in (pixels on the screen), for patterns of a fixed size whatever the shape's: `Draw.Rect(bar, 6, (float2 uv, float2 size) => int(uv.x * size.x / 12) % 2 == 0 ? light : dark)` has stripes 12 pixels wide.
 - **The rest of the shape is as ever.** `Draw.Shape(shape, fill)` takes its center, size, rotation, corners, outline, soft edge and ellipse from `shape`, and the fill replaces `color` and `color2`. Its place in the shape is the shape's own, before `rotation` turns it, and its top is the upper one on the screen whether `y` goes up or down.
 - **Fills drawn one after another are drawn together,** whatever their functions: a menu of gradient buttons costs one draw. The function is GPU code, with [what the GPU runs](./shaders.md#what-the-gpu-runs)' rules.
-- **They're local code.** A fill is drawn by views and the functions they call, in the window or inside [`GUI.Draw`](./gui.md#custom-controls-in-layout). A render target's own `Rect` and `Shape` don't take one yet.
+- **They're local code.** A fill is drawn by views and the functions they call, in the window or inside [`GUI.Draw`](./gui.md#custom-controls-in-layout). A [render target](./render-targets.md)'s own `Rect` and `Shape` take one too, drawn by the target's size: `card.Rect(Rect(0, 0, 200, 60), 12, Gradient.Vertical(top, bottom))`.
 
 ## On the screen
 

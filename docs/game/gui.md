@@ -497,7 +497,85 @@ void Tooltip(mut Tip tip, int hovered, float2 at, string text)
 
 An area at an anchor animates by itself: when its content changes size, as a menu's tabs change, its panel grows or shrinks to it over twice the theme's `transition`, staying at its anchor, and its content is clipped to the panel meanwhile.
 
-It goes by the frame's length, `Frame.dt`, so it takes as long at any frame rate. Up to 1,024 values are animated at once; past that, a new one is at its target.
+`GUI.Tween(target, seconds)` moves at a constant speed instead: a change from rest takes exactly `seconds`, and turning back midway takes as long as it went. It's for a progress from 0 to 1 that an [easing function](../language/math.md#functions) shapes, so it runs on a timeline:
+
+```csharp
+var t = Math.EaseInOut(GUI.Tween(menu.open ? 1.0 : 0.0, 0.4)); // Slow, fast, slow: 0.4 seconds either way
+var at = Math.Lerp(float2(-300, 100), float2(40, 100), t);
+var pop = Math.EaseOutBack(GUI.Tween(1, 0.3, 0));               // 0 to 1 once, as it appears, overshooting
+```
+
+It takes a `float`. Like `Animate`, it's at its target the first time it's called, starts at `from` given one, and starts over after a frame it isn't called in. A target that changes while it's moving, other than back, keeps the speed it has.
+
+Both go by the frame's length, `Frame.dt`, so they take as long at any frame rate. Up to 1,024 values are animated at once, the widgets' own fades and the anchored areas' sizes among them; past that, a new one isn't animated: it's at its target, or stays at its `from`.
+
+#### Animated values in GPU code
+
+An animated value is a number the view has, worked out once a frame, so GPU code reacts to it as to any other: a [fill](./views.md#fills)'s lambda reads it from around it, and a [frag or a vert](./shaders.md#values-for-one-draw) is given it in the draw's values, or in each instance's own for many at once. Animate on the CPU, where the GUI keeps it from frame to frame; shape it on the GPU, where the easing functions are too, so each pixel can take its own part of one progress:
+
+```csharp
+struct Glow
+{
+    float amount; // 0 to 1, animated on the CPU
+}
+
+frag Pulse(Vertex vertex, out Color color, Glow glow)
+{
+    color = Color(1, 0.8, 0.3, glow.amount * (1 - vertex.uv.y));
+}
+
+view Reveal(Menu menu)
+{
+    // Animated once a frame: a progress half a second long...
+    var t = GUI.Tween(menu.open ? 1.0 : 0.0, 0.5, 0);
+    GUI.Draw()
+    {
+        // ...shaped for each pixel: a wipe from left to right with a soft, eased edge
+        Draw.Rect(Rect(40, 40, 320, 200), 16, (float2 uv) =>
+            Color(0.2, 0.4, 0.9).WithAlpha(Math.EaseOut(Math.Saturate(t * 1.5 - uv.x * 0.5))));
+    }
+    // A frag's draw values: the glow fades in and out with the menu's light
+    Draw.Mesh(menu.vertices, menu.indices, Pulse, Glow { amount = GUI.Animate(menu.lit ? 1.0 : 0.0, 0.2) });
+}
+```
+
+GPU code keeps nothing from one frame to the next, so it can't ease a value of its own: what it's given is where the animation is this frame.
+
+### Widgets in a render target
+
+`GUI.Target(target, shown) { ... }` draws the widgets in its block into a [render target](./render-targets.md), for a panel that's warped, turned, faded as a whole, or shown on something in the world. They're laid out in the target's logical pixels, its size the screen's for them (an `Area`'s anchors, a modal's dim), and `shown` is where the game shows the target on the screen: the pointer reaches the widgets through it, scaled, and a press on one is the GUI's as on any widget.
+
+```csharp
+view Window(mut Desk desk)
+{
+    if (!desk.content.valid) desk.content = RenderTarget(520, 340);
+    desk.content.Clear(Color.white);
+    GUI.Target(desk.content, Rect(desk.at.x, desk.at.y, 520, 340))
+    {
+        GUILayout.Area(Rect(20, 20, 480, 300))
+        {
+            GUILayout.TextField("Title", desk.title);
+            if (GUILayout.Button("Share")) desk.shared++;
+        }
+    }
+    GUI.Draw() // After the block: this frame's widgets
+    {
+        Draw.Mesh(desk.quad, desk.corners, desk.content.color);
+    }
+}
+```
+
+- **Draw what shows the target after the block, in `GUI.Draw`.** The GUI goes over the world, so a world draw of the target shows the frame before.
+- **`GUI.Target(target)`, with no rect, has no pointer:** the keyboard and the gamepad reach its widgets, for a target shown where the pointer can't follow, like a screen on a wall.
+- One block at a time: a `GUI.Target` inside another, or for an invalid target, is skipped with its content.
+
+The desktop below draws its window's widgets into a target and shows it as a mesh, which bends into the dock with a genie effect as it minimizes. Type in the field, press Share, drag the slider, then minimize the window and click its thumbnail in the dock.
+
+::: tide-example gui-desktop A window of widgets, minimized into the dock
+
+<<< @/examples/gui-desktop.tide
+
+:::
 
 ### Scrolling
 

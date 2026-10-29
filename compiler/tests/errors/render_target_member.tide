@@ -1,4 +1,4 @@
-// expect: a RenderTarget has 'color', 'colors' and 'depth', not 'stencil'
+// expect: a RenderTarget has 'color', 'colors', 'depth', 'size' and 'valid', not 'stencil'
 scene Main { }
 local singleton Lamp { RenderTarget map; DepthTexture shadow; }
 view Show(Lamp lamp) { var stencil = lamp.map.stencil; }

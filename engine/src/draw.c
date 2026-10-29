@@ -734,8 +734,13 @@ void tide_draw_pop(tide_draw_list *d, const uint32_t mark)
 
 void tide_draw_restore_window(tide_draw_list *d, const tide_draw_place *before, const uint32_t mark)
 {
+    tide_draw_restore_to(d, (tide_render_target){.id = TIDE_RENDER_WINDOW}, before, mark);
+}
+
+void tide_draw_restore_to(tide_draw_list *d, const tide_render_target target, const tide_draw_place *before, const uint32_t mark)
+{
     tide_draw_pop(d, mark);
-    tide_draw_render_target(d, (tide_render_target){.id = TIDE_RENDER_WINDOW});
+    tide_draw_render_target(d, target);
     const tide_draw_place played = d->place;
     d->place = *before;
     d->place.played_2d = played.played_2d;
@@ -748,17 +753,23 @@ void tide_draw_restore_window(tide_draw_list *d, const tide_draw_place *before, 
 void tide_draw_move_gui(tide_draw_list *d, const uint32_t commands, const uint32_t plains, const uint32_t clips,
                         const tide_float2 offset)
 {
+    tide_draw_move_gui_in(d, 0, commands, plains, clips, offset);
+}
+
+void tide_draw_move_gui_in(tide_draw_list *d, const uint32_t home, const uint32_t commands, const uint32_t plains,
+                           const uint32_t clips, const tide_float2 offset)
+{
     if (d->plain_open) {
         tide_draw_command *run = &d->commands[d->plain_open - 1u];
         run->plain.count = d->plain_count - run->plain.first;
     }
-    uint32_t target = 0;
+    uint32_t target = home;
     bool screen = true;
     bool marked = false;
     for (uint32_t i = commands; i < d->count; i++) {
         tide_draw_command *c = &d->commands[i];
         if (c->kind == TIDE_DRAW_TARGET) target = c->target;
-        if (target) continue;
+        if (target != home) continue;
         if (c->kind == TIDE_DRAW_SCREEN) screen = true;
         if (c->kind == TIDE_DRAW_CAMERA) screen = false;
         if (!screen && c->kind != TIDE_DRAW_CLIP) continue;

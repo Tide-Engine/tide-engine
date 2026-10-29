@@ -144,6 +144,42 @@ static inline float tide_lerp_f(const float a, const float b, const float t) { r
 static inline float tide_unlerp_f(const float a, const float b, const float x) { return (x - a) / (b - a); }
 static inline float tide_step_f(const float edge, const float x) { return x >= edge ? 1.0f : 0.0f; }
 
+// Math.EaseIn and the rest: `t` from 0 to 1 (NaN as 0, past the ends at
+// them) shaped as an animation's progress. Cubic in, out and in-out; In/OutBack
+// pull back past the start or overshoot the end by about 10%. Written as the
+// GPU's tide_ease is, in the same order.
+static inline float tide_ease_in_f(const float x)
+{
+    const float t = tide_saturate_f(x);
+    return t * t * t;
+}
+
+static inline float tide_ease_out_f(const float x)
+{
+    const float u = 1.0f - tide_saturate_f(x);
+    return 1.0f - u * u * u;
+}
+
+static inline float tide_ease_in_out_f(const float x)
+{
+    const float t = tide_saturate_f(x);
+    if (t < 0.5f) return 4.0f * t * t * t;
+    const float u = 2.0f - 2.0f * t;
+    return 1.0f - u * u * u * 0.5f;
+}
+
+static inline float tide_ease_in_back_f(const float x)
+{
+    const float t = tide_saturate_f(x);
+    return 2.70158f * t * t * t - 1.70158f * t * t;
+}
+
+static inline float tide_ease_out_back_f(const float x)
+{
+    const float u = tide_saturate_f(x) - 1.0f;
+    return 1.0f + 2.70158f * u * u * u + 1.70158f * u * u;
+}
+
 static inline float tide_smoothstep_f(const float a, const float b, const float x)
 {
     const float t = tide_saturate_f((x - a) / (b - a));
