@@ -1,5 +1,44 @@
 # Benchmarks
 
+## Aggressive wide storage experiments (2026-10-29)
+
+The owner's request to push beyond loop changes adds isolated, handwritten
+canonical-layout prototypes using Tide's scheduler: contiguous component records,
+four-row field blocks, packed active field arrays, packed arrays with six-field
+write-back, and repacking from the original-order mirror every tick. They retain
+all frozen values and use logical ID maps. No production/compiler/runtime/game
+source, canonical format, language behavior or expected hash changes.
+
+On Windows/Ryzen 9 7900X with unchanged strict O2 floats, 1M rows/95% frozen/
+one thread, packed active arrays take 0.02870 ms versus current Tide 0.86350
+and ordinary Bevy SparseSet 0.24170. Six-field write-back costs 0.44450 ms;
+repack/update/write-back costs 1.88855. AoS roughly reaches ordinary Bevy on
+sparse updates but regresses dense throughput; AoSoA4 is adverse. A stronger
+Bevy build changes only Frozen to default Table storage, partitioning both
+sides: paired Bevy/prototype ratios are 3.52x at 95%, 3.67x at 99%, and 4.02x
+at 99% with four offered threads. This is a workload-specific storage path
+against full Bevy queries, not a shipping Tide win or a Bevy throughput ceiling.
+
+Packed storage uses about 48 MB of data and 12 MB of index arrays. A separate
+diagnostic's update-plus-1,000-membership-toggles takes 0.043892 ms, and 10,000
+toggles 0.196777; these are medians of process means with changing active work,
+not isolated mutation costs or paired Bevy results. A retained previous-state
+comparison at 95% takes prototype 1.65640 ms versus Tide 4.12580; the prototype
+deep-copies its data and has static membership, not a general COW/rollback path.
+
+There are 135 valid measured/diagnostic processes, three alternating rounds,
+200 warmup/400 measured ticks in the paired comparisons. Six initial snapshot
+attempts launched the wrong executable due to a one-element PowerShell array
+being unwrapped; all are retained and excluded, with the corrected runner and
+batch preserved. Native/WASI agree in 240 collected layout checks, and each
+passes 3,742,200 exact field comparisons under membership changes by stable ID.
+The prototype groups selected rows into fewer tasks and lacks general table/COW,
+generational lifetime, arbitrary query/event order, multiple filters, dynamic
+snapshot restore, hash/pack and reload integration. No whole-engine improvement
+or automatic production layout decision follows. Sources, all adverse controls,
+stronger Bevy comparator, raw output, identities and audit:
+`bench/results/bevy-layout-20261029/README.md`.
+
 ## Sparse wide locality probes (2026-10-29)
 
 Five manually edited generated-C kernels test field traversal and explicit SIMD

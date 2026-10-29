@@ -1,0 +1,17 @@
+{
+  "command": [
+    "cargo",
+    "+1.95.0",
+    "build",
+    "--offline",
+    "--locked",
+    "--release",
+    "--manifest-path",
+    "build/bevy-table-20261029/Cargo.toml",
+    "--target-dir",
+    "build/bevy-table-20261029/target"
+  ],
+  "rustflags": "-C target-cpu=x86-64 -C target-feature=-fma",
+  "executable_sha256": "b4757e9d793a5231e77b12babdb78553d0335608e42a2430272efd3ac7f51578",
+  "scope": "Only Frozen storage changed from SparseSet to default Table; normal change detection retained."
+}

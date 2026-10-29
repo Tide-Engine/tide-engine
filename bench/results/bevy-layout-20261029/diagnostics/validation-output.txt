@@ -1,0 +1,10 @@
+Captured stdout from python build/bevy-layout-20261029/validate.py:
+
+membership validation: 3742200 exact field comparisons passed
+membership validation: 3742200 exact field comparisons passed
+mode 0 passed
+mode 1 passed
+mode 2 passed
+mode 3 passed
+mode 4 passed
+240 checks passed

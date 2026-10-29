@@ -1,0 +1,11 @@
+versus_wide: bodies of a dozen floats each fall and bounce, a tick changing half of them
+  count 1000000; kept 0; tagged 1; frozen 95; layout 0; 400 ticks timed after 200; optimized native build
+
+  ms a tick       1 thread            
+  Tide                0.961           
+  Layout              0.227 4.24x     
+  C                   0.996 0.97x     
+
+  medians; beside C, how many times as long Tide takes
+  every way ended the same: 0xd332cbdb933b490c
+{"benchmark":"versus_wide","label":"stdout","date":"2026-10-29T00:57:40Z","os":"windows","arch":"x86_64","optimized":true,"compiler":"23.1.2 (https://github.com/llvm/llvm-project 85ac560262434c9ccfc0c183ec22d4138ed647fb)","machine":"AMD Ryzen 9 7900X 12-Core Processor            ","revision":"8cebf05bfc8cb58c4d8cc97a0a6a30c43ef175d4+local","options":{"warmup":200,"ticks":400,"split":false,"count":1000000,"kept":0,"tagged":1,"frozen":95,"layout":0},"ok":true,"digest":"0xd332cbdb933b490c","runs":[{"threads":1,"ways":{"Tide":{"median_ms":0.96095,"mean_ms":0.999154},"Layout":{"median_ms":0.22665,"mean_ms":0.235187},"C":{"median_ms":0.9957,"mean_ms":1.01924}}}]}
