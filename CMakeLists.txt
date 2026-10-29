@@ -47,16 +47,9 @@ else()
     set(TIDE_ANDROID OFF)
 endif()
 
+include(cmake/Sanitizers.cmake)
 include(cmake/TideFlags.cmake)
 include(cmake/Tide.cmake)
-
-# For testing: AddressSanitizer and UndefinedBehaviorSanitizer on everything,
-# like the WebRTC stack's fuzzing (platform/tests/rtc_fuzz.c). Linux and macOS.
-option(TIDE_SANITIZE "Build with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
-if(TIDE_SANITIZE)
-    add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all)
-    add_link_options(-fsanitize=address,undefined)
-endif()
 include(cmake/WebTest.cmake)
 include(cmake/VulkanTests.cmake)
 include(cmake/HlslTests.cmake)

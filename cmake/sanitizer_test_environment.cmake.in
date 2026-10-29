@@ -1,0 +1,9 @@
+# CTest-only environment, inherited by tests and their subprocesses.
+# Distinct exits keep sanitizer failures from satisfying tests that expect a
+# normal diagnostic's exit 1 or 2. Keep explicit user options except exitcode.
+set(ENV{ASAN_OPTIONS} "detect_leaks=0:$ENV{ASAN_OPTIONS}:exitcode=86")
+set(ENV{UBSAN_OPTIONS} "print_stacktrace=1:$ENV{UBSAN_OPTIONS}:exitcode=86")
+if(NOT "@tide_asan_runtime_dir@" STREQUAL "")
+    set(ENV{PATH} "@tide_asan_runtime_dir@;@tide_asan_compiler_dir@;$ENV{PATH}")
+    set(ENV{ASAN_SYMBOLIZER_PATH} "@tide_asan_symbolizer@")
+endif()

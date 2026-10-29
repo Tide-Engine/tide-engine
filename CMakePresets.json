@@ -25,10 +25,9 @@
       "name": "sanitize",
       "inherits": "base",
       "displayName": "Sanitize",
-      "description": "Linux and macOS: optimized, with AddressSanitizer and UndefinedBehaviorSanitizer on everything, for the tests of what no Tide code can do (see AGENTS.md, Language). Leaks aren't looked for: tools and tests end with what they hold.",
+      "description": "Native correctness tests, including GPU tests: AddressSanitizer on Windows; AddressSanitizer and UndefinedBehaviorSanitizer on Linux/macOS. Optimized with debug info. Leak detection is disabled for tools and tests that retain allocations until exit.",
       "cacheVariables": { "CMAKE_BUILD_TYPE": "RelWithDebInfo", "TIDE_SANITIZE": "ON" },
-      "environment": { "ASAN_OPTIONS": "detect_leaks=0", "UBSAN_OPTIONS": "print_stacktrace=1" },
-      "condition": { "type": "notEquals", "lhs": "${hostSystemName}", "rhs": "Windows" }
+      "environment": { "ASAN_OPTIONS": "detect_leaks=0", "UBSAN_OPTIONS": "print_stacktrace=1" }
     },
     {
       "name": "web-base",
