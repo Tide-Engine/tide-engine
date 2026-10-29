@@ -1,5 +1,17 @@
 # ECS and simulation state
 
+## Raw-save pins after the derived cache slot (2026-10-29)
+
+CI run 40787272828 agrees across platforms on unchanged local-fields logical
+world/whole-transfer/delta hashes, but its two equivalence fixtures still pin
+raw saves from before the zero cache pointer was appended. Only those raw pins
+change: 391 to 399 bytes on 64-bit hosts, 363 to 367 on WASI. Removing exactly
+the verified-zero pointer slot recovers both prior raw byte hashes in both
+fixtures. A direct zero-slot assertion guards against serializing cache ownership.
+Both fixture CTests pass optimized native/WASI; no simulation or transfer value
+changes. Detailed hashes and CI scope: releases-and-ci.md, Raw-save pins and
+journal isolation in run 40787272828.
+
 ## Pure row updates before conditional destruction (2026-10-28)
 
 Internal compiler optimization, preserving component bytes, entity IDs, deferred

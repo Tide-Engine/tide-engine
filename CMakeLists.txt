@@ -186,7 +186,9 @@ if(TIDE_PLATFORM)
             add_test(NAME tide_server_shards_journal COMMAND "${TIDE_NODE}" "${PROJECT_SOURCE_DIR}/platform/tests/server_journal.mjs"
                 "$<TARGET_FILE:tide_server_shards>")
             set_tests_properties(tide_server_shards tide_server_shards_room PROPERTIES TIMEOUT 30)
-            set_tests_properties(tide_server_shards_journal PROPERTIES TIMEOUT 80) # Three processes, 25 seconds each
+            # Do not overlap disk-synchronous recovery with installers and
+            # other server/process tests on shared CI runners.
+            set_tests_properties(tide_server_shards_journal PROPERTIES TIMEOUT 80 RUN_SERIAL TRUE) # Three processes, 25 seconds each
         endif()
         tide_add_game(tide_server_entry SERVER NAME game SOURCES
             "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/server_menu.tide"

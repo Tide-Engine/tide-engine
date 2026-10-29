@@ -1,5 +1,42 @@
 # Shards: one world across servers
 
+## Isolate the durable journal integration test (2026-10-29)
+
+Build `40787272828` failed the MinGW journal test inside its second process's
+own 25-second budget. Recovery and its immediate checkpoint had completed
+after 3.19 seconds; the timeout found a checkpoint and three new shard logs.
+Unlike the earlier shared-deadline failure below, this process had its full
+budget. The log has no intermediate file/update history, so it does not show
+whether the remaining time was spent progressing slowly or stalled.
+
+CTest ran the journal process beside `tide_cli_installers` (62.62 seconds),
+`tide_platform_rooms` (68.26 seconds), and successive Earth/Newton/shader tests
+with four-way parallelism. Its 200 service updates use real time and durable
+disk commits, rather than a fixed wall-clock duration. `RUN_SERIAL` now keeps
+this disk-synchronous integration test apart from other CTests; ordinary
+machine activity remains uncontrolled. Runtime flush ordering, the killed
+first process, both 200-update recoveries, all assertions, the 25-second
+per-process limits and the 80-second CTest limit remain unchanged.
+
+`server_journal.mjs` also records its initial journal file sizes and changed
+sizes at most once a second in the existing per-process timeout log. This is
+bounded diagnostic sampling, not a progress-based deadline extension or a
+success condition. A repeat failure can distinguish unchanged files from
+ongoing writes/checkpoint replacement. The interval ends with its child;
+failure still kills/reaps that child before removing the temporary directory.
+
+Validation: a warning-free native optimized server build and the actual
+`tide_server_shards_journal` CTest pass (3.39 seconds), with Clang 23.1.2 and
+Node 24.22.1. Configured native CTest JSON confirms `RUN_SERIAL: true` and
+`TIMEOUT: 80`. A scratch process double keeps appending journal bytes but
+never exits its recovery: the harness still fails at that process's unchanged
+25-second deadline (27.6 seconds overall), reports 24 changed-size snapshots,
+and leaves neither child running nor its journal directory. Node syntax and
+scoped whitespace checks pass. This checkout has no configured MinGW tree,
+so the next CI run must confirm that platform and whether isolation removes
+the hosted failure. No full suite or manual CI dispatch was run; no runtime
+or persistence behavior changed.
+
 ## Journal integration-test deadlines (2026-10-26)
 
 Build `40338328972` at `195c8f1d` failed only
