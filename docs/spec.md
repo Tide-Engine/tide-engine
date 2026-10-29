@@ -4439,6 +4439,7 @@ A C library whose state is big and lives between calls (a physics world) has, un
 
 - Games share code as packages: Tide code (and C) from a git repository, at a commit, or from a folder on this machine.
 - A game lists its packages in a file of its own, `tide.packages`. A package from git is always pinned to a commit there, so every build of a game builds the same code; there's no lock file, and nothing is generated.
+- A game can pin its Tide release with `tide = <exact-version>` in `tide.packages`; `tide pin [version]` writes this line. Decided (2026-10-29): CLI project build and package commands select that version from the shared side-by-side cache and ask before downloading a missing release, leaving the main installation unchanged. Unity retains its package-selected toolchain; engine source builds ending in `-dev` retain their development compiler. Only a game pins its Tide; packages declare a minimum version.
 - A package declares nothing global: everything it declares is in its namespace.
 - `tide update` moves packages to the newest commit of what they follow: a branch, or the newest tag of a version.
 - Packages come from git hosts. Code adapts to the version of tide it builds with (see Conditional compilation).

@@ -33,6 +33,10 @@ tide <command> [folder] [options]
 | `tide deploy [folder]` | Creates or reuses a project and saves its link in `tide.deploy.json`; builds and uploads locally. `--server-only` omits the client, `--bundle-only` only builds |
 | `tide cc <options>` | clang, built into tide, for C you build yourself (see [Calling C](../c/functions.md#where-the-c-goes)) |
 
+Project build and package commands automatically use the version pinned with
+`tide pin`, asking before downloading a missing release into the shared
+version cache. See [Pinning Tide itself](../packages/using-and-writing.md#pinning-tide-itself).
+
 Managed deployment, project selection, prepaid credit and current availability
 are described in [Managed hosting](../multiplayer/hosting.md).
 

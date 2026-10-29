@@ -81,10 +81,11 @@ static const command_help commands[] = {
      "Example: tide eject rooms", EJECT},
     {"pin", "pin [version]", "Build the game with one version of tide",
      "Writes `tide = <version>` in the current game's tide.packages: this tide's\n"
-     "version, or the one given. A tide of another version then refuses to\n"
-     "build the game, saying how to install the pinned one, so everyone working\n"
-     "on it builds the same. In a Unity project, Tide's package uses the tide\n"
-     "of its own commit, and a pin it doesn't match is an error.\n\n"
+     "version, or the one given. Project commands use that version from the\n"
+     "shared TIDE_VERSIONS cache, asking to download it when missing. Other\n"
+     "versions and the main installation stay installed. In a Unity project,\n"
+     "Tide's package uses the tide of its own commit, and a pin it doesn't\n"
+     "match is an error.\n\n"
      "Examples: tide pin\n"
      "          tide pin 0.5.0-nightly.12", PIN},
     {"fetch", "fetch [folder]", "Download missing git packages",
