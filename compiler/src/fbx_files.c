@@ -573,9 +573,13 @@ static bool fbx_channel(fbx_builder *b, fbx_buffer *samplers, fbx_buffer *channe
         float time;
         ok = fbx_key_time(b, source_time - begin_time, flags, &time);
         if (!ok || time < 0.0f) continue;
-        if (!(time > previous)) { ok = fbx_fail(b, "move the animation keys farther apart, or shorten its time range", "has FBX animation keys too close together for float timestamps"); break; }
-        previous = time;
-        ok = fbx_number(&times, time);
+        // Keys closer than a float can tell apart are one key, the later's
+        // value (Mixamo's last key is 2e-8 s before its take's end, where
+        // the boundary sample is): its time stays, its value is replaced.
+        const bool merged = !(time > previous);
+        if (merged) values.size -= (path == 1u ? 4u : 3u) * sizeof(float);
+        else previous = time;
+        if (!merged) ok = fbx_number(&times, time);
         if (path == 1u) {
             ufbx_baked_quat_list list = {.data=(ufbx_baked_quat *)quat, .count=count};
             ufbx_quat q = boundary ? ufbx_evaluate_baked_quat(list, source_time) : quat[i-1u].value;
@@ -589,7 +593,7 @@ static bool fbx_channel(fbx_builder *b, fbx_buffer *samplers, fbx_buffer *channe
             ufbx_vec3 v = boundary ? ufbx_evaluate_baked_vec3(list, source_time) : vec[i-1u].value;
             ok = ok && fbx_number(&values, v.x) && fbx_number(&values, v.y) && fbx_number(&values, v.z);
         }
-        keys++;
+        if (!merged) keys++;
     }
     if (ok && keys) {
         size_t begin = b->bin.size;
