@@ -12,7 +12,9 @@ player mode before building. The help catalog, CLI reference and agent guides
 describe the protocol and provisional names. No CLI telemetry field changed.
 Run-exit dispatch/path forwarding, hidden/unsupported/missing-value checks,
 and focused help tests cover the CLI integration. Native CLI builds and docs
-production build pass; final compatibility results are in standard-host.md.
+production build pass. After merging the Windows sanitizer work, the affected
+CLI builds and six selected platform/CLI ASan CTests pass; final compatibility
+results are in standard-host.md.
 
 ## Isolated editor tests under Windows ASan (2026-10-29)
 
