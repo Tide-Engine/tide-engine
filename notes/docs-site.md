@@ -15,9 +15,9 @@ repository URL plus independent reports, each with date/hardware, exact Tide
 and benchmark revisions, raw-result path, iteration counts, implementations,
 workloads, medians/ranges and measurement notes. Benchmark source, runner and
 raw evidence belong to the independent public `Tide-Engine/tide-benchmarks`
-repository. Reports link source/result revisions; different runs are not
-pooled. The default report compares Tide, Bevy 0.20.0, Flecs 4.1.6 and EnTT
-4.0.0 in six serial workloads, using 96 accepted processes (four cyclic
+repository. Reports preserve source/result revisions internally; different
+runs are not pooled. The default report compares Tide, Bevy 0.20.0, Flecs
+4.1.6 and EnTT 4.0.0 in six serial workloads, using 96 accepted processes (four cyclic
 rounds, 200 warmup and 400 measured ticks each). The raw evidence retains one
 excluded contended attempt, 75 correctness cases across four native ECS
 implementations/C reference/Tide WASI, and 26 passing harness tests. The
@@ -29,11 +29,19 @@ the fresh report's manifest records its pre-measurement source commit too.
 `src/lib/benchmarks.ts` validates finite positive timings, ordered ranges,
 complete engine coverage and report metadata at build time. The content
 pipeline replaces the interactive marker with tables in Markdown/LLM/skill
-exports, so exported numbers and source links match the website and changes
-to the dataset participate in the documentation fingerprint. No chart or
+exports, so exported numbers and Tide revision links match the website and
+changes to the dataset participate in the documentation fingerprint. No chart or
 other package dependency was added. Native selects, text values, table
 headers and a focusable horizontal scroll region support keyboard use and
 small screens; the initial report's entire table is server-rendered.
+
+The owner requested that the benchmark repository remain public on GitHub
+without being promoted in the docs. The page and Markdown/LLM exports omit
+benchmark repository, source and raw-measurement links; the measurements,
+methodology and Tide engine revision link remain. The dataset keeps its
+repository URL, pinned benchmark revisions and raw-result paths as internal
+provenance. The homepage describes the comparison without promising source
+links on the benchmark page.
 
 Validation: Svelte check has zero errors/warnings. After merging current
 `dev`, the final docs production build and development/isolated-production

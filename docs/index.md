@@ -36,7 +36,7 @@ features:
     details: One tide command, with clang built in. Write a .tide file and run tide run. Editor support for VS Code and JetBrains IDEs.
 ---
 
-Explore the [ECS benchmarks](./benchmarks) for measured workloads, implementation details and source you can run yourself.
+Explore the [ECS benchmarks](./benchmarks) for measured workloads, implementation details and comparison methodology.
 
 ## A whole game
 

@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { benchmarks, milliseconds, resultsUrl, sourceUrl } from '#lib/benchmarks.ts';
+    import { benchmarks, milliseconds } from '#lib/benchmarks.ts';
 
     let reportId = $state(benchmarks.reports[0].id);
     let caseId = $state(benchmarks.reports[0].cases[0].id);
@@ -51,8 +51,6 @@
 
     <p class="run-details">{report.rounds} processes per implementation and workload · {report.warmup} warmup ticks · {report.ticks} measured ticks per process</p>
     <p class="source-links">
-        <a href={sourceUrl(report)}>Benchmark source</a>
-        <a href={resultsUrl(report)}>Raw measurements</a>
         <a href={`https://github.com/Tide-Engine/tide-engine/commit/${report.tideRevision}`}>Tide {report.tideRevision.slice(0, 9)}</a>
     </p>
 

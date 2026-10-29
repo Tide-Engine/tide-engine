@@ -120,9 +120,9 @@ async function exportsOverHttp(base, compareSource) {
 
     const benchmarkPage = all.get('/benchmarks');
     const benchmarkData = JSON.parse(await readFile(path.join(docs, 'src/lib/data/benchmarks.json'), 'utf8'));
+    assert.ok(!benchmarkPage.body.includes(benchmarkData.repository), 'benchmark export omits the benchmark repository URL');
     for (const report of benchmarkData.reports) {
         assert.ok(benchmarkPage.body.includes(report.tideRevision), 'benchmark export preserves the engine revision');
-        assert.ok(benchmarkPage.body.includes(report.resultPath), 'benchmark export links raw evidence');
         for (const item of report.cases) {
             for (const result of item.results) {
                 for (const value of [result.medianMs, result.minMs, result.maxMs]) {

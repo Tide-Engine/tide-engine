@@ -1,10 +1,10 @@
 ---
-description: "Reproducible ECS benchmarks for Tide and other ECS implementations, with source code, raw measurements and the limits of each comparison."
+description: "Measured ECS performance for Tide and other ECS implementations, with workload details, methodology, variation and the limits of each comparison."
 ---
 
 # Benchmarks
 
-How much work can Tide's ECS do in a tick? These small CPU workloads give a baseline you can inspect and reproduce. The [benchmark repository](https://github.com/Tide-Engine/tide-benchmarks) contains the implementations, pinned dependencies, runner and raw measurements.
+How much work can Tide's ECS do in a tick? These small CPU workloads give a baseline for comparing ECS performance.
 
 This measures **ECS updates**, including deferred structural changes where used. It excludes setup, world hashing, snapshots, networking and rendering. It does not measure the cost of a complete Tide multiplayer tick or predict a game's frame rate.
 
@@ -34,7 +34,3 @@ Tide generates specialized C storage and systems for each game. Bevy uses its Ta
 Each report names its exact implementations, versions and thread count. Compiler settings preserve the update's floating-point operation order: no fast math or fused multiply-add contraction. Tide keeps its determinism requirements; the harness does not disable them to improve a result.
 
 These are selected synthetic workloads on one machine, maintained by the Tide project. Cache layout, entity count, query shape, structural changes, scheduling and hardware can change the outcome. Use them as a starting point for a workload that resembles your game.
-
-## Run it yourself
-
-Follow the [benchmark repository's setup and run instructions](https://github.com/Tide-Engine/tide-benchmarks#readme). Each report links the source revision used and its raw measurements. Run the implementations on the same otherwise idle machine, keep the pinned versions and flags, and report ranges as well as medians. Corrections and equivalent implementations are welcome in that repository.

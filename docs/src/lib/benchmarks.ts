@@ -68,14 +68,6 @@ export function milliseconds(value: number): string {
     return value.toFixed(5);
 }
 
-export function sourceUrl(report: BenchmarkReport): string {
-    return `${benchmarks.repository}/tree/${report.benchmarkRevision}`;
-}
-
-export function resultsUrl(report: BenchmarkReport): string {
-    return `${sourceUrl(report)}/${report.resultPath}`;
-}
-
 /** Plain-text exports carry the same measurements as the interactive page. */
 export function benchmarkMarkdown(): string {
     return benchmarks.reports.map((report) => {
@@ -91,7 +83,7 @@ export function benchmarkMarkdown(): string {
             `**${report.title}**`,
             `${report.date} · ${report.cpu} · ${report.os}.`,
             `${report.rounds} processes per implementation and workload; ${report.warmup} warmup ticks and ${report.ticks} measured ticks per process.`,
-            `Tide revision: [${report.tideRevision}](https://github.com/Tide-Engine/tide-engine/commit/${report.tideRevision}). [Benchmark source](${sourceUrl(report)}). [Raw measurements](${resultsUrl(report)}).`,
+            `Tide revision: [${report.tideRevision}](https://github.com/Tide-Engine/tide-engine/commit/${report.tideRevision}).`,
             report.engines.map((engine) => `- ${engine.label} ${engine.version}: ${engine.method}`).join('\n'),
             table,
             report.notes.join('\n\n'),
