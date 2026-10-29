@@ -187,6 +187,64 @@ try {
         const screenshot = await command('Page.captureScreenshot');
         writeFileSync(join(shots, `${name}.png`), Buffer.from(screenshot.data, 'base64'));
     };
+    async function desktopControls() {
+        await until('getComputedStyle(example.querySelector("iframe")).opacity === "1"', 'desktop: finishes appearing');
+        const box = await evaluate('({ rect: example.querySelector("iframe").getBoundingClientRect().toJSON(), x: scrollX, y: scrollY })');
+        const rect = box.rect;
+        const pageLeft = rect.left + box.x, pageTop = rect.top + box.y;
+        const left = (rect.width - 340) * 0.5;
+        await evaluate(`(() => {
+            const frame = example.querySelector('iframe').contentWindow;
+            frame.__desktopTime = frame.performance.now();
+            const count = (now) => { frame.__desktopTime = now; frame.requestAnimationFrame(count); };
+            frame.requestAnimationFrame(count);
+        })()`);
+        const frames = async (count = 60) => {
+            const previous = await evaluate('({ time: example.querySelector("iframe").contentWindow.__desktopTime, draws: example.querySelector("iframe").contentWindow.__draws })');
+            await until(`example.querySelector("iframe").contentWindow.__desktopTime > ${previous.time + count * 1000 / 60} && example.querySelector("iframe").contentWindow.__draws > ${previous.draws + 200}`, 'desktop: settles');
+        };
+        const move = async (x, y) => {
+            Object.assign(rect, await evaluate('example.querySelector("iframe").getBoundingClientRect().toJSON()'));
+            return command('Input.dispatchMouseEvent', { type: 'mouseMoved', x: rect.left + x, y: rect.top + y });
+        };
+        const click = async (x, y) => {
+            await move(x, y);
+            await frames(6);
+            await command('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1, x: rect.left + x, y: rect.top + y });
+            await frames(6);
+            await command('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', buttons: 0, clickCount: 1, x: rect.left + x, y: rect.top + y });
+            await frames(6);
+        };
+        // Exclude the independently changing host FPS counter; include the
+        // entire note and dock, so a failed restore or lost target is visible.
+        const capture = async (name) => {
+            await move(2, 28);
+            await frames();
+            const data = Buffer.from((await command('Page.captureScreenshot', { format: 'png', clip: {
+                x: pageLeft + 8, y: pageTop + 30,
+                width: rect.width - 16, height: rect.height - 78, scale: 1,
+            } })).data, 'base64');
+            if (shots) writeFileSync(join(shots, `gui-desktop-${name}.png`), data);
+            return createHash('sha256').update(data).digest('hex');
+        };
+        const initial = await capture('open');
+        await click(left + 145, 108);
+        await command('Input.insertText', { text: ' edited' });
+        await click(left + 40, 218); // Share through GUI.Target's pointer mapping
+        await click(left + 180, 60); // Remove field/button focus before comparison
+        const edited = await capture('edited');
+        assert.notEqual(edited, initial, 'desktop: real widgets change the target');
+        await click(left + 40, 60);
+        const minimized = await capture('minimized');
+        assert.notEqual(minimized, edited, 'desktop: minimizes into the dock');
+        await command('Input.insertText', { text: ' hidden' });
+        await click(rect.width * 0.5 + 32, rect.height - 76);
+        assert.equal(await capture('restored'), edited, 'desktop: thumbnail restores the same edited note');
+        await click(left + 40, 60);
+        await frames(2);
+        await click(rect.width * 0.5 - 42, rect.height - 76);
+        assert.equal(await capture('reversed'), edited, 'desktop: Notes reverses an in-flight minimize');
+    }
     async function cameraControls(id) {
         await until('getComputedStyle(example.querySelector("iframe")).opacity === "1"', `${id}: canvas finishes appearing`);
         const box = await evaluate('({ rect: example.querySelector("iframe").getBoundingClientRect().toJSON(), x: scrollX, y: scrollY })');
@@ -332,6 +390,7 @@ try {
             await until(`example.querySelectorAll("iframe").length === ${players}`, `${id}: every player's frame`);
             for (const src of await evaluate('Array.from(example.querySelectorAll("iframe"), frame => frame.src)')) stats(src, `${id}: embedded frame`);
             await shoot(id);
+            if (id === 'gui-desktop') await desktopControls();
             if (id === 'render3d' || id === 'render3d-materials' || id === 'render3d-effects') await cameraControls(id);
             // Stopped, so that the page runs one game at a time here.
             await evaluate('example.querySelector("[data-example-stop]").click();');
