@@ -45,3 +45,10 @@ void tide_script_input(uint32_t frame);
 // (tide_platform_capture, tide_platform_capture_audio). TIDE_KEEP_RUNNING, or
 // the run's exit code: 0 at its `quit`, 1 when a file couldn't be written.
 int tide_script_drawn(uint32_t frame);
+
+// Persistent hidden play over stdin. The replay file owns relative capture
+// paths. Wait returns frames to advance, 0 to quit, or -1 on transport/I/O
+// failure. Only the first player reads stdin or writes the replay.
+bool tide_script_interactive_open(const char *replay);
+int tide_script_interactive_wait(uint32_t frame);
+bool tide_script_interactive_close(uint32_t frame);

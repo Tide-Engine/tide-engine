@@ -201,10 +201,11 @@ static void dropping(void)
 int main(int argc, char **argv)
 {
     tide_headless_desc desc = {.players = 3, .argc = argc, .argv = argv};
-    bool die = false, drop = false;
+    bool die = false, drop = false, control = false;
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "die") == 0) die = true;
         if (strcmp(argv[i], "drop") == 0) drop = true;
+        if (strcmp(argv[i], "control") == 0) control = true;
         if (strcmp(argv[i], "--player") == 0 && i + 2 < argc) {
             desc.player = (uint32_t)atoi(argv[i + 1]);
             desc.hub = (uint32_t)atoi(argv[i + 2]);
@@ -218,6 +219,23 @@ int main(int argc, char **argv)
     tide_platform_players_room(4, room, sizeof room);
     check(room[0] == '\0', "and which has no fourth");
     tide_platform_players_start();
+
+    if (control) {
+        for (uint32_t round = 0; round < 3u; round++) {
+            char line[128] = "", expected[128];
+            snprintf(expected, sizeof expected, "capture player pictures %u.png", (unsigned)round);
+            if (me == 1) snprintf(line, sizeof line, "%s", expected);
+            check(tide_platform_players_control(line, sizeof line), "the command is broadcast to every player");
+            check(strcmp(line, expected) == 0, "every player receives the complete command");
+            bool ok = round != 1u || me != 2u; // The second player's observation fails once.
+            check(tide_platform_players_control_done(&ok), "every player's completion is acknowledged");
+            check(ok == (round != 1u || me == 3u), "a child's error reaches the controller and the next command recovers");
+            check(tide_platform_players_step(round) == TIDE_KEEP_RUNNING, "control and frame messages stay separate");
+        }
+        const int code = tide_platform_players_finish(failures ? 1 : 0);
+        if (me == 1) printf("%s: commands and completion/errors cross three processes without a GPU\n", code ? "FAIL" : "ok");
+        return code;
+    }
 
     int code = TIDE_KEEP_RUNNING;
     for (frame = 1; frame <= 7 && code == TIDE_KEEP_RUNNING; frame++) {

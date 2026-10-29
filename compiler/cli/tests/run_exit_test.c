@@ -144,6 +144,7 @@ int main(void)
         {{"tide", "run", "--frames", "1"}, 4, "UN"},
         {{"tide", "run", "--capture", "frame.png"}, 4, "UN"},
         {{"tide", "run", "--script", "play.txt"}, 4, "UN"},
+        {{"tide", "run", "--interactive", "play.txt"}, 4, "UN"},
         {{"tide", "run", "--capture-audio", "run.wav"}, 4, "UN"},
         {{"tide", "run", "--record", "run.gif"}, 4, "UN"},
         {{"tide", "run", "--microphone", "voice.wav"}, 4, "UN"},
@@ -169,7 +170,7 @@ int main(void)
     // as it was typed, but for the files, which are where the command says
     // from here, as the game runs in its own folder.
     char *all[] = {"tide", "run", "--host", "7777", "--join", "K7QF2M", "--connect", "localhost", "--capture", "frame.png",
-                   "--capture-audio", "run.wav", "--record", "run.gif", "--script", "play.txt", "--microphone", "voice.wav", "--frames", "1",
+                   "--capture-audio", "run.wav", "--record", "run.gif", "--script", "play.txt", "--interactive", "live play.txt", "--microphone", "voice.wav", "--frames", "1",
                    "--scale", "2", "--players", "2", "--seed", "7", "--data-dir", "test saves", "--size", "640", "480",
                    "--latency", "80", "--jitter", "10", "--loss", "5", "--latency", "2:120", "game"};
     const int all_count = (int)(sizeof all / sizeof all[0]);
@@ -186,7 +187,7 @@ int main(void)
         const char *typed = all[i + 2];
         const char *before = i > 0 ? all[i + 1] : "";
         const bool file = strcmp(before, "--capture") == 0 || strcmp(before, "--capture-audio") == 0 || strcmp(before, "--record") == 0 ||
-                          strcmp(before, "--script") == 0 || strcmp(before, "--microphone") == 0 || strcmp(before, "--data-dir") == 0;
+                          strcmp(before, "--script") == 0 || strcmp(before, "--interactive") == 0 || strcmp(before, "--microphone") == 0 || strcmp(before, "--data-dir") == 0;
         const char *expected = file ? path_absolute(typed) : typed;
         if (strcmp(passed[i], expected) != 0) {
             fprintf(stderr, "every option once: argument %d should be '%s', not '%s'\n", i, expected, passed[i]);

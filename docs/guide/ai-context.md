@@ -126,7 +126,7 @@ POSIX:
 TIDE_HIDDEN=1 tide run --frames 120 --capture smoke.png --stats
 ```
 
-This finishes after 120 frames and captures the final picture. Add `--size 640 360` to test a particular logical window size; use `Screen.width` and `Screen.height` for responsive layout. Open the PNG and inspect it; a successful build alone does not establish that the game draws or behaves correctly. If inspection is inconclusive, take a later capture or check simulation values with `Debug.Log`/`Debug.Assert` before concluding the game is blank or broken. For input, use `tide run --script smoke.txt --frames 180 --capture smoke.png --stats`, with a script such as:
+This finishes after 120 frames and captures the final picture. Add `--size 640 360` to test a particular logical window size; use `Screen.width` and `Screen.height` for responsive layout. For dynamic play in the same session, use `tide run --interactive play.txt`: send `capture menu.png`, inspect it, queue future-frame input lines, then send `step 30` and wait for `tide: interactive ready <frame>` ([protocol](../tools/cli.md#interactive-play)). Open the PNG and inspect it; a successful build alone does not establish that the game draws or behaves correctly. If inspection is inconclusive, take a later capture or check simulation values with `Debug.Log`/`Debug.Assert` before concluding the game is blank or broken. For input, use `tide run --script smoke.txt --frames 180 --capture smoke.png --stats`, with a script such as:
 
 ```text
 1 key d down

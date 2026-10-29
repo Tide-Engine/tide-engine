@@ -48,6 +48,11 @@ int tide_platform_players_step(uint32_t frame);
 // for the others, and its exit code is the run's, the first that isn't 0.
 int tide_platform_players_finish(int code);
 
+// Interactive runs: broadcast the first player's command, then acknowledge
+// its completion on every player before reporting success to the controller.
+bool tide_platform_players_control(char *line, size_t capacity);
+bool tide_platform_players_control_done(bool *ok);
+
 // A script's `leave`, `drop` and `rejoin` lines for this player, at the
 // frame they're polled in (script.c): leave and rejoin wait for the host
 // (tide_platform_players_action); a drop silences this player's ends at once,

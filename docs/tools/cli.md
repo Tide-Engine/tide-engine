@@ -142,7 +142,7 @@ still performs only front-end validation, even with a preview flag.
 | `--stats` | Shows the [stats](#stats) in the window's corner, as the game's `stats` setting does. `run` starts them open |
 | `--debug-views` | Turns the [debug views](debug-views.md) on, as the game's `debugViews` setting does: F7 shows the profiler, which says where a frame's time and a tick's go |
 | `--size <width> <height>` | `run` only: the window's size in pixels, 960 by 540 without it (not on the web or Android) |
-| `--capture`, `--record`, `--capture-audio`, `--microphone`, `--frames`, `--script`, `--scale`, `--players` | `run` only: plays the game [without a window](#without-a-window), to see what it draws and hear what it plays, with [several players](#several-players) if you like |
+| `--capture`, `--record`, `--capture-audio`, `--microphone`, `--frames`, `--script`, `--interactive`, `--scale`, `--players` | `run` only: plays the game [without a window](#without-a-window), to see what it draws and hear what it plays, with [several players](#several-players) if you like |
 | `--latency <ms>`, `--jitter <ms>`, `--loss <percent>` | `run` only: plays a match this machine joins as if it were further from its server (see [A slow network](#a-slow-network)) |
 | `--seed <n>` | `run` only: the seed of the matches the game starts, [`Random.seed`](../language/math.md#the-match-s-seed), from 0 to 2147483647. Without it, every match gets another one |
 | `--data-dir <folder>` | `run` only, native desktop: use this save directory, relative to where the command was invoked. Useful for disposable test saves |
@@ -655,6 +655,7 @@ tide run --frames 300 --capture menu.png --stats
 | `--microphone <file>` | A WAV or Ogg Vorbis file the microphone plays in the run, looped, where a window's run would hear the capture device (`Clip.Microphone`). Without it a run's microphone is silent |
 | `--frames <n>` | Ends the run after `n` frames |
 | `--script <file>` | Input by frame from a file, which also says when to capture and when to quit (see [Scripts](#scripts)) |
+| `--interactive <replay.txt>` | Keeps the game alive for [dynamic input and captures](#interactive-play), saving executed actions as a replay script |
 | `--players <n>` | Plays the game `n` times at once, as the `n` players of one match (see [Several players](#several-players)) |
 | `--scale <s>` | Draws as on a display scaled this much, like `1.5` or `2` (1 without it). Text and edges are fitted to the display's pixels, so they look different there, and [render targets](../game/render-targets.md) at the display's scale have that many more pixels |
 | `--size <width> <height>` | The window's size in pixels, 960 by 540 without it |
@@ -677,7 +678,7 @@ Nothing of the run depends on the machine it's on, or on what's happening there:
 
 So a run repeats exactly: the match goes the same way on every machine, and the same machine writes the same pictures, byte for byte. Between machines, pixels a GPU blends (the edges of shapes, a shader's gradients) can differ a little. The stats' list and the profiler are the exception, while they're open: they show what this machine's clock measured, which no two runs agree on. The stats' one line doesn't. What the game reads from disk, like its saves, is still this machine's. Made-up time doesn't wait for anyone, so a run like this isn't for a match with another machine, or with another run: neither would wait for the other. A match with [several players](#several-players) is one run, which plays them all.
 
-Something has to end a run nobody can close: `--frames`, or the script's `quit`. The run's exit code says how it went:
+Something has to end a run nobody can close: `--frames`, the script's `quit`, or an interactive controller's `quit`/closed input. The run's exit code says how it went:
 
 | Exit code | What happened |
 |---|---|
@@ -725,13 +726,86 @@ This is new, and its details may still change: the option's name, the rooms' cod
 
 Set the `TIDE_HIDDEN` environment variable where nobody is there to look at a window, or to close one: on a build server, or in the shell of an agent that works on your machine while you do. Any value but nothing or `0` counts. No Tide game shows a window there, however it's started:
 
-- A run with no window goes as ever: `--frames`, `--capture` and `--script`.
+- A run with no window goes as ever: `--frames`, `--capture`, `--script` and `--interactive`.
 - Any other run is refused, with exit code 2, before anything is built or opened. Only closing its window would end it, and nobody could. The message says what to give the run instead.
 - `tide run --web --stats` serves the page and opens no browser.
 - Nobody listens there either: a program that opens its window hidden, as a test does, opens no audio device and no microphone.
 - A game that stops says why on stderr and shows no dialog. On Windows, a debug build that stops would otherwise show one and wait for a click.
 
 A game `tide build` made follows it too, on its own. Leave the variable out of your own terminal and your editor, where you want the window.
+
+### Interactive play
+
+An agent can inspect a picture, choose its next actions and continue the same
+game session. Start a desktop hidden run with a replay file:
+
+```sh
+tide run --interactive play.txt --size 1280 720
+```
+
+Keep the process's standard input open and read its standard output. The game
+draws frame 1, prints `tide: interactive ready 1`, then waits. Waiting advances
+neither frames nor the run's made-up time. Send one command per line:
+
+```text
+capture menu.png
+2 mouse 640 353
+3 button left
+step 30
+capture arena.png
+32 key d down
+44 key d up
+step 13
+capture moved.png
+quit
+```
+
+Read `menu.png` before choosing the click, and `arena.png` before choosing the
+movement. The steps finish at frames 31 and 44. A frame number is absolute,
+counted from 1, and must be later than the current frame. Queue lines use the
+[script grammar](#scripts), including `player <n>`, keyboard, mouse, locked
+movement, scroll, text, touch, gamepads, captures, GIF recording and
+leave/drop/rejoin. Lines can arrive out of frame order; actions at the same
+frame keep their arrival order. Held input stays held until released.
+
+| Command | Result |
+|---|---|
+| `<frame> <event>` | Queues an action without advancing; at most 65,536 pending actions |
+| `step <n>` | Advances every player together by exactly `n` frames, then waits; `n` is 1 to 1,000,000 and the resulting frame is at most 1,000,000,000 |
+| `capture <file.png>` | Captures the current frame without advancing; `player 2 capture hers.png` selects one player |
+| `status` | Reports the current frame without advancing |
+| `clear` | Removes all pending actions; already held keys/buttons stay held |
+| `quit`, or closing standard input | Ends the session at its current frame |
+
+After a step, wait for `tide: interactive ready <frame>` before inspecting
+results or deciding the next batch. Other accepted commands print
+`tide: interactive ok <frame>` after every player has completed them. Invalid
+commands print `tide: interactive error <reason>` and leave the session open
+for correction. These lines are flushed immediately; ordinary capture output
+and game logs can appear alongside them. Blank lines and comments beginning
+with `#` are accepted. A command is at most 4,094 UTF-8 bytes, excluding its
+newline; terminate each command with a newline.
+
+Capture and recording paths are relative to the replay file's directory,
+including when `tide run` was invoked elsewhere. Several players use the same
+numbered capture names as scripted runs. Only the first process reads commands;
+all players wait together, so an agent can take time to inspect each picture.
+External peers and services keep their own clocks; use `--players` for a match
+whose participants all wait together.
+
+`play.txt` is written incrementally in executed frame order. A clean exit adds
+its final `quit`; future actions discarded with `clear` or left unexecuted are
+absent. Replay with `tide run --script play.txt`, using the same size, scale,
+seed, player count and other runtime settings. Replay writes the captures and
+recordings again. As with ordinary scripts, persistent saves or external
+services can change the outcome; use an explicit `--data-dir` for test saves.
+
+`--interactive` runs once without hot reload, on desktop only, and cannot be
+combined with `--script`. Optional `--frames` caps the whole session and can
+end a step early. `--capture` writes its final frame. Use `--capture-audio` to
+retain the run's audio from its start; dynamically queued `capture-audio`
+lines are refused because past audio may already have been discarded.
+These command names and protocol details are provisional.
 
 ### Scripts
 

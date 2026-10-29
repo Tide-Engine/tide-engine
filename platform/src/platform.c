@@ -238,12 +238,17 @@ void tide_platform_open_headless(const tide_headless_desc *desc)
     }
     // Which player of the run this is, if it's one of several: its script's lines and its files are its own
     tide_platform_players_configure(&headless_run);
+    if (headless_run.interactive && headless_run.script) {
+        fprintf(stderr, "tide: --interactive takes new actions over stdin; omit --script (its output is a replay script)\n");
+        exit(2);
+    }
+    if (headless_run.interactive && !tide_script_interactive_open(headless_run.interactive)) exit(2);
     if (headless_run.capture) headless_run.capture = tide_platform_players_file(headless_run.capture);
     if (headless_run.capture_audio) headless_run.capture_audio = tide_platform_players_file(headless_run.capture_audio);
     if (headless_run.record) headless_run.record = tide_platform_players_file(headless_run.record);
     // The script first: a line that's wrong needs no window to say so
     if (headless_run.script && !tide_script_load(headless_run.script)) exit(2);
-    if (!headless_run.frames && !tide_script_quits()) {
+    if (!headless_run.frames && !tide_script_quits() && !headless_run.interactive) {
         fprintf(stderr, "tide: nothing ends this run, and it has no window to close: give it --frames <n>, or its script a "
                         "`quit` line\n");
         exit(2);
@@ -406,6 +411,7 @@ static void write_used_keys(void);
 
 _Noreturn static void finish(int code)
 {
+    if (!tide_script_interactive_close(headless_frame) && code == 0) code = 1;
     // A recording the run ended in the middle of is written out
     const bool run_written = record_end(&run_recording), script_written = tide_platform_record_stop();
     if ((!run_written || !script_written) && code == 0) code = 1;
@@ -480,8 +486,22 @@ void tide_platform_run(const tide_frame_fn frame, void *user)
     // Doesn't return: it unwinds main's stack back to the browser.
     tide_web_run(web_timer_frames);
 #else
+    uint32_t interactive_steps = 0;
     for (;;) {
         if (tide_window_should_close()) finish(0);
+        if (headless_run.interactive && headless_frame) {
+            if (!interactive_steps) {
+                const int steps = tide_script_interactive_wait(headless_frame);
+                if (steps <= 0) {
+                    int code = steps < 0 ? 1 : 0;
+                    if (headless_run.capture && !tide_platform_capture(headless_run.capture)) code = 1;
+                    if (headless_run.capture_audio && !capture_audio(headless_run.capture_audio, 0)) code = 1;
+                    finish(code);
+                }
+                interactive_steps = (uint32_t)steps;
+            }
+            interactive_steps--;
+        }
         const int code = step();
         if (code != TIDE_KEEP_RUNNING) finish(code);
     }

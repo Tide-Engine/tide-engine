@@ -1,5 +1,80 @@
 # The standard host: runs with no window, the stats, debug views
 
+## Dynamic agent play (2026-10-29)
+
+The owner requested agents that can inspect rendered games and queue input
+while the same game stays alive. `--interactive <replay.txt>` selects the
+existing desktop hidden host. It draws frame 1 normally, then blocks on stdin
+between explicit `step <n>` requests. No session/simulation clock advances
+while waiting. Keyboard/mouse/clicks/movement/scroll/text/touch/gamepad and
+player leave/drop/rejoin use script.c's existing parser and device path.
+No generated C, match behavior, embed ABI or runtime function changed.
+
+The provisional protocol is documented in docs/tools/cli.md, Interactive play:
+absolute future-frame script lines queue actions (stable order for equal
+frames, sorted insertion across frames); step advances 1..1,000,000 frames;
+capture reads the current frame, optionally for one player; status observes;
+clear frees pending actions without releasing held input; quit/EOF ends at
+the current frame. Flushed `tide: interactive ready/ok/error` lines report
+completion and permit recovery from malformed requests. Lines are limited to
+4,094 bytes, pending events to 65,536, frames to 1,000,000,000. --frames can
+cap the session, --capture/--capture-audio write final outputs; --script is
+mutually exclusive. Dynamic audio-capture lines are refused because audio
+not requested ahead of time can already have been discarded.
+
+Only player 1 reads stdin and writes the replay. players.c broadcasts control
+commands on the existing private coordinator connections, and acknowledges
+completion/error from each process, separate from frame datagram exchanges.
+Every process steps together, including while disconnected from its match.
+An observation targeting another player's capture is acknowledged after the
+file is written, and a failure there reaches the controller. External peers
+and services do not stop with this process; --players keeps a whole local
+match under frame control.
+
+Executed events alone are flushed to the replay in frame/arrival order,
+including events targeting other players. Current-frame observations append
+only after successful acknowledgement. Consumed events are freed; abandoned
+future plans do not enter the replay. Clean exits append the last frame's
+quit. Replay uses the normal --script path and requires matching runtime
+settings and starting saves/external state. Relative captures/recordings are
+beside the replay file, matching ordinary scripts.
+
+Validation: Windows Clang 23.1.2/Node 24.22.1 strict native builds and the web
+platform archive build pass. tide_platform_interactive passes visual
+observe/click/step decisions, held/released movement, text, no advancement
+between observations, out-of-order queues, clear, error recovery/long lines,
+two synchronized players, targeted input/capture, a second player's capture
+failure, leave, EOF, a --frames cap, and byte-identical normal script replays.
+All ten existing capture/refusal, multiplayer/refusal/network and CLI
+compatibility CTests pass. The final interactive, no-GPU three-process control
+acknowledgement/error test and CLI forwarding test also pass (3/3).
+Docs production build passes (the existing unstaged-example 404s remain).
+No browser was launched, deterministic hash changed, or extra CI dispatched.
+Integration: merged origin/dev's routine Windows sanitizer configuration,
+retaining both new CLI notes sections. The affected ASan targets build with
+Clang 23.1.2 and all six selected CTests pass: visual interactive play/replay,
+three-process control acknowledgements/errors, capture refusals, CLI dispatch,
+help and hidden/unsupported modes. No sanitizer finding or hash change.
+Other desktop OS execution and Android remain untested locally; the interactive
+command itself is desktop-only.
+
+## Agent-tool play verification (2026-10-29)
+
+After the owner clarified that the goal is agents seeing and controlling a
+running game, the existing interface was exercised through the agent's actual
+persistent terminal and image-viewing tools, rather than only a subprocess test.
+The hidden capture fixture reached ready 1; terminal input stepped to frame 3
+and captured it; image inspection located the Go button at (80,40). The agent
+then queued mouse/click and held/released D input, advanced to frame 12, and
+inspected another capture: the button's green witness appeared and the red
+mover moved. Quit ended the same process cleanly. Artifacts are
+build/debug/agent-before.png, agent-after.png and agent-live-proof.txt.
+No game input was prewritten to the replay file, and no file transport was
+needed. The proposed append-file detour was discarded before commit. The AI
+guide now explicitly describes keeping a terminal session handle, writing
+controls to it, and using an image tool between decisions.
+The docs production build and diff checks pass; no runtime code changed.
+
 ## A slow network to play on (2026-10-27)
 
 The owner's ask: tune how a match feels online (Parry's blocks, struck through a guard that looked up in time) without

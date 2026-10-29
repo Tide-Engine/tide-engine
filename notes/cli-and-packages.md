@@ -1,5 +1,21 @@
 # `tide`, packages and the package
 
+## Interactive hidden play (2026-10-29)
+
+`run --interactive <replay.txt>` forwards the replay's absolute path and
+selects the ordinary one-shot native build/run path, retaining inherited
+stdin/stdout. The hidden runner accepts live frame-queued script input,
+explicit steps and current-frame captures, with executed actions saved for
+--script replay; contracts and platform tests are in notes/standard-host.md,
+Dynamic agent play. Existing web/Android/server checks refuse this native
+player mode before building. The help catalog, CLI reference and agent guides
+describe the protocol and provisional names. No CLI telemetry field changed.
+Run-exit dispatch/path forwarding, hidden/unsupported/missing-value checks,
+and focused help tests cover the CLI integration. Native CLI builds and docs
+production build pass. After merging the Windows sanitizer work, the affected
+CLI builds and six selected platform/CLI ASan CTests pass; final compatibility
+results are in standard-host.md.
+
 ## Isolated editor tests under Windows ASan (2026-10-29)
 
 editors_test.cmake and jetbrains_test.cmake copy any clang ASan runtime DLLs

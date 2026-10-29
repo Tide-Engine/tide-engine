@@ -30,6 +30,11 @@ also fail. Every probe verifies all child processes and temporary journals
 are gone. Node syntax and whitespace checks pass. No runtime code changed;
 this native-only fixture needs no web rerun or full suite.
 
+After merging dev's independent interactive-host changes, the affected native
+targets rebuild cleanly and the journal CTest passes again in 3.56 seconds.
+The accompanying Render3D correction also passes its native ASan Vulkan/OpenGL
+and web WebGL/WebGPU checks against that merged platform code.
+
 ## Isolate the durable journal integration test (2026-10-29)
 
 Build `40787272828` failed the MinGW journal test inside its second process's

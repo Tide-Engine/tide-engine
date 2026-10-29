@@ -25,7 +25,8 @@ static const command_help commands[] = {
      "Native captures and scripted runs play once without a window, in fixed\n"
      "1/60-second frames, and return the game's exit code. Use --frames or a\n"
      "script's quit to end them. They are unavailable on web and Android.\n"
-     "With TIDE_HIDDEN set, native runs require a bounded mode; web opens no browser.\n\n"
+     "--interactive keeps a hidden session for stdin input, steps and captures.\n"
+     "With TIDE_HIDDEN set, native runs need hidden play; web opens no browser.\n\n"
      "Examples: tide run --web\n"
      "          tide run --frames 300 --capture menu.png", RUN},
     {"build", "build [folder] [options]", "Build a game for distribution",
@@ -269,6 +270,12 @@ static const argument_help arguments[] = {
      "Requires run --server. A checkpoint now and then, and every shard's ticks\n"
      "since, on the disk before anything a shard sends goes on: a server\n"
      "started again with the same folder goes on where the world was.", RUN},
+    {"--interactive", "--interactive <replay.txt>", "Play dynamically over stdin without a window",
+     "Draws frame 1, then waits for commands: future-frame script lines queue\n"
+     "input; step <n> advances; capture <file.png> observes; quit or EOF ends.\n"
+     "Reports tide: interactive ready <frame> after each step. Executed actions\n"
+     "are saved as a replay script; relative captures are beside that script.\n"
+     "Supports --players. Desktop only; cannot combine with --script.", RUN},
     {"--capture", "--capture <file.png>", "Save the last frame as a PNG",
      "Runs natively without a window; add --frames or a script's quit.\n"
      "The output path is relative to the directory where tide was invoked.", RUN | OPEN},

@@ -724,12 +724,19 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
     add_test(NAME tide_platform_players_net COMMAND tide_platform_players_net)
     add_test(NAME tide_platform_players_net_ended COMMAND tide_platform_players_net die)
     add_test(NAME tide_platform_players_net_drop COMMAND tide_platform_players_net drop)
+    add_test(NAME tide_platform_players_net_control COMMAND tide_platform_players_net control)
+    set_tests_properties(tide_platform_players_net_control PROPERTIES TIMEOUT 60)
     set_tests_properties(tide_platform_players_net tide_platform_players_net_ended tide_platform_players_net_drop PROPERTIES TIMEOUT 60)
 
     tide_add_game(tide_platform_players SOURCES tests/players.tide)
     tide_add_game(tide_platform_players_menu SOURCES tests/players_menu.tide)
     tide_add_game(tide_platform_players_leave SOURCES tests/players_leave.tide)
     if(TIDE_NODE)
+        add_test(NAME tide_platform_interactive
+            COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/interactive.mjs" $<TARGET_FILE:tide_platform_capture>
+                $<TARGET_FILE:tide_platform_players> "${CMAKE_CURRENT_BINARY_DIR}/tide_platform_interactive-run")
+        set_tests_properties(tide_platform_interactive PROPERTIES TIMEOUT 120)
+        tide_gpu_test(tide_platform_interactive)
         add_test(NAME tide_platform_players
             COMMAND "${TIDE_NODE}" "${CMAKE_CURRENT_SOURCE_DIR}/tests/players.mjs" $<TARGET_FILE:tide_platform_players>
                 $<TARGET_FILE:tide_platform_players_menu> $<TARGET_FILE:tide_platform_players_leave>

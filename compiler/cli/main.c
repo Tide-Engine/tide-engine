@@ -226,7 +226,7 @@ static int command_main(const int argc, char **argv)
     const char *game_args[128] = {NULL};
     int game_arg_count = 0;
     bool open_page = true; // run --web opens the page in a browser
-    bool headless = false; // --capture, --capture-audio, --record, --frames, --microphone or --script: the game runs with no window
+    bool headless = false; // --capture, --capture-audio, --record, --frames, --microphone, --script or --interactive: no window
     bool players = false;  // --players: several players, which only such a run has
     bool sized = false;
     bool data_directory = false;
@@ -283,12 +283,13 @@ static int command_main(const int argc, char **argv)
             game_args[game_arg_count++] = path_absolute(argv[++i]);
             data_directory = true;
         } else if (run && (strcmp(a, "--capture") == 0 || strcmp(a, "--capture-audio") == 0 || strcmp(a, "--record") == 0 ||
-                           strcmp(a, "--script") == 0 || strcmp(a, "--microphone") == 0)) {
+                           strcmp(a, "--script") == 0 || strcmp(a, "--microphone") == 0 || strcmp(a, "--interactive") == 0)) {
             if (left < 1) {
                 const char *like = "--capture menu.png";
                 if (a[2] == 'r') like = "--record run.gif";
                 else if (a[2] == 's') like = "--script play.txt";
                 else if (a[2] == 'm') like = "--microphone voice.wav";
+                else if (a[2] == 'i') like = "--interactive play.txt";
                 else if (a[9]) like = "--capture-audio run.wav"; // What's after --capture
                 fprintf(stderr, "tide: %s takes a file, like `%s`\n", a, like);
                 free(defines);
