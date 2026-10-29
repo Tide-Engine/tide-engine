@@ -366,6 +366,7 @@ static void gen_shard_moves(gen *g)
         }
         if (body.len) {
             sb_printf(o, "    for (uint32_t row = 0; row < w->%s.count; row++) {\n", arch_name(g, a));
+            sb_printf(o, "        if (tide_row_gone(%s)) continue; // A hole (tide_table_remove)\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
             sb_printf(o, "        const tide_entity e = *%s;\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
             sb_put(o, body.data);
             sb_put(o, "    }\n");
@@ -398,6 +399,7 @@ static void gen_shard_moves(gen *g)
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
         sb_printf(o, "    for (uint32_t row = 0; row < w->%s.count; row++) {\n", arch_name(g, a));
+        sb_printf(o, "        if (tide_row_gone(%s)) continue; // A hole (tide_table_remove)\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_printf(o, "        if (%s) continue; // A ghost: another shard's\n", presence_cell(g, "w", a, prog->shard_ghost->index, "row", false));
         sb_printf(o, "        const tide_entity e = *%s;\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_put(o, "        double p[3];\n"

@@ -162,6 +162,7 @@ static void gen_task_trace(gen *g)
                 const type t = {TY_COMPONENT, (decl *)d};
                 if (!arch_stores(g, a, c) || task_trace_live(&types, t) < 0) continue;
                 sb_printf(o, "    for (uint32_t row = 0; row < w->%s.count; row++) {\n", arch_name(g, a));
+                sb_printf(o, "        if (tide_row_gone(%s)) continue; // A hole (tide_table_remove)\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
                 if (comp_sparse(g, c)) sb_printf(o, "        if (!%s) continue;\n", presence_cell(g, "w", a, c, "row", false));
                 sb_printf(o, "        %s value; %s;\n", type_cname(d), comp_take(g, "w", a, c, "row", "value"));
                 gen_task_trace_root(g, &types, t, "&value", s);

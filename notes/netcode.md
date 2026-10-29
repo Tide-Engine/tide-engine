@@ -1,5 +1,13 @@
 # Netcode: sessions, prediction, commands
 
+## Protocol 20: rows entities left are holes (2026-10-29)
+
+`PROTOCOL` is 20 (`engine/src/session.c`, and the tests that write it by hand:
+`tests/test_commands.c`, `test_session_packets.c`, `test_session_view_time.c`,
+`packages/voice/test/voice_test.c`). Builds before and after place rows
+differently once entities leave (notes/ecs.md, Holes), so the same game would
+agree on its first ticks and then disagree.
+
 ## Projected repair delivery on unordered traffic (2026-10-26)
 
 The follow-up to the view-time fix below measures and fixes actual repair lag,

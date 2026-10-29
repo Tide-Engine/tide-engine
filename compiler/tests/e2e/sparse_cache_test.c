@@ -28,10 +28,25 @@ static void alone(void *self, void (*work)(void *context, uint32_t thread), void
 }
 static const tide_jobs eight = {.threads = 8, .run = alone};
 
+#define HOLE (-1) // A row an entity left (tide_table_remove)
+
+#define CHUNK_ROWS 2048 // Item's chunks (arch_shift)
+
+// The lowest hole an entity left in the last chunk, which a new row fills, or -1.
+static int lowest_hole(const model *m)
+{
+    for (int row = m->count ? (m->count - 1) / CHUNK_ROWS * CHUNK_ROWS : 0; row < m->count; row++) {
+        if (m->rows[row] == HOLE) return row;
+    }
+    return -1;
+}
+
 static void model_birth(model *m, const int ordinal, const bool last)
 {
     TIDE_REQUIRE(ordinal < MOST && m->count < MOST);
-    m->rows[m->count++] = ordinal;
+    const int hole = lowest_hole(m);
+    if (hole >= 0) m->rows[hole] = ordinal; // It fills the last chunk's lowest hole
+    else m->rows[m->count++] = ordinal;
     m->items[ordinal] = (expected_item){
         .value = {.ordinal = ordinal, .value = (float)ordinal * 0.03125f + 1.0f, .other = -0.5f, .small = 9,
                   .spare = {1.0f, -2.0f, 3.0f}},
@@ -55,6 +70,7 @@ static void model_tick(model *m, const int mode)
 {
     m->seen_count = 0;
     for (int row = 0; row < m->count; row++) {
+        if (m->rows[row] == HOLE) continue;
         expected_item *e = &m->items[m->rows[row]];
         if (!e->needed || e->blocked) continue;
         e->value.value = (e->value.value + 0.125f) * 0.5f;
@@ -64,6 +80,7 @@ static void model_tick(model *m, const int mode)
         m->seen[m->seen_count++] = e->value.ordinal;
     }
     for (int row = 0; row < m->count; row++) {
+        if (m->rows[row] == HOLE) continue;
         expected_item *e = &m->items[m->rows[row]];
         if (mode == 1 || mode == 6) {
             const int offset = mode == 6 ? 41 : 0;
@@ -74,13 +91,14 @@ static void model_tick(model *m, const int mode)
         if (mode == 3) e->needed = false;
     }
     if (mode == 4) {
-        // Commands were recorded in pre-removal row order. Each removal fills
-        // its hole with the current last row, including its sparse presence.
+        // Commands were recorded in pre-removal row order. Each removal leaves
+        // a hole, but the last row's, which goes with the holes before it.
         const int gone[] = {1, 1023, 2048};
         for (size_t g = 0; g < sizeof gone / sizeof *gone; g++) {
             for (int row = 0; row < m->count; row++) {
                 if (m->rows[row] != gone[g]) continue;
-                m->rows[row] = m->rows[--m->count];
+                m->rows[row] = HOLE;
+                while (m->count && m->rows[m->count - 1] == HOLE) m->count--;
                 break;
             }
         }
@@ -99,6 +117,8 @@ static void check_world(const tide_world *w, const model *m)
         TIDE_REQUIRE(seen && *seen == m->seen[i]);
     }
     for (int row = 0; row < m->count; row++) {
+        TIDE_REQUIRE(TIDE_ROW_GONE(w, arch0_Item, (uint32_t)row) == (m->rows[row] == HOLE));
+        if (m->rows[row] == HOLE) continue;
         const Item got = TIDE_AT(w, arch0_Item, Item, (uint32_t)row);
         const expected_item *e = &m->items[m->rows[row]];
         const tide_entity entity = TIDE_ENTITY_AT(w, arch0_Item, (uint32_t)row);

@@ -107,12 +107,14 @@ static uint64_t world_digest(const tide_world *w)
 {
     uint64_t sum = 0;
     for (uint32_t row = 0; row < w->arch0_Position_Velocity.count; row++) {
+        if (TIDE_ROW_GONE(w, arch0_Position_Velocity, row)) continue; // A hole an entity left
         const Position p = TIDE_AT(w, arch0_Position_Velocity, Position, row);
         const Velocity v = TIDE_AT(w, arch0_Position_Velocity, Velocity, row);
         const mover_item item = {{p.value.x, p.value.y, p.value.z}, {v.value.x, v.value.y, v.value.z}};
         sum += versus_item(&item, sizeof item);
     }
     for (uint32_t row = 0; row < w->arch1_Position_Turret.count; row++) {
+        if (TIDE_ROW_GONE(w, arch1_Position_Turret, row)) continue; // A hole an entity left
         const Position p = TIDE_AT(w, arch1_Position_Turret, Position, row);
         const Turret t = TIDE_AT(w, arch1_Position_Turret, Turret, row);
         const turret_item item = {{p.value.x, p.value.y, p.value.z}, t.cooldown, t.reload, t.slot, t.shots};

@@ -24,11 +24,11 @@
 // The derived sparse-query cache appends a zero pointer slot to raw headers.
 // Logical world hashes and portable whole/delta bytes keep their existing pins.
 #if UINTPTR_MAX > 0xFFFFFFFFu
-#define SAME_PACKED_SIZE 399u
-#define SAME_PACKED UINT64_C(0x53E7F64483E0C089)
+#define SAME_PACKED_SIZE 447u
+#define SAME_PACKED UINT64_C(0x04C64696C170B049)
 #else
-#define SAME_PACKED_SIZE 367u
-#define SAME_PACKED UINT64_C(0xAE6996790AA73F09)
+#define SAME_PACKED_SIZE 403u
+#define SAME_PACKED UINT64_C(0x7466E398E439BE99)
 #endif
 
 static uint64_t same_bytes_hash(const uint8_t *bytes, const uint32_t size)

@@ -52,7 +52,7 @@ TIDE_TEST(crossplatform_simulation)
     TIDE_CHECK(world.arch0_Body.count > 0 && world.arch0_Body.count < 200); // Some were retired
 
     const uint64_t h = hash_world();
-    const uint64_t expected = 0x8D7E5A010DE69811ull;
+    const uint64_t expected = 0x473341060AE593FDull;
     if (h != expected) printf("    simulation: hash is 0x%016" PRIX64 ", expected 0x%016" PRIX64 "\n", h, expected);
     TIDE_CHECK(h == expected);
 }

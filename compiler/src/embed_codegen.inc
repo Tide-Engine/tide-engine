@@ -257,6 +257,7 @@ static void gen_embed_rows(gen *g, const int c, const char *body)
     for (int a = 0; a < g->prog->archetypes.count; a++) {
         if (arch_local(g, a) || !arch_stores(g, a, c)) continue;
         sb_printf(o, "        for (uint32_t i = 0; i < w->%s.count; i++) {\n", arch_name(g, a));
+        sb_printf(o, "            if (tide_row_gone(%s)) continue; // A hole (tide_table_remove)\n", arch_cell(g, "w", a, 0, "tide_entity", "i", false));
         if (comp_sparse(g, c)) sb_printf(o, "            if (!%s) continue;\n", presence_cell(g, "w", a, c, "i", false));
         sb_printf(o, "            const tide_entity e = *%s;\n            (void)e;\n", arch_cell(g, "w", a, 0, "tide_entity", "i", false));
         if (sharded(g)) sb_put(o, "            if (tide_view_hides(w, e)) continue; // Another world drawn has it\n");
@@ -397,6 +398,7 @@ static void gen_embed(gen *g)
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
         sb_printf(o, "    for (uint32_t i = 0; i < w->%s.count; i++) {\n", arch_name(g, a));
+        sb_printf(o, "        if (tide_row_gone(%s)) continue; // A hole (tide_table_remove)\n", arch_cell(g, "w", a, 0, "tide_entity", "i", false));
         sb_printf(o, "        const tide_entity e = *%s;\n        uint32_t flags = 0;\n", arch_cell(g, "w", a, 0, "tide_entity", "i", false));
         if (sharded(g)) sb_put(o, "        if (tide_view_hides(w, e)) continue; // Another world drawn has it\n");
         if (owner >= 0 && arch_stores(g, a, owner)) {

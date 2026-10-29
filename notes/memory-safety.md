@@ -1,5 +1,14 @@
 # No Tide code can corrupt memory
 
+## Holes keep stale bytes nothing reads (2026-10-29)
+
+A hole an entity left (notes/ecs.md, Holes) keeps its row's old bytes,
+including text and list handles already released. Every generated loop,
+migration, unpack's placement check and the hosts' `TIDE_ROW_GONE` skip it by
+its null entity, and entity lookups never reach it, so those handles are
+never read. Filling a hole zeroes it first. Unpacked holes are counted from
+the bytes; table headers from received bytes are zeroed before use.
+
 ## Remote assets: decoders, limits and the fetch paths (2026-10-26)
 
 Games load bytes from URLs: at build time (`asset X x = "https://..."`, fetched by tidec's curl) and at runtime (`await Web.Fetch`, then `grid.Decode` or `SkinnedMesh.Decode` in match code on every machine). Every decoder those bytes reach was audited and fuzzed with libFuzzer + ASan + UBSan on Windows clang 23 (harnesses kept outside the repo, compiling each decoder directly with a malloc-backed `tide_alloc` so ASan sees every allocation; old-vs-new outputs compared over the corpora, all identical for valid files). What was found and fixed:

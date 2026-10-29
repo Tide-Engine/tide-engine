@@ -32,7 +32,52 @@ typedef struct tide_table {
     uint32_t last_room; // Rows the last chunk has room for: only the first chunk, alone, has room for fewer than 1 << shift
     uint32_t room;      // Chunks `pages` has room for
     tide_page **pages;  // Chunk c's column k: pages[c * columns + k]
+    // An archetype's table only (column 0 the entities): rows below `count`
+    // whose entity left, the null entity in their entity cell and the rest as
+    // it was. Filling one from the end, as a table without them would, writes
+    // a row of every column of its chunk, which copies all of the chunk's
+    // pages a snapshot shares; a hole writes one cell. An entity that comes
+    // fills a hole of the last chunk, which an append would write anyway, or
+    // else goes at the end; the last row's holes go with it, and the end of a
+    // tick fills them from the end once they're a 32nd of the table
+    // (tide_table_settle). Where they are is in the rows, so the same changes
+    // leave the same holes on every machine, and these counts follow from the
+    // rows (tide_table_count_holes).
+    uint32_t holes;        // Rows that are holes
+    uint32_t hole_from;    // No hole is below this row
+    uint32_t *chunk_holes; // Each chunk's holes, `room` of them
 } tide_table;
+
+// Whether a row of an archetype's table is a hole: its entity is the null one.
+static inline bool tide_row_gone(const tide_entity *e)
+{
+    return e->generation == 0u;
+}
+
+// Whether chunk `chunk` has no holes, so its rows from 0 to tide_table_rows are all entities.
+static inline bool tide_table_whole(const tide_table *t, const uint32_t chunk)
+{
+    return !t->holes || !t->chunk_holes[chunk];
+}
+
+// The entities in the table: its rows but its holes.
+static inline uint32_t tide_table_live(const tide_table *t)
+{
+    return t->count - t->holes;
+}
+
+// The next run of entities in a chunk's rows from *at up to `to`, given its
+// entity column: *at moves past any holes to the run's first row, and the
+// row after its last is returned (*at itself when there's none left).
+static inline uint32_t tide_table_run(const tide_entity *entities, uint32_t *at, const uint32_t to)
+{
+    uint32_t from = *at;
+    while (from < to && tide_row_gone(&entities[from])) from++;
+    uint32_t end = from;
+    while (end < to && !tide_row_gone(&entities[end])) end++;
+    *at = from;
+    return end;
+}
 
 // Rows in use in a chunk.
 static inline uint32_t tide_table_rows(const tide_table *t, const uint32_t shift, const uint32_t chunk)
@@ -213,9 +258,20 @@ void *tide_table_cell(tide_table *t, const tide_columns *c, uint32_t row, uint32
 // A new row at the end, zeroed: its number.
 uint32_t tide_table_add(tide_table *t, const tide_columns *c);
 
-// Takes a row out, moving the last row into its place, and tells the entity
-// table where the moved one went. Release its text and lists first.
+// Takes a row out, leaving a hole where it was (the last row just goes,
+// with the holes before it). Release its text and lists first: the rest of a
+// hole is whatever the row held, which nothing reads.
 void tide_table_remove(tide_table *t, const tide_columns *c, uint32_t row, tide_entities *entities, uint32_t archetype);
+
+// At the end of a tick, once its changes are in: fills the holes from the end
+// when they're more than a 32nd of the rows, telling the entity table where
+// each row it moved went.
+void tide_table_settle(tide_table *t, const tide_columns *c, tide_entities *entities, uint32_t archetype);
+
+// Counts an archetype's table's holes from its rows again, for a table that
+// came as bytes (tide_table_unpack, tide_table_unpack_delta) or was carried
+// over by a reload.
+void tide_table_count_holes(tide_table *t, const tide_columns *c);
 
 // Takes a row out of a table with no entities, like a world's tasks, moving
 // the last row into its place.

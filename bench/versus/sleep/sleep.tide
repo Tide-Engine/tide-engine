@@ -1,7 +1,8 @@
 // Sleep: bodies that fall asleep and wake, in a world kept as a predicting
 // client keeps it. Awake bodies move; sleeping ones lie still. Every tick
-// `toggles` bodies, picked by hash, change: a sleeping one wakes, an awake
-// one falls asleep, as contacts wake and settle bodies in a physics game.
+// `toggles` bodies, picked by hash, change: half of them sleeping ones that
+// wake, half awake ones that fall asleep, as contacts wake and settle bodies
+// in a physics game.
 //
 // Built two ways: Sleeping a presence bit in every body's row ([Sparse]), or
 // with LASTING (versus_sleep_lasting) a tag whose Add and Remove move the
@@ -14,7 +15,7 @@ singleton Setup
 {
     int bodies = 1000;
     int asleep = 90;  // Of every hundred bodies, how many start asleep
-    int toggles = 10; // Bodies that wake or fall asleep each tick
+    int toggles = 10; // Bodies that wake or fall asleep each tick, half of each
     List<Entity> all; // Every body, to pick the ones that change
     bool ready;
 }
@@ -81,16 +82,24 @@ system Move(mut Body body, Time time, without Sleeping)
     Step(body.motion, time.dt);
 }
 
-// Wakes or settles `toggles` bodies, picked by the tick: those changes apply
-// at the end of the tick, in the order they were made
+// Wakes `toggles` / 2 sleeping bodies and settles as many awake ones, picked
+// by hash (the first of a few tries that's the kind wanted), so the share
+// asleep stays where it started. The changes apply at the end of the tick,
+// in the order they were made
 system Toggle(Setup setup, Time time, World world)
 {
     var count = setup.all.count;
     if (count == 0) return;
     for (var k = 0; k < setup.toggles; k++)
     {
-        var e = setup.all[(Math.Hash(int2(time.tick, k)) & 0x7FFFFFFF) % count];
-        if (world.Has<Sleeping>(e)) e.Remove(Sleeping);
-        else e.Add(Sleeping);
+        var waking = k % 2 == 0;
+        for (var attempt = 0; attempt < 64; attempt++)
+        {
+            var e = setup.all[(Math.Hash(int2(time.tick * 64 + attempt, k)) & 0x7FFFFFFF) % count];
+            if (world.Has<Sleeping>(e) != waking) continue;
+            if (waking) e.Remove(Sleeping);
+            else e.Add(Sleeping);
+            break;
+        }
     }
 }

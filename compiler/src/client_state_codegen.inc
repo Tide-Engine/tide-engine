@@ -84,6 +84,7 @@ static void gen_client_hierarchy_codec(gen *g)
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
         sb_printf(o, "    for (uint32_t row = 0; valid && row < w->%s.count; row++) {\n", arch_name(g, a));
+        sb_printf(o, "        if (tide_row_gone(%s)) continue; // A hole (tide_table_remove)\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_printf(o, "        const tide_entity e = *%s;\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_put(o, "        const tide_hierarchy_node node = tide_hierarchy_get(w, e);\n"
                   "        if (!tide_entity_is_null(node.parent) && !tide_entity_alive(&w->entities, node.parent)) { valid = false; break; }\n"
@@ -120,6 +121,7 @@ static void gen_client_hierarchy_codec(gen *g)
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
         sb_printf(o, "    for (uint32_t row = 0; valid && row < w->%s.count; row++) {\n", arch_name(g, a));
+        sb_printf(o, "        if (tide_row_gone(%s)) continue; // A hole (tide_table_remove)\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_printf(o, "        const tide_entity e = *%s;\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_printf(o, "        if (!tide_entity_is_null(tide_hierarchy_get(w, e).parent) && !(colors[offsets[%d] + row] & 4u)) valid = false;\n    }\n", a);
     }
@@ -139,6 +141,7 @@ static void gen_client_input_filter(gen *g)
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
         sb_printf(o, "    for (uint32_t row = 0; row < w->%s.count; row++) {\n", arch_name(g, a));
+        sb_printf(o, "        if (tide_row_gone(%s)) continue; // A hole (tide_table_remove)\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_printf(o, "        const tide_entity e = *%s;\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         if (arch_stores(g, a, prog->owner->index)) {
             sb_printf(o, "        const %s owner = tide_get_%s(w, e);\n", type_cname(prog->owner), type_cname(prog->owner));
@@ -183,6 +186,7 @@ static void gen_client_input_filter(gen *g)
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
         sb_printf(o, "    for (uint32_t row = 0; row < w->%s.count; row++) {\n", arch_name(g, a));
+        sb_printf(o, "        if (tide_row_gone(%s)) continue; // A hole (tide_table_remove)\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_printf(o, "        const tide_entity e = *%s;\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         if (arch_stores(g, a, prog->owner->index)) {
             sb_printf(o, "        const int32_t owner_index = tide_player_index(tide_get_%s(w, e).player);\n", type_cname(prog->owner));
@@ -339,6 +343,7 @@ static void gen_client_hashes(gen *g)
                          "    if (rows%d && !denied%d) tide_out_of_memory();\n", a, a, a, (unsigned)n, a, a, a);
         }
         sb_printf(o, "    for (uint32_t row = 0; row < rows%d; row++) {\n", a);
+        sb_printf(o, "        if (tide_row_gone(%s)) continue; // A hole (tide_table_remove)\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_printf(o, "        const tide_entity e = *%s;\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_put(o, "        uint64_t mask = 0;\n");
         for (int k = 0; k < n; k++) sb_printf(o, "        if (tide_has_%s(w, e)) mask |= 1ull << %d;\n", type_cname(prog->components.items[deniable[k]]), k);
@@ -380,6 +385,8 @@ static void gen_client_hashes(gen *g)
         if (arch_local(g, a)) continue;
         const int n = client_deniable(g, a, deniable);
         sb_printf(o, "        for (uint32_t row = 0; row < rows%d; row++) {\n", a);
+        sb_printf(o, "            if (tide_row_gone(%s)) continue; // A hole (tide_table_remove): nothing kept of it above\n",
+                  arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_printf(o, "            if (!client && !tide_audience_contains(audience%d[row], recipient)) continue;\n", a);
         sb_printf(o, "            uint64_t mask = has%d[row * 4u], h;\n", a);
         for (int k = 0; k < n; k++) {
@@ -468,10 +475,12 @@ static void gen_client_state(gen *g)
         if (arch_local(g, a)) continue;
         sb_put(o, "    {\n        uint32_t count = 0;\n");
         sb_printf(o, "        for (uint32_t row = 0; row < w->%s.count; row++) {\n", arch_name(g, a));
+        sb_printf(o, "            if (tide_row_gone(%s)) continue; // A hole (tide_table_remove)\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_printf(o, "            const tide_entity e = *%s;\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_put(o, "            if (tide_visibility_entity(w, e, recipient)) count++;\n"
                   "        }\n        tide_write_varint(&out, count);\n");
         sb_printf(o, "        for (uint32_t row = 0; row < w->%s.count; row++) {\n", arch_name(g, a));
+        sb_printf(o, "            if (tide_row_gone(%s)) continue; // A hole (tide_table_remove)\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_printf(o, "            const tide_entity e = *%s;\n", arch_cell(g, "w", a, 0, "tide_entity", "row", false));
         sb_put(o, "            if (!tide_visibility_entity(w, e, recipient)) continue;\n"
                   "            tide_write_u32(&out, e.index);\n            tide_write_u32(&out, e.generation);\n"
@@ -615,6 +624,7 @@ static void gen_client_state(gen *g)
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (arch_local(g, a)) continue;
         sb_printf(o, "    for (uint32_t row = 0; row < had->%s.count; row++) {\n", arch_name(g, a));
+        sb_printf(o, "        if (tide_row_gone(%s)) continue; // A hole (tide_table_remove)\n", arch_cell(g, "had", a, 0, "tide_entity", "row", false));
         sb_printf(o, "        const tide_entity e = *%s;\n", arch_cell(g, "had", a, 0, "tide_entity", "row", false));
         sb_put(o, "        if (!tide_entity_alive(&w->entities, e) && tide_visibility_entity(had, e, recipient)) {\n"
                   "            if (out && count < capacity) out[count] = e;\n            count++;\n        }\n    }\n");

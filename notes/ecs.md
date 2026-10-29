@@ -1,5 +1,61 @@
 # ECS and simulation state
 
+## Holes: rows entities left stay where they were (2026-10-29)
+
+The owner's request after the `[Lasting]` client measurements: removing a row
+no longer fills it from the end. Filling writes a row of every column of the
+hole's chunk, which under a kept snapshot copies all of that chunk's pages
+(about 13 cold 8 KiB pages for the sleep benchmark's bodies), then rehashes
+them. That made a moving tag cost about 20 us per toggle per tick on a client.
+
+- **Contract** (`tide/table.h`, `engine/src/table.c`): `tide_table_remove` on an
+  archetype's table writes the null entity into the row's entity cell and
+  leaves the rest as it was: a hole. The last row is dropped instead, with any
+  holes before it. `tide_table_add` fills the lowest hole of the last chunk
+  (zeroed), which an append would write anyway, and otherwise appends: filling
+  a hole further in would copy that chunk under a snapshot. At the end of each
+  tick's changes, generated `apply_commands` calls `tide_table_settle` per
+  archetype, which fills holes from the end, lowest first, once they're more
+  than a 32nd of a table's rows (1/8 and 1/16 left `versus_churn` fragmented,
+  1/64 settled too often; filling the lowest hole on arrival copied a cold
+  chunk per arrival and kept only a tenth of the gain). Where holes are
+  depends on the world's changes alone, never on page sharing, so server,
+  predicting client and resimulation agree. `holes`, `hole_from` (no hole below
+  it) and `chunk_holes` follow from the rows: generated unpack and delta unpack
+  call `tide_table_count_holes` for archetype tables; snapshots copy them.
+  Tasks' and attached tables never get holes (`tide_table_remove_row` is as it
+  was). Raw saves grow by the zeroed new header fields (16 bytes a table on
+  64-bit hosts, 12 on WASM); packing zeroes table headers, so no address leaves.
+- **Loops**: system tasks (`gen_system_chunk`), the threaded own/done steps and
+  C systems call their row functions once per run of entities
+  (`tide_table_run`); a whole chunk (`tide_table_whole`) is one run with no
+  scan. A chunk with holes is never written apart: its changed lanes are copied
+  first (`tide_table_lanes_begin` with `apart` false), so hole bytes stay and
+  page hashes stay deterministic. Sparse pass counts are taken per run there,
+  and retained sparse selections and the cached-chunk task shortcut aren't
+  used for it (`gen_rows_cache_lookup` gives NULL). Every other generated row
+  loop skips holes by their entity (`tide_row_gone`): views and batched sends
+  (`gen_chunk`), queries and query fills, heard rows, availability, client state
+  and recipient hashes, shards, unloads (which also re-check the count, as a
+  destroy can drop trailing holes), local-field and resource walks, task traces
+  and the Unity embed. `tide_world_entity_count` counts `tide_table_live`.
+  Hosts get `TIDE_ROW_GONE(world, arch, row)` (docs/c/hosts.md); the versus
+  harnesses use it. Unpack's `placed` check skips holes. Hot-reload migration
+  carries no hole (`platform/src/migrate.c`).
+- **Order**: rows of a table now come in the order holes and appends give them,
+  deterministic everywhere but not swap-remove's. Games whose results depend on
+  entity order (a shared random stream drawn per entity, `safety_churn`) get
+  other, equally deterministic values: pins moved for crossplatform,
+  towers, sumo and safety_churn; local_fields/local_events logical, whole and
+  delta hashes didn't move, only their raw save sizes. `PROTOCOL` is 20.
+- **Tests**: `tests/test_table.c` (holes, runs, lowest fill, trailing drop,
+  settle, recount); `destroy_rows` and `sparse_cache` models now model holes and
+  match exactly; `lasting`, `big_world` (pack/unpack with holes), `shards`
+  (checkpoint recovery) and every existing suite pass native and WASI.
+- **Gaps**: a hole keeps its old component bytes (released text and list handles
+  included) until filled; nothing reads them. Tables with many holes run more,
+  shorter row calls until settled. Measurements: notes/benchmarks.md.
+
 ## Raw-save pins after the derived cache slot (2026-10-29)
 
 CI run 40787272828 agrees across platforms on unchanged local-fields logical

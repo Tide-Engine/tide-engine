@@ -1,5 +1,21 @@
 # Benchmarks
 
+## Holes under a client's rollback (2026-10-29)
+
+Rows entities leave stay as holes (notes/ecs.md, Holes). Against `dev` before
+it, five alternating rounds, release, one thread, `versus_sleep` with 100k
+bodies 90% asleep and balanced toggles (ms per 12-tick client period): a
+`[Lasting]` tag goes 1.119 to 0.557 at 10 toggles a tick (-49.7%), 2.866 to
+0.959 at 30 (-66.4%), 5.762 to 2.163 at 100 (-62.5%), 8.517 to 4.133 at 300
+(-51.2%), 10.816 to 8.306 at 1,000 (-23.4%). A sparse tag takes 3.90-6.50 there
+and is unchanged. Moving now beats sparse up to roughly 500 toggles a tick per
+100k bodies, where it was about 30; at 1M bodies a sparse tag costs 64 ms a
+period against a moving one's 3.7-11. Particles, wide, filtered wide and
+rollback are within 2.5%. Churn without snapshots is +1% to +13% across
+batches (fragmented loops until settling, about 5% of samples in
+`tide_table_run`), with a kept snapshot -6% to -10%. Rejected policies and every
+row: `bench/results/table-holes-20261029/README.md`.
+
 ## Moving tags under a client's rollback (2026-10-29)
 
 The owner asked whether toggled tags should move entities by default (as

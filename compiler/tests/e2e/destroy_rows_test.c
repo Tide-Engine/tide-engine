@@ -31,7 +31,7 @@ typedef struct model {
     Bullet items[COUNT];
     tide_entity handles[COUNT];
     uint32_t order[COUNT], row[COUNT], free_ids[COUNT], generations[COUNT + 16];
-    uint32_t live, made, free_count, next;
+    uint32_t live, holes, made, free_count, next; // live: the table's rows, holes among them
     int32_t gone[COUNT], values[COUNT * 4];
     tide_float2 positions[COUNT];
     uint32_t gone_count;
@@ -44,6 +44,63 @@ static int32_t as_int(const uint32_t value)
     return result;
 }
 
+#define HOLE UINT32_MAX // A row an entity left (tide_table_remove)
+
+#define CHUNK_ROWS 2048u // Bullet's chunks (arch_shift)
+
+// A row for `ordinal`: the lowest hole of the last chunk, or a new one at the end.
+static void add_row(model *m, const uint32_t ordinal)
+{
+    uint32_t at = m->live;
+    for (uint32_t row = m->live ? (m->live - 1u) / CHUNK_ROWS * CHUNK_ROWS : 0u; row < m->live; row++) {
+        if (m->order[row] != HOLE) continue;
+        at = row;
+        break;
+    }
+    if (at < m->live) m->holes--;
+    else m->live++;
+    m->order[at] = ordinal;
+    m->row[ordinal] = at;
+}
+
+static void drop_trailing_holes(model *m)
+{
+    while (m->live && m->order[m->live - 1u] == HOLE) {
+        m->live--;
+        m->holes--;
+    }
+}
+
+// Its row is a hole, unless it's the last, which goes with the holes before it.
+static void remove_row(model *m, const uint32_t ordinal)
+{
+    const uint32_t at = m->row[ordinal];
+    m->row[ordinal] = UINT32_MAX;
+    if (at + 1u == m->live) {
+        m->live--;
+        drop_trailing_holes(m);
+        return;
+    }
+    m->order[at] = HOLE;
+    m->holes++;
+}
+
+// The tick's end: past a 32nd of the rows, holes are filled from the end, lowest first.
+static void settle(model *m)
+{
+    if ((uint64_t)m->holes * 32u <= m->live) return;
+    for (;;) {
+        drop_trailing_holes(m);
+        if (!m->holes) break;
+        uint32_t at = 0;
+        while (m->order[at] != HOLE) at++;
+        const uint32_t moved = m->order[--m->live];
+        m->order[at] = moved;
+        m->row[moved] = at;
+        m->holes--;
+    }
+}
+
 static void birth(model *m, const uint32_t first, const uint32_t count)
 {
     for (uint32_t i = first; i < first + count; i++) {
@@ -54,19 +111,20 @@ static void birth(model *m, const uint32_t first, const uint32_t count)
             .position = {(float)(i % 3u) * 0.125f, -0.0f},
             .velocity = {(float)((int32_t)(i % 17u) - 8) * 0.25f, (float)((int32_t)(i % 5u) - 2) * 0.125f},
             .life = 1 + (int32_t)(i % 7u), .wrapped = (int32_t)i};
-        m->order[m->live] = i;
-        m->row[i] = m->live++;
+        add_row(m, i);
         m->made++;
     }
 }
 
-// Independent row/slot model: reserve births before the deferred deaths, move
-// the last row into each gap, and reuse slots last-freed-first with generations.
+// Independent row/slot model: reserve births before the deferred deaths, leave
+// a hole for each (filled in the last chunk, settled from the end past a 32nd),
+// and reuse slots last-freed-first with generations.
 static void model_tick(model *m, const uint32_t tick)
 {
     uint32_t died[COUNT], deaths = 0;
     for (uint32_t row = 0; row < m->live; row++) {
         const uint32_t ordinal = m->order[row];
+        if (ordinal == HOLE) continue;
         Bullet *b = &m->items[ordinal];
         b->position.x += b->velocity.x * DT;
         b->position.y += b->velocity.y * DT;
@@ -89,15 +147,12 @@ static void model_tick(model *m, const uint32_t tick)
         m->values[trace * 4u + 1u] = b->divided;
         m->values[trace * 4u + 2u] = b->minimumDivided;
         m->values[trace * 4u + 3u] = b->shifted;
-        const uint32_t row = m->row[ordinal];
-        const uint32_t moved = m->order[--m->live];
-        m->order[row] = moved;
-        m->row[moved] = row;
-        m->row[ordinal] = UINT32_MAX;
+        remove_row(m, ordinal);
         const tide_entity e = m->handles[ordinal];
         m->generations[e.index]++;
         m->free_ids[m->free_count++] = e.index;
     }
+    settle(m);
 }
 
 static void check_world(const model *m)

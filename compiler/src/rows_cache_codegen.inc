@@ -198,7 +198,9 @@ static void gen_rows_cache_helpers(gen *g)
 
 static void gen_rows_cache_lookup(gen *g, const decl *sys, const int a, const char *pad)
 {
-    sb_printf(&g->c, "%sconst tide_rows_chunk *tide_cached = tide_rows_cache_find(tide_w->tide_rows_cache, %du, %du, tide_t, %s, tide_c, ",
+    // A chunk with holes has none: what's kept is of all of its rows, and its loops go through runs of entities
+    sb_printf(&g->c, "%sconst tide_rows_chunk *tide_cached = !tide_table_whole(tide_t, tide_c) ? NULL : "
+                     "tide_rows_cache_find(tide_w->tide_rows_cache, %du, %du, tide_t, %s, tide_c, ",
               pad, rows_cache_id(g, sys, a), a, arch_columns(g, a));
     const int filters = gen_rows_cache_filters(g, sys, a);
     sb_printf(&g->c, ", %du);\n", filters);
