@@ -1,5 +1,35 @@
 # Shards: one world across servers
 
+## Journal recovery budget on hosted runners (2026-10-29)
+
+Nightly `40960903022` at `cfbb6d15d` failed only the journal test in its
+Windows native suite. The second process reported recovery and its immediate
+checkpoint after 0.43 seconds, then all three journal files kept growing
+through the final sample at 24.19 seconds. Its fixed 25-second deadline killed
+it before the 200 service updates finished. `RUN_SERIAL` was already active.
+This is evidence of ongoing recovery-test work, not a stalled startup; the
+log does not isolate disk latency from other hosted scheduling costs. This
+ordinary release job had no sanitizer instrumentation.
+
+The harness now allows 60 seconds per process. CTest allows 130 seconds for
+the initial 2.5-second crash run, two recoveries and cleanup. Both recoveries
+still require all 200 real-time updates, normal exit and the recovery report.
+The server's durable flush/checkpoint behavior, process isolation, diagnostics,
+kill/reap cleanup and assertions are unchanged. File progress never resets
+the deadline. Hosted Windows and MinGW must confirm the extra budget suffices;
+this is a correctness-test allowance, not a claim about journal performance.
+
+Validation: the freshly built Windows ASan `tide_server_shards` passes the
+actual `tide_server_shards_journal` CTest in 3.50 seconds (Clang 23.1.2,
+Node 24.22.1). CTest JSON confirms `RUN_SERIAL: true` and `TIMEOUT: 130`.
+Scratch child-process doubles with two 26-second recoveries make the old
+harness fail after 27.78 seconds and the revised one pass after 54.77 seconds.
+A recovery that keeps writing but never exits still fails after its fixed
+60-second budget (62.80 seconds overall); exit 7 and a missing recovery report
+also fail. Every probe verifies all child processes and temporary journals
+are gone. Node syntax and whitespace checks pass. No runtime code changed;
+this native-only fixture needs no web rerun or full suite.
+
 ## Isolate the durable journal integration test (2026-10-29)
 
 Build `40787272828` failed the MinGW journal test inside its second process's

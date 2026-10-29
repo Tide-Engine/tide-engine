@@ -23,7 +23,7 @@ ways; it is not a handwritten Vulkan/OpenGL backend comparison.
 
 ## Workload
 
-Output is always **1920 by 1080 physical pixels at scale 1**. A fixed 40 by
+Measured output is **1920 by 1080 physical pixels at scale 1**. A fixed 40 by
 22.5 orthographic camera views a grid of equal, fixed-rotation cubes. The mesh
 is the self-contained `mesh.obj`: **24 vertices and 12 source triangles**.
 Counts default to 100, 1,000 and 10,000 cubes, plus one fixed flattened-cube
@@ -137,9 +137,12 @@ Ryzen 9 7900X / RTX 4080 SUPER label and records NVIDIA inventory/driver data;
 that inventory is not a backend adapter query. Override it on another machine.
 
 `--quick` disables timing entirely and uses four cubes, one receiver, one
-warmup/two checked frames per way and requested 32-pixel shadow cells. It keeps
-the fixed output size and covers all four cases. CTest registers native default
-and forced OpenGL checks, plus WebGL and served WebGPU smoke through the existing
+warmup/two checked frames per way and requested 32-pixel shadow cells. Its
+640x360 output keeps the same camera and all four cases, with the nine pixel
+probes scaled to the output size. Full native pixel equality, expanded-command
+equality and per-frame work checks still apply. This bounds CI's software-GPU
+pixel work; measured runs retain the full 1920x1080 output. CTest registers native
+default and forced OpenGL checks, plus WebGL and served WebGPU smoke through the existing
 muted browser runners. There are no timing thresholds.
 
 The web page uses the existing test shell, for example:

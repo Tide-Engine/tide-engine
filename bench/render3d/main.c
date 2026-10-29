@@ -32,6 +32,7 @@ static int counts[MAX_COUNTS] = {100, 1000, 10000}, count_count = 3;
 static int cases[CASES] = {0, 1, 2, 3}, case_count = CASES;
 static int ways[WAYS] = {0, 1}, way_count = WAYS;
 static int frames = 100, warmup = 20, repeats = 3, shadow_resolution = 512;
+static int frame_width = WIDTH, frame_height = HEIGHT;
 static int overrides[4] = {-1, -1, -1, -1};
 static int count_at, case_at, way_at, repeat_at, frame_at, drain, gpu_samples;
 static bool need_setup = true, quick;
@@ -110,9 +111,9 @@ static bool named_list(const char *text, const char *const *names, const int lim
 static bool record_package(void)
 {
     tide_draw_reset(&draw);
-    tide_draw_screen_size(&draw, tide_f2(WIDTH, HEIGHT));
+    tide_draw_screen_size(&draw, tide_f2(frame_width, frame_height));
     draw.screen_scale = tide_f2(1, 1);
-    tide_gui_begin(&gui, &devices, tide_f2(WIDTH, HEIGHT), tide_platform_measure_text);
+    tide_gui_begin(&gui, &devices, tide_f2(frame_width, frame_height), tide_platform_measure_text);
     tide_frame(&world, NULL, 1.0f, NULL, NULL, 1.0f, &local, &draw, &gui);
     tide_gui_end(&gui, &draw);
     return true;
@@ -121,7 +122,7 @@ static bool record_package(void)
 static bool record_direct(void)
 {
     tide_draw_reset(&draw);
-    tide_draw_screen_size(&draw, tide_f2(WIDTH, HEIGHT));
+    tide_draw_screen_size(&draw, tide_f2(frame_width, frame_height));
     draw.screen_scale = tide_f2(1, 1);
     return render3d_direct_record(direct, &draw);
 }
@@ -130,7 +131,7 @@ static bool completed_frame(void)
 {
 #ifndef __wasm__
     int width, height;
-    if (!tide_platform_frame_pixels(&width, &height) || width != WIDTH || height != HEIGHT) {
+    if (!tide_platform_frame_pixels(&width, &height) || width != frame_width || height != frame_height) {
         fputs("render3d: couldn't read the completed fixed-size frame\n", stderr);
         return false;
     }
@@ -156,8 +157,12 @@ static void free_workload(void)
 // Web correctness uses the exact expanded data plus nine rendered sample pixels.
 static bool verify_pair(void)
 {
-    static const tide_float2 points[] = {{960, 540}, {480, 270}, {1440, 270}, {480, 810}, {1440, 810},
-                                         {100, 100}, {1800, 100}, {100, 980}, {1800, 980}};
+    static const tide_float2 reference_points[] = {{960, 540}, {480, 270}, {1440, 270}, {480, 810}, {1440, 810},
+                                                   {100, 100}, {1800, 100}, {100, 980}, {1800, 980}};
+    tide_float2 points[9];
+    for (int i = 0; i < 9; i++)
+        points[i] = tide_f2(reference_points[i].x * (float)frame_width / WIDTH,
+                            reference_points[i].y * (float)frame_height / HEIGHT);
     uint32_t a[9], b[9];
     if (!record_package() || !render3d_direct_equal(direct, &draw)) return false;
     tide_platform_read_pixels(&draw, points, 9, a);
@@ -165,8 +170,8 @@ static bool verify_pair(void)
     tide_platform_draw(&draw);
     int width, height;
     const uint8_t *pixels = tide_platform_frame_pixels(&width, &height);
-    if (!pixels || width != WIDTH || height != HEIGHT) return false;
-    const size_t bytes = (size_t)WIDTH * HEIGHT * 4u;
+    if (!pixels || width != frame_width || height != frame_height) return false;
+    const size_t bytes = (size_t)frame_width * frame_height * 4u;
     uint8_t *copy = malloc(bytes);
     if (!copy) return false;
     memcpy(copy, pixels, bytes);
@@ -182,7 +187,7 @@ static bool verify_pair(void)
 #ifndef __wasm__
     tide_platform_draw(&draw);
     pixels = tide_platform_frame_pixels(&width, &height);
-    pixels_equal = pixels_equal && pixels && width == WIDTH && height == HEIGHT && memcmp(copy, pixels, bytes) == 0;
+    pixels_equal = pixels_equal && pixels && width == frame_width && height == frame_height && memcmp(copy, pixels, bytes) == 0;
     free(copy);
 #endif
     if (!pixels_equal) { fputs("render3d: equivalent paths differ in pixels\n", stderr); return false; }
@@ -337,7 +342,7 @@ static void report(void)
                   "\"world_hash\":\"%016llx\",\"mesh_sha256\":\"%s\","
                   "\"vertices_per_mesh\":24,\"triangles_per_mesh\":12,\"source_triangles\":%d,"
                   "\"summed_squared_scale\":160,\"projection\":\"orthographic_40x22.5\",\"cached_static_inputs\":%s",
-            way_names[current_way()], case_names[cases[case_at]], counts[count_at], repeat_at + 1, WIDTH, HEIGHT,
+            way_names[current_way()], case_names[cases[case_at]], counts[count_at], repeat_at + 1, frame_width, frame_height,
             warmup, frames, gpu_samples, world.Workload.directional, world.Workload.point, world.Workload.spot,
             selected_lights, world.Workload.shadows ? "true" : "false", world.Workload.shadowMaps, shadow_views,
             shadow_resolution, active_shadow_resolution, atlas_size, dropped_lights, unshadowed_lights,
@@ -452,10 +457,10 @@ static void help(void)
          "  [--ways package,cached_direct] [--frames 100] [--warmup 20] [--repeat 3]\n"
          "  [--directional 0..64] [--point 0..64] [--spot 0..64] [--shadow-maps 0..16]\n"
          "  [--shadow-resolution 512] [--save label] [--output file.jsonl] [--capture final.png] [--quick]\n"
-         "Fixed 1920x1080; count tiles plus one fixed receiver. All light types overlap the grid.\n"
+         "Measurements use fixed 1920x1080; count tiles plus one fixed receiver. All light types overlap the grid.\n"
          "cached_direct re-records prepacked static inputs with exactly the same generated shaders.\n"
          "Native readback synchronizes frames; CPU/GPU intervals overlap and are not shipping FPS.\n"
-         "--quick checks equivalence without timing, with 4 tiles and 32-pixel shadow cells.");
+         "--quick checks equivalence without timing, at 640x360 with 4 tiles and 32-pixel shadow cells.");
 }
 
 int main(const int argc, char **argv)
@@ -466,6 +471,8 @@ int main(const int argc, char **argv)
         if (!strcmp(arg, "--bench")) continue;
         if (!strcmp(arg, "--quick")) {
             quick = true; counts[0] = 4; count_count = 1; frames = 2; warmup = 1; repeats = 1; shadow_resolution = 32;
+            // Keep software-GPU correctness checks bounded; measured workloads retain 1080p.
+            frame_width = 640; frame_height = 360;
             continue;
         }
         const char *equal = strchr(arg, '=');
@@ -509,12 +516,12 @@ int main(const int argc, char **argv)
 #endif
     if (!tide_assets_load(tide_game_pack, tide_game_pack_size)) return 1;
 #ifdef __wasm__
-    tide_platform_open(&(tide_window_desc){.title = "Render3D benchmark", .width = WIDTH, .height = HEIGHT, .hidden = true});
+    tide_platform_open(&(tide_window_desc){.title = "Render3D benchmark", .width = frame_width, .height = frame_height, .hidden = true});
 #else
-    tide_platform_open_headless(&(tide_headless_desc){.width = WIDTH, .height = HEIGHT, .scale = 1.0f,
+    tide_platform_open_headless(&(tide_headless_desc){.width = frame_width, .height = frame_height, .scale = 1.0f,
                                                     .frames = (uint32_t)limit});
 #endif
-    printf("renderer: %s; fixed %dx%d; %s\n", tide_platform_renderer(), WIDTH, HEIGHT,
+    printf("renderer: %s; fixed %dx%d; %s\n", tide_platform_renderer(), frame_width, frame_height,
            quick ? "correctness only" : "isolated static frames; CPU/GPU overlap; readback is not FPS");
     tide_platform_background_pipelines(false);
     tide_platform_run(frame, NULL);

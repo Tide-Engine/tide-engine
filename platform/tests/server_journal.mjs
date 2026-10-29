@@ -46,13 +46,15 @@ function serve(frames) {
   }, 1000);
   server.once('close', () => clearInterval(progress));
   // Each recovery does 200 real-time updates, including durable disk flushes.
-  // Give each process its own budget: earlier runs must not spend its time.
+  // Hosted recovery was still writing at its 25-second cutoff even with this
+  // test running alone. Allow one minute, still with a fixed deadline: progress
+  // must never extend it, and earlier runs must not spend this one's time.
   clearTimeout(deadline);
   deadline = setTimeout(() => {
     timedOut = new Error(`timed out in ${phase}, ${((Date.now() - started) / 1000).toFixed(1)} s in; ` +
       `the folder has ${journalState()}; since the run began:\n${log}`);
     server.kill('SIGKILL');
-  }, 25000);
+  }, 60000);
   return { server, output: () => output, ended: once(server, 'close') };
 }
 

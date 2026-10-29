@@ -1,5 +1,32 @@
 # Benchmarks
 
+## Bound Render3D correctness-smoke pixel work (2026-10-29)
+
+Nightly run `40960903022` reached the Linux WebGL browser's 120-second guard
+in `bench_render3d`, without a page result or shader diagnostic. Its previous
+run `40952236439`, already containing the shadow and height changes, passed in
+63.39 seconds. The quick workload overrides shadow resolution to 32 and selects
+zero cascades, so the new default 2048 cells/four cascades do not increase it.
+These hosted observations do not establish the cause of the individual stall.
+
+Quick mode had reduced geometry and frames while still shading 1920x1080.
+It now uses 640x360, retaining the 16:9 camera and scaling all nine sample
+coordinates to the output. All four light cases, both submission paths,
+warmup/checked frames, full native pixel equality, expanded-command equality,
+match hashes and per-frame draw/vertex/upload checks remain. Color pixel work
+is one ninth; shader, shadow cells and browser deadlines are unchanged.
+Measurement mode stays at 1920x1080, including its capture and JSON dimensions.
+Historical sources, measurement artifacts and paired-run source gates stay intact.
+
+Scoped builds pass with Clang 23.1.2 and Node 24.22.1. Both native Windows ASan
+Vulkan/OpenGL quick CTests pass with Vulkan validation enabled, as do WebGL and
+WebGPU. The local WebGL check takes 34.08 seconds before and 5.74 after; WebGPU
+takes 5.05 after. These are smoke durations, not renderer performance results.
+A bounded non-quick ASan run covers all four cases/both paths at 1920x1080,
+verifies eight JSON rows and a full-size capture, and retains exact command and
+pixel equality; its instrumented timing fields are not performance evidence.
+Other OS/browser combinations await ordinary push-triggered CI validation.
+
 ## Render3D keeps its fixed shadow workload (2026-10-29)
 
 `bench/render3d/game.tide` explicitly selects `shadowCascades = 0` as Render3D

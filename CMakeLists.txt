@@ -181,7 +181,8 @@ if(TIDE_PLATFORM)
             set_tests_properties(tide_server_shards tide_server_shards_room PROPERTIES TIMEOUT 30)
             # Do not overlap disk-synchronous recovery with installers and
             # other server/process tests on shared CI runners.
-            set_tests_properties(tide_server_shards_journal PROPERTIES TIMEOUT 80 RUN_SERIAL TRUE) # Three processes, 25 seconds each
+            # The 2.5-second crash run, two 60-second recoveries, and cleanup.
+            set_tests_properties(tide_server_shards_journal PROPERTIES TIMEOUT 130 RUN_SERIAL TRUE)
         endif()
         tide_add_game(tide_server_entry SERVER NAME game SOURCES
             "${PROJECT_SOURCE_DIR}/compiler/tests/e2e/server_menu.tide"
