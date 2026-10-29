@@ -3474,3 +3474,45 @@ TIDE_TEST(gui_a_themes_sizes_lay_out_and_bad_numbers_are_fitted)
     TIDE_CHECK(gui.theme.transition == 0.0f && gui.theme.padding == 12.0f);
     end();
 }
+
+// An anchored area's panel eases to its content's new size rather than
+// jumping, centered as it goes, with its content clipped to it meanwhile.
+static float eased_area_frame(const int buttons)
+{
+    begin();
+    gui.seconds = 0.05f;
+    const int depth = tide_gui_begin_area_at(&gui, 99, TIDE_ANCHOR_MIDDLE_CENTER);
+    for (int i = 0; i < buttons; i++) tide_gui_layout_button(&gui, (uint32_t)(i + 1), "Play");
+    tide_gui_close(&gui, depth);
+    end();
+    for (uint32_t i = 0; i < draw.count; i++) { // The panel: the area's first shape in the panel's color
+        const tide_draw_command *c = &draw.commands[i];
+        if (same_color(c->color, (tide_color){0.07f, 0.07f, 0.1f, 0.9f})) return c->b.y;
+    }
+    return -1.0f;
+}
+
+TIDE_TEST(gui_an_anchored_area_eases_to_its_new_size)
+{
+    start();
+    const float one = 28.0f + 2.0f * 12.0f, three = 3.0f * 28.0f + 2.0f * 5.0f + 2.0f * 12.0f;
+    for (int frame = 0; frame < 3; frame++) TIDE_CHECK(eased_area_frame(1) == one);
+    const float first = eased_area_frame(3);
+    TIDE_CHECK(first > one && first < three); // On its way
+    TIDE_CHECK(gui.list.clip_count == 0);     // Nothing was clipped the frame it started
+    const float second = eased_area_frame(3);
+    TIDE_CHECK(second > first && second < three);
+    TIDE_CHECK(gui.list.clip_count == 1); // ...and its content is clipped to it while it grows
+    TIDE_CHECK(gui.list.clips[0].rect.height == second);
+    for (int frame = 0; frame < 60; frame++) eased_area_frame(3);
+    TIDE_CHECK(eased_area_frame(3) == three); // There, exactly
+    TIDE_CHECK(gui.list.clip_count == 0);
+    // With no frame time it's at its size at once, as before
+    begin();
+    gui.seconds = 0.0f;
+    const int depth = tide_gui_begin_area_at(&gui, 99, TIDE_ANCHOR_MIDDLE_CENTER);
+    tide_gui_layout_button(&gui, 1, "Play");
+    tide_gui_close(&gui, depth);
+    end();
+    TIDE_CHECK(draw.commands[2].b.y == one);
+}

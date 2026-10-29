@@ -196,6 +196,8 @@ typedef struct tide_gui_group {
     float spacing;            // Between its widgets: the theme's as it took its last one
     uint32_t shadow;          // An area: its shadow's command, a smooth shape's, or UINT32_MAX
     float border;             // An area: its background's border, as the theme had it when it opened
+    uint32_t own_clip;        // An anchored area that's changing size: 1 + its clip in the list, or 0
+    uint32_t clip_mark;       // ...and what puts the clip around it back
 } tide_gui_group;
 
 typedef struct tide_gui_scroll_state {

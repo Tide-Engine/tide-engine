@@ -231,7 +231,7 @@ The rest are numbers:
 | `borderWidth` | 0 | How wide `border` is, in pixels: 0 for none |
 | `shading` | 0 | How much darker each widget's bottom is than its top, from 0 (flat) to 1 (black): a little, like 0.2, makes buttons look raised |
 | `shadowSize` | 16 | How far the panels' shadow fades out, in pixels: 0 for none |
-| `transition` | 0.1 | Seconds a widget takes to fade from one state's color to another's, as the pointer comes and goes: 0 changes at once |
+| `transition` | 0.1 | Seconds a widget takes to fade from one state's color to another's, as the pointer comes and goes, and half the time an anchored area takes to grow or shrink to its content: 0 changes at once |
 | `textSize` | 16 | The widgets' text size, in pixels. A widget's height follows it: `textSize + 12` |
 | `padding` | 12 | Space inside an area, around its widgets |
 | `spacing` | 5 | Space between widgets |
@@ -452,6 +452,8 @@ The GUI keeps the value from frame to frame, told apart by where `Animate` is ca
 - **`GUI.Animate(target, seconds, from)` starts at `from` instead,** the first frame: `GUI.Animate(1, 0.3, 0)` fades a toast in as it first appears.
 - **A frame it isn't called in starts it over.** Keep calling it while something fades out, and stop once it's at its target.
 - It settles exactly on its target, so `shown <= 0` is true once a fade out has finished.
+
+An area at an anchor animates by itself: when its content changes size, as a menu's tabs change, its panel grows or shrinks to it over twice the theme's `transition`, staying at its anchor, and its content is clipped to the panel meanwhile.
 
 It goes by the frame's length, `Frame.dt`, so it takes as long at any frame rate. Up to 1,024 values are animated at once; past that, a new one is at its target.
 

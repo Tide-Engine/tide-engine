@@ -41,6 +41,7 @@ spec (GUI, and Smooth shapes' Fills); users' docs are `docs/game/gui.md`
   rect, so defaults draw as before but for the new panel shadow and fades.
   The wheel step is its own 28 px (`WHEEL_LINE`). Both defaults (`gui.c`,
   `add_builtins` in check.c) were extended together.
+- **Anchored areas ease** (the owner's ask after the showcases): `close_area` shows `area_shown`, a motion keyed `tide_gui_seed(id, 0xA4EA)` easing toward the measured size over 2 x transition, places the panel, shadow and content by it, and remembers it as the size the next frame places by. Lanes 2-3 keep the measured size, so `area_moving` (a lookup that inserts nothing) tells the next open whether to push a clip at the guessed rect; close patches it to the shown rect, only when the list made it new (clips equal to the one in use are shared), and pops it. So a still area records no clip, and the first frame of a change can spill once. No frame time (zeroed GUI, tests) snaps, as before. `gui_an_anchored_area_eases_to_its_new_size` covers easing, centering, the clip's appearance and size, settling and the snap.
 - **Fills** (`draw_prelude` in `compiler/src/builtins.c`, `<tide>/draw.tide`):
   Tide code compiled with a game whose files, together, show a fill
   (`draw_prelude_wanted`: `Gradient.` or `Func<float2, Color>` anywhere, or a
