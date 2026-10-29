@@ -239,6 +239,7 @@ static GLFWwindow *make_window(const tide_window_desc *desc, const bool hidden, 
         glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
     }
     glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+    glfwWindowHint(GLFW_FOCUSED, hidden ? GLFW_FALSE : GLFW_TRUE);
     glfwWindowHint(GLFW_RESIZABLE, hidden ? GLFW_FALSE : GLFW_TRUE);
     // Pixels are the display's logical ones (see tide/platform.h): the size
     // asked for is in those, so the window is as many times bigger as the
@@ -426,7 +427,11 @@ bool tide_window_key_held(const tide_key key)
 // player clicks on the window or presses another key.
 static void follow_lock(void)
 {
-    const bool hold = tide_cursor_held(&cursor, glfwGetWindowAttrib(window, GLFW_FOCUSED));
+    // Focus alone is not permission to confine the desktop's mouse. In
+    // particular, a hidden test must never acquire it, even with stale focus.
+    const bool visible = !tide_hidden() && glfwGetWindowAttrib(window, GLFW_VISIBLE) &&
+                         !glfwGetWindowAttrib(window, GLFW_ICONIFIED);
+    const bool hold = tide_cursor_held(&cursor, glfwGetWindowAttrib(window, GLFW_FOCUSED), visible);
     if (hold == locked) return;
     if (hold) glfwGetCursorPos(window, &locked_x, &locked_y);
     glfwSetInputMode(window, GLFW_CURSOR, hold ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
