@@ -1,5 +1,101 @@
 # The docs site
 
+## Compact desktop minimize example (2026-10-29)
+
+The owner requested improving or removing gui-desktop because it overflowed
+its embed and felt janky. Kept it as a compact 340 x 244 note, centered and
+scaled only below the normal 376 x 400 viewport. Removed the sidebar, inert
+menu/app/delete actions and dock magnification. The fixed Notes icon and
+thumbnail slot sit above the host stats corner. Drag placement is clamped to
+the available desktop, including after a viewport resize.
+
+The 0.42-second reversible tween feeds a mesh whose rows retain their vertical
+order and settle directly onto the thumbnail rectangle. This replaces the
+moving dock destination and collapsed-line/thumbnail handoff. The same target
+image is frozen during motion and while minimized; widgets are not declared
+then, and minimizing clears keyboard focus. Notes restores/reverses at any
+point; the settled thumbnail also restores. User docs describe these controls.
+No engine/runtime/compiler API or default styling changes.
+
+Native and web-debug example targets compile without warnings. Scripted native
+captures cover open/bending/minimized/restored states, title editing and Share,
+and dragging far outside the desktop; 320 x 400, 376 x 400 and 960 x 540 layouts
+were inspected. The docs runner now exercises actual target widgets and exact
+pixel restoration of the edited note through thumbnail restore and in-flight
+reversal, excluding the independent FPS counter from comparisons. Both WebGL
+and WebGPU pass, including typing while minimized without altering the note.
+The browser interaction helper waits for elapsed animation time and rendered
+work, and for pointer releases to be processed before moving away; draw-call
+counts alone did not reliably settle transitions or clicks on WebGPU.
+Production docs build passes with Node 24.22.1 and the existing allowed
+unstaged-example 404s. Native and WebGPU captures were visually inspected.
+Other operating systems and real-phone testing remain unavailable locally.
+
+Integration retains incoming benchmark and Render3D notes through 16fcf26ea;
+the only conflict was concurrent notes prepends. The merged docs production
+build and selected desktop interaction checks pass again on WebGL and WebGPU.
+Incoming package changes do not affect this example's compiled runtime.
+
+## Public ECS benchmark page (2026-10-29)
+
+`/benchmarks` is an ordinary prerendered docs page, linked from the home page
+and Get started sidebar. `src/lib/components/Benchmarks.svelte` presents a
+zero-origin workload chart and the complete report table, with medians and
+the min/max of process medians. The comparison is scoped to ECS updates;
+setup, hashing, snapshots, networking and rendering are excluded. Static
+frozen membership and EnTT's explicit dispatch are stated rather than
+presented as equivalent engine services. There is no aggregate score.
+
+`src/lib/data/benchmarks.json` is the site's presentation snapshot, schema 1:
+repository URL plus independent reports, each with date/hardware, exact Tide
+and benchmark revisions, raw-result path, iteration counts, implementations,
+workloads, medians/ranges and measurement notes. Benchmark source, runner and
+raw evidence belong to the independent public `Tide-Engine/tide-benchmarks`
+repository. Reports preserve source/result revisions internally; different
+runs are not pooled. The default report compares Tide, Bevy 0.20.0, Flecs
+4.1.6 and EnTT 4.0.0 in six serial workloads, using 96 accepted processes (four cyclic
+rounds, 200 warmup and 400 measured ticks each). The raw evidence retains one
+excluded contended attempt, 75 correctness cases across four native ECS
+implementations/C reference/Tide WASI, and 26 passing harness tests. The
+initial Tide/Bevy batch remains selectable and retains its tied 50%-frozen
+four-thread result and overlapping/noisy churn observations. Both reports
+pin benchmark archive revision `810437c0df4cf01b925ea6a6c403eb78925d641c`;
+the fresh report's manifest records its pre-measurement source commit too.
+
+`src/lib/benchmarks.ts` validates finite positive timings, ordered ranges,
+complete engine coverage and report metadata at build time. The content
+pipeline replaces the interactive marker with tables in Markdown/LLM/skill
+exports, so exported numbers and Tide revision links match the website and
+changes to the dataset participate in the documentation fingerprint. No chart or
+other package dependency was added. Native selects, text values, table
+headers and a focusable horizontal scroll region support keyboard use and
+small screens; the initial report's entire table is server-rendered.
+
+The owner requested that the benchmark repository remain public on GitHub
+without being promoted in the docs. The page and Markdown/LLM exports omit
+benchmark repository, source and raw-measurement links; the measurements,
+methodology and Tide engine revision link remain. The dataset keeps its
+repository URL, pinned benchmark revisions and raw-result paths as internal
+provenance. The homepage describes the comparison without promising source
+links on the benchmark page.
+
+Link-removal validation: the production docs build and both existing
+development/isolated-production export tests pass after merging `dev`.
+GitHub still reports the benchmark repository as public. No browser rerun
+was needed for removing links and prose.
+
+Validation: Svelte check has zero errors/warnings. After merging current
+`dev`, the final docs production build and development/isolated-production
+Markdown exports plus SEO/HTTP tests pass (5 tests). A temporary ignored
+browser check used muted headless Chrome and verified switching between both
+reports, all four engine rows/columns, workload selection, 390px page fit,
+keyboard table scrolling and zero browser runtime errors. Desktop light/dark,
+the complete four-engine table and mobile screenshots were inspected. Owned
+browsers and local servers were closed after validation; benchmark timing
+did not overlap these checks. Existing unstaged game artifacts remain absent
+from this checkout's site build; its pre-existing playable-page 404
+diagnostics do not affect the benchmark page or these checks.
+
 ## Render3D camera-fitted shadow examples (2026-10-29)
 
 The Render3D guide and package README now document camera-fitted directional

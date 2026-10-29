@@ -33,6 +33,7 @@ export const sidebar: Group[] = [
             { text: 'Playground', link: '/guide/playground' },
             { text: 'Samples', link: '/guide/samples' },
             { text: 'Earth demo', link: '/guide/earth' },
+            { text: 'Benchmarks', link: '/benchmarks' },
         ],
     },
     {

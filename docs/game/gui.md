@@ -569,7 +569,7 @@ view Window(mut Desk desk)
 - **`GUI.Target(target)`, with no rect, has no pointer:** the keyboard and the gamepad reach its widgets, for a target shown where the pointer can't follow, like a screen on a wall.
 - One block at a time: a `GUI.Target` inside another, or for an invalid target, is skipped with its content.
 
-The desktop below draws its window's widgets into a target and shows it as a mesh, which bends into the dock with a genie effect as it minimizes. Type in the field, press Share, drag the slider, then minimize the window and click its thumbnail in the dock.
+The compact desktop below fits the embedded view with readable widgets and space for the stats display. It draws its note into a target, then bends that image smoothly into a fixed dock thumbnail. Type in the field, press Share, or drag the slider. Click the yellow title-bar button to minimize; click the thumbnail or the yellow Notes icon to restore. The Notes icon also reverses an animation in progress. Dragging the title bar keeps the note within the available desktop. Widgets stop receiving input while the note is minimized or moving.
 
 ::: tide-example gui-desktop A window of widgets, minimized into the dock
 
