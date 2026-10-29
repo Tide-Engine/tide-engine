@@ -1,5 +1,27 @@
 # Benchmarks
 
+## The day's changes against Bevy and this morning (2026-10-29)
+
+After tags became moving by default (notes/ecs.md, Tags move entities by
+default), with holes and lane writes: the Bevy runner against SparseSet Bevy,
+three rounds (`bench/results/bevy-now-20261029/sparseset`). Tide with a moving
+tag, 1M entities, one thread: 1.186/1.054/0.405/0.0587/0.0293/0.0058 ms at
+1/10/50/90/95/99% filtered, against SparseSet Bevy's 2.942/2.672/2.328/0.510/
+0.207/0.0472. Two retries of the table-storage batch were stopped by other
+sessions' builds (the runner refuses contended processes), so table Bevy's
+figures are the afternoon's (`bevy-holes-20261029/table`), whose Bevy binary is
+unchanged: Tide leads it 2.74x at 50% and 3.47x at 99% on one thread, 1.28x at
+50% on four (both at the memory-bandwidth wall). Particles and wide lead 1.8-3.4x.
+Churn trails this batch's Bevy 0.89x/0.74x (Tide 0.352/0.338 ms); Bevy's churn
+measured 0.25-0.58 ms across the day's batches, Tide's 0.33-0.40.
+
+This morning's `dev` (2bee50f69 binaries, sparse tags) against now, three
+alternating rounds without the quiet guard (`client-morning-vs-now.txt`):
+the sleep client with the default tag -97%/-88%/-81%/-59%/-27% at
+0/10/30/100/300 toggles a tick and +17% at 1,000; with `[Sparse]` -21% to -34%
+throughout; wide client -32%, churn client -15%, rollback -3%, particles client
+-1%, churn on a server +6%.
+
 ## Lanes a system can't write (2026-10-29)
 
 Against `dev` at 1b2deaf8c (holes), five alternating rounds, release (notes/ecs.md,
