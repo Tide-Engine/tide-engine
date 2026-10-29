@@ -99,6 +99,7 @@ Positions and sizes are in world units, with `y` up. The camera maps them to the
 | `Draw.Arc(center, radius, start, sweep, width, color)` | Part of a ring |
 | `Draw.Shape(shape)` | A [`Shape`](#the-general-shape): a fill from one color to another, an outline around a fill, an edge that fades |
 | `Draw.Rect(rect, radius, fill)`, `Draw.Shape(shape, fill)` | A shape [filled by a function](#fills) of where in it each pixel is: a `Gradient`, or any `Func<float2, Color>` |
+| `Draw.Shadow(rect, radius, size)` | A soft shadow under a box at `rect`, fading out over `size` pixels, a quarter of `size` lower: black at 0.4, or `Draw.Shadow(rect, radius, size, color)`. Draw it before the box |
 | `Draw.Text(text, position, size, color)` | Text, with `position` its top left corner and `size` its font size, the height of a line of it (see [Text](#text)) |
 | `Draw.Text(text, position, size, color, anchor)` | Text with `position` another place of its box: `Anchor.MiddleCenter` centers it there |
 | `Draw.Text(text, position, size, color, font)` | Text in a weight: `Font.Bold`. An anchor goes before it: `Draw.Text(text, position, size, color, anchor, font)` |
@@ -265,9 +266,12 @@ view Buttons()
 | `Gradient.Linear(angle, from, to)` | Across it at `angle`, in radians from `+x` towards `+y`, one corner to the opposite one |
 | `Gradient.Radial(inner, outer)` | Its middle out to the middle of its sides, and on to its corners |
 
+`color.WithAlpha(a)` is the color with another alpha, its red, green and blue as they are: a glow of an item's color, `rarity.WithAlpha(0.4)`. It works in a fill, and in any GPU code, too.
+
 Each takes two, three or four colors, spread evenly: `Gradient.Vertical(a, b, c)` is `b` at the middle. Colors blend with their alpha, so a gradient to `Color.clear` fades without darkening.
 
 - **A fill is a value.** Keep one in a field, pass it to a helper, or write your own: a function `Color Name(float2 uv)` named where a fill goes, or a lambda, which can use the variables around it: `Draw.Rect(rect, 8, (float2 uv) => tint * (1 - uv.y * 0.3))`. Calling one on the CPU gives the color a pixel there gets.
+- **A fill can take the shape's size too:** a `Func<float2, float2, Color>`, given the place and the shape's size in the units it's drawn in (pixels on the screen), for patterns of a fixed size whatever the shape's: `Draw.Rect(bar, 6, (float2 uv, float2 size) => int(uv.x * size.x / 12) % 2 == 0 ? light : dark)` has stripes 12 pixels wide.
 - **The rest of the shape is as ever.** `Draw.Shape(shape, fill)` takes its center, size, rotation, corners, outline, soft edge and ellipse from `shape`, and the fill replaces `color` and `color2`. Its place in the shape is the shape's own, before `rotation` turns it, and its top is the upper one on the screen whether `y` goes up or down.
 - **Fills drawn one after another are drawn together,** whatever their functions: a menu of gradient buttons costs one draw. The function is GPU code, with [what the GPU runs](./shaders.md#what-the-gpu-runs)' rules.
 - **They're local code.** A fill is drawn by views and the functions they call, in the window or inside [`GUI.Draw`](./gui.md#custom-controls-in-layout). A render target's own `Rect` and `Shape` don't take one yet.

@@ -48,6 +48,7 @@ Widgets have automatic IDs from where they're called and the entity the view run
 | Widget | What it is |
 |---|---|
 | `Label(text)` | Text |
+| `Label(text, size)` | Text at a size of its own, like a heading: `GUILayout.Label("Settings", 24)`. Its line is as tall as a widget with that text size |
 | `Button(text)` | A button; returns whether it was pressed |
 | `Toggle(text, mut bool value)` | A checkbox |
 | `Slider(label, mut float value, min, max)` | A slider |
@@ -231,7 +232,7 @@ The rest are numbers:
 | `borderWidth` | 0 | How wide `border` is, in pixels: 0 for none |
 | `shading` | 0 | How much darker each widget's bottom is than its top, from 0 (flat) to 1 (black): a little, like 0.2, makes buttons look raised |
 | `shadowSize` | 16 | How far the panels' shadow fades out, in pixels: 0 for none |
-| `transition` | 0.1 | Seconds a widget takes to fade from one state's color to another's, as the pointer comes and goes: 0 changes at once |
+| `transition` | 0.1 | Seconds a widget takes to fade from one state's color to another's, as the pointer comes and goes, and half the time an anchored area takes to grow or shrink to its content: 0 changes at once |
 | `textSize` | 16 | The widgets' text size, in pixels. A widget's height follows it: `textSize + 12` |
 | `padding` | 12 | Space inside an area, around its widgets |
 | `spacing` | 5 | Space between widgets |
@@ -251,7 +252,25 @@ The buttons below pick a theme, and the slider its corners. The menu under them 
 
 :::
 
-Every frame starts from the default look, so a view that sets a theme sets it every frame, and a game that sets none looks as the GUI always did. A theme a block doesn't name fields of takes those from the defaults, not from the theme around it: keep a theme in a `const` or a singleton and change a copy of it to build one on another.
+Every frame starts from the default look, so a view that sets a theme sets it every frame, and a game that sets none looks as the GUI always did. A theme a block doesn't name fields of takes those from the defaults, not from the theme around it. To change one thing of a theme of your own, change a copy of it:
+
+```csharp
+const GUITheme LOOK = GUITheme { radius = 10, shading = 0.2, textSize = 18, spacing = 10 };
+
+view Menu()
+{
+    GUI.SetTheme(LOOK);
+    mut var primary = LOOK;  // The same look...
+    primary.control = Color(0.25, 0.45, 1); // ...with one color of its own
+    GUILayout.Area(Anchor.MiddleCenter)
+    {
+        GUILayout.Button("Cancel");
+        GUI.Theme(primary) { GUILayout.Button("Save"); }
+    }
+}
+```
+
+A toggle's box is never rounder than a quarter of its size, so a theme with round corners still has checkboxes that look like checkboxes.
 
 An area's panel has the look it opened with. The [stats overlay and the debug views](../tools/cli.md) aren't the GUI's widgets, and keep their own look whatever a game sets.
 
@@ -452,6 +471,31 @@ The GUI keeps the value from frame to frame, told apart by where `Animate` is ca
 - **`GUI.Animate(target, seconds, from)` starts at `from` instead,** the first frame: `GUI.Animate(1, 0.3, 0)` fades a toast in as it first appears.
 - **A frame it isn't called in starts it over.** Keep calling it while something fades out, and stop once it's at its target.
 - It settles exactly on its target, so `shown <= 0` is true once a fade out has finished.
+- **Something that fades out needs what it shows until it's gone.** A tooltip for the hovered item has no item once the pointer leaves: keep the last one in local state, and draw it while the fade lasts:
+
+```csharp
+local singleton Tip
+{
+    int item = -1; // The last item hovered, kept while its tooltip fades
+}
+
+void Tooltip(mut Tip tip, int hovered, float2 at, string text)
+{
+    if (hovered >= 0) tip.item = hovered;
+    var shown = GUI.Animate(hovered >= 0 ? 1.0 : 0.0, 0.15);
+    if (shown <= 0 || tip.item < 0) return;
+    GUI.Draw()
+    {
+        // Beside the pointer, and moved back onto the screen near its edges
+        var box = Rect(at.x + 16, at.y + 18, Draw.MeasureText(text, 15).x + 24, 36).MoveInside(Screen.rect);
+        Draw.Shadow(box, 8, 10, Color(0, 0, 0, 0.5 * shown));
+        Draw.Rect(box, 8, Color(0.05, 0.05, 0.08).WithAlpha(0.95 * shown));
+        Draw.Text(text, float2(box.x + 12, box.y + 18), 15, Color.white.WithAlpha(shown), Anchor.MiddleLeft);
+    }
+}
+```
+
+An area at an anchor animates by itself: when its content changes size, as a menu's tabs change, its panel grows or shrinks to it over twice the theme's `transition`, staying at its anchor, and its content is clipped to the panel meanwhile.
 
 It goes by the frame's length, `Frame.dt`, so it takes as long at any frame rate. Up to 1,024 values are animated at once; past that, a new one is at its target.
 

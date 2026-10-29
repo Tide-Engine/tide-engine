@@ -8,5 +8,6 @@ view Paint()
     Draw.SetScreen();
     Draw.Rect(Rect(0, 0, 32, 32), 0, Gradient.Vertical(Color.red, Color.blue));
     Color green = Color.green;
-    Draw.Rect(Rect(32, 0, 32, 32), 16, (float2 uv) => green);
+    // Takes its size too, and sets its alpha on the GPU: still green where it is
+    Draw.Rect(Rect(32, 0, 32, 32), 16, (float2 uv, float2 size) => green.WithAlpha(size.x > 0 ? 1 : 0));
 }

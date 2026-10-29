@@ -4160,7 +4160,18 @@ static void ex_call(emit *em, const expr *e)
         return;
     case CALL_LIST:
     case CALL_WORLD: what = "change lists or use the World: it reads fields of numbers, lists and maps, and samples grids"; break;
-    case CALL_TEXT: what = "work with text"; break;
+    case CALL_TEXT:
+        if (e->object->type.kind == TY_COLOR && str_eq_c(e->name, "WithAlpha")) { // The color with that alpha
+            sb_put(em->o, em->l == WGSL ? "vec4f((" : "vec4((");
+            ex(em, e->object);
+            sb_put(em->o, ").rgb, ");
+            ex_as(em, e->args.items[0], (type){TY_FLOAT, NULL}); // An int's a float there, as on the CPU
+            sb_put(em->o, ")");
+            return;
+        }
+        what = e->object->type.kind == TY_RECT ? "move a Rect: pass its x, y, width and height as a float4"
+                                               : "work with text";
+        break;
     default: what = "do this"; break;
     }
     refuse(em, e->at, "the GPU can't %s", what);

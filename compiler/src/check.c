@@ -3902,16 +3902,21 @@ static bool check_fill_draw(checker *c, expr *e, type *result)
     if (e->args.count != (rect ? 3 : 2)) return false;
     expr *fill = e->args.items[e->args.count - 1];
     if (fill->is_out) return false;
-    decl *const fn = prelude_decl(c->prog, DRAW_PRELUDE_PATH, rect ? DRAW_FILL_RECT : DRAW_FILL_SHAPE, DECL_FUNCTION);
-    // A lambda has its type from what takes it
-    if (!fill->lambda) {
+    // A lambda has its type from what takes it; it and a function value take the shape's size too with two arguments
+    int arguments = 0;
+    if (fill->lambda) arguments = fill->lambda_params.count;
+    else {
         const type t = check_expr(c, fill);
         fill->prechecked = true;
         if (!is_callable(t)) return false;
+        arguments = t.decl->call_types.count - 1;
     }
+    const char *name = arguments == 2 ? (rect ? DRAW_FILL_RECT_SIZED : DRAW_FILL_SHAPE_SIZED)
+                                      : (rect ? DRAW_FILL_RECT : DRAW_FILL_SHAPE);
+    decl *const fn = prelude_decl(c->prog, DRAW_PRELUDE_PATH, name, DECL_FUNCTION);
     if (!fn) { // A function value whose type the program's text doesn't write out
         diag_error(fill->at, "a fill's function needs its type where the program can see it: give it as a lambda, "
-                             "`(float2 uv) => ...`, or declare it as `Color Name(float2 uv)`");
+                             "`(float2 uv) => ...`, or declare it as `Color Name(float2 uv)` (or `(float2 uv, float2 size)`)");
         *result = T_ERR;
         return true;
     }
@@ -8141,6 +8146,18 @@ static type check_method(checker *c, expr *e)
         check_default_args(c, e);
         e->call = CALL_DRAW;
         e->draw_dims = 2;
+        return result;
+    }
+    // glow.WithAlpha(0.5), tip.MoveInside(Screen.rect): a Color's and a Rect's methods, called as text's are
+    if (obj.kind == TY_COLOR || obj.kind == TY_RECT) {
+        for (int i = 0; i < e->args.count; i++) {
+            if (e->args.items[i]->kind != E_DEFAULT && !e->args.items[i]->enum_shorthand) check_expr(c, e->args.items[i]);
+        }
+        const type result = resolve_builtin_call(str_from(obj.kind == TY_COLOR ? "Color" : "Rect"), e);
+        if (result.kind != TY_ERROR) {
+            e->call = CALL_TEXT;
+            check_default_args(c, e);
+        }
         return result;
     }
     if (obj.kind == TY_STRING) {

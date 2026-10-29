@@ -839,6 +839,12 @@ static void build_signatures(void)
     add_draw("Rect", "tide_draw_rect_area_radius", "rect, radius, color",
              "An antialiased rectangle with round corners. The radius is clamped to half its smaller side.",
              3, &T_RECT, &T_F, &T_COLOR);
+    add_draw("Shadow", "tide_draw_shadow_area_default", "rect, radius, size",
+             "A soft shadow under a box at `rect` with corners `radius`: black at 0.4, fading out over `size` pixels, a "
+             "quarter of `size` lower. Draw it before the box.", 3, &T_RECT, &T_F, &T_F);
+    add_draw("Shadow", "tide_draw_shadow_area", "rect, radius, size, color",
+             "A soft shadow in `color` under a box at `rect` with corners `radius`, fading out over `size` pixels, a "
+             "quarter of `size` lower. Draw it before the box; a light color makes a glow.", 4, &T_RECT, &T_F, &T_F, &T_COLOR);
     add_draw("Rect", "tide_draw_rect_area_corners", "rect, radii, color",
              "An antialiased rectangle with independent corner radii: top left, top right, bottom right, bottom left. Each is clamped to half its smaller side.",
              3, &T_RECT, &T_F4, &T_COLOR);
@@ -1098,6 +1104,12 @@ static void build_signatures(void)
              "start", "The text from character `start` on.");
     describe(add("string", "Substring", T_STR, "tide_str_substring", 2, t_int, t_int, T_NONE),
              "start, length", "`length` characters of the text, from character `start`.");
+    // Methods of a Color and a Rect, called as text's are, with the value first
+    describe(add("Color", "WithAlpha", T_COLOR, "tide_color_with_alpha", 1, T_F, T_NONE, T_NONE),
+             "alpha", "The color with this alpha, its red, green and blue as they are: `glow.WithAlpha(0.5 * fade)`.");
+    describe(add("Rect", "MoveInside", T_RECT, "tide_rect_move_inside", 1, T_RECT, T_NONE, T_NONE),
+             "bounds", "The rect moved, not resized, as little as it takes to be inside `bounds`, like a tooltip kept on "
+             "the screen: `tip.MoveInside(Screen.rect)`. Wider or taller than them, its left or top edge is at theirs.");
     describe(add("string", "ToUpper", T_STR, "tide_str_to_upper", 0, T_NONE, T_NONE, T_NONE),
              NULL, "The text in upper case: ASCII letters only, for now.");
     describe(add("string", "ToLower", T_STR, "tide_str_to_lower", 0, T_NONE, T_NONE, T_NONE),
@@ -1141,6 +1153,9 @@ static void build_signatures(void)
     // The GUI, in views: tide/gui.h. Codegen passes the view's GUI first, then
     // the widget's ID, then a mut argument's address.
     add_widget("Label", T_NONE, "label", "string text", 0, "Text.");
+    add_widget("Label", T_NONE, "label_sized", "string text, float size", 0,
+               "Text at a size of its own, in pixels, like a heading: `GUILayout.Label(\"Settings\", 24)`. Its line is "
+               "as tall as a widget with that text size.");
     add_gui("double", "TryParse", T_BOOL, "tide_str_parse_double", "string text, out double value", 0,
             "Reads the whole decimal text as the nearest double, ties to even, with identical bits on every platform. Invalid text or overflow gives false and zero.");
 
@@ -1360,6 +1375,7 @@ static const struct {
     {"Draw", "list", TY_DRAW_LIST, "tide_draw_render_target(tide_draw, (tide_render_target){.id = TIDE_RENDER_WINDOW})"},
     {"Screen", "width", TY_FLOAT, "tide_ui->width"},
     {"Screen", "height", TY_FLOAT, "tide_ui->height"},
+    {"Screen", "rect", TY_RECT, "((tide_rect){0.0f, 0.0f, tide_ui->width, tide_ui->height})"},
     {"Screen", "scale", TY_FLOAT2, "tide_f2(tide_draw->screen_scale.x > 0.0f ? tide_draw->screen_scale.x : 1.0f, tide_draw->screen_scale.y > 0.0f ? tide_draw->screen_scale.y : 1.0f)"},
     // In views and the functions they call. The input's Sample reads it of its own devices (see check_member).
     {"Cursor", "locked", TY_BOOL, "tide_ui->devices.mouse.locked"},
@@ -2268,6 +2284,8 @@ static const char *const draw_prelude_lines[] = {
     "    float ellipse;    // 1 for the ellipse that fits its size",
     "    float3 screen;    // The window's size in pixels, and how many of the display's each is",
     "    Func<float2, Color> fill;",
+    "    Func<float2, float2, Color> sized; // ...or one that takes the shape's size too, where `bySize` is 1",
+    "    float bySize;",
     "}",
     "",
     "// A quad's corner, from -1 to 1, to around the shape and as far as its edge",
@@ -2358,7 +2376,9 @@ static const char *const draw_prelude_lines[] = {
     "        cover = cover * glow * glow;",
     "    }",
     "    float2 uv = Math.Saturate(p / Math.Max(shape.size, float2(0.000001)) + float2(0.5));",
-    "    Color fill = shape.fill(uv);",
+    "    mut Color fill = Color(0, 0, 0, 0);",
+    "    if (shape.bySize > 0.5) fill = shape.sized(uv, shape.size);",
+    "    else fill = shape.fill(uv);",
     "    mut float4 paint = TidePremultiplied(fill);",
     "    if (shape.outline > 0)",
     "        paint = Math.Lerp(TidePremultiplied(shape.outlineColor), paint, Math.Saturate(0.5 - (d + shape.outline / pixel)));",
@@ -2387,6 +2407,23 @@ static const char *const draw_prelude_lines[] = {
     "    return Math.Clamp(radii, float4(0), float4(most));",
     "}",
     "",
+    "TideFillItem TideFillRectItem(Rect rect, float4 radii)",
+    "{",
+    "    float2 size = float2(rect.width, rect.height);",
+    "    return TideFillItem { center = float2(rect.x, rect.y) + size * 0.5, size = size, turn = float2(1, 0),",
+    "                          radii = TideFillRadii(size, radii), screen = TideFillScreen() };",
+    "}",
+    "",
+    "TideFillItem TideFillShapeItem(Shape shape)",
+    "{",
+    "    float most = Math.Min(shape.size.x, shape.size.y) * 0.5;",
+    "    return TideFillItem { center = shape.center, size = shape.size,",
+    "                          turn = float2(Math.Cos(shape.rotation), Math.Sin(shape.rotation)),",
+    "                          radii = TideFillRadii(shape.size, float4(shape.radius)),",
+    "                          outline = Math.Clamp(shape.outline, 0, most), outlineColor = shape.outlineColor,",
+    "                          soft = shape.soft, ellipse = shape.ellipse ? 1 : 0, screen = TideFillScreen() };",
+    "}",
+    "",
     "void TideFillRect(Rect rect, float radius, Func<float2, Color> fill)",
     "{",
     "    TideFillRect(rect, float4(radius), fill);",
@@ -2394,20 +2431,38 @@ static const char *const draw_prelude_lines[] = {
     "",
     "void TideFillRect(Rect rect, float4 radii, Func<float2, Color> fill)",
     "{",
-    "    float2 size = float2(rect.width, rect.height);",
-    "    TideFillDraw(TideFillItem { center = float2(rect.x, rect.y) + size * 0.5, size = size, turn = float2(1, 0),",
-    "                                radii = TideFillRadii(size, radii), screen = TideFillScreen(), fill = fill });",
+    "    mut var item = TideFillRectItem(rect, radii);",
+    "    item.fill = fill;",
+    "    TideFillDraw(item);",
     "}",
     "",
     "void TideFillShape(Shape shape, Func<float2, Color> fill)",
     "{",
-    "    float most = Math.Min(shape.size.x, shape.size.y) * 0.5;",
-    "    TideFillDraw(TideFillItem { center = shape.center, size = shape.size,",
-    "                                turn = float2(Math.Cos(shape.rotation), Math.Sin(shape.rotation)),",
-    "                                radii = TideFillRadii(shape.size, float4(shape.radius)),",
-    "                                outline = Math.Clamp(shape.outline, 0, most), outlineColor = shape.outlineColor,",
-    "                                soft = shape.soft, ellipse = shape.ellipse ? 1 : 0, screen = TideFillScreen(),",
-    "                                fill = fill });",
+    "    mut var item = TideFillShapeItem(shape);",
+    "    item.fill = fill;",
+    "    TideFillDraw(item);",
+    "}",
+    "",
+    "// The same with a fill that takes the shape's size too, in the units it's drawn in",
+    "void TideFillRectSized(Rect rect, float radius, Func<float2, float2, Color> fill)",
+    "{",
+    "    TideFillRectSized(rect, float4(radius), fill);",
+    "}",
+    "",
+    "void TideFillRectSized(Rect rect, float4 radii, Func<float2, float2, Color> fill)",
+    "{",
+    "    mut var item = TideFillRectItem(rect, radii);",
+    "    item.sized = fill;",
+    "    item.bySize = 1;",
+    "    TideFillDraw(item);",
+    "}",
+    "",
+    "void TideFillShapeSized(Shape shape, Func<float2, float2, Color> fill)",
+    "{",
+    "    mut var item = TideFillShapeItem(shape);",
+    "    item.sized = fill;",
+    "    item.bySize = 1;",
+    "    TideFillDraw(item);",
     "}",
     "",
     "// Between `count` colors spread evenly from 0 to 1, at `t`: blended with",
@@ -2567,7 +2622,8 @@ bool draw_prelude_wanted(const char *const *texts, const size_t *lens, const int
     // written as a lambda where a Draw.Rect or a Draw.Shape takes it, or a function's name there
     for (int f = 0; f < count; f++) {
         if (has_text(texts[f], lens[f], "Gradient.") || has_text(texts[f], lens[f], "Func<float2, Color>")
-            || has_text(texts[f], lens[f], "Func<float2,Color>")) return true;
+            || has_text(texts[f], lens[f], "Func<float2,Color>") || has_text(texts[f], lens[f], "Func<float2, float2, Color>")
+            || has_text(texts[f], lens[f], "Func<float2,float2,Color>")) return true;
     }
     static const char *const calls[] = {"Draw.Rect(", "Draw.Shape("};
     for (int f = 0; f < count; f++) {

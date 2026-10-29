@@ -10,7 +10,9 @@ Color Stripes(float2 uv)
 
 local singleton Probe
 {
-    Color[12] seen;
+    Color[13] seen;
+    Rect moved;
+    Rect screen;
     int frames;
     Func<float2, Color> kept;
 }
@@ -23,10 +25,13 @@ view Paint(mut Probe probe)
     // Three fills in a row: one run of the fills' shader
     Draw.Rect(Rect(10, 10, 100, 40), 8, Gradient.Vertical(Color.red, Color.blue));
     Color tint = Color(0.25, 0.5, 1);
-    Draw.Rect(Rect(10, 60, 100, 40), float4(0, 4, 8, 12), (float2 uv) => tint * uv.x);
+    Draw.Rect(Rect(10, 60, 100, 40), float4(0, 4, 8, 12), (float2 uv) => tint.WithAlpha(uv.x)); // WithAlpha on the GPU
     Draw.Rect(Rect(10, 110, 100, 40), 0, Stripes);
     Draw.Shape(Shape { center = float2(200, 100), size = float2(80, 40), rotation = 0.5, outline = 2, soft = 4 },
                Gradient.Radial(Color.white, Color.clear));
+    // One that takes the shape's size too: stripes 10 units wide, whatever its width
+    Draw.Rect(Rect(10, 160, 100, 20), 4, (float2 uv, float2 size) => int(uv.x * size.x / 10) % 2 == 0 ? Color.white : Color.black);
+    Draw.Shadow(Rect(10, 200, 100, 40), 8, 12); // A shape of its own, after the fills' run
     // Nothing to draw: no size, or a size that isn't a number
     Draw.Rect(Rect(10, 10, 0, 40), 8, Stripes);
     Draw.Rect(Rect(10, 10, Math.Sqrt(-1), 40), 8, Stripes);
@@ -49,4 +54,7 @@ view Paint(mut Probe probe)
     probe.seen[9] = four(float2(0, 1));
     probe.seen[10] = down(float2(0.5, Math.Sqrt(-1))); // A NaN uv is the start
     probe.seen[11] = Stripes(float2(0.3, 0));
+    probe.seen[12] = Color.red.WithAlpha(0.25);
+    probe.moved = Rect(90, -5, 20, 20).MoveInside(Rect(0, 0, 100, 100));
+    probe.screen = Screen.rect;
 }

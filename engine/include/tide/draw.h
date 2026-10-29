@@ -228,6 +228,26 @@ typedef struct tide_rect {
     float x, y, width, height;
 } tide_rect;
 
+// rect.MoveInside(bounds): the rect moved, not resized, as little as it takes
+// to be inside `bounds`: a popup kept on the screen. Where it's wider or
+// taller than `bounds`, its left or top edge is at theirs. A number that
+// isn't one counts as 0.
+static inline float tide_rect_inside_axis(float at, float size, float from, float room)
+{
+    at = at == at ? at : 0.0f;
+    size = size == size && size > 0.0f ? size : 0.0f;
+    from = from == from ? from : 0.0f;
+    room = room == room && room > 0.0f ? room : 0.0f;
+    if (at + size > from + room) at = from + room - size;
+    return at < from ? from : at;
+}
+
+static inline tide_rect tide_rect_move_inside(const tide_rect r, const tide_rect bounds)
+{
+    return (tide_rect){tide_rect_inside_axis(r.x, r.width, bounds.x, bounds.width),
+                       tide_rect_inside_axis(r.y, r.height, bounds.y, bounds.height), r.width, r.height};
+}
+
 // A place of a box, named as Unity's TextAnchor: which of a text's is at its
 // position, and where GUILayout.Area puts an area on the screen. Tide's
 // Anchor enum has the same values. Upper is towards the top of the screen.
@@ -1856,6 +1876,13 @@ typedef struct tide_shape {
     ((tide_shape){.color = TIDE_COLOR_WHITE, .color2 = TIDE_COLOR_NONE, .outline_color = TIDE_COLOR_WHITE})
 
 void tide_draw_shape(tide_draw_list *d, tide_shape shape);
+
+// Draw.Shadow(rect, radius, size[, color]): a soft shadow under a box at
+// `rect` with corners `radius`, fading out over `size`, a quarter of `size`
+// lower (in the GUI's pixels, down the screen). Drawn before the box. With no
+// color, black at 0.4.
+void tide_draw_shadow_area(tide_draw_list *d, tide_rect rect, float radius, float size, tide_color color);
+void tide_draw_shadow_area_default(tide_draw_list *d, tide_rect rect, float radius, float size);
 
 // A line `width` thick, with round ends: it reaches half its width past them.
 void tide_draw_thick_line(tide_draw_list *d, tide_float2 from, tide_float2 to, float width, tide_color color);

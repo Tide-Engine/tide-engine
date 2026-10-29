@@ -49,11 +49,14 @@ Draw.Rect(rect, 14, Gradient.Vertical(Color(0.35, 0.55, 1), Color(0.25, 0.4, 0.8
 Draw.Rect(Rect(x - 220, y - 100, 440, 200), 100, Gradient.Radial(Color(0.35, 0.45, 1, 0.35), Color.clear));
 ```
 
-A shadow is a dark shape with a soft edge, drawn first and a little lower: `soft` fades its edge out over that many pixels.
+A shadow goes under a box, drawn first: `Draw.Shadow(rect, radius, size)` is a soft dark shape the box's size, fading out over `size` pixels and a little lower. A light color, `Draw.Shadow(rect, radius, size, Color(1, 0.8, 0.3, 0.5))`, is a glow.
 
 ```csharp
-Draw.Shape(Shape { center = center + float2(0, 6), size = size, radius = 14, color = Color(0, 0, 0, 0.45), soft = 10 });
+Draw.Shadow(card, 14, 12);
+Draw.Rect(card, 14, Gradient.Vertical(Color(0.17, 0.15, 0.25), Color(0.09, 0.08, 0.14)));
 ```
+
+A heading is a label at a size of its own, `GUILayout.Label("Settings", 24)`, and `color.WithAlpha(a)` fades any color, like a glow of an item's rarity color: `glow.WithAlpha(0.6 * chosen)`.
 
 Fills drawn one after another are drawn together, so a screen of gradient buttons costs no more than one.
 
@@ -95,5 +98,7 @@ if (shown > 0)
 ```
 
 It settles exactly on its target, so `shown > 0` stops drawing the panel once it has slid out. Something that should come in as it first appears starts from a value of its own: `GUI.Animate(1, 0.4, 0)` goes from 0 to 1 the first time it's called. Keyed with `GUI.Key`, a new key starts again, as the "Starting..." note above does each time Play is pressed.
+
+A panel at an anchor needs none of this to change size smoothly: `GUILayout.Area(Anchor.MiddleCenter)` grows and shrinks to its content by itself, as the tabs of a dialog change. For a tooltip, keep what it shows while it fades, and keep it on the screen with `rect.MoveInside(Screen.rect)` (see [Animation](./gui.md#animation)).
 
 Animate positions, sizes, colors and alpha; keep times short, a tenth to a third of a second, so the menu feels quick.

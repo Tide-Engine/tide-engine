@@ -1344,6 +1344,41 @@ int tide_gui_begin_area(tide_gui *g, const uint32_t id, const tide_rect rect)
     return before;
 }
 
+// An anchored area's size as it's shown, which eases toward the size its
+// content measured, over twice the theme's transition, so a panel whose
+// content changes grows and shrinks rather than jumping. Its motion keeps
+// what was measured too (lanes 2 and 3), for the next frame to see whether
+// it's still on its way.
+static tide_float2 area_shown(tide_gui *g, const uint32_t id, const tide_float2 measured)
+{
+    const uint32_t key = tide_gui_seed(id, 0xA4EAu);
+    const float target[2] = {measured.x, measured.y};
+    float shown[2];
+    animate_lanes(g, key, target, shown, 2, g->theme.transition * 2.0f, NULL);
+    bool fresh;
+    tide_gui_motion *m = motion(g, key, &fresh); // The slot it just used
+    if (m) {
+        m->value[2] = measured.x;
+        m->value[3] = measured.y;
+    }
+    return tide_f2(shown[0], shown[1]);
+}
+
+// Whether an anchored area was shown at another size than its content's last
+// frame: it's on its way to it, and its content is clipped to it meanwhile.
+static bool area_moving(const tide_gui *g, const uint32_t id)
+{
+    const uint32_t key = tide_gui_seed(id, 0xA4EAu);
+    uint32_t slot = key & (TIDE_GUI_MAX_MOTIONS - 1);
+    for (uint32_t probe = 0; probe < TIDE_GUI_MAX_MOTIONS; probe++) {
+        const tide_gui_motion *m = &g->motions[slot];
+        if (m->frame == 0) return false;
+        if (m->id == key) return g->frame - m->frame <= 1u && (m->value[0] != m->value[2] || m->value[1] != m->value[3]);
+        slot = (slot + 1) & (TIDE_GUI_MAX_MOTIONS - 1);
+    }
+    return false;
+}
+
 int tide_gui_begin_area_at(tide_gui *g, const uint32_t id, const int32_t anchor)
 {
     // Placed with last frame's size, so widgets know where they are as
@@ -1369,6 +1404,10 @@ int tide_gui_begin_area_at(tide_gui *g, const uint32_t id, const int32_t anchor)
     top(g)->hot_before = g->hot_next;
     top(g)->rects_before = g->rect_count_next;
     top(g)->nav_from = g->nav_count;
+    if (area_moving(g, id)) { // Its content inside it as it grows: placed when it closes
+        top(g)->clip_mark = tide_draw_push_clip(&g->list, (tide_rect){at.x, at.y, size.x, size.y});
+        top(g)->own_clip = g->list.place.clip;
+    }
     return before;
 }
 
@@ -1471,8 +1510,10 @@ static void close_area(tide_gui *g, const tide_gui_group *grp)
 {
     const tide_float2 size = tide_f2(grp->size.x + 2.0f * AREA_PADDING, grp->size.y + 2.0f * AREA_PADDING);
     tide_rect r = grp->rect;
+    tide_float2 kept = size; // What the next frame places it by
     if (grp->anchor >= 0) {
-        const tide_float2 at = place(g, grp->anchor, size);
+        const tide_float2 shown = kept = area_shown(g, grp->id, size);
+        const tide_float2 at = place(g, grp->anchor, shown);
         const float dx = at.x - grp->guess.x;
         const float dy = at.y - grp->guess.y;
         if ((dx != 0.0f || dy != 0.0f) && (grp->panel != UINT32_MAX || grp->panel_plain)) {
@@ -1489,7 +1530,12 @@ static void close_area(tide_gui *g, const tide_gui_group *grp)
             g->nav_rects[i].y += dy;
             if (g->nav[i] == g->focus) g->focus_rect = g->nav_rects[i];
         }
-        r = (tide_rect){at.x, at.y, size.x, size.y};
+        r = (tide_rect){at.x, at.y, shown.x, shown.y};
+        if (grp->own_clip) {
+            // Its own, made as it opened (a list shares a clip that's the same as the one in use)
+            if (grp->own_clip > grp->clips_from) g->list.clips[grp->own_clip - 1u].rect = r;
+            tide_draw_pop(&g->list, grp->clip_mark);
+        }
     }
     if (grp->panel != UINT32_MAX) {
         tide_draw_command *c = &g->list.commands[grp->panel];
@@ -1512,7 +1558,7 @@ static void close_area(tide_gui *g, const tide_gui_group *grp)
         c->b = tide_f2(max_f(r.width, 1.0f), max_f(r.height, 1.0f));
         g->list.shapes[c->shape].radius = grp->radius;
     }
-    remember(g, grp->id, size, grp->natural, grp->least);
+    remember(g, grp->id, kept, grp->natural, grp->least);
     remember_place(g, grp->id, r, grp->rects_before);
     if (!contains(r, g->mouse)) return;
     g->over_next = true;
@@ -1756,6 +1802,30 @@ void tide_gui_layout_label(tide_gui *g, const char *text)
     tide_gui_label(g, reserve(g, width, width, false), text);
 }
 
+// A label at its own text size, as a heading is: the theme's, for it alone.
+// A size that isn't a number, or is out of the theme's range, is the nearest in it.
+static float label_size(const tide_gui *g, const float size)
+{
+    if (!tide_is_finite_f(size)) return g->theme.text_size;
+    return size < 1.0f ? 1.0f : size > 512.0f ? 512.0f : size;
+}
+
+void tide_gui_label_sized(tide_gui *g, const tide_rect rect, const char *text, const float size)
+{
+    const float theme = g->theme.text_size;
+    g->theme.text_size = label_size(g, size);
+    tide_gui_label(g, rect, text);
+    g->theme.text_size = theme;
+}
+
+void tide_gui_layout_label_sized(tide_gui *g, const char *text, const float size)
+{
+    const float theme = g->theme.text_size;
+    g->theme.text_size = label_size(g, size); // Its line is as tall as its text, as a widget's is
+    tide_gui_layout_label(g, text);
+    g->theme.text_size = theme;
+}
+
 bool tide_gui_button(tide_gui *g, const uint32_t id, const tide_rect rect, const char *text)
 {
     bool hover, down, focused;
@@ -1806,9 +1876,14 @@ bool tide_gui_toggle(tide_gui *g, const uint32_t id, const tide_rect rect, const
     const bool changed = clicked(g, id, rect, &hover, &down, &focused);
     if (changed) *value = !*value;
     const tide_rect box = {rect.x, rect.y + (rect.height - BOX) * 0.5f, BOX, BOX};
+    // Its corners no rounder than a quarter of its box, so a round theme's checkbox doesn't look like a radio
+    // button; the focus's outline and the check go around them as ever
+    const float radius = g->theme.radius;
+    g->theme.radius = min_f(radius, BOX * 0.25f);
     if (focused) fill_around(g, box, BORDER, g->theme.accent);
     body(g, id, box, hover ? g->theme.hot : g->theme.control);
     if (*value) fill_around(g, box, -4.0f, g->theme.accent);
+    g->theme.radius = radius;
     text_at(g, text, rect.x + BOX + 8.0f, rect.y + rect.height * 0.5f, g->theme.text);
     return changed;
 }

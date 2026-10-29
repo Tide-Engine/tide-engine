@@ -1,0 +1,411 @@
+# Shared runner steps for Build's independent test and package matrices.
+name: Check
+
+on:
+  workflow_call:
+    inputs:
+      platform:
+        required: true
+        type: string
+      os:
+        required: true
+        type: string
+      preset:
+        required: true
+        type: string
+      test-jobs:
+        required: true
+        type: number
+      version:
+        required: true
+        type: string
+      channel:
+        required: true
+        type: string
+
+env:
+  TIDE_HIDDEN: '1'
+  TIDE_TELEMETRY: '0'
+
+jobs:
+  check:
+    runs-on: ${{ inputs.os }}
+    env:
+      TIDE_VERSION: ${{ inputs.version }}
+      TIDE_CHANNEL: ${{ inputs.channel }}
+      TIDE_WEB_CHROME_VERSION: '155.0.8059.39'
+      CTEST_PARALLEL_LEVEL: ${{ inputs.test-jobs }}
+      CMAKE_C_COMPILER_LAUNCHER: ccache
+      CMAKE_CXX_COMPILER_LAUNCHER: ccache
+      CCACHE_DIR: ${{ github.workspace }}/build/ccache
+      CCACHE_MAXSIZE: 500M
+      CCACHE_COMPILERCHECK: content
+      CCACHE_NODIRECT: 'true'
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+
+      # The runners' own Node is 22, whose libuv ends a Windows process, about
+      # one in 500, as it starts its first TCP connection (exit code
+      # 3221226505, before a test file's first test ran): libuv's #5107, which
+      # Node has from 24.16. So the Node tests here run on 24, on every
+      # platform, as the docs' do. Require the October 2026 security fixes
+      # and check for newer 24.x patches instead of trusting the runner cache.
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '^24.22.1'
+          check-latest: true
+
+      # A run that releases nothing builds as this repo's version, as builds
+      # here do: the package's tests check `#if TIDE_0_1_OR_NEWER` against it.
+      - name: Version
+        if: env.TIDE_VERSION == ''
+        run: echo "TIDE_VERSION=$(cat VERSION)-dev" >> "$GITHUB_ENV"
+
+      # Windows and Linux build with the LLVM tide's built-in clang comes from
+      # (cmake/LLVM.cmake), which builds players' games: the runners' own is
+      # older. clang-toolchain.cmake finds it through LLVM_ROOT.
+      - name: LLVM version
+        run: |
+          version=$(sed -nE 's/^set\(TIDE_LLVM_VERSION ([0-9.]+)\).*/\1/p' cmake/LLVM.cmake)
+          test -n "$version"
+          echo "LLVM_VERSION=$version" >> "$GITHUB_ENV"
+      # LLVM's own packages, of the same major version. LLDB is for tidec_debugger_lldb: a game's LLDB views.
+      - name: Install tools (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          major=${LLVM_VERSION%%.*}
+          codename=$(lsb_release -cs)
+          wget -qO- https://apt.llvm.org/llvm-snapshot.gpg.key | sudo tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc > /dev/null
+          echo "deb http://apt.llvm.org/$codename/ llvm-toolchain-$codename-$major main" | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install -y clang-$major lld-$major llvm-$major lldb-$major ninja-build zstd ccache libx11-dev libxrandr-dev \
+            libxinerama-dev libxcursor-dev libxi-dev libgl1-mesa-dev
+          echo "LLVM_ROOT=/usr/lib/llvm-$major" >> "$GITHUB_ENV"
+      - name: Cache LLVM tools (Windows)
+        id: llvm-tools
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          # Cache the build tools and their aliases, plus clang's resources.
+          # Debuggers, Fortran and the other LLVM programs aren't used here.
+          path: |
+            C:/llvm/bin/clang.exe
+            C:/llvm/bin/clang++.exe
+            C:/llvm/bin/clang-scan-deps.exe
+            C:/llvm/bin/llvm-ar.exe
+            C:/llvm/bin/llvm-ranlib.exe
+            C:/llvm/bin/llvm-lib.exe
+            C:/llvm/bin/llvm-rc.exe
+            C:/llvm/bin/llvm-windres.exe
+            C:/llvm/bin/llvm-mt.exe
+            C:/llvm/bin/lld.exe
+            C:/llvm/bin/ld.lld.exe
+            C:/llvm/bin/lld-link.exe
+            C:/llvm/bin/wasm-ld.exe
+            C:/llvm/lib/clang
+          key: llvm-tools-v2-Windows-${{ env.LLVM_VERSION }}-${{ hashFiles('cmake/LLVM.cmake', 'cmake/*toolchain.cmake') }}
+      # LLVM's own release, the very archive tide's package unpacks: its
+      # programs and clang's headers.
+      - name: Install tools (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          # Ninja and zstd are on the hosted image (cache restore uses zstd
+          # already). Avoid redundant Chocolatey feed requests for them.
+          ninja --version
+          zstd --version
+          if ! command -v ccache >/dev/null 2>&1; then
+            choco install ccache -y --no-progress
+          fi
+          ccache --version
+          if [ '${{ steps.llvm-tools.outputs.cache-hit }}' != true ]; then
+            name="clang+llvm-$LLVM_VERSION-x86_64-pc-windows-msvc"
+            mkdir -p /c/llvm
+            curl -fsSL "https://github.com/llvm/llvm-project/releases/download/llvmorg-$LLVM_VERSION/$name.tar.zst" \
+              | zstd -d -q --long=31 | tar -x -f - -C /c/llvm --strip-components=1 "$name/bin" "$name/lib/clang"
+          fi
+          echo "LLVM_ROOT=C:/llvm" >> "$GITHUB_ENV"
+      # Apple's clang builds native code; web builds need Homebrew's LLVM, and its lld for wasm-ld.
+      - name: Install tools (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          brew install ninja llvm lld zstd ccache
+          echo "$(brew --prefix lld)/bin" >> "$GITHUB_PATH"
+      # Web builds download wasi-sdk's C library (cmake/wasi-toolchain.cmake),
+      # and MinGW builds llvm-mingw's (cmake/mingw-toolchain.cmake).
+      - uses: actions/cache@v4
+        with:
+          path: build/wasi-sdk-*
+          key: wasi-sdk-${{ hashFiles('cmake/wasi-toolchain.cmake') }}
+      - uses: actions/cache@v4
+        if: runner.os == 'Windows'
+        with:
+          path: build/llvm-mingw-*
+          key: llvm-mingw-${{ hashFiles('cmake/mingw-toolchain.cmake') }}
+      # The package builds clang and lld into tide from LLVM's release (cmake/LLVM.cmake).
+      - uses: actions/cache@v4
+        if: inputs.preset == 'package'
+        with:
+          path: build/llvm-[0-9]*
+          key: llvm-${{ runner.os }}-${{ hashFiles('cmake/LLVM.cmake') }}
+      # On macOS, LLVM's libraries are bitcode, which lld compiles as it links
+      # tide (minutes); its cache keeps that work between runs. Only LLVM and
+      # the code that calls it decide what's in it. lld's own keys for what it
+      # keeps there leave out most of how the code is made (whether a function's
+      # address is said to matter, which folding identical ones goes by), so a
+      # change to that takes another number here, or the old code is found.
+      - uses: actions/cache@v4
+        if: runner.os == 'macOS' && inputs.preset == 'package'
+        with:
+          path: build/package/lto-cache
+          key: lto-2-${{ hashFiles('cmake/LLVM.cmake', 'compiler/cli/llvm/cc.cpp') }}
+          restore-keys: lto-2-
+
+      # CMake inherits these launchers in its native host builds too. ccache
+      # hashes the compiler and preprocessed source, including optional headers.
+      - name: Cache compiled objects
+        uses: actions/cache@v4
+        with:
+          path: build/ccache
+          key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.preset }}-${{ env.LLVM_VERSION }}-${{ github.sha }}
+          restore-keys: ccache-${{ runner.os }}-${{ runner.arch }}-${{ inputs.preset }}-${{ env.LLVM_VERSION }}-
+      - name: Compiler cache statistics (start)
+        run: ccache --zero-stats
+
+      # Start long native tests first. Browser workloads compete for software
+      # rendering CPU when grouped together, so keep their usual ordering.
+      # Only scheduling data is cached; every selected test still runs.
+      - name: Cache test durations
+        if: inputs.preset == 'release' || inputs.preset == 'mingw-release'
+        uses: actions/cache@v4
+        with:
+          path: build/${{ inputs.preset }}/Testing/Temporary/CTestCostData.txt
+          key: ctest-cost-${{ runner.os }}-${{ runner.arch }}-${{ inputs.preset }}-${{ github.sha }}
+          restore-keys: ctest-cost-${{ runner.os }}-${{ runner.arch }}-${{ inputs.preset }}-
+
+      # Native tests that open a window (label gpu: the demo's smoke test, the
+      # renderer's) need OpenGL in a window, which no runner has: Windows' and
+      # Linux's have no GPU, and on macOS's GLFW finds no OpenGL to open one
+      # with. The web ones run in headless Chrome.
+      - name: Test (native)
+        if: inputs.preset == 'release'
+        run: |
+          cmake --preset release -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
+          cmake --build --preset release
+          ctest --preset release -LE gpu
+      # Everything again under AddressSanitizer and UndefinedBehaviorSanitizer,
+      # where a read or write out of bounds or an undefined operation is a
+      # report, and a report fails its test: the games of Tide alone that try
+      # to make one (compiler/tests/safety, see AGENTS.md, Language) with the
+      # rest of the suite. Two tests are the other jobs' alone: the relay's,
+      # which is Node's and no sanitizer watches, and rooms with the runner's
+      # browsers, which nobody has run this way yet.
+      - name: Test (sanitizers)
+        if: inputs.preset == 'sanitize'
+        run: |
+          cmake --preset sanitize -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
+          cmake --build --preset sanitize
+          ctest --preset sanitize -LE gpu -E '^(relay|tide_platform_rooms)$'
+      # Pin the Windows web tests' browser independently of the runner image.
+      # Headless Shell draws offscreen; native jobs keep the runner's browser.
+      - name: Cache Chrome Headless Shell (Windows web)
+        if: runner.os == 'Windows' && inputs.preset == 'web-release'
+        uses: actions/cache@v4
+        with:
+          path: build/chrome-for-testing/${{ env.TIDE_WEB_CHROME_VERSION }}/chrome-headless-shell-win64
+          key: chrome-headless-shell-Windows-win64-${{ env.TIDE_WEB_CHROME_VERSION }}
+      - name: Install Chrome Headless Shell (Windows web)
+        if: runner.os == 'Windows' && inputs.preset == 'web-release'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $chromeRoot = Join-Path $env:GITHUB_WORKSPACE "build/chrome-for-testing/$env:TIDE_WEB_CHROME_VERSION"
+          $chromePath = Join-Path $chromeRoot 'chrome-headless-shell-win64/chrome-headless-shell.exe'
+          if (-not (Test-Path -LiteralPath $chromePath)) {
+            New-Item -Path $chromeRoot -ItemType Directory -Force | Out-Null
+            $chromeArchive = Join-Path $chromeRoot 'chrome-headless-shell-win64.zip'
+            Invoke-WebRequest "https://storage.googleapis.com/chrome-for-testing-public/$env:TIDE_WEB_CHROME_VERSION/win64/chrome-headless-shell-win64.zip" -OutFile $chromeArchive
+            Expand-Archive -LiteralPath $chromeArchive -DestinationPath $chromeRoot -Force
+            Remove-Item -LiteralPath $chromeArchive
+          }
+          $chromeVersion = (& $chromePath --version | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $chromeVersion -ne "Google Chrome for Testing $env:TIDE_WEB_CHROME_VERSION") {
+            throw "Expected Chrome Headless Shell $env:TIDE_WEB_CHROME_VERSION, found $chromeVersion."
+          }
+          Write-Output "Web browser: $chromePath ($chromeVersion)"
+          Write-Output "Windows process session: $((Get-Process -Id $PID).SessionId)"
+          "TIDE_WEB_BROWSER=$($chromePath.Replace('\', '/'))" >> $env:GITHUB_ENV
+
+      # The WebGPU ones (label webgpu) run on the browser's software WebGPU.
+      # Linux's runners leave them out: without a GPU, Chrome there draws with
+      # WebGPU but gives nothing back when the test reads its pixels.
+      - name: Test (web)
+        if: inputs.preset == 'web-release'
+        run: |
+          # The docs' examples are the Docs workflow's.
+          browser=()
+          if [ "$RUNNER_OS" = Windows ]; then
+            test -f "$TIDE_WEB_BROWSER"
+            browser=(-DTIDE_BROWSER="$TIDE_WEB_BROWSER")
+          fi
+          cmake --preset web-release -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL" -DTIDE_DOC_EXAMPLES=OFF "${browser[@]}"
+          cmake --build --preset web-release
+          # Software-rendered pages reserve the host's CPUs in CTest. Private
+          # Windows/Linux runners have two CPUs, despite the four-job default.
+          web_test_jobs="$(node -p 'require("node:os").availableParallelism()')"
+          if [ "$RUNNER_OS" = Linux ]; then
+            ctest --preset web-release --parallel "$web_test_jobs" -LE webgpu
+          else
+            ctest --preset web-release --parallel "$web_test_jobs"
+          fi
+      # The target tide builds Windows games for; its platform layer goes in the package.
+      - name: Test (MinGW)
+        if: inputs.preset == 'mingw-release'
+        run: |
+          cmake --preset mingw-release -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
+          cmake --build --preset mingw-release
+          ctest --preset mingw-release -LE gpu
+
+      # Android's tests run on its emulator, which Linux's runners accelerate
+      # (KVM). Its SDK is on the runners; the emulator and its image come
+      # through the SDK's manager, under Google's license.
+      - name: Free disk space for Android
+        if: runner.os == 'Linux' && inputs.preset == 'package'
+        run: |
+          # The 6 GiB userdata partition needs 7.2 GiB free before booting.
+          # Tide uses neither of these SDKs preinstalled on the hosted image.
+          df -h "$HOME"
+          sudo rm -rf -- /usr/share/dotnet /usr/local/.ghcup
+          df -h "$HOME"
+      # Java for the SDK's tools, and for the checks of what's made for Google
+      # Play.
+      - uses: actions/setup-java@v4
+        if: runner.os == 'Linux' && inputs.preset == 'package'
+        with:
+          distribution: temurin
+          java-version: 21
+      - name: Test (Android)
+        if: runner.os == 'Linux' && inputs.preset == 'package'
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          tools="$ANDROID_HOME/cmdline-tools/latest/bin"
+          # Its yes to the licenses, without a pipe: yes ends with a broken one, which pipefail takes for failing
+          "$tools/sdkmanager" --install emulator platform-tools "system-images;android-36;default;x86_64" \
+            > /dev/null < <(yes)
+          # One folder for AVDs, which avdmanager and the emulator would each
+          # look for in their own places (the runner sets XDG_CONFIG_HOME)
+          export ANDROID_AVD_HOME="$HOME/.android/avd"
+          mkdir -p "$ANDROID_AVD_HOME"
+          echo no | "$tools/avdmanager" create avd -n tide -k "system-images;android-36;default;x86_64" --force
+          # The memory and disk Android 16 wants, which a new AVD's defaults don't give it
+          "$ANDROID_HOME/emulator/emulator" -avd tide -no-window -no-audio -no-boot-anim -gpu swiftshader_indirect \
+            -no-snapshot -memory 4096 -cores 4 -partition-size 6144 > emulator.log 2>&1 &
+          emulator=$!
+          adb="$ANDROID_HOME/platform-tools/adb"
+          # Build while Android boots; only running tests needs the device.
+          cmake --preset android-debug -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
+          cmake --build --preset android-debug
+          # Until Android says it booted. An emulator that ends first, or hasn't
+          # booted in 15 minutes, fails the step with what it said.
+          until [ "$("$adb" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" = 1 ]; do
+            if ! kill -0 $emulator 2>/dev/null || [ $SECONDS -gt 900 ]; then
+              cat emulator.log
+              exit 1
+            fi
+            sleep 2
+          done
+          ctest --preset android-debug
+
+      # The package's Android half is the platform layer for each CPU, built
+      # with the runner's NDK (ANDROID_NDK_HOME).
+      - uses: actions/download-artifact@v4
+        if: inputs.preset == 'package'
+        with:
+          name: tide-jetbrains-installer
+          path: build/jetbrains
+      - name: Package
+        if: inputs.preset == 'package'
+        run: |
+          # MinGW stages its tools before the native tools replace them.
+          if [ "$RUNNER_OS" = Windows ]; then
+            cmake --preset mingw-release -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
+            cmake --build --preset mingw-release --target tide_cli tidels tide_platform tide_editor
+          fi
+          cmake --preset package -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
+          targets=(tide_cli tidels tide_vscode tide_editor)
+          if [ "$RUNNER_OS" != Windows ]; then targets+=(tide_platform); fi
+          cmake --build --preset package --target "${targets[@]}"
+          cmake --preset web-package -DTIDE_VERSION="$TIDE_VERSION" -DTIDE_CHANNEL="$TIDE_CHANNEL"
+          cmake --build --preset web-package --target tide_platform
+          for abi in arm64 x86_64; do
+            cmake --preset android-package-$abi
+            cmake --build --preset android-package-$abi --target tide_platform
+          done
+          cmake -DNAME=tide-${{ inputs.platform }} -P cmake/package.cmake
+      # Build a game with the package, as a user would.
+      - name: Try the package
+        if: inputs.preset == 'package'
+        run: |
+          mkdir -p build/try
+          cp demo/demo.tide build/try/
+          build/dist/tide/bin/tide version
+          build/dist/tide/bin/tide build build/try
+          build/dist/tide/bin/tide build build/try --release --web
+          build/dist/tide/bin/tide build build/try --release --web --single-file
+          build/dist/tide/bin/tide build build/try --android
+          cmake -DTIDE="$PWD/build/dist/tide/bin/tide${{ runner.os == 'Windows' && '.exe' || '' }}" \
+            -DBUNDLE="$PWD/build/dist/tide/editors/tide-jetbrains-installer.zip" \
+            -DWORK="$PWD/build/try-editors" -P compiler/cli/tests/jetbrains_test.cmake
+      # A game's C++, which builds with no C++ runtime: that it builds for each
+      # target with the package's own compiler and headers, and what tide says
+      # when it can't.
+      - name: Try the package (C++)
+        if: inputs.preset == 'package'
+        run: cmake -DTIDE=build/dist/tide/bin/tide -DWORK=build/try-cpp -DANDROID=ON -P compiler/cli/tests/cpp_test.cmake
+      - name: Try the package (incremental builds)
+        if: inputs.preset == 'package'
+        run: node compiler/cli/tests/cache_test.mjs --tide build/dist/tide/bin/tide --web
+      # Its app and bundle made to ship, checked with Google's tools: apksigner,
+      # Java's JAR signatures, and bundletool (pinned), which Play runs on what
+      # it's given. Then the APKs bundletool makes of the bundle, signed with
+      # tide's key as Play signs with its own, play on the emulator, which the
+      # Android tests started.
+      - name: Try the package (Google Play)
+        if: runner.os == 'Linux' && inputs.preset == 'package'
+        run: |
+          printf 'settings\n{\n    appId = "dev.tide.trydemo";\n}\n' > build/try/settings.tide
+          build/dist/tide/bin/tide build build/try --android --release
+          tools=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)
+          "$tools/apksigner" verify --verbose build/try/.build/try.apk
+          "$JAVA_HOME/bin/jarsigner" -verify build/try/.build/try.aab | tee jarsigner.log
+          grep -q "jar verified" jarsigner.log
+          curl -fsSL -o bundletool.jar https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar
+          echo "a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29  bundletool.jar" | sha256sum -c
+          java -jar bundletool.jar validate --bundle=build/try/.build/try.aab
+          openssl pkcs12 -export -in ~/.android/tide.pem -inkey ~/.android/tide.pem -out tide.p12 -passout pass:tide -name tide
+          java -jar bundletool.jar build-apks --bundle=build/try/.build/try.aab --output=try.apks --connected-device \
+            --ks=tide.p12 --ks-pass=pass:tide --ks-key-alias=tide --key-pass=pass:tide
+          java -jar bundletool.jar install-apks --apks=try.apks
+          adb="$ANDROID_HOME/platform-tools/adb"
+          # -W: back once the app has drawn its first frame
+          "$adb" shell am start -W -n dev.tide.trydemo/android.app.NativeActivity | tee start.log
+          grep -q "Status: ok" start.log
+          "$adb" shell pidof dev.tide.trydemo
+          "$adb" shell dumpsys activity activities | grep topResumedActivity | grep -q dev.tide.trydemo
+
+      - uses: actions/upload-artifact@v4
+        if: inputs.preset == 'package'
+        with:
+          name: tide-${{ inputs.platform }}
+          path: build/dist/tide-${{ inputs.platform }}.*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1 # Only the release job reads them, and they count against the account's storage
+
+      - name: Compiler cache statistics (end)
+        if: always()
+        run: ccache --show-stats
