@@ -18,6 +18,7 @@
 #include "telemetry.h"
 #include "toolchain.h"
 #include "upgrade.h"
+#include "versions.h"
 
 #ifdef TIDE_EMBEDDED_CLANG
 #include "cc.h"
@@ -65,6 +66,15 @@ static char *command_folder(char *folder)
     const size_t n = strlen(unity);
     if (n > 1 && unity[n - 1] == '/') unity[n - 1] = '\0'; // As path_absolute gives a folder
     return unity;
+}
+
+// A delegated command records its own usage data with its selected version.
+static bool selected_pin;
+static int use_pinned(const char *folder, int argc, char **argv)
+{
+    const int code = tide_use_pinned(folder, argc, argv, TIDE_VERSION);
+    if (code >= 0) selected_pin = true;
+    return code;
 }
 
 static int command_main(const int argc, char **argv)
@@ -127,6 +137,8 @@ static int command_main(const int argc, char **argv)
             return 2;
         }
         char *folder = command_folder(path_absolute("."));
+        const int selected = use_pinned(folder, argc, argv);
+        if (selected >= 0) return selected;
         return tide_add(folder, argv[2]);
     }
 
@@ -137,6 +149,8 @@ static int command_main(const int argc, char **argv)
             return 2;
         }
         char *folder = command_folder(path_absolute("."));
+        const int selected = use_pinned(folder, argc, argv);
+        if (selected >= 0) return selected;
         return tide_update(folder, (const char *const *)argv + 2, argc - 2);
     }
 
@@ -155,6 +169,8 @@ static int command_main(const int argc, char **argv)
             return 2;
         }
         char *folder = command_folder(path_absolute("."));
+        const int selected = use_pinned(folder, argc, argv);
+        if (selected >= 0) return selected;
         return tide_eject(folder, argv[2]);
     }
 
@@ -164,6 +180,8 @@ static int command_main(const int argc, char **argv)
             return 2;
         }
         char *folder = command_folder(path_absolute(argc == 3 ? argv[2] : "."));
+        const int selected = use_pinned(folder, argc, argv);
+        if (selected >= 0) return selected;
         return command[0] == 'f' ? tide_fetch(folder) : tide_publish(folder);
     }
 
@@ -464,6 +482,10 @@ static int command_main(const int argc, char **argv)
         }
         open_page = false;
     }
+    if (!unity) {
+        const int selected = use_pinned(opts.folder, argc, argv);
+        if (selected >= 0) { free(defines); return selected; }
+    }
     // A run ends with its game. Do the occasional update check before it
     // starts, so the network can't keep tide alive after the window closes.
     if (run) tide_check_for_update(root);
@@ -507,7 +529,7 @@ int main(const int argc, char **argv)
     const int64_t start = sys_now_ms();
     const int code = command_main(argc, argv);
     char *root = install_root();
-    tide_telemetry_record(root, argc, (const char *const *)argv, code, sys_now_ms() - start, TIDE_VERSION);
+    if (!selected_pin) tide_telemetry_record(root, argc, (const char *const *)argv, code, sys_now_ms() - start, TIDE_VERSION);
     free(root);
     return code;
 }

@@ -43,6 +43,33 @@ A line always has its commit, and the game builds with that commit's code, whoev
 
 `tide` keeps each commit it downloads, once for every game on your machine, in `%LOCALAPPDATA%\Tide\packages` on Windows and `~/.tide/packages` elsewhere (or where the `TIDE_PACKAGES` environment variable says). A game whose packages aren't there yet, like one you just cloned, downloads them the first time `tide run` or `tide build` builds it. `tide fetch` downloads them without building, for a build that then needs no network.
 
+## Pinning Tide itself
+
+`tide pin` writes the invoking Tide's exact version into the game's `tide.packages`.
+To choose another release, use `tide pin 0.5.0-nightly.12`:
+
+```text
+tide = 0.5.0-nightly.12
+```
+
+`run`, `build`, `schedule`, `shaders`, `add`, `update`, `eject`, `fetch` and
+`publish` use that pinned release. If it is missing, Tide asks to download it,
+checks its release checksum, then continues the original command. Declining or
+ending input stops the command. Scripts with no terminal report the missing
+version; a caller that can forward an answer through stdin can set
+`TIDE_INTERACTIVE=1` to enable the prompt.
+
+Versions stay side by side in `TIDE_VERSIONS`, or by default
+`%LOCALAPPDATA%/Tide/versions` on Windows and `~/.tide/versions` elsewhere.
+Unity uses the same cache, so an installed version is reused offline. Downloading
+a project version leaves your main Tide installation and editor plugins as they
+are. `tide upgrade` still updates the invoking installation; `tide version` and
+help describe that installation. `tide pin` only changes the project's pin.
+
+Unity projects keep using the toolchain selected by their Tide Unity package.
+A Tide built from engine source (a version ending in `-dev`) keeps using that
+build for engine development, even when a game pins a release.
+
 ## Updating
 
 `tide update` moves packages to the newest commit of what they follow, and says what changed:

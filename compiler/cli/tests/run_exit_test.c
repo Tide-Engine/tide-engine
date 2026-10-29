@@ -237,3 +237,6 @@ int main(void)
     puts("ok: an option given over and over is refused");
     return 0;
 }
+
+int tide_use_pinned(const char *folder, int argc, char **argv, const char *version)
+{ (void)folder; (void)argc; (void)argv; (void)version; return -1; }

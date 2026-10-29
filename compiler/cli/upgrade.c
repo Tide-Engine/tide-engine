@@ -289,6 +289,66 @@ void tide_cleanup(const char *root)
 
 // ---------------------------------------------------------------------------
 
+// Shared by upgrades and side-by-side project versions.
+static char *download_release(const char *work, const json *release)
+{
+    const char *next = tide_release_version(release);
+    const char *package_url = asset_url(release, PACKAGE);
+    const char *sums_url = asset_url(release, "SHA256SUMS");
+    if (!package_url || !sums_url) {
+        fprintf(stderr, "tide: release %s has no package for this platform (%s)\n", next, PACKAGE);
+        return NULL;
+    }
+    fflush(stdout);
+    char *package = path_join(work, PACKAGE);
+    char *sums_path = path_join(work, "SHA256SUMS");
+    // The checksums come first, so the bar ends when the package is all there.
+    const char *curl[40] = {sys_tool("curl"), "-q", "--fail-early"};
+    int n = 3 + curl_request(curl + 3, sums_url, sums_path, false);
+    curl[n++] = "--next";
+    curl_request(curl + n, package_url, package, false);
+    const bool downloaded = run_step("Downloading", curl, work, sys_file_size, package, asset_size(release, PACKAGE));
+    if (!downloaded) {
+        telemetry_fail(TELEMETRY_ERROR_NETWORK);
+        fprintf(stderr, "tide: the download failed\n");
+        return NULL;
+    }
+
+    // The package must match the checksum published with it.
+    char *sums = sys_read_file(sums_path, NULL);
+    char want[65];
+    if (!sums || !expected_hash(sums, PACKAGE, want)) {
+        fprintf(stderr, "tide: SHA256SUMS doesn't list %s\n", PACKAGE);
+        return NULL;
+    }
+    size_t len = 0;
+    char *data = sys_read_file(package, &len);
+    char got[65];
+    sha256_hex(data, len, got);
+    free(data);
+    free(sums);
+    free(sums_path);
+    if (strcmp(got, want) != 0) {
+        fprintf(stderr, "tide: the download is damaged (its checksum doesn't match); nothing was changed\n");
+        return NULL;
+    }
+
+    char *fresh = path_join(work, "new");
+    sys_mkdirs(fresh);
+    const char *const tar[] = {sys_tool("tar"), "-xf", package, "-C", fresh, NULL};
+    if (!run_step("Unpacking", tar, work, tree_size, fresh, unpacked_size(package))) {
+        fprintf(stderr, "tide: couldn't unpack the download\n");
+        return NULL;
+    }
+    free(package);
+    if (!tide_installation_whole(fresh, next)) {
+        fprintf(stderr, "tide: the package is not tide %s; nothing was installed\n", next);
+        free(fresh);
+        return NULL;
+    }
+    return fresh;
+}
+
 int tide_upgrade(const char *root, const char *channel, const char *version)
 {
     if (version && version[0] == 'v') version++;
@@ -331,52 +391,9 @@ int tide_upgrade(const char *root, const char *channel, const char *version)
         return 0;
     }
 
-    const char *package_url = asset_url(release, PACKAGE);
-    const char *sums_url = asset_url(release, "SHA256SUMS");
-    if (!package_url || !sums_url) {
-        fprintf(stderr, "tide: release %s has no package for this platform (%s)\n", next, PACKAGE);
-        return 1;
-    }
     if (!whole) printf("This installation isn't whole (an upgrade stopped partway): installing tide %s over it.\n", next);
-    fflush(stdout);
-    char *package = path_join(work, PACKAGE);
-    char *sums_path = path_join(work, "SHA256SUMS");
-    // The checksums come first, so the bar ends when the package is all there.
-    const char *curl[40] = {sys_tool("curl"), "-q", "--fail-early"};
-    int n = 3 + curl_request(curl + 3, sums_url, sums_path, false);
-    curl[n++] = "--next";
-    curl_request(curl + n, package_url, package, false);
-    const bool downloaded = run_step("Downloading", curl, work, sys_file_size, package, asset_size(release, PACKAGE));
-    if (!downloaded) {
-        telemetry_fail(TELEMETRY_ERROR_NETWORK);
-        fprintf(stderr, "tide: the download failed\n");
-        return 1;
-    }
-
-    // The package must match the checksum published with it.
-    char *sums = sys_read_file(sums_path, NULL);
-    char want[65];
-    if (!sums || !expected_hash(sums, PACKAGE, want)) {
-        fprintf(stderr, "tide: SHA256SUMS doesn't list %s\n", PACKAGE);
-        return 1;
-    }
-    size_t len = 0;
-    char *data = sys_read_file(package, &len);
-    char got[65];
-    sha256_hex(data, len, got);
-    free(data);
-    if (strcmp(got, want) != 0) {
-        fprintf(stderr, "tide: the download is damaged (its checksum doesn't match); nothing was changed\n");
-        return 1;
-    }
-
-    char *fresh = path_join(work, "new");
-    sys_mkdirs(fresh);
-    const char *const tar[] = {sys_tool("tar"), "-xf", package, "-C", fresh, NULL};
-    if (!run_step("Unpacking", tar, work, tree_size, fresh, unpacked_size(package))) {
-        fprintf(stderr, "tide: couldn't unpack the download\n");
-        return 1;
-    }
+    char *fresh = download_release(work, release);
+    if (!fresh) return 1;
     char *trash = path_join(work, "old");
     char failed[1024];
     if (!tide_install(root, fresh, trash, failed, sizeof failed)) {
@@ -446,4 +463,60 @@ void tide_check_for_update(const char *root)
         fprintf(stderr, "\ntide %s is out (you have %s): run `tide upgrade`\n", tide_release_version(release), TIDE_VERSION);
     }
     sys_remove_tree(work);
+}
+
+
+bool tide_install_version(const char *root, const char *version)
+{
+    // root is a validated exact version below the caller's absolute cache root.
+    char *parent = path_dir(root);
+    if (!sys_mkdirs(parent)) {
+        fprintf(stderr, "tide: can't write to %s\n", parent);
+        free(parent);
+        return false;
+    }
+    char name[160];
+    snprintf(name, sizeof name, ".%s.lock", version);
+    char *lock_path = path_join(parent, name);
+    sys_lock *lock = sys_lock_file(lock_path);
+    free(lock_path);
+    if (!lock) {
+        fprintf(stderr, "tide: another command is installing tide %s; retry when it finishes\n", version);
+        free(parent);
+        return false;
+    }
+    snprintf(name, sizeof name, ".%s-download-%u", version, sys_pid());
+    char *work = path_join(parent, name);
+    free(parent);
+    bool ok = sys_mkdirs(work);
+    const json *releases = ok ? fetch_releases(work, false) : NULL;
+    const json *release = releases ? exactly(work, releases, version) : NULL;
+    if (releases && !release) fprintf(stderr, "tide: there's no release called %s\n", version);
+    char *fresh = release ? download_release(work, release) : NULL;
+    ok = false;
+    if (fresh) {
+#ifdef _WIN32
+        char *program = path_join(fresh, "bin/tide.exe");
+#else
+        char *program = path_join(fresh, "bin/tide");
+#endif
+        if (sys_exists(program)) {
+            // Unity may have completed its own installation during our download.
+#ifdef _WIN32
+            char *installed = path_join(root, "bin/tide.exe");
+#else
+            char *installed = path_join(root, "bin/tide");
+#endif
+            if (tide_installation_whole(root, version) && sys_exists(installed)) ok = true;
+            else ok = (!sys_exists(root) || sys_remove_tree(root)) && sys_rename(fresh, root);
+            free(installed);
+        }
+        if (!ok) fprintf(stderr, "tide: couldn't install tide %s in %s\n", version, root);
+        free(program);
+    }
+    free(fresh);
+    sys_remove_tree(work);
+    free(work);
+    sys_unlock(lock);
+    return ok;
 }
