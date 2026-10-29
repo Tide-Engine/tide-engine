@@ -312,6 +312,7 @@ tide_e2e_test(scenes_fallback)
 tide_e2e_test(scene_filters) # with scene, without scene: systems, views and handlers by an entity's scene
 tide_e2e_test(gui)
 tide_e2e_test(gui_custom)
+tide_e2e_test(text_arrays) # Arrays of text, lists and structs that hold them, each element its holder's own
 tide_e2e_test(gui_animate) # GUI.Animate and a control's eased hover, press and focus
 tide_e2e_test(fills) # Draw.Rect and Draw.Shape with a function that colors them, and Gradient's
 tide_e2e_test(gui_entered) # TextField, IntField and FloatField with `out entered`: whether Enter ended the typing

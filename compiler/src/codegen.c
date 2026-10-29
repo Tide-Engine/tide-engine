@@ -394,7 +394,11 @@ static const char *c_type(const type t)
 static const char *array_cname(const decl *array)
 {
     sb b = {0};
-    sb_printf(&b, "tide_array_%s_%d", c_type(array->fields.items[0].type), array->array_length);
+    const type e = array->fields.items[0].type;
+    // Every list is a tide_list in C, and every map a tide_map: an array of one is named by which
+    if (e.kind == TY_LIST) sb_printf(&b, "tide_array_list%d_%d", e.decl->index, array->array_length);
+    else if (e.kind == TY_MAP || e.kind == TY_SET) sb_printf(&b, "tide_array_map%d_%d", e.decl->index, array->array_length);
+    else sb_printf(&b, "tide_array_%s_%d", c_type(e), array->array_length);
     for (char *c = b.data; *c; c++) {
         if (!((*c >= 'a' && *c <= 'z') || (*c >= 'A' && *c <= 'Z') || (*c >= '0' && *c <= '9'))) *c = '_';
     }
@@ -425,6 +429,7 @@ static const char *grid_shape_name(const decl *grid)
 static bool type_has_text(const type t)
 {
     if (t.kind == TY_STRING || t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET || t.kind == TY_GRID) return true;
+    if (t.kind == TY_ARRAY) return type_has_text(t.decl->fields.items[0].type);
     if (t.kind != TY_STRUCT) return false;
     for (int i = 0; i < t.decl->fields.count; i++) {
         if (type_has_text(t.decl->fields.items[i].type)) return true;
@@ -445,6 +450,7 @@ static bool decl_has_text(const decl *d)
 static bool type_has_bytes(const type t)
 {
     if (t.kind == TY_LIST) return t.decl->fields.items[0].type.kind == TY_BYTE;
+    if (t.kind == TY_ARRAY) return type_has_bytes(t.decl->fields.items[0].type);
     if (t.kind != TY_STRUCT) return false;
     for (int i = 0; i < t.decl->fields.count; i++) {
         if (type_has_bytes(t.decl->fields.items[i].type)) return true;
@@ -566,9 +572,13 @@ typedef struct heap_path {
     const decl *list;
     const decl *map; // A Map<K, V> or Set<K>
     const decl *grid;
+    const decl *array; // An array whose elements hold text or lists (tide_array<n>_own and the rest)
 } heap_path;
 
 typedef VEC(heap_path) path_list;
+
+static bool array_holds_heap(const decl *a);
+static void gen_heap_assign(sb *o, type t, const char *place, const char *value, bool value_is_str);
 
 // The text and list fields of `d`'s values, as member paths from `prefix`:
 // "name", "stats.title".
@@ -580,10 +590,11 @@ static void text_paths(const decl *d, const char *prefix, path_list *out)
         sb path = {0};
         sb_printf(&path, "%s%s", prefix, field_cname(f));
         if (f->type.kind == TY_STRING || f->type.kind == TY_LIST || f->type.kind == TY_MAP || f->type.kind == TY_SET
-            || f->type.kind == TY_GRID) {
+            || f->type.kind == TY_GRID || f->type.kind == TY_ARRAY) {
             const heap_path hp = {path.data, f->type.kind == TY_LIST ? f->type.decl : NULL,
                                   f->type.kind == TY_MAP || f->type.kind == TY_SET ? f->type.decl : NULL,
-                                  f->type.kind == TY_GRID ? f->type.decl : NULL};
+                                  f->type.kind == TY_GRID ? f->type.decl : NULL,
+                                  f->type.kind == TY_ARRAY ? f->type.decl : NULL};
             vec_push(*out, hp);
         } else {
             sb_put(&path, ".");
@@ -634,7 +645,7 @@ static void random_paths(const program *prog, const decl *d, const char *prefix,
         sb path = {0};
         sb_printf(&path, "%s%s", prefix, field_cname(f));
         if (f->type.decl == prog->random) {
-            const heap_path p = {path.data, NULL, NULL, NULL};
+            const heap_path p = {path.data, NULL, NULL, NULL, NULL};
             vec_push(*out, p);
         } else {
             sb_put(&path, ".");
@@ -678,7 +689,7 @@ static void entity_paths(const decl *d, const char *prefix, path_list *out)
         sb path = {0};
         sb_printf(&path, "%s%s", prefix, field_cname(f));
         if (f->type.kind == TY_ENTITY) {
-            const heap_path p = {path.data, NULL, NULL, NULL};
+            const heap_path p = {path.data, NULL, NULL, NULL, NULL};
             vec_push(*out, p);
         } else if (f->type.kind == TY_STRUCT) {
             sb_put(&path, ".");
@@ -2409,6 +2420,7 @@ static const char *element_copy_open(const type t)
     sb b = {0};
     if (t.kind == TY_LIST) sb_printf(&b, "tide_list%d_copy(", t.decl->index);
     else if (t.kind == TY_MAP || t.kind == TY_SET) sb_printf(&b, "tide_map%d_copy(", t.decl->index);
+    else if (t.kind == TY_ARRAY) sb_printf(&b, "tide_array%d_copy(", t.decl->index);
     else sb_printf(&b, "tide_copy_%s(", type_cname(t.decl));
     return b.data;
 }
@@ -2529,6 +2541,25 @@ static void gen_element_assign(gen *g, const stmt *s, expr *left)
     }
     indent(g, o);
     const bool swizzle = target->kind == E_MEMBER && target->swizzle_len > 1;
+    const type kept = is_optional_field(target) ? target->field->type : target->type;
+    if (!swizzle && type_has_text(kept)) { // Text or lists, through arrays alone (element_path_in_place): the place's own
+        const char *where = place_where(g, target);
+        sb place = {0};
+        sb_printf(&place, arrow ? "(*%s)" : "%s", path.data);
+        sb value = {0};
+        if (s->op == T_ASSIGN) gen_as(g, &value, s->value, kept);
+        else gen_binary(g, &value, compound_op(s->op), left, s->value, target->type, s->operator_decl);
+        sb_printf(o, "{ const uint32_t where = %s; ", where);
+        gen_heap_assign(o, kept, place.data, value.data, true);
+        sb_put(o, " }\n");
+        for (; opened > 0; opened--) {
+            g->indent--;
+            line(g, o, "}");
+        }
+        g->indent--;
+        line(g, o, "}");
+        return;
+    }
     if (swizzle) sb_printf(o, "{ %s tide_t = ", c_type(target->type));
     else if (arrow) sb_printf(o, "*%s = ", path.data);
     else sb_printf(o, "%s = ", path.data);
@@ -3774,7 +3805,8 @@ static void gen_expr(gen *g, sb *o, const expr *e)
         }
         if (e->object->type.kind == TY_ARRAY) { // cells[i], or the element's zero past the end
             if (pointerable(e->object) && !e->kept) { // Where the array is, rather than from a copy of it
-                sb_put(o, "(*");
+                const bool text = e->type.kind == TY_STRING && e != g->raw_place; // Text as what it says
+                sb_put(o, text ? "tide_text_view(*" : "(*");
                 gen_ptr(g, o, e);
                 sb_put(o, ")");
                 break;
@@ -3802,7 +3834,9 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             sb_printf(o, "((%s){{", c_type(e->type));
             for (int i = 0; i < e->args.count; i++) {
                 if (i) sb_put(o, ", ");
+                if (element.kind == TY_STRING) sb_put(o, "tide_text_temp(");
                 gen_as(g, o, e->args.items[i], element);
+                if (element.kind == TY_STRING) sb_put(o, ")");
             }
             sb_put(o, "}})");
             break;
@@ -7234,7 +7268,8 @@ static void gen_stmt(gen *g, const stmt *s)
             line(g, o, "for (; %s < %d; %s++) {", index, array->array_length, index);
             g->indent++;
             const int round = task_mark(g);
-            line(g, o, "%s %s = %s.at[%s];", elem_vtype(s->type), local_cname(g, s->name), all, index);
+            if (s->type.kind == TY_STRING) line(g, o, "tide_str %s = tide_text_view(%s.at[%s]);", local_cname(g, s->name), all, index);
+            else line(g, o, "%s %s = %s.at[%s];", elem_vtype(s->type), local_cname(g, s->name), all, index);
             line(g, o, "(void)%s;", local_cname(g, s->name));
             task_declare(g, local_cname(g, s->name), s->type);
             const gen_target loop = {g->frame, g->containers.count, true, true, made_up(g, "loop_end"), false, made_up(g, "next"), false, false};
@@ -7524,8 +7559,9 @@ static void gen_stmt(gen *g, const stmt *s)
             break;
         }
         if (target->kind == E_INDEX && target->object->type.kind == TY_ARRAY) { // cells[i] = x: where the array is
+            const bool heap = array_holds_heap(target->object->type.decl);
             indent(g, o);
-            sb_printf(o, "tide_array%d_set(", target->object->type.decl->index);
+            sb_printf(o, "tide_array%d_%s(", target->object->type.decl->index, heap ? "put" : "set");
             if (is_slot(target->object)) { // rows[i][j] = x: the element's slot (gen_slot)
                 gen_slot(g, o, target->object);
             } else {
@@ -7538,7 +7574,17 @@ static void gen_stmt(gen *g, const stmt *s)
             sb_put(o, ", ");
             if (s->op == T_ASSIGN) gen_as(g, o, s->value, target->type);
             else gen_binary(g, o, compound_op(s->op), left, s->value, target->type, s->operator_decl);
+            if (heap) sb_printf(o, ", %s", place_where(g, target->object));
             sb_put(o, ");\n");
+            break;
+        }
+        if (target->kind != E_INDEX && target->type.kind == TY_ARRAY && array_holds_heap(target->type.decl)) { // names = other: each element the place's own
+            indent(g, o);
+            sb_printf(o, "tide_array%d_assign(&(", target->type.decl->index);
+            gen_raw_place(g, o, target);
+            sb_put(o, "), ");
+            gen_as(g, o, s->value, target->type);
+            sb_printf(o, ", %s);\n", place_where(g, target));
             break;
         }
         if (target->kind == E_INDEX) { // items[i] = x
@@ -8018,7 +8064,7 @@ static void gen_array_types(const gen *g, sb *o, bool *array_done, const bool *s
                 continue;
             }
             const char *name = array_cname(a);
-            sb_printf(o, "// " STR_FMT "\ntypedef struct %s {\n    %s at[%d];\n} %s;\n", STR_ARG(a->name), name, c_type(e),
+            sb_printf(o, "// " STR_FMT "\ntypedef struct %s {\n    %s at[%d];\n} %s;\n", STR_ARG(a->name), name, elem_ctype(e),
                       a->array_length, name);
             sb_printf(o, "_Static_assert(sizeof(%s) == %d, \"%s has padding tidec didn't write out\");\n\n", name,
                       type_layout((type){TY_ARRAY, (decl *)a}).size, name);
@@ -8829,11 +8875,12 @@ static void gen_list_helpers(gen *g, const bool bodies)
         const bool text = type_has_text(e);
         const char *owner = e.kind == TY_STRUCT && text ? type_cname(e.decl) : NULL;
         // An element that's a list, a map or a set: its own helpers own, release and assign it
-        const bool container = e.kind == TY_LIST || e.kind == TY_MAP || e.kind == TY_SET;
+        const bool heap_array = e.kind == TY_ARRAY && array_holds_heap(e.decl); // ...or an array of them
+        const bool container = e.kind == TY_LIST || e.kind == TY_MAP || e.kind == TY_SET || heap_array;
         const bool slotted = container || e.kind == TY_ARRAY || prog->lists.items[k]->paths; // ...or one reached into, changed where it is
         const bool paths = prog->lists.items[k]->paths; // rows[i].x: read through a pointer at the element
         char held[32] = "";
-        if (container) snprintf(held, sizeof held, "tide_%s%d", e.kind == TY_LIST ? "list" : "map", e.decl->index);
+        if (container) snprintf(held, sizeof held, "tide_%s%d", heap_array ? "array" : e.kind == TY_LIST ? "list" : "map", e.decl->index);
         const bool compares = e.kind == TY_BYTE || e.kind == TY_CHAR || e.kind == TY_INT || e.kind == TY_LONG || e.kind == TY_FLOAT || e.kind == TY_DOUBLE || e.kind == TY_BOOL || e.kind == TY_ENUM
                            || e.kind == TY_ENTITY || e.kind == TY_LOCAL_ENTITY || e.kind == TY_PLAYER || e.kind == TY_STRING;
         if (!bodies) {
@@ -9028,6 +9075,9 @@ static void gen_map_slot(sb *o, const type t, const char *slot, const char *v, c
     } else if (t.kind == TY_STRUCT && type_has_text(t)) {
         if (put) sb_printf(o, "    tide_assign_%s(%s, %s, where);\n", type_cname(t.decl), slot, v);
         else sb_printf(o, "    tide_%s_%s(%s, where);\n", strcmp(op, "drop") == 0 ? "release" : "own", type_cname(t.decl), slot);
+    } else if (t.kind == TY_ARRAY && array_holds_heap(t.decl)) {
+        if (put) sb_printf(o, "    tide_array%d_assign(%s, %s, where);\n", t.decl->index, slot, v);
+        else sb_printf(o, "    tide_array%d_%s(%s, where);\n", t.decl->index, strcmp(op, "drop") == 0 ? "release" : "own", slot);
     } else if (put) {
         sb_printf(o, "    *%s = %s;\n", slot, v);
     }
@@ -9348,20 +9398,108 @@ static void gen_array_helpers(gen *g)
         if (array_unwritten(prog, a)) continue;
         const type e = a->fields.items[0].type;
         const char *name = array_cname(a);
-        const char *ec = c_type(e);
+        const char *ec = elem_ctype(e);
         // A long array (types.h) is only ever read where it is, through tide_array%d_ref: with no reader that
         // takes one by value, code that would copy it, hundreds of kilobytes on the audio thread's stack, doesn't compile
         if (!type_holds_long_array((type){TY_ARRAY, (decl *)a})) {
-            sb_printf(o, "TIDE_HELPER %s tide_array%d_get(const %s a, const int32_t i)\n{\n"
-                         "    return (uint32_t)i < %du ? a.at[i] : (%s){0};\n}\n\n", ec, k, name, a->array_length, ec);
+            if (e.kind == TY_STRING) { // Text is read as what it says
+                sb_printf(o, "TIDE_HELPER tide_str tide_array%d_get(const %s a, const int32_t i)\n{\n"
+                             "    return (uint32_t)i < %du ? tide_text_view(a.at[i]) : TIDE_STR_EMPTY;\n}\n\n", k, name, a->array_length);
+            } else {
+                sb_printf(o, "TIDE_HELPER %s tide_array%d_get(const %s a, const int32_t i)\n{\n"
+                             "    return (uint32_t)i < %du ? a.at[i] : (%s){0};\n}\n\n", ec, k, name, a->array_length, ec);
+            }
         }
-        sb_printf(o, "TIDE_HELPER void tide_array%d_set(%s *a, const int32_t i, const %s v)\n{\n"
-                     "    if (a && (uint32_t)i < %du) a->at[i] = v;\n}\n\n", k, name, ec, a->array_length);
+        // Text and lists go in through tide_array%d_put, the place's own (gen_array_heap_helpers)
+        if (!type_has_text(e)) {
+            sb_printf(o, "TIDE_HELPER void tide_array%d_set(%s *a, const int32_t i, const %s v)\n{\n"
+                         "    if (a && (uint32_t)i < %du) a->at[i] = v;\n}\n\n", k, name, ec, a->array_length);
+        }
         sb_printf(o, "TIDE_HELPER %s *tide_array%d_slot(%s *a, const int32_t i)\n{\n"
                      "    return a && (uint32_t)i < %du ? &a->at[i] : NULL;\n}\n\n", ec, k, name, a->array_length);
         sb_printf(o, "static const %s tide_array%d_zero = {0};\n", ec, k);
         sb_printf(o, "TIDE_HELPER const %s *tide_array%d_ref(const %s *a, const int32_t i)\n{\n"
                      "    return (uint32_t)i < %du ? &a->at[i] : &tide_array%d_zero;\n}\n\n", ec, k, name, a->array_length, k);
+    }
+}
+
+// Whether array `a` holds text, lists, maps or sets, which its helpers own and release
+static bool array_holds_heap(const decl *a)
+{
+    return type_has_text(a->fields.items[0].type);
+}
+
+// A statement that does `op` ("own" or "release") to the value of type `t` at
+// `place`, with `where`, or nothing for one with no text or lists.
+static void gen_heap_op(sb *o, const type t, const char *op, const char *place)
+{
+    if (t.kind == TY_STRING) sb_printf(o, "tide_text_%s(&%s, where);", op, place);
+    else if (t.kind == TY_LIST) sb_printf(o, "tide_list%d_%s(&%s, where);", t.decl->index, op, place);
+    else if (t.kind == TY_MAP || t.kind == TY_SET) sb_printf(o, "tide_map%d_%s(&%s, where);", t.decl->index, op, place);
+    else if (t.kind == TY_ARRAY && array_holds_heap(t.decl)) sb_printf(o, "tide_array%d_%s(&%s, where);", t.decl->index, op, place);
+    else if (t.kind == TY_STRUCT && decl_has_text(t.decl)) sb_printf(o, "tide_%s_%s(&%s, where);", op, type_cname(t.decl), place);
+}
+
+// A statement that makes the value of type `t` at `place` `value`, its text
+// and lists the place's own: text from a tide_str where `value_is_str`, or
+// from a tide_text as it's stored.
+static void gen_heap_assign(sb *o, const type t, const char *place, const char *value, const bool value_is_str)
+{
+    if (t.kind == TY_STRING) {
+        if (value_is_str) sb_printf(o, "tide_text_set(&%s, %s, where);", place, value);
+        else sb_printf(o, "tide_text_set(&%s, tide_text_view(%s), where);", place, value);
+    } else if (t.kind == TY_LIST) sb_printf(o, "tide_list%d_assign(&%s, %s, where);", t.decl->index, place, value);
+    else if (t.kind == TY_MAP || t.kind == TY_SET) sb_printf(o, "tide_map%d_assign(&%s, %s, where);", t.decl->index, place, value);
+    else if (t.kind == TY_ARRAY && array_holds_heap(t.decl)) sb_printf(o, "tide_array%d_assign(&%s, %s, where);", t.decl->index, place, value);
+    else if (t.kind == TY_STRUCT && decl_has_text(t.decl)) sb_printf(o, "tide_assign_%s(&%s, %s, where);", type_cname(t.decl), place, value);
+    else sb_printf(o, "%s = %s;", place, value);
+}
+
+// An array whose elements hold text or lists: its own (tide/text.h's `where`),
+// released, assigned, put an element into, and copied with lists of its own.
+// Plain arrays have none of these: they're bytes, as they always were.
+static void gen_array_heap_helpers(gen *g, const bool bodies)
+{
+    const program *prog = g->prog;
+    sb *o = &g->c;
+    for (int k = 0; k < prog->arrays.count; k++) {
+        const decl *a = prog->arrays.items[k];
+        if (array_unwritten(prog, a) || !array_holds_heap(a)) continue;
+        const type e = a->fields.items[0].type;
+        const char *name = array_cname(a);
+        const bool lists = type_has_list(e);
+        if (!bodies) {
+            sb_printf(o, "TIDE_HELPER void tide_array%d_own(%s *a, uint32_t where);\n", k, name);
+            sb_printf(o, "TIDE_HELPER void tide_array%d_release(%s *a, uint32_t where);\n", k, name);
+            sb_printf(o, "TIDE_HELPER void tide_array%d_assign(%s *to, %s value, uint32_t where);\n", k, name, name);
+            sb_printf(o, "TIDE_HELPER void tide_array%d_put(%s *a, int32_t i, %s v, uint32_t where);\n", k, name, elem_vtype(e));
+            if (lists) sb_printf(o, "TIDE_HELPER %s tide_array%d_copy(%s v);\n", name, k, name);
+            continue;
+        }
+        static const char *const ops[2] = {"own", "release"};
+        for (int op = 0; op < 2; op++) {
+            sb_printf(o, "TIDE_HELPER void tide_array%d_%s(%s *a, const uint32_t where)\n{\n", k, ops[op], name);
+            sb_printf(o, "    for (int32_t i = 0; i < %d; i++) ", a->array_length);
+            gen_heap_op(o, e, ops[op], "a->at[i]");
+            sb_put(o, "\n}\n\n");
+        }
+        sb_printf(o, "TIDE_HELPER void tide_array%d_assign(%s *to, const %s value, const uint32_t where)\n{\n", k, name, name);
+        sb_printf(o, "    for (int32_t i = 0; i < %d; i++) ", a->array_length);
+        gen_heap_assign(o, e, "to->at[i]", "value.at[i]", false);
+        sb_put(o, "\n}\n\n");
+        sb_printf(o, "TIDE_HELPER void tide_array%d_put(%s *a, const int32_t i, const %s v, const uint32_t where)\n{\n"
+                     "    if (!a || (uint32_t)i >= %du) return;\n    ", k, name, elem_vtype(e), a->array_length);
+        gen_heap_assign(o, e, "a->at[i]", "v", true);
+        sb_put(o, "\n}\n\n");
+        if (lists) {
+            sb_printf(o, "TIDE_HELPER %s tide_array%d_copy(%s v)\n{\n    for (int32_t i = 0; i < %d; i++) ", name, k, name,
+                      a->array_length);
+            if (e.kind == TY_LIST) sb_printf(o, "v.at[i] = tide_list%d_copy(v.at[i]);", e.decl->index);
+            else if (e.kind == TY_MAP || e.kind == TY_SET) sb_printf(o, "v.at[i] = tide_map%d_copy(v.at[i]);", e.decl->index);
+            else if (e.kind == TY_ARRAY) sb_printf(o, "v.at[i] = tide_array%d_copy(v.at[i]);", e.decl->index);
+            else sb_printf(o, "v.at[i] = tide_copy_%s(v.at[i]);", type_cname(e.decl));
+            sb_put(o, "\n    return v;\n}\n\n");
+        }
     }
 }
 
@@ -9374,6 +9512,7 @@ static void gen_text_helpers(gen *g)
     gen_list_helpers(g, false);
     gen_map_helpers(g, false);
     gen_grid_helpers(g);
+    gen_array_heap_helpers(g, false);
     // The program's value types, the local parts of the match's components and
     // singletons, then the maps' entries (what a foreach gives)
     const int models = prog->decls.count + prog->skinned_types.count;
@@ -9397,6 +9536,7 @@ static void gen_text_helpers(gen *g)
         for (int k = 0; k < paths.count; k++) {
             const heap_path *hp = &paths.items[k];
             if (hp->list) sb_printf(o, "    tide_list%d_own(&v->%s, where);\n", hp->list->index, hp->path);
+            else if (hp->array) sb_printf(o, "    tide_array%d_own(&v->%s, where);\n", hp->array->index, hp->path);
             else if (hp->map) sb_printf(o, "    tide_map%d_own(&v->%s, where);\n", hp->map->index, hp->path);
             else if (hp->grid) sb_printf(o, "    tide_grid_own(&v->%s, &%s, where);\n", hp->path, grid_shape_name(hp->grid));
             else sb_printf(o, "    tide_text_own(&v->%s, where);\n", hp->path);
@@ -9405,6 +9545,7 @@ static void gen_text_helpers(gen *g)
         for (int k = 0; k < paths.count; k++) {
             const heap_path *hp = &paths.items[k];
             if (hp->list) sb_printf(o, "    tide_list%d_release(&v->%s, where);\n", hp->list->index, hp->path);
+            else if (hp->array) sb_printf(o, "    tide_array%d_release(&v->%s, where);\n", hp->array->index, hp->path);
             else if (hp->map) sb_printf(o, "    tide_map%d_release(&v->%s, where);\n", hp->map->index, hp->path);
             else if (hp->grid) sb_printf(o, "    tide_grid_release(&v->%s, &%s, where);\n", hp->path, grid_shape_name(hp->grid));
             else sb_printf(o, "    tide_text_release(&v->%s, where);\n", hp->path);
@@ -9416,6 +9557,7 @@ static void gen_text_helpers(gen *g)
         for (int k = 0; k < paths.count; k++) {
             const heap_path *hp = &paths.items[k];
             if (hp->list) sb_printf(o, "    tide_list%d_assign(&to->%s, value.%s, where);\n", hp->list->index, hp->path, hp->path);
+            else if (hp->array) sb_printf(o, "    tide_array%d_assign(&to->%s, value.%s, where);\n", hp->array->index, hp->path, hp->path);
             else if (hp->map) sb_printf(o, "    tide_map%d_assign(&to->%s, value.%s, where);\n", hp->map->index, hp->path, hp->path);
             else if (hp->grid) sb_printf(o, "    tide_grid_set(&to->%s, value.%s, &%s, where);\n", hp->path, hp->path, grid_shape_name(hp->grid));
             else sb_printf(o, "    tide_text_set(&to->%s, tide_text_view(value.%s), where);\n", hp->path, hp->path);
@@ -9435,6 +9577,7 @@ static void gen_text_helpers(gen *g)
             for (int h = 0; h < held.count; h++) {
                 const heap_path *hp = &held.items[h];
                 if (hp->list) sb_printf(o, "        tide_list%d_release(&to->%s, where);\n", hp->list->index, hp->path);
+                else if (hp->array) sb_printf(o, "        tide_array%d_release(&to->%s, where);\n", hp->array->index, hp->path);
                 else if (hp->map) sb_printf(o, "        tide_map%d_release(&to->%s, where);\n", hp->map->index, hp->path);
                 else if (!hp->grid) sb_printf(o, "        tide_text_release(&to->%s, where);\n", hp->path);
             }
@@ -9450,6 +9593,8 @@ static void gen_text_helpers(gen *g)
             for (int k = 0; k < paths.count; k++) {
                 const heap_path *hp = &paths.items[k];
                 if (hp->list) sb_printf(o, "    v.%s = tide_list%d_copy(v.%s);\n", hp->path, hp->list->index, hp->path);
+                else if (hp->array && type_has_list((type){TY_ARRAY, (decl *)hp->array}))
+                    sb_printf(o, "    v.%s = tide_array%d_copy(v.%s);\n", hp->path, hp->array->index, hp->path);
                 else if (hp->map) sb_printf(o, "    v.%s = tide_map%d_copy(v.%s);\n", hp->path, hp->map->index, hp->path);
             }
             sb_put(o, "    return v;\n}\n\n");
@@ -9465,6 +9610,7 @@ static void gen_text_helpers(gen *g)
     }
     gen_list_helpers(g, true);
     gen_map_helpers(g, true);
+    gen_array_heap_helpers(g, true);
     // A spawn's values, as they go into the command queue or are dropped.
     for (int a = 0; a < prog->archetypes.count; a++) {
         if (!prog->spawn_target.items[a]) continue;
@@ -9573,7 +9719,7 @@ static void gen_show_helpers(gen *g)
         sb_printf(o, "    for (int32_t i = 0; i < %d; i++) {\n", a->array_length);
         sb_put(o, "        if (i > 0) a = tide_str_add_cstr(a, \", \");\n");
         sb part = {0};
-        gen_show_part(g, &part, a->fields.items[0].type, "v.at[i]");
+        gen_show_part(g, &part, a->fields.items[0].type, a->fields.items[0].type.kind == TY_STRING ? "tide_text_view(v.at[i])" : "v.at[i]");
         for (const char *line = part.data; *line;) { // Indented once more, in the loop
             const char *end = strchr(line, '\n');
             sb_put(o, "    ");
@@ -14124,6 +14270,18 @@ static void gen_confirm_decl(sb *o, const decl *d, const char *value, const char
 // it by what it says, like any other.
 static void gen_confirm_value(sb *o, const type t, const char *place, const char *pad, const int depth)
 {
+    if (t.kind == TY_ARRAY) { // Each element that holds text or lists, where it is
+        if (!type_has_text(t)) return;
+        char k[24], inner[128];
+        snprintf(k, sizeof k, "tide_k%d", depth);
+        snprintf(inner, sizeof inner, "%s    ", pad);
+        sb at = {0};
+        sb_printf(&at, "%s.at[%s]", place, k);
+        sb_printf(o, "%sfor (int32_t %s = 0; %s < %d; %s++) {\n", pad, k, k, t.decl->array_length, k);
+        gen_confirm_value(o, t.decl->fields.items[0].type, at.data, inner, depth + 1);
+        sb_printf(o, "%s}\n", pad);
+        return;
+    }
     if (t.kind == TY_STRING || t.kind == TY_GRID) {
         sb_printf(o, "%s%s.at = tide_confirmed(%s.at);\n", pad, place, place);
         return;
@@ -14178,6 +14336,7 @@ static void gen_confirm_decl(sb *o, const decl *d, const char *value, const char
         const type part = hp->list ? (type){TY_LIST, (decl *)hp->list}
                         : hp->map  ? (type){hp->map->is_set ? TY_SET : TY_MAP, (decl *)hp->map}
                         : hp->grid ? (type){TY_GRID, (decl *)hp->grid}
+                        : hp->array ? (type){TY_ARRAY, (decl *)hp->array}
                                    : (type){TY_STRING, NULL};
         gen_confirm_value(o, part, hp->path, pad, depth);
     }
@@ -14200,6 +14359,18 @@ static void gen_scratch_decl(sb *o, const decl *d, const char *value, const char
 
 static void gen_scratch_value(sb *o, const type t, const char *place, const char *pad, const int depth)
 {
+    if (t.kind == TY_ARRAY) { // Each element that holds text or lists, where it is
+        if (!type_has_text(t)) return;
+        char k[24], inner[128];
+        snprintf(k, sizeof k, "tide_k%d", depth);
+        snprintf(inner, sizeof inner, "%s    ", pad);
+        sb at = {0};
+        sb_printf(&at, "%s.at[%s]", place, k);
+        sb_printf(o, "%sfor (int32_t %s = 0; %s < %d; %s++) {\n", pad, k, k, t.decl->array_length, k);
+        gen_scratch_value(o, t.decl->fields.items[0].type, at.data, inner, depth + 1);
+        sb_printf(o, "%s}\n", pad);
+        return;
+    }
     if (t.kind == TY_STRING) {
         sb_printf(o, "%s%s = tide_text_temp(tide_text_view(%s));\n", pad, place, place);
         return;
@@ -14256,6 +14427,7 @@ static void gen_scratch_decl(sb *o, const decl *d, const char *value, const char
         const type part = hp->list ? (type){TY_LIST, (decl *)hp->list}
                         : hp->map  ? (type){hp->map->is_set ? TY_SET : TY_MAP, (decl *)hp->map}
                         : hp->grid ? (type){TY_GRID, (decl *)hp->grid}
+                        : hp->array ? (type){TY_ARRAY, (decl *)hp->array}
                                    : (type){TY_STRING, NULL};
         gen_scratch_value(o, part, hp->path, pad, depth);
     }

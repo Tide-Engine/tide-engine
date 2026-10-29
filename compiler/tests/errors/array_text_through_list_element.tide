@@ -1,0 +1,8 @@
+// expect: a list's element is a copy, so it can't be changed where it is: it holds text or a list
+// Text in an array goes in where it is through arrays alone: a list's element is a copy
+scene Main { }
+singleton Log { List<string[2]> pairs; }
+system Write(mut Log log)
+{
+    log.pairs[0][1] = "x";
+}

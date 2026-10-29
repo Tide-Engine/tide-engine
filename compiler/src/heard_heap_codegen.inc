@@ -3,6 +3,7 @@ static type heard_path_type(const heap_path *p)
     if (p->list) return (type){TY_LIST, (decl *)p->list};
     if (p->map) return (type){p->map->is_set ? TY_SET : TY_MAP, (decl *)p->map};
     if (p->grid) return (type){TY_GRID, (decl *)p->grid};
+    if (p->array) return (type){TY_ARRAY, (decl *)p->array};
     return (type){TY_STRING, NULL};
 }
 

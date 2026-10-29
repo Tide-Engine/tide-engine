@@ -1,5 +1,68 @@
 # Language features, as tidec builds them
 
+## Arrays of text and lists (2026-10-29)
+
+The owner, after the GUI showcases hit "an array's elements are plain values,
+not text": "behind the scenes we can have a special case for arrays that point
+at strings in the heap to not slow down arrays as they are right now. lists too
+I suppose." Array elements are now any value but a grid; the plain-only rule was
+the original arrays build's pick (2026-10-06), not the owner's decision.
+
+- **Plain arrays are untouched.** The special case is keyed on `type_has_text`
+  of the element (`array_holds_heap` in codegen.c): only those arrays get
+  ownership helpers, and plain arrays keep `tide_array<n>_set`, their lanes,
+  SIMD, inputs and GPU use, and generated C as before.
+- **Storage:** text elements are `tide_text` handles (`elem_ctype`), as struct
+  fields are; lists/maps/sets their `tide_list`/`tide_map`. `tide_array<n>_get`
+  of text returns a `tide_str` via `tide_text_view`; a pointer read through
+  `tide_array<n>_ref` is viewed the same unless it's a raw place; `foreach`
+  views each element; a literal's text elements are `tide_text_temp`.
+  `array_cname` names arrays of lists and maps by the list/map index, since every
+  list is a `tide_list` in C (`List<int>[2]` and `List<string>[2]` collided).
+- **Ownership:** `gen_array_heap_helpers` emits `tide_array<n>_own`, `_release`,
+  `_assign`, `_put` (element store with `where`) and `_copy` (when lists are
+  inside), each one loop over the elements, recursing by element type through
+  `gen_heap_op`/`gen_heap_assign` (text, list, map, struct helpers, inner
+  arrays). No length limit: code size doesn't grow with N.
+- **Field paths:** `heap_path.array` makes a heap-holding array field one path,
+  like a list's. Consumers: struct own/release/assign/copy and T? release call
+  the array's helpers; memset consumers (fresh rows, heard plain, embed
+  defaults, layout defaults) zero the whole field; `gen_confirm_value` and
+  `gen_scratch_value` loop over elements (`tide_k<depth>`); heard maps the
+  path to the array type for the value codec (which already handled arrays);
+  shard singleton release; embed fixes loop per element, embedded commands
+  decode an array of text per element and zero other heap arrays. Hot reload
+  carries text as plain bytes with the heap, so arrays need nothing there.
+- **List and map helpers** treat a heap array element as a container (`held` =
+  `tide_array<n>`); map slots likewise (`gen_map_slot`); `element_copy_open`
+  copies arrays with lists.
+- **Writes:** `a[i] = v` on a heap array is `tide_array<n>_put(..., where)`
+  (where = the root holder's, `place_where`); a heap array field or local
+  assigned whole is `tide_array<n>_assign`; a field through array indexes
+  (`a[i].label = x`) goes through `gen_element_assign`, whose last store is the
+  ownership-aware assign for heap targets. check.c's `element_path_in_place`
+  allows heap targets only when every index on the path is an array's: through
+  a list or map element they're still taken out and put back (that element is
+  the list's, not the holder's). `mut` arguments from array elements remain
+  refused, as for plain arrays. Methods on a list field of a struct that's an
+  array element (`shelf.bags[0].parts.Add(x)`) stay take-out/put-back.
+- **Checker:** `array_element_ok` accepts text/lists/maps/sets/structs holding
+  them, refuses grids (and structs holding grids); `holds_text`, `holds_list`,
+  `holds_list_but_bytes`, codegen's `type_has_text`/`type_has_bytes` look
+  inside arrays, so mut parameters get their `where`, events/commands their
+  heap handling, etc.
+
+Tests: `e2e/text_arrays` (components, singletons, struct elements written whole
+and by field, arrays of lists added to and assigned, `string[2][2]`,
+`List<string[2]>`, `Map<int, string[2]>`, events, forward structs with lists,
+`List<Bag[2][3]>`, `T?` fields in array structs, text display, foreach, reads
+and writes past both ends, destroy, snapshot equality, steady heap over 250
+ticks, local state pack/unpack); `e2e/commands` `commands_carry_arrays_of_text`
+(wire bytes checked, delivered, truncation refused); errors
+`array_text_through_list_element` and `array_of_grids` replace six fixtures
+that pinned the old refusal. A sweep also compiled a `verified` view reading
+one, JSON of a struct holding one, and the `--embed` build, warning-free.
+
 ## Whole cached-chunk task shortcut (2026-10-29)
 
 Split systems with an eligible retained sparse selection, an apart variant and

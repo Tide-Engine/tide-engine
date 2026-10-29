@@ -294,3 +294,19 @@ TIDE_TEST(commands_generated_game_without_input_survives_loss_over_network)
     tide_server_destroy(server);
     tide_loopback_destroy(net);
 }
+
+TIDE_TEST(commands_carry_arrays_of_text)
+{
+    start();
+    local.UI.tag = true;
+    frame();
+    uint8_t bytes[TIDE_COMMAND_BYTES];
+    const uint32_t size = pending(bytes);
+    TIDE_REQUIRE(size > 0);
+    TIDE_REQUIRE(tide_game_api.command(&world, tide_player_from_index(0), 0, 1, bytes, size));
+    tide_world_tick(&world);
+    TIDE_CHECK(strcmp(tide_str_c(tide_text_read(&world.heap, world.Seen.tagged.at[0])), "Alice") == 0);
+    TIDE_CHECK(strcmp(tide_str_c(tide_text_read(&world.heap, world.Seen.tagged.at[1])), "tag") == 0);
+    // A truncated one is refused, as any command's text is
+    TIDE_CHECK(!tide_game_api.check_command(bytes, size - 1, NULL));
+}

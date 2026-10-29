@@ -224,7 +224,7 @@ system Upgrade(mut Fighter fighter, Draft draft)
 
 ## Arrays
 
-`T[N]` is a fixed number of values side by side in whatever holds them, with nothing in the heap: `int[32] cells;`, of up to 4,096 elements (an [audio declaration's state](../game/audio.md#echoes-and-reverbs) holds far longer ones, for an echo's delay line). An array is part of its component's bytes, like its other fields, so a system's loop over rows runs with SIMD, and there's no list to look up. The length is a constant: a number, or a `const` and arithmetic on it, up to 4096 elements with every level of `int[4][8]` counted together.
+`T[N]` is a fixed number of values side by side in whatever holds them: `int[32] cells;`, `string[3] tabs;`, of up to 4,096 elements (an [audio declaration's state](../game/audio.md#echoes-and-reverbs) holds far longer ones, for an echo's delay line). An array is part of its component's bytes, like its other fields, so a system's loop over rows runs with SIMD, and there's no list to look up. The length is a constant: a number, or a `const` and arithmetic on it, up to 4096 elements with every level of `int[4][8]` counted together.
 
 ```csharp
 const int CAP = 32;
@@ -248,13 +248,24 @@ system Record(mut Trail trail, Body body)
 }
 ```
 
-Elements are plain values: numbers, bools, chars, enums, vectors, quaternions, matrices, `Color`, `Rect`, `Entity`, `PlayerID`, structs of those, and arrays. Not text, lists, maps or grids, which need the heap. An array goes where a plain value goes, inputs included: a fixed number of values a player sends, which `[Clamp]`, `[Min]` and `[Max]` bound element by element.
+Elements are any value but a grid: numbers, bools, chars, enums, vectors, quaternions, matrices, `Color`, `Rect`, `Entity`, `PlayerID`, text, lists, maps, sets, structs of any of those, and arrays.
+
+```csharp
+local singleton Menu
+{
+    string[3] tabs = ["Video", "Audio", "Profile"];
+    List<string>[2] logs;   // Two lists, each its own
+    int picked;
+}
+```
+
+An array of plain values is its holder's bytes and nothing more, so a system's loop over it runs with SIMD and an input can hold one: a fixed number of values a player sends, which `[Clamp]`, `[Min]` and `[Max]` bound element by element. An array of text or lists keeps each element's text or list where a field's would be, its holder's own, so copying the array copies them and nothing is shared. Inputs and code on the GPU take no text or lists, in arrays or anywhere.
 
 `a[i]` reads an element, or zero past the end; `a[i] = v` and `a[i] += v` write one, and do nothing past the end. `a.count` is the length, `foreach` goes through the elements (each a copy), `a = b` copies the whole array, and `a = [1, 2, 3]` sets it from a literal of exactly `count` values. Text shows one as it shows a list: `[1, 2, 3]`.
 
 ## Changing an element where it is
 
-A list's element, a map's value or an array's element that's a struct is changed where it is when the field written is a plain value: `rings[i].head = 0`, `rings[i].cells[j] = v`, `trail.points[i].x += 1`. A missing map key is added when its value is written this way. A field that holds text or a collection, and anything in a list or a map inside the struct element, is still taken out, changed and put back (`mut var r = rings[i]; r.names.Add("x"); rings[i] = r;`), and so is a grid's cell. Reading `rings[i].head` or `rows[i][j]` copies nothing either way.
+A list's element, a map's value or an array's element that's a struct is changed where it is when the field written is a plain value: `rings[i].head = 0`, `rings[i].cells[j] = v`, `trail.points[i].x += 1`. A missing map key is added when its value is written this way. Through arrays alone, text and lists are written where they are too, as an array is its holder's own bytes: `menu.tabs[1] = "Sound"`, `shelf.bags[0].label = "Tools"`, `log.lines[2] += "!"`, `menu.logs[0].Add("x")`. Text or a collection reached through a list's element or a map's value, and anything in a list or a map inside the struct element, is still taken out, changed and put back (`mut var r = rings[i]; r.names.Add("x"); rings[i] = r;`), and so is a grid's cell. Reading `rings[i].head` or `rows[i][j]` copies nothing either way.
 
 ## Lists inside lists
 

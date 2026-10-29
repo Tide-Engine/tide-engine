@@ -1,0 +1,3 @@
+// expect: an array's elements can't be grids
+scene Main { }
+component Maps { Grid2<int>[2] layers; }

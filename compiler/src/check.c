@@ -2338,8 +2338,9 @@ static bool reaches_long_array(const type t)
     }
 }
 
-// What an array's elements can be: plain values, which an array keeps side by
-// side in the bytes of whatever holds it, so nothing that needs the heap.
+// What an array's elements can be: values an array keeps side by side in the
+// bytes of whatever holds it. Text, lists, maps and sets are their handles
+// there, kept in the heap as a struct's fields' are; grids and resources never.
 static bool array_element_ok(const type t, const loc at)
 {
     switch (t.kind) {
@@ -2350,10 +2351,9 @@ static bool array_element_ok(const type t, const loc at)
     case TY_LOCAL_ENTITY: case TY_PLAYER: case TY_COLOR: case TY_RECT: case TY_ENUM: case TY_ARRAY:
         return true;
     case TY_STRUCT:
-        if (holds_heap(t) || holds_grid(t)) {
-            diag_error(at, "an array's elements can't be '" STR_FMT "': it holds %s", STR_ARG(t.decl->name),
-                       holds_grid(t) ? "a grid" : "text or a list");
-            diag_note("an array is its holder's own bytes, with nothing in the heap: a List<%s> holds them", type_name(t));
+        if (holds_grid(t)) {
+            diag_error(at, "an array's elements can't be '" STR_FMT "': it holds a grid", STR_ARG(t.decl->name));
+            diag_note("a grid is its holder's alone, never copied: keep it in a component or a singleton");
             return false;
         }
         if (holds_render_resource(t)) {
@@ -2361,9 +2361,10 @@ static bool array_element_ok(const type t, const loc at)
             return false;
         }
         return true;
-    case TY_STRING: case TY_LIST: case TY_MAP: case TY_SET: case TY_GRID:
-        diag_error(at, "an array's elements are plain values, not %s", t.kind == TY_STRING ? "text" : t.kind == TY_LIST ? "lists" : t.kind == TY_GRID ? "grids" : "maps or sets");
-        diag_note("an array is its holder's own bytes, with nothing in the heap: a list holds those, 'List<%s>'", type_name(t));
+    case TY_STRING: case TY_LIST: case TY_MAP: case TY_SET: return true;
+    case TY_GRID:
+        diag_error(at, "an array's elements can't be grids");
+        diag_note("a grid is its holder's alone, never copied: keep it in a component or a singleton");
         return false;
     default:
         diag_error(at, "an array's elements are plain values, like numbers, enums, vectors and structs of them, not %s", type_name(t));
@@ -2447,7 +2448,15 @@ static bool element_path_in_place(const expr *target)
     const char *why = NULL;
     const expr *cell = NULL;
     const type kept = is_optional_field(target) ? target->field->type : target->type; // A T? field: what it's kept as
-    if (holds_heap(kept) || holds_grid(kept)) why = "it holds text or a list, which an element's bytes can't take as they are";
+    // Text and lists go where they are through arrays alone: an array is its holder's own bytes, whose text and
+    // lists are its holder's, where a list's element is the list's
+    bool only_arrays = true;
+    for (const expr *e = target; e->kind == E_MEMBER || e->kind == E_INDEX; e = e->object) {
+        if (e->kind == E_INDEX && e->object->type.kind != TY_ARRAY) only_arrays = false;
+        if (e->skin_operation == SKIN_OP_POSE_INDEX) only_arrays = false;
+    }
+    if (holds_grid(kept) || (holds_heap(kept) && !only_arrays))
+        why = "it holds text or a list, which an element's bytes can't take as they are";
     for (const expr *e = target; !why && (e->kind == E_MEMBER || e->kind == E_INDEX); e = e->object) {
         if (e->kind == E_MEMBER && !e->field && e->swizzle_len == 0) why = "it's a part of a value, not a field";
         if (e->kind == E_INDEX && e->object->type.kind == TY_GRID) cell = e;
@@ -14891,6 +14900,7 @@ static void order_struct(program *prog, decl *d)
 static bool holds_list(const type t)
 {
     if (t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET) return true;
+    if (t.kind == TY_ARRAY) return holds_list(t.decl->fields.items[0].type);
     if (t.kind != TY_STRUCT) return false;
     for (int i = 0; i < t.decl->fields.count; i++) {
         if (holds_list(t.decl->fields.items[i].type)) return true;
@@ -14904,6 +14914,7 @@ static bool holds_list_but_bytes(const type t)
 {
     if (t.kind == TY_LIST) return t.decl->fields.items[0].type.kind != TY_BYTE;
     if (t.kind == TY_MAP || t.kind == TY_SET) return true;
+    if (t.kind == TY_ARRAY) return holds_list_but_bytes(t.decl->fields.items[0].type);
     if (t.kind != TY_STRUCT) return false;
     for (int i = 0; i < t.decl->fields.count; i++) {
         if (holds_list_but_bytes(t.decl->fields.items[i].type)) return true;
@@ -14926,6 +14937,7 @@ static bool holds_grid(const type t)
 static bool holds_text(const type t)
 {
     if (t.kind == TY_STRING) return true;
+    if (t.kind == TY_ARRAY) return holds_text(t.decl->fields.items[0].type);
     if (t.kind != TY_STRUCT) return false;
     for (int i = 0; i < t.decl->fields.count; i++) {
         if (holds_text(t.decl->fields.items[i].type)) return true;
