@@ -1,0 +1,480 @@
+{
+  "schema": 1,
+  "repository": "https://github.com/Tide-Engine/tide-benchmarks",
+  "reports": [
+    {
+      "id": "2026-10-29-four-ecs",
+      "title": "Tide, Bevy, Flecs and EnTT: one thread",
+      "date": "2026-10-29",
+      "cpu": "AMD Ryzen 9 7900X",
+      "os": "Windows 11 x86-64",
+      "tideRevision": "fe5e96be1c61c7372590e7466dc26810a910bb14",
+      "benchmarkRevision": "810437c0df4cf01b925ea6a6c403eb78925d641c",
+      "resultPath": "results/2026-10-29-four-ecs",
+      "rounds": 4,
+      "warmup": 200,
+      "ticks": 400,
+      "engines": [
+        {
+          "id": "tide",
+          "label": "Tide",
+          "version": "fe5e96be1",
+          "method": "Generated C storage and scheduled systems; moving Frozen tags. Clang 23.1.2, -O2, baseline x86-64."
+        },
+        {
+          "id": "bevy",
+          "label": "Bevy",
+          "version": "0.20.0",
+          "method": "Table storage and scheduled systems; Rust 1.95.0, opt-level 2, baseline x86-64."
+        },
+        {
+          "id": "flecs",
+          "label": "Flecs",
+          "version": "4.1.6",
+          "method": "Cached archetype systems and pipeline; Clang 23.1.2, -O2, baseline x86-64."
+        },
+        {
+          "id": "entt",
+          "label": "EnTT",
+          "version": "4.0.0",
+          "method": "Views and an owning filtered group with explicit dispatch, without an integrated scheduler; Clang 23.1.2, -O2, baseline x86-64."
+        }
+      ],
+      "cases": [
+        {
+          "id": "particles-1m",
+          "label": "1M particles",
+          "threads": 1,
+          "results": [
+            {
+              "engine": "tide",
+              "medianMs": 0.446475,
+              "minMs": 0.43545,
+              "maxMs": 0.5787
+            },
+            {
+              "engine": "bevy",
+              "medianMs": 1.1556250000000001,
+              "minMs": 1.14835,
+              "maxMs": 1.2658
+            },
+            {
+              "engine": "flecs",
+              "medianMs": 1.6671,
+              "minMs": 1.66455,
+              "maxMs": 1.73415
+            },
+            {
+              "engine": "entt",
+              "medianMs": 1.883975,
+              "minMs": 1.84365,
+              "maxMs": 1.91285
+            }
+          ]
+        },
+        {
+          "id": "wide-1m",
+          "label": "1M wide components, all active",
+          "threads": 1,
+          "results": [
+            {
+              "engine": "tide",
+              "medianMs": 1.291375,
+              "minMs": 1.22825,
+              "maxMs": 1.3443
+            },
+            {
+              "engine": "bevy",
+              "medianMs": 2.408375,
+              "minMs": 2.38005,
+              "maxMs": 2.60395
+            },
+            {
+              "engine": "flecs",
+              "medianMs": 2.25955,
+              "minMs": 2.2428,
+              "maxMs": 2.2873
+            },
+            {
+              "engine": "entt",
+              "medianMs": 2.8536,
+              "minMs": 2.82575,
+              "maxMs": 2.8802
+            }
+          ]
+        },
+        {
+          "id": "filtered50-1m",
+          "label": "1M wide components, 50% frozen",
+          "threads": 1,
+          "results": [
+            {
+              "engine": "tide",
+              "medianMs": 0.445225,
+              "minMs": 0.42905,
+              "maxMs": 0.46295
+            },
+            {
+              "engine": "bevy",
+              "medianMs": 1.143575,
+              "minMs": 1.1059,
+              "maxMs": 1.201
+            },
+            {
+              "engine": "flecs",
+              "medianMs": 1.103475,
+              "minMs": 1.09495,
+              "maxMs": 1.12315
+            },
+            {
+              "engine": "entt",
+              "medianMs": 1.4656,
+              "minMs": 1.43635,
+              "maxMs": 1.46895
+            }
+          ]
+        },
+        {
+          "id": "filtered95-1m",
+          "label": "1M wide components, 95% frozen",
+          "threads": 1,
+          "results": [
+            {
+              "engine": "tide",
+              "medianMs": 0.029249999999999998,
+              "minMs": 0.0289,
+              "maxMs": 0.0293
+            },
+            {
+              "engine": "bevy",
+              "medianMs": 0.1012,
+              "minMs": 0.1,
+              "maxMs": 0.1069
+            },
+            {
+              "engine": "flecs",
+              "medianMs": 0.109625,
+              "minMs": 0.1091,
+              "maxMs": 0.11205
+            },
+            {
+              "engine": "entt",
+              "medianMs": 0.13195,
+              "minMs": 0.13005,
+              "maxMs": 0.1372
+            }
+          ]
+        },
+        {
+          "id": "filtered99-1m",
+          "label": "1M wide components, 99% frozen",
+          "threads": 1,
+          "results": [
+            {
+              "engine": "tide",
+              "medianMs": 0.00575,
+              "minMs": 0.0057,
+              "maxMs": 0.0058
+            },
+            {
+              "engine": "bevy",
+              "medianMs": 0.020225,
+              "minMs": 0.0201,
+              "maxMs": 0.0206
+            },
+            {
+              "engine": "flecs",
+              "medianMs": 0.021875,
+              "minMs": 0.02165,
+              "maxMs": 0.0225
+            },
+            {
+              "engine": "entt",
+              "medianMs": 0.029025000000000002,
+              "minMs": 0.0267,
+              "maxMs": 0.0297
+            }
+          ]
+        },
+        {
+          "id": "churn-2k",
+          "label": "2k bullets, churn",
+          "threads": 1,
+          "results": [
+            {
+              "engine": "tide",
+              "medianMs": 0.34695,
+              "minMs": 0.33555,
+              "maxMs": 0.3891
+            },
+            {
+              "engine": "bevy",
+              "medianMs": 0.520375,
+              "minMs": 0.4655,
+              "maxMs": 0.6861
+            },
+            {
+              "engine": "flecs",
+              "medianMs": 0.56875,
+              "minMs": 0.4542,
+              "maxMs": 0.7395
+            },
+            {
+              "engine": "entt",
+              "medianMs": 0.262675,
+              "minMs": 0.2598,
+              "maxMs": 0.27045
+            }
+          ]
+        }
+      ],
+      "notes": [
+        "Tide has the lowest sampled median for particles, dense wide components and the three frozen densities. EnTT has the lowest churn median. Bevy and Flecs churn ranges are wide; these observations describe this run, not a universal ranking.",
+        "The 96 accepted processes use four cyclic rounds: each implementation occupies every launch position once per workload. One complete attempt that overlapped a build was excluded; its raw evidence and the accepted replacement are both retained. Attempts were not selected by their timing.",
+        "Before timing, 75 validation cases matched across the four native implementations, an independent C reference and Tide WASI; the harness passed 26 checks. The raw report records source and binary hashes, correctness evidence and the attempt ledger. Bevy, Flecs and EnTT WebAssembly were not measured or validated in this report."
+      ]
+    },
+    {
+      "id": "2026-10-29-bevy-baseline",
+      "title": "Tide and Bevy: one and four threads",
+      "date": "2026-10-29",
+      "cpu": "AMD Ryzen 9 7900X",
+      "os": "Windows x86-64",
+      "tideRevision": "fe5e96be1c61c7372590e7466dc26810a910bb14",
+      "benchmarkRevision": "810437c0df4cf01b925ea6a6c403eb78925d641c",
+      "resultPath": "results/2026-10-29-bevy-baseline",
+      "rounds": 3,
+      "warmup": 200,
+      "ticks": 400,
+      "engines": [
+        {
+          "id": "tide",
+          "label": "Tide",
+          "version": "fe5e96be1",
+          "method": "Generated C storage and scheduled systems; Clang 23.1.2, -O2, baseline x86-64."
+        },
+        {
+          "id": "bevy",
+          "label": "Bevy",
+          "version": "0.20.0",
+          "method": "Table storage and scheduled systems; Rust 1.95.0, opt-level 2, baseline x86-64."
+        }
+      ],
+      "cases": [
+        {
+          "id": "particles-1m-1",
+          "label": "1M particles",
+          "threads": 1,
+          "results": [
+            {
+              "engine": "tide",
+              "medianMs": 0.4583,
+              "minMs": 0.4473,
+              "maxMs": 0.4803
+            },
+            {
+              "engine": "bevy",
+              "medianMs": 1.1521,
+              "minMs": 1.1506,
+              "maxMs": 1.17375
+            }
+          ]
+        },
+        {
+          "id": "particles-1m-4",
+          "label": "1M particles",
+          "threads": 4,
+          "results": [
+            {
+              "engine": "tide",
+              "medianMs": 0.1265,
+              "minMs": 0.1248,
+              "maxMs": 0.1274
+            },
+            {
+              "engine": "bevy",
+              "medianMs": 0.43015,
+              "minMs": 0.42965,
+              "maxMs": 0.43565
+            }
+          ]
+        },
+        {
+          "id": "wide-1m-1",
+          "label": "1M wide components, all active",
+          "threads": 1,
+          "results": [
+            {
+              "engine": "tide",
+              "medianMs": 1.3328,
+              "minMs": 1.32535,
+              "maxMs": 1.4035
+            },
+            {
+              "engine": "bevy",
+              "medianMs": 2.4964,
+              "minMs": 2.38615,
+              "maxMs": 2.59715
+            }
+          ]
+        },
+        {
+          "id": "wide-1m-4",
+          "label": "1M wide components, all active",
+          "threads": 4,
+          "results": [
+            {
+              "engine": "tide",
+              "medianMs": 0.67165,
+              "minMs": 0.6715,
+              "maxMs": 0.8212
+            },
+            {
+              "engine": "bevy",
+              "medianMs": 1.17735,
+              "minMs": 1.14365,
+              "maxMs": 1.191
+            }
+          ]
+        },
+        {
+          "id": "filtered-1m-1",
+          "label": "1M wide components, 50% frozen",
+          "threads": 1,
+          "results": [
+            {
+              "engine": "tide",
+              "medianMs": 0.43605,
+              "minMs": 0.41605,
+              "maxMs": 0.4806
+            },
+            {
+              "engine": "bevy",
+              "medianMs": 1.13585,
+              "minMs": 1.0835,
+              "maxMs": 1.14465
+            }
+          ]
+        },
+        {
+          "id": "filtered-1m-4",
+          "label": "1M wide components, 50% frozen",
+          "threads": 4,
+          "results": [
+            {
+              "engine": "tide",
+              "medianMs": 0.41065,
+              "minMs": 0.40415,
+              "maxMs": 0.4198
+            },
+            {
+              "engine": "bevy",
+              "medianMs": 0.4115,
+              "minMs": 0.41115,
+              "maxMs": 0.41365
+            }
+          ]
+        },
+        {
+          "id": "filtered-frozen95-1m-1",
+          "label": "1M wide components, 95% frozen",
+          "threads": 1,
+          "results": [
+            {
+              "engine": "tide",
+              "medianMs": 0.0294,
+              "minMs": 0.0292,
+              "maxMs": 0.0294
+            },
+            {
+              "engine": "bevy",
+              "medianMs": 0.1005,
+              "minMs": 0.10025,
+              "maxMs": 0.1011
+            }
+          ]
+        },
+        {
+          "id": "filtered-frozen99-1m-1",
+          "label": "1M wide components, 99% frozen",
+          "threads": 1,
+          "results": [
+            {
+              "engine": "tide",
+              "medianMs": 0.0057,
+              "minMs": 0.0057,
+              "maxMs": 0.0058
+            },
+            {
+              "engine": "bevy",
+              "medianMs": 0.01995,
+              "minMs": 0.0199,
+              "maxMs": 0.02
+            }
+          ]
+        },
+        {
+          "id": "filtered-frozen99-1m-4",
+          "label": "1M wide components, 99% frozen",
+          "threads": 4,
+          "results": [
+            {
+              "engine": "tide",
+              "medianMs": 0.0057,
+              "minMs": 0.0057,
+              "maxMs": 0.0058
+            },
+            {
+              "engine": "bevy",
+              "medianMs": 0.0221,
+              "minMs": 0.0213,
+              "maxMs": 0.0233
+            }
+          ]
+        },
+        {
+          "id": "churn-2k-1",
+          "label": "2k bullets, churn",
+          "threads": 1,
+          "results": [
+            {
+              "engine": "tide",
+              "medianMs": 0.3385,
+              "minMs": 0.33725,
+              "maxMs": 0.3403
+            },
+            {
+              "engine": "bevy",
+              "medianMs": 0.3202,
+              "minMs": 0.2968,
+              "maxMs": 0.3515
+            }
+          ]
+        },
+        {
+          "id": "churn-2k-4",
+          "label": "2k bullets, churn",
+          "threads": 4,
+          "results": [
+            {
+              "engine": "tide",
+              "medianMs": 0.35025,
+              "minMs": 0.3312,
+              "maxMs": 0.3655
+            },
+            {
+              "engine": "bevy",
+              "medianMs": 0.30455,
+              "minMs": 0.26305,
+              "maxMs": 0.51825
+            }
+          ]
+        }
+      ],
+      "notes": [
+        "The four-thread 50%-frozen workload is effectively tied. Churn measurements overlap and vary substantially, especially with four threads; these runs do not establish a reliable winner for churn.",
+        "Three alternating Tide/Bevy process pairs were run independently for each workload. Two earlier full batches affected by contention were excluded; the raw archive records both the accepted and discarded runs."
+      ]
+    }
+  ]
+}

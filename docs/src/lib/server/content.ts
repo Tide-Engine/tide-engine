@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parse } from 'yaml';
 import { pages, type Link } from '#lib/nav.ts';
+import { benchmarkMarkdown } from '#lib/benchmarks.ts';
 import { language, render, type Heading } from './markdown.ts';
 
 const sources = import.meta.glob(['/**/*.md', '!/node_modules/**', '!/.svelte-kit/**', '!/build/**', '!/static/**'], {
@@ -69,6 +70,7 @@ export function sourcePage(at: string): SourcePage | undefined {
     const { body } = frontmatter(sources[file]);
     // The browser supplies this editor's source separately from the Markdown.
     let markdown = snippets(body.replace(/<div data-tide-playground><\/div>/g, '<<< @/playground/demo.tide'), file);
+    if (at === '/benchmarks') markdown = markdown.replace('<div data-tide-benchmarks></div>', benchmarkMarkdown());
     const rendered = renderFile(file);
     const info = at === '/' ? home() : page(at.slice(1));
     if (at === '/') {
