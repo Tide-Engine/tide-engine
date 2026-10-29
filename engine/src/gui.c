@@ -121,6 +121,8 @@ enum {
 
 #define STICK 0.5f // How far the left stick goes before it counts as a d-pad press
 
+static tide_rect on_screen(const tide_gui *g, tide_rect r);
+
 static uint32_t nav_keys(const tide_devices *d)
 {
     const tide_keyboard *k = &d->keyboard;
@@ -377,6 +379,50 @@ static float animate_lanes(tide_gui *g, const uint32_t id, const float *target, 
     }
     if (m) m->frame = g->frame;
     return out[0];
+}
+
+// A tween's lanes: where it is, the target it's going to, and how fast it goes there.
+static float tween(tide_gui *g, const uint32_t id, const float target, const float seconds, const float *from)
+{
+    bool fresh = true;
+    tide_gui_motion *m = motion(g, tide_gui_seed(id, 0x7EE7u), &fresh);
+    const float to = tide_is_finite_f(target) ? target : 0.0f;
+    const float dt = g->seconds > 0.0f && tide_is_finite_f(g->seconds) ? g->seconds : 0.0f;
+    float v = to;
+    if (m && !fresh) {
+        v = m->value[0];
+        if (m->value[1] != to) { // A new target: from rest, as far as it is in `seconds`; turned midway, as fast as it went
+            const bool resting = v == m->value[1] || !(m->value[2] > 0.0f);
+            if (resting) m->value[2] = seconds > 0.0f && tide_is_finite_f(seconds) ? tide_abs_f(to - v) / seconds : 0.0f;
+            m->value[1] = to;
+        }
+        const float step = m->value[2] * dt;
+        // Arrives on time: a last step short by rounding alone arrives too
+        const float slack = 1e-5f * max_f(1.0f, tide_abs_f(to));
+        if (!(m->value[2] > 0.0f) || !(dt > 0.0f) || tide_abs_f(to - v) <= step + slack) v = to;
+        else v += to > v ? step : -step;
+    } else if (from && tide_is_finite_f(*from)) {
+        v = *from;
+        if (m) m->value[2] = seconds > 0.0f && tide_is_finite_f(seconds) ? tide_abs_f(to - v) / seconds : 0.0f;
+    }
+    if (!tide_is_finite_f(v)) v = to;
+    if (m) {
+        m->value[0] = v;
+        m->value[1] = to;
+        if (fresh && !from) m->value[2] = 0.0f;
+        m->frame = g->frame;
+    }
+    return v;
+}
+
+float tide_gui_tween(tide_gui *g, const uint32_t id, const float target, const float seconds)
+{
+    return tween(g, id, target, seconds, NULL);
+}
+
+float tide_gui_tween_from(tide_gui *g, const uint32_t id, const float target, const float seconds, const float from)
+{
+    return tween(g, id, target, seconds, &from);
 }
 
 float tide_gui_animate(tide_gui *g, const uint32_t id, const float target, const float seconds)
@@ -1064,7 +1110,7 @@ void tide_gui_claim_keyboard(tide_gui *g)
 void tide_gui_claim_pointer_at(tide_gui *g, const tide_rect rect)
 {
     if (g->claim_rect_count_next < TIDE_GUI_MAX_CLAIM_RECTS) {
-        g->claim_rects_next[g->claim_rect_count_next++] = (tide_gui_claim_rect){rect, g->view};
+        g->claim_rects_next[g->claim_rect_count_next++] = (tide_gui_claim_rect){on_screen(g, rect), g->view};
         return;
     }
     // More places than a frame remembers: the pointer on it, as this frame sees it
@@ -1102,6 +1148,38 @@ static bool live(const tide_gui *g)
     return !under_modal(g) && !grayed(g);
 }
 
+// A rect of the GUI's where the screen has it: inside a Target block, where
+// the target is shown; the same rect elsewhere. What the next frame finds
+// the pointer on, and what the focus moves by, are in the screen's pixels.
+static tide_rect on_screen(const tide_gui *g, const tide_rect r)
+{
+    if (!g->in_target) return r;
+    if (!g->space.mapped) return (tide_rect){-1e30f, -1e30f, 0.0f, 0.0f}; // Nowhere the pointer is
+    return (tide_rect){g->space.origin.x + r.x * g->space.scale.x, g->space.origin.y + r.y * g->space.scale.y,
+                       r.width * g->space.scale.x, r.height * g->space.scale.y};
+}
+
+// A rect of the screen's in the GUI's pixels: on_screen undone.
+static tide_rect from_screen(const tide_gui *g, const tide_rect r)
+{
+    if (!g->in_target || !g->space.mapped) return r;
+    return (tide_rect){(r.x - g->space.origin.x) / g->space.scale.x, (r.y - g->space.origin.y) / g->space.scale.y,
+                       r.width / g->space.scale.x, r.height / g->space.scale.y};
+}
+
+// A move of `by` GUI pixels in the screen's.
+static tide_float2 on_screen_by(const tide_gui *g, const tide_float2 by)
+{
+    if (!g->in_target || !g->space.mapped) return by;
+    return tide_f2(by.x * g->space.scale.x, by.y * g->space.scale.y);
+}
+
+// Where the pointer is on the screen, whichever space the GUI draws in.
+static tide_float2 screen_mouse(const tide_gui *g)
+{
+    return g->in_target ? g->space.mouse : g->mouse;
+}
+
 // Remembers where a widget or an area is: the pointer there is the GUI's, for
 // the game and views that read it before the next frame's GUI (see on_gui),
 // and that frame's widgets go by which of them is on top there (see on_top).
@@ -1109,7 +1187,7 @@ static bool live(const tide_gui *g)
 // content's.
 static void remember_place(tide_gui *g, const uint32_t id, const tide_rect r, const uint32_t content)
 {
-    if (g->rect_count_next < TIDE_GUI_MAX_RECTS) g->rects_next[g->rect_count_next++] = (tide_gui_rect){r, id, content, g->scroll_clip, g->scroll_id};
+    if (g->rect_count_next < TIDE_GUI_MAX_RECTS) g->rects_next[g->rect_count_next++] = (tide_gui_rect){on_screen(g, r), id, content, g->scroll_clip, g->scroll_id};
     else g->rects_full_next = true;
 }
 
@@ -1123,9 +1201,9 @@ static bool hovered(tide_gui *g, const uint32_t id, const tide_rect r)
     remember_place(g, id, r, WIDGET);
     if (!contains(r, g->mouse) || (g->scroll_clip && !contains(g->input_clip, g->mouse))) return false;
     g->hot_next = id;
-    g->hot_rect_next = r;
+    g->hot_rect_next = on_screen(g, r);
     g->over_next = true;
-    return !grayed(g) && (g->hot == id || g->hot == 0 || !contains(g->hot_rect, g->mouse));
+    return !grayed(g) && (g->hot == id || g->hot == 0 || !contains(g->hot_rect, screen_mouse(g)));
 }
 
 // Whether the mouse is pressing the widget: from a press on it until it's let
@@ -1159,12 +1237,12 @@ static bool focusable(tide_gui *g, const uint32_t id, const bool steps, const ti
         g->focus = id;
     }
     if (g->nav_count < TIDE_GUI_MAX_NAV) {
-        g->nav_rects[g->nav_count] = rect;
+        g->nav_rects[g->nav_count] = on_screen(g, rect);
         g->nav_steps[g->nav_count] = steps;
         g->nav[g->nav_count++] = id;
     }
     if (g->focus != id) return false;
-    g->focus_rect = rect;
+    g->focus_rect = on_screen(g, rect);
     g->focus_seen = true;
     return true;
 }
@@ -1337,6 +1415,7 @@ int tide_gui_begin_area(tide_gui *g, const uint32_t id, const tide_rect rect)
     top(g)->radius = g->theme.radius;
     top(g)->border = g->theme.border_width;
     top(g)->shadow = shadow;
+    top(g)->home = g->list.target;
     top(g)->clips_from = g->list.clip_count;
     top(g)->hot_before = g->hot_next;
     top(g)->rects_before = g->rect_count_next;
@@ -1400,6 +1479,7 @@ int tide_gui_begin_area_at(tide_gui *g, const uint32_t id, const int32_t anchor)
     top(g)->radius = g->theme.radius;
     top(g)->border = g->theme.border_width;
     top(g)->shadow = shadow;
+    top(g)->home = g->list.target;
     top(g)->clips_from = g->list.clip_count;
     top(g)->hot_before = g->hot_next;
     top(g)->rects_before = g->rect_count_next;
@@ -1432,6 +1512,12 @@ int tide_gui_begin_modal(tide_gui *g, const uint32_t id, const int32_t anchor, b
 // A block that lays out nothing: a copy of the container around it, which its
 // widgets go on laying out, and which hands the layout back when it closes.
 // False when it's too deep for one.
+// Where the GUI draws now: the window, or a Target block's target.
+static tide_render_target gui_destination(const tide_gui *g)
+{
+    return g->in_target ? g->space.dest : (tide_render_target){.id = TIDE_RENDER_WINDOW};
+}
+
 static bool open_scope(tide_gui *g)
 {
     if (g->depth == TIDE_GUI_MAX_DEPTH) return false;
@@ -1441,14 +1527,54 @@ static bool open_scope(tide_gui *g)
     top(g)->themed = false;
     top(g)->keyed = false;
     top(g)->drawing = false;
+    top(g)->targeted = false;
     return true;
+}
+
+static int begin_target(tide_gui *g, const tide_render_target target, const bool mapped, const tide_rect shown)
+{
+    const int before = g->depth;
+    if (g->in_target || !tide_render_target_valid_id(target.id) || target.id == TIDE_RENDER_WINDOW) return -1;
+    const tide_float2 size = tide_render_target_logical(target, tide_f2(g->in_target ? g->space.width : g->width,
+                                                                        g->in_target ? g->space.height : g->height));
+    if (!(size.x > 0.0f) || !(size.y > 0.0f)) return -1;
+    if (!open_scope(g)) return -1;
+    top(g)->targeted = true;
+    top(g)->space_before = g->space;
+    tide_gui_space space = {.dest = target, .mouse = g->mouse, .width = g->width, .height = g->height};
+    const tide_float2 nowhere = tide_f2(-1e30f, -1e30f);
+    space.mapped = mapped && shown.width > 0.0f && shown.height > 0.0f && tide_is_finite_f(shown.x) && tide_is_finite_f(shown.y);
+    if (space.mapped) {
+        space.origin = tide_f2(shown.x, shown.y);
+        space.scale = tide_f2(shown.width / size.x, shown.height / size.y);
+    }
+    g->space = space;
+    g->in_target = true;
+    // The target's pixels: its size is the screen's for what lays out by one, and the pointer is in them
+    g->width = size.x;
+    g->height = size.y;
+    g->mouse = space.mapped && contains(shown, space.mouse)
+        ? tide_f2((space.mouse.x - shown.x) / space.scale.x, (space.mouse.y - shown.y) / space.scale.y) : nowhere;
+    tide_draw_render_target(&g->list, target);
+    tide_draw_set_screen(&g->list);
+    return before;
+}
+
+int tide_gui_begin_target(tide_gui *g, const tide_render_target target, const tide_rect shown)
+{
+    return begin_target(g, target, true, shown);
+}
+
+int tide_gui_begin_target_unshown(tide_gui *g, const tide_render_target target)
+{
+    return begin_target(g, target, false, (tide_rect){0});
 }
 
 int tide_gui_begin_draw(tide_gui *g)
 {
     const int before = g->depth;
     if (!open_scope(g)) return -1; // A skipped block cannot leak drawing settings at the nesting ceiling
-    tide_draw_render_target(&g->list, (tide_render_target){.id = TIDE_RENDER_WINDOW});
+    tide_draw_render_target(&g->list, gui_destination(g));
     top(g)->drawing = true;
     g->drawing[g->drawing_count++] = (tide_gui_draw_state){g->list.place, g->list.saved_count};
     tide_draw_set_screen(&g->list);
@@ -1517,17 +1643,18 @@ static void close_area(tide_gui *g, const tide_gui_group *grp)
         const float dx = at.x - grp->guess.x;
         const float dy = at.y - grp->guess.y;
         if ((dx != 0.0f || dy != 0.0f) && (grp->panel != UINT32_MAX || grp->panel_plain)) {
-            tide_draw_move_gui(&g->list, grp->panel != UINT32_MAX ? grp->panel : grp->commands_from,
-                               grp->plains_from, grp->clips_from, tide_f2(dx, dy));
+            tide_draw_move_gui_in(&g->list, grp->home, grp->panel != UINT32_MAX ? grp->panel : grp->commands_from,
+                                  grp->plains_from, grp->clips_from, tide_f2(dx, dy));
         }
-        // Its widgets are remembered where they're drawn, too.
+        // Its widgets are remembered where they're drawn, too, in the screen's pixels
+        const tide_float2 moved = on_screen_by(g, tide_f2(dx, dy));
         for (uint32_t i = grp->rects_before; i < g->rect_count_next; i++) {
-            g->rects_next[i].rect.x += dx;
-            g->rects_next[i].rect.y += dy;
+            g->rects_next[i].rect.x += moved.x;
+            g->rects_next[i].rect.y += moved.y;
         }
         for (uint32_t i = grp->nav_from; i < g->nav_count; i++) {
-            g->nav_rects[i].x += dx;
-            g->nav_rects[i].y += dy;
+            g->nav_rects[i].x += moved.x;
+            g->nav_rects[i].y += moved.y;
             if (g->nav[i] == g->focus) g->focus_rect = g->nav_rects[i];
         }
         r = (tide_rect){at.x, at.y, shown.x, shown.y};
@@ -1565,7 +1692,7 @@ static void close_area(tide_gui *g, const tide_gui_group *grp)
     // Under the mouse, but none of its widgets is: the panel hides what's below it.
     if (g->hot_next == grp->hot_before) {
         g->hot_next = grp->id;
-        g->hot_rect_next = r;
+        g->hot_rect_next = on_screen(g, r);
     }
 }
 
@@ -1590,7 +1717,7 @@ static void close_scroll(tide_gui *g, const tide_gui_group *grp)
     if (g->focus && g->focus_seen && g->reveal_focus) {
         for (uint32_t i = grp->nav_from; i < g->nav_count; i++) {
             if (g->nav[i] != g->focus) continue;
-            const tide_rect r = g->focus_rect;
+            const tide_rect r = from_screen(g, g->focus_rect); // In the GUI's pixels, as the viewport is
             if (r.x < state.viewport.x) offset.x += r.x - state.viewport.x;
             else if (r.x + r.width > state.viewport.x + state.viewport.width)
                 offset.x += r.x + r.width - state.viewport.x - state.viewport.width;
@@ -1605,14 +1732,15 @@ static void close_scroll(tide_gui *g, const tide_gui_group *grp)
     *state.offset = offset;
     const tide_float2 shift = tide_f2(state.before.x - offset.x, state.before.y - offset.y);
     if (shift.x != 0.0f || shift.y != 0.0f) {
-        tide_draw_move_gui(&g->list, grp->commands_from, grp->plains_from, state.clip, shift);
+        tide_draw_move_gui_in(&g->list, grp->home, grp->commands_from, grp->plains_from, state.clip, shift);
+        const tide_float2 moved = on_screen_by(g, shift); // Remembered in the screen's pixels
         for (uint32_t i = grp->rects_before; i < g->rect_count_next; i++) {
-            g->rects_next[i].rect.x += shift.x;
-            g->rects_next[i].rect.y += shift.y;
+            g->rects_next[i].rect.x += moved.x;
+            g->rects_next[i].rect.y += moved.y;
         }
         for (uint32_t i = grp->nav_from; i < g->nav_count; i++) {
-            g->nav_rects[i].x += shift.x;
-            g->nav_rects[i].y += shift.y;
+            g->nav_rects[i].x += moved.x;
+            g->nav_rects[i].y += moved.y;
             if (g->nav[i] == g->focus) g->focus_rect = g->nav_rects[i];
         }
     }
@@ -1643,10 +1771,18 @@ void tide_gui_close(tide_gui *g, const int depth)
         g->depth--;
         if (grp.scope) { // A Disabled or Theme block hands the layout back to the container around it
             if (grp.themed) g->theme = grp.before; // ...and a Theme block the look it found
+            if (grp.targeted) { // ...and a Target block the screen, the pointer and the window
+                g->mouse = g->space.mouse;
+                g->width = g->space.width;
+                g->height = g->space.height;
+                g->space = grp.space_before;
+                g->in_target = false;
+                tide_draw_render_target(&g->list, (tide_render_target){.id = TIDE_RENDER_WINDOW});
+            }
             if (grp.keyed) g->key = grp.key_before;
             if (grp.drawing) {
                 const tide_gui_draw_state *state = &g->drawing[--g->drawing_count];
-                tide_draw_restore_window(&g->list, &state->before, state->mark);
+                tide_draw_restore_to(&g->list, gui_destination(g), &state->before, state->mark);
             }
             tide_gui_group *around = top(g);
             const tide_gui_group own = *around;
@@ -1658,6 +1794,8 @@ void tide_gui_close(tide_gui *g, const int depth)
             around->keyed = own.keyed;
             around->key_before = own.key_before;
             around->drawing = own.drawing;
+            around->targeted = own.targeted;
+            around->space_before = own.space_before;
             continue;
         }
         g->in_modal = grp.in_modal_before;
@@ -1716,6 +1854,7 @@ int tide_gui_begin_scroll(tide_gui *g, const uint32_t id, tide_rect rect, tide_f
     grp->stretch = rect.width;
     grp->commands_from = g->list.count;
     grp->plains_from = g->list.plain_count;
+    grp->home = g->list.target;
     grp->rects_before = g->rect_count_next;
     grp->nav_from = g->nav_count;
     grp->hot_before = g->hot_next;

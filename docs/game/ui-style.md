@@ -101,4 +101,6 @@ It settles exactly on its target, so `shown > 0` stops drawing the panel once it
 
 A panel at an anchor needs none of this to change size smoothly: `GUILayout.Area(Anchor.MiddleCenter)` grows and shrinks to its content by itself, as the tabs of a dialog change. For a tooltip, keep what it shows while it fades, and keep it on the screen with `rect.MoveInside(Screen.rect)` (see [Animation](./gui.md#animation)).
 
+For a fixed-length animation, a slide that eases in and out or a pop that overshoots, `GUI.Tween` gives a progress that takes exactly its time, and `Math.EaseInOut`, `Math.EaseOutBack` and the rest shape it. A panel that's warped or bent as a whole draws its widgets into a render target with [`GUI.Target`](./gui.md#widgets-in-a-render-target).
+
 Animate positions, sizes, colors and alpha; keep times short, a tenth to a third of a second, so the menu feels quick.

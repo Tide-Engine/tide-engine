@@ -3550,3 +3550,45 @@ TIDE_TEST(gui_headings_and_checkboxes_under_a_round_theme)
     TIDE_CHECK(heading && plain);
     TIDE_CHECK(box); // A quarter of its 16 pixels, not the theme's 20
 }
+
+// GUI.Target: widgets drawn into a render target shown at twice its size.
+// The pointer reaches them through where it's shown; their places are
+// remembered on the screen; the GUI's screen and pointer are back after it.
+TIDE_TEST(gui_target_draws_into_a_target_and_maps_the_pointer)
+{
+    start();
+    const tide_render_target t = tide_render_target_make(200.0f, 100.0f);
+    const tide_rect shown = {100.0f, 100.0f, 400.0f, 200.0f};
+    bool clicked = false;
+    for (int frame = 0; frame < 3; frame++) {
+        // The button's middle, (50, 25) in the target, is (200, 150) on the screen
+        mouse(200.0f, 150.0f, frame == 1);
+        begin();
+        const int depth = tide_gui_begin_target(&gui, t, shown);
+        TIDE_REQUIRE(depth >= 0);
+        TIDE_CHECK(gui.width == 200.0f && gui.height == 100.0f);
+        TIDE_CHECK(gui.mouse.x == 50.0f && gui.mouse.y == 25.0f);
+        clicked |= tide_gui_button(&gui, 1, (tide_rect){10.0f, 10.0f, 80.0f, 30.0f}, "Go");
+        tide_gui_close(&gui, depth);
+        TIDE_CHECK(gui.width == 1920.0f && gui.mouse.x == 200.0f && !gui.in_target);
+        end();
+    }
+    TIDE_CHECK(clicked);
+    TIDE_REQUIRE(gui.rect_count > 0);
+    TIDE_CHECK(gui.rects[0].rect.x == 120.0f && gui.rects[0].rect.y == 120.0f && gui.rects[0].rect.width == 160.0f);
+    bool into = false;
+    for (uint32_t i = 0; i < draw.count; i++) into |= draw.commands[i].kind == TIDE_DRAW_TARGET && draw.commands[i].target != 0;
+    TIDE_CHECK(into);
+    // Unshown: no pointer, so nothing's hovered there
+    begin();
+    const int depth = tide_gui_begin_target_unshown(&gui, t);
+    TIDE_CHECK(gui.mouse.x < -1e29f);
+    tide_gui_close(&gui, depth);
+    end();
+    // An invalid target, and the window, are skipped
+    begin();
+    TIDE_CHECK(tide_gui_begin_target(&gui, (tide_render_target){0}, shown) == -1);
+    TIDE_CHECK(tide_gui_begin_target(&gui, (tide_render_target){.id = TIDE_RENDER_WINDOW}, shown) == -1);
+    end();
+    tide_render_target_dispose(t);
+}

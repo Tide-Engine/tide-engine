@@ -12,6 +12,16 @@ no runtime function: they're compiler-supplied Tide code over Draw.Instanced.
 No match state, wire format or simulation arithmetic changes. Contracts,
 validation and gaps: gui.md, Looks.
 
+The desktop demo's gaps (2026-10-29, same task) add generated calls
+tide_gui_begin_target, tide_gui_begin_target_unshown, tide_gui_tween[_from],
+tide_ease_in_f, tide_ease_out_f, tide_ease_in_out_f, tide_ease_in_back_f,
+tide_ease_out_back_f, tide_render_target_logical and
+tide_render_target_valid_id, and draw helpers tide_draw_restore_to and
+tide_draw_move_gui_in. tide_gui and tide_gui_group grow fields (space,
+in_target; home, targeted, space_before), so hosts, libraries and games
+rebuild together. No match state or wire format changes; the easing functions
+are plain IEEE arithmetic usable in match code.
+
 ## Private cached-chunk task shortcut (2026-10-29)
 
 The follow-up performance change is confined to compiler-generated tasks. An

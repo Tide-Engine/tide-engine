@@ -11,8 +11,14 @@ Color Stripes(float2 uv)
 local singleton Probe
 {
     Color[13] seen;
+    float[6] eases;
     Rect moved;
     Rect screen;
+    RenderTarget art;
+    bool validBefore;
+    bool validAfter;
+    bool windowValid;
+    float2 artSize;
     int frames;
     Func<float2, Color> kept;
 }
@@ -57,4 +63,18 @@ view Paint(mut Probe probe)
     probe.seen[12] = Color.red.WithAlpha(0.25);
     probe.moved = Rect(90, -5, 20, 20).MoveInside(Rect(0, 0, 100, 100));
     probe.screen = Screen.rect;
+    probe.eases[0] = Math.EaseIn(0.5);
+    probe.eases[1] = Math.EaseOut(0.5);
+    probe.eases[2] = Math.EaseInOut(0.25);
+    probe.eases[3] = Math.EaseOutBack(0.7);
+    probe.eases[4] = Math.EaseInBack(0.2);
+    probe.eases[5] = Math.EaseOut(Math.Sqrt(-1)) + Math.EaseIn(7);
+    // Into a render target: its own run, by its size
+    if (probe.frames == 1) probe.validBefore = probe.art.valid;
+    if (!probe.art.valid) probe.art = RenderTarget(64, 32);
+    probe.validAfter = probe.art.valid;
+    probe.windowValid = Draw.window.valid;
+    probe.artSize = probe.art.size;
+    probe.art.Rect(Rect(0, 0, 64, 32), 4, Gradient.Vertical(Color.red, Color.blue));
+    probe.art.Shape(Shape { center = float2(32, 16), size = float2(20, 20), ellipse = true }, (float2 uv, float2 size) => Color.white.WithAlpha(uv.x));
 }

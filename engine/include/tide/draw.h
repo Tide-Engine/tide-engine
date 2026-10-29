@@ -716,6 +716,13 @@ static inline uint64_t tide_render_target_version(const uint64_t id)
     return s ? s->version : 0;
 }
 
+// target.valid: whether drawing into it draws: the window, or a target made
+// and not disposed (a default one, never made, isn't).
+static inline bool tide_render_target_valid_id(const uint64_t id)
+{
+    return id == TIDE_RENDER_WINDOW || tide_render_target_live(id);
+}
+
 // A local destination reference. The window uses TIDE_RENDER_WINDOW. Borrowed
 // C descriptors use a nonzero id without the managed bit; their owner supplies
 // the size, and they hold color. A zero-initialized reference is invalid.
@@ -723,6 +730,17 @@ typedef struct tide_render_target {
     uint64_t id;
     tide_target_size size;
 } tide_render_target;
+
+// target.size: its size in logical pixels, in a window of `window_size`: the
+// window's, a target that follows it, or the size it was made or resized to.
+// Nothing for a target that isn't there.
+static inline tide_float2 tide_render_target_logical(const tide_render_target t, const tide_float2 window_size)
+{
+    if (t.id == TIDE_RENDER_WINDOW) return window_size;
+    const tide_render_target_state *s = tide_render_target_state_of(t.id);
+    if (s && !s->alive) return tide_f2(0.0f, 0.0f);
+    return tide_target_size_logical(s ? s->size : t.size, window_size);
+}
 
 // Texture's common sampling reference: CPU pixels, a rendered image, an image
 // of the game's pack (an `asset Texture`: no pixels and no target, its size
@@ -2164,6 +2182,11 @@ void tide_draw_restore_window(tide_draw_list *d, const tide_draw_place *before, 
 // Reposition the window's 2D content of an anchored GUI area. Plain records
 // before `plains` and clips before `clips` belong to the surrounding content.
 void tide_draw_move_gui(tide_draw_list *d, uint32_t commands, uint32_t plains, uint32_t clips, tide_float2 offset);
+// ...the same for content recorded into destination `home` (tide_draw_list.target): a render target's GUI
+void tide_draw_move_gui_in(tide_draw_list *d, uint32_t home, uint32_t commands, uint32_t plains, uint32_t clips,
+                           tide_float2 offset);
+// tide_draw_restore_window for another destination: `target`'s settings put back.
+void tide_draw_restore_to(tide_draw_list *d, tide_render_target target, const tide_draw_place *before, uint32_t mark);
 
 // The texture `id` of `space` (TIDE_PIXELS_*) at `version`, for a mesh
 // command: 1 + its place in the list's textures, or 0 when it has no size.

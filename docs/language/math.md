@@ -120,6 +120,18 @@ These builders work in frags and verts too, with the GPU's usual float rounding.
 
 A color goes through them channel by channel, alpha too, with other colors and with numbers, which count for every channel: `Math.Lerp(cold, hot, heat)` is the color that far from `cold` to `hot`, and `Math.Saturate(color)` keeps each channel from 0 to 1. A color and a vector don't mix in one call.
 
+**Easing**, a progress `t` from 0 to 1 shaped as an animation's is:
+
+| Function | Shape |
+|---|---|
+| `Math.EaseIn(t)` | Starts slowly and speeds up (cubic) |
+| `Math.EaseOut(t)` | Starts fast and settles: what most UI that arrives uses |
+| `Math.EaseInOut(t)` | Slow at both ends, for something that moves from one place to another |
+| `Math.EaseInBack(t)` | Pulls back a little below 0 first: an anticipation |
+| `Math.EaseOutBack(t)` | Overshoots 1 by about 10% and settles back: a pop |
+
+Each is 0 at 0 and 1 at 1; past the ends it's at them, and NaN is 0. They're plain arithmetic, the same on every machine, so they work in match code, in views, and in [GPU code](../game/shaders.md#math). Shape a progress with them and blend by it: `Math.Lerp(from, to, Math.EaseOutBack(t))`. [`GUI.Tween`](../game/gui.md#animation) makes a progress that takes a fixed time.
+
 **Vectors:**
 
 `Dot`, `Cross`, `Length`, `LengthSq`, `Distance`, `DistanceSq`, `Normalize` (zero for a zero vector, never NaN), `Reflect`, `Csum`, `Cmin`, `Cmax`.

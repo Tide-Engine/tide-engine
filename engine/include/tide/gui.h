@@ -162,6 +162,17 @@ typedef struct tide_gui_motion {
     float value[4];
 } tide_gui_motion;
 
+// Where the GUI's widgets go and how the pointer reaches them: the window, or
+// a render target (GUI.Target) shown on the screen at a rect.
+typedef struct tide_gui_space {
+    tide_render_target dest; // Zeroed for the window
+    bool mapped;             // The pointer reaches it: the screen's pointer at `origin`, `scale` times smaller
+    tide_float2 origin;
+    tide_float2 scale;       // Screen pixels per target pixel
+    tide_float2 mouse;       // The screen's pointer, while the GUI's is the target's
+    float width, height;     // The screen's, while the GUI's are the target's
+} tide_gui_space;
+
 typedef struct tide_gui_group {
     uint32_t id;
     uint32_t kind;            // Vertical, horizontal or area
@@ -198,6 +209,9 @@ typedef struct tide_gui_group {
     float border;             // An area: its background's border, as the theme had it when it opened
     uint32_t own_clip;        // An anchored area that's changing size: 1 + its clip in the list, or 0
     uint32_t clip_mark;       // ...and what puts the clip around it back
+    uint32_t home;            // An area or a scroll: the GUI list's destination it opened in (tide_draw_list.target)
+    bool targeted;            // A Target block: what it found, back when it closes...
+    tide_gui_space space_before;
 } tide_gui_group;
 
 typedef struct tide_gui_scroll_state {
@@ -395,6 +409,8 @@ typedef struct tide_gui {
     uint32_t scrolling_count;
 
     tide_gui_theme theme; // How widgets drawn now look (GUI.SetTheme, GUI.Theme)
+    tide_gui_space space; // Where widgets drawn now go (GUI.Target)
+    bool in_target;       // ...a render target's
 
     tide_gui_group groups[TIDE_GUI_MAX_DEPTH + 1]; // [0] is the screen's own
     int depth;
@@ -520,11 +536,29 @@ tide_control tide_gui_control(tide_gui *g, uint32_t id, tide_rect rect);
 // target). Past TIDE_GUI_MAX_MOTIONS at once, a new one is at its target.
 // Nonfinite numbers aren't kept: a value that was one starts over.
 float tide_gui_animate(tide_gui *g, uint32_t id, float target, float seconds);
+// GUI.Tween: `target`, reached at a constant speed, each change of it taking
+// exactly `seconds` from where the value was then, so an ease shapes it
+// (Math.EaseInOut). Starts at the target, or at `from`; a frame away starts it
+// over; no frame time or no seconds is at the target at once.
+float tide_gui_tween(tide_gui *g, uint32_t id, float target, float seconds);
+float tide_gui_tween_from(tide_gui *g, uint32_t id, float target, float seconds, float from);
 float tide_gui_animate_from(tide_gui *g, uint32_t id, float target, float seconds, float from);
 tide_float2 tide_gui_animate_float2(tide_gui *g, uint32_t id, tide_float2 target, float seconds);
 tide_float2 tide_gui_animate_float2_from(tide_gui *g, uint32_t id, tide_float2 target, float seconds, tide_float2 from);
 tide_color tide_gui_animate_color(tide_gui *g, uint32_t id, tide_color target, float seconds);
 tide_color tide_gui_animate_color_from(tide_gui *g, uint32_t id, tide_color target, float seconds, tide_color from);
+
+// GUI.Target(target, shown) { ... }: the widgets in the block draw into
+// `target`, laid out in its logical pixels, its size the screen's for them
+// (anchors, modals). `shown` is where the game shows the target on the
+// screen: the pointer reaches the widgets through it, and their places are
+// remembered there, so a press on one is the GUI's as on any widget.
+// tide_gui_begin_target_unshown has no pointer: keyboard and gamepad only.
+// Draw what shows the target after the block, in a GUI.Draw block: the GUI's
+// list goes over the world, so a world draw of it shows the frame before.
+// Returns the depth to close, or -1 where it's skipped (nesting, an invalid target).
+int tide_gui_begin_target(tide_gui *g, tide_render_target target, tide_rect shown);
+int tide_gui_begin_target_unshown(tide_gui *g, tide_render_target target);
 
 // Custom visuals use this list inside a GUI.Draw block. Its close restores
 // the window's drawing settings, including settings changed with Set calls.
