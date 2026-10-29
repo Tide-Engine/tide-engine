@@ -58,8 +58,8 @@ strict `f32` expressions with no fused arithmetic; Tide keeps its normal O2,
 no-fast-math/no-contraction flags. Both target baseline x86-64, while their
 compiler/LLVM versions differ. Dependency checksums are pinned by Cargo.lock.
 
-The correctness script checks 66 Bevy cases against native Tide/C and WASI
-Tide/C: 1/17/10,000 particles; empty/17 wide components; 0/50/100% frozen;
+The correctness script checks 78 Bevy cases against native Tide/C and WASI
+Tide/C: 1/17/10,000 particles; empty/17 wide components; 0/50/95/99/100% frozen;
 1/31/100 bullets spawned per tick; early and steady-state ticks; serial and
 four-thread Bevy. Its collected timings are discarded. The timing runner also
 requires matching digests in every process pair at its larger actual workloads.

@@ -1,5 +1,23 @@
 # Language features, as tidec builds them
 
+## Whole cached-chunk task shortcut (2026-10-29)
+
+Split systems with an eligible retained sparse selection, an apart variant and
+32-128 bytes of accessed component data have a small private task wrapper.
+For one whole chunk, it validates the existing exact cache key and rare count,
+skips zero matches, and captures every changed component's lane pages. Every
+page must have one reference before any hash metadata changes. It then marks
+those pages stale and calls the same cached rows helper directly; private pages
+need no begin/end bookkeeping. Readonly component pages may remain shared.
+
+The original task is an explicit non-inlined fallback for shared pages, pieces,
+stale/dense selections and unsupported archetypes. Task counts, work estimates,
+queue contexts, archetype offsets, row order, scratch marks and row signatures
+stay the same. The shortcut changes no arithmetic, component/world/cache layout,
+snapshot value, hash, packed bytes, runtime API or reload contract. The native
+prefetch loop is unchanged. Benchmark evidence and validation are recorded in
+benchmarks.md and `bench/results/bevy-next-20261028-final/README.md`.
+
 ## Retained sparse row selection (2026-10-28)
 
 Compiler-private follow-up to the rare-mask path: eligible match systems retain

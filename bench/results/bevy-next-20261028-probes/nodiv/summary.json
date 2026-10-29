@@ -1,0 +1,92 @@
+{
+  "valid": true,
+  "rounds": 3,
+  "warmup": 200,
+  "ticks": 400,
+  "has_before": true,
+  "processes": 9,
+  "estimator": "median of process tick medians; ratios are median of paired ratios",
+  "scope": "ECS ticks only; excludes setup, snapshots, per-tick hashing, networking and rendering",
+  "cases": [
+    {
+      "rate": 0,
+      "threads": 1,
+      "id": "filtered-frozen99-1m-1",
+      "tagged": 1,
+      "workload": "wide",
+      "count": 1000000,
+      "frozen": 99,
+      "digest": "0xa683eb7fe00d6622",
+      "tide_ms": 0.11315,
+      "bevy_ms": 0.04775,
+      "c_ms": 1.1308,
+      "tide_range_ms": [
+        0.1127,
+        0.1134
+      ],
+      "bevy_range_ms": [
+        0.0477,
+        0.048
+      ],
+      "c_range_ms": [
+        1.12535,
+        1.13485
+      ],
+      "ratio_bevy_over_tide": 0.4215642951833849,
+      "paired_ratios": [
+        0.4210758377425044,
+        0.42590949423247565,
+        0.4215642951833849
+      ],
+      "process_medians_ms": {
+        "Tide": [
+          0.1134,
+          0.1127,
+          0.11315
+        ],
+        "Bevy": [
+          0.04775,
+          0.048,
+          0.0477
+        ],
+        "C": [
+          1.12535,
+          1.1308,
+          1.13485
+        ],
+        "Before": [
+          0.1134,
+          0.1138,
+          0.1136
+        ],
+        "Before_C": [
+          1.1304,
+          1.12055,
+          1.1321
+        ]
+      },
+      "before_ms": 0.1136,
+      "before_range_ms": [
+        0.1134,
+        0.1138
+      ],
+      "before_c_ms": 1.1304,
+      "before_c_range_ms": [
+        1.12055,
+        1.1321
+      ],
+      "ratio_before_over_tide": 1.0039770216526736,
+      "paired_before_ratios": [
+        1.0,
+        1.0097604259094943,
+        1.0039770216526736
+      ],
+      "paired_change_percent": [
+        0.0,
+        -0.9666080843585223,
+        -0.3961267605633867
+      ],
+      "change_percent": -0.3961267605633867
+    }
+  ]
+}

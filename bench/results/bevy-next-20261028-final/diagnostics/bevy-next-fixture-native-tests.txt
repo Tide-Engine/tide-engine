@@ -1,0 +1,21 @@
+Tool-output transcript preserved after completion; tests were not rerun to create this file.
+Commands:
+$env:TIDE_HIDDEN = '1'
+cmake --build --preset release --target tidec_sparse_cache_private
+ctest --preset release -R '^tidec_(e2e_sparse_cache|sparse_cache_private|sparse_cache_codegen)$' --output-on-failure
+
+[0/2] Re-checking globbed directories...
+[1/4] Building C object compiler/tests/CMakeFiles/tidec_sparse_cache_private.dir/tide/tidec_e2e_sparse_cache/game_pack.c.obj
+[2/4] Building C object compiler/tests/CMakeFiles/tidec_sparse_cache_private.dir/e2e/sparse_cache_private.c.obj
+[3/4] Linking C executable bin\tidec_sparse_cache_private.exe
+Test project C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release
+    Start 53: tidec_e2e_sparse_cache
+1/3 Test #53: tidec_e2e_sparse_cache ...........   Passed    0.07 sec
+    Start 54: tidec_sparse_cache_private
+2/3 Test #54: tidec_sparse_cache_private .......   Passed    0.05 sec
+    Start 55: tidec_sparse_cache_codegen
+3/3 Test #55: tidec_sparse_cache_codegen .......   Passed    0.04 sec
+
+100% tests passed, 0 tests failed out of 3
+
+Total Test time (real) =   0.23 sec

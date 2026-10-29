@@ -10,6 +10,17 @@ component Item
     float3 spare = float3(1, -2, 3);
 }
 
+component Extra
+{
+    float4 value = float4(1, -2, 3, -4);
+    int visits;
+}
+
+component Gauge
+{
+    float4 value = float4(0.25, -0.5, 1, 2);
+}
+
 [Sparse]
 component Needed { }
 [Sparse]
@@ -23,6 +34,8 @@ singleton Rules
     int mode;
     bool ready;
     bool heavy;
+    bool extras;
+    string scratch;
     List<int> seen;
 }
 
@@ -33,9 +46,19 @@ system Setup(mut Rules rules)
     rules.next = rules.count;
     for (var i = 0; i < rules.count; i++)
     {
-        var made = Spawn(Item { ordinal = i, value = float(i) * 0.03125 + 1, other = -0.5 });
-        if ((i + rules.bias) % 97 == 0 || i == rules.count - 1) made.Add(Needed);
-        if ((i + rules.bias) % 191 == 0) made.Add(Blocked);
+        // Keep the ordinary spawn first so the default model remains arch0.
+        if (!rules.extras || i % 2 != 0)
+        {
+            var made = Spawn(Item { ordinal = i, value = float(i) * 0.03125 + 1, other = -0.5 });
+            if ((i + rules.bias) % 97 == 0 || i == rules.count - 1) made.Add(Needed);
+            if ((i + rules.bias) % 191 == 0) made.Add(Blocked);
+        }
+        else
+        {
+            var made = Spawn(Item { ordinal = i, value = float(i) * 0.03125 + 1, other = -0.5 }, Extra, Gauge);
+            if ((i + rules.bias) % 97 == 0 || i == rules.count - 1) made.Add(Needed);
+            if ((i + rules.bias) % 191 == 0) made.Add(Blocked);
+        }
     }
 }
 
@@ -56,6 +79,17 @@ system Update(mut Item item, Rules rules, with Needed, without Blocked)
     item.other -= item.value * 0.25;
     item.visits += 1;
     item.small += 19;
+}
+
+system UpdateExtra(mut Item item, mut Extra extra, Gauge gauge, with Needed, without Blocked)
+{
+    item.value += gauge.value.x * 0.0625;
+    item.other += extra.value.x * 0.125;
+    extra.value.x = (extra.value.x + item.value) * 0.5;
+    extra.value.y += gauge.value.y;
+    extra.value.z -= item.other * 0.25;
+    extra.value.w += gauge.value.z * gauge.value.w;
+    extra.visits += 1;
 }
 
 system Record(Item item, mut Rules rules, with Needed, without Blocked)

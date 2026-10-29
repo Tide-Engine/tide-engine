@@ -1,0 +1,108 @@
+{
+  "valid": true,
+  "rounds": 5,
+  "warmup": 200,
+  "ticks": 400,
+  "has_before": true,
+  "processes": 15,
+  "estimator": "median of process tick medians; ratios are median of paired ratios",
+  "scope": "ECS ticks only; excludes setup, snapshots, per-tick hashing, networking and rendering",
+  "cases": [
+    {
+      "workload": "wide",
+      "tagged": 1,
+      "id": "filtered-frozen90-1m-1",
+      "threads": 1,
+      "rate": 0,
+      "count": 1000000,
+      "frozen": 90,
+      "digest": "0x07c33fc7d6a94b2d",
+      "tide_ms": 1.4935,
+      "bevy_ms": 0.7499,
+      "c_ms": 1.19945,
+      "tide_range_ms": [
+        1.42275,
+        1.60495
+      ],
+      "bevy_range_ms": [
+        0.5666,
+        0.9807
+      ],
+      "c_range_ms": [
+        1.0992,
+        1.28795
+      ],
+      "ratio_bevy_over_tide": 0.5159625705242878,
+      "paired_ratios": [
+        0.6892988929889299,
+        0.5237330309616051,
+        0.3793773016404419,
+        0.4037820492850244,
+        0.5159625705242878
+      ],
+      "process_medians_ms": {
+        "Tide": [
+          1.42275,
+          1.58745,
+          1.4935,
+          1.60495,
+          1.4534
+        ],
+        "Bevy": [
+          0.9807,
+          0.8314,
+          0.5666,
+          0.64805,
+          0.7499
+        ],
+        "C": [
+          1.19945,
+          1.1499,
+          1.25305,
+          1.28795,
+          1.0992
+        ],
+        "Before": [
+          1.4062,
+          1.5958,
+          1.3278,
+          1.37005,
+          1.3193
+        ],
+        "Before_C": [
+          1.1298,
+          1.28915,
+          1.1205,
+          1.153,
+          1.10835
+        ]
+      },
+      "before_ms": 1.37005,
+      "before_range_ms": [
+        1.3193,
+        1.5958
+      ],
+      "before_c_ms": 1.1298,
+      "before_c_range_ms": [
+        1.10835,
+        1.28915
+      ],
+      "ratio_before_over_tide": 0.9077335902022843,
+      "paired_before_ratios": [
+        0.9883675979616938,
+        1.0052600081892344,
+        0.8890525610980917,
+        0.8536403003208822,
+        0.9077335902022843
+      ],
+      "paired_change_percent": [
+        1.1769307353150404,
+        -0.5232485273843901,
+        12.479289049555643,
+        17.145359658406644,
+        10.164481164253768
+      ],
+      "change_percent": 10.164481164253768
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+Internal ctest changing into directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release
+Test project C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/release
+      Start   46: tidec_e2e_structural
+ 1/15 Test   #46: tidec_e2e_structural .............   Passed    0.03 sec
+      Start   48: tidec_e2e_sparse
+ 2/15 Test   #48: tidec_e2e_sparse .................   Passed    0.04 sec
+      Start   49: tidec_e2e_rows
+ 3/15 Test   #49: tidec_e2e_rows ...................   Passed    0.29 sec
+      Start   50: tidec_e2e_sparse_rows
+ 4/15 Test   #50: tidec_e2e_sparse_rows ............   Passed    0.05 sec
+      Start   51: tidec_e2e_sparse_masks
+ 5/15 Test   #51: tidec_e2e_sparse_masks ...........   Passed    0.08 sec
+      Start   52: tidec_sparse_masks_codegen
+ 6/15 Test   #52: tidec_sparse_masks_codegen .......   Passed    0.04 sec
+      Start   56: tidec_e2e_destroy_rows
+ 7/15 Test   #56: tidec_e2e_destroy_rows ...........   Passed    0.05 sec
+      Start   57: tidec_destroy_rows_codegen
+ 8/15 Test   #57: tidec_destroy_rows_codegen .......   Passed    0.03 sec
+      Start   69: tidec_e2e_shards
+ 9/15 Test   #69: tidec_e2e_shards .................   Passed    0.76 sec
+      Start 2489: tidec_rows_parameters
+10/15 Test #2489: tidec_rows_parameters ............   Passed    0.17 sec
+      Start 2757: versus_particles
+11/15 Test #2757: versus_particles .................   Passed    0.03 sec
+      Start 2758: versus_wide
+12/15 Test #2758: versus_wide ......................   Passed    0.03 sec
+      Start 2759: versus_wide_kept
+13/15 Test #2759: versus_wide_kept .................   Passed    0.02 sec
+      Start 2762: versus_churn
+14/15 Test #2762: versus_churn .....................   Passed    0.03 sec
+      Start 2772: versus_particles_kept
+15/15 Test #2772: versus_particles_kept ............   Passed    0.01 sec
+
+100% tests passed, 0 tests failed out of 15
+
+Total Test time (real) =   1.74 sec

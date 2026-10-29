@@ -1,5 +1,14 @@
 # Runtime written by Claude for now
 
+## Private cached-chunk task shortcut (2026-10-29)
+
+The follow-up performance change is confined to compiler-generated tasks. An
+all-private whole chunk calls its existing cached rows helper after invalidating
+the same changed pages' hashes; the existing task handles every fallback. No
+runtime source, function, signature, ownership rule or persistent layout changes.
+Contracts: language.md, Whole cached-chunk task shortcut. Measurements and
+validation: benchmarks.md and its linked evidence.
+
 ## Derived sparse-selection cache (2026-10-28)
 
 The selective-query performance task adds compiler-private retained selection

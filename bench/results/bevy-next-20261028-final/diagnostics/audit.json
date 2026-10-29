@@ -1,0 +1,203 @@
+{
+  "valid": true,
+  "scope": "Read-only independent raw/source/summary audit; no workload execution. Follow-up density-control is separate and excluded.",
+  "processes": 240,
+  "cases": 16,
+  "rounds": 5,
+  "raw_stdout_hash_checks": 240,
+  "metadata_input_hash_checks": 64,
+  "measured_ecs_ticks": 96000,
+  "ecs_warmup_ticks": 48000,
+  "additional_measured_c_ticks": 64000,
+  "quiet_resets": 0,
+  "contended_processes": 0,
+  "started": "2026-10-28T23:57:51.3450494Z",
+  "finished": "2026-10-29T00:02:51.5723606Z",
+  "available_executables_verified": {
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-c30a131da\\bin\\versus_particles.exe": "c7ae5972e6e00c41e47ae6d1ec4890d81bbfaaa79215df95ab08948fb4ebd1df",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\release\\bin\\versus_particles.exe": "0470e8739fdaa716db11c95a01ffe9ae2fe5f3754099e5759a00f21510a97860",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy\\release\\tide-bevy-bench.exe": "d83769333a56edceb3aed09ab38878774f8491e9c8b0ba3444db3bcfbeaed081",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-c30a131da\\bin\\versus_wide.exe": "455e586b712041306307e742697385c40a07c1be2a899a9b772ad2afb13da1e2",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\release\\bin\\versus_wide.exe": "5b0935ac280c571ea1460b26ebd815c80134048680f4df0025f0e8602bfcaa2f",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-before-c30a131da\\bin\\versus_churn.exe": "9d068a28c2460a1fd000a8359c836ff061b8435683d965cdf733d3d8fa53aacf",
+    "C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\release\\bin\\versus_churn.exe": "61d2f6cda0d60ce59935e9e3a069f4ef8220adef77d6b181afc626fa6a991b11"
+  },
+  "wide_header_diff_only_simulation_id": true,
+  "cached_wide_rows_body_unchanged": true,
+  "validation_report_records": 78,
+  "matching_native_hash_pack_report_records": 75,
+  "adverse_paired_medians": [
+    {
+      "id": "particles-100k-1",
+      "paired_change_percent": 0.23752969121140222,
+      "before_ms": 0.0422,
+      "tide_ms": 0.0423,
+      "bevy_ms": 0.1136
+    },
+    {
+      "id": "particles-1m-1",
+      "paired_change_percent": 1.2595293337752667,
+      "before_ms": 0.46305,
+      "tide_ms": 0.4608,
+      "bevy_ms": 1.165
+    },
+    {
+      "id": "particles-1m-4",
+      "paired_change_percent": 0.6389776357827337,
+      "before_ms": 0.1263,
+      "tide_ms": 0.1271,
+      "bevy_ms": 0.4218
+    },
+    {
+      "id": "churn-2k-1",
+      "paired_change_percent": 1.623635879691232,
+      "before_ms": 0.3497,
+      "tide_ms": 0.3817,
+      "bevy_ms": 0.3754
+    },
+    {
+      "id": "churn-2k-4",
+      "paired_change_percent": 1.556939501779353,
+      "before_ms": 0.34995,
+      "tide_ms": 0.34245,
+      "bevy_ms": 0.3852
+    },
+    {
+      "id": "filtered-frozen1-1m-1",
+      "paired_change_percent": 1.5232640889220272,
+      "before_ms": 2.9509,
+      "tide_ms": 2.99585,
+      "bevy_ms": 3.09195
+    },
+    {
+      "id": "filtered-frozen10-1m-1",
+      "paired_change_percent": 1.333635818573664,
+      "before_ms": 3.08555,
+      "tide_ms": 3.203,
+      "bevy_ms": 2.76315
+    },
+    {
+      "id": "filtered-frozen90-1m-1",
+      "paired_change_percent": 5.326131803008138,
+      "before_ms": 1.33305,
+      "tide_ms": 1.40405,
+      "bevy_ms": 0.6338
+    }
+  ],
+  "cases_verified": [
+    {
+      "id": "particles-10k-1",
+      "paired_change_percent": 0.0,
+      "before_ms": 0.0041,
+      "tide_ms": 0.0042,
+      "bevy_ms": 0.0117
+    },
+    {
+      "id": "particles-100k-1",
+      "paired_change_percent": 0.23752969121140222,
+      "before_ms": 0.0422,
+      "tide_ms": 0.0423,
+      "bevy_ms": 0.1136
+    },
+    {
+      "id": "particles-1m-1",
+      "paired_change_percent": 1.2595293337752667,
+      "before_ms": 0.46305,
+      "tide_ms": 0.4608,
+      "bevy_ms": 1.165
+    },
+    {
+      "id": "particles-1m-4",
+      "paired_change_percent": 0.6389776357827337,
+      "before_ms": 0.1263,
+      "tide_ms": 0.1271,
+      "bevy_ms": 0.4218
+    },
+    {
+      "id": "wide-1m-1",
+      "paired_change_percent": -2.338319734058625,
+      "before_ms": 1.3236,
+      "tide_ms": 1.3143,
+      "bevy_ms": 2.4279
+    },
+    {
+      "id": "wide-1m-4",
+      "paired_change_percent": -1.1008061021062665,
+      "before_ms": 0.59275,
+      "tide_ms": 0.6315,
+      "bevy_ms": 1.04375
+    },
+    {
+      "id": "filtered-1m-1",
+      "paired_change_percent": -1.1848967721777681,
+      "before_ms": 2.141,
+      "tide_ms": 2.12525,
+      "bevy_ms": 2.52905
+    },
+    {
+      "id": "filtered-1m-4",
+      "paired_change_percent": -2.631761202299332,
+      "before_ms": 0.7293,
+      "tide_ms": 0.72195,
+      "bevy_ms": 1.1918
+    },
+    {
+      "id": "churn-2k-1",
+      "paired_change_percent": 1.623635879691232,
+      "before_ms": 0.3497,
+      "tide_ms": 0.3817,
+      "bevy_ms": 0.3754
+    },
+    {
+      "id": "churn-2k-4",
+      "paired_change_percent": 1.556939501779353,
+      "before_ms": 0.34995,
+      "tide_ms": 0.34245,
+      "bevy_ms": 0.3852
+    },
+    {
+      "id": "filtered-frozen1-1m-1",
+      "paired_change_percent": 1.5232640889220272,
+      "before_ms": 2.9509,
+      "tide_ms": 2.99585,
+      "bevy_ms": 3.09195
+    },
+    {
+      "id": "filtered-frozen10-1m-1",
+      "paired_change_percent": 1.333635818573664,
+      "before_ms": 3.08555,
+      "tide_ms": 3.203,
+      "bevy_ms": 2.76315
+    },
+    {
+      "id": "filtered-frozen90-1m-1",
+      "paired_change_percent": 5.326131803008138,
+      "before_ms": 1.33305,
+      "tide_ms": 1.40405,
+      "bevy_ms": 0.6338
+    },
+    {
+      "id": "filtered-frozen95-1m-1",
+      "paired_change_percent": -4.788474731305747,
+      "before_ms": 1.0498,
+      "tide_ms": 1.02315,
+      "bevy_ms": 0.226
+    },
+    {
+      "id": "filtered-frozen99-1m-1",
+      "paired_change_percent": -12.689901697944595,
+      "before_ms": 0.1119,
+      "tide_ms": 0.0977,
+      "bevy_ms": 0.0473
+    },
+    {
+      "id": "filtered-frozen99-1m-4",
+      "paired_change_percent": -10.738255033557042,
+      "before_ms": 0.0454,
+      "tide_ms": 0.0409,
+      "bevy_ms": 0.0322
+    }
+  ],
+  "native_raw_packs_independently_byte_compared": 75,
+  "native_hash_rows_independently_matched": 75
+}

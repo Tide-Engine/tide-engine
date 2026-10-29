@@ -18134,6 +18134,90 @@ static void gen_extern_system_run(gen *g, const decl *sys)
     if (split && system_owns(g, sys)) gen_system_own(g, sys);
 }
 
+// Keep the measured whole-chunk task shortcut to the same bounded component
+// width as native cached prefetching. Its existing rows helper and signature
+// remain shared with ordinary tasks.
+static bool rows_task_fastable(const gen *g, const decl *sys, const int a)
+{
+    return system_splits(sys) && rows_cacheable(g, sys, a) && rows_part(g, sys, a)
+        && gen_rows_cache_prefetchable(g, sys, a);
+}
+
+// The unchanged slow task owns all COW, pieced and unsupported cases. For a
+// whole cached chunk, prove every changed page private before changing any
+// hash metadata, then use its existing storage without begin/end bookkeeping.
+static void gen_system_cached_task(gen *g, const decl *sys, const rows_set *rows)
+{
+    sb *o = &g->c;
+    const program *prog = g->prog;
+    const char *name = decl_cname(sys);
+    sb_printf(o, "static void tide_task_%s(void *tide_world_v, uint32_t tide_task, uint32_t tide_pieces)\n{\n"
+                 "    tide_world *tide_w = tide_world_v;\n"
+                 "    if (tide_pieces != 1u) goto tide_fallback;\n"
+                 "    uint32_t tide_chunk = tide_task;\n", name);
+    for (int a = 0; a < prog->archetypes.count; a++) {
+        if (!runs_on(g, sys, a)) continue;
+        sb_printf(o, "    { // %s\n        tide_table *tide_t = &tide_w->%s;\n"
+                     "        if (tide_chunk < tide_t->chunks) {\n", arch_label(g, a), arch_name(g, a));
+        if (!rows_task_fastable(g, sys, a)) {
+            sb_put(o, "            goto tide_fallback;\n");
+        } else {
+            const char *columns = arch_columns(g, a);
+            sb_put(o, "            const uint32_t tide_c = tide_chunk;\n");
+            gen_rows_cache_lookup(g, sys, a, "            ");
+            sb_put(o, "            if (!tide_cached || tide_cached->pass >= (tide_cached->rows + 15u) / 16u) goto tide_fallback;\n"
+                      "            if (!tide_cached->pass) return;\n");
+            // Capture all changed pages and finish every ownership check
+            // before marking any of them, including across components.
+            for (int c = 0; c < prog->components.count; c++) {
+                if (!arch_stores(g, a, c) || !changes_component(sys, c, false)) continue;
+                const decl *d = prog->components.items[c];
+                const char *comp = type_cname(d);
+                const int lanes = comp_lanes(d);
+                sb_printf(o, "            tide_page *const tide_pages_%s[%d] = {", comp, lanes);
+                for (int k = 0; k < lanes; k++) {
+                    sb_printf(o, "%stide_t->pages[(size_t)tide_c * (%s)->count + %d]", k ? ", " : "", columns, arch_column(g, a, c) + k);
+                }
+                sb_printf(o, "};\n            for (uint32_t tide_lane = 0u; tide_lane < %du; tide_lane++)\n"
+                             "                if (tide_pages_%s[tide_lane]->refs != 1u) goto tide_fallback;\n", lanes, comp);
+            }
+            for (int c = 0; c < prog->components.count; c++) {
+                if (!arch_stores(g, a, c) || !changes_component(sys, c, false)) continue;
+                const decl *d = prog->components.items[c];
+                const char *comp = type_cname(d);
+                const int lanes = comp_lanes(d);
+                sb_printf(o, "            uint8_t *tide_own_%s[%d];\n"
+                             "            for (uint32_t tide_lane = 0u; tide_lane < %du; tide_lane++) {\n"
+                             "                tide_page *const tide_page_now = tide_pages_%s[tide_lane];\n"
+                             "                tide_page_now->hashed = UINT32_MAX;\n"
+                             "                tide_own_%s[tide_lane] = tide_page_data(tide_page_now);\n            }\n", comp, lanes, lanes, comp, comp);
+            }
+            // Read-only components may remain shared. Use exactly the names
+            // and arrays the existing rows argument/budget emitter expects.
+            for (int c = 0; c < prog->components.count; c++) {
+                if (!rows_take(g, sys, a, c) || changes_component(sys, c, false)) continue;
+                const decl *d = prog->components.items[c];
+                sb_printf(o, "            const uint8_t *const tide_col_%s[%d] = {", type_cname(d), comp_lanes(d));
+                for (int k = 0; k < comp_lanes(d); k++) {
+                    sb_printf(o, "%stide_table_column(tide_t, %s, tide_c, %d)", k ? ", " : "", columns, arch_column(g, a, c) + k);
+                }
+                sb_put(o, "};\n");
+            }
+            sb_printf(o, "            const tide_entity *tide_ent = tide_table_column(tide_t, %s, tide_c, 0);\n", columns);
+            if (arch_scene_column(g, a)) sb_printf(o, "            const tide_entity *tide_scn = tide_table_column(tide_t, %s, tide_c, 1);\n", columns);
+            if (prog->uses_text) sb_put(o, "            const uint32_t tide_mark = tide_scratch_mark();\n");
+            sb_printf(o, "            tide_rows_%s_%d(tide_w%s, 0u, tide_cached->pass", name, rows[a].place_cached,
+                      prog->uses_text ? ", tide_mark" : "");
+            gen_rows_columns(g, sys, a, false, ROWS_ARGS, true);
+            sb_put(o, ");\n            return;\n");
+        }
+        // Non-cacheable archetypes still occupy their original task slots.
+        // The slow call receives the original task number, not this offset.
+        sb_put(o, "        }\n        tide_chunk -= tide_t->chunks;\n    }\n");
+    }
+    sb_printf(o, "tide_fallback:\n    tide_task_%s_slow(tide_world_v, tide_task, tide_pieces);\n}\n\n", name);
+}
+
 static void gen_system_run(gen *g, const decl *sys)
 {
     if (sys->extern_system) {
@@ -18164,6 +18248,7 @@ static void gen_system_run(gen *g, const decl *sys)
         sb_printf(&call, "tide_system_%s(tide_w", name);
     }
     const bool split = system_splits(sys);
+    bool fast_task = false;
     bool fresh_mark = false; // A view's: it borrowed text for its entities' default local fields
     bool confirmed_mark = false; // ...and copied elements out of the confirmed world
 
@@ -18195,6 +18280,7 @@ static void gen_system_run(gen *g, const decl *sys)
             ? gen_rows(g, sys, a, call.data, clear, false, false, ROWS_MASKED, &rows_made) : -1;
         rows[a].place_cached = rows_cacheable(g, sys, a)
             ? gen_rows(g, sys, a, call.data, clear, false, false, ROWS_CACHED, &rows_made) : -1;
+        fast_task |= rows_task_fastable(g, sys, a);
     }
 
     if (view) {
@@ -18311,7 +18397,8 @@ static void gen_system_run(gen *g, const decl *sys)
         } else {
             sb_put(o, "    return 1u;\n}\n\n");
         }
-        sb_printf(o, "static void tide_task_%s(void *tide_world_v, uint32_t tide_task, uint32_t tide_pieces)\n{\n", name);
+        sb_printf(o, "%svoid tide_task_%s%s(void *tide_world_v, uint32_t tide_task, uint32_t tide_pieces)\n{\n",
+                  fast_task ? "static __attribute__((noinline)) " : "static ", name, fast_task ? "_slow" : "");
         sb_put(o, "    tide_world *tide_w = tide_world_v;\n    (void)tide_task;\n    (void)tide_pieces;\n");
         if (split) { // Its task's chunk among its archetypes' chunks, and its piece of it
             sb_put(o, "    const uint32_t tide_piece = tide_task % tide_pieces;\n    uint32_t tide_chunk = tide_task / tide_pieces;\n");
@@ -18367,6 +18454,7 @@ static void gen_system_run(gen *g, const decl *sys)
     if (fresh_mark) sb_put(o, "    tide_scratch_reset(tide_fresh_mark);\n");
     if (confirmed_mark) sb_put(o, "    tide_scratch_reset(tide_confirmed_mark);\n");
     sb_put(o, "}\n\n");
+    if (fast_task) gen_system_cached_task(g, sys, rows);
     if (!view && system_settles(sys) && settles_fields(sys)) gen_system_settle(g, sys);
     if (!view && split && system_owns(g, sys)) gen_system_pieces(g, sys);
 }

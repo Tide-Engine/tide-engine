@@ -1,0 +1,53 @@
+diff --git "a/C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes/common/wide.c" "b/C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes/fasttask/wide.c"
+index 0ad493665..fe3890e58 100644
+--- "a/C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes/common/wide.c"
++++ "b/C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes/fasttask/wide.c"
+@@ -1701,7 +1701,7 @@ static uint32_t tide_tasks_Shift(const void *tide_world_v, uint64_t *tide_work)
+     return tide_chunks ? tide_chunks : 1u;
+ }
+ 
+-static void tide_task_Shift(void *tide_world_v, uint32_t tide_task, uint32_t tide_pieces)
++TIDE_ROWS void tide_task_Shift_slow(void *tide_world_v, uint32_t tide_task, uint32_t tide_pieces)
+ {
+     tide_world *tide_w = tide_world_v;
+     (void)tide_task;
+@@ -1756,6 +1756,39 @@ static void tide_task_Shift(void *tide_world_v, uint32_t tide_task, uint32_t tid
+     }
+ }
+ 
++static void tide_task_Shift(void *tide_world_v, uint32_t tide_task, uint32_t tide_pieces)
++{
++    tide_world *tide_w = tide_world_v;
++    tide_table *const tide_t = &tide_w->arch1_Crate;
++    if (tide_pieces == 1u && tide_task < tide_t->chunks) {
++        const uint32_t tide_c = tide_task;
++        const tide_rows_chunk *const tide_cached = tide_rows_cache_find(tide_w->tide_rows_cache,
++            0u, 1u, tide_t, &tide_columns_arch1_Crate, tide_c, (const tide_rows_filter[]){{14u, 0u}}, 1u);
++        if (tide_cached && tide_cached->pass < (tide_cached->rows + 15u) / 16u) {
++            if (!tide_cached->pass) return;
++            tide_page *const *const tide_pages = tide_t->pages + (size_t)tide_c * tide_columns_arch1_Crate.count;
++            // Establish exclusive ownership for every changed lane before
++            // marking any page or bypassing the original COW machinery.
++            for (uint32_t tide_lane = 0u; tide_lane < 12u; tide_lane++)
++                if (tide_pages[2u + tide_lane]->refs != 1u) goto tide_fallback;
++            uint8_t *tide_own[12];
++            for (uint32_t tide_lane = 0u; tide_lane < 12u; tide_lane++) {
++                tide_page *const tide_page_now = tide_pages[2u + tide_lane];
++                tide_page_now->hashed = UINT32_MAX;
++                tide_own[tide_lane] = tide_page_data(tide_page_now);
++            }
++            const tide_entity *const tide_ent = tide_page_data(tide_pages[0]);
++            const tide_entity *const tide_scn = tide_page_data(tide_pages[1]);
++            tide_rows_Shift_6(tide_w, 0u, tide_cached->pass, tide_ent, tide_scn, tide_cached,
++                tide_own[0], tide_own[1], tide_own[2], tide_own[3], tide_own[4], tide_own[5],
++                tide_own[6], tide_own[7], tide_own[8], tide_own[9], tide_own[10], tide_own[11]);
++            return;
++        }
++    }
++tide_fallback:
++    tide_task_Shift_slow(tide_world_v, tide_task, tide_pieces);
++}
++
+ static void tide_own_Shift(void *tide_world_v)
+ {
+     tide_world *tide_w = tide_world_v;

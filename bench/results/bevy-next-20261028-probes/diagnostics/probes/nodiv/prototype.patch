@@ -1,0 +1,26 @@
+diff --git "a/C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes/common/wide.c" "b/C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes/nodiv/wide.c"
+index 0ad493665..c8eaf75d7 100644
+--- "a/C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes/common/wide.c"
++++ "b/C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-next-probes/nodiv/wide.c"
+@@ -1706,8 +1706,8 @@ static void tide_task_Shift(void *tide_world_v, uint32_t tide_task, uint32_t tid
+     tide_world *tide_w = tide_world_v;
+     (void)tide_task;
+     (void)tide_pieces;
+-    const uint32_t tide_piece = tide_task % tide_pieces;
+-    uint32_t tide_chunk = tide_task / tide_pieces;
++    const uint32_t tide_piece = tide_pieces == 1u ? 0u : tide_task % tide_pieces;
++    uint32_t tide_chunk = tide_pieces == 1u ? tide_task : tide_task / tide_pieces;
+     (void)tide_piece;
+     (void)tide_chunk;
+     { // Crate
+@@ -1715,8 +1715,8 @@ static void tide_task_Shift(void *tide_world_v, uint32_t tide_task, uint32_t tid
+         if (tide_chunk < tide_t->chunks) {
+             const uint32_t tide_c = tide_chunk;
+             const uint32_t tide_n = tide_table_rows(tide_t, 11, tide_c);
+-            const uint32_t tide_from = (uint32_t)((uint64_t)tide_n * tide_piece / tide_pieces);
+-            const uint32_t tide_to = (uint32_t)((uint64_t)tide_n * (tide_piece + 1u) / tide_pieces);
++            const uint32_t tide_from = tide_pieces == 1u ? 0u : (uint32_t)((uint64_t)tide_n * tide_piece / tide_pieces);
++            const uint32_t tide_to = tide_pieces == 1u ? tide_n : (uint32_t)((uint64_t)tide_n * (tide_piece + 1u) / tide_pieces);
+             const tide_entity *tide_ent = tide_table_column(tide_t, &tide_columns_arch1_Crate, tide_c, 0);
+             const tide_entity *tide_scn = tide_table_column(tide_t, &tide_columns_arch1_Crate, tide_c, 1);
+             const uint8_t *tide_pres_Frozen = tide_table_column(tide_t, &tide_columns_arch1_Crate, tide_c, 14);

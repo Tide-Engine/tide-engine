@@ -1,5 +1,47 @@
 # Benchmarks
 
+## Smaller cached sparse tasks (2026-10-29)
+
+A bounded compiler-private wrapper shortcuts whole, rare cached chunks whose
+changed pages are all private. It validates the original exact cache key and
+checks every changed lane before invalidating any page hash, then calls the
+unchanged cached row helper without begin/end bookkeeping. Readonly pages may
+remain shared. The original task is a non-inlined fallback for shared pages,
+pieces, dense/stale caches and unsupported archetypes. Eligibility is restricted
+to the existing 32-128 accessed-byte range; no math, ordering, scheduling,
+component/world/cache layout, runtime API or packed byte changes. Contracts:
+language.md, Whole cached-chunk task shortcut.
+
+Windows/Ryzen 9 7900X, Clang 23.1.2, Rust 1.95.0/Bevy ECS 0.20.0, unchanged
+O2 flags/game sources/Bevy executable: five alternating adjacent triples against
+frozen `c30a131da`, 16 cases, 240 successful processes, 200 warmup/400 measured
+ticks each. Source SHA-256 codegen.c is
+`23ef9022a97ceaddb9294dd4af4ad5090d21a84dba13d8b38a70d01241eca645`;
+rows_cache_codegen.inc remains unchanged. At 99% frozen, before/current/Bevy
+median tick costs are 0.11190/0.09770/0.04730 ms serial and
+0.04540/0.04090/0.03220 ms with four offered threads. Paired Tide time falls
+12.69%/10.74%; 95%-frozen serial falls 4.79%. Bevy still leads those cases.
+
+Eight control paired medians are adverse, including 90% frozen at +5.33%.
+A separate five-round/15-process density check is adverse at +10.16%, with
+overlapping ranges and substantial unchanged C-reference variation. The old
+slow task's machine body is unchanged; attribution remains unresolved. This
+does not establish a universal speedup. The 90-process prototype/control report
+retains six variants, including noisy/adverse results; division specialization
+and loop versioning were not promoted. No batch is pooled or C-normalized.
+
+Eighteen scoped CTests pass per platform on native/WASI, 78 cross-engine checks
+pass including 95%/99% frozen, and 75 complete native raw packs/world hashes
+match the baseline byte for byte. Expanded fixtures cover multiple archetypes,
+tails, mixed references across changed components, shared readonly pages,
+stale/empty cache entries, scratch arguments, snapshots and original split paths.
+The final 23:57:51-00:02:51 UTC batch has no quiet reset or contention event.
+Timings exclude setup, final digest, per-tick hashing, retained snapshots,
+rollback, networking and rendering. Full evidence, ranges, adverse controls,
+source/binary identities, validation logs and reproduction:
+`bench/results/bevy-next-20261028-final/README.md`. Hosted validation remains
+the ordinary push-to-dev run; no extra CI dispatch was made.
+
 ## Retained sparse selection (2026-10-28)
 
 The follow-up retains derived selection plans per world, keyed by exact

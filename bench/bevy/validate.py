@@ -29,7 +29,7 @@ def main():
     cases = [("particles", ["--count", str(n)]) for n in (1, 17, 10000)]
     cases += [("wide", ["--count", "0"]), ("wide", ["--count", "17"])]
     cases += [("wide", ["--count", "10000", "--tagged", "1", "--frozen", str(n)])
-              for n in (0, 50, 100)]
+              for n in (0, 50, 95, 99, 100)]
     cases += [("churn", ["--rate", str(n)]) for n in (1, 31, 100)]
     records = []
     for workload, flags in cases:
