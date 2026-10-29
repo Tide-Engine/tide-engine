@@ -1,8 +1,0 @@
-Internal ctest changing into directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/packed-web-release
-Test project C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/packed-web-release
-    Start 4: tide_tests
-1/1 Test #4: tide_tests .......................   Passed    3.62 sec
-
-100% tests passed, 0 tests failed out of 1
-
-Total Test time (real) =   3.72 sec

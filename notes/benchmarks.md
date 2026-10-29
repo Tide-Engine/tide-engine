@@ -1,55 +1,28 @@
 # Benchmarks
 
-## Transient packed integration rejected (2026-10-29)
+## Packed storage abandoned and cleaned up (2026-10-29)
 
-The owner requested an implemented/validated keep-or-abandon decision. A gated
-production compiler/runtime experiment packs independent numeric systems and
-restores logical order before every other consumer. Native/WASI runtime and
-compiler tests pass; the real Entities example passes 360 paired ticks with
-348 actual partitions, matching commands, destruction, IDs, raw/delta state and
-ordered view payloads. Docs/sample/prototype builds and bounded native starts
-pass, while all six existing prototype/sample simulation targets report zero
-partitions under the conservative selector (fallback coverage only).
+The owner abandoned this route after the integrated transient pack/restore
+experiment passed correctness checks but lost every full-cost comparison.
+At 1M/95% frozen, ordinary/transient tick+hash medians were 6.08790/128.29755 ms;
+with a retained snapshot, 8.79705/149.76765 ms. All six cases lost, with median
+paired ratios of 16.51x--40.74x, and every paired tick hash matched.
 
-Three alternating pairs across six wide workloads time conversion, update,
-restoration and mandatory hashing, plus snapshots/churn where requested.
-1M/95%-frozen ordinary/transient medians are 6.08790/128.29755 ms; with a retained
-snapshot 8.79705/149.76765 ms. Every case loses (16.51x--40.74x median paired
-ratios); all paired per-tick hashes match. No new Bevy comparison is claimed.
+Native/WASI runtime and compiler checks passed. The real Entities replay
+performed 348 partitions across 360 ticks with matching commands, IDs,
+snapshots, serialization and view payloads. Docs/sample/prototype builds and
+bounded native starts passed; the six simulation test targets selected no
+partitions, so those were fallback compatibility checks only.
 
-The full-copy transient design was abandoned and its production edits removed;
-the tested patch, sources, raw evidence, caveats and reproduction are retained
-in `bench/results/packed-production-20261029/README.md`, with harnesses in
-`bench/packed/`. This rejects transient conversion, not the still-unimplemented
-general resident design. No shipping runtime behavior or hash pin changed.
-
-## Packed tables through the world lifecycle (2026-10-29)
-
-After approval of the row-mapping boundary, an isolated table-runtime overlay
-exercises the unchanged generated wide game with real pages, COW, logical
-entity locations, growth/removal/moves, hashes, raw saves and deltas. A retained
-logical-page cache updates from exact retained source-page identities. Shipping
-engine/compiler files and hash pins remain unchanged; automatic eligibility and
-general order-sensitive traversal are not implemented.
-
-On this Windows/Ryzen 9 7900X/Clang 23.1.2 O2 build, three alternating pairs
-give 1M/95%-frozen identity/packed tick+hash medians 6.42200/5.28395 ms, and with
-a retained snapshot 8.85360/5.65210. Median paired time reductions are 9.87% and
-33.30%; at 99% frozen, 31.64% and 65.24%. At 50% frozen tick+hash regresses
-104.25%, and the 4,099-row/95% case regresses 602.78%. Both sides use the
-experimental runtime; no new shipping-Tide or Bevy comparison is claimed.
-The extra logical mirror/map memory and adverse controls rule out blanket use.
-
-Native and WASI each pass 44,728,800 exact column comparisons, including raw/
-delta restore and structural churn, with the same aggregate logical digest.
-A native four-thread check passes 192,000,576 comparisons with 36 actual helper
-entries; sixteen existing table/queue tests pass on both platforms. The complete
-168-process timing batch has matching paired digests, 100 warmup/200 measured
-ticks each, and no detected native build/benchmark contention. Setup/partition,
-membership churn, networking and rendering are outside timing; hash modes hash
-every tick. Full scope, limitations, all samples and source identities:
-`bench/results/packed-integration-20261029/README.md`. Remaining production work:
-`notes/packed-storage-integration.md`.
+The earlier resident probe and transient implementation, harnesses and archived
+sources were removed from the tracked tree. Dedicated builds were quarantined
+locally under ignored `build/_cleanup/`; staged docs pages were restored from
+the ordinary build and the editor's game manifest regenerated. The proposal
+is closed; no further packed-storage integration is planned. Source, raw
+measurements and limitations remain in Git history at commit 57df9c937. The
+results reject full-copy transient conversion, not every possible resident
+layout, and establish no new Bevy comparison. Shipping compiler/runtime code,
+hash pins and the existing successful ECS optimizations are unchanged.
 
 ## Aggressive wide storage experiments (2026-10-29)
 
