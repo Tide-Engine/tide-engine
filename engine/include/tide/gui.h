@@ -105,6 +105,9 @@ typedef struct tide_textref tide_textref;
 #ifndef TIDE_GUI_MAX_CLAIM_RECTS
 #define TIDE_GUI_MAX_CLAIM_RECTS 256 // Places views claim the pointer at, per frame
 #endif
+#ifndef TIDE_GUI_MAX_MOTIONS
+#define TIDE_GUI_MAX_MOTIONS 1024 // Animated values kept between frames (GUI.Animate, widgets' fades); a power of two
+#endif
 
 // How the GUI's own widgets look: their colors, and how round their corners
 // are. Tide's GUITheme has the same fields. Every frame starts with the
@@ -121,6 +124,15 @@ typedef struct tide_gui_theme {
     tide_color field_hot; // ...with the pointer on it
     tide_color accent;    // The focus's outline, a toggle's check and a slider's filled part
     float radius;         // Their corners', in pixels: 0 for square ones. No rounder than half a part's smaller side
+    tide_color border;    // An outline inside each part's edge...
+    float border_width;   // ...this wide, in pixels: 0 for none
+    float shading;        // How much darker a part's bottom is than its top, from 0 (flat) to 1 (black)
+    tide_color shadow;    // A shadow under an area's panel...
+    float shadow_size;    // ...fading out over this many pixels: 0 for none
+    float transition;     // Seconds a widget takes to change color between its states: 0 changes at once
+    float text_size;      // Text's size, in pixels; a widget's height follows it
+    float padding;        // Inside an area, around its content, and inside a button, from its sides
+    float spacing;        // Between widgets
 } tide_gui_theme;
 
 // What the player is doing with a control (GUI.Control). Tide's GUIControl
@@ -134,7 +146,21 @@ typedef struct tide_control {
     bool up;      // Its pointer was released this frame, on or off the rect
     bool cancelled; // Its held gesture ended: disabled, under a modal, or taken by touch scrolling
     tide_float2 position; // Pointer position in GUI pixels, including while held outside the rect
+    // Each of hovered, pressed and focused as an amount from 0 to 1 that eases
+    // toward it over the theme's transition: what a control fades its look by
+    float hover;
+    float press;
+    float focus;
 } tide_control;
+
+// A value the GUI animates (GUI.Animate, and widgets' fades): up to four
+// floats, eased toward their target, kept while something asks for them
+// every frame.
+typedef struct tide_gui_motion {
+    uint32_t id;
+    uint32_t frame; // The frame it was last asked for; 0 for a slot never used
+    float value[4];
+} tide_gui_motion;
 
 typedef struct tide_gui_group {
     uint32_t id;
@@ -167,6 +193,9 @@ typedef struct tide_gui_group {
     bool drawing;
     uint32_t clips_from;
     uint32_t nav_from;
+    float spacing;            // Between its widgets: the theme's as it took its last one
+    uint32_t shadow;          // An area: its shadow's command, a smooth shape's, or UINT32_MAX
+    float border;             // An area: its background's border, as the theme had it when it opened
 } tide_gui_group;
 
 typedef struct tide_gui_scroll_state {
@@ -246,6 +275,10 @@ typedef struct tide_gui {
     // The screen this frame (Screen in Tide).
     float width;
     float height;
+    // This frame's length in seconds, which animations move by (Frame.dt in
+    // Tide: generated tide_frame sets it). 0, as a zeroed tide_gui has it,
+    // puts every animated value at its target at once.
+    float seconds;
 
     // Input this frame
     tide_measure_fn measure;
@@ -368,6 +401,7 @@ typedef struct tide_gui {
     uint32_t drawing_count;
     tide_gui_size sizes[TIDE_GUI_MAX_SIZES];
     tide_gui_seen seen[TIDE_GUI_MAX_IDS];
+    tide_gui_motion motions[TIDE_GUI_MAX_MOTIONS];
     tide_draw_list list; // This frame's commands, drawn over the world at the end
 } tide_gui;
 
@@ -475,6 +509,20 @@ void tide_gui_set_theme(tide_gui *g, tide_gui_theme theme);
 // Space and Escape, and the d-pad, the left stick and the south and east
 // buttons.
 tide_control tide_gui_control(tide_gui *g, uint32_t id, tide_rect rect);
+
+// GUI.Animate: `target`, eased toward from where it was last frame, so a
+// value that jumps (a menu's open state, a bar's fill, a color) moves there
+// smoothly instead, by about 99% of the way in `seconds`. `id` tells the
+// animated values apart, as a widget's does. A value asked for the first
+// time, or not asked last frame, starts at `from` (the plain forms: at the
+// target). Past TIDE_GUI_MAX_MOTIONS at once, a new one is at its target.
+// Nonfinite numbers aren't kept: a value that was one starts over.
+float tide_gui_animate(tide_gui *g, uint32_t id, float target, float seconds);
+float tide_gui_animate_from(tide_gui *g, uint32_t id, float target, float seconds, float from);
+tide_float2 tide_gui_animate_float2(tide_gui *g, uint32_t id, tide_float2 target, float seconds);
+tide_float2 tide_gui_animate_float2_from(tide_gui *g, uint32_t id, tide_float2 target, float seconds, tide_float2 from);
+tide_color tide_gui_animate_color(tide_gui *g, uint32_t id, tide_color target, float seconds);
+tide_color tide_gui_animate_color_from(tide_gui *g, uint32_t id, tide_color target, float seconds, tide_color from);
 
 // Custom visuals use this list inside a GUI.Draw block. Its close restores
 // the window's drawing settings, including settings changed with Set calls.

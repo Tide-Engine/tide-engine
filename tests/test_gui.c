@@ -1035,10 +1035,12 @@ TIDE_TEST(gui_anchored_area_centers_its_content)
         tide_gui_close(&gui, depth);
         end();
     }
-    TIDE_REQUIRE(draw.count >= 3);
-    TIDE_CHECK(draw.commands[1].a.x == 960.0f && draw.commands[1].a.y == 540.0f);
+    TIDE_REQUIRE(draw.count >= 4);
+    // Its shadow first, a quarter of its size lower, then the panel and the button
+    TIDE_CHECK(draw.commands[1].kind == TIDE_DRAW_SHAPE && draw.commands[1].a.x == 960.0f && draw.commands[1].a.y == 544.0f);
     TIDE_CHECK(draw.commands[2].a.x == 960.0f && draw.commands[2].a.y == 540.0f);
-    TIDE_CHECK(draw.commands[1].b.y == 28.0f + 2.0f * 12.0f);
+    TIDE_CHECK(draw.commands[3].a.x == 960.0f && draw.commands[3].a.y == 540.0f);
+    TIDE_CHECK(draw.commands[2].b.y == 28.0f + 2.0f * 12.0f);
 }
 
 // The draw list's rects, in the GUI's order: each one's left and right edges.
@@ -2149,9 +2151,11 @@ TIDE_TEST(gui_looks_as_it_always_did_with_no_theme)
     const tide_color text = {0.93f, 0.93f, 0.95f, 1.0f};
     const tide_color control = {0.2f, 0.2f, 0.25f, 1.0f};
     const tide_color accent = {1.0f, 0.77f, 0.24f, 1.0f};
-    TIDE_REQUIRE(draw.count == 13);
-    TIDE_CHECK(draw.shape_count == 0);
-    const tide_draw_command *c = draw.commands;
+    // The panel's shadow, a soft shape, then the rects the GUI always drew
+    TIDE_REQUIRE(draw.count == 14);
+    TIDE_CHECK(draw.shape_count == 1 && draw.commands[1].kind == TIDE_DRAW_SHAPE);
+    TIDE_CHECK(same_color(draw.commands[1].color, (tide_color){0.0f, 0.0f, 0.0f, 0.35f}));
+    const tide_draw_command *c = draw.commands + 1;
     TIDE_CHECK(c[1].kind == TIDE_DRAW_RECT && same_color(c[1].color, (tide_color){0.07f, 0.07f, 0.1f, 0.9f}));
     TIDE_CHECK(c[2].kind == TIDE_DRAW_RECT && same_color(c[2].color, control));
     TIDE_CHECK(c[3].kind == TIDE_DRAW_TEXT && same_color(c[3].color, text));
@@ -2169,12 +2173,12 @@ TIDE_TEST(gui_looks_as_it_always_did_with_no_theme)
     begin();
     every_part();
     end();
-    TIDE_CHECK(same_color(draw.commands[2].color, (tide_color){0.28f, 0.28f, 0.34f, 1.0f}));
+    TIDE_CHECK(same_color(draw.commands[3].color, (tide_color){0.28f, 0.28f, 0.34f, 1.0f}));
     mouse(420.0f, 420.0f, true);
     begin();
     every_part();
     end();
-    TIDE_CHECK(same_color(draw.commands[2].color, (tide_color){0.14f, 0.14f, 0.18f, 1.0f}));
+    TIDE_CHECK(same_color(draw.commands[3].color, (tide_color){0.14f, 0.14f, 0.18f, 1.0f}));
     mouse(420.0f, 525.0f, false);
     begin();
     every_part();
@@ -2182,7 +2186,7 @@ TIDE_TEST(gui_looks_as_it_always_did_with_no_theme)
     begin();
     every_part();
     end();
-    TIDE_CHECK(same_color(draw.commands[11].color, (tide_color){0.16f, 0.16f, 0.2f, 1.0f}));
+    TIDE_CHECK(same_color(draw.commands[12].color, (tide_color){0.16f, 0.16f, 0.2f, 1.0f}));
 }
 
 static tide_gui_theme loud_theme(void)
@@ -2196,6 +2200,7 @@ static tide_gui_theme loud_theme(void)
     theme.field = (tide_color){1.0f, 1.0f, 1.0f, 1.0f};
     theme.field_hot = (tide_color){0.9f, 0.9f, 0.9f, 1.0f};
     theme.accent = (tide_color){1.0f, 0.0f, 0.5f, 1.0f};
+    theme.shadow_size = 0.0f; // Its parts alone
     return theme;
 }
 
@@ -2236,6 +2241,7 @@ TIDE_TEST(gui_a_themes_radius_rounds_every_part)
     start();
     tide_gui_theme theme = tide_gui_theme_default();
     theme.radius = 6.0f;
+    theme.shadow_size = 0.0f; // Its parts alone
     mouse(5.0f, 5.0f, false);
     for (int frame = 0; frame < 2; frame++) {
         key(&devices.keyboard.tab, frame == 1);
@@ -3424,4 +3430,47 @@ TIDE_TEST(gui_a_modal_over_a_number_field_keeps_what_was_typed)
         TIDE_CHECK(form_count == 7 && gui.editing == 0 && gui.focus == 31);
         TIDE_CHECK(!count_under_modal(modal_first != 0, &up) && form_count == 7);
     }
+}
+
+// A theme's sizes lay the widgets out, its border and shading make their parts
+// shapes, and numbers that aren't numbers, or are out of range, are the nearest
+// that are.
+TIDE_TEST(gui_a_themes_sizes_lay_out_and_bad_numbers_are_fitted)
+{
+    start();
+    tide_gui_theme theme = tide_gui_theme_default();
+    theme.text_size = 24.0f;
+    theme.spacing = 20.0f;
+    theme.border_width = 1.0f;
+    theme.shading = 0.5f;
+    tide_rect first = {0}, second = {0};
+    for (int frame = 0; frame < 2; frame++) {
+        begin();
+        tide_gui_set_theme(&gui, theme);
+        first = tide_gui_layout_reserve(&gui, tide_f2(10.0f, 10.0f));
+        tide_gui_layout_button(&gui, 1, "Play");
+        second = tide_gui_layout_reserve(&gui, tide_f2(10.0f, 10.0f));
+        end();
+    }
+    TIDE_CHECK(second.y - first.y == 10.0f + 20.0f + 36.0f + 20.0f); // A button is the text size and 12 tall
+    bool shaded = false;
+    for (uint32_t i = 0; i < draw.count; i++) {
+        const tide_draw_command *c = &draw.commands[i];
+        if (c->kind != TIDE_DRAW_SHAPE || c->shape >= draw.shape_count) continue;
+        const tide_draw_shape_data *s = &draw.shapes[c->shape];
+        shaded |= s->outline == 1.0f && s->color2.r == c->color.r * 0.5f;
+    }
+    TIDE_CHECK(shaded);
+
+    theme = tide_gui_theme_default();
+    theme.text_size = NAN;
+    theme.spacing = -5.0f;
+    theme.shading = 7.0f;
+    theme.transition = INFINITY;
+    theme.padding = NAN;
+    begin();
+    tide_gui_set_theme(&gui, theme);
+    TIDE_CHECK(gui.theme.text_size == 16.0f && gui.theme.spacing == 0.0f && gui.theme.shading == 1.0f);
+    TIDE_CHECK(gui.theme.transition == 0.0f && gui.theme.padding == 12.0f);
+    end();
 }

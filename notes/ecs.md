@@ -1,5 +1,43 @@
 # ECS and simulation state
 
+## Lanes a system can't write stay where they are (2026-10-29)
+
+Following the owner's thread-scaling question: Tide's dense and `[Lasting]`
+loops were already at memory bandwidth (one thread moves 36 MB in 0.42 ms at
+1M rows; hand-written C and Bevy's table storage stop scaling at the same wall),
+so the lever was bytes. On a client, a system writing a snapshot-shared chunk
+apart took a page for every lane of each `mut` component, copied the lanes its
+body never writes (clang made them `memcpy` calls), compared all of them at the
+end and handed back the unchanged ones.
+
+- **The analysis** (`compiler/src/lane_writes_codegen.inc`): for a system's
+  single `mut` parameter of a component, the bytes its body can write:
+  assignments and steps to it or its fields (by field offset; a swizzle by its
+  first and last component), places passed to `mut` parameters (through the
+  callee's own code, memoized per function and parameter; C, built-ins and a
+  call back into a function being worked out write all of the place), `out`
+  arguments and GUI `arg_mut`, any method called on a place of it, and
+  everything inside blocks, lambdas and steps. A property, an element, a local
+  part or anything it can't place writes all of what it's in; a field `Snap()`
+  writes the whole component (its hidden counter). Views, systems that don't
+  run alone (`rows_alone`: World writes, World reads of what they change,
+  tasks), `World.Set` of the component, two `mut` parameters of one component
+  and components of more than 64 lanes keep every lane. `written_lanes` turns
+  bytes into a lane mask.
+- **Codegen**: `tide_scatter_some_<Component>` puts back only the masked lanes
+  (`gen_row_puts`, used by row functions, `gen_chunk` and handlers, all of which
+  begin unwritten lanes as copies or leave them in place). `gen_system_chunk`
+  and the pieces' own/done begin, check, piece and end only runs of written
+  lanes (`written_runs`); unwritten lanes read and "write" pointers are the
+  column where it is (`gen_unwritten_lanes`), never stored to. The cached-chunk
+  shortcut checks and marks only written lanes, as the ordinary task begins
+  them; a system writing all lanes generates the C it did. Unwritten pages stay
+  shared with their hashes kept.
+- **Tests**: the full native and web suites; `field_snap` caught the Snap
+  counter and `sparse_cache_private` the shortcut's page-state parity, both
+  fixed before merging; `sparse_cache_codegen` pins the masked shortcut.
+  Measurements: notes/benchmarks.md, Lanes a system can't write.
+
 ## Holes: rows entities left stay where they were (2026-10-29)
 
 The owner's request after the `[Lasting]` client measurements: removing a row
@@ -436,7 +474,7 @@ Build notes, moved here from `AGENTS.md` as they were: what's built, what code r
   - `restrict` is omitted when code can reach the loop's lanes another way: writes through World, reads through World of a component it also changes, and starting tasks, which get and put back their entity's components themselves (`rows_alone`). Those systems keep the same aliasing behavior.
   - At most 240 scalar lane pointers are parameters of a rows function (`ROWS_LANES_MOST`), counting read and write pointers separately when apart. The whole signature also stays within [V8's 1,000-parameter limit](https://chromium.googlesource.com/v8/v8.git/+/main/src/wasm/wasm-limits.h) for Wasm functions (`ROWS_PARAMS_MOST`): sparse presence columns, fallback arrays, and the leading parameters count too. A component that would cross either budget is passed as arrays of pointers instead, copied into arrays of the loop's own; the fallback has no `restrict` promise for those lanes. `tidec_rows_parameters` checks a legal game at the component limit and, in the web suite, validates its compiled Wasm module.
   - Views keep their loops in their run functions (`gen_chunk`), with only the in-place version: the local world they change has no snapshots. A system whose one Send can be batched also keeps its existing path.
-  - Two measured gaps remain, and neither optimization is implemented: a chunk with mixed passing and skipped rows still runs its filtered loop, rather than sending runs of passing rows through `every`; and all lanes of a `mut` component are still written apart and compared at the end, even when the body never changes some of them. Knowing which individual lanes can change could avoid those writes and comparisons. These are implementation gaps, with no change to the language's `mut` rule.
+  - A measured gap remains: a chunk with mixed passing and skipped rows still runs its filtered loop, rather than sending runs of passing rows through `every`. The other one, every lane of a `mut` component written apart and compared even when the body never changes some, is closed (below, Lanes a system can't write, 2026-10-29). Neither touches the language's `mut` rule.
   - The wide loops without a filter vectorize at width 4 on SSE2 and Wasm, and 8 on AVX2; mixed filters remain scalar. Five alternating native runs on Windows, 12 cores, using the least saved median and the same corrected C snapshots in both builds (`row-functions-final-before` and `row-functions-final`, measured before later dev integration), put a million entities of twelve float lanes, six changed, at 6.22 -> 3.62 ms a tick on one thread while the prior state is kept. With a sparse tag and every row passing, without a kept state, it is 3.77 -> 1.32; with none passing and a kept state, 2.99 -> 0.105. Unfiltered private rows on twelve offered threads measured 0.615 -> 0.671, while identical C measured 0.534 -> 0.583; that result does not isolate dispatch costs from variation. The settings, ranges, hashes and compile measurements are in `bench/results/row-functions.md` and its metadata.
   - Five alternating end-to-end build rounds of 100 helper functions and 100 entity systems, using one or four archetypes and the least saved median, show the fixture tradeoff: with four archetypes, a Tide-body edit in native release is 33.07 -> 3.16 s, and in web release 16.22 -> 2.69 s; native debug is 0.62 -> 0.73 s and web debug 0.90 -> 0.95 s. Cold builds and unchanged/C/header edits are in the report. These Windows measurements include build completion and were taken with recorded CPU contention; their ranges and the separate direct Clang phases qualify the comparison.
   - A task's components are copies too, loaded each time it goes on and put back when it waits or ends, and around what it awaits or starts, which may change them (`gen_entity_copies` in `compiler/src/codegen.c`).

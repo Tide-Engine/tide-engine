@@ -99,6 +99,8 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
         if (inputs[i].package) lex_define_package(inputs[i].package);
     }
     bool web = false, overlay_found = false; // A file names Web.Request's types, which are Tide's own code
+    const char **texts = arena_alloc(sizeof(char *) * (size_t)(count ? count : 1)); // ...or a fill's, which are too
+    size_t *lens = arena_alloc(sizeof(size_t) * (size_t)(count ? count : 1));
     for (int i = 0; i < count; i++) {
         source *src = NEW(source);
         src->path = inputs[i].path;
@@ -124,6 +126,8 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
         src->text = text;
         diag_add_source(src);
         web |= web_prelude_wanted(text, src->len);
+        texts[i] = text;
+        lens[i] = src->len;
 
         token *toks = lex(src);
         if (!toks) return false;
@@ -137,6 +141,14 @@ bool compile_inputs(const compile_input *inputs, const int count, const codegen_
         source *src = NEW(source);
         src->path = WEB_PRELUDE_PATH;
         src->text = web_prelude(&src->len);
+        diag_add_source(src);
+        token *toks = lex(src);
+        if (!toks || !parse_file(prog, src, toks, false)) return false;
+    }
+    if (draw_prelude_wanted(texts, lens, count)) {
+        source *src = NEW(source);
+        src->path = DRAW_PRELUDE_PATH;
+        src->text = draw_prelude(&src->len);
         diag_add_source(src);
         token *toks = lex(src);
         if (!toks || !parse_file(prog, src, toks, false)) return false;
