@@ -239,7 +239,9 @@ LOD preserves tangent signs only for static `float4 tangent` layouts, without a
 new xyz error metric; other layouts and skinned meshes retain their prior LOD
 behavior and cache keys. Generated tangents do not promise MikkTSpace bake compatibility. Height
 mapping shifts UVs with one height sample; it changes no geometry, depth or
-silhouette. Keep the scale modest, especially near grazing views.
+silhouette. With positive `heightScale`, brighter values are raised, darker
+values are recessed and `0.5` is neutral; a negative scale reverses the relief.
+Keep the scale modest, especially near grazing views.
 
 ## Skinning, vertex deformation and post-processing
 

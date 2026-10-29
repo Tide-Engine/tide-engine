@@ -14,6 +14,7 @@ local singleton MaterialPixelProbe
     bool disabled;
     bool useMask = true;
     bool useHeight = true;
+    float heightValue = 1;
     int side = 1;
     int lodMode;
     int shadowViews;
@@ -142,6 +143,7 @@ view ConfigureMaterialPixels(mut Render3D.Renderer renderer, mut MaterialPixelPr
     renderer.shadowBias = 0.003;
     renderer.shadowSlopeBias = 0;
     renderer.maxShadowMaps = 1;
+    probe.height[0, 0] = Color(probe.heightValue, 0, 0, 0);
     if (probe.initialized) return;
     probe.initialized = true;
     // Plain grid references are captured at the material binding's color/raw
@@ -149,7 +151,6 @@ view ConfigureMaterialPixels(mut Render3D.Renderer renderer, mut MaterialPixelPr
     probe.orm[0, 0] = Color(64.0 / 255, 128.0 / 255, 192.0 / 255, 0);
     probe.ao[0, 0] = Color(0, 1, 1, 0);
     probe.normal[0, 0] = Color(1, 128.0 / 255, 128.0 / 255, 0);
-    probe.height[0, 0] = Color(1, 0, 0, 0);
     probe.glow[0, 0] = Color(128.0 / 255, 64.0 / 255, 1, 1);
     probe.stripes[0, 0] = Color(1, 0, 0, 1);
     probe.stripes[1, 0] = Color(0, 0, 1, 1);

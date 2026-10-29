@@ -1,5 +1,35 @@
 # Render3D package
 
+## Height parallax direction (2026-10-29)
+
+The owner noticed the mapped cube's relief looked inverted and authorized the
+correction. Its generated height map already has raised bright centers and dark
+grooves; its normals are derived from the same height gradients. `ParallaxUV`
+instead subtracted the tangent-plane view offset while `viewDirection` points
+from surface to eye, interpreting bright values as inward depth. It now adds
+the offset: positive `heightScale` means brighter is raised, darker recessed,
+and 0.5 neutral. Negative scale reverses the relief. The single sample, grazing
+denominator floor, UV-only behavior and shared color/cutout-shadow path remain.
+No texture, normal-map convention, runtime or compiler change is needed.
+
+The previous numeric and pixel expectations encoded the reversed sign. A new
+CPU oracle intersects camera rays with offset planes and recovers UVs from
+the hit points, covering both UV axes and view directions, rotated/mirrored
+frames, below/above/neutral/clamped heights and positive/zero/negative scales.
+Material GPU witnesses independently intersect the authored quad's relief
+plane for emission stripes and cutout coverage in color and shadow passes,
+including both camera sides, black/neutral/white maps and disabled parallax.
+The material and skinning targets build native/web; all six focused native
+CTests and eight web CTests pass across runs, covering Vulkan/OpenGL and
+WebGL/ANGLE D3D11/WebGPU. The initial Vulkan skinning process crashed without
+diagnostics; the unchanged binary passes under LLDB with validation enabled
+and in the isolated CTest retry. No cause or correction for that intermittent
+failure is claimed, consistent with the earlier skinning crashes below.
+The materials demo builds native/web, the scripted native close-up now shows
+raised tile relief, and the production docs build passes with its existing
+unstaged-example prerender 404 notices. No other native OS/mobile or Unity
+execution was run locally. All tolerances and simulation hash checks remain.
+
 ## Higher initial shadow detail (2026-10-29)
 
 The owner approved a higher default resolution after inspecting the cascaded

@@ -90,12 +90,13 @@ float2 MaterialUV(SurfaceInput input, float2 scale, float2 offset,
 
 // A single centered height sample shifts UVs only, never geometry/depth. Both
 // passes use the main camera's view direction, preserving the cutout silhouette.
+// With surface-to-eye V, raised height intersects P + V * height / dot(V, N).
 float2 ParallaxUV(SurfaceInput input, float2 uv, float height, float scale)
 {
     float2 along = float2(Math.Dot(input.viewDirection, input.tangent),
                           Math.Dot(input.viewDirection, input.bitangent));
     float facing = Math.Max(Math.Dot(input.viewDirection, input.normal), 0.05);
-    return uv - along * ((Math.Clamp(height, 0, 1) - 0.5) * scale / facing);
+    return uv + along * ((Math.Clamp(height, 0, 1) - 0.5) * scale / facing);
 }
 
 // Explicit bilinear sampling is valid in GPU helpers. A pure, immutable UV

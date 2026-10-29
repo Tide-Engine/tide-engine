@@ -95,6 +95,21 @@ static int byte(double value)
     return value >= 1 ? 255 : (int)(value * 255 + 0.5);
 }
 
+static double relief_u(vec3 plane_point)
+{
+    // The imported card has u=.5-x/4, UV offset -.125 and outward normal -Z.
+    // One U unit spans four world units, so a constant height defines a virtual
+    // parallel plane. Intersect the eye ray with that plane independently of
+    // ParallaxUV's tangent projections; the stripe/cutout witnesses use U only.
+    const double height = local.MaterialPixelProbe.useHeight
+        ? (double)byte(local.MaterialPixelProbe.heightValue) / 255 : 0.5;
+    const double z = -4 * (height - 0.5) * 0.8;
+    const camera c = fixture_camera();
+    const vec3 ray = sub(plane_point, c.eye);
+    const vec3 hit = add(c.eye, mul(ray, (z - c.eye.z) / ray.z));
+    return 0.5 - hit.x / 4 - 0.125;
+}
+
 static bool compare(uint32_t actual, vec3 linear, bool encoded, int point)
 {
     const int expected[4] = {byte(encoded ? linear.x : display(linear.x)),
@@ -203,7 +218,8 @@ static bool inspect_commands(void)
                     mirrored_witness = true;
                 }
                 const unsigned char orm[] = {64, 128, 192, 0}, normal[] = {255, 128, 128, 0};
-                const unsigned char ao[] = {0, 255, 255, 0}, height[] = {255, 0, 0, 0};
+                const unsigned char ao[] = {0, 255, 255, 0};
+                const unsigned char height[] = {(unsigned char)byte(local.MaterialPixelProbe.heightValue), 0, 0, 0};
                 if (current_scenario == 1) raw_witness |= texture_bytes(run, orm);
                 if (current_scenario == 3) raw_witness |= texture_bytes(run, normal);
                 if (current_scenario == 5 && local.MaterialPixelProbe.useMask) raw_witness |= texture_bytes(run, ao);
@@ -279,14 +295,21 @@ static bool color_pixels(float scale)
         expected[0] = v3(4 * direct_half(plane_at(points[0], scale, 0), v3(0, 0, -1)), 2,
                          local.MaterialPixelProbe.useMask ? 0 : 0.5);
     if (current_scenario == 6) {
-        const bool blue = current_side > 0 && local.MaterialPixelProbe.useHeight;
+        const double u = relief_u(plane_at(points[0], scale, 0));
+        CHECK(u > 0 && u < 1);
+        const bool blue = u >= 0.5;
         expected[0] = blue ? v3(0, 0, 4) : v3(4, 0, 0);
     }
     if (current_scenario == 7) {
-        const bool covered = current_side > 0 && local.MaterialPixelProbe.useHeight;
+        const double u = relief_u(plane_at(points[0], scale, 0));
+        CHECK(u > 0 && u < 1);
+        const bool covered = u >= 0.5;
         expected[0] = covered ? v3(2, 0, 0) : v3(0, 0.4, 0);
         count = 2;
-        points[1] = (tide_float2){3, 3}; expected[1] = covered ? v3(0, 0, 0) : v3(1, 1, 1);
+        // The +Z light ray to (0,0,1) crosses the caster at (0,0,0).
+        // Its cutout still uses the MAIN eye ray to choose the height lookup.
+        const bool shadow_covered = relief_u(v3(0, 0, 0)) >= 0.5;
+        points[1] = (tide_float2){3, 3}; expected[1] = shadow_covered ? v3(0, 0, 0) : v3(1, 1, 1);
         encoded[1] = true;
     }
     if (current_scenario >= 8) {
@@ -322,7 +345,7 @@ static bool scenario(int number, bool reverse)
     gui.width = WIDTH; gui.height = HEIGHT;
     const uint64_t hash = tide_world_hash(&world);
     const int sides = number == 3 || number == 6 || number == 7 || number >= 8 ? 2 : 1;
-    const int variants = number == 5 || number == 6 || number == 7 || number == 10 ? 2 : 1;
+    const int variants = number == 6 || number == 7 ? 4 : number == 5 || number == 10 ? 2 : 1;
     uint64_t hdr = 0, shadow = 0;
     for (int side = 0; side < sides; side++) {
         current_side = side ? -1 : 1;
@@ -330,7 +353,8 @@ static bool scenario(int number, bool reverse)
         for (int variant = 0; variant < variants; variant++) {
             current_variant = variant;
             local.MaterialPixelProbe.useMask = variant == 0;
-            local.MaterialPixelProbe.useHeight = variant == 0;
+            local.MaterialPixelProbe.useHeight = number == 6 || number == 7 ? variant < 3 : variant == 0;
+            local.MaterialPixelProbe.heightValue = variant == 1 ? 0 : variant == 2 ? 0.5f : 1;
             local.MaterialPixelProbe.lodMode = number == 10 ? variant : 0;
             for (int output = 1; output <= 2; output++) {
                 tide_draw_reset(&draw);

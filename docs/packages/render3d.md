@@ -100,6 +100,10 @@ Drag the scene to orbit, or tap the frame and use one finger to orbit. In these 
 | `emissionMap` | Display-space RGB | Decoded to linear light, then multiplied by linear HDR `emission` |
 | `heightMap` | Numeric R, centered at `0.5` | Offsets UVs according to camera direction and `heightScale` |
 
+With positive `heightScale`, brighter height values are raised and darker values
+are recessed; `0.5` is the undisplaced surface. A negative scale reverses the
+relief. Height parallax changes texture coordinates, not geometry or depth.
+
 Only `baseMap` defaults to `Render3D.White`; all four optional maps start empty. Unused optional maps are not sampled, including an empty emission map on an emissive material. `Render3D.FlatNormal` is available for explicit assignment when a flat normal texture is wanted.
 
 Normal, ORM and height images contain numbers; color compression or sRGB decoding would change their meaning. Base and emission maps contain display-space color. A white mask leaves scalar values unchanged; `metallic = 0` or `emission = float3(0)` still gives no metallic or emission contribution even when a map is assigned.
