@@ -35,15 +35,17 @@ other package dependency was added. Native selects, text values, table
 headers and a focusable horizontal scroll region support keyboard use and
 small screens; the initial report's entire table is server-rendered.
 
-Validation: Svelte check has zero errors/warnings; the docs production build
-passes. Development and isolated production Markdown exports plus SEO/HTTP
-tests pass (5 tests). A temporary ignored browser check used muted headless
-Chrome and verified workload selection, 390px page fit, keyboard table
-scrolling and zero browser runtime errors. Desktop light/dark and mobile
-screenshots were inspected. The browser and local server were closed before
-benchmark timing. Existing unstaged game artifacts remain absent from this
-checkout's site build; its pre-existing playable-page 404 diagnostics do not
-affect the benchmark page or these checks.
+Validation: Svelte check has zero errors/warnings. After merging current
+`dev`, the final docs production build and development/isolated-production
+Markdown exports plus SEO/HTTP tests pass (5 tests). A temporary ignored
+browser check used muted headless Chrome and verified switching between both
+reports, all four engine rows/columns, workload selection, 390px page fit,
+keyboard table scrolling and zero browser runtime errors. Desktop light/dark,
+the complete four-engine table and mobile screenshots were inspected. Owned
+browsers and local servers were closed after validation; benchmark timing
+did not overlap these checks. Existing unstaged game artifacts remain absent
+from this checkout's site build; its pre-existing playable-page 404
+diagnostics do not affect the benchmark page or these checks.
 
 ## Material-inspired GUI example (2026-10-29)
 
