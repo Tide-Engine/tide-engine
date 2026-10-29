@@ -1,0 +1,7 @@
+// expect: Lasting marks a tag that entities gain and keep a while, and 'Score' isn't a component
+[Lasting]
+singleton Score
+{
+    int value;
+}
+scene Main { }

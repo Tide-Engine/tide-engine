@@ -45,10 +45,22 @@ static uint64_t world_digest(const tide_world *w)
         const Body b = TIDE_AT(w, arch0_Body, Body, row);
         sum += versus_item(&b, sizeof b);
     }
+#ifdef WIDE_LASTING
+    // Frozen crates have an archetype of their own; the sum doesn't mind the order
+    for (uint32_t row = 0; row < w->arch1_Crate_Frozen.count; row++) {
+        const Crate c = TIDE_AT(w, arch1_Crate_Frozen, Crate, row);
+        sum += versus_item(&c, sizeof c);
+    }
+    for (uint32_t row = 0; row < w->arch2_Crate.count; row++) {
+        const Crate c = TIDE_AT(w, arch2_Crate, Crate, row);
+        sum += versus_item(&c, sizeof c);
+    }
+#else
     for (uint32_t row = 0; row < w->arch1_Crate.count; row++) {
         const Crate c = TIDE_AT(w, arch1_Crate, Crate, row);
         sum += versus_item(&c, sizeof c);
     }
+#endif
     return sum;
 }
 

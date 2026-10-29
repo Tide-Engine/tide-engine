@@ -18607,16 +18607,24 @@ static comp_mask solid(const program *prog, const comp_mask m)
     return mask_andnot(m, prog->sparse_mask);
 }
 
+static const attribute *attribute_named(const decl *d, const char *name)
+{
+    for (int a = 0; a < d->attributes.count; a++) {
+        if (str_eq_c(d->attributes.items[a].name, name)) return &d->attributes.items[a];
+    }
+    return NULL;
+}
+
 // Whether a sparse component is one: [Sparse], or a tag (no fields) that any
 // Add or Remove names, which would otherwise double the archetypes it can
 // reach. A tag only set at Spawn stays part of its archetype, so filtering on
-// it costs nothing a row.
+// it costs nothing a row, and so does a [Lasting] one: its Add and Remove move
+// the entity, as a component with fields does.
 static bool sparse_component_source(const program *prog, const decl *d)
 {
     if (d->is_scene) return false;
-    for (int a = 0; a < d->attributes.count; a++) {
-        if (str_eq_c(d->attributes.items[a].name, "Sparse")) return true;
-    }
+    if (attribute_named(d, "Sparse")) return true;
+    if (attribute_named(d, "Lasting")) return false;
     return d->fields.count == 0 && (mask_has(prog->added_mask, d->index) || mask_has(prog->removed_mask, d->index));
 }
 
@@ -18717,6 +18725,12 @@ static void derive_archetypes(const checker *c)
     // The sparse components: a presence byte in every archetype they can reach, not archetypes of their own
     for (int i = 0; i < prog->components.count; i++) {
         decl *d = prog->components.items[i];
+        const attribute *lasting = attribute_named(d, "Lasting");
+        if (lasting && !d->is_local && d->visibility_optional) {
+            diag_error(lasting->at, "'" STR_FMT "' has its visibility set per player, which keeps a presence bit in the row, so it "
+                       "can't be [Lasting]", STR_ARG(d->name));
+            diag_note("remove [Lasting]: its Add and Remove can't move the entity while players see it or not on their own");
+        }
         d->is_sparse = sparse_component(prog, d);
         if (d->is_sparse) prog->sparse_mask = mask_or(prog->sparse_mask, bit(d));
     }
@@ -18750,6 +18764,13 @@ too_many:
     diag_error((loc){1, 1, 0}, "the program can create more than %d different component combinations", MAX_ARCHETYPES);
     diag_note("an Add or Remove on an entity read from a field or a parameter can apply to any entity, so combinations "
               "multiply; one on 'this', or on an entity a Spawn in the same code made, only reaches what it can");
+    for (int i = 0; i < prog->components.count; i++) {
+        const decl *d = prog->components.items[i];
+        if (d->is_sparse || !attribute_named(d, "Lasting")) continue;
+        diag_note("each [Lasting] tag doubles the archetypes it can reach, like '" STR_FMT "': one that changes often wants to be "
+                  "an ordinary tag, a presence bit in the row", STR_ARG(d->name));
+        break;
+    }
 }
 
 static const char *system_what(const decl *sys)
@@ -19360,6 +19381,24 @@ static void check_attributes(checker *c)
                 }
                 continue;
             }
+            if (str_eq_c(attr->name, "Lasting")) { // Read as the archetypes derive (sparse_component_source)
+                if (d->kind != DECL_COMPONENT || d->is_scene) {
+                    diag_error(attr->at, "Lasting marks a tag that entities gain and keep a while, and '" STR_FMT "' isn't a component",
+                               STR_ARG(d->name));
+                    diag_note("'[Lasting] component Sleeping { }': its Add and Remove move the entity to an archetype of its own");
+                } else if (attr->values.count > 0 || attr->args.count > 0) {
+                    diag_error(attr->at, "Lasting takes nothing: '[Lasting]'");
+                } else if (attribute_named(d, "Sparse")) {
+                    diag_error(attr->at, "'" STR_FMT "' can't be both [Sparse] and [Lasting]", STR_ARG(d->name));
+                    diag_note("[Sparse] keeps a presence bit in the row; [Lasting] moves the entity to an archetype of its own. "
+                              "Keep the one that fits how often it changes");
+                } else if (d->fields.count > 0) {
+                    diag_error(attr->at, "'" STR_FMT "' has fields, so its Add and Remove move the entity already; [Lasting] is for tags",
+                               STR_ARG(d->name));
+                    diag_note("remove [Lasting]; a component with fields that changes often wants [Sparse] instead");
+                }
+                continue;
+            }
             const bool before = str_eq_c(attr->name, "Before");
             if (!before && !str_eq_c(attr->name, "After")) {
                 diag_error(attr->at, "unknown attribute '" STR_FMT "'", STR_ARG(attr->name));
@@ -19372,6 +19411,7 @@ static void check_attributes(checker *c)
                 suggest_consider_c(&s, "NativeName");
                 suggest_consider_c(&s, "Name");
                 suggest_consider_c(&s, "Sparse");
+                suggest_consider_c(&s, "Lasting");
                 suggest_consider_c(&s, "Bus");
                 suggest_consider_c(&s, "Channel");
                 suggest_consider_c(&s, "Unordered");

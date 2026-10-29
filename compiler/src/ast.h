@@ -550,7 +550,7 @@ typedef struct decl {
     bool is_scene;    // `scene Arena { ... }`: a DECL_COMPONENT whose entity is a loaded scene
     struct prefab_node *prefab_root;
     struct prefab_instance *prefab_checked; // Neutral authored analysis, including unused prefabs.
-    bool is_sparse;   // [Sparse], or a tag any Add or Remove names: a presence byte and its lanes in every archetype it can reach, not an archetype of its own
+    bool is_sparse;   // [Sparse], or a tag any Add or Remove names that isn't [Lasting]: a presence byte and its lanes in every archetype it can reach, not an archetype of its own
     bool visibility_optional; // Whole-component visibility needs an independent per-row presence byte on clients.
     bool named;       // The built-in Random, Depth and Cull: some code names it, so generated C has it
     // A match component's or singleton's `local` fields are a declaration of

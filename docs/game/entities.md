@@ -225,4 +225,16 @@ system Recover(Time time, mut Stunned stunned)
 }
 ```
 
+A tag that entities keep a long while, and that many systems filter on, can go the other way. Mark it `[Lasting]` and its `Add` and `Remove` move the entity to an archetype of its own, as a component with fields does: `without Sleeping` then runs through the awake entities alone, rather than checking every row, and systems on either side of it can run at the same time. Each toggle copies the entity, and each lasting tag doubles the archetypes it can reach, so keep it for states that last, not ones that flicker.
+
+```csharp
+[Lasting]
+component Sleeping { }
+
+system Move(mut Body body, Time time, without Sleeping)
+{
+    body.position += body.velocity * time.dt;
+}
+```
+
 For now, a game has at most 256 components and 1024 archetypes. Entities, the rows of each archetype, and the structural changes and events in a tick grow as they need, with no limit but memory (see [C hosts](../c/hosts.md#memory)).
