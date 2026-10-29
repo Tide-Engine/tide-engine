@@ -27,6 +27,8 @@ view Options(Devices devices, mut Settings settings)
 }
 ```
 
+For a look of your own (gradients, shadows, animated controls), see [Good-looking UI](./ui-style.md).
+
 The GUI is local: widgets change this machine's state, never the match. To act on the match, put continuous controls in the [input](./input.md), or send a [command](./commands.md) for a button's action.
 
 ## Widgets change what you pass them
@@ -186,7 +188,7 @@ It lays nothing out: its widgets stay where they'd be without it, in the contain
 
 ## Themes
 
-The GUI has one look, and a theme changes its colors and its corners. `GUITheme` is a struct whose defaults are that look, so a theme names only what it changes:
+The GUI has one look, and a theme changes its colors, its corners, its borders, shading and shadows, how fast it fades between states, and its text size and spacing. `GUITheme` is a struct whose defaults are that look, so a theme names only what it changes:
 
 ```csharp
 const Color INK = Color(0.86, 0.92, 1);
@@ -218,8 +220,23 @@ view Menu(mut Lobby lobby)
 | `field` | A field to type into |
 | `fieldHot` | ...with the pointer on it |
 | `accent` | The outline of the widget that has the focus, a toggle's check, a slider's filled part |
+| `border` | An outline inside the edge of each widget and panel, `borderWidth` pixels wide |
+| `shadow` | A soft shadow under each area's panel, fading out over `shadowSize` pixels |
 
-`radius` is how round the widgets' corners are, in pixels: 0, its default, is square. A part is never rounder than half its smaller side, so a big radius makes a pill of a button.
+The rest are numbers:
+
+| Field | Default | What it is |
+|---|---|---|
+| `radius` | 0 | How round the widgets' corners are, in pixels: 0 is square. A part is never rounder than half its smaller side, so a big radius makes a pill of a button |
+| `borderWidth` | 0 | How wide `border` is, in pixels: 0 for none |
+| `shading` | 0 | How much darker each widget's bottom is than its top, from 0 (flat) to 1 (black): a little, like 0.2, makes buttons look raised |
+| `shadowSize` | 16 | How far the panels' shadow fades out, in pixels: 0 for none |
+| `transition` | 0.1 | Seconds a widget takes to fade from one state's color to another's, as the pointer comes and goes: 0 changes at once |
+| `textSize` | 16 | The widgets' text size, in pixels. A widget's height follows it: `textSize + 12` |
+| `padding` | 12 | Space inside an area, around its widgets |
+| `spacing` | 5 | Space between widgets |
+
+A number that isn't a number, or is out of its range, is taken as the nearest one that is: a negative size as 0, a `shading` over 1 as 1.
 
 A theme is set in one of two ways, as every setting of a frame is:
 
@@ -238,7 +255,7 @@ Every frame starts from the default look, so a view that sets a theme sets it ev
 
 An area's panel has the look it opened with. The [stats overlay and the debug views](../tools/cli.md) aren't the GUI's widgets, and keep their own look whatever a game sets.
 
-That's all a theme is: there are no styles for single widgets, no text sizes and no fonts. A widget that should look like nothing here is [one you draw yourself](#widgets-of-your-own).
+That's all a theme is: there are no styles for single widgets and no fonts. A widget that should look like nothing here is [one you draw yourself](#widgets-of-your-own).
 
 ## Keyboard and gamepad
 
@@ -350,6 +367,18 @@ The cards below are three controls, drawn from [smooth shapes](./views.md#smooth
 | `cancelled` | Its held gesture was aborted because it became disabled, covered by a modal or taken by touch scrolling |
 | `position` | Pointer position in GUI pixels, including while held outside the rect |
 
+It also has `hover`, `press` and `focus`: `hovered`, `pressed` and `focused` as amounts from 0 to 1, which ease toward them over the theme's `transition`. Blend a control's look by them, and it fades as the pointer comes and goes, with nothing to keep:
+
+```csharp
+var card = GUI.Control(rect);
+GUI.Draw()
+{
+    var lift = card.hover * 4 - card.press * 2;
+    Draw.Rect(Rect(rect.x, rect.y - lift, rect.width, rect.height), 12,
+              Math.Lerp(Color(0.15, 0.2, 0.35), Color(0.25, 0.35, 0.6), card.hover));
+}
+```
+
 It works as a button of the GUI's does, and the GUI draws nothing for it, so showing that it's hovered or has the focus is the view's:
 
 - **The pointer on it is the GUI's.** A press there never reaches the input's `Sample` or the other views, from the frame it lands in, a finger's too. The view needs no claim.
@@ -388,6 +417,43 @@ One `GUI.Draw` block can wrap a whole group of custom controls; a separate block
 Screen-space content follows an anchored panel when it is placed. Explicit custom cameras and 3D geometry keep their own coordinates. Render-target calls still draw to the target they name. Outside `GUI.Draw`, ordinary view drawing is beneath the GUI.
 
 `Reserve(size)` keeps the requested size. `Reserve(size, minWidth: 80, expandWidth: true)` can shrink horizontally to 80 pixels or expand to the column's remembered natural width. Height is explicit; negative and nonfinite dimensions become zero. Reserving space alone draws nothing and takes no input. UI code runs once per frame.
+
+### Animation
+
+`GUI.Animate(target, seconds)` gives `target`, eased toward from where it was last frame: a value that jumps, like a menu's open state, a bar's fill or a color, moves there smoothly instead, about 99% of the way in `seconds`. It takes a `float`, a `float2` or a `Color`, and it moves fastest at first and settles on the target without overshooting, so a target that changes midway turns smoothly.
+
+```csharp
+local singleton Pause
+{
+    bool open;
+}
+
+view PauseMenu(Devices devices, mut Pause pause)
+{
+    if (devices.keyboard.escape.down) pause.open = !pause.open;
+    var shown = GUI.Animate(pause.open ? 1.0 : 0.0, 0.25);
+    if (shown <= 0) return; // Gone once it has faded out
+    GUI.Draw()
+    {
+        Draw.Rect(Rect(0, 0, Screen.width, Screen.height), 0, Color(0, 0, 0, 0.6 * shown));
+    }
+    // Slides up from below the screen's middle as the screen darkens
+    GUILayout.Area(Rect(Screen.width * 0.5 - 150, Screen.height * 0.5 - 100 + (1 - shown) * 60, 300, 200))
+    {
+        GUILayout.Label("Paused");
+        if (GUILayout.Button("Resume")) pause.open = false;
+    }
+}
+```
+
+The GUI keeps the value from frame to frame, told apart by where `Animate` is called, as widgets are: each turn of a loop has its own, and [`GUI.Key`](#stable-keys) keeps one with its item when items move. Call it every frame:
+
+- **The first time it's called, it's at its target.** A menu that's closed when the game starts is closed, with no fade.
+- **`GUI.Animate(target, seconds, from)` starts at `from` instead,** the first frame: `GUI.Animate(1, 0.3, 0)` fades a toast in as it first appears.
+- **A frame it isn't called in starts it over.** Keep calling it while something fades out, and stop once it's at its target.
+- It settles exactly on its target, so `shown <= 0` is true once a fade out has finished.
+
+It goes by the frame's length, `Frame.dt`, so it takes as long at any frame rate. Up to 1,024 values are animated at once; past that, a new one is at its target.
 
 ### Scrolling
 

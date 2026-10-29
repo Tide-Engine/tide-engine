@@ -1,5 +1,12 @@
 # Drawing: `Draw`, its settings, shapes and meshes
 
+## Fills (2026-10-29)
+
+`Draw.Rect(rect, radius|radii, fill)` and `Draw.Shape(shape, fill)` with a
+`Func<float2, Color>` are Tide code that comes with the compiler (a vert and
+frag over instanced quads), not a runtime path: no draw.c or renderer change.
+What's built, why it batches and its gaps are in gui.md, Looks.
+
 ## Twelve texture capture slots (2026-10-25)
 
 Shader runs hold twelve texture slots and uint64_t sampling, two eight-slot

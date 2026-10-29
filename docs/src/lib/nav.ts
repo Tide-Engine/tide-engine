@@ -66,6 +66,7 @@ export const sidebar: Group[] = [
             { text: 'Local state', link: '/game/local-state' },
             { text: 'Files and directories', link: '/game/files' },
             { text: 'GUI', link: '/game/gui' },
+            { text: 'Good-looking UI', link: '/game/ui-style' },
         ],
     },
     {

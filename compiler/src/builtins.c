@@ -1225,6 +1225,25 @@ static void build_signatures(void)
             "gamepad are on it) and `clicked`. A press on it never reaches the input's `Sample` or the other views; "
             "Tab, the arrows, the d-pad and the left stick move the focus to it with the other widgets, and Enter, "
             "Space and the south button click it. `GUI.Disabled` and modals stop it like any widget.");
+    // Values eased from frame to frame, told apart as widgets are: by where they're called, a loop's turn
+    // and GUI.Key
+    static const char *const animate_doc =
+        "`target`, eased toward from where it was last frame: a value that jumps, like a menu's open state, a "
+        "bar's fill or a color, moves there smoothly instead, about 99% of the way in `seconds`. Call it every "
+        "frame: it starts at its target, and starts over after a frame it isn't called in.";
+    static const char *const animate_from_doc =
+        "`target`, eased toward from where it was last frame, about 99% of the way in `seconds`. It starts at "
+        "`from` the first frame it's called, and after a frame it isn't: `GUI.Animate(1, 0.3, 0)` fades in as it "
+        "first appears.";
+    add_gui("GUI", "Animate", T_F, "tide_gui_animate", "float target, float seconds", GUI_ID, animate_doc);
+    add_gui("GUI", "Animate", T_F2, "tide_gui_animate_float2", "float2 target, float seconds", GUI_ID, animate_doc);
+    add_gui("GUI", "Animate", T_COLOR, "tide_gui_animate_color", "Color target, float seconds", GUI_ID, animate_doc);
+    add_gui("GUI", "Animate", T_F, "tide_gui_animate_from", "float target, float seconds, float from", GUI_ID,
+            animate_from_doc);
+    add_gui("GUI", "Animate", T_F2, "tide_gui_animate_float2_from", "float2 target, float seconds, float2 from", GUI_ID,
+            animate_from_doc);
+    add_gui("GUI", "Animate", T_COLOR, "tide_gui_animate_color_from", "Color target, float seconds, Color from", GUI_ID,
+            animate_from_doc);
     add_gui("GUI", "Navigate", T_NONE, "tide_gui_navigate", "", 0,
             "A menu is up: the arrows, the d-pad and the left stick can start moving the focus between widgets, "
             "though the match reads the devices. Without it they only move a focus that's there, which Tab starts, "
@@ -2227,6 +2246,255 @@ const char *web_prelude(size_t *len)
     return web_prelude_text;
 }
 
+// Fills' own Tide code: Draw.Rect and Draw.Shape with a function that colors them
+// (DRAW_FILL_RECT, DRAW_FILL_SHAPE), and the Gradient functions that make one: a
+// line each, as one string literal would be longer than C promises to hold.
+static const char *const draw_prelude_lines[] = {
+    "// Fills: Draw.Rect and Draw.Shape with a function that colors them, run on",
+    "// the GPU for each pixel, and Gradient's functions, which are such functions.",
+    "// Every fill of a game is one shader: a fill's function is part of its",
+    "// instance, so fills drawn one after another are drawn together.",
+    "",
+    "// One filled shape, as its vert and frag read it.",
+    "struct TideFillItem",
+    "{",
+    "    float2 center;",
+    "    float2 size;",
+    "    float2 turn;      // Its rotation's cos and sin",
+    "    float4 radii;     // Its corners': top left, top right, bottom right, bottom left",
+    "    float outline;    // An outline this wide inside its edge...",
+    "    Color outlineColor;",
+    "    float soft;       // How far its edge fades: outwards, or inwards under 0",
+    "    float ellipse;    // 1 for the ellipse that fits its size",
+    "    float3 screen;    // The window's size in pixels, and how many of the display's each is",
+    "    Func<float2, Color> fill;",
+    "}",
+    "",
+    "// A quad's corner, from -1 to 1, to around the shape and as far as its edge",
+    "// fades, in the shape's own frame. Its uv is where it is in that frame, and its",
+    "// color says how big one of the display's pixels is there and which way is up.",
+    "vert TideFillPlace(mut Vertex vertex, TideFillItem shape)",
+    "{",
+    "    float2 corner = vertex.position;",
+    "    float2 across = shape.turn;",
+    "    float2 down = float2(-shape.turn.y, shape.turn.x);",
+    "    // Where the transform and the camera put its middle, and a step along each of its axes and up the world",
+    "    vertex.position = shape.center;",
+    "    float4 middle = this.clip;",
+    "    vertex.position = shape.center + across;",
+    "    float4 right = this.clip;",
+    "    vertex.position = shape.center + down;",
+    "    float4 below = this.clip;",
+    "    vertex.position = shape.center + float2(0, 1);",
+    "    float4 up = this.clip;",
+    "    float2 at = middle.xy / middle.w;",
+    "    float2 pixels = shape.screen.xy * 0.5 * shape.screen.z; // The display's pixels across half the clip space",
+    "    float alongX = Math.Length((right.xy / right.w - at) * pixels);",
+    "    float alongY = Math.Length((below.xy / below.w - at) * pixels);",
+    "    // One pixel, in the shape's units: one unit where the screen's size isn't known, and never more than the",
+    "    // shape is across, so a transform that flattens it can't make its quad huge",
+    "    mut float pixel = shape.screen.x > 0 && shape.screen.y > 0 ? 1 / Math.Max(Math.Min(alongX, alongY), 0.000001) : 1;",
+    "    pixel = Math.Min(pixel, Math.Max(Math.Max(shape.size.x, shape.size.y), 1));",
+    "    float2 local = corner * (shape.size * 0.5 + float2(Math.Max(shape.soft, 0) + 2 * pixel));",
+    "    vertex.position = shape.center + across * local.x + down * local.y;",
+    "    vertex.uv = local;",
+    "    // In the GUI's pixels y goes down the screen; in a world, up it, and its top is then where y is greatest",
+    "    vertex.color = Color(pixel, up.y / up.w > at.y ? 1 : 0, 0, 1);",
+    "}",
+    "",
+    "// A color with its alpha worked into it, which blends without darkening",
+    "// toward clear. An alpha out of 0 to 1, like Color.none's, is the nearest in it.",
+    "float4 TidePremultiplied(Color c)",
+    "{",
+    "    float a = Math.Saturate(c.a);",
+    "    return float4(c.r * a, c.g * a, c.b * a, a);",
+    "}",
+    "",
+    "// A color with its alpha worked into it as it was, times `cover`.",
+    "Color TideStraight(float4 p, float cover)",
+    "{",
+    "    mut Color color = Color(0, 0, 0, 0);",
+    "    if (p.w > 0) color = Color(p.x / p.w, p.y / p.w, p.z / p.w, p.w * cover);",
+    "    return color;",
+    "}",
+    "",
+    "// How far `p` is outside the shape's edge, under 0 inside it.",
+    "float TideFillDistance(float2 p, float2 extent, float4 radii, float ellipse)",
+    "{",
+    "    // One return at its end, as ANGLE's D3D11 warns of a value an early one might leave unset",
+    "    mut float d = 0;",
+    "    if (ellipse > 0.5)",
+    "    {",
+    "        float2 e = Math.Max(extent, float2(0.000001));",
+    "        float k = Math.Length(p / e);",
+    "        float slope = Math.Length(p / (e * e));",
+    "        d = slope > 0 ? (k - 1) * k / slope : -Math.Min(e.x, e.y);",
+    "    }",
+    "    else",
+    "    {",
+    "        float r = p.y < 0 ? (p.x < 0 ? radii.x : radii.y) : (p.x < 0 ? radii.w : radii.z);",
+    "        float2 q = Math.Abs(p) - extent + float2(r);",
+    "        d = Math.Length(Math.Max(q, float2(0))) + Math.Min(Math.Max(q.x, q.y), 0) - r;",
+    "    }",
+    "    return d;",
+    "}",
+    "",
+    "frag TideFillPaint(Vertex vertex, out Color color, TideFillItem shape)",
+    "{",
+    "    float pixel = vertex.color.r;",
+    "    mut float2 p = vertex.uv;",
+    "    if (vertex.color.g > 0.5) p.y = -p.y; // Its top is up the screen",
+    "    float d = TideFillDistance(p, shape.size * 0.5, shape.radii, shape.ellipse) / pixel; // In the display's pixels",
+    "    mut float cover = Math.Saturate(0.5 - d);",
+    "    float soft = shape.soft / pixel;",
+    "    if (soft > 0)",
+    "    {",
+    "        float glow = Math.Saturate(1 - (d + 0.5) / (soft + 1));",
+    "        cover = glow * glow;",
+    "    }",
+    "    else if (soft < 0)",
+    "    {",
+    "        float glow = Math.Saturate(1 + (d - 0.5) / (1 - soft));",
+    "        cover = cover * glow * glow;",
+    "    }",
+    "    float2 uv = Math.Saturate(p / Math.Max(shape.size, float2(0.000001)) + float2(0.5));",
+    "    Color fill = shape.fill(uv);",
+    "    mut float4 paint = TidePremultiplied(fill);",
+    "    if (shape.outline > 0)",
+    "        paint = Math.Lerp(TidePremultiplied(shape.outlineColor), paint, Math.Saturate(0.5 - (d + shape.outline / pixel)));",
+    "    color = TideStraight(paint, cover);",
+    "}",
+    "",
+    "void TideFillDraw(TideFillItem item)",
+    "{",
+    "    if (!(item.size.x > 0) || !(item.size.y > 0)) return;",
+    "    List<Vertex> quad = [Vertex { position = float2(-1, -1) }, Vertex { position = float2(1, -1) },",
+    "                         Vertex { position = float2(1, 1) }, Vertex { position = float2(-1, 1) }];",
+    "    List<int> corners = [0, 1, 2, 0, 2, 3];",
+    "    List<TideFillItem> items = [item];",
+    "    Draw.Instanced(quad, corners, items, TideFillPlace, TideFillPaint);",
+    "}",
+    "",
+    "float3 TideFillScreen()",
+    "{",
+    "    return float3(Screen.width, Screen.height, (Screen.scale.x + Screen.scale.y) * 0.5);",
+    "}",
+    "",
+    "// Each no more than half the smaller side, and none under 0.",
+    "float4 TideFillRadii(float2 size, float4 radii)",
+    "{",
+    "    float most = Math.Min(size.x, size.y) * 0.5;",
+    "    return Math.Clamp(radii, float4(0), float4(most));",
+    "}",
+    "",
+    "void TideFillRect(Rect rect, float radius, Func<float2, Color> fill)",
+    "{",
+    "    TideFillRect(rect, float4(radius), fill);",
+    "}",
+    "",
+    "void TideFillRect(Rect rect, float4 radii, Func<float2, Color> fill)",
+    "{",
+    "    float2 size = float2(rect.width, rect.height);",
+    "    TideFillDraw(TideFillItem { center = float2(rect.x, rect.y) + size * 0.5, size = size, turn = float2(1, 0),",
+    "                                radii = TideFillRadii(size, radii), screen = TideFillScreen(), fill = fill });",
+    "}",
+    "",
+    "void TideFillShape(Shape shape, Func<float2, Color> fill)",
+    "{",
+    "    float most = Math.Min(shape.size.x, shape.size.y) * 0.5;",
+    "    TideFillDraw(TideFillItem { center = shape.center, size = shape.size,",
+    "                                turn = float2(Math.Cos(shape.rotation), Math.Sin(shape.rotation)),",
+    "                                radii = TideFillRadii(shape.size, float4(shape.radius)),",
+    "                                outline = Math.Clamp(shape.outline, 0, most), outlineColor = shape.outlineColor,",
+    "                                soft = shape.soft, ellipse = shape.ellipse ? 1 : 0, screen = TideFillScreen(),",
+    "                                fill = fill });",
+    "}",
+    "",
+    "// Between `count` colors spread evenly from 0 to 1, at `t`: blended with",
+    "// their alpha in them, so a gradient to clear fades without darkening.",
+    "Color TideGradientAt(float t, int count, Color a, Color b, Color c, Color d)",
+    "{",
+    "    float along = Math.Saturate(t) * (count - 1);",
+    "    int i = Math.Min(int(along), count - 2);",
+    "    float f = along - i;",
+    "    // Each set before it's chosen between, as ANGLE's D3D11 warns of a color picked by nested ?:",
+    "    mut Color from = a;",
+    "    mut Color to = b;",
+    "    if (i == 1)",
+    "    {",
+    "        from = b;",
+    "        to = c;",
+    "    }",
+    "    else if (i >= 2)",
+    "    {",
+    "        from = c;",
+    "        to = d;",
+    "    }",
+    "    return TideStraight(Math.Lerp(TidePremultiplied(from), TidePremultiplied(to), f), 1);",
+    "}",
+    "",
+    "// Where a pixel is along a gradient, 0 to 1: across the shape at `angle`",
+    "// (setup.y; setup.x 0), so its corners are at the ends, or out from its middle",
+    "// (setup.x 1), 1 at the middle of its sides. setup.z is how many colors.",
+    "float TideGradientAlong(float2 uv, float3 setup)",
+    "{",
+    "    float2 from = uv - float2(0.5);",
+    "    float2 way = float2(Math.Cos(setup.y), Math.Sin(setup.y));",
+    "    float reach = (Math.Abs(way.x) + Math.Abs(way.y)) * 0.5;",
+    "    return setup.x > 0.5 ? Math.Length(from) * 2 : Math.Dot(from, way) / Math.Max(reach, 0.000001) * 0.5 + 0.5;",
+    "}",
+    "",
+    "Func<float2, Color> TideGradient(float3 setup, Color a, Color b, Color c, Color d)",
+    "{",
+    "    return (float2 uv) => TideGradientAt(TideGradientAlong(uv, setup), int(setup.z), a, b, c, d);",
+    "}",
+    "",
+    "namespace Gradient",
+    "{",
+    "    // From `top` at the shape's top to `bottom` at its bottom.",
+    "    Func<float2, Color> Vertical(Color top, Color bottom) { return TideGradient(float3(0, 1.5707964, 2), top, bottom, bottom, bottom); }",
+    "    Func<float2, Color> Vertical(Color top, Color middle, Color bottom) { return TideGradient(float3(0, 1.5707964, 3), top, middle, bottom, bottom); }",
+    "    Func<float2, Color> Vertical(Color a, Color b, Color c, Color d) { return TideGradient(float3(0, 1.5707964, 4), a, b, c, d); }",
+    "    // From `left` at the shape's left to `right` at its right.",
+    "    Func<float2, Color> Horizontal(Color left, Color right) { return TideGradient(float3(0, 0, 2), left, right, right, right); }",
+    "    Func<float2, Color> Horizontal(Color left, Color middle, Color right) { return TideGradient(float3(0, 0, 3), left, middle, right, right); }",
+    "    Func<float2, Color> Horizontal(Color a, Color b, Color c, Color d) { return TideGradient(float3(0, 0, 4), a, b, c, d); }",
+    "    // Across the shape at `angle`, in radians from +x towards +y, from `from` at one corner to `to` at the other.",
+    "    Func<float2, Color> Linear(float angle, Color from, Color to) { return TideGradient(float3(0, angle, 2), from, to, to, to); }",
+    "    Func<float2, Color> Linear(float angle, Color from, Color middle, Color to) { return TideGradient(float3(0, angle, 3), from, middle, to, to); }",
+    "    Func<float2, Color> Linear(float angle, Color a, Color b, Color c, Color d) { return TideGradient(float3(0, angle, 4), a, b, c, d); }",
+    "    // From `inner` at the shape's middle out to `outer` at the middle of its sides, and past them to its corners.",
+    "    Func<float2, Color> Radial(Color inner, Color outer) { return TideGradient(float3(1, 0, 2), inner, outer, outer, outer); }",
+    "    Func<float2, Color> Radial(Color inner, Color middle, Color outer) { return TideGradient(float3(1, 0, 3), inner, middle, outer, outer); }",
+    "    Func<float2, Color> Radial(Color a, Color b, Color c, Color d) { return TideGradient(float3(1, 0, 4), a, b, c, d); }",
+    "}",
+};
+
+const char *draw_prelude(size_t *len)
+{
+    static char *text;
+    static size_t length;
+    if (!text) {
+        const size_t count = sizeof draw_prelude_lines / sizeof draw_prelude_lines[0];
+        for (size_t i = 0; i < count; i++) length += strlen(draw_prelude_lines[i]) + 1;
+        text = malloc(length + 1);
+        if (!text) {
+            fprintf(stderr, "tidec: out of memory\n");
+            exit(1);
+        }
+        size_t at = 0;
+        for (size_t i = 0; i < count; i++) {
+            const size_t n = strlen(draw_prelude_lines[i]);
+            memcpy(text + at, draw_prelude_lines[i], n);
+            text[at + n] = '\n';
+            at += n + 1;
+        }
+        text[at] = '\0';
+    }
+    *len = length;
+    return text;
+}
+
 static bool has_text(const char *text, const size_t len, const char *word)
 {
     const size_t n = strlen(word);
@@ -2241,4 +2509,88 @@ bool web_prelude_wanted(const char *text, const size_t len)
     // IOError.TimedOut is a request's own error, which only a program with this code has (add_builtins in check.c)
     return has_text(text, len, "Web.Request") || has_text(text, len, "WebRequest") || has_text(text, len, "WebResponse")
         || has_text(text, len, "IOError.TimedOut");
+}
+
+// Whether `name` (`n` bytes) is declared somewhere in the texts as a fill
+// function: "Color Name(float2 ...".
+static bool declares_fill(const char *const *texts, const size_t *lens, const int count, const char *name, const size_t n)
+{
+    for (int f = 0; f < count; f++) {
+        const char *text = texts[f];
+        const size_t len = lens[f];
+        for (size_t i = 0; i + 6 + n + 8 <= len; i++) {
+            if (memcmp(text + i, "Color ", 6) != 0 || (i > 0 && (isalnum((unsigned char)text[i - 1]) || text[i - 1] == '_')))
+                continue;
+            size_t at = i + 6;
+            while (at < len && text[at] == ' ') at++;
+            if (at + n + 8 > len || memcmp(text + at, name, n) != 0) continue;
+            at += n;
+            while (at < len && text[at] == ' ') at++;
+            if (at + 8 <= len && memcmp(text + at, "(float2 ", 8) == 0) return true;
+        }
+    }
+    return false;
+}
+
+// The last argument of the call whose '(' is at `open`: where it starts and
+// how long it is, spaces trimmed, or false where the call doesn't close.
+static bool last_argument(const char *text, const size_t len, const size_t open, size_t *start, size_t *n)
+{
+    int depth = 0;
+    size_t from = open + 1;
+    for (size_t i = open; i < len; i++) {
+        const char ch = text[i];
+        if (ch == '"') { // Past a string, whose commas and brackets are its own
+            for (i++; i < len && text[i] != '"'; i++) {
+                if (text[i] == 92) i++; // A backslash escapes what follows it
+            }
+            continue;
+        }
+        if (ch == '(' || ch == '[' || ch == '{') depth++;
+        else if (ch == ')' || ch == ']' || ch == '}') {
+            if (--depth == 0) {
+                size_t a = from, b = i;
+                while (a < b && isspace((unsigned char)text[a])) a++;
+                while (b > a && isspace((unsigned char)text[b - 1])) b--;
+                *start = a;
+                *n = b - a;
+                return true;
+            }
+        } else if (ch == ',' && depth == 1) from = i + 1;
+    }
+    return false;
+}
+
+bool draw_prelude_wanted(const char *const *texts, const size_t *lens, const int count)
+{
+    // A fill is a Func<float2, Color> that colors a shape: a Gradient's, or one of the game's kept as that type,
+    // written as a lambda where a Draw.Rect or a Draw.Shape takes it, or a function's name there
+    for (int f = 0; f < count; f++) {
+        if (has_text(texts[f], lens[f], "Gradient.") || has_text(texts[f], lens[f], "Func<float2, Color>")
+            || has_text(texts[f], lens[f], "Func<float2,Color>")) return true;
+    }
+    static const char *const calls[] = {"Draw.Rect(", "Draw.Shape("};
+    for (int f = 0; f < count; f++) {
+        const char *text = texts[f];
+        const size_t len = lens[f];
+        for (int k = 0; k < 2; k++) {
+            const size_t m = strlen(calls[k]);
+            for (size_t i = 0; i + m <= len; i++) {
+                if (memcmp(text + i, calls[k], m) != 0) continue;
+                size_t start, n;
+                if (!last_argument(text, len, i + m - 1, &start, &n) || n == 0) continue;
+                const char *arg = text + start;
+                bool name = true;
+                for (size_t j = 0; j < n; j++) {
+                    if (j + 1 < n && arg[j] == '=' && arg[j + 1] == '>') return true; // A lambda
+                    name &= isalnum((unsigned char)arg[j]) || arg[j] == '_' || arg[j] == '.';
+                }
+                if (!name) continue;
+                size_t last = n; // A qualified name's own
+                while (last > 0 && arg[last - 1] != '.') last--;
+                if (n > last && declares_fill(texts, lens, count, arg + last, n - last)) return true;
+            }
+        }
+    }
+    return false;
 }

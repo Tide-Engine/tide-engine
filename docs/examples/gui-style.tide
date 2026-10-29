@@ -1,0 +1,91 @@
+// A menu with a look of its own: a theme for the GUI's widgets, gradients for
+// the background and the buttons, controls that ease as they're hovered, and a
+// panel that slides in.
+scene Main { }
+
+const Color INK = Color(0.92, 0.94, 1);
+const Color NAVY = Color(0.06, 0.08, 0.14);
+const Color BLUE = Color(0.25, 0.4, 0.85);
+
+local singleton Menu
+{
+    bool options;
+    bool music = true;
+    float volume = 0.7;
+    int played;
+}
+
+// The look the GUI's own widgets have here: rounder, raised, with a border, a shadow and a quick fade
+const GUITheme LOOK = GUITheme {
+    text = INK, panel = Color(0.09, 0.11, 0.19, 0.96), control = Color(0.18, 0.24, 0.42),
+    hot = Color(0.26, 0.34, 0.6), pressed = Color(0.12, 0.16, 0.3), accent = Color(1, 0.75, 0.3),
+    radius = 10, shading = 0.2, borderWidth = 1, border = Color(1, 1, 1, 0.1),
+    textSize = 18, padding = 18, spacing = 10, transition = 0.12 };
+
+// A big button the view draws itself: it lifts as the pointer comes, and sinks as it's pressed
+bool BigButton(Rect rect, string text, Color top, Color bottom)
+{
+    var button = GUI.Control(rect);
+    GUI.Draw()
+    {
+        var lift = button.hover * 3 - button.press * 2;
+        var at = Rect(rect.x, rect.y - lift, rect.width, rect.height);
+        // A shadow that grows as it lifts
+        Draw.Shape(Shape { center = float2(at.x + at.width * 0.5, at.y + at.height * 0.5 + 6 + lift),
+                           size = float2(at.width, at.height), radius = 14, color = Color(0, 0, 0, 0.45),
+                           soft = 10 + lift * 2 });
+        Draw.Rect(at, 14, Gradient.Vertical(Math.Lerp(top, Color.white, button.hover * 0.15), bottom));
+        if (button.focus > 0) Draw.WireRoundRect(float2(at.x + at.width * 0.5, at.y + at.height * 0.5),
+                                                  float2(at.width + 6, at.height + 6), 17, 2,
+                                                  Color(1, 0.75, 0.3, button.focus));
+        Draw.Text(text, float2(at.x + at.width * 0.5, at.y + at.height * 0.5), 22, INK, Anchor.MiddleCenter, Font.Bold);
+    }
+    return button.clicked;
+}
+
+view Background()
+{
+    Draw.SetScreen();
+    Draw.Rect(Rect(0, 0, Screen.width, Screen.height), 0, Gradient.Vertical(Color(0.1, 0.12, 0.24), NAVY));
+    // A soft glow behind the title
+    Draw.Rect(Rect(Screen.width * 0.5 - 220, 20, 440, 200), 100, Gradient.Radial(Color(0.35, 0.45, 1, 0.35), Color.clear));
+    Draw.Text("SKYWARD", float2(Screen.width * 0.5, 120), 56, INK, Anchor.MiddleCenter, Font.Bold);
+}
+
+view MainMenu(mut Menu menu)
+{
+    var middle = Screen.width * 0.5;
+    if (BigButton(Rect(middle - 130, 200, 260, 56), "Play", Color(0.35, 0.55, 1), BLUE)) menu.played++;
+    if (BigButton(Rect(middle - 130, 272, 260, 56), "Options", Color(0.3, 0.33, 0.45), Color(0.18, 0.2, 0.3)))
+        menu.options = !menu.options;
+
+    // The options panel slides in from the right, and out again
+    var shown = GUI.Animate(menu.options ? 1.0 : 0.0, 0.3);
+    if (shown > 0)
+    {
+        GUI.Theme(LOOK)
+        {
+            GUILayout.Area(Rect(Screen.width - 340 * shown, 180, 320, 220))
+            {
+                GUILayout.Label("Options");
+                GUILayout.Toggle("Music", menu.music);
+                GUILayout.Slider("Volume", menu.volume, 0, 1);
+                if (GUILayout.Button("Done")) menu.options = false;
+            }
+        }
+    }
+
+    // A note that fades in each time Play is pressed
+    if (menu.played > 0)
+    {
+        GUI.Key(menu.played)
+        {
+            var fade = GUI.Animate(1, 0.4, 0);
+            GUI.Draw()
+            {
+                Draw.Rect(Rect(middle - 110, 360 + (1 - fade) * 12, 220, 40), 20, Color(0.1, 0.5, 0.3, 0.9 * fade));
+                Draw.Text("Starting...", float2(middle, 380 + (1 - fade) * 12), 18, Color(1, 1, 1, fade), Anchor.MiddleCenter);
+            }
+        }
+    }
+}

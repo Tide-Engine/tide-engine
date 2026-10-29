@@ -10595,7 +10595,10 @@ static void gen_prelude(gen *g)
                  "TIDE_HELPER tide_gui_theme tide_gui_theme_value(const %s t)\n{\n"
                  "    return (tide_gui_theme){.text = t.text, .panel = t.panel, .control = t.control, .hot = t.hot,\n"
                  "                            .pressed = t.pressed, .field = t.field, .field_hot = t.fieldHot,\n"
-                 "                            .accent = t.accent, .radius = t.radius};\n}\n\n"
+                 "                            .accent = t.accent, .radius = t.radius, .border = t.border,\n"
+                 "                            .border_width = t.borderWidth, .shading = t.shading, .shadow = t.shadow,\n"
+                 "                            .shadow_size = t.shadowSize, .transition = t.transition,\n"
+                 "                            .text_size = t.textSize, .padding = t.padding, .spacing = t.spacing};\n}\n\n"
                  "TIDE_HELPER void tide_gui_set_theme_value(tide_gui *g, const %s t)\n{\n"
                  "    tide_gui_set_theme(g, tide_gui_theme_value(t));\n}\n\n"
                  "TIDE_HELPER int tide_gui_begin_theme_value(tide_gui *g, const %s t)\n{\n"
@@ -10605,7 +10608,8 @@ static void gen_prelude(gen *g)
                  "TIDE_HELPER %s tide_gui_control_value(tide_gui *g, const uint32_t id, const tide_rect rect)\n{\n"
                  "    const tide_control c = tide_gui_control(g, id, rect);\n"
                  "    return (%s){.hovered = c.hovered, .pressed = c.pressed, .focused = c.focused, .clicked = c.clicked,\n"
-                 "                .down = c.down, .up = c.up, .cancelled = c.cancelled, .position = c.position};\n"
+                 "                .down = c.down, .up = c.up, .cancelled = c.cancelled, .position = c.position,\n"
+                 "                .hover = c.hover, .press = c.press, .focus = c.focus};\n"
                  "}\n\n",
               control, control);
 
@@ -19807,6 +19811,8 @@ static void gen_api(gen *g)
               "                const tide_world *verified_previous, float verified_alpha,\n"
               "                tide_local *local, tide_draw_list *draw, tide_gui *gui)\n{\n");
     sb_put(o, "    (void)previous;\n    (void)alpha;\n    (void)verified;\n    (void)verified_previous;\n    (void)verified_alpha;\n");
+    // What the GUI's animations move by: the frame's length (tide_local_frame_time)
+    sb_put(o, "    if (gui) gui->seconds = local->tide_frame_seconds;\n");
     if (program_workers(prog)) sb_put(o, "    local->tide_worker_jobs = gui->jobs;\n    tide_workers_frame(&local->tide_workers, gui->worker_limits, gui->profile);\n");
     // Shards.Owns in views: what the world they draw owns
     if (sharded(g)) {
