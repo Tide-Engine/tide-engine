@@ -1,5 +1,18 @@
 # Benchmarks
 
+## Render3D keeps its fixed shadow workload (2026-10-29)
+
+`bench/render3d/game.tide` explicitly selects `shadowCascades = 0` as Render3D
+adopts camera-fitted cascades by default. The harness keeps its fixed
+orthographic color camera, directional shadow volume and one/six/eight-view
+cases, rather than changing the amount of shadow geometry submitted with the
+package default. It still uses the current production shaders. Frozen sources
+and measurements in `bench/results/` remain unchanged; no new timing or
+cross-version pixel-equivalence result is claimed. Native Vulkan/OpenGL and web
+WebGL/WebGPU benchmark quick checks pass (two CTests per configuration). The
+historical paired runner's exact source gate remains unchanged and rejects the
+new source line; it is not evidence for comparing these shader versions.
+
 ## Churn's costs, and a fill rule that lost (2026-10-29)
 
 A profile of `versus_churn` (2,000 bullets a tick, ~200k alive, one thread)

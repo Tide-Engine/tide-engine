@@ -241,12 +241,14 @@ skip-draw behavior.
 | `shadows` | `true` | Enable shadow casting and sampling |
 | `maxShadowMaps` | `8` | Shadow-view budget, clamped to 0–16 |
 | `shadowResolution` | `1024` | Requested atlas cell size in pixels, including gutters |
-| `shadowCenter` | `float3(0)` | World-space center of directional shadow volumes |
-| `shadowExtent` | `10` | Half-width and half-height of directional shadow volumes, in world units |
-| `shadowDistance` | `40` | Depth of directional shadow volumes, in world units |
+| `shadowCascades` | `4` | Camera-fitted directional cascade count, clamped to 0–4; 0 selects a fixed volume |
+| `shadowRange` | `40` | Farthest camera-forward distance receiving cascaded shadows, limited by `camera.far` |
+| `shadowCenter` | `float3(0)` | World-space center of fixed directional volumes; used when `shadowCascades = 0` |
+| `shadowExtent` | `10` | Half-width and half-height of fixed directional volumes, in world units |
+| `shadowDistance` | `40` | Cascade caster reach toward the light, or fixed-volume total depth, in world units |
 | `shadowNear` | `0.05` | Point/spot shadow near plane, in world units; at least 0.001 |
-| `shadowBias` | `0.0005` | Constant offset in normalized comparison depth |
-| `shadowSlopeBias` | `0.002` | Additional normalized depth offset as the surface turns away from the light |
+| `shadowBias` | `0.0005` | Constant normalized depth offset, scaled for each cascade's texel size and depth span |
+| `shadowSlopeBias` | `0.002` | Additional offset as the surface turns away from the light, scaled the same way |
 
 The package retains its window-sized `Format.Rgba16f` scene target and depth atlas in `Renderer`, resizing as needed. The depth resource ID survives atlas resizing. Setting `enabled = false` before preparation disposes them; re-enabling recreates them. `Render3D.Dispose(renderer)` also releases them explicitly; an enabled renderer recreates them on its next preparation. An enabled renderer still presents its background when there is no match.
 
@@ -274,9 +276,17 @@ Each frame, the renderer keeps up to `maxLights` lights in descending `priority`
 
 ## Shadows
 
-Shadow allocation follows the retained light order. A directional or spot light uses one atlas cell; a point light needs six contiguous cells, allocated together or not at all. A shadow request that cannot fit in `maxShadowMaps` still illuminates without shadows; later requests can use the remaining cells. Point/spot lights whose range does not exceed the effective shadow near plane also illuminate without shadows. `Renderer.unshadowedLights` counts retained lights requesting shadows that receive none, including when shadows are globally disabled.
+Directional lights follow the camera by default. `shadowCascades = 4` divides the visible depth range into four overlapping slices, with finer shadow detail near the camera. `shadowRange = 40` is the farthest camera-forward distance receiving these shadows, limited by `camera.far`. Set it to the distance your game needs: a smaller range gives the same texture resolution to a smaller part of the scene.
 
-Directional shadow volumes are orthographic and share `shadowCenter`, `shadowExtent` and `shadowDistance`. They do not follow the camera automatically. Move `shadowCenter` with the area that needs shadows. Spot shadow volumes follow their cone; point shadows cover six faces. Surfaces outside a shadow view are unshadowed by that view. The global biases are comparison-depth offsets, not world distances; too little can produce self-shadowing, while too much separates shadows from their casters.
+Each cascade fits a stable sphere around its frustum slice and snaps its light-space placement to the shadow texel grid. Splits combine evenly spaced and logarithmic distances. Shadows blend over the last 10% of each slice; the last cascade fades to fully lit at `shadowRange`. `shadowDistance` extends the casting volume toward the light, allowing off-camera geometry within that reach to shadow visible surfaces. This is a caster reach, separate from the camera's shadow range.
+
+Set `shadowCascades = 0` when you need a single fixed directional volume. Its orthographic box uses `shadowCenter`, `shadowExtent` and `shadowDistance` as its center, half-width/half-height and total depth. Move `shadowCenter` yourself in this mode. Values 1–4 select that many camera-fitted cascades; `shadowCenter` and `shadowExtent` are unused. Spot shadow volumes follow their cone; point shadows cover six faces. Surfaces outside a shadow view are unshadowed by that view.
+
+Shadow allocation follows the retained light order. A directional light needs one atlas cell per cascade, or one cell in fixed mode; a spot needs one and a point needs six. Each light's cells are contiguous and allocated together or not at all. A shadow request that cannot fit in `maxShadowMaps` still illuminates without shadows; later requests can use the remaining cells. For example, a four-cascade directional light and a shadowed point light require a budget of at least ten views. Point/spot lights whose range does not exceed the effective shadow near plane also illuminate without shadows. `Renderer.unshadowedLights` counts retained lights requesting shadows that receive none, including when shadows are globally disabled.
+
+Shadow edges use a normalized 3×3 tent filter reconstructed with four bilinear depth comparisons. The sampling weights follow the fractional texel position, without random jitter. The biases are normalized comparison-depth offsets, not world distances. Cascades scale them for their world-space texel size and depth span; fixed, point and spot views apply the values directly. Too little bias can produce self-shadowing, while too much separates shadows from their casters.
+
+Vulkan devices whose depth format does not support linear comparison filtering retain the backend's nearest-comparison fallback, with reduced edge quality.
 
 The atlas uses the smallest square grid that fits the allocated views. Each cell has a two-pixel gutter on every edge, so its usable interior is `cellSize - 4` pixels per side. `shadowResolution` clamps to 16 through `floor(2048 / gridSize)`; the atlas never exceeds 2048 pixels per side. `Renderer.activeShadowResolution` reports the actual cell size, including gutters; `Renderer.atlasSize` reports the atlas side length. For example, eight views use a 3×3 grid: a request of 1024 yields 682-pixel cells in a 2046-pixel atlas.
 
@@ -426,4 +436,4 @@ Lighting uses a metallic-roughness BRDF with GGX specular, Smith visibility, Sch
 
 Base-map sampling currently filters display-space texels **before** decoding them to linear light. This can produce different edges and mip colors from linear-light filtering; automatic hardware sRGB sampling is not part of this slice. On devices unable to render into float targets, the engine's existing [RGBA8 fallback](../game/render-targets.md#what-a-target-holds) clips HDR values before tone mapping.
 
-The current path draws static and skinned mesh assets. It has no `LightMode`, baked or area lights, cascades, environment specular, GI, probes or light baker. Model texture and metallic/roughness import is not automatic: declare and bind the maps explicitly. Height is UV parallax and transparency is sorted alpha blending, subject to the limits above.
+The current path draws static and skinned mesh assets. It has no `LightMode`, baked or area lights, environment specular, GI, probes or light baker. Model texture and metallic/roughness import is not automatic: declare and bind the maps explicitly. Height is UV parallax and transparency is sorted alpha blending, subject to the limits above.

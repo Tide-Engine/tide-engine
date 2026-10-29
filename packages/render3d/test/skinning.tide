@@ -106,6 +106,7 @@ view ConfigureSkinning(mut Render3D.Renderer renderer, mut SkinningProbe probe)
     };
     renderer.shadowResolution = 256;
     renderer.shadowExtent = 4;
+    renderer.shadowCascades = 0;
     renderer.shadowDistance = 20;
     renderer.shadowCenter = float3(0, 0, 0.5);
     renderer.shadowBias = 0;

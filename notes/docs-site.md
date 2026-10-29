@@ -47,6 +47,24 @@ did not overlap these checks. Existing unstaged game artifacts remain absent
 from this checkout's site build; its pre-existing playable-page 404
 diagnostics do not affect the benchmark page or these checks.
 
+## Render3D camera-fitted shadow examples (2026-10-29)
+
+The Render3D guide and package README now document camera-fitted directional
+cascades, the separate camera shadow range and upstream caster reach, fixed
+volume opt-in, atomic per-light view budgets and normalized tent filtering.
+The former unbuilt-cascades limitation is removed. The package's implementation,
+regressions and integration validation are recorded in `notes/render3d.md`.
+
+The three Render3D examples use their existing camera/exhibit geometry to set
+the shadow range. The base example covers its camera distance plus eight world
+units; the materials and effects examples cover the active exhibit's actual
+camera-forward depth, its bounding radius and four units of receiver margin.
+This keeps shadows within reach when zoomed out in narrow embeds while assigning
+more detail to close views. Obsolete fixed center/extent assignments are removed.
+Camera controls, framing, source textures, material cutoffs and stats placement
+are unchanged. Build and browser results belong with the accompanying Render3D
+integration validation; no separate validation run is claimed by this docs edit.
+
 ## Material-inspired GUI example (2026-10-29)
 
 The owner requested a different look for the gui-style menu based on Material
