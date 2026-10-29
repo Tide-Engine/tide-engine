@@ -1,5 +1,24 @@
 # Benchmarks
 
+## Churn's costs, and a fill rule that lost (2026-10-29)
+
+A profile of `versus_churn` (2,000 bullets a tick, ~200k alive, one thread)
+splits Tide's time roughly: the Fly row loop and its runs about a third,
+entity-table location writes and lookups about a sixth, hole settling and
+table bookkeeping about a sixth, and the spawn path itself (queue push, row
+writes, entity creation) about a tenth. Batching spawns as events are batched
+would save at most that tenth, so it wasn't built. Tide's churn tick is
+0.33-0.40 ms against hand-written C's 0.20; Bevy's measured 0.25-0.58 across the
+day's batches.
+
+Rejected, reverted: filling arrivals into holes of chunks a system wrote this
+tick (deterministic: flagged as a system begins a chunk's lanes, cleared at
+settle) before the last chunk. Five alternating rounds against `dev` at
+c3cee6b49: churn +8.8%/+8.9% on 1/4 threads, +23.9% with a kept snapshot;
+`versus_sleep` with a moving tag +3.3%/+1.7%/+5.5% at 10/100/1,000 toggles.
+Spawns scattered across chunks cost more in random writes than the row moves
+they saved, and this tick's destroys still leave the Fly loop fragmented.
+
 ## The day's changes against Bevy and this morning (2026-10-29)
 
 After tags became moving by default (notes/ecs.md, Tags move entities by
