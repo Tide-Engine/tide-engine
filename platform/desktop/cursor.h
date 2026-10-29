@@ -2,11 +2,11 @@
 
 // When a desktop window holds the cursor (see tide_window_cursor_lock in
 // src/window.h). It's apart from glfw.c, and has nothing of the window's, so
-// it's checked without one (tests/cursor_rules.c): a test's window, hidden,
-// never has the focus, so it never holds the cursor.
+// it's checked without one (tests/cursor_rules.c). A hidden window must never
+// hold the cursor, even if it reports focus.
 //
 // - The game asks, every frame it wants the cursor, and only a window with the
-//   focus holds it.
+//   focus and is visible holds it. Hidden/quiet runs never hold it.
 // - Escape gives the cursor back to the player while the game still asks, as a
 //   browser does. The player's next click on the window, or press of another
 //   key, takes it again. Escape never does.
@@ -40,7 +40,7 @@ static inline void tide_cursor_click(tide_cursor *cursor)
 }
 
 // Whether the window holds the cursor now.
-static inline bool tide_cursor_held(const tide_cursor *cursor, const bool focused)
+static inline bool tide_cursor_held(const tide_cursor *cursor, const bool focused, const bool visible)
 {
-    return cursor->wanted && !cursor->let_go && focused;
+    return cursor->wanted && !cursor->let_go && focused && visible;
 }

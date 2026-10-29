@@ -784,8 +784,8 @@ if(NOT TIDE_WEB AND NOT TIDE_ANDROID)
         add_test(NAME tide_platform_moltenvk COMMAND tide_platform_moltenvk)
     endif()
 
-    # The cursor's lock on desktop: only a window with the focus holds it, and
-    # a test's window, hidden, never has it. It needs a desktop session, as
+    # The cursor's lock on desktop: hidden windows never hold it, regardless
+    # of focus. It needs a desktop session, as
     # tide_platform_draw does.
     add_executable(tide_platform_cursor tests/cursor.c)
     target_link_libraries(tide_platform_cursor PRIVATE tide_platform)
