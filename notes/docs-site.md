@@ -31,6 +31,70 @@ Production docs build passes with Node 24.22.1 and the existing allowed
 unstaged-example 404s. Native and WebGPU captures were visually inspected.
 Other operating systems and real-phone testing remain unavailable locally.
 
+## Public ECS benchmark page (2026-10-29)
+
+`/benchmarks` is an ordinary prerendered docs page, linked from the home page
+and Get started sidebar. `src/lib/components/Benchmarks.svelte` presents a
+zero-origin workload chart and the complete report table, with medians and
+the min/max of process medians. The comparison is scoped to ECS updates;
+setup, hashing, snapshots, networking and rendering are excluded. Static
+frozen membership and EnTT's explicit dispatch are stated rather than
+presented as equivalent engine services. There is no aggregate score.
+
+`src/lib/data/benchmarks.json` is the site's presentation snapshot, schema 1:
+repository URL plus independent reports, each with date/hardware, exact Tide
+and benchmark revisions, raw-result path, iteration counts, implementations,
+workloads, medians/ranges and measurement notes. Benchmark source, runner and
+raw evidence belong to the independent public `Tide-Engine/tide-benchmarks`
+repository. Reports link source/result revisions; different runs are not
+pooled. The default report compares Tide, Bevy 0.20.0, Flecs 4.1.6 and EnTT
+4.0.0 in six serial workloads, using 96 accepted processes (four cyclic
+rounds, 200 warmup and 400 measured ticks each). The raw evidence retains one
+excluded contended attempt, 75 correctness cases across four native ECS
+implementations/C reference/Tide WASI, and 26 passing harness tests. The
+initial Tide/Bevy batch remains selectable and retains its tied 50%-frozen
+four-thread result and overlapping/noisy churn observations. Both reports
+pin benchmark archive revision `810437c0df4cf01b925ea6a6c403eb78925d641c`;
+the fresh report's manifest records its pre-measurement source commit too.
+
+`src/lib/benchmarks.ts` validates finite positive timings, ordered ranges,
+complete engine coverage and report metadata at build time. The content
+pipeline replaces the interactive marker with tables in Markdown/LLM/skill
+exports, so exported numbers and source links match the website and changes
+to the dataset participate in the documentation fingerprint. No chart or
+other package dependency was added. Native selects, text values, table
+headers and a focusable horizontal scroll region support keyboard use and
+small screens; the initial report's entire table is server-rendered.
+
+Validation: Svelte check has zero errors/warnings. After merging current
+`dev`, the final docs production build and development/isolated-production
+Markdown exports plus SEO/HTTP tests pass (5 tests). A temporary ignored
+browser check used muted headless Chrome and verified switching between both
+reports, all four engine rows/columns, workload selection, 390px page fit,
+keyboard table scrolling and zero browser runtime errors. Desktop light/dark,
+the complete four-engine table and mobile screenshots were inspected. Owned
+browsers and local servers were closed after validation; benchmark timing
+did not overlap these checks. Existing unstaged game artifacts remain absent
+from this checkout's site build; its pre-existing playable-page 404
+diagnostics do not affect the benchmark page or these checks.
+
+## Render3D camera-fitted shadow examples (2026-10-29)
+
+The Render3D guide and package README now document camera-fitted directional
+cascades, the separate camera shadow range and upstream caster reach, fixed
+volume opt-in, atomic per-light view budgets and normalized tent filtering.
+The former unbuilt-cascades limitation is removed. The package's implementation,
+regressions and integration validation are recorded in `notes/render3d.md`.
+
+The three Render3D examples use their existing camera/exhibit geometry to set
+the shadow range. The base example covers its camera distance plus eight world
+units; the materials and effects examples cover the active exhibit's actual
+camera-forward depth, its bounding radius and four units of receiver margin.
+This keeps shadows within reach when zoomed out in narrow embeds while assigning
+more detail to close views. Obsolete fixed center/extent assignments are removed.
+Camera controls, framing, source textures, material cutoffs and stats placement
+are unchanged. Build and browser results belong with the accompanying Render3D
+integration validation; no separate validation run is claimed by this docs edit.
 
 ## Material-inspired GUI example (2026-10-29)
 

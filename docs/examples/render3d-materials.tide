@@ -239,8 +239,8 @@ view Camera(mut Render3D.Renderer renderer, mut Controls controls, Devices devic
     renderer.background = Color(0.086, 0.086, 0.094);
     renderer.ambientIrradiance = float3(controls.ambient);
     renderer.shadows = controls.shadows;
-    renderer.shadowCenter = float3(0, 0.5, 0);
-    renderer.shadowExtent = 10;
+    // Spend shadow detail on the active exhibit, including its ground shadow.
+    renderer.shadowRange = Math.Dot(center - eye, -outward) + Math.Length(half) + 4;
 }
 
 [After(Render3D.Stages.Present)]

@@ -36,6 +36,8 @@ features:
     details: One tide command, with clang built in. Write a .tide file and run tide run. Editor support for VS Code and JetBrains IDEs.
 ---
 
+Explore the [ECS benchmarks](./benchmarks) for measured workloads, implementation details and source you can run yourself.
+
 ## A whole game
 
 A game is a folder of `.tide` files, and needs no other code. This one bounces a ball:

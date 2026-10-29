@@ -136,6 +136,7 @@ view ConfigureMaterialPixels(mut Render3D.Renderer renderer, mut MaterialPixelPr
     renderer.ambientIrradiance = fixture.scenario == 5 ? float3(0, 0, Math.PI) : float3(0);
     renderer.shadowResolution = 256;
     renderer.shadowExtent = 8;
+    renderer.shadowCascades = 0;
     renderer.shadowDistance = 24;
     renderer.shadowCenter = float3(0, 0, 0.5);
     renderer.shadowBias = 0.003;

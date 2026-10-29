@@ -197,8 +197,12 @@ frag Lit(MeshVertex vertex, out Color color, Instance instance, Material materia
             int face = light.kind == LightKind.Point ? PointFace(this.world - light.position) : 0;
             float facing = Math.Saturate(Math.Dot(input.normal, toward));
             float bias = Math.Max(renderer.shadowBias, 0) + Math.Max(renderer.shadowSlopeBias, 0) * (1 - facing);
-            visibility = ShadowVisibility(renderer.shadow, renderer.shadowViews[light.shadowIndex + face], this.world, bias, renderer.shadowTexel,
-                                          light.kind == LightKind.Point);
+            if (light.cascadeCount > 0)
+                visibility = DirectionalVisibility(renderer.shadow, renderer.shadowViews, light, this.world,
+                    Math.Dot(this.world - renderer.eye, renderer.shadowForward), bias, renderer.shadowTexel);
+            else
+                visibility = ShadowVisibility(renderer.shadow, renderer.shadowViews[light.shadowIndex + face], this.world, bias, renderer.shadowTexel,
+                                              light.kind == LightKind.Point);
         }
         radiance += EvaluateDirectPbr(result, viewDirection, toward, light.intensity * attenuation, visibility);
     }

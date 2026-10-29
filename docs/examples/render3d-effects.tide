@@ -194,8 +194,8 @@ view Camera(mut Render3D.Renderer renderer, mut Controls controls, Devices devic
     renderer.background = Color(0.086, 0.086, 0.094);
     renderer.ambientIrradiance = float3(0.3);
     renderer.shadows = true;
-    renderer.shadowCenter = float3(0, 0.5, 0);
-    renderer.shadowExtent = 10;
+    // Include the deformed exhibit and its ground shadow at every zoom distance.
+    renderer.shadowRange = Math.Dot(center - eye, -outward) + Math.Length(half) + 4;
 }
 
 [After(Render3D.Stages.Present)]
