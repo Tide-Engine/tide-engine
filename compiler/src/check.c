@@ -9265,7 +9265,7 @@ static type check_member(checker *c, expr *e)
         return type_asset_reference_value(obj.decl);
     }
 
-    if (obj.kind == TY_TEXTURE) {
+    if (obj.kind == TY_TEXTURE || obj.kind == TY_DEPTH_TEXTURE) {
         if (str_eq_c(e->member, "size")) {
             e->object->raw_sampled = true; // Metadata does not read or expose Raw pixels.
             c->prog->uses_texture_size = true;
@@ -9276,8 +9276,9 @@ static type check_member(checker *c, expr *e)
             }
             return (type){TY_INT2, NULL};
         }
-        diag_error(e->at, "a Texture has 'size', its int2 pixel dimensions, not '" STR_FMT "'", STR_ARG(e->member));
-        diag_note("Sample(uv[, filter[, wrap]]) reads its pixels on the GPU");
+        diag_error(e->at, "a %s has 'size', its int2 pixel dimensions, not '" STR_FMT "'", type_name(obj), STR_ARG(e->member));
+        diag_note(obj.kind == TY_DEPTH_TEXTURE ? "Sample(uv) and Compare(uv, value) read its depth on the GPU"
+                                               : "Sample(uv[, filter[, wrap]]) reads its pixels on the GPU");
         return T_ERR;
     }
     if (obj.kind == TY_RENDER_TARGET) {
@@ -11401,8 +11402,11 @@ static bool check_writable(checker *c, expr *target, const decl *called, const p
             diag_note("copy the touch into a 'mut var' to change it");
             return false;
         }
-        if (part->kind == E_MEMBER && part->object->type.kind == TY_TEXTURE && str_eq_c(part->member, "size")) {
-            diag_error(target->at, "a Texture's size is read-only: resize its RenderTarget or change its source grid instead");
+        if (part->kind == E_MEMBER && (part->object->type.kind == TY_TEXTURE || part->object->type.kind == TY_DEPTH_TEXTURE)
+            && str_eq_c(part->member, "size")) {
+            diag_error(target->at, part->object->type.kind == TY_DEPTH_TEXTURE
+                ? "a DepthTexture's size is read-only: resize its RenderTarget instead"
+                : "a Texture's size is read-only: resize its RenderTarget or change its source grid instead");
             return false;
         }
         // target.color, target.colors[1], target.depth: the target's own images, which a Texture only names
@@ -11828,7 +11832,8 @@ static void settle_grid_loops(program *prog, stmt *s)
 static bool own_cell_only_expr(const expr *e, const stmt *loop)
 {
     if (!e) return true;
-    if (e->kind == E_MEMBER && e->object->type.kind == TY_TEXTURE && str_eq_c(e->member, "size")) return false;
+    if (e->kind == E_MEMBER && (e->object->type.kind == TY_TEXTURE || e->object->type.kind == TY_DEPTH_TEXTURE)
+        && str_eq_c(e->member, "size")) return false;
     if (e->io_operation || e->storage_flush || e->web_fetch) return false;
     if (e->resource_operation) return false;
     switch (e->call) {
@@ -12032,7 +12037,8 @@ static void check_step_expr(checker *c, const expr *e)
 {
     if (!e) return;
     const char *what = e->io_operation ? "access the filesystem" : NULL;
-    if (e->kind == E_MEMBER && e->object->type.kind == TY_TEXTURE && str_eq_c(e->member, "size")) what = "read frame image metadata";
+    if (e->kind == E_MEMBER && (e->object->type.kind == TY_TEXTURE || e->object->type.kind == TY_DEPTH_TEXTURE)
+        && str_eq_c(e->member, "size")) what = "read frame image metadata";
     switch (e->call) {
     case CALL_SPAWN: what = "spawn"; break;
     case CALL_ADD: case CALL_REMOVE: case CALL_DESTROY: case CALL_PARENT: what = "add, remove or destroy"; break;

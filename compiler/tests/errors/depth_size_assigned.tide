@@ -1,0 +1,4 @@
+// expect: a DepthTexture's size is read-only
+scene Main { }
+local singleton Art { DepthTexture depth; }
+view Paint(mut Art art) { art.depth.size.x = 3; }

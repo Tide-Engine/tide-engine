@@ -721,6 +721,7 @@ float lit = lamp.shadow.Compare(uv, depth);   // How much of what's stored there
 
 - **`Sample(uv)`** gives the depth as a number: 0 at the camera's near plane, 1 at its far limit, as [`this.depth`](#where-the-pixel-is) is, and 1 where nothing was drawn since the target was cleared. It's the nearest pixel's, with no filter to pick: a depth blended between two pixels would be neither's.
 - **`Compare(uv, value)`** compares what's stored with a number of yours, and gives a number from 0 to 1: 1 where what's stored isn't nearer than `value`, 0 where it is, and in between along an edge, as the GPU compares the pixels around `uv` and blends what that gives. `value` is kept between 0 and 1, so what's past the far limit counts as at it.
+- **`size`** gives the depth image's width and height as an `int2` of physical pixels, on the CPU and GPU. It follows target resize, display scale and the device's size limit; missing or disposed depth gives `int2(0)`. Reading dimensions copies no pixels and uses no texture binding. For pixel-sized shadow offsets, use `float2 texel = 1.0 / float2(lamp.shadow.size)` after checking that the size is nonzero.
 
 `uv` is a color's: (0, 0) is the target's top left corner. Past the target's edges, both read the pixels at the edge: a depth takes no `Wrap`. Verts read a depth too. Each way a frag reads one is one of its draw's [12 textures](#what-the-gpu-runs).
 

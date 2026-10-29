@@ -240,7 +240,7 @@ skip-draw behavior.
 | `maxLights` | `32` | Maximum retained lights; negative values act as 0 |
 | `shadows` | `true` | Enable shadow casting and sampling |
 | `maxShadowMaps` | `8` | Shadow-view budget, clamped to 0–16 |
-| `shadowResolution` | `1024` | Requested atlas cell size in pixels, including gutters |
+| `shadowResolution` | `2048` | Requested atlas cell size in pixels, including gutters |
 | `shadowCascades` | `4` | Camera-fitted directional cascade count, clamped to 0–4; 0 selects a fixed volume |
 | `shadowRange` | `40` | Farthest camera-forward distance receiving cascaded shadows, limited by `camera.far` |
 | `shadowCenter` | `float3(0)` | World-space center of fixed directional volumes; used when `shadowCascades = 0` |
@@ -288,7 +288,9 @@ Shadow edges use a normalized 3×3 tent filter reconstructed with four bilinear 
 
 Vulkan devices whose depth format does not support linear comparison filtering retain the backend's nearest-comparison fallback, with reduced edge quality.
 
-The atlas uses the smallest square grid that fits the allocated views. Each cell has a two-pixel gutter on every edge, so its usable interior is `cellSize - 4` pixels per side. `shadowResolution` clamps to 16 through `floor(2048 / gridSize)`; the atlas never exceeds 2048 pixels per side. `Renderer.activeShadowResolution` reports the actual cell size, including gutters; `Renderer.atlasSize` reports the atlas side length. For example, eight views use a 3×3 grid: a request of 1024 yields 682-pixel cells in a 2046-pixel atlas.
+The atlas uses the smallest square grid that fits the allocated views. Each cell has a two-pixel gutter on every edge, so its usable interior is `cellSize - 4` pixels per side. The atlas limit is 4096 pixels per side or the device's smaller limit; `shadowResolution` clamps to 16 through `floor(atlasLimit / gridSize)`. `Renderer.activeShadowResolution` reports the actual cell size, including gutters; `Renderer.atlasSize` reports the atlas side length. Gutters, filtering and cascade snapping use the actual dimensions, including on smaller devices.
+
+One default directional light uses four 2048-pixel cells in a 4096-square atlas on devices supporting that size. Eight views use a 3×3 grid: the default request yields 1365-pixel cells in a 4095-pixel atlas. On a device limited to 2048, those cases use 1024- and 682-pixel cells respectively. Set a lower `shadowResolution` to reduce shadow memory and rasterization work; halving the atlas side uses one quarter as many depth texels.
 
 With no allocated shadow views, including `shadows = false`, the renderer retains the atlas size (initially 16×16), clears it to far depth and reports `activeShadowResolution = 0`. The depth resource remains valid for the shader's bound sampler. Disabling shadows skips shadow drawing and sampling; lights and emission still render.
 

@@ -6202,6 +6202,16 @@ TIDE_TEST(lsp_textures_in_functions)
     TIDE_CHECK(has(request("textDocument/hover"), "physical pixels"));
     snprintf(program, sizeof program, "%sview V(Lamp lamp) { lamp.image.$ }\n", types);
     TIDE_CHECK(offers(complete(program), "size"));
+    snprintf(program, sizeof program, "%sint2 Size(DepthTexture depth) { return depth.size; }\nview V(Lamp lamp) { Debug.Log($$\"{Size(lamp.shadow)}\"); }\n", types);
+    open_document(program);
+    TIDE_CHECK(has(last_sent(), "\"diagnostics\":[]"));
+    snprintf(program, sizeof program, "%sview V(Lamp lamp) { var extent = lamp.shadow.si$ze; Debug.Log($$\"{extent}\"); }\n", types);
+    open_document(program);
+    TIDE_CHECK(has(request("textDocument/hover"), "physical pixels"));
+    snprintf(program, sizeof program, "%sview V(Lamp lamp) { lamp.shadow.$ }\n", types);
+    TIDE_CHECK(offers(complete(program), "size"));
+    snprintf(program, sizeof program, "%sview V(Lamp lamp) { lamp.shadow.size.$ }\n", types);
+    TIDE_CHECK(offers(complete(program), "x"));
     snprintf(program, sizeof program, "%sColor Above(Cubemap sky, float3 way)\n{\n    return sky.$\n}\n", types);
     TIDE_CHECK(offers(complete(program), "Sample"));
     snprintf(program, sizeof program, "%sfloat Sunlit(DepthTexture depth, float3 at)\n{\n    float near = depth.Sample(at.xy);\n"

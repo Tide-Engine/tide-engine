@@ -101,6 +101,13 @@ static bool tent_pixels(void)
     return pixels(expected, 1) && pixels(expected, 2);
 }
 
+static tide_int2 limited_pixels(const tide_target_size size)
+{
+    tide_int2 pixels = tide_platform_target_pixels(size);
+    if (pixels.x > 2048) pixels = tide_i2(2048, 2048);
+    return pixels;
+}
+
 static int frame(void *context, const float seconds)
 {
     (void)context;
@@ -109,7 +116,16 @@ static int frame(void *context, const float seconds)
     tide_world_init(&world, 1.0f / 60.0f);
     tide_world_tick(&world);
     tide_local_init(&local);
-    const bool passed = cascade_pixels(1) && cascade_pixels(2) && tent_pixels();
+    draw.target_pixels = tide_platform_target_pixels;
+    const int default_resolution = local.Render3D_Renderer.shadowResolution;
+    bool passed = cascade_pixels(1) && cascade_pixels(2) && tent_pixels();
+    local.ShadowProbe.resolution = default_resolution;
+    passed = passed && cascade_pixels(1) && tent_pixels();
+    const tide_int2 available = tide_platform_target_pixels((tide_target_size){.width = 4096, .height = 4096, .scale = 1});
+    passed = passed && local.Render3D_Renderer.atlasSize == available.x / 2 * 2;
+    draw.target_pixels = limited_pixels;
+    passed = passed && cascade_pixels(2) && tent_pixels();
+    passed = passed && local.Render3D_Renderer.atlasSize <= 2048;
     local.ShadowProbe.disabled = true;
     record();
     tide_draw_free(&draw);
@@ -117,7 +133,7 @@ static int frame(void *context, const float seconds)
     tide_world_free(&world);
     tide_render_targets_free();
     if (!passed) return 1;
-    puts("ok: Render3D cascade selection, overlapping blends, range fade, off-camera caster and normalized monotonic tent edge at 1x/2x");
+    puts("ok: Render3D cascade selection, overlapping blends, range fade, off-camera caster and normalized monotonic tent edge at 1x/2x, default detail and smaller-device fallback");
     return 0;
 }
 

@@ -142,7 +142,7 @@ local singleton Renderer
     int maxLights = 32;
     bool shadows = true;
     int maxShadowMaps = 8; // Cascades and point faces are reserved together.
-    int shadowResolution = 1024; // Requested cell size, including gutters.
+    int shadowResolution = 2048; // Requested cell size, including gutters.
     int shadowCascades = 4; // 1..4 camera-fitted cascades; zero selects a fixed volume.
     float shadowRange = 40; // Camera-forward receiver distance for cascades.
     float3 shadowCenter;
@@ -162,6 +162,7 @@ local singleton Renderer
     float shadowTexel;
     int activeShadowResolution;
     int atlasSize;
+    int shadowAtlasLimit;
     int droppedLights;
     int unshadowedLights;
     bool ready;
@@ -221,6 +222,7 @@ view Prepare(mut Renderer renderer)
         renderer.shadowMap = RenderTarget(16, 16, 1, Format.Depth);
         renderer.shadow = renderer.shadowMap.depth;
         renderer.atlasSize = 16;
+        renderer.shadowAtlasLimit = 4096;
         renderer.ready = true;
     }
     renderer.eye = renderer.camera.position;
@@ -449,14 +451,24 @@ view FinishLights(mut Renderer renderer)
     }
     mut int grid = 1;
     while (grid * grid < renderer.shadowViews.count) grid++;
-    // Portable texture-size baseline: gutters remain real pixels on every backend.
-    int cell = Math.Clamp(renderer.shadowResolution, 16, 2048 / grid);
-    int size = renderer.shadowViews.count > 0 ? cell * grid : renderer.atlasSize;
+    if (renderer.shadowAtlasLimit <= 0) renderer.shadowAtlasLimit = 4096;
+    mut int cell = Math.Clamp(renderer.shadowResolution, 16, renderer.shadowAtlasLimit / grid);
+    mut int size = renderer.shadowViews.count > 0 ? cell * grid : renderer.atlasSize;
     if (renderer.atlasSize != size)
     {
         renderer.shadowMap.Resize(size, size);
-        renderer.atlasSize = size;
     }
+    // Target-size queries need no GPU allocation. Cache a smaller device limit
+    // and align it to whole cells so gutters, filtering and snapping use pixels.
+    int pixels = renderer.shadowMap.depth.size.x;
+    if (pixels > 0 && pixels < size)
+    {
+        renderer.shadowAtlasLimit = pixels;
+        cell = Math.Clamp(renderer.shadowResolution, 16, pixels / grid);
+        size = renderer.shadowViews.count > 0 ? cell * grid : pixels;
+        renderer.shadowMap.Resize(size, size);
+    }
+    renderer.atlasSize = size;
     renderer.activeShadowResolution = renderer.shadowViews.count > 0 ? cell : 0;
     renderer.shadowTexel = 1.0 / size;
     for (var i = 0; i < renderer.shadowViews.count; i++)

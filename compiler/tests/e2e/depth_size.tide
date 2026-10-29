@@ -1,0 +1,58 @@
+scene Main { }
+local singleton Sizes
+{
+    RenderTarget target;
+    DepthTexture depth;
+    DepthTexture colorDepth;
+    DepthTexture missing;
+    DepthTexture window;
+    DepthTexture cube;
+    int2 depthSize;
+    int2 colorSize;
+    int2 missingSize;
+    int2 windowSize;
+    int2 cubeSize;
+    bool checkOrder;
+    int directOrder;
+    int helperOrder;
+    Grid2<int> copies = Grid2(2, 2);
+}
+int2 Size(DepthTexture image) { return image.size; }
+int2 Forward(DepthTexture image) { return Size(image); }
+int ResizeWidth(RenderTarget target) { target.Resize(7, 4); return 0; }
+int First(int value, int other) { return value + other; }
+view Measure(mut Sizes sizes)
+{
+    if (sizes.checkOrder)
+    {
+        sizes.checkOrder = false;
+        var alias = sizes.depth;
+        sizes.directOrder = First(alias.size.x, ResizeWidth(sizes.target));
+        sizes.target.Resize(10, 6);
+        foreach (var at in sizes.copies) sizes.copies[at] = alias.size.x;
+        foreach (var at in sizes.copies) sizes.copies[at] = Forward(alias).x;
+        sizes.helperOrder = First(Forward(alias).x, ResizeWidth(sizes.target));
+        sizes.target.Resize(10, 6);
+    }
+    sizes.depthSize = Forward(sizes.depth);
+    sizes.colorSize = sizes.colorDepth.size;
+    sizes.missingSize = sizes.missing.size;
+    sizes.windowSize = sizes.window.size;
+    sizes.cubeSize = sizes.cube.size;
+}
+vert SizedVertex(mut Vertex vertex, Sizes sizes)
+{
+    vertex.position += float2(Forward(sizes.depth)) * 0.001;
+}
+frag Sized(Vertex vertex, out Color color, Sizes sizes)
+{
+    int2 depth = Forward(sizes.depth);
+    int2 other = Forward(sizes.colorDepth);
+    int2 missing = Forward(sizes.missing);
+    color = Color(float(depth.x + other.x + missing.x), float(depth.y + other.y + missing.y), 0);
+}
+view Paint(Sizes sizes)
+{
+    Draw.Mesh([Vertex { }, Vertex { position = float2(1, 0) }, Vertex { position = float2(0, 1) }], [0, 1, 2],
+              SizedVertex, Sized);
+}

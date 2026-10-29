@@ -1543,6 +1543,7 @@ static int metadata_scale;
 
 static tide_int2 metadata_pixels(const tide_target_size size)
 {
+    if (size.scale > 0 && !(size.window > 0)) return tide_platform_target_pixels(size);
     const float scale = size.scale > 0 ? size.scale : (float)metadata_scale;
     if (size.window > 0) return tide_i2((int32_t)(SIZE * metadata_scale * size.window + 0.5f),
                                        (int32_t)(SIZE * metadata_scale * size.window + 0.5f));
@@ -1552,14 +1553,24 @@ static tide_int2 metadata_pixels(const tide_target_size size)
 static void run_size_checks(const char *when)
 {
     const tide_render_target target = tide_render_target_make_scaled(4, 3, 2);
+    const tide_render_target depth = tide_render_target_make_scaled_as(4, 3, 2, TIDE_TARGET_DEPTH);
+    const int limit = tide_window_gpu()->target_limit();
+    // Metadata alone must clamp an oversized depth image without allocating it.
+    const tide_render_target limited = tide_render_target_make_scaled_as((float)limit * 2, (float)limit, 1, TIDE_TARGET_DEPTH);
     const tide_render_target window = tide_render_target_screen(0.5f);
     local.ImageSizes.kept = tide_render_target_color(target);
     local.ImageSizes.window = tide_render_target_color(window);
+    local.ImageSizes.depth = tide_render_target_depth(depth);
+    local.ImageSizes.colorDepth = tide_render_target_depth(target);
+    local.ImageSizes.limitedDepth = tide_render_target_depth(limited);
+    local.ImageSizes.expectedLimit = tide_i2(limit, (limit + 1) / 2);
     const tide_int2 actual = tide_platform_target_pixels(target.size);
     if (actual.x != 8 || actual.y != 6) { printf("FAIL: platform target size%s\n", when); failures++; }
     for (int step = 0; step < 3; step++) {
         if (step == 1) tide_render_target_resize(target, 7, 4);
         if (step == 2) tide_render_target_dispose(target);
+        if (step == 1) tide_render_target_resize(depth, 7, 4);
+        if (step == 2) tide_render_target_dispose(depth);
         local.ImageSizes.expected = step == 0 ? tide_i2(8, 6) : step == 1 ? tide_i2(14, 8) : tide_i2(0, 0);
         for (metadata_scale = 1; metadata_scale <= 2; metadata_scale++) {
             local.ImageSizes.expectedWindow = tide_i2(SIZE * metadata_scale / 2, SIZE * metadata_scale / 2);
@@ -1582,6 +1593,7 @@ static void run_size_checks(const char *when)
         }
     }
     tide_render_target_dispose(window);
+    tide_render_target_dispose(limited);
 }
 
 // Every shader of the game's made before anything draws with it (tide_platform_prewarm), as a host has them made

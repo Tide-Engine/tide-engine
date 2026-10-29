@@ -1,5 +1,41 @@
 # Render3D package
 
+## Higher initial shadow detail (2026-10-29)
+
+The owner approved a higher default resolution after inspecting the cascaded
+shadows. `shadowResolution` now defaults to 2048 and the atlas cap is 4096, so
+one default four-cascade directional uses four 2048-square cells, rather than
+having a higher request silently reduced by the former 2048 atlas cap. The
+default atlas has four times the depth texels; filter tap counts are unchanged.
+Explicit lower resolutions remain supported.
+
+The existing texture-size query is completed for `DepthTexture` (contracts and
+tests in textures.md). After requesting an atlas size, Render3D reads its physical
+dimensions without allocating a GPU image. If the device clamps it, the package
+caches that smaller limit in derived `shadowAtlasLimit`, realigns to whole cells
+and resizes to the physical dimensions before drawing. Gutters, filter phase,
+point-face edge clamps, bias and cascade snapping therefore keep real texels.
+The cached limit resets when renderer resources are recreated; a lower device
+limit discovered later is also honored. The standard host supplies the existing
+target-size resolver; custom C hosts must bind `draw.target_pixels` likewise.
+Without that metadata the query reports zero and Render3D retains its request.
+
+CPU coverage pins the default 2048 cells/4096 atlas, a simulated 2048 device,
+actual-pixel gutters and cascade fitting, no repeated resizing after fallback,
+an explicit lower request and three-column rounding. GPU witnesses exercise
+the default and a simulated smaller device with the existing independent
+cascade and tent-filter oracles. All 31 focused native CTests pass (the complete
+Render3D package, texture/depth metadata and diagnostics, and platform shader
+pixels on Vulkan/OpenGL). Another 23 depth diagnostics/SPIR-V/HLSL checks and
+the targeted LSP completion/hover check pass. All 38 corresponding web CTests
+pass, including WASI CPU tests and WebGL, ANGLE D3D11 and WebGPU pixels.
+The production docs build passes;
+unstaged example routes still produce its existing prerender 404 notices.
+The native materials demo rebuilt and its scripted close-up capture was inspected
+at the new default. Actual minimum-capability mobile hardware, other native OSes
+and Unity execution remain unavailable locally; the smaller-device path is
+covered by a simulated resolver on the tested backends.
+
 ## Camera-fitted cascades and stable shadow filtering (2026-10-29)
 
 The owner requested improving the official renderer after the materials example

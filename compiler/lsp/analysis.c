@@ -3792,7 +3792,8 @@ static void describe(const occurrence *o, sb *out)
             sb_put(out, "\n\n" DEVICE_ARRAY_COUNT_DOC);
         }
         if (o->object_type.kind == TY_GRID && str_eq_c(o->name, "size")) sb_put(out, "\n\n" GRID_SIZE_FIELD_DOC);
-        if (o->object_type.kind == TY_TEXTURE && str_eq_c(o->name, "size")) sb_put(out, "\n\n" TEXTURE_SIZE_DOC);
+        if ((o->object_type.kind == TY_TEXTURE || o->object_type.kind == TY_DEPTH_TEXTURE) && str_eq_c(o->name, "size"))
+            sb_put(out, "\n\n" TEXTURE_SIZE_DOC);
         break;
     case OCC_ATTRIBUTE: {
         static const struct {
@@ -6734,7 +6735,7 @@ static type member_type(const type t, const str member)
         return (type){TY_FLOAT, NULL};
     }
     if (t.kind == TY_STRING && str_eq_c(member, "length")) return (type){TY_INT, NULL};
-    if (t.kind == TY_TEXTURE && str_eq_c(member, "size")) return (type){TY_INT2, NULL};
+    if ((t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE) && str_eq_c(member, "size")) return (type){TY_INT2, NULL};
     if ((t.kind == TY_LIST || t.kind == TY_MAP || t.kind == TY_SET) && str_eq_c(member, "count")) return (type){TY_INT, NULL};
     if (t.kind == TY_RECORD && t.decl->array_of && str_eq_c(member, "count")) return (type){TY_INT, NULL};
     if (t.kind == TY_ARRAY && str_eq_c(member, "count")) return (type){TY_INT, NULL};
@@ -6869,7 +6870,7 @@ static void list_members(completion *c, const type t, const bool edges, const sc
         item(c, "isCancelled", CK_PROPERTY, "bool", "True after cancellation, or for a default or stale handle.", NULL);
         return;
     }
-    if (t.kind == TY_TEXTURE) item(c, "size", CK_PROPERTY, "int2", TEXTURE_SIZE_DOC, NULL);
+    if (t.kind == TY_TEXTURE || t.kind == TY_DEPTH_TEXTURE) item(c, "size", CK_PROPERTY, "int2", TEXTURE_SIZE_DOC, NULL);
     if (t.kind == TY_STRUCT && t.decl && t.decl->asset_ref_of) {
         item(c, "Value", CK_PROPERTY, type_name(type_asset_reference_value(t.decl)),
              "The currently loaded mesh. Empty references read an empty mesh; assign a named asset to change the reference.", NULL);

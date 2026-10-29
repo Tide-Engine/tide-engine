@@ -2720,7 +2720,7 @@ static void ex_texture_size(emit *em, const expr *e);
 
 static void ex_member(emit *em, const expr *e)
 {
-    if (e->object->type.kind == TY_TEXTURE && str_eq_c(e->member, "size")) {
+    if ((e->object->type.kind == TY_TEXTURE || e->object->type.kind == TY_DEPTH_TEXTURE) && str_eq_c(e->member, "size")) {
         ex_texture_size(em, e);
         return;
     }

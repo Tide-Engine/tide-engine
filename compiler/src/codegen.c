@@ -3944,9 +3944,12 @@ static void gen_expr(gen *g, sb *o, const expr *e)
             gen_expr(g, o, e->object);
             break;
         }
-        if (e->object->type.kind == TY_TEXTURE && str_eq_c(e->member, "size")) {
+        if ((e->object->type.kind == TY_TEXTURE || e->object->type.kind == TY_DEPTH_TEXTURE) && str_eq_c(e->member, "size")) {
             sb_put(o, "tide_texture_size(");
+            if (e->object->type.kind == TY_DEPTH_TEXTURE)
+                sb_put(o, "(tide_texture_ref){.image.height = TIDE_TEXTURE_DEPTH, .target = (");
             gen_expr(g, o, e->object);
+            if (e->object->type.kind == TY_DEPTH_TEXTURE) sb_put(o, ").target}");
             sb_put(o, ")");
             break;
         }
@@ -5955,7 +5958,7 @@ static void collect_ordered(expr *e, ordering *out, const bool later)
         }
         const int had = out->items.count;
         collect_ordered(e->object, out, later);
-        if (e->object->type.kind == TY_TEXTURE && str_eq_c(e->member, "size")) {
+        if ((e->object->type.kind == TY_TEXTURE || e->object->type.kind == TY_DEPTH_TEXTURE) && str_eq_c(e->member, "size")) {
             const ordered_item item = {e, false, false};
             vec_push(out->items, item);
         }
@@ -22812,6 +22815,11 @@ static void gen_shaders(gen *g)
             if (source_type.kind == TY_GRID) {
                 sb converted = {0};
                 sb_printf(&converted, "tide_texture_of_grid(%s, &%s, 0u)", from.data, grid_shape_name(source_type.decl));
+                from = converted;
+            }
+            if (source_type.kind == TY_DEPTH_TEXTURE) {
+                sb converted = {0};
+                sb_printf(&converted, "(tide_texture_ref){.image.height = TIDE_TEXTURE_DEPTH, .target = (%s).target}", from.data);
                 from = converted;
             }
             sb_printf(o, "    const tide_int2 tide_size%d = tide_texture_size(%s);\n"

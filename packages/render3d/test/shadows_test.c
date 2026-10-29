@@ -37,6 +37,7 @@ static bool start_light(const int scenario, const tide_float3 direction)
     tide_world_tick(&world);
     tide_local_init(&local);
     TIDE_CHECK(local.Render3D_Renderer.shadowCascades == 4);
+    TIDE_CHECK(local.Render3D_Renderer.shadowResolution == 2048);
     return true;
 }
 
@@ -218,6 +219,54 @@ TIDE_TEST(render3d_cascade_projection_stays_stable_under_rotation_and_subtexel_m
     finish();
 }
 
+static tide_int2 limited_pixels(const tide_target_size size)
+{
+    const int side = size.width < 2048 ? (int)size.width : 2048;
+    return tide_i2(side, side);
+}
+
+TIDE_TEST(render3d_default_shadow_detail_respects_device_limits)
+{
+    TIDE_REQUIRE(start(0));
+    local.ShadowProbe.resolution = local.Render3D_Renderer.shadowResolution;
+    frame(320, 200);
+    TIDE_CHECK(local.Render3D_Renderer.activeShadowResolution == 2048);
+    TIDE_CHECK(local.Render3D_Renderer.atlasSize == 4096);
+    near_value(local.Render3D_Renderer.shadowTexel, 1.0 / 4096, 0.000000001);
+    coverage(320, 200);
+
+    // Simulate a smaller device, including a limit change after creation.
+    draw.target_pixels = limited_pixels;
+    frame(320, 200);
+    TIDE_CHECK(local.Render3D_Renderer.activeShadowResolution == 1024);
+    TIDE_CHECK(local.Render3D_Renderer.atlasSize == 2048);
+    near_value(local.Render3D_Renderer.shadowTexel, 1.0 / 2048, 0.000000001);
+    near_value(local.ShadowProbe.views.at[0].uvRect.x * 2048, 2, 0.000001);
+    near_value(local.ShadowProbe.views.at[0].uvRect.z * 2048, 1020, 0.000001);
+    coverage(320, 200);
+    const uint64_t version = tide_render_target_version(local.Render3D_Renderer.shadowMap.id);
+    frame(320, 200);
+    TIDE_CHECK(tide_render_target_version(local.Render3D_Renderer.shadowMap.id) == version);
+
+    local.ShadowProbe.resolution = 256;
+    frame(320, 200);
+    TIDE_CHECK(local.Render3D_Renderer.activeShadowResolution == 256);
+    TIDE_CHECK(local.Render3D_Renderer.atlasSize == 512);
+    finish();
+
+    // Three-column grids must also use whole physical cells on smaller GPUs.
+    TIDE_REQUIRE(start(1));
+    draw.target_pixels = limited_pixels;
+    local.ShadowProbe.resolution = local.Render3D_Renderer.shadowResolution;
+    local.ShadowProbe.budget = 9;
+    frame(320, 200);
+    TIDE_CHECK(local.ShadowProbe.viewCount == 9);
+    TIDE_CHECK(local.Render3D_Renderer.activeShadowResolution == 682);
+    TIDE_CHECK(local.Render3D_Renderer.atlasSize == 2046);
+    near_value(local.ShadowProbe.views.at[1].uvRect.x * 2046, 684, 0.0001);
+    finish();
+}
+
 TIDE_TEST(render3d_shadow_budget_reserves_complete_cascades_and_point_faces)
 {
     TIDE_REQUIRE(start(1));
@@ -239,7 +288,7 @@ TIDE_TEST(render3d_shadow_budget_reserves_complete_cascades_and_point_faces)
             rejected += wanted[row][light] < 0;
         }
         TIDE_CHECK(local.Render3D_Renderer.unshadowedLights == rejected);
-        TIDE_CHECK(local.Render3D_Renderer.atlasSize <= 2048);
+        TIDE_CHECK(local.Render3D_Renderer.atlasSize <= 4096);
     }
     finish();
 }

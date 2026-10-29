@@ -775,6 +775,7 @@ tide_target_pixels_fn tide_texture_target_pixels(tide_target_pixels_fn resolve);
 #define TIDE_TEXTURE_SAMPLING_SHIFT 60u
 #define TIDE_TEXTURE_NAME ((UINT64_C(1) << TIDE_TEXTURE_SAMPLING_SHIFT) - 1u)
 #define TIDE_TEXTURE_GRID (-1) // A grid's reference's `image.height`
+#define TIDE_TEXTURE_DEPTH (-2) // Metadata-only depth reference for tide_texture_size; never sampled as color
 
 static inline uint32_t tide_sampling_bits(const int32_t filter, const int32_t wrap)
 {

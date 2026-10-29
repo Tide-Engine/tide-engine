@@ -1010,6 +1010,11 @@ CPU helper diagnostics, view/helper completion and the member hover. Shared
 compiler checking also supplies empty-map, component-value and payload-helper
 behavior; no editor-specific syntax rule is added.
 
+DepthTexture.size (2026-10-29) uses the same member completion, int2 chaining and
+metadata hover. lsp_textures_in_functions covers its CPU helper and view reads,
+completion and hover alongside ordinary Texture.size. No sampling capability
+was added to CPU views; Sample/Compare keep their existing completion rules.
+
 ## Scene visibility uses ordinary groups (2026-10-15)
 
 Scene completion now offers only Load/Unload. Its load signature/hover explains

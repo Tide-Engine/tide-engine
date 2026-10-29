@@ -532,6 +532,13 @@ notes/verified-and-local-handlers.md.
 
 ## Conventional resource metadata (2026-10-18)
 
+The Render3D resolution follow-up (2026-10-29) completes DepthTexture.size by
+reusing tide_texture_size with a compiler-created TIDE_TEXTURE_DEPTH marker in
+the temporary reference's image.height. No runtime entry point, signature,
+stored resource layout, frame resolver or ownership contract changes. The
+existing temporary draw/mesh maintenance exception applies; details and tests
+are in textures.md, Depth dimensions.
+
 Within the owner's authorized API-completion pass, generated local code now
 calls `tide_texture_size(tide_texture_ref)` and borrows/restores a frame resolver
 through `tide_texture_target_pixels(tide_target_pixels_fn)`. Both live in the

@@ -474,6 +474,14 @@ in notes/language.md with the full suites.
 
 ## Texture-size metadata and payload values (2026-10-18)
 
+DepthTexture.size joins this metadata path (2026-10-29), for component/singleton
+fields and helper parameters, on CPU and GPU. Its READ_SIZE sources remain
+uniform-only; generated captures use tide_texture_size's TIDE_TEXTURE_DEPTH
+marker and the existing frame target resolver. Depth comparisons/sampling and
+their binding types are unchanged. The depth_size E2E fixture and platform pass
+23 cover distinct depth-only/color-target sources and the device's size clamp.
+Contracts and validation ownership are recorded in textures.md, Depth dimensions.
+
 Texture.size is lowered to two uniform ints per distinct named image source.
 Compiler-only READ_SIZE flows through the existing helper sampling analysis,
 but shader.sizes is separate from sampled textures: no binding slot, pixel

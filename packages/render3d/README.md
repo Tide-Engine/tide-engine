@@ -174,11 +174,15 @@ offsets. Cascades scale these offsets for their world-space texel size and depth
 span; fixed, point and spot views use the offsets directly. Too little bias
 causes self-shadowing; too much separates the shadow from its caster.
 
-`shadowResolution = 1024` requests each atlas cell's pixel size, including a
+`shadowResolution = 2048` requests each atlas cell's pixel size, including a
 two-pixel gutter on every edge. The smallest square grid fitting the views clamps
-cells to `16..floor(2048 / gridSize)`, keeping the atlas at most 2048 per side.
+cells to `16..floor(atlasLimit / gridSize)`, with an atlas limit of 4096 per side
+or the device's smaller limit. One default directional light uses four 2048-pixel
+cells in a 4096-square atlas on devices supporting that size. Set a lower
+`shadowResolution` for a smaller memory and shadow-rasterization budget.
 Derived `activeShadowResolution` reports actual cell size including gutters, and
-`atlasSize` the atlas side length. With no shadow views, the atlas keeps its size (initially
+`atlasSize` the atlas side length. Gutters, filtering and cascade snapping use
+these actual dimensions on smaller devices too. With no shadow views, the atlas keeps its size (initially
 16×16), clears to far depth and reports `activeShadowResolution = 0`.
 `shadows = false` skips shadow drawing/sampling while retaining a valid sampler.
 

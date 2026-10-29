@@ -2274,8 +2274,10 @@ game code easier, without returning for routine language/API choices.
   existing scratch-use analysis, as ordinary records do.
   Recorded local match-event payloads still omit heap data, as recorded
   component copies already did; forwarding cannot recover omitted values.
-- `Texture.size` is a machine-local read-only int2 on CPU and GPU. Metadata-only
-  shader planning/capture and runtime contracts are in `notes/textures.md` and
+- `Texture.size` is a machine-local read-only int2 on CPU and GPU. DepthTexture
+  gains the same metadata API in the 2026-10-29 Render3D resolution follow-up,
+  including helper calls, source ordering and parallel-loop restrictions.
+  Metadata-only shader planning/capture and runtime contracts are in `notes/textures.md` and
   `notes/shaders.md`. New errors pin assignment and match access rejection.
 
 At this pass input parameters were deferred because `.down`/`.up` needed the
