@@ -1,5 +1,35 @@
 # Benchmarks
 
+## Sparse wide locality probes (2026-10-29)
+
+Five manually edited generated-C kernels test field traversal and explicit SIMD
+against d65b66ed4 without changing canonical storage, compiler/runtime/game
+sources or hash pins. Three axis passes, tiled at 16/64 selected rows or a whole
+chunk, do not establish a win. At 95% frozen the tiled forms regress 6.93%/7.37%
+and four gathered rows with SIMD regress 5.47% in median adjacent paired time.
+Four contiguous physical rows with masked preservation of frozen neighbors
+regress 23.02% at 95% frozen, 37.42% at 99%, and 22.18% at 99% with four threads.
+No candidate is promoted; Bevy remains faster on these sparse workloads.
+
+Windows/Ryzen 9 7900X, unchanged O2 and deterministic float flags: six batches
+(including unchanged relink control), three alternating before/probe/Bevy rounds,
+200 warmup/400 measured ticks, 144 successful processes. The unchanged relink
+control moves by about 1-2%; dense/90%-frozen/identical-particle controls also
+vary, including -8.18% at 90% despite retaining the original row path. These
+observations do not establish an isolated storage/cache-miss cause. An earlier
+nine-process control attempt interrupted by external build/test work is kept
+separately and excluded; completed batches have no detected contention.
+
+All timed logical digests agree. Native and ordinary WASM SIMD each pass 179,200
+exact twelve-lane byte comparisons against the original helper across five
+variants, 14 sizes, 32 patterns, four selected-index pieces and 20 ticks. This
+covers frozen neighbors, tails, piece boundaries and signed zeros, not general
+compiler transformation correctness or snapshot/changing-membership performance.
+Timing excludes setup/digest, per-tick hashes, snapshots, networking and rendering.
+Sources, commands, identities, adverse results, controls, validation and raw rows:
+`bench/results/bevy-locality-20261029/README.md`. No production change, full suite
+or manual CI dispatch accompanies these experimental records.
+
 ## Smaller cached sparse tasks (2026-10-29)
 
 A bounded compiler-private wrapper shortcuts whole, rare cached chunks whose

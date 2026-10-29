@@ -1,0 +1,196 @@
+diff --git "a/C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-locality-20261029/common/wide.c" "b/C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-locality-20261029/simd4/wide.c"
+index 357b2219a..60b1af242 100644
+--- "a/C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-locality-20261029/common/wide.c"
++++ "b/C:\\Users\\blenm\\.t3\\worktrees\\PurrEngine\\t3-2f0c48c7\\build\\bevy-locality-20261029/simd4/wide.c"
+@@ -1641,54 +1641,145 @@ TIDE_ROWS void tide_rows_Shift_5(tide_world *tide_w, const uint32_t tide_from, c
+ // Shift's rows, selecting cached sparse indices in order, each lane it changes read and written in one place
+ TIDE_ROWS void tide_rows_Shift_6(tide_world *tide_w, const uint32_t tide_from, const uint32_t tide_to, const tide_entity *restrict tide_ent, const tide_entity *restrict tide_scn, const tide_rows_chunk *tide_selection, uint8_t *restrict tide_w3_0, uint8_t *restrict tide_w3_1, uint8_t *restrict tide_w3_2, uint8_t *restrict tide_w3_3, uint8_t *restrict tide_w3_4, uint8_t *restrict tide_w3_5, uint8_t *restrict tide_w3_6, uint8_t *restrict tide_w3_7, uint8_t *restrict tide_w3_8, uint8_t *restrict tide_w3_9, uint8_t *restrict tide_w3_10, uint8_t *restrict tide_w3_11)
+ {
+-    (void)tide_w;
+-    (void)tide_ent;
+-    (void)tide_scn;
+-    const uint8_t *const tide_in_Crate[12] = {tide_w3_0, tide_w3_1, tide_w3_2, tide_w3_3, tide_w3_4, tide_w3_5, tide_w3_6, tide_w3_7, tide_w3_8, tide_w3_9, tide_w3_10, tide_w3_11};
+-    (void)tide_in_Crate;
+-    uint8_t *const tide_col_Crate[12] = {tide_w3_0, tide_w3_1, tide_w3_2, tide_w3_3, tide_w3_4, tide_w3_5, tide_w3_6, tide_w3_7, tide_w3_8, tide_w3_9, tide_w3_10, tide_w3_11};
++    (void)tide_ent; (void)tide_scn;
+     const uint16_t *tide_selected = tide_selection->selected;
+-#if !defined(__wasm__)
+-    const bool tide_prefetch = tide_selection->pass < (tide_selection->rows + 63u) / 64u;
+-    for (uint32_t tide_warm = tide_from; tide_prefetch && tide_warm < tide_to && tide_warm - tide_from < 4u; tide_warm++) {
+-        const uint32_t tide_prefetch_i = tide_selected[tide_warm];
+-        __builtin_prefetch(tide_col_Crate[0] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-        __builtin_prefetch(tide_col_Crate[1] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-        __builtin_prefetch(tide_col_Crate[2] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-        __builtin_prefetch(tide_col_Crate[3] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-        __builtin_prefetch(tide_col_Crate[4] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-        __builtin_prefetch(tide_col_Crate[5] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-        __builtin_prefetch(tide_col_Crate[6] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-        __builtin_prefetch(tide_col_Crate[7] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-        __builtin_prefetch(tide_col_Crate[8] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-        __builtin_prefetch(tide_col_Crate[9] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-        __builtin_prefetch(tide_col_Crate[10] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-        __builtin_prefetch(tide_col_Crate[11] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-    }
+-#endif
+-    for (uint32_t tide_pick = tide_from; tide_pick < tide_to; tide_pick++) {
+-#if !defined(__wasm__)
+-        if (tide_prefetch && tide_to - tide_pick > 4u) {
+-            const uint32_t tide_prefetch_i = tide_selected[tide_pick + 4u];
+-            __builtin_prefetch(tide_col_Crate[0] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-            __builtin_prefetch(tide_col_Crate[1] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-            __builtin_prefetch(tide_col_Crate[2] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-            __builtin_prefetch(tide_col_Crate[3] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-            __builtin_prefetch(tide_col_Crate[4] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-            __builtin_prefetch(tide_col_Crate[5] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-            __builtin_prefetch(tide_col_Crate[6] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-            __builtin_prefetch(tide_col_Crate[7] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-            __builtin_prefetch(tide_col_Crate[8] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-            __builtin_prefetch(tide_col_Crate[9] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-            __builtin_prefetch(tide_col_Crate[10] + (size_t)tide_prefetch_i * 4u, 1, 3);
+-            __builtin_prefetch(tide_col_Crate[11] + (size_t)tide_prefetch_i * 4u, 1, 3);
++    const float dt = tide_w->Time.dt;
++    typedef float v4 __attribute__((ext_vector_type(4)));
++    uint32_t pick = tide_from;
++    for (; tide_to - pick >= 4u; pick += 4u) {
++        const uint32_t ids[4] = {tide_selected[pick], tide_selected[pick+1u], tide_selected[pick+2u], tide_selected[pick+3u]};
++        v4 f0;
++        { float v; memcpy(&v, tide_w3_0 + (size_t)ids[0] * 4u, 4u); f0[0] = v; }
++        { float v; memcpy(&v, tide_w3_0 + (size_t)ids[1] * 4u, 4u); f0[1] = v; }
++        { float v; memcpy(&v, tide_w3_0 + (size_t)ids[2] * 4u, 4u); f0[2] = v; }
++        { float v; memcpy(&v, tide_w3_0 + (size_t)ids[3] * 4u, 4u); f0[3] = v; }
++        v4 f1;
++        { float v; memcpy(&v, tide_w3_1 + (size_t)ids[0] * 4u, 4u); f1[0] = v; }
++        { float v; memcpy(&v, tide_w3_1 + (size_t)ids[1] * 4u, 4u); f1[1] = v; }
++        { float v; memcpy(&v, tide_w3_1 + (size_t)ids[2] * 4u, 4u); f1[2] = v; }
++        { float v; memcpy(&v, tide_w3_1 + (size_t)ids[3] * 4u, 4u); f1[3] = v; }
++        v4 f2;
++        { float v; memcpy(&v, tide_w3_2 + (size_t)ids[0] * 4u, 4u); f2[0] = v; }
++        { float v; memcpy(&v, tide_w3_2 + (size_t)ids[1] * 4u, 4u); f2[1] = v; }
++        { float v; memcpy(&v, tide_w3_2 + (size_t)ids[2] * 4u, 4u); f2[2] = v; }
++        { float v; memcpy(&v, tide_w3_2 + (size_t)ids[3] * 4u, 4u); f2[3] = v; }
++        v4 f3;
++        { float v; memcpy(&v, tide_w3_3 + (size_t)ids[0] * 4u, 4u); f3[0] = v; }
++        { float v; memcpy(&v, tide_w3_3 + (size_t)ids[1] * 4u, 4u); f3[1] = v; }
++        { float v; memcpy(&v, tide_w3_3 + (size_t)ids[2] * 4u, 4u); f3[2] = v; }
++        { float v; memcpy(&v, tide_w3_3 + (size_t)ids[3] * 4u, 4u); f3[3] = v; }
++        v4 f4;
++        { float v; memcpy(&v, tide_w3_4 + (size_t)ids[0] * 4u, 4u); f4[0] = v; }
++        { float v; memcpy(&v, tide_w3_4 + (size_t)ids[1] * 4u, 4u); f4[1] = v; }
++        { float v; memcpy(&v, tide_w3_4 + (size_t)ids[2] * 4u, 4u); f4[2] = v; }
++        { float v; memcpy(&v, tide_w3_4 + (size_t)ids[3] * 4u, 4u); f4[3] = v; }
++        v4 f5;
++        { float v; memcpy(&v, tide_w3_5 + (size_t)ids[0] * 4u, 4u); f5[0] = v; }
++        { float v; memcpy(&v, tide_w3_5 + (size_t)ids[1] * 4u, 4u); f5[1] = v; }
++        { float v; memcpy(&v, tide_w3_5 + (size_t)ids[2] * 4u, 4u); f5[2] = v; }
++        { float v; memcpy(&v, tide_w3_5 + (size_t)ids[3] * 4u, 4u); f5[3] = v; }
++        v4 f6;
++        { float v; memcpy(&v, tide_w3_6 + (size_t)ids[0] * 4u, 4u); f6[0] = v; }
++        { float v; memcpy(&v, tide_w3_6 + (size_t)ids[1] * 4u, 4u); f6[1] = v; }
++        { float v; memcpy(&v, tide_w3_6 + (size_t)ids[2] * 4u, 4u); f6[2] = v; }
++        { float v; memcpy(&v, tide_w3_6 + (size_t)ids[3] * 4u, 4u); f6[3] = v; }
++        v4 f7;
++        { float v; memcpy(&v, tide_w3_7 + (size_t)ids[0] * 4u, 4u); f7[0] = v; }
++        { float v; memcpy(&v, tide_w3_7 + (size_t)ids[1] * 4u, 4u); f7[1] = v; }
++        { float v; memcpy(&v, tide_w3_7 + (size_t)ids[2] * 4u, 4u); f7[2] = v; }
++        { float v; memcpy(&v, tide_w3_7 + (size_t)ids[3] * 4u, 4u); f7[3] = v; }
++        v4 f8;
++        { float v; memcpy(&v, tide_w3_8 + (size_t)ids[0] * 4u, 4u); f8[0] = v; }
++        { float v; memcpy(&v, tide_w3_8 + (size_t)ids[1] * 4u, 4u); f8[1] = v; }
++        { float v; memcpy(&v, tide_w3_8 + (size_t)ids[2] * 4u, 4u); f8[2] = v; }
++        { float v; memcpy(&v, tide_w3_8 + (size_t)ids[3] * 4u, 4u); f8[3] = v; }
++        v4 f9;
++        { float v; memcpy(&v, tide_w3_9 + (size_t)ids[0] * 4u, 4u); f9[0] = v; }
++        { float v; memcpy(&v, tide_w3_9 + (size_t)ids[1] * 4u, 4u); f9[1] = v; }
++        { float v; memcpy(&v, tide_w3_9 + (size_t)ids[2] * 4u, 4u); f9[2] = v; }
++        { float v; memcpy(&v, tide_w3_9 + (size_t)ids[3] * 4u, 4u); f9[3] = v; }
++        v4 f10;
++        { float v; memcpy(&v, tide_w3_10 + (size_t)ids[0] * 4u, 4u); f10[0] = v; }
++        { float v; memcpy(&v, tide_w3_10 + (size_t)ids[1] * 4u, 4u); f10[1] = v; }
++        { float v; memcpy(&v, tide_w3_10 + (size_t)ids[2] * 4u, 4u); f10[2] = v; }
++        { float v; memcpy(&v, tide_w3_10 + (size_t)ids[3] * 4u, 4u); f10[3] = v; }
++        v4 f11;
++        { float v; memcpy(&v, tide_w3_11 + (size_t)ids[0] * 4u, 4u); f11[0] = v; }
++        { float v; memcpy(&v, tide_w3_11 + (size_t)ids[1] * 4u, 4u); f11[1] = v; }
++        { float v; memcpy(&v, tide_w3_11 + (size_t)ids[2] * 4u, 4u); f11[2] = v; }
++        { float v; memcpy(&v, tide_w3_11 + (size_t)ids[3] * 4u, 4u); f11[3] = v; }
++        const v4 drag = (v4)(1.0f) - f9 * (v4)(dt);
++        f3 = (f3 + f6 * (v4)(dt)) * drag;
++        f0 = f0 + f3 * (v4)(dt);
++        f4 = (f4 + f7 * (v4)(dt)) * drag;
++        f1 = f1 + f4 * (v4)(dt);
++        f5 = (f5 + f8 * (v4)(dt)) * drag;
++        f2 = f2 + f5 * (v4)(dt);
++        const __typeof__(f1 < f11) hit = f1 < f11;
++        f1 = hit ? f11 * (v4)(2.0f) - f1 : f1;
++        f4 = hit ? -f4 * f10 : f4;
++        { float v = f0[0]; memcpy(tide_w3_0 + (size_t)ids[0] * 4u, &v, 4u); }
++        { float v = f0[1]; memcpy(tide_w3_0 + (size_t)ids[1] * 4u, &v, 4u); }
++        { float v = f0[2]; memcpy(tide_w3_0 + (size_t)ids[2] * 4u, &v, 4u); }
++        { float v = f0[3]; memcpy(tide_w3_0 + (size_t)ids[3] * 4u, &v, 4u); }
++        { float v = f1[0]; memcpy(tide_w3_1 + (size_t)ids[0] * 4u, &v, 4u); }
++        { float v = f1[1]; memcpy(tide_w3_1 + (size_t)ids[1] * 4u, &v, 4u); }
++        { float v = f1[2]; memcpy(tide_w3_1 + (size_t)ids[2] * 4u, &v, 4u); }
++        { float v = f1[3]; memcpy(tide_w3_1 + (size_t)ids[3] * 4u, &v, 4u); }
++        { float v = f2[0]; memcpy(tide_w3_2 + (size_t)ids[0] * 4u, &v, 4u); }
++        { float v = f2[1]; memcpy(tide_w3_2 + (size_t)ids[1] * 4u, &v, 4u); }
++        { float v = f2[2]; memcpy(tide_w3_2 + (size_t)ids[2] * 4u, &v, 4u); }
++        { float v = f2[3]; memcpy(tide_w3_2 + (size_t)ids[3] * 4u, &v, 4u); }
++        { float v = f3[0]; memcpy(tide_w3_3 + (size_t)ids[0] * 4u, &v, 4u); }
++        { float v = f3[1]; memcpy(tide_w3_3 + (size_t)ids[1] * 4u, &v, 4u); }
++        { float v = f3[2]; memcpy(tide_w3_3 + (size_t)ids[2] * 4u, &v, 4u); }
++        { float v = f3[3]; memcpy(tide_w3_3 + (size_t)ids[3] * 4u, &v, 4u); }
++        { float v = f4[0]; memcpy(tide_w3_4 + (size_t)ids[0] * 4u, &v, 4u); }
++        { float v = f4[1]; memcpy(tide_w3_4 + (size_t)ids[1] * 4u, &v, 4u); }
++        { float v = f4[2]; memcpy(tide_w3_4 + (size_t)ids[2] * 4u, &v, 4u); }
++        { float v = f4[3]; memcpy(tide_w3_4 + (size_t)ids[3] * 4u, &v, 4u); }
++        { float v = f5[0]; memcpy(tide_w3_5 + (size_t)ids[0] * 4u, &v, 4u); }
++        { float v = f5[1]; memcpy(tide_w3_5 + (size_t)ids[1] * 4u, &v, 4u); }
++        { float v = f5[2]; memcpy(tide_w3_5 + (size_t)ids[2] * 4u, &v, 4u); }
++        { float v = f5[3]; memcpy(tide_w3_5 + (size_t)ids[3] * 4u, &v, 4u); }
++    }
++    for (; pick < tide_to; pick++) {
++        const uint32_t i = tide_selected[pick];
++        {
++            float p; memcpy(&p, tide_w3_0 + (size_t)i * 4u, 4u);
++            float v; memcpy(&v, tide_w3_3 + (size_t)i * 4u, 4u);
++            float push; memcpy(&push, tide_w3_6 + (size_t)i * 4u, 4u);
++            float drag; memcpy(&drag, tide_w3_9 + (size_t)i * 4u, 4u);
++            v = (v + push * dt) * (1.0f - drag * dt);
++            p = p + v * dt;
++            memcpy(tide_w3_0 + (size_t)i * 4u, &p, 4u);
++            memcpy(tide_w3_3 + (size_t)i * 4u, &v, 4u);
++        }
++        {
++            float p; memcpy(&p, tide_w3_1 + (size_t)i * 4u, 4u);
++            float v; memcpy(&v, tide_w3_4 + (size_t)i * 4u, 4u);
++            float push; memcpy(&push, tide_w3_7 + (size_t)i * 4u, 4u);
++            float drag; memcpy(&drag, tide_w3_9 + (size_t)i * 4u, 4u);
++            v = (v + push * dt) * (1.0f - drag * dt);
++            p = p + v * dt;
++            float radius; memcpy(&radius, tide_w3_11 + (size_t)i * 4u, 4u);
++            if (p < radius) {
++                float bounce; memcpy(&bounce, tide_w3_10 + (size_t)i * 4u, 4u);
++                p = radius * 2.0f - p; v = -v * bounce;
++            }
++            memcpy(tide_w3_1 + (size_t)i * 4u, &p, 4u);
++            memcpy(tide_w3_4 + (size_t)i * 4u, &v, 4u);
++        }
++        {
++            float p; memcpy(&p, tide_w3_2 + (size_t)i * 4u, 4u);
++            float v; memcpy(&v, tide_w3_5 + (size_t)i * 4u, 4u);
++            float push; memcpy(&push, tide_w3_8 + (size_t)i * 4u, 4u);
++            float drag; memcpy(&drag, tide_w3_9 + (size_t)i * 4u, 4u);
++            v = (v + push * dt) * (1.0f - drag * dt);
++            p = p + v * dt;
++            memcpy(tide_w3_2 + (size_t)i * 4u, &p, 4u);
++            memcpy(tide_w3_5 + (size_t)i * 4u, &v, 4u);
+         }
+-#endif
+-            const uint32_t tide_i = tide_selected[tide_pick];
+-            Crate tide_v0;
+-            tide_gather_Crate(&tide_v0, (const uint8_t *const *)tide_in_Crate, tide_i);
+-            tide_system_Shift(tide_w, tide_ent[tide_i], &tide_v0, &tide_w->Time, tide_scn[tide_i]);
+-            tide_scatter_Crate(tide_col_Crate, tide_i, &tide_v0);
+     }
+ }
+ 
