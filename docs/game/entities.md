@@ -209,7 +209,7 @@ An archetype is a set of components that entities share, and entities with the s
 
 ## Limits
 
-A component that entities gain and lose all the time, like `Stunned` or `Selected`, would still double the archetypes it can reach. Mark it `[Sparse]`: it's kept as a presence bit and its value in every archetype it can reach, so `Add` and `Remove` of it move no entity, and systems that take or filter on it skip the rows that haven't got it. A tag (a component with no fields) that any `Add` or `Remove` names is sparse by itself; one only set at `Spawn` isn't, so `with Rock` costs nothing per entity.
+Adding or removing a component moves the entity to the archetype of its new set, tags (components with no fields) included, at the end of the tick. That's what makes `without Sleeping` cheap: the system runs through the archetypes of awake entities and never looks at a sleeping one. Each move copies the entity's row, so a status that flickers, gained and lost every few ticks by many entities, is better kept in the row. Mark it `[Sparse]`: it's kept as a presence bit and its value in every archetype it can reach, so `Add` and `Remove` of it move no entity, and systems that take or filter on it skip the rows that haven't got it.
 
 ```csharp
 [Sparse]
@@ -225,16 +225,6 @@ system Recover(Time time, mut Stunned stunned)
 }
 ```
 
-A tag that entities keep a long while, and that many systems filter on, can go the other way. Mark it `[Lasting]` and its `Add` and `Remove` move the entity to an archetype of its own, as a component with fields does: `without Sleeping` then runs through the awake entities alone, rather than checking every row, and systems on either side of it can run at the same time. Each toggle copies the entity, and each lasting tag doubles the archetypes it can reach, so keep it for states that last, not ones that flicker.
-
-```csharp
-[Lasting]
-component Sleeping { }
-
-system Move(mut Body body, Time time, without Sleeping)
-{
-    body.position += body.velocity * time.dt;
-}
-```
+Every component an entity can gain or lose doubles the archetypes it can reach. When tags would take a game past the limit below, the compiler keeps some of them in the row as if they were `[Sparse]`, starting with the tags added to entities read from fields or parameters, until the archetypes fit. A component with fields isn't chosen that way: past the limit it's an error, which marking the ones entities gain and lose most `[Sparse]` fixes.
 
 For now, a game has at most 256 components and 1024 archetypes. Entities, the rows of each archetype, and the structural changes and events in a tick grow as they need, with no limit but memory (see [C hosts](../c/hosts.md#memory)).

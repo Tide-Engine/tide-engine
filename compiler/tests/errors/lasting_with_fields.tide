@@ -1,7 +1,0 @@
-// expect: 'Asleep' has fields, so its Add and Remove move the entity already; [Lasting] is for tags
-[Lasting]
-component Asleep
-{
-    float since;
-}
-scene Main { }

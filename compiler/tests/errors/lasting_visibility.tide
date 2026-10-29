@@ -1,5 +1,0 @@
-// expect: 'Secret' has its visibility set per player, which keeps a presence bit in the row, so it can't be [Lasting]
-[Lasting]
-component Secret { }
-scene Main { }
-system Change(mut Visibility visibility) { visibility.Set<Secret>(Audience.None); }

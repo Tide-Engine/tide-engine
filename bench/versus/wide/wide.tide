@@ -39,11 +39,10 @@ component Crate
 }
 
 // Built with LASTING (versus_wide_lasting), frozen crates can thaw, so Frozen
-// is a tag that's added and removed, kept in an archetype of its own;
-// otherwise it's a presence bit in every crate's row.
-#if LASTING
-[Lasting]
-#else
+// is a tag that's added and removed, whose Add and Remove move a crate to the
+// archetype with or without it; otherwise it's [Sparse], a presence bit in
+// every crate's row.
+#if !LASTING
 [Sparse]
 #endif
 component Frozen { }
