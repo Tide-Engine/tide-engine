@@ -103,4 +103,6 @@ A panel at an anchor needs none of this to change size smoothly: `GUILayout.Area
 
 For a fixed-length animation, a slide that eases in and out or a pop that overshoots, `GUI.Tween` gives a progress that takes exactly its time, and `Math.EaseInOut`, `Math.EaseOutBack` and the rest shape it. A panel that's warped or bent as a whole draws its widgets into a render target with [`GUI.Target`](./gui.md#widgets-in-a-render-target).
 
+An animated value goes to GPU code like any other: a fill's lambda reads it, and a frag is given it in its [draw's values](./shaders.md#values-for-one-draw). Animate on the CPU and shape on the GPU: a wipe whose edge eases, a glow that pulses with a button's `hover`. See [Animated values in GPU code](./gui.md#animated-values-in-gpu-code).
+
 Animate positions, sizes, colors and alpha; keep times short, a tenth to a third of a second, so the menu feels quick.

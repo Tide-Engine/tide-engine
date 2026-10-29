@@ -505,7 +505,41 @@ var at = Math.Lerp(float2(-300, 100), float2(40, 100), t);
 var pop = Math.EaseOutBack(GUI.Tween(1, 0.3, 0));               // 0 to 1 once, as it appears, overshooting
 ```
 
-It goes by the frame's length, `Frame.dt`, so it takes as long at any frame rate. Up to 1,024 values are animated at once; past that, a new one is at its target.
+It takes a `float`. Like `Animate`, it's at its target the first time it's called, starts at `from` given one, and starts over after a frame it isn't called in. A target that changes while it's moving, other than back, keeps the speed it has.
+
+Both go by the frame's length, `Frame.dt`, so they take as long at any frame rate. Up to 1,024 values are animated at once, the widgets' own fades and the anchored areas' sizes among them; past that, a new one isn't animated: it's at its target, or stays at its `from`.
+
+#### Animated values in GPU code
+
+An animated value is a number the view has, worked out once a frame, so GPU code reacts to it as to any other: a [fill](./views.md#fills)'s lambda reads it from around it, and a [frag or a vert](./shaders.md#values-for-one-draw) is given it in the draw's values, or in each instance's own for many at once. Animate on the CPU, where the GUI keeps it from frame to frame; shape it on the GPU, where the easing functions are too, so each pixel can take its own part of one progress:
+
+```csharp
+struct Glow
+{
+    float amount; // 0 to 1, animated on the CPU
+}
+
+frag Pulse(Vertex vertex, out Color color, Glow glow)
+{
+    color = Color(1, 0.8, 0.3, glow.amount * (1 - vertex.uv.y));
+}
+
+view Reveal(Menu menu)
+{
+    // Animated once a frame: a progress half a second long...
+    var t = GUI.Tween(menu.open ? 1.0 : 0.0, 0.5, 0);
+    GUI.Draw()
+    {
+        // ...shaped for each pixel: a wipe from left to right with a soft, eased edge
+        Draw.Rect(Rect(40, 40, 320, 200), 16, (float2 uv) =>
+            Color(0.2, 0.4, 0.9).WithAlpha(Math.EaseOut(Math.Saturate(t * 1.5 - uv.x * 0.5))));
+    }
+    // A frag's draw values: the glow fades in and out with the menu's light
+    Draw.Mesh(menu.vertices, menu.indices, Pulse, Glow { amount = GUI.Animate(menu.lit ? 1.0 : 0.0, 0.2) });
+}
+```
+
+GPU code keeps nothing from one frame to the next, so it can't ease a value of its own: what it's given is where the animation is this frame.
 
 ### Widgets in a render target
 

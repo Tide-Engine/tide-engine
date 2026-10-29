@@ -408,6 +408,7 @@ That's [Duel](https://github.com/Tide-Engine/tide-engine/tree/dev/examples/duel)
 - Draws in a row with the same mesh, the same vert and frag and the same values are still one draw call. Other values start another.
 - With [`Draw.Instanced`](#instances-from-a-list), a frag can take both: the list's struct, which each instance has its own of, and the draw's, which they share. The two have to be different types, and neither can be the type the draw's vert [writes for its frag](#from-a-vert-to-its-frag).
 - It holds no texture to sample. A draw's image is its `Texture` argument, or a field of a component or singleton.
+- It's where an animated value goes: `Glow { amount = GUI.Animate(lit ? 1.0 : 0.0, 0.2) }`, worked out on the CPU once a frame (see [Animated values in GPU code](./gui.md#animated-values-in-gpu-code)).
 
 It's an error at the draw when its frag or vert takes a struct that nothing supplies (not the draw's vert, its instances or its values), and when the draw gives a struct neither takes.
 
