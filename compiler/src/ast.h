@@ -1063,6 +1063,7 @@ struct expr {
     str prefab_scope;          // Its source prefab instance's root path.
     int prefab_entity;         // Authored entity reference, when prefab_reference is set.
     bool prefab_reference;
+    bool prechecked;           // Checked already, to pick what takes it: checking it again gives its type
     bool shared_place; // A property compound operation reuses this receiver path.
     prefab_instance *prefab;
     loc end; // E_SWITCH: just past its closing brace, for editor spans

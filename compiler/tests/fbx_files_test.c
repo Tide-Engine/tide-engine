@@ -388,6 +388,46 @@ TIDE_TEST(fbx_euler_keys_in_their_other_triple_bake_as_the_same_rotation)
     tide_skinned_data_free(canonical[1]);
 }
 
+// A key one tick before its take's end (Mixamo's last keys are) and the end's
+// boundary sample are one float time: they import as one key, at the end.
+TIDE_TEST(fbx_keys_closer_than_a_float_are_one_key)
+{
+    static const char *const names[] = {"animation/close_ascii.fbx", "animation/close_binary.fbx"};
+    uint8_t *canonical[2] = {NULL, NULL};
+    uint32_t sizes[2] = {0, 0};
+    for (uint32_t f = 0; f < 2; f++) {
+        size_t size;
+        uint8_t *bytes = fixture(names[f], &size);
+        TIDE_REQUIRE(bytes);
+        TIDE_REQUIRE(decode(bytes, size, &canonical[f], &sizes[f]));
+        free(bytes);
+    }
+    TIDE_CHECK(sizes[0] == sizes[1] && !memcmp(canonical[0], canonical[1], sizes[0]));
+    tide_skinned_data_view view;
+    TIDE_REQUIRE(tide_skinned_data_open(canonical[0], sizes[0], &view));
+    const uint32_t bone = named_node(&view, "Bone0");
+    bool found = false;
+    for (uint32_t c = 0; c < view.channels; c++) {
+        tide_skinned_channel_data channel;
+        TIDE_REQUIRE(tide_skinned_data_channel(&view, c, &channel));
+        if (channel.node != bone || channel.path != TIDE_SKINNED_TRANSLATION) continue;
+        found = true;
+        TIDE_REQUIRE(channel.keys >= 2u);
+        float first[4], last[4], in[4], out[4], time, before = -1.0f;
+        for (uint32_t k = 0; k < channel.keys; k++) {
+            TIDE_REQUIRE(tide_skinned_data_key(&view, &channel, k, &time, k ? last : first, in, out));
+            TIDE_CHECK(time > before);
+            before = time;
+        }
+        // The take's end, and the last key's value there: five times the first's (1 then 5).
+        TIDE_CHECK(time == (float)(38.0 / 30.0));
+        TIDE_CHECK(fabsf(last[0] - 5.0f * first[0]) <= 1e-5f * fabsf(last[0]));
+    }
+    TIDE_CHECK(found);
+    tide_skinned_data_free(canonical[0]);
+    tide_skinned_data_free(canonical[1]);
+}
+
 TIDE_TEST(fbx_animation_only_ascii_and_binary_keep_clips_without_geometry)
 {
     static const char *const names[] = {"clips/move_ascii.fbx", "clips/move_binary.fbx"};

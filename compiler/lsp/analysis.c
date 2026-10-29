@@ -1525,16 +1525,33 @@ void analysis_run(const analysis_file *given, const int given_count)
     // Web.Request's types are Tide's own code, a file of the game's for as long as the game names them
     const analysis_file *files = given;
     int count = given_count;
-    bool web = false;
+    // ...and so are fills', for as long as it shows one
+    bool web = false, fills = false;
     for (int i = 0; i < given_count && !web; i++) web = web_prelude_wanted(given[i].text, given[i].len);
-    if (web) {
-        analysis_file *all = arena_alloc(sizeof(analysis_file) * (size_t)(given_count + 1));
+    if (given_count > 0) {
+        const char **texts = arena_alloc(sizeof(char *) * (size_t)given_count);
+        size_t *lens = arena_alloc(sizeof(size_t) * (size_t)given_count);
+        for (int i = 0; i < given_count; i++) {
+            texts[i] = given[i].text;
+            lens[i] = given[i].len;
+        }
+        fills = draw_prelude_wanted(texts, lens, given_count);
+    }
+    if (web || fills) {
+        analysis_file *all = arena_alloc(sizeof(analysis_file) * (size_t)(given_count + 2));
         if (given_count > 0) memcpy(all, given, sizeof(analysis_file) * (size_t)given_count);
-        analysis_file prelude = {"tide:///web.tide", WEB_PRELUDE_PATH, NULL, 0, NULL};
-        prelude.text = web_prelude(&prelude.len);
-        all[given_count] = prelude;
+        count = given_count;
+        if (web) {
+            analysis_file prelude = {"tide:///web.tide", WEB_PRELUDE_PATH, NULL, 0, NULL};
+            prelude.text = web_prelude(&prelude.len);
+            all[count++] = prelude;
+        }
+        if (fills) {
+            analysis_file prelude = {"tide:///draw.tide", DRAW_PRELUDE_PATH, NULL, 0, NULL};
+            prelude.text = draw_prelude(&prelude.len);
+            all[count++] = prelude;
+        }
         files = all;
-        count = given_count + 1;
     }
     diag_reset();
     diag_set_sink(collect, NULL);

@@ -1,0 +1,32 @@
+// GUI.Animate and a control's eased amounts. gui_animate_test.c steps frames
+// of a known length and reads what the view saw.
+scene Main;
+
+local singleton Seen
+{
+    bool open;
+    bool showToast;
+    float opened;
+    float2 slid;
+    Color tint;
+    float toast;
+    float[3] rows;
+    float hover;
+    float press;
+    bool hovered;
+}
+
+view Menu(mut Seen seen)
+{
+    seen.opened = GUI.Animate(seen.open ? 1.0 : 0.0, 0.5);
+    seen.slid = GUI.Animate(seen.open ? float2(100, 0) : float2(0, 0), 0.5);
+    seen.tint = GUI.Animate(seen.open ? Color.white : Color.black, 0.5);
+    if (seen.showToast) seen.toast = GUI.Animate(1, 0.5, 0); // Fades in from 0 as it first appears
+    // In a loop, each turn its own
+    for (var i = 0; i < 3; i++) seen.rows[i] = GUI.Animate(seen.open ? i + 1.0 : 0.0, 0.5);
+    GUI.SetTheme(GUITheme { transition = 0.5 });
+    var card = GUI.Control(Rect(0, 0, 100, 100));
+    seen.hover = card.hover;
+    seen.press = card.press;
+    seen.hovered = card.hovered;
+}

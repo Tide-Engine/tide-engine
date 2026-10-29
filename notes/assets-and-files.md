@@ -1,5 +1,30 @@
 # Assets and local files
 
+## FBX keys closer than a float are one key (2026-10-29, bug)
+
+Reported by the owner from the duel (`bannerlord-duel`'s `notes/gaps.md`):
+Mixamo clips downloaded onto a Synty character, four of the five slashes of
+its Great Sword Pack and three of the Pro Sword and Shield Pack's attacks,
+were refused: "has FBX animation keys too close together for float
+timestamps". The owner: "i dont like when the engine is in the way". Their
+last key is 2e-8 s before the take's end (1.2666666454 s of a 38-frame take
+ending at 1.2666666667: the tick count's rounding), where `fbx_channel` adds
+its end boundary sample; as floats both are 1.26666665 s, and the importer
+refused any key not after the one before. Now keys whose float times aren't
+after the previous key's are one key, at the earlier's time with the later's
+value (the end's evaluated value there). Only files that were refused import
+differently: wherever every float time rose before, the output is the same
+bytes. All seven of the owner's files then build.
+
+Test: `fbx_keys_closer_than_a_float_are_one_key` (`animation/close_*.fbx`
+from `fbx_make.mjs`: Bone0's last key one tick before a 38-frame take's end;
+the channel's times rise and end at the take's end, with the last key's
+value; fails before this change, refused). Validation: `tidec_fbx_files`,
+`tidec_e2e_fbx_assets`, `tidec_e2e_animations`, `tidec_e2e_blend_shapes`,
+`tidec_animations_identity` and the FBX and animation diagnostics, native
+debug (18 tests). The importer runs only in native tidec, so web was not
+run.
+
 ## FBX Euler keys unwrapped before baking (2026-10-27, bug)
 
 Follow-up the same day: HeavyStab01 still swung `spine_01` about 45 degrees

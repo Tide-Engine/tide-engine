@@ -3872,17 +3872,52 @@ static bool check_io_use(checker *c, const loc at, const char *what, const bool 
 // One of the declarations of Web.Request's own Tide code (web_prelude), by
 // its name: NULL in a program that doesn't have it, or whose own declaration
 // has the name.
-static decl *web_decl(const program *prog, const char *name, const decl_kind kind)
+static type check_function_call(checker *c, expr *e, decl *fn);
+
+static decl *prelude_decl(const program *prog, const char *path, const char *name, const decl_kind kind)
 {
     for (int i = 0; i < prog->decls.count; i++) {
         decl *d = prog->decls.items[i];
         if (d->kind == kind && str_eq_c(d->name, name) && d->unit && d->unit->src
-            && strcmp(d->unit->src->path, WEB_PRELUDE_PATH) == 0) return d;
+            && strcmp(d->unit->src->path, path) == 0) return d;
     }
     return NULL;
 }
 
+static decl *web_decl(const program *prog, const char *name, const decl_kind kind)
+{
+    return prelude_decl(prog, WEB_PRELUDE_PATH, name, kind);
+}
+
 static type builtin_task_start(checker *c, expr *e, type result, int side);
+
+// Draw.Rect(rect, radius, fill) and Draw.Shape(shape, fill), where `fill` is a
+// Func<float2, Color> that colors the shape: calls of fills' own Tide code
+// (draw_prelude), which a program has where its text shows a fill. True, with
+// the call's type in *result, where it is one; the arguments it checked to see
+// are checked, for the built-in versions the call is otherwise.
+static bool check_fill_draw(checker *c, expr *e, type *result)
+{
+    const bool rect = str_eq_c(e->name, "Rect");
+    if (e->args.count != (rect ? 3 : 2)) return false;
+    expr *fill = e->args.items[e->args.count - 1];
+    if (fill->is_out) return false;
+    decl *const fn = prelude_decl(c->prog, DRAW_PRELUDE_PATH, rect ? DRAW_FILL_RECT : DRAW_FILL_SHAPE, DECL_FUNCTION);
+    // A lambda has its type from what takes it
+    if (!fill->lambda) {
+        const type t = check_expr(c, fill);
+        fill->prechecked = true;
+        if (!is_callable(t)) return false;
+    }
+    if (!fn) { // A function value whose type the program's text doesn't write out
+        diag_error(fill->at, "a fill's function needs its type where the program can see it: give it as a lambda, "
+                             "`(float2 uv) => ...`, or declare it as `Color Name(float2 uv)`");
+        *result = T_ERR;
+        return true;
+    }
+    *result = check_function_call(c, e, fn);
+    return true;
+}
 
 // await request.Send(): the request goes out, by this machine, and the task
 // waits for its answer, as with Web.Fetch. An answer of any status is its
@@ -5188,7 +5223,9 @@ static decl *check_overloaded_args(checker *c, expr *e, decl *first)
             continue;
         }
         if (untyped_arg(arg)) {
-            check_expr_want_checked(c, arg, want, true);
+            // A list's elements were checked to pick it; a lambda or a function's name is bound to the Func it
+            // goes to now, its captures read as it is
+            check_expr_want_checked(c, arg, want, !arg->lambda && !arg->callable_reference);
             continue;
         }
         const param *taken_by = &m->params.items[param_of[best][i]];
@@ -7820,6 +7857,10 @@ static type check_method(checker *c, expr *e)
         }
         if (str_eq_c(owner, "RenderTarget")) return check_window_target(c, e);
         if (str_eq_c(owner, "Draw") && str_eq_c(e->name, "Blit")) return check_blit(c, e);
+        if (str_eq_c(owner, "Draw") && (str_eq_c(e->name, "Rect") || str_eq_c(e->name, "Shape"))) {
+            type filled;
+            if (check_fill_draw(c, e, &filled)) return filled;
+        }
         // Draw is the window's drawing: what a render target has as its methods
         const bool draws = builtin_draw_owner(owner);
         if (draws && (str_eq_c(e->name, "Mesh") || str_eq_c(e->name, "Instanced") || str_eq_c(e->name, "SkinnedMesh"))) return check_mesh_draw(c, e);
@@ -10955,6 +10996,7 @@ static type check_expr_any_raw(checker *c, expr *e);
 static type check_expr_any(checker *c, expr *e)
 {
     if (e->prefab_reference) return e->type;
+    if (e->prechecked) return e->type;
     const unit *saved = c->unit;
     if (e->authored_unit) c->unit = e->authored_unit;
     const type result = check_expr_any_raw(c, e);
@@ -17839,6 +17881,34 @@ static void add_builtins(program *prog)
     theme_radius.name = str_from("radius");
     theme_radius.type_name = str_from("float");
     vec_push(theme->fields, theme_radius);
+    // ...then its border, shading, shadow, transitions and sizes, as
+    // tide_gui_theme_default has them: a color's four parts, or one number
+    static const char *const theme_more[][6] = {
+        {"border", "Color", "1", "1", "1", "0.12"}, {"borderWidth", "float", "0"}, {"shading", "float", "0"},
+        {"shadow", "Color", "0", "0", "0", "0.35"}, {"shadowSize", "float", "16"}, {"transition", "float", "0.1"},
+        {"textSize", "float", "16"}, {"padding", "float", "12"}, {"spacing", "float", "5"}};
+    for (int i = 0; i < (int)(sizeof theme_more / sizeof theme_more[0]); i++) {
+        field f = {0};
+        f.name = str_from(theme_more[i][0]);
+        f.type_name = str_from(theme_more[i][1]);
+        const bool color = strcmp(theme_more[i][1], "Color") == 0;
+        expr *value = NEW(expr);
+        if (color) { // Color(r, g, b, a)
+            value->kind = E_CALL;
+            value->name = str_from("Color");
+            for (int k = 2; k < 6; k++) {
+                expr *part = NEW(expr);
+                part->kind = E_FLOAT;
+                part->text = str_from(theme_more[i][k]);
+                vec_push(value->args, part);
+            }
+        } else {
+            value->kind = E_FLOAT;
+            value->text = str_from(theme_more[i][2]);
+        }
+        if (color || strcmp(theme_more[i][2], "0") != 0) f.default_value = value;
+        vec_push(theme->fields, f);
+    }
     prog->gui_theme = theme;
     // GUI.Control's interaction flags and GUI-space pointer position, as
     // tide/gui.h's tide_control. Generated padding stays explicit and zeroed.
@@ -17846,11 +17916,12 @@ static void add_builtins(program *prog)
     control->kind = DECL_STRUCT;
     control->name = str_from("GUIControl");
     control->builtin = true;
-    static const char *const control_fields[] = {"hovered", "pressed", "focused", "clicked", "down", "up", "cancelled", "position"};
+    static const char *const control_fields[] = {"hovered", "pressed", "focused", "clicked", "down", "up", "cancelled",
+                                                 "position", "hover", "press", "focus"};
     for (int i = 0; i < (int)(sizeof control_fields / sizeof control_fields[0]); i++) {
         field f = {0};
         f.name = str_from(control_fields[i]);
-        f.type_name = str_from(i == 7 ? "float2" : "bool");
+        f.type_name = str_from(i == 7 ? "float2" : i > 7 ? "float" : "bool");
         vec_push(control->fields, f);
     }
     prog->gui_control = control;

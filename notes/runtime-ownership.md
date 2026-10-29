@@ -1,5 +1,17 @@
 # Runtime written by Claude for now
 
+## GUI looks boundary (2026-10-29)
+
+Within the owner's approved GUI looks task, generated code gains the
+tide_gui_animate[_float2|_color][_from] calls (GUI.Animate) and sets
+tide_gui.seconds from the frame's length at the start of tide_frame.
+tide_control gains hover/press/focus floats and tide_gui_theme nine fields;
+tide_gui grows the motions table, so hosts, libraries and games rebuild
+together. The existing GUI temporary maintenance exception applies. Fills add
+no runtime function: they're compiler-supplied Tide code over Draw.Instanced.
+No match state, wire format or simulation arithmetic changes. Contracts,
+validation and gaps: gui.md, Looks.
+
 ## Private cached-chunk task shortcut (2026-10-29)
 
 The follow-up performance change is confined to compiler-generated tasks. An

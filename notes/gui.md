@@ -1,5 +1,103 @@
 # The GUI
 
+## Looks: fills, animation and a fuller theme (2026-10-29)
+
+The owner found agents struggling to make good-looking UI: transitions were
+hard and gradients came out as stacks of fading rectangles (Gradients existed,
+as `Shape.color2`, but only on the views page and only top to bottom). Agreed:
+the GUI holds animation state; fills are functions given to the SDF shapes,
+with 2-4 color gradients built in (the owner's idea); the theme's scope was
+delegated to Claude's recommendation. The API details are Provisional in the
+spec (GUI, and Smooth shapes' Fills); users' docs are `docs/game/gui.md`
+(Themes, Animation, GUIControl), `docs/game/views.md#fills` and the new
+`docs/game/ui-style.md` page with its `gui-style` example.
+
+- **Animation** (`engine/src/gui.c`, Animated values): `tide_gui.motions` is
+  an open-addressed table of `TIDE_GUI_MAX_MOTIONS` (1,024) four-float values,
+  keyed by GUI ids. A slot not asked for this frame or the last is free, the
+  oldest first; a lookup stops at a never-used slot, so chains survive stale
+  entries. A value skipped for a frame, or new, starts at its target or at
+  `from`. Easing is `1 - exp(-dt * ln(100) / seconds)` of what's left, snapping
+  within 1e-4 relative, so fade-outs reach exactly 0. `tide_gui.seconds` is
+  the frame's length: generated `tide_frame` sets it from
+  `local->tide_frame_seconds` (every game's C gained that line); 0, as a
+  zeroed GUI or a custom host without frame time has, jumps to targets.
+  Nonfinite values are never stored. `GUI.Animate` has float, float2 and Color
+  forms, each with `from` (`tide_gui_animate[_float2|_color][_from]`), as
+  GUI_ID builtins.
+- **Controls** (`tide_control.hover/press/focus`): three lanes of one motion
+  keyed `tide_gui_seed(id, 0xB0D1)`, over the theme's transition. The stock
+  widgets' bodies (button, toggle box, slider rail, number and text fields)
+  fade their color through the same key (`body`); focus outlines, checks and
+  slider fills don't animate.
+- **Theme** (`tide_gui_theme`, `GUITheme`, `fitted_theme`): border/borderWidth,
+  shading (color2 = darker by it), shadow/shadowSize (a soft smooth shape
+  recorded before an area's panel, resized and moved at close with it, a
+  quarter of its size lower), transition, textSize (FONT; LINE is +12; a
+  toggle's box is the text size; a slider's thumb LINE - 4), padding (areas)
+  and spacing (a group records the spacing its last widget used, so a Theme
+  block inside a row closes it right). Themes are sanitized as set. A part
+  with a border or shading is a `tide_shape`; without, the old rect/round
+  rect, so defaults draw as before but for the new panel shadow and fades.
+  The wheel step is its own 28 px (`WHEEL_LINE`). Both defaults (`gui.c`,
+  `add_builtins` in check.c) were extended together.
+- **Fills** (`draw_prelude` in `compiler/src/builtins.c`, `<tide>/draw.tide`):
+  Tide code compiled with a game whose files, together, show a fill
+  (`draw_prelude_wanted`: `Gradient.` or `Func<float2, Color>` anywhere, or a
+  `Draw.Rect(`/`Draw.Shape(` whose last top-level argument is a lambda or the
+  name of a `Color Name(float2 ...)` function). Including it unconditionally
+  added ~200 KB of C and a prewarmed pipeline to a small GUI game; a first
+  trigger on any `(float2 p) =>` lambda or `Color F(float2 uv)` helper pulled
+  it into shader fixtures that had no fill, hence looking at the call. `check_fill_draw` (check.c) routes `Draw.Rect(rect, r|radii, f)`
+  and `Draw.Shape(shape, f)` to `TideFillRect`/`TideFillShape` when the last
+  argument is callable; it checks that argument once (`expr.prechecked` makes
+  a later check return its type), and a lambda is left for the overload's
+  want. The prelude draws one instance per call with `Draw.Instanced` over
+  scratch lists: the quad's mesh slot is found by content, instances append
+  contiguously, so consecutive fills merge into one run, whatever their
+  functions (the callable's tag and captures are instance data). The vert
+  reads `this.clip` at the center and a step along each axis to find the
+  display's pixel size in shape units (screen size and scale come in the
+  instance), giving AA and soft edges in device pixels through any transform
+  and camera, and a step up the world to keep a y-up camera's top on top.
+  The frag mirrors the built-in smooth shape's box/corners SDF, soft and
+  outline math, with an ellipse by its first-order distance. Gradients are one
+  captured lambda target (`TideGradient`, a float3 setup and four colors), so
+  the Func payload stays 20 floats however many Gradient forms a game uses.
+- **Overload fix** (check.c `check_overloaded_args`): a lambda or a named
+  function given to an overloaded function was checked with `checked = true`,
+  which skipped binding it to its Func (`check_callable_value`), so its
+  captures were never read and their locals warned "never used". It's bound
+  now; lists keep the checked path.
+
+Tests: `compiler/tests/e2e/fills` (four fills one run of four instances,
+including corners, a capturing lambda, a named function and a Shape; empty
+and NaN sizes draw nothing; CPU values of every Gradient form, clear fades
+without darkening, NaN uv); `e2e/gui_animate` (easing steps for each type,
+loop turns apart, exact settling, zero frame time, `from`, restart after a
+skipped frame, a control's hover and press); `tide_platform_fills`
+(`platform/tests/fills.*`: a gradient's and a lambda's colors, a round
+corner's outside, and one GPU draw for both, on Vulkan, OpenGL, WebGL, ANGLE
+D3D11 and WebGPU); `gui_a_themes_sizes_lay_out_and_bad_numbers_are_fitted`
+and the updated theme tests in `tests/test_gui.c`. The prelude keeps one
+return per function and picks colors by assignment, not nested `?:`: ANGLE's
+D3D11 warned X4000 for both, as it did for callables' dispatch. With no
+screen size known (a GUI that never began a frame), a fill takes one unit per
+pixel; its pixel size is capped by the shape's size. Captured by hand on
+Vulkan as well: gradients, stripes, per-corner radii, a rotated outline, a
+soft ellipse, a fill in GUI.Draw, a y-up world camera, and the `gui-style`
+example. Validation: the full native suite before the last trigger and
+prelude fixes (all failures were the shader goldens the first trigger moved
+and the GUI command counts the panel shadow moved, both fixed), then 125
+affected native tests, and on web the six GUI/fill/callable e2e tests and the
+three browser pixel runs; `npm run build` in docs passed.
+
+Gaps: render targets' own `Rect`/`Shape` take no fill, and fills in a target
+take the window's size for their pixel size; no fill for `RoundRect`,
+`Ellipse` and the wire shapes (use `Draw.Shape`); the ellipse distance is
+approximate for very flat ellipses; `Math.Damp`/`Math.Ease*` proposed but not
+built; the theme has no per-widget sizes beyond text size.
+
 ## Rectangles, scrolling, focus and editing (2026-10-25)
 
 The owner requested the proposed priorities plus a performance pass. This

@@ -12,12 +12,13 @@
 // the simulation, so it's free to use the C library (formatting and parsing
 // numbers) and to depend on the window's size.
 
-// Sizes, in GUI units (pixels)
-#define FONT 16.0f         // Text's size
-#define LINE 28.0f         // A widget's height
-#define PAD 10.0f          // Text inside a button, from its sides
-#define SPACING 5.0f       // Between widgets
-#define AREA_PADDING 12.0f // Inside an area, around its content
+// Sizes, in GUI units (pixels). The theme's are read where `g` is the GUI.
+#define FONT (g->theme.text_size)         // Text's size
+#define LINE (g->theme.text_size + 12.0f) // A widget's height
+#define PAD 10.0f                         // Text inside a button, from its sides
+#define SPACING (g->theme.spacing)        // Between widgets
+#define AREA_PADDING (g->theme.padding)   // Inside an area, around its content
+#define WHEEL_LINE 28.0f                  // How far a step of the mouse's wheel scrolls
 #define AREA_MARGIN 12.0f  // Between an anchored area and the screen's edges
 #define LABEL_WIDTH 130.0f // A labelled widget's label, at least
 #define SLIDER_WIDTH 180.0f
@@ -25,7 +26,7 @@
 #define FIELD_WIDTH 90.0f
 #define PART_WIDTH 68.0f   // Each number of a vector field
 #define COLOR_PART_WIDTH 52.0f
-#define BOX 16.0f          // A toggle's box
+#define BOX (g->theme.text_size) // A toggle's box
 #define BORDER 2.0f        // The focus's outline
 
 // Squeezed, when there isn't room: as narrow as these go
@@ -51,7 +52,38 @@ tide_gui_theme tide_gui_theme_default(void)
         .field_hot = {0.16f, 0.16f, 0.2f, 1.0f},
         .accent = {1.0f, 0.77f, 0.24f, 1.0f},
         .radius = 0.0f,
+        .border = {1.0f, 1.0f, 1.0f, 0.12f},
+        .border_width = 0.0f,
+        .shading = 0.0f,
+        .shadow = {0.0f, 0.0f, 0.0f, 0.35f},
+        .shadow_size = 16.0f,
+        .transition = 0.1f,
+        .text_size = 16.0f,
+        .padding = 12.0f,
+        .spacing = 5.0f,
     };
+}
+
+// A theme's number as the GUI can lay out and draw with it: one that isn't a
+// number is `otherwise`, and one out of its range the nearest that's in it.
+static float theme_number(const float v, const float least, const float most, const float otherwise)
+{
+    if (!tide_is_finite_f(v)) return otherwise;
+    return v < least ? least : v > most ? most : v;
+}
+
+static tide_gui_theme fitted_theme(tide_gui_theme t)
+{
+    const tide_gui_theme d = tide_gui_theme_default();
+    t.radius = theme_number(t.radius, 0.0f, 1e6f, 0.0f);
+    t.border_width = theme_number(t.border_width, 0.0f, 1e6f, 0.0f);
+    t.shading = theme_number(t.shading, 0.0f, 1.0f, 0.0f);
+    t.shadow_size = theme_number(t.shadow_size, 0.0f, 1e4f, 0.0f);
+    t.transition = theme_number(t.transition, 0.0f, 60.0f, 0.0f);
+    t.text_size = theme_number(t.text_size, 1.0f, 512.0f, d.text_size);
+    t.padding = theme_number(t.padding, 0.0f, 1e4f, d.padding);
+    t.spacing = theme_number(t.spacing, 0.0f, 1e4f, d.spacing);
+    return t;
 }
 
 enum { VERTICAL, HORIZONTAL, AREA, SCROLL };
@@ -207,6 +239,48 @@ static void fill_around(tide_gui *g, const tide_rect r, const float by, const ti
     paint(g, grow(r, by), shade(g, color), g->theme.radius > 0.0f ? max_f(g->theme.radius + by, 0.0f) : 0.0f);
 }
 
+// `color` darkened by `by`, 0 to 1, keeping its alpha.
+static tide_color darker(const tide_color color, const float by)
+{
+    const float keep = 1.0f - by;
+    return (tide_color){color.r * keep, color.g * keep, color.b * keep, color.a};
+}
+
+// A widget's or an area's body, its corners round by `radius`, with the
+// theme's border and shading where it has them. With neither, it's the rect
+// paint draws.
+static void body_paint(tide_gui *g, const tide_rect r, const tide_color color, const float radius)
+{
+    const tide_gui_theme *t = &g->theme;
+    if (!(t->border_width > 0.0f) && !(t->shading > 0.0f)) {
+        paint(g, r, color, radius);
+        return;
+    }
+    tide_shape s = TIDE_SHAPE_WHITE;
+    s.center = tide_f2(r.x + r.width * 0.5f, r.y + r.height * 0.5f);
+    s.size = tide_f2(r.width, r.height);
+    s.radius = radius;
+    s.color = color;
+    s.color2 = darker(color, t->shading);
+    s.outline = t->border_width;
+    s.outline_color = t->border;
+    if (grayed(g)) s.outline_color.a *= FADED;
+    tide_draw_shape(&g->list, s);
+}
+
+static float animate_lanes(tide_gui *g, uint32_t id, const float *target, float *out, int n, float seconds,
+                           const float *from);
+
+// A widget's body in `color`, which it fades to from the color it had, over
+// the theme's transition. `id` is the widget's.
+static void body(tide_gui *g, const uint32_t id, const tide_rect r, const tide_color color)
+{
+    const float target[4] = {color.r, color.g, color.b, color.a};
+    float now[4];
+    animate_lanes(g, tide_gui_seed(id, 0xB0D1u), target, now, 4, g->theme.transition, NULL);
+    body_paint(g, r, shade(g, (tide_color){now[0], now[1], now[2], now[3]}), g->theme.radius);
+}
+
 // Text starting at `x`, centered on `middle` vertically.
 static void text_at(tide_gui *g, const char *text, const float x, const float middle, const tide_color color)
 {
@@ -246,6 +320,109 @@ uint32_t tide_gui_id(tide_gui *g, const uint32_t seed, const uint32_t site)
         slot = (slot + 1) & (TIDE_GUI_MAX_IDS - 1);
     }
     return key; // Full: widgets from one site share an ID
+}
+
+// ---------------------------------------------------------------------------
+// Animated values (GUI.Animate, and widgets' fades)
+
+// The slot of the value `id`, found or made, or NULL with none to spare.
+// `fresh` says it starts over: it's new, or it skipped a frame. A slot nothing
+// asked for this frame or the last is free to take, the oldest first.
+static tide_gui_motion *motion(tide_gui *g, const uint32_t id, bool *fresh)
+{
+    uint32_t slot = id & (TIDE_GUI_MAX_MOTIONS - 1), free_slot = UINT32_MAX;
+    for (uint32_t probe = 0; probe < TIDE_GUI_MAX_MOTIONS; probe++) {
+        tide_gui_motion *m = &g->motions[slot];
+        if (m->id == id && m->frame != 0) {
+            *fresh = g->frame - m->frame > 1u;
+            return m;
+        }
+        if (m->frame == 0) { // Never used: the end of the values that probed past it
+            if (free_slot == UINT32_MAX) free_slot = slot;
+            break;
+        }
+        if (g->frame - m->frame > 1u && (free_slot == UINT32_MAX || m->frame < g->motions[free_slot].frame))
+            free_slot = slot;
+        slot = (slot + 1) & (TIDE_GUI_MAX_MOTIONS - 1);
+    }
+    if (free_slot == UINT32_MAX) return NULL;
+    *fresh = true;
+    g->motions[free_slot].id = id;
+    return &g->motions[free_slot];
+}
+
+// Eases `n` floats toward `target` and writes where they are now to `out`:
+// about 99% of the way in `seconds`, moving fastest at first and settling
+// without overshooting, so a target that changes midway turns smoothly. A
+// fresh value starts at `from`, or at its target with none. Returns out[0].
+static float animate_lanes(tide_gui *g, const uint32_t id, const float *target, float *out, const int n,
+                           const float seconds, const float *from)
+{
+    bool fresh = true;
+    tide_gui_motion *m = motion(g, id, &fresh);
+    // The share of the way left that this frame covers: 4.6 is -ln(0.01)
+    const float dt = g->seconds > 0.0f && tide_is_finite_f(g->seconds) ? g->seconds : 0.0f;
+    const float step = dt > 0.0f && seconds > 0.0f && tide_is_finite_f(seconds) ? 1.0f - tide_exp_f(-dt * 4.60517f / seconds) : 1.0f;
+    for (int i = 0; i < n; i++) {
+        const float to = target[i];
+        float v = to;
+        if (fresh && from) v = from[i]; // Where it starts, shown as it is this frame
+        else if (!fresh) {
+            v = m->value[i] + (to - m->value[i]) * step;
+            if (tide_abs_f(to - v) <= 1e-4f * max_f(1.0f, tide_abs_f(to))) v = to;
+        }
+        if (!tide_is_finite_f(v)) v = to;
+        out[i] = v;
+        if (m) m->value[i] = tide_is_finite_f(v) ? v : 0.0f;
+    }
+    if (m) m->frame = g->frame;
+    return out[0];
+}
+
+float tide_gui_animate(tide_gui *g, const uint32_t id, const float target, const float seconds)
+{
+    float out;
+    return animate_lanes(g, id, &target, &out, 1, seconds, NULL);
+}
+
+float tide_gui_animate_from(tide_gui *g, const uint32_t id, const float target, const float seconds, const float from)
+{
+    float out;
+    return animate_lanes(g, id, &target, &out, 1, seconds, &from);
+}
+
+tide_float2 tide_gui_animate_float2(tide_gui *g, const uint32_t id, const tide_float2 target, const float seconds)
+{
+    const float to[2] = {target.x, target.y};
+    float out[2];
+    animate_lanes(g, id, to, out, 2, seconds, NULL);
+    return tide_f2(out[0], out[1]);
+}
+
+tide_float2 tide_gui_animate_float2_from(tide_gui *g, const uint32_t id, const tide_float2 target, const float seconds,
+                                         const tide_float2 from)
+{
+    const float to[2] = {target.x, target.y}, start[2] = {from.x, from.y};
+    float out[2];
+    animate_lanes(g, id, to, out, 2, seconds, start);
+    return tide_f2(out[0], out[1]);
+}
+
+tide_color tide_gui_animate_color(tide_gui *g, const uint32_t id, const tide_color target, const float seconds)
+{
+    const float to[4] = {target.r, target.g, target.b, target.a};
+    float out[4];
+    animate_lanes(g, id, to, out, 4, seconds, NULL);
+    return (tide_color){out[0], out[1], out[2], out[3]};
+}
+
+tide_color tide_gui_animate_color_from(tide_gui *g, const uint32_t id, const tide_color target, const float seconds,
+                                       const tide_color from)
+{
+    const float to[4] = {target.r, target.g, target.b, target.a}, start[4] = {from.r, from.g, from.b, from.a};
+    float out[4];
+    animate_lanes(g, id, to, out, 4, seconds, start);
+    return (tide_color){out[0], out[1], out[2], out[3]};
 }
 
 static const tide_gui_size *remembered(const tide_gui *g, const uint32_t id)
@@ -763,7 +940,7 @@ void tide_gui_begin(tide_gui *g, const tide_devices *devices, const tide_float2 
     g->in_modal = 0;
     const tide_gui_size *root = remembered(g, ROOT_ID);
     g->groups[0] = (tide_gui_group){
-        .id = ROOT_ID, .kind = VERTICAL, .room = screen.x, .stretch = root ? root->natural : 0.0f, .anchor = -1};
+        .id = ROOT_ID, .kind = VERTICAL, .room = screen.x, .stretch = root ? root->natural : 0.0f, .anchor = -1, .spacing = SPACING};
     tide_draw_reset(&g->list);
     tide_draw_screen_size(&g->list, screen);
     tide_draw_set_screen(&g->list); // In the screen's pixels, whatever list it's added to
@@ -1041,6 +1218,7 @@ static tide_rect take(tide_gui *g, const float width, const float height, const 
 {
     tide_gui_group *grp = top(g);
     const tide_rect r = {grp->cursor.x, grp->cursor.y, width, height};
+    grp->spacing = SPACING; // The last one's, which comes off as a row closes: a theme can change it between
     if (grp->kind == HORIZONTAL) {
         grp->cursor.x += width + SPACING;
         grp->size = tide_f2(r.x + width - grp->origin.x, max_f(grp->size.y, r.y + height - grp->origin.y));
@@ -1080,7 +1258,7 @@ static int open_group(tide_gui *g, const uint32_t id, const uint32_t kind, const
     g->depth++;
     tide_gui_group *grp = top(g);
     *grp = (tide_gui_group){.id = id, .kind = kind, .origin = origin, .cursor = origin, .room = room, .anchor = -1,
-                            .panel = UINT32_MAX, .in_modal_before = g->in_modal, .disabled = around->disabled};
+                            .panel = UINT32_MAX, .in_modal_before = g->in_modal, .disabled = around->disabled, .spacing = SPACING};
     if (last && kind != HORIZONTAL) grp->stretch = last->natural;
     if (last && kind == HORIZONTAL) grp->squeeze = squeeze(last->natural, last->least, room);
     return before;
@@ -1113,14 +1291,30 @@ static tide_float2 place(const tide_gui *g, int32_t anchor, const tide_float2 si
 // shape's command (the result), or a plain shape (*plain, 1 + it). What's
 // moved with it once it's placed starts at *commands, the commands after it,
 // and *plains, the plain shapes from it on.
-static uint32_t panel(tide_gui *g, const tide_rect r, uint32_t *plain, uint32_t *commands, uint32_t *plains)
+// Under it, the theme's shadow, if it has one (*shadow, a smooth shape's
+// command, or UINT32_MAX), sized with it.
+static uint32_t panel(tide_gui *g, const tide_rect r, uint32_t *plain, uint32_t *commands, uint32_t *plains,
+                      uint32_t *shadow)
 {
-    const uint32_t before = g->list.count, plains_before = g->list.plain_count;
-    // With round corners it's a shape, which the list leaves out while it has
-    // no size: an area that isn't sized yet stands in as a pixel.
-    const bool round = g->theme.radius > 0.0f;
+    const tide_gui_theme *t = &g->theme;
+    // With round corners, a border or shading it's a shape, which the list leaves
+    // out while it has no size: an area that isn't sized yet stands in as a pixel.
+    const bool round = t->radius > 0.0f || t->border_width > 0.0f || t->shading > 0.0f;
     const tide_rect sized = {r.x, r.y, round ? max_f(r.width, 1.0f) : r.width, round ? max_f(r.height, 1.0f) : r.height};
-    paint(g, sized, g->theme.panel, g->theme.radius);
+    *shadow = UINT32_MAX;
+    if (t->shadow_size > 0.0f && t->shadow.a > 0.0f) {
+        const uint32_t ahead = g->list.count;
+        tide_shape s = TIDE_SHAPE_WHITE;
+        s.center = tide_f2(r.x + r.width * 0.5f, r.y + r.height * 0.5f + t->shadow_size * 0.25f);
+        s.size = tide_f2(max_f(r.width, 1.0f), max_f(r.height, 1.0f));
+        s.radius = t->radius;
+        s.color = t->shadow;
+        s.soft = t->shadow_size;
+        tide_draw_shape(&g->list, s);
+        if (g->list.count > ahead) *shadow = g->list.count - 1u;
+    }
+    const uint32_t before = g->list.count, plains_before = g->list.plain_count;
+    body_paint(g, sized, t->panel, t->radius);
     *commands = g->list.count; // A plain one's run, and what was settled before it, stay where they are
     *plains = plains_before;
     *plain = g->list.plain_count > plains_before ? g->list.plain_count : 0u; // A plain one: more of a run, or a run's first
@@ -1130,8 +1324,8 @@ static uint32_t panel(tide_gui *g, const tide_rect r, uint32_t *plain, uint32_t 
 
 int tide_gui_begin_area(tide_gui *g, const uint32_t id, const tide_rect rect)
 {
-    uint32_t plain, commands, plains;
-    const uint32_t background = panel(g, rect, &plain, &commands, &plains);
+    uint32_t plain, commands, plains, shadow;
+    const uint32_t background = panel(g, rect, &plain, &commands, &plains, &shadow);
     const int before = open_group(g, id, AREA, tide_f2(rect.x + AREA_PADDING, rect.y + AREA_PADDING));
     if (g->depth == before) return before;
     top(g)->room = max_f(rect.width - 2.0f * AREA_PADDING, 0.0f);
@@ -1141,6 +1335,8 @@ int tide_gui_begin_area(tide_gui *g, const uint32_t id, const tide_rect rect)
     top(g)->commands_from = commands;
     top(g)->plains_from = plains;
     top(g)->radius = g->theme.radius;
+    top(g)->border = g->theme.border_width;
+    top(g)->shadow = shadow;
     top(g)->clips_from = g->list.clip_count;
     top(g)->hot_before = g->hot_next;
     top(g)->rects_before = g->rect_count_next;
@@ -1155,8 +1351,8 @@ int tide_gui_begin_area_at(tide_gui *g, const uint32_t id, const int32_t anchor)
     const tide_gui_size *last = remembered(g, id);
     const tide_float2 size = last ? last->size : tide_f2(0.0f, 0.0f);
     const tide_float2 at = place(g, anchor, size);
-    uint32_t plain, commands, plains;
-    const uint32_t background = panel(g, (tide_rect){at.x, at.y, size.x, size.y}, &plain, &commands, &plains);
+    uint32_t plain, commands, plains, shadow;
+    const uint32_t background = panel(g, (tide_rect){at.x, at.y, size.x, size.y}, &plain, &commands, &plains, &shadow);
     const int before = open_group(g, id, AREA, tide_f2(at.x + AREA_PADDING, at.y + AREA_PADDING));
     if (g->depth == before) return before;
     top(g)->room = max_f(g->width - 2.0f * (AREA_MARGIN + AREA_PADDING), 0.0f);
@@ -1167,6 +1363,8 @@ int tide_gui_begin_area_at(tide_gui *g, const uint32_t id, const int32_t anchor)
     top(g)->commands_from = commands;
     top(g)->plains_from = plains;
     top(g)->radius = g->theme.radius;
+    top(g)->border = g->theme.border_width;
+    top(g)->shadow = shadow;
     top(g)->clips_from = g->list.clip_count;
     top(g)->hot_before = g->hot_next;
     top(g)->rects_before = g->rect_count_next;
@@ -1260,13 +1458,13 @@ int tide_gui_begin_theme(tide_gui *g, const tide_gui_theme theme)
     if (!open_scope(g)) return before; // Too deep to put it back: its widgets keep the look around them
     top(g)->themed = true;
     top(g)->before = g->theme;
-    g->theme = theme;
+    g->theme = fitted_theme(theme);
     return before;
 }
 
 void tide_gui_set_theme(tide_gui *g, const tide_gui_theme theme)
 {
-    g->theme = theme;
+    g->theme = fitted_theme(theme);
 }
 
 static void close_area(tide_gui *g, const tide_gui_group *grp)
@@ -1297,12 +1495,22 @@ static void close_area(tide_gui *g, const tide_gui_group *grp)
         tide_draw_command *c = &g->list.commands[grp->panel];
         c->a = tide_f2(r.x + r.width * 0.5f, r.y + r.height * 0.5f);
         c->b = tide_f2(r.width, r.height);
-        // Round corners were fitted to the size it had then: the list fits them again as it's added
-        if (c->kind == TIDE_DRAW_SHAPE) g->list.shapes[c->shape].radius = grp->radius;
+        // Round corners and a border were fitted to the size it had then: the list fits them again as it's added
+        if (c->kind == TIDE_DRAW_SHAPE) {
+            g->list.shapes[c->shape].radius = grp->radius;
+            g->list.shapes[c->shape].outline = grp->border;
+        }
     } else if (grp->panel_plain) {
         tide_draw_plain *p = &g->list.plains[grp->panel_plain - 1u];
         p->a = tide_f2(r.x + r.width * 0.5f, r.y + r.height * 0.5f);
         p->b = tide_f2(r.width, r.height);
+    }
+    if (grp->shadow != UINT32_MAX) { // Under it wherever it went, with its soft edge's offset
+        tide_draw_command *c = &g->list.commands[grp->shadow];
+        const float drop = g->list.shapes[c->shape].soft * 0.25f;
+        c->a = tide_f2(r.x + r.width * 0.5f, r.y + r.height * 0.5f + drop);
+        c->b = tide_f2(max_f(r.width, 1.0f), max_f(r.height, 1.0f));
+        g->list.shapes[c->shape].radius = grp->radius;
     }
     remember(g, grp->id, size, grp->natural, grp->least);
     remember_place(g, grp->id, r, grp->rects_before);
@@ -1326,10 +1534,10 @@ static void close_scroll(tide_gui *g, const tide_gui_group *grp)
         offset.y += g->drag_delta.y;
     }
     if (g->wheel_owner == grp->id && live(g)) {
-        const tide_float2 moved = tide_f2(clamp_f(offset.x - g->wheel.x * LINE, 0.0f, limit.x),
-                                         clamp_f(offset.y - g->wheel.y * LINE, 0.0f, limit.y));
-        g->wheel.x += (moved.x - offset.x) / LINE;
-        g->wheel.y += (moved.y - offset.y) / LINE;
+        const tide_float2 moved = tide_f2(clamp_f(offset.x - g->wheel.x * WHEEL_LINE, 0.0f, limit.x),
+                                         clamp_f(offset.y - g->wheel.y * WHEEL_LINE, 0.0f, limit.y));
+        g->wheel.x += (moved.x - offset.x) / WHEEL_LINE;
+        g->wheel.y += (moved.y - offset.y) / WHEEL_LINE;
         offset = moved;
         g->wheel_owner = state.parent;
     }
@@ -1418,8 +1626,8 @@ void tide_gui_close(tide_gui *g, const int depth)
         float natural = grp.natural;
         float least = grp.least;
         if (grp.kind == HORIZONTAL) { // Less the spacing after its last widget
-            natural = max_f(natural - SPACING, 0.0f);
-            least = max_f(least - SPACING, 0.0f);
+            natural = max_f(natural - grp.spacing, 0.0f);
+            least = max_f(least - grp.spacing, 0.0f);
         }
         remember(g, grp.id, grp.size, natural, least);
         take(g, grp.size.x, grp.size.y, natural, least);
@@ -1431,12 +1639,12 @@ void tide_gui_layout_space(tide_gui *g, const float size)
     tide_gui_group *grp = top(g);
     if (grp->kind == HORIZONTAL) {
         grp->cursor.x += size;
-        grp->size.x = max_f(grp->size.x, grp->cursor.x - SPACING - grp->origin.x);
+        grp->size.x = max_f(grp->size.x, grp->cursor.x - grp->spacing - grp->origin.x);
         grp->natural += size;
         grp->least += size;
     } else {
         grp->cursor.y += size;
-        grp->size.y = max_f(grp->size.y, grp->cursor.y - SPACING - grp->origin.y);
+        grp->size.y = max_f(grp->size.y, grp->cursor.y - grp->spacing - grp->origin.y);
     }
 }
 
@@ -1553,7 +1761,7 @@ bool tide_gui_button(tide_gui *g, const uint32_t id, const tide_rect rect, const
     bool hover, down, focused;
     const bool pressed_now = clicked(g, id, rect, &hover, &down, &focused);
     if (focused) fill_around(g, rect, BORDER, g->theme.accent);
-    fill(g, rect, down && hover ? g->theme.pressed : hover ? g->theme.hot : g->theme.control);
+    body(g, id, rect, down && hover ? g->theme.pressed : hover ? g->theme.hot : g->theme.control);
     text_centered(g, text, rect, g->theme.text);
     return pressed_now;
 }
@@ -1572,10 +1780,18 @@ tide_control tide_gui_control(tide_gui *g, const uint32_t id, const tide_rect re
     // Held until the pointer lets go: not in the frame it does, when a click says so
     const bool enabled = live(g);
     if (was_active && !enabled) g->active = 0;
-    return (tide_control){.hovered = hover, .pressed = down && g->mouse_held && enabled,
-                          .focused = focused, .clicked = click && enabled,
-                          .down = down && g->mouse_pressed && enabled, .up = down && g->mouse_released && enabled,
-                          .cancelled = (was_active && !enabled) || gesture_cancelled, .position = g->mouse};
+    tide_control c = {.hovered = hover, .pressed = down && g->mouse_held && enabled,
+                      .focused = focused, .clicked = click && enabled,
+                      .down = down && g->mouse_pressed && enabled, .up = down && g->mouse_released && enabled,
+                      .cancelled = (was_active && !enabled) || gesture_cancelled, .position = g->mouse};
+    // ...and as amounts, which ease over the theme's transition
+    const float states[3] = {c.hovered ? 1.0f : 0.0f, c.pressed ? 1.0f : 0.0f, c.focused ? 1.0f : 0.0f};
+    float amounts[3];
+    animate_lanes(g, tide_gui_seed(id, 0xB0D1u), states, amounts, 3, g->theme.transition, NULL);
+    c.hover = amounts[0];
+    c.press = amounts[1];
+    c.focus = amounts[2];
+    return c;
 }
 
 bool tide_gui_layout_button(tide_gui *g, const uint32_t id, const char *text)
@@ -1591,7 +1807,7 @@ bool tide_gui_toggle(tide_gui *g, const uint32_t id, const tide_rect rect, const
     if (changed) *value = !*value;
     const tide_rect box = {rect.x, rect.y + (rect.height - BOX) * 0.5f, BOX, BOX};
     if (focused) fill_around(g, box, BORDER, g->theme.accent);
-    fill(g, box, hover ? g->theme.hot : g->theme.control);
+    body(g, id, box, hover ? g->theme.hot : g->theme.control);
     if (*value) fill_around(g, box, -4.0f, g->theme.accent);
     text_at(g, text, rect.x + BOX + 8.0f, rect.y + rect.height * 0.5f, g->theme.text);
     return changed;
@@ -1629,9 +1845,10 @@ static double slider(tide_gui *g, const uint32_t id, const tide_rect r, const do
     const float middle = r.y + r.height * 0.5f;
     const tide_rect rail = {r.x, middle - 3.0f, r.width, 6.0f};
     if (focused) fill_around(g, rail, BORDER, g->theme.accent);
-    fill(g, rail, hover || down ? g->theme.hot : g->theme.control);
+    body(g, id, rail, hover || down ? g->theme.hot : g->theme.control);
     fill(g, (tide_rect){rail.x, rail.y, rail.width * at, rail.height}, g->theme.accent);
-    fill(g, (tide_rect){r.x + r.width * at - 6.0f, middle - 12.0f, 12.0f, 24.0f}, down ? g->theme.accent : g->theme.text);
+    const float thumb = LINE - 4.0f;
+    fill(g, (tide_rect){r.x + r.width * at - 6.0f, middle - thumb * 0.5f, 12.0f, thumb}, down ? g->theme.accent : g->theme.text);
     return moved;
 }
 
@@ -2032,7 +2249,7 @@ static bool number_box(tide_gui *g, const uint32_t id, const tide_rect box, doub
     }
 
     if (focused) fill_around(g, box, BORDER, g->theme.accent);
-    fill(g, box, hover ? g->theme.field_hot : g->theme.field);
+    body(g, id, box, hover ? g->theme.field_hot : g->theme.field);
     char text[48];
     if (g->editing == id) edit_draw(g, box);
     else {
@@ -2118,7 +2335,7 @@ bool tide_gui_color_field(tide_gui *g, const uint32_t id, const tide_rect rect, 
 {
     const tide_rect r = after_label(g, rect, label);
     const tide_rect swatch = {r.x, r.y, min_f(r.height, r.width), r.height};
-    fill(g, swatch, g->theme.control);
+    body_paint(g, swatch, shade(g, g->theme.control), g->theme.radius);
     fill_around(g, swatch, -3.0f, *value);
     float parts[4] = {value->r, value->g, value->b, value->a};
     const float skip = swatch.width + SPACING;
@@ -2188,7 +2405,7 @@ bool tide_gui_text_field_entered(tide_gui *g, const uint32_t id, const tide_rect
     }
 
     if (focused) fill_around(g, box, BORDER, g->theme.accent);
-    fill(g, box, hover ? g->theme.field_hot : g->theme.field);
+    body(g, id, box, hover ? g->theme.field_hot : g->theme.field);
     const tide_str shown = tide_textref_get(value);
     char text[300];
     if (g->editing == id) edit_draw(g, box);
@@ -2240,26 +2457,26 @@ bool tide_gui_layout_float_field(tide_gui *g, const uint32_t id, const char *lab
     return tide_gui_layout_float_field_entered(g, id, label, value, &entered);
 }
 
-static float parts_width(const int n, const float each)
+static float parts_width(const tide_gui *g, const int n, const float each)
 {
     return (float)n * each + (float)(n - 1) * SPACING;
 }
 
 bool tide_gui_layout_float2_field(tide_gui *g, const uint32_t id, const char *label, tide_float2 *value)
 {
-    const tide_rect r = labelled(g, label, parts_width(2, PART_WIDTH), parts_width(2, LEAST_PART));
+    const tide_rect r = labelled(g, label, parts_width(g, 2, PART_WIDTH), parts_width(g, 2, LEAST_PART));
     return tide_gui_float2_field(g, id, r, "", value);
 }
 
 bool tide_gui_layout_float3_field(tide_gui *g, const uint32_t id, const char *label, tide_float3 *value)
 {
-    const tide_rect r = labelled(g, label, parts_width(3, PART_WIDTH), parts_width(3, LEAST_PART));
+    const tide_rect r = labelled(g, label, parts_width(g, 3, PART_WIDTH), parts_width(g, 3, LEAST_PART));
     return tide_gui_float3_field(g, id, r, "", value);
 }
 
 bool tide_gui_layout_float4_field(tide_gui *g, const uint32_t id, const char *label, tide_float4 *value)
 {
-    const tide_rect r = labelled(g, label, parts_width(4, PART_WIDTH), parts_width(4, LEAST_PART));
+    const tide_rect r = labelled(g, label, parts_width(g, 4, PART_WIDTH), parts_width(g, 4, LEAST_PART));
     return tide_gui_float4_field(g, id, r, "", value);
 }
 
@@ -2267,6 +2484,6 @@ bool tide_gui_layout_color_field(tide_gui *g, const uint32_t id, const char *lab
 {
     const float swatch = LINE + SPACING;
     const tide_rect r =
-        labelled(g, label, swatch + parts_width(4, COLOR_PART_WIDTH), swatch + parts_width(4, LEAST_PART));
+        labelled(g, label, swatch + parts_width(g, 4, COLOR_PART_WIDTH), swatch + parts_width(g, 4, LEAST_PART));
     return tide_gui_color_field(g, id, r, "", value);
 }
