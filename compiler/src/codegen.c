@@ -10703,6 +10703,15 @@ static void gen_component_access(gen *g)
             sb_printf(o, "    memcpy(lanes[%d] + (size_t)i * %d, (const uint8_t *)v + %d, %d);\n", k, width, k * width, width);
         }
         sb_put(o, "}\n\n");
+        if (lanes <= 64) { // Only the lanes code can write, a bit each (lane_writes_codegen.inc): the others stay where they are
+            sb_printf(o, "TIDE_HELPER void tide_scatter_some_%s(uint8_t *const *lanes, const uint32_t i, const %s *v, const uint64_t some)\n{\n",
+                      name, name);
+            for (int k = 0; k < lanes; k++) {
+                sb_printf(o, "    if (some >> %d & 1u) memcpy(lanes[%d] + (size_t)i * %d, (const uint8_t *)v + %d, %d);\n", k, k, width,
+                          k * width, width);
+            }
+            sb_put(o, "}\n\n");
+        }
         // By entity: false when it's gone, or has none
         for (int put = 0; put < 2; put++) {
             sb_printf(o, "TIDE_HELPER bool tide_%s_%s(%s%s *w, tide_entity e, %s%s *v)\n{\n", put ? "store" : "load", name,
@@ -14278,6 +14287,8 @@ static bool filters_owner(const gen *g, const decl *sys, const int a)
 // for a mut parameter (unless `read_only`), so the chunk's page of it is the
 // world's own (see tide/page.h).
 // Whether a system or handler changes component `c` of archetype `a`'s rows.
+#include "lane_writes_codegen.inc"
+
 static bool changes_component(const decl *sys, const int c, const bool read_only)
 {
     for (int i = 0; i < sys->params.count && !read_only; i++) {
@@ -14669,6 +14680,12 @@ static void gen_row_puts(gen *g, const decl *sys, const char *pad, const bool re
         if (world_sets_component(sys, p->type.decl)) {
             sb_printf(&g->c, "%stide_store_%s(%s, tide_ent[tide_i], &tide_v%d);\n", pad, type_cname(p->type.decl),
                       p->type.decl->is_local ? "tide_l" : "tide_w", i);
+            continue;
+        }
+        if (lanes_partial(g, sys, p->type.decl->index)) {
+            sb_printf(&g->c, "%stide_scatter_some_%s(tide_col_%s, tide_i, &tide_v%d, UINT64_C(0x%llx));\n", pad,
+                      type_cname(p->type.decl), type_cname(p->type.decl), i,
+                      (unsigned long long)written_lanes(g, sys, p->type.decl->index));
             continue;
         }
         sb_printf(&g->c, "%stide_scatter_%s(tide_col_%s, tide_i, &tide_v%d);\n", pad, type_cname(p->type.decl),
@@ -17410,11 +17427,29 @@ static void gen_rows_shared(gen *g, const decl *sys, const int a)
     bool first = true;
     for (int c = 0; c < g->prog->components.count; c++) {
         if (!arch_stores(g, a, c) || !changes_component(sys, c, false)) continue;
-        sb_printf(&g->c, "%stide_table_lanes_shared(tide_t, %s, tide_c, %d, %d)", first ? "" : " || ", arch_columns(g, a),
-                  arch_column(g, a, c), comp_lanes(g->prog->components.items[c]));
-        first = false;
+        lane_run runs[64];
+        const int n = written_runs(g, sys, c, runs);
+        for (int r = 0; r < n; r++) {
+            sb_printf(&g->c, "%stide_table_lanes_shared(tide_t, %s, tide_c, %d, %d)", first ? "" : " || ", arch_columns(g, a),
+                      arch_column(g, a, c) + runs[r].first, runs[r].count);
+            first = false;
+        }
     }
     if (first) sb_put(&g->c, "false");
+}
+
+// The lanes of component `c` a system takes `mut` but can't write: where they
+// are, read and never written, so no page of theirs is taken (written_lanes)
+static void gen_unwritten_lanes(gen *g, const decl *sys, const int a, const int c, const char *pad)
+{
+    if (!lanes_partial(g, sys, c)) return;
+    const decl *d = g->prog->components.items[c];
+    const uint64_t mask = written_lanes(g, sys, c);
+    for (int k = 0; k < comp_lanes(d); k++) {
+        if (mask >> k & 1u) continue;
+        sb_printf(&g->c, "%stide_was_%s[%d] = tide_table_column(tide_t, %s, tide_c, %d);\n%stide_own_%s[%d] = (uint8_t *)(uintptr_t)tide_was_%s[%d];\n",
+                  pad, type_cname(d), k, arch_columns(g, a), arch_column(g, a, c) + k, pad, type_cname(d), k, type_cname(d), k);
+    }
 }
 
 // A call to a system's rows function number `rows` for archetype `a`.
@@ -17557,16 +17592,28 @@ static void gen_system_chunk(gen *g, const decl *sys, const int a, const rows_se
     for (int c = 0; c < prog->components.count; c++) {
         if (!arch_stores(g, a, c) || !changes_component(sys, c, false)) continue;
         const decl *d = prog->components.items[c];
-        sb_printf(o, "%stide_table_lanes_begin(tide_t, %s, tide_c, %d, %d, tide_apart, tide_was_%s, tide_own_%s);\n", in.data, columns,
-                  arch_column(g, a, c), comp_lanes(d), type_cname(d), type_cname(d));
+        gen_unwritten_lanes(g, sys, a, c, in.data);
+        lane_run runs[64];
+        const int n = written_runs(g, sys, c, runs);
+        for (int r = 0; r < n; r++) {
+            sb_printf(o, "%stide_table_lanes_begin(tide_t, %s, tide_c, %d, %d, tide_apart, &tide_was_%s[%d], &tide_own_%s[%d]);\n", in.data,
+                      columns, arch_column(g, a, c) + runs[r].first, runs[r].count, type_cname(d), runs[r].first, type_cname(d),
+                      runs[r].first);
+        }
     }
     if (pieced) {
         sb_printf(o, "%s} else {\n", pad);
         for (int c = 0; c < prog->components.count; c++) {
             if (!arch_stores(g, a, c) || !changes_component(sys, c, false)) continue;
             const decl *d = prog->components.items[c];
-            sb_printf(o, "%stide_apart |= tide_table_lanes_piece(tide_t, %s, tide_c, %d, %d, tide_was_%s, tide_own_%s);\n", in.data,
-                      columns, arch_column(g, a, c), comp_lanes(d), type_cname(d), type_cname(d));
+            gen_unwritten_lanes(g, sys, a, c, in.data);
+            lane_run runs[64];
+            const int n = written_runs(g, sys, c, runs);
+            for (int r = 0; r < n; r++) {
+                sb_printf(o, "%stide_apart |= tide_table_lanes_piece(tide_t, %s, tide_c, %d, %d, &tide_was_%s[%d], &tide_own_%s[%d]);\n",
+                          in.data, columns, arch_column(g, a, c) + runs[r].first, runs[r].count, type_cname(d), runs[r].first,
+                          type_cname(d), runs[r].first);
+            }
         }
         sb_printf(o, "%s}\n", pad);
     }
@@ -17593,8 +17640,12 @@ static void gen_system_chunk(gen *g, const decl *sys, const int a, const rows_se
     for (int c = prog->components.count; c-- > 0;) {
         if (!arch_stores(g, a, c) || !changes_component(sys, c, false)) continue;
         const decl *d = prog->components.items[c];
-        sb_printf(o, "%stide_table_lanes_end(tide_t, %s, tide_c, %d, %d, tide_own_%s);\n", in.data, columns, arch_column(g, a, c),
-                  comp_lanes(d), type_cname(d));
+        lane_run runs[64];
+        const int n = written_runs(g, sys, c, runs);
+        for (int r = n; r-- > 0;) {
+            sb_printf(o, "%stide_table_lanes_end(tide_t, %s, tide_c, %d, %d, &tide_own_%s[%d]);\n", in.data, columns,
+                      arch_column(g, a, c) + runs[r].first, runs[r].count, type_cname(d), runs[r].first);
+        }
     }
     if (pieced) sb_printf(o, "%s}\n", pad);
 }
@@ -17734,8 +17785,13 @@ static void gen_system_pieces(gen *g, const decl *sys)
             for (int i = 0; i < prog->components.count; i++) {
                 const int c = done ? prog->components.count - 1 - i : i; // Ended in the reverse order they were begun
                 if (!arch_stores(g, a, c) || !changes_component(sys, c, false)) continue;
-                sb_printf(o, "%stide_table_lanes_%s_pieces(tide_t, %s, tide_c, %d, %d%s);\n", pad, done ? "end" : "begin",
-                          arch_columns(g, a), arch_column(g, a, c), comp_lanes(prog->components.items[c]), done ? "" : ", tide_apart");
+                lane_run runs[64];
+                const int n = written_runs(g, sys, c, runs);
+                for (int k = 0; k < n; k++) {
+                    const int r = done ? n - 1 - k : k;
+                    sb_printf(o, "%stide_table_lanes_%s_pieces(tide_t, %s, tide_c, %d, %d%s);\n", pad, done ? "end" : "begin",
+                              arch_columns(g, a), arch_column(g, a, c) + runs[r].first, runs[r].count, done ? "" : ", tide_apart");
+                }
             }
             sb_put(o, "        }\n    }\n");
         }
@@ -18243,8 +18299,14 @@ static void gen_system_cached_task(gen *g, const decl *sys, const rows_set *rows
                 for (int k = 0; k < lanes; k++) {
                     sb_printf(o, "%stide_t->pages[(size_t)tide_c * (%s)->count + %d]", k ? ", " : "", columns, arch_column(g, a, c) + k);
                 }
-                sb_printf(o, "};\n            for (uint32_t tide_lane = 0u; tide_lane < %du; tide_lane++)\n"
-                             "                if (tide_pages_%s[tide_lane]->refs != 1u) goto tide_fallback;\n", lanes, comp);
+                // Only the lanes the code writes need be the table's alone, as the ordinary task begins only those
+                sb_printf(o, "};\n            for (uint32_t tide_lane = 0u; tide_lane < %du; tide_lane++)\n", lanes);
+                if (lanes_partial(g, sys, c)) {
+                    sb_printf(o, "                if ((UINT64_C(0x%llx) >> tide_lane & 1u) && tide_pages_%s[tide_lane]->refs != 1u) goto tide_fallback;\n",
+                              (unsigned long long)written_lanes(g, sys, c), comp);
+                } else {
+                    sb_printf(o, "                if (tide_pages_%s[tide_lane]->refs != 1u) goto tide_fallback;\n", comp);
+                }
             }
             for (int c = 0; c < prog->components.count; c++) {
                 if (!arch_stores(g, a, c) || !changes_component(sys, c, false)) continue;
@@ -18253,9 +18315,14 @@ static void gen_system_cached_task(gen *g, const decl *sys, const rows_set *rows
                 const int lanes = comp_lanes(d);
                 sb_printf(o, "            uint8_t *tide_own_%s[%d];\n"
                              "            for (uint32_t tide_lane = 0u; tide_lane < %du; tide_lane++) {\n"
-                             "                tide_page *const tide_page_now = tide_pages_%s[tide_lane];\n"
-                             "                tide_page_now->hashed = UINT32_MAX;\n"
-                             "                tide_own_%s[tide_lane] = tide_page_data(tide_page_now);\n            }\n", comp, lanes, lanes, comp, comp);
+                             "                tide_page *const tide_page_now = tide_pages_%s[tide_lane];\n", comp, lanes, lanes, comp);
+                if (lanes_partial(g, sys, c)) {
+                    sb_printf(o, "                if (UINT64_C(0x%llx) >> tide_lane & 1u) tide_page_now->hashed = UINT32_MAX;\n",
+                              (unsigned long long)written_lanes(g, sys, c));
+                } else {
+                    sb_put(o, "                tide_page_now->hashed = UINT32_MAX;\n");
+                }
+                sb_printf(o, "                tide_own_%s[tide_lane] = tide_page_data(tide_page_now);\n            }\n", comp);
             }
             // Read-only components may remain shared. Use exactly the names
             // and arrays the existing rows argument/budget emitter expects.
@@ -22791,6 +22858,7 @@ static void order_arrays(program *prog)
 
 bool codegen(program *prog, const codegen_options *opts)
 {
+    lane_memo.count = 0; // What code writes of its parameters, this program's (lane_writes_codegen.inc)
     if (opts->strip_unused_assets) program_strip_unused_assets(prog);
     order_arrays(prog);
     // Filter.Trilinear is a member of the enum only in a game that names it, so the others' C is as it was

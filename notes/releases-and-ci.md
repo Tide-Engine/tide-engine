@@ -1,5 +1,26 @@
 # Releases, installing and CI
 
+## Tests alongside JetBrains verification (2026-10-29)
+
+Build's eight native/web/MinGW/sanitizer test entries now depend only on
+Version, so they start alongside the JetBrains plugin instead of waiting for
+its build and verification. The three package entries remain dependent on
+Version and JetBrains because they bundle its exact-version installer.
+Both matrices call check.yml with the original runner steps, cache settings,
+platforms, presets and test budgets. The required Build (platform) checks
+require both matrices to succeed before Release can publish.
+
+Validation: parsed YAML comparison checks all eleven matrix entries and every
+runner setting/step against the previous workflow, reversing only the context
+substitutions needed by the reusable workflow. Version, JetBrains, Release,
+Marketplace, triggers, concurrency and workflow environment are unchanged.
+Actionlint 1.7.12 passes with only its existing unsupported concurrency.queue
+key excluded, and the whitespace check passes. The release gate passes only
+for two successful matrices across all sixteen success/failure/cancelled/skipped
+combinations. Hosted scheduling and the
+elapsed-time saving remain normal push-to-dev CI coverage; no extra workflow
+is dispatched.
+
 ## Raw-save pins and journal isolation in run 40787272828 (2026-10-29)
 
 The completed run at `c30a131da` fails `local_fields` and `local_fields_plain`
@@ -135,8 +156,9 @@ No manual dispatch or retry was performed.
 
 The JetBrains job also builds and uploads tide-jetbrains-installer.zip, an
 offline Tide/LSP4IJ bundle with the engine's exact version and upstream notices.
-The checks matrix waits for that job; package entries download the artifact to
-build/jetbrains before cmake/package.cmake adds it to editors/ and stages its
+The package matrix waits for that job (test entries run independently as of
+2026-10-29); package entries download the artifact to build/jetbrains before
+cmake/package.cmake adds it to editors/ and stages its
 notices under licenses/jetbrains. Packaging rejects absent/mismatched versions.
 The installed-package smoke step runs jetbrains_test.cmake with the real bundle,
 using isolated profiles and checking every installed Tide/LSP4IJ byte.

@@ -1,5 +1,19 @@
 # Benchmarks
 
+## Lanes a system can't write (2026-10-29)
+
+Against `dev` at 1b2deaf8c (holes), five alternating rounds, release (notes/ecs.md,
+Lanes a system can't write). With a kept snapshot each tick (a client):
+`[Lasting]` wide at 1M/50% frozen -39.9% on one thread (2.40 to 1.38 ms) and
+-35.9% on four; dense wide 1M -28.3% / -9.0%; `versus_sleep` sparse tag
+-36.8%/-33.2%/-29.6% at 0/10/100 toggles and moving tag -34.5%/-15.5%/-5.4%;
+churn -7.0%, particles -3.9%, rollback -2.3%. Without snapshots the in-place
+loops are unchanged code and measured -6.4% to +4.5% with overlapping ranges.
+Thread scaling for those loops is bound by memory bandwidth (hand-written C and
+Bevy's table storage stop at the same wall), not by task splitting. Raw rows:
+`bench/results/lane-writes-20261029/paired-runs.txt`. The Bevy comparison
+before this change, with charts' data: `bench/results/bevy-holes-20261029/`.
+
 ## Holes under a client's rollback (2026-10-29)
 
 Rows entities leave stay as holes (notes/ecs.md, Holes). Against `dev` before
