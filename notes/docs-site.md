@@ -79,6 +79,11 @@ repository URL, pinned benchmark revisions and raw-result paths as internal
 provenance. The homepage describes the comparison without promising source
 links on the benchmark page.
 
+Link-removal validation: the production docs build and both existing
+development/isolated-production export tests pass after merging `dev`.
+GitHub still reports the benchmark repository as public. No browser rerun
+was needed for removing links and prose.
+
 Validation: Svelte check has zero errors/warnings. After merging current
 `dev`, the final docs production build and development/isolated-production
 Markdown exports plus SEO/HTTP tests pass (5 tests). A temporary ignored
