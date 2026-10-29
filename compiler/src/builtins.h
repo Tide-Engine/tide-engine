@@ -49,6 +49,9 @@ bool web_prelude_wanted(const char *text, size_t len);
 #define DRAW_PRELUDE_PATH "<tide>/draw.tide"
 #define DRAW_FILL_RECT "TideFillRect"
 #define DRAW_FILL_SHAPE "TideFillShape"
+// ...and with a Func<float2, float2, Color>, which takes the shape's size too
+#define DRAW_FILL_RECT_SIZED "TideFillRectSized"
+#define DRAW_FILL_SHAPE_SIZED "TideFillShapeSized"
 const char *draw_prelude(size_t *len);
 bool draw_prelude_wanted(const char *const *texts, const size_t *lens, int count);
 // Its Format enum, which RenderTarget.Window takes, the same way.

@@ -30,7 +30,14 @@ TIDE_TEST(fills_draw_as_one_run_of_instances)
         tide_frame(&world, NULL, 1, NULL, NULL, 1, &local, &draw, &gui);
         TIDE_CHECK(local.Probe.frames == frame + 1);
         TIDE_REQUIRE(draw.run_count == 1);
-        TIDE_CHECK(draw.runs[0].count == 4);
+        TIDE_CHECK(draw.runs[0].count == 5);
+        bool shadow = false; // Draw.Shadow: a soft shape a quarter of its size lower
+        for (uint32_t i = 0; i < draw.count; i++) {
+            const tide_draw_command *c = &draw.commands[i];
+            if (c->kind == TIDE_DRAW_SHAPE && c->a.x == 60.0f && c->a.y == 223.0f && draw.shapes[c->shape].soft == 12.0f)
+                shadow = true;
+        }
+        TIDE_CHECK(shadow);
         TIDE_CHECK(draw.runs[0].shader->instance_ints > 0); // The functions' tags
         TIDE_CHECK(tide_world_hash(&world) == hash);
     }
@@ -63,6 +70,9 @@ TIDE_TEST(fills_gradients_give_their_colors)
     TIDE_CHECK(color_is(seen[9], 1, 1, 1, 1));         // Four colors: the last at the end
     TIDE_CHECK(color_is(seen[10], 1, 0, 0, 1));        // A uv that isn't a number: the start
     TIDE_CHECK(color_is(seen[11], 0, 0, 0, 1));        // A function of the game's
+    TIDE_CHECK(color_is(seen[12], 1, 0, 0, 0.25f));    // WithAlpha
+    const tide_rect moved = local.Probe.moved;           // MoveInside: moved, not resized
+    TIDE_CHECK(moved.x == 80 && moved.y == 0 && moved.width == 20 && moved.height == 20);
     tide_draw_free(&draw);
     tide_local_free(&local);
     tide_world_free(&world);

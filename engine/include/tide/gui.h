@@ -570,6 +570,10 @@ bool tide_gui_text_field_entered(tide_gui *g, uint32_t id, tide_rect rect, const
 
 // The same, laid out automatically (GUILayout).
 void tide_gui_layout_label(tide_gui *g, const char *text);
+// Label(text, size): a label at a text size of its own, like a heading, its
+// line as tall as a widget of that size is.
+void tide_gui_label_sized(tide_gui *g, tide_rect rect, const char *text, float size);
+void tide_gui_layout_label_sized(tide_gui *g, const char *text, float size);
 bool tide_gui_layout_button(tide_gui *g, uint32_t id, const char *text);
 bool tide_gui_layout_toggle(tide_gui *g, uint32_t id, const char *text, bool *value);
 bool tide_gui_layout_slider(tide_gui *g, uint32_t id, const char *label, float *value, float min, float max);

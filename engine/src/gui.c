@@ -1802,6 +1802,30 @@ void tide_gui_layout_label(tide_gui *g, const char *text)
     tide_gui_label(g, reserve(g, width, width, false), text);
 }
 
+// A label at its own text size, as a heading is: the theme's, for it alone.
+// A size that isn't a number, or is out of the theme's range, is the nearest in it.
+static float label_size(const tide_gui *g, const float size)
+{
+    if (!tide_is_finite_f(size)) return g->theme.text_size;
+    return size < 1.0f ? 1.0f : size > 512.0f ? 512.0f : size;
+}
+
+void tide_gui_label_sized(tide_gui *g, const tide_rect rect, const char *text, const float size)
+{
+    const float theme = g->theme.text_size;
+    g->theme.text_size = label_size(g, size);
+    tide_gui_label(g, rect, text);
+    g->theme.text_size = theme;
+}
+
+void tide_gui_layout_label_sized(tide_gui *g, const char *text, const float size)
+{
+    const float theme = g->theme.text_size;
+    g->theme.text_size = label_size(g, size); // Its line is as tall as its text, as a widget's is
+    tide_gui_layout_label(g, text);
+    g->theme.text_size = theme;
+}
+
 bool tide_gui_button(tide_gui *g, const uint32_t id, const tide_rect rect, const char *text)
 {
     bool hover, down, focused;
@@ -1852,9 +1876,14 @@ bool tide_gui_toggle(tide_gui *g, const uint32_t id, const tide_rect rect, const
     const bool changed = clicked(g, id, rect, &hover, &down, &focused);
     if (changed) *value = !*value;
     const tide_rect box = {rect.x, rect.y + (rect.height - BOX) * 0.5f, BOX, BOX};
+    // Its corners no rounder than a quarter of its box, so a round theme's checkbox doesn't look like a radio
+    // button; the focus's outline and the check go around them as ever
+    const float radius = g->theme.radius;
+    g->theme.radius = min_f(radius, BOX * 0.25f);
     if (focused) fill_around(g, box, BORDER, g->theme.accent);
     body(g, id, box, hover ? g->theme.hot : g->theme.control);
     if (*value) fill_around(g, box, -4.0f, g->theme.accent);
+    g->theme.radius = radius;
     text_at(g, text, rect.x + BOX + 8.0f, rect.y + rect.height * 0.5f, g->theme.text);
     return changed;
 }

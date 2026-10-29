@@ -2259,8 +2259,9 @@ TIDE_TEST(gui_a_themes_radius_rounds_every_part)
     TIDE_CHECK(same_color(c[2].color, theme.accent) && shape_of(&c[2])->radius == 8.0f);
     TIDE_CHECK(same_color(c[3].color, theme.control) && shape_of(&c[3])->radius == 6.0f);
     TIDE_CHECK(c[2].b.x == c[3].b.x + 4.0f && c[2].b.y == c[3].b.y + 4.0f);
-    TIDE_REQUIRE(shape_of(&c[5]) && shape_of(&c[6]));
-    TIDE_CHECK(shape_of(&c[5])->radius == 6.0f && shape_of(&c[6])->radius == 2.0f);
+    // A toggle's box is no rounder than a quarter of it (16 pixels), and its check goes around that
+    TIDE_REQUIRE(shape_of(&c[5]) != NULL);
+    TIDE_CHECK(shape_of(&c[5])->radius == 4.0f && shape_of(&c[6]) == NULL);
     TIDE_REQUIRE(shape_of(&c[9]) != NULL);
     TIDE_CHECK(c[9].b.y == 6.0f && shape_of(&c[9])->radius == 3.0f);
     TIDE_CHECK(shape_of(&c[12]) != NULL && shape_of(&c[12])->radius == 6.0f);
@@ -3515,4 +3516,37 @@ TIDE_TEST(gui_an_anchored_area_eases_to_its_new_size)
     tide_gui_close(&gui, depth);
     end();
     TIDE_CHECK(draw.commands[2].b.y == one);
+}
+
+// A label at a size of its own is a heading: its text that size, its line as
+// tall as a widget of that size, and the theme's size back for what follows.
+// A checkbox stays square-ish under a round theme.
+TIDE_TEST(gui_headings_and_checkboxes_under_a_round_theme)
+{
+    start();
+    static bool on = true;
+    tide_gui_theme theme = tide_gui_theme_default();
+    theme.radius = 20.0f;
+    theme.shadow_size = 0.0f;
+    tide_rect after = {0};
+    for (int frame = 0; frame < 2; frame++) {
+        begin();
+        tide_gui_set_theme(&gui, theme);
+        tide_gui_layout_label_sized(&gui, "Settings", 30.0f);
+        after = tide_gui_layout_reserve(&gui, tide_f2(10.0f, 10.0f));
+        tide_gui_layout_toggle(&gui, 1, "Sound", &on);
+        tide_gui_layout_label_sized(&gui, "x", NAN); // The theme's size
+        end();
+    }
+    TIDE_CHECK(after.y == 30.0f + 12.0f + 5.0f);
+    TIDE_CHECK(gui.theme.text_size == 16.0f && gui.theme.radius == 20.0f);
+    bool heading = false, box = false, plain = false;
+    for (uint32_t i = 0; i < draw.count; i++) {
+        const tide_draw_command *c = &draw.commands[i];
+        if (c->kind == TIDE_DRAW_TEXT && c->b.x == 30.0f) heading = true;
+        if (c->kind == TIDE_DRAW_TEXT && c->b.x == 16.0f) plain = true;
+        if (c->kind == TIDE_DRAW_SHAPE && c->b.x == 16.0f && draw.shapes[c->shape].radius == 4.0f) box = true;
+    }
+    TIDE_CHECK(heading && plain);
+    TIDE_CHECK(box); // A quarter of its 16 pixels, not the theme's 20
 }

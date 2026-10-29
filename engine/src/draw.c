@@ -1619,6 +1619,24 @@ void tide_draw_shape(tide_draw_list *d, const tide_shape shape)
                                       .outline_color = shape.outline_color});
 }
 
+void tide_draw_shadow_area(tide_draw_list *d, const tide_rect rect, const float radius, const float size,
+                           const tide_color color)
+{
+    if (!(size > 0.0f)) return; // Also NaN: no shadow
+    tide_shape s = TIDE_SHAPE_WHITE;
+    s.center = tide_f2(rect.x + rect.width * 0.5f, rect.y + rect.height * 0.5f + size * 0.25f);
+    s.size = tide_f2(rect.width, rect.height);
+    s.radius = radius;
+    s.color = color;
+    s.soft = size;
+    tide_draw_shape(d, s);
+}
+
+void tide_draw_shadow_area_default(tide_draw_list *d, const tide_rect rect, const float radius, const float size)
+{
+    tide_draw_shadow_area(d, rect, radius, size, (tide_color){0.0f, 0.0f, 0.0f, 0.4f});
+}
+
 void tide_draw_thick_line(tide_draw_list *d, const tide_float2 from, const tide_float2 to, const float width,
                           const tide_color color)
 {
