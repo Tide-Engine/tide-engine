@@ -73,6 +73,11 @@ bands. No measured frame-time claim accompanies this change. Mobile, other
 native OSes, Unity player execution, nearest-only Vulkan depth filtering and
 old-layout hot reload remain untested locally.
 
+The origin/dev merge brings aa8269a9a's independent GUI-style example and guide.
+Only the docs note's insertion point conflicted; both complete entries are kept.
+No Render3D source or dependency changed, so the focused validations above are
+not repeated for that unrelated incoming work.
+
 ## Skinning, shared vertex deformation and HDR effects (2026-10-25)
 
 The owner requested extending this package rather than implementing another

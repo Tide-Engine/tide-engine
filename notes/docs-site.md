@@ -18,6 +18,30 @@ Camera controls, framing, source textures, material cutoffs and stats placement
 are unchanged. Build and browser results belong with the accompanying Render3D
 integration validation; no separate validation run is claimed by this docs edit.
 
+## Material-inspired GUI example (2026-10-29)
+
+The owner requested a different look for the gui-style menu based on Material
+Design. The example now uses a light lavender surface, purple primary/tonal
+pill actions, translucent hover/press state layers and a focus ring. Settings
+replaces the actions with a compact themed sound card, eased vertically; Play
+shows an inverse-surface snackbar. Width is bounded by the viewport; the card
+and snackbar leave the bottom stats corner clear at the 376 x 400 embed size.
+The guide's introduction, theme and custom-button recipe match the new example;
+gradients remain documented as an optional technique. This is a Material-inspired
+composition using Tide's existing font/widgets, not a full Material component
+implementation. No engine, compiler, default theme or language changes.
+
+Validation: native and web-debug example targets compile without warnings.
+Native scripted captures at 376 x 400 cover Play feedback, Settings/Done,
+keyboard focus/activation, Music off and volume changed from 0.70 to 0.84;
+a 960 x 540 menu capture also passes visual inspection. Production docs build
+passes with Node 24.22.1 and existing unstaged-example 404s. The first browser
+smoke ran against a site built before example staging and reported unavailable;
+the site was rebuilt after staging. Final selected docs source/rendering smoke
+passes on both WebGL and WebGPU; the WebGPU capture was visually inspected.
+Other OS and real-phone coverage remains CI/device work.
+
+
 ## Tide Motion mapped humanoid retargeting (2026-10-27)
 
 The Motion guide now documents offline SOMA-to-character retargeting and the

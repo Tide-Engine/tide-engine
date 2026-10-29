@@ -1,19 +1,16 @@
 ---
-description: "Make Tide menus and HUDs look polished: themes, gradient fills, soft shadows, controls that ease as they're hovered, and panels that slide in."
+description: "Style Tide menus with a Material-inspired example: tonal surfaces, pill buttons, subtle state layers, themed settings and animated feedback."
 ---
 
 # Good-looking UI
 
-The [GUI](./gui.md)'s widgets work out of the box, and look plain. Four things make a menu look finished, and each is a line or two:
+The [GUI](./gui.md)'s widgets work out of the box. A consistent palette, clear type hierarchy and a little motion give a menu its own character.
 
-1. **A theme** for the GUI's own widgets: round corners, a little shading, a border, a bigger text size, more room.
-2. **Gradients and shadows** instead of flat rectangles: [fills](./views.md#fills) and soft edges.
-3. **Controls that ease** between their states, rather than snapping: a control's `hover` and `press`.
-4. **Panels that move** as they open and close: `GUI.Animate`.
+This example takes inspiration from Material Design: a light surface, purple primary and tonal actions, pill-shaped buttons and subtle state layers. Settings opens a compact card; Play shows a snackbar. It uses Tide's built-in font and widgets, so it is an interpretation rather than a complete Material component library.
 
-The menu below does all four. Hover the buttons, press Options, and press Play.
+Hover the buttons, open Settings, and press Play. Keyboard and gamepad focus have a visible outline.
 
-::: tide-example gui-style A menu with a look of its own
+::: tide-example gui-style A Material-inspired menu
 
 <<< @/examples/gui-style.tide
 
@@ -25,16 +22,14 @@ Set one theme for the menu's widgets, rather than a color here and there. A few 
 
 ```csharp
 const GUITheme LOOK = GUITheme {
-    radius = 10,        // Round corners
-    shading = 0.2,      // Each widget a little darker at its bottom: raised
-    borderWidth = 1,    // A faint edge, which separates widgets from a panel of a similar color
-    border = Color(1, 1, 1, 0.1),
-    textSize = 18,      // Widgets grow with it
-    padding = 18,       // Room inside panels...
-    spacing = 10 };     // ...and between widgets
+    text = INK, panel = Color(0.95, 0.92, 0.98), control = TONAL,
+    hot = Color(0.85, 0.80, 0.94), pressed = Color(0.79, 0.73, 0.88), accent = PRIMARY,
+    radius = 20, shading = 0, borderWidth = 0,
+    shadow = Color(0.11, 0.10, 0.13, 0.10), shadowSize = 8,
+    textSize = 16, padding = 20, spacing = 10, transition = 0.15 };
 ```
 
-Wrap the widgets in `GUI.Theme(LOOK) { ... }`, or call `GUI.SetTheme(LOOK)` at the start of the view. Every panel has a soft shadow and every widget fades between its colors by default; `shadowSize` and `transition` change them. Pick colors from one family: a dark panel, controls a step lighter, the hovered color a step lighter again, and one bright `accent`.
+Wrap widgets in `GUI.Theme(LOOK) { ... }`, or call `GUI.SetTheme(LOOK)` at the start of the view. The example uses flat tonal surfaces (`shading = 0`) and a quiet panel shadow. Give primary actions a strong fill, secondary actions a softer tone, and text enough contrast against both. `textSize`, `padding` and `spacing` establish a consistent scale.
 
 ## Gradients and shadows
 
@@ -65,22 +60,21 @@ Fills drawn one after another are drawn together, so a screen of gradient button
 A [control](./gui.md#widgets-of-your-own) says how hovered, pressed and focused it is as amounts from 0 to 1, `hover`, `press` and `focus`, which ease over the theme's `transition`. Blend by them rather than switching on `hovered`:
 
 ```csharp
-bool BigButton(Rect rect, string text)
+bool MaterialButton(Rect rect, string text)
 {
     var button = GUI.Control(rect);
     GUI.Draw()
     {
-        var lift = button.hover * 3 - button.press * 2; // Up as the pointer comes, down as it's pressed
-        var at = Rect(rect.x, rect.y - lift, rect.width, rect.height);
-        Draw.Rect(at, 14, Gradient.Vertical(Math.Lerp(Color(0.35, 0.55, 1), Color.white, button.hover * 0.15),
-                                            Color(0.25, 0.4, 0.85)));
-        Draw.Text(text, float2(at.x + at.width * 0.5, at.y + at.height * 0.5), 22, Color.white, Anchor.MiddleCenter);
+        Draw.Rect(rect, 24, PRIMARY);
+        Draw.Rect(rect, 24, Color.white.WithAlpha(button.hover * 0.08 + button.press * 0.12));
+        Draw.Text(text, float2(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5),
+                  16, Color.white, Anchor.MiddleCenter, Font.Bold);
     }
     return button.clicked;
 }
 ```
 
-Show `focus` too, as an outline: players on a gamepad or a keyboard see where they are.
+A translucent state layer makes interaction visible while keeping the button's position stable. The complete example also draws `focus` as an outline so players on a gamepad or keyboard see where they are.
 
 ## Panels that move
 
@@ -97,7 +91,7 @@ if (shown > 0)
 }
 ```
 
-It settles exactly on its target, so `shown > 0` stops drawing the panel once it has slid out. Something that should come in as it first appears starts from a value of its own: `GUI.Animate(1, 0.4, 0)` goes from 0 to 1 the first time it's called. Keyed with `GUI.Key`, a new key starts again, as the "Starting..." note above does each time Play is pressed.
+It settles exactly on its target, so `shown > 0` stops drawing the panel once it has slid out. Something that should come in as it first appears starts from a value of its own: `GUI.Animate(1, 0.4, 0)` goes from 0 to 1 the first time it's called. Keyed with `GUI.Key`, a new key starts again, as the snackbar above does each time Play is pressed.
 
 A panel at an anchor needs none of this to change size smoothly: `GUILayout.Area(Anchor.MiddleCenter)` grows and shrinks to its content by itself, as the tabs of a dialog change. For a tooltip, keep what it shows while it fades, and keep it on the screen with `rect.MoveInside(Screen.rect)` (see [Animation](./gui.md#animation)).
 

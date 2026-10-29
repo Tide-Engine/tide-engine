@@ -1,11 +1,11 @@
-// A menu with a look of its own: a theme for the GUI's widgets, gradients for
-// the background and the buttons, controls that ease as they're hovered, and a
-// panel that slides in.
+// A Material-inspired menu: tonal surfaces, pill buttons and soft state layers.
 scene Main { }
 
-const Color INK = Color(0.92, 0.94, 1);
-const Color NAVY = Color(0.06, 0.08, 0.14);
-const Color BLUE = Color(0.25, 0.4, 0.85);
+const Color INK = Color(0.11, 0.10, 0.13);
+const Color MUTED = Color(0.29, 0.27, 0.32);
+const Color SURFACE = Color(0.99, 0.97, 1);
+const Color PRIMARY = Color(0.40, 0.31, 0.64);
+const Color TONAL = Color(0.91, 0.87, 0.98);
 
 local singleton Menu
 {
@@ -15,76 +15,82 @@ local singleton Menu
     int played;
 }
 
-// The look the GUI's own widgets have here: rounder, raised, with a border, a shadow and a quick fade
+// Flat surfaces and a quiet shadow; custom buttons share this transition time.
 const GUITheme LOOK = GUITheme {
-    text = INK, panel = Color(0.09, 0.11, 0.19, 0.96), control = Color(0.18, 0.24, 0.42),
-    hot = Color(0.26, 0.34, 0.6), pressed = Color(0.12, 0.16, 0.3), accent = Color(1, 0.75, 0.3),
-    radius = 10, shading = 0.2, borderWidth = 1, border = Color(1, 1, 1, 0.1),
-    textSize = 18, padding = 18, spacing = 10, transition = 0.12 };
+    text = INK, panel = Color(0.95, 0.92, 0.98), control = TONAL,
+    hot = Color(0.85, 0.80, 0.94), pressed = Color(0.79, 0.73, 0.88), accent = PRIMARY,
+    radius = 20, shading = 0, borderWidth = 0,
+    shadow = Color(0.11, 0.10, 0.13, 0.10), shadowSize = 8,
+    textSize = 16, padding = 20, spacing = 10, transition = 0.15 };
 
-// A big button the view draws itself: it lifts as the pointer comes, and sinks as it's pressed
-bool BigButton(Rect rect, string text, Color top, Color bottom)
+// Material-style state layers keep the button still as hover and press ease in.
+bool MaterialButton(Rect rect, string text, bool filled)
 {
     var button = GUI.Control(rect);
+    var base = filled ? PRIMARY : TONAL;
+    var foreground = filled ? Color.white : PRIMARY;
     GUI.Draw()
     {
-        var lift = button.hover * 3 - button.press * 2;
-        var at = Rect(rect.x, rect.y - lift, rect.width, rect.height);
-        // A shadow that grows as it lifts
-        Draw.Shape(Shape { center = float2(at.x + at.width * 0.5, at.y + at.height * 0.5 + 6 + lift),
-                           size = float2(at.width, at.height), radius = 14, color = Color(0, 0, 0, 0.45),
-                           soft = 10 + lift * 2 });
-        Draw.Rect(at, 14, Gradient.Vertical(Math.Lerp(top, Color.white, button.hover * 0.15), bottom));
-        if (button.focus > 0) Draw.WireRoundRect(float2(at.x + at.width * 0.5, at.y + at.height * 0.5),
-                                                  float2(at.width + 6, at.height + 6), 17, 2,
-                                                  Color(1, 0.75, 0.3, button.focus));
-        Draw.Text(text, float2(at.x + at.width * 0.5, at.y + at.height * 0.5), 22, INK, Anchor.MiddleCenter, Font.Bold);
+        Draw.Rect(rect, 24, base);
+        Draw.Rect(rect, 24, foreground.WithAlpha(button.hover * 0.08 + button.press * 0.12));
+        if (button.focus > 0)
+            Draw.WireRoundRect(float2(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5),
+                               float2(rect.width + 8, rect.height + 8), 28, 2, PRIMARY.WithAlpha(button.focus));
+        Draw.Text(text, float2(rect.x + rect.width * 0.5, rect.y + rect.height * 0.5),
+                  16, foreground, Anchor.MiddleCenter, Font.Bold);
     }
     return button.clicked;
 }
 
-view Background()
-{
-    Draw.SetScreen();
-    Draw.Rect(Rect(0, 0, Screen.width, Screen.height), 0, Gradient.Vertical(Color(0.1, 0.12, 0.24), NAVY));
-    // A soft glow behind the title
-    Draw.Rect(Rect(Screen.width * 0.5 - 220, 20, 440, 200), 100, Gradient.Radial(Color(0.35, 0.45, 1, 0.35), Color.clear));
-    Draw.Text("SKYWARD", float2(Screen.width * 0.5, 120), 56, INK, Anchor.MiddleCenter, Font.Bold);
-}
-
 view MainMenu(mut Menu menu)
 {
+    Draw.SetScreen();
+    GUI.SetTheme(LOOK);
+    Draw.Rect(Screen.rect, SURFACE);
     var middle = Screen.width * 0.5;
-    if (BigButton(Rect(middle - 130, 200, 260, 56), "Play", Color(0.35, 0.55, 1), BLUE)) menu.played++;
-    if (BigButton(Rect(middle - 130, 272, 260, 56), "Options", Color(0.3, 0.33, 0.45), Color(0.18, 0.2, 0.3)))
-        menu.options = !menu.options;
+    var width = Math.Min(312.0, Screen.width - 48);
+    var left = middle - width * 0.5;
+    var top = Math.Max(24.0, (Screen.height - 360) * 0.5);
 
-    // The options panel slides in from the right, and out again
-    var shown = GUI.Animate(menu.options ? 1.0 : 0.0, 0.3);
-    if (shown > 0)
+    // A small brand mark leaves the title and actions room to breathe.
+    Draw.Rect(Rect(middle - 24, top, 48, 48), 16, TONAL);
+    Draw.Text("S", float2(middle, top + 24), 28, PRIMARY, Anchor.MiddleCenter, Font.Bold);
+    Draw.Text("Skyward", float2(middle, top + 84), 36, INK, Anchor.MiddleCenter);
+    Draw.Text("A little room for adventure.", float2(middle, top + 120), 16, MUTED, Anchor.MiddleCenter);
+
+    // Settings replaces the actions, keeping a narrow embedded demo uncluttered.
+    var shown = GUI.Animate(menu.options ? 1.0 : 0.0, 0.22);
+    if (!menu.options && shown < 0.01)
     {
-        GUI.Theme(LOOK)
+        if (MaterialButton(Rect(left, top + 164, width, 48), "Play", true)) menu.played++;
+        if (MaterialButton(Rect(left, top + 224, width, 48), "Settings", false)) menu.options = true;
+        Draw.Text("MAKE YOURSELF AT HOME", float2(middle, top + 308), 11, MUTED, Anchor.MiddleCenter);
+    }
+
+    if (shown > 0.001)
+    {
+        // One compact card, eased up into place, with ordinary themed widgets.
+        GUILayout.Area(Rect(left, top + 140 + (1 - shown) * 24, width, 188))
         {
-            GUILayout.Area(Rect(Screen.width - 340 * shown, 180, 320, 220))
-            {
-                GUILayout.Label("Options");
-                GUILayout.Toggle("Music", menu.music);
-                GUILayout.Slider("Volume", menu.volume, 0, 1);
-                if (GUILayout.Button("Done")) menu.options = false;
-            }
+            GUILayout.Label("Sound & music", 20);
+            GUILayout.Toggle("Music", menu.music);
+            GUILayout.Slider("Volume", menu.volume, 0, 1);
+            if (GUILayout.Button("Done")) menu.options = false;
         }
     }
 
-    // A note that fades in each time Play is pressed
-    if (menu.played > 0)
+    // The snackbar acknowledges this example's Play action.
+    if (menu.played > 0 && !menu.options && shown < 0.01)
     {
         GUI.Key(menu.played)
         {
-            var fade = GUI.Animate(1, 0.4, 0);
+            var fade = GUI.Animate(1, 0.25, 0);
             GUI.Draw()
             {
-                Draw.Rect(Rect(middle - 110, 360 + (1 - fade) * 12, 220, 40), 20, Color(0.1, 0.5, 0.3, 0.9 * fade));
-                Draw.Text("Starting...", float2(middle, 380 + (1 - fade) * 12), 18, Color(1, 1, 1, fade), Anchor.MiddleCenter);
+                var at = Rect(left, Screen.height - 88 + (1 - fade) * 8, width, 40);
+                Draw.Rect(at, 8, INK.WithAlpha(fade));
+                Draw.Text("Ready for takeoff.", float2(middle, at.y + 20), 14,
+                          SURFACE.WithAlpha(fade), Anchor.MiddleCenter);
             }
         }
     }
