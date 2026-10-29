@@ -1,5 +1,26 @@
 # Benchmarks
 
+## `[Lasting]` tags against Bevy (2026-10-29)
+
+The owner chose to keep toggled tags sparse by default and let a tag opt out
+with `[Lasting]`: its Add and Remove move the entity between archetypes (spec,
+Lasting tags; ecs.md). `versus_wide_lasting` builds `wide.tide` with `LASTING`:
+Frozen becomes `[Lasting]`, and a `Thaw` system that never runs during timing
+makes it removable. `main.c` reads both crate archetypes under `WIDE_LASTING`.
+
+Windows/Ryzen 9 7900X, release O2, Rust 1.95.0/Bevy 0.20.0. Each batch has 3
+alternating before (`[Sparse]`)/`[Lasting]`/Bevy rounds, 200 warmup/400 measured
+ticks and 81 processes. One batch uses ordinary Bevy (SparseSet Frozen), the other
+Bevy with Frozen in table storage. Before/`[Lasting]` medians at 1M serial:
+50% frozen 2.316/0.457 ms, 90% 1.307/0.060, 95% 1.036/0.030, 99% 0.097/0.0058.
+`[Lasting]` leads Bevy table storage in every case: 3.47-3.78x at 90-99% frozen,
+2.66x at 50% serial, 1.13x at 50% with four threads. It leads SparseSet Bevy 5.6-11.3x
+at 90-99%. With four threads, 50% frozen doesn't scale (0.475 against 0.457 serial),
+and that wasn't investigated. Toggle cost (row copies) and archetype growth are
+unmeasured because `Thaw` never runs. All digests match, and the e2e and quick
+tests pass on native and WASI. Tables, staging and limits:
+`bench/results/bevy-lasting-20261029/README.md`.
+
 ## Packed storage abandoned and cleaned up (2026-10-29)
 
 The owner abandoned this route after the integrated transient pack/restore

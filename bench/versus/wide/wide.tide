@@ -14,6 +14,8 @@ singleton Yard
     int frozen;  // Of a hundred crates, how many are frozen
     bool tagged; // Crates, not bodies
     bool ready;
+    Entity thaw;  // A crate to thaw, with LASTING, when thawing; the benchmark asks for none
+    bool thawing;
 }
 
 struct Motion
@@ -36,7 +38,14 @@ component Crate
     Motion motion;
 }
 
+// Built with LASTING (versus_wide_lasting), frozen crates can thaw, so Frozen
+// is a tag that's added and removed, kept in an archetype of its own;
+// otherwise it's a presence bit in every crate's row.
+#if LASTING
+[Lasting]
+#else
 [Sparse]
+#endif
 component Frozen { }
 
 system Setup(mut Yard yard)
@@ -84,3 +93,10 @@ system Shift(mut Crate crate, Time time, without Frozen)
 {
     Step(crate.motion, time.dt);
 }
+
+#if LASTING
+system Thaw(Yard yard)
+{
+    if (yard.thawing) yard.thaw.Remove(Frozen);
+}
+#endif

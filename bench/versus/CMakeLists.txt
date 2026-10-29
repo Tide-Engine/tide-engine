@@ -21,6 +21,11 @@ endfunction()
 versus_add(particles particles/particles.tide)
 versus_add(wide wide/wide.tide) # A dozen arrays of one component at once
 add_test(NAME versus_wide_kept COMMAND versus_wide --quick --kept 1 --tagged 1 --frozen 50)
+# The same, with Frozen a [Lasting] tag that can be removed: frozen crates in an archetype of their own
+tide_add_game(versus_wide_lasting SOURCES wide/wide.tide NAME wide HOST wide/main.c wide/wide.c DEFINES LASTING)
+target_link_libraries(versus_wide_lasting PRIVATE tide_versus)
+target_compile_definitions(versus_wide_lasting PRIVATE WIDE_LASTING) # main.c's digest reads both crate archetypes
+add_test(NAME versus_wide_lasting COMMAND versus_wide_lasting --quick --tagged 1 --frozen 95)
 versus_add(sand ../sand/sand.tide) # The game itself
 versus_add(life life/life.tide)
 versus_add(churn churn/churn.tide)
