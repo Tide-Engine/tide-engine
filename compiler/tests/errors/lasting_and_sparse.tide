@@ -1,5 +1,0 @@
-// expect: 'Asleep' can't be both [Sparse] and [Lasting]
-[Sparse]
-[Lasting]
-component Asleep { }
-scene Main { }

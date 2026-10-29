@@ -21,7 +21,7 @@ static void ticks(tide_world *w, const int n)
     for (int i = 0; i < n; i++) tide_world_tick(w);
 }
 
-TIDE_TEST(lasting_tags_move_entities_and_ordinary_tags_do_not)
+TIDE_TEST(tags_move_entities_and_sparse_ones_do_not)
 {
     tide_world_init(&world, 1.0f);
     const uint32_t awake = archetype_of(&world, 0);
@@ -58,7 +58,7 @@ TIDE_TEST(lasting_tags_move_entities_and_ordinary_tags_do_not)
 }
 
 // A snapshot and a packed copy taken while bodies sleep play on to the same world.
-TIDE_TEST(lasting_tags_survive_snapshots_and_packing)
+TIDE_TEST(moved_tags_survive_snapshots_and_packing)
 {
     tide_world_init(&world, 1.0f);
     ticks(&world, 2);

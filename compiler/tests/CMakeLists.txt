@@ -26,7 +26,8 @@ tide_e2e_test(map_iteration)
 tide_e2e_test(structural)
 tide_e2e_test(reach)
 tide_e2e_test(sparse)
-tide_e2e_test(lasting) # [Lasting] tags move entities between archetypes; ordinary toggled tags stay presence bits
+tide_e2e_test(tag_moves) # Toggled tags move entities between archetypes; [Sparse] ones stay presence bits
+tide_e2e_test(tag_fallback) # Tags that would pass the archetype limit become presence bits
 tide_e2e_test(rows) # A system's loop over a chunk's rows: pages shared with a snapshot or not, rows left out, chunks in pieces
 tide_e2e_test(sparse_rows) # Mixed sparse/scene filters preserve row order, block bounds and snapshot writes
 tide_e2e_test(sparse_masks) # Rare sparse intersections preserve short allocations, mask/chunk/piece tails and snapshots

@@ -21,7 +21,7 @@ endfunction()
 versus_add(particles particles/particles.tide)
 versus_add(wide wide/wide.tide) # A dozen arrays of one component at once
 add_test(NAME versus_wide_kept COMMAND versus_wide --quick --kept 1 --tagged 1 --frozen 50)
-# The same, with Frozen a [Lasting] tag that can be removed: frozen crates in an archetype of their own
+# The same, with Frozen a tag that can be removed, not [Sparse]: frozen crates in an archetype of their own
 tide_add_game(versus_wide_lasting SOURCES wide/wide.tide NAME wide HOST wide/main.c wide/wide.c DEFINES LASTING)
 target_link_libraries(versus_wide_lasting PRIVATE tide_versus)
 target_compile_definitions(versus_wide_lasting PRIVATE WIDE_LASTING) # main.c's digest reads both crate archetypes
@@ -38,7 +38,7 @@ versus_add(rollback rollback/rollback.tide)
 add_test(NAME versus_rollback_spread COMMAND versus_rollback --quick --spread 1 --moving 10)
 add_test(NAME versus_rollback_deep COMMAND versus_rollback --quick --kept 3 --back 5 --every 1)
 # A client's frames over bodies that fall asleep and wake: Sleeping a presence
-# bit, or a [Lasting] tag that moves them (Tide only, one build against the other)
+# bit ([Sparse]), or a tag that moves them as tags do (Tide only, one build against the other)
 foreach(variant sleep sleep_lasting)
     if(variant STREQUAL "sleep_lasting")
         set(sleep_defines DEFINES LASTING)

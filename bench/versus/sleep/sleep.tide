@@ -5,8 +5,8 @@
 // in a physics game.
 //
 // Built two ways: Sleeping a presence bit in every body's row ([Sparse]), or
-// with LASTING (versus_sleep_lasting) a tag whose Add and Remove move the
-// body to an archetype of its own. main.c runs the client's frames.
+// with LASTING (versus_sleep_lasting) a tag as tags are, whose Add and Remove
+// move the body to an archetype of its own. main.c runs the client's frames.
 
 scene Main { }
 
@@ -35,9 +35,7 @@ component Body
     Motion motion;
 }
 
-#if LASTING
-[Lasting]
-#else
+#if !LASTING
 [Sparse]
 #endif
 component Sleeping { }

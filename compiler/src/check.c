@@ -18686,17 +18686,15 @@ static const attribute *attribute_named(const decl *d, const char *name)
     return NULL;
 }
 
-// Whether a sparse component is one: [Sparse], or a tag (no fields) that any
-// Add or Remove names, which would otherwise double the archetypes it can
-// reach. A tag only set at Spawn stays part of its archetype, so filtering on
-// it costs nothing a row, and so does a [Lasting] one: its Add and Remove move
-// the entity, as a component with fields does.
+// Whether a sparse component is one: [Sparse], or a tag the archetypes would
+// otherwise pass the limit with (derive_archetypes). Any other component's Add
+// and Remove move the entity to the archetype with or without it, so a
+// system filtering on it goes through whole archetypes.
 static bool sparse_component_source(const program *prog, const decl *d)
 {
+    (void)prog;
     if (d->is_scene) return false;
-    if (attribute_named(d, "Sparse")) return true;
-    if (attribute_named(d, "Lasting")) return false;
-    return d->fields.count == 0 && (mask_has(prog->added_mask, d->index) || mask_has(prog->removed_mask, d->index));
+    return attribute_named(d, "Sparse") || d->sparse_fallback;
 }
 
 static bool sparse_component(const program *prog, const decl *d)
@@ -18789,19 +18787,15 @@ static void append_component_names(const program *prog, const comp_mask mask, ch
 // Every spawn creates an archetype, and the Adds and Removes that can reach
 // each archetype's entities (change_site) make the rest, until nothing new
 // appears.
-static void derive_archetypes(const checker *c)
+// One try at the archetypes, with the components sparse_component says are
+// sparse: false past the limit, with what it made left for the next try to clear.
+static bool derive_archetypes_once(const checker *c)
 {
     program *prog = c->prog;
     pending p = {{0}, {0}};
     // The sparse components: a presence byte in every archetype they can reach, not archetypes of their own
     for (int i = 0; i < prog->components.count; i++) {
         decl *d = prog->components.items[i];
-        const attribute *lasting = attribute_named(d, "Lasting");
-        if (lasting && !d->is_local && d->visibility_optional) {
-            diag_error(lasting->at, "'" STR_FMT "' has its visibility set per player, which keeps a presence bit in the row, so it "
-                       "can't be [Lasting]", STR_ARG(d->name));
-            diag_note("remove [Lasting]: its Add and Remove can't move the entity while players see it or not on their own");
-        }
         d->is_sparse = sparse_component(prog, d);
         if (d->is_sparse) prog->sparse_mask = mask_or(prog->sparse_mask, bit(d));
     }
@@ -18829,19 +18823,60 @@ static void derive_archetypes(const checker *c)
         c->spawns.items[i]->spawn_archetype = a;
         prog->spawn_target.items[a] = true;
     }
-    return;
+    return true;
 
 too_many:
+    return false;
+}
+
+// Whether tag `d` is one Add or Remove names, which a fallback could make sparse;
+// with `anywhere`, only one named by a change on an entity read from a field or
+// a parameter, which can reach every archetype
+static bool fallback_tag(const program *prog, const decl *d, const bool anywhere)
+{
+    if (d->is_scene || d->is_sparse || d->sparse_fallback || d->fields.count > 0) return false;
+    if (!mask_has(prog->added_mask, d->index) && !mask_has(prog->removed_mask, d->index)) return false;
+    if (!anywhere) return true;
+    for (int pass = 0; pass < 2; pass++) {
+        const change_sites *sites = pass ? &prog->removes : &prog->adds;
+        for (int i = 0; i < sites->count; i++) {
+            const change_site *s = &sites->items[i];
+            if (!s->from && !s->spawn && mask_has(s->comps, d->index)) return true;
+        }
+    }
+    return false;
+}
+
+// Every spawn creates an archetype, and the Adds and Removes that can reach
+// each archetype's entities (change_site) make the rest. Where a tag's moving
+// entities takes them past the limit, tags become presence bits in the row
+// instead (sparse_fallback), one at a time until they fit: first those an Add
+// or Remove on any entity names, which multiply the combinations, then the
+// rest, each in the order declared. Which tags those are depends on the code
+// alone, so every build of a game makes the same ones.
+static void derive_archetypes(const checker *c)
+{
+    program *prog = c->prog;
+    for (;;) {
+        prog->archetypes.count = 0;
+        prog->possible.count = 0;
+        prog->archetype_local.count = 0;
+        prog->sparse_mask = mask_none();
+        if (derive_archetypes_once(c)) return;
+        decl *next = NULL;
+        for (int anywhere = 1; anywhere >= 0 && !next; anywhere--) {
+            for (int i = 0; i < prog->components.count && !next; i++) {
+                if (fallback_tag(prog, prog->components.items[i], anywhere)) next = prog->components.items[i];
+            }
+        }
+        if (!next) break;
+        next->sparse_fallback = true;
+    }
     diag_error((loc){1, 1, 0}, "the program can create more than %d different component combinations", MAX_ARCHETYPES);
     diag_note("an Add or Remove on an entity read from a field or a parameter can apply to any entity, so combinations "
               "multiply; one on 'this', or on an entity a Spawn in the same code made, only reaches what it can");
-    for (int i = 0; i < prog->components.count; i++) {
-        const decl *d = prog->components.items[i];
-        if (d->is_sparse || !attribute_named(d, "Lasting")) continue;
-        diag_note("each [Lasting] tag doubles the archetypes it can reach, like '" STR_FMT "': one that changes often wants to be "
-                  "an ordinary tag, a presence bit in the row", STR_ARG(d->name));
-        break;
-    }
+    diag_note("a component with fields that entities gain and lose all the time can be '[Sparse]': a presence bit and its "
+              "value in the row, which no Add or Remove moves");
 }
 
 static const char *system_what(const decl *sys)
@@ -19452,24 +19487,6 @@ static void check_attributes(checker *c)
                 }
                 continue;
             }
-            if (str_eq_c(attr->name, "Lasting")) { // Read as the archetypes derive (sparse_component_source)
-                if (d->kind != DECL_COMPONENT || d->is_scene) {
-                    diag_error(attr->at, "Lasting marks a tag that entities gain and keep a while, and '" STR_FMT "' isn't a component",
-                               STR_ARG(d->name));
-                    diag_note("'[Lasting] component Sleeping { }': its Add and Remove move the entity to an archetype of its own");
-                } else if (attr->values.count > 0 || attr->args.count > 0) {
-                    diag_error(attr->at, "Lasting takes nothing: '[Lasting]'");
-                } else if (attribute_named(d, "Sparse")) {
-                    diag_error(attr->at, "'" STR_FMT "' can't be both [Sparse] and [Lasting]", STR_ARG(d->name));
-                    diag_note("[Sparse] keeps a presence bit in the row; [Lasting] moves the entity to an archetype of its own. "
-                              "Keep the one that fits how often it changes");
-                } else if (d->fields.count > 0) {
-                    diag_error(attr->at, "'" STR_FMT "' has fields, so its Add and Remove move the entity already; [Lasting] is for tags",
-                               STR_ARG(d->name));
-                    diag_note("remove [Lasting]; a component with fields that changes often wants [Sparse] instead");
-                }
-                continue;
-            }
             const bool before = str_eq_c(attr->name, "Before");
             if (!before && !str_eq_c(attr->name, "After")) {
                 diag_error(attr->at, "unknown attribute '" STR_FMT "'", STR_ARG(attr->name));
@@ -19482,7 +19499,6 @@ static void check_attributes(checker *c)
                 suggest_consider_c(&s, "NativeName");
                 suggest_consider_c(&s, "Name");
                 suggest_consider_c(&s, "Sparse");
-                suggest_consider_c(&s, "Lasting");
                 suggest_consider_c(&s, "Bus");
                 suggest_consider_c(&s, "Channel");
                 suggest_consider_c(&s, "Unordered");

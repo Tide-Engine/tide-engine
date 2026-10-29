@@ -1,7 +1,6 @@
-// Lasting tags: Sleeping is added and removed, but [Lasting] keeps it out of
-// the row's presence bits, so its Add and Remove move the entity to an
-// archetype of its own. Drowsy, an ordinary tag that's added and removed, is
-// sparse and moves nobody.
+// Tags that come and go: Sleeping's Add and Remove move the entity to the
+// archetype with or without it, as any component's do. Drowsy is [Sparse]: a
+// presence bit in the row, which moves nobody.
 
 component Body
 {
@@ -10,9 +9,9 @@ component Body
     int naps;
 }
 
-[Lasting]
 component Sleeping { }
 
+[Sparse]
 component Drowsy { }
 
 scene Main { }

@@ -11539,23 +11539,14 @@ static void gen_apply(gen *g, const bool local)
     }
     sb_put(o, "    default: break;\n    }\n}\n\n");
 
-    // Add: replace the value if the entity already has the component, otherwise move.
-    sb_printf(o, "TIDE_HELPER void %sapply_add(%s *w, tide_command *c)\n{\n", p, world);
-    sb_put(o, "    tide_location loc = tide_entity_location(&w->entities, c->entity);\n");
-    sb_put(o, "    if (loc.archetype == TIDE_ARCHETYPE_NONE) { // Destroyed earlier.\n        switch (c->id) {\n");
-    for (int comp_i = 0; comp_i < prog->components.count; comp_i++) {
-        const decl *comp = prog->components.items[comp_i];
-        if (!has_component(prog->added_mask, comp_i) || comp->is_local != local || !decl_has_text(comp)) continue;
-        sb_printf(o, "        case %d: tide_release_%s(&c->data.%s, %s); break;\n", comp_i, type_cname(comp), type_cname(comp),
-                  world_where(local));
-    }
-    sb_put(o, "        default: break;\n        }\n        return;\n    }\n");
-    if (!local) gen_component_availability(g, true, true);
-    sb_put(o, "    switch (c->id) {\n");
+    // Add: replace the value if the entity already has the component, otherwise move. Each component's
+    // cases are a function of their own, so no one function grows with components times archetypes (a
+    // WebAssembly function has a limit of locals, which an unoptimized build's cases each take some of)
     for (int comp_i = 0; comp_i < prog->components.count; comp_i++) {
         if (!has_component(prog->added_mask, comp_i) || prog->components.items[comp_i]->is_local != local) continue;
         const char *comp = type_cname(prog->components.items[comp_i]);
-        sb_printf(o, "    case %d: // %s\n", comp_i, comp);
+        sb_printf(o, "static __attribute__((noinline, unused)) void %sapply_add%d(%s *w, tide_command *c, const tide_location loc) // %s\n{\n",
+                  p, comp_i, world, comp);
         {
             // Its generators the Add left unseeded: seeded as it's added, like a spawn's
             sb added = {0};
@@ -11600,21 +11591,34 @@ static void gen_apply(gen *g, const bool local)
                           comp_put(g, "w", to, comp_i, "row", value.data));
             }
         }
-        sb_put(o, "        default: break;\n        }\n        break;\n");
+        sb_put(o, "        default: break;\n        }\n}\n\n");
+    }
+    sb_printf(o, "TIDE_HELPER void %sapply_add(%s *w, tide_command *c)\n{\n", p, world);
+    sb_put(o, "    tide_location loc = tide_entity_location(&w->entities, c->entity);\n");
+    sb_put(o, "    if (loc.archetype == TIDE_ARCHETYPE_NONE) { // Destroyed earlier.\n        switch (c->id) {\n");
+    for (int comp_i = 0; comp_i < prog->components.count; comp_i++) {
+        const decl *comp = prog->components.items[comp_i];
+        if (!has_component(prog->added_mask, comp_i) || comp->is_local != local || !decl_has_text(comp)) continue;
+        sb_printf(o, "        case %d: tide_release_%s(&c->data.%s, %s); break;\n", comp_i, type_cname(comp), type_cname(comp),
+                  world_where(local));
+    }
+    sb_put(o, "        default: break;\n        }\n        return;\n    }\n");
+    if (!local) gen_component_availability(g, true, true);
+    sb_put(o, "    switch (c->id) {\n");
+    for (int comp_i = 0; comp_i < prog->components.count; comp_i++) {
+        if (!has_component(prog->added_mask, comp_i) || prog->components.items[comp_i]->is_local != local) continue;
+        sb_printf(o, "    case %d: %sapply_add%d(w, c, loc); break;\n", comp_i, p, comp_i);
     }
     sb_put(o, "    default: break;\n    }\n");
     if (!local) gen_component_availability(g, false, true);
     sb_put(o, "}\n\n");
 
     // Remove: nothing happens if the entity doesn't have the component.
-    sb_printf(o, "TIDE_HELPER void %sapply_remove(%s *w, tide_command *c)\n{\n", p, world);
-    sb_put(o, "    tide_location loc = tide_entity_location(&w->entities, c->entity);\n");
-    sb_put(o, "    if (loc.archetype == TIDE_ARCHETYPE_NONE) return; // Destroyed earlier.\n");
-    if (!local) gen_component_availability(g, true, false);
-    sb_put(o, "    switch (c->id) {\n");
+    // Each component's cases a function of their own, as Add's
     for (int comp_i = 0; comp_i < prog->components.count; comp_i++) {
         if (!has_component(prog->removed_mask, comp_i) || prog->components.items[comp_i]->is_local != local) continue;
-        sb_printf(o, "    case %d: // %s\n        switch (loc.archetype) {\n", comp_i, type_cname(prog->components.items[comp_i]));
+        sb_printf(o, "static __attribute__((noinline, unused)) void %sapply_remove%d(%s *w, const tide_location loc) // %s\n{\n"
+                     "        switch (loc.archetype) {\n", p, comp_i, world, type_cname(prog->components.items[comp_i]));
         for (int a = 0; a < prog->archetypes.count; a++) {
             const comp_mask mask = prog->archetypes.items[a];
             const decl *comp = prog->components.items[comp_i];
@@ -11642,7 +11646,16 @@ static void gen_apply(gen *g, const bool local)
                 sb_printf(o, "        case %d: tide_move%d_%d(w, loc.row); break;\n", a, a, to);
             }
         }
-        sb_put(o, "        default: break;\n        }\n        break;\n");
+        sb_put(o, "        default: break;\n        }\n}\n\n");
+    }
+    sb_printf(o, "TIDE_HELPER void %sapply_remove(%s *w, tide_command *c)\n{\n", p, world);
+    sb_put(o, "    tide_location loc = tide_entity_location(&w->entities, c->entity);\n");
+    sb_put(o, "    if (loc.archetype == TIDE_ARCHETYPE_NONE) return; // Destroyed earlier.\n");
+    if (!local) gen_component_availability(g, true, false);
+    sb_put(o, "    switch (c->id) {\n");
+    for (int comp_i = 0; comp_i < prog->components.count; comp_i++) {
+        if (!has_component(prog->removed_mask, comp_i) || prog->components.items[comp_i]->is_local != local) continue;
+        sb_printf(o, "    case %d: %sapply_remove%d(w, loc); break;\n", comp_i, p, comp_i);
     }
     sb_put(o, "    default: break;\n    }\n");
     if (!local) gen_component_availability(g, false, false);
