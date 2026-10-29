@@ -373,7 +373,9 @@ static bool scenario(int number, bool reverse)
     local.MaterialPixelProbe.disabled = true;
     tide_frame(&world, NULL, 1, NULL, NULL, 1, &local, &draw, &gui);
     CHECK(!tide_render_target_live(hdr) && !tide_render_target_live(shadow));
-    tide_draw_free(&draw);
+    // Preserve the epoch across scenes: cached target IDs must be forgotten
+    // before their freed bookkeeping can be inspected by the next draw.
+    tide_draw_forget(&draw);
     tide_local_free(&local);
     tide_world_free(&world);
     tide_render_targets_free();
@@ -395,6 +397,7 @@ static int frame(void *context, float seconds)
         if (!scenario(number, false)) return 1;
         if (number >= 8 && !scenario(number, true)) return 1;
     }
+    tide_draw_free(&draw);
     puts("ok: Render3D material maps, raw alpha-zero numbers, TBN, AO, emission/HDR, cutout/shadows, parallax, sorted transparency/depth/LOD, 1x/2x and unchanged match hashes");
     return 0;
 }

@@ -1,5 +1,44 @@
 # Render3D package
 
+## GPU fixture use-after-free resolved (2026-10-29)
+
+The owner requested investigating the intermittent native skinning crash rather
+than accepting another retry. On baseline `19fe15426`, Windows AddressSanitizer
+reproduces a heap-use-after-free on the first scene transition in
+`skinning_pixels.c`, `material_pixels.c` and `pixels.c`. Skinning reproduces on
+OpenGL too: this failure is in common test-host cleanup, not Vulkan-only code.
+Twelve ordinary debugger launches passed, so debugger retries alone did not
+identify it.
+
+The failing stack is `tide_render_target_live` (`draw.h:710`) through
+`forget_disposed_targets` (`platform.c:2465`), `draw_list`, and the next scene's
+pixel readback. The previous scene called `tide_draw_free`, which zeroed its
+epoch, then `tide_render_targets_free`, which released managed target states.
+The platform still cached those target IDs. Another zero-epoch draw skipped
+cache invalidation and read `state->alive` through a freed pointer. The sanitizer
+reports the allocation in Render3D Prepare, the free in scenario teardown, and
+the later read independently. Whether the freed allocation stays readable
+explains why ordinary runs could pass and a debugger changed the symptom.
+
+These three multi-scene fixtures now retain the main draw list and call
+`tide_draw_forget` before releasing target bookkeeping; the increasing epoch
+invalidates cached targets before the next scene inspects them. The list is
+freed once after all scenarios. This follows the existing standard host's
+`tide_run_end` contract. No extra GPU flush, runtime/backend change, tolerance
+change or skipped assertion is needed. Existing multi-scene pixel tests are the
+regression; their unchanged oracles continue to check rendering and match hashes.
+
+Baseline sanitizer logs and the scoped build are under ignored
+`build/crash-analysis` and `build/crash-asan`. The latter uses clang 23.1.2,
+`-fsanitize=address -fno-omit-frame-pointer` for compilation and
+`-fsanitize=address` for linking; its LLVM Windows sanitizer DLL directory is
+on the process PATH, `ASAN_OPTIONS=detect_leaks=0`, and `TIDE_HIDDEN=1` throughout.
+All six fixed sanitizer CTests pass on Vulkan/OpenGL with the usual Vulkan
+validation environment. The same six ordinary native CTests pass ten consecutive
+launches each (`--repeat until-fail:10`, 60 passes with no retry exclusions).
+All nine corresponding web checks pass on WebGL, ANGLE D3D11 and WebGPU.
+No unrelated suite, mobile/other native OS run or extra CI dispatch was needed.
+
 ## Height parallax direction (2026-10-29)
 
 The owner noticed the mapped cube's relief looked inverted and authorized the

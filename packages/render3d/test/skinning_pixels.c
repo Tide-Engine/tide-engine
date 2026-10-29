@@ -200,7 +200,9 @@ static bool scenario(int number, bool reverse)
     local.SkinningProbe.disabled = true;
     tide_frame(&world, NULL, 1, NULL, NULL, 1, &local, &draw, &gui);
     CHECK(!tide_render_target_live(hdr) && !tide_render_target_live(shadow));
-    tide_draw_free(&draw);
+    // Keep the advancing epoch so the next scene drops GPU target references
+    // before inspecting the bookkeeping released below, as the standard host does.
+    tide_draw_forget(&draw);
     tide_draw_free(&gui.list);
     tide_local_free(&local);
     tide_world_free(&world);
@@ -220,6 +222,7 @@ static int frame(void *context, float seconds)
         if (!scenario(number, false)) return 1;
         if (number == 3 && !scenario(number, true)) return 1;
     }
+    tide_draw_free(&draw);
     puts("ok: Render3D posed UV silhouettes, shared captured deformation, tangent normal maps, independent cutout shadow pixels, mixed transparency, 1x/2x and unchanged match hashes");
     return 0;
 }
