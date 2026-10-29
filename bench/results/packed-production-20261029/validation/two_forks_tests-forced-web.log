@@ -1,0 +1,18 @@
+ok   two_forks_goto_resets_a_shared_kitchen_without_awarding_credit (2.296 ms)
+ok   two_forks_snapshot_restores_its_own_kitchen_and_layout (0.298 ms)
+ok   two_forks_starts_in_a_kitchen_and_advances_through_all_regions (3.216 ms)
+ok   two_forks_a_grill_cooks_the_side_that_lands_on_it (0.210 ms)
+ok   two_forks_a_held_key_repeats_and_a_quick_one_waits_its_turn (0.103 ms)
+ok   two_forks_a_level_starts_over_and_that_is_taken_back_too (0.344 ms)
+ok   two_forks_a_player_alone_has_both_chefs (0.324 ms)
+ok   two_forks_a_step_pushes_and_a_turn_sweeps (0.260 ms)
+ok   two_forks_an_ice_chain_glides_together_and_stops_in_order (0.245 ms)
+ok   two_forks_embers_need_both_pedals_and_cook_on_ignition (0.140 ms)
+ok   two_forks_every_level_takes_both_chefs (4140.334 ms)
+ok   two_forks_ice_glides_and_a_partner_stops_it (0.110 ms)
+ok   two_forks_moves_are_taken_back (0.097 ms)
+ok   two_forks_the_pedal_cuts_the_gas (0.078 ms)
+ok   two_forks_what_stops_a_move_stops_all_of_it (0.065 ms)
+
+15/15 passed
+packed rows: 0 partitions, 0 rows

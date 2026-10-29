@@ -1,0 +1,28 @@
+Internal ctest changing into directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/packed-release
+UpdateCTestConfiguration  from :C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/packed-release/DartConfiguration.tcl
+UpdateCTestConfiguration  from :C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/packed-release/DartConfiguration.tcl
+Test project C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/packed-release
+Constructing a list of tests
+Done constructing a list of tests
+Updating test list for fixtures
+Added 0 tests to meet fixture requirements
+Checking test dependency graph...
+Checking test dependency graph end
+test 2886
+    Start 2886: foldline_test
+
+2886: Test command: C:\Users\blenm\.t3\worktrees\PurrEngine\t3-2f0c48c7\build\packed-release\bin\foldline_test.exe
+2886: Working Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/packed-release/external/tide-prototypes/foldline
+2886: Test timeout computed to be: 10000000
+2886: packed rows: 0 partitions, 0 rows
+2886: FOLDLINE replay hash: 4231019967869630865
+2886: FOLDLINE campaign hash: 14776863045388384365
+2886: FOLDLINE simulation checks passed
+1/1 Test #2886: foldline_test ....................   Passed    5.03 sec
+
+The following tests passed:
+	foldline_test
+
+100% tests passed, 0 tests failed out of 1
+
+Total Test time (real) =   5.11 sec

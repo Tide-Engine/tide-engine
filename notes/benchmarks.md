@@ -1,5 +1,28 @@
 # Benchmarks
 
+## Transient packed integration rejected (2026-10-29)
+
+The owner requested an implemented/validated keep-or-abandon decision. A gated
+production compiler/runtime experiment packs independent numeric systems and
+restores logical order before every other consumer. Native/WASI runtime and
+compiler tests pass; the real Entities example passes 360 paired ticks with
+348 actual partitions, matching commands, destruction, IDs, raw/delta state and
+ordered view payloads. Docs/sample/prototype builds and bounded native starts
+pass, while all six existing prototype/sample simulation targets report zero
+partitions under the conservative selector (fallback coverage only).
+
+Three alternating pairs across six wide workloads time conversion, update,
+restoration and mandatory hashing, plus snapshots/churn where requested.
+1M/95%-frozen ordinary/transient medians are 6.08790/128.29755 ms; with a retained
+snapshot 8.79705/149.76765 ms. Every case loses (16.51x--40.74x median paired
+ratios); all paired per-tick hashes match. No new Bevy comparison is claimed.
+
+The full-copy transient design was abandoned and its production edits removed;
+the tested patch, sources, raw evidence, caveats and reproduction are retained
+in `bench/results/packed-production-20261029/README.md`, with harnesses in
+`bench/packed/`. This rejects transient conversion, not the still-unimplemented
+general resident design. No shipping runtime behavior or hash pin changed.
+
 ## Packed tables through the world lifecycle (2026-10-29)
 
 After approval of the row-mapping boundary, an isolated table-runtime overlay

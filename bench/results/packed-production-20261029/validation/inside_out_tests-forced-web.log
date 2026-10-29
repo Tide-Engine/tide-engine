@@ -1,0 +1,121 @@
+  Puzzle 6, seat 0 alone: 3454 positions, cargo and outlines never all ready.
+  Puzzle 6, seat 1 alone: 3454 positions, cargo and outlines never all ready.
+  Puzzle 7, seat 0 alone: 876520 positions, cargo and outlines never all ready.
+  Puzzle 7, seat 1 alone: 489062 positions, cargo and outlines never all ready.
+  Puzzle 8, seat 0 alone: 21252 positions, cargo and outlines never all ready.
+  Puzzle 8, seat 1 alone: 7726 positions, cargo and outlines never all ready.
+  Puzzle 9, seat 0 alone: 464922 positions, cargo and outlines never all ready.
+  Puzzle 9, seat 1 alone: 464922 positions, cargo and outlines never all ready.
+  Puzzle 10, seat 0 alone: 80 positions, cargo and outlines never all ready.
+  Puzzle 10, seat 1 alone: 80 positions, cargo and outlines never all ready.
+  Puzzle 11, seat 0 alone: 89 positions, cargo and outlines never all ready.
+  Puzzle 11, seat 1 alone: 264 positions, cargo and outlines never all ready.
+  Puzzle 12, seat 0 alone: 22 positions, cargo and outlines never all ready.
+  Puzzle 12, seat 1 alone: 1 positions, cargo and outlines never all ready.
+  Puzzle 13, seat 0 alone: 2080 positions, cargo and outlines never all ready.
+  Puzzle 13, seat 1 alone: 3186 positions, cargo and outlines never all ready.
+  Puzzle 14, seat 0 alone: 860 positions, cargo and outlines never all ready.
+  Puzzle 14, seat 1 alone: 1833 positions, cargo and outlines never all ready.
+  Puzzle 15, seat 0 alone: 457 positions, cargo and outlines never all ready.
+  Puzzle 15, seat 1 alone: 3413 positions, cargo and outlines never all ready.
+  Puzzle 16, seat 0 alone: 3770 positions, cargo and outlines never all ready.
+  Puzzle 16, seat 1 alone: 10867 positions, cargo and outlines never all ready.
+  Puzzle 17, seat 0 alone: 79735 positions, cargo and outlines never all ready.
+  Puzzle 17, seat 1 alone: 77041 positions, cargo and outlines never all ready.
+  Puzzle 18, seat 0 alone: 3423 positions, cargo and outlines never all ready.
+  Puzzle 18, seat 1 alone: 3423 positions, cargo and outlines never all ready.
+  Puzzle 19, seat 0 alone: 598 positions, cargo and outlines never all ready.
+  Puzzle 19, seat 1 alone: 598 positions, cargo and outlines never all ready.
+  Puzzle 20, seat 0 alone: 217 positions, cargo and outlines never all ready.
+  Puzzle 20, seat 1 alone: 7530 positions, cargo and outlines never all ready.
+ok   inside_out_a_box_is_entered_only_with_the_partner_behind_it (13225.784 ms)
+ok   inside_out_a_challenge_is_found_in_its_box_and_keeps_its_budget (0.949 ms)
+  Puzzle  8: par 30, the authored witness 50.
+  Puzzle 14: par 42, the authored witness 46.
+  Puzzle 20: par 29, the authored witness 39.
+ok   inside_out_a_solve_keeps_the_fewest_moves_and_par_is_reached (3.531 ms)
+ok   inside_out_a_solved_puzzle_returns_to_its_hall (0.188 ms)
+ok   inside_out_batteries_in_the_sockets_power_the_lift (0.409 ms)
+ok   inside_out_both_robots_in_a_post_open_its_puzzle (0.304 ms)
+ok   inside_out_campaign_cycle_has_one_box_for_each_canonical_room (0.111 ms)
+ok   inside_out_campaign_has_exactly_the_witnessed_puzzles (0.226 ms)
+ok   inside_out_campaign_players_can_exchange_their_jobs (1.836 ms)
+  Puzzle 1: 10 moves.
+  Puzzle 2: 12 moves.
+  Puzzle 3: 20 moves.
+  Puzzle 4: 15 moves.
+  Puzzle 5: 11 moves.
+  Puzzle 6: 19 moves.
+  Puzzle 7: 16 moves.
+  Puzzle 8: 50 moves.
+  Puzzle 9: 26 moves.
+  Puzzle 10: 17 moves.
+  Puzzle 11: 12 moves.
+  Puzzle 12: 12 moves.
+  Puzzle 13: 13 moves.
+  Puzzle 14: 46 moves.
+  Puzzle 15: 20 moves.
+  Puzzle 16: 21 moves.
+  Puzzle 17: 25 moves.
+  Puzzle 18: 35 moves.
+  Puzzle 19: 34 moves.
+  Puzzle 20: 39 moves.
+ok   inside_out_every_campaign_puzzle_has_a_production_rules_solution (3.620 ms)
+  Challenge 1: 16 moves, its budget.
+  Challenge 2: 21 moves, its budget.
+  Challenge 3: 22 moves, its budget.
+  Challenge 2, seat 0 alone: 360816 positions, cargo never all ready.
+  Challenge 2, seat 1 alone: 360816 positions, cargo never all ready.
+  Challenge 3, seat 0 alone: 10 positions, cargo never all ready.
+  Challenge 3, seat 1 alone: 231 positions, cargo never all ready.
+ok   inside_out_every_challenge_is_met_exactly_within_its_budget (4136.424 ms)
+ok   inside_out_leaving_for_the_hall_and_sharing_progress (0.298 ms)
+ok   inside_out_recursive_campaign_uses_the_partner_to_enter_its_own_room (0.126 ms)
+ok   inside_out_the_last_puzzle_ends_the_campaign_then_returns (0.304 ms)
+ok   inside_out_the_lift_works_once_its_hall_is_powered (0.347 ms)
+ok   inside_out_the_return_waits_for_the_missing_partner (0.265 ms)
+ok   inside_out_the_room_shares_the_better_best (0.108 ms)
+ok   inside_out_undo_and_reset_cancel_the_return (0.393 ms)
+ok   inside_out_a_battery_pushed_out_of_a_room_holding_its_own_box_lands_beside_it (0.144 ms)
+ok   inside_out_a_bot_faces_the_way_it_last_moved_and_undo_turns_it_back (0.069 ms)
+ok   inside_out_a_box_carries_its_pressed_plate_and_keeps_the_shutter_open (0.102 ms)
+ok   inside_out_a_box_goes_into_a_stopped_box_only_by_a_facing_doorway (0.053 ms)
+ok   inside_out_a_box_inside_its_own_room_is_left_beside_itself_and_entered_by_its_doors (0.085 ms)
+ok   inside_out_a_box_pushed_within_itself_carries_its_room_and_is_left_beside_its_new_place (0.071 ms)
+ok   inside_out_a_clamp_holds_its_box_and_the_room_carries_it (0.166 ms)
+ok   inside_out_a_plate_in_one_room_opens_a_shutter_in_another (0.067 ms)
+ok   inside_out_a_plate_pressed_by_a_bot_a_battery_or_a_box_opens_only_its_channel (0.103 ms)
+ok   inside_out_a_push_follows_the_whole_row_across_an_occupied_shutter (0.207 ms)
+ok   inside_out_a_room_box_holds_a_shutter_doorway_down_for_nested_entry (0.066 ms)
+ok   inside_out_a_row_of_any_length_is_pushed_and_only_a_wall_stops_it (0.069 ms)
+ok   inside_out_a_shutter_in_a_doorway_blocks_only_when_empty_and_unpowered (0.067 ms)
+ok   inside_out_a_stopped_thing_goes_into_the_box_pushed_at_it (0.079 ms)
+ok   inside_out_an_occupied_shutter_stays_down_as_a_battery_hands_it_to_a_bot (0.053 ms)
+ok   inside_out_automatic_push_carries_nested_contents_and_updates_exit_anchor (0.044 ms)
+ok   inside_out_both_travelers_enter_share_and_leave_the_same_room (0.038 ms)
+ok   inside_out_bounded_history_drops_only_oldest_steps (0.238 ms)
+ok   inside_out_completion_checks_distinct_exits_nested_docks_and_all_cargo (0.055 ms)
+ok   inside_out_dimensions_and_invalid_offsets_remain_bounded (0.045 ms)
+ok   inside_out_doorways_use_power_from_before_the_move (0.088 ms)
+ok   inside_out_entering_its_own_box_emits_a_doorway_cue (0.041 ms)
+ok   inside_out_fallback_entry_pushes_doorway_cargo_atomically (0.039 ms)
+ok   inside_out_name_hold_waits_for_partner_and_same_level_retries_are_quick (0.162 ms)
+ok   inside_out_narrow_nested_start_returns_outward_and_undo_restores_it (0.050 ms)
+ok   inside_out_occupied_shutters_hold_only_their_cell_for_batteries_and_room_boxes (0.151 ms)
+ok   inside_out_only_the_other_bot_can_be_put_in_a_box_s_way (0.047 ms)
+ok   inside_out_partner_backstop_enables_entry_and_releases_room_motion (0.058 ms)
+ok   inside_out_rebased_self_exit_emits_real_source_and_travel_direction (0.059 ms)
+ok   inside_out_rectangular_completion_ignores_unused_capacity (0.034 ms)
+ok   inside_out_rectangular_rooms_use_all_four_offset_doorways (0.121 ms)
+ok   inside_out_rejects_stale_malformed_and_forged_actions (0.058 ms)
+ok   inside_out_rejoin_keeps_independent_seats_and_serial (0.046 ms)
+ok   inside_out_rejoining_a_moved_room_does_not_restart_its_name_hold (0.215 ms)
+ok   inside_out_requires_two_real_present_participants (0.054 ms)
+ok   inside_out_room_push_is_automatic_and_only_blocked_pushes_enter (0.052 ms)
+ok   inside_out_shell_export_discards_stale_deep_parent_trail (0.031 ms)
+ok   inside_out_simultaneous_entries_obey_shared_occupancy_and_undo (0.054 ms)
+ok   inside_out_snapshot_pack_and_replay_preserve_recursive_match_state (0.721 ms)
+ok   inside_out_two_boxes_inside_each_other_are_left_into_each_other (0.049 ms)
+
+58/58 passed
+packed rows: 0 partitions, 0 rows

@@ -1,0 +1,36 @@
+Start testing: Oct 29 13:21 Romance Standard Time
+----------------------------------------------------------
+13/2799 Testing: tidec_e2e_packed_rows
+13/2799 Test: tidec_e2e_packed_rows
+Command: "C:/Program Files/nodejs/node.exe" "--no-warnings" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/cmake/run_wasi.mjs" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/packed-web-release/bin/tidec_e2e_packed_rows.wasm"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/packed-web-release/compiler/tests
+"tidec_e2e_packed_rows" start time: Oct 29 13:21 Romance Standard Time
+Output:
+----------------------------------------------------------
+ok   packed_rows_restore_order_before_other_consumers (11.721 ms)
+
+1/1 passed
+<end of output>
+Test time =   0.07 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_e2e_packed_rows" end time: Oct 29 13:21 Romance Standard Time
+"tidec_e2e_packed_rows" time elapsed: 00:00:00
+----------------------------------------------------------
+
+14/2799 Testing: tidec_packed_rows_codegen
+14/2799 Test: tidec_packed_rows_codegen
+Command: "C:/Program Files/CMake/bin/cmake.exe" "-DGAME_C=C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/packed-web-release/compiler/tests/tide/tidec_e2e_packed_rows/game.c" "-P" "C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/compiler/tests/packed_rows_codegen.cmake"
+Directory: C:/Users/blenm/.t3/worktrees/PurrEngine/t3-2f0c48c7/build/packed-web-release/compiler/tests
+"tidec_packed_rows_codegen" start time: Oct 29 13:21 Romance Standard Time
+Output:
+----------------------------------------------------------
+<end of output>
+Test time =   0.03 sec
+----------------------------------------------------------
+Test Passed.
+"tidec_packed_rows_codegen" end time: Oct 29 13:21 Romance Standard Time
+"tidec_packed_rows_codegen" time elapsed: 00:00:00
+----------------------------------------------------------
+
+End testing: Oct 29 13:21 Romance Standard Time

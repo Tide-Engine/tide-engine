@@ -1,0 +1,33 @@
+  Puzzle  1:  14 moves at the least,  2 and  0 of them hands; 286 positions searched.
+  Puzzle  2:  20 moves at the least,  2 and  2 of them hands; 312 positions searched.
+  Puzzle  3:  29 moves at the least,  6 and  6 of them hands; 630 positions searched.
+  Puzzle  4:  16 moves at the least,  2 and  0 of them hands; 699 positions searched.
+  Puzzle  5:  30 moves at the least,  6 and  4 of them hands; 6421 positions searched.
+  Puzzle  6:  42 moves at the least,  8 and  6 of them hands; 23066 positions searched.
+  Puzzle  7:  16 moves at the least,  2 and  0 of them hands; 356 positions searched.
+  Puzzle  8:  49 moves at the least,  4 and  2 of them hands; 2035 positions searched.
+  Puzzle  9:  79 moves at the least, 14 and  2 of them hands; 13112 positions searched.
+  Puzzle 10:   8 moves at the least,  1 and  0 of them hands; 31 positions searched.
+  Puzzle 11:  49 moves at the least, 12 and  4 of them hands; 9579 positions searched.
+  Puzzle 12:  70 moves at the least, 12 and 10 of them hands; 31514 positions searched.
+  Puzzle 13:  12 moves at the least,  2 and  0 of them hands; 268 positions searched.
+  Puzzle 14:  34 moves at the least,  2 and 10 of them hands; 28153 positions searched.
+  Puzzle 15:  58 moves at the least, 10 and 10 of them hands; 18170 positions searched.
+  Puzzle 16:  64 moves at the least,  4 and 12 of them hands; 6336 positions searched.
+  Puzzle 17:  72 moves at the least, 14 and 16 of them hands; 68843 positions searched.
+  Puzzle 18:  94 moves at the least, 26 and  6 of them hands; 59687 positions searched.
+ok   underfoot_every_puzzle_is_solved_in_exactly_the_moves_it_says (192.332 ms)
+ok   underfoot_the_game_and_the_search_model_agree_move_for_move (122.056 ms)
+ok   underfoot_a_crate_over_nothing_sinks_and_is_ground_for_good (0.051 ms)
+ok   underfoot_a_match_survives_a_snapshot_its_bytes_and_a_replay (0.867 ms)
+ok   underfoot_a_plate_opens_its_gates_for_the_move_that_follows (0.045 ms)
+ok   underfoot_a_portal_sends_whatever_arrives_to_its_free_twin (0.039 ms)
+ok   underfoot_a_stone_laid_over_nothing_is_a_way_across (0.018 ms)
+ok   underfoot_alone_a_player_works_both_pavers_and_together_only_their_own (0.060 ms)
+ok   underfoot_both_lanterns_end_a_puzzle_and_open_the_next (0.109 ms)
+ok   underfoot_ice_carries_pavers_to_an_edge_and_crates_over_it (0.024 ms)
+ok   underfoot_lifting_takes_firm_footing_and_an_empty_hand (0.034 ms)
+ok   underfoot_undo_goes_back_through_a_reset_and_keeps_the_last_256_moves (0.377 ms)
+
+12/12 passed
+packed rows: 0 partitions, 0 rows

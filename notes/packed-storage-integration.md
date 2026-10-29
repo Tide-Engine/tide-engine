@@ -1,8 +1,47 @@
 # Packed storage integration proposal
 
-Status: runtime boundary approved by the owner on 2026-10-29. An isolated
-runtime integration probe is implemented and validated; automatic compiler
-selection and general production integration are not implemented.
+Status: runtime boundary approved by the owner on 2026-10-29. The isolated
+resident probe was followed by an actual compiler/runtime integration of
+transient packing. That implementation passed correctness checks but was
+rejected for performance and archived, not left in shipping code. General
+resident production integration remains unimplemented.
+
+## Transient production experiment rejected (2026-10-29)
+
+The follow-through rebuilt the whole engine/compiler and actual generated games
+with an experimental table ABI. Compiler-proven independent numeric systems
+partitioned their tables in a serial tick, then restored every column to logical
+order before other consumers ran. No game source changes or new language syntax
+were needed. The docs Entities replay requires actual packing and passes 360
+paired ticks on native/WASI (348 partitions, commands, destruction, IDs,
+hashes/raw/delta restore and ordered view payloads). Compiler ordering fixtures
+and full runtime tests pass on both targets too.
+
+The 49 docs examples, 11 gallery games and six prototype games build on both
+targets and pass bounded native startup checks. The six existing simulation
+test targets pass with force requested on native/WASI, but all report zero
+partitions: fallback compatibility, not packed performance or behavior coverage.
+The ordinary WASI runner drops environment variables; the force checks were
+explicitly rerun through a saved runner that supplies mode/report variables.
+
+Full-cost timing rejects this design. At 1M/95% frozen, ordinary/transient
+tick+hash medians are 6.08790/128.29755 ms, and with a kept snapshot
+8.79705/149.76765 ms. All six cases lose, with median adjacent paired ratios
+16.51x to 40.74x. All 36 processes have matching paired tick hashes, with
+conversion/restoration and optional snapshots/membership changes inside timing.
+Copying every column back also discards cached hashes of unchanged pages.
+
+Decision: abandon full-copy transient packing and defer the broader resident
+rewrite until a real game establishes a useful target. This does not prove
+resident packing cannot win; its earlier measured gains had a different cost
+model and left ordinary consumers unsupported. Shipping compiler/runtime/CMake
+and tests were restored exactly, with no hash-pin changes. The full tested
+implementation is reproducible from the archived patch, source snapshots and
+tools in `bench/packed/`. Evidence, limitations and reproduction:
+`bench/results/packed-production-20261029/README.md`.
+
+The remaining sections describe the resident proposal and the earlier baseline,
+not an active shipping requirement.
 
 The probe and measured acceptance problems are recorded in
 `bench/results/packed-integration-20261029/README.md`. It keeps real Tide
