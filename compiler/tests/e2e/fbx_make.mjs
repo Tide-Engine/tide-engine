@@ -206,5 +206,16 @@ twinConnections.splice(twinConnections.findIndex(c => c.props[1] === 6300n), 1,
     connect(6300n, 6200n, "d|X"), connect(6301n, 6200n, "d|Y"), connect(6302n, 6200n, "d|Z"));
 writePair("animation", "twin", twin);
 
+// Bone0's last key one tick before its take's end, at 38 frames of 30 fps, as Mixamo's are: as floats, that key
+// and the end (where the take's boundary sample is) are the same time, and must be one key.
+const close = document(true);
+const closeObjects = close.find(n => n.name === "Objects").children;
+const closeEnd = tick * 38n / 30n;
+for (const p of closeObjects.find(n => n.name === "AnimationStack").children[0].children)
+    if (p.props[0].endsWith("Stop")) p.props[4] = closeEnd;
+for (const child of closeObjects.find(n => n.name === "AnimationCurve").children)
+    if (child.name === "KeyTime") child.props = [array("l", [0n, closeEnd - 1n])];
+writePair("animation", "close", close);
+
 mkdirSync(join(root, "bad"), { recursive: true });
 writeFileSync(join(root, "bad", "malformed.fbx"), "; FBX 7.4.0 project file\nObjects: { Geometry: 1, \"Geometry::Broken\", \"Mesh\" { Vertices: *9 { a: 0,0\n");
