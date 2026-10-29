@@ -1,5 +1,40 @@
 # Benchmarks
 
+## Moving tags under a client's rollback (2026-10-29)
+
+The owner asked whether toggled tags should move entities by default (as
+`[Lasting]` does) and what that costs a whole client, not just the ECS loop.
+
+Archetype check: a local tidec with the flipped default compiled all 420 source
+lists (engine games, samples, benchmarks, tests and `tide-prototypes` via
+`TIDE_EXTERNAL_DIRS`). Only Foldline changes: `Glimpse`, `LastWitness` and
+`WellFall` are added to entities read from variables, so with Box3D it passes
+1,024 archetypes and fails to compile. Every other game keeps its archetypes;
+only compiler fixtures change.
+
+`versus_sleep` / `versus_sleep_lasting` (Tide only, `bench/versus/sleep`) run a
+predicting client's period like `versus_rollback`: 12 ticks each kept in a ring
+of 16 and hashed, with a rollback of 8. Bodies of 12 floats are asleep or awake,
+and `--toggles` bodies, picked by hash, wake or fall asleep each tick. Single
+quick runs, release, one thread, 100k bodies with 90% asleep, ms a period:
+sparse/moving 6.68/0.45 with no toggles, 7.39/3.77 at 10, 7.84/7.45 at 30,
+9.10/13.19 at 100. Break-even is about 0.03-0.05% of entities toggling a tick at
+10k, 100k and 1M bodies and 50/90/99% asleep. Sparse is slow even without
+toggles, because scattered awake rows change nearly every page, which each
+snapshot then copies and each hash rereads.
+
+Each move costs about 15-25 us a tick under snapshots: filling the hole and
+appending to the destination's last chunk both copy a page per column (about
+13 cold 8 KiB pages), and the kept snapshots hold those copies, pushing the
+working set out of cache. A wakes-only variant (holes in the cold sleeping
+table) costs about 0.3 ms a period per move per tick; profiles show page
+copies, cache misses in the awake loop and rehashing. Rejected experiments,
+both reverted: 512/256-row chunks halve move cost but slow dense ticks up to
+2x; hashing 1 KiB blocks of a page with cached block hashes (only the written
+row's block rehashed) measured +13%/-6%/+1% for moving at 0/10/100 toggles and
++7%/+6% for sparse in five alternating rounds, so rehashing isn't the
+bottleneck. The default stays sparse; `[Lasting]` remains opt-in.
+
 ## `[Lasting]` tags against Bevy (2026-10-29)
 
 The owner chose to keep toggled tags sparse by default and let a tag opt out
