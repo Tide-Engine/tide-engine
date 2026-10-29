@@ -23,13 +23,16 @@ if(WIN32)
 endif()
 
 # Editors run a copy at a fixed path, build/tools/tidels, so they get the
-# latest server whichever build tree or IDE profile built it.
-set(TIDELS_EDITOR_COPY "${PROJECT_SOURCE_DIR}/build/tools/tidels${CMAKE_EXECUTABLE_SUFFIX}")
-add_custom_command(TARGET tidels POST_BUILD
-    COMMAND "${CMAKE_COMMAND}" -E make_directory "${PROJECT_SOURCE_DIR}/build/tools"
-    COMMAND "${CMAKE_COMMAND}" "-DEXE=${TIDELS_EDITOR_COPY}" -P "${CMAKE_CURRENT_SOURCE_DIR}/move_aside.cmake"
-    COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:tidels>" "${TIDELS_EDITOR_COPY}"
-    VERBATIM)
+# latest ordinary build. Sanitizer test builds keep their server in their
+# own bin directory, without replacing the editor's server or its runtime.
+if(NOT TIDE_SANITIZE)
+    set(TIDELS_EDITOR_COPY "${PROJECT_SOURCE_DIR}/build/tools/tidels${CMAKE_EXECUTABLE_SUFFIX}")
+    add_custom_command(TARGET tidels POST_BUILD
+        COMMAND "${CMAKE_COMMAND}" -E make_directory "${PROJECT_SOURCE_DIR}/build/tools"
+        COMMAND "${CMAKE_COMMAND}" "-DEXE=${TIDELS_EDITOR_COPY}" -P "${CMAKE_CURRENT_SOURCE_DIR}/move_aside.cmake"
+        COMMAND "${CMAKE_COMMAND}" -E copy "$<TARGET_FILE:tidels>" "${TIDELS_EDITOR_COPY}"
+        VERBATIM)
+endif()
 
 add_executable(tidels_tests tests/lsp_test.c tests/json_test.c "${PROJECT_SOURCE_DIR}/tests/test_main.c")
 target_include_directories(tidels_tests PRIVATE "${PROJECT_SOURCE_DIR}/tests")

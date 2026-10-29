@@ -50,6 +50,12 @@ execute_process(
     OUTPUT_VARIABLE stdout
     ERROR_VARIABLE stderr)
 
+# A compiler error printed before memory corruption must not make an ASan or
+# UBSan failure look like the expected diagnostic.
+if("${stdout}${stderr}" MATCHES "AddressSanitizer|UndefinedBehaviorSanitizer|runtime error:")
+    message(FATAL_ERROR "a sanitizer's report:\n${stdout}${stderr}")
+endif()
+
 if(result EQUAL 0)
     message(FATAL_ERROR "expected tidec to fail with: ${expected}")
 endif()

@@ -1,5 +1,21 @@
 # Debugging Tide code in native debuggers
 
+## Windows ASan debugger fixture (2026-10-29)
+
+The native sanitizer suite exposed dbgeng stopping at a first-chance access
+violation in ASan's initialization, before the fixture's Tide breakpoint.
+Windows ASan commits shadow-memory pages on demand through its exception
+handler; [Microsoft documents these first-chance stops](https://learn.microsoft.com/en-us/cpp/sanitizers/asan-known-issues#asan-64-bit-first-chance-exceptions).
+`natvis_test.cmake` now starts its command script with `sxd av`, allowing the
+handler to run while retaining second-chance breaks for unhandled violations.
+It also explicitly rejects sanitizer reports captured from the debug session.
+All existing Tide line, stepping, local-variable and natvis assertions remain.
+
+Validation: `tidec_debugger_natvis` passes with the Windows `sanitize` build
+(Clang 23.1.2 ASan) and the ordinary native `debug` build. The latter's missing
+fixture executable was built from this checkout before its successful run.
+No debugger-driver code, compiler output or runtime instrumentation changed.
+
 Built 2026-10-26, asked for by the owner: Tide code debuggable in native
 debuggers, so a game's systems step as Tide rather than as generated C, most of
 all inside Unity (the match is a native library there) and in `tide run`. User

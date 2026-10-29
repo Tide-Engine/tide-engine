@@ -32,16 +32,19 @@ Requires CMake 3.25+, Ninja and clang. The toolchain finds clang through `$LLVM_
 
 | Action | Command |
 |---|---|
+| Configure, build and test native correctness with sanitizers | `cmake --workflow --preset sanitize` |
+| Build configured native sanitizer targets | `cmake --build --preset sanitize` |
+| Run native correctness tests | `ctest --preset sanitize` |
 | Configure, build and test native debug | `cmake --workflow --preset debug` |
 | Build configured native debug | `cmake --build --preset debug` |
-| Run native tests | `ctest --preset debug` |
-| Run selected engine tests | `build/debug/bin/tide_tests [name-filter]` |
+| Run native debug tests | `ctest --preset debug` |
+| Run selected engine tests with ASan | `build/sanitize/bin/tide_tests [name-filter]` |
 | Configure, build and test web debug | `cmake --workflow --preset web-debug` |
 | Run web tests | `ctest --preset web-debug` |
 
-`debug` has no optimization; `release` is optimized with debug information. `sanitize` enables ASan and UBSan on Linux/macOS. Web, MinGW, Android and packaging presets are in `CMakePresets.json`; read their notes before using them. Use Node 24.22.1 or a newer 24.x patch for Node-based tooling and services (`notes/testing.md`); this includes the October 2026 security fixes and the Windows crash fix from 24.16.
+Use `sanitize` for routine native correctness validation, including local GPU tests: ASan on Windows, ASan and UBSan on Linux/macOS. Keep ordinary release and web coverage, and measure performance without sanitizers. `debug` has no optimization; `release` and `sanitize` are optimized with debug information. Web, MinGW, Android and packaging presets are in `CMakePresets.json`; read their notes before using them. Use Node 24.22.1 or a newer 24.x patch for Node-based tooling and services (`notes/testing.md`); this includes the October 2026 security fixes and the Windows crash fix from 24.16.
 
-Desktop configuration downloads pinned GLFW. Linux desktop builds need X11 development headers. `-DTIDE_PLATFORM=OFF` omits the platform layer and targets requiring it, useful offline. Native builds copy `tidels` to `build/tools/tidels` for the editors. Build integration and layout details are in `notes/repository.md` and `notes/tide-programs.md`.
+Desktop configuration downloads pinned GLFW. Linux desktop builds need X11 development headers. `-DTIDE_PLATFORM=OFF` omits the platform layer and targets requiring it, useful offline. Ordinary native builds copy `tidels` to `build/tools/tidels` for the editors; sanitizer builds keep their test server separate. Build integration and layout details are in `notes/repository.md` and `notes/tide-programs.md`.
 
 Warnings are errors. Fix warnings encountered during validation, including ones already present:
 
@@ -62,7 +65,7 @@ Test only what the change needs, once, before merging: the Build workflow runs e
 | `tools/` only | That tool's tests |
 | Unbuilt text, including this guide and notes | No build or test suite; check references and the diff |
 
-Android emulator tests are CI's job unless the owner asks for Android work. Linux, macOS, MinGW and sanitizers are also CI validation for this Windows machine. Tests needing a window, GPU or browser follow `notes/testing.md`; report unavailable coverage.
+Android emulator tests are CI's job unless the owner asks for Android work. Linux, macOS and MinGW are also CI validation for this Windows machine; native Windows ASan tests run locally. Tests needing a window, GPU or browser follow `notes/testing.md`; report unavailable coverage.
 
 Merge procedure: fetch, merge `origin/dev` into the task branch, then push `HEAD:dev`. Inspect `git diff --stat ORIG_HEAD HEAD` after a merge:
 
@@ -168,7 +171,7 @@ Read the notes for every subsystem the task touches. Paths and former section re
 | GUI controls, theme, input claims and focus | `notes/gui.md` |
 | `tide/run.h`, `host.h`, capture/scripts/players, debug/stats/profiler, hidden runs | `notes/standard-host.md` |
 | Asset declarations/importers/packs, static/skinned meshes and animation, files/fetch | `notes/assets-and-files.md` |
-| GPU/browser test runners, Node requirements, test labels | `notes/testing.md` |
+| Native sanitizers, GPU/browser test runners, Node requirements, test labels | `notes/testing.md` |
 | `platform/web/`, WASI, `tide.js`, web threads and tests | `notes/web.md` |
 | MinGW/Android toolchains, APKs, signing, Android runner | `notes/android-and-mingw.md` |
 | `bench/`, harness and saved measurements | `notes/benchmarks.md` |

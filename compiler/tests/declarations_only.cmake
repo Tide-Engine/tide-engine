@@ -18,6 +18,9 @@ function(compile expect_built)
         RESULT_VARIABLE result
         OUTPUT_VARIABLE stdout
         ERROR_VARIABLE stderr)
+    if("${stdout}${stderr}" MATCHES "AddressSanitizer|UndefinedBehaviorSanitizer|runtime error:")
+        message(FATAL_ERROR "a sanitizer's report:\n${stdout}${stderr}")
+    endif()
     if(expect_built AND NOT result EQUAL 0)
         message(FATAL_ERROR "tidec ${ARGN} didn't build:\n${stderr}")
     elseif(NOT expect_built AND result EQUAL 0)

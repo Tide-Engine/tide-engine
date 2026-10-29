@@ -1,5 +1,66 @@
 # Test infrastructure
 
+## Routine native sanitizers (2026-10-29)
+
+The owner approved routine sanitizer testing after ASan identified a Render3D
+pixel fixture's use-after-free (notes/render3d.md). The existing `sanitize`
+configure/build/test/workflow preset now supports Windows with ASan; Linux and
+macOS retain ASan + UBSan. It instruments the engine, platform, generated C,
+test hosts and native build tools together. Use it for affected native
+correctness tests, including local Vulkan/OpenGL tests, and keep normal release
+and web coverage. Performance measurements use an ordinary optimized build.
+
+`cmake/Sanitizers.cmake` queries the selected clang for its target-specific ASan
+DLL and copies it beside the build's executables. Missing runtimes fail at
+configure with installation guidance. CTest also supplies the runtime directory
+on PATH and the matching llvm-symbolizer, inherited by tests that copy tools to
+scratch installations; this works with both `ctest --preset sanitize` and
+`ctest --test-dir build/sanitize`. The two editor installer fixtures that clear
+PATH copy the DLL alongside their scratch CLI instead. Sanitizer builds keep
+their language server in their own bin directory, without publishing it to the
+editor's shared build/tools directory. Cross builds/MinGW are not supported by
+this native sanitizer configuration.
+
+Windows ASan links disable identical/tail data folding (`/OPT:NOICF`), keeping
+reference elimination. lld-link otherwise enables folding with `/OPT:REF`:
+different-sized narrow/wide literals can share ASan-padded storage, and empty
+strings can land in poisoned padding ([LLVM issue 62078](https://github.com/llvm/llvm-project/issues/62078)).
+The first full run reproduced both failures; the corrected links pass the
+same platform fixtures without suppressing checks. Sanitizer executables also
+reserve an 8 MiB main-thread stack: the instrumented rewind C fixture alone
+uses a 0x10a5f8-byte frame, exceeding Windows' ordinary 1 MiB reserve. Ordinary
+builds keep their stack limits. The native debugger fixture allows ASan's
+handled first-chance shadow-memory faults; unhandled exceptions and sanitizer
+reports still fail it (notes/debugging.md).
+
+`tide_sanitizer_detects_use_after_free` deliberately reads freed memory and
+requires a failing exit with ASan's specific diagnostic. It also proves that
+the expected-compiler-error harness rejects a sanitizer finding emitted after
+the expected diagnostic. Ordinary successful tests alone cannot prove that
+instrumentation is enabled. Compiler diagnostic tests now explicitly reject
+ASan/UBSan reports, as the existing safety harness already did. CTest assigns
+sanitizer exit code 86, so those failures cannot satisfy wrappers expecting
+ordinary error exits 1 or 2. ASan and UBSan share that option in the runtime.
+
+The preset retains `detect_leaks=0`: tools/tests may keep allocations until
+process exit. ASan checks exercised CPU memory accesses, including those in
+renderer hosts; Vulkan validation and shader/browser tests remain necessary.
+Neither this preset nor a passing suite proves every memory error absent.
+Linux sanitizer CI remains enabled and excludes native GPU tests because its
+runners have no GPU; local Windows validation closes that coverage gap.
+
+Validation: with Clang 23.1.2 and Node 24.22.1, the full Windows sanitizer
+build passes all 2,892 enabled CTest tests, including 60 native GPU checks,
+29 safety checks, the ASan detection/diagnostic-wrapper probe, and the actual
+CLI scratch-installation and language-server subprocesses. No manual PATH
+setup is needed. The ordinary debug natvis test also passes. The full web-debug
+build and all 2,783 enabled tests pass, including WebGL, ten Windows ANGLE
+D3D11 checks and 22 WebGPU checks. Both suites retain the same pre-existing
+disabled MicroDuck right-turn test; no new exclusion or suppression was added.
+Agent runs use TIDE_HIDDEN and the existing muted browser launchers. Linux,
+macOS, MinGW, Android and installed-package C++ validation remain CI coverage;
+no workflow was manually dispatched.
+
 ## Debugger tests (2026-10-26)
 
 `tidec_debugger_natvis` drives Windows' own `dbgeng.dll` (no install) on

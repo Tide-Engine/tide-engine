@@ -1,5 +1,14 @@
 # The language server and the editors
 
+## Sanitizer test builds keep their own server (2026-10-29)
+
+With TIDE_SANITIZE enabled, tidels stays in that build's bin directory and
+does not replace the shared build/tools/tidels editor copy. Routine sanitizer
+tests therefore leave the editor's server and runtime selection alone. Ordinary
+native builds still refresh the shared copy. The instrumented server and its
+stdio/pipe tests remain part of the sanitizer build; configuration and validation
+are recorded in notes/testing.md.
+
 ## Following a Unity development session (2026-10-26)
 
 The owner replaces Unity's saved compiler override with a launch-only

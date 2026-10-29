@@ -1,5 +1,14 @@
 # `tide`, packages and the package
 
+## Isolated editor tests under Windows ASan (2026-10-29)
+
+editors_test.cmake and jetbrains_test.cmake copy any clang ASan runtime DLLs
+beside their source tide executable into the scratch installation's bin.
+These two harnesses replace PATH with their fake editor directory, so inheriting
+CTest's sanitizer environment alone cannot load the runtime. Their isolated
+PATH, profiles and real CLI behavior stay unchanged. Ordinary builds with no
+ASan DLL copy nothing extra. Validation is recorded in notes/testing.md.
+
 ## CLI pins select a side-by-side release (2026-10-29)
 
 Owner requested using a project's pin and asking to download a missing release,
