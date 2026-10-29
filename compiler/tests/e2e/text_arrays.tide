@@ -1,0 +1,158 @@
+// Arrays of text, lists and structs that hold them: in components, singletons,
+// structs, events, lists, maps and locals, each element its own.
+
+struct Tag
+{
+    string label;
+    int level;
+}
+
+component Named
+{
+    string[2] names = ["cat", "dog"];
+    Tag[2] tags;
+    List<int>[2] counts;
+}
+
+singleton Log
+{
+    string[3] last;
+    string[2][2] grid = [["a", "b"], ["c", "d"]];
+    List<string[2]> pairs;
+    Map<int, string[2]> byLevel;
+    int ticks;
+    int heard;
+    int kept;
+    string shown;
+    string joined;
+    string outside;
+}
+
+event Said
+{
+    string[2] words;
+}
+
+scene Main { }
+
+event(Spawned) Setup(with Main)
+{
+    Spawn(Named { names = ["fox", "owl"] });
+    Spawn(Named);
+}
+
+string[2] Swapped(string[2] pair)
+{
+    return [pair[1], pair[0]];
+}
+
+void Grow(mut string[2] names)
+{
+    for (var i = 0; i < 2; i++)
+    {
+        if (names[i].length < 10) names[i] += "s";
+        else names[i] = names[i].ToUpper();
+    }
+}
+
+system Tick(mut Named n, mut Log log)
+{
+    var before = n.names; // A copy: it keeps the old text
+    Grow(n.names);
+    n.tags[0].label = n.names[0] + "!";
+    n.tags[1] = Tag { label = n.names[1], level = n.tags[1].level + 1 };
+    n.counts[0].Add(log.ticks);
+    if (n.counts[0].count > 4) n.counts[0].RemoveAt(0);
+    n.counts[1] = [1, 2, 3];
+    if (before[0] + "s" == n.names[0] || n.names[0].length >= 10) log.kept += 1;
+    Send(Said { words = Swapped(n.names) });
+    if (n.names[1] == "dogsss") this.Destroy();
+}
+
+system Remember(mut Log log)
+{
+    log.ticks++;
+    log.last[log.ticks % 3] = $"tick {log.ticks % 10}";
+    if (log.grid[1][0].length < 6) log.grid[1][0] = log.grid[1][0] + "c";
+    log.pairs.Add(["p", $"{log.ticks % 10}"]);
+    if (log.pairs.count > 4) log.pairs.RemoveAt(0);
+    log.byLevel[log.ticks % 2] = [$"{log.ticks % 10}", "x"];
+    log.shown = $"{log.last}";
+    mut string all = "";
+    foreach (var s in log.grid[0]) all += s;
+    log.joined = all;
+    // Past either end: nothing is written, and a read is empty text
+    log.last[99] = "never";
+    log.last[-1] += "never";
+    log.grid[5][0] = "never";
+    log.grid[0][-3] = "never";
+    log.outside = log.last[99] + log.grid[7][1];
+}
+
+event(Said said) Hear(mut Log log)
+{
+    if (said.words[0].length > 0 && said.words[1].length > 0) log.heard += 1;
+}
+
+// Forward structs that hold lists and text, nested arrays of them in a list, and T? fields in an array's structs
+struct Shelf
+{
+    Bag[2] bags;
+}
+
+struct Bag
+{
+    List<int> parts;
+    Label label;
+}
+
+struct Label
+{
+    string text;
+}
+
+struct Slot
+{
+    string? label;
+}
+
+singleton Store
+{
+    Shelf shelf;
+    List<Bag[2][3]> crates;
+    Slot[2] slots;
+    int stocked;
+}
+
+system Stock(mut Store store)
+{
+    mut var bag = store.shelf.bags[0]; // A copy, its list its own
+    bag.parts.Add(store.stocked);
+    if (bag.parts.count > 3) bag.parts.RemoveAt(0);
+    bag.label.text = $"bag {store.stocked % 10}";
+    store.shelf.bags[0] = bag;
+    store.shelf.bags[1].label.text = "second";
+    store.shelf.bags[9].label.text = "never"; // A field through an index past the end: nothing
+    if (store.stocked % 3 == 0) store.slots[store.stocked % 2].label = null;
+    else store.slots[store.stocked % 2].label = "slot";
+    if (store.crates.count < 2) store.crates.Add(default);
+    mut var crate = store.crates[0];
+    crate[1][2] = bag;
+    store.crates[0] = crate;
+    store.stocked++;
+}
+
+// Local state: written by a view, packed and unpacked as hot reloading does
+local singleton Recent
+{
+    string[3] words = ["one", "two", "three"];
+    List<string>[2] logs;
+    int frames;
+}
+
+view Note(mut Recent recent)
+{
+    recent.frames++;
+    recent.words[recent.frames % 3] = $"frame {recent.frames % 10}";
+    recent.logs[1] = ["a", $"{recent.frames % 10}"];
+}

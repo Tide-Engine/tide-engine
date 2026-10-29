@@ -1,4 +1,0 @@
-// expect: an array's elements can't be 'Slot': it holds text or a list
-struct Slot { string? label; }
-component Bag { Slot[2] slots; }
-scene Main { }

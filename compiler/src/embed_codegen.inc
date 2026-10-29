@@ -50,6 +50,16 @@ static void embed_fix_value(sb *o, const type t, const char *lvalue, const char 
     case TY_STRUCT:
         sb_printf(o, "%stide_embed_fix_%s(&%s, out);\n", indent, type_cname(t.decl), lvalue);
         break;
+    case TY_ARRAY: { // Each element, as a field of its type would be
+        sb inner = {0}, element = {0};
+        sb_printf(&inner, "%s    ", indent);
+        sb_printf(&element, "%s.at[tide_e%d]", lvalue, (int)strlen(indent));
+        sb_printf(o, "%sfor (int32_t tide_e%d = 0; tide_e%d < %d; tide_e%d++) {\n", indent, (int)strlen(indent),
+                  (int)strlen(indent), t.decl->array_length, (int)strlen(indent));
+        embed_fix_value(o, t.decl->fields.items[0].type, element.data, inner.data);
+        sb_printf(o, "%s}\n", indent);
+        break;
+    }
     default:
         // An array or what else keeps text: zeroed, as the packet can't say it
         sb_printf(o, "%smemset(&%s, 0, sizeof %s);\n", indent, lvalue, lvalue);
@@ -71,6 +81,7 @@ static void gen_embed_fix(gen *g, const decl *d)
         const type t = hp->list ? (type){TY_LIST, (decl *)hp->list}
                      : hp->map ? (type){hp->map->is_set ? TY_SET : TY_MAP, (decl *)hp->map}
                      : hp->grid ? (type){TY_GRID, (decl *)hp->grid}
+                     : hp->array ? (type){TY_ARRAY, (decl *)hp->array}
                      : (type){TY_STRING, NULL};
         sb lvalue = {0};
         sb_printf(&lvalue, "v->%s", hp->path);
@@ -587,6 +598,12 @@ static void gen_embed(gen *g)
                 if (hp->list && embed_list_plain(hp->list)) {
                     sb_printf(o, "        ok = ok && tide_embed_command_list(tail, tail_size, &v.%s, (uint32_t)sizeof(%s));\n", hp->path,
                               elem_ctype(list_elem(hp->list)));
+                } else if (hp->array && hp->array->fields.items[0].type.kind == TY_STRING) { // Each element's text
+                    sb_printf(o, "        for (int32_t e = 0; e < %d; e++) ok = ok && tide_embed_command_text(tail, tail_size, &v.%s.at[e]);\n",
+                              hp->array->array_length, hp->path);
+                } else if (hp->array) {
+                    // An array of what another program's bytes can't hold: empty
+                    sb_printf(o, "        memset(&v.%s, 0, sizeof v.%s);\n", hp->path, hp->path);
                 } else if (hp->list || hp->map || hp->grid) {
                     // What another program's bytes can't hold: empty
                     sb_printf(o, "        ok = ok && !v.%s.at;\n        memset(&v.%s, 0, sizeof v.%s);\n", hp->path, hp->path, hp->path);

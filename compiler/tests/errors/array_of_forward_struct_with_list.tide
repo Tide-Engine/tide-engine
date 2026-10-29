@@ -1,5 +1,0 @@
-// expect: an array's elements can't be 'Bag': it holds text or a list
-struct Shelf { Bag[4] bags; }
-struct Bag { List<int> parts; }
-component Rack { Shelf shelf; }
-scene Main { }

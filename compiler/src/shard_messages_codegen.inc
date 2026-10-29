@@ -87,6 +87,7 @@ static void put_singleton_release(sb *o, const decl *d, const char *value)
         if (hp->list) sb_printf(o, " tide_list%d_release(&%s%s, TIDE_IN_MATCH);", hp->list->index, value, hp->path);
         else if (hp->map) sb_printf(o, " tide_map%d_release(&%s%s, TIDE_IN_MATCH);", hp->map->index, value, hp->path);
         else if (hp->grid) sb_printf(o, " tide_grid_release(&%s%s, &%s, TIDE_IN_MATCH);", value, hp->path, grid_shape_name(hp->grid));
+        else if (hp->array) sb_printf(o, " tide_array%d_release(&%s%s, TIDE_IN_MATCH);", hp->array->index, value, hp->path);
         else sb_printf(o, " tide_text_release(&%s%s, TIDE_IN_MATCH);", value, hp->path);
     }
 }
